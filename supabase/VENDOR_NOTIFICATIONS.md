@@ -26,14 +26,25 @@ Configure in the Supabase Dashboard: **Project Settings → Edge Functions → S
 | Secret | Required when | Purpose |
 |--------|----------------|---------|
 | `RESEND_API_KEY` | Sending email | Resend API |
-| `RESEND_FROM_EMAIL` | Sending email | Verified sender domain in Resend |
+| `RESEND_FROM_EMAIL` | Optional | From address; must sit on a **verified** domain in Resend. If unset, defaults to `noreply@assetwise.site` (see **Verify `assetwise.site` on Resend** below). |
 | `TWILIO_ACCOUNT_SID` | Sending SMS | Twilio account |
 | `TWILIO_AUTH_TOKEN` | Sending SMS | Twilio auth |
 | `TWILIO_FROM_NUMBER` | Sending SMS | E.164 sender, e.g. `+15551234567` |
 | `VENDOR_PORTAL_BASE_URL` | Optional | Legacy fallback: origin parsed for links if `APP_URL` is unset |
-| `APP_URL` | Recommended | Public site origin for vendor links, e.g. `https://app.example.com` (no trailing slash). Used for **Vendor portal**, **View job** (`/vendor`, `/vendor/ticket/:id?k=…`), and redirects from **`vendor-respond`**. |
+| `APP_URL` | Recommended | Public site origin for vendor links, e.g. `https://app.example.com` (no trailing slash). Host-only values get **`https://` prepended** when building links. Used for **Vendor portal**, **View job** (`/vendor`, `/vendor/ticket/:id?k=…`), and redirects from **`vendor-respond`**. |
 | `VENDOR_EMAIL_ACTION_SECRET` | Recommended | Long random string (32+ chars). HMAC secret for **Accept job** / **Decline job** links handled by **`vendor-respond`**. Without it, emails still send **View job** but not signed action buttons. |
 | `VENDOR_RESPOND_FN_URL` | Optional | Override URL for email action links; default is `${SUPABASE_URL}/functions/v1/vendor-respond`. |
+
+### Verify `assetwise.site` on Resend (production — Option A)
+
+Resend returns **403** / `validation_error` if the **from** domain is not verified.
+
+1. In [Resend → Domains](https://resend.com/domains), click **Add domain** and enter **`assetwise.site`** (or a subdomain you prefer, e.g. `mail.assetwise.site`).
+2. In Namecheap (or your DNS host), add the **TXT** / **DKIM** (and any other) records Resend shows. Save and wait until Resend shows the domain as **Verified**.
+3. In Supabase: **Project Settings → Edge Functions → Secrets**, set:
+   - `RESEND_API_KEY` — your Resend API key  
+   - Optionally `RESEND_FROM_EMAIL` — e.g. `noreply@assetwise.site` (must use the **same** verified domain or subdomain Resend approved). If omitted, the code still sends from `noreply@assetwise.site`.
+4. Redeploy or re-run functions if needed, then submit a test ticket and confirm **`vendor_notify_error`** is empty on `maintenance_requests`.
 
 `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` are provided automatically to Edge Functions.
 

@@ -4,8 +4,21 @@ import { supabase } from '@/lib/supabase'
 
 type GateState = 'loading' | 'authed' | 'anon'
 
+const VENDOR_PORTAL_BEARER_STORAGE_KEY = 'vendor_portal_bearer'
+
+function hasVendorPortalBearerBypass(search: string): boolean {
+  const k = new URLSearchParams(search).get('k')?.trim()
+  if (k) return true
+  try {
+    return Boolean(sessionStorage.getItem(VENDOR_PORTAL_BEARER_STORAGE_KEY)?.trim())
+  } catch {
+    return false
+  }
+}
+
 /**
- * Requires a Supabase session for /vendor/*.
+ * Requires a Supabase session for /vendor/*, unless the URL (or session) carries a
+ * vendor portal bearer (`k` query param or persisted key from a prior email link).
  * In Vite dev without Supabase env, children render so local UI work stays possible.
  */
 export function VendorAuthGate({ children }: { children: React.ReactNode }) {
@@ -42,6 +55,9 @@ export function VendorAuthGate({ children }: { children: React.ReactNode }) {
   }
 
   if (state === 'anon') {
+    if (hasVendorPortalBearerBypass(location.search || '')) {
+      return <>{children}</>
+    }
     const from = `${location.pathname}${location.search || ''}`
     return <Navigate to={`/vendor/login?redirect=${encodeURIComponent(from)}`} replace />
   }

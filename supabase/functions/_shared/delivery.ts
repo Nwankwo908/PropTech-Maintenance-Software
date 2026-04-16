@@ -9,7 +9,9 @@ export async function sendResendEmail(
   html: string,
 ): Promise<{ id: string } | { error: string }> {
   const key = Deno.env.get("RESEND_API_KEY")?.trim()
-  const from = "noreply@assetwise.site"
+  /** Must be an address on a domain verified in Resend (https://resend.com/domains). */
+  const from =
+    Deno.env.get("RESEND_FROM_EMAIL")?.trim() || "noreply@assetwise.site"
   if (!key) {
     return { error: "Missing RESEND_API_KEY" }
   }

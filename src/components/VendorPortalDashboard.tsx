@@ -26,6 +26,17 @@ import {
 
 export type { VendorDbWorkStatus }
 
+const VENDOR_PORTAL_BEARER_STORAGE_KEY = 'vendor_portal_bearer'
+
+function readStoredPortalBearer(): string | null {
+  if (typeof window === 'undefined') return null
+  try {
+    return sessionStorage.getItem(VENDOR_PORTAL_BEARER_STORAGE_KEY)?.trim() || null
+  } catch {
+    return null
+  }
+}
+
 const VENDOR_COMPANY = 'ABC Maintenance Co.'
 const VENDOR_ID = 'V-12345'
 
@@ -1085,7 +1096,29 @@ export function VendorPortalDashboard({
   const navigate = useNavigate()
   const listUrl = vendorPortalListUrl()
   const updateUrl = vendorPortalUpdateUrl()
-  const useLiveVendorApi = Boolean(listUrl && updateUrl && supabase)
+
+  const portalBearerFromLink = useMemo(() => {
+    const k = deepLinkToken?.trim()
+    if (k) return k
+    return readStoredPortalBearer()
+  }, [deepLinkToken])
+
+  const useLiveVendorApi = Boolean(
+    listUrl && updateUrl && (Boolean(portalBearerFromLink) || Boolean(supabase)),
+  )
+
+  const resolveVendorRequestBearer = useCallback(async (): Promise<string | null> => {
+    const k = deepLinkToken?.trim()
+    if (k) return k
+    const stored = readStoredPortalBearer()
+    if (stored) return stored
+    if (!supabase) return null
+    try {
+      return await getValidAccessToken(supabase)
+    } catch {
+      return null
+    }
+  }, [deepLinkToken, supabase])
 
   const [orders, setOrders] = useState<VendorWorkOrder[]>(() =>
     useLiveVendorApi ? [] : INITIAL_WORK_ORDERS,
@@ -1100,12 +1133,19 @@ export function VendorPortalDashboard({
   const [dropTargetColumn, setDropTargetColumn] = useState<VendorColumn | null>(null)
 
   const loadTickets = useCallback(async () => {
-    if (!useLiveVendorApi || !listUrl || !supabase) return
+    if (!useLiveVendorApi || !listUrl) return
     setApiLoading(true)
     setApiError(null)
     try {
-      const accessToken = await getValidAccessToken(supabase)
-      const res = await fetchVendorTickets(listUrl, accessToken)
+      const bearer = await resolveVendorRequestBearer()
+      if (!bearer?.trim()) {
+        setApiError(
+          'Missing vendor portal key or sign-in. Open your assignment email link or sign in.',
+        )
+        setOrders([])
+        return
+      }
+      const res = await fetchVendorTickets(listUrl, bearer.trim())
       setVendorHeaderName(res.vendor?.name ?? null)
       setOrders(
         res.tickets
@@ -1118,7 +1158,7 @@ export function VendorPortalDashboard({
     } finally {
       setApiLoading(false)
     }
-  }, [useLiveVendorApi, listUrl])
+  }, [useLiveVendorApi, listUrl, resolveVendorRequestBearer])
 
   useEffect(() => {
     void loadTickets()
@@ -1178,9 +1218,10 @@ export function VendorPortalDashboard({
         ? deepLinkToken ?? undefined
         : undefined
     try {
-      const accessToken = supabase ? await getValidAccessToken(supabase) : undefined
-      if (!accessToken && !token) {
-        const msg = 'Missing vendor session or ticket link token for this action.'
+      const accessToken = (await resolveVendorRequestBearer()) ?? undefined
+      if (!accessToken?.trim() && !token) {
+        const msg =
+          'Missing vendor portal key, ticket link token, or sign-in for this action.'
         setActionError(msg)
         window.alert(msg)
         return
@@ -1189,7 +1230,7 @@ export function VendorPortalDashboard({
         ticketId,
         action,
         updateUrl,
-        accessToken,
+        accessToken: accessToken?.trim() || undefined,
         token,
       })
       if (res.ok) applyVendorStatusToOrder(ticketId, res.vendor_work_status)
@@ -1232,16 +1273,18 @@ export function VendorPortalDashboard({
     }
     setActionError(null)
     try {
-      const accessToken = supabase ? await getValidAccessToken(supabase) : undefined
-      if (!accessToken && !token) {
-        setVendorToast('Missing vendor session or ticket link token for this action.')
+      const accessToken = (await resolveVendorRequestBearer()) ?? undefined
+      if (!accessToken?.trim() && !token) {
+        setVendorToast(
+          'Missing vendor portal key, ticket link token, or sign-in for this action.',
+        )
         return
       }
       const res = await updateJobStatus({
         ticketId: orderId,
         action,
         updateUrl,
-        accessToken,
+        accessToken: accessToken?.trim() || undefined,
         token,
       })
       if (res?.ok) applyVendorStatusToOrder(orderId, res.vendor_work_status)

@@ -45,13 +45,21 @@ type VendorEmailLinks = {
   declineUrl: string | null
 }
 
+/** Ensures vendor email links are absolute (mailto clients break on host-only origins). */
+function withHttpsScheme(origin: string): string {
+  const t = origin.trim().replace(/\/$/, "")
+  if (!t) return t
+  if (/^https?:\/\//i.test(t)) return t
+  return `https://${t}`
+}
+
 function resolveAppBaseUrl(): string | null {
-  const app = Deno.env.get("APP_URL")?.trim()?.replace(/\/$/, "") ?? ""
-  if (app) return app
+  const appRaw = Deno.env.get("APP_URL")?.trim() ?? ""
+  if (appRaw) return withHttpsScheme(appRaw)
   const legacy = Deno.env.get("VENDOR_PORTAL_BASE_URL")?.trim() ?? ""
   if (!legacy) return null
   try {
-    return new URL(legacy).origin
+    return new URL(withHttpsScheme(legacy)).origin
   } catch {
     return null
   }
@@ -282,8 +290,9 @@ async function insertLog(
 
 /** Legacy `?t=&k=` URL when APP_URL is not set. */
 function portalManageUrl(ticketId: string, actionToken: string): string | null {
-  const baseUrl = Deno.env.get("VENDOR_PORTAL_BASE_URL")?.trim()?.replace(/\/$/, "") ?? null
-  if (baseUrl == null) return null
+  const raw = Deno.env.get("VENDOR_PORTAL_BASE_URL")?.trim()?.replace(/\/$/, "") ?? null
+  if (raw == null) return null
+  const baseUrl = withHttpsScheme(raw)
   return `${baseUrl}?t=${encodeURIComponent(ticketId)}&k=${encodeURIComponent(actionToken)}`
 }
 

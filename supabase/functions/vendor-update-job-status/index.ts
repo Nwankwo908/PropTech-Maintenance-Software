@@ -5,6 +5,10 @@ import {
   notifyResidentInProgress,
 } from "../submit-maintenance-request/resident_notify.ts"
 import { tryAutoReassignAfterDecline } from "../_shared/vendor_auto_reassign.ts"
+import {
+  bearerLooksLikeJwt,
+  PORTAL_API_KEY_UUID_RE,
+} from "../_shared/vendor_portal_bearer.ts"
 
 const corsHeaders: Record<string, string> = {
   "Access-Control-Allow-Origin": "*",
@@ -153,76 +157,105 @@ serve(async (req) => {
   const accessToken = bearerKey(req)
 
   if (accessToken) {
-    const { data: auth, error: authErr } = await supabase.auth.getUser(accessToken)
-    if (authErr || !auth?.user?.id) {
-      console.error("[vendor-update-job-status] auth.getUser", authErr)
-      return jsonResponse({ error: "Invalid or expired JWT" }, 401)
-    }
+    if (bearerLooksLikeJwt(accessToken)) {
+      const { data: auth, error: authErr } = await supabase.auth.getUser(accessToken)
+      if (authErr || !auth?.user?.id) {
+        console.error("[vendor-update-job-status] auth.getUser", authErr)
+        return jsonResponse({ error: "Invalid or expired JWT" }, 401)
+      }
 
-    const authUid = auth.user.id
-    const authEmail =
-      typeof auth.user.email === "string" ? auth.user.email.trim().toLowerCase() : null
+      const authUid = auth.user.id
+      const authEmail =
+        typeof auth.user.email === "string" ? auth.user.email.trim().toLowerCase() : null
 
-    const { data: byUid, error: byUidErr } = await supabase
-      .from("vendors")
-      .select("id, auth_user_id")
-      .eq("auth_user_id", authUid)
-      .eq("active", true)
-      .maybeSingle()
-
-    if (byUidErr) {
-      console.error("[vendor-update-job-status] vendor lookup by auth_user_id", byUidErr)
-      return jsonResponse({ error: "Lookup failed" }, 500)
-    }
-
-    let vendorRow: { id: string; auth_user_id: string | null } | null = byUid ?? null
-
-    if (!vendorRow && authEmail) {
-      const { data: byEmail, error: byEmailErr } = await supabase
+      const { data: byUid, error: byUidErr } = await supabase
         .from("vendors")
         .select("id, auth_user_id")
-        .ilike("email", authEmail)
+        .eq("auth_user_id", authUid)
         .eq("active", true)
         .maybeSingle()
 
-      if (byEmailErr) {
-        console.error("[vendor-update-job-status] vendor lookup by email", byEmailErr)
+      if (byUidErr) {
+        console.error("[vendor-update-job-status] vendor lookup by auth_user_id", byUidErr)
         return jsonResponse({ error: "Lookup failed" }, 500)
       }
 
-      if (byEmail) {
-        if (byEmail.auth_user_id && byEmail.auth_user_id !== authUid) {
-          return jsonResponse({ error: "Forbidden" }, 403)
-        }
-        if (!byEmail.auth_user_id) {
-          const { data: linked, error: linkErr } = await supabase
-            .from("vendors")
-            .update({ auth_user_id: authUid })
-            .eq("id", byEmail.id)
-            .is("auth_user_id", null)
-            .select("id, auth_user_id")
-            .maybeSingle()
+      let vendorRow: { id: string; auth_user_id: string | null } | null = byUid ?? null
 
-          if (linkErr) {
-            console.error("[vendor-update-job-status] vendor link auth_user_id", linkErr)
-            return jsonResponse({ error: "Link failed" }, 500)
+      if (!vendorRow && authEmail) {
+        const { data: byEmail, error: byEmailErr } = await supabase
+          .from("vendors")
+          .select("id, auth_user_id")
+          .ilike("email", authEmail)
+          .eq("active", true)
+          .maybeSingle()
+
+        if (byEmailErr) {
+          console.error("[vendor-update-job-status] vendor lookup by email", byEmailErr)
+          return jsonResponse({ error: "Lookup failed" }, 500)
+        }
+
+        if (byEmail) {
+          if (byEmail.auth_user_id && byEmail.auth_user_id !== authUid) {
+            return jsonResponse({ error: "Forbidden" }, 403)
           }
-          vendorRow = linked ?? byEmail
-        } else {
-          vendorRow = byEmail
+          if (!byEmail.auth_user_id) {
+            const { data: linked, error: linkErr } = await supabase
+              .from("vendors")
+              .update({ auth_user_id: authUid })
+              .eq("id", byEmail.id)
+              .is("auth_user_id", null)
+              .select("id, auth_user_id")
+              .maybeSingle()
+
+            if (linkErr) {
+              console.error("[vendor-update-job-status] vendor link auth_user_id", linkErr)
+              return jsonResponse({ error: "Link failed" }, 500)
+            }
+            vendorRow = linked ?? byEmail
+          } else {
+            vendorRow = byEmail
+          }
         }
       }
-    }
 
-    if (!vendorRow) {
-      return jsonResponse({ error: "Vendor not found" }, 403)
-    }
+      if (!vendorRow) {
+        return jsonResponse({ error: "Vendor not found" }, 403)
+      }
 
-    if (vendorRow.id !== row.assigned_vendor_id) {
-      return jsonResponse({ error: "Forbidden" }, 403)
-    }
+      if (vendorRow.id !== row.assigned_vendor_id) {
+        return jsonResponse({ error: "Forbidden" }, 403)
+      }
 
-    vendorIdMatched = vendorRow.id
+      vendorIdMatched = vendorRow.id
+    } else if (PORTAL_API_KEY_UUID_RE.test(accessToken)) {
+      const { data: portalVendor, error: portalErr } = await supabase
+        .from("vendors")
+        .select("id")
+        .eq("portal_api_key", accessToken)
+        .eq("active", true)
+        .maybeSingle()
+
+      if (portalErr) {
+        console.error("[vendor-update-job-status] portal_api_key lookup", portalErr)
+        return jsonResponse({ error: "Lookup failed" }, 500)
+      }
+
+      if (portalVendor) {
+        if (portalVendor.id !== row.assigned_vendor_id) {
+          return jsonResponse({ error: "Forbidden" }, 403)
+        }
+        vendorIdMatched = portalVendor.id as string
+      } else if (row.vendor_action_token === accessToken) {
+        // Email deep links pass `k` = vendor_action_token; same value is sent as Bearer.
+        vendorIdMatched = row.assigned_vendor_id
+        source = "email_link"
+      } else {
+        return jsonResponse({ error: "Forbidden" }, 403)
+      }
+    } else {
+      return jsonResponse({ error: "Invalid Authorization token" }, 401)
+    }
   } else if (token && row.vendor_action_token === token) {
     vendorIdMatched = row.assigned_vendor_id
     source = "email_link"

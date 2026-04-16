@@ -42,11 +42,11 @@ const uuidRe =
 
 export async function fetchVendorTickets(
   listUrl: string,
-  accessToken: string,
+  bearerToken: string,
 ): Promise<VendorListResponse> {
   const res = await fetch(listUrl, {
     method: "GET",
-    headers: { Authorization: `Bearer ${accessToken}` },
+    headers: { Authorization: `Bearer ${bearerToken}` },
   })
   const text = await res.text()
   let body: unknown
@@ -72,8 +72,8 @@ export async function postVendorJobStatus(
     throw new Error("Invalid ticket id")
   }
   const headers: Record<string, string> = { "Content-Type": "application/json" }
-  if (opts.accessToken) {
-    headers.Authorization = `Bearer ${opts.accessToken}`
+  if (opts.accessToken?.trim()) {
+    headers.Authorization = `Bearer ${opts.accessToken.trim()}`
   }
   const body: Record<string, string> = { ticketId, action }
   if (opts.token) body.token = opts.token

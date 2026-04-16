@@ -3,6 +3,10 @@ import {
   createClient,
   type SupabaseClient,
 } from "https://esm.sh/@supabase/supabase-js@2.49.1"
+import {
+  bearerLooksLikeJwt,
+  PORTAL_API_KEY_UUID_RE,
+} from "../_shared/vendor_portal_bearer.ts"
 
 const corsHeaders: Record<string, string> = {
   "Access-Control-Allow-Origin": "*",
@@ -73,66 +77,136 @@ serve(async (req) => {
 
   const supabase = createClient(supabaseUrl, serviceKey)
 
-  const { data: auth, error: authErr } = await supabase.auth.getUser(accessToken)
-  if (authErr || !auth?.user?.id) {
-    console.error("[vendor-list-tickets] auth.getUser", authErr)
-    return jsonResponse({ error: "Invalid or expired JWT" }, 401)
-  }
+  let vendor: { id: string; name: string } | null = null
 
-  const authUid = auth.user.id
-  const authEmail =
-    typeof auth.user.email === "string" ? auth.user.email.trim().toLowerCase() : null
+  if (bearerLooksLikeJwt(accessToken)) {
+    const { data: auth, error: authErr } = await supabase.auth.getUser(accessToken)
+    if (authErr || !auth?.user?.id) {
+      console.error("[vendor-list-tickets] auth.getUser", authErr)
+      return jsonResponse({ error: "Invalid or expired JWT" }, 401)
+    }
 
-  let vendor: { id: string; name: string; auth_user_id: string | null } | null = null
+    const authUid = auth.user.id
+    const authEmail =
+      typeof auth.user.email === "string" ? auth.user.email.trim().toLowerCase() : null
 
-  const { data: byUid, error: byUidErr } = await supabase
-    .from("vendors")
-    .select("id, name, auth_user_id")
-    .eq("auth_user_id", authUid)
-    .eq("active", true)
-    .maybeSingle()
+    let jwtVendor: { id: string; name: string; auth_user_id: string | null } | null = null
 
-  if (byUidErr) {
-    console.error("[vendor-list-tickets] vendor lookup by auth_user_id", byUidErr)
-    return jsonResponse({ error: "Lookup failed" }, 500)
-  }
-  if (byUid) {
-    vendor = byUid
-  } else if (authEmail) {
-    const { data: byEmail, error: byEmailErr } = await supabase
+    const { data: byUid, error: byUidErr } = await supabase
       .from("vendors")
       .select("id, name, auth_user_id")
-      .ilike("email", authEmail)
+      .eq("auth_user_id", authUid)
       .eq("active", true)
       .maybeSingle()
 
-    if (byEmailErr) {
-      console.error("[vendor-list-tickets] vendor lookup by email", byEmailErr)
+    if (byUidErr) {
+      console.error("[vendor-list-tickets] vendor lookup by auth_user_id", byUidErr)
+      return jsonResponse({ error: "Lookup failed" }, 500)
+    }
+    if (byUid) {
+      jwtVendor = byUid
+    } else if (authEmail) {
+      const { data: byEmail, error: byEmailErr } = await supabase
+        .from("vendors")
+        .select("id, name, auth_user_id")
+        .ilike("email", authEmail)
+        .eq("active", true)
+        .maybeSingle()
+
+      if (byEmailErr) {
+        console.error("[vendor-list-tickets] vendor lookup by email", byEmailErr)
+        return jsonResponse({ error: "Lookup failed" }, 500)
+      }
+
+      if (byEmail) {
+        if (byEmail.auth_user_id && byEmail.auth_user_id !== authUid) {
+          return jsonResponse({ error: "Forbidden" }, 403)
+        }
+        if (!byEmail.auth_user_id) {
+          const { data: linked, error: linkErr } = await supabase
+            .from("vendors")
+            .update({ auth_user_id: authUid })
+            .eq("id", byEmail.id)
+            .is("auth_user_id", null)
+            .select("id, name, auth_user_id")
+            .maybeSingle()
+
+          if (linkErr) {
+            console.error("[vendor-list-tickets] vendor link auth_user_id", linkErr)
+            return jsonResponse({ error: "Link failed" }, 500)
+          }
+          jwtVendor = linked ?? byEmail
+        } else {
+          jwtVendor = byEmail
+        }
+      }
+    }
+
+    if (!jwtVendor) {
+      return jsonResponse({ error: "Vendor not found" }, 403)
+    }
+    vendor = { id: jwtVendor.id, name: jwtVendor.name }
+  } else if (PORTAL_API_KEY_UUID_RE.test(accessToken)) {
+    // 1) Per-vendor portal key (`vendors.portal_api_key`).
+    const { data: portalVendor, error: portalErr } = await supabase
+      .from("vendors")
+      .select("id, name")
+      .eq("portal_api_key", accessToken)
+      .eq("active", true)
+      .maybeSingle()
+
+    if (portalErr) {
+      console.error("[vendor-list-tickets] vendor lookup by portal_api_key", portalErr)
       return jsonResponse({ error: "Lookup failed" }, 500)
     }
 
-    if (byEmail) {
-      if (byEmail.auth_user_id && byEmail.auth_user_id !== authUid) {
-        return jsonResponse({ error: "Forbidden" }, 403)
+    if (portalVendor) {
+      vendor = { id: portalVendor.id, name: portalVendor.name }
+    } else {
+      // 2) Assignment emails use `?k=<vendor_action_token>` (per ticket), not portal_api_key.
+      const { data: actionRow, error: actionErr } = await supabase
+        .from("maintenance_requests")
+        .select("assigned_vendor_id")
+        .eq("vendor_action_token", accessToken)
+        .not("assigned_vendor_id", "is", null)
+        .limit(1)
+        .maybeSingle()
+
+      if (actionErr) {
+        console.error(
+          "[vendor-list-tickets] vendor lookup by vendor_action_token",
+          actionErr,
+        )
+        return jsonResponse({ error: "Lookup failed" }, 500)
       }
-      if (!byEmail.auth_user_id) {
-        const { data: linked, error: linkErr } = await supabase
+
+      const vid = actionRow?.assigned_vendor_id as string | null | undefined
+      if (vid) {
+        const { data: vByAction, error: vErr } = await supabase
           .from("vendors")
-          .update({ auth_user_id: authUid })
-          .eq("id", byEmail.id)
-          .is("auth_user_id", null)
-          .select("id, name, auth_user_id")
+          .select("id, name")
+          .eq("id", vid)
+          .eq("active", true)
           .maybeSingle()
 
-        if (linkErr) {
-          console.error("[vendor-list-tickets] vendor link auth_user_id", linkErr)
-          return jsonResponse({ error: "Link failed" }, 500)
+        if (vErr) {
+          console.error(
+            "[vendor-list-tickets] vendor fetch after vendor_action_token",
+            vErr,
+          )
+          return jsonResponse({ error: "Lookup failed" }, 500)
         }
-        vendor = linked ?? byEmail
-      } else {
-        vendor = byEmail
+        if (vByAction) {
+          vendor = { id: vByAction.id, name: vByAction.name }
+        }
       }
     }
+
+    if (!vendor) {
+      return jsonResponse({ error: "Forbidden" }, 403)
+    }
+  } else {
+    return jsonResponse({ error: "Invalid Authorization token" }, 401)
   }
 
   if (!vendor) {
