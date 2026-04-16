@@ -1715,7 +1715,7 @@ export function MaintenanceRequestForm({
           setOtpFlowState('idle')
         }}
         onFlowStateChange={setOtpFlowState}
-        onVerified={(auth) => {
+        onVerified={() => {
           setVerifyModalOpen(false)
           setOtpFlowState('idle')
           void performSubmit()
