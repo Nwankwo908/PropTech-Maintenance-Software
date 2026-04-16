@@ -645,8 +645,8 @@ export function MaintenanceRequestForm({
       setVerifyModalOpen(true)
       return
     }
-    await performSubmit(null)
-  }
+    await performSubmit()
+    }
 
   /** OTP pipeline steps (requirement: track sending vs verifying vs ticket submit). */
   const isRequestingOtp = otpFlowState === 'sending'
@@ -1718,7 +1718,7 @@ export function MaintenanceRequestForm({
         onVerified={(auth) => {
           setVerifyModalOpen(false)
           setOtpFlowState('idle')
-          void performSubmit(auth)
+          void performSubmit()
         }}
       />
     </main>
