@@ -838,7 +838,7 @@ export function MaintenanceRequestForm({
 
               <MaintenancePortalPageHeader sticky="always" />
 
-              <div className="flex flex-col gap-6 pb-10 lg:flex-row lg:items-start lg:gap-8 xl:gap-10">
+              <div className="flex flex-col gap-6 pb-10 lg:flex-row lg:items-start lg:gap-20 xl:gap-28">
                 <div className="min-h-0 min-w-0 w-full flex-1 px-6 sm:px-12">
               <fieldset
                 disabled={locked}
@@ -1554,19 +1554,21 @@ export function MaintenanceRequestForm({
                 </div>
 
                 <div
-                  className="flex w-full min-w-0 shrink-0 flex-col items-center justify-center bg-transparent pl-6 pr-6 pt-[224px] pb-1 sm:pl-12 sm:pr-12 lg:sticky lg:top-14 lg:mr-[336px] lg:w-auto lg:min-w-[min(100%,520px)] lg:max-w-none lg:shrink-0 lg:self-start lg:px-0 lg:pt-[224px] xl:min-w-[560px]"
+                  className="flex w-full min-w-0 shrink-0 flex-col items-center justify-center bg-transparent pl-12 pr-6 pb-1 pt-[199px] sm:pl-24 sm:pr-12 lg:sticky lg:top-14 lg:mr-[336px] lg:min-w-0 lg:flex-1 lg:shrink-0 lg:self-stretch lg:pt-[199px] lg:pl-20 lg:pr-0 xl:pl-28"
                 >
-                  <img
-                    src={maintenanceRequestHeroIllustration}
-                    alt=""
-                    className="pointer-events-none h-auto w-full max-w-[min(100%,228px)] shrink-0 select-none object-contain sm:max-w-[246px] lg:max-w-[263px]"
-                    decoding="async"
-                    loading="lazy"
-                    aria-hidden
-                  />
-                  <p className="mt-4 max-w-full text-balance text-center text-[16px] font-normal leading-7 tracking-[-0.1504px] text-[#4a5565] max-lg:mx-auto sm:text-[18px] lg:w-max lg:max-w-none lg:text-nowrap">
-                    Submit a request and we&apos;ll take care of the rest.
-                  </p>
+                  <div className="mx-auto flex w-full max-w-[min(100%,42rem)] flex-col items-center text-center sm:max-w-[min(100%,46rem)] lg:max-w-[min(100%,50rem)]">
+                    <img
+                      src={maintenanceRequestHeroIllustration}
+                      alt=""
+                      className="pointer-events-none mx-auto h-auto w-full max-w-[min(100%,308px)] shrink-0 select-none object-contain sm:max-w-[332px] lg:max-w-[355px]"
+                      decoding="async"
+                      loading="lazy"
+                      aria-hidden
+                    />
+                    <p className="mt-4 w-full max-w-full whitespace-nowrap text-center text-[22px] font-normal leading-7 tracking-[-0.1504px] text-[#4a5565] sm:text-[24px]">
+                      Submit a request and we&apos;ll take care of the rest.
+                    </p>
+                  </div>
                 </div>
               </div>
             </form>
