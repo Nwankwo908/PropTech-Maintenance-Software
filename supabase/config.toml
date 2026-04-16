@@ -1,0 +1,44 @@
+
+[functions.clarify-issue]
+enabled = true
+verify_jwt = true
+import_map = "./functions/clarify-issue/deno.json"
+# Uncomment to specify a custom file path to the entrypoint.
+# Supported file extensions are: .ts, .js, .mjs, .jsx, .tsx
+entrypoint = "./functions/clarify-issue/index.ts"
+# Specifies static files to be bundled with the function. Supports glob patterns.
+# For example, if you want to serve static HTML pages in your function:
+# static_files = [ "./functions/clarify-issue/*.html" ]
+
+# Gateway JWT check off: the handler validates `Authorization` with `auth.getUser(accessToken)`
+# (avoids false "Invalid JWT" from the edge proxy while tokens are still valid for GoTrue).
+[functions.submit-maintenance-request]
+enabled = true
+verify_jwt = false
+import_map = "./functions/submit-maintenance-request/deno.json"
+entrypoint = "./functions/submit-maintenance-request/index.ts"
+
+[functions.vendor-list-tickets]
+enabled = true
+verify_jwt = false
+import_map = "./functions/vendor-list-tickets/deno.json"
+entrypoint = "./functions/vendor-list-tickets/index.ts"
+
+[functions.vendor-update-job-status]
+enabled = true
+verify_jwt = false
+import_map = "./functions/vendor-update-job-status/deno.json"
+entrypoint = "./functions/vendor-update-job-status/index.ts"
+
+[functions.admin-reassign-vendor]
+enabled = true
+verify_jwt = false
+import_map = "./functions/admin-reassign-vendor/deno.json"
+entrypoint = "./functions/admin-reassign-vendor/index.ts"
+
+# Public GET with HMAC token (email Accept / Decline); verify_jwt off.
+[functions.vendor-respond]
+enabled = true
+verify_jwt = false
+import_map = "./functions/vendor-respond/deno.json"
+entrypoint = "./functions/vendor-respond/index.ts"
