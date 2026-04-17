@@ -41,21 +41,20 @@ const uuidRe =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
 
 export async function fetchVendorTickets(url: string, bearerToken: string): Promise<VendorListResponse> {
-  // 1. Read token from URL (?k=...)
   const k =
     typeof window !== 'undefined'
       ? new URLSearchParams(window.location.search).get('k')?.trim()
-      : null
+      : undefined
 
-  // 2. Prefer URL token, fallback to existing bearerToken
-  const authToken = k || bearerToken
+  const authToken = k ? k : bearerToken
 
-  console.log('[vendor-frontend] sending token:', authToken)
+  console.log('[vendor-frontend] FINAL TOKEN USED:', authToken)
 
-  // 3. Make request with Authorization header
   const res = await fetch(url, {
+    method: 'GET',
     headers: {
       Authorization: `Bearer ${authToken}`,
+      'Content-Type': 'application/json',
     },
   })
 
