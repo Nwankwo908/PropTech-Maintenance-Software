@@ -107,6 +107,26 @@ async function buildVendorEmailLinks(
       console.error("[vendor-notify] sign email action", e)
     }
   }
+  // #region agent log
+  fetch("http://127.0.0.1:7898/ingest/3050e2ef-64dd-49e5-a718-1f5719c45963", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "06dfe0" },
+    body: JSON.stringify({
+      sessionId: "06dfe0",
+      hypothesisId: "H3_H4",
+      location: "vendor_notify.ts:buildVendorEmailLinks",
+      message: "vendor email link shape",
+      data: {
+        ticketIdLen: ticketId.length,
+        actionTokenLen: actionToken.length,
+        viewJobHasKQuery: viewJob.includes("?k="),
+        viewJobHasPercentEncoding: viewJob.includes("%"),
+        portalHomeHasKQuery: portalHome.includes("?k="),
+      },
+      timestamp: Date.now(),
+    }),
+  }).catch(() => {})
+  // #endregion
   return { portalHome, viewJob, acceptUrl, declineUrl }
 }
 

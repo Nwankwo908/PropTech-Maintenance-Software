@@ -40,26 +40,49 @@ export function vendorPortalUpdateUrl(): string | undefined {
 const uuidRe =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
 
-export async function fetchVendorTickets(
-  listUrl: string,
-  bearerToken: string,
-): Promise<VendorListResponse> {
-  const res = await fetch(listUrl, {
-    method: "GET",
-    headers: { Authorization: `Bearer ${bearerToken}` },
+export async function fetchVendorTickets(url: string, bearerToken: string): Promise<VendorListResponse> {
+  // 1. Read token from URL (?k=...)
+  const k =
+    typeof window !== 'undefined'
+      ? new URLSearchParams(window.location.search).get('k')?.trim()
+      : null
+
+  // 2. Prefer URL token, fallback to existing bearerToken
+  const authToken = k || bearerToken
+
+  console.log('[vendor-frontend] sending token:', authToken)
+
+  // 3. Make request with Authorization header
+  const res = await fetch(url, {
+    headers: {
+      Authorization: `Bearer ${authToken}`,
+    },
   })
-  const text = await res.text()
-  let body: unknown
+
+  // 4. Parse response safely
+  let data: VendorListResponse | null = null
   try {
-    body = text ? JSON.parse(text) : {}
+    data = (await res.json()) as VendorListResponse
   } catch {
-    throw new Error(`Vendor list: invalid JSON (${res.status})`)
+    console.error('[vendor-frontend] failed to parse JSON')
   }
+
+  // 5. Handle API errors properly
   if (!res.ok) {
-    const err = body as { error?: string }
-    throw new Error(err.error ?? `Vendor list failed (${res.status})`)
+    console.error('[vendor-frontend] API ERROR:', {
+      status: res.status,
+      data,
+    })
+    const errBody = data as { error?: string } | null
+    throw new Error(errBody?.error || 'Request failed')
   }
-  return body as VendorListResponse
+
+  console.log('[vendor-frontend] SUCCESS:', data)
+
+  if (!data) {
+    throw new Error('Vendor list: empty response')
+  }
+  return data
 }
 
 export async function postVendorJobStatus(

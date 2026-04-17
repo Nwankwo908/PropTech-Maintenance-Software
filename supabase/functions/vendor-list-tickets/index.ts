@@ -22,6 +22,10 @@ function jsonResponse(body: unknown, status = 200): Response {
   })
 }
 
+function failReason(reason: string) {
+  console.log("[vendor-list-tickets] FAIL reason:", reason)
+}
+
 function bearerKey(req: Request): string | null {
   const h = req.headers.get("Authorization")?.trim()
   if (!h?.toLowerCase().startsWith("bearer ")) return null
@@ -53,6 +57,7 @@ async function photoSignedUrls(
 }
 
 serve(async (req) => {
+  console.log("SUPABASE CLIENT TYPE:", !!Deno.env.get("SUPABASE_SERVICE_ROLE_KEY"))
   if (req.method === "OPTIONS") {
     return new Response("ok", { headers: corsHeaders })
   }
@@ -120,6 +125,7 @@ serve(async (req) => {
 
       if (byEmail) {
         if (byEmail.auth_user_id && byEmail.auth_user_id !== authUid) {
+          failReason("jwt email vendor mismatch")
           return jsonResponse({ error: "Forbidden" }, 403)
         }
         if (!byEmail.auth_user_id) {
@@ -143,73 +149,59 @@ serve(async (req) => {
     }
 
     if (!jwtVendor) {
+      failReason("jwt vendor not found")
       return jsonResponse({ error: "Vendor not found" }, 403)
     }
     vendor = { id: jwtVendor.id, name: jwtVendor.name }
   } else if (PORTAL_API_KEY_UUID_RE.test(accessToken)) {
-    // 1) Per-vendor portal key (`vendors.portal_api_key`).
-    const { data: portalVendor, error: portalErr } = await supabase
-      .from("vendors")
-      .select("id, name")
-      .eq("portal_api_key", accessToken)
-      .eq("active", true)
+    // `?k=` / Bearer: per-ticket `vendor_action_token` (UUID). Not `portal_api_key`.
+    console.log("[vendor-list-tickets] incoming token:", accessToken)
+
+    const { data: ticket, error: tErr } = await supabase
+      .from("maintenance_requests")
+      .select("assigned_vendor_id")
+      .eq("vendor_action_token", accessToken)
       .maybeSingle()
 
-    if (portalErr) {
-      console.error("[vendor-list-tickets] vendor lookup by portal_api_key", portalErr)
+    if (tErr) {
+      console.error("[vendor-list-tickets] ticket lookup error", tErr)
       return jsonResponse({ error: "Lookup failed" }, 500)
     }
 
-    if (portalVendor) {
-      vendor = { id: portalVendor.id, name: portalVendor.name }
-    } else {
-      // 2) Assignment emails use `?k=<vendor_action_token>` (per ticket), not portal_api_key.
-      const { data: actionRow, error: actionErr } = await supabase
-        .from("maintenance_requests")
-        .select("assigned_vendor_id")
-        .eq("vendor_action_token", accessToken)
-        .not("assigned_vendor_id", "is", null)
-        .limit(1)
-        .maybeSingle()
-
-      if (actionErr) {
-        console.error(
-          "[vendor-list-tickets] vendor lookup by vendor_action_token",
-          actionErr,
-        )
-        return jsonResponse({ error: "Lookup failed" }, 500)
-      }
-
-      const vid = actionRow?.assigned_vendor_id as string | null | undefined
-      if (vid) {
-        const { data: vByAction, error: vErr } = await supabase
-          .from("vendors")
-          .select("id, name")
-          .eq("id", vid)
-          .eq("active", true)
-          .maybeSingle()
-
-        if (vErr) {
-          console.error(
-            "[vendor-list-tickets] vendor fetch after vendor_action_token",
-            vErr,
-          )
-          return jsonResponse({ error: "Lookup failed" }, 500)
-        }
-        if (vByAction) {
-          vendor = { id: vByAction.id, name: vByAction.name }
-        }
-      }
+    if (!ticket) {
+      failReason("invalid or expired vendor_action_token")
+      return jsonResponse({ error: "Invalid or expired vendor token" }, 403)
     }
 
-    if (!vendor) {
-      return jsonResponse({ error: "Forbidden" }, 403)
+    if (!ticket.assigned_vendor_id) {
+      failReason("ticket has no assigned_vendor_id")
+      return jsonResponse({ error: "Vendor not found or inactive" }, 403)
     }
+
+    const { data: actionVendor, error: vErr } = await supabase
+      .from("vendors")
+      .select("id, name")
+      .eq("id", ticket.assigned_vendor_id)
+      .eq("active", true)
+      .maybeSingle()
+
+    if (vErr) {
+      console.error("[vendor-list-tickets] vendor lookup", vErr)
+      return jsonResponse({ error: "Lookup failed" }, 500)
+    }
+
+    if (!actionVendor) {
+      failReason("vendor not found or inactive after token lookup")
+      return jsonResponse({ error: "Vendor not found or inactive" }, 403)
+    }
+
+    vendor = { id: actionVendor.id, name: actionVendor.name }
   } else {
     return jsonResponse({ error: "Invalid Authorization token" }, 401)
   }
 
   if (!vendor) {
+    failReason("vendor unresolved after auth branches")
     return jsonResponse({ error: "Vendor not found" }, 403)
   }
 
@@ -233,5 +225,10 @@ serve(async (req) => {
     }),
   )
 
-  return jsonResponse({ vendor: { id: vendor.id, name: vendor.name }, tickets })
+  const data = { vendor: { id: vendor.id, name: vendor.name }, tickets }
+  console.log("[vendor-list-tickets] SUCCESS returning data")
+  return new Response(JSON.stringify(data), {
+    status: 200,
+    headers: { ...corsHeaders, "Content-Type": "application/json" },
+  })
 })

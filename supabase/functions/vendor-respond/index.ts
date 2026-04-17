@@ -195,6 +195,15 @@ serve(async (req) => {
     return htmlResponse("Error", "Could not update status.", { status: 500 })
   }
 
+  const { data: postUpdateRow, error: postTokenErr } = await supabase
+    .from("maintenance_requests")
+    .select("vendor_action_token")
+    .eq("id", ticketId)
+    .maybeSingle()
+
+  const tokenForRedirect =
+    postUpdateRow?.vendor_action_token ?? row.vendor_action_token
+
   const { error: logErr } = await supabase.from("vendor_status_events").insert({
     ticket_id: ticketId,
     from_status: current,
@@ -225,9 +234,34 @@ serve(async (req) => {
   }
 
   const appUrl = Deno.env.get("APP_URL")?.trim()?.replace(/\/$/, "") ?? ""
-  const keyParam = row.vendor_action_token ? `?k=${row.vendor_action_token}` : ""
+  const keyParam = tokenForRedirect ? `?k=${tokenForRedirect}` : ""
   const redirectUrl =
     appUrl.length > 0 ? `${appUrl}/vendor/ticket/${ticketId}${keyParam}` : null
+
+  // #region agent log
+  fetch("http://127.0.0.1:7898/ingest/3050e2ef-64dd-49e5-a718-1f5719c45963", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "06dfe0" },
+    body: JSON.stringify({
+      sessionId: "06dfe0",
+      runId: "post-update-token",
+      hypothesisId: "H1_H2_H5",
+      location: "vendor-respond/index.ts:redirect",
+      message: "vendor-respond redirect k presence",
+      data: {
+        hasTokenBeforeUpdate: Boolean(row.vendor_action_token),
+        hasTokenAfterRefetch: Boolean(postUpdateRow?.vendor_action_token),
+        postTokenSelectError: postTokenErr != null,
+        tokenForRedirectPresent: Boolean(tokenForRedirect),
+        keyParamNonEmpty: keyParam.length > 0,
+        appUrlNonEmpty: appUrl.length > 0,
+        redirectUrlIsNull: redirectUrl == null,
+        redirectHasKQuery: redirectUrl != null && redirectUrl.includes("?k="),
+      },
+      timestamp: Date.now(),
+    }),
+  }).catch(() => {})
+  // #endregion
 
   const msg =
     action === "accept"
