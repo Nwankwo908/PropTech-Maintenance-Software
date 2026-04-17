@@ -11,6 +11,19 @@ function isProbablyEmail(value: string): boolean {
 export function VendorLoginPage() {
   const [searchParams] = useSearchParams()
   const redirect = searchParams.get('redirect')?.trim() || '/vendor'
+  const kFromLoginUrl = searchParams.get('k')?.trim() || null
+
+  const kFromRedirect = useMemo(() => {
+    try {
+      // `redirect` is already decoded by URLSearchParams (e.g. "/vendor/ticket/:id?k=...").
+      const asUrl = new URL(redirect, 'https://vendor.local')
+      return asUrl.searchParams.get('k')?.trim() || null
+    } catch {
+      return null
+    }
+  }, [redirect])
+
+  const portalKey = kFromLoginUrl || kFromRedirect
 
   const [email, setEmail] = useState('')
   const [submitting, setSubmitting] = useState(false)
@@ -19,6 +32,17 @@ export function VendorLoginPage() {
   const [alreadyAuthed, setAlreadyAuthed] = useState<boolean | null>(null)
 
   const emailOk = useMemo(() => isProbablyEmail(email), [email])
+
+  useEffect(() => {
+    console.log('[vendor-login] recovered k:', portalKey)
+    if (!portalKey) return
+    try {
+      sessionStorage.setItem('vendor_portal_bearer', portalKey)
+    } catch {
+      /* private mode / quota */
+    }
+    setAlreadyAuthed(true)
+  }, [portalKey])
 
   useEffect(() => {
     if (!supabase) {

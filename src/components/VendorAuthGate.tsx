@@ -6,16 +6,6 @@ type GateState = 'loading' | 'authed' | 'anon'
 
 const VENDOR_PORTAL_BEARER_STORAGE_KEY = 'vendor_portal_bearer'
 
-function hasVendorPortalBearerBypass(search: string): boolean {
-  const k = new URLSearchParams(search).get('k')?.trim()
-  if (k) return true
-  try {
-    return Boolean(sessionStorage.getItem(VENDOR_PORTAL_BEARER_STORAGE_KEY)?.trim())
-  } catch {
-    return false
-  }
-}
-
 /**
  * Requires a Supabase session for /vendor/*, unless the URL (or session) carries a
  * vendor portal bearer (`k` query param or persisted key from a prior email link).
@@ -25,10 +15,7 @@ export function VendorAuthGate({ children }: { children: React.ReactNode }) {
   const location = useLocation()
   const [state, setState] = useState<GateState>('loading')
 
-  const k =
-    typeof window !== 'undefined'
-      ? new URLSearchParams(window.location.search).get('k')?.trim() || null
-      : null
+  const k = new URLSearchParams(window.location.search).get('k')?.trim()
   console.log('[vendor-auth] k from URL:', k)
 
   // Vendor email-link flow: `?k=` fully bypasses login.
@@ -71,9 +58,6 @@ export function VendorAuthGate({ children }: { children: React.ReactNode }) {
   }
 
   if (state === 'anon') {
-    if (hasVendorPortalBearerBypass(location.search || '')) {
-      return <>{children}</>
-    }
     const from = `${location.pathname}${location.search || ''}`
     return <Navigate to={`/vendor/login?redirect=${encodeURIComponent(from)}`} replace />
   }

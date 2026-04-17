@@ -12,15 +12,13 @@ export function MaintenancePortalPageHeader({
   sticky,
   step = 'form',
 }: {
-  /** `always`: form flow. `lg`: review flow (avoid double sticky with mobile progress). */
-  sticky: 'always' | 'lg'
+  /** `always`: form flow. `lg`: review flow. `none`: never sticky. */
+  sticky: 'always' | 'lg' | 'none'
   /** `review`: confirm step. `submitted`: success screen after submission. */
   step?: 'form' | 'review' | 'submitted'
 }) {
   const positionClass =
-    sticky === 'always'
-      ? 'sticky top-0'
-      : 'relative lg:sticky lg:top-0'
+    sticky === 'always' ? 'sticky top-0' : sticky === 'lg' ? 'relative lg:sticky lg:top-0' : 'relative'
 
   return (
     <header className={`${positionClass} ${HEADER_ROW_CLASS}`}>

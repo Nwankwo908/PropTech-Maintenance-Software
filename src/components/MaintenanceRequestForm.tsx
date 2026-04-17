@@ -736,7 +736,7 @@ export function MaintenanceRequestForm({
             {phase === 'review' ? (
               <>
                 <div
-                  className="lg:hidden sticky top-0 z-30 w-full shrink-0 bg-white px-6 py-3 sm:px-8 lg:px-10"
+                  className="lg:hidden z-30 w-full shrink-0 bg-white px-6 py-3 sm:px-8 lg:px-10"
                   role="region"
                   aria-label="Request progress"
                 >
@@ -836,7 +836,7 @@ export function MaintenanceRequestForm({
                 </div>
               )}
 
-              <MaintenancePortalPageHeader sticky="always" />
+              <MaintenancePortalPageHeader sticky="none" />
 
               <div className="flex flex-col gap-6 pb-10 lg:flex-row lg:items-start lg:gap-20 xl:gap-28">
                 <div className="min-h-0 min-w-0 w-full flex-1 px-6 sm:px-8 lg:px-10">
@@ -1554,18 +1554,20 @@ export function MaintenanceRequestForm({
                 </div>
 
                 <div
-                  className="flex w-full min-w-0 shrink-0 flex-col items-center justify-center bg-transparent px-6 pb-1 pt-[199px] sm:px-10 lg:sticky lg:top-14 lg:min-w-0 lg:flex-1 lg:shrink-0 lg:self-stretch lg:px-8 lg:pt-[199px]"
+                  className="flex w-full min-w-0 shrink-0 flex-col items-center justify-center bg-transparent px-6 pb-1 pt-[199px] sm:px-10 lg:min-w-0 lg:flex-1 lg:shrink-0 lg:self-stretch lg:px-8 lg:pt-[199px]"
                 >
                   <div className="relative z-[1] mx-auto flex w-full max-w-[min(100%,42rem)] flex-col items-center justify-center text-center sm:max-w-[min(100%,46rem)] lg:max-w-[min(100%,50rem)] -mt-[450px]">
-                    <img
-                      src={maintenanceRequestHeroIllustration}
-                      alt=""
-                      className="pointer-events-none mx-auto h-auto w-full max-w-[min(100%,216px)] shrink-0 select-none object-contain sm:max-w-[232px] lg:max-w-[249px]"
-                      decoding="async"
-                      loading="lazy"
-                      aria-hidden
-                    />
-                    <p className="mt-4 w-full max-w-full whitespace-nowrap text-center text-[18.7px] font-normal leading-7 tracking-[-0.1504px] text-[#4a5565] sm:text-[20.4px]">
+                    <div className="sticky top-4">
+                      <img
+                        src={maintenanceRequestHeroIllustration}
+                        alt=""
+                        className="pointer-events-none mx-auto h-auto w-full max-w-[min(100%,140px)] shrink-0 select-none object-contain sm:max-w-[151px] lg:max-w-[162px]"
+                        decoding="async"
+                        loading="lazy"
+                        aria-hidden
+                      />
+                    </div>
+                    <p className="mt-4 w-full max-w-full whitespace-nowrap text-center text-[16.8px] font-thin leading-7 tracking-[-0.1504px] text-[#4a5565] sm:text-[18.4px]">
                       Submit a request and we&apos;ll take care of the rest.
                     </p>
                   </div>
