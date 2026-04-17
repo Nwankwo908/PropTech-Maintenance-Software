@@ -1113,14 +1113,7 @@ export function VendorPortalDashboard({
       typeof window !== 'undefined'
         ? new URLSearchParams(window.location.search).get('k')?.trim()
         : null
-
-    if (k) {
-      console.log('[vendor-auth] USING URL TOKEN:', k)
-      return k
-    }
-
-    console.error('[vendor-auth] NO K TOKEN FOUND')
-    return null
+    return k ?? null
   }, [])
 
   const [orders, setOrders] = useState<VendorWorkOrder[]>(() =>
@@ -1141,15 +1134,15 @@ export function VendorPortalDashboard({
     setApiError(null)
     try {
       const bearer = resolveVendorRequestBearer()
-      console.log('FINAL AUTH TOKEN:', bearer)
-      if (!bearer?.trim()) {
+      if (!bearer) {
+        console.error('NO K TOKEN — STOPPING REQUEST')
         setApiError(
           'Missing vendor token (?k=). Open your assignment email link with the portal key.',
         )
         setOrders([])
         return
       }
-      const res = await fetchVendorTickets(listUrl, bearer.trim())
+      const res = await fetchVendorTickets(listUrl, bearer)
       setVendorHeaderName(res.vendor?.name ?? null)
       setOrders(
         res.tickets
@@ -1222,9 +1215,9 @@ export function VendorPortalDashboard({
         ? deepLinkToken ?? undefined
         : undefined
     try {
-      const accessToken = resolveVendorRequestBearer() ?? undefined
-      console.log('FINAL AUTH TOKEN:', accessToken)
-      if (!accessToken?.trim() && !token) {
+      const bearer = resolveVendorRequestBearer()
+      if (!bearer) {
+        console.error('NO K TOKEN — STOPPING REQUEST')
         const msg =
           'Missing vendor token (?k=). Open your assignment email link with the portal key.'
         setActionError(msg)
@@ -1277,9 +1270,9 @@ export function VendorPortalDashboard({
     }
     setActionError(null)
     try {
-      const accessToken = resolveVendorRequestBearer() ?? undefined
-      console.log('FINAL AUTH TOKEN:', accessToken)
-      if (!accessToken?.trim() && !token) {
+      const bearer = resolveVendorRequestBearer()
+      if (!bearer) {
+        console.error('NO K TOKEN — STOPPING REQUEST')
         setVendorToast(
           'Missing vendor token (?k=). Open your assignment email link with the portal key.',
         )

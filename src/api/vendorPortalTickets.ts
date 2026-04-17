@@ -40,20 +40,27 @@ export function vendorPortalUpdateUrl(): string | undefined {
 const uuidRe =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
 
-export async function fetchVendorTickets(url: string, _bearerToken: string): Promise<VendorListResponse> {
+export async function fetchVendorTickets(url: string, bearerToken: string): Promise<VendorListResponse> {
   const k =
     typeof window !== 'undefined'
       ? new URLSearchParams(window.location.search).get('k')?.trim()
       : null
 
-  if (!k) {
+  console.log('[vendor-frontend] USING K TOKEN:', k)
+
+  const authToken = k || bearerToken
+
+  console.log('[vendor-frontend] FINAL TOKEN USED:', authToken)
+
+  if (!authToken?.trim()) {
     console.error('[vendor-frontend] NO K TOKEN FOUND')
     throw new Error('Missing vendor token')
   }
 
-  const authToken = k
-
-  console.log('[vendor-frontend] FINAL TOKEN USED:', authToken)
+  if (!k?.trim() && authToken.includes('.')) {
+    console.error('[vendor-frontend] Refusing JWT for vendor list request (no ?k=)')
+    throw new Error('Missing vendor token')
+  }
 
   const res = await fetch(url, {
     method: 'GET',
@@ -103,14 +110,16 @@ export async function postVendorJobStatus(
       ? new URLSearchParams(window.location.search).get('k')?.trim()
       : null
 
-  if (!k) {
-    console.error('[vendor-frontend] NO K TOKEN FOUND')
-    throw new Error('Missing vendor token')
-  }
+  console.log('[vendor-frontend] USING K TOKEN:', k)
 
   const authToken = k
 
   console.log('[vendor-frontend] FINAL TOKEN USED:', authToken)
+
+  if (!authToken?.trim()) {
+    console.error('[vendor-frontend] NO K TOKEN FOUND')
+    throw new Error('Missing vendor token')
+  }
 
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
