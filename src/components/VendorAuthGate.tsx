@@ -15,7 +15,10 @@ export function VendorAuthGate({ children }: { children: React.ReactNode }) {
   const location = useLocation()
   const [state, setState] = useState<GateState>('loading')
 
-  const k = new URLSearchParams(window.location.search).get('k')?.trim()
+  const k =
+    typeof window !== 'undefined'
+      ? new URLSearchParams(window.location.search).get('k')?.trim()
+      : null
   console.log('[vendor-auth] k from URL:', k)
 
   // Vendor email-link flow: `?k=` fully bypasses login.

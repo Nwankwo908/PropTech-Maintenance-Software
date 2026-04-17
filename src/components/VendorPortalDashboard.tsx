@@ -28,7 +28,6 @@ export type { VendorDbWorkStatus }
 const VENDOR_PORTAL_BEARER_STORAGE_KEY = 'vendor_portal_bearer'
 
 function readStoredPortalBearer(): string | null {
-  if (typeof window === 'undefined') return null
   try {
     return sessionStorage.getItem(VENDOR_PORTAL_BEARER_STORAGE_KEY)?.trim() || null
   } catch {
@@ -43,17 +42,20 @@ function readVendorActionTokenFromUrl(
 ): string | null {
   const fromRouter = new URLSearchParams(routerSearch).get('k')?.trim()
   if (fromRouter) return fromRouter
-  if (typeof window !== 'undefined') {
-    const fromWindow = new URLSearchParams(window.location.search).get('k')?.trim()
-    if (fromWindow) return fromWindow
-  }
+  const k =
+    typeof window !== 'undefined'
+      ? new URLSearchParams(window.location.search).get('k')?.trim()
+      : null
+  if (k) return k
   const fromProps = deepLinkToken?.trim()
   return fromProps || null
 }
 
 function warnIfVendorKeyOverriddenByJwt(bearer: string | null | undefined): void {
-  if (typeof window === 'undefined') return
-  const k = new URLSearchParams(window.location.search).get('k')?.trim()
+  const k =
+    typeof window !== 'undefined'
+      ? new URLSearchParams(window.location.search).get('k')?.trim()
+      : null
   if (!k) return
   const normalized = bearer?.trim() ?? ''
   if (!normalized.includes('.')) return
@@ -1135,14 +1137,17 @@ export function VendorPortalDashboard({
   )
 
   const resolveVendorRequestBearer = useCallback((): string | null => {
-    const k = new URLSearchParams(window.location.search).get('k')?.trim()
+    const k =
+      typeof window !== 'undefined'
+        ? new URLSearchParams(window.location.search).get('k')?.trim()
+        : null
 
     if (k) {
       console.log('[vendor-auth] USING URL TOKEN:', k)
       return k
     }
 
-    console.log('[vendor-auth] FALLBACK TO JWT')
+    console.log('[vendor-auth] no k in URL (JWT not used here)')
     return null
   }, [])
 

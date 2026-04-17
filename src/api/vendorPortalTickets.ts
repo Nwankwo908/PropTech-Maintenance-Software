@@ -44,9 +44,9 @@ export async function fetchVendorTickets(url: string, bearerToken: string): Prom
   const k =
     typeof window !== 'undefined'
       ? new URLSearchParams(window.location.search).get('k')?.trim()
-      : undefined
+      : null
 
-  const authToken = k ? k : bearerToken
+  const authToken = k || bearerToken
 
   console.log('[vendor-frontend] FINAL TOKEN USED:', authToken)
 
@@ -93,9 +93,15 @@ export async function postVendorJobStatus(
   if (!uuidRe.test(ticketId)) {
     throw new Error("Invalid ticket id")
   }
+  const k =
+    typeof window !== 'undefined'
+      ? new URLSearchParams(window.location.search).get('k')?.trim()
+      : null
+  const authToken = (k || opts.accessToken)?.trim()
+
   const headers: Record<string, string> = { "Content-Type": "application/json" }
-  if (opts.accessToken?.trim()) {
-    headers.Authorization = `Bearer ${opts.accessToken.trim()}`
+  if (authToken) {
+    headers.Authorization = `Bearer ${authToken}`
   }
   const body: Record<string, string> = { ticketId, action }
   if (opts.token) body.token = opts.token
