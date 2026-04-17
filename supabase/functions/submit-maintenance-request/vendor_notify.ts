@@ -80,7 +80,7 @@ async function buildVendorEmailLinks(
 ): Promise<VendorEmailLinks | null> {
   const appBase = resolveAppBaseUrl()
   if (!appBase) return null
-  const portalHome = `${appBase}/vendor`
+  const portalHome = `${appBase}/vendor?k=${encodeURIComponent(actionToken)}`
   const viewJob =
     `${appBase}/vendor/ticket/${ticketId}?k=${encodeURIComponent(actionToken)}`
   const signingSecret = Deno.env.get("VENDOR_EMAIL_ACTION_SECRET")?.trim() ?? null

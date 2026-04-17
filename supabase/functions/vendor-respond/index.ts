@@ -123,7 +123,7 @@ serve(async (req) => {
 
   const { data: row, error: rowErr } = await supabase
     .from("maintenance_requests")
-    .select("id, assigned_vendor_id, vendor_work_status")
+    .select("id, assigned_vendor_id, vendor_work_status, vendor_action_token")
     .eq("id", ticketId)
     .maybeSingle()
 
@@ -225,8 +225,11 @@ serve(async (req) => {
   }
 
   const appUrl = Deno.env.get("APP_URL")?.trim()?.replace(/\/$/, "") ?? ""
+  const keyParam = row.vendor_action_token
+    ? `?k=${encodeURIComponent(row.vendor_action_token)}`
+    : ""
   const redirectUrl =
-    appUrl.length > 0 ? `${appUrl}/vendor/ticket/${ticketId}` : null
+    appUrl.length > 0 ? `${appUrl}/vendor/ticket/${ticketId}${keyParam}` : null
 
   const msg =
     action === "accept"
