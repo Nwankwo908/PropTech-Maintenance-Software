@@ -8,7 +8,7 @@ import {
   type ReactNode,
   type RefObject,
 } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useLocation, useNavigate } from 'react-router-dom'
 import {
   fetchVendorTickets,
   updateJobStatus,
@@ -17,7 +17,6 @@ import {
   type VendorApiTicket,
 } from '@/api/vendorPortalTickets'
 import { supabase } from '@/lib/supabase'
-import { getValidAccessToken } from '@/lib/residentAuth'
 import {
   columnToAction,
   isValidMove,
@@ -35,6 +34,27 @@ function readStoredPortalBearer(): string | null {
   } catch {
     return null
   }
+}
+
+/** Same idea as edge `bearerLooksLikeJwt` — vendor portal keys must never be mistaken for session JWTs. */
+function bearerLooksLikeJwt(token: string): boolean {
+  const parts = token.split('.')
+  return parts.length === 3 && parts.every((p) => p.length > 0)
+}
+
+/** `k` may be available from the router before `window` is fully in sync on some navigations. */
+function readVendorActionTokenFromUrl(
+  routerSearch: string,
+  deepLinkToken: string | null | undefined,
+): string | null {
+  const fromRouter = new URLSearchParams(routerSearch).get('k')?.trim()
+  if (fromRouter) return fromRouter
+  if (typeof window !== 'undefined') {
+    const fromWindow = new URLSearchParams(window.location.search).get('k')?.trim()
+    if (fromWindow) return fromWindow
+  }
+  const fromProps = deepLinkToken?.trim()
+  return fromProps || null
 }
 
 const VENDOR_COMPANY = 'ABC Maintenance Co.'
@@ -1094,31 +1114,50 @@ export function VendorPortalDashboard({
   deepLinkToken?: string | null
 } = {}) {
   const navigate = useNavigate()
+  const location = useLocation()
   const listUrl = vendorPortalListUrl()
   const updateUrl = vendorPortalUpdateUrl()
 
   const portalBearerFromLink = useMemo(() => {
-    const k = deepLinkToken?.trim()
-    if (k) return k
+    const fromUrl = readVendorActionTokenFromUrl(location.search, deepLinkToken)
+    if (fromUrl) return fromUrl
     return readStoredPortalBearer()
-  }, [deepLinkToken])
+  }, [location.search, deepLinkToken])
 
   const useLiveVendorApi = Boolean(
     listUrl && updateUrl && (Boolean(portalBearerFromLink) || Boolean(supabase)),
   )
 
   const resolveVendorRequestBearer = useCallback(async (): Promise<string | null> => {
-    const k = deepLinkToken?.trim()
-    if (k) return k
-    const stored = readStoredPortalBearer()
-    if (stored) return stored
+    // 1. Always prioritize ?k= (React Router location, then window, then props from parent)
+    const k = readVendorActionTokenFromUrl(location.search, deepLinkToken)
+
+    console.log('Vendor portal using k:', k)
+
+    if (k) {
+      // persist for navigation after initial load
+      try {
+        sessionStorage.setItem(VENDOR_PORTAL_BEARER_STORAGE_KEY, k)
+      } catch {
+        /* private mode / quota */
+      }
+      return k
+    }
+
+    // 2. fallback to stored portal key (ignore accidental JWT-shaped garbage in this slot)
+    const stored = sessionStorage.getItem(VENDOR_PORTAL_BEARER_STORAGE_KEY)?.trim()
+    if (stored && !bearerLooksLikeJwt(stored)) return stored
+
+    // 3. fallback to Supabase auth (only if no k exists)
     if (!supabase) return null
+
     try {
-      return await getValidAccessToken(supabase)
+      const { data } = await supabase.auth.getSession()
+      return data.session?.access_token ?? null
     } catch {
       return null
     }
-  }, [deepLinkToken, supabase])
+  }, [supabase, location.search, deepLinkToken])
 
   const [orders, setOrders] = useState<VendorWorkOrder[]>(() =>
     useLiveVendorApi ? [] : INITIAL_WORK_ORDERS,
@@ -1138,6 +1177,7 @@ export function VendorPortalDashboard({
     setApiError(null)
     try {
       const bearer = await resolveVendorRequestBearer()
+      console.log('FINAL AUTH TOKEN:', bearer)
       if (!bearer?.trim()) {
         setApiError(
           'Missing vendor portal key or sign-in. Open your assignment email link or sign in.',
@@ -1219,6 +1259,7 @@ export function VendorPortalDashboard({
         : undefined
     try {
       const accessToken = (await resolveVendorRequestBearer()) ?? undefined
+      console.log('FINAL AUTH TOKEN:', accessToken)
       if (!accessToken?.trim() && !token) {
         const msg =
           'Missing vendor portal key, ticket link token, or sign-in for this action.'
@@ -1274,6 +1315,7 @@ export function VendorPortalDashboard({
     setActionError(null)
     try {
       const accessToken = (await resolveVendorRequestBearer()) ?? undefined
+      console.log('FINAL AUTH TOKEN:', accessToken)
       if (!accessToken?.trim() && !token) {
         setVendorToast(
           'Missing vendor portal key, ticket link token, or sign-in for this action.',
