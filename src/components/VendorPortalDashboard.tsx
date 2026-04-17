@@ -36,12 +36,6 @@ function readStoredPortalBearer(): string | null {
   }
 }
 
-/** Same idea as edge `bearerLooksLikeJwt` — vendor portal keys must never be mistaken for session JWTs. */
-function bearerLooksLikeJwt(token: string): boolean {
-  const parts = token.split('.')
-  return parts.length === 3 && parts.every((p) => p.length > 0)
-}
-
 /** `k` may be available from the router before `window` is fully in sync on some navigations. */
 function readVendorActionTokenFromUrl(
   routerSearch: string,
@@ -55,6 +49,18 @@ function readVendorActionTokenFromUrl(
   }
   const fromProps = deepLinkToken?.trim()
   return fromProps || null
+}
+
+function warnIfVendorKeyOverriddenByJwt(bearer: string | null | undefined): void {
+  if (typeof window === 'undefined') return
+  const k = new URLSearchParams(window.location.search).get('k')?.trim()
+  if (!k) return
+  const normalized = bearer?.trim() ?? ''
+  if (!normalized.includes('.')) return
+  console.warn(
+    '[vendor-portal] URL has ?k= but resolved bearer looks like JWT. JWT should not override vendor_action_token.',
+    { k, bearer: normalized },
+  )
 }
 
 const VENDOR_COMPANY = 'ABC Maintenance Co.'
@@ -1129,13 +1135,9 @@ export function VendorPortalDashboard({
   )
 
   const resolveVendorRequestBearer = useCallback(async (): Promise<string | null> => {
-    // 1. Always prioritize ?k= (React Router location, then window, then props from parent)
-    const k = readVendorActionTokenFromUrl(location.search, deepLinkToken)
-
-    console.log('Vendor portal using k:', k)
-
+    // 1. Always prioritize ?k= from URL
+    const k = new URLSearchParams(window.location.search).get('k')?.trim()
     if (k) {
-      // persist for navigation after initial load
       try {
         sessionStorage.setItem(VENDOR_PORTAL_BEARER_STORAGE_KEY, k)
       } catch {
@@ -1144,20 +1146,19 @@ export function VendorPortalDashboard({
       return k
     }
 
-    // 2. fallback to stored portal key (ignore accidental JWT-shaped garbage in this slot)
+    // 2. fallback to stored portal key (never reuse JWT-shaped values here)
     const stored = sessionStorage.getItem(VENDOR_PORTAL_BEARER_STORAGE_KEY)?.trim()
-    if (stored && !bearerLooksLikeJwt(stored)) return stored
+    if (stored && !stored.includes('.')) return stored
 
-    // 3. fallback to Supabase auth (only if no k exists)
+    // 3. fallback to Supabase auth (only if no k and no stored key)
     if (!supabase) return null
-
     try {
       const { data } = await supabase.auth.getSession()
       return data.session?.access_token ?? null
     } catch {
       return null
     }
-  }, [supabase, location.search, deepLinkToken])
+  }, [supabase])
 
   const [orders, setOrders] = useState<VendorWorkOrder[]>(() =>
     useLiveVendorApi ? [] : INITIAL_WORK_ORDERS,
@@ -1177,6 +1178,7 @@ export function VendorPortalDashboard({
     setApiError(null)
     try {
       const bearer = await resolveVendorRequestBearer()
+      warnIfVendorKeyOverriddenByJwt(bearer)
       console.log('FINAL AUTH TOKEN:', bearer)
       if (!bearer?.trim()) {
         setApiError(
@@ -1259,6 +1261,7 @@ export function VendorPortalDashboard({
         : undefined
     try {
       const accessToken = (await resolveVendorRequestBearer()) ?? undefined
+      warnIfVendorKeyOverriddenByJwt(accessToken)
       console.log('FINAL AUTH TOKEN:', accessToken)
       if (!accessToken?.trim() && !token) {
         const msg =
@@ -1315,6 +1318,7 @@ export function VendorPortalDashboard({
     setActionError(null)
     try {
       const accessToken = (await resolveVendorRequestBearer()) ?? undefined
+      warnIfVendorKeyOverriddenByJwt(accessToken)
       console.log('FINAL AUTH TOKEN:', accessToken)
       if (!accessToken?.trim() && !token) {
         setVendorToast(
