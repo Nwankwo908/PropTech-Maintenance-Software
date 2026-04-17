@@ -36,11 +36,6 @@ export function VendorLoginPage() {
   useEffect(() => {
     console.log('[vendor-login] recovered k:', portalKey)
     if (!portalKey) return
-    try {
-      sessionStorage.setItem('vendor_portal_bearer', portalKey)
-    } catch {
-      /* private mode / quota */
-    }
     setAlreadyAuthed(true)
   }, [portalKey])
 

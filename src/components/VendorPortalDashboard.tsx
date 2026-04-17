@@ -1142,7 +1142,7 @@ export function VendorPortalDashboard({
         setOrders([])
         return
       }
-      const res = await fetchVendorTickets(listUrl, bearer)
+      const res = await fetchVendorTickets(listUrl)
       setVendorHeaderName(res.vendor?.name ?? null)
       setOrders(
         res.tickets
