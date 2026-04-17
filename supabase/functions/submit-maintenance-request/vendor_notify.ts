@@ -80,9 +80,9 @@ async function buildVendorEmailLinks(
 ): Promise<VendorEmailLinks | null> {
   const appBase = resolveAppBaseUrl()
   if (!appBase) return null
-  const portalHome = `${appBase}/vendor?k=${encodeURIComponent(actionToken)}`
+  const portalHome = `${appBase}/vendor?k=${actionToken}`
   const viewJob =
-    `${appBase}/vendor/ticket/${ticketId}?k=${encodeURIComponent(actionToken)}`
+    `${appBase}/vendor/ticket/${ticketId}?k=${actionToken}`
   const signingSecret = Deno.env.get("VENDOR_EMAIL_ACTION_SECRET")?.trim() ?? null
   const respondBase = resolveVendorRespondBaseUrl()
   let acceptUrl: string | null = null
@@ -293,7 +293,7 @@ function portalManageUrl(ticketId: string, actionToken: string): string | null {
   const raw = Deno.env.get("VENDOR_PORTAL_BASE_URL")?.trim()?.replace(/\/$/, "") ?? null
   if (raw == null) return null
   const baseUrl = withHttpsScheme(raw)
-  return `${baseUrl}?t=${encodeURIComponent(ticketId)}&k=${encodeURIComponent(actionToken)}`
+  return `${baseUrl}?t=${encodeURIComponent(ticketId)}&k=${actionToken}`
 }
 
 /**

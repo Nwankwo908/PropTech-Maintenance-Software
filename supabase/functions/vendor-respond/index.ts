@@ -225,9 +225,7 @@ serve(async (req) => {
   }
 
   const appUrl = Deno.env.get("APP_URL")?.trim()?.replace(/\/$/, "") ?? ""
-  const keyParam = row.vendor_action_token
-    ? `?k=${encodeURIComponent(row.vendor_action_token)}`
-    : ""
+  const keyParam = row.vendor_action_token ? `?k=${row.vendor_action_token}` : ""
   const redirectUrl =
     appUrl.length > 0 ? `${appUrl}/vendor/ticket/${ticketId}${keyParam}` : null
 
