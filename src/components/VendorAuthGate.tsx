@@ -25,6 +25,22 @@ export function VendorAuthGate({ children }: { children: React.ReactNode }) {
   const location = useLocation()
   const [state, setState] = useState<GateState>('loading')
 
+  const k =
+    typeof window !== 'undefined'
+      ? new URLSearchParams(window.location.search).get('k')?.trim() || null
+      : null
+  console.log('[vendor-auth] k from URL:', k)
+
+  // Vendor email-link flow: `?k=` fully bypasses login.
+  if (k) {
+    try {
+      sessionStorage.setItem(VENDOR_PORTAL_BEARER_STORAGE_KEY, k)
+    } catch {
+      /* private mode / quota */
+    }
+    return <>{children}</>
+  }
+
   useEffect(() => {
     if (!supabase) {
       setState(import.meta.env.DEV ? 'authed' : 'anon')
