@@ -1134,31 +1134,17 @@ export function VendorPortalDashboard({
     listUrl && updateUrl && (Boolean(portalBearerFromLink) || Boolean(supabase)),
   )
 
-  const resolveVendorRequestBearer = useCallback(async (): Promise<string | null> => {
-    // 1. Always prioritize ?k= from URL
+  const resolveVendorRequestBearer = useCallback((): string | null => {
     const k = new URLSearchParams(window.location.search).get('k')?.trim()
+
     if (k) {
-      try {
-        sessionStorage.setItem(VENDOR_PORTAL_BEARER_STORAGE_KEY, k)
-      } catch {
-        /* private mode / quota */
-      }
+      console.log('[vendor-auth] USING URL TOKEN:', k)
       return k
     }
 
-    // 2. fallback to stored portal key (never reuse JWT-shaped values here)
-    const stored = sessionStorage.getItem(VENDOR_PORTAL_BEARER_STORAGE_KEY)?.trim()
-    if (stored && !stored.includes('.')) return stored
-
-    // 3. fallback to Supabase auth (only if no k and no stored key)
-    if (!supabase) return null
-    try {
-      const { data } = await supabase.auth.getSession()
-      return data.session?.access_token ?? null
-    } catch {
-      return null
-    }
-  }, [supabase])
+    console.log('[vendor-auth] FALLBACK TO JWT')
+    return null
+  }, [])
 
   const [orders, setOrders] = useState<VendorWorkOrder[]>(() =>
     useLiveVendorApi ? [] : INITIAL_WORK_ORDERS,
@@ -1177,7 +1163,7 @@ export function VendorPortalDashboard({
     setApiLoading(true)
     setApiError(null)
     try {
-      const bearer = await resolveVendorRequestBearer()
+      const bearer = resolveVendorRequestBearer()
       warnIfVendorKeyOverriddenByJwt(bearer)
       console.log('FINAL AUTH TOKEN:', bearer)
       if (!bearer?.trim()) {
@@ -1260,7 +1246,7 @@ export function VendorPortalDashboard({
         ? deepLinkToken ?? undefined
         : undefined
     try {
-      const accessToken = (await resolveVendorRequestBearer()) ?? undefined
+      const accessToken = resolveVendorRequestBearer() ?? undefined
       warnIfVendorKeyOverriddenByJwt(accessToken)
       console.log('FINAL AUTH TOKEN:', accessToken)
       if (!accessToken?.trim() && !token) {
@@ -1317,7 +1303,7 @@ export function VendorPortalDashboard({
     }
     setActionError(null)
     try {
-      const accessToken = (await resolveVendorRequestBearer()) ?? undefined
+      const accessToken = resolveVendorRequestBearer() ?? undefined
       warnIfVendorKeyOverriddenByJwt(accessToken)
       console.log('FINAL AUTH TOKEN:', accessToken)
       if (!accessToken?.trim() && !token) {
