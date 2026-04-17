@@ -736,7 +736,7 @@ export function MaintenanceRequestForm({
             {phase === 'review' ? (
               <>
                 <div
-                  className="lg:hidden sticky top-0 z-30 w-full shrink-0 bg-white px-6 py-3 sm:px-12"
+                  className="lg:hidden sticky top-0 z-30 w-full shrink-0 bg-white px-6 py-3 sm:px-8 lg:px-10"
                   role="region"
                   aria-label="Request progress"
                 >
@@ -782,10 +782,10 @@ export function MaintenanceRequestForm({
               noValidate
             >
               {(success || submitError) && (
-                <div className="mb-[18px] flex flex-col gap-[18px] px-6 pt-8 sm:px-12 sm:pt-10">
+                <div className="mb-[18px] flex flex-col gap-[18px] px-6 pt-8 sm:px-8 sm:pt-10 lg:px-10">
                   {success && (
                     <div
-                      className="w-full max-w-full rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 text-[14px] leading-5 text-emerald-950 lg:max-w-[650px]"
+                      className="w-full max-w-full rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 text-[14px] leading-5 text-emerald-950 lg:max-w-[898px]"
                       role="status"
                     >
                       <p className="font-medium">Request received</p>
@@ -807,7 +807,7 @@ export function MaintenanceRequestForm({
 
                   {submitError && (
                     <div
-                      className="w-full max-w-full rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-[14px] leading-5 text-red-950 lg:max-w-[650px]"
+                      className="w-full max-w-full rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-[14px] leading-5 text-red-950 lg:max-w-[898px]"
                       role="alert"
                     >
                       <div className="flex items-start gap-2">
@@ -839,7 +839,7 @@ export function MaintenanceRequestForm({
               <MaintenancePortalPageHeader sticky="always" />
 
               <div className="flex flex-col gap-6 pb-10 lg:flex-row lg:items-start lg:gap-20 xl:gap-28">
-                <div className="min-h-0 min-w-0 w-full flex-1 px-6 sm:px-12">
+                <div className="min-h-0 min-w-0 w-full flex-1 px-6 sm:px-8 lg:px-10">
               <fieldset
                 disabled={locked}
                 className="m-0 flex flex-col gap-[18px] border-0 p-0 pt-4 sm:pt-6 disabled:opacity-60"
@@ -852,13 +852,13 @@ export function MaintenanceRequestForm({
                   {mobileProgressCore}
                 </div>
 
-                <div className="ml-0 flex w-full min-w-0 max-w-full flex-col gap-[18px] pl-[36px] lg:ml-[120px] lg:pl-0">
-                <div className="w-full max-w-full lg:max-w-[650px]">
+                <div className="ml-0 flex w-full min-w-0 max-w-full flex-col gap-[18px] pl-[36px] lg:ml-[48px] lg:pl-0">
+                <div className="w-full max-w-full lg:max-w-[898px]">
                   <fieldset className="m-0 border-0 p-0">
                     <legend className="text-[14px] font-medium leading-5 tracking-[-0.1504px] text-[#0a0a0a]">
                       Urgency level
                     </legend>
-                    <p className="mt-2 max-w-full text-[14px] font-normal leading-5 tracking-[-0.1504px] text-[#4a5565] lg:max-w-[582px]">
+                    <p className="mt-2 max-w-full text-[14px] font-normal leading-5 tracking-[-0.1504px] text-[#4a5565] lg:max-w-[803px]">
                       Select the urgency level for this maintenance request. This
                       helps us prioritize and respond appropriately.
                     </p>
@@ -937,7 +937,7 @@ export function MaintenanceRequestForm({
                   </fieldset>
                 </div>
 
-                <div className="flex w-full max-w-full flex-col gap-4 lg:max-w-[650px]">
+                <div className="flex w-full max-w-full flex-col gap-4 lg:max-w-[898px]">
                   <div className="flex flex-col gap-2">
                     <label
                       htmlFor="resident-name"
@@ -1554,18 +1554,18 @@ export function MaintenanceRequestForm({
                 </div>
 
                 <div
-                  className="flex w-full min-w-0 shrink-0 flex-col items-center justify-center bg-transparent pl-12 pr-6 pb-1 pt-[199px] sm:pl-24 sm:pr-12 lg:sticky lg:top-14 lg:mr-[336px] lg:min-w-0 lg:flex-1 lg:shrink-0 lg:self-stretch lg:pt-[199px] lg:pl-20 lg:pr-0 xl:pl-28"
+                  className="flex w-full min-w-0 shrink-0 flex-col items-center justify-center bg-transparent px-6 pb-1 pt-[199px] sm:px-10 lg:sticky lg:top-14 lg:min-w-0 lg:flex-1 lg:shrink-0 lg:self-stretch lg:px-8 lg:pt-[199px]"
                 >
-                  <div className="mx-auto flex w-full max-w-[min(100%,42rem)] flex-col items-center text-center sm:max-w-[min(100%,46rem)] lg:max-w-[min(100%,50rem)]">
+                  <div className="relative z-[1] mx-auto flex w-full max-w-[min(100%,42rem)] flex-col items-center justify-center text-center sm:max-w-[min(100%,46rem)] lg:max-w-[min(100%,50rem)] -mt-[450px]">
                     <img
                       src={maintenanceRequestHeroIllustration}
                       alt=""
-                      className="pointer-events-none mx-auto h-auto w-full max-w-[min(100%,308px)] shrink-0 select-none object-contain sm:max-w-[332px] lg:max-w-[355px]"
+                      className="pointer-events-none mx-auto h-auto w-full max-w-[min(100%,216px)] shrink-0 select-none object-contain sm:max-w-[232px] lg:max-w-[249px]"
                       decoding="async"
                       loading="lazy"
                       aria-hidden
                     />
-                    <p className="mt-4 w-full max-w-full whitespace-nowrap text-center text-[22px] font-normal leading-7 tracking-[-0.1504px] text-[#4a5565] sm:text-[24px]">
+                    <p className="mt-4 w-full max-w-full whitespace-nowrap text-center text-[18.7px] font-normal leading-7 tracking-[-0.1504px] text-[#4a5565] sm:text-[20.4px]">
                       Submit a request and we&apos;ll take care of the rest.
                     </p>
                   </div>

@@ -104,8 +104,8 @@ export function MaintenanceRequestReview({
     <div className="flex w-full flex-col">
       <MaintenancePortalPageHeader sticky="lg" step="review" />
 
-      <div className="px-6 pb-10 sm:px-12">
-        <div className="ml-0 flex w-full max-w-full flex-col gap-8 pt-8 lg:ml-[120px] lg:max-w-[650px] sm:pt-10">
+      <div className="px-6 pb-10 sm:px-8 lg:px-10">
+        <div className="ml-0 flex w-full min-w-0 max-w-full flex-col gap-8 pl-[36px] pt-8 sm:pt-10 lg:ml-[48px] lg:max-w-[898px] lg:pl-0">
         <div className="flex flex-col gap-4 rounded-[12px] border-2 border-[#e9d4ff] bg-gradient-to-br from-[#faf5ff] via-white to-[#eef2ff] px-[22px] py-5 shadow-[0_1px_0_rgba(255,255,255,0.8)_inset] sm:px-[26px] sm:py-6">
           <div className="flex flex-wrap items-center gap-2 gap-y-1">
             <span className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-[#f3e8ff] text-[#9810fa] ring-1 ring-[#e9d4ff]">
@@ -239,7 +239,7 @@ export function MaintenanceRequestReview({
           </div>
         )}
 
-        <div className="flex w-full max-w-full gap-3 lg:max-w-[650px]">
+        <div className="flex w-full max-w-full gap-3 lg:max-w-[898px]">
           <button
             type="button"
             onClick={onBack}

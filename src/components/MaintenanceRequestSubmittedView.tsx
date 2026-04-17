@@ -197,9 +197,9 @@ export function MaintenanceRequestSubmittedView({
 
             <div className="w-full min-w-0 flex-1">
               <MaintenancePortalPageHeader sticky="always" step="submitted" />
-              <div className="px-6 pb-6 sm:px-12 lg:pb-12">
-                <div className="ml-0 flex w-full flex-col items-center pt-8 sm:pt-10 lg:ml-[120px] lg:items-stretch">
-                <div className="flex w-full max-w-full flex-col items-center gap-4 lg:max-w-[650px] lg:items-center">
+              <div className="px-6 pb-6 sm:px-8 lg:px-10 lg:pb-12">
+                <div className="ml-0 flex w-full min-w-0 flex-col items-center pl-[36px] pt-8 sm:pt-10 lg:ml-[48px] lg:items-stretch lg:pl-0">
+                <div className="flex w-full max-w-full flex-col items-center gap-4 lg:max-w-[898px] lg:items-center">
               <SuccessCheckIllustration />
 
               <div className="flex flex-col items-center gap-[24px]">
@@ -215,7 +215,7 @@ export function MaintenanceRequestSubmittedView({
               <button
                 type="button"
                 onClick={() => void copyId()}
-                className="w-full max-w-full rounded-[10px] border-2 border-[#e5e7eb] bg-[#f9fafb] px-6 py-6 text-center transition-colors hover:border-[#d1d5dc] lg:max-w-[448px]"
+                className="w-full max-w-full rounded-[10px] border-2 border-[#e5e7eb] bg-[#f9fafb] px-6 py-6 text-center transition-colors hover:border-[#d1d5dc] lg:max-w-full"
               >
                 <p className="text-[14px] font-normal leading-5 tracking-[-0.1504px] text-[#6a7282]">
                   Request ID
@@ -228,7 +228,7 @@ export function MaintenanceRequestSubmittedView({
                 </p>
               </button>
 
-              <div className="w-full max-w-full rounded-[10px] border border-[#e5e7eb] bg-white px-6 pb-5 pt-6 lg:max-w-[448px]">
+              <div className="w-full max-w-full rounded-[10px] border border-[#e5e7eb] bg-white px-6 pb-5 pt-6 lg:max-w-full">
                 <h2 className="text-center text-[14px] font-semibold leading-5 tracking-[-0.1504px] text-[#101828]">
                   Add Comments or Additional Info
                 </h2>
@@ -297,7 +297,7 @@ export function MaintenanceRequestSubmittedView({
                 </p>
               </div>
 
-              <div className="w-full max-w-full rounded-[10px] border border-[#e5e7eb] bg-[#f9fafb] p-[25px] lg:max-w-[448px]">
+              <div className="w-full max-w-full rounded-[10px] border border-[#e5e7eb] bg-[#f9fafb] p-[25px] lg:max-w-full">
                 <h2 className="text-[14px] font-semibold leading-5 tracking-[-0.1504px] text-[#101828]">
                   Track Request Status
                 </h2>
@@ -374,7 +374,7 @@ export function MaintenanceRequestSubmittedView({
                 </div>
               </div>
 
-              <div className="hidden w-full max-w-full flex-col items-stretch gap-4 lg:flex lg:max-w-[448px]">
+              <div className="hidden w-full max-w-full flex-col items-stretch gap-4 lg:flex lg:max-w-full">
                 <div className="h-px w-full bg-[#e5e7eb]" />
 
                 <button
