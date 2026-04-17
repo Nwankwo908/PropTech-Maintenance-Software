@@ -40,13 +40,18 @@ export function vendorPortalUpdateUrl(): string | undefined {
 const uuidRe =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
 
-export async function fetchVendorTickets(url: string, bearerToken: string): Promise<VendorListResponse> {
+export async function fetchVendorTickets(url: string, _bearerToken: string): Promise<VendorListResponse> {
   const k =
     typeof window !== 'undefined'
       ? new URLSearchParams(window.location.search).get('k')?.trim()
       : null
 
-  const authToken = k || bearerToken
+  if (!k) {
+    console.error('[vendor-frontend] NO K TOKEN FOUND')
+    throw new Error('Missing vendor token')
+  }
+
+  const authToken = k
 
   console.log('[vendor-frontend] FINAL TOKEN USED:', authToken)
 
@@ -88,7 +93,7 @@ export async function postVendorJobStatus(
   updateUrl: string,
   ticketId: string,
   action: "accept" | "decline" | "in_progress" | "completed",
-  opts: { accessToken?: string; token?: string },
+  opts: { token?: string },
 ): Promise<{ vendor_work_status: string }> {
   if (!uuidRe.test(ticketId)) {
     throw new Error("Invalid ticket id")
@@ -97,11 +102,19 @@ export async function postVendorJobStatus(
     typeof window !== 'undefined'
       ? new URLSearchParams(window.location.search).get('k')?.trim()
       : null
-  const authToken = (k || opts.accessToken)?.trim()
 
-  const headers: Record<string, string> = { "Content-Type": "application/json" }
-  if (authToken) {
-    headers.Authorization = `Bearer ${authToken}`
+  if (!k) {
+    console.error('[vendor-frontend] NO K TOKEN FOUND')
+    throw new Error('Missing vendor token')
+  }
+
+  const authToken = k
+
+  console.log('[vendor-frontend] FINAL TOKEN USED:', authToken)
+
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+    Authorization: `Bearer ${authToken}`,
   }
   const body: Record<string, string> = { ticketId, action }
   if (opts.token) body.token = opts.token
@@ -131,7 +144,6 @@ export type UpdateJobStatusInput = {
   ticketId: string
   action: "accept" | "decline" | "in_progress" | "completed"
   updateUrl: string
-  accessToken?: string
   token?: string
 }
 
@@ -145,7 +157,7 @@ export async function updateJobStatus(
     input.updateUrl,
     input.ticketId,
     input.action,
-    { accessToken: input.accessToken, token: input.token },
+    { token: input.token },
   )
   return { ok: true, vendor_work_status }
 }

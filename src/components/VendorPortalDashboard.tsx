@@ -16,7 +16,6 @@ import {
   vendorPortalUpdateUrl,
   type VendorApiTicket,
 } from '@/api/vendorPortalTickets'
-import { supabase } from '@/lib/supabase'
 import {
   columnToAction,
   isValidMove,
@@ -24,16 +23,6 @@ import {
 } from '@/lib/statusColumns'
 
 export type { VendorDbWorkStatus }
-
-const VENDOR_PORTAL_BEARER_STORAGE_KEY = 'vendor_portal_bearer'
-
-function readStoredPortalBearer(): string | null {
-  try {
-    return sessionStorage.getItem(VENDOR_PORTAL_BEARER_STORAGE_KEY)?.trim() || null
-  } catch {
-    return null
-  }
-}
 
 /** `k` may be available from the router before `window` is fully in sync on some navigations. */
 function readVendorActionTokenFromUrl(
@@ -49,20 +38,6 @@ function readVendorActionTokenFromUrl(
   if (k) return k
   const fromProps = deepLinkToken?.trim()
   return fromProps || null
-}
-
-function warnIfVendorKeyOverriddenByJwt(bearer: string | null | undefined): void {
-  const k =
-    typeof window !== 'undefined'
-      ? new URLSearchParams(window.location.search).get('k')?.trim()
-      : null
-  if (!k) return
-  const normalized = bearer?.trim() ?? ''
-  if (!normalized.includes('.')) return
-  console.warn(
-    '[vendor-portal] URL has ?k= but resolved bearer looks like JWT. JWT should not override vendor_action_token.',
-    { k, bearer: normalized },
-  )
 }
 
 const VENDOR_COMPANY = 'ABC Maintenance Co.'
@@ -1126,15 +1101,12 @@ export function VendorPortalDashboard({
   const listUrl = vendorPortalListUrl()
   const updateUrl = vendorPortalUpdateUrl()
 
-  const portalBearerFromLink = useMemo(() => {
-    const fromUrl = readVendorActionTokenFromUrl(location.search, deepLinkToken)
-    if (fromUrl) return fromUrl
-    return readStoredPortalBearer()
-  }, [location.search, deepLinkToken])
-
-  const useLiveVendorApi = Boolean(
-    listUrl && updateUrl && (Boolean(portalBearerFromLink) || Boolean(supabase)),
+  const portalBearerFromLink = useMemo(
+    () => readVendorActionTokenFromUrl(location.search, deepLinkToken),
+    [location.search, deepLinkToken],
   )
+
+  const useLiveVendorApi = Boolean(listUrl && updateUrl && Boolean(portalBearerFromLink))
 
   const resolveVendorRequestBearer = useCallback((): string | null => {
     const k =
@@ -1147,7 +1119,7 @@ export function VendorPortalDashboard({
       return k
     }
 
-    console.log('[vendor-auth] no k in URL (JWT not used here)')
+    console.error('[vendor-auth] NO K TOKEN FOUND')
     return null
   }, [])
 
@@ -1169,11 +1141,10 @@ export function VendorPortalDashboard({
     setApiError(null)
     try {
       const bearer = resolveVendorRequestBearer()
-      warnIfVendorKeyOverriddenByJwt(bearer)
       console.log('FINAL AUTH TOKEN:', bearer)
       if (!bearer?.trim()) {
         setApiError(
-          'Missing vendor portal key or sign-in. Open your assignment email link or sign in.',
+          'Missing vendor token (?k=). Open your assignment email link with the portal key.',
         )
         setOrders([])
         return
@@ -1252,11 +1223,10 @@ export function VendorPortalDashboard({
         : undefined
     try {
       const accessToken = resolveVendorRequestBearer() ?? undefined
-      warnIfVendorKeyOverriddenByJwt(accessToken)
       console.log('FINAL AUTH TOKEN:', accessToken)
       if (!accessToken?.trim() && !token) {
         const msg =
-          'Missing vendor portal key, ticket link token, or sign-in for this action.'
+          'Missing vendor token (?k=). Open your assignment email link with the portal key.'
         setActionError(msg)
         window.alert(msg)
         return
@@ -1265,7 +1235,6 @@ export function VendorPortalDashboard({
         ticketId,
         action,
         updateUrl,
-        accessToken: accessToken?.trim() || undefined,
         token,
       })
       if (res.ok) applyVendorStatusToOrder(ticketId, res.vendor_work_status)
@@ -1309,11 +1278,10 @@ export function VendorPortalDashboard({
     setActionError(null)
     try {
       const accessToken = resolveVendorRequestBearer() ?? undefined
-      warnIfVendorKeyOverriddenByJwt(accessToken)
       console.log('FINAL AUTH TOKEN:', accessToken)
       if (!accessToken?.trim() && !token) {
         setVendorToast(
-          'Missing vendor portal key, ticket link token, or sign-in for this action.',
+          'Missing vendor token (?k=). Open your assignment email link with the portal key.',
         )
         return
       }
@@ -1321,7 +1289,6 @@ export function VendorPortalDashboard({
         ticketId: orderId,
         action,
         updateUrl,
-        accessToken: accessToken?.trim() || undefined,
         token,
       })
       if (res?.ok) applyVendorStatusToOrder(orderId, res.vendor_work_status)
