@@ -74,10 +74,10 @@ serve(async (req) => {
 
   const action = url.searchParams.get("action")?.trim().toLowerCase()
   const ticketId = url.searchParams.get("ticketId")?.trim() ?? ""
-  const vendorId = url.searchParams.get("vendorId")?.trim() ?? ""
+  const _vendorId = url.searchParams.get("vendorId")?.trim() ?? ""
   const token = url.searchParams.get("token")?.trim() ?? ""
 
-  if (!action || !ticketId || !vendorId || !token) {
+  if (!action || !ticketId || !_vendorId || !token) {
     return htmlResponse(
       "Missing parameters",
       "This link is incomplete. Open your vendor email and use the buttons there.",
@@ -103,7 +103,7 @@ serve(async (req) => {
   if (
     !payload ||
     payload.ticketId !== ticketId ||
-    payload.vendorId !== vendorId ||
+    payload.vendorId !== _vendorId ||
     payload.action !== action
   ) {
     return htmlResponse(
@@ -137,7 +137,7 @@ serve(async (req) => {
     })
   }
 
-  if (row.assigned_vendor_id !== vendorId) {
+  if (row.assigned_vendor_id !== _vendorId) {
     return htmlResponse(
       "Not assigned",
       "This job is no longer assigned to your company.",
@@ -188,7 +188,7 @@ serve(async (req) => {
     .from("maintenance_requests")
     .update({ vendor_work_status: next })
     .eq("id", ticketId)
-    .eq("assigned_vendor_id", vendorId)
+    .eq("assigned_vendor_id", _vendorId)
 
   if (upErr) {
     console.error("[vendor-respond] update", upErr)
@@ -200,7 +200,7 @@ serve(async (req) => {
     from_status: current,
     to_status: next,
     source: "email_signed",
-    vendor_id: vendorId,
+    vendor_id: _vendorId,
   })
   if (logErr) console.error("[vendor-respond] audit", logErr)
 
@@ -208,7 +208,7 @@ serve(async (req) => {
     JSON.stringify({
       event: "vendor_email_action",
       ticketId,
-      vendorId,
+      _vendorId,
       action,
       from: current,
       to: next,
@@ -218,7 +218,7 @@ serve(async (req) => {
 
   if (next === "declined") {
     try {
-      await tryAutoReassignAfterDecline(supabase, ticketId, vendorId)
+      await tryAutoReassignAfterDecline(supabase, ticketId, _vendorId)
     } catch (e) {
       console.error("[vendor-respond] auto-reassign after decline", e)
     }

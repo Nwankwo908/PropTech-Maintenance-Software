@@ -84,18 +84,18 @@ async function buildVendorEmailLinks(
     try {
       const acceptTok = await signVendorEmailAction(signingSecret, {
         ticketId,
-        vendorId,
+        vendorId: _vendorId,
         action: "accept",
       })
       const declineTok = await signVendorEmailAction(signingSecret, {
         ticketId,
-        vendorId,
+        vendorId: _vendorId,
         action: "decline",
       })
       acceptUrl =
-        `${respondBase}?action=accept&ticketId=${encodeURIComponent(ticketId)}&vendorId=${encodeURIComponent(vendorId)}&token=${encodeURIComponent(acceptTok)}`
+        `${respondBase}?action=accept&ticketId=${encodeURIComponent(ticketId)}&vendorId=${encodeURIComponent(_vendorId)}&token=${encodeURIComponent(acceptTok)}`
       declineUrl =
-        `${respondBase}?action=decline&ticketId=${encodeURIComponent(ticketId)}&vendorId=${encodeURIComponent(vendorId)}&token=${encodeURIComponent(declineTok)}`
+        `${respondBase}?action=decline&ticketId=${encodeURIComponent(ticketId)}&vendorId=${encodeURIComponent(_vendorId)}&token=${encodeURIComponent(declineTok)}`
     } catch (e) {
       console.error("[vendor-notify] sign email action", e)
     }
@@ -266,14 +266,14 @@ async function resolveVendorForNewTicket(
 async function insertLog(
   supabase: SupabaseClient,
   ticketId: string,
-  vendorId: string,
+  _vendorId: string,
   channel: "email" | "sms",
   providerMessageId: string | null,
   error: string | null,
 ): Promise<void> {
   const { error: insErr } = await supabase.from("vendor_notification_log").insert({
     ticket_id: ticketId,
-    vendor_id: vendorId,
+    vendor_id: _vendorId,
     channel,
     provider_message_id: providerMessageId,
     error,
@@ -413,7 +413,7 @@ export async function assignVendorAndNotify(
 
   console.log("[vendor-notify] assigned vendor persisted", {
     ticketId: payload.ticketId,
-    vendorId: vendor.id,
+    _vendorId: vendor.id,
   })
 
   await touchVendorLastAssignedAt(supabase, vendor.id)
@@ -480,7 +480,7 @@ export type ReassignVendorNotifyOptions = {
 export async function reassignVendorByIdAndNotify(
   supabase: SupabaseClient,
   ticketId: string,
-  vendorId: string,
+  _vendorId: string,
   opts?: ReassignVendorNotifyOptions,
 ): Promise<{ ok: true } | { error: string }> {
   const { data: ticket, error: tErr } = await supabase
@@ -502,7 +502,7 @@ export async function reassignVendorByIdAndNotify(
   const { data: vendor, error: vErr } = await supabase
     .from("vendors")
     .select("id,name,email,phone,notification_channel,active,category,portal_api_key")
-    .eq("id", vendorId)
+    .eq("id", _vendorId)
     .eq("active", true)
     .maybeSingle()
 

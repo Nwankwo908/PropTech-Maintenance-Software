@@ -1267,10 +1267,10 @@ function VendorManagementTabContent({
       )
       const activeCounts: Record<string, number> = {}
       for (const row of ticketRows ?? []) {
-        const vendorId = row.assigned_vendor_id
-        if (typeof vendorId !== 'string' || !vendorId) continue
+        const _vendorId = row.assigned_vendor_id
+        if (typeof _vendorId !== 'string' || !_vendorId) continue
         if (!isActiveJobStatus(row.status)) continue
-        activeCounts[vendorId] = (activeCounts[vendorId] ?? 0) + 1
+        activeCounts[_vendorId] = (activeCounts[_vendorId] ?? 0) + 1
       }
       setActiveJobCountsByVendor(activeCounts)
     }
@@ -1541,7 +1541,7 @@ function VendorManagementTabContent({
 
 export function AdminUserManagementDashboard() {
   const [searchParams, setSearchParams] = useSearchParams()
-  const vendorIdFromUrl = searchParams.get('vendorId')
+  const _vendorIdFromUrl = searchParams.get('vendorId')
   const [dashboardTab, setDashboardTab] = useState<DashboardTab>('users')
   const [residents, setResidents] = useState<UserManagementRow[]>([])
   const [selectedResidentIds, setSelectedResidentIds] = useState<Set<string>>(() => new Set())
@@ -1692,10 +1692,10 @@ export function AdminUserManagementDashboard() {
   }, [loadResidents])
 
   useLayoutEffect(() => {
-    if (vendorIdFromUrl?.trim()) {
+    if (_vendorIdFromUrl?.trim()) {
       setDashboardTab('vendors')
     }
-  }, [vendorIdFromUrl])
+  }, [_vendorIdFromUrl])
 
   const handleConsumedVendorDeepLink = useCallback(() => {
     setSearchParams(
@@ -2348,7 +2348,7 @@ export function AdminUserManagementDashboard() {
               vendorCategoryFilter={vendorCategoryFilter}
               vendorStatusFilter={vendorStatusFilter}
               openRailRequest={openVendorRailRequest}
-              initialOpenVendorId={vendorIdFromUrl}
+              initialOpenVendorId={_vendorIdFromUrl}
               onConsumedInitialOpenVendorId={handleConsumedVendorDeepLink}
             />
           )}

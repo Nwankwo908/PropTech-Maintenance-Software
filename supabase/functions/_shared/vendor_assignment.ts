@@ -206,13 +206,13 @@ export async function pickVendorForAssignment(
 
 export async function touchVendorLastAssignedAt(
   supabase: SupabaseClient,
-  vendorId: string,
+  _vendorId: string,
 ): Promise<void> {
   const at = new Date().toISOString()
   const { error } = await supabase
     .from("vendors")
     .update({ last_assigned_at: at })
-    .eq("id", vendorId)
+    .eq("id", _vendorId)
 
   if (error) {
     console.error("[vendor-assignment] touch last_assigned_at", error)

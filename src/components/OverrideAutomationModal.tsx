@@ -1206,7 +1206,7 @@ export function OverrideAutomationModal({
   const [ticketId, setTicketId] = useState('')
   const [overrideType, setOverrideType] = useState<OverrideTypeId>('vendor')
   const [newPriorityLevel, setNewPriorityLevel] = useState<'' | NewPriorityLevelId>('')
-  const [vendorId, setVendorId] = useState<string | null>(null)
+  const [_vendorId, setVendorId] = useState<string | null>(null)
   const [password, setPassword] = useState('')
   const [audienceScope, setAudienceScope] = useState('')
   const [urgencyTone, setUrgencyTone] = useState('')
@@ -1466,11 +1466,11 @@ export function OverrideAutomationModal({
   }, [vendorSearchQuery, vendorCategoryFilter])
 
   useEffect(() => {
-    if (!open || vendorId == null) return
-    if (!filteredVendors.some((v) => v.id === vendorId)) {
+    if (!open || _vendorId == null) return
+    if (!filteredVendors.some((v) => v.id === _vendorId)) {
       setVendorId(null)
     }
-  }, [open, vendorId, filteredVendors])
+  }, [open, _vendorId, filteredVendors])
 
   useEffect(() => {
     if (isRentReminder) return
@@ -1765,7 +1765,7 @@ export function OverrideAutomationModal({
   const inspectionReassignFormValid = inspectionNewInspectorId != null
 
   const defaultFlowValid =
-    (!needsVendor || Boolean(vendorId)) &&
+    (!needsVendor || Boolean(_vendorId)) &&
     (!needsNewPriority || Boolean(newPriorityLevel)) &&
     (!needsDefaultPausePanel || defaultPauseAutomationValid) &&
     (!showSafetyAlertSeverityPanel || safetyAlertSeverityFormValid) &&
@@ -3813,18 +3813,18 @@ export function OverrideAutomationModal({
                       onClick={() => setVendorId(v.id)}
                       className={[
                         'flex w-full flex-col gap-0 rounded-[10px] border-2 px-[14px] py-3 text-left transition-colors sm:flex-row sm:items-center sm:justify-between',
-                        vendorId === v.id ? 'border-[#fe9a00] bg-white' : 'border-[#e5e7eb] bg-white',
+                        _vendorId === v.id ? 'border-[#fe9a00] bg-white' : 'border-[#e5e7eb] bg-white',
                       ].join(' ')}
                     >
                       <div className="flex min-w-0 flex-1 items-start gap-3">
                         <span
                           className={[
                             'mt-1 flex size-4 shrink-0 items-center justify-center rounded-full border-2',
-                            vendorId === v.id ? 'border-[#fe9a00]' : 'border-[#d1d5dc]',
+                            _vendorId === v.id ? 'border-[#fe9a00]' : 'border-[#d1d5dc]',
                           ].join(' ')}
                           aria-hidden
                         >
-                          {vendorId === v.id ? (
+                          {_vendorId === v.id ? (
                             <span className="size-2.5 rounded-full bg-[#fe9a00]" />
                           ) : null}
                         </span>

@@ -78,9 +78,9 @@ serve(async (req) => {
 
   const supabase = createClient(supabaseUrl, serviceKey)
 
-  let vendorId = ""
+  let _vendorId = ""
   if (vendorIdRaw && uuidRe.test(vendorIdRaw)) {
-    vendorId = vendorIdRaw
+    _vendorId = vendorIdRaw
   } else if (vendorName) {
     const needle = vendorName
       .trim()
@@ -116,7 +116,7 @@ serve(async (req) => {
         409,
       )
     }
-    vendorId = matches[0].id as string
+    _vendorId = matches[0].id as string
   } else {
     return jsonResponse(
       { error: "Provide vendorId (uuid) or vendorName" },
@@ -124,7 +124,7 @@ serve(async (req) => {
     )
   }
 
-  const result = await reassignVendorByIdAndNotify(supabase, ticketId, vendorId)
+  const result = await reassignVendorByIdAndNotify(supabase, ticketId, _vendorId)
   // Plan: resident `vendor_assigned` email/SMS is sent inside reassignVendorByIdAndNotify (notifyResidentVendorAssigned).
   if ("error" in result) {
     const status =
@@ -136,5 +136,5 @@ serve(async (req) => {
     return jsonResponse({ error: result.error }, status)
   }
 
-  return jsonResponse({ ok: true, ticketId, assigned_vendor_id: vendorId })
+  return jsonResponse({ ok: true, ticketId, assigned_vendor_id: _vendorId })
 })

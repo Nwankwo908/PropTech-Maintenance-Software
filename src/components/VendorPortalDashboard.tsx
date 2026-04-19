@@ -1129,7 +1129,7 @@ export function VendorPortalDashboard({
   const hasLoadedRef = useRef(false)
 
   const [accessToken, setAccessToken] = useState<string | null>(null)
-  const [vendorId, setVendorId] = useState<string | null>(null)
+  const [_vendorId, setVendorId] = useState<string | null>(null)
 
   const [orders, setOrders] = useState<VendorWorkOrder[]>([])
   const [vendorHeaderName, setVendorHeaderName] = useState<string | null>(null)
@@ -1199,7 +1199,7 @@ export function VendorPortalDashboard({
   }, [loadTickets])
 
   useEffect(() => {
-    if (!supabase || !useLiveVendorApi || !vendorId || !accessToken) {
+    if (!supabase || !useLiveVendorApi || !_vendorId || !accessToken) {
       setRealtimeStatus('idle')
       return
     }
@@ -1207,14 +1207,14 @@ export function VendorPortalDashboard({
     setRealtimeStatus('connecting')
 
     const channel = supabase
-      .channel(`vendor-tickets:${vendorId}`)
+      .channel(`vendor-tickets:${_vendorId}`)
       .on(
         'postgres_changes',
         {
           event: '*',
           schema: 'public',
           table: 'maintenance_requests',
-          filter: `assigned_vendor_id=eq.${vendorId}`,
+          filter: `assigned_vendor_id=eq.${_vendorId}`,
         },
         (payload: RealtimePostgresChangesPayload<Record<string, unknown>>) => {
           if (payload.eventType === 'INSERT' && payload.new) {
@@ -1258,7 +1258,7 @@ export function VendorPortalDashboard({
       setRealtimeStatus('idle')
       if (supabase) void supabase.removeChannel(channel)
     }
-  }, [useLiveVendorApi, vendorId, accessToken])
+  }, [useLiveVendorApi, _vendorId, accessToken])
 
   useEffect(() => {
     if (!useLiveVendorApi) return

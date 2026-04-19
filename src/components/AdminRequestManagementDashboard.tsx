@@ -754,11 +754,11 @@ function AssignedVendorCard({
   const due = dueAtDisplay?.trim()
   const est = estimatedCompletion?.trim()
   const hasVendor = Boolean(vendorName?.trim())
-  const vendorIdTrim = assignedVendorId?.trim() ?? ''
-  const warnNoVendorId = vendorIdTrim === ''
+  const _vendorIdTrim = assignedVendorId?.trim() ?? ''
+  const warnNoVendorId = _vendorIdTrim === ''
   const vendorProfileTo =
-    vendorIdTrim !== ''
-      ? `/admin/users?vendorId=${encodeURIComponent(vendorIdTrim)}`
+    _vendorIdTrim !== ''
+      ? `/admin/users?vendorId=${encodeURIComponent(_vendorIdTrim)}`
       : null
 
   const shellClass = warnNoVendorId
@@ -1436,7 +1436,7 @@ export function AdminRequestManagementDashboard() {
         setTickets([])
         return
       }
-      const vendorIds = [
+      const _vendorIds = [
         ...new Set(
           rows
             .map((r) => r.assigned_vendor_id?.trim())
@@ -1444,11 +1444,11 @@ export function AdminRequestManagementDashboard() {
         ),
       ]
       const vendorNameById: Record<string, string> = {}
-      if (vendorIds.length > 0) {
+      if (_vendorIds.length > 0) {
         const { data: vendorRows, error: vendorErr } = await supabase
           .from('vendors')
           .select('id, name')
-          .in('id', vendorIds)
+          .in('id', _vendorIds)
         if (vendorErr) {
           console.error('[admin] vendors batch lookup failed', vendorErr.message)
         } else if (vendorRows) {
