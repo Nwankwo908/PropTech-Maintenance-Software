@@ -81,9 +81,12 @@ async function buildVendorEmailLinks(
 ): Promise<VendorEmailLinks | null> {
   const appBase = resolveAppBaseUrl()
   if (!appBase) return null
+  // Public portal entry: never use `/vendor/login?redirect=…`; vendors with a key go straight here.
   const portalHome = `${appBase}/vendor?k=${portalApiKey}`
+  console.log("🔥 VENDOR PORTAL LINK:", portalHome)
   const viewJob =
     `${appBase}/vendor/ticket/${ticketId}?k=${portalApiKey}`
+  console.log("🔥 VENDOR TICKET LINK:", viewJob)
   const signingSecret = Deno.env.get("VENDOR_EMAIL_ACTION_SECRET")?.trim() ?? null
   const respondBase = resolveVendorRespondBaseUrl()
   let acceptUrl: string | null = null
@@ -289,11 +292,16 @@ async function insertLog(
   if (insErr) console.error("[vendor-notify] log insert", insErr)
 }
 
+/** If legacy env mistakenly points at `/vendor/login`, normalize so links are not login-wrapped. */
+function normalizeLegacyVendorPortalBase(baseUrl: string): string {
+  return baseUrl.replace(/\/vendor\/login$/i, "/vendor")
+}
+
 /** Legacy `?t=&k=` URL when APP_URL is not set. */
 function portalManageUrl(ticketId: string, portalApiKey: string): string | null {
   const raw = Deno.env.get("VENDOR_PORTAL_BASE_URL")?.trim()?.replace(/\/$/, "") ?? null
   if (raw == null) return null
-  const baseUrl = withHttpsScheme(raw)
+  const baseUrl = normalizeLegacyVendorPortalBase(withHttpsScheme(raw))
   return `${baseUrl}?t=${encodeURIComponent(ticketId)}&k=${portalApiKey}`
 }
 

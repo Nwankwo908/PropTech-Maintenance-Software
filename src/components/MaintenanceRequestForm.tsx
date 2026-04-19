@@ -863,7 +863,7 @@ export function MaintenanceRequestForm({
                       helps us prioritize and respond appropriately.
                     </p>
                     <div
-                      className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-3 lg:grid-cols-1 xl:grid-cols-3"
+                      className="mt-2 grid grid-cols-1 gap-2 min-[1281px]:grid-cols-3"
                       role="radiogroup"
                       aria-label="Urgency level"
                       aria-invalid={showError('urgency')}
@@ -1553,22 +1553,22 @@ export function MaintenanceRequestForm({
               </fieldset>
                 </div>
 
-                <div
-                  className="flex w-full min-w-0 shrink-0 flex-col items-center justify-center bg-transparent px-6 pb-1 pt-[199px] sm:px-10 lg:min-w-0 lg:flex-1 lg:shrink-0 lg:self-stretch lg:px-8 lg:pt-[199px]"
-                >
-                  <div className="relative z-[1] mx-auto flex w-full max-w-[min(100%,42rem)] flex-col items-center justify-center text-center sm:max-w-[min(100%,46rem)] lg:max-w-[min(100%,50rem)] -mt-[450px]">
-                    <div className="sticky top-4">
-                      <img
-                        src={maintenanceRequestHeroIllustration}
-                        alt=""
-                        className="pointer-events-none mx-auto h-auto w-full max-w-[min(100%,140px)] shrink-0 select-none object-contain sm:max-w-[151px] lg:max-w-[162px]"
-                        decoding="async"
-                        loading="lazy"
-                        aria-hidden
-                      />
-                    </div>
-                    <p className="mt-4 w-full max-w-full whitespace-nowrap text-center text-[16.8px] font-thin leading-7 tracking-[-0.1504px] text-[#4a5565] sm:text-[18.4px]">
-                      Submit a request and we&apos;ll take care of the rest.
+                <div className="hidden w-full min-w-0 shrink-0 flex-col items-center justify-center bg-transparent lg:flex lg:min-w-0 lg:flex-1 lg:shrink-0 lg:self-start lg:px-8 lg:pb-6 lg:pt-0">
+                  {/* lg+ only: reserve column width; hero is fixed while the form scrolls.
+                      Align to strip (8px) + main width + half gap (matches lg:gap-20 / xl:gap-28). */}
+                  <div
+                    className="pointer-events-none hidden w-full max-w-[min(100%,50rem)] flex-col items-center justify-center text-center lg:fixed lg:left-[calc(8px+((100vw-8px-300px)/2)+2.5rem)] lg:top-[calc(7rem+200px)] lg:z-[5] lg:flex lg:w-[min(50rem,calc((100vw-8px-300px-5rem)/2))] lg:px-8 xl:left-[calc(8px+((100vw-8px-300px)/2)+3.5rem)] xl:w-[min(50rem,calc((100vw-8px-300px-7rem)/2))]"
+                  >
+                    <img
+                      src={maintenanceRequestHeroIllustration}
+                      alt=""
+                      className="mx-auto h-auto w-full max-w-[162px] shrink-0 select-none object-contain"
+                      decoding="async"
+                      loading="lazy"
+                      aria-hidden
+                    />
+                    <p className="mt-4 w-full max-w-full text-center text-[18.4px] font-thin leading-7 tracking-[-0.1504px] text-[#4a5565]">
+                      Submit a request and we&apos;ll take <br /> care of the rest. <br />
                     </p>
                   </div>
                 </div>

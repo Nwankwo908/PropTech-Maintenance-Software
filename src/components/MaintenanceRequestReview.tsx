@@ -104,7 +104,9 @@ export function MaintenanceRequestReview({
     <div className="flex w-full flex-col">
       <MaintenancePortalPageHeader sticky="lg" step="review" />
 
-      <div className="px-6 pb-10 sm:px-8 lg:px-10">
+      {/* Same two-column shell as MaintenanceRequestForm so lg content aligns with the form column */}
+      <div className="flex flex-col gap-6 pb-10 lg:flex-row lg:items-start lg:gap-20 xl:gap-28">
+        <div className="min-h-0 min-w-0 w-full flex-1 px-6 sm:px-8 lg:px-10">
         <div className="ml-0 flex w-full min-w-0 max-w-full flex-col gap-8 pl-[36px] pt-8 sm:pt-10 lg:ml-[48px] lg:max-w-[898px] lg:pl-0">
         <div className="flex flex-col gap-4 rounded-[12px] border-2 border-[#e9d4ff] bg-gradient-to-br from-[#faf5ff] via-white to-[#eef2ff] px-[22px] py-5 shadow-[0_1px_0_rgba(255,255,255,0.8)_inset] sm:px-[26px] sm:py-6">
           <div className="flex flex-wrap items-center gap-2 gap-y-1">
@@ -259,6 +261,11 @@ export function MaintenanceRequestReview({
           </button>
         </div>
         </div>
+        </div>
+        <div
+          className="hidden min-h-0 shrink-0 bg-transparent lg:block lg:min-w-0 lg:flex-1 lg:self-start"
+          aria-hidden
+        />
       </div>
     </div>
   )

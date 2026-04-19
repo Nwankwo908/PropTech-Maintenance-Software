@@ -197,7 +197,9 @@ export function MaintenanceRequestSubmittedView({
 
             <div className="w-full min-w-0 flex-1">
               <MaintenancePortalPageHeader sticky="always" step="submitted" />
-              <div className="px-6 pb-6 sm:px-8 lg:px-10 lg:pb-12">
+              {/* Same two-column shell as MaintenanceRequestForm / MaintenanceRequestReview */}
+              <div className="flex flex-col gap-6 pb-6 lg:flex-row lg:items-start lg:gap-20 lg:pb-12 xl:gap-28">
+                <div className="min-h-0 min-w-0 w-full flex-1 px-6 sm:px-8 lg:px-10">
                 <div className="ml-0 flex w-full min-w-0 flex-col items-center pl-[36px] pt-8 sm:pt-10 lg:ml-[48px] lg:items-stretch lg:pl-0">
                 <div className="flex w-full max-w-full flex-col items-center gap-4 lg:max-w-[898px] lg:items-center">
               <SuccessCheckIllustration />
@@ -394,6 +396,11 @@ export function MaintenanceRequestSubmittedView({
               </div>
                 </div>
                 </div>
+                </div>
+                <div
+                  className="hidden min-h-0 shrink-0 bg-transparent lg:block lg:min-w-0 lg:flex-1 lg:self-start"
+                  aria-hidden
+                />
               </div>
             </div>
 

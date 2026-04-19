@@ -41,7 +41,7 @@ const uuidRe =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
 
 /**
- * Portal key: top-level `?k=`, or nested in `redirect` (e.g. `/vendor/login?redirect=/vendor?k=`).
+ * Portal key: top-level `?k=`, or legacy nested in `redirect` (old `/vendor/login?redirect=/vendor?k=`).
  */
 export function getVendorPortalK(): string | undefined {
   if (typeof window === "undefined") return undefined
