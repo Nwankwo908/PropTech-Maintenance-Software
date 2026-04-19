@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState, type FormEvent } from 'react'
-import { Navigate, useSearchParams } from 'react-router-dom'
+import { useNavigate, useSearchParams } from 'react-router-dom'
+import { getVendorPortalK } from '@/api/vendorPortalTickets'
 import { supabase } from '@/lib/supabase'
 
 function isProbablyEmail(value: string): boolean {
@@ -8,22 +9,32 @@ function isProbablyEmail(value: string): boolean {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(t)
 }
 
+/** Only allow in-app paths under /vendor (avoid open redirects). */
+function safeVendorPath(path: string): string {
+  let p = path.trim()
+  try {
+    p = decodeURIComponent(p || "")
+  } catch {
+    return '/vendor'
+  }
+  if (!p.startsWith('/')) p = `/${p}`
+  if (!p.startsWith('/vendor')) return '/vendor'
+  if (p.includes('//')) return '/vendor'
+  return p
+}
+
 export function VendorLoginPage() {
+  console.log("🔥🔥🔥 THIS IS THE REAL LOGIN PAGE")
+
+  const navigate = useNavigate()
   const [searchParams] = useSearchParams()
-  const redirect = searchParams.get('redirect')?.trim() || '/vendor'
-  const kFromLoginUrl = searchParams.get('k')?.trim() || null
+  const redirectRaw = searchParams.get('redirect')?.trim() || '/vendor'
+  const redirect = safeVendorPath(redirectRaw)
 
-  const kFromRedirect = useMemo(() => {
-    try {
-      // `redirect` is already decoded by URLSearchParams (e.g. "/vendor/ticket/:id?k=...").
-      const asUrl = new URL(redirect, 'https://vendor.local')
-      return asUrl.searchParams.get('k')?.trim() || null
-    } catch {
-      return null
-    }
-  }, [redirect])
-
-  const portalKey = kFromLoginUrl || kFromRedirect
+  const portalKey = useMemo(
+    () => getVendorPortalK() ?? null,
+    [searchParams.toString()],
+  )
 
   const [email, setEmail] = useState('')
   const [submitting, setSubmitting] = useState(false)
@@ -34,27 +45,49 @@ export function VendorLoginPage() {
   const emailOk = useMemo(() => isProbablyEmail(email), [email])
 
   useEffect(() => {
-    console.log('[vendor-login] recovered k:', portalKey)
+    const k = getVendorPortalK()
+
+    if (k) {
+      console.log('🔥 Redirecting from login with key:', k)
+      navigate(`/vendor?k=${k}`, { replace: true })
+    }
+  }, [])
+
+  useEffect(() => {
     if (!portalKey) return
     setAlreadyAuthed(true)
   }, [portalKey])
 
   useEffect(() => {
     if (!supabase) {
-      setAlreadyAuthed(import.meta.env.DEV)
+      setAlreadyAuthed(portalKey ? true : import.meta.env.DEV)
       return
     }
     supabase.auth.getSession().then(({ data }) => {
-      setAlreadyAuthed(!!data.session)
+      setAlreadyAuthed(() => {
+        if (portalKey) return true
+        return !!data.session
+      })
     })
-  }, [])
+  }, [portalKey])
 
-  if (alreadyAuthed === true) {
-    return <Navigate to={redirect} replace />
-  }
+  /** After login (or portal key), full navigation so `?k=` is preserved reliably. */
+  useEffect(() => {
+    if (alreadyAuthed !== true) return
+    const dest = safeVendorPath(redirectRaw || '/vendor')
+    window.location.replace(`${window.location.origin}${dest}`)
+  }, [alreadyAuthed, redirectRaw])
 
   if (alreadyAuthed === null) {
     return <div className="min-h-dvh bg-[#080913]" aria-busy="true" aria-label="Loading" />
+  }
+
+  if (alreadyAuthed === true) {
+    return (
+      <div className="min-h-dvh bg-[#080913]" aria-busy="true" aria-label="Redirecting to vendor portal">
+        <p className="sr-only">Redirecting…</p>
+      </div>
+    )
   }
 
   async function onSubmit(e: FormEvent) {
@@ -150,4 +183,3 @@ export function VendorLoginPage() {
     </div>
   )
 }
-

@@ -9,6 +9,8 @@ export type VendorAssignmentRow = {
   notification_channel: string
   active: boolean
   category: string | null
+  /** Stable portal auth key (`/vendor?k=`); required for email/SMS portal links. */
+  portal_api_key: string | null
   last_assigned_at: string | null
   created_at: string
 }
@@ -169,7 +171,7 @@ export async function pickVendorForAssignment(
   const { data: rows, error } = await supabase
     .from("vendors")
     .select(
-      "id,name,email,phone,notification_channel,active,category,last_assigned_at,created_at",
+      "id,name,email,phone,notification_channel,active,category,portal_api_key,last_assigned_at,created_at",
     )
     .eq("active", true)
 

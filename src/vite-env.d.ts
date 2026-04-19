@@ -15,7 +15,7 @@ interface ImportMetaEnv {
   readonly VITE_RECURRING_ISSUE_API_URL?: string
   /** POST JSON after ticket created — route or assign vendor (optional). */
   readonly VITE_VENDOR_ROUTING_API_URL?: string
-  /** GET vendor-list-tickets (Authorization: Bearer <vendor action token from ?k=>). */
+  /** GET vendor-list-tickets (Authorization: Bearer <vendors.portal_api_key from ?k=>). */
   readonly VITE_VENDOR_PORTAL_LIST_URL?: string
   /** POST vendor-update-job-status — full URL; if omitted, derived from VITE_VENDOR_PORTAL_LIST_URL. */
   readonly VITE_VENDOR_PORTAL_UPDATE_URL?: string

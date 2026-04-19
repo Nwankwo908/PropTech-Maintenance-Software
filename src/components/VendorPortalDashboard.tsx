@@ -11,6 +11,7 @@ import {
 import { useLocation, useNavigate } from 'react-router-dom'
 import {
   fetchVendorTickets,
+  getVendorPortalK,
   updateJobStatus,
   vendorPortalListUrl,
   vendorPortalUpdateUrl,
@@ -23,22 +24,6 @@ import {
 } from '@/lib/statusColumns'
 
 export type { VendorDbWorkStatus }
-
-/** `k` may be available from the router before `window` is fully in sync on some navigations. */
-function readVendorActionTokenFromUrl(
-  routerSearch: string,
-  deepLinkToken: string | null | undefined,
-): string | null {
-  const fromRouter = new URLSearchParams(routerSearch).get('k')?.trim()
-  if (fromRouter) return fromRouter
-  const k =
-    typeof window !== 'undefined'
-      ? new URLSearchParams(window.location.search).get('k')?.trim()
-      : null
-  if (k) return k
-  const fromProps = deepLinkToken?.trim()
-  return fromProps || null
-}
 
 const VENDOR_COMPANY = 'ABC Maintenance Co.'
 const VENDOR_ID = 'V-12345'
@@ -1091,30 +1076,21 @@ function VendorCompletedWorkOrderDetailRail({
 
 export function VendorPortalDashboard({
   deepLinkTicketId = null,
-  deepLinkToken = null,
 }: {
   deepLinkTicketId?: string | null
-  deepLinkToken?: string | null
 } = {}) {
   const navigate = useNavigate()
   const location = useLocation()
   const listUrl = vendorPortalListUrl()
   const updateUrl = vendorPortalUpdateUrl()
 
-  const portalBearerFromLink = useMemo(
-    () => readVendorActionTokenFromUrl(location.search, deepLinkToken),
-    [location.search, deepLinkToken],
+  /** Same `k` as vendor API (top-level or nested in `redirect`). */
+  const portalK = useMemo(
+    () => getVendorPortalK() ?? null,
+    [location.pathname, location.search],
   )
 
-  const useLiveVendorApi = Boolean(listUrl && updateUrl && Boolean(portalBearerFromLink))
-
-  const resolveVendorRequestBearer = useCallback((): string | null => {
-    const k =
-      typeof window !== 'undefined'
-        ? new URLSearchParams(window.location.search).get('k')?.trim()
-        : null
-    return k ?? null
-  }, [])
+  const useLiveVendorApi = Boolean(listUrl && updateUrl && Boolean(portalK))
 
   const [orders, setOrders] = useState<VendorWorkOrder[]>(() =>
     useLiveVendorApi ? [] : INITIAL_WORK_ORDERS,
@@ -1133,8 +1109,7 @@ export function VendorPortalDashboard({
     setApiLoading(true)
     setApiError(null)
     try {
-      const bearer = resolveVendorRequestBearer()
-      if (!bearer) {
+      if (!portalK) {
         console.error('NO K TOKEN — STOPPING REQUEST')
         setApiError(
           'Missing vendor token (?k=). Open your assignment email link with the portal key.',
@@ -1155,7 +1130,7 @@ export function VendorPortalDashboard({
     } finally {
       setApiLoading(false)
     }
-  }, [useLiveVendorApi, listUrl, resolveVendorRequestBearer])
+  }, [useLiveVendorApi, listUrl, portalK])
 
   useEffect(() => {
     void loadTickets()
@@ -1167,10 +1142,13 @@ export function VendorPortalDashboard({
     if (orders.length === 0) return
     const found = orders.some((o) => o.id === deepLinkTicketId)
     if (!found) {
-      navigate('/vendor', { replace: true })
+      navigate(
+        portalK ? `/vendor?k=${encodeURIComponent(portalK)}` : '/vendor',
+        { replace: true },
+      )
       setVendorToast('This ticket is not assigned to your vendor account.')
     }
-  }, [useLiveVendorApi, apiLoading, apiError, deepLinkTicketId, orders, navigate])
+  }, [useLiveVendorApi, apiLoading, apiError, deepLinkTicketId, orders, navigate, portalK])
 
   useEffect(() => {
     if (!deepLinkTicketId || apiLoading) return
@@ -1210,13 +1188,8 @@ export function VendorPortalDashboard({
         return
       }
     }
-    const token =
-      deepLinkTicketId != null && ticketId === deepLinkTicketId
-        ? deepLinkToken ?? undefined
-        : undefined
     try {
-      const bearer = resolveVendorRequestBearer()
-      if (!bearer) {
+      if (!portalK) {
         console.error('NO K TOKEN — STOPPING REQUEST')
         const msg =
           'Missing vendor token (?k=). Open your assignment email link with the portal key.'
@@ -1228,7 +1201,6 @@ export function VendorPortalDashboard({
         ticketId,
         action,
         updateUrl,
-        token,
       })
       if (res.ok) applyVendorStatusToOrder(ticketId, res.vendor_work_status)
     } catch (e) {
@@ -1249,10 +1221,6 @@ export function VendorPortalDashboard({
     }
 
     if (!updateUrl) return
-    const token =
-      deepLinkTicketId != null && orderId === deepLinkTicketId
-        ? deepLinkToken ?? undefined
-        : undefined
 
     if (!isValidMove(order.vendorDbStatus, targetColumn)) {
       setVendorToast("You can't move this job to that stage yet.")
@@ -1270,8 +1238,7 @@ export function VendorPortalDashboard({
     }
     setActionError(null)
     try {
-      const bearer = resolveVendorRequestBearer()
-      if (!bearer) {
+      if (!portalK) {
         console.error('NO K TOKEN — STOPPING REQUEST')
         setVendorToast(
           'Missing vendor token (?k=). Open your assignment email link with the portal key.',
@@ -1282,7 +1249,6 @@ export function VendorPortalDashboard({
         ticketId: orderId,
         action,
         updateUrl,
-        token,
       })
       if (res?.ok) applyVendorStatusToOrder(orderId, res.vendor_work_status)
     } catch {

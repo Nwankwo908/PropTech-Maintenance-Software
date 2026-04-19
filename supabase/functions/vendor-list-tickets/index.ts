@@ -154,48 +154,25 @@ serve(async (req) => {
     }
     vendor = { id: jwtVendor.id, name: jwtVendor.name }
   } else if (PORTAL_API_KEY_UUID_RE.test(accessToken)) {
-    // `?k=` / Bearer: per-ticket `vendor_action_token` (UUID). Not `portal_api_key`.
-    console.log("[vendor-list-tickets] incoming token:", accessToken)
-
-    const { data: ticket, error: tErr } = await supabase
-      .from("maintenance_requests")
-      .select("assigned_vendor_id")
-      .eq("vendor_action_token", accessToken)
-      .maybeSingle()
-
-    if (tErr) {
-      console.error("[vendor-list-tickets] ticket lookup error", tErr)
-      return jsonResponse({ error: "Lookup failed" }, 500)
-    }
-
-    if (!ticket) {
-      failReason("invalid or expired vendor_action_token")
-      return jsonResponse({ error: "Invalid or expired vendor token" }, 403)
-    }
-
-    if (!ticket.assigned_vendor_id) {
-      failReason("ticket has no assigned_vendor_id")
-      return jsonResponse({ error: "Vendor not found or inactive" }, 403)
-    }
-
-    const { data: actionVendor, error: vErr } = await supabase
+    // `?k=` / Bearer: `vendors.portal_api_key` (stable portal auth).
+    const { data: portalVendor, error: vErr } = await supabase
       .from("vendors")
       .select("id, name")
-      .eq("id", ticket.assigned_vendor_id)
+      .eq("portal_api_key", accessToken)
       .eq("active", true)
       .maybeSingle()
 
     if (vErr) {
-      console.error("[vendor-list-tickets] vendor lookup", vErr)
+      console.error("[vendor-list-tickets] portal_api_key lookup", vErr)
       return jsonResponse({ error: "Lookup failed" }, 500)
     }
 
-    if (!actionVendor) {
-      failReason("vendor not found or inactive after token lookup")
-      return jsonResponse({ error: "Vendor not found or inactive" }, 403)
+    if (!portalVendor) {
+      failReason("invalid or unknown portal_api_key")
+      return jsonResponse({ error: "Invalid or expired vendor token" }, 403)
     }
 
-    vendor = { id: actionVendor.id, name: actionVendor.name }
+    vendor = { id: portalVendor.id, name: portalVendor.name }
   } else {
     return jsonResponse({ error: "Invalid Authorization token" }, 401)
   }

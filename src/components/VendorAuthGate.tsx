@@ -1,62 +1,43 @@
-import { useEffect, useState } from 'react'
-import { Navigate, useLocation } from 'react-router-dom'
-import { supabase } from '@/lib/supabase'
+import { useEffect, useState, type ReactNode } from 'react'
+import { useLocation, useNavigate } from 'react-router-dom'
+import { getVendorPortalK } from '@/api/vendorPortalTickets'
 
-type GateState = 'loading' | 'authed' | 'anon'
-
-/**
- * Requires a Supabase session for /vendor/*, unless the URL carries `?k=` (vendor action token).
- * In Vite dev without Supabase env, children render so local UI work stays possible.
- */
-export function VendorAuthGate({ children }: { children: React.ReactNode }) {
+export default function VendorAuthGate({ children }: { children: ReactNode }) {
   const location = useLocation()
-  const [state, setState] = useState<GateState>('loading')
+  const navigate = useNavigate()
 
-  const k =
-    typeof window !== 'undefined'
-      ? new URLSearchParams(window.location.search).get('k')?.trim()
-      : null
-  console.log('[vendor-auth] k from URL:', k)
-
-  // Vendor email-link flow: `?k=` fully bypasses login.
-  if (k) {
-    return <>{children}</>
-  }
+  const [checked, setChecked] = useState(false)
+  const [allowed, setAllowed] = useState(false)
 
   useEffect(() => {
-    if (!supabase) {
-      setState(import.meta.env.DEV ? 'authed' : 'anon')
+    const k = getVendorPortalK()
+
+    console.log('🔥 AuthGate check:', {
+      path: location.pathname,
+      search: location.search,
+      k,
+    })
+
+    // If key exists → allow
+    if (k) {
+      setAllowed(true)
+      setChecked(true)
       return
     }
 
-    let cancelled = false
-    supabase.auth.getSession().then(({ data }) => {
-      if (cancelled) return
-      setState(data.session ? 'authed' : 'anon')
-    })
+    // If NO key → redirect to login
+    navigate(
+      `/vendor/login?redirect=${encodeURIComponent(location.pathname + location.search)}`,
+      { replace: true },
+    )
 
-    const {
-      data: { subscription },
-    } = supabase.auth.onAuthStateChange((_event, session) => {
-      if (cancelled) return
-      setState(session ? 'authed' : 'anon')
-    })
+    setChecked(true)
+  }, [location.pathname, location.search])
 
-    return () => {
-      cancelled = true
-      subscription.unsubscribe()
-    }
-  }, [])
+  // Block render until check completes
+  if (!checked) return null
 
-  if (state === 'loading') {
-    return <div className="min-h-dvh w-full bg-[#f3f4f6]" aria-busy="true" aria-label="Loading" />
-  }
-
-  if (state === 'anon') {
-    const from = `${location.pathname}${location.search || ''}`
-    return <Navigate to={`/vendor/login?redirect=${encodeURIComponent(from)}`} replace />
-  }
+  if (!allowed) return null
 
   return <>{children}</>
 }
-

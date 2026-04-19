@@ -247,7 +247,7 @@ serve(async (req) => {
         }
         vendorIdMatched = portalVendor.id as string
       } else if (row.vendor_action_token === accessToken) {
-        // Email deep links pass `k` = vendor_action_token; same value is sent as Bearer.
+        // Legacy: per-ticket token (prefer `vendors.portal_api_key` in URL/Bearer).
         vendorIdMatched = row.assigned_vendor_id
         source = "email_link"
       } else {

@@ -28,6 +28,7 @@ type VendorRow = {
   notification_channel: string
   active: boolean
   category: string | null
+  portal_api_key: string | null
 }
 
 const SMS_DESC_MAX = 300
@@ -76,13 +77,13 @@ function resolveVendorRespondBaseUrl(): string | null {
 async function buildVendorEmailLinks(
   ticketId: string,
   vendorId: string,
-  actionToken: string,
+  portalApiKey: string,
 ): Promise<VendorEmailLinks | null> {
   const appBase = resolveAppBaseUrl()
   if (!appBase) return null
-  const portalHome = `${appBase}/vendor?k=${actionToken}`
+  const portalHome = `${appBase}/vendor?k=${portalApiKey}`
   const viewJob =
-    `${appBase}/vendor/ticket/${ticketId}?k=${actionToken}`
+    `${appBase}/vendor/ticket/${ticketId}?k=${portalApiKey}`
   const signingSecret = Deno.env.get("VENDOR_EMAIL_ACTION_SECRET")?.trim() ?? null
   const respondBase = resolveVendorRespondBaseUrl()
   let acceptUrl: string | null = null
@@ -107,26 +108,6 @@ async function buildVendorEmailLinks(
       console.error("[vendor-notify] sign email action", e)
     }
   }
-  // #region agent log
-  fetch("http://127.0.0.1:7898/ingest/3050e2ef-64dd-49e5-a718-1f5719c45963", {
-    method: "POST",
-    headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "06dfe0" },
-    body: JSON.stringify({
-      sessionId: "06dfe0",
-      hypothesisId: "H3_H4",
-      location: "vendor_notify.ts:buildVendorEmailLinks",
-      message: "vendor email link shape",
-      data: {
-        ticketIdLen: ticketId.length,
-        actionTokenLen: actionToken.length,
-        viewJobHasKQuery: viewJob.includes("?k="),
-        viewJobHasPercentEncoding: viewJob.includes("%"),
-        portalHomeHasKQuery: portalHome.includes("?k="),
-      },
-      timestamp: Date.now(),
-    }),
-  }).catch(() => {})
-  // #endregion
   return { portalHome, viewJob, acceptUrl, declineUrl }
 }
 
@@ -309,11 +290,11 @@ async function insertLog(
 }
 
 /** Legacy `?t=&k=` URL when APP_URL is not set. */
-function portalManageUrl(ticketId: string, actionToken: string): string | null {
+function portalManageUrl(ticketId: string, portalApiKey: string): string | null {
   const raw = Deno.env.get("VENDOR_PORTAL_BASE_URL")?.trim()?.replace(/\/$/, "") ?? null
   if (raw == null) return null
   const baseUrl = withHttpsScheme(raw)
-  return `${baseUrl}?t=${encodeURIComponent(ticketId)}&k=${actionToken}`
+  return `${baseUrl}?t=${encodeURIComponent(ticketId)}&k=${portalApiKey}`
 }
 
 /**
@@ -324,16 +305,19 @@ async function notifyChannelsForAssignment(
   ticketId: string,
   vendor: VendorRow,
   payload: TicketNotifyPayload,
-  actionToken: string,
 ): Promise<string[]> {
+  if (!vendor.portal_api_key?.trim()) {
+    throw new Error("Vendor missing portal_api_key")
+  }
+  const portalKey = vendor.portal_api_key.trim()
   const errors: string[] = []
   const ch = vendor.notification_channel
 
   const wantEmail = ch === "email" || ch === "both"
   const wantSms = ch === "sms" || ch === "both"
 
-  const emailLinks = await buildVendorEmailLinks(ticketId, vendor.id, actionToken)
-  const legacyManage = portalManageUrl(ticketId, actionToken)
+  const emailLinks = await buildVendorEmailLinks(ticketId, vendor.id, portalKey)
+  const legacyManage = portalManageUrl(ticketId, portalKey)
 
   if (wantEmail) {
     if (!vendor.email?.trim()) {
@@ -414,6 +398,9 @@ export async function assignVendorAndNotify(
     console.warn("[vendor-notify] no active vendor; skipping assignment and notify")
     return
   }
+  if (!vendor.portal_api_key?.trim()) {
+    throw new Error("Vendor missing portal_api_key")
+  }
 
   const assignedAt = new Date().toISOString()
   const actionToken = crypto.randomUUID()
@@ -453,7 +440,6 @@ export async function assignVendorAndNotify(
     payload.ticketId,
     vendor,
     payload,
-    actionToken,
   )
 
   const now = new Date().toISOString()
@@ -532,7 +518,7 @@ export async function reassignVendorByIdAndNotify(
 
   const { data: vendor, error: vErr } = await supabase
     .from("vendors")
-    .select("id,name,email,phone,notification_channel,active,category")
+    .select("id,name,email,phone,notification_channel,active,category,portal_api_key")
     .eq("id", vendorId)
     .eq("active", true)
     .maybeSingle()
@@ -543,6 +529,9 @@ export async function reassignVendorByIdAndNotify(
   }
   if (!vendor) {
     return { error: "Vendor not found or inactive" }
+  }
+  if (!vendor.portal_api_key?.trim()) {
+    return { error: "Vendor not available: missing portal_api_key" }
   }
 
   const prevStatus = ticket.vendor_work_status as string
@@ -597,7 +586,6 @@ export async function reassignVendorByIdAndNotify(
     ticketId,
     vendor as VendorRow,
     payload,
-    actionToken,
   )
 
   const now = new Date().toISOString()
