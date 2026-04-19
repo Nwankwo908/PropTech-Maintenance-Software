@@ -1,8 +1,6 @@
 import { useEffect, useState, type ReactNode } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 
-console.log('🔥 VendorAuthGate MOUNTED')
-
 function extractPortalKey(search: string): string | null {
   const params = new URLSearchParams(search)
 
@@ -13,8 +11,11 @@ function extractPortalKey(search: string): string | null {
   if (!redirect) return null
 
   try {
-    const decoded = decodeURIComponent(redirect)
-    const queryPart = decoded.includes('?') ? decoded.split('?')[1] ?? '' : ''
+    // 🔥 handles + and encoding edge cases
+    const decoded = decodeURIComponent(redirect.replace(/\+/g, ' '))
+    const idx = decoded.indexOf('?')
+    const queryPart = idx >= 0 ? decoded.slice(idx + 1) : ''
+
     const nested = new URLSearchParams(queryPart).get('k')
     if (nested && nested.trim() !== '') return nested.trim()
   } catch {}
@@ -41,6 +42,7 @@ export default function VendorAuthGate({ children }: { children: ReactNode }) {
     }
 
     console.log('❌ No key → redirecting to login')
+
     setStatus('blocked')
 
     navigate(
@@ -51,9 +53,7 @@ export default function VendorAuthGate({ children }: { children: ReactNode }) {
     )
   }, [location.pathname, location.search, navigate])
 
-  // ⛔ BLOCK EVERYTHING until we decide
   if (status === 'checking') return null
-
   if (status === 'allowed') return <>{children}</>
 
   return null
