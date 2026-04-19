@@ -827,10 +827,17 @@ function KanbanColumn({
   onDragOverColumn: (col: VendorColumn) => void
   onDropOnColumn: (col: VendorColumn, orderId: string) => void
 }) {
+  const dropActiveClass =
+    column === 'assigned'
+      ? 'bg-[#eef0ff] ring-2 ring-[#3342aa] ring-offset-2'
+      : column === 'in_progress'
+        ? 'bg-[#f4f1ec] ring-2 ring-[#988873] ring-offset-2'
+        : 'bg-[#e5f4f4] ring-2 ring-[#016363] ring-offset-2'
+
   return (
     <div
       className={`flex min-h-[min(599px,70vh)] min-w-0 flex-1 flex-col rounded-[10px] bg-[#f9fafb] transition-[box-shadow,background-color] ${
-        isDropActive ? 'bg-[#eff6ff] ring-2 ring-[#2b7fff] ring-offset-2' : ''
+        isDropActive ? dropActiveClass : ''
       }`}
       onDragOver={(e) => {
         e.preventDefault()
@@ -1312,8 +1319,8 @@ export function VendorPortalDashboard({
 
   return (
     <div className="min-h-dvh bg-[#f3f4f6]">
-      <header className="border-b-4 border-[#fdc700] bg-white shadow-[0px_1px_3px_0px_rgba(0,0,0,0.1),0px_1px_2px_0px_rgba(0,0,0,0.1)]">
-        <div className="mx-auto flex max-w-[1280px] flex-col gap-4 px-6 py-4 sm:flex-row sm:items-center sm:justify-between">
+      <header className="border-b-4 border-[#944c73] bg-white shadow-[0px_1px_3px_0px_rgba(0,0,0,0.1),0px_1px_2px_0px_rgba(0,0,0,0.1)]">
+        <div className="mx-auto flex w-full max-w-[1280px] flex-col gap-4 px-6 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-8 lg:px-10">
           <div>
             <h1 className="text-[24px] font-bold leading-8 tracking-[0.0703px] text-[#101828]">Vendor Portal</h1>
             <p className="mt-0.5 text-[14px] font-normal leading-5 tracking-[-0.1504px] text-[#4a5565]">
@@ -1333,7 +1340,7 @@ export function VendorPortalDashboard({
         </div>
       </header>
 
-      <main className="mx-auto max-w-[1280px] px-6 pb-10 pt-6">
+      <main className="mx-auto w-full max-w-[1280px] px-6 pb-10 pt-8 sm:px-8 sm:pt-10 lg:px-10">
         {apiLoading ? (
           <p className="mb-4 text-[14px] text-[#6a7282]">Loading work orders…</p>
         ) : null}
@@ -1354,15 +1361,15 @@ export function VendorPortalDashboard({
           </p>
         ) : null}
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-          <div className="rounded-[10px] border-l-4 border-[#2b7fff] bg-white py-4 pl-5 pr-4 shadow-sm">
+          <div className="rounded-[10px] border-l-4 border-[#3342aa] bg-white py-4 pl-5 pr-4 shadow-sm">
             <p className="text-[24px] font-bold leading-8 tracking-[0.0703px] text-[#101828]">{nAssigned}</p>
             <p className="mt-0.5 text-[14px] font-normal leading-5 tracking-[-0.1504px] text-[#4a5565]">Assigned</p>
           </div>
-          <div className="rounded-[10px] border-l-4 border-[#f0b100] bg-white py-4 pl-5 pr-4 shadow-sm">
+          <div className="rounded-[10px] border-l-4 border-[#988873] bg-white py-4 pl-5 pr-4 shadow-sm">
             <p className="text-[24px] font-bold leading-8 tracking-[0.0703px] text-[#101828]">{nProgress}</p>
             <p className="mt-0.5 text-[14px] font-normal leading-5 tracking-[-0.1504px] text-[#4a5565]">In Progress</p>
           </div>
-          <div className="rounded-[10px] border-l-4 border-[#00c950] bg-white py-4 pl-5 pr-4 shadow-sm">
+          <div className="rounded-[10px] border-l-4 border-[#016363] bg-white py-4 pl-5 pr-4 shadow-sm">
             <p className="text-[24px] font-bold leading-8 tracking-[0.0703px] text-[#101828]">{nCompleted}</p>
             <p className="mt-0.5 text-[14px] font-normal leading-5 tracking-[-0.1504px] text-[#4a5565]">Completed</p>
           </div>
@@ -1389,7 +1396,7 @@ export function VendorPortalDashboard({
         <div className="mt-6 flex flex-col gap-4 lg:flex-row lg:items-start">
           <KanbanColumn
             title="Assigned"
-            dotClass="bg-[#2b7fff]"
+            dotClass="bg-[#3342aa]"
             count={assigned.length}
             emptyLabel={emptyBoardMsg}
             column="assigned"
@@ -1408,7 +1415,7 @@ export function VendorPortalDashboard({
           </KanbanColumn>
           <KanbanColumn
             title="In Progress"
-            dotClass="bg-[#f0b100]"
+            dotClass="bg-[#988873]"
             count={inProgress.length}
             emptyLabel={emptyBoardMsg}
             column="in_progress"
@@ -1427,7 +1434,7 @@ export function VendorPortalDashboard({
           </KanbanColumn>
           <KanbanColumn
             title="Completed"
-            dotClass="bg-[#00c950]"
+            dotClass="bg-[#016363]"
             count={completed.length}
             emptyLabel={emptyBoardMsg}
             column="completed"

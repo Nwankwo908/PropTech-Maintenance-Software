@@ -863,7 +863,7 @@ export function MaintenanceRequestForm({
                       helps us prioritize and respond appropriately.
                     </p>
                     <div
-                      className="mt-2 grid grid-cols-1 gap-2 min-[1281px]:grid-cols-3"
+                      className="mt-2 grid grid-cols-1 gap-2 min-[1281px]:grid-cols-2 min-[1536px]:grid-cols-3"
                       role="radiogroup"
                       aria-label="Urgency level"
                       aria-invalid={showError('urgency')}
@@ -884,7 +884,7 @@ export function MaintenanceRequestForm({
                                   : 'border-[#e5e7eb] hover:border-[#944c73]/45 hover:bg-[#fafafa] hover:shadow-sm'
                             }`}
                           >
-                            <div className="flex items-start gap-3.5">
+                            <div className="flex min-w-0 flex-col gap-3 min-[1281px]:flex-row min-[1281px]:items-start min-[1281px]:gap-3.5">
                               <span className="shrink-0 self-start">
                                 <input
                                   type="radio"
@@ -914,10 +914,10 @@ export function MaintenanceRequestForm({
                                 )}
                               </span>
                               <span className="flex min-w-0 flex-1 flex-col gap-2 text-left text-[14px] tracking-[-0.1504px]">
-                                <span className="font-medium leading-[14px] text-[#0a0a0a]">
+                                <span className="min-w-0 break-words font-medium leading-[14px] text-[#0a0a0a]">
                                   {opt.title}
                                 </span>
-                                <span className="font-normal leading-5 text-[#6a7282]">
+                                <span className="min-w-0 break-words font-normal leading-5 text-[#6a7282]">
                                   {opt.description}
                                 </span>
                               </span>

@@ -3,24 +3,20 @@ import { useLocation, useNavigate } from 'react-router-dom'
 
 function extractPortalKey(search: string): string | null {
   const params = new URLSearchParams(search)
-  let k = params.get('k')
 
-  if (!k) {
-    const redirect = params.get('redirect')
-    if (redirect) {
-      try {
-        const decoded = decodeURIComponent(redirect)
-        const queryPart = decoded.includes('?') ? decoded.split('?')[1] : ''
-        k = new URLSearchParams(queryPart).get('k')
-      } catch {
-        return null
-      }
-    }
-  }
+  const top = params.get('k')
+  if (top && top.trim() !== '') return top.trim()
 
-  if (k !== null && k.trim() !== '') {
-    return k.trim()
-  }
+  const redirect = params.get('redirect')
+  if (!redirect) return null
+
+  try {
+    const decoded = decodeURIComponent(redirect)
+    const queryPart = decoded.includes('?') ? decoded.split('?')[1] ?? '' : ''
+    const nested = new URLSearchParams(queryPart).get('k')
+    if (nested && nested.trim() !== '') return nested.trim()
+  } catch {}
+
   return null
 }
 
@@ -28,8 +24,7 @@ export default function VendorAuthGate({ children }: { children: ReactNode }) {
   const location = useLocation()
   const navigate = useNavigate()
 
-  const [checked, setChecked] = useState(false)
-  const [allowed, setAllowed] = useState(false)
+  const [status, setStatus] = useState<'checking' | 'allowed' | 'blocked'>('checking')
 
   useEffect(() => {
     const key = extractPortalKey(location.search)
@@ -37,33 +32,27 @@ export default function VendorAuthGate({ children }: { children: ReactNode }) {
     console.log('🔥 SEARCH:', location.search)
     console.log('🔥 KEY:', key)
 
-    // ✅ If key exists → allow immediately
     if (key) {
-      console.log('🔥 Vendor key detected, bypassing login')
-      setAllowed(true)
-      setChecked(true)
+      console.log('🔥 Vendor key detected → ALLOW')
+      setStatus('allowed')
       return
     }
 
-    // ⛔ IMPORTANT: do NOT redirect immediately on first render
-    // Wait until we are sure there's no key
+    console.log('❌ No key → redirecting to login')
+    setStatus('blocked')
 
-    if (!checked) {
-      setChecked(true)
-      return
-    }
-
-    // ❌ Only redirect AFTER check is complete
     navigate(
       `/vendor/login?redirect=${encodeURIComponent(
-        location.pathname + location.search,
+        location.pathname + location.search
       )}`,
-      { replace: true },
+      { replace: true }
     )
-  }, [location.search, location.pathname, checked, navigate])
+  }, [location.pathname, location.search, navigate])
 
-  if (!checked) return null
-  if (!allowed) return null
+  // ⛔ BLOCK EVERYTHING until we decide
+  if (status === 'checking') return null
 
-  return <>{children}</>
+  if (status === 'allowed') return <>{children}</>
+
+  return null
 }
