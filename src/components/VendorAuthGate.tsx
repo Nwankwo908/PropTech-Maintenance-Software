@@ -1,24 +1,5 @@
-function extractPortalKey(search: string): string | null {
-  const params = new URLSearchParams(search)
-
-  const top = params.get('k')
-  if (top && top.trim() !== '') return top.trim()
-
-  const redirect = params.get('redirect')
-  if (!redirect) return null
-
-  try {
-    const decoded = decodeURIComponent(redirect.replace(/\+/g, ' '))
-    const idx = decoded.indexOf('?')
-    const queryPart = idx >= 0 ? decoded.slice(idx + 1) : ''
-    const nested = new URLSearchParams(queryPart).get('k')
-    if (nested && nested.trim() !== '') return nested.trim()
-  } catch {
-    return null
-  }
-
-  return null
-}
+import { useEffect, useState, type ReactNode } from 'react'
+import { useLocation, useNavigate } from 'react-router-dom'
 
 export default function VendorAuthGate({ children }: { children: ReactNode }) {
   const location = useLocation()
@@ -28,21 +9,30 @@ export default function VendorAuthGate({ children }: { children: ReactNode }) {
   const [allowed, setAllowed] = useState(false)
 
   useEffect(() => {
-    const key = extractPortalKey(location.search)
+    const params = new URLSearchParams(location.search)
+    let k = params.get('k')
 
-    if (key) {
+    // fallback: check redirect
+    if (!k) {
+      const redirect = params.get('redirect')
+      if (redirect) {
+        try {
+          const decoded = decodeURIComponent(redirect)
+          const queryPart = decoded.includes('?') ? decoded.split('?')[1] : ''
+          k = new URLSearchParams(queryPart).get('k')
+        } catch {}
+      }
+    }
+
+    // ✅ KEY LOGIC (you are missing this right now)
+    if (k && k.trim() !== '') {
       console.log('🔥 Vendor key detected, bypassing login')
       setAllowed(true)
       setChecked(true)
       return
     }
 
-    // prevent redirect loop
-    if (location.pathname.startsWith('/vendor/login')) {
-      setChecked(true)
-      return
-    }
-
+    // ❌ only redirect when NO key
     const dest = `/vendor/login?redirect=${encodeURIComponent(
       location.pathname + location.search,
     )}`
