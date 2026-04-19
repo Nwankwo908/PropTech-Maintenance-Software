@@ -8,7 +8,7 @@ export type VendorApiTicket = {
   unit: string
   description: string
   photo_paths: string[] | null
-  /** Time-limited signed URLs for `photo_paths` (set by vendor-list-tickets). */
+  /** Time-limited signed URLs for `photo_paths` (from vendor-list-tickets). */
   photo_urls?: string[] | null
   vendor_work_status: string
   assigned_vendor_id: string | null
@@ -37,58 +37,17 @@ export function vendorPortalUpdateUrl(): string | undefined {
   return list.replace(/vendor-list-tickets\/?$/, "vendor-update-job-status")
 }
 
-const uuidRe =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
-
-/**
- * Portal key: top-level `?k=`, or legacy nested in `redirect` (old `/vendor/login?redirect=/vendor?k=`).
- */
-export function getVendorPortalK(): string | undefined {
-  if (typeof window === "undefined") return undefined
-
-  const params = new URLSearchParams(window.location.search)
-
-  // 1. Direct
-  let k = params.get("k")?.trim()
-  if (k) {
-    console.log("🔥 FINAL K:", k)
-    return k
-  }
-
-  // 2. Nested
-  const redirect = params.get("redirect")
-  if (redirect) {
-    try {
-      const decoded = decodeURIComponent(redirect || "")
-
-      const queryPart = decoded.includes("?")
-        ? decoded.split("?")[1]
-        : ""
-
-      k = new URLSearchParams(queryPart).get("k")?.trim()
-
-      console.log("🔥 FINAL K (from redirect):", k)
-
-      return k || undefined
-    } catch (e) {
-      console.error("decode failed", e)
-    }
-  }
-
-  console.log("🔥 FINAL K: undefined")
-  return undefined
-}
-
 /** Collapses overlapping calls (e.g. React Strict Mode) to a single in-flight request. */
 const vendorListInflight = new Map<string, Promise<VendorListResponse>>()
 const vendorListRecentOk = new Map<string, { data: VendorListResponse; at: number }>()
 const VENDOR_LIST_DEDUPE_MS = 15_000
 
-async function executeVendorListFetch(url: string, k: string): Promise<VendorListResponse> {
-
+async function executeVendorListFetch(
+  url: string,
+  accessToken: string,
+): Promise<VendorListResponse> {
   const headers = new Headers()
-  headers.set("Authorization", `Bearer ${k}`)
-  console.log("🔥 FINAL HEADER BEING SENT:", headers.get("Authorization"))
+  headers.set("Authorization", `Bearer ${accessToken}`)
 
   const res = await fetch(url, {
     method: "GET",
@@ -117,11 +76,13 @@ async function executeVendorListFetch(url: string, k: string): Promise<VendorLis
   return data
 }
 
-export async function fetchVendorTickets(url: string): Promise<VendorListResponse> {
-  const k = getVendorPortalK()
-  if (!k) throw new Error("Missing vendor key")
+export async function fetchVendorTickets(
+  url: string,
+  accessToken: string,
+): Promise<VendorListResponse> {
+  if (!accessToken.trim()) throw new Error("Missing session")
 
-  const key = `${url}::${k}`
+  const key = `${url}::${accessToken}`
 
   const recent = vendorListRecentOk.get(key)
   if (recent && Date.now() - recent.at < VENDOR_LIST_DEDUPE_MS) {
@@ -131,7 +92,7 @@ export async function fetchVendorTickets(url: string): Promise<VendorListRespons
   let p = vendorListInflight.get(key)
   if (p) return p
 
-  p = executeVendorListFetch(url, k)
+  p = executeVendorListFetch(url, accessToken)
     .then((data) => {
       vendorListRecentOk.set(key, { data, at: Date.now() })
       return data
@@ -144,22 +105,24 @@ export async function fetchVendorTickets(url: string): Promise<VendorListRespons
   return p
 }
 
+const uuidRe =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
+
 export async function postVendorJobStatus(
   updateUrl: string,
   ticketId: string,
   action: "accept" | "decline" | "in_progress" | "completed",
+  accessToken: string,
 ): Promise<{ vendor_work_status: string }> {
   if (!uuidRe.test(ticketId)) {
     throw new Error("Invalid ticket id")
   }
 
-  const k = getVendorPortalK()
-  if (!k) throw new Error("Missing vendor key")
+  if (!accessToken.trim()) throw new Error("Missing session")
 
   const headers = new Headers()
-  headers.set("Authorization", `Bearer ${k}`)
+  headers.set("Authorization", `Bearer ${accessToken}`)
   headers.set("Content-Type", "application/json")
-  console.log("🔥 FINAL HEADER BEING SENT:", headers.get("Authorization"))
 
   const res = await fetch(updateUrl, {
     method: "POST",
@@ -190,6 +153,7 @@ export type UpdateJobStatusInput = {
   ticketId: string
   action: "accept" | "decline" | "in_progress" | "completed"
   updateUrl: string
+  accessToken: string
 }
 
 export async function updateJobStatus(
@@ -199,6 +163,7 @@ export async function updateJobStatus(
     input.updateUrl,
     input.ticketId,
     input.action,
+    input.accessToken,
   )
   return { ok: true, vendor_work_status }
 }

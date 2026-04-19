@@ -3,10 +3,7 @@ import {
   createClient,
   type SupabaseClient,
 } from "https://esm.sh/@supabase/supabase-js@2.49.1"
-import {
-  bearerLooksLikeJwt,
-  PORTAL_API_KEY_UUID_RE,
-} from "../_shared/vendor_portal_bearer.ts"
+import { bearerLooksLikeJwt } from "../_shared/vendor_portal_bearer.ts"
 
 const corsHeaders: Record<string, string> = {
   "Access-Control-Allow-Origin": "*",
@@ -153,28 +150,11 @@ serve(async (req) => {
       return jsonResponse({ error: "Vendor not found" }, 403)
     }
     vendor = { id: jwtVendor.id, name: jwtVendor.name }
-  } else if (PORTAL_API_KEY_UUID_RE.test(accessToken)) {
-    // `?k=` / Bearer: `vendors.portal_api_key` (stable portal auth).
-    const { data: portalVendor, error: vErr } = await supabase
-      .from("vendors")
-      .select("id, name")
-      .eq("portal_api_key", accessToken)
-      .eq("active", true)
-      .maybeSingle()
-
-    if (vErr) {
-      console.error("[vendor-list-tickets] portal_api_key lookup", vErr)
-      return jsonResponse({ error: "Lookup failed" }, 500)
-    }
-
-    if (!portalVendor) {
-      failReason("invalid or unknown portal_api_key")
-      return jsonResponse({ error: "Invalid or expired vendor token" }, 403)
-    }
-
-    vendor = { id: portalVendor.id, name: portalVendor.name }
   } else {
-    return jsonResponse({ error: "Invalid Authorization token" }, 401)
+    return jsonResponse(
+      { error: "Invalid Authorization token — sign in with a vendor account" },
+      401,
+    )
   }
 
   if (!vendor) {

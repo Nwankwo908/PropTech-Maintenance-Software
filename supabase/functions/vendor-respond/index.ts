@@ -195,31 +195,6 @@ serve(async (req) => {
     return htmlResponse("Error", "Could not update status.", { status: 500 })
   }
 
-  const { data: vendorRow, error: portalErr } = await supabase
-    .from("vendors")
-    .select("portal_api_key")
-    .eq("id", vendorId)
-    .eq("active", true)
-    .maybeSingle()
-
-  if (portalErr) {
-    console.error("[vendor-respond] load vendor portal key", portalErr)
-    return htmlResponse("Error", "Could not load vendor.", { status: 500 })
-  }
-
-  const portalKey =
-    typeof vendorRow?.portal_api_key === "string"
-      ? vendorRow.portal_api_key.trim()
-      : ""
-
-  if (!portalKey) {
-    return htmlResponse(
-      "Portal unavailable",
-      "Vendor portal access is not configured for this account. Contact support.",
-      { status: 500 },
-    )
-  }
-
   const { error: logErr } = await supabase.from("vendor_status_events").insert({
     ticket_id: ticketId,
     from_status: current,
@@ -251,9 +226,7 @@ serve(async (req) => {
 
   const appUrl = Deno.env.get("APP_URL")?.trim()?.replace(/\/$/, "") ?? ""
   const redirectUrl =
-    appUrl.length > 0
-      ? `${appUrl}/vendor/ticket/${ticketId}?k=${encodeURIComponent(portalKey)}`
-      : null
+    appUrl.length > 0 ? `${appUrl}/vendor/ticket/${ticketId}` : null
 
   const msg =
     action === "accept"

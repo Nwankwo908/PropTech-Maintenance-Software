@@ -57,13 +57,7 @@ function withHttpsScheme(origin: string): string {
 function resolveAppBaseUrl(): string | null {
   const appRaw = Deno.env.get("APP_URL")?.trim() ?? ""
   if (appRaw) return withHttpsScheme(appRaw)
-  const legacy = Deno.env.get("VENDOR_PORTAL_BASE_URL")?.trim() ?? ""
-  if (!legacy) return null
-  try {
-    return new URL(withHttpsScheme(legacy)).origin
-  } catch {
-    return null
-  }
+  return null
 }
 
 function resolveVendorRespondBaseUrl(): string | null {
@@ -76,17 +70,12 @@ function resolveVendorRespondBaseUrl(): string | null {
 
 async function buildVendorEmailLinks(
   ticketId: string,
-  vendorId: string,
-  portalApiKey: string,
+  _vendorId: string,
 ): Promise<VendorEmailLinks | null> {
   const appBase = resolveAppBaseUrl()
   if (!appBase) return null
-  // Public portal entry: never use `/vendor/login?redirect=…`; vendors with a key go straight here.
-  const portalHome = `${appBase}/vendor?k=${portalApiKey}`
-  console.log("🔥 VENDOR PORTAL LINK:", portalHome)
-  const viewJob =
-    `${appBase}/vendor/ticket/${ticketId}?k=${portalApiKey}`
-  console.log("🔥 VENDOR TICKET LINK:", viewJob)
+  const portalHome = `${appBase}/vendor`
+  const viewJob = `${appBase}/vendor/ticket/${ticketId}`
   const signingSecret = Deno.env.get("VENDOR_EMAIL_ACTION_SECRET")?.trim() ?? null
   const respondBase = resolveVendorRespondBaseUrl()
   let acceptUrl: string | null = null
@@ -292,17 +281,11 @@ async function insertLog(
   if (insErr) console.error("[vendor-notify] log insert", insErr)
 }
 
-/** If legacy env mistakenly points at `/vendor/login`, normalize so links are not login-wrapped. */
-function normalizeLegacyVendorPortalBase(baseUrl: string): string {
-  return baseUrl.replace(/\/vendor\/login$/i, "/vendor")
-}
-
-/** Legacy `?t=&k=` URL when APP_URL is not set. */
-function portalManageUrl(ticketId: string, portalApiKey: string): string | null {
-  const raw = Deno.env.get("VENDOR_PORTAL_BASE_URL")?.trim()?.replace(/\/$/, "") ?? null
-  if (raw == null) return null
-  const baseUrl = normalizeLegacyVendorPortalBase(withHttpsScheme(raw))
-  return `${baseUrl}?t=${encodeURIComponent(ticketId)}&k=${portalApiKey}`
+/** Fallback deep link when `buildVendorEmailLinks` cannot resolve APP_URL. */
+function portalManageUrl(ticketId: string): string | null {
+  const appBase = resolveAppBaseUrl()
+  if (!appBase) return null
+  return `${appBase}/vendor/ticket/${encodeURIComponent(ticketId)}`
 }
 
 /**
@@ -314,18 +297,14 @@ async function notifyChannelsForAssignment(
   vendor: VendorRow,
   payload: TicketNotifyPayload,
 ): Promise<string[]> {
-  if (!vendor.portal_api_key?.trim()) {
-    throw new Error("Vendor missing portal_api_key")
-  }
-  const portalKey = vendor.portal_api_key.trim()
   const errors: string[] = []
   const ch = vendor.notification_channel
 
   const wantEmail = ch === "email" || ch === "both"
   const wantSms = ch === "sms" || ch === "both"
 
-  const emailLinks = await buildVendorEmailLinks(ticketId, vendor.id, portalKey)
-  const legacyManage = portalManageUrl(ticketId, portalKey)
+  const emailLinks = await buildVendorEmailLinks(ticketId, vendor.id)
+  const legacyManage = portalManageUrl(ticketId)
 
   if (wantEmail) {
     if (!vendor.email?.trim()) {
@@ -406,10 +385,6 @@ export async function assignVendorAndNotify(
     console.warn("[vendor-notify] no active vendor; skipping assignment and notify")
     return
   }
-  if (!vendor.portal_api_key?.trim()) {
-    throw new Error("Vendor missing portal_api_key")
-  }
-
   const assignedAt = new Date().toISOString()
   const actionToken = crypto.randomUUID()
   /** Single update: assigned_vendor_id + pending_accept together satisfies require_vendor_for_progress. */
@@ -538,10 +513,6 @@ export async function reassignVendorByIdAndNotify(
   if (!vendor) {
     return { error: "Vendor not found or inactive" }
   }
-  if (!vendor.portal_api_key?.trim()) {
-    return { error: "Vendor not available: missing portal_api_key" }
-  }
-
   const prevStatus = ticket.vendor_work_status as string
   const actionToken = crypto.randomUUID()
 

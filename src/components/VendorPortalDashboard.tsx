@@ -8,16 +8,18 @@ import {
   type ReactNode,
   type RefObject,
 } from 'react'
-import { useLocation, useNavigate } from 'react-router-dom'
+import { useNavigate } from 'react-router-dom'
+import type { RealtimePostgresChangesPayload } from '@supabase/supabase-js'
 import {
   fetchVendorTickets,
-  getVendorPortalK,
   updateJobStatus,
   vendorPortalListUrl,
   vendorPortalUpdateUrl,
   type VendorApiTicket,
 } from '@/api/vendorPortalTickets'
+import { supabase } from '@/lib/supabase'
 import {
+  actionToStatus,
   columnToAction,
   isValidMove,
   type VendorDbWorkStatus,
@@ -231,6 +233,40 @@ function tryMapApiTicketToWorkOrder(t: VendorApiTicket): VendorWorkOrder | null 
   } catch (e) {
     console.error('Bad ticket:', t, e)
     return null
+  }
+}
+
+function predictVendorStatus(
+  action: 'accept' | 'decline' | 'in_progress' | 'completed',
+): VendorDbWorkStatus {
+  if (action === 'decline') return 'declined'
+  return actionToStatus[action] as VendorDbWorkStatus
+}
+
+/** Map a Realtime `maintenance_requests` row to `VendorApiTicket` (unsigned photos). */
+function rowToVendorApiTicket(row: Record<string, unknown>): VendorApiTicket | null {
+  const id = row.id
+  if (typeof id !== 'string') return null
+  const paths = row.photo_paths
+  return {
+    id,
+    created_at: typeof row.created_at === 'string' ? row.created_at : '',
+    urgency: (row.urgency as string | null | undefined) ?? null,
+    priority: (row.priority as string | null | undefined) ?? null,
+    resident_name: typeof row.resident_name === 'string' ? row.resident_name : '',
+    unit: typeof row.unit === 'string' ? row.unit : '',
+    description: typeof row.description === 'string' ? row.description : '',
+    photo_paths: Array.isArray(paths) ? (paths as string[]) : null,
+    photo_urls: undefined,
+    vendor_work_status:
+      typeof row.vendor_work_status === 'string' ? row.vendor_work_status : 'pending_accept',
+    assigned_vendor_id:
+      typeof row.assigned_vendor_id === 'string' ? row.assigned_vendor_id : null,
+    due_at: (row.due_at as string | null | undefined) ?? null,
+    estimated_minutes:
+      typeof row.estimated_minutes === 'number' ? row.estimated_minutes : null,
+    severity: (row.severity as string | null | undefined) ?? null,
+    issue_category: (row.issue_category as string | null | undefined) ?? null,
   }
 }
 
@@ -1087,45 +1123,63 @@ export function VendorPortalDashboard({
   deepLinkTicketId?: string | null
 } = {}) {
   const navigate = useNavigate()
-  const location = useLocation()
   const listUrl = vendorPortalListUrl()
   const updateUrl = vendorPortalUpdateUrl()
 
-  /** Same `k` as vendor API (top-level or nested in `redirect`). */
-  const portalK = useMemo(
-    () => getVendorPortalK() ?? null,
-    [location.pathname, location.search],
-  )
+  const hasLoadedRef = useRef(false)
 
-  const useLiveVendorApi = Boolean(listUrl && updateUrl && Boolean(portalK))
+  const [accessToken, setAccessToken] = useState<string | null>(null)
+  const [vendorId, setVendorId] = useState<string | null>(null)
 
-  const [orders, setOrders] = useState<VendorWorkOrder[]>(() =>
-    useLiveVendorApi ? [] : INITIAL_WORK_ORDERS,
-  )
+  const [orders, setOrders] = useState<VendorWorkOrder[]>([])
   const [vendorHeaderName, setVendorHeaderName] = useState<string | null>(null)
-  const [apiLoading, setApiLoading] = useState(useLiveVendorApi)
+  const [apiLoading, setApiLoading] = useState(false)
   const [apiError, setApiError] = useState<string | null>(null)
   const [actionError, setActionError] = useState<string | null>(null)
   const [vendorToast, setVendorToast] = useState<string | null>(null)
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [query, setQuery] = useState('')
   const [dropTargetColumn, setDropTargetColumn] = useState<VendorColumn | null>(null)
+  const [realtimeStatus, setRealtimeStatus] = useState<
+    'idle' | 'connecting' | 'connected' | 'reconnecting' | 'error'
+  >('idle')
+
+  const useLiveVendorApi = Boolean(listUrl && updateUrl)
+
+  useEffect(() => {
+    if (!supabase) return
+    void supabase.auth.getSession().then(({ data: { session } }) => {
+      setAccessToken(session?.access_token ?? null)
+    })
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((_event, session) => {
+      setAccessToken(session?.access_token ?? null)
+    })
+    return () => subscription.unsubscribe()
+  }, [])
+
+  useEffect(() => {
+    hasLoadedRef.current = false
+  }, [accessToken])
 
   const loadTickets = useCallback(async () => {
-    if (!useLiveVendorApi || !listUrl) return
+    if (!useLiveVendorApi) {
+      hasLoadedRef.current = false
+      setVendorId(null)
+      setOrders(INITIAL_WORK_ORDERS)
+      return
+    }
+    if (hasLoadedRef.current) return
+    if (!listUrl || !accessToken) return
+
+    hasLoadedRef.current = true
     setApiLoading(true)
     setApiError(null)
     try {
-      if (!portalK) {
-        console.error('NO K TOKEN — STOPPING REQUEST')
-        setApiError(
-          'Missing vendor token (?k=). Open your assignment email link with the portal key.',
-        )
-        setOrders([])
-        return
-      }
-      const res = await fetchVendorTickets(listUrl)
+      const res = await fetchVendorTickets(listUrl, accessToken)
       setVendorHeaderName(res.vendor?.name ?? null)
+      setVendorId(res.vendor?.id ?? null)
       setOrders(
         res.tickets
           .map((ticket) => tryMapApiTicketToWorkOrder(ticket))
@@ -1134,28 +1188,97 @@ export function VendorPortalDashboard({
     } catch (e) {
       setApiError(e instanceof Error ? e.message : 'Failed to load tickets')
       setOrders([])
+      setVendorId(null)
     } finally {
       setApiLoading(false)
     }
-  }, [useLiveVendorApi, listUrl, portalK])
+  }, [useLiveVendorApi, listUrl, accessToken])
 
   useEffect(() => {
     void loadTickets()
   }, [loadTickets])
 
   useEffect(() => {
-    if (!useLiveVendorApi || apiLoading || apiError) return
-    if (!deepLinkTicketId) return
-    if (orders.length === 0) return
-    const found = orders.some((o) => o.id === deepLinkTicketId)
-    if (!found) {
-      navigate(
-        portalK ? `/vendor?k=${encodeURIComponent(portalK)}` : '/vendor',
-        { replace: true },
+    if (!supabase || !useLiveVendorApi || !vendorId || !accessToken) {
+      setRealtimeStatus('idle')
+      return
+    }
+
+    setRealtimeStatus('connecting')
+
+    const channel = supabase
+      .channel(`vendor-tickets:${vendorId}`)
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'maintenance_requests',
+          filter: `assigned_vendor_id=eq.${vendorId}`,
+        },
+        (payload: RealtimePostgresChangesPayload<Record<string, unknown>>) => {
+          if (payload.eventType === 'INSERT' && payload.new) {
+            setVendorToast('New work order assigned')
+          }
+
+          if (payload.eventType === 'DELETE') {
+            const oldId = (payload.old as { id?: string } | null)?.id
+            if (typeof oldId === 'string') {
+              setOrders((prev) => prev.filter((o) => o.id !== oldId))
+            }
+            return
+          }
+
+          const row = payload.new as Record<string, unknown> | null
+          if (!row?.id || typeof row.id !== 'string') return
+
+          const apiTicket = rowToVendorApiTicket(row)
+          if (!apiTicket) return
+          const mapped = tryMapApiTicketToWorkOrder(apiTicket)
+          if (!mapped) return
+
+          setOrders((prev) => {
+            const exists = prev.some((o) => o.id === mapped.id)
+            if (!exists) return [mapped, ...prev]
+            return prev.map((o) => (o.id === mapped.id ? { ...o, ...mapped } : o))
+          })
+        },
       )
+      .subscribe((status) => {
+        if (status === 'SUBSCRIBED') {
+          setRealtimeStatus('connected')
+        } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
+          setRealtimeStatus('error')
+        } else if (status === 'CLOSED') {
+          setRealtimeStatus((s) => (s === 'connected' ? 'reconnecting' : s))
+        }
+      })
+
+    return () => {
+      setRealtimeStatus('idle')
+      if (supabase) void supabase.removeChannel(channel)
+    }
+  }, [useLiveVendorApi, vendorId, accessToken])
+
+  useEffect(() => {
+    if (!useLiveVendorApi) return
+    if (apiLoading || apiError) return
+    if (!deepLinkTicketId) return
+
+    const found = orders.some((o) => o.id === deepLinkTicketId)
+
+    if (!found) {
+      navigate('/vendor', { replace: true })
       setVendorToast('This ticket is not assigned to your vendor account.')
     }
-  }, [useLiveVendorApi, apiLoading, apiError, deepLinkTicketId, orders, navigate, portalK])
+  }, [
+    useLiveVendorApi,
+    apiLoading,
+    apiError,
+    deepLinkTicketId,
+    orders,
+    navigate,
+  ])
 
   useEffect(() => {
     if (!deepLinkTicketId || apiLoading) return
@@ -1195,22 +1318,27 @@ export function VendorPortalDashboard({
         return
       }
     }
+    if (useLiveVendorApi && !accessToken) {
+      const msg = 'Session expired. Sign in again.'
+      setActionError(msg)
+      window.alert(msg)
+      return
+    }
+    const snapshot = orders
+    if (useLiveVendorApi && accessToken) {
+      applyVendorStatusToOrder(ticketId, predictVendorStatus(action))
+    }
     try {
-      if (!portalK) {
-        console.error('NO K TOKEN — STOPPING REQUEST')
-        const msg =
-          'Missing vendor token (?k=). Open your assignment email link with the portal key.'
-        setActionError(msg)
-        window.alert(msg)
-        return
-      }
+      if (!useLiveVendorApi || !accessToken) return
       const res = await updateJobStatus({
         ticketId,
         action,
         updateUrl,
+        accessToken,
       })
       if (res.ok) applyVendorStatusToOrder(ticketId, res.vendor_work_status)
     } catch (e) {
+      setOrders(snapshot)
       const msg = e instanceof Error ? e.message : 'Update failed'
       setActionError(msg)
       window.alert(msg)
@@ -1243,22 +1371,26 @@ export function VendorPortalDashboard({
       setVendorToast('This job is not assigned to a vendor')
       return
     }
+    if (useLiveVendorApi && !accessToken) {
+      setVendorToast('Session expired. Sign in again.')
+      return
+    }
+    const snapshot = orders
+    if (useLiveVendorApi && accessToken) {
+      applyVendorStatusToOrder(orderId, predictVendorStatus(action))
+    }
     setActionError(null)
     try {
-      if (!portalK) {
-        console.error('NO K TOKEN — STOPPING REQUEST')
-        setVendorToast(
-          'Missing vendor token (?k=). Open your assignment email link with the portal key.',
-        )
-        return
-      }
+      if (!accessToken) return
       const res = await updateJobStatus({
         ticketId: orderId,
         action,
         updateUrl,
+        accessToken,
       })
       if (res?.ok) applyVendorStatusToOrder(orderId, res.vendor_work_status)
     } catch {
+      setOrders(snapshot)
       setVendorToast("You can't move this job to that stage yet.")
     }
   }
@@ -1333,7 +1465,15 @@ export function VendorPortalDashboard({
             </p>
             <p className="text-[12px] font-normal leading-4 text-[#6a7282]">
               {useLiveVendorApi && vendorHeaderName
-                ? 'Connected to live tickets'
+                ? realtimeStatus === 'connected'
+                  ? 'Live updates connected'
+                  : realtimeStatus === 'reconnecting'
+                    ? 'Reconnecting live updates…'
+                    : realtimeStatus === 'error'
+                      ? 'Live updates unavailable — refresh if needed'
+                      : realtimeStatus === 'connecting'
+                        ? 'Connecting live updates…'
+                        : 'Connected to live tickets'
                 : `Vendor ID: ${VENDOR_ID}`}
             </p>
           </div>

@@ -5,10 +5,7 @@ import {
   notifyResidentInProgress,
 } from "../submit-maintenance-request/resident_notify.ts"
 import { tryAutoReassignAfterDecline } from "../_shared/vendor_auto_reassign.ts"
-import {
-  bearerLooksLikeJwt,
-  PORTAL_API_KEY_UUID_RE,
-} from "../_shared/vendor_portal_bearer.ts"
+import { bearerLooksLikeJwt } from "../_shared/vendor_portal_bearer.ts"
 
 const corsHeaders: Record<string, string> = {
   "Access-Control-Allow-Origin": "*",
@@ -228,31 +225,9 @@ serve(async (req) => {
       }
 
       vendorIdMatched = vendorRow.id
-    } else if (PORTAL_API_KEY_UUID_RE.test(accessToken)) {
-      const { data: portalVendor, error: portalErr } = await supabase
-        .from("vendors")
-        .select("id")
-        .eq("portal_api_key", accessToken)
-        .eq("active", true)
-        .maybeSingle()
-
-      if (portalErr) {
-        console.error("[vendor-update-job-status] portal_api_key lookup", portalErr)
-        return jsonResponse({ error: "Lookup failed" }, 500)
-      }
-
-      if (portalVendor) {
-        if (portalVendor.id !== row.assigned_vendor_id) {
-          return jsonResponse({ error: "Forbidden" }, 403)
-        }
-        vendorIdMatched = portalVendor.id as string
-      } else if (row.vendor_action_token === accessToken) {
-        // Legacy: per-ticket token (prefer `vendors.portal_api_key` in URL/Bearer).
-        vendorIdMatched = row.assigned_vendor_id
-        source = "email_link"
-      } else {
-        return jsonResponse({ error: "Forbidden" }, 403)
-      }
+    } else if (row.vendor_action_token === accessToken) {
+      vendorIdMatched = row.assigned_vendor_id
+      source = "email_link"
     } else {
       return jsonResponse({ error: "Invalid Authorization token" }, 401)
     }
