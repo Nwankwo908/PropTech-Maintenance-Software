@@ -42,3 +42,10 @@ enabled = true
 verify_jwt = false
 import_map = "./functions/vendor-respond/deno.json"
 entrypoint = "./functions/vendor-respond/index.ts"
+
+# POST { token, vendorId } — matches vendors.portal_api_key; returns session tokens or hashed_token for verifyOtp.
+[functions.vendor-verify-token]
+enabled = true
+verify_jwt = false
+import_map = "./functions/vendor-verify-token/deno.json"
+entrypoint = "./functions/vendor-verify-token/index.ts"

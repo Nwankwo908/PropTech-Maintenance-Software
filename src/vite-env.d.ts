@@ -26,6 +26,11 @@ interface ImportMetaEnv {
   readonly VITE_ADMIN_REASSIGN_URL?: string
   /** Same value as Edge secret ADMIN_REASSIGN_SECRET — do not ship to public clients in production. */
   readonly VITE_ADMIN_REASSIGN_SECRET?: string
+  /**
+   * POST vendor-verify-token (full URL). If unset, defaults to
+   * `${VITE_SUPABASE_URL}/functions/v1/vendor-verify-token`.
+   */
+  readonly VITE_VENDOR_VERIFY_TOKEN_URL?: string
 }
 
 interface ImportMeta {
