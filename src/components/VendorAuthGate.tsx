@@ -1,6 +1,8 @@
 import { useEffect, useState, type ReactNode } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 
+console.log('🔥 VendorAuthGate MOUNTED')
+
 function extractPortalKey(search: string): string | null {
   const params = new URLSearchParams(search)
 
