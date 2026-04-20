@@ -1,35 +1,31 @@
-import { useEffect, useState, type ReactNode } from 'react'
-import { useLocation, useNavigate } from 'react-router-dom'
+import { useLayoutEffect, type ReactNode } from 'react'
+import { useLocation, useNavigate, useSearchParams } from 'react-router-dom'
+import { VendorInvalidLinkPage } from '@/components/VendorInvalidLinkPage'
 
 export default function VendorAuthGate({ children }: { children: ReactNode }) {
-  const location = useLocation()
+  const [searchParams] = useSearchParams()
   const navigate = useNavigate()
+  const location = useLocation()
 
-  const [ready, setReady] = useState(false)
-
-  useEffect(() => {
-    const params = new URLSearchParams(location.search)
-    const queryToken = params.get('k')
-    const storedToken = localStorage.getItem('vendor_token')
-
-    // STEP 1: Save token if it exists in URL
-    if (queryToken) {
-      localStorage.setItem('vendor_token', queryToken)
+  const tokenFromUrl = searchParams.get('k')
+  if (tokenFromUrl) {
+    try {
+      localStorage.setItem('vendor_token', tokenFromUrl)
+    } catch {
+      /* ignore */
     }
+  }
 
-    const finalToken = queryToken || storedToken
+  const token = localStorage.getItem('vendor_token')
 
-    // STEP 2: Only redirect AFTER checking both sources
-    if (!finalToken) {
-      navigate('/vendor/login?redirect=/vendor', { replace: true })
-      return
-    }
+  useLayoutEffect(() => {
+    if (!tokenFromUrl) return
+    navigate({ pathname: location.pathname, hash: location.hash || '' }, { replace: true })
+  }, [tokenFromUrl, navigate, location.pathname, location.hash])
 
-    setReady(true)
-  }, [location.search, navigate])
-
-  // STEP 3: Prevent early render
-  if (!ready) return null
+  if (!token) {
+    return <VendorInvalidLinkPage />
+  }
 
   return <>{children}</>
 }
