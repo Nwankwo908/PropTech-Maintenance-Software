@@ -44,10 +44,10 @@ const VENDOR_LIST_DEDUPE_MS = 15_000
 
 async function executeVendorListFetch(
   url: string,
-  accessToken: string,
+  vendorToken: string,
 ): Promise<VendorListResponse> {
   const headers = new Headers()
-  headers.set("Authorization", `Bearer ${accessToken}`)
+  headers.set("Authorization", `Bearer ${vendorToken}`)
 
   const res = await fetch(url, {
     method: "GET",
@@ -78,11 +78,11 @@ async function executeVendorListFetch(
 
 export async function fetchVendorTickets(
   url: string,
-  accessToken: string,
+  vendorToken: string,
 ): Promise<VendorListResponse> {
-  if (!accessToken.trim()) throw new Error("Missing session")
+  if (!vendorToken.trim()) throw new Error("Missing vendor token")
 
-  const key = `${url}::${accessToken}`
+  const key = `${url}::${vendorToken}`
 
   const recent = vendorListRecentOk.get(key)
   if (recent && Date.now() - recent.at < VENDOR_LIST_DEDUPE_MS) {
@@ -92,7 +92,7 @@ export async function fetchVendorTickets(
   let p = vendorListInflight.get(key)
   if (p) return p
 
-  p = executeVendorListFetch(url, accessToken)
+  p = executeVendorListFetch(url, vendorToken)
     .then((data) => {
       vendorListRecentOk.set(key, { data, at: Date.now() })
       return data
@@ -112,16 +112,16 @@ export async function postVendorJobStatus(
   updateUrl: string,
   ticketId: string,
   action: "accept" | "decline" | "in_progress" | "completed",
-  accessToken: string,
+  vendorToken: string,
 ): Promise<{ vendor_work_status: string }> {
   if (!uuidRe.test(ticketId)) {
     throw new Error("Invalid ticket id")
   }
 
-  if (!accessToken.trim()) throw new Error("Missing session")
+  if (!vendorToken.trim()) throw new Error("Missing vendor token")
 
   const headers = new Headers()
-  headers.set("Authorization", `Bearer ${accessToken}`)
+  headers.set("Authorization", `Bearer ${vendorToken}`)
   headers.set("Content-Type", "application/json")
 
   const res = await fetch(updateUrl, {
@@ -153,7 +153,7 @@ export type UpdateJobStatusInput = {
   ticketId: string
   action: "accept" | "decline" | "in_progress" | "completed"
   updateUrl: string
-  accessToken: string
+  vendorToken: string
 }
 
 export async function updateJobStatus(
@@ -163,7 +163,7 @@ export async function updateJobStatus(
     input.updateUrl,
     input.ticketId,
     input.action,
-    input.accessToken,
+    input.vendorToken,
   )
   return { ok: true, vendor_work_status }
 }

@@ -6,6 +6,7 @@ import {
 } from "../submit-maintenance-request/resident_notify.ts"
 import { tryAutoReassignAfterDecline } from "../_shared/vendor_auto_reassign.ts"
 import { bearerLooksLikeJwt } from "../_shared/vendor_portal_bearer.ts"
+import { getVendorFromPortalApiKey } from "../_shared/vendor_portal_api_key.ts"
 
 const corsHeaders: Record<string, string> = {
   "Access-Control-Allow-Origin": "*",
@@ -225,11 +226,17 @@ serve(async (req) => {
       }
 
       vendorIdMatched = vendorRow.id
-    } else if (row.vendor_action_token === accessToken) {
-      vendorIdMatched = row.assigned_vendor_id
-      source = "email_link"
     } else {
-      return jsonResponse({ error: "Invalid Authorization token" }, 401)
+      const portalVendor = await getVendorFromPortalApiKey(supabase, accessToken)
+      if (portalVendor && portalVendor.id === row.assigned_vendor_id) {
+        vendorIdMatched = portalVendor.id
+        source = "portal"
+      } else if (row.vendor_action_token === accessToken) {
+        vendorIdMatched = row.assigned_vendor_id
+        source = "email_link"
+      } else {
+        return jsonResponse({ error: "Invalid Authorization token" }, 401)
+      }
     }
   } else if (token && row.vendor_action_token === token) {
     vendorIdMatched = row.assigned_vendor_id

@@ -68,14 +68,29 @@ function resolveVendorRespondBaseUrl(): string | null {
   return `${supabaseUrl}/functions/v1/vendor-respond`
 }
 
+function appendPortalTokenToUrl(url: string, portalApiKey: string | null): string {
+  if (!portalApiKey?.trim()) return url
+  try {
+    const u = new URL(url)
+    u.searchParams.set("k", portalApiKey.trim())
+    return u.toString()
+  } catch {
+    return url
+  }
+}
+
 async function buildVendorEmailLinks(
   ticketId: string,
   _vendorId: string,
+  portalApiKey: string | null,
 ): Promise<VendorEmailLinks | null> {
   const appBase = resolveAppBaseUrl()
   if (!appBase) return null
-  const portalHome = `${appBase}/vendor`
-  const viewJob = `${appBase}/vendor/ticket/${ticketId}`
+  const portalHome = appendPortalTokenToUrl(`${appBase}/vendor`, portalApiKey)
+  const viewJob = appendPortalTokenToUrl(
+    `${appBase}/vendor/ticket/${ticketId}`,
+    portalApiKey,
+  )
   const signingSecret = Deno.env.get("VENDOR_EMAIL_ACTION_SECRET")?.trim() ?? null
   const respondBase = resolveVendorRespondBaseUrl()
   let acceptUrl: string | null = null
@@ -282,10 +297,13 @@ async function insertLog(
 }
 
 /** Fallback deep link when `buildVendorEmailLinks` cannot resolve APP_URL. */
-function portalManageUrl(ticketId: string): string | null {
+function portalManageUrl(ticketId: string, portalApiKey: string | null): string | null {
   const appBase = resolveAppBaseUrl()
   if (!appBase) return null
-  return `${appBase}/vendor/ticket/${encodeURIComponent(ticketId)}`
+  return appendPortalTokenToUrl(
+    `${appBase}/vendor/ticket/${encodeURIComponent(ticketId)}`,
+    portalApiKey,
+  )
 }
 
 /**
@@ -303,8 +321,12 @@ async function notifyChannelsForAssignment(
   const wantEmail = ch === "email" || ch === "both"
   const wantSms = ch === "sms" || ch === "both"
 
-  const emailLinks = await buildVendorEmailLinks(ticketId, vendor.id)
-  const legacyManage = portalManageUrl(ticketId)
+  const emailLinks = await buildVendorEmailLinks(
+    ticketId,
+    vendor.id,
+    vendor.portal_api_key,
+  )
+  const legacyManage = portalManageUrl(ticketId, vendor.portal_api_key)
 
   if (wantEmail) {
     if (!vendor.email?.trim()) {

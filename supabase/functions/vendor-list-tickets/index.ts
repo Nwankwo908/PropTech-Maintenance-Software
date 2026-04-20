@@ -4,6 +4,7 @@ import {
   type SupabaseClient,
 } from "https://esm.sh/@supabase/supabase-js@2.49.1"
 import { bearerLooksLikeJwt } from "../_shared/vendor_portal_bearer.ts"
+import { getVendorFromPortalApiKey } from "../_shared/vendor_portal_api_key.ts"
 
 const corsHeaders: Record<string, string> = {
   "Access-Control-Allow-Origin": "*",
@@ -151,10 +152,11 @@ serve(async (req) => {
     }
     vendor = { id: jwtVendor.id, name: jwtVendor.name }
   } else {
-    return jsonResponse(
-      { error: "Invalid Authorization token — sign in with a vendor account" },
-      401,
-    )
+    const portalVendor = await getVendorFromPortalApiKey(supabase, accessToken)
+    if (!portalVendor) {
+      return jsonResponse({ error: "Invalid or unknown vendor portal token" }, 401)
+    }
+    vendor = portalVendor
   }
 
   if (!vendor) {
