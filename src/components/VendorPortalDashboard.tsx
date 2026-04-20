@@ -9,7 +9,7 @@ import {
   type ReactNode,
   type RefObject,
 } from 'react'
-import { useLocation, useNavigate } from 'react-router-dom'
+import { useNavigate } from 'react-router-dom'
 import {
   fetchVendorTickets,
   updateJobStatus,
@@ -17,10 +17,7 @@ import {
   vendorPortalUpdateUrl,
   type VendorApiTicket,
 } from '@/api/vendorPortalTickets'
-import {
-  VENDOR_SIGNED_IN_TOAST_FLAG,
-  VENDOR_TOKEN_STORAGE_KEY,
-} from '@/lib/vendorToken'
+import { VENDOR_TOKEN_STORAGE_KEY } from '@/lib/vendorToken'
 import {
   actionToStatus,
   columnToAction,
@@ -1101,7 +1098,6 @@ export function VendorPortalDashboard({
   deepLinkTicketId?: string | null
 } = {}) {
   const navigate = useNavigate()
-  const location = useLocation()
   const listUrl = vendorPortalListUrl()
   const updateUrl = vendorPortalUpdateUrl()
 
@@ -1121,35 +1117,12 @@ export function VendorPortalDashboard({
   const useLiveVendorApi = Boolean(listUrl && updateUrl)
 
   useLayoutEffect(() => {
-    const params = new URLSearchParams(location.search)
-    const fromUrl = params.get('k')?.trim() || params.get('token')?.trim()
-    if (fromUrl) {
-      try {
-        localStorage.setItem(VENDOR_TOKEN_STORAGE_KEY, fromUrl)
-      } catch {
-        /* ignore */
-      }
-      setVendorToken(fromUrl)
-      try {
-        sessionStorage.setItem(VENDOR_SIGNED_IN_TOAST_FLAG, '1')
-      } catch {
-        /* ignore */
-      }
-      navigate(`${location.pathname}${location.hash || ''}`, { replace: true })
-      return
-    }
     try {
-      const stored = localStorage.getItem(VENDOR_TOKEN_STORAGE_KEY)?.trim()
-      if (stored) setVendorToken(stored)
+      const stored = localStorage.getItem(VENDOR_TOKEN_STORAGE_KEY)?.trim() ?? null
+      setVendorToken(stored)
     } catch {
-      /* ignore */
+      setVendorToken(null)
     }
-  }, [location.pathname, location.search, location.hash, navigate])
-
-  useEffect(() => {
-    if (sessionStorage.getItem(VENDOR_SIGNED_IN_TOAST_FLAG) !== '1') return
-    sessionStorage.removeItem(VENDOR_SIGNED_IN_TOAST_FLAG)
-    setVendorToast("You're securely signed in")
   }, [])
 
   const loadTickets = useCallback(

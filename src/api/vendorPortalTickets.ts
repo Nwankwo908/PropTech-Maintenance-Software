@@ -1,3 +1,23 @@
+import {
+  readVendorAccessToken,
+  VENDOR_INVALID_ACCESS_CODE_FLAG,
+  VENDOR_TOKEN_STORAGE_KEY,
+} from "@/lib/vendorToken"
+
+function clearVendorTokenAndShowInvalidCode() {
+  try {
+    localStorage.removeItem(VENDOR_TOKEN_STORAGE_KEY)
+  } catch {
+    /* ignore */
+  }
+  try {
+    sessionStorage.setItem(VENDOR_INVALID_ACCESS_CODE_FLAG, "1")
+  } catch {
+    /* ignore */
+  }
+  window.location.assign("/vendor")
+}
+
 export type VendorApiTicket = {
   id: string
   created_at: string
@@ -46,13 +66,21 @@ async function executeVendorListFetch(
   url: string,
   vendorToken: string,
 ): Promise<VendorListResponse> {
+  const bearer = readVendorAccessToken() || vendorToken.trim()
+  if (!bearer) throw new Error("Missing vendor token")
+
   const headers = new Headers()
-  headers.set("Authorization", `Bearer ${vendorToken}`)
+  headers.set("Authorization", `Bearer ${bearer}`)
 
   const res = await fetch(url, {
     method: "GET",
     headers,
   })
+
+  if (res.status === 401) {
+    clearVendorTokenAndShowInvalidCode()
+    throw new Error("Invalid access code")
+  }
 
   let data: VendorListResponse | null = null
   try {
@@ -80,9 +108,10 @@ export async function fetchVendorTickets(
   url: string,
   vendorToken: string,
 ): Promise<VendorListResponse> {
-  if (!vendorToken.trim()) throw new Error("Missing vendor token")
+  const bearer = readVendorAccessToken() || vendorToken.trim()
+  if (!bearer) throw new Error("Missing vendor token")
 
-  const key = `${url}::${vendorToken}`
+  const key = `${url}::${bearer}`
 
   const recent = vendorListRecentOk.get(key)
   if (recent && Date.now() - recent.at < VENDOR_LIST_DEDUPE_MS) {
@@ -118,10 +147,11 @@ export async function postVendorJobStatus(
     throw new Error("Invalid ticket id")
   }
 
-  if (!vendorToken.trim()) throw new Error("Missing vendor token")
+  const bearer = readVendorAccessToken() || vendorToken.trim()
+  if (!bearer) throw new Error("Missing vendor token")
 
   const headers = new Headers()
-  headers.set("Authorization", `Bearer ${vendorToken}`)
+  headers.set("Authorization", `Bearer ${bearer}`)
   headers.set("Content-Type", "application/json")
 
   const res = await fetch(updateUrl, {
@@ -129,6 +159,12 @@ export async function postVendorJobStatus(
     headers,
     body: JSON.stringify({ ticketId, action }),
   })
+
+  if (res.status === 401) {
+    clearVendorTokenAndShowInvalidCode()
+    throw new Error("Invalid access code")
+  }
+
   const text = await res.text()
   let parsed: unknown
   try {

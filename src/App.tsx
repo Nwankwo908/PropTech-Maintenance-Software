@@ -4,7 +4,6 @@ import { supabase } from './lib/supabase'
 import { ResidentPortal } from './ResidentPortal'
 import { VendorPortal } from './VendorPortal'
 import VendorAuthGate from './components/VendorAuthGate'
-import { VendorInvalidLinkPage } from './components/VendorInvalidLinkPage'
 import { AdminAuthGate } from './components/AdminAuthGate'
 import { AdminLayout } from './components/AdminLayout'
 import { AdminLoginPage } from './components/AdminLoginPage'
@@ -19,9 +18,6 @@ export default function App() {
     <BrowserRouter>
       <Routes>
         <Route path="/" element={<ResidentPortal />} />
-
-        <Route path="/vendor/invalid-link" element={<VendorInvalidLinkPage />} />
-        <Route path="/vendor/login" element={<VendorInvalidLinkPage />} />
 
         <Route
           path="/vendor/*"
