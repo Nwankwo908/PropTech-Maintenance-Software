@@ -42,7 +42,7 @@ import { supabase } from '@/lib/supabase'
 import { SparkleIcon } from '@/components/SparkleIcon'
 import checkmarkIcon from '@/assets/Checkmark Icon.svg'
 import dashIcon from '@/assets/Dash icon.svg'
-import homeIcon from '@/assets/Home Icon.svg'
+import webMaintenanceIcon from '@/assets/web-maintenance.png'
 import radioButtonChecked from '@/assets/radio_button_checked.svg'
 import radioButtonUnchecked from '@/assets/radio_button_unchecked.svg'
 import uploadIcon from '@/assets/Upload_Icon.svg'
@@ -74,13 +74,13 @@ const URGENCY_OPTIONS: {
     value: 'low',
     title: 'Low Priority',
     description:
-      'Non-urgent issue that can be addressed during regular business hours',
+      'Non-urgent issues',
   },
   {
     value: 'normal',
     title: 'Normal Priority',
     description:
-      'Standard maintenance issue requiring attention within 48 hours',
+      'Standard maintenance issue',
   },
   {
     value: 'urgent',
@@ -93,9 +93,9 @@ function fieldClassName(invalid: boolean): string {
   const base =
     'w-full rounded-lg border px-3 text-[14px] tracking-[-0.1504px] text-[#0a0a0a] placeholder:text-[#717182] outline-none transition-[box-shadow,background-color,border-color] duration-150'
   if (invalid) {
-    return `${base} border-red-500 bg-[#fef2f2] ring-2 ring-red-500/30 hover:border-red-600 hover:bg-[#fee2e2]`
+    return `${base} border-[#b52a00] bg-[#fff4f0] ring-2 ring-[#b52a00]/30 hover:border-[#b52a00] hover:bg-[#ffe9e1]`
   }
-  return `${base} border-transparent bg-[#f3f3f5] ring-[#944c73] hover:border-[#d1d5dc] hover:bg-[#ececef] focus:border-transparent focus:ring-2`
+  return `${base} border-transparent bg-[#f3f3f5] ring-[#0030b5] hover:border-[#0030b5]/45 hover:bg-[#e2f4ed] focus:border-transparent focus:ring-2`
 }
 
 type IssueDescriptionClarifyBodyProps = {
@@ -135,27 +135,27 @@ function IssueDescriptionClarifyBody({
           aria-busy="true"
           aria-label="Analyzing issue description"
         >
-          <div className="h-2.5 w-full max-w-[18rem] animate-pulse rounded-full bg-[#e9d4ff]/70" />
-          <div className="h-2.5 w-full max-w-[14rem] animate-pulse rounded-full bg-[#e9d4ff]/55" />
-          <div className="h-2.5 w-full max-w-[10rem] animate-pulse rounded-full bg-[#e9d4ff]/40" />
+          <div className="h-2.5 w-full max-w-[18rem] animate-pulse rounded-full bg-[#b8e4d2]/70" />
+          <div className="h-2.5 w-full max-w-[14rem] animate-pulse rounded-full bg-[#b8e4d2]/55" />
+          <div className="h-2.5 w-full max-w-[10rem] animate-pulse rounded-full bg-[#b8e4d2]/40" />
           <p className="pt-0.5 text-[12px] leading-4 text-[#6a7282]">
             Extracting details and suggestions…
           </p>
         </div>
       )}
       {clarifyError && !clarifyLoading && (
-        <div className="rounded-lg border border-red-200 bg-red-50/90 px-3 py-2.5 text-[13px] font-medium leading-5 text-red-800">
+        <div className="rounded-lg border border-[#b52a00]/30 bg-[#fff4f0]/90 px-3 py-2.5 text-[13px] font-medium leading-5 text-[#b52a00]">
           {clarifyError}
         </div>
       )}
       {!clarifyLoading && !clarifyError && issueParsed && hasStructuredParse && (
         <div className="space-y-3">
-          <p className="text-[12px] font-medium uppercase tracking-wide text-[#6e11b0]/80">
+          <p className="text-[12px] font-medium uppercase tracking-wide text-[#2f7f63]/80">
             What we detected
           </p>
           <dl className="grid grid-cols-1 gap-2 sm:grid-cols-2">
             {issueParsed.issueType && (
-              <div className="rounded-lg border border-[#e9d4ff]/50 bg-white/80 px-3 py-2">
+              <div className="rounded-lg border border-[#b8e4d2]/55 bg-white/80 px-3 py-2">
                 <dt className="text-[11px] font-medium uppercase tracking-wide text-[#6a7282]">
                   Issue type
                 </dt>
@@ -165,7 +165,7 @@ function IssueDescriptionClarifyBody({
               </div>
             )}
             {issueParsed.room && (
-              <div className="rounded-lg border border-[#e9d4ff]/50 bg-white/80 px-3 py-2">
+              <div className="rounded-lg border border-[#b8e4d2]/55 bg-white/80 px-3 py-2">
                 <dt className="text-[11px] font-medium uppercase tracking-wide text-[#6a7282]">
                   Room
                 </dt>
@@ -175,7 +175,7 @@ function IssueDescriptionClarifyBody({
               </div>
             )}
             {issueParsed.appliance && (
-              <div className="rounded-lg border border-[#e9d4ff]/50 bg-white/80 px-3 py-2">
+              <div className="rounded-lg border border-[#b8e4d2]/55 bg-white/80 px-3 py-2">
                 <dt className="text-[11px] font-medium uppercase tracking-wide text-[#6a7282]">
                   Appliance
                 </dt>
@@ -185,7 +185,7 @@ function IssueDescriptionClarifyBody({
               </div>
             )}
             {issueParsed.urgency && (
-              <div className="rounded-lg border border-[#e9d4ff]/50 bg-white/80 px-3 py-2">
+              <div className="rounded-lg border border-[#b8e4d2]/55 bg-white/80 px-3 py-2">
                 <dt className="text-[11px] font-medium uppercase tracking-wide text-[#6a7282]">
                   Urgency
                 </dt>
@@ -196,7 +196,7 @@ function IssueDescriptionClarifyBody({
               </div>
             )}
             {issueParsed.severity && (
-              <div className="rounded-lg border border-[#e9d4ff]/50 bg-white/80 px-3 py-2">
+              <div className="rounded-lg border border-[#b8e4d2]/55 bg-white/80 px-3 py-2">
                 <dt className="text-[11px] font-medium uppercase tracking-wide text-[#6a7282]">
                   Severity
                 </dt>
@@ -207,8 +207,8 @@ function IssueDescriptionClarifyBody({
             )}
           </dl>
           {issueParsed.normalizedSummary && (
-            <div className="rounded-lg border border-dashed border-[#c4b5fd]/80 bg-[#faf5ff]/50 px-3 py-2.5">
-              <p className="text-[11px] font-medium uppercase tracking-wide text-[#6e11b0]/80">
+            <div className="rounded-lg border border-dashed border-[#94d8bf]/80 bg-[#f5fbf8]/70 px-3 py-2.5">
+              <p className="text-[11px] font-medium uppercase tracking-wide text-[#2f7f63]/80">
                 Clearer wording
               </p>
               <p className="mt-1 text-[13px] leading-5 text-[#364153]">
@@ -228,11 +228,11 @@ function IssueDescriptionClarifyBody({
               className={[
                 'flex items-center gap-2 rounded-lg border px-3 py-2.5 text-[13px] font-medium shadow-sm transition-colors',
                 applyUrgencySheetLayout
-                  ? '-mx-4 w-[calc(100%+2rem)] max-w-none justify-center text-center'
+                  ? 'w-full max-w-full justify-center text-center'
                   : 'w-full max-w-full max-lg:justify-center max-lg:text-center sm:w-auto lg:justify-start lg:text-left',
                 suggestedUrgencyApplied
                   ? 'cursor-default border-emerald-200/90 bg-emerald-50/90 text-emerald-900'
-                  : 'border-[#d8b4fe] bg-white text-[#59168b] hover:bg-[#faf5ff]',
+                  : 'border-[#b8e4d2] bg-white text-[#2d6f59] hover:bg-[#e2f4ed]',
                 'disabled:opacity-100',
               ].join(' ')}
               onClick={() => onApplySuggestedUrgency(issueParsed.urgency!)}
@@ -262,7 +262,7 @@ function IssueDescriptionClarifyBody({
               ) : (
                 <span className={applyUrgencySheetLayout ? 'text-center' : ''}>
                   Apply suggested urgency:{' '}
-                  <span className="text-[#9810fa]">
+                  <span className="text-[#2f7f63]">
                     {URGENCY_OPTIONS.find((o) => o.value === issueParsed.urgency)
                       ?.title ?? issueParsed.urgency}
                   </span>
@@ -280,7 +280,7 @@ function IssueDescriptionClarifyBody({
               className="flex items-center gap-2 rounded-lg border border-[#e5e7eb] bg-white/90 px-3 py-2 text-[13px] leading-5 text-[#364153] shadow-[0_1px_0_rgba(0,0,0,0.03)]"
             >
               <span
-                className="flex size-7 shrink-0 items-center justify-center rounded-full bg-[#f3e8ff]"
+                className="flex size-7 shrink-0 items-center justify-center rounded-full bg-[#e2f4ed]"
                 aria-hidden
               >
                 <img
@@ -679,10 +679,6 @@ export function MaintenanceRequestForm({
   const urgencyTitle =
     URGENCY_OPTIONS.find((o) => o.value === urgency)?.title ?? '—'
 
-  const sidebarSubmitJetBlack =
-    (phase === 'form' && canSubmit && !isSubmitting && !locked) ||
-    (phase === 'review' && reviewConfirmBusy)
-
   const mobileProgressPct =
     locked || phase === 'success'
       ? 100
@@ -712,7 +708,7 @@ export function MaintenanceRequestForm({
           aria-hidden
         >
           <div
-            className="h-full rounded-full bg-[#944c73] transition-[width] duration-300 ease-out"
+            className="h-full rounded-full bg-[#9da8ec] transition-[width] duration-300 ease-out"
             style={{ width: `${mobileProgressPct}%` }}
           />
         </div>
@@ -728,31 +724,13 @@ export function MaintenanceRequestForm({
       <div className="flex min-h-dvh w-full min-w-0 flex-col rounded-none border-0 bg-white shadow-none lg:flex-row">
         <div className="flex min-h-dvh min-w-0 flex-1 flex-col lg:flex-row">
           <div
-            className="hidden w-[8px] shrink-0 self-stretch bg-[#944c73] lg:block"
+            className="hidden w-[8px] shrink-0 self-stretch bg-[#0030b5] lg:block"
             aria-hidden
           />
 
           <div className="w-full min-w-0 flex-1">
             {phase === 'review' ? (
               <>
-                <div
-                  className="lg:hidden z-30 w-full shrink-0 bg-white px-6 py-3 sm:px-8 lg:px-10"
-                  role="region"
-                  aria-label="Request progress"
-                >
-                  {mobileProgressCore}
-                  {!reviewConfirmBusy ? (
-                    <p className="mt-3 text-center text-[12px] leading-4 text-[#6a7282]">
-                      Confirm your request below to submit.
-                    </p>
-                  ) : (
-                    <p className="mt-3 text-center text-[12px] font-medium leading-4 text-[#364153]">
-                      {isSubmitting
-                        ? 'Submitting…'
-                        : 'Check your email to verify and submit.'}
-                    </p>
-                  )}
-                </div>
                 <MaintenanceRequestReview
                   residentName={residentName}
                   email={email}
@@ -772,6 +750,14 @@ export function MaintenanceRequestForm({
                   onConfirm={() => void handleConfirmSubmit()}
                   isConfirming={reviewConfirmBusy}
                   confirmError={submitError}
+                  mobileProgressCore={mobileProgressCore}
+                  mobileProgressHint={
+                    !reviewConfirmBusy
+                      ? 'Confirm your request below to submit.'
+                      : isSubmitting
+                        ? 'Submitting…'
+                        : 'Check your email to verify and submit.'
+                  }
                 />
               </>
             ) : (
@@ -807,12 +793,12 @@ export function MaintenanceRequestForm({
 
                   {submitError && (
                     <div
-                      className="w-full max-w-full rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-[14px] leading-5 text-red-950 lg:max-w-[898px]"
+                      className="w-full max-w-full rounded-lg border border-[#b52a00]/30 bg-[#fff4f0] px-4 py-3 text-[14px] leading-5 text-[#b52a00] lg:max-w-[898px]"
                       role="alert"
                     >
                       <div className="flex items-start gap-2">
                         <span
-                          className="mt-0.5 inline-flex size-5 shrink-0 items-center justify-center rounded-full bg-red-100 text-red-700"
+                          className="mt-0.5 inline-flex size-5 shrink-0 items-center justify-center rounded-full bg-[#b52a00]/12 text-[#b52a00]"
                           aria-hidden
                         >
                           <svg
@@ -845,7 +831,7 @@ export function MaintenanceRequestForm({
                 className="m-0 flex flex-col gap-[18px] border-0 p-0 pt-4 sm:pt-6 disabled:opacity-60"
               >
                 <div
-                  className="lg:hidden w-full"
+                  className="lg:hidden w-full px-[36px]"
                   role="region"
                   aria-label="Request progress"
                 >
@@ -878,10 +864,10 @@ export function MaintenanceRequestForm({
                             key={opt.value}
                             className={`flex min-h-0 min-w-0 w-full cursor-pointer flex-col rounded-[10px] border border-solid p-4 transition-[border-color,box-shadow,background-color] duration-150 ${
                               selected
-                                ? 'border-[#944c73] ring-1 ring-[#944c73] hover:bg-[#fdf8fb] hover:ring-2 hover:ring-[#944c73]/25'
+                                ? 'border-[#0030b5] ring-1 ring-[#0030b5] hover:bg-[#e2f4ed] hover:ring-2 hover:ring-[#0030b5]/25'
                                 : showError('urgency')
-                                  ? 'border-red-400 ring-1 ring-red-400/40 hover:border-red-500 hover:bg-red-50/60'
-                                  : 'border-[#e5e7eb] hover:border-[#944c73]/45 hover:bg-[#fafafa] hover:shadow-sm'
+                                  ? 'border-[#b52a00]/65 ring-1 ring-[#b52a00]/40 hover:border-[#b52a00] hover:bg-[#fff4f0]/60'
+                                  : 'border-[#e5e7eb] hover:border-[#0030b5]/45 hover:bg-[#e2f4ed] hover:shadow-sm'
                             }`}
                           >
                             <div className="flex min-w-0 flex-col gap-3 min-[1281px]:flex-row min-[1281px]:items-start min-[1281px]:gap-3.5">
@@ -917,7 +903,7 @@ export function MaintenanceRequestForm({
                                 <span className="min-w-0 break-words font-medium leading-[14px] text-[#0a0a0a]">
                                   {opt.title}
                                 </span>
-                                <span className="min-w-0 break-words font-normal leading-5 text-[#6a7282]">
+                                <span className="min-w-0 break-words text-[12px] font-normal leading-4 text-[#6a7282]">
                                   {opt.description}
                                 </span>
                               </span>
@@ -929,7 +915,7 @@ export function MaintenanceRequestForm({
                     {showError('urgency') && (
                       <p
                         id="urgency-error"
-                        className="mt-2 text-[12px] font-medium leading-4 text-red-600"
+                        className="mt-2 text-[12px] font-medium leading-4 text-[#b52a00]"
                       >
                         {errors.urgency}
                       </p>
@@ -965,7 +951,7 @@ export function MaintenanceRequestForm({
                     {showError('residentName') && (
                       <p
                         id="resident-name-error"
-                        className="text-[12px] font-medium leading-4 text-red-600"
+                        className="text-[12px] font-medium leading-4 text-[#b52a00]"
                       >
                         {errors.residentName}
                       </p>
@@ -1001,7 +987,7 @@ export function MaintenanceRequestForm({
                     {showError('email') && (
                       <p
                         id="email-error"
-                        className="text-[12px] font-medium leading-4 text-red-600"
+                        className="text-[12px] font-medium leading-4 text-[#b52a00]"
                       >
                         {errors.email}
                       </p>
@@ -1032,14 +1018,11 @@ export function MaintenanceRequestForm({
                       }
                       className={`h-9 py-1 ${fieldClassName(showError('phone'))}`}
                     />
-                    <p className="px-3 text-left text-[12px] font-normal leading-4 text-[#6a7282]">
-                      Text messages when your ticket is submitted, assigned, in
-                      progress, or completed.
-                    </p>
+                
                     {showError('phone') && (
                       <p
                         id="resident-phone-error"
-                        className="text-[12px] font-medium leading-4 text-red-600"
+                        className="text-[12px] font-medium leading-4 text-[#b52a00]"
                       >
                         {errors.phone}
                       </p>
@@ -1075,7 +1058,17 @@ export function MaintenanceRequestForm({
                             onChange={() =>
                               setResidentNotificationChannel(value)
                             }
-                            className="size-4 accent-[#9810fa]"
+                            className="sr-only"
+                          />
+                          <img
+                            src={
+                              residentNotificationChannel === value
+                                ? radioButtonChecked
+                                : radioButtonUnchecked
+                            }
+                            alt=""
+                            className="size-5 shrink-0"
+                            aria-hidden
                           />
                           {label}
                         </label>
@@ -1108,7 +1101,7 @@ export function MaintenanceRequestForm({
                     {showError('unit') && (
                       <p
                         id="unit-error"
-                        className="text-[12px] font-medium leading-4 text-red-600"
+                        className="text-[12px] font-medium leading-4 text-[#b52a00]"
                       >
                         {errors.unit}
                       </p>
@@ -1174,24 +1167,24 @@ export function MaintenanceRequestForm({
                       {showDescriptionClarify && (
                         <>
                           <div
-                            className="hidden overflow-hidden rounded-xl border border-[#e9cbf7] bg-gradient-to-br from-[#faf5ff] via-white to-[#f3f4ff] text-left shadow-sm ring-1 ring-black/[0.03] lg:block"
+                            className="hidden overflow-hidden rounded-xl border border-[#b8e4d2] bg-gradient-to-br from-[#f5fbf8] via-white to-[#edf8f2] text-left shadow-sm ring-1 ring-black/[0.03] lg:block"
                             role="status"
                             aria-live="polite"
                           >
-                            <div className="flex items-start gap-2 border-b border-[#e9d4ff]/55 bg-white/55 px-3 py-2.5 sm:px-4 lg:items-center">
-                              <span className="flex size-8 shrink-0 items-center justify-center self-start rounded-lg bg-[#f3e8ff] text-[#9810fa] lg:self-auto">
+                            <div className="flex items-start gap-2 border-b border-[#b8e4d2]/65 bg-[#f6fcf9] px-3 py-2.5 sm:px-4 lg:items-center">
+                              <span className="flex size-8 shrink-0 items-center justify-center self-start rounded-lg bg-[#e2f4ed] text-[#2f7f63] lg:self-auto">
                                 <SparkleIcon className="size-4" />
                               </span>
                               <div className="min-w-0 flex-1">
-                                <p className="text-[13px] font-semibold leading-5 text-[#59168b]">
+                                <p className="text-[13px] font-semibold leading-5 text-[#2d6f59]">
                                   Helpful Details To Add
                                 </p>
-                                <p className="text-[11px] leading-4 text-[#7c3aed]/85">
+                                <p className="text-[11px] leading-4 text-[#3f7d67]/85">
                                   See followup questions to add to your request.
                                 </p>
                               </div>
                               {clarifyLoading && (
-                                <span className="shrink-0 text-[11px] font-medium uppercase tracking-wide text-[#9810fa]/90">
+                                <span className="shrink-0 text-[11px] font-medium uppercase tracking-wide text-[#2f7f63]/90">
                                   Analyzing…
                                 </span>
                               )}
@@ -1215,7 +1208,7 @@ export function MaintenanceRequestForm({
                           </div>
                           <button
                             type="button"
-                            className={`flex w-full overflow-hidden rounded-xl border border-[#e9cbf7] bg-gradient-to-br from-[#faf5ff] via-white to-[#f3f4ff] text-left shadow-sm ring-1 ring-black/[0.03] lg:hidden ${issueDescriptionClarifySheetOpen ? 'max-lg:hidden' : ''}`}
+                            className={`flex w-full overflow-hidden rounded-xl border border-[#b8e4d2] bg-gradient-to-br from-[#f5fbf8] via-white to-[#edf8f2] text-left shadow-sm ring-1 ring-black/[0.03] lg:hidden ${issueDescriptionClarifySheetOpen ? 'max-lg:hidden' : ''}`}
                             aria-expanded={issueDescriptionClarifySheetOpen}
                             aria-controls="issue-description-clarify-sheet-panel"
                             onClick={() =>
@@ -1223,19 +1216,19 @@ export function MaintenanceRequestForm({
                             }
                           >
                             <span className="flex w-full items-start gap-2 px-3 py-2.5 sm:px-4 sm:py-3">
-                              <span className="flex size-8 shrink-0 items-center justify-center self-start rounded-lg bg-[#f3e8ff] text-[#9810fa]">
+                              <span className="flex size-8 shrink-0 items-center justify-center self-start rounded-lg bg-[#e2f4ed] text-[#2f7f63]">
                                 <SparkleIcon className="size-4" />
                               </span>
                               <span className="min-w-0 flex-1">
-                                <span className="block text-[13px] font-semibold leading-5 text-[#59168b]">
+                                <span className="block text-[13px] font-semibold leading-5 text-[#2d6f59]">
                                   Helpful Details To Add
                                 </span>
-                                <span className="mt-0.5 block text-[11px] leading-4 text-[#7c3aed]/85">
+                                <span className="mt-0.5 block text-[11px] leading-4 text-[#3f7d67]/85">
                                   Tap to view analysis and follow-up questions.
                                 </span>
                               </span>
                               {clarifyLoading && (
-                                <span className="shrink-0 text-[11px] font-medium uppercase tracking-wide text-[#9810fa]/90">
+                                <span className="shrink-0 text-[11px] font-medium uppercase tracking-wide text-[#2f7f63]/90">
                                   Analyzing…
                                 </span>
                               )}
@@ -1269,16 +1262,16 @@ export function MaintenanceRequestForm({
                             role="dialog"
                             aria-modal="true"
                             aria-labelledby="issue-description-clarify-sheet-title"
-                            className={`absolute inset-0 flex h-[100dvh] max-h-[100dvh] flex-col border-[#e9cbf7] bg-gradient-to-br from-[#faf5ff] via-white to-[#f3f4ff] shadow-[0_-8px_30px_rgba(0,0,0,0.08)] transition-transform duration-300 ease-[cubic-bezier(0.32,0.72,0,1)] will-change-transform ${
+                            className={`absolute inset-0 flex h-[100dvh] max-h-[100dvh] flex-col border-[#b8e4d2] bg-gradient-to-br from-[#f5fbf8] via-white to-[#edf8f2] shadow-[0_-8px_30px_rgba(0,0,0,0.08)] transition-transform duration-300 ease-[cubic-bezier(0.32,0.72,0,1)] will-change-transform ${
                               issueClarifySheetEntered
                                 ? 'translate-y-0'
                                 : 'translate-y-full'
                             } pt-[env(safe-area-inset-top,0px)]`}
                           >
-                            <div className="flex shrink-0 items-center gap-2 border-b border-[#e9d4ff]/55 bg-white/70 px-3 py-3 sm:px-4">
+                            <div className="flex shrink-0 items-center gap-2 border-b border-[#b8e4d2]/65 bg-white/75 px-3 py-3 sm:px-4">
                               <button
                                 type="button"
-                                className="flex size-10 shrink-0 items-center justify-center rounded-lg text-[#59168b] transition-colors hover:bg-[#f3e8ff]"
+                                className="flex size-10 shrink-0 items-center justify-center rounded-lg text-[#2d6f59] transition-colors hover:bg-[#e2f4ed]"
                                 aria-label="Back"
                                 onClick={() =>
                                   setIssueDescriptionClarifySheetOpen(false)
@@ -1299,7 +1292,7 @@ export function MaintenanceRequestForm({
                               </button>
                               <h2
                                 id="issue-description-clarify-sheet-title"
-                                className="min-w-0 flex-1 text-left text-[15px] font-semibold leading-snug text-[#59168b]"
+                                className="min-w-0 flex-1 text-left text-[15px] font-semibold leading-snug text-[#2d6f59]"
                               >
                                 Helpful details to add
                               </h2>
@@ -1309,7 +1302,7 @@ export function MaintenanceRequestForm({
                               role="status"
                               aria-live="polite"
                             >
-                              <div className="mb-5 flex flex-col gap-[8px] border-b border-[#e9d4ff]/55 pb-5">
+                              <div className="mb-5 flex flex-col gap-[8px] border-b border-[#b8e4d2]/65 pb-5">
                                 <label
                                   htmlFor="description-sheet"
                                   className="text-left text-[14px] font-medium leading-5 tracking-[-0.1504px] text-[#0a0a0a]"
@@ -1345,7 +1338,7 @@ export function MaintenanceRequestForm({
                                 {showError('description') && (
                                   <p
                                     id="description-error-sheet"
-                                    className="text-[12px] font-medium leading-4 text-red-600"
+                                    className="text-[12px] font-medium leading-4 text-[#b52a00]"
                                     role="alert"
                                   >
                                     {errors.description}
@@ -1368,10 +1361,10 @@ export function MaintenanceRequestForm({
                                 }}
                               />
                             </div>
-                            <div className="shrink-0 border-t border-[#e9d4ff]/55 bg-white/90 px-4 pt-3 pb-[max(0.75rem,env(safe-area-inset-bottom,0px))] shadow-[0_-4px_24px_rgba(0,0,0,0.06)]">
+                            <div className="shrink-0 border-t border-[#b8e4d2]/65 bg-white/90 px-4 pt-3 pb-[max(0.75rem,env(safe-area-inset-bottom,0px))] shadow-[0_-4px_24px_rgba(0,0,0,0.06)]">
                               <button
                                 type="button"
-                                className="flex h-11 w-full items-center justify-center rounded-lg bg-[#9810fa] px-4 text-[15px] font-semibold text-white transition-colors hover:bg-[#8710e0] active:bg-[#7620c7]"
+                                className="flex h-11 w-full items-center justify-center rounded-lg bg-[#ffee6c] px-4 text-[15px] font-semibold text-[#101828] transition-colors hover:bg-[#f5e35e] active:bg-[#ead84f]"
                                 onClick={() =>
                                   setIssueDescriptionClarifySheetOpen(false)
                                 }
@@ -1386,7 +1379,7 @@ export function MaintenanceRequestForm({
                     {showError('description') && (
                       <p
                         id="description-error"
-                        className={`text-[12px] font-medium leading-4 text-red-600 ${
+                        className={`text-[12px] font-medium leading-4 text-[#b52a00] ${
                           issueDescriptionClarifySheetOpen
                             ? 'max-lg:hidden'
                             : ''
@@ -1434,8 +1427,8 @@ export function MaintenanceRequestForm({
                       onClick={() => fileInputRef.current?.click()}
                       className={`flex min-h-[136px] w-full cursor-pointer flex-col items-center justify-center gap-2 rounded-[10px] border-2 border-dashed px-6 pb-6 pt-6 transition-colors ${
                         showError('photo')
-                          ? 'border-red-400 bg-red-50/50 hover:border-red-500/70'
-                          : 'border-[#d1d5dc] bg-transparent hover:border-[#944c73]/50'
+                          ? 'border-[#b52a00]/65 bg-[#fff4f0]/50 hover:border-[#b52a00]/80'
+                          : 'border-[#d1d5dc] bg-transparent hover:border-[#0030b5]/50'
                       }`}
                     >
                       <span className="flex w-full max-w-full flex-col items-center justify-center gap-2 text-center">
@@ -1513,7 +1506,7 @@ export function MaintenanceRequestForm({
                               </span>
                               <button
                                 type="button"
-                                className="flex size-9 shrink-0 items-center justify-center rounded-full text-[#6a7282] transition-colors hover:bg-[#f3f3f5] hover:text-[#0a0a0a]"
+                                className="flex size-9 shrink-0 items-center justify-center rounded-full text-[#6a7282] transition-colors hover:bg-[#e2f4ed] hover:text-[#0a0a0a]"
                                 aria-label={`Remove ${file.name}`}
                                 onClick={() => {
                                   setMediaFiles((prev) =>
@@ -1543,7 +1536,7 @@ export function MaintenanceRequestForm({
                       </ul>
                     )}
                     {showError('photo') && (
-                      <p className="text-[12px] font-medium leading-4 text-red-600">
+                      <p className="text-[12px] font-medium leading-4 text-[#b52a00]">
                         {errors.photo}
                       </p>
                     )}
@@ -1580,11 +1573,11 @@ export function MaintenanceRequestForm({
           <aside className="hidden w-full shrink-0 bg-white px-6 pb-10 pt-6 lg:flex lg:w-[300px] lg:items-start lg:border-l lg:border-[#e5e7eb] lg:px-8 lg:pb-12 lg:pt-10">
             <div className="mt-[50px] h-fit w-full min-w-0 lg:sticky lg:top-[50px] lg:z-10 lg:self-start">
               <div className="flex flex-col items-center text-center">
-                <div className="flex size-12 items-center justify-center rounded-[10px] bg-[#101828]">
+                <div className="flex size-10 items-center justify-center rounded-[10px]">
                   <img
-                    src={homeIcon}
+                    src={webMaintenanceIcon}
                     alt=""
-                    className="size-12 object-contain"
+                    className="size-8 object-contain"
                   />
                 </div>
                 <h2 className="mt-4 text-[20px] font-semibold leading-7 tracking-[-0.4492px] text-[#0a0a0a]">
@@ -1636,16 +1629,14 @@ export function MaintenanceRequestForm({
                 disabled={
                   phase !== 'form' || !canSubmit || isSubmitting || locked
                 }
-                className={`mt-6 h-9 w-full rounded-lg text-[14px] font-medium leading-5 tracking-[-0.1504px] text-white transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
-                  sidebarSubmitJetBlack ? 'bg-black' : 'bg-[#101828]'
-                } ${
+                className={`mt-6 h-9 w-full rounded-lg bg-[#ffee6c] text-[14px] font-medium leading-5 tracking-[-0.1504px] text-[#101828] transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
                   phase === 'review' && reviewConfirmBusy ? '!opacity-100' : ''
                 } ${
                   phase === 'form' &&
                   canSubmit &&
                   !isSubmitting &&
                   !locked
-                    ? 'cursor-pointer hover:bg-neutral-900'
+                    ? 'cursor-pointer hover:bg-[#f5e35e]'
                     : ''
                 }`}
               >
@@ -1662,7 +1653,7 @@ export function MaintenanceRequestForm({
                 <button
                   type="button"
                   onClick={resetForm}
-                  className="mt-3 w-full rounded-lg border border-[#e5e7eb] bg-white py-2 text-[14px] font-medium leading-5 tracking-[-0.1504px] text-[#364153] transition-colors hover:bg-[#f9fafb]"
+                  className="mt-3 w-full rounded-lg border border-[#e5e7eb] bg-white py-2 text-[14px] font-medium leading-5 tracking-[-0.1504px] text-[#364153] transition-colors hover:bg-[#e2f4ed]"
                 >
                   New request
                 </button>
@@ -1679,11 +1670,9 @@ export function MaintenanceRequestForm({
                 type="submit"
                 form={formId}
                 disabled={!canSubmit || isSubmitting}
-                className={`h-9 w-full rounded-lg text-[14px] font-medium leading-5 tracking-[-0.1504px] text-white transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
-                  sidebarSubmitJetBlack ? 'bg-black' : 'bg-[#101828]'
-                } ${
+                className={`h-9 w-full rounded-lg bg-[#ffee6c] text-[14px] font-medium leading-5 tracking-[-0.1504px] text-[#101828] transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
                   canSubmit && !isSubmitting
-                    ? 'cursor-pointer hover:bg-neutral-900'
+                    ? 'cursor-pointer hover:bg-[#f5e35e]'
                     : ''
                 }`}
               >
@@ -1702,7 +1691,7 @@ export function MaintenanceRequestForm({
                 <button
                   type="button"
                   onClick={resetForm}
-                  className="mt-2 w-full rounded-lg border border-[#e5e7eb] bg-white py-2 text-[14px] font-medium leading-5 tracking-[-0.1504px] text-[#364153] transition-colors hover:bg-[#f9fafb]"
+                  className="mt-2 w-full rounded-lg border border-[#e5e7eb] bg-white py-2 text-[14px] font-medium leading-5 tracking-[-0.1504px] text-[#364153] transition-colors hover:bg-[#e2f4ed]"
                 >
                   New request
                 </button>

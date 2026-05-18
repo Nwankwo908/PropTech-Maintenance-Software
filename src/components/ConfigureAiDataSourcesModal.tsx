@@ -91,8 +91,8 @@ function SourceCheckbox({
       className={[
         'flex size-5 shrink-0 items-center justify-center rounded border-2',
         checked
-          ? 'border-[#ad46ff] bg-[#ad46ff]'
-          : 'border-[#d1d5dc] bg-white',
+          ? 'border-primary bg-primary'
+          : 'border-secondary bg-white',
         className,
       ].join(' ')}
       aria-hidden
@@ -120,10 +120,10 @@ function ToggleRow({
   labelId: string
 }) {
   return (
-    <div className="flex items-center justify-between gap-3 rounded-[10px] border border-[#e5e7eb] px-3 py-3">
+    <div className="flex items-center justify-between gap-3 rounded-[10px] border border-secondary px-3 py-3">
       <div className="min-w-0" id={labelId}>
-        <p className="text-[14px] font-medium leading-5 tracking-[-0.1504px] text-[#101828]">{label}</p>
-        <p className="text-[12px] leading-4 text-[#6a7282]">{hint}</p>
+        <p className="text-[14px] font-medium leading-5 tracking-[-0.1504px] text-extended-3">{label}</p>
+        <p className="text-[12px] leading-4 text-neutral">{hint}</p>
       </div>
       <button
         type="button"
@@ -132,8 +132,8 @@ function ToggleRow({
         aria-labelledby={labelId}
         onClick={onToggle}
         className={[
-          'relative h-6 w-11 shrink-0 rounded-full transition-colors outline-none focus-visible:ring-2 focus-visible:ring-[#9810fa] focus-visible:ring-offset-2',
-          on ? 'bg-[#9810fa]' : 'bg-[#d1d5dc]',
+          'relative h-6 w-11 shrink-0 rounded-full transition-colors outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2',
+          on ? 'bg-primary' : 'bg-secondary',
         ].join(' ')}
       >
         <span
@@ -216,19 +216,19 @@ export function ConfigureAiDataSourcesModal({ open, onClose }: { open: boolean; 
         aria-labelledby={titleId}
         className="relative flex max-h-[min(92dvh,900px)] w-full max-w-[1009px] flex-col overflow-hidden rounded-[10px] bg-white shadow-[0px_20px_25px_-5px_rgba(0,0,0,0.1),0px_8px_10px_-6px_rgba(0,0,0,0.1)]"
       >
-        <header className="flex shrink-0 items-center justify-between gap-4 border-b border-[#e5e7eb] px-6 py-5">
+        <header className="flex shrink-0 items-center justify-between gap-4 border-b border-secondary px-6 py-5">
           <div className="flex min-w-0 items-center gap-3">
-            <div className="flex size-10 shrink-0 items-center justify-center rounded-[10px] bg-[#f3e8ff] text-[#9810fa]">
+            <div className="flex size-10 shrink-0 items-center justify-center rounded-[10px] bg-secondary text-primary">
               <SparkleIcon className="size-5" />
             </div>
             <div className="min-w-0">
               <h2
                 id={titleId}
-                className="text-[18px] font-semibold leading-7 tracking-[-0.4395px] text-[#0a0a0a]"
+                className="text-[18px] font-semibold leading-7 tracking-[-0.4395px] text-extended-3"
               >
                 Configure AI Data Sources
               </h2>
-              <p className="text-[12px] leading-4 text-[#6a7282]">
+              <p className="text-[12px] leading-4 text-neutral">
                 Manage where the AI pulls insights and makes decisions
               </p>
             </div>
@@ -237,7 +237,7 @@ export function ConfigureAiDataSourcesModal({ open, onClose }: { open: boolean; 
             type="button"
             onClick={onClose}
             aria-label="Close"
-            className="shrink-0 rounded-lg p-1 text-[#6a7282] outline-none transition-colors hover:bg-black/5 hover:text-[#0a0a0a] focus-visible:ring-2 focus-visible:ring-[#9810fa] focus-visible:ring-offset-2"
+            className="shrink-0 rounded-lg p-1 text-neutral outline-none transition-colors hover:bg-black/5 hover:text-extended-3 focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2"
           >
             <svg className="size-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} aria-hidden>
               <path d="M18 6L6 18M6 6l12 12" strokeLinecap="round" />
@@ -247,17 +247,17 @@ export function ConfigureAiDataSourcesModal({ open, onClose }: { open: boolean; 
 
         <div className="min-h-0 flex-1 overflow-y-auto px-6 py-6">
           <div className="flex flex-col gap-6">
-            <div className="rounded-[10px] border-l-4 border-[#2b7fff] bg-[#eff6ff] py-4 pl-5 pr-4">
+            <div className="rounded-[10px] border-l-4 border-extended-1 bg-extended-2 py-4 pl-5 pr-4">
               <div className="flex gap-3">
-                <svg className="mt-0.5 size-5 shrink-0 text-[#1447e6]" viewBox="0 0 24 24" fill="none" aria-hidden>
+                <svg className="mt-0.5 size-5 shrink-0 text-extended-1" viewBox="0 0 24 24" fill="none" aria-hidden>
                   <circle cx="12" cy="12" r="9" stroke="currentColor" strokeWidth={1.8} />
                   <path d="M12 16v-4M12 8h.01" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" />
                 </svg>
                 <div>
-                  <p className="text-[14px] font-semibold leading-5 tracking-[-0.1504px] text-[#1c398e]">
+                  <p className="text-[14px] font-semibold leading-5 tracking-[-0.1504px] text-extended-3">
                     AI Learning System
                   </p>
-                  <p className="mt-1 text-[12px] leading-4 text-[#1447e6]">
+                  <p className="mt-1 text-[12px] leading-4 text-extended-1">
                     The AI analyzes selected data sources to improve vendor recommendations, urgency detection,
                     and routing efficiency. More sources = better accuracy.
                   </p>
@@ -267,14 +267,14 @@ export function ConfigureAiDataSourcesModal({ open, onClose }: { open: boolean; 
 
             <section className="flex flex-col gap-4">
                 <div className="flex flex-wrap items-center justify-between gap-3">
-                  <p className="text-[14px] font-medium leading-5 tracking-[-0.1504px] text-[#364153]">
+                  <p className="text-[14px] font-medium leading-5 tracking-[-0.1504px] text-neutral-variant">
                     Active Data Sources{' '}
-                    <span className="text-[#99a1af]">({selectedCount} selected)</span>
+                    <span className="text-neutral">({selectedCount} selected)</span>
                   </p>
                   <button
                     type="button"
                     onClick={selectAll}
-                    className="inline-flex h-8 shrink-0 items-center justify-center rounded-lg border border-black/10 bg-white px-[13px] text-[14px] font-medium tracking-[-0.1504px] text-[#0a0a0a] outline-none hover:bg-[#f9fafb] focus-visible:ring-2 focus-visible:ring-[#9810fa] focus-visible:ring-offset-2"
+                    className="inline-flex h-8 shrink-0 items-center justify-center rounded-lg border border-black/10 bg-white px-[13px] text-[14px] font-medium tracking-[-0.1504px] text-extended-3 outline-none hover:bg-secondary focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2"
                   >
                     Select All
                   </button>
@@ -290,8 +290,8 @@ export function ConfigureAiDataSourcesModal({ open, onClose }: { open: boolean; 
                       type="button"
                       onClick={() => toggleSource(id)}
                       className={[
-                        'flex gap-3 rounded-[10px] border-2 p-[18px] text-left outline-none transition-colors focus-visible:ring-2 focus-visible:ring-[#9810fa] focus-visible:ring-offset-2',
-                        isOn ? 'border-[#ad46ff] bg-[#faf5ff]' : 'border-[#e5e7eb] bg-white hover:bg-[#fafafa]',
+                        'flex gap-3 rounded-[10px] border-2 p-[18px] text-left outline-none transition-colors focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2',
+                        isOn ? 'border-primary bg-secondary' : 'border-secondary bg-white hover:bg-secondary',
                       ].join(' ')}
                     >
                       <SourceCheckbox checked={isOn} className="mt-0.5" />
@@ -300,17 +300,17 @@ export function ConfigureAiDataSourcesModal({ open, onClose }: { open: boolean; 
                           <span className="text-[18px] leading-7" aria-hidden>
                             {meta.emoji}
                           </span>
-                          <span className="text-[16px] font-semibold leading-6 tracking-[-0.3125px] text-[#101828]">
+                          <span className="text-[16px] font-semibold leading-6 tracking-[-0.3125px] text-extended-3">
                             {meta.title}
                           </span>
                           {meta.recommended ? (
-                            <span className="inline-flex rounded px-2 py-0.5 text-[12px] font-normal leading-4 bg-[#dcfce7] text-[#008236]">
+                            <span className="inline-flex rounded px-2 py-0.5 text-[12px] font-normal leading-4 bg-extended-2 text-extended-3">
                               Recommended
                             </span>
                           ) : null}
                         </div>
-                        <p className="text-[12px] leading-4 text-[#4a5565]">{meta.description}</p>
-                        <div className="flex flex-wrap gap-4 text-[12px] leading-4 text-[#6a7282]">
+                        <p className="text-[12px] leading-4 text-neutral-variant">{meta.description}</p>
+                        <div className="flex flex-wrap gap-4 text-[12px] leading-4 text-neutral">
                           <span>{meta.metaA}</span>
                           <span>{meta.metaB}</span>
                         </div>
@@ -322,25 +322,25 @@ export function ConfigureAiDataSourcesModal({ open, onClose }: { open: boolean; 
             </section>
 
             <section className="flex flex-col gap-3">
-              <h3 className="text-[14px] font-medium leading-5 tracking-[-0.1504px] text-[#364153]">
+              <h3 className="text-[14px] font-medium leading-5 tracking-[-0.1504px] text-neutral-variant">
                 Source Priority Weighting
               </h3>
-              <div className="rounded-[10px] border border-[#e5e7eb] bg-[#f9fafb] px-[17px] py-[17px]">
-                <p className="text-[12px] leading-4 text-[#4a5565]">
+              <div className="rounded-[10px] border border-secondary bg-secondary px-[17px] py-[17px]">
+                <p className="text-[12px] leading-4 text-neutral-variant">
                   Adjust how much the AI should prioritize each data source when making decisions.
                 </p>
                 <div className="mt-4 flex flex-col gap-3">
                   {PRIORITY_ROWS.map((row) => (
                     <div key={row.key} className="flex flex-col gap-2">
                       <div className="flex items-center justify-between gap-2">
-                        <span className="text-[14px] leading-5 tracking-[-0.1504px] text-[#364153]">{row.label}</span>
-                        <span className="text-[14px] font-medium leading-5 tracking-[-0.1504px] text-[#9810fa]">
+                        <span className="text-[14px] leading-5 tracking-[-0.1504px] text-neutral-variant">{row.label}</span>
+                        <span className="text-[14px] font-medium leading-5 tracking-[-0.1504px] text-primary">
                           {row.pct}%
                         </span>
                       </div>
-                      <div className="h-2 w-full overflow-hidden rounded-[10px] bg-[#e5e7eb]">
+                      <div className="h-2 w-full overflow-hidden rounded-[10px] bg-secondary">
                         <div
-                          className="h-full rounded-[10px] bg-[#9810fa]"
+                          className="h-full rounded-[10px] bg-primary"
                           style={{ width: `${row.pct}%` }}
                         />
                       </div>
@@ -351,7 +351,7 @@ export function ConfigureAiDataSourcesModal({ open, onClose }: { open: boolean; 
             </section>
 
             <section className="flex flex-col gap-3">
-              <h3 className="text-[14px] font-medium leading-5 tracking-[-0.1504px] text-[#364153]">
+              <h3 className="text-[14px] font-medium leading-5 tracking-[-0.1504px] text-neutral-variant">
                 Advanced Settings
               </h3>
               <div className="flex flex-col gap-3">
@@ -369,12 +369,12 @@ export function ConfigureAiDataSourcesModal({ open, onClose }: { open: boolean; 
                   on={anomalyDetection}
                   onToggle={() => setAnomalyDetection((v) => !v)}
                 />
-                <div className="flex flex-wrap items-center justify-between gap-3 rounded-[10px] border border-[#e5e7eb] px-[13px] py-3">
+                <div className="flex flex-wrap items-center justify-between gap-3 rounded-[10px] border border-secondary px-[13px] py-3">
                   <div className="min-w-0">
-                    <p className="text-[14px] font-medium leading-5 tracking-[-0.1504px] text-[#101828]">
+                    <p className="text-[14px] font-medium leading-5 tracking-[-0.1504px] text-extended-3">
                       Confidence Threshold
                     </p>
-                    <p className="text-[12px] leading-4 text-[#6a7282]">
+                    <p className="text-[12px] leading-4 text-neutral">
                       Minimum AI confidence for auto-routing (currently {confidence})
                     </p>
                   </div>
@@ -385,7 +385,7 @@ export function ConfigureAiDataSourcesModal({ open, onClose }: { open: boolean; 
                         setConfidence(e.target.value as (typeof CONFIDENCE_OPTIONS)[number])
                       }
                       aria-label="Confidence threshold"
-                      className="h-9 w-[96px] appearance-none rounded-lg border border-transparent bg-[#f3f3f5] py-1 pl-3 pr-8 text-[14px] font-medium tracking-[-0.1504px] text-[#0a0a0a] outline-none focus:border-[#9810fa]/45 focus:ring-2 focus:ring-[#9810fa]/30"
+                      className="h-9 w-[96px] appearance-none rounded-lg border border-transparent bg-secondary py-1 pl-3 pr-8 text-[14px] font-medium tracking-[-0.1504px] text-extended-3 outline-none focus:border-primary/45 focus:ring-2 focus:ring-primary/30"
                     >
                       {CONFIDENCE_OPTIONS.map((opt) => (
                         <option key={opt} value={opt}>
@@ -393,7 +393,7 @@ export function ConfigureAiDataSourcesModal({ open, onClose }: { open: boolean; 
                         </option>
                       ))}
                     </select>
-                    <span className="pointer-events-none absolute right-2 top-1/2 size-4 -translate-y-1/2 text-[#6a7282]">
+                    <span className="pointer-events-none absolute right-2 top-1/2 size-4 -translate-y-1/2 text-neutral">
                       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} aria-hidden>
                         <path d="M6 9l6 6 6-6" />
                       </svg>
@@ -403,9 +403,9 @@ export function ConfigureAiDataSourcesModal({ open, onClose }: { open: boolean; 
               </div>
             </section>
 
-            <div className="rounded-[10px] border-l-4 border-[#00c950] bg-[#f0fdf4] py-4 pl-5 pr-4">
+            <div className="rounded-[10px] border-l-4 border-tertiary bg-extended-2 py-4 pl-5 pr-4">
               <div className="flex gap-3">
-                <svg className="mt-0.5 size-5 shrink-0 text-[#00a63e]" viewBox="0 0 24 24" fill="none" aria-hidden>
+                <svg className="mt-0.5 size-5 shrink-0 text-tertiary" viewBox="0 0 24 24" fill="none" aria-hidden>
                   <path
                     d="M4 19h16M7 15l3-4 4 5 5-9"
                     stroke="currentColor"
@@ -415,10 +415,10 @@ export function ConfigureAiDataSourcesModal({ open, onClose }: { open: boolean; 
                   />
                 </svg>
                 <div>
-                  <p className="text-[14px] font-semibold leading-5 tracking-[-0.1504px] text-[#0d542b]">
+                  <p className="text-[14px] font-semibold leading-5 tracking-[-0.1504px] text-extended-3">
                     Estimated Impact
                   </p>
-                  <ul className="mt-2 flex flex-col gap-1 text-[12px] leading-4 text-[#008236]">
+                  <ul className="mt-2 flex flex-col gap-1 text-[12px] leading-4 text-extended-3">
                     <li>✓ AI recommendation accuracy: 94% → 96%</li>
                     <li>✓ Average response time: 4.2hrs → 3.8hrs</li>
                     <li>✓ Vendor match quality: 89% → 92%</li>
@@ -430,18 +430,18 @@ export function ConfigureAiDataSourcesModal({ open, onClose }: { open: boolean; 
           </div>
         </div>
 
-        <footer className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-t border-[#e5e7eb] bg-[#f9fafb] px-6 py-4">
+        <footer className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-t border-secondary bg-secondary px-6 py-4">
           <button
             type="button"
             onClick={onClose}
-            className="inline-flex h-9 items-center justify-center rounded-lg border border-black/10 bg-white px-[17px] text-[14px] font-medium tracking-[-0.1504px] text-[#0a0a0a] outline-none hover:bg-[#f3f4f6] focus-visible:ring-2 focus-visible:ring-[#9810fa] focus-visible:ring-offset-2"
+            className="inline-flex h-9 items-center justify-center rounded-lg border border-black/10 bg-white px-[17px] text-[14px] font-medium tracking-[-0.1504px] text-extended-3 outline-none hover:bg-secondary focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2"
           >
             Cancel
           </button>
           <button
             type="button"
             onClick={onClose}
-            className="inline-flex h-9 items-center justify-center gap-2 rounded-lg bg-[#9810fa] px-4 text-[14px] font-medium tracking-[-0.1504px] text-white outline-none hover:bg-[#8610de] focus-visible:ring-2 focus-visible:ring-[#9810fa] focus-visible:ring-offset-2"
+            className="inline-flex h-9 items-center justify-center gap-2 rounded-lg bg-primary px-4 text-[14px] font-medium tracking-[-0.1504px] text-white outline-none hover:bg-primary focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2"
           >
             <svg className="size-4 text-white" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.2} aria-hidden>
               <path d="M20 6L9 17l-5-5" strokeLinecap="round" strokeLinejoin="round" />

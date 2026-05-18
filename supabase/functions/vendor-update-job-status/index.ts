@@ -3,6 +3,7 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1"
 import {
   notifyResidentCompleted,
   notifyResidentInProgress,
+  notifyResidentVendorAccepted,
 } from "../submit-maintenance-request/resident_notify.ts"
 import { tryAutoReassignAfterDecline } from "../_shared/vendor_auto_reassign.ts"
 import { bearerLooksLikeJwt } from "../_shared/vendor_portal_bearer.ts"
@@ -289,9 +290,15 @@ serve(async (req) => {
     }
   }
 
-  if (step.next === "in_progress" || step.next === "completed") {
+  if (
+    step.next === "accepted" ||
+    step.next === "in_progress" ||
+    step.next === "completed"
+  ) {
     const event =
-      step.next === "in_progress"
+      step.next === "accepted"
+        ? ("vendor_accepted" as const)
+        : step.next === "in_progress"
         ? ("repair_in_progress" as const)
         : ("repair_completed" as const)
 
@@ -332,7 +339,9 @@ serve(async (req) => {
           priority: typeof trow.priority === "string" ? trow.priority : undefined,
           vendorName,
         }
-        if (event === "repair_in_progress") {
+        if (event === "vendor_accepted") {
+          await notifyResidentVendorAccepted(supabase, base)
+        } else if (event === "repair_in_progress") {
           await notifyResidentInProgress(supabase, base)
         } else {
           await notifyResidentCompleted(supabase, base)

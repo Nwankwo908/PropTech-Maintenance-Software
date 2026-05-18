@@ -91,6 +91,23 @@ type ResidentUserRowDb = {
   lease_end_date: string | null
 }
 
+type BroadcastBalanceLogRow = {
+  created_at: string | null
+  recipient_user_id: string | null
+  broadcast_notifications:
+    | {
+        subject?: unknown
+        message?: unknown
+        payload?: unknown
+      }
+    | {
+        subject?: unknown
+        message?: unknown
+        payload?: unknown
+      }[]
+    | null
+}
+
 const DEMO_ROWS: UserManagementRow[] = [
   {
     id: '1',
@@ -335,7 +352,7 @@ function statusPill(status: ResidentStatus) {
       )
     case 'suspended':
       return (
-        <span className="inline-flex rounded px-2 py-1 text-[12px] font-medium leading-4 bg-[#ffe2e2] text-[#c10007]">
+        <span className="inline-flex rounded px-2 py-1 text-[12px] font-medium leading-4 bg-[#fff4f0] text-[#b52a00]">
           Suspended
         </span>
       )
@@ -358,7 +375,7 @@ function issuePill(tag: IssueTag) {
   return (
     <span
       key={tag}
-      className="inline-flex rounded px-1.5 py-0.5 text-[12px] font-normal leading-4 bg-[#ffe2e2] text-[#c10007]"
+      className="inline-flex rounded px-1.5 py-0.5 text-[12px] font-normal leading-4 bg-[#fff4f0] text-[#b52a00]"
     >
       Duplicate
     </span>
@@ -407,7 +424,7 @@ function rowMatchesFilters(
   return true
 }
 
-function IconUser({ className = 'size-5 shrink-0 text-[#155dfc]' }: { className?: string }) {
+function IconUser({ className = 'size-5 shrink-0 text-[#6a7282]' }: { className?: string }) {
   return (
     <svg className={['block', className].join(' ')} viewBox="0 0 24 24" fill="none" aria-hidden>
       <path
@@ -420,7 +437,7 @@ function IconUser({ className = 'size-5 shrink-0 text-[#155dfc]' }: { className?
   )
 }
 
-function IconBuilding({ className = 'size-5 shrink-0 text-[#00a63e]' }: { className?: string }) {
+function IconBuilding({ className = 'size-5 shrink-0 text-[#6a7282]' }: { className?: string }) {
   return (
     <svg className={['block', className].join(' ')} viewBox="0 0 24 24" fill="none" aria-hidden>
       <path
@@ -765,11 +782,93 @@ function mapResidentDbRow(row: ResidentUserRowDb): UserManagementRow {
   }
 }
 
+function coerceBroadcastParent(
+  value: BroadcastBalanceLogRow['broadcast_notifications'],
+): { subject: string; message: string; payload: unknown } | null {
+  const first = Array.isArray(value) ? value[0] : value
+  if (!first || typeof first !== 'object') return null
+  const subject = typeof first.subject === 'string' ? first.subject : ''
+  const message = typeof first.message === 'string' ? first.message : ''
+  const payload = 'payload' in first ? first.payload : null
+  return { subject, message, payload }
+}
+
+function isBillingOrRentBroadcast(subject: string, message: string, payload: unknown): boolean {
+  if (payload && typeof payload === 'object') {
+    const p = payload as Record<string, unknown>
+    const automationRaw = p.automation
+    if (automationRaw && typeof automationRaw === 'object') {
+      const category = String((automationRaw as Record<string, unknown>).category ?? '')
+        .trim()
+        .toLowerCase()
+      if (category === 'billing' || category === 'rent_reminder' || category === 'utility_alert') {
+        return true
+      }
+    }
+  }
+  const lowerSubject = subject.toLowerCase()
+  const lowerMessage = message.toLowerCase()
+  const textSignals = /(rent|billing|utility|invoice|late fee|autopay|payment|balance due)/i
+  if (textSignals.test(lowerSubject) || textSignals.test(lowerMessage)) return true
+  if (!payload || typeof payload !== 'object') return false
+  const payloadStr = JSON.stringify(payload).toLowerCase()
+  return /(rent|billing|utility|invoice|late_fee|autopay|payment|override)/i.test(payloadStr)
+}
+
+function parseBalanceAmount(subject: string, message: string, payload: unknown): number | null {
+  if (payload && typeof payload === 'object') {
+    const p = payload as Record<string, unknown>
+    const canonical = p.amount_due
+    if (typeof canonical === 'number' && Number.isFinite(canonical)) return canonical
+    if (typeof canonical === 'string') {
+      const parsed = Number.parseFloat(canonical.replace(/[^0-9.]/g, ''))
+      if (Number.isFinite(parsed)) return parsed
+    }
+  }
+
+  const candidateText = [subject, message].join(' ')
+  const amountMatches = candidateText.match(/\$\s?(\d{1,3}(?:,\d{3})*(?:\.\d{1,2})?|\d+(?:\.\d{1,2})?)/g)
+  if (amountMatches && amountMatches.length > 0) {
+    const last = amountMatches[amountMatches.length - 1] ?? ''
+    const normalized = last.replace(/[^0-9.]/g, '')
+    const amount = Number.parseFloat(normalized)
+    if (Number.isFinite(amount)) return amount
+  }
+  if (!payload || typeof payload !== 'object') return null
+  const possibleKeys = ['balance_due', 'balanceDue', 'amountDue', 'due_amount', 'dueAmount']
+  for (const key of possibleKeys) {
+    const raw = (payload as Record<string, unknown>)[key]
+    if (typeof raw === 'number' && Number.isFinite(raw)) return raw
+    if (typeof raw === 'string') {
+      const amount = Number.parseFloat(raw.replace(/[^0-9.]/g, ''))
+      if (Number.isFinite(amount)) return amount
+    }
+  }
+  return null
+}
+
+function deriveBalanceByUserId(logRows: BroadcastBalanceLogRow[]): Map<string, { at: number; amount: number }> {
+  const out = new Map<string, { at: number; amount: number }>()
+  for (const row of logRows) {
+    const userId = (row.recipient_user_id ?? '').trim()
+    if (!userId) continue
+    const parent = coerceBroadcastParent(row.broadcast_notifications)
+    if (!parent) continue
+    if (!isBillingOrRentBroadcast(parent.subject, parent.message, parent.payload)) continue
+    const amount = parseBalanceAmount(parent.subject, parent.message, parent.payload)
+    if (amount == null || !Number.isFinite(amount)) continue
+    const at = row.created_at ? Date.parse(row.created_at) : 0
+    const prev = out.get(userId)
+    if (!prev || at >= prev.at) out.set(userId, { at, amount })
+  }
+  return out
+}
+
 const vendorFormInputClass =
-  'h-9 w-full rounded-lg border border-transparent bg-[#f3f3f5] px-3 text-[14px] tracking-[-0.1504px] text-[#0a0a0a] outline-none placeholder:text-[#717182] focus:border-[#944c73]/45 focus:bg-white focus:ring-2 focus:ring-[#944c73]/30'
+  'h-9 w-full rounded-lg border border-transparent bg-[#f3f3f5] px-3 text-[14px] tracking-[-0.1504px] text-[#0a0a0a] outline-none placeholder:text-[#717182] focus:border-[#0030b5]/45 focus:bg-white focus:ring-2 focus:ring-[#0030b5]/30'
 
 const vendorFormSelectClass =
-  'h-9 w-full cursor-pointer appearance-none rounded-lg border border-transparent bg-[#f3f3f5] py-1 pl-3 pr-9 text-[14px] font-medium tracking-[-0.1504px] text-[#0a0a0a] outline-none focus-visible:border-[#944c73]/45 focus-visible:bg-white focus-visible:ring-2 focus-visible:ring-[#944c73]/30'
+  'h-9 w-full cursor-pointer appearance-none rounded-lg border border-transparent bg-[#f3f3f5] py-1 pl-3 pr-9 text-[14px] font-medium tracking-[-0.1504px] text-[#0a0a0a] outline-none focus-visible:border-[#0030b5]/45 focus-visible:bg-white focus-visible:ring-2 focus-visible:ring-[#0030b5]/30'
 
 function VendorFormModal({
   open,
@@ -950,7 +1049,7 @@ function VendorFormModal({
             type="button"
             onClick={onClose}
             aria-label="Close"
-            className="shrink-0 rounded-lg p-1 text-[#6a7282] outline-none hover:bg-black/5 hover:text-[#0a0a0a] focus-visible:ring-2 focus-visible:ring-[#944c73] focus-visible:ring-offset-2"
+            className="shrink-0 rounded-lg p-1 text-[#6a7282] outline-none hover:bg-[#e2f4ed] hover:text-[#0a0a0a] focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2"
           >
             <svg className="size-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} aria-hidden>
               <path d="M18 6L6 18M6 6l12 12" strokeLinecap="round" />
@@ -961,13 +1060,13 @@ function VendorFormModal({
         <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-6 pt-6">
           <div className="flex flex-col gap-4 pb-6">
             {saveError ? (
-              <p className="rounded-lg border border-[#ffc9c9] bg-[#fef2f2] px-3 py-2 text-[13px] text-[#b91c1c]">
+              <p className="rounded-lg border border-[#b52a00]/30 bg-[#fff4f0] px-3 py-2 text-[13px] text-[#b52a00]">
                 {saveError}
               </p>
             ) : null}
             <div className="space-y-2">
               <label htmlFor="vendor-form-name" className="block text-[14px] font-medium tracking-[-0.1504px] text-[#364153]">
-                Company Name <span className="text-[#c10007]">*</span>
+                Company Name <span className="text-[#b52a00]">*</span>
               </label>
               <input
                 id="vendor-form-name"
@@ -981,7 +1080,7 @@ function VendorFormModal({
             </div>
             <div className="space-y-2">
               <label htmlFor="vendor-form-contact-name" className="block text-[14px] font-medium tracking-[-0.1504px] text-[#364153]">
-                Contact Name <span className="text-[#c10007]">*</span>
+                Contact Name <span className="text-[#b52a00]">*</span>
               </label>
               <input
                 id="vendor-form-contact-name"
@@ -995,7 +1094,7 @@ function VendorFormModal({
             <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
               <div className="space-y-2">
                 <label htmlFor="vendor-form-email" className="block text-[14px] font-medium tracking-[-0.1504px] text-[#364153]">
-                  Email Address <span className="text-[#c10007]">*</span>
+                  Email Address <span className="text-[#b52a00]">*</span>
                 </label>
                 <input
                   id="vendor-form-email"
@@ -1008,7 +1107,7 @@ function VendorFormModal({
               </div>
               <div className="space-y-2">
                 <label htmlFor="vendor-form-phone" className="block text-[14px] font-medium tracking-[-0.1504px] text-[#364153]">
-                  Phone Number <span className="text-[#c10007]">*</span>
+                  Phone Number <span className="text-[#b52a00]">*</span>
                 </label>
                 <input
                   id="vendor-form-phone"
@@ -1022,7 +1121,7 @@ function VendorFormModal({
             </div>
             <div className="space-y-2">
               <label htmlFor="vendor-form-category" className="block text-[14px] font-medium tracking-[-0.1504px] text-[#364153]">
-                Specialty <span className="text-[#c10007]">*</span>
+                Specialty <span className="text-[#b52a00]">*</span>
               </label>
               <div className="relative">
                 <select
@@ -1050,16 +1149,16 @@ function VendorFormModal({
             </div>
             <div className="space-y-3">
               <p className="text-[14px] font-medium leading-5 tracking-[-0.1504px] text-[#364153]">
-                Delivery Channel <span className="text-[#c10007]">*</span>
+                Delivery Channel <span className="text-[#b52a00]">*</span>
               </p>
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                   <button
                     type="button"
                     onClick={toggleEmailChannel}
                     className={[
-                      'rounded-[10px] border-2 px-[18px] pb-[10px] pt-[12px] text-left outline-none transition-colors focus-visible:ring-2 focus-visible:ring-[#944c73] focus-visible:ring-offset-2',
+                      'rounded-[10px] border-2 px-[18px] pb-[10px] pt-[12px] text-left outline-none transition-colors focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2',
                       emailSelected
-                        ? 'border-[#2b7fff] bg-[#eff6ff]'
+                        ? 'border-[#0030b5] bg-[#eff6ff]'
                         : 'border-[#e5e7eb] bg-white hover:bg-[#f9fafb]',
                     ].join(' ')}
                     aria-pressed={emailSelected}
@@ -1090,9 +1189,9 @@ function VendorFormModal({
                     type="button"
                     onClick={toggleSmsChannel}
                     className={[
-                      'rounded-[10px] border-2 px-[18px] pb-[10px] pt-[12px] text-left outline-none transition-colors focus-visible:ring-2 focus-visible:ring-[#944c73] focus-visible:ring-offset-2',
+                      'rounded-[10px] border-2 px-[18px] pb-[10px] pt-[12px] text-left outline-none transition-colors focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2',
                       smsSelected
-                        ? 'border-[#2b7fff] bg-[#eff6ff]'
+                        ? 'border-[#0030b5] bg-[#eff6ff]'
                         : 'border-[#e5e7eb] bg-white hover:bg-[#f9fafb]',
                     ].join(' ')}
                     aria-pressed={smsSelected}
@@ -1130,7 +1229,7 @@ function VendorFormModal({
                   type="button"
                   onClick={() => setActive(true)}
                   className={[
-                    'h-8 flex-1 rounded-[8px] px-4 text-[14px] font-medium outline-none transition-colors focus-visible:ring-2 focus-visible:ring-[#944c73] focus-visible:ring-offset-1',
+                    'h-8 flex-1 rounded-[8px] px-4 text-[14px] font-medium outline-none transition-colors focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-1',
                     active ? 'bg-white text-[#0a0a0a] shadow-sm' : 'text-[#6a7282] hover:text-[#0a0a0a]',
                   ].join(' ')}
                   aria-pressed={active}
@@ -1141,7 +1240,7 @@ function VendorFormModal({
                   type="button"
                   onClick={() => setActive(false)}
                   className={[
-                    'h-8 flex-1 rounded-[8px] px-4 text-[14px] font-medium outline-none transition-colors focus-visible:ring-2 focus-visible:ring-[#944c73] focus-visible:ring-offset-1',
+                    'h-8 flex-1 rounded-[8px] px-4 text-[14px] font-medium outline-none transition-colors focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-1',
                     !active ? 'bg-white text-[#0a0a0a] shadow-sm' : 'text-[#6a7282] hover:text-[#0a0a0a]',
                   ].join(' ')}
                   aria-pressed={!active}
@@ -1158,12 +1257,10 @@ function VendorFormModal({
             type="button"
             disabled={saving || !name.trim()}
             onClick={() => void submit()}
-            className="inline-flex h-9 flex-1 items-center justify-center gap-2 rounded-lg bg-[#155dfc] px-4 text-[14px] font-medium text-white outline-none transition-colors hover:bg-[#1447e6] focus-visible:ring-2 focus-visible:ring-[#944c73] focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50"
+            className="inline-flex h-9 flex-1 items-center justify-center gap-2 rounded-lg bg-[#b58500] px-4 text-[14px] font-medium text-white outline-none transition-colors focus-visible:ring-2 focus-visible:ring-[#b58500] focus-visible:ring-offset-2 focus-visible:ring-offset-[#f9fafb] enabled:hover:bg-[#9a7310] disabled:cursor-not-allowed disabled:opacity-50"
           >
-       
             {saving ? 'Saving…' : mode === 'add' ? 'Add Vendor' : 'Save Changes'}
           </button>
-       
         </footer>
       </div>
     </div>
@@ -1377,7 +1474,7 @@ function VendorManagementTabContent({
             <button
               type="button"
               onClick={() => setSelectedVendorIds(new Set())}
-              className="inline-flex h-9 items-center justify-center rounded-lg border border-black/10 bg-white px-3 text-[14px] font-medium text-[#0a0a0a] outline-none hover:bg-[#f3f4f6] focus-visible:ring-2 focus-visible:ring-[#944c73] focus-visible:ring-offset-2"
+              className="inline-flex h-9 items-center justify-center rounded-lg border border-black/10 bg-white px-3 text-[14px] font-medium text-[#0a0a0a] outline-none hover:bg-[#f3f4f6] focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2"
             >
               Clear selection
             </button>
@@ -1385,7 +1482,7 @@ function VendorManagementTabContent({
               type="button"
               disabled={deleteVendorsSaving}
               onClick={() => void deleteSelectedVendors()}
-              className="inline-flex h-9 items-center justify-center rounded-lg border border-[#fecaca] bg-[#fef2f2] px-3 text-[14px] font-medium text-[#c10007] outline-none hover:bg-[#fee2e2] focus-visible:ring-2 focus-visible:ring-[#944c73] focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50"
+              className="inline-flex h-9 items-center justify-center rounded-lg border border-[#b52a00]/30 bg-[#fff4f0] px-3 text-[14px] font-medium text-[#b52a00] outline-none hover:bg-[#ffe9e1] focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50"
             >
               {deleteVendorsSaving ? 'Deleting…' : 'Delete selected'}
             </button>
@@ -1393,7 +1490,7 @@ function VendorManagementTabContent({
         </div>
       ) : null}
       {deleteVendorsError ? (
-        <p className="mb-3 rounded-[10px] border border-[#fecaca] bg-[#fef2f2] px-4 py-3 text-[14px] leading-5 text-[#b91c1c]">
+        <p className="mb-3 rounded-[10px] border border-[#b52a00]/30 bg-[#fff4f0] px-4 py-3 text-[14px] leading-5 text-[#b52a00]">
           Could not delete selected vendors: {deleteVendorsError}
         </p>
       ) : null}
@@ -1402,7 +1499,7 @@ function VendorManagementTabContent({
         {loading ? (
           <p className="px-4 py-10 text-center text-[14px] text-[#6a7282]">Loading vendors…</p>
         ) : loadError ? (
-          <p className="px-4 py-10 text-center text-[14px] text-[#b91c1c]">{loadError}</p>
+          <p className="px-4 py-10 text-center text-[14px] text-[#b52a00]">{loadError}</p>
         ) : (
           <div className="overflow-x-auto">
             <table className="min-w-[980px] w-full border-collapse text-left">
@@ -1504,7 +1601,7 @@ function VendorManagementTabContent({
                           aria-label={`Edit ${row.name}`}
                           onClick={() => setVendorModal({ mode: 'edit', vendor: row })}
                           disabled={!supabase}
-                          className="flex size-7 items-center justify-center rounded outline-none hover:bg-[#f3f4f6] focus-visible:ring-2 focus-visible:ring-[#944c73] focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50"
+                          className="flex size-7 items-center justify-center rounded outline-none hover:bg-[#f3f4f6] focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50"
                         >
                           <IconPencil />
                         </button>
@@ -1683,12 +1780,74 @@ export function AdminUserManagementDashboard() {
       setResidents([])
       return
     }
+    let derivedByUser = new Map<string, { at: number; amount: number }>()
+    const { data: balanceLogData, error: balanceLogError } = await supabase
+      .from('broadcast_notification_log')
+      .select(
+        `
+        created_at,
+        recipient_user_id,
+        broadcast_notifications (
+          subject,
+          message,
+          payload
+        )
+      `,
+      )
+      .not('recipient_user_id', 'is', null)
+      .order('created_at', { ascending: false })
+      .limit(800)
+    if (!balanceLogError) {
+      derivedByUser = deriveBalanceByUserId((balanceLogData ?? []) as BroadcastBalanceLogRow[])
+    } else {
+      console.warn('[user-management] broadcast balance derivation skipped', balanceLogError.message)
+    }
+
     setResidentsFetchError(null)
-    setResidents(((data ?? []) as ResidentUserRowDb[]).map(mapResidentDbRow))
+    setResidents(
+      ((data ?? []) as ResidentUserRowDb[]).map((row) => {
+        const mapped = mapResidentDbRow(row)
+        const derived = derivedByUser.get(row.id)
+        if (!derived) return mapped
+        return { ...mapped, balanceDue: derived.amount }
+      }),
+    )
   }, [])
 
   useEffect(() => {
     void loadResidents()
+  }, [loadResidents])
+
+  useEffect(() => {
+    const sb = supabase
+    if (!sb) return
+    let cancelled = false
+    const refresh = () => {
+      if (cancelled) return
+      void loadResidents()
+    }
+    const channel = sb
+      .channel('user-management-balance-sync')
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'users' },
+        refresh,
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'broadcast_notification_log' },
+        refresh,
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'broadcast_notifications' },
+        refresh,
+      )
+      .subscribe()
+    return () => {
+      cancelled = true
+      void sb.removeChannel(channel)
+    }
   }, [loadResidents])
 
   useLayoutEffect(() => {
@@ -1895,7 +2054,7 @@ export function AdminUserManagementDashboard() {
                   <span className="text-[11px] font-medium uppercase leading-4 tracking-[0.06em] text-[#6a7282]">
                     Residents
                   </span>
-                  <span className="text-[20px] font-semibold leading-7 tracking-[0.02em] tabular-nums text-[#155dfc]">
+                  <span className="text-[20px] font-semibold leading-7 tracking-[0.02em] tabular-nums text-[#0a0a0a]">
                     {residentStatusStats.sharePct}%
                   </span>
                 </div>
@@ -1917,7 +2076,7 @@ export function AdminUserManagementDashboard() {
                   <span className="text-[11px] font-medium uppercase leading-4 tracking-[0.06em] text-[#6a7282]">
                     Occupancy rate
                   </span>
-                  <span className="text-[20px] font-semibold leading-7 tracking-[0.02em] tabular-nums text-[#00a63e]">
+                  <span className="text-[20px] font-semibold leading-7 tracking-[0.02em] tabular-nums text-[#0a0a0a]">
                     {occupancyUnitStats.pct}%
                   </span>
                 </div>
@@ -1963,14 +2122,9 @@ export function AdminUserManagementDashboard() {
               <button
                 type="button"
                 onClick={() => setAddResidentOpen(true)}
-                className="flex h-10 w-full min-w-0 flex-row items-center justify-center gap-2 rounded-[10px] border border-black/10 bg-transparent px-3 text-[14px] font-medium leading-none tracking-[-0.1504px] text-[#0a0a0a] outline-none hover:bg-[#f3f4f6] focus-visible:ring-2 focus-visible:ring-[#944c73] focus-visible:ring-offset-2"
+                className="flex h-10 w-full min-w-0 flex-row items-center justify-center gap-2 rounded-[10px] border border-black/10 bg-transparent px-3 text-[14px] font-medium leading-none tracking-[-0.1504px] text-[#0a0a0a] outline-none hover:bg-[#f3f4f6] focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2"
               >
-                <span
-                  aria-hidden
-                  className="inline-flex size-5 shrink-0 items-center justify-center text-[16px] font-normal leading-none text-[#364153]"
-                >
-                  +
-                </span>
+             
                 <span className="leading-none">Add Resident</span>
               </button>
               <button
@@ -1979,14 +2133,9 @@ export function AdminUserManagementDashboard() {
                   setPropertyRegisterNotice(null)
                   setAddPropertyOpen(true)
                 }}
-                className="flex h-10 w-full min-w-0 flex-row items-center justify-center gap-2 rounded-[10px] border border-black/10 bg-transparent px-3 text-[14px] font-medium leading-none tracking-[-0.1504px] text-[#0a0a0a] outline-none hover:bg-[#f3f4f6] focus-visible:ring-2 focus-visible:ring-[#944c73] focus-visible:ring-offset-2"
+                className="flex h-10 w-full min-w-0 flex-row items-center justify-center gap-2 rounded-[10px] border border-black/10 bg-transparent px-3 text-[14px] font-medium leading-none tracking-[-0.1504px] text-[#0a0a0a] outline-none hover:bg-[#f3f4f6] focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2"
               >
-                <span
-                  aria-hidden
-                  className="inline-flex size-5 shrink-0 items-center justify-center text-[16px] font-normal leading-none text-[#364153]"
-                >
-                  +
-                </span>
+            
                 <span className="leading-none">Add Property</span>
               </button>
               <button
@@ -1998,11 +2147,9 @@ export function AdminUserManagementDashboard() {
                     mode: 'add',
                   }))
                 }}
-                className="flex h-10 w-full min-w-0 flex-row items-center justify-center gap-2 rounded-[10px] border border-black/10 bg-transparent px-3 text-[14px] font-medium leading-none tracking-[-0.1504px] text-[#0a0a0a] outline-none hover:bg-[#f3f4f6] focus-visible:ring-2 focus-visible:ring-[#944c73] focus-visible:ring-offset-2"
+                className="flex h-10 w-full min-w-0 flex-row items-center justify-center gap-2 rounded-[10px] border border-black/10 bg-transparent px-3 text-[14px] font-medium leading-none tracking-[-0.1504px] text-[#0a0a0a] outline-none hover:bg-[#f3f4f6] focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2"
               >
-                <span className="inline-flex size-5 shrink-0 items-center justify-center">
-                  <img src={maintenanceVendorButtonIcon} alt="" aria-hidden className="size-4 object-contain" />
-                </span>
+               
                 <span className="leading-none">Manage Vendors</span>
               </button>
             </div>
@@ -2032,7 +2179,7 @@ export function AdminUserManagementDashboard() {
                       id="user-mgmt-status"
                       value={statusFilter}
                       onChange={(e) => setStatusFilter(e.target.value)}
-                      className="h-9 w-[160px] cursor-pointer appearance-none rounded-lg border border-transparent bg-[#f3f3f5] py-1 pl-3 pr-9 text-[14px] font-medium tracking-[-0.1504px] text-[#0a0a0a] outline-none focus-visible:ring-2 focus-visible:ring-[#944c73] focus-visible:ring-offset-2"
+                      className="h-9 w-[160px] cursor-pointer appearance-none rounded-lg border border-transparent bg-[#f3f3f5] py-1 pl-3 pr-9 text-[14px] font-medium tracking-[-0.1504px] text-[#0a0a0a] outline-none focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2"
                     >
                       {STATUS_FILTER.map((o) => (
                         <option key={o.value || 'all'} value={o.value}>
@@ -2052,7 +2199,7 @@ export function AdminUserManagementDashboard() {
                       id="user-mgmt-units"
                       value={unitFilter}
                       onChange={(e) => setUnitFilter(e.target.value)}
-                      className="h-9 w-[160px] cursor-pointer appearance-none rounded-lg border border-transparent bg-[#f3f3f5] py-1 pl-3 pr-9 text-[14px] font-medium tracking-[-0.1504px] text-[#0a0a0a] outline-none focus-visible:ring-2 focus-visible:ring-[#944c73] focus-visible:ring-offset-2"
+                      className="h-9 w-[160px] cursor-pointer appearance-none rounded-lg border border-transparent bg-[#f3f3f5] py-1 pl-3 pr-9 text-[14px] font-medium tracking-[-0.1504px] text-[#0a0a0a] outline-none focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2"
                     >
                       {UNIT_FILTER.map((o) => (
                         <option key={o.value || 'all-units'} value={o.value}>
@@ -2093,7 +2240,7 @@ export function AdminUserManagementDashboard() {
                       id="user-mgmt-vendor-category"
                       value={vendorCategoryFilter}
                       onChange={(e) => setVendorCategoryFilter(e.target.value)}
-                      className="h-9 w-[170px] cursor-pointer appearance-none rounded-lg border border-transparent bg-[#f3f3f5] py-1 pl-3 pr-9 text-[14px] font-medium tracking-[-0.1504px] text-[#0a0a0a] outline-none focus-visible:ring-2 focus-visible:ring-[#944c73] focus-visible:ring-offset-2"
+                      className="h-9 w-[170px] cursor-pointer appearance-none rounded-lg border border-transparent bg-[#f3f3f5] py-1 pl-3 pr-9 text-[14px] font-medium tracking-[-0.1504px] text-[#0a0a0a] outline-none focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2"
                     >
                       <option value="">All Categories</option>
                       {VENDOR_CATEGORY_FILTER_OPTIONS.map((option) => (
@@ -2114,7 +2261,7 @@ export function AdminUserManagementDashboard() {
                       id="user-mgmt-vendor-status"
                       value={vendorStatusFilter}
                       onChange={(e) => setVendorStatusFilter(e.target.value)}
-                      className="h-9 w-[150px] cursor-pointer appearance-none rounded-lg border border-transparent bg-[#f3f3f5] py-1 pl-3 pr-9 text-[14px] font-medium tracking-[-0.1504px] text-[#0a0a0a] outline-none focus-visible:ring-2 focus-visible:ring-[#944c73] focus-visible:ring-offset-2"
+                      className="h-9 w-[150px] cursor-pointer appearance-none rounded-lg border border-transparent bg-[#f3f3f5] py-1 pl-3 pr-9 text-[14px] font-medium tracking-[-0.1504px] text-[#0a0a0a] outline-none focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2"
                     >
                       <option value="">All Status</option>
                       <option value="active">Active</option>
@@ -2145,7 +2292,7 @@ export function AdminUserManagementDashboard() {
                     aria-selected={isActive}
                     onClick={() => setDashboardTab(t.id)}
                     className={[
-                      '-mb-px border-b-2 pb-3 text-[14px] font-medium tracking-[-0.1504px] transition-colors outline-none focus-visible:ring-2 focus-visible:ring-[#944c73] focus-visible:ring-offset-2',
+                      '-mb-px border-b-2 pb-3 text-[14px] font-medium tracking-[-0.1504px] transition-colors outline-none focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2',
                       isActive
                         ? 'border-[#155dfc] text-[#155dfc]'
                         : 'border-transparent text-[#6a7282] hover:text-[#0a0a0a]',
@@ -2170,14 +2317,14 @@ export function AdminUserManagementDashboard() {
                   <button
                     type="button"
                     onClick={() => setSelectedResidentIds(new Set())}
-                    className="inline-flex h-9 items-center justify-center rounded-lg border border-black/10 bg-white px-3 text-[14px] font-medium text-[#0a0a0a] outline-none hover:bg-[#f3f4f6] focus-visible:ring-2 focus-visible:ring-[#944c73] focus-visible:ring-offset-2"
+                    className="inline-flex h-9 items-center justify-center rounded-lg border border-black/10 bg-white px-3 text-[14px] font-medium text-[#0a0a0a] outline-none hover:bg-[#f3f4f6] focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2"
                   >
                     Clear selection
                   </button>
                   <button
                     type="button"
                     onClick={() => void deleteSelectedResidents()}
-                    className="inline-flex h-9 items-center justify-center rounded-lg border border-[#fecaca] bg-[#fef2f2] px-3 text-[14px] font-medium text-[#c10007] outline-none hover:bg-[#fee2e2] focus-visible:ring-2 focus-visible:ring-[#944c73] focus-visible:ring-offset-2"
+                    className="inline-flex h-9 items-center justify-center rounded-lg border border-[#b52a00]/30 bg-[#fff4f0] px-3 text-[14px] font-medium text-[#b52a00] outline-none hover:bg-[#ffe9e1] focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2"
                   >
                     Delete selected
                   </button>
@@ -2185,7 +2332,7 @@ export function AdminUserManagementDashboard() {
               </div>
             ) : null}
             {residentOpError ? (
-              <p className="rounded-[10px] border border-[#fecaca] bg-[#fef2f2] px-4 py-3 text-[14px] leading-5 text-[#b91c1c]">
+              <p className="rounded-[10px] border border-[#b52a00]/30 bg-[#fff4f0] px-4 py-3 text-[14px] leading-5 text-[#b52a00]">
                 Resident action failed: {residentOpError}
               </p>
             ) : null}
@@ -2316,7 +2463,7 @@ export function AdminUserManagementDashboard() {
                               type="button"
                               aria-label={`Link record for ${row.name}`}
                               onClick={() => setAssignUnitRow(toAssignUnitRow(row))}
-                              className="flex h-7 items-center gap-1.5 rounded px-2 text-[12px] font-medium leading-4 text-[#155dfc] outline-none hover:bg-[#f3f4f6] focus-visible:ring-2 focus-visible:ring-[#944c73] focus-visible:ring-offset-2"
+                              className="flex h-7 items-center gap-1.5 rounded px-2 text-[12px] font-medium leading-4 text-[#155dfc] outline-none hover:bg-[#f3f4f6] focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2"
                             >
                               <IconLink />
                               Link
@@ -2326,7 +2473,7 @@ export function AdminUserManagementDashboard() {
                             type="button"
                             aria-label={`Edit ${row.name}`}
                             onClick={() => setEditResidentRow(toEditResidentRow(row))}
-                            className="flex size-7 items-center justify-center rounded outline-none hover:bg-[#f3f4f6] focus-visible:ring-2 focus-visible:ring-[#944c73] focus-visible:ring-offset-2"
+                            className="flex size-7 items-center justify-center rounded outline-none hover:bg-[#f3f4f6] focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2"
                           >
                             <IconPencil />
                           </button>

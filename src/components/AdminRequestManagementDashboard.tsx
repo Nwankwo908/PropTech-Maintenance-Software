@@ -1,5 +1,6 @@
 import {
   Fragment,
+  useCallback,
   useEffect,
   useId,
   useMemo,
@@ -8,10 +9,19 @@ import {
   type ChangeEventHandler,
 } from 'react'
 import { Link } from 'react-router-dom'
-import { postAdminReassignVendor } from '@/api/adminReassignVendor'
-import { ChangeAssignedVendorModal } from '@/components/ChangeAssignedVendorModal'
+import {
+  postAdminReassignVendor,
+  type AdminVendorReassignChoice,
+} from '@/api/adminReassignVendor'
+import magnifyingGlassIcon from '@/assets/Magnifying glass.svg'
+import {
+  ChangeAssignedVendorModal,
+} from '@/components/ChangeAssignedVendorModal'
+import { resolveDiscoverExternalVendorsUrl } from '@/api/discoverExternalVendors'
 import { SparkleIcon } from '@/components/SparkleIcon'
+import { VendorDelayedAlternativesSection } from '@/components/VendorDelayedAlternativesSection'
 import { supabase } from '@/lib/supabase'
+import { isVendorPendingAcceptDelayed } from '@/lib/vendorDelayAlerts'
 import {
   getIssueCategorySlugForTicket,
   vendorMatchesTicketIssueCategory,
@@ -62,10 +72,16 @@ export type AdminTicketRow = {
   assignedVendorId?: string
   /** Shown on assigned-vendor card, e.g. "Mar 25, 2:00 PM". */
   estimatedCompletion?: string
+  /** `maintenance_requests.vendor_work_status` when loaded from Supabase. */
+  vendorWorkStatus?: string | null
+  /** `maintenance_requests.assigned_at` (ISO) for vendor delay + auto-reassign UI. */
+  assignedAtIso?: string | null
   /** When true, shows overdue callout using `estimatedCompletion`. */
   isOverdue?: boolean
   /** SLA due from `maintenance_requests.due_at` (live data). */
   dueAtDisplay?: string
+  /** Raw ISO for `maintenance_requests.due_at`, used for inline editing. */
+  dueAtIso?: string
   /** True when `due_at` is past and ticket is not completed. */
   isSlaOverdue?: boolean
   /** Expanded accordion for `under_review` rows (fallbacks used if omitted). */
@@ -74,7 +90,7 @@ export type AdminTicketRow = {
   photoAttached?: boolean
 }
 
-type StatSummaryIcon = 'house' | 'alert'
+type StatSummaryIcon = 'open' | 'alert'
 
 const STATUS_FILTER_OPTIONS: { value: StatusUi; label: string }[] = [
   { value: 'under_review', label: 'Under Review' },
@@ -96,11 +112,6 @@ const CATEGORY_FILTER_OPTIONS: { value: string; label: string }[] = [
   { value: 'appliance', label: 'Appliance' },
   { value: 'door_window_noise', label: 'Door/Window Noise' },
 ]
-
-/** Under Review accordion: hide purple Vendors Delayed card for these resident emails. */
-const RESIDENT_EMAILS_WITHOUT_VENDORS_DELAYED = new Set([
-  'david.park@email.com',
-])
 
 /**
  * Under Review accordion: Assigned Vendor blue card shows “No vendor assigned yet”
@@ -127,8 +138,15 @@ function rowMatchesSearch(row: AdminTicketRow, q: string): boolean {
   return hay.includes(needle)
 }
 
+const BACKEND_TICKET_UUID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
+
 function resolveBackendTicketId(row: AdminTicketRow): string | null {
-  return row.backendTicketId ?? null
+  const b = row.backendTicketId?.trim()
+  if (b && BACKEND_TICKET_UUID_RE.test(b)) return b
+  const id = row.id?.trim()
+  if (id && BACKEND_TICKET_UUID_RE.test(id)) return id
+  return null
 }
 
 type MaintenanceRequestRowDb = {
@@ -147,6 +165,7 @@ type MaintenanceRequestRowDb = {
   estimated_minutes?: number | null
   severity?: string | null
   issue_category?: string | null
+  assigned_at?: string | null
   assigned_vendor_id?: string | null
   /** Denormalized `maintenance_requests.vendor` text (legacy / backfill); not the vendors FK row. */
   vendorDenormalized?: string | null
@@ -203,8 +222,9 @@ function mapVendorWorkStatusToUi(raw: string): StatusUi {
   const x = raw.trim().toLowerCase()
   if (x === 'completed') return 'completed'
   if (x === 'in_progress') return 'in_progress'
+  if (x === 'accepted') return 'in_progress'
   if (x === 'declined' || x === 'unassigned') return 'assigned'
-  if (x === 'pending_accept' || x === 'accepted') return 'assigned'
+  if (x === 'pending_accept') return 'assigned'
   return 'assigned'
 }
 
@@ -271,6 +291,16 @@ function formatDueAtDisplay(iso: string | null | undefined): string | undefined 
   return d.toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })
 }
 
+function formatDateTimeLocalInputValue(
+  iso: string | null | undefined,
+): string {
+  if (iso == null || String(iso).trim() === '') return ''
+  const d = new Date(iso)
+  if (Number.isNaN(d.getTime())) return ''
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`
+}
+
 function formatIssueCategoryLabel(raw: string | null | undefined): string {
   const t = (raw ?? '').trim()
   if (!t) return 'Maintenance'
@@ -314,6 +344,10 @@ function normalizeMaintenanceRequestRow(
     severity: raw.severity == null ? null : String(raw.severity),
     issue_category:
       raw.issue_category == null ? null : String(raw.issue_category),
+    assigned_at:
+      raw.assigned_at == null || String(raw.assigned_at).trim() === ''
+        ? null
+        : String(raw.assigned_at),
     assigned_vendor_id:
       raw.assigned_vendor_id != null && String(raw.assigned_vendor_id).trim() !== ''
         ? String(raw.assigned_vendor_id)
@@ -358,6 +392,7 @@ function mapMaintenanceRequestToAdminRow(
     fromTicketColumn ||
     (vid ? 'Unknown vendor' : '')
   ).trim()
+  const vendorWork = dbRow.vendor_work_status ?? null
 
   return {
     id: idStr,
@@ -387,6 +422,15 @@ function mapMaintenanceRequestToAdminRow(
     ...(vid ? { assignedVendorId: vid } : {}),
     urgency: mapDbUrgency(dbRow.priority ?? ''),
     photoAttached: false,
+    ...(vendorWork != null && String(vendorWork).trim() !== ''
+      ? { vendorWorkStatus: String(vendorWork).trim() }
+      : {}),
+    ...(dbRow.assigned_at != null && String(dbRow.assigned_at).trim() !== ''
+      ? { assignedAtIso: String(dbRow.assigned_at).trim() }
+      : {}),
+    ...(dbRow.due_at != null && String(dbRow.due_at).trim() !== ''
+      ? { dueAtIso: String(dbRow.due_at).trim() }
+      : {}),
     ...(dueAtDisplay ? { dueAtDisplay } : {}),
     ...(isSlaOverdue ? { isSlaOverdue: true } : {}),
   }
@@ -457,6 +501,8 @@ const DEMO_TICKETS: AdminTicketRow[] = [
       'Air conditioning not working. Temperature in unit is 82°F.',
     status: 'assigned',
     vendor: 'CoolAir Solutions',
+    vendorWorkStatus: 'pending_accept',
+    assignedAtIso: new Date(Date.now() - 50 * 60 * 60 * 1000).toISOString(),
     estimatedCompletion: 'Mar 26, 5:00 PM',
     urgency: 'urgent',
   },
@@ -557,16 +603,61 @@ const DEMO_TICKETS: AdminTicketRow[] = [
   },
 ]
 
+/** Corner icons on the three stat summary cards (matches label tone `text-[#6a7282]`). */
+const STAT_SUMMARY_CORNER_ICON_CLASS = 'size-5 shrink-0 text-[#6a7282]'
+
 function StatIcon({ name }: { name: StatSummaryIcon }) {
-  const cls = 'size-5 shrink-0'
-  if (name === 'house') {
+  const cls = STAT_SUMMARY_CORNER_ICON_CLASS
+  if (name === 'open') {
     return (
-      <svg className={cls} viewBox="0 0 24 24" fill="none" aria-hidden>
+      <svg className={cls} viewBox="0 0 22 22" fill="none" aria-hidden>
         <path
-          d="M3 10.5 12 3l9 7.5V20a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1v-9.5Z"
-          stroke="#155dfc"
-          strokeWidth={1.8}
-          strokeLinejoin="round"
+          fillRule="evenodd"
+          clipRule="evenodd"
+          d="M18.487 6.04776L10.487 9.04776C10.194 9.15776 10 9.43676 10 9.74976V20.7498C10 20.9958 10.121 21.2258 10.323 21.3658C10.525 21.5068 10.783 21.5388 11.013 21.4518C11.013 21.4518 16.459 19.4098 18.364 18.6958C19.048 18.4388 19.5 17.7858 19.5 17.0568C19.5 15.4778 19.5 11.7498 19.5 11.7498C19.5 11.3358 19.164 10.9998 18.75 10.9998C18.336 10.9998 18 11.3358 18 11.7498V17.0568C18 17.1608 17.935 17.2538 17.838 17.2908L11.5 19.6678V10.2698L19.013 7.45176C19.401 7.30676 19.598 6.87376 19.452 6.48676C19.307 6.09876 18.874 5.90176 18.487 6.04776Z"
+          fill="currentColor"
+        />
+        <path
+          fillRule="evenodd"
+          clipRule="evenodd"
+          d="M2.48719 7.45176L10.0002 10.2698V19.6678L3.66219 17.2908C3.56519 17.2538 3.50019 17.1608 3.50019 17.0568V11.7498C3.50019 11.3358 3.16419 10.9998 2.75019 10.9998C2.33619 10.9998 2.00019 11.3358 2.00019 11.7498C2.00019 11.7498 2.00019 15.4778 2.00019 17.0568C2.00019 17.7858 2.45219 18.4388 3.13619 18.6958L10.4872 21.4518C10.7172 21.5388 10.9752 21.5068 11.1772 21.3658C11.3792 21.2258 11.5002 20.9958 11.5002 20.7498V9.74976C11.5002 9.43676 11.3062 9.15776 11.0132 9.04776L3.01319 6.04776C2.62619 5.90176 2.19319 6.09876 2.04819 6.48676C1.90219 6.87376 2.09919 7.30676 2.48719 7.45176Z"
+          fill="currentColor"
+        />
+        <path
+          fillRule="evenodd"
+          clipRule="evenodd"
+          d="M19.4211 6.41474C19.2491 6.07074 18.8461 5.91274 18.4871 6.04774L10.4871 9.04774C10.2881 9.12174 10.1301 9.27774 10.0521 9.47574C9.97412 9.67374 9.98412 9.89474 10.0791 10.0847L12.0791 14.0847C12.2511 14.4287 12.6541 14.5867 13.0131 14.4517L21.0131 11.4517C21.2121 11.3777 21.3701 11.2217 21.4481 11.0237C21.5261 10.8257 21.5161 10.6047 21.4211 10.4147L19.4211 6.41474ZM18.3811 7.68874L19.7071 10.3397L13.1191 12.8107L11.7931 10.1597L18.3811 7.68874Z"
+          fill="currentColor"
+        />
+        <path
+          fillRule="evenodd"
+          clipRule="evenodd"
+          d="M3.01312 6.04774C2.65412 5.91274 2.25112 6.07074 2.07912 6.41474L0.0791164 10.4147C-0.0158836 10.6047 -0.0258836 10.8257 0.0521164 11.0237C0.130116 11.2217 0.288116 11.3777 0.487116 11.4517L8.48712 14.4517C8.84612 14.5867 9.24912 14.4287 9.42112 14.0847L11.4211 10.0847C11.5161 9.89474 11.5261 9.67374 11.4481 9.47574C11.3701 9.27774 11.2121 9.12174 11.0131 9.04774L3.01312 6.04774ZM3.11912 7.68874L9.70712 10.1597L8.38112 12.8107L1.79312 10.3397L3.11912 7.68874Z"
+          fill="currentColor"
+        />
+        <path
+          fillRule="evenodd"
+          clipRule="evenodd"
+          d="M3.01319 7.45174L6.51319 6.13974C6.90119 5.99374 7.09819 5.56174 6.95219 5.17374C6.80719 4.78674 6.37419 4.58974 5.98719 4.73474L2.48719 6.04774C2.09919 6.19274 1.90219 6.62574 2.04819 7.01274C2.19319 7.40074 2.62619 7.59774 3.01319 7.45174Z"
+          fill="currentColor"
+        />
+        <path
+          fillRule="evenodd"
+          clipRule="evenodd"
+          d="M14.9872 6.13974L18.4872 7.45174C18.8742 7.59774 19.3072 7.40074 19.4522 7.01274C19.5982 6.62574 19.4012 6.19274 19.0132 6.04774L15.5132 4.73474C15.1262 4.58974 14.6932 4.78674 14.5482 5.17374C14.4022 5.56174 14.5992 5.99374 14.9872 6.13974Z"
+          fill="currentColor"
+        />
+        <path
+          fillRule="evenodd"
+          clipRule="evenodd"
+          d="M11.5 6.24976V1.24976C11.5 0.835756 11.164 0.499756 10.75 0.499756C10.336 0.499756 10 0.835756 10 1.24976V6.24976C10 6.66376 10.336 6.99976 10.75 6.99976C11.164 6.99976 11.5 6.66376 11.5 6.24976Z"
+          fill="currentColor"
+        />
+        <path
+          fillRule="evenodd"
+          clipRule="evenodd"
+          d="M8.78024 3.77975L10.7502 1.81075L12.7202 3.77975C13.0122 4.07275 13.4882 4.07275 13.7802 3.77975C14.0732 3.48775 14.0732 3.01175 13.7802 2.71975L11.2802 0.21975C10.9872 -0.07325 10.5132 -0.07325 10.2202 0.21975L7.72024 2.71975C7.42724 3.01175 7.42724 3.48775 7.72024 3.77975C8.01224 4.07275 8.48824 4.07275 8.78024 3.77975Z"
+          fill="currentColor"
         />
       </svg>
     )
@@ -575,7 +666,7 @@ function StatIcon({ name }: { name: StatSummaryIcon }) {
     <svg className={cls} viewBox="0 0 24 24" fill="none" aria-hidden>
       <path
         d="M12 9v4m0 4h.01M10.3 4.8 2.2 16A2 2 0 004 17.8h16a2 2 0 001.8-1.8l-8.1-12a2 2 0 00-3.4 0z"
-        stroke="#e7000b"
+        stroke="currentColor"
         strokeWidth={1.8}
         strokeLinecap="round"
       />
@@ -583,15 +674,28 @@ function StatIcon({ name }: { name: StatSummaryIcon }) {
   )
 }
 
-function IconProgressCompletedPair() {
+/** Same geometry as `Checkmark Icon.svg`, stroke follows `STAT_SUMMARY_CORNER_ICON_CLASS`. */
+function StatSummaryPipelineCheckmarkIcon() {
   return (
-    <svg className="size-5 shrink-0" viewBox="0 0 24 24" fill="none" aria-hidden>
-      <circle cx="12" cy="12" r="9" stroke="#d08700" strokeWidth={1.8} />
+    <svg
+      className={STAT_SUMMARY_CORNER_ICON_CLASS}
+      viewBox="0 0 20 20"
+      fill="none"
+      aria-hidden
+    >
       <path
-        d="M12 7v5l3 2"
-        stroke="#d08700"
-        strokeWidth={1.8}
+        d="M9.99996 18.3333C14.6023 18.3333 18.3333 14.6024 18.3333 10C18.3333 5.39763 14.6023 1.66667 9.99996 1.66667C5.39759 1.66667 1.66663 5.39763 1.66663 10C1.66663 14.6024 5.39759 18.3333 9.99996 18.3333Z"
+        stroke="currentColor"
+        strokeWidth={1.66667}
         strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+      <path
+        d="M7.5 9.99999L9.16667 11.6667L12.5 8.33333"
+        stroke="currentColor"
+        strokeWidth={1.66667}
+        strokeLinecap="round"
+        strokeLinejoin="round"
       />
     </svg>
   )
@@ -629,7 +733,7 @@ function InProgressCompletedDonut({
               cy={cx}
               r={r}
               fill="none"
-              stroke="#d08700"
+              stroke="#b58500"
               strokeWidth={stroke}
               strokeLinecap="butt"
               strokeDasharray={`${lenProgress} ${c}`}
@@ -658,7 +762,7 @@ function InProgressCompletedDonut({
       </div>
       <ul className="min-w-0 flex-1 list-none space-y-2 p-0">
         <li className="flex items-center gap-2 text-[12px] leading-4">
-          <span className="size-2 shrink-0 rounded-full bg-[#d08700]" aria-hidden />
+          <span className="size-2 shrink-0 rounded-full bg-[#b58500]" aria-hidden />
           <span className="min-w-0 text-[#364153]">In progress</span>
           <span className="ml-auto shrink-0 font-semibold tabular-nums text-[#101828]">{inProgress}</span>
         </li>
@@ -688,8 +792,8 @@ function statusUi(s: StatusUi): {
     case 'assigned':
       return {
         label: 'Assigned',
-        pill: 'bg-[#f3e8ff] border border-[#e9d4ff]',
-        text: 'text-[#8200db]',
+        pill: 'bg-[#eaf0ff] border border-[#c9d7ff]',
+        text: 'text-[#0030b5]',
       }
     case 'under_review':
       return {
@@ -716,7 +820,7 @@ function urgencyUi(u: UrgencyUi): { label: string; className: string } {
   if (u === 'urgent')
     return {
       label: 'Urgent',
-      className: 'bg-[#ffe2e2] text-[#c10007]',
+      className: 'bg-[#fff4f0] text-[#b52a00]',
     }
   if (u === 'normal')
     return {
@@ -729,8 +833,15 @@ function urgencyUi(u: UrgencyUi): { label: string; className: string } {
   }
 }
 
-const accordionColumnWrap =
-  'flex min-h-0 min-w-0 flex-1 basis-0 xl:min-w-[200px]'
+/**
+ * Equal-width + equal-height cards on lg+: row flex with `items-stretch` (tallest card sets row height).
+ * `flex-1 basis-0` shares horizontal space; inner cards use `flex-1` to fill the stretched cell.
+ */
+const ticketAccordionGrid =
+  'flex min-w-0 flex-col gap-4 lg:flex-row lg:items-stretch lg:gap-4'
+/** One column: fills stretched row height so child cards can `flex-1`. */
+const ticketAccordionCell =
+  'flex min-h-0 min-w-0 flex-1 flex-col basis-0'
 
 /** Unified Figma-style Assigned Vendor card (all ticket statuses). */
 function AssignedVendorCard({
@@ -761,22 +872,17 @@ function AssignedVendorCard({
       ? `/admin/users?vendorId=${encodeURIComponent(_vendorIdTrim)}`
       : null
 
-  const shellClass = warnNoVendorId
-    ? 'border-amber-300 bg-amber-50'
-    : 'border-[#bedbff] bg-[#eff6ff]'
-  const headerTextClass = warnNoVendorId ? 'text-amber-950' : 'text-[#1c398e]'
-  const editBtnClass = warnNoVendorId
-    ? 'text-amber-950 focus-visible:ring-offset-amber-50'
-    : 'text-[#1c398e] focus-visible:ring-offset-[#eff6ff]'
+  const shellClass =
+    'rounded-lg border border-[#e5e7eb] bg-white p-4 shadow-sm'
+  const editBtnClass =
+    'text-[#6a7282] hover:text-[#0a0a0a] focus-visible:ring-[#0030b5]/35 focus-visible:ring-offset-white'
 
   const nameBlock = hasVendor ? (
-    <p
-      className={`text-[16px] font-semibold leading-6 tracking-[-0.3125px] ${warnNoVendorId ? 'text-amber-950' : 'text-[#1447e6]'}`}
-    >
+    <p className="text-[16px] font-semibold leading-6 tracking-[-0.3125px] text-[#0a0a0a]">
       {vendorProfileTo ? (
         <Link
           to={vendorProfileTo}
-          className="text-inherit underline decoration-[#1447e6]/40 underline-offset-2 transition-colors hover:text-[#1d4ed8] hover:decoration-[#1d4ed8]/60 focus-visible:rounded-sm focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#155dfc]"
+          className="text-inherit underline decoration-black/25 underline-offset-2 transition-colors hover:text-[#0030b5] hover:decoration-[#0030b5]/40 focus-visible:rounded-sm focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#0030b5]"
         >
           {vendorName}
         </Link>
@@ -785,33 +891,27 @@ function AssignedVendorCard({
       )}
     </p>
   ) : warnNoVendorId ? (
-    <p className="text-[12px] font-medium leading-4 text-amber-900">
+    <p className="text-[12px] font-medium leading-4 text-[#b52a00]">
       ⚠️ No vendor assigned
     </p>
   ) : (
-    <p
-      className={`text-[14px] leading-5 ${warnNoVendorId ? 'text-amber-950' : 'text-[#1447e6]'}`}
-    >
-      {emptyMessage}
-    </p>
+    <p className="text-[14px] leading-5 text-[#6a7282]">{emptyMessage}</p>
   )
 
   return (
     <div
-      className={`flex h-full w-full flex-col gap-[10px] rounded-[10px] border p-[13px] ${shellClass}`}
+      className={`flex min-h-0 w-full flex-1 flex-col gap-3 ${shellClass}`}
     >
-      <div className="flex w-full items-start gap-[10px]">
+      <div className="flex w-full shrink-0 items-start gap-3">
         <div className="min-w-0 flex-1 flex flex-col gap-1">
-          <p
-            className={`text-[14px] font-medium leading-5 tracking-[-0.1504px] ${headerTextClass}`}
-          >
+          <p className="text-[12px] leading-4 text-[#6a7282]">
             Assigned Vendor
           </p>
           {nameBlock}
         </div>
         <button
           type="button"
-          className={`flex size-4 shrink-0 items-center justify-center outline-none transition-opacity hover:opacity-80 focus-visible:ring-2 focus-visible:ring-[#155dfc] focus-visible:ring-offset-2 ${editBtnClass}`}
+          className={`flex size-4 shrink-0 items-center justify-center outline-none transition-colors focus-visible:ring-2 focus-visible:ring-offset-2 ${editBtnClass}`}
           aria-label={editLabel}
           onClick={onEditVendor}
         >
@@ -831,30 +931,74 @@ function AssignedVendorCard({
       </div>
       {hasVendor && (due || est) ? (
         due ? (
-          <p className="text-[12px] font-normal leading-4 text-[#155dfc]">
-            Due: {due}
+          <p className="shrink-0 text-[12px] font-normal leading-4 text-[#6a7282]">
+            Due:{' '}
+            <span className="font-medium text-[#0a0a0a]">{due}</span>
           </p>
         ) : (
-          <p className="text-[12px] font-normal leading-4 text-[#155dfc]">
-            Est. completion: {est}
+          <p className="shrink-0 text-[12px] font-normal leading-4 text-[#6a7282]">
+            Est. completion:{' '}
+            <span className="font-medium text-[#0a0a0a]">{est}</span>
           </p>
         )
       ) : null}
+      <div className="min-h-0 flex-1" aria-hidden />
     </div>
   )
 }
 
 function RequestRowOverdueCard({
   slaDue,
+  dueAtIso,
   est,
+  onSaveDeadline,
 }: {
   slaDue?: string
+  dueAtIso?: string
   est?: string
+  onSaveDeadline: (nextDueAtIso: string) => Promise<void>
 }) {
+  const [isEditing, setIsEditing] = useState(false)
+  const [inputValue, setInputValue] = useState(
+    formatDateTimeLocalInputValue(dueAtIso),
+  )
+  const [saving, setSaving] = useState(false)
+  const [saveError, setSaveError] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (!isEditing) {
+      setInputValue(formatDateTimeLocalInputValue(dueAtIso))
+    }
+  }, [dueAtIso, isEditing])
+
+  async function handleSave() {
+    if (!inputValue.trim()) {
+      setSaveError('Pick a date and time.')
+      return
+    }
+    const parsed = new Date(inputValue)
+    if (Number.isNaN(parsed.getTime())) {
+      setSaveError('Enter a valid date and time.')
+      return
+    }
+    setSaving(true)
+    setSaveError(null)
+    try {
+      await onSaveDeadline(parsed.toISOString())
+      setIsEditing(false)
+    } catch (error) {
+      setSaveError(
+        error instanceof Error ? error.message : 'Could not update urgency date.',
+      )
+    } finally {
+      setSaving(false)
+    }
+  }
+
   return (
-    <div className="flex w-full flex-col rounded-lg border border-[#fecaca] bg-[#fef2f2] p-4 shadow-sm">
-      <div className="flex flex-1 gap-3">
-        <span className="mt-0.5 shrink-0 text-[#c10007]" aria-hidden>
+    <div className="flex min-h-0 w-full flex-1 flex-col rounded-lg border border-[#b52a00]/30 bg-[#fff4f0] p-4 shadow-sm">
+      <div className="flex shrink-0 items-start justify-between gap-3">
+        <span className="mt-0.5 shrink-0 text-[#b52a00]" aria-hidden>
           <svg
             className="size-5"
             viewBox="0 0 24 24"
@@ -866,15 +1010,83 @@ function RequestRowOverdueCard({
             <path d="M12 8v4m0 4h.01" strokeLinecap="round" />
           </svg>
         </span>
-        <div className="min-w-0">
-          <p className="text-[14px] font-medium leading-5 text-[#991b1b]">
+        <div className="min-w-0 flex-1">
+          <p className="text-[14px] font-medium leading-5 text-[#b52a00]">
             Overdue Request
           </p>
-          <p className="mt-1 text-[14px] leading-5 text-[#b91c1c]">
+          <p className="mt-1 text-[14px] leading-5 text-[#b52a00]">
             Expected completion was {slaDue ?? est}
           </p>
+          {isEditing ? (
+            <div className="mt-3 space-y-2">
+              <label className="block text-[12px] font-medium leading-4 text-[#b52a00]">
+                Urgency date and time
+              </label>
+              <input
+                type="datetime-local"
+                value={inputValue}
+                onChange={(e) => setInputValue(e.target.value)}
+                disabled={saving}
+                className="h-9 w-full rounded-lg border border-[#fca5a5] bg-white px-3 text-[14px] text-[#0a0a0a] outline-none transition-colors focus:border-[#dc2626] focus:ring-2 focus:ring-[#fca5a5]"
+              />
+              {saveError ? (
+                <p className="text-[12px] leading-4 text-[#b52a00]" role="alert">
+                  {saveError}
+                </p>
+              ) : null}
+              <div className="flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  onClick={() => void handleSave()}
+                  disabled={saving}
+                  className="inline-flex h-8 items-center justify-center rounded-md bg-[#b52a00] px-3 text-[12px] font-medium text-white outline-none transition-colors hover:bg-[#9f2600] focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-60"
+                >
+                  {saving ? 'Saving…' : 'Save'}
+                </button>
+                <button
+                  type="button"
+                  disabled={saving}
+                  onClick={() => {
+                    setSaveError(null)
+                    setInputValue(formatDateTimeLocalInputValue(dueAtIso))
+                    setIsEditing(false)
+                  }}
+                  className="inline-flex h-8 items-center justify-center rounded-md border border-[#b52a00]/30 bg-white px-3 text-[12px] font-medium text-[#b52a00] outline-none transition-colors hover:bg-[#fff4f0] focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-60"
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          ) : null}
         </div>
+        {!isEditing ? (
+          <button
+            type="button"
+            onClick={() => {
+              setSaveError(null)
+              setInputValue(formatDateTimeLocalInputValue(dueAtIso))
+              setIsEditing(true)
+            }}
+            className="inline-flex size-8 shrink-0 items-center justify-center rounded-md text-[#b52a00] outline-none transition-colors hover:bg-[#fff4f0] focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2"
+            aria-label="Edit urgency date and time"
+            title="Edit urgency date and time"
+          >
+            <svg
+              className="size-4"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth={2}
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              aria-hidden
+            >
+              <path d="M12 20h9M16.5 3.5a2.121 2.121 0 013 3L7 19l-4 1 1-4L16.5 3.5z" />
+            </svg>
+          </button>
+        ) : null}
       </div>
+      <div className="min-h-0 flex-1" aria-hidden />
     </div>
   )
 }
@@ -883,10 +1095,18 @@ function RequestRowAccordionPanel({
   row,
   st,
   onEditVendor,
+  activeVendorsFromDb,
+  onReassignAlternativeVendor,
+  onUpdateOverdueDeadline,
 }: {
   row: AdminTicketRow
   st: ReturnType<typeof statusUi>
   onEditVendor: () => void
+  activeVendorsFromDb: VendorPickerRow[]
+  onReassignAlternativeVendor: (
+    choice: AdminVendorReassignChoice,
+  ) => Promise<void>
+  onUpdateOverdueDeadline: (nextDueAtIso: string) => Promise<void>
 }) {
   const detail =
     row.detailDescription?.trim() || row.descriptionPreview
@@ -905,10 +1125,12 @@ function RequestRowAccordionPanel({
 
   return (
     <div className="border-t border-[#e5e7eb] bg-[#fafafa] px-4 py-5 sm:px-5">
-      <div className="flex min-w-[min(100%,1280px)] flex-col gap-4 xl:min-w-0 xl:flex-row xl:items-stretch xl:gap-4">
-        <div className={accordionColumnWrap}>
-          <div className="flex h-full w-full flex-col rounded-lg border border-[#e5e7eb] bg-white p-4 shadow-sm">
-            <div className="flex flex-wrap items-start justify-between gap-3">
+      <div
+        className={`min-w-[min(100%,1280px)] ${ticketAccordionGrid}`}
+      >
+        <div className={ticketAccordionCell}>
+          <div className="flex min-h-0 flex-1 flex-col rounded-lg border border-[#e5e7eb] bg-white p-4 shadow-sm">
+            <div className="flex shrink-0 flex-wrap items-start justify-between gap-3">
               <div className="min-w-0">
                 <p className="text-[12px] leading-4 text-[#6a7282]">
                   Request ID
@@ -924,13 +1146,13 @@ function RequestRowAccordionPanel({
               </span>
             </div>
             <div className="mt-4 flex min-h-0 flex-1 flex-col">
-              <p className="text-[12px] leading-4 text-[#6a7282]">
+              <p className="shrink-0 text-[12px] leading-4 text-[#6a7282]">
                 Full Issue Description
               </p>
               <div className="mt-2 min-h-[72px] flex-1 rounded-lg border border-[#e5e7eb] bg-[#fafafa] px-3 py-3 text-[14px] leading-5 tracking-[-0.1504px] text-[#0a0a0a]">
                 {detail}
               </div>
-              <div className="mt-4">
+              <div className="mt-4 shrink-0">
                 <p className="text-[12px] leading-4 text-[#6a7282]">
                   Submitted
                 </p>
@@ -942,9 +1164,7 @@ function RequestRowAccordionPanel({
           </div>
         </div>
 
-        <div
-          className={`${accordionColumnWrap} flex flex-col gap-4`}
-        >
+        <div className={ticketAccordionCell}>
           <AssignedVendorCard
             vendorName={row.vendor}
             assignedVendorId={row.assignedVendorId}
@@ -953,10 +1173,39 @@ function RequestRowAccordionPanel({
             dueAtDisplay={slaDue}
             estimatedCompletion={est}
           />
-          {showOverdue ? (
-            <RequestRowOverdueCard slaDue={slaDue} est={est} />
-          ) : null}
         </div>
+        {showOverdue ? (
+          <div className={ticketAccordionCell}>
+            <RequestRowOverdueCard
+              slaDue={slaDue}
+              dueAtIso={row.dueAtIso}
+              est={est}
+              onSaveDeadline={onUpdateOverdueDeadline}
+            />
+          </div>
+        ) : null}
+        {showOverdue &&
+        isVendorPendingAcceptDelayed(
+          row.vendorWorkStatus,
+          row.assignedAtIso,
+        ) &&
+        row.vendor?.trim() ? (
+          <div className={ticketAccordionCell}>
+            <VendorDelayedAlternativesSection
+              row={{
+                id: row.id,
+                backendTicketId: resolveBackendTicketId(row) ?? undefined,
+                vendor: row.vendor,
+                vendorWorkStatus: row.vendorWorkStatus,
+                assignedAtIso: row.assignedAtIso,
+                issueCategoryRaw: row.issueCategoryRaw,
+                category: row.category,
+              }}
+              activeVendorsFromDb={activeVendorsFromDb}
+              onReassignVendor={onReassignAlternativeVendor}
+            />
+          </div>
+        ) : null}
       </div>
     </div>
   )
@@ -986,7 +1235,18 @@ function uniqueVendorStrings(values: (string | undefined)[]): string[] {
   return out
 }
 
-type VendorPickerRow = { name: string; category: string | null }
+type VendorPickerRow = { id: string; name: string; category: string | null }
+
+function vendorIdForActiveName(
+  rows: VendorPickerRow[],
+  vendorName: string,
+): string | undefined {
+  const t = vendorName.trim()
+  if (!t) return undefined
+  const hit = rows.find((r) => r.name.trim() === t)
+  const id = hit?.id?.trim()
+  return id || undefined
+}
 
 /** Vendors offered in the change-vendor modal: active vendors from the DB whose specialty matches this ticket’s category (same as User Management → Vendors). */
 function buildVendorOptionsForRow(
@@ -1025,10 +1285,16 @@ function UnderReviewAccordionPanel({
   row,
   st,
   onEditVendor,
+  activeVendorsFromDb,
+  onReassignAlternativeVendor,
 }: {
   row: AdminTicketRow
   st: ReturnType<typeof statusUi>
   onEditVendor: () => void
+  activeVendorsFromDb: VendorPickerRow[]
+  onReassignAlternativeVendor: (
+    choice: AdminVendorReassignChoice,
+  ) => Promise<void>
 }) {
   const panel = resolveUnderReviewPanel(row)
   const detail =
@@ -1063,15 +1329,18 @@ function UnderReviewAccordionPanel({
       : panel.recommendedVendorOptions
 
   const showRecurringCard = !panel.omitRecurringIssueCard
-  const showVendorsDelayed =
-    !RESIDENT_EMAILS_WITHOUT_VENDORS_DELAYED.has(residentEmailNorm)
+  const showOverdue = Boolean(
+    (row.isOverdue && est) || (row.isSlaOverdue && slaDue),
+  )
 
   return (
     <div className="border-t border-[#e5e7eb] bg-[#fafafa] px-4 py-5 sm:px-5">
-      <div className="flex min-w-[min(100%,1280px)] flex-col gap-4 xl:min-w-0 xl:flex-row xl:items-stretch xl:gap-4">
-        <div className={accordionColumnWrap}>
-          <div className="flex h-full w-full flex-col rounded-lg border border-[#e5e7eb] bg-white p-4 shadow-sm">
-            <div className="flex flex-wrap items-start justify-between gap-3">
+      <div
+        className={`min-w-[min(100%,1280px)] ${ticketAccordionGrid}`}
+      >
+        <div className={ticketAccordionCell}>
+          <div className="flex min-h-0 flex-1 flex-col rounded-lg border border-[#e5e7eb] bg-white p-4 shadow-sm">
+            <div className="flex shrink-0 flex-wrap items-start justify-between gap-3">
               <div className="min-w-0">
                 <p className="text-[12px] leading-4 text-[#6a7282]">
                   Request ID
@@ -1087,13 +1356,13 @@ function UnderReviewAccordionPanel({
               </span>
             </div>
             <div className="mt-4 flex min-h-0 flex-1 flex-col">
-              <p className="text-[12px] leading-4 text-[#6a7282]">
+              <p className="shrink-0 text-[12px] leading-4 text-[#6a7282]">
                 Full Issue Description
               </p>
               <div className="mt-2 min-h-[72px] flex-1 rounded-lg border border-[#e5e7eb] bg-[#fafafa] px-3 py-3 text-[14px] leading-5 tracking-[-0.1504px] text-[#0a0a0a]">
                 {detail}
               </div>
-              <div className="mt-4">
+              <div className="mt-4 shrink-0">
                 <p className="text-[12px] leading-4 text-[#6a7282]">
                   Submitted
                 </p>
@@ -1105,7 +1374,7 @@ function UnderReviewAccordionPanel({
           </div>
         </div>
 
-        <div className={accordionColumnWrap}>
+        <div className={ticketAccordionCell}>
           <AssignedVendorCard
             vendorName={
               showVendorDetailsInAccordion ? row.vendor : null
@@ -1121,9 +1390,9 @@ function UnderReviewAccordionPanel({
         </div>
 
         {showRecurringCard ? (
-          <div className={accordionColumnWrap}>
-            <div className="group flex h-full w-full flex-col rounded-lg border border-[#fcd34d] bg-[#fffbeb] p-4 shadow-sm transition-[border-color,background-color,box-shadow] duration-150 hover:border-[#fbbf24] hover:bg-[#fef3c7] hover:shadow-md">
-              <div className="flex items-start gap-2">
+          <div className={ticketAccordionCell}>
+            <div className="group flex min-h-0 w-full flex-1 flex-col rounded-lg border border-[#fcd34d] bg-[#fffbeb] p-4 shadow-sm transition-[border-color,background-color,box-shadow] duration-150 hover:border-[#fbbf24] hover:bg-[#fef3c7] hover:shadow-md">
+              <div className="flex shrink-0 items-start gap-2">
                 <span
                   className="mt-0.5 shrink-0 text-[#d97706] transition-transform duration-150 group-hover:scale-110"
                   aria-hidden
@@ -1146,7 +1415,7 @@ function UnderReviewAccordionPanel({
                   Recurring Issue - Approval Required
                 </p>
               </div>
-              <div className="mt-3 rounded-lg border border-[#fde68a] bg-white px-3 py-3 text-[13px] leading-5 transition-[border-color,background-color,box-shadow] duration-150 group-hover:border-[#fcd34d] group-hover:bg-[#fffefb] group-hover:shadow-sm">
+              <div className="mt-3 shrink-0 rounded-lg border border-[#fde68a] bg-white px-3 py-3 text-[13px] leading-5 transition-[border-color,background-color,box-shadow] duration-150 group-hover:border-[#fcd34d] group-hover:bg-[#fffefb] group-hover:shadow-sm">
                 <p className="font-medium text-[#c2410c] transition-colors duration-150 group-hover:text-[#9a3412]">
                   <span className="font-semibold">Alert:</span>{' '}
                   {panel.recurringAlert}
@@ -1155,7 +1424,7 @@ function UnderReviewAccordionPanel({
                   Previous issues: {panel.recurringPrevious}
                 </p>
               </div>
-              <div className="mt-4">
+              <div className="mt-4 shrink-0">
                 <label
                   htmlFor={`recommended-vendor-${row.id}`}
                   className="text-[12px] font-medium leading-4 text-[#92400e] transition-colors duration-150 group-hover:text-[#78350f]"
@@ -1190,7 +1459,8 @@ function UnderReviewAccordionPanel({
                   </span>
                 </div>
               </div>
-              <div className="mt-auto flex w-full gap-2 pt-5">
+              <div className="min-h-0 flex-1" aria-hidden />
+              <div className="mt-auto flex w-full shrink-0 gap-2 pt-5">
                 <button
                   type="button"
                   disabled={!row.assignedVendorId}
@@ -1199,7 +1469,7 @@ function UnderReviewAccordionPanel({
                       ? 'Assign a vendor before updating status'
                       : undefined
                   }
-                  className="inline-flex h-10 min-w-0 flex-1 items-center justify-center rounded-lg bg-[#00a63e] px-3 text-[14px] font-medium text-white outline-none transition-[background-color,transform,box-shadow] duration-150 hover:enabled:bg-[#008236] hover:enabled:shadow-sm active:enabled:scale-[0.98] focus-visible:ring-2 focus-visible:ring-[#00a63e] focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+                  className="inline-flex h-10 min-w-0 flex-1 items-center justify-center rounded-lg bg-[#ffee6c] px-3 text-[14px] font-medium text-[#101828] outline-none transition-[background-color,transform,box-shadow] duration-150 hover:enabled:bg-[#f5e35e] hover:enabled:shadow-sm active:enabled:scale-[0.98] focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   Approve
                 </button>
@@ -1211,7 +1481,7 @@ function UnderReviewAccordionPanel({
                       ? 'Assign a vendor before updating status'
                       : undefined
                   }
-                  className="inline-flex h-10 min-w-0 flex-1 items-center justify-center rounded-lg bg-[#e5e7eb] px-3 text-[14px] font-medium text-[#0a0a0a] outline-none transition-[background-color,transform,box-shadow] duration-150 hover:enabled:bg-[#d1d5dc] hover:enabled:shadow-sm active:enabled:scale-[0.98] focus-visible:ring-2 focus-visible:ring-[#944c73] focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+                  className="inline-flex h-10 min-w-0 flex-1 items-center justify-center rounded-lg bg-[#e5e7eb] px-3 text-[14px] font-medium text-[#0a0a0a] outline-none transition-[background-color,transform,box-shadow] duration-150 hover:enabled:bg-[#d1d5dc] hover:enabled:shadow-sm active:enabled:scale-[0.98] focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   Request Review
                 </button>
@@ -1220,45 +1490,22 @@ function UnderReviewAccordionPanel({
           </div>
         ) : null}
 
-        {showVendorsDelayed ? (
-          <div className={accordionColumnWrap}>
-            <div className="group flex h-full w-full flex-col rounded-lg border border-[#c4b5fd] bg-[#f5f3ff] p-4 shadow-sm transition-[border-color,background-color,box-shadow] duration-150 hover:border-[#a78bfa] hover:bg-[#ede9fe] hover:shadow-md">
-              <div className="flex items-start gap-2">
-                <SparkleIcon className="mt-0.5 size-5 shrink-0 text-[#7c3aed] transition-transform duration-150 group-hover:scale-110" />
-                <p className="min-w-0 text-[14px] font-semibold leading-5 text-[#5b21b6] transition-colors duration-150 group-hover:text-[#4c1d95]">
-                  Vendors Delayed - Alternative Recommendations
-                </p>
-              </div>
-              <div className="mt-3 flex min-h-0 flex-1 flex-col gap-2">
-                {delayedVendors.length > 0 ? (
-                  delayedVendors.map((name) => (
-                    <div
-                      key={name}
-                      className="rounded-lg border border-[#ddd6fe] bg-white px-3 py-2.5 text-[14px] font-medium text-[#6d28d9] transition-[background-color,border-color,box-shadow] duration-150 hover:border-[#c4b5fd] hover:bg-[#faf5ff] hover:shadow-sm"
-                    >
-                      {name}
-                    </div>
-                  ))
-                ) : (
-                  <p className="rounded-lg border border-[#ddd6fe] bg-white px-3 py-2.5 text-[13px] text-[#6d28d9] transition-[background-color,border-color] duration-150 hover:border-[#c4b5fd] hover:bg-[#faf5ff]">
-                    No alternative vendors suggested for this request.
-                  </p>
-                )}
-              </div>
-              <p className="mt-4 flex items-start gap-2 text-[11px] leading-4 text-[#7c3aed] transition-colors duration-150 group-hover:text-[#6d28d9]">
-                <svg
-                  className="mt-0.5 size-3 shrink-0 text-[#7c3aed] transition-colors duration-150 group-hover:text-[#6d28d9]"
-                  viewBox="0 0 8 8"
-                  aria-hidden
-                >
-                  <path fill="currentColor" d="M4 0 8 4 4 8 0 4z" />
-                </svg>
-                <span>
-                  AI will automatically select an alternative vendor if no
-                  selection is made within 48 hours.
-                </span>
-              </p>
-            </div>
+        {showOverdue ? (
+          <div className={ticketAccordionCell}>
+            <VendorDelayedAlternativesSection
+              row={{
+                id: row.id,
+                backendTicketId: resolveBackendTicketId(row) ?? undefined,
+                vendor: row.vendor,
+                vendorWorkStatus: row.vendorWorkStatus,
+                assignedAtIso: row.assignedAtIso,
+                issueCategoryRaw: row.issueCategoryRaw,
+                category: row.category,
+              }}
+              activeVendorsFromDb={activeVendorsFromDb}
+              staticFallbackNames={delayedVendors}
+              onReassignVendor={onReassignAlternativeVendor}
+            />
           </div>
         ) : null}
       </div>
@@ -1295,7 +1542,7 @@ function TableCheckbox({
       aria-label={ariaLabel}
       checked={checked}
       onChange={onChange}
-      className={`size-4 shrink-0 rounded border border-black/10 bg-[#f3f3f5] shadow-sm accent-[#944c73] transition-[background-color,border-color,box-shadow,opacity] duration-150 outline-none enabled:cursor-pointer hover:enabled:border-black/15 hover:enabled:bg-[#e8eaee] active:enabled:border-black/20 active:enabled:bg-[#dcdde3] focus:border-[#944c73]/45 focus:bg-white focus:outline-none focus:ring-2 focus:ring-[#944c73]/30 focus:ring-offset-0 disabled:cursor-not-allowed disabled:opacity-55 disabled:hover:border-black/10 disabled:hover:bg-[#f3f3f5] disabled:focus:ring-0 disabled:active:bg-[#f3f3f5] ${className}`}
+      className={`size-4 shrink-0 rounded border border-black/10 bg-[#f3f3f5] shadow-sm accent-[#0030b5] transition-[background-color,border-color,box-shadow,opacity] duration-150 outline-none enabled:cursor-pointer hover:enabled:border-black/15 hover:enabled:bg-[#e8eaee] active:enabled:border-black/20 active:enabled:bg-[#dcdde3] focus:border-[#0030b5]/45 focus:bg-white focus:outline-none focus:ring-2 focus:ring-[#0030b5]/30 focus:ring-offset-0 disabled:cursor-not-allowed disabled:opacity-55 disabled:hover:border-black/10 disabled:hover:bg-[#f3f3f5] disabled:focus:ring-0 disabled:active:bg-[#f3f3f5] ${className}`}
     />
   )
 }
@@ -1304,7 +1551,7 @@ function ChipEditButton({ ariaLabel }: { ariaLabel: string }) {
   return (
     <button
       type="button"
-      className="shrink-0 rounded p-0.5 text-[#6a7282] opacity-0 transition-opacity duration-150 hover:bg-black/10 hover:text-[#0a0a0a] group-hover/chip:opacity-100 focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#944c73] focus-visible:ring-offset-1"
+      className="shrink-0 rounded p-0.5 text-[#6a7282] opacity-0 transition-opacity duration-150 hover:bg-black/10 hover:text-[#0a0a0a] group-hover/chip:opacity-100 focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-1"
       aria-label={ariaLabel}
     >
       <svg
@@ -1337,6 +1584,7 @@ export function AdminRequestManagementDashboard() {
     rowId: string
     currentVendor: string
     vendorOptions: string[]
+    issueCategorySlug: string | null
   } | null>(null)
   const [vendorSaving, setVendorSaving] = useState(false)
   const [vendorSaveError, setVendorSaveError] = useState<string | null>(null)
@@ -1359,7 +1607,7 @@ export function AdminRequestManagementDashboard() {
     void (async () => {
       const { data, error } = await supabase
         .from('vendors')
-        .select('name, category')
+        .select('id, name, category')
         .eq('active', true)
         .order('name')
       if (cancelled) return
@@ -1370,6 +1618,7 @@ export function AdminRequestManagementDashboard() {
       }
       setActiveVendorPickList(
         (data ?? []).map((r) => ({
+          id: String(r.id ?? ''),
           name: typeof r.name === 'string' ? r.name : String(r.name ?? ''),
           category: r.category == null ? null : String(r.category),
         })),
@@ -1379,6 +1628,115 @@ export function AdminRequestManagementDashboard() {
       cancelled = true
     }
   }, [])
+
+  const persistVendorReassignForRow = useCallback(
+    async (targetRow: AdminTicketRow, choice: AdminVendorReassignChoice) => {
+      const nextVendor = choice.vendorName.trim()
+      const ticketUuid = resolveBackendTicketId(targetRow)
+      const reassignUrl = import.meta.env.VITE_ADMIN_REASSIGN_URL?.trim()
+      const reassignSecret = import.meta.env.VITE_ADMIN_REASSIGN_SECRET?.trim()
+      if (ticketUuid && reassignUrl && reassignSecret) {
+        const reassignResult = await postAdminReassignVendor({
+          url: reassignUrl,
+          secret: reassignSecret,
+          ticketId: ticketUuid,
+          vendorName: nextVendor,
+          vendorId: choice.vendorId?.trim() || undefined,
+          createVendorIfMissing: choice.createVendorIfMissing,
+          vendorCategory: choice.vendorCategory,
+        })
+
+        let dueAtIso: string | undefined
+        let dueAtDisplay: string | undefined
+        let assignedAtIso: string | undefined
+        let isSlaOverdue: boolean | undefined
+
+        if (supabase) {
+          const { data: ref } = await supabase
+            .from('maintenance_requests')
+            .select('due_at, assigned_at')
+            .eq('id', ticketUuid)
+            .maybeSingle()
+          if (ref) {
+            if (ref.due_at != null && String(ref.due_at).trim() !== '') {
+              dueAtIso = String(ref.due_at).trim()
+              dueAtDisplay = formatDueAtDisplay(dueAtIso)
+            }
+            if (
+              ref.assigned_at != null &&
+              String(ref.assigned_at).trim() !== ''
+            ) {
+              assignedAtIso = String(ref.assigned_at).trim()
+            }
+            if (dueAtIso != null) {
+              const t = new Date(dueAtIso).getTime()
+              isSlaOverdue =
+                targetRow.status !== 'completed' &&
+                !Number.isNaN(t) &&
+                t < Date.now()
+            }
+          }
+        }
+
+        setTickets((prev) =>
+          prev.map((r) => {
+            if (r.id !== targetRow.id) return r
+            const next: AdminTicketRow = {
+              ...r,
+              vendor: nextVendor,
+              assignedVendorId: reassignResult.assigned_vendor_id,
+              vendorWorkStatus: 'pending_accept',
+            }
+            if (assignedAtIso != null) next.assignedAtIso = assignedAtIso
+            if (dueAtIso != null) next.dueAtIso = dueAtIso
+            if (dueAtDisplay != null) next.dueAtDisplay = dueAtDisplay
+            if (isSlaOverdue !== undefined) next.isSlaOverdue = isSlaOverdue
+            return next
+          }),
+        )
+      } else {
+        setTickets((prev) =>
+          prev.map((r) =>
+            r.id === targetRow.id ? { ...r, vendor: nextVendor } : r,
+          ),
+        )
+      }
+    },
+    [supabase],
+  )
+
+  const persistOverdueDeadlineForRow = useCallback(
+    async (targetRow: AdminTicketRow, nextDueAtIso: string) => {
+      const parsed = new Date(nextDueAtIso)
+      if (Number.isNaN(parsed.getTime())) {
+        throw new Error('Invalid date/time selected.')
+      }
+      const ticketUuid = resolveBackendTicketId(targetRow)
+      if (supabase && ticketUuid) {
+        const { error } = await supabase
+          .from('maintenance_requests')
+          .update({ due_at: parsed.toISOString() })
+          .eq('id', ticketUuid)
+        if (error) throw new Error(error.message)
+      }
+      const dueAtDisplay = formatDueAtDisplay(parsed.toISOString())
+      const isSlaOverdue =
+        targetRow.status !== 'completed' && parsed.getTime() < Date.now()
+      setTickets((prev) =>
+        prev.map((r) =>
+          r.id === targetRow.id
+            ? {
+                ...r,
+                dueAtIso: parsed.toISOString(),
+                dueAtDisplay,
+                isSlaOverdue,
+              }
+            : r,
+        ),
+      )
+    },
+    [],
+  )
 
   useEffect(() => {
     let cancelled = false
@@ -1525,7 +1883,7 @@ export function AdminRequestManagementDashboard() {
         value: String(tickets.length),
         hint: 'Total maintenance requests',
         valueClass: 'text-[#0a0a0a]',
-        icon: 'house' as const,
+        icon: 'open' as const,
       },
       {
         label: 'Urgent',
@@ -1533,7 +1891,7 @@ export function AdminRequestManagementDashboard() {
           tickets.filter((r) => r.urgency === 'urgent').length,
         ),
         hint: 'Requires immediate action',
-        valueClass: 'text-[#e7000b]',
+        valueClass: 'text-[#0a0a0a]',
         icon: 'alert' as const,
       },
     ],
@@ -1665,7 +2023,7 @@ export function AdminRequestManagementDashboard() {
                   Only continue if you intend to delete these records.
                 </p>
                 {deleteError ? (
-                  <p className="text-[13px] leading-4 text-[#c10007]" role="alert">
+                  <p className="text-[13px] leading-4 text-[#b52a00]" role="alert">
                     {deleteError}
                   </p>
                 ) : null}
@@ -1673,7 +2031,7 @@ export function AdminRequestManagementDashboard() {
                   <button
                     type="button"
                     disabled={deleteSaving || selectedCount === 0}
-                    className="inline-flex h-9 min-w-0 flex-1 items-center justify-center rounded-lg border border-[#fecaca] bg-[#fef2f2] px-4 text-[14px] font-medium leading-5 tracking-[-0.1504px] text-[#c10007] outline-none transition-colors hover:bg-[#fee2e2] focus-visible:ring-2 focus-visible:ring-[#944c73] focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-60 sm:flex-initial"
+                    className="inline-flex h-9 min-w-0 flex-1 items-center justify-center rounded-lg border border-[#b52a00]/30 bg-[#fff4f0] px-4 text-[14px] font-medium leading-5 tracking-[-0.1504px] text-[#b52a00] outline-none transition-colors hover:bg-[#ffe9e1] focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-60 sm:flex-initial"
                     onClick={() => void deleteSelectedTickets()}
                   >
                     {deleteSaving ? 'Deleting…' : 'Yes, delete permanently'}
@@ -1681,7 +2039,7 @@ export function AdminRequestManagementDashboard() {
                   <button
                     type="button"
                     disabled={deleteSaving}
-                    className="inline-flex h-9 items-center justify-center rounded-lg border border-black/10 bg-white px-[17px] text-[14px] font-medium leading-5 tracking-[-0.1504px] text-[#0a0a0a] outline-none transition-colors hover:bg-[#f3f4f6] focus-visible:ring-2 focus-visible:ring-[#944c73] focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-60"
+                    className="inline-flex h-9 items-center justify-center rounded-lg border border-black/10 bg-white px-[17px] text-[14px] font-medium leading-5 tracking-[-0.1504px] text-[#0a0a0a] outline-none transition-colors hover:bg-[#f3f4f6] focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-60"
                     onClick={() => {
                       if (!deleteSaving) {
                         setDeleteError(null)
@@ -1702,12 +2060,21 @@ export function AdminRequestManagementDashboard() {
           vendorOptions={vendorModal?.vendorOptions ?? []}
           saving={vendorSaving}
           saveError={vendorSaveError}
+          externalDiscovery={(() => {
+            if (!vendorModal || vendorModal.vendorOptions.length > 0) return null
+            const row = tickets.find((r) => r.id === vendorModal.rowId)
+            const tid = row ? resolveBackendTicketId(row) : null
+            const url = resolveDiscoverExternalVendorsUrl()
+            const secret = import.meta.env.VITE_ADMIN_REASSIGN_SECRET?.trim()
+            if (!tid || !url || !secret) return null
+            return { ticketId: tid, url, secret }
+          })()}
           onClose={() => {
             if (vendorSaving) return
             setVendorSaveError(null)
             setVendorModal(null)
           }}
-          onSave={async (nextVendor) => {
+          onSave={async (nextVendor, meta) => {
             if (!vendorModal) return
             setVendorSaveError(null)
             const row = tickets.find((r) => r.id === vendorModal.rowId)
@@ -1715,6 +2082,10 @@ export function AdminRequestManagementDashboard() {
               setVendorModal(null)
               return
             }
+            const createExternal = meta?.createVendorIfMissing === true
+            const vendorId = createExternal
+              ? undefined
+              : vendorIdForActiveName(activeVendorPickList, nextVendor)
             const ticketUuid = resolveBackendTicketId(row)
             const reassignUrl = import.meta.env.VITE_ADMIN_REASSIGN_URL?.trim()
             const reassignSecret =
@@ -1722,23 +2093,14 @@ export function AdminRequestManagementDashboard() {
             if (ticketUuid && reassignUrl && reassignSecret) {
               setVendorSaving(true)
               try {
-                const reassignResult = await postAdminReassignVendor({
-                  url: reassignUrl,
-                  secret: reassignSecret,
-                  ticketId: ticketUuid,
+                await persistVendorReassignForRow(row, {
                   vendorName: nextVendor,
+                  vendorId,
+                  createVendorIfMissing: createExternal || undefined,
+                  vendorCategory: createExternal
+                    ? vendorModal.issueCategorySlug
+                    : undefined,
                 })
-                setTickets((prev) =>
-                  prev.map((r) =>
-                    r.id === vendorModal.rowId
-                      ? {
-                          ...r,
-                          vendor: nextVendor,
-                          assignedVendorId: reassignResult.assigned_vendor_id,
-                        }
-                      : r,
-                  ),
-                )
               } catch (e) {
                 setVendorSaveError(
                   e instanceof Error
@@ -1750,11 +2112,14 @@ export function AdminRequestManagementDashboard() {
               }
               setVendorSaving(false)
             } else {
-              setTickets((prev) =>
-                prev.map((r) =>
-                  r.id === vendorModal.rowId ? { ...r, vendor: nextVendor } : r,
-                ),
-              )
+              await persistVendorReassignForRow(row, {
+                vendorName: nextVendor,
+                vendorId,
+                createVendorIfMissing: createExternal || undefined,
+                vendorCategory: createExternal
+                  ? vendorModal.issueCategorySlug
+                  : undefined,
+              })
             }
             setVendorModal(null)
           }}
@@ -1800,11 +2165,11 @@ export function AdminRequestManagementDashboard() {
                     <span className="text-[11px] font-medium uppercase leading-4 tracking-[0.06em] text-[#6a7282]">
                       Completion rate
                     </span>
-                    <span className="text-[20px] font-semibold leading-7 tracking-[0.02em] tabular-nums text-[#00a63e]">
+                    <span className="text-[20px] font-semibold leading-7 tracking-[0.02em] tabular-nums text-[#0a0a0a]">
                       {pipelineStats.completedPct}%
                     </span>
                   </div>
-                  <IconProgressCompletedPair />
+                  <StatSummaryPipelineCheckmarkIcon />
                 </div>
                 <div className="flex min-h-20 w-full min-w-0 flex-1 items-center">
                   <InProgressCompletedDonut
@@ -1821,17 +2186,23 @@ export function AdminRequestManagementDashboard() {
             <div className="rounded-[10px] border border-[#e5e7eb] bg-white p-6 shadow-[0px_1px_2px_-1px_rgba(0,0,0,0.06)]">
               <div className="flex flex-col gap-3 lg:flex-row lg:flex-wrap lg:items-center">
                 <div className="relative min-w-0 flex-1 lg:min-w-[240px]">
-                  <span className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-[#6a7282]">
-                    <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" className="size-4">
-                      <path d="M7 12A5 5 0 107 2a5 5 0 000 10zm6 6l-3-3" strokeWidth={1.5} />
-                    </svg>
+                  <span className="pointer-events-none absolute left-3 top-1/2 flex size-4 -translate-y-1/2 items-center justify-center">
+                    <img
+                      src={magnifyingGlassIcon}
+                      alt=""
+                      className="size-4 object-contain opacity-60"
+                      width={16}
+                      height={16}
+                      decoding="async"
+                      aria-hidden
+                    />
                   </span>
                   <input
                     type="search"
                     value={searchQuery}
                     onChange={(e) => setSearchQuery(e.target.value)}
                     placeholder="Search by resident, unit, or request ID..."
-                    className="h-9 w-full rounded-lg border border-transparent bg-[#e8e9ed] py-1 pl-10 pr-3 text-[14px] tracking-[-0.1504px] text-[#0a0a0a] shadow-none placeholder:text-[#717182] outline-none transition-[background-color,border-color,box-shadow] duration-150 hover:border-black/10 hover:bg-[#dfe0e6] active:border-black/15 active:bg-[#cfd0d6] focus:border-[#944c73]/45 focus:bg-white focus:ring-2 focus:ring-[#944c73]/30"
+                    className="h-9 w-full rounded-lg border border-transparent bg-[#e8e9ed] py-1 pl-10 pr-3 text-[14px] tracking-[-0.1504px] text-[#0a0a0a] shadow-none placeholder:text-[#717182] outline-none transition-[background-color,border-color,box-shadow] duration-150 hover:border-black/10 hover:bg-[#dfe0e6] active:border-black/15 active:bg-[#cfd0d6] focus:border-[#0030b5]/45 focus:bg-white focus:ring-2 focus:ring-[#0030b5]/30"
                     aria-label="Search requests"
                   />
                 </div>
@@ -1871,7 +2242,7 @@ export function AdminRequestManagementDashboard() {
                 <div className="flex flex-wrap items-center gap-2">
                   <button
                     type="button"
-                    className="inline-flex h-9 items-center justify-center rounded-lg border border-black/10 bg-white px-3 text-[14px] font-medium tracking-[-0.1504px] text-[#0a0a0a] outline-none transition-colors duration-150 hover:bg-[#e5e7eb] focus-visible:ring-2 focus-visible:ring-[#944c73] focus-visible:ring-offset-2"
+                    className="inline-flex h-9 items-center justify-center rounded-lg border border-black/10 bg-white px-3 text-[14px] font-medium tracking-[-0.1504px] text-[#0a0a0a] outline-none transition-colors duration-150 hover:bg-[#e5e7eb] focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2"
                     onClick={() => setSelectedIds(new Set())}
                   >
                     Clear selection
@@ -1879,7 +2250,7 @@ export function AdminRequestManagementDashboard() {
                   <button
                     type="button"
                     disabled={deleteSaving}
-                    className="inline-flex h-9 items-center justify-center rounded-lg border border-[#fecaca] bg-[#fef2f2] px-3 text-[14px] font-medium tracking-[-0.1504px] text-[#c10007] outline-none transition-colors duration-150 hover:bg-[#fee2e2] focus-visible:ring-2 focus-visible:ring-[#944c73] focus-visible:ring-offset-2"
+                    className="inline-flex h-9 items-center justify-center rounded-lg border border-[#b52a00]/30 bg-[#fff4f0] px-3 text-[14px] font-medium tracking-[-0.1504px] text-[#b52a00] outline-none transition-colors duration-150 hover:bg-[#ffe9e1] focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2"
                     onClick={() => {
                       setDeleteError(null)
                       setDeleteConfirmOpen(true)
@@ -1891,7 +2262,7 @@ export function AdminRequestManagementDashboard() {
               </div>
             ) : null}
             {deleteError && !deleteConfirmOpen ? (
-              <p className="rounded-[10px] border border-[#fecaca] bg-[#fef2f2] px-4 py-3 text-[14px] leading-5 text-[#b91c1c]">
+              <p className="rounded-[10px] border border-[#b52a00]/30 bg-[#fff4f0] px-4 py-3 text-[14px] leading-5 text-[#b52a00]">
                 Could not delete selected requests: {deleteError}
               </p>
             ) : null}
@@ -1928,7 +2299,7 @@ export function AdminRequestManagementDashboard() {
                         Urgency
                       </th>
                       <th className="min-w-[140px] px-3 py-3 text-[12px] font-medium uppercase tracking-wide text-[#6a7282]">
-                        Due (SLA)
+                        Due date/time
                       </th>
                       <th className="px-3 py-3 text-[12px] font-medium uppercase tracking-wide text-[#6a7282]">
                         Actions
@@ -2014,7 +2385,7 @@ export function AdminRequestManagementDashboard() {
                               </div>
                             ) : null}
                             {row.status === 'under_review' ? (
-                              <p className="mt-1 flex items-center gap-1 text-[12px] text-[#9810fa]">
+                              <p className="mt-1 flex items-center gap-1 text-[12px] text-[#2f7f63]">
                                 <SparkleIcon className="size-3 shrink-0" />
                                 AI suggestions available
                               </p>
@@ -2038,14 +2409,14 @@ export function AdminRequestManagementDashboard() {
                                 <span
                                   className={`text-[14px] leading-5 ${
                                     row.isSlaOverdue
-                                      ? 'font-medium text-[#b91c1c]'
+                                      ? 'font-medium text-[#b52a00]'
                                       : 'text-[#0a0a0a]'
                                   }`}
                                 >
                                   {row.dueAtDisplay}
                                 </span>
                                 {row.isSlaOverdue ? (
-                                  <span className="inline-flex w-fit rounded-full bg-[#fee2e2] px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wide text-[#991b1b]">
+                                  <span className="inline-flex w-fit rounded-full bg-[#fff4f0] px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wide text-[#b52a00]">
                                     Overdue
                                   </span>
                                 ) : null}
@@ -2060,7 +2431,7 @@ export function AdminRequestManagementDashboard() {
                               aria-expanded={isExpanded}
                               aria-controls={`request-detail-${row.id}`}
                               id={`request-view-${row.id}`}
-                              className={`inline-flex h-8 items-center gap-1.5 rounded-lg border px-2.5 text-[14px] font-medium tracking-[-0.1504px] outline-none transition-colors focus-visible:ring-2 focus-visible:ring-[#944c73] focus-visible:ring-offset-2 ${
+                              className={`inline-flex h-8 items-center gap-1.5 rounded-lg border px-2.5 text-[14px] font-medium tracking-[-0.1504px] outline-none transition-colors focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2 ${
                                 isExpanded
                                   ? 'border-black/12 bg-white text-[#0a0a0a] shadow-sm'
                                   : 'border-black/10 bg-white text-[#0a0a0a] hover:bg-[#e5e7eb]'
@@ -2109,6 +2480,10 @@ export function AdminRequestManagementDashboard() {
                                     key={row.id}
                                     row={row}
                                     st={st}
+                                    activeVendorsFromDb={activeVendorPickList}
+                                    onReassignAlternativeVendor={(choice) =>
+                                      persistVendorReassignForRow(row, choice)
+                                    }
                                     onEditVendor={() => {
                                       setVendorSaveError(null)
                                       setVendorSaving(false)
@@ -2120,6 +2495,8 @@ export function AdminRequestManagementDashboard() {
                                           row,
                                           activeVendorPickList,
                                         ),
+                                        issueCategorySlug:
+                                          getIssueCategorySlugForTicket(row),
                                       })
                                     }}
                                   />
@@ -2127,6 +2504,16 @@ export function AdminRequestManagementDashboard() {
                                   <RequestRowAccordionPanel
                                     row={row}
                                     st={st}
+                                    activeVendorsFromDb={activeVendorPickList}
+                                    onUpdateOverdueDeadline={(nextDueAtIso) =>
+                                      persistOverdueDeadlineForRow(
+                                        row,
+                                        nextDueAtIso,
+                                      )
+                                    }
+                                    onReassignAlternativeVendor={(choice) =>
+                                      persistVendorReassignForRow(row, choice)
+                                    }
                                     onEditVendor={() => {
                                       setVendorSaveError(null)
                                       setVendorSaving(false)
@@ -2138,6 +2525,8 @@ export function AdminRequestManagementDashboard() {
                                           row,
                                           activeVendorPickList,
                                         ),
+                                        issueCategorySlug:
+                                          getIssueCategorySlugForTicket(row),
                                       })
                                     }}
                                   />
@@ -2180,7 +2569,7 @@ function FilterSelect({
         disabled={disabled}
         value={value}
         onChange={(e) => onChange(e.target.value)}
-        className="peer h-9 min-w-[140px] appearance-none rounded-lg border border-transparent bg-[#f3f3f5] py-1 pl-3 pr-9 text-[14px] font-medium tracking-[-0.1504px] text-[#0a0a0a] shadow-none outline-none transition-[background-color,border-color,box-shadow,opacity,color] duration-150 enabled:cursor-pointer hover:enabled:border-black/10 hover:enabled:bg-[#e8eaee] active:enabled:border-black/15 active:enabled:bg-[#dcdde3] focus:border-[#944c73]/45 focus:bg-white focus:ring-2 focus:ring-[#944c73]/30 focus:outline-none disabled:cursor-not-allowed disabled:opacity-55 disabled:hover:border-transparent disabled:hover:bg-[#f3f3f5] disabled:focus:ring-0 disabled:active:bg-[#f3f3f5]"
+        className="peer h-9 min-w-[140px] appearance-none rounded-lg border border-transparent bg-[#f3f3f5] py-1 pl-3 pr-9 text-[14px] font-medium tracking-[-0.1504px] text-[#0a0a0a] shadow-none outline-none transition-[background-color,border-color,box-shadow,opacity,color] duration-150 enabled:cursor-pointer hover:enabled:border-black/10 hover:enabled:bg-[#e8eaee] active:enabled:border-black/15 active:enabled:bg-[#dcdde3] focus:border-[#0030b5]/45 focus:bg-white focus:ring-2 focus:ring-[#0030b5]/30 focus:outline-none disabled:cursor-not-allowed disabled:opacity-55 disabled:hover:border-transparent disabled:hover:bg-[#f3f3f5] disabled:focus:ring-0 disabled:active:bg-[#f3f3f5]"
       >
         <option value="">{label}</option>
         {options?.map((o) => (

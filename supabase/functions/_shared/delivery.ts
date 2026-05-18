@@ -11,9 +11,9 @@ export async function sendResendEmail(
   const key = Deno.env.get("RESEND_API_KEY")?.trim()
   /** Must be an address on a domain verified in Resend (https://resend.com/domains). */
   const from =
-    Deno.env.get("RESEND_FROM_EMAIL")?.trim() || "noreply@assetwise.site"
+    Deno.env.get("RESEND_FROM_EMAIL")?.trim() || "noreply@send.assetwise.site"
   if (!key) {
-    return { error: "Missing RESEND_API_KEY" }
+    return { error: "Resend not configured" }
   }
 
   const res = await fetch("https://api.resend.com/emails", {
@@ -51,10 +51,7 @@ export async function sendTwilioSms(to: string, body: string): Promise<
   const token = Deno.env.get("TWILIO_AUTH_TOKEN")?.trim()
   const fromNum = Deno.env.get("TWILIO_FROM_NUMBER")?.trim()
   if (!sid || !token || !fromNum) {
-    return {
-      error:
-        "Missing TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, or TWILIO_FROM_NUMBER",
-    }
+    return { error: "Twilio not configured" }
   }
 
   const auth = btoa(`${sid}:${token}`)

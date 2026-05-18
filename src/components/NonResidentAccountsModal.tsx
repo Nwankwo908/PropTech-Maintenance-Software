@@ -23,7 +23,7 @@ function formatBalance(cents: number) {
   return `$${n.toFixed(2)}`
 }
 
-function IconClose({ className = 'size-5 text-[#6a7282]' }: { className?: string }) {
+function IconClose({ className = 'size-5 text-neutral' }: { className?: string }) {
   return (
     <svg className={className} viewBox="0 0 24 24" fill="none" aria-hidden>
       <path d="M18 6L6 18M6 6l12 12" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" />
@@ -31,7 +31,7 @@ function IconClose({ className = 'size-5 text-[#6a7282]' }: { className?: string
   )
 }
 
-function IconUserXHeader({ className = 'size-5 text-[#a65f00]' }: { className?: string }) {
+function IconUserXHeader({ className = 'size-5 text-tertiary' }: { className?: string }) {
   return (
     <svg className={className} viewBox="0 0 24 24" fill="none" aria-hidden>
       <path
@@ -74,21 +74,21 @@ export function NonResidentAccountsModal({
         role="dialog"
         aria-modal="true"
         aria-labelledby={titleId}
-        className="relative flex h-full max-h-dvh w-full max-w-[min(100vw,768px)] flex-col overflow-hidden border-l border-[#e5e7eb] bg-white shadow-[inset_1px_0_0_0_#e5e7eb]"
+        className="relative flex h-full max-h-dvh w-full max-w-[min(100vw,768px)] flex-col overflow-hidden border-l border-secondary bg-white shadow-[inset_1px_0_0_0_#A788964D]"
       >
-        <header className="flex h-[81px] shrink-0 items-center justify-between border-b border-[#e5e7eb] px-6">
+        <header className="flex h-[81px] shrink-0 items-center justify-between border-b border-secondary px-6">
           <div className="flex min-w-0 items-center gap-3">
-            <div className="flex size-10 shrink-0 items-center justify-center rounded-[10px] bg-[#fef9c2]">
+            <div className="flex size-10 shrink-0 items-center justify-center rounded-[10px] bg-tertiary">
               <IconUserXHeader />
             </div>
             <div className="min-w-0">
               <h2
                 id={titleId}
-                className="text-[18px] font-semibold leading-7 tracking-[-0.4395px] text-[#101828]"
+                className="text-[18px] font-semibold leading-7 tracking-[-0.4395px] text-extended-3"
               >
                 Non-Resident Accounts
               </h2>
-              <p className="text-[14px] font-normal leading-5 tracking-[-0.1504px] text-[#6a7282]">
+              <p className="text-[14px] font-normal leading-5 tracking-[-0.1504px] text-neutral">
                 Past residents and outstanding balances
               </p>
             </div>
@@ -97,47 +97,47 @@ export function NonResidentAccountsModal({
             type="button"
             onClick={onClose}
             aria-label="Close"
-            className="flex size-9 shrink-0 items-center justify-center rounded-lg outline-none hover:bg-[#f3f4f6] focus-visible:ring-2 focus-visible:ring-[#944c73] focus-visible:ring-offset-2"
+            className="flex size-9 shrink-0 items-center justify-center rounded-lg outline-none hover:bg-secondary focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2"
           >
             <IconClose />
           </button>
         </header>
 
         <div className="min-h-0 flex-1 overflow-auto px-6 py-6">
-          <div className="overflow-hidden rounded-[10px] border border-[#e5e7eb]">
+          <div className="overflow-hidden rounded-[10px] border border-secondary">
             <table className="w-full border-collapse text-left">
               <thead>
-                <tr className="border-b border-[#e5e7eb] bg-[#f9fafb]">
-                  <th className="px-4 py-3 text-[12px] font-medium leading-4 text-[#4a5565]">Name</th>
-                  <th className="px-4 py-3 text-[12px] font-medium leading-4 text-[#4a5565]">
+                <tr className="border-b border-secondary bg-secondary">
+                  <th className="px-4 py-3 text-[12px] font-medium leading-4 text-neutral-variant">Name</th>
+                  <th className="px-4 py-3 text-[12px] font-medium leading-4 text-neutral-variant">
                     Last Unit
                   </th>
-                  <th className="px-4 py-3 text-[12px] font-medium leading-4 text-[#4a5565]">
+                  <th className="px-4 py-3 text-[12px] font-medium leading-4 text-neutral-variant">
                     Outstanding Balance
                   </th>
-                  <th className="px-4 py-3 text-right text-[12px] font-medium leading-4 text-[#4a5565]">
+                  <th className="px-4 py-3 text-right text-[12px] font-medium leading-4 text-neutral-variant">
                     Actions
                   </th>
                 </tr>
               </thead>
               <tbody>
                 {DEMO_NON_RESIDENTS.map((row) => (
-                  <tr key={row.id} className="border-b border-[#e5e7eb] last:border-b-0">
+                  <tr key={row.id} className="border-b border-secondary last:border-b-0">
                     <td className="px-4 py-3 align-middle">
                       <div className="flex flex-col gap-0.5">
-                        <p className="text-[14px] font-medium leading-5 tracking-[-0.1504px] text-[#101828]">
+                        <p className="text-[14px] font-medium leading-5 tracking-[-0.1504px] text-extended-3">
                           {row.name}
                         </p>
-                        <p className="text-[12px] font-normal leading-4 text-[#6a7282]">{row.email}</p>
+                        <p className="text-[12px] font-normal leading-4 text-neutral">{row.email}</p>
                       </div>
                     </td>
                     <td className="px-4 py-3 align-middle">
-                      <p className="text-[14px] font-normal leading-5 tracking-[-0.1504px] text-[#4a5565]">
+                      <p className="text-[14px] font-normal leading-5 tracking-[-0.1504px] text-neutral-variant">
                         {row.lastUnit}
                       </p>
                     </td>
                     <td className="px-4 py-3 align-middle">
-                      <p className="text-[14px] font-semibold leading-5 tracking-[-0.1504px] text-[#e7000b]">
+                      <p className="text-[14px] font-semibold leading-5 tracking-[-0.1504px] text-error">
                         {formatBalance(row.balanceCents)}
                       </p>
                     </td>
@@ -145,7 +145,7 @@ export function NonResidentAccountsModal({
                       <div className="flex justify-end">
                         <button
                           type="button"
-                          className="rounded px-3 py-1.5 text-[12px] font-medium leading-4 text-white outline-none bg-[#155dfc] hover:bg-[#1447e6] focus-visible:ring-2 focus-visible:ring-[#944c73] focus-visible:ring-offset-2"
+                          className="rounded px-3 py-1.5 text-[12px] font-medium leading-4 text-white outline-none bg-extended-1 hover:bg-extended-1 focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2"
                         >
                           View Details
                         </button>
@@ -158,11 +158,11 @@ export function NonResidentAccountsModal({
           </div>
         </div>
 
-        <footer className="flex shrink-0 justify-end border-t border-[#e5e7eb] bg-[#f9fafb] px-6 pb-5 pt-4">
+        <footer className="flex shrink-0 justify-end border-t border-secondary bg-secondary px-6 pb-5 pt-4">
           <button
             type="button"
             onClick={onClose}
-            className="inline-flex h-10 items-center justify-center rounded-[10px] bg-[#4a5565] px-8 text-[16px] font-medium leading-6 tracking-[-0.3125px] text-white outline-none hover:bg-[#364153] focus-visible:ring-2 focus-visible:ring-[#944c73] focus-visible:ring-offset-2"
+            className="inline-flex h-10 items-center justify-center rounded-[10px] bg-neutral-variant px-8 text-[16px] font-medium leading-6 tracking-[-0.3125px] text-white outline-none hover:bg-neutral-variant focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2"
           >
             Close
           </button>

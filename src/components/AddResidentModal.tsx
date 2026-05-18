@@ -16,7 +16,7 @@ export type AddResidentSubmitPayload = {
   status: (typeof STATUS_OPTIONS)[number]['value']
 }
 
-function IconUserPlusHeader({ className = 'size-5 text-[#155dfc]' }: { className?: string }) {
+function IconUserPlusHeader({ className = 'size-5 text-extended-1' }: { className?: string }) {
   return (
     <svg className={className} viewBox="0 0 24 24" fill="none" aria-hidden>
       <circle cx="9" cy="7" r="4" stroke="currentColor" strokeWidth={1.8} />
@@ -31,7 +31,7 @@ function IconUserPlusHeader({ className = 'size-5 text-[#155dfc]' }: { className
   )
 }
 
-function IconChevronDown({ className = 'size-4 text-[#0a0a0a]' }: { className?: string }) {
+function IconChevronDown({ className = 'size-4 text-extended-3' }: { className?: string }) {
   return (
     <svg className={className} viewBox="0 0 24 24" fill="none" aria-hidden>
       <path d="M6 9l6 6 6-6" stroke="currentColor" strokeWidth={2} strokeLinecap="round" />
@@ -40,10 +40,10 @@ function IconChevronDown({ className = 'size-4 text-[#0a0a0a]' }: { className?: 
 }
 
 const inputClass =
-  'h-9 w-full rounded-lg border border-transparent bg-[#f3f3f5] px-3 text-[14px] tracking-[-0.1504px] text-[#0a0a0a] outline-none placeholder:text-[#717182] focus:border-[#e5e7eb] focus:ring-1 focus:ring-[#e5e7eb]'
+  'h-9 w-full rounded-lg border border-transparent bg-secondary px-3 text-[14px] tracking-[-0.1504px] text-extended-3 outline-none placeholder:text-neutral focus:border-secondary focus:ring-1 focus:ring-secondary'
 
 const selectClass =
-  'h-9 w-full cursor-pointer appearance-none rounded-lg border border-transparent bg-[#f3f3f5] py-1 pl-3 pr-9 text-[14px] font-medium tracking-[-0.1504px] outline-none focus-visible:ring-2 focus-visible:ring-[#944c73] focus-visible:ring-offset-2'
+  'h-9 w-full cursor-pointer appearance-none rounded-lg border border-transparent bg-secondary py-1 pl-3 pr-9 text-[14px] font-medium tracking-[-0.1504px] outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2'
 
 /** Add New Resident form (Figma 129:16139). */
 export function AddResidentModal({
@@ -128,21 +128,21 @@ export function AddResidentModal({
         role="dialog"
         aria-modal="true"
         aria-labelledby={titleId}
-        className="relative flex h-full max-h-dvh w-full max-w-[min(100vw,560px)] flex-col overflow-hidden border-l border-[#e5e7eb] bg-white shadow-[inset_1px_0_0_0_#e5e7eb]"
+        className="relative flex h-full max-h-dvh w-full max-w-[min(100vw,560px)] flex-col overflow-hidden border-l border-secondary bg-white shadow-[inset_1px_0_0_0_#A788964D]"
       >
-        <header className="flex h-[81px] shrink-0 items-center justify-between border-b border-[#e5e7eb] px-6">
+        <header className="flex h-[81px] shrink-0 items-center justify-between border-b border-secondary px-6">
           <div className="flex min-w-0 items-center gap-3">
-            <div className="flex size-10 shrink-0 items-center justify-center rounded-[10px] bg-[#dbeafe]">
+            <div className="flex size-10 shrink-0 items-center justify-center rounded-[10px] bg-extended-2">
               <IconUserPlusHeader />
             </div>
             <div className="min-w-0">
               <h2
                 id={titleId}
-                className="text-[18px] font-semibold leading-7 tracking-[-0.4395px] text-[#101828]"
+                className="text-[18px] font-semibold leading-7 tracking-[-0.4395px] text-extended-3"
               >
                 Add New Resident
               </h2>
-              <p className="text-[14px] leading-5 tracking-[-0.1504px] text-[#6a7282]">
+              <p className="text-[14px] leading-5 tracking-[-0.1504px] text-neutral">
                 Create a new resident account
               </p>
             </div>
@@ -151,7 +151,7 @@ export function AddResidentModal({
             type="button"
             onClick={onClose}
             aria-label="Close"
-            className="shrink-0 rounded-lg p-1 text-[#6a7282] outline-none hover:bg-black/5 hover:text-[#0a0a0a] focus-visible:ring-2 focus-visible:ring-[#944c73] focus-visible:ring-offset-2"
+            className="shrink-0 rounded-lg p-1 text-neutral outline-none hover:bg-black/5 hover:text-extended-3 focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2"
           >
             <svg className="size-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} aria-hidden>
               <path d="M18 6L6 18M6 6l12 12" strokeLinecap="round" />
@@ -162,8 +162,8 @@ export function AddResidentModal({
         <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-6 pt-6">
           <div className="flex flex-col gap-4 pb-6">
             <div className="space-y-2">
-              <label htmlFor="add-resident-name" className="block text-[14px] font-medium tracking-[-0.1504px] text-[#364153]">
-                Full Name <span className="text-[#c10007]">*</span>
+              <label htmlFor="add-resident-name" className="block text-[14px] font-medium tracking-[-0.1504px] text-neutral-variant">
+                Full Name <span className="text-error">*</span>
               </label>
               <input
                 id="add-resident-name"
@@ -175,8 +175,8 @@ export function AddResidentModal({
               />
             </div>
             <div className="space-y-2">
-              <label htmlFor="add-resident-email" className="block text-[14px] font-medium tracking-[-0.1504px] text-[#364153]">
-                Email Address <span className="text-[#c10007]">*</span>
+              <label htmlFor="add-resident-email" className="block text-[14px] font-medium tracking-[-0.1504px] text-neutral-variant">
+                Email Address <span className="text-error">*</span>
               </label>
               <input
                 id="add-resident-email"
@@ -188,7 +188,7 @@ export function AddResidentModal({
               />
             </div>
             <div className="space-y-2">
-              <label htmlFor="add-resident-phone" className="block text-[14px] font-medium tracking-[-0.1504px] text-[#364153]">
+              <label htmlFor="add-resident-phone" className="block text-[14px] font-medium tracking-[-0.1504px] text-neutral-variant">
                 Phone Number
               </label>
               <input
@@ -201,7 +201,7 @@ export function AddResidentModal({
               />
             </div>
             <div className="space-y-2">
-              <label htmlFor="add-resident-unit" className="block text-[14px] font-medium tracking-[-0.1504px] text-[#364153]">
+              <label htmlFor="add-resident-unit" className="block text-[14px] font-medium tracking-[-0.1504px] text-neutral-variant">
                 Unit Assignment
               </label>
               <div className="relative">
@@ -209,7 +209,7 @@ export function AddResidentModal({
                   id="add-resident-unit"
                   value={unit}
                   onChange={(e) => setUnit(e.target.value)}
-                  className={`${selectClass} ${!unit ? 'text-[#717182]' : 'text-[#0a0a0a]'}`}
+                  className={`${selectClass} ${!unit ? 'text-neutral' : 'text-extended-3'}`}
                 >
                   {unitOptions.map((o) => (
                     <option key={o.value || 'placeholder'} value={o.value}>
@@ -223,7 +223,7 @@ export function AddResidentModal({
               </div>
             </div>
             <div className="space-y-2">
-              <label htmlFor="add-resident-move-in" className="block text-[14px] font-medium tracking-[-0.1504px] text-[#364153]">
+              <label htmlFor="add-resident-move-in" className="block text-[14px] font-medium tracking-[-0.1504px] text-neutral-variant">
                 Move-In Date
               </label>
               <input
@@ -235,7 +235,7 @@ export function AddResidentModal({
               />
             </div>
             <div className="space-y-2">
-              <label htmlFor="add-resident-status" className="block text-[14px] font-medium tracking-[-0.1504px] text-[#364153]">
+              <label htmlFor="add-resident-status" className="block text-[14px] font-medium tracking-[-0.1504px] text-neutral-variant">
                 Account Status
               </label>
               <div className="relative">
@@ -245,7 +245,7 @@ export function AddResidentModal({
                   onChange={(e) =>
                     setStatus(e.target.value as (typeof STATUS_OPTIONS)[number]['value'])
                   }
-                  className={`${selectClass} text-[#0a0a0a]`}
+                  className={`${selectClass} text-extended-3`}
                 >
                   {STATUS_OPTIONS.map((o) => (
                     <option key={o.value} value={o.value}>
@@ -261,24 +261,12 @@ export function AddResidentModal({
           </div>
         </div>
 
-        <footer className="flex shrink-0 flex-wrap items-center justify-end gap-3 border-t border-[#e5e7eb] bg-[#f9fafb] px-6 py-[17px]">
-          <button
-            type="button"
-            onClick={onClose}
-            className="inline-flex h-[42px] min-w-[85px] items-center justify-center rounded-[10px] border border-[#d1d5dc] bg-white px-4 text-[16px] font-medium leading-6 tracking-[-0.3125px] text-[#364153] outline-none hover:bg-[#f3f4f6] focus-visible:ring-2 focus-visible:ring-[#944c73] focus-visible:ring-offset-2"
-          >
-            Cancel
-          </button>
+        <footer className="flex shrink-0 flex-wrap items-stretch gap-3 border-t border-secondary bg-secondary px-6 py-[17px] sm:flex-nowrap">
           <button
             type="button"
             disabled={!formValid}
             onClick={submit}
-            className={[
-              'inline-flex h-[42px] min-w-[131px] items-center justify-center rounded-[10px] px-4 text-[16px] font-medium leading-6 tracking-[-0.3125px] text-white outline-none focus-visible:ring-2 focus-visible:ring-[#944c73] focus-visible:ring-offset-2',
-              formValid
-                ? 'bg-[#101828] hover:bg-[#475467]'
-                : 'cursor-not-allowed bg-[#d1d5dc]',
-            ].join(' ')}
+            className="inline-flex h-[42px] min-w-0 flex-1 items-center justify-center rounded-[10px] bg-[#b58500] px-4 text-[16px] font-medium leading-6 tracking-[-0.3125px] text-white outline-none focus-visible:ring-2 focus-visible:ring-[#b58500] focus-visible:ring-offset-2 focus-visible:ring-offset-secondary enabled:hover:bg-[#9a7310] disabled:cursor-not-allowed disabled:opacity-50"
           >
             Add Resident
           </button>

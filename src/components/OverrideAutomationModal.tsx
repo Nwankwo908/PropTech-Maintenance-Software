@@ -227,33 +227,6 @@ const INSPECTION_TIME_SLOT_OPTIONS = [
   { value: '15-16', label: '3:00 PM – 4:00 PM EST' },
 ] as const
 
-const INSPECTION_STAFF_AVAILABILITY_SLOTS = [
-  {
-    id: 's1',
-    line: 'Mon, Mar 30 at 8:00 AM',
-    staff: 'Mike Johnson',
-    availability: 'available' as const,
-  },
-  {
-    id: 's2',
-    line: 'Mon, Mar 30 at 2:00 PM',
-    staff: 'Sarah Chen',
-    availability: 'available' as const,
-  },
-  {
-    id: 's3',
-    line: 'Tue, Mar 31 at 10:00 AM',
-    staff: 'Mike Johnson',
-    availability: 'available' as const,
-  },
-  {
-    id: 's4',
-    line: 'Tue, Mar 31 at 3:00 PM',
-    staff: 'David Miller',
-    availability: 'limited' as const,
-  },
-] as const
-
 const INSPECTION_NOTIFICATION_PREFS = [
   {
     key: 'sms' as const,
@@ -1136,10 +1109,21 @@ function PauseDisableOverrideActionsPanel({
 }
 
 export type OverrideAutomationPresentation = 'modal' | 'rail'
+export type OverrideAutomationSubmission = {
+  ticketId: string
+  automationCategory: AutomationCategoryId
+  overrideType: OverrideTypeId
+  context: OverrideAutomationContext
+  appliedAtIso: string
+  details: Record<string, unknown>
+}
+export type OverrideAutomationScopeOption = { value: string; label: string }
 
 export function OverrideAutomationModal({
   open,
   onClose,
+  onApply,
+  scopeOptionsOverride,
   context = 'default',
   initialAutomationCategory,
   initialTicketId: initialTicketIdProp,
@@ -1148,6 +1132,9 @@ export function OverrideAutomationModal({
 }: {
   open: boolean
   onClose: () => void
+  onApply?: (submission: OverrideAutomationSubmission) => void | Promise<void>
+  /** Optional real scope rows from dashboard (used instead of demo scope options). */
+  scopeOptionsOverride?: OverrideAutomationScopeOption[]
   context?: OverrideAutomationContext
   /** When opening from a deep link (e.g. Monthly Rent Reminder override), pre-select category. */
   initialAutomationCategory?: AutomationCategoryId
@@ -1207,7 +1194,6 @@ export function OverrideAutomationModal({
   const [overrideType, setOverrideType] = useState<OverrideTypeId>('vendor')
   const [newPriorityLevel, setNewPriorityLevel] = useState<'' | NewPriorityLevelId>('')
   const [_vendorId, setVendorId] = useState<string | null>(null)
-  const [password, setPassword] = useState('')
   const [audienceScope, setAudienceScope] = useState('')
   const [urgencyTone, setUrgencyTone] = useState('')
   const [rentAutomationAction, setRentAutomationAction] =
@@ -1273,6 +1259,8 @@ export function OverrideAutomationModal({
   const [inspectionNewInspectorId, setInspectionNewInspectorId] = useState<string | null>(
     null,
   )
+  const [applyingOverride, setApplyingOverride] = useState(false)
+  const [applyError, setApplyError] = useState<string | null>(null)
 
   const isRentReminder = context === 'rent-reminder'
   const isMaintenanceCategory =
@@ -1309,15 +1297,26 @@ export function OverrideAutomationModal({
           ? 'Choose an alert to override...'
           : 'Choose an inspection automation to override...'
 
-  const scopeOptions = isRentReminder
-    ? DEMO_RENT_REMINDER_RUNS
-    : automationCategory === 'maintenance'
-      ? DEMO_TICKETS
-      : automationCategory === 'billing'
-        ? DEMO_BILLING_AUTOMATIONS
-        : automationCategory === 'safety'
-          ? DEMO_SAFETY_AUTOMATIONS
-          : DEMO_INSPECTION_AUTOMATIONS
+  const scopeOptions = useMemo(() => {
+    const billingScopePattern =
+      /(rent|billing|utility|invoice|late[-\s]?fee|ach|auto[-\s]?pay|payment)/i
+
+    if (scopeOptionsOverride?.length) {
+      if (isRentReminder || automationCategory === 'billing') {
+        const filtered = scopeOptionsOverride.filter((opt) => billingScopePattern.test(opt.label))
+        return filtered.length ? filtered : scopeOptionsOverride
+      }
+      return scopeOptionsOverride
+    }
+
+    if (isRentReminder) return DEMO_RENT_REMINDER_RUNS
+    if (automationCategory === 'maintenance') return DEMO_TICKETS
+    if (automationCategory === 'billing') return DEMO_BILLING_AUTOMATIONS
+    if (automationCategory === 'safety') return DEMO_SAFETY_AUTOMATIONS
+    return DEMO_INSPECTION_AUTOMATIONS
+  }, [scopeOptionsOverride, isRentReminder, automationCategory])
+
+  const effectiveScopeOptions = scopeOptions
 
   useEffect(() => {
     if (!open) return
@@ -1333,7 +1332,6 @@ export function OverrideAutomationModal({
       setAutomationCategory('maintenance')
       setTicketId('')
       setVendorId(null)
-      setPassword('')
       setAudienceScope('')
       setUrgencyTone('')
       setRentAutomationAction(null)
@@ -1378,6 +1376,8 @@ export function OverrideAutomationModal({
       setInspectionScopeCustomItems([])
       setInspectionScopeCustomInput('')
       setInspectionNewInspectorId(null)
+      setApplyingOverride(false)
+      setApplyError(null)
       setOverrideType('vendor')
       return
     }
@@ -1388,7 +1388,6 @@ export function OverrideAutomationModal({
     setAutomationCategory(nextCategory)
     setTicketId(nextTicketId)
     setVendorId(null)
-    setPassword('')
     setAudienceScope('')
     setUrgencyTone('')
     setRentAutomationAction(null)
@@ -1433,6 +1432,8 @@ export function OverrideAutomationModal({
     setInspectionScopeCustomItems([])
     setInspectionScopeCustomInput('')
     setInspectionNewInspectorId(null)
+    setApplyingOverride(false)
+    setApplyError(null)
     if (isRentReminder) {
       setOverrideType('priority')
     } else if (nextCategory === 'billing') {
@@ -1783,7 +1784,6 @@ export function OverrideAutomationModal({
 
   const formValid =
     Boolean(ticketId) &&
-    password.trim().length > 0 &&
     (isRentReminder ? rentFlowValid : defaultFlowValid)
 
   const headerSubtitle = isRentReminder
@@ -1795,9 +1795,70 @@ export function OverrideAutomationModal({
   const showAiRecommendationStrip = isRentReminder
   const showImpactWarning = isRentReminder || !isMaintenanceCategory
 
-  function applyOverride() {
-    if (!formValid) return
-    onClose()
+  async function applyOverride() {
+    if (!formValid || applyingOverride) return
+    setApplyError(null)
+    setApplyingOverride(true)
+    const details: Record<string, unknown> = {
+      selectedScope: ticketId,
+      audienceScope,
+      urgencyTone,
+      rentAutomationAction,
+      pauseDuration,
+      resumeOn,
+      newTriggerTiming,
+      newPriorityLevel,
+      vendorId: _vendorId,
+      safetyNewSeverity,
+      safetyNotifyResidents,
+      safetyNotifyMaintenance,
+      safetyNotifyPropertyMgmt,
+      safetyNotifRecipients,
+      safetyNotifTiming,
+      safetyNotifMethods,
+      safetyNotifAutoEscalation,
+      safetyNotifEscalateAfter,
+      safetyNewResponseProtocol,
+      safetyProtocolAutomated,
+      safetyProtocolBudget,
+      safetyProtocolQueue,
+      safetyProtocolStaffing,
+      safetyProtocolBypassSla,
+      safetyProtocolJustification,
+      billingNewDueDate,
+      billingPaymentAmount,
+      billingPaymentFrequency,
+      billingModificationNotes,
+      billingLateFeeAdjustmentType,
+      billingNewLateFeeAmount,
+      billingSuspendDuration,
+      billingSuspendPauseStart,
+      billingSuspendResumeDate,
+      billingSuspendNotifyEmail,
+      billingSuspendNotifySms,
+      inspectionRescheduleReason,
+      inspectionNewDate,
+      inspectionTimeSlot,
+      inspectionNotifPrefs,
+      inspectionScopeIncluded: [...inspectionScopeIncluded],
+      inspectionScopeCustomItems,
+      inspectionNewInspectorId,
+    }
+    try {
+      await onApply?.({
+        ticketId,
+        automationCategory,
+        overrideType,
+        context,
+        appliedAtIso: new Date().toISOString(),
+        details,
+      })
+      onClose()
+    } catch (error) {
+      setApplyError(error instanceof Error ? error.message : 'Failed to apply override.')
+    } finally {
+      setApplyingOverride(false)
+    }
   }
 
   return (
@@ -1943,7 +2004,7 @@ export function OverrideAutomationModal({
                   className="h-9 w-full appearance-none rounded-lg border border-transparent bg-[#f3f3f5] py-1 pl-3 pr-9 text-[14px] font-medium tracking-[-0.1504px] text-[#0a0a0a] outline-none focus:border-[#944c73]/45 focus:bg-white focus:ring-2 focus:ring-[#944c73]/30"
                 >
                   <option value="">{scopePlaceholder}</option>
-                  {scopeOptions.map((t) => (
+                  {effectiveScopeOptions.map((t) => (
                     <option key={t.value} value={t.value}>
                       {t.label}
                     </option>
@@ -2014,46 +2075,6 @@ export function OverrideAutomationModal({
                   </p>
                 </div>
 
-                <div>
-                  <p className="mb-2 text-[12px] font-medium uppercase tracking-wide text-[#6a7282]">
-                    Current Scheduled Appointment
-                  </p>
-                  <div className="flex gap-3 rounded-[10px] border border-[#e5e7eb] bg-white p-4">
-                    <div
-                      className="flex size-12 shrink-0 items-center justify-center rounded-lg bg-[#1447e6]"
-                      aria-hidden
-                    >
-                      <svg
-                        className="size-6 text-white"
-                        viewBox="0 0 24 24"
-                        fill="none"
-                        stroke="currentColor"
-                        strokeWidth={2}
-                      >
-                        <rect x="3" y="4" width="18" height="18" rx="2" />
-                        <path d="M16 2v4M8 2v4M3 10h18" strokeLinecap="round" />
-                      </svg>
-                    </div>
-                    <div className="min-w-0 flex-1">
-                      <div className="flex flex-wrap items-start justify-between gap-2">
-                        <div>
-                          <p className="text-[15px] font-semibold leading-5 text-[#101828]">
-                            Saturday, March 28, 2026
-                          </p>
-                          <p className="mt-0.5 text-[13px] font-medium text-[#4a5565]">
-                            10:00 AM – 11:00 AM EST
-                          </p>
-                          <p className="mt-1 text-[12px] text-[#6a7282]">
-                            Assigned to: Mike Johnson
-                          </p>
-                        </div>
-                        <span className="inline-flex shrink-0 items-center rounded-full bg-[#dbeafe] px-2.5 py-0.5 text-[11px] font-semibold text-[#1447e6]">
-                          Confirmed
-                        </span>
-                      </div>
-                    </div>
-                  </div>
-                </div>
 
                 <div className="flex flex-col gap-1">
                   <label
@@ -2135,52 +2156,6 @@ export function OverrideAutomationModal({
                         </span>
                       </div>
                     </div>
-                  </div>
-                </div>
-
-                <div>
-                  <p className="mb-2 text-[12px] font-medium uppercase tracking-wide text-[#6a7282]">
-                    Staff Availability
-                  </p>
-                  <div className="rounded-[10px] border border-[#e5e7eb] bg-white p-4">
-                    <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[#f3f4f6] pb-3">
-                      <p className="text-[14px] font-semibold text-[#101828]">Next Available Slots</p>
-                      <button
-                        type="button"
-                        className="text-[12px] font-semibold text-[#e17100] underline-offset-2 hover:underline"
-                      >
-                        View Full Calendar →
-                      </button>
-                    </div>
-                    <ul className="mt-3 flex flex-col gap-2" aria-label="Suggested staff slots">
-                      {INSPECTION_STAFF_AVAILABILITY_SLOTS.map((s) => {
-                        const limited = s.availability === 'limited'
-                        return (
-                          <li
-                            key={s.id}
-                            className={[
-                              'flex flex-wrap items-center justify-between gap-2 rounded-lg border px-3 py-2.5',
-                              limited
-                                ? 'border-[#fff085] bg-[#fefce8]'
-                                : 'border-[#b9f8cf] bg-[#f0fdf4]',
-                            ].join(' ')}
-                          >
-                            <div>
-                              <p className="text-[13px] font-medium text-[#101828]">{s.line}</p>
-                              <p className="text-[12px] text-[#6a7282]">{s.staff}</p>
-                            </div>
-                            <span
-                              className={[
-                                'inline-flex shrink-0 rounded-full px-2 py-0.5 text-[11px] font-semibold',
-                                limited ? 'bg-[#fff085]/80 text-[#733e0a]' : 'bg-[#dcfce7] text-[#166534]',
-                              ].join(' ')}
-                            >
-                              {limited ? 'Limited' : 'Available'}
-                            </span>
-                          </li>
-                        )
-                      })}
-                    </ul>
                   </div>
                 </div>
 
@@ -3979,36 +3954,11 @@ export function OverrideAutomationModal({
               </div>
             ) : null}
 
-            <div className="rounded-[10px] border border-[#e5e7eb] bg-[#f9fafb] p-4">
-              <div className="mb-3 flex items-center gap-2">
-                <svg className="size-4 shrink-0 text-[#6a7282]" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} aria-hidden>
-                  <path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2" strokeLinecap="round" />
-                  <circle cx="12" cy="7" r="4" strokeLinecap="round" />
-                  <path d="M12 14v3M9 21h6" strokeLinecap="round" />
-                </svg>
-                <p className="text-[14px] font-semibold leading-5 tracking-[-0.1504px] text-[#101828]">
-                  Administrator Authorization
-                </p>
-              </div>
-              <label
-                htmlFor="override-password"
-                className="mb-2 block text-[14px] font-medium tracking-[-0.1504px] text-[#364153]"
-              >
-                Confirm Password <span className="text-[#c10007]">*</span>
-              </label>
-              <input
-                id="override-password"
-                type="password"
-                autoComplete="current-password"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                placeholder="Enter your admin password to authorize override..."
-                className="h-9 w-full rounded-lg border border-transparent bg-[#f3f3f5] px-3 text-[14px] tracking-[-0.1504px] text-[#0a0a0a] outline-none placeholder:text-[#717182] focus:border-[#944c73]/45 focus:bg-white focus:ring-2 focus:ring-[#944c73]/30"
-              />
-              <p className="mt-2 text-[12px] leading-4 text-[#6a7282]">
-                🔒 This action requires admin-level authorization and will be permanently logged.
+            {applyError ? (
+              <p className="rounded-lg border border-[#fecaca] bg-[#fef2f2] px-3 py-2 text-[13px] leading-5 text-[#b91c1c]">
+                {applyError}
               </p>
-            </div>
+            ) : null}
           </div>
         </div>
 
@@ -4022,7 +3972,7 @@ export function OverrideAutomationModal({
           </button>
           <button
             type="button"
-            disabled={!formValid}
+            disabled={!formValid || applyingOverride}
             onClick={applyOverride}
             className="inline-flex h-9 items-center gap-2 rounded-lg bg-[#e17100] px-4 text-[14px] font-medium tracking-[-0.1504px] text-white outline-none enabled:hover:bg-[#c36100] focus-visible:ring-2 focus-visible:ring-[#944c73] focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
           >
@@ -4031,7 +3981,7 @@ export function OverrideAutomationModal({
               alt=""
               className="size-4 shrink-0 object-contain brightness-0 invert"
             />
-            Apply Override
+            {applyingOverride ? 'Applying…' : 'Apply Override'}
           </button>
         </footer>
       </div>

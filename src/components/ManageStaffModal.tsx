@@ -44,7 +44,7 @@ const DEMO_STAFF: StaffMember[] = [
   },
 ]
 
-function IconShieldHeader({ className = 'size-5 text-[#9810fa]' }: { className?: string }) {
+function IconShieldHeader({ className = 'size-5 text-primary' }: { className?: string }) {
   return (
     <svg className={className} viewBox="0 0 24 24" fill="none" aria-hidden>
       <path
@@ -57,7 +57,7 @@ function IconShieldHeader({ className = 'size-5 text-[#9810fa]' }: { className?:
   )
 }
 
-function IconClose({ className = 'size-5 text-[#6a7282]' }: { className?: string }) {
+function IconClose({ className = 'size-5 text-neutral' }: { className?: string }) {
   return (
     <svg className={className} viewBox="0 0 24 24" fill="none" aria-hidden>
       <path d="M18 6L6 18M6 6l12 12" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" />
@@ -80,7 +80,7 @@ function IconUserPlusWhite({ className = 'size-4 shrink-0 text-white' }: { class
   )
 }
 
-function IconPencilSmall({ className = 'size-4 text-[#4a5565]' }: { className?: string }) {
+function IconPencilSmall({ className = 'size-4 text-neutral-variant' }: { className?: string }) {
   return (
     <svg className={className} viewBox="0 0 24 24" fill="none" aria-hidden>
       <path
@@ -94,7 +94,7 @@ function IconPencilSmall({ className = 'size-4 text-[#4a5565]' }: { className?: 
   )
 }
 
-function IconTrashSmall({ className = 'size-4 text-[#e7000b]' }: { className?: string }) {
+function IconTrashSmall({ className = 'size-4 text-error' }: { className?: string }) {
   return (
     <svg className={className} viewBox="0 0 24 24" fill="none" aria-hidden>
       <path
@@ -108,7 +108,7 @@ function IconTrashSmall({ className = 'size-4 text-[#e7000b]' }: { className?: s
   )
 }
 
-function IconClockSmall({ className = 'size-3 shrink-0 text-[#6a7282]' }: { className?: string }) {
+function IconClockSmall({ className = 'size-3 shrink-0 text-neutral' }: { className?: string }) {
   return (
     <svg className={className} viewBox="0 0 24 24" fill="none" aria-hidden>
       <circle cx="12" cy="12" r="9" stroke="currentColor" strokeWidth={1.8} />
@@ -139,21 +139,21 @@ export function ManageStaffModal({ open, onClose }: { open: boolean; onClose: ()
         role="dialog"
         aria-modal="true"
         aria-labelledby={titleId}
-        className="relative flex h-full max-h-dvh w-full max-w-[min(100vw,900px)] flex-col overflow-hidden border-l border-[#e5e7eb] bg-white shadow-[inset_1px_0_0_0_#e5e7eb]"
+        className="relative flex h-full max-h-dvh w-full max-w-[min(100vw,900px)] flex-col overflow-hidden border-l border-secondary bg-white shadow-[inset_1px_0_0_0_#A788964D]"
       >
-        <header className="flex h-[81px] shrink-0 items-center justify-between border-b border-[#e5e7eb] px-6">
+        <header className="flex h-[81px] shrink-0 items-center justify-between border-b border-secondary px-6">
           <div className="flex min-w-0 items-center gap-3">
-            <div className="flex size-10 shrink-0 items-center justify-center rounded-[10px] bg-[#f3e8ff]">
+            <div className="flex size-10 shrink-0 items-center justify-center rounded-[10px] bg-secondary">
               <IconShieldHeader />
             </div>
             <div className="min-w-0">
               <h2
                 id={titleId}
-                className="text-[18px] font-semibold leading-7 tracking-[-0.4395px] text-[#101828]"
+                className="text-[18px] font-semibold leading-7 tracking-[-0.4395px] text-extended-3"
               >
                 Staff Management
               </h2>
-              <p className="text-[14px] font-normal leading-5 tracking-[-0.1504px] text-[#6a7282]">
+              <p className="text-[14px] font-normal leading-5 tracking-[-0.1504px] text-neutral">
                 Manage staff accounts and permissions
               </p>
             </div>
@@ -162,7 +162,7 @@ export function ManageStaffModal({ open, onClose }: { open: boolean; onClose: ()
             type="button"
             onClick={onClose}
             aria-label="Close"
-            className="flex size-9 shrink-0 items-center justify-center rounded-lg outline-none hover:bg-[#f3f4f6] focus-visible:ring-2 focus-visible:ring-[#944c73] focus-visible:ring-offset-2"
+            className="flex size-9 shrink-0 items-center justify-center rounded-lg outline-none hover:bg-secondary focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2"
           >
             <IconClose />
           </button>
@@ -172,7 +172,7 @@ export function ManageStaffModal({ open, onClose }: { open: boolean; onClose: ()
           <div className="flex justify-end">
             <button
               type="button"
-              className="inline-flex h-10 shrink-0 items-center justify-center gap-2 rounded-[10px] bg-[#9810fa] px-4 text-[16px] font-medium leading-6 tracking-[-0.3125px] text-white outline-none hover:bg-[#8200db] focus-visible:ring-2 focus-visible:ring-[#944c73] focus-visible:ring-offset-2"
+              className="inline-flex h-10 shrink-0 items-center justify-center gap-2 rounded-[10px] bg-primary px-4 text-[16px] font-medium leading-6 tracking-[-0.3125px] text-white outline-none hover:bg-primary focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2"
             >
               <IconUserPlusWhite />
               Add Staff Member
@@ -183,21 +183,21 @@ export function ManageStaffModal({ open, onClose }: { open: boolean; onClose: ()
             {DEMO_STAFF.map((member) => (
               <div
                 key={member.id}
-                className="rounded-[10px] border border-[#e5e7eb] bg-white p-4"
+                className="rounded-[10px] border border-secondary bg-white p-4"
               >
                 <div className="flex items-start justify-between gap-3">
                   <div className="flex min-w-0 gap-3">
-                    <div className="flex size-12 shrink-0 items-center justify-center rounded-full bg-[#f3e8ff]">
-                      <span className="text-[16px] font-medium leading-6 tracking-[-0.3125px] text-[#9810fa]">
+                    <div className="flex size-12 shrink-0 items-center justify-center rounded-full bg-secondary">
+                      <span className="text-[16px] font-medium leading-6 tracking-[-0.3125px] text-primary">
                         {member.initials}
                       </span>
                     </div>
                     <div className="min-w-0 space-y-1">
-                      <p className="text-[14px] font-semibold leading-5 tracking-[-0.1504px] text-[#101828]">
+                      <p className="text-[14px] font-semibold leading-5 tracking-[-0.1504px] text-extended-3">
                         {member.name}
                       </p>
-                      <p className="text-[12px] font-normal leading-4 text-[#4a5565]">{member.email}</p>
-                      <span className="inline-flex rounded px-2 py-0.5 text-[12px] font-normal leading-4 text-[#8200db] bg-[#f3e8ff]">
+                      <p className="text-[12px] font-normal leading-4 text-neutral-variant">{member.email}</p>
+                      <span className="inline-flex rounded px-2 py-0.5 text-[12px] font-normal leading-4 text-primary bg-secondary">
                         {member.roleLabel}
                       </span>
                     </div>
@@ -206,7 +206,7 @@ export function ManageStaffModal({ open, onClose }: { open: boolean; onClose: ()
                     <button
                       type="button"
                       aria-label={`Edit ${member.name}`}
-                      className="flex size-7 items-center justify-center rounded outline-none hover:bg-[#f3f4f6] focus-visible:ring-2 focus-visible:ring-[#944c73] focus-visible:ring-offset-2"
+                      className="flex size-7 items-center justify-center rounded outline-none hover:bg-secondary focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2"
                     >
                       <IconPencilSmall />
                     </button>
@@ -214,7 +214,7 @@ export function ManageStaffModal({ open, onClose }: { open: boolean; onClose: ()
                       <button
                         type="button"
                         aria-label={`Remove ${member.name}`}
-                        className="flex size-7 items-center justify-center rounded outline-none hover:bg-[#ffe2e2] focus-visible:ring-2 focus-visible:ring-[#944c73] focus-visible:ring-offset-2"
+                        className="flex size-7 items-center justify-center rounded outline-none hover:bg-error focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2"
                       >
                         <IconTrashSmall />
                       </button>
@@ -222,13 +222,13 @@ export function ManageStaffModal({ open, onClose }: { open: boolean; onClose: ()
                   </div>
                 </div>
 
-                <div className="mt-4 rounded bg-[#f9fafb] px-3 pb-3 pt-3">
-                  <p className="text-[12px] font-medium leading-4 text-[#364153]">Permissions:</p>
+                <div className="mt-4 rounded bg-secondary px-3 pb-3 pt-3">
+                  <p className="text-[12px] font-medium leading-4 text-neutral-variant">Permissions:</p>
                   <div className="mt-2 flex flex-wrap gap-2">
                     {member.permissions.map((perm) => (
                       <span
                         key={perm}
-                        className="inline-flex items-center rounded border border-[#e5e7eb] bg-white px-2.5 py-1 text-[12px] font-normal leading-4 text-[#364153]"
+                        className="inline-flex items-center rounded border border-secondary bg-white px-2.5 py-1 text-[12px] font-normal leading-4 text-neutral-variant"
                       >
                         {perm}
                       </span>
@@ -237,8 +237,8 @@ export function ManageStaffModal({ open, onClose }: { open: boolean; onClose: ()
                 </div>
 
                 <div className="mt-4 flex items-center gap-2">
-                  <IconClockSmall className="size-3 text-[#6a7282]" />
-                  <p className="text-[12px] font-normal leading-4 text-[#6a7282]">
+                  <IconClockSmall className="size-3 text-neutral" />
+                  <p className="text-[12px] font-normal leading-4 text-neutral">
                     Last login: {member.lastLogin}
                   </p>
                 </div>
@@ -247,11 +247,11 @@ export function ManageStaffModal({ open, onClose }: { open: boolean; onClose: ()
           </div>
         </div>
 
-        <footer className="flex shrink-0 justify-end border-t border-[#e5e7eb] bg-[#f9fafb] px-6 pb-5 pt-4">
+        <footer className="flex shrink-0 justify-end border-t border-secondary bg-secondary px-6 pb-5 pt-4">
           <button
             type="button"
             onClick={onClose}
-            className="inline-flex h-10 items-center justify-center rounded-[10px] bg-[#4a5565] px-8 text-[16px] font-medium leading-6 tracking-[-0.3125px] text-white outline-none hover:bg-[#364153] focus-visible:ring-2 focus-visible:ring-[#944c73] focus-visible:ring-offset-2"
+            className="inline-flex h-10 items-center justify-center rounded-[10px] bg-neutral-variant px-8 text-[16px] font-medium leading-6 tracking-[-0.3125px] text-white outline-none hover:bg-neutral-variant focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2"
           >
             Close
           </button>

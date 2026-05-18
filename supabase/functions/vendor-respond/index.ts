@@ -2,6 +2,7 @@ import { serve } from "https://deno.land/std/http/server.ts"
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1"
 import { verifyVendorEmailAction } from "../_shared/vendor_action_token.ts"
 import { tryAutoReassignAfterDecline } from "../_shared/vendor_auto_reassign.ts"
+import { notifyResidentVendorAccepted } from "../submit-maintenance-request/resident_notify.ts"
 
 const corsHeaders: Record<string, string> = {
   "Access-Control-Allow-Origin": "*",
@@ -203,6 +204,50 @@ serve(async (req) => {
     vendor_id: _vendorId,
   })
   if (logErr) console.error("[vendor-respond] audit", logErr)
+
+  if (next === "accepted") {
+    try {
+      const { data: trow } = await supabase
+        .from("maintenance_requests")
+        .select(
+          "resident_name, email, resident_phone, unit, assigned_vendor_id, priority, resident_notification_channel",
+        )
+        .eq("id", ticketId)
+        .maybeSingle()
+
+      let vendorName: string | undefined
+      if (trow?.assigned_vendor_id) {
+        const { data: v } = await supabase
+          .from("vendors")
+          .select("name")
+          .eq("id", trow.assigned_vendor_id as string)
+          .maybeSingle()
+        if (v?.name) vendorName = String(v.name)
+      }
+
+      if (trow) {
+        await notifyResidentVendorAccepted(supabase, {
+          ticketId,
+          recipientName: String(trow.resident_name ?? ""),
+          recipientEmail:
+            typeof trow.email === "string" ? trow.email.trim() : "",
+          recipientPhone:
+            typeof trow.resident_phone === "string"
+              ? trow.resident_phone
+              : null,
+          notificationChannel:
+            typeof trow.resident_notification_channel === "string"
+              ? trow.resident_notification_channel
+              : null,
+          unit: typeof trow.unit === "string" ? trow.unit : undefined,
+          priority: typeof trow.priority === "string" ? trow.priority : undefined,
+          vendorName,
+        })
+      }
+    } catch (e) {
+      console.error("[vendor-respond] resident notify vendor_accepted", e)
+    }
+  }
 
   console.log(
     JSON.stringify({

@@ -1,14 +1,46 @@
+@import url('https://fonts.googleapis.com/css2?family=Encode+Sans+Semi+Condensed:wght@400;500;600;700&display=swap');
 @import 'tailwindcss';
 
 @theme {
+  --font-heading: 'Google Sans', 'Product Sans', 'Inter', ui-sans-serif, system-ui,
+    sans-serif, 'Apple Color Emoji', 'Segoe UI Emoji', 'Segoe UI Symbol';
   --font-sans:
-    'Inter', ui-sans-serif, system-ui, sans-serif, 'Apple Color Emoji',
+    'Encode Sans Semi Condensed', 'Inter', ui-sans-serif, system-ui, sans-serif,
+    'Apple Color Emoji',
     'Segoe UI Emoji', 'Segoe UI Symbol';
+
+  /* Brand + neutrals (matches existing UI: mauve accent, charcoal type, cool grays) */
+  --color-primary: #a78896;
+  --color-secondary: #f2f4f7;
+  --color-neutral: #667085;
+  --color-neutral-variant: #98a2b3;
+  --color-tertiary: #047857;
+  --color-error: #dc2626;
+  --color-extended-1: #0d9488;
+  --color-extended-2: #d1fae5;
+  --color-extended-3: #101828;
+}
+
+/*
+ * Surfaces use the same hue as `text-tertiary`; a plain `bg-tertiary` would be too dark
+ * next to `text-extended-3` in panels. Tint the background while keeping borders/text on `--color-tertiary`.
+ */
+@utility bg-tertiary {
+  background-color: color-mix(in oklab, var(--color-tertiary) 14%, white);
 }
 
 body {
   margin: 0;
   font-family: var(--font-sans);
+}
+
+h1,
+h2,
+h3,
+h4,
+h5,
+h6 {
+  font-family: var(--font-heading);
 }
 
 #root {

@@ -38,7 +38,7 @@ const INITIAL_RESIDENTS: ResidentRow[] = [
 
 const PREFERRED_OPTIONS = ['SMS', 'Email', 'Phone', 'In-App'] as const
 
-function LabelPhoneIcon({ className = 'size-4 shrink-0 text-[#6a7282]' }: { className?: string }) {
+function LabelPhoneIcon({ className = 'size-4 shrink-0 text-neutral' }: { className?: string }) {
   return (
     <svg className={className} viewBox="0 0 24 24" fill="none" aria-hidden>
       <path
@@ -52,7 +52,7 @@ function LabelPhoneIcon({ className = 'size-4 shrink-0 text-[#6a7282]' }: { clas
   )
 }
 
-function LabelMailIcon({ className = 'size-4 shrink-0 text-[#6a7282]' }: { className?: string }) {
+function LabelMailIcon({ className = 'size-4 shrink-0 text-neutral' }: { className?: string }) {
   return (
     <svg className={className} viewBox="0 0 24 24" fill="none" aria-hidden>
       <path
@@ -66,7 +66,7 @@ function LabelMailIcon({ className = 'size-4 shrink-0 text-[#6a7282]' }: { class
   )
 }
 
-function LabelChatIcon({ className = 'size-4 shrink-0 text-[#6a7282]' }: { className?: string }) {
+function LabelChatIcon({ className = 'size-4 shrink-0 text-neutral' }: { className?: string }) {
   return (
     <svg className={className} viewBox="0 0 24 24" fill="none" aria-hidden>
       <path
@@ -80,7 +80,7 @@ function LabelChatIcon({ className = 'size-4 shrink-0 text-[#6a7282]' }: { class
   )
 }
 
-function AvatarUserIcon({ className = 'size-5 text-[#1447e6]' }: { className?: string }) {
+function AvatarUserIcon({ className = 'size-5 text-extended-1' }: { className?: string }) {
   return (
     <svg className={className} viewBox="0 0 24 24" fill="none" aria-hidden>
       <circle cx="12" cy="8" r="3.5" stroke="currentColor" strokeWidth={1.65} />
@@ -154,20 +154,20 @@ export function UpdateContactInformationModal({
         aria-labelledby={titleId}
         className={
           isRail
-            ? 'relative flex h-full max-h-dvh w-full max-w-[min(100vw,768px)] flex-col overflow-hidden border-l border-[#e5e7eb] bg-white shadow-[inset_1px_0_0_0_#e5e7eb]'
+            ? 'relative flex h-full max-h-dvh w-full max-w-[min(100vw,768px)] flex-col overflow-hidden border-l border-secondary bg-white shadow-[inset_1px_0_0_0_#A788964D]'
             : 'relative flex max-h-[min(92dvh,900px)] w-full max-w-[768px] flex-col overflow-hidden rounded-[10px] bg-white shadow-[0px_20px_25px_-5px_rgba(0,0,0,0.1),0px_8px_10px_-6px_rgba(0,0,0,0.1)]'
         }
       >
-        <header className="shrink-0 border-b border-[#e5e7eb] px-6 py-6">
+        <header className="shrink-0 border-b border-secondary px-6 py-6">
           <div className="flex items-start justify-between gap-4">
             <div className="min-w-0">
               <h2
                 id={titleId}
-                className="text-[20px] font-semibold leading-7 tracking-[-0.4492px] text-[#101828]"
+                className="text-[20px] font-semibold leading-7 tracking-[-0.4492px] text-extended-3"
               >
                 Update Contact Information
               </h2>
-              <p className="mt-1 text-[14px] leading-5 tracking-[-0.1504px] text-[#4a5565]">
+              <p className="mt-1 text-[14px] leading-5 tracking-[-0.1504px] text-neutral-variant">
                 Update contact details for residents with failed SMS delivery
               </p>
             </div>
@@ -175,7 +175,7 @@ export function UpdateContactInformationModal({
               type="button"
               onClick={onClose}
               aria-label="Close"
-              className="shrink-0 rounded-lg p-1 text-[#6a7282] outline-none hover:bg-black/5 hover:text-[#0a0a0a] focus-visible:ring-2 focus-visible:ring-[#944c73] focus-visible:ring-offset-2"
+              className="shrink-0 rounded-lg p-1 text-neutral outline-none hover:bg-black/5 hover:text-extended-3 focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2"
             >
               <svg className="size-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} aria-hidden>
                 <path d="M18 6L6 18M6 6l12 12" strokeLinecap="round" />
@@ -189,17 +189,17 @@ export function UpdateContactInformationModal({
             {residents.map((r) => (
               <div
                 key={r.id}
-                className="rounded-[10px] border border-[#e5e7eb] bg-[#f9fafb] px-[21px] pb-5 pt-[21px]"
+                className="rounded-[10px] border border-secondary bg-secondary px-[21px] pb-5 pt-[21px]"
               >
-                <div className="mb-4 flex items-center gap-3 border-b border-[#e5e7eb] pb-4">
-                  <div className="flex size-10 shrink-0 items-center justify-center rounded-full bg-[#dbeafe]">
+                <div className="mb-4 flex items-center gap-3 border-b border-secondary pb-4">
+                  <div className="flex size-10 shrink-0 items-center justify-center rounded-full bg-extended-1">
                     <AvatarUserIcon />
                   </div>
                   <div>
-                    <p className="text-[18px] font-semibold leading-[27px] tracking-[-0.4395px] text-[#101828]">
+                    <p className="text-[18px] font-semibold leading-[27px] tracking-[-0.4395px] text-extended-3">
                       {r.name}
                     </p>
-                    <p className="text-[14px] leading-5 tracking-[-0.1504px] text-[#4a5565]">{r.apt}</p>
+                    <p className="text-[14px] leading-5 tracking-[-0.1504px] text-neutral-variant">{r.apt}</p>
                   </div>
                 </div>
 
@@ -207,7 +207,7 @@ export function UpdateContactInformationModal({
                   <div>
                     <label
                       htmlFor={`contact-phone-${r.id}`}
-                      className="mb-2 flex items-center gap-2 text-[14px] font-medium tracking-[-0.1504px] text-[#364153]"
+                      className="mb-2 flex items-center gap-2 text-[14px] font-medium tracking-[-0.1504px] text-neutral-variant"
                     >
                       <LabelPhoneIcon />
                       Phone Number
@@ -217,13 +217,13 @@ export function UpdateContactInformationModal({
                       type="tel"
                       value={r.phone}
                       onChange={(e) => patchResident(r.id, { phone: e.target.value })}
-                      className="h-[42px] w-full rounded-[10px] border border-[#d1d5dc] px-4 text-[16px] leading-6 tracking-[-0.3125px] text-[#0a0a0a] outline-none placeholder:text-[rgba(10,10,10,0.5)] focus:border-[#944c73]/45 focus:ring-2 focus:ring-[#944c73]/30"
+                      className="h-[42px] w-full rounded-[10px] border border-secondary px-4 text-[16px] leading-6 tracking-[-0.3125px] text-extended-3 outline-none placeholder:text-[rgba(10,10,10,0.5)] focus:border-primary/45 focus:ring-2 focus:ring-primary/30"
                     />
                   </div>
                   <div>
                     <label
                       htmlFor={`contact-email-${r.id}`}
-                      className="mb-2 flex items-center gap-2 text-[14px] font-medium tracking-[-0.1504px] text-[#364153]"
+                      className="mb-2 flex items-center gap-2 text-[14px] font-medium tracking-[-0.1504px] text-neutral-variant"
                     >
                       <LabelMailIcon />
                       Email Address
@@ -233,13 +233,13 @@ export function UpdateContactInformationModal({
                       type="email"
                       value={r.email}
                       onChange={(e) => patchResident(r.id, { email: e.target.value })}
-                      className="h-[42px] w-full rounded-[10px] border border-[#d1d5dc] px-4 text-[16px] leading-6 tracking-[-0.3125px] text-[#0a0a0a] outline-none placeholder:text-[rgba(10,10,10,0.5)] focus:border-[#944c73]/45 focus:ring-2 focus:ring-[#944c73]/30"
+                      className="h-[42px] w-full rounded-[10px] border border-secondary px-4 text-[16px] leading-6 tracking-[-0.3125px] text-extended-3 outline-none placeholder:text-[rgba(10,10,10,0.5)] focus:border-primary/45 focus:ring-2 focus:ring-primary/30"
                     />
                   </div>
                   <div>
                     <label
                       htmlFor={`contact-pref-${r.id}`}
-                      className="mb-2 flex items-center gap-2 text-[14px] font-medium tracking-[-0.1504px] text-[#364153]"
+                      className="mb-2 flex items-center gap-2 text-[14px] font-medium tracking-[-0.1504px] text-neutral-variant"
                     >
                       <LabelChatIcon />
                       Preferred Contact Method
@@ -249,7 +249,7 @@ export function UpdateContactInformationModal({
                         id={`contact-pref-${r.id}`}
                         value={r.preferredMethod}
                         onChange={(e) => patchResident(r.id, { preferredMethod: e.target.value })}
-                        className="h-[38px] w-full appearance-none rounded-[10px] border border-[#d1d5dc] bg-white py-1 pl-3 pr-9 text-[14px] font-medium tracking-[-0.1504px] text-[#0a0a0a] outline-none focus:border-[#944c73]/45 focus:ring-2 focus:ring-[#944c73]/30"
+                        className="h-[38px] w-full appearance-none rounded-[10px] border border-secondary bg-white py-1 pl-3 pr-9 text-[14px] font-medium tracking-[-0.1504px] text-extended-3 outline-none focus:border-primary/45 focus:ring-2 focus:ring-primary/30"
                       >
                         {PREFERRED_OPTIONS.map((opt) => (
                           <option key={opt} value={opt}>
@@ -257,7 +257,7 @@ export function UpdateContactInformationModal({
                           </option>
                         ))}
                       </select>
-                      <span className="pointer-events-none absolute right-3 top-1/2 size-4 -translate-y-1/2 text-[#6a7282]">
+                      <span className="pointer-events-none absolute right-3 top-1/2 size-4 -translate-y-1/2 text-neutral">
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} aria-hidden>
                           <path d="M6 9l6 6 6-6" />
                         </svg>
@@ -270,23 +270,23 @@ export function UpdateContactInformationModal({
           </div>
         </div>
 
-        <footer className="shrink-0 border-t border-[#e5e7eb] bg-[#f9fafb] px-6 py-5">
+        <footer className="shrink-0 border-t border-secondary bg-secondary px-6 py-5">
           <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-            <p className="text-[14px] leading-5 tracking-[-0.1504px] text-[#4a5565]">
+            <p className="text-[14px] leading-5 tracking-[-0.1504px] text-neutral-variant">
               Changes will be saved to the resident database immediately
             </p>
             <div className="flex flex-wrap items-center justify-end gap-3">
               <button
                 type="button"
                 onClick={onClose}
-                className="inline-flex h-9 items-center justify-center rounded-lg border border-black/10 bg-white px-[17px] text-[14px] font-medium tracking-[-0.1504px] text-[#0a0a0a] outline-none hover:bg-[#f3f4f6] focus-visible:ring-2 focus-visible:ring-[#944c73] focus-visible:ring-offset-2"
+                className="inline-flex h-9 items-center justify-center rounded-lg border border-black/10 bg-white px-[17px] text-[14px] font-medium tracking-[-0.1504px] text-extended-3 outline-none hover:bg-secondary focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2"
               >
                 Cancel
               </button>
               <button
                 type="button"
                 onClick={onClose}
-                className="inline-flex h-9 min-w-[146px] items-center justify-center rounded-lg bg-[#030213] px-4 text-[14px] font-medium tracking-[-0.1504px] text-white outline-none hover:bg-[#1a1f36] focus-visible:ring-2 focus-visible:ring-[#944c73] focus-visible:ring-offset-2"
+                className="inline-flex h-9 min-w-[146px] items-center justify-center rounded-lg bg-extended-3 px-4 text-[14px] font-medium tracking-[-0.1504px] text-white outline-none hover:bg-extended-3 focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2"
               >
                 Save All Changes
               </button>

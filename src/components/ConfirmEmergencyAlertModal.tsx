@@ -76,11 +76,11 @@ export function ConfirmEmergencyAlertModal({
         aria-labelledby={titleId}
         className={
           isRail
-            ? 'relative flex h-full max-h-dvh w-full max-w-[min(100vw,672px)] flex-col overflow-hidden border-l border-[#e5e7eb] bg-white shadow-[inset_1px_0_0_0_#e5e7eb]'
+            ? 'relative flex h-full max-h-dvh w-full max-w-[min(100vw,672px)] flex-col overflow-hidden border-l border-secondary bg-white shadow-[inset_1px_0_0_0_#A788964D]'
             : 'relative flex max-h-[min(92dvh,680px)] w-full max-w-[672px] flex-col overflow-hidden rounded-[10px] bg-white shadow-[0px_20px_25px_-5px_rgba(0,0,0,0.1),0px_8px_10px_-6px_rgba(0,0,0,0.1)]'
         }
       >
-        <header className="flex h-[59px] shrink-0 items-center justify-between bg-[#e7000b] px-6">
+        <header className="flex h-[59px] shrink-0 items-center justify-between bg-error px-6">
           <div className="flex min-w-0 items-center gap-3">
             <HeaderAlertGlyph className="size-6 shrink-0 text-white" />
             <h2
@@ -94,7 +94,7 @@ export function ConfirmEmergencyAlertModal({
             type="button"
             onClick={onClose}
             aria-label="Close"
-            className="shrink-0 rounded-lg p-0.5 text-white outline-none hover:bg-white/15 focus-visible:ring-2 focus-visible:ring-white focus-visible:ring-offset-2 focus-visible:ring-offset-[#e7000b]"
+            className="shrink-0 rounded-lg p-0.5 text-white outline-none hover:bg-white/15 focus-visible:ring-2 focus-visible:ring-white focus-visible:ring-offset-2 focus-visible:ring-offset-error"
           >
             <svg className="size-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} aria-hidden>
               <path d="M18 6L6 18M6 6l12 12" strokeLinecap="round" />
@@ -105,24 +105,24 @@ export function ConfirmEmergencyAlertModal({
         <div className="min-h-0 flex-1 overflow-y-auto px-6 py-6">
           <div className="flex flex-col gap-4">
             <div className="flex flex-wrap items-center gap-2">
-              <span className="inline-flex rounded px-2 py-1 text-[12px] font-medium leading-4 bg-[#e7000b] text-white">
+              <span className="inline-flex rounded px-2 py-1 text-[12px] font-medium leading-4 bg-error text-white">
                 URGENT
               </span>
-              <span className="text-[14px] leading-5 tracking-[-0.1504px] text-[#6a7282]">
+              <span className="text-[14px] leading-5 tracking-[-0.1504px] text-neutral">
                 Detected 2 hours ago
               </span>
             </div>
 
-            <h3 className="text-[16px] font-semibold leading-6 tracking-[-0.3125px] text-[#101828]">
+            <h3 className="text-[16px] font-semibold leading-6 tracking-[-0.3125px] text-extended-3">
               Gas Leak Advisory - PG&amp;E Emergency Alert
             </h3>
 
-            <p className="text-[14px] leading-5 tracking-[-0.1504px] text-[#364153]">
+            <p className="text-[14px] leading-5 tracking-[-0.1504px] text-neutral-variant">
               PG&amp;E has issued an emergency gas leak advisory for the surrounding area. Residents should be
               aware of the following safety precautions:
             </p>
 
-            <ul className="list-disc space-y-1 pl-5 text-[14px] leading-5 tracking-[-0.1504px] text-[#364153]">
+            <ul className="list-disc space-y-1 pl-5 text-[14px] leading-5 tracking-[-0.1504px] text-neutral-variant">
               {BULLET_ITEMS.map((line) => (
                 <li key={line} className="pl-1">
                   {line}
@@ -130,45 +130,45 @@ export function ConfirmEmergencyAlertModal({
               ))}
             </ul>
 
-            <div className="rounded-[10px] border border-[#e5e7eb] bg-[#f9fafb] p-[17px]">
+            <div className="rounded-[10px] border border-secondary bg-secondary p-[17px]">
               <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                 <div>
-                  <p className="text-[14px] leading-5 tracking-[-0.1504px] text-[#6a7282]">Source</p>
-                  <p className="mt-1 text-[14px] font-medium leading-5 tracking-[-0.1504px] text-[#101828]">
+                  <p className="text-[14px] leading-5 tracking-[-0.1504px] text-neutral">Source</p>
+                  <p className="mt-1 text-[14px] font-medium leading-5 tracking-[-0.1504px] text-extended-3">
                     PG&amp;E Emergency Alert System
                   </p>
                 </div>
                 <div>
-                  <p className="text-[14px] leading-5 tracking-[-0.1504px] text-[#6a7282]">Detected Time</p>
-                  <p className="mt-1 text-[14px] font-medium leading-5 tracking-[-0.1504px] text-[#101828]">
+                  <p className="text-[14px] leading-5 tracking-[-0.1504px] text-neutral">Detected Time</p>
+                  <p className="mt-1 text-[14px] font-medium leading-5 tracking-[-0.1504px] text-extended-3">
                     Mar 25, 2:00 PM
                   </p>
                 </div>
                 <div>
-                  <p className="text-[14px] leading-5 tracking-[-0.1504px] text-[#6a7282]">Recipients</p>
-                  <p className="mt-1 text-[14px] font-medium leading-5 tracking-[-0.1504px] text-[#101828]">
+                  <p className="text-[14px] leading-5 tracking-[-0.1504px] text-neutral">Recipients</p>
+                  <p className="mt-1 text-[14px] font-medium leading-5 tracking-[-0.1504px] text-extended-3">
                     All Residents (142 units)
                   </p>
                 </div>
                 <div>
-                  <p className="text-[14px] leading-5 tracking-[-0.1504px] text-[#6a7282]">Delivery Method</p>
-                  <p className="mt-1 text-[14px] font-medium leading-5 tracking-[-0.1504px] text-[#101828]">
+                  <p className="text-[14px] leading-5 tracking-[-0.1504px] text-neutral">Delivery Method</p>
+                  <p className="mt-1 text-[14px] font-medium leading-5 tracking-[-0.1504px] text-extended-3">
                     Email + SMS
                   </p>
                 </div>
               </div>
             </div>
 
-            <div className="flex gap-3 rounded-[10px] border border-[#fee685] bg-[#fffbeb] p-[17px]">
-              <svg className="mt-0.5 size-5 shrink-0 text-[#e17100]" viewBox="0 0 24 24" fill="none" aria-hidden>
+            <div className="flex gap-3 rounded-[10px] border border-tertiary bg-tertiary p-[17px]">
+              <svg className="mt-0.5 size-5 shrink-0 text-tertiary" viewBox="0 0 24 24" fill="none" aria-hidden>
                 <circle cx="12" cy="12" r="9" stroke="currentColor" strokeWidth={1.8} />
                 <path d="M12 8v5M12 16h.01" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" />
               </svg>
               <div>
-                <p className="text-[14px] font-medium leading-5 tracking-[-0.1504px] text-[#7b3306]">
+                <p className="text-[14px] font-medium leading-5 tracking-[-0.1504px] text-tertiary">
                   Important Notice
                 </p>
-                <p className="mt-1 text-[14px] leading-5 tracking-[-0.1504px] text-[#973c00]">
+                <p className="mt-1 text-[14px] leading-5 tracking-[-0.1504px] text-tertiary">
                   This alert will be sent immediately to all residents via both email and SMS. This action cannot be
                   undone.
                 </p>
@@ -177,14 +177,14 @@ export function ConfirmEmergencyAlertModal({
           </div>
         </div>
 
-        <footer className="flex shrink-0 flex-wrap items-stretch gap-3 border-t border-[#e5e7eb] bg-white px-6 py-4">
+        <footer className="flex shrink-0 flex-wrap items-stretch gap-3 border-t border-secondary bg-white px-6 py-4">
           <button
             type="button"
             onClick={() => {
               onClose()
               onConfirmSend()
             }}
-            className="inline-flex min-h-9 min-w-0 flex-1 items-center justify-center gap-2 rounded-lg bg-[#e7000b] px-4 text-[14px] font-medium tracking-[-0.1504px] text-white outline-none hover:bg-[#c10007] focus-visible:ring-2 focus-visible:ring-[#944c73] focus-visible:ring-offset-2"
+            className="inline-flex min-h-9 min-w-0 flex-1 items-center justify-center gap-2 rounded-lg bg-error px-4 text-[14px] font-medium tracking-[-0.1504px] text-white outline-none hover:bg-error focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2"
           >
             <ButtonAlertGlyph />
             Send Emergency Alert Now
@@ -192,7 +192,7 @@ export function ConfirmEmergencyAlertModal({
           <button
             type="button"
             onClick={onClose}
-            className="inline-flex h-9 shrink-0 items-center justify-center rounded-lg border border-black/10 bg-white px-[17px] text-[14px] font-medium tracking-[-0.1504px] text-[#0a0a0a] outline-none hover:bg-[#f3f4f6] focus-visible:ring-2 focus-visible:ring-[#944c73] focus-visible:ring-offset-2"
+            className="inline-flex h-9 shrink-0 items-center justify-center rounded-lg border border-black/10 bg-white px-[17px] text-[14px] font-medium tracking-[-0.1504px] text-extended-3 outline-none hover:bg-secondary focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2"
           >
             Cancel
           </button>

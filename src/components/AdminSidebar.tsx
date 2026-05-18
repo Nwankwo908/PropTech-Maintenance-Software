@@ -1,12 +1,12 @@
 import { NavLink, useNavigate } from 'react-router-dom'
-import homeIcon from '@/assets/Home Icon.svg'
+import heroLogo from '@/assets/Hero_Logo.svg'
 import requestServiceIcon from '@/assets/Request_Service_2.svg'
 import { SIDEBAR_ADMIN_PROFILE } from '@/constants/sidebarAdminProfile'
 import { signOutAdmin } from '@/lib/adminAuth'
 import { supabase } from '@/lib/supabase'
 
 const navBase =
-  'flex min-h-[44px] w-full cursor-pointer items-center gap-3 whitespace-nowrap rounded-[10px] px-4 text-left text-[14px] font-medium tracking-[-0.1504px] outline-none transition-colors duration-150 focus-visible:ring-2 focus-visible:ring-[#944c73] focus-visible:ring-offset-2 focus-visible:ring-offset-white'
+  'flex min-h-[44px] w-full cursor-pointer items-center gap-3 whitespace-nowrap rounded-[10px] px-4 text-left text-[14px] font-medium tracking-[-0.1504px] outline-none transition-colors duration-150 focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 focus-visible:ring-offset-white'
 
 export function AdminSidebarContent({
   onNavigate,
@@ -22,16 +22,16 @@ export function AdminSidebarContent({
 
   return (
     <div className="flex min-h-0 w-full flex-1 flex-col overflow-hidden">
-      <div className={`shrink-0 border-b border-[#e5e7eb] ${gutter}`}>
+      <div className={`shrink-0 border-b border-secondary ${gutter}`}>
         <div className="flex items-center gap-3">
-          <div className="flex size-10 shrink-0 items-center justify-center rounded-[10px] bg-[#101828]">
-            <img src={homeIcon} alt="" className="size-10 object-contain" />
+          <div className="flex size-10 shrink-0 items-center justify-center rounded-[10px] bg-extended-3">
+            <img src={heroLogo} alt="" className="size-10 object-contain" />
           </div>
           <div className="min-w-0">
-            <p className="text-[20px] font-semibold leading-7 tracking-[-0.4492px] text-[#101828]">
+            <p className="text-[20px] font-semibold leading-7 tracking-[-0.4492px] text-extended-3">
               Admin Panel
             </p>
-            <p className="text-[12px] leading-4 text-[#6a7282]">Property Mgmt</p>
+            <p className="text-[12px] leading-4 text-neutral">Property Mgmt</p>
           </div>
         </div>
       </div>
@@ -48,8 +48,8 @@ export function AdminSidebarContent({
             [
               navBase,
               isActive
-                ? 'bg-[#101828] text-white hover:bg-[#475467] active:bg-[#0c111d]'
-                : 'text-[#364153] hover:bg-[#e5e7eb] active:bg-[#d1d5dc]',
+                ? 'bg-[#ffee6c] text-[#b58500]'
+                : 'text-neutral-variant hover:bg-secondary active:bg-secondary',
             ].join(' ')
           }
         >
@@ -60,8 +60,10 @@ export function AdminSidebarContent({
                   src={requestServiceIcon}
                   alt=""
                   className={[
-                    'size-5 object-contain transition-[filter]',
-                    isActive ? 'brightness-0 invert' : 'brightness-0',
+                    'size-5 object-contain transition-opacity',
+                    isActive
+                      ? 'opacity-100 [filter:brightness(0)_saturate(100%)_invert(53%)_sepia(63%)_saturate(1050%)_hue-rotate(18deg)_brightness(96%)_contrast(95%)]'
+                      : 'opacity-55 brightness-0',
                   ].join(' ')}
                 />
               </span>
@@ -76,8 +78,8 @@ export function AdminSidebarContent({
             [
               navBase,
               isActive
-                ? 'bg-[#101828] text-white hover:bg-[#475467] active:bg-[#0c111d]'
-                : 'text-[#364153] hover:bg-[#e5e7eb] active:bg-[#d1d5dc]',
+                ? 'bg-[#ffee6c] text-[#b58500]'
+                : 'text-neutral-variant hover:bg-secondary active:bg-secondary',
             ].join(' ')
           }
         >
@@ -95,8 +97,8 @@ export function AdminSidebarContent({
             [
               navBase,
               isActive
-                ? 'bg-[#101828] text-white hover:bg-[#475467] active:bg-[#0c111d]'
-                : 'text-[#364153] hover:bg-[#e5e7eb] active:bg-[#d1d5dc]',
+                ? 'bg-[#ffee6c] text-[#b58500]'
+                : 'text-neutral-variant hover:bg-secondary active:bg-secondary',
             ].join(' ')
           }
         >
@@ -110,23 +112,23 @@ export function AdminSidebarContent({
       </nav>
 
       <div
-        className={`shrink-0 border-t border-[#e5e7eb] bg-white ${footerPad}`}
+        className={`shrink-0 border-t border-secondary bg-white ${footerPad}`}
       >
         <div className="flex w-full min-w-0 items-center gap-3 rounded-[10px] px-3 py-2.5">
           <div
-            className="flex size-10 shrink-0 items-center justify-center rounded-full bg-[#944c73] text-[13px] font-semibold leading-none tracking-[-0.02em] text-white shadow-sm"
+            className="flex size-10 shrink-0 items-center justify-center rounded-full bg-[#00b585] text-[13px] font-semibold leading-none tracking-[-0.02em] text-black shadow-sm"
             aria-hidden
           >
             {SIDEBAR_ADMIN_PROFILE.initials}
           </div>
           <div className="min-w-0 flex-1 text-left">
-            <p className="truncate text-[14px] font-semibold tracking-[-0.1504px] text-[#101828]">
+            <p className="truncate text-[14px] font-semibold tracking-[-0.1504px] text-extended-3">
               {SIDEBAR_ADMIN_PROFILE.name}
             </p>
-            <p className="mt-0.5 truncate text-[12px] leading-4 text-[#6a7282]">
+            <p className="mt-0.5 truncate text-[12px] leading-4 text-neutral">
               {SIDEBAR_ADMIN_PROFILE.email}
             </p>
-            <p className="mt-1 text-[11px] font-medium leading-4 text-[#944c73]">
+            <p className="mt-1 text-[11px] font-medium leading-4 text-primary">
               Admin Portal
             </p>
           </div>
@@ -134,7 +136,7 @@ export function AdminSidebarContent({
         {supabase ? (
           <button
             type="button"
-            className="mt-3 w-full cursor-pointer rounded-[10px] border border-[#e5e7eb] bg-white px-3 py-2.5 text-left text-[14px] font-medium tracking-[-0.1504px] text-[#364153] outline-none transition-colors duration-150 hover:border-[#d1d5dc] hover:bg-[#e5e7eb] active:border-[#d1d5dc] active:bg-[#d1d5dc] focus-visible:ring-2 focus-visible:ring-[#944c73] focus-visible:ring-offset-2"
+            className="mt-3 w-full cursor-pointer rounded-[10px] border border-secondary bg-white px-3 py-2.5 text-left text-[14px] font-medium tracking-[-0.1504px] text-neutral-variant outline-none transition-colors duration-150 hover:border-secondary hover:bg-secondary active:border-secondary active:bg-secondary focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2"
             onClick={async () => {
               await signOutAdmin()
               onNavigate?.()

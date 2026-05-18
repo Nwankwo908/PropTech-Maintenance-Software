@@ -1,12 +1,16 @@
 import { useEffect, useId, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
 import {
   VENDOR_INVALID_ACCESS_CODE_FLAG,
+  VENDOR_TOKEN_CHANGED_EVENT,
   VENDOR_TOKEN_STORAGE_KEY,
 } from '@/lib/vendorToken'
 
-export function VendorAccessCodePage() {
-  const navigate = useNavigate()
+type VendorAccessCodePageProps = {
+  /** Called after `vendor_token` is saved so the parent gate re-renders immediately. */
+  onAccessGranted?: () => void
+}
+
+export function VendorAccessCodePage({ onAccessGranted }: VendorAccessCodePageProps = {}) {
   const inputId = useId()
   const errorId = `${inputId}-error`
   const [code, setCode] = useState('')
@@ -23,8 +27,7 @@ export function VendorAccessCodePage() {
     }
   }, [])
 
-  function onSubmit(e: React.FormEvent) {
-    e.preventDefault()
+  function grantAccess() {
     setError(null)
     const value = code.trim()
     if (!value) {
@@ -37,7 +40,13 @@ export function VendorAccessCodePage() {
       setError('Could not save code. Check browser storage settings.')
       return
     }
-    navigate('/vendor', { replace: true })
+    window.dispatchEvent(new Event(VENDOR_TOKEN_CHANGED_EVENT))
+    onAccessGranted?.()
+  }
+
+  function onSubmit(e: React.FormEvent) {
+    e.preventDefault()
+    grantAccess()
   }
 
   return (
@@ -58,7 +67,13 @@ export function VendorAccessCodePage() {
               autoComplete="off"
               value={code}
               onChange={(e) => setCode(e.target.value)}
-              className="w-full rounded-lg border border-[#d1d5db] px-3 py-2.5 text-[15px] text-[#101828] outline-none ring-[#3342aa] focus:border-[#3342aa] focus:ring-2"
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  e.preventDefault()
+                  grantAccess()
+                }
+              }}
+              className="w-full rounded-lg border border-[#d1d5db] px-3 py-2.5 text-[15px] text-[#101828] outline-none ring-[#0030b5] focus:border-[#0030b5] focus:ring-2"
               placeholder="Access code"
             />
           </div>
@@ -66,14 +81,15 @@ export function VendorAccessCodePage() {
             <p
               id={errorId}
               role="alert"
-              className="rounded-lg bg-[#fef2f2] px-3 py-2 text-sm text-[#991b1b]"
+              className="rounded-lg bg-[#fff4f0] px-3 py-2 text-sm text-[#b52a00]"
             >
               {error}
             </p>
           ) : null}
           <button
-            type="submit"
-            className="rounded-lg bg-[#3342aa] px-4 py-2.5 text-sm font-semibold text-white hover:bg-[#2a368f]"
+            type="button"
+            onClick={grantAccess}
+            className="rounded-lg bg-[#ffee6c] px-4 py-2.5 text-sm font-semibold text-[#101828] hover:bg-[#f5e35e]"
           >
             Access Dashboard
           </button>

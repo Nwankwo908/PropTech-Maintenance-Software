@@ -19,7 +19,7 @@ const DEMO_ITEMS: CommItem[] = [
     channel: 'email',
     dateLabel: '3/25/2026',
     readState: 'unread',
-    priorityClass: 'bg-[#ffedd4] text-[#ca3500]',
+    priorityClass: 'bg-tertiary text-error',
     priorityLabel: 'high',
   },
   {
@@ -29,7 +29,7 @@ const DEMO_ITEMS: CommItem[] = [
     channel: 'sms',
     dateLabel: '3/24/2026',
     readState: 'read',
-    priorityClass: 'bg-[#ffe2e2] text-[#c10007]',
+    priorityClass: 'bg-error text-white',
     priorityLabel: 'urgent',
   },
   {
@@ -39,12 +39,12 @@ const DEMO_ITEMS: CommItem[] = [
     channel: 'email',
     dateLabel: '3/23/2026',
     readState: 'read',
-    priorityClass: 'bg-[#dbeafe] text-[#1447e6]',
+    priorityClass: 'bg-extended-1 text-white',
     priorityLabel: 'medium',
   },
 ]
 
-function IconClose({ className = 'size-5 text-[#6a7282]' }: { className?: string }) {
+function IconClose({ className = 'size-5 text-neutral' }: { className?: string }) {
   return (
     <svg className={className} viewBox="0 0 24 24" fill="none" aria-hidden>
       <path d="M18 6L6 18M6 6l12 12" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" />
@@ -52,7 +52,7 @@ function IconClose({ className = 'size-5 text-[#6a7282]' }: { className?: string
   )
 }
 
-function IconMailHeader({ className = 'size-5 text-[#364153]' }: { className?: string }) {
+function IconMailHeader({ className = 'size-5 text-neutral-variant' }: { className?: string }) {
   return (
     <svg className={className} viewBox="0 0 24 24" fill="none" aria-hidden>
       <path
@@ -66,7 +66,7 @@ function IconMailHeader({ className = 'size-5 text-[#364153]' }: { className?: s
   )
 }
 
-function IconMailMeta({ className = 'size-3 shrink-0 text-[#6a7282]' }: { className?: string }) {
+function IconMailMeta({ className = 'size-3 shrink-0 text-neutral' }: { className?: string }) {
   return (
     <svg className={className} viewBox="0 0 24 24" fill="none" aria-hidden>
       <path
@@ -80,7 +80,7 @@ function IconMailMeta({ className = 'size-3 shrink-0 text-[#6a7282]' }: { classN
   )
 }
 
-function IconSmsMeta({ className = 'size-3 shrink-0 text-[#6a7282]' }: { className?: string }) {
+function IconSmsMeta({ className = 'size-3 shrink-0 text-neutral' }: { className?: string }) {
   return (
     <svg className={className} viewBox="0 0 24 24" fill="none" aria-hidden>
       <path
@@ -94,7 +94,7 @@ function IconSmsMeta({ className = 'size-3 shrink-0 text-[#6a7282]' }: { classNa
   )
 }
 
-function IconCalendarMeta({ className = 'size-3 shrink-0 text-[#6a7282]' }: { className?: string }) {
+function IconCalendarMeta({ className = 'size-3 shrink-0 text-neutral' }: { className?: string }) {
   return (
     <svg className={className} viewBox="0 0 24 24" fill="none" aria-hidden>
       <rect x="3" y="5" width="18" height="16" rx="2" stroke="currentColor" strokeWidth={1.8} />
@@ -131,21 +131,21 @@ export function ExternalCommunicationsModal({
         role="dialog"
         aria-modal="true"
         aria-labelledby={titleId}
-        className="relative flex h-full max-h-dvh w-full max-w-[min(100vw,640px)] flex-col overflow-hidden border-l border-[#e5e7eb] bg-white shadow-[inset_1px_0_0_0_#e5e7eb]"
+        className="relative flex h-full max-h-dvh w-full max-w-[min(100vw,640px)] flex-col overflow-hidden border-l border-secondary bg-white shadow-[inset_1px_0_0_0_#A788964D]"
       >
-        <header className="flex h-[81px] shrink-0 items-center justify-between border-b border-[#e5e7eb] px-6">
+        <header className="flex h-[81px] shrink-0 items-center justify-between border-b border-secondary px-6">
           <div className="flex min-w-0 items-center gap-3">
-            <div className="flex size-10 shrink-0 items-center justify-center rounded-[10px] bg-[#f3f4f6]">
+            <div className="flex size-10 shrink-0 items-center justify-center rounded-[10px] bg-secondary">
               <IconMailHeader />
             </div>
             <div className="min-w-0">
               <h2
                 id={titleId}
-                className="text-[18px] font-semibold leading-7 tracking-[-0.4395px] text-[#101828]"
+                className="text-[18px] font-semibold leading-7 tracking-[-0.4395px] text-extended-3"
               >
                 External Communications
               </h2>
-              <p className="text-[14px] font-normal leading-5 tracking-[-0.1504px] text-[#6a7282]">
+              <p className="text-[14px] font-normal leading-5 tracking-[-0.1504px] text-neutral">
                 City notifications and official correspondence
               </p>
             </div>
@@ -154,7 +154,7 @@ export function ExternalCommunicationsModal({
             type="button"
             onClick={onClose}
             aria-label="Close"
-            className="flex size-9 shrink-0 items-center justify-center rounded-lg outline-none hover:bg-[#f3f4f6] focus-visible:ring-2 focus-visible:ring-[#944c73] focus-visible:ring-offset-2"
+            className="flex size-9 shrink-0 items-center justify-center rounded-lg outline-none hover:bg-secondary focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2"
           >
             <IconClose />
           </button>
@@ -164,14 +164,14 @@ export function ExternalCommunicationsModal({
           {DEMO_ITEMS.map((item) => (
             <article
               key={item.id}
-              className="flex flex-col gap-2 rounded-[10px] border border-[#e5e7eb] px-[17px] pb-[17px] pt-[17px]"
+              className="flex flex-col gap-2 rounded-[10px] border border-secondary px-[17px] pb-[17px] pt-[17px]"
             >
               <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0 space-y-1">
-                  <h3 className="text-[14px] font-semibold leading-5 tracking-[-0.1504px] text-[#101828]">
+                  <h3 className="text-[14px] font-semibold leading-5 tracking-[-0.1504px] text-extended-3">
                     {item.title}
                   </h3>
-                  <p className="text-[12px] font-normal leading-4 text-[#4a5565]">{item.fromLabel}</p>
+                  <p className="text-[12px] font-normal leading-4 text-neutral-variant">{item.fromLabel}</p>
                 </div>
                 <span
                   className={[
@@ -183,18 +183,18 @@ export function ExternalCommunicationsModal({
                 </span>
               </div>
               <div className="flex flex-wrap items-center gap-4">
-                <span className="inline-flex items-center gap-1.5 text-[12px] font-normal leading-4 text-[#6a7282]">
+                <span className="inline-flex items-center gap-1.5 text-[12px] font-normal leading-4 text-neutral">
                   {item.channel === 'email' ? <IconMailMeta /> : <IconSmsMeta />}
                   {item.channel === 'email' ? 'Email' : 'SMS'}
                 </span>
-                <span className="inline-flex items-center gap-1.5 text-[12px] font-normal leading-4 text-[#6a7282]">
+                <span className="inline-flex items-center gap-1.5 text-[12px] font-normal leading-4 text-neutral">
                   <IconCalendarMeta />
                   {item.dateLabel}
                 </span>
                 <span
                   className={[
                     'text-[12px] font-medium leading-4',
-                    item.readState === 'unread' ? 'text-[#155dfc]' : 'text-[#6a7282]',
+                    item.readState === 'unread' ? 'text-extended-1' : 'text-neutral',
                   ].join(' ')}
                 >
                   {item.readState === 'unread' ? 'Unread' : 'Read'}
@@ -204,11 +204,11 @@ export function ExternalCommunicationsModal({
           ))}
         </div>
 
-        <footer className="flex shrink-0 justify-end border-t border-[#e5e7eb] bg-[#f9fafb] px-6 pb-5 pt-4">
+        <footer className="flex shrink-0 justify-end border-t border-secondary bg-secondary px-6 pb-5 pt-4">
           <button
             type="button"
             onClick={onClose}
-            className="inline-flex h-10 items-center justify-center rounded-[10px] bg-[#4a5565] px-8 text-[16px] font-medium leading-6 tracking-[-0.3125px] text-white outline-none hover:bg-[#364153] focus-visible:ring-2 focus-visible:ring-[#944c73] focus-visible:ring-offset-2"
+            className="inline-flex h-10 items-center justify-center rounded-[10px] bg-neutral-variant px-8 text-[16px] font-medium leading-6 tracking-[-0.3125px] text-white outline-none hover:bg-neutral-variant focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2"
           >
             Close
           </button>

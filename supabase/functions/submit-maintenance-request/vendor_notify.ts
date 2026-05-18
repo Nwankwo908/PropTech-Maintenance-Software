@@ -7,6 +7,7 @@ import {
 import { sendResendEmail, sendTwilioSms } from "../_shared/delivery.ts"
 import { signVendorEmailAction } from "../_shared/vendor_action_token.ts"
 import { notifyResidentVendorAssigned } from "./resident_notify.ts"
+import { getEstimatedMinutes } from "../_shared/sla_rules.ts"
 
 export type TicketNotifyPayload = {
   ticketId: string
@@ -108,6 +109,7 @@ function buildEmailBodies(
   vendorName: string,
   links: VendorEmailLinks | null,
   fallbackManageUrl: string | null,
+  accessCode: string | null,
 ): {
   text: string
   html: string
@@ -145,6 +147,9 @@ function buildEmailBodies(
   } else if (fallbackManageUrl) {
     textLines.push("", `Open job: ${fallbackManageUrl}`)
   }
+  if (accessCode?.trim()) {
+    textLines.push("", "Vendor access code:", accessCode.trim(), "Use this code on the vendor portal sign-in page.")
+  }
 
   const actionButtonsHtml =
     links && (links.acceptUrl || links.declineUrl)
@@ -172,6 +177,11 @@ function buildEmailBodies(
     Number.isFinite(payload.estimatedMinutes)
       ? `<tr><td style="padding: 4px 12px 4px 0; color: #6a7282;">Est. time</td><td><strong>${escapeHtml(String(payload.estimatedMinutes))} minutes</strong></td></tr>`
       : ""
+  const accessCodeHtml = accessCode?.trim()
+    ? `<p style="margin: 14px 0 0; font-size: 14px; color: #6a7282;">Vendor access code</p>
+  <p style="margin: 4px 0 12px;"><code style="display:inline-block;padding:8px 10px;border-radius:6px;background:#f3f4f6;border:1px solid #e5e7eb;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;">${escapeHtml(accessCode.trim())}</code></p>
+  <p style="margin: 0 0 12px;">Use this code on the vendor portal sign-in page.</p>`
+    : ""
 
   const html = `
 <!DOCTYPE html>
@@ -190,6 +200,7 @@ function buildEmailBodies(
   <p style="white-space: pre-wrap;">${escapeHtml(payload.description)}</p>
   <p style="font-size: 12px; color: #6a7282;">Ticket ID: ${escapeHtml(payload.ticketId)}</p>
   ${portalLinksHtml}
+  ${accessCodeHtml}
   ${actionButtonsHtml}
 </body>
 </html>`.trim()
@@ -316,6 +327,7 @@ async function notifyChannelsForAssignment(
         vendor.name,
         emailLinks,
         legacyManage,
+        vendor.portal_api_key,
       )
       const subject = "New Maintenance Job Assigned"
       const r = await sendResendEmail(vendor.email.trim(), subject, text, html)
@@ -469,12 +481,15 @@ export async function assignVendorAndNotify(
 
 /**
  * Admin reassignment: sets `assigned_vendor_id`, rotates `vendor_action_token`, resets workflow to
- * `pending_accept`, clears prior notify timestamps, notifies the new vendor, writes `vendor_status_events`.
+ * `pending_accept`, clears prior notify timestamps, recomputes `due_at` / `estimated_minutes` from
+ * now (existing minutes or SLA rules), notifies the new vendor, writes `vendor_status_events`.
  * Does not throw — returns `{ ok: true }` or `{ error: string }` for HTTP mapping.
  */
 export type ReassignVendorNotifyOptions = {
   /** Audit `vendor_status_events.source` (default `edge`). */
   eventSource?: "edge" | "auto_reassign"
+  /** When false, skip resident vendor-assigned notification (default true). */
+  notifyResident?: boolean
 }
 
 export async function reassignVendorByIdAndNotify(
@@ -486,7 +501,7 @@ export async function reassignVendorByIdAndNotify(
   const { data: ticket, error: tErr } = await supabase
     .from("maintenance_requests")
     .select(
-      "id, priority, urgency, unit, description, vendor_work_status, issue_category, due_at, estimated_minutes",
+      "id, priority, urgency, unit, description, vendor_work_status, issue_category, due_at, estimated_minutes, severity",
     )
     .eq("id", ticketId)
     .maybeSingle()
@@ -517,21 +532,43 @@ export async function reassignVendorByIdAndNotify(
   const actionToken = crypto.randomUUID()
 
   const eventSource = opts?.eventSource ?? "edge"
+  const notifyResident = opts?.notifyResident ?? true
 
   const existingIssueCat =
     typeof ticket.issue_category === "string" && ticket.issue_category.trim()
       ? ticket.issue_category.trim()
       : null
 
+  const urgencyOrPriority =
+    (typeof ticket.urgency === "string" && ticket.urgency.trim()
+      ? ticket.urgency
+      : ticket.priority) as string
+
+  const estRaw = ticket.estimated_minutes as number | null | undefined
+  const severityRaw = ticket.severity as string | null | undefined
+  const sevForSla =
+    typeof severityRaw === "string" && severityRaw.trim()
+      ? severityRaw.trim()
+      : urgencyOrPriority
+  const estMin =
+    typeof estRaw === "number" && Number.isFinite(estRaw) && estRaw > 0
+      ? estRaw
+      : getEstimatedMinutes(existingIssueCat ?? undefined, sevForSla)
+  const newDueAtIso = new Date(Date.now() + estMin * 60_000).toISOString()
+
+  const assignedAt = new Date().toISOString()
   const { error: upAssign } = await supabase
     .from("maintenance_requests")
     .update({
       assigned_vendor_id: vendor.id,
+      assigned_at: assignedAt,
       vendor_action_token: actionToken,
       vendor_work_status: "pending_accept",
       vendor_notified_at: null,
       vendor_notify_error: null,
       issue_category: existingIssueCat ?? vendor.category ?? null,
+      due_at: newDueAtIso,
+      estimated_minutes: estMin,
     })
     .eq("id", ticketId)
 
@@ -542,22 +579,13 @@ export async function reassignVendorByIdAndNotify(
 
   await touchVendorLastAssignedAt(supabase, vendor.id)
 
-  const urgencyOrPriority =
-    (typeof ticket.urgency === "string" && ticket.urgency.trim()
-      ? ticket.urgency
-      : ticket.priority) as string
-
-  const dueRaw = ticket.due_at as string | null | undefined
-  const estRaw = ticket.estimated_minutes as number | null | undefined
-
   const payload: TicketNotifyPayload = {
     ticketId,
     priority: urgencyOrPriority,
     unit: ticket.unit as string,
     description: ticket.description as string,
-    dueAt: typeof dueRaw === "string" && dueRaw.trim() ? dueRaw : null,
-    estimatedMinutes:
-      typeof estRaw === "number" && Number.isFinite(estRaw) ? estRaw : null,
+    dueAt: newDueAtIso,
+    estimatedMinutes: estMin,
   }
 
   const errors = await notifyChannelsForAssignment(
@@ -597,7 +625,7 @@ export async function reassignVendorByIdAndNotify(
     .eq("id", ticketId)
     .maybeSingle()
 
-  if (contact) {
+  if (notifyResident && contact) {
     await notifyResidentVendorAssigned(supabase, {
       ticketId,
       recipientName: String(contact.resident_name ?? ""),

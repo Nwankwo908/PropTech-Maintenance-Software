@@ -229,23 +229,23 @@ export function VerifyIdentityModal({
       aria-modal="true"
       aria-labelledby="verify-identity-title"
     >
-      <div className="w-full max-w-md rounded-[10px] border border-[#e5e7eb] bg-white p-6 shadow-lg">
+      <div className="w-full max-w-md rounded-[10px] border border-secondary bg-white p-6 shadow-lg">
         <h2
           id="verify-identity-title"
-          className="text-[18px] font-semibold leading-7 tracking-[-0.4395px] text-[#0a0a0a]"
+          className="text-[18px] font-semibold leading-7 tracking-[-0.4395px] text-extended-3"
         >
           Confirm your request
         </h2>
 
-        <p className="mt-2 text-[14px] leading-5 tracking-[-0.1504px] text-[#6a7282]">
-          Enter the <span className="font-medium text-[#0a0a0a]">verification code</span>{' '}
-          sent to <span className="font-medium text-[#0a0a0a]">{email}</span> to confirm your
+        <p className="mt-2 text-[14px] leading-5 tracking-[-0.1504px] text-neutral">
+          Enter the <span className="font-medium text-extended-3">verification code</span>{' '}
+          sent to <span className="font-medium text-extended-3">{email}</span> to confirm your
           maintenance request. Check spam if you don&apos;t see it.
         </p>
 
         {sendError && step === 'sending' && !busy && (
           <p
-            className="mt-3 text-[13px] font-medium leading-4 text-red-600"
+            className="mt-3 text-[13px] font-medium leading-4 text-[#b52a00]"
             role="alert"
           >
             {sendError}
@@ -254,7 +254,7 @@ export function VerifyIdentityModal({
 
         {error && (
           <p
-            className="mt-3 text-[13px] font-medium leading-4 text-red-600"
+            className="mt-3 text-[13px] font-medium leading-4 text-[#b52a00]"
             role="alert"
           >
             {error}
@@ -264,14 +264,14 @@ export function VerifyIdentityModal({
         {step === 'sending' && (
           <div className="mt-5">
             {busy ? (
-              <p className="text-[14px] leading-5 text-[#364153]">
+              <p className="text-[14px] leading-5 text-neutral-variant">
                 Sending verification email…
               </p>
             ) : sendError ? (
               <button
                 type="button"
                 onClick={() => void retrySend()}
-                className="h-9 w-full rounded-lg bg-[#9810fa] px-4 text-[14px] font-medium text-white transition-colors hover:bg-[#8710e0]"
+                className="h-9 w-full rounded-lg bg-[#ffee6c] px-4 text-[14px] font-medium text-[#101828] transition-colors hover:bg-[#f5e35e]"
               >
                 Try again
               </button>
@@ -283,7 +283,7 @@ export function VerifyIdentityModal({
           <div className="mt-4">
             <label
               htmlFor="verify-otp"
-              className="text-[12px] font-medium text-[#364153]"
+              className="text-[12px] font-medium text-neutral-variant"
             >
               One-time code
             </label>
@@ -299,9 +299,9 @@ export function VerifyIdentityModal({
               placeholder="e.g. 12345678"
               disabled={busy}
               aria-describedby="verify-otp-hint"
-              className="mt-1 w-full rounded-lg border border-[#e5e7eb] bg-[#f9fafb] px-3 py-3 text-center font-mono text-[24px] font-semibold tracking-[0.35em] text-[#0a0a0a] outline-none ring-[#944c73] focus:ring-2 disabled:opacity-60"
+              className="mt-1 w-full rounded-lg border border-transparent bg-[#f3f3f5] px-3 py-3 text-center font-mono text-[24px] font-semibold tracking-[0.35em] text-extended-3 outline-none ring-[#0030b5] focus:ring-2 disabled:opacity-60"
             />
-            <p id="verify-otp-hint" className="mt-2 text-[12px] text-[#6a7282]">
+            <p id="verify-otp-hint" className="mt-2 text-[12px] text-neutral">
               Use every character shown in the email. We continue automatically
               when the code length matches (e.g. 6, 8, or 10 digits).
             </p>
@@ -309,7 +309,7 @@ export function VerifyIdentityModal({
               type="button"
               disabled={busy || !isValidEmailOtpToken(otp)}
               onClick={() => void handleVerify(otp)}
-              className="mt-3 h-9 w-full rounded-lg bg-[#9810fa] px-4 text-[14px] font-medium text-white transition-colors hover:bg-[#8710e0] disabled:pointer-events-none disabled:opacity-50"
+              className="mt-3 h-9 w-full rounded-lg bg-[#ffee6c] px-4 text-[14px] font-medium text-[#101828] transition-colors hover:bg-[#f5e35e] disabled:pointer-events-none disabled:opacity-50"
             >
               {busy ? 'Verifying…' : 'Verify & submit'}
             </button>
@@ -317,7 +317,7 @@ export function VerifyIdentityModal({
               type="button"
               disabled={resendDisabled}
               onClick={() => void handleResend()}
-              className="mt-2 h-9 w-full rounded-lg border border-[#e5e7eb] bg-white px-4 text-[14px] font-medium text-[#364153] transition-colors hover:bg-[#f9fafb] disabled:cursor-not-allowed disabled:opacity-60"
+              className="mt-2 h-9 w-full rounded-lg border border-[#e5e7eb] bg-white px-4 text-[14px] font-medium text-[#364153] transition-colors hover:bg-[#e2f4ed] disabled:cursor-not-allowed disabled:opacity-60"
             >
               {isResending ? 'Sending…' : resendLabel}
             </button>
@@ -325,7 +325,7 @@ export function VerifyIdentityModal({
         )}
 
         {step === 'verifying' && (
-          <p className="mt-5 text-[14px] leading-5 text-[#364153]">
+          <p className="mt-5 text-[14px] leading-5 text-neutral-variant">
             Verifying code…
           </p>
         )}
@@ -340,7 +340,7 @@ export function VerifyIdentityModal({
               sendGenerationRef.current += 1
               onExit()
             }}
-            className="h-9 flex-1 rounded-lg border border-transparent px-4 text-[14px] font-medium text-[#6a7282] transition-colors hover:bg-[#f3f3f5] disabled:opacity-60"
+            className="h-9 flex-1 rounded-lg border border-transparent px-4 text-[14px] font-medium text-[#364153] transition-colors hover:bg-[#e2f4ed] disabled:opacity-60"
           >
             Cancel
           </button>

@@ -32,12 +32,12 @@ const STATUS_OPTIONS: { value: ResidentStatus; label: string }[] = [
 ]
 
 const inputClass =
-  'h-9 w-full rounded-lg border border-transparent bg-[#f3f3f5] px-3 text-[14px] tracking-[-0.1504px] text-[#0a0a0a] outline-none placeholder:text-[#717182] focus:border-[#e5e7eb] focus:ring-1 focus:ring-[#e5e7eb]'
+  'h-9 w-full rounded-lg border border-transparent bg-secondary px-3 text-[14px] tracking-[-0.1504px] text-extended-3 outline-none placeholder:text-neutral focus:border-secondary focus:ring-1 focus:ring-secondary'
 
 const selectClass =
-  'h-9 w-full cursor-pointer appearance-none rounded-lg border border-transparent bg-[#f3f3f5] py-1 pl-3 pr-9 text-[14px] font-medium tracking-[-0.1504px] text-[#0a0a0a] outline-none focus-visible:ring-2 focus-visible:ring-[#944c73] focus-visible:ring-offset-2'
+  'h-9 w-full cursor-pointer appearance-none rounded-lg border border-transparent bg-secondary py-1 pl-3 pr-9 text-[14px] font-medium tracking-[-0.1504px] text-extended-3 outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2'
 
-function IconPencilHeader({ className = 'size-5 text-[#155dfc]' }: { className?: string }) {
+function IconPencilHeader({ className = 'size-5 text-extended-1' }: { className?: string }) {
   return (
     <svg className={className} viewBox="0 0 24 24" fill="none" aria-hidden>
       <path
@@ -51,7 +51,7 @@ function IconPencilHeader({ className = 'size-5 text-[#155dfc]' }: { className?:
   )
 }
 
-function IconChevronDown({ className = 'size-4 text-[#0a0a0a]' }: { className?: string }) {
+function IconChevronDown({ className = 'size-4 text-extended-3' }: { className?: string }) {
   return (
     <svg className={className} viewBox="0 0 24 24" fill="none" aria-hidden>
       <path d="M6 9l6 6 6-6" stroke="currentColor" strokeWidth={2} strokeLinecap="round" />
@@ -59,7 +59,7 @@ function IconChevronDown({ className = 'size-4 text-[#0a0a0a]' }: { className?: 
   )
 }
 
-function IconTrash({ className = 'size-4 shrink-0 text-[#e7000b]' }: { className?: string }) {
+function IconTrash({ className = 'size-4 shrink-0 text-error' }: { className?: string }) {
   return (
     <svg className={className} viewBox="0 0 24 24" fill="none" aria-hidden>
       <path
@@ -152,21 +152,21 @@ export function EditResidentModal({
         role="dialog"
         aria-modal="true"
         aria-labelledby={titleId}
-        className="relative flex h-full max-h-dvh w-full max-w-[min(100vw,560px)] flex-col overflow-hidden border-l border-[#e5e7eb] bg-white shadow-[inset_1px_0_0_0_#e5e7eb]"
+        className="relative flex h-full max-h-dvh w-full max-w-[min(100vw,560px)] flex-col overflow-hidden border-l border-secondary bg-white shadow-[inset_1px_0_0_0_#A788964D]"
       >
-        <header className="flex h-[81px] shrink-0 items-center justify-between border-b border-[#e5e7eb] px-6">
+        <header className="flex h-[81px] shrink-0 items-center justify-between border-b border-secondary px-6">
           <div className="flex min-w-0 items-center gap-3">
-            <div className="flex size-10 shrink-0 items-center justify-center rounded-[10px] bg-[#dbeafe]">
+            <div className="flex size-10 shrink-0 items-center justify-center rounded-[10px] bg-extended-2">
               <IconPencilHeader />
             </div>
             <div className="min-w-0">
               <h2
                 id={titleId}
-                className="text-[18px] font-semibold leading-7 tracking-[-0.4395px] text-[#101828]"
+                className="text-[18px] font-semibold leading-7 tracking-[-0.4395px] text-extended-3"
               >
                 Edit Resident
               </h2>
-              <p className="text-[14px] font-normal leading-5 tracking-[-0.1504px] text-[#6a7282]">
+              <p className="text-[14px] font-normal leading-5 tracking-[-0.1504px] text-neutral">
                 {row.residentId}
               </p>
             </div>
@@ -175,7 +175,7 @@ export function EditResidentModal({
             type="button"
             onClick={onClose}
             aria-label="Close"
-            className="flex size-9 shrink-0 items-center justify-center rounded-lg text-[#6a7282] outline-none hover:bg-[#f3f4f6] focus-visible:ring-2 focus-visible:ring-[#944c73] focus-visible:ring-offset-2"
+            className="flex size-9 shrink-0 items-center justify-center rounded-lg text-neutral outline-none hover:bg-secondary focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2"
           >
             <svg className="size-5" viewBox="0 0 24 24" fill="none" aria-hidden>
               <path d="M18 6L6 18M6 6l12 12" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" />
@@ -194,8 +194,8 @@ export function EditResidentModal({
           ) : null}
           <div className="flex flex-col gap-4">
             <div className="space-y-2">
-              <label className="block text-[14px] font-medium leading-5 tracking-[-0.1504px] text-[#364153]">
-                Full Name <span className="text-[#e7000b]">*</span>
+              <label className="block text-[14px] font-medium leading-5 tracking-[-0.1504px] text-neutral-variant">
+                Full Name <span className="text-error">*</span>
               </label>
               <input
                 type="text"
@@ -206,8 +206,8 @@ export function EditResidentModal({
               />
             </div>
             <div className="space-y-2">
-              <label className="block text-[14px] font-medium leading-5 tracking-[-0.1504px] text-[#364153]">
-                Email Address <span className="text-[#e7000b]">*</span>
+              <label className="block text-[14px] font-medium leading-5 tracking-[-0.1504px] text-neutral-variant">
+                Email Address <span className="text-error">*</span>
               </label>
               <input
                 type="email"
@@ -218,7 +218,7 @@ export function EditResidentModal({
               />
             </div>
             <div className="space-y-2">
-              <label className="block text-[14px] font-medium leading-5 tracking-[-0.1504px] text-[#364153]">
+              <label className="block text-[14px] font-medium leading-5 tracking-[-0.1504px] text-neutral-variant">
                 Phone Number
               </label>
               <input
@@ -232,7 +232,7 @@ export function EditResidentModal({
             <div className="space-y-2">
               <label
                 htmlFor="edit-resident-unit"
-                className="block text-[14px] font-medium leading-5 tracking-[-0.1504px] text-[#364153]"
+                className="block text-[14px] font-medium leading-5 tracking-[-0.1504px] text-neutral-variant"
               >
                 Unit assignment
               </label>
@@ -254,14 +254,14 @@ export function EditResidentModal({
                   <IconChevronDown />
                 </span>
               </div>
-              <p className="text-[12px] font-normal leading-4 text-[#6a7282]">
+              <p className="text-[12px] font-normal leading-4 text-neutral">
                 Shows vacant units and this resident&apos;s current unit so you can reassign if needed.
               </p>
             </div>
             <div className="space-y-2">
               <label
                 htmlFor="edit-resident-status"
-                className="block text-[14px] font-medium leading-5 tracking-[-0.1504px] text-[#364153]"
+                className="block text-[14px] font-medium leading-5 tracking-[-0.1504px] text-neutral-variant"
               >
                 Account Status
               </label>
@@ -286,12 +286,12 @@ export function EditResidentModal({
           </div>
         </div>
 
-        <footer className="flex w-full shrink-0 gap-3 border-t border-[#e5e7eb] bg-[#f9fafb] px-6 pb-5 pt-4">
+        <footer className="flex w-full shrink-0 gap-3 border-t border-secondary bg-secondary px-6 pb-5 pt-4">
           <button
             type="button"
             onClick={onClose}
             disabled={saving}
-            className="flex h-[42px] min-w-0 flex-1 basis-0 items-center justify-center gap-2 rounded-[10px] border border-[#ffa2a2] px-4 text-[16px] font-medium leading-6 tracking-[-0.3125px] text-[#e7000b] outline-none hover:bg-[#fef2f2] focus-visible:ring-2 focus-visible:ring-[#944c73] focus-visible:ring-offset-2 disabled:opacity-50"
+            className="flex h-[42px] min-w-0 flex-1 basis-0 items-center justify-center gap-2 rounded-[10px] border border-error px-4 text-[16px] font-medium leading-6 tracking-[-0.3125px] text-error outline-none hover:bg-error focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 disabled:opacity-50"
           >
             <IconTrash />
             Delete Account
@@ -300,7 +300,7 @@ export function EditResidentModal({
             type="button"
             onClick={() => void save()}
             disabled={!formValid || saving}
-            className="flex h-[42px] min-w-0 flex-1 basis-0 items-center justify-center rounded-[10px] bg-[#155dfc] px-5 text-[16px] font-medium leading-6 tracking-[-0.3125px] text-white outline-none hover:bg-[#1447e6] focus-visible:ring-2 focus-visible:ring-[#944c73] focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50"
+            className="flex h-[42px] min-w-0 flex-1 basis-0 items-center justify-center rounded-[10px] bg-extended-1 px-5 text-[16px] font-medium leading-6 tracking-[-0.3125px] text-white outline-none hover:bg-extended-1 focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50"
           >
             {saving ? 'Saving…' : 'Save Changes'}
           </button>

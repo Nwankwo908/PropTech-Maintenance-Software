@@ -27,10 +27,30 @@ interface ImportMetaEnv {
   /** Same value as Edge secret ADMIN_REASSIGN_SECRET — do not ship to public clients in production. */
   readonly VITE_ADMIN_REASSIGN_SECRET?: string
   /**
+   * POST recommend-vendor-alternatives (full URL); uses `VITE_ADMIN_REASSIGN_SECRET`.
+   * If omitted, URL defaults to `${VITE_SUPABASE_URL}/functions/v1/recommend-vendor-alternatives`.
+   */
+  readonly VITE_VENDOR_RECOMMEND_URL?: string
+  /**
+   * POST discover-external-vendors (full URL); uses `VITE_ADMIN_REASSIGN_SECRET`.
+   * If omitted, URL defaults to `${VITE_SUPABASE_URL}/functions/v1/discover-external-vendors`.
+   */
+  readonly VITE_DISCOVER_EXTERNAL_VENDORS_URL?: string
+  /** Milliseconds after assignment before “vendor delayed” AI UI (default: dev 0, prod 1h). */
+  readonly VITE_VENDOR_DELAY_AI_MS?: string
+  /**
    * POST vendor-verify-token (full URL). If unset, defaults to
    * `${VITE_SUPABASE_URL}/functions/v1/vendor-verify-token`.
    */
   readonly VITE_VENDOR_VERIFY_TOKEN_URL?: string
+  /** Optional POST endpoint for immediate broadcast send. */
+  readonly VITE_BROADCAST_SEND_URL?: string
+  /** Optional POST endpoint for scheduled broadcast creation. */
+  readonly VITE_BROADCAST_SCHEDULE_URL?: string
+  /** Optional POST endpoint for AI message enhancement. */
+  readonly VITE_BROADCAST_AI_ENHANCE_URL?: string
+  /** Optional POST endpoint for retrying a failed resident/vendor/broadcast delivery. */
+  readonly VITE_RETRY_FAILED_DELIVERY_URL?: string
 }
 
 interface ImportMeta {

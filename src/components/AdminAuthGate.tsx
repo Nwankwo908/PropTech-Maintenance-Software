@@ -39,7 +39,7 @@ export function AdminAuthGate({ children }: { children: React.ReactNode }) {
   if (state === 'loading') {
     return (
       <div
-        className="min-h-dvh w-full bg-[#f3f4f6]"
+        className="min-h-dvh w-full bg-secondary"
         aria-busy="true"
         aria-label="Loading"
       />

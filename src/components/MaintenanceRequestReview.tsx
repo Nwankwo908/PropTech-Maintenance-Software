@@ -2,6 +2,7 @@ import { buildMaintenanceReviewSummary } from '@/lib/buildMaintenanceReviewSumma
 import type { IssueParsed } from '@/api/issueAnalysis'
 import { MaintenancePortalPageHeader } from '@/components/MaintenancePortalPageHeader'
 import { SparkleIcon } from '@/components/SparkleIcon'
+import type { ReactNode } from 'react'
 
 function WhiteCheckIcon({ className }: { className?: string }) {
   return (
@@ -28,14 +29,14 @@ function WhiteCheckIcon({ className }: { className?: string }) {
 function FormattedSummary({ text }: { text: string }) {
   const chunks = text.split(/(\*\*[^*]+\*\*)/g)
   return (
-    <div className="flex flex-col gap-3 text-[14px] font-normal leading-7 tracking-[-0.1504px] text-[#6e11b0]">
+    <div className="flex flex-col gap-3 text-[14px] font-normal leading-7 tracking-[-0.1504px] text-[#3f7d67]">
       {chunks.map((chunk, i) => {
         if (!chunk) return null
         if (chunk.startsWith('**') && chunk.endsWith('**')) {
           return (
             <strong
               key={i}
-              className="font-semibold text-[#4c1d95] first:mt-0 sm:text-[15px]"
+              className="font-semibold text-[#2d6f59] first:mt-0 sm:text-[15px]"
             >
               {chunk.slice(2, -2)}
             </strong>
@@ -44,7 +45,7 @@ function FormattedSummary({ text }: { text: string }) {
         const t = chunk.trim()
         if (!t) return null
         return (
-          <p key={i} className="leading-relaxed text-[#6e11b0]">
+          <p key={i} className="leading-relaxed text-[#3f7d67]">
             {chunk.trimStart()}
           </p>
         )
@@ -72,6 +73,8 @@ export type MaintenanceRequestReviewProps = {
   onConfirm: () => void
   isConfirming: boolean
   confirmError: string | null
+  mobileProgressCore?: ReactNode
+  mobileProgressHint?: string
 }
 
 export function MaintenanceRequestReview({
@@ -90,6 +93,8 @@ export function MaintenanceRequestReview({
   onConfirm,
   isConfirming,
   confirmError,
+  mobileProgressCore,
+  mobileProgressHint,
 }: MaintenanceRequestReviewProps) {
   const summaryText =
     aiGeneratedSummary?.trim() ||
@@ -103,27 +108,43 @@ export function MaintenanceRequestReview({
   return (
     <div className="flex w-full flex-col">
       <MaintenancePortalPageHeader sticky="lg" step="review" />
+      {mobileProgressCore ? (
+        <div
+          className="lg:hidden z-30 w-full shrink-0 bg-white px-6 py-3 sm:px-8"
+          role="region"
+          aria-label="Request progress"
+        >
+          <div className="pl-[36px]">
+            {mobileProgressCore}
+            {mobileProgressHint ? (
+              <p className="mt-3 text-center text-[12px] leading-4 text-[#6a7282]">
+                {mobileProgressHint}
+              </p>
+            ) : null}
+          </div>
+        </div>
+      ) : null}
 
       {/* Same two-column shell as MaintenanceRequestForm so lg content aligns with the form column */}
       <div className="flex flex-col gap-6 pb-10 lg:flex-row lg:items-start lg:gap-20 xl:gap-28">
         <div className="min-h-0 min-w-0 w-full flex-1 px-6 sm:px-8 lg:px-10">
         <div className="ml-0 flex w-full min-w-0 max-w-full flex-col gap-8 pl-[36px] pt-8 sm:pt-10 lg:ml-[48px] lg:max-w-[898px] lg:pl-0">
-        <div className="flex flex-col gap-4 rounded-[12px] border-2 border-[#e9d4ff] bg-gradient-to-br from-[#faf5ff] via-white to-[#eef2ff] px-[22px] py-5 shadow-[0_1px_0_rgba(255,255,255,0.8)_inset] sm:px-[26px] sm:py-6">
+        <div className="flex flex-col gap-4 rounded-[12px] border-2 border-[#b8e4d2] bg-gradient-to-br from-[#f5fbf8] via-white to-[#edf8f2] px-[22px] py-5 shadow-[0_1px_0_rgba(255,255,255,0.8)_inset] sm:px-[26px] sm:py-6">
           <div className="flex flex-wrap items-center gap-2 gap-y-1">
-            <span className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-[#f3e8ff] text-[#9810fa] ring-1 ring-[#e9d4ff]">
+            <span className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-[#e2f4ed] text-[#2f7f63] ring-1 ring-[#b8e4d2]">
               <SparkleIcon className="size-5" />
             </span>
             <div className="min-w-0 flex-1">
-              <h2 className="text-[18px] font-semibold leading-7 tracking-[-0.4395px] text-[#59168b]">
+              <h2 className="text-[18px] font-semibold leading-7 tracking-[-0.4395px] text-[#2d6f59]">
                 AI-Generated Summary
               </h2>
-              <p className="text-[12px] font-normal leading-4 text-[#7c3aed]/90">
+              <p className="text-[12px] font-normal leading-4 text-[#3f7d67]/90">
                 Based on your description—we grouped what stands out before you
                 submit.
               </p>
             </div>
           </div>
-          <div className="rounded-lg border border-[#e9d4ff]/60 bg-white/70 px-4 py-3.5 sm:px-5">
+          <div className="rounded-lg border border-[#b8e4d2]/60 bg-white/70 px-4 py-3.5 sm:px-5">
             <FormattedSummary text={summaryText} />
           </div>
         </div>
@@ -254,9 +275,9 @@ export function MaintenanceRequestReview({
             type="button"
             onClick={onConfirm}
             disabled={isConfirming}
-            className="flex h-9 min-w-0 flex-1 items-center justify-center gap-2 rounded-lg bg-[#9810fa] px-4 text-[14px] font-medium leading-5 tracking-[-0.1504px] text-white transition-colors hover:bg-[#8710e0] disabled:cursor-not-allowed disabled:opacity-80"
+            className="flex h-9 min-w-0 flex-1 items-center justify-center gap-2 rounded-lg bg-[#ffee6c] px-4 text-[14px] font-medium leading-5 tracking-[-0.1504px] text-[#101828] transition-colors hover:bg-[#f5e35e] disabled:cursor-not-allowed disabled:opacity-80"
           >
-            <WhiteCheckIcon className="size-4 shrink-0 text-white" />
+            <WhiteCheckIcon className="size-4 shrink-0 text-[#245845]" />
             {isConfirming ? 'Submitting…' : 'Confirm'}
           </button>
         </div>

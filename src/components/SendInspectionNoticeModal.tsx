@@ -1,6 +1,9 @@
-import { useEffect, useId, useMemo, useState, type ReactNode } from 'react'
+import { useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react'
 import inspectionIcon from '@/assets/Inspection_3.svg'
 import { SparkleIcon } from '@/components/SparkleIcon'
+import { recordBroadcastSendAttempt } from '@/lib/broadcastMetrics'
+import { ALL_UNIT_OPTIONS } from '@/lib/propertyUnitOptions'
+import { unitOptionValueToCell } from '@/lib/residentUnitKeys'
 
 const INSPECTION_TYPES = [
   { id: 'annual' as const, emoji: '📋', title: 'Annual Inspection', subtitle: 'Yearly property review' },
@@ -26,6 +29,8 @@ const TIME_WINDOW_OPTIONS = [
 type InspectionTypeId = (typeof INSPECTION_TYPES)[number]['id']
 type UnitScope = 'all' | 'building' | 'units'
 type AdvanceId = (typeof ADVANCE_OPTIONS)[number]['id']
+type BroadcastAudience = 'all' | 'building' | 'units'
+type BroadcastChannel = 'email' | 'sms'
 
 const INSPECTION_RETRY_ATTEMPT_OPTIONS = [
   { value: '2', label: '2 attempts' },
@@ -60,18 +65,114 @@ const INSPECTION_FOLLOW_UP_OPTIONS = [
   { value: '72h', label: '72 hours' },
 ] as const
 
+const REGISTERED_PROPERTY_UNITS_SESSION_KEY =
+  'proptech.admin.registeredPropertyUnitOptions.v1'
+
+function toDateInputValue(d: Date): string {
+  const y = d.getFullYear()
+  const m = String(d.getMonth() + 1).padStart(2, '0')
+  const day = String(d.getDate()).padStart(2, '0')
+  return `${y}-${m}-${day}`
+}
+
+function advanceNoticeDays(v: AdvanceId): number {
+  if (v === '24h') return 1
+  if (v === '48h') return 2
+  if (v === '1w') return 7
+  return 14
+}
+
+function readRegisteredBuildingsFromSession(): string[] {
+  if (typeof sessionStorage === 'undefined') return []
+  try {
+    const raw = sessionStorage.getItem(REGISTERED_PROPERTY_UNITS_SESSION_KEY)
+    if (!raw) return []
+    const parsed = JSON.parse(raw) as unknown
+    if (!Array.isArray(parsed)) return []
+    const out = new Set<string>()
+    for (const x of parsed) {
+      if (!x || typeof x !== 'object') continue
+      const label = (x as { label?: unknown }).label
+      if (typeof label !== 'string') continue
+      const parts = label.split('—')
+      if (parts.length < 2) continue
+      const building = parts[1]?.trim()
+      if (building) out.add(building)
+    }
+    return [...out]
+  } catch {
+    return []
+  }
+}
+
+function defaultBuildingOptions(): string[] {
+  const out = new Set<string>()
+  for (const opt of ALL_UNIT_OPTIONS) {
+    const cell = unitOptionValueToCell(opt.value)
+    if (cell.kind === 'assigned' && cell.building.trim()) {
+      out.add(cell.building.trim())
+    }
+  }
+  for (const b of readRegisteredBuildingsFromSession()) {
+    if (b.trim()) out.add(b.trim())
+  }
+  return [...out].sort((a, b) => a.localeCompare(b))
+}
+
+function readRegisteredUnitsFromSession(): string[] {
+  if (typeof sessionStorage === 'undefined') return []
+  try {
+    const raw = sessionStorage.getItem(REGISTERED_PROPERTY_UNITS_SESSION_KEY)
+    if (!raw) return []
+    const parsed = JSON.parse(raw) as unknown
+    if (!Array.isArray(parsed)) return []
+    const out = new Set<string>()
+    for (const x of parsed) {
+      if (!x || typeof x !== 'object') continue
+      const label = (x as { label?: unknown }).label
+      if (typeof label !== 'string') continue
+      const parts = label.split('—')
+      const unit = parts[0]?.trim()
+      if (unit) out.add(unit)
+    }
+    return [...out]
+  } catch {
+    return []
+  }
+}
+
+function defaultUnitOptions(): string[] {
+  const out = new Set<string>()
+  for (const opt of ALL_UNIT_OPTIONS) {
+    const cell = unitOptionValueToCell(opt.value)
+    if (cell.kind === 'assigned' && cell.unit.trim()) {
+      out.add(cell.unit.trim())
+    }
+  }
+  for (const u of readRegisteredUnitsFromSession()) {
+    if (u.trim()) out.add(u.trim())
+  }
+  return [...out].sort((a, b) =>
+    a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' }),
+  )
+}
+
 function inspectionRetryDelayShort(value: string): string {
   const map: Record<string, string> = { '15m': '15 min', '30m': '30 min', '1h': '1 hr', '2h': '2 hr' }
   return map[value] ?? value
 }
 
+export type SendInspectionNoticeModalProps = {
+  open: boolean
+  onClose: () => void
+  onBroadcastStatsInvalidate?: () => void
+}
+
 export function SendInspectionNoticeModal({
   open,
   onClose,
-}: {
-  open: boolean
-  onClose: () => void
-}) {
+  onBroadcastStatsInvalidate,
+}: SendInspectionNoticeModalProps) {
   const titleId = useId()
   const inspectionAutomationSwitchId = useId()
   const [inspectionType, setInspectionType] = useState<InspectionTypeId>('annual')
@@ -79,6 +180,7 @@ export function SendInspectionNoticeModal({
   const [timeWindow, setTimeWindow] = useState('')
   const [advanceNotice, setAdvanceNotice] = useState<AdvanceId>('48h')
   const [unitScope, setUnitScope] = useState<UnitScope>('all')
+  const [inspectionBuilding, setInspectionBuilding] = useState('')
   const [specificUnits, setSpecificUnits] = useState('')
   const [additionalMessage, setAdditionalMessage] = useState('')
   const [deliveryEmail, setDeliveryEmail] = useState(true)
@@ -101,6 +203,15 @@ export function SendInspectionNoticeModal({
     preventive: false,
   })
   const [followUpAfter, setFollowUpAfter] = useState('24h')
+  const [buildingOptions, setBuildingOptions] = useState<string[]>(() =>
+    defaultBuildingOptions(),
+  )
+  const [unitOptions, setUnitOptions] = useState<string[]>(() => defaultUnitOptions())
+  const [sendConfirmOpen, setSendConfirmOpen] = useState(false)
+  const [sendingNotice, setSendingNotice] = useState(false)
+  const [submitError, setSubmitError] = useState<string | null>(null)
+  const [successMessage, setSuccessMessage] = useState<string | null>(null)
+  const closeAfterSuccessTimeoutRef = useRef<number | null>(null)
 
   useEffect(() => {
     if (!open) return
@@ -111,6 +222,20 @@ export function SendInspectionNoticeModal({
     return () => window.removeEventListener('keydown', onKey)
   }, [open, onClose])
 
+  useEffect(() => {
+    return () => {
+      if (closeAfterSuccessTimeoutRef.current != null) {
+        window.clearTimeout(closeAfterSuccessTimeoutRef.current)
+      }
+    }
+  }, [])
+
+  useEffect(() => {
+    if (!open) return
+    setBuildingOptions(defaultBuildingOptions())
+    setUnitOptions(defaultUnitOptions())
+  }, [open])
+
   const [prevOpen, setPrevOpen] = useState(open)
   if (open !== prevOpen) {
     setPrevOpen(open)
@@ -120,6 +245,7 @@ export function SendInspectionNoticeModal({
       setTimeWindow('')
       setAdvanceNotice('48h')
       setUnitScope('all')
+      setInspectionBuilding('')
       setSpecificUnits('')
       setAdditionalMessage('')
       setDeliveryEmail(true)
@@ -140,6 +266,14 @@ export function SendInspectionNoticeModal({
         preventive: false,
       })
       setFollowUpAfter('24h')
+      setSendingNotice(false)
+      setSendConfirmOpen(false)
+      setSubmitError(null)
+      setSuccessMessage(null)
+      if (closeAfterSuccessTimeoutRef.current != null) {
+        window.clearTimeout(closeAfterSuccessTimeoutRef.current)
+        closeAfterSuccessTimeoutRef.current = null
+      }
     }
   }
 
@@ -189,20 +323,145 @@ export function SendInspectionNoticeModal({
   if (!open) return null
 
   const unitsOk = unitScope !== 'units' || specificUnits.trim().length > 0
+  const buildingOk = unitScope !== 'building' || inspectionBuilding.trim().length > 0
+  const minInspectionDate = (() => {
+    const d = new Date()
+    d.setHours(0, 0, 0, 0)
+    d.setDate(d.getDate() + advanceNoticeDays(advanceNotice))
+    return toDateInputValue(d)
+  })()
+  const dateOk = Boolean(inspectionDate) && inspectionDate >= minInspectionDate
   const formValid =
-    Boolean(inspectionDate) &&
+    dateOk &&
     Boolean(timeWindow) &&
     unitsOk &&
+    buildingOk &&
     (deliveryEmail || deliverySms)
 
-  function handleSendNotice() {
-    if (!formValid) return
-    onClose()
+  async function postBroadcast(urlValue: string | undefined, body: Record<string, unknown>): Promise<void> {
+    const url = urlValue?.trim()
+    if (!url) {
+      throw new Error('Broadcast service is not configured. Please try again later.')
+    }
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    })
+    if (!res.ok) {
+      throw new Error(`Request failed (${res.status})`)
+    }
   }
 
-  function handleSaveDraft() {
-    if (!formValid) return
-    onClose()
+  function buildInspectionBroadcastBody(): Record<string, unknown> {
+    const typeTitle =
+      INSPECTION_TYPES.find((t) => t.id === inspectionType)?.title ?? 'Property inspection'
+    const timeLabel = TIME_WINDOW_OPTIONS.find((o) => o.value === timeWindow)?.label ?? timeWindow
+    const advanceTitle = ADVANCE_OPTIONS.find((o) => o.id === advanceNotice)?.title ?? advanceNotice
+
+    let audience: BroadcastAudience
+    let building = ''
+    let units: string[] = []
+    if (unitScope === 'all') {
+      audience = 'all'
+    } else if (unitScope === 'building') {
+      audience = 'building'
+      building = inspectionBuilding.trim()
+    } else {
+      audience = 'units'
+      units = specificUnits
+        .split(',')
+        .map((u) => u.trim())
+        .filter(Boolean)
+    }
+
+    const subject = `${typeTitle} — ${inspectionDate}`
+    const messageParts = [
+      'This is an official inspection notice for your residence.',
+      '',
+      `Inspection type: ${typeTitle}`,
+      `Scheduled date: ${inspectionDate}`,
+      `Time window: ${timeLabel}`,
+      `Advance notice: ${advanceTitle}`,
+    ]
+    if (additionalMessage.trim()) {
+      messageParts.push('', 'Additional information:', additionalMessage.trim())
+    }
+    const message = messageParts.join('\n')
+
+    const channels: BroadcastChannel[] = [
+      ...(deliveryEmail ? (['email'] as const) : []),
+      ...(deliverySms ? (['sms'] as const) : []),
+    ]
+
+    const selectedEventTriggers = INSPECTION_EVENT_TRIGGER_OPTIONS.filter(
+      (e) => eventTriggerSelection[e.key],
+    ).map((e) => e.key)
+
+    const automation: Record<string, unknown> = {
+      enabled: automationEnabled,
+      autoRetryFailed,
+      retryMaxAttempts: Number(retryMaxAttempts),
+      retryDelay,
+      recurringSchedule,
+      recurringFrequency,
+      recurringDays: [] as string[],
+      recurringTime,
+      autoFollowUp,
+      followUpAfter,
+      inspection: {
+        inspectionType,
+        inspectionDate,
+        timeWindow,
+        advanceNotice,
+        unitScope,
+        ...(unitScope === 'building' ? { building: inspectionBuilding.trim() } : {}),
+        ...(unitScope === 'units' ? { specificUnits: specificUnits.trim() } : {}),
+        eventTriggers,
+        selectedEventTriggers,
+      },
+    }
+
+    return {
+      action: 'send_now',
+      subject,
+      message,
+      audience,
+      building,
+      units,
+      channels,
+      automation,
+    }
+  }
+
+  async function handleSendNotice() {
+    if (!formValid || sendingNotice) return
+    setSendConfirmOpen(false)
+    setSubmitError(null)
+    setSuccessMessage(null)
+    setSendingNotice(true)
+    const body = buildInspectionBroadcastBody()
+    const channels = body.channels as BroadcastChannel[]
+    try {
+      await postBroadcast(import.meta.env.VITE_BROADCAST_SEND_URL, body)
+      recordBroadcastSendAttempt(channels, true)
+      onBroadcastStatsInvalidate?.()
+      setSuccessMessage('Inspection notice sent. Delivery has started.')
+      closeAfterSuccessTimeoutRef.current = window.setTimeout(() => {
+        onClose()
+      }, 1500)
+    } catch (error) {
+      recordBroadcastSendAttempt(channels, false)
+      const msg =
+        error instanceof Error ? error.message : 'Failed to send inspection notice. Please try again.'
+      setSubmitError(
+        msg.toLowerCase().includes('failed to fetch')
+          ? 'Failed to reach broadcast service. Confirm send-broadcast is deployed and CORS is enabled.'
+          : msg,
+      )
+    } finally {
+      setSendingNotice(false)
+    }
   }
 
   return (
@@ -219,19 +478,19 @@ export function SendInspectionNoticeModal({
         aria-labelledby={titleId}
         className="relative flex max-h-[min(90dvh,1240px)] w-full max-w-[881px] flex-col overflow-hidden rounded-[10px] bg-white shadow-lg"
       >
-        <header className="flex shrink-0 items-center justify-between gap-3 border-b border-[#e5e7eb] px-6 py-5">
+        <header className="flex shrink-0 items-center justify-between gap-3 border-b border-secondary px-6 py-5">
           <div className="flex min-w-0 items-center gap-3">
-            <div className="flex size-10 shrink-0 items-center justify-center rounded-[10px] bg-[#f3e8ff]">
+            <div className="flex size-10 shrink-0 items-center justify-center rounded-[10px] bg-secondary">
               <img src={inspectionIcon} alt="" className="size-5 object-contain" />
             </div>
             <div className="min-w-0">
               <h2
                 id={titleId}
-                className="text-[18px] font-semibold leading-7 tracking-[-0.4395px] text-[#0a0a0a]"
+                className="text-[18px] font-semibold leading-7 tracking-[-0.4395px] text-extended-3"
               >
                 Send Inspection Notice
               </h2>
-              <p className="text-[12px] leading-4 text-[#6a7282]">
+              <p className="text-[12px] leading-4 text-neutral">
                 Schedule and notify residents of property inspections
               </p>
             </div>
@@ -240,7 +499,7 @@ export function SendInspectionNoticeModal({
             type="button"
             onClick={onClose}
             aria-label="Close"
-            className="shrink-0 rounded-lg p-1 text-[#6a7282] outline-none transition-colors hover:bg-black/5 hover:text-[#0a0a0a] focus-visible:ring-2 focus-visible:ring-[#944c73] focus-visible:ring-offset-2"
+            className="shrink-0 rounded-lg p-1 text-neutral outline-none transition-colors hover:bg-black/5 hover:text-extended-3 focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2"
           >
             <svg className="size-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} aria-hidden>
               <path d="M18 6L6 18M6 6l12 12" strokeLinecap="round" />
@@ -251,8 +510,8 @@ export function SendInspectionNoticeModal({
         <div className="min-h-0 flex-1 overflow-y-auto px-6 py-6">
           <div className="flex flex-col gap-6">
             <section>
-              <p className="mb-3 text-[14px] font-medium tracking-[-0.1504px] text-[#364153]">
-                Inspection Type <span className="text-[#c10007]">*</span>
+              <p className="mb-3 text-[14px] font-medium tracking-[-0.1504px] text-neutral-variant">
+                Inspection Type <span className="text-error">*</span>
               </p>
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                 {INSPECTION_TYPES.map((t) => (
@@ -263,20 +522,20 @@ export function SendInspectionNoticeModal({
                     className={[
                       'flex w-full rounded-[10px] border-2 p-4 text-left transition-colors',
                       inspectionType === t.id
-                        ? 'border-[#ad46ff] bg-[#faf5ff]'
-                        : 'border-[#e5e7eb] bg-white',
+                        ? 'border-primary bg-secondary'
+                        : 'border-secondary bg-white',
                     ].join(' ')}
                   >
                     <div className="flex gap-3">
                       <PurpleRadio on={inspectionType === t.id} large />
                       <div>
-                        <p className="flex items-center gap-2 text-[16px] font-medium leading-6 tracking-[-0.3125px] text-[#101828]">
+                        <p className="flex items-center gap-2 text-[16px] font-medium leading-6 tracking-[-0.3125px] text-extended-3">
                           <span className="text-[18px] leading-7" aria-hidden>
                             {t.emoji}
                           </span>
                           {t.title}
                         </p>
-                        <p className="mt-1 text-[12px] leading-4 text-[#6a7282]">{t.subtitle}</p>
+                        <p className="mt-1 text-[12px] leading-4 text-neutral">{t.subtitle}</p>
                       </div>
                     </div>
                   </button>
@@ -288,31 +547,37 @@ export function SendInspectionNoticeModal({
               <div>
                 <label
                   htmlFor="inspection-date"
-                  className="mb-2 block text-[14px] font-medium tracking-[-0.1504px] text-[#364153]"
+                  className="mb-2 block text-[14px] font-medium tracking-[-0.1504px] text-neutral-variant"
                 >
-                  Inspection Date <span className="text-[#c10007]">*</span>
+                  Inspection Date <span className="text-error">*</span>
                 </label>
                 <input
                   id="inspection-date"
                   type="date"
+                  min={minInspectionDate}
                   value={inspectionDate}
                   onChange={(e) => setInspectionDate(e.target.value)}
-                  className="h-9 w-full rounded-lg border border-transparent bg-[#f3f3f5] px-3 text-[14px] text-[#0a0a0a] outline-none focus:border-[#944c73]/45 focus:bg-white focus:ring-2 focus:ring-[#944c73]/30"
+                  className="h-9 w-full rounded-lg border border-transparent bg-secondary px-3 text-[14px] text-extended-3 outline-none focus:border-primary/45 focus:bg-white focus:ring-2 focus:ring-primary/30"
                 />
+                {!dateOk && inspectionDate ? (
+                  <p className="mt-2 text-[12px] leading-4 text-error">
+                    Date must be on or after {minInspectionDate} for {ADVANCE_OPTIONS.find((o) => o.id === advanceNotice)?.title ?? advanceNotice} notice.
+                  </p>
+                ) : null}
               </div>
               <div>
                 <label
                   htmlFor="inspection-time-window"
-                  className="mb-2 block text-[14px] font-medium tracking-[-0.1504px] text-[#364153]"
+                  className="mb-2 block text-[14px] font-medium tracking-[-0.1504px] text-neutral-variant"
                 >
-                  Time Window <span className="text-[#c10007]">*</span>
+                  Time Window <span className="text-error">*</span>
                 </label>
                 <div className="relative">
                   <select
                     id="inspection-time-window"
                     value={timeWindow}
                     onChange={(e) => setTimeWindow(e.target.value)}
-                    className="h-9 w-full appearance-none rounded-lg border border-transparent bg-[#f3f3f5] py-1 pl-3 pr-9 text-[14px] font-medium tracking-[-0.1504px] text-[#0a0a0a] outline-none focus:border-[#944c73]/45 focus:bg-white focus:ring-2 focus:ring-[#944c73]/30"
+                    className="h-9 w-full appearance-none rounded-lg border border-transparent bg-secondary py-1 pl-3 pr-9 text-[14px] font-medium tracking-[-0.1504px] text-extended-3 outline-none focus:border-primary/45 focus:bg-white focus:ring-2 focus:ring-primary/30"
                   >
                     {TIME_WINDOW_OPTIONS.map((o) => (
                       <option key={o.value || 'placeholder'} value={o.value}>
@@ -320,7 +585,7 @@ export function SendInspectionNoticeModal({
                       </option>
                     ))}
                   </select>
-                  <span className="pointer-events-none absolute right-2.5 top-1/2 size-4 -translate-y-1/2 text-[#6a7282]">
+                  <span className="pointer-events-none absolute right-2.5 top-1/2 size-4 -translate-y-1/2 text-neutral">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} aria-hidden>
                       <path d="M6 9l6 6 6-6" />
                     </svg>
@@ -330,11 +595,14 @@ export function SendInspectionNoticeModal({
             </section>
 
             <section>
-              <p className="mb-3 text-[14px] font-medium tracking-[-0.1504px] text-[#364153]">
-                Advance Notice Period <span className="text-[#c10007]">*</span>{' '}
-                <span className="text-[12px] font-normal leading-4 text-[#9810fa]">
+              <p className="mb-3 text-[14px] font-medium tracking-[-0.1504px] text-neutral-variant">
+                Advance Notice Period <span className="text-error">*</span>{' '}
+                <span className="text-[12px] font-normal leading-4 text-primary">
                   (Legal Requirement)
                 </span>
+              </p>
+              <p className="mb-3 text-[12px] leading-4 text-neutral">
+                Earliest allowed date based on this selection: {minInspectionDate}
               </p>
               <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
                 {ADVANCE_OPTIONS.map((o) => (
@@ -345,15 +613,15 @@ export function SendInspectionNoticeModal({
                     className={[
                       'rounded-[10px] border-2 p-3.5 text-left transition-colors',
                       advanceNotice === o.id
-                        ? 'border-[#ad46ff] bg-[#faf5ff]'
-                        : 'border-[#e5e7eb] bg-white',
+                        ? 'border-primary bg-secondary'
+                        : 'border-secondary bg-white',
                     ].join(' ')}
                   >
                     <div className="flex gap-3">
                       <PurpleRadio on={advanceNotice === o.id} large={false} />
                       <div>
-                        <p className="text-[14px] font-medium tracking-[-0.1504px] text-[#101828]">{o.title}</p>
-                        <p className="mt-0.5 text-[12px] leading-4 text-[#6a7282]">{o.subtitle}</p>
+                        <p className="text-[14px] font-medium tracking-[-0.1504px] text-extended-3">{o.title}</p>
+                        <p className="mt-0.5 text-[12px] leading-4 text-neutral">{o.subtitle}</p>
                       </div>
                     </div>
                   </button>
@@ -362,8 +630,8 @@ export function SendInspectionNoticeModal({
             </section>
 
             <section>
-              <p className="mb-3 text-[14px] font-medium tracking-[-0.1504px] text-[#364153]">
-                Select Units <span className="text-[#c10007]">*</span>
+              <p className="mb-3 text-[14px] font-medium tracking-[-0.1504px] text-neutral-variant">
+                Select Units <span className="text-error">*</span>
               </p>
               <div className="flex flex-col gap-3">
                 <InspectionUnitCard
@@ -373,19 +641,76 @@ export function SendInspectionNoticeModal({
                   subtitle="Property-wide inspection (142 units)"
                   rightIcon={<HomeGlyph />}
                 />
-                <InspectionUnitCard
-                  selected={unitScope === 'building'}
-                  onSelect={() => setUnitScope('building')}
-                  title="Specific Building"
-                  subtitle="Select one building"
-                  rightIcon={<HomeGlyph />}
-                />
+                <div
+                  className={[
+                    'rounded-[10px] border-2 p-4 transition-colors',
+                    unitScope === 'building'
+                      ? 'border-primary bg-secondary'
+                      : 'border-secondary bg-white',
+                  ].join(' ')}
+                >
+                  <button
+                    type="button"
+                    onClick={() => setUnitScope('building')}
+                    className="flex w-full items-center justify-between gap-3 text-left"
+                  >
+                    <div className="flex items-center gap-3">
+                      <PurpleRadio on={unitScope === 'building'} large />
+                      <div>
+                        <p className="text-[16px] font-medium leading-6 tracking-[-0.3125px] text-extended-3">
+                          Specific Building
+                        </p>
+                        <p className="text-[12px] leading-4 text-neutral">
+                          Enter the building name
+                        </p>
+                      </div>
+                    </div>
+                    <HomeGlyph />
+                  </button>
+                  {unitScope === 'building' ? (
+                    <div className="ml-11 mt-3 w-[calc(100%-2.75rem)]">
+                      <label
+                        htmlFor="inspection-building-name"
+                        className="mb-2 block text-[12px] font-medium leading-4 text-neutral-variant"
+                      >
+                        Building name <span className="text-error">*</span>
+                      </label>
+                      <div className="relative">
+                        <select
+                          id="inspection-building-name"
+                          value={inspectionBuilding}
+                          onChange={(e) => setInspectionBuilding(e.target.value)}
+                          className="h-9 w-full appearance-none rounded-lg border border-transparent bg-white px-3 pr-9 text-[14px] text-extended-3 outline-none focus:border-primary/45 focus:ring-2 focus:ring-primary/30"
+                        >
+                          <option value="">Select building</option>
+                          {buildingOptions.map((b) => (
+                            <option key={b} value={b}>
+                              {b}
+                            </option>
+                          ))}
+                        </select>
+                        <span className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-neutral">
+                          <svg
+                            className="size-4"
+                            viewBox="0 0 24 24"
+                            fill="none"
+                            stroke="currentColor"
+                            strokeWidth={2}
+                            aria-hidden
+                          >
+                            <path d="M6 9l6 6 6-6" />
+                          </svg>
+                        </span>
+                      </div>
+                    </div>
+                  ) : null}
+                </div>
                 <div
                   className={[
                     'rounded-[10px] border-2 p-4 transition-colors',
                     unitScope === 'units'
-                      ? 'border-[#ad46ff] bg-[#faf5ff]'
-                      : 'border-[#e5e7eb] bg-white',
+                      ? 'border-primary bg-secondary'
+                      : 'border-secondary bg-white',
                   ].join(' ')}
                 >
                   <button
@@ -396,24 +721,43 @@ export function SendInspectionNoticeModal({
                     <div className="flex items-center gap-3">
                       <PurpleRadio on={unitScope === 'units'} large />
                       <div>
-                        <p className="text-[16px] font-medium leading-6 tracking-[-0.3125px] text-[#101828]">
+                        <p className="text-[16px] font-medium leading-6 tracking-[-0.3125px] text-extended-3">
                           Specific Units
                         </p>
-                        <p className="text-[12px] leading-4 text-[#6a7282]">
-                          Enter unit numbers manually
+                        <p className="text-[12px] leading-4 text-neutral">
+                          Select one unit from app inventory
                         </p>
                       </div>
                     </div>
-                    <FunnelGlyph className="size-5 shrink-0 text-[#6a7282]" />
+                    <FunnelGlyph className="size-5 shrink-0 text-neutral" />
                   </button>
                   {unitScope === 'units' ? (
-                    <input
-                      type="text"
+                    <div className="relative ml-11 mt-3 w-[calc(100%-2.75rem)]">
+                      <select
                       value={specificUnits}
                       onChange={(e) => setSpecificUnits(e.target.value)}
-                      placeholder="e.g., 2A, 3B, 5C (comma-separated)"
-                      className="ml-11 mt-3 h-9 w-[calc(100%-2.75rem)] rounded-lg border border-transparent bg-white px-3 text-[14px] text-[#0a0a0a] outline-none focus:border-[#944c73]/45 focus:ring-2 focus:ring-[#944c73]/30"
-                    />
+                      className="h-9 w-full appearance-none rounded-lg border border-transparent bg-white px-3 pr-9 text-[14px] text-extended-3 outline-none focus:border-primary/45 focus:ring-2 focus:ring-primary/30"
+                    >
+                      <option value="">Select unit</option>
+                      {unitOptions.map((unit) => (
+                        <option key={unit} value={unit}>
+                          {unit}
+                        </option>
+                      ))}
+                    </select>
+                      <span className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-neutral">
+                        <svg
+                          className="size-4"
+                          viewBox="0 0 24 24"
+                          fill="none"
+                          stroke="currentColor"
+                          strokeWidth={2}
+                          aria-hidden
+                        >
+                          <path d="M6 9l6 6 6-6" />
+                        </svg>
+                      </span>
+                    </div>
                   ) : null}
                 </div>
               </div>
@@ -422,7 +766,7 @@ export function SendInspectionNoticeModal({
             <section>
               <label
                 htmlFor="inspection-additional"
-                className="mb-2 block text-[14px] font-medium tracking-[-0.1504px] text-[#364153]"
+                className="mb-2 block text-[14px] font-medium tracking-[-0.1504px] text-neutral-variant"
               >
                 Additional Message (Optional)
               </label>
@@ -432,16 +776,16 @@ export function SendInspectionNoticeModal({
                 onChange={(e) => setAdditionalMessage(e.target.value)}
                 placeholder="Add any additional instructions or information for residents..."
                 rows={4}
-                className="w-full resize-y rounded-[10px] border border-[#d1d5dc] px-3 py-2 text-[16px] leading-6 tracking-[-0.3125px] text-[#0a0a0a] outline-none placeholder:text-[rgba(10,10,10,0.5)] focus:border-[#944c73]/45 focus:ring-2 focus:ring-[#944c73]/30"
+                className="w-full resize-y rounded-[10px] border border-secondary px-3 py-2 text-[16px] leading-6 tracking-[-0.3125px] text-extended-3 outline-none placeholder:text-[rgba(10,10,10,0.5)] focus:border-primary/45 focus:ring-2 focus:ring-primary/30"
               />
-              <p className="mt-2 text-[12px] leading-4 text-[#6a7282]">
+              <p className="mt-2 text-[12px] leading-4 text-neutral">
                 Legal notice language will be automatically included
               </p>
             </section>
 
             <section>
-              <p className="mb-3 text-[14px] font-medium tracking-[-0.1504px] text-[#364153]">
-                Delivery Method <span className="text-[#c10007]">*</span>
+              <p className="mb-3 text-[14px] font-medium tracking-[-0.1504px] text-neutral-variant">
+                Delivery Method <span className="text-error">*</span>
               </p>
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                 <DeliveryToggleCard
@@ -459,20 +803,20 @@ export function SendInspectionNoticeModal({
               </div>
             </section>
 
-            <section className="flex flex-col gap-4 border-t border-[#e5e7eb] pt-6">
+            <section className="flex flex-col gap-4 border-t border-secondary pt-6">
               <div className="flex flex-col gap-4 min-[480px]:flex-row min-[480px]:items-center min-[480px]:justify-between">
                 <div>
-                  <p className="text-[14px] font-medium leading-5 tracking-[-0.1504px] text-[#101828]">
+                  <p className="text-[14px] font-medium leading-5 tracking-[-0.1504px] text-extended-3">
                     🤖 Automation Settings
                   </p>
-                  <p className="mt-1 text-[12px] leading-4 text-[#6a7282]">
+                  <p className="mt-1 text-[12px] leading-4 text-neutral">
                     Configure automatic retries, scheduling, and triggers
                   </p>
                 </div>
                 <div className="flex items-center gap-2 self-start min-[480px]:self-auto">
                   <label
                     htmlFor={inspectionAutomationSwitchId}
-                    className="cursor-pointer text-[12px] leading-4 text-[#4a5565]"
+                    className="cursor-pointer text-[12px] leading-4 text-neutral-variant"
                   >
                     Enable Automation
                   </label>
@@ -483,8 +827,8 @@ export function SendInspectionNoticeModal({
                     aria-checked={automationEnabled}
                     onClick={() => setAutomationEnabled((v) => !v)}
                     className={[
-                      'relative h-6 w-11 shrink-0 rounded-full transition-colors outline-none focus-visible:ring-2 focus-visible:ring-[#944c73] focus-visible:ring-offset-2',
-                      automationEnabled ? 'bg-[#9810fa]' : 'bg-[#d1d5dc]',
+                      'relative h-6 w-11 shrink-0 rounded-full transition-colors outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2',
+                      automationEnabled ? 'bg-primary' : 'bg-secondary',
                     ].join(' ')}
                   >
                     <span
@@ -498,7 +842,7 @@ export function SendInspectionNoticeModal({
               </div>
 
               {automationEnabled ? (
-                <div className="flex flex-col gap-4 rounded-[10px] bg-[#f9fafb] px-4 py-4">
+                <div className="flex flex-col gap-4 rounded-[10px] bg-secondary px-4 py-4">
                   <InspectionAutomationRow
                     checked={autoRetryFailed}
                     onCheckedChange={setAutoRetryFailed}
@@ -508,7 +852,7 @@ export function SendInspectionNoticeModal({
                   >
                     <div className="grid gap-3 sm:grid-cols-2">
                       <div className="space-y-1">
-                        <span className="block text-[12px] font-medium leading-4 text-[#4a5565]">
+                        <span className="block text-[12px] font-medium leading-4 text-neutral-variant">
                           Max Attempts
                         </span>
                         <InspectionAutomationSelect
@@ -518,7 +862,7 @@ export function SendInspectionNoticeModal({
                         />
                       </div>
                       <div className="space-y-1">
-                        <span className="block text-[12px] font-medium leading-4 text-[#4a5565]">
+                        <span className="block text-[12px] font-medium leading-4 text-neutral-variant">
                           Retry Delay
                         </span>
                         <InspectionAutomationSelect
@@ -539,7 +883,7 @@ export function SendInspectionNoticeModal({
                   >
                     <div className="flex flex-col gap-3">
                       <div className="space-y-1">
-                        <span className="block text-[12px] font-medium leading-4 text-[#4a5565]">
+                        <span className="block text-[12px] font-medium leading-4 text-neutral-variant">
                           Frequency
                         </span>
                         <InspectionAutomationSelect
@@ -551,7 +895,7 @@ export function SendInspectionNoticeModal({
                       <div className="space-y-1">
                         <label
                           htmlFor="inspection-recurring-time"
-                          className="block text-[12px] font-medium leading-4 text-[#4a5565]"
+                          className="block text-[12px] font-medium leading-4 text-neutral-variant"
                         >
                           Time
                         </label>
@@ -560,7 +904,7 @@ export function SendInspectionNoticeModal({
                           type="time"
                           value={recurringTime}
                           onChange={(e) => setRecurringTime(e.target.value)}
-                          className="h-9 w-full rounded-lg border border-transparent bg-[#f3f3f5] px-3 text-[14px] font-medium tracking-[-0.1504px] text-[#0a0a0a] outline-none focus:border-[#944c73]/45 focus:bg-white focus:ring-2 focus:ring-[#944c73]/30"
+                          className="h-9 w-full rounded-lg border border-transparent bg-secondary px-3 text-[14px] font-medium tracking-[-0.1504px] text-extended-3 outline-none focus:border-primary/45 focus:bg-white focus:ring-2 focus:ring-primary/30"
                         />
                       </div>
                     </div>
@@ -595,7 +939,7 @@ export function SendInspectionNoticeModal({
                     description={"Send reminder if resident doesn't acknowledge notice"}
                   >
                     <div className="space-y-1">
-                      <span className="block text-[12px] font-medium leading-4 text-[#4a5565]">
+                      <span className="block text-[12px] font-medium leading-4 text-neutral-variant">
                         Send reminder after
                       </span>
                       <InspectionAutomationSelect
@@ -607,15 +951,15 @@ export function SendInspectionNoticeModal({
                   </InspectionAutomationRow>
 
                   {activeInspectionAutomationLines.length > 0 ? (
-                    <div className="flex gap-2 rounded-[10px] border border-[#e9d4ff] bg-[#faf5ff] px-[13px] py-3">
-                      <SparkleIcon className="mt-0.5 size-4 shrink-0 text-[#8200db]" />
+                    <div className="flex gap-2 rounded-[10px] border border-secondary bg-secondary px-[13px] py-3">
+                      <SparkleIcon className="mt-0.5 size-4 shrink-0 text-primary" />
                       <div className="min-w-0">
-                        <p className="text-[12px] font-medium leading-4 text-[#59168b]">
+                        <p className="text-[12px] font-medium leading-4 text-primary">
                           Active Automations
                         </p>
                         <ul className="mt-1 space-y-1">
                           {activeInspectionAutomationLines.map((line, i) => (
-                            <li key={i} className="text-[12px] leading-4 text-[#8200db]">
+                            <li key={i} className="text-[12px] leading-4 text-primary">
                               {line}
                             </li>
                           ))}
@@ -626,40 +970,70 @@ export function SendInspectionNoticeModal({
                 </div>
               ) : null}
             </section>
+
+            {submitError ? (
+              <p className="rounded-lg border border-[#fecaca] bg-[#fef2f2] px-3 py-2 text-[13px] leading-5 text-[#b91c1c]">
+                {submitError}
+              </p>
+            ) : null}
+            {successMessage ? (
+              <p className="rounded-lg border border-[#bbf7d0] bg-[#f0fdf4] px-3 py-2 text-[13px] leading-5 text-[#166534]">
+                {successMessage}
+              </p>
+            ) : null}
           </div>
         </div>
 
-        <footer className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-t border-[#e5e7eb] bg-[#f9fafb] px-6 py-4">
+        <footer className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-t border-secondary bg-secondary px-6 py-4">
           <button
             type="button"
             onClick={onClose}
-            className="inline-flex h-9 items-center justify-center rounded-lg border border-black/10 bg-white px-[17px] text-[14px] font-medium tracking-[-0.1504px] text-[#0a0a0a] outline-none transition-colors hover:bg-[#f3f4f6] focus-visible:ring-2 focus-visible:ring-[#944c73] focus-visible:ring-offset-2"
+            className="inline-flex h-9 items-center justify-center rounded-lg border border-black/10 bg-white px-[17px] text-[14px] font-medium tracking-[-0.1504px] text-extended-3 outline-none transition-colors hover:bg-secondary focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2"
           >
             Cancel
           </button>
-          <div className="flex flex-wrap items-center gap-2">
+          <div className="flex flex-wrap items-center">
             <button
               type="button"
-              disabled={!formValid}
-              onClick={handleSaveDraft}
-              className="inline-flex h-9 items-center gap-2 rounded-lg border border-black/10 bg-white px-3 text-[14px] font-medium tracking-[-0.1504px] text-[#0a0a0a] outline-none transition-colors enabled:hover:bg-[#f3f4f6] focus-visible:ring-2 focus-visible:ring-[#944c73] focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+              disabled={!formValid || sendingNotice}
+              onClick={() => setSendConfirmOpen(true)}
+              className="inline-flex h-9 items-center justify-center rounded-lg bg-primary px-4 text-[14px] font-medium tracking-[-0.1504px] text-white outline-none transition-colors enabled:hover:bg-primary focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
             >
-              <svg className="size-4 shrink-0 text-[#6a7282]" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} aria-hidden>
-                <circle cx="12" cy="12" r="9" />
-                <path d="M12 7v5l3 2" strokeLinecap="round" />
-              </svg>
-              Save as Draft
-            </button>
-            <button
-              type="button"
-              disabled={!formValid}
-              onClick={handleSendNotice}
-              className="inline-flex h-9 items-center justify-center rounded-lg bg-[#9810fa] px-4 text-[14px] font-medium tracking-[-0.1504px] text-white outline-none transition-colors enabled:hover:bg-[#8200db] focus-visible:ring-2 focus-visible:ring-[#944c73] focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              Send Notice
+              {sendingNotice ? 'Sending…' : 'Send Notice'}
             </button>
           </div>
         </footer>
+        {sendConfirmOpen ? (
+          <div className="absolute inset-0 z-10 flex items-center justify-center bg-black/35 p-4">
+            <div className="w-full max-w-[460px] rounded-[10px] border border-secondary bg-white p-5 shadow-lg">
+              <h3 className="text-[16px] font-semibold leading-6 tracking-[-0.3125px] text-extended-3">
+                Confirm Send Inspection Notice
+              </h3>
+              <p className="mt-2 text-[14px] leading-5 tracking-[-0.1504px] text-neutral-variant">
+                Send this inspection notice now? Residents will be notified through the channels
+                you selected.
+              </p>
+              <div className="mt-4 flex items-center justify-end gap-2">
+                <button
+                  type="button"
+                  disabled={sendingNotice}
+                  onClick={() => setSendConfirmOpen(false)}
+                  className="inline-flex h-9 items-center justify-center rounded-lg border border-black/10 bg-white px-3 text-[14px] font-medium tracking-[-0.1504px] text-extended-3 outline-none transition-colors hover:bg-secondary focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  disabled={sendingNotice}
+                  onClick={() => void handleSendNotice()}
+                  className="inline-flex h-9 items-center justify-center rounded-lg bg-primary px-4 text-[14px] font-medium tracking-[-0.1504px] text-white outline-none transition-colors enabled:hover:bg-primary focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {sendingNotice ? 'Sending…' : 'Confirm Send'}
+                </button>
+              </div>
+            </div>
+          </div>
+        ) : null}
       </div>
     </div>
   )
@@ -673,11 +1047,11 @@ function PurpleRadio({ on, large }: { on: boolean; large: boolean }) {
       className={[
         'flex shrink-0 items-center justify-center rounded-full border-2',
         outer,
-        on ? 'border-[#ad46ff]' : 'border-[#d1d5dc]',
+        on ? 'border-primary' : 'border-secondary',
       ].join(' ')}
       aria-hidden
     >
-      {on ? <span className={`rounded-full bg-[#ad46ff] ${inner}`} /> : null}
+      {on ? <span className={`rounded-full bg-primary ${inner}`} /> : null}
     </span>
   )
 }
@@ -701,14 +1075,14 @@ function InspectionUnitCard({
       onClick={onSelect}
       className={[
         'flex w-full items-center justify-between gap-3 rounded-[10px] border-2 p-4 text-left transition-colors',
-        selected ? 'border-[#ad46ff] bg-[#faf5ff]' : 'border-[#e5e7eb] bg-white',
+        selected ? 'border-primary bg-secondary' : 'border-secondary bg-white',
       ].join(' ')}
     >
       <div className="flex items-center gap-3">
         <PurpleRadio on={selected} large />
         <div>
-          <p className="text-[16px] font-medium leading-6 tracking-[-0.3125px] text-[#101828]">{title}</p>
-          <p className="text-[12px] leading-4 text-[#6a7282]">{subtitle}</p>
+          <p className="text-[16px] font-medium leading-6 tracking-[-0.3125px] text-extended-3">{title}</p>
+          <p className="text-[12px] leading-4 text-neutral">{subtitle}</p>
         </div>
       </div>
       <span className="shrink-0">{rightIcon}</span>
@@ -734,14 +1108,14 @@ function DeliveryToggleCard({
       onClick={onToggle}
       className={[
         'rounded-[10px] border-2 p-4 text-left transition-colors',
-        selected ? 'border-[#ad46ff] bg-[#faf5ff]' : 'border-[#e5e7eb] bg-white',
+        selected ? 'border-primary bg-secondary' : 'border-secondary bg-white',
       ].join(' ')}
     >
       <div className="flex items-center gap-3">
         <span
           className={[
             'flex size-4 shrink-0 items-center justify-center rounded border shadow-sm',
-            selected ? 'border-[#030213] bg-[#030213]' : 'border-black/10 bg-[#f3f3f5]',
+            selected ? 'border-extended-3 bg-extended-3' : 'border-black/10 bg-secondary',
           ].join(' ')}
           aria-hidden
         >
@@ -752,8 +1126,8 @@ function DeliveryToggleCard({
           ) : null}
         </span>
         <div>
-          <p className="text-[16px] font-medium leading-6 tracking-[-0.3125px] text-[#101828]">{title}</p>
-          <p className="text-[12px] leading-4 text-[#6a7282]">{subtitle}</p>
+          <p className="text-[16px] font-medium leading-6 tracking-[-0.3125px] text-extended-3">{title}</p>
+          <p className="text-[12px] leading-4 text-neutral">{subtitle}</p>
         </div>
       </div>
     </button>
@@ -762,7 +1136,7 @@ function DeliveryToggleCard({
 
 function HomeGlyph() {
   return (
-    <svg className="size-5 text-[#6a7282]" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} aria-hidden>
+    <svg className="size-5 text-neutral" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} aria-hidden>
       <path d="M3 9l9-7 9 7v11a1 1 0 01-1 1H4a1 1 0 01-1-1V9zM9 22V12h6v10" strokeLinecap="round" strokeLinejoin="round" />
     </svg>
   )
@@ -787,7 +1161,7 @@ function InspectionAutomationRow({
     <div
       className={[
         'flex gap-3',
-        showBorderBottom ? 'border-b border-[#e5e7eb] pb-4' : '',
+        showBorderBottom ? 'border-b border-secondary pb-4' : '',
       ].join(' ')}
     >
       <button
@@ -796,8 +1170,8 @@ function InspectionAutomationRow({
         aria-checked={checked}
         onClick={() => onCheckedChange(!checked)}
         className={[
-          'mt-1 flex size-4 shrink-0 items-center justify-center rounded border shadow-[0px_1px_2px_0px_rgba(0,0,0,0.05)] outline-none transition-colors focus-visible:ring-2 focus-visible:ring-[#944c73] focus-visible:ring-offset-2',
-          checked ? 'border-[#030213] bg-[#030213]' : 'border-black/10 bg-[#f3f3f5]',
+          'mt-1 flex size-4 shrink-0 items-center justify-center rounded border shadow-[0px_1px_2px_0px_rgba(0,0,0,0.05)] outline-none transition-colors focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2',
+          checked ? 'border-extended-3 bg-extended-3' : 'border-black/10 bg-secondary',
         ].join(' ')}
       >
         {checked ? (
@@ -814,8 +1188,8 @@ function InspectionAutomationRow({
         ) : null}
       </button>
       <div className="min-w-0 flex-1 pb-1">
-        <p className="text-[14px] font-medium leading-5 tracking-[-0.1504px] text-[#101828]">{title}</p>
-        <p className="mt-1 text-[12px] leading-4 text-[#6a7282]">{description}</p>
+        <p className="text-[14px] font-medium leading-5 tracking-[-0.1504px] text-extended-3">{title}</p>
+        <p className="mt-1 text-[12px] leading-4 text-neutral">{description}</p>
         {checked && children ? <div className="mt-3">{children}</div> : null}
       </div>
     </div>
@@ -836,7 +1210,7 @@ function InspectionAutomationSelect({
       <select
         value={value}
         onChange={(e) => onChange(e.target.value)}
-        className="h-9 w-full cursor-pointer appearance-none rounded-lg border border-transparent bg-[#f3f3f5] py-1 pl-3 pr-9 text-[14px] font-medium tracking-[-0.1504px] text-[#0a0a0a] outline-none focus:border-[#944c73]/45 focus:bg-white focus:ring-2 focus:ring-[#944c73]/30"
+        className="h-9 w-full cursor-pointer appearance-none rounded-lg border border-transparent bg-secondary py-1 pl-3 pr-9 text-[14px] font-medium tracking-[-0.1504px] text-extended-3 outline-none focus:border-primary/45 focus:bg-white focus:ring-2 focus:ring-primary/30"
       >
         {options.map((o) => (
           <option key={o.value} value={o.value}>
@@ -844,7 +1218,7 @@ function InspectionAutomationSelect({
           </option>
         ))}
       </select>
-      <span className="pointer-events-none absolute right-2.5 top-1/2 size-4 -translate-y-1/2 text-[#6a7282]">
+      <span className="pointer-events-none absolute right-2.5 top-1/2 size-4 -translate-y-1/2 text-neutral">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} aria-hidden>
           <path d="M6 9l6 6 6-6" />
         </svg>
@@ -870,12 +1244,12 @@ function InspectionEventTriggerRow({
       role="checkbox"
       aria-checked={checked}
       onClick={onToggle}
-      className="flex w-full items-center gap-3 rounded-[10px] border border-[#e5e7eb] bg-white px-[13px] py-3 text-left outline-none transition-colors hover:bg-[#f9fafb] focus-visible:ring-2 focus-visible:ring-[#944c73] focus-visible:ring-offset-2"
+      className="flex w-full items-center gap-3 rounded-[10px] border border-secondary bg-white px-[13px] py-3 text-left outline-none transition-colors hover:bg-secondary focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2"
     >
       <span
         className={[
           'flex size-4 shrink-0 items-center justify-center rounded border shadow-[0px_1px_2px_0px_rgba(0,0,0,0.05)]',
-          checked ? 'border-[#030213] bg-[#030213]' : 'border-black/10 bg-[#f3f3f5]',
+          checked ? 'border-extended-3 bg-extended-3' : 'border-black/10 bg-secondary',
         ].join(' ')}
         aria-hidden
       >
@@ -895,7 +1269,7 @@ function InspectionEventTriggerRow({
       <span className="text-[18px] leading-7" aria-hidden>
         {emoji}
       </span>
-      <span className="text-[14px] font-normal leading-5 tracking-[-0.1504px] text-[#101828]">
+      <span className="text-[14px] font-normal leading-5 tracking-[-0.1504px] text-extended-3">
         {label}
       </span>
     </button>

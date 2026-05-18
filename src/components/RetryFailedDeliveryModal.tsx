@@ -1,6 +1,22 @@
 import { useEffect, useId, useState } from 'react'
 
-type AltChannelId = 'email' | 'in_app' | 'push' | 'phone'
+export type AltChannelId = 'email' | 'sms' | 'in_app' | 'push' | 'phone'
+
+export type RetryFailedRecipient = {
+  id: string
+  title: string
+  failureLine: string
+  availabilityLine: string
+}
+
+export type RetryFailedDeliveryPayload = {
+  subtitleLine: string
+  messageTitle: string
+  messageBody: string
+  failedRecipients: RetryFailedRecipient[]
+  availableChannels?: AltChannelId[]
+  defaultChannel?: AltChannelId
+}
 
 const FAILED_RETRY_RECIPIENTS = [
   {
@@ -37,6 +53,7 @@ const ALT_CHANNELS: {
     description: 'All 3 recipients available',
     recommended: true,
   },
+  { id: 'sms', emoji: '💬', title: 'SMS', description: 'Retry original SMS delivery' },
   { id: 'in_app', emoji: '📱', title: 'In-App', description: '3 recipients available' },
   { id: 'push', emoji: '🔔', title: 'Push', description: '2 recipients available' },
   {
@@ -52,7 +69,7 @@ function ChannelCheckbox({ checked }: { checked: boolean }) {
     <span
       className={[
         'flex size-5 shrink-0 items-center justify-center rounded border-2',
-        checked ? 'border-[#155dfc] bg-[#155dfc]' : 'border-[#d1d5dc] bg-white',
+        checked ? 'border-extended-1 bg-extended-2' : 'border-secondary bg-white',
       ].join(' ')}
       aria-hidden
     >
@@ -65,7 +82,7 @@ function ChannelCheckbox({ checked }: { checked: boolean }) {
   )
 }
 
-function RecipientPersonGlyph({ className = 'size-5 text-[#c10007]' }: { className?: string }) {
+function RecipientPersonGlyph({ className = 'size-5 text-error' }: { className?: string }) {
   return (
     <svg className={className} viewBox="0 0 24 24" fill="none" aria-hidden>
       <circle cx="12" cy="8" r="3.5" stroke="currentColor" strokeWidth={1.65} />
@@ -106,13 +123,22 @@ export function RetryFailedDeliveryModal({
   open,
   onClose,
   presentation = 'modal',
+  data = null,
 }: {
   open: boolean
   onClose: () => void
   presentation?: RetryFailedDeliveryPresentation
+  data?: RetryFailedDeliveryPayload | null
 }) {
   const titleId = useId()
   const [channel, setChannel] = useState<AltChannelId>('email')
+  const recipients = data?.failedRecipients?.length ? data.failedRecipients : [...FAILED_RETRY_RECIPIENTS]
+  const allowedChannelIds = data?.availableChannels?.length
+    ? new Set<AltChannelId>(data.availableChannels)
+    : null
+  const availableChannels = allowedChannelIds
+    ? ALT_CHANNELS.filter((ch) => allowedChannelIds.has(ch.id))
+    : ALT_CHANNELS
 
   useEffect(() => {
     if (!open) return
@@ -126,7 +152,7 @@ export function RetryFailedDeliveryModal({
   const [prevOpen, setPrevOpen] = useState(open)
   if (open !== prevOpen) {
     setPrevOpen(open)
-    if (open) setChannel('email')
+    if (open) setChannel(data?.defaultChannel ?? 'email')
   }
 
   if (!open) return null
@@ -135,7 +161,7 @@ export function RetryFailedDeliveryModal({
 
   const notifyViaLine =
     channel === 'email'
-      ? '1 alternative channel'
+      ? `${recipients.length} recipient${recipients.length === 1 ? '' : 's'}`
       : ALT_CHANNELS.find((c) => c.id === channel)?.title ?? 'alternative channel'
 
   return (
@@ -158,24 +184,24 @@ export function RetryFailedDeliveryModal({
         aria-labelledby={titleId}
         className={
           isRail
-            ? 'relative flex h-full max-h-dvh w-full max-w-[min(100vw,657px)] flex-col overflow-hidden border-l border-[#e5e7eb] bg-white shadow-[inset_1px_0_0_0_#e5e7eb]'
+            ? 'relative flex h-full max-h-dvh w-full max-w-[min(100vw,657px)] flex-col overflow-hidden border-l border-secondary bg-white shadow-[inset_1px_0_0_0_#A788964D]'
             : 'relative flex max-h-[min(92dvh,900px)] w-full max-w-[657px] flex-col overflow-hidden rounded-[10px] bg-white shadow-[0px_20px_25px_-5px_rgba(0,0,0,0.1),0px_8px_10px_-6px_rgba(0,0,0,0.1)]'
         }
       >
-        <header className="flex shrink-0 items-center justify-between gap-4 border-b border-[#e5e7eb] px-6 py-5">
+        <header className="flex shrink-0 items-center justify-between gap-4 border-b border-secondary px-6 py-5">
           <div className="flex min-w-0 items-center gap-3">
-            <div className="flex size-10 shrink-0 items-center justify-center rounded-[10px] bg-[#ffe2e2] text-[#c10007]">
+            <div className="flex size-10 shrink-0 items-center justify-center rounded-[10px] bg-error text-white">
               <svg className="size-5" viewBox="0 0 24 24" fill="none" aria-hidden>
                 <circle cx="12" cy="12" r="9" stroke="currentColor" strokeWidth={1.8} />
                 <path d="M12 8v5M12 16h.01" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" />
               </svg>
             </div>
             <div className="min-w-0">
-              <h2 id={titleId} className="text-[18px] font-semibold leading-7 tracking-[-0.4395px] text-[#0a0a0a]">
+              <h2 id={titleId} className="text-[18px] font-semibold leading-7 tracking-[-0.4395px] text-extended-3">
                 Retry Failed Delivery
               </h2>
-              <p className="text-[12px] leading-4 text-[#6a7282]">
-                Send emergency elevator notice via alternative channel
+              <p className="text-[12px] leading-4 text-neutral">
+                {data?.subtitleLine ?? 'Send failed notice via alternative channel'}
               </p>
             </div>
           </div>
@@ -183,7 +209,7 @@ export function RetryFailedDeliveryModal({
             type="button"
             onClick={onClose}
             aria-label="Close"
-            className="shrink-0 rounded-lg p-1 text-[#6a7282] outline-none hover:bg-black/5 hover:text-[#0a0a0a] focus-visible:ring-2 focus-visible:ring-[#944c73] focus-visible:ring-offset-2"
+            className="shrink-0 rounded-lg p-1 text-neutral outline-none hover:bg-black/5 hover:text-extended-3 focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2"
           >
             <svg className="size-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} aria-hidden>
               <path d="M18 6L6 18M6 6l12 12" strokeLinecap="round" />
@@ -194,24 +220,24 @@ export function RetryFailedDeliveryModal({
         <div className="min-h-0 flex-1 overflow-y-auto px-6 py-6">
           <div className="flex flex-col gap-6">
             <section>
-              <h3 className="mb-3 text-[14px] font-medium leading-5 tracking-[-0.1504px] text-[#364153]">
-                Failed Recipients (3)
+              <h3 className="mb-3 text-[14px] font-medium leading-5 tracking-[-0.1504px] text-neutral-variant">
+                Failed Recipients ({recipients.length})
               </h3>
-              <div className="flex flex-col gap-3 rounded-[10px] border border-[#ffc9c9] bg-[#fef2f2] p-[17px]">
-                {FAILED_RETRY_RECIPIENTS.map((r) => (
+              <div className="flex flex-col gap-3 rounded-[10px] border border-error bg-error p-[17px]">
+                {recipients.map((r) => (
                   <div
                     key={r.id}
-                    className="flex items-center gap-3 rounded-[10px] border border-[#ffc9c9] bg-white py-3 pl-[13px] pr-4"
+                    className="flex items-center gap-3 rounded-[10px] border border-error bg-white py-3 pl-[13px] pr-4"
                   >
-                    <div className="flex size-10 shrink-0 items-center justify-center rounded-[10px] bg-[#ffe2e2]">
+                    <div className="flex size-10 shrink-0 items-center justify-center rounded-[10px] bg-error">
                       <RecipientPersonGlyph />
                     </div>
                     <div className="min-w-0 flex-1">
-                      <p className="text-[14px] font-semibold leading-5 tracking-[-0.1504px] text-[#101828]">
+                      <p className="text-[14px] font-semibold leading-5 tracking-[-0.1504px] text-extended-3">
                         {r.title}
                       </p>
-                      <p className="text-[12px] leading-4 text-[#4a5565]">{r.failureLine}</p>
-                      <p className="text-[12px] leading-4 text-[#00a63e]">{r.availabilityLine}</p>
+                      <p className="text-[12px] leading-4 text-neutral-variant">{r.failureLine}</p>
+                      <p className="text-[12px] leading-4 text-tertiary">{r.availabilityLine}</p>
                     </div>
                   </div>
                 ))}
@@ -219,11 +245,11 @@ export function RetryFailedDeliveryModal({
             </section>
 
             <section>
-              <h3 className="mb-3 text-[14px] font-medium leading-5 tracking-[-0.1504px] text-[#364153]">
+              <h3 className="mb-3 text-[14px] font-medium leading-5 tracking-[-0.1504px] text-neutral-variant">
                 Select Alternative Delivery Channel
               </h3>
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                {ALT_CHANNELS.map((ch) => {
+                {availableChannels.map((ch) => {
                   const selected = channel === ch.id
                   return (
                     <button
@@ -231,8 +257,8 @@ export function RetryFailedDeliveryModal({
                       type="button"
                       onClick={() => setChannel(ch.id)}
                       className={[
-                        'flex min-h-[140px] flex-col rounded-[10px] border-2 p-4 text-left outline-none transition-colors focus-visible:ring-2 focus-visible:ring-[#155dfc] focus-visible:ring-offset-2',
-                        selected ? 'border-[#2b7fff] bg-[#eff6ff]' : 'border-[#e5e7eb] bg-white hover:bg-[#fafafa]',
+                        'flex min-h-[140px] flex-col rounded-[10px] border-2 p-4 text-left outline-none transition-colors focus-visible:ring-2 focus-visible:ring-extended-1 focus-visible:ring-offset-2',
+                        selected ? 'border-extended-1 bg-extended-2' : 'border-secondary bg-white hover:bg-secondary',
                       ].join(' ')}
                     >
                       <div className="mb-3 flex items-center gap-2">
@@ -241,10 +267,14 @@ export function RetryFailedDeliveryModal({
                           {ch.emoji}
                         </span>
                       </div>
-                      <p className="text-[14px] font-semibold leading-5 tracking-[-0.1504px] text-[#101828]">{ch.title}</p>
-                      <p className="mt-1 text-[12px] leading-4 text-[#4a5565]">{ch.description}</p>
+                      <p className="text-[14px] font-semibold leading-5 tracking-[-0.1504px] text-extended-3">{ch.title}</p>
+                      <p className="mt-1 text-[12px] leading-4 text-neutral-variant">
+                        {ch.id === 'phone'
+                          ? 'Automated voice message'
+                          : `${recipients.length} recipient${recipients.length === 1 ? '' : 's'} available`}
+                      </p>
                       {ch.recommended ? (
-                        <span className="mt-2 inline-flex self-start rounded px-2 py-0.5 text-[12px] font-normal leading-4 bg-[#dcfce7] text-[#008236]">
+                        <span className="mt-2 inline-flex self-start rounded px-2 py-0.5 text-[12px] font-normal leading-4 bg-extended-2 text-extended-3">
                           Recommended
                         </span>
                       ) : null}
@@ -255,12 +285,12 @@ export function RetryFailedDeliveryModal({
             </section>
 
             <section>
-              <h3 className="mb-3 text-[14px] font-medium leading-5 tracking-[-0.1504px] text-[#364153]">
+              <h3 className="mb-3 text-[14px] font-medium leading-5 tracking-[-0.1504px] text-neutral-variant">
                 Message to Resend
               </h3>
-              <div className="overflow-hidden rounded-[10px] border border-[#d1d5dc] bg-[#f9fafb]">
-                <div className="flex items-start gap-2 border-b border-[#fff085] bg-[#fefce8] px-4 py-2">
-                  <svg className="mt-0.5 size-4 shrink-0 text-[#ca8a04]" viewBox="0 0 24 24" fill="none" aria-hidden>
+              <div className="overflow-hidden rounded-[10px] border border-secondary bg-secondary">
+                <div className="flex items-start gap-2 border-b border-tertiary bg-tertiary px-4 py-2">
+                  <svg className="mt-0.5 size-4 shrink-0 text-tertiary" viewBox="0 0 24 24" fill="none" aria-hidden>
                     <path
                       d="M12 9v4M12 17h.01M10.3 4.8 2.2 16A2 2 0 004 17.8h16a2 2 0 001.8-1.8l-8.1-12a2 2 0 00-3.4 0z"
                       stroke="currentColor"
@@ -268,49 +298,31 @@ export function RetryFailedDeliveryModal({
                       strokeLinecap="round"
                     />
                   </svg>
-                  <p className="text-[12px] font-semibold leading-4 text-[#733e0a]">
+                  <p className="text-[12px] font-semibold leading-4 text-tertiary">
                     Emergency Notice: Elevator Out of Service
                   </p>
                 </div>
-                <div className="space-y-3 px-4 py-4 text-[14px] leading-[22.75px] tracking-[-0.1504px] text-[#364153]">
-                  <p className="font-bold">IMPORTANT NOTICE</p>
-                  <p>
-                    The main elevator is temporarily out of service due to an emergency repair. Technicians are
-                    working to resolve the issue.
-                  </p>
-                  <p>
-                    <span className="font-bold">Affected:</span>
-                    <span className="font-normal"> Main elevator (Building A)</span>
-                  </p>
-                  <p>
-                    <span className="font-bold">Expected Fix:</span>
-                    <span className="font-normal"> Within 24 hours</span>
-                  </p>
-                  <p>
-                    <span className="font-bold">Alternative:</span>
-                    <span className="font-normal"> Please use the service elevator or stairs</span>
-                  </p>
-                  <p className="font-normal">
-                    We apologize for any inconvenience. Updates will be provided as available.
-                  </p>
+                <div className="space-y-3 px-4 py-4 text-[14px] leading-[22.75px] tracking-[-0.1504px] text-neutral-variant">
+                  <p className="font-bold">{data?.messageTitle ?? 'Message'}</p>
+                  <p className="font-normal whitespace-pre-wrap">{data?.messageBody ?? 'No message preview available.'}</p>
                 </div>
               </div>
             </section>
 
-            <div className="rounded-[10px] border-l-4 border-[#2b7fff] bg-[#eff6ff] py-4 pl-5 pr-4">
+            <div className="rounded-[10px] border-l-4 border-extended-1 bg-extended-2 py-4 pl-5 pr-4">
               <div className="flex gap-3">
-                <svg className="mt-0.5 size-5 shrink-0 text-[#1447e6]" viewBox="0 0 24 24" fill="none" aria-hidden>
+                <svg className="mt-0.5 size-5 shrink-0 text-extended-1" viewBox="0 0 24 24" fill="none" aria-hidden>
                   <circle cx="12" cy="12" r="9" stroke="currentColor" strokeWidth={1.8} />
                   <path d="M8 12.5l2.5 2.5 5-5" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" />
                 </svg>
                 <div>
-                  <p className="text-[14px] font-semibold leading-5 tracking-[-0.1504px] text-[#1c398e]">
+                  <p className="text-[14px] font-semibold leading-5 tracking-[-0.1504px] text-extended-3">
                     Retry Information
                   </p>
-                  <ul className="mt-2 flex flex-col gap-1 text-[12px] leading-4 text-[#1447e6]">
-                    <li>• 3 residents will be notified via {notifyViaLine}</li>
+                  <ul className="mt-2 flex flex-col gap-1 text-[12px] leading-4 text-extended-1">
+                    <li>• {recipients.length} recipient{recipients.length === 1 ? '' : 's'} will be notified via {notifyViaLine}</li>
                     <li>• Estimated delivery: Immediate</li>
-                    <li>• Original SMS failures will be logged</li>
+                    <li>• Original delivery failures will be logged</li>
                   </ul>
                 </div>
               </div>
@@ -318,18 +330,18 @@ export function RetryFailedDeliveryModal({
           </div>
         </div>
 
-        <footer className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-t border-[#e5e7eb] bg-[#f9fafb] px-6 py-4">
+        <footer className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-t border-secondary bg-secondary px-6 py-4">
           <button
             type="button"
             onClick={onClose}
-            className="inline-flex h-9 items-center justify-center rounded-lg border border-black/10 bg-white px-[17px] text-[14px] font-medium tracking-[-0.1504px] text-[#0a0a0a] outline-none hover:bg-[#f3f4f6] focus-visible:ring-2 focus-visible:ring-[#944c73] focus-visible:ring-offset-2"
+            className="inline-flex h-9 items-center justify-center rounded-lg border border-black/10 bg-white px-[17px] text-[14px] font-medium tracking-[-0.1504px] text-extended-3 outline-none hover:bg-secondary focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2"
           >
             Cancel
           </button>
           <button
             type="button"
             onClick={onClose}
-            className="inline-flex h-9 items-center justify-center gap-2 rounded-lg bg-[#e7000b] px-4 text-[14px] font-medium tracking-[-0.1504px] text-white outline-none hover:bg-[#c10007] focus-visible:ring-2 focus-visible:ring-[#944c73] focus-visible:ring-offset-2"
+            className="inline-flex h-9 items-center justify-center gap-2 rounded-lg bg-error px-4 text-[14px] font-medium tracking-[-0.1504px] text-white outline-none hover:bg-error focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2"
           >
             <SendRetryGlyph />
             Send via Alternative Channel

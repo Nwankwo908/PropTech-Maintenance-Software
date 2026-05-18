@@ -1,12 +1,149 @@
-import { useEffect, useId, useMemo, useState, type ReactNode } from 'react'
+import { useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react'
 import broadcastIcon from '@/assets/Broadcast.svg'
 import {
   ScheduleBroadcastModal,
+  type ScheduleBroadcastSelection,
   type ScheduleBroadcastSummary,
 } from '@/components/ScheduleBroadcastModal'
 import { SparkleIcon } from '@/components/SparkleIcon'
+import { recordBroadcastSendAttempt } from '@/lib/broadcastMetrics'
+import { ALL_UNIT_OPTIONS } from '@/lib/propertyUnitOptions'
+import { unitOptionValueToCell } from '@/lib/residentUnitKeys'
+import { supabase } from '@/lib/supabase'
 
 type Audience = 'all' | 'building' | 'units'
+
+const REGISTERED_PROPERTY_UNITS_SESSION_KEY =
+  'proptech.admin.registeredPropertyUnitOptions.v1'
+
+function readRegisteredPropertyUnitCountFromSession(): number {
+  if (typeof sessionStorage === 'undefined') return 0
+  try {
+    const raw = sessionStorage.getItem(REGISTERED_PROPERTY_UNITS_SESSION_KEY)
+    if (!raw) return 0
+    const parsed = JSON.parse(raw) as unknown
+    if (!Array.isArray(parsed)) return 0
+    return parsed.filter(
+      (x) =>
+        x &&
+        typeof x === 'object' &&
+        typeof (x as { value?: unknown }).value === 'string' &&
+        typeof (x as { label?: unknown }).label === 'string',
+    ).length
+  } catch {
+    return 0
+  }
+}
+
+function readRegisteredBuildingsFromSession(): string[] {
+  if (typeof sessionStorage === 'undefined') return []
+  try {
+    const raw = sessionStorage.getItem(REGISTERED_PROPERTY_UNITS_SESSION_KEY)
+    if (!raw) return []
+    const parsed = JSON.parse(raw) as unknown
+    if (!Array.isArray(parsed)) return []
+    const out = new Set<string>()
+    for (const x of parsed) {
+      if (!x || typeof x !== 'object') continue
+      const label = (x as { label?: unknown }).label
+      if (typeof label !== 'string') continue
+      const parts = label.split('—')
+      if (parts.length < 2) continue
+      const building = parts[1]?.trim()
+      if (building) out.add(building)
+    }
+    return [...out]
+  } catch {
+    return []
+  }
+}
+
+function defaultBuildingOptions(): string[] {
+  const out = new Set<string>()
+  for (const opt of ALL_UNIT_OPTIONS) {
+    const cell = unitOptionValueToCell(opt.value)
+    if (cell.kind === 'assigned' && cell.building.trim()) {
+      out.add(cell.building.trim())
+    }
+  }
+  for (const b of readRegisteredBuildingsFromSession()) {
+    if (b.trim()) out.add(b.trim())
+  }
+  return [...out].sort((a, b) => a.localeCompare(b))
+}
+
+function readRegisteredUnitsFromSession(): string[] {
+  if (typeof sessionStorage === 'undefined') return []
+  try {
+    const raw = sessionStorage.getItem(REGISTERED_PROPERTY_UNITS_SESSION_KEY)
+    if (!raw) return []
+    const parsed = JSON.parse(raw) as unknown
+    if (!Array.isArray(parsed)) return []
+    const out = new Set<string>()
+    for (const x of parsed) {
+      if (!x || typeof x !== 'object') continue
+      const label = (x as { label?: unknown }).label
+      if (typeof label !== 'string') continue
+      const parts = label.split('—')
+      const unit = parts[0]?.trim()
+      if (unit) out.add(unit)
+    }
+    return [...out]
+  } catch {
+    return []
+  }
+}
+
+function defaultUnitOptions(): string[] {
+  const out = new Set<string>()
+  for (const opt of ALL_UNIT_OPTIONS) {
+    const cell = unitOptionValueToCell(opt.value)
+    if (cell.kind === 'assigned' && cell.unit.trim()) {
+      out.add(cell.unit.trim())
+    }
+  }
+  for (const unit of readRegisteredUnitsFromSession()) {
+    if (unit.trim()) out.add(unit.trim())
+  }
+  return [...out].sort((a, b) =>
+    a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' }),
+  )
+}
+
+function edgeFnUrlFromSupabaseBase(
+  explicitUrl: string | undefined,
+  fnName: 'send-broadcast' | 'schedule-broadcast',
+): string | undefined {
+  const direct = explicitUrl?.trim()
+  if (direct) return direct
+  const base = import.meta.env.VITE_SUPABASE_URL?.trim().replace(/\/+$/, '')
+  return base ? `${base}/functions/v1/${fnName}` : undefined
+}
+
+type BroadcastPayload = {
+  subject: string
+  message: string
+  audience: Audience
+  building: string
+  units: string[]
+  channels: Array<'email' | 'sms'>
+  automation: {
+    category?: string
+    enabled: boolean
+    autoRetryFailed: boolean
+    retryMaxAttempts: number
+    retryDelay: string
+    recurringSchedule: boolean
+    recurringFrequency: string
+    recurringDays: string[]
+    recurringTime: string
+    autoFollowUp: boolean
+    followUpAfter: string
+    /** Optional rent reminder context (stored on broadcast row payload). */
+    rentReminder?: { dueDate: string | null; amount: string | null }
+  }
+  payload?: Record<string, unknown>
+}
 
 const RETRY_ATTEMPT_OPTIONS = [
   { value: '2', label: '2 attempts' },
@@ -38,13 +175,6 @@ const WEEKDAY_LABELS: Record<(typeof WEEKDAY_KEYS)[number], string> = {
   sun: 'Sun',
 }
 
-const EVENT_TRIGGER_OPTIONS = [
-  { key: 'moveIn' as const, emoji: '🏠', label: 'New Resident Move-In' },
-  { key: 'lease' as const, emoji: '📄', label: 'Lease Renewal (30 days)' },
-  { key: 'maintenance' as const, emoji: '✅', label: 'Maintenance Completed' },
-  { key: 'payment' as const, emoji: '💰', label: 'Payment Due Reminder' },
-]
-
 const FOLLOW_UP_AFTER_OPTIONS = [
   { value: '12h', label: '12 hours' },
   { value: '24h', label: '24 hours' },
@@ -57,30 +187,66 @@ function retryDelaySummaryShort(value: string): string {
   return map[value] ?? value
 }
 
+function detectIntent(message: string): string {
+  const text = message.toLowerCase()
+
+  if (text.includes('rent')) return 'rent_reminder'
+  if (text.includes('inspection')) return 'inspection_notice'
+  if (text.includes('water') || text.includes('shut')) return 'utility_alert'
+  if (text.includes('maintenance')) return 'maintenance_notice'
+
+  return 'general'
+}
+
+function getFallback(intent: string): string {
+  switch (intent) {
+    case 'rent_reminder':
+      return 'Reminder: Rent is due on the 1st. Please submit your payment on time to avoid late fees.'
+    case 'inspection_notice':
+      return 'Notice: A property inspection is scheduled. Please ensure your unit is accessible.'
+    case 'utility_alert':
+      return 'Alert: Temporary service interruption expected. We will restore service shortly.'
+    case 'maintenance_notice':
+      return 'Notice: Maintenance work will be performed. Please plan accordingly.'
+    default:
+      return 'Notice: Please review this update and take any necessary action.'
+  }
+}
+
+function parseAmountNumber(value: string): number | null {
+  const cleaned = value.replace(/[^0-9.]/g, '')
+  if (!cleaned) return null
+  const n = Number.parseFloat(cleaned)
+  return Number.isFinite(n) ? n : null
+}
+
 export type SendBroadcastPresentation = 'modal' | 'rail'
 
 export function SendBroadcastMessageModal({
   open,
   onClose,
   presentation = 'modal',
+  onBroadcastStatsInvalidate,
 }: {
   open: boolean
   onClose: () => void
   /** `rail` = full-height panel from the right; `modal` = centered dialog. */
   presentation?: SendBroadcastPresentation
+  /** Called after a successful send or schedule so dashboards can refetch metrics. */
+  onBroadcastStatsInvalidate?: () => void
 }) {
   const titleId = useId()
   const automationSwitchId = useId()
   const [subject, setSubject] = useState('')
   const [message, setMessage] = useState('')
   const [audience, setAudience] = useState<Audience>('units')
+  const [building, setBuilding] = useState('')
   const [units, setUnits] = useState('')
   const [channelEmail, setChannelEmail] = useState(true)
   const [channelSms, setChannelSms] = useState(false)
   const [automationEnabled, setAutomationEnabled] = useState(true)
   const [autoRetryFailed, setAutoRetryFailed] = useState(false)
   const [recurringSchedule, setRecurringSchedule] = useState(false)
-  const [eventTriggers, setEventTriggers] = useState(false)
   const [autoFollowUp, setAutoFollowUp] = useState(false)
   const [retryMaxAttempts, setRetryMaxAttempts] = useState('3')
   const [retryDelay, setRetryDelay] = useState('30m')
@@ -89,16 +255,78 @@ export function SendBroadcastMessageModal({
     () => new Set(),
   )
   const [recurringTime, setRecurringTime] = useState('09:00')
-  const [eventTriggerSelection, setEventTriggerSelection] = useState<
-    Record<(typeof EVENT_TRIGGER_OPTIONS)[number]['key'], boolean>
-  >({
-    moveIn: false,
-    lease: false,
-    maintenance: false,
-    payment: false,
-  })
   const [followUpAfter, setFollowUpAfter] = useState('24h')
+  const [paymentDueDate, setPaymentDueDate] = useState('')
+  const [paymentAmount, setPaymentAmount] = useState('')
   const [scheduleModalOpen, setScheduleModalOpen] = useState(false)
+  const [enhancing, setEnhancing] = useState(false)
+  const [sendingNow, setSendingNow] = useState(false)
+  const [scheduling, setScheduling] = useState(false)
+  const [submitError, setSubmitError] = useState<string | null>(null)
+  const [successMessage, setSuccessMessage] = useState<string | null>(null)
+  const [buildingOptions, setBuildingOptions] = useState<string[]>(() =>
+    defaultBuildingOptions(),
+  )
+  const [unitOptions, setUnitOptions] = useState<string[]>(() =>
+    defaultUnitOptions(),
+  )
+  const [totalUnitsCount, setTotalUnitsCount] = useState(() => {
+    return ALL_UNIT_OPTIONS.length + readRegisteredPropertyUnitCountFromSession()
+  })
+  const closeAfterSuccessTimeoutRef = useRef<number | null>(null)
+
+  useEffect(() => {
+    if (!open) return
+    setTotalUnitsCount(
+      ALL_UNIT_OPTIONS.length + readRegisteredPropertyUnitCountFromSession(),
+    )
+  }, [open])
+
+  useEffect(() => {
+    if (!open) return
+    let cancelled = false
+    const local = defaultBuildingOptions()
+    const localUnits = defaultUnitOptions()
+    setBuildingOptions(local)
+    setUnitOptions(localUnits)
+    if (!supabase) return
+
+    void (async () => {
+      const { data, error } = await supabase.from('users').select('building, unit')
+      if (cancelled || error) return
+      const merged = new Set<string>(local)
+      const mergedUnits = new Set<string>(localUnits)
+      for (const row of data ?? []) {
+        const buildingName =
+          row && typeof row === 'object' && 'building' in row
+            ? String((row as { building?: unknown }).building ?? '').trim()
+            : ''
+        const unitName =
+          row && typeof row === 'object' && 'unit' in row
+            ? String((row as { unit?: unknown }).unit ?? '').trim()
+            : ''
+        if (buildingName) merged.add(buildingName)
+        if (unitName) mergedUnits.add(unitName)
+      }
+      if (!cancelled) {
+        setBuildingOptions(
+          [...merged].sort((a, b) => a.localeCompare(b)),
+        )
+        setUnitOptions(
+          [...mergedUnits].sort((a, b) =>
+            a.localeCompare(b, undefined, {
+              numeric: true,
+              sensitivity: 'base',
+            }),
+          ),
+        )
+      }
+    })()
+
+    return () => {
+      cancelled = true
+    }
+  }, [open])
 
   const scheduleSummary = useMemo(
     (): ScheduleBroadcastSummary => ({
@@ -123,36 +351,46 @@ export function SendBroadcastMessageModal({
     return () => window.removeEventListener('keydown', onKey)
   }, [open, onClose, scheduleModalOpen])
 
-  const [prevOpen, setPrevOpen] = useState(open)
-  if (open !== prevOpen) {
-    setPrevOpen(open)
-    if (!open) {
-      setSubject('')
-      setMessage('')
-      setAudience('units')
-      setUnits('')
-      setChannelEmail(true)
-      setChannelSms(false)
-      setAutomationEnabled(true)
-      setAutoRetryFailed(false)
-      setRecurringSchedule(false)
-      setEventTriggers(false)
-      setAutoFollowUp(false)
-      setRetryMaxAttempts('3')
-      setRetryDelay('30m')
-      setRecurringFrequency('weekly')
-      setRecurringDays(new Set())
-      setRecurringTime('09:00')
-      setEventTriggerSelection({
-        moveIn: false,
-        lease: false,
-        maintenance: false,
-        payment: false,
-      })
-      setFollowUpAfter('24h')
-      setScheduleModalOpen(false)
+  useEffect(() => {
+    if (open) return
+    if (closeAfterSuccessTimeoutRef.current != null) {
+      window.clearTimeout(closeAfterSuccessTimeoutRef.current)
+      closeAfterSuccessTimeoutRef.current = null
     }
-  }
+    setSubject('')
+    setMessage('')
+    setAudience('units')
+    setBuilding('')
+    setUnits('')
+    setChannelEmail(true)
+    setChannelSms(false)
+    setAutomationEnabled(true)
+    setAutoRetryFailed(false)
+    setRecurringSchedule(false)
+    setAutoFollowUp(false)
+    setRetryMaxAttempts('3')
+    setRetryDelay('30m')
+    setRecurringFrequency('weekly')
+    setRecurringDays(new Set())
+    setRecurringTime('09:00')
+    setFollowUpAfter('24h')
+    setPaymentDueDate('')
+    setPaymentAmount('')
+    setScheduleModalOpen(false)
+    setEnhancing(false)
+    setSendingNow(false)
+    setScheduling(false)
+    setSubmitError(null)
+    setSuccessMessage(null)
+  }, [open])
+
+  useEffect(() => {
+    return () => {
+      if (closeAfterSuccessTimeoutRef.current != null) {
+        window.clearTimeout(closeAfterSuccessTimeoutRef.current)
+      }
+    }
+  }, [])
 
   const activeAutomationLines = useMemo(() => {
     const lines: string[] = []
@@ -171,21 +409,19 @@ export function SendBroadcastMessageModal({
           : ''
       lines.push(`• Recurring ${freq.toLowerCase()}${daysPart} at ${recurringTime}`)
     }
-    if (eventTriggers) {
-      const names = EVENT_TRIGGER_OPTIONS.filter((e) => eventTriggerSelection[e.key]).map(
-        (e) => e.label,
-      )
-      if (names.length > 0) {
-        lines.push(`• Event triggers: ${names.join('; ')}`)
-      } else {
-        lines.push('• Event-based triggers (select event types above)')
-      }
-    }
     if (autoFollowUp) {
       const after =
         FOLLOW_UP_AFTER_OPTIONS.find((o) => o.value === followUpAfter)?.label.toLowerCase() ??
         followUpAfter
       lines.push(`• Follow-up reminder after ${after}`)
+    }
+    const rentDue = paymentDueDate.trim()
+    const rentAmt = paymentAmount.trim()
+    if (rentDue || rentAmt) {
+      const parts: string[] = []
+      if (rentAmt) parts.push(`amount ${rentAmt}`)
+      if (rentDue) parts.push(`due ${rentDue}`)
+      lines.push(`• Rent reminder: ${parts.join(' · ')}`)
     }
     return lines
   }, [
@@ -196,26 +432,248 @@ export function SendBroadcastMessageModal({
     recurringFrequency,
     recurringDays,
     recurringTime,
-    eventTriggers,
-    eventTriggerSelection,
     autoFollowUp,
     followUpAfter,
+    paymentDueDate,
+    paymentAmount,
   ])
+
+  const validationErrors = useMemo(() => {
+    const out: string[] = []
+    if (!subject.trim()) out.push('Subject is required.')
+    if (!message.trim()) out.push('Message content is required.')
+    if (!audience) out.push('Please select an audience.')
+    if (audience === 'building' && !building.trim()) {
+      out.push('Please select a building.')
+    }
+    if (audience === 'units' && !units.trim()) {
+      out.push('Please select a unit.')
+    }
+    if (!channelEmail && !channelSms) {
+      out.push('Select at least one delivery channel (Email or SMS).')
+    }
+    return out
+  }, [subject, message, audience, building, units, channelEmail, channelSms])
+
+  const formValid = validationErrors.length === 0
+  const isRail = presentation === 'rail'
 
   if (!open) return null
 
-  const isRail = presentation === 'rail'
+  function buildPayload(): BroadcastPayload {
+    const rentDue = paymentDueDate.trim()
+    const rentAmt = paymentAmount.trim()
+    const rentAmountNumber = parseAmountNumber(rentAmt)
+    const inferredCategory = rentDue || rentAmt ? 'billing' : detectIntent(message.trim())
+    const rentReminder =
+      rentDue || rentAmt ? { dueDate: rentDue || null, amount: rentAmt || null } : undefined
+    return {
+      subject: subject.trim(),
+      message: message.trim(),
+      audience,
+      building: building.trim(),
+      units:
+        audience === 'units'
+          ? units
+              .split(',')
+              .map((v) => v.trim())
+              .filter(Boolean)
+          : [],
+      channels: [
+        ...(channelEmail ? (['email'] as const) : []),
+        ...(channelSms ? (['sms'] as const) : []),
+      ],
+      automation: {
+        category: inferredCategory,
+        enabled: automationEnabled,
+        autoRetryFailed,
+        retryMaxAttempts: Number(retryMaxAttempts),
+        retryDelay,
+        recurringSchedule,
+        recurringFrequency,
+        recurringDays: [...recurringDays],
+        recurringTime,
+        autoFollowUp,
+        followUpAfter,
+        ...(rentReminder ? { rentReminder } : {}),
+      },
+      payload:
+        rentDue || rentAmt
+          ? {
+              automation: {
+                category: 'billing',
+                source: 'send_broadcast_modal',
+              },
+              amount_due: rentAmountNumber,
+              due_date: rentDue || null,
+            }
+          : undefined,
+    }
+  }
 
-  const unitsOk = audience !== 'units' || units.trim().length > 0
-  const formValid =
-    subject.trim().length > 0 &&
-    message.trim().length > 0 &&
-    unitsOk &&
-    (channelEmail || channelSms)
+  async function postBroadcast(
+    urlValue: string | undefined,
+    body: Record<string, unknown>,
+  ): Promise<void> {
+    const url = urlValue?.trim()
+    if (!url) {
+      throw new Error(
+        'Broadcast service is not configured. Please try again later.',
+      )
+    }
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    })
+    if (!res.ok) {
+      let detail = ''
+      try {
+        const data = (await res.json()) as { error?: unknown; message?: unknown }
+        const msg =
+          typeof data.error === 'string'
+            ? data.error
+            : typeof data.message === 'string'
+              ? data.message
+              : ''
+        detail = msg.trim()
+      } catch {
+        // ignore parse errors; fallback to status text only
+      }
+      throw new Error(detail ? `${detail} (${res.status})` : `Request failed (${res.status})`)
+    }
+  }
 
-  function submitSendNow() {
-    if (!formValid) return
-    onClose()
+  async function submitSendNow() {
+    if (!formValid || sendingNow || scheduling) return
+    const confirmed = window.confirm(
+      'Send this broadcast now? This will immediately start delivery to the selected audience.',
+    )
+    if (!confirmed) return
+    setSubmitError(null)
+    setSuccessMessage(null)
+    setSendingNow(true)
+    const payload = buildPayload()
+    try {
+      const sendUrl = edgeFnUrlFromSupabaseBase(
+        import.meta.env.VITE_BROADCAST_SEND_URL,
+        'send-broadcast',
+      )
+      await postBroadcast(sendUrl, {
+        action: 'send_now',
+        ...payload,
+      })
+      recordBroadcastSendAttempt(payload.channels, true)
+      onBroadcastStatsInvalidate?.()
+      setSuccessMessage('Broadcast sent successfully. Delivery has started.')
+      closeAfterSuccessTimeoutRef.current = window.setTimeout(() => {
+        onClose()
+      }, 1500)
+    } catch (error) {
+      recordBroadcastSendAttempt(payload.channels, false)
+      const msg =
+        error instanceof Error ? error.message : 'Failed to send broadcast. Please try again.'
+      setSubmitError(
+        msg.toLowerCase().includes('failed to fetch')
+          ? 'Failed to reach broadcast service. Confirm send-broadcast is deployed and CORS is enabled.'
+          : msg,
+      )
+    } finally {
+      setSendingNow(false)
+    }
+  }
+
+  async function submitSchedule(selection: ScheduleBroadcastSelection) {
+    if (!formValid || sendingNow || scheduling) return
+    setSubmitError(null)
+    setScheduling(true)
+    try {
+      const payload = buildPayload()
+      const scheduleUrl = edgeFnUrlFromSupabaseBase(
+        import.meta.env.VITE_BROADCAST_SCHEDULE_URL,
+        'schedule-broadcast',
+      )
+      await postBroadcast(scheduleUrl, {
+        action: 'schedule',
+        scheduled_for: selection.scheduledAtIso,
+        // Backward compatibility: deployed edge function may still read nested schedule.scheduledAtIso.
+        schedule: {
+          scheduledAtIso: selection.scheduledAtIso,
+          date: selection.date,
+          time: selection.time,
+        },
+        ...payload,
+      })
+      onBroadcastStatsInvalidate?.()
+      setScheduleModalOpen(false)
+      onClose()
+    } catch (error) {
+      setSubmitError(error instanceof Error ? error.message : 'Could not schedule broadcast.')
+    } finally {
+      setScheduling(false)
+    }
+  }
+
+  const handleAiEnhanceMessage = async () => {
+    const aiUrl =
+      import.meta.env.VITE_BROADCAST_AI_ENHANCE_URL?.trim() ||
+      edgeFnUrlFromSupabaseBase(undefined, 'send-broadcast')?.replace(
+        /\/send-broadcast$/,
+        '/ai-enhance',
+      ) ||
+      ''
+    if (enhancing || !message.trim()) return
+    setSubmitError(null)
+    setEnhancing(true)
+    try {
+      const intent = detectIntent(message)
+      if (aiUrl) {
+        const anonKey = import.meta.env.VITE_SUPABASE_ANON_KEY?.trim() ?? ''
+        const authSession = supabase ? await supabase.auth.getSession() : null
+        const accessToken = authSession?.data.session?.access_token?.trim() ?? ''
+        const authToken = accessToken || anonKey
+        const headers: Record<string, string> = { 'Content-Type': 'application/json' }
+        if (anonKey) headers.apikey = anonKey
+        if (authToken) headers.Authorization = `Bearer ${authToken}`
+        const res = await fetch(aiUrl, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({
+            message: message.trim(),
+          }),
+        })
+        const data = (await res.json()) as { message?: string; error?: string }
+        if (!res.ok) {
+          const detail = (data?.error ?? '').trim()
+          if (
+            res.status === 401 &&
+            detail.toLowerCase().includes('incorrect api key')
+          ) {
+            throw new Error(
+              'AI Enhance is unavailable: OPENAI_API_KEY is invalid on the ai-enhance Edge function.',
+            )
+          }
+          throw new Error(detail || `AI enhance failed (${res.status})`)
+        }
+        const nextMessage = data?.message?.trim()
+        if (nextMessage) {
+          setMessage(nextMessage)
+        } else {
+          setMessage(getFallback(intent))
+          setSubmitError('AI returned an empty response, using fallback template.')
+        }
+      } else {
+        setMessage(getFallback(intent))
+        setSubmitError('AI URL is not configured, using fallback template.')
+      }
+    } catch (error) {
+      setMessage(getFallback(detectIntent(message)))
+      const msg =
+        error instanceof Error ? error.message : "Couldn’t enhance message — using default template."
+      setSubmitError(`${msg} (using default template)`)
+    } finally {
+      setEnhancing(false)
+    }
   }
 
   return (
@@ -241,13 +699,13 @@ export function SendBroadcastMessageModal({
         aria-labelledby={titleId}
         className={
           isRail
-            ? 'relative flex h-full max-h-dvh w-full max-w-[min(100vw,560px)] flex-col overflow-hidden border-l border-[#e5e7eb] bg-white shadow-[inset_1px_0_0_0_#e5e7eb]'
+            ? 'relative flex h-full max-h-dvh w-full max-w-[min(100vw,560px)] flex-col overflow-hidden border-l border-secondary bg-white shadow-[inset_1px_0_0_0_#A788964D]'
             : 'relative flex max-h-[min(90dvh,1040px)] w-full max-w-[753px] flex-col overflow-hidden rounded-[10px] bg-white shadow-lg'
         }
       >
-        <header className="flex shrink-0 items-start justify-between gap-3 border-b border-[#e5e7eb] px-6 py-5">
+        <header className="flex shrink-0 items-start justify-between gap-3 border-b border-secondary px-6 py-5">
           <div className="flex min-w-0 items-center gap-3">
-            <div className="flex size-10 shrink-0 items-center justify-center rounded-[10px] bg-[#dbeafe]">
+            <div className="flex size-10 shrink-0 items-center justify-center rounded-[10px] bg-extended-2">
               <img
                 src={broadcastIcon}
                 alt=""
@@ -257,11 +715,11 @@ export function SendBroadcastMessageModal({
             <div className="min-w-0">
               <h2
                 id={titleId}
-                className="text-[18px] font-semibold leading-7 tracking-[-0.4395px] text-[#0a0a0a]"
+                className="text-[18px] font-semibold leading-7 tracking-[-0.4395px] text-extended-3"
               >
                 Send Broadcast Message
               </h2>
-              <p className="text-[12px] leading-4 text-[#6a7282]">
+              <p className="text-[12px] leading-4 text-neutral">
                 Compose and send notifications to residents
               </p>
             </div>
@@ -270,7 +728,7 @@ export function SendBroadcastMessageModal({
             type="button"
             onClick={onClose}
             aria-label="Close"
-            className="shrink-0 rounded-lg p-1 text-[#6a7282] outline-none transition-colors hover:bg-black/5 hover:text-[#0a0a0a] focus-visible:ring-2 focus-visible:ring-[#944c73] focus-visible:ring-offset-2"
+            className="shrink-0 rounded-lg p-1 text-neutral outline-none transition-colors hover:bg-black/5 hover:text-extended-3 focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2"
           >
             <svg className="size-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} aria-hidden>
               <path d="M18 6L6 18M6 6l12 12" strokeLinecap="round" />
@@ -280,77 +738,183 @@ export function SendBroadcastMessageModal({
 
         <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-6 py-6">
           <div className="flex flex-col gap-6">
-            <div>
-              <label
-                htmlFor="broadcast-subject"
-                className="mb-2 block text-[14px] font-medium tracking-[-0.1504px] text-[#364153]"
-              >
-                Subject Line <span className="text-[#c10007]">*</span>
-              </label>
-              <input
-                id="broadcast-subject"
-                type="text"
-                value={subject}
-                onChange={(e) => setSubject(e.target.value)}
-                placeholder="e.g., Building Maintenance Notice"
-                className="h-9 w-full rounded-lg border border-transparent bg-[#f3f3f5] px-3 text-[14px] tracking-[-0.1504px] text-[#0a0a0a] outline-none placeholder:text-[#717182] transition-[border-color,box-shadow] focus:border-[#944c73]/45 focus:bg-white focus:ring-2 focus:ring-[#944c73]/30"
-              />
-            </div>
-
-            <div>
-              <label
-                htmlFor="broadcast-message"
-                className="mb-2 block text-[14px] font-medium tracking-[-0.1504px] text-[#364153]"
-              >
-                Message Content <span className="text-[#c10007]">*</span>
-              </label>
-              <textarea
-                id="broadcast-message"
-                value={message}
-                onChange={(e) => setMessage(e.target.value)}
-                placeholder="Type your message here..."
-                rows={5}
-                className="min-h-[150px] w-full resize-y rounded-[10px] border border-[#d1d5dc] px-3 py-2 text-[16px] leading-6 tracking-[-0.3125px] text-[#0a0a0a] outline-none placeholder:text-[rgba(10,10,10,0.5)] focus:border-[#944c73]/45 focus:ring-2 focus:ring-[#944c73]/30"
-              />
-              <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
-                <p className="text-[12px] leading-4 text-[#6a7282]">
-                  {message.length} characters
-                </p>
-                <button
-                  type="button"
-                  className="inline-flex h-8 items-center gap-2 rounded-lg border border-black/10 bg-white px-3 text-[14px] font-medium tracking-[-0.1504px] text-[#9810fa] outline-none transition-colors hover:bg-[#faf5ff] focus-visible:ring-2 focus-visible:ring-[#944c73] focus-visible:ring-offset-2"
-                >
-                  <SparkleIcon className="size-4 text-[#9810fa]" />
-                  AI Enhance Message
-                </button>
+            <section className="space-y-4">
+              <div>
+                <h3 className="text-[14px] font-semibold leading-5 tracking-[-0.1504px] text-extended-3">
+                  Message Details
+                </h3>
               </div>
-            </div>
+              <div>
+                <label
+                  htmlFor="broadcast-subject"
+                  className="mb-2 block text-[14px] font-medium tracking-[-0.1504px] text-neutral-variant"
+                >
+                  Subject Line <span className="text-error">*</span>
+                </label>
+                <input
+                  id="broadcast-subject"
+                  type="text"
+                  value={subject}
+                  onChange={(e) => setSubject(e.target.value)}
+                  placeholder="e.g., Building Maintenance Notice"
+                  className="h-9 w-full rounded-lg border border-transparent bg-secondary px-3 text-[14px] tracking-[-0.1504px] text-extended-3 outline-none placeholder:text-neutral transition-[border-color,box-shadow] focus:border-primary/45 focus:bg-white focus:ring-2 focus:ring-primary/30"
+                />
+              </div>
+              <div>
+                <label
+                  htmlFor="broadcast-message"
+                  className="mb-2 block text-[14px] font-medium tracking-[-0.1504px] text-neutral-variant"
+                >
+                  Message Content <span className="text-error">*</span>
+                </label>
+                <textarea
+                  id="broadcast-message"
+                  value={message}
+                  onChange={(e) => setMessage(e.target.value)}
+                  placeholder="Type your message here..."
+                  rows={5}
+                  className="min-h-[150px] w-full resize-y rounded-[10px] border border-secondary px-3 py-2 text-[16px] leading-6 tracking-[-0.3125px] text-extended-3 outline-none placeholder:text-[rgba(10,10,10,0.5)] focus:border-primary/45 focus:ring-2 focus:ring-primary/30"
+                />
+                <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
+                  <p className="text-[12px] leading-4 text-neutral">
+                    {message.length} characters
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => void handleAiEnhanceMessage()}
+                    disabled={enhancing || !message.trim()}
+                    className="inline-flex h-8 items-center gap-2 rounded-lg border border-black/10 bg-white px-3 text-[14px] font-medium tracking-[-0.1504px] text-primary outline-none transition-colors hover:bg-secondary focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2"
+                  >
+                    <SparkleIcon className="size-4 text-primary" />
+                    {enhancing ? 'Enhancing…' : 'AI Enhance Message'}
+                  </button>
+                </div>
+              </div>
+            </section>
+
+            <section className="space-y-3 rounded-[10px] border border-secondary bg-white p-4">
+              <div className="space-y-1">
+                <h3 className="text-[14px] font-semibold leading-5 tracking-[-0.1504px] text-extended-3">
+                  (Optional) Rent or Billing Details
+                </h3>
+                <p className="text-[12px] leading-4 text-neutral">
+                  Only set these fields when this broadcast is a rent or billing-related message.
+                </p>
+              </div>
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 sm:items-end">
+                <div className="min-w-0 space-y-1">
+                  <label
+                    htmlFor="broadcast-payment-amount"
+                    className="block text-[12px] font-medium leading-4 text-neutral-variant"
+                  >
+                    Rent or bill Amount (if applicable)
+                  </label>
+                  <div className="relative">
+                    <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-[16px] tracking-[-0.3125px] text-neutral">
+                      $
+                    </span>
+                    <input
+                      id="broadcast-payment-amount"
+                      type="text"
+                      inputMode="decimal"
+                      value={paymentAmount}
+                      onChange={(e) => setPaymentAmount(e.target.value)}
+                      placeholder="0.00"
+                      className="h-[42px] w-full min-w-0 rounded-[10px] border border-secondary bg-white pl-7 pr-3 text-[16px] tracking-[-0.3125px] text-extended-3 outline-none placeholder:text-neutral transition-[border-color,box-shadow] focus:border-primary/45 focus:ring-2 focus:ring-primary/30"
+                    />
+                  </div>
+                </div>
+                <div className="min-w-0 space-y-1">
+                  <label
+                    htmlFor="broadcast-payment-due-date"
+                    className="block text-[12px] font-medium leading-4 text-neutral-variant"
+                  >
+                    Due Date
+                  </label>
+                  <input
+                    id="broadcast-payment-due-date"
+                    type="date"
+                    value={paymentDueDate}
+                    onChange={(e) => setPaymentDueDate(e.target.value)}
+                    className="h-[42px] w-full min-w-0 rounded-[10px] border border-secondary bg-white px-3 text-[14px] tracking-[-0.1504px] text-extended-3 outline-none transition-[border-color,box-shadow] focus:border-primary/45 focus:ring-2 focus:ring-primary/30"
+                  />
+                </div>
+              </div>
+            </section>
 
             <div>
-              <p className="mb-3 text-[14px] font-medium tracking-[-0.1504px] text-[#364153]">
-                Select Audience <span className="text-[#c10007]">*</span>
+              <p className="mb-3 text-[14px] font-medium tracking-[-0.1504px] text-neutral-variant">
+              Who should receive this? <span className="text-error">*</span>
               </p>
               <div className="flex flex-col gap-3" role="radiogroup" aria-label="Audience">
                 <AudienceCard
                   selected={audience === 'all'}
                   onSelect={() => setAudience('all')}
                   title="All Residents"
-                  subtitle="Send to all 142 units"
+                  subtitle={`Send to all ${totalUnitsCount} units`}
                   rightIcon={<UsersGlyph />}
-                />
-                <AudienceCard
-                  selected={audience === 'building'}
-                  onSelect={() => setAudience('building')}
-                  title="Specific Building"
-                  subtitle="Select one or more buildings"
-                  rightIcon={<BuildingGlyph />}
                 />
                 <div
                   className={[
                     'rounded-[10px] border-2 p-4 transition-colors',
+                    audience === 'building'
+                      ? 'border-extended-1 bg-white'
+                      : 'border-secondary bg-white',
+                  ].join(' ')}
+                >
+                  <button
+                    type="button"
+                    role="radio"
+                    aria-checked={audience === 'building'}
+                    onClick={() => setAudience('building')}
+                    className="flex w-full items-center justify-between gap-3 text-left"
+                  >
+                    <div className="flex items-center gap-3">
+                      <RadioDot on={audience === 'building'} />
+                      <div>
+                        <p className="text-[16px] font-medium leading-6 tracking-[-0.3125px] text-extended-3">
+                          Specific Building
+                        </p>
+                        <p className="text-[12px] leading-4 text-neutral">Enter one building name</p>
+                      </div>
+                    </div>
+                    <BuildingGlyph />
+                  </button>
+                  {audience === 'building' ? (
+                    <div className="relative ml-11 mt-3 w-[calc(100%-2.75rem)]">
+                      <select
+                        value={building}
+                        onChange={(e) => setBuilding(e.target.value)}
+                        className="h-9 w-full appearance-none rounded-lg border border-transparent bg-secondary px-3 pr-9 text-[14px] tracking-[-0.1504px] text-extended-3 outline-none placeholder:text-neutral transition-[border-color,box-shadow] focus:border-primary/45 focus:bg-white focus:ring-2 focus:ring-primary/30"
+                      >
+                        <option value="">Select building</option>
+                        {buildingOptions.map((b) => (
+                          <option key={b} value={b}>
+                            {b}
+                          </option>
+                        ))}
+                      </select>
+                      <span className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-neutral">
+                        <svg
+                          className="size-4"
+                          viewBox="0 0 24 24"
+                          fill="none"
+                          stroke="currentColor"
+                          strokeWidth={2}
+                          aria-hidden
+                        >
+                          <path d="M6 9l6 6 6-6" />
+                        </svg>
+                      </span>
+                    </div>
+                  ) : null}
+                </div>
+                <div
+                  className={[
+                    'rounded-[10px] border-2 p-4 transition-colors',
                     audience === 'units'
-                      ? 'border-[#2b7fff] bg-[#eff6ff]'
-                      : 'border-[#e5e7eb] bg-white',
+                      ? 'border-extended-1 bg-white'
+                      : 'border-secondary bg-white',
                   ].join(' ')}
                 >
                   <button
@@ -363,32 +927,51 @@ export function SendBroadcastMessageModal({
                     <div className="flex items-center gap-3">
                       <RadioDot on={audience === 'units'} />
                       <div>
-                        <p className="text-[16px] font-medium leading-6 tracking-[-0.3125px] text-[#101828]">
+                        <p className="text-[16px] font-medium leading-6 tracking-[-0.3125px] text-extended-3">
                           Specific Units
                         </p>
-                        <p className="text-[12px] leading-4 text-[#6a7282]">
-                          Enter unit numbers manually
+                        <p className="text-[12px] leading-4 text-neutral">
+                          Select units from User Management
                         </p>
                       </div>
                     </div>
-                    <FunnelGlyph className="size-5 shrink-0 text-[#6a7282]" />
+                    <FunnelGlyph className="size-5 shrink-0 text-neutral" />
                   </button>
                   {audience === 'units' ? (
-                    <input
-                      type="text"
-                      value={units}
-                      onChange={(e) => setUnits(e.target.value)}
-                      placeholder="e.g., 2A, 3B, 5C (comma-separated)"
-                      className="ml-11 mt-3 h-9 w-[calc(100%-2.75rem)] rounded-lg border border-transparent bg-[#f3f3f5] px-3 text-[14px] tracking-[-0.1504px] text-[#0a0a0a] outline-none placeholder:text-[#717182] focus:border-[#944c73]/45 focus:bg-white focus:ring-2 focus:ring-[#944c73]/30"
-                    />
+                    <div className="relative ml-11 mt-3 w-[calc(100%-2.75rem)]">
+                      <select
+                        value={units}
+                        onChange={(e) => setUnits(e.target.value)}
+                        className="h-9 w-full appearance-none rounded-lg border border-transparent bg-secondary px-3 pr-9 text-[14px] tracking-[-0.1504px] text-extended-3 outline-none focus:border-primary/45 focus:bg-white focus:ring-2 focus:ring-primary/30"
+                      >
+                        <option value="">Select unit</option>
+                        {unitOptions.map((unit) => (
+                          <option key={unit} value={unit}>
+                            {unit}
+                          </option>
+                        ))}
+                      </select>
+                      <span className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-neutral">
+                        <svg
+                          className="size-4"
+                          viewBox="0 0 24 24"
+                          fill="none"
+                          stroke="currentColor"
+                          strokeWidth={2}
+                          aria-hidden
+                        >
+                          <path d="M6 9l6 6 6-6" />
+                        </svg>
+                      </span>
+                    </div>
                   ) : null}
                 </div>
               </div>
             </div>
 
             <div>
-              <p className="mb-3 text-[14px] font-medium tracking-[-0.1504px] text-[#364153]">
-                Delivery Channel <span className="text-[#c10007]">*</span>
+              <p className="mb-3 text-[14px] font-medium tracking-[-0.1504px] text-neutral-variant">
+              Choose how to send <span className="text-error">*</span>
               </p>
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                 <ChannelCard
@@ -406,20 +989,20 @@ export function SendBroadcastMessageModal({
               </div>
             </div>
 
-            <div className="flex flex-col gap-4 border-t border-[#e5e7eb] pt-6">
+            <div className="flex flex-col gap-4 border-t border-secondary pt-6">
               <div className="flex flex-col gap-4 min-[480px]:flex-row min-[480px]:items-center min-[480px]:justify-between">
                 <div>
-                  <p className="text-[14px] font-medium leading-5 tracking-[-0.1504px] text-[#101828]">
+                  <p className="text-[14px] font-medium leading-5 tracking-[-0.1504px] text-extended-3">
                     🤖 Automation Settings
                   </p>
-                  <p className="mt-1 text-[12px] leading-4 text-[#6a7282]">
+                  <p className="mt-1 text-[12px] leading-4 text-neutral">
                     Configure automatic retries, scheduling, and triggers
                   </p>
                 </div>
                 <div className="flex items-center gap-2 self-start min-[480px]:self-auto">
                   <label
                     htmlFor={automationSwitchId}
-                    className="cursor-pointer text-[12px] leading-4 text-[#4a5565]"
+                    className="cursor-pointer text-[12px] leading-4 text-neutral-variant"
                   >
                     Enable Automation
                   </label>
@@ -430,8 +1013,8 @@ export function SendBroadcastMessageModal({
                     aria-checked={automationEnabled}
                     onClick={() => setAutomationEnabled((v) => !v)}
                     className={[
-                      'relative h-6 w-11 shrink-0 rounded-full transition-colors outline-none focus-visible:ring-2 focus-visible:ring-[#944c73] focus-visible:ring-offset-2',
-                      automationEnabled ? 'bg-[#155dfc]' : 'bg-[#d1d5dc]',
+                      'relative h-6 w-11 shrink-0 rounded-full transition-colors outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2',
+                      automationEnabled ? 'bg-extended-1' : 'bg-secondary',
                     ].join(' ')}
                   >
                     <span
@@ -445,7 +1028,7 @@ export function SendBroadcastMessageModal({
               </div>
 
               {automationEnabled ? (
-                <div className="flex flex-col gap-4 rounded-[10px] bg-[#f9fafb] px-4 py-4">
+                <div className="flex flex-col gap-4 rounded-[10px] bg-secondary px-4 py-4">
                   <AutomationSettingRow
                     enabled
                     checked={autoRetryFailed}
@@ -456,7 +1039,7 @@ export function SendBroadcastMessageModal({
                   >
                     <div className="grid gap-3 sm:grid-cols-2">
                       <div className="space-y-1">
-                        <label className="block text-[12px] font-medium leading-4 text-[#4a5565]">
+                        <label className="block text-[12px] font-medium leading-4 text-neutral-variant">
                           Max Attempts
                         </label>
                         <AutomationSelect
@@ -466,7 +1049,7 @@ export function SendBroadcastMessageModal({
                         />
                       </div>
                       <div className="space-y-1">
-                        <label className="block text-[12px] font-medium leading-4 text-[#4a5565]">
+                        <label className="block text-[12px] font-medium leading-4 text-neutral-variant">
                           Retry Delay
                         </label>
                         <AutomationSelect
@@ -488,7 +1071,7 @@ export function SendBroadcastMessageModal({
                   >
                     <div className="flex flex-col gap-3">
                       <div className="space-y-1">
-                        <label className="block text-[12px] font-medium leading-4 text-[#4a5565]">
+                        <label className="block text-[12px] font-medium leading-4 text-neutral-variant">
                           Frequency
                         </label>
                         <AutomationSelect
@@ -498,7 +1081,7 @@ export function SendBroadcastMessageModal({
                         />
                       </div>
                       <div className="space-y-2">
-                        <p className="text-[12px] font-medium leading-4 text-[#4a5565]">Select Days</p>
+                        <p className="text-[12px] font-medium leading-4 text-neutral-variant">Select Days</p>
                         <div className="flex flex-wrap gap-2">
                           {WEEKDAY_KEYS.map((key) => (
                             <button
@@ -513,10 +1096,10 @@ export function SendBroadcastMessageModal({
                                 })
                               }
                               className={[
-                                'rounded-lg border px-3 py-1.5 text-[12px] font-medium outline-none transition-colors focus-visible:ring-2 focus-visible:ring-[#944c73] focus-visible:ring-offset-2',
+                                'rounded-lg border px-3 py-1.5 text-[12px] font-medium outline-none transition-colors focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2',
                                 recurringDays.has(key)
-                                  ? 'border-[#2b7fff] bg-[#eff6ff] text-[#1447e6]'
-                                  : 'border-[#d1d5dc] bg-white text-[#364153] hover:bg-[#f9fafb]',
+                                  ? 'border-extended-1 bg-extended-1 text-white'
+                                  : 'border-secondary bg-white text-neutral-variant hover:bg-secondary',
                               ].join(' ')}
                             >
                               {WEEKDAY_LABELS[key]}
@@ -527,7 +1110,7 @@ export function SendBroadcastMessageModal({
                       <div className="space-y-1">
                         <label
                           htmlFor="broadcast-recurring-time"
-                          className="block text-[12px] font-medium leading-4 text-[#4a5565]"
+                          className="block text-[12px] font-medium leading-4 text-neutral-variant"
                         >
                           Time
                         </label>
@@ -536,32 +1119,9 @@ export function SendBroadcastMessageModal({
                           type="time"
                           value={recurringTime}
                           onChange={(e) => setRecurringTime(e.target.value)}
-                          className="h-9 w-full rounded-lg border border-transparent bg-[#f3f3f5] px-3 text-[14px] font-medium tracking-[-0.1504px] text-[#0a0a0a] outline-none focus:border-[#944c73]/45 focus:bg-white focus:ring-2 focus:ring-[#944c73]/30"
+                          className="h-9 w-full rounded-lg border border-transparent bg-secondary px-3 text-[14px] font-medium tracking-[-0.1504px] text-extended-3 outline-none focus:border-primary/45 focus:bg-white focus:ring-2 focus:ring-primary/30"
                         />
                       </div>
-                    </div>
-                  </AutomationSettingRow>
-
-                  <AutomationSettingRow
-                    enabled
-                    checked={eventTriggers}
-                    onCheckedChange={setEventTriggers}
-                    title="Event-Based Triggers"
-                    description="Automatically send messages when specific events occur"
-                    showBorderBottom
-                  >
-                    <div className="flex flex-col gap-2">
-                      {EVENT_TRIGGER_OPTIONS.map((ev) => (
-                        <EventTriggerOptionRow
-                          key={ev.key}
-                          emoji={ev.emoji}
-                          label={ev.label}
-                          checked={eventTriggerSelection[ev.key]}
-                          onToggle={() =>
-                            setEventTriggerSelection((p) => ({ ...p, [ev.key]: !p[ev.key] }))
-                          }
-                        />
-                      ))}
                     </div>
                   </AutomationSettingRow>
 
@@ -573,7 +1133,7 @@ export function SendBroadcastMessageModal({
                     description={"Send reminder if resident doesn't respond"}
                   >
                     <div className="space-y-1">
-                      <label className="block text-[12px] font-medium leading-4 text-[#4a5565]">
+                      <label className="block text-[12px] font-medium leading-4 text-neutral-variant">
                         Send reminder after
                       </label>
                       <AutomationSelect
@@ -585,13 +1145,13 @@ export function SendBroadcastMessageModal({
                   </AutomationSettingRow>
 
                   {activeAutomationLines.length > 0 ? (
-                    <div className="flex gap-2 rounded-[10px] border border-[#bedbff] bg-[#eff6ff] px-[13px] py-3">
-                      <SparkleIcon className="mt-0.5 size-4 shrink-0 text-[#1447e6]" />
+                    <div className="flex gap-2 rounded-[10px] border border-extended-1 bg-extended-2 px-[13px] py-3">
+                      <SparkleIcon className="mt-0.5 size-4 shrink-0 text-extended-1" />
                       <div className="min-w-0">
-                        <p className="text-[12px] font-medium leading-4 text-[#1c398e]">Active Automations</p>
+                        <p className="text-[12px] font-medium leading-4 text-extended-3">Active Automations</p>
                         <ul className="mt-1 space-y-1">
                           {activeAutomationLines.map((line, i) => (
-                            <li key={i} className="text-[12px] leading-4 text-[#1447e6]">
+                            <li key={i} className="text-[12px] leading-4 text-extended-1">
                               {line}
                             </li>
                           ))}
@@ -602,33 +1162,55 @@ export function SendBroadcastMessageModal({
                 </div>
               ) : null}
             </div>
+            {validationErrors.length > 0 ? (
+              <div className="rounded-lg border border-[#fde68a] bg-[#fffbeb] px-3 py-2">
+                <p className="text-[13px] font-medium leading-5 text-[#92400e]">
+                  Complete these fields before sending:
+                </p>
+                <ul className="mt-1 list-disc pl-5 text-[13px] leading-5 text-[#92400e]">
+                  {validationErrors.map((msg) => (
+                    <li key={msg}>{msg}</li>
+                  ))}
+                </ul>
+              </div>
+            ) : null}
+            {submitError ? (
+              <p className="rounded-lg border border-[#fecaca] bg-[#fef2f2] px-3 py-2 text-[13px] leading-5 text-[#b91c1c]">
+                {submitError}
+              </p>
+            ) : null}
+            {successMessage ? (
+              <p className="rounded-lg border border-[#bbf7d0] bg-[#f0fdf4] px-3 py-2 text-[13px] leading-5 text-[#166534]">
+                {successMessage} ✅
+              </p>
+            ) : null}
           </div>
         </div>
 
-        <footer className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-t border-[#e5e7eb] bg-[#f9fafb] px-6 py-4">
+        <footer className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-t border-secondary bg-secondary px-6 py-4">
           <button
             type="button"
             onClick={onClose}
-            className="inline-flex h-9 items-center justify-center rounded-lg border border-black/10 bg-white px-[17px] text-[14px] font-medium tracking-[-0.1504px] text-[#0a0a0a] outline-none transition-colors hover:bg-[#f3f4f6] focus-visible:ring-2 focus-visible:ring-[#944c73] focus-visible:ring-offset-2"
+            className="inline-flex h-9 items-center justify-center rounded-lg border border-black/10 bg-white px-[17px] text-[14px] font-medium tracking-[-0.1504px] text-extended-3 outline-none transition-colors hover:bg-secondary focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2"
           >
             Cancel
           </button>
           <div className="flex flex-wrap items-center gap-2">
             <button
               type="button"
-              disabled={!formValid}
+              disabled={!formValid || sendingNow || scheduling}
               onClick={() => formValid && setScheduleModalOpen(true)}
-              className="inline-flex h-9 items-center justify-center rounded-lg border border-black/10 bg-white px-3 text-[14px] font-medium tracking-[-0.1504px] text-[#0a0a0a] outline-none transition-colors enabled:hover:bg-[#f3f4f6] focus-visible:ring-2 focus-visible:ring-[#944c73] focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+              className="inline-flex h-9 items-center justify-center rounded-lg border border-black/10 bg-white px-3 text-[14px] font-medium tracking-[-0.1504px] text-extended-3 outline-none transition-colors enabled:hover:bg-secondary focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
             >
-              Schedule for Later
+              {scheduling ? 'Scheduling…' : 'Schedule send'}
             </button>
             <button
               type="button"
-              disabled={!formValid}
-              onClick={submitSendNow}
-              className="inline-flex h-9 items-center justify-center rounded-lg bg-[#155dfc] px-3 text-[14px] font-medium tracking-[-0.1504px] text-white outline-none transition-colors enabled:hover:bg-[#1249d6] focus-visible:ring-2 focus-visible:ring-[#944c73] focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+              disabled={!formValid || sendingNow || scheduling}
+              onClick={() => void submitSendNow()}
+              className="inline-flex h-9 items-center justify-center rounded-lg bg-extended-1 px-3 text-[14px] font-medium tracking-[-0.1504px] text-white outline-none transition-colors enabled:hover:bg-extended-1 focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
             >
-              Send Now
+              {sendingNow ? 'Sending...' : 'Send Now'}
             </button>
           </div>
         </footer>
@@ -638,10 +1220,9 @@ export function SendBroadcastMessageModal({
         open={scheduleModalOpen}
         summary={scheduleSummary}
         onClose={() => setScheduleModalOpen(false)}
-        onConfirm={() => {
-          setScheduleModalOpen(false)
-          onClose()
-        }}
+        onConfirm={(selection) => void submitSchedule(selection)}
+        confirmBusy={scheduling}
+        confirmError={submitError}
       />
     </div>
   )
@@ -652,11 +1233,11 @@ function RadioDot({ on }: { on: boolean }) {
     <span
       className={[
         'flex size-5 shrink-0 items-center justify-center rounded-full border-2',
-        on ? 'border-[#2b7fff]' : 'border-[#d1d5dc]',
+        on ? 'border-extended-1' : 'border-secondary',
       ].join(' ')}
       aria-hidden
     >
-      {on ? <span className="size-3 rounded-full bg-[#2b7fff]" /> : null}
+      {on ? <span className="size-3 rounded-full bg-extended-1" /> : null}
     </span>
   )
 }
@@ -682,14 +1263,14 @@ function AudienceCard({
       onClick={onSelect}
       className={[
         'flex w-full items-center justify-between gap-3 rounded-[10px] border-2 p-4 text-left transition-colors',
-        selected ? 'border-[#2b7fff] bg-[#eff6ff]' : 'border-[#e5e7eb] bg-white',
+        selected ? 'border-extended-1 bg-white' : 'border-secondary bg-white',
       ].join(' ')}
     >
       <div className="flex min-w-0 items-center gap-3">
         <RadioDot on={selected} />
         <div>
-          <p className="text-[16px] font-medium leading-6 tracking-[-0.3125px] text-[#101828]">{title}</p>
-          <p className="text-[12px] leading-4 text-[#6a7282]">{subtitle}</p>
+          <p className="text-[16px] font-medium leading-6 tracking-[-0.3125px] text-extended-3">{title}</p>
+          <p className="text-[12px] leading-4 text-neutral">{subtitle}</p>
         </div>
       </div>
       <span className="shrink-0">{rightIcon}</span>
@@ -718,7 +1299,7 @@ function AutomationSettingRow({
     <div
       className={[
         'flex gap-3',
-        showBorderBottom ? 'border-b border-[#e5e7eb] pb-4' : '',
+        showBorderBottom ? 'border-b border-secondary pb-4' : '',
       ].join(' ')}
     >
       <button
@@ -728,8 +1309,8 @@ function AutomationSettingRow({
         disabled={!enabled}
         onClick={() => enabled && onCheckedChange(!checked)}
         className={[
-          'mt-1 flex size-4 shrink-0 items-center justify-center rounded border shadow-[0px_1px_2px_0px_rgba(0,0,0,0.05)] outline-none transition-colors focus-visible:ring-2 focus-visible:ring-[#944c73] focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50',
-          checked ? 'border-[#030213] bg-[#030213]' : 'border-black/10 bg-[#f3f3f5]',
+          'mt-1 flex size-4 shrink-0 items-center justify-center rounded border shadow-[0px_1px_2px_0px_rgba(0,0,0,0.05)] outline-none transition-colors focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50',
+          checked ? 'border-extended-3 bg-extended-3' : 'border-black/10 bg-secondary',
         ].join(' ')}
       >
         {checked ? (
@@ -746,8 +1327,8 @@ function AutomationSettingRow({
         ) : null}
       </button>
       <div className="min-w-0 flex-1 pb-1">
-        <p className="text-[14px] font-medium leading-5 tracking-[-0.1504px] text-[#101828]">{title}</p>
-        <p className="mt-1 text-[12px] leading-4 text-[#6a7282]">{description}</p>
+        <p className="text-[14px] font-medium leading-5 tracking-[-0.1504px] text-extended-3">{title}</p>
+        <p className="mt-1 text-[12px] leading-4 text-neutral">{description}</p>
         {checked && children ? <div className="mt-3">{children}</div> : null}
       </div>
     </div>
@@ -768,7 +1349,7 @@ function AutomationSelect({
       <select
         value={value}
         onChange={(e) => onChange(e.target.value)}
-        className="h-9 w-full cursor-pointer appearance-none rounded-lg border border-transparent bg-[#f3f3f5] py-1 pl-3 pr-9 text-[14px] font-medium tracking-[-0.1504px] text-[#0a0a0a] outline-none focus:border-[#944c73]/45 focus:bg-white focus:ring-2 focus:ring-[#944c73]/30"
+        className="h-9 w-full cursor-pointer appearance-none rounded-lg border border-transparent bg-secondary py-1 pl-3 pr-9 text-[14px] font-medium tracking-[-0.1504px] text-extended-3 outline-none focus:border-primary/45 focus:bg-white focus:ring-2 focus:ring-primary/30"
       >
         {options.map((o) => (
           <option key={o.value} value={o.value}>
@@ -776,59 +1357,12 @@ function AutomationSelect({
           </option>
         ))}
       </select>
-      <span className="pointer-events-none absolute right-2.5 top-1/2 size-4 -translate-y-1/2 text-[#6a7282]">
+      <span className="pointer-events-none absolute right-2.5 top-1/2 size-4 -translate-y-1/2 text-neutral">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} aria-hidden>
           <path d="M6 9l6 6 6-6" />
         </svg>
       </span>
     </div>
-  )
-}
-
-function EventTriggerOptionRow({
-  emoji,
-  label,
-  checked,
-  onToggle,
-}: {
-  emoji: string
-  label: string
-  checked: boolean
-  onToggle: () => void
-}) {
-  return (
-    <button
-      type="button"
-      role="checkbox"
-      aria-checked={checked}
-      onClick={onToggle}
-      className="flex w-full items-center gap-3 rounded-[10px] border border-[#e5e7eb] bg-white px-[13px] py-3 text-left outline-none transition-colors hover:bg-[#f9fafb] focus-visible:ring-2 focus-visible:ring-[#944c73] focus-visible:ring-offset-2"
-    >
-      <span
-        className={[
-          'flex size-4 shrink-0 items-center justify-center rounded border shadow-[0px_1px_2px_0px_rgba(0,0,0,0.05)]',
-          checked ? 'border-[#030213] bg-[#030213]' : 'border-black/10 bg-[#f3f3f5]',
-        ].join(' ')}
-        aria-hidden
-      >
-        {checked ? (
-          <svg
-            className="size-3.5 text-white"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth={3}
-            aria-hidden
-          >
-            <path d="M20 6L9 17l-5-5" strokeLinecap="round" strokeLinejoin="round" />
-          </svg>
-        ) : null}
-      </span>
-      <span className="text-[18px] leading-7" aria-hidden>
-        {emoji}
-      </span>
-      <span className="text-[14px] font-normal leading-5 tracking-[-0.1504px] text-[#101828]">{label}</span>
-    </button>
   )
 }
 
@@ -850,14 +1384,14 @@ function ChannelCard({
       onClick={onToggle}
       className={[
         'flex rounded-[10px] border-2 p-4 text-left transition-colors',
-        selected ? 'border-[#2b7fff] bg-[#eff6ff]' : 'border-[#e5e7eb] bg-white',
+        selected ? 'border-extended-1 bg-white' : 'border-secondary bg-white',
       ].join(' ')}
     >
       <div className="flex items-center gap-3">
         <span
           className={[
             'flex size-4 shrink-0 items-center justify-center rounded border shadow-sm',
-            selected ? 'border-[#030213] bg-[#030213]' : 'border-black/10 bg-[#f3f3f5]',
+            selected ? 'border-extended-3 bg-extended-3' : 'border-black/10 bg-secondary',
           ].join(' ')}
           aria-hidden
         >
@@ -868,8 +1402,8 @@ function ChannelCard({
           ) : null}
         </span>
         <div>
-          <p className="text-[16px] font-medium leading-6 tracking-[-0.3125px] text-[#101828]">{title}</p>
-          <p className="text-[12px] leading-4 text-[#6a7282]">{subtitle}</p>
+          <p className="text-[16px] font-medium leading-6 tracking-[-0.3125px] text-extended-3">{title}</p>
+          <p className="text-[12px] leading-4 text-neutral">{subtitle}</p>
         </div>
       </div>
     </button>
@@ -878,7 +1412,7 @@ function ChannelCard({
 
 function UsersGlyph() {
   return (
-    <svg className="size-5 text-[#6a7282]" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} aria-hidden>
+    <svg className="size-5 text-neutral" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} aria-hidden>
       <path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2M9 11a4 4 0 100-8 4 4 0 000 8zM23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75" strokeLinecap="round" />
     </svg>
   )
@@ -886,7 +1420,7 @@ function UsersGlyph() {
 
 function BuildingGlyph() {
   return (
-    <svg className="size-5 text-[#6a7282]" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} aria-hidden>
+    <svg className="size-5 text-neutral" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} aria-hidden>
       <path d="M6 22V10l6-4 6 4v12M6 22h15M9 22v-5h4v5" strokeLinecap="round" strokeLinejoin="round" />
     </svg>
   )

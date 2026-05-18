@@ -1,11 +1,17 @@
-import { useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import broadcastIcon from '@/assets/Broadcast.svg'
-import inspectionIcon from '@/assets/Inspection_3.svg'
+import calenderIcon from '@/assets/Calender.svg'
+import deliveredIcon from '@/assets/Delivered.svg'
+import emailIcon from '@/assets/Email.svg'
+import failedDeliveryIcon from '@/assets/Failed Delivery.svg'
+import smsIcon from '@/assets/SMS.svg'
+import ticketIcon from '@/assets/Ticket2.svg'
 import overrideIcon from '@/assets/Override.svg'
 import retryIcon from '@/assets/Retry.svg'
 import { ConfigureAiDataSourcesModal } from '@/components/ConfigureAiDataSourcesModal'
 import {
   RetryFailedDeliveryModal,
+  type RetryFailedDeliveryPayload,
   type RetryFailedDeliveryPresentation,
 } from '@/components/RetryFailedDeliveryModal'
 import {
@@ -29,14 +35,12 @@ import {
   FailedMessageDetailsModal,
 } from '@/components/FailedMessageDetailsModal'
 import {
-  type MessageDetailsPayload,
-  MessageDetailsModal,
-} from '@/components/MessageDetailsModal'
-import {
   OverrideAutomationModal,
   PGE_GAS_LEAK_ADVISORY_AUTOMATION_ID,
   type AutomationCategoryId,
   type OverrideAutomationContext,
+  type OverrideAutomationScopeOption,
+  type OverrideAutomationSubmission,
   type OverrideAutomationPresentation,
   type SafetyOverrideTypeId,
 } from '@/components/OverrideAutomationModal'
@@ -45,64 +49,36 @@ import {
   type SendBroadcastPresentation,
 } from '@/components/SendBroadcastMessageModal'
 import { SendInspectionNoticeModal } from '@/components/SendInspectionNoticeModal'
+import { supabase } from '@/lib/supabase'
 
-const NOTIF_TABS = [
-  { id: 'history', label: 'Message History' },
-  { id: 'scheduled', label: 'Scheduled Automations' },
-  { id: 'external', label: 'External Alerts' },
-  { id: 'failed', label: 'Failed & Urgent' },
-] as const
+const NOTIF_TAB_IDS = ['history', 'scheduled', 'external'] as const
+type TabId = (typeof NOTIF_TAB_IDS)[number]
 
-type TabId = (typeof NOTIF_TABS)[number]['id']
-
-const STAT_CARDS = [
-  {
-    label: 'Active Notifications',
-    value: '24',
-    hint: 'Live broadcasts',
-    valueClass: 'text-[#0a0a0a]',
-    icon: 'bell' as const,
-  },
-  {
-    label: 'Scheduled Messages',
-    value: '12',
-    hint: 'Pending automation',
-    valueClass: 'text-[#0a0a0a]',
-    icon: 'clock' as const,
-  },
-] as const
-
-const STAT_RECENT_BROADCASTS = 156
-const STAT_FAILED_DELIVERIES = 3
-const STAT_BROADCAST_SUCCESS_PCT =
-  STAT_RECENT_BROADCASTS + STAT_FAILED_DELIVERIES > 0
-    ? Math.round(
-        (STAT_RECENT_BROADCASTS / (STAT_RECENT_BROADCASTS + STAT_FAILED_DELIVERIES)) * 100,
-      )
-    : 0
-
-function IconBroadcast({ className = 'size-5 shrink-0 text-[#00a63e]' }: { className?: string }) {
-  return (
-    <svg className={['block', className].join(' ')} viewBox="0 0 24 24" fill="none" aria-hidden>
-      <path
-        d="M21 11.5a8.38 8.38 0 01-.9 3.8 8.5 8.5 0 01-7.6 4.7 8.38 8.38 0 01-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 01-.9-3.8 8.5 8.5 0 014.7-7.6 8.38 8.38 0 013.8-.9h.5a8.48 8.48 0 018 8.5z"
-        stroke="currentColor"
-        strokeWidth={1.65}
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-    </svg>
-  )
+/** Broadcast tables only (resident/vendor maintenance logs are separate). */
+type BroadcastDashboardStats = {
+  activeNotifications24h: number
+  broadcastSuccess7d: number
+  broadcastFailed7d: number
+  scheduledDbCount: number
+  successRate7d: number
 }
 
-function StatGlyph({ name }: { name: (typeof STAT_CARDS)[number]['icon'] }) {
-  const cls = 'size-5 shrink-0'
+const EMPTY_BROADCAST_DASHBOARD_STATS: BroadcastDashboardStats = {
+  activeNotifications24h: 0,
+  broadcastSuccess7d: 0,
+  broadcastFailed7d: 0,
+  scheduledDbCount: 0,
+  successRate7d: 0,
+}
+
+function StatGlyph({ name }: { name: 'bell' | 'clock' }) {
+  const cls = 'size-5 shrink-0 text-[#6a7282]'
   if (name === 'bell') {
     return (
       <svg className={cls} viewBox="0 0 24 24" fill="none" aria-hidden>
         <path
           d="M18 8a6 6 0 10-12 0c0 7-3 9-3 9h18s-3-2-3-9M13.73 21a2 2 0 01-3.46 0"
-          stroke="#155dfc"
+          stroke="currentColor"
           strokeWidth={1.8}
           strokeLinecap="round"
           strokeLinejoin="round"
@@ -112,10 +88,10 @@ function StatGlyph({ name }: { name: (typeof STAT_CARDS)[number]['icon'] }) {
   }
   return (
     <svg className={cls} viewBox="0 0 24 24" fill="none" aria-hidden>
-      <circle cx="12" cy="12" r="9" stroke="#9810fa" strokeWidth={1.8} />
+      <circle cx="12" cy="12" r="9" stroke="currentColor" strokeWidth={1.8} />
       <path
         d="M12 7v5l3 2"
-        stroke="#9810fa"
+        stroke="currentColor"
         strokeWidth={1.8}
         strokeLinecap="round"
       />
@@ -148,14 +124,14 @@ function BroadcastsFailedDonut({
         aria-label={`${recentBroadcasts} recent broadcasts and ${failedDeliveries} failed deliveries, ${total} total. ${successPct} percent completed without failure.`}
       >
         <svg className="size-full -rotate-90" viewBox={`0 0 ${vb} ${vb}`} aria-hidden>
-          <circle cx={cx} cy={cx} r={r} fill="none" stroke="#e5e7eb" strokeWidth={stroke} />
+          <circle cx={cx} cy={cx} r={r} fill="none" stroke="#A78896" strokeWidth={stroke} />
           {lenOk > 0 ? (
             <circle
               cx={cx}
               cy={cx}
               r={r}
               fill="none"
-              stroke="#00a63e"
+              stroke="#30b500"
               strokeWidth={stroke}
               strokeLinecap="butt"
               strokeDasharray={`${lenOk} ${c}`}
@@ -167,7 +143,7 @@ function BroadcastsFailedDonut({
               cy={cx}
               r={r}
               fill="none"
-              stroke="#e7000b"
+              stroke="#b52a00"
               strokeWidth={stroke}
               strokeLinecap="butt"
               strokeDasharray={`${lenFail} ${c}`}
@@ -176,24 +152,24 @@ function BroadcastsFailedDonut({
           ) : null}
         </svg>
         <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center gap-0.5">
-          <span className="text-[15px] font-bold tabular-nums leading-none text-[#101828]">{total}</span>
-          <span className="text-[10px] font-medium uppercase leading-none tracking-wide text-[#6a7282]">
+          <span className="text-[15px] font-bold tabular-nums leading-none text-extended-3">{total}</span>
+          <span className="text-[10px] font-medium uppercase leading-none tracking-wide text-neutral">
             total
           </span>
         </div>
       </div>
       <ul className="min-w-0 flex-1 list-none space-y-2 p-0">
         <li className="flex items-center gap-2 text-[12px] leading-4">
-          <span className="size-2 shrink-0 rounded-full bg-[#00a63e]" aria-hidden />
-          <span className="min-w-0 text-[#364153]">Recent broadcasts</span>
-          <span className="ml-auto shrink-0 font-semibold tabular-nums text-[#101828]">
+          <span className="size-2 shrink-0 rounded-full bg-[#30b500]" aria-hidden />
+          <span className="min-w-0 text-neutral-variant">Recent broadcasts</span>
+          <span className="ml-auto shrink-0 font-semibold tabular-nums text-extended-3">
             {recentBroadcasts}
           </span>
         </li>
         <li className="flex items-center gap-2 text-[12px] leading-4">
-          <span className="size-2 shrink-0 rounded-full bg-[#e7000b]" aria-hidden />
-          <span className="min-w-0 text-[#364153]">Failed deliveries</span>
-          <span className="ml-auto shrink-0 font-semibold tabular-nums text-[#101828]">
+          <span className="size-2 shrink-0 rounded-full bg-[#b52a00]" aria-hidden />
+          <span className="min-w-0 text-neutral-variant">Failed deliveries</span>
+          <span className="ml-auto shrink-0 font-semibold tabular-nums text-extended-3">
             {failedDeliveries}
           </span>
         </li>
@@ -214,29 +190,204 @@ type NotifRow = {
   footer?: 'pending' | 'failed'
 }
 
-const RENT_PAYMENT_MESSAGE_DETAILS: MessageDetailsPayload = {
-  sentAtLabel: 'Sent Mar 24, 2026, 9:00 AM',
-  statusBadge: {
-    label: 'Sent',
-    className: 'border border-[#b9f8cf] bg-[#dcfce7] text-[#008236]',
-  },
-  categoryBadge: { label: 'Rent', className: 'bg-[#dbeafe] text-[#1447e6]' },
-  messageTitle: 'Rent Payment Reminder - Due March 31',
-  messageBody:
-    'Your rent payment of $1,250 is due on March 31st. Pay online through the resident portal.',
-  totalRecipients: 142,
-  delivered: 139,
-  failed: 3,
-  failedDeliveries: [
-    { unit: 'Unit 8C', name: 'John Davis', reason: 'Invalid email address' },
-    { unit: 'Unit 12A', name: 'Lisa Wang', reason: 'Phone number disconnected' },
-    { unit: 'Unit 15B', name: 'Tom Martinez', reason: 'Email bounced' },
-  ],
-  channels: ['📧 Email', '📱 SMS'],
+type RetrySource = 'resident' | 'vendor' | 'broadcast'
+
+type MessageHistoryStatusFilter = 'all' | 'sent' | 'failed'
+type MessageHistoryTypeFilter = 'all' | 'resident' | 'vendor' | 'broadcast'
+
+type ResidentNotificationTicketEmbed = {
+  id: string
+  resident_name: string | null
+  unit: string | null
 }
 
-const MESSAGE_DETAILS_BY_ID: Partial<Record<string, MessageDetailsPayload>> = {
-  '1': RENT_PAYMENT_MESSAGE_DETAILS,
+type ResidentNotificationLogRow = {
+  id: string
+  created_at: string
+  ticket_id: string
+  event_type: string
+  channel: string
+  error: string | null
+  vendor_name?: string | null
+  maintenance_requests?: ResidentNotificationTicketEmbed | ResidentNotificationTicketEmbed[] | null
+}
+
+type VendorNotificationLogRow = {
+  id: string
+  created_at: string
+  ticket_id: string
+  channel: string
+  error: string | null
+  vendors?: { id: string; name: string | null } | { id: string; name: string | null }[] | null
+}
+
+type BroadcastNotificationParent = {
+  subject: string | null
+  message: string | null
+  audience: string | null
+}
+
+type BroadcastNotificationLogRow = {
+  id: string
+  created_at: string
+  channel: string
+  success: boolean
+  error: string | null
+  broadcast_id: string
+  recipient_user_id?: string | null
+  recipient_name?: string | null
+  recipient_email?: string | null
+  broadcast_notifications: BroadcastNotificationParent | BroadcastNotificationParent[] | null
+}
+
+function formatNotifTimestamp(iso: string): string {
+  const d = new Date(iso)
+  if (Number.isNaN(d.getTime())) return iso
+  return d.toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })
+}
+
+function shortTicket(ticketId: string): string {
+  const t = ticketId.trim().toUpperCase()
+  return t.length > 12 ? t.slice(0, 12) : t
+}
+
+function residentEventLabel(eventType: string, vendorName?: string | null): string {
+  const x = eventType.trim().toLowerCase()
+  const v = (vendorName ?? '').trim()
+  if (x === 'ticket_submitted') return 'Ticket Submitted'
+  if (x === 'vendor_assigned') {
+    return v ? `Vendor Assigned (${v})` : 'Vendor Assigned'
+  }
+  if (x === 'repair_in_progress') {
+    return v ? `Repair In Progress (${v})` : 'Repair In Progress'
+  }
+  if (x === 'repair_completed') return 'Repair Completed'
+  return 'Resident Update'
+}
+
+function channelLabelFromLog(channel: string): string {
+  const x = channel.trim().toLowerCase()
+  if (x === 'sms') return 'SMS'
+  if (x === 'email') return 'Email'
+  return channel
+}
+
+/** User-facing copy for delivery rows where SMS failed (e.g. Twilio trial / account limits). */
+const SMS_FAILURE_DESCRIPTION =
+  "You can't text that number because your account isn't fully unlocked yet."
+
+function notifRowFromResidentLog(r: ResidentNotificationLogRow): NotifRow {
+  const failed = Boolean(r.error && r.error.trim())
+  const raw = r.maintenance_requests
+  const ticket = Array.isArray(raw) ? raw[0] : raw
+
+  const residentName = (ticket?.resident_name ?? '').trim() || 'Resident'
+  const unitRaw = (ticket?.unit ?? '').trim()
+  const unit = unitRaw ? ` (Unit ${unitRaw})` : ''
+  const vendor = r.vendor_name ?? ''
+
+  const ticketSubtitle = `Ticket ${shortTicket(r.ticket_id)}`
+  const description = failed
+    ? r.channel.trim().toLowerCase() === 'sms'
+      ? `${ticketSubtitle}\n\n${SMS_FAILURE_DESCRIPTION}`
+      : `${ticketSubtitle}\n\nDelivery failed via ${r.channel.toUpperCase()}: ${r.error}`
+    : `${ticketSubtitle}\n\nResident notification delivered via ${r.channel.toUpperCase()}.`
+
+  return {
+    id: r.id,
+    chips: [
+      { label: 'Resident', className: 'bg-secondary text-primary' },
+      {
+        label: failed ? 'Failed' : 'Sent',
+        className: failed
+          ? 'bg-[#b52a00] text-white'
+          : 'bg-extended-2 text-extended-3',
+      },
+    ],
+    title: `${residentName}${unit} — ${residentEventLabel(r.event_type, vendor)}`,
+    description,
+    meta: [
+      channelLabelFromLog(r.channel),
+      failed ? 'Delivery failed' : 'Delivered',
+      `Time ${formatNotifTimestamp(r.created_at)}`,
+    ],
+    variant: failed ? 'failed' : 'default',
+    ...(failed ? { footer: 'failed' as const } : {}),
+  }
+}
+
+function broadcastParentSubjectMessage(
+  parent: BroadcastNotificationParent | BroadcastNotificationParent[] | null | undefined,
+): { subject: string; message: string } {
+  const p = Array.isArray(parent) ? parent[0] : parent
+  return {
+    subject: (p?.subject ?? '').trim() || 'Broadcast',
+    message: (p?.message ?? '').trim(),
+  }
+}
+
+function notifRowFromBroadcastLog(row: BroadcastNotificationLogRow): NotifRow {
+  const { subject, message } = broadcastParentSubjectMessage(row.broadcast_notifications)
+  const failed = !row.success
+  const preview = message.length > 160 ? `${message.slice(0, 160)}…` : message || '—'
+  const name =
+    (row.recipient_name ?? '').trim() || (row.recipient_email ?? '').trim() || 'Resident'
+  return {
+    id: `bcl-${row.id}`,
+    chips: [
+      { label: 'Broadcast', className: 'bg-extended-1 text-white' },
+      {
+        label: failed ? 'Failed' : 'Sent',
+        className: failed ? 'bg-error text-white' : 'bg-extended-2 text-extended-3',
+      },
+    ],
+    title: `${name} — ${subject}`,
+    description: failed
+      ? row.channel.trim().toLowerCase() === 'sms'
+        ? SMS_FAILURE_DESCRIPTION
+        : `Delivery failed via ${row.channel.toUpperCase()}${row.error ? `: ${row.error}` : ''}`
+      : preview,
+    meta: [
+      channelLabelFromLog(row.channel),
+      'Broadcast',
+      failed ? 'Delivery failed' : 'Delivered',
+      `Time ${formatNotifTimestamp(row.created_at)}`,
+    ],
+    variant: failed ? 'failed' : 'default',
+    ...(failed ? { footer: 'failed' as const } : {}),
+  }
+}
+
+function notifRowFromVendorLog(row: VendorNotificationLogRow): NotifRow {
+  const failed = Boolean(row.error && row.error.trim())
+  const vendor = Array.isArray(row.vendors) ? row.vendors[0] : row.vendors
+  const vendorName = (vendor?.name ?? '').trim() || 'Vendor'
+  return {
+    id: row.id,
+    chips: [
+      { label: 'Vendor', className: 'bg-extended-1 text-white' },
+      {
+        label: failed ? 'Failed' : 'Sent',
+        className: failed
+          ? 'bg-error text-white'
+          : 'bg-extended-2 text-extended-3',
+      },
+    ],
+    title: `${vendorName} — Ticket ${shortTicket(row.ticket_id)}`,
+    description: failed
+      ? row.channel.trim().toLowerCase() === 'sms'
+        ? SMS_FAILURE_DESCRIPTION
+        : `Vendor delivery failed via ${row.channel.toUpperCase()}: ${row.error}`
+      : `Vendor notification delivered via ${row.channel.toUpperCase()}.`,
+    meta: [
+      channelLabelFromLog(row.channel),
+      `Ticket ${shortTicket(row.ticket_id)}`,
+      failed ? 'Delivery failed' : 'Delivered',
+      `Time ${formatNotifTimestamp(row.created_at)}`,
+    ],
+    variant: failed ? 'failed' : 'default',
+    ...(failed ? { footer: 'failed' as const } : {}),
+  }
 }
 
 const BOIL_WATER_EDIT_INITIAL: EditMessageModalInitial = {
@@ -255,7 +406,7 @@ const EDIT_MESSAGE_BY_ID: Partial<Record<string, EditMessageModalInitial>> = {
 
 const ELEVATOR_FAILED_MESSAGE_DETAILS: FailedMessageDetailsPayload = {
   subtitleLine: 'Building A Emergency Notice - Mar 25, 2:15 PM',
-  categoryBadge: { label: 'Alert - System', className: 'bg-[#ffe2e2] text-[#c10007]' },
+  categoryBadge: { label: 'Alert - System', className: 'bg-error text-white' },
   messageTitle: 'Emergency: Elevator Out of Service - Building A',
   messageBody:
     'Elevator in Building A is temporarily out of service. Use stairs or Building B elevator.',
@@ -298,64 +449,12 @@ const FAILED_MESSAGE_DETAILS_BY_ID: Partial<Record<string, FailedMessageDetailsP
   '5': ELEVATOR_FAILED_MESSAGE_DETAILS,
 }
 
-function messageDetailsForRow(row: NotifRow): MessageDetailsPayload {
-  const preset = MESSAGE_DETAILS_BY_ID[row.id]
-  if (preset) return preset
-
-  const STATUS = new Set(['Sent', 'Pending', 'Failed'])
-  const statusChip = row.chips.find((c) => STATUS.has(c.label))
-  const categoryChip = row.chips.find(
-    (c) =>
-      !STATUS.has(c.label) &&
-      c.label !== '🤖 Automated' &&
-      !c.label.startsWith('🤖'),
-  )
-
-  const metaBlob = row.meta.join(' ')
-  const timeLine = row.meta.find((m) => m.startsWith('🕐'))
-  const sentAtLabel = timeLine ? `Sent ${timeLine.replace(/^🕐\s*/, '')}` : '—'
-
-  const deliveredMatch = metaBlob.match(/(\d+)\s+delivered/)
-  const failedMatch = metaBlob.match(/(\d+)\s+failed/)
-  const unitsMatch = metaBlob.match(/\((\d+)\s+units?\)/)
-  const delivered = deliveredMatch ? parseInt(deliveredMatch[1], 10) : 0
-  const failed = failedMatch ? parseInt(failedMatch[1], 10) : 0
-  const fromUnits = unitsMatch ? parseInt(unitsMatch[1], 10) : 0
-  const totalRecipients =
-    fromUnits > 0 ? fromUnits : delivered + failed > 0 ? delivered + failed : 0
-
-  const channelLine = row.meta.find((m) => m.includes('📧') || m.includes('SMS'))
-  const channels: string[] = []
-  if (channelLine?.includes('Email')) channels.push('📧 Email')
-  if (channelLine?.includes('SMS')) channels.push('📱 SMS')
-  if (channels.length === 0) channels.push('📧 Email')
-
-  return {
-    sentAtLabel,
-    statusBadge: statusChip ?? {
-      label: '—',
-      className: 'border border-[#e5e7eb] bg-[#f3f4f6] text-[#364153]',
-    },
-    categoryBadge: categoryChip ?? {
-      label: 'Message',
-      className: 'border border-[#e5e7eb] bg-[#f3f4f6] text-[#364153]',
-    },
-    messageTitle: row.title,
-    messageBody: row.description,
-    totalRecipients,
-    delivered: delivered || (failed === 0 && totalRecipients > 0 ? totalRecipients : delivered),
-    failed,
-    failedDeliveries: [],
-    channels,
-  }
-}
-
 const MESSAGE_HISTORY_ROWS: NotifRow[] = [
   {
     id: '1',
     chips: [
-      { label: 'Rent', className: 'bg-[#dbeafe] text-[#1447e6]' },
-      { label: 'Sent', className: 'bg-[#dcfce7] text-[#008236]' },
+      { label: 'Rent', className: 'bg-extended-1 text-white' },
+      { label: 'Sent', className: 'bg-extended-2 text-extended-3' },
     ],
     title: 'Rent Payment Reminder - Due March 31',
     description:
@@ -371,8 +470,8 @@ const MESSAGE_HISTORY_ROWS: NotifRow[] = [
   {
     id: '2',
     chips: [
-      { label: 'Maintenance', className: 'bg-[#f3e8ff] text-[#8200db]' },
-      { label: 'Sent', className: 'bg-[#dcfce7] text-[#008236]' },
+      { label: 'Resident', className: 'bg-secondary text-primary' },
+      { label: 'Sent', className: 'bg-extended-2 text-extended-3' },
     ],
     title: 'Water Shut Off - Building B (Scheduled Maintenance)',
     description:
@@ -388,8 +487,8 @@ const MESSAGE_HISTORY_ROWS: NotifRow[] = [
   {
     id: '3',
     chips: [
-      { label: 'Alert - City', className: 'bg-[#fef3c6] text-[#bb4d00]' },
-      { label: 'Pending', className: 'bg-[#fef9c2] text-[#a65f00]' },
+      { label: 'Alert - City', className: 'bg-tertiary text-tertiary' },
+      { label: 'Pending', className: 'bg-tertiary text-tertiary' },
     ],
     title: 'Boil Water Advisory - City of Oakland',
     description:
@@ -405,8 +504,8 @@ const MESSAGE_HISTORY_ROWS: NotifRow[] = [
   {
     id: '4',
     chips: [
-      { label: 'Inspection', className: 'bg-[#e0e7ff] text-[#432dd7]' },
-      { label: 'Sent', className: 'bg-[#dcfce7] text-[#008236]' },
+      { label: 'Inspection', className: 'bg-extended-1 text-primary' },
+      { label: 'Sent', className: 'bg-extended-2 text-extended-3' },
     ],
     title: 'Annual Fire Safety Inspection - Unit 5A',
     description:
@@ -414,7 +513,7 @@ const MESSAGE_HISTORY_ROWS: NotifRow[] = [
     meta: [
       '📧 Email + SMS',
       '👥 Michael Chan (Unit 5A)',
-      '✅ Delivered',
+      'Delivered',
       '🕐 Mar 25, 11:30 AM',
     ],
     variant: 'default',
@@ -422,8 +521,8 @@ const MESSAGE_HISTORY_ROWS: NotifRow[] = [
   {
     id: '5',
     chips: [
-      { label: 'Alert - System', className: 'bg-[#ffe2e2] text-[#c10007]' },
-      { label: 'Sent', className: 'bg-[#dcfce7] text-[#008236]' },
+      { label: 'Alert - System', className: 'bg-error text-white' },
+      { label: 'Sent', className: 'bg-extended-2 text-extended-3' },
     ],
     title: 'Emergency: Elevator Out of Service - Building A',
     description:
@@ -441,19 +540,19 @@ const MESSAGE_HISTORY_ROWS: NotifRow[] = [
 
 function cardShellClasses(variant: NotifRow['variant']) {
   if (variant === 'pending') {
-    return 'bg-[#fffbeb] border-[#ffd230]'
+    return 'bg-tertiary border-tertiary'
   }
-  if (variant === 'failed') {
-    return 'bg-[#fef2f2] border-[#ffa2a2]'
-  }
-  return 'bg-white border-[#e5e7eb]'
+  // default + failed: same shell; failed state is shown only on the Failed chip.
+  return 'bg-white border-secondary'
 }
 
 type AutomationPanelItem = {
   id: string
   title: string
   metaLine: string
-  status: 'active' | 'paused'
+  status: 'active' | 'paused' | 'scheduled_pending'
+  /** When false, hide Override (e.g. one-off scheduled broadcasts from DB). */
+  showOverride?: boolean
 }
 
 /** Demo scope id — pairs with DEMO_BILLING_AUTOMATIONS for Monthly Rent Reminder (Figma 112:5773). */
@@ -465,29 +564,176 @@ const INSPECTION_72HR_NOTICE_SCOPE = 'insp-72hr'
 /** Demo ticket id — pairs with DEMO_TICKETS for Maintenance Request Updates automation (Figma 106:3458). */
 const MAINTENANCE_REQUEST_UPDATES_SCOPE = 'MNT-AUTO-UPD'
 
-const SCHEDULED_AUTOMATION_ITEMS: AutomationPanelItem[] = [
-  {
-    id: 'sa-1',
-    title: 'Monthly Rent Reminder',
-    metaLine:
-      'Trigger: 7 days before rent due | Audience: All residents | Channel: Email + SMS',
-    status: 'active',
-  },
-  {
-    id: 'sa-2',
-    title: 'Inspection Reminder (72hr notice)',
-    metaLine:
-      'Trigger: 72 hours before inspection | Audience: Affected unit | Channel: Email + SMS',
-    status: 'active',
-  },
-  {
-    id: 'sa-3',
-    title: 'Maintenance Request Updates',
-    metaLine:
-      'Trigger: Status change on request | Audience: Request submitter | Channel: Email + SMS',
-    status: 'active',
-  },
-]
+type BroadcastScheduleRow = {
+  id: string
+  subject: string
+  message?: string
+  status: string
+  created_at: string
+  scheduled_for: string
+  audience: string
+  channels: unknown
+  building: string | null
+  payload: unknown
+}
+
+function formatBroadcastChannels(channels: unknown): string {
+  const arr = Array.isArray(channels) ? channels : []
+  const hasEmail = arr.includes('email')
+  const hasSms = arr.includes('sms')
+  if (hasEmail && hasSms) return 'Email + SMS'
+  if (hasSms) return 'SMS'
+  return 'Email'
+}
+
+function audienceSummaryBroadcast(audience: string, building: string | null): string {
+  if (audience === 'all') return 'Audience: All residents'
+  if (audience === 'building') {
+    const b = (building ?? '').trim()
+    return b ? `Audience: Building (${b})` : 'Audience: Building'
+  }
+  return 'Audience: Specific units'
+}
+
+/** DB `payload` is usually the automation object; some paths may nest it under `automation`. */
+function automationPayloadRoot(payload: unknown): Record<string, unknown> | null {
+  const raw =
+    payload && typeof payload === 'object' && !Array.isArray(payload)
+      ? (payload as Record<string, unknown>)
+      : null
+  if (!raw) return null
+  const inner = raw.automation
+  if (inner && typeof inner === 'object' && !Array.isArray(inner)) {
+    return inner as Record<string, unknown>
+  }
+  return raw
+}
+
+function automationSummaryFromPayload(payload: unknown): string {
+  const p = automationPayloadRoot(payload)
+  if (!p) return 'Automation: none'
+
+  const lines: string[] = []
+  const rr = p.rentReminder
+  if (rr && typeof rr === 'object') {
+    const o = rr as Record<string, unknown>
+    const due = typeof o.dueDate === 'string' ? o.dueDate.trim() : ''
+    const amt = typeof o.amount === 'string' ? o.amount.trim() : ''
+    if (due || amt) {
+      const bits: string[] = []
+      if (amt) bits.push(`rent ${amt}`)
+      if (due) bits.push(`due ${due}`)
+      lines.push(`Rent: ${bits.join(' · ')}`)
+    }
+  }
+
+  const insp = p.inspection
+  if (insp && typeof insp === 'object') {
+    const o = insp as Record<string, unknown>
+    const typ = typeof o.inspectionType === 'string' ? o.inspectionType.trim() : ''
+    const dt = typeof o.inspectionDate === 'string' ? o.inspectionDate.trim() : ''
+    if (typ || dt) {
+      lines.push(`Inspection: ${typ || 'notice'}${dt ? ` · ${dt}` : ''}`)
+    }
+  }
+
+  const enabled = p.enabled
+  if (enabled === false) {
+    if (lines.length === 0) return 'Automation: disabled'
+    return `Automation: ${lines.join(' · ')}`
+  }
+  if (p.autoRetryFailed === true) {
+    const attempts =
+      typeof p.retryMaxAttempts === 'number' && Number.isFinite(p.retryMaxAttempts)
+        ? String(p.retryMaxAttempts)
+        : '3'
+    const delay = typeof p.retryDelay === 'string' && p.retryDelay.trim() ? p.retryDelay : '30m'
+    lines.push(`Auto-retry ${attempts}x (${delay})`)
+  }
+  if (p.recurringSchedule === true) {
+    const freq =
+      typeof p.recurringFrequency === 'string' && p.recurringFrequency.trim()
+        ? p.recurringFrequency
+        : 'weekly'
+    const time =
+      typeof p.recurringTime === 'string' && p.recurringTime.trim() ? p.recurringTime : '09:00'
+    lines.push(`Recurring ${freq} @ ${time}`)
+  }
+  if (p.autoFollowUp === true) {
+    const after =
+      typeof p.followUpAfter === 'string' && p.followUpAfter.trim() ? p.followUpAfter : '24h'
+    lines.push(`Follow-up after ${after}`)
+  }
+
+  if (lines.length === 0) {
+    return 'Automation: none selected'
+  }
+  return `Automation: ${lines.join(' · ')}`
+}
+
+function hasSelectedBroadcastAutomation(payload: unknown): boolean {
+  const p = automationPayloadRoot(payload)
+  if (!p) return false
+  const rr = p.rentReminder
+  if (rr && typeof rr === 'object') {
+    const o = rr as Record<string, unknown>
+    const due = typeof o.dueDate === 'string' ? o.dueDate.trim() : ''
+    const amt = typeof o.amount === 'string' ? o.amount.trim() : ''
+    if (due || amt) return true
+  }
+  const insp = p.inspection
+  if (insp && typeof insp === 'object') {
+    const o = insp as Record<string, unknown>
+    const typ = typeof o.inspectionType === 'string' ? o.inspectionType.trim() : ''
+    const dt = typeof o.inspectionDate === 'string' ? o.inspectionDate.trim() : ''
+    if (typ || dt) return true
+  }
+  if (p.enabled === true) return true
+  if (p.enabled === false) return false
+  return p.autoRetryFailed === true || p.recurringSchedule === true || p.autoFollowUp === true
+}
+
+function hasInspectionAutomationFallback(row: BroadcastScheduleRow): boolean {
+  const subject = (row.subject ?? '').trim().toLowerCase()
+  const message = (row.message ?? '').trim().toLowerCase()
+  if (!subject && !message) return false
+  const hasInspectionWord = subject.includes('inspection') || message.includes('inspection')
+  const hasInspectionScheduleDetails =
+    message.includes('scheduled date:') ||
+    message.includes('advance notice:') ||
+    message.includes('inspection type:')
+  return hasInspectionWord && hasInspectionScheduleDetails
+}
+
+function broadcastRowToAutomationItem(row: BroadcastScheduleRow): AutomationPanelItem {
+  const when =
+    row.status === 'scheduled'
+      ? row.scheduled_for
+        ? new Date(row.scheduled_for).toLocaleString(undefined, {
+            dateStyle: 'medium',
+            timeStyle: 'short',
+          })
+        : '—'
+      : row.created_at
+        ? new Date(row.created_at).toLocaleString(undefined, {
+            dateStyle: 'medium',
+            timeStyle: 'short',
+          })
+        : '—'
+
+  const whenLine =
+    row.status === 'scheduled'
+      ? `Sends ${when}`
+      : row.status === 'processing'
+        ? `Processing · ${when}`
+        : `Configured from Send Now · ${when}`
+  return {
+    id: `bc-${row.id}`,
+    title: row.subject.trim() || 'Scheduled broadcast',
+    metaLine: `${audienceSummaryBroadcast(row.audience, row.building)} · ${formatBroadcastChannels(row.channels)} · ${whenLine} · ${automationSummaryFromPayload(row.payload)}`,
+    status: row.status === 'scheduled' ? 'scheduled_pending' : 'active',
+  }
+}
 
 /** External alert rows for AI-Aggregated panel (Figma 83:1281). */
 type ExternalAlertCardKind = 'action_required' | 'info' | 'processed'
@@ -542,32 +788,35 @@ const EXTERNAL_ALERT_CARDS: ExternalAlertCard[] = [
 
 function automationStatusPill(status: AutomationPanelItem['status']) {
   if (status === 'paused') {
-    return 'bg-[#fef9c2] text-[#a65f00]'
+    return 'bg-tertiary text-tertiary'
   }
-  return 'bg-[#dcfce7] text-[#008236]'
+  if (status === 'scheduled_pending') {
+    return 'bg-extended-1 text-white'
+  }
+  return 'bg-extended-2 text-extended-3'
 }
 
 function externalAlertCardShell(card: ExternalAlertCard) {
   if (card.whiteBackground) {
-    return 'bg-white border-[#e5e7eb]'
+    return 'bg-white border-secondary'
   }
   if (card.kind === 'action_required') {
-    return 'bg-[#fffbeb] border-[#ffd230]'
+    return 'bg-tertiary border-tertiary'
   }
   if (card.kind === 'info') {
-    return 'bg-[#eff6ff] border-[#8ec5ff]'
+    return 'bg-extended-1 border-extended-1'
   }
-  return 'bg-white border-[#e5e7eb]'
+  return 'bg-white border-secondary'
 }
 
 function externalAlertStatusBadgeClasses(kind: ExternalAlertCardKind) {
   if (kind === 'action_required') {
-    return 'bg-[#fef3c6] text-[#bb4d00]'
+    return 'bg-tertiary text-tertiary'
   }
   if (kind === 'info') {
-    return 'bg-[#dbeafe] text-[#1447e6]'
+    return 'bg-extended-1 text-white'
   }
-  return 'bg-[#f3f4f6] text-[#364153]'
+  return 'bg-secondary text-neutral-variant'
 }
 
 function ExternalAlertsAggregatedPanel({
@@ -584,14 +833,14 @@ function ExternalAlertsAggregatedPanel({
   const newCount = visibleCards.filter((c) => c.showActions).length
 
   return (
-    <div className="flex flex-col gap-4 rounded-[10px] border border-[#e5e7eb] bg-white px-[25px] pb-px pt-[25px]">
+    <div className="flex flex-col gap-4 rounded-[10px] border border-secondary bg-white px-[25px] pb-px pt-[25px]">
       <div className="flex h-8 w-full flex-wrap items-center justify-between gap-3">
         <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
-          <h3 className="text-[18px] font-semibold leading-7 tracking-[-0.4395px] text-[#0a0a0a]">
+          <h3 className="text-[18px] font-semibold leading-7 tracking-[-0.4395px] text-extended-3">
             AI-Aggregated External Alerts
           </h3>
           {newCount > 0 ? (
-            <span className="inline-flex rounded px-2 py-1 text-[12px] font-medium leading-4 bg-[#dbeafe] text-[#1447e6]">
+            <span className="inline-flex rounded px-2 py-1 text-[12px] font-medium leading-4 bg-extended-1 text-white">
               {newCount} New
             </span>
           ) : null}
@@ -599,7 +848,7 @@ function ExternalAlertsAggregatedPanel({
         <button
           type="button"
           onClick={onConfigureSources}
-          className="inline-flex h-8 shrink-0 items-center justify-center rounded-lg border border-black/10 bg-white px-[13px] text-[14px] font-medium tracking-[-0.1504px] text-[#0a0a0a] outline-none hover:bg-[#f9fafb] focus-visible:ring-2 focus-visible:ring-[#944c73] focus-visible:ring-offset-2"
+          className="inline-flex h-8 shrink-0 items-center justify-center rounded-lg border border-black/10 bg-white px-[13px] text-[14px] font-medium tracking-[-0.1504px] text-extended-3 outline-none hover:bg-secondary focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2"
         >
           Configure Sources
         </button>
@@ -607,7 +856,7 @@ function ExternalAlertsAggregatedPanel({
 
       <div className="flex flex-col gap-3 pb-6">
         {visibleCards.length === 0 ? (
-          <p className="py-8 text-center text-[14px] leading-5 text-[#6a7282]">
+          <p className="py-8 text-center text-[14px] leading-5 text-neutral">
             No external alerts right now.
           </p>
         ) : (
@@ -621,7 +870,7 @@ function ExternalAlertsAggregatedPanel({
             >
               <div className="min-w-0 space-y-2">
                 <div className="flex flex-wrap items-center gap-2">
-                  <span className="text-[14px] font-medium leading-5 tracking-[-0.1504px] text-[#0a0a0a]">
+                  <span className="text-[14px] font-medium leading-5 tracking-[-0.1504px] text-extended-3">
                     {card.title}
                   </span>
                   <span
@@ -630,23 +879,23 @@ function ExternalAlertsAggregatedPanel({
                     {card.badgeLabel}
                   </span>
                 </div>
-                <p className="text-[14px] leading-5 tracking-[-0.1504px] text-[#364153]">
+                <p className="text-[14px] leading-5 tracking-[-0.1504px] text-neutral-variant">
                   {card.description}
                 </p>
-                <p className="text-[12px] leading-4 text-[#6a7282]">{card.sourceLine}</p>
+                <p className="text-[12px] leading-4 text-neutral">{card.sourceLine}</p>
                 {card.showActions ? (
                   <div className="flex flex-wrap gap-2 pt-1">
                     <button
                       type="button"
                       onClick={onNotifyResidents}
-                      className="inline-flex h-8 items-center justify-center rounded-lg bg-[#5f2167] px-3 text-[14px] font-medium tracking-[-0.1504px] text-white outline-none hover:bg-[#4a1a52] focus-visible:ring-2 focus-visible:ring-[#944c73] focus-visible:ring-offset-2"
+                      className="inline-flex h-8 items-center justify-center rounded-lg bg-[#ffee6c] px-3 text-[14px] font-medium tracking-[-0.1504px] text-[#101828] outline-none hover:bg-[#f5e35e] focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2"
                     >
                       Notify Residents
                     </button>
                     <button
                       type="button"
                       onClick={() => onDismiss(card.id)}
-                      className="inline-flex h-8 items-center justify-center rounded-lg border border-black/10 bg-white px-[13px] text-[14px] font-medium tracking-[-0.1504px] text-[#0a0a0a] outline-none hover:bg-[#f9fafb] focus-visible:ring-2 focus-visible:ring-[#944c73] focus-visible:ring-offset-2"
+                      className="inline-flex h-8 items-center justify-center rounded-lg border border-black/10 bg-white px-[13px] text-[14px] font-medium tracking-[-0.1504px] text-extended-3 outline-none hover:bg-secondary focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2"
                     >
                       Dismiss
                     </button>
@@ -665,182 +914,95 @@ function AutomationsPanel({
   title,
   items,
   onOverride,
+  scheduledInDatabaseCount,
 }: {
   title: string
   items: AutomationPanelItem[]
   onOverride: (item: AutomationPanelItem) => void
+  /** From stats: rows with status `scheduled` (may differ from this list when filters differ). */
+  scheduledInDatabaseCount?: number
 }) {
   return (
-    <div className="flex flex-col gap-4 rounded-[10px] border border-[#e5e7eb] bg-white px-[25px] pb-6 pt-[25px]">
-      <h3 className="text-[18px] font-semibold leading-7 tracking-[-0.4395px] text-[#0a0a0a]">
+    <div className="flex flex-col gap-4 rounded-[10px] border border-secondary bg-white px-[25px] pb-6 pt-[25px]">
+      <h3 className="text-[18px] font-semibold leading-7 tracking-[-0.4395px] text-extended-3">
         {title}
       </h3>
-      <div className="flex flex-col gap-3">
-        {items.map((item) => (
-          <div
-            key={item.id}
-            className="flex flex-col gap-3 rounded-[10px] border border-[#e5e7eb] px-[13px] py-3 sm:flex-row sm:items-center sm:justify-between sm:gap-4"
-          >
-            <div className="min-w-0 flex-1 space-y-1">
-              <div className="flex flex-wrap items-center gap-2">
-                <span className="text-[14px] font-medium leading-5 tracking-[-0.1504px] text-[#0a0a0a]">
-                  {item.title}
-                </span>
-                <span
-                  className={`inline-flex rounded px-2 py-0.5 text-[12px] font-normal leading-4 ${automationStatusPill(item.status)}`}
-                >
-                  {item.status === 'active' ? 'Active' : 'Paused'}
-                </span>
-              </div>
-              <p className="text-[12px] leading-4 text-[#4a5565]">{item.metaLine}</p>
-            </div>
-            <button
-              type="button"
-              onClick={() => onOverride(item)}
-              className="inline-flex h-8 w-full shrink-0 items-center justify-center gap-2 rounded-lg border border-black/10 bg-white px-[13px] text-[14px] font-medium tracking-[-0.1504px] text-[#e17100] outline-none hover:bg-[#fffbeb] focus-visible:ring-2 focus-visible:ring-[#944c73] focus-visible:ring-offset-2 sm:w-auto"
+      {items.length === 0 ? (
+        <div className="rounded-[10px] border border-dashed border-secondary bg-secondary/40 px-4 py-6 text-center">
+          <p className="text-[14px] leading-5 tracking-[-0.1504px] text-neutral-variant">
+            No scheduled automations yet. Rows appear here when a broadcast is{' '}
+            <span className="font-medium text-extended-3">scheduled</span>,{' '}
+            <span className="font-medium text-extended-3">processing</span>, or completed with
+            automation options stored on the record.
+          </p>
+          {typeof scheduledInDatabaseCount === 'number' && scheduledInDatabaseCount > 0 ? (
+            <p className="mt-3 text-[13px] leading-5 text-neutral">
+              The database currently reports{' '}
+              <span className="font-semibold tabular-nums text-extended-3">
+                {scheduledInDatabaseCount}
+              </span>{' '}
+              scheduled broadcast
+              {scheduledInDatabaseCount === 1 ? '' : 's'}. If this panel stays empty, check the
+              browser console for load errors or table access (RLS).
+            </p>
+          ) : null}
+        </div>
+      ) : (
+        <div className="flex flex-col gap-3">
+          {items.map((item) => (
+            <div
+              key={item.id}
+              className="flex flex-col gap-3 rounded-[10px] border border-secondary px-[13px] py-3 sm:flex-row sm:items-center sm:justify-between sm:gap-4"
             >
-              <img src={overrideIcon} alt="" className="size-4 shrink-0 object-contain" />
-              Override
-            </button>
-          </div>
-        ))}
-      </div>
-    </div>
-  )
-}
-
-/** Failed & Urgent queue (Figma 83:1928). */
-function FailedUrgentNotificationsPanel({
-  onRetryAlternativeChannel,
-  onUpdateContactInfo,
-  onSendScheduledRentNow,
-  onSendEmergencyGasAlert,
-  onReviewGasAlertDetails,
-}: {
-  onRetryAlternativeChannel: () => void
-  onUpdateContactInfo: () => void
-  onSendScheduledRentNow: () => void
-  onSendEmergencyGasAlert: () => void
-  onReviewGasAlertDetails: () => void
-}) {
-  const issueCount = 3
-
-  return (
-    <div className="flex flex-col gap-4 rounded-[10px] border border-[#e5e7eb] bg-white px-[25px] pb-6 pt-[25px]">
-      <div className="flex flex-wrap items-center gap-2">
-        <h3 className="text-[18px] font-semibold leading-7 tracking-[-0.4395px] text-[#82181a]">
-          Failed &amp; Urgent Notifications
-        </h3>
-        <span className="inline-flex rounded px-2 py-1 text-[12px] font-medium leading-4 bg-[#ffe2e2] text-[#c10007]">
-          {issueCount} Issues
-        </span>
-      </div>
-
-      <div className="flex flex-col gap-3">
-        <div className="rounded-[10px] border border-[#e5e7eb] bg-white p-[17px]">
-          <div className="flex flex-col gap-2">
-            <div className="flex flex-wrap items-center gap-2">
-              <span className="text-[14px] font-medium leading-5 tracking-[-0.1504px] text-[#101828]">
-                Failed SMS Delivery (3 recipients)
-              </span>
+              <div className="min-w-0 flex-1 space-y-1">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="text-[14px] font-medium leading-5 tracking-[-0.1504px] text-extended-3">
+                    {item.title}
+                  </span>
+                  <span
+                    className={`inline-flex rounded px-2 py-0.5 text-[12px] font-normal leading-4 ${automationStatusPill(item.status)}`}
+                  >
+                    {item.status === 'scheduled_pending'
+                      ? 'Scheduled'
+                      : item.status === 'active'
+                        ? 'Active'
+                        : 'Paused'}
+                  </span>
+                </div>
+                <p className="text-[12px] leading-4 text-neutral-variant">{item.metaLine}</p>
+              </div>
+              {item.showOverride !== false ? (
+                <button
+                  type="button"
+                  onClick={() => onOverride(item)}
+                  className="inline-flex h-8 w-full shrink-0 items-center justify-center gap-2 rounded-lg border border-black/10 bg-white px-[13px] text-[14px] font-medium tracking-[-0.1504px] text-tertiary outline-none hover:bg-tertiary focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 sm:w-auto"
+                >
+                  <img src={overrideIcon} alt="" className="size-4 shrink-0 object-contain" />
+                  Override
+                </button>
+              ) : null}
             </div>
-            <p className="text-[14px] leading-5 tracking-[-0.1504px] text-[#364153]">
-              Emergency elevator notice failed to deliver to 3 residents via SMS. Email delivered
-              successfully.
-            </p>
-            <p className="text-[12px] leading-4 text-[#6a7282]">
-              Recipients: Unit 3A, 8B, 12C | Failure reason: Invalid phone numbers
-            </p>
-            <div className="flex flex-wrap gap-2 pt-1">
-              <button
-                type="button"
-                onClick={onRetryAlternativeChannel}
-                className="inline-flex h-8 items-center justify-center rounded-lg bg-[#5f2167] px-3 text-[14px] font-medium tracking-[-0.1504px] text-white outline-none hover:bg-[#4a1a52] focus-visible:ring-2 focus-visible:ring-[#944c73] focus-visible:ring-offset-2"
-              >
-                Retry via Alternative Channel
-              </button>
-              <button
-                type="button"
-                onClick={onUpdateContactInfo}
-                className="inline-flex h-8 items-center justify-center rounded-lg border border-black/10 bg-white px-[13px] text-[14px] font-medium tracking-[-0.1504px] text-[#0a0a0a] outline-none hover:bg-[#f9fafb] focus-visible:ring-2 focus-visible:ring-[#944c73] focus-visible:ring-offset-2"
-              >
-                Update Contact Info
-              </button>
-            </div>
-          </div>
+          ))}
         </div>
-
-        <div className="rounded-[10px] border border-[#e5e7eb] bg-white p-[17px]">
-          <div className="flex flex-col gap-2">
-            <div className="flex flex-wrap items-center gap-2">
-              <span className="text-[14px] font-medium leading-5 tracking-[-0.1504px] text-[#101828]">
-                Unsent Scheduled Message
-              </span>
-            </div>
-            <p className="text-[14px] leading-5 tracking-[-0.1504px] text-[#364153]">
-              Rent reminder scheduled for Mar 25, 9:00 AM was not sent due to system maintenance
-              window.
-            </p>
-            <p className="text-[12px] leading-4 text-[#6a7282]">
-              Audience: All residents (142 units) | Type: Automated rent reminder
-            </p>
-            <div className="flex flex-wrap gap-2 pt-1">
-              <a
-                href="#broadcast-rent-reminder"
-                onClick={(e) => {
-                  e.preventDefault()
-                  onSendScheduledRentNow()
-                }}
-                className="inline-flex h-8 items-center justify-center rounded-lg bg-[#5f2167] px-3 text-[14px] font-medium tracking-[-0.1504px] text-white outline-none hover:bg-[#4a1a52] focus-visible:ring-2 focus-visible:ring-[#944c73] focus-visible:ring-offset-2"
-              >
-                Send Now
-              </a>
-            </div>
-          </div>
-        </div>
-
-        <div className="rounded-[10px] border border-[#e5e7eb] bg-white p-[17px]">
-          <div className="flex flex-col gap-2">
-            <div className="flex flex-wrap items-center gap-2">
-              <span className="text-[14px] font-medium leading-5 tracking-[-0.1504px] text-[#101828]">
-                High Priority: Urgent City Alert Not Sent
-              </span>
-              <span className="inline-flex rounded px-2 py-0.5 text-[12px] font-medium leading-4 bg-[#e7000b] text-white">
-                URGENT
-              </span>
-            </div>
-            <p className="text-[14px] leading-5 tracking-[-0.1504px] text-[#364153]">
-              AI detected urgent gas leak advisory from PG&amp;E 2 hours ago. No notification has been
-              sent to residents yet.
-            </p>
-            <p className="text-[12px] leading-4 text-[#6a7282]">
-              Source: PG&amp;E Emergency Alert | Detected: Mar 25, 2:00 PM | Status: Awaiting approval
-            </p>
-            <div className="flex flex-wrap gap-2 pt-1">
-              <button
-                type="button"
-                onClick={onSendEmergencyGasAlert}
-                className="inline-flex h-8 items-center justify-center rounded-lg bg-[#5f2167] px-3 text-[14px] font-medium tracking-[-0.1504px] text-white outline-none hover:bg-[#4a1a52] focus-visible:ring-2 focus-visible:ring-[#944c73] focus-visible:ring-offset-2"
-              >
-                Send Emergency Alert Now
-              </button>
-              <button
-                type="button"
-                onClick={onReviewGasAlertDetails}
-                className="inline-flex h-8 items-center justify-center rounded-lg border border-black/10 bg-white px-[13px] text-[14px] font-medium tracking-[-0.1504px] text-[#0a0a0a] outline-none hover:bg-[#f9fafb] focus-visible:ring-2 focus-visible:ring-[#944c73] focus-visible:ring-offset-2"
-              >
-                Review Details
-              </button>
-            </div>
-          </div>
-        </div>
-      </div>
+      )}
     </div>
   )
 }
 
 export function AdminNotificationManagementDashboard() {
+  const [broadcastDashboardStats, setBroadcastDashboardStats] =
+    useState<BroadcastDashboardStats>(EMPTY_BROADCAST_DASHBOARD_STATS)
+  const [messageHistoryRows, setMessageHistoryRows] =
+    useState<NotifRow[]>(MESSAGE_HISTORY_ROWS)
+  const [scheduledBroadcastAutomations, setScheduledBroadcastAutomations] = useState<
+    AutomationPanelItem[]
+  >([])
   const [tab, setTab] = useState<TabId>('history')
+  const [messageHistorySearch, setMessageHistorySearch] = useState('')
+  const [messageHistoryStatusFilter, setMessageHistoryStatusFilter] =
+    useState<MessageHistoryStatusFilter>('all')
+  const [messageHistoryTypeFilter, setMessageHistoryTypeFilter] =
+    useState<MessageHistoryTypeFilter>('all')
   const [broadcastModalOpen, setBroadcastModalOpen] = useState(false)
   const [broadcastPresentation, setBroadcastPresentation] =
     useState<SendBroadcastPresentation>('modal')
@@ -850,6 +1012,24 @@ export function AdminNotificationManagementDashboard() {
     setBroadcastModalOpen(true)
   }
 
+  function openHistoryRowEditOrFailedDetails(row: NotifRow) {
+    const editPayload = EDIT_MESSAGE_BY_ID[row.id]
+    if (editPayload) {
+      setEditMessageInitial(editPayload)
+      setEditMessageOpen(true)
+      return
+    }
+    const failedPayload = FAILED_MESSAGE_DETAILS_BY_ID[row.id]
+    if (failedPayload) {
+      setFailedMessageDetailsPayload(failedPayload)
+      setFailedMessageDetailsOpen(true)
+    }
+  }
+
+  function historyRowHasEditOrFailedDetails(row: NotifRow) {
+    return Boolean(EDIT_MESSAGE_BY_ID[row.id] || FAILED_MESSAGE_DETAILS_BY_ID[row.id])
+  }
+
   function closeBroadcast() {
     setBroadcastModalOpen(false)
     setBroadcastPresentation('modal')
@@ -857,7 +1037,61 @@ export function AdminNotificationManagementDashboard() {
 
   function closeRetryFailedDelivery() {
     setRetryFailedDeliveryOpen(false)
+    setRetryFailedDeliveryData(null)
     setRetryFailedDeliveryPresentation('modal')
+  }
+
+  function rowDeliveryChannel(row: NotifRow): 'sms' | 'email' {
+    const metaLabels = row.meta.map((m) => m.trim().toLowerCase())
+    if (metaLabels.includes('sms')) return 'sms'
+    return 'email'
+  }
+
+  function rowRetrySource(row: NotifRow): RetrySource {
+    const firstChip = row.chips[0]?.label?.trim().toLowerCase()
+    if (firstChip === 'broadcast') return 'broadcast'
+    if (firstChip === 'vendor') return 'vendor'
+    return 'resident'
+  }
+
+  function rowRetryLogId(row: NotifRow, source: RetrySource): string {
+    if (source === 'broadcast' && row.id.startsWith('bcl-')) return row.id.slice(4)
+    return row.id
+  }
+
+  async function retryRowWithExistingChannel(row: NotifRow): Promise<void> {
+    const source = rowRetrySource(row)
+    const channel = rowDeliveryChannel(row)
+    const logId = rowRetryLogId(row, source)
+    const explicitRetryUrl = import.meta.env.VITE_RETRY_FAILED_DELIVERY_URL?.trim()
+    const baseUrl = import.meta.env.VITE_SUPABASE_URL?.trim().replace(/\/+$/, '') ?? ''
+    const retryUrl =
+      explicitRetryUrl || (baseUrl ? `${baseUrl}/functions/v1/retry-failed-delivery` : '')
+    if (!retryUrl) {
+      throw new Error('Missing VITE_SUPABASE_URL for retry-failed-delivery')
+    }
+    const anonKey = import.meta.env.VITE_SUPABASE_ANON_KEY?.trim() ?? ''
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' }
+    if (anonKey) {
+      headers.apikey = anonKey
+      headers.Authorization = `Bearer ${anonKey}`
+    }
+    const res = await fetch(retryUrl, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ source, logId, channel }),
+    })
+    if (!res.ok) {
+      let msg = `Retry failed (${res.status})`
+      try {
+        const body = (await res.json()) as { error?: string }
+        if (body.error?.trim()) msg = body.error.trim()
+      } catch {
+        // ignore parse errors
+      }
+      throw new Error(msg)
+    }
+    console.info('[notifications] retry-failed-delivery success', { source, logId, channel })
   }
 
   function closeUpdateContactInfo() {
@@ -871,6 +1105,27 @@ export function AdminNotificationManagementDashboard() {
     setOverrideModalInitialTicketId(undefined)
     setOverrideModalInitialSafetyOverrideType(undefined)
     setOverrideModalPresentation('modal')
+  }
+
+  async function handleOverrideApply(submission: OverrideAutomationSubmission) {
+    const ts = new Date(submission.appliedAtIso).toLocaleString(undefined, {
+      dateStyle: 'medium',
+      timeStyle: 'short',
+    })
+    const scopeId = submission.ticketId.trim()
+    if (scopeId) {
+      setScheduledBroadcastAutomations((prev) =>
+        prev.map((item) =>
+          item.id === scopeId
+            ? {
+                ...item,
+                status: 'active',
+                metaLine: `${item.metaLine} · Override applied ${ts}`,
+              }
+            : item,
+        ),
+      )
+    }
   }
   const [inspectionModalOpen, setInspectionModalOpen] = useState(false)
   const [overrideModalOpen, setOverrideModalOpen] = useState(false)
@@ -886,9 +1141,6 @@ export function AdminNotificationManagementDashboard() {
   >(undefined)
   const [overrideModalInitialSafetyOverrideType, setOverrideModalInitialSafetyOverrideType] =
     useState<SafetyOverrideTypeId | undefined>(undefined)
-  const [messageDetailsOpen, setMessageDetailsOpen] = useState(false)
-  const [messageDetailsPayload, setMessageDetailsPayload] =
-    useState<MessageDetailsPayload | null>(null)
   const [editMessageOpen, setEditMessageOpen] = useState(false)
   const [editMessageInitial, setEditMessageInitial] =
     useState<EditMessageModalInitial | null>(null)
@@ -900,6 +1152,9 @@ export function AdminNotificationManagementDashboard() {
   )
   const [configureAiSourcesOpen, setConfigureAiSourcesOpen] = useState(false)
   const [retryFailedDeliveryOpen, setRetryFailedDeliveryOpen] = useState(false)
+  const [retryFailedDeliveryData, setRetryFailedDeliveryData] =
+    useState<RetryFailedDeliveryPayload | null>(null)
+  const [retryingRowId, setRetryingRowId] = useState<string | null>(null)
   const [retryFailedDeliveryPresentation, setRetryFailedDeliveryPresentation] =
     useState<RetryFailedDeliveryPresentation>('modal')
   const [updateContactInfoOpen, setUpdateContactInfoOpen] = useState(false)
@@ -912,6 +1167,435 @@ export function AdminNotificationManagementDashboard() {
   const [emergencyAlertDetailsPresentation, setEmergencyAlertDetailsPresentation] =
     useState<EmergencyAlertDetailsPresentation>('modal')
 
+  const invalidateBroadcastMetricsRef = useRef<(() => void) | null>(null)
+
+  useEffect(() => {
+    if (!supabase) {
+      setBroadcastDashboardStats(EMPTY_BROADCAST_DASHBOARD_STATS)
+      setMessageHistoryRows(MESSAGE_HISTORY_ROWS)
+      setScheduledBroadcastAutomations([])
+      return
+    }
+    const sb = supabase
+    let cancelled = false
+
+    async function loadBroadcastDashboardStats() {
+      let activeNotifications = 0
+
+      try {
+        const baseUrl = import.meta.env.VITE_SUPABASE_URL?.trim().replace(/\/+$/, '') ?? ''
+        const statsUrl = baseUrl ? `${baseUrl}/functions/v1/get-broadcast-stats` : ''
+        const anonKey = import.meta.env.VITE_SUPABASE_ANON_KEY?.trim() ?? ''
+        if (!statsUrl) {
+          throw new Error('get-broadcast-stats: missing VITE_SUPABASE_URL')
+        }
+        const res = await fetch(statsUrl, {
+          headers: anonKey
+            ? {
+                apikey: anonKey,
+                Authorization: `Bearer ${anonKey}`,
+              }
+            : {},
+        })
+        if (!res.ok) {
+          throw new Error(`get-broadcast-stats failed (${res.status})`)
+        }
+        const stats = (await res.json()) as {
+          activeNotifications?: unknown
+        }
+        activeNotifications =
+          typeof stats.activeNotifications === 'number' && Number.isFinite(stats.activeNotifications)
+            ? stats.activeNotifications
+            : 0
+      } catch (error) {
+        console.error(
+          '[notifications] get-broadcast-stats failed',
+          error instanceof Error ? error.message : String(error),
+        )
+      }
+
+      const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString()
+
+      const [
+        { count: scheduledCount, error: schedResErr },
+        { count: broadcastOk7, error: ok7Err },
+        { count: broadcastFail7, error: fail7Err },
+      ] = await Promise.all([
+        sb
+          .from('broadcast_notifications')
+          .select('id', { count: 'exact', head: true })
+          .eq('status', 'scheduled'),
+        sb
+          .from('broadcast_notification_log')
+          .select('*', { count: 'exact', head: true })
+          .gte('created_at', sevenDaysAgo)
+          .eq('success', true),
+        sb
+          .from('broadcast_notification_log')
+          .select('*', { count: 'exact', head: true })
+          .gte('created_at', sevenDaysAgo)
+          .eq('success', false),
+      ])
+
+      if (cancelled) return
+      if (schedResErr) {
+        console.error('[notifications] scheduled broadcast count failed', schedResErr.message)
+      }
+      if (ok7Err) {
+        console.error('[notifications] broadcast 7d success count failed', ok7Err.message)
+      }
+      if (fail7Err) {
+        console.error('[notifications] broadcast 7d failure count failed', fail7Err.message)
+      }
+
+      const broadcastSuccess7d = broadcastOk7 ?? 0
+      const broadcastFailed7d = broadcastFail7 ?? 0
+      const broadcastAttempts7d = broadcastSuccess7d + broadcastFailed7d
+      const successRate7d =
+        broadcastAttempts7d > 0
+          ? Math.max(0, Math.min(100, Math.round((broadcastSuccess7d / broadcastAttempts7d) * 100)))
+          : 0
+
+      setBroadcastDashboardStats({
+        activeNotifications24h: activeNotifications,
+        broadcastSuccess7d,
+        broadcastFailed7d,
+        scheduledDbCount: scheduledCount ?? 0,
+        successRate7d,
+      })
+    }
+
+    async function loadScheduledBroadcastRows() {
+      let data: BroadcastScheduleRow[] | null = null
+      let error: { message?: string } | null = null
+
+      const withPayload = await sb
+        .from('broadcast_notifications')
+        .select('id, subject, message, status, created_at, scheduled_for, audience, channels, building, payload')
+        .in('status', ['scheduled', 'processing', 'completed', 'partial'])
+        .order('created_at', { ascending: false })
+
+      if (withPayload.error) {
+        const msg = (withPayload.error.message ?? '').toLowerCase()
+        if (msg.includes('payload') && msg.includes('column')) {
+          const fallback = await sb
+            .from('broadcast_notifications')
+            .select('id, subject, message, status, created_at, scheduled_for, audience, channels, building')
+            .in('status', ['scheduled', 'processing', 'completed', 'partial'])
+            .order('created_at', { ascending: false })
+          data = (fallback.data ?? null) as BroadcastScheduleRow[] | null
+          error = fallback.error
+        } else {
+          data = (withPayload.data ?? null) as BroadcastScheduleRow[] | null
+          error = withPayload.error
+        }
+      } else {
+        data = (withPayload.data ?? null) as BroadcastScheduleRow[] | null
+        error = null
+      }
+
+      if (cancelled) return
+      if (error) {
+        console.error('[notifications] scheduled broadcasts load failed', error.message)
+        setScheduledBroadcastAutomations([])
+        return
+      }
+      const rows = (data ?? []) as BroadcastScheduleRow[]
+      const automationRows = rows.filter(
+        (row) =>
+          row.status === 'scheduled' ||
+          row.status === 'processing' ||
+          hasSelectedBroadcastAutomation(row.payload) ||
+          hasInspectionAutomationFallback(row),
+      )
+      setScheduledBroadcastAutomations(automationRows.map(broadcastRowToAutomationItem))
+    }
+
+    async function loadMessageHistoryRows() {
+      const [resident, vendor] = await Promise.all([
+        sb
+          .from('resident_notification_log')
+          .select(
+            `
+            id,
+            created_at,
+            ticket_id,
+            event_type,
+            channel,
+            error,
+            vendor_name,
+            maintenance_requests (
+              id,
+              resident_name,
+              unit
+            )
+          `,
+          )
+          .order('created_at', { ascending: false })
+          .limit(40),
+        sb
+          .from('vendor_notification_log')
+          .select(
+            `
+            id,
+            created_at,
+            ticket_id,
+            channel,
+            error,
+            vendors (
+              id,
+              name
+            )
+          `,
+          )
+          .order('created_at', { ascending: false })
+          .limit(40),
+      ])
+
+      let broadcastData: unknown[] | null = null
+      let broadcastError: { message?: string } | null = null
+
+      const broadcastWithRecipients = await sb
+        .from('broadcast_notification_log')
+        .select(
+          `
+          id,
+          created_at,
+          channel,
+          success,
+          error,
+          broadcast_id,
+          recipient_user_id,
+          recipient_name,
+          recipient_email,
+          broadcast_notifications (
+            subject,
+            message,
+            audience
+          )
+        `,
+        )
+        .order('created_at', { ascending: false })
+        .limit(40)
+
+      if (broadcastWithRecipients.error) {
+        const msg = (broadcastWithRecipients.error.message ?? '').toLowerCase()
+        const missingRecipientCols =
+          msg.includes('recipient_name') || msg.includes('recipient_email')
+        if (missingRecipientCols) {
+          const broadcastFallback = await sb
+            .from('broadcast_notification_log')
+            .select(
+              `
+              id,
+              created_at,
+              channel,
+              success,
+              error,
+              broadcast_id,
+              recipient_user_id,
+              broadcast_notifications (
+                subject,
+                message,
+                audience
+              )
+            `,
+            )
+            .order('created_at', { ascending: false })
+            .limit(40)
+          broadcastData = broadcastFallback.data
+          broadcastError = broadcastFallback.error
+        } else {
+          broadcastData = broadcastWithRecipients.data
+          broadcastError = broadcastWithRecipients.error
+        }
+      } else {
+        broadcastData = broadcastWithRecipients.data
+        broadcastError = null
+      }
+
+      if (cancelled) return
+      if (resident.error || vendor.error) {
+        console.error(
+          '[notifications] message history load failed',
+          resident.error?.message ?? vendor.error?.message,
+        )
+        return
+      }
+      if (broadcastError) {
+        console.error('[notifications] broadcast log history failed', broadcastError.message)
+      }
+
+      const residentRows = (resident.data ?? []) as ResidentNotificationLogRow[]
+      const vendorRows = (vendor.data ?? []) as VendorNotificationLogRow[]
+      const broadcastRows = (broadcastData ?? []) as BroadcastNotificationLogRow[]
+      const recipientUserIds = Array.from(
+        new Set(
+          broadcastRows
+            .map((r) => (r.recipient_user_id ?? '').trim())
+            .filter((id): id is string => id.length > 0),
+        ),
+      )
+      const broadcastRecipientByUserId = new Map<string, { name: string | null; email: string | null }>()
+      if (recipientUserIds.length > 0) {
+        const { data: usersData, error: usersErr } = await sb
+          .from('users')
+          .select('id, full_name, email')
+          .in('id', recipientUserIds)
+        if (usersErr) {
+          console.error('[notifications] broadcast recipient users lookup failed', usersErr.message)
+        } else {
+          for (const u of
+            (usersData ?? []) as { id: string; full_name: string | null; email: string | null }[]) {
+            broadcastRecipientByUserId.set(u.id, {
+              name: u.full_name ?? null,
+              email: u.email ?? null,
+            })
+          }
+        }
+      }
+      const enrichedBroadcastRows = broadcastRows.map((row) => {
+        const uid = (row.recipient_user_id ?? '').trim()
+        const recipientFromUsers = uid ? broadcastRecipientByUserId.get(uid) : undefined
+        return {
+          ...row,
+          recipient_name:
+            (row.recipient_name ?? '').trim() ||
+            (recipientFromUsers?.name ?? '').trim() ||
+            null,
+          recipient_email:
+            (row.recipient_email ?? '').trim() ||
+            (recipientFromUsers?.email ?? '').trim() ||
+            null,
+        }
+      })
+      const merged = [
+        ...residentRows.map((r) => ({
+          createdAt: r.created_at,
+          row: notifRowFromResidentLog(r),
+        })),
+        ...vendorRows.map((r) => ({
+          createdAt: r.created_at,
+          row: notifRowFromVendorLog(r),
+        })),
+        ...enrichedBroadcastRows.map((r) => ({
+          createdAt: r.created_at,
+          row: notifRowFromBroadcastLog(r),
+        })),
+      ]
+        .sort(
+          (a, b) =>
+            new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
+        )
+        .map((x) => x.row)
+        .slice(0, 50)
+      setMessageHistoryRows(merged)
+    }
+
+    invalidateBroadcastMetricsRef.current = () => {
+      void loadBroadcastDashboardStats()
+      void loadMessageHistoryRows()
+      void loadScheduledBroadcastRows()
+    }
+
+    void loadBroadcastDashboardStats()
+    void loadMessageHistoryRows()
+    void loadScheduledBroadcastRows()
+
+    const pollId = window.setInterval(() => {
+      if (!cancelled) {
+        void loadBroadcastDashboardStats()
+        void loadMessageHistoryRows()
+        void loadScheduledBroadcastRows()
+      }
+    }, 20_000)
+
+    const onVisibility = () => {
+      if (document.visibilityState === 'visible' && !cancelled) {
+        void loadBroadcastDashboardStats()
+        void loadMessageHistoryRows()
+        void loadScheduledBroadcastRows()
+      }
+    }
+    document.addEventListener('visibilitychange', onVisibility)
+
+    const channel = sb
+      .channel('notification-log-metrics')
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'resident_notification_log' },
+        () => {
+          void loadMessageHistoryRows()
+        },
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'vendor_notification_log' },
+        () => {
+          void loadMessageHistoryRows()
+        },
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'broadcast_notification_log' },
+        () => {
+          void loadBroadcastDashboardStats()
+          void loadMessageHistoryRows()
+        },
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'broadcast_notifications' },
+        () => {
+          void loadBroadcastDashboardStats()
+          void loadScheduledBroadcastRows()
+        },
+      )
+      .subscribe()
+
+    return () => {
+      cancelled = true
+      invalidateBroadcastMetricsRef.current = null
+      window.clearInterval(pollId)
+      document.removeEventListener('visibilitychange', onVisibility)
+      void sb.removeChannel(channel)
+    }
+  }, [])
+
+  const computedRecentBroadcasts = broadcastDashboardStats.broadcastSuccess7d
+  const computedFailedDeliveries = broadcastDashboardStats.broadcastFailed7d
+  const computedScheduledDbCount = broadcastDashboardStats.scheduledDbCount
+  const computedScheduledTabTotal = scheduledBroadcastAutomations.length
+  const computedActiveNotifications = broadcastDashboardStats.activeNotifications24h
+  const computedBroadcastSuccessPct = broadcastDashboardStats.successRate7d
+  const overrideScopeOptionsFromScheduled = useMemo<OverrideAutomationScopeOption[]>(
+    () =>
+      scheduledBroadcastAutomations.map((item) => ({
+        value: item.id,
+        label: `${item.title} — ${item.metaLine}`,
+      })),
+    [scheduledBroadcastAutomations],
+  )
+
+  const statCards = useMemo(
+    () => [
+      {
+        label: 'Active Notifications',
+        value: String(computedActiveNotifications),
+        hint: 'Live broadcasts',
+        valueClass: 'text-extended-3',
+        icon: 'bell' as const,
+      },
+      {
+        label: 'Scheduled Messages',
+        value: String(computedScheduledDbCount),
+        hint: 'Broadcasts queued in database',
+        valueClass: 'text-extended-3',
+        icon: 'clock' as const,
+      },
+    ],
+    [computedActiveNotifications, computedScheduledDbCount],
+  )
   function closeEmergencyAlertDetails() {
     setEmergencyAlertDetailsOpen(false)
     setEmergencyAlertDetailsPresentation('modal')
@@ -925,15 +1609,58 @@ export function AdminNotificationManagementDashboard() {
   const visibleExternalAlerts = EXTERNAL_ALERT_CARDS.filter(
     (c) => !dismissedExternalAlertIds.has(c.id),
   )
+  const filteredMessageHistoryRows = useMemo(() => {
+    const q = messageHistorySearch.trim().toLowerCase()
+    return messageHistoryRows.filter((row) => {
+      const typeLabel = row.chips[0]?.label?.trim().toLowerCase() ?? ''
+      const typePass =
+        messageHistoryTypeFilter === 'all' || typeLabel === messageHistoryTypeFilter
+
+      const statusPass =
+        messageHistoryStatusFilter === 'all' ||
+        (messageHistoryStatusFilter === 'failed'
+          ? row.variant === 'failed'
+          : row.variant !== 'failed')
+
+      if (!typePass || !statusPass) return false
+      if (!q) return true
+
+      const haystack = [row.title, row.description, ...row.meta, ...row.chips.map((c) => c.label)]
+        .join(' ')
+        .toLowerCase()
+      return haystack.includes(q)
+    })
+  }, [messageHistoryRows, messageHistorySearch, messageHistoryStatusFilter, messageHistoryTypeFilter])
+  const notifTabs = useMemo(
+    () => [
+      {
+        id: 'history' as const,
+        label: `Message History (${messageHistoryRows.length})`,
+      },
+      {
+        id: 'scheduled' as const,
+        label: `Scheduled Automations (${computedScheduledTabTotal})`,
+      },
+      {
+        id: 'external' as const,
+        label: `External Alerts (${visibleExternalAlerts.length})`,
+      },
+    ],
+    [
+      computedScheduledTabTotal,
+      messageHistoryRows.length,
+      visibleExternalAlerts.length,
+    ],
+  )
 
   return (
     <>
-      <header className="border-b border-[#e5e7eb] bg-white px-8 py-8">
+      <header className="border-b border-secondary bg-white px-8 py-8">
         <div>
-          <h1 className="text-[22px] font-semibold leading-8 tracking-[0.0703px] text-[#0a0a0a] sm:text-[24px]">
+          <h1 className="text-[22px] font-semibold leading-8 tracking-[0.0703px] text-extended-3 sm:text-[24px]">
             Notification Management
           </h1>
-          <p className="mt-1 text-[14px] leading-5 tracking-[-0.1504px] text-[#6a7282]">
+          <p className="mt-1 text-[14px] leading-5 tracking-[-0.1504px] text-neutral">
             Manage system notifications.
           </p>
         </div>
@@ -942,13 +1669,13 @@ export function AdminNotificationManagementDashboard() {
       <main className="min-h-0 flex-1 overflow-auto px-8 py-8">
         <div className="w-full space-y-6">
           <div className="grid auto-rows-fr grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
-            {STAT_CARDS.map((s) => (
+            {statCards.map((s) => (
               <div
                 key={s.label}
-                className="flex h-full min-h-0 flex-col gap-y-3 rounded-[10px] border border-[#e5e7eb] bg-white p-6 shadow-[0px_1px_2px_-1px_rgba(0,0,0,0.06)]"
+                className="flex h-full min-h-0 flex-col gap-y-3 rounded-[10px] border border-secondary bg-white p-6 shadow-[0px_1px_2px_-1px_rgba(0,0,0,0.06)]"
               >
                 <div className="flex shrink-0 items-start justify-between gap-2">
-                  <p className="text-[14px] font-normal leading-5 tracking-[-0.1504px] text-[#6a7282]">
+                  <p className="text-[14px] font-normal leading-5 tracking-[-0.1504px] text-neutral">
                     {s.label}
                   </p>
                   <StatGlyph name={s.icon} />
@@ -960,60 +1687,52 @@ export function AdminNotificationManagementDashboard() {
                     {s.value}
                   </p>
                 </div>
-                <p className="shrink-0 text-[12px] leading-4 text-[#6a7282]">{s.hint}</p>
+                <p className="shrink-0 text-[12px] leading-4 text-neutral">{s.hint}</p>
               </div>
             ))}
-            <div className="flex h-full min-h-0 flex-col gap-y-3 rounded-[10px] border border-[#e5e7eb] bg-white p-6 shadow-[0px_1px_2px_-1px_rgba(0,0,0,0.06)]">
+            <div className="flex h-full min-h-0 flex-col gap-y-3 rounded-[10px] border border-secondary bg-white p-6 shadow-[0px_1px_2px_-1px_rgba(0,0,0,0.06)]">
               <div className="flex shrink-0 items-start justify-between gap-2">
                 <div className="flex min-w-0 flex-col gap-0.5">
-                  <span className="text-[11px] font-medium uppercase leading-4 tracking-[0.06em] text-[#6a7282]">
+                  <span className="text-[11px] font-medium uppercase leading-4 tracking-[0.06em] text-neutral">
                     Broadcast Success rate
                   </span>
-                  <span className="text-[20px] font-semibold leading-7 tracking-[0.02em] tabular-nums text-[#00a63e]">
-                    {STAT_BROADCAST_SUCCESS_PCT}%
+                  <span className="text-[20px] font-semibold leading-7 tracking-[0.02em] tabular-nums text-[#0a0a0a]">
+                    {computedBroadcastSuccessPct}%
                   </span>
                 </div>
-                <IconBroadcast />
+                <img
+                  src={broadcastIcon}
+                  alt=""
+                  className="size-5 shrink-0 object-contain opacity-55"
+                  aria-hidden
+                />
               </div>
               <div className="flex min-h-20 w-full min-w-0 flex-1 items-center">
                 <BroadcastsFailedDonut
-                  recentBroadcasts={STAT_RECENT_BROADCASTS}
-                  failedDeliveries={STAT_FAILED_DELIVERIES}
+                  recentBroadcasts={computedRecentBroadcasts}
+                  failedDeliveries={computedFailedDeliveries}
                 />
               </div>
-              <p className="shrink-0 text-[12px] leading-4 text-[#6a7282]">
+              <p className="shrink-0 text-[12px] leading-4 text-neutral">
                 Last 7 days · failures require attention
               </p>
             </div>
           </div>
 
-          <div className="rounded-[10px] border border-[#e5e7eb] bg-white px-6 pb-6 pt-6 shadow-[0px_1px_2px_-1px_rgba(0,0,0,0.06)]">
-            <h2 className="text-[18px] font-semibold leading-7 tracking-[-0.4395px] text-[#0a0a0a]">
-              Quick Actions
-            </h2>
-            <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-3">
+          <div className="rounded-[10px] border border-secondary bg-white px-6 pb-6 pt-6 shadow-[0px_1px_2px_-1px_rgba(0,0,0,0.06)]">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
               <button
                 type="button"
                 onClick={() => openBroadcast('modal')}
-                className="inline-flex h-9 w-full cursor-pointer items-center justify-center gap-2 rounded-lg border border-black/10 bg-transparent px-3 text-[14px] font-medium tracking-[-0.1504px] text-[#0a0a0a] outline-none transition-colors duration-150 hover:bg-[#f3f4f6] hover:border-black/12 active:bg-[#d1d5dc] active:border-black/15 focus-visible:ring-2 focus-visible:ring-[#944c73] focus-visible:ring-offset-2 focus-visible:ring-offset-white"
+                className="inline-flex h-9 w-full cursor-pointer items-center justify-center gap-2 rounded-lg border border-black/10 bg-transparent px-3 text-[14px] font-medium tracking-[-0.1504px] text-extended-3 outline-none transition-colors duration-150 hover:bg-secondary hover:border-black/12 active:bg-secondary active:border-black/15 focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2 focus-visible:ring-offset-white"
               >
-                <img
-                  src={broadcastIcon}
-                  alt=""
-                  className="size-4 shrink-0 object-contain"
-                />
                 Broadcast Message
               </button>
               <button
                 type="button"
                 onClick={() => setInspectionModalOpen(true)}
-                className="inline-flex h-9 w-full cursor-pointer items-center justify-center gap-2 rounded-lg border border-black/10 bg-transparent px-3 text-[14px] font-medium tracking-[-0.1504px] text-[#0a0a0a] outline-none transition-colors duration-150 hover:bg-[#f3f4f6] hover:border-black/12 active:bg-[#d1d5dc] active:border-black/15 focus-visible:ring-2 focus-visible:ring-[#944c73] focus-visible:ring-offset-2 focus-visible:ring-offset-white"
+                className="inline-flex h-9 w-full cursor-pointer items-center justify-center gap-2 rounded-lg border border-black/10 bg-transparent px-3 text-[14px] font-medium tracking-[-0.1504px] text-extended-3 outline-none transition-colors duration-150 hover:bg-secondary hover:border-black/12 active:bg-secondary active:border-black/15 focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2 focus-visible:ring-offset-white"
               >
-                <img
-                  src={inspectionIcon}
-                  alt=""
-                  className="size-4 shrink-0 object-contain"
-                />
                 Inspection Notice
               </button>
               <button
@@ -1025,25 +1744,20 @@ export function AdminNotificationManagementDashboard() {
                   setOverrideModalPresentation('modal')
                   setOverrideModalOpen(true)
                 }}
-                className="inline-flex h-9 w-full cursor-pointer items-center justify-center gap-2 rounded-lg border border-black/10 bg-transparent px-3 text-[14px] font-medium tracking-[-0.1504px] text-[#0a0a0a] outline-none transition-colors duration-150 hover:bg-[#f3f4f6] hover:border-black/12 active:bg-[#d1d5dc] active:border-black/15 focus-visible:ring-2 focus-visible:ring-[#944c73] focus-visible:ring-offset-2 focus-visible:ring-offset-white"
+                className="inline-flex h-9 w-full cursor-pointer items-center justify-center gap-2 rounded-lg border border-black/10 bg-transparent px-3 text-[14px] font-medium tracking-[-0.1504px] text-extended-3 outline-none transition-colors duration-150 hover:bg-secondary hover:border-black/12 active:bg-secondary active:border-black/15 focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2 focus-visible:ring-offset-white"
               >
-                <img
-                  src={overrideIcon}
-                  alt=""
-                  className="size-4 shrink-0 object-contain"
-                />
                 Override Automation
               </button>
             </div>
           </div>
 
-          <div className="overflow-hidden rounded-[10px] border border-[#e5e7eb] bg-white shadow-[0px_1px_2px_-1px_rgba(0,0,0,0.06)]">
+          <div className="overflow-hidden rounded-[10px] border border-secondary bg-white shadow-[0px_1px_2px_-1px_rgba(0,0,0,0.06)]">
             <div
-              className="flex flex-wrap gap-x-6 gap-y-2 border-b border-[#e5e7eb] px-6 pt-3"
+              className="flex flex-wrap gap-x-6 gap-y-2 border-b border-secondary px-6 pt-3"
               role="tablist"
               aria-label="Notification views"
             >
-              {NOTIF_TABS.map((t) => {
+              {notifTabs.map((t) => {
                 const isActive = tab === t.id
                 return (
                   <button
@@ -1053,10 +1767,10 @@ export function AdminNotificationManagementDashboard() {
                     aria-selected={isActive}
                     onClick={() => setTab(t.id)}
                     className={[
-                      '-mb-px border-b-2 pb-3 text-[14px] font-medium tracking-[-0.1504px] transition-colors outline-none focus-visible:ring-2 focus-visible:ring-[#944c73] focus-visible:ring-offset-2',
+                      '-mb-px border-b-2 pb-3 text-[14px] font-medium tracking-[-0.1504px] transition-colors outline-none focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2',
                       isActive
-                        ? 'border-[#155dfc] text-[#155dfc]'
-                        : 'border-transparent text-[#6a7282] hover:text-[#0a0a0a]',
+                        ? 'border-extended-1 text-extended-1'
+                        : 'border-transparent text-neutral hover:text-extended-3',
                     ].join(' ')}
                   >
                     {t.label}
@@ -1069,7 +1783,8 @@ export function AdminNotificationManagementDashboard() {
               {tab === 'scheduled' ? (
                 <AutomationsPanel
                   title="Scheduled Automations"
-                  items={SCHEDULED_AUTOMATION_ITEMS}
+                  items={scheduledBroadcastAutomations}
+                  scheduledInDatabaseCount={broadcastDashboardStats.scheduledDbCount}
                   onOverride={(item) => {
                     if (item.id === 'sa-1') {
                       setOverrideModalContext('default')
@@ -1102,13 +1817,141 @@ export function AdminNotificationManagementDashboard() {
                   onConfigureSources={() => setConfigureAiSourcesOpen(true)}
                 />
               ) : tab === 'history' ? (
-                MESSAGE_HISTORY_ROWS.map((row) => (
+                <>
+                  <div className="mb-1 grid grid-cols-1 gap-3 sm:grid-cols-[minmax(0,1fr)_auto_auto]">
+                    <label className="flex min-w-0 items-center gap-2 rounded-lg border border-secondary bg-white px-3 py-2 focus-within:border-black/20">
+                      <svg
+                        className="size-4 shrink-0 text-neutral"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth={2}
+                        aria-hidden
+                      >
+                        <circle cx="11" cy="11" r="7" />
+                        <path d="m20 20-3.5-3.5" strokeLinecap="round" />
+                      </svg>
+                      <input
+                        type="search"
+                        value={messageHistorySearch}
+                        onChange={(e) => setMessageHistorySearch(e.target.value)}
+                        placeholder="Search message history"
+                        className="w-full min-w-0 border-0 bg-transparent p-0 text-[14px] leading-5 text-extended-3 outline-none placeholder:text-neutral"
+                      />
+                    </label>
+                    <div className="relative">
+                      <select
+                        value={messageHistoryStatusFilter}
+                        onChange={(e) =>
+                          setMessageHistoryStatusFilter(e.target.value as MessageHistoryStatusFilter)
+                        }
+                        className="h-10 appearance-none rounded-lg border border-black/10 bg-white pl-3 pr-9 text-[14px] text-extended-3 outline-none focus-visible:ring-2 focus-visible:ring-[#0030b5]"
+                        aria-label="Filter message history by status"
+                      >
+                        <option value="all">All statuses</option>
+                        <option value="sent">Sent</option>
+                        <option value="failed">Failed</option>
+                      </select>
+                      <svg
+                        className="pointer-events-none absolute right-2 top-1/2 size-4 -translate-y-1/2 text-neutral"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth={2}
+                        aria-hidden
+                      >
+                        <path d="M6 9l6 6 6-6" />
+                      </svg>
+                    </div>
+                    <div className="relative">
+                      <select
+                        value={messageHistoryTypeFilter}
+                        onChange={(e) =>
+                          setMessageHistoryTypeFilter(e.target.value as MessageHistoryTypeFilter)
+                        }
+                        className="h-10 appearance-none rounded-lg border border-black/10 bg-white pl-3 pr-9 text-[14px] text-extended-3 outline-none focus-visible:ring-2 focus-visible:ring-[#0030b5]"
+                        aria-label="Filter message history by notification type"
+                      >
+                        <option value="all">All types</option>
+                        <option value="resident">Resident</option>
+                        <option value="vendor">Vendor</option>
+                        <option value="broadcast">Broadcast</option>
+                      </select>
+                      <svg
+                        className="pointer-events-none absolute right-2 top-1/2 size-4 -translate-y-1/2 text-neutral"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth={2}
+                        aria-hidden
+                      >
+                        <path d="M6 9l6 6 6-6" />
+                      </svg>
+                    </div>
+                  </div>
+                  {filteredMessageHistoryRows.length === 0 ? (
+                    <p className="py-10 text-center text-[14px] leading-5 text-neutral">
+                      {messageHistoryRows.length === 0
+                        ? 'No message history yet. Maintenance and broadcast deliveries will appear here.'
+                        : 'No messages match your current search and filters.'}
+                    </p>
+                  ) : (
+                    filteredMessageHistoryRows.map((row) => {
+                      const rowOpensEditOrFailed = historyRowHasEditOrFailedDetails(row)
+                      return (
                   <article
                     key={row.id}
-                    className={`rounded-[10px] border p-4 sm:p-[17px] ${cardShellClasses(row.variant)}`}
+                    role={rowOpensEditOrFailed ? 'button' : undefined}
+                    tabIndex={rowOpensEditOrFailed ? 0 : undefined}
+                    onClick={
+                      rowOpensEditOrFailed
+                        ? () => openHistoryRowEditOrFailedDetails(row)
+                        : undefined
+                    }
+                    onKeyDown={
+                      rowOpensEditOrFailed
+                        ? (e) => {
+                            if (e.key === 'Enter' || e.key === ' ') {
+                              e.preventDefault()
+                              openHistoryRowEditOrFailedDetails(row)
+                            }
+                          }
+                        : undefined
+                    }
+                    className={`rounded-[10px] border p-4 sm:p-[17px] ${cardShellClasses(row.variant)}${
+                      rowOpensEditOrFailed
+                        ? ' cursor-pointer outline-none transition-shadow hover:shadow-sm focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2'
+                        : ''
+                    }${row.footer === 'failed' ? ' relative' : ''}`}
                   >
-                    <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
-                      <div className="min-w-0 flex-1 space-y-2">
+                      {row.footer === 'failed' ? (
+                        <button
+                          type="button"
+                          disabled={retryingRowId === row.id}
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            setRetryingRowId(row.id)
+                            void retryRowWithExistingChannel(row)
+                              .then(() => {
+                                window.alert('Retry sent using existing channel.')
+                              })
+                              .catch((err) => {
+                                window.alert(err instanceof Error ? err.message : 'Retry failed')
+                              })
+                              .finally(() => {
+                                setRetryingRowId((prev) => (prev === row.id ? null : prev))
+                              })
+                          }}
+                          className="absolute right-4 top-4 z-10 inline-flex h-8 max-w-[calc(100%-2rem)] items-center justify-center gap-1.5 rounded-lg border border-[#0030b5] bg-[#0030b5] px-2.5 text-[13px] font-medium leading-none tracking-[-0.1504px] text-[#ffffff] outline-none hover:bg-[#9da8ec] focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-60 sm:right-[17px] sm:top-[17px] sm:gap-2 sm:px-3 sm:text-[14px]"
+                        >
+                          <span className="truncate">
+                            {retryingRowId === row.id ? 'Sending…' : 'Send Again'}
+                          </span>
+                        </button>
+                      ) : null}
+                      <div
+                        className={`min-w-0 space-y-2${row.footer === 'failed' ? ' pr-36 sm:pr-52' : ''}`}
+                      >
                         <div className="flex flex-wrap items-center gap-2">
                           {row.chips.map((c, i) => (
                             <span
@@ -1119,15 +1962,67 @@ export function AdminNotificationManagementDashboard() {
                             </span>
                           ))}
                         </div>
-                        <h3 className="text-[16px] font-medium leading-6 tracking-[-0.3125px] text-[#101828]">
+                        <h3 className="text-[16px] font-medium leading-6 tracking-[-0.3125px] text-extended-3">
                           {row.title}
                         </h3>
-                        <p className="text-[14px] leading-5 tracking-[-0.1504px] text-[#4a5565]">
+                        <p className="text-[14px] leading-5 tracking-[-0.1504px] text-neutral-variant">
                           {row.description}
                         </p>
-                        <div className="flex flex-wrap gap-x-4 gap-y-1 text-[12px] leading-4 text-[#6a7282]">
+                        <div className="flex flex-wrap gap-x-4 gap-y-1 text-[12px] leading-4 text-neutral">
                           {row.meta.map((m, i) => (
-                            <span key={`${row.id}-meta-${i}`}>{m}</span>
+                            <span key={`${row.id}-meta-${i}`} className="inline-flex items-center gap-1.5">
+                              {m === 'SMS' ? (
+                                <img
+                                  src={smsIcon}
+                                  alt=""
+                                  className="size-3.5 shrink-0 object-contain opacity-70"
+                                  aria-hidden
+                                />
+                              ) : m === 'Email' ? (
+                                <img
+                                  src={emailIcon}
+                                  alt=""
+                                  className="size-3.5 shrink-0 object-contain opacity-70"
+                                  aria-hidden
+                                />
+                              ) : m === 'Broadcast' ? (
+                                <img
+                                  src={broadcastIcon}
+                                  alt=""
+                                  className="size-3.5 shrink-0 object-contain opacity-70"
+                                  aria-hidden
+                                />
+                              ) : m === 'Delivery failed' ? (
+                                <img
+                                  src={failedDeliveryIcon}
+                                  alt=""
+                                  className="size-3.5 shrink-0 object-contain opacity-70"
+                                  aria-hidden
+                                />
+                              ) : m === 'Delivered' ? (
+                                <img
+                                  src={deliveredIcon}
+                                  alt=""
+                                  className="size-3.5 shrink-0 object-contain opacity-70"
+                                  aria-hidden
+                                />
+                              ) : m.startsWith('Ticket ') ? (
+                                <img
+                                  src={ticketIcon}
+                                  alt=""
+                                  className="size-3.5 shrink-0 object-contain opacity-70"
+                                  aria-hidden
+                                />
+                              ) : m.startsWith('Time ') ? (
+                                <img
+                                  src={calenderIcon}
+                                  alt=""
+                                  className="size-3.5 shrink-0 object-contain opacity-70"
+                                  aria-hidden
+                                />
+                              ) : null}
+                              {m.startsWith('Time ') ? m.slice(5) : m}
+                            </span>
                           ))}
                         </div>
                         {row.footer === 'pending' ? (
@@ -1135,7 +2030,8 @@ export function AdminNotificationManagementDashboard() {
                             <button
                               type="button"
                               disabled
-                              className="inline-flex h-8 cursor-not-allowed items-center justify-center gap-2 rounded-lg border border-black/10 bg-white px-3 text-[14px] font-medium tracking-[-0.1504px] text-[#0a0a0a] outline-none opacity-50 focus-visible:ring-2 focus-visible:ring-[#944c73] focus-visible:ring-offset-2"
+                              onClick={(e) => e.stopPropagation()}
+                              className="inline-flex h-8 cursor-not-allowed items-center justify-center gap-2 rounded-lg border border-black/10 bg-white px-3 text-[14px] font-medium tracking-[-0.1504px] text-extended-3 outline-none opacity-50 focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2"
                             >
                               <svg className="size-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} aria-hidden>
                                 <path d="M20 6 9 17l-5-5" strokeLinecap="round" strokeLinejoin="round" />
@@ -1144,90 +2040,24 @@ export function AdminNotificationManagementDashboard() {
                             </button>
                             <button
                               type="button"
-                              onClick={() => openBroadcast('rail')}
-                              className="inline-flex h-8 items-center justify-center rounded-lg bg-[#5f2167] px-3 text-[14px] font-medium tracking-[-0.1504px] text-white outline-none hover:bg-[#4a1a52] focus-visible:ring-2 focus-visible:ring-[#944c73] focus-visible:ring-offset-2"
+                              onClick={(e) => {
+                                e.stopPropagation()
+                                openBroadcast('rail')
+                              }}
+                              className="inline-flex h-8 items-center justify-center rounded-lg bg-[#ffee6c] px-3 text-[14px] font-medium tracking-[-0.1504px] text-[#101828] outline-none hover:bg-[#f5e35e] focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2"
                             >
                               Send Now
                             </button>
                           </div>
                         ) : null}
-                        {row.footer === 'failed' ? (
-                          <div className="flex flex-wrap gap-2 pt-2">
-                            <button
-                              type="button"
-                              className="inline-flex h-8 items-center justify-center gap-2 rounded-lg bg-[#5f2167] px-3 text-[14px] font-medium tracking-[-0.1504px] text-white outline-none hover:bg-[#4a1a52] focus-visible:ring-2 focus-visible:ring-[#944c73] focus-visible:ring-offset-2"
-                            >
-                              <img
-                                src={retryIcon}
-                                alt=""
-                                className="size-4 shrink-0 object-contain brightness-0 invert"
-                              />
-                              Retry Failed Deliveries
-                            </button>
-                          </div>
-                        ) : null}
                       </div>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          const editPayload = EDIT_MESSAGE_BY_ID[row.id]
-                          if (editPayload) {
-                            setEditMessageInitial(editPayload)
-                            setEditMessageOpen(true)
-                            return
-                          }
-                          const failedPayload = FAILED_MESSAGE_DETAILS_BY_ID[row.id]
-                          if (failedPayload) {
-                            setFailedMessageDetailsPayload(failedPayload)
-                            setFailedMessageDetailsOpen(true)
-                            return
-                          }
-                          setMessageDetailsPayload(messageDetailsForRow(row))
-                          setMessageDetailsOpen(true)
-                        }}
-                        className="inline-flex h-8 shrink-0 items-center justify-center gap-2 self-start rounded-lg border border-black/10 bg-white px-2.5 text-[14px] font-medium tracking-[-0.1504px] text-[#0a0a0a] outline-none hover:bg-[#f3f4f6] focus-visible:ring-2 focus-visible:ring-[#944c73] focus-visible:ring-offset-2 sm:px-3"
-                      >
-                        <svg className="size-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} aria-hidden>
-                          <path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7-11-7-11-7z" />
-                          <circle cx="12" cy="12" r="3" />
-                        </svg>
-                        View
-                        <svg
-                          className="size-4 shrink-0 opacity-60"
-                          viewBox="0 0 24 24"
-                          fill="none"
-                          stroke="currentColor"
-                          strokeWidth={2}
-                          aria-hidden
-                        >
-                          <path d="M6 9l6 6 6-6" />
-                        </svg>
-                      </button>
-                    </div>
                   </article>
-                ))
-              ) : tab === 'failed' ? (
-                <FailedUrgentNotificationsPanel
-                  onRetryAlternativeChannel={() => {
-                    setRetryFailedDeliveryPresentation('rail')
-                    setRetryFailedDeliveryOpen(true)
-                  }}
-                  onUpdateContactInfo={() => {
-                    setUpdateContactInfoPresentation('rail')
-                    setUpdateContactInfoOpen(true)
-                  }}
-                  onSendScheduledRentNow={() => openBroadcast('rail')}
-                  onSendEmergencyGasAlert={() => {
-                    setConfirmEmergencyAlertPresentation('rail')
-                    setConfirmEmergencyAlertOpen(true)
-                  }}
-                  onReviewGasAlertDetails={() => {
-                    setEmergencyAlertDetailsPresentation('rail')
-                    setEmergencyAlertDetailsOpen(true)
-                  }}
-                />
+                      )
+                    })
+                  )}
+                </>
               ) : (
-                <p className="py-10 text-center text-[14px] leading-5 text-[#6a7282]">
+                <p className="py-10 text-center text-[14px] leading-5 text-neutral">
                   No items in this view yet.
                 </p>
               )}
@@ -1263,6 +2093,7 @@ export function AdminNotificationManagementDashboard() {
         open={retryFailedDeliveryOpen}
         onClose={closeRetryFailedDelivery}
         presentation={retryFailedDeliveryPresentation}
+        data={retryFailedDeliveryData}
       />
       <UpdateContactInformationModal
         open={updateContactInfoOpen}
@@ -1277,27 +2108,27 @@ export function AdminNotificationManagementDashboard() {
         open={broadcastModalOpen}
         onClose={closeBroadcast}
         presentation={broadcastPresentation}
+        onBroadcastStatsInvalidate={() => {
+          invalidateBroadcastMetricsRef.current?.()
+        }}
       />
       <SendInspectionNoticeModal
         open={inspectionModalOpen}
         onClose={() => setInspectionModalOpen(false)}
+        onBroadcastStatsInvalidate={() => {
+          invalidateBroadcastMetricsRef.current?.()
+        }}
       />
       <OverrideAutomationModal
         open={overrideModalOpen}
         onClose={closeOverrideModal}
+        onApply={handleOverrideApply}
+        scopeOptionsOverride={overrideScopeOptionsFromScheduled}
         context={overrideModalContext}
         initialAutomationCategory={overrideModalInitialCategory}
         initialTicketId={overrideModalInitialTicketId}
         initialSafetyOverrideType={overrideModalInitialSafetyOverrideType}
         presentation={overrideModalPresentation}
-      />
-      <MessageDetailsModal
-        open={messageDetailsOpen}
-        onClose={() => {
-          setMessageDetailsOpen(false)
-          setMessageDetailsPayload(null)
-        }}
-        data={messageDetailsPayload}
       />
       <EditMessageModal
         open={editMessageOpen}

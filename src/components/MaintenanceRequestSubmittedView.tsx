@@ -1,6 +1,6 @@
 import { useCallback, useState } from 'react'
 import checkmarkIcon from '@/assets/Checkmark Icon.svg'
-import homeIcon from '@/assets/Home Icon.svg'
+import homeIcon from '@/assets/Icon_Home.png'
 import { appendMaintenanceTicketComment } from '@/api/appendMaintenanceTicketComment'
 import { useTicketTimelineStatus } from '@/hooks/useTicketTimelineStatus'
 import {
@@ -191,7 +191,7 @@ export function MaintenanceRequestSubmittedView({
         <div className="flex min-h-dvh w-full min-w-0 flex-col overflow-x-hidden rounded-none border-0 bg-white shadow-none lg:flex-row">
           <div className="flex min-h-dvh min-w-0 flex-1 flex-col lg:flex-row">
             <div
-              className="hidden w-[8px] shrink-0 self-stretch bg-[#944c73] lg:block"
+              className="hidden w-[8px] shrink-0 self-stretch bg-[#0030b5] lg:block"
               aria-hidden
             />
 
@@ -242,20 +242,20 @@ export function MaintenanceRequestSubmittedView({
                     onChange={(e) => setCommentDraft(e.target.value)}
                     placeholder="Provide additional information or updates about your request..."
                     disabled={commentBusy}
-                    className="w-full resize-y rounded-lg border border-transparent bg-[#f3f3f5] px-3 py-2 text-[14px] leading-5 tracking-[-0.1504px] text-[#0a0a0a] placeholder:text-[#717182] outline-none ring-[#944c73] focus:ring-2 disabled:opacity-60"
+                    className="w-full resize-y rounded-lg border border-transparent bg-[#f3f3f5] px-3 py-2 text-[14px] leading-5 tracking-[-0.1504px] text-[#0a0a0a] placeholder:text-[#717182] outline-none ring-[#0030b5] focus:ring-2 disabled:opacity-60"
                   />
                   <button
                     type="button"
                     disabled={!canSubmitComment}
                     onClick={() => void submitComment()}
-                    className="h-9 w-full rounded-lg bg-[#101828] text-[14px] font-medium leading-5 tracking-[-0.1504px] text-white transition-colors hover:bg-black disabled:pointer-events-none disabled:opacity-50"
+                    className="h-9 w-full rounded-lg bg-[#ffee6c] text-[14px] font-medium leading-5 tracking-[-0.1504px] text-[#101828] transition-colors hover:bg-[#f5e35e] disabled:pointer-events-none disabled:opacity-50"
                   >
                     {commentBusy ? 'Adding…' : 'Add Comment'}
                   </button>
                 </div>
                 {commentError && (
                   <p
-                    className="mt-3 text-center text-[12px] font-normal leading-4 text-red-600"
+                    className="mt-3 text-center text-[12px] font-normal leading-4 text-[#b52a00]"
                     role="alert"
                   >
                     {commentError}
@@ -362,7 +362,7 @@ export function MaintenanceRequestSubmittedView({
                 </div>
                 {statusError ? (
                   <p
-                    className="mt-2 text-center text-[12px] font-normal leading-4 text-red-600"
+                    className="mt-2 text-center text-[12px] font-normal leading-4 text-[#b52a00]"
                     role="alert"
                   >
                     {statusError}
@@ -382,7 +382,7 @@ export function MaintenanceRequestSubmittedView({
                 <button
                   type="button"
                   onClick={onSubmitAnother}
-                  className="h-9 w-full rounded-lg bg-[#101828] text-[14px] font-medium leading-5 tracking-[-0.1504px] text-white transition-colors hover:bg-black"
+                  className="h-9 w-full rounded-lg bg-[#ffee6c] text-[14px] font-medium leading-5 tracking-[-0.1504px] text-[#101828] transition-colors hover:bg-[#f5e35e]"
                 >
                   Submit Another Request
                 </button>
@@ -407,11 +407,11 @@ export function MaintenanceRequestSubmittedView({
             <aside className="hidden w-full shrink-0 bg-white px-6 pb-10 pt-6 lg:flex lg:w-[300px] lg:border-l lg:border-[#e5e7eb] lg:px-8 lg:pb-12 lg:pt-10">
               <div className="h-fit w-full min-w-0">
                 <div className="flex flex-col items-center text-center">
-                  <div className="flex size-12 items-center justify-center rounded-[10px] bg-[#101828]">
+                  <div className="flex size-12 items-center justify-center rounded-[10px]">
                     <img
                       src={homeIcon}
                       alt=""
-                      className="size-12 object-contain"
+                      className="size-8 object-contain"
                     />
                   </div>
                   <h2 className="mt-4 text-[20px] font-semibold leading-7 tracking-[-0.4492px] text-[#0a0a0a]">
@@ -443,7 +443,7 @@ export function MaintenanceRequestSubmittedView({
                   </li>
                 </ul>
 
-                <div className="mt-6 flex h-9 w-full items-center justify-center gap-2 rounded-lg bg-[#101828] text-white">
+                <div className="mt-6 flex h-9 w-full items-center justify-center gap-2 rounded-lg bg-[#ffee6c] text-[#101828]">
                   <svg
                     className="size-4 shrink-0"
                     viewBox="0 0 16 16"
@@ -473,7 +473,7 @@ export function MaintenanceRequestSubmittedView({
             <button
               type="button"
               onClick={onSubmitAnother}
-              className="h-9 w-full rounded-lg bg-[#101828] text-[14px] font-medium leading-5 tracking-[-0.1504px] text-white transition-colors hover:bg-black"
+              className="h-9 w-full rounded-lg bg-[#ffee6c] text-[14px] font-medium leading-5 tracking-[-0.1504px] text-[#101828] transition-colors hover:bg-[#f5e35e]"
             >
               Submit Another Request
             </button>

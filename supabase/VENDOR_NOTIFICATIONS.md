@@ -4,7 +4,7 @@ When a resident submits a maintenance request through the `submit-maintenance-re
 
 ## Resident lifecycle (email + SMS)
 
-The same **Resend** and **Twilio** secrets notify the **submitter** (resident) on: ticket received (after optional media uploads); vendor assigned (including after admin reassign via `reassignVendorByIdAndNotify`); repair **in progress**; repair **completed** (`vendor-update-job-status`). **`resident_notification_channel`** on `maintenance_requests` is **`email`**, **`sms`**, or **`both`** (default `both`; set from multipart `residentNotificationChannel`). Per channel: **email** sends Resend only; **sms** sends Twilio only when **`resident_phone`** is valid; **both** sends email and SMS when possible. Missing phone on **both** / **sms** logs a skipped SMS row. Attempts are logged in **`resident_notification_log`**.
+The same **Resend** and **Twilio** secrets notify the **submitter** (resident) on: ticket received (after optional media uploads); vendor assigned (including after admin reassign via `reassignVendorByIdAndNotify`); vendor **accepted**; repair **in progress**; repair **completed** (`vendor-update-job-status`). **`resident_notification_channel`** on `maintenance_requests` is **`email`**, **`sms`**, or **`both`** (default `both`; set from multipart `residentNotificationChannel`). Per channel: **email** sends Resend only; **sms** sends Twilio only when **`resident_phone`** is valid; **both** sends email and SMS when possible. Missing phone on **both** / **sms** logs a skipped SMS row. Attempts are logged in **`resident_notification_log`**.
 
 ## Database
 
@@ -50,11 +50,11 @@ Resend returns **403** / `validation_error` if the **from** domain is not verifi
 
 Deploy **`vendor-respond`** after setting secrets: `supabase functions deploy vendor-respond`
 
-Assignment sets **`vendor_action_token`** and resets **`vendor_work_status`** to `pending_accept`. Portal APIs and env vars are documented in [`VENDOR_PORTAL.md`](VENDOR_PORTAL.md).
+Assignment sets **`vendor_action_token`** and resets **`vendor_work_status`** to `pending_accept`. Assignment emails also include the vendor's **access code** (`vendors.portal_api_key`) for the access-code login flow. Portal APIs and env vars are documented in [`VENDOR_PORTAL.md`](VENDOR_PORTAL.md).
 
 ### Vendor links and `localhost`
 
-Emails use **`APP_URL`** for **Vendor portal** and **View job** (`/vendor`, `/vendor/ticket/:id?k=…`). If those links “do not open” or load the wrong device:
+Emails use **`APP_URL`** for **Vendor portal** and **View job** (`/vendor`, `/vendor/ticket/:id`). If those links “do not open” or load the wrong device:
 
 - **Port must match the command you run (common “can’t be reached” cause):**
   - **`npm run dev`** serves on **5173** by default. Use `APP_URL=http://localhost:5173` (or the **Network** URL with **:5173**).
@@ -96,4 +96,4 @@ POST multipart to the local function URL with the same fields as production.
 - Include optional `residentPhone` and `residentNotificationChannel` (`email` \| `sms` \| `both`) in multipart when testing SMS.
 - After submit: check **`resident_notification_log`** for `ticket_submitted` rows (email and/or sms per channel).
 - After vendor assignment: log rows for `vendor_assigned` (also fired from **`reassignVendorByIdAndNotify`** when using **`admin-reassign-vendor`**).
-- Use **`vendor-update-job-status`** with a valid bearer or ticket token: transitions to **`in_progress`** / **`completed`** should add `repair_in_progress` / `repair_completed` log rows.
+- Use **`vendor-update-job-status`** with a valid bearer or ticket token: transitions to **`accepted`** / **`in_progress`** / **`completed`** should add `vendor_accepted` / `repair_in_progress` / `repair_completed` log rows.

@@ -1,6 +1,6 @@
 import { useEffect, useId } from 'react'
 
-function IconClose({ className = 'size-5 text-[#6a7282]' }: { className?: string }) {
+function IconClose({ className = 'size-5 text-neutral' }: { className?: string }) {
   return (
     <svg className={className} viewBox="0 0 24 24" fill="none" aria-hidden>
       <path d="M18 6L6 18M6 6l12 12" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" />
@@ -8,7 +8,7 @@ function IconClose({ className = 'size-5 text-[#6a7282]' }: { className?: string
   )
 }
 
-function IconHeaderAlert({ className = 'size-5 text-[#f54900]' }: { className?: string }) {
+function IconHeaderAlert({ className = 'size-5 text-error' }: { className?: string }) {
   return (
     <svg className={className} viewBox="0 0 24 24" fill="none" aria-hidden>
       <path
@@ -22,7 +22,7 @@ function IconHeaderAlert({ className = 'size-5 text-[#f54900]' }: { className?: 
   )
 }
 
-function IconIncompleteSection({ className = 'size-4 shrink-0 text-[#f54900]' }: { className?: string }) {
+function IconIncompleteSection({ className = 'size-4 shrink-0 text-error' }: { className?: string }) {
   return (
     <svg className={className} viewBox="0 0 24 24" fill="none" aria-hidden>
       <circle cx="12" cy="12" r="9" stroke="currentColor" strokeWidth={1.65} />
@@ -36,7 +36,7 @@ function IconIncompleteSection({ className = 'size-4 shrink-0 text-[#f54900]' }:
   )
 }
 
-function IconDuplicateSection({ className = 'size-4 shrink-0 text-[#e7000b]' }: { className?: string }) {
+function IconDuplicateSection({ className = 'size-4 shrink-0 text-error' }: { className?: string }) {
   return (
     <svg className={className} viewBox="0 0 24 24" fill="none" aria-hidden>
       <path
@@ -50,7 +50,7 @@ function IconDuplicateSection({ className = 'size-4 shrink-0 text-[#e7000b]' }: 
   )
 }
 
-function IconUnassignedSection({ className = 'size-4 shrink-0 text-[#ca8a04]' }: { className?: string }) {
+function IconUnassignedSection({ className = 'size-4 shrink-0 text-tertiary' }: { className?: string }) {
   return (
     <svg className={className} viewBox="0 0 24 24" fill="none" aria-hidden>
       <path
@@ -85,21 +85,21 @@ export function DataIssuesModal({ open, onClose }: { open: boolean; onClose: () 
         role="dialog"
         aria-modal="true"
         aria-labelledby={titleId}
-        className="relative flex h-full max-h-dvh w-full max-w-[min(100vw,640px)] flex-col overflow-hidden border-l border-[#e5e7eb] bg-white shadow-[inset_1px_0_0_0_#e5e7eb]"
+        className="relative flex h-full max-h-dvh w-full max-w-[min(100vw,640px)] flex-col overflow-hidden border-l border-secondary bg-white shadow-[inset_1px_0_0_0_#A788964D]"
       >
-        <header className="flex h-[81px] shrink-0 items-center justify-between border-b border-[#e5e7eb] px-6">
+        <header className="flex h-[81px] shrink-0 items-center justify-between border-b border-secondary px-6">
           <div className="flex min-w-0 items-center gap-3">
-            <div className="flex size-10 shrink-0 items-center justify-center rounded-[10px] bg-[#ffedd4]">
+            <div className="flex size-10 shrink-0 items-center justify-center rounded-[10px] bg-tertiary">
               <IconHeaderAlert />
             </div>
             <div className="min-w-0">
               <h2
                 id={titleId}
-                className="text-[18px] font-semibold leading-7 tracking-[-0.4395px] text-[#101828]"
+                className="text-[18px] font-semibold leading-7 tracking-[-0.4395px] text-extended-3"
               >
                 Data Issues &amp; Conflicts
               </h2>
-              <p className="text-[14px] font-normal leading-5 tracking-[-0.1504px] text-[#6a7282]">
+              <p className="text-[14px] font-normal leading-5 tracking-[-0.1504px] text-neutral">
                 Review and resolve data inconsistencies
               </p>
             </div>
@@ -108,47 +108,47 @@ export function DataIssuesModal({ open, onClose }: { open: boolean; onClose: () 
             type="button"
             onClick={onClose}
             aria-label="Close"
-            className="flex size-9 shrink-0 items-center justify-center rounded-lg outline-none hover:bg-[#f3f4f6] focus-visible:ring-2 focus-visible:ring-[#944c73] focus-visible:ring-offset-2"
+            className="flex size-9 shrink-0 items-center justify-center rounded-lg outline-none hover:bg-secondary focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2"
           >
             <IconClose />
           </button>
         </header>
 
         <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-auto px-6 py-6">
-          <section className="flex flex-col gap-3 rounded-[10px] border border-[#ffd6a8] px-[17px] pb-4 pt-[17px]">
-            <h3 className="flex items-center gap-2 text-[14px] font-semibold leading-5 tracking-[-0.1504px] text-[#101828]">
+          <section className="flex flex-col gap-3 rounded-[10px] border border-tertiary px-[17px] pb-4 pt-[17px]">
+            <h3 className="flex items-center gap-2 text-[14px] font-semibold leading-5 tracking-[-0.1504px] text-extended-3">
               <IconIncompleteSection />
               Incomplete Profiles (2)
             </h3>
             <div className="flex flex-col gap-2">
-              <div className="flex min-h-[62px] items-center justify-between gap-3 rounded border border-[#ffd6a8] bg-[#fff7ed] px-[13px] py-2">
+              <div className="flex min-h-[62px] items-center justify-between gap-3 rounded border border-tertiary bg-tertiary px-[13px] py-2">
                 <div className="min-w-0">
-                  <p className="text-[14px] font-medium leading-5 tracking-[-0.1504px] text-[#101828]">
+                  <p className="text-[14px] font-medium leading-5 tracking-[-0.1504px] text-extended-3">
                     Emily Rodriguez
                   </p>
-                  <p className="mt-0.5 text-[12px] font-normal leading-4 text-[#4a5565]">
+                  <p className="mt-0.5 text-[12px] font-normal leading-4 text-neutral-variant">
                     Missing: Phone number
                   </p>
                 </div>
                 <button
                   type="button"
-                  className="shrink-0 rounded px-3 py-1.5 text-[12px] font-medium leading-4 text-white outline-none bg-[#f54900] hover:bg-[#d44300] focus-visible:ring-2 focus-visible:ring-[#944c73] focus-visible:ring-offset-2"
+                  className="shrink-0 rounded px-3 py-1.5 text-[12px] font-medium leading-4 text-white outline-none bg-error hover:bg-tertiary focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2"
                 >
                   Fix Now
                 </button>
               </div>
-              <div className="flex min-h-[62px] items-center justify-between gap-3 rounded border border-[#ffd6a8] bg-[#fff7ed] px-[13px] py-2">
+              <div className="flex min-h-[62px] items-center justify-between gap-3 rounded border border-tertiary bg-tertiary px-[13px] py-2">
                 <div className="min-w-0">
-                  <p className="text-[14px] font-medium leading-5 tracking-[-0.1504px] text-[#101828]">
+                  <p className="text-[14px] font-medium leading-5 tracking-[-0.1504px] text-extended-3">
                     Robert Kim
                   </p>
-                  <p className="mt-0.5 text-[12px] font-normal leading-4 text-[#4a5565]">
+                  <p className="mt-0.5 text-[12px] font-normal leading-4 text-neutral-variant">
                     Missing: Emergency contact
                   </p>
                 </div>
                 <button
                   type="button"
-                  className="shrink-0 rounded px-3 py-1.5 text-[12px] font-medium leading-4 text-white outline-none bg-[#f54900] hover:bg-[#d44300] focus-visible:ring-2 focus-visible:ring-[#944c73] focus-visible:ring-offset-2"
+                  className="shrink-0 rounded px-3 py-1.5 text-[12px] font-medium leading-4 text-white outline-none bg-error hover:bg-tertiary focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2"
                 >
                   Fix Now
                 </button>
@@ -156,42 +156,42 @@ export function DataIssuesModal({ open, onClose }: { open: boolean; onClose: () 
             </div>
           </section>
 
-          <section className="flex flex-col gap-3 rounded-[10px] border border-[#ffc9c9] px-[17px] pb-4 pt-[17px]">
-            <h3 className="flex items-center gap-2 text-[14px] font-semibold leading-5 tracking-[-0.1504px] text-[#101828]">
+          <section className="flex flex-col gap-3 rounded-[10px] border border-error px-[17px] pb-4 pt-[17px]">
+            <h3 className="flex items-center gap-2 text-[14px] font-semibold leading-5 tracking-[-0.1504px] text-extended-3">
               <IconDuplicateSection />
               Duplicate Accounts (1)
             </h3>
-            <div className="flex min-h-[62px] items-center justify-between gap-3 rounded border border-[#ffc9c9] bg-[#fef2f2] px-[13px] py-2">
+            <div className="flex min-h-[62px] items-center justify-between gap-3 rounded border border-error bg-error px-[13px] py-2">
               <div className="min-w-0">
-                <p className="text-[14px] font-medium leading-5 tracking-[-0.1504px] text-[#101828]">
+                <p className="text-[14px] font-medium leading-5 tracking-[-0.1504px] text-extended-3">
                   Lisa Wang
                 </p>
-                <p className="mt-0.5 text-[12px] font-normal leading-4 text-[#4a5565]">
+                <p className="mt-0.5 text-[12px] font-normal leading-4 text-neutral-variant">
                   Possible duplicate email detected
                 </p>
               </div>
               <button
                 type="button"
-                className="shrink-0 rounded px-3 py-1.5 text-[12px] font-medium leading-4 text-white outline-none bg-[#e7000b] hover:bg-[#c10007] focus-visible:ring-2 focus-visible:ring-[#944c73] focus-visible:ring-offset-2"
+                className="shrink-0 rounded px-3 py-1.5 text-[12px] font-medium leading-4 text-white outline-none bg-error hover:bg-error focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2"
               >
                 Review
               </button>
             </div>
           </section>
 
-          <section className="rounded-[10px] border border-[#fff085] px-[17px] pb-4 pt-[17px]">
-            <h3 className="flex items-center gap-2 text-[14px] font-semibold leading-5 tracking-[-0.1504px] text-[#101828]">
+          <section className="rounded-[10px] border border-tertiary px-[17px] pb-4 pt-[17px]">
+            <h3 className="flex items-center gap-2 text-[14px] font-semibold leading-5 tracking-[-0.1504px] text-extended-3">
               <IconUnassignedSection />
               Unassigned Active Residents (0)
             </h3>
           </section>
         </div>
 
-        <footer className="flex shrink-0 justify-end border-t border-[#e5e7eb] bg-[#f9fafb] px-6 pb-5 pt-4">
+        <footer className="flex shrink-0 justify-end border-t border-secondary bg-secondary px-6 pb-5 pt-4">
           <button
             type="button"
             onClick={onClose}
-            className="inline-flex h-10 items-center justify-center rounded-[10px] bg-[#4a5565] px-8 text-[16px] font-medium leading-6 tracking-[-0.3125px] text-white outline-none hover:bg-[#364153] focus-visible:ring-2 focus-visible:ring-[#944c73] focus-visible:ring-offset-2"
+            className="inline-flex h-10 items-center justify-center rounded-[10px] bg-neutral-variant px-8 text-[16px] font-medium leading-6 tracking-[-0.3125px] text-white outline-none hover:bg-neutral-variant focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2"
           >
             Close
           </button>

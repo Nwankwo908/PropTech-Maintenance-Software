@@ -36,6 +36,24 @@ verify_jwt = false
 import_map = "./functions/admin-reassign-vendor/deno.json"
 entrypoint = "./functions/admin-reassign-vendor/index.ts"
 
+[functions.recommend-vendor-alternatives]
+enabled = true
+verify_jwt = false
+import_map = "./functions/recommend-vendor-alternatives/deno.json"
+entrypoint = "./functions/recommend-vendor-alternatives/index.ts"
+
+[functions.discover-external-vendors]
+enabled = true
+verify_jwt = false
+import_map = "./functions/discover-external-vendors/deno.json"
+entrypoint = "./functions/discover-external-vendors/index.ts"
+
+[functions.vendor-delayed-auto-reassign]
+enabled = true
+verify_jwt = false
+import_map = "./functions/vendor-delayed-auto-reassign/deno.json"
+entrypoint = "./functions/vendor-delayed-auto-reassign/index.ts"
+
 # Public GET with HMAC token (email Accept / Decline); verify_jwt off.
 [functions.vendor-respond]
 enabled = true
@@ -49,3 +67,49 @@ enabled = true
 verify_jwt = false
 import_map = "./functions/vendor-verify-token/deno.json"
 entrypoint = "./functions/vendor-verify-token/index.ts"
+
+[functions.send-broadcast]
+enabled = true
+verify_jwt = false
+import_map = "./functions/send-broadcast/deno.json"
+entrypoint = "./functions/send-broadcast/index.ts"
+
+[functions.schedule-broadcast]
+enabled = true
+verify_jwt = false
+import_map = "./functions/schedule-broadcast/deno.json"
+entrypoint = "./functions/schedule-broadcast/index.ts"
+
+[functions.run-scheduled-broadcasts]
+enabled = true
+verify_jwt = false
+import_map = "./functions/run-scheduled-broadcasts/deno.json"
+entrypoint = "./functions/run-scheduled-broadcasts/index.ts"
+
+[functions.get-broadcast-stats]
+enabled = true
+verify_jwt = false
+import_map = "./functions/get-broadcast-stats/deno.json"
+# Uncomment to specify a custom file path to the entrypoint.
+# Supported file extensions are: .ts, .js, .mjs, .jsx, .tsx
+entrypoint = "./functions/get-broadcast-stats/index.ts"
+# Specifies static files to be bundled with the function. Supports glob patterns.
+# For example, if you want to serve static HTML pages in your function:
+# static_files = [ "./functions/get-broadcast-stats/*.html" ]
+
+[functions.retry-failed-delivery]
+enabled = true
+verify_jwt = false
+import_map = "./functions/retry-failed-delivery/deno.json"
+entrypoint = "./functions/retry-failed-delivery/index.ts"
+
+[functions.ai-enhance]
+enabled = true
+verify_jwt = true
+import_map = "./functions/ai-enhance/deno.json"
+# Uncomment to specify a custom file path to the entrypoint.
+# Supported file extensions are: .ts, .js, .mjs, .jsx, .tsx
+entrypoint = "./functions/ai-enhance/index.ts"
+# Specifies static files to be bundled with the function. Supports glob patterns.
+# For example, if you want to serve static HTML pages in your function:
+# static_files = [ "./functions/ai-enhance/*.html" ]

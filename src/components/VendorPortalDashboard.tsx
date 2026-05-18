@@ -328,7 +328,7 @@ function IconAttachment({ className = 'size-4 shrink-0 text-[#4a5565]' }: { clas
   )
 }
 
-function IconDueClock({ className = 'size-3 shrink-0 text-[#e7000b]' }: { className?: string }) {
+function IconDueClock({ className = 'size-3 shrink-0 text-[#b52a00]' }: { className?: string }) {
   return (
     <svg className={className} viewBox="0 0 24 24" fill="none" aria-hidden>
       <circle cx="12" cy="12" r="9" stroke="currentColor" strokeWidth={1.5} />
@@ -467,8 +467,14 @@ function IconCameraSection({ className = 'size-5 text-[#101828]' }: { className?
 function IconMarkCompleteCircle({ className = 'size-5 shrink-0' }: { className?: string }) {
   return (
     <svg className={className} viewBox="0 0 24 24" fill="none" aria-hidden>
-      <circle cx="12" cy="12" r="9" stroke="white" strokeWidth={1.5} />
-      <path d="M8 12l2.5 2.5L16 9" stroke="white" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" />
+      <circle cx="12" cy="12" r="9" stroke="currentColor" strokeWidth={1.5} />
+      <path
+        d="M8 12l2.5 2.5L16 9"
+        stroke="currentColor"
+        strokeWidth={1.8}
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
     </svg>
   )
 }
@@ -520,7 +526,7 @@ function VendorWorkOrderWideHeader({
           type="button"
           onClick={onClose}
           aria-label="Close"
-          className="flex size-6 shrink-0 items-center justify-center text-[#6a7282] outline-none hover:text-[#101828] focus-visible:ring-2 focus-visible:ring-[#2b7fff] focus-visible:ring-offset-2"
+          className="flex size-6 shrink-0 items-center justify-center text-[#6a7282] outline-none hover:text-[#101828] focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2"
         >
           <svg className="size-6" viewBox="0 0 24 24" fill="none" aria-hidden>
             <path d="M18 6L6 18M6 6l12 12" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" />
@@ -567,11 +573,11 @@ function VendorWorkOrderWideScrollBody({ order }: { order: VendorWorkOrder }) {
           </div>
         </div>
         {dueRange ? (
-          <div className="flex flex-col gap-1 rounded-[10px] border border-[#ffc9c9] bg-[#fef2f2] px-[17px] pb-4 pt-[17px]">
-            <p className="text-[14px] font-normal leading-5 tracking-[-0.1504px] text-[#e7000b]">Due Date</p>
+          <div className="flex flex-col gap-1 rounded-[10px] border border-[#b52a00]/30 bg-[#fff4f0] px-[17px] pb-4 pt-[17px]">
+            <p className="text-[14px] font-normal leading-5 tracking-[-0.1504px] text-[#b52a00]">Due Date</p>
             <div className="flex items-center gap-2">
-              <IconDueClock className="size-4 shrink-0 text-[#c10007]" />
-              <p className="text-[16px] font-semibold leading-6 tracking-[-0.3125px] text-[#c10007]">{dueRange}</p>
+              <IconDueClock className="size-4 shrink-0 text-[#b52a00]" />
+              <p className="text-[16px] font-semibold leading-6 tracking-[-0.3125px] text-[#b52a00]">{dueRange}</p>
             </div>
           </div>
         ) : (
@@ -614,7 +620,7 @@ function VendorWorkOrderWideScrollBody({ order }: { order: VendorWorkOrder }) {
                       isVideo: isProbablyVideoAssetUrl(src),
                     })
                   }
-                  className="group relative h-32 w-[min(100%,270px)] shrink-0 overflow-hidden rounded-[10px] border border-[#e5e7eb] bg-black/5 text-left outline-none transition-[box-shadow,transform] hover:border-[#2b7fff]/40 hover:shadow-md focus-visible:ring-2 focus-visible:ring-[#2b7fff] focus-visible:ring-offset-2 active:scale-[0.99]"
+                  className="group relative h-32 w-[min(100%,270px)] shrink-0 overflow-hidden rounded-[10px] border border-[#e5e7eb] bg-black/5 text-left outline-none transition-[box-shadow,transform] hover:border-[#0030b5]/40 hover:shadow-md focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2 active:scale-[0.99]"
                   aria-label={`Expand attachment ${i + 1}`}
                 >
                   {isProbablyVideoAssetUrl(src) ? (
@@ -718,7 +724,7 @@ function VendorWorkOrderStatusNoteFields({
         value={statusNote}
         onChange={(e) => setStatusNote(e.target.value)}
         placeholder="Add a note about this status update (optional)"
-        className="mt-3 h-[250px] w-full resize-y rounded-[10px] border border-[#d1d5dc] px-3 py-2 text-[16px] leading-6 tracking-[-0.3125px] text-[#0a0a0a] outline-none placeholder:text-[rgba(10,10,10,0.5)] focus:border-[#2b7fff] focus:ring-1 focus:ring-[#2b7fff]"
+        className="mt-3 h-[250px] w-full resize-y rounded-[10px] border border-[#d1d5dc] px-3 py-2 text-[16px] leading-6 tracking-[-0.3125px] text-[#0a0a0a] outline-none placeholder:text-[rgba(10,10,10,0.5)] focus:border-[#0030b5] focus:ring-1 focus:ring-[#0030b5]"
       />
       <input
         ref={fileInputRef}
@@ -735,7 +741,7 @@ function VendorWorkOrderStatusNoteFields({
       <button
         type="button"
         onClick={() => fileInputRef.current?.click()}
-        className="mt-3 flex h-10 w-full items-center justify-center gap-2 rounded-[10px] border-2 border-dashed border-[#d1d5dc] text-[14px] font-medium leading-5 tracking-[-0.1504px] text-[#4a5565] outline-none hover:border-[#9ca3af] hover:bg-[#f9fafb] focus-visible:ring-2 focus-visible:ring-[#2b7fff] focus-visible:ring-offset-2"
+        className="mt-3 flex h-10 w-full items-center justify-center gap-2 rounded-[10px] border-2 border-dashed border-[#d1d5dc] text-[14px] font-medium leading-5 tracking-[-0.1504px] text-[#4a5565] outline-none hover:border-[#0030b5]/45 hover:bg-[#e2f4ed] focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2"
       >
         <IconCameraSection className="size-5 text-[#4a5565]" />
         Upload Photos/Videos
@@ -772,7 +778,7 @@ function WorkOrderCard({
       }}
       onDragEnd={onDragEnd}
       onClick={onSelect}
-      className="w-full cursor-grab rounded-[10px] border border-[#e5e7eb] bg-white p-4 text-left outline-none transition-shadow active:cursor-grabbing hover:shadow-sm focus-visible:ring-2 focus-visible:ring-[#2b7fff] focus-visible:ring-offset-2"
+      className="w-full cursor-grab rounded-[10px] border border-[#e5e7eb] bg-white p-4 text-left outline-none transition-shadow active:cursor-grabbing hover:shadow-sm focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2"
     >
       <div className="flex items-start justify-between gap-2">
         <p className="font-mono text-[14px] leading-5 text-[#6a7282]">{order.displayId}</p>
@@ -804,7 +810,7 @@ function WorkOrderCard({
             className={`text-[12px] font-normal leading-4 ${
               order.slaOverdue
                 ? 'font-semibold text-[#b91c1c]'
-                : 'text-[#e7000b]'
+                : 'text-[#b52a00]'
             }`}
           >
             {order.dueDisplay}
@@ -838,7 +844,7 @@ function KanbanColumn({
 }) {
   const dropActiveClass =
     column === 'assigned'
-      ? 'bg-[#eef0ff] ring-2 ring-[#3342aa] ring-offset-2'
+      ? 'bg-[#eef0ff] ring-2 ring-[#0030b5] ring-offset-2'
       : column === 'in_progress'
         ? 'bg-[#f4f1ec] ring-2 ring-[#988873] ring-offset-2'
         : 'bg-[#e5f4f4] ring-2 ring-[#016363] ring-offset-2'
@@ -887,13 +893,24 @@ function VendorAssignedWorkOrderDetailRail({
   order,
   onClose,
   onStartWork,
+  onAcceptJob,
   onDeclineJob,
+  startWorkDisabled,
+  startWorkTitle,
+  acceptDisabled,
+  acceptTitle,
 }: {
   order: VendorWorkOrder
   onClose: () => void
-  /** Accept + move to In progress: calls `in_progress` on the API (same as kanban drag to In progress). */
+  /** Move to In progress (after accepting when using live API). */
   onStartWork: () => void
+  /** Accept assignment (`pending_accept` → `accepted`). */
+  onAcceptJob: () => void
   onDeclineJob: () => void
+  startWorkDisabled?: boolean
+  startWorkTitle?: string
+  acceptDisabled?: boolean
+  acceptTitle?: string
 }) {
   const titleId = useId()
   const noteId = useId()
@@ -944,21 +961,34 @@ function VendorAssignedWorkOrderDetailRail({
             </div>
           </div>
           <div className="shrink-0 border-t border-[#e5e7eb] bg-white px-6 py-6">
-            <div className="flex w-full flex-col gap-3 sm:flex-row sm:items-stretch sm:gap-4">
+            <div className="flex w-full flex-col gap-3">
               <button
                 type="button"
                 onClick={onStartWork}
-                className="flex h-[52px] min-h-0 flex-1 items-center justify-center rounded-[10px] bg-[#155dfc] text-[16px] font-medium leading-6 tracking-[-0.3125px] text-white outline-none hover:bg-[#1447e6] focus-visible:ring-2 focus-visible:ring-[#2b7fff] focus-visible:ring-offset-2"
+                disabled={startWorkDisabled}
+                title={startWorkTitle}
+                className="flex h-[52px] w-full min-h-0 items-center justify-center rounded-[10px] bg-[#ffee6c] text-[16px] font-medium leading-6 tracking-[-0.3125px] text-[#101828] outline-none hover:enabled:bg-[#f5e35e] focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
               >
                 Start work
               </button>
-              <button
-                type="button"
-                onClick={decline}
-                className="flex h-[52px] min-h-0 flex-1 items-center justify-center rounded-[10px] border-2 border-[#e7000b] bg-white text-[16px] font-semibold leading-6 tracking-[-0.3125px] text-[#e7000b] outline-none hover:bg-[#fef2f2] focus-visible:ring-2 focus-visible:ring-[#2b7fff] focus-visible:ring-offset-2"
-              >
-                Decline Job
-              </button>
+              <div className="flex w-full flex-col gap-3 sm:flex-row sm:items-stretch sm:gap-4">
+                <button
+                  type="button"
+                  onClick={onAcceptJob}
+                  disabled={acceptDisabled}
+                  title={acceptTitle}
+                  className="flex h-[52px] min-h-0 flex-1 items-center justify-center rounded-[10px] bg-[#30b500] text-[16px] font-semibold leading-6 tracking-[-0.3125px] text-white outline-none hover:enabled:bg-[#279400] focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  Accept
+                </button>
+                <button
+                  type="button"
+                  onClick={decline}
+                  className="flex h-[52px] min-h-0 flex-1 items-center justify-center rounded-[10px] border-2 border-[#b52a00] bg-white text-[16px] font-semibold leading-6 tracking-[-0.3125px] text-[#b52a00] outline-none hover:bg-[#fff4f0] focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2"
+                >
+                  Decline Job
+                </button>
+              </div>
             </div>
           </div>
         </div>
@@ -1034,7 +1064,7 @@ function VendorInProgressWorkOrderDetailRail({
               <button
                 type="button"
                 onClick={onMarkComplete}
-                className="mt-6 flex h-10 w-full items-center justify-center gap-2 rounded-[10px] bg-[#00a63e] text-[16px] font-medium leading-6 tracking-[-0.3125px] text-white outline-none hover:bg-[#008a34] focus-visible:ring-2 focus-visible:ring-[#2b7fff] focus-visible:ring-offset-2"
+                className="mt-6 flex h-10 w-full items-center justify-center gap-2 rounded-[10px] bg-[#ffee6c] text-[16px] font-medium leading-6 tracking-[-0.3125px] text-[#101828] outline-none hover:bg-[#f5e35e] focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2"
               >
                 <IconMarkCompleteCircle />
                 Mark as Complete
@@ -1042,7 +1072,7 @@ function VendorInProgressWorkOrderDetailRail({
               <button
                 type="button"
                 onClick={confirmCancelWork}
-                className="mt-3 flex h-10 w-full items-center justify-center rounded-[10px] border-2 border-[#e7000b] bg-white text-[16px] font-semibold leading-6 tracking-[-0.3125px] text-[#e7000b] outline-none hover:bg-[#fef2f2] focus-visible:ring-2 focus-visible:ring-[#2b7fff] focus-visible:ring-offset-2"
+                className="mt-3 flex h-10 w-full items-center justify-center rounded-[10px] border-2 border-[#b52a00] bg-white text-[16px] font-semibold leading-6 tracking-[-0.3125px] text-[#b52a00] outline-none hover:bg-[#fff4f0] focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2"
               >
                 Cancel work order
               </button>
@@ -1338,6 +1368,14 @@ export function VendorPortalDashboard({
     setSelectedId(null)
   }
 
+  function acceptJob(id: string) {
+    if (useLiveVendorApi) {
+      void runStatusAction(id, 'accept')
+      return
+    }
+    patchOrder(id, { vendorDbStatus: 'accepted' })
+  }
+
   function completeWork(id: string) {
     if (useLiveVendorApi) {
       void runStatusAction(id, 'completed').then(() => setSelectedId(null))
@@ -1358,7 +1396,7 @@ export function VendorPortalDashboard({
 
   return (
     <div className="min-h-dvh bg-[#f3f4f6]">
-      <header className="border-b-4 border-[#944c73] bg-white shadow-[0px_1px_3px_0px_rgba(0,0,0,0.1),0px_1px_2px_0px_rgba(0,0,0,0.1)]">
+      <header className="border-b-4 border-[#0030b5] bg-white shadow-[0px_1px_3px_0px_rgba(0,0,0,0.1),0px_1px_2px_0px_rgba(0,0,0,0.1)]">
         <div className="mx-auto flex w-full max-w-[1280px] flex-col gap-4 px-6 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-8 lg:px-10">
           <div>
             <h1 className="text-[24px] font-bold leading-8 tracking-[0.0703px] text-[#101828]">Vendor Portal</h1>
@@ -1384,12 +1422,12 @@ export function VendorPortalDashboard({
           <p className="mb-4 text-[14px] text-[#6a7282]">Loading work orders…</p>
         ) : null}
         {apiError ? (
-          <p className="mb-4 rounded-[10px] border border-[#fecaca] bg-[#fef2f2] px-4 py-3 text-[14px] text-[#991b1b]">
+          <p className="mb-4 rounded-[10px] border border-[#b52a00]/30 bg-[#fff4f0] px-4 py-3 text-[14px] text-[#b52a00]">
             {apiError}
           </p>
         ) : null}
         {actionError ? (
-          <p className="mb-4 rounded-[10px] border border-[#fde68a] bg-[#fffbeb] px-4 py-3 text-[14px] text-[#92400e]">
+          <p className="mb-4 rounded-[10px] border border-[#b52a00]/30 bg-[#fff4f0] px-4 py-3 text-[14px] text-[#b52a00]">
             {actionError}
           </p>
         ) : null}
@@ -1400,15 +1438,15 @@ export function VendorPortalDashboard({
           </p>
         ) : null}
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-          <div className="rounded-[10px] border-l-4 border-[#3342aa] bg-white py-4 pl-5 pr-4 shadow-sm">
+          <div className="rounded-[10px] border-l-4 border-[#0030b5] bg-white py-4 pl-5 pr-4 shadow-sm">
             <p className="text-[24px] font-bold leading-8 tracking-[0.0703px] text-[#101828]">{nAssigned}</p>
             <p className="mt-0.5 text-[14px] font-normal leading-5 tracking-[-0.1504px] text-[#4a5565]">Assigned</p>
           </div>
-          <div className="rounded-[10px] border-l-4 border-[#988873] bg-white py-4 pl-5 pr-4 shadow-sm">
+          <div className="rounded-[10px] border-l-4 border-[#b58500] bg-white py-4 pl-5 pr-4 shadow-sm">
             <p className="text-[24px] font-bold leading-8 tracking-[0.0703px] text-[#101828]">{nProgress}</p>
             <p className="mt-0.5 text-[14px] font-normal leading-5 tracking-[-0.1504px] text-[#4a5565]">In Progress</p>
           </div>
-          <div className="rounded-[10px] border-l-4 border-[#016363] bg-white py-4 pl-5 pr-4 shadow-sm">
+          <div className="rounded-[10px] border-l-4 border-[#30b500] bg-white py-4 pl-5 pr-4 shadow-sm">
             <p className="text-[24px] font-bold leading-8 tracking-[0.0703px] text-[#101828]">{nCompleted}</p>
             <p className="mt-0.5 text-[14px] font-normal leading-5 tracking-[-0.1504px] text-[#4a5565]">Completed</p>
           </div>
@@ -1427,7 +1465,7 @@ export function VendorPortalDashboard({
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               placeholder="Search by ID, title, or location…"
-              className="h-10 w-full rounded-[10px] border border-[#e5e7eb] bg-white px-3 text-[14px] tracking-[-0.1504px] text-[#101828] outline-none placeholder:text-[#99a1af] focus:border-[#2b7fff] focus:ring-1 focus:ring-[#2b7fff]"
+              className="h-10 w-full rounded-[10px] border border-[#e5e7eb] bg-white px-3 text-[14px] tracking-[-0.1504px] text-[#101828] outline-none placeholder:text-[#99a1af] focus:border-[#0030b5] focus:ring-1 focus:ring-[#0030b5]"
             />
           </label>
         </div>
@@ -1435,7 +1473,7 @@ export function VendorPortalDashboard({
         <div className="mt-6 flex flex-col gap-4 lg:flex-row lg:items-start">
           <KanbanColumn
             title="Assigned"
-            dotClass="bg-[#3342aa]"
+            dotClass="bg-[#0030b5]"
             count={assigned.length}
             emptyLabel={emptyBoardMsg}
             column="assigned"
@@ -1454,7 +1492,7 @@ export function VendorPortalDashboard({
           </KanbanColumn>
           <KanbanColumn
             title="In Progress"
-            dotClass="bg-[#988873]"
+            dotClass="bg-[#b58500]"
             count={inProgress.length}
             emptyLabel={emptyBoardMsg}
             column="in_progress"
@@ -1473,7 +1511,7 @@ export function VendorPortalDashboard({
           </KanbanColumn>
           <KanbanColumn
             title="Completed"
-            dotClass="bg-[#016363]"
+            dotClass="bg-[#30b500]"
             count={completed.length}
             emptyLabel={emptyBoardMsg}
             column="completed"
@@ -1499,7 +1537,26 @@ export function VendorPortalDashboard({
           order={selected}
           onClose={() => setSelectedId(null)}
           onStartWork={() => startWork(selected.id)}
+          onAcceptJob={() => acceptJob(selected.id)}
           onDeclineJob={() => declineJob(selected.id)}
+          startWorkDisabled={
+            useLiveVendorApi && selected.vendorDbStatus === 'pending_accept'
+          }
+          startWorkTitle={
+            useLiveVendorApi && selected.vendorDbStatus === 'pending_accept'
+              ? 'Accept the job first'
+              : undefined
+          }
+          acceptDisabled={
+            useLiveVendorApi
+              ? selected.vendorDbStatus !== 'pending_accept'
+              : selected.vendorDbStatus === 'accepted'
+          }
+          acceptTitle={
+            useLiveVendorApi && selected.vendorDbStatus !== 'pending_accept'
+              ? 'Only available while the job is awaiting your acceptance'
+              : undefined
+          }
         />
       ) : selected && selected.column === 'in_progress' ? (
         <VendorInProgressWorkOrderDetailRail
@@ -1521,7 +1578,7 @@ export function VendorPortalDashboard({
         <div
           role="status"
           aria-live="polite"
-          className="pointer-events-none fixed bottom-6 left-1/2 z-[100] max-w-[min(100vw-24px,28rem)] -translate-x-1/2 rounded-[10px] border border-[#334155] bg-[#101828] px-4 py-3 text-center text-[14px] leading-5 tracking-[-0.1504px] text-white shadow-[0px_10px_15px_-3px_rgba(0,0,0,0.2)]"
+          className="pointer-events-none fixed bottom-6 left-1/2 z-[100] max-w-[min(100vw-24px,28rem)] -translate-x-1/2 rounded-[10px] border border-[#b8e4d2] bg-[#f5fbf8] px-4 py-3 text-center text-[14px] leading-5 tracking-[-0.1504px] text-[#245845] shadow-[0px_10px_15px_-3px_rgba(0,0,0,0.2)]"
         >
           {vendorToast}
         </div>

@@ -21,7 +21,7 @@ const DEMO_AVAILABLE_UNITS: AvailableUnit[] = [
   { id: 'u6', unit: '11A', building: 'Building C' },
 ]
 
-function IconKeyHeader({ className = 'size-5 text-[#155dfc]' }: { className?: string }) {
+function IconKeyHeader({ className = 'size-5 text-extended-1' }: { className?: string }) {
   return (
     <svg className={className} viewBox="0 0 24 24" fill="none" aria-hidden>
       <path
@@ -35,7 +35,7 @@ function IconKeyHeader({ className = 'size-5 text-[#155dfc]' }: { className?: st
   )
 }
 
-function IconAi({ className = 'size-4 shrink-0 text-[#1447e6]' }: { className?: string }) {
+function IconAi({ className = 'size-4 shrink-0 text-extended-1' }: { className?: string }) {
   return (
     <svg className={className} viewBox="0 0 24 24" fill="none" aria-hidden>
       <path
@@ -48,7 +48,7 @@ function IconAi({ className = 'size-4 shrink-0 text-[#1447e6]' }: { className?: 
   )
 }
 
-function IconCheckCircle({ className = 'size-4 shrink-0 text-[#0d542b]' }: { className?: string }) {
+function IconCheckCircle({ className = 'size-4 shrink-0 text-extended-3' }: { className?: string }) {
   return (
     <svg className={className} viewBox="0 0 24 24" fill="none" aria-hidden>
       <circle cx="12" cy="12" r="9" stroke="currentColor" strokeWidth={1.65} />
@@ -99,21 +99,21 @@ export function AssignUnitModal({
         role="dialog"
         aria-modal="true"
         aria-labelledby={titleId}
-        className="relative flex h-full max-h-dvh w-full max-w-[min(100vw,640px)] flex-col overflow-hidden border-l border-[#e5e7eb] bg-white shadow-[inset_1px_0_0_0_#e5e7eb]"
+        className="relative flex h-full max-h-dvh w-full max-w-[min(100vw,640px)] flex-col overflow-hidden border-l border-secondary bg-white shadow-[inset_1px_0_0_0_#A788964D]"
       >
-        <header className="flex h-[81px] shrink-0 items-center justify-between border-b border-[#e5e7eb] px-6">
+        <header className="flex h-[81px] shrink-0 items-center justify-between border-b border-secondary px-6">
           <div className="flex min-w-0 items-center gap-3">
-            <div className="flex size-10 shrink-0 items-center justify-center rounded-[10px] bg-[#dbeafe]">
+            <div className="flex size-10 shrink-0 items-center justify-center rounded-[10px] bg-extended-2">
               <IconKeyHeader />
             </div>
             <div className="min-w-0">
               <h2
                 id={titleId}
-                className="text-[18px] font-semibold leading-7 tracking-[-0.4395px] text-[#101828]"
+                className="text-[18px] font-semibold leading-7 tracking-[-0.4395px] text-extended-3"
               >
                 Assign Unit
               </h2>
-              <p className="text-[14px] font-normal leading-5 tracking-[-0.1504px] text-[#6a7282]">
+              <p className="text-[14px] font-normal leading-5 tracking-[-0.1504px] text-neutral">
                 {row.name}
               </p>
             </div>
@@ -122,7 +122,7 @@ export function AssignUnitModal({
             type="button"
             onClick={onClose}
             aria-label="Close"
-            className="flex size-9 shrink-0 items-center justify-center rounded-lg text-[#6a7282] outline-none hover:bg-[#f3f4f6] focus-visible:ring-2 focus-visible:ring-[#944c73] focus-visible:ring-offset-2"
+            className="flex size-9 shrink-0 items-center justify-center rounded-lg text-neutral outline-none hover:bg-secondary focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2"
           >
             <svg className="size-5" viewBox="0 0 24 24" fill="none" aria-hidden>
               <path d="M18 6L6 18M6 6l12 12" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" />
@@ -132,12 +132,12 @@ export function AssignUnitModal({
 
         <div className="min-h-0 flex-1 overflow-y-auto px-6 pb-6 pt-6">
           <div className="flex flex-col gap-4">
-            <div className="rounded-[10px] border border-[#bedbff] bg-[#eff6ff] px-[13px] py-[13px]">
+            <div className="rounded-[10px] border border-extended-1 bg-extended-2 px-[13px] py-[13px]">
               <div className="flex gap-2">
-                <IconAi className="mt-0.5 size-4 shrink-0 text-[#1447e6]" />
+                <IconAi className="mt-0.5 size-4 shrink-0 text-extended-1" />
                 <div className="min-w-0 space-y-1">
-                  <p className="text-[12px] font-medium leading-4 text-[#1c398e]">AI Conflict Prevention</p>
-                  <p className="text-[12px] font-normal leading-4 text-[#1447e6]">
+                  <p className="text-[12px] font-medium leading-4 text-extended-3">AI Conflict Prevention</p>
+                  <p className="text-[12px] font-normal leading-4 text-extended-1">
                     System will prevent duplicate or conflicting unit assignments automatically.
                   </p>
                 </div>
@@ -145,7 +145,7 @@ export function AssignUnitModal({
             </div>
 
             <div className="flex flex-col gap-2">
-              <p className="text-[14px] font-medium leading-5 tracking-[-0.1504px] text-[#364153]">
+              <p className="text-[14px] font-medium leading-5 tracking-[-0.1504px] text-neutral-variant">
                 Select Available Unit
               </p>
               <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
@@ -160,16 +160,16 @@ export function AssignUnitModal({
                       aria-label={`${u.unit}, ${u.building}, available`}
                       className={
                         isSel
-                          ? 'flex h-[88px] flex-col items-stretch rounded-[10px] border-2 border-[#155dfc] bg-white px-[14px] pt-[14px] pb-[2px] outline-none focus-visible:ring-2 focus-visible:ring-[#944c73] focus-visible:ring-offset-2'
-                          : 'flex h-[88px] flex-col items-stretch rounded-[10px] border-2 border-[#e5e7eb] bg-white px-[14px] pt-[14px] pb-[2px] outline-none hover:border-[#d1d5dc] focus-visible:ring-2 focus-visible:ring-[#944c73] focus-visible:ring-offset-2'
+                          ? 'flex h-[88px] flex-col items-stretch rounded-[10px] border-2 border-extended-1 bg-white px-[14px] pt-[14px] pb-[2px] outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2'
+                          : 'flex h-[88px] flex-col items-stretch rounded-[10px] border-2 border-secondary bg-white px-[14px] pt-[14px] pb-[2px] outline-none hover:border-secondary focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2'
                       }
                     >
                       <div className="flex flex-1 flex-col items-center text-center">
-                        <p className="text-[14px] font-semibold leading-5 tracking-[-0.1504px] text-[#101828]">
+                        <p className="text-[14px] font-semibold leading-5 tracking-[-0.1504px] text-extended-3">
                           {u.unit}
                         </p>
-                        <p className="text-[12px] font-medium leading-4 text-[#6a7282]">{u.building}</p>
-                        <span className="mt-2 inline-flex items-center justify-center rounded px-2 py-0.5 text-[12px] font-medium leading-4 text-[#008236] bg-[#dcfce7]">
+                        <p className="text-[12px] font-medium leading-4 text-neutral">{u.building}</p>
+                        <span className="mt-2 inline-flex items-center justify-center rounded px-2 py-0.5 text-[12px] font-medium leading-4 text-extended-3 bg-extended-2">
                           Available
                         </span>
                       </div>
@@ -179,10 +179,10 @@ export function AssignUnitModal({
               </div>
             </div>
 
-            <div className="rounded-[10px] border border-[#b9f8cf] bg-[#f0fdf4] px-[13px] py-[13px]">
+            <div className="rounded-[10px] border border-extended-2 bg-extended-2 px-[13px] py-[13px]">
               <div className="flex items-center gap-2">
                 <IconCheckCircle />
-                <p className="text-[14px] font-medium leading-5 tracking-[-0.1504px] text-[#0d542b]">
+                <p className="text-[14px] font-medium leading-5 tracking-[-0.1504px] text-extended-3">
                   {selected ? (
                     <>
                       Unit {selected.unit} will be assigned to {row.name}
@@ -196,11 +196,11 @@ export function AssignUnitModal({
           </div>
         </div>
 
-        <footer className="flex shrink-0 flex-wrap items-center justify-end gap-3 border-t border-[#e5e7eb] bg-[#f9fafb] px-6 pb-5 pt-4">
+        <footer className="flex shrink-0 flex-wrap items-center justify-end gap-3 border-t border-secondary bg-secondary px-6 pb-5 pt-4">
           <button
             type="button"
             onClick={onClose}
-            className="inline-flex h-[42px] min-w-[5.5rem] items-center justify-center rounded-[10px] border border-[#d1d5dc] bg-white px-5 text-[16px] font-medium leading-6 tracking-[-0.3125px] text-[#364153] outline-none hover:bg-[#f3f4f6] focus-visible:ring-2 focus-visible:ring-[#944c73] focus-visible:ring-offset-2"
+            className="inline-flex h-[42px] min-w-[5.5rem] items-center justify-center rounded-[10px] border border-secondary bg-white px-5 text-[16px] font-medium leading-6 tracking-[-0.3125px] text-neutral-variant outline-none hover:bg-secondary focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2"
           >
             Cancel
           </button>
@@ -208,7 +208,7 @@ export function AssignUnitModal({
             type="button"
             onClick={assign}
             disabled={!selectedId}
-            className="inline-flex h-[42px] min-w-[8.5rem] items-center justify-center rounded-[10px] bg-[#155dfc] px-5 text-[16px] font-medium leading-6 tracking-[-0.3125px] text-white outline-none hover:bg-[#1447e6] focus-visible:ring-2 focus-visible:ring-[#944c73] focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50"
+            className="inline-flex h-[42px] min-w-[8.5rem] items-center justify-center rounded-[10px] bg-extended-1 px-5 text-[16px] font-medium leading-6 tracking-[-0.3125px] text-white outline-none hover:bg-extended-1 focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50"
           >
             Assign Unit
           </button>

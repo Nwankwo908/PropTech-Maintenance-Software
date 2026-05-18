@@ -11,6 +11,12 @@ export type ScheduleBroadcastSummary = {
   channelSms: boolean
 }
 
+export type ScheduleBroadcastSelection = {
+  date: string
+  time: string
+  scheduledAtIso: string
+}
+
 function pad2(n: number) {
   return String(n).padStart(2, '0')
 }
@@ -45,11 +51,15 @@ export function ScheduleBroadcastModal({
   summary,
   onClose,
   onConfirm,
+  confirmBusy = false,
+  confirmError = null,
 }: {
   open: boolean
   summary: ScheduleBroadcastSummary
   onClose: () => void
-  onConfirm: () => void
+  onConfirm: (selection: ScheduleBroadcastSelection) => void
+  confirmBusy?: boolean
+  confirmError?: string | null
 }) {
   const titleId = useId()
   const [date, setDate] = useState('')
@@ -70,6 +80,11 @@ export function ScheduleBroadcastModal({
   if (!open) return null
 
   const scheduleValid = Boolean(date.trim() && time.trim())
+  const scheduledAtPreview = scheduleValid ? new Date(`${date}T${time}`) : null
+  const scheduleTooSoon =
+    scheduledAtPreview instanceof Date &&
+    !Number.isNaN(scheduledAtPreview.getTime()) &&
+    scheduledAtPreview.getTime() <= Date.now() + 60_000
 
   function applyDateTime(d: Date, hour: number, minute: number) {
     const next = new Date(d)
@@ -100,8 +115,11 @@ export function ScheduleBroadcastModal({
   }
 
   function handleConfirm() {
-    if (!scheduleValid) return
-    onConfirm()
+    if (!scheduleValid || confirmBusy) return
+    const scheduledAt = new Date(`${date}T${time}`)
+    if (Number.isNaN(scheduledAt.getTime())) return
+    if (scheduledAt.getTime() <= Date.now() + 60_000) return
+    onConfirm({ date, time, scheduledAtIso: scheduledAt.toISOString() })
   }
 
   const previewBody =
@@ -121,10 +139,10 @@ export function ScheduleBroadcastModal({
         aria-labelledby={titleId}
         className="relative flex max-h-[min(90dvh,720px)] w-full max-w-[680px] flex-col overflow-hidden rounded-[10px] bg-white shadow-lg"
       >
-        <header className="flex shrink-0 items-center justify-between gap-3 border-b border-[#e5e7eb] px-6 py-5">
+        <header className="flex shrink-0 items-center justify-between gap-3 border-b border-secondary px-6 py-5">
           <div className="flex min-w-0 items-center gap-3">
-            <div className="flex size-10 shrink-0 items-center justify-center rounded-[10px] bg-[#dbeafe]">
-              <svg className="size-5 text-[#155dfc]" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} aria-hidden>
+            <div className="flex size-10 shrink-0 items-center justify-center rounded-[10px] bg-extended-2">
+              <svg className="size-5 text-extended-1" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} aria-hidden>
                 <circle cx="12" cy="12" r="9" />
                 <path d="M12 7v5l3 2" strokeLinecap="round" />
               </svg>
@@ -132,11 +150,11 @@ export function ScheduleBroadcastModal({
             <div className="min-w-0">
               <h2
                 id={titleId}
-                className="text-[18px] font-semibold leading-[27px] tracking-[-0.4395px] text-[#101828]"
+                className="text-[18px] font-semibold leading-[27px] tracking-[-0.4395px] text-extended-3"
               >
                 Schedule Broadcast
               </h2>
-              <p className="text-[14px] leading-5 tracking-[-0.1504px] text-[#6a7282]">
+              <p className="text-[14px] leading-5 tracking-[-0.1504px] text-neutral">
                 Choose when to send this message
               </p>
             </div>
@@ -145,7 +163,7 @@ export function ScheduleBroadcastModal({
             type="button"
             onClick={onClose}
             aria-label="Close"
-            className="shrink-0 rounded-lg p-1 text-[#6a7282] outline-none transition-colors hover:bg-black/5 hover:text-[#0a0a0a] focus-visible:ring-2 focus-visible:ring-[#944c73] focus-visible:ring-offset-2"
+            className="shrink-0 rounded-lg p-1 text-neutral outline-none transition-colors hover:bg-black/5 hover:text-extended-3 focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2"
           >
             <svg className="size-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} aria-hidden>
               <path d="M18 6L6 18M6 6l12 12" strokeLinecap="round" />
@@ -154,25 +172,25 @@ export function ScheduleBroadcastModal({
         </header>
 
         <div className="min-h-0 flex-1 overflow-y-auto px-6 py-6">
-          <div className="rounded-[10px] border border-[#e5e7eb] bg-[#f9fafb] p-4">
+          <div className="rounded-[10px] border border-secondary bg-secondary p-4">
             <div className="flex gap-3">
-              <svg className="mt-0.5 size-5 shrink-0 text-[#6a7282]" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} aria-hidden>
+              <svg className="mt-0.5 size-5 shrink-0 text-neutral" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} aria-hidden>
                 <path d="M21 11.5a8.38 8.38 0 01-.9 3.8 8.5 8.5 0 01-7.6 4.7 8.38 8.38 0 01-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 01-.9-3.8 8.5 8.5 0 014.7-7.6 8.38 8.38 0 013.8-.9h.5a8.48 8.48 0 018 8.5z" strokeLinecap="round" strokeLinejoin="round" />
               </svg>
               <div className="min-w-0 flex-1">
-                <p className="text-[16px] font-semibold leading-6 tracking-[-0.3125px] text-[#101828]">
+                <p className="text-[16px] font-semibold leading-6 tracking-[-0.3125px] text-extended-3">
                   {summary.subject.trim() || '—'}
                 </p>
-                <p className="mt-1 text-[14px] leading-5 tracking-[-0.1504px] text-[#4a5565]">
+                <p className="mt-1 text-[14px] leading-5 tracking-[-0.1504px] text-neutral-variant">
                   {previewBody.trim() || '—'}
                 </p>
                 <div className="mt-3 flex flex-wrap items-center gap-2 text-[12px] leading-4">
-                  <span className="text-[#6a7282]">Sending to:</span>
-                  <span className="rounded bg-[#dbeafe] px-2 py-0.5 font-medium text-[#1447e6]">
+                  <span className="text-neutral">Sending to:</span>
+                  <span className="rounded bg-extended-1 px-2 py-0.5 font-medium text-white">
                     {audienceBadge}
                   </span>
-                  <span className="text-[#99a1af]">via</span>
-                  <span className="rounded bg-[#e5e7eb] px-2 py-0.5 text-[#364153]">
+                  <span className="text-neutral">via</span>
+                  <span className="rounded bg-secondary px-2 py-0.5 text-neutral-variant">
                     {channelBadge}
                   </span>
                 </div>
@@ -184,7 +202,7 @@ export function ScheduleBroadcastModal({
             <div>
               <label
                 htmlFor="schedule-date"
-                className="mb-2 block text-[14px] font-medium tracking-[-0.1504px] text-[#364153]"
+                className="mb-2 block text-[14px] font-medium tracking-[-0.1504px] text-neutral-variant"
               >
                 Date
               </label>
@@ -193,13 +211,13 @@ export function ScheduleBroadcastModal({
                 type="date"
                 value={date}
                 onChange={(e) => setDate(e.target.value)}
-                className="h-[42px] w-full rounded-[10px] border border-[#d1d5dc] bg-white px-3 text-[14px] text-[#0a0a0a] outline-none focus:border-[#944c73]/45 focus:ring-2 focus:ring-[#944c73]/30"
+                className="h-[42px] w-full rounded-[10px] border border-secondary bg-white px-3 text-[14px] text-extended-3 outline-none focus:border-primary/45 focus:ring-2 focus:ring-primary/30"
               />
             </div>
             <div>
               <label
                 htmlFor="schedule-time"
-                className="mb-2 block text-[14px] font-medium tracking-[-0.1504px] text-[#364153]"
+                className="mb-2 block text-[14px] font-medium tracking-[-0.1504px] text-neutral-variant"
               >
                 Time
               </label>
@@ -208,51 +226,56 @@ export function ScheduleBroadcastModal({
                 type="time"
                 value={time}
                 onChange={(e) => setTime(e.target.value)}
-                className="h-[42px] w-full rounded-[10px] border border-[#d1d5dc] bg-white px-3 text-[14px] text-[#0a0a0a] outline-none focus:border-[#944c73]/45 focus:ring-2 focus:ring-[#944c73]/30"
+                className="h-[42px] w-full rounded-[10px] border border-secondary bg-white px-3 text-[14px] text-extended-3 outline-none focus:border-primary/45 focus:ring-2 focus:ring-primary/30"
               />
             </div>
           </div>
 
-          <div className="mt-4 flex items-center gap-2 rounded-[10px] bg-[#eff6ff] py-2.5 pl-3 pr-3">
-            <svg className="size-4 shrink-0 text-[#155dfc]" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} aria-hidden>
+          <div className="mt-4 flex items-center gap-2 rounded-[10px] bg-extended-2 py-2.5 pl-3 pr-3">
+            <svg className="size-4 shrink-0 text-extended-1" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} aria-hidden>
               <circle cx="12" cy="12" r="10" />
               <path d="M2 12h20M12 2a15.3 15.3 0 014 10 15.3 15.3 0 01-4 10 15.3 15.3 0 01-4-10 15.3 15.3 0 014-10z" />
             </svg>
-            <p className="text-[14px] leading-5 tracking-[-0.1504px] text-[#4a5565]">
-              Timezone: Pacific Time (PT) — UTC−8
+            <p className="text-[14px] leading-5 tracking-[-0.1504px] text-neutral-variant">
+              Timezone: Eastern Time (ET) — UTC−5 / UTC−4
             </p>
           </div>
+          {scheduleTooSoon ? (
+            <p className="mt-3 rounded-[10px] border border-[#fed7aa] bg-[#fff7ed] px-3 py-2 text-[13px] leading-5 text-[#9a3412]">
+              Pick a schedule time at least one minute in the future.
+            </p>
+          ) : null}
 
           <div className="mt-6">
-            <p className="mb-3 text-[14px] font-medium tracking-[-0.1504px] text-[#364153]">
+            <p className="mb-3 text-[14px] font-medium tracking-[-0.1504px] text-neutral-variant">
               Quick Schedule
             </p>
             <div className="flex flex-wrap gap-2">
               <button
                 type="button"
                 onClick={() => tomorrowAt(9, 0)}
-                className="inline-flex h-[38px] min-w-[140px] flex-1 items-center justify-center rounded-[10px] border border-[#d1d5dc] bg-white px-3 text-[14px] font-medium tracking-[-0.1504px] text-[#364153] outline-none transition-colors hover:bg-[#f9fafb] focus-visible:ring-2 focus-visible:ring-[#944c73] focus-visible:ring-offset-2 sm:min-w-[150px]"
+                className="inline-flex h-[38px] min-w-[140px] flex-1 items-center justify-center rounded-[10px] border border-secondary bg-white px-3 text-[14px] font-medium tracking-[-0.1504px] text-neutral-variant outline-none transition-colors hover:bg-secondary focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 sm:min-w-[150px]"
               >
                 Tomorrow 9 AM
               </button>
               <button
                 type="button"
                 onClick={() => tomorrowAt(17, 0)}
-                className="inline-flex h-[38px] min-w-[140px] flex-1 items-center justify-center rounded-[10px] border border-[#d1d5dc] bg-white px-3 text-[14px] font-medium tracking-[-0.1504px] text-[#364153] outline-none transition-colors hover:bg-[#f9fafb] focus-visible:ring-2 focus-visible:ring-[#944c73] focus-visible:ring-offset-2 sm:min-w-[150px]"
+                className="inline-flex h-[38px] min-w-[140px] flex-1 items-center justify-center rounded-[10px] border border-secondary bg-white px-3 text-[14px] font-medium tracking-[-0.1504px] text-neutral-variant outline-none transition-colors hover:bg-secondary focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 sm:min-w-[150px]"
               >
                 Tomorrow 5 PM
               </button>
               <button
                 type="button"
                 onClick={nextMondayAt9}
-                className="inline-flex h-[38px] min-w-[140px] flex-1 items-center justify-center rounded-[10px] border border-[#d1d5dc] bg-white px-3 text-[14px] font-medium tracking-[-0.1504px] text-[#364153] outline-none transition-colors hover:bg-[#f9fafb] focus-visible:ring-2 focus-visible:ring-[#944c73] focus-visible:ring-offset-2 sm:min-w-[150px]"
+                className="inline-flex h-[38px] min-w-[140px] flex-1 items-center justify-center rounded-[10px] border border-secondary bg-white px-3 text-[14px] font-medium tracking-[-0.1504px] text-neutral-variant outline-none transition-colors hover:bg-secondary focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 sm:min-w-[150px]"
               >
                 Monday 9 AM
               </button>
               <button
                 type="button"
                 onClick={nextWeekAt9}
-                className="inline-flex h-[38px] min-w-[140px] flex-1 items-center justify-center rounded-[10px] border border-[#d1d5dc] bg-white px-3 text-[14px] font-medium tracking-[-0.1504px] text-[#364153] outline-none transition-colors hover:bg-[#f9fafb] focus-visible:ring-2 focus-visible:ring-[#944c73] focus-visible:ring-offset-2 sm:min-w-[150px]"
+                className="inline-flex h-[38px] min-w-[140px] flex-1 items-center justify-center rounded-[10px] border border-secondary bg-white px-3 text-[14px] font-medium tracking-[-0.1504px] text-neutral-variant outline-none transition-colors hover:bg-secondary focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 sm:min-w-[150px]"
               >
                 Next Week
               </button>
@@ -260,25 +283,30 @@ export function ScheduleBroadcastModal({
           </div>
         </div>
 
-        <footer className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-t border-[#e5e7eb] px-6 py-4">
+        <footer className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-t border-secondary px-6 py-4">
+          {confirmError ? (
+            <p className="w-full rounded-lg border border-[#fecaca] bg-[#fef2f2] px-3 py-2 text-[13px] leading-5 text-[#b91c1c]">
+              {confirmError}
+            </p>
+          ) : null}
           <button
             type="button"
             onClick={onClose}
-            className="inline-flex h-9 items-center justify-center rounded-lg border border-black/10 bg-white px-[17px] text-[14px] font-medium tracking-[-0.1504px] text-[#0a0a0a] outline-none transition-colors hover:bg-[#f3f4f6] focus-visible:ring-2 focus-visible:ring-[#944c73] focus-visible:ring-offset-2"
+            className="inline-flex h-9 items-center justify-center rounded-lg border border-black/10 bg-white px-[17px] text-[14px] font-medium tracking-[-0.1504px] text-extended-3 outline-none transition-colors hover:bg-secondary focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2"
           >
             Cancel
           </button>
           <button
             type="button"
-            disabled={!scheduleValid}
+            disabled={!scheduleValid || scheduleTooSoon || confirmBusy}
             onClick={handleConfirm}
-            className="inline-flex h-9 items-center gap-2 rounded-lg bg-[#155dfc] px-3 text-[14px] font-medium tracking-[-0.1504px] text-white outline-none transition-colors enabled:hover:bg-[#1249d6] focus-visible:ring-2 focus-visible:ring-[#944c73] focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+            className="inline-flex h-9 items-center gap-2 rounded-lg bg-extended-1 px-3 text-[14px] font-medium tracking-[-0.1504px] text-white outline-none transition-colors enabled:hover:bg-extended-1 focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
           >
             <svg className="size-4 shrink-0 text-white" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} aria-hidden>
               <circle cx="12" cy="12" r="9" />
               <path d="M12 7v5l3 2" strokeLinecap="round" />
             </svg>
-            Confirm Schedule
+            {confirmBusy ? 'Scheduling…' : 'Confirm Schedule'}
           </button>
         </footer>
       </div>

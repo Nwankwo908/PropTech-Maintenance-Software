@@ -113,7 +113,7 @@ export async function tryAutoReassignAfterDecline(
     supabase,
     ticketId,
     nextVendor.id,
-    { eventSource: "auto_reassign" },
+    { eventSource: "auto_reassign", notifyResident: false },
   )
 
   if ("error" in r) {

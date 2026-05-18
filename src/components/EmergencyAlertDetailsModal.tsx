@@ -16,7 +16,7 @@ const SOURCE_LINES = [
   'Status: Active',
 ] as const
 
-function HeaderAlertGlyph({ className = 'size-5 shrink-0 text-[#c10007]' }: { className?: string }) {
+function HeaderAlertGlyph({ className = 'size-5 shrink-0 text-error' }: { className?: string }) {
   return (
     <svg className={className} viewBox="0 0 24 24" fill="none" aria-hidden>
       <circle cx="12" cy="12" r="9" stroke="currentColor" strokeWidth={1.8} />
@@ -25,7 +25,7 @@ function HeaderAlertGlyph({ className = 'size-5 shrink-0 text-[#c10007]' }: { cl
   )
 }
 
-function SmallAlertGlyph({ className = 'size-3 shrink-0 text-[#c10007]' }: { className?: string }) {
+function SmallAlertGlyph({ className = 'size-3 shrink-0 text-error' }: { className?: string }) {
   return (
     <svg className={className} viewBox="0 0 24 24" fill="none" aria-hidden>
       <path
@@ -38,7 +38,7 @@ function SmallAlertGlyph({ className = 'size-3 shrink-0 text-[#c10007]' }: { cla
   )
 }
 
-function SourceDocIcon({ className = 'size-4 shrink-0 text-[#c2410c]' }: { className?: string }) {
+function SourceDocIcon({ className = 'size-4 shrink-0 text-tertiary' }: { className?: string }) {
   return (
     <svg className={className} viewBox="0 0 24 24" fill="none" aria-hidden>
       <path
@@ -106,27 +106,27 @@ export function EmergencyAlertDetailsModal({
         aria-labelledby={titleId}
         className={
           isRail
-            ? 'relative flex h-full max-h-dvh w-full max-w-[min(100vw,900px)] flex-col overflow-hidden border-l border-[#e5e7eb] bg-white shadow-[inset_1px_0_0_0_#e5e7eb]'
+            ? 'relative flex h-full max-h-dvh w-full max-w-[min(100vw,900px)] flex-col overflow-hidden border-l border-secondary bg-white shadow-[inset_1px_0_0_0_#A788964D]'
             : 'relative flex max-h-[min(92dvh,920px)] w-full max-w-[900px] flex-col overflow-hidden rounded-[10px] bg-white shadow-[0px_20px_25px_-5px_rgba(0,0,0,0.1),0px_8px_10px_-6px_rgba(0,0,0,0.1)]'
         }
       >
-        <header className="flex shrink-0 items-center justify-between gap-4 border-b border-[#e5e7eb] px-6 py-6">
+        <header className="flex shrink-0 items-center justify-between gap-4 border-b border-secondary px-6 py-6">
           <div className="flex min-w-0 items-center gap-3">
-            <div className="flex size-10 shrink-0 items-center justify-center rounded-[10px] bg-[#ffe2e2]">
+            <div className="flex size-10 shrink-0 items-center justify-center rounded-[10px] bg-error">
               <HeaderAlertGlyph />
             </div>
             <div className="min-w-0">
-              <h2 id={titleId} className="text-[18px] font-semibold leading-[27px] tracking-[-0.4395px] text-[#101828]">
+              <h2 id={titleId} className="text-[18px] font-semibold leading-[27px] tracking-[-0.4395px] text-extended-3">
                 Emergency Alert Details
               </h2>
-              <p className="text-[14px] leading-5 tracking-[-0.1504px] text-[#6a7282]">PG&amp;E Gas Leak Advisory</p>
+              <p className="text-[14px] leading-5 tracking-[-0.1504px] text-neutral">PG&amp;E Gas Leak Advisory</p>
             </div>
           </div>
           <button
             type="button"
             onClick={onClose}
             aria-label="Close"
-            className="shrink-0 rounded-lg p-1 text-[#6a7282] outline-none hover:bg-black/5 hover:text-[#0a0a0a] focus-visible:ring-2 focus-visible:ring-[#944c73] focus-visible:ring-offset-2"
+            className="shrink-0 rounded-lg p-1 text-neutral outline-none hover:bg-black/5 hover:text-extended-3 focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2"
           >
             <svg className="size-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} aria-hidden>
               <path d="M18 6L6 18M6 6l12 12" strokeLinecap="round" />
@@ -136,22 +136,22 @@ export function EmergencyAlertDetailsModal({
 
         <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-6 py-6">
           <div className="flex flex-col gap-6">
-            <div className="rounded-[10px] border border-[#ffc9c9] bg-[#fef2f2] p-[17px]">
+            <div className="rounded-[10px] border border-error bg-error p-[17px]">
               <div className="flex gap-3">
-                <svg className="mt-0.5 size-5 shrink-0 text-[#e7000b]" viewBox="0 0 24 24" fill="none" aria-hidden>
+                <svg className="mt-0.5 size-5 shrink-0 text-error" viewBox="0 0 24 24" fill="none" aria-hidden>
                   <circle cx="12" cy="12" r="9" stroke="currentColor" strokeWidth={1.8} />
                   <path d="M12 8v5M12 16h.01" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" />
                 </svg>
                 <div className="min-w-0 flex-1 space-y-2">
                   <div className="flex flex-wrap items-center gap-2">
-                    <span className="text-[16px] font-semibold leading-6 tracking-[-0.3125px] text-[#82181a]">
+                    <span className="text-[16px] font-semibold leading-6 tracking-[-0.3125px] text-error">
                       Urgent Action Required
                     </span>
-                    <span className="inline-flex rounded px-2 py-0.5 text-[12px] font-medium leading-4 bg-[#e7000b] text-white">
+                    <span className="inline-flex rounded px-2 py-0.5 text-[12px] font-medium leading-4 bg-error text-white">
                       URGENT
                     </span>
                   </div>
-                  <p className="text-[14px] leading-5 tracking-[-0.1504px] text-[#9f0712]">
+                  <p className="text-[14px] leading-5 tracking-[-0.1504px] text-error">
                     This emergency alert was detected 2 hours ago and has not been sent to residents yet. Immediate
                     action is recommended.
                   </p>
@@ -161,31 +161,31 @@ export function EmergencyAlertDetailsModal({
 
             <div className="grid grid-cols-1 gap-6 md:grid-cols-2">
               <div>
-                <h3 className="mb-3 text-[16px] font-semibold leading-6 tracking-[-0.3125px] text-[#101828]">
+                <h3 className="mb-3 text-[16px] font-semibold leading-6 tracking-[-0.3125px] text-extended-3">
                   Alert Information
                 </h3>
                 <div className="flex flex-col gap-3">
                   <div>
-                    <p className="text-[14px] leading-5 text-[#6a7282]">Source</p>
-                    <p className="mt-1 text-[14px] font-medium leading-5 tracking-[-0.1504px] text-[#101828]">
+                    <p className="text-[14px] leading-5 text-neutral">Source</p>
+                    <p className="mt-1 text-[14px] font-medium leading-5 tracking-[-0.1504px] text-extended-3">
                       PG&amp;E Emergency Alert System
                     </p>
                   </div>
                   <div>
-                    <p className="text-[14px] leading-5 text-[#6a7282]">Alert Type</p>
-                    <p className="mt-1 text-[14px] font-medium leading-5 tracking-[-0.1504px] text-[#101828]">
+                    <p className="text-[14px] leading-5 text-neutral">Alert Type</p>
+                    <p className="mt-1 text-[14px] font-medium leading-5 tracking-[-0.1504px] text-extended-3">
                       Gas Leak Advisory
                     </p>
                   </div>
                   <div>
-                    <p className="text-[14px] leading-5 text-[#6a7282]">Detection Time</p>
-                    <p className="mt-1 text-[14px] font-medium leading-5 tracking-[-0.1504px] text-[#101828]">
+                    <p className="text-[14px] leading-5 text-neutral">Detection Time</p>
+                    <p className="mt-1 text-[14px] font-medium leading-5 tracking-[-0.1504px] text-extended-3">
                       March 25, 2026 at 2:00 PM
                     </p>
                   </div>
                   <div>
-                    <p className="text-[14px] leading-5 text-[#6a7282]">Priority Level</p>
-                    <span className="mt-1 inline-flex items-center gap-1.5 rounded px-2 py-1 text-[12px] font-medium leading-4 bg-[#ffe2e2] text-[#c10007]">
+                    <p className="text-[14px] leading-5 text-neutral">Priority Level</p>
+                    <span className="mt-1 inline-flex items-center gap-1.5 rounded px-2 py-1 text-[12px] font-medium leading-4 bg-error text-white">
                       <SmallAlertGlyph />
                       Critical - Immediate Action
                     </span>
@@ -193,39 +193,39 @@ export function EmergencyAlertDetailsModal({
                 </div>
               </div>
               <div>
-                <h3 className="mb-3 text-[16px] font-semibold leading-6 tracking-[-0.3125px] text-[#101828]">
+                <h3 className="mb-3 text-[16px] font-semibold leading-6 tracking-[-0.3125px] text-extended-3">
                   Distribution Details
                 </h3>
                 <div className="flex flex-col gap-3">
                   <div>
-                    <p className="text-[14px] leading-5 text-[#6a7282]">Recipients</p>
-                    <p className="mt-1 text-[14px] font-medium leading-5 tracking-[-0.1504px] text-[#101828]">
+                    <p className="text-[14px] leading-5 text-neutral">Recipients</p>
+                    <p className="mt-1 text-[14px] font-medium leading-5 tracking-[-0.1504px] text-extended-3">
                       All Residents (142 units)
                     </p>
                   </div>
                   <div>
-                    <p className="text-[14px] leading-5 text-[#6a7282]">Delivery Channels</p>
+                    <p className="text-[14px] leading-5 text-neutral">Delivery Channels</p>
                     <div className="mt-1 flex flex-wrap gap-2">
-                      <span className="inline-flex rounded px-2 py-1 text-[12px] font-medium leading-4 bg-[#dbeafe] text-[#1447e6]">
+                      <span className="inline-flex rounded px-2 py-1 text-[12px] font-medium leading-4 bg-extended-1 text-white">
                         Email
                       </span>
-                      <span className="inline-flex rounded px-2 py-1 text-[12px] font-medium leading-4 bg-[#dcfce7] text-[#008236]">
+                      <span className="inline-flex rounded px-2 py-1 text-[12px] font-medium leading-4 bg-extended-2 text-extended-3">
                         SMS
                       </span>
                     </div>
                   </div>
                   <div>
-                    <p className="text-[14px] leading-5 text-[#6a7282]">AI Confidence Score</p>
+                    <p className="text-[14px] leading-5 text-neutral">AI Confidence Score</p>
                     <div className="mt-2 flex items-center gap-2">
-                      <div className="h-2 min-w-0 flex-1 overflow-hidden rounded-full bg-[#e5e7eb]">
-                        <div className="h-full w-[98%] rounded-full bg-[#e7000b]" />
+                      <div className="h-2 min-w-0 flex-1 overflow-hidden rounded-full bg-secondary">
+                        <div className="h-full w-[98%] rounded-full bg-error" />
                       </div>
-                      <span className="shrink-0 text-[14px] font-medium tracking-[-0.1504px] text-[#101828]">98%</span>
+                      <span className="shrink-0 text-[14px] font-medium tracking-[-0.1504px] text-extended-3">98%</span>
                     </div>
                   </div>
                   <div>
-                    <p className="text-[14px] leading-5 text-[#6a7282]">Estimated Delivery Time</p>
-                    <p className="mt-1 text-[14px] font-medium leading-5 tracking-[-0.1504px] text-[#101828]">
+                    <p className="text-[14px] leading-5 text-neutral">Estimated Delivery Time</p>
+                    <p className="mt-1 text-[14px] font-medium leading-5 tracking-[-0.1504px] text-extended-3">
                       ~2-3 minutes
                     </p>
                   </div>
@@ -234,11 +234,11 @@ export function EmergencyAlertDetailsModal({
             </div>
 
             <section>
-              <h3 className="mb-3 text-[16px] font-semibold leading-6 tracking-[-0.3125px] text-[#101828]">
+              <h3 className="mb-3 text-[16px] font-semibold leading-6 tracking-[-0.3125px] text-extended-3">
                 Alert Message
               </h3>
-              <div className="rounded-[10px] border border-[#e5e7eb] bg-[#f9fafb] p-4 text-[14px] leading-5 tracking-[-0.1504px] text-[#364153]">
-                <p className="font-semibold leading-6 tracking-[-0.3125px] text-[#101828]">
+              <div className="rounded-[10px] border border-secondary bg-secondary p-4 text-[14px] leading-5 tracking-[-0.1504px] text-neutral-variant">
+                <p className="font-semibold leading-6 tracking-[-0.3125px] text-extended-3">
                   ⚠️ URGENT: Gas Leak Advisory in Your Area
                 </p>
                 <p className="mt-3">Dear Residents,</p>
@@ -263,25 +263,25 @@ export function EmergencyAlertDetailsModal({
                   <span className="font-bold">(555) 123-4567</span>
                 </p>
                 <p className="mt-3">Thank you for your cooperation and stay safe.</p>
-                <p className="mt-3 text-[#4a5565]">— Property Management Team</p>
+                <p className="mt-3 text-neutral-variant">— Property Management Team</p>
               </div>
             </section>
 
             <section>
-              <h3 className="mb-3 text-[16px] font-semibold leading-6 tracking-[-0.3125px] text-[#101828]">
+              <h3 className="mb-3 text-[16px] font-semibold leading-6 tracking-[-0.3125px] text-extended-3">
                 Source Data
               </h3>
-              <div className="rounded-[10px] border border-[#e5e7eb] bg-[#f9fafb] p-[17px]">
+              <div className="rounded-[10px] border border-secondary bg-secondary p-[17px]">
                 <div className="flex gap-3">
-                  <div className="flex size-8 shrink-0 items-center justify-center rounded bg-[#ffedd4]">
+                  <div className="flex size-8 shrink-0 items-center justify-center rounded bg-tertiary">
                     <SourceDocIcon />
                   </div>
                   <div className="min-w-0 flex-1">
-                    <p className="text-[14px] font-medium leading-5 tracking-[-0.1504px] text-[#101828]">
+                    <p className="text-[14px] font-medium leading-5 tracking-[-0.1504px] text-extended-3">
                       PG&amp;E Emergency Alert System
                     </p>
-                    <p className="mt-1 text-[12px] leading-4 text-[#6a7282]">Automated detection from verified source</p>
-                    <pre className="mt-3 whitespace-pre-wrap rounded border border-[#e5e7eb] bg-white p-2 font-mono text-[12px] leading-4 text-[#4a5565]">
+                    <p className="mt-1 text-[12px] leading-4 text-neutral">Automated detection from verified source</p>
+                    <pre className="mt-3 whitespace-pre-wrap rounded border border-secondary bg-white p-2 font-mono text-[12px] leading-4 text-neutral-variant">
                       {SOURCE_LINES.join('\n')}
                     </pre>
                   </div>
@@ -289,8 +289,8 @@ export function EmergencyAlertDetailsModal({
               </div>
             </section>
 
-            <div className="border-t border-[#e5e7eb] pt-6">
-              <h3 className="mb-4 text-[16px] font-semibold leading-6 tracking-[-0.3125px] text-[#101828]">Actions</h3>
+            <div className="border-t border-secondary pt-6">
+              <h3 className="mb-4 text-[16px] font-semibold leading-6 tracking-[-0.3125px] text-extended-3">Actions</h3>
               <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap">
                 <button
                   type="button"
@@ -298,7 +298,7 @@ export function EmergencyAlertDetailsModal({
                     onClose()
                     onSendNow()
                   }}
-                  className="inline-flex h-9 flex-1 items-center justify-center gap-2 rounded-lg bg-[#e7000b] px-4 text-[14px] font-medium tracking-[-0.1504px] text-white outline-none hover:bg-[#c10007] focus-visible:ring-2 focus-visible:ring-[#944c73] focus-visible:ring-offset-2 sm:min-w-[200px]"
+                  className="inline-flex h-9 flex-1 items-center justify-center gap-2 rounded-lg bg-error px-4 text-[14px] font-medium tracking-[-0.1504px] text-white outline-none hover:bg-error focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 sm:min-w-[200px]"
                 >
                   <svg className="size-4 text-white" viewBox="0 0 24 24" fill="none" aria-hidden>
                     <circle cx="12" cy="12" r="9" stroke="currentColor" strokeWidth={1.8} />
@@ -309,14 +309,14 @@ export function EmergencyAlertDetailsModal({
                 <button
                   type="button"
                   onClick={onSchedule}
-                  className="inline-flex h-9 flex-1 items-center justify-center rounded-lg border border-black/10 bg-white px-4 text-[14px] font-medium tracking-[-0.1504px] text-[#0a0a0a] outline-none hover:bg-[#f9fafb] focus-visible:ring-2 focus-visible:ring-[#944c73] focus-visible:ring-offset-2 sm:min-w-[200px]"
+                  className="inline-flex h-9 flex-1 items-center justify-center rounded-lg border border-black/10 bg-white px-4 text-[14px] font-medium tracking-[-0.1504px] text-extended-3 outline-none hover:bg-secondary focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 sm:min-w-[200px]"
                 >
                   Schedule
                 </button>
                 <button
                   type="button"
                   onClick={onClose}
-                  className="inline-flex h-9 flex-1 items-center justify-center gap-2 rounded-lg border border-black/10 bg-white px-4 text-[14px] font-medium tracking-[-0.1504px] text-[#0a0a0a] outline-none hover:bg-[#f9fafb] focus-visible:ring-2 focus-visible:ring-[#944c73] focus-visible:ring-offset-2 sm:min-w-[200px]"
+                  className="inline-flex h-9 flex-1 items-center justify-center gap-2 rounded-lg border border-black/10 bg-white px-4 text-[14px] font-medium tracking-[-0.1504px] text-extended-3 outline-none hover:bg-secondary focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 sm:min-w-[200px]"
                 >
                   <svg className="size-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} aria-hidden>
                     <path d="M18 6L6 18M6 6l12 12" strokeLinecap="round" />

@@ -4,6 +4,7 @@ import { sendResendEmail, sendTwilioSms } from "./delivery.ts"
 export type ResidentNotifyEvent =
   | "ticket_submitted"
   | "vendor_assigned"
+  | "vendor_accepted"
   | "repair_in_progress"
   | "repair_completed"
 
@@ -60,6 +61,8 @@ function subjectForEvent(event: ResidentNotifyEvent): string {
       return "We received your maintenance request"
     case "vendor_assigned":
       return "A vendor has been assigned to your request"
+    case "vendor_accepted":
+      return "Your vendor accepted your maintenance request"
     case "repair_in_progress":
       return "Repair in progress on your maintenance request"
     case "repair_completed":
@@ -104,6 +107,14 @@ function buildEmail(
         (unitLine ? `${unitLine}\n` : "") +
         `\nReference: ${ticketId}\n`
       break
+    case "vendor_accepted":
+      bodyText =
+        `Hi ${name},\n\nYour vendor has accepted your maintenance request` +
+        (vendor ? `: ${vendor}` : "") +
+        ".\n\n" +
+        (unitLine ? `${unitLine}\n` : "") +
+        `\nReference: ${ticketId}\n`
+      break
     case "repair_in_progress":
       bodyText =
         `Hi ${name},\n\nWork is now in progress on your maintenance request.\n\n` +
@@ -129,6 +140,8 @@ function buildEmail(
     ? `<p>Thank you — we've received your <strong>maintenance request</strong> and will keep you updated.</p>`
     : event === "vendor_assigned"
     ? `<p>A vendor has been assigned to your maintenance request${vendor ? `: <strong>${escapeHtml(vendor)}</strong>` : ""}.</p>`
+    : event === "vendor_accepted"
+    ? `<p>Your vendor has accepted your maintenance request${vendor ? `: <strong>${escapeHtml(vendor)}</strong>` : ""}.</p>`
     : event === "repair_in_progress"
     ? `<p>Work is now <strong>in progress</strong> on your maintenance request.</p>`
     : `<p>Your maintenance request has been marked <strong>complete</strong>.</p>`}
@@ -172,6 +185,11 @@ function buildSms(
         `Vendor assigned${vendor ? `: ${vendor}` : ""}. ${unit ? `Unit: ${unit}. ` : ""}Ref: ${ticketId}`,
         300,
       )
+    case "vendor_accepted":
+      return truncate(
+        `Vendor accepted${vendor ? `: ${vendor}` : ""}. ${unit ? `Unit: ${unit}. ` : ""}Ref: ${ticketId}`,
+        300,
+      )
     case "repair_in_progress":
       return truncate(
         `Repair in progress${vendor ? ` (${vendor})` : ""}. Ref: ${ticketId}`,
@@ -192,13 +210,16 @@ async function insertResidentLog(
   channel: "email" | "sms",
   providerMessageId: string | null,
   error: string | null,
+  vendorName?: string | null,
 ): Promise<void> {
+  const v = vendorName?.trim() || null
   const { error: insErr } = await supabase.from("resident_notification_log").insert({
     ticket_id: ticketId,
     event_type: eventType,
     channel,
     provider_message_id: providerMessageId,
     error,
+    vendor_name: v,
   })
   if (insErr) console.error("[resident-notify] log insert", insErr)
 }
@@ -274,6 +295,7 @@ export async function notifyResident(
       "sms",
       null,
       "skipped: no valid phone for SMS-only channel",
+      input.vendorName,
     )
     return
   }
@@ -313,6 +335,7 @@ export async function notifyResident(
         "email",
         null,
         "skipped: no email on ticket",
+        input.vendorName,
       )
     } else {
       const rEmail = await sendResendEmail(email, subject, text, html)
@@ -325,6 +348,7 @@ export async function notifyResident(
           "email",
           null,
           rEmail.error,
+          input.vendorName,
         )
       } else {
         await insertResidentLog(
@@ -334,6 +358,7 @@ export async function notifyResident(
           "email",
           rEmail.id,
           null,
+          input.vendorName,
         )
       }
     }
@@ -353,6 +378,7 @@ export async function notifyResident(
       ch === "both"
         ? "skipped: no valid phone for SMS"
         : "skipped: no valid phone for SMS-only channel",
+      input.vendorName,
     )
     return
   }
@@ -371,6 +397,7 @@ export async function notifyResident(
       "sms",
       null,
       rSms.error,
+      input.vendorName,
     )
   } else {
     await insertResidentLog(
@@ -380,6 +407,7 @@ export async function notifyResident(
       "sms",
       rSms.sid,
       null,
+      input.vendorName,
     )
   }
 }

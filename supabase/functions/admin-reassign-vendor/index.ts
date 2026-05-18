@@ -1,13 +1,10 @@
 import { serve } from "https://deno.land/std/http/server.ts"
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1"
+import { adminEdgeCorsHeaders } from "../_shared/admin_edge_cors.ts"
+import { adminReassignSecretAuthorized } from "../_shared/admin_reassign_auth.ts"
 import { reassignVendorByIdAndNotify } from "../submit-maintenance-request/vendor_notify.ts"
 
-const corsHeaders: Record<string, string> = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers":
-    "authorization, x-client-info, apikey, content-type",
-  "Access-Control-Allow-Methods": "POST, OPTIONS",
-}
+const corsHeaders = adminEdgeCorsHeaders
 
 const uuidRe =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
@@ -17,15 +14,6 @@ function jsonResponse(body: unknown, status = 200): Response {
     status,
     headers: { ...corsHeaders, "Content-Type": "application/json" },
   })
-}
-
-function bearerAdminSecret(req: Request): string | null {
-  const expected = Deno.env.get("ADMIN_REASSIGN_SECRET")?.trim()
-  if (!expected) return null
-  const h = req.headers.get("Authorization")?.trim()
-  if (!h?.toLowerCase().startsWith("bearer ")) return null
-  const t = h.slice(7).trim()
-  return t === expected ? t : null
 }
 
 serve(async (req) => {
@@ -42,7 +30,10 @@ serve(async (req) => {
     return jsonResponse({ error: "Server misconfiguration" }, 500)
   }
 
-  if (!bearerAdminSecret(req)) {
+  if (!adminReassignSecretAuthorized(req)) {
+    console.warn(
+      "[admin-reassign-vendor] 401 Unauthorized: x-admin-reassign-secret (or legacy Bearer admin secret) does not match ADMIN_REASSIGN_SECRET on this deployment",
+    )
     return jsonResponse({ error: "Unauthorized" }, 401)
   }
 
@@ -50,6 +41,8 @@ serve(async (req) => {
     ticketId?: string
     vendorId?: string
     vendorName?: string
+    createVendorIfMissing?: boolean
+    vendorCategory?: string
   }
   try {
     body = await req.json()
@@ -62,6 +55,10 @@ serve(async (req) => {
     typeof body.vendorId === "string" ? body.vendorId.trim() : ""
   const vendorName =
     typeof body.vendorName === "string" ? body.vendorName.trim() : ""
+  const createVendorIfMissing = body.createVendorIfMissing === true
+  const vendorCategoryRaw =
+    typeof body.vendorCategory === "string" ? body.vendorCategory.trim() : ""
+  const vendorCategoryInsert = vendorCategoryRaw || null
 
   if (!ticketId || !uuidRe.test(ticketId)) {
     return jsonResponse({ error: "Missing or invalid ticketId" }, 400)
@@ -102,12 +99,29 @@ serve(async (req) => {
     const want = norm(vendorName)
     const matches = (rows ?? []).filter((r) => norm(r.name as string) === want)
     if (matches.length === 0) {
-      return jsonResponse(
-        { error: `No active vendor found named "${vendorName}"` },
-        404,
-      )
-    }
-    if (matches.length > 1) {
+      if (createVendorIfMissing) {
+        const { data: ins, error: insErr } = await supabase
+          .from("vendors")
+          .insert({
+            name: vendorName,
+            category: vendorCategoryInsert,
+            active: true,
+            notification_channel: "email",
+          })
+          .select("id")
+          .single()
+        if (insErr || !ins?.id) {
+          console.error("[admin-reassign-vendor] create vendor", insErr)
+          return jsonResponse({ error: "Could not create vendor record" }, 500)
+        }
+        _vendorId = ins.id as string
+      } else {
+        return jsonResponse(
+          { error: `No active vendor found named "${vendorName}"` },
+          404,
+        )
+      }
+    } else if (matches.length > 1) {
       return jsonResponse(
         {
           error:
@@ -115,8 +129,9 @@ serve(async (req) => {
         },
         409,
       )
+    } else {
+      _vendorId = matches[0].id as string
     }
-    _vendorId = matches[0].id as string
   } else {
     return jsonResponse(
       { error: "Provide vendorId (uuid) or vendorName" },

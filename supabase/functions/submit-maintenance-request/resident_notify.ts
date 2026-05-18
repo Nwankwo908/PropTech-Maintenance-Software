@@ -34,6 +34,13 @@ export function notifyResidentVendorAssigned(
   return notifyResident(supabase, { ...input, event: "vendor_assigned" })
 }
 
+export function notifyResidentVendorAccepted(
+  supabase: SupabaseClient,
+  input: Base,
+): Promise<void> {
+  return notifyResident(supabase, { ...input, event: "vendor_accepted" })
+}
+
 export function notifyResidentInProgress(
   supabase: SupabaseClient,
   input: Base,
