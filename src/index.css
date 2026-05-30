@@ -1,4 +1,4 @@
-@import url('https://fonts.googleapis.com/css2?family=Encode+Sans+Semi+Condensed:wght@400;500;600;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;1,9..40,400&family=Encode+Sans+Semi+Condensed:wght@400;500;600;700&family=JetBrains+Mono:wght@400;700&display=swap');
 @import 'tailwindcss';
 
 @theme {
@@ -8,6 +8,8 @@
     'Encode Sans Semi Condensed', 'Inter', ui-sans-serif, system-ui, sans-serif,
     'Apple Color Emoji',
     'Segoe UI Emoji', 'Segoe UI Symbol';
+  --font-landing: 'DM Sans', 'Encode Sans Semi Condensed', ui-sans-serif, system-ui, sans-serif;
+  --font-landing-heading: 'DM Sans', 'Google Sans', ui-sans-serif, system-ui, sans-serif;
 
   /* Brand + neutrals (matches existing UI: mauve accent, charcoal type, cool grays) */
   --color-primary: #a78896;

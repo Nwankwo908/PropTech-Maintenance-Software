@@ -36,7 +36,7 @@ export function MaintenancePortalPageHeader({
         <nav aria-label="Breadcrumb" className="mt-0">
           <ol className="m-0 flex min-w-0 list-none flex-wrap items-center gap-x-1 gap-y-0.5 p-0">
             <li className="flex min-w-0 items-center gap-x-1">
-              <Link to="/" className={`${breadcrumbCrumbClass} underline-offset-2 hover:underline`}>
+              <Link to="/request" className={`${breadcrumbCrumbClass} underline-offset-2 hover:underline`}>
                 Resident Portal
               </Link>
               <span aria-hidden className="shrink-0 text-[14px] text-neutral">

@@ -1,6 +1,7 @@
 import { BrowserRouter, Routes, Route } from 'react-router-dom'
 import { useSessionAutoRefresh } from './hooks/useSessionAutoRefresh'
 import { supabase } from './lib/supabase'
+import { LandingPage } from './components/landing/LandingPage'
 import { ResidentPortal } from './ResidentPortal'
 import { VendorPortal } from './VendorPortal'
 import VendorAuthGate from './components/VendorAuthGate'
@@ -17,7 +18,8 @@ export default function App() {
   return (
     <BrowserRouter>
       <Routes>
-        <Route path="/" element={<ResidentPortal />} />
+        <Route path="/" element={<LandingPage />} />
+        <Route path="/request" element={<ResidentPortal />} />
 
         <Route
           path="/vendor/*"
