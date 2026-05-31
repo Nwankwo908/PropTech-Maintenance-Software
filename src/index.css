@@ -48,3 +48,14 @@ h6 {
 #root {
   min-height: 100dvh;
 }
+
+/* Plus darker on illustration over lavender panel; darken fallback for older browsers. */
+.early-access-art-panel {
+  background-blend-mode: darken, normal;
+}
+
+@supports (background-blend-mode: plus-darker) {
+  .early-access-art-panel {
+    background-blend-mode: plus-darker, normal;
+  }
+}

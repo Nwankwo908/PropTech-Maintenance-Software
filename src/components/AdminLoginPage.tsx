@@ -1,30 +1,42 @@
 import { useEffect, useState, type FormEvent } from 'react'
 import { Navigate, useNavigate } from 'react-router-dom'
-import bgLogin from '@/assets/bg_Login.svg'
-import { signInAdmin } from '@/lib/adminAuth'
+import bgLogin from '@/assets/BG_Login.png'
+import uloLogo from '@/assets/Ulo_Logo_small.png'
+import {
+  sendAdminEmailOtp,
+  signInAdminWithOAuth,
+  verifyAdminEmailOtp,
+} from '@/lib/adminAuth'
 import { supabase } from '@/lib/supabase'
 
-function IconEye({ visible }: { visible: boolean }) {
-  if (visible) {
-    return (
-      <svg className="size-5 text-neutral" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} aria-hidden>
-        <path strokeLinecap="round" strokeLinejoin="round" d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z" />
-        <circle cx="12" cy="12" r="3" />
-      </svg>
-    )
-  }
+function IconGoogle({ className = 'size-5' }: { className?: string }) {
   return (
-    <svg className="size-5 text-neutral" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} aria-hidden>
-      <path strokeLinecap="round" strokeLinejoin="round" d="M3 3l18 18M10.6 10.6a2 2 0 102.8 2.8M9.9 4.2A10.2 10.2 0 0112 4c6.5 0 10 7 10 7a18.2 18.2 0 01-4.8 5.2M6.6 6.6C4.2 7.8 2.4 10 2 12c0 0 3.5 7 10 7 1.1 0 2.1-.2 3.1-.5" />
+    <svg className={className} viewBox="0 0 24 24" aria-hidden>
+      <path
+        fill="#4285F4"
+        d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"
+      />
+      <path
+        fill="#34A853"
+        d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"
+      />
+      <path
+        fill="#FBBC05"
+        d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"
+      />
+      <path
+        fill="#EA4335"
+        d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"
+      />
     </svg>
   )
 }
 
 export function AdminLoginPage() {
   const navigate = useNavigate()
-  const [username, setUsername] = useState('')
-  const [password, setPassword] = useState('')
-  const [showPassword, setShowPassword] = useState(false)
+  const [step, setStep] = useState<'email' | 'otp'>('email')
+  const [email, setEmail] = useState('')
+  const [otp, setOtp] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
   const [alreadyAuthed, setAlreadyAuthed] = useState<boolean | null>(null)
@@ -45,139 +57,211 @@ export function AdminLoginPage() {
 
   if (alreadyAuthed === null) {
     return (
-      <div className="min-h-dvh bg-extended-3" aria-busy="true" aria-label="Loading" />
+      <div className="min-h-dvh bg-gradient-to-b from-white to-[#f0fdf4]" aria-busy="true" aria-label="Loading" />
     )
   }
 
-  async function onSubmit(e: FormEvent) {
+  async function onContinue(e: FormEvent) {
     e.preventDefault()
     setError(null)
+    if (!email.trim()) {
+      setError('Enter your email.')
+      return
+    }
     if (!supabase) {
       setError('Supabase is not configured. Add VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY.')
       return
     }
     setSubmitting(true)
     try {
-      await signInAdmin(username, password)
-      navigate('/admin', { replace: true })
+      await sendAdminEmailOtp(email)
+      setStep('otp')
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Sign in failed')
+      setError(err instanceof Error ? err.message : 'Could not send verification code')
     } finally {
       setSubmitting(false)
     }
   }
 
+  async function onVerifyOtp(e: FormEvent) {
+    e.preventDefault()
+    setError(null)
+    if (!otp.trim()) {
+      setError('Enter the verification code from your email.')
+      return
+    }
+    setSubmitting(true)
+    try {
+      await verifyAdminEmailOtp(email, otp)
+      navigate('/admin', { replace: true })
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Verification failed')
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  async function onGoogleSignIn() {
+    setError(null)
+    if (!supabase) {
+      setError('Supabase is not configured.')
+      return
+    }
+    setSubmitting(true)
+    try {
+      await signInAdminWithOAuth('google')
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Sign in failed')
+      setSubmitting(false)
+    }
+  }
+
   return (
-    <div className="relative min-h-dvh overflow-hidden bg-extended-3 font-sans">
+    <div className="relative min-h-dvh overflow-hidden bg-gradient-to-b from-white to-[#f0fdf4] font-sans">
       <div className="pointer-events-none absolute inset-0" aria-hidden>
         <img
           src={bgLogin}
           alt=""
-          className="h-full w-full min-h-dvh object-cover object-center"
+          className="h-full w-full min-h-dvh object-cover object-center opacity-90"
           loading="eager"
           decoding="async"
         />
       </div>
+      <div
+        className="pointer-events-none absolute -right-20 top-0 size-[500px] rounded-full bg-emerald-500/10 blur-[64px]"
+        aria-hidden
+      />
+      <div
+        className="pointer-events-none absolute -left-20 bottom-0 size-[400px] rounded-full bg-sky-500/10 blur-[64px]"
+        aria-hidden
+      />
 
-      <div className="relative z-10 flex min-h-dvh flex-col items-center justify-center gap-10 px-6 pb-14 pt-6 sm:px-12 lg:flex-row lg:items-center lg:gap-[56px] lg:px-14 lg:py-20">
-        <div className="w-full max-w-xl shrink-0 lg:w-auto">
-          <p className="text-[28px] font-medium leading-snug tracking-[-0.02em] text-white sm:text-[32px] sm:leading-[1.5] sm:tracking-[-0.019em]">
-            Maintenance intelligence system for property portfolios.
-          </p>
-        </div>
-
-        <div className="w-full max-w-md shrink-0 lg:w-[28rem]">
-          <div className="w-full">
-            <div className="overflow-hidden rounded-2xl border border-secondary bg-white shadow-[0px_20px_25px_-5px_rgba(0,0,0,0.1),0px_8px_10px_-6px_rgba(0,0,0,0.1)]">
-              <div className="px-8 pb-0 pt-6">
-                <h1 className="text-center text-[24px] font-bold leading-8 tracking-[0.0703px] text-[rgba(16,24,40,0.7)]">
-                  Log In
+      <div className="relative z-10 flex min-h-dvh items-center justify-center px-6 py-12">
+        <div className="w-full max-w-md">
+          <div className="overflow-hidden rounded-2xl border border-[#e5e7eb] bg-white shadow-[0px_20px_25px_-5px_rgba(0,0,0,0.1),0px_8px_10px_-6px_rgba(0,0,0,0.1)]">
+            <div className="px-8 pb-8 pt-8">
+              <div className="flex flex-col items-center gap-2 text-center">
+                <img src={uloLogo} alt="ülo home" className="h-10 w-auto object-contain" />
+                <h1 className="text-[24px] font-bold leading-8 tracking-[0.0703px] text-[rgba(16,24,40,0.7)]">
+                  Welcome to Ulo Home
                 </h1>
-                <p className="mt-2 text-center text-[14px] font-normal leading-5 tracking-[-0.1504px] text-extended-3">
-                  Property Management Dashboard
+                <p className="text-[14px] font-normal leading-5 tracking-[-0.1504px] text-[#0a0a0a]">
+                  {step === 'email'
+                    ? 'Login or Register with your email'
+                    : 'Enter the verification code we sent to your email'}
                 </p>
               </div>
 
-              <form className="flex flex-col gap-6 px-8 pb-8 pt-8" onSubmit={onSubmit} noValidate>
-                <div className="flex flex-col gap-2">
-                  <label htmlFor="admin-username" className="text-[14px] font-medium leading-5 tracking-[-0.1504px] text-neutral-variant">
-                    Username
-                  </label>
-                  <input
-                    id="admin-username"
-                    name="username"
-                    type="text"
-                    autoComplete="username"
-                    placeholder="Enter username"
-                    value={username}
-                    onChange={(e) => setUsername(e.target.value)}
-                    className="h-9 w-full rounded-lg border border-transparent bg-secondary px-3 text-[14px] tracking-[-0.1504px] text-extended-3 outline-none placeholder:text-neutral focus:border-[#0030b5]/35 focus:bg-white focus:ring-2 focus:ring-[#0030b5]/20"
-                  />
-                </div>
-
-                <div className="flex flex-col gap-2">
-                  <label htmlFor="admin-password" className="text-[14px] font-medium leading-5 tracking-[-0.1504px] text-neutral-variant">
-                    Password
-                  </label>
-                  <div className="relative">
-                    <input
-                      id="admin-password"
-                      name="password"
-                      type={showPassword ? 'text' : 'password'}
-                      autoComplete="current-password"
-                      placeholder="Enter password"
-                      value={password}
-                      onChange={(e) => setPassword(e.target.value)}
-                      className="h-9 w-full rounded-lg border border-transparent bg-secondary py-1 pl-3 pr-11 text-[14px] tracking-[-0.1504px] text-extended-3 outline-none placeholder:text-neutral focus:border-[#0030b5]/35 focus:bg-white focus:ring-2 focus:ring-[#0030b5]/20"
-                    />
-                    <button
-                      type="button"
-                      className="absolute right-2 top-1/2 -translate-y-1/2 rounded-md p-0.5 text-neutral outline-none hover:bg-black/5 focus-visible:ring-2 focus-visible:ring-[#0030b5]"
-                      onClick={() => setShowPassword((v) => !v)}
-                      aria-label={showPassword ? 'Hide password' : 'Show password'}
+              {step === 'email' ? (
+                <form className="mt-8 flex flex-col gap-4" onSubmit={onContinue} noValidate>
+                  <div className="flex flex-col gap-2">
+                    <label
+                      htmlFor="admin-email"
+                      className="text-[14px] font-medium leading-5 tracking-[-0.1504px] text-[#364153]"
                     >
-                      <IconEye visible={showPassword} />
-                    </button>
+                      Email
+                    </label>
+                    <input
+                      id="admin-email"
+                      name="email"
+                      type="email"
+                      autoComplete="email"
+                      placeholder="Enter your email..."
+                      value={email}
+                      onChange={(e) => setEmail(e.target.value)}
+                      className="h-9 w-full rounded-lg border border-transparent bg-[#f3f3f5] px-3 text-[14px] tracking-[-0.1504px] text-[#101828] outline-none placeholder:text-[#717182] focus:border-emerald-500/35 focus:bg-white focus:ring-2 focus:ring-emerald-500/20"
+                    />
                   </div>
-                </div>
 
-                {error ? (
-                  <p className="text-[13px] leading-4 text-[#b52a00]" role="alert">
-                    {error}
-                  </p>
-                ) : null}
-
-                <button
-                  type="submit"
-                  disabled={submitting}
-                  className="h-9 w-full rounded-lg bg-[#ffee6c] text-[14px] font-medium leading-5 tracking-[-0.1504px] text-[#101828] outline-none transition-colors hover:bg-[#f5e35e] focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-60"
-                >
-                  {submitting ? 'Signing in…' : 'Sign In'}
-                </button>
-
-                <div className="rounded-[10px] border border-secondary bg-secondary px-[17px] pb-4 pt-[17px]">
-                  <p className="text-[12px] font-medium leading-4 text-neutral-variant">Password hint:</p>
-                  <div className="mt-2 flex flex-col gap-1 text-[12px] leading-4 text-neutral-variant">
-                    <p>
-                      <span className="font-medium">Username:</span>{' '}
-                      <span className="font-normal">admin</span>
+                  {error ? (
+                    <p className="text-[13px] leading-4 text-[#b52a00]" role="alert">
+                      {error}
                     </p>
-                    <p>
-                      <span className="font-medium">Password:</span>{' '}
-                      <span className="font-normal">admin123</span>
-                    </p>
+                  ) : null}
+
+                  <button
+                    type="submit"
+                    disabled={submitting}
+                    className="h-9 w-full rounded-lg bg-[#0e5c45] text-[14px] font-medium leading-5 tracking-[-0.1504px] text-white outline-none transition-opacity hover:opacity-95 focus-visible:ring-2 focus-visible:ring-emerald-600 focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-60"
+                  >
+                    {submitting ? 'Sending…' : 'Continue'}
+                  </button>
+
+                  <div className="flex items-center gap-8">
+                    <div className="h-px flex-1 bg-[#cac4d0]" />
+                    <span className="text-[14px] tracking-[-0.1504px] text-[#6a7282]">or</span>
+                    <div className="h-px flex-1 bg-[#cac4d0]" />
                   </div>
-                </div>
-              </form>
+
+                  <button
+                    type="button"
+                    disabled={submitting}
+                    onClick={onGoogleSignIn}
+                    className="flex h-9 w-full items-center justify-center gap-2 rounded-lg border border-black/10 bg-white text-[14px] font-medium leading-5 tracking-[-0.1504px] text-[#6a7282] outline-none transition-colors hover:bg-gray-50 focus-visible:ring-2 focus-visible:ring-emerald-600 focus-visible:ring-offset-2 disabled:opacity-60"
+                  >
+                    <IconGoogle />
+                    Continue with Google
+                  </button>
+                </form>
+              ) : (
+                <form className="mt-8 flex flex-col gap-4" onSubmit={onVerifyOtp} noValidate>
+                  <div className="flex flex-col gap-2">
+                    <label
+                      htmlFor="admin-otp"
+                      className="text-[14px] font-medium leading-5 tracking-[-0.1504px] text-[#364153]"
+                    >
+                      Verification code
+                    </label>
+                    <input
+                      id="admin-otp"
+                      name="otp"
+                      type="text"
+                      inputMode="numeric"
+                      autoComplete="one-time-code"
+                      placeholder="Enter code"
+                      value={otp}
+                      onChange={(e) => setOtp(e.target.value)}
+                      className="h-9 w-full rounded-lg border border-transparent bg-[#f3f3f5] px-3 text-center font-mono text-[14px] tracking-[0.2em] text-[#101828] outline-none placeholder:tracking-normal placeholder:text-[#717182] focus:border-emerald-500/35 focus:bg-white focus:ring-2 focus:ring-emerald-500/20"
+                    />
+                  </div>
+
+                  {error ? (
+                    <p className="text-[13px] leading-4 text-[#b52a00]" role="alert">
+                      {error}
+                    </p>
+                  ) : null}
+
+                  <button
+                    type="submit"
+                    disabled={submitting}
+                    className="h-9 w-full rounded-lg bg-[#0e5c45] text-[14px] font-medium leading-5 tracking-[-0.1504px] text-white outline-none transition-opacity hover:opacity-95 focus-visible:ring-2 focus-visible:ring-emerald-600 focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-60"
+                  >
+                    {submitting ? 'Verifying…' : 'Continue'}
+                  </button>
+
+                  <button
+                    type="button"
+                    disabled={submitting}
+                    onClick={() => {
+                      setStep('email')
+                      setOtp('')
+                      setError(null)
+                    }}
+                    className="text-[14px] font-medium text-[#6a7282] underline underline-offset-2"
+                  >
+                    Use a different email
+                  </button>
+                </form>
+              )}
             </div>
-
-            {import.meta.env.DEV && !supabase ? (
-              <p className="mt-4 text-center text-[12px] text-white/70">
-                Dev mode: Supabase env missing —{' '}
-                <span className="font-mono">/admin</span> stays available without login.
-              </p>
-            ) : null}
           </div>
+
+          {import.meta.env.DEV && !supabase ? (
+            <p className="mt-4 text-center text-[12px] text-[#364153]/80">
+              Dev mode: Supabase env missing — <span className="font-mono">/admin</span> stays available
+              without login.
+            </p>
+          ) : null}
         </div>
       </div>
     </div>

@@ -23,6 +23,36 @@ export async function signInAdmin(loginId: string, password: string): Promise<vo
   if (error) throw new Error(error.message)
 }
 
+export async function sendAdminEmailOtp(loginId: string): Promise<void> {
+  if (!supabase) throw new Error('Supabase is not configured.')
+  const email = loginIdToEmail(loginId)
+  const { error } = await supabase.auth.signInWithOtp({
+    email,
+    options: { shouldCreateUser: true },
+  })
+  if (error) throw new Error(error.message)
+}
+
+export async function verifyAdminEmailOtp(loginId: string, token: string): Promise<void> {
+  if (!supabase) throw new Error('Supabase is not configured.')
+  const email = loginIdToEmail(loginId)
+  const { error } = await supabase.auth.verifyOtp({
+    email,
+    token: token.replace(/\s/g, '').trim(),
+    type: 'email',
+  })
+  if (error) throw new Error(error.message)
+}
+
+export async function signInAdminWithOAuth(provider: 'google' | 'apple'): Promise<void> {
+  if (!supabase) throw new Error('Supabase is not configured.')
+  const { error } = await supabase.auth.signInWithOAuth({
+    provider,
+    options: { redirectTo: `${window.location.origin}/admin` },
+  })
+  if (error) throw new Error(error.message)
+}
+
 export async function signOutAdmin(): Promise<void> {
   if (!supabase) return
   await supabase.auth.signOut()

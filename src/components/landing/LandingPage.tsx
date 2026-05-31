@@ -1,5 +1,6 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
+import { EarlyAccessModal } from '@/components/landing/EarlyAccessModal'
 import uloLogo from '@/assets/landing/ulo-logo.png'
 import skyscraperIcon from '@/assets/landing/skyscraper.png'
 import mechanicIcon from '@/assets/landing/mechanic.png'
@@ -10,6 +11,12 @@ import {
   formatHoursSaved,
   formatResolutionHours,
 } from '@/lib/landingRoiCalculator'
+import {
+  captureWaitlistReferralFromUrl,
+  consumeWaitlistOAuthIntent,
+  joinWaitlistFromSessionEmail,
+} from '@/lib/landingWaitlist'
+import { supabase } from '@/lib/supabase'
 import {
   IconArrowRight,
   IconChevronRight,
@@ -97,7 +104,19 @@ function PrimaryButton({
   return (
     <button
       type="button"
-      className={`inline-flex items-center justify-center gap-2 rounded-lg px-5 py-2.5 text-sm font-semibold text-white transition hover:brightness-105 ${className}`}
+      className={[
+        'inline-flex items-center justify-center gap-2 rounded-lg px-5 py-2.5',
+        'text-sm font-semibold text-white',
+        'shadow-[0_4px_14px_rgba(14,92,68,0.4)]',
+        'transition-[transform,box-shadow,filter] duration-150 ease-out',
+        'hover:brightness-110 hover:shadow-[0_10px_28px_rgba(14,92,68,0.5)] hover:-translate-y-0.5',
+        'active:translate-y-px active:scale-[0.98] active:brightness-[0.92] active:shadow-[0_2px_10px_rgba(14,92,68,0.35)]',
+        'focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-emerald-500/50 focus-visible:ring-offset-2 focus-visible:ring-offset-[#f0fdf4]',
+        'disabled:pointer-events-none disabled:opacity-50 disabled:shadow-none disabled:translate-y-0 disabled:scale-100 disabled:brightness-100',
+        className,
+      ]
+        .filter(Boolean)
+        .join(' ')}
       style={{ backgroundImage: TEAL_GRADIENT }}
       {...props}
     >
@@ -109,8 +128,50 @@ function PrimaryButton({
 export function LandingPage() {
   const [units, setUnits] = useState(50)
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
+  const [earlyAccessOpen, setEarlyAccessOpen] = useState(false)
+  const [earlyAccessSuccess, setEarlyAccessSuccess] = useState(false)
+  const [earlyAccessReferralLink, setEarlyAccessReferralLink] = useState('')
   const roi = useMemo(() => computeLandingRoi(units), [units])
   const sliderPct = ((units - 1) / (500 - 1)) * 100
+
+  useEffect(() => {
+    const fromReferral = captureWaitlistReferralFromUrl()
+    if (fromReferral) {
+      setEarlyAccessOpen(true)
+    }
+  }, [])
+
+  useEffect(() => {
+    if (!consumeWaitlistOAuthIntent() || !supabase) return
+    void (async () => {
+      const { data } = await supabase.auth.getSession()
+      const email = data.session?.user.email
+      if (!email) return
+      try {
+        const result = await joinWaitlistFromSessionEmail(email)
+        setEarlyAccessReferralLink(result.referralLink)
+        setEarlyAccessSuccess(true)
+        setEarlyAccessOpen(true)
+      } catch {
+        setEarlyAccessOpen(true)
+      } finally {
+        await supabase.auth.signOut()
+      }
+    })()
+  }, [])
+
+  function openEarlyAccess() {
+    setMobileMenuOpen(false)
+    setEarlyAccessSuccess(false)
+    setEarlyAccessReferralLink('')
+    setEarlyAccessOpen(true)
+  }
+
+  function closeEarlyAccess() {
+    setEarlyAccessOpen(false)
+    setEarlyAccessSuccess(false)
+    setEarlyAccessReferralLink('')
+  }
 
   const navLinks = [
     { label: 'Home', target: 'top' },
@@ -160,7 +221,7 @@ export function LandingPage() {
               >
                 Login
               </Link>
-              <PrimaryButton onClick={() => scrollTo('calculator')} className="inline-flex">
+              <PrimaryButton onClick={openEarlyAccess} className="inline-flex">
                 Request Early Access
                 <IconArrowRight />
               </PrimaryButton>
@@ -199,7 +260,7 @@ export function LandingPage() {
                 Login
               </Link>
               <PrimaryButton
-                onClick={() => scrollTo('calculator')}
+                onClick={openEarlyAccess}
                 className="w-full justify-center py-3.5"
               >
                 Request Early Access
@@ -222,7 +283,7 @@ export function LandingPage() {
                 </span>
 
                 <h1 className="mt-6 font-[family-name:var(--font-landing-heading)] text-[clamp(2rem,11vw,3rem)] font-bold leading-[1.15] tracking-[-0.03em] text-[#111827] lg:text-[clamp(2.25rem,6vw,4.5rem)] lg:leading-[1.05] lg:tracking-[-0.025em]">
-                  The SMS, first
+                  The SMS first
                   <br />
                   <span className="lg:whitespace-nowrap">Maintenance Operating System for</span>
                   <br />
@@ -247,7 +308,7 @@ export function LandingPage() {
 
                 <div className="mt-6 flex flex-col gap-4 lg:flex-row lg:flex-wrap lg:items-center lg:gap-4">
                   <PrimaryButton
-                    onClick={() => scrollTo('calculator')}
+                    onClick={openEarlyAccess}
                     className="w-full justify-center px-7 py-4 lg:w-auto"
                   >
                     Request Early Access
@@ -436,7 +497,7 @@ export function LandingPage() {
                 label: 'Property Managers',
                 labelClass: 'text-[#398398]',
                 title: 'Full operational control',
-                body: 'Ticket triage, vendor routing, suspend payments, and real-time reporting — all from one dashboard.',
+                body: 'Maintenance intake, vendor routing, suspend payments, and real-time reporting — all from one dashboard.',
                 link: '/admin',
               },
               {
@@ -497,7 +558,7 @@ export function LandingPage() {
             <div className="pointer-events-none absolute -right-20 top-0 size-[500px] rounded-full bg-emerald-500/10 blur-[64px]" />
             <div className="pointer-events-none absolute -left-20 bottom-0 size-[400px] rounded-full bg-sky-500/10 blur-[64px]" />
 
-            <div className="relative py-10 lg:py-16">
+            <div className="relative px-4 py-10 lg:px-0 lg:py-16">
               <div className="mx-auto flex w-full max-w-3xl flex-col items-center text-center">
                 <span className="inline-flex rounded-full bg-[#d3f4ff] px-4 py-2 font-mono text-xs font-bold uppercase tracking-wide text-[#5796aa]">
                   Interactive ROI Calculator
@@ -581,7 +642,10 @@ export function LandingPage() {
                 </div>
 
                 <div className="mt-10 flex w-full max-w-lg flex-col items-center gap-4 lg:mt-14 lg:max-w-none lg:flex-row lg:flex-wrap lg:justify-center">
-                  <PrimaryButton className="w-full gap-2.5 px-10 py-5 text-base font-bold shadow-[0_12px_20px_rgba(16,185,129,0.35)] lg:w-auto">
+                  <PrimaryButton
+                    onClick={openEarlyAccess}
+                    className="w-full gap-2.5 px-10 py-5 text-base font-bold shadow-[0_12px_20px_rgba(16,185,129,0.35)] lg:w-auto"
+                  >
                     Request Early Access
                     <IconArrowRight className="size-5" />
                   </PrimaryButton>
@@ -602,6 +666,13 @@ export function LandingPage() {
       <footer className="border-t border-gray-100 py-8 text-center text-sm text-[#6b7280]">
         <p>© {new Date().getFullYear()} ülo home. All rights reserved.</p>
       </footer>
+
+      <EarlyAccessModal
+        open={earlyAccessOpen}
+        onClose={closeEarlyAccess}
+        initialSuccess={earlyAccessSuccess}
+        initialReferralLink={earlyAccessReferralLink}
+      />
     </div>
   )
 }

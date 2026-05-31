@@ -1,6 +1,7 @@
 import { BrowserRouter, Routes, Route } from 'react-router-dom'
 import { useSessionAutoRefresh } from './hooks/useSessionAutoRefresh'
 import { supabase } from './lib/supabase'
+import { ReferralLandingRedirect } from './components/ReferralLandingRedirect'
 import { LandingPage } from './components/landing/LandingPage'
 import { ResidentPortal } from './ResidentPortal'
 import { VendorPortal } from './VendorPortal'
@@ -17,6 +18,7 @@ export default function App() {
 
   return (
     <BrowserRouter>
+      <ReferralLandingRedirect />
       <Routes>
         <Route path="/" element={<LandingPage />} />
         <Route path="/request" element={<ResidentPortal />} />
