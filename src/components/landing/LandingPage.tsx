@@ -1,16 +1,8 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { EarlyAccessModal } from '@/components/landing/EarlyAccessModal'
 import uloLogo from '@/assets/landing/ulo-logo.png'
-import skyscraperIcon from '@/assets/landing/skyscraper.png'
-import mechanicIcon from '@/assets/landing/mechanic.png'
-import peopleIcon from '@/assets/landing/people.png'
-import {
-  computeLandingRoi,
-  formatAnnualSavings,
-  formatHoursSaved,
-  formatResolutionHours,
-} from '@/lib/landingRoiCalculator'
+import { playUiClickSound, primeUiClickSound } from '@/lib/uiClickSound'
 import {
   captureWaitlistReferralFromUrl,
   consumeWaitlistOAuthIntent,
@@ -19,7 +11,6 @@ import {
 import { supabase } from '@/lib/supabase'
 import {
   IconArrowRight,
-  IconChevronRight,
   IconClose,
   IconCpu,
   IconExcel,
@@ -28,6 +19,12 @@ import {
   IconMessage,
   IconUsers,
 } from '@/components/landing/LandingIcons'
+import { Step1SmsChatMockup } from '@/components/landing/Step1SmsChatMockup'
+import { CompletionRateDonut } from '@/components/landing/CompletionRateDonut'
+import { Step2AiIntakeMockup } from '@/components/landing/Step2AiIntakeMockup'
+import { FeaturesShowcase } from '@/components/landing/FeaturesShowcase'
+import { BeforeAfterWorkflowSection } from '@/components/landing/BeforeAfterWorkflowSection'
+import { HowItWorksStepReveal, HowItWorksStepsGrid } from '@/components/landing/HowItWorksStepReveal'
 
 const TEAL_GRADIENT =
   'linear-gradient(169deg, rgb(34, 154, 127) 0%, rgb(14, 92, 68) 100%)'
@@ -45,26 +42,11 @@ const LANDING_CONTENT_ALIGN = 'lg:ml-[calc(8.25rem+3.5rem)]'
 const LANDING_NAV_DIVIDER =
   'pointer-events-none absolute inset-y-0 left-[calc(3.5rem+8.25rem)] z-[51] hidden w-px bg-gray-200/60 lg:block'
 
-/** Consistent vertical gap between hero, How it Works, and Features. */
-const LANDING_SECTION_GAP = 'pb-8 lg:pb-10'
+/** Horizontal section rules — align with LANDING_NAV_DIVIDER on desktop (8.25rem past lg gutter). */
+const LANDING_SECTION_RULE = 'border-gray-200/80 lg:ml-[8.25rem]'
 
-const ROI_PRIMARY_STATS = [
-  {
-    valueKey: 'hours' as const,
-    label: 'Hours saved/week',
-    sub: 'on ticket triage',
-  },
-  {
-    valueKey: 'turnaround' as const,
-    label: 'Faster turnaround',
-    sub: 'avg. resolution time',
-  },
-  {
-    valueKey: 'savings' as const,
-    label: 'Annual savings',
-    sub: 'labor & efficiency',
-  },
-]
+/** Consistent vertical gap between landing sections — 64px. */
+const LANDING_SECTION_GAP = 'pb-16'
 
 function LandingContentShell({
   className = '',
@@ -126,13 +108,13 @@ function PrimaryButton({
 }
 
 export function LandingPage() {
-  const [units, setUnits] = useState(50)
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
   const [earlyAccessOpen, setEarlyAccessOpen] = useState(false)
   const [earlyAccessSuccess, setEarlyAccessSuccess] = useState(false)
   const [earlyAccessReferralLink, setEarlyAccessReferralLink] = useState('')
-  const roi = useMemo(() => computeLandingRoi(units), [units])
-  const sliderPct = ((units - 1) / (500 - 1)) * 100
+  useEffect(() => {
+    primeUiClickSound()
+  }, [])
 
   useEffect(() => {
     const fromReferral = captureWaitlistReferralFromUrl()
@@ -161,6 +143,7 @@ export function LandingPage() {
   }, [])
 
   function openEarlyAccess() {
+    playUiClickSound()
     setMobileMenuOpen(false)
     setEarlyAccessSuccess(false)
     setEarlyAccessReferralLink('')
@@ -182,12 +165,6 @@ export function LandingPage() {
   function scrollTo(id: string) {
     setMobileMenuOpen(false)
     document.getElementById(id)?.scrollIntoView({ behavior: 'smooth', block: 'start' })
-  }
-
-  function roiPrimaryValue(key: (typeof ROI_PRIMARY_STATS)[number]['valueKey']) {
-    if (key === 'hours') return formatHoursSaved(roi.hoursSavedPerWeek)
-    if (key === 'turnaround') return `${roi.fasterTurnaroundPct}%`
-    return formatAnnualSavings(roi.annualSavings)
   }
 
   return (
@@ -275,35 +252,33 @@ export function LandingPage() {
         {/* Hero */}
         <section className="min-h-[calc(100dvh-4rem)] lg:min-h-0">
           <LandingContentShell
-            className={`pt-12 sm:pt-16 lg:pt-14 ${LANDING_SECTION_GAP}`}
-            contentClassName="max-w-3xl min-w-0"
+            className="pb-32 pt-12 sm:pt-16 lg:pt-14"
+            contentClassName="min-w-0 w-full max-w-none"
           >
-                <span className="inline-flex rounded-full bg-[#d3f4ff] px-4 py-2 font-mono text-xs font-bold uppercase tracking-wide text-[#5796aa]">
+                <span className="inline-flex items-center gap-2 rounded-full border border-[#e5e7eb] bg-white px-4 py-2 font-mono text-xs font-bold uppercase tracking-wide text-black">
+                  <span className="size-2 shrink-0 rounded-full bg-[#7dd3fc]" aria-hidden />
                   What If Rental Maintenance Ran Itself?
                 </span>
 
-                <h1 className="mt-6 font-[family-name:var(--font-landing-heading)] text-[clamp(2rem,11vw,3rem)] font-bold leading-[1.15] tracking-[-0.03em] text-[#111827] lg:text-[clamp(2.25rem,6vw,4.5rem)] lg:leading-[1.05] lg:tracking-[-0.025em]">
-                  The SMS first
-                  <br />
-                  <span className="lg:whitespace-nowrap">Maintenance Operating System for</span>
-                  <br />
-                  <span className="inline-block lg:whitespace-nowrap">
+                <h1 className="mt-6 flex flex-col items-start font-[family-name:var(--font-landing-heading)] text-[clamp(2rem,10vw,120px)] font-bold leading-[1.1] tracking-[-0.03em] text-[#111827] lg:text-[120px] lg:leading-[1.05] lg:tracking-[-0.025em]">
+                  <span className="block whitespace-nowrap">Your Tenants</span>
+                  <span className="block whitespace-nowrap">
+                    <span className="text-[#0f1623]">Text. </span>
                     <span
                       className="bg-clip-text text-transparent"
                       style={{
                         backgroundImage:
-                          'linear-gradient(174deg, rgb(24, 121, 96) 0%, rgb(180, 222, 234) 100%)',
+                          'linear-gradient(174deg, rgb(24, 121, 96) 0%, rgb(174, 225, 239) 100%)',
                       }}
                     >
-                      Independent
+                      Ulo
                     </span>
-                    <span className="text-[#0f1623]"> Landlords.</span>
+                    <span className="text-[#0f1623]"> does the rest.</span>
                   </span>
                 </h1>
 
                 <p className="mt-6 max-w-xl border-l-[3px] border-[#187960] pl-5 text-lg leading-relaxed text-[#4b5563] lg:max-w-3xl">
-                  Your tenants already text about maintenance. Ulo organizes every request, coordinates
-                  vendors, and keeps repairs moving without the constant back and forth.
+                Tenant texts become completed repairs, automatically. From routine maintenance to emergency repairs, Ulo creates work orders, dispatches the right vendor, and tracks every repair from request to resolution.
                 </p>
 
                 <div className="mt-6 flex flex-col gap-4 lg:flex-row lg:flex-wrap lg:items-center lg:gap-4">
@@ -314,14 +289,7 @@ export function LandingPage() {
                     Request Early Access
                     <IconArrowRight />
                   </PrimaryButton>
-                  <button
-                    type="button"
-                    onClick={() => scrollTo('calculator')}
-                    className="w-full rounded-lg border border-[#e5e7eb] bg-white px-6 py-4 text-sm font-semibold text-[#1f2937] transition hover:bg-gray-50 lg:w-auto"
-                  >
-                    Calculate Savings
-                  </button>
-                  <div className="flex items-center gap-4">
+                  <div className="flex items-center gap-1">
                     <IconExcel className="size-[25px]" />
                     <button
                       type="button"
@@ -332,9 +300,6 @@ export function LandingPage() {
                   </div>
                 </div>
 
-                <p className="mt-6 font-mono text-xs text-[#4b5563] lg:mt-6">
-                  Workflow Automation · Operational decisions · No Setup Fee
-                </p>
           </LandingContentShell>
         </section>
 
@@ -342,323 +307,169 @@ export function LandingPage() {
         <section id="how-it-works" className={`scroll-mt-20 ${LANDING_SECTION_GAP}`}>
           <LandingContentShell>
           <div className="rounded-3xl border border-gray-200/80 bg-white p-6 shadow-[0_20px_30px_rgba(0,0,0,0.03),0_1px_1.5px_rgba(0,0,0,0.02)] sm:p-10 lg:shadow-none">
-            <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-              <div>
-                <h2 className="font-[family-name:var(--font-landing-heading)] text-2xl font-bold text-[#111827]">
-                  How it Works
-                </h2>
-                <p className="mt-2 text-sm text-[#6b7280]">
-                  From report to resolution — four steps, fully automated.
-                </p>
-              </div>
-              <button
-                type="button"
-                onClick={() => scrollTo('calculator')}
-                className="hidden w-fit items-center gap-1.5 rounded-2xl border border-[#e5e7eb] px-4 py-2 text-xs font-medium text-[#6b7280] transition hover:bg-gray-50 lg:inline-flex"
-              >
-                Calculate your Savings
-                <IconChevronRight className="size-4" />
-              </button>
+            <h2 className="inline-flex items-center gap-2 rounded-full border border-[#e5e7eb] bg-white px-4 py-2 font-mono text-xs font-bold uppercase tracking-wide text-black">
+              <span className="size-2 shrink-0 rounded-full bg-[#7dd3fc]" aria-hidden />
+              How it Works
+            </h2>
+
+            <div className="mt-4 grid grid-cols-1 gap-6 lg:grid-cols-2 lg:gap-10 lg:items-start">
+              <p className="font-[family-name:var(--font-landing-heading)] text-[48px] font-medium leading-[1.1] tracking-[-0.02em] text-[#111827]">
+                From report to resolution in four simple steps
+              </p>
+              <p className="text-lg font-normal leading-relaxed text-[#4b5563]">
+                Ulo automates the day to day work of rental property ownership so landlords get their time back and tenants get faster, better service.
+              </p>
             </div>
 
-            <div className="mt-10 grid grid-cols-1 gap-4 lg:grid-cols-4">
+            <HowItWorksStepsGrid className="mt-10 grid grid-cols-1 items-start gap-4 lg:grid-cols-4">
               {/* Step 1 */}
-              <div className="relative rounded-2xl border-2 border-[#e5e7eb] bg-[#f9fafb] p-5 shadow-[0_2px_4px_rgba(0,0,0,0.02)]">
+              <HowItWorksStepReveal
+                index={0}
+                className="relative rounded-2xl border-2 border-[#e5e7eb] bg-[#f9fafb] p-5 shadow-[0_2px_4px_rgba(0,0,0,0.02)]"
+              >
                 <StepBadge n={1} />
-                <div className="rounded-2xl border border-[#e5e7eb] bg-white p-3">
-                  <div className="rounded-xl bg-[#e8e8ec] p-2">
-                    <div className="mb-1.5 max-w-[126px] rounded-2xl rounded-bl-lg bg-white px-2 py-1 font-mono text-[10px] leading-snug text-[#364153] shadow-sm">
-                      Bathroom faucet leaking — #204
-                    </div>
-                    <div className="flex justify-end">
-                      <div className="max-w-[126px] rounded-2xl rounded-br-lg bg-[#0f1623] px-2 py-1 font-mono text-[10px] leading-snug text-white">
-                        Got it! How urgent?
-                      </div>
-                    </div>
-                  </div>
-                </div>
+                <Step1SmsChatMockup />
                 <div className="mt-4 flex items-center gap-2">
                   <IconMessage className="size-4 text-emerald-600" />
                   <span className="text-sm font-bold">Resident SMS</span>
                 </div>
                 <p className="mt-2 text-xs leading-relaxed text-[#6b7280]">
-                  Residents text their issue 24/7 — no app, no login.
+                  Residents text dedicated Ulo Maintenance number 24/7. No app, Install needed.
                 </p>
-              </div>
+              </HowItWorksStepReveal>
 
               {/* Step 2 */}
-              <div className="relative rounded-2xl border-2 border-[#e5e7eb] bg-[#f9fafb] p-5 shadow-[0_2px_4px_rgba(0,0,0,0.02)]">
+              <HowItWorksStepReveal
+                index={1}
+                className="relative h-fit self-start rounded-2xl border-2 border-[#e5e7eb] bg-[#f9fafb] p-5 shadow-[0_2px_4px_rgba(0,0,0,0.02)]"
+              >
                 <StepBadge n={2} />
-                <div className="rounded-2xl border border-[#e5e7eb] bg-white p-3">
-                  <div className="flex flex-col gap-2">
-                    {[
-                      ['Category', 'Plumbing', 'bg-[#dbeafe] text-[#1447e6]'],
-                      ['Urgency', 'High', 'bg-[#ffe2e2] text-[#c10007]'],
-                      ['Unit', '#204', 'bg-[#f3f4f6] text-[#364153]'],
-                    ].map(([label, value, chipClass]) => (
-                      <div
-                        key={label}
-                        className="flex items-center justify-between rounded bg-[#f0f0f4] px-2 py-1"
-                      >
-                        <span className="font-mono text-[10px] text-[#6a7282]">{label}</span>
-                        <span className={`rounded px-1.5 py-0.5 font-mono text-[9px] ${chipClass}`}>
-                          {value}
-                        </span>
-                      </div>
-                    ))}
-                  </div>
-                </div>
+                <Step2AiIntakeMockup />
                 <div className="mt-4 flex items-center gap-2">
                   <IconCpu className="size-4 text-emerald-600" />
-                  <span className="text-sm font-bold">AI Intake</span>
+                  <span className="text-sm font-bold">AI Work Order</span>
                 </div>
                 <p className="mt-2 text-xs leading-relaxed text-[#6b7280]">
-                  AI captures details, urgency, and category instantly.
+                  AI assesses and capture details, urgency and category instantly.
                 </p>
-              </div>
+              </HowItWorksStepReveal>
 
-              {/* Step 3 */}
-              <div className="relative rounded-2xl border-2 border-[#e5e7eb] bg-[#f9fafb] p-5 shadow-[0_2px_4px_rgba(0,0,0,0.02)]">
-                <StepBadge n={3} />
-                <div className="rounded-2xl border border-[#e5e7eb] bg-white p-3">
-                  <div className="flex flex-col gap-2">
-                    {[
-                      ['M', 'Mike P.', 'Plumber · 2h away', '98%'],
-                      ['J', 'Jess L.', 'Plumber · 4h away', '91%'],
-                    ].map(([initial, name, meta, score]) => (
-                      <div
-                        key={name}
-                        className="flex items-center gap-2 rounded bg-[#f0f0f4] px-2 py-1"
-                      >
-                        <span className="flex size-5 shrink-0 items-center justify-center rounded-full bg-[#0f1623] font-mono text-[8px] font-bold text-white">
-                          {initial}
-                        </span>
-                        <div className="min-w-0 flex-1">
-                          <p className="truncate font-mono text-[10px] text-[#1e2939]">{name}</p>
-                          <p className="truncate font-mono text-[10px] text-[#99a1af]">{meta}</p>
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:col-span-2 lg:items-stretch">
+                {/* Step 3 */}
+                <HowItWorksStepReveal
+                  index={2}
+                  className="relative flex h-full flex-col rounded-2xl border-2 border-[#e5e7eb] bg-[#f9fafb] p-5 shadow-[0_2px_4px_rgba(0,0,0,0.02)]"
+                >
+                  <StepBadge n={3} />
+                  <div className="rounded-2xl border border-[#e5e7eb] bg-white p-3">
+                    <div className="flex flex-col gap-2">
+                      {[
+                        ['M', 'Mike P.', 'Plumber', '4.9', '2h away', '98%'],
+                        ['J', 'Jess L.', 'Plumber', '4.7', '4h away', '91%'],
+                      ].map(([initial, name, trade, rating, availability, match]) => (
+                        <div
+                          key={name}
+                          className="flex items-center gap-2 rounded bg-[#f0f0f4] px-2 py-1"
+                        >
+                          <span className="flex size-5 shrink-0 items-center justify-center rounded-full bg-[#0f1623] font-mono text-[8px] font-bold text-white">
+                            {initial}
+                          </span>
+                          <div className="min-w-0 flex-1">
+                            <p className="truncate font-mono text-[10px] text-[#1e2939]">{name}</p>
+                            <p className="truncate font-mono text-[10px] text-[#99a1af]">{trade}</p>
+                            <p className="truncate font-mono text-[9px] text-[#6a7282]">
+                              <span>Rating {rating}</span>
+                              <span className="mx-1 text-[#d1d5db]">·</span>
+                              <span>Avail. {availability}</span>
+                            </p>
+                          </div>
+                          <span className="shrink-0 font-mono text-[10px] text-[#2a7a3b]">{match}</span>
                         </div>
-                        <span className="font-mono text-[10px] text-[#2a7a3b]">{score}</span>
-                      </div>
-                    ))}
+                      ))}
+                    </div>
                   </div>
-                </div>
-                <div className="mt-4 flex items-center gap-2">
-                  <IconUsers className="size-4 text-emerald-600" />
-                  <span className="text-sm font-bold">Vendor Assignment</span>
-                </div>
-                <p className="mt-2 text-xs leading-relaxed text-[#6b7280]">
-                  Best-matched vendor auto-routed with one-click confirm.
-                </p>
-              </div>
+                  <div className="mt-4 flex items-center gap-2">
+                    <IconUsers className="size-4 text-emerald-600" />
+                    <span className="text-sm font-bold">Vendor Assignment</span>
+                  </div>
+                  <p className="mt-2 text-xs leading-relaxed text-[#6b7280]">
+                    You approve vendor. Scheduling done automatically. Zero back and forth.
+                  </p>
+                </HowItWorksStepReveal>
 
-              {/* Step 4 */}
-              <div
-                className="relative rounded-2xl border-2 border-emerald-500 p-5 shadow-[0_2px_4px_rgba(0,0,0,0.02)]"
-                style={{ backgroundImage: TEAL_GRADIENT }}
-              >
-                <StepBadge n={4} variant="purple" />
-                <div className="rounded-2xl border border-white/20 bg-white/15 p-3">
-                  <div className="grid grid-cols-2 gap-2">
-                    {[
-                      ['Open', '14'],
-                      ['In Progress', '8'],
-                    ].map(([label, val]) => (
-                      <div key={label} className="rounded bg-white/10 px-2 py-1 text-center">
-                        <p className="font-mono text-[10px] text-white/50">{label}</p>
-                        <p className="font-mono text-sm font-bold text-white">{val}</p>
+                {/* Step 4 */}
+                <HowItWorksStepReveal
+                  index={3}
+                  className="relative flex h-full flex-col rounded-2xl border-2 border-[#e5e7eb] bg-[#f9fafb] p-5 shadow-[0_2px_4px_rgba(0,0,0,0.02)]"
+                >
+                  <StepBadge n={4} />
+                  <div className="flex flex-1 flex-col">
+                    <div className="rounded-xl border border-black/[0.04] bg-white p-[11px]">
+                      <div className="flex flex-col gap-2">
+                        <div className="grid grid-cols-2 gap-2">
+                          {[
+                            ['Open', '14'],
+                            ['In Progress', '8'],
+                          ].map(([label, val]) => (
+                            <div key={label} className="rounded bg-[#f0f0f4] px-2 py-1 text-center">
+                              <p className="font-mono text-[10px] text-[#6a7282]">{label}</p>
+                              <p className="font-mono text-sm font-bold text-[#1e2939]">{val}</p>
+                            </div>
+                          ))}
+                        </div>
+                        <div className="flex items-center justify-between gap-2 rounded bg-[#f0f0f4] px-2 py-2">
+                          <span className="font-mono text-[10px] text-[#6a7282]">Completion rate</span>
+                          <CompletionRateDonut percent={87} />
+                        </div>
                       </div>
-                    ))}
+                    </div>
                   </div>
-                  <div className="mt-2 flex items-center justify-between rounded bg-white/10 px-2 py-1">
-                    <span className="font-mono text-[10px] text-white/60">Avg. Resolution</span>
-                    <span className="font-mono text-[10px] text-[#f5b800]">4.2h</span>
+                  <div className="mt-4 flex items-center gap-2">
+                    <IconLayout className="size-4 text-emerald-600" />
+                    <span className="text-sm font-bold">Job Tracking</span>
                   </div>
-                </div>
-                <div className="mt-4 flex items-center gap-2">
-                  <IconLayout className="size-4 text-white" />
-                  <span className="text-sm font-bold text-white">Dashboard Update</span>
-                </div>
-                <p className="mt-2 text-xs leading-relaxed text-white/80">
-                  Live status for managers, vendors, and residents.
-                </p>
+                  <p className="mt-2 text-xs leading-relaxed text-[#6b7280]">
+                    Live status updates. Photo receipt and vendor payment on completion.
+                  </p>
+                </HowItWorksStepReveal>
               </div>
-            </div>
+            </HowItWorksStepsGrid>
           </div>
           </LandingContentShell>
         </section>
 
         {/* Features */}
         <section id="features" className={`scroll-mt-20 ${LANDING_SECTION_GAP}`}>
-          <LandingContentShell>
-          <div className="grid grid-cols-1 gap-5 lg:grid-cols-3">
-            {[
-              {
-                icon: skyscraperIcon,
-                label: 'Property Managers',
-                labelClass: 'text-[#398398]',
-                title: 'Full operational control',
-                body: 'Maintenance intake, vendor routing, suspend payments, and real-time reporting — all from one dashboard.',
-                link: '/admin',
-              },
-              {
-                icon: mechanicIcon,
-                label: 'Vendors & Contractors',
-                labelClass: 'text-[#0284c7]',
-                title: 'Kanban-style job board',
-                body: 'Accept jobs, update status, upload photos, and flag delays directly from a mobile-first portal.',
-                link: '/vendor',
-              },
-              {
-                icon: peopleIcon,
-                label: 'Residents',
-                labelClass: 'text-[#52aad8]',
-                title: 'SMS — no download needed',
-                body: "Text any issue, get confirmation in seconds, and receive real-time updates until it's resolved.",
-                link: '/request',
-                iconWrap: true,
-              },
-            ].map((card) => (
-              <Link
-                key={card.label}
-                to={card.link}
-                className="group rounded-2xl border border-[#e5e7eb] bg-white p-7 shadow-[0_4px_8px_rgba(0,0,0,0.04)] transition hover:border-emerald-200 hover:shadow-md lg:shadow-none"
-              >
-                {card.iconWrap ? (
-                  <div
-                    className="flex size-11 items-center justify-center rounded-2xl"
-                    style={{
-                      backgroundImage:
-                        'linear-gradient(135deg, rgba(99, 102, 241, 0.1) 0%, rgba(139, 92, 246, 0.1) 100%)',
-                    }}
-                  >
-                    <img src={card.icon} alt="" className="size-8 object-contain" />
-                  </div>
-                ) : (
-                  <img src={card.icon} alt="" className="size-[42px] object-contain" />
-                )}
-                <p
-                  className={`mt-5 font-mono text-[10px] font-bold uppercase tracking-[0.15em] ${card.labelClass}`}
-                >
-                  {card.label}
-                </p>
-                <h3 className="mt-2 font-[family-name:var(--font-landing-heading)] text-base font-bold">
-                  {card.title}
-                </h3>
-                <p className="mt-2 text-sm leading-relaxed text-[#6b7280]">{card.body}</p>
-              </Link>
-            ))}
+          <div className={LANDING_VIEWPORT_GUTTER}>
+            <div className={`border-t ${LANDING_SECTION_RULE}`} aria-hidden />
           </div>
-          </LandingContentShell>
-        </section>
-
-        {/* ROI Calculator */}
-        <section id="calculator" className="scroll-mt-20 pb-20">
-          <LandingContentShell>
-          <div className="relative overflow-hidden rounded-3xl border border-emerald-500/20 bg-gradient-to-b from-white to-[#f0fdf4] shadow-[0_0_0_1px_rgba(16,185,129,0.05)]">
-            <div className="pointer-events-none absolute -right-20 top-0 size-[500px] rounded-full bg-emerald-500/10 blur-[64px]" />
-            <div className="pointer-events-none absolute -left-20 bottom-0 size-[400px] rounded-full bg-sky-500/10 blur-[64px]" />
-
-            <div className="relative px-4 py-10 lg:px-0 lg:py-16">
-              <div className="mx-auto flex w-full max-w-3xl flex-col items-center text-center">
-                <span className="inline-flex rounded-full bg-[#d3f4ff] px-4 py-2 font-mono text-xs font-bold uppercase tracking-wide text-[#5796aa]">
-                  Interactive ROI Calculator
-                </span>
-                <h2 className="mt-6 font-[family-name:var(--font-landing-heading)] text-[clamp(1.75rem,8vw,3rem)] font-bold leading-tight text-[#111827]">
-                  See Your Potential Savings
-                </h2>
-                <p className="mt-4 max-w-xl text-lg text-[#4b5563]">
-                  Calculate how much time and money Ulo can save your property management team
-                </p>
-
-                <label className="mt-10 block w-full max-w-lg text-base font-bold lg:mt-12" htmlFor="units-slider">
-                  How many units do you manage?
-                </label>
-
-                <div className="relative mt-5 w-full max-w-lg">
-                  <div className="flex flex-col items-center rounded-2xl border-[3px] border-[#e5e7eb] bg-white px-9 py-6 shadow-[0_8px_12px_rgba(0,0,0,0.06)] lg:block lg:py-7 lg:shadow-none">
-                    <output
-                      htmlFor="units-slider"
-                      className="block font-mono text-5xl font-bold text-[#111827]"
-                    >
-                      {units}
-                    </output>
-                    <span className="mt-1 font-mono text-base font-bold text-[#9ca3af] lg:absolute lg:right-9 lg:top-1/2 lg:mt-0 lg:-translate-y-1/2">
-                      units
-                    </span>
-                  </div>
-                </div>
-
-                <input
-                  id="units-slider"
-                  type="range"
-                  min={1}
-                  max={500}
-                  value={units}
-                  onChange={(e) => setUnits(Number(e.target.value))}
-                  className="mt-6 h-3 w-full max-w-lg cursor-pointer appearance-none rounded-full bg-[#e5e7eb] [&::-webkit-slider-thumb]:size-5 [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:border [&::-webkit-slider-thumb]:border-gray-300 [&::-webkit-slider-thumb]:bg-white [&::-webkit-slider-thumb]:shadow-sm"
-                  style={{
-                    background: `linear-gradient(to right, rgb(156,163,175) 0%, rgb(156,163,175) ${sliderPct}%, rgb(229,231,235) ${sliderPct}%, rgb(229,231,235) 100%)`,
-                  }}
-                  aria-valuemin={1}
-                  aria-valuemax={500}
-                  aria-valuenow={units}
-                />
-
-                <div className="mt-10 grid w-full max-w-5xl grid-cols-1 gap-5 lg:mt-12 lg:grid-cols-3">
-                  {ROI_PRIMARY_STATS.map((stat) => (
-                    <div
-                      key={stat.label}
-                      className="rounded-2xl border-2 border-[#e5e7eb] bg-white px-6 py-8 text-center shadow-[0_10px_15px_rgba(0,0,0,0.06)] lg:border-2 lg:shadow-none"
-                    >
-                      <p className="font-mono text-4xl font-bold leading-none text-[#8c8985] lg:text-[clamp(2.5rem,6vw,3.75rem)]">
-                        {roiPrimaryValue(stat.valueKey)}
-                      </p>
-                      <p className="mt-3 font-mono text-[11px] font-bold uppercase tracking-[0.15em] text-[#6b7280]">
-                        {stat.label}
-                      </p>
-                      <p className="mt-2 text-sm text-[#9ca3af]">{stat.sub}</p>
-                    </div>
-                  ))}
-                </div>
-
-                <div className="mt-10 grid w-full max-w-3xl grid-cols-1 gap-8 border-t border-gray-200/50 pt-10 lg:mt-12 lg:grid-cols-3">
-                  {[
-                    { value: `${roi.timeRecoveredPerMonth} hrs/mo`, label: 'Time recovered' },
-                    { value: `${roi.residentSatisfactionPct}%`, label: 'Resident satisfaction' },
-                    {
-                      value: formatResolutionHours(roi.avgResolutionHours),
-                      label: 'Avg. resolution time',
-                    },
-                  ].map((stat) => (
-                    <div key={stat.label} className="text-center">
-                      <p className="font-[family-name:var(--font-landing-heading)] text-3xl font-bold">
-                        {stat.value}
-                      </p>
-                      <p className="mt-2 font-mono text-[10px] font-bold uppercase tracking-[0.15em] text-[#6b7280]">
-                        {stat.label}
-                      </p>
-                    </div>
-                  ))}
-                </div>
-
-                <div className="mt-10 flex w-full max-w-lg flex-col items-center gap-4 lg:mt-14 lg:max-w-none lg:flex-row lg:flex-wrap lg:justify-center">
-                  <PrimaryButton
-                    onClick={openEarlyAccess}
-                    className="w-full gap-2.5 px-10 py-5 text-base font-bold shadow-[0_12px_20px_rgba(16,185,129,0.35)] lg:w-auto"
-                  >
-                    Request Early Access
-                    <IconArrowRight className="size-5" />
-                  </PrimaryButton>
-                  <Link
-                    to="/admin/login"
-                    className="px-4 text-base font-semibold text-[#6b7280] underline underline-offset-2"
-                  >
-                    Login
-                  </Link>
-                </div>
-              </div>
+          <LandingContentShell className="py-16">
+          <div>
+            <h2 className="inline-flex items-center gap-2 rounded-full border border-[#e5e7eb] bg-white px-4 py-2 font-mono text-xs font-bold uppercase tracking-wide text-black">
+              <span className="size-2 shrink-0 rounded-full bg-[#7dd3fc]" aria-hidden />
+              Features
+            </h2>
+            <div className="mt-4 grid grid-cols-1 gap-6 lg:grid-cols-2 lg:gap-10 lg:items-start">
+              <p className="font-[family-name:var(--font-landing-heading)] text-[48px] font-medium leading-[1.1] tracking-[-0.02em] text-[#111827]">
+                Everything your property needs, automated.
+              </p>
+              <p className="text-lg font-normal leading-relaxed text-[#4b5563]">
+                Ulo can automate up to 80% of landlord coordination work.
+              </p>
             </div>
           </div>
+
+          <FeaturesShowcase />
+          </LandingContentShell>
+          <div className={LANDING_VIEWPORT_GUTTER}>
+            <div className={`border-b ${LANDING_SECTION_RULE}`} aria-hidden />
+          </div>
+        </section>
+
+        {/* Before / After workflow */}
+        <section id="workflow-comparison" className={`scroll-mt-20 ${LANDING_SECTION_GAP}`}>
+          <LandingContentShell>
+            <BeforeAfterWorkflowSection />
           </LandingContentShell>
         </section>
       </main>

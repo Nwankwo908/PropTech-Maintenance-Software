@@ -1,4 +1,4 @@
-import { useEffect, useState, type FormEvent } from 'react'
+import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { Link } from 'react-router-dom'
 import homeAutomationIllustration from '@/assets/landing/Home_Automation.png'
 import { IconClose } from '@/components/landing/LandingIcons'
@@ -6,6 +6,7 @@ import {
   joinWaitlistByEmail,
   signInWaitlistWithGoogle,
 } from '@/lib/landingWaitlist'
+import { playWaitlistSuccessSound, primeWaitlistSuccessSound } from '@/lib/uiSuccessSound'
 
 function IconGoogle({ className = 'size-[18px]' }: { className?: string }) {
   return (
@@ -63,6 +64,24 @@ export function EarlyAccessModal({
   const [success, setSuccess] = useState(initialSuccess)
   const [referralLink, setReferralLink] = useState(initialReferralLink)
   const [copyLabel, setCopyLabel] = useState('Copy Link')
+  const wasSuccessRef = useRef(false)
+
+  useEffect(() => {
+    if (open) {
+      primeWaitlistSuccessSound()
+    }
+  }, [open])
+
+  useEffect(() => {
+    if (!open) {
+      wasSuccessRef.current = false
+      return
+    }
+    if (success && !wasSuccessRef.current) {
+      playWaitlistSuccessSound()
+    }
+    wasSuccessRef.current = success
+  }, [open, success])
 
   useEffect(() => {
     if (!open) return
@@ -239,22 +258,24 @@ export function EarlyAccessModal({
                   className="mt-2 h-[50px] w-full rounded-2xl border border-[#e5e7eb] bg-white px-[17px] text-base text-[#1f2937] outline-none placeholder:text-[rgba(31,41,55,0.5)] focus:border-emerald-500/35 focus:ring-2 focus:ring-emerald-500/20 disabled:opacity-60"
                 />
 
-                {error ? (
-                  <p className="mt-3 text-[13px] leading-4 text-[#b52a00]" role="alert">
-                    {error}
-                  </p>
-                ) : null}
+                <div className="mt-3 min-h-4" aria-live="polite">
+                  {error ? (
+                    <p className="text-[13px] leading-4 text-[#b52a00]" role="alert">
+                      {error}
+                    </p>
+                  ) : null}
+                </div>
 
                 <button
                   type="submit"
                   disabled={submitting}
-                  className="mt-4 h-11 w-full rounded-2xl bg-[#0e5c45] text-sm font-semibold text-white outline-none transition hover:opacity-95 focus-visible:ring-2 focus-visible:ring-emerald-600 focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-60"
+                  className="mt-4 flex h-[46px] shrink-0 w-full items-center justify-center rounded-2xl bg-[#0e5c45] text-sm font-semibold text-white outline-none transition hover:opacity-95 focus-visible:ring-2 focus-visible:ring-emerald-600 focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-60"
                 >
                   {submitting ? 'Joining…' : 'Continue'}
                 </button>
               </form>
 
-              <div className="mt-6 flex items-center gap-3">
+              <div className="mt-6 flex shrink-0 items-center gap-3">
                 <div className="h-px flex-1 bg-[#e5e7eb]" />
                 <span className="text-xs text-[#9ca3af]">OR</span>
                 <div className="h-px flex-1 bg-[#e5e7eb]" />
@@ -264,7 +285,7 @@ export function EarlyAccessModal({
                 type="button"
                 disabled={submitting}
                 onClick={() => void onGoogleSignIn()}
-                className="mt-6 flex h-[46px] w-full items-center justify-center gap-2 rounded-2xl border border-[#e5e7eb] bg-white text-sm font-medium text-[#1f2937] outline-none transition hover:bg-gray-50 focus-visible:ring-2 focus-visible:ring-emerald-600 focus-visible:ring-offset-2 disabled:opacity-60"
+                className="mt-6 flex h-[46px] shrink-0 w-full items-center justify-center gap-2 rounded-2xl border border-[#e5e7eb] bg-white text-sm font-medium leading-none text-[#1f2937] outline-none transition hover:bg-gray-50 focus-visible:ring-2 focus-visible:ring-emerald-600 focus-visible:ring-offset-2 disabled:opacity-60"
               >
                 <IconGoogle />
                 Continue with Google
