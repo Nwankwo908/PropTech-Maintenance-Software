@@ -2,7 +2,7 @@ import beforeWorkflow from '@/assets/landing/before-workflow.png'
 import afterWorkflowDiagram from '@/assets/landing/after-workflow-diagram.png'
 
 const WORKFLOW_CARD =
-  'flex h-[320px] flex-col gap-8 rounded-3xl border border-[#e5e7eb] bg-white px-6 py-8 sm:px-10 lg:h-[340px] lg:flex-row lg:items-center lg:gap-16 lg:px-[38px] lg:py-10'
+  'flex min-h-[320px] flex-col gap-8 overflow-x-clip rounded-3xl border border-[#e5e7eb] bg-white px-6 py-8 sm:px-10 lg:h-[340px] lg:min-h-0 lg:flex-row lg:items-center lg:gap-16 lg:overflow-visible lg:px-[38px] lg:py-10'
 
 function WorkflowLabel({ title, subtitle }: { title: string; subtitle: string }) {
   return (
@@ -20,23 +20,37 @@ function WorkflowDiagram({
   alt,
   width,
   height,
-  imageClassName = 'w-[70%]',
+  widthPercent,
+  lgWidthClass,
 }: {
   src: string
   alt: string
   width: number
   height: number
-  imageClassName?: string
+  widthPercent: number
+  lgWidthClass: string
 }) {
+  const diagramWidthPx = Math.round(width * (widthPercent / 100))
+
   return (
-    <div className="flex min-h-0 min-w-0 flex-1 items-center justify-center">
-      <img
-        src={src}
-        alt={alt}
-        className={`h-auto max-w-full ${imageClassName}`}
-        width={width}
-        height={height}
-      />
+    <div className="relative flex min-w-0 flex-1 overflow-x-hidden overflow-y-visible lg:overflow-visible">
+      <div
+        className="flex w-full items-center overflow-x-auto overflow-y-visible overscroll-x-contain touch-pan-x [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden lg:overflow-visible"
+        aria-label={`${alt}. Swipe horizontally to view the full diagram.`}
+        tabIndex={0}
+      >
+        <div className="flex min-w-max items-center justify-start py-1 lg:min-w-0 lg:w-full lg:justify-center lg:py-0">
+          <img
+            src={src}
+            alt={alt}
+            width={width}
+            height={height}
+            draggable={false}
+            style={{ width: diagramWidthPx }}
+            className={`block h-auto max-w-none shrink-0 ${lgWidthClass} lg:max-w-full`}
+          />
+        </div>
+      </div>
     </div>
   )
 }
@@ -52,7 +66,8 @@ export function BeforeAfterWorkflowSection() {
           alt="Before Ulo: tenant, landlord, and vendor stuck in repeated back-and-forth coordination"
           width={1043}
           height={212}
-          imageClassName="w-[91%]"
+          widthPercent={91}
+          lgWidthClass="lg:!w-[91%]"
         />
       </div>
 
@@ -63,6 +78,8 @@ export function BeforeAfterWorkflowSection() {
           alt="After Ulo: tenant texts Ulo, landlord and vendor coordinate once, tenant issue resolved"
           width={702}
           height={225}
+          widthPercent={70}
+          lgWidthClass="lg:!w-[70%]"
         />
       </div>
     </div>

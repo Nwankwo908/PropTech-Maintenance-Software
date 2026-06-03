@@ -250,58 +250,57 @@ export function LandingPage() {
 
       <main id="top" className="flex flex-1 flex-col">
         {/* Hero */}
-        <section className="min-h-[calc(100dvh-4rem)] lg:min-h-0">
+        <section className="min-h-[calc(100dvh-4rem)] overflow-x-clip lg:min-h-0">
           <LandingContentShell
-            className="pb-20 pt-10 sm:pb-32 sm:pt-16 lg:pb-32 lg:pt-14"
+            className="pb-20 pt-10 sm:pb-28 sm:pt-14 md:pb-32 lg:pt-14"
             contentClassName="min-w-0 w-full max-w-none"
           >
-                <span className="inline-flex max-w-full items-center gap-2 rounded-full border border-[#e5e7eb] bg-white px-3 py-1.5 font-mono text-[10px] font-bold uppercase leading-snug tracking-wide text-black sm:px-4 sm:py-2 sm:text-xs">
-                  <span className="size-2 shrink-0 rounded-full bg-[#7dd3fc]" aria-hidden />
-                  What If Rental Maintenance Ran Itself?
+            <span className="inline-flex max-w-full flex-wrap items-center gap-2 rounded-full border border-[#e5e7eb] bg-white px-3 py-1.5 font-mono text-[10px] font-bold uppercase leading-snug tracking-wide text-black sm:px-4 sm:py-2 sm:text-xs">
+              <span className="size-2 shrink-0 rounded-full bg-[#7dd3fc]" aria-hidden />
+              What If Rental Maintenance Ran Itself?
+            </span>
+
+            <h1 className="mt-4 w-full max-w-full text-balance font-[family-name:var(--font-landing-heading)] text-[clamp(1.875rem,5vw+1rem,7.5rem)] font-bold leading-[1.12] tracking-[-0.03em] text-[#111827] sm:mt-6 lg:leading-[1.05] lg:tracking-[-0.025em]">
+              <span className="block">Your Tenants</span>
+              <span className="block [overflow-wrap:anywhere]">
+                <span className="text-[#0f1623]">Text. </span>
+                <span
+                  className="bg-clip-text text-transparent"
+                  style={{
+                    backgroundImage:
+                      'linear-gradient(174deg, rgb(24, 121, 96) 0%, rgb(174, 225, 239) 100%)',
+                  }}
+                >
+                  Ulo
                 </span>
+                <span className="text-[#0f1623]"> does the rest.</span>
+              </span>
+            </h1>
 
-                <h1 className="mt-4 flex min-w-0 flex-col items-start font-[family-name:var(--font-landing-heading)] text-[clamp(2.25rem,12vw,120px)] font-bold leading-[1.08] tracking-[-0.03em] text-[#111827] sm:mt-6 lg:text-[120px] lg:leading-[1.05] lg:tracking-[-0.025em]">
-                  <span className="block lg:whitespace-nowrap">Your Tenants</span>
-                  <span className="block lg:whitespace-nowrap">
-                    <span className="text-[#0f1623]">Text. </span>
-                    <span
-                      className="bg-clip-text text-transparent"
-                      style={{
-                        backgroundImage:
-                          'linear-gradient(174deg, rgb(24, 121, 96) 0%, rgb(174, 225, 239) 100%)',
-                      }}
-                    >
-                      Ulo
-                    </span>
-                    <span className="text-[#0f1623]"> does the rest.</span>
-                  </span>
-                </h1>
+            <p className="mt-4 w-full max-w-full border-l-[3px] border-[#187960] pl-4 text-base leading-relaxed text-[#4b5563] sm:mt-6 sm:max-w-xl sm:pl-5 sm:text-lg lg:max-w-3xl">
+              Tenant texts become completed repairs, automatically. From routine maintenance to
+              emergency repairs, Ulo creates work orders, dispatches the right vendor, and tracks
+              every repair from request to resolution.
+            </p>
 
-                <p className="mt-4 min-w-0 max-w-full border-l-[3px] border-[#187960] pl-4 text-base leading-relaxed text-[#4b5563] sm:mt-6 sm:max-w-xl sm:pl-5 sm:text-lg lg:max-w-3xl">
-                  Tenant texts become completed repairs, automatically. From routine maintenance to
-                  emergency repairs, Ulo creates work orders, dispatches the right vendor, and tracks
-                  every repair from request to resolution.
-                </p>
-
-                <div className="mt-5 flex flex-col gap-4 sm:mt-6 lg:flex-row lg:flex-wrap lg:items-center lg:gap-4">
-                  <PrimaryButton
-                    onClick={openEarlyAccess}
-                    className="w-full justify-center px-7 py-4 lg:w-auto"
-                  >
-                    Request Early Access
-                    <IconArrowRight />
-                  </PrimaryButton>
-                  <div className="flex items-center gap-1">
-                    <IconExcel className="size-[25px]" />
-                    <button
-                      type="button"
-                      className="text-sm font-medium text-[#6b7280] underline decoration-solid underline-offset-2"
-                    >
-                      Instant Excel import
-                    </button>
-                  </div>
-                </div>
-
+            <div className="mt-5 flex w-full max-w-full flex-col gap-4 sm:mt-6 md:flex-row md:flex-wrap md:items-center">
+              <PrimaryButton
+                onClick={openEarlyAccess}
+                className="w-full justify-center px-7 py-3.5 sm:py-4 md:w-auto"
+              >
+                Request Early Access
+                <IconArrowRight />
+              </PrimaryButton>
+              <div className="flex items-center justify-center gap-1 md:justify-start">
+                <IconExcel className="size-[25px] shrink-0" />
+                <button
+                  type="button"
+                  className="text-sm font-medium text-[#6b7280] underline decoration-solid underline-offset-2"
+                >
+                  Instant Excel import
+                </button>
+              </div>
+            </div>
           </LandingContentShell>
         </section>
 
