@@ -250,9 +250,9 @@ export function LandingPage() {
 
       <main id="top" className="flex flex-1 flex-col">
         {/* Hero */}
-        <section className="min-h-[calc(100dvh-4rem)] overflow-x-clip lg:min-h-0">
+        <section className="overflow-x-clip">
           <LandingContentShell
-            className="pb-20 pt-10 sm:pb-28 sm:pt-14 md:pb-32 lg:pt-14"
+            className="pb-12 pt-10 sm:pb-28 sm:pt-14 md:pb-32 lg:pt-14"
             contentClassName="min-w-0 w-full max-w-none"
           >
             <span className="inline-flex max-w-full flex-wrap items-center gap-2 rounded-full border border-[#e5e7eb] bg-white px-3 py-1.5 font-mono text-[10px] font-bold uppercase leading-snug tracking-wide text-black sm:px-4 sm:py-2 sm:text-xs">

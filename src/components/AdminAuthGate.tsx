@@ -1,11 +1,23 @@
 import { useEffect, useState } from 'react'
 import { Navigate } from 'react-router-dom'
+import type { Session } from '@supabase/supabase-js'
+import { isAdminSessionAllowed, signOutAdmin } from '@/lib/adminAuth'
 import { supabase } from '@/lib/supabase'
 
 type GateState = 'loading' | 'authed' | 'anon'
 
+async function gateStateForSession(session: Session | null): Promise<GateState> {
+  if (!session) return 'anon'
+  if (!isAdminSessionAllowed(session)) {
+    await signOutAdmin()
+    return 'anon'
+  }
+  return 'authed'
+}
+
 /**
  * Requires a Supabase session for /admin/* (except /admin/login, which renders outside this gate).
+ * Only emeka@ulohome.io and osi@ulohome.io may access admin routes.
  * In Vite dev without Supabase env, children render so local UI work stays possible.
  */
 export function AdminAuthGate({ children }: { children: React.ReactNode }) {
@@ -18,16 +30,18 @@ export function AdminAuthGate({ children }: { children: React.ReactNode }) {
     }
 
     let cancelled = false
-    supabase.auth.getSession().then(({ data }) => {
+
+    void supabase.auth.getSession().then(async ({ data }) => {
       if (cancelled) return
-      setState(data.session ? 'authed' : 'anon')
+      setState(await gateStateForSession(data.session))
     })
 
     const {
       data: { subscription },
     } = supabase.auth.onAuthStateChange((_event, session) => {
-      if (cancelled) return
-      setState(session ? 'authed' : 'anon')
+      void gateStateForSession(session).then((next) => {
+        if (!cancelled) setState(next)
+      })
     })
 
     return () => {

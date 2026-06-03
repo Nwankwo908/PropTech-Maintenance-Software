@@ -1,3 +1,4 @@
+import type { Session } from '@supabase/supabase-js'
 import { supabase } from '@/lib/supabase'
 
 /**
@@ -6,6 +7,11 @@ import { supabase } from '@/lib/supabase'
  */
 export const ADMIN_LOGIN_EMAIL_DOMAIN = 'property-admin.auth.local'
 
+export const ADMIN_ACCESS_DENIED_MESSAGE =
+  'This account is not authorized to access the admin portal.'
+
+const ADMIN_ALLOWED_EMAILS = new Set(['emeka@ulohome.io', 'osi@ulohome.io'])
+
 export function loginIdToEmail(loginId: string): string {
   const t = loginId.trim().toLowerCase()
   if (!t) return t
@@ -13,8 +19,29 @@ export function loginIdToEmail(loginId: string): string {
   return `${t}@${ADMIN_LOGIN_EMAIL_DOMAIN}`
 }
 
+export function normalizeAdminEmail(loginId: string): string {
+  return loginIdToEmail(loginId).trim().toLowerCase()
+}
+
+export function isAdminEmailAllowed(loginIdOrEmail: string): boolean {
+  return ADMIN_ALLOWED_EMAILS.has(normalizeAdminEmail(loginIdOrEmail))
+}
+
+export function isAdminSessionAllowed(session: Session | null): boolean {
+  const email = session?.user?.email?.trim()
+  if (!email) return false
+  return isAdminEmailAllowed(email)
+}
+
+function assertAdminEmailAllowed(loginId: string): void {
+  if (!isAdminEmailAllowed(loginId)) {
+    throw new Error(ADMIN_ACCESS_DENIED_MESSAGE)
+  }
+}
+
 export async function signInAdmin(loginId: string, password: string): Promise<void> {
   if (!supabase) throw new Error('Supabase is not configured.')
+  assertAdminEmailAllowed(loginId)
   const email = loginIdToEmail(loginId)
   const { error } = await supabase.auth.signInWithPassword({
     email,
@@ -25,16 +52,18 @@ export async function signInAdmin(loginId: string, password: string): Promise<vo
 
 export async function sendAdminEmailOtp(loginId: string): Promise<void> {
   if (!supabase) throw new Error('Supabase is not configured.')
+  assertAdminEmailAllowed(loginId)
   const email = loginIdToEmail(loginId)
   const { error } = await supabase.auth.signInWithOtp({
     email,
-    options: { shouldCreateUser: true },
+    options: { shouldCreateUser: false },
   })
   if (error) throw new Error(error.message)
 }
 
 export async function verifyAdminEmailOtp(loginId: string, token: string): Promise<void> {
   if (!supabase) throw new Error('Supabase is not configured.')
+  assertAdminEmailAllowed(loginId)
   const email = loginIdToEmail(loginId)
   const { error } = await supabase.auth.verifyOtp({
     email,

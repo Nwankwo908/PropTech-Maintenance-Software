@@ -3,8 +3,10 @@ import { Navigate, useNavigate } from 'react-router-dom'
 import bgLogin from '@/assets/BG_Login.png'
 import uloLogo from '@/assets/Ulo_Logo_small.png'
 import {
+  isAdminSessionAllowed,
   sendAdminEmailOtp,
   signInAdminWithOAuth,
+  signOutAdmin,
   verifyAdminEmailOtp,
 } from '@/lib/adminAuth'
 import { supabase } from '@/lib/supabase'
@@ -46,8 +48,13 @@ export function AdminLoginPage() {
       setAlreadyAuthed(import.meta.env.DEV)
       return
     }
-    supabase.auth.getSession().then(({ data }) => {
-      setAlreadyAuthed(!!data.session)
+    void supabase.auth.getSession().then(async ({ data }) => {
+      if (data.session && !isAdminSessionAllowed(data.session)) {
+        await signOutAdmin()
+        setAlreadyAuthed(false)
+        return
+      }
+      setAlreadyAuthed(isAdminSessionAllowed(data.session))
     })
   }, [])
 
@@ -147,7 +154,7 @@ export function AdminLoginPage() {
                 </h1>
                 <p className="text-[14px] font-normal leading-5 tracking-[-0.1504px] text-[#0a0a0a]">
                   {step === 'email'
-                    ? 'Login or Register with your email'
+                    ? 'Sign in with your authorized email'
                     : 'Enter the verification code we sent to your email'}
                 </p>
               </div>
