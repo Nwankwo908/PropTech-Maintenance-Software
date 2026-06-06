@@ -1,6 +1,8 @@
 import { serve } from "https://deno.land/std/http/server.ts"
 import { createClient, type SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.49.1"
 import { deliverBroadcastMessages } from "../_shared/broadcast_delivery.ts"
+import { logGraphEvent } from "../_shared/graph/logGraphEvent.ts"
+import { resolveLandlordId } from "../_shared/sms/landlordSmsOnboarding.ts"
 
 const VERSION = "v2-" + Date.now()
 console.log("🔥 VERSION:", VERSION)
@@ -235,6 +237,29 @@ serve(async (req) => {
         .from("broadcast_notifications")
         .update({ status: result.immediateTerminalStatus })
         .eq("id", broadcastId)
+    }
+
+    try {
+      await logGraphEvent(supabase, {
+        landlord_id: resolveLandlordId(),
+        event_type: "broadcast.sent",
+        source: "dashboard",
+        actor_type: "landlord",
+        metadata: {
+          broadcast_id: broadcastId,
+          action,
+          audience,
+          building,
+          units,
+          channels,
+          status: result.immediateTerminalStatus,
+          recipients_count: result.recipients_count,
+          attempts_ok: result.attemptsOk,
+          attempts_failed: result.attemptsFail,
+        },
+      })
+    } catch (e) {
+      console.error("[send-broadcast] graph event", e)
     }
 
     return jsonResponse({

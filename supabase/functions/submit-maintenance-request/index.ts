@@ -7,6 +7,8 @@ import {
 import { getEstimatedMinutes } from "../_shared/sla_rules.ts"
 import { notifyResidentSubmitted } from "./resident_notify.ts"
 import { assignVendorAndNotify } from "./vendor_notify.ts"
+import { logGraphEvent } from "../_shared/graph/logGraphEvent.ts"
+import { resolveLandlordId } from "../_shared/sms/landlordSmsOnboarding.ts"
 
 const corsHeaders: Record<string, string> = {
   "Access-Control-Allow-Origin": "*",
@@ -367,6 +369,27 @@ serve(async (req) => {
     })
   } catch (e) {
     console.error("[submit-maintenance-request] vendor notify failed", e)
+  }
+
+  try {
+    await logGraphEvent(supabase, {
+      landlord_id: resolveLandlordId(),
+      event_type: "maintenance.request_submitted",
+      source: "edge_function",
+      actor_type: "resident",
+      actor_id: residentRow.id,
+      resident_id: residentRow.id,
+      maintenance_request_id: ticketId,
+      metadata: {
+        unit,
+        priority,
+        issue_category: slaClassification.issue_category,
+        severity: slaClassification.severity,
+        photo_count: paths.length,
+      },
+    })
+  } catch (e) {
+    console.error("[submit-maintenance-request] graph event", e)
   }
 
   return jsonResponse({ id: ticketId, requestId: ticketId })

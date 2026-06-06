@@ -1,5 +1,5 @@
 /**
- * Shared Resend + Twilio delivery (vendor and resident notifications).
+ * Shared Resend email delivery. Outbound SMS uses `_shared/sms/providerFactory.ts`.
  */
 
 export async function sendResendEmail(
@@ -41,47 +41,5 @@ export async function sendResendEmail(
     return { id: j.id ?? "sent" }
   } catch {
     return { id: "sent" }
-  }
-}
-
-export async function sendTwilioSms(to: string, body: string): Promise<
-  { sid: string } | { error: string }
-> {
-  const sid = Deno.env.get("TWILIO_ACCOUNT_SID")?.trim()
-  const token = Deno.env.get("TWILIO_AUTH_TOKEN")?.trim()
-  const fromNum = Deno.env.get("TWILIO_FROM_NUMBER")?.trim()
-  if (!sid || !token || !fromNum) {
-    return { error: "Twilio not configured" }
-  }
-
-  const auth = btoa(`${sid}:${token}`)
-  const form = new URLSearchParams({
-    To: to,
-    From: fromNum,
-    Body: body,
-  })
-
-  const res = await fetch(
-    `https://api.twilio.com/2010-04-01/Accounts/${sid}/Messages.json`,
-    {
-      method: "POST",
-      headers: {
-        Authorization: `Basic ${auth}`,
-        "Content-Type": "application/x-www-form-urlencoded",
-      },
-      body: form.toString(),
-    },
-  )
-
-  const raw = await res.text()
-  if (!res.ok) {
-    console.error("[delivery] Twilio error", res.status, raw)
-    return { error: raw.slice(0, 500) || `Twilio HTTP ${res.status}` }
-  }
-  try {
-    const j = JSON.parse(raw) as { sid?: string }
-    return { sid: j.sid ?? "sent" }
-  } catch {
-    return { sid: "sent" }
   }
 }

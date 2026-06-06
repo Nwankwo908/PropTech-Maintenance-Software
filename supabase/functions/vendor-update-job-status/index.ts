@@ -8,6 +8,8 @@ import {
 import { tryAutoReassignAfterDecline } from "../_shared/vendor_auto_reassign.ts"
 import { bearerLooksLikeJwt } from "../_shared/vendor_portal_bearer.ts"
 import { getVendorFromPortalApiKey } from "../_shared/vendor_portal_api_key.ts"
+import { logGraphEvent } from "../_shared/graph/logGraphEvent.ts"
+import { resolveLandlordId } from "../_shared/sms/landlordSmsOnboarding.ts"
 
 const corsHeaders: Record<string, string> = {
   "Access-Control-Allow-Origin": "*",
@@ -281,6 +283,26 @@ serve(async (req) => {
     vendor_id: vendorIdMatched,
   })
   if (logErr) console.error("[vendor-update-job-status] audit", logErr)
+
+  try {
+    await logGraphEvent(supabase, {
+      landlord_id: resolveLandlordId(),
+      event_type: "vendor.work_status_changed",
+      source: source === "portal" ? "vendor_portal" : "edge_function",
+      actor_type: "vendor",
+      actor_id: vendorIdMatched,
+      vendor_id: vendorIdMatched,
+      maintenance_request_id: ticketId,
+      metadata: {
+        action,
+        from_status: current,
+        to_status: step.next,
+        auth_source: source,
+      },
+    })
+  } catch (e) {
+    console.error("[vendor-update-job-status] graph event", e)
+  }
 
   if (step.next === "declined") {
     try {

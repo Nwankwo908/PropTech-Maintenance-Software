@@ -1,8 +1,9 @@
 import { serve } from "https://deno.land/std/http/server.ts"
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1"
 import { verifyVendorEmailAction } from "../_shared/vendor_action_token.ts"
-import { tryAutoReassignAfterDecline } from "../_shared/vendor_auto_reassign.ts"
-import { notifyResidentVendorAccepted } from "../submit-maintenance-request/resident_notify.ts"
+import { applyVendorStatusTransition } from "../_shared/vendor_workflow.ts"
+import { logGraphEvent } from "../_shared/graph/logGraphEvent.ts"
+import { resolveLandlordId } from "../_shared/sms/landlordSmsOnboarding.ts"
 
 const corsHeaders: Record<string, string> = {
   "Access-Control-Allow-Origin": "*",
@@ -122,131 +123,67 @@ serve(async (req) => {
 
   const supabase = createClient(supabaseUrl, serviceKey)
 
-  const { data: row, error: rowErr } = await supabase
-    .from("maintenance_requests")
-    .select("id, assigned_vendor_id, vendor_work_status")
-    .eq("id", ticketId)
-    .maybeSingle()
-
-  if (rowErr) {
-    console.error("[vendor-respond] load ticket", rowErr)
-    return htmlResponse("Error", "Could not load this job.", { status: 500 })
-  }
-  if (!row) {
-    return htmlResponse("Not found", "This maintenance request was not found.", {
-      status: 404,
-    })
-  }
-
-  if (row.assigned_vendor_id !== _vendorId) {
-    return htmlResponse(
-      "Not assigned",
-      "This job is no longer assigned to your company.",
-      { status: 403 },
-    )
-  }
-
-  const current = row.vendor_work_status as string
-
-  if (current === "completed") {
-    return htmlResponse(
-      "Already completed",
-      "This job is already marked completed.",
-      { status: 409 },
-    )
-  }
-
-  if (current === "declined") {
-    return htmlResponse(
-      "Already declined",
-      "This job was already declined.",
-      { status: 409 },
-    )
-  }
-
-  let next: string
-  if (action === "accept") {
-    if (current !== "pending_accept") {
-      return htmlResponse(
-        "Cannot accept",
-        `This job cannot be accepted from its current status (${current}).`,
-        { status: 409 },
-      )
-    }
-    next = "accepted"
-  } else {
-    if (current !== "pending_accept" && current !== "accepted") {
-      return htmlResponse(
-        "Cannot decline",
-        `This job cannot be declined from its current status (${current}).`,
-        { status: 409 },
-      )
-    }
-    next = "declined"
-  }
-
-  const { error: upErr } = await supabase
-    .from("maintenance_requests")
-    .update({ vendor_work_status: next })
-    .eq("id", ticketId)
-    .eq("assigned_vendor_id", _vendorId)
-
-  if (upErr) {
-    console.error("[vendor-respond] update", upErr)
-    return htmlResponse("Error", "Could not update status.", { status: 500 })
-  }
-
-  const { error: logErr } = await supabase.from("vendor_status_events").insert({
-    ticket_id: ticketId,
-    from_status: current,
-    to_status: next,
+  const transition = await applyVendorStatusTransition(supabase, {
+    ticketId,
+    vendorId: _vendorId,
+    action,
     source: "email_signed",
-    vendor_id: _vendorId,
   })
-  if (logErr) console.error("[vendor-respond] audit", logErr)
 
-  if (next === "accepted") {
-    try {
-      const { data: trow } = await supabase
-        .from("maintenance_requests")
-        .select(
-          "resident_name, email, resident_phone, unit, assigned_vendor_id, priority, resident_notification_channel",
-        )
-        .eq("id", ticketId)
-        .maybeSingle()
+  if (!transition.ok) {
+    const msg =
+      transition.reason === "not_found"
+        ? "This maintenance request was not found."
+        : transition.reason === "not_assigned_to_vendor"
+          ? "This job is no longer assigned to your company."
+          : transition.reason === "already_completed"
+            ? "This job is already marked completed."
+            : transition.reason === "already_declined"
+              ? "This job was already declined."
+              : transition.reason === "cannot_accept"
+                ? `This job cannot be accepted from its current status (${transition.currentStatus ?? "unknown"}).`
+                : transition.reason === "cannot_decline"
+                  ? `This job cannot be declined from its current status (${transition.currentStatus ?? "unknown"}).`
+                  : "Could not update status."
+    const status =
+      transition.reason === "not_found"
+        ? 404
+        : transition.reason === "not_assigned_to_vendor"
+          ? 403
+          : transition.reason === "already_completed" ||
+              transition.reason === "already_declined" ||
+              transition.reason === "cannot_accept" ||
+              transition.reason === "cannot_decline"
+            ? 409
+            : 500
+    return htmlResponse(
+      transition.reason === "not_found" ? "Not found" : "Error",
+      msg,
+      { status },
+    )
+  }
 
-      let vendorName: string | undefined
-      if (trow?.assigned_vendor_id) {
-        const { data: v } = await supabase
-          .from("vendors")
-          .select("name")
-          .eq("id", trow.assigned_vendor_id as string)
-          .maybeSingle()
-        if (v?.name) vendorName = String(v.name)
-      }
+  const next = transition.toStatus
+  const current = transition.fromStatus
 
-      if (trow) {
-        await notifyResidentVendorAccepted(supabase, {
-          ticketId,
-          recipientName: String(trow.resident_name ?? ""),
-          recipientEmail:
-            typeof trow.email === "string" ? trow.email.trim() : "",
-          recipientPhone:
-            typeof trow.resident_phone === "string"
-              ? trow.resident_phone
-              : null,
-          notificationChannel:
-            typeof trow.resident_notification_channel === "string"
-              ? trow.resident_notification_channel
-              : null,
-          unit: typeof trow.unit === "string" ? trow.unit : undefined,
-          priority: typeof trow.priority === "string" ? trow.priority : undefined,
-          vendorName,
-        })
-      }
-    } catch (e) {
-      console.error("[vendor-respond] resident notify vendor_accepted", e)
-    }
+  try {
+    await logGraphEvent(supabase, {
+      landlord_id: resolveLandlordId(),
+      event_type: "vendor.work_status_changed",
+      source: "vendor_portal",
+      actor_type: "vendor",
+      actor_id: _vendorId,
+      vendor_id: _vendorId,
+      maintenance_request_id: ticketId,
+      metadata: {
+        action,
+        from_status: current,
+        to_status: next,
+        channel: "email_signed",
+      },
+    })
+  } catch (e) {
+    console.error("[vendor-respond] graph event", e)
   }
 
   console.log(
@@ -260,14 +197,6 @@ serve(async (req) => {
       at: new Date().toISOString(),
     }),
   )
-
-  if (next === "declined") {
-    try {
-      await tryAutoReassignAfterDecline(supabase, ticketId, _vendorId)
-    } catch (e) {
-      console.error("[vendor-respond] auto-reassign after decline", e)
-    }
-  }
 
   const appUrl = Deno.env.get("APP_URL")?.trim()?.replace(/\/$/, "") ?? ""
   const redirectUrl =

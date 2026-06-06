@@ -1,5 +1,6 @@
 import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.49.1"
-import { sendResendEmail, sendTwilioSms } from "./delivery.ts"
+import { sendResendEmail } from "./delivery.ts"
+import { sendOutboundSms } from "./sms/adapters.ts"
 
 export type ResidentNotifyEvent =
   | "ticket_submitted"
@@ -387,7 +388,7 @@ export async function notifyResident(
     unit: input.unit,
     vendorName: input.vendorName,
   })
-  const rSms = await sendTwilioSms(phoneE164, smsBody)
+  const rSms = await sendOutboundSms(phoneE164, smsBody)
   if ("error" in rSms) {
     console.error("[resident-notify] sms failed", input.ticketId, rSms.error)
     await insertResidentLog(

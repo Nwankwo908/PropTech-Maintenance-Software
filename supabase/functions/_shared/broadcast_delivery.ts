@@ -4,7 +4,8 @@
  */
 
 import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.49.1"
-import { sendResendEmail, sendTwilioSms } from "./delivery.ts"
+import { sendResendEmail } from "./delivery.ts"
+import { sendOutboundSms } from "./sms/adapters.ts"
 import { normalizePhoneFlexible } from "./resident_notify.ts"
 
 export type BroadcastChannel = "email" | "sms"
@@ -340,7 +341,7 @@ export async function deliverBroadcastMessages(
             throw new Error("skipped: no valid phone for SMS")
           }
           const sms = broadcastSmsBody(params.subject, params.message, params.payload)
-          const result = await sendTwilioSms(phoneE164, sms)
+          const result = await sendOutboundSms(phoneE164, sms)
           if ("error" in result) {
             throw new Error(result.error)
           }

@@ -3,6 +3,8 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1"
 import { adminEdgeCorsHeaders } from "../_shared/admin_edge_cors.ts"
 import { adminReassignSecretAuthorized } from "../_shared/admin_reassign_auth.ts"
 import { reassignVendorByIdAndNotify } from "../submit-maintenance-request/vendor_notify.ts"
+import { logGraphEvent } from "../_shared/graph/logGraphEvent.ts"
+import { resolveLandlordId } from "../_shared/sms/landlordSmsOnboarding.ts"
 
 const corsHeaders = adminEdgeCorsHeaders
 
@@ -149,6 +151,23 @@ serve(async (req) => {
           ? 404
           : 500
     return jsonResponse({ error: result.error }, status)
+  }
+
+  try {
+    await logGraphEvent(supabase, {
+      landlord_id: resolveLandlordId(),
+      event_type: "vendor.reassigned",
+      source: "dashboard",
+      actor_type: "landlord",
+      vendor_id: _vendorId,
+      maintenance_request_id: ticketId,
+      metadata: {
+        vendor_name: vendorName || null,
+        create_vendor_if_missing: createVendorIfMissing,
+      },
+    })
+  } catch (e) {
+    console.error("[admin-reassign-vendor] graph event", e)
   }
 
   return jsonResponse({ ok: true, ticketId, assigned_vendor_id: _vendorId })

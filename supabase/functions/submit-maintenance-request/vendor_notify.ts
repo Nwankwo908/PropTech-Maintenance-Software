@@ -4,7 +4,8 @@ import {
   pickVendorForAssignment,
   touchVendorLastAssignedAt,
 } from "../_shared/vendor_assignment.ts"
-import { sendResendEmail, sendTwilioSms } from "../_shared/delivery.ts"
+import { sendResendEmail } from "../_shared/delivery.ts"
+import { sendVendorJobAlert } from "../_shared/sms/vendorSmsRouting.ts"
 import { signVendorEmailAction } from "../_shared/vendor_action_token.ts"
 import { notifyResidentVendorAssigned } from "./resident_notify.ts"
 import { getEstimatedMinutes } from "../_shared/sla_rules.ts"
@@ -351,12 +352,24 @@ async function notifyChannelsForAssignment(
         emailLinks?.acceptUrl ?? null,
         emailLinks?.declineUrl ?? null,
       )
-      const r = await sendTwilioSms(vendor.phone.trim(), smsBody)
-      if ("error" in r) {
+      const r = await sendVendorJobAlert(supabase, {
+        ticketId,
+        vendorId: vendor.id,
+        vendorPhone: vendor.phone.trim(),
+        body: smsBody,
+      })
+      if (!r.ok) {
         errors.push(`sms: ${r.error}`)
         await insertLog(supabase, ticketId, vendor.id, "sms", null, r.error)
       } else {
-        await insertLog(supabase, ticketId, vendor.id, "sms", r.sid, null)
+        await insertLog(
+          supabase,
+          ticketId,
+          vendor.id,
+          "sms",
+          r.providerMessageSid,
+          null,
+        )
       }
     }
   }

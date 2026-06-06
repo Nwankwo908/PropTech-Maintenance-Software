@@ -5,7 +5,8 @@ import {
   type ResidentNotifyEvent,
   normalizePhoneFlexible,
 } from "../_shared/resident_notify.ts"
-import { sendResendEmail, sendTwilioSms } from "../_shared/delivery.ts"
+import { sendResendEmail } from "../_shared/delivery.ts"
+import { sendOutboundSms } from "../_shared/sms/adapters.ts"
 
 const corsHeaders: Record<string, string> = {
   "Access-Control-Allow-Origin": "*",
@@ -204,7 +205,7 @@ async function retryVendorDelivery(
       typeof vendor.phone === "string" ? vendor.phone : null,
     )
     if (!to) throw new Error("Vendor has no valid phone for SMS retry")
-    const result = await sendTwilioSms(
+    const result = await sendOutboundSms(
       to,
       vendorRetrySmsBody({ ticketId, priority: String(priority), unit }),
     )
@@ -290,7 +291,7 @@ async function retryBroadcastDelivery(
     else providerMessageId = result.id
   } else {
     if (!recipientPhone) throw new Error("Broadcast recipient phone missing for SMS retry")
-    const result = await sendTwilioSms(recipientPhone, message || subject)
+    const result = await sendOutboundSms(recipientPhone, message || subject)
     if ("error" in result) sendErr = result.error
     else providerMessageId = result.sid
   }
