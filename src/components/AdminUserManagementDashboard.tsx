@@ -31,6 +31,23 @@ import {
 } from '@/components/EditResidentModal'
 import maintenanceVendorButtonIcon from '@/assets/Maintenance_Vendor.svg'
 import maintenanceVendorRailIcon from '@/assets/Maintenance_Vendor_2.svg'
+import {
+  ensureLandlordSmsOnboarding,
+  registerPropertyUnitsSms,
+  registerUnitSms,
+} from '@/api/landlordSmsOnboarding'
+import {
+  activateUnit,
+  ensureUnitsInDb,
+  loadUnitsFromDb,
+  markUnitVacant,
+  type UnitRecord,
+} from '@/api/unitVacancy'
+import { MarkUnitVacantModal } from '@/components/MarkUnitVacantModal'
+import {
+  ActivateUnitModal,
+  type ActivateUnitSubmitPayload,
+} from '@/components/ActivateUnitModal'
 
 type ResidentStatus = 'active' | 'pending' | 'past_resident' | 'suspended'
 
@@ -1276,7 +1293,14 @@ function isActiveJobStatus(rawStatus: unknown): boolean {
     .trim()
     .toLowerCase()
     .replace(/\s+/g, '_')
-  return normalized !== 'completed' && normalized !== 'done' && normalized !== 'closed'
+  return (
+    normalized !== '' &&
+    normalized !== 'completed' &&
+    normalized !== 'done' &&
+    normalized !== 'closed' &&
+    normalized !== 'declined' &&
+    normalized !== 'unassigned'
+  )
 }
 
 function VendorManagementTabContent({
@@ -1299,6 +1323,7 @@ function VendorManagementTabContent({
   const [activeJobCountsByVendor, setActiveJobCountsByVendor] = useState<Record<string, number>>({})
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState<string | null>(null)
+  const [jobCountsWarning, setJobCountsWarning] = useState<string | null>(null)
   const [vendorModal, setVendorModal] = useState<
     { mode: 'add' } | { mode: 'edit'; vendor: VendorManagementRow } | null
   >(null)
@@ -1339,38 +1364,49 @@ function VendorManagementTabContent({
     }
     setLoading(true)
     setLoadError(null)
+    setJobCountsWarning(null)
     const { data, error } = await supabase
       .from('vendors')
       .select('id, name, category, email, phone, notification_channel, active, portal_api_key')
       .order('name')
-    const { data: ticketRows, error: ticketError } = await supabase
-      .from('maintenance_requests')
-      .select('assigned_vendor_id, status')
-      .not('assigned_vendor_id', 'is', null)
+
     if (error) {
       setLoadError(error.message)
       setVendors([])
       setActiveJobCountsByVendor({})
-    } else if (ticketError) {
-      setLoadError(ticketError.message)
-      setVendors([])
+      setLoading(false)
+      return
+    }
+
+    setVendors(
+      (data ?? []).map((row) => ({
+        ...row,
+        notification_channel: normalizeVendorChannel(row.notification_channel),
+      })),
+    )
+
+    const { data: ticketRows, error: ticketError } = await supabase
+      .from('maintenance_requests')
+      .select('assigned_vendor_id, vendor_work_status')
+      .not('assigned_vendor_id', 'is', null)
+
+    if (ticketError) {
+      console.warn('[vendors tab] active job count query failed', ticketError.message)
+      setJobCountsWarning(
+        'Vendor list loaded, but active job counts are unavailable right now. Try refreshing in a moment.',
+      )
       setActiveJobCountsByVendor({})
     } else {
-      setVendors(
-        (data ?? []).map((row) => ({
-          ...row,
-          notification_channel: normalizeVendorChannel(row.notification_channel),
-        })),
-      )
       const activeCounts: Record<string, number> = {}
       for (const row of ticketRows ?? []) {
-        const _vendorId = row.assigned_vendor_id
-        if (typeof _vendorId !== 'string' || !_vendorId) continue
-        if (!isActiveJobStatus(row.status)) continue
-        activeCounts[_vendorId] = (activeCounts[_vendorId] ?? 0) + 1
+        const vendorId = row.assigned_vendor_id
+        if (typeof vendorId !== 'string' || !vendorId) continue
+        if (!isActiveJobStatus(row.vendor_work_status)) continue
+        activeCounts[vendorId] = (activeCounts[vendorId] ?? 0) + 1
       }
       setActiveJobCountsByVendor(activeCounts)
     }
+
     setLoading(false)
   }, [])
 
@@ -1433,6 +1469,21 @@ function VendorManagementTabContent({
     const idsToDelete = Array.from(selectedVendorIds)
     if (supabase) {
       setDeleteVendorsSaving(true)
+
+      const { error: unassignError } = await supabase
+        .from('maintenance_requests')
+        .update({
+          assigned_vendor_id: null,
+          vendor_work_status: 'unassigned',
+        })
+        .in('assigned_vendor_id', idsToDelete)
+
+      if (unassignError) {
+        setDeleteVendorsError(unassignError.message)
+        setDeleteVendorsSaving(false)
+        return
+      }
+
       const { error } = await supabase.from('vendors').delete().in('id', idsToDelete)
       if (error) {
         setDeleteVendorsError(error.message)
@@ -1492,6 +1543,11 @@ function VendorManagementTabContent({
       {deleteVendorsError ? (
         <p className="mb-3 rounded-[10px] border border-[#b52a00]/30 bg-[#fff4f0] px-4 py-3 text-[14px] leading-5 text-[#b52a00]">
           Could not delete selected vendors: {deleteVendorsError}
+        </p>
+      ) : null}
+      {jobCountsWarning ? (
+        <p className="mb-3 rounded-[10px] border border-[#f59e0b]/30 bg-[#fffbeb] px-4 py-3 text-[14px] leading-5 text-[#92400e]">
+          {jobCountsWarning}
         </p>
       ) : null}
 
@@ -1662,6 +1718,37 @@ export function AdminUserManagementDashboard() {
   const [registeredPropertyUnitOptions, setRegisteredPropertyUnitOptions] = useState<
     { value: string; label: string }[]
   >(() => readRegisteredPropertyUnitsSession())
+  const [dbUnits, setDbUnits] = useState<UnitRecord[]>([])
+  const [unitNotice, setUnitNotice] = useState<string | null>(null)
+  const [unitOpLoading, setUnitOpLoading] = useState(false)
+  const [markVacantTarget, setMarkVacantTarget] = useState<UnitRecord | null>(null)
+  const [activateUnitTarget, setActivateUnitTarget] = useState<UnitRecord | null>(null)
+
+  const loadUnits = useCallback(async () => {
+    const rows = await loadUnitsFromDb()
+    setDbUnits(rows)
+  }, [])
+
+  useEffect(() => {
+    void loadUnits()
+  }, [loadUnits])
+
+  useEffect(() => {
+    const syncInventory = async () => {
+      const cells = [
+        ...ALL_UNIT_OPTIONS.map((o) => unitOptionValueToCell(o.value)),
+        ...registeredPropertyUnitOptions.map((o) => unitOptionKeyToCell(o.value)),
+      ].filter((c): c is { kind: 'assigned'; unit: string; building: string } => c.kind === 'assigned')
+
+      if (cells.length === 0) return
+
+      await ensureUnitsInDb(
+        cells.map((c) => ({ unitLabel: c.unit, building: c.building })),
+      )
+      await loadUnits()
+    }
+    void syncInventory()
+  }, [registeredPropertyUnitOptions, loadUnits])
 
   const filteredRows = useMemo(
     () => residents.filter((r) => rowMatchesFilters(r, search, statusFilter, unitFilter)),
@@ -1817,6 +1904,11 @@ export function AdminUserManagementDashboard() {
   useEffect(() => {
     void loadResidents()
   }, [loadResidents])
+
+  useEffect(() => {
+    if (!supabase) return
+    void ensureLandlordSmsOnboarding()
+  }, [])
 
   useEffect(() => {
     const sb = supabase
@@ -1990,7 +2082,17 @@ export function AdminUserManagementDashboard() {
         setResidentOpError(error.message)
         return
       }
-      setResidents((prev) => [mapResidentDbRow(data as ResidentUserRowDb), ...prev])
+      const row = mapResidentDbRow(data as ResidentUserRowDb)
+      setResidents((prev) => [row, ...prev])
+
+      if (unitCell.kind === 'assigned') {
+        void registerUnitSms({
+          unitLabel: unitCell.unit,
+          building: unitCell.building,
+          residentId: row.id,
+          tenantPhone: payload.phone || null,
+        })
+      }
       return
     }
 
@@ -2013,13 +2115,13 @@ export function AdminUserManagementDashboard() {
     ])
   }
 
-  function addPropertyFromModal(payload: AddPropertyFormPayload) {
+  async function addPropertyFromModal(payload: AddPropertyFormPayload) {
     setResidentOpError(null)
+    const unitOptions = buildUnitOptionsFromPropertyPayload(payload)
     setRegisteredPropertyUnitOptions((prev) => {
-      const next = buildUnitOptionsFromPropertyPayload(payload)
       const seen = new Set(prev.map((o) => o.value))
       const merged = [...prev]
-      for (const o of next) {
+      for (const o of unitOptions) {
         if (seen.has(o.value)) continue
         seen.add(o.value)
         merged.push(o)
@@ -2027,8 +2129,97 @@ export function AdminUserManagementDashboard() {
       writeRegisteredPropertyUnitsSession(merged)
       return merged
     })
+
+    const units = unitOptions
+      .map((option) => {
+        const cell = unitOptionKeyToCell(option.value)
+        if (cell.kind !== 'assigned') return null
+        return { unitLabel: cell.unit, building: cell.building }
+      })
+      .filter((u): u is { unitLabel: string; building: string } => u != null)
+
+    if (units.length > 0) {
+      const ok = await registerPropertyUnitsSms({ units })
+      await loadUnits()
+      setPropertyRegisterNotice(
+        ok
+          ? `Property “${payload.propertyName}” registered (${units.length} units linked to Ulo SMS).`
+          : `Property “${payload.propertyName}” saved locally (${units.length} units). SMS registration skipped — set VITE_DEFAULT_LANDLORD_ID and VITE_ADMIN_REASSIGN_SECRET.`,
+      )
+      return
+    }
+
     setPropertyRegisterNotice(
-      `Property “${payload.propertyName}” saved locally (${payload.totalUnits} units). Add a properties table + API to persist.`,
+      `Property “${payload.propertyName}” saved locally. Add valid unit count to register SMS units.`,
+    )
+  }
+
+  async function handleMarkVacantConfirm() {
+    if (!markVacantTarget) return
+    setUnitOpLoading(true)
+    setUnitNotice(null)
+    setResidentOpError(null)
+    try {
+      const result = await markUnitVacant({
+        unitId: markVacantTarget.id,
+        unitLabel: markVacantTarget.unit_label,
+        building: markVacantTarget.building,
+      })
+      if (!result.ok) {
+        setResidentOpError(result.error)
+        return
+      }
+      setMarkVacantTarget(null)
+      setUnitNotice(result.promptMessage)
+      await Promise.all([loadUnits(), loadResidents()])
+    } finally {
+      setUnitOpLoading(false)
+    }
+  }
+
+  async function handleActivateUnitSubmit(payload: ActivateUnitSubmitPayload) {
+    if (!activateUnitTarget) return
+    setUnitOpLoading(true)
+    setUnitNotice(null)
+    setResidentOpError(null)
+    try {
+      const result = await activateUnit({
+        unitId: activateUnitTarget.id,
+        skipTenantRegistration: payload.skipTenantRegistration,
+        tenantName: payload.tenantName,
+        tenantPhone: payload.tenantPhone,
+        tenantEmail: payload.tenantEmail || undefined,
+        moveInDate: payload.moveInDate,
+      })
+      if (!result.ok) {
+        setResidentOpError(result.error)
+        return
+      }
+      setActivateUnitTarget(null)
+      setUnitNotice(
+        payload.skipTenantRegistration
+          ? `Unit activated without tenant registration.`
+          : `Unit activated and tenant registered.`,
+      )
+      await Promise.all([loadUnits(), loadResidents()])
+    } finally {
+      setUnitOpLoading(false)
+    }
+  }
+
+  function unitStatusPill(status: UnitRecord['status']) {
+    const styles =
+      status === 'active'
+        ? 'bg-[#dcfce7] text-[#166534]'
+        : status === 'vacant'
+          ? 'bg-[#ffedd5] text-[#c2410c]'
+          : 'bg-[#f3f4f6] text-[#4a5565]'
+    const label =
+      status === 'active' ? 'Active' : status === 'vacant' ? 'Vacant' : 'Inactive'
+    return (
+      <span className={`inline-flex rounded-full px-2 py-0.5 text-[12px] font-medium ${styles}`}>
+        {label}
+      </span>
     )
   }
 
@@ -2118,6 +2309,11 @@ export function AdminUserManagementDashboard() {
                 {propertyRegisterNotice}
               </p>
             ) : null}
+            {unitNotice ? (
+              <p className="mb-3 rounded-lg border border-[#bfdbfe] bg-[#eff6ff] px-3 py-2 text-[13px] leading-5 text-[#1e40af]">
+                {unitNotice}
+              </p>
+            ) : null}
             <div className="grid w-full grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3 lg:gap-3">
               <button
                 type="button"
@@ -2154,6 +2350,67 @@ export function AdminUserManagementDashboard() {
               </button>
             </div>
           </div>
+
+          {dashboardTab === 'users' && dbUnits.length > 0 ? (
+            <div className="rounded-[10px] border border-[#e5e7eb] bg-white p-[17px] shadow-[0px_1px_2px_-1px_rgba(0,0,0,0.06)]">
+              <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+                <div>
+                  <h2 className="text-[16px] font-semibold text-[#101828]">Units</h2>
+                  <p className="text-[13px] leading-5 text-[#6a7282]">
+                    Mark units vacant when tenants move out. Activate vacant units after registering
+                    the new tenant.
+                  </p>
+                </div>
+              </div>
+              <div className="overflow-x-auto">
+                <table className="w-full min-w-[640px] border-collapse text-left">
+                  <thead>
+                    <tr className="border-b border-[#e5e7eb] text-[12px] font-medium uppercase tracking-wide text-[#6a7282]">
+                      <th className="px-3 py-2">Unit</th>
+                      <th className="px-3 py-2">Building</th>
+                      <th className="px-3 py-2">Status</th>
+                      <th className="px-3 py-2 text-right">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {dbUnits.map((unit) => (
+                      <tr key={unit.id} className="border-b border-[#f3f4f6] last:border-0">
+                        <td className="px-3 py-3 text-[14px] font-medium text-[#101828]">
+                          {unit.unit_label}
+                        </td>
+                        <td className="px-3 py-3 text-[14px] text-[#6a7282]">
+                          {unit.building ?? '—'}
+                        </td>
+                        <td className="px-3 py-3">{unitStatusPill(unit.status)}</td>
+                        <td className="px-3 py-3">
+                          <div className="flex justify-end gap-2">
+                            {unit.status !== 'vacant' ? (
+                              <button
+                                type="button"
+                                onClick={() => setMarkVacantTarget(unit)}
+                                className="rounded-lg border border-[#fecaca] px-3 py-1.5 text-[12px] font-medium text-[#dc2626] hover:bg-[#fef2f2]"
+                              >
+                                Mark vacant
+                              </button>
+                            ) : null}
+                            {unit.status === 'vacant' || unit.status === 'inactive' ? (
+                              <button
+                                type="button"
+                                onClick={() => setActivateUnitTarget(unit)}
+                                className="rounded-lg bg-[#0030b5] px-3 py-1.5 text-[12px] font-medium text-white hover:bg-[#002080]"
+                              >
+                                Activate
+                              </button>
+                            ) : null}
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          ) : null}
 
           <div className="rounded-[10px] border border-[#e5e7eb] bg-white p-[17px] shadow-[0px_1px_2px_-1px_rgba(0,0,0,0.06)]">
             {dashboardTab === 'users' ? (
@@ -2517,6 +2774,22 @@ export function AdminUserManagementDashboard() {
       />
       <DataIssuesModal open={dataIssuesOpen} onClose={() => setDataIssuesOpen(false)} />
       <AssignUnitModal row={assignUnitRow} onClose={() => setAssignUnitRow(null)} />
+      <MarkUnitVacantModal
+        open={markVacantTarget != null}
+        unitLabel={markVacantTarget?.unit_label ?? ''}
+        building={markVacantTarget?.building ?? null}
+        loading={unitOpLoading}
+        onClose={() => setMarkVacantTarget(null)}
+        onConfirm={() => void handleMarkVacantConfirm()}
+      />
+      <ActivateUnitModal
+        open={activateUnitTarget != null}
+        unitLabel={activateUnitTarget?.unit_label ?? ''}
+        building={activateUnitTarget?.building ?? null}
+        loading={unitOpLoading}
+        onClose={() => setActivateUnitTarget(null)}
+        onSubmit={(payload) => void handleActivateUnitSubmit(payload)}
+      />
       <EditResidentModal
         row={editResidentRow}
         unitOptions={editResidentUnitOptions}
