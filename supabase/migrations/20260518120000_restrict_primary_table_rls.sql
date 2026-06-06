@@ -1,5 +1,6 @@
 -- Replace catch-all / public RLS policies on primary tables with staff- and vendor-scoped access.
--- Staff: Supabase Auth users whose JWT email ends with @property-admin.auth.local (see src/lib/adminAuth.ts).
+-- Staff: Supabase Auth users whose JWT email ends with @property-admin.auth.local
+-- or are on the ulohome.io admin allowlist (see src/lib/adminAuth.ts).
 -- Vendors: rows in public.vendors linked via auth_user_id or email match.
 
 -- ---------------------------------------------------------------------------

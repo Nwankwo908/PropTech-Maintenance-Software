@@ -119,3 +119,59 @@ enabled = true
 verify_jwt = false
 import_map = "./functions/join-waitlist/deno.json"
 entrypoint = "./functions/join-waitlist/index.ts"
+
+# Twilio (and future providers) inbound SMS webhook — signature validated in provider layer.
+[functions.sms-inbound]
+enabled = true
+verify_jwt = false
+import_map = "./functions/sms-inbound/deno.json"
+entrypoint = "./functions/sms-inbound/index.ts"
+
+# Twilio delivery status callback (StatusCallback on outbound sends).
+[functions.sms-status-callback]
+enabled = true
+verify_jwt = false
+import_map = "./functions/sms-status-callback/deno.json"
+entrypoint = "./functions/sms-status-callback/index.ts"
+
+[functions.landlord-sms-onboarding]
+enabled = true
+verify_jwt = false
+import_map = "./functions/landlord-sms-onboarding/deno.json"
+entrypoint = "./functions/landlord-sms-onboarding/index.ts"
+
+[functions.register-unit]
+enabled = true
+verify_jwt = false
+import_map = "./functions/register-unit/deno.json"
+entrypoint = "./functions/register-unit/index.ts"
+
+[functions.send-proxied-message]
+enabled = true
+verify_jwt = false
+import_map = "./functions/send-proxied-message/deno.json"
+entrypoint = "./functions/send-proxied-message/index.ts"
+
+[functions.mark-unit-vacant]
+enabled = true
+verify_jwt = false
+import_map = "./functions/mark-unit-vacant/deno.json"
+entrypoint = "./functions/mark-unit-vacant/index.ts"
+
+[functions.activate-unit]
+enabled = true
+verify_jwt = false
+import_map = "./functions/activate-unit/deno.json"
+entrypoint = "./functions/activate-unit/index.ts"
+
+[functions.provision-sms-number]
+enabled = true
+verify_jwt = false
+import_map = "./functions/provision-sms-number/deno.json"
+entrypoint = "./functions/provision-sms-number/index.ts"
+
+[functions.release-sms-number]
+enabled = true
+verify_jwt = false
+import_map = "./functions/release-sms-number/deno.json"
+entrypoint = "./functions/release-sms-number/index.ts"

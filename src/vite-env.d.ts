@@ -51,6 +51,8 @@ interface ImportMetaEnv {
   readonly VITE_BROADCAST_AI_ENHANCE_URL?: string
   /** Optional POST endpoint for retrying a failed resident/vendor/broadcast delivery. */
   readonly VITE_RETRY_FAILED_DELIVERY_URL?: string
+  /** UUID tenant scope for SMS onboarding (matches Edge secret DEFAULT_LANDLORD_ID). */
+  readonly VITE_DEFAULT_LANDLORD_ID?: string
 }
 
 interface ImportMeta {

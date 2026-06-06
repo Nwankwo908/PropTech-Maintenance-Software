@@ -27,9 +27,13 @@ Configure in the Supabase Dashboard: **Project Settings → Edge Functions → S
 |--------|----------------|---------|
 | `RESEND_API_KEY` | Sending email | Resend API |
 | `RESEND_FROM_EMAIL` | Optional | From address; must sit on a **verified** domain in Resend. If unset, defaults to `noreply@assetwise.site` (see **Verify `assetwise.site` on Resend** below). |
+| `SMS_PROVIDER` | Sending SMS | Set to `twilio` (default if unset) |
 | `TWILIO_ACCOUNT_SID` | Sending SMS | Twilio account |
 | `TWILIO_AUTH_TOKEN` | Sending SMS | Twilio auth |
-| `TWILIO_FROM_NUMBER` | Sending SMS | E.164 sender, e.g. `+15551234567` |
+| `TWILIO_FROM_NUMBER` | Sending SMS | E.164 sender when not using a Messaging Service |
+| `TWILIO_MESSAGING_SERVICE_SID` | Optional | Send via Twilio Messaging Service instead of `From` |
+| `TWILIO_STATUS_CALLBACK_URL` | Optional | Status callback URL on outbound messages |
+| `TWILIO_INBOUND_WEBHOOK_URL` | Recommended | Exact public URL Twilio POSTs to (e.g. `https://YOUR_REF.supabase.co/functions/v1/sms-inbound`); used for signature validation instead of internal `req.url` |
 | `VENDOR_PORTAL_BASE_URL` | Optional | Legacy fallback: origin parsed for links if `APP_URL` is unset |
 | `APP_URL` | Recommended | Public site origin for vendor links, e.g. `https://app.example.com` (no trailing slash). Host-only values get **`https://` prepended** when building links. Used for **Vendor portal**, **View job** (`/vendor`, `/vendor/ticket/:id?k=…`), and redirects from **`vendor-respond`**. |
 | `VENDOR_EMAIL_ACTION_SECRET` | Recommended | Long random string (32+ chars). HMAC secret for **Accept job** / **Decline job** links handled by **`vendor-respond`**. Without it, emails still send **View job** but not signed action buttons. |
@@ -97,3 +101,38 @@ POST multipart to the local function URL with the same fields as production.
 - After submit: check **`resident_notification_log`** for `ticket_submitted` rows (email and/or sms per channel).
 - After vendor assignment: log rows for `vendor_assigned` (also fired from **`reassignVendorByIdAndNotify`** when using **`admin-reassign-vendor`**).
 - Use **`vendor-update-job-status`** with a valid bearer or ticket token: transitions to **`accepted`** / **`in_progress`** / **`completed`** should add `vendor_accepted` / `repair_in_progress` / `repair_completed` log rows.
+
+## Landlord SMS onboarding (`sms_numbers` + `sms_identities`)
+
+Shared logic: `supabase/functions/_shared/sms/landlordSmsOnboarding.ts`
+
+| Edge Function | When to call |
+|---------------|--------------|
+| `landlord-sms-onboarding` | Landlord account created — ensures one active `sms_numbers` row with `purpose=landlord_main` |
+| `register-unit` | Unit created — links unit to landlord main line; creates `sms_identity` when tenant phone is known |
+
+**Landlord main number assignment (pool only — no auto-buy / env fallback)**
+
+1. Reuse existing active `landlord_main` for `DEFAULT_LANDLORD_ID`
+2. Else claim oldest row where `purpose=pool`, `status=active`, `landlord_id IS NULL` → set `landlord_id`, `purpose=landlord_main`, `status=active`
+3. If pool is empty → error: **`No available SMS numbers in pool.`**
+
+Pre-seed pool rows manually in `sms_numbers` (Twilio console + SQL insert). Do not rely on `TWILIO_FROM_NUMBER` for landlord onboarding yet.
+
+**Unit registration**
+
+- Does **not** provision per-unit numbers.
+- Logs `unit.registered` on `operations_graph_events` with the landlord main SMS number.
+- When `tenantPhone` + `residentId` are provided, upserts `sms_identities` (`identity_type=resident`, `verified=false`).
+
+**Secrets / client env**
+
+| Name | Purpose |
+|------|---------|
+| `DEFAULT_LANDLORD_ID` | Edge tenant uuid until `landlords` table exists |
+| `VITE_DEFAULT_LANDLORD_ID` | Same uuid in admin UI |
+| `SMS_ADMIN_NOTIFY_EMAILS` | Admin email when SMS self-healing fails (see inbound resolver) |
+
+Admin UI calls onboarding on dashboard load (`ensureLandlordSmsOnboarding`), on property register (`register-unit` batch), and on resident add with phone (`register-unit` + identity).
+
+Deploy: `supabase functions deploy landlord-sms-onboarding register-unit sms-inbound`
