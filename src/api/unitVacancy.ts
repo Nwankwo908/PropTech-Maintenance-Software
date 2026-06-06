@@ -58,7 +58,7 @@ async function postAdminFunction<T>(
   }
 
   if (!res.ok) {
-    return { ok: false, error: parsed.error ?? text.slice(0, 200) || `Request failed (${res.status})` }
+    return { ok: false, error: parsed.error ?? (text.slice(0, 200) || `Request failed (${res.status})`) }
   }
 
   return { ok: true, data: parsed as T }
