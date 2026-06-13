@@ -8,6 +8,7 @@ import {
   useState,
 } from 'react'
 import { useSearchParams } from 'react-router-dom'
+import { getActiveLandlordId } from '@/lib/activeLandlord'
 import { getErrorMessage } from '@/lib/errorMessage'
 import { supabase } from '@/lib/supabase'
 import { normIssueCategory } from '@/lib/vendorIssueCategory'
@@ -35,6 +36,7 @@ import {
   ensureLandlordSmsOnboarding,
   registerPropertyUnitsSms,
   registerUnitSms,
+  syncSmsIdentity,
 } from '@/api/landlordSmsOnboarding'
 import {
   activateUnit,
@@ -975,15 +977,27 @@ function VendorFormModal({
           notification_channel: notificationChannel,
           active,
         })
-        const { error } = await supabase.from('vendors').insert({
-          name: n,
-          category: categoryPayload,
-          email: emailPayload,
-          phone: phonePayload,
-          notification_channel: notificationChannel,
-          active,
-        })
+        const { data, error } = await supabase
+          .from('vendors')
+          .insert({
+            name: n,
+            category: categoryPayload,
+            email: emailPayload,
+            phone: phonePayload,
+            notification_channel: notificationChannel,
+            active,
+            landlord_id: getActiveLandlordId(),
+          })
+          .select('id')
+          .single()
         if (error) throw error
+        if (phonePayload && data?.id) {
+          void syncSmsIdentity({
+            phone: phonePayload,
+            identityType: 'vendor',
+            vendorId: data.id,
+          })
+        }
       } else if (initial) {
         console.log('[vendor-form] submit (update)', {
           id: initial.id,
@@ -1006,6 +1020,13 @@ function VendorFormModal({
           })
           .eq('id', initial.id)
         if (error) throw error
+        if (phonePayload) {
+          void syncSmsIdentity({
+            phone: phonePayload,
+            identityType: 'vendor',
+            vendorId: initial.id,
+          })
+        }
       }
       onSaved()
     } catch (e) {
@@ -1368,6 +1389,7 @@ function VendorManagementTabContent({
     const { data, error } = await supabase
       .from('vendors')
       .select('id, name, category, email, phone, notification_channel, active, portal_api_key')
+      .eq('landlord_id', getActiveLandlordId())
       .order('name')
 
     if (error) {
@@ -1388,6 +1410,7 @@ function VendorManagementTabContent({
     const { data: ticketRows, error: ticketError } = await supabase
       .from('maintenance_requests')
       .select('assigned_vendor_id, vendor_work_status')
+      .eq('landlord_id', getActiveLandlordId())
       .not('assigned_vendor_id', 'is', null)
 
     if (ticketError) {
@@ -1861,6 +1884,7 @@ export function AdminUserManagementDashboard() {
       .select(
         'id, resident_id, full_name, email, phone, unit, building, status, balance_due, issues, move_in_date, lease_end_date',
       )
+      .eq('landlord_id', getActiveLandlordId())
     if (error) {
       console.error('[user-management] users fetch failed', error.message)
       setResidentsFetchError(error.message)
@@ -1987,6 +2011,15 @@ export function AdminUserManagementDashboard() {
           setResidentOpError(msg)
           throw new Error(msg)
         }
+        if (payload.phone?.trim()) {
+          void syncSmsIdentity({
+            phone: payload.phone,
+            identityType: 'resident',
+            residentId: payload.id,
+            unitLabel: unitCell.kind === 'assigned' ? unitCell.unit : null,
+            building: unitCell.kind === 'assigned' ? unitCell.building : null,
+          })
+        }
         await loadResidents()
         return
       }
@@ -2073,6 +2106,7 @@ export function AdminUserManagementDashboard() {
           status: payload.status,
           balance_due: 0,
           issues: [],
+          landlord_id: getActiveLandlordId(),
         })
         .select(
           'id, resident_id, full_name, email, phone, unit, building, status, balance_due, issues, move_in_date, lease_end_date',
@@ -2091,6 +2125,12 @@ export function AdminUserManagementDashboard() {
           building: unitCell.building,
           residentId: row.id,
           tenantPhone: payload.phone || null,
+        })
+      } else if (payload.phone?.trim()) {
+        void syncSmsIdentity({
+          phone: payload.phone,
+          identityType: 'resident',
+          residentId: row.id,
         })
       }
       return
@@ -2742,7 +2782,11 @@ export function AdminUserManagementDashboard() {
               </table>
             </div>
             {filteredRows.length === 0 ? (
-              <p className="px-4 py-10 text-center text-[14px] text-[#6a7282]">No residents match your filters.</p>
+              <p className="px-4 py-10 text-center text-[14px] text-[#6a7282]">
+                {residents.length === 0
+                  ? 'No residents yet. Add a property, then import or add residents to get started.'
+                  : 'No residents match your filters.'}
+              </p>
             ) : null}
           </div>
           </div>

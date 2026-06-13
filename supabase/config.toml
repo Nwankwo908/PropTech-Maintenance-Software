@@ -164,6 +164,12 @@ verify_jwt = false
 import_map = "./functions/activate-unit/deno.json"
 entrypoint = "./functions/activate-unit/index.ts"
 
+[functions.start-lifecycle-workflow]
+enabled = true
+verify_jwt = false
+import_map = "./functions/start-lifecycle-workflow/deno.json"
+entrypoint = "./functions/start-lifecycle-workflow/index.ts"
+
 [functions.provision-sms-number]
 enabled = true
 verify_jwt = false
@@ -175,3 +181,29 @@ enabled = true
 verify_jwt = false
 import_map = "./functions/release-sms-number/deno.json"
 entrypoint = "./functions/release-sms-number/index.ts"
+
+# Workflow engine — cron / programmatic triggers (Bearer secret in handler).
+[functions.run-workflow-triggers]
+enabled = true
+verify_jwt = false
+entrypoint = "./functions/run-workflow-triggers/index.ts"
+
+[functions.run-workflow-engine]
+enabled = true
+verify_jwt = false
+entrypoint = "./functions/run-workflow-engine/index.ts"
+
+[functions.check-lease-renewals]
+enabled = true
+verify_jwt = false
+entrypoint = "./functions/check-lease-renewals/index.ts"
+
+[functions.run-workflow-escalations]
+enabled = true
+verify_jwt = false
+entrypoint = "./functions/run-workflow-escalations/index.ts"
+
+[functions.check-rent-collection]
+enabled = true
+verify_jwt = false
+entrypoint = "./functions/check-rent-collection/index.ts"

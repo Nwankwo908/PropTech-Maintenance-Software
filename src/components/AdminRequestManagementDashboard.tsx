@@ -8,7 +8,7 @@ import {
   useState,
   type ChangeEventHandler,
 } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useSearchParams } from 'react-router-dom'
 import {
   postAdminReassignVendor,
   type AdminVendorReassignChoice,
@@ -20,6 +20,7 @@ import {
 import { resolveDiscoverExternalVendorsUrl } from '@/api/discoverExternalVendors'
 import { SparkleIcon } from '@/components/SparkleIcon'
 import { VendorDelayedAlternativesSection } from '@/components/VendorDelayedAlternativesSection'
+import { getActiveLandlordId } from '@/lib/activeLandlord'
 import { supabase } from '@/lib/supabase'
 import { isVendorPendingAcceptDelayed } from '@/lib/vendorDelayAlerts'
 import {
@@ -1575,7 +1576,13 @@ export function AdminRequestManagementDashboard() {
     DEMO_TICKETS.slice(),
   )
   const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set())
-  const [searchQuery, setSearchQuery] = useState('')
+  const [searchParams] = useSearchParams()
+  const globalSearchQuery = searchParams.get('q')
+  const [searchQuery, setSearchQuery] = useState(() => globalSearchQuery ?? '')
+
+  useEffect(() => {
+    if (globalSearchQuery !== null) setSearchQuery(globalSearchQuery)
+  }, [globalSearchQuery])
   const [statusFilter, setStatusFilter] = useState('')
   const [urgencyFilter, setUrgencyFilter] = useState('')
   const [categoryFilter, setCategoryFilter] = useState('')
@@ -1609,6 +1616,7 @@ export function AdminRequestManagementDashboard() {
         .from('vendors')
         .select('id, name, category')
         .eq('active', true)
+        .eq('landlord_id', getActiveLandlordId())
         .order('name')
       if (cancelled) return
       if (error) {
@@ -1759,6 +1767,7 @@ export function AdminRequestManagementDashboard() {
       const embedded = await supabase
         .from('maintenance_requests')
         .select(ticketListSelectEmbedded)
+        .eq('landlord_id', getActiveLandlordId())
         .order('created_at', { ascending: false })
 
       if (embedded.error) {
@@ -1769,6 +1778,7 @@ export function AdminRequestManagementDashboard() {
         const plain = await supabase
           .from('maintenance_requests')
           .select('*')
+          .eq('landlord_id', getActiveLandlordId())
           .order('created_at', { ascending: false })
         rowsPayload = (plain.data ?? []) as Record<string, unknown>[]
         err = plain.error
@@ -2313,7 +2323,9 @@ export function AdminRequestManagementDashboard() {
                           colSpan={8}
                           className="px-4 py-12 text-center text-[14px] leading-5 text-[#6a7282]"
                         >
-                          No requests match your search or filters.
+                          {tickets.length === 0
+                            ? 'No maintenance requests yet. Requests submitted by residents (web or SMS) will appear here.'
+                            : 'No requests match your search or filters.'}
                         </td>
                       </tr>
                     ) : (

@@ -8,6 +8,7 @@ import { getEstimatedMinutes } from "../_shared/sla_rules.ts"
 import { notifyResidentSubmitted } from "./resident_notify.ts"
 import { assignVendorAndNotify } from "./vendor_notify.ts"
 import { logGraphEvent } from "../_shared/graph/logGraphEvent.ts"
+import { startMaintenanceRequestWorkflow } from "../_shared/engine/startMaintenanceRequestWorkflow.ts"
 import { resolveLandlordId } from "../_shared/sms/landlordSmsOnboarding.ts"
 
 const corsHeaders: Record<string, string> = {
@@ -310,6 +311,25 @@ serve(async (req) => {
   }
 
   const ticketId = row.id as string
+  const landlordId = resolveLandlordId()
+
+  let workflowRunId: string | null = null
+  try {
+    const started = await startMaintenanceRequestWorkflow(supabase, {
+      landlordId,
+      ticketId,
+      residentId: residentRow.id,
+      triggerType: "dashboard",
+      dueAt: dueAt.toISOString(),
+      issueCategory: slaClassification.issue_category,
+      severity: slaClassification.severity,
+      unitLabel: unit,
+      source: "web_form",
+    })
+    workflowRunId = started.workflowRunId
+  } catch (e) {
+    console.error("[submit-maintenance-request] workflow run", e)
+  }
 
   const paths: string[] = []
   const photoParts = form.getAll("photo")
@@ -373,19 +393,22 @@ serve(async (req) => {
 
   try {
     await logGraphEvent(supabase, {
-      landlord_id: resolveLandlordId(),
+      landlord_id: landlordId,
       event_type: "maintenance.request_submitted",
       source: "edge_function",
       actor_type: "resident",
       actor_id: residentRow.id,
       resident_id: residentRow.id,
       maintenance_request_id: ticketId,
+      workflow_run_id: workflowRunId,
+      workflow_template_id: "maintenance_request",
       metadata: {
         unit,
         priority,
         issue_category: slaClassification.issue_category,
         severity: slaClassification.severity,
         photo_count: paths.length,
+        source: "web_form",
       },
     })
   } catch (e) {

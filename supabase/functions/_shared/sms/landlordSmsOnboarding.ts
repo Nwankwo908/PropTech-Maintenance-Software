@@ -1,8 +1,7 @@
 import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.49.1"
 import {
-  lookupSmsIdentity,
   normalizeSmsPhone,
-  upsertSmsIdentity,
+  upsertSmsIdentityForPhone,
   type SmsIdentityRow,
 } from "./inbound_db.ts"
 import { ensureUnitRow } from "../unitVacancy.ts"
@@ -104,23 +103,43 @@ async function createResidentSmsIdentity(
     tenantPhone: string
     unitId?: string | null
   },
-): Promise<SmsIdentityRow> {
-  const existing = await lookupSmsIdentity(
-    supabase,
-    params.tenantPhone,
-    params.landlordId,
-  )
-
-  return upsertSmsIdentity(supabase, {
-    fromNumber: params.tenantPhone,
+): Promise<SmsIdentityRow | null> {
+  return upsertSmsIdentityForPhone(supabase, {
     landlordId: params.landlordId,
-    existing,
-    patch: {
-      identity_type: "resident",
-      resident_id: params.residentId,
-      unit_id: params.unitId ?? null,
-      verified: false,
-    },
+    phone: params.tenantPhone,
+    identityType: "resident",
+    residentId: params.residentId,
+    unitId: params.unitId ?? null,
+  })
+}
+
+/** Register or upgrade resident SMS identity after admin/resident onboarding. */
+export async function syncResidentSmsIdentity(
+  supabase: SupabaseClient,
+  params: {
+    landlordId: string
+    residentId: string
+    tenantPhone: string
+    unitId?: string | null
+    unitLabel?: string | null
+    building?: string | null
+  },
+): Promise<SmsIdentityRow | null> {
+  let unitId = params.unitId?.trim() || null
+  if (!unitId && params.unitLabel?.trim()) {
+    const unitRow = await ensureUnitRow(supabase, {
+      landlordId: params.landlordId,
+      unitLabel: params.unitLabel.trim(),
+      building: params.building?.trim() || null,
+    })
+    unitId = unitRow.id
+  }
+
+  return createResidentSmsIdentity(supabase, {
+    landlordId: params.landlordId,
+    residentId: params.residentId,
+    tenantPhone: params.tenantPhone,
+    unitId,
   })
 }
 
@@ -179,29 +198,37 @@ export async function onUnitCreated(
       tenantPhone,
       unitId: resolvedUnitId,
     })
-    smsIdentityId = identity.id
+    if (!identity) {
+      console.warn("[landlordSms] skipped resident sms_identity — invalid phone", {
+        landlordId,
+        residentId,
+        tenantPhone,
+      })
+    } else {
+      smsIdentityId = identity.id
 
-    await logGraphEvent(supabase, {
-      landlord_id: landlordId,
-      event_type: "tenant.sms_registered",
-      source: "dashboard",
-      actor_type: "landlord",
-      unit_id: resolvedUnitId,
-      resident_id: residentId,
-      metadata: {
+      await logGraphEvent(supabase, {
+        landlord_id: landlordId,
+        event_type: "tenant.sms_registered",
+        source: "dashboard",
+        actor_type: "landlord",
+        unit_id: resolvedUnitId,
+        resident_id: residentId,
+        metadata: {
+          phone: normalizeSmsPhone(tenantPhone),
+          sms_identity_id: identity.id,
+          unit_label: unitLabel,
+          building,
+        },
+      })
+
+      console.info("[landlordSms] created resident sms_identity", {
+        landlordId,
+        residentId,
         phone: normalizeSmsPhone(tenantPhone),
-        sms_identity_id: identity.id,
-        unit_label: unitLabel,
-        building,
-      },
-    })
-
-    console.info("[landlordSms] created resident sms_identity", {
-      landlordId,
-      residentId,
-      phone: normalizeSmsPhone(tenantPhone),
-      unitLabel,
-    })
+        unitLabel,
+      })
+    }
   }
 
   return {

@@ -49,6 +49,7 @@ import {
   type SendBroadcastPresentation,
 } from '@/components/SendBroadcastMessageModal'
 import { SendInspectionNoticeModal } from '@/components/SendInspectionNoticeModal'
+import { getActiveLandlordId } from '@/lib/activeLandlord'
 import { supabase } from '@/lib/supabase'
 
 const NOTIF_TAB_IDS = ['history', 'scheduled', 'external'] as const
@@ -1224,15 +1225,18 @@ export function AdminNotificationManagementDashboard() {
         sb
           .from('broadcast_notifications')
           .select('id', { count: 'exact', head: true })
+          .eq('landlord_id', getActiveLandlordId())
           .eq('status', 'scheduled'),
         sb
           .from('broadcast_notification_log')
           .select('*', { count: 'exact', head: true })
+          .eq('landlord_id', getActiveLandlordId())
           .gte('created_at', sevenDaysAgo)
           .eq('success', true),
         sb
           .from('broadcast_notification_log')
           .select('*', { count: 'exact', head: true })
+          .eq('landlord_id', getActiveLandlordId())
           .gte('created_at', sevenDaysAgo)
           .eq('success', false),
       ])
@@ -1272,6 +1276,7 @@ export function AdminNotificationManagementDashboard() {
       const withPayload = await sb
         .from('broadcast_notifications')
         .select('id, subject, message, status, created_at, scheduled_for, audience, channels, building, payload')
+        .eq('landlord_id', getActiveLandlordId())
         .in('status', ['scheduled', 'processing', 'completed', 'partial'])
         .order('created_at', { ascending: false })
 
@@ -1281,6 +1286,7 @@ export function AdminNotificationManagementDashboard() {
           const fallback = await sb
             .from('broadcast_notifications')
             .select('id, subject, message, status, created_at, scheduled_for, audience, channels, building')
+            .eq('landlord_id', getActiveLandlordId())
             .in('status', ['scheduled', 'processing', 'completed', 'partial'])
             .order('created_at', { ascending: false })
           data = (fallback.data ?? null) as BroadcastScheduleRow[] | null
@@ -1331,6 +1337,7 @@ export function AdminNotificationManagementDashboard() {
             )
           `,
           )
+          .eq('landlord_id', getActiveLandlordId())
           .order('created_at', { ascending: false })
           .limit(40),
         sb
@@ -1348,6 +1355,7 @@ export function AdminNotificationManagementDashboard() {
             )
           `,
           )
+          .eq('landlord_id', getActiveLandlordId())
           .order('created_at', { ascending: false })
           .limit(40),
       ])
@@ -1375,6 +1383,7 @@ export function AdminNotificationManagementDashboard() {
           )
         `,
         )
+        .eq('landlord_id', getActiveLandlordId())
         .order('created_at', { ascending: false })
         .limit(40)
 
@@ -1401,6 +1410,7 @@ export function AdminNotificationManagementDashboard() {
               )
             `,
             )
+            .eq('landlord_id', getActiveLandlordId())
             .order('created_at', { ascending: false })
             .limit(40)
           broadcastData = broadcastFallback.data

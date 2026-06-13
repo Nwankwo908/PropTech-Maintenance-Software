@@ -5,7 +5,6 @@ import {
   InboundSmsError,
   processInboundSms,
   twilioEmptyTwiMLResponse,
-  twilioMessageResponse,
 } from "../_shared/sms/inbound_processor.ts"
 
 const corsHeaders: Record<string, string> = {
@@ -59,22 +58,17 @@ Deno.serve(async (req) => {
 
     const result = await processInboundSms(supabase, inbound)
 
-    if (result.releasedPending) {
-      console.info("[sms-inbound] released_pending reply", {
-        providerMessageSid: inbound.providerMessageSid,
-        to: inbound.to,
-      })
-      return twilioMessageResponse(result.autoReply)
-    }
-
     console.info("[sms-inbound] processed", {
       providerMessageSid: inbound.providerMessageSid,
-      workflowRoute: result.workflowRoute,
-      identityType: result.identityType,
+      releasedPending: "releasedPending" in result && result.releasedPending === true,
+      workflowRoute: "workflowRoute" in result ? result.workflowRoute : undefined,
+      identityType: "identityType" in result ? result.identityType : undefined,
       conversationId: result.conversationId,
       messageId: result.messageId,
+      outboundMessageId: result.outboundMessageId,
     })
 
+    // Replies are sent via getSMSProvider().sendMessage(); return empty TwiML ack only.
     return twilioEmptyTwiMLResponse()
   } catch (err) {
     if (err instanceof InboundSmsError) {

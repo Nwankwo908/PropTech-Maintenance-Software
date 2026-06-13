@@ -2,9 +2,7 @@ import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.49.1
 import { resolveLandlordId } from "./sms/landlordSmsOnboarding.ts"
 import { logGraphEvent } from "./graph/logGraphEvent.ts"
 import {
-  lookupSmsIdentity,
-  normalizeSmsPhone,
-  upsertSmsIdentity,
+  upsertSmsIdentityForPhone,
 } from "./sms/inbound_db.ts"
 
 export type UnitRow = {
@@ -351,10 +349,11 @@ export async function markUnitVacant(
 
   await logGraphEvent(supabase, {
     landlord_id: landlordId,
-    event_type: "unit.marked_vacant",
+    event_type: "move_out.unit_vacated",
     source: "dashboard",
     actor_type: "landlord",
     unit_id: unit.id,
+    workflow_template_id: "move_out",
     metadata: {
       unit_label: unit.unit_label,
       building: unit.building,
@@ -510,21 +509,12 @@ export async function activateUnit(
 
     occupancyId = occ.id as string
 
-    const existingIdentity = await lookupSmsIdentity(
-      supabase,
-      tenantPhone,
+    await upsertSmsIdentityForPhone(supabase, {
       landlordId,
-    )
-    await upsertSmsIdentity(supabase, {
-      fromNumber: tenantPhone,
-      landlordId,
-      existing: existingIdentity,
-      patch: {
-        identity_type: "resident",
-        resident_id: residentId,
-        unit_id: unit.id,
-        verified: false,
-      },
+      phone: tenantPhone,
+      identityType: "resident",
+      residentId,
+      unitId: unit.id,
     })
   }
 
@@ -544,17 +534,18 @@ export async function activateUnit(
 
   await logGraphEvent(supabase, {
     landlord_id: landlordId,
-    event_type: "unit.activated",
+    event_type: skip ? "unit.activated" : "move_in.unit_activated",
     source: "dashboard",
     actor_type: "landlord",
     unit_id: unit.id,
     resident_id: residentId,
+    occupancy_id: occupancyId,
+    workflow_template_id: skip ? null : "move_in",
     metadata: {
       unit_label: unit.unit_label,
       building: unit.building,
       skip_tenant_registration: skip,
       move_in_date: skip ? null : moveInDate,
-      occupancy_id: occupancyId,
     },
   })
 

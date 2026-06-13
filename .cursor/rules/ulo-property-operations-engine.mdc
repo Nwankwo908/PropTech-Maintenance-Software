@@ -1,0 +1,52 @@
+---
+description: Ulo property operations — one workflow engine, shared graph (not separate products)
+alwaysApply: true
+---
+
+# Ulo property operations platform
+
+Ulo is one AI property operations platform. **Do not** build Move Ins, Move Outs, or Inspections as separate products, dashboards, or edge-function silos.
+
+## One workflow engine
+
+Every operational workflow uses the same pipeline:
+
+`trigger → classify → route → act → escalate → log`
+
+Implementation lives in `supabase/functions/_shared/engine/`:
+
+- `runner.ts` — pipeline orchestration
+- `registry.ts` — executable templates (`templates/*.ts`)
+- `workflowRuns.ts` / `workflow_events` — run state + step log
+- `logStage.ts` — writes `workflow.{stage}` to graph + run events
+
+Add new domains (move-in, move-out, inspection, lease, rent, maintenance) as **workflow templates**, not new apps.
+
+## Shared property operations graph
+
+Every meaningful interaction must append to `operations_graph_events` via `logGraphEvent` or `operationsGraph.ts`.
+
+Link graph events to all applicable entities:
+
+- `landlord_id`, `property_id`, `unit_id`, `resident_id`
+- `vendor_id`, `maintenance_request_id`
+- `occupancy_id`, `inspection_id`, `task_id`
+- `workflow_run_id`, `workflow_template_id`
+- `conversation_id`, `message_id` (SMS)
+
+Domain events use dotted names (`rent.reminder_sent`, `move_in.checklist_sent`, `inspection.scheduled`). Pipeline stages use `workflow.{stage}`.
+
+## What not to do
+
+- No standalone “Move In product” UI module with its own backend
+- No duplicate cron/edge paths that skip `workflow_runs`
+- No domain logging that only touches a local table without a graph event
+- No new migrations that edit old migration files
+
+## Adding a workflow
+
+1. Seed `workflow_templates` (trigger/route/escalation config)
+2. Add `templates/<name>.ts` implementing `classify` + `act` (+ `escalate`)
+3. Register in `registry.ts` and extend `WorkflowTemplateId` in `types.ts`
+4. Log domain events through `operationsGraph.ts` with full entity scope
+5. Reuse existing channels (SMS, email, dashboard) — route in `act`, don’t fork delivery

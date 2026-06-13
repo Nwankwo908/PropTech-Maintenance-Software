@@ -26,6 +26,11 @@ export type LogGraphEventInput = {
   maintenance_request_id?: string | null
   conversation_id?: string | null
   message_id?: string | null
+  workflow_run_id?: string | null
+  workflow_template_id?: string | null
+  occupancy_id?: string | null
+  inspection_id?: string | null
+  task_id?: string | null
   metadata?: Record<string, unknown>
 }
 
@@ -49,6 +54,11 @@ export async function logGraphEvent(
       maintenance_request_id: params.maintenance_request_id ?? null,
       conversation_id: params.conversation_id ?? null,
       message_id: params.message_id ?? null,
+      workflow_run_id: params.workflow_run_id ?? null,
+      workflow_template_id: params.workflow_template_id ?? null,
+      occupancy_id: params.occupancy_id ?? null,
+      inspection_id: params.inspection_id ?? null,
+      task_id: params.task_id ?? null,
       metadata: params.metadata ?? {},
     })
     .select("id")

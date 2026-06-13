@@ -6,6 +6,7 @@ import {
   adminEdgeInvokeHeaders,
   fetchAdminEdgeFunction,
 } from '@/api/adminReassignVendor'
+import { getActiveLandlordId } from '@/lib/activeLandlord'
 
 export type UnitRecord = {
   id: string
@@ -26,7 +27,7 @@ function adminSecret(): string | undefined {
 }
 
 function defaultLandlordId(): string | undefined {
-  return import.meta.env.VITE_DEFAULT_LANDLORD_ID?.trim() || undefined
+  return getActiveLandlordId()
 }
 
 function functionUrl(name: 'mark-unit-vacant' | 'activate-unit'): string | undefined {

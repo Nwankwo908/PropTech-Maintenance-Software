@@ -9,7 +9,9 @@ import VendorAuthGate from './components/VendorAuthGate'
 import { AdminAuthGate } from './components/AdminAuthGate'
 import { AdminLayout } from './components/AdminLayout'
 import { AdminLoginPage } from './components/AdminLoginPage'
+import { AdminOverviewDashboard } from './components/AdminOverviewDashboard'
 import { AdminRequestManagementDashboard } from './components/AdminRequestManagementDashboard'
+import { AdminWorkflowOperationsDashboard } from './components/AdminWorkflowOperationsDashboard'
 import { AdminNotificationManagementDashboard } from './components/AdminNotificationManagementDashboard'
 import { AdminUserManagementDashboard } from './components/AdminUserManagementDashboard'
 
@@ -41,7 +43,9 @@ export default function App() {
             </AdminAuthGate>
           }
         >
-          <Route index element={<AdminRequestManagementDashboard />} />
+          <Route index element={<AdminOverviewDashboard />} />
+          <Route path="requests" element={<AdminRequestManagementDashboard />} />
+          <Route path="workflows" element={<AdminWorkflowOperationsDashboard />} />
           <Route
             path="notifications"
             element={<AdminNotificationManagementDashboard />}

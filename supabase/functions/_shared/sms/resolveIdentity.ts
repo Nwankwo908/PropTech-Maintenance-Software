@@ -1,7 +1,6 @@
 import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.49.1"
 import { sendResendEmail } from "../delivery.ts"
 import { normalizePhoneFlexible } from "../resident_notify.ts"
-import { sendOutboundSms } from "./adapters.ts"
 import {
   createUnknownIdentity,
   lookupSmsIdentity,
@@ -336,7 +335,7 @@ async function processUnitNumberSelfHealing(
       suggestedUnit: null,
       selfHealingPhase: "awaiting_unit_number",
       replyHint:
-        "Please reply with your unit number (for example: 5A or Unit 12) and a brief description of the issue.",
+        "Got it — what's your unit number? (Something like 5A works.) If you can, include a quick note about what's going on.",
       notifyLandlord: false,
       continueIntake: false,
       createdOrUpdated: false,
@@ -359,7 +358,7 @@ async function processUnitNumberSelfHealing(
       suggestedUnit: null,
       selfHealingPhase: "unresolved",
       replyHint:
-        "We couldn't match that unit number. A property manager has been notified to register your tenancy. We'll follow up shortly.",
+        "I wasn't able to match that unit on our end. I've flagged your property manager — someone will follow up with you shortly.",
       notifyLandlord: true,
       continueIntake: false,
       createdOrUpdated: false,
@@ -391,7 +390,7 @@ async function processUnitNumberSelfHealing(
     suggestedUnit: resident.unit,
     selfHealingPhase: "resolved",
     replyHint:
-      "Thanks — we matched your unit. Reply with a brief description of the maintenance issue (photos welcome).",
+      "Great — I found your unit. When you're ready, tell me what's going on (a photo helps too).",
     notifyLandlord: false,
     continueIntake: true,
     createdOrUpdated: true,
@@ -558,8 +557,8 @@ export async function resolvePhoneIdentity(
   }
 
   const replyHint = suggestedUnit
-    ? `Hi — this is Ulo Home. We think you may be in unit ${suggestedUnit}. Reply with your unit number and a brief description of the maintenance issue.`
-    : "Hi — this is Ulo Home. Reply with your unit number and a brief description of the maintenance issue."
+    ? `Hi — this is Ulo. I think you may be in unit ${suggestedUnit}. What's your unit number, and what's going on?`
+    : "Hi — this is Ulo. What's your unit number, and what's going on with the maintenance issue?"
 
   return {
     identity,
@@ -574,16 +573,11 @@ export async function resolvePhoneIdentity(
   }
 }
 
-/** Sends an onboarding / self-healing SMS reply when a hint is provided. */
+/** @deprecated Use sendInboundAutoReply from inboundReply.ts (persists to sms_messages). */
 export async function sendIdentityReplyHint(
-  toNumber: string,
-  fromNumber: string | undefined,
-  replyHint: string | undefined,
+  _toNumber: string,
+  _fromNumber: string | undefined,
+  _replyHint: string | undefined,
 ): Promise<void> {
-  if (!replyHint?.trim() || !fromNumber?.trim()) return
-
-  const result = await sendOutboundSms(toNumber, replyHint, { from: fromNumber })
-  if ("error" in result) {
-    console.error("[resolveIdentity] outbound reply failed", result.error)
-  }
+  // Replies are sent from inbound_processor after workflow routing.
 }

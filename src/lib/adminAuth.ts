@@ -10,7 +10,13 @@ export const ADMIN_LOGIN_EMAIL_DOMAIN = 'property-admin.auth.local'
 export const ADMIN_ACCESS_DENIED_MESSAGE =
   'This account is not authorized to access the admin portal.'
 
-const ADMIN_ALLOWED_EMAILS = new Set(['emeka@ulohome.io', 'osi@ulohome.io'])
+const ADMIN_ALLOWED_EMAILS = new Set([
+  'emeka@ulohome.io',
+  'osi@ulohome.io',
+  // Landlord showcase accounts (see src/lib/activeLandlord.ts)
+  'demo@ulohome.io',
+  'newlandlord@ulohome.io',
+])
 
 export function loginIdToEmail(loginId: string): string {
   const t = loginId.trim().toLowerCase()

@@ -1,5 +1,5 @@
 import { Link } from 'react-router-dom'
-import heroLogo from '@/assets/Hero_Logo.svg'
+import uloLogo from '@/assets/landing/ulo-logo.png'
 
 /** Single source of truth for resident maintenance + review page top bar (height, padding, type). */
 const HEADER_ROW_CLASS =
@@ -22,11 +22,11 @@ export function MaintenancePortalPageHeader({
 
   return (
     <header className={`${positionClass} ${HEADER_ROW_CLASS}`}>
-      <div className="relative size-12 shrink-0">
+      <div className="relative shrink-0">
         <img
-          src={heroLogo}
-          alt=""
-          className="size-12 object-contain"
+          src={uloLogo}
+          alt="Ulo Home"
+          className="h-10 w-auto object-contain"
         />
       </div>
       <div className="min-w-0 flex-1 text-left">

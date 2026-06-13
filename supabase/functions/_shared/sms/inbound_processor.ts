@@ -1,6 +1,7 @@
 import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.49.1"
 import type { InboundSMSMessage } from "./types.ts"
 import {
+  createUnknownIdentity,
   findOpenConversation,
   findOrCreateConversation,
   lookupReleasedPendingSmsNumber,
@@ -11,7 +12,6 @@ import {
 } from "./inbound_db.ts"
 import {
   resolvePhoneIdentity,
-  sendIdentityReplyHint,
   type IdentityResolutionSource,
   type SelfHealingPhase,
 } from "./resolveIdentity.ts"
@@ -22,18 +22,25 @@ import {
 } from "./workflow_router.ts"
 import { relayInboundProxiedMessage } from "./proxiedMessaging.ts"
 import { logGraphEvent } from "../graph/logGraphEvent.ts"
+import {
+  resolveInboundAutoReplyBody,
+  sendInboundAutoReply,
+} from "./inboundReply.ts"
 
 export type ProcessInboundSmsResult =
   | {
       ok: true
       releasedPending: true
-      autoReply: string
+      conversationId: string
+      messageId: string
+      outboundMessageId?: string
     }
   | {
       ok: true
       releasedPending?: false
       conversationId: string
       messageId: string
+      outboundMessageId?: string
       workflowRoute: string
       identityType: string
       landlordId: string
@@ -96,6 +103,60 @@ async function saveInboundMessage(
   return data.id as string
 }
 
+async function trySendAutoReply(
+  supabase: SupabaseClient,
+  params: {
+    conversationId: string
+    landlordId: string
+    uloNumber: string
+    externalPhone: string
+    provider: InboundSMSMessage["provider"]
+    resolutionHint?: string
+    workflowHint?: string
+    source: string
+    workflowRoute?: string
+  },
+): Promise<string | undefined> {
+  const replyBody = resolveInboundAutoReplyBody(
+    params.resolutionHint,
+    params.workflowHint,
+    params.workflowRoute,
+  )
+
+  if (!replyBody) {
+    console.warn("[sms-inbound] auto-reply skipped — no reply text", {
+      conversationId: params.conversationId,
+      source: params.source,
+      workflowRoute: params.workflowRoute,
+      hasResolutionHint: !!params.resolutionHint?.trim(),
+      hasWorkflowHint: !!params.workflowHint?.trim(),
+    })
+    return undefined
+  }
+
+  const sent = await sendInboundAutoReply(supabase, {
+    conversationId: params.conversationId,
+    landlordId: params.landlordId,
+    fromNumber: params.uloNumber,
+    toNumber: params.externalPhone,
+    body: replyBody,
+    provider: params.provider,
+    source: params.source,
+  })
+
+  if (!sent.ok) {
+    console.warn("[sms-inbound] auto-reply not delivered", {
+      conversationId: params.conversationId,
+      source: params.source,
+      workflowRoute: params.workflowRoute,
+      error: sent.error,
+    })
+    return undefined
+  }
+
+  return sent.messageId
+}
+
 async function recordGraphEvent(
   supabase: SupabaseClient,
   params: {
@@ -106,11 +167,21 @@ async function recordGraphEvent(
     maintenanceRequestId: string | null
     inbound: InboundSMSMessage
     workflowRoute: string
+    workflowMetadata?: Record<string, unknown>
     selfHealed: boolean
     resolutionSource: IdentityResolutionSource
     selfHealingPhase: SelfHealingPhase
   },
 ): Promise<void> {
+  const templateId =
+    typeof params.workflowMetadata?.workflow_template_id === "string"
+      ? params.workflowMetadata.workflow_template_id
+      : null
+  const runId =
+    typeof params.workflowMetadata?.workflow_run_id === "string"
+      ? params.workflowMetadata.workflow_run_id
+      : null
+
   await logGraphEvent(supabase, {
     landlord_id: params.landlordId,
     event_type: "sms.message_received",
@@ -123,8 +194,12 @@ async function recordGraphEvent(
     maintenance_request_id: params.maintenanceRequestId,
     conversation_id: params.conversationId,
     message_id: params.messageId,
+    workflow_run_id: runId,
+    workflow_template_id: templateId,
     metadata: {
       workflow_route: params.workflowRoute,
+      workflow_template_id: templateId ?? undefined,
+      workflow_run_id: runId ?? undefined,
       provider_message_sid: params.inbound.providerMessageSid,
       from: params.inbound.from,
       to: params.inbound.to,
@@ -150,11 +225,61 @@ export async function processInboundSms(
         pending.release_auto_reply?.trim() ||
         Deno.env.get("SMS_RELEASE_AUTO_REPLY")?.trim() ||
         "This Ulo SMS line is no longer active. Please contact your property manager directly."
-      console.info("[sms-inbound] released_pending auto-reply", {
+
+      const landlordId = pending.landlord_id?.trim()
+      if (!landlordId) {
+        throw new InboundSmsError(
+          "Released SMS number is missing landlord_id",
+          422,
+        )
+      }
+
+      const identity = await createUnknownIdentity(
+        supabase,
+        inbound.from,
+        landlordId,
+      )
+
+      const { conversationId } = await findOrCreateConversation(supabase, {
+        landlordId,
+        smsNumberId: pending.id,
+        externalPhone: inbound.from,
+        identity,
+        maintenanceRequestId: null,
+        conversationStatus: "closed",
+      })
+
+      const messageId = await saveInboundMessage(supabase, {
+        conversationId,
+        landlordId,
+        inbound,
+      })
+
+      const outboundMessageId = await trySendAutoReply(supabase, {
+        conversationId,
+        landlordId,
+        uloNumber: inbound.to,
+        externalPhone: inbound.from,
+        provider: inbound.provider,
+        workflowHint: autoReply,
+        source: "released_pending_auto_reply",
+      })
+
+      console.info("[sms-inbound] released_pending auto-reply handled", {
         to: inbound.to,
         smsNumberId: pending.id,
+        conversationId,
+        inboundMessageId: messageId,
+        outboundMessageId,
       })
-      return { ok: true, releasedPending: true, autoReply }
+
+      return {
+        ok: true,
+        releasedPending: true,
+        conversationId,
+        messageId,
+        outboundMessageId,
+      }
     }
     throw new InboundSmsError(`Unknown SMS destination number: ${inbound.to}`, 404)
   }
@@ -186,12 +311,6 @@ export async function processInboundSms(
   const identity = resolution.identity
   const selfHealed = resolution.source === "self_healed_unit" ||
     (resolution.createdOrUpdated && resolution.source !== "sms_identity")
-
-  await sendIdentityReplyHint(
-    inbound.from,
-    inbound.to,
-    resolution.replyHint,
-  )
 
   const maintenanceRequestId =
     existingConversation?.maintenance_request_id ??
@@ -269,18 +388,45 @@ export async function processInboundSms(
     }
   }
 
-  const workflow = await routeInboundSmsWorkflow(supabase, {
-    inbound,
-    landlordId,
-    identity,
+  let workflow
+  try {
+    workflow = await routeInboundSmsWorkflow(supabase, {
+      inbound,
+      landlordId,
+      identity,
+      conversationId,
+      messageId,
+      maintenanceRequestId,
+      selfHealed,
+      continueIntake: resolution.continueIntake,
+      resolutionSource: resolution.source,
+      selfHealingPhase: resolution.selfHealingPhase,
+      suggestedUnit: resolution.suggestedUnit,
+    })
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err)
+    console.error("[sms-inbound] workflow failed", {
+      conversationId,
+      error: message,
+    })
+    workflow = {
+      route: "resident_maintenance_intake" as const,
+      replyHint: resolution.replyHint ??
+        "Thanks for reaching out — I'm having a little trouble on my end. Please try again in a moment.",
+      metadata: { workflowError: message },
+    }
+  }
+
+  const outboundMessageId = await trySendAutoReply(supabase, {
     conversationId,
-    messageId,
-    maintenanceRequestId,
-    selfHealed,
-    continueIntake: resolution.continueIntake,
-    resolutionSource: resolution.source,
-    selfHealingPhase: resolution.selfHealingPhase,
-    suggestedUnit: resolution.suggestedUnit,
+    landlordId,
+    uloNumber: inbound.to,
+    externalPhone: inbound.from,
+    provider: inbound.provider,
+    resolutionHint: resolution.replyHint,
+    workflowHint: workflow.replyHint,
+    source: `workflow_${workflow.route}`,
+    workflowRoute: workflow.route,
   })
 
   await recordGraphEvent(supabase, {
@@ -291,6 +437,7 @@ export async function processInboundSms(
     maintenanceRequestId,
     inbound,
     workflowRoute: workflow.route,
+    workflowMetadata: workflow.metadata,
     selfHealed,
     resolutionSource: resolution.source,
     selfHealingPhase: resolution.selfHealingPhase,
@@ -300,6 +447,7 @@ export async function processInboundSms(
     ok: true,
     conversationId,
     messageId,
+    outboundMessageId,
     workflowRoute: workflow.route,
     identityType: identity.identity_type,
     landlordId,

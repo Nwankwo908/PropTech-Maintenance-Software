@@ -95,27 +95,180 @@ export type SmsIdentityRow = {
   verified: boolean
 }
 
-export async function lookupSmsIdentity(
+const smsIdentitySelect =
+  "id, landlord_id, resident_id, vendor_id, unit_id, phone_number, identity_type, verified"
+
+/** All identity rows matching phone format variants for a landlord (may be >1 if stored inconsistently). */
+export async function findSmsIdentitiesByPhone(
   supabase: SupabaseClient,
   fromNumber: string,
   landlordId: string,
-): Promise<SmsIdentityRow | null> {
-  const normalizedFrom = normalizeSmsPhone(fromNumber)
+): Promise<SmsIdentityRow[]> {
+  const variants = phoneLookupVariants(fromNumber)
+  if (variants.length === 0) return []
+
   const { data, error } = await supabase
     .from("sms_identities")
-    .select(
-      "id, landlord_id, resident_id, vendor_id, unit_id, phone_number, identity_type, verified",
-    )
+    .select(smsIdentitySelect)
     .eq("landlord_id", landlordId)
-    .eq("phone_number", normalizedFrom)
-    .maybeSingle()
+    .in("phone_number", variants)
 
   if (error) {
     console.error("[sms-inbound] sms_identities lookup", error.message)
     throw new Error("Failed to look up SMS identity")
   }
 
-  return (data as SmsIdentityRow | null) ?? null
+  return (data as SmsIdentityRow[] | null) ?? []
+}
+
+function pickCanonicalSmsIdentity(
+  rows: SmsIdentityRow[],
+  e164: string,
+): SmsIdentityRow | null {
+  if (rows.length === 0) return null
+  if (rows.length === 1) return rows[0]
+
+  const ranked = [...rows].sort((a, b) => {
+    const aE164 = a.phone_number === e164 ? 0 : 1
+    const bE164 = b.phone_number === e164 ? 0 : 1
+    if (aE164 !== bE164) return aE164 - bE164
+
+    const aKnown = a.identity_type !== "unknown" ? 0 : 1
+    const bKnown = b.identity_type !== "unknown" ? 0 : 1
+    if (aKnown !== bKnown) return aKnown - bKnown
+
+    return a.id.localeCompare(b.id)
+  })
+
+  return ranked[0] ?? null
+}
+
+export async function lookupSmsIdentity(
+  supabase: SupabaseClient,
+  fromNumber: string,
+  landlordId: string,
+): Promise<SmsIdentityRow | null> {
+  const e164 = normalizePhoneFlexible(fromNumber)
+  const rows = await findSmsIdentitiesByPhone(supabase, fromNumber, landlordId)
+  return pickCanonicalSmsIdentity(rows, e164 ?? normalizeSmsPhone(fromNumber))
+}
+
+export type UpsertSmsIdentityForPhoneParams = {
+  landlordId: string
+  phone: string
+  identityType: "resident" | "vendor"
+  residentId?: string | null
+  vendorId?: string | null
+  unitId?: string | null
+}
+
+/**
+ * Create or upgrade an sms_identities row for a landlord-scoped phone.
+ * Normalizes to E.164 before match/insert, upgrades unknown identities, preserves first_seen_at.
+ */
+export async function upsertSmsIdentityForPhone(
+  supabase: SupabaseClient,
+  params: UpsertSmsIdentityForPhoneParams,
+): Promise<SmsIdentityRow | null> {
+  const e164 = normalizePhoneFlexible(params.phone)
+  if (!e164) {
+    console.warn("[sms] upsertSmsIdentityForPhone: invalid phone", params.phone)
+    return null
+  }
+
+  const landlordId = params.landlordId.trim()
+  const now = new Date().toISOString()
+  const matches = await findSmsIdentitiesByPhone(supabase, params.phone, landlordId)
+  const existing = pickCanonicalSmsIdentity(matches, e164)
+  const duplicateIds = matches
+    .filter((row) => row.id !== existing?.id)
+    .map((row) => row.id)
+
+  const identityPatch =
+    params.identityType === "resident"
+      ? {
+          identity_type: "resident" as const,
+          resident_id: params.residentId?.trim() || null,
+          vendor_id: null,
+          unit_id: params.unitId?.trim() || null,
+          verified: false,
+        }
+      : {
+          identity_type: "vendor" as const,
+          vendor_id: params.vendorId?.trim() || null,
+          resident_id: null,
+          unit_id: null,
+          verified: false,
+        }
+
+  let result: SmsIdentityRow
+
+  if (existing) {
+    const canApplyType =
+      existing.identity_type === "unknown" ||
+      existing.identity_type === params.identityType
+
+    const updatePayload = canApplyType
+      ? { ...identityPatch, phone_number: e164, last_seen_at: now }
+      : { phone_number: e164, last_seen_at: now }
+
+    const { data, error } = await supabase
+      .from("sms_identities")
+      .update(updatePayload)
+      .eq("id", existing.id)
+      .select(smsIdentitySelect)
+      .single()
+
+    if (error || !data) {
+      console.error("[sms] upsertSmsIdentityForPhone update", error?.message)
+      throw new Error("Failed to update SMS identity")
+    }
+
+    result = data as SmsIdentityRow
+  } else {
+    const { data, error } = await supabase
+      .from("sms_identities")
+      .insert({
+        landlord_id: landlordId,
+        phone_number: e164,
+        ...identityPatch,
+        last_seen_at: now,
+      })
+      .select(smsIdentitySelect)
+      .single()
+
+    if (error || !data) {
+      if (error?.code === "23505") {
+        const retryExisting = await lookupSmsIdentity(
+          supabase,
+          params.phone,
+          landlordId,
+        )
+        if (retryExisting) {
+          return upsertSmsIdentityForPhone(supabase, params)
+        }
+      }
+      console.error("[sms] upsertSmsIdentityForPhone insert", error?.message)
+      throw new Error("Failed to create SMS identity")
+    }
+
+    result = data as SmsIdentityRow
+  }
+
+  if (duplicateIds.length > 0) {
+    const { error: dedupeErr } = await supabase
+      .from("sms_identities")
+      .delete()
+      .in("id", duplicateIds)
+    if (dedupeErr) {
+      console.warn(
+        "[sms] upsertSmsIdentityForPhone dedupe failed",
+        dedupeErr.message,
+      )
+    }
+  }
+
+  return result
 }
 
 export async function upsertSmsIdentity(
@@ -132,13 +285,18 @@ export async function upsertSmsIdentity(
     >
   },
 ): Promise<SmsIdentityRow> {
-  const normalizedFrom = normalizeSmsPhone(params.fromNumber)
+  const e164 = normalizePhoneFlexible(params.fromNumber)
+  const normalizedFrom = e164 ?? params.fromNumber.trim()
   const now = new Date().toISOString()
 
   if (params.existing) {
     const { data, error } = await supabase
       .from("sms_identities")
-      .update({ ...params.patch, last_seen_at: now })
+      .update({
+        ...params.patch,
+        ...(e164 ? { phone_number: e164 } : {}),
+        last_seen_at: now,
+      })
       .eq("id", params.existing.id)
       .select(
         "id, landlord_id, resident_id, vendor_id, unit_id, phone_number, identity_type, verified",
@@ -394,7 +552,14 @@ export async function findOpenConversation(
     .eq("landlord_id", params.landlordId)
     .eq("sms_number_id", params.smsNumberId)
     .eq("external_phone_number", external)
-    .eq("status", "open")
+    .in("status", [
+      "open",
+      "awaiting_unit_number",
+      "unresolved",
+      "intake_collecting",
+      "intake_confirm",
+      "intake_edit",
+    ])
     .order("updated_at", { ascending: false })
     .limit(1)
     .maybeSingle()

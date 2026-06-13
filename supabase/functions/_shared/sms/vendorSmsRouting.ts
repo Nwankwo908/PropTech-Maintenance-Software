@@ -6,9 +6,8 @@ import {
 } from "./landlordSmsOnboarding.ts"
 import {
   findOrCreateConversation,
-  lookupSmsIdentity,
   normalizeSmsPhone,
-  upsertSmsIdentity,
+  upsertSmsIdentityForPhone,
   type SmsIdentityRow,
 } from "./inbound_db.ts"
 import { getSMSProvider } from "./providerFactory.ts"
@@ -40,22 +39,25 @@ async function ensureVendorSmsIdentity(
     vendorId: string
     vendorPhone: string
   },
-): Promise<SmsIdentityRow> {
-  const existing = await lookupSmsIdentity(
-    supabase,
-    params.vendorPhone,
-    params.landlordId,
-  )
-  return upsertSmsIdentity(supabase, {
-    fromNumber: params.vendorPhone,
+): Promise<SmsIdentityRow | null> {
+  return upsertSmsIdentityForPhone(supabase, {
     landlordId: params.landlordId,
-    existing,
-    patch: {
-      identity_type: "vendor",
-      vendor_id: params.vendorId,
-      verified: true,
-    },
+    phone: params.vendorPhone,
+    identityType: "vendor",
+    vendorId: params.vendorId,
   })
+}
+
+/** Register or upgrade vendor SMS identity after admin/vendor onboarding. */
+export async function syncVendorSmsIdentity(
+  supabase: SupabaseClient,
+  params: {
+    landlordId: string
+    vendorId: string
+    vendorPhone: string
+  },
+): Promise<SmsIdentityRow | null> {
+  return ensureVendorSmsIdentity(supabase, params)
 }
 
 async function saveOutboundSmsMessage(
@@ -166,6 +168,9 @@ export async function sendVendorJobAlert(
     vendorId: params.vendorId,
     vendorPhone,
   })
+  if (!identity) {
+    return { ok: false, error: "Invalid vendor phone number for SMS identity" }
+  }
 
   const { conversationId } = await findOrCreateConversation(supabase, {
     landlordId,

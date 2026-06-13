@@ -7,6 +7,7 @@ import {
   adminEdgeInvokeHeaders,
   fetchAdminEdgeFunction,
 } from '@/api/adminReassignVendor'
+import { getActiveLandlordId } from '@/lib/activeLandlord'
 
 function supabaseFunctionsBase(): string | undefined {
   const base = import.meta.env.VITE_SUPABASE_URL?.trim()?.replace(/\/$/, '')
@@ -18,10 +19,12 @@ function adminSecret(): string | undefined {
 }
 
 function defaultLandlordId(): string | undefined {
-  return import.meta.env.VITE_DEFAULT_LANDLORD_ID?.trim() || undefined
+  return getActiveLandlordId()
 }
 
-function functionUrl(name: 'landlord-sms-onboarding' | 'register-unit'): string | undefined {
+function functionUrl(
+  name: 'landlord-sms-onboarding' | 'register-unit' | 'sync-sms-identity',
+): string | undefined {
   const base = supabaseFunctionsBase()
   return base ? `${base}/functions/v1/${name}` : undefined
 }
@@ -105,6 +108,39 @@ export async function registerPropertyUnitsSms(params: {
     {
       landlordId: resolvedLandlordId,
       units: params.units,
+    },
+  )
+
+  return result?.ok === true
+}
+
+export async function syncSmsIdentity(params: {
+  landlordId?: string
+  phone: string
+  identityType: 'resident' | 'vendor'
+  residentId?: string
+  vendorId?: string
+  unitId?: string | null
+  unitLabel?: string | null
+  building?: string | null
+}): Promise<boolean> {
+  const phone = params.phone.trim()
+  if (!phone) return false
+
+  const resolvedLandlordId = params.landlordId?.trim() || defaultLandlordId()
+  if (!resolvedLandlordId) return false
+
+  const result = await postAdminFunction<{ ok: boolean }>(
+    functionUrl('sync-sms-identity'),
+    {
+      landlordId: resolvedLandlordId,
+      phone,
+      identityType: params.identityType,
+      residentId: params.residentId ?? null,
+      vendorId: params.vendorId ?? null,
+      unitId: params.unitId ?? null,
+      unitLabel: params.unitLabel ?? null,
+      building: params.building ?? null,
     },
   )
 
