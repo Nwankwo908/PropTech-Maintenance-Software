@@ -1,0 +1,5 @@
+-- Vendor scoring demo data is merged into seed_demo_landlord_account.sql
+-- (section "Vendor scoring — status-event timing + resident feedback").
+--
+-- Re-run the main demo seed after applying 20260615150000_vendor_feedback_scoring.sql:
+--   psql "$DATABASE_URL" -f supabase/seed_demo_landlord_account.sql

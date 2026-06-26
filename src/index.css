@@ -8,6 +8,8 @@
     'Encode Sans Semi Condensed', 'Inter', ui-sans-serif, system-ui, sans-serif,
     'Apple Color Emoji',
     'Segoe UI Emoji', 'Segoe UI Symbol';
+  --font-admin:
+    'Inter', ui-sans-serif, -apple-system, 'Segoe UI', Roboto, system-ui, sans-serif;
   --font-landing: 'DM Sans', 'Encode Sans Semi Condensed', ui-sans-serif, system-ui, sans-serif;
   --font-landing-heading: 'DM Sans', 'Google Sans', ui-sans-serif, system-ui, sans-serif;
 

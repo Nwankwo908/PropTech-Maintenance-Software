@@ -48,14 +48,34 @@ export function AdminLoginPage() {
       setAlreadyAuthed(import.meta.env.DEV)
       return
     }
-    void supabase.auth.getSession().then(async ({ data }) => {
-      if (data.session && !isAdminSessionAllowed(data.session)) {
+
+    const client = supabase
+    let cancelled = false
+
+    const evaluate = async (session: Parameters<typeof isAdminSessionAllowed>[0]) => {
+      if (cancelled) return
+      if (session && !isAdminSessionAllowed(session)) {
         await signOutAdmin()
-        setAlreadyAuthed(false)
+        if (!cancelled) setAlreadyAuthed(false)
         return
       }
-      setAlreadyAuthed(isAdminSessionAllowed(data.session))
+      if (!cancelled) setAlreadyAuthed(isAdminSessionAllowed(session))
+    }
+
+    void client.auth.getSession().then(({ data }) => evaluate(data.session))
+
+    // A session can arrive slightly after mount (e.g. OAuth detectSessionInUrl),
+    // so react to it instead of requiring the user to click Login again.
+    const {
+      data: { subscription },
+    } = client.auth.onAuthStateChange((_event, session) => {
+      void evaluate(session)
     })
+
+    return () => {
+      cancelled = true
+      subscription.unsubscribe()
+    }
   }, [])
 
   if (alreadyAuthed === true) {
@@ -124,7 +144,7 @@ export function AdminLoginPage() {
   }
 
   return (
-    <div className="relative min-h-dvh overflow-hidden bg-gradient-to-b from-white to-[#f0fdf4] font-sans">
+    <div className="relative min-h-dvh overflow-hidden bg-gradient-to-b from-white to-[#f0fdf4] font-[family-name:var(--font-admin)]">
       <div className="pointer-events-none absolute inset-0" aria-hidden>
         <img
           src={bgLogin}

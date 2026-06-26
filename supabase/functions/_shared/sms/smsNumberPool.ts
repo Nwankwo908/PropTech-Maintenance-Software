@@ -1,6 +1,7 @@
 import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.49.1"
 import { getSMSProvider } from "./providerFactory.ts"
 import { logGraphEvent } from "../graph/logGraphEvent.ts"
+import { normalizePhoneFlexible } from "../resident_notify.ts"
 
 export type LandlordSmsNumberRow = {
   id: string
@@ -45,6 +46,21 @@ export type ReleaseSmsNumberResult = {
 const SMS_NUMBER_FIELDS =
   "id, landlord_id, phone_number, provider, provider_number_sid, provider_messaging_service_sid, status, purpose, release_auto_reply"
 
+function phoneLookupVariants(input: string): string[] {
+  const trimmed = input.trim()
+  const e164 = normalizePhoneFlexible(trimmed)
+  const digits = trimmed.replace(/\D/g, "")
+  const set = new Set<string>()
+  if (trimmed) set.add(trimmed)
+  if (e164) set.add(e164)
+  if (digits) {
+    set.add(digits)
+    if (digits.length === 11 && digits.startsWith("1")) set.add(`+${digits}`)
+    if (digits.length === 10) set.add(`+1${digits}`)
+  }
+  return [...set]
+}
+
 function resolveAutoProvisionInput(params: {
   phoneNumber?: string | null
   providerNumberSid?: string | null
@@ -53,6 +69,7 @@ function resolveAutoProvisionInput(params: {
   const phoneNumber =
     params.phoneNumber?.trim() ||
     Deno.env.get("SMS_AUTO_PROVISION_PHONE_NUMBER")?.trim() ||
+    Deno.env.get("TELNYX_FROM_NUMBER")?.trim() ||
     Deno.env.get("TWILIO_FROM_NUMBER")?.trim() ||
     null
 
@@ -69,7 +86,7 @@ function resolveAutoProvisionInput(params: {
   return { phoneNumber, providerNumberSid, areaCode }
 }
 
-async function findActiveLandlordMain(
+export async function findActiveLandlordMain(
   supabase: SupabaseClient,
   landlordId: string,
 ): Promise<LandlordSmsNumberRow | null> {
@@ -149,6 +166,54 @@ export async function claimAvailablePoolNumber(
 
   if (error) {
     console.error("[smsNumberPool] pool claim", error.message)
+    throw new Error("Failed to claim pool SMS number")
+  }
+
+  return (data as LandlordSmsNumberRow | null) ?? null
+}
+
+/** Claim a specific pool row by dialed number (inbound auto-assign). */
+export async function claimPoolNumberByPhone(
+  supabase: SupabaseClient,
+  params: { phoneNumber: string; landlordId: string },
+): Promise<LandlordSmsNumberRow | null> {
+  const variants = phoneLookupVariants(params.phoneNumber)
+  if (variants.length === 0) return null
+
+  const { data: candidate, error: lookupErr } = await supabase
+    .from("sms_numbers")
+    .select(SMS_NUMBER_FIELDS)
+    .in("phone_number", variants)
+    .eq("purpose", "pool")
+    .is("landlord_id", null)
+    .in("status", ["available", "active"])
+    .limit(1)
+    .maybeSingle()
+
+  if (lookupErr) {
+    console.error("[smsNumberPool] pool lookup by phone", lookupErr.message)
+    throw new Error("Failed to look up SMS pool number")
+  }
+
+  if (!candidate?.id) return null
+
+  const { data, error } = await supabase
+    .from("sms_numbers")
+    .update({
+      landlord_id: params.landlordId,
+      purpose: "landlord_main",
+      status: "active",
+      release_auto_reply: null,
+    })
+    .eq("id", candidate.id)
+    .eq("purpose", "pool")
+    .is("landlord_id", null)
+    .in("status", ["available", "active"])
+    .select(SMS_NUMBER_FIELDS)
+    .maybeSingle()
+
+  if (error) {
+    console.error("[smsNumberPool] pool claim by phone", error.message)
     throw new Error("Failed to claim pool SMS number")
   }
 

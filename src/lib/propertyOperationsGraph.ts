@@ -208,6 +208,86 @@ function mapLegacyBridgeRow(row: LegacyGraphRow): PropertyOperationsTimelineEven
   }
 }
 
+function readMetadataString(
+  metadata: Record<string, unknown> | null | undefined,
+  key: string,
+): string | null {
+  const value = metadata?.[key]
+  if (typeof value === 'string' && value.trim()) return value.trim()
+  return null
+}
+
+/** Batch setup events that read better as one feed line (same type, day, building). */
+const CONSOLIDATED_SETUP_EVENT_TYPES = new Set([
+  'unit.registered',
+  'tenant.sms_registered',
+])
+
+function consolidationGroupKey(event: PropertyOperationsTimelineEvent): string | null {
+  if (!CONSOLIDATED_SETUP_EVENT_TYPES.has(event.eventType)) return null
+  const day = event.createdAt.slice(0, 10)
+  const building = (event.building ?? 'Portfolio').trim() || 'Portfolio'
+  return `${event.eventType}|${day}|${building}`
+}
+
+function consolidatedSetupLabel(eventType: string, count: number): string {
+  if (eventType === 'unit.registered') {
+    return count === 1 ? 'Unit registered' : `${count} units registered`
+  }
+  if (eventType === 'tenant.sms_registered') {
+    return count === 1 ? 'Resident SMS linked' : `${count} residents linked for SMS`
+  }
+  const base = formatEventTypeLabel(eventType)
+  return count === 1 ? base : `${count} × ${base}`
+}
+
+function mergeSetupEventGroup(group: PropertyOperationsTimelineEvent[]): PropertyOperationsTimelineEvent {
+  const sorted = [...group].sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+  const latest = sorted[0]!
+  const building = latest.building ?? sorted.find((event) => event.building)?.building ?? null
+  const count = sorted.length
+
+  let message = latest.message
+  if (count > 1) {
+    if (latest.eventType === 'tenant.sms_registered') {
+      message = `${count} residents linked for SMS${building ? ` at ${building}` : ''}.`
+    } else {
+      message = `${count} units linked to Ulo SMS${building ? ` at ${building}` : ''}.`
+    }
+  }
+
+  return {
+    ...latest,
+    id: `consolidated:${consolidationGroupKey(latest) ?? latest.id}`,
+    label: consolidatedSetupLabel(latest.eventType, count),
+    message,
+    building,
+    unitLabel: count === 1 ? latest.unitLabel : null,
+  }
+}
+
+/** Collapse repetitive setup logs (e.g. onboarding registering many units). */
+export function consolidateFeedEvents(
+  events: PropertyOperationsTimelineEvent[],
+): PropertyOperationsTimelineEvent[] {
+  const passthrough: PropertyOperationsTimelineEvent[] = []
+  const groups = new Map<string, PropertyOperationsTimelineEvent[]>()
+
+  for (const event of events) {
+    const key = consolidationGroupKey(event)
+    if (!key) {
+      passthrough.push(event)
+      continue
+    }
+    const list = groups.get(key) ?? []
+    list.push(event)
+    groups.set(key, list)
+  }
+
+  const consolidated = [...groups.values()].map(mergeSetupEventGroup)
+  return [...passthrough, ...consolidated].sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+}
+
 function mapOperationsGraphRow(row: OperationsGraphRow): PropertyOperationsTimelineEvent {
   const metadata = row.metadata ?? {}
 
@@ -219,8 +299,8 @@ function mapOperationsGraphRow(row: OperationsGraphRow): PropertyOperationsTimel
     message: readPayloadMessage(metadata),
     eventSource: row.source,
     createdAt: row.created_at,
-    unitLabel: null,
-    building: null,
+    unitLabel: readMetadataString(metadata, 'unit_label'),
+    building: readMetadataString(metadata, 'building'),
     residentName: null,
     vendorName: null,
     maintenanceRequestId: row.maintenance_request_id,
@@ -373,6 +453,7 @@ export async function fetchRecentPropertyOperationsEvents(
   if (!supabase) return []
 
   const landlordId = defaultLandlordId()
+  const rawLimit = Math.max(limit * 6, 48)
 
   let canonicalQuery = supabase
     .from('property_operations_graph_enriched')
@@ -380,7 +461,7 @@ export async function fetchRecentPropertyOperationsEvents(
       'id, landlord_id, unit_id, resident_id, vendor_id, workflow_run_id, event_type, event_source, event_payload, created_at, unit_label, building, resident_name, vendor_name',
     )
     .order('created_at', { ascending: false })
-    .limit(limit)
+    .limit(rawLimit)
 
   if (landlordId) {
     canonicalQuery = canonicalQuery.eq('landlord_id', landlordId)
@@ -392,7 +473,7 @@ export async function fetchRecentPropertyOperationsEvents(
       'id, landlord_id, unit_id, resident_id, vendor_id, workflow_run_id, event_type, source, metadata, maintenance_request_id, created_at',
     )
     .order('created_at', { ascending: false })
-    .limit(limit)
+    .limit(rawLimit)
 
   if (landlordId) {
     supplementalQuery = supplementalQuery.eq('landlord_id', landlordId)
@@ -431,9 +512,10 @@ export async function fetchRecentPropertyOperationsEvents(
     }
   }
 
-  return [...merged.values()]
-    .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
-    .slice(0, limit)
+  return consolidateFeedEvents([...merged.values()].sort((a, b) => b.createdAt.localeCompare(a.createdAt))).slice(
+    0,
+    limit,
+  )
 }
 
 export function formatTimelineContextLine(

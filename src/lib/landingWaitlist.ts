@@ -50,6 +50,11 @@ export function markWaitlistOAuthIntent(): void {
   sessionStorage.setItem(WAITLIST_OAUTH_FLAG, '1')
 }
 
+/** Read the waitlist OAuth intent without clearing it. */
+export function hasWaitlistOAuthIntent(): boolean {
+  return sessionStorage.getItem(WAITLIST_OAUTH_FLAG) === '1'
+}
+
 export function consumeWaitlistOAuthIntent(): boolean {
   const pending = sessionStorage.getItem(WAITLIST_OAUTH_FLAG) === '1'
   if (pending) sessionStorage.removeItem(WAITLIST_OAUTH_FLAG)

@@ -10,6 +10,12 @@ import { bearerLooksLikeJwt } from "../_shared/vendor_portal_bearer.ts"
 import { getVendorFromPortalApiKey } from "../_shared/vendor_portal_api_key.ts"
 import { logGraphEvent } from "../_shared/graph/logGraphEvent.ts"
 import { resolveLandlordId } from "../_shared/sms/landlordSmsOnboarding.ts"
+import { requestVendorFeedback } from "../_shared/vendor_feedback.ts"
+import {
+  markMaintenanceJobCompleted,
+  submitMaintenanceInvoice,
+  type MaintenanceInvoiceInput,
+} from "../_shared/maintenanceSpend.ts"
 
 const corsHeaders: Record<string, string> = {
   "Access-Control-Allow-Origin": "*",
@@ -87,6 +93,7 @@ serve(async (req) => {
     ticketId?: string
     action?: string
     token?: string
+    invoice?: unknown
   }
   try {
     body = await req.json()
@@ -275,6 +282,62 @@ serve(async (req) => {
     return jsonResponse({ error: "Update failed" }, 500)
   }
 
+  if (step.next === "completed") {
+    try {
+      await markMaintenanceJobCompleted(supabase, ticketId)
+    } catch (e) {
+      console.error("[vendor-update-job-status] mark completed", e)
+    }
+
+    const invoiceRaw = body.invoice
+    if (invoiceRaw && typeof invoiceRaw === "object") {
+      const o = invoiceRaw as Record<string, unknown>
+      const labor = Number(o.laborCost ?? o.labor_cost ?? 0)
+      const material = Number(o.materialCost ?? o.material_cost ?? 0)
+      const tax = Number(o.taxAmount ?? o.tax_amount ?? 0)
+      if ([labor, material, tax].every((n) => Number.isFinite(n))) {
+        const invoice: MaintenanceInvoiceInput = {
+          laborCost: labor,
+          materialCost: material,
+          taxAmount: tax,
+          invoiceNumber:
+            typeof o.invoiceNumber === "string"
+              ? o.invoiceNumber
+              : typeof o.invoice_number === "string"
+              ? o.invoice_number
+              : null,
+          documentPath:
+            typeof o.documentPath === "string"
+              ? o.documentPath
+              : typeof o.document_path === "string"
+              ? o.document_path
+              : null,
+          vendorNotes:
+            typeof o.vendorNotes === "string"
+              ? o.vendorNotes
+              : typeof o.vendor_notes === "string"
+              ? o.vendor_notes
+              : null,
+        }
+        const total = labor + material + tax
+        if (total > 0 && vendorIdMatched) {
+          const invResult = await submitMaintenanceInvoice(supabase, {
+            maintenanceRequestId: ticketId,
+            vendorId: vendorIdMatched,
+            invoice,
+            source: source === "portal" ? "vendor_portal" : "edge_function",
+          })
+          if ("error" in invResult) {
+            console.error(
+              "[vendor-update-job-status] invoice submit",
+              invResult.error,
+            )
+          }
+        }
+      }
+    }
+  }
+
   const { error: logErr } = await supabase.from("vendor_status_events").insert({
     ticket_id: ticketId,
     from_status: current,
@@ -327,7 +390,7 @@ serve(async (req) => {
     const { data: trow } = await supabase
       .from("maintenance_requests")
       .select(
-        "resident_name, email, resident_phone, unit, assigned_vendor_id, priority, resident_notification_channel",
+        "landlord_id, resident_name, email, resident_phone, unit, assigned_vendor_id, priority, resident_notification_channel",
       )
       .eq("id", ticketId)
       .maybeSingle()
@@ -367,6 +430,37 @@ serve(async (req) => {
           await notifyResidentInProgress(supabase, base)
         } else {
           await notifyResidentCompleted(supabase, base)
+        }
+
+        if (step.next === "completed" && trow?.landlord_id && vendorIdMatched) {
+          const landlordId = String(trow.landlord_id)
+          const { data: enriched } = await supabase
+            .from("maintenance_request_enriched")
+            .select("resident_id")
+            .eq("id", ticketId)
+            .maybeSingle()
+
+          try {
+            await requestVendorFeedback(supabase, {
+              ticketId,
+              landlordId,
+              vendorId: vendorIdMatched,
+              residentId:
+                typeof enriched?.resident_id === "string"
+                  ? enriched.resident_id
+                  : null,
+              residentPhone:
+                typeof trow.resident_phone === "string"
+                  ? trow.resident_phone
+                  : null,
+              residentName:
+                typeof trow.resident_name === "string"
+                  ? trow.resident_name
+                  : null,
+            })
+          } catch (e) {
+            console.error("[vendor-update-job-status] vendor feedback request", e)
+          }
         }
       } catch (e) {
         console.error("[vendor-update-job-status] resident notify", e)

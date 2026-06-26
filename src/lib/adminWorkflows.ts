@@ -305,6 +305,8 @@ const EVENT_LABELS: Record<string, string> = {
   'workflow.act': 'Action taken',
   'workflow.escalate': 'Escalated',
   'workflow.log': 'Logged',
+  'unit.registered': 'Unit registered',
+  'tenant.sms_registered': 'Resident SMS linked',
 }
 
 const RENT_CLASSIFICATION_LABELS: Record<RentCollectionClassification, string> = {

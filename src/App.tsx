@@ -9,11 +9,20 @@ import VendorAuthGate from './components/VendorAuthGate'
 import { AdminAuthGate } from './components/AdminAuthGate'
 import { AdminLayout } from './components/AdminLayout'
 import { AdminLoginPage } from './components/AdminLoginPage'
+import { AuthCallback } from './components/AuthCallback'
 import { AdminOverviewDashboard } from './components/AdminOverviewDashboard'
+import { AdminPropertiesDashboard } from './components/AdminPropertiesDashboard'
 import { AdminRequestManagementDashboard } from './components/AdminRequestManagementDashboard'
 import { AdminWorkflowOperationsDashboard } from './components/AdminWorkflowOperationsDashboard'
 import { AdminNotificationManagementDashboard } from './components/AdminNotificationManagementDashboard'
+import { AdminCommunicationDashboard } from './components/AdminCommunicationDashboard'
+import { AdminVendorsDashboard } from './components/AdminVendorsDashboard'
+import { AdminResidentsDashboard } from './components/AdminResidentsDashboard'
+import { AdminAnalyticsDashboard } from './components/AdminAnalyticsDashboard'
+import { AdminSettingsDashboard } from './components/AdminSettingsDashboard'
 import { AdminUserManagementDashboard } from './components/AdminUserManagementDashboard'
+import { AdminOnboardingDashboard } from './components/AdminOnboardingDashboard'
+import { AdminOnboardingGuard } from './components/AdminOnboardingGuard'
 
 export default function App() {
   useSessionAutoRefresh(supabase)
@@ -34,6 +43,7 @@ export default function App() {
           }
         />
 
+        <Route path="/auth/callback" element={<AuthCallback />} />
         <Route path="/admin/login" element={<AdminLoginPage />} />
         <Route
           path="/admin"
@@ -43,14 +53,23 @@ export default function App() {
             </AdminAuthGate>
           }
         >
-          <Route index element={<AdminOverviewDashboard />} />
-          <Route path="requests" element={<AdminRequestManagementDashboard />} />
-          <Route path="workflows" element={<AdminWorkflowOperationsDashboard />} />
-          <Route
-            path="notifications"
-            element={<AdminNotificationManagementDashboard />}
-          />
-          <Route path="users" element={<AdminUserManagementDashboard />} />
+          <Route element={<AdminOnboardingGuard />}>
+            <Route index element={<AdminOverviewDashboard />} />
+            <Route path="onboarding" element={<AdminOnboardingDashboard />} />
+            <Route path="properties" element={<AdminPropertiesDashboard />} />
+            <Route path="communication" element={<AdminCommunicationDashboard />} />
+            <Route path="requests" element={<AdminRequestManagementDashboard />} />
+            <Route path="vendors" element={<AdminVendorsDashboard />} />
+            <Route path="workflows" element={<AdminWorkflowOperationsDashboard />} />
+            <Route path="residents" element={<AdminResidentsDashboard />} />
+            <Route path="analytics" element={<AdminAnalyticsDashboard />} />
+            <Route path="settings" element={<AdminSettingsDashboard />} />
+            <Route
+              path="notifications"
+              element={<AdminNotificationManagementDashboard />}
+            />
+            <Route path="users" element={<AdminUserManagementDashboard />} />
+          </Route>
         </Route>
       </Routes>
     </BrowserRouter>

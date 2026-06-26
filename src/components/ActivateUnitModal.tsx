@@ -1,4 +1,5 @@
 import { useEffect, useId, useMemo, useState } from 'react'
+import { checkboxInputClassName } from '@/components/TableCheckbox'
 
 export type ActivateUnitSubmitPayload = {
   skipTenantRegistration: boolean
@@ -79,7 +80,7 @@ export function ActivateUnitModal({
             type="checkbox"
             checked={skipTenantRegistration}
             onChange={(e) => setSkipTenantRegistration(e.target.checked)}
-            className="mt-1"
+            className={`mt-1 ${checkboxInputClassName}`}
           />
           <span className="text-[14px] leading-5 text-[#101828]">
             Skip tenant registration (activate without tenant name, phone, or move-in date)

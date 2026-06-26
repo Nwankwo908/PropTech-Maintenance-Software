@@ -2,7 +2,7 @@ import beforeWorkflow from '@/assets/landing/before-workflow.png'
 import afterWorkflowDiagram from '@/assets/landing/after-workflow-diagram.png'
 
 const WORKFLOW_CARD =
-  'flex min-h-[192px] flex-col gap-8 overflow-x-clip rounded-3xl border border-[#e5e7eb] bg-white px-6 py-5 sm:px-10 lg:h-[204px] lg:min-h-0 lg:flex-row lg:items-center lg:gap-16 lg:overflow-visible lg:px-[38px] lg:py-6'
+  'flex min-h-[192px] flex-col gap-8 overflow-x-clip rounded-3xl border border-[#e5e7eb] bg-white px-6 py-5 sm:px-10 lg:flex-row lg:items-center lg:gap-12 lg:overflow-visible lg:px-[38px] lg:py-8'
 
 function WorkflowLabel({ title, subtitle }: { title: string; subtitle: string }) {
   return (
@@ -39,7 +39,7 @@ function WorkflowDiagram({
         aria-label={`${alt}. Swipe horizontally to view the full diagram.`}
         tabIndex={0}
       >
-        <div className="flex min-w-max items-center justify-start py-1 lg:min-w-0 lg:w-full lg:justify-center lg:py-0">
+        <div className="flex min-w-max items-center justify-start py-1 lg:min-w-0 lg:w-full lg:justify-start lg:py-0">
           <img
             src={src}
             alt={alt}
@@ -47,7 +47,7 @@ function WorkflowDiagram({
             height={height}
             draggable={false}
             style={{ width: diagramWidthPx }}
-            className={`block h-auto max-w-none shrink-0 ${lgWidthClass} lg:max-w-full`}
+            className={`block h-auto max-w-none shrink-0 ${lgWidthClass} lg:max-w-full lg:object-left`}
           />
         </div>
       </div>
@@ -67,7 +67,7 @@ export function BeforeAfterWorkflowSection() {
           width={1043}
           height={212}
           widthPercent={91}
-          lgWidthClass="lg:!w-[91%]"
+          lgWidthClass="lg:!w-[949px]"
         />
       </div>
 
@@ -79,7 +79,7 @@ export function BeforeAfterWorkflowSection() {
           width={702}
           height={225}
           widthPercent={70}
-          lgWidthClass="lg:!w-[70%]"
+          lgWidthClass="lg:!w-full"
         />
       </div>
     </div>

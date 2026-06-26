@@ -13,6 +13,7 @@ import { getErrorMessage } from '@/lib/errorMessage'
 import { supabase } from '@/lib/supabase'
 import { normIssueCategory } from '@/lib/vendorIssueCategory'
 import { AddPropertyModal, type AddPropertyFormPayload } from '@/components/AddPropertyModal'
+import { TableCheckbox } from '@/components/TableCheckbox'
 import { ALL_UNIT_OPTIONS } from '@/lib/propertyUnitOptions'
 import {
   buildUnitOptionsFromPropertyPayload,
@@ -889,7 +890,7 @@ const vendorFormInputClass =
 const vendorFormSelectClass =
   'h-9 w-full cursor-pointer appearance-none rounded-lg border border-transparent bg-[#f3f3f5] py-1 pl-3 pr-9 text-[14px] font-medium tracking-[-0.1504px] text-[#0a0a0a] outline-none focus-visible:border-[#0030b5]/45 focus-visible:bg-white focus-visible:ring-2 focus-visible:ring-[#0030b5]/30'
 
-function VendorFormModal({
+export function VendorFormModal({
   open,
   mode,
   initial,
@@ -1585,12 +1586,10 @@ function VendorManagementTabContent({
               <thead>
                 <tr className="border-b border-[#e5e7eb] bg-[#f9fafb]">
                   <th className="w-10 px-4 py-3">
-                    <input
-                      type="checkbox"
+                    <TableCheckbox
                       aria-label="Select all vendors"
                       checked={allFilteredVendorsSelected}
                       onChange={toggleAllFilteredVendorsSelected}
-                      className="size-4 rounded border-black/10"
                     />
                   </th>
                   {['Vendor', 'Category', 'Contact', 'Notifications', 'Status', 'Active jobs', 'Actions'].map((h) => (
@@ -1610,12 +1609,10 @@ function VendorManagementTabContent({
                 {filteredVendors.map((row) => (
                   <tr key={row.id} className="border-b border-[#e5e7eb] last:border-b-0">
                     <td className="px-4 py-3 align-middle">
-                      <input
-                        type="checkbox"
+                      <TableCheckbox
                         aria-label={`Select vendor ${row.name}`}
                         checked={selectedVendorIds.has(row.id)}
                         onChange={() => toggleVendorSelected(row.id)}
-                        className="size-4 rounded border-black/10"
                       />
                     </td>
                     <td className="px-4 py-3 align-middle">
@@ -2662,12 +2659,10 @@ export function AdminUserManagementDashboard() {
                 <thead>
                   <tr className="border-b border-[#e5e7eb] bg-[#f9fafb]">
                     <th className="w-10 px-4 py-3">
-                      <input
-                        type="checkbox"
+                      <TableCheckbox
                         aria-label="Select all residents"
                         checked={allFilteredResidentsSelected}
                         onChange={toggleAllFilteredResidentsSelected}
-                        className="size-4 rounded border-black/10"
                       />
                     </th>
                     {['Resident', 'Contact', 'Unit', 'Status', 'Balance', 'Issues', 'Actions'].map(
@@ -2689,12 +2684,10 @@ export function AdminUserManagementDashboard() {
                   {filteredRows.map((row) => (
                     <tr key={row.id} className="border-b border-[#e5e7eb] last:border-b-0">
                       <td className="px-4 py-3 align-middle">
-                        <input
-                          type="checkbox"
+                        <TableCheckbox
                           aria-label={`Select resident ${row.name}`}
                           checked={selectedResidentIds.has(row.id)}
                           onChange={() => toggleResidentSelected(row.id)}
-                          className="size-4 rounded border-black/10"
                         />
                       </td>
                       <td className="px-4 py-3 align-middle">

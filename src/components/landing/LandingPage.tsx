@@ -1,13 +1,15 @@
 import { useEffect, useState } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import { EarlyAccessModal } from '@/components/landing/EarlyAccessModal'
 import uloLogo from '@/assets/landing/ulo-logo.png'
 import { playUiClickSound, primeUiClickSound } from '@/lib/uiClickSound'
 import {
   captureWaitlistReferralFromUrl,
   consumeWaitlistOAuthIntent,
+  hasWaitlistOAuthIntent,
   joinWaitlistFromSessionEmail,
 } from '@/lib/landingWaitlist'
+import { isAdminSessionAllowed } from '@/lib/adminAuth'
 import { supabase } from '@/lib/supabase'
 import {
   IconArrowRight,
@@ -25,6 +27,11 @@ import { Step2AiIntakeMockup } from '@/components/landing/Step2AiIntakeMockup'
 import { FeaturesShowcase } from '@/components/landing/FeaturesShowcase'
 import { BeforeAfterWorkflowSection } from '@/components/landing/BeforeAfterWorkflowSection'
 import { HowItWorksStepReveal, HowItWorksStepsGrid } from '@/components/landing/HowItWorksStepReveal'
+import { formatPhoneNational } from '@/lib/phoneFormat'
+
+/** Live Ulo maintenance SMS line (Telnyx). */
+const ULO_MAINTENANCE_SMS_E164 = '+19734005760'
+const ULO_MAINTENANCE_SMS_DISPLAY = formatPhoneNational(ULO_MAINTENANCE_SMS_E164)
 
 const TEAL_GRADIENT =
   'linear-gradient(169deg, rgb(34, 154, 127) 0%, rgb(14, 92, 68) 100%)'
@@ -108,6 +115,7 @@ function PrimaryButton({
 }
 
 export function LandingPage() {
+  const navigate = useNavigate()
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
   const [earlyAccessOpen, setEarlyAccessOpen] = useState(false)
   const [earlyAccessSuccess, setEarlyAccessSuccess] = useState(false)
@@ -115,6 +123,33 @@ export function LandingPage() {
   useEffect(() => {
     primeUiClickSound()
   }, [])
+
+  // Safety net for admin Google sign-in: if Supabase's redirect-URL allowlist
+  // sends an OAuth return to the Site URL ("/") instead of /auth/callback, catch
+  // the fresh SIGNED_IN here and forward authorized admins straight to /admin
+  // (no second Login click). Waitlist Google returns are handled separately and
+  // are skipped via the intent flag captured at mount.
+  useEffect(() => {
+    if (!supabase) return
+    const client = supabase
+    const waitlistReturn = hasWaitlistOAuthIntent()
+    if (waitlistReturn) return
+
+    let cancelled = false
+    const {
+      data: { subscription },
+    } = client.auth.onAuthStateChange((event, session) => {
+      if (cancelled || event !== 'SIGNED_IN' || !session) return
+      if (isAdminSessionAllowed(session)) {
+        navigate('/admin', { replace: true })
+      }
+    })
+
+    return () => {
+      cancelled = true
+      subscription.unsubscribe()
+    }
+  }, [navigate])
 
   useEffect(() => {
     const fromReferral = captureWaitlistReferralFromUrl()
@@ -335,8 +370,15 @@ export function LandingPage() {
                   <span className="text-sm font-bold">Resident SMS</span>
                 </div>
                 <p className="mt-2 text-xs leading-relaxed text-[#6b7280]">
-                  Residents text dedicated Ulo Maintenance number 24/7. No app, Install needed.
+                  Residents text the Ulo maintenance line 24/7 — no app install needed.
                 </p>
+                <a
+                  href={`sms:${ULO_MAINTENANCE_SMS_E164}`}
+                  className="mt-3 inline-flex items-center gap-1.5 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 font-mono text-xs font-semibold text-emerald-800 transition hover:bg-emerald-100"
+                >
+                  <IconMessage className="size-3.5 shrink-0 text-emerald-700" />
+                  {ULO_MAINTENANCE_SMS_DISPLAY}
+                </a>
               </HowItWorksStepReveal>
 
               {/* Step 2 */}
@@ -469,7 +511,7 @@ export function LandingPage() {
 
         {/* Before / After workflow */}
         <section id="workflow-comparison" className={`scroll-mt-20 ${LANDING_SECTION_GAP}`}>
-          <LandingContentShell>
+          <LandingContentShell contentClassName="max-w-none">
             <BeforeAfterWorkflowSection />
           </LandingContentShell>
         </section>

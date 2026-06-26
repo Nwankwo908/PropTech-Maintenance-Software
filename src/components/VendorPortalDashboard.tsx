@@ -16,6 +16,7 @@ import {
   vendorPortalListUrl,
   vendorPortalUpdateUrl,
   type VendorApiTicket,
+  type VendorInvoiceInput,
 } from '@/api/vendorPortalTickets'
 import { VENDOR_TOKEN_STORAGE_KEY } from '@/lib/vendorToken'
 import {
@@ -1006,13 +1007,20 @@ function VendorInProgressWorkOrderDetailRail({
 }: {
   order: VendorWorkOrder
   onClose: () => void
-  onMarkComplete: () => void
+  onMarkComplete: (invoice: VendorInvoiceInput) => void
   onCancelWork: () => void
 }) {
   const titleId = useId()
   const noteId = useId()
+  const laborId = useId()
+  const materialId = useId()
+  const taxId = useId()
   const fileInputRef = useRef<HTMLInputElement>(null)
   const [statusNote, setStatusNote] = useState('')
+  const [laborCost, setLaborCost] = useState('')
+  const [materialCost, setMaterialCost] = useState('')
+  const [taxAmount, setTaxAmount] = useState('')
+  const [invoiceError, setInvoiceError] = useState<string | null>(null)
 
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
@@ -1034,6 +1042,28 @@ function VendorInProgressWorkOrderDetailRail({
     onCancelWork()
   }
 
+  function submitCompleteWithInvoice() {
+    const labor = Number(laborCost)
+    const material = Number(materialCost)
+    const tax = Number(taxAmount)
+    if (![labor, material, tax].every((n) => Number.isFinite(n) && n >= 0)) {
+      setInvoiceError('Enter valid labor, materials, and tax amounts.')
+      return
+    }
+    const total = labor + material + tax
+    if (total <= 0) {
+      setInvoiceError('Invoice total must be greater than zero.')
+      return
+    }
+    setInvoiceError(null)
+    onMarkComplete({
+      laborCost: labor,
+      materialCost: material,
+      taxAmount: tax,
+      vendorNotes: statusNote.trim() || null,
+    })
+  }
+
   return (
     <div className="fixed inset-0 z-50 flex justify-end">
       <div role="presentation" className="absolute inset-0 bg-black/40" aria-hidden onClick={onClose} />
@@ -1049,21 +1079,67 @@ function VendorInProgressWorkOrderDetailRail({
             <VendorWorkOrderWideScrollBody order={order} />
             <div className="border-t border-[#e5e7eb] pt-6">
               <h3 className="m-0 text-[18px] font-semibold leading-[27px] tracking-[-0.4395px] text-[#101828]">
-                Update Status
+                Complete job &amp; submit invoice
               </h3>
+              <p className="mt-1 text-[13px] text-[#6a7282]">
+                Upload costs for landlord approval. Spend appears in analytics after approval.
+              </p>
+              <div className="mt-4 grid gap-3 sm:grid-cols-3">
+                <label className="flex flex-col gap-1 text-[13px] text-[#4a5565]" htmlFor={laborId}>
+                  Labor ($)
+                  <input
+                    id={laborId}
+                    type="number"
+                    min={0}
+                    step="0.01"
+                    value={laborCost}
+                    onChange={(e) => setLaborCost(e.target.value)}
+                    className="h-10 rounded-[8px] border border-[#e5e7eb] px-3 text-[14px] text-[#101828]"
+                  />
+                </label>
+                <label className="flex flex-col gap-1 text-[13px] text-[#4a5565]" htmlFor={materialId}>
+                  Materials ($)
+                  <input
+                    id={materialId}
+                    type="number"
+                    min={0}
+                    step="0.01"
+                    value={materialCost}
+                    onChange={(e) => setMaterialCost(e.target.value)}
+                    className="h-10 rounded-[8px] border border-[#e5e7eb] px-3 text-[14px] text-[#101828]"
+                  />
+                </label>
+                <label className="flex flex-col gap-1 text-[13px] text-[#4a5565]" htmlFor={taxId}>
+                  Tax ($)
+                  <input
+                    id={taxId}
+                    type="number"
+                    min={0}
+                    step="0.01"
+                    value={taxAmount}
+                    onChange={(e) => setTaxAmount(e.target.value)}
+                    className="h-10 rounded-[8px] border border-[#e5e7eb] px-3 text-[14px] text-[#101828]"
+                  />
+                </label>
+              </div>
               <VendorWorkOrderStatusNoteFields
                 noteId={noteId}
                 statusNote={statusNote}
                 setStatusNote={setStatusNote}
                 fileInputRef={fileInputRef}
               />
+              {invoiceError ? (
+                <p className="mt-3 text-[13px] text-[#c10007]" role="alert">
+                  {invoiceError}
+                </p>
+              ) : null}
               <hr
                 className="mt-6 w-full border-0 border-t border-[#e5e7eb]"
                 aria-hidden
               />
               <button
                 type="button"
-                onClick={onMarkComplete}
+                onClick={submitCompleteWithInvoice}
                 className="mt-6 flex h-10 w-full items-center justify-center gap-2 rounded-[10px] bg-[#ffee6c] text-[16px] font-medium leading-6 tracking-[-0.3125px] text-[#101828] outline-none hover:bg-[#f5e35e] focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2"
               >
                 <IconMarkCompleteCircle />
@@ -1240,6 +1316,7 @@ export function VendorPortalDashboard({
   async function runStatusAction(
     ticketId: string,
     action: 'accept' | 'decline' | 'in_progress' | 'completed',
+    invoice?: VendorInvoiceInput,
   ) {
     if (!updateUrl) return
     setActionError(null)
@@ -1272,6 +1349,7 @@ export function VendorPortalDashboard({
         action,
         updateUrl,
         vendorToken,
+        invoice,
       })
       if (res.ok) applyVendorStatusToOrder(ticketId, res.vendor_work_status)
     } catch (e) {
@@ -1376,9 +1454,9 @@ export function VendorPortalDashboard({
     patchOrder(id, { vendorDbStatus: 'accepted' })
   }
 
-  function completeWork(id: string) {
+  function completeWork(id: string, invoice: VendorInvoiceInput) {
     if (useLiveVendorApi) {
-      void runStatusAction(id, 'completed').then(() => setSelectedId(null))
+      void runStatusAction(id, 'completed', invoice).then(() => setSelectedId(null))
       return
     }
     patchOrder(id, { column: 'completed' })
@@ -1563,7 +1641,7 @@ export function VendorPortalDashboard({
           key={selected.id}
           order={selected}
           onClose={() => setSelectedId(null)}
-          onMarkComplete={() => completeWork(selected.id)}
+          onMarkComplete={(invoice) => completeWork(selected.id, invoice)}
           onCancelWork={() => declineJob(selected.id)}
         />
       ) : selected && selected.column === 'completed' ? (

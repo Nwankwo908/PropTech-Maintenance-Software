@@ -2,6 +2,7 @@ import { useRef, useState } from 'react'
 import { Link, Outlet, useNavigate } from 'react-router-dom'
 import uloLogo from '@/assets/landing/ulo-logo.png'
 import { AdminSidebarContent } from '@/components/AdminSidebar'
+import { signOutAdmin } from '@/lib/adminAuth'
 import {
   getActiveLandlordId,
   getSessionLandlordId,
@@ -9,6 +10,8 @@ import {
   LANDLORD_ACCOUNT_OPTIONS,
   setActiveLandlordOverride,
 } from '@/lib/activeLandlord'
+import { isOnboardingLandlordAccount } from '@/lib/landlordOnboarding'
+import { supabase } from '@/lib/supabase'
 
 function SearchIcon() {
   return (
@@ -50,6 +53,37 @@ function AiSparkleIcon() {
   )
 }
 
+function AdminHeaderActions({ onNavigate }: { onNavigate?: () => void }) {
+  const navigate = useNavigate()
+
+  return (
+    <div className="flex shrink-0 items-center gap-2">
+      <Link
+        to="/admin/notifications"
+        aria-label="Notifications"
+        onClick={onNavigate}
+        className="flex size-9 shrink-0 items-center justify-center rounded-full text-[#101828] outline-none transition-colors duration-150 hover:bg-[#f3f4f6] active:bg-[#e5e7eb] focus-visible:ring-2 focus-visible:ring-[#101828] focus-visible:ring-offset-2"
+      >
+        <BellIcon />
+      </Link>
+      {supabase ? (
+        <button
+          type="button"
+          className="shrink-0 cursor-pointer rounded-[10px] border border-[#e5e7eb] bg-white px-3 py-1.5 text-[13px] font-medium text-[#364153] outline-none transition-colors duration-150 hover:bg-[#f3f4f6] active:bg-[#e5e7eb] focus-visible:ring-2 focus-visible:ring-[#101828] focus-visible:ring-offset-2"
+          onClick={async (e) => {
+            e.stopPropagation()
+            await signOutAdmin()
+            onNavigate?.()
+            navigate('/admin/login', { replace: true })
+          }}
+        >
+          Sign out
+        </button>
+      ) : null}
+    </div>
+  )
+}
+
 function AdminTopBar() {
   const navigate = useNavigate()
   const [query, setQuery] = useState('')
@@ -80,7 +114,7 @@ function AdminTopBar() {
         <button
           type="button"
           title="Ulo AI assistant"
-          className="flex shrink-0 cursor-pointer items-center gap-2 rounded-[10px] bg-[#101828] px-4 py-[9px] text-center text-[14px] font-medium leading-5 tracking-[-0.1504px] text-white outline-none transition-colors duration-150 hover:bg-[#1e2939] active:bg-[#101828] focus-visible:ring-2 focus-visible:ring-[#101828] focus-visible:ring-offset-2"
+          className="flex shrink-0 cursor-pointer items-center gap-2 rounded-[10px] bg-[#20967C] px-4 py-[9px] text-center text-[14px] font-medium leading-5 tracking-[-0.1504px] text-white outline-none transition-colors duration-150 hover:bg-[#1a7d68] active:bg-[#20967C] focus-visible:ring-2 focus-visible:ring-[#20967C] focus-visible:ring-offset-2"
         >
           <AiSparkleIcon />
           Ask Ulo AI
@@ -90,6 +124,10 @@ function AdminTopBar() {
           <span className="shrink-0 rounded-full bg-[#fef9c2] px-3 py-1 text-[12px] font-semibold uppercase tracking-[0.06em] text-[#a65f00]">
             Demo data
           </span>
+        ) : isOnboardingLandlordAccount() ? (
+          <span className="shrink-0 rounded-full bg-[#dbeafe] px-3 py-1 text-[12px] font-semibold uppercase tracking-[0.06em] text-[#1d4ed8]">
+            Onboarding
+          </span>
         ) : null}
         {getSessionLandlordId() === null ? (
           <label className="flex shrink-0 items-center gap-2 text-[12px] text-[#6a7282]">
@@ -97,7 +135,7 @@ function AdminTopBar() {
             <select
               value={getActiveLandlordId()}
               onChange={(e) => setActiveLandlordOverride(e.target.value)}
-              className="h-9 cursor-pointer rounded-[8px] border border-[#e5e7eb] bg-white px-2 text-[13px] text-[#101828] outline-none focus-visible:ring-2 focus-visible:ring-[#101828]/20"
+              className="h-9 cursor-pointer rounded-[10px] border border-[#e5e7eb] bg-white px-2 text-[13px] text-[#101828] outline-none focus-visible:ring-2 focus-visible:ring-[#101828]/20"
               aria-label="Switch landlord account"
             >
               {LANDLORD_ACCOUNT_OPTIONS.map((opt) => (
@@ -108,13 +146,7 @@ function AdminTopBar() {
             </select>
           </label>
         ) : null}
-        <Link
-          to="/admin/notifications"
-          aria-label="Notifications"
-          className="flex size-9 shrink-0 items-center justify-center rounded-full text-[#101828] outline-none transition-colors duration-150 hover:bg-[#f3f4f6] active:bg-[#e5e7eb] focus-visible:ring-2 focus-visible:ring-[#101828] focus-visible:ring-offset-2"
-        >
-          <BellIcon />
-        </Link>
+        <AdminHeaderActions />
       </div>
     </header>
   )
@@ -124,7 +156,7 @@ export function AdminLayout() {
   const mobileNavRef = useRef<HTMLDetailsElement>(null)
 
   return (
-    <div className="flex min-h-dvh w-full bg-[#f9fafb] font-sans">
+    <div className="flex min-h-dvh w-full bg-[#f9fafb] font-[family-name:var(--font-admin)]">
       <aside className="relative z-20 hidden h-dvh max-h-dvh w-64 shrink-0 border-r border-[#e5e7eb] bg-white lg:sticky lg:top-0 lg:flex lg:flex-col">
         <AdminSidebarContent forRail />
       </aside>
@@ -148,11 +180,16 @@ export function AdminLayout() {
                 <p className="text-[11px] text-[#6a7282]">Property Mgmt</p>
               </div>
             </div>
-            <span className="shrink-0 text-[12px] font-medium text-[#364153] group-open:rotate-180">
+            <div className="flex shrink-0 items-center gap-2">
+              <AdminHeaderActions
+                onNavigate={() => mobileNavRef.current?.removeAttribute('open')}
+              />
+              <span className="shrink-0 text-[12px] font-medium text-[#364153] group-open:rotate-180">
               <svg className="size-5" viewBox="0 0 24 24" fill="none" stroke="currentColor">
                 <path d="M6 9l6 6 6-6" strokeWidth={2} />
               </svg>
-            </span>
+              </span>
+            </div>
           </summary>
           <div className="flex max-h-[min(70dvh,520px)] flex-col overflow-hidden border-t border-[#e5e7eb]">
             <AdminSidebarContent

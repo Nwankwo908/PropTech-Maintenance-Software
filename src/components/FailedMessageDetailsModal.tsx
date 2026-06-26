@@ -291,7 +291,7 @@ export function FailedMessageDetailsModal({
                 <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                   <label
                     className={[
-                      'block cursor-pointer rounded-[10px] border-2 px-[18px] pb-[10px] pt-[18px] shadow-[0px_1px_2px_0px_rgba(0,0,0,0.05)] outline-none transition-colors focus-within:ring-2 focus-within:ring-primary focus-within:ring-offset-2',
+                      'group block cursor-pointer rounded-[10px] border-2 px-[18px] pb-[10px] pt-[18px] shadow-[0px_1px_2px_0px_rgba(0,0,0,0.05)] outline-none transition-colors focus-within:ring-2 focus-within:ring-primary focus-within:ring-offset-2',
                       channelEmail
                         ? 'border-extended-1 bg-extended-2'
                         : 'border-secondary bg-white',
@@ -307,10 +307,10 @@ export function FailedMessageDetailsModal({
                       />
                       <span
                         className={[
-                          'flex size-4 shrink-0 items-center justify-center rounded shadow-[0px_1px_2px_0px_rgba(0,0,0,0.05)]',
+                          'flex size-4 shrink-0 items-center justify-center rounded border shadow-[0px_1px_2px_0px_rgba(0,0,0,0.05)] transition-[background-color,border-color,box-shadow] duration-150',
                           channelEmail
-                            ? 'border border-extended-3 bg-extended-3'
-                            : 'border border-black/10 bg-secondary',
+                            ? 'border-extended-3 bg-extended-3 group-hover:brightness-95'
+                            : 'border-black/10 bg-secondary group-hover:border-black/15 group-hover:bg-[#e8eaee] group-hover:shadow-sm',
                         ].join(' ')}
                         aria-hidden
                       >
@@ -337,7 +337,7 @@ export function FailedMessageDetailsModal({
                   </label>
                   <label
                     className={[
-                      'block cursor-pointer rounded-[10px] border-2 px-[18px] pb-[10px] pt-[18px] shadow-[0px_1px_2px_0px_rgba(0,0,0,0.05)] outline-none transition-colors focus-within:ring-2 focus-within:ring-primary focus-within:ring-offset-2',
+                      'group block cursor-pointer rounded-[10px] border-2 px-[18px] pb-[10px] pt-[18px] shadow-[0px_1px_2px_0px_rgba(0,0,0,0.05)] outline-none transition-colors focus-within:ring-2 focus-within:ring-primary focus-within:ring-offset-2',
                       channelSms
                         ? 'border-extended-1 bg-extended-2'
                         : 'border-secondary bg-white',
@@ -353,10 +353,10 @@ export function FailedMessageDetailsModal({
                       />
                       <span
                         className={[
-                          'flex size-4 shrink-0 items-center justify-center rounded shadow-[0px_1px_2px_0px_rgba(0,0,0,0.05)]',
+                          'flex size-4 shrink-0 items-center justify-center rounded border shadow-[0px_1px_2px_0px_rgba(0,0,0,0.05)] transition-[background-color,border-color,box-shadow] duration-150',
                           channelSms
-                            ? 'border border-extended-3 bg-extended-3'
-                            : 'border border-black/10 bg-secondary',
+                            ? 'border-extended-3 bg-extended-3 group-hover:brightness-95'
+                            : 'border-black/10 bg-secondary group-hover:border-black/15 group-hover:bg-[#e8eaee] group-hover:shadow-sm',
                         ].join(' ')}
                         aria-hidden
                       >

@@ -28,7 +28,7 @@ function EditMessageChannelRow({
   onChange: (next: boolean) => void
 }) {
   return (
-    <label htmlFor={id} className="flex cursor-pointer items-center gap-2">
+    <label htmlFor={id} className="group flex cursor-pointer items-center gap-2">
       <input
         id={id}
         type="checkbox"
@@ -38,10 +38,10 @@ function EditMessageChannelRow({
       />
       <span
         className={[
-          'flex size-4 shrink-0 items-center justify-center rounded shadow-[0px_1px_2px_0px_rgba(0,0,0,0.05)] peer-focus-visible:ring-2 peer-focus-visible:ring-primary peer-focus-visible:ring-offset-2',
+          'flex size-4 shrink-0 items-center justify-center rounded border shadow-[0px_1px_2px_0px_rgba(0,0,0,0.05)] transition-[background-color,border-color,box-shadow] duration-150 peer-focus-visible:ring-2 peer-focus-visible:ring-primary peer-focus-visible:ring-offset-2',
           checked
-            ? 'border border-extended-3 bg-extended-3'
-            : 'border border-black/10 bg-secondary',
+            ? 'border-extended-3 bg-extended-3 group-hover:brightness-95'
+            : 'border-black/10 bg-secondary group-hover:border-black/15 group-hover:bg-[#e8eaee] group-hover:shadow-sm',
         ].join(' ')}
       >
         {checked ? (

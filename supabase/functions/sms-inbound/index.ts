@@ -1,5 +1,5 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1"
-import { getSMSProvider } from "../_shared/sms/providerFactory.ts"
+import { getSMSProvider, resolveProviderName } from "../_shared/sms/providerFactory.ts"
 import { resolveTwilioWebhookValidationUrl } from "../_shared/sms/TwilioProvider.ts"
 import {
   InboundSmsError,
@@ -10,8 +10,15 @@ import {
 const corsHeaders: Record<string, string> = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers":
-    "authorization, x-client-info, apikey, content-type, x-twilio-signature",
+    "authorization, x-client-info, apikey, content-type, x-twilio-signature, telnyx-signature-ed25519, telnyx-timestamp",
   "Access-Control-Allow-Methods": "POST, OPTIONS",
+}
+
+function webhookAckResponse(): Response {
+  if (resolveProviderName() === "telnyx") {
+    return new Response("", { status: 200, headers: corsHeaders })
+  }
+  return twilioEmptyTwiMLResponse()
 }
 
 function errorResponse(message: string, status: number): Response {
@@ -19,7 +26,10 @@ function errorResponse(message: string, status: number): Response {
   if (status >= 500) {
     return new Response(message, { status, headers: corsHeaders })
   }
-  return twilioEmptyTwiMLResponse()
+  if (status === 401) {
+    return new Response("Unauthorized", { status: 401, headers: corsHeaders })
+  }
+  return webhookAckResponse()
 }
 
 Deno.serve(async (req) => {
@@ -68,15 +78,19 @@ Deno.serve(async (req) => {
       outboundMessageId: result.outboundMessageId,
     })
 
-    // Replies are sent via getSMSProvider().sendMessage(); return empty TwiML ack only.
-    return twilioEmptyTwiMLResponse()
+    // Replies are sent via getSMSProvider().sendMessage(); return provider-specific ack.
+    return webhookAckResponse()
   } catch (err) {
     if (err instanceof InboundSmsError) {
       return errorResponse(err.message, err.status)
     }
 
     const message = err instanceof Error ? err.message : String(err)
-    if (/Invalid Twilio webhook signature/i.test(message)) {
+    if (
+      /Invalid Twilio webhook signature/i.test(message) ||
+      /Invalid Telnyx webhook signature/i.test(message) ||
+      /Missing Telnyx webhook signature headers/i.test(message)
+    ) {
       return new Response("Unauthorized", { status: 401, headers: corsHeaders })
     }
 

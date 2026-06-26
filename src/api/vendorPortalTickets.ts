@@ -137,11 +137,28 @@ export async function fetchVendorTickets(
 const uuidRe =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
 
+export type VendorInvoiceInput = {
+  laborCost: number
+  materialCost: number
+  taxAmount: number
+  invoiceNumber?: string | null
+  vendorNotes?: string | null
+}
+
+export function vendorPortalInvoiceUrl(): string | undefined {
+  const explicit = import.meta.env.VITE_VENDOR_PORTAL_INVOICE_URL?.trim()
+  if (explicit) return explicit
+  const list = vendorPortalListUrl()
+  if (!list) return undefined
+  return list.replace(/vendor-list-tickets\/?$/, 'vendor-submit-maintenance-invoice')
+}
+
 export async function postVendorJobStatus(
   updateUrl: string,
   ticketId: string,
   action: "accept" | "decline" | "in_progress" | "completed",
   vendorToken: string,
+  invoice?: VendorInvoiceInput,
 ): Promise<{ vendor_work_status: string }> {
   if (!uuidRe.test(ticketId)) {
     throw new Error("Invalid ticket id")
@@ -157,7 +174,11 @@ export async function postVendorJobStatus(
   const res = await fetch(updateUrl, {
     method: "POST",
     headers,
-    body: JSON.stringify({ ticketId, action }),
+    body: JSON.stringify({
+      ticketId,
+      action,
+      ...(invoice && action === "completed" ? { invoice } : {}),
+    }),
   })
 
   if (res.status === 401) {
@@ -185,11 +206,58 @@ export async function postVendorJobStatus(
   return { vendor_work_status: ok.vendor_work_status }
 }
 
+export async function postVendorMaintenanceInvoice(
+  invoiceUrl: string,
+  ticketId: string,
+  invoice: VendorInvoiceInput,
+  vendorToken: string,
+): Promise<{ totalCost: number; invoiceId: string }> {
+  if (!uuidRe.test(ticketId)) {
+    throw new Error("Invalid ticket id")
+  }
+
+  const bearer = readVendorAccessToken() || vendorToken.trim()
+  if (!bearer) throw new Error("Missing vendor token")
+
+  const headers = new Headers()
+  headers.set("Authorization", `Bearer ${bearer}`)
+  headers.set("Content-Type", "application/json")
+
+  const res = await fetch(invoiceUrl, {
+    method: "POST",
+    headers,
+    body: JSON.stringify({ ticketId, invoice }),
+  })
+
+  if (res.status === 401) {
+    clearVendorTokenAndShowInvalidCode()
+    throw new Error("Invalid access code")
+  }
+
+  const text = await res.text()
+  let parsed: unknown
+  try {
+    parsed = text ? JSON.parse(text) : {}
+  } catch {
+    throw new Error(`Vendor invoice: invalid JSON (${res.status})`)
+  }
+  if (!res.ok) {
+    const err = parsed as { error?: string }
+    throw new Error(err.error ?? `Vendor invoice failed (${res.status})`)
+  }
+  const ok = parsed as { totalCost?: number; invoiceId?: string }
+  if (ok.totalCost == null || !ok.invoiceId) {
+    throw new Error("Vendor invoice: missing response fields")
+  }
+  return { totalCost: ok.totalCost, invoiceId: ok.invoiceId }
+}
+
 export type UpdateJobStatusInput = {
   ticketId: string
   action: "accept" | "decline" | "in_progress" | "completed"
   updateUrl: string
   vendorToken: string
+  invoice?: VendorInvoiceInput
 }
 
 export async function updateJobStatus(
@@ -200,6 +268,7 @@ export async function updateJobStatus(
     input.ticketId,
     input.action,
     input.vendorToken,
+    input.invoice,
   )
   return { ok: true, vendor_work_status }
 }

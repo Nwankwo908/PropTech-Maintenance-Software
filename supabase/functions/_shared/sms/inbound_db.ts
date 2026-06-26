@@ -1,5 +1,6 @@
 import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.49.1"
 import { normalizePhoneFlexible } from "../resident_notify.ts"
+import { claimPoolNumberByPhone } from "./smsNumberPool.ts"
 
 /** Normalize to E.164 when possible; fall back to trimmed raw for lookup. */
 export function normalizeSmsPhone(input: string): string {
@@ -56,6 +57,64 @@ export async function lookupSmsNumberByTo(
   }
 
   return (data as SmsNumberRow | null) ?? null
+}
+
+/**
+ * Resolve the Ulo line for an inbound SMS.
+ * Active landlord_main first; otherwise auto-claim an available pool row using DEFAULT_LANDLORD_ID.
+ */
+export async function resolveInboundSmsNumber(
+  supabase: SupabaseClient,
+  toNumber: string,
+): Promise<SmsNumberRow | null> {
+  const active = await lookupSmsNumberByTo(supabase, toNumber)
+  if (active) return active
+
+  const variants = phoneLookupVariants(toNumber)
+  if (variants.length === 0) return null
+
+  const { data: poolRow, error: poolErr } = await supabase
+    .from("sms_numbers")
+    .select(
+      "id, landlord_id, vendor_id, phone_number, provider, purpose, status, release_auto_reply",
+    )
+    .in("phone_number", variants)
+    .eq("purpose", "pool")
+    .is("landlord_id", null)
+    .in("status", ["available", "active"])
+    .limit(1)
+    .maybeSingle()
+
+  if (poolErr) {
+    console.error("[sms-inbound] pool number lookup", poolErr.message)
+    throw new Error("Failed to look up SMS pool number")
+  }
+
+  if (!poolRow) return null
+
+  const landlordId = Deno.env.get("DEFAULT_LANDLORD_ID")?.trim()
+  if (!landlordId) {
+    console.error("[sms-inbound] pool number matched but DEFAULT_LANDLORD_ID is unset", {
+      to: toNumber,
+      smsNumberId: poolRow.id,
+    })
+    return null
+  }
+
+  const claimed = await claimPoolNumberByPhone(supabase, {
+    phoneNumber: toNumber,
+    landlordId,
+  })
+
+  if (claimed) {
+    console.info("[sms-inbound] auto-claimed pool number for inbound", {
+      to: toNumber,
+      landlordId,
+      smsNumberId: claimed.id,
+    })
+  }
+
+  return claimed
 }
 
 /** Numbers in churn — inbound gets auto-reply only, no workflow routing. */

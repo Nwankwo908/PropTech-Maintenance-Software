@@ -6,7 +6,7 @@ import type { SmsProviderName } from "./types.ts"
 let cachedProvider: SMSProvider | null = null
 let cachedProviderName: SmsProviderName | null = null
 
-function resolveProviderName(): SmsProviderName {
+export function resolveProviderName(): SmsProviderName {
   const raw = Deno.env.get("SMS_PROVIDER")?.trim().toLowerCase() || "twilio"
   if (raw === "twilio") return "twilio"
   if (raw === "telnyx") return "telnyx"

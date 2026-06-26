@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
+import { PropertyHealthBuildingGrid } from '@/components/PropertyHealthBuildingGrid'
 import { getActiveLandlordId } from '@/lib/activeLandlord'
 import {
   fetchAdminWorkflowDashboard,
@@ -12,6 +13,18 @@ import {
   formatTimelineContextLine,
   type PropertyOperationsTimelineEvent,
 } from '@/lib/propertyOperationsGraph'
+import {
+  buildPropertyHealthReport,
+  enrichFeedbackFromTickets,
+  fetchPropertyHealthSignals,
+  formatPropertyHealthTooltip,
+  mapTicketsForPropertyHealth,
+  mapUnitsForPropertyHealth,
+  PROPERTY_HEALTH_KPI_CAPTION,
+  type PropertyHealthFeedback,
+  type PropertyHealthPmTask,
+  type PropertyHealthVendorMetrics,
+} from '@/lib/propertyHealth'
 import { supabase } from '@/lib/supabase'
 
 type OverviewTicket = {
@@ -25,6 +38,10 @@ type OverviewTicket = {
   assignedVendorId: string | null
   residentName: string | null
   estimatedMinutes: number | null
+  /** Actual total from an extracted vendor invoice (labor + materials + tax), when available. */
+  totalCost: number | null
+  /** When the job was marked complete, when the schema records it. */
+  completedAt: string | null
 }
 
 type OverviewUnit = {
@@ -32,17 +49,6 @@ type OverviewUnit = {
   unitLabel: string
   building: string | null
   status: string
-}
-
-type BuildingHealth = {
-  building: string
-  unitCount: number
-  openTickets: number
-  occupancyPct: number
-  health: number
-  status: 'healthy' | 'monitor' | 'at_risk'
-  /** Estimated maintenance spend over the last 30 days (cost proxy). */
-  monthlySpend: number
 }
 
 type SmartInsight = {
@@ -59,6 +65,7 @@ type AttentionItem = {
   meta: string
   actionLabel: string
   actionTo: string
+  actionStyle?: 'alert'
 }
 
 const CRITICAL_LEVELS = new Set(['urgent', 'emergency', 'critical', 'high'])
@@ -88,7 +95,37 @@ function normalizeTicketRow(raw: Record<string, unknown>): OverviewTicket {
       typeof raw.estimated_minutes === 'number' && Number.isFinite(raw.estimated_minutes)
         ? raw.estimated_minutes
         : null,
+    totalCost: invoiceTotalFromRow(raw),
+    completedAt:
+      asString(raw.completed_at) ||
+      asString(raw.resolved_at) ||
+      asString(raw.closed_at) ||
+      null,
   }
+}
+
+function asFiniteNumber(value: unknown): number | null {
+  if (typeof value === 'number' && Number.isFinite(value)) return value
+  if (typeof value === 'string' && value.trim()) {
+    const parsed = Number(value)
+    if (Number.isFinite(parsed)) return parsed
+  }
+  return null
+}
+
+/**
+ * Total cost recorded from an extracted vendor invoice. Prefers an explicit
+ * total column; otherwise sums labor + materials + tax when those are present.
+ * Returns null when no invoice cost exists yet (job not invoiced).
+ */
+function invoiceTotalFromRow(raw: Record<string, unknown>): number | null {
+  const total = asFiniteNumber(raw.total_cost ?? raw.invoice_total ?? raw.amount)
+  if (total != null) return total
+  const labor = asFiniteNumber(raw.labor_cost)
+  const material = asFiniteNumber(raw.material_cost ?? raw.materials_cost)
+  const tax = asFiniteNumber(raw.tax_amount ?? raw.tax)
+  if (labor == null && material == null && tax == null) return null
+  return (labor ?? 0) + (material ?? 0) + (tax ?? 0)
 }
 
 /**
@@ -99,12 +136,41 @@ function ticketCostEstimate(ticket: OverviewTicket): number {
   return (ticket.estimatedMinutes ?? 240) * 1.25
 }
 
-function formatSpend(amount: number): string {
+/**
+ * Spend for a single ticket: the real extracted invoice total when available,
+ * otherwise the estimate proxy so the figure stays populated pre-invoicing.
+ */
+function ticketSpend(ticket: OverviewTicket): number {
+  return ticket.totalCost ?? ticketCostEstimate(ticket)
+}
+
+/** Date a job's spend should be attributed to (completion date, else created). */
+function ticketSpendDate(ticket: OverviewTicket): number {
+  const completed = ticket.completedAt ? new Date(ticket.completedAt).getTime() : NaN
+  if (!Number.isNaN(completed)) return completed
+  return new Date(ticket.createdAt).getTime()
+}
+
+function isCompletedJob(ticket: OverviewTicket): boolean {
+  return ticket.vendorWorkStatus === 'completed'
+}
+
+/** Abbreviated currency, e.g. "$1k", "$48.2k", "$1.2M". */
+function formatSpendCompact(amount: number): string {
   return new Intl.NumberFormat(undefined, {
     style: 'currency',
     currency: 'USD',
-    maximumFractionDigits: 0,
-  }).format(amount)
+    notation: 'compact',
+    maximumFractionDigits: 1,
+  })
+    .format(amount)
+    .replace('K', 'k')
+}
+
+/** Signed abbreviated currency for a delta pill, e.g. "+$1.2k" / "-$340" / "$0". */
+function formatSignedSpend(amount: number): string {
+  const sign = amount > 0 ? '+' : amount < 0 ? '-' : ''
+  return `${sign}${formatSpendCompact(Math.abs(amount))}`
 }
 
 function isTicketOpen(ticket: OverviewTicket): boolean {
@@ -194,20 +260,12 @@ function TrendingDownIcon() {
   )
 }
 
-function BuildingIcon() {
-  return (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} className="size-5">
-      <rect x="4" y="3" width="16" height="18" rx="1.5" />
-      <path d="M9 7h2M13 7h2M9 11h2M13 11h2M9 15h2M13 15h2M10 21v-3h4v3" />
-    </svg>
-  )
-}
-
 function KpiCard({
   label,
   value,
   delta,
   deltaSuffix = '',
+  deltaFormatter,
   goodWhenUp = false,
   caption,
 }: {
@@ -216,6 +274,8 @@ function KpiCard({
   delta: number | null
   /** Appended to the delta, e.g. '%' for rate cards. */
   deltaSuffix?: string
+  /** Renders the full signed delta string (e.g. currency); overrides deltaSuffix. */
+  deltaFormatter?: (delta: number) => string
   /** True when an increase is a good trend (e.g. health), false when it's bad (e.g. critical issues). */
   goodWhenUp?: boolean
   caption: string
@@ -245,7 +305,11 @@ function KpiCard({
             ].join(' ')}
           >
             {neutral ? null : positive ? <TrendingUpIcon /> : <TrendingDownIcon />}
-            {positive ? `+${delta}${deltaSuffix}` : `${delta}${deltaSuffix}`}
+            {deltaFormatter
+              ? deltaFormatter(delta ?? 0)
+              : positive
+                ? `+${delta}${deltaSuffix}`
+                : `${delta}${deltaSuffix}`}
           </span>
         ) : null}
       </div>
@@ -271,30 +335,15 @@ const FEED_BADGE_STYLES: Record<string, string> = {
   admin: 'bg-[#f3f4f6] text-[#364153]',
 }
 
-const HEALTH_BADGE_STYLES: Record<BuildingHealth['status'], string> = {
-  healthy: 'bg-[#dbfce7] text-[#008236]',
-  monitor: 'bg-[#fef9c2] text-[#a65f00]',
-  at_risk: 'bg-[#ffe2e2] text-[#c10007]',
-}
-
-const HEALTH_BADGE_LABELS: Record<BuildingHealth['status'], string> = {
-  healthy: 'HEALTHY',
-  monitor: 'MONITOR',
-  at_risk: 'AT RISK',
-}
-
-const HEALTH_BAR_STYLES: Record<BuildingHealth['status'], string> = {
-  healthy: 'bg-[#00c950]',
-  monitor: 'bg-[#fdc700]',
-  at_risk: 'bg-[#fb2c36]',
-}
-
 export function AdminOverviewDashboard() {
   const [tickets, setTickets] = useState<OverviewTicket[]>([])
   const [units, setUnits] = useState<OverviewUnit[]>([])
   const [workflowData, setWorkflowData] =
     useState<AdminWorkflowDashboardData | null>(null)
   const [feedEvents, setFeedEvents] = useState<PropertyOperationsTimelineEvent[]>([])
+  const [pmTasks, setPmTasks] = useState<PropertyHealthPmTask[]>([])
+  const [feedback, setFeedback] = useState<PropertyHealthFeedback[]>([])
+  const [vendorMetrics, setVendorMetrics] = useState<PropertyHealthVendorMetrics[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null)
@@ -312,43 +361,53 @@ export function AdminOverviewDashboard() {
       setLoading(true)
       setError(null)
 
-      const [ticketsResult, unitsResult, workflowResult, feedResult] =
-        await Promise.allSettled([
+      const landlordId = getActiveLandlordId()
+      const [ticketsResult, unitsResult, workflowResult, feedResult, healthSignals] =
+        await Promise.all([
           supabase
-            .from('maintenance_requests')
-            .select('*')
-            .eq('landlord_id', getActiveLandlordId())
+            .from('maintenance_request_enriched')
+            .select(
+              'id, created_at, unit, unit_id, building, issue_category, assigned_vendor_id, vendor_work_status, urgency, severity, priority, due_at, resident_name, estimated_minutes, total_cost, invoice_total, amount, labor_cost, material_cost, materials_cost, tax_amount, tax, completed_at, resolved_at, closed_at',
+            )
+            .eq('landlord_id', landlordId)
             .order('created_at', { ascending: false })
-            .limit(500),
+            .limit(500)
+            .then((r) =>
+              r.error
+                ? supabase!
+                    .from('maintenance_requests')
+                    .select('*')
+                    .eq('landlord_id', landlordId)
+                    .order('created_at', { ascending: false })
+                    .limit(500)
+                : r,
+            ),
           supabase
             .from('units')
             .select('id, unit_label, building, status')
-            .eq('landlord_id', getActiveLandlordId())
+            .eq('landlord_id', landlordId)
             .limit(1000),
           fetchAdminWorkflowDashboard(),
           fetchRecentPropertyOperationsEvents(8),
+          fetchPropertyHealthSignals(),
         ])
 
       if (cancelled) return
 
-      if (ticketsResult.status === 'fulfilled' && !ticketsResult.value.error) {
+      if (!ticketsResult.error) {
         setTickets(
-          ((ticketsResult.value.data ?? []) as Record<string, unknown>[]).map(
-            normalizeTicketRow,
-          ),
+          ((ticketsResult.data ?? []) as Record<string, unknown>[]).map(normalizeTicketRow),
         )
       } else {
         console.error(
-          '[admin overview] maintenance_requests fetch failed',
-          ticketsResult.status === 'fulfilled'
-            ? ticketsResult.value.error?.message
-            : ticketsResult.reason,
+          '[admin overview] maintenance requests fetch failed',
+          ticketsResult.error.message,
         )
       }
 
-      if (unitsResult.status === 'fulfilled' && !unitsResult.value.error) {
+      if (!unitsResult.error) {
         setUnits(
-          ((unitsResult.value.data ?? []) as Record<string, unknown>[]).map((r) => ({
+          ((unitsResult.data ?? []) as Record<string, unknown>[]).map((r) => ({
             id: asString(r.id),
             unitLabel: asString(r.unit_label),
             building: asString(r.building) || null,
@@ -357,15 +416,11 @@ export function AdminOverviewDashboard() {
         )
       }
 
-      if (workflowResult.status === 'fulfilled') {
-        setWorkflowData(workflowResult.value)
-      } else {
-        console.error('[admin overview] workflow dashboard fetch failed', workflowResult.reason)
-      }
-
-      if (feedResult.status === 'fulfilled') {
-        setFeedEvents(feedResult.value)
-      }
+      setWorkflowData(workflowResult)
+      setFeedEvents(feedResult)
+      setPmTasks(healthSignals.pmTasks)
+      setFeedback(healthSignals.feedback)
+      setVendorMetrics(healthSignals.vendorMetrics)
 
       setLastUpdated(new Date())
       setLoading(false)
@@ -381,6 +436,20 @@ export function AdminOverviewDashboard() {
   const fourWeeksMs = 28 * 24 * 60 * 60 * 1000
 
   const openTickets = useMemo(() => tickets.filter(isTicketOpen), [tickets])
+
+  const healthReport = useMemo(() => {
+    const healthTickets = mapTicketsForPropertyHealth(
+      tickets as unknown as Record<string, unknown>[],
+    )
+    return buildPropertyHealthReport({
+      units: mapUnitsForPropertyHealth(units as unknown as Record<string, unknown>[]),
+      tickets: healthTickets,
+      pmTasks,
+      feedback: enrichFeedbackFromTickets(feedback, healthTickets),
+      vendorMetrics,
+      now,
+    })
+  }, [units, tickets, pmTasks, feedback, vendorMetrics, now])
 
   const kpis = useMemo(() => {
     const criticalOpen = openTickets.filter(isTicketCritical).length
@@ -437,55 +506,22 @@ export function AdminOverviewDashboard() {
     }
     const activeOps = opsNow
 
-    const workOrders = openTickets.filter((t) => t.assignedVendorId).length
+    const workOrders = openTickets.length
     const ordersRecent = countCreatedBetween(
       tickets,
       now - fourWeeksMs,
       now,
-      (t) => Boolean(t.assignedVendorId),
+      isTicketOpen,
     )
     const ordersPrevious = countCreatedBetween(
       tickets,
       now - 2 * fourWeeksMs,
       now - fourWeeksMs,
-      (t) => Boolean(t.assignedVendorId),
+      isTicketOpen,
     )
 
-    const trackedUnits = units.filter((u) => u.status !== 'inactive')
-    const unitsWithOpenIssue = new Set(
-      openTickets.map((t) => normalizeUnitLabel(t.unit)).filter(Boolean),
-    )
-    const healthyUnits = trackedUnits.filter(
-      (u) => !unitsWithOpenIssue.has(normalizeUnitLabel(u.unitLabel)),
-    ).length
-    const propertyHealth = trackedUnits.length
-      ? Math.round((healthyUnits / trackedUnits.length) * 100)
-      : null
-
-    // Approximate health 4 weeks ago: still-open issues that already existed
-    // then (percentage-point change; no historical snapshots available).
-    const unitsWithOlderOpenIssue = new Set(
-      openTickets
-        .filter((t) => {
-          const ts = new Date(t.createdAt).getTime()
-          return !Number.isNaN(ts) && ts < now - fourWeeksMs
-        })
-        .map((t) => normalizeUnitLabel(t.unit))
-        .filter(Boolean),
-    )
-    const previousHealth = trackedUnits.length
-      ? Math.round(
-          (trackedUnits.filter(
-            (u) => !unitsWithOlderOpenIssue.has(normalizeUnitLabel(u.unitLabel)),
-          ).length /
-            trackedUnits.length) *
-            100,
-        )
-      : null
-    const propertyHealthDelta =
-      propertyHealth != null && previousHealth != null
-        ? propertyHealth - previousHealth
-        : null
+    const propertyHealth = healthReport.portfolio?.score ?? null
+    const propertyHealthDelta = healthReport.portfolioDelta
 
     const assigned = tickets.filter((t) => t.assignedVendorId)
     const responded = assigned.filter(
@@ -517,6 +553,24 @@ export function AdminOverviewDashboard() {
         ? responseRecent - responsePrevious
         : null
 
+    // YTD maintenance cost: total spend on completed maintenance jobs from
+    // Jan 1 (local) through now. Uses extracted invoice totals when present,
+    // else the estimate proxy, attributed to each job's completion date.
+    const startOfYear = new Date(new Date().getFullYear(), 0, 1).getTime()
+    const completedJobs = tickets.filter(isCompletedJob)
+    const spendBetween = (fromMs: number, toMs: number): number =>
+      completedJobs.reduce((sum, t) => {
+        const at = ticketSpendDate(t)
+        if (Number.isNaN(at) || at < fromMs || at >= toMs) return sum
+        return sum + ticketSpend(t)
+      }, 0)
+    const ytdMaintenanceCost = Math.round(spendBetween(startOfYear, now))
+    // 4-week-over-4-week change in completed-job spend (rising spend = bad).
+    const ytdMaintenanceCostDelta = Math.round(
+      spendBetween(now - fourWeeksMs, now) -
+        spendBetween(now - 2 * fourWeeksMs, now - fourWeeksMs),
+    )
+
     return {
       criticalOpen,
       criticalDelta: criticalRecent - criticalPrevious,
@@ -528,8 +582,10 @@ export function AdminOverviewDashboard() {
       propertyHealthDelta,
       vendorResponse,
       vendorResponseDelta,
+      ytdMaintenanceCost,
+      ytdMaintenanceCostDelta,
     }
-  }, [tickets, openTickets, units, workflowData, now, fourWeeksMs])
+  }, [tickets, openTickets, units, workflowData, healthReport, now, fourWeeksMs])
 
   const attentionItems = useMemo<AttentionItem[]>(() => {
     const items: AttentionItem[] = []
@@ -552,6 +608,7 @@ export function AdminOverviewDashboard() {
         meta: `Due ${formatRelativeTime(t.dueAt ?? t.createdAt)}`,
         actionLabel: 'Review',
         actionTo: '/admin/requests',
+        actionStyle: 'alert',
       })
     }
 
@@ -602,71 +659,10 @@ export function AdminOverviewDashboard() {
     (i) => i.badge === 'critical',
   ).length
 
-  const buildingHealth = useMemo<BuildingHealth[]>(() => {
-    if (units.length === 0) return []
-
-    const byBuilding = new Map<string, OverviewUnit[]>()
-    for (const unit of units) {
-      const key = unit.building ?? 'Portfolio'
-      const list = byBuilding.get(key) ?? []
-      list.push(unit)
-      byBuilding.set(key, list)
-    }
-
-    const openByUnitLabel = new Map<string, number>()
-    for (const t of openTickets) {
-      const key = normalizeUnitLabel(t.unit)
-      if (!key) continue
-      openByUnitLabel.set(key, (openByUnitLabel.get(key) ?? 0) + 1)
-    }
-
-    // Estimated spend per unit label over the last 30 days (open or completed).
-    const thirtyDaysAgo = now - 30 * 24 * 60 * 60 * 1000
-    const spendByUnitLabel = new Map<string, number>()
-    for (const t of tickets) {
-      const key = normalizeUnitLabel(t.unit)
-      if (!key) continue
-      const ts = new Date(t.createdAt).getTime()
-      if (Number.isNaN(ts) || ts < thirtyDaysAgo) continue
-      spendByUnitLabel.set(key, (spendByUnitLabel.get(key) ?? 0) + ticketCostEstimate(t))
-    }
-
-    const rows: BuildingHealth[] = []
-    for (const [building, buildingUnits] of byBuilding) {
-      const openTicketCount = buildingUnits.reduce(
-        (sum, u) => sum + (openByUnitLabel.get(normalizeUnitLabel(u.unitLabel)) ?? 0),
-        0,
-      )
-      const monthlySpend = buildingUnits.reduce(
-        (sum, u) => sum + (spendByUnitLabel.get(normalizeUnitLabel(u.unitLabel)) ?? 0),
-        0,
-      )
-      const activeUnits = buildingUnits.filter((u) => u.status === 'active').length
-      const occupancyPct = buildingUnits.length
-        ? Math.round((activeUnits / buildingUnits.length) * 100)
-        : 0
-      // Penalize open issues relative to building size so a 200-unit tower
-      // isn't flagged at-risk by the same ticket count as a 6-unit building.
-      const issuePenalty = buildingUnits.length
-        ? Math.round((openTicketCount / buildingUnits.length) * 450)
-        : openTicketCount * 9
-      const health = Math.max(
-        30,
-        Math.min(100, 100 - issuePenalty - Math.round((100 - occupancyPct) / 6)),
-      )
-      rows.push({
-        building,
-        unitCount: buildingUnits.length,
-        openTickets: openTicketCount,
-        occupancyPct,
-        health,
-        status: health >= 85 ? 'healthy' : health >= 70 ? 'monitor' : 'at_risk',
-        monthlySpend: Math.round(monthlySpend),
-      })
-    }
-
-    return rows.sort((a, b) => a.health - b.health).slice(0, 6)
-  }, [units, openTickets, tickets, now])
+  const overviewBuildingHealth = useMemo(
+    () => healthReport.buildings.slice(0, 6),
+    [healthReport.buildings],
+  )
 
   const smartInsights = useMemo<SmartInsight[]>(() => {
     const insights: SmartInsight[] = []
@@ -742,6 +738,21 @@ export function AdminOverviewDashboard() {
 
   const updatedCaption =
     loading || !lastUpdated ? 'Updating…' : formatUpdatedAt(lastUpdated)
+  const portfolioPendingSetup = healthReport.portfolio?.status === 'pending_setup'
+  const healthKpiCaption = healthReport.portfolio
+    ? portfolioPendingSetup
+      ? 'Units are inactive — activate units to measure portfolio health.'
+      : `${PROPERTY_HEALTH_KPI_CAPTION} Hover score for breakdown.`
+    : updatedCaption
+  const healthKpiTooltip = healthReport.portfolio
+    ? formatPropertyHealthTooltip(healthReport.portfolio.components)
+    : undefined
+  const healthKpiValue =
+    loading || !healthReport.portfolio
+      ? '—'
+      : portfolioPendingSetup
+        ? 'Pending'
+        : `${healthReport.portfolio.score}%`
 
   return (
     <main className="flex min-h-0 flex-1 flex-col px-8 pb-12">
@@ -844,24 +855,21 @@ export function AdminOverviewDashboard() {
           delta={loading ? null : kpis.workOrdersDelta}
           caption={updatedCaption}
         />
+        <div title={healthKpiTooltip} aria-label={healthKpiTooltip}>
+          <KpiCard
+            label="Property Health"
+            value={healthKpiValue}
+            delta={loading || portfolioPendingSetup ? null : kpis.propertyHealthDelta}
+            deltaSuffix="%"
+            goodWhenUp
+            caption={healthKpiCaption}
+          />
+        </div>
         <KpiCard
-          label="Property Health"
-          value={
-            loading || kpis.propertyHealth == null ? '—' : `${kpis.propertyHealth}%`
-          }
-          delta={loading ? null : kpis.propertyHealthDelta}
-          deltaSuffix="%"
-          goodWhenUp
-          caption={updatedCaption}
-        />
-        <KpiCard
-          label="Vendor Response"
-          value={
-            loading || kpis.vendorResponse == null ? '—' : `${kpis.vendorResponse}%`
-          }
-          delta={loading ? null : kpis.vendorResponseDelta}
-          deltaSuffix="%"
-          goodWhenUp
+          label="YTD Maintenance Cost"
+          value={loading ? '—' : formatSpendCompact(kpis.ytdMaintenanceCost)}
+          delta={loading ? null : kpis.ytdMaintenanceCostDelta}
+          deltaFormatter={formatSignedSpend}
           caption={updatedCaption}
         />
       </div>
@@ -953,7 +961,9 @@ export function AdminOverviewDashboard() {
                           'rounded-[4px] px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-[0.06em]',
                           item.badge === 'critical'
                             ? 'bg-[#fb2c36] text-white'
-                            : 'bg-[#fef9c2] text-[#a65f00]',
+                            : item.actionStyle === 'alert'
+                              ? 'bg-[#f7e1e3] text-[#b22430]'
+                              : 'bg-[#fef9c2] text-[#a65f00]',
                         ].join(' ')}
                       >
                         {item.badge === 'critical' ? 'Critical' : 'Warning'}
@@ -969,10 +979,10 @@ export function AdminOverviewDashboard() {
                   <Link
                     to={item.actionTo}
                     className={[
-                      'shrink-0 rounded-full px-4 py-2 text-[13px] font-medium leading-5 transition-colors duration-150',
-                      item.badge === 'critical'
-                        ? 'bg-[#fb2c36] text-white hover:bg-[#e7000b]'
-                        : 'bg-[#101828] text-white hover:bg-[#1e2939]',
+                      'shrink-0 rounded-[10px] border px-4 py-2 text-[13px] font-medium leading-5 transition-colors duration-150',
+                      item.actionStyle === 'alert'
+                        ? 'border-transparent bg-[#f7e1e3] text-[#b22430] hover:bg-[#efd0d4]'
+                        : 'border-black/10 bg-white text-tertiary hover:bg-[#e2f5f1]',
                     ].join(' ')}
                   >
                     {item.actionLabel} →
@@ -1038,99 +1048,19 @@ export function AdminOverviewDashboard() {
           </div>
         </section>
 
-        {/* Property Health */}
-        <section className="flex min-w-0 flex-col rounded-[10px] border border-[#e5e7eb] bg-white shadow-[0px_1px_2px_-1px_rgba(0,0,0,0.06)]">
-          <div className="flex items-center justify-between border-b border-[#e5e7eb] px-6 py-4">
-            <div>
-              <h2 className="text-[16px] font-semibold leading-6 text-[#0a0a0a]">
-                Property Health
-              </h2>
-              <p className="text-[12px] leading-4 text-[#6a7282]">
-                {buildingHealth.length} propert{buildingHealth.length === 1 ? 'y' : 'ies'} ·{' '}
-                {units.length} units · See which properties need attention before
-                issues become costly.
-              </p>
-            </div>
+        <PropertyHealthBuildingGrid
+          loading={loading}
+          buildings={overviewBuildingHealth}
+          totalUnits={units.length}
+          headerAction={
             <Link
-              to="/admin/users"
+              to="/admin/properties"
               className="shrink-0 text-[13px] font-medium text-[#364153] hover:underline"
             >
               View all properties →
             </Link>
-          </div>
-          <div className="grid gap-4 p-4 sm:grid-cols-2 2xl:grid-cols-3">
-            {loading ? (
-              <p className="col-span-full px-2 py-8 text-center text-[13px] text-[#6a7282]">
-                Loading…
-              </p>
-            ) : buildingHealth.length === 0 ? (
-              <div className="col-span-full px-2 py-8 text-center">
-                <p className="text-[13px] text-[#6a7282]">No properties yet.</p>
-                <Link
-                  to="/admin/users"
-                  className="mt-2 inline-block rounded-[10px] bg-[#101828] px-4 py-2 text-[13px] font-medium text-white hover:bg-[#1e2939]"
-                >
-                  Add your first property
-                </Link>
-              </div>
-            ) : (
-              buildingHealth.map((b) => (
-                <div
-                  key={b.building}
-                  className="flex flex-col gap-3 rounded-[10px] border border-[#e5e7eb] bg-white p-4"
-                >
-                  <div className="flex items-start justify-between gap-2">
-                    <div className="flex min-w-0 items-center gap-2.5">
-                      <span className="flex size-9 shrink-0 items-center justify-center rounded-[8px] border border-[#e5e7eb] text-[#364153]">
-                        <BuildingIcon />
-                      </span>
-                      <div className="min-w-0">
-                        <p className="truncate text-[14px] font-semibold leading-5 text-[#0a0a0a]">
-                          {b.building}
-                        </p>
-                        <p className="text-[12px] leading-4 text-[#6a7282]">
-                          {b.unitCount} unit{b.unitCount === 1 ? '' : 's'}
-                        </p>
-                      </div>
-                    </div>
-                    <span
-                      className={`shrink-0 rounded-[4px] px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-[0.06em] ${HEALTH_BADGE_STYLES[b.status]}`}
-                    >
-                      {HEALTH_BADGE_LABELS[b.status]}
-                    </span>
-                  </div>
-                  <div>
-                    <p className="text-[28px] font-bold leading-8 text-[#0a0a0a] tabular-nums">
-                      {b.health}
-                      <span className="text-[12px] font-normal text-[#6a7282]">
-                        {' '}
-                        / 100 health
-                      </span>
-                    </p>
-                    <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-[#f3f4f6]">
-                      <div
-                        className={`h-full rounded-full ${HEALTH_BAR_STYLES[b.status]}`}
-                        style={{ width: `${b.health}%` }}
-                      />
-                    </div>
-                  </div>
-                  <div className="flex items-center justify-between text-[12px] leading-4 text-[#6a7282]">
-                    <span>Monthly spend</span>
-                    <span className="font-semibold text-[#0a0a0a] tabular-nums">
-                      {formatSpend(b.monthlySpend)}
-                    </span>
-                  </div>
-                  <div className="flex items-center justify-between border-t border-[#f3f4f6] pt-2 text-[12px] leading-4 text-[#6a7282]">
-                    <span>
-                      {b.openTickets} open issue{b.openTickets === 1 ? '' : 's'}
-                    </span>
-                    <span>{b.occupancyPct}% occ.</span>
-                  </div>
-                </div>
-              ))
-            )}
-          </div>
-        </section>
+          }
+        />
       </div>
     </main>
   )

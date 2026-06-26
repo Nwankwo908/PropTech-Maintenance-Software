@@ -134,14 +134,21 @@ export async function activateUnit(
   }
 }
 
-export async function loadUnitsFromDb(): Promise<UnitRecord[]> {
+export async function loadUnitsFromDb(landlordId?: string): Promise<UnitRecord[]> {
   const { supabase } = await import('@/lib/supabase')
   if (!supabase) return []
 
-  const { data, error } = await supabase
+  const scopedLandlordId = landlordId?.trim() || defaultLandlordId()
+  let query = supabase
     .from('units')
     .select('id, landlord_id, unit_label, building, status, skip_tenant_registration')
     .order('unit_label', { ascending: true })
+
+  if (scopedLandlordId) {
+    query = query.eq('landlord_id', scopedLandlordId)
+  }
+
+  const { data, error } = await query
 
   if (error) {
     console.warn('[unitVacancy] load units', error.message)
@@ -153,13 +160,13 @@ export async function loadUnitsFromDb(): Promise<UnitRecord[]> {
 
 export async function ensureUnitsInDb(
   units: Array<{ unitLabel: string; building: string | null }>,
-): Promise<void> {
+): Promise<boolean> {
   const landlordId = defaultLandlordId()
   const secret = adminSecret()
-  if (!landlordId || !secret || units.length === 0) return
+  if (!landlordId || !secret || units.length === 0) return false
 
   const { registerPropertyUnitsSms } = await import('@/api/landlordSmsOnboarding')
-  await registerPropertyUnitsSms({
+  return registerPropertyUnitsSms({
     landlordId,
     units: units.map((u) => ({ unitLabel: u.unitLabel, building: u.building })),
   })

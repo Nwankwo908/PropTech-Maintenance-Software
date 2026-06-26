@@ -114,9 +114,13 @@ export async function loadUnitsForWorkflowPicker(): Promise<UnitOption[]> {
   const { supabase } = await import('@/lib/supabase')
   if (!supabase) return []
 
+  const { getActiveLandlordId } = await import('@/lib/activeLandlord')
+  const landlordId = getActiveLandlordId()
+
   const { data, error } = await supabase
     .from('units')
     .select('id, unit_label, building, status')
+    .eq('landlord_id', landlordId)
     .order('unit_label', { ascending: true })
 
   if (error) {

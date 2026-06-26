@@ -1,5 +1,6 @@
 import { useEffect, useId, useLayoutEffect, useMemo, useState } from 'react'
 import overrideIcon from '@/assets/Override.svg'
+import { checkboxInputClassName, checkboxInputClassNameLg } from '@/components/TableCheckbox'
 
 export type OverrideAutomationContext = 'default' | 'rent-reminder'
 
@@ -2183,7 +2184,7 @@ export function OverrideAutomationModal({
                                 [row.key]: !p[row.key],
                               }))
                             }
-                            className="mt-1 size-4 shrink-0 rounded border-[#d1d5dc] text-[#944c73] focus:ring-[#944c73]"
+                            className={`mt-1 ${checkboxInputClassName}`}
                           />
                           <span className="min-w-0 flex-1">
                             <span className="block text-[14px] font-medium leading-5 tracking-[-0.1504px] text-[#101828]">
@@ -2924,7 +2925,7 @@ export function OverrideAutomationModal({
                           type="checkbox"
                           checked={billingSuspendNotifyEmail}
                           onChange={(e) => setBillingSuspendNotifyEmail(e.target.checked)}
-                          className="size-4 shrink-0 rounded border-[#d1d5dc] text-[#944c73] focus:ring-[#944c73]"
+                          className={checkboxInputClassName}
                         />
                         <span className="text-[14px] font-medium leading-5 tracking-[-0.1504px] text-[#364153]">
                           Send email notification to resident
@@ -2939,7 +2940,7 @@ export function OverrideAutomationModal({
                           type="checkbox"
                           checked={billingSuspendNotifySms}
                           onChange={(e) => setBillingSuspendNotifySms(e.target.checked)}
-                          className="size-4 shrink-0 rounded border-[#d1d5dc] text-[#944c73] focus:ring-[#944c73]"
+                          className={checkboxInputClassName}
                         />
                         <span className="text-[14px] font-medium leading-5 tracking-[-0.1504px] text-[#364153]">
                           Send SMS reminder before resume date
@@ -2983,7 +2984,7 @@ export function OverrideAutomationModal({
                                 [g.id]: !prev[g.id],
                               }))
                             }
-                            className="mt-0.5 size-5 shrink-0 rounded border-[#d1d5dc] text-[#944c73] focus:ring-[#944c73]"
+                            className={`mt-0.5 ${checkboxInputClassNameLg}`}
                           />
                           <span className="min-w-0 flex-1">
                             <span className="flex flex-wrap items-center gap-2">
@@ -3077,7 +3078,7 @@ export function OverrideAutomationModal({
                             name="safety-notif-timing"
                             checked={sel}
                             onChange={() => setSafetyNotifTiming(opt.id)}
-                            className="mt-1 size-4 shrink-0 border-[#d1d5dc] text-[#944c73] focus:ring-[#944c73]"
+                            className={`mt-1 ${checkboxInputClassName}`}
                           />
                           <span className="min-w-0">
                             <span className="block text-[14px] font-medium leading-5 tracking-[-0.1504px] text-[#101828]">
@@ -3117,7 +3118,7 @@ export function OverrideAutomationModal({
                                 [m.id]: !prev[m.id],
                               }))
                             }
-                            className="mt-0.5 size-4 shrink-0 rounded border-[#d1d5dc] text-[#944c73] focus:ring-[#944c73]"
+                            className={`mt-0.5 ${checkboxInputClassName}`}
                           />
                           <span className="min-w-0">
                             <span className="flex items-center gap-2">
@@ -3151,7 +3152,7 @@ export function OverrideAutomationModal({
                           setSafetyNotifAutoEscalation(e.target.checked)
                           if (!e.target.checked) setSafetyNotifEscalateAfter('')
                         }}
-                        className="mt-1 size-4 shrink-0 rounded border-[#d1d5dc] text-[#944c73] focus:ring-[#944c73]"
+                        className={`mt-1 ${checkboxInputClassName}`}
                       />
                       <span className="min-w-0 flex-1">
                         <span className="block text-[14px] font-medium leading-5 tracking-[-0.1504px] text-[#101828]">
@@ -3279,7 +3280,7 @@ export function OverrideAutomationModal({
                               [a.id]: !prev[a.id],
                             }))
                           }
-                          className="mt-1 size-4 shrink-0 rounded border-[#d1d5dc] text-[#944c73] focus:ring-[#944c73]"
+                          className={`mt-1 ${checkboxInputClassName}`}
                         />
                         <span className="min-w-0">
                           <span className="block text-[14px] font-medium leading-5 tracking-[-0.1504px] text-[#101828]">
@@ -3396,7 +3397,7 @@ export function OverrideAutomationModal({
                         type="checkbox"
                         checked={safetyProtocolBypassSla}
                         onChange={(e) => setSafetyProtocolBypassSla(e.target.checked)}
-                        className="mt-1 size-4 shrink-0 rounded border-[#d1d5dc] text-[#944c73] focus:ring-[#944c73]"
+                        className={`mt-1 ${checkboxInputClassName}`}
                       />
                       <span className="min-w-0">
                         <span className="block text-[14px] font-medium leading-5 tracking-[-0.1504px] text-[#101828]">
@@ -3568,7 +3569,7 @@ export function OverrideAutomationModal({
                           type="checkbox"
                           checked={safetyNotifyResidents}
                           onChange={(e) => setSafetyNotifyResidents(e.target.checked)}
-                          className="mt-1 size-4 shrink-0 rounded border-[#d1d5dc] text-[#944c73] focus:ring-[#944c73]"
+                          className={`mt-1 ${checkboxInputClassName}`}
                         />
                         <span className="min-w-0">
                           <span className="block text-[14px] font-medium leading-5 tracking-[-0.1504px] text-[#364153]">
@@ -3588,7 +3589,7 @@ export function OverrideAutomationModal({
                           type="checkbox"
                           checked={safetyNotifyMaintenance}
                           onChange={(e) => setSafetyNotifyMaintenance(e.target.checked)}
-                          className="mt-1 size-4 shrink-0 rounded border-[#d1d5dc] text-[#944c73] focus:ring-[#944c73]"
+                          className={`mt-1 ${checkboxInputClassName}`}
                         />
                         <span className="min-w-0">
                           <span className="block text-[14px] font-medium leading-5 tracking-[-0.1504px] text-[#364153]">
@@ -3608,7 +3609,7 @@ export function OverrideAutomationModal({
                           type="checkbox"
                           checked={safetyNotifyPropertyMgmt}
                           onChange={(e) => setSafetyNotifyPropertyMgmt(e.target.checked)}
-                          className="mt-1 size-4 shrink-0 rounded border-[#d1d5dc] text-[#944c73] focus:ring-[#944c73]"
+                          className={`mt-1 ${checkboxInputClassName}`}
                         />
                         <span className="min-w-0">
                           <span className="block text-[14px] font-medium leading-5 tracking-[-0.1504px] text-[#364153]">

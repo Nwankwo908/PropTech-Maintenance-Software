@@ -36,6 +36,18 @@ verify_jwt = false
 import_map = "./functions/admin-reassign-vendor/deno.json"
 entrypoint = "./functions/admin-reassign-vendor/index.ts"
 
+[functions.vendor-submit-maintenance-invoice]
+enabled = true
+verify_jwt = false
+import_map = "./functions/vendor-submit-maintenance-invoice/deno.json"
+entrypoint = "./functions/vendor-submit-maintenance-invoice/index.ts"
+
+[functions.admin-approve-maintenance-invoice]
+enabled = true
+verify_jwt = false
+import_map = "./functions/admin-approve-maintenance-invoice/deno.json"
+entrypoint = "./functions/admin-approve-maintenance-invoice/index.ts"
+
 [functions.recommend-vendor-alternatives]
 enabled = true
 verify_jwt = false

@@ -9,17 +9,22 @@
 --     Cedar Court 48, Maple Heights 96, Birch Tower 210, Willow Park 36)
 --   * Named residents incl. lease expirations + late-rent scenarios
 --   * Vendors across plumbing / HVAC / electrical / general / cleaning
+--   * Vendor scores: resident feedback, status-event timing, composite ratings
 --   * Maintenance: open, completed, emergency, SLA-overdue, preventive,
 --     and a vendor-reassignment example
 --   * Workflows: maintenance, rent collection, lease renewal, move-in,
 --     move-out, inspections — with workflow_events timelines
 --   * property_operations_graph events powering the AI Operations Feed,
 --     Smart Insights, Needs Attention, and unit timelines
+--   * Property Health signals: open tickets per building, repeat issues (45d window),
+--     resident feedback per building, vendor assignments for performance scoring
+--     (PM tasks seeded separately in seed_demo_preventive_maintenance.sql)
 --
 -- Idempotent: deletes everything owned by the demo landlord, then re-inserts.
 -- Never touches other landlords' data.
 --
--- Run after migrations (incl. 20260611120000_landlord_accounts.sql):
+-- Run after migrations (incl. 20260611120000_landlord_accounts.sql and
+-- 20260615150000_vendor_feedback_scoring.sql for vendor score KPIs):
 --   psql "$DATABASE_URL" -f supabase/seed_demo_landlord_account.sql
 -- Or paste into the Supabase SQL Editor.
 -- =============================================================================
@@ -40,7 +45,7 @@ declare
   -- Showcase units (looked up after bulk insert)
   u_oak_103 uuid; u_oak_204 uuid; u_oak_304 uuid; u_oak_506 uuid;
   u_oak_108 uuid; u_oak_205 uuid;
-  u_pine_305 uuid; u_pine_204 uuid;
+  u_pine_305 uuid; u_pine_204 uuid; u_pine_301 uuid;
   u_cedar_102 uuid; u_cedar_305 uuid;
   u_maple_207 uuid; u_maple_312 uuid; u_maple_105 uuid; u_maple_107 uuid;
   u_birch_1203 uuid; u_birch_410 uuid; u_birch_708 uuid; u_birch_107 uuid;
@@ -113,6 +118,8 @@ declare
   -- up (green TrendingUp pill) on the overview dashboard.
   t27 uuid := md5('ulo-demo-ticket-27')::uuid;  -- stale pending Birch 503
   t28 uuid := md5('ulo-demo-ticket-28')::uuid;  -- stale pending Pine 401
+  t29 uuid := md5('ulo-demo-ticket-29')::uuid;  -- completed plumbing Pine 301 (repeat pair)
+  t30 uuid := md5('ulo-demo-ticket-30')::uuid;  -- open plumbing Pine 301 (repeat within 45d)
 
   -- Workflow runs
   wr_maint1 uuid := md5('ulo-demo-run-maint-1')::uuid;        -- active (t01)
@@ -161,6 +168,12 @@ begin
   delete from public.workflow_events where landlord_id = demo_landlord;
   delete from public.unit_inspections where landlord_id = demo_landlord;
   delete from public.workflow_runs where landlord_id = demo_landlord;
+  if to_regclass('public.vendor_feedback_requests') is not null then
+    delete from public.vendor_feedback_requests where landlord_id = demo_landlord;
+  end if;
+  if to_regclass('public.vendor_feedback') is not null then
+    delete from public.vendor_feedback where landlord_id = demo_landlord;
+  end if;
   delete from public.maintenance_requests where landlord_id = demo_landlord;
   delete from public.occupancy where landlord_id = demo_landlord;
   delete from public.users where landlord_id = demo_landlord;
@@ -201,6 +214,7 @@ begin
   select id into u_oak_205 from public.units where landlord_id = demo_landlord and building = 'Oakwood Apartments' and unit_label = '205';
   select id into u_pine_305 from public.units where landlord_id = demo_landlord and building = 'Pine Ridge' and unit_label = '305';
   select id into u_pine_204 from public.units where landlord_id = demo_landlord and building = 'Pine Ridge' and unit_label = '204';
+  select id into u_pine_301 from public.units where landlord_id = demo_landlord and building = 'Pine Ridge' and unit_label = '301';
   select id into u_cedar_102 from public.units where landlord_id = demo_landlord and building = 'Cedar Court' and unit_label = '102';
   select id into u_cedar_305 from public.units where landlord_id = demo_landlord and building = 'Cedar Court' and unit_label = '305';
   select id into u_maple_207 from public.units where landlord_id = demo_landlord and building = 'Maple Heights' and unit_label = '207';
@@ -217,7 +231,7 @@ begin
   update public.units set status = 'active'
   where id in (
     u_oak_103, u_oak_204, u_oak_304, u_oak_506, u_oak_108, u_oak_205,
-    u_pine_305, u_pine_204, u_cedar_102, u_cedar_305,
+    u_pine_305, u_pine_204, u_pine_301, u_cedar_102, u_cedar_305,
     u_maple_207, u_maple_312, u_maple_105, u_maple_107,
     u_birch_1203, u_birch_410, u_birch_708, u_birch_107,
     u_willow_103, u_willow_201
@@ -400,7 +414,16 @@ begin
     (t28, demo_landlord, now_ts - interval '44 days', 'low', 'low', 'low',
      'Priya Raman', 'priya.raman@example.com', '+15555620037', '401',
      'Laundry room faucet drip — assignment still awaiting vendor response.',
-     'pending_accept', 'plumbing', v_metro, now_ts - interval '43 days', null);
+     'pending_accept', 'plumbing', v_metro, now_ts - interval '43 days', null),
+    -- Repeat-issue pair (same unit + category within 45 days — Property Health signal)
+    (t29, demo_landlord, now_ts - interval '28 days', 'normal', 'normal', 'normal',
+     'David Okafor', 'david.okafor@example.com', '+15555620004', '301',
+     'Kitchen sink drip — slow leak under cabinet, towels placed.',
+     'completed', 'plumbing', v_metro, now_ts - interval '27 days', now_ts - interval '25 days'),
+    (t30, demo_landlord, now_ts - interval '9 days', 'high', 'high', 'high',
+     'David Okafor', 'david.okafor@example.com', '+15555620004', '301',
+     'Same sink leak returned; water damage spreading on cabinet floor.',
+     'in_progress', 'plumbing', v_metro, now_ts - interval '8 days', now_ts + interval '1 day');
 
   -- ---------------------------------------------------------------------------
   -- Workflow runs
@@ -773,6 +796,75 @@ begin
      null, null, null, null, null,
      jsonb_build_object('message', 'Auto-replied to 8 resident inquiries in the last 24 hours.'),
      now_ts - interval '1 day 4 hours');
+
+  -- ---------------------------------------------------------------------------
+  -- Vendor scoring — status-event timing + resident feedback for vendor_score_view
+  -- (requires 20260615150000_vendor_feedback_scoring.sql)
+  -- ---------------------------------------------------------------------------
+  if to_regclass('public.vendor_feedback') is not null then
+    insert into public.vendor_scoring_settings (landlord_id, rework_window_days)
+    values (demo_landlord, 30)
+    on conflict (landlord_id) do update
+      set rework_window_days = excluded.rework_window_days,
+          updated_at = now();
+
+    update public.maintenance_requests mr
+    set vendor_notified_at = coalesce(mr.vendor_notified_at, mr.assigned_at)
+    where mr.landlord_id = demo_landlord
+      and mr.assigned_vendor_id is not null
+      and mr.assigned_at is not null
+      and mr.vendor_work_status = 'completed';
+
+    insert into public.vendor_status_events (ticket_id, created_at, from_status, to_status, source, vendor_id)
+    select
+      mr.id,
+      mr.assigned_at + offs.step_offset,
+      offs.from_status,
+      offs.to_status,
+      'portal',
+      mr.assigned_vendor_id
+    from public.maintenance_requests mr
+    cross join lateral (
+      values
+        (interval '38 minutes', 'pending_accept', 'accepted'),
+        (interval '2 hours 10 minutes', 'accepted', 'in_progress'),
+        (interval '1 day 8 hours', 'in_progress', 'completed')
+    ) as offs(step_offset, from_status, to_status)
+    where mr.landlord_id = demo_landlord
+      and mr.vendor_work_status = 'completed'
+      and mr.assigned_at is not null
+      and mr.assigned_vendor_id is not null
+      and mr.id in (t17, t18, t19, t20, t21, t22, t23, t24, t25, t26, t29);
+
+    -- Partial vendor progression on active assigned jobs (response / completion metrics)
+    insert into public.vendor_status_events (ticket_id, created_at, from_status, to_status, source, vendor_id)
+    values
+      (t02, now_ts - interval '23 hours', 'pending_accept', 'accepted', 'portal', v_bright),
+      (t02, now_ts - interval '22 hours', 'accepted', 'in_progress', 'portal', v_bright),
+      (t04, now_ts - interval '2 days 12 hours', 'pending_accept', 'accepted', 'portal', v_apex),
+      (t06, now_ts - interval '27 hours', 'pending_accept', 'accepted', 'portal', v_rooter),
+      (t06, now_ts - interval '26 hours', 'accepted', 'in_progress', 'portal', v_rooter),
+      (t08, now_ts - interval '3 days', 'pending_accept', 'accepted', 'portal', v_allied),
+      (t10, now_ts - interval '18 hours', 'pending_accept', 'accepted', 'portal', v_summit),
+      (t30, now_ts - interval '7 days 6 hours', 'pending_accept', 'accepted', 'portal', v_metro),
+      (t30, now_ts - interval '7 days', 'accepted', 'in_progress', 'portal', v_metro);
+
+    insert into public.vendor_feedback (
+      landlord_id, vendor_id, maintenance_request_id, resident_id, rating, comment, submitted_at
+    )
+    values
+      (demo_landlord, v_apex, t17, r_walker, 5, null, now_ts - interval '16 days'),
+      (demo_landlord, v_apex, t26, null, 4, null, now_ts - interval '67 days'),
+      (demo_landlord, v_rooter, t18, null, 5, null, now_ts - interval '21 days'),
+      (demo_landlord, v_bright, t19, r_patel, 4, null, now_ts - interval '27 days'),
+      (demo_landlord, v_summit, t20, null, 5, null, now_ts - interval '10 days'),
+      (demo_landlord, v_summit, t22, r_silva, 3, 'Took two visits to fully fix the thermostat.', now_ts - interval '44 days'),
+      (demo_landlord, v_allied, t21, r_ito, 4, null, now_ts - interval '35 days'),
+      (demo_landlord, v_allied, t25, r_nguyen, 5, null, now_ts - interval '59 days'),
+      (demo_landlord, v_metro, t23, null, 2, 'Leak returned after one week.', now_ts - interval '50 days'),
+      (demo_landlord, v_fresh, t24, r_okafor, 5, null, now_ts - interval '15 days'),
+      (demo_landlord, v_metro, t29, r_okafor, 3, 'Fixed quickly but leak came back within two weeks.', now_ts - interval '24 days');
+  end if;
 
   raise notice 'Demo Property Management seeded: 582 units across 6 properties, % residents, % vendors, % tickets, % workflow runs.',
     (select count(*) from public.users where landlord_id = demo_landlord),

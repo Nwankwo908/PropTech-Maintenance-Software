@@ -90,6 +90,9 @@ export function setActiveLandlordOverride(landlordId: string | null): void {
       window.localStorage.removeItem(OVERRIDE_STORAGE_KEY)
     } else {
       window.localStorage.setItem(OVERRIDE_STORAGE_KEY, landlordId)
+      if (landlordId === EMPTY_LANDLORD_ID) {
+        window.localStorage.removeItem(`ulo.landlordOnboarding.${EMPTY_LANDLORD_ID}`)
+      }
     }
   } catch {
     // localStorage unavailable (private mode) — switching silently unsupported

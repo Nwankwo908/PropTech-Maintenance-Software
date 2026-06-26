@@ -1,4 +1,5 @@
 import { useEffect, useId, useMemo, useState } from 'react'
+import { checkboxInputClassName } from '@/components/TableCheckbox'
 
 const AMENITY_KEYS = [
   { id: 'parking', label: 'Parking' },
@@ -347,7 +348,7 @@ export function AddPropertyModal({ open, onClose, onSubmit }: AddPropertyModalPr
                       type="checkbox"
                       checked={Boolean(amenities[a.id])}
                       onChange={() => toggleAmenity(a.id)}
-                      className="size-4 shrink-0 rounded border border-black/10 bg-secondary text-primary shadow-[0px_1px_2px_0px_rgba(0,0,0,0.05)] focus:ring-2 focus:ring-primary focus:ring-offset-1"
+                      className={checkboxInputClassName}
                     />
                     <span className="text-[14px] font-medium leading-5 tracking-[-0.1504px] text-neutral-variant">
                       {a.label}

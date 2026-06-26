@@ -5,8 +5,8 @@ import {
   findOpenConversation,
   findOrCreateConversation,
   lookupReleasedPendingSmsNumber,
-  lookupSmsNumberByTo,
   normalizeSmsPhone,
+  resolveInboundSmsNumber,
   resolveOpenMaintenanceRequestId,
   type SmsIdentityRow,
 } from "./inbound_db.ts"
@@ -26,6 +26,7 @@ import {
   resolveInboundAutoReplyBody,
   sendInboundAutoReply,
 } from "./inboundReply.ts"
+import { tryHandleVendorFeedbackInbound } from "../vendor_feedback.ts"
 
 export type ProcessInboundSmsResult =
   | {
@@ -217,7 +218,7 @@ export async function processInboundSms(
   supabase: SupabaseClient,
   inbound: InboundSMSMessage,
 ): Promise<ProcessInboundSmsResult> {
-  const smsNumber = await lookupSmsNumberByTo(supabase, inbound.to)
+  const smsNumber = await resolveInboundSmsNumber(supabase, inbound.to)
   if (!smsNumber) {
     const pending = await lookupReleasedPendingSmsNumber(supabase, inbound.to)
     if (pending) {
@@ -345,6 +346,57 @@ export async function processInboundSms(
     landlordId,
     inbound,
   })
+
+  const feedbackResult = await tryHandleVendorFeedbackInbound(supabase, {
+    landlordId,
+    conversationId,
+    messageId,
+    body: inbound.body,
+    residentId: identity.resident_id,
+    identityType: identity.identity_type,
+  })
+
+  if (feedbackResult.handled) {
+    const outboundMessageId = await trySendAutoReply(supabase, {
+      conversationId,
+      landlordId,
+      uloNumber: inbound.to,
+      externalPhone: inbound.from,
+      provider: inbound.provider,
+      workflowHint: feedbackResult.replyBody,
+      source: `vendor_feedback_${feedbackResult.eventType}`,
+      workflowRoute: "vendor_feedback",
+    })
+
+    await recordGraphEvent(supabase, {
+      landlordId,
+      identity,
+      conversationId,
+      messageId,
+      maintenanceRequestId: feedbackResult.maintenanceRequestId,
+      inbound,
+      workflowRoute: "vendor_feedback",
+      workflowMetadata: {
+        vendor_feedback_event: feedbackResult.eventType,
+        rating: feedbackResult.rating,
+      },
+      selfHealed,
+      resolutionSource: resolution.source,
+      selfHealingPhase: resolution.selfHealingPhase,
+    })
+
+    return {
+      ok: true,
+      conversationId,
+      messageId,
+      outboundMessageId,
+      workflowRoute: "vendor_feedback",
+      identityType: identity.identity_type,
+      landlordId,
+      resolutionSource: resolution.source,
+      selfHealingPhase: resolution.selfHealingPhase,
+    }
+  }
 
   if (conversationType === "vendor_tenant_proxy") {
     const relay = await relayInboundProxiedMessage(supabase, {

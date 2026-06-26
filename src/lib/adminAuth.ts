@@ -83,7 +83,7 @@ export async function signInAdminWithOAuth(provider: 'google' | 'apple'): Promis
   if (!supabase) throw new Error('Supabase is not configured.')
   const { error } = await supabase.auth.signInWithOAuth({
     provider,
-    options: { redirectTo: `${window.location.origin}/admin` },
+    options: { redirectTo: `${window.location.origin}/auth/callback` },
   })
   if (error) throw new Error(error.message)
 }
