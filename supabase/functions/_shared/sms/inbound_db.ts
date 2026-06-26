@@ -112,9 +112,19 @@ export async function resolveInboundSmsNumber(
       landlordId,
       smsNumberId: claimed.id,
     })
+    return {
+      id: claimed.id,
+      landlord_id: claimed.landlord_id,
+      vendor_id: null,
+      phone_number: claimed.phone_number,
+      provider: claimed.provider,
+      purpose: claimed.purpose,
+      status: claimed.status,
+      release_auto_reply: claimed.release_auto_reply ?? null,
+    }
   }
 
-  return claimed
+  return null
 }
 
 /** Numbers in churn — inbound gets auto-reply only, no workflow routing. */

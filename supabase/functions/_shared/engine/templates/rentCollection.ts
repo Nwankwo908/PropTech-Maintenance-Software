@@ -937,6 +937,7 @@ export {
   escalateLatePaymentRuns as escalateOverdueRentCollections,
 } from "../rentCollectionEscalation.ts"
 export {
-  executeRentCollectionRouteAndAct,
+  lookupLandlordMainNumber,
+  sendRentCollectionSms,
   routePaymentReminder as sendRentCollectionPaymentReminder,
 }

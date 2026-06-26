@@ -118,11 +118,15 @@ async function trySendAutoReply(
     workflowRoute?: string
   },
 ): Promise<string | undefined> {
-  const replyBody = resolveInboundAutoReplyBody(
-    params.resolutionHint,
-    params.workflowHint,
-    params.workflowRoute,
-  )
+  const replyBody =
+    resolveInboundAutoReplyBody(
+      params.resolutionHint,
+      params.workflowHint,
+      params.workflowRoute,
+    ) ??
+    (params.workflowHint?.trim() ||
+      params.resolutionHint?.trim() ||
+      "Thanks for reaching out — this is Ulo. How can we help with your maintenance issue today?")
 
   if (!replyBody) {
     console.warn("[sms-inbound] auto-reply skipped — no reply text", {

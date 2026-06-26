@@ -440,6 +440,8 @@ export async function resolvePhoneIdentity(
       source: "active_resident",
       suggestedUnit: activeResident.unit,
       selfHealingPhase: "none",
+      replyHint:
+        "Hi — this is Ulo. Tell me what's going on with your unit (a photo or video helps too).",
       notifyLandlord: false,
       continueIntake: true,
       createdOrUpdated,
