@@ -304,13 +304,14 @@ export class TelnyxProvider implements SMSProvider {
     }
 
     const explicitFrom = input.from?.trim()
-    if (explicitFrom) {
-      body.from = explicitFrom
-    } else if (cfg.fromNumber) {
-      body.from = cfg.fromNumber
-    } else if (cfg.messagingProfileId) {
+    const fromNumber = explicitFrom || cfg.fromNumber
+
+    if (cfg.messagingProfileId) {
       body.messaging_profile_id = cfg.messagingProfileId
-    } else {
+    }
+    if (fromNumber) {
+      body.from = fromNumber
+    } else if (!cfg.messagingProfileId) {
       return {
         provider: "telnyx",
         error: "Telnyx send requires from, TELNYX_FROM_NUMBER, or TELNYX_MESSAGING_PROFILE_ID",
@@ -348,10 +349,40 @@ export class TelnyxProvider implements SMSProvider {
 
     try {
       const parsed = JSON.parse(raw) as {
-        data?: { id?: string; to?: Array<{ status?: string }> }
+        data?: {
+          id?: string
+          to?: Array<{ status?: string; phone_number?: string }>
+          errors?: Array<{ code?: string; title?: string; detail?: string }>
+        }
+        errors?: Array<{ code?: string; title?: string; detail?: string }>
       }
       const sid = parsed.data?.id?.trim() || "sent"
-      const status = parsed.data?.to?.[0]?.status
+      const status = parsed.data?.to?.[0]?.status?.trim().toLowerCase()
+      const errors = parsed.data?.errors ?? parsed.errors ?? []
+      const errorDetail = errors
+        .map((e) => [e.title, e.detail].filter(Boolean).join(": "))
+        .filter(Boolean)
+        .join("; ")
+
+      if (
+        status === "failed" ||
+        status === "delivery_failed" ||
+        status === "sending_failed" ||
+        errors.length > 0
+      ) {
+        console.error("[TelnyxProvider] sendMessage rejected", {
+          sid,
+          status,
+          errors,
+          raw: raw.slice(0, 500),
+        })
+        return {
+          provider: "telnyx",
+          providerMessageSid: sid,
+          error: errorDetail || `Telnyx send status: ${status ?? "failed"}`,
+        }
+      }
+
       return successSendResult(sid, status)
     } catch {
       return successSendResult("sent")

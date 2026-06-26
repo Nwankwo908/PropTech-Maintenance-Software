@@ -101,7 +101,7 @@ export async function sendInboundAutoReply(
         body,
         media_urls: [],
         provider: sendResult.provider ?? params.provider,
-        provider_message_sid: null,
+        provider_message_sid: sendResult.providerMessageSid ?? null,
         provider_status: "failed",
         raw_payload: {
           source: params.source ?? "inbound_auto_reply",
