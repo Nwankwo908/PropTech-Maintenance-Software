@@ -58,6 +58,9 @@ const LANDING_SECTION_GAP = 'pb-16'
 /** Hero video display width (px), scaled from metadata on load. */
 const HERO_INTERACTION_VIDEO_WIDTH = 350
 
+/** Fallback aspect ratio from the WebM export (544×1010) until metadata loads. */
+const HERO_INTERACTION_VIDEO_ASPECT = 1010 / 544
+
 /** How long the last frame stays visible before the clip replays. */
 const HERO_INTERACTION_VIDEO_LAST_FRAME_HOLD_MS = 10_000
 
@@ -137,29 +140,30 @@ function HeroInteractionVideo() {
     }
   }, [])
 
-  const videoStyle = size
-    ? ({
-        '--hero-video-w': `${size.width}px`,
-        '--hero-video-h': `${size.height}px`,
-      } as React.CSSProperties)
-    : ({
-        '--hero-video-w': `${HERO_INTERACTION_VIDEO_WIDTH}px`,
-      } as React.CSSProperties)
+  const displayWidth = size?.width ?? HERO_INTERACTION_VIDEO_WIDTH
+  const displayHeight = size?.height ?? Math.round(displayWidth * HERO_INTERACTION_VIDEO_ASPECT)
 
   return (
-    <div className="relative mx-auto aspect-[390/780] w-[min(100%,300px)] overflow-hidden rounded-[2.75rem] lg:aspect-auto lg:w-auto lg:overflow-visible lg:rounded-none">
-      <video
-        ref={videoRef}
-        src={uloInteractionVideo}
-        muted
-        playsInline
-        preload="auto"
-        onLoadedMetadata={(event) => syncSize(event.currentTarget)}
-        style={videoStyle}
-        className="absolute inset-0 h-full w-full object-cover object-center bg-transparent lg:static lg:inset-auto lg:block lg:h-[length:var(--hero-video-h,auto)] lg:w-[length:var(--hero-video-w)] lg:max-w-full lg:object-contain"
-        aria-label="Ulo handling a tenant maintenance text conversation"
-      />
-    </div>
+    <video
+      ref={videoRef}
+      src={uloInteractionVideo}
+      muted
+      playsInline
+      preload="auto"
+      width={displayWidth}
+      height={displayHeight}
+      onLoadedMetadata={(event) => syncSize(event.currentTarget)}
+      onCanPlay={(event) => {
+        syncSize(event.currentTarget)
+        void event.currentTarget.play().catch(() => {})
+      }}
+      style={{
+        width: displayWidth,
+        height: displayHeight,
+      }}
+      className="mx-auto block max-w-full bg-transparent max-lg:[clip-path:inset(18%_12%_18%_12%)]"
+      aria-label="Ulo handling a tenant maintenance text conversation"
+    />
   )
 }
 
