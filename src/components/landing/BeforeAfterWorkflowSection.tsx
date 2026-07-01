@@ -20,36 +20,31 @@ function WorkflowDiagram({
   alt,
   width,
   height,
-  widthPercent,
+  mobileWidthClass,
   lgWidthClass,
 }: {
   src: string
   alt: string
   width: number
   height: number
-  widthPercent: number
+  mobileWidthClass: string
   lgWidthClass: string
 }) {
-  const diagramWidthPx = Math.round(width * (widthPercent / 100))
-
   return (
-    <div className="relative flex min-w-0 flex-1 overflow-x-hidden overflow-y-visible lg:overflow-visible">
+    <div className="relative min-w-0 flex-1 overflow-x-hidden lg:overflow-visible">
       <div
-        className="flex w-full items-center overflow-x-auto overflow-y-visible overscroll-x-contain touch-pan-x [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden lg:overflow-visible"
+        className="overflow-x-auto overflow-y-hidden overscroll-x-contain touch-pan-x [-ms-overflow-style:none] [-webkit-overflow-scrolling:touch] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden lg:overflow-visible"
         aria-label={`${alt}. Swipe horizontally to view the full diagram.`}
         tabIndex={0}
       >
-        <div className="flex min-w-max items-center justify-start py-1 lg:min-w-0 lg:w-full lg:justify-start lg:py-0">
-          <img
-            src={src}
-            alt={alt}
-            width={width}
-            height={height}
-            draggable={false}
-            style={{ width: diagramWidthPx }}
-            className={`block h-auto max-w-none shrink-0 ${lgWidthClass} lg:max-w-full lg:object-left`}
-          />
-        </div>
+        <img
+          src={src}
+          alt={alt}
+          width={width}
+          height={height}
+          draggable={false}
+          className={`block h-auto w-full max-w-full shrink-0 ${mobileWidthClass} ${lgWidthClass}`}
+        />
       </div>
     </div>
   )
@@ -58,7 +53,7 @@ function WorkflowDiagram({
 /** Before / after maintenance workflow comparison (Figma 481:2814). */
 export function BeforeAfterWorkflowSection() {
   return (
-    <div className="flex flex-col gap-10 lg:gap-12">
+    <div className="flex flex-col gap-4">
       <div className={WORKFLOW_CARD}>
         <WorkflowLabel title="Before" subtitle="Messy. Slow. Frustration" />
         <WorkflowDiagram
@@ -66,8 +61,8 @@ export function BeforeAfterWorkflowSection() {
           alt="Before Ulo: tenant, landlord, and vendor stuck in repeated back-and-forth coordination"
           width={1043}
           height={212}
-          widthPercent={91}
-          lgWidthClass="lg:!w-[949px]"
+          mobileWidthClass="max-lg:w-[949px] max-lg:max-w-none"
+          lgWidthClass="lg:max-w-[949px]"
         />
       </div>
 
@@ -78,8 +73,8 @@ export function BeforeAfterWorkflowSection() {
           alt="After Ulo: tenant texts Ulo, landlord and vendor coordinate once, tenant issue resolved"
           width={702}
           height={225}
-          widthPercent={70}
-          lgWidthClass="lg:!w-full"
+          mobileWidthClass="max-lg:w-[491px] max-lg:max-w-none"
+          lgWidthClass="lg:w-full"
         />
       </div>
     </div>
