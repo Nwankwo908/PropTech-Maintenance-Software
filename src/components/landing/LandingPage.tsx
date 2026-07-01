@@ -58,9 +58,6 @@ const LANDING_SECTION_GAP = 'pb-16'
 /** Hero video display width (px), scaled from metadata on load. */
 const HERO_INTERACTION_VIDEO_WIDTH = 350
 
-/** Fallback aspect ratio from the WebM export (544×1010) until metadata loads. */
-const HERO_INTERACTION_VIDEO_ASPECT = 1010 / 544
-
 /** How long the last frame stays visible before the clip replays. */
 const HERO_INTERACTION_VIDEO_LAST_FRAME_HOLD_MS = 10_000
 
@@ -90,6 +87,9 @@ function LandingContentShell({
     </div>
   )
 }
+
+/** Fraction trimmed from each edge on mobile to hide baked-in black matte. */
+const HERO_INTERACTION_VIDEO_MOBILE_EDGE_INSET = 0.1
 
 function HeroInteractionVideo() {
   const videoRef = useRef<HTMLVideoElement>(null)
@@ -141,29 +141,42 @@ function HeroInteractionVideo() {
   }, [])
 
   const displayWidth = size?.width ?? HERO_INTERACTION_VIDEO_WIDTH
-  const displayHeight = size?.height ?? Math.round(displayWidth * HERO_INTERACTION_VIDEO_ASPECT)
+  const displayHeight = size?.height
+  const inset = HERO_INTERACTION_VIDEO_MOBILE_EDGE_INSET
+  const croppedWidth = Math.round(displayWidth * (1 - inset * 2))
+  const croppedHeight = displayHeight
+    ? Math.round(displayHeight * (1 - inset * 2))
+    : undefined
 
   return (
-    <video
-      ref={videoRef}
-      src={uloInteractionVideo}
-      muted
-      playsInline
-      preload="auto"
-      width={displayWidth}
-      height={displayHeight}
-      onLoadedMetadata={(event) => syncSize(event.currentTarget)}
-      onCanPlay={(event) => {
-        syncSize(event.currentTarget)
-        void event.currentTarget.play().catch(() => {})
-      }}
-      style={{
-        width: displayWidth,
-        height: displayHeight,
-      }}
-      className="mx-auto block max-w-full bg-transparent max-lg:[clip-path:inset(18%_12%_18%_12%)]"
-      aria-label="Ulo handling a tenant maintenance text conversation"
-    />
+    <div
+      className="mx-auto flex max-lg:w-[var(--hero-crop-w)] max-lg:h-[var(--hero-crop-h)] max-lg:items-center max-lg:justify-center max-lg:overflow-hidden max-lg:rounded-[2.75rem] lg:inline-block lg:w-auto lg:h-auto lg:overflow-visible lg:rounded-none"
+      style={
+        croppedHeight
+          ? ({
+              '--hero-crop-w': `${croppedWidth}px`,
+              '--hero-crop-h': `${croppedHeight}px`,
+            } as React.CSSProperties)
+          : ({
+              '--hero-crop-w': `${croppedWidth}px`,
+            } as React.CSSProperties)
+      }
+    >
+      <video
+        ref={videoRef}
+        src={uloInteractionVideo}
+        muted
+        playsInline
+        preload="auto"
+        onLoadedMetadata={(event) => syncSize(event.currentTarget)}
+        style={{
+          width: displayWidth,
+          height: displayHeight ?? 'auto',
+        }}
+        className="block max-w-full shrink-0 bg-transparent"
+        aria-label="Ulo handling a tenant maintenance text conversation"
+      />
+    </div>
   )
 }
 
