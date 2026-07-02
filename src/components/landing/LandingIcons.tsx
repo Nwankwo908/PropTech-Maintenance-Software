@@ -102,6 +102,88 @@ export function IconExcel({ className = 'size-5' }: IconProps) {
   )
 }
 
+type FileBadgeIconProps = IconProps & {
+  bannerColor: string
+  label: string
+}
+
+function FileBadgeIcon({ className = 'size-5', bannerColor, label }: FileBadgeIconProps) {
+  const fontSize = label.length > 4 ? 4.1 : 5
+
+  return (
+    <svg className={className} viewBox="0 0 25 28" fill="none" aria-hidden>
+      <path
+        d="M4 2h12l5 5v19a2 2 0 01-2 2H4a2 2 0 01-2-2V4a2 2 0 012-2z"
+        fill="white"
+        stroke="#d1d5db"
+        strokeWidth={0.6}
+      />
+      <path d="M16 2v5h5" fill="#e5e7eb" />
+      <path d="M6 7h9M6 10h9" stroke="#e5e7eb" strokeWidth={0.8} strokeLinecap="round" />
+      <rect x="3" y="15" width="19" height="9" rx="1.5" fill={bannerColor} />
+      <text
+        x="12.5"
+        y="21.5"
+        textAnchor="middle"
+        fill="white"
+        fontSize={fontSize}
+        fontWeight="700"
+        fontFamily="system-ui, -apple-system, sans-serif"
+      >
+        {label}
+      </text>
+    </svg>
+  )
+}
+
+export function IconPdf({ className = 'size-5' }: IconProps) {
+  return <FileBadgeIcon className={className} bannerColor="#E5252A" label="PDF" />
+}
+
+export function IconGoogleDocs({ className = 'size-5' }: IconProps) {
+  return (
+    <svg className={className} viewBox="0 0 25 28" fill="none" aria-hidden>
+      <path
+        d="M4 2h12l5 5v19a2 2 0 01-2 2H4a2 2 0 01-2-2V4a2 2 0 012-2z"
+        fill="#4285F4"
+      />
+      <path d="M16 2v5h5" fill="#669DF6" />
+      <path d="M7 9h6M7 12h6M7 15h4" stroke="white" strokeWidth={1.2} strokeLinecap="round" />
+    </svg>
+  )
+}
+
+export function IconHeic({ className = 'size-5' }: IconProps) {
+  return <FileBadgeIcon className={className} bannerColor="#2563EB" label="HEIC" />
+}
+
+export function IconJpg({ className = 'size-5' }: IconProps) {
+  return <FileBadgeIcon className={className} bannerColor="#38BDF8" label="JPG" />
+}
+
+export function IconPng({ className = 'size-5' }: IconProps) {
+  return <FileBadgeIcon className={className} bannerColor="#7C3AED" label="PNG" />
+}
+
+export function IconTif({ className = 'size-5' }: IconProps) {
+  return <FileBadgeIcon className={className} bannerColor="#7C3AED" label="TIF" />
+}
+
+export function IconTiff({ className = 'size-5' }: IconProps) {
+  return <FileBadgeIcon className={className} bannerColor="#3B82F6" label="TIFF" />
+}
+
+export const LANDING_DOCUMENT_IMPORT_ICONS = [
+  IconExcel,
+  IconPdf,
+  IconGoogleDocs,
+  IconHeic,
+  IconJpg,
+  IconPng,
+  IconTif,
+  IconTiff,
+] as const
+
 export function IconMenu({ className = 'size-5' }: IconProps) {
   return (
     <svg className={className} viewBox="0 0 20 20" fill="none" aria-hidden>

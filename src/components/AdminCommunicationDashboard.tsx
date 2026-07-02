@@ -1,5 +1,8 @@
 import { useEffect, useMemo, useState } from 'react'
+import { ConversationMonitoringModal } from '@/components/ConversationMonitoringModal'
 import { getActiveLandlordId } from '@/lib/activeLandlord'
+import { fetchCommunicationWorkOrderInboxRows } from '@/lib/workflowPipelineDetail'
+import { isCommunicationInboxConversationType } from '@/lib/propertyConversations'
 import { supabase } from '@/lib/supabase'
 
 type ParticipantKind = 'tenant' | 'vendor' | 'ai' | 'landlord'
@@ -82,6 +85,20 @@ function humanizeStatus(status: string): string {
     .join(' ')
 }
 
+function conversationStatusLabel(
+  conversationType: string,
+  status: string,
+  hasMaintenanceRequest: boolean,
+): string {
+  if (hasMaintenanceRequest) {
+    return `Maintenance · ${humanizeStatus(status)}`
+  }
+  if (conversationType === 'ai_copilot') {
+    return 'Handled by Ulo'
+  }
+  return humanizeStatus(status)
+}
+
 function formatRelativeTime(ms: number): string {
   if (Number.isNaN(ms)) return ''
   const diff = Date.now() - ms
@@ -119,7 +136,6 @@ const NEEDS_ATTENTION_STATUSES = new Set([
   'open',
   'unread',
   'new',
-  'awaiting_approval',
   'action_required',
 ])
 const CLOSED_STATUSES = new Set([
@@ -340,7 +356,6 @@ function AiSparkleAvatar() {
 const FILTERS = [
   { id: 'all', label: 'All' },
   { id: 'unread', label: 'Unread' },
-  { id: 'ai', label: 'AI' },
 ] as const
 
 type FilterId = (typeof FILTERS)[number]['id']
@@ -351,6 +366,7 @@ export function AdminCommunicationDashboard() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [filter, setFilter] = useState<FilterId>('all')
+  const [monitoringConversationId, setMonitoringConversationId] = useState<string | null>(null)
 
   useEffect(() => {
     let cancelled = false
@@ -495,7 +511,11 @@ export function AdminCommunicationDashboard() {
         return
       }
 
-      const rows = (convRows ?? []) as Record<string, unknown>[]
+      const rows = (convRows ?? []).filter((row) =>
+        isCommunicationInboxConversationType(
+          asString((row as Record<string, unknown>).conversation_type),
+        ),
+      ) as Record<string, unknown>[]
       const conversationIds = rows.map((r) => asString(r.id)).filter(Boolean)
       const residentIds = [
         ...new Set(rows.map((r) => asString(r.resident_id)).filter(Boolean)),
@@ -603,9 +623,11 @@ export function AdminCommunicationDashboard() {
 
         const latest = latestMessageByConversation.get(id)
         const status = asString(r.status) || 'open'
-        const statusLabel = asString(r.maintenance_request_id)
-          ? `Maintenance · ${humanizeStatus(status)}`
-          : humanizeStatus(status)
+        const statusLabel = conversationStatusLabel(
+          asString(r.conversation_type),
+          status,
+          Boolean(asString(r.maintenance_request_id)),
+        )
 
         return {
           id,
@@ -615,12 +637,36 @@ export function AdminCommunicationDashboard() {
           preview: latest?.body || 'No messages yet.',
           status: statusLabel,
           unread:
-            NEEDS_ATTENTION_STATUSES.has(status) ||
-            (latest?.direction === 'inbound' && !CLOSED_STATUSES.has(status)),
+            kind !== 'ai' &&
+            (NEEDS_ATTENTION_STATUSES.has(status) ||
+              (latest?.direction === 'inbound' && !CLOSED_STATUSES.has(status))),
           lastActivity:
             latest?.createdAt ?? new Date(asString(r.updated_at)).getTime(),
         }
       })
+
+      const workOrderInboxRows = await fetchCommunicationWorkOrderInboxRows().catch(() => [])
+      if (cancelled) return
+
+      const existingIds = new Set(mapped.map((entry) => entry.id))
+      for (const workOrder of workOrderInboxRows) {
+        if (existingIds.has(workOrder.id)) continue
+        if (workOrder.uloThread.conversationId && existingIds.has(workOrder.uloThread.conversationId)) {
+          continue
+        }
+
+        mapped.push({
+          id: workOrder.id,
+          name: workOrder.name,
+          kind: 'tenant',
+          context: workOrder.context,
+          preview: workOrder.preview,
+          status: workOrder.status,
+          unread: false,
+          lastActivity: workOrder.lastActivity,
+        })
+        existingIds.add(workOrder.id)
+      }
 
       setConversations(mapped)
       setLoading(false)
@@ -635,7 +681,6 @@ export function AdminCommunicationDashboard() {
   const filtered = useMemo(() => {
     const sorted = [...conversations].sort((a, b) => b.lastActivity - a.lastActivity)
     if (filter === 'unread') return sorted.filter((c) => c.unread)
-    if (filter === 'ai') return sorted.filter((c) => c.kind === 'ai')
     return sorted
   }, [conversations, filter])
 
@@ -648,7 +693,7 @@ export function AdminCommunicationDashboard() {
           Conversations
         </h1>
         <p className="text-[14px] leading-5 tracking-[-0.1504px] text-[#6a7282]">
-          Unified inbox across tenants, vendors, and the Ulo AI copilot.
+          Tenant and vendor SMS threads — Ulo handles messages automatically. Admin-directed updates appear in notifications.
         </p>
       </div>
 
@@ -708,7 +753,7 @@ export function AdminCommunicationDashboard() {
               Conversation Inbox
             </h2>
             <p className="text-[12px] leading-4 text-[#6a7282]">
-              Unified communication · tenants, vendors &amp; AI
+              Tenant and vendor threads · admin updates in notifications
             </p>
           </div>
           <div className="flex shrink-0 items-center gap-1 rounded-[10px] bg-[#f3f4f6] p-1">
@@ -742,7 +787,7 @@ export function AdminCommunicationDashboard() {
               </p>
               <p className="mt-1 text-[13px] text-[#6a7282]">
                 {conversations.length === 0
-                  ? 'Tenant, vendor, and Ulo AI messages will appear here as they come in.'
+                  ? 'Tenant and vendor messages will appear here as they come in.'
                   : 'Try a different filter to see more conversations.'}
               </p>
             </div>
@@ -751,6 +796,7 @@ export function AdminCommunicationDashboard() {
               <button
                 key={c.id}
                 type="button"
+                onClick={() => setMonitoringConversationId(c.id)}
                 className="flex w-full items-start gap-3 px-6 py-4 text-left transition-colors hover:bg-[#f9fafb]"
               >
                 <span className="relative flex shrink-0 items-center pt-0.5">
@@ -806,6 +852,11 @@ export function AdminCommunicationDashboard() {
           )}
         </div>
       </section>
+      <ConversationMonitoringModal
+        open={monitoringConversationId != null}
+        conversationId={monitoringConversationId}
+        onClose={() => setMonitoringConversationId(null)}
+      />
     </main>
   )
 }

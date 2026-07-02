@@ -1,9 +1,8 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { EarlyAccessModal } from '@/components/landing/EarlyAccessModal'
 import uloLogo from '@/assets/landing/ulo-logo.png'
-import uloInteractionVideo from '@/assets/landing/Ulo Intereaction.webm'
-import uloInteractionHevc from '@/assets/landing/Ulo-Interaction-hevc.mov'
+import uloInteractionSvg from '@/assets/Ulo Intereaction (1).svg'
 import { playUiClickSound, primeUiClickSound } from '@/lib/uiClickSound'
 import {
   captureWaitlistReferralFromUrl,
@@ -16,16 +15,16 @@ import { supabase } from '@/lib/supabase'
 import {
   IconArrowRight,
   IconClose,
-  IconExcel,
+  LANDING_DOCUMENT_IMPORT_ICONS,
   IconMenu,
 } from '@/components/landing/LandingIcons'
 import { FeaturesShowcase } from '@/components/landing/FeaturesShowcase'
 import { BeforeAfterWorkflowSection } from '@/components/landing/BeforeAfterWorkflowSection'
 import { HowItWorksStepReveal, HowItWorksStepsGrid } from '@/components/landing/HowItWorksStepReveal'
-import smrStep from '@/assets/SMR.png'
-import vaStep from '@/assets/VA.png'
-import vcStep from '@/assets/VC.png'
-import jtStep from '@/assets/JT.png'
+import smrStep from '@/assets/SMR_1.png'
+import vaStep from '@/assets/VC_0_1.png'
+import vcStep from '@/assets/VC_2_1.png'
+import jtStep from '@/assets/JT_1.png'
 
 const HOW_IT_WORKS_STEPS = [
   { src: smrStep, alt: 'Smart Maintenance Requests' },
@@ -56,11 +55,15 @@ const LANDING_SECTION_RULE = 'border-gray-200/80 2xl:ml-[8.25rem]'
 /** Consistent vertical gap between landing sections — 64px. */
 const LANDING_SECTION_GAP = 'pb-16'
 
-/** Hero video display width (px), scaled from metadata on load. */
-const HERO_INTERACTION_VIDEO_WIDTH = 350
+/** Max width of hero copy on wide desktop. */
+const HERO_COPY_MAX_WIDTH = '40rem'
 
-/** How long the last frame stays visible before the clip replays. */
-const HERO_INTERACTION_VIDEO_LAST_FRAME_HOLD_MS = 10_000
+/** Hero interaction display width (px). SVG native width is 543px. */
+const HERO_INTERACTION_VIDEO_WIDTH = 364
+const HERO_INTERACTION_ASPECT = 1010 / 543
+
+/** Layout slot for the hero phone clip — matches rendered width. */
+const HERO_VIDEO_COLUMN_WIDTH = `${HERO_INTERACTION_VIDEO_WIDTH}px`
 
 function LandingContentShell({
   className = '',
@@ -89,110 +92,20 @@ function LandingContentShell({
   )
 }
 
-function isIosDevice() {
-  if (typeof navigator === 'undefined') return false
-  return (
-    /iPad|iPhone|iPod/.test(navigator.userAgent) ||
-    (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1)
-  )
-}
-
 function HeroInteractionVideo() {
-  const videoRef = useRef<HTMLVideoElement>(null)
-  const [size, setSize] = useState<{ width: number; height: number } | null>(null)
-  const [iosWebmFallbackBlend, setIosWebmFallbackBlend] = useState(false)
-
-  function syncPlaybackSize(video: HTMLVideoElement) {
-    syncSize(video)
-    if (
-      isIosDevice() &&
-      video.currentSrc &&
-      /\.webm(?:$|\?)/i.test(video.currentSrc)
-    ) {
-      setIosWebmFallbackBlend(true)
-    }
-  }
-
-  function syncSize(video: HTMLVideoElement) {
-    const { videoWidth, videoHeight } = video
-    if (!videoWidth || !videoHeight) return
-    const scale = Math.min(1, HERO_INTERACTION_VIDEO_WIDTH / videoWidth)
-    setSize({
-      width: Math.round(videoWidth * scale),
-      height: Math.round(videoHeight * scale),
-    })
-  }
-
-  useEffect(() => {
-    const el = videoRef.current
-    if (!el) return
-    const video: HTMLVideoElement = el
-
-    let holdTimeout: ReturnType<typeof setTimeout> | undefined
-
-    function clearHoldTimeout() {
-      if (holdTimeout !== undefined) {
-        clearTimeout(holdTimeout)
-        holdTimeout = undefined
-      }
-    }
-
-    function startCycle() {
-      clearHoldTimeout()
-      video.currentTime = 0
-      void video.play()
-    }
-
-    function onEnded() {
-      video.pause()
-      holdTimeout = setTimeout(startCycle, HERO_INTERACTION_VIDEO_LAST_FRAME_HOLD_MS)
-    }
-
-    video.addEventListener('ended', onEnded)
-    startCycle()
-
-    return () => {
-      clearHoldTimeout()
-      video.removeEventListener('ended', onEnded)
-      video.pause()
-    }
-  }, [])
-
-  const displayWidth = size?.width ?? HERO_INTERACTION_VIDEO_WIDTH
-  const displayHeight = size?.height
+  const displayWidth = HERO_INTERACTION_VIDEO_WIDTH
+  const displayHeight = Math.round(displayWidth * HERO_INTERACTION_ASPECT)
 
   return (
-    <div
-      className={
-        iosWebmFallbackBlend
-          ? 'mx-auto bg-white isolation-isolate 2xl:bg-transparent'
-          : 'mx-auto 2xl:inline-block'
-      }
-    >
-      <video
-        ref={videoRef}
-        muted
-        playsInline
-        preload="auto"
-        onLoadedMetadata={(event) => syncPlaybackSize(event.currentTarget)}
-        onLoadedData={(event) => syncPlaybackSize(event.currentTarget)}
-        style={{
-          width: displayWidth,
-          height: displayHeight ?? 'auto',
-        }}
-        className={[
-          'mx-auto block max-w-full bg-transparent',
-          iosWebmFallbackBlend ? 'mix-blend-screen' : '',
-        ]
-          .filter(Boolean)
-          .join(' ')}
+    <div className="mx-auto max-lg:overflow-hidden max-lg:rounded-[2.75rem] [@media(min-width:768px)_and_(max-width:850px)_and_(min-height:850px)_and_(max-height:920px)]:max-w-[291px] [@media(min-width:1024px)_and_(max-width:1100px)_and_(min-height:850px)_and_(max-height:920px)]:max-w-none [@media(min-width:1024px)_and_(max-width:1100px)_and_(min-height:850px)_and_(max-height:920px)]:inline-block min-[1440px]:inline-block">
+      <object
+        data={uloInteractionSvg}
+        type="image/svg+xml"
+        width={displayWidth}
+        height={displayHeight}
         aria-label="Ulo handling a tenant maintenance text conversation"
-      >
-        {/* HEVC + alpha for Safari/iOS; VP9 WebM for Chrome/Firefox. */}
-        <source src={uloInteractionHevc} type='video/mp4; codecs="hvc1"' />
-        <source src={uloInteractionHevc} type="video/quicktime" />
-        <source src={uloInteractionVideo} type="video/webm" />
-      </video>
+        className="mx-auto block h-auto w-full max-w-full bg-transparent max-lg:rounded-[2.75rem]"
+      />
     </div>
   )
 }
@@ -304,7 +217,6 @@ export function LandingPage() {
   }
 
   const navLinks = [
-    { label: 'Home', target: 'top' },
     { label: 'How it Works', target: 'how-it-works' },
     { label: 'Features', target: 'features' },
   ] as const
@@ -325,27 +237,27 @@ export function LandingPage() {
               <img src={uloLogo} alt="ülo home" className="h-full w-full object-contain object-left" />
             </Link>
           </div>
-          <div className="flex min-w-0 flex-1 items-center justify-end lg:justify-between lg:pl-14">
-            <nav className="hidden items-center gap-1 lg:flex" aria-label="Primary">
-              {navLinks.map(({ label, target }) => (
-                <button
-                  key={label}
-                  type="button"
-                  onClick={() => scrollTo(target)}
-                  className="rounded-xl px-3 py-2 text-sm font-medium text-[#6b7280] transition hover:bg-gray-50 hover:text-[#111827]"
-                >
-                  {label}
-                </button>
-              ))}
-            </nav>
-            <div className="hidden items-center gap-3 lg:flex">
+          <div className="flex min-w-0 flex-1 items-center justify-end">
+            <div className="hidden items-center gap-1 lg:flex">
+              <nav className="flex items-center gap-1" aria-label="Primary">
+                {navLinks.map(({ label, target }) => (
+                  <button
+                    key={label}
+                    type="button"
+                    onClick={() => scrollTo(target)}
+                    className="rounded-xl px-3 py-2 text-sm font-medium text-[#6b7280] transition hover:bg-gray-50 hover:text-[#111827]"
+                  >
+                    {label}
+                  </button>
+                ))}
+              </nav>
               <Link
                 to="/admin/login"
-                className="rounded-xl px-3 py-2 text-sm font-medium text-[#6b7280] transition hover:bg-gray-50 hover:text-[#111827]"
+                className="ml-2 rounded-xl px-3 py-2 text-sm font-medium text-[#6b7280] transition hover:bg-gray-50 hover:text-[#111827]"
               >
                 Login
               </Link>
-              <PrimaryButton onClick={openEarlyAccess} className="inline-flex">
+              <PrimaryButton onClick={openEarlyAccess} className="ml-2 inline-flex">
                 Request Early Access
                 <IconArrowRight />
               </PrimaryButton>
@@ -397,21 +309,33 @@ export function LandingPage() {
 
       <main id="top" className="flex flex-1 flex-col">
         {/* Hero */}
-        <section>
+        <section className="min-[2560px]:flex min-[2560px]:min-h-[calc(100dvh-4rem)] min-[2560px]:items-center">
           <LandingContentShell
-            className="pb-12 pt-10 sm:pb-28 sm:pt-14 md:pb-32 lg:pt-14"
-            contentClassName="w-full max-w-none"
+            className="w-full pb-12 pt-10 sm:pb-28 sm:pt-14 md:pb-32 lg:pt-14 min-[2560px]:pb-16 min-[2560px]:pt-16"
+            contentClassName="w-full max-w-none [@media(min-width:1024px)_and_(max-width:1100px)_and_(min-height:850px)_and_(max-height:920px)]:!ml-0 [@media(min-width:1024px)_and_(max-width:1100px)_and_(min-height:850px)_and_(max-height:920px)]:flex [@media(min-width:1024px)_and_(max-width:1100px)_and_(min-height:850px)_and_(max-height:920px)]:justify-center min-[1440px]:!ml-0 min-[1440px]:flex min-[1440px]:justify-center"
           >
-            <div className="grid grid-cols-1 items-start gap-10 overflow-visible 2xl:grid-cols-[minmax(0,1.5fr)_auto] 2xl:items-center 2xl:gap-16">
-              <div className="relative z-10 min-w-0 w-full">
+            <div
+              className="grid w-full grid-cols-1 items-start gap-10 [@media(min-width:1024px)_and_(max-width:1100px)_and_(min-height:850px)_and_(max-height:920px)]:mx-auto [@media(min-width:1024px)_and_(max-width:1100px)_and_(min-height:850px)_and_(max-height:920px)]:flex [@media(min-width:1024px)_and_(max-width:1100px)_and_(min-height:850px)_and_(max-height:920px)]:w-auto [@media(min-width:1024px)_and_(max-width:1100px)_and_(min-height:850px)_and_(max-height:920px)]:max-w-full [@media(min-width:1024px)_and_(max-width:1100px)_and_(min-height:850px)_and_(max-height:920px)]:flex-row [@media(min-width:1024px)_and_(max-width:1100px)_and_(min-height:850px)_and_(max-height:920px)]:flex-nowrap [@media(min-width:1024px)_and_(max-width:1100px)_and_(min-height:850px)_and_(max-height:920px)]:items-center [@media(min-width:1024px)_and_(max-width:1100px)_and_(min-height:850px)_and_(max-height:920px)]:gap-4 min-[1440px]:mx-auto min-[1440px]:flex min-[1440px]:w-auto min-[1440px]:max-w-full min-[1440px]:flex-row min-[1440px]:flex-nowrap min-[1440px]:items-center min-[1440px]:gap-8 min-[1440px]:gap-y-0 min-[2560px]:gap-12"
+              style={
+                {
+                  '--hero-copy-max-w': HERO_COPY_MAX_WIDTH,
+                  '--hero-video-col-w': HERO_VIDEO_COLUMN_WIDTH,
+                } as React.CSSProperties
+              }
+            >
+              <div className="relative z-10 min-w-0 w-full max-w-full [@media(min-width:1024px)_and_(max-width:1100px)_and_(min-height:850px)_and_(max-height:920px)]:max-w-[22rem] [@media(min-width:1024px)_and_(max-width:1100px)_and_(min-height:850px)_and_(max-height:920px)]:shrink min-[1440px]:max-w-[var(--hero-copy-max-w)] min-[1440px]:shrink">
                 <span className="inline-flex max-w-full flex-wrap items-center gap-2 rounded-full border border-[#e5e7eb] bg-white px-3 py-1.5 font-mono text-[10px] font-bold uppercase leading-snug tracking-wide text-black sm:px-4 sm:py-2 sm:text-xs">
                   <span className="size-2 shrink-0 rounded-full bg-[#7dd3fc]" aria-hidden />
                   What If Rental Maintenance Ran Itself?
                 </span>
 
-                <h1 className="mt-4 w-full max-w-full text-balance font-[family-name:var(--font-landing-heading)] text-[clamp(1.875rem,5vw+1rem,7.5rem)] font-bold leading-[1.12] tracking-[-0.03em] text-[#111827] sm:mt-6 lg:leading-[1.05] lg:tracking-[-0.025em]">
-                  <span className="block text-[#0f1623]">Your Tenants Text.</span>
-                  <span className="block text-[#0f1623]">
+                <h1
+                  className="mt-4 w-full max-w-full font-[family-name:var(--font-landing-heading)] text-[clamp(2.25rem,6vw+1.2rem,9rem)] font-bold tracking-[-0.03em] text-[#0f1623] sm:mt-6 [@media(min-width:300px)_and_(max-width:349px)_and_(min-height:850px)_and_(max-height:920px)]:text-[clamp(2.475rem,6.6vw+1.32rem,9.9rem)] [@media(min-width:350px)_and_(max-width:399px)_and_(min-height:850px)_and_(max-height:920px)]:text-[clamp(2.7rem,7.2vw+1.44rem,10.8rem)] [@media(min-width:400px)_and_(max-width:500px)_and_(min-height:850px)_and_(max-height:920px)]:text-[clamp(2.8125rem,7.5vw+1.5rem,11.25rem)] [@media(min-width:768px)_and_(max-width:850px)_and_(min-height:850px)_and_(max-height:920px)]:text-[clamp(3.6rem,9.6vw+1.92rem,14.4rem)] [@media(min-width:1024px)_and_(max-width:1100px)_and_(min-height:850px)_and_(max-height:920px)]:text-[clamp(2.625rem,5.25vw,4.125rem)] min-[1440px]:text-[clamp(2.25rem,3.84vw,6rem)] [@media(min-width:1440px)_and_(max-width:1535px)_and_(min-height:850px)_and_(max-height:920px)]:text-[clamp(3.825rem,6.528vw,10.2rem)] lg:tracking-[-0.025em]"
+                  style={{ lineHeight: 0.82 }}
+                >
+                  <span className="block whitespace-nowrap">Your tenants</span>
+                  <span className="block whitespace-nowrap">
+                    text.{' '}
                     <span
                       className="bg-clip-text text-transparent"
                       style={{
@@ -420,12 +344,16 @@ export function LandingPage() {
                       }}
                     >
                       Ulo
-                    </span>
-                    {' does the rest.'}
+                    </span>{' '}
+                    does
                   </span>
+                  <span className="block">the rest</span>
                 </h1>
 
-                <p className="mt-4 w-full max-w-full border-l-[3px] border-[#187960] pl-4 text-base leading-relaxed text-[#4b5563] sm:mt-6 sm:pl-5 sm:text-lg lg:max-w-none">
+                <p
+                  className="mt-4 w-full max-w-full border-l-[3px] border-[#187960] pl-4 text-base text-[#4b5563] sm:mt-6 sm:pl-5 sm:text-lg"
+                  style={{ lineHeight: 1.15 }}
+                >
                   Tenant texts become completed repairs, automatically. From routine maintenance to emergency repairs,
                   Ulo creates work orders, dispatches the right vendor, and tracks every repair from request to
                   resolution.
@@ -439,19 +367,28 @@ export function LandingPage() {
                     Request Early Access
                     <IconArrowRight />
                   </PrimaryButton>
-                  <div className="flex items-center justify-center gap-1 md:justify-start">
-                    <IconExcel className="size-[25px] shrink-0" />
+                  <div className="flex flex-wrap items-center justify-center gap-2 md:justify-start">
                     <button
                       type="button"
                       className="text-sm font-medium text-[#6b7280] underline decoration-solid underline-offset-2"
                     >
-                      Instant Excel import
+                      Instant import
                     </button>
+                    <div className="flex shrink-0 items-center gap-1" aria-hidden>
+                      {LANDING_DOCUMENT_IMPORT_ICONS.map((Icon) => (
+                        <span
+                          key={Icon.name}
+                          className="inline-flex drop-shadow-[0_1px_1px_rgba(15,23,42,0.24)] drop-shadow-[0_1px_2px_rgba(15,23,42,0.18)]"
+                        >
+                          <Icon className="size-[25px] shrink-0" />
+                        </span>
+                      ))}
+                    </div>
                   </div>
                 </div>
               </div>
 
-              <div className="mx-auto shrink-0 overflow-visible 2xl:mx-0 2xl:-translate-x-[400px]">
+              <div className="relative z-0 mx-auto flex shrink-0 justify-center [@media(min-width:768px)_and_(max-width:850px)_and_(min-height:850px)_and_(max-height:920px)]:w-[291px] [@media(min-width:1024px)_and_(max-width:1100px)_and_(min-height:850px)_and_(max-height:920px)]:ml-3 [@media(min-width:1024px)_and_(max-width:1100px)_and_(min-height:850px)_and_(max-height:920px)]:mr-0 [@media(min-width:1024px)_and_(max-width:1100px)_and_(min-height:850px)_and_(max-height:920px)]:w-[280px] min-[1440px]:ml-8 min-[1440px]:mr-0 min-[1440px]:w-[var(--hero-video-col-w)] min-[2560px]:ml-12">
                 <HeroInteractionVideo />
               </div>
             </div>

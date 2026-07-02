@@ -1,5 +1,6 @@
 import { useRef, useState } from 'react'
-import { Link, Outlet, useNavigate } from 'react-router-dom'
+import { Outlet, useNavigate } from 'react-router-dom'
+import { AdminUloNotificationsBell } from '@/components/AdminUloNotificationsBell'
 import uloLogo from '@/assets/landing/ulo-logo.png'
 import { AdminSidebarContent } from '@/components/AdminSidebar'
 import { signOutAdmin } from '@/lib/adminAuth'
@@ -18,14 +19,6 @@ function SearchIcon() {
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} className="size-4">
       <circle cx="11" cy="11" r="7" />
       <path d="M21 21l-4.35-4.35" strokeLinecap="round" />
-    </svg>
-  )
-}
-
-function BellIcon() {
-  return (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} className="size-5">
-      <path d="M18 8a6 6 0 10-12 0c0 7-3 9-3 9h18s-3-2-3-9M13.73 21a2 2 0 01-3.46 0" />
     </svg>
   )
 }
@@ -58,14 +51,7 @@ function AdminHeaderActions({ onNavigate }: { onNavigate?: () => void }) {
 
   return (
     <div className="flex shrink-0 items-center gap-2">
-      <Link
-        to="/admin/notifications"
-        aria-label="Notifications"
-        onClick={onNavigate}
-        className="flex size-9 shrink-0 items-center justify-center rounded-full text-[#101828] outline-none transition-colors duration-150 hover:bg-[#f3f4f6] active:bg-[#e5e7eb] focus-visible:ring-2 focus-visible:ring-[#101828] focus-visible:ring-offset-2"
-      >
-        <BellIcon />
-      </Link>
+      <AdminUloNotificationsBell onNavigate={onNavigate} />
       {supabase ? (
         <button
           type="button"

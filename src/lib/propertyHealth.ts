@@ -77,6 +77,7 @@ export type PropertyHealthScopeScore = {
 export type PropertyHealthBuildingRow = PropertyHealthScopeScore & {
   building: string
   unitCount: number
+  /** Open maintenance tickets scoped to this building (work orders). */
   openTickets: number
   occupancyPct: number
   /** Real avg resident rating (1–5) when feedback exists; null otherwise. */
@@ -98,6 +99,74 @@ export type PropertyHealthUnit = {
   status: string
 }
 
+export type PropertyHealthResident = {
+  id: string
+  fullName: string
+  unit: string
+  building: string | null
+  status: string
+  email?: string | null
+}
+
+const NON_OCCUPYING_RESIDENT_STATUSES = new Set(['past_resident', 'inactive', 'vacant'])
+
+/** True when a roster row counts as currently occupying a unit. */
+export function isOccupyingResidentStatus(status: string): boolean {
+  return !NON_OCCUPYING_RESIDENT_STATUSES.has(status.trim().toLowerCase())
+}
+
+export function findResidentForUnitLabel(
+  unitLabel: string,
+  building: string,
+  residents: PropertyHealthResident[],
+): PropertyHealthResident | null {
+  const unitKey = normalizeUnitLabel(unitLabel)
+  return (
+    residents.find((resident) => {
+      if (normalizeBuildingKey(resident.building) !== normalizeBuildingKey(building)) return false
+      return normalizeUnitLabel(resident.unit) === unitKey
+    }) ?? null
+  )
+}
+
+/** Occupied = tracked unit with a roster resident (same rule as the Units tab). */
+export function isUnitOccupiedByResident(
+  unit: PropertyHealthUnit,
+  building: string,
+  residents: PropertyHealthResident[],
+): boolean {
+  if (unit.status === 'inactive') return false
+  const resident = findResidentForUnitLabel(unit.unitLabel, building, residents)
+  return resident != null && isOccupyingResidentStatus(resident.status)
+}
+
+export function countOccupiedUnits(
+  units: PropertyHealthUnit[],
+  residents: PropertyHealthResident[],
+  building?: string,
+): number {
+  let count = 0
+  for (const unit of units) {
+    if (unit.status === 'inactive') continue
+    const scopeBuilding = building ?? unit.building
+    if (!scopeBuilding) continue
+    if (isUnitOccupiedByResident(unit, scopeBuilding, residents)) count += 1
+  }
+  return count
+}
+
+export function computeOccupancyStats(
+  units: PropertyHealthUnit[],
+  residents: PropertyHealthResident[],
+  building?: string,
+): { occupied: number; tracked: number; occupancyPct: number } {
+  const scoped = building ? filterUnitsForBuilding(units, building) : units
+  const tracked = scoped.filter((unit) => unit.status !== 'inactive')
+  const occupied = countOccupiedUnits(tracked, residents, building)
+  const occupancyPct = tracked.length ? Math.round((occupied / tracked.length) * 100) : 0
+  return { occupied, tracked: tracked.length, occupancyPct }
+}
+
 export type PropertyHealthTicket = {
   id: string
   createdAt: string
@@ -107,6 +176,7 @@ export type PropertyHealthTicket = {
   issueCategory: string | null
   vendorWorkStatus: string
   assignedVendorId: string | null
+  email?: string | null
 }
 
 export type PropertyHealthPmTask = {
@@ -136,6 +206,8 @@ export type PropertyHealthInputs = {
   pmTasks: PropertyHealthPmTask[]
   feedback: PropertyHealthFeedback[]
   vendorMetrics: PropertyHealthVendorMetrics[]
+  /** Roster rows used for occupancy (units with an assigned active resident). */
+  residents?: PropertyHealthResident[]
   now?: number
   /** Override repeat-issue lookback window (ms). Defaults to REPEAT_ISSUE_WINDOW_DAYS. */
   repeatWindowMs?: number
@@ -197,7 +269,7 @@ export function collectPortfolioBuildingKeys(
   tickets: PropertyHealthTicket[],
   landlordId: string = getActiveLandlordId(),
 ): string[] {
-  const unitBuildingMap = buildUnitBuildingMap(units)
+  const ticketBuildingCtx = buildTicketBuildingContext(units)
   const keys = new Set<string>()
 
   for (const unit of units) {
@@ -207,7 +279,7 @@ export function collectPortfolioBuildingKeys(
     if (task.building?.trim()) keys.add(normalizeBuildingKey(task.building))
   }
   for (const ticket of tickets) {
-    keys.add(ticketBuilding(ticket, unitBuildingMap))
+    keys.add(ticketBuilding(ticket, ticketBuildingCtx))
   }
   for (const building of LANDLORD_REGISTERED_BUILDINGS[landlordId] ?? []) {
     keys.add(normalizeBuildingKey(building))
@@ -275,36 +347,94 @@ function ratingToScore(rating: number): number {
   return clampScore((rating / 5) * 100)
 }
 
-function buildUnitBuildingMap(units: PropertyHealthUnit[]): Map<string, string> {
-  const map = new Map<string, string>()
-  for (const unit of units) {
-    map.set(normalizeUnitLabel(unit.unitLabel), normalizeBuildingKey(unit.building))
-  }
-  return map
+type TicketBuildingContext = {
+  unitIdBuildingMap: Map<string, string>
+  uniqueUnitLabelBuildingMap: Map<string, string>
 }
 
-function ticketBuilding(
-  ticket: PropertyHealthTicket,
-  unitBuildingMap: Map<string, string>,
-): string {
+function buildTicketBuildingContext(units: PropertyHealthUnit[]): TicketBuildingContext {
+  const unitIdBuildingMap = new Map<string, string>()
+  const labelToBuildings = new Map<string, Set<string>>()
+
+  for (const unit of units) {
+    if (unit.id) {
+      unitIdBuildingMap.set(unit.id, normalizeBuildingKey(unit.building))
+    }
+    const label = normalizeUnitLabel(unit.unitLabel)
+    if (!label) continue
+    const buildings = labelToBuildings.get(label) ?? new Set<string>()
+    buildings.add(normalizeBuildingKey(unit.building))
+    labelToBuildings.set(label, buildings)
+  }
+
+  const uniqueUnitLabelBuildingMap = new Map<string, string>()
+  for (const [label, buildings] of labelToBuildings) {
+    if (buildings.size === 1) {
+      uniqueUnitLabelBuildingMap.set(label, [...buildings][0]!)
+    }
+  }
+
+  return { unitIdBuildingMap, uniqueUnitLabelBuildingMap }
+}
+
+function ticketBuilding(ticket: PropertyHealthTicket, ctx: TicketBuildingContext): string {
   if (ticket.building?.trim()) return normalizeBuildingKey(ticket.building)
-  const fromUnit = unitBuildingMap.get(normalizeUnitLabel(ticket.unit))
-  return fromUnit ?? 'Portfolio'
+  if (ticket.unitId?.trim()) {
+    const fromUnitId = ctx.unitIdBuildingMap.get(ticket.unitId.trim())
+    if (fromUnitId) return fromUnitId
+  }
+  const fromLabel = ctx.uniqueUnitLabelBuildingMap.get(normalizeUnitLabel(ticket.unit))
+  return fromLabel ?? 'Portfolio'
+}
+
+/** Scope maintenance tickets to one building (uses unit_id when unit labels repeat across properties). */
+export function filterTicketsForBuildingScope<T extends PropertyHealthTicket>(
+  tickets: T[],
+  building: string,
+  units: PropertyHealthUnit[],
+  residents: PropertyHealthResident[] = [],
+): T[] {
+  const ctx = buildTicketBuildingContext(units)
+  const key = normalizeBuildingKey(building)
+  const emailBuildingMap = new Map<string, string>()
+  for (const resident of residents) {
+    const email = resident.email?.trim().toLowerCase()
+    if (email && resident.building?.trim()) {
+      emailBuildingMap.set(email, normalizeBuildingKey(resident.building))
+    }
+  }
+
+  return tickets.filter((ticket) => {
+    if (ticket.building?.trim() && normalizeBuildingKey(ticket.building) === key) {
+      return true
+    }
+    const ticketEmail = ticket.email?.trim().toLowerCase()
+    if (ticketEmail && emailBuildingMap.get(ticketEmail) === key) {
+      return true
+    }
+    if (ticket.unitId?.trim()) {
+      const unitBuilding = ctx.unitIdBuildingMap.get(ticket.unitId.trim())
+      if (unitBuilding === key) return true
+    }
+    return ticketBuilding(ticket, ctx) === key
+  })
 }
 
 function filterUnitsForBuilding(
   units: PropertyHealthUnit[],
   building: string,
 ): PropertyHealthUnit[] {
-  return units.filter((u) => normalizeBuildingKey(u.building) === building)
+  const key = normalizeBuildingKey(building)
+  return units.filter((u) => normalizeBuildingKey(u.building) === key)
 }
 
 function filterTicketsForBuilding(
   tickets: PropertyHealthTicket[],
   building: string,
-  unitBuildingMap: Map<string, string>,
+  ctx: TicketBuildingContext,
 ): PropertyHealthTicket[] {
-  return tickets.filter((t) => ticketBuilding(t, unitBuildingMap) === building)
+  const key = normalizeBuildingKey(building)
+  return tickets.filter((ticket) => ticketBuilding(ticket, ctx) === key)
 }
 
 function filterPmForBuilding(tasks: PropertyHealthPmTask[], building: string): PropertyHealthPmTask[] {
@@ -314,12 +444,12 @@ function filterPmForBuilding(tasks: PropertyHealthPmTask[], building: string): P
 function filterFeedbackForBuilding(
   feedback: PropertyHealthFeedback[],
   building: string,
-  unitBuildingMap: Map<string, string>,
+  ctx: TicketBuildingContext,
 ): PropertyHealthFeedback[] {
   return feedback.filter((f) => {
     if (f.building?.trim()) return normalizeBuildingKey(f.building) === building
     if (f.unit) {
-      return unitBuildingMap.get(normalizeUnitLabel(f.unit)) === building
+      return ctx.uniqueUnitLabelBuildingMap.get(normalizeUnitLabel(f.unit)) === building
     }
     return building === 'Portfolio'
   })
@@ -392,7 +522,11 @@ function scorePmCompliance(tasks: PropertyHealthPmTask[]): PropertyHealthCompone
   }
 }
 
-function scoreVacancy(trackedUnits: PropertyHealthUnit[]): PropertyHealthComponent {
+function scoreVacancy(
+  trackedUnits: PropertyHealthUnit[],
+  residents: PropertyHealthResident[],
+  building?: string,
+): PropertyHealthComponent {
   if (trackedUnits.length === 0) {
     return {
       key: 'vacancy',
@@ -403,7 +537,7 @@ function scoreVacancy(trackedUnits: PropertyHealthUnit[]): PropertyHealthCompone
       detail: 'No active units to measure',
     }
   }
-  const occupied = trackedUnits.filter((u) => u.status === 'active').length
+  const occupied = countOccupiedUnits(trackedUnits, residents, building)
   const score = clampScore((occupied / trackedUnits.length) * 100)
   return {
     key: 'vacancy',
@@ -598,7 +732,7 @@ export function computePropertyHealthScope(
   const now = inputs.now ?? Date.now()
   const repeatWindowMs =
     inputs.repeatWindowMs ?? REPEAT_ISSUE_WINDOW_DAYS * 24 * 60 * 60 * 1000
-  const unitBuildingMap = buildUnitBuildingMap(inputs.units)
+  const ticketBuildingCtx = buildTicketBuildingContext(inputs.units)
 
   const scopedUnits = scope.building
     ? filterUnitsForBuilding(inputs.units, scope.building)
@@ -610,20 +744,20 @@ export function computePropertyHealthScope(
   }
 
   const scopedTickets = scope.building
-    ? filterTicketsForBuilding(inputs.tickets, scope.building, unitBuildingMap)
+    ? filterTicketsForBuilding(inputs.tickets, scope.building, ticketBuildingCtx)
     : inputs.tickets
   const openTickets = scopedTickets.filter(isTicketOpen)
   const scopedPm = scope.building
     ? filterPmForBuilding(inputs.pmTasks, scope.building)
     : inputs.pmTasks
   const scopedFeedback = scope.building
-    ? filterFeedbackForBuilding(inputs.feedback, scope.building, unitBuildingMap)
+    ? filterFeedbackForBuilding(inputs.feedback, scope.building, ticketBuildingCtx)
     : inputs.feedback
 
   const components: PropertyHealthComponent[] = [
     scoreOpenMaintenance(trackedUnits, openTickets, inputs.openIssuesCreatedBeforeMs),
     scorePmCompliance(scopedPm),
-    scoreVacancy(trackedUnits),
+    scoreVacancy(trackedUnits, inputs.residents ?? [], scope.building),
     scoreResidentSatisfaction(scopedFeedback),
     scoreRepeatIssueRisk(trackedUnits, scopedTickets, now, repeatWindowMs),
     scoreVendorPerformance(scopedTickets, inputs.vendorMetrics),
@@ -643,7 +777,7 @@ export function buildPropertyHealthReport(
   landlordId: string = getActiveLandlordId(),
 ): PropertyHealthReport {
   const now = inputs.now ?? Date.now()
-  const unitBuildingMap = buildUnitBuildingMap(inputs.units)
+  const ticketBuildingCtx = buildTicketBuildingContext(inputs.units)
 
   const portfolio = computePropertyHealthScope(inputs)
   const portfolioDelta = (() => {
@@ -665,12 +799,6 @@ export function buildPropertyHealthReport(
   )
 
   const openTickets = inputs.tickets.filter(isTicketOpen)
-  const openByUnit = new Map<string, number>()
-  for (const ticket of openTickets) {
-    const key = normalizeUnitLabel(ticket.unit)
-    if (!key) continue
-    openByUnit.set(key, (openByUnit.get(key) ?? 0) + 1)
-  }
 
   const buildings: PropertyHealthBuildingRow[] = []
   for (const building of buildingKeys) {
@@ -682,19 +810,18 @@ export function buildPropertyHealthReport(
 
     if (!scopeScore) continue
 
-    const tracked = buildingUnits.filter((u) => u.status !== 'inactive')
-    const active = tracked.filter((u) => u.status === 'active').length
-    const occupancyPct = tracked.length ? Math.round((active / tracked.length) * 100) : 0
+    const occupancy = computeOccupancyStats(inputs.units, inputs.residents ?? [], building)
 
-    const openTicketCount = tracked.reduce(
-      (sum, u) => sum + (openByUnit.get(normalizeUnitLabel(u.unitLabel)) ?? 0),
-      0,
-    )
+    const openWorkOrderCount = filterTicketsForBuilding(
+      openTickets,
+      building,
+      ticketBuildingCtx,
+    ).length
 
     const scopedFeedback = filterFeedbackForBuilding(
       inputs.feedback,
       building,
-      unitBuildingMap,
+      ticketBuildingCtx,
     )
     const ratings = scopedFeedback
       .map((f) => f.rating)
@@ -707,8 +834,8 @@ export function buildPropertyHealthReport(
     buildings.push({
       building,
       unitCount: buildingUnits.length,
-      openTickets: openTicketCount,
-      occupancyPct,
+      openTickets: openWorkOrderCount,
+      occupancyPct: occupancy.occupancyPct,
       residentRating,
       feedbackCount: ratings.length,
       ...scopeScore,
@@ -764,7 +891,7 @@ export function mapUnitsForPropertyHealth(
 ): PropertyHealthUnit[] {
   return rows.map((raw) => ({
     id: asString(raw.id),
-    unitLabel: asString(raw.unit_label),
+    unitLabel: asString(raw.unit_label) || asString(raw.unitLabel),
     building: asString(raw.building) || null,
     status: asString(raw.status).toLowerCase(),
   }))

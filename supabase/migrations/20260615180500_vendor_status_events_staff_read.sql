@@ -1,6 +1,8 @@
 -- Staff dashboards need vendor_status_events to compute avg response time in
 -- vendor_operational_metrics / vendor_score_view (security_invoker views).
 
+drop policy if exists vendor_status_events_select_staff on public.vendor_status_events;
+
 create policy vendor_status_events_select_staff
   on public.vendor_status_events
   for select

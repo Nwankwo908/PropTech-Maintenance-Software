@@ -1,4 +1,8 @@
-import { Link, useLocation } from 'react-router-dom'
+import { Link, Route, Routes, useLocation } from 'react-router-dom'
+import { AdminBillingSettings } from '@/components/AdminBillingSettings'
+import { AdminConnectedEmailSettings } from '@/components/AdminConnectedEmailSettings'
+import { AdminNotificationSettings } from '@/components/AdminNotificationSettings'
+import { AdminOrganizationSettings } from '@/components/AdminOrganizationSettings'
 
 type SettingsCategory = {
   id: string
@@ -14,37 +18,26 @@ const SETTINGS_CATEGORIES: SettingsCategory[] = [
     id: 'organization',
     title: 'Organization',
     description: 'Company profile, branding, and time zone.',
+    href: '/admin/settings/organization',
     activeOnExactPath: '/admin/settings',
   },
   {
-    id: 'team',
-    title: 'Team & roles',
-    description: 'Invite operators and configure permissions.',
-    href: '/admin/users',
-  },
-  {
-    id: 'ai-copilot',
-    title: 'AI copilot',
-    description: 'Tune automation thresholds and approval rules.',
-    href: '/admin/workflows',
-  },
-  {
-    id: 'integrations',
-    title: 'Integrations',
-    description: 'Accounting, payments, smart locks, and IoT sensors.',
-    comingSoon: true,
+    id: 'connected-email',
+    title: 'Connected Email',
+    description: 'Discover leases, invoices, and inspection reports from your inbox.',
+    href: '/admin/settings/integrations/email',
   },
   {
     id: 'billing',
     title: 'Billing',
-    description: 'Plan, invoices, and payment method.',
-    comingSoon: true,
+    description: 'Beta access, subscription details, and future billing.',
+    href: '/admin/settings/billing',
   },
   {
     id: 'notifications',
     title: 'Notifications',
-    description: 'Email, SMS, and push delivery preferences.',
-    href: '/admin/notifications',
+    description: 'Operational alerts by event, channel, and priority.',
+    href: '/admin/settings/operations/notifications',
   },
 ]
 
@@ -105,11 +98,11 @@ function SettingsCategoryCard({
   )
 }
 
-export function AdminSettingsDashboard() {
+function SettingsHome() {
   const { pathname } = useLocation()
 
   return (
-    <main className="flex min-h-0 flex-1 flex-col px-8 pb-12">
+    <>
       <div className="py-6">
         <h1 className="text-[24px] font-semibold leading-8 tracking-[0.0703px] text-[#0a0a0a]">
           Settings
@@ -122,15 +115,28 @@ export function AdminSettingsDashboard() {
       <div className="grid gap-4 sm:grid-cols-2">
         {SETTINGS_CATEGORIES.map((category) => {
           const active =
-            category.activeOnExactPath != null
-              ? pathname === category.activeOnExactPath
-              : category.href != null && pathname.startsWith(category.href)
+            (category.activeOnExactPath != null && pathname === category.activeOnExactPath) ||
+            (category.href != null && pathname.startsWith(category.href))
 
           return (
             <SettingsCategoryCard key={category.id} category={category} active={active} />
           )
         })}
       </div>
+    </>
+  )
+}
+
+export function AdminSettingsDashboard() {
+  return (
+    <main className="flex min-h-0 flex-1 flex-col px-8 pb-12">
+      <Routes>
+        <Route index element={<SettingsHome />} />
+        <Route path="organization" element={<AdminOrganizationSettings />} />
+        <Route path="billing" element={<AdminBillingSettings />} />
+        <Route path="operations/notifications" element={<AdminNotificationSettings />} />
+        <Route path="integrations/email" element={<AdminConnectedEmailSettings />} />
+      </Routes>
     </main>
   )
 }

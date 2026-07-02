@@ -77,6 +77,27 @@ serve(async (req) => {
 
   const supabase = createClient(supabaseUrl, serviceKey)
 
+  const { data: ticketRow, error: ticketLoadErr } = await supabase
+    .from("maintenance_requests")
+    .select("id, landlord_id, issue_category")
+    .eq("id", ticketId)
+    .maybeSingle()
+
+  if (ticketLoadErr) {
+    console.error("[admin-reassign-vendor] load ticket scope", ticketLoadErr)
+    return jsonResponse({ error: "Load ticket failed" }, 500)
+  }
+  if (!ticketRow) {
+    return jsonResponse({ error: "Ticket not found" }, 404)
+  }
+
+  const ticketLandlordId = ticketRow.landlord_id == null
+    ? null
+    : String(ticketRow.landlord_id).trim()
+  const ticketIssueCategory = ticketRow.issue_category == null
+    ? null
+    : String(ticketRow.issue_category).trim()
+
   let _vendorId = ""
   if (vendorIdRaw && uuidRe.test(vendorIdRaw)) {
     _vendorId = vendorIdRaw
@@ -86,12 +107,16 @@ serve(async (req) => {
       .replace(/\\/g, "\\\\")
       .replace(/%/g, "\\%")
       .replace(/_/g, "\\_")
-    const { data: rows, error: exErr } = await supabase
+    let vendorQuery = supabase
       .from("vendors")
       .select("id, name")
       .eq("active", true)
       .ilike("name", needle)
       .limit(25)
+    if (ticketLandlordId) {
+      vendorQuery = vendorQuery.eq("landlord_id", ticketLandlordId)
+    }
+    const { data: rows, error: exErr } = await vendorQuery
 
     if (exErr) {
       console.error("[admin-reassign-vendor] vendor by name", exErr)
@@ -102,14 +127,16 @@ serve(async (req) => {
     const matches = (rows ?? []).filter((r) => norm(r.name as string) === want)
     if (matches.length === 0) {
       if (createVendorIfMissing) {
+        const insertRow: Record<string, unknown> = {
+          name: vendorName,
+          category: vendorCategoryInsert ?? ticketIssueCategory,
+          active: true,
+          notification_channel: "email",
+        }
+        if (ticketLandlordId) insertRow.landlord_id = ticketLandlordId
         const { data: ins, error: insErr } = await supabase
           .from("vendors")
-          .insert({
-            name: vendorName,
-            category: vendorCategoryInsert,
-            active: true,
-            notification_channel: "email",
-          })
+          .insert(insertRow)
           .select("id")
           .single()
         if (insErr || !ins?.id) {
@@ -155,7 +182,7 @@ serve(async (req) => {
 
   try {
     await logGraphEvent(supabase, {
-      landlord_id: resolveLandlordId(),
+      landlord_id: ticketLandlordId ?? resolveLandlordId(),
       event_type: "vendor.reassigned",
       source: "dashboard",
       actor_type: "landlord",

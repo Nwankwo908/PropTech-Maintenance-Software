@@ -38,6 +38,10 @@ export type AdminWorkflowRow = {
   lastEventType: string | null
   lastEventMessage: string | null
   lastEventAt: string | null
+  /** From workflow_runs.metadata.escalation_reason when escalated. */
+  escalationReason: string | null
+  /** Step log for escalated run review rails. */
+  timeline?: AdminWorkflowTimelineEvent[]
 }
 
 export type AdminRentCollectionRow = AdminWorkflowRow & {
@@ -104,6 +108,7 @@ export type AdminWorkflowDashboardData = {
   rentCollection: AdminRentCollectionDashboard
   lifecycle: AdminLifecycleDashboard
   groups: AdminWorkflowGroupCard[]
+  runMetadata: Record<string, Record<string, unknown>>
   stats: {
     activeCount: number
     escalatedCount: number
@@ -704,6 +709,7 @@ export async function fetchAdminWorkflowDashboard(): Promise<AdminWorkflowDashbo
       rentCollection: emptyRentCollectionDashboard(),
       lifecycle: emptyLifecycleDashboard(),
       groups: emptyWorkflowGroups(),
+      runMetadata: {},
       stats: { activeCount: 0, escalatedCount: 0, completedCount: 0 },
     }
   }
@@ -845,6 +851,7 @@ export async function fetchAdminWorkflowDashboard(): Promise<AdminWorkflowDashbo
       lastEventType: latestEvent?.event_type ?? null,
       lastEventMessage: latestEvent?.message ?? null,
       lastEventAt: latestEvent?.created_at ?? null,
+      escalationReason: readMetaString(metadata, 'escalation_reason'),
     }
   })
 
@@ -854,12 +861,17 @@ export async function fetchAdminWorkflowDashboard(): Promise<AdminWorkflowDashbo
       row.templateId !== 'rent_collection' &&
       !isLifecycleTemplateId(row.templateId),
   )
-  const escalated = rows.filter(
-    (row) =>
-      row.status === 'escalated' &&
-      row.templateId !== 'rent_collection' &&
-      !isLifecycleTemplateId(row.templateId),
-  )
+  const escalated = rows
+    .filter(
+      (row) =>
+        row.status === 'escalated' &&
+        row.templateId !== 'rent_collection' &&
+        !isLifecycleTemplateId(row.templateId),
+    )
+    .map((row) => ({
+      ...row,
+      timeline: timelineByRun.get(row.id) ?? [],
+    }))
   const completedCount = rows.filter((row) => row.status === 'completed').length
 
   const rentRuns = runs
@@ -901,6 +913,7 @@ export async function fetchAdminWorkflowDashboard(): Promise<AdminWorkflowDashbo
   for (const run of runs) {
     metadataByRunId.set(run.id, run.metadata ?? {})
   }
+  const runMetadata = Object.fromEntries(metadataByRunId.entries())
 
   const maintenanceRows = rows.filter((row) =>
     MAINTENANCE_TEMPLATE_IDS.has(row.templateId)
@@ -974,6 +987,7 @@ export async function fetchAdminWorkflowDashboard(): Promise<AdminWorkflowDashbo
       },
     },
     groups,
+    runMetadata,
     stats: {
       activeCount: active.length,
       escalatedCount: escalated.length,

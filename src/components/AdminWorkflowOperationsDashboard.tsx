@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useId, useMemo, useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import {
   startLifecycleWorkflow,
   loadResidentsForUnit,
@@ -10,48 +11,27 @@ import {
 } from '@/api/lifecycleWorkflow'
 import {
   fetchAdminWorkflowDashboard,
-  formatLocationContextLabel,
-  workflowTemplateGroupId,
   type AdminWorkflowDashboardData,
   type AdminWorkflowRow,
 } from '@/lib/adminWorkflows'
+import {
+  WORKFLOW_CATEGORY_BADGE,
+  WORKFLOW_KANBAN_STAGES,
+  buildWorkflowKanbanCard,
+  collectAdminWorkflowRuns,
+  type WorkflowKanbanCard,
+  type WorkflowKanbanCategory,
+  type WorkflowKanbanStageId,
+} from '@/lib/adminWorkflowKanban'
+import { fetchWorkflowPipelineDetail, type WorkflowPipelineDetail } from '@/lib/workflowPipelineDetail'
+import { WorkflowPipelineDetailPanel } from '@/components/WorkflowPipelineDetailPanel'
 import { supabase } from '@/lib/supabase'
 
-// -----------------------------------------------------------------------------
-// Kanban model: every workflow run maps to one pipeline stage + one category.
-// -----------------------------------------------------------------------------
-
-type StageId =
-  | 'new_intake'
-  | 'assigned'
-  | 'in_progress'
-  | 'completed'
-
-const STAGE_ORDER: { id: StageId; label: string }[] = [
-  { id: 'new_intake', label: 'New Intake' },
-  { id: 'assigned', label: 'Assigned' },
-  { id: 'in_progress', label: 'In Progress' },
-  { id: 'completed', label: 'Completed' },
-]
-
-type Category =
-  | 'maintenance'
-  | 'payment'
-  | 'lease'
-  | 'move_in'
-  | 'move_out'
-  | 'inspection'
-  | 'other'
-
-const CATEGORY_BADGE: Record<Category, { label: string; className: string }> = {
-  maintenance: { label: 'Maintenance', className: 'bg-[#f3e8ff] text-[#7c3aed]' },
-  payment: { label: 'Payment', className: 'bg-[#fef9c2] text-[#a65f00]' },
-  lease: { label: 'Lease', className: 'bg-[#dbeafe] text-[#1447e6]' },
-  move_in: { label: 'Move in', className: 'bg-[#dbfce7] text-[#008236]' },
-  move_out: { label: 'Move out', className: 'bg-[#ffe2e2] text-[#c10007]' },
-  inspection: { label: 'Inspection', className: 'bg-[#e0f2fe] text-[#0069a8]' },
-  other: { label: 'Workflow', className: 'bg-[#f3f4f6] text-[#364153]' },
-}
+type StageId = WorkflowKanbanStageId
+const STAGE_ORDER = WORKFLOW_KANBAN_STAGES
+type Category = WorkflowKanbanCategory
+const CATEGORY_BADGE = WORKFLOW_CATEGORY_BADGE
+type KanbanCard = WorkflowKanbanCard
 
 type PillId = 'all' | 'maintenance' | 'lease' | 'payment'
 
@@ -61,103 +41,6 @@ const FILTER_PILLS: { id: PillId; label: string }[] = [
   { id: 'lease', label: 'Lease' },
   { id: 'payment', label: 'Payment' },
 ]
-
-type KanbanCard = {
-  id: string
-  title: string
-  context: string
-  category: Category
-  stage: StageId
-  critical: boolean
-  initials: string | null
-}
-
-function deriveCategory(row: AdminWorkflowRow): Category {
-  const group = workflowTemplateGroupId(row.templateId)
-  if (group === 'maintenance') return 'maintenance'
-  if (group === 'rent_collection') return 'payment'
-  if (group === 'move_in') return 'move_in'
-  if (group === 'move_out') return 'move_out'
-  if (group === 'inspection') return 'inspection'
-  if (row.templateId === 'lease_renewal') return 'lease'
-  return 'other'
-}
-
-/** Rent runs are cron-started; map engine steps/events to kanban columns explicitly. */
-function deriveRentCollectionStage(row: AdminWorkflowRow): StageId {
-  if (row.status === 'completed') return 'completed'
-  if (row.status === 'escalated') return 'in_progress'
-
-  const step = (row.currentStep ?? '').toLowerCase()
-  const event = (row.lastEventType ?? '').toLowerCase()
-  const hay = `${step} ${event}`
-
-  if (/paid|complete|closed|done/.test(hay) || event === 'rent.payment_received') {
-    return 'completed'
-  }
-  if (
-    /reminder|await|payment_requested|payment_reminder|late_escal|overdue|outreach/.test(hay) ||
-    event === 'rent.reminder_sent' ||
-    event === 'rent.payment_requested' ||
-    event === 'rent.late_escalated'
-  ) {
-    return 'in_progress'
-  }
-  if (
-    /initiated|classified|routed|due|detect/.test(hay) ||
-    event === 'rent.due_detected' ||
-    event === 'workflow.trigger'
-  ) {
-    return 'assigned'
-  }
-  return row.status === 'active' ? 'in_progress' : 'assigned'
-}
-
-function deriveStage(row: AdminWorkflowRow): StageId {
-  if (row.templateId === 'rent_collection') {
-    return deriveRentCollectionStage(row)
-  }
-
-  if (row.status === 'completed') return 'completed'
-  if (row.status === 'escalated') return 'in_progress'
-
-  const step = (row.currentStep ?? '').toLowerCase()
-  const event = (row.lastEventType ?? '').toLowerCase()
-  const hay = `${step} ${event}`
-
-  if (/complete|closed|done|paid|activated|vacated/.test(hay)) return 'completed'
-  if (/wait|pending|await|hold|reminder|notice|response|review/.test(hay)) return 'in_progress'
-  if (/act|in_progress|progress|working|repair|schedul/.test(hay)) return 'in_progress'
-  if (/classif|route|assign|dispatch|vendor/.test(hay)) return 'assigned'
-  if (/trigger|intake|new|received|created|start|detect/.test(hay)) return 'new_intake'
-  return 'new_intake'
-}
-
-function deriveInitials(row: AdminWorkflowRow): string | null {
-  const name = row.residentName?.trim()
-  if (!name) return null
-  const parts = name.split(/\s+/).filter(Boolean)
-  if (!parts.length) return null
-  const first = parts[0][0] ?? ''
-  const last = parts.length > 1 ? (parts[parts.length - 1][0] ?? '') : ''
-  return (first + last).toUpperCase() || null
-}
-
-function buildCard(row: AdminWorkflowRow): KanbanCard {
-  return {
-    id: row.id,
-    title: row.templateName,
-    context: formatLocationContextLabel({
-      propertyLabel: row.propertyLabel,
-      unitLabel: row.unitLabel,
-      residentName: row.residentName,
-    }),
-    category: deriveCategory(row),
-    stage: deriveStage(row),
-    critical: row.status === 'escalated',
-    initials: deriveInitials(row),
-  }
-}
 
 function StartLifecycleWorkflowModal({
   open,
@@ -466,10 +349,28 @@ function StartWorkflowChooser({
   )
 }
 
-function KanbanCardItem({ card }: { card: KanbanCard }) {
+function KanbanCardItem({
+  card,
+  highlighted,
+  onSelect,
+}: {
+  card: KanbanCard
+  highlighted?: boolean
+  onSelect: (runId: string) => void
+}) {
   const badge = CATEGORY_BADGE[card.category]
   return (
-    <div className="flex flex-col gap-2 rounded-[10px] border border-[#e5e7eb] bg-white p-3 shadow-[0px_1px_2px_-1px_rgba(0,0,0,0.06)]">
+    <button
+      type="button"
+      id={`workflow-card-${card.id}`}
+      onClick={() => onSelect(card.id)}
+      className={[
+        'flex w-full flex-col gap-2 rounded-[10px] border bg-white p-3 text-left shadow-[0px_1px_2px_-1px_rgba(0,0,0,0.06)] transition-shadow outline-none hover:border-[#d1d5dc] focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2',
+        highlighted
+          ? 'border-[#101828] ring-2 ring-[#101828]/20'
+          : 'border-[#e5e7eb]',
+      ].join(' ')}
+    >
       <div className="flex items-start justify-between gap-2">
         <p className="min-w-0 flex-1 text-[14px] font-medium leading-5 text-[#0a0a0a]">
           {card.title}
@@ -498,36 +399,32 @@ function KanbanCardItem({ card }: { card: KanbanCard }) {
           <span className="size-6 shrink-0 rounded-full bg-[#e5e7eb]" aria-hidden />
         )}
       </div>
-    </div>
+    </button>
   )
 }
 
 export function AdminWorkflowOperationsDashboard() {
+  const [searchParams] = useSearchParams()
+  const focusRunId = searchParams.get('run')?.trim() || null
   const [data, setData] = useState<AdminWorkflowDashboardData | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [categoryFilter, setCategoryFilter] = useState<PillId>('all')
+  const [highlightRunId, setHighlightRunId] = useState<string | null>(null)
 
   const [chooserOpen, setChooserOpen] = useState(false)
   const [startModalWorkflow, setStartModalWorkflow] = useState<LifecycleWorkflowType | null>(null)
+  const [selectedRunId, setSelectedRunId] = useState<string | null>(null)
+  const [pipelineDetail, setPipelineDetail] = useState<WorkflowPipelineDetail | null>(null)
+  const [pipelineLoading, setPipelineLoading] = useState(false)
 
   const allRuns = useMemo<AdminWorkflowRow[]>(() => {
     if (!data) return []
-    const byId = new Map<string, AdminWorkflowRow>()
-    for (const row of [
-      ...data.active,
-      ...data.escalated,
-      ...data.maintenanceRuns,
-      ...data.rentCollection.runs,
-      ...data.lifecycle.runs,
-    ]) {
-      byId.set(row.id, row)
-    }
-    return [...byId.values()]
+    return collectAdminWorkflowRuns(data)
   }, [data])
 
   const cards = useMemo<KanbanCard[]>(() => {
-    const all = allRuns.filter((row) => row.status !== 'cancelled').map(buildCard)
+    const all = allRuns.filter((row) => row.status !== 'cancelled').map(buildWorkflowKanbanCard)
     if (categoryFilter === 'all') return all
     const target: Category = categoryFilter === 'payment' ? 'payment' : categoryFilter
     return all.filter((card) => card.category === target)
@@ -572,6 +469,40 @@ export function AdminWorkflowOperationsDashboard() {
   }, [load])
 
   useEffect(() => {
+    if (!focusRunId || loading) return
+    setSelectedRunId(focusRunId)
+    const element = document.getElementById(`workflow-card-${focusRunId}`)
+    if (element) {
+      element.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    }
+    setHighlightRunId(focusRunId)
+    const timer = window.setTimeout(() => setHighlightRunId(null), 3200)
+    return () => window.clearTimeout(timer)
+  }, [focusRunId, loading, cards])
+
+  useEffect(() => {
+    if (!selectedRunId || !data) {
+      setPipelineDetail(null)
+      setPipelineLoading(false)
+      return
+    }
+
+    let cancelled = false
+    setPipelineLoading(true)
+    setPipelineDetail(null)
+
+    void fetchWorkflowPipelineDetail(selectedRunId, allRuns, data.runMetadata).then((result) => {
+      if (cancelled) return
+      setPipelineDetail(result)
+      setPipelineLoading(false)
+    })
+
+    return () => {
+      cancelled = true
+    }
+  }, [selectedRunId, data, allRuns])
+
+  useEffect(() => {
     const client = supabase
     if (!client) return
 
@@ -599,7 +530,7 @@ export function AdminWorkflowOperationsDashboard() {
   }, [load])
 
   return (
-    <main className="flex min-h-0 flex-1 flex-col overflow-auto px-8 pb-12">
+    <main className="flex min-h-0 w-full min-w-0 flex-1 flex-col overflow-x-hidden overflow-y-auto px-8 pb-12">
       <div className="py-6">
         <h1 className="text-[24px] font-semibold leading-8 tracking-[0.0703px] text-[#0a0a0a]">
           Workflows
@@ -625,6 +556,13 @@ export function AdminWorkflowOperationsDashboard() {
         onStarted={() => void load()}
       />
 
+      <WorkflowPipelineDetailPanel
+        open={selectedRunId != null}
+        detail={pipelineDetail}
+        loading={pipelineLoading}
+        onClose={() => setSelectedRunId(null)}
+      />
+
       {error ? (
         <div className="mb-4 rounded-[10px] border border-[#fecaca] bg-[#fef2f2] px-4 py-3 text-[14px] text-[#b52a00]">
           {error}
@@ -632,7 +570,7 @@ export function AdminWorkflowOperationsDashboard() {
       ) : null}
 
       {/* Workflow Pipeline (kanban) */}
-      <section className="flex min-w-0 flex-col rounded-[10px] border border-[#e5e7eb] bg-white shadow-[0px_1px_2px_-1px_rgba(0,0,0,0.06)]">
+      <section className="flex w-full min-w-0 flex-col overflow-hidden rounded-[10px] border border-[#e5e7eb] bg-white shadow-[0px_1px_2px_-1px_rgba(0,0,0,0.06)]">
         <div className="flex flex-col gap-3 border-b border-[#e5e7eb] px-6 py-4 lg:flex-row lg:items-center lg:justify-between">
           <div>
             <h2 className="text-[16px] font-semibold leading-6 text-[#0a0a0a]">
@@ -661,12 +599,15 @@ export function AdminWorkflowOperationsDashboard() {
           </div>
         </div>
 
-        <div className="overflow-x-auto overscroll-x-contain p-4">
-          <div className="flex min-w-max gap-4">
+        <div
+          className="overflow-x-auto overscroll-x-contain touch-pan-x [-ms-overflow-style:none] [-webkit-overflow-scrolling:touch] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden lg:overflow-visible"
+          aria-label="Workflow stages"
+        >
+          <div className="flex w-max snap-x snap-mandatory gap-4 p-4 lg:grid lg:w-full lg:snap-none lg:grid-cols-2 xl:grid-cols-4">
             {columns.map((column) => (
               <div
                 key={column.id}
-                className="flex w-[300px] shrink-0 flex-col rounded-[10px] border border-[#e5e7eb] bg-[#f9fafb]"
+                className="flex w-[min(85vw,320px)] shrink-0 snap-start flex-col rounded-[10px] border border-[#e5e7eb] bg-[#f9fafb] min-h-[min(60vh,560px)] lg:w-auto lg:min-w-0"
               >
                 <div className="flex items-center justify-between gap-2 px-3 py-2.5">
                   <div className="flex items-center gap-2">
@@ -688,7 +629,7 @@ export function AdminWorkflowOperationsDashboard() {
                     </svg>
                   </button>
                 </div>
-                <div className="flex max-h-[60vh] flex-col gap-3 overflow-y-auto px-3 pb-3">
+                <div className="flex flex-1 flex-col gap-3 overflow-y-visible px-3 pb-3 lg:min-h-0 lg:overflow-y-auto">
                   {loading ? (
                     <p className="px-1 py-6 text-center text-[12px] text-[#6a7282]">Loading…</p>
                   ) : column.cards.length === 0 ? (
@@ -696,7 +637,14 @@ export function AdminWorkflowOperationsDashboard() {
                       No workflows
                     </p>
                   ) : (
-                    column.cards.map((card) => <KanbanCardItem key={card.id} card={card} />)
+                    column.cards.map((card) => (
+                      <KanbanCardItem
+                        key={card.id}
+                        card={card}
+                        highlighted={highlightRunId === card.id}
+                        onSelect={setSelectedRunId}
+                      />
+                    ))
                   )}
                 </div>
               </div>

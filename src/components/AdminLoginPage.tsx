@@ -1,5 +1,5 @@
 import { useEffect, useState, type FormEvent } from 'react'
-import { Navigate, useNavigate } from 'react-router-dom'
+import { Navigate, Link, useNavigate } from 'react-router-dom'
 import bgLogin from '@/assets/BG_Login.png'
 import uloLogo from '@/assets/Ulo_Logo_small.png'
 import {
@@ -168,7 +168,13 @@ export function AdminLoginPage() {
           <div className="overflow-hidden rounded-2xl border border-[#e5e7eb] bg-white shadow-[0px_20px_25px_-5px_rgba(0,0,0,0.1),0px_8px_10px_-6px_rgba(0,0,0,0.1)]">
             <div className="px-8 pb-8 pt-8">
               <div className="flex flex-col items-center gap-2 text-center">
-                <img src={uloLogo} alt="ülo home" className="h-10 w-auto object-contain" />
+                <Link
+                  to="/"
+                  aria-label="Back to Ulo home"
+                  className="rounded-lg outline-none transition-opacity hover:opacity-80 focus-visible:ring-2 focus-visible:ring-emerald-500/40 focus-visible:ring-offset-2"
+                >
+                  <img src={uloLogo} alt="ülo home" className="h-10 w-auto object-contain" />
+                </Link>
                 <h1 className="text-[24px] font-bold leading-8 tracking-[0.0703px] text-[rgba(16,24,40,0.7)]">
                   Welcome to Ulo Home
                 </h1>

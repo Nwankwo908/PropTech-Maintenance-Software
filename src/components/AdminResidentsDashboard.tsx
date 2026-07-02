@@ -20,6 +20,10 @@ type ResidentRow = {
   id: string
   name: string
   unitLabel: string
+  rentLabel: string
+  moveInLabel: string
+  contactPhone: string | null
+  contactEmail: string | null
   leaseEndLabel: string
   balanceDue: number
   sentiment: Sentiment
@@ -60,6 +64,23 @@ function formatLeaseEnd(value: string | null): string {
   const date = new Date(`${value.trim()}T12:00:00`)
   if (Number.isNaN(date.getTime())) return '—'
   return date.toLocaleDateString(undefined, { month: 'short', year: 'numeric' })
+}
+
+function formatMoveIn(value: string | null): string {
+  if (!value?.trim()) return '—'
+  const date = new Date(`${value.trim()}T12:00:00`)
+  if (Number.isNaN(date.getTime())) return '—'
+  return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })
+}
+
+function estimateMonthlyRent(unit: string | null): number {
+  const unitNumber = Number.parseInt((unit ?? '').replace(/\D/g, ''), 10)
+  if (!Number.isFinite(unitNumber)) return 1800
+  if (unitNumber >= 500) return 2400
+  if (unitNumber >= 400) return 2200
+  if (unitNumber >= 300) return 2000
+  if (unitNumber >= 200) return 1850
+  return 1650
 }
 
 function formatBalance(amount: number): string {
@@ -238,7 +259,9 @@ export function AdminResidentsDashboard() {
 
     const { data, error: fetchError } = await supabase
       .from('users')
-      .select('id, full_name, unit, building, status, balance_due, lease_end_date, issues')
+      .select(
+        'id, full_name, unit, building, status, balance_due, lease_end_date, move_in_date, phone, email, issues',
+      )
       .eq('landlord_id', getActiveLandlordId())
       .neq('status', 'past_resident')
 
@@ -254,10 +277,17 @@ export function AdminResidentsDashboard() {
         const balanceDue = asFiniteNumber(raw.balance_due)
         const status = asString(raw.status) || 'active'
         const leaseEndDate = asString(raw.lease_end_date) || null
+        const unit = asString(raw.unit) || null
+        const phone = asString(raw.phone) || null
+        const email = asString(raw.email) || null
         return {
           id: asString(raw.id),
           name: asString(raw.full_name) || 'Unnamed resident',
-          unitLabel: formatUnit(asString(raw.building) || null, asString(raw.unit) || null),
+          unitLabel: formatUnit(asString(raw.building) || null, unit),
+          rentLabel: formatBalance(estimateMonthlyRent(unit)),
+          moveInLabel: formatMoveIn(asString(raw.move_in_date) || null),
+          contactPhone: phone,
+          contactEmail: email,
           leaseEndLabel: formatLeaseEnd(leaseEndDate),
           balanceDue,
           sentiment: inferSentiment({
@@ -375,7 +405,10 @@ export function AdminResidentsDashboard() {
         !q ||
         resident.name.toLowerCase().includes(q) ||
         resident.unitLabel.toLowerCase().includes(q) ||
-        resident.leaseEndLabel.toLowerCase().includes(q)
+        resident.leaseEndLabel.toLowerCase().includes(q) ||
+        resident.moveInLabel.toLowerCase().includes(q) ||
+        (resident.contactPhone ?? '').toLowerCase().includes(q) ||
+        (resident.contactEmail ?? '').toLowerCase().includes(q)
       if (!matchesSearch) return false
       if (sentimentFilter !== 'all' && resident.sentiment !== sentimentFilter) return false
       return true
@@ -582,6 +615,9 @@ export function AdminResidentsDashboard() {
                 </th>
                 <th className="px-6 py-3 text-[12px] font-medium text-[#6a7282]">Resident</th>
                 <th className="px-6 py-3 text-[12px] font-medium text-[#6a7282]">Unit</th>
+                <th className="px-6 py-3 text-[12px] font-medium text-[#6a7282]">Rent</th>
+                <th className="px-6 py-3 text-[12px] font-medium text-[#6a7282]">Move-in</th>
+                <th className="px-6 py-3 text-[12px] font-medium text-[#6a7282]">Contact</th>
                 <th className="px-6 py-3 text-[12px] font-medium text-[#6a7282]">Lease ends</th>
                 <th className="px-6 py-3 text-[12px] font-medium text-[#6a7282]">Balance</th>
                 <th className="px-6 py-3 text-[12px] font-medium text-[#6a7282]">Sentiment</th>
@@ -590,13 +626,13 @@ export function AdminResidentsDashboard() {
             <tbody>
               {loading ? (
                 <tr>
-                  <td colSpan={6} className="px-6 py-10 text-center text-[14px] text-[#6a7282]">
+                  <td colSpan={9} className="px-6 py-10 text-center text-[14px] text-[#6a7282]">
                     Loading residents…
                   </td>
                 </tr>
               ) : filteredResidents.length === 0 ? (
                 <tr>
-                  <td colSpan={6} className="px-6 py-10 text-center text-[14px] text-[#6a7282]">
+                  <td colSpan={9} className="px-6 py-10 text-center text-[14px] text-[#6a7282]">
                     {residents.length === 0 ? (
                       <>
                         No residents yet.{' '}
@@ -627,6 +663,27 @@ export function AdminResidentsDashboard() {
                       {resident.name}
                     </td>
                     <td className="px-6 py-4 text-[14px] text-[#6a7282]">{resident.unitLabel}</td>
+                    <td className="px-6 py-4 text-[14px] tabular-nums text-[#0a0a0a]">
+                      {resident.rentLabel}
+                    </td>
+                    <td className="px-6 py-4 text-[14px] tabular-nums text-[#6a7282]">
+                      {resident.moveInLabel}
+                    </td>
+                    <td className="px-6 py-4">
+                      <div className="flex flex-col gap-0.5">
+                        {resident.contactPhone ? (
+                          <span className="text-[13px] leading-5 text-[#0a0a0a]">{resident.contactPhone}</span>
+                        ) : null}
+                        {resident.contactEmail ? (
+                          <span className="truncate text-[12px] leading-4 text-[#6a7282]">
+                            {resident.contactEmail}
+                          </span>
+                        ) : null}
+                        {!resident.contactPhone && !resident.contactEmail ? (
+                          <span className="text-[14px] text-[#6a7282]">—</span>
+                        ) : null}
+                      </div>
+                    </td>
                     <td className="px-6 py-4 text-[14px] tabular-nums text-[#6a7282]">
                       {resident.leaseEndLabel}
                     </td>

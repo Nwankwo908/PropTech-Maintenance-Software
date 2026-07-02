@@ -27,6 +27,9 @@
 -- 20260615150000_vendor_feedback_scoring.sql for vendor score KPIs):
 --   psql "$DATABASE_URL" -f supabase/seed_demo_landlord_account.sql
 -- Or paste into the Supabase SQL Editor.
+--
+-- After this seed, also run (for MTD maintenance spend + analytics chart):
+--   psql "$DATABASE_URL" -f supabase/seed_demo_maintenance_spend.sql
 -- =============================================================================
 
 do $$
@@ -48,7 +51,7 @@ declare
   u_pine_305 uuid; u_pine_204 uuid; u_pine_301 uuid;
   u_cedar_102 uuid; u_cedar_305 uuid;
   u_maple_207 uuid; u_maple_312 uuid; u_maple_105 uuid; u_maple_107 uuid;
-  u_birch_1203 uuid; u_birch_410 uuid; u_birch_708 uuid; u_birch_107 uuid;
+  u_birch_1203 uuid; u_birch_410 uuid; u_birch_708 uuid; u_birch_107 uuid; u_birch_402 uuid;
   u_willow_103 uuid; u_willow_201 uuid;
 
   -- Vendors
@@ -120,11 +123,14 @@ declare
   t28 uuid := md5('ulo-demo-ticket-28')::uuid;  -- stale pending Pine 401
   t29 uuid := md5('ulo-demo-ticket-29')::uuid;  -- completed plumbing Pine 301 (repeat pair)
   t30 uuid := md5('ulo-demo-ticket-30')::uuid;  -- open plumbing Pine 301 (repeat within 45d)
+  t31 uuid := md5('ulo-demo-ticket-31')::uuid;  -- open plumbing Birch 402 (vendor assigned)
 
   -- Workflow runs
   wr_maint1 uuid := md5('ulo-demo-run-maint-1')::uuid;        -- active (t01)
   wr_maint2 uuid := md5('ulo-demo-run-maint-2')::uuid;        -- active (t03)
-  wr_maint3 uuid := md5('ulo-demo-run-maint-3')::uuid;        -- escalated, vendor declined (t14)
+  wr_maint3 uuid := md5('ulo-demo-run-maint-3')::uuid;        -- active after auto-reassign (t14)
+  wr_maint6 uuid := md5('ulo-demo-run-maint-6')::uuid;        -- escalated, vendor declined no roster (t11)
+  wr_maint7 uuid := md5('ulo-demo-run-maint-7')::uuid;        -- active (t31)
   wr_maint4 uuid := md5('ulo-demo-run-maint-4')::uuid;        -- completed (t17)
   wr_maint5 uuid := md5('ulo-demo-run-maint-5')::uuid;        -- completed (t20)
   wr_rent1 uuid := md5('ulo-demo-run-rent-1')::uuid;          -- due today (Okafor)
@@ -225,6 +231,7 @@ begin
   select id into u_birch_410 from public.units where landlord_id = demo_landlord and building = 'Birch Tower' and unit_label = '410';
   select id into u_birch_708 from public.units where landlord_id = demo_landlord and building = 'Birch Tower' and unit_label = '708';
   select id into u_birch_107 from public.units where landlord_id = demo_landlord and building = 'Birch Tower' and unit_label = '107';
+  select id into u_birch_402 from public.units where landlord_id = demo_landlord and building = 'Birch Tower' and unit_label = '402';
   select id into u_willow_103 from public.units where landlord_id = demo_landlord and building = 'Willow Park' and unit_label = '103';
   select id into u_willow_201 from public.units where landlord_id = demo_landlord and building = 'Willow Park' and unit_label = '201';
 
@@ -233,7 +240,7 @@ begin
     u_oak_103, u_oak_204, u_oak_304, u_oak_506, u_oak_108, u_oak_205,
     u_pine_305, u_pine_204, u_pine_301, u_cedar_102, u_cedar_305,
     u_maple_207, u_maple_312, u_maple_105, u_maple_107,
-    u_birch_1203, u_birch_410, u_birch_708, u_birch_107,
+    u_birch_1203, u_birch_410, u_birch_708, u_birch_107, u_birch_402,
     u_willow_103, u_willow_201
   );
 
@@ -305,7 +312,7 @@ begin
      'EMERGENCY: water heater burst in utility closet, active leak spreading to hallway.',
      'unassigned', 'plumbing', null, null, now_ts + interval '4 hours'),
     (t02, demo_landlord, now_ts - interval '26 hours', 'urgent', 'urgent', 'urgent',
-     'Omar Haddad', 'omar.haddad@example.com', '+15555620010', '1203',
+     'Omar Haddad', 'omar.haddad@example.com', '+15555620010', 'Birch Tower · 1203',
      'Breaker panel sparking when AC compressor kicks on. Smell of burning plastic.',
      'in_progress', 'electrical', v_bright, now_ts - interval '24 hours', now_ts + interval '10 hours'),
     (t03, demo_landlord, now_ts - interval '3 hours', 'urgent', 'urgent', 'urgent',
@@ -325,9 +332,9 @@ begin
      'Ceiling leak below upstairs bathroom — drywall sagging.',
      'in_progress', 'plumbing', v_rooter, now_ts - interval '28 hours', now_ts + interval '14 hours'),
     (t07, demo_landlord, now_ts - interval '6 days', 'high', 'high', 'high',
-     'Liam O''Connor', 'liam.oconnor@example.com', '+15555620016', '708',
+     'Liam O''Connor', 'liam.oconnor@example.com', '+15555620016', 'Birch Tower · 708',
      'Half the outlets in the living room dead after storm.',
-     'unassigned', 'electrical', null, null, now_ts + interval '1 day'),
+     'accepted', 'electrical', v_bright, now_ts - interval '5 days', now_ts + interval '1 day'),
     -- Open / normal --------------------------------------------------------------
     (t08, demo_landlord, now_ts - interval '4 days', 'normal', 'normal', 'normal',
      'Maya Lindqvist', 'maya.lindqvist@example.com', '+15555620032', '103',
@@ -342,9 +349,9 @@ begin
      'Preventive maintenance: HVAC filter replacement and coil service (quarterly schedule).',
      'accepted', 'hvac', v_summit, now_ts - interval '20 hours', now_ts + interval '6 days'),
     (t11, demo_landlord, now_ts - interval '8 hours', 'normal', 'normal', 'normal',
-     'Haruto Ito', 'haruto.ito@example.com', '+15555620014', '410',
+     'Haruto Ito', 'haruto.ito@example.com', '+15555620014', 'Birch Tower · 410',
      'Move-out deep clean needed before showing.',
-     'pending_accept', 'cleaning', v_fresh, now_ts - interval '7 hours', now_ts + interval '5 days'),
+     'unassigned', 'cleaning', null, null, now_ts + interval '5 days'),
     (t12, demo_landlord, now_ts - interval '9 days', 'low', 'low', 'low',
      'David Okafor', 'david.okafor@example.com', '+15555620004', '204',
      'Recurring late-night noise from HVAC closet shared wall.',
@@ -379,11 +386,11 @@ begin
      'GFCI outlet in kitchen keeps tripping.',
      'completed', 'electrical', v_bright, now_ts - interval '30 days', now_ts - interval '28 days'),
     (t20, demo_landlord, now_ts - interval '12 days', 'urgent', 'urgent', 'urgent',
-     'Carmen Reyes', 'carmen.reyes@example.com', '+15555620035', '107',
+     'Carmen Reyes', 'carmen.reyes@example.com', '+15555620035', 'Birch Tower · 107',
      'AC down during heat advisory.',
      'completed', 'hvac', v_summit, now_ts - interval '11 days 20 hours', now_ts - interval '11 days'),
     (t21, demo_landlord, now_ts - interval '40 days', 'normal', 'normal', 'normal',
-     'Haruto Ito', 'haruto.ito@example.com', '+15555620014', '410',
+     'Haruto Ito', 'haruto.ito@example.com', '+15555620014', 'Birch Tower · 410',
      'Closet door off track.',
      'completed', 'general', v_allied, now_ts - interval '39 days', now_ts - interval '36 days'),
     (t22, demo_landlord, now_ts - interval '49 days', 'normal', 'normal', 'normal',
@@ -408,7 +415,7 @@ begin
      'completed', 'plumbing', v_apex, now_ts - interval '69 days 12 hours', now_ts - interval '68 days'),
     -- Stale prior-window assignments (no vendor acknowledgement)
     (t27, demo_landlord, now_ts - interval '35 days', 'low', 'low', 'low',
-     'Devon Carter', 'devon.carter@example.com', '+15555620036', '503',
+     'Devon Carter', 'devon.carter@example.com', '+15555620036', 'Birch Tower · 503',
      'Balcony door weather stripping worn — vendor never confirmed the job.',
      'pending_accept', 'general', v_allied, now_ts - interval '34 days', null),
     (t28, demo_landlord, now_ts - interval '44 days', 'low', 'low', 'low',
@@ -423,7 +430,11 @@ begin
     (t30, demo_landlord, now_ts - interval '9 days', 'high', 'high', 'high',
      'David Okafor', 'david.okafor@example.com', '+15555620004', '301',
      'Same sink leak returned; water damage spreading on cabinet floor.',
-     'in_progress', 'plumbing', v_metro, now_ts - interval '8 days', now_ts + interval '1 day');
+     'in_progress', 'plumbing', v_metro, now_ts - interval '8 days', now_ts + interval '1 day'),
+    (t31, demo_landlord, now_ts - interval '2 days', 'normal', 'normal', 'normal',
+     'Grace Chen', 'grace.chen@example.com', '+15555620003', 'Birch Tower · 402',
+     'Dishwasher backing up into the sink — slow drain and standing water after cycles.',
+     'accepted', 'plumbing', v_metro, now_ts - interval '36 hours', now_ts + interval '2 days');
 
   -- ---------------------------------------------------------------------------
   -- Workflow runs
@@ -447,12 +458,13 @@ begin
      jsonb_build_object('landlord_id', demo_landlord, 'unit_label', '207', 'building', 'Maple Heights',
        'maintenance_request_id', t03, 'issue_category', 'hvac', 'urgency', 'urgent',
        'due_at', (now_ts + interval '20 hours')::text)),
-    (wr_maint3, 'maintenance_intake', 'escalated', 'maintenance_request', t14,
+    (wr_maint3, 'maintenance_intake', 'active', 'maintenance_request', t14,
      p_oakwood, u_oak_506, r_freeman, demo_landlord, 'sms_inbound', 'maintenance',
-     'escalated', 'vendor_reassigned', now_ts - interval '2 days', null,
+     'act', 'awaiting_vendor_accept', now_ts - interval '2 days', null,
      jsonb_build_object('landlord_id', demo_landlord, 'unit_label', '506', 'building', 'Oakwood Apartments',
        'maintenance_request_id', t14, 'issue_category', 'plumbing',
-       'declined_vendor', 'Rapid Rooter', 'reassigned_vendor', 'Apex Plumbing Co')),
+       'declined_vendor', 'Rapid Rooter', 'reassigned_vendor', 'Apex Plumbing Co',
+       'auto_reassigned_at', (now_ts - interval '3 hours')::text)),
     (wr_maint4, 'maintenance_intake', 'completed', 'maintenance_request', t17,
      p_oakwood, u_oak_304, r_walker, demo_landlord, 'sms_inbound', 'maintenance',
      'logged', 'completed', now_ts - interval '18 days', now_ts - interval '16 days',
@@ -463,6 +475,20 @@ begin
      'logged', 'completed', now_ts - interval '12 days', now_ts - interval '11 days',
      jsonb_build_object('landlord_id', demo_landlord, 'unit_label', '107', 'building', 'Birch Tower',
        'maintenance_request_id', t20, 'issue_category', 'hvac')),
+    (wr_maint6, 'maintenance_intake', 'escalated', 'maintenance_request', t11,
+     p_birch, u_birch_410, r_ito, demo_landlord, 'sms_inbound', 'maintenance',
+     'escalated', 'needs_admin_vendor', now_ts - interval '8 hours', null,
+     jsonb_build_object('landlord_id', demo_landlord, 'unit_label', '410', 'building', 'Birch Tower',
+       'maintenance_request_id', t11, 'issue_category', 'cleaning',
+       'escalation_reason', 'vendor_declined_no_vendor',
+       'escalated_at', (now_ts - interval '2 hours')::text,
+       'declined_vendor', 'FreshNest Cleaning')),
+    (wr_maint7, 'maintenance_intake', 'active', 'maintenance_request', t31,
+     p_birch, u_birch_402, r_chen, demo_landlord, 'sms_inbound', 'maintenance',
+     'acted', 'awaiting_vendor_schedule', now_ts - interval '2 days', null,
+     jsonb_build_object('landlord_id', demo_landlord, 'unit_label', '402', 'building', 'Birch Tower',
+       'maintenance_request_id', t31, 'issue_category', 'plumbing',
+       'due_at', (now_ts + interval '2 days')::text)),
     -- Rent collection -------------------------------------------------------------
     (wr_rent1, 'rent_collection', 'active', 'user', r_okafor,
      p_pine, null, r_okafor, demo_landlord, 'cron', 'rent', 'classified',
@@ -599,8 +625,16 @@ begin
      'Summit HVAC notified; awaiting acceptance.', demo_landlord, 'maintenance', now_ts - interval '2 hours'),
     (md5('ulo-demo-wfe-maint3-1')::uuid, wr_maint3, 'workflow.act', 'vendor_dispatch', 'act', 'system',
      'Rapid Rooter assigned to garbage disposal repair (Oakwood 506).', demo_landlord, 'maintenance', now_ts - interval '2 days'),
-    (md5('ulo-demo-wfe-maint3-2')::uuid, wr_maint3, 'workflow.escalate', 'vendor_reassigned', 'escalate', 'system',
-     'Rapid Rooter declined the assignment. Reassigned to Apex Plumbing Co.', demo_landlord, 'maintenance', now_ts - interval '3 hours'),
+    (md5('ulo-demo-wfe-maint3-2')::uuid, wr_maint3, 'workflow.act', 'vendor_reassigned', 'act', 'system',
+     'Rapid Rooter declined the assignment. Auto-reassigned to Apex Plumbing Co.', demo_landlord, 'maintenance', now_ts - interval '3 hours'),
+    (md5('ulo-demo-wfe-maint6-1')::uuid, wr_maint6, 'workflow.act', 'vendor_dispatch', 'act', 'system',
+     'FreshNest Cleaning assigned to move-out deep clean (Birch Tower 410).', demo_landlord, 'maintenance', now_ts - interval '8 hours'),
+    (md5('ulo-demo-wfe-maint6-2')::uuid, wr_maint6, 'workflow.escalate', 'needs_admin_vendor', 'escalate', 'system',
+     'FreshNest Cleaning declined — no other cleaning vendor on roster. Admin must assign or onboard.', demo_landlord, 'maintenance', now_ts - interval '2 hours'),
+    (md5('ulo-demo-wfe-maint7-1')::uuid, wr_maint7, 'workflow.trigger', 'intake', 'trigger', 'system',
+     'Plumbing request received from Grace Chen (Birch Tower 402).', demo_landlord, 'maintenance', now_ts - interval '2 days'),
+    (md5('ulo-demo-wfe-maint7-2')::uuid, wr_maint7, 'workflow.act', 'awaiting_vendor_schedule', 'act', 'system',
+     'Metro Plumbing accepted dishwasher backup job — awaiting scheduled visit.', demo_landlord, 'maintenance', now_ts - interval '34 hours'),
     (md5('ulo-demo-wfe-maint4-1')::uuid, wr_maint4, 'workflow.log', 'completed', 'log', 'system',
      'Supply line leak repaired by Apex Plumbing Co; resident confirmed.', demo_landlord, 'maintenance', now_ts - interval '16 days'),
     (md5('ulo-demo-wfe-maint5-1')::uuid, wr_maint5, 'workflow.log', 'completed', 'log', 'system',
@@ -671,6 +705,11 @@ begin
      jsonb_build_object('message', 'Rapid Rooter declined — Apex Plumbing Co reassigned automatically.',
        'maintenance_request_id', t14, 'unit_label', '506', 'building', 'Oakwood Apartments'),
      now_ts - interval '3 hours'),
+    (md5('ulo-demo-graph-feed-3b')::uuid, demo_landlord, p_birch, u_birch_410, r_ito, null, wr_maint6,
+     'maintenance.vendor_declined_needs_vendor', 'automation',
+     jsonb_build_object('message', 'Cleaning vendor declined with no vendor in roster — admin must assign or onboard a vendor.',
+       'maintenance_request_id', t11, 'unit_label', '410', 'building', 'Birch Tower'),
+     now_ts - interval '2 hours'),
     (md5('ulo-demo-graph-feed-4')::uuid, demo_landlord, p_maple, u_maple_105, r_alvarez, null, wr_rent3,
      'rent.late_escalated', 'automation',
      jsonb_build_object('message', 'Late rent escalated — Marco Alvarez, 7 days overdue ($2,400).',
@@ -697,6 +736,11 @@ begin
      jsonb_build_object('message', 'Brightline Electrical dispatched for sparking breaker panel.',
        'maintenance_request_id', t02, 'unit_label', '1203', 'building', 'Birch Tower'),
      now_ts - interval '24 hours'),
+    (md5('ulo-demo-graph-m1b')::uuid, demo_landlord, p_birch, u_birch_402, r_chen, v_metro, wr_maint7,
+     'maintenance.vendor_assigned', 'dashboard',
+     jsonb_build_object('message', 'Metro Plumbing accepted dishwasher backup repair — Birch Tower 402.',
+       'maintenance_request_id', t31, 'unit_label', '402', 'building', 'Birch Tower'),
+     now_ts - interval '34 hours'),
     (md5('ulo-demo-graph-m2')::uuid, demo_landlord, p_oakwood, u_oak_108, null, v_apex, null,
      'maintenance.sla_overdue', 'automation',
      jsonb_build_object('message', 'SLA breached — sewage smell ticket past due at Oakwood 108.',
@@ -846,8 +890,12 @@ begin
       (t06, now_ts - interval '26 hours', 'accepted', 'in_progress', 'portal', v_rooter),
       (t08, now_ts - interval '3 days', 'pending_accept', 'accepted', 'portal', v_allied),
       (t10, now_ts - interval '18 hours', 'pending_accept', 'accepted', 'portal', v_summit),
+      (t11, now_ts - interval '7 hours', 'pending_accept', 'declined', 'portal', v_fresh),
+      (t11, now_ts - interval '6 hours 30 minutes', 'declined', 'unassigned', 'auto_reassign', v_fresh),
+      (t07, now_ts - interval '5 days 2 hours', 'pending_accept', 'accepted', 'portal', v_bright),
       (t30, now_ts - interval '7 days 6 hours', 'pending_accept', 'accepted', 'portal', v_metro),
-      (t30, now_ts - interval '7 days', 'accepted', 'in_progress', 'portal', v_metro);
+      (t30, now_ts - interval '7 days', 'accepted', 'in_progress', 'portal', v_metro),
+      (t31, now_ts - interval '38 hours', 'pending_accept', 'accepted', 'portal', v_metro);
 
     insert into public.vendor_feedback (
       landlord_id, vendor_id, maintenance_request_id, resident_id, rating, comment, submitted_at

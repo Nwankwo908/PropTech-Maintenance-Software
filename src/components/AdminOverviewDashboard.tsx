@@ -1,7 +1,17 @@
-import { useEffect, useMemo, useState } from 'react'
-import { Link } from 'react-router-dom'
+import { useCallback, useEffect, useMemo, useState } from 'react'
+import { Link, useNavigate } from 'react-router-dom'
+import { postAdminReassignVendor } from '@/api/adminReassignVendor'
+import { postRecommendVendorAlternatives } from '@/api/recommendVendorAlternatives'
 import { PropertyHealthBuildingGrid } from '@/components/PropertyHealthBuildingGrid'
+import { AwaitingDecisionListRail } from '@/components/AwaitingDecisionListRail'
+import { LateRentAccountReviewRail } from '@/components/LateRentAccountReviewRail'
+import { LeaseRenewalEscalatedRail } from '@/components/LeaseRenewalEscalatedRail'
+import { SlaOverdueActionRail } from '@/components/SlaOverdueActionRail'
 import { getActiveLandlordId } from '@/lib/activeLandlord'
+import {
+  isMaintenanceAdminVendorEscalationReason,
+  maintenanceAdminVendorAttentionTitle,
+} from '@/lib/maintenanceAdminVendor'
 import {
   fetchAdminWorkflowDashboard,
   formatLocationContextLabel,
@@ -23,8 +33,30 @@ import {
   PROPERTY_HEALTH_KPI_CAPTION,
   type PropertyHealthFeedback,
   type PropertyHealthPmTask,
+  type PropertyHealthResident,
   type PropertyHealthVendorMetrics,
 } from '@/lib/propertyHealth'
+import { buildEscalatedWorkflowReview } from '@/lib/escalatedWorkflowReview'
+import {
+  applyLateRentAccountAction,
+  buildLateRentAccountReview,
+  collectLateRentReviewRuns,
+  type LateRentAccountAction,
+  type LateRentAccountReview,
+} from '@/lib/lateRentAccountReview'
+import {
+  applyLeaseRenewalEscalatedAction,
+  buildLeaseRenewalEscalatedReview,
+  isLeaseRenewalEscalatedRun,
+  type LeaseRenewalEscalatedAction,
+  type LeaseRenewalEscalatedReview,
+} from '@/lib/leaseRenewalEscalatedReview'
+import {
+  buildSlaOverdueActionReview,
+  isSlaOverdueOpenTicket,
+  type SlaOverdueActionReview,
+  type SlaOverdueTicketInput,
+} from '@/lib/slaOverdueActionReview'
 import { supabase } from '@/lib/supabase'
 
 type OverviewTicket = {
@@ -34,14 +66,25 @@ type OverviewTicket = {
   dueAt: string | null
   vendorWorkStatus: string
   unit: string
+  building: string | null
+  description: string | null
   issueCategory: string | null
   assignedVendorId: string | null
+  assignedVendorName: string | null
+  assignedAt: string | null
   residentName: string | null
   estimatedMinutes: number | null
   /** Actual total from an extracted vendor invoice (labor + materials + tax), when available. */
   totalCost: number | null
   /** When the job was marked complete, when the schema records it. */
   completedAt: string | null
+}
+
+type OverviewVendor = {
+  id: string
+  name: string
+  category: string | null
+  active: boolean
 }
 
 type OverviewUnit = {
@@ -64,10 +107,51 @@ type AttentionItem = {
   context: string
   meta: string
   actionLabel: string
-  actionTo: string
+  actionTo?: string
+  onAction?: () => void
   actionStyle?: 'alert'
 }
 
+type EscalatedRailTarget =
+  | { kind: 'ticket'; ticketId: string }
+  | { kind: 'workflow'; runId: string }
+
+type OverviewResident = {
+  id: string
+  fullName: string
+  unit: string
+  building: string | null
+  status: string
+  moveInDate: string | null
+  balanceDue: number
+  phone: string | null
+}
+
+function overviewTicketToInput(
+  ticket: OverviewTicket,
+  units: OverviewUnit[],
+): SlaOverdueTicketInput {
+  const building =
+    ticket.building ??
+    units.find((u) => normalizeUnitLabel(u.unitLabel) === normalizeUnitLabel(ticket.unit))
+      ?.building ??
+    null
+  return {
+    id: ticket.id,
+    createdAt: ticket.createdAt,
+    dueAt: ticket.dueAt,
+    urgency: ticket.urgency,
+    unit: ticket.unit,
+    building,
+    description: ticket.description,
+    issueCategory: ticket.issueCategory,
+    assignedVendorId: ticket.assignedVendorId,
+    assignedVendorName: ticket.assignedVendorName,
+    vendorWorkStatus: ticket.vendorWorkStatus,
+    residentName: ticket.residentName,
+    assignedAt: ticket.assignedAt,
+  }
+}
 const CRITICAL_LEVELS = new Set(['urgent', 'emergency', 'critical', 'high'])
 const CLOSED_WORK_STATUSES = new Set(['completed', 'cancelled'])
 
@@ -76,7 +160,17 @@ function asString(value: unknown): string {
   return String(value).trim()
 }
 
-function normalizeTicketRow(raw: Record<string, unknown>): OverviewTicket {
+function normalizeTicketRow(
+  raw: Record<string, unknown>,
+  vendorNameById: Record<string, string> = {},
+): OverviewTicket {
+  const assignedVendorId = asString(raw.assigned_vendor_id) || null
+  const embeddedVendor =
+    asString(raw.assigned_vendor_name) ||
+    asString(raw.vendor_name) ||
+    (assignedVendorId ? vendorNameById[assignedVendorId] : '') ||
+    asString(raw.vendor) ||
+    null
   return {
     id: asString(raw.id),
     createdAt: asString(raw.created_at),
@@ -88,8 +182,12 @@ function normalizeTicketRow(raw: Record<string, unknown>): OverviewTicket {
     dueAt: asString(raw.due_at) || null,
     vendorWorkStatus: asString(raw.vendor_work_status).toLowerCase(),
     unit: asString(raw.unit),
+    building: asString(raw.building) || null,
+    description: asString(raw.description) || null,
     issueCategory: asString(raw.issue_category) || null,
-    assignedVendorId: asString(raw.assigned_vendor_id) || null,
+    assignedVendorId,
+    assignedVendorName: embeddedVendor?.trim() || null,
+    assignedAt: asString(raw.assigned_at) || null,
     residentName: asString(raw.resident_name) || null,
     estimatedMinutes:
       typeof raw.estimated_minutes === 'number' && Number.isFinite(raw.estimated_minutes)
@@ -335,8 +433,18 @@ const FEED_BADGE_STYLES: Record<string, string> = {
   admin: 'bg-[#f3f4f6] text-[#364153]',
 }
 
+function resolveVendorRecommendAlternativesUrl(): string | undefined {
+  const explicit = import.meta.env.VITE_VENDOR_RECOMMEND_URL?.trim()
+  if (explicit) return explicit
+  const base = import.meta.env.VITE_SUPABASE_URL?.trim().replace(/\/$/, '')
+  if (base) return `${base}/functions/v1/recommend-vendor-alternatives`
+  return undefined
+}
+
 export function AdminOverviewDashboard() {
+  const navigate = useNavigate()
   const [tickets, setTickets] = useState<OverviewTicket[]>([])
+  const [vendors, setVendors] = useState<OverviewVendor[]>([])
   const [units, setUnits] = useState<OverviewUnit[]>([])
   const [workflowData, setWorkflowData] =
     useState<AdminWorkflowDashboardData | null>(null)
@@ -344,9 +452,23 @@ export function AdminOverviewDashboard() {
   const [pmTasks, setPmTasks] = useState<PropertyHealthPmTask[]>([])
   const [feedback, setFeedback] = useState<PropertyHealthFeedback[]>([])
   const [vendorMetrics, setVendorMetrics] = useState<PropertyHealthVendorMetrics[]>([])
+  const [residents, setResidents] = useState<PropertyHealthResident[]>([])
+  const [overviewResidents, setOverviewResidents] = useState<OverviewResident[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null)
+  const [escalatedRailTarget, setEscalatedRailTarget] = useState<EscalatedRailTarget | null>(null)
+  const [escalatedReview, setEscalatedReview] = useState<SlaOverdueActionReview | null>(null)
+  const [escalatedRailLoading, setEscalatedRailLoading] = useState(false)
+  const [escalatedRailSaving, setEscalatedRailSaving] = useState(false)
+  const [escalatedRailError, setEscalatedRailError] = useState<string | null>(null)
+  const [lateRentRailRunId, setLateRentRailRunId] = useState<string | null>(null)
+  const [lateRentRailSaving, setLateRentRailSaving] = useState(false)
+  const [lateRentRailError, setLateRentRailError] = useState<string | null>(null)
+  const [leaseRenewalRailRunId, setLeaseRenewalRailRunId] = useState<string | null>(null)
+  const [leaseRenewalRailSaving, setLeaseRenewalRailSaving] = useState(false)
+  const [leaseRenewalRailError, setLeaseRenewalRailError] = useState<string | null>(null)
+  const [awaitingDecisionListOpen, setAwaitingDecisionListOpen] = useState(false)
 
   useEffect(() => {
     let cancelled = false
@@ -362,12 +484,12 @@ export function AdminOverviewDashboard() {
       setError(null)
 
       const landlordId = getActiveLandlordId()
-      const [ticketsResult, unitsResult, workflowResult, feedResult, healthSignals] =
+      const [ticketsResult, vendorsResult, unitsResult, workflowResult, feedResult, healthSignals, residentsResult] =
         await Promise.all([
           supabase
             .from('maintenance_request_enriched')
             .select(
-              'id, created_at, unit, unit_id, building, issue_category, assigned_vendor_id, vendor_work_status, urgency, severity, priority, due_at, resident_name, estimated_minutes, total_cost, invoice_total, amount, labor_cost, material_cost, materials_cost, tax_amount, tax, completed_at, resolved_at, closed_at',
+              'id, created_at, assigned_at, unit, unit_id, building, description, issue_category, assigned_vendor_id, vendor_work_status, urgency, severity, priority, due_at, resident_name, estimated_minutes, total_cost, invoice_total, amount, labor_cost, material_cost, materials_cost, tax_amount, tax, completed_at, resolved_at, closed_at',
             )
             .eq('landlord_id', landlordId)
             .order('created_at', { ascending: false })
@@ -383,6 +505,12 @@ export function AdminOverviewDashboard() {
                 : r,
             ),
           supabase
+            .from('vendors')
+            .select('id, name, category, active')
+            .eq('landlord_id', landlordId)
+            .eq('active', true)
+            .limit(500),
+          supabase
             .from('units')
             .select('id, unit_label, building, status')
             .eq('landlord_id', landlordId)
@@ -390,13 +518,37 @@ export function AdminOverviewDashboard() {
           fetchAdminWorkflowDashboard(),
           fetchRecentPropertyOperationsEvents(8),
           fetchPropertyHealthSignals(),
+          supabase
+            .from('users')
+            .select('id, full_name, unit, building, status, move_in_date, balance_due, phone')
+            .eq('landlord_id', landlordId)
+            .neq('status', 'past_resident')
+            .limit(2000),
         ])
 
       if (cancelled) return
 
+      const vendorNameById: Record<string, string> = {}
+      if (!vendorsResult.error) {
+        const vendorRows = ((vendorsResult.data ?? []) as Record<string, unknown>[])
+          .map((r) => ({
+            id: asString(r.id),
+            name: asString(r.name),
+            category: asString(r.category) || null,
+            active: r.active !== false,
+          }))
+          .filter((v) => v.id && v.name)
+        setVendors(vendorRows)
+        for (const v of vendorRows) vendorNameById[v.id] = v.name
+      } else {
+        setVendors([])
+      }
+
       if (!ticketsResult.error) {
         setTickets(
-          ((ticketsResult.data ?? []) as Record<string, unknown>[]).map(normalizeTicketRow),
+          ((ticketsResult.data ?? []) as Record<string, unknown>[]).map((raw) =>
+            normalizeTicketRow(raw, vendorNameById),
+          ),
         )
       } else {
         console.error(
@@ -421,6 +573,34 @@ export function AdminOverviewDashboard() {
       setPmTasks(healthSignals.pmTasks)
       setFeedback(healthSignals.feedback)
       setVendorMetrics(healthSignals.vendorMetrics)
+
+      if (!residentsResult.error) {
+        const mapped = ((residentsResult.data ?? []) as Record<string, unknown>[])
+          .map((raw) => ({
+            id: asString(raw.id),
+            fullName: asString(raw.full_name) || 'Unnamed resident',
+            unit: asString(raw.unit),
+            building: asString(raw.building) || null,
+            status: asString(raw.status).toLowerCase() || 'active',
+            moveInDate: asString(raw.move_in_date) || null,
+            balanceDue: asFiniteNumber(raw.balance_due) ?? 0,
+            phone: asString(raw.phone) || null,
+          }))
+          .filter((row) => row.id)
+        setResidents(
+          mapped.map((row) => ({
+            id: row.id,
+            fullName: row.fullName,
+            unit: row.unit,
+            building: row.building,
+            status: row.status,
+          })),
+        )
+        setOverviewResidents(mapped)
+      } else {
+        setResidents([])
+        setOverviewResidents([])
+      }
 
       setLastUpdated(new Date())
       setLoading(false)
@@ -447,9 +627,10 @@ export function AdminOverviewDashboard() {
       pmTasks,
       feedback: enrichFeedbackFromTickets(feedback, healthTickets),
       vendorMetrics,
+      residents,
       now,
     })
-  }, [units, tickets, pmTasks, feedback, vendorMetrics, now])
+  }, [units, tickets, pmTasks, feedback, vendorMetrics, residents, now])
 
   const kpis = useMemo(() => {
     const criticalOpen = openTickets.filter(isTicketCritical).length
@@ -587,54 +768,156 @@ export function AdminOverviewDashboard() {
     }
   }, [tickets, openTickets, units, workflowData, healthReport, now, fourWeeksMs])
 
-  const attentionItems = useMemo<AttentionItem[]>(() => {
-    const items: AttentionItem[] = []
+  const slaOverdueTickets = useMemo(
+    () =>
+      openTickets
+        .filter(isSlaOverdueOpenTicket)
+        .sort((a, b) => {
+          const aDue = a.dueAt ? new Date(a.dueAt).getTime() : 0
+          const bDue = b.dueAt ? new Date(b.dueAt).getTime() : 0
+          return aDue - bDue
+        }),
+    [openTickets],
+  )
 
-    const slaOverdue = openTickets.filter((t) => {
-      if (!t.dueAt) return false
-      const due = new Date(t.dueAt).getTime()
-      return !Number.isNaN(due) && due < now
-    })
-    for (const t of slaOverdue.slice(0, 2)) {
+  const openEscalatedRailForTicket = useCallback((ticketId: string) => {
+    setEscalatedRailTarget({ kind: 'ticket', ticketId })
+    setEscalatedRailError(null)
+  }, [])
+
+  const openEscalatedRailForRun = useCallback((runId: string) => {
+    setEscalatedRailTarget({ kind: 'workflow', runId })
+    setEscalatedRailError(null)
+  }, [])
+
+  const lateRentReviewRuns = useMemo(
+    () => (workflowData ? collectLateRentReviewRuns(workflowData) : []),
+    [workflowData],
+  )
+
+  const openLateRentRail = useCallback((runId: string) => {
+    setLateRentRailRunId(runId)
+    setLateRentRailError(null)
+  }, [])
+
+  const closeLateRentRail = useCallback(() => {
+    setLateRentRailRunId(null)
+    setLateRentRailError(null)
+  }, [])
+
+  const openLeaseRenewalRail = useCallback((runId: string) => {
+    setLeaseRenewalRailRunId(runId)
+    setLeaseRenewalRailError(null)
+  }, [])
+
+  const closeLeaseRenewalRail = useCallback(() => {
+    setLeaseRenewalRailRunId(null)
+    setLeaseRenewalRailError(null)
+  }, [])
+
+  const lateRentReview = useMemo<LateRentAccountReview | null>(() => {
+    if (!workflowData || !lateRentRailRunId) return null
+    const row =
+      lateRentReviewRuns.find((entry) => entry.id === lateRentRailRunId) ??
+      workflowData.rentCollection.runs.find((entry) => entry.id === lateRentRailRunId)
+    if (!row) return null
+    const resident = row.residentId
+      ? overviewResidents.find((entry) => entry.id === row.residentId) ?? null
+      : null
+    return buildLateRentAccountReview(row, resident)
+  }, [workflowData, lateRentReviewRuns, lateRentRailRunId, overviewResidents])
+
+  const leaseRenewalReview = useMemo<LeaseRenewalEscalatedReview | null>(() => {
+    if (!workflowData || !leaseRenewalRailRunId) return null
+    const run = workflowData.escalated.find((entry) => entry.id === leaseRenewalRailRunId)
+    if (!run || !isLeaseRenewalEscalatedRun(run)) return null
+    const resident = run.residentId
+      ? overviewResidents.find((entry) => entry.id === run.residentId) ?? null
+      : null
+    return buildLeaseRenewalEscalatedReview(
+      run,
+      workflowData.runMetadata[run.id],
+      resident ? { phone: resident.phone } : null,
+    )
+  }, [workflowData, leaseRenewalRailRunId, overviewResidents])
+
+  const allAttentionItems = useMemo<AttentionItem[]>(() => {
+    const items: AttentionItem[] = []
+    const escalatedNoVendorKeys = new Set(
+      (workflowData?.escalated ?? [])
+        .filter((r) => isMaintenanceAdminVendorEscalationReason(r.escalationReason))
+        .map((r) => r.entityId)
+        .filter(Boolean),
+    )
+
+    for (const ticket of slaOverdueTickets) {
+      if (escalatedNoVendorKeys.has(ticket.id)) continue
+      const building =
+        ticket.building ??
+        units.find(
+          (u) => normalizeUnitLabel(u.unitLabel) === normalizeUnitLabel(ticket.unit),
+        )?.building ??
+        null
       items.push({
-        key: `ticket-${t.id}`,
-        badge: isTicketCritical(t) ? 'critical' : 'warning',
-        title: isTicketCritical(t)
-          ? `Emergency ${formatCategoryName(t.issueCategory ?? 'maintenance')} Issue`
-          : `${formatCategoryName(t.issueCategory ?? 'maintenance')} SLA Overdue`,
-        context: [t.unit ? `Unit ${t.unit.replace(/^unit\s+/i, '')}` : null, t.residentName]
-          .filter(Boolean)
-          .join(' · '),
-        meta: `Due ${formatRelativeTime(t.dueAt ?? t.createdAt)}`,
+        key: `sla-${ticket.id}`,
+        badge: isTicketCritical(ticket) ? 'critical' : 'warning',
+        title: 'SLA breached — maintenance ticket',
+        context: formatLocationContextLabel({
+          propertyLabel: building,
+          unitLabel: ticket.unit,
+          residentName: ticket.residentName,
+        }),
+        meta: ticket.dueAt
+          ? `Past due ${formatRelativeTime(ticket.dueAt)}`
+          : 'Past SLA',
         actionLabel: 'Review',
-        actionTo: '/admin/requests',
         actionStyle: 'alert',
+        onAction: () => openEscalatedRailForTicket(ticket.id),
       })
     }
 
     if (workflowData) {
-      for (const run of workflowData.escalated.slice(0, 3)) {
+      for (const run of workflowData.escalated) {
+        const adminVendorReason = isMaintenanceAdminVendorEscalationReason(run.escalationReason)
+          ? run.escalationReason
+          : null
+        const needsVendor = adminVendorReason != null
+        const isLeaseRenewal = isLeaseRenewalEscalatedRun(run)
         items.push({
           key: `run-${run.id}`,
-          badge: 'warning',
-          title: `${run.templateName} Escalated`,
+          badge: needsVendor || isLeaseRenewal ? 'critical' : 'warning',
+          title: needsVendor
+            ? maintenanceAdminVendorAttentionTitle(adminVendorReason)
+            : isLeaseRenewal
+              ? 'Lease Renewal Escalated'
+              : `${run.templateName} Escalated`,
           context: formatLocationContextLabel({
             propertyLabel: run.propertyLabel,
             unitLabel: run.unitLabel,
             residentName: run.residentName,
           }),
           meta: run.lastEventAt
-            ? `Escalated ${formatRelativeTime(run.lastEventAt)}`
+            ? needsVendor
+              ? `Needs vendor onboarding ${formatRelativeTime(run.lastEventAt)}`
+              : isLeaseRenewal
+                ? `No tenant response ${formatRelativeTime(run.lastEventAt)}`
+                : `Escalated ${formatRelativeTime(run.lastEventAt)}`
             : 'Awaiting input',
-          actionLabel: 'Review',
-          actionTo: '/admin/workflows',
+          actionLabel: needsVendor ? 'Assign vendor' : 'Review',
+          actionTo: needsVendor ? '/admin/users' : undefined,
+          onAction: needsVendor
+            ? undefined
+            : isLeaseRenewal
+              ? () => openLeaseRenewalRail(run.id)
+              : () => openEscalatedRailForRun(run.id),
+          actionStyle: needsVendor ? 'alert' : undefined,
         })
       }
 
-      for (const row of workflowData.rentCollection.overdue.slice(0, 2)) {
+      for (const row of lateRentReviewRuns) {
         items.push({
           key: `rent-${row.id}`,
-          badge: 'warning',
+          badge: row.status === 'escalated' ? 'critical' : 'warning',
           title: 'Late Rent Escalation',
           context: formatLocationContextLabel({
             propertyLabel: row.propertyLabel,
@@ -644,18 +927,249 @@ export function AdminOverviewDashboard() {
           meta: row.rentDueDate
             ? `Overdue since ${new Date(row.rentDueDate).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}`
             : 'Overdue',
-          actionLabel: 'Review Account',
-          actionTo: '/admin/workflows',
+          actionLabel: 'Review',
+          onAction: () => openLateRentRail(row.id),
         })
       }
     }
 
-    return items
-      .sort((a, b) => (a.badge === b.badge ? 0 : a.badge === 'critical' ? -1 : 1))
-      .slice(0, 4)
-  }, [openTickets, workflowData, now])
+    return items.sort((a, b) => (a.badge === b.badge ? 0 : a.badge === 'critical' ? -1 : 1))
+  }, [workflowData, slaOverdueTickets, units, lateRentReviewRuns, openEscalatedRailForTicket, openEscalatedRailForRun, openLateRentRail, openLeaseRenewalRail])
 
-  const criticalAttentionCount = attentionItems.filter(
+  const attentionItems = useMemo(() => allAttentionItems.slice(0, 4), [allAttentionItems])
+
+  const handleAwaitingDecisionItemAction = useCallback((item: AttentionItem) => {
+    setAwaitingDecisionListOpen(false)
+    item.onAction?.()
+  }, [])
+
+  useEffect(() => {
+    if (!escalatedRailTarget) {
+      setEscalatedReview(null)
+      setEscalatedRailLoading(false)
+      return
+    }
+
+    let cancelled = false
+    let ticketIdForRecommend: string | null = null
+
+    if (escalatedRailTarget.kind === 'ticket') {
+      const ticket = tickets.find((t) => t.id === escalatedRailTarget.ticketId)
+      if (!ticket) {
+        setEscalatedReview(null)
+        return
+      }
+      ticketIdForRecommend = ticket.id
+      const review = buildSlaOverdueActionReview(
+        overviewTicketToInput(ticket, units),
+        vendors,
+        vendorMetrics,
+      )
+      if (!review) {
+        setEscalatedRailTarget(null)
+        return
+      }
+      setEscalatedReview(review)
+    } else {
+      const run = workflowData?.escalated.find((r) => r.id === escalatedRailTarget.runId)
+      if (!run) {
+        setEscalatedReview(null)
+        return
+      }
+      const linkedTicket =
+        run.entityType === 'maintenance_request' && run.entityId
+          ? tickets.find((t) => t.id === run.entityId) ?? null
+          : null
+      if (linkedTicket) ticketIdForRecommend = linkedTicket.id
+      const review = buildEscalatedWorkflowReview(
+        run,
+        linkedTicket ? overviewTicketToInput(linkedTicket, units) : null,
+        vendors,
+        vendorMetrics,
+      )
+      if (!review) {
+        setEscalatedRailTarget(null)
+        return
+      }
+      setEscalatedReview(review)
+    }
+
+    setEscalatedRailLoading(true)
+
+    const recommendUrl = resolveVendorRecommendAlternativesUrl()
+    const secret = import.meta.env.VITE_ADMIN_REASSIGN_SECRET?.trim()
+    if (!recommendUrl || !secret || !ticketIdForRecommend) {
+      setEscalatedRailLoading(false)
+      return
+    }
+
+    void postRecommendVendorAlternatives({
+      url: recommendUrl,
+      secret,
+      ticketId: ticketIdForRecommend,
+      limit: 1,
+    })
+      .then((result) => {
+        if (cancelled) return
+        const alt = result.alternatives[0]
+        if (escalatedRailTarget.kind === 'ticket') {
+          const ticket = tickets.find((t) => t.id === escalatedRailTarget.ticketId)
+          if (!ticket) return
+          const next = buildSlaOverdueActionReview(
+            overviewTicketToInput(ticket, units),
+            vendors,
+            vendorMetrics,
+            alt ? { id: alt.id, name: alt.name } : null,
+          )
+          if (next) setEscalatedReview(next)
+        } else {
+          const run = workflowData?.escalated.find((r) => r.id === escalatedRailTarget.runId)
+          if (!run) return
+          const linkedTicket =
+            run.entityType === 'maintenance_request' && run.entityId
+              ? tickets.find((t) => t.id === run.entityId) ?? null
+              : null
+          const next = buildEscalatedWorkflowReview(
+            run,
+            linkedTicket ? overviewTicketToInput(linkedTicket, units) : null,
+            vendors,
+            vendorMetrics,
+            alt ? { id: alt.id, name: alt.name } : null,
+          )
+          if (next) setEscalatedReview(next)
+        }
+      })
+      .catch((err) => {
+        if (cancelled) return
+        console.warn('[admin overview] vendor alternatives', err)
+      })
+      .finally(() => {
+        if (!cancelled) setEscalatedRailLoading(false)
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [escalatedRailTarget, tickets, units, vendors, vendorMetrics, workflowData])
+
+  const handleEscalatedTakeAction = useCallback(
+    async (review: SlaOverdueActionReview) => {
+      if (review.takeActionMode === 'workflows') {
+        navigate(review.workflowRunId ? `/admin/workflows?run=${review.workflowRunId}` : '/admin/workflows')
+        setEscalatedRailTarget(null)
+        return
+      }
+
+      const suggestion = review.suggestion
+      if (review.takeActionMode === 'assign_vendor' || !suggestion?.vendorName) {
+        navigate('/admin/users')
+        setEscalatedRailTarget(null)
+        return
+      }
+
+      const reassignUrl = import.meta.env.VITE_ADMIN_REASSIGN_URL?.trim()
+      const secret = import.meta.env.VITE_ADMIN_REASSIGN_SECRET?.trim()
+      if (!reassignUrl || !secret) {
+        navigate('/admin/requests')
+        setEscalatedRailTarget(null)
+        return
+      }
+
+      setEscalatedRailSaving(true)
+      setEscalatedRailError(null)
+      try {
+        await postAdminReassignVendor({
+          url: reassignUrl,
+          secret,
+          ticketId: review.ticketId,
+          vendorId: suggestion.vendorId,
+          vendorName: suggestion.vendorName,
+        })
+        setTickets((prev) =>
+          prev.map((t) =>
+            t.id === review.ticketId
+              ? {
+                  ...t,
+                  assignedVendorId: review.suggestion!.vendorId,
+                  assignedVendorName: review.suggestion!.vendorName,
+                  vendorWorkStatus: 'pending_accept',
+                }
+              : t,
+          ),
+        )
+        setEscalatedRailTarget(null)
+      } catch (err) {
+        setEscalatedRailError(err instanceof Error ? err.message : 'Reassign failed')
+      } finally {
+        setEscalatedRailSaving(false)
+      }
+    },
+    [navigate],
+  )
+
+  const handleLateRentAction = useCallback(
+    async (action: LateRentAccountAction, review: LateRentAccountReview) => {
+      setLateRentRailSaving(true)
+      setLateRentRailError(null)
+      try {
+        const result = await applyLateRentAccountAction(action, review, getActiveLandlordId())
+        if (!result.ok) {
+          setLateRentRailError(result.error)
+          return
+        }
+
+        if (action === 'mark_payment_received' && review.residentId) {
+          setOverviewResidents((prev) =>
+            prev.map((resident) =>
+              resident.id === review.residentId
+                ? { ...resident, balanceDue: 0 }
+                : resident,
+            ),
+          )
+        }
+
+        const nextWorkflowData = await fetchAdminWorkflowDashboard()
+        setWorkflowData(nextWorkflowData)
+        closeLateRentRail()
+      } catch (err) {
+        setLateRentRailError(err instanceof Error ? err.message : 'Action failed')
+      } finally {
+        setLateRentRailSaving(false)
+      }
+    },
+    [closeLateRentRail],
+  )
+
+  const handleLeaseRenewalAction = useCallback(
+    async (action: LeaseRenewalEscalatedAction, review: LeaseRenewalEscalatedReview) => {
+      setLeaseRenewalRailSaving(true)
+      setLeaseRenewalRailError(null)
+      try {
+        const result = await applyLeaseRenewalEscalatedAction(action, review, getActiveLandlordId())
+        if (!result.ok) {
+          setLeaseRenewalRailError(result.error)
+          return
+        }
+
+        if (action === 'mark_resolved' || action === 'snooze_1h') {
+          setWorkflowData(await fetchAdminWorkflowDashboard())
+          closeLeaseRenewalRail()
+          return
+        }
+
+        if (action === 'call_tenant' && review.residentPhone) {
+          window.location.href = `tel:${review.residentPhone.replace(/\D/g, '')}`
+        }
+      } catch (err) {
+        setLeaseRenewalRailError(err instanceof Error ? err.message : 'Action failed')
+      } finally {
+        setLeaseRenewalRailSaving(false)
+      }
+    },
+    [closeLeaseRenewalRail],
+  )
+
+  const criticalAttentionCount = allAttentionItems.filter(
     (i) => i.badge === 'critical',
   ).length
 
@@ -929,17 +1443,19 @@ export function AdminOverviewDashboard() {
                 Awaiting Your Decision
               </h2>
               <p className="text-[12px] leading-4 text-[#6a7282]">
-                {attentionItems.length} operations{attentionItems.length === 1 ? '' : 's'}{' '}
+                {allAttentionItems.length} operations{allAttentionItems.length === 1 ? '' : 's'}{' '}
                 awaiting your decision
                 {criticalAttentionCount > 0 ? ` · ${criticalAttentionCount} critical` : ''}
               </p>
             </div>
-            <Link
-              to="/admin/workflows"
-              className="shrink-0 text-[13px] font-medium text-[#364153] hover:underline"
+            <button
+              type="button"
+              onClick={() => setAwaitingDecisionListOpen(true)}
+              disabled={loading || allAttentionItems.length === 0}
+              className="shrink-0 cursor-pointer text-[13px] font-medium text-[#364153] outline-none transition-colors duration-150 hover:text-[#0a0a0a] hover:underline disabled:cursor-not-allowed disabled:opacity-40"
             >
               View all →
-            </Link>
+            </button>
           </div>
           <div className="flex flex-col divide-y divide-[#f3f4f6]">
             {loading ? (
@@ -976,17 +1492,32 @@ export function AdminOverviewDashboard() {
                     ) : null}
                     <p className="text-[12px] leading-4 text-[#6a7282]">{item.meta}</p>
                   </div>
-                  <Link
-                    to={item.actionTo}
-                    className={[
-                      'shrink-0 rounded-[10px] border px-4 py-2 text-[13px] font-medium leading-5 transition-colors duration-150',
-                      item.actionStyle === 'alert'
-                        ? 'border-transparent bg-[#f7e1e3] text-[#b22430] hover:bg-[#efd0d4]'
-                        : 'border-black/10 bg-white text-tertiary hover:bg-[#e2f5f1]',
-                    ].join(' ')}
-                  >
-                    {item.actionLabel} →
-                  </Link>
+                  {item.onAction ? (
+                    <button
+                      type="button"
+                      onClick={item.onAction}
+                      className={[
+                        'shrink-0 rounded-[10px] border px-4 py-2 text-[13px] font-medium leading-5 transition-colors duration-150',
+                        item.actionStyle === 'alert'
+                          ? 'border-transparent bg-[#f7e1e3] text-[#b22430] hover:bg-[#efd0d4]'
+                          : 'border-black/10 bg-white text-tertiary hover:bg-[#e2f5f1]',
+                      ].join(' ')}
+                    >
+                      {item.actionLabel} →
+                    </button>
+                  ) : (
+                    <Link
+                      to={item.actionTo ?? '/admin/workflows'}
+                      className={[
+                        'shrink-0 rounded-[10px] border px-4 py-2 text-[13px] font-medium leading-5 transition-colors duration-150',
+                        item.actionStyle === 'alert'
+                          ? 'border-transparent bg-[#f7e1e3] text-[#b22430] hover:bg-[#efd0d4]'
+                          : 'border-black/10 bg-white text-tertiary hover:bg-[#e2f5f1]',
+                      ].join(' ')}
+                    >
+                      {item.actionLabel} →
+                    </Link>
+                  )}
                 </div>
               ))
             )}
@@ -1062,6 +1593,60 @@ export function AdminOverviewDashboard() {
           }
         />
       </div>
+
+      {escalatedRailError ? (
+        <p className="fixed bottom-4 right-4 z-[60] max-w-sm rounded-[10px] border border-[#fecaca] bg-[#fff5f5] px-4 py-2 text-[13px] text-[#c10007] shadow-lg">
+          {escalatedRailError}
+        </p>
+      ) : null}
+
+      {lateRentRailError ? (
+        <p className="fixed bottom-4 right-4 z-[60] max-w-sm rounded-[10px] border border-[#fecaca] bg-[#fff5f5] px-4 py-2 text-[13px] text-[#c10007] shadow-lg">
+          {lateRentRailError}
+        </p>
+      ) : null}
+
+      {leaseRenewalRailError ? (
+        <p className="fixed bottom-4 right-4 z-[60] max-w-sm rounded-[10px] border border-[#fecaca] bg-[#fff5f5] px-4 py-2 text-[13px] text-[#c10007] shadow-lg">
+          {leaseRenewalRailError}
+        </p>
+      ) : null}
+
+      <SlaOverdueActionRail
+        open={escalatedRailTarget != null && escalatedReview != null}
+        review={escalatedReview}
+        loading={escalatedRailLoading}
+        saving={escalatedRailSaving}
+        onClose={() => {
+          setEscalatedRailTarget(null)
+          setEscalatedRailError(null)
+        }}
+        onTakeAction={handleEscalatedTakeAction}
+      />
+
+      <AwaitingDecisionListRail
+        open={awaitingDecisionListOpen}
+        items={allAttentionItems}
+        criticalCount={criticalAttentionCount}
+        onClose={() => setAwaitingDecisionListOpen(false)}
+        onItemAction={handleAwaitingDecisionItemAction}
+      />
+
+      <LateRentAccountReviewRail
+        open={lateRentRailRunId != null && lateRentReview != null}
+        review={lateRentReview}
+        saving={lateRentRailSaving}
+        onClose={closeLateRentRail}
+        onAction={(action, review) => void handleLateRentAction(action, review)}
+      />
+
+      <LeaseRenewalEscalatedRail
+        open={leaseRenewalRailRunId != null && leaseRenewalReview != null}
+        review={leaseRenewalReview}
+        saving={leaseRenewalRailSaving}
+        onClose={closeLeaseRenewalRail}
+        onAction={(action, review) => void handleLeaseRenewalAction(action, review)}
+      />
     </main>
   )
 }

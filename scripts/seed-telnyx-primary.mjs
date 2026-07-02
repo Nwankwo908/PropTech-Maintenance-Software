@@ -13,11 +13,12 @@ import { fileURLToPath } from 'node:url'
 import { createClient } from '@supabase/supabase-js'
 
 const TELNYX_NUMBER = '+19734005760'
-/** Demo landlord — matches demo@ulohome.io resident data for SMS testing. */
+/** Ulo Operations — default staff tenant (matches VITE_DEFAULT_LANDLORD_ID). */
+const ULO_OPERATIONS_LANDLORD_ID = '068daf53-07e4-4493-bd7f-6106e3c8c62f'
 const SMS_LANDLORD_ID =
   process.env.SMS_LANDLORD_ID?.trim() ||
   process.env.VITE_DEFAULT_LANDLORD_ID?.trim() ||
-  'de300000-0000-4000-8000-000000000001'
+  ULO_OPERATIONS_LANDLORD_ID
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const envPath = resolve(__dirname, '../.env')
@@ -98,11 +99,12 @@ async function main() {
         provider: 'telnyx',
         purpose: 'landlord_main',
         status: 'active',
+        landlord_id: SMS_LANDLORD_ID,
       })
       .eq('id', existing.id)
     if (updateError) throw new Error(`sms_numbers update: ${updateError.message}`)
     console.log(
-      `OK    ${TELNYX_NUMBER} active on landlord ${existing.landlord_id} (provider: telnyx)`,
+      `OK    ${TELNYX_NUMBER} active on landlord ${SMS_LANDLORD_ID} (provider: telnyx)`,
     )
     return
   }

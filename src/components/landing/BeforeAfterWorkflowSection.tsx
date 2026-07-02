@@ -22,6 +22,7 @@ function WorkflowDiagram({
   height,
   mobileWidthClass,
   lgWidthClass,
+  imgClassName = '',
 }: {
   src: string
   alt: string
@@ -29,6 +30,7 @@ function WorkflowDiagram({
   height: number
   mobileWidthClass: string
   lgWidthClass: string
+  imgClassName?: string
 }) {
   return (
     <div className="relative min-w-0 flex-1 overflow-x-hidden lg:overflow-visible">
@@ -43,7 +45,14 @@ function WorkflowDiagram({
           width={width}
           height={height}
           draggable={false}
-          className={`block h-auto w-full max-w-full shrink-0 ${mobileWidthClass} ${lgWidthClass}`}
+          className={[
+            'block h-auto shrink-0',
+            mobileWidthClass,
+            lgWidthClass,
+            imgClassName,
+          ]
+            .filter(Boolean)
+            .join(' ')}
         />
       </div>
     </div>
@@ -54,7 +63,9 @@ function WorkflowDiagram({
 export function BeforeAfterWorkflowSection() {
   return (
     <div className="flex flex-col gap-4">
-      <div className={WORKFLOW_CARD}>
+      <div
+        className={`${WORKFLOW_CARD} [@media(min-width:2560px)_and_(min-height:1300px)_and_(max-height:1600px)]:min-h-[330px] [@media(min-width:2560px)_and_(min-height:1300px)_and_(max-height:1600px)]:lg:gap-[4.5rem] [@media(min-width:2560px)_and_(min-height:1300px)_and_(max-height:1600px)]:lg:py-12`}
+      >
         <WorkflowLabel title="Before" subtitle="Messy. Slow. Frustration" />
         <WorkflowDiagram
           src={beforeWorkflow}
@@ -62,7 +73,8 @@ export function BeforeAfterWorkflowSection() {
           width={1043}
           height={212}
           mobileWidthClass="max-lg:w-[949px] max-lg:max-w-none"
-          lgWidthClass="lg:max-w-[949px]"
+          lgWidthClass="w-full max-w-full lg:max-w-[949px]"
+          imgClassName="[@media(min-width:2560px)_and_(min-height:1300px)_and_(max-height:1600px)]:lg:!w-[1424px] [@media(min-width:2560px)_and_(min-height:1300px)_and_(max-height:1600px)]:lg:!max-w-[1424px] [@media(min-width:1024px)_and_(max-width:1100px)_and_(min-height:850px)_and_(max-height:920px)]:lg:!w-[1329px] [@media(min-width:1024px)_and_(max-width:1100px)_and_(min-height:850px)_and_(max-height:920px)]:lg:!max-w-[1329px]"
         />
       </div>
 
@@ -75,6 +87,7 @@ export function BeforeAfterWorkflowSection() {
           height={225}
           mobileWidthClass="max-lg:w-[491px] max-lg:max-w-none"
           lgWidthClass="lg:w-full"
+          imgClassName="[@media(min-width:300px)_and_(max-width:349px)_and_(min-height:850px)_and_(max-height:920px)]:!w-[638px] [@media(min-width:300px)_and_(max-width:349px)_and_(min-height:850px)_and_(max-height:920px)]:max-w-none [@media(min-width:350px)_and_(max-width:399px)_and_(min-height:850px)_and_(max-height:920px)]:!w-[638px] [@media(min-width:350px)_and_(max-width:399px)_and_(min-height:850px)_and_(max-height:920px)]:max-w-none [@media(min-width:400px)_and_(max-width:500px)_and_(min-height:850px)_and_(max-height:920px)]:!w-[687px] [@media(min-width:400px)_and_(max-width:500px)_and_(min-height:850px)_and_(max-height:920px)]:max-w-none [@media(min-width:768px)_and_(max-width:850px)_and_(min-height:850px)_and_(max-height:920px)]:!w-[687px] [@media(min-width:768px)_and_(max-width:850px)_and_(min-height:850px)_and_(max-height:920px)]:max-w-none [@media(min-width:1024px)_and_(max-width:1100px)_and_(min-height:850px)_and_(max-height:920px)]:!w-[913px] [@media(min-width:1024px)_and_(max-width:1100px)_and_(min-height:850px)_and_(max-height:920px)]:max-w-none"
         />
       </div>
     </div>

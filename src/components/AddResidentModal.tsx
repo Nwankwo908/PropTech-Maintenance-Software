@@ -266,7 +266,7 @@ export function AddResidentModal({
             type="button"
             disabled={!formValid}
             onClick={submit}
-            className="inline-flex h-[42px] min-w-0 flex-1 items-center justify-center rounded-[10px] bg-[#b58500] px-4 text-[16px] font-medium leading-6 tracking-[-0.3125px] text-white outline-none focus-visible:ring-2 focus-visible:ring-[#b58500] focus-visible:ring-offset-2 focus-visible:ring-offset-secondary enabled:hover:bg-[#9a7310] disabled:cursor-not-allowed disabled:opacity-50"
+            className="inline-flex h-[42px] min-w-0 flex-1 items-center justify-center rounded-[10px] bg-[#187960] px-4 text-[16px] font-medium leading-6 tracking-[-0.3125px] text-white outline-none focus-visible:ring-2 focus-visible:ring-[#b58500] focus-visible:ring-offset-2 focus-visible:ring-offset-secondary enabled:hover:bg-[#9a7310] disabled:cursor-not-allowed disabled:opacity-50"
           >
             Add Resident
           </button>

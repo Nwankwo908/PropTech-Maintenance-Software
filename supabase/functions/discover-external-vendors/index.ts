@@ -2,7 +2,7 @@ import { serve } from "https://deno.land/std/http/server.ts"
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1"
 import { adminEdgeCorsHeaders } from "../_shared/admin_edge_cors.ts"
 import { adminReassignSecretAuthorized } from "../_shared/admin_reassign_auth.ts"
-import { discoverExternalVendorsMerged } from "../_shared/discover_external_vendors.ts"
+import { discoverExternalVendorsForTicket } from "../_shared/external_vendor/discover.ts"
 
 const corsHeaders = adminEdgeCorsHeaders
 
@@ -37,7 +37,7 @@ serve(async (req) => {
     return jsonResponse({ error: "Unauthorized" }, 401)
   }
 
-  let body: { ticketId?: string }
+  let body: { ticketId?: string; limit?: number; useMock?: boolean }
   try {
     body = await req.json()
   } catch {
@@ -49,6 +49,16 @@ serve(async (req) => {
     return jsonResponse({ error: "Missing or invalid ticketId" }, 400)
   }
 
+  const limit =
+    typeof body.limit === "number" && Number.isFinite(body.limit) &&
+      body.limit >= 1 && body.limit <= 10
+      ? Math.floor(body.limit)
+      : 8
+
+  const forceMock =
+    body.useMock === true ||
+    (Deno.env.get("EXTERNAL_VENDOR_USE_MOCK") ?? "").trim().toLowerCase() === "true"
+
   const supabaseUrl = Deno.env.get("SUPABASE_URL")?.trim()
   const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")?.trim()
   if (!supabaseUrl || !serviceKey) {
@@ -58,50 +68,25 @@ serve(async (req) => {
     )
   }
 
-  const googleKey = Deno.env.get("GOOGLE_PLACES_API_KEY")?.trim() || null
-  const yelpKey = Deno.env.get("YELP_API_KEY")?.trim() || null
-  if (!googleKey && !yelpKey) {
-    return jsonResponse({
-      ticketId,
-      suggestions: [],
-      configured: false,
-      notice:
-        "Set Edge secrets GOOGLE_PLACES_API_KEY and/or YELP_API_KEY to load outside-network vendors.",
-    })
-  }
-
   const supabase = createClient(supabaseUrl, serviceKey)
-  const { data: ticket, error } = await supabase
-    .from("maintenance_requests")
-    .select("id, issue_category, unit")
-    .eq("id", ticketId)
-    .maybeSingle()
-
-  if (error) {
-    console.error("[discover-external-vendors] load ticket", error)
-    return jsonResponse({ error: "Load ticket failed" }, 500)
-  }
-  if (!ticket) {
-    return jsonResponse({ error: "Ticket not found" }, 404)
-  }
-
-  const issueCategory = ticket.issue_category == null
-    ? null
-    : String(ticket.issue_category)
-  const unit = ticket.unit == null ? "" : String(ticket.unit).trim()
-  const envLoc = Deno.env.get("EXTERNAL_VENDOR_SEARCH_LOCATION")?.trim() || ""
-  const searchLocation = unit || envLoc || "United States"
-
-  const suggestions = await discoverExternalVendorsMerged({
-    issueCategory,
-    searchLocation,
-    googleApiKey: googleKey,
-    yelpApiKey: yelpKey,
+  const result = await discoverExternalVendorsForTicket(supabase, ticketId, {
+    limit,
+    forceMock,
   })
 
+  if ("error" in result) {
+    const status = result.error === "Ticket not found" ? 404 : 500
+    return jsonResponse({ error: result.error }, status)
+  }
+
   return jsonResponse({
-    ticketId,
-    suggestions,
-    configured: true,
+    ticketId: result.ticketId,
+    suggestions: result.suggestions,
+    providersUsed: result.providersUsed,
+    mode: result.mode,
+    configured: result.configured,
+    notice: result.mode === "mock"
+      ? "Using mock external vendor provider (set GOOGLE_PLACES_API_KEY / YELP_API_KEY for live search)."
+      : undefined,
   })
 })

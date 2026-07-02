@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import { PropertyHealthBuildingGrid } from '@/components/PropertyHealthBuildingGrid'
 import { getActiveLandlordId } from '@/lib/activeLandlord'
 import { deleteLandlordBuildings } from '@/lib/landlordOnboarding'
 import {
   buildPropertyHealthReport,
+  computeOccupancyStats,
   countPortfolioBuildings,
   enrichFeedbackFromTickets,
   fetchPropertyHealthSignals,
@@ -14,8 +15,12 @@ import {
   PROPERTY_HEALTH_KPI_CAPTION,
   type PropertyHealthFeedback,
   type PropertyHealthPmTask,
+  type PropertyHealthResident,
   type PropertyHealthVendorMetrics,
 } from '@/lib/propertyHealth'
+import { fetchRecognizedMaintenanceSpend, type RecognizedMaintenanceSpend } from '@/api/maintenanceInvoice'
+import { buildMonthlySpendByBuilding, type PropertyAnalyticsTicket } from '@/lib/propertyAnalytics'
+import { buildingDetailPath } from '@/lib/propertyRoutes'
 import { supabase } from '@/lib/supabase'
 
 type PropertyTicket = {
@@ -24,6 +29,8 @@ type PropertyTicket = {
   urgency: string
   vendorWorkStatus: string
   unit: string
+  unitId: string | null
+  building: string | null
   issueCategory: string | null
   assignedVendorId: string | null
   estimatedMinutes: number | null
@@ -77,6 +84,8 @@ function normalizeTicketRow(raw: Record<string, unknown>): PropertyTicket {
     ).toLowerCase(),
     vendorWorkStatus: asString(raw.vendor_work_status).toLowerCase(),
     unit: asString(raw.unit),
+    unitId: asString(raw.unit_id) || null,
+    building: asString(raw.building) || null,
     issueCategory: asString(raw.issue_category) || null,
     assignedVendorId: asString(raw.assigned_vendor_id) || null,
     estimatedMinutes:
@@ -111,10 +120,6 @@ function ticketSpendDate(ticket: PropertyTicket): number {
 
 function isCompletedJob(ticket: PropertyTicket): boolean {
   return ticket.vendorWorkStatus === 'completed'
-}
-
-function normalizeUnitLabel(label: string): string {
-  return label.toLowerCase().replace(/^unit\s+/, '').trim()
 }
 
 function formatSpend(amount: number): string {
@@ -235,17 +240,20 @@ function KpiCard({
 }
 
 export function AdminPropertiesDashboard() {
+  const navigate = useNavigate()
   const [tickets, setTickets] = useState<PropertyTicket[]>([])
   const [units, setUnits] = useState<PropertyUnit[]>([])
   const [pmTasks, setPmTasks] = useState<PropertyHealthPmTask[]>([])
   const [feedback, setFeedback] = useState<PropertyHealthFeedback[]>([])
   const [vendorMetrics, setVendorMetrics] = useState<PropertyHealthVendorMetrics[]>([])
+  const [residents, setResidents] = useState<PropertyHealthResident[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null)
   const [selectedBuildings, setSelectedBuildings] = useState<Set<string>>(() => new Set())
   const [deleteBuildingsSaving, setDeleteBuildingsSaving] = useState(false)
   const [deleteBuildingsError, setDeleteBuildingsError] = useState<string | null>(null)
+  const [recognizedSpend, setRecognizedSpend] = useState<RecognizedMaintenanceSpend[]>([])
 
   const loadProperties = useCallback(async () => {
     if (!supabase) {
@@ -277,13 +285,20 @@ export function AdminPropertiesDashboard() {
             .order('created_at', { ascending: false })
             .limit(500)
 
-    const [unitsResult, healthSignals] = await Promise.all([
+    const [unitsResult, healthSignals, residentsResult, recognizedSpendResult] = await Promise.all([
       supabase
         .from('units')
         .select('id, unit_label, building, status')
         .eq('landlord_id', landlordId)
         .limit(1000),
       fetchPropertyHealthSignals(),
+      supabase
+        .from('users')
+        .select('id, full_name, unit, building, status')
+        .eq('landlord_id', landlordId)
+        .neq('status', 'past_resident')
+        .limit(2000),
+      fetchRecognizedMaintenanceSpend(),
     ])
 
     if (!ticketsResult.error) {
@@ -313,6 +328,23 @@ export function AdminPropertiesDashboard() {
     setPmTasks(healthSignals.pmTasks)
     setFeedback(healthSignals.feedback)
     setVendorMetrics(healthSignals.vendorMetrics)
+    setRecognizedSpend(recognizedSpendResult ?? [])
+
+    if (!residentsResult.error) {
+      setResidents(
+        ((residentsResult.data ?? []) as Record<string, unknown>[])
+          .map((raw) => ({
+            id: asString(raw.id),
+            fullName: asString(raw.full_name) || 'Unnamed resident',
+            unit: asString(raw.unit),
+            building: asString(raw.building) || null,
+            status: asString(raw.status).toLowerCase() || 'active',
+          }))
+          .filter((row) => row.id),
+      )
+    } else {
+      setResidents([])
+    }
 
     setLastUpdated(new Date())
     setLoading(false)
@@ -335,29 +367,41 @@ export function AdminPropertiesDashboard() {
       pmTasks,
       feedback: enrichFeedbackFromTickets(feedback, healthTickets),
       vendorMetrics,
+      residents,
       now,
     })
-  }, [units, tickets, pmTasks, feedback, vendorMetrics, now])
+  }, [units, tickets, pmTasks, feedback, vendorMetrics, residents, now])
 
   const monthlySpendByBuilding = useMemo(() => {
-    const thirtyDaysAgo = now - 30 * 24 * 60 * 60 * 1000
-    const spendByUnitLabel = new Map<string, number>()
-    for (const t of tickets) {
-      const key = normalizeUnitLabel(t.unit)
-      if (!key) continue
-      const ts = new Date(t.createdAt).getTime()
-      if (Number.isNaN(ts) || ts < thirtyDaysAgo) continue
-      spendByUnitLabel.set(key, (spendByUnitLabel.get(key) ?? 0) + ticketCostEstimate(t))
-    }
-
-    const byBuilding = new Map<string, number>()
-    for (const unit of units) {
-      const building = unit.building ?? 'Portfolio'
-      const spend = spendByUnitLabel.get(normalizeUnitLabel(unit.unitLabel)) ?? 0
-      byBuilding.set(building, (byBuilding.get(building) ?? 0) + spend)
-    }
-    return byBuilding
-  }, [units, tickets, now])
+    const healthUnits = mapUnitsForPropertyHealth(units as unknown as Record<string, unknown>[])
+    const unitBuildingById = new Map(
+      healthUnits.map((unit) => [unit.id, unit.building] as const),
+    )
+    const analyticsTickets: PropertyAnalyticsTicket[] = tickets.map((ticket) => {
+      const building =
+        ticket.building?.trim() ||
+        (ticket.unitId ? unitBuildingById.get(ticket.unitId) ?? null : null)
+      return {
+        id: ticket.id,
+        createdAt: ticket.createdAt,
+        completedAt: ticket.completedAt,
+        urgency: ticket.urgency,
+        vendorWorkStatus: ticket.vendorWorkStatus,
+        estimatedMinutes: ticket.estimatedMinutes,
+        unit: ticket.unit,
+        unitId: ticket.unitId,
+        building,
+        totalCost: ticket.totalCost,
+      }
+    })
+    return buildMonthlySpendByBuilding({
+      buildings: healthReport.buildings.map((row) => row.building),
+      tickets: analyticsTickets,
+      units: healthUnits,
+      recognizedSpend,
+      nowMs: now,
+    })
+  }, [healthReport.buildings, units, tickets, recognizedSpend, now])
 
   const kpis = useMemo(() => {
     const healthTickets = mapTicketsForPropertyHealth(
@@ -367,11 +411,9 @@ export function AdminPropertiesDashboard() {
     const buildings = countPortfolioBuildings(healthUnits, pmTasks, healthTickets)
     const totalUnits = units.length
 
-    const trackedUnits = units.filter((u) => u.status !== 'inactive')
-    const activeUnits = trackedUnits.filter((u) => u.status === 'active').length
-    const avgOccupancy = trackedUnits.length
-      ? Math.round((activeUnits / trackedUnits.length) * 100)
-      : null
+    const trackedUnits = healthUnits.filter((u) => u.status !== 'inactive')
+    const occupancy = computeOccupancyStats(healthUnits, residents)
+    const avgOccupancy = trackedUnits.length ? occupancy.occupancyPct : null
 
     const propertyHealth = healthReport.portfolio?.score ?? null
     const propertyHealthDelta = healthReport.portfolioDelta
@@ -399,7 +441,7 @@ export function AdminPropertiesDashboard() {
       ytdMaintenanceCost,
       ytdMaintenanceCostDelta,
     }
-  }, [units, tickets, pmTasks, healthReport, now, fourWeeksMs])
+  }, [units, tickets, pmTasks, healthReport, residents, now, fourWeeksMs])
 
   const updatedCaption =
     loading || !lastUpdated ? 'Updating…' : formatUpdatedAt(lastUpdated)
@@ -420,7 +462,6 @@ export function AdminPropertiesDashboard() {
         : `${healthReport.portfolio.score}%`
 
   const visibleBuildings = healthReport.buildings
-  const selectedBuildingCount = selectedBuildings.size
   const allVisibleBuildingsSelected =
     visibleBuildings.length > 0 &&
     visibleBuildings.every((building) => selectedBuildings.has(building.building))
@@ -535,32 +576,6 @@ export function AdminPropertiesDashboard() {
         </div>
       ) : null}
 
-      {selectedBuildingCount > 0 ? (
-        <div className="mb-4 mt-4 flex flex-wrap items-center justify-between gap-2 rounded-[10px] border border-[#e5e7eb] bg-white px-4 py-3 shadow-[0px_1px_2px_-1px_rgba(0,0,0,0.06)]">
-          <p className="text-[14px] leading-5 tracking-[-0.1504px] text-[#0a0a0a]">
-            <span className="font-medium">{selectedBuildingCount}</span>
-            {selectedBuildingCount === 1 ? ' property selected' : ' properties selected'}
-          </p>
-          <div className="flex items-center gap-2">
-            <button
-              type="button"
-              onClick={() => setSelectedBuildings(new Set())}
-              className="inline-flex h-9 items-center justify-center rounded-lg border border-black/10 bg-white px-3 text-[14px] font-medium text-[#0a0a0a] outline-none hover:bg-[#f3f4f6] focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2"
-            >
-              Clear selection
-            </button>
-            <button
-              type="button"
-              disabled={deleteBuildingsSaving}
-              onClick={() => void deleteSelectedBuildings()}
-              className="inline-flex h-9 items-center justify-center rounded-lg border border-[#b52a00]/30 bg-[#fff4f0] px-3 text-[14px] font-medium text-[#b52a00] outline-none hover:bg-[#ffe9e1] focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50"
-            >
-              {deleteBuildingsSaving ? 'Deleting…' : 'Delete selected'}
-            </button>
-          </div>
-        </div>
-      ) : null}
-
       <PropertyHealthBuildingGrid
         className="mt-4"
         loading={loading}
@@ -575,12 +590,24 @@ export function AdminPropertiesDashboard() {
           allSelected: allVisibleBuildingsSelected,
           someSelected: someVisibleBuildingsSelected,
           onToggleAll: toggleAllVisibleBuildingsSelected,
+          onClearSelection: () => setSelectedBuildings(new Set()),
+          onDeleteSelected: () => void deleteSelectedBuildings(),
+          deleteSelectedSaving: deleteBuildingsSaving,
         }}
+        onBuildingOpen={(building) => navigate(buildingDetailPath(building))}
         headerAction={
           <Link
             to="/admin/users"
-            className="shrink-0 rounded-[10px] border border-black/10 bg-white px-4 py-2 text-[13px] font-medium leading-5 text-tertiary transition-colors duration-150 hover:bg-[#e2f5f1]"
+            className="inline-flex shrink-0 items-center justify-center gap-1.5 rounded-[10px] border border-black/10 bg-white px-4 py-2 text-[13px] font-medium leading-5 text-[#6a7282] transition-colors duration-150 hover:bg-[#e2f5f1]"
           >
+            <svg viewBox="0 0 24 24" fill="none" aria-hidden className="size-3.5 shrink-0">
+              <path
+                d="M12 5v14M5 12h14"
+                stroke="currentColor"
+                strokeWidth={2}
+                strokeLinecap="round"
+              />
+            </svg>
             Add Properties
           </Link>
         }

@@ -1,11 +1,10 @@
--- Primary Telnyx SMS number — assigned as active landlord_main (not pool-only).
--- Default landlord: Demo Property Management (demo@ulohome.io resident data).
--- Override: set local variable demo_landlord before running.
+-- Primary Telnyx SMS number — assigned as active landlord_main for Ulo Operations.
+-- Default landlord: Ulo Operations (staff default tenant).
 
 do $$
 declare
   telnyx_number text := '+19734005760';
-  demo_landlord uuid := 'de300000-0000-4000-8000-000000000001';
+  ulo_operations uuid := '068daf53-07e4-4493-bd7f-6106e3c8c62f';
 begin
   update public.sms_providers
   set active = false
@@ -36,7 +35,7 @@ begin
     'telnyx',
     'active',
     'landlord_main',
-    demo_landlord,
+    ulo_operations,
     null,
     null
   )
@@ -45,7 +44,7 @@ begin
     provider = 'telnyx',
     status = 'active',
     purpose = 'landlord_main',
-    landlord_id = demo_landlord;
+    landlord_id = ulo_operations;
 
-  raise notice 'Telnyx number % assigned as landlord_main for %', telnyx_number, demo_landlord;
+  raise notice 'Telnyx number % assigned as landlord_main for Ulo Operations %', telnyx_number, ulo_operations;
 end $$;

@@ -1,10 +1,12 @@
 /**
- * Scheduled job: tickets in `pending_accept` for 48h+ with no vendor response
- * are reassigned to the top AI/heuristic alternative (same secret as admin reassign or CRON).
+ * Scheduled job:
+ * 1. Tickets past due_at → auto-reassign to next roster vendor (or escalate if none).
+ * 2. pending_accept 48h+ with no response → reassign via alternatives (legacy path).
  */
 import { serve } from "https://deno.land/std/http/server.ts"
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1"
 import { recommendAlternativeVendorsForTicket } from "../_shared/recommend_vendor_alternatives.ts"
+import { processSlaExpiredAutoReassign, escalateForNoVendor } from "../_shared/sla_expired_auto_reassign.ts"
 import { reassignVendorByIdAndNotify } from "../submit-maintenance-request/vendor_notify.ts"
 
 const corsHeaders: Record<string, string> = {
@@ -54,8 +56,10 @@ serve(async (req) => {
   }
 
   const supabase = createClient(supabaseUrl, serviceKey)
-  const cutoff = new Date(Date.now() - 48 * 60 * 60 * 1000).toISOString()
 
+  const slaResults = await processSlaExpiredAutoReassign(supabase)
+
+  const cutoff = new Date(Date.now() - 48 * 60 * 60 * 1000).toISOString()
   const { data: stale, error: qErr } = await supabase
     .from("maintenance_requests")
     .select("id")
@@ -70,7 +74,7 @@ serve(async (req) => {
     return jsonResponse({ error: "Query failed" }, 500)
   }
 
-  const results: { ticketId: string; ok?: boolean; error?: string }[] = []
+  const delayedResults: { ticketId: string; ok?: boolean; error?: string }[] = []
 
   for (const row of stale ?? []) {
     const ticketId = String(row.id ?? "")
@@ -80,12 +84,30 @@ serve(async (req) => {
       limit: 3,
     })
     if ("error" in rec) {
-      results.push({ ticketId, error: rec.error })
+      delayedResults.push({ ticketId, error: rec.error })
       continue
     }
     const pick = rec.alternatives[0]
     if (!pick) {
-      results.push({ ticketId, error: "No alternative vendors" })
+      const { data: ticketRow } = await supabase
+        .from("maintenance_requests")
+        .select("id, landlord_id, assigned_vendor_id, issue_category, vendor_work_status")
+        .eq("id", ticketId)
+        .maybeSingle()
+      if (ticketRow) {
+        await escalateForNoVendor(supabase, {
+          id: ticketId,
+          landlord_id: ticketRow.landlord_id == null ? null : String(ticketRow.landlord_id),
+          assigned_vendor_id: ticketRow.assigned_vendor_id == null
+            ? null
+            : String(ticketRow.assigned_vendor_id),
+          issue_category: ticketRow.issue_category == null
+            ? null
+            : String(ticketRow.issue_category),
+          vendor_work_status: String(ticketRow.vendor_work_status ?? "").toLowerCase(),
+        })
+      }
+      delayedResults.push({ ticketId, error: "No alternative vendors — escalated for admin" })
       continue
     }
 
@@ -93,16 +115,19 @@ serve(async (req) => {
       eventSource: "auto_reassign",
     })
     if ("error" in r) {
-      results.push({ ticketId, error: r.error })
+      delayedResults.push({ ticketId, error: r.error })
     } else {
-      results.push({ ticketId, ok: true })
+      delayedResults.push({ ticketId, ok: true })
     }
   }
 
   return jsonResponse({
     ok: true,
-    cutoff,
-    processed: results.length,
-    results,
+    slaExpired: slaResults,
+    delayedPendingAccept: {
+      cutoff,
+      processed: delayedResults.length,
+      results: delayedResults,
+    },
   })
 })

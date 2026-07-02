@@ -204,6 +204,11 @@ function buildSummary(tasks: PmComplianceTask[]): PmComplianceSummary {
   }
 }
 
+/** Build PM compliance summary from an already-scoped task list (e.g. one property). */
+export function summarizePmComplianceTasks(tasks: PmComplianceTask[]): PmComplianceSummary {
+  return buildSummary(tasks)
+}
+
 export async function fetchPmCompliance(): Promise<PmComplianceSummary> {
   const { supabase } = await import('@/lib/supabase')
   if (!supabase) {

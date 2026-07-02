@@ -63,6 +63,20 @@ function StarIcon() {
   )
 }
 
+function TrashIcon({ className = 'size-3.5 shrink-0' }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 24 24" fill="none" aria-hidden>
+      <path
+        d="M3 6h18M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2m3 0v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6h14zM10 11v6M14 11v6"
+        stroke="currentColor"
+        strokeWidth={1.65}
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  )
+}
+
 type PropertyHealthBuildingGridProps = {
   className?: string
   loading: boolean
@@ -80,8 +94,24 @@ type PropertyHealthBuildingGridProps = {
     allSelected: boolean
     someSelected: boolean
     onToggleAll: () => void
+    onClearSelection?: () => void
+    onDeleteSelected?: () => void
+    deleteSelectedSaving?: boolean
   }
+  onBuildingOpen?: (building: string) => void
 }
+
+const HEADER_BTN =
+  'inline-flex shrink-0 items-center justify-center rounded-[10px] border border-black/10 bg-white px-4 py-2 text-[13px] font-medium leading-5 text-tertiary transition-colors duration-150 hover:bg-[#e2f5f1] disabled:pointer-events-none disabled:opacity-50'
+
+const HEADER_BTN_GHOST =
+  'inline-flex shrink-0 items-center justify-center rounded-[10px] bg-transparent px-4 py-2 text-[13px] font-medium leading-5 text-[#6a7282] transition-colors duration-150 hover:bg-[#f3f4f6] disabled:pointer-events-none disabled:opacity-50'
+
+const HEADER_BTN_DANGER =
+  'inline-flex shrink-0 items-center justify-center gap-1.5 rounded-[10px] bg-transparent px-4 py-2 text-[13px] font-medium leading-5 text-[#b52a00] transition-colors duration-150 hover:bg-[#fff4f0] disabled:pointer-events-none disabled:opacity-50'
+
+const METRIC_CHIP =
+  'inline-flex items-center gap-1.5 rounded-[8px] border border-[#e5e7eb] bg-transparent px-2.5 py-1 text-[12px] leading-4 text-[#6a7282]'
 
 export function PropertyHealthBuildingGrid({
   className = '',
@@ -95,34 +125,72 @@ export function PropertyHealthBuildingGrid({
   formatSpend,
   monthlySpendByBuilding,
   selection,
+  onBuildingOpen,
 }: PropertyHealthBuildingGridProps) {
+  const selectedCount = selection?.selectedBuildings.size ?? 0
+
   return (
     <section
       className={`flex min-w-0 flex-col rounded-[10px] border border-[#e5e7eb] bg-white shadow-[0px_1px_2px_-1px_rgba(0,0,0,0.06)] ${className}`.trim()}
     >
-      <div className="flex items-center justify-between gap-4 border-b border-[#e5e7eb] px-6 py-4">
-        <div className="flex min-w-0 items-start gap-3">
-          {selection ? (
-            <div className="pt-0.5">
-              <TableCheckbox
-                aria-label="Select all properties"
-                disabled={loading || buildings.length === 0}
-                checked={selection.allSelected}
-                indeterminate={selection.someSelected}
-                onChange={selection.onToggleAll}
-              />
-            </div>
-          ) : null}
-          <div>
-            <h2 className="text-[16px] font-semibold leading-6 text-[#0a0a0a]">
-              Property Health
-            </h2>
-            <p className="text-[12px] leading-4 text-[#6a7282]">
-              {buildings.length} propert{buildings.length === 1 ? 'y' : 'ies'} · {totalUnits} units
-            </p>
-          </div>
+      <div className="flex flex-nowrap items-center justify-between gap-4 border-b border-[#e5e7eb] px-6 py-4">
+        <div className="min-w-0 shrink">
+          <h2 className="text-[16px] font-semibold leading-6 text-[#0a0a0a]">
+            Property Health
+          </h2>
+          <p className="text-[12px] leading-4 text-[#6a7282]">
+            {selectedCount > 0 ? (
+              <>
+                <span className="font-medium text-[#0a0a0a]">{selectedCount}</span>
+                {selectedCount === 1 ? ' property selected' : ' properties selected'}
+                {' · '}
+                {totalUnits} units
+              </>
+            ) : (
+              <>
+                {buildings.length} propert{buildings.length === 1 ? 'y' : 'ies'} · {totalUnits}{' '}
+                units
+              </>
+            )}
+          </p>
         </div>
-        {headerAction}
+        <div className="flex shrink-0 flex-nowrap items-center gap-2">
+          {selection ? (
+            <>
+              {!selection.allSelected ? (
+                <button
+                  type="button"
+                  disabled={loading || buildings.length === 0}
+                  onClick={selection.onToggleAll}
+                  className={HEADER_BTN}
+                >
+                  Select all
+                </button>
+              ) : null}
+              {selectedCount > 0 && selection.onClearSelection ? (
+                <button
+                  type="button"
+                  onClick={selection.onClearSelection}
+                  className={HEADER_BTN_GHOST}
+                >
+                  Clear selection
+                </button>
+              ) : null}
+              {selectedCount > 0 && selection.onDeleteSelected ? (
+                <button
+                  type="button"
+                  disabled={selection.deleteSelectedSaving}
+                  onClick={selection.onDeleteSelected}
+                  className={HEADER_BTN_DANGER}
+                >
+                  <TrashIcon />
+                  {selection.deleteSelectedSaving ? 'Deleting…' : 'Delete selected'}
+                </button>
+              ) : null}
+            </>
+          ) : null}
+          {headerAction}
+        </div>
       </div>
       <div className="grid gap-4 p-4 sm:grid-cols-2 2xl:grid-cols-3">
         {loading ? (
@@ -147,8 +215,28 @@ export function PropertyHealthBuildingGrid({
             return (
             <div
               key={b.building}
+              role={onBuildingOpen ? 'button' : undefined}
+              tabIndex={onBuildingOpen ? 0 : undefined}
+              onClick={
+                onBuildingOpen
+                  ? () => {
+                      onBuildingOpen(b.building)
+                    }
+                  : undefined
+              }
+              onKeyDown={
+                onBuildingOpen
+                  ? (event) => {
+                      if (event.key === 'Enter' || event.key === ' ') {
+                        event.preventDefault()
+                        onBuildingOpen(b.building)
+                      }
+                    }
+                  : undefined
+              }
               className={[
                 'group flex flex-col gap-3 rounded-[10px] border bg-white p-4 transition-[border-color,box-shadow,background-color] duration-150',
+                onBuildingOpen ? 'cursor-pointer' : '',
                 selected
                   ? 'border-[#0030b5]/35 ring-1 ring-[#0030b5]/15 hover:border-[#0030b5]/50 hover:shadow-[0px_4px_12px_rgba(0,48,181,0.08)]'
                   : 'border-[#e5e7eb] hover:border-[#101828]/20 hover:bg-[#fafafa] hover:shadow-[0px_4px_12px_rgba(0,0,0,0.06)]',
@@ -182,6 +270,8 @@ export function PropertyHealthBuildingGrid({
                           ? 'block'
                           : 'hidden group-hover:block group-focus-within:block',
                       ].join(' ')}
+                      onClick={(event) => event.stopPropagation()}
+                      onKeyDown={(event) => event.stopPropagation()}
                     >
                       <TableCheckbox
                         aria-label={`Select ${b.building}`}
@@ -221,19 +311,19 @@ export function PropertyHealthBuildingGrid({
                   </>
                 )}
               </div>
-              <div className="grid grid-cols-2 gap-x-4 gap-y-2 border-t border-[#f3f4f6] pt-3 text-[12px] leading-4 text-[#6a7282]">
-                <span className="flex items-center gap-1.5">
+              <div className="flex flex-wrap gap-2 border-t border-[#f3f4f6] pt-3">
+                <span className={METRIC_CHIP}>
                   <ClockIcon />
-                  <span className="font-semibold text-[#0a0a0a]">{b.openTickets}</span> open
+                  <span className="font-semibold text-[#0a0a0a]">{b.openTickets}</span> work orders
                 </span>
-                <span className="flex items-center gap-1.5">
+                <span className={METRIC_CHIP}>
                   <UsersIcon />
                   <span className="font-semibold text-[#0a0a0a] tabular-nums">
                     {b.occupancyPct}%
                   </span>{' '}
                   occ.
                 </span>
-                <span className="col-span-2 flex items-center gap-1.5">
+                <span className={METRIC_CHIP}>
                   <span className={b.residentRating != null ? 'text-[#f59e0b]' : 'text-[#d1d5db]'}>
                     <StarIcon />
                   </span>
@@ -249,8 +339,8 @@ export function PropertyHealthBuildingGrid({
                   )}
                 </span>
                 {showMonthlySpend && formatSpend && monthlySpendByBuilding ? (
-                  <span className="col-span-2 flex items-center justify-between">
-                    <span>30-day maintenance</span>
+                  <span className={METRIC_CHIP}>
+                    <span>MTD maintenance</span>
                     <span className="font-semibold text-[#0a0a0a] tabular-nums">
                       {formatSpend(monthlySpendByBuilding.get(b.building) ?? 0)}
                     </span>

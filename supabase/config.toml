@@ -60,6 +60,12 @@ verify_jwt = false
 import_map = "./functions/discover-external-vendors/deno.json"
 entrypoint = "./functions/discover-external-vendors/index.ts"
 
+[functions.reassign-external-vendor]
+enabled = true
+verify_jwt = false
+import_map = "./functions/reassign-external-vendor/deno.json"
+entrypoint = "./functions/reassign-external-vendor/index.ts"
+
 [functions.vendor-delayed-auto-reassign]
 enabled = true
 verify_jwt = false

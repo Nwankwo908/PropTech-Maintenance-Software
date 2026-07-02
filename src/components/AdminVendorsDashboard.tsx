@@ -417,7 +417,7 @@ export function AdminVendorsDashboard() {
             Vendors
           </h1>
           <p className="text-[14px] leading-5 tracking-[-0.1504px] text-[#6a7282]">
-            Who is doing work for me?
+            Keep track of your vendors, assign work orders, and manage repairs in one place.
           </p>
         </div>
         <button
