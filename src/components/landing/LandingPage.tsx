@@ -3,6 +3,7 @@ import { Link, useNavigate } from 'react-router-dom'
 import { EarlyAccessModal } from '@/components/landing/EarlyAccessModal'
 import uloLogo from '@/assets/landing/ulo-logo.png'
 import uloInteractionVideo from '@/assets/landing/Ulo Intereaction.webm'
+import uloInteractionHevc from '@/assets/landing/Ulo-Interaction-hevc.mov'
 import { playUiClickSound, primeUiClickSound } from '@/lib/uiClickSound'
 import {
   captureWaitlistReferralFromUrl,
@@ -88,9 +89,29 @@ function LandingContentShell({
   )
 }
 
+function isIosDevice() {
+  if (typeof navigator === 'undefined') return false
+  return (
+    /iPad|iPhone|iPod/.test(navigator.userAgent) ||
+    (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1)
+  )
+}
+
 function HeroInteractionVideo() {
   const videoRef = useRef<HTMLVideoElement>(null)
   const [size, setSize] = useState<{ width: number; height: number } | null>(null)
+  const [iosWebmFallbackBlend, setIosWebmFallbackBlend] = useState(false)
+
+  function syncPlaybackSize(video: HTMLVideoElement) {
+    syncSize(video)
+    if (
+      isIosDevice() &&
+      video.currentSrc &&
+      /\.webm(?:$|\?)/i.test(video.currentSrc)
+    ) {
+      setIosWebmFallbackBlend(true)
+    }
+  }
 
   function syncSize(video: HTMLVideoElement) {
     const { videoWidth, videoHeight } = video
@@ -141,22 +162,38 @@ function HeroInteractionVideo() {
   const displayHeight = size?.height
 
   return (
-    <video
-      ref={videoRef}
-      muted
-      playsInline
-      preload="auto"
-      onLoadedMetadata={(event) => syncSize(event.currentTarget)}
-      style={{
-        width: displayWidth,
-        height: displayHeight ?? 'auto',
-      }}
-      className="mx-auto block max-w-full bg-transparent"
-      aria-label="Ulo handling a tenant maintenance text conversation"
+    <div
+      className={
+        iosWebmFallbackBlend
+          ? 'mx-auto bg-white isolation-isolate lg:bg-transparent'
+          : 'mx-auto lg:inline-block'
+      }
     >
-      {/* VP9 + alpha WebM — Chrome/Firefox. iOS Safari often paints alpha as black without an HEVC fallback. */}
-      <source src={uloInteractionVideo} type="video/webm" />
-    </video>
+      <video
+        ref={videoRef}
+        muted
+        playsInline
+        preload="auto"
+        onLoadedMetadata={(event) => syncPlaybackSize(event.currentTarget)}
+        onLoadedData={(event) => syncPlaybackSize(event.currentTarget)}
+        style={{
+          width: displayWidth,
+          height: displayHeight ?? 'auto',
+        }}
+        className={[
+          'mx-auto block max-w-full bg-transparent',
+          iosWebmFallbackBlend ? 'mix-blend-screen' : '',
+        ]
+          .filter(Boolean)
+          .join(' ')}
+        aria-label="Ulo handling a tenant maintenance text conversation"
+      >
+        {/* HEVC + alpha for Safari/iOS; VP9 WebM for Chrome/Firefox. */}
+        <source src={uloInteractionHevc} type='video/mp4; codecs="hvc1"' />
+        <source src={uloInteractionHevc} type="video/quicktime" />
+        <source src={uloInteractionVideo} type="video/webm" />
+      </video>
+    </div>
   )
 }
 
