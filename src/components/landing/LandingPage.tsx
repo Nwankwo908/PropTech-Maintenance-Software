@@ -97,14 +97,14 @@ function HeroInteractionVideo() {
   const displayHeight = Math.round(displayWidth * HERO_INTERACTION_ASPECT)
 
   return (
-    <div className="mx-auto max-lg:overflow-hidden max-lg:rounded-[2.75rem] [@media(min-width:768px)_and_(max-width:850px)_and_(min-height:850px)_and_(max-height:920px)]:max-w-[291px] [@media(min-width:1024px)_and_(max-width:1100px)_and_(min-height:850px)_and_(max-height:920px)]:max-w-none [@media(min-width:1024px)_and_(max-width:1100px)_and_(min-height:850px)_and_(max-height:920px)]:inline-block min-[1440px]:inline-block">
+    <div className="mx-auto bg-transparent [@media(min-width:768px)_and_(max-width:850px)_and_(min-height:850px)_and_(max-height:920px)]:max-w-[291px] [@media(min-width:1024px)_and_(max-width:1100px)_and_(min-height:850px)_and_(max-height:920px)]:max-w-none [@media(min-width:1024px)_and_(max-width:1100px)_and_(min-height:850px)_and_(max-height:920px)]:inline-block [@media(min-width:1024px)_and_(max-width:1100px)_and_(min-height:1400px)_and_(max-height:1500px)]:max-w-none [@media(min-width:1024px)_and_(max-width:1100px)_and_(min-height:1400px)_and_(max-height:1500px)]:inline-block min-[1440px]:inline-block">
       <object
         data={uloInteractionSvg}
         type="image/svg+xml"
         width={displayWidth}
         height={displayHeight}
         aria-label="Ulo handling a tenant maintenance text conversation"
-        className="mx-auto block h-auto w-full max-w-full bg-transparent max-lg:rounded-[2.75rem]"
+        className="mx-auto block h-auto w-full max-w-full bg-transparent"
       />
     </div>
   )
@@ -312,10 +312,10 @@ export function LandingPage() {
         <section className="min-[2560px]:flex min-[2560px]:min-h-[calc(100dvh-4rem)] min-[2560px]:items-center">
           <LandingContentShell
             className="w-full pb-12 pt-10 sm:pb-28 sm:pt-14 md:pb-32 lg:pt-14 min-[2560px]:pb-16 min-[2560px]:pt-16"
-            contentClassName="w-full max-w-none [@media(min-width:1024px)_and_(max-width:1100px)_and_(min-height:850px)_and_(max-height:920px)]:!ml-0 [@media(min-width:1024px)_and_(max-width:1100px)_and_(min-height:850px)_and_(max-height:920px)]:flex [@media(min-width:1024px)_and_(max-width:1100px)_and_(min-height:850px)_and_(max-height:920px)]:justify-center min-[1440px]:!ml-0 min-[1440px]:flex min-[1440px]:justify-center"
+            contentClassName="w-full max-w-none [@media(min-width:1024px)_and_(max-width:1100px)_and_(min-height:850px)_and_(max-height:920px)]:!ml-0 [@media(min-width:1024px)_and_(max-width:1100px)_and_(min-height:850px)_and_(max-height:920px)]:flex [@media(min-width:1024px)_and_(max-width:1100px)_and_(min-height:850px)_and_(max-height:920px)]:justify-center [@media(min-width:1024px)_and_(max-width:1100px)_and_(min-height:1400px)_and_(max-height:1500px)]:!ml-0 [@media(min-width:1024px)_and_(max-width:1100px)_and_(min-height:1400px)_and_(max-height:1500px)]:flex [@media(min-width:1024px)_and_(max-width:1100px)_and_(min-height:1400px)_and_(max-height:1500px)]:justify-center min-[1440px]:!ml-0 min-[1440px]:flex min-[1440px]:justify-center"
           >
             <div
-              className="grid w-full grid-cols-1 items-start gap-10 [@media(min-width:1024px)_and_(max-width:1100px)_and_(min-height:850px)_and_(max-height:920px)]:mx-auto [@media(min-width:1024px)_and_(max-width:1100px)_and_(min-height:850px)_and_(max-height:920px)]:flex [@media(min-width:1024px)_and_(max-width:1100px)_and_(min-height:850px)_and_(max-height:920px)]:w-auto [@media(min-width:1024px)_and_(max-width:1100px)_and_(min-height:850px)_and_(max-height:920px)]:max-w-full [@media(min-width:1024px)_and_(max-width:1100px)_and_(min-height:850px)_and_(max-height:920px)]:flex-row [@media(min-width:1024px)_and_(max-width:1100px)_and_(min-height:850px)_and_(max-height:920px)]:flex-nowrap [@media(min-width:1024px)_and_(max-width:1100px)_and_(min-height:850px)_and_(max-height:920px)]:items-center [@media(min-width:1024px)_and_(max-width:1100px)_and_(min-height:850px)_and_(max-height:920px)]:gap-4 min-[1440px]:mx-auto min-[1440px]:flex min-[1440px]:w-auto min-[1440px]:max-w-full min-[1440px]:flex-row min-[1440px]:flex-nowrap min-[1440px]:items-center min-[1440px]:gap-8 min-[1440px]:gap-y-0 min-[2560px]:gap-12"
+              className="grid w-full grid-cols-1 items-start gap-10 [@media(min-width:1024px)_and_(max-width:1100px)_and_(min-height:850px)_and_(max-height:920px)]:mx-auto [@media(min-width:1024px)_and_(max-width:1100px)_and_(min-height:850px)_and_(max-height:920px)]:flex [@media(min-width:1024px)_and_(max-width:1100px)_and_(min-height:850px)_and_(max-height:920px)]:w-auto [@media(min-width:1024px)_and_(max-width:1100px)_and_(min-height:850px)_and_(max-height:920px)]:max-w-full [@media(min-width:1024px)_and_(max-width:1100px)_and_(min-height:850px)_and_(max-height:920px)]:flex-row [@media(min-width:1024px)_and_(max-width:1100px)_and_(min-height:850px)_and_(max-height:920px)]:flex-nowrap [@media(min-width:1024px)_and_(max-width:1100px)_and_(min-height:850px)_and_(max-height:920px)]:items-center [@media(min-width:1024px)_and_(max-width:1100px)_and_(min-height:850px)_and_(max-height:920px)]:gap-4 [@media(min-width:1024px)_and_(max-width:1100px)_and_(min-height:1400px)_and_(max-height:1500px)]:mx-auto [@media(min-width:1024px)_and_(max-width:1100px)_and_(min-height:1400px)_and_(max-height:1500px)]:flex [@media(min-width:1024px)_and_(max-width:1100px)_and_(min-height:1400px)_and_(max-height:1500px)]:w-auto [@media(min-width:1024px)_and_(max-width:1100px)_and_(min-height:1400px)_and_(max-height:1500px)]:max-w-full [@media(min-width:1024px)_and_(max-width:1100px)_and_(min-height:1400px)_and_(max-height:1500px)]:flex-row [@media(min-width:1024px)_and_(max-width:1100px)_and_(min-height:1400px)_and_(max-height:1500px)]:flex-nowrap [@media(min-width:1024px)_and_(max-width:1100px)_and_(min-height:1400px)_and_(max-height:1500px)]:items-center [@media(min-width:1024px)_and_(max-width:1100px)_and_(min-height:1400px)_and_(max-height:1500px)]:gap-[50px] min-[1440px]:mx-auto min-[1440px]:flex min-[1440px]:w-auto min-[1440px]:max-w-full min-[1440px]:flex-row min-[1440px]:flex-nowrap min-[1440px]:items-center min-[1440px]:gap-8 min-[1440px]:gap-y-0 min-[2560px]:gap-12"
               style={
                 {
                   '--hero-copy-max-w': HERO_COPY_MAX_WIDTH,
@@ -323,14 +323,23 @@ export function LandingPage() {
                 } as React.CSSProperties
               }
             >
-              <div className="relative z-10 min-w-0 w-full max-w-full [@media(min-width:1024px)_and_(max-width:1100px)_and_(min-height:850px)_and_(max-height:920px)]:max-w-[22rem] [@media(min-width:1024px)_and_(max-width:1100px)_and_(min-height:850px)_and_(max-height:920px)]:shrink min-[1440px]:max-w-[var(--hero-copy-max-w)] min-[1440px]:shrink">
-                <span className="inline-flex max-w-full flex-wrap items-center gap-2 rounded-full border border-[#e5e7eb] bg-white px-3 py-1.5 font-mono text-[10px] font-bold uppercase leading-snug tracking-wide text-black sm:px-4 sm:py-2 sm:text-xs">
-                  <span className="size-2 shrink-0 rounded-full bg-[#7dd3fc]" aria-hidden />
-                  What If Rental Maintenance Ran Itself?
+              <div className="relative z-10 min-w-0 w-full max-w-full [@media(min-width:1024px)_and_(max-width:1100px)_and_(min-height:850px)_and_(max-height:920px)]:max-w-[22rem] [@media(min-width:1024px)_and_(max-width:1100px)_and_(min-height:850px)_and_(max-height:920px)]:shrink [@media(min-width:1024px)_and_(max-width:1100px)_and_(min-height:1400px)_and_(max-height:1500px)]:ml-[50px] [@media(min-width:1024px)_and_(max-width:1100px)_and_(min-height:1400px)_and_(max-height:1500px)]:max-w-[20rem] [@media(min-width:1024px)_and_(max-width:1100px)_and_(min-height:1400px)_and_(max-height:1500px)]:shrink [@media(min-width:1024px)_and_(max-width:1100px)_and_(min-height:1400px)_and_(max-height:1500px)]:pr-2 min-[1440px]:ml-0 min-[1440px]:max-w-[var(--hero-copy-max-w)] min-[1440px]:pr-0 min-[1440px]:shrink">
+                <span className="inline-flex max-w-full flex-wrap items-center gap-2 rounded-full border border-[#e5e7eb] bg-white px-3 py-1.5 font-mono text-[10px] font-bold uppercase leading-snug tracking-wide text-black sm:px-4 sm:py-2 sm:text-xs [@media(min-width:1024px)_and_(max-width:1100px)_and_(min-height:1400px)_and_(max-height:1500px)]:flex-nowrap [@media(min-width:1024px)_and_(max-width:1100px)_and_(min-height:1400px)_and_(max-height:1500px)]:whitespace-nowrap [@media(min-width:1024px)_and_(max-width:1100px)_and_(min-height:1400px)_and_(max-height:1500px)]:gap-0 [@media(min-width:1024px)_and_(max-width:1100px)_and_(min-height:1400px)_and_(max-height:1500px)]:text-[9px] [@media(min-width:1024px)_and_(max-width:1100px)_and_(min-height:1400px)_and_(max-height:1500px)]:tracking-tight">
+                  <span className="inline-flex items-center gap-2 [@media(min-width:1024px)_and_(max-width:1100px)_and_(min-height:1400px)_and_(max-height:1500px)]:hidden">
+                    <span className="size-2 shrink-0 rounded-full bg-[#7dd3fc]" aria-hidden />
+                    What If Rental Maintenance Ran Itself?
+                  </span>
+                  <span className="hidden [@media(min-width:1024px)_and_(max-width:1100px)_and_(min-height:1400px)_and_(max-height:1500px)]:inline-flex [@media(min-width:1024px)_and_(max-width:1100px)_and_(min-height:1400px)_and_(max-height:1500px)]:items-center [@media(min-width:1024px)_and_(max-width:1100px)_and_(min-height:1400px)_and_(max-height:1500px)]:whitespace-nowrap">
+                    <span className="inline-flex items-center gap-1">
+                      <span className="size-2 shrink-0 rounded-full bg-[#7dd3fc]" aria-hidden />
+                      What
+                    </span>
+                    <span> If Rental Maintenance Ran Itself?</span>
+                  </span>
                 </span>
 
                 <h1
-                  className="mt-4 w-full max-w-full font-[family-name:var(--font-landing-heading)] text-[clamp(2.25rem,6vw+1.2rem,9rem)] font-bold tracking-[-0.03em] text-[#0f1623] sm:mt-6 [@media(min-width:300px)_and_(max-width:349px)_and_(min-height:850px)_and_(max-height:920px)]:text-[clamp(2.475rem,6.6vw+1.32rem,9.9rem)] [@media(min-width:350px)_and_(max-width:399px)_and_(min-height:850px)_and_(max-height:920px)]:text-[clamp(2.7rem,7.2vw+1.44rem,10.8rem)] [@media(min-width:400px)_and_(max-width:500px)_and_(min-height:850px)_and_(max-height:920px)]:text-[clamp(2.8125rem,7.5vw+1.5rem,11.25rem)] [@media(min-width:768px)_and_(max-width:850px)_and_(min-height:850px)_and_(max-height:920px)]:text-[clamp(3.6rem,9.6vw+1.92rem,14.4rem)] [@media(min-width:1024px)_and_(max-width:1100px)_and_(min-height:850px)_and_(max-height:920px)]:text-[clamp(2.625rem,5.25vw,4.125rem)] min-[1440px]:text-[clamp(2.25rem,3.84vw,6rem)] [@media(min-width:1440px)_and_(max-width:1535px)_and_(min-height:850px)_and_(max-height:920px)]:text-[clamp(3.825rem,6.528vw,10.2rem)] lg:tracking-[-0.025em]"
+                  className="mt-4 w-full max-w-full font-[family-name:var(--font-landing-heading)] text-[clamp(2.25rem,6vw+1.2rem,9rem)] font-bold tracking-[-0.03em] text-[#0f1623] sm:mt-6 [@media(min-width:300px)_and_(max-width:349px)_and_(min-height:850px)_and_(max-height:920px)]:text-[clamp(2.475rem,6.6vw+1.32rem,9.9rem)] [@media(min-width:350px)_and_(max-width:399px)_and_(min-height:850px)_and_(max-height:920px)]:text-[clamp(2.7rem,7.2vw+1.44rem,10.8rem)] [@media(min-width:400px)_and_(max-width:500px)_and_(min-height:850px)_and_(max-height:920px)]:text-[clamp(2.8125rem,7.5vw+1.5rem,11.25rem)] [@media(min-width:768px)_and_(max-width:850px)_and_(min-height:850px)_and_(max-height:920px)]:text-[clamp(3.6rem,9.6vw+1.92rem,14.4rem)] [@media(min-width:1024px)_and_(max-width:1100px)_and_(min-height:850px)_and_(max-height:920px)]:text-[clamp(2.625rem,5.25vw,4.125rem)] [@media(min-width:1024px)_and_(max-width:1100px)_and_(min-height:1400px)_and_(max-height:1500px)]:text-[clamp(2.625rem,5.25vw,4.125rem)] min-[1440px]:text-[clamp(2.25rem,3.84vw,6rem)] [@media(min-width:1440px)_and_(max-width:1535px)_and_(min-height:850px)_and_(max-height:920px)]:text-[clamp(3.825rem,6.528vw,10.2rem)] [@media(min-width:1440px)_and_(max-width:1535px)_and_(min-height:1400px)_and_(max-height:1500px)]:text-[clamp(3.6rem,6.144vw,9.6rem)] lg:tracking-[-0.025em]"
                   style={{ lineHeight: 0.82 }}
                 >
                   <span className="block whitespace-nowrap">Your tenants</span>
@@ -367,10 +376,10 @@ export function LandingPage() {
                     Request Early Access
                     <IconArrowRight />
                   </PrimaryButton>
-                  <div className="flex flex-wrap items-center justify-center gap-2 md:justify-start">
+                  <div className="flex flex-nowrap items-center justify-center gap-2 md:justify-start">
                     <button
                       type="button"
-                      className="text-sm font-medium text-[#6b7280] underline decoration-solid underline-offset-2"
+                      className="shrink-0 whitespace-nowrap text-sm font-medium text-[#6b7280] underline decoration-solid underline-offset-2"
                     >
                       Instant import
                     </button>
@@ -388,7 +397,7 @@ export function LandingPage() {
                 </div>
               </div>
 
-              <div className="relative z-0 mx-auto flex shrink-0 justify-center [@media(min-width:768px)_and_(max-width:850px)_and_(min-height:850px)_and_(max-height:920px)]:w-[291px] [@media(min-width:1024px)_and_(max-width:1100px)_and_(min-height:850px)_and_(max-height:920px)]:ml-3 [@media(min-width:1024px)_and_(max-width:1100px)_and_(min-height:850px)_and_(max-height:920px)]:mr-0 [@media(min-width:1024px)_and_(max-width:1100px)_and_(min-height:850px)_and_(max-height:920px)]:w-[280px] min-[1440px]:ml-8 min-[1440px]:mr-0 min-[1440px]:w-[var(--hero-video-col-w)] min-[2560px]:ml-12">
+              <div className="relative z-0 mx-auto flex shrink-0 justify-center [@media(min-width:768px)_and_(max-width:850px)_and_(min-height:850px)_and_(max-height:920px)]:w-[291px] [@media(min-width:1024px)_and_(max-width:1100px)_and_(min-height:850px)_and_(max-height:920px)]:ml-3 [@media(min-width:1024px)_and_(max-width:1100px)_and_(min-height:850px)_and_(max-height:920px)]:mr-0 [@media(min-width:1024px)_and_(max-width:1100px)_and_(min-height:850px)_and_(max-height:920px)]:w-[280px] [@media(min-width:1024px)_and_(max-width:1100px)_and_(min-height:1400px)_and_(max-height:1500px)]:ml-0 [@media(min-width:1024px)_and_(max-width:1100px)_and_(min-height:1400px)_and_(max-height:1500px)]:mr-0 [@media(min-width:1024px)_and_(max-width:1100px)_and_(min-height:1400px)_and_(max-height:1500px)]:w-[280px] [@media(min-width:1024px)_and_(max-width:1100px)_and_(min-height:1400px)_and_(max-height:1500px)]:shrink-0 min-[1440px]:ml-8 min-[1440px]:mr-0 min-[1440px]:w-[var(--hero-video-col-w)] min-[2560px]:ml-12">
                 <HeroInteractionVideo />
               </div>
             </div>

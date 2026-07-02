@@ -1,6 +1,7 @@
 <svg width="543" height="1010" viewBox="0 0 543 1010" fill="none" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
 <style>
 svg { overflow: visible; }
+#Rectangle { display: none; }
 @keyframes kf_Frame_2_opacity_0 {
   0% {
     animation-timing-function: ease-out;
