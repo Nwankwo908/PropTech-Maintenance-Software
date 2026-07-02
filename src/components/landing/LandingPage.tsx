@@ -44,14 +44,14 @@ const LANDING_VIEWPORT_GUTTER = 'px-6 lg:px-14'
 const LANDING_NAV = `mx-auto flex w-full ${LANDING_VIEWPORT_GUTTER}`
 
 /** Desktop offset from gutter (logo zone + 56px divider gap). */
-const LANDING_CONTENT_ALIGN = 'lg:ml-[calc(8.25rem+3.5rem)]'
+const LANDING_CONTENT_ALIGN = '2xl:ml-[calc(8.25rem+3.5rem)]'
 
-/** Full-page vertical divider — desktop only. */
+/** Full-page vertical divider — wide desktop only. */
 const LANDING_NAV_DIVIDER =
-  'pointer-events-none absolute inset-y-0 left-[calc(3.5rem+8.25rem)] z-[51] hidden w-px bg-gray-200/60 lg:block'
+  'pointer-events-none absolute inset-y-0 left-[calc(3.5rem+8.25rem)] z-[51] hidden w-px bg-gray-200/60 2xl:block'
 
-/** Horizontal section rules — align with LANDING_NAV_DIVIDER on desktop (8.25rem past lg gutter). */
-const LANDING_SECTION_RULE = 'border-gray-200/80 lg:ml-[8.25rem]'
+/** Horizontal section rules — align with LANDING_NAV_DIVIDER on wide desktop. */
+const LANDING_SECTION_RULE = 'border-gray-200/80 2xl:ml-[8.25rem]'
 
 /** Consistent vertical gap between landing sections — 64px. */
 const LANDING_SECTION_GAP = 'pb-16'
@@ -165,8 +165,8 @@ function HeroInteractionVideo() {
     <div
       className={
         iosWebmFallbackBlend
-          ? 'mx-auto bg-white isolation-isolate lg:bg-transparent'
-          : 'mx-auto lg:inline-block'
+          ? 'mx-auto bg-white isolation-isolate 2xl:bg-transparent'
+          : 'mx-auto 2xl:inline-block'
       }
     >
       <video
@@ -397,13 +397,12 @@ export function LandingPage() {
 
       <main id="top" className="flex flex-1 flex-col">
         {/* Hero */}
-        <section className="overflow-visible">
+        <section>
           <LandingContentShell
-            allowContentShrink={false}
             className="pb-12 pt-10 sm:pb-28 sm:pt-14 md:pb-32 lg:pt-14"
-            contentClassName="w-full max-w-none overflow-visible"
+            contentClassName="w-full max-w-none"
           >
-            <div className="grid grid-cols-1 items-start gap-10 overflow-visible lg:grid-cols-[minmax(0,1.5fr)_auto] lg:items-center lg:gap-12 xl:gap-16">
+            <div className="grid grid-cols-1 items-start gap-10 overflow-visible 2xl:grid-cols-[minmax(0,1.5fr)_auto] 2xl:items-center 2xl:gap-16">
               <div className="relative z-10 min-w-0 w-full">
                 <span className="inline-flex max-w-full flex-wrap items-center gap-2 rounded-full border border-[#e5e7eb] bg-white px-3 py-1.5 font-mono text-[10px] font-bold uppercase leading-snug tracking-wide text-black sm:px-4 sm:py-2 sm:text-xs">
                   <span className="size-2 shrink-0 rounded-full bg-[#7dd3fc]" aria-hidden />
@@ -427,14 +426,9 @@ export function LandingPage() {
                 </h1>
 
                 <p className="mt-4 w-full max-w-full border-l-[3px] border-[#187960] pl-4 text-base leading-relaxed text-[#4b5563] sm:mt-6 sm:pl-5 sm:text-lg lg:max-w-none">
-                  <span className="block">
-                    Tenant texts become completed repairs, automatically. From routine maintenance to emergency
-                    repairs,
-                  </span>
-                  <span className="block">
-                    Ulo creates work orders, dispatches the right vendor, and tracks every repair from request to
-                    resolution.
-                  </span>
+                  Tenant texts become completed repairs, automatically. From routine maintenance to emergency repairs,
+                  Ulo creates work orders, dispatches the right vendor, and tracks every repair from request to
+                  resolution.
                 </p>
 
                 <div className="mt-5 flex w-full max-w-full flex-col gap-4 sm:mt-6 md:flex-row md:flex-wrap md:items-center">
@@ -457,7 +451,7 @@ export function LandingPage() {
                 </div>
               </div>
 
-              <div className="mx-auto shrink-0 overflow-visible lg:mx-0 lg:-translate-x-[400px]">
+              <div className="mx-auto shrink-0 overflow-visible 2xl:mx-0 2xl:-translate-x-[400px]">
                 <HeroInteractionVideo />
               </div>
             </div>
