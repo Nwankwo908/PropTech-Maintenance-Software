@@ -88,9 +88,6 @@ function LandingContentShell({
   )
 }
 
-/** Fraction trimmed from each edge on mobile to hide baked-in black matte. */
-const HERO_INTERACTION_VIDEO_MOBILE_EDGE_INSET = 0.1
-
 function HeroInteractionVideo() {
   const videoRef = useRef<HTMLVideoElement>(null)
   const [size, setSize] = useState<{ width: number; height: number } | null>(null)
@@ -142,41 +139,24 @@ function HeroInteractionVideo() {
 
   const displayWidth = size?.width ?? HERO_INTERACTION_VIDEO_WIDTH
   const displayHeight = size?.height
-  const inset = HERO_INTERACTION_VIDEO_MOBILE_EDGE_INSET
-  const croppedWidth = Math.round(displayWidth * (1 - inset * 2))
-  const croppedHeight = displayHeight
-    ? Math.round(displayHeight * (1 - inset * 2))
-    : undefined
 
   return (
-    <div
-      className="mx-auto flex max-lg:w-[var(--hero-crop-w)] max-lg:h-[var(--hero-crop-h)] max-lg:items-center max-lg:justify-center max-lg:overflow-hidden max-lg:rounded-[2.75rem] lg:inline-block lg:w-auto lg:h-auto lg:overflow-visible lg:rounded-none"
-      style={
-        croppedHeight
-          ? ({
-              '--hero-crop-w': `${croppedWidth}px`,
-              '--hero-crop-h': `${croppedHeight}px`,
-            } as React.CSSProperties)
-          : ({
-              '--hero-crop-w': `${croppedWidth}px`,
-            } as React.CSSProperties)
-      }
+    <video
+      ref={videoRef}
+      muted
+      playsInline
+      preload="auto"
+      onLoadedMetadata={(event) => syncSize(event.currentTarget)}
+      style={{
+        width: displayWidth,
+        height: displayHeight ?? 'auto',
+      }}
+      className="mx-auto block max-w-full bg-transparent"
+      aria-label="Ulo handling a tenant maintenance text conversation"
     >
-      <video
-        ref={videoRef}
-        src={uloInteractionVideo}
-        muted
-        playsInline
-        preload="auto"
-        onLoadedMetadata={(event) => syncSize(event.currentTarget)}
-        style={{
-          width: displayWidth,
-          height: displayHeight ?? 'auto',
-        }}
-        className="block max-w-full shrink-0 bg-transparent"
-        aria-label="Ulo handling a tenant maintenance text conversation"
-      />
-    </div>
+      {/* VP9 + alpha WebM — Chrome/Firefox. iOS Safari often paints alpha as black without an HEVC fallback. */}
+      <source src={uloInteractionVideo} type="video/webm" />
+    </video>
   )
 }
 
