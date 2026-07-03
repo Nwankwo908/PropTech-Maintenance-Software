@@ -402,7 +402,7 @@ export function LandingPage() {
                       type="button"
                       className="shrink-0 whitespace-nowrap text-sm font-medium text-[#6b7280] underline decoration-solid underline-offset-2"
                     >
-                      Instant import
+                      Bring Your Existing Data
                     </button>
                     <div className="flex shrink-0 items-center gap-1" aria-hidden>
                       {LANDING_DOCUMENT_IMPORT_ICONS.map((Icon) => (
