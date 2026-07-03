@@ -376,7 +376,7 @@ export function LandingPage() {
                     Request Early Access
                     <IconArrowRight />
                   </PrimaryButton>
-                  <div className="flex flex-nowrap items-center justify-center gap-2 md:justify-start">
+                  <div className="flex flex-nowrap items-center justify-center gap-2 md:justify-start [@media(min-width:300px)_and_(max-width:349px)_and_(min-height:1400px)_and_(max-height:1500px)]:flex-col [@media(min-width:300px)_and_(max-width:349px)_and_(min-height:1400px)_and_(max-height:1500px)]:items-center [@media(min-width:300px)_and_(max-width:349px)_and_(min-height:1400px)_and_(max-height:1500px)]:gap-1">
                     <button
                       type="button"
                       className="shrink-0 whitespace-nowrap text-sm font-medium text-[#6b7280] underline decoration-solid underline-offset-2"
