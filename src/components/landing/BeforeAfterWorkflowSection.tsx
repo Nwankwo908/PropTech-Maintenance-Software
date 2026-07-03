@@ -46,7 +46,7 @@ function WorkflowDiagram({
     >
       <div
         className={[
-          'overflow-x-auto overflow-y-hidden overscroll-x-contain touch-pan-x [-ms-overflow-style:none] [-webkit-overflow-scrolling:touch] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden',
+          'w-full overflow-x-auto overflow-y-hidden overscroll-x-contain touch-pan-x [-ms-overflow-style:none] [-webkit-overflow-scrolling:touch] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden',
           scrollOnDesktop ? '' : 'lg:overflow-visible',
         ]
           .filter(Boolean)
@@ -89,8 +89,8 @@ export function BeforeAfterWorkflowSection() {
           height={212}
           scrollOnDesktop
           mobileWidthClass="max-lg:w-[949px] max-lg:max-w-none"
-          lgWidthClass="w-full max-w-full lg:max-w-[949px]"
-          imgClassName="[@media(min-width:2560px)_and_(min-height:1300px)_and_(max-height:1399px)]:lg:!w-[1424px] [@media(min-width:2560px)_and_(min-height:1300px)_and_(max-height:1399px)]:lg:!max-w-none [@media(min-width:2560px)_and_(min-height:1501px)_and_(max-height:1600px)]:lg:!w-[1424px] [@media(min-width:2560px)_and_(min-height:1501px)_and_(max-height:1600px)]:lg:!max-w-none [@media(min-width:1024px)_and_(max-width:1100px)_and_(min-height:850px)_and_(max-height:920px)]:lg:!w-[1329px] [@media(min-width:1024px)_and_(max-width:1100px)_and_(min-height:850px)_and_(max-height:920px)]:lg:!max-w-none [@media(min-width:1704px)_and_(max-width:2559px)_and_(min-height:1400px)_and_(max-height:1500px)]:lg:!w-[1139px] [@media(min-width:1704px)_and_(max-width:2559px)_and_(min-height:1400px)_and_(max-height:1500px)]:lg:!max-w-none [@media(min-width:2560px)_and_(min-height:1400px)_and_(max-height:1500px)]:lg:!w-[1709px] [@media(min-width:2560px)_and_(min-height:1400px)_and_(max-height:1500px)]:lg:!max-w-none"
+          lgWidthClass="w-full max-w-full lg:max-w-[949px] [@media(min-width:1440px)_and_(max-width:2715px)_and_(min-height:1400px)_and_(max-height:1500px)]:lg:!max-w-none"
+          imgClassName="[@media(min-width:2560px)_and_(min-height:1300px)_and_(max-height:1399px)]:lg:!w-[1424px] [@media(min-width:2560px)_and_(min-height:1300px)_and_(max-height:1399px)]:lg:!max-w-none [@media(min-width:2560px)_and_(min-height:1501px)_and_(max-height:1600px)]:lg:!w-[1424px] [@media(min-width:2560px)_and_(min-height:1501px)_and_(max-height:1600px)]:lg:!max-w-none [@media(min-width:1024px)_and_(max-width:1100px)_and_(min-height:850px)_and_(max-height:920px)]:lg:!w-[1329px] [@media(min-width:1024px)_and_(max-width:1100px)_and_(min-height:850px)_and_(max-height:920px)]:lg:!max-w-none [@media(min-width:1440px)_and_(max-width:2715px)_and_(min-height:1400px)_and_(max-height:1500px)]:lg:!w-full [@media(min-width:1440px)_and_(max-width:2715px)_and_(min-height:1400px)_and_(max-height:1500px)]:lg:!max-w-none"
         />
       </div>
 
