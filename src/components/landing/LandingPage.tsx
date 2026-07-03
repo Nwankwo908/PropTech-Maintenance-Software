@@ -2,6 +2,9 @@ import { useEffect, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { EarlyAccessModal } from '@/components/landing/EarlyAccessModal'
 import uloLogo from '@/assets/landing/ulo-logo.png'
+import heroBlueprint from '@/assets/landing/hero-blueprint.png'
+import heroArrow from '@/assets/Arrow_01.svg'
+import heroVideoCorner from '@/assets/Highlight_05.png'
 import uloInteractionSvg from '@/assets/Ulo Intereaction (1).svg'
 import { playUiClickSound, primeUiClickSound } from '@/lib/uiClickSound'
 import {
@@ -97,7 +100,20 @@ function HeroInteractionVideo() {
   const displayHeight = Math.round(displayWidth * HERO_INTERACTION_ASPECT)
 
   return (
-    <div className="mx-auto bg-transparent [@media(min-width:768px)_and_(max-width:850px)_and_(min-height:850px)_and_(max-height:920px)]:max-w-[291px] [@media(min-width:1024px)_and_(max-width:1100px)_and_(min-height:850px)_and_(max-height:920px)]:max-w-none [@media(min-width:1024px)_and_(max-width:1100px)_and_(min-height:850px)_and_(max-height:920px)]:inline-block [@media(min-width:1024px)_and_(max-width:1100px)_and_(min-height:1400px)_and_(max-height:1500px)]:max-w-none [@media(min-width:1024px)_and_(max-width:1100px)_and_(min-height:1400px)_and_(max-height:1500px)]:inline-block min-[1440px]:inline-block">
+    <div className="relative mx-auto bg-transparent [@media(min-width:768px)_and_(max-width:850px)_and_(min-height:850px)_and_(max-height:920px)]:max-w-[291px] [@media(min-width:1024px)_and_(max-width:1100px)_and_(min-height:850px)_and_(max-height:920px)]:max-w-none [@media(min-width:1024px)_and_(max-width:1100px)_and_(min-height:850px)_and_(max-height:920px)]:inline-block [@media(min-width:1024px)_and_(max-width:1100px)_and_(min-height:1400px)_and_(max-height:1500px)]:max-w-none [@media(min-width:1024px)_and_(max-width:1100px)_and_(min-height:1400px)_and_(max-height:1500px)]:inline-block min-[1440px]:inline-block">
+      <img
+        src={heroVideoCorner}
+        alt=""
+        aria-hidden
+        className="pointer-events-none absolute left-0 top-0 z-10 h-[25px] w-[23px] opacity-80"
+      />
+      <img
+        src={heroVideoCorner}
+        alt=""
+        aria-hidden
+        className="pointer-events-none absolute bottom-0 right-0 z-10 h-[25px] w-[23px] opacity-80"
+        style={{ transform: 'rotate(180deg)' }}
+      />
       <object
         data={uloInteractionSvg}
         type="image/svg+xml"
@@ -309,9 +325,14 @@ export function LandingPage() {
 
       <main id="top" className="flex flex-1 flex-col">
         {/* Hero */}
-        <section className="min-[2560px]:flex min-[2560px]:min-h-[calc(100dvh-4rem)] min-[2560px]:items-center">
+        <section className="relative overflow-hidden min-[2560px]:flex min-[2560px]:min-h-[calc(100dvh-4rem)] min-[2560px]:items-center">
+          <div
+            aria-hidden
+            className="pointer-events-none absolute inset-0 bg-cover bg-center bg-no-repeat opacity-[0.14]"
+            style={{ backgroundImage: `url(${heroBlueprint})` }}
+          />
           <LandingContentShell
-            className="w-full pb-12 pt-10 sm:pb-28 sm:pt-14 md:pb-32 lg:pt-14 min-[2560px]:pb-16 min-[2560px]:pt-16"
+            className="relative z-10 w-full pb-12 pt-10 sm:pb-28 sm:pt-14 md:pb-32 lg:pt-14 min-[2560px]:pb-16 min-[2560px]:pt-16"
             contentClassName="w-full max-w-none [@media(min-width:1024px)_and_(max-width:1100px)_and_(min-height:850px)_and_(max-height:920px)]:!ml-0 [@media(min-width:1024px)_and_(max-width:1100px)_and_(min-height:850px)_and_(max-height:920px)]:flex [@media(min-width:1024px)_and_(max-width:1100px)_and_(min-height:850px)_and_(max-height:920px)]:justify-center [@media(min-width:1024px)_and_(max-width:1100px)_and_(min-height:1400px)_and_(max-height:1500px)]:!ml-0 [@media(min-width:1024px)_and_(max-width:1100px)_and_(min-height:1400px)_and_(max-height:1500px)]:flex [@media(min-width:1024px)_and_(max-width:1100px)_and_(min-height:1400px)_and_(max-height:1500px)]:justify-center min-[1440px]:!ml-0 min-[1440px]:flex min-[1440px]:justify-center"
           >
             <div
@@ -397,6 +418,17 @@ export function LandingPage() {
                 </div>
               </div>
 
+              <div
+                aria-hidden
+                className="relative z-[5] mx-auto flex shrink-0 items-center justify-center self-center py-1 [@media(min-width:1024px)_and_(max-width:1100px)_and_(min-height:850px)_and_(max-height:920px)]:py-0 [@media(min-width:1024px)_and_(max-width:1100px)_and_(min-height:1400px)_and_(max-height:1500px)]:py-0 min-[1440px]:py-0"
+              >
+                <img
+                  src={heroArrow}
+                  alt=""
+                  className="block size-[4.2rem] origin-center [transform:rotate(120deg)] sm:size-[4.8rem] [@media(min-width:1024px)_and_(max-width:1100px)_and_(min-height:850px)_and_(max-height:920px)]:size-[3.6rem] [@media(min-width:1024px)_and_(max-width:1100px)_and_(min-height:850px)_and_(max-height:920px)]:[transform:rotate(-40deg)] [@media(min-width:1024px)_and_(max-width:1100px)_and_(min-height:1400px)_and_(max-height:1500px)]:size-12 [@media(min-width:1024px)_and_(max-width:1100px)_and_(min-height:1400px)_and_(max-height:1500px)]:[transform:rotate(-40deg)] min-[1440px]:size-24 min-[1440px]:[transform:rotate(-40deg)] min-[2560px]:size-[7.2rem]"
+                />
+              </div>
+
               <div className="relative z-0 mx-auto flex shrink-0 justify-center [@media(min-width:768px)_and_(max-width:850px)_and_(min-height:850px)_and_(max-height:920px)]:w-[291px] [@media(min-width:1024px)_and_(max-width:1100px)_and_(min-height:850px)_and_(max-height:920px)]:ml-3 [@media(min-width:1024px)_and_(max-width:1100px)_and_(min-height:850px)_and_(max-height:920px)]:mr-0 [@media(min-width:1024px)_and_(max-width:1100px)_and_(min-height:850px)_and_(max-height:920px)]:w-[280px] [@media(min-width:1024px)_and_(max-width:1100px)_and_(min-height:1400px)_and_(max-height:1500px)]:ml-0 [@media(min-width:1024px)_and_(max-width:1100px)_and_(min-height:1400px)_and_(max-height:1500px)]:mr-0 [@media(min-width:1024px)_and_(max-width:1100px)_and_(min-height:1400px)_and_(max-height:1500px)]:w-[280px] [@media(min-width:1024px)_and_(max-width:1100px)_and_(min-height:1400px)_and_(max-height:1500px)]:shrink-0 min-[1440px]:ml-8 min-[1440px]:mr-0 min-[1440px]:w-[var(--hero-video-col-w)] min-[2560px]:ml-12">
                 <HeroInteractionVideo />
               </div>
@@ -407,7 +439,7 @@ export function LandingPage() {
         {/* How it Works */}
         <section id="how-it-works" className={`scroll-mt-20 ${LANDING_SECTION_GAP}`}>
           <LandingContentShell>
-          <div className="rounded-3xl border border-gray-200/80 bg-white p-6 shadow-[0_20px_30px_rgba(0,0,0,0.03),0_1px_1.5px_rgba(0,0,0,0.02)] sm:p-10 lg:shadow-none">
+          <div className="rounded-3xl border border-gray-200/80 bg-[#E6E9F2] p-6 shadow-[0_20px_30px_rgba(0,0,0,0.03),0_1px_1.5px_rgba(0,0,0,0.02)] sm:p-10 lg:shadow-none">
             <h2 className="inline-flex items-center gap-2 rounded-full border border-[#e5e7eb] bg-white px-4 py-2 font-mono text-xs font-bold uppercase tracking-wide text-slate-900">
               <span className="size-2 shrink-0 rounded-full bg-[#7dd3fc]" aria-hidden />
               How it Works
