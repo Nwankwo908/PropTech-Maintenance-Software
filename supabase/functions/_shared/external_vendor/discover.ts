@@ -1,6 +1,7 @@
 import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.49.1"
 import { GooglePlacesExternalVendorProvider } from "./providers/google.ts"
 import { MockExternalVendorProvider } from "./providers/mock.ts"
+import { netVendorProviderFromEnv } from "./providers/netvendor.ts"
 import { YelpExternalVendorProvider } from "./providers/yelp.ts"
 import { mergeAndRankExternalHits, rosterNameKeys } from "./ranking.ts"
 import { buildExternalSearchQuery } from "./trade_terms.ts"
@@ -41,6 +42,7 @@ export function resolveExternalVendorProviders(opts?: {
 
   const googleKey = Deno.env.get("GOOGLE_PLACES_API_KEY")?.trim() ?? ""
   const yelpKey = Deno.env.get("YELP_API_KEY")?.trim() ?? ""
+  const netvendor = netVendorProviderFromEnv({ forceMock: opts?.forceMock })
   const providers: ExternalVendorProvider[] = []
 
   if (mode === "auto" || mode.includes("google")) {
@@ -49,8 +51,11 @@ export function resolveExternalVendorProviders(opts?: {
   if (mode === "auto" || mode.includes("yelp")) {
     providers.push(new YelpExternalVendorProvider(yelpKey))
   }
+  if (mode === "auto" || mode.includes("netvendor")) {
+    providers.push(netvendor)
+  }
 
-  const configuredLive = providers.some((p) => p.isConfigured())
+  const configuredLive = providers.some((p) => p.isConfigured() && p.id !== "mock")
   if (!configuredLive) {
     return [mock]
   }
@@ -97,7 +102,19 @@ export async function discoverExternalVendors(
     forceMock: options.forceMock,
   })
   const providersUsed = providers.map((p) => p.id)
-  const mode = providersUsed.includes("mock") && providersUsed.length === 1 ? "mock" : "live"
+  const netvendorMockActive =
+    providersUsed.includes("netvendor") &&
+    (options.forceMock ||
+      (Deno.env.get("NETVENDOR_USE_MOCK") ?? "").trim().toLowerCase() === "true" ||
+      !Deno.env.get("NETVENDOR_API_KEY")?.trim() ||
+      !Deno.env.get("NETVENDOR_API_BASE_URL")?.trim())
+  const googleLive =
+    Boolean(Deno.env.get("GOOGLE_PLACES_API_KEY")?.trim()) &&
+    providersUsed.includes("google")
+  const yelpLive =
+    Boolean(Deno.env.get("YELP_API_KEY")?.trim()) && providersUsed.includes("yelp")
+  const netvendorLive = providersUsed.includes("netvendor") && !netvendorMockActive
+  const mode = googleLive || yelpLive || netvendorLive ? "live" : "mock"
   const configured = mode === "live"
 
   const hitGroups = await Promise.all(providers.map((p) => p.search(searchInput)))

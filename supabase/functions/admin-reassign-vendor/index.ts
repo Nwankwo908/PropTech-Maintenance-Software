@@ -5,11 +5,9 @@ import { adminReassignSecretAuthorized } from "../_shared/admin_reassign_auth.ts
 import { reassignVendorByIdAndNotify } from "../submit-maintenance-request/vendor_notify.ts"
 import { logGraphEvent } from "../_shared/graph/logGraphEvent.ts"
 import { resolveLandlordId } from "../_shared/sms/landlordSmsOnboarding.ts"
+import { isUuidShape } from "../_shared/uuid_shape.ts"
 
 const corsHeaders = adminEdgeCorsHeaders
-
-const uuidRe =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
 
 function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
@@ -62,7 +60,7 @@ serve(async (req) => {
     typeof body.vendorCategory === "string" ? body.vendorCategory.trim() : ""
   const vendorCategoryInsert = vendorCategoryRaw || null
 
-  if (!ticketId || !uuidRe.test(ticketId)) {
+  if (!ticketId || !isUuidShape(ticketId)) {
     return jsonResponse({ error: "Missing or invalid ticketId" }, 400)
   }
 
@@ -99,7 +97,7 @@ serve(async (req) => {
     : String(ticketRow.issue_category).trim()
 
   let _vendorId = ""
-  if (vendorIdRaw && uuidRe.test(vendorIdRaw)) {
+  if (vendorIdRaw && isUuidShape(vendorIdRaw)) {
     _vendorId = vendorIdRaw
   } else if (vendorName) {
     const needle = vendorName

@@ -111,9 +111,20 @@ function AdminTopBar() {
             Demo data
           </span>
         ) : isOnboardingLandlordAccount() ? (
-          <span className="shrink-0 rounded-full bg-[#dbeafe] px-3 py-1 text-[12px] font-semibold uppercase tracking-[0.06em] text-[#1d4ed8]">
-            Onboarding
-          </span>
+          <>
+            <button
+              type="button"
+              className="shrink-0 cursor-pointer rounded-[10px] border border-[#e5e7eb] bg-white px-3 py-1.5 text-[12px] font-medium text-[#364153] outline-none transition-colors duration-150 hover:bg-[#f3f4f6] focus-visible:ring-2 focus-visible:ring-[#101828]/20"
+              onClick={() => {
+                window.location.assign('/admin/onboarding?reset=1')
+              }}
+            >
+              Reset onboarding
+            </button>
+            <span className="shrink-0 rounded-full bg-[#dbeafe] px-3 py-1 text-[12px] font-semibold uppercase tracking-[0.06em] text-[#1d4ed8]">
+              Onboarding
+            </span>
+          </>
         ) : null}
         {getSessionLandlordId() === null ? (
           <label className="flex shrink-0 items-center gap-2 text-[12px] text-[#6a7282]">

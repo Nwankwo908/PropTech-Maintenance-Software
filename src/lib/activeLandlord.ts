@@ -88,11 +88,15 @@ export function setActiveLandlordOverride(landlordId: string | null): void {
   try {
     if (!landlordId || landlordId === DEFAULT_LANDLORD_ID) {
       window.localStorage.removeItem(OVERRIDE_STORAGE_KEY)
-    } else {
-      window.localStorage.setItem(OVERRIDE_STORAGE_KEY, landlordId)
-      if (landlordId === EMPTY_LANDLORD_ID) {
-        window.localStorage.removeItem(`ulo.landlordOnboarding.${EMPTY_LANDLORD_ID}`)
-      }
+      window.location.reload()
+      return
+    }
+
+    window.localStorage.setItem(OVERRIDE_STORAGE_KEY, landlordId)
+    if (landlordId === EMPTY_LANDLORD_ID) {
+      window.localStorage.removeItem(`ulo.landlordOnboarding.${EMPTY_LANDLORD_ID}`)
+      window.location.assign('/admin/onboarding?reset=1')
+      return
     }
   } catch {
     // localStorage unavailable (private mode) — switching silently unsupported

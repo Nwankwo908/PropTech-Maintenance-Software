@@ -310,6 +310,9 @@ const EVENT_LABELS: Record<string, string> = {
   'workflow.act': 'Action taken',
   'workflow.escalate': 'Escalated',
   'workflow.log': 'Logged',
+  'maintenance.sla_auto_reassigned': 'SLA auto-reassigned to backup vendor',
+  'maintenance.external_vendor_reassigned': 'External vendor assigned',
+  'maintenance.sla_expired_needs_vendor': 'SLA expired — needs vendor',
   'unit.registered': 'Unit registered',
   'tenant.sms_registered': 'Resident SMS linked',
 }

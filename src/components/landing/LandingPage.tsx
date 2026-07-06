@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
+import { TERMS_PRIVACY_SECTION_PATH } from '@/lib/legal/termsOfServiceContent'
 import { EarlyAccessModal } from '@/components/landing/EarlyAccessModal'
 import uloLogo from '@/assets/landing/ulo-logo.png'
 import heroBlueprint from '@/assets/landing/hero-blueprint.png'
@@ -558,7 +559,27 @@ export function LandingPage() {
           alt="ülo home"
           className="mx-auto h-auto w-[min(85vw,22rem)] max-w-full sm:w-96 md:w-[28rem] lg:w-[32rem]"
         />
-        <p className="mt-8 text-sm text-[#6b7280]">
+        <nav
+          className="mt-8 flex flex-wrap items-center justify-center gap-x-4 gap-y-2 text-sm"
+          aria-label="Legal"
+        >
+          <Link
+            to="/terms"
+            className="font-medium text-[#9E439F] underline-offset-2 transition-colors hover:text-[#7f3680] hover:underline"
+          >
+            Terms of Service
+          </Link>
+          <span className="text-[#d1d5db]" aria-hidden>
+            ·
+          </span>
+          <Link
+            to={TERMS_PRIVACY_SECTION_PATH}
+            className="font-medium text-[#9E439F] underline-offset-2 transition-colors hover:text-[#7f3680] hover:underline"
+          >
+            Privacy Policy
+          </Link>
+        </nav>
+        <p className="mt-6 text-sm text-[#6b7280]">
           © {new Date().getFullYear()} ülo home. All rights reserved.
         </p>
       </footer>

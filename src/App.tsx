@@ -25,6 +25,7 @@ import { AdminSettingsDashboard } from './components/AdminSettingsDashboard'
 import { AdminUserManagementDashboard } from './components/AdminUserManagementDashboard'
 import { AdminOnboardingDashboard } from './components/AdminOnboardingDashboard'
 import { AdminOnboardingGuard } from './components/AdminOnboardingGuard'
+import { TermsOfServicePage } from './components/legal/TermsOfServicePage'
 
 export default function App() {
   useSessionAutoRefresh(supabase)
@@ -34,6 +35,7 @@ export default function App() {
       <ReferralLandingRedirect />
       <Routes>
         <Route path="/" element={<LandingPage />} />
+        <Route path="/terms" element={<TermsOfServicePage />} />
         <Route path="/request" element={<ResidentPortal />} />
 
         <Route

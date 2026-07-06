@@ -24,6 +24,8 @@ const AUTO_REASSIGN_STATUSES = new Set([
   "pending_accept",
   "unassigned",
   "declined",
+  "accepted",
+  "in_progress",
 ])
 
 export type SlaReassignOutcome =
@@ -81,6 +83,136 @@ export async function escalateForNoVendor(
   })
 }
 
+async function processSlaExpiredTicketRow(
+  supabase: SupabaseClient,
+  raw: Record<string, unknown>,
+): Promise<SlaReassignResult> {
+  const ticket: SlaTicketRow = {
+    id: String(raw.id ?? ""),
+    landlord_id: raw.landlord_id == null ? null : String(raw.landlord_id),
+    assigned_vendor_id: raw.assigned_vendor_id == null
+      ? null
+      : String(raw.assigned_vendor_id),
+    issue_category: raw.issue_category == null ? null : String(raw.issue_category),
+    vendor_work_status: String(raw.vendor_work_status ?? "").toLowerCase(),
+  }
+
+  if (!ticket.id) {
+    return { ticketId: "", outcome: "skipped", reason: "missing_id" }
+  }
+
+  if (TERMINAL_STATUSES.has(ticket.vendor_work_status)) {
+    return { ticketId: ticket.id, outcome: "skipped", reason: "terminal" }
+  }
+
+  if (!AUTO_REASSIGN_STATUSES.has(ticket.vendor_work_status)) {
+    return {
+      ticketId: ticket.id,
+      outcome: "skipped",
+      reason: "vendor_active_on_job",
+    }
+  }
+
+  if (await linkedWorkflowNeedsAdminVendor(supabase, ticket.id)) {
+    return {
+      ticketId: ticket.id,
+      outcome: "skipped",
+      reason: "already_needs_admin_vendor",
+    }
+  }
+
+  const replacement = await findReplacementVendor(supabase, ticket)
+  if (!replacement) {
+    await escalateForNoVendor(supabase, ticket)
+    return { ticketId: ticket.id, outcome: "needs_admin_vendor" }
+  }
+
+  const reassign = await reassignVendorByIdAndNotify(
+    supabase,
+    ticket.id,
+    replacement.id,
+    { eventSource: "auto_reassign", notifyResident: false },
+  )
+
+  if ("error" in reassign) {
+    console.error(
+      "[sla-expired-auto-reassign] reassign failed",
+      ticket.id,
+      reassign.error,
+    )
+    return {
+      ticketId: ticket.id,
+      outcome: "skipped",
+      reason: reassign.error,
+    }
+  }
+
+  try {
+    await resumeMaintenanceWorkflowAfterAutoReassign(
+      supabase,
+      ticket.id,
+      `Auto-reassigned to ${replacement.name} after SLA expired`,
+    )
+  } catch (e) {
+    console.error("[sla-expired-auto-reassign] resume workflow", e)
+  }
+
+  if (ticket.landlord_id) {
+    await logGraphEvent(supabase, {
+      landlord_id: ticket.landlord_id,
+      event_type: "maintenance.sla_auto_reassigned",
+      source: "automation",
+      actor_type: "system",
+      maintenance_request_id: ticket.id,
+      vendor_id: replacement.id,
+      metadata: {
+        message: `SLA expired — auto-reassigned to ${replacement.name}.`,
+        previous_vendor_id: ticket.assigned_vendor_id,
+      },
+    })
+  }
+
+  return {
+    ticketId: ticket.id,
+    outcome: "reassigned",
+    newVendorId: replacement.id,
+  }
+}
+
+/** Auto-reassign one SLA-expired ticket when a roster vendor exists. */
+export async function processSlaExpiredAutoReassignForTicket(
+  supabase: SupabaseClient,
+  ticketId: string,
+): Promise<SlaReassignResult | { error: string }> {
+  const id = ticketId.trim()
+  if (!id) return { error: "Missing ticketId" }
+
+  const nowIso = new Date().toISOString()
+  const { data: raw, error } = await supabase
+    .from("maintenance_requests")
+    .select(
+      "id, landlord_id, assigned_vendor_id, issue_category, vendor_work_status, due_at",
+    )
+    .eq("id", id)
+    .maybeSingle()
+
+  if (error) {
+    console.error("[sla-expired-auto-reassign] load ticket", error.message)
+    return { error: "Load ticket failed" }
+  }
+  if (!raw) return { error: "Ticket not found" }
+
+  const dueRaw = raw.due_at
+  if (dueRaw == null || String(dueRaw).trim() === "") {
+    return { ticketId: id, outcome: "skipped", reason: "no_due_at" }
+  }
+  if (new Date(String(dueRaw)).getTime() >= Date.now()) {
+    return { ticketId: id, outcome: "skipped", reason: "sla_not_expired" }
+  }
+
+  return processSlaExpiredTicketRow(supabase, raw as Record<string, unknown>)
+}
+
 /** Process open tickets past due_at — reassign when a roster vendor exists. */
 export async function processSlaExpiredAutoReassign(
   supabase: SupabaseClient,
@@ -106,99 +238,9 @@ export async function processSlaExpiredAutoReassign(
   const results: SlaReassignResult[] = []
 
   for (const raw of rows ?? []) {
-    const ticket: SlaTicketRow = {
-      id: String(raw.id ?? ""),
-      landlord_id: raw.landlord_id == null ? null : String(raw.landlord_id),
-      assigned_vendor_id: raw.assigned_vendor_id == null
-        ? null
-        : String(raw.assigned_vendor_id),
-      issue_category: raw.issue_category == null ? null : String(raw.issue_category),
-      vendor_work_status: String(raw.vendor_work_status ?? "").toLowerCase(),
-    }
-
-    if (!ticket.id) continue
-
-    if (TERMINAL_STATUSES.has(ticket.vendor_work_status)) {
-      results.push({ ticketId: ticket.id, outcome: "skipped", reason: "terminal" })
-      continue
-    }
-
-    if (!AUTO_REASSIGN_STATUSES.has(ticket.vendor_work_status)) {
-      results.push({
-        ticketId: ticket.id,
-        outcome: "skipped",
-        reason: "vendor_active_on_job",
-      })
-      continue
-    }
-
-    if (await linkedWorkflowNeedsAdminVendor(supabase, ticket.id)) {
-      results.push({
-        ticketId: ticket.id,
-        outcome: "skipped",
-        reason: "already_needs_admin_vendor",
-      })
-      continue
-    }
-
-    const replacement = await findReplacementVendor(supabase, ticket)
-    if (!replacement) {
-      await escalateForNoVendor(supabase, ticket)
-      results.push({ ticketId: ticket.id, outcome: "needs_admin_vendor" })
-      continue
-    }
-
-    const reassign = await reassignVendorByIdAndNotify(
-      supabase,
-      ticket.id,
-      replacement.id,
-      { eventSource: "auto_reassign", notifyResident: false },
+    results.push(
+      await processSlaExpiredTicketRow(supabase, raw as Record<string, unknown>),
     )
-
-    if ("error" in reassign) {
-      console.error(
-        "[sla-expired-auto-reassign] reassign failed",
-        ticket.id,
-        reassign.error,
-      )
-      results.push({
-        ticketId: ticket.id,
-        outcome: "skipped",
-        reason: reassign.error,
-      })
-      continue
-    }
-
-    try {
-      await resumeMaintenanceWorkflowAfterAutoReassign(
-        supabase,
-        ticket.id,
-        `Auto-reassigned to ${replacement.name} after SLA expired`,
-      )
-    } catch (e) {
-      console.error("[sla-expired-auto-reassign] resume workflow", e)
-    }
-
-    if (ticket.landlord_id) {
-      await logGraphEvent(supabase, {
-        landlord_id: ticket.landlord_id,
-        event_type: "maintenance.sla_auto_reassigned",
-        source: "automation",
-        actor_type: "system",
-        maintenance_request_id: ticket.id,
-        vendor_id: replacement.id,
-        metadata: {
-          message: `SLA expired — auto-reassigned to ${replacement.name}.`,
-          previous_vendor_id: ticket.assigned_vendor_id,
-        },
-      })
-    }
-
-    results.push({
-      ticketId: ticket.id,
-      outcome: "reassigned",
-      newVendorId: replacement.id,
-    })
   }
 
   return results

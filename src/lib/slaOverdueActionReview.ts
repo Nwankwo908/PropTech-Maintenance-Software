@@ -39,7 +39,7 @@ export type SlaOverdueActionReview = {
   suggestion: SlaOverdueSuggestedVendor | null
   suggestionLine: string
   noVendorOnRoster: boolean
-  takeActionMode: 'reassign' | 'workflows' | 'assign_vendor'
+  takeActionMode: 'reassign' | 'workflows' | 'assign_vendor' | 'external_vendor'
 }
 
 export type SlaOverdueTicketInput = {
@@ -238,11 +238,8 @@ function buildTimeline(
   return entries.filter((e) => e.timeLabel)
 }
 
-/** Rich demo copy for Oakwood 304 emergency plumbing (Figma SLA rail). */
-function demoShowcaseReview(
-  ticket: SlaOverdueTicketInput,
-  suggestion: SlaOverdueSuggestedVendor | null,
-): Partial<SlaOverdueActionReview> | null {
+/** Rich demo copy for Oakwood 304 emergency plumbing (Figma SLA rail). Display fields only. */
+function demoShowcaseReview(ticket: SlaOverdueTicketInput): Partial<SlaOverdueActionReview> | null {
   if (!isDemoAccountActive()) return null
   const unit = ticket.unit.trim()
   const building = (ticket.building ?? '').toLowerCase()
@@ -251,26 +248,16 @@ function demoShowcaseReview(
     building.includes('oakwood') &&
     normIssueCategory(ticket.issueCategory) === 'plumbing'
 
-  if (!isOak304 && !suggestion) return null
+  if (!isOak304) return null
 
   const created = ticket.createdAt
   const due = ticket.dueAt ?? addMinutes(created, 60)
-  const rapidAlt =
-    suggestion ??
-    ({
-      vendorId: '',
-      vendorName: 'Rapid Plumb Co.',
-      rating: 4.9,
-      etaMinutes: 18,
-    } satisfies SlaOverdueSuggestedVendor)
 
   return {
     locationLabel: 'Oakwood Apartments · Unit 304',
     issueSummary:
       ticket.description?.trim() ||
       'Active leak from ceiling in master bathroom, water pooling on floor.',
-    currentVendorName: ticket.assignedVendorName ?? 'Metro Plumbing',
-    currentVendorStatus: 'Assigned · no ETA confirmed',
     timeline: [
       { timeLabel: '9:12 AM', description: 'Tenant reported via SMS', actor: 'Daniel Rivera' },
       { timeLabel: '9:13 AM', description: 'Classified as Emergency · Plumbing', actor: 'Ulo AI' },
@@ -278,14 +265,6 @@ function demoShowcaseReview(
       { timeLabel: '9:42 AM', description: 'Auto-followed up — no response', actor: 'Ulo AI' },
       { timeLabel: '10:12 AM', description: 'SLA breached', actor: 'System' },
     ],
-    suggestion: isOak304
-      ? {
-          ...rapidAlt,
-          vendorName: rapidAlt.vendorName || 'Rapid Plumb Co.',
-          rating: rapidAlt.rating ?? 4.9,
-          etaMinutes: rapidAlt.etaMinutes ?? 18,
-        }
-      : suggestion,
     reportedAtLabel: formatTicketTime(created),
     slaDueLabel: `${formatTicketTime(due).replace(/^Today · /, 'Today · ')} (${formatSlaDuration(created, due) ?? '1 Hr SLA'})`,
     slaDurationLabel: formatSlaDuration(created, due) ?? '1 Hr SLA',
@@ -309,10 +288,10 @@ export function buildSlaOverdueActionReview(
   const metricsById = new Map(vendorMetrics.map((m) => [m.vendorId, m]))
 
   let suggestion: SlaOverdueSuggestedVendor | null = null
-  if (suggested?.id && suggested.name) {
-    const metrics = metricsById.get(suggested.id)
+  if (suggested?.name) {
+    const metrics = suggested.id ? metricsById.get(suggested.id) : undefined
     suggestion = {
-      vendorId: suggested.id,
+      vendorId: suggested.id?.trim() ?? '',
       vendorName: suggested.name,
       rating: ratingFromMetrics(metrics) ?? 4.7,
       etaMinutes: etaFromMetrics(metrics) ?? 20,
@@ -328,8 +307,9 @@ export function buildSlaOverdueActionReview(
     }
   }
 
-  const noVendorOnRoster = alternatives.length === 0 && !suggestion?.vendorId
-  const showcase = demoShowcaseReview(ticket, suggestion)
+  const noVendorOnRoster =
+    alternatives.length === 0 && !suggestion?.vendorId && !suggestion?.vendorName
+  const showcase = demoShowcaseReview(ticket)
 
   return {
     ticketId: ticket.id,
@@ -356,19 +336,17 @@ export function buildSlaOverdueActionReview(
       showcase?.issueSummary ??
       (ticket.description?.trim() ||
         `${formatCategoryLabel(ticket.issueCategory)} maintenance request`),
-    currentVendorName: showcase?.currentVendorName ?? ticket.assignedVendorName,
-    currentVendorStatus:
-      showcase?.currentVendorStatus ??
-      vendorStatusLabel(ticket.vendorWorkStatus, ticket.assignedVendorName),
+    currentVendorName: ticket.assignedVendorName,
+    currentVendorStatus: vendorStatusLabel(ticket.vendorWorkStatus, ticket.assignedVendorName),
     timeline: showcase?.timeline ?? buildTimeline(ticket, now),
-    suggestion: showcase?.suggestion ?? suggestion,
+    suggestion,
     suggestionLine: buildSuggestionLine(
-      showcase?.suggestion ?? suggestion,
+      suggestion,
       noVendorOnRoster,
       normIssueCategory(ticket.issueCategory) === 'hvac',
     ),
     noVendorOnRoster,
-    takeActionMode: noVendorOnRoster ? 'assign_vendor' : 'reassign',
+    takeActionMode: noVendorOnRoster ? 'external_vendor' : 'reassign',
   }
 }
 
@@ -378,7 +356,7 @@ function buildSuggestionLine(
   offerSlaCredit = false,
 ): string {
   if (noVendorOnRoster) {
-    return 'Add a vendor to your roster to auto-reassign on SLA breach'
+    return 'No vendor on roster — review external vendor match below'
   }
   if (!suggestion?.vendorName) {
     return 'Review escalation details in maintenance requests'

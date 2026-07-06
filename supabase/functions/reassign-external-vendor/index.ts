@@ -4,13 +4,11 @@ import { adminEdgeCorsHeaders } from "../_shared/admin_edge_cors.ts"
 import { adminReassignSecretAuthorized } from "../_shared/admin_reassign_auth.ts"
 import { reassignExternalVendorToTicket } from "../_shared/external_vendor/reassign_external.ts"
 import type { ExternalVendorSource } from "../_shared/external_vendor/types.ts"
+import { isUuidShape } from "../_shared/uuid_shape.ts"
 
 const corsHeaders = adminEdgeCorsHeaders
 
-const uuidRe =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
-
-const SOURCE_SET = new Set<ExternalVendorSource>(["google", "yelp", "mock"])
+const SOURCE_SET = new Set<ExternalVendorSource>(["google", "yelp", "netvendor", "mock"])
 
 function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
@@ -70,7 +68,7 @@ serve(async (req) => {
   const ticketId = typeof body.ticketId === "string" ? body.ticketId.trim() : ""
   const vendorName = typeof body.vendorName === "string" ? body.vendorName.trim() : ""
 
-  if (!ticketId || !uuidRe.test(ticketId)) {
+  if (!ticketId || !isUuidShape(ticketId)) {
     return jsonResponse({ error: "Missing or invalid ticketId" }, 400)
   }
   if (!vendorName) {

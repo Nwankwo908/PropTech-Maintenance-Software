@@ -54,6 +54,12 @@ verify_jwt = false
 import_map = "./functions/recommend-vendor-alternatives/deno.json"
 entrypoint = "./functions/recommend-vendor-alternatives/index.ts"
 
+[functions.sla-auto-reassign]
+enabled = true
+verify_jwt = false
+import_map = "./functions/sla-auto-reassign/deno.json"
+entrypoint = "./functions/sla-auto-reassign/index.ts"
+
 [functions.discover-external-vendors]
 enabled = true
 verify_jwt = false

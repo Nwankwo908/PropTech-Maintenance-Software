@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react'
+import { useEffect, useId, useRef, useState, type ReactNode } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import {
   anyDocumentProcessing,
@@ -19,7 +19,9 @@ import { OnboardingStepIndicator } from '@/components/onboarding/OnboardingStepI
 import { OnboardingReviewStep } from '@/components/onboarding/OnboardingReviewStep'
 import { OnboardingAiReviewStep } from '@/components/onboarding/OnboardingAiReviewStep'
 import { OnboardingDocumentUploadStep } from '@/components/onboarding/OnboardingDocumentUploadStep'
+import { checkboxInputClassName } from '@/components/TableCheckbox'
 import { getActiveLandlordId } from '@/lib/activeLandlord'
+import { TERMS_PRIVACY_SECTION_PATH } from '@/lib/legal/termsOfServiceContent'
 import {
   buildOnboardingReviewData,
   canCompleteOnboarding,
@@ -466,6 +468,8 @@ export function AdminOnboardingDashboard() {
   const [importingPortfolio, setImportingPortfolio] = useState(false)
   const [editingFromReview, setEditingFromReview] = useState(false)
   const [reviewEditStep, setReviewEditStep] = useState<OnboardingStep | null>(null)
+  const [smsConsentAccepted, setSmsConsentAccepted] = useState(false)
+  const smsConsentCheckboxId = useId()
   const editingFromReviewRef = useRef(false)
   const wizardRemoteSaveTimer = useRef<number | null>(null)
   const processingControllersRef = useRef<Map<string, AbortController>>(new Map())
@@ -880,6 +884,7 @@ export function AdminOnboardingDashboard() {
     setUploadDocuments([])
     setUploadError(null)
     setExtractionReview(null)
+    setSmsConsentAccepted(false)
   }
 
   async function wipePortfolioSession(): Promise<LandlordOnboardingState | null> {
@@ -949,6 +954,10 @@ export function AdminOnboardingDashboard() {
   async function saveAccountSetup() {
     if (!state.accountSetup.companyName.trim() || !state.accountSetup.contactName.trim()) {
       setError('Enter your company and contact name.')
+      return
+    }
+    if (!smsConsentAccepted) {
+      setError('Please agree to the SMS terms to continue.')
       return
     }
     if (editingFromReviewRef.current) {
@@ -1614,20 +1623,75 @@ export function AdminOnboardingDashboard() {
                 placeholder="Email"
                 aria-label="Email"
               />
-              <input
-                className={`${inputClass} sm:col-span-2`}
-                value={state.accountSetup.phone}
-                onChange={(e) => updateAccountSetup({ phone: e.target.value })}
-                placeholder="(555) 123-4567"
-                aria-label="Phone"
-              />
+              <div className="flex flex-col gap-2 sm:col-span-2">
+                <input
+                  className={inputClass}
+                  type="tel"
+                  autoComplete="tel"
+                  value={state.accountSetup.phone}
+                  onChange={(e) => updateAccountSetup({ phone: e.target.value })}
+                  placeholder="(555) 123-4567"
+                  aria-label="Phone"
+                  aria-describedby={`${smsConsentCheckboxId}-disclosure`}
+                />
+                <p
+                  id={`${smsConsentCheckboxId}-disclosure`}
+                  className="text-[12px] leading-[18px] tracking-[-0.01em] text-[#6a7282]"
+                >
+                  By signing up, you agree to receive recurring SMS messages from Ulo related to
+                  account verification, maintenance requests, vendor coordination, work order
+                  updates, appointment reminders, and other property management notifications.
+                  Consent is not a condition of purchase. Reply STOP to opt out. Reply HELP for
+                  help. Message frequency varies. Message and data rates may apply.                   View our{' '}
+                  <Link
+                    to={TERMS_PRIVACY_SECTION_PATH}
+                    className="font-medium text-[#9E439F] underline underline-offset-2 hover:text-[#7f3680]"
+                  >
+                    Privacy Policy
+                  </Link>{' '}
+                  and{' '}
+                  <Link
+                    to="/terms"
+                    className="font-medium text-[#9E439F] underline underline-offset-2 hover:text-[#7f3680]"
+                  >
+                    Terms of Service
+                  </Link>
+                  .
+                </p>
+                <label
+                  htmlFor={smsConsentCheckboxId}
+                  className="flex cursor-pointer items-start gap-2.5 pt-1"
+                >
+                  <input
+                    id={smsConsentCheckboxId}
+                    type="checkbox"
+                    checked={smsConsentAccepted}
+                    onChange={(e) => {
+                      setSmsConsentAccepted(e.target.checked)
+                      if (e.target.checked) {
+                        setError((prev) =>
+                          prev === 'Please agree to the SMS terms to continue.' ? null : prev,
+                        )
+                      }
+                    }}
+                    aria-describedby={`${smsConsentCheckboxId}-disclosure`}
+                    className={`${checkboxInputClassName} mt-0.5 accent-[#9E439F]`}
+                  />
+                  <span className="text-[12px] leading-[18px] text-[#364153]">
+                    I agree to receive SMS messages as described above.
+                  </span>
+                </label>
+              </div>
             </div>
             <OnboardingStepNav
               showBack={showBackButton}
               onBack={() => void handleBack()}
               saving={saving}
             >
-              <OnboardingContinueButton disabled={saving} onClick={() => void saveAccountSetup()}>
+              <OnboardingContinueButton
+                disabled={saving || !smsConsentAccepted}
+                onClick={() => void saveAccountSetup()}
+              >
                 {editContinueLabel ?? 'Continue'}
               </OnboardingContinueButton>
             </OnboardingStepNav>

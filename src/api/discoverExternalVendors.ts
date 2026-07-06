@@ -12,12 +12,19 @@ export type ExternalVendorSuggestionDto = {
   rating: number | null
   reviewCount: number | null
   priceLabel: string | null
-  sources: ('google' | 'yelp')[]
+  sources: ('google' | 'yelp' | 'netvendor' | 'mock')[]
+  etaMinutes?: number | null
+  address?: string | null
+  phone?: string | null
+  website?: string | null
+  tags?: string[]
 }
 
 export type DiscoverExternalVendorsOk = {
   ticketId: string
   suggestions: ExternalVendorSuggestionDto[]
+  providersUsed?: ('google' | 'yelp' | 'netvendor' | 'mock')[]
+  mode?: 'live' | 'mock'
   configured: boolean
   notice?: string
 }

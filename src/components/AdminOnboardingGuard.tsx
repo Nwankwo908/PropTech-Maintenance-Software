@@ -1,9 +1,11 @@
 import { useEffect, useRef, useState } from 'react'
-import { Navigate, Outlet, useLocation } from 'react-router-dom'
+import { Navigate, Outlet, useLocation, useNavigate } from 'react-router-dom'
 import {
+  defaultOnboardingState,
   fetchLandlordOnboarding,
   isOnboardingLandlordAccount,
   readLocalOnboardingState,
+  restartNewLandlordOnboarding,
   shouldBlockDashboard,
   type LandlordOnboardingState,
 } from '@/lib/landlordOnboarding'
@@ -14,16 +16,45 @@ import {
  */
 export function AdminOnboardingGuard() {
   const location = useLocation()
+  const navigate = useNavigate()
   const onOnboardingRoute = location.pathname.startsWith('/admin/onboarding')
   const [state, setState] = useState<LandlordOnboardingState | null>(null)
   const [loading, setLoading] = useState(true)
   const hasFetchedRef = useRef(false)
+  const resetStartedRef = useRef(false)
 
   const isOnboardingAccount = isOnboardingLandlordAccount()
+  const shouldReset = new URLSearchParams(location.search).get('reset') === '1'
+
+  useEffect(() => {
+    if (!isOnboardingAccount || !shouldReset || resetStartedRef.current) {
+      return
+    }
+    resetStartedRef.current = true
+
+    const fresh = defaultOnboardingState()
+    setState(fresh)
+    hasFetchedRef.current = true
+    setLoading(false)
+    navigate('/admin/onboarding', { replace: true })
+
+    void restartNewLandlordOnboarding().then((result) => {
+      if (!result.ok) {
+        console.error('[AdminOnboardingGuard] reset failed', result.error)
+        return
+      }
+      if (result.state) {
+        setState(result.state)
+      }
+    })
+  }, [isOnboardingAccount, shouldReset, navigate])
 
   useEffect(() => {
     if (!isOnboardingAccount) {
       setLoading(false)
+      return
+    }
+    if (shouldReset || resetStartedRef.current) {
       return
     }
     let cancelled = false
@@ -40,7 +71,7 @@ export function AdminOnboardingGuard() {
     return () => {
       cancelled = true
     }
-  }, [isOnboardingAccount, location.pathname])
+  }, [isOnboardingAccount, location.pathname, shouldReset])
 
   if (!isOnboardingAccount) {
     if (onOnboardingRoute) {

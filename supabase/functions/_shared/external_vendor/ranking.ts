@@ -29,6 +29,26 @@ type MutableAgg = {
   priceLabel: string | null
   sources: Set<ExternalVendorSource>
   etaMinutes: number | null
+  address: string | null
+  phone: string | null
+  website: string | null
+  tags: string[]
+}
+
+function pickString(prev: string | null, next: string | null | undefined): string | null {
+  if (prev) return prev
+  const n = next?.trim()
+  return n ? n : null
+}
+
+function mergeTags(prev: string[], next: string[] | undefined): string[] {
+  if (!next?.length) return prev
+  const out = [...prev]
+  for (const tag of next) {
+    const t = tag.trim()
+    if (t && !out.includes(t)) out.push(t)
+  }
+  return out.slice(0, 4)
 }
 
 function maxNullable(a: number | null, b: number | null): number | null {
@@ -67,6 +87,10 @@ export function mergeAndRankExternalHits(
         priceLabel: hit.priceLabel,
         sources: new Set([hit.source]),
         etaMinutes: hit.etaMinutes ?? null,
+        address: hit.address?.trim() || null,
+        phone: hit.phone?.trim() || null,
+        website: hit.website?.trim() || null,
+        tags: hit.tags ?? [],
       })
       continue
     }
@@ -75,6 +99,10 @@ export function mergeAndRankExternalHits(
     prev.reviewCount = maxNullable(prev.reviewCount, hit.reviewCount)
     prev.rating = maxNullable(prev.rating, hit.rating)
     prev.etaMinutes = minNullable(prev.etaMinutes, hit.etaMinutes ?? null)
+    prev.address = pickString(prev.address, hit.address)
+    prev.phone = pickString(prev.phone, hit.phone)
+    prev.website = pickString(prev.website, hit.website)
+    prev.tags = mergeTags(prev.tags, hit.tags)
     if (!prev.priceLabel && hit.priceLabel) prev.priceLabel = hit.priceLabel
     else if (
       prev.priceLabel &&
@@ -101,6 +129,10 @@ export function mergeAndRankExternalHits(
       sources,
       rankScore,
       etaMinutes: m.etaMinutes,
+      address: m.address,
+      phone: m.phone,
+      website: m.website,
+      tags: m.tags.length > 0 ? m.tags : undefined,
     }
   })
 

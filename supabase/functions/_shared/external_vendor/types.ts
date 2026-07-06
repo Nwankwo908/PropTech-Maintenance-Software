@@ -8,9 +8,13 @@ export type ExternalVendorHit = {
   /** Optional stable id from the provider (Yelp business id, etc.). */
   providerRef?: string | null
   etaMinutes?: number | null
+  address?: string | null
+  phone?: string | null
+  website?: string | null
+  tags?: string[]
 }
 
-export type ExternalVendorSource = "google" | "yelp" | "mock"
+export type ExternalVendorSource = "google" | "yelp" | "netvendor" | "mock"
 
 /** Merged, ranked suggestion returned to admin APIs. */
 export type ExternalVendorSuggestion = {
@@ -21,6 +25,10 @@ export type ExternalVendorSuggestion = {
   sources: ExternalVendorSource[]
   rankScore: number
   etaMinutes: number | null
+  address?: string | null
+  phone?: string | null
+  website?: string | null
+  tags?: string[]
 }
 
 export type ExternalVendorSearchInput = {

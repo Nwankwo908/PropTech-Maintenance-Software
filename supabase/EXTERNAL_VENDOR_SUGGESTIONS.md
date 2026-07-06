@@ -9,6 +9,7 @@ discover-external-vendors (Edge)
   └─ external_vendor/discover.ts
        ├─ providers/google.ts
        ├─ providers/yelp.ts
+       ├─ providers/netvendor.ts  ← NetVendor credentialed vendor search (partner API)
        └─ providers/mock.ts   ← used when live API keys are absent
        └─ ranking.ts          ← dedupe + rankScore
 
@@ -37,11 +38,37 @@ In-network roster suggestions remain on **`recommend-vendor-alternatives`** (Ope
 | `ADMIN_REASSIGN_SECRET` | Auth for both functions (`x-admin-reassign-secret`) |
 | `GOOGLE_PLACES_API_KEY` | Google Places Text Search (optional) |
 | `YELP_API_KEY` | Yelp Fusion search (optional) |
+| `NETVENDOR_API_KEY` | NetVendor partner API bearer token (optional) |
+| `NETVENDOR_API_BASE_URL` | NetVendor API host, e.g. `https://api.netvendor.com` (required with key) |
+| `NETVENDOR_SEARCH_PATH` | Search path (default `/v1/vendors/search`) |
+| `NETVENDOR_ACCOUNT_ID` | Optional portfolio / account scope on search requests |
+| `NETVENDOR_USE_MOCK` | `true` uses NetVendor-shaped mock credentialed vendors (no HTTP) |
 | `EXTERNAL_VENDOR_SEARCH_LOCATION` | Fallback location when ticket `unit` is not geocodable |
-| `EXTERNAL_VENDOR_PROVIDER` | `auto` (default), `mock`, or comma list e.g. `google,yelp` |
+| `EXTERNAL_VENDOR_PROVIDER` | `auto` (default), `mock`, or comma list e.g. `google,yelp,netvendor` |
 | `EXTERNAL_VENDOR_USE_MOCK` | `true` forces mock provider in discover API |
 
-When no live keys are configured, **`mock`** provider returns deterministic suggestions (safe for dev/demo).
+When no live keys are configured, **`mock`** provider returns deterministic suggestions (safe for dev/demo). With **`NETVENDOR_USE_MOCK=true`** (and no Google/Yelp keys), NetVendor-shaped credentialed mock vendors are used instead.
+
+### NetVendor partner API contract
+
+NetVendor does not publish a public developer portal; configure secrets from your NetVendor integration contact. The adapter sends:
+
+```http
+POST {NETVENDOR_API_BASE_URL}{NETVENDOR_SEARCH_PATH}
+Authorization: Bearer {NETVENDOR_API_KEY}
+Content-Type: application/json
+
+{
+  "trade": "plumbing contractor",
+  "location": "Oakwood Apartments · Unit 304",
+  "issueCategory": "plumbing",
+  "complianceStatus": "compliant",
+  "limit": 6,
+  "accountId": "<optional NETVENDOR_ACCOUNT_ID>"
+}
+```
+
+Responses may return vendors under `vendors`, `results`, `data`, `items`, or `matches`. Each record is mapped from common field names (`name`, `vendorName`, `company_name`, `rating`, `review_count`, `compliance_status`, etc.).
 
 ## APIs
 

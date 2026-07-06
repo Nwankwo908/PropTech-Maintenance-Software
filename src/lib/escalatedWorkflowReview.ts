@@ -146,8 +146,6 @@ function demoHvacEscalatedShowcase(
     pastSlaLabel: '1 hour 20 minutes past SLA',
     issueSummary:
       'No cooling in unit, indoor temp 84°F. Tenant has infant — heat advisory active.',
-    currentVendorName: 'Cool Air HVAC',
-    currentVendorStatus: 'Accepted · technician en route, delayed by parts pickup',
     timeline: [
       { timeLabel: '7:45 AM', description: 'Tenant reported via app', actor: 'M. Chen' },
       { timeLabel: '7:46 AM', description: 'Classified as High · HVAC', actor: 'Ulo AI' },
@@ -168,15 +166,6 @@ function demoHvacEscalatedShowcase(
         actor: 'Ulo AI',
       },
     ],
-    suggestion: {
-      vendorId: '',
-      vendorName: 'Arctic HVAC',
-      rating: 4.8,
-      etaMinutes: 35,
-    },
-    suggestionLine:
-      'Escalate to backup vendor (Arctic HVAC · 35 min ETA) or extend SLA with tenant credit',
-    takeActionMode: 'reassign',
   }
 }
 
@@ -199,6 +188,11 @@ export function buildEscalatedWorkflowReview(
       now,
     )
     if (slaReview) {
+      const timeline =
+        showcase?.timeline ??
+        (run.timeline?.length
+          ? timelineFromWorkflowEvents(run.timeline)
+          : slaReview.timeline)
       return {
         ...slaReview,
         workflowRunId: run.id,
@@ -209,15 +203,15 @@ export function buildEscalatedWorkflowReview(
         locationLabel:
           showcase?.locationLabel ??
           formatLocation(run.propertyLabel ?? ticket.building, run.unitLabel ?? ticket.unit),
-        timeline:
-          showcase?.timeline ??
-          (run.timeline?.length
-            ? timelineFromWorkflowEvents(run.timeline)
-            : slaReview.timeline),
-        suggestionLine: showcase?.suggestionLine ?? slaReview.suggestionLine,
-        suggestion: showcase?.suggestion ?? slaReview.suggestion,
-        ...(showcase ?? {}),
-        workflowRunId: run.id,
+        ticketRef: showcase?.ticketRef ?? slaReview.ticketRef,
+        urgencyLabel: showcase?.urgencyLabel ?? slaReview.urgencyLabel,
+        urgencyIsCritical: showcase?.urgencyIsCritical ?? slaReview.urgencyIsCritical,
+        reportedAtLabel: showcase?.reportedAtLabel ?? slaReview.reportedAtLabel,
+        slaDueLabel: showcase?.slaDueLabel ?? slaReview.slaDueLabel,
+        minutesPastSla: showcase?.minutesPastSla ?? slaReview.minutesPastSla,
+        pastSlaLabel: showcase?.pastSlaLabel ?? slaReview.pastSlaLabel,
+        issueSummary: showcase?.issueSummary ?? slaReview.issueSummary,
+        timeline,
       }
     }
   }
@@ -233,8 +227,8 @@ export function buildEscalatedWorkflowReview(
 
   const alternatives = ticket ? pickAlternativeVendors(ticket, vendors) : []
   const metricsById = new Map(vendorMetrics.map((m) => [m.vendorId, m]))
-  let suggestion = showcase?.suggestion ?? null
-  if (!suggestion && suggested?.name) {
+  let suggestion: SlaOverdueActionReview['suggestion'] = null
+  if (suggested?.name) {
     const metrics = suggested.id ? metricsById.get(suggested.id) : undefined
     suggestion = {
       vendorId: suggested.id,
@@ -252,7 +246,8 @@ export function buildEscalatedWorkflowReview(
     }
   }
 
-  const noVendorOnRoster = alternatives.length === 0 && !suggestion?.vendorId
+  const noVendorOnRoster =
+    alternatives.length === 0 && !suggestion?.vendorId && !suggestion?.vendorName
   const timeline =
     showcase?.timeline ??
     (run.timeline?.length
@@ -307,19 +302,19 @@ export function buildEscalatedWorkflowReview(
       (ticket?.description?.trim() ||
         run.lastEventMessage?.trim() ||
         `${categoryLabel} escalation requires your review.`),
-    currentVendorName: showcase?.currentVendorName ?? ticket?.assignedVendorName ?? null,
-    currentVendorStatus:
-      showcase?.currentVendorStatus ??
-      vendorStatusLabel(
-        ticket?.vendorWorkStatus ?? 'escalated',
-        ticket?.assignedVendorName ?? null,
-      ),
+    currentVendorName: ticket?.assignedVendorName ?? null,
+    currentVendorStatus: vendorStatusLabel(
+      ticket?.vendorWorkStatus ?? 'escalated',
+      ticket?.assignedVendorName ?? null,
+    ),
     timeline,
     suggestion,
-    suggestionLine:
-      showcase?.suggestionLine ??
-      buildSuggestionLineForReview(suggestion, noVendorOnRoster, issueCategory),
+    suggestionLine: buildSuggestionLineForReview(
+      suggestion,
+      noVendorOnRoster,
+      issueCategory,
+    ),
     noVendorOnRoster,
-    takeActionMode: noVendorOnRoster ? 'assign_vendor' : 'reassign',
+    takeActionMode: noVendorOnRoster ? 'external_vendor' : 'reassign',
   }
 }

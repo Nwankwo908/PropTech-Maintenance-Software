@@ -1,12 +1,22 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { postAdminReassignVendor } from '@/api/adminReassignVendor'
-import { postRecommendVendorAlternatives } from '@/api/recommendVendorAlternatives'
+import {
+  postDiscoverExternalVendors,
+  resolveDiscoverExternalVendorsUrl,
+  type ExternalVendorSuggestionDto,
+} from '@/api/discoverExternalVendors'
+import {
+  postReassignExternalVendor,
+  resolveReassignExternalVendorUrl,
+} from '@/api/reassignExternalVendor'
+import { postSlaAutoReassign, resolveSlaAutoReassignUrl } from '@/api/slaAutoReassign'
 import { PropertyHealthBuildingGrid } from '@/components/PropertyHealthBuildingGrid'
 import { AwaitingDecisionListRail } from '@/components/AwaitingDecisionListRail'
 import { LateRentAccountReviewRail } from '@/components/LateRentAccountReviewRail'
 import { LeaseRenewalEscalatedRail } from '@/components/LeaseRenewalEscalatedRail'
 import { SlaOverdueActionRail } from '@/components/SlaOverdueActionRail'
+import { FindExternalVendorRail } from '@/components/FindExternalVendorRail'
 import { getActiveLandlordId } from '@/lib/activeLandlord'
 import {
   isMaintenanceAdminVendorEscalationReason,
@@ -54,6 +64,7 @@ import {
 import {
   buildSlaOverdueActionReview,
   isSlaOverdueOpenTicket,
+  pickAlternativeVendors,
   type SlaOverdueActionReview,
   type SlaOverdueTicketInput,
 } from '@/lib/slaOverdueActionReview'
@@ -113,8 +124,8 @@ type AttentionItem = {
 }
 
 type EscalatedRailTarget =
-  | { kind: 'ticket'; ticketId: string }
-  | { kind: 'workflow'; runId: string }
+  | { kind: 'ticket'; ticketId: string; preferExternalVendor?: boolean }
+  | { kind: 'workflow'; runId: string; preferExternalVendor?: boolean }
 
 type OverviewResident = {
   id: string
@@ -152,6 +163,15 @@ function overviewTicketToInput(
     assignedAt: ticket.assignedAt,
   }
 }
+
+function ticketHasRosterAlternative(
+  ticket: OverviewTicket,
+  vendors: OverviewVendor[],
+  units: OverviewUnit[],
+): boolean {
+  return pickAlternativeVendors(overviewTicketToInput(ticket, units), vendors).length > 0
+}
+
 const CRITICAL_LEVELS = new Set(['urgent', 'emergency', 'critical', 'high'])
 const CLOSED_WORK_STATUSES = new Set(['completed', 'cancelled'])
 
@@ -433,14 +453,6 @@ const FEED_BADGE_STYLES: Record<string, string> = {
   admin: 'bg-[#f3f4f6] text-[#364153]',
 }
 
-function resolveVendorRecommendAlternativesUrl(): string | undefined {
-  const explicit = import.meta.env.VITE_VENDOR_RECOMMEND_URL?.trim()
-  if (explicit) return explicit
-  const base = import.meta.env.VITE_SUPABASE_URL?.trim().replace(/\/$/, '')
-  if (base) return `${base}/functions/v1/recommend-vendor-alternatives`
-  return undefined
-}
-
 export function AdminOverviewDashboard() {
   const navigate = useNavigate()
   const [tickets, setTickets] = useState<OverviewTicket[]>([])
@@ -462,6 +474,18 @@ export function AdminOverviewDashboard() {
   const [escalatedRailLoading, setEscalatedRailLoading] = useState(false)
   const [escalatedRailSaving, setEscalatedRailSaving] = useState(false)
   const [escalatedRailError, setEscalatedRailError] = useState<string | null>(null)
+  const [externalVendorSuggestions, setExternalVendorSuggestions] = useState<
+    ExternalVendorSuggestionDto[]
+  >([])
+  const [externalVendorProvidersUsed, setExternalVendorProvidersUsed] = useState<string[]>([])
+  const [externalVendorNotice, setExternalVendorNotice] = useState<string | null>(null)
+  const [externalVendorDiscoverError, setExternalVendorDiscoverError] = useState<string | null>(
+    null,
+  )
+  const [externalVendorIssueCategory, setExternalVendorIssueCategory] = useState<string | null>(
+    null,
+  )
+  const [findExternalVendorOpen, setFindExternalVendorOpen] = useState(false)
   const [lateRentRailRunId, setLateRentRailRunId] = useState<string | null>(null)
   const [lateRentRailSaving, setLateRentRailSaving] = useState(false)
   const [lateRentRailError, setLateRentRailError] = useState<string | null>(null)
@@ -780,13 +804,91 @@ export function AdminOverviewDashboard() {
     [openTickets],
   )
 
+  const slaEscalatedNoVendorKeys = useMemo(
+    () =>
+      new Set(
+        (workflowData?.escalated ?? [])
+          .filter((r) => isMaintenanceAdminVendorEscalationReason(r.escalationReason))
+          .map((r) => r.entityId)
+          .filter(Boolean),
+      ),
+    [workflowData],
+  )
+
+  useEffect(() => {
+    if (loading) return
+    const url = resolveSlaAutoReassignUrl()
+    const secret = import.meta.env.VITE_ADMIN_REASSIGN_SECRET?.trim()
+    if (!url || !secret || slaOverdueTickets.length === 0) return
+
+    const toAuto = slaOverdueTickets.filter(
+      (ticket) =>
+        !slaEscalatedNoVendorKeys.has(ticket.id) &&
+        ticketHasRosterAlternative(ticket, vendors, units),
+    )
+    if (toAuto.length === 0) return
+
+    let cancelled = false
+    void (async () => {
+      let anyReassigned = false
+      for (const ticket of toAuto) {
+        if (cancelled) break
+        try {
+          const result = await postSlaAutoReassign({ url, secret, ticketId: ticket.id })
+          if (result.outcome === 'reassigned') anyReassigned = true
+        } catch (err) {
+          console.warn('[admin overview] sla auto-reassign', ticket.id, err)
+        }
+      }
+      if (cancelled || !anyReassigned || !supabase) return
+
+      const landlordId = getActiveLandlordId()
+      const [ticketsResult, feedResult, workflowResult] = await Promise.all([
+        supabase
+          .from('maintenance_request_enriched')
+          .select(
+            'id, created_at, assigned_at, unit, unit_id, building, description, issue_category, assigned_vendor_id, vendor_work_status, urgency, severity, priority, due_at, resident_name, estimated_minutes, total_cost, invoice_total, amount, labor_cost, material_cost, materials_cost, tax_amount, tax, completed_at, resolved_at, closed_at',
+          )
+          .eq('landlord_id', landlordId)
+          .order('created_at', { ascending: false })
+          .limit(500),
+        fetchRecentPropertyOperationsEvents(8),
+        fetchAdminWorkflowDashboard(),
+      ])
+
+      if (cancelled) return
+      setFeedEvents(feedResult)
+      setWorkflowData(workflowResult)
+      if (!ticketsResult.error) {
+        const vendorNameById = Object.fromEntries(vendors.map((v) => [v.id, v.name]))
+        setTickets(
+          ((ticketsResult.data ?? []) as Record<string, unknown>[]).map((raw) =>
+            normalizeTicketRow(raw, vendorNameById),
+          ),
+        )
+      }
+    })()
+
+    return () => {
+      cancelled = true
+    }
+  }, [loading, slaOverdueTickets, slaEscalatedNoVendorKeys, vendors, units])
+
   const openEscalatedRailForTicket = useCallback((ticketId: string) => {
-    setEscalatedRailTarget({ kind: 'ticket', ticketId })
+    setExternalVendorSuggestions([])
+    setExternalVendorDiscoverError(null)
+    setExternalVendorNotice(null)
+    setFindExternalVendorOpen(true)
+    setEscalatedRailTarget({ kind: 'ticket', ticketId, preferExternalVendor: true })
     setEscalatedRailError(null)
   }, [])
 
-  const openEscalatedRailForRun = useCallback((runId: string) => {
-    setEscalatedRailTarget({ kind: 'workflow', runId })
+  const openEscalatedRailForRun = useCallback((runId: string, preferExternalVendor = false) => {
+    setExternalVendorSuggestions([])
+    setExternalVendorDiscoverError(null)
+    setExternalVendorNotice(null)
+    setFindExternalVendorOpen(preferExternalVendor)
+    setEscalatedRailTarget({ kind: 'workflow', runId, preferExternalVendor })
     setEscalatedRailError(null)
   }, [])
 
@@ -843,15 +945,10 @@ export function AdminOverviewDashboard() {
 
   const allAttentionItems = useMemo<AttentionItem[]>(() => {
     const items: AttentionItem[] = []
-    const escalatedNoVendorKeys = new Set(
-      (workflowData?.escalated ?? [])
-        .filter((r) => isMaintenanceAdminVendorEscalationReason(r.escalationReason))
-        .map((r) => r.entityId)
-        .filter(Boolean),
-    )
 
     for (const ticket of slaOverdueTickets) {
-      if (escalatedNoVendorKeys.has(ticket.id)) continue
+      if (slaEscalatedNoVendorKeys.has(ticket.id)) continue
+      if (ticketHasRosterAlternative(ticket, vendors, units)) continue
       const building =
         ticket.building ??
         units.find(
@@ -861,7 +958,7 @@ export function AdminOverviewDashboard() {
       items.push({
         key: `sla-${ticket.id}`,
         badge: isTicketCritical(ticket) ? 'critical' : 'warning',
-        title: 'SLA breached — maintenance ticket',
+        title: 'SLA breached — no roster vendor',
         context: formatLocationContextLabel({
           propertyLabel: building,
           unitLabel: ticket.unit,
@@ -870,7 +967,7 @@ export function AdminOverviewDashboard() {
         meta: ticket.dueAt
           ? `Past due ${formatRelativeTime(ticket.dueAt)}`
           : 'Past SLA',
-        actionLabel: 'Review',
+        actionLabel: 'Assign vendor',
         actionStyle: 'alert',
         onAction: () => openEscalatedRailForTicket(ticket.id),
       })
@@ -904,11 +1001,10 @@ export function AdminOverviewDashboard() {
                 : `Escalated ${formatRelativeTime(run.lastEventAt)}`
             : 'Awaiting input',
           actionLabel: needsVendor ? 'Assign vendor' : 'Review',
-          actionTo: needsVendor ? '/admin/users' : undefined,
-          onAction: needsVendor
-            ? undefined
-            : isLeaseRenewal
-              ? () => openLeaseRenewalRail(run.id)
+          onAction: isLeaseRenewal
+            ? () => openLeaseRenewalRail(run.id)
+            : needsVendor
+              ? () => openEscalatedRailForRun(run.id, true)
               : () => openEscalatedRailForRun(run.id),
           actionStyle: needsVendor ? 'alert' : undefined,
         })
@@ -934,7 +1030,7 @@ export function AdminOverviewDashboard() {
     }
 
     return items.sort((a, b) => (a.badge === b.badge ? 0 : a.badge === 'critical' ? -1 : 1))
-  }, [workflowData, slaOverdueTickets, units, lateRentReviewRuns, openEscalatedRailForTicket, openEscalatedRailForRun, openLateRentRail, openLeaseRenewalRail])
+  }, [workflowData, slaOverdueTickets, slaEscalatedNoVendorKeys, units, vendors, lateRentReviewRuns, openEscalatedRailForTicket, openEscalatedRailForRun, openLateRentRail, openLeaseRenewalRail])
 
   const attentionItems = useMemo(() => allAttentionItems.slice(0, 4), [allAttentionItems])
 
@@ -947,11 +1043,18 @@ export function AdminOverviewDashboard() {
     if (!escalatedRailTarget) {
       setEscalatedReview(null)
       setEscalatedRailLoading(false)
+      setExternalVendorSuggestions([])
+      setExternalVendorProvidersUsed([])
+      setExternalVendorNotice(null)
+      setExternalVendorDiscoverError(null)
+      setExternalVendorIssueCategory(null)
+      setFindExternalVendorOpen(false)
       return
     }
 
     let cancelled = false
-    let ticketIdForRecommend: string | null = null
+    let ticketIdForAction: string | null = null
+    let builtReview: SlaOverdueActionReview | null = null
 
     if (escalatedRailTarget.kind === 'ticket') {
       const ticket = tickets.find((t) => t.id === escalatedRailTarget.ticketId)
@@ -959,17 +1062,18 @@ export function AdminOverviewDashboard() {
         setEscalatedReview(null)
         return
       }
-      ticketIdForRecommend = ticket.id
-      const review = buildSlaOverdueActionReview(
+      ticketIdForAction = ticket.id
+      builtReview = buildSlaOverdueActionReview(
         overviewTicketToInput(ticket, units),
         vendors,
         vendorMetrics,
       )
-      if (!review) {
-        setEscalatedRailTarget(null)
+      if (!builtReview) {
+        setFindExternalVendorOpen(true)
+        setExternalVendorDiscoverError('Could not load escalation details for this ticket.')
+        setEscalatedRailLoading(false)
         return
       }
-      setEscalatedReview(review)
     } else {
       const run = workflowData?.escalated.find((r) => r.id === escalatedRailTarget.runId)
       if (!run) {
@@ -980,68 +1084,138 @@ export function AdminOverviewDashboard() {
         run.entityType === 'maintenance_request' && run.entityId
           ? tickets.find((t) => t.id === run.entityId) ?? null
           : null
-      if (linkedTicket) ticketIdForRecommend = linkedTicket.id
-      const review = buildEscalatedWorkflowReview(
+      if (linkedTicket) ticketIdForAction = linkedTicket.id
+      builtReview = buildEscalatedWorkflowReview(
         run,
         linkedTicket ? overviewTicketToInput(linkedTicket, units) : null,
         vendors,
         vendorMetrics,
       )
-      if (!review) {
-        setEscalatedRailTarget(null)
+      if (!builtReview) {
+        setFindExternalVendorOpen(true)
+        setExternalVendorDiscoverError('Could not load escalation details for this workflow.')
+        setEscalatedRailLoading(false)
         return
       }
-      setEscalatedReview(review)
     }
 
+    const preferExternalVendor =
+      escalatedRailTarget.preferExternalVendor === true || builtReview.noVendorOnRoster
+
+    if (builtReview && !preferExternalVendor && ticketIdForAction) {
+      const autoUrl = resolveSlaAutoReassignUrl()
+      const secret = import.meta.env.VITE_ADMIN_REASSIGN_SECRET?.trim()
+      setEscalatedRailLoading(true)
+      if (autoUrl && secret) {
+        void postSlaAutoReassign({ url: autoUrl, secret, ticketId: ticketIdForAction })
+          .then(async (result) => {
+            if (cancelled) return
+            if (result.outcome === 'reassigned') {
+              setFeedEvents(await fetchRecentPropertyOperationsEvents(8))
+            }
+            setEscalatedRailTarget(null)
+          })
+          .catch((err) => {
+            if (cancelled) return
+            console.warn('[admin overview] sla auto-reassign rail', err)
+            setEscalatedRailError(err instanceof Error ? err.message : 'Auto-reassign failed')
+          })
+          .finally(() => {
+            if (!cancelled) setEscalatedRailLoading(false)
+          })
+      } else {
+        setEscalatedRailTarget(null)
+        setEscalatedRailLoading(false)
+      }
+      return () => {
+        cancelled = true
+      }
+    }
+
+    setEscalatedReview(builtReview)
     setEscalatedRailLoading(true)
-
-    const recommendUrl = resolveVendorRecommendAlternativesUrl()
-    const secret = import.meta.env.VITE_ADMIN_REASSIGN_SECRET?.trim()
-    if (!recommendUrl || !secret || !ticketIdForRecommend) {
-      setEscalatedRailLoading(false)
-      return
+    setExternalVendorSuggestions([])
+    setExternalVendorProvidersUsed([])
+    setExternalVendorNotice(null)
+    setExternalVendorDiscoverError(null)
+    if (preferExternalVendor) {
+      setFindExternalVendorOpen(true)
     }
 
-    void postRecommendVendorAlternatives({
-      url: recommendUrl,
+    if (preferExternalVendor) {
+      const linkedTicket =
+        escalatedRailTarget.kind === 'ticket'
+          ? tickets.find((t) => t.id === escalatedRailTarget.ticketId)
+          : (() => {
+              const run = workflowData?.escalated.find((r) => r.id === escalatedRailTarget.runId)
+              return run?.entityType === 'maintenance_request' && run.entityId
+                ? tickets.find((t) => t.id === run.entityId) ?? null
+                : null
+            })()
+      setExternalVendorIssueCategory(linkedTicket?.issueCategory ?? null)
+    }
+
+    const discoverUrl = resolveDiscoverExternalVendorsUrl()
+    const secret = import.meta.env.VITE_ADMIN_REASSIGN_SECRET?.trim()
+    if (!discoverUrl || !secret || !ticketIdForAction) {
+      setEscalatedRailLoading(false)
+      if (preferExternalVendor) {
+        setFindExternalVendorOpen(true)
+        setExternalVendorDiscoverError(
+          !ticketIdForAction
+            ? 'Could not link this escalation to a maintenance ticket.'
+            : 'External vendor search is not configured (check VITE_ADMIN_REASSIGN_SECRET).',
+        )
+      }
+      return () => {
+        cancelled = true
+      }
+    }
+
+    void postDiscoverExternalVendors({
+      url: discoverUrl,
       secret,
-      ticketId: ticketIdForRecommend,
-      limit: 1,
+      ticketId: ticketIdForAction,
     })
       .then((result) => {
         if (cancelled) return
-        const alt = result.alternatives[0]
-        if (escalatedRailTarget.kind === 'ticket') {
-          const ticket = tickets.find((t) => t.id === escalatedRailTarget.ticketId)
-          if (!ticket) return
-          const next = buildSlaOverdueActionReview(
-            overviewTicketToInput(ticket, units),
-            vendors,
-            vendorMetrics,
-            alt ? { id: alt.id, name: alt.name } : null,
-          )
-          if (next) setEscalatedReview(next)
-        } else {
-          const run = workflowData?.escalated.find((r) => r.id === escalatedRailTarget.runId)
-          if (!run) return
-          const linkedTicket =
-            run.entityType === 'maintenance_request' && run.entityId
-              ? tickets.find((t) => t.id === run.entityId) ?? null
-              : null
-          const next = buildEscalatedWorkflowReview(
-            run,
-            linkedTicket ? overviewTicketToInput(linkedTicket, units) : null,
-            vendors,
-            vendorMetrics,
-            alt ? { id: alt.id, name: alt.name } : null,
-          )
-          if (next) setEscalatedReview(next)
+        setExternalVendorSuggestions(result.suggestions ?? [])
+        setExternalVendorProvidersUsed(result.providersUsed ?? [])
+        if (result.notice) setExternalVendorNotice(result.notice)
+        const pick = result.suggestions[0]
+        if (builtReview?.noVendorOnRoster && (result.suggestions?.length ?? 0) > 0) {
+          setFindExternalVendorOpen(true)
+        } else if (preferExternalVendor) {
+          setFindExternalVendorOpen(true)
         }
+        if (!pick) return
+        setEscalatedReview((prev) => {
+          if (!prev) return prev
+          const meta = [
+            pick.rating != null ? `${pick.rating.toFixed(1)}★` : null,
+            pick.priceLabel,
+          ]
+            .filter(Boolean)
+            .join(' · ')
+          return {
+            ...prev,
+            suggestion: {
+              vendorId: '',
+              vendorName: pick.name,
+              rating: pick.rating,
+              etaMinutes: pick.etaMinutes ?? null,
+            },
+            suggestionLine: `Assign external vendor ${pick.name}${meta ? ` (${meta})` : ''}`,
+          }
+        })
       })
       .catch((err) => {
         if (cancelled) return
-        console.warn('[admin overview] vendor alternatives', err)
+        console.warn('[admin overview] discover external vendors', err)
+        const message = err instanceof Error ? err.message : 'External vendor search failed'
+        setEscalatedRailError(message)
+        setExternalVendorDiscoverError(message)
+        if (preferExternalVendor) setFindExternalVendorOpen(true)
       })
       .finally(() => {
         if (!cancelled) setEscalatedRailLoading(false)
@@ -1060,25 +1234,47 @@ export function AdminOverviewDashboard() {
         return
       }
 
+      if (review.takeActionMode === 'assign_vendor' || review.takeActionMode === 'external_vendor') {
+        if (escalatedRailLoading) {
+          setEscalatedRailError('External vendor search is still loading.')
+          return
+        }
+        if (externalVendorSuggestions.length === 0) {
+          setEscalatedRailError(
+            externalVendorDiscoverError ?? 'No external vendor suggestions available yet.',
+          )
+          return
+        }
+        setFindExternalVendorOpen(true)
+        return
+      }
+
       const suggestion = review.suggestion
-      if (review.takeActionMode === 'assign_vendor' || !suggestion?.vendorName) {
-        navigate('/admin/users')
-        setEscalatedRailTarget(null)
+      if (review.takeActionMode !== 'reassign' || !suggestion?.vendorName) {
+        setEscalatedRailError('This ticket is handled automatically when a roster vendor is available.')
+        return
+      }
+
+      const secret = import.meta.env.VITE_ADMIN_REASSIGN_SECRET?.trim()
+      if (!secret) {
+        setEscalatedRailError(
+          'Admin actions are not configured. Set VITE_ADMIN_REASSIGN_SECRET in .env.',
+        )
         return
       }
 
       const reassignUrl = import.meta.env.VITE_ADMIN_REASSIGN_URL?.trim()
-      const secret = import.meta.env.VITE_ADMIN_REASSIGN_SECRET?.trim()
-      if (!reassignUrl || !secret) {
-        navigate('/admin/requests')
-        setEscalatedRailTarget(null)
+      if (!reassignUrl) {
+        setEscalatedRailError(
+          'Reassign is not configured. Set VITE_ADMIN_REASSIGN_URL in .env.',
+        )
         return
       }
 
       setEscalatedRailSaving(true)
       setEscalatedRailError(null)
       try {
-        await postAdminReassignVendor({
+        const reassignResult = await postAdminReassignVendor({
           url: reassignUrl,
           secret,
           ticketId: review.ticketId,
@@ -1090,8 +1286,8 @@ export function AdminOverviewDashboard() {
             t.id === review.ticketId
               ? {
                   ...t,
-                  assignedVendorId: review.suggestion!.vendorId,
-                  assignedVendorName: review.suggestion!.vendorName,
+                  assignedVendorId: reassignResult.assigned_vendor_id,
+                  assignedVendorName: suggestion.vendorName,
                   vendorWorkStatus: 'pending_accept',
                 }
               : t,
@@ -1104,7 +1300,55 @@ export function AdminOverviewDashboard() {
         setEscalatedRailSaving(false)
       }
     },
-    [navigate],
+    [navigate, escalatedRailLoading, externalVendorSuggestions.length, externalVendorDiscoverError],
+  )
+
+  const handleExternalVendorSelect = useCallback(
+    async (pick: ExternalVendorSuggestionDto) => {
+      if (!escalatedReview) return
+      const secret = import.meta.env.VITE_ADMIN_REASSIGN_SECRET?.trim()
+      const reassignUrl = resolveReassignExternalVendorUrl()
+      if (!secret || !reassignUrl) {
+        setEscalatedRailError('External reassign is not configured.')
+        return
+      }
+
+      setEscalatedRailSaving(true)
+      setEscalatedRailError(null)
+      try {
+        const result = await postReassignExternalVendor({
+          url: reassignUrl,
+          secret,
+          ticketId: escalatedReview.ticketId,
+          vendorName: pick.name,
+          rating: pick.rating,
+          reviewCount: pick.reviewCount,
+          priceLabel: pick.priceLabel,
+          sources: pick.sources,
+        })
+        setTickets((prev) =>
+          prev.map((t) =>
+            t.id === escalatedReview.ticketId
+              ? {
+                  ...t,
+                  assignedVendorId: result.assigned_vendor_id,
+                  assignedVendorName: pick.name,
+                  vendorWorkStatus: 'pending_accept',
+                }
+              : t,
+          ),
+        )
+        setFeedEvents(await fetchRecentPropertyOperationsEvents(8))
+        setFindExternalVendorOpen(false)
+        setEscalatedRailTarget(null)
+        setExternalVendorSuggestions([])
+      } catch (err) {
+        setEscalatedRailError(err instanceof Error ? err.message : 'External assign failed')
+      } finally {
+        setEscalatedRailSaving(false)
+      }
+    },
+    [escalatedReview],
   )
 
   const handleLateRentAction = useCallback(
@@ -1613,7 +1857,7 @@ export function AdminOverviewDashboard() {
       ) : null}
 
       <SlaOverdueActionRail
-        open={escalatedRailTarget != null && escalatedReview != null}
+        open={escalatedRailTarget != null && escalatedReview != null && !findExternalVendorOpen}
         review={escalatedReview}
         loading={escalatedRailLoading}
         saving={escalatedRailSaving}
@@ -1622,6 +1866,26 @@ export function AdminOverviewDashboard() {
           setEscalatedRailError(null)
         }}
         onTakeAction={handleEscalatedTakeAction}
+      />
+
+      <FindExternalVendorRail
+        open={findExternalVendorOpen}
+        onClose={() => {
+          if (escalatedRailSaving) return
+          setFindExternalVendorOpen(false)
+          setEscalatedRailTarget(null)
+          setEscalatedRailError(null)
+        }}
+        onSelect={handleExternalVendorSelect}
+        saving={escalatedRailSaving}
+        saveError={escalatedRailError}
+        loading={escalatedRailLoading}
+        error={externalVendorDiscoverError}
+        notice={externalVendorNotice}
+        locationLabel={escalatedReview?.locationLabel ?? 'Property · Unit'}
+        issueCategory={externalVendorIssueCategory}
+        suggestions={externalVendorSuggestions}
+        providersUsed={externalVendorProvidersUsed}
       />
 
       <AwaitingDecisionListRail

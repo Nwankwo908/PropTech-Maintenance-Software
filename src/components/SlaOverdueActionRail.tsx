@@ -109,13 +109,15 @@ export function SlaOverdueActionRail({
       : 'Close'
 
   const actionLabel =
-    review.takeActionMode === 'assign_vendor'
-      ? 'Assign vendor'
-      : review.takeActionMode === 'workflows'
-        ? 'Open workflows'
-        : review.takeActionMode === 'reassign'
-          ? 'Approve & Continue'
-          : 'Take action'
+    review.takeActionMode === 'external_vendor'
+      ? 'Find vendor'
+      : review.takeActionMode === 'assign_vendor'
+        ? 'Assign vendor'
+        : review.takeActionMode === 'workflows'
+          ? 'Open workflows'
+          : review.takeActionMode === 'reassign'
+            ? 'Approve & Continue'
+            : 'Take action'
 
   return (
     <div className="fixed inset-0 z-50 flex justify-end">
@@ -189,14 +191,24 @@ export function SlaOverdueActionRail({
           <div className="mt-5 rounded-[10px] bg-[#f3f4f6] px-4 py-3">
             <p className="text-[10px] font-semibold uppercase tracking-[0.08em] text-[#9ca3af]">Ulo suggests</p>
             {loading ? (
-              <p className="mt-2 text-[13px] leading-5 text-[#6a7282]">Finding roster alternatives…</p>
+              <p className="mt-2 text-[13px] leading-5 text-[#6a7282]">
+                {review.takeActionMode === 'external_vendor'
+                  ? 'Searching external vendors…'
+                  : 'Finding roster alternatives…'}
+              </p>
             ) : (
               <>
                 <p className="mt-2 text-[14px] font-semibold leading-5 text-[#0a0a0a]">
                   {review.suggestionLine}
                 </p>
-                {review.takeActionMode === 'reassign' ? (
-                  <p className="mt-1 text-[12px] leading-4 text-[#6a7282]">Opens in /admin/requests</p>
+                {review.takeActionMode === 'external_vendor' && review.suggestion?.vendorName ? (
+                  <p className="mt-1 text-[12px] leading-4 text-[#6a7282]">
+                    Onboard {review.suggestion.vendorName} from external search and dispatch the job.
+                  </p>
+                ) : review.takeActionMode === 'reassign' && review.suggestion?.vendorName ? (
+                  <p className="mt-1 text-[12px] leading-4 text-[#6a7282]">
+                    Approve dispatches {review.suggestion.vendorName} via admin reassign.
+                  </p>
                 ) : null}
               </>
             )}

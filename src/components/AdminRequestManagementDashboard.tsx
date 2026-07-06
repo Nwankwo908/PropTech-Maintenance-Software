@@ -2043,7 +2043,14 @@ export function AdminRequestManagementDashboard() {
             const url = resolveDiscoverExternalVendorsUrl()
             const secret = import.meta.env.VITE_ADMIN_REASSIGN_SECRET?.trim()
             if (!tid || !url || !secret) return null
-            return { ticketId: tid, url, secret }
+            const locationLabel = [row?.unit, row?.residentName].filter(Boolean).join(' · ')
+            return {
+              ticketId: tid,
+              url,
+              secret,
+              locationLabel: locationLabel || 'Property · Unit',
+              issueCategory: vendorModal.issueCategorySlug,
+            }
           })()}
           onClose={() => {
             if (vendorSaving) return

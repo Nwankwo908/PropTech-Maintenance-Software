@@ -153,7 +153,7 @@ export async function recommendAlternativeVendorsForTicket(
   const { data: ticket, error } = await supabase
     .from("maintenance_requests")
     .select(
-      "id, assigned_vendor_id, issue_category, description, priority, vendor_work_status",
+      "id, assigned_vendor_id, issue_category, description, priority, vendor_work_status, due_at",
     )
     .eq("id", ticketId)
     .maybeSingle()
@@ -166,9 +166,21 @@ export async function recommendAlternativeVendorsForTicket(
     return { error: "Ticket not found" }
   }
 
-  const vws = String(ticket.vendor_work_status ?? "").trim()
-  if (vws !== "pending_accept") {
-    return { error: "Ticket is not awaiting vendor acceptance" }
+  const vws = String(ticket.vendor_work_status ?? "").trim().toLowerCase()
+  const dueRaw = ticket.due_at
+  const dueTs = dueRaw ? new Date(String(dueRaw)).getTime() : NaN
+  const slaOverdue = !Number.isNaN(dueTs) && dueTs < Date.now()
+  const pendingAccept = vws === "pending_accept"
+  const terminal = vws === "completed" || vws === "cancelled"
+
+  if (terminal) {
+    return { error: "Ticket is closed" }
+  }
+  if (!pendingAccept && !slaOverdue) {
+    return {
+      error:
+        "Ticket is not eligible for vendor alternatives (must be pending acceptance or past SLA)",
+    }
   }
 
   const candidates = await loadAlternativeVendorCandidates(supabase, {

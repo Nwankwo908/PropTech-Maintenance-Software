@@ -209,6 +209,14 @@ function localKey(landlordId: string): string {
   return `${LOCAL_STORAGE_PREFIX}${landlordId}`
 }
 
+export function clearLocalOnboardingStorage(landlordId: string = getActiveLandlordId()): void {
+  try {
+    window.localStorage.removeItem(localKey(landlordId))
+  } catch {
+    // private mode
+  }
+}
+
 export function isOnboardingLandlordAccount(landlordId: string = getActiveLandlordId()): boolean {
   return landlordId === EMPTY_LANDLORD_ID || getActiveLandlordKind() === 'empty'
 }
@@ -844,6 +852,35 @@ export async function fetchOnboardingReviewData(
   )
 }
 
+async function deleteLandlordScopedRows(
+  table: string,
+  landlordId: string,
+): Promise<{ ok: boolean; error?: string }> {
+  if (!supabase) {
+    return { ok: false, error: 'Database unavailable.' }
+  }
+  const { error } = await supabase.from(table).delete().eq('landlord_id', landlordId)
+  if (error && !/does not exist|Could not find the table/i.test(error.message)) {
+    return { ok: false, error: `${table}: ${error.message}` }
+  }
+  return { ok: true }
+}
+
+async function deleteInScopedRows(
+  table: string,
+  column: string,
+  values: string[],
+): Promise<{ ok: boolean; error?: string }> {
+  if (!supabase || values.length === 0) {
+    return { ok: true }
+  }
+  const { error } = await supabase.from(table).delete().in(column, values)
+  if (error && !/does not exist|Could not find the table/i.test(error.message)) {
+    return { ok: false, error: `${table}: ${error.message}` }
+  }
+  return { ok: true }
+}
+
 export async function resetOnboardingPortfolio(
   landlordId: string = getActiveLandlordId(),
 ): Promise<{ ok: boolean; error?: string }> {
@@ -853,6 +890,17 @@ export async function resetOnboardingPortfolio(
   if (!supabase) {
     return { ok: false, error: 'Database unavailable.' }
   }
+
+  const { data: ticketRows, error: ticketLoadError } = await supabase
+    .from('maintenance_requests')
+    .select('id')
+    .eq('landlord_id', landlordId)
+
+  if (ticketLoadError) {
+    return { ok: false, error: ticketLoadError.message }
+  }
+
+  const ticketIds = (ticketRows ?? []).map((row) => String((row as { id: string }).id))
 
   const { data: unitRows, error: unitLoadError } = await supabase
     .from('units')
@@ -869,20 +917,58 @@ export async function resetOnboardingPortfolio(
     return removed
   }
 
-  const deletes = await Promise.all([
-    supabase.from('workflow_runs').delete().eq('landlord_id', landlordId),
-    supabase.from('maintenance_requests').delete().eq('landlord_id', landlordId),
-    supabase.from('users').delete().eq('landlord_id', landlordId),
-    supabase.from('vendors').delete().eq('landlord_id', landlordId),
+  const childDelete = await deleteInScopedRows('vendor_status_events', 'ticket_id', ticketIds)
+  if (!childDelete.ok) {
+    return childDelete
+  }
+
+  const parallelDeletes = await Promise.all([
+    deleteLandlordScopedRows('vendor_feedback', landlordId),
+    deleteLandlordScopedRows('maintenance_invoices', landlordId),
+    deleteLandlordScopedRows('preventive_maintenance_tasks', landlordId),
+    deleteLandlordScopedRows('unit_assets', landlordId),
+    deleteLandlordScopedRows('operations_graph_events', landlordId),
+    deleteLandlordScopedRows('workflow_events', landlordId),
+    deleteLandlordScopedRows('workflow_runs', landlordId),
+    deleteLandlordScopedRows('maintenance_requests', landlordId),
+    deleteLandlordScopedRows('users', landlordId),
+    deleteLandlordScopedRows('vendors', landlordId),
+    deleteLandlordScopedRows('units', landlordId),
   ])
 
-  for (const result of deletes) {
-    if (result.error) {
-      return { ok: false, error: result.error.message }
-    }
+  const failed = parallelDeletes.find((result) => !result.ok)
+  if (failed) {
+    return failed
   }
 
   return { ok: true }
+}
+
+/** Wipe portfolio + onboarding progress and return to the welcome hub. */
+export async function restartNewLandlordOnboarding(
+  landlordId: string = getActiveLandlordId(),
+): Promise<{ ok: boolean; error?: string; state?: LandlordOnboardingState }> {
+  if (!isOnboardingLandlordAccount(landlordId)) {
+    return { ok: false, error: 'Only the New Landlord account can be reset.' }
+  }
+
+  clearLocalOnboardingStorage(landlordId)
+
+  const cleared: LandlordOnboardingState = {
+    ...defaultOnboardingState(landlordId),
+    onboardingStatus: 'not_started',
+    currentStep: 'entry',
+    setupPath: null,
+    properties: [],
+  }
+
+  await saveLandlordOnboarding(cleared)
+
+  void resetOnboardingPortfolio(landlordId).catch((err) => {
+    console.warn('[landlordOnboarding] background portfolio reset failed', err)
+  })
+
+  return { ok: true, state: cleared }
 }
 
 /** Wipe units/vendors/residents and clear property draft; optionally keep account setup fields. */
