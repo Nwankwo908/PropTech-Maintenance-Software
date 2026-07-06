@@ -20,13 +20,14 @@ import {
 import { reassignVendorByIdAndNotify } from "../submit-maintenance-request/vendor_notify.ts"
 
 const TERMINAL_STATUSES = new Set(["completed", "cancelled"])
+/** Only reassign before a vendor has actively committed to the job. */
 const AUTO_REASSIGN_STATUSES = new Set([
   "pending_accept",
   "unassigned",
   "declined",
-  "accepted",
-  "in_progress",
 ])
+/** Vendor already accepted or on site — admin review only, never silent auto-reassign. */
+const ADMIN_REVIEW_ONLY_STATUSES = new Set(["accepted", "in_progress"])
 
 export type SlaReassignOutcome =
   | "reassigned"
@@ -109,7 +110,9 @@ async function processSlaExpiredTicketRow(
     return {
       ticketId: ticket.id,
       outcome: "skipped",
-      reason: "vendor_active_on_job",
+      reason: ADMIN_REVIEW_ONLY_STATUSES.has(ticket.vendor_work_status)
+        ? "vendor_active_on_job"
+        : "status_not_eligible",
     }
   }
 

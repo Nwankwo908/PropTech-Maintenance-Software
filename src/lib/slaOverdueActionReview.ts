@@ -350,6 +350,46 @@ export function buildSlaOverdueActionReview(
   }
 }
 
+/** Minimal review when SLA rail data is unavailable but external vendor assign is required. */
+export function buildExternalVendorFallbackReview(
+  ticket: SlaOverdueTicketInput,
+  options: { workflowRunId?: string } = {},
+): SlaOverdueActionReview {
+  const dueAt = ticket.dueAt
+  const dueTs = dueAt ? new Date(dueAt).getTime() : NaN
+  const minutesPastSla =
+    dueAt && !Number.isNaN(dueTs) && dueTs < Date.now()
+      ? Math.max(1, Math.round((Date.now() - dueTs) / 60_000))
+      : null
+
+  return {
+    ticketId: ticket.id,
+    workflowRunId: options.workflowRunId,
+    badgeLabel: 'ASSIGN VENDOR · MAINTENANCE',
+    headerTitle: `Assign Vendor · ${formatCategoryLabel(ticket.issueCategory)}`,
+    locationLabel: formatLocation(ticket.building, ticket.unit),
+    ticketRef: formatTicketRef(ticket.id),
+    urgencyLabel: formatUrgencyLabel(ticket.urgency),
+    urgencyIsCritical: isUrgencyCritical(ticket.urgency),
+    reportedAtLabel: formatTicketTime(ticket.createdAt),
+    slaDueLabel: dueAt ? formatTicketTime(dueAt) : '—',
+    slaDurationLabel:
+      dueAt && ticket.createdAt ? formatSlaDuration(ticket.createdAt, dueAt) : null,
+    minutesPastSla,
+    pastSlaLabel: minutesPastSla != null ? formatPastSlaLabel(minutesPastSla) : null,
+    issueSummary:
+      ticket.description?.trim() ||
+      `${formatCategoryLabel(ticket.issueCategory)} maintenance request`,
+    currentVendorName: ticket.assignedVendorName,
+    currentVendorStatus: vendorStatusLabel(ticket.vendorWorkStatus, ticket.assignedVendorName),
+    timeline: buildTimeline(ticket),
+    suggestion: null,
+    suggestionLine: 'Find an external vendor for this job',
+    noVendorOnRoster: true,
+    takeActionMode: 'external_vendor',
+  }
+}
+
 function buildSuggestionLine(
   suggestion: SlaOverdueSuggestedVendor | null,
   noVendorOnRoster: boolean,

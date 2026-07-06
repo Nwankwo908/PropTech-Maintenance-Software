@@ -62,6 +62,7 @@ import {
   type LeaseRenewalEscalatedReview,
 } from '@/lib/leaseRenewalEscalatedReview'
 import {
+  buildExternalVendorFallbackReview,
   buildSlaOverdueActionReview,
   isSlaOverdueOpenTicket,
   pickAlternativeVendors,
@@ -1063,17 +1064,10 @@ export function AdminOverviewDashboard() {
         return
       }
       ticketIdForAction = ticket.id
-      builtReview = buildSlaOverdueActionReview(
-        overviewTicketToInput(ticket, units),
-        vendors,
-        vendorMetrics,
-      )
-      if (!builtReview) {
-        setFindExternalVendorOpen(true)
-        setExternalVendorDiscoverError('Could not load escalation details for this ticket.')
-        setEscalatedRailLoading(false)
-        return
-      }
+      const ticketInput = overviewTicketToInput(ticket, units)
+      builtReview =
+        buildSlaOverdueActionReview(ticketInput, vendors, vendorMetrics) ??
+        buildExternalVendorFallbackReview(ticketInput)
     } else {
       const run = workflowData?.escalated.find((r) => r.id === escalatedRailTarget.runId)
       if (!run) {
@@ -1085,15 +1079,20 @@ export function AdminOverviewDashboard() {
           ? tickets.find((t) => t.id === run.entityId) ?? null
           : null
       if (linkedTicket) ticketIdForAction = linkedTicket.id
-      builtReview = buildEscalatedWorkflowReview(
-        run,
-        linkedTicket ? overviewTicketToInput(linkedTicket, units) : null,
-        vendors,
-        vendorMetrics,
-      )
+      builtReview =
+        buildEscalatedWorkflowReview(
+          run,
+          linkedTicket ? overviewTicketToInput(linkedTicket, units) : null,
+          vendors,
+          vendorMetrics,
+        ) ??
+        (linkedTicket
+          ? buildExternalVendorFallbackReview(overviewTicketToInput(linkedTicket, units), {
+              workflowRunId: run.id,
+            })
+          : null)
       if (!builtReview) {
-        setFindExternalVendorOpen(true)
-        setExternalVendorDiscoverError('Could not load escalation details for this workflow.')
+        setEscalatedRailError('Could not load escalation details for this workflow.')
         setEscalatedRailLoading(false)
         return
       }
@@ -1305,7 +1304,13 @@ export function AdminOverviewDashboard() {
 
   const handleExternalVendorSelect = useCallback(
     async (pick: ExternalVendorSuggestionDto) => {
-      if (!escalatedReview) return
+      const ticketId =
+        escalatedReview?.ticketId ??
+        (escalatedRailTarget?.kind === 'ticket' ? escalatedRailTarget.ticketId : null)
+      if (!ticketId) {
+        setEscalatedRailError('Could not link this vendor to a maintenance ticket.')
+        return
+      }
       const secret = import.meta.env.VITE_ADMIN_REASSIGN_SECRET?.trim()
       const reassignUrl = resolveReassignExternalVendorUrl()
       if (!secret || !reassignUrl) {
@@ -1319,7 +1324,7 @@ export function AdminOverviewDashboard() {
         const result = await postReassignExternalVendor({
           url: reassignUrl,
           secret,
-          ticketId: escalatedReview.ticketId,
+          ticketId,
           vendorName: pick.name,
           rating: pick.rating,
           reviewCount: pick.reviewCount,
@@ -1328,7 +1333,7 @@ export function AdminOverviewDashboard() {
         })
         setTickets((prev) =>
           prev.map((t) =>
-            t.id === escalatedReview.ticketId
+            t.id === ticketId
               ? {
                   ...t,
                   assignedVendorId: result.assigned_vendor_id,
@@ -1348,7 +1353,7 @@ export function AdminOverviewDashboard() {
         setEscalatedRailSaving(false)
       }
     },
-    [escalatedReview],
+    [escalatedReview, escalatedRailTarget],
   )
 
   const handleLateRentAction = useCallback(
