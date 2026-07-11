@@ -1,0 +1,42 @@
+---
+description: Late rent Awaiting Your Decision — when to show acknowledgement
+globs: src/components/AdminOverviewDashboard.tsx,src/lib/awaitingDecisionOutcome.ts,src/lib/lateRentAccount*.ts,src/components/LateRentAccount*.tsx,src/lib/leaseRenewalIncentiveMessaging.ts
+alwaysApply: false
+---
+
+# Late rent acknowledgement
+
+For late rent escalations in **Awaiting Your Decision**:
+
+- **Do show** the awaiting-decision outcome / acknowledgement modal only when the admin chooses **Mark payment received** (item leaves the queue).
+- **Mark payment received must complete the `rent_collection` workflow run(s)** (`status: completed`, `rent_classification: paid`, `amount_due: 0`, `users.balance_due: 0`). The Awaiting Your Decision queue is driven by escalated/overdue runs — graph events alone do not remove the item.
+- **Do not show** acknowledgement after **Offer payment plan** or **Waive late fee** — those open the SMS suggestion rail and keep the escalation in the queue until payment is marked received.
+- **Send** payment-plan / waive-fee SMS via the `send-late-rent-account-message` edge function so the message lands in `sms_conversations` / `sms_messages` (`resident_intake`) and appears in Communication inbox.
+- **Send** lease renewal incentive SMS via `send-lease-renewal-incentive-message` the same way (resident SMS thread + Communication inbox), not graph-only inserts.
+- After a payment plan SMS is sent, set `workflow_runs.metadata.payment_plan_sms_sent` and show **Payment plan sent** (disabled) on the review rail.
+- After a late-fee waiver SMS is sent, set `workflow_runs.metadata.late_fee_waiver_sms_sent` and show **Late fee waive** (disabled) on the review rail — do not reopen the waive SMS rail.
+- **Once the landlord sends a late-fee waiver SMS**, adjust **all rent balances** for that tenant in the same request: subtract the waived late fee from `users.balance_due` and from every open `rent_collection` run’s `metadata.amount_due` / `step_state.amount_due`. Log `rent.late_fee_waived`. Do not double-apply if `metadata.late_fee_waived` is already true.
+
+```tsx
+// ❌ BAD — acknowledge after sending payment plan SMS
+setLateRentMessageBrief(appendLateRentSentMessage(brief, message))
+showAwaitingDecisionOutcome(buildLateRentActionOutcome('offer_payment_plan', review), key)
+
+// ❌ BAD — graph-only insert (never reaches inbox)
+await supabase.from('operations_graph_events').insert({ event_type: 'rent.payment_plan_sms_drafted', ... })
+
+// ❌ BAD — mark payment received without completing the run
+await supabase.from('users').update({ balance_due: 0 })
+// run stays escalated → still in Awaiting Your Decision
+
+// ✅ GOOD — complete rent_collection run(s) so queue membership drops
+await applyLateRentAccountAction('mark_payment_received', review, landlordId)
+// status completed + rent_classification paid + balance_due 0
+
+// ✅ GOOD — real SMS + inbox thread; acknowledge later on mark_payment_received
+await sendLateRentAccountMessage(brief, message, landlordId)
+setLateRentMessageBrief(appendLateRentSentMessage(brief, message))
+
+// ✅ GOOD — waive late fee SMS also adjusts tenant balances server-side
+// users.balance_due -= lateFee; open rent_collection amount_due -= lateFee
+```

@@ -1,5 +1,12 @@
-import { useEffect, useId } from 'react'
+import { useEffect, useId, useMemo, useState } from 'react'
 import type { ExternalVendorSuggestionDto } from '@/api/discoverExternalVendors'
+import { ExternalVendorVerificationView } from '@/components/ExternalVendorVerificationView'
+import {
+  ADMIN_RIGHT_RAIL_STACK_HOST,
+  ADMIN_RIGHT_RAIL_SCRIM,
+  adminRightRailPanelClass,
+  type AdminRightRailStackedPosition,
+} from '@/lib/adminRightRail'
 import {
   buildExternalSearchQueryLabel,
   enrichExternalVendorSuggestions,
@@ -7,11 +14,24 @@ import {
   formatSourceBadgeLabel,
   type ExternalVendorDisplayRow,
 } from '@/lib/externalVendorDisplay'
+import {
+  buildVendorSetupContextFromExternalVendor,
+  isVendorSetupAwaitingResponse,
+} from '@/lib/vendorSetupConversation'
+import { CallPhoneButton, PhoneTelLink } from '@/components/CallPhoneButton'
 
 function CloseIcon() {
   return (
     <svg className="size-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} aria-hidden>
       <path d="M18 6L6 18M6 6l12 12" strokeLinecap="round" />
+    </svg>
+  )
+}
+
+function ChevronLeftIcon() {
+  return (
+    <svg className="size-3.5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} aria-hidden>
+      <path d="M15 18l-6-6 6-6" strokeLinecap="round" strokeLinejoin="round" />
     </svg>
   )
 }
@@ -61,6 +81,14 @@ function UserPlusIcon() {
   )
 }
 
+function CheckIcon() {
+  return (
+    <svg className="size-3 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5} aria-hidden>
+      <path d="M20 6L9 17l-5-5" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  )
+}
+
 function StarRating({ rating }: { rating: number | null }) {
   const value = rating ?? 0
   return (
@@ -101,13 +129,75 @@ function SourceBadge({ source }: { source: ExternalVendorDisplayRow['primarySour
   )
 }
 
+function RatingTierBadge({ tier }: { tier: ExternalVendorDisplayRow['ratingTier'] }) {
+  const className =
+    tier.tone === 'excellent'
+      ? 'bg-[#ecfdf5] text-[#047857]'
+      : tier.tone === 'strong'
+        ? 'bg-[#eff6ff] text-[#1d4ed8]'
+        : tier.tone === 'good'
+          ? 'bg-[#f0fdf4] text-[#15803d]'
+          : tier.tone === 'acceptable'
+            ? 'bg-[#fefce8] text-[#a16207]'
+            : 'bg-[#fef2f2] text-[#b91c1c]'
+
+  return (
+    <span className={`inline-flex rounded-full px-2 py-0.5 text-[10px] font-semibold leading-[15px] ${className}`}>
+      {tier.recommendationBadge}
+    </span>
+  )
+}
+
+function ConfidenceBadge({ tier }: { tier: ExternalVendorDisplayRow['confidenceTier'] }) {
+  const className =
+    tier.tone === 'very-high'
+      ? 'bg-[#f3f4f6] text-[#111827]'
+      : tier.tone === 'high'
+        ? 'bg-[#f3f4f6] text-[#374151]'
+        : tier.tone === 'moderate'
+          ? 'bg-[#f9fafb] text-[#4b5563]'
+          : tier.tone === 'limited'
+            ? 'bg-[#fff7ed] text-[#c2410c]'
+            : 'bg-[#fef2f2] text-[#991b1b]'
+
+  return (
+    <span className={`inline-flex rounded px-1.5 py-0.5 text-[9px] font-medium leading-[13.5px] ${className}`}>
+      {tier.label}
+    </span>
+  )
+}
+
+function DistanceTierBadge({ tier }: { tier: ExternalVendorDisplayRow['distanceTier'] }) {
+  if (!tier) return null
+  const className =
+    tier.tone === 'local' || tier.tone === 'nearby'
+      ? 'text-[#047857]'
+      : tier.tone === 'extended'
+        ? 'text-[#a16207]'
+        : tier.tone === 'long'
+          ? 'text-[#c2410c]'
+          : 'text-[#b91c1c]'
+
+  return (
+    <span className={`inline-flex items-center gap-1 text-[10px] font-medium leading-[15px] ${className}`}>
+      <span aria-hidden>{tier.dot}</span>
+      <span>
+        {tier.tierLabel} · {tier.recommendation}
+      </span>
+    </span>
+  )
+}
+
 function VendorResultRow({
   vendor,
   saving,
+  selected,
   onSelect,
 }: {
   vendor: ExternalVendorDisplayRow
   saving: boolean
+  /** Outreach sent; vendor has not submitted the setup form yet. */
+  selected?: boolean
   onSelect: () => void
 }) {
   const distanceLabel =
@@ -134,10 +224,25 @@ function VendorResultRow({
             </span>
           </div>
 
+          <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+            <RatingTierBadge tier={vendor.ratingTier} />
+            <ConfidenceBadge tier={vendor.confidenceTier} />
+          </div>
+          <p className="mt-1 text-[10px] text-[#717182]">
+            Rating quality: {vendor.ratingTier.qualityLabel}
+          </p>
+
           {distanceLabel ? (
-            <div className="mt-1.5 flex items-center gap-1">
-              <MapPinIcon />
-              <p className="text-[11px] leading-[16.5px] text-[#717182]">{distanceLabel}</p>
+            <div className="mt-1.5 flex flex-col gap-0.5">
+              <div className="flex items-center gap-1">
+                <MapPinIcon />
+                <p className="text-[11px] leading-[16.5px] text-[#717182]">{distanceLabel}</p>
+              </div>
+              <DistanceTierBadge tier={vendor.distanceTier} />
+            </div>
+          ) : vendor.distanceTier ? (
+            <div className="mt-1.5">
+              <DistanceTierBadge tier={vendor.distanceTier} />
             </div>
           ) : null}
 
@@ -146,7 +251,9 @@ function VendorResultRow({
               {vendor.phone ? (
                 <div className="flex items-center gap-1">
                   <PhoneIcon />
-                  <span className="text-[11px] text-[#717182]">{vendor.phone}</span>
+                  <PhoneTelLink phone={vendor.phone} className="text-[11px] text-[#717182]">
+                    {vendor.phone}
+                  </PhoneTelLink>
                 </div>
               ) : null}
               {vendor.website ? (
@@ -172,15 +279,35 @@ function VendorResultRow({
           ) : null}
         </div>
 
+        <div className="flex shrink-0 flex-col items-stretch gap-1.5">
         <button
           type="button"
           disabled={saving}
           onClick={onSelect}
-          className="inline-flex shrink-0 items-center gap-1 rounded-[10px] bg-[#0a0a0a] px-3 py-1.5 text-[12px] font-semibold leading-4 text-white outline-none transition-colors hover:bg-[#1f2937] focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-60"
+          aria-pressed={selected}
+          className={[
+            'inline-flex min-h-[36px] shrink-0 items-center justify-center gap-1 rounded-[10px] px-3 py-2 text-[12px] font-semibold leading-4 outline-none transition-colors focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-60',
+            selected
+              ? 'border border-[#101828] bg-white text-[#101828] hover:bg-[#f9fafb]'
+              : 'bg-[#0a4d38] text-white hover:bg-[#083828]',
+          ].join(' ')}
         >
-          <UserPlusIcon />
-          Select
+          {selected ? (
+            <>
+              <CheckIcon />
+              Selected
+            </>
+          ) : (
+            <>
+              <UserPlusIcon />
+              Select
+            </>
+          )}
         </button>
+        {vendor.phone ? (
+          <CallPhoneButton phone={vendor.phone} label="Call" variant="outline" className="w-full" />
+        ) : null}
+        </div>
       </div>
     </div>
   )
@@ -199,6 +326,16 @@ export type FindExternalVendorRailProps = {
   notice?: string | null
   saving?: boolean
   saveError?: string | null
+  /** Footer dismiss label (default Cancel). */
+  cancelLabel?: string
+  /** When set, header/footer back uses this instead of fully closing via `onClose`. */
+  onBack?: () => void
+  workOrderRef?: string | null
+  residentName?: string | null
+  /** Render only the panel (parent owns overlay, backdrop, and stacking). */
+  panelOnly?: boolean
+  /** When stacked beside another rail, drop outer rounding on the seam side. */
+  stackedPosition?: AdminRightRailStackedPosition
 }
 
 /** Figma 835:1519 — Find External Vendor, overview right rail. */
@@ -215,55 +352,161 @@ export function FindExternalVendorRail({
   notice = null,
   saving = false,
   saveError = null,
+  cancelLabel = 'Cancel',
+  onBack,
+  workOrderRef = null,
+  residentName = null,
+  panelOnly = false,
+  stackedPosition,
 }: FindExternalVendorRailProps) {
   const titleId = useId()
-  const displayRows = enrichExternalVendorSuggestions(suggestions, issueCategory)
+  const [verificationVendor, setVerificationVendor] = useState<ExternalVendorDisplayRow | null>(null)
+  const [setupMonitoringOpen, setSetupMonitoringOpen] = useState(false)
+  const [awaitingRefreshKey, setAwaitingRefreshKey] = useState(0)
+  const displayRows = enrichExternalVendorSuggestions(
+    suggestions,
+    issueCategory,
+    locationLabel,
+  )
   const searchQuery = buildExternalSearchQueryLabel(issueCategory, locationLabel)
   const providerChip = formatExternalProviderChip(providersUsed)
   const resultCount = displayRows.length
+  const verificationStep = verificationVendor != null
+  const handleBack = onBack ?? onClose
+  const handleDismiss = panelOnly && onBack ? onBack : onClose
+  const showBackNav = !panelOnly
+
+  const awaitingVendorKeys = useMemo(() => {
+    void awaitingRefreshKey
+    const keys = new Set<string>()
+    for (const vendor of displayRows) {
+      const setupContext = buildVendorSetupContextFromExternalVendor({
+        vendorName: vendor.name,
+        vendorPhone: vendor.phone,
+        vendorWebsite: vendor.website,
+        locationLabel,
+        issueCategory,
+      })
+      if (isVendorSetupAwaitingResponse(setupContext)) {
+        keys.add(`${vendor.name}-${vendor.primarySource}`)
+      }
+    }
+    return keys
+  }, [awaitingRefreshKey, displayRows, issueCategory, locationLabel])
+
+  useEffect(() => {
+    if (open) return
+    setVerificationVendor(null)
+    setSetupMonitoringOpen(false)
+  }, [open])
+
+  useEffect(() => {
+    setSetupMonitoringOpen(false)
+  }, [verificationVendor])
+
+  useEffect(() => {
+    if (!open || verificationVendor != null) return
+    setAwaitingRefreshKey((key) => key + 1)
+    const interval = window.setInterval(() => {
+      setAwaitingRefreshKey((key) => key + 1)
+    }, 1500)
+    return () => window.clearInterval(interval)
+  }, [open, verificationVendor])
 
   useEffect(() => {
     if (!open) return
     function onKey(event: KeyboardEvent) {
-      if (event.key === 'Escape' && !saving) onClose()
+      if (event.key !== 'Escape' || saving) return
+      if (setupMonitoringOpen) {
+        setSetupMonitoringOpen(false)
+        return
+      }
+      if (verificationVendor) {
+        setVerificationVendor(null)
+        return
+      }
+      handleDismiss()
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [open, onClose, saving])
+  }, [open, handleDismiss, saving, setupMonitoringOpen, verificationVendor])
+
+  function handleRailDismiss() {
+    if (saving) return
+    if (setupMonitoringOpen) {
+      setSetupMonitoringOpen(false)
+      return
+    }
+    if (verificationVendor) {
+      setVerificationVendor(null)
+      return
+    }
+    handleDismiss()
+  }
 
   if (!open) return null
 
-  return (
-    <div className="fixed inset-0 z-[55] flex justify-end">
-      <div
-        role="presentation"
-        className="absolute inset-0 bg-black/40"
-        aria-hidden
-        onClick={() => {
-          if (!saving) onClose()
-        }}
-      />
+  const panelWidthClass = setupMonitoringOpen
+    ? 'max-w-[min(100vw,560px)]'
+    : verificationStep
+      ? 'max-w-[min(100vw,960px)]'
+      : 'max-w-[min(100vw,520px)]'
+
+  const panel = (
       <div
         role="dialog"
-        aria-modal="true"
+        aria-modal={panelOnly ? undefined : true}
         aria-labelledby={titleId}
-        className="relative flex h-full max-h-dvh w-full max-w-[min(100vw,520px)] flex-col overflow-hidden rounded-l-[12px] border border-[#e5e7eb] bg-white shadow-[0px_8px_24px_rgba(0,0,0,0.12)]"
+        className={adminRightRailPanelClass(stackedPosition, panelWidthClass)}
       >
+        {!setupMonitoringOpen ? (
         <button
           type="button"
-          onClick={() => {
-            if (!saving) onClose()
-          }}
+          onClick={handleRailDismiss}
           disabled={saving}
           aria-label="Close"
           className="absolute right-4 top-4 z-10 rounded-lg p-1 text-[#9ca3af] outline-none hover:bg-black/5 hover:text-[#364153] focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2 disabled:opacity-50"
         >
           <CloseIcon />
         </button>
+        ) : null}
 
+        {verificationVendor ? (
+          <ExternalVendorVerificationView
+            vendor={verificationVendor}
+            locationLabel={locationLabel}
+            issueCategory={issueCategory}
+            workOrderRef={workOrderRef}
+            residentName={residentName}
+            saving={saving}
+            saveError={saveError}
+            setupMonitoringOpen={setupMonitoringOpen}
+            onSetupMonitoringOpen={() => setSetupMonitoringOpen(true)}
+            onSetupMonitoringClose={() => setSetupMonitoringOpen(false)}
+            onBack={() => setVerificationVendor(null)}
+            onAssign={() => {
+              void onSelect(verificationVendor)
+            }}
+            onReject={() => {
+              setVerificationVendor(null)
+            }}
+          />
+        ) : (
+        <>
         <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
           <header className="border-b border-[#e5e7eb] px-6 pb-5 pt-6 pr-12">
-            <div className="flex flex-wrap items-center gap-2">
+            {showBackNav ? (
+              <button
+                type="button"
+                disabled={saving}
+                onClick={handleBack}
+                className="inline-flex items-center gap-1 text-[12px] font-medium text-[#717182] outline-none hover:text-[#0a0a0a] focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2 disabled:opacity-50"
+              >
+                <ChevronLeftIcon />
+                {cancelLabel}
+              </button>
+            ) : null}
+            <div className={`flex flex-wrap items-center gap-2 ${showBackNav ? 'mt-3' : ''}`}>
               <span className="inline-flex rounded bg-[#fb2c36] px-1.5 py-0.5 text-[10px] font-bold leading-[15px] text-white">
                 URGENT
               </span>
@@ -316,16 +559,18 @@ export function FindExternalVendorRail({
 
             {!loading && !error && displayRows.length > 0 ? (
               <div>
-                {displayRows.map((vendor) => (
-                  <VendorResultRow
-                    key={`${vendor.name}-${vendor.primarySource}`}
-                    vendor={vendor}
-                    saving={saving}
-                    onSelect={() => {
-                      void onSelect(vendor)
-                    }}
-                  />
-                ))}
+                {displayRows.map((vendor) => {
+                  const rowKey = `${vendor.name}-${vendor.primarySource}`
+                  return (
+                    <VendorResultRow
+                      key={rowKey}
+                      vendor={vendor}
+                      saving={saving}
+                      selected={awaitingVendorKeys.has(rowKey)}
+                      onSelect={() => setVerificationVendor(vendor)}
+                    />
+                  )
+                })}
               </div>
             ) : null}
 
@@ -337,17 +582,34 @@ export function FindExternalVendorRail({
           </div>
         </div>
 
-        <footer className="flex shrink-0 justify-end border-t border-[#e5e7eb] px-6 py-4">
-          <button
-            type="button"
-            disabled={saving}
-            onClick={onClose}
-            className="rounded-[10px] border border-[#e5e7eb] bg-white px-4 py-2 text-[13px] font-medium text-[#364153] outline-none hover:bg-[#f9fafb] focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2 disabled:opacity-50"
-          >
-            Cancel
-          </button>
-        </footer>
+        {showBackNav ? (
+          <footer className="flex shrink-0 justify-end border-t border-[#e5e7eb] px-6 py-4">
+            <button
+              type="button"
+              disabled={saving}
+              onClick={handleBack}
+              className="inline-flex min-h-[44px] items-center justify-center rounded-[10px] border border-[#e5e7eb] bg-white px-4 py-2.5 text-[13px] font-medium text-[#364153] outline-none hover:bg-[#f9fafb] focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2 disabled:opacity-50"
+            >
+              {cancelLabel}
+            </button>
+          </footer>
+        ) : null}
+        </>
+        )}
       </div>
+  )
+
+  if (panelOnly) return panel
+
+  return (
+    <div className={ADMIN_RIGHT_RAIL_STACK_HOST}>
+      <div
+        role="presentation"
+        className={ADMIN_RIGHT_RAIL_SCRIM}
+        aria-hidden
+        onClick={handleRailDismiss}
+      />
+      {panel}
     </div>
   )
 }

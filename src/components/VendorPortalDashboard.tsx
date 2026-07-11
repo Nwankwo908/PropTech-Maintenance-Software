@@ -1333,7 +1333,7 @@ export function VendorPortalDashboard({
       }
     }
     if (useLiveVendorApi && !vendorToken?.trim()) {
-      const msg = 'Missing access. Open your vendor link from email.'
+      const msg = 'We need your job link from email to sign in.'
       setActionError(msg)
       window.alert(msg)
       return
@@ -1387,7 +1387,7 @@ export function VendorPortalDashboard({
       return
     }
     if (useLiveVendorApi && !vendorToken?.trim()) {
-      setVendorToast('Missing access. Open your vendor link from email.')
+      setVendorToast('We need your job link from email to sign in.')
       return
     }
     const snapshot = orders

@@ -1,4 +1,10 @@
 import { useEffect, useId, type ReactNode } from 'react'
+import {
+  ADMIN_RIGHT_RAIL_OVERLAY_HOST,
+  ADMIN_RIGHT_RAIL_SCRIM,
+  adminRightRailPanelClass,
+  type AdminRightRailStackedPosition,
+} from '@/lib/adminRightRail'
 import type { SlaOverdueActionReview } from '@/lib/slaOverdueActionReview'
 
 function CloseIcon() {
@@ -75,6 +81,10 @@ type SlaOverdueActionRailProps = {
   onTakeAction: (review: SlaOverdueActionReview) => void
   saving?: boolean
   loading?: boolean
+  /** Render only the panel (parent owns overlay, backdrop, and stacking). */
+  panelOnly?: boolean
+  /** When stacked beside another rail, drop outer rounding on the seam side. */
+  stackedPosition?: AdminRightRailStackedPosition
 }
 
 /** Escalated / SLA-breached maintenance — overview right rail. */
@@ -85,17 +95,19 @@ export function SlaOverdueActionRail({
   onTakeAction,
   saving = false,
   loading = false,
+  panelOnly = false,
+  stackedPosition,
 }: SlaOverdueActionRailProps) {
   const titleId = useId()
 
   useEffect(() => {
-    if (!open) return
+    if (!open || panelOnly) return
     function onKey(event: KeyboardEvent) {
       if (event.key === 'Escape') onClose()
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [open, onClose])
+  }, [open, onClose, panelOnly])
 
   if (!open || !review) return null
 
@@ -103,30 +115,35 @@ export function SlaOverdueActionRail({
     review.pastSlaLabel ??
     (review.minutesPastSla != null ? `${review.minutesPastSla} minutes past SLA` : 'Escalation requires review')
 
+  const isVendorSuggestionAction =
+    review.takeActionMode === 'external_vendor' ||
+    review.takeActionMode === 'assign_vendor' ||
+    review.takeActionMode === 'reassign'
+
   const dismissLabel =
     review.takeActionMode === 'reassign' && review.currentVendorName
       ? 'Wait for Current Vendor'
       : 'Close'
 
-  const actionLabel =
-    review.takeActionMode === 'external_vendor'
-      ? 'Find vendor'
-      : review.takeActionMode === 'assign_vendor'
-        ? 'Assign vendor'
-        : review.takeActionMode === 'workflows'
-          ? 'Open workflows'
-          : review.takeActionMode === 'reassign'
-            ? 'Approve & Continue'
-            : 'Take action'
+  const actionLabel = isVendorSuggestionAction
+    ? 'Ulo Vendor Suggestion'
+    : review.takeActionMode === 'workflows'
+      ? 'Open workflows'
+      : 'Take action'
 
-  return (
-    <div className="fixed inset-0 z-50 flex justify-end">
-      <div role="presentation" className="absolute inset-0 bg-black/40" aria-hidden onClick={onClose} />
+  const dismissButtonClass =
+    'inline-flex min-h-[44px] w-full items-center justify-center rounded-[10px] border border-[#e5e7eb] bg-white px-4 py-2.5 text-[13px] font-medium text-[#364153] outline-none hover:bg-[#f9fafb] focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2 disabled:opacity-50'
+
+  const actionButtonClass = isVendorSuggestionAction
+    ? 'inline-flex min-h-[44px] w-full items-center justify-center rounded-[10px] bg-[#0a4d38] px-4 py-2.5 text-[13px] font-medium text-white outline-none hover:bg-[#083828] focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2 disabled:opacity-50'
+    : 'inline-flex min-h-[44px] w-full items-center justify-center rounded-[10px] bg-[#0a0a0a] px-4 py-2.5 text-[13px] font-medium text-white outline-none hover:bg-[#1f2937] focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2 disabled:opacity-50'
+
+  const panel = (
       <div
         role="dialog"
-        aria-modal="true"
+        aria-modal={panelOnly ? undefined : true}
         aria-labelledby={titleId}
-        className="relative flex h-full max-h-dvh w-full max-w-[min(100vw,520px)] flex-col overflow-hidden rounded-l-[12px] border border-[#e5e7eb] bg-white shadow-[0px_8px_24px_rgba(0,0,0,0.12)]"
+        className={adminRightRailPanelClass(stackedPosition)}
       >
         <button
           type="button"
@@ -187,54 +204,44 @@ export function SlaOverdueActionRail({
               ))}
             </ul>
           </div>
-
-          <div className="mt-5 rounded-[10px] bg-[#f3f4f6] px-4 py-3">
-            <p className="text-[10px] font-semibold uppercase tracking-[0.08em] text-[#9ca3af]">Ulo suggests</p>
-            {loading ? (
-              <p className="mt-2 text-[13px] leading-5 text-[#6a7282]">
-                {review.takeActionMode === 'external_vendor'
-                  ? 'Searching external vendors…'
-                  : 'Finding roster alternatives…'}
-              </p>
-            ) : (
-              <>
-                <p className="mt-2 text-[14px] font-semibold leading-5 text-[#0a0a0a]">
-                  {review.suggestionLine}
-                </p>
-                {review.takeActionMode === 'external_vendor' && review.suggestion?.vendorName ? (
-                  <p className="mt-1 text-[12px] leading-4 text-[#6a7282]">
-                    Onboard {review.suggestion.vendorName} from external search and dispatch the job.
-                  </p>
-                ) : review.takeActionMode === 'reassign' && review.suggestion?.vendorName ? (
-                  <p className="mt-1 text-[12px] leading-4 text-[#6a7282]">
-                    Approve dispatches {review.suggestion.vendorName} via admin reassign.
-                  </p>
-                ) : null}
-              </>
-            )}
-          </div>
         </div>
 
-        <footer className="flex shrink-0 items-center justify-end gap-3 border-t border-[#e5e7eb] px-6 py-4">
+        <footer
+          className={`shrink-0 border-t border-[#e5e7eb] px-6 py-4 ${
+            isVendorSuggestionAction ? 'grid grid-cols-2 gap-3' : 'flex items-center justify-end gap-3'
+          }`}
+        >
           <button
             type="button"
             disabled={saving}
             onClick={onClose}
-            className="rounded-[10px] border border-[#e5e7eb] bg-white px-4 py-2 text-[13px] font-medium text-[#364153] outline-none hover:bg-[#f9fafb] focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2 disabled:opacity-50"
+            className={isVendorSuggestionAction ? dismissButtonClass : `${dismissButtonClass} w-auto`}
           >
-            {dismissLabel}
+            {isVendorSuggestionAction ? 'Close' : dismissLabel}
           </button>
           <button
             type="button"
             disabled={saving || loading}
             onClick={() => onTakeAction(review)}
-            className="inline-flex items-center gap-2 rounded-[10px] bg-[#0a0a0a] px-4 py-2 text-[13px] font-medium text-white outline-none hover:bg-[#1f2937] focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2 disabled:opacity-50"
+            className={isVendorSuggestionAction ? actionButtonClass : `${actionButtonClass} w-auto gap-2`}
           >
-            <ActionCircleIcon />
-            {saving ? 'Working…' : actionLabel}
+            {!isVendorSuggestionAction ? <ActionCircleIcon /> : null}
+            {saving
+              ? 'Working…'
+              : loading && isVendorSuggestionAction
+                ? 'Searching vendors…'
+                : actionLabel}
           </button>
         </footer>
       </div>
+  )
+
+  if (panelOnly) return panel
+
+  return (
+    <div className={ADMIN_RIGHT_RAIL_OVERLAY_HOST}>
+      <div role="presentation" className={ADMIN_RIGHT_RAIL_SCRIM} aria-hidden onClick={onClose} />
+      {panel}
     </div>
   )
 }

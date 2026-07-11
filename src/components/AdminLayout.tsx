@@ -100,7 +100,7 @@ function AdminTopBar() {
         <button
           type="button"
           title="Ulo AI assistant"
-          className="flex shrink-0 cursor-pointer items-center gap-2 rounded-[10px] bg-[#20967C] px-4 py-[9px] text-center text-[14px] font-medium leading-5 tracking-[-0.1504px] text-white outline-none transition-colors duration-150 hover:bg-[#1a7d68] active:bg-[#20967C] focus-visible:ring-2 focus-visible:ring-[#20967C] focus-visible:ring-offset-2"
+          className="flex shrink-0 cursor-pointer items-center gap-2 rounded-[10px] border border-current bg-transparent px-4 py-[9px] text-center text-[14px] font-medium leading-5 tracking-[-0.1504px] text-[#0A4D38] outline-none transition-colors duration-150 hover:bg-[#0A4D38]/5 active:bg-[#0A4D38]/10 focus-visible:ring-2 focus-visible:ring-[#0A4D38] focus-visible:ring-offset-2"
         >
           <AiSparkleIcon />
           Ask Ulo AI

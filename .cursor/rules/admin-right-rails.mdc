@@ -1,0 +1,46 @@
+---
+description: Admin right-rail UX — single panel vs stacked follow-on rails
+globs: src/components/*Rail*.tsx,src/components/AdminOverviewDashboard.tsx,src/components/AdminPropertyDetailDashboard.tsx
+alwaysApply: false
+---
+
+# Admin right-rail experiences
+
+## Layout
+
+- Full-height panel docked to the **right** over `bg-black/40`.
+- Solo: `fixed inset-0 z-50 flex justify-end` owns overlay + panel.
+- Stacked follow-on (message, find vendor, etc.): parent owns overlay at `z-[55]`; each rail uses `panelOnly` + `stackedPosition`.
+
+## Stacking rule
+
+When an action opens a **second** rail (draft SMS, vendor search, etc.):
+
+1. **Keep** the source review rail open — do not close it first.
+2. Place the follow-on panel **left**, source review **right**.
+3. Shared overlay dismisses the whole stack; follow-on close returns to source alone; source close dismisses both.
+4. Match vendor assign (`FindExternalVendorRail` + `SlaOverdueActionRail`) and lease incentive (`LeaseRenewalIncentiveMessageRail` + `LeaseRenewalEscalatedRail`).
+
+```tsx
+// ❌ BAD — replace review with follow-on
+closeLeaseRenewalRail()
+setIncentiveBrief(brief)
+
+// ✅ GOOD — stack beside review
+setIncentiveBrief(brief)
+// parent: stackedPosition left = message, right = review
+```
+
+## Chrome (keep consistent)
+
+Use `adminRightRailPanelClass` / `adminRightRailStackRoundedClass` from `@/lib/adminRightRail`.
+
+- Border `#e5e7eb`, white bg, shadow `0px_8px_24px_rgba(0,0,0,0.12)`
+- Width `max-w-[min(100vw,520px)]` or `560px` for denser review rails
+- Solo / left stack: `rounded-l-[12px]`; right stack: `rounded-none border-l-0`
+- Close: `absolute right-4 top-4`; title ~`text-[20px] font-semibold`; body scroll `min-h-0 flex-1 overflow-y-auto`
+- Escape / overlay: skip when `panelOnly` (parent handles); block dismiss while `saving`/`sending`
+
+## Props every stackable rail needs
+
+`panelOnly?: boolean`, `stackedPosition?: 'left' | 'right'` — when `panelOnly`, return the panel only (no overlay, no Escape listener).

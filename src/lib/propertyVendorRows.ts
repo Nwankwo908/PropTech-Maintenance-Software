@@ -13,6 +13,7 @@ export type PropertyVendorRecord = {
   id: string
   name: string
   category: string | null
+  phone: string | null
 }
 
 export type PropertyVendorWorkOrder = {
@@ -28,6 +29,7 @@ export type PropertyActiveVendorRow = {
   vendorId: string
   vendorName: string
   trade: string
+  phone: string | null
   activeJobCount: number
   workOrders: PropertyVendorWorkOrder[]
 }
@@ -125,6 +127,7 @@ export function buildPropertyActiveVendorRows(input: {
       vendorId,
       vendorName: vendor?.name?.trim() || 'Assigned vendor',
       trade: formatTrade(vendor?.category ?? null),
+      phone: vendor?.phone?.trim() || null,
       activeJobCount: workOrders.length,
       workOrders: workOrders.sort((a, b) => a.title.localeCompare(b.title)),
     })

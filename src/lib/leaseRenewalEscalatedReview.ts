@@ -7,7 +7,6 @@ export type LeaseRenewalRecommendAction =
 
 export type LeaseRenewalEscalatedAction =
   | LeaseRenewalRecommendAction
-  | 'snooze_1h'
   | 'mark_resolved'
 
 export type LeaseRenewalRecommendation = {
@@ -197,7 +196,6 @@ const LEASE_RENEWAL_ACTION_EVENT: Record<LeaseRenewalEscalatedAction, string> = 
   call_tenant: 'lease.renewal_call_recommended',
   trigger_move_out_prep: 'lease.move_out_prep_triggered',
   offer_renewal_incentive: 'lease.renewal_incentive_offered',
-  snooze_1h: 'lease.renewal_review_snoozed',
   mark_resolved: 'lease.renewal_resolved',
 }
 
@@ -205,23 +203,114 @@ const LEASE_RENEWAL_ACTION_MESSAGE: Record<LeaseRenewalEscalatedAction, string> 
   call_tenant: 'Admin initiated tenant call for lease renewal',
   trigger_move_out_prep: 'Move-out prep triggered from lease renewal review',
   offer_renewal_incentive: 'Renewal incentive offered from admin review',
-  snooze_1h: 'Lease renewal review snoozed for 1 hour',
   mark_resolved: 'Lease renewal escalation marked resolved',
+}
+
+async function resumeLeaseRenewalAfterAdminResolve(
+  workflowRunId: string,
+  landlordId: string,
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  const { supabase } = await import('@/lib/supabase')
+  if (!supabase) return { ok: false, error: 'Supabase is not configured.' }
+
+  const { data: run, error: fetchError } = await supabase
+    .from('workflow_runs')
+    .select('id, status, metadata')
+    .eq('id', workflowRunId)
+    .eq('landlord_id', landlordId)
+    .eq('template_id', 'lease_renewal')
+    .maybeSingle()
+
+  if (fetchError) return { ok: false, error: fetchError.message }
+  if (!run) return { ok: false, error: 'Workflow run not found.' }
+  if (run.status !== 'escalated') return { ok: true }
+
+  const metadata =
+    run.metadata && typeof run.metadata === 'object' && !Array.isArray(run.metadata)
+      ? (run.metadata as Record<string, unknown>)
+      : {}
+  const stepState =
+    metadata.step_state &&
+    typeof metadata.step_state === 'object' &&
+    !Array.isArray(metadata.step_state)
+      ? (metadata.step_state as Record<string, unknown>)
+      : {}
+
+  const now = new Date().toISOString()
+  const resumeStep = 'awaiting_response'
+
+  const { error: updateError } = await supabase
+    .from('workflow_runs')
+    .update({
+      status: 'active',
+      current_step: resumeStep,
+      current_stage: 'act',
+      metadata: {
+        ...metadata,
+        admin_resolved_at: now,
+        escalated_at: null,
+        escalation_reason: null,
+        step_state: {
+          ...stepState,
+          step: resumeStep,
+        },
+      },
+    })
+    .eq('id', workflowRunId)
+    .eq('landlord_id', landlordId)
+
+  if (updateError) return { ok: false, error: updateError.message }
+
+  const { error: eventError } = await supabase.from('workflow_events').insert({
+    workflow_run_id: workflowRunId,
+    event_type: 'workflow.act',
+    step: resumeStep,
+    actor_type: 'landlord',
+    message: 'Admin marked lease renewal escalation resolved — resuming outreach',
+    metadata: { admin_resolved_at: now },
+  })
+
+  if (eventError) return { ok: false, error: eventError.message }
+  return { ok: true }
 }
 
 export async function applyLeaseRenewalEscalatedAction(
   action: LeaseRenewalEscalatedAction,
   review: LeaseRenewalEscalatedReview,
   landlordId: string,
-): Promise<{ ok: true } | { ok: false; error: string }> {
+): Promise<
+  | { ok: true; moveOutRunId?: string; conversationId?: string | null }
+  | { ok: false; error: string }
+> {
+  if (action === 'trigger_move_out_prep') {
+    const { postTriggerMoveOutFromLeaseRenewal } = await import(
+      '@/api/triggerMoveOutFromLeaseRenewal'
+    )
+    const result = await postTriggerMoveOutFromLeaseRenewal(review.workflowRunId, landlordId)
+    if (!result.ok) return result
+    return {
+      ok: true,
+      moveOutRunId: result.moveOutRunId,
+      conversationId: result.conversationId,
+    }
+  }
+
   const { supabase } = await import('@/lib/supabase')
   if (!supabase) return { ok: false, error: 'Supabase is not configured.' }
+
+  if (action === 'mark_resolved') {
+    const resumeResult = await resumeLeaseRenewalAfterAdminResolve(
+      review.workflowRunId,
+      landlordId,
+    )
+    if (!resumeResult.ok) return resumeResult
+  }
 
   const { error } = await supabase.from('operations_graph_events').insert({
     landlord_id: landlordId,
     event_type: LEASE_RENEWAL_ACTION_EVENT[action],
-    source: 'admin',
-    actor_type: 'admin',
+    source: 'dashboard',
+    actor_type: 'landlord',
     workflow_run_id: review.workflowRunId,
     workflow_template_id: 'lease_renewal',
     resident_id: review.residentId,
@@ -229,9 +318,6 @@ export async function applyLeaseRenewalEscalatedAction(
       action,
       workflow_ref: review.workflowRef,
       message: LEASE_RENEWAL_ACTION_MESSAGE[action],
-      ...(action === 'snooze_1h'
-        ? { snooze_until: new Date(Date.now() + 60 * 60 * 1000).toISOString() }
-        : {}),
     },
   })
 

@@ -27,6 +27,9 @@ export type DiscoverExternalVendorsOk = {
   mode?: 'live' | 'mock'
   configured: boolean
   notice?: string
+  searchLocation?: string
+  locationLabel?: string
+  issueCategory?: string | null
 }
 
 export function resolveDiscoverExternalVendorsUrl(): string | null {

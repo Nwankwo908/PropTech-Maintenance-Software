@@ -105,21 +105,6 @@ export async function submitMaintenanceRequest(
   /** Read per-call so Vite always injects current `VITE_MAINTENANCE_API_URL` (avoids stale module-scope in edge cases). */
   const apiUrl = import.meta.env.VITE_MAINTENANCE_API_URL?.trim()
 
-  // #region agent log
-  fetch('http://127.0.0.1:7898/ingest/3050e2ef-64dd-49e5-a718-1f5719c45963', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': '57e74e' },
-    body: JSON.stringify({
-      sessionId: '57e74e',
-      location: 'submitMaintenanceRequest.ts:branch',
-      message: 'submitMaintenanceRequest branch',
-      data: { hasMaintenanceApiUrl: Boolean(apiUrl) },
-      timestamp: Date.now(),
-      hypothesisId: 'H2',
-    }),
-  }).catch(() => {})
-  // #endregion
-
   if (apiUrl) {
     const supabaseUrl = import.meta.env.VITE_SUPABASE_URL?.trim()
     if (supabaseUrl) {
@@ -186,73 +171,14 @@ export async function submitMaintenanceRequest(
     }
 
     const supabaseHeaders = maintenanceSubmitHeaders(apiUrl, authForRequest)
-    // #region agent log
-    fetch('http://127.0.0.1:7898/ingest/3050e2ef-64dd-49e5-a718-1f5719c45963', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': '57e74e' },
-      body: JSON.stringify({
-        sessionId: '57e74e',
-        location: 'submitMaintenanceRequest.ts:preFetch',
-        message: 'about to POST maintenance API',
-        data: {
-          photoCount: photos.length,
-          hasAuth: Boolean(authForRequest?.accessToken),
-          hasSupabaseHeaders: Boolean(supabaseHeaders),
-          sessionFresh: Boolean(options?.sessionFresh),
-        },
-        timestamp: Date.now(),
-        hypothesisId: 'H3',
-      }),
-    }).catch(() => {})
-    // #endregion
     const res = await fetch(apiUrl, {
       method: 'POST',
       headers: supabaseHeaders,
       body,
     })
 
-    // #region agent log
-    fetch('http://127.0.0.1:7898/ingest/3050e2ef-64dd-49e5-a718-1f5719c45963', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': '57e74e' },
-      body: JSON.stringify({
-        sessionId: '57e74e',
-        location: 'submitMaintenanceRequest.ts:response',
-        message: 'maintenance API response',
-        data: { status: res.status, ok: res.ok },
-        timestamp: Date.now(),
-        hypothesisId: 'H4',
-      }),
-    }).catch(() => {})
-    // #endregion
-
     if (!res.ok) {
       const text = await res.text()
-      // #region agent log
-      const snippet = text
-        .slice(0, 200)
-        .replace(
-          /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g,
-          '[redacted]',
-        )
-      fetch('http://127.0.0.1:7898/ingest/3050e2ef-64dd-49e5-a718-1f5719c45963', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': '57e74e' },
-        body: JSON.stringify({
-          sessionId: '57e74e',
-          location: 'submitMaintenanceRequest.ts:errorBody',
-          message: 'maintenance API error body (truncated)',
-          data: {
-            status: res.status,
-            snippet,
-            mentionsRequireVendor: text.includes('require_vendor'),
-            mentionsMaintenanceRequests: text.includes('maintenance_requests'),
-          },
-          timestamp: Date.now(),
-          hypothesisId: 'H1',
-        }),
-      }).catch(() => {})
-      // #endregion
       throw new Error(messageFromResponseBody(text, res.status))
     }
 
@@ -263,38 +189,10 @@ export async function submitMaintenanceRequest(
       id = data.id ?? data.requestId ?? id
     }
 
-    // #region agent log
-    fetch('http://127.0.0.1:7898/ingest/3050e2ef-64dd-49e5-a718-1f5719c45963', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': '57e74e' },
-      body: JSON.stringify({
-        sessionId: '57e74e',
-        location: 'submitMaintenanceRequest.ts:success',
-        message: 'maintenance submit api success',
-        data: { mode: 'api' },
-        timestamp: Date.now(),
-        hypothesisId: 'H4',
-      }),
-    }).catch(() => {})
-    // #endregion
     return { id, ticketId: id, mode: 'api' }
   }
 
   await new Promise((r) => setTimeout(r, 550))
   const demoId = `demo-${Date.now()}`
-  // #region agent log
-  fetch('http://127.0.0.1:7898/ingest/3050e2ef-64dd-49e5-a718-1f5719c45963', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': '57e74e' },
-    body: JSON.stringify({
-      sessionId: '57e74e',
-      location: 'submitMaintenanceRequest.ts:demo',
-      message: 'maintenance submit demo path (no VITE_MAINTENANCE_API_URL)',
-      data: { mode: 'demo' },
-      timestamp: Date.now(),
-      hypothesisId: 'H2',
-    }),
-  }).catch(() => {})
-  // #endregion
   return { id: demoId, ticketId: demoId, mode: 'demo' }
 }

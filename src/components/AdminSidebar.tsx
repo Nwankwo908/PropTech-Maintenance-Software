@@ -122,7 +122,7 @@ export function AdminSidebarContent({
           <span className="size-5 shrink-0 text-current" aria-hidden>
             <OperationsIcon />
           </span>
-          Operations
+          Active Tasks
         </NavLink>
         <NavLink to="/admin/residents" onClick={onNavigate} className={navClassName}>
           <span className="size-5 shrink-0 text-current" aria-hidden>

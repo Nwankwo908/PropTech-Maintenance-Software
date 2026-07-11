@@ -7,6 +7,11 @@ import {
 } from "../_shared/resident_notify.ts"
 import { sendResendEmail } from "../_shared/delivery.ts"
 import { sendOutboundSms } from "../_shared/sms/adapters.ts"
+import {
+  buildVendorRetryEmailSubject,
+  buildVendorRetryEmailText,
+  buildVendorRetrySms,
+} from "../_shared/vendor_outreach_copy.ts"
 
 const corsHeaders: Record<string, string> = {
   "Access-Control-Allow-Origin": "*",
@@ -46,32 +51,23 @@ function vendorRetryEmailBodies(input: {
   unit: string
   description: string
 }): { subject: string; text: string; html: string } {
-  const subject = `Maintenance request update (retry): ${input.ticketId}`
-  const text = [
-    `Hello ${input.vendorName},`,
-    "",
-    "Retrying a previously failed delivery for your maintenance request notification.",
-    "",
-    `Priority: ${input.priority}`,
-    `Unit / location: ${input.unit}`,
-    "",
-    "Description:",
-    input.description,
-    "",
-    `Ticket ID: ${input.ticketId}`,
-  ].join("\n")
+  const subject = buildVendorRetryEmailSubject(input.ticketId)
+  const text = buildVendorRetryEmailText(input)
+  const first = input.vendorName.trim().split(/\s+/)[0] || "there"
   const html = `
 <!DOCTYPE html>
 <html>
 <head><meta charset="utf-8"/></head>
 <body style="font-family: system-ui, sans-serif; line-height: 1.5; color: #101828;">
-  <p>Hello ${escapeHtml(input.vendorName)},</p>
-  <p>Retrying a previously failed delivery for your maintenance request notification.</p>
+  <p>Hi ${escapeHtml(first)},</p>
+  <p>We're resending your job alert — our last message may not have gone through.</p>
   <p><strong>Priority:</strong> ${escapeHtml(input.priority)}</p>
-  <p><strong>Unit / location:</strong> ${escapeHtml(input.unit)}</p>
-  <p style="color:#6a7282;">Description</p>
+  <p><strong>Location:</strong> ${escapeHtml(input.unit)}</p>
+  <p style="color:#6a7282;">What's needed</p>
   <p style="white-space: pre-wrap;">${escapeHtml(input.description)}</p>
-  <p style="font-size:12px;color:#6a7282;">Ticket ID: ${escapeHtml(input.ticketId)}</p>
+  <p style="font-size:12px;color:#6a7282;">Job ref: ${escapeHtml(input.ticketId)}</p>
+  <p>Check your email or vendor portal for accept/decline links.</p>
+  <p>Thanks!</p>
 </body>
 </html>`.trim()
   return { subject, text, html }
@@ -82,7 +78,7 @@ function vendorRetrySmsBody(input: {
   priority: string
   unit: string
 }): string {
-  return `Maintenance request notification retry. Ticket ${input.ticketId}. Priority: ${input.priority}. Unit: ${input.unit}.`
+  return buildVendorRetrySms(input)
 }
 
 function escapeHtml(s: string): string {

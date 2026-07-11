@@ -56,6 +56,10 @@ export type AdminRentCollectionRow = AdminWorkflowRow & {
   reminderEmailSent: boolean
   paymentStatus: string
   paymentIntent: string | null
+  /** True after dashboard payment-plan SMS was delivered to the resident thread. */
+  paymentPlanSmsSent: boolean
+  /** True after dashboard late-fee waiver SMS was delivered to the resident thread. */
+  lateFeeWaiverSmsSent: boolean
   timeline: AdminWorkflowTimelineEvent[]
 }
 
@@ -500,6 +504,10 @@ function buildRentCollectionRow(
     reminderEmailSent: reminder.emailSent,
     paymentStatus: derivePaymentStatus(metadata, classification),
     paymentIntent: parsePaymentIntent(metadata),
+    paymentPlanSmsSent: readMetaBoolean(metadata, 'payment_plan_sms_sent'),
+    lateFeeWaiverSmsSent:
+      readMetaBoolean(metadata, 'late_fee_waiver_sms_sent') ||
+      readMetaBoolean(metadata, 'late_fee_waived'),
     timeline: timeline.filter(
       (event) =>
         RENT_GRAPH_EVENT_TYPES.has(event.eventType) ||

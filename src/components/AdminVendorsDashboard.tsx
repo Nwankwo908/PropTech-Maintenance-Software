@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { VendorFormModal } from '@/components/AdminUserManagementDashboard'
 import { TableCheckbox } from '@/components/TableCheckbox'
+import { CallPhoneButton } from '@/components/CallPhoneButton'
 import magnifyingGlassIcon from '@/assets/Magnifying glass.svg'
 import { getActiveLandlordId } from '@/lib/activeLandlord'
 import { dedupeVendorsByName, duplicateVendorIdsToRemove } from '@/lib/vendorDedup'
@@ -557,18 +558,19 @@ export function AdminVendorsDashboard() {
                 <th className="px-6 py-3 text-[12px] font-medium text-[#6a7282]">Completed jobs</th>
                 <th className="px-6 py-3 text-[12px] font-medium text-[#6a7282]">Avg response</th>
                 <th className="px-6 py-3 text-[12px] font-medium text-[#6a7282]">Status</th>
+                <th className="px-6 py-3 text-[12px] font-medium text-[#6a7282]">Call</th>
               </tr>
             </thead>
             <tbody>
               {loading ? (
                 <tr>
-                  <td colSpan={7} className="px-6 py-10 text-center text-[14px] text-[#6a7282]">
+                  <td colSpan={8} className="px-6 py-10 text-center text-[14px] text-[#6a7282]">
                     Loading vendors…
                   </td>
                 </tr>
               ) : filteredVendors.length === 0 ? (
                 <tr>
-                  <td colSpan={7} className="px-6 py-10 text-center text-[14px] text-[#6a7282]">
+                  <td colSpan={8} className="px-6 py-10 text-center text-[14px] text-[#6a7282]">
                     {vendors.length === 0
                       ? 'No vendors yet. Add vendors so Ulo can route work to them.'
                       : 'No vendors match your search or filters.'}
@@ -619,6 +621,14 @@ export function AdminVendorsDashboard() {
                       >
                         {vendor.active ? 'Active' : 'Backup'}
                       </span>
+                    </td>
+                    <td className="px-6 py-4">
+                      <CallPhoneButton
+                        phone={vendor.phone}
+                        label="Call"
+                        variant="outline"
+                        className="text-[11px]"
+                      />
                     </td>
                   </tr>
                 ))

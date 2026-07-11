@@ -83,6 +83,9 @@ serve(async (req) => {
     providersUsed: result.providersUsed,
     mode: result.mode,
     configured: result.configured,
+    searchLocation: result.searchLocation,
+    locationLabel: result.locationLabel,
+    issueCategory: result.issueCategory,
     notice: result.mode === "mock"
       ? result.providersUsed.includes("netvendor")
         ? "Using NetVendor mock (set NETVENDOR_API_KEY + NETVENDOR_API_BASE_URL for live search)."

@@ -1,4 +1,10 @@
 import { useEffect, useId, type ReactNode } from 'react'
+import {
+  ADMIN_RIGHT_RAIL_OVERLAY_HOST,
+  ADMIN_RIGHT_RAIL_SCRIM,
+  adminRightRailPanelClass,
+  type AdminRightRailStackedPosition,
+} from '@/lib/adminRightRail'
 import type {
   LeaseRenewalEscalatedAction,
   LeaseRenewalEscalatedReview,
@@ -91,6 +97,9 @@ type LeaseRenewalEscalatedRailProps = {
   onClose: () => void
   onAction?: (action: LeaseRenewalEscalatedAction, review: LeaseRenewalEscalatedReview) => void
   saving?: boolean
+  /** Render panel only (parent owns overlay) for side-by-side stacking. */
+  panelOnly?: boolean
+  stackedPosition?: AdminRightRailStackedPosition
 }
 
 /** Escalated lease renewal review — overview right rail. */
@@ -100,134 +109,127 @@ export function LeaseRenewalEscalatedRail({
   onClose,
   onAction,
   saving = false,
+  panelOnly = false,
+  stackedPosition,
 }: LeaseRenewalEscalatedRailProps) {
   const titleId = useId()
 
   useEffect(() => {
-    if (!open) return
+    if (!open || panelOnly) return
     function onKey(event: KeyboardEvent) {
       if (event.key === 'Escape') onClose()
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [open, onClose])
+  }, [open, onClose, panelOnly])
 
   if (!open || !review) return null
 
-  return (
-    <div className="fixed inset-0 z-50 flex justify-end">
-      <div role="presentation" className="absolute inset-0 bg-black/40" aria-hidden onClick={onClose} />
-      <div
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby={titleId}
-        className="relative flex h-full max-h-dvh w-full max-w-[min(100vw,560px)] flex-col overflow-hidden rounded-l-[12px] border border-[#e5e7eb] bg-white shadow-[0px_8px_24px_rgba(0,0,0,0.12)]"
-      >
-        <div className="shrink-0 border-b border-[#e5e7eb] px-6 pb-4 pt-6">
-          <button
-            type="button"
-            onClick={onClose}
-            aria-label="Close"
-            className="absolute right-4 top-4 rounded-lg p-1 text-[#9ca3af] outline-none hover:bg-black/5 hover:text-[#364153] focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2"
-          >
-            <CloseIcon />
-          </button>
+  const panel = (
+    <div
+      role="dialog"
+      aria-modal={panelOnly ? undefined : true}
+      aria-labelledby={titleId}
+      className={adminRightRailPanelClass(stackedPosition, 'max-w-[min(100vw,560px)]')}
+    >
+      <div className="shrink-0 border-b border-[#e5e7eb] px-6 pb-4 pt-6">
+        <button
+          type="button"
+          onClick={onClose}
+          aria-label="Close"
+          className="absolute right-4 top-4 rounded-lg p-1 text-[#9ca3af] outline-none hover:bg-black/5 hover:text-[#364153] focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2"
+        >
+          <CloseIcon />
+        </button>
 
-          <div className="flex flex-wrap items-center gap-2 pr-8">
-            <span className="inline-flex rounded-[6px] bg-[#ffedd5] px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.06em] text-[#c2410c]">
-              Escalated workflow
-            </span>
-            <span className="text-[12px] text-[#9ca3af]">· {review.workflowRef}</span>
-          </div>
-
-          <h2
-            id={titleId}
-            className="mt-3 text-[20px] font-semibold leading-7 tracking-[-0.3px] text-[#0a0a0a]"
-          >
-            {review.headerTitle}
-          </h2>
-          <p className="mt-1 text-[13px] font-medium leading-5 text-[#6a7282]">{review.locationLabel}</p>
+        <div className="flex flex-wrap items-center gap-2 pr-8">
+          <span className="inline-flex rounded-[6px] bg-[#ffedd5] px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.06em] text-[#c2410c]">
+            Escalated workflow
+          </span>
+          <span className="text-[12px] text-[#9ca3af]">· {review.workflowRef}</span>
         </div>
 
-        <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-6 pb-6 pt-5">
-          <div className="grid grid-cols-2 gap-3">
-            <MetaCard label="Days until lease ends" icon={<DocumentIcon />} value={review.daysUntilLeaseEndLabel} />
-            <MetaCard label="Stage" icon={<AlertIcon />} value={review.stageLabel} />
-            <MetaCard label="Escalated" icon={<ClockIcon />} value={review.escalatedAtLabel} />
-            <MetaCard label="Outreach attempts" icon={<SparkleIcon />} value={review.outreachAttemptsLabel} />
-          </div>
-
-          <div className="mt-6">
-            <div className="flex items-center gap-1.5">
-              <SparkleIcon />
-              <p className="text-[10px] font-semibold uppercase tracking-[0.08em] text-[#9ca3af]">
-                Ulo recommends
-              </p>
-            </div>
-            <div className="mt-3 flex flex-col gap-2">
-              {review.recommendations.map((item) => (
-                <button
-                  key={item.id}
-                  type="button"
-                  disabled={saving || !onAction}
-                  onClick={() => onAction?.(item.id as LeaseRenewalRecommendAction, review)}
-                  className={[
-                    'flex w-full cursor-pointer items-center justify-between gap-3 rounded-[10px] px-4 py-3 text-left outline-none transition-colors duration-150 focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50',
-                    item.primary
-                      ? 'bg-[#0a0a0a] text-white hover:bg-[#1f2937] active:bg-[#374151]'
-                      : 'border border-[#e5e7eb] bg-white text-[#0a0a0a] hover:border-[#101828]/15 hover:bg-[#e2f5f1] active:bg-[#d4ede8]',
-                  ].join(' ')}
-                >
-                  <span className="min-w-0">
-                    <span className="block text-[14px] font-semibold leading-5">{item.title}</span>
-                    <span
-                      className={[
-                        'mt-0.5 block text-[12px] leading-4',
-                        item.primary ? 'text-[#d1d5db]' : 'text-[#6a7282]',
-                      ].join(' ')}
-                    >
-                      {item.subtitle}
-                    </span>
-                  </span>
-                  <ArrowUpRightIcon
-                    className={['size-4 shrink-0', item.primary ? 'text-white' : 'text-[#9ca3af]'].join(' ')}
-                  />
-                </button>
-              ))}
-            </div>
-          </div>
-        </div>
-
-        <footer className="flex shrink-0 items-center justify-between gap-3 border-t border-[#e5e7eb] px-6 py-4">
-          <button
-            type="button"
-            disabled={saving || !onAction}
-            onClick={() => onAction?.('snooze_1h', review)}
-            className="cursor-pointer text-[13px] font-medium text-[#0a0a0a] outline-none transition-colors duration-150 hover:text-[#364153] focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
-          >
-            Snooze 1h
-          </button>
-          <div className="flex items-center gap-2">
-            <button
-              type="button"
-              disabled={saving}
-              onClick={onClose}
-              className="cursor-pointer rounded-[10px] border border-[#e5e7eb] bg-white px-4 py-2 text-[13px] font-medium text-[#364153] outline-none transition-colors duration-150 hover:bg-[#f9fafb] focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2 disabled:opacity-50"
-            >
-              Close
-            </button>
-            <button
-              type="button"
-              disabled={saving || !onAction}
-              onClick={() => onAction?.('mark_resolved', review)}
-              className="inline-flex cursor-pointer items-center gap-2 rounded-[10px] bg-[#0a0a0a] px-4 py-2 text-[13px] font-medium text-white outline-none transition-colors duration-150 hover:bg-[#1f2937] active:bg-[#374151] focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              <CheckCircleIcon />
-              {saving ? 'Working…' : 'Mark resolved'}
-            </button>
-          </div>
-        </footer>
+        <h2
+          id={titleId}
+          className="mt-3 text-[20px] font-semibold leading-7 tracking-[-0.3px] text-[#0a0a0a]"
+        >
+          {review.headerTitle}
+        </h2>
+        <p className="mt-1 text-[13px] font-medium leading-5 text-[#6a7282]">{review.locationLabel}</p>
       </div>
+
+      <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-6 pb-6 pt-5">
+        <div className="grid grid-cols-2 gap-3">
+          <MetaCard label="Days until lease ends" icon={<DocumentIcon />} value={review.daysUntilLeaseEndLabel} />
+          <MetaCard label="Stage" icon={<AlertIcon />} value={review.stageLabel} />
+          <MetaCard label="Escalated" icon={<ClockIcon />} value={review.escalatedAtLabel} />
+          <MetaCard label="Outreach attempts" icon={<SparkleIcon />} value={review.outreachAttemptsLabel} />
+        </div>
+
+        <div className="mt-6">
+          <div className="flex items-center gap-1.5">
+            <SparkleIcon />
+            <p className="text-[10px] font-semibold uppercase tracking-[0.08em] text-[#9ca3af]">
+              Ulo recommends
+            </p>
+          </div>
+          <div className="mt-3 flex flex-col gap-2">
+            {review.recommendations.map((item) => (
+              <button
+                key={item.id}
+                type="button"
+                disabled={saving || !onAction}
+                onClick={() => onAction?.(item.id as LeaseRenewalRecommendAction, review)}
+                className={[
+                  'flex w-full cursor-pointer items-center justify-between gap-3 rounded-[10px] px-4 py-3 text-left outline-none transition-colors duration-150 focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50',
+                  item.primary
+                    ? 'border border-[#186179] bg-transparent text-[#186179] hover:bg-[#186179]/5 active:bg-[#186179]/10'
+                    : 'border border-[#e5e7eb] bg-white text-[#0a0a0a] hover:border-[#101828]/15 hover:bg-[#e2f5f1] active:bg-[#d4ede8]',
+                ].join(' ')}
+              >
+                <span className="min-w-0">
+                  <span className="block text-[14px] font-semibold leading-5">{item.title}</span>
+                  <span className="mt-0.5 block text-[12px] leading-4 text-[#6a7282]">
+                    {item.subtitle}
+                  </span>
+                </span>
+                <ArrowUpRightIcon
+                  className={['size-4 shrink-0', item.primary ? 'text-[#186179]' : 'text-[#9ca3af]'].join(' ')}
+                />
+              </button>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      <footer className="flex shrink-0 flex-col gap-2 border-t border-[#e5e7eb] px-6 py-4">
+        <button
+          type="button"
+          disabled={saving}
+          onClick={onClose}
+          className="inline-flex min-h-[44px] w-full cursor-pointer items-center justify-center rounded-[10px] border border-[#e5e7eb] bg-white px-4 py-2.5 text-[13px] font-medium text-[#364153] outline-none transition-colors duration-150 hover:bg-[#f9fafb] focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2 disabled:opacity-50"
+        >
+          Close
+        </button>
+        <button
+          type="button"
+          disabled={saving || !onAction}
+          onClick={() => onAction?.('mark_resolved', review)}
+          className="inline-flex min-h-[44px] w-full cursor-pointer items-center justify-center gap-2 rounded-[10px] bg-[#0A4D38] px-4 py-2.5 text-[13px] font-medium text-white outline-none transition-colors duration-150 hover:bg-[#083d2d] active:bg-[#062e22] focus-visible:ring-2 focus-visible:ring-[#0A4D38] focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          <CheckCircleIcon />
+          {saving ? 'Working…' : 'Mark resolved'}
+        </button>
+      </footer>
+    </div>
+  )
+
+  if (panelOnly) return panel
+
+  return (
+    <div className={ADMIN_RIGHT_RAIL_OVERLAY_HOST}>
+      <div role="presentation" className={ADMIN_RIGHT_RAIL_SCRIM} aria-hidden onClick={onClose} />
+      {panel}
     </div>
   )
 }

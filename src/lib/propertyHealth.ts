@@ -268,8 +268,10 @@ export function collectPortfolioBuildingKeys(
   pmTasks: PropertyHealthPmTask[],
   tickets: PropertyHealthTicket[],
   landlordId: string = getActiveLandlordId(),
+  residents: PropertyHealthResident[] = [],
 ): string[] {
   const ticketBuildingCtx = buildTicketBuildingContext(units)
+  const emailBuildingMap = buildResidentEmailBuildingMap(residents)
   const keys = new Set<string>()
 
   for (const unit of units) {
@@ -279,7 +281,7 @@ export function collectPortfolioBuildingKeys(
     if (task.building?.trim()) keys.add(normalizeBuildingKey(task.building))
   }
   for (const ticket of tickets) {
-    keys.add(ticketBuilding(ticket, ticketBuildingCtx))
+    keys.add(ticketBuilding(ticket, ticketBuildingCtx, emailBuildingMap, landlordId))
   }
   for (const building of LANDLORD_REGISTERED_BUILDINGS[landlordId] ?? []) {
     keys.add(normalizeBuildingKey(building))
@@ -295,8 +297,9 @@ export function countPortfolioBuildings(
   pmTasks: PropertyHealthPmTask[] = [],
   tickets: PropertyHealthTicket[] = [],
   landlordId: string = getActiveLandlordId(),
+  residents: PropertyHealthResident[] = [],
 ): number {
-  return collectPortfolioBuildingKeys(units, pmTasks, tickets, landlordId).length
+  return collectPortfolioBuildingKeys(units, pmTasks, tickets, landlordId, residents).length
 }
 
 export function isPendingSetupHealth(components: PropertyHealthComponent[]): boolean {
@@ -352,6 +355,55 @@ type TicketBuildingContext = {
   uniqueUnitLabelBuildingMap: Map<string, string>
 }
 
+function buildResidentEmailBuildingMap(
+  residents: PropertyHealthResident[],
+): Map<string, string> {
+  const emailBuildingMap = new Map<string, string>()
+  for (const resident of residents) {
+    const email = resident.email?.trim().toLowerCase()
+    if (email && resident.building?.trim()) {
+      emailBuildingMap.set(email, normalizeBuildingKey(resident.building))
+    }
+  }
+  return emailBuildingMap
+}
+
+/** Map short demo labels ("Oakwood") to roster building names ("Oakwood Apartments"). */
+function resolveCanonicalBuildingLabel(
+  label: string,
+  landlordId: string = getActiveLandlordId(),
+): string {
+  const normalized = normalizeBuildingKey(label)
+  const normalizedLower = normalized.toLowerCase()
+  const registered = LANDLORD_REGISTERED_BUILDINGS[landlordId] ?? []
+  for (const name of registered) {
+    const canonical = normalizeBuildingKey(name)
+    const canonicalLower = canonical.toLowerCase()
+    if (canonicalLower === normalizedLower) return canonical
+    const firstWord = canonicalLower.split(/\s+/)[0] ?? ''
+    if (
+      firstWord &&
+      (firstWord === normalizedLower ||
+        canonicalLower.startsWith(`${normalizedLower} `) ||
+        normalizedLower.startsWith(firstWord))
+    ) {
+      return canonical
+    }
+  }
+  return normalized
+}
+
+function parseBuildingPrefixFromUnit(
+  unit: string,
+  landlordId: string = getActiveLandlordId(),
+): string | null {
+  const trimmed = unit.trim()
+  if (!trimmed.includes('·')) return null
+  const prefix = trimmed.split('·')[0]?.trim()
+  if (!prefix) return null
+  return resolveCanonicalBuildingLabel(prefix, landlordId)
+}
+
 function buildTicketBuildingContext(units: PropertyHealthUnit[]): TicketBuildingContext {
   const unitIdBuildingMap = new Map<string, string>()
   const labelToBuildings = new Map<string, Set<string>>()
@@ -377,8 +429,21 @@ function buildTicketBuildingContext(units: PropertyHealthUnit[]): TicketBuilding
   return { unitIdBuildingMap, uniqueUnitLabelBuildingMap }
 }
 
-function ticketBuilding(ticket: PropertyHealthTicket, ctx: TicketBuildingContext): string {
-  if (ticket.building?.trim()) return normalizeBuildingKey(ticket.building)
+function ticketBuilding(
+  ticket: PropertyHealthTicket,
+  ctx: TicketBuildingContext,
+  emailBuildingMap?: Map<string, string>,
+  landlordId: string = getActiveLandlordId(),
+): string {
+  if (ticket.building?.trim()) {
+    return resolveCanonicalBuildingLabel(ticket.building, landlordId)
+  }
+  const fromUnitPrefix = parseBuildingPrefixFromUnit(ticket.unit, landlordId)
+  if (fromUnitPrefix) return fromUnitPrefix
+  const ticketEmail = ticket.email?.trim().toLowerCase()
+  if (ticketEmail && emailBuildingMap?.get(ticketEmail)) {
+    return emailBuildingMap.get(ticketEmail)!
+  }
   if (ticket.unitId?.trim()) {
     const fromUnitId = ctx.unitIdBuildingMap.get(ticket.unitId.trim())
     if (fromUnitId) return fromUnitId
@@ -396,16 +461,13 @@ export function filterTicketsForBuildingScope<T extends PropertyHealthTicket>(
 ): T[] {
   const ctx = buildTicketBuildingContext(units)
   const key = normalizeBuildingKey(building)
-  const emailBuildingMap = new Map<string, string>()
-  for (const resident of residents) {
-    const email = resident.email?.trim().toLowerCase()
-    if (email && resident.building?.trim()) {
-      emailBuildingMap.set(email, normalizeBuildingKey(resident.building))
-    }
-  }
+  const emailBuildingMap = buildResidentEmailBuildingMap(residents)
 
   return tickets.filter((ticket) => {
-    if (ticket.building?.trim() && normalizeBuildingKey(ticket.building) === key) {
+    if (
+      ticket.building?.trim() &&
+      resolveCanonicalBuildingLabel(ticket.building) === key
+    ) {
       return true
     }
     const ticketEmail = ticket.email?.trim().toLowerCase()
@@ -416,7 +478,7 @@ export function filterTicketsForBuildingScope<T extends PropertyHealthTicket>(
       const unitBuilding = ctx.unitIdBuildingMap.get(ticket.unitId.trim())
       if (unitBuilding === key) return true
     }
-    return ticketBuilding(ticket, ctx) === key
+    return ticketBuilding(ticket, ctx, emailBuildingMap) === key
   })
 }
 
@@ -431,10 +493,10 @@ function filterUnitsForBuilding(
 function filterTicketsForBuilding(
   tickets: PropertyHealthTicket[],
   building: string,
-  ctx: TicketBuildingContext,
+  units: PropertyHealthUnit[],
+  residents: PropertyHealthResident[] = [],
 ): PropertyHealthTicket[] {
-  const key = normalizeBuildingKey(building)
-  return tickets.filter((ticket) => ticketBuilding(ticket, ctx) === key)
+  return filterTicketsForBuildingScope(tickets, building, units, residents)
 }
 
 function filterPmForBuilding(tasks: PropertyHealthPmTask[], building: string): PropertyHealthPmTask[] {
@@ -744,7 +806,12 @@ export function computePropertyHealthScope(
   }
 
   const scopedTickets = scope.building
-    ? filterTicketsForBuilding(inputs.tickets, scope.building, ticketBuildingCtx)
+    ? filterTicketsForBuilding(
+        inputs.tickets,
+        scope.building,
+        inputs.units,
+        inputs.residents ?? [],
+      )
     : inputs.tickets
   const openTickets = scopedTickets.filter(isTicketOpen)
   const scopedPm = scope.building
@@ -796,6 +863,7 @@ export function buildPropertyHealthReport(
     inputs.pmTasks,
     inputs.tickets,
     landlordId,
+    inputs.residents ?? [],
   )
 
   const openTickets = inputs.tickets.filter(isTicketOpen)
@@ -815,7 +883,8 @@ export function buildPropertyHealthReport(
     const openWorkOrderCount = filterTicketsForBuilding(
       openTickets,
       building,
-      ticketBuildingCtx,
+      inputs.units,
+      inputs.residents ?? [],
     ).length
 
     const scopedFeedback = filterFeedbackForBuilding(
@@ -876,13 +945,14 @@ export function mapTicketsForPropertyHealth(
 ): PropertyHealthTicket[] {
   return rows.map((raw) => ({
     id: asString(raw.id),
-    createdAt: asString(raw.created_at),
+    createdAt: asString(raw.created_at ?? raw.createdAt),
     unit: asString(raw.unit),
-    unitId: asString(raw.unit_id) || null,
+    unitId: asString(raw.unit_id ?? raw.unitId) || null,
     building: asString(raw.building) || null,
-    issueCategory: asString(raw.issue_category) || null,
-    vendorWorkStatus: asString(raw.vendor_work_status).toLowerCase(),
-    assignedVendorId: asString(raw.assigned_vendor_id) || null,
+    email: asString(raw.email) || null,
+    issueCategory: asString(raw.issue_category ?? raw.issueCategory) || null,
+    vendorWorkStatus: asString(raw.vendor_work_status ?? raw.vendorWorkStatus).toLowerCase(),
+    assignedVendorId: asString(raw.assigned_vendor_id ?? raw.assignedVendorId) || null,
   }))
 }
 

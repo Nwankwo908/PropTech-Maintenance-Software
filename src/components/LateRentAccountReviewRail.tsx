@@ -1,8 +1,20 @@
-import { useEffect, useId } from 'react'
+import { useEffect, useId, useState } from 'react'
+import {
+  postGenerateLateRentInsights,
+  resolveGenerateLateRentInsightsUrl,
+} from '@/api/generateLateRentInsights'
+import {
+  ADMIN_RIGHT_RAIL_OVERLAY_HOST,
+  ADMIN_RIGHT_RAIL_SCRIM,
+  adminRightRailPanelClass,
+  type AdminRightRailStackedPosition,
+} from '@/lib/adminRightRail'
 import {
   LATE_RENT_ACCOUNT_ACTION_LABELS,
+  applyLateRentInsightTexts,
   type LateRentAccountAction,
   type LateRentAccountReview,
+  type LateRentInsightCard,
 } from '@/lib/lateRentAccountReview'
 
 function CloseIcon() {
@@ -63,6 +75,9 @@ type LateRentAccountReviewRailProps = {
   onClose: () => void
   onAction?: (action: LateRentAccountAction, review: LateRentAccountReview) => void
   saving?: boolean
+  /** Render panel only (parent owns overlay) for side-by-side stacking. */
+  panelOnly?: boolean
+  stackedPosition?: AdminRightRailStackedPosition
 }
 
 /** Overdue rent collection review — overview right rail (Late Rent Review workflow). */
@@ -72,28 +87,103 @@ export function LateRentAccountReviewRail({
   onClose,
   onAction,
   saving = false,
+  panelOnly = false,
+  stackedPosition,
 }: LateRentAccountReviewRailProps) {
   const titleId = useId()
+  const [insights, setInsights] = useState<LateRentInsightCard[] | null>(null)
+  const [insightsLoading, setInsightsLoading] = useState(false)
+  const [insightsMode, setInsightsMode] = useState<'openai' | 'fallback' | null>(null)
+  const [insightsError, setInsightsError] = useState<string | null>(null)
 
   useEffect(() => {
-    if (!open) return
+    if (!open || panelOnly) return
     function onKey(event: KeyboardEvent) {
-      if (event.key === 'Escape') onClose()
+      if (event.key === 'Escape' && !saving) onClose()
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [open, onClose])
+  }, [open, onClose, saving, panelOnly])
+
+  useEffect(() => {
+    if (!open || !review) {
+      setInsights(null)
+      setInsightsMode(null)
+      setInsightsError(null)
+      setInsightsLoading(false)
+      return
+    }
+
+    let cancelled = false
+    const runId = review.workflowRunId
+    const fallback = review.insights
+
+    setInsights(null)
+    setInsightsMode(null)
+    setInsightsError(null)
+    setInsightsLoading(true)
+
+    void (async () => {
+      const url = resolveGenerateLateRentInsightsUrl()
+      const secret = import.meta.env.VITE_ADMIN_REASSIGN_SECRET?.trim()
+      if (!url || !secret) {
+        if (!cancelled) {
+          setInsights(fallback)
+          setInsightsMode('fallback')
+          setInsightsError('AI insights are not configured — showing local summary.')
+          setInsightsLoading(false)
+        }
+        return
+      }
+
+      try {
+        const result = await postGenerateLateRentInsights({
+          url,
+          secret,
+          account: review.insightsAccount,
+        })
+        if (cancelled || runId !== review.workflowRunId) return
+        const next = applyLateRentInsightTexts(review, result.insights).insights
+        setInsights(next)
+        setInsightsMode(result.mode)
+        setInsightsError(
+          result.mode === 'fallback'
+            ? 'AI unavailable — showing local summary.'
+            : null,
+        )
+      } catch (err) {
+        if (cancelled) return
+        setInsights(fallback)
+        setInsightsMode('fallback')
+        setInsightsError(
+          err instanceof Error ? err.message : 'Could not generate AI insights.',
+        )
+      } finally {
+        if (!cancelled) setInsightsLoading(false)
+      }
+    })()
+
+    return () => {
+      cancelled = true
+    }
+  }, [open, review])
 
   if (!open || !review) return null
 
-  return (
-    <div className="fixed inset-0 z-50 flex justify-end">
-      <div role="presentation" className="absolute inset-0 bg-black/40" aria-hidden onClick={onClose} />
+  const displayInsights = insights ?? review.insights
+  const subtitle =
+    insightsLoading
+      ? 'Generating AI summary…'
+      : insightsMode === 'openai'
+        ? 'AI-generated summary of this account'
+        : 'Account summary'
+
+  const panel = (
       <div
         role="dialog"
-        aria-modal="true"
+        aria-modal={panelOnly ? undefined : true}
         aria-labelledby={titleId}
-        className="relative flex h-full max-h-dvh w-full max-w-[min(100vw,560px)] flex-col overflow-hidden rounded-l-[12px] border border-[#e5e7eb] bg-white shadow-[0px_8px_24px_rgba(0,0,0,0.12)]"
+        className={adminRightRailPanelClass(stackedPosition, 'max-w-[min(100vw,560px)]')}
       >
         <div className="shrink-0 border-b border-[#e5e7eb] px-6 pb-4 pt-6">
           <div className="flex items-start justify-between gap-3 pr-8">
@@ -111,8 +201,9 @@ export function LateRentAccountReviewRail({
             <button
               type="button"
               onClick={onClose}
+              disabled={saving}
               aria-label="Close"
-              className="absolute right-4 top-4 rounded-lg p-1 text-[#9ca3af] outline-none hover:bg-black/5 hover:text-[#364153] focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2"
+              className="absolute right-4 top-4 rounded-lg p-1 text-[#9ca3af] outline-none hover:bg-black/5 hover:text-[#364153] focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2 disabled:opacity-50"
             >
               <CloseIcon />
             </button>
@@ -166,13 +257,19 @@ export function LateRentAccountReviewRail({
           <div className="mt-5 rounded-[12px] border border-[#e5e7eb] bg-white p-4">
             <div>
               <p className="text-[15px] font-semibold leading-6 text-[#0a0a0a]">Ulo insights</p>
-              <p className="text-[12px] leading-4 text-[#6a7282]">AI-generated summary of this account</p>
+              <p className="text-[12px] leading-4 text-[#6a7282]">{subtitle}</p>
+              {insightsError ? (
+                <p className="mt-1 text-[11px] leading-4 text-[#9ca3af]">{insightsError}</p>
+              ) : null}
             </div>
             <div className="mt-4 grid gap-3 sm:grid-cols-2">
-              {review.insights.map((insight) => (
+              {displayInsights.map((insight) => (
                 <div
                   key={insight.tag}
-                  className="relative rounded-[10px] border border-[#e5e7eb] bg-white p-3.5"
+                  className={[
+                    'relative rounded-[10px] border border-[#e5e7eb] bg-white p-3.5',
+                    insightsLoading ? 'animate-pulse' : '',
+                  ].join(' ')}
                 >
                   <span className="absolute right-3 top-3">
                     <SparkleIcon />
@@ -182,7 +279,9 @@ export function LateRentAccountReviewRail({
                   >
                     {insight.tag}
                   </span>
-                  <p className="mt-3 pr-6 text-[13px] leading-5 text-[#364153]">{insight.text}</p>
+                  <p className="mt-3 pr-6 text-[13px] leading-5 text-[#364153]">
+                    {insightsLoading ? 'Writing insight…' : insight.text}
+                  </p>
                 </div>
               ))}
             </div>
@@ -196,24 +295,47 @@ export function LateRentAccountReviewRail({
               'waive_late_fee',
               'mark_payment_received',
             ] as LateRentAccountAction[]
-          ).map((action) => (
-            <button
-              key={action}
-              type="button"
-              disabled={saving || !onAction}
-              onClick={() => onAction?.(action, review)}
-              className={[
-                'w-full rounded-[10px] px-4 py-2.5 text-[13px] font-medium outline-none transition-colors duration-150 focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50',
-                action === 'offer_payment_plan'
-                  ? 'cursor-pointer bg-[#0a0a0a] text-white hover:bg-[#1f2937] active:bg-[#374151]'
-                  : 'cursor-pointer border border-[#e5e7eb] bg-white text-[#364153] hover:border-[#101828]/15 hover:bg-[#e2f5f1] active:bg-[#d4ede8]',
-              ].join(' ')}
-            >
-              {saving ? 'Working…' : LATE_RENT_ACCOUNT_ACTION_LABELS[action]}
-            </button>
-          ))}
+          ).map((action) => {
+            const paymentPlanSent =
+              action === 'offer_payment_plan' && review.paymentPlanSmsSent
+            const lateFeeWaived =
+              action === 'waive_late_fee' && review.lateFeeWaiverSmsSent
+            const actionDone = paymentPlanSent || lateFeeWaived
+            return (
+              <button
+                key={action}
+                type="button"
+                disabled={saving || !onAction || actionDone}
+                onClick={() => onAction?.(action, review)}
+                className="w-full cursor-pointer rounded-[10px] border border-[#187960] bg-white px-4 py-2.5 text-[13px] font-medium text-[#364153] outline-none transition-colors duration-150 hover:bg-[#e2f5f1] active:bg-[#d4ede8] focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {saving
+                  ? 'Working…'
+                  : paymentPlanSent
+                    ? 'Payment plan sent'
+                    : lateFeeWaived
+                      ? 'Late fee waive'
+                      : LATE_RENT_ACCOUNT_ACTION_LABELS[action]}
+              </button>
+            )
+          })}
         </footer>
       </div>
+  )
+
+  if (panelOnly) return panel
+
+  return (
+    <div className={ADMIN_RIGHT_RAIL_OVERLAY_HOST}>
+      <div
+        role="presentation"
+        className={ADMIN_RIGHT_RAIL_SCRIM}
+        aria-hidden
+        onClick={() => {
+          if (!saving) onClose()
+        }}
+      />
+      {panel}
     </div>
   )
 }

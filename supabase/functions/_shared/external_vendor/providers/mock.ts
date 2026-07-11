@@ -1,3 +1,4 @@
+import { tradeBucketFromCategory } from "../trade_terms.ts"
 import type {
   ExternalVendorHit,
   ExternalVendorProvider,
@@ -79,14 +80,6 @@ const MOCK_BY_TRADE: Record<string, ExternalVendorHit[]> = {
   ],
 }
 
-function tradeBucket(tradeTerms: string): string {
-  const t = tradeTerms.toLowerCase()
-  if (t.includes("plumb")) return "plumbing"
-  if (t.includes("electric")) return "electrical"
-  if (t.includes("hvac") || t.includes("heat") || t.includes("air")) return "hvac"
-  return "default"
-}
-
 /** Deterministic external suggestions for dev/demo when live APIs are unavailable. */
 export class MockExternalVendorProvider implements ExternalVendorProvider {
   readonly id = "mock" as const
@@ -96,11 +89,8 @@ export class MockExternalVendorProvider implements ExternalVendorProvider {
   }
 
   async search(input: ExternalVendorSearchInput): Promise<ExternalVendorHit[]> {
-    const bucket = tradeBucket(input.tradeTerms)
+    const bucket = tradeBucketFromCategory(input.issueCategory)
     const rows = MOCK_BY_TRADE[bucket] ?? MOCK_BY_TRADE.default
-    void input.searchLocation
-    void input.issueCategory
-    void input.textQuery
     return rows.map((row) => ({ ...row }))
   }
 }

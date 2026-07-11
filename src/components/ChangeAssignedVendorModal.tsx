@@ -4,6 +4,7 @@ import {
   type ExternalVendorSuggestionDto,
 } from '@/api/discoverExternalVendors'
 import { FindExternalVendorRail } from '@/components/FindExternalVendorRail'
+import { formatWorkOrderRefFromTicketId } from '@/lib/vendorCallFlow'
 
 function IconWrenchHeader({ className = 'size-5 shrink-0 text-white' }: { className?: string }) {
   return (
@@ -85,6 +86,8 @@ export function ChangeAssignedVendorModal({
   const [externalLoading, setExternalLoading] = useState(false)
   const [externalError, setExternalError] = useState<string | null>(null)
   const [externalNotice, setExternalNotice] = useState<string | null>(null)
+  const [resolvedLocationLabel, setResolvedLocationLabel] = useState<string | null>(null)
+  const [resolvedIssueCategory, setResolvedIssueCategory] = useState<string | null>(null)
 
   useEffect(() => {
     if (!open) return
@@ -101,6 +104,8 @@ export function ChangeAssignedVendorModal({
     setExternalLoading(true)
     setExternalError(null)
     setExternalNotice(null)
+    setResolvedLocationLabel(null)
+    setResolvedIssueCategory(null)
     setExternalSuggestions([])
     setExternalProvidersUsed([])
     void (async () => {
@@ -112,6 +117,8 @@ export function ChangeAssignedVendorModal({
         })
         if (cancelled) return
         if (res.notice) setExternalNotice(res.notice)
+        if (res.locationLabel) setResolvedLocationLabel(res.locationLabel)
+        if (res.issueCategory !== undefined) setResolvedIssueCategory(res.issueCategory)
         setExternalSuggestions(res.suggestions ?? [])
         setExternalProvidersUsed(res.providersUsed ?? [])
       } catch (e) {
@@ -158,8 +165,19 @@ export function ChangeAssignedVendorModal({
         loading={externalLoading}
         error={externalError}
         notice={externalNotice}
-        locationLabel={externalDiscovery?.locationLabel ?? 'Property · Unit'}
-        issueCategory={externalDiscovery?.issueCategory ?? null}
+        locationLabel={
+          resolvedLocationLabel ??
+          externalDiscovery?.locationLabel ??
+          'Property · Unit'
+        }
+        issueCategory={
+          resolvedIssueCategory ?? externalDiscovery?.issueCategory ?? null
+        }
+        workOrderRef={
+          externalDiscovery?.ticketId
+            ? formatWorkOrderRefFromTicketId(externalDiscovery.ticketId)
+            : null
+        }
         suggestions={externalSuggestions}
         providersUsed={externalProvidersUsed}
         onSelect={async (pick) => {

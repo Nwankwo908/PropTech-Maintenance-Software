@@ -54,6 +54,24 @@ verify_jwt = false
 import_map = "./functions/recommend-vendor-alternatives/deno.json"
 entrypoint = "./functions/recommend-vendor-alternatives/index.ts"
 
+[functions.generate-late-rent-insights]
+enabled = true
+verify_jwt = false
+import_map = "./functions/generate-late-rent-insights/deno.json"
+entrypoint = "./functions/generate-late-rent-insights/index.ts"
+
+[functions.send-late-rent-account-message]
+enabled = true
+verify_jwt = false
+import_map = "./functions/send-late-rent-account-message/deno.json"
+entrypoint = "./functions/send-late-rent-account-message/index.ts"
+
+[functions.send-lease-renewal-incentive-message]
+enabled = true
+verify_jwt = false
+import_map = "./functions/send-lease-renewal-incentive-message/deno.json"
+entrypoint = "./functions/send-lease-renewal-incentive-message/index.ts"
+
 [functions.sla-auto-reassign]
 enabled = true
 verify_jwt = false
@@ -193,6 +211,12 @@ enabled = true
 verify_jwt = false
 import_map = "./functions/start-lifecycle-workflow/deno.json"
 entrypoint = "./functions/start-lifecycle-workflow/index.ts"
+
+[functions.trigger-move-out-from-lease-renewal]
+enabled = true
+verify_jwt = false
+import_map = "./functions/trigger-move-out-from-lease-renewal/deno.json"
+entrypoint = "./functions/trigger-move-out-from-lease-renewal/index.ts"
 
 [functions.provision-sms-number]
 enabled = true

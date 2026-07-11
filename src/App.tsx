@@ -26,6 +26,8 @@ import { AdminUserManagementDashboard } from './components/AdminUserManagementDa
 import { AdminOnboardingDashboard } from './components/AdminOnboardingDashboard'
 import { AdminOnboardingGuard } from './components/AdminOnboardingGuard'
 import { TermsOfServicePage } from './components/legal/TermsOfServicePage'
+import { PrivacyPolicyPage } from './components/legal/PrivacyPolicyPage'
+import { VendorIntakePortal } from './VendorIntakePortal'
 
 export default function App() {
   useSessionAutoRefresh(supabase)
@@ -36,7 +38,9 @@ export default function App() {
       <Routes>
         <Route path="/" element={<LandingPage />} />
         <Route path="/terms" element={<TermsOfServicePage />} />
+        <Route path="/privatepolicy" element={<PrivacyPolicyPage />} />
         <Route path="/request" element={<ResidentPortal />} />
+        <Route path="/v/:token" element={<VendorIntakePortal />} />
 
         <Route
           path="/vendor/*"

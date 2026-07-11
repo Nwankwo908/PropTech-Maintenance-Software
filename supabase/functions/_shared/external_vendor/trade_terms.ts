@@ -1,17 +1,49 @@
+/** Normalize ticket issue_category for external vendor search + filtering. */
+export function normalizeIssueCategoryForSearch(
+  issueCategory: string | null | undefined,
+): string | null {
+  const c = String(issueCategory ?? "").trim().toLowerCase()
+  if (!c || c === "maintenance") return null
+  if (c.includes("plumb") || c.includes("water")) return "plumbing"
+  if (c.includes("hvac") || c.includes("heat") || c.includes("air")) return "hvac"
+  if (c.includes("electric")) return "electrical"
+  if (c.includes("appliance")) return "appliance"
+  if (c.includes("door") || c.includes("window")) return "other"
+  return c
+}
+
+export type ExternalVendorTradeBucket =
+  | "plumbing"
+  | "electrical"
+  | "hvac"
+  | "appliance"
+  | "default"
+
+/** Trade bucket for mock providers and result filtering. */
+export function tradeBucketFromCategory(
+  issueCategory: string | null | undefined,
+): ExternalVendorTradeBucket {
+  const c = normalizeIssueCategoryForSearch(issueCategory)
+  if (c === "plumbing") return "plumbing"
+  if (c === "electrical") return "electrical"
+  if (c === "hvac") return "hvac"
+  if (c === "appliance") return "appliance"
+  return "default"
+}
+
 /** Map maintenance issue_category to external search trade terms. */
 export function tradeTermsFromCategory(
   issueCategory: string | null | undefined,
 ): string {
+  const bucket = tradeBucketFromCategory(issueCategory)
+  if (bucket === "plumbing") return "plumbing contractor"
+  if (bucket === "hvac") return "HVAC air conditioning heating"
+  if (bucket === "electrical") return "electrical contractor"
+  if (bucket === "appliance") return "appliance repair"
   const c = String(issueCategory ?? "").trim().toLowerCase()
-  if (!c) return "home maintenance repair"
-  if (c.includes("plumb")) return "plumbing contractor"
-  if (c.includes("hvac") || c.includes("heat") || c.includes("air")) {
-    return "HVAC air conditioning heating"
-  }
-  if (c.includes("electric")) return "electrical contractor"
-  if (c.includes("appliance")) return "appliance repair"
   if (c.includes("door") || c.includes("window")) return "door window repair"
-  return `${c} repair service`
+  if (c) return `${c} repair service`
+  return "home maintenance repair"
 }
 
 export function buildExternalSearchQuery(

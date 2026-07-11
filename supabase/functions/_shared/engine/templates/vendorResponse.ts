@@ -1,6 +1,11 @@
 import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.49.1"
 import { applyVendorStatusTransition, parseVendorSmsReply } from "../../vendor_workflow.ts"
 import {
+  buildVendorSmsAcceptReply,
+  buildVendorSmsDeclineReply,
+  buildVendorSmsReplyPrompt,
+} from "../../vendor_outreach_copy.ts"
+import {
   recordVendorRepliedEvent,
   resolveVendorMaintenanceRequestId,
   type VendorStatusTransitionResultMeta,
@@ -127,11 +132,11 @@ export const vendorJobResponseTemplate: WorkflowTemplate = {
       route: workflowRouteForTemplate("vendor_job_response"),
       replyHint:
         parsedAction === "accept"
-          ? "Thanks — your acceptance was recorded."
+          ? buildVendorSmsAcceptReply()
           : parsedAction === "decline"
-            ? "Thanks — your decline was recorded."
+            ? buildVendorSmsDeclineReply()
             : ticketId
-              ? "Reply ACCEPT or DECLINE for your assigned job."
+              ? buildVendorSmsReplyPrompt()
               : undefined,
       metadata: {
         vendorId,

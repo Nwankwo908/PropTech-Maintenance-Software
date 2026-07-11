@@ -641,6 +641,75 @@ export async function findOpenConversation(
   return data as { id: string; maintenance_request_id: string | null; status: string; conversation_type: string } | null
 }
 
+/**
+ * Find the most recent resident SMS thread for a phone (any status), including
+ * completed late-rent / reminder threads that should receive follow-up SMS.
+ * Falls back to resident_id when the phone on the thread was stored incorrectly
+ * (e.g. demo ai_copilot rows keyed to the Ulo line).
+ */
+export async function findResidentConversationByPhone(
+  supabase: SupabaseClient,
+  params: {
+    landlordId: string
+    smsNumberId: string
+    externalPhone: string
+    residentId?: string | null
+  },
+): Promise<{ id: string; maintenance_request_id: string | null; status: string; conversation_type: string } | null> {
+  const external = normalizeSmsPhone(params.externalPhone)
+  const selectCols = "id, maintenance_request_id, status, conversation_type"
+
+  const byPhone = await supabase
+    .from("sms_conversations")
+    .select(selectCols)
+    .eq("landlord_id", params.landlordId)
+    .eq("sms_number_id", params.smsNumberId)
+    .eq("external_phone_number", external)
+    .is("vendor_id", null)
+    .order("updated_at", { ascending: false })
+    .limit(1)
+    .maybeSingle()
+
+  if (byPhone.error) {
+    console.error("[sms-inbound] resident conversation lookup", byPhone.error.message)
+    throw new Error("Failed to look up resident conversation")
+  }
+  if (byPhone.data) {
+    return byPhone.data as {
+      id: string
+      maintenance_request_id: string | null
+      status: string
+      conversation_type: string
+    }
+  }
+
+  const residentId = params.residentId?.trim()
+  if (!residentId) return null
+
+  const byResident = await supabase
+    .from("sms_conversations")
+    .select(selectCols)
+    .eq("landlord_id", params.landlordId)
+    .eq("sms_number_id", params.smsNumberId)
+    .eq("resident_id", residentId)
+    .is("vendor_id", null)
+    .order("updated_at", { ascending: false })
+    .limit(1)
+    .maybeSingle()
+
+  if (byResident.error) {
+    console.error("[sms-inbound] resident conversation lookup by id", byResident.error.message)
+    throw new Error("Failed to look up resident conversation")
+  }
+
+  return (byResident.data as {
+    id: string
+    maintenance_request_id: string | null
+    status: string
+    conversation_type: string
+  } | null) ?? null
+}
+
 export async function createConversation(
   supabase: SupabaseClient,
   params: {

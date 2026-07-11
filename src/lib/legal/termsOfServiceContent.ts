@@ -20,7 +20,8 @@ export const TERMS_OF_SERVICE_META = {
 
 /** Anchor id for Privacy Policy references within the Terms page (Section 12.1). */
 export const TERMS_PRIVACY_SECTION_ID = '12-1'
-export const TERMS_PRIVACY_SECTION_PATH = `/terms#${TERMS_PRIVACY_SECTION_ID}` as const
+/** @deprecated Prefer PRIVACY_POLICY_PATH from privacyPolicyContent — kept for legacy imports. */
+export const TERMS_PRIVACY_SECTION_PATH = '/privatepolicy' as const
 
 export const TERMS_OF_SERVICE_PREAMBLE: LegalBlock[] = [
   {
@@ -452,7 +453,7 @@ export const TERMS_OF_SERVICE_SECTIONS: LegalSection[] = [
         blocks: [
           {
             type: 'paragraph',
-            text: 'Data practices are governed by Ulo\'s Privacy Policy available at /privacy, incorporated by reference.',
+            text: 'Data practices are governed by Ulo\'s Privacy Policy available at /privatepolicy, incorporated by reference.',
           },
         ],
       },

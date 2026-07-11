@@ -13,6 +13,13 @@ import {
   lifecycleStepKey,
   type WorkflowKanbanCategory,
 } from '@/lib/adminWorkflowKanban'
+import { formatWorkOrderRefForWorkflowRun } from '@/lib/vendorCallFlow'
+import {
+  buildMoveOutTimeline,
+  formatMoveOutDateLabel,
+  moveOutPipelineTitle,
+  moveOutProgressPercent,
+} from '@/lib/moveOutWorkflow'
 import { getActiveLandlordId } from '@/lib/activeLandlord'
 import {
   resolveWorkOrderInboxConversationId,
@@ -86,6 +93,10 @@ export type WorkflowPipelineDetail = {
   maintenanceRequestId: string | null
   conversationId: string | null
   uloThread: WorkflowUloThreadInput | null
+  isMoveOutWorkflow?: boolean
+  moveOutProgressPercent?: number
+  moveOutDateLabel?: string
+  sourceLeaseRenewalRunId?: string | null
 }
 
 const MAINTENANCE_PIPELINE_LABELS = [
@@ -149,9 +160,7 @@ function initials(name: string): string {
 }
 
 function formatWorkOrderRef(run: AdminWorkflowRow): string {
-  const source = run.entityId || run.id
-  const compact = source.replace(/-/g, '').slice(0, 4).toUpperCase()
-  return `WO-${compact || '0000'}`
+  return formatWorkOrderRefForWorkflowRun(run.templateId, run.id, run.entityId)
 }
 
 function formatCreatedLine(iso: string): string {
@@ -186,6 +195,16 @@ function buildProgressSteps(labels: readonly string[], activeIndex: number): Wor
     else if (stepNumber === activeIndex) state = 'active'
     return { label, state }
   })
+}
+
+function progressCaptionFromSteps(steps: WorkflowPipelineStep[]): string {
+  const activeIndex = steps.findIndex((step) => step.state === 'active')
+  const lastCompleteIndex = steps.reduce(
+    (lastIndex, step, index) => (step.state === 'complete' ? index : lastIndex),
+    -1,
+  )
+  const progressIndex = activeIndex >= 0 ? activeIndex : Math.max(0, lastCompleteIndex)
+  return `Stage ${progressIndex + 1} of ${steps.length}`
 }
 
 function deriveMaintenancePipelineIndex(
@@ -634,6 +653,22 @@ async function loadTicketEnrichment(
     resident = (data as Record<string, unknown> | null) ?? null
   }
 
+  if (!conversationId && row.id) {
+    const { data: convByRun } = await supabase
+      .from('sms_conversations')
+      .select('id')
+      .eq('landlord_id', landlordId)
+      .eq('workflow_run_id', row.id)
+      .order('updated_at', { ascending: false })
+      .limit(1)
+      .maybeSingle()
+    conversationId = asString((convByRun as Record<string, unknown> | null)?.id) || conversationId
+  }
+
+  if (!conversationId) {
+    conversationId = asString(metadata.conversation_id)
+  }
+
   return { ticket, invoice, vendorName, resident, conversationId, maintenanceRequestId: ticketId || null }
 }
 
@@ -751,6 +786,32 @@ function buildInspectionUloThreadInput(
   }
 }
 
+function buildMoveOutUloThreadInput(
+  row: AdminWorkflowRow,
+  metadata: Record<string, unknown>,
+  enrichment: TicketEnrichment,
+): import('@/lib/conversationMonitoring').MoveOutUloThreadInput {
+  const residentName =
+    asString(enrichment.resident?.full_name) || row.residentName || 'Resident'
+  const startedAtMs = new Date(row.startedAt).getTime()
+  const moveOutIso =
+    asString(metadata.move_out_date) ||
+    asString(enrichment.resident?.lease_end_date) ||
+    asString(metadata.lease_end_date)
+
+  return {
+    kind: 'move_out',
+    conversationId: enrichment.conversationId,
+    workflowRunId: row.id,
+    residentName,
+    unitLabel: row.unitLabel || '',
+    propertyLabel: row.propertyLabel || 'Property',
+    startedAtMs: Number.isFinite(startedAtMs) ? startedAtMs : Date.now(),
+    moveOutDateMs: parseIsoDateMs(moveOutIso, Date.now() + 30 * 24 * 60 * 60 * 1000),
+    sourceLeaseRenewalRunId: asString(metadata.source_workflow_run_id),
+  }
+}
+
 function buildWorkflowUloThreadInput(
   row: AdminWorkflowRow,
   metadata: Record<string, unknown>,
@@ -761,6 +822,9 @@ function buildWorkflowUloThreadInput(
   }
   if (row.templateId === 'move_in') {
     return buildMoveInUloThreadInput(row, metadata, enrichment)
+  }
+  if (row.templateId === 'move_out') {
+    return buildMoveOutUloThreadInput(row, metadata, enrichment)
   }
   if (isInspectionTemplateId(row.templateId)) {
     return buildInspectionUloThreadInput(row, metadata, enrichment)
@@ -775,6 +839,11 @@ function workflowInboxPreview(input: WorkflowUloThreadInput): string {
       day: 'numeric',
     })
     return `Welcome to ${input.propertyLabel}! We're excited to have you. Your move-in is scheduled for ${moveInLabel}.`
+  }
+
+  if (input.kind === 'move_out') {
+    const fname = input.residentName.trim().split(/\s+/)[0] || 'there'
+    return `Hi ${fname}! We understand you'll be moving out at the end of your lease. We'll use this conversation to help guide you through the move-out process.`
   }
 
   if (input.kind === 'inspection') {
@@ -823,6 +892,7 @@ export async function fetchCommunicationWorkOrderInboxRows(): Promise<Communicat
   const runs = collectAdminWorkflowRuns(data).filter((row) => {
     if (workflowTemplateGroupId(row.templateId) === 'maintenance') return true
     if (row.templateId === 'move_in') return true
+    if (row.templateId === 'move_out') return true
     return isInspectionTemplateId(row.templateId)
   })
 
@@ -839,9 +909,11 @@ export async function fetchCommunicationWorkOrderInboxRows(): Promise<Communicat
     const anchorMs =
       uloThread.kind === 'move_in'
         ? uloThread.moveInDateMs
-        : uloThread.kind === 'inspection'
-          ? uloThread.scheduledAtMs
-          : 0
+        : uloThread.kind === 'move_out'
+          ? uloThread.moveOutDateMs
+          : uloThread.kind === 'inspection'
+            ? uloThread.scheduledAtMs
+            : 0
     const lastActivity = Math.max(
       Number.isFinite(startedMs) ? startedMs : 0,
       Number.isFinite(eventMs) ? eventMs : 0,
@@ -873,11 +945,12 @@ export async function fetchWorkflowPipelineDetail(
   if (!row) return null
 
   const metadata = runMetadata[row.id] ?? {}
-  const card = buildWorkflowKanbanCard(row)
+  const card = buildWorkflowKanbanCard(row, metadata)
   const category = categoryBadge(card.category)
   const stage = stageBadge(card.stage)
   const group = workflowTemplateGroupId(row.templateId)
   const isMaintenance = group === 'maintenance'
+  const isMoveOut = row.templateId === 'move_out'
 
   const enrichment = await loadTicketEnrichment(row, metadata)
   const ticket = enrichment.ticket
@@ -885,16 +958,26 @@ export async function fetchWorkflowPipelineDetail(
   const urgency = asString(ticket?.urgency) || asString(ticket?.priority) || asString(metadata.urgency) || 'normal'
   const priority = PRIORITY_BADGE[urgency.toLowerCase()] ?? PRIORITY_BADGE.normal
 
-  const title =
-    asString(ticket?.description).split(/[.!?]/)[0]?.trim() ||
-    row.templateName ||
-    'Workflow'
+  const moveOutTimeline = isMoveOut ? buildMoveOutTimeline(row, metadata) : undefined
+  const moveOutProgress = moveOutTimeline ? moveOutProgressPercent(moveOutTimeline) : undefined
+  const moveOutDateLabel = isMoveOut
+    ? formatMoveOutDateLabel(
+        asString(metadata.move_out_date) || asString(enrichment.resident?.lease_end_date),
+      )
+    : undefined
 
-  const description =
-    asString(ticket?.description) ||
-    row.lastEventMessage ||
-    row.escalationReason ||
-    'Ulo is coordinating this workflow. Details will update as steps complete.'
+  const title = isMoveOut
+    ? moveOutPipelineTitle()
+    : asString(ticket?.description).split(/[.!?]/)[0]?.trim() ||
+      row.templateName ||
+      'Workflow'
+
+  const description = isMoveOut
+    ? 'Ulo is coordinating move-out with the resident — instructions, inspection, keys, and deposit review stay in one SMS thread.'
+    : asString(ticket?.description) ||
+      row.lastEventMessage ||
+      row.escalationReason ||
+      'Ulo is coordinating this task in the workflow pipeline. Details will update as steps complete.'
 
   const pipelineIndex = isMaintenance
     ? deriveMaintenancePipelineIndex(row, ticket)
@@ -950,6 +1033,14 @@ export async function fetchWorkflowPipelineDetail(
           )
         : []
 
+  const moveOutProgressSteps =
+    isMoveOut && moveOutTimeline
+      ? moveOutTimeline.map((step) => ({
+          label: step.label,
+          state: step.state,
+        }))
+      : null
+
   return {
     runId: row.id,
     workOrderRef: formatWorkOrderRef(row),
@@ -965,9 +1056,25 @@ export async function fetchWorkflowPipelineDetail(
       .filter(Boolean)
       .join(' · '),
     description,
-    progressSteps: buildProgressSteps(pipelineLabels, pipelineIndex),
-    progressCaption: `Stage ${Math.min(pipelineIndex, pipelineLabels.length)} of ${pipelineLabels.length}`,
-    overviewFields: [
+    progressSteps: moveOutProgressSteps ?? buildProgressSteps(pipelineLabels, pipelineIndex),
+    progressCaption: moveOutProgressSteps
+      ? progressCaptionFromSteps(moveOutProgressSteps)
+      : `Stage ${Math.min(pipelineIndex, pipelineLabels.length)} of ${pipelineLabels.length}`,
+    overviewFields: isMoveOut
+      ? [
+          { label: 'Resident', value: residentName || '—' },
+          { label: 'Property', value: row.propertyLabel || '—' },
+          { label: 'Unit', value: row.unitLabel || '—' },
+          { label: 'Move-out date', value: moveOutDateLabel ?? '—' },
+          {
+            label: 'Current stage',
+            value:
+              moveOutProgressSteps?.find((step) => step.state === 'active')?.label ??
+              stage.label,
+          },
+          { label: 'Progress', value: moveOutProgress != null ? `${moveOutProgress}%` : '—' },
+        ]
+      : [
       { label: 'Property', value: row.propertyLabel || '—' },
       { label: 'Unit', value: row.unitLabel || asString(ticket?.unit) || '—' },
       { label: 'Resident', value: residentName || '—' },
@@ -997,5 +1104,9 @@ export async function fetchWorkflowPipelineDetail(
     maintenanceRequestId: enrichment.maintenanceRequestId,
     conversationId: enrichment.conversationId,
     uloThread,
+    isMoveOutWorkflow: isMoveOut,
+    moveOutProgressPercent: moveOutProgress,
+    moveOutDateLabel,
+    sourceLeaseRenewalRunId: asString(metadata.source_workflow_run_id),
   }
 }

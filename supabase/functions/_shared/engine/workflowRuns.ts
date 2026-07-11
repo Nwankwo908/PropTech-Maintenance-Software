@@ -203,6 +203,7 @@ export async function findActiveWorkflowRun(
 export async function createWorkflowRun(
   supabase: SupabaseClient,
   params: {
+    id?: string
     templateId: WorkflowTemplateId | string
     landlordId: string
     triggerType: WorkflowTriggerType
@@ -225,24 +226,28 @@ export async function createWorkflowRun(
     undefined,
   )
 
-  const { data, error } = await supabase
-    .from("workflow_runs")
-    .insert({
-      template_id: params.templateId,
-      landlord_id: params.landlordId,
-      trigger_type: params.triggerType,
-      status: "active",
-      entity_type: params.entityType ?? null,
-      entity_id: params.entityId ?? null,
-      property_id: params.propertyId ?? null,
-      resident_id: params.residentId ?? null,
-      unit_id: params.unitId ?? null,
-      current_stage: params.currentStep ?? null,
-      current_step: params.currentStep ?? null,
-      metadata,
-    })
-    .select(runSelect)
-    .single()
+  const row = {
+    template_id: params.templateId,
+    landlord_id: params.landlordId,
+    trigger_type: params.triggerType,
+    status: "active",
+    entity_type: params.entityType ?? null,
+    entity_id: params.entityId ?? null,
+    property_id: params.propertyId ?? null,
+    resident_id: params.residentId ?? null,
+    unit_id: params.unitId ?? null,
+    current_stage: params.currentStep ?? null,
+    current_step: params.currentStep ?? null,
+    completed_at: null,
+    metadata,
+    ...(params.id ? { id: params.id } : {}),
+  }
+
+  const writeQuery = params.id
+    ? supabase.from("workflow_runs").upsert(row, { onConflict: "id" })
+    : supabase.from("workflow_runs").insert(row)
+
+  const { data, error } = await writeQuery.select(runSelect).single()
 
   if (error) {
     console.error("[workflow-runs] create", error.message)

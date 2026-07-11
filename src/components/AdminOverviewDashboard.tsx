@@ -1,6 +1,5 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
-import { postAdminReassignVendor } from '@/api/adminReassignVendor'
 import {
   postDiscoverExternalVendors,
   resolveDiscoverExternalVendorsUrl,
@@ -11,12 +10,17 @@ import {
   resolveReassignExternalVendorUrl,
 } from '@/api/reassignExternalVendor'
 import { postSlaAutoReassign, resolveSlaAutoReassignUrl } from '@/api/slaAutoReassign'
+import insightWarningIcon from '@/assets/noun-warning-recurring.png'
 import { PropertyHealthBuildingGrid } from '@/components/PropertyHealthBuildingGrid'
 import { AwaitingDecisionListRail } from '@/components/AwaitingDecisionListRail'
+import { AwaitingDecisionOutcomeModal } from '@/components/AwaitingDecisionOutcomeModal'
 import { LateRentAccountReviewRail } from '@/components/LateRentAccountReviewRail'
+import { LateRentAccountMessageRail } from '@/components/LateRentAccountMessageRail'
 import { LeaseRenewalEscalatedRail } from '@/components/LeaseRenewalEscalatedRail'
+import { LeaseRenewalIncentiveMessageRail } from '@/components/LeaseRenewalIncentiveMessageRail'
 import { SlaOverdueActionRail } from '@/components/SlaOverdueActionRail'
 import { FindExternalVendorRail } from '@/components/FindExternalVendorRail'
+import { VendorCallFlowModal } from '@/components/VendorCallFlowModal'
 import { getActiveLandlordId } from '@/lib/activeLandlord'
 import {
   isMaintenanceAdminVendorEscalationReason,
@@ -27,6 +31,16 @@ import {
   formatLocationContextLabel,
   type AdminWorkflowDashboardData,
 } from '@/lib/adminWorkflows'
+import { snapshotActiveOperations } from '@/lib/adminWorkflowKanban'
+import {
+  ADMIN_RIGHT_RAIL_SCRIM,
+  ADMIN_RIGHT_RAIL_STACK_HOST,
+} from '@/lib/adminRightRail'
+import {
+  buildLeaseRenewalCallReasonLine,
+  formatWorkOrderRefFromTicketId,
+  type VendorCallContext,
+} from '@/lib/vendorCallFlow'
 import {
   fetchRecentPropertyOperationsEvents,
   formatTimelineCategoryLabel,
@@ -55,6 +69,13 @@ import {
   type LateRentAccountReview,
 } from '@/lib/lateRentAccountReview'
 import {
+  appendLateRentSentMessage,
+  buildLateRentPaymentPlanBrief,
+  buildLateRentWaiveLateFeeBrief,
+  sendLateRentAccountMessage,
+  type LateRentAccountMessageBrief,
+} from '@/lib/lateRentAccountMessaging'
+import {
   applyLeaseRenewalEscalatedAction,
   buildLeaseRenewalEscalatedReview,
   isLeaseRenewalEscalatedRun,
@@ -69,6 +90,19 @@ import {
   type SlaOverdueActionReview,
   type SlaOverdueTicketInput,
 } from '@/lib/slaOverdueActionReview'
+import {
+  buildAutoRemovedAttentionOutcome,
+  buildLateRentActionOutcome,
+  buildLeaseRenewalActionOutcome,
+  buildVendorAssignedOutcome,
+  type AwaitingDecisionOutcome,
+} from '@/lib/awaitingDecisionOutcome'
+import {
+  appendLeaseRenewalIncentiveSentMessage,
+  buildLeaseRenewalIncentiveBrief,
+  sendLeaseRenewalIncentiveMessage,
+  type LeaseRenewalIncentiveBrief,
+} from '@/lib/leaseRenewalIncentiveMessaging'
 import { supabase } from '@/lib/supabase'
 
 type OverviewTicket = {
@@ -79,6 +113,7 @@ type OverviewTicket = {
   vendorWorkStatus: string
   unit: string
   building: string | null
+  email: string | null
   description: string | null
   issueCategory: string | null
   assignedVendorId: string | null
@@ -107,9 +142,16 @@ type OverviewUnit = {
 }
 
 type SmartInsight = {
-  tag: 'PATTERN' | 'PERFORMANCE' | 'RISK' | 'PREVENTIVE'
+  tag: 'RECURRING ISSUES' | 'VENDOR RESPONSE' | 'RISK' | 'PREVENT FUTURE REPAIRS'
   text: string
   score: number
+  /** Structured fields for insight cards (Figma). */
+  building?: string
+  categoryLabel?: string
+  requestCount?: number
+  unitLabel?: string
+  responseRate?: number
+  assignedCount?: number
 }
 
 type AttentionItem = {
@@ -204,6 +246,7 @@ function normalizeTicketRow(
     vendorWorkStatus: asString(raw.vendor_work_status).toLowerCase(),
     unit: asString(raw.unit),
     building: asString(raw.building) || null,
+    email: asString(raw.email) || null,
     description: asString(raw.description) || null,
     issueCategory: asString(raw.issue_category) || null,
     assignedVendorId,
@@ -379,6 +422,60 @@ function TrendingDownIcon() {
   )
 }
 
+function KpiInfoIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} className="size-3.5 text-[#9ca3af]">
+      <circle cx="12" cy="12" r="9" />
+      <path d="M12 10v5M12 8h.01" strokeLinecap="round" />
+    </svg>
+  )
+}
+
+function KpiBreakdownInfo({
+  title,
+  description,
+  lines,
+}: {
+  title: string
+  description?: string
+  lines: Array<{ label: string; count: number }>
+}) {
+  if (!lines.length) return null
+
+  return (
+    <span className="group/kpi-info relative inline-flex shrink-0">
+      <button
+        type="button"
+        tabIndex={0}
+        className="inline-flex rounded p-0.5 outline-none hover:text-[#4b5563] focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-1"
+        aria-label={`${title} breakdown`}
+      >
+        <KpiInfoIcon />
+      </button>
+      <div
+        role="tooltip"
+        className="pointer-events-none absolute left-0 top-full z-50 mt-1.5 w-[min(240px,calc(100vw-2rem))] rounded-[10px] border border-[#e5e7eb] bg-white p-3 opacity-0 shadow-[0px_8px_24px_rgba(0,0,0,0.12)] transition-opacity duration-150 group-hover/kpi-info:opacity-100 group-focus-within/kpi-info:opacity-100"
+      >
+        <p className="text-[11px] font-semibold leading-4 text-[#0a0a0a]">{title}</p>
+        {description ? (
+          <p className="mt-1 text-[10px] leading-[14px] text-[#6a7282]">{description}</p>
+        ) : null}
+        <ul className="mt-2 flex flex-col gap-1">
+          {lines.map((line) => (
+            <li
+              key={line.label}
+              className="flex items-center justify-between gap-3 text-[11px] leading-4"
+            >
+              <span className="text-[#364153]">{line.label}</span>
+              <span className="font-semibold tabular-nums text-[#0a0a0a]">{line.count}</span>
+            </li>
+          ))}
+        </ul>
+      </div>
+    </span>
+  )
+}
+
 function KpiCard({
   label,
   value,
@@ -387,6 +484,9 @@ function KpiCard({
   deltaFormatter,
   goodWhenUp = false,
   caption,
+  infoTitle,
+  infoDescription,
+  infoLines,
 }: {
   label: string
   value: string
@@ -398,15 +498,27 @@ function KpiCard({
   /** True when an increase is a good trend (e.g. health), false when it's bad (e.g. critical issues). */
   goodWhenUp?: boolean
   caption: string
+  infoTitle?: string
+  infoDescription?: string
+  infoLines?: Array<{ label: string; count: number }>
 }) {
   const positive = (delta ?? 0) > 0
   const neutral = delta === 0
   const good = neutral ? false : positive === goodWhenUp
   return (
     <div className="flex min-w-0 flex-1 flex-col gap-4 rounded-[10px] border border-[#e5e7eb] bg-white p-6 shadow-[0px_1px_2px_-1px_rgba(0,0,0,0.06)]">
-      <p className="truncate text-[14px] leading-5 tracking-[-0.1504px] text-[#6a7282]">
-        {label}
-      </p>
+      <div className="flex min-w-0 items-center gap-1.5">
+        <p className="truncate text-[14px] leading-5 tracking-[-0.1504px] text-[#6a7282]">
+          {label}
+        </p>
+        {infoLines?.length ? (
+          <KpiBreakdownInfo
+            title={infoTitle ?? label}
+            description={infoDescription}
+            lines={infoLines}
+          />
+        ) : null}
+      </div>
       <div className="flex items-end justify-between gap-2">
         <p className="text-[44px] font-bold leading-none tracking-[0.4px] text-[#0a0a0a] tabular-nums xl:text-[52px]">
           {value}
@@ -437,11 +549,174 @@ function KpiCard({
   )
 }
 
-const INSIGHT_TAG_STYLES: Record<SmartInsight['tag'], string> = {
-  PATTERN: 'text-[#7c3aed]',
-  PERFORMANCE: 'text-[#7c3aed]',
-  RISK: 'text-[#7c3aed]',
-  PREVENTIVE: 'text-[#7c3aed]',
+/** Map insight score (0–100) onto a 1–5 strength meter for insight cards. */
+function insightStrengthDots(score: number): number {
+  return Math.min(5, Math.max(1, Math.floor((score - 50) / 10)))
+}
+
+function InsightStrengthMeter({ score }: { score: number }) {
+  const filled = insightStrengthDots(score)
+  return (
+    <div className="flex shrink-0 items-center gap-[6px]" aria-hidden>
+      {Array.from({ length: 5 }, (_, i) => (
+        <span
+          key={i}
+          className={`size-[10px] rounded-full ${
+            i < filled ? 'bg-[#9E439F]' : 'bg-[#e2e8f0]'
+          }`}
+        />
+      ))}
+    </div>
+  )
+}
+
+/** Alert badge for high-strength (4–5) or low-strength (1–2) insight cards. */
+function InsightAlertIcon({
+  score,
+  when,
+}: {
+  score: number
+  when: 'high' | 'low'
+}) {
+  const dots = insightStrengthDots(score)
+  if (when === 'high' && dots < 4) return null
+  if (when === 'low' && dots > 2) return null
+  return (
+    <span
+      role="img"
+      aria-label={when === 'high' ? 'High priority insight' : 'Low vendor response'}
+      className="mt-0.5 size-5 shrink-0"
+      style={{
+        backgroundColor: '#DA4951',
+        WebkitMaskImage: `url(${insightWarningIcon})`,
+        WebkitMaskSize: 'contain',
+        WebkitMaskRepeat: 'no-repeat',
+        WebkitMaskPosition: 'center',
+        maskImage: `url(${insightWarningIcon})`,
+        maskSize: 'contain',
+        maskRepeat: 'no-repeat',
+        maskPosition: 'center',
+      }}
+    />
+  )
+}
+
+function RecurringIssuesInsightCard({ insight }: { insight: SmartInsight }) {
+  const categoryLabel = insight.categoryLabel ?? 'Maintenance'
+  const requestCount = insight.requestCount ?? 0
+  const requestWord = requestCount === 1 ? 'Request' : 'Requests'
+
+  return (
+    <div className="flex flex-col gap-2 rounded-[12px] border border-[#eef2ff] bg-white p-4 shadow-[0px_1px_3px_rgba(0,0,0,0.08)]">
+      <div className="flex items-start justify-between gap-2">
+        <p className="text-[12px] font-extrabold uppercase leading-normal tracking-[0.04em] text-[#9E439F]">
+          Recurring Issues
+        </p>
+        <InsightAlertIcon score={insight.score} when="high" />
+      </div>
+      <div className="flex items-center gap-5">
+        <p className="min-w-0 flex-1 text-[16px] font-normal leading-[1.4] text-[#0f172a]">
+          {insight.text}
+        </p>
+        <InsightStrengthMeter score={insight.score} />
+      </div>
+      <div className="flex flex-wrap items-center gap-2 text-[13px] leading-normal text-[#64748b]">
+        <span>
+          {requestCount} {categoryLabel} {requestWord}
+        </span>
+        <span className="h-3 w-px shrink-0 bg-[#eef2ff]" aria-hidden />
+        <span>Last 60 Days</span>
+      </div>
+    </div>
+  )
+}
+
+function RiskInsightCard({ insight }: { insight: SmartInsight }) {
+  const requestCount = insight.requestCount ?? 0
+  const requestWord = requestCount === 1 ? 'Request' : 'Requests'
+
+  return (
+    <div className="flex flex-col gap-2 rounded-[12px] border border-[#eef2ff] bg-white p-4 shadow-[0px_1px_3px_rgba(0,0,0,0.08)]">
+      <div className="flex items-start justify-between gap-2">
+        <p className="text-[12px] font-extrabold uppercase leading-normal tracking-[0.04em] text-[#9E439F]">
+          Needs Attention
+        </p>
+        <InsightAlertIcon score={insight.score} when="high" />
+      </div>
+      <div className="flex items-center gap-5">
+        <p className="min-w-0 flex-1 text-[16px] font-normal leading-[1.4] text-[#0f172a]">
+          {insight.text}
+        </p>
+        <InsightStrengthMeter score={insight.score} />
+      </div>
+      <div className="flex flex-wrap items-center gap-2 text-[13px] leading-normal text-[#64748b]">
+        <span>
+          {requestCount} Maintenance {requestWord}
+        </span>
+        <span className="h-3 w-px shrink-0 bg-[#eef2ff]" aria-hidden />
+        <span>Last 60 Days</span>
+      </div>
+    </div>
+  )
+}
+
+function VendorResponseInsightCard({ insight }: { insight: SmartInsight }) {
+  const assignedCount = insight.assignedCount ?? 0
+  const assignedWord = assignedCount === 1 ? 'Work Order' : 'Work Orders'
+
+  return (
+    <div className="flex flex-col gap-2 rounded-[12px] border border-[#eef2ff] bg-white p-4 shadow-[0px_1px_3px_rgba(0,0,0,0.08)]">
+      <div className="flex items-start justify-between gap-2">
+        <p className="text-[12px] font-extrabold uppercase leading-normal tracking-[0.04em] text-[#9E439F]">
+          Vendor Response
+        </p>
+        <InsightAlertIcon score={insight.score} when="low" />
+      </div>
+      <div className="flex items-center gap-5">
+        <p className="min-w-0 flex-1 text-[16px] font-normal leading-[1.4] text-[#0f172a]">
+          {insight.text}
+        </p>
+        <InsightStrengthMeter score={insight.score} />
+      </div>
+      <div className="flex flex-wrap items-center gap-2 text-[13px] leading-normal text-[#64748b]">
+        <span>
+          {assignedCount} Assigned {assignedWord}
+        </span>
+        <span className="h-3 w-px shrink-0 bg-[#eef2ff]" aria-hidden />
+        <span>All Time</span>
+      </div>
+    </div>
+  )
+}
+
+function PreventFutureRepairsInsightCard({ insight }: { insight: SmartInsight }) {
+  const categoryLabel = insight.categoryLabel ?? 'Maintenance'
+  const requestCount = insight.requestCount ?? 0
+  const requestWord = requestCount === 1 ? 'Request' : 'Requests'
+
+  return (
+    <div className="flex flex-col gap-2 rounded-[12px] border border-[#eef2ff] bg-white p-4 shadow-[0px_1px_3px_rgba(0,0,0,0.08)]">
+      <div className="flex items-start justify-between gap-2">
+        <p className="text-[12px] font-extrabold uppercase leading-normal tracking-[0.04em] text-[#9E439F]">
+          Prevent Future Repairs
+        </p>
+        <InsightAlertIcon score={insight.score} when="high" />
+      </div>
+      <div className="flex items-center gap-5">
+        <p className="min-w-0 flex-1 text-[16px] font-normal leading-[1.4] text-[#0f172a]">
+          {insight.text}
+        </p>
+        <InsightStrengthMeter score={insight.score} />
+      </div>
+      <div className="flex flex-wrap items-center gap-2 text-[13px] leading-normal text-[#64748b]">
+        <span>
+          {requestCount} {categoryLabel} {requestWord}
+        </span>
+        <span className="h-3 w-px shrink-0 bg-[#eef2ff]" aria-hidden />
+        <span>Last 60 Days</span>
+      </div>
+    </div>
+  )
 }
 
 const FEED_BADGE_STYLES: Record<string, string> = {
@@ -486,14 +761,44 @@ export function AdminOverviewDashboard() {
   const [externalVendorIssueCategory, setExternalVendorIssueCategory] = useState<string | null>(
     null,
   )
+  const [externalVendorLocationLabel, setExternalVendorLocationLabel] = useState<string | null>(
+    null,
+  )
   const [findExternalVendorOpen, setFindExternalVendorOpen] = useState(false)
   const [lateRentRailRunId, setLateRentRailRunId] = useState<string | null>(null)
   const [lateRentRailSaving, setLateRentRailSaving] = useState(false)
   const [lateRentRailError, setLateRentRailError] = useState<string | null>(null)
+  const [lateRentMessageBrief, setLateRentMessageBrief] =
+    useState<LateRentAccountMessageBrief | null>(null)
+  const [lateRentMessageSending, setLateRentMessageSending] = useState(false)
+  const [lateRentMessageError, setLateRentMessageError] = useState<string | null>(null)
   const [leaseRenewalRailRunId, setLeaseRenewalRailRunId] = useState<string | null>(null)
   const [leaseRenewalRailSaving, setLeaseRenewalRailSaving] = useState(false)
   const [leaseRenewalRailError, setLeaseRenewalRailError] = useState<string | null>(null)
+  const [leaseRenewalIncentiveBrief, setLeaseRenewalIncentiveBrief] =
+    useState<LeaseRenewalIncentiveBrief | null>(null)
+  const [leaseRenewalIncentiveSending, setLeaseRenewalIncentiveSending] = useState(false)
+  const [leaseRenewalIncentiveError, setLeaseRenewalIncentiveError] = useState<string | null>(null)
+  const [tenantCallFlow, setTenantCallFlow] = useState<{
+    name: string
+    phone: string
+    context: VendorCallContext
+    reasonLine: string
+  } | null>(null)
   const [awaitingDecisionListOpen, setAwaitingDecisionListOpen] = useState(false)
+  const [awaitingDecisionOutcome, setAwaitingDecisionOutcome] =
+    useState<AwaitingDecisionOutcome | null>(null)
+  const prevAttentionItemsRef = useRef<AttentionItem[]>([])
+  const skipAutoOutcomeKeysRef = useRef<Set<string>>(new Set())
+  const attentionTrackingReadyRef = useRef(false)
+
+  const showAwaitingDecisionOutcome = useCallback(
+    (outcome: AwaitingDecisionOutcome, itemKey?: string) => {
+      if (itemKey) skipAutoOutcomeKeysRef.current.add(itemKey)
+      setAwaitingDecisionOutcome(outcome)
+    },
+    [],
+  )
 
   useEffect(() => {
     let cancelled = false
@@ -514,7 +819,7 @@ export function AdminOverviewDashboard() {
           supabase
             .from('maintenance_request_enriched')
             .select(
-              'id, created_at, assigned_at, unit, unit_id, building, description, issue_category, assigned_vendor_id, vendor_work_status, urgency, severity, priority, due_at, resident_name, estimated_minutes, total_cost, invoice_total, amount, labor_cost, material_cost, materials_cost, tax_amount, tax, completed_at, resolved_at, closed_at',
+              'id, created_at, assigned_at, unit, unit_id, building, email, description, issue_category, assigned_vendor_id, vendor_work_status, urgency, severity, priority, due_at, resident_name, estimated_minutes, total_cost, invoice_total, amount, labor_cost, material_cost, materials_cost, tax_amount, tax, completed_at, resolved_at, closed_at',
             )
             .eq('landlord_id', landlordId)
             .order('created_at', { ascending: false })
@@ -545,7 +850,7 @@ export function AdminOverviewDashboard() {
           fetchPropertyHealthSignals(),
           supabase
             .from('users')
-            .select('id, full_name, unit, building, status, move_in_date, balance_due, phone')
+            .select('id, full_name, unit, building, status, move_in_date, balance_due, phone, email')
             .eq('landlord_id', landlordId)
             .neq('status', 'past_resident')
             .limit(2000),
@@ -607,6 +912,7 @@ export function AdminOverviewDashboard() {
             unit: asString(raw.unit),
             building: asString(raw.building) || null,
             status: asString(raw.status).toLowerCase() || 'active',
+            email: asString(raw.email) || null,
             moveInDate: asString(raw.move_in_date) || null,
             balanceDue: asFiniteNumber(raw.balance_due) ?? 0,
             phone: asString(raw.phone) || null,
@@ -619,6 +925,7 @@ export function AdminOverviewDashboard() {
             unit: row.unit,
             building: row.building,
             status: row.status,
+            email: row.email ?? null,
           })),
         )
         setOverviewResidents(mapped)
@@ -674,45 +981,24 @@ export function AdminOverviewDashboard() {
 
     // Active operations = every workflow run currently in flight, regardless
     // of type (maintenance, rent collection, move-ins, move-outs, inspections).
-    // Headline and delta are computed from the same run pool with the same
-    // rule: a run was active at time T if it had started by T and had not
-    // completed yet.
-    type RunLifespan = {
-      startedAt: string
-      completedAt: string | null
-      status: string
-    }
-    const allRunsById = new Map<string, RunLifespan>()
-    if (workflowData) {
-      for (const run of [
-        ...workflowData.active,
-        ...workflowData.escalated,
-        ...workflowData.maintenanceRuns,
-        ...workflowData.rentCollection.runs,
-        ...workflowData.lifecycle.runs,
-      ]) {
-        allRunsById.set(run.id, run)
-      }
-    }
-    const wasActiveAt = (run: RunLifespan, atMs: number): boolean => {
-      const started = new Date(run.startedAt).getTime()
-      if (Number.isNaN(started) || started > atMs) return false
-      if (run.completedAt) {
-        const completed = new Date(run.completedAt).getTime()
-        return Number.isNaN(completed) || completed > atMs
-      }
-      // No completion timestamp: only currently active/escalated runs count.
-      return run.status === 'active' || run.status === 'escalated'
-    }
-    let opsNow = 0
-    let opsPrevious = 0
-    for (const run of allRunsById.values()) {
-      if (wasActiveAt(run, now)) opsNow += 1
-      if (wasActiveAt(run, now - fourWeeksMs)) opsPrevious += 1
-    }
-    const activeOps = opsNow
+    const opsNowSnapshot = snapshotActiveOperations(workflowData, now)
+    const opsPreviousSnapshot = snapshotActiveOperations(
+      workflowData,
+      now - fourWeeksMs,
+    )
+    const activeOps = opsNowSnapshot.total
+    const activeOpsBreakdown = opsNowSnapshot.lines.map((line) => ({
+      label: line.label,
+      count: line.count,
+    }))
 
     const workOrders = openTickets.length
+    const workOrdersCritical = openTickets.filter(isTicketCritical).length
+    const workOrdersStandard = workOrders - workOrdersCritical
+    const workOrdersBreakdown = [
+      { label: 'Critical', count: workOrdersCritical },
+      { label: 'Standard', count: workOrdersStandard },
+    ].filter((line) => line.count > 0)
     const ordersRecent = countCreatedBetween(
       tickets,
       now - fourWeeksMs,
@@ -781,8 +1067,12 @@ export function AdminOverviewDashboard() {
       criticalOpen,
       criticalDelta: criticalRecent - criticalPrevious,
       activeOps,
-      activeOpsDelta: workflowData ? opsNow - opsPrevious : null,
+      activeOpsDelta: workflowData
+        ? opsNowSnapshot.total - opsPreviousSnapshot.total
+        : null,
+      activeOpsBreakdown,
       workOrders,
+      workOrdersBreakdown,
       workOrdersDelta: ordersRecent - ordersPrevious,
       propertyHealth,
       propertyHealthDelta,
@@ -815,6 +1105,16 @@ export function AdminOverviewDashboard() {
       ),
     [workflowData],
   )
+
+  const externalVendorCallContext = useMemo(() => {
+    const ticketId = escalatedReview?.ticketId
+    if (!ticketId) return { workOrderRef: null as string | null, residentName: null as string | null }
+    const ticket = tickets.find((row) => row.id === ticketId)
+    return {
+      workOrderRef: formatWorkOrderRefFromTicketId(ticketId),
+      residentName: ticket?.residentName ?? null,
+    }
+  }, [escalatedReview?.ticketId, tickets])
 
   useEffect(() => {
     if (loading) return
@@ -879,7 +1179,7 @@ export function AdminOverviewDashboard() {
     setExternalVendorSuggestions([])
     setExternalVendorDiscoverError(null)
     setExternalVendorNotice(null)
-    setFindExternalVendorOpen(true)
+    setFindExternalVendorOpen(false)
     setEscalatedRailTarget({ kind: 'ticket', ticketId, preferExternalVendor: true })
     setEscalatedRailError(null)
   }, [])
@@ -888,7 +1188,7 @@ export function AdminOverviewDashboard() {
     setExternalVendorSuggestions([])
     setExternalVendorDiscoverError(null)
     setExternalVendorNotice(null)
-    setFindExternalVendorOpen(preferExternalVendor)
+    setFindExternalVendorOpen(false)
     setEscalatedRailTarget({ kind: 'workflow', runId, preferExternalVendor })
     setEscalatedRailError(null)
   }, [])
@@ -901,22 +1201,42 @@ export function AdminOverviewDashboard() {
   const openLateRentRail = useCallback((runId: string) => {
     setLateRentRailRunId(runId)
     setLateRentRailError(null)
+    setLateRentMessageBrief(null)
+    setLateRentMessageError(null)
   }, [])
 
+  const closeLateRentMessageRail = useCallback(() => {
+    if (lateRentMessageSending) return
+    setLateRentMessageBrief(null)
+    setLateRentMessageError(null)
+  }, [lateRentMessageSending])
+
   const closeLateRentRail = useCallback(() => {
+    if (lateRentMessageSending) return
     setLateRentRailRunId(null)
     setLateRentRailError(null)
-  }, [])
+    setLateRentMessageBrief(null)
+    setLateRentMessageError(null)
+  }, [lateRentMessageSending])
 
   const openLeaseRenewalRail = useCallback((runId: string) => {
     setLeaseRenewalRailRunId(runId)
     setLeaseRenewalRailError(null)
   }, [])
 
+  const closeLeaseRenewalIncentiveRail = useCallback(() => {
+    if (leaseRenewalIncentiveSending) return
+    setLeaseRenewalIncentiveBrief(null)
+    setLeaseRenewalIncentiveError(null)
+  }, [leaseRenewalIncentiveSending])
+
   const closeLeaseRenewalRail = useCallback(() => {
+    if (leaseRenewalIncentiveSending) return
     setLeaseRenewalRailRunId(null)
     setLeaseRenewalRailError(null)
-  }, [])
+    setLeaseRenewalIncentiveBrief(null)
+    setLeaseRenewalIncentiveError(null)
+  }, [leaseRenewalIncentiveSending])
 
   const lateRentReview = useMemo<LateRentAccountReview | null>(() => {
     if (!workflowData || !lateRentRailRunId) return null
@@ -927,7 +1247,17 @@ export function AdminOverviewDashboard() {
     const resident = row.residentId
       ? overviewResidents.find((entry) => entry.id === row.residentId) ?? null
       : null
-    return buildLateRentAccountReview(row, resident)
+    return buildLateRentAccountReview(
+      row,
+      resident
+        ? {
+            status: resident.status,
+            moveInDate: resident.moveInDate,
+            balanceDue: resident.balanceDue,
+            phone: resident.phone,
+          }
+        : null,
+    )
   }, [workflowData, lateRentReviewRuns, lateRentRailRunId, overviewResidents])
 
   const leaseRenewalReview = useMemo<LeaseRenewalEscalatedReview | null>(() => {
@@ -1041,6 +1371,38 @@ export function AdminOverviewDashboard() {
   }, [])
 
   useEffect(() => {
+    if (loading) return
+
+    const prev = prevAttentionItemsRef.current
+    const currentKeys = new Set(allAttentionItems.map((item) => item.key))
+
+    if (!attentionTrackingReadyRef.current) {
+      attentionTrackingReadyRef.current = true
+      prevAttentionItemsRef.current = allAttentionItems
+      return
+    }
+
+    for (const item of prev) {
+      if (currentKeys.has(item.key)) continue
+      if (skipAutoOutcomeKeysRef.current.has(item.key)) continue
+      showAwaitingDecisionOutcome(
+        buildAutoRemovedAttentionOutcome({
+          title: item.title,
+          context: item.context,
+          meta: item.meta,
+        }),
+        item.key,
+      )
+      break
+    }
+
+    skipAutoOutcomeKeysRef.current = new Set(
+      [...skipAutoOutcomeKeysRef.current].filter((key) => currentKeys.has(key)),
+    )
+    prevAttentionItemsRef.current = allAttentionItems
+  }, [loading, allAttentionItems, showAwaitingDecisionOutcome])
+
+  useEffect(() => {
     if (!escalatedRailTarget) {
       setEscalatedReview(null)
       setEscalatedRailLoading(false)
@@ -1049,6 +1411,7 @@ export function AdminOverviewDashboard() {
       setExternalVendorNotice(null)
       setExternalVendorDiscoverError(null)
       setExternalVendorIssueCategory(null)
+      setExternalVendorLocationLabel(null)
       setFindExternalVendorOpen(false)
       return
     }
@@ -1137,9 +1500,6 @@ export function AdminOverviewDashboard() {
     setExternalVendorProvidersUsed([])
     setExternalVendorNotice(null)
     setExternalVendorDiscoverError(null)
-    if (preferExternalVendor) {
-      setFindExternalVendorOpen(true)
-    }
 
     if (preferExternalVendor) {
       const linkedTicket =
@@ -1159,7 +1519,6 @@ export function AdminOverviewDashboard() {
     if (!discoverUrl || !secret || !ticketIdForAction) {
       setEscalatedRailLoading(false)
       if (preferExternalVendor) {
-        setFindExternalVendorOpen(true)
         setExternalVendorDiscoverError(
           !ticketIdForAction
             ? 'Could not link this escalation to a maintenance ticket.'
@@ -1181,12 +1540,11 @@ export function AdminOverviewDashboard() {
         setExternalVendorSuggestions(result.suggestions ?? [])
         setExternalVendorProvidersUsed(result.providersUsed ?? [])
         if (result.notice) setExternalVendorNotice(result.notice)
-        const pick = result.suggestions[0]
-        if (builtReview?.noVendorOnRoster && (result.suggestions?.length ?? 0) > 0) {
-          setFindExternalVendorOpen(true)
-        } else if (preferExternalVendor) {
-          setFindExternalVendorOpen(true)
+        if (result.locationLabel) setExternalVendorLocationLabel(result.locationLabel)
+        if (result.issueCategory !== undefined) {
+          setExternalVendorIssueCategory(result.issueCategory)
         }
+        const pick = result.suggestions[0]
         if (!pick) return
         setEscalatedReview((prev) => {
           if (!prev) return prev
@@ -1214,7 +1572,6 @@ export function AdminOverviewDashboard() {
         const message = err instanceof Error ? err.message : 'External vendor search failed'
         setEscalatedRailError(message)
         setExternalVendorDiscoverError(message)
-        if (preferExternalVendor) setFindExternalVendorOpen(true)
       })
       .finally(() => {
         if (!cancelled) setEscalatedRailLoading(false)
@@ -1233,9 +1590,13 @@ export function AdminOverviewDashboard() {
         return
       }
 
-      if (review.takeActionMode === 'assign_vendor' || review.takeActionMode === 'external_vendor') {
+      if (
+        review.takeActionMode === 'assign_vendor' ||
+        review.takeActionMode === 'external_vendor' ||
+        review.takeActionMode === 'reassign'
+      ) {
         if (escalatedRailLoading) {
-          setEscalatedRailError('External vendor search is still loading.')
+          setEscalatedRailError('Vendor search is still loading.')
           return
         }
         if (externalVendorSuggestions.length === 0) {
@@ -1244,63 +1605,32 @@ export function AdminOverviewDashboard() {
           )
           return
         }
+        setEscalatedRailError(null)
         setFindExternalVendorOpen(true)
         return
       }
 
-      const suggestion = review.suggestion
-      if (review.takeActionMode !== 'reassign' || !suggestion?.vendorName) {
-        setEscalatedRailError('This ticket is handled automatically when a roster vendor is available.')
-        return
-      }
-
-      const secret = import.meta.env.VITE_ADMIN_REASSIGN_SECRET?.trim()
-      if (!secret) {
-        setEscalatedRailError(
-          'Admin actions are not configured. Set VITE_ADMIN_REASSIGN_SECRET in .env.',
-        )
-        return
-      }
-
-      const reassignUrl = import.meta.env.VITE_ADMIN_REASSIGN_URL?.trim()
-      if (!reassignUrl) {
-        setEscalatedRailError(
-          'Reassign is not configured. Set VITE_ADMIN_REASSIGN_URL in .env.',
-        )
-        return
-      }
-
-      setEscalatedRailSaving(true)
-      setEscalatedRailError(null)
-      try {
-        const reassignResult = await postAdminReassignVendor({
-          url: reassignUrl,
-          secret,
-          ticketId: review.ticketId,
-          vendorId: suggestion.vendorId,
-          vendorName: suggestion.vendorName,
-        })
-        setTickets((prev) =>
-          prev.map((t) =>
-            t.id === review.ticketId
-              ? {
-                  ...t,
-                  assignedVendorId: reassignResult.assigned_vendor_id,
-                  assignedVendorName: suggestion.vendorName,
-                  vendorWorkStatus: 'pending_accept',
-                }
-              : t,
-          ),
-        )
-        setEscalatedRailTarget(null)
-      } catch (err) {
-        setEscalatedRailError(err instanceof Error ? err.message : 'Reassign failed')
-      } finally {
-        setEscalatedRailSaving(false)
-      }
+      setEscalatedRailError('This ticket is handled automatically when a roster vendor is available.')
     },
     [navigate, escalatedRailLoading, externalVendorSuggestions.length, externalVendorDiscoverError],
   )
+
+  const closeEscalatedRail = useCallback(() => {
+    if (escalatedRailSaving) return
+    setFindExternalVendorOpen(false)
+    setEscalatedRailTarget(null)
+    setEscalatedRailError(null)
+  }, [escalatedRailSaving])
+
+  const closeEscalatedVendorFlow = useCallback(() => {
+    closeEscalatedRail()
+  }, [closeEscalatedRail])
+
+  const backFromFindExternalVendor = useCallback(() => {
+    if (escalatedRailSaving) return
+    setFindExternalVendorOpen(false)
+    setEscalatedRailError(null)
+  }, [escalatedRailSaving])
 
   const handleExternalVendorSelect = useCallback(
     async (pick: ExternalVendorSuggestionDto) => {
@@ -1347,13 +1677,33 @@ export function AdminOverviewDashboard() {
         setFindExternalVendorOpen(false)
         setEscalatedRailTarget(null)
         setExternalVendorSuggestions([])
+        const locationLabel =
+          externalVendorLocationLabel ??
+          escalatedReview?.locationLabel ??
+          tickets.find((t) => t.id === ticketId)?.unit ??
+          'Property · Unit'
+        showAwaitingDecisionOutcome(
+          buildVendorAssignedOutcome({
+            operationTitle: escalatedReview?.headerTitle ?? 'SLA breached — no roster vendor',
+            context: locationLabel,
+            vendorName: pick.name,
+            external: true,
+          }),
+          `sla-${ticketId}`,
+        )
       } catch (err) {
         setEscalatedRailError(err instanceof Error ? err.message : 'External assign failed')
       } finally {
         setEscalatedRailSaving(false)
       }
     },
-    [escalatedReview, escalatedRailTarget],
+    [
+      escalatedReview,
+      escalatedRailTarget,
+      externalVendorLocationLabel,
+      tickets,
+      showAwaitingDecisionOutcome,
+    ],
   )
 
   const handleLateRentAction = useCallback(
@@ -1364,6 +1714,26 @@ export function AdminOverviewDashboard() {
         const result = await applyLateRentAccountAction(action, review, getActiveLandlordId())
         if (!result.ok) {
           setLateRentRailError(result.error)
+          return
+        }
+
+        if (action === 'offer_payment_plan') {
+          if (review.paymentPlanSmsSent) {
+            setLateRentRailError('A payment plan was already sent for this account.')
+            return
+          }
+          setLateRentMessageError(null)
+          setLateRentMessageBrief(buildLateRentPaymentPlanBrief(review))
+          return
+        }
+
+        if (action === 'waive_late_fee') {
+          if (review.lateFeeWaiverSmsSent) {
+            setLateRentRailError('A late fee waiver was already sent for this account.')
+            return
+          }
+          setLateRentMessageError(null)
+          setLateRentMessageBrief(buildLateRentWaiveLateFeeBrief(review))
           return
         }
 
@@ -1380,13 +1750,65 @@ export function AdminOverviewDashboard() {
         const nextWorkflowData = await fetchAdminWorkflowDashboard()
         setWorkflowData(nextWorkflowData)
         closeLateRentRail()
+        showAwaitingDecisionOutcome(
+          buildLateRentActionOutcome(action, review),
+          `rent-${review.workflowRunId}`,
+        )
       } catch (err) {
         setLateRentRailError(err instanceof Error ? err.message : 'Action failed')
       } finally {
         setLateRentRailSaving(false)
       }
     },
-    [closeLateRentRail],
+    [closeLateRentRail, showAwaitingDecisionOutcome],
+  )
+
+  const handleLateRentMessageSend = useCallback(
+    async (
+      brief: LateRentAccountMessageBrief,
+      message: string,
+      options?: { installments?: number },
+    ) => {
+      setLateRentMessageSending(true)
+      setLateRentMessageError(null)
+      try {
+        const result = await sendLateRentAccountMessage(
+          brief,
+          message,
+          getActiveLandlordId(),
+          options,
+        )
+        if (!result.ok) {
+          setLateRentMessageError(result.error)
+          return
+        }
+        // Payment plan / waive late fee stay in Awaiting Your Decision — no
+        // acknowledgement modal until Mark payment received.
+        setLateRentMessageBrief(appendLateRentSentMessage(brief, message))
+        // Waive late fee adjusts users.balance_due + open rent run amounts.
+        if (
+          brief.action === 'waive_late_fee' &&
+          brief.residentId &&
+          result.balanceDueAfterWaiver != null
+        ) {
+          const nextBalance = result.balanceDueAfterWaiver
+          setOverviewResidents((prev) =>
+            prev.map((resident) =>
+              resident.id === brief.residentId
+                ? { ...resident, balanceDue: nextBalance }
+                : resident,
+            ),
+          )
+        }
+        const nextWorkflowData = await fetchAdminWorkflowDashboard()
+        setWorkflowData(nextWorkflowData)
+      } catch (err) {
+        setLateRentMessageError(err instanceof Error ? err.message : 'Send failed')
+      } finally {
+        setLateRentMessageSending(false)
+      }
+    },
+    [],
   )
 
   const handleLeaseRenewalAction = useCallback(
@@ -1400,14 +1822,57 @@ export function AdminOverviewDashboard() {
           return
         }
 
-        if (action === 'mark_resolved' || action === 'snooze_1h') {
+        if (action === 'mark_resolved' || action === 'trigger_move_out_prep') {
           setWorkflowData(await fetchAdminWorkflowDashboard())
           closeLeaseRenewalRail()
+          showAwaitingDecisionOutcome(
+            buildLeaseRenewalActionOutcome(action, review, {
+              moveOutRunId: result.moveOutRunId,
+            }),
+            `run-${review.workflowRunId}`,
+          )
           return
         }
 
-        if (action === 'call_tenant' && review.residentPhone) {
-          window.location.href = `tel:${review.residentPhone.replace(/\D/g, '')}`
+        if (action === 'offer_renewal_incentive') {
+          const run = workflowData?.escalated.find((entry) => entry.id === review.workflowRunId)
+          const residentName =
+            run?.residentName?.trim() ||
+            (review.residentId
+              ? overviewResidents.find((entry) => entry.id === review.residentId)?.fullName
+              : null) ||
+            'Resident'
+          setLeaseRenewalIncentiveError(null)
+          setLeaseRenewalIncentiveBrief(
+            buildLeaseRenewalIncentiveBrief(review, { residentName }),
+          )
+          return
+        }
+
+        if (action === 'call_tenant') {
+          if (!review.residentPhone) {
+            setLeaseRenewalRailError('No phone number on file for this tenant.')
+            return
+          }
+          const run = workflowData?.escalated.find((entry) => entry.id === review.workflowRunId)
+          const residentName =
+            run?.residentName?.trim() ||
+            (review.residentId
+              ? overviewResidents.find((entry) => entry.id === review.residentId)?.fullName
+              : null) ||
+            'Resident'
+          closeLeaseRenewalRail()
+          setTenantCallFlow({
+            name: residentName,
+            phone: review.residentPhone,
+            context: {
+              workOrderRef: review.workflowRef,
+              locationLabel: review.locationLabel,
+              residentName,
+              issueCategory: 'lease_renewal',
+            },
+            reasonLine: buildLeaseRenewalCallReasonLine(review.workflowRef),
+          })
         }
       } catch (err) {
         setLeaseRenewalRailError(err instanceof Error ? err.message : 'Action failed')
@@ -1415,7 +1880,36 @@ export function AdminOverviewDashboard() {
         setLeaseRenewalRailSaving(false)
       }
     },
-    [closeLeaseRenewalRail],
+    [
+      closeLeaseRenewalRail,
+      overviewResidents,
+      showAwaitingDecisionOutcome,
+      workflowData?.escalated,
+    ],
+  )
+
+  const handleLeaseRenewalIncentiveSend = useCallback(
+    async (brief: LeaseRenewalIncentiveBrief, message: string) => {
+      setLeaseRenewalIncentiveSending(true)
+      setLeaseRenewalIncentiveError(null)
+      try {
+        const result = await sendLeaseRenewalIncentiveMessage(
+          brief,
+          message,
+          getActiveLandlordId(),
+        )
+        if (!result.ok) {
+          setLeaseRenewalIncentiveError(result.error)
+          return
+        }
+        setLeaseRenewalIncentiveBrief(appendLeaseRenewalIncentiveSentMessage(brief, message))
+      } catch (err) {
+        setLeaseRenewalIncentiveError(err instanceof Error ? err.message : 'Send failed')
+      } finally {
+        setLeaseRenewalIncentiveSending(false)
+      }
+    },
+    [],
   )
 
   const criticalAttentionCount = allAttentionItems.filter(
@@ -1449,13 +1943,21 @@ export function AdminOverviewDashboard() {
       byBuildingCategory.set(key, (byBuildingCategory.get(key) ?? 0) + 1)
     }
     const topPattern = [...byBuildingCategory.entries()].sort((a, b) => b[1] - a[1])[0]
+    let recurringBuilding: string | null = null
+    let recurringCategory: string | null = null
     if (topPattern && topPattern[1] >= 2) {
       const [key, count] = topPattern
       const [building, category] = key.split('|')
+      recurringBuilding = building
+      recurringCategory = category
+      const categoryLabel = formatCategoryName(category)
       insights.push({
-        tag: 'PATTERN',
-        text: `${building} has experienced ${count} ${formatCategoryName(category).toLowerCase()} issues in the last 60 days.`,
+        tag: 'RECURRING ISSUES',
+        text: `${categoryLabel} issues keep occurring in ${building}.`,
         score: Math.min(95, 70 + count * 5),
+        building,
+        categoryLabel,
+        requestCount: count,
       })
     }
 
@@ -1467,32 +1969,60 @@ export function AdminOverviewDashboard() {
     }
     const topUnit = [...byUnit.entries()].sort((a, b) => b[1] - a[1])[0]
     if (topUnit && topUnit[1] >= 2) {
+      const unitLabel = `Unit ${topUnit[0].toUpperCase()}`
       insights.push({
         tag: 'RISK',
-        text: `Unit ${topUnit[0].toUpperCase()} shows elevated maintenance volume (${topUnit[1]} requests in 60 days).`,
+        text: `${unitLabel} has generated the most maintenance requests.`,
         score: Math.min(90, 60 + topUnit[1] * 6),
+        unitLabel,
+        requestCount: topUnit[1],
       })
     }
 
     if (kpis.vendorResponse != null) {
+      const assignedCount = tickets.filter((t) => t.assignedVendorId).length
       insights.push({
-        tag: 'PERFORMANCE',
+        tag: 'VENDOR RESPONSE',
         text: `Vendors have responded to ${kpis.vendorResponse}% of assigned work orders.`,
         score: kpis.vendorResponse,
+        responseRate: kpis.vendorResponse,
+        assignedCount,
       })
     }
 
-    const byCategory = new Map<string, number>()
+    // Unit-level preventive signal (distinct from Recurring Issues, which is building+category).
+    const byUnitCategory = new Map<string, number>()
     for (const t of recentTickets) {
-      if (!t.issueCategory) continue
-      byCategory.set(t.issueCategory, (byCategory.get(t.issueCategory) ?? 0) + 1)
+      const unitKey = normalizeUnitLabel(t.unit)
+      if (!unitKey || !t.issueCategory) continue
+      const key = `${unitKey}|${t.issueCategory}`
+      byUnitCategory.set(key, (byUnitCategory.get(key) ?? 0) + 1)
     }
-    const topCategory = [...byCategory.entries()].sort((a, b) => b[1] - a[1])[0]
-    if (topCategory && topCategory[1] >= 3) {
+    const unitCategoryCandidates = [...byUnitCategory.entries()]
+      .filter(([, count]) => count >= 2)
+      .sort((a, b) => b[1] - a[1])
+    // Prefer a unit that isn't just restating the same building+category as Recurring Issues.
+    const preventPick =
+      unitCategoryCandidates.find(([key]) => {
+        const [unitKey, category] = key.split('|')
+        if (recurringCategory && category === recurringCategory) {
+          const building = buildingByUnitLabel.get(unitKey)
+          if (building && building === recurringBuilding) return false
+        }
+        return true
+      }) ?? unitCategoryCandidates[0]
+    if (preventPick) {
+      const [key, count] = preventPick
+      const [unitKey, category] = key.split('|')
+      const categoryLabel = formatCategoryName(category)
+      const unitLabel = `Unit ${unitKey.toUpperCase()}`
       insights.push({
-        tag: 'PREVENTIVE',
-        text: `Preventive ${formatCategoryName(topCategory[0]).toLowerCase()} inspection recommended — ${topCategory[1]} related requests in 60 days.`,
-        score: Math.min(95, 65 + topCategory[1] * 4),
+        tag: 'PREVENT FUTURE REPAIRS',
+        text: `A preventive ${categoryLabel.toLowerCase()} inspection is recommended for ${unitLabel}.`,
+        score: Math.min(95, 65 + count * 4),
+        categoryLabel,
+        requestCount: count,
+        unitLabel,
       })
     }
 
@@ -1516,6 +2046,13 @@ export function AdminOverviewDashboard() {
       : portfolioPendingSetup
         ? 'Pending'
         : `${healthReport.portfolio.score}%`
+
+  const escalatedRailOpen = escalatedRailTarget != null && escalatedReview != null
+  const stackedVendorRails = escalatedRailOpen && findExternalVendorOpen
+  const lateRentRailOpen = lateRentRailRunId != null && lateRentReview != null
+  const stackedLateRentRails = lateRentRailOpen && lateRentMessageBrief != null
+  const leaseRenewalRailOpen = leaseRenewalRailRunId != null && leaseRenewalReview != null
+  const stackedLeaseRenewalRails = leaseRenewalRailOpen && leaseRenewalIncentiveBrief != null
 
   return (
     <main className="flex min-h-0 flex-1 flex-col px-8 pb-12">
@@ -1607,16 +2144,22 @@ export function AdminOverviewDashboard() {
           caption="More reported than 4 weeks ago"
         />
         <KpiCard
-          label="Active Operations"
+          label="Active Tasks"
           value={loading ? '—' : String(kpis.activeOps)}
           delta={loading ? null : kpis.activeOpsDelta}
           caption="Compared to 4 weeks ago"
+          infoTitle="Active tasks breakdown"
+          infoDescription="Workflow runs Ulo is coordinating — maintenance, rent, inspections, move-ins, move-outs, and lease renewals. Maintenance items here are work orders Ulo is actively moving forward, not your full open backlog."
+          infoLines={loading ? undefined : kpis.activeOpsBreakdown}
         />
         <KpiCard
           label="Open Work Orders"
           value={loading ? '—' : String(kpis.workOrders)}
           delta={loading ? null : kpis.workOrdersDelta}
           caption={updatedCaption}
+          infoTitle="Open work orders breakdown"
+          infoDescription="Open maintenance backlog across the portfolio (standard and critical). Use Work Orders for the full list; Active Tasks shows what Ulo is coordinating in the workflow pipeline."
+          infoLines={loading ? undefined : kpis.workOrdersBreakdown}
         />
         <div title={healthKpiTooltip} aria-label={healthKpiTooltip}>
           <KpiCard
@@ -1656,30 +2199,17 @@ export function AdminOverviewDashboard() {
                 Insights will appear as Ulo learns from your properties.
               </p>
             ) : (
-              smartInsights.map((insight) => (
-                <div
-                  key={insight.tag}
-                  className="rounded-[10px] border border-[#ede9fe] bg-[#fbfaff] p-4"
-                >
-                  <p className="text-[14px] leading-5 tracking-[-0.1504px] text-[#0a0a0a]">
-                    {insight.text}
-                  </p>
-                  <div className="mt-3 flex items-center gap-3">
-                    <span
-                      className={`text-[10px] font-semibold uppercase tracking-[0.08em] ${INSIGHT_TAG_STYLES[insight.tag]}`}
-                    >
-                      {insight.tag}
-                    </span>
-                    <div className="h-1.5 w-24 overflow-hidden rounded-full bg-[#ede9fe]">
-                      <div
-                        className="h-full rounded-full bg-[#7c3aed]"
-                        style={{ width: `${insight.score}%` }}
-                      />
-                    </div>
-                    <span className="text-[11px] text-[#6a7282]">{insight.score}%</span>
-                  </div>
-                </div>
-              ))
+              smartInsights.map((insight) =>
+                insight.tag === 'RECURRING ISSUES' ? (
+                  <RecurringIssuesInsightCard key={insight.tag} insight={insight} />
+                ) : insight.tag === 'RISK' ? (
+                  <RiskInsightCard key={insight.tag} insight={insight} />
+                ) : insight.tag === 'VENDOR RESPONSE' ? (
+                  <VendorResponseInsightCard key={insight.tag} insight={insight} />
+                ) : (
+                  <PreventFutureRepairsInsightCard key={insight.tag} insight={insight} />
+                ),
+              )
             )}
           </div>
         </section>
@@ -1701,7 +2231,7 @@ export function AdminOverviewDashboard() {
               type="button"
               onClick={() => setAwaitingDecisionListOpen(true)}
               disabled={loading || allAttentionItems.length === 0}
-              className="shrink-0 cursor-pointer text-[13px] font-medium text-[#364153] outline-none transition-colors duration-150 hover:text-[#0a0a0a] hover:underline disabled:cursor-not-allowed disabled:opacity-40"
+              className="shrink-0 cursor-pointer text-[13px] font-medium text-[#AF63AF] outline-none transition-colors duration-150 hover:text-[#954f95] hover:underline disabled:cursor-not-allowed disabled:opacity-40"
             >
               View all →
             </button>
@@ -1725,9 +2255,9 @@ export function AdminOverviewDashboard() {
                         className={[
                           'rounded-[4px] px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-[0.06em]',
                           item.badge === 'critical'
-                            ? 'bg-[#fb2c36] text-white'
+                            ? 'bg-[#E3646C] text-white'
                             : item.actionStyle === 'alert'
-                              ? 'bg-[#f7e1e3] text-[#b22430]'
+                              ? 'bg-[#FBE3E5] text-[#E3646C]'
                               : 'bg-[#fef9c2] text-[#a65f00]',
                         ].join(' ')}
                       >
@@ -1748,8 +2278,8 @@ export function AdminOverviewDashboard() {
                       className={[
                         'shrink-0 rounded-[10px] border px-4 py-2 text-[13px] font-medium leading-5 transition-colors duration-150',
                         item.actionStyle === 'alert'
-                          ? 'border-transparent bg-[#f7e1e3] text-[#b22430] hover:bg-[#efd0d4]'
-                          : 'border-black/10 bg-white text-tertiary hover:bg-[#e2f5f1]',
+                          ? 'border-transparent bg-[#FBE3E5] text-[#E3646C] hover:bg-[#f5d0d4]'
+                          : 'border-current bg-white text-tertiary hover:bg-[#e2f5f1]',
                       ].join(' ')}
                     >
                       {item.actionLabel} →
@@ -1760,8 +2290,8 @@ export function AdminOverviewDashboard() {
                       className={[
                         'shrink-0 rounded-[10px] border px-4 py-2 text-[13px] font-medium leading-5 transition-colors duration-150',
                         item.actionStyle === 'alert'
-                          ? 'border-transparent bg-[#f7e1e3] text-[#b22430] hover:bg-[#efd0d4]'
-                          : 'border-black/10 bg-white text-tertiary hover:bg-[#e2f5f1]',
+                          ? 'border-transparent bg-[#FBE3E5] text-[#E3646C] hover:bg-[#f5d0d4]'
+                          : 'border-current bg-white text-tertiary hover:bg-[#e2f5f1]',
                       ].join(' ')}
                     >
                       {item.actionLabel} →
@@ -1861,37 +2391,62 @@ export function AdminOverviewDashboard() {
         </p>
       ) : null}
 
-      <SlaOverdueActionRail
-        open={escalatedRailTarget != null && escalatedReview != null && !findExternalVendorOpen}
-        review={escalatedReview}
-        loading={escalatedRailLoading}
-        saving={escalatedRailSaving}
-        onClose={() => {
-          setEscalatedRailTarget(null)
-          setEscalatedRailError(null)
-        }}
-        onTakeAction={handleEscalatedTakeAction}
-      />
-
-      <FindExternalVendorRail
-        open={findExternalVendorOpen}
-        onClose={() => {
-          if (escalatedRailSaving) return
-          setFindExternalVendorOpen(false)
-          setEscalatedRailTarget(null)
-          setEscalatedRailError(null)
-        }}
-        onSelect={handleExternalVendorSelect}
-        saving={escalatedRailSaving}
-        saveError={escalatedRailError}
-        loading={escalatedRailLoading}
-        error={externalVendorDiscoverError}
-        notice={externalVendorNotice}
-        locationLabel={escalatedReview?.locationLabel ?? 'Property · Unit'}
-        issueCategory={externalVendorIssueCategory}
-        suggestions={externalVendorSuggestions}
-        providersUsed={externalVendorProvidersUsed}
-      />
+      {stackedVendorRails ? (
+        <div className={ADMIN_RIGHT_RAIL_STACK_HOST}>
+          <div
+            role="presentation"
+            className={ADMIN_RIGHT_RAIL_SCRIM}
+            aria-hidden
+            onClick={() => {
+              if (!escalatedRailSaving) closeEscalatedRail()
+            }}
+          />
+          <div className="relative flex h-full max-h-dvh max-w-full">
+            <FindExternalVendorRail
+              panelOnly
+              stackedPosition="left"
+              open
+              onClose={closeEscalatedVendorFlow}
+              onBack={backFromFindExternalVendor}
+              onSelect={handleExternalVendorSelect}
+              saving={escalatedRailSaving}
+              saveError={escalatedRailError}
+              loading={escalatedRailLoading}
+              error={externalVendorDiscoverError}
+              notice={externalVendorNotice}
+              locationLabel={
+                externalVendorLocationLabel ??
+                escalatedReview?.locationLabel ??
+                'Property · Unit'
+              }
+              issueCategory={externalVendorIssueCategory}
+              workOrderRef={externalVendorCallContext.workOrderRef}
+              residentName={externalVendorCallContext.residentName}
+              suggestions={externalVendorSuggestions}
+              providersUsed={externalVendorProvidersUsed}
+            />
+            <SlaOverdueActionRail
+              panelOnly
+              stackedPosition="right"
+              open
+              review={escalatedReview}
+              loading={escalatedRailLoading}
+              saving={escalatedRailSaving}
+              onClose={closeEscalatedRail}
+              onTakeAction={handleEscalatedTakeAction}
+            />
+          </div>
+        </div>
+      ) : (
+        <SlaOverdueActionRail
+          open={escalatedRailOpen}
+          review={escalatedReview}
+          loading={escalatedRailLoading}
+          saving={escalatedRailSaving}
+          onClose={closeEscalatedRail}
+          onTakeAction={handleEscalatedTakeAction}
+        />
+      )}
 
       <AwaitingDecisionListRail
         open={awaitingDecisionListOpen}
@@ -1901,20 +2456,136 @@ export function AdminOverviewDashboard() {
         onItemAction={handleAwaitingDecisionItemAction}
       />
 
-      <LateRentAccountReviewRail
-        open={lateRentRailRunId != null && lateRentReview != null}
-        review={lateRentReview}
-        saving={lateRentRailSaving}
-        onClose={closeLateRentRail}
-        onAction={(action, review) => void handleLateRentAction(action, review)}
-      />
+      {stackedLateRentRails ? (
+        <div className={ADMIN_RIGHT_RAIL_STACK_HOST}>
+          <div
+            role="presentation"
+            className={ADMIN_RIGHT_RAIL_SCRIM}
+            aria-hidden
+            onClick={() => {
+              if (!lateRentRailSaving && !lateRentMessageSending) {
+                closeLateRentRail()
+              }
+            }}
+          />
+          <div className="relative flex h-full max-h-dvh max-w-full">
+            <LateRentAccountMessageRail
+              panelOnly
+              stackedPosition="left"
+              open
+              brief={lateRentMessageBrief}
+              sending={lateRentMessageSending}
+              sendError={lateRentMessageError}
+              onClose={closeLateRentMessageRail}
+              onSend={(brief, message, options) =>
+                void handleLateRentMessageSend(brief, message, options)
+              }
+            />
+            <LateRentAccountReviewRail
+              panelOnly
+              stackedPosition="right"
+              open
+              review={lateRentReview}
+              saving={lateRentRailSaving || lateRentMessageSending}
+              onClose={closeLateRentRail}
+              onAction={(action, review) => void handleLateRentAction(action, review)}
+            />
+          </div>
+        </div>
+      ) : (
+        <>
+          <LateRentAccountReviewRail
+            open={lateRentRailOpen}
+            review={lateRentReview}
+            saving={lateRentRailSaving}
+            onClose={closeLateRentRail}
+            onAction={(action, review) => void handleLateRentAction(action, review)}
+          />
 
-      <LeaseRenewalEscalatedRail
-        open={leaseRenewalRailRunId != null && leaseRenewalReview != null}
-        review={leaseRenewalReview}
-        saving={leaseRenewalRailSaving}
-        onClose={closeLeaseRenewalRail}
-        onAction={(action, review) => void handleLeaseRenewalAction(action, review)}
+          <LateRentAccountMessageRail
+            open={lateRentMessageBrief != null}
+            brief={lateRentMessageBrief}
+            sending={lateRentMessageSending}
+            sendError={lateRentMessageError}
+            onClose={closeLateRentMessageRail}
+            onSend={(brief, message, options) =>
+              void handleLateRentMessageSend(brief, message, options)
+            }
+          />
+        </>
+      )}
+
+      {stackedLeaseRenewalRails ? (
+        <div className={ADMIN_RIGHT_RAIL_STACK_HOST}>
+          <div
+            role="presentation"
+            className={ADMIN_RIGHT_RAIL_SCRIM}
+            aria-hidden
+            onClick={() => {
+              if (!leaseRenewalRailSaving && !leaseRenewalIncentiveSending) {
+                closeLeaseRenewalRail()
+              }
+            }}
+          />
+          <div className="relative flex h-full max-h-dvh max-w-full">
+            <LeaseRenewalIncentiveMessageRail
+              panelOnly
+              stackedPosition="left"
+              open
+              brief={leaseRenewalIncentiveBrief}
+              sending={leaseRenewalIncentiveSending}
+              sendError={leaseRenewalIncentiveError}
+              onClose={closeLeaseRenewalIncentiveRail}
+              onSend={(brief, message) => void handleLeaseRenewalIncentiveSend(brief, message)}
+            />
+            <LeaseRenewalEscalatedRail
+              panelOnly
+              stackedPosition="right"
+              open
+              review={leaseRenewalReview}
+              saving={leaseRenewalRailSaving || leaseRenewalIncentiveSending}
+              onClose={closeLeaseRenewalRail}
+              onAction={(action, review) => void handleLeaseRenewalAction(action, review)}
+            />
+          </div>
+        </div>
+      ) : (
+        <>
+          <LeaseRenewalEscalatedRail
+            open={leaseRenewalRailOpen}
+            review={leaseRenewalReview}
+            saving={leaseRenewalRailSaving}
+            onClose={closeLeaseRenewalRail}
+            onAction={(action, review) => void handleLeaseRenewalAction(action, review)}
+          />
+
+          <LeaseRenewalIncentiveMessageRail
+            open={leaseRenewalIncentiveBrief != null}
+            brief={leaseRenewalIncentiveBrief}
+            sending={leaseRenewalIncentiveSending}
+            sendError={leaseRenewalIncentiveError}
+            onClose={closeLeaseRenewalIncentiveRail}
+            onSend={(brief, message) => void handleLeaseRenewalIncentiveSend(brief, message)}
+          />
+        </>
+      )}
+
+      {tenantCallFlow ? (
+        <VendorCallFlowModal
+          open
+          onClose={() => setTenantCallFlow(null)}
+          vendorName={tenantCallFlow.name}
+          vendorPhone={tenantCallFlow.phone}
+          context={tenantCallFlow.context}
+          reasonLine={tenantCallFlow.reasonLine}
+          quickNotesPlaceholder="e.g. Tenant leaning toward renewing, asked about parking…"
+        />
+      ) : null}
+
+      <AwaitingDecisionOutcomeModal
+        open={awaitingDecisionOutcome != null}
+        outcome={awaitingDecisionOutcome}
+        onClose={() => setAwaitingDecisionOutcome(null)}
       />
     </main>
   )

@@ -17,6 +17,9 @@ import {
 import {
   WORKFLOW_CATEGORY_BADGE,
   WORKFLOW_KANBAN_STAGES,
+  WORKFLOW_PIPELINE_MAINTENANCE_FILTER_HELPER,
+  WORKFLOW_PIPELINE_PAGE_SUBTITLE,
+  WORKFLOW_PIPELINE_SECTION_HELPER,
   buildWorkflowKanbanCard,
   collectAdminWorkflowRuns,
   type WorkflowKanbanCard,
@@ -424,11 +427,14 @@ export function AdminWorkflowOperationsDashboard() {
   }, [data])
 
   const cards = useMemo<KanbanCard[]>(() => {
-    const all = allRuns.filter((row) => row.status !== 'cancelled').map(buildWorkflowKanbanCard)
+    const runMetadata = data?.runMetadata ?? {}
+    const all = allRuns
+      .filter((row) => row.status !== 'cancelled')
+      .map((row) => buildWorkflowKanbanCard(row, runMetadata[row.id]))
     if (categoryFilter === 'all') return all
     const target: Category = categoryFilter === 'payment' ? 'payment' : categoryFilter
     return all.filter((card) => card.category === target)
-  }, [allRuns, categoryFilter])
+  }, [allRuns, categoryFilter, data?.runMetadata])
 
   const columns = useMemo(() => {
     const byStage = new Map<StageId, KanbanCard[]>()
@@ -529,14 +535,19 @@ export function AdminWorkflowOperationsDashboard() {
     }
   }, [load])
 
+  const pipelineHelperText =
+    categoryFilter === 'maintenance'
+      ? WORKFLOW_PIPELINE_MAINTENANCE_FILTER_HELPER
+      : WORKFLOW_PIPELINE_SECTION_HELPER
+
   return (
     <main className="flex min-h-0 w-full min-w-0 flex-1 flex-col overflow-x-hidden overflow-y-auto px-8 pb-12">
       <div className="py-6">
         <h1 className="text-[24px] font-semibold leading-8 tracking-[0.0703px] text-[#0a0a0a]">
-          Workflows
+          Active Tasks
         </h1>
-        <p className="text-[14px] leading-5 tracking-[-0.1504px] text-[#6a7282]">
-          Every property operation runs through one AI-powered workflow engine.
+        <p className="mt-1 max-w-3xl text-[14px] leading-5 tracking-[-0.1504px] text-[#6a7282]">
+          {WORKFLOW_PIPELINE_PAGE_SUBTITLE}
         </p>
       </div>
 
@@ -561,6 +572,14 @@ export function AdminWorkflowOperationsDashboard() {
         detail={pipelineDetail}
         loading={pipelineLoading}
         onClose={() => setSelectedRunId(null)}
+        onWorkflowUpdated={() => {
+          void load()
+          if (selectedRunId && data) {
+            void fetchWorkflowPipelineDetail(selectedRunId, allRuns, data.runMetadata).then(
+              setPipelineDetail,
+            )
+          }
+        }}
       />
 
       {error ? (
@@ -571,13 +590,16 @@ export function AdminWorkflowOperationsDashboard() {
 
       {/* Workflow Pipeline (kanban) */}
       <section className="flex w-full min-w-0 flex-col overflow-hidden rounded-[10px] border border-[#e5e7eb] bg-white shadow-[0px_1px_2px_-1px_rgba(0,0,0,0.06)]">
-        <div className="flex flex-col gap-3 border-b border-[#e5e7eb] px-6 py-4 lg:flex-row lg:items-center lg:justify-between">
-          <div>
+        <div className="flex flex-col gap-3 border-b border-[#e5e7eb] px-6 py-4 lg:flex-row lg:items-start lg:justify-between">
+          <div className="min-w-0">
             <h2 className="text-[16px] font-semibold leading-6 text-[#0a0a0a]">
               Workflow Pipeline
             </h2>
             <p className="text-[12px] leading-4 text-[#6a7282]">
-              {loading ? 'Loading…' : `${activeCount} active workflows across ${STAGE_ORDER.length} stages`}
+              {loading ? 'Loading…' : `${activeCount} active tasks across ${STAGE_ORDER.length} stages`}
+            </p>
+            <p className="mt-1.5 max-w-2xl text-[12px] leading-4 text-[#6a7282]">
+              {pipelineHelperText}
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-1.5">
@@ -634,7 +656,9 @@ export function AdminWorkflowOperationsDashboard() {
                     <p className="px-1 py-6 text-center text-[12px] text-[#6a7282]">Loading…</p>
                   ) : column.cards.length === 0 ? (
                     <p className="px-1 py-6 text-center text-[12px] text-[#9ca3af]">
-                      No workflows
+                      {categoryFilter === 'maintenance' && column.id === 'in_progress'
+                        ? 'No maintenance tasks in progress'
+                        : 'No tasks in this stage'}
                     </p>
                   ) : (
                     column.cards.map((card) => (

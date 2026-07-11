@@ -36,6 +36,16 @@ interface ImportMetaEnv {
    * If omitted, URL defaults to `${VITE_SUPABASE_URL}/functions/v1/discover-external-vendors`.
    */
   readonly VITE_DISCOVER_EXTERNAL_VENDORS_URL?: string
+  /**
+   * POST reassign-external-vendor (full URL); uses `VITE_ADMIN_REASSIGN_SECRET`.
+   * If omitted, defaults to `${VITE_SUPABASE_URL}/functions/v1/reassign-external-vendor`.
+   */
+  readonly VITE_REASSIGN_EXTERNAL_VENDOR_URL?: string
+  /**
+   * POST sla-auto-reassign (full URL); uses `VITE_ADMIN_REASSIGN_SECRET`.
+   * If omitted, defaults to `${VITE_SUPABASE_URL}/functions/v1/sla-auto-reassign`.
+   */
+  readonly VITE_SLA_AUTO_REASSIGN_URL?: string
   /** Milliseconds after assignment before “vendor delayed” AI UI (default: dev 0, prod 1h). */
   readonly VITE_VENDOR_DELAY_AI_MS?: string
   /**
@@ -49,6 +59,21 @@ interface ImportMetaEnv {
   readonly VITE_BROADCAST_SCHEDULE_URL?: string
   /** Optional POST endpoint for AI message enhancement. */
   readonly VITE_BROADCAST_AI_ENHANCE_URL?: string
+  /**
+   * POST generate-late-rent-insights (full URL); uses `VITE_ADMIN_REASSIGN_SECRET`.
+   * If omitted, defaults to `${VITE_SUPABASE_URL}/functions/v1/generate-late-rent-insights`.
+   */
+  readonly VITE_LATE_RENT_INSIGHTS_URL?: string
+  /**
+   * POST send-late-rent-account-message (full URL); uses `VITE_ADMIN_REASSIGN_SECRET`.
+   * If omitted, defaults to `${VITE_SUPABASE_URL}/functions/v1/send-late-rent-account-message`.
+   */
+  readonly VITE_SEND_LATE_RENT_ACCOUNT_MESSAGE_URL?: string
+  /**
+   * POST send-lease-renewal-incentive-message (full URL); uses `VITE_ADMIN_REASSIGN_SECRET`.
+   * If omitted, defaults to `${VITE_SUPABASE_URL}/functions/v1/send-lease-renewal-incentive-message`.
+   */
+  readonly VITE_SEND_LEASE_RENEWAL_INCENTIVE_MESSAGE_URL?: string
   /** Optional POST endpoint for retrying a failed resident/vendor/broadcast delivery. */
   readonly VITE_RETRY_FAILED_DELIVERY_URL?: string
   /** UUID tenant scope for SMS onboarding (matches Edge secret DEFAULT_LANDLORD_ID). */

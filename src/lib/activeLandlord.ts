@@ -18,6 +18,9 @@ export const DEFAULT_LANDLORD_ID =
 export const DEMO_LANDLORD_ID = 'de300000-0000-4000-8000-000000000001'
 export const EMPTY_LANDLORD_ID = 'de300000-0000-4000-8000-000000000002'
 
+/** Showcase move-out WO-D777 — stable id for lease-renewal kickoff demos. */
+export const DEMO_MOVE_OUT_WO_D777_RUN_ID = 'd7770000-0000-4000-8000-000000000001'
+
 export type LandlordAccountKind = 'default' | 'demo' | 'empty'
 
 export type LandlordAccountOption = {

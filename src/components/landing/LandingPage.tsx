@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
-import { TERMS_PRIVACY_SECTION_PATH } from '@/lib/legal/termsOfServiceContent'
+import { PRIVACY_POLICY_PATH } from '@/lib/legal/privacyPolicyContent'
 import { EarlyAccessModal } from '@/components/landing/EarlyAccessModal'
 import uloLogo from '@/assets/landing/ulo-logo.png'
 import heroBlueprint from '@/assets/landing/hero-blueprint.png'
@@ -573,7 +573,7 @@ export function LandingPage() {
             ·
           </span>
           <Link
-            to={TERMS_PRIVACY_SECTION_PATH}
+            to={PRIVACY_POLICY_PATH}
             className="font-medium text-[#9E439F] underline-offset-2 transition-colors hover:text-[#7f3680] hover:underline"
           >
             Privacy Policy

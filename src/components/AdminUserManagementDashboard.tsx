@@ -14,6 +14,7 @@ import { supabase } from '@/lib/supabase'
 import { normIssueCategory } from '@/lib/vendorIssueCategory'
 import { AddPropertyModal, type AddPropertyFormPayload } from '@/components/AddPropertyModal'
 import { TableCheckbox } from '@/components/TableCheckbox'
+import { CallPhoneButton, PhoneTelLink } from '@/components/CallPhoneButton'
 import { ALL_UNIT_OPTIONS } from '@/lib/propertyUnitOptions'
 import {
   buildUnitOptionsFromPropertyPayload,
@@ -1650,7 +1651,9 @@ function VendorManagementTabContent({
                         {row.phone ? (
                           <div className="flex items-center gap-2">
                             <IconPhone />
-                            <span className="text-[12px] leading-4 text-[#4a5565]">{row.phone}</span>
+                            <PhoneTelLink phone={row.phone} className="text-[12px] leading-4 text-[#4a5565]">
+                              {row.phone}
+                            </PhoneTelLink>
                           </div>
                         ) : null}
                       </div>
@@ -1671,7 +1674,15 @@ function VendorManagementTabContent({
                       <span className="text-[12px] font-medium text-[#4a5565]">{activeJobCountsByVendor[row.id] ?? 0}</span>
                     </td>
                     <td className="px-4 py-3 align-middle">
-                      <div className="flex justify-end">
+                      <div className="flex justify-end gap-1">
+                        {row.phone ? (
+                          <CallPhoneButton
+                            phone={row.phone}
+                            label="Call"
+                            variant="outline"
+                            className="h-7 px-2.5 text-[11px]"
+                          />
+                        ) : null}
                         <button
                           type="button"
                           aria-label={`Edit ${row.name}`}

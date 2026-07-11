@@ -21,7 +21,7 @@ import { OnboardingAiReviewStep } from '@/components/onboarding/OnboardingAiRevi
 import { OnboardingDocumentUploadStep } from '@/components/onboarding/OnboardingDocumentUploadStep'
 import { checkboxInputClassName } from '@/components/TableCheckbox'
 import { getActiveLandlordId } from '@/lib/activeLandlord'
-import { TERMS_PRIVACY_SECTION_PATH } from '@/lib/legal/termsOfServiceContent'
+import { PRIVACY_POLICY_PATH } from '@/lib/legal/privacyPolicyContent'
 import {
   buildOnboardingReviewData,
   canCompleteOnboarding,
@@ -1644,7 +1644,7 @@ export function AdminOnboardingDashboard() {
                   Consent is not a condition of purchase. Reply STOP to opt out. Reply HELP for
                   help. Message frequency varies. Message and data rates may apply.                   View our{' '}
                   <Link
-                    to={TERMS_PRIVACY_SECTION_PATH}
+                    to={PRIVACY_POLICY_PATH}
                     className="font-medium text-[#9E439F] underline underline-offset-2 hover:text-[#7f3680]"
                   >
                     Privacy Policy

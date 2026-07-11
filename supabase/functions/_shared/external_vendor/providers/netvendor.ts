@@ -125,13 +125,7 @@ const MOCK_BY_TRADE: Record<string, ExternalVendorHit[]> = {
   ],
 }
 
-function mockTradeKey(issueCategory: string | null): string {
-  const c = String(issueCategory ?? "").trim().toLowerCase()
-  if (c.includes("plumb")) return "plumbing"
-  if (c.includes("hvac") || c.includes("heat") || c.includes("air")) return "hvac"
-  if (c.includes("electric")) return "electrical"
-  return "default"
-}
+import { tradeBucketFromCategory } from "../trade_terms.ts"
 
 /** Deterministic NetVendor-shaped suggestions when live API is unavailable. */
 export class NetVendorMockExternalVendorProvider implements ExternalVendorProvider {
@@ -142,7 +136,7 @@ export class NetVendorMockExternalVendorProvider implements ExternalVendorProvid
   }
 
   async search(input: ExternalVendorSearchInput): Promise<ExternalVendorHit[]> {
-    const key = mockTradeKey(input.issueCategory)
+    const key = tradeBucketFromCategory(input.issueCategory)
     return MOCK_BY_TRADE[key] ?? MOCK_BY_TRADE.default
   }
 }

@@ -18,6 +18,7 @@ export type LateRentResidentContext = {
   status?: string | null
   moveInDate?: string | null
   balanceDue?: number | null
+  phone?: string | null
 }
 
 export type LateRentAccountAction =
@@ -31,12 +32,32 @@ export const LATE_RENT_ACCOUNT_ACTION_LABELS: Record<LateRentAccountAction, stri
   mark_payment_received: 'Mark payment received',
 }
 
+/** Structured facts sent to generate-late-rent-insights (OpenAI). */
+export type LateRentInsightsAccountFacts = {
+  residentName: string
+  locationLabel: string
+  daysOverdue: number
+  balanceDue: number | null
+  monthlyRent: number | null
+  workflowStatus: string
+  rentClassification: string | null
+  paymentIntent: string | null
+  paymentStatus: string | null
+  reminderSent: boolean
+  reminderSmsSent: boolean
+  reminderEmailSent: boolean
+  leaseStatus: string | null
+  moveInDate: string | null
+  riskLevel: LateRentRiskLevel
+}
+
 export type LateRentAccountReview = {
   workflowRunId: string
   residentId: string | null
   residentName: string
   residentShortName: string
   residentInitials: string
+  residentPhone: string | null
   leaseStatusLabel: string
   riskLabel: string
   riskClassName: string
@@ -47,7 +68,13 @@ export type LateRentAccountReview = {
   daysOverdue: number
   daysOverdueLabel: string
   monthlyRentLabel: string
+  /** True when payment-plan SMS was already delivered for this run. */
+  paymentPlanSmsSent: boolean
+  /** True when late-fee waiver SMS was already delivered for this run. */
+  lateFeeWaiverSmsSent: boolean
+  /** Heuristic fallback; replaced by AI when generate-late-rent-insights succeeds. */
   insights: LateRentInsightCard[]
+  insightsAccount: LateRentInsightsAccountFacts
 }
 
 const INSIGHT_TAG_STYLES: Record<LateRentInsightTag, string> = {
@@ -253,6 +280,22 @@ export function collectLateRentReviewRuns(
   })
 }
 
+export function applyLateRentInsightTexts(
+  review: LateRentAccountReview,
+  insights: Array<{ tag: LateRentInsightTag; text: string }>,
+): LateRentAccountReview {
+  const byTag = new Map(
+    insights.map((item) => [item.tag, item.text.trim()] as const),
+  )
+  return {
+    ...review,
+    insights: review.insights.map((card) => {
+      const next = byTag.get(card.tag)
+      return next ? { ...card, text: next } : card
+    }),
+  }
+}
+
 export function buildLateRentAccountReview(
   row: AdminRentCollectionRow,
   resident?: LateRentResidentContext | null,
@@ -262,29 +305,52 @@ export function buildLateRentAccountReview(
   const riskBadge = RISK_BADGE[risk]
   const balanceDue = resident?.balanceDue ?? row.amountDue ?? 0
   const monthlyRent = estimateMonthlyRent(row.amountDue, row.unitLabel)
+  const locationLabel = formatLocation(row.propertyLabel, row.unitLabel)
+  const residentName = row.residentName?.trim() || 'Resident'
+  const insightsAccount: LateRentInsightsAccountFacts = {
+    residentName,
+    locationLabel,
+    daysOverdue,
+    balanceDue: balanceDue > 0 ? balanceDue : row.amountDue,
+    monthlyRent,
+    workflowStatus: row.status,
+    rentClassification: row.rentClassification,
+    paymentIntent: row.paymentIntent,
+    paymentStatus: row.paymentStatus,
+    reminderSent: row.reminderSent,
+    reminderSmsSent: row.reminderSmsSent,
+    reminderEmailSent: row.reminderEmailSent,
+    leaseStatus: resident?.status ?? null,
+    moveInDate: resident?.moveInDate ?? null,
+    riskLevel: risk,
+  }
 
   return {
     workflowRunId: row.id,
     residentId: row.residentId,
-    residentName: row.residentName?.trim() || 'Resident',
+    residentName,
     residentShortName: formatShortName(row.residentName),
     residentInitials: formatInitials(row.residentName),
+    residentPhone: resident?.phone?.trim() || null,
     leaseStatusLabel: resolveLeaseStatusLabel(resident?.status),
     riskLabel: riskBadge.label,
     riskClassName: riskBadge.className,
-    locationLabel: formatLocation(row.propertyLabel, row.unitLabel),
+    locationLabel,
     communicationPrefLabel: 'Prefers Both',
     nextReminderLabel: buildNextReminderLabel(row),
     balanceDueLabel: formatCurrency(balanceDue > 0 ? balanceDue : row.amountDue),
     daysOverdue,
     daysOverdueLabel: String(daysOverdue),
     monthlyRentLabel: formatCurrency(monthlyRent),
+    paymentPlanSmsSent: row.paymentPlanSmsSent,
+    lateFeeWaiverSmsSent: row.lateFeeWaiverSmsSent,
     insights: [
       buildOnTimeHistoryInsight(row, resident),
       buildEngagementInsight(row),
       buildIntentInsight(row),
       buildRiskInsight(row, risk, daysOverdue),
     ],
+    insightsAccount,
   }
 }
 
@@ -300,15 +366,18 @@ const LATE_RENT_ACTION_MESSAGE: Record<LateRentAccountAction, string> = {
   mark_payment_received: 'Payment marked received by admin',
 }
 
-export async function applyLateRentAccountAction(
-  action: LateRentAccountAction,
-  review: LateRentAccountReview,
+/**
+ * Complete open rent_collection runs for this tenant so the escalation leaves
+ * Awaiting Your Decision (queue is driven by workflow_runs.status, not balance alone).
+ */
+async function completeRentCollectionRunsAfterPayment(
   landlordId: string,
+  review: LateRentAccountReview,
 ): Promise<{ ok: true } | { ok: false; error: string }> {
   const { supabase } = await import('@/lib/supabase')
   if (!supabase) return { ok: false, error: 'Supabase is not configured.' }
 
-  if (action === 'mark_payment_received' && review.residentId) {
+  if (review.residentId) {
     const { error: balanceError } = await supabase
       .from('users')
       .update({ balance_due: 0 })
@@ -319,11 +388,118 @@ export async function applyLateRentAccountAction(
     }
   }
 
+  const now = new Date().toISOString()
+  const runIds = new Set<string>([review.workflowRunId])
+
+  if (review.residentId) {
+    const { data: openRuns, error: runsError } = await supabase
+      .from('workflow_runs')
+      .select('id')
+      .eq('landlord_id', landlordId)
+      .eq('resident_id', review.residentId)
+      .eq('template_id', 'rent_collection')
+      .in('status', ['active', 'escalated'])
+
+    if (runsError) return { ok: false, error: runsError.message }
+    for (const row of openRuns ?? []) {
+      if (typeof row.id === 'string' && row.id) runIds.add(row.id)
+    }
+  }
+
+  for (const runId of runIds) {
+    const { data: run, error: fetchError } = await supabase
+      .from('workflow_runs')
+      .select('id, status, metadata')
+      .eq('id', runId)
+      .eq('landlord_id', landlordId)
+      .eq('template_id', 'rent_collection')
+      .maybeSingle()
+
+    if (fetchError) return { ok: false, error: fetchError.message }
+    if (!run) {
+      if (runId === review.workflowRunId) {
+        return { ok: false, error: 'Workflow run not found.' }
+      }
+      continue
+    }
+    if (run.status === 'completed') continue
+
+    const metadata =
+      run.metadata && typeof run.metadata === 'object' && !Array.isArray(run.metadata)
+        ? (run.metadata as Record<string, unknown>)
+        : {}
+    const stepState =
+      metadata.step_state &&
+      typeof metadata.step_state === 'object' &&
+      !Array.isArray(metadata.step_state)
+        ? (metadata.step_state as Record<string, unknown>)
+        : {}
+
+    const { error: updateError } = await supabase
+      .from('workflow_runs')
+      .update({
+        status: 'completed',
+        current_step: 'completed',
+        current_stage: 'completed',
+        completed_at: now,
+        metadata: {
+          ...metadata,
+          amount_due: 0,
+          payment_intent: 'paid',
+          rent_classification: 'paid',
+          admin_payment_received_at: now,
+          escalated_at: null,
+          escalation_reason: null,
+          step_state: {
+            ...stepState,
+            step: 'completed',
+            amount_due: 0,
+            payment_intent: 'paid',
+            rent_classification: 'paid',
+          },
+        },
+      })
+      .eq('id', runId)
+      .eq('landlord_id', landlordId)
+
+    if (updateError) return { ok: false, error: updateError.message }
+
+    const { error: eventError } = await supabase.from('workflow_events').insert({
+      workflow_run_id: runId,
+      event_type: 'workflow.act',
+      step: 'payment_received',
+      actor_type: 'landlord',
+      message: 'Admin marked rent payment received — escalation closed',
+      metadata: {
+        payment_intent: 'paid',
+        rent_classification: 'paid',
+        source: 'dashboard',
+      },
+    })
+    if (eventError) return { ok: false, error: eventError.message }
+  }
+
+  return { ok: true }
+}
+
+export async function applyLateRentAccountAction(
+  action: LateRentAccountAction,
+  review: LateRentAccountReview,
+  landlordId: string,
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  const { supabase } = await import('@/lib/supabase')
+  if (!supabase) return { ok: false, error: 'Supabase is not configured.' }
+
+  if (action === 'mark_payment_received') {
+    const completed = await completeRentCollectionRunsAfterPayment(landlordId, review)
+    if (!completed.ok) return completed
+  }
+
   const { error: graphError } = await supabase.from('operations_graph_events').insert({
     landlord_id: landlordId,
     event_type: LATE_RENT_ACTION_EVENT[action],
-    source: 'admin',
-    actor_type: 'admin',
+    source: 'dashboard',
+    actor_type: 'landlord',
     workflow_run_id: review.workflowRunId,
     workflow_template_id: 'rent_collection',
     resident_id: review.residentId,

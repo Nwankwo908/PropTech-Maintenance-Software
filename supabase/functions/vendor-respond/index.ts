@@ -82,7 +82,7 @@ serve(async (req) => {
   if (!action || !ticketId || !_vendorId || !token) {
     return htmlResponse(
       "Missing parameters",
-      "This link is incomplete. Open your vendor email and use the buttons there.",
+      "This link isn't complete. Open the job email we sent you and use the buttons there.",
       { status: 400 },
     )
   }
@@ -110,7 +110,7 @@ serve(async (req) => {
   ) {
     return htmlResponse(
       "Invalid or expired link",
-      "This link is invalid or has expired. Request a new assignment email or open the vendor portal.",
+      "This link doesn't work anymore. Ask for a new job email or open your vendor portal.",
       { status: 403 },
     )
   }
@@ -204,8 +204,8 @@ serve(async (req) => {
 
   const msg =
     action === "accept"
-      ? "You accepted this job. Redirecting to your vendor portal…"
-      : "You declined this job. Redirecting to your vendor portal…"
+      ? "You accepted this job. Taking you to your vendor portal…"
+      : "You declined this job. Taking you to your vendor portal…"
 
   return htmlResponse(action === "accept" ? "Accepted" : "Declined", msg, {
     redirectUrl,

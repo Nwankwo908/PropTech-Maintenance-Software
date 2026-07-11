@@ -7,6 +7,11 @@ import {
 import { sendResendEmail } from "../_shared/delivery.ts"
 import { sendVendorJobAlert } from "../_shared/sms/vendorSmsRouting.ts"
 import { signVendorEmailAction } from "../_shared/vendor_action_token.ts"
+import {
+  buildVendorJobAssignmentEmailText,
+  buildVendorJobAssignmentSms,
+  buildVendorJobAssignmentSubject,
+} from "../_shared/vendor_outreach_copy.ts"
 import { notifyResidentVendorAssigned } from "./resident_notify.ts"
 import { getEstimatedMinutes } from "../_shared/sla_rules.ts"
 
@@ -31,14 +36,6 @@ type VendorRow = {
   active: boolean
   category: string | null
   portal_api_key: string | null
-}
-
-const SMS_DESC_MAX = 300
-
-function truncateDescription(s: string, max: number): string {
-  const t = s.trim()
-  if (t.length <= max) return t
-  return `${t.slice(0, max - 1)}…`
 }
 
 type VendorEmailLinks = {
@@ -115,98 +112,79 @@ function buildEmailBodies(
   text: string
   html: string
 } {
-  const dueLine =
+  const text = buildVendorJobAssignmentEmailText({
+    vendorName,
+    priority: payload.priority,
+    unit: payload.unit,
+    description: payload.description,
+    ticketId: payload.ticketId,
+    dueAt: payload.dueAt,
+    estimatedMinutes: payload.estimatedMinutes,
+    viewJobUrl: links?.viewJob ?? fallbackManageUrl,
+    acceptUrl: links?.acceptUrl ?? null,
+    declineUrl: links?.declineUrl ?? null,
+    portalHomeUrl: links?.portalHome ?? null,
+    accessCode,
+  })
+
+  const first = vendorName.trim().split(/\s+/)[0] || "there"
+  const unit = payload.unit.trim() || "the property"
+  const dueRow =
     payload.dueAt && payload.dueAt.trim()
-      ? `Due by: ${new Date(payload.dueAt).toLocaleString()}`
-      : null
-  const estLine =
+      ? `<tr><td style="padding: 4px 12px 4px 0; color: #6a7282;">Respond by</td><td><strong>${escapeHtml(new Date(payload.dueAt).toLocaleString())}</strong></td></tr>`
+      : ""
+  const estRow =
     typeof payload.estimatedMinutes === "number" &&
     Number.isFinite(payload.estimatedMinutes)
-      ? `Estimated time: ${payload.estimatedMinutes} minutes`
-      : null
-
-  const textLines: string[] = [
-    `Hello ${vendorName},`,
-    "",
-    "You have been assigned a new maintenance request.",
-    "",
-    `Priority: ${payload.priority}`,
-    `Unit / location: ${payload.unit}`,
-    ...(dueLine ? [dueLine] : []),
-    ...(estLine ? [estLine] : []),
-    "",
-    "Description:",
-    payload.description,
-    "",
-    `Ticket ID: ${payload.ticketId}`,
-  ]
-
-  if (links) {
-    textLines.push("", `Vendor portal: ${links.portalHome}`, `View job: ${links.viewJob}`)
-    if (links.acceptUrl) textLines.push(`Accept job: ${links.acceptUrl}`)
-    if (links.declineUrl) textLines.push(`Decline job: ${links.declineUrl}`)
-  } else if (fallbackManageUrl) {
-    textLines.push("", `Open job: ${fallbackManageUrl}`)
-  }
-  if (accessCode?.trim()) {
-    textLines.push("", "Vendor access code:", accessCode.trim(), "Use this code on the vendor portal sign-in page.")
-  }
+      ? `<tr><td style="padding: 4px 12px 4px 0; color: #6a7282;">Target time</td><td><strong>${escapeHtml(String(payload.estimatedMinutes))} minutes</strong></td></tr>`
+      : ""
+  const accessCodeHtml = accessCode?.trim()
+    ? `<p style="margin: 14px 0 0; font-size: 14px; color: #6a7282;">Your sign-in code</p>
+  <p style="margin: 4px 0 12px;"><code style="display:inline-block;padding:8px 10px;border-radius:6px;background:#f3f4f6;border:1px solid #e5e7eb;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;">${escapeHtml(accessCode.trim())}</code></p>
+  <p style="margin: 0 0 12px;">Use this on the vendor portal if you're asked to log in.</p>`
+    : ""
 
   const actionButtonsHtml =
     links && (links.acceptUrl || links.declineUrl)
       ? `<p style="margin: 20px 0 12px;">
-    ${links.acceptUrl ? `<a href="${escapeHtml(links.acceptUrl)}" style="display:inline-block;margin:4px 8px 4px 0;padding:10px 16px;background:#9810fa;color:#fff;text-decoration:none;border-radius:8px;font-weight:600;">Accept Job</a>` : ""}
-    ${links.declineUrl ? `<a href="${escapeHtml(links.declineUrl)}" style="display:inline-block;margin:4px 8px 4px 0;padding:10px 16px;background:#f3f4f6;color:#101828;text-decoration:none;border-radius:8px;font-weight:600;border:1px solid #e5e7eb;">Decline Job</a>` : ""}
+    ${links.acceptUrl ? `<a href="${escapeHtml(links.acceptUrl)}" style="display:inline-block;margin:4px 8px 4px 0;padding:10px 16px;background:#9810fa;color:#fff;text-decoration:none;border-radius:8px;font-weight:600;">Accept job</a>` : ""}
+    ${links.declineUrl ? `<a href="${escapeHtml(links.declineUrl)}" style="display:inline-block;margin:4px 8px 4px 0;padding:10px 16px;background:#f3f4f6;color:#101828;text-decoration:none;border-radius:8px;font-weight:600;border:1px solid #e5e7eb;">Decline job</a>` : ""}
   </p>`
       : ""
 
   const portalLinksHtml = links
     ? `<p style="margin: 12px 0;">
     <a href="${escapeHtml(links.portalHome)}" style="color:#9810fa;font-weight:600;">Vendor portal</a>
-    · <a href="${escapeHtml(links.viewJob)}" style="color:#9810fa;font-weight:600;">View Job</a>
+    · <a href="${escapeHtml(links.viewJob)}" style="color:#9810fa;font-weight:600;">View job</a>
   </p>`
     : fallbackManageUrl
       ? `<p><a href="${escapeHtml(fallbackManageUrl)}">Open vendor portal</a></p>`
       : ""
-
-  const dueRow =
-    payload.dueAt && payload.dueAt.trim()
-      ? `<tr><td style="padding: 4px 12px 4px 0; color: #6a7282;">Due by</td><td><strong>${escapeHtml(new Date(payload.dueAt).toLocaleString())}</strong></td></tr>`
-      : ""
-  const estRow =
-    typeof payload.estimatedMinutes === "number" &&
-    Number.isFinite(payload.estimatedMinutes)
-      ? `<tr><td style="padding: 4px 12px 4px 0; color: #6a7282;">Est. time</td><td><strong>${escapeHtml(String(payload.estimatedMinutes))} minutes</strong></td></tr>`
-      : ""
-  const accessCodeHtml = accessCode?.trim()
-    ? `<p style="margin: 14px 0 0; font-size: 14px; color: #6a7282;">Vendor access code</p>
-  <p style="margin: 4px 0 12px;"><code style="display:inline-block;padding:8px 10px;border-radius:6px;background:#f3f4f6;border:1px solid #e5e7eb;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;">${escapeHtml(accessCode.trim())}</code></p>
-  <p style="margin: 0 0 12px;">Use this code on the vendor portal sign-in page.</p>`
-    : ""
 
   const html = `
 <!DOCTYPE html>
 <html>
 <head><meta charset="utf-8"/></head>
 <body style="font-family: system-ui, sans-serif; line-height: 1.5; color: #101828;">
-  <p>Hello ${escapeHtml(vendorName)},</p>
-  <p>You have been assigned a <strong>new maintenance request</strong>.</p>
+  <p>Hi ${escapeHtml(first)},</p>
+  <p>You have a <strong>new maintenance job</strong> at ${escapeHtml(unit)}.</p>
   <table style="border-collapse: collapse; margin: 16px 0;">
     <tr><td style="padding: 4px 12px 4px 0; color: #6a7282;">Priority</td><td><strong>${escapeHtml(payload.priority)}</strong></td></tr>
-    <tr><td style="padding: 4px 12px 4px 0; color: #6a7282;">Unit / location</td><td><strong>${escapeHtml(payload.unit)}</strong></td></tr>
+    <tr><td style="padding: 4px 12px 4px 0; color: #6a7282;">Location</td><td><strong>${escapeHtml(unit)}</strong></td></tr>
     ${dueRow}
     ${estRow}
   </table>
-  <p style="color: #6a7282; font-size: 14px;">Description</p>
+  <p style="color: #6a7282; font-size: 14px;">What's needed</p>
   <p style="white-space: pre-wrap;">${escapeHtml(payload.description)}</p>
-  <p style="font-size: 12px; color: #6a7282;">Ticket ID: ${escapeHtml(payload.ticketId)}</p>
+  <p style="font-size: 12px; color: #6a7282;">Job ref: ${escapeHtml(payload.ticketId)}</p>
   ${portalLinksHtml}
   ${accessCodeHtml}
   ${actionButtonsHtml}
+  <p>Thanks!</p>
 </body>
 </html>`.trim()
 
-  return { text: textLines.join("\n"), html }
+  return { text, html }
 }
 
 function escapeHtml(s: string): string {
@@ -219,44 +197,20 @@ function escapeHtml(s: string): string {
 
 function buildSmsBody(
   payload: TicketNotifyPayload,
+  vendorName: string,
   primaryUrl: string | null,
   acceptUrl: string | null,
-  declineUrl: string | null,
+  _declineUrl: string | null,
 ): string {
-  const linkBlock = [primaryUrl, acceptUrl, declineUrl].filter(Boolean).join("\n")
-  const reservedForLink = linkBlock.length > 0 ? Math.min(400, linkBlock.length + 40) : 0
-  const descMax = Math.max(60, SMS_DESC_MAX - reservedForLink)
-  const desc = truncateDescription(payload.description, descMax)
-  const dueSms =
-    payload.dueAt && payload.dueAt.trim()
-      ? `Due by: ${new Date(payload.dueAt).toLocaleString()}`
-      : null
-  const estSms =
-    typeof payload.estimatedMinutes === "number" &&
-    Number.isFinite(payload.estimatedMinutes)
-      ? `Est. time: ${payload.estimatedMinutes} min`
-      : null
-
-  const parts: string[] = [
-    `New job assigned (${payload.priority})`,
-    `Unit: ${payload.unit}`,
-    ...(dueSms ? [dueSms] : []),
-    ...(estSms ? [estSms] : []),
-    "",
-    desc,
-    "",
-    `Ref: ${payload.ticketId}`,
-  ]
-  if (primaryUrl) {
-    parts.push("", `View: ${truncateDescription(primaryUrl, 220)}`)
-  }
-  if (acceptUrl) {
-    parts.push(`Accept: ${truncateDescription(acceptUrl, 200)}`)
-  }
-  if (declineUrl) {
-    parts.push(`Decline: ${truncateDescription(declineUrl, 200)}`)
-  }
-  return parts.join("\n")
+  return buildVendorJobAssignmentSms({
+    vendorName,
+    priority: payload.priority,
+    unit: payload.unit,
+    description: payload.description,
+    ticketId: payload.ticketId,
+    viewJobUrl: primaryUrl,
+    acceptUrl,
+  })
 }
 
 /**
@@ -330,7 +284,7 @@ async function notifyChannelsForAssignment(
         legacyManage,
         vendor.portal_api_key,
       )
-      const subject = "New Maintenance Job Assigned"
+      const subject = buildVendorJobAssignmentSubject(payload.unit)
       const r = await sendResendEmail(vendor.email.trim(), subject, text, html)
       if ("error" in r) {
         errors.push(`email: ${r.error}`)
@@ -348,6 +302,7 @@ async function notifyChannelsForAssignment(
     } else {
       const smsBody = buildSmsBody(
         payload,
+        vendor.name,
         emailLinks?.viewJob ?? legacyManage,
         emailLinks?.acceptUrl ?? null,
         emailLinks?.declineUrl ?? null,

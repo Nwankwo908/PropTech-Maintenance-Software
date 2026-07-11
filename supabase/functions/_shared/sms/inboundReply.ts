@@ -17,7 +17,7 @@ export type SendInboundAutoReplyParams = {
 
 export type SendInboundAutoReplyResult =
   | { ok: true; messageId: string; providerMessageSid: string }
-  | { ok: false; error: string }
+  | { ok: false; error: string; messageId?: string }
 
 /** Resolve the auto-reply body from identity resolution and workflow handlers. */
 export function resolveInboundAutoReplyBody(
@@ -113,14 +113,15 @@ export async function sendInboundAutoReply(
 
     if (error || !data?.id) {
       console.error("[sms-inbound] failed outbound auto-reply save", error?.message)
-    } else {
-      console.info("[sms-inbound] failed outbound auto-reply saved", {
-        conversationId: params.conversationId,
-        messageId: data.id,
-      })
+      return { ok: false, error: sendResult.error }
     }
 
-    return { ok: false, error: sendResult.error }
+    console.info("[sms-inbound] failed outbound auto-reply saved", {
+      conversationId: params.conversationId,
+      messageId: data.id,
+    })
+
+    return { ok: false, error: sendResult.error, messageId: data.id as string }
   }
 
   const providerMessageSid =

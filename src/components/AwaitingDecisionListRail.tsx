@@ -1,5 +1,10 @@
 import { useEffect, useId } from 'react'
 import { Link } from 'react-router-dom'
+import {
+  ADMIN_RIGHT_RAIL_OVERLAY_HOST,
+  ADMIN_RIGHT_RAIL_SCRIM,
+  adminRightRailPanelClass,
+} from '@/lib/adminRightRail'
 
 export type AwaitingDecisionItem = {
   key: string
@@ -51,13 +56,13 @@ export function AwaitingDecisionListRail({
   if (!open) return null
 
   return (
-    <div className="fixed inset-0 z-50 flex justify-end">
-      <div role="presentation" className="absolute inset-0 bg-black/40" aria-hidden onClick={onClose} />
+    <div className={ADMIN_RIGHT_RAIL_OVERLAY_HOST}>
+      <div role="presentation" className={ADMIN_RIGHT_RAIL_SCRIM} aria-hidden onClick={onClose} />
       <div
         role="dialog"
         aria-modal="true"
         aria-labelledby={titleId}
-        className="relative flex h-full max-h-dvh w-full max-w-[min(100vw,560px)] flex-col overflow-hidden rounded-l-[12px] border border-[#e5e7eb] bg-white shadow-[0px_8px_24px_rgba(0,0,0,0.12)]"
+        className={adminRightRailPanelClass(undefined, 'max-w-[min(100vw,560px)]')}
       >
         <div className="shrink-0 border-b border-[#e5e7eb] px-6 pb-4 pt-6">
           <button
@@ -97,9 +102,9 @@ export function AwaitingDecisionListRail({
                         className={[
                           'rounded-[4px] px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-[0.06em]',
                           item.badge === 'critical'
-                            ? 'bg-[#fb2c36] text-white'
+                            ? 'bg-[#E3646C] text-white'
                             : item.actionStyle === 'alert'
-                              ? 'bg-[#f7e1e3] text-[#b22430]'
+                              ? 'bg-[#FBE3E5] text-[#E3646C]'
                               : 'bg-[#fef9c2] text-[#a65f00]',
                         ].join(' ')}
                       >
@@ -118,8 +123,8 @@ export function AwaitingDecisionListRail({
                       className={[
                         'shrink-0 rounded-[10px] border px-4 py-2 text-[13px] font-medium leading-5 transition-colors duration-150',
                         item.actionStyle === 'alert'
-                          ? 'border-transparent bg-[#f7e1e3] text-[#b22430] hover:bg-[#efd0d4]'
-                          : 'border-black/10 bg-white text-tertiary hover:bg-[#e2f5f1]',
+                          ? 'border-transparent bg-[#FBE3E5] text-[#E3646C] hover:bg-[#f5d0d4]'
+                          : 'border-current bg-white text-tertiary hover:bg-[#e2f5f1]',
                       ].join(' ')}
                     >
                       {item.actionLabel} →
@@ -131,8 +136,8 @@ export function AwaitingDecisionListRail({
                       className={[
                         'shrink-0 rounded-[10px] border px-4 py-2 text-[13px] font-medium leading-5 transition-colors duration-150',
                         item.actionStyle === 'alert'
-                          ? 'border-transparent bg-[#f7e1e3] text-[#b22430] hover:bg-[#efd0d4]'
-                          : 'border-black/10 bg-white text-tertiary hover:bg-[#e2f5f1]',
+                          ? 'border-transparent bg-[#FBE3E5] text-[#E3646C] hover:bg-[#f5d0d4]'
+                          : 'border-current bg-white text-tertiary hover:bg-[#e2f5f1]',
                       ].join(' ')}
                     >
                       {item.actionLabel} →

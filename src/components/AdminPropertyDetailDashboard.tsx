@@ -20,7 +20,6 @@ import { fetchAdminWorkflowDashboard, type AdminWorkflowDashboardData } from '@/
 import {
   buildWorkflowKanbanCard,
   collectAdminWorkflowRuns,
-  countOpenWorkflowsForBuilding,
   isOpenWorkflowKanbanCard,
   workflowOperationsPath,
   WORKFLOW_STAGE_LABEL,
@@ -113,7 +112,7 @@ const TABS: { id: PropertyTab; label: string; href?: string }[] = [
   { id: 'overview', label: 'Overview' },
   { id: 'units', label: 'Units' },
   { id: 'residents', label: 'Residents' },
-  { id: 'workflows', label: 'Workflows' },
+  { id: 'workflows', label: 'Active Tasks' },
   { id: 'conversations', label: 'Conversations' },
   { id: 'vendors', label: 'Vendors' },
   { id: 'analytics', label: 'Analytics' },
@@ -363,7 +362,7 @@ export function AdminPropertyDetailDashboard() {
           .limit(2000),
         supabase
           .from('vendors')
-          .select('id, name, category')
+          .select('id, name, category, phone')
           .eq('landlord_id', landlordId)
           .order('name'),
         fetchRecognizedMaintenanceSpend(),
@@ -489,6 +488,7 @@ export function AdminPropertyDetailDashboard() {
             id: asString(raw.id),
             name: asString(raw.name) || 'Vendor',
             category: asString(raw.category) || null,
+            phone: asString(raw.phone) || null,
           }))
           .filter((row) => row.id),
       )
@@ -583,6 +583,7 @@ export function AdminPropertyDetailDashboard() {
         unit: resident.unit,
         building: resident.building,
         status: resident.status,
+        email: resident.email ?? null,
       })),
     })
   }, [units, tickets, pmTasks, feedback, vendorMetrics, residents])
@@ -630,11 +631,6 @@ export function AdminPropertyDetailDashboard() {
       building,
     ).occupied
   }, [building, buildingUnits, residents])
-
-  const openWorkflowsDisplay = useMemo(() => {
-    if (!building) return 0
-    return countOpenWorkflowsForBuilding(workflowData, building)
-  }, [workflowData, building])
 
   const urgentItems: UrgentItem[] = useMemo(() => {
     if (!workflowData || !building) return []
@@ -900,8 +896,8 @@ export function AdminPropertyDetailDashboard() {
         <StatTile label="Units" value={loading ? '—' : String(buildingUnits.length)} icon={<BuildingStatIcon />} />
         <StatTile label="Occupied" value={loading ? '—' : String(occupiedCount)} icon={<UsersStatIcon />} />
         <StatTile
-          label="Open workflows"
-          value={loading ? '—' : String(openWorkflowsDisplay)}
+          label="Open work orders"
+          value={loading ? '—' : String(buildingHealth?.openTickets ?? 0)}
           icon={<WrenchStatIcon />}
         />
         <StatTile

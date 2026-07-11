@@ -31,6 +31,7 @@ type PropertyTicket = {
   unit: string
   unitId: string | null
   building: string | null
+  email: string | null
   issueCategory: string | null
   assignedVendorId: string | null
   estimatedMinutes: number | null
@@ -86,6 +87,7 @@ function normalizeTicketRow(raw: Record<string, unknown>): PropertyTicket {
     unit: asString(raw.unit),
     unitId: asString(raw.unit_id) || null,
     building: asString(raw.building) || null,
+    email: asString(raw.email) || null,
     issueCategory: asString(raw.issue_category) || null,
     assignedVendorId: asString(raw.assigned_vendor_id) || null,
     estimatedMinutes:
@@ -269,7 +271,7 @@ export function AdminPropertiesDashboard() {
     const enrichedTickets = await supabase
       .from('maintenance_request_enriched')
       .select(
-        'id, created_at, unit, unit_id, building, issue_category, assigned_vendor_id, vendor_work_status, estimated_minutes, total_cost, invoice_total, amount, labor_cost, material_cost, materials_cost, tax_amount, tax, completed_at, resolved_at, closed_at',
+        'id, created_at, unit, unit_id, building, email, issue_category, assigned_vendor_id, vendor_work_status, estimated_minutes, total_cost, invoice_total, amount, labor_cost, material_cost, materials_cost, tax_amount, tax, completed_at, resolved_at, closed_at',
       )
       .eq('landlord_id', landlordId)
       .order('created_at', { ascending: false })
@@ -294,7 +296,7 @@ export function AdminPropertiesDashboard() {
       fetchPropertyHealthSignals(),
       supabase
         .from('users')
-        .select('id, full_name, unit, building, status')
+        .select('id, full_name, unit, building, status, email')
         .eq('landlord_id', landlordId)
         .neq('status', 'past_resident')
         .limit(2000),
@@ -339,6 +341,7 @@ export function AdminPropertiesDashboard() {
             unit: asString(raw.unit),
             building: asString(raw.building) || null,
             status: asString(raw.status).toLowerCase() || 'active',
+            email: asString(raw.email) || null,
           }))
           .filter((row) => row.id),
       )
@@ -408,7 +411,13 @@ export function AdminPropertiesDashboard() {
       tickets as unknown as Record<string, unknown>[],
     )
     const healthUnits = mapUnitsForPropertyHealth(units as unknown as Record<string, unknown>[])
-    const buildings = countPortfolioBuildings(healthUnits, pmTasks, healthTickets)
+    const buildings = countPortfolioBuildings(
+      healthUnits,
+      pmTasks,
+      healthTickets,
+      getActiveLandlordId(),
+      residents,
+    )
     const totalUnits = units.length
 
     const trackedUnits = healthUnits.filter((u) => u.status !== 'inactive')

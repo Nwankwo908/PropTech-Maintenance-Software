@@ -69,12 +69,12 @@ function plumbingNegotiationTemplate(
     targetPrice: 1900,
     walkAwayPrice: 2050,
     leverageSummary:
-      'Leverage: 14 jobs in last 6 months · 4.8★ rating you provided · payment in 7 days vs their standard 30.',
+      'Your edge: 14 jobs in the last 6 months · 4.8★ rating you shared · we pay in 7 days vs their usual 30.',
     messages: [
       {
         id: 'vendor-1',
         sender: 'vendor',
-        body: 'Hi — quoting $2,250 total for the pipe burst job. Emergency rate + 3-day dry-out. Can dispatch in 25 min.',
+        body: 'Hi! My quote is $2,250 for the burst pipe job — emergency rate plus 3-day dry-out. I can head out in about 25 minutes.',
         timeLabel: '2:14 PM',
       },
       {
@@ -115,12 +115,12 @@ function genericNegotiationTemplate(
     targetPrice,
     walkAwayPrice,
     leverageSummary:
-      'Leverage: repeat vendor relationship · prior on-time completion · faster payment terms available.',
+      'Your edge: repeat work with you · on-time track record · we can pay faster than their usual terms.',
     messages: [
       {
         id: 'vendor-1',
         sender: 'vendor',
-        body: `Hi — quoting ${formatEmergencyCurrency(quoteAmount)} for this ${category.toLowerCase()} job. Can start today pending approval.`,
+        body: `Hi! My quote is ${formatEmergencyCurrency(quoteAmount)} for this ${category.toLowerCase()} job. I can start today if you approve.`,
         timeLabel: '2:14 PM',
       },
       {

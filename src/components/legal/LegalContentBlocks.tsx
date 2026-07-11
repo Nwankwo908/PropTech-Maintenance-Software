@@ -1,14 +1,15 @@
 import { Link } from 'react-router-dom'
-import { TERMS_PRIVACY_SECTION_PATH, type LegalBlock } from '@/lib/legal/termsOfServiceContent'
+import { PRIVACY_POLICY_PATH } from '@/lib/legal/privacyPolicyContent'
+import type { LegalBlock } from '@/lib/legal/termsOfServiceContent'
 
 function renderInlineLinks(text: string) {
-  const parts = text.split(/(\/privacy)/g)
+  const parts = text.split(/(\/privatepolicy(?:#opt-out)?|\/privacy)/g)
   return parts.map((part, index) => {
-    if (part === '/privacy') {
+    if (part === '/privacy' || part.startsWith('/privatepolicy')) {
       return (
         <Link
           key={`privacy-${index}`}
-          to={TERMS_PRIVACY_SECTION_PATH}
+          to={part.startsWith('/privatepolicy') ? part : PRIVACY_POLICY_PATH}
           className="font-medium text-[#9E439F] underline underline-offset-2 hover:text-[#7f3680]"
         >
           Privacy Policy

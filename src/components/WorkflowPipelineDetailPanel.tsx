@@ -4,6 +4,12 @@ import {
   fetchWorkflowUloThreadMonitoring,
   type ConversationMonitoringDetail,
 } from '@/lib/conversationMonitoring'
+import {
+  applyMoveOutAdminAction,
+  MOVE_OUT_ADMIN_ACTION_LABELS,
+  type MoveOutAdminAction,
+} from '@/lib/moveOutWorkflow'
+import { getActiveLandlordId } from '@/lib/activeLandlord'
 import type {
   WorkflowPipelineAttachment,
   WorkflowPipelineDetail,
@@ -271,6 +277,7 @@ type WorkflowPipelineDetailPanelProps = {
   detail: WorkflowPipelineDetail | null
   loading?: boolean
   onClose: () => void
+  onWorkflowUpdated?: () => void
 }
 
 /** Workflow pipeline card detail — Figma 719:177 work order view. */
@@ -279,6 +286,7 @@ export function WorkflowPipelineDetailPanel({
   detail,
   loading = false,
   onClose,
+  onWorkflowUpdated,
 }: WorkflowPipelineDetailPanelProps) {
   const titleId = useId()
   const threadTitleId = useId()
@@ -286,6 +294,8 @@ export function WorkflowPipelineDetailPanel({
   const [threadDetail, setThreadDetail] = useState<ConversationMonitoringDetail | null>(null)
   const [threadLoading, setThreadLoading] = useState(false)
   const [threadError, setThreadError] = useState<string | null>(null)
+  const [moveOutActionSaving, setMoveOutActionSaving] = useState(false)
+  const [moveOutActionError, setMoveOutActionError] = useState<string | null>(null)
 
   useEffect(() => {
     if (!open) {
@@ -347,6 +357,28 @@ export function WorkflowPipelineDetailPanel({
     }
   }, [open, panelView, detail])
 
+  const handleMoveOutAction = async (action: MoveOutAdminAction) => {
+    if (!detail?.runId) return
+    setMoveOutActionSaving(true)
+    setMoveOutActionError(null)
+    try {
+      const result = await applyMoveOutAdminAction(action, {
+        workflowRunId: detail.runId,
+        landlordId: getActiveLandlordId(),
+        residentId: detail.resident ? undefined : null,
+      })
+      if (!result.ok) {
+        setMoveOutActionError(result.error)
+        return
+      }
+      onWorkflowUpdated?.()
+    } catch (err) {
+      setMoveOutActionError(err instanceof Error ? err.message : 'Action failed')
+    } finally {
+      setMoveOutActionSaving(false)
+    }
+  }
+
   if (!open) return null
 
   const canSeeThread = Boolean(detail?.uloThread)
@@ -371,7 +403,7 @@ export function WorkflowPipelineDetailPanel({
                   className="inline-flex items-center gap-1.5 rounded-lg px-1 py-1 text-[13px] font-medium text-[#1447e6] outline-none hover:bg-[#eff6ff] focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2"
                 >
                   <BackIcon />
-                  Back to work order
+                  Back to task
                 </button>
                 <h2 id={threadTitleId} className="mt-3 text-[24px] font-semibold leading-8 tracking-[-0.3px] text-[#0a0a0a]">
                   {detail?.uloThread?.kind === 'move_in'
@@ -449,7 +481,41 @@ export function WorkflowPipelineDetailPanel({
             </div>
           ) : (
             <div className="flex flex-col gap-4">
-              <WorkflowProgressStepper steps={detail.progressSteps} caption={detail.progressCaption} />
+              <WorkflowProgressStepper
+                steps={detail.progressSteps}
+                caption={detail.progressCaption}
+              />
+
+              {detail.isMoveOutWorkflow ? (
+                <section className="rounded-[10px] border border-[#e5e7eb] bg-white p-5 shadow-[0px_1px_2px_-1px_rgba(0,0,0,0.06)]">
+                  <h3 className="text-[15px] font-semibold leading-6 text-[#0a0a0a]">Admin actions</h3>
+                  {moveOutActionError ? (
+                    <p className="mt-2 text-[13px] text-[#b52a00]">{moveOutActionError}</p>
+                  ) : null}
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    {(
+                      [
+                        'send_reminder',
+                        'schedule_inspection',
+                        'mark_keys_returned',
+                        'complete_cleaning',
+                        'complete_move_out',
+                        'cancel_move_out',
+                      ] as MoveOutAdminAction[]
+                    ).map((action) => (
+                      <button
+                        key={action}
+                        type="button"
+                        disabled={moveOutActionSaving}
+                        onClick={() => void handleMoveOutAction(action)}
+                        className="inline-flex cursor-pointer items-center rounded-[8px] border border-[#e5e7eb] bg-white px-3 py-2 text-[12px] font-medium text-[#364153] outline-none transition-colors hover:bg-[#f9fafb] focus-visible:ring-2 focus-visible:ring-[#0030b5] disabled:opacity-50"
+                      >
+                        {MOVE_OUT_ADMIN_ACTION_LABELS[action]}
+                      </button>
+                    ))}
+                  </div>
+                </section>
+              ) : null}
 
               <section className="rounded-[10px] border border-[#e5e7eb] bg-white p-5 shadow-[0px_1px_2px_-1px_rgba(0,0,0,0.06)]">
                 <h3 className="text-[15px] font-semibold leading-6 text-[#0a0a0a]">Overview</h3>

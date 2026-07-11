@@ -43,7 +43,7 @@ In-network roster suggestions remain on **`recommend-vendor-alternatives`** (Ope
 | `NETVENDOR_SEARCH_PATH` | Search path (default `/v1/vendors/search`) |
 | `NETVENDOR_ACCOUNT_ID` | Optional portfolio / account scope on search requests |
 | `NETVENDOR_USE_MOCK` | `true` uses NetVendor-shaped mock credentialed vendors (no HTTP) |
-| `EXTERNAL_VENDOR_SEARCH_LOCATION` | Fallback location when ticket `unit` is not geocodable |
+| `EXTERNAL_VENDOR_SEARCH_LOCATION` | Fallback geocode anchor when property address cannot be resolved |
 | `EXTERNAL_VENDOR_PROVIDER` | `auto` (default), `mock`, or comma list e.g. `google,yelp,netvendor` |
 | `EXTERNAL_VENDOR_USE_MOCK` | `true` forces mock provider in discover API |
 
@@ -98,9 +98,14 @@ Response:
   ],
   "providersUsed": ["mock"],
   "mode": "mock",
-  "configured": false
+  "configured": false,
+  "searchLocation": "901 Maple Heights Blvd, Hillsboro, OR 97123",
+  "locationLabel": "Maple Heights · Unit 207",
+  "issueCategory": "plumbing"
 }
 ```
+
+**Location resolution:** loads the ticket from `maintenance_request_enriched` (building + unit), then resolves a geocodable `searchLocation` from landlord onboarding property addresses, demo portfolio building addresses, or `EXTERNAL_VENDOR_SEARCH_LOCATION`. Issue category is normalized (`water_damage` → `plumbing`, etc.) before provider search.
 
 Ticket load uses `maintenance_requests.landlord_id`; roster vendor names for that landlord are excluded from suggestions.
 

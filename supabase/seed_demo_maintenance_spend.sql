@@ -21,17 +21,17 @@ begin
   set unit = v.unit_label
   from (
     values
-      (md5('ulo-demo-ticket-17')::uuid, 'Oakwood · 304'),
-      (md5('ulo-demo-ticket-18')::uuid, 'Oakwood · 103'),
-      (md5('ulo-demo-ticket-19')::uuid, 'Oakwood · 204'),
+      (md5('ulo-demo-ticket-17')::uuid, 'Oakwood Apartments · 304'),
+      (md5('ulo-demo-ticket-18')::uuid, 'Oakwood Apartments · 103'),
+      (md5('ulo-demo-ticket-19')::uuid, 'Oakwood Apartments · 204'),
       (md5('ulo-demo-ticket-20')::uuid, 'Birch Tower · 107'),
       (md5('ulo-demo-ticket-21')::uuid, 'Birch Tower · 410'),
-      (md5('ulo-demo-ticket-22')::uuid, 'Maple · 207'),
-      (md5('ulo-demo-ticket-23')::uuid, 'Maple · 105'),
-      (md5('ulo-demo-ticket-24')::uuid, 'Pine · 204'),
-      (md5('ulo-demo-ticket-25')::uuid, 'Cedar · 305'),
-      (md5('ulo-demo-ticket-26')::uuid, 'Willow · 103'),
-      (md5('ulo-demo-ticket-29')::uuid, 'Pine · 301')
+      (md5('ulo-demo-ticket-22')::uuid, 'Maple Heights · 207'),
+      (md5('ulo-demo-ticket-23')::uuid, 'Maple Heights · 105'),
+      (md5('ulo-demo-ticket-24')::uuid, 'Pine Ridge · 204'),
+      (md5('ulo-demo-ticket-25')::uuid, 'Cedar Court · 305'),
+      (md5('ulo-demo-ticket-26')::uuid, 'Willow Park · 103'),
+      (md5('ulo-demo-ticket-29')::uuid, 'Pine Ridge · 301')
   ) as v(ticket_id, unit_label)
   where mr.id = v.ticket_id
     and mr.landlord_id = demo_landlord;

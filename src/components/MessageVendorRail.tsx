@@ -1,5 +1,10 @@
 import { useEffect, useId, useState } from 'react'
 import {
+  ADMIN_RIGHT_RAIL_OVERLAY_HOST,
+  ADMIN_RIGHT_RAIL_SCRIM,
+  adminRightRailPanelClass,
+} from '@/lib/adminRightRail'
+import {
   formatQuoteBadge,
   type VendorNegotiationBrief,
 } from '@/lib/vendorNegotiationBrief'
@@ -87,13 +92,13 @@ export function MessageVendorRail({
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex justify-end">
-      <div role="presentation" className="absolute inset-0 bg-black/40" aria-hidden onClick={onClose} />
+    <div className={ADMIN_RIGHT_RAIL_OVERLAY_HOST}>
+      <div role="presentation" className={ADMIN_RIGHT_RAIL_SCRIM} aria-hidden onClick={onClose} />
       <div
         role="dialog"
         aria-modal="true"
         aria-labelledby={titleId}
-        className="relative flex h-full max-h-dvh w-full max-w-[min(100vw,520px)] flex-col overflow-hidden rounded-l-[12px] border border-[#e5e7eb] bg-white shadow-[0px_8px_24px_rgba(0,0,0,0.12)]"
+        className={adminRightRailPanelClass(undefined)}
       >
         <header className="shrink-0 border-b border-[#e5e7eb] px-5 py-4">
           <div className="flex items-start gap-3 pr-8">

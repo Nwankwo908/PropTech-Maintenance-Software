@@ -81,6 +81,7 @@ declare
   r_ito uuid := md5('ulo-demo-res-haruto-ito')::uuid;
   r_mensah uuid := md5('ulo-demo-res-abena-mensah')::uuid;
   r_oconnor uuid := md5('ulo-demo-res-liam-oconnor')::uuid;
+  r_bennett uuid := md5('ulo-demo-res-noah-bennett')::uuid;         -- SLA overdue plumbing Oakwood 108
 
   -- Occupancy
   o_patel uuid := md5('ulo-demo-occ-patel')::uuid;
@@ -131,6 +132,8 @@ declare
   wr_maint3 uuid := md5('ulo-demo-run-maint-3')::uuid;        -- active after auto-reassign (t14)
   wr_maint6 uuid := md5('ulo-demo-run-maint-6')::uuid;        -- escalated, vendor declined no roster (t11)
   wr_maint7 uuid := md5('ulo-demo-run-maint-7')::uuid;        -- active (t31)
+  wr_maint8 uuid := md5('ulo-demo-run-maint-8')::uuid;        -- active SLA overdue (t04)
+  wr_maint9 uuid := md5('ulo-demo-run-maint-9')::uuid;        -- active inspection follow-up (t09)
   wr_maint4 uuid := md5('ulo-demo-run-maint-4')::uuid;        -- completed (t17)
   wr_maint5 uuid := md5('ulo-demo-run-maint-5')::uuid;        -- completed (t20)
   wr_rent1 uuid := md5('ulo-demo-run-rent-1')::uuid;          -- due today (Okafor)
@@ -138,7 +141,8 @@ declare
   wr_rent3 uuid := md5('ulo-demo-run-rent-3')::uuid;          -- escalated overdue (Alvarez)
   wr_rent4 uuid := md5('ulo-demo-run-rent-4')::uuid;          -- completed / paid (Ito)
   wr_lease1 uuid := md5('ulo-demo-run-lease-1')::uuid;        -- active (Johnson, 14 days)
-  wr_lease2 uuid := md5('ulo-demo-run-lease-2')::uuid;        -- escalated no response (Freeman)
+  wr_lease2 uuid := md5('ulo-demo-run-lease-2')::uuid;        -- completed (Freeman, signed)
+  wr_lease3 uuid := md5('ulo-demo-run-lease-3')::uuid;        -- escalated no response (O'Connor)
   wr_movein1 uuid := md5('ulo-demo-run-movein-1')::uuid;      -- active (Patel)
   wr_movein2 uuid := md5('ulo-demo-run-movein-2')::uuid;      -- completed (Mensah)
   wr_moveout1 uuid := md5('ulo-demo-run-moveout-1')::uuid;    -- active (Brooks)
@@ -284,7 +288,8 @@ begin
     (r_freeman, demo_landlord, 'DEMO-013', 'Tessa Freeman', 'tessa.freeman@example.com', '+15555620013', '506', 'Oakwood Apartments', 'active', 0, current_date - 330, current_date + 28),
     (r_ito, demo_landlord, 'DEMO-014', 'Haruto Ito', 'haruto.ito@example.com', '+15555620014', '410', 'Birch Tower', 'active', 0, current_date - 150, current_date + 215),
     (r_mensah, demo_landlord, 'DEMO-015', 'Abena Mensah', 'abena.mensah@example.com', '+15555620015', '102', 'Cedar Court', 'active', 0, current_date - 21, current_date + 344),
-    (r_oconnor, demo_landlord, 'DEMO-016', 'Liam O''Connor', 'liam.oconnor@example.com', '+15555620016', '708', 'Birch Tower', 'active', 0, current_date - 480, current_date + 85);
+    (r_oconnor, demo_landlord, 'DEMO-016', 'Liam O''Connor', 'liam.oconnor@example.com', '+15555620016', '708', 'Birch Tower', 'active', 0, current_date - 480, current_date + 85),
+    (r_bennett, demo_landlord, 'DEMO-017', 'Noah Bennett', 'noah.bennett@example.com', '+15555620031', '108', 'Oakwood Apartments', 'active', 0, current_date - 200, current_date + 165);
 
   -- ---------------------------------------------------------------------------
   -- Occupancy (lifecycle scenarios)
@@ -308,7 +313,7 @@ begin
   values
     -- Open / critical -----------------------------------------------------------
     (t01, demo_landlord, now_ts - interval '45 minutes', 'urgent', 'urgent', 'urgent',
-     'Jordan Walker', 'jordan.walker@example.com', '+15555620009', '304',
+     'Jordan Walker', 'jordan.walker@example.com', '+15555620009', 'Oakwood Apartments · 304',
      'EMERGENCY: water heater burst in utility closet, active leak spreading to hallway.',
      'unassigned', 'plumbing', null, null, now_ts + interval '4 hours'),
     (t02, demo_landlord, now_ts - interval '26 hours', 'urgent', 'urgent', 'urgent',
@@ -316,19 +321,19 @@ begin
      'Breaker panel sparking when AC compressor kicks on. Smell of burning plastic.',
      'in_progress', 'electrical', v_bright, now_ts - interval '24 hours', now_ts + interval '10 hours'),
     (t03, demo_landlord, now_ts - interval '3 hours', 'urgent', 'urgent', 'urgent',
-     'Bianca Silva', 'bianca.silva@example.com', '+15555620011', '207',
+     'Bianca Silva', 'bianca.silva@example.com', '+15555620011', 'Maple Heights · 207',
      'No heat in unit — thermostat unresponsive, family with infant.',
      'pending_accept', 'hvac', v_summit, now_ts - interval '2 hours', now_ts + interval '20 hours'),
     (t04, demo_landlord, now_ts - interval '3 days', 'high', 'high', 'high',
-     'Noah Bennett', 'noah.bennett@example.com', '+15555620031', '108',
+     'Noah Bennett', 'noah.bennett@example.com', '+15555620031', 'Oakwood Apartments · 108',
      'Sewage smell from bathroom drain getting worse — suspected vent blockage.',
      'accepted', 'plumbing', v_apex, now_ts - interval '2 days 18 hours', now_ts - interval '6 hours'),
     (t05, demo_landlord, now_ts - interval '5 hours', 'urgent', 'urgent', 'urgent',
-     'Piotr Kowalski', 'piotr.kowalski@example.com', '+15555620012', '305',
+     'Piotr Kowalski', 'piotr.kowalski@example.com', '+15555620012', 'Pine Ridge · 305',
      'Gas smell near the stove — resident vacated unit, gas company notified.',
      'unassigned', 'general', null, null, now_ts + interval '2 hours'),
     (t06, demo_landlord, now_ts - interval '30 hours', 'urgent', 'urgent', 'urgent',
-     'Abena Mensah', 'abena.mensah@example.com', '+15555620015', '102',
+     'Abena Mensah', 'abena.mensah@example.com', '+15555620015', 'Cedar Court · 102',
      'Ceiling leak below upstairs bathroom — drywall sagging.',
      'in_progress', 'plumbing', v_rooter, now_ts - interval '28 hours', now_ts + interval '14 hours'),
     (t07, demo_landlord, now_ts - interval '6 days', 'high', 'high', 'high',
@@ -337,15 +342,15 @@ begin
      'accepted', 'electrical', v_bright, now_ts - interval '5 days', now_ts + interval '1 day'),
     -- Open / normal --------------------------------------------------------------
     (t08, demo_landlord, now_ts - interval '4 days', 'normal', 'normal', 'normal',
-     'Maya Lindqvist', 'maya.lindqvist@example.com', '+15555620032', '103',
+     'Maya Lindqvist', 'maya.lindqvist@example.com', '+15555620032', 'Willow Park · 103',
      'Patio door not latching; lock misaligned.',
      'accepted', 'door_window', v_allied, now_ts - interval '3 days 12 hours', now_ts + interval '3 days'),
     (t09, demo_landlord, now_ts - interval '2 days', 'normal', 'normal', 'normal',
-     'Elena Rossi', 'elena.rossi@example.com', '+15555620008', '205',
+     'Elena Rossi', 'elena.rossi@example.com', '+15555620008', 'Oakwood Apartments · 205',
      'Kitchen sink leak and cabinet water damage — flagged during annual unit inspection.',
      'unassigned', 'plumbing', null, null, now_ts + interval '4 days'),
     (t10, demo_landlord, now_ts - interval '1 day', 'normal', 'normal', 'normal',
-     'Property Manager', 'demo@ulohome.io', null, '312',
+     'Property Manager', 'demo@ulohome.io', null, 'Maple Heights · 312',
      'Preventive maintenance: HVAC filter replacement and coil service (quarterly schedule).',
      'accepted', 'hvac', v_summit, now_ts - interval '20 hours', now_ts + interval '6 days'),
     (t11, demo_landlord, now_ts - interval '8 hours', 'normal', 'normal', 'normal',
@@ -353,36 +358,36 @@ begin
      'Move-out deep clean needed before showing.',
      'unassigned', 'cleaning', null, null, now_ts + interval '5 days'),
     (t12, demo_landlord, now_ts - interval '9 days', 'low', 'low', 'low',
-     'David Okafor', 'david.okafor@example.com', '+15555620004', '204',
+     'David Okafor', 'david.okafor@example.com', '+15555620004', 'Pine Ridge · 204',
      'Recurring late-night noise from HVAC closet shared wall.',
      'unassigned', 'noise', null, null, null),
     (t13, demo_landlord, now_ts - interval '3 days', 'normal', 'normal', 'normal',
-     'Kim Nguyen', 'kim.nguyen@example.com', '+15555620007', '305',
+     'Kim Nguyen', 'kim.nguyen@example.com', '+15555620007', 'Cedar Court · 305',
      'Hallway light fixture flickering on floor 3.',
      'in_progress', 'general', v_allied, now_ts - interval '2 days 6 hours', now_ts + interval '2 days'),
     (t14, demo_landlord, now_ts - interval '2 days', 'normal', 'normal', 'normal',
-     'Tessa Freeman', 'tessa.freeman@example.com', '+15555620013', '506',
+     'Tessa Freeman', 'tessa.freeman@example.com', '+15555620013', 'Oakwood Apartments · 506',
      'Garbage disposal jammed and leaking underneath.',
      'pending_accept', 'plumbing', v_apex, now_ts - interval '3 hours', now_ts + interval '2 days'),
     (t15, demo_landlord, now_ts - interval '12 days', 'normal', 'normal', 'normal',
-     'Ravi Subramanian', 'ravi.subramanian@example.com', '+15555620033', '105',
+     'Ravi Subramanian', 'ravi.subramanian@example.com', '+15555620033', 'Maple Heights · 105',
      'Window screen torn; requesting replacement.',
      'unassigned', 'general', null, null, null),
     (t16, demo_landlord, now_ts - interval '1 day', 'normal', 'normal', 'normal',
-     'Property Manager', 'demo@ulohome.io', null, '201',
+     'Property Manager', 'demo@ulohome.io', null, 'Willow Park · 201',
      'Preventive maintenance: annual furnace service ahead of winter.',
      'pending_accept', 'hvac', v_summit, now_ts - interval '22 hours', now_ts + interval '10 days'),
     -- Completed -------------------------------------------------------------------
     (t17, demo_landlord, now_ts - interval '18 days', 'high', 'high', 'high',
-     'Jordan Walker', 'jordan.walker@example.com', '+15555620009', '304',
+     'Jordan Walker', 'jordan.walker@example.com', '+15555620009', 'Oakwood Apartments · 304',
      'Bathroom supply line leak behind vanity.',
      'completed', 'plumbing', v_apex, now_ts - interval '17 days 18 hours', now_ts - interval '16 days'),
     (t18, demo_landlord, now_ts - interval '24 days', 'normal', 'normal', 'normal',
-     'Sofia Marin', 'sofia.marin@example.com', '+15555620034', '103',
+     'Sofia Marin', 'sofia.marin@example.com', '+15555620034', 'Oakwood Apartments · 103',
      'Slow draining tub.',
      'completed', 'plumbing', v_rooter, now_ts - interval '23 days', now_ts - interval '21 days'),
     (t19, demo_landlord, now_ts - interval '31 days', 'normal', 'normal', 'normal',
-     'Anita Patel', 'anita.patel@example.com', '+15555620005', '204',
+     'Anita Patel', 'anita.patel@example.com', '+15555620005', 'Oakwood Apartments · 204',
      'GFCI outlet in kitchen keeps tripping.',
      'completed', 'electrical', v_bright, now_ts - interval '30 days', now_ts - interval '28 days'),
     (t20, demo_landlord, now_ts - interval '12 days', 'urgent', 'urgent', 'urgent',
@@ -394,23 +399,23 @@ begin
      'Closet door off track.',
      'completed', 'general', v_allied, now_ts - interval '39 days', now_ts - interval '36 days'),
     (t22, demo_landlord, now_ts - interval '49 days', 'normal', 'normal', 'normal',
-     'Bianca Silva', 'bianca.silva@example.com', '+15555620011', '207',
+     'Bianca Silva', 'bianca.silva@example.com', '+15555620011', 'Maple Heights · 207',
      'Thermostat replacement.',
      'completed', 'hvac', v_summit, now_ts - interval '48 days', now_ts - interval '45 days'),
     (t23, demo_landlord, now_ts - interval '55 days', 'normal', 'normal', 'normal',
-     'Ravi Subramanian', 'ravi.subramanian@example.com', '+15555620033', '105',
+     'Ravi Subramanian', 'ravi.subramanian@example.com', '+15555620033', 'Maple Heights · 105',
      'Running toilet wasting water.',
      'completed', 'plumbing', v_metro, now_ts - interval '54 days', now_ts - interval '51 days'),
     (t24, demo_landlord, now_ts - interval '20 days', 'normal', 'normal', 'normal',
-     'David Okafor', 'david.okafor@example.com', '+15555620004', '204',
+     'David Okafor', 'david.okafor@example.com', '+15555620004', 'Pine Ridge · 204',
      'Carpet cleaning after radiator drip.',
      'completed', 'cleaning', v_fresh, now_ts - interval '19 days', now_ts - interval '16 days'),
     (t25, demo_landlord, now_ts - interval '64 days', 'normal', 'normal', 'normal',
-     'Kim Nguyen', 'kim.nguyen@example.com', '+15555620007', '305',
+     'Kim Nguyen', 'kim.nguyen@example.com', '+15555620007', 'Cedar Court · 305',
      'Caulking refresh in bathroom.',
      'completed', 'general', v_allied, now_ts - interval '63 days', now_ts - interval '60 days'),
     (t26, demo_landlord, now_ts - interval '70 days', 'high', 'high', 'high',
-     'Maya Lindqvist', 'maya.lindqvist@example.com', '+15555620032', '103',
+     'Maya Lindqvist', 'maya.lindqvist@example.com', '+15555620032', 'Willow Park · 103',
      'Burst hose bib flooding garden bed.',
      'completed', 'plumbing', v_apex, now_ts - interval '69 days 12 hours', now_ts - interval '68 days'),
     -- Stale prior-window assignments (no vendor acknowledgement)
@@ -419,16 +424,16 @@ begin
      'Balcony door weather stripping worn — vendor never confirmed the job.',
      'pending_accept', 'general', v_allied, now_ts - interval '34 days', null),
     (t28, demo_landlord, now_ts - interval '44 days', 'low', 'low', 'low',
-     'Priya Raman', 'priya.raman@example.com', '+15555620037', '401',
+     'Priya Raman', 'priya.raman@example.com', '+15555620037', 'Birch Tower · 401',
      'Laundry room faucet drip — assignment still awaiting vendor response.',
      'pending_accept', 'plumbing', v_metro, now_ts - interval '43 days', null),
     -- Repeat-issue pair (same unit + category within 45 days — Property Health signal)
     (t29, demo_landlord, now_ts - interval '28 days', 'normal', 'normal', 'normal',
-     'David Okafor', 'david.okafor@example.com', '+15555620004', '301',
+     'David Okafor', 'david.okafor@example.com', '+15555620004', 'Pine Ridge · 301',
      'Kitchen sink drip — slow leak under cabinet, towels placed.',
      'completed', 'plumbing', v_metro, now_ts - interval '27 days', now_ts - interval '25 days'),
     (t30, demo_landlord, now_ts - interval '9 days', 'high', 'high', 'high',
-     'David Okafor', 'david.okafor@example.com', '+15555620004', '301',
+     'David Okafor', 'david.okafor@example.com', '+15555620004', 'Pine Ridge · 301',
      'Same sink leak returned; water damage spreading on cabinet floor.',
      'in_progress', 'plumbing', v_metro, now_ts - interval '8 days', now_ts + interval '1 day'),
     (t31, demo_landlord, now_ts - interval '2 days', 'normal', 'normal', 'normal',
@@ -465,6 +470,18 @@ begin
        'maintenance_request_id', t14, 'issue_category', 'plumbing',
        'declined_vendor', 'Rapid Rooter', 'reassigned_vendor', 'Apex Plumbing Co',
        'auto_reassigned_at', (now_ts - interval '3 hours')::text)),
+    (wr_maint8, 'maintenance_intake', 'active', 'maintenance_request', t04,
+     p_oakwood, u_oak_108, r_bennett, demo_landlord, 'sms_inbound', 'maintenance',
+     'acted', 'awaiting_vendor_schedule', now_ts - interval '3 days', null,
+     jsonb_build_object('landlord_id', demo_landlord, 'unit_label', '108', 'building', 'Oakwood Apartments',
+       'maintenance_request_id', t04, 'issue_category', 'plumbing', 'urgency', 'high',
+       'due_at', (now_ts - interval '6 hours')::text, 'sla_breached', true)),
+    (wr_maint9, 'maintenance_intake', 'active', 'maintenance_request', t09,
+     p_oakwood, u_oak_205, r_rossi, demo_landlord, 'dashboard', 'maintenance',
+     'initiated', 'vendor_dispatch', now_ts - interval '2 days', null,
+     jsonb_build_object('landlord_id', demo_landlord, 'unit_label', '205', 'building', 'Oakwood Apartments',
+       'maintenance_request_id', t09, 'issue_category', 'plumbing',
+       'source', 'inspection_follow_up', 'linked_inspection_id', insp_done)),
     (wr_maint4, 'maintenance_intake', 'completed', 'maintenance_request', t17,
      p_oakwood, u_oak_304, r_walker, demo_landlord, 'sms_inbound', 'maintenance',
      'logged', 'completed', now_ts - interval '18 days', now_ts - interval '16 days',
@@ -527,11 +544,19 @@ begin
      'renewal_offer_sent', now_ts - interval '16 days', null,
      jsonb_build_object('landlord_id', demo_landlord, 'unit_label', '103', 'building', 'Cedar Court',
        'lease_end_date', (current_date + 14)::text, 'notice_days', 60)),
-    (wr_lease2, 'lease_renewal', 'escalated', 'user', r_freeman,
-     p_oakwood, u_oak_506, r_freeman, demo_landlord, 'cron', 'leasing', 'escalated',
-     'no_response', now_ts - interval '30 days', null,
+    (wr_lease2, 'lease_renewal', 'completed', 'user', r_freeman,
+     p_oakwood, u_oak_506, r_freeman, demo_landlord, 'cron', 'leasing', 'logged',
+     'renewal_signed', now_ts - interval '30 days', now_ts - interval '2 days',
      jsonb_build_object('landlord_id', demo_landlord, 'unit_label', '506', 'building', 'Oakwood Apartments',
-       'lease_end_date', (current_date + 28)::text, 'notice_days', 60, 'reminders_sent', 3)),
+       'lease_end_date', (current_date + 365)::text, 'notice_days', 60, 'reminders_sent', 3,
+       'renewal_signed', true)),
+    (wr_lease3, 'lease_renewal', 'escalated', 'user', r_oconnor,
+     p_birch, u_birch_708, r_oconnor, demo_landlord, 'cron', 'leasing', 'escalated',
+     'no_response', now_ts - interval '18 days', null,
+     jsonb_build_object('landlord_id', demo_landlord, 'unit_label', '708', 'building', 'Birch Tower',
+       'lease_end_date', (current_date + 85)::text, 'notice_days', 60, 'reminders_sent', 3,
+       'escalation_reason', 'no_response',
+       'escalated_at', (now_ts - interval '6 hours')::text)),
     -- Move in -----------------------------------------------------------------------
     (wr_movein1, 'move_in', 'active', 'occupancy', o_patel,
      p_oakwood, u_oak_204, r_patel, demo_landlord, 'dashboard', 'move_in', 'initiated',
@@ -657,6 +682,12 @@ begin
      'Lease renewal offer sent to Sarah Johnson — lease ends in 14 days.', demo_landlord, 'leasing', now_ts - interval '14 days'),
     (md5('ulo-demo-wfe-lease2-1')::uuid, wr_lease2, 'workflow.escalate', 'no_response', 'escalate', 'system',
      'No response after 3 renewal reminders to Tessa Freeman. Escalated.', demo_landlord, 'leasing', now_ts - interval '2 days'),
+    (md5('ulo-demo-wfe-lease3-1')::uuid, wr_lease3, 'workflow.act', 'renewal_offer_sent', 'act', 'system',
+     'Lease renewal offer sent to Liam O''Connor — lease ending in 85 days.', demo_landlord, 'leasing', now_ts - interval '14 days'),
+    (md5('ulo-demo-wfe-lease3-2')::uuid, wr_lease3, 'workflow.act', 'renewal_reminder_sent', 'act', 'system',
+     'Third renewal reminder sent via SMS and email — no tenant response.', demo_landlord, 'leasing', now_ts - interval '3 days'),
+    (md5('ulo-demo-wfe-lease3-3')::uuid, wr_lease3, 'workflow.escalate', 'no_response', 'escalate', 'system',
+     'No response after 3 renewal reminders to Liam O''Connor. Escalated.', demo_landlord, 'leasing', now_ts - interval '6 hours'),
     (md5('ulo-demo-wfe-movein1-1')::uuid, wr_movein1, 'move_in.started', 'initiated', 'trigger', 'system',
      'Move-in workflow started for Anita Patel (Oakwood 204).', demo_landlord, 'move_in', now_ts - interval '4 days'),
     (md5('ulo-demo-wfe-movein1-2')::uuid, wr_movein1, 'move_in.checklist_sent', 'checklist_sent', 'route', 'system',
@@ -720,6 +751,11 @@ begin
      jsonb_build_object('message', 'Lease renewal reminder sent to Sarah Johnson — lease ends in 14 days.',
        'unit_label', '103', 'building', 'Cedar Court', 'workflow_template_id', 'lease_renewal'),
      now_ts - interval '5 hours'),
+    (md5('ulo-demo-graph-feed-5b')::uuid, demo_landlord, p_birch, u_birch_708, r_oconnor, null, wr_lease3,
+     'workflow.escalate', 'automation',
+     jsonb_build_object('message', 'Lease renewal escalated — no response from Liam O''Connor.',
+       'unit_label', '708', 'building', 'Birch Tower', 'workflow_template_id', 'lease_renewal'),
+     now_ts - interval '6 hours'),
     (md5('ulo-demo-graph-feed-6')::uuid, demo_landlord, p_oakwood, null, null, null, null,
      'maintenance.recurring_issue_detected', 'automation',
      jsonb_build_object('message', 'Recurring plumbing issues detected at Oakwood Apartments — 4 tickets in 60 days.',

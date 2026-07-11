@@ -13,6 +13,7 @@ import {
   type AdminVendorReassignChoice,
 } from '@/api/adminReassignVendor'
 import magnifyingGlassIcon from '@/assets/Magnifying glass.svg'
+import { CallPhoneButton } from '@/components/CallPhoneButton'
 import {
   ChangeAssignedVendorModal,
 } from '@/components/ChangeAssignedVendorModal'
@@ -848,6 +849,7 @@ const ticketAccordionCell =
 function AssignedVendorCard({
   vendorName,
   assignedVendorId,
+  vendorPhone,
   emptyMessage = 'No vendor assigned yet.',
   editLabel,
   onEditVendor,
@@ -857,6 +859,7 @@ function AssignedVendorCard({
   vendorName?: string | null
   /** When set, the vendor name links to User Management (vendor profile). */
   assignedVendorId?: string | null
+  vendorPhone?: string | null
   emptyMessage?: string
   editLabel: string
   onEditVendor: () => void
@@ -942,6 +945,9 @@ function AssignedVendorCard({
             <span className="font-medium text-[#0a0a0a]">{est}</span>
           </p>
         )
+      ) : null}
+      {hasVendor && vendorPhone ? (
+        <CallPhoneButton phone={vendorPhone} label="Call vendor" variant="link" className="shrink-0 self-start" />
       ) : null}
       <div className="min-h-0 flex-1" aria-hidden />
     </div>
@@ -1169,6 +1175,11 @@ function RequestRowAccordionPanel({
           <AssignedVendorCard
             vendorName={row.vendor}
             assignedVendorId={row.assignedVendorId}
+            vendorPhone={vendorPhoneForAssignment(
+              activeVendorsFromDb,
+              row.assignedVendorId,
+              row.vendor,
+            )}
             editLabel={vendorEditLabel}
             onEditVendor={onEditVendor}
             dueAtDisplay={slaDue}
@@ -1236,7 +1247,27 @@ function uniqueVendorStrings(values: (string | undefined)[]): string[] {
   return out
 }
 
-type VendorPickerRow = { id: string; name: string; category: string | null }
+type VendorPickerRow = { id: string; name: string; category: string | null; phone?: string | null }
+
+function vendorPhoneForAssignment(
+  rows: VendorPickerRow[],
+  assignedVendorId?: string | null,
+  vendorName?: string | null,
+): string | null {
+  const id = assignedVendorId?.trim()
+  if (id) {
+    const byId = rows.find((row) => row.id === id)
+    const phone = byId?.phone?.trim()
+    if (phone) return phone
+  }
+  const name = vendorName?.trim()
+  if (name) {
+    const byName = rows.find((row) => row.name.trim() === name)
+    const phone = byName?.phone?.trim()
+    if (phone) return phone
+  }
+  return null
+}
 
 function vendorIdForActiveName(
   rows: VendorPickerRow[],
@@ -1382,6 +1413,15 @@ function UnderReviewAccordionPanel({
             }
             assignedVendorId={
               showVendorDetailsInAccordion ? row.assignedVendorId : undefined
+            }
+            vendorPhone={
+              showVendorDetailsInAccordion
+                ? vendorPhoneForAssignment(
+                    activeVendorsFromDb,
+                    row.assignedVendorId,
+                    row.vendor,
+                  )
+                : null
             }
             editLabel={vendorEditLabel}
             onEditVendor={onEditVendor}
@@ -1580,7 +1620,7 @@ export function AdminRequestManagementDashboard() {
     void (async () => {
       const { data, error } = await supabase
         .from('vendors')
-        .select('id, name, category')
+        .select('id, name, category, phone')
         .eq('active', true)
         .eq('landlord_id', getActiveLandlordId())
         .order('name')
@@ -1595,6 +1635,7 @@ export function AdminRequestManagementDashboard() {
           id: String(r.id ?? ''),
           name: typeof r.name === 'string' ? r.name : String(r.name ?? ''),
           category: r.category == null ? null : String(r.category),
+          phone: r.phone == null ? null : String(r.phone),
         })),
       )
     })()
@@ -1855,9 +1896,9 @@ export function AdminRequestManagementDashboard() {
   const statSummaryItems = useMemo(
     () => [
       {
-        label: 'Open Requests',
-        value: String(tickets.length),
-        hint: 'Total maintenance requests',
+        label: 'Open Work Orders',
+        value: String(tickets.filter((row) => row.status !== 'completed').length),
+        hint: 'Open maintenance backlog',
         valueClass: 'text-[#0a0a0a]',
         icon: 'open' as const,
       },
@@ -2109,10 +2150,11 @@ export function AdminRequestManagementDashboard() {
         />
         <header className="border-b border-[#e5e7eb] bg-white px-8 py-8">
           <h1 className="text-[22px] font-semibold leading-8 tracking-[0.0703px] text-[#0a0a0a] sm:text-[24px]">
-            Request Management Dashboard
+            Work Orders
           </h1>
           <p className="mt-1 text-[14px] leading-5 tracking-[-0.1504px] text-[#6a7282]">
-            Maintenance Request Overview
+            Full maintenance request list — open and completed. For tasks Ulo is actively coordinating,
+            see Active Tasks.
           </p>
         </header>
 

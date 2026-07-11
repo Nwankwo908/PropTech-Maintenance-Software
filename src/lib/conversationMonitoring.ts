@@ -1,7 +1,18 @@
 import { getActiveLandlordId } from '@/lib/activeLandlord'
 import { isAdminDirectedConversationType } from '@/lib/propertyConversations'
+import {
+  buildVendorSetupMonitoringDetail,
+  parseVendorSetupConversationId,
+  readVendorSetupLoggedQuotes,
+  readVendorSetupThreadContext,
+  sortVendorSetupMonitoringTranscript,
+  stripLegacyVerbalQuoteAuditItems,
+} from '@/lib/vendorSetupConversation'
+import type { VendorSetupPricingNegotiationBrief } from '@/lib/vendorSetupPricingNegotiation'
 
 export type MonitoringRiskLevel = 'high' | 'medium' | 'low'
+
+export type VendorOutreachChannel = 'sms' | 'email'
 
 export type MonitoringTranscriptItem =
   | {
@@ -10,10 +21,22 @@ export type MonitoringTranscriptItem =
       senderName: string
       body: string
       timestampMs: number
+      outreachChannel?: VendorOutreachChannel | 'both'
     }
   | {
       type: 'tool_action'
       label: string
+      timestampMs: number
+      outreachChannel?: VendorOutreachChannel | 'both'
+    }
+  | {
+      type: 'delivery_event'
+      channel: 'sms' | 'email' | 'grouped'
+      label: string
+      detail?: string
+      body?: string
+      smsBody?: string
+      emailBody?: string
       timestampMs: number
     }
 
@@ -29,6 +52,10 @@ export type ConversationMonitoringDetail = {
   transcript: MonitoringTranscriptItem[]
   readOnlyNote: string
   canTakeOver: boolean
+  /** Per-channel copy when vendor setup threads split SMS vs email. */
+  vendorOutreachChannels?: Record<VendorOutreachChannel, { summary: string; readOnlyNote: string }>
+  /** Submitted intake rates + AI negotiation guidance for vendor setup threads. */
+  vendorSetupPricing?: VendorSetupPricingNegotiationBrief | null
 }
 
 export type AdminUloNotification = {
@@ -98,9 +125,22 @@ export type InspectionUloThreadInput = {
   hasMaintenanceFollowUp: boolean
 }
 
+export type MoveOutUloThreadInput = {
+  kind: 'move_out'
+  conversationId: string | null
+  workflowRunId: string
+  residentName: string
+  unitLabel: string
+  propertyLabel: string
+  startedAtMs: number
+  moveOutDateMs: number
+  sourceLeaseRenewalRunId?: string | null
+}
+
 export type WorkflowUloThreadInput =
   | MaintenanceUloThreadInput
   | MoveInUloThreadInput
+  | MoveOutUloThreadInput
   | InspectionUloThreadInput
 
 /** @deprecated Use MaintenanceUloThreadInput */
@@ -225,7 +265,10 @@ function buildTitle(ctx: ConversationContext): string {
     return location ? `Maintenance · ${location}` : 'Maintenance request'
   }
 
-  if (/rent|late payment/i.test(combinedText)) {
+  if (/rent|late payment|payment plan|installment/i.test(combinedText)) {
+    if (/payment plan|installment/i.test(combinedText)) {
+      return location ? `Payment plan · ${location}` : 'Payment plan'
+    }
     return location ? `Rent reminder · ${location}` : 'Rent reminder'
   }
 
@@ -246,21 +289,39 @@ function buildAcFailureSummary(ctx: ConversationContext): string {
   return `Tenant reported AC outage. Ulo classified as urgent maintenance (heat advisory in zip), triaged, and dispatched Rapid Plumb HVAC. ETA confirmed 11:30a. No human action required unless ${tenant} escalates.`
 }
 
+function isPaymentPlanOfferBody(body: string): boolean {
+  return /payment plan|installment|split (?:your |the )?balance/i.test(body)
+}
+
+function isLateRentReminderBody(body: string): boolean {
+  return /rent (?:for |was )?due|late[- ]?rent|friendly reminder your rent/i.test(body)
+}
+
 function buildSummary(ctx: ConversationContext): string {
   const combined = ctx.messages.map((m) => m.body).join(' ')
+  const latest = ctx.messages[ctx.messages.length - 1]?.body || ''
+  const tenant = ctx.residentName || 'the resident'
+  const place = buildingShortName(ctx.building) || 'this property'
 
   if (mentionsAc(combined) || (ctx.ticketCategory === 'hvac' && ctx.status === 'in_progress')) {
     return buildAcFailureSummary(ctx)
   }
 
+  // Payment-plan / late-rent SMS bodies belong in the transcript as Ulo AI messages —
+  // never dump them into the admin summary chrome.
+  if (isPaymentPlanOfferBody(latest) || isPaymentPlanOfferBody(combined)) {
+    return `Ulo sent ${tenant} a payment plan offer for ${place}. Monitor the SMS thread below for their reply — no further action needed unless they escalate.`
+  }
+
+  if (isLateRentReminderBody(latest) || isLateRentReminderBody(combined)) {
+    return `Ulo sent a late-rent reminder to ${tenant} at ${place}. No action required unless they reply.`
+  }
+
   if (ctx.conversationType === 'ai_copilot') {
-    if (/late rent|rent reminder/i.test(combined)) {
-      return `Ulo sent a late-rent reminder to ${ctx.residentName || 'the resident'} at ${buildingShortName(ctx.building) || 'this property'}. No action required unless they reply.`
-    }
     if (/vendor|alternative|rapid plumb/i.test(combined)) {
       return `Ulo auto-routed the Oakwood 304 emergency to Rapid Plumb Co. (4.9★, nearby) after Apex Plumbing was 6+ hours out. Logged for your records — no approval needed.`
     }
-    return combined || 'Ulo handled this automatically. Monitor below for visibility — no landlord action required.'
+    return 'Ulo handled this automatically. Monitor the SMS thread below for visibility — no landlord action required.'
   }
 
   if (ctx.conversationType === 'vendor_alert') {
@@ -277,10 +338,7 @@ function buildSummary(ctx: ConversationContext): string {
     return `Resident confirmed the issue is resolved. Ulo closed the loop and updated the maintenance record — no further action needed.`
   }
 
-  const preview = ctx.messages[ctx.messages.length - 1]?.body || ctx.ticketDescription
-  return preview
-    ? `Latest message: ${preview.slice(0, 160)}${preview.length > 160 ? '…' : ''}`
-    : 'Ulo is monitoring this thread. No landlord action required unless the resident escalates.'
+  return 'Ulo is monitoring this thread. No landlord action required unless the resident escalates.'
 }
 
 function buildDemoAcFailureTranscript(ctx: ConversationContext): MonitoringTranscriptItem[] {
@@ -375,10 +433,9 @@ function mapDbMessagesToTranscript(ctx: ConversationContext): MonitoringTranscri
 function buildTranscript(ctx: ConversationContext): MonitoringTranscriptItem[] {
   const combined = ctx.messages.map((m) => m.body).join(' ')
 
-  if (
-    ctx.conversationType === 'resident_intake' &&
-    (mentionsAc(combined) || ctx.messages.length <= 2)
-  ) {
+  // Demo AC polish only when the thread is actually about AC — never replace
+  // short rent / payment-plan threads (those SMS bodies must stay in the transcript).
+  if (ctx.conversationType === 'resident_intake' && mentionsAc(combined)) {
     return buildDemoAcFailureTranscript(ctx)
   }
 
@@ -680,6 +737,53 @@ function parseMoveInDateMs(iso: string | null | undefined, fallbackMs: number): 
 }
 
 /** Short coordination SMS sequence — not a long conversational thread. */
+function buildSyntheticMoveOutThread(input: MoveOutUloThreadInput): ConversationMonitoringDetail {
+  const tenant = input.residentName || 'Resident'
+  const fname = tenant.trim().split(/\s+/)[0] || 'there'
+  const moveOutLabel = new Date(input.moveOutDateMs).toLocaleDateString(undefined, {
+    month: 'long',
+    day: 'numeric',
+    year: 'numeric',
+  })
+  const started = input.startedAtMs
+
+  const transcript: MonitoringTranscriptItem[] = [
+    {
+      type: 'tool_action',
+      label: 'Initiated',
+      timestampMs: started,
+    },
+    {
+      type: 'message',
+      sender: 'ulo',
+      senderName: 'Ulo AI',
+      body: `Hi ${fname}! We understand you'll be moving out at the end of your lease. We'll use this conversation to help guide you through the move-out process.`,
+      timestampMs: started + 60_000,
+    },
+    {
+      type: 'message',
+      sender: 'ulo',
+      senderName: 'Ulo AI',
+      body: `Your move-out date is ${moveOutLabel}. Reply here with any questions about notice, cleaning, keys, or the inspection.`,
+      timestampMs: started + 120_000,
+    },
+  ]
+
+  return {
+    conversationId: input.conversationId || workOrderThreadConversationId(input.workflowRunId),
+    title: `${tenant} · Move-out coordination`,
+    subtitle: 'Admin monitoring view · SMS · guided move-out thread',
+    riskLevel: 'low',
+    riskLabel: 'In progress',
+    summary: `Ulo is guiding ${tenant} through move-out at ${input.propertyLabel} — instructions, inspection, keys, and deposit updates stay in this SMS thread.`,
+    tenantName: tenant,
+    tenantInitials: monitoringInitials(tenant),
+    transcript,
+    readOnlyNote: 'Residents can reply naturally; admin can take over or use suggested replies.',
+    canTakeOver: true,
+  }
+}
+
 function buildMoveInCoordinationTranscript(input: MoveInUloThreadInput): MonitoringTranscriptItem[] {
   const moveInMs = input.moveInDateMs
   const property = input.propertyLabel || 'your new home'
@@ -1091,6 +1195,10 @@ export async function fetchWorkflowUloThreadMonitoring(
     return buildSyntheticMoveInThread(input)
   }
 
+  if (input.kind === 'move_out') {
+    return buildSyntheticMoveOutThread(input)
+  }
+
   if (input.kind === 'inspection') {
     return buildSyntheticInspectionThread(input)
   }
@@ -1118,6 +1226,37 @@ export async function fetchInboxConversationMonitoring(
 ): Promise<ConversationMonitoringDetail | null> {
   const linked = await fetchConversationMonitoring(conversationId)
   if (linked) return linked
+
+  if (parseVendorSetupConversationId(conversationId)) {
+    const context = readVendorSetupThreadContext(conversationId)
+    if (context) {
+      const { readVendorIntakeResponses, readVendorIntakeSubmission } = await import(
+        '@/lib/vendorIntakeForm'
+      )
+      const { buildVendorSetupPricingNegotiationBrief, extractVendorSetupSentFollowUpBodies } =
+        await import('@/lib/vendorSetupPricingNegotiation')
+      const submission = readVendorIntakeSubmission(conversationId)
+      const loggedQuotes = readVendorSetupLoggedQuotes(conversationId)
+      const intakeResponses = readVendorIntakeResponses(conversationId)
+      const detail = buildVendorSetupMonitoringDetail(conversationId, context)
+      return {
+        ...detail,
+        transcript: stripLegacyVerbalQuoteAuditItems(
+          sortVendorSetupMonitoringTranscript([
+            ...detail.transcript,
+            ...loggedQuotes,
+            ...intakeResponses,
+          ]),
+        ),
+        vendorSetupPricing: submission
+          ? buildVendorSetupPricingNegotiationBrief(context, submission, conversationId, {
+              sentFollowUpBodies: extractVendorSetupSentFollowUpBodies(loggedQuotes),
+            })
+          : null,
+      }
+    }
+    return null
+  }
 
   const workflowRunId = parseWorkOrderThreadConversationId(conversationId)
   if (!workflowRunId) return null

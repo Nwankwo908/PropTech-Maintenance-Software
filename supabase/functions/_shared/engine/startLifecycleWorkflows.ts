@@ -127,6 +127,33 @@ async function writeLifecycleGraphStartedEvent(
   })
 }
 
+async function cancelOtherActiveMoveOutRuns(
+  supabase: SupabaseClient,
+  params: {
+    landlordId: string
+    unitId: string
+    keepRunId: string
+  },
+): Promise<void> {
+  const now = new Date().toISOString()
+  const { error } = await supabase
+    .from("workflow_runs")
+    .update({
+      status: "cancelled",
+      current_step: "cancelled",
+      completed_at: now,
+    })
+    .eq("landlord_id", params.landlordId)
+    .eq("template_id", "move_out")
+    .eq("status", "active")
+    .eq("unit_id", params.unitId)
+    .neq("id", params.keepRunId)
+
+  if (error) {
+    console.error("[move_out] cancel sibling active runs", error.message)
+  }
+}
+
 async function findActiveLifecycleRun(
   supabase: SupabaseClient,
   params: {
@@ -311,6 +338,10 @@ export type StartMoveOutWorkflowParams = {
   triggerType?: WorkflowTriggerType
   classification?: "voluntary_move_out" | "lease_end" | "eviction"
   reuseActiveRun?: boolean
+  /** When set, upsert this workflow_run id (demo WO-D777). */
+  runId?: string | null
+  sourceWorkflowRunId?: string | null
+  sourceWorkflowTemplateId?: string | null
 }
 
 /** Start a move_out workflow run and log move_out.started on the property operations graph. */
@@ -322,7 +353,7 @@ export async function startMoveOutWorkflow(
   const classification = params.classification ?? "voluntary_move_out"
   const classificationMeta = buildClassificationMetadata(classification, "dashboard")
 
-  if (params.reuseActiveRun !== false) {
+  if (!params.runId && params.reuseActiveRun !== false) {
     const existingId = await findActiveLifecycleRun(supabase, {
       landlordId: params.landlordId,
       templateId: "move_out",
@@ -347,6 +378,7 @@ export async function startMoveOutWorkflow(
   const entityId = params.occupancyId ?? params.unitId
 
   const run = await createWorkflowRun(supabase, {
+    id: params.runId?.trim() || undefined,
     templateId: "move_out",
     landlordId: params.landlordId,
     triggerType,
@@ -362,6 +394,9 @@ export async function startMoveOutWorkflow(
       move_out_date: params.moveOutDate?.trim() || undefined,
       occupancy_id: params.occupancyId ?? undefined,
       move_out_classification: classification,
+      source_workflow: params.sourceWorkflowTemplateId ?? undefined,
+      source_workflow_run_id: params.sourceWorkflowRunId ?? undefined,
+      source_workflow_template_id: params.sourceWorkflowTemplateId ?? undefined,
       ...classificationMeta,
       step_state: {
         step: "initiated",
@@ -375,6 +410,14 @@ export async function startMoveOutWorkflow(
 
   if (!run) {
     throw new Error("Failed to create workflow_run for move_out")
+  }
+
+  if (params.runId?.trim()) {
+    await cancelOtherActiveMoveOutRuns(supabase, {
+      landlordId: params.landlordId,
+      unitId: params.unitId,
+      keepRunId: run.id,
+    })
   }
 
   const graphScope: OperationsGraphScope = {
@@ -410,6 +453,8 @@ export async function startMoveOutWorkflow(
       occupancy_id: params.occupancyId ?? null,
       unit_label: params.unitLabel ?? null,
       building: params.building ?? null,
+      source_workflow: params.sourceWorkflowTemplateId ?? null,
+      source_workflow_run_id: params.sourceWorkflowRunId ?? null,
     },
     legacyScope: graphScope,
   })

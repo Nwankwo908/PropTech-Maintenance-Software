@@ -304,7 +304,8 @@ export class TelnyxProvider implements SMSProvider {
     }
 
     const explicitFrom = input.from?.trim()
-    const fromNumber = explicitFrom || cfg.fromNumber
+    // Prefer the configured Telnyx line over DB/demo placeholders (avoids 10004 invalid source).
+    const fromNumber = cfg.fromNumber?.trim() || explicitFrom
 
     if (cfg.messagingProfileId) {
       body.messaging_profile_id = cfg.messagingProfileId

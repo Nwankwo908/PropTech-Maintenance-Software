@@ -1,4 +1,5 @@
 import type { PropertyActiveVendorRow } from '@/lib/propertyVendorRows'
+import { CallPhoneButton } from '@/components/CallPhoneButton'
 
 type PropertyVendorsListProps = {
   rows: PropertyActiveVendorRow[]
@@ -59,9 +60,12 @@ export function PropertyVendorsList({
                 {vendor.trade} · {vendor.activeJobCount} active order{vendor.activeJobCount === 1 ? '' : 's'}
               </p>
             </div>
-            <span className="inline-flex rounded-full bg-[#dbfce7] px-2.5 py-0.5 text-[12px] font-medium text-[#008236]">
-              On site
-            </span>
+            <div className="flex shrink-0 flex-wrap items-center gap-2">
+              <CallPhoneButton phone={vendor.phone} label="Call vendor" variant="outline" />
+              <span className="inline-flex rounded-full bg-[#dbfce7] px-2.5 py-0.5 text-[12px] font-medium text-[#008236]">
+                On site
+              </span>
+            </div>
           </header>
 
           <ul>

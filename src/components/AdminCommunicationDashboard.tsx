@@ -1,6 +1,12 @@
 import { useEffect, useMemo, useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { ConversationMonitoringModal } from '@/components/ConversationMonitoringModal'
 import { getActiveLandlordId } from '@/lib/activeLandlord'
+import {
+  vendorSetupInboxContext,
+  vendorSetupInboxStatus,
+} from '@/lib/vendorOutreachCopy'
+import { listVendorSetupInboxEntries } from '@/lib/vendorSetupConversation'
 import { fetchCommunicationWorkOrderInboxRows } from '@/lib/workflowPipelineDetail'
 import { isCommunicationInboxConversationType } from '@/lib/propertyConversations'
 import { supabase } from '@/lib/supabase'
@@ -361,12 +367,18 @@ const FILTERS = [
 type FilterId = (typeof FILTERS)[number]['id']
 
 export function AdminCommunicationDashboard() {
+  const [searchParams, setSearchParams] = useSearchParams()
   const [conversations, setConversations] = useState<Conversation[]>([])
   const [metrics, setMetrics] = useState<CommMetrics | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [filter, setFilter] = useState<FilterId>('all')
   const [monitoringConversationId, setMonitoringConversationId] = useState<string | null>(null)
+
+  useEffect(() => {
+    const thread = searchParams.get('thread')?.trim()
+    if (thread) setMonitoringConversationId(thread)
+  }, [searchParams])
 
   useEffect(() => {
     let cancelled = false
@@ -668,6 +680,21 @@ export function AdminCommunicationDashboard() {
         existingIds.add(workOrder.id)
       }
 
+      for (const setup of listVendorSetupInboxEntries()) {
+        if (existingIds.has(setup.conversationId)) continue
+        mapped.push({
+          id: setup.conversationId,
+          name: setup.vendorName,
+          kind: 'vendor',
+          context: vendorSetupInboxContext(setup.locationLabel),
+          preview: setup.preview,
+          status: vendorSetupInboxStatus(),
+          unread: false,
+          lastActivity: setup.lastActivityMs,
+        })
+        existingIds.add(setup.conversationId)
+      }
+
       setConversations(mapped)
       setLoading(false)
     }
@@ -855,7 +882,14 @@ export function AdminCommunicationDashboard() {
       <ConversationMonitoringModal
         open={monitoringConversationId != null}
         conversationId={monitoringConversationId}
-        onClose={() => setMonitoringConversationId(null)}
+        onClose={() => {
+          setMonitoringConversationId(null)
+          if (searchParams.get('thread')) {
+            const next = new URLSearchParams(searchParams)
+            next.delete('thread')
+            setSearchParams(next, { replace: true })
+          }
+        }}
       />
     </main>
   )

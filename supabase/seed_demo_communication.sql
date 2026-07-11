@@ -8,6 +8,7 @@
 -- and property detail Conversations tabs:
 --   * 1 landlord SMS number (provisioned)
 --   * 9 conversations across tenant / vendor / Ulo AI copilot
+--   * Marco Alvarez late-rent thread as resident_intake (SMS inbox, not admin-only)
 --   * Birch Tower vendor SMS threads for assigned maintenance (1203, 708, 402)
 --   * messages providing the preview text + relative timestamps
 --
@@ -123,10 +124,11 @@ begin
     (c_david, demo_landlord, num_main, '+15555620004',
      r_okafor, null, null, null,
      'resident_intake', 'resolved', now_ts - interval '2 days', now_ts - interval '1 hour'),
-    -- 5. Ulo AI — sent late-rent reminder (Maple 107)
-    (c_ai_maple, demo_landlord, num_main, ulo_number,
+    -- 5. Tenant — Marco Alvarez — late-rent reminder (Maple 107)
+    -- resident_intake so it appears in Communication inbox; payment-plan SMS appends here.
+    (c_ai_maple, demo_landlord, num_main, '+15555620005',
      r_alvarez, null, null, null,
-     'ai_copilot', 'completed', now_ts - interval '3 hours', now_ts - interval '2 hours'),
+     'resident_intake', 'open', now_ts - interval '3 hours', now_ts - interval '2 hours'),
     -- 6. Vendor — Summit HVAC — preventive inspection scheduled (Birch 410)
     (c_summit, demo_landlord, num_main, '+15555610003',
      null, v_summit, u_birch_410, null,
@@ -187,7 +189,7 @@ begin
      'Thanks for the quick turnaround on the faucet!',
      'twilio', '{}'::text[], now_ts - interval '1 hour'),
 
-    -- Ulo AI — Maple late rent reminder sent
+    -- Marco Alvarez — Maple late rent reminder (Ulo AI outbound)
     (md5('ulo-demo-msg-ai-maple-1')::uuid, c_ai_maple, demo_landlord, 'outbound',
      ulo_number, '+15555620005',
      'Hi Marco — friendly reminder your rent for Maple Heights 107 was due on the 1st. Pay anytime at your portal link or reply if you need help.',

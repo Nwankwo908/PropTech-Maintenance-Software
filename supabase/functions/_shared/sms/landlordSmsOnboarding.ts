@@ -6,11 +6,13 @@ import {
 } from "./inbound_db.ts"
 import { ensureUnitRow } from "../unitVacancy.ts"
 import { logGraphEvent } from "../graph/logGraphEvent.ts"
+import { resolveProviderName } from "./providerFactory.ts"
 import {
   provisionLandlordMainNumber,
   resolveLandlordId,
   type LandlordSmsNumberRow,
 } from "./smsNumberPool.ts"
+import type { SmsProviderName } from "./types.ts"
 
 export { resolveLandlordId, type LandlordSmsNumberRow } from "./smsNumberPool.ts"
 export { claimAvailablePoolNumber as claimPoolNumberForLandlord } from "./smsNumberPool.ts"
@@ -65,6 +67,98 @@ export async function findActiveLandlordMainNumber(
   }
 
   return (data as LandlordSmsNumberRow | null) ?? null
+}
+
+export type OutboundLandlordSmsLine = {
+  id: string
+  phone: string
+  provider: SmsProviderName
+}
+
+async function findActiveTelnyxNumberByPhone(
+  supabase: SupabaseClient,
+  phone: string,
+  landlordId?: string | null,
+): Promise<LandlordSmsNumberRow | null> {
+  const normalized = normalizeSmsPhone(phone)
+
+  if (landlordId?.trim()) {
+    const { data: scoped } = await supabase
+      .from("sms_numbers")
+      .select(selectSmsNumberFields())
+      .eq("landlord_id", landlordId.trim())
+      .eq("phone_number", normalized)
+      .eq("provider", "telnyx")
+      .eq("status", "active")
+      .limit(1)
+      .maybeSingle()
+
+    if (scoped) return scoped as LandlordSmsNumberRow
+  }
+
+  const { data: shared } = await supabase
+    .from("sms_numbers")
+    .select(selectSmsNumberFields())
+    .eq("phone_number", normalized)
+    .eq("provider", "telnyx")
+    .eq("status", "active")
+    .eq("purpose", "landlord_main")
+    .order("created_at", { ascending: true })
+    .limit(1)
+    .maybeSingle()
+
+  return (shared as LandlordSmsNumberRow | null) ?? null
+}
+
+/**
+ * Landlord_main line for outbound SMS. When Telnyx is active but the landlord row
+ * still points at a demo/Twilio placeholder, use the configured Telnyx number.
+ */
+export async function resolveOutboundLandlordSmsLine(
+  supabase: SupabaseClient,
+  landlordId: string,
+): Promise<OutboundLandlordSmsLine | null> {
+  const row = await findActiveLandlordMainNumber(supabase, landlordId)
+  if (!row) return null
+
+  const dbPhone = String(row.phone_number).trim()
+  const dbProvider = row.provider === "telnyx" ? "telnyx" : "twilio"
+
+  if (resolveProviderName() !== "telnyx") {
+    return { id: String(row.id), phone: dbPhone, provider: dbProvider }
+  }
+
+  const envFrom = Deno.env.get("TELNYX_FROM_NUMBER")?.trim()
+  if (!envFrom) {
+    return { id: String(row.id), phone: dbPhone, provider: "telnyx" }
+  }
+
+  const envNorm = normalizeSmsPhone(envFrom)
+  const dbNorm = normalizeSmsPhone(dbPhone)
+  if (dbProvider === "telnyx" && dbNorm === envNorm) {
+    return { id: String(row.id), phone: envNorm, provider: "telnyx" }
+  }
+
+  const defaultLandlordId = Deno.env.get("DEFAULT_LANDLORD_ID")?.trim() ?? null
+  const telnyxRow = await findActiveTelnyxNumberByPhone(supabase, envNorm, landlordId) ??
+    (defaultLandlordId
+      ? await findActiveTelnyxNumberByPhone(supabase, envNorm, defaultLandlordId)
+      : null)
+
+  if (telnyxRow) {
+    return {
+      id: String(telnyxRow.id),
+      phone: normalizeSmsPhone(String(telnyxRow.phone_number)),
+      provider: "telnyx",
+    }
+  }
+
+  console.warn("[landlordSms] using TELNYX_FROM_NUMBER — landlord_main row is not Telnyx", {
+    landlordId,
+    dbPhone,
+    envFrom: envNorm,
+  })
+  return { id: String(row.id), phone: envNorm, provider: "telnyx" }
 }
 
 /**
