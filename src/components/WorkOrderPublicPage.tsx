@@ -50,6 +50,15 @@ function formatHistoryDate(iso: string): string {
   }
 }
 
+/** Split stored description text into readable paragraphs (not a raw line dump). */
+function descriptionParagraphs(raw: string): string[] {
+  return raw
+    .replace(/\r\n/g, '\n')
+    .split(/\n\s*\n/)
+    .map((block) => block.replace(/\n+/g, ' ').replace(/\s+/g, ' ').trim())
+    .filter(Boolean)
+}
+
 /**
  * Phase 2 / 4.2 — public no-login job detail at `/w/:token`.
  */
@@ -131,45 +140,57 @@ export function WorkOrderPublicPage() {
     job.appointment.scheduledAt,
     job.appointment.windowText,
   )
+  const descriptionBlocks = job.description
+    ? descriptionParagraphs(job.description)
+    : []
 
   return (
     <div className="min-h-dvh bg-[#f4f6f8] text-[#101828]">
       <header className="border-b border-[#e5e7eb] bg-white">
-        <div className="mx-auto flex max-w-2xl items-center justify-between px-4 py-4">
-          <div>
+        <div className="mx-auto flex max-w-lg items-start justify-between gap-3 px-4 py-4">
+          <div className="min-w-0">
             <p className="text-[12px] font-medium uppercase tracking-[0.06em] text-[#667085]">
-              Work order
+              Job detail
             </p>
             <h1 className="font-[family-name:var(--font-heading)] text-[22px] font-semibold leading-tight">
               {workOrderRef}
             </h1>
+            <p className="mt-1 text-[14px] text-[#667085]">
+              {job.unit || 'Unit'}
+              {job.address ? ` · ${job.address}` : ''}
+            </p>
           </div>
-          <span className="rounded-md bg-[#eef6f8] px-2.5 py-1 text-[12px] font-semibold text-[#186179]">
+          <span className="shrink-0 rounded-md bg-[#eef6f8] px-2.5 py-1 text-[12px] font-semibold text-[#186179]">
             {statusLabel(job.status)}
           </span>
         </div>
       </header>
 
-      <main className="mx-auto max-w-2xl space-y-5 px-4 py-6 pb-16">
+      <main className="mx-auto max-w-lg space-y-4 px-4 py-6 pb-16">
         <section className="rounded-xl bg-white px-4 py-4 shadow-[0_1px_2px_rgba(16,24,40,0.04)]">
-          <h2 className="text-[13px] font-semibold text-[#667085]">Address</h2>
-          <p className="mt-1 text-[16px] font-medium leading-6">{job.address}</p>
+          <h2 className="text-[15px] font-semibold leading-6 text-[#101828]">
+            Description
+          </h2>
+          <p className="mt-1 text-[13px] leading-5 text-[#667085]">{issueLabel}</p>
+          {descriptionBlocks.length > 0 ? (
+            <ul className="mt-2 list-disc space-y-2 pl-5 text-[14px] leading-6 text-[#364153]">
+              {descriptionBlocks.map((paragraph) => (
+                <li key={paragraph}>{paragraph}</li>
+              ))}
+            </ul>
+          ) : (
+            <p className="mt-2 text-[14px] leading-6 text-[#98a2b3]">
+              No description provided.
+            </p>
+          )}
           {job.priority ? (
-            <p className="mt-2 text-[13px] text-[#667085]">
+            <p className="mt-3 text-[13px] text-[#667085]">
               Priority:{' '}
               <span className="font-medium capitalize text-[#344054]">
                 {job.priority}
               </span>
             </p>
           ) : null}
-        </section>
-
-        <section className="rounded-xl bg-white px-4 py-4 shadow-[0_1px_2px_rgba(16,24,40,0.04)]">
-          <h2 className="text-[13px] font-semibold text-[#667085]">Issue</h2>
-          <p className="mt-1 text-[15px] font-medium">{issueLabel}</p>
-          <p className="mt-2 whitespace-pre-wrap text-[14px] leading-6 text-[#364153]">
-            {job.description || 'No description provided.'}
-          </p>
           {job.photoUrls.length > 0 ? (
             <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-3">
               {job.photoUrls.map((url) => (
@@ -194,7 +215,7 @@ export function WorkOrderPublicPage() {
         </section>
 
         <section className="rounded-xl bg-white px-4 py-4 shadow-[0_1px_2px_rgba(16,24,40,0.04)]">
-          <h2 className="text-[13px] font-semibold text-[#667085]">
+          <h2 className="text-[15px] font-semibold leading-6 text-[#101828]">
             Access instructions
           </h2>
           <p className="mt-2 whitespace-pre-wrap text-[14px] leading-6 text-[#364153]">
@@ -203,7 +224,9 @@ export function WorkOrderPublicPage() {
         </section>
 
         <section className="rounded-xl bg-white px-4 py-4 shadow-[0_1px_2px_rgba(16,24,40,0.04)]">
-          <h2 className="text-[13px] font-semibold text-[#667085]">Tenant contact</h2>
+          <h2 className="text-[15px] font-semibold leading-6 text-[#101828]">
+            Tenant contact
+          </h2>
           <p className="mt-1 text-[15px] font-medium">{job.tenant.name}</p>
           {job.tenant.phone ? (
             <a
@@ -218,7 +241,9 @@ export function WorkOrderPublicPage() {
         </section>
 
         <section className="rounded-xl bg-white px-4 py-4 shadow-[0_1px_2px_rgba(16,24,40,0.04)]">
-          <h2 className="text-[13px] font-semibold text-[#667085]">Appointment</h2>
+          <h2 className="text-[15px] font-semibold leading-6 text-[#101828]">
+            Appointment
+          </h2>
           <p className="mt-1 text-[15px] font-medium">{appointmentText}</p>
           {job.vendorName ? (
             <p className="mt-1 text-[13px] text-[#667085]">Vendor: {job.vendorName}</p>
@@ -226,7 +251,7 @@ export function WorkOrderPublicPage() {
         </section>
 
         <section className="rounded-xl bg-white px-4 py-4 shadow-[0_1px_2px_rgba(16,24,40,0.04)]">
-          <h2 className="text-[13px] font-semibold text-[#667085]">
+          <h2 className="text-[15px] font-semibold leading-6 text-[#101828]">
             Property job history
           </h2>
           {job.propertyHistory.length === 0 ? (
@@ -260,7 +285,7 @@ export function WorkOrderPublicPage() {
         </section>
 
         <section className="rounded-xl bg-white px-4 py-4 shadow-[0_1px_2px_rgba(16,24,40,0.04)]">
-          <h2 className="text-[13px] font-semibold text-[#667085]">Actions</h2>
+          <h2 className="text-[15px] font-semibold leading-6 text-[#101828]">Actions</h2>
           <div className="mt-3 grid gap-2">
             <ActionLink
               href={job.links.estimate}
