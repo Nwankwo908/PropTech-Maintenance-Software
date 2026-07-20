@@ -78,6 +78,11 @@ interface ImportMetaEnv {
   readonly VITE_RETRY_FAILED_DELIVERY_URL?: string
   /** UUID tenant scope for SMS onboarding (matches Edge secret DEFAULT_LANDLORD_ID). */
   readonly VITE_DEFAULT_LANDLORD_ID?: string
+  /**
+   * POST send-tenant-activation (full URL); uses `VITE_ADMIN_REASSIGN_SECRET`.
+   * If omitted, defaults to `${VITE_SUPABASE_URL}/functions/v1/send-tenant-activation`.
+   */
+  readonly VITE_SEND_TENANT_ACTIVATION_URL?: string
 }
 
 interface ImportMeta {

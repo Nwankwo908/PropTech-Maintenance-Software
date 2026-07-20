@@ -925,6 +925,22 @@ export function formatPropertyHealthTooltip(components: PropertyHealthComponent[
     .join('\n')
 }
 
+/** KPI popover rows for the six weighted health factors (weakest first). */
+export function propertyHealthFactorBreakdownLines(
+  components: PropertyHealthComponent[],
+): Array<{ label: string; value: string; detail: string }> {
+  return [...components]
+    .sort((a, b) => a.score - b.score || b.weight - a.weight)
+    .map((component) => {
+      const weightPct = Math.round(component.weight * 100)
+      return {
+        label: `${component.label} (${weightPct}%)`,
+        value: component.isFallback ? `${component.score} · neutral` : String(component.score),
+        detail: component.detail,
+      }
+    })
+}
+
 function asString(value: unknown): string {
   if (value == null) return ''
   return String(value).trim()

@@ -78,10 +78,11 @@ export function AwaitingDecisionListRail({
             id={titleId}
             className="pr-8 text-[20px] font-semibold leading-7 tracking-[-0.3px] text-[#0a0a0a]"
           >
-            Awaiting Your Decision
+            Needs Your Attention
           </h2>
           <p className="mt-1 text-[13px] leading-5 text-[#6a7282]">
-            {items.length} operation{items.length === 1 ? '' : 's'} awaiting your decision
+            {items.length} operation{items.length === 1 ? '' : 's'} need
+            {items.length === 1 ? 's' : ''} your attention
             {criticalCount > 0 ? ` · ${criticalCount} critical` : ''}
           </p>
         </div>
@@ -123,8 +124,8 @@ export function AwaitingDecisionListRail({
                       className={[
                         'shrink-0 rounded-[10px] border px-4 py-2 text-[13px] font-medium leading-5 transition-colors duration-150',
                         item.actionStyle === 'alert'
-                          ? 'border-transparent bg-[#FBE3E5] text-[#E3646C] hover:bg-[#f5d0d4]'
-                          : 'border-current bg-white text-tertiary hover:bg-[#e2f5f1]',
+                          ? 'border-transparent bg-[#187960] text-white hover:bg-[#0A4D38]'
+                          : 'border-[#0A4D38] bg-white text-[#0A4D38] hover:bg-[#e8f3ef]',
                       ].join(' ')}
                     >
                       {item.actionLabel} →
@@ -136,8 +137,8 @@ export function AwaitingDecisionListRail({
                       className={[
                         'shrink-0 rounded-[10px] border px-4 py-2 text-[13px] font-medium leading-5 transition-colors duration-150',
                         item.actionStyle === 'alert'
-                          ? 'border-transparent bg-[#FBE3E5] text-[#E3646C] hover:bg-[#f5d0d4]'
-                          : 'border-current bg-white text-tertiary hover:bg-[#e2f5f1]',
+                          ? 'border-transparent bg-[#187960] text-white hover:bg-[#0A4D38]'
+                          : 'border-[#0A4D38] bg-white text-[#0A4D38] hover:bg-[#e8f3ef]',
                       ].join(' ')}
                     >
                       {item.actionLabel} →

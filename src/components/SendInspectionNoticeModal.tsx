@@ -2,7 +2,8 @@ import { useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'rea
 import inspectionIcon from '@/assets/Inspection_3.svg'
 import { SparkleIcon } from '@/components/SparkleIcon'
 import { recordBroadcastSendAttempt } from '@/lib/broadcastMetrics'
-import { ALL_UNIT_OPTIONS } from '@/lib/propertyUnitOptions'
+import { getActiveLandlordId } from '@/lib/activeLandlord'
+import { getInventoryUnitOptions } from '@/lib/propertyUnitOptions'
 import { unitOptionValueToCell } from '@/lib/residentUnitKeys'
 
 const INSPECTION_TYPES = [
@@ -65,8 +66,12 @@ const INSPECTION_FOLLOW_UP_OPTIONS = [
   { value: '72h', label: '72 hours' },
 ] as const
 
-const REGISTERED_PROPERTY_UNITS_SESSION_KEY =
+const REGISTERED_PROPERTY_UNITS_SESSION_PREFIX =
   'proptech.admin.registeredPropertyUnitOptions.v1'
+
+function registeredPropertyUnitsSessionKey(): string {
+  return `${REGISTERED_PROPERTY_UNITS_SESSION_PREFIX}.${getActiveLandlordId()}`
+}
 
 function toDateInputValue(d: Date): string {
   const y = d.getFullYear()
@@ -85,7 +90,7 @@ function advanceNoticeDays(v: AdvanceId): number {
 function readRegisteredBuildingsFromSession(): string[] {
   if (typeof sessionStorage === 'undefined') return []
   try {
-    const raw = sessionStorage.getItem(REGISTERED_PROPERTY_UNITS_SESSION_KEY)
+    const raw = sessionStorage.getItem(registeredPropertyUnitsSessionKey())
     if (!raw) return []
     const parsed = JSON.parse(raw) as unknown
     if (!Array.isArray(parsed)) return []
@@ -107,7 +112,7 @@ function readRegisteredBuildingsFromSession(): string[] {
 
 function defaultBuildingOptions(): string[] {
   const out = new Set<string>()
-  for (const opt of ALL_UNIT_OPTIONS) {
+  for (const opt of getInventoryUnitOptions()) {
     const cell = unitOptionValueToCell(opt.value)
     if (cell.kind === 'assigned' && cell.building.trim()) {
       out.add(cell.building.trim())
@@ -122,7 +127,7 @@ function defaultBuildingOptions(): string[] {
 function readRegisteredUnitsFromSession(): string[] {
   if (typeof sessionStorage === 'undefined') return []
   try {
-    const raw = sessionStorage.getItem(REGISTERED_PROPERTY_UNITS_SESSION_KEY)
+    const raw = sessionStorage.getItem(registeredPropertyUnitsSessionKey())
     if (!raw) return []
     const parsed = JSON.parse(raw) as unknown
     if (!Array.isArray(parsed)) return []
@@ -143,7 +148,7 @@ function readRegisteredUnitsFromSession(): string[] {
 
 function defaultUnitOptions(): string[] {
   const out = new Set<string>()
-  for (const opt of ALL_UNIT_OPTIONS) {
+  for (const opt of getInventoryUnitOptions()) {
     const cell = unitOptionValueToCell(opt.value)
     if (cell.kind === 'assigned' && cell.unit.trim()) {
       out.add(cell.unit.trim())
@@ -357,7 +362,6 @@ export function SendInspectionNoticeModal({
     const typeTitle =
       INSPECTION_TYPES.find((t) => t.id === inspectionType)?.title ?? 'Property inspection'
     const timeLabel = TIME_WINDOW_OPTIONS.find((o) => o.value === timeWindow)?.label ?? timeWindow
-    const advanceTitle = ADVANCE_OPTIONS.find((o) => o.id === advanceNotice)?.title ?? advanceNotice
 
     let audience: BroadcastAudience
     let building = ''
@@ -375,18 +379,24 @@ export function SendInspectionNoticeModal({
         .filter(Boolean)
     }
 
-    const subject = `${typeTitle} — ${inspectionDate}`
+    const subject = `Upcoming ${typeTitle.toLowerCase()} on ${inspectionDate}`
     const messageParts = [
-      'This is an official inspection notice for your residence.',
+      'Hi, this is your property management team.',
       '',
-      `Inspection type: ${typeTitle}`,
-      `Scheduled date: ${inspectionDate}`,
-      `Time window: ${timeLabel}`,
-      `Advance notice: ${advanceTitle}`,
+      `We're letting you know about an upcoming ${typeTitle.toLowerCase()} at your home. ` +
+        `You don't need to do anything to prepare unless we mention it below.`,
+      '',
+      'Here are the details:',
+      `• Date: ${inspectionDate}`,
+      `• Time: ${timeLabel}`,
     ]
     if (additionalMessage.trim()) {
-      messageParts.push('', 'Additional information:', additionalMessage.trim())
+      messageParts.push('', additionalMessage.trim())
     }
+    messageParts.push(
+      '',
+      "If you have any questions or need a different time, just reply to this message and we're happy to help.",
+    )
     const message = messageParts.join('\n')
 
     const channels: BroadcastChannel[] = [

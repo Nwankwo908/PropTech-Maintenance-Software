@@ -105,3 +105,79 @@ export async function resolveExternalVendorSearchContext(
 
   return { searchLocation: unit || "United States", locationLabel }
 }
+
+/** Portfolio-level search anchor for Ask Ulo (no ticket). Prefers named building, then first geocodable property. */
+export async function resolvePortfolioExternalSearchContext(
+  supabase: SupabaseClient,
+  input: {
+    landlordId: string
+    buildingFilter?: string | null
+  },
+): Promise<ResolvedVendorSearchContext> {
+  const landlordId = input.landlordId.trim()
+  const building = input.buildingFilter?.trim() ?? ""
+
+  if (building) {
+    return resolveExternalVendorSearchContext(supabase, {
+      unit: "",
+      building,
+      landlordId: landlordId || null,
+    })
+  }
+
+  if (landlordId) {
+    const { data } = await supabase
+      .from("landlord_onboarding")
+      .select("draft_state")
+      .eq("landlord_id", landlordId)
+      .maybeSingle()
+
+    const props = data?.draft_state && typeof data.draft_state === "object"
+      ? (data.draft_state as Record<string, unknown>).properties
+      : null
+    if (Array.isArray(props)) {
+      for (const raw of props) {
+        if (!raw || typeof raw !== "object") continue
+        const row = raw as Record<string, unknown>
+        const name = typeof row.name === "string" ? row.name.trim() : ""
+        const parts = [
+          typeof row.streetAddress === "string" ? row.streetAddress.trim() : "",
+          [row.city, row.state].filter((v) => typeof v === "string" && String(v).trim()).join(", "),
+          typeof row.zipCode === "string" ? row.zipCode.trim() : "",
+        ].filter(Boolean)
+        const address = parts.join(" ")
+        if (looksGeocodable(address)) {
+          return {
+            searchLocation: address,
+            locationLabel: name || "Portfolio property",
+          }
+        }
+      }
+    }
+
+    const { data: units } = await supabase
+      .from("units")
+      .select("building")
+      .eq("landlord_id", landlordId)
+      .not("building", "is", null)
+      .limit(50)
+
+    const seen = new Set<string>()
+    for (const u of units ?? []) {
+      const b = typeof u.building === "string" ? u.building.trim() : ""
+      if (!b || seen.has(b)) continue
+      seen.add(b)
+      const demo = DEMO_BUILDING_ADDRESSES[b]
+      if (demo) {
+        return { searchLocation: demo, locationLabel: b }
+      }
+    }
+  }
+
+  const envLoc = Deno.env.get("EXTERNAL_VENDOR_SEARCH_LOCATION")?.trim() || ""
+  if (envLoc) {
+    return { searchLocation: envLoc, locationLabel: "Portfolio area" }
+  }
+
+  return { searchLocation: "Portland, OR", locationLabel: "Portfolio area" }
+}

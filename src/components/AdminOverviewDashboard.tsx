@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Link, useNavigate } from 'react-router-dom'
+import { Link, useLocation, useNavigate } from 'react-router-dom'
 import {
   postDiscoverExternalVendors,
   resolveDiscoverExternalVendorsUrl,
@@ -11,6 +11,7 @@ import {
 } from '@/api/reassignExternalVendor'
 import { postSlaAutoReassign, resolveSlaAutoReassignUrl } from '@/api/slaAutoReassign'
 import insightWarningIcon from '@/assets/noun-warning-recurring.png'
+import feedInfoIcon from '@/assets/noun-information.png'
 import { PropertyHealthBuildingGrid } from '@/components/PropertyHealthBuildingGrid'
 import { AwaitingDecisionListRail } from '@/components/AwaitingDecisionListRail'
 import { AwaitingDecisionOutcomeModal } from '@/components/AwaitingDecisionOutcomeModal'
@@ -21,40 +22,59 @@ import { LeaseRenewalIncentiveMessageRail } from '@/components/LeaseRenewalIncen
 import { SlaOverdueActionRail } from '@/components/SlaOverdueActionRail'
 import { FindExternalVendorRail } from '@/components/FindExternalVendorRail'
 import { VendorCallFlowModal } from '@/components/VendorCallFlowModal'
-import { getActiveLandlordId } from '@/lib/activeLandlord'
+import { getActiveLandlordId, isDemoAccountActive } from '@/lib/activeLandlord'
+import {
+  ensureOnboardingDashboardMatchesPortfolio,
+} from '@/lib/landlordOnboarding'
+import { useSidebarAdminProfile } from '@/hooks/useSidebarAdminProfile'
 import {
   isMaintenanceAdminVendorEscalationReason,
+  maintenanceAdminVendorAttentionMeta,
   maintenanceAdminVendorAttentionTitle,
 } from '@/lib/maintenanceAdminVendor'
 import {
+  emptyAdminWorkflowDashboardData,
   fetchAdminWorkflowDashboard,
   formatLocationContextLabel,
+  workflowTemplateGroupId,
   type AdminWorkflowDashboardData,
 } from '@/lib/adminWorkflows'
-import { snapshotActiveOperations } from '@/lib/adminWorkflowKanban'
+import {
+  collectAdminWorkflowRuns,
+  snapshotActiveOperations,
+  workflowOperationsPath,
+} from '@/lib/adminWorkflowKanban'
 import {
   ADMIN_RIGHT_RAIL_SCRIM,
   ADMIN_RIGHT_RAIL_STACK_HOST,
 } from '@/lib/adminRightRail'
+import { buildingDetailPath } from '@/lib/propertyRoutes'
+import {
+  buildActivityFeedTooltipCopy,
+  splitEmphasizedText,
+  type FeedTooltipDestination,
+} from '@/lib/activityFeedTooltip'
 import {
   buildLeaseRenewalCallReasonLine,
-  formatWorkOrderRefFromTicketId,
   type VendorCallContext,
 } from '@/lib/vendorCallFlow'
 import {
+  buildOverviewFeedBadgeShowcase,
   fetchRecentPropertyOperationsEvents,
   formatTimelineCategoryLabel,
   formatTimelineContextLine,
+  linkShowcaseFeedEventsToWorkflowRuns,
+  type PropertyOperationsTimelineCategory,
   type PropertyOperationsTimelineEvent,
 } from '@/lib/propertyOperationsGraph'
 import {
   buildPropertyHealthReport,
   enrichFeedbackFromTickets,
   fetchPropertyHealthSignals,
-  formatPropertyHealthTooltip,
   mapTicketsForPropertyHealth,
   mapUnitsForPropertyHealth,
   PROPERTY_HEALTH_KPI_CAPTION,
+  propertyHealthFactorBreakdownLines,
   type PropertyHealthFeedback,
   type PropertyHealthPmTask,
   type PropertyHealthResident,
@@ -103,6 +123,7 @@ import {
   sendLeaseRenewalIncentiveMessage,
   type LeaseRenewalIncentiveBrief,
 } from '@/lib/leaseRenewalIncentiveMessaging'
+import { enrichExternalVendorSuggestions } from '@/lib/externalVendorDisplay'
 import { supabase } from '@/lib/supabase'
 
 type OverviewTicket = {
@@ -391,6 +412,39 @@ function formatCategoryName(slug: string): string {
     .join(' ')
 }
 
+/** Human label for awaiting-decision maintenance type (never a vague "General"). */
+function resolveMaintenanceTypeLabel(
+  issueCategory: string | null | undefined,
+  ticket?: Pick<OverviewTicket, 'issueCategory' | 'description'> | null,
+): string {
+  const raw = (issueCategory ?? ticket?.issueCategory ?? '').trim().toLowerCase()
+  if (raw && raw !== 'general' && raw !== 'other' && raw !== 'maintenance') {
+    return `${formatCategoryName(raw)} maintenance`
+  }
+
+  const desc = (ticket?.description ?? '').toLowerCase()
+  if (/plumb|leak|water|drain|sewage|pipe|disposal/.test(desc)) return 'Plumbing maintenance'
+  if (/electric|breaker|outlet|wiring|panel|gfci/.test(desc)) return 'Electrical maintenance'
+  if (/hvac|heat|ac\b|air condition|furnace|thermostat|compressor/.test(desc)) {
+    return 'HVAC maintenance'
+  }
+  if (/appliance|refrigerat|dishwasher|washer|dryer|stove|oven|fridge/.test(desc)) {
+    return 'Appliance maintenance'
+  }
+  if (/pest|roach|rodent|insect|infestation|bug/.test(desc)) return 'Pest control maintenance'
+  if (/clean|carpet|deep clean/.test(desc)) return 'Cleaning maintenance'
+  if (/door|window|lock|latch|screen/.test(desc)) return 'Door & window maintenance'
+  if (/gas smell|gas leak/.test(desc)) return 'Gas safety maintenance'
+  if (/noise/.test(desc)) return 'Noise complaint maintenance'
+
+  const summary = ticket?.description?.trim()
+  if (summary) {
+    const short = summary.length > 48 ? `${summary.slice(0, 48).trim()}…` : summary
+    return short
+  }
+  return 'Uncategorized maintenance'
+}
+
 function countCreatedBetween(
   tickets: OverviewTicket[],
   fromMs: number,
@@ -422,12 +476,129 @@ function TrendingDownIcon() {
   )
 }
 
-function KpiInfoIcon() {
+function timelineCategoryForWorkflowTemplate(
+  templateId: string,
+): PropertyOperationsTimelineCategory | null {
+  const group = workflowTemplateGroupId(templateId)
+  if (group === 'maintenance') return 'maintenance'
+  if (group === 'rent_collection') return 'rent'
+  if (group === 'move_in') return 'move_in'
+  if (group === 'move_out') return 'move_out'
+  if (group === 'inspection') return 'inspection'
+  if (templateId === 'lease_renewal') return 'admin'
+  return null
+}
+
+function isUnitRegisteredFeedEvent(event: PropertyOperationsTimelineEvent): boolean {
+  return event.eventType === 'unit.registered' || event.id === 'showcase-admin-unit-registered'
+}
+
+function feedEventOpenTarget(
+  event: PropertyOperationsTimelineEvent,
+): FeedTooltipDestination | null {
+  if (isUnitRegisteredFeedEvent(event)) {
+    const building = event.building?.trim()
+    return {
+      kind: 'property',
+      path: building ? buildingDetailPath(building) : '/admin/properties',
+    }
+  }
+  const runId = event.workflowRunId?.trim()
+  if (!runId) return null
+  return { kind: 'workflow', runId }
+}
+
+function FeedEventInfo({
+  event,
+  onOpen,
+}: {
+  event: PropertyOperationsTimelineEvent
+  onOpen: (target: FeedTooltipDestination) => void
+}) {
+  const target = feedEventOpenTarget(event)
+  const copy = buildActivityFeedTooltipCopy(event, target)
+  const summaryParts = splitEmphasizedText(copy.summary)
+
+  const openTarget = () => {
+    if (target) onOpen(target)
+  }
+
   return (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} className="size-3.5 text-[#9ca3af]">
-      <circle cx="12" cy="12" r="9" />
-      <path d="M12 10v5M12 8h.01" strokeLinecap="round" />
-    </svg>
+    <span className="group/feed-info relative inline-flex shrink-0 self-start pt-3.5">
+      <button
+        type="button"
+        tabIndex={0}
+        disabled={!target}
+        onClick={openTarget}
+        className={[
+          'inline-flex rounded p-0.5 outline-none transition-opacity focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-1',
+          target ? 'cursor-pointer hover:opacity-70' : 'cursor-default opacity-40',
+        ].join(' ')}
+        aria-label={
+          copy.actionLabel
+            ? `${copy.actionLabel}: ${copy.title}`
+            : `More information about ${copy.title}`
+        }
+      >
+        <img
+          src={feedInfoIcon}
+          alt=""
+          aria-hidden
+          className="size-5 opacity-55"
+        />
+      </button>
+      <div
+        role="tooltip"
+        className={[
+          'absolute right-0 top-full z-50 mt-1.5 w-[min(280px,calc(100vw-2rem))] rounded-[10px] border border-[#e5e7eb] bg-white p-3 opacity-0 shadow-[0px_8px_24px_rgba(0,0,0,0.12)] transition-opacity duration-150 group-hover/feed-info:opacity-100 group-focus-within/feed-info:opacity-100',
+          target ? 'cursor-pointer' : 'pointer-events-none',
+        ].join(' ')}
+        onClick={(e) => {
+          if (!target) return
+          e.preventDefault()
+          e.stopPropagation()
+          openTarget()
+        }}
+        onKeyDown={(e) => {
+          if (!target) return
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault()
+            e.stopPropagation()
+            openTarget()
+          }
+        }}
+      >
+        <p className="text-[12px] font-semibold leading-4 text-[#0a0a0a]">{copy.title}</p>
+        <p className="mt-1.5 text-[12px] leading-[17px] text-[#374151]">
+          {summaryParts.map((part, index) =>
+            part.bold ? (
+              <strong key={`${part.text}-${index}`} className="font-semibold text-[#0a0a0a]">
+                {part.text}
+              </strong>
+            ) : (
+              <span key={`${part.text}-${index}`}>{part.text}</span>
+            ),
+          )}
+        </p>
+        {copy.fields.length ? (
+          <ul className="mt-2.5 flex flex-col gap-1.5">
+            {copy.fields.map((field) => (
+              <li key={field.label} className="flex flex-col gap-0.5">
+                <span className="text-[11px] font-medium leading-4 text-[#6a7282]">
+                  {field.label}
+                </span>
+                <span className="text-[12px] leading-4 text-[#0a0a0a]">{field.value}</span>
+              </li>
+            ))}
+          </ul>
+        ) : null}
+        {copy.actionLabel ? (
+          <p className="mt-2.5 text-[12px] font-semibold leading-4 text-[#0030b5]">
+            {copy.actionLabel}
+          </p>
+        ) : null}
+      </div>
+    </span>
   )
 }
 
@@ -438,7 +609,7 @@ function KpiBreakdownInfo({
 }: {
   title: string
   description?: string
-  lines: Array<{ label: string; count: number }>
+  lines: Array<{ label: string; count?: number; value?: string; detail?: string }>
 }) {
   if (!lines.length) return null
 
@@ -447,29 +618,44 @@ function KpiBreakdownInfo({
       <button
         type="button"
         tabIndex={0}
-        className="inline-flex rounded p-0.5 outline-none hover:text-[#4b5563] focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-1"
+        className="inline-flex rounded p-0.5 outline-none transition-opacity hover:opacity-70 focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-1"
         aria-label={`${title} breakdown`}
       >
-        <KpiInfoIcon />
+        <img
+          src={feedInfoIcon}
+          alt=""
+          aria-hidden
+          className="size-4 opacity-55"
+        />
       </button>
       <div
         role="tooltip"
-        className="pointer-events-none absolute left-0 top-full z-50 mt-1.5 w-[min(240px,calc(100vw-2rem))] rounded-[10px] border border-[#e5e7eb] bg-white p-3 opacity-0 shadow-[0px_8px_24px_rgba(0,0,0,0.12)] transition-opacity duration-150 group-hover/kpi-info:opacity-100 group-focus-within/kpi-info:opacity-100"
+        className="pointer-events-none absolute left-0 top-full z-50 mt-1.5 w-[min(280px,calc(100vw-2rem))] rounded-[10px] border border-[#e5e7eb] bg-white p-3 opacity-0 shadow-[0px_8px_24px_rgba(0,0,0,0.12)] transition-opacity duration-150 group-hover/kpi-info:opacity-100 group-focus-within/kpi-info:opacity-100"
       >
         <p className="text-[11px] font-semibold leading-4 text-[#0a0a0a]">{title}</p>
         {description ? (
           <p className="mt-1 text-[10px] leading-[14px] text-[#6a7282]">{description}</p>
         ) : null}
-        <ul className="mt-2 flex flex-col gap-1">
-          {lines.map((line) => (
-            <li
-              key={line.label}
-              className="flex items-center justify-between gap-3 text-[11px] leading-4"
-            >
-              <span className="text-[#364153]">{line.label}</span>
-              <span className="font-semibold tabular-nums text-[#0a0a0a]">{line.count}</span>
-            </li>
-          ))}
+        <ul className="mt-2 flex flex-col gap-1.5">
+          {lines.map((line) => {
+            const displayValue =
+              line.value ?? (line.count != null ? String(line.count) : null)
+            return (
+              <li key={line.label} className="flex flex-col gap-0.5">
+                <div className="flex items-center justify-between gap-3 text-[11px] leading-4">
+                  <span className="text-[#364153]">{line.label}</span>
+                  {displayValue != null ? (
+                    <span className="shrink-0 font-semibold tabular-nums text-[#0a0a0a]">
+                      {displayValue}
+                    </span>
+                  ) : null}
+                </div>
+                {line.detail ? (
+                  <p className="text-[10px] leading-[13px] text-[#9ca3af]">{line.detail}</p>
+                ) : null}
+              </li>
+            )
+          })}
         </ul>
       </div>
     </span>
@@ -500,7 +686,7 @@ function KpiCard({
   caption: string
   infoTitle?: string
   infoDescription?: string
-  infoLines?: Array<{ label: string; count: number }>
+  infoLines?: Array<{ label: string; count?: number; value?: string; detail?: string }>
 }) {
   const positive = (delta ?? 0) > 0
   const neutral = delta === 0
@@ -729,8 +915,47 @@ const FEED_BADGE_STYLES: Record<string, string> = {
   admin: 'bg-[#f3f4f6] text-[#364153]',
 }
 
+/** Demo overview: show every feed badge category for UI review. */
+async function loadOverviewFeedEvents(): Promise<PropertyOperationsTimelineEvent[]> {
+  if (isDemoAccountActive()) return buildOverviewFeedBadgeShowcase()
+  return fetchRecentPropertyOperationsEvents(8)
+}
+
+function overviewGreetingSalutation(now: Date = new Date()): string {
+  const hour = now.getHours()
+  if (hour < 12) return 'Good morning'
+  if (hour < 17) return 'Good afternoon'
+  return 'Good evening'
+}
+
+function overviewGreetingFirstName(fullName: string | null | undefined): string | null {
+  const first = fullName?.trim().split(/\s+/).filter(Boolean)[0]
+  return first || null
+}
+
 export function AdminOverviewDashboard() {
   const navigate = useNavigate()
+  const location = useLocation()
+  const initialOnboardingNotice =
+    typeof (location.state as { onboardingNotice?: unknown } | null)?.onboardingNotice ===
+    'string'
+      ? ((location.state as { onboardingNotice: string }).onboardingNotice)
+      : null
+  const [onboardingNotice, setOnboardingNotice] = useState<string | null>(
+    initialOnboardingNotice,
+  )
+  useEffect(() => {
+    if (initialOnboardingNotice) {
+      // Consume the one-shot notice so a refresh/back-nav doesn't resurface it.
+      navigate('.', { replace: true, state: null })
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+  const { profile: accountHolderProfile } = useSidebarAdminProfile()
+  const greetingName = overviewGreetingFirstName(accountHolderProfile?.name)
+  const greetingLine = greetingName
+    ? `${overviewGreetingSalutation()}, ${greetingName}. See what's happening across your portfolio.`
+    : `${overviewGreetingSalutation()}. See what's happening across your portfolio.`
   const [tickets, setTickets] = useState<OverviewTicket[]>([])
   const [vendors, setVendors] = useState<OverviewVendor[]>([])
   const [units, setUnits] = useState<OverviewUnit[]>([])
@@ -791,6 +1016,7 @@ export function AdminOverviewDashboard() {
   const prevAttentionItemsRef = useRef<AttentionItem[]>([])
   const skipAutoOutcomeKeysRef = useRef<Set<string>>(new Set())
   const attentionTrackingReadyRef = useRef(false)
+  const allowImportedOperationsRef = useRef(true)
 
   const showAwaitingDecisionOutcome = useCallback(
     (outcome: AwaitingDecisionOutcome, itemKey?: string) => {
@@ -814,26 +1040,35 @@ export function AdminOverviewDashboard() {
       setError(null)
 
       const landlordId = getActiveLandlordId()
+
+      // Strict rule: guided New Landlord only shows portfolio-matched ops.
+      const dashboardSync = await ensureOnboardingDashboardMatchesPortfolio(landlordId)
+      if (cancelled) return
+      const allowImportedOperations = dashboardSync.allowImportedOperations
+      allowImportedOperationsRef.current = allowImportedOperations
+
       const [ticketsResult, vendorsResult, unitsResult, workflowResult, feedResult, healthSignals, residentsResult] =
         await Promise.all([
-          supabase
-            .from('maintenance_request_enriched')
-            .select(
-              'id, created_at, assigned_at, unit, unit_id, building, email, description, issue_category, assigned_vendor_id, vendor_work_status, urgency, severity, priority, due_at, resident_name, estimated_minutes, total_cost, invoice_total, amount, labor_cost, material_cost, materials_cost, tax_amount, tax, completed_at, resolved_at, closed_at',
-            )
-            .eq('landlord_id', landlordId)
-            .order('created_at', { ascending: false })
-            .limit(500)
-            .then((r) =>
-              r.error
-                ? supabase!
-                    .from('maintenance_requests')
-                    .select('*')
-                    .eq('landlord_id', landlordId)
-                    .order('created_at', { ascending: false })
-                    .limit(500)
-                : r,
-            ),
+          allowImportedOperations
+            ? supabase
+                .from('maintenance_request_enriched')
+                .select(
+                  'id, created_at, assigned_at, unit, unit_id, building, email, description, issue_category, assigned_vendor_id, vendor_work_status, urgency, severity, priority, due_at, resident_name, estimated_minutes, total_cost, invoice_total, amount, labor_cost, material_cost, materials_cost, tax_amount, tax, completed_at, resolved_at, closed_at',
+                )
+                .eq('landlord_id', landlordId)
+                .order('created_at', { ascending: false })
+                .limit(500)
+                .then((r) =>
+                  r.error
+                    ? supabase!
+                        .from('maintenance_requests')
+                        .select('*')
+                        .eq('landlord_id', landlordId)
+                        .order('created_at', { ascending: false })
+                        .limit(500)
+                    : r,
+                )
+            : Promise.resolve({ data: [], error: null }),
           supabase
             .from('vendors')
             .select('id, name, category, active')
@@ -845,8 +1080,10 @@ export function AdminOverviewDashboard() {
             .select('id, unit_label, building, status')
             .eq('landlord_id', landlordId)
             .limit(1000),
-          fetchAdminWorkflowDashboard(),
-          fetchRecentPropertyOperationsEvents(8),
+          allowImportedOperations
+            ? fetchAdminWorkflowDashboard()
+            : Promise.resolve(emptyAdminWorkflowDashboardData()),
+          loadOverviewFeedEvents(),
           fetchPropertyHealthSignals(),
           supabase
             .from('users')
@@ -1106,16 +1343,6 @@ export function AdminOverviewDashboard() {
     [workflowData],
   )
 
-  const externalVendorCallContext = useMemo(() => {
-    const ticketId = escalatedReview?.ticketId
-    if (!ticketId) return { workOrderRef: null as string | null, residentName: null as string | null }
-    const ticket = tickets.find((row) => row.id === ticketId)
-    return {
-      workOrderRef: formatWorkOrderRefFromTicketId(ticketId),
-      residentName: ticket?.residentName ?? null,
-    }
-  }, [escalatedReview?.ticketId, tickets])
-
   useEffect(() => {
     if (loading) return
     const url = resolveSlaAutoReassignUrl()
@@ -1144,17 +1371,22 @@ export function AdminOverviewDashboard() {
       if (cancelled || !anyReassigned || !supabase) return
 
       const landlordId = getActiveLandlordId()
+      const allowImportedOperations = allowImportedOperationsRef.current
       const [ticketsResult, feedResult, workflowResult] = await Promise.all([
-        supabase
-          .from('maintenance_request_enriched')
-          .select(
-            'id, created_at, assigned_at, unit, unit_id, building, description, issue_category, assigned_vendor_id, vendor_work_status, urgency, severity, priority, due_at, resident_name, estimated_minutes, total_cost, invoice_total, amount, labor_cost, material_cost, materials_cost, tax_amount, tax, completed_at, resolved_at, closed_at',
-          )
-          .eq('landlord_id', landlordId)
-          .order('created_at', { ascending: false })
-          .limit(500),
-        fetchRecentPropertyOperationsEvents(8),
-        fetchAdminWorkflowDashboard(),
+        allowImportedOperations
+          ? supabase
+              .from('maintenance_request_enriched')
+              .select(
+                'id, created_at, assigned_at, unit, unit_id, building, description, issue_category, assigned_vendor_id, vendor_work_status, urgency, severity, priority, due_at, resident_name, estimated_minutes, total_cost, invoice_total, amount, labor_cost, material_cost, materials_cost, tax_amount, tax, completed_at, resolved_at, closed_at',
+              )
+              .eq('landlord_id', landlordId)
+              .order('created_at', { ascending: false })
+              .limit(500)
+          : Promise.resolve({ data: [], error: null }),
+        loadOverviewFeedEvents(),
+        allowImportedOperations
+          ? fetchAdminWorkflowDashboard()
+          : Promise.resolve(emptyAdminWorkflowDashboardData()),
       ])
 
       if (cancelled) return
@@ -1196,6 +1428,36 @@ export function AdminOverviewDashboard() {
   const lateRentReviewRuns = useMemo(
     () => (workflowData ? collectLateRentReviewRuns(workflowData) : []),
     [workflowData],
+  )
+
+  const linkedFeedEvents = useMemo(() => {
+    if (!workflowData) return feedEvents
+    const runIdsByCategory: Partial<
+      Record<PropertyOperationsTimelineCategory, string[]>
+    > = {}
+    for (const run of collectAdminWorkflowRuns(workflowData)) {
+      const category = timelineCategoryForWorkflowTemplate(run.templateId)
+      if (!category) continue
+      const bucket = runIdsByCategory[category] ?? []
+      bucket.push(run.id)
+      runIdsByCategory[category] = bucket
+    }
+    // Vendor showcase rows share maintenance workflow cards when present.
+    if (runIdsByCategory.maintenance?.length) {
+      runIdsByCategory.vendor = [...runIdsByCategory.maintenance]
+    }
+    return linkShowcaseFeedEventsToWorkflowRuns(feedEvents, runIdsByCategory)
+  }, [feedEvents, workflowData])
+
+  const openFeedTarget = useCallback(
+    (target: FeedTooltipDestination) => {
+      if (target.kind === 'property') {
+        navigate(target.path)
+        return
+      }
+      navigate(workflowOperationsPath(target.runId))
+    },
+    [navigate],
   )
 
   const openLateRentRail = useCallback((runId: string) => {
@@ -1296,8 +1558,8 @@ export function AdminOverviewDashboard() {
           residentName: ticket.residentName,
         }),
         meta: ticket.dueAt
-          ? `Past due ${formatRelativeTime(ticket.dueAt)}`
-          : 'Past SLA',
+          ? `${resolveMaintenanceTypeLabel(ticket.issueCategory, ticket)} · Past due ${formatRelativeTime(ticket.dueAt)}`
+          : `${resolveMaintenanceTypeLabel(ticket.issueCategory, ticket)} · Past SLA`,
         actionLabel: 'Assign vendor',
         actionStyle: 'alert',
         onAction: () => openEscalatedRailForTicket(ticket.id),
@@ -1311,6 +1573,11 @@ export function AdminOverviewDashboard() {
           : null
         const needsVendor = adminVendorReason != null
         const isLeaseRenewal = isLeaseRenewalEscalatedRun(run)
+        const linkedTicket =
+          run.entityType === 'maintenance_request' && run.entityId
+            ? tickets.find((row) => row.id === run.entityId) ?? null
+            : null
+        const issueCategory = run.issueCategory ?? linkedTicket?.issueCategory ?? null
         items.push({
           key: `run-${run.id}`,
           badge: needsVendor || isLeaseRenewal ? 'critical' : 'warning',
@@ -1324,13 +1591,13 @@ export function AdminOverviewDashboard() {
             unitLabel: run.unitLabel,
             residentName: run.residentName,
           }),
-          meta: run.lastEventAt
-            ? needsVendor
-              ? `Needs vendor onboarding ${formatRelativeTime(run.lastEventAt)}`
-              : isLeaseRenewal
+          meta: needsVendor
+            ? maintenanceAdminVendorAttentionMeta(adminVendorReason, issueCategory)
+            : run.lastEventAt
+              ? isLeaseRenewal
                 ? `No tenant response ${formatRelativeTime(run.lastEventAt)}`
                 : `Escalated ${formatRelativeTime(run.lastEventAt)}`
-            : 'Awaiting input',
+              : 'Awaiting input',
           actionLabel: needsVendor ? 'Assign vendor' : 'Review',
           onAction: isLeaseRenewal
             ? () => openLeaseRenewalRail(run.id)
@@ -1361,7 +1628,7 @@ export function AdminOverviewDashboard() {
     }
 
     return items.sort((a, b) => (a.badge === b.badge ? 0 : a.badge === 'critical' ? -1 : 1))
-  }, [workflowData, slaOverdueTickets, slaEscalatedNoVendorKeys, units, vendors, lateRentReviewRuns, openEscalatedRailForTicket, openEscalatedRailForRun, openLateRentRail, openLeaseRenewalRail])
+  }, [workflowData, slaOverdueTickets, slaEscalatedNoVendorKeys, units, vendors, tickets, lateRentReviewRuns, openEscalatedRailForTicket, openEscalatedRailForRun, openLateRentRail, openLeaseRenewalRail])
 
   const attentionItems = useMemo(() => allAttentionItems.slice(0, 4), [allAttentionItems])
 
@@ -1473,7 +1740,7 @@ export function AdminOverviewDashboard() {
           .then(async (result) => {
             if (cancelled) return
             if (result.outcome === 'reassigned') {
-              setFeedEvents(await fetchRecentPropertyOperationsEvents(8))
+              setFeedEvents(await loadOverviewFeedEvents())
             }
             setEscalatedRailTarget(null)
           })
@@ -1537,14 +1804,19 @@ export function AdminOverviewDashboard() {
     })
       .then((result) => {
         if (cancelled) return
-        setExternalVendorSuggestions(result.suggestions ?? [])
+        const verifiedSuggestions = enrichExternalVendorSuggestions(
+          result.suggestions ?? [],
+          result.issueCategory,
+          result.locationLabel,
+        )
+        setExternalVendorSuggestions(verifiedSuggestions)
         setExternalVendorProvidersUsed(result.providersUsed ?? [])
         if (result.notice) setExternalVendorNotice(result.notice)
         if (result.locationLabel) setExternalVendorLocationLabel(result.locationLabel)
         if (result.issueCategory !== undefined) {
           setExternalVendorIssueCategory(result.issueCategory)
         }
-        const pick = result.suggestions[0]
+        const pick = verifiedSuggestions[0]
         if (!pick) return
         setEscalatedReview((prev) => {
           if (!prev) return prev
@@ -1673,7 +1945,7 @@ export function AdminOverviewDashboard() {
               : t,
           ),
         )
-        setFeedEvents(await fetchRecentPropertyOperationsEvents(8))
+        setFeedEvents(await loadOverviewFeedEvents())
         setFindExternalVendorOpen(false)
         setEscalatedRailTarget(null)
         setExternalVendorSuggestions([])
@@ -1782,7 +2054,7 @@ export function AdminOverviewDashboard() {
           setLateRentMessageError(result.error)
           return
         }
-        // Payment plan / waive late fee stay in Awaiting Your Decision — no
+        // Payment plan / waive late fee stay in Needs Your Attention — no
         // acknowledgement modal until Mark payment received.
         setLateRentMessageBrief(appendLateRentSentMessage(brief, message))
         // Waive late fee adjusts users.balance_due + open rent run amounts.
@@ -2035,11 +2307,12 @@ export function AdminOverviewDashboard() {
   const healthKpiCaption = healthReport.portfolio
     ? portfolioPendingSetup
       ? 'Units are inactive — activate units to measure portfolio health.'
-      : `${PROPERTY_HEALTH_KPI_CAPTION} Hover score for breakdown.`
+      : PROPERTY_HEALTH_KPI_CAPTION
     : updatedCaption
-  const healthKpiTooltip = healthReport.portfolio
-    ? formatPropertyHealthTooltip(healthReport.portfolio.components)
-    : undefined
+  const healthFactorBreakdown =
+    !loading && healthReport.portfolio && !portfolioPendingSetup
+      ? propertyHealthFactorBreakdownLines(healthReport.portfolio.components)
+      : undefined
   const healthKpiValue =
     loading || !healthReport.portfolio
       ? '—'
@@ -2055,17 +2328,33 @@ export function AdminOverviewDashboard() {
   const stackedLeaseRenewalRails = leaseRenewalRailOpen && leaseRenewalIncentiveBrief != null
 
   return (
-    <main className="flex min-h-0 flex-1 flex-col px-8 pb-12">
+    <div className="flex flex-col px-8 pb-8">
       <div className="flex items-center justify-between py-6">
         <div>
           <h1 className="text-[24px] font-semibold leading-8 tracking-[0.0703px] text-[#0a0a0a]">
             Operations Overview
           </h1>
           <p className="text-[14px] leading-5 tracking-[-0.1504px] text-[#6a7282]">
-            Good Morning, Alex. See whats happening across your portfolio.
+            {greetingLine}
           </p>
         </div>
       </div>
+
+      {onboardingNotice ? (
+        <div
+          role="alert"
+          className="mb-4 flex items-start justify-between gap-3 rounded-[10px] border border-[#fde68a] bg-[#fffbeb] px-4 py-3 text-[13px] text-[#92400e]"
+        >
+          <span>{onboardingNotice}</span>
+          <button
+            type="button"
+            onClick={() => setOnboardingNotice(null)}
+            className="shrink-0 text-[12px] font-medium text-[#92400e] underline"
+          >
+            Dismiss
+          </button>
+        </div>
+      ) : null}
 
       {error ? (
         <div className="mb-4 rounded-[10px] border border-[#fde68a] bg-[#fffbeb] px-4 py-3 text-[13px] text-[#92400e]">
@@ -2149,7 +2438,7 @@ export function AdminOverviewDashboard() {
           delta={loading ? null : kpis.activeOpsDelta}
           caption="Compared to 4 weeks ago"
           infoTitle="Active tasks breakdown"
-          infoDescription="Workflow runs Ulo is coordinating — maintenance, rent, inspections, move-ins, move-outs, and lease renewals. Maintenance items here are work orders Ulo is actively moving forward, not your full open backlog."
+          infoDescription="Shows the tasks Ulo is actively managing, such as maintenance, rent, inspections, move-ins, move-outs, and lease renewals. It doesn't include every open work order—only those currently in progress."
           infoLines={loading ? undefined : kpis.activeOpsBreakdown}
         />
         <KpiCard
@@ -2158,19 +2447,20 @@ export function AdminOverviewDashboard() {
           delta={loading ? null : kpis.workOrdersDelta}
           caption={updatedCaption}
           infoTitle="Open work orders breakdown"
-          infoDescription="Open maintenance backlog across the portfolio (standard and critical). Use Work Orders for the full list; Active Tasks shows what Ulo is coordinating in the workflow pipeline."
+          infoDescription="Shows all open maintenance work orders across your properties, including standard and critical issues."
           infoLines={loading ? undefined : kpis.workOrdersBreakdown}
         />
-        <div title={healthKpiTooltip} aria-label={healthKpiTooltip}>
-          <KpiCard
-            label="Property Health"
-            value={healthKpiValue}
-            delta={loading || portfolioPendingSetup ? null : kpis.propertyHealthDelta}
-            deltaSuffix="%"
-            goodWhenUp
-            caption={healthKpiCaption}
-          />
-        </div>
+        <KpiCard
+          label="Property Health"
+          value={healthKpiValue}
+          delta={loading || portfolioPendingSetup ? null : kpis.propertyHealthDelta}
+          deltaSuffix="%"
+          goodWhenUp
+          caption={healthKpiCaption}
+          infoTitle="Property health factors"
+          infoDescription="See the six factors that make up your Property Health score. The areas that need the most attention are shown first so you know where to focus."
+          infoLines={healthFactorBreakdown}
+        />
         <KpiCard
           label="YTD Maintenance Cost"
           value={loading ? '—' : formatSpendCompact(kpis.ytdMaintenanceCost)}
@@ -2180,7 +2470,7 @@ export function AdminOverviewDashboard() {
         />
       </div>
 
-      <div className="mt-4 grid gap-4 xl:grid-cols-[2fr_3fr]">
+      <div className="mt-4 grid items-start gap-4 xl:grid-cols-[2fr_3fr]">
         {/* Smart Insights */}
         <section className="flex min-w-0 flex-col rounded-[10px] border border-[#e5e7eb] bg-white shadow-[0px_1px_2px_-1px_rgba(0,0,0,0.06)]">
           <div className="border-b border-[#e5e7eb] px-6 py-4">
@@ -2219,22 +2509,24 @@ export function AdminOverviewDashboard() {
           <div className="flex items-center justify-between border-b border-[#e5e7eb] px-6 py-4">
             <div>
               <h2 className="text-[16px] font-semibold leading-6 text-[#0a0a0a]">
-                Awaiting Your Decision
+                Needs Your Attention
               </h2>
               <p className="text-[12px] leading-4 text-[#6a7282]">
-                {allAttentionItems.length} operations{allAttentionItems.length === 1 ? '' : 's'}{' '}
-                awaiting your decision
+                {allAttentionItems.length} operation{allAttentionItems.length === 1 ? '' : 's'}{' '}
+                need{allAttentionItems.length === 1 ? 's' : ''} your attention
                 {criticalAttentionCount > 0 ? ` · ${criticalAttentionCount} critical` : ''}
               </p>
             </div>
-            <button
-              type="button"
-              onClick={() => setAwaitingDecisionListOpen(true)}
-              disabled={loading || allAttentionItems.length === 0}
-              className="shrink-0 cursor-pointer text-[13px] font-medium text-[#AF63AF] outline-none transition-colors duration-150 hover:text-[#954f95] hover:underline disabled:cursor-not-allowed disabled:opacity-40"
-            >
-              View all →
-            </button>
+            {allAttentionItems.length > 4 ? (
+              <button
+                type="button"
+                onClick={() => setAwaitingDecisionListOpen(true)}
+                disabled={loading}
+                className="admin-quiet-text-action"
+              >
+                View all →
+              </button>
+            ) : null}
           </div>
           <div className="flex flex-col divide-y divide-[#f3f4f6]">
             {loading ? (
@@ -2278,8 +2570,8 @@ export function AdminOverviewDashboard() {
                       className={[
                         'shrink-0 rounded-[10px] border px-4 py-2 text-[13px] font-medium leading-5 transition-colors duration-150',
                         item.actionStyle === 'alert'
-                          ? 'border-transparent bg-[#FBE3E5] text-[#E3646C] hover:bg-[#f5d0d4]'
-                          : 'border-current bg-white text-tertiary hover:bg-[#e2f5f1]',
+                          ? 'border-transparent bg-[#187960] text-white hover:bg-[#0A4D38]'
+                          : 'border-[#0A4D38] bg-white text-[#0A4D38] hover:bg-[#e8f3ef]',
                       ].join(' ')}
                     >
                       {item.actionLabel} →
@@ -2290,8 +2582,8 @@ export function AdminOverviewDashboard() {
                       className={[
                         'shrink-0 rounded-[10px] border px-4 py-2 text-[13px] font-medium leading-5 transition-colors duration-150',
                         item.actionStyle === 'alert'
-                          ? 'border-transparent bg-[#FBE3E5] text-[#E3646C] hover:bg-[#f5d0d4]'
-                          : 'border-current bg-white text-tertiary hover:bg-[#e2f5f1]',
+                          ? 'border-transparent bg-[#187960] text-white hover:bg-[#0A4D38]'
+                          : 'border-[#0A4D38] bg-white text-[#0A4D38] hover:bg-[#e8f3ef]',
                       ].join(' ')}
                     >
                       {item.actionLabel} →
@@ -2308,7 +2600,7 @@ export function AdminOverviewDashboard() {
           <div className="flex items-center justify-between border-b border-[#e5e7eb] px-6 py-4">
             <div>
               <h2 className="text-[16px] font-semibold leading-6 text-[#0a0a0a]">
-                What Ulo Handled Today
+                Ulo Activity Feed
               </h2>
               <p className="text-[12px] leading-4 text-[#6a7282]">Actions completed across your properties</p>
             </div>
@@ -2317,20 +2609,34 @@ export function AdminOverviewDashboard() {
           <div className="flex flex-col">
             {loading ? (
               <p className="px-6 py-8 text-center text-[13px] text-[#6a7282]">Loading…</p>
-            ) : feedEvents.length === 0 ? (
+            ) : linkedFeedEvents.length === 0 ? (
               <p className="px-6 py-8 text-center text-[13px] text-[#6a7282]">
                 No AI actions yet. Activity will stream here as Ulo starts working.
               </p>
             ) : (
-              feedEvents.map((event) => {
+              linkedFeedEvents.map((event, index) => {
                 const context = formatTimelineContextLine(event)
+                const isLast = index === linkedFeedEvents.length - 1
+                const isFirst = index === 0
                 return (
-                  <div key={event.id} className="flex gap-3 px-6 py-3">
-                    <span
-                      className="mt-1.5 size-2 shrink-0 rounded-full bg-[#7c3aed]"
-                      aria-hidden
-                    />
-                    <div className="min-w-0 flex-1">
+                  <div key={event.id} className="flex gap-3 px-6">
+                    <div className="flex w-[4.75rem] shrink-0 flex-col items-center self-stretch">
+                      <span
+                        className={[
+                          'w-full text-center text-[11px] leading-4 text-[#6a7282]',
+                          isFirst ? 'mt-3' : 'mt-1',
+                        ].join(' ')}
+                      >
+                        {formatRelativeTime(event.createdAt)}
+                      </span>
+                      {!isLast ? (
+                        <span
+                          className="mt-1 w-0 min-h-[12px] flex-1 border-l border-dotted border-[#d1d5dc]"
+                          aria-hidden
+                        />
+                      ) : null}
+                    </div>
+                    <div className="min-w-0 flex-1 py-3">
                       <p className="text-[14px] leading-5 tracking-[-0.1504px] text-[#0a0a0a]">
                         {event.label}
                         {context ? (
@@ -2346,11 +2652,9 @@ export function AdminOverviewDashboard() {
                         >
                           {formatTimelineCategoryLabel(event.category)}
                         </span>
-                        <span className="text-[11px] text-[#6a7282]">
-                          {formatRelativeTime(event.createdAt)}
-                        </span>
                       </div>
                     </div>
+                    <FeedEventInfo event={event} onOpen={openFeedTarget} />
                   </div>
                 )
               })
@@ -2361,12 +2665,10 @@ export function AdminOverviewDashboard() {
         <PropertyHealthBuildingGrid
           loading={loading}
           buildings={overviewBuildingHealth}
+          buildingCount={healthReport.buildings.length}
           totalUnits={units.length}
           headerAction={
-            <Link
-              to="/admin/properties"
-              className="shrink-0 text-[13px] font-medium text-[#364153] hover:underline"
-            >
+            <Link to="/admin/properties" className="admin-quiet-text-action">
               View all properties →
             </Link>
           }
@@ -2420,8 +2722,6 @@ export function AdminOverviewDashboard() {
                 'Property · Unit'
               }
               issueCategory={externalVendorIssueCategory}
-              workOrderRef={externalVendorCallContext.workOrderRef}
-              residentName={externalVendorCallContext.residentName}
               suggestions={externalVendorSuggestions}
               providersUsed={externalVendorProvidersUsed}
             />
@@ -2587,6 +2887,6 @@ export function AdminOverviewDashboard() {
         outcome={awaitingDecisionOutcome}
         onClose={() => setAwaitingDecisionOutcome(null)}
       />
-    </main>
+    </div>
   )
 }

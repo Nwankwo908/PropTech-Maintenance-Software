@@ -541,7 +541,7 @@ export function AdminWorkflowOperationsDashboard() {
       : WORKFLOW_PIPELINE_SECTION_HELPER
 
   return (
-    <main className="flex min-h-0 w-full min-w-0 flex-1 flex-col overflow-x-hidden overflow-y-auto px-8 pb-12">
+    <main className="w-full min-w-0 px-8 pb-12">
       <div className="py-6">
         <h1 className="text-[24px] font-semibold leading-8 tracking-[0.0703px] text-[#0a0a0a]">
           Active Tasks
@@ -588,8 +588,8 @@ export function AdminWorkflowOperationsDashboard() {
         </div>
       ) : null}
 
-      {/* Workflow Pipeline (kanban) */}
-      <section className="flex w-full min-w-0 flex-col overflow-hidden rounded-[10px] border border-[#e5e7eb] bg-white shadow-[0px_1px_2px_-1px_rgba(0,0,0,0.06)]">
+      {/* Workflow Pipeline (kanban) — grow with content; AdminLayout owns vertical scroll */}
+      <section className="flex w-full min-w-0 flex-col rounded-[10px] border border-[#e5e7eb] bg-white shadow-[0px_1px_2px_-1px_rgba(0,0,0,0.06)]">
         <div className="flex flex-col gap-3 border-b border-[#e5e7eb] px-6 py-4 lg:flex-row lg:items-start lg:justify-between">
           <div className="min-w-0">
             <h2 className="text-[16px] font-semibold leading-6 text-[#0a0a0a]">
@@ -629,7 +629,7 @@ export function AdminWorkflowOperationsDashboard() {
             {columns.map((column) => (
               <div
                 key={column.id}
-                className="flex w-[min(85vw,320px)] shrink-0 snap-start flex-col rounded-[10px] border border-[#e5e7eb] bg-[#f9fafb] min-h-[min(60vh,560px)] lg:w-auto lg:min-w-0"
+                className="flex w-[min(85vw,320px)] shrink-0 snap-start flex-col rounded-[10px] border border-[#e5e7eb] bg-[#f9fafb] min-h-[min(40vh,320px)] lg:w-auto lg:min-w-0"
               >
                 <div className="flex items-center justify-between gap-2 px-3 py-2.5">
                   <div className="flex items-center gap-2">
@@ -651,14 +651,12 @@ export function AdminWorkflowOperationsDashboard() {
                     </svg>
                   </button>
                 </div>
-                <div className="flex flex-1 flex-col gap-3 overflow-y-visible px-3 pb-3 lg:min-h-0 lg:overflow-y-auto">
+                <div className="flex flex-col gap-3 px-3 pb-3">
                   {loading ? (
                     <p className="px-1 py-6 text-center text-[12px] text-[#6a7282]">Loading…</p>
                   ) : column.cards.length === 0 ? (
                     <p className="px-1 py-6 text-center text-[12px] text-[#9ca3af]">
-                      {categoryFilter === 'maintenance' && column.id === 'in_progress'
-                        ? 'No maintenance tasks in progress'
-                        : 'No tasks in this stage'}
+                      No tasks in this stage
                     </p>
                   ) : (
                     column.cards.map((card) => (

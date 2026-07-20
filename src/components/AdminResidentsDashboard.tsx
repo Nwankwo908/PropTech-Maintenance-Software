@@ -10,6 +10,7 @@ import {
 } from '@/components/AddResidentModal'
 import { getActiveLandlordId } from '@/lib/activeLandlord'
 import { customUnitPickKey, unitOptionKeyToCell } from '@/lib/residentUnitKeys'
+import { propertyResidentDetailPath } from '@/lib/propertyRoutes'
 import { supabase } from '@/lib/supabase'
 
 type Sentiment = 'positive' | 'at_risk' | 'neutral'
@@ -19,6 +20,7 @@ type BalanceSort = 'desc' | 'asc'
 type ResidentRow = {
   id: string
   name: string
+  building: string | null
   unitLabel: string
   rentLabel: string
   moveInLabel: string
@@ -283,6 +285,7 @@ export function AdminResidentsDashboard() {
         return {
           id: asString(raw.id),
           name: asString(raw.full_name) || 'Unnamed resident',
+          building: asString(raw.building) || null,
           unitLabel: formatUnit(asString(raw.building) || null, unit),
           rentLabel: formatBalance(estimateMonthlyRent(unit)),
           moveInLabel: formatMoveIn(asString(raw.move_in_date) || null),
@@ -478,7 +481,8 @@ export function AdminResidentsDashboard() {
   }
 
   return (
-    <main className="flex min-h-0 flex-1 flex-col px-8 pb-12">
+    // Natural height so AdminLayout's scroll region owns vertical scrolling.
+    <main className="px-8 pb-12">
       <div className="flex items-start justify-between gap-3 py-6">
         <div>
           <h1 className="text-[24px] font-semibold leading-8 tracking-[0.0703px] text-[#0a0a0a]">
@@ -599,8 +603,8 @@ export function AdminResidentsDashboard() {
         </div>
       ) : null}
 
-      <section className="overflow-hidden rounded-[10px] border border-[#e5e7eb] bg-white shadow-[0px_1px_2px_-1px_rgba(0,0,0,0.06)]">
-        <div className="overflow-x-auto">
+      <section className="rounded-[10px] border border-[#e5e7eb] bg-white shadow-[0px_1px_2px_-1px_rgba(0,0,0,0.06)]">
+        <div className="overflow-x-auto overscroll-x-contain">
           <table className="min-w-full border-collapse text-left">
             <thead>
               <tr className="border-b border-[#e5e7eb]">
@@ -660,7 +664,16 @@ export function AdminResidentsDashboard() {
                       />
                     </td>
                     <td className="px-6 py-4 text-[14px] font-medium text-[#0a0a0a]">
-                      {resident.name}
+                      {resident.building ? (
+                        <Link
+                          to={propertyResidentDetailPath(resident.building, resident.id)}
+                          className="rounded-[4px] text-[#0a0a0a] transition-colors hover:text-[#186179] hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2"
+                        >
+                          {resident.name}
+                        </Link>
+                      ) : (
+                        resident.name
+                      )}
                     </td>
                     <td className="px-6 py-4 text-[14px] text-[#6a7282]">{resident.unitLabel}</td>
                     <td className="px-6 py-4 text-[14px] tabular-nums text-[#0a0a0a]">

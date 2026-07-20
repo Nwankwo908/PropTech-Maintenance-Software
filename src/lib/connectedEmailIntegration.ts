@@ -1,3 +1,5 @@
+import { isDemoAccountActive } from '@/lib/activeLandlord'
+
 export type EmailConfidenceLevel = 'high' | 'medium'
 
 export type EmailDocumentCategory =
@@ -174,3 +176,30 @@ export const EMAIL_AUTOMATION_TOGGLES = [
   { id: 'insurance_expiry', label: 'Insurance document expires', defaultOn: true },
   { id: 'rent_roll', label: 'Rent roll updated', defaultOn: false },
 ] as const
+
+/** Showcase discovery panels — demo account only. */
+export function getDiscoveredDocumentBuckets(): DiscoveredDocumentBucket[] {
+  return isDemoAccountActive() ? DISCOVERED_DOCUMENT_BUCKETS : []
+}
+
+export function getRecentlyDiscoveredDocuments(): RecentlyDiscoveredDocument[] {
+  return isDemoAccountActive() ? RECENTLY_DISCOVERED_DOCUMENTS : []
+}
+
+export function getEmailRecommendedActions(): RecommendedAction[] {
+  return isDemoAccountActive() ? EMAIL_RECOMMENDED_ACTIONS : []
+}
+
+export function getEmailActivityFeed(): EmailActivityItem[] {
+  return isDemoAccountActive() ? EMAIL_ACTIVITY_FEED : []
+}
+
+export function getConnectedEmailAccount() {
+  if (isDemoAccountActive()) return CONNECTED_EMAIL_ACCOUNT
+  return {
+    provider: 'Not connected',
+    email: '',
+    lastSyncLabel: '—',
+    connected: false,
+  }
+}

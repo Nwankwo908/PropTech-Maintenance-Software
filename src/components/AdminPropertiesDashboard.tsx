@@ -9,10 +9,10 @@ import {
   countPortfolioBuildings,
   enrichFeedbackFromTickets,
   fetchPropertyHealthSignals,
-  formatPropertyHealthTooltip,
   mapTicketsForPropertyHealth,
   mapUnitsForPropertyHealth,
   PROPERTY_HEALTH_KPI_CAPTION,
+  propertyHealthFactorBreakdownLines,
   type PropertyHealthFeedback,
   type PropertyHealthPmTask,
   type PropertyHealthResident,
@@ -187,6 +187,70 @@ function TrendingDownIcon() {
   )
 }
 
+function KpiInfoIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} className="size-3.5 text-[#9ca3af]">
+      <circle cx="12" cy="12" r="9" />
+      <path d="M12 10v5M12 8h.01" strokeLinecap="round" />
+    </svg>
+  )
+}
+
+function KpiBreakdownInfo({
+  title,
+  description,
+  lines,
+}: {
+  title: string
+  description?: string
+  lines: Array<{ label: string; count?: number; value?: string; detail?: string }>
+}) {
+  if (!lines.length) return null
+
+  return (
+    <span className="group/kpi-info relative inline-flex shrink-0">
+      <button
+        type="button"
+        tabIndex={0}
+        className="inline-flex rounded p-0.5 outline-none hover:text-[#4b5563] focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-1"
+        aria-label={`${title} breakdown`}
+      >
+        <KpiInfoIcon />
+      </button>
+      <div
+        role="tooltip"
+        className="pointer-events-none absolute left-0 top-full z-50 mt-1.5 w-[min(280px,calc(100vw-2rem))] rounded-[10px] border border-[#e5e7eb] bg-white p-3 opacity-0 shadow-[0px_8px_24px_rgba(0,0,0,0.12)] transition-opacity duration-150 group-hover/kpi-info:opacity-100 group-focus-within/kpi-info:opacity-100"
+      >
+        <p className="text-[11px] font-semibold leading-4 text-[#0a0a0a]">{title}</p>
+        {description ? (
+          <p className="mt-1 text-[10px] leading-[14px] text-[#6a7282]">{description}</p>
+        ) : null}
+        <ul className="mt-2 flex flex-col gap-1.5">
+          {lines.map((line) => {
+            const displayValue =
+              line.value ?? (line.count != null ? String(line.count) : null)
+            return (
+              <li key={line.label} className="flex flex-col gap-0.5">
+                <div className="flex items-center justify-between gap-3 text-[11px] leading-4">
+                  <span className="text-[#364153]">{line.label}</span>
+                  {displayValue != null ? (
+                    <span className="shrink-0 font-semibold tabular-nums text-[#0a0a0a]">
+                      {displayValue}
+                    </span>
+                  ) : null}
+                </div>
+                {line.detail ? (
+                  <p className="text-[10px] leading-[13px] text-[#9ca3af]">{line.detail}</p>
+                ) : null}
+              </li>
+            )
+          })}
+        </ul>
+      </div>
+    </span>
+  )
+}
+
 function KpiCard({
   label,
   value,
@@ -195,6 +259,9 @@ function KpiCard({
   deltaFormatter,
   goodWhenUp = false,
   caption,
+  infoTitle,
+  infoDescription,
+  infoLines,
 }: {
   label: string
   value: string
@@ -203,15 +270,27 @@ function KpiCard({
   deltaFormatter?: (delta: number) => string
   goodWhenUp?: boolean
   caption: string
+  infoTitle?: string
+  infoDescription?: string
+  infoLines?: Array<{ label: string; count?: number; value?: string; detail?: string }>
 }) {
   const positive = (delta ?? 0) > 0
   const neutral = delta === 0
   const good = neutral ? false : positive === goodWhenUp
   return (
     <div className="flex min-w-0 flex-1 flex-col gap-4 rounded-[10px] border border-[#e5e7eb] bg-white p-6 shadow-[0px_1px_2px_-1px_rgba(0,0,0,0.06)]">
-      <p className="truncate text-[14px] leading-5 tracking-[-0.1504px] text-[#6a7282]">
-        {label}
-      </p>
+      <div className="flex min-w-0 items-center gap-1.5">
+        <p className="truncate text-[14px] leading-5 tracking-[-0.1504px] text-[#6a7282]">
+          {label}
+        </p>
+        {infoLines?.length ? (
+          <KpiBreakdownInfo
+            title={infoTitle ?? label}
+            description={infoDescription}
+            lines={infoLines}
+          />
+        ) : null}
+      </div>
       <div className="flex items-end justify-between gap-2">
         <p className="text-[44px] font-bold leading-none tracking-[0.4px] text-[#0a0a0a] tabular-nums xl:text-[52px]">
           {value}
@@ -458,11 +537,12 @@ export function AdminPropertiesDashboard() {
   const healthKpiCaption = healthReport.portfolio
     ? portfolioPendingSetup
       ? 'Units are inactive — activate units to measure portfolio health.'
-      : `${PROPERTY_HEALTH_KPI_CAPTION} Hover score for breakdown.`
+      : PROPERTY_HEALTH_KPI_CAPTION
     : updatedCaption
-  const healthKpiTooltip = healthReport.portfolio
-    ? formatPropertyHealthTooltip(healthReport.portfolio.components)
-    : undefined
+  const healthFactorBreakdown =
+    !loading && healthReport.portfolio && !portfolioPendingSetup
+      ? propertyHealthFactorBreakdownLines(healthReport.portfolio.components)
+      : undefined
   const healthKpiValue =
     loading || !healthReport.portfolio
       ? '—'
@@ -557,19 +637,17 @@ export function AdminPropertiesDashboard() {
           delta={null}
           caption={updatedCaption}
         />
-        <div
-          title={healthKpiTooltip}
-          aria-label={healthKpiTooltip}
-        >
-          <KpiCard
-            label="Property Health"
-            value={healthKpiValue}
-            delta={loading || portfolioPendingSetup ? null : kpis.propertyHealthDelta}
-            deltaSuffix="%"
-            goodWhenUp
-            caption={healthKpiCaption}
-          />
-        </div>
+        <KpiCard
+          label="Property Health"
+          value={healthKpiValue}
+          delta={loading || portfolioPendingSetup ? null : kpis.propertyHealthDelta}
+          deltaSuffix="%"
+          goodWhenUp
+          caption={healthKpiCaption}
+          infoTitle="Property health factors"
+          infoDescription="Breakdown of the six factors that contribute to this portfolio score. Weaker factors appear first so you can see what affected it most."
+          infoLines={healthFactorBreakdown}
+        />
         <KpiCard
           label="YTD Maintenance Cost"
           value={loading ? '—' : formatSpendCompact(kpis.ytdMaintenanceCost)}

@@ -11,6 +11,8 @@ export type ExternalVendorHit = {
   address?: string | null
   phone?: string | null
   website?: string | null
+  /** Provider listing page (Google Maps URI, Yelp business URL, etc.). */
+  listingUrl?: string | null
   tags?: string[]
 }
 
@@ -28,6 +30,8 @@ export type ExternalVendorSuggestion = {
   address?: string | null
   phone?: string | null
   website?: string | null
+  /** Provider listing page (Google Maps URI, Yelp business URL, etc.). */
+  listingUrl?: string | null
   tags?: string[]
 }
 

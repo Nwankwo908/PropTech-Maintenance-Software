@@ -1,4 +1,5 @@
 import { formatEmergencyCurrency } from '@/lib/emergencyApprovalReview'
+import { formatVendorTradeLabel } from '@/lib/vendorTrades'
 
 export type VendorChatMessage = {
   id: string
@@ -35,12 +36,7 @@ function formatLocation(building: string | null, unit: string): string {
 }
 
 function formatCategoryLabel(category: string | null): string {
-  if (!category) return 'Maintenance'
-  return category
-    .split('_')
-    .filter(Boolean)
-    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
-    .join(' ')
+  return formatVendorTradeLabel(category, { emptyLabel: 'Maintenance' })
 }
 
 function initialsFromName(name: string): string {

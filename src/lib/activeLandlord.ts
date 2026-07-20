@@ -9,6 +9,10 @@
  *
  * The login email mapping always wins over the switcher override, so demo data
  * can never leak into a real customer account or vice versa.
+ *
+ * Onboarding writes are fail-closed to EMPTY_LANDLORD_ID only (see
+ * requireOnboardingLandlord). Switching to New Landlord always resets via
+ * /admin/onboarding?reset=1 so prior fast-track imports cannot linger.
  */
 
 export const DEFAULT_LANDLORD_ID =

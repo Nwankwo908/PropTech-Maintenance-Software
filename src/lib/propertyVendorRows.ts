@@ -1,3 +1,5 @@
+import { formatVendorTradeLabel } from '@/lib/vendorTrades'
+
 export type PropertyVendorTicket = {
   id: string
   unit: string
@@ -52,12 +54,7 @@ export function isActiveVendorJobStatus(rawStatus: string): boolean {
 }
 
 function formatTrade(category: string | null): string {
-  if (!category?.trim()) return 'General'
-  return category
-    .split(/[_\s-]+/)
-    .filter(Boolean)
-    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
-    .join(' ')
+  return formatVendorTradeLabel(category)
 }
 
 function humanizeWorkStatus(status: string): string {

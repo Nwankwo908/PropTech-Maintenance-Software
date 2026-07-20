@@ -188,7 +188,7 @@ export function vendorSetupReadOnlyNote(): string {
 }
 
 export function vendorSetupInboxContext(locationLabel: string): string {
-  return `New job · ${vendorOutreachLocationPhrase(locationLabel)}`
+  return `Vendor onboarding · ${vendorOutreachLocationPhrase(locationLabel)}`
 }
 
 export function vendorSetupInboxStatus(): string {
@@ -196,7 +196,7 @@ export function vendorSetupInboxStatus(): string {
 }
 
 export function vendorSetupInboxPreview(locationLabel: string): string {
-  return `Job invite · ${vendorOutreachLocationPhrase(locationLabel)}`
+  return `Vendor onboarding · ${vendorOutreachLocationPhrase(locationLabel)}`
 }
 
 /** Vendor intake portal — after they confirm pricing on the setup form. */

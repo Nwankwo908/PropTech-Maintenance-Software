@@ -35,15 +35,18 @@ import {
   fetchOnboardingResidents,
   fetchOnboardingVendors,
   clearOnboardingPortfolioSession,
-  hasOnboardingAccountDraft,
   getPreviousOnboardingStep,
   importMockExtraction,
   maxOnboardingResidentSequence,
   nextOnboardingResidentIdFromSequence,
   normalizeOnboardingStepId,
+  parseLeaseDateInput,
+  parseMonthlyRentInput,
+  parseRentDueDayInput,
   persistOnboardingProperties,
   persistOnboardingWizardLocally,
   readLocalOnboardingState,
+  requireOnboardingLandlord,
   resolveOnboardingStepForPath,
   saveLandlordOnboarding,
   saveOnboardingWizardDraft,
@@ -57,7 +60,13 @@ import {
   type OnboardingVendor,
 } from '@/lib/landlordOnboarding'
 import { supabase } from '@/lib/supabase'
+import {
+  VENDOR_TRADE_OPTIONS as CANONICAL_VENDOR_TRADE_OPTIONS,
+  dbCategoryToVendorTrade,
+  vendorTradeToDbCategory,
+} from '@/lib/vendorTrades'
 import { phoneForDbOrError } from '@/lib/phoneFormat'
+import { citiesForState, US_STATE_OPTIONS } from '@/lib/usLocations'
 
 const inputClass =
   'h-10 w-full rounded-[8px] border border-[#e5e7eb] bg-white px-3 text-[14px] text-[#101828] outline-none placeholder:text-[#9ca3af] focus:border-[#155dfc] focus:ring-2 focus:ring-[#155dfc]/20'
@@ -77,27 +86,11 @@ const PROPERTY_TYPE_OPTIONS: { value: string; label: string }[] = [
 
 const VENDOR_TRADE_OPTIONS: { value: string; label: string }[] = [
   { value: '', label: 'Select trade' },
-  { value: 'plumbing', label: 'Plumbing' },
-  { value: 'electrical', label: 'Electrical' },
-  { value: 'appliance', label: 'Appliances' },
-  { value: 'hvac', label: 'HVAC' },
-  { value: 'general', label: 'General maintenance' },
-  { value: 'landscaping', label: 'Landscaping' },
-  { value: 'pest_control', label: 'Pest control' },
-  { value: 'other', label: 'Other' },
+  ...CANONICAL_VENDOR_TRADE_OPTIONS.map((trade) => ({
+    value: trade.value,
+    label: trade.label,
+  })),
 ]
-
-function vendorTradeToDbCategory(trade: string): string | null {
-  const value = trade.trim()
-  if (value === 'plumbing' || value === 'electrical' || value === 'appliance') return value
-  return null
-}
-
-function dbCategoryToVendorTrade(category: string): string {
-  const value = category.trim()
-  if (value === 'plumbing' || value === 'electrical' || value === 'appliance') return value
-  return value ? 'other' : ''
-}
 
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
@@ -110,6 +103,9 @@ type PropertyFormRow = {
   id: string
   name: string
   address: string
+  city: string
+  state: string
+  zipCode: string
   propertyType: string
   unitCount: string
 }
@@ -119,9 +115,38 @@ function createEmptyPropertyForm(): PropertyFormRow {
     id: createPropertyId(),
     name: '',
     address: '',
+    city: '',
+    state: '',
+    zipCode: '',
     propertyType: 'multifamily',
     unitCount: '',
   }
+}
+
+function normalizePropertyFormRow(
+  form: Partial<PropertyFormRow> & { id: string },
+): PropertyFormRow {
+  const state = (form.state ?? '').trim().toUpperCase()
+  const city = (form.city ?? '').trim()
+  return {
+    id: form.id,
+    name: form.name ?? '',
+    address: form.address ?? '',
+    city,
+    state,
+    zipCode: form.zipCode ?? '',
+    propertyType: form.propertyType ?? 'multifamily',
+    unitCount: form.unitCount ?? '',
+  }
+}
+
+function cityOptionsForProperty(form: PropertyFormRow): string[] {
+  const cities = [...citiesForState(form.state)]
+  const current = form.city.trim()
+  if (current && !cities.includes(current)) {
+    cities.unshift(current)
+  }
+  return cities
 }
 
 function formatPropertyAddress(property: OnboardingProperty): string {
@@ -133,16 +158,29 @@ function formatPropertyAddress(property: OnboardingProperty): string {
 
 function propertyFormToOnboarding(form: PropertyFormRow): OnboardingProperty | null {
   const unitCount = Number.parseInt(form.unitCount, 10)
-  if (!form.name.trim() || !form.address.trim() || !Number.isFinite(unitCount) || unitCount < 1) {
+  const name = form.name.trim()
+  const streetAddress = form.address.trim()
+  const city = form.city.trim()
+  const state = form.state.trim().toUpperCase()
+  const zipCode = form.zipCode.trim()
+  if (
+    !name ||
+    !streetAddress ||
+    !city ||
+    !state ||
+    !zipCode ||
+    !Number.isFinite(unitCount) ||
+    unitCount < 1
+  ) {
     return null
   }
   return {
     id: form.id,
-    name: form.name.trim(),
-    streetAddress: form.address.trim(),
-    city: '',
-    state: '',
-    zipCode: '',
+    name,
+    streetAddress,
+    city,
+    state,
+    zipCode,
     unitCount,
   }
 }
@@ -179,7 +217,10 @@ function propertyFormsFromState(properties: OnboardingProperty[]): PropertyFormR
   return properties.map((property) => ({
     id: property.id,
     name: property.name,
-    address: formatPropertyAddress(property),
+    address: property.streetAddress || formatPropertyAddress(property),
+    city: property.city ?? '',
+    state: property.state ?? '',
+    zipCode: property.zipCode ?? '',
     propertyType: 'multifamily',
     unitCount: String(property.unitCount),
   }))
@@ -217,16 +258,36 @@ function dedupeVendorForms(forms: VendorFormRow[]): VendorFormRow[] {
   return deduped.length > 0 ? deduped : [createEmptyVendorForm()]
 }
 
-function residentFormRowHasUserInput(form: ResidentFormRow): boolean {
+/** Accepts UI rows and persisted drafts (draft `rentDueDayMode` is optional string). */
+type ResidentFormInput = {
+  id: string
+  residentId?: string
+  fullName?: string
+  unit?: string
+  email?: string
+  phone?: string
+  monthlyRent?: string
+  rentDueDayMode?: string
+  rentDueDay?: string
+  leaseStart?: string
+  leaseEnd?: string
+}
+
+function residentFormRowHasUserInput(form: ResidentFormInput): boolean {
   return (
-    form.fullName.trim() !== '' ||
-    form.unit.trim() !== '' ||
-    form.phone.trim() !== '' ||
-    form.email.trim() !== ''
+    (form.fullName ?? '').trim() !== '' ||
+    (form.unit ?? '').trim() !== '' ||
+    (form.phone ?? '').trim() !== '' ||
+    (form.email ?? '').trim() !== '' ||
+    (form.monthlyRent ?? '').trim() !== '' ||
+    (form.rentDueDayMode ?? '') !== '' ||
+    (form.rentDueDay ?? '').trim() !== '' ||
+    (form.leaseStart ?? '').trim() !== '' ||
+    (form.leaseEnd ?? '').trim() !== ''
   )
 }
 
-function residentFormsHaveData(forms: ResidentFormRow[] | undefined): boolean {
+function residentFormsHaveData(forms: ResidentFormInput[] | undefined): boolean {
   return (forms ?? []).some(residentFormRowHasUserInput)
 }
 
@@ -234,20 +295,40 @@ function pickResidentFormsForStep(
   preferred: ResidentFormRow[],
   reviewResidents: OnboardingResident[] | undefined,
 ): ResidentFormRow[] {
-  if (residentFormsHaveData(preferred)) return preferred
+  if (residentFormsHaveData(preferred)) return preferred.map(normalizeResidentFormRow)
   if (reviewResidents?.length) return reviewResidents.map(residentToFormRow)
-  return preferred.length > 0 ? preferred : [createEmptyResidentForm()]
+  return preferred.length > 0
+    ? preferred.map(normalizeResidentFormRow)
+    : [createEmptyResidentForm()]
+}
+
+function normalizeResidentFormRow(form: ResidentFormInput): ResidentFormRow {
+  const rentDueDay = form.rentDueDay ?? ''
+  return {
+    id: form.id,
+    residentId: form.residentId,
+    fullName: form.fullName ?? '',
+    unit: form.unit ?? '',
+    email: form.email ?? '',
+    phone: form.phone ?? '',
+    monthlyRent: form.monthlyRent ?? '',
+    rentDueDayMode: resolveRentDueDayMode(form.rentDueDayMode, rentDueDay),
+    rentDueDay,
+    leaseStart: form.leaseStart ?? '',
+    leaseEnd: form.leaseEnd ?? '',
+  }
 }
 
 function readPersistedResidentForms(
   stateDraft: OnboardingFormDraft | undefined,
 ): ResidentFormRow[] | undefined {
-  if (residentFormsHaveData(stateDraft?.residentForms)) {
-    return stateDraft!.residentForms
+  const stateForms = stateDraft?.residentForms
+  if (stateForms && residentFormsHaveData(stateForms)) {
+    return stateForms.map(normalizeResidentFormRow)
   }
-  const localDraft = readLocalOnboardingState()?.formDraft
-  if (residentFormsHaveData(localDraft?.residentForms)) {
-    return localDraft!.residentForms
+  const localForms = readLocalOnboardingState()?.formDraft?.residentForms
+  if (localForms && residentFormsHaveData(localForms)) {
+    return localForms.map(normalizeResidentFormRow)
   }
   return undefined
 }
@@ -308,11 +389,13 @@ function hydrateFormsFromOnboarding(
   const draft = onboarding.formDraft
 
   if (draft?.propertyForms?.length) {
-    setters.setPropertyForms(draft.propertyForms)
+    setters.setPropertyForms(draft.propertyForms.map(normalizePropertyFormRow))
   } else if (onboarding.properties.length > 0) {
     setters.setPropertyForms(propertyFormsFromState(onboarding.properties))
   }
 }
+
+type RentDueDayChoice = '' | '1' | '5' | 'custom'
 
 type ResidentFormRow = {
   id: string
@@ -321,6 +404,32 @@ type ResidentFormRow = {
   unit: string
   email: string
   phone: string
+  monthlyRent: string
+  rentDueDayMode: RentDueDayChoice
+  rentDueDay: string
+  leaseStart: string
+  leaseEnd: string
+}
+
+function rentDueDayModeFromDay(day: number | null | undefined): RentDueDayChoice {
+  if (day == null || !Number.isFinite(day)) return ''
+  if (day === 1) return '1'
+  if (day === 5) return '5'
+  return 'custom'
+}
+
+function resolveRentDueDayMode(
+  mode: string | undefined,
+  dayValue: string,
+): RentDueDayChoice {
+  if (mode === '1' || mode === '5' || mode === 'custom' || mode === '') {
+    return mode
+  }
+  const trimmed = dayValue.trim()
+  if (!trimmed) return ''
+  if (trimmed === '1') return '1'
+  if (trimmed === '5') return '5'
+  return 'custom'
 }
 
 function createEmptyResidentForm(): ResidentFormRow {
@@ -330,10 +439,19 @@ function createEmptyResidentForm(): ResidentFormRow {
     unit: '',
     email: '',
     phone: '',
+    monthlyRent: '',
+    rentDueDayMode: '',
+    rentDueDay: '',
+    leaseStart: '',
+    leaseEnd: '',
   }
 }
 
 function residentToFormRow(resident: OnboardingResident): ResidentFormRow {
+  const rentDueDay =
+    resident.rentDueDay != null && Number.isFinite(resident.rentDueDay)
+      ? String(resident.rentDueDay)
+      : ''
   return {
     id: resident.id,
     residentId: resident.residentId,
@@ -341,6 +459,14 @@ function residentToFormRow(resident: OnboardingResident): ResidentFormRow {
     unit: resident.unit,
     email: resident.email.endsWith('@onboarding.local') ? '' : resident.email,
     phone: resident.phone,
+    monthlyRent:
+      resident.monthlyRent != null && Number.isFinite(resident.monthlyRent)
+        ? String(resident.monthlyRent)
+        : '',
+    rentDueDayMode: rentDueDayModeFromDay(resident.rentDueDay),
+    rentDueDay,
+    leaseStart: resident.leaseStart ?? '',
+    leaseEnd: resident.leaseEnd ?? '',
   }
 }
 
@@ -608,7 +734,8 @@ export function AdminOnboardingDashboard() {
             (counts.properties > 0 ||
               counts.units > 0 ||
               counts.residents > 0 ||
-              counts.vendors > 0)))
+              counts.vendors > 0 ||
+              counts.workflowRuns > 0)))
 
       if (hasStalePortfolio) {
         const cleared = await clearOnboardingPortfolioSession({ keepAccountSetup: true })
@@ -663,7 +790,7 @@ export function AdminOnboardingDashboard() {
   useEffect(() => {
     if (loading || step !== 'property') return
     if (state.formDraft?.propertyForms?.length) {
-      setPropertyForms(state.formDraft.propertyForms)
+      setPropertyForms(state.formDraft.propertyForms.map(normalizePropertyFormRow))
       return
     }
     if (state.properties.length > 0) {
@@ -973,7 +1100,7 @@ export function AdminOnboardingDashboard() {
       .filter((property): property is OnboardingProperty => property != null)
 
     if (properties.length !== propertyForms.length) {
-      setError('Each property needs a name, address, and at least one unit.')
+      setError('Each property needs a name, street address, city, state, ZIP code, and at least one unit.')
       return
     }
 
@@ -998,7 +1125,21 @@ export function AdminOnboardingDashboard() {
   }
 
   function updatePropertyForm(id: string, patch: Partial<PropertyFormRow>) {
-    setPropertyForms((prev) => prev.map((row) => (row.id === id ? { ...row, ...patch } : row)))
+    setPropertyForms((prev) =>
+      prev.map((row) => {
+        if (row.id !== id) return row
+        const next = { ...row, ...patch }
+        if (patch.state !== undefined) {
+          const state = patch.state.trim().toUpperCase()
+          next.state = state
+          const allowed = citiesForState(state)
+          if (next.city && !allowed.includes(next.city)) {
+            next.city = ''
+          }
+        }
+        return next
+      }),
+    )
   }
 
   function addPropertyForm() {
@@ -1078,6 +1219,12 @@ export function AdminOnboardingDashboard() {
   }
 
   async function commitFastTrackImport(review: OnboardingExtractionReview): Promise<boolean> {
+    const scope = requireOnboardingLandlord()
+    if (!scope.ok) {
+      setError(scope.error)
+      return false
+    }
+
     setExtractionReview(review)
     setSaving(true)
     setError(null)
@@ -1163,6 +1310,11 @@ export function AdminOnboardingDashboard() {
   async function saveVendorsAndContinue() {
     if (!supabase) {
       setError('Database unavailable.')
+      return
+    }
+    const scope = requireOnboardingLandlord()
+    if (!scope.ok) {
+      setError(scope.error)
       return
     }
 
@@ -1295,25 +1447,62 @@ export function AdminOnboardingDashboard() {
       setError('Database unavailable.')
       return
     }
+    const scope = requireOnboardingLandlord()
+    if (!scope.ok) {
+      setError(scope.error)
+      return
+    }
 
     const residentsToSave = residentForms.filter((form) => form.fullName.trim())
     for (const form of residentForms) {
-      const hasPartialData =
-        form.fullName.trim() ||
-        form.unit.trim() ||
-        form.email.trim() ||
-        form.phone.trim()
+      const hasPartialData = residentFormRowHasUserInput(form)
       if (hasPartialData && !form.fullName.trim()) {
         setError('Each resident needs a name, or clear empty resident rows.')
         return
       }
     }
 
+    type ResidentLeasePayload = {
+      monthly_rent: number | null
+      rent_due_day: number | null
+      move_in_date: string | null
+      lease_end_date: string | null
+    }
+    const leasePayloads: ResidentLeasePayload[] = []
+    for (const form of residentsToSave) {
+      if (form.monthlyRent.trim() && parseMonthlyRentInput(form.monthlyRent) == null) {
+        setError(`${form.fullName.trim()}: Enter a valid monthly rent amount.`)
+        return
+      }
+      if (form.rentDueDayMode === 'custom' && !form.rentDueDay.trim()) {
+        setError(`${form.fullName.trim()}: Enter a custom rent due day (1–31).`)
+        return
+      }
+      if (form.rentDueDay.trim() && parseRentDueDayInput(form.rentDueDay) == null) {
+        setError(`${form.fullName.trim()}: Rent due day must be between 1 and 31.`)
+        return
+      }
+      if (form.leaseStart.trim() && parseLeaseDateInput(form.leaseStart) == null) {
+        setError(`${form.fullName.trim()}: Lease start must be a valid date.`)
+        return
+      }
+      if (form.leaseEnd.trim() && parseLeaseDateInput(form.leaseEnd) == null) {
+        setError(`${form.fullName.trim()}: Lease end must be a valid date.`)
+        return
+      }
+      leasePayloads.push({
+        monthly_rent: parseMonthlyRentInput(form.monthlyRent),
+        rent_due_day: parseRentDueDayInput(form.rentDueDay),
+        move_in_date: parseLeaseDateInput(form.leaseStart),
+        lease_end_date: parseLeaseDateInput(form.leaseEnd),
+      })
+    }
+
     setSaving(true)
     setError(null)
 
     const building = state.properties[0]?.name ?? propertyForms[0]?.name.trim() ?? ''
-    const landlordId = getActiveLandlordId()
+    const landlordId = scope.landlordId
     const existingResidents = await fetchOnboardingResidents(landlordId)
     let nextResidentSequence = maxOnboardingResidentSequence(existingResidents)
     const residentPhones: Array<{ phone: string | null }> = []
@@ -1331,6 +1520,7 @@ export function AdminOnboardingDashboard() {
       const form = residentsToSave[i]!
       const phone = residentPhones[i]!.phone
       const unit = form.unit.trim() || null
+      const lease = leasePayloads[i]!
 
       if (isPersistedVendorId(form.id)) {
         const { error: updateError } = await supabase
@@ -1341,10 +1531,33 @@ export function AdminOnboardingDashboard() {
             phone,
             unit,
             building: building || null,
+            ...lease,
           })
           .eq('id', form.id)
           .eq('landlord_id', landlordId)
         if (updateError) {
+          // Retry without rent columns if migration 20260716130000 is not applied yet.
+          if (/monthly_rent|rent_due_day|column/i.test(updateError.message)) {
+            const { error: retryError } = await supabase
+              .from('users')
+              .update({
+                full_name: form.fullName.trim(),
+                email: residentEmailForDb(form.email, form.residentId ?? 'ONB-000'),
+                phone,
+                unit,
+                building: building || null,
+                move_in_date: lease.move_in_date,
+                lease_end_date: lease.lease_end_date,
+              })
+              .eq('id', form.id)
+              .eq('landlord_id', landlordId)
+            if (retryError) {
+              setSaving(false)
+              setError(retryError.message)
+              return
+            }
+            continue
+          }
           setSaving(false)
           setError(updateError.message)
           return
@@ -1365,8 +1578,31 @@ export function AdminOnboardingDashboard() {
         balance_due: 0,
         issues: [],
         landlord_id: landlordId,
+        ...lease,
       })
       if (insertError) {
+        if (/monthly_rent|rent_due_day|column/i.test(insertError.message)) {
+          const { error: retryError } = await supabase.from('users').insert({
+            resident_id: residentId,
+            full_name: form.fullName.trim(),
+            email: residentEmailForDb(form.email, residentId),
+            phone,
+            unit,
+            building: building || null,
+            status: 'active',
+            balance_due: 0,
+            issues: [],
+            landlord_id: landlordId,
+            move_in_date: lease.move_in_date,
+            lease_end_date: lease.lease_end_date,
+          })
+          if (retryError) {
+            setSaving(false)
+            setError(retryError.message)
+            return
+          }
+          continue
+        }
         setSaving(false)
         setError(insertError.message)
         return
@@ -1522,7 +1758,12 @@ export function AdminOnboardingDashboard() {
     if (remainingMs > 0) {
       await new Promise((resolve) => window.setTimeout(resolve, remainingMs))
     }
-    navigate('/admin', { replace: true })
+    navigate('/admin', {
+      replace: true,
+      state: result.activationWarning
+        ? { onboardingNotice: result.activationWarning }
+        : undefined,
+    })
   }
 
   if (loading) {
@@ -1727,7 +1968,8 @@ export function AdminOnboardingDashboard() {
           <section className="rounded-[10px] border border-[#e5e7eb] bg-white p-6 shadow-[0px_1px_2px_-1px_rgba(0,0,0,0.06)]">
             <h2 className="text-[18px] font-semibold text-[#101828]">Add your properties</h2>
             <p className="mt-1 text-[14px] text-[#6a7282]">
-              Tell us about the properties you manage. You can always add more properties later.
+              Tell us about the properties you manage, including city, state, and ZIP so we can match
+              nearby vendors. You can always add more properties later.
             </p>
 
             <div className="mt-4 flex flex-col gap-4">
@@ -1747,7 +1989,7 @@ export function AdminOnboardingDashboard() {
                     ) : null}
                   </div>
                   <div className="grid gap-4 sm:grid-cols-2">
-                    <label className="block">
+                    <label className="block sm:col-span-2">
                       <span className={fieldLabelClass}>Property name</span>
                       <input
                         className={inputClass}
@@ -1757,14 +1999,72 @@ export function AdminOnboardingDashboard() {
                         aria-label={`Property ${index + 1} name`}
                       />
                     </label>
-                    <label className="block">
-                      <span className={fieldLabelClass}>Address</span>
+                    <label className="block sm:col-span-2">
+                      <span className={fieldLabelClass}>Street address</span>
                       <input
                         className={inputClass}
                         value={form.address}
                         onChange={(e) => updatePropertyForm(form.id, { address: e.target.value })}
-                        placeholder="123 Main St, City"
-                        aria-label={`Property ${index + 1} address`}
+                        placeholder="123 Main St"
+                        aria-label={`Property ${index + 1} street address`}
+                      />
+                    </label>
+                    <label className="block">
+                      <span className={fieldLabelClass}>State</span>
+                      <div className="relative">
+                        <select
+                          className={`${selectClass} ${!form.state ? 'text-[#9ca3af]' : ''}`}
+                          value={form.state}
+                          onChange={(e) => updatePropertyForm(form.id, { state: e.target.value })}
+                          aria-label={`Property ${index + 1} state`}
+                        >
+                          <option value="">Select state</option>
+                          {US_STATE_OPTIONS.map((state) => (
+                            <option key={state.code} value={state.code}>
+                              {state.name}
+                            </option>
+                          ))}
+                        </select>
+                        <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-[#6a7282]" aria-hidden>
+                          <svg viewBox="0 0 24 24" fill="none" className="size-4">
+                            <path d="M6 9l6 6 6-6" stroke="currentColor" strokeWidth={2} strokeLinecap="round" />
+                          </svg>
+                        </span>
+                      </div>
+                    </label>
+                    <label className="block">
+                      <span className={fieldLabelClass}>City</span>
+                      <div className="relative">
+                        <select
+                          className={`${selectClass} ${!form.city ? 'text-[#9ca3af]' : ''}`}
+                          value={form.city}
+                          onChange={(e) => updatePropertyForm(form.id, { city: e.target.value })}
+                          disabled={!form.state}
+                          aria-label={`Property ${index + 1} city`}
+                        >
+                          <option value="">{form.state ? 'Select city' : 'Select state first'}</option>
+                          {cityOptionsForProperty(form).map((city) => (
+                            <option key={city} value={city}>
+                              {city}
+                            </option>
+                          ))}
+                        </select>
+                        <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-[#6a7282]" aria-hidden>
+                          <svg viewBox="0 0 24 24" fill="none" className="size-4">
+                            <path d="M6 9l6 6 6-6" stroke="currentColor" strokeWidth={2} strokeLinecap="round" />
+                          </svg>
+                        </span>
+                      </div>
+                    </label>
+                    <label className="block">
+                      <span className={fieldLabelClass}>ZIP code</span>
+                      <input
+                        className={inputClass}
+                        value={form.zipCode}
+                        onChange={(e) => updatePropertyForm(form.id, { zipCode: e.target.value })}
+                        placeholder="07102"
+                        inputMode="numeric"
+                        aria-label={`Property ${index + 1} ZIP code`}
                       />
                     </label>
                     <label className="block">
@@ -1936,35 +2236,141 @@ export function AdminOnboardingDashboard() {
                     ) : null}
                   </div>
                   <div className="grid gap-4 sm:grid-cols-2">
-                    <input
-                      className={`${inputClass} sm:col-span-2`}
-                      value={form.fullName}
-                      onChange={(e) => updateResidentForm(form.id, { fullName: e.target.value })}
-                      placeholder="Full name"
-                      aria-label={`Resident ${index + 1} full name`}
-                    />
-                    <input
-                      className={inputClass}
-                      value={form.unit}
-                      onChange={(e) => updateResidentForm(form.id, { unit: e.target.value })}
-                      placeholder="Unit"
-                      aria-label={`Resident ${index + 1} unit`}
-                    />
-                    <input
-                      className={inputClass}
-                      value={form.phone}
-                      onChange={(e) => updateResidentForm(form.id, { phone: e.target.value })}
-                      placeholder="(555) 123-4567"
-                      aria-label={`Resident ${index + 1} phone`}
-                    />
-                    <input
-                      className={`${inputClass} sm:col-span-2`}
-                      type="email"
-                      value={form.email}
-                      onChange={(e) => updateResidentForm(form.id, { email: e.target.value })}
-                      placeholder="Email"
-                      aria-label={`Resident ${index + 1} email`}
-                    />
+                    <label className="block sm:col-span-2">
+                      <span className={fieldLabelClass}>Full name</span>
+                      <input
+                        className={inputClass}
+                        value={form.fullName}
+                        onChange={(e) => updateResidentForm(form.id, { fullName: e.target.value })}
+                        placeholder="Jordan Lee"
+                        aria-label={`Resident ${index + 1} full name`}
+                      />
+                    </label>
+                    <label className="block">
+                      <span className={fieldLabelClass}>Unit</span>
+                      <input
+                        className={inputClass}
+                        value={form.unit}
+                        onChange={(e) => updateResidentForm(form.id, { unit: e.target.value })}
+                        placeholder="4B"
+                        aria-label={`Resident ${index + 1} unit`}
+                      />
+                    </label>
+                    <label className="block">
+                      <span className={fieldLabelClass}>Phone</span>
+                      <input
+                        className={inputClass}
+                        value={form.phone}
+                        onChange={(e) => updateResidentForm(form.id, { phone: e.target.value })}
+                        placeholder="(555) 123-4567"
+                        aria-label={`Resident ${index + 1} phone`}
+                      />
+                    </label>
+                    <label className="block sm:col-span-2">
+                      <span className={fieldLabelClass}>Email</span>
+                      <input
+                        className={inputClass}
+                        type="email"
+                        value={form.email}
+                        onChange={(e) => updateResidentForm(form.id, { email: e.target.value })}
+                        placeholder="jordan@email.com"
+                        aria-label={`Resident ${index + 1} email`}
+                      />
+                    </label>
+                    <label className="block">
+                      <span className={fieldLabelClass}>Monthly rent</span>
+                      <input
+                        className={inputClass}
+                        inputMode="decimal"
+                        value={form.monthlyRent}
+                        onChange={(e) => updateResidentForm(form.id, { monthlyRent: e.target.value })}
+                        placeholder="$2,850"
+                        aria-label={`Resident ${index + 1} monthly rent`}
+                      />
+                    </label>
+                    <label className="block">
+                      <span className={fieldLabelClass}>Rent due day</span>
+                      <div className="relative">
+                        <select
+                          className={selectClass}
+                          value={form.rentDueDayMode}
+                          onChange={(e) => {
+                            const choice = e.target.value as RentDueDayChoice
+                            if (choice === '1' || choice === '5') {
+                              updateResidentForm(form.id, {
+                                rentDueDayMode: choice,
+                                rentDueDay: choice,
+                              })
+                              return
+                            }
+                            if (choice === 'custom') {
+                              const current = form.rentDueDay.trim()
+                              updateResidentForm(form.id, {
+                                rentDueDayMode: 'custom',
+                                rentDueDay:
+                                  current === '1' || current === '5' ? '' : current,
+                              })
+                              return
+                            }
+                            updateResidentForm(form.id, {
+                              rentDueDayMode: '',
+                              rentDueDay: '',
+                            })
+                          }}
+                          aria-label={`Resident ${index + 1} rent due day`}
+                        >
+                          <option value="">Select day</option>
+                          <option value="1">1st</option>
+                          <option value="5">5th</option>
+                          <option value="custom">Custom</option>
+                        </select>
+                        <span
+                          className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-[#6a7282]"
+                          aria-hidden
+                        >
+                          <svg viewBox="0 0 24 24" fill="none" className="size-4">
+                            <path
+                              d="M6 9l6 6 6-6"
+                              stroke="currentColor"
+                              strokeWidth={2}
+                              strokeLinecap="round"
+                            />
+                          </svg>
+                        </span>
+                      </div>
+                      {form.rentDueDayMode === 'custom' ? (
+                        <input
+                          className={`${inputClass} mt-2`}
+                          inputMode="numeric"
+                          value={form.rentDueDay}
+                          onChange={(e) =>
+                            updateResidentForm(form.id, { rentDueDay: e.target.value })
+                          }
+                          placeholder="Day of month (1–31)"
+                          aria-label={`Resident ${index + 1} custom rent due day`}
+                        />
+                      ) : null}
+                    </label>
+                    <label className="block">
+                      <span className={fieldLabelClass}>Lease starts</span>
+                      <input
+                        className={inputClass}
+                        type="date"
+                        value={form.leaseStart}
+                        onChange={(e) => updateResidentForm(form.id, { leaseStart: e.target.value })}
+                        aria-label={`Resident ${index + 1} lease starts`}
+                      />
+                    </label>
+                    <label className="block">
+                      <span className={fieldLabelClass}>Lease ends</span>
+                      <input
+                        className={inputClass}
+                        type="date"
+                        value={form.leaseEnd}
+                        onChange={(e) => updateResidentForm(form.id, { leaseEnd: e.target.value })}
+                        aria-label={`Resident ${index + 1} lease ends`}
+                      />
+                    </label>
                   </div>
                 </div>
               ))}

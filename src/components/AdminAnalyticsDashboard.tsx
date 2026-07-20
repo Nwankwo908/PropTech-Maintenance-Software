@@ -600,7 +600,7 @@ export function AdminAnalyticsDashboard() {
   const updatedCaption = lastUpdated ? formatUpdatedAt(lastUpdated) : 'Live portfolio metrics'
 
   return (
-    <main className="flex min-h-0 flex-1 flex-col px-8 pb-12">
+    <main className="w-full min-w-0 px-8 pb-12">
       <div className="py-6">
         <h1 className="text-[24px] font-semibold leading-8 tracking-[0.0703px] text-[#0a0a0a]">
           Analytics

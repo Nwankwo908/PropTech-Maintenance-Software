@@ -1,4 +1,5 @@
 import { useEffect, useId } from 'react'
+import { isDemoAccountActive } from '@/lib/activeLandlord'
 
 type StaffMember = {
   id: string
@@ -180,7 +181,12 @@ export function ManageStaffModal({ open, onClose }: { open: boolean; onClose: ()
           </div>
 
           <div className="flex flex-col gap-3">
-            {DEMO_STAFF.map((member) => (
+            {(isDemoAccountActive() ? DEMO_STAFF : []).length === 0 ? (
+              <p className="rounded-[10px] border border-secondary bg-secondary px-4 py-6 text-center text-[13px] text-neutral">
+                No staff members yet. Add someone to get started.
+              </p>
+            ) : null}
+            {(isDemoAccountActive() ? DEMO_STAFF : []).map((member) => (
               <div
                 key={member.id}
                 className="rounded-[10px] border border-secondary bg-white p-4"

@@ -6,6 +6,7 @@ import {
 } from '@/lib/adminWorkflows'
 import { DEMO_MOVE_OUT_WO_D777_RUN_ID } from '@/lib/activeLandlord'
 import { normalizeBuildingKey } from '@/lib/propertyHealth'
+import { formatWorkOrderRefForWorkflowRun } from '@/lib/vendorCallFlow'
 
 export type OperationsBreakdownLine = {
   id: string
@@ -362,16 +363,43 @@ function deriveInspectionKanbanStage(row: AdminWorkflowRow): WorkflowKanbanStage
   return 'new_intake'
 }
 
-function deriveMaintenanceKanbanStage(row: AdminWorkflowRow): WorkflowKanbanStageId {
+/**
+ * Maintenance Operations columns follow ticket lifecycle (not the collapsed “all open → In Progress” map).
+ * Source of truth: `maintenance_requests.vendor_work_status` when linked; else intake / run heuristics.
+ */
+export function deriveMaintenanceKanbanStage(row: AdminWorkflowRow): WorkflowKanbanStageId {
   if (row.status === 'completed') return 'completed'
+
+  const vendorStatus = (row.vendorWorkStatus ?? '').trim().toLowerCase()
+  if (vendorStatus === 'completed') return 'completed'
+  if (vendorStatus === 'in_progress' || vendorStatus === 'accepted') {
+    return 'in_progress'
+  }
+  if (vendorStatus === 'pending_accept' || vendorStatus === 'declined') {
+    return 'assigned'
+  }
+  if (vendorStatus === 'unassigned') return 'new_intake'
+
+  // SMS intake still collecting (no ticket yet, or ticket not linked).
+  if (row.templateId === 'maintenance_intake') {
+    const step = (row.currentStep ?? '').toLowerCase()
+    if (step === 'submitted' || row.entityType === 'maintenance_request') {
+      // Ticket created but status missing — treat as assigned once a vendor id exists.
+      if (row.assignedVendorId) return 'assigned'
+      return 'new_intake'
+    }
+    return 'new_intake'
+  }
+
+  if (row.assignedVendorId) return 'assigned'
 
   const step = (row.currentStep ?? '').toLowerCase()
   const event = (row.lastEventType ?? '').toLowerCase()
-  const hay = `${step} ${event}`
-  if (/complete|closed|done/.test(hay)) return 'completed'
+  if (step === 'completed' || /complete|closed|done/.test(event)) return 'completed'
+  if (step === 'in_progress' || event === 'in_progress') return 'in_progress'
+  // Do not treat intake steps containing "accept"/"await" as assigned without a vendor id.
 
-  // Unfinished maintenance always sits in In Progress — avoids looking like a second work-order board.
-  return 'in_progress'
+  return 'new_intake'
 }
 
 export function deriveWorkflowKanbanStage(
@@ -413,15 +441,29 @@ export function buildWorkflowKanbanCard(
   row: AdminWorkflowRow,
   metadata: Record<string, unknown> = {},
 ): WorkflowKanbanCard {
+  const category = deriveCategory(row)
+  // Maintenance chip already labels the type — show WO/INT ref as the card title.
+  const title =
+    category === 'maintenance'
+      ? formatWorkOrderRefForWorkflowRun(
+          row.templateId,
+          row.id,
+          row.entityId,
+          row.entityType,
+        )
+      : row.templateId === 'move_out'
+        ? 'Move-Out Preparation'
+        : row.templateName
+
   return {
     id: row.id,
-    title: row.templateId === 'move_out' ? 'Move-Out Preparation' : row.templateName,
+    title,
     context: formatLocationContextLabel({
       propertyLabel: row.propertyLabel,
       unitLabel: row.unitLabel,
       residentName: row.residentName,
     }),
-    category: deriveCategory(row),
+    category,
     stage: deriveWorkflowKanbanStage(row, metadata),
     critical: row.status === 'escalated',
     initials: deriveInitials(row),

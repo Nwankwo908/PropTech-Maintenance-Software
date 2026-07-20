@@ -5,6 +5,7 @@ import {
   createWorkflowRun,
   getWorkflowRunById,
   logPipelineStageEvent,
+  updateWorkflowRun,
 } from "./workflowRuns.ts"
 
 export type StartMaintenanceRequestWorkflowParams = {
@@ -20,6 +21,8 @@ export type StartMaintenanceRequestWorkflowParams = {
   source: "web_form" | "sms_intake"
   intakeRunId?: string | null
   conversationId?: string | null
+  /** When false/undefined, run starts at unassigned (not pending_accept). */
+  vendorAssigned?: boolean
 }
 
 async function findMaintenanceRequestRun(
@@ -51,14 +54,22 @@ export async function startMaintenanceRequestWorkflow(
 ): Promise<{ workflowRunId: string | null }> {
   const existingId = await findMaintenanceRequestRun(supabase, params.ticketId)
   if (existingId) {
+    if (params.vendorAssigned) {
+      await updateWorkflowRun(supabase, existingId, {
+        currentStep: "pending_accept",
+        metadata: { vendor_assigned: true },
+      })
+    }
     return { workflowRunId: existingId }
   }
+
+  const currentStep = params.vendorAssigned ? "pending_accept" : "unassigned"
 
   const run = await createWorkflowRun(supabase, {
     templateId: "maintenance_request",
     landlordId: params.landlordId,
     triggerType: params.triggerType,
-    currentStep: "pending_accept",
+    currentStep,
     entityType: "maintenance_request",
     entityId: params.ticketId,
     residentId: params.residentId,
@@ -71,6 +82,7 @@ export async function startMaintenanceRequestWorkflow(
       source: params.source,
       intake_run_id: params.intakeRunId ?? undefined,
       conversation_id: params.conversationId ?? undefined,
+      vendor_assigned: Boolean(params.vendorAssigned),
     },
   })
 

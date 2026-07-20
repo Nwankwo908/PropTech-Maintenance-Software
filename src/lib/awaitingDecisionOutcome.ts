@@ -34,7 +34,7 @@ export function buildLateRentActionOutcome(
       operationTitle,
       context,
       kind: 'resolved',
-      headline: 'Removed from Awaiting Your Decision',
+      headline: 'Removed from Needs Your Attention',
       detail: `Payment recorded for ${review.residentShortName}. Ulo cleared this late rent escalation and will resume standard rent collection if needed.`,
       removedFromQueue: true,
     }
@@ -45,7 +45,7 @@ export function buildLateRentActionOutcome(
     context,
     kind: 'updated',
     headline: 'Action recorded',
-    detail: `Update recorded for ${review.residentShortName}. This escalation stays in Awaiting Your Decision until payment is marked received.`,
+    detail: `Update recorded for ${review.residentShortName}. This escalation stays in Needs Your Attention until payment is marked received.`,
     removedFromQueue: false,
   }
 }
@@ -64,7 +64,7 @@ export function buildLeaseRenewalActionOutcome(
       operationTitle,
       context,
       kind: 'moved',
-      headline: 'Removed from Awaiting Your Decision',
+      headline: 'Removed from Needs Your Attention',
       detail:
         'Move-out preparation is now active. Ulo completed the lease renewal escalation and started coordinating move-out instructions, inspection, and keys with the resident.',
       removedFromQueue: true,
@@ -93,7 +93,7 @@ export function buildLeaseRenewalActionOutcome(
       kind: 'updated',
       headline: 'Incentive message ready',
       detail:
-        'Ulo drafted a renewal incentive SMS. Review the suggestion, edit if needed, and send it to the resident. This item remains in Awaiting Your Decision until resolved.',
+        'Ulo drafted a renewal incentive SMS. Review the suggestion, edit if needed, and send it to the resident. This item remains in Needs Your Attention until resolved.',
       removedFromQueue: false,
     }
   }
@@ -118,7 +118,7 @@ export function buildLeaseRenewalIncentiveSentOutcome(input: {
     context: input.locationLabel,
     kind: 'updated',
     headline: 'Incentive offer sent',
-    detail: `Ulo logged a ${input.incentiveAmountLabel} renewal incentive SMS draft for ${input.residentName}. Follow up in the resident thread as needed. This item remains in Awaiting Your Decision until resolved.`,
+    detail: `Ulo logged a ${input.incentiveAmountLabel} renewal incentive SMS draft for ${input.residentName}. Follow up in the resident thread as needed. This item remains in Needs Your Attention until resolved.`,
     removedFromQueue: false,
   }
 }
@@ -133,7 +133,7 @@ export function buildVendorAssignedOutcome(input: {
     operationTitle: input.operationTitle,
     context: input.context,
     kind: 'resolved',
-    headline: 'Removed from Awaiting Your Decision',
+    headline: 'Removed from Needs Your Attention',
     detail: input.external
       ? `${input.vendorName} was assigned as an external vendor. Ulo sent onboarding outreach and moved this work order back into the active pipeline.`
       : `${input.vendorName} was assigned. Ulo notified the vendor and moved this work order back into the active pipeline.`,
@@ -152,7 +152,7 @@ export function buildAutoRemovedAttentionOutcome(input: {
     operationTitle: input.title,
     context: input.context,
     kind: 'resolved',
-    headline: 'No longer awaiting your decision',
+    headline: 'No longer needs your attention',
     detail:
       input.meta?.trim()
         ? `${input.meta.trim()}. Ulo or another workflow update cleared this from your decision queue.`

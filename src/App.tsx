@@ -19,6 +19,7 @@ import { AdminWorkflowOperationsDashboard } from './components/AdminWorkflowOper
 import { AdminNotificationManagementDashboard } from './components/AdminNotificationManagementDashboard'
 import { AdminCommunicationDashboard } from './components/AdminCommunicationDashboard'
 import { AdminVendorsDashboard } from './components/AdminVendorsDashboard'
+import { AdminVendorDetailDashboard } from './components/AdminVendorDetailDashboard'
 import { AdminResidentsDashboard } from './components/AdminResidentsDashboard'
 import { AdminAnalyticsDashboard } from './components/AdminAnalyticsDashboard'
 import { AdminSettingsDashboard } from './components/AdminSettingsDashboard'
@@ -28,6 +29,10 @@ import { AdminOnboardingGuard } from './components/AdminOnboardingGuard'
 import { TermsOfServicePage } from './components/legal/TermsOfServicePage'
 import { PrivacyPolicyPage } from './components/legal/PrivacyPolicyPage'
 import { VendorIntakePortal } from './VendorIntakePortal'
+import { WorkOrderPublicPage } from './components/WorkOrderPublicPage'
+import { WorkOrderEstimatePage } from './components/WorkOrderEstimatePage'
+import { WorkOrderUploadPage } from './components/WorkOrderUploadPage'
+import { WorkOrderTokenActionStub } from './components/WorkOrderTokenActionStub'
 
 export default function App() {
   useSessionAutoRefresh(supabase)
@@ -41,6 +46,13 @@ export default function App() {
         <Route path="/privatepolicy" element={<PrivacyPolicyPage />} />
         <Route path="/request" element={<ResidentPortal />} />
         <Route path="/v/:token" element={<VendorIntakePortal />} />
+        <Route path="/w/:token" element={<WorkOrderPublicPage />} />
+        <Route path="/estimate/:token" element={<WorkOrderEstimatePage />} />
+        <Route path="/upload/:token" element={<WorkOrderUploadPage />} />
+        <Route
+          path="/invoice/:token"
+          element={<WorkOrderTokenActionStub kind="invoice" />}
+        />
 
         <Route
           path="/vendor/*"
@@ -73,6 +85,7 @@ export default function App() {
             <Route path="communication" element={<AdminCommunicationDashboard />} />
             <Route path="requests" element={<AdminRequestManagementDashboard />} />
             <Route path="vendors" element={<AdminVendorsDashboard />} />
+            <Route path="vendors/:vendorId" element={<AdminVendorDetailDashboard />} />
             <Route path="workflows" element={<AdminWorkflowOperationsDashboard />} />
             <Route path="residents" element={<AdminResidentsDashboard />} />
             <Route path="analytics" element={<AdminAnalyticsDashboard />} />

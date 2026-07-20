@@ -1,6 +1,6 @@
 import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.49.1"
 import { tryAutoReassignAfterDecline } from "./vendor_auto_reassign.ts"
-import { notifyResidentVendorAccepted } from "../submit-maintenance-request/resident_notify.ts"
+import { beginVendorAvailabilityAsk } from "./vendor_job_schedule.ts"
 
 export type VendorSmsReplyAction = "accept" | "decline"
 
@@ -34,14 +34,20 @@ export function parseVendorSmsReply(body: string): VendorSmsReplyAction | null {
   return null
 }
 
-/** Apply accept/decline to an assigned ticket (shared by email links and SMS replies). */
+/**
+ * Apply accept/decline to an assigned ticket (shared by email links and SMS replies).
+ * On accept: does NOT notify resident — next step is earliest-availability SMS.
+ */
 export async function applyVendorStatusTransition(
   supabase: SupabaseClient,
   params: {
     ticketId: string
     vendorId: string
     action: VendorSmsReplyAction
-    source: "email_signed" | "sms"
+    source: "email_signed" | "sms" | "portal"
+    /** When true (default), ask earliest availability over SMS after accept. */
+    askAvailability?: boolean
+    conversationId?: string | null
   },
 ): Promise<VendorStatusTransitionResult> {
   const { data: row, error: rowErr } = await supabase
@@ -94,56 +100,31 @@ export async function applyVendorStatusTransition(
     return { ok: false, reason: "update_failed", currentStatus: current }
   }
 
+  const sourceLabel =
+    params.source === "sms"
+      ? "edge"
+      : params.source === "portal"
+      ? "portal"
+      : params.source
+
   const { error: logErr } = await supabase.from("vendor_status_events").insert({
     ticket_id: params.ticketId,
     from_status: current,
     to_status: next,
-    source: params.source === "sms" ? "edge" : params.source,
+    source: sourceLabel,
     vendor_id: params.vendorId,
   })
   if (logErr) console.error("[vendor-workflow] audit", logErr.message)
 
-  if (next === "accepted") {
+  if (next === "accepted" && params.askAvailability !== false) {
     try {
-      const { data: trow } = await supabase
-        .from("maintenance_requests")
-        .select(
-          "resident_name, email, resident_phone, unit, assigned_vendor_id, priority, resident_notification_channel",
-        )
-        .eq("id", params.ticketId)
-        .maybeSingle()
-
-      let vendorName: string | undefined
-      if (trow?.assigned_vendor_id) {
-        const { data: v } = await supabase
-          .from("vendors")
-          .select("name")
-          .eq("id", trow.assigned_vendor_id as string)
-          .maybeSingle()
-        if (v?.name) vendorName = String(v.name)
-      }
-
-      if (trow) {
-        await notifyResidentVendorAccepted(supabase, {
-          ticketId: params.ticketId,
-          recipientName: String(trow.resident_name ?? ""),
-          recipientEmail:
-            typeof trow.email === "string" ? trow.email.trim() : "",
-          recipientPhone:
-            typeof trow.resident_phone === "string"
-              ? trow.resident_phone
-              : null,
-          notificationChannel:
-            typeof trow.resident_notification_channel === "string"
-              ? trow.resident_notification_channel
-              : null,
-          unit: typeof trow.unit === "string" ? trow.unit : undefined,
-          priority: typeof trow.priority === "string" ? trow.priority : undefined,
-          vendorName,
-        })
-      }
+      await beginVendorAvailabilityAsk(supabase, {
+        ticketId: params.ticketId,
+        vendorId: params.vendorId,
+        conversationId: params.conversationId ?? null,
+      })
     } catch (e) {
-      console.error("[vendor-workflow] resident notify vendor_accepted", e)
+      console.error("[vendor-workflow] begin availability ask", e)
     }
   }
 

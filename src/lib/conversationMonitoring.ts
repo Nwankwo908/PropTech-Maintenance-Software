@@ -40,6 +40,15 @@ export type MonitoringTranscriptItem =
       timestampMs: number
     }
 
+export type PendingEstimateDecision = {
+  estimateId: string
+  actionToken: string
+  partsCost: number
+  laborCost: number
+  totalCost: number
+  notes: string | null
+}
+
 export type ConversationMonitoringDetail = {
   conversationId: string
   title: string
@@ -52,6 +61,8 @@ export type ConversationMonitoringDetail = {
   transcript: MonitoringTranscriptItem[]
   readOnlyNote: string
   canTakeOver: boolean
+  /** Pending vendor estimate the admin can approve/decline from this thread. */
+  pendingEstimateDecision?: PendingEstimateDecision | null
   /** Per-channel copy when vendor setup threads split SMS vs email. */
   vendorOutreachChannels?: Record<VendorOutreachChannel, { summary: string; readOnlyNote: string }>
   /** Submitted intake rates + AI negotiation guidance for vendor setup threads. */
@@ -163,9 +174,11 @@ type ConversationContext = {
   ticketDescription: string
   ticketUrgency: string
   ticketCategory: string
+  maintenanceRequestId: string
   createdAtMs: number
   updatedAtMs: number
   messages: DbMessage[]
+  pendingEstimateDecision: PendingEstimateDecision | null
 }
 
 function asString(value: unknown): string {
@@ -204,12 +217,64 @@ function mentionsAc(text: string): boolean {
   return /\b(ac|a\/c|air conditioning|air.?condition)\b/i.test(text)
 }
 
+/** Vendor estimate submitted into the job SMS thread (awaiting landlord approval). */
+export function isMaintenanceEstimateSubmittedBody(text: string): boolean {
+  return /submitted an estimate for this job|estimate submitted for approval|reply approve or decline/i.test(
+    text,
+  )
+}
+
+/** Vendor verification invite SMS/email (not a maintenance work-order thread). */
+function isVendorOnboardingInvite(text: string): boolean {
+  return (
+    /preferred vendor network|vendor network on ulo|quick verification|start verification|eligible to receive work orders/i.test(
+      text,
+    ) ||
+    /finished the vendor verification form|verification form submitted/i.test(text) ||
+    /received your verification form|verification is complete|items still need attention before we can begin sending you work orders/i.test(
+      text,
+    )
+  )
+}
+
+/** True when the vendor completed the verification form (inbox response). */
+function isVendorVerificationSubmitted(text: string): boolean {
+  return /finished the vendor verification form|verification form submitted/i.test(text)
+}
+
+/** Tenant activation / welcome + consent SMS (not a maintenance report thread). */
+function isTenantOnboardingInvite(text: string): boolean {
+  return (
+    /reply yes to get updates about your maintenance requests/i.test(text) ||
+    /reach us by text anytime you need a repair/i.test(text) ||
+    /we'll text you here about your maintenance requests/i.test(text) ||
+    /you'?re all set, thank you\. we'll text you here/i.test(text)
+  )
+}
+
+function isOnboardingInvite(text: string): boolean {
+  return isVendorOnboardingInvite(text) || isTenantOnboardingInvite(text)
+}
+
 function deriveRisk(ctx: ConversationContext): { level: MonitoringRiskLevel | null; label: string | null } {
   const status = ctx.status.toLowerCase()
   const urgency = ctx.ticketUrgency.toLowerCase()
+  const combinedText = [
+    ctx.ticketDescription,
+    ...ctx.messages.map((m) => m.body),
+  ].join(' ')
+
+  // General rule: vendor/tenant onboarding invites are informational — no risk.
+  if (isOnboardingInvite(combinedText)) {
+    return { level: 'low', label: 'NO RISK' }
+  }
 
   if (ctx.conversationType === 'ai_copilot') {
     return { level: 'low', label: 'AUTO-HANDLED' }
+  }
+
+  if (ctx.pendingEstimateDecision || isMaintenanceEstimateSubmittedBody(combinedText)) {
+    return { level: 'medium', label: 'NEEDS APPROVAL' }
   }
 
   if (['resolved', 'completed', 'closed'].includes(status)) {
@@ -220,7 +285,7 @@ function deriveRisk(ctx: ConversationContext): { level: MonitoringRiskLevel | nu
     return { level: 'low', label: 'LOW RISK' }
   }
 
-  if (urgency === 'urgent' || status === 'in_progress' || mentionsAc(ctx.messages.map((m) => m.body).join(' '))) {
+  if (urgency === 'urgent' || status === 'in_progress' || mentionsAc(combinedText)) {
     return { level: 'high', label: 'HIGH RISK' }
   }
 
@@ -231,7 +296,13 @@ function deriveRisk(ctx: ConversationContext): { level: MonitoringRiskLevel | nu
   return { level: 'medium', label: 'MEDIUM RISK' }
 }
 
-function buildSubtitle(conversationType: string): string {
+function buildSubtitle(conversationType: string, combinedText = ''): string {
+  if (isTenantOnboardingInvite(combinedText)) {
+    return 'Admin monitoring view · SMS · tenant onboarding'
+  }
+  if (isVendorOnboardingInvite(combinedText)) {
+    return 'Admin monitoring view · SMS · vendor onboarding'
+  }
   if (conversationType === 'ai_copilot') {
     return 'Admin monitoring view · Internal · auto-routed to Ulo AI'
   }
@@ -252,6 +323,18 @@ function buildTitle(ctx: ConversationContext): string {
   ]
     .join(' ')
     .toLowerCase()
+
+  // Welcome/invite copy must win over maintenance heuristics ("repair", "Plumbing", etc.).
+  if (isVendorOnboardingInvite(combinedText)) {
+    return 'Vendor onboarding'
+  }
+  if (isTenantOnboardingInvite(combinedText)) {
+    return 'Tenant onboarding'
+  }
+
+  if (ctx.pendingEstimateDecision || isMaintenanceEstimateSubmittedBody(combinedText)) {
+    return location ? `Estimate approval · ${location}` : 'Estimate approval'
+  }
 
   if (mentionsAc(combinedText)) {
     return location ? `AC failure · ${location}` : 'AC failure'
@@ -315,6 +398,36 @@ function buildSummary(ctx: ConversationContext): string {
 
   if (isLateRentReminderBody(latest) || isLateRentReminderBody(combined)) {
     return `Ulo sent a late-rent reminder to ${tenant} at ${place}. No action required unless they reply.`
+  }
+
+  if (ctx.pendingEstimateDecision || isMaintenanceEstimateSubmittedBody(combined) || isMaintenanceEstimateSubmittedBody(latest)) {
+    const vendor = ctx.vendorName || 'The vendor'
+    const total = ctx.pendingEstimateDecision
+      ? ctx.pendingEstimateDecision.totalCost.toLocaleString('en-US', {
+          style: 'currency',
+          currency: 'USD',
+        })
+      : null
+    return total
+      ? `${vendor} submitted an estimate of ${total}. Approve or decline from this thread — or reply APPROVE / DECLINE by text.`
+      : `${vendor} submitted an estimate. Approve or decline from this thread — or reply APPROVE / DECLINE by text.`
+  }
+
+  if (isVendorVerificationSubmitted(combined) || isVendorVerificationSubmitted(latest)) {
+    const vendor = ctx.vendorName || 'This vendor'
+    if (/needs a quick review|needs attention|please review/i.test(combined)) {
+      return `${vendor} submitted their verification form and needs a quick review. Open the thread for details.`
+    }
+    return `${vendor} submitted their verification form and is ready for work orders. Logged in this thread for your records.`
+  }
+
+  if (isVendorOnboardingInvite(combined)) {
+    const vendor = ctx.vendorName || 'this vendor'
+    return `Ulo invited ${vendor} to complete a quick verification for your preferred vendor network. Monitor this thread for their reply.`
+  }
+
+  if (isTenantOnboardingInvite(combined)) {
+    return `Ulo sent ${tenant} a welcome text to activate SMS updates at ${place}. Monitor this thread for their reply.`
   }
 
   if (ctx.conversationType === 'ai_copilot') {
@@ -485,21 +598,28 @@ function buildMonitoringDetail(ctx: ConversationContext): ConversationMonitoring
   const risk = deriveRisk(ctx)
   const closed = ['resolved', 'completed', 'closed'].includes(ctx.status.toLowerCase())
   const isAiCopilot = ctx.conversationType === 'ai_copilot'
+  const combinedText = [
+    ctx.ticketDescription,
+    ...ctx.messages.map((m) => m.body),
+  ].join(' ')
 
   return {
     conversationId: ctx.id,
     title: buildTitle(ctx),
-    subtitle: buildSubtitle(ctx.conversationType),
+    subtitle: buildSubtitle(ctx.conversationType, combinedText),
     riskLevel: risk.level,
     riskLabel: risk.label,
     summary: buildSummary(ctx),
     tenantName: ctx.residentName || ctx.vendorName || 'Participant',
     tenantInitials: monitoringInitials(ctx.residentName || ctx.vendorName || '?'),
     transcript: buildTranscript(ctx),
-    readOnlyNote: isAiCopilot
-      ? 'Read-only · Ulo sends tenant and vendor messages automatically.'
-      : 'Read-only · Ulo continues handling unless you take over.',
-    canTakeOver: !closed && !isAiCopilot,
+    readOnlyNote: ctx.pendingEstimateDecision
+      ? 'Approve or decline this estimate here, or reply APPROVE / DECLINE by text on the ops notify thread.'
+      : isAiCopilot
+        ? 'Read-only · Ulo sends tenant and vendor messages automatically.'
+        : 'Read-only · Ulo continues handling unless you take over.',
+    canTakeOver: !closed && !isAiCopilot && !ctx.pendingEstimateDecision,
+    pendingEstimateDecision: ctx.pendingEstimateDecision,
   }
 }
 
@@ -516,7 +636,7 @@ async function loadConversationContext(
   const unitId = asString(row.unit_id)
   const ticketId = asString(row.maintenance_request_id)
 
-  const [messagesResult, residentResult, vendorResult, unitResult, ticketResult] =
+  const [messagesResult, residentResult, vendorResult, unitResult, ticketResult, estimateResult] =
     await Promise.allSettled([
       supabase
         .from('sms_messages')
@@ -538,6 +658,16 @@ async function loadConversationContext(
             .from('maintenance_requests')
             .select('description, urgency, priority, issue_category, unit')
             .eq('id', ticketId)
+            .maybeSingle()
+        : Promise.resolve({ data: null, error: null }),
+      ticketId
+        ? supabase
+            .from('maintenance_estimates')
+            .select(
+              'id, landlord_action_token, parts_cost, labor_cost, total_cost, notes, status',
+            )
+            .eq('maintenance_request_id', ticketId)
+            .eq('status', 'pending_approval')
             .maybeSingle()
         : Promise.resolve({ data: null, error: null }),
     ])
@@ -569,6 +699,21 @@ async function loadConversationContext(
     ticketResult.status === 'fulfilled' && ticketResult.value.data
       ? (ticketResult.value.data as Record<string, unknown>)
       : null
+  const estimateRow =
+    estimateResult.status === 'fulfilled' && estimateResult.value.data
+      ? (estimateResult.value.data as Record<string, unknown>)
+      : null
+  const pendingEstimateDecision: PendingEstimateDecision | null =
+    estimateRow && asString(estimateRow.id) && asString(estimateRow.landlord_action_token)
+      ? {
+          estimateId: asString(estimateRow.id),
+          actionToken: asString(estimateRow.landlord_action_token),
+          partsCost: Number(estimateRow.parts_cost) || 0,
+          laborCost: Number(estimateRow.labor_cost) || 0,
+          totalCost: Number(estimateRow.total_cost) || 0,
+          notes: asString(estimateRow.notes) || null,
+        }
+      : null
 
   return {
     id: conversationId,
@@ -588,9 +733,11 @@ async function loadConversationContext(
     ticketDescription: asString(ticket?.description),
     ticketUrgency: asString(ticket?.urgency) || asString(ticket?.priority),
     ticketCategory: asString(ticket?.issue_category),
+    maintenanceRequestId: ticketId,
     createdAtMs: new Date(asString(row.created_at)).getTime(),
     updatedAtMs: new Date(asString(row.updated_at)).getTime(),
     messages,
+    pendingEstimateDecision,
   }
 }
 
@@ -1054,10 +1201,10 @@ function buildConversationalInspectionTranscript(input: InspectionUloThreadInput
       senderName: 'Ulo AI',
       body:
         mode === 'move_out'
-          ? "You're all set — your move-out inspection is on file. Reply here if you remember anything else before vacate day."
+          ? "You're all set! Your move-out inspection is on file. Reply here if you remember anything else before vacate day."
           : mode === 'move_in'
-            ? "You're all set — your move-in condition is documented. Reply here if you spot anything else in the first few days."
-            : "You're all set — thanks for completing your self-inspection. Reply here if anything new comes up.",
+            ? "You're all set! Your move-in condition is documented. Reply here if you spot anything else in the first few days."
+            : "You're all set, thanks for completing your self-inspection! Reply here if anything new comes up.",
       timestampMs: anchor + 23 * minute + 30_000,
     },
   )
@@ -1099,9 +1246,11 @@ function buildSyntheticWorkOrderThread(input: MaintenanceUloThreadInput): Conver
     ticketDescription: input.description,
     ticketUrgency: input.urgency,
     ticketCategory: input.issueCategory,
+    maintenanceRequestId: input.maintenanceRequestId || '',
     createdAtMs: input.startedAtMs,
     updatedAtMs: Date.now(),
     messages: [],
+    pendingEstimateDecision: null,
   }
 
   const transcript =
@@ -1166,9 +1315,11 @@ async function buildSyntheticWorkOrderThreadWithEvents(
     ticketDescription: input.description,
     ticketUrgency: input.urgency,
     ticketCategory: input.issueCategory,
+    maintenanceRequestId: input.maintenanceRequestId || '',
     createdAtMs: input.startedAtMs,
     updatedAtMs: Date.now(),
     messages: [],
+    pendingEstimateDecision: null,
   }
 
   const transcript =
@@ -1289,7 +1440,12 @@ export async function fetchConversationMonitoringByMaintenanceRequest(
   if (error || !convRows?.length) return null
 
   const rows = convRows as Record<string, unknown>[]
+
+  // Prefer the vendor job thread whenever one is linked — estimate submit,
+  // approve/decline, and other vendor updates land there. Fall back to resident.
+  // Rows are already ordered by updated_at desc, so the first match is latest.
   const preferred =
+    rows.find((row) => asString(row.conversation_type) === 'vendor_alert') ??
     rows.find((row) => asString(row.conversation_type) === 'resident_intake') ??
     rows.find((row) => !isAdminDirectedConversationType(asString(row.conversation_type))) ??
     rows[0]

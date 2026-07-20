@@ -1,4 +1,5 @@
 import { useEffect, useId } from 'react'
+import { isDemoAccountActive } from '@/lib/activeLandlord'
 
 type NonResidentRow = {
   id: string
@@ -121,7 +122,14 @@ export function NonResidentAccountsModal({
                 </tr>
               </thead>
               <tbody>
-                {DEMO_NON_RESIDENTS.map((row) => (
+                {(isDemoAccountActive() ? DEMO_NON_RESIDENTS : []).length === 0 ? (
+                  <tr>
+                    <td colSpan={4} className="px-4 py-8 text-center text-[13px] text-neutral">
+                      No past residents with outstanding balances.
+                    </td>
+                  </tr>
+                ) : null}
+                {(isDemoAccountActive() ? DEMO_NON_RESIDENTS : []).map((row) => (
                   <tr key={row.id} className="border-b border-secondary last:border-b-0">
                     <td className="px-4 py-3 align-middle">
                       <div className="flex flex-col gap-0.5">

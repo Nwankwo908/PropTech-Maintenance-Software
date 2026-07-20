@@ -1472,11 +1472,33 @@ export function VendorPortalDashboard({
     setSelectedId(null)
   }
 
+  function handlePortalBack() {
+    if (selectedId) {
+      setSelectedId(null)
+      if (deepLinkTicketId) {
+        navigate('/vendor', { replace: true })
+      }
+      return
+    }
+    if (typeof window !== 'undefined' && window.history.length > 1) {
+      navigate(-1)
+      return
+    }
+    navigate('/vendor')
+  }
+
   return (
     <div className="min-h-dvh bg-[#f3f4f6]">
       <header className="border-b-4 border-[#0030b5] bg-white shadow-[0px_1px_3px_0px_rgba(0,0,0,0.1),0px_1px_2px_0px_rgba(0,0,0,0.1)]">
         <div className="mx-auto flex w-full max-w-[1280px] flex-col gap-4 px-6 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-8 lg:px-10">
           <div>
+            <button
+              type="button"
+              onClick={handlePortalBack}
+              className="mb-2 inline-flex items-center gap-1 text-[13px] font-medium text-[#6a7282] outline-none transition-colors hover:text-[#101828] focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2"
+            >
+              <span aria-hidden>←</span> Back
+            </button>
             <h1 className="text-[24px] font-bold leading-8 tracking-[0.0703px] text-[#101828]">Vendor Portal</h1>
             <p className="mt-0.5 text-[14px] font-normal leading-5 tracking-[-0.1504px] text-[#4a5565]">
               Manage your assigned work orders

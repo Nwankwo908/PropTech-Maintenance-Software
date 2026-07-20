@@ -2,16 +2,22 @@ import type { IssueParsed } from './issueAnalysis'
 import type { MaintenanceFormValues } from '../lib/maintenanceRequestValidation'
 import { getValidResidentSubmitAuth } from '../lib/residentAuth'
 import { supabase } from '../lib/supabase'
+import {
+  issueCategoryToVendorTrade,
+  VENDOR_TRADE_SLUGS,
+  type VendorTradeSlug,
+} from '../lib/vendorTrades'
 
-const ALLOWED_ISSUE_CATEGORIES = ['plumbing', 'electrical', 'appliance'] as const
+const ALLOWED_ISSUE_CATEGORIES: readonly VendorTradeSlug[] = VENDOR_TRADE_SLUGS
 
 function normalizeToAllowedIssueCategory(
   raw: string | null | undefined,
 ): string | null {
   if (!raw || typeof raw !== 'string') return null
-  const c = raw.trim().toLowerCase()
-  if (c === 'appliances') return 'appliance'
-  if ((ALLOWED_ISSUE_CATEGORIES as readonly string[]).includes(c)) return c
+  const normalized = issueCategoryToVendorTrade(raw)
+  if ((ALLOWED_ISSUE_CATEGORIES as readonly string[]).includes(normalized)) {
+    return normalized
+  }
   return null
 }
 

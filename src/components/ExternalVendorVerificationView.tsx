@@ -1,9 +1,6 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { PhoneTelLink } from '@/components/CallPhoneButton'
-import { ConversationMonitoringPanel } from '@/components/ConversationMonitoringModal'
-import { VendorCallFlowModal } from '@/components/VendorCallFlowModal'
 import { profileFromSessionUser } from '@/constants/sidebarAdminProfile'
-import type { VendorCallContext } from '@/lib/vendorCallFlow'
 import type { ExternalVendorDisplayRow } from '@/lib/externalVendorDisplay'
 import {
   buildExternalVendorVerificationProfile,
@@ -11,6 +8,13 @@ import {
   mergeVerificationChecklist,
 } from '@/lib/externalVendorVerification'
 import { supabase } from '@/lib/supabase'
+import {
+  coiStateFromLookup,
+  initialCoiVerificationState,
+  isCoiVerificationComplete,
+  lookupVendorCoi,
+  type VendorCoiVerificationState,
+} from '@/lib/vendorCoiVerification'
 import {
   initialLicenseVerificationState,
   isLicenseVerificationComplete,
@@ -21,38 +25,11 @@ import {
   verifyManualLicenseNumber,
   type VendorLicenseVerificationState,
 } from '@/lib/vendorLicenseVerification'
-import {
-  registerVendorSetupConversation,
-  resolveVendorSetupConversationId,
-  vendorEmailFromWebsite,
-  type VendorSetupThreadContext,
-} from '@/lib/vendorSetupConversation'
-import { hasVendorIntakeSubmission, readVendorIntakeSubmission } from '@/lib/vendorIntakeForm'
-import {
-  isVendorPricingConfirmedByAdmin,
-  markAdminPricingConfirmed,
-  readVendorPricingConfirmation,
-} from '@/lib/vendorPricingConfirmation'
-import {
-  initialVendorSetupVerificationState,
-  markVendorSetupFormReceived,
-  markVendorSetupRequestSent,
-  resolveVendorSetupVerificationState,
-  type VendorSetupVerificationState,
-} from '@/lib/vendorSetupVerification'
 
 function ChevronLeftIcon() {
   return (
     <svg className="size-3.5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} aria-hidden>
       <path d="M15 18l-6-6 6-6" strokeLinecap="round" strokeLinejoin="round" />
-    </svg>
-  )
-}
-
-function CloseIcon() {
-  return (
-    <svg className="size-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} aria-hidden>
-      <path d="M18 6L6 18M6 6l12 12" strokeLinecap="round" />
     </svg>
   )
 }
@@ -113,37 +90,6 @@ function PendingPill() {
   )
 }
 
-function ViewMessageButton({ onClick }: { onClick: () => void }) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className="inline-flex min-h-[36px] shrink-0 items-center justify-center rounded-[10px] border border-[#bfdbfe] bg-white px-3 py-2 text-[12px] font-medium text-[#155dfc] outline-none transition-colors hover:bg-[#eff6ff] focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2"
-    >
-      View message
-    </button>
-  )
-}
-
-function ConfirmPricingButton({
-  onClick,
-  disabled,
-}: {
-  onClick: () => void
-  disabled?: boolean
-}) {
-  return (
-    <button
-      type="button"
-      disabled={disabled}
-      onClick={onClick}
-      className="inline-flex min-h-[36px] shrink-0 items-center justify-center rounded-[10px] border border-[#101828] bg-white px-3 py-2 text-[12px] font-semibold text-[#101828] outline-none transition-colors hover:bg-[#f9fafb] focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50"
-    >
-      Confirm pricing
-    </button>
-  )
-}
-
 function ReadinessGauge({ percent }: { percent: number }) {
   const radius = 42
   const circumference = 2 * Math.PI * radius
@@ -172,11 +118,31 @@ function ReadinessGauge({ percent }: { percent: number }) {
   )
 }
 
-function SectionCard({ title, children }: { title: string; children: ReactNode }) {
+function SimulatedBadge() {
+  return (
+    <span
+      className="inline-flex shrink-0 items-center rounded-full bg-[#f3f4f6] px-2 py-0.5 text-[9px] font-bold uppercase tracking-[0.08em] text-[#6a7282]"
+      title="Demo data — not a live external check"
+    >
+      Simulated
+    </span>
+  )
+}
+
+function SectionCard({
+  title,
+  badge,
+  children,
+}: {
+  title: string
+  badge?: ReactNode
+  children: ReactNode
+}) {
   return (
     <div className="overflow-hidden rounded-2xl border border-black/10 bg-white">
-      <div className="border-b border-black/10 px-4 py-3.5">
+      <div className="flex items-center justify-between gap-2 border-b border-black/10 px-4 py-3.5">
         <h3 className="text-[14px] font-bold leading-5 text-[#0a0a0a]">{title}</h3>
+        {badge ?? null}
       </div>
       <div className="p-4">{children}</div>
     </div>
@@ -196,10 +162,10 @@ function SecondaryActionButton({
     <button
       type="button"
       onClick={onClick}
-      className={`inline-flex min-h-[44px] w-full items-center justify-center rounded-[10px] border px-4 py-2.5 text-[13px] font-medium outline-none transition-colors focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2 ${
+      className={`inline-flex min-h-[44px] w-full items-center justify-center rounded-[10px] border border-[#e5e7eb] px-4 py-2.5 text-[13px] font-medium outline-none transition-colors focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2 ${
         destructive
-          ? 'border-[#ffc9c9] text-[#fb2c36] hover:bg-[#fef2f2]'
-          : 'border-black/10 text-[#0a0a0a] hover:bg-[#f9fafb]'
+          ? 'text-[#fb2c36] hover:bg-[#fef2f2]'
+          : 'text-[#0a0a0a] hover:bg-[#f9fafb]'
       }`}
     >
       {label}
@@ -235,16 +201,11 @@ export type ExternalVendorVerificationViewProps = {
   vendor: ExternalVendorDisplayRow
   locationLabel: string
   issueCategory?: string | null
-  workOrderRef?: string | null
-  residentName?: string | null
   saving?: boolean
   saveError?: string | null
   onBack: () => void
   onAssign: () => void
   onReject: () => void
-  setupMonitoringOpen?: boolean
-  onSetupMonitoringOpen?: () => void
-  onSetupMonitoringClose?: () => void
 }
 
 /** Figma 839:1718 — Vendor verification before external assign. */
@@ -252,27 +213,17 @@ export function ExternalVendorVerificationView({
   vendor,
   locationLabel,
   issueCategory = null,
-  workOrderRef = null,
-  residentName = null,
   saving = false,
   saveError = null,
   onBack,
   onAssign,
   onReject,
-  setupMonitoringOpen = false,
-  onSetupMonitoringOpen,
-  onSetupMonitoringClose,
 }: ExternalVendorVerificationViewProps) {
   const approverName = useAdminApproverName()
-  const [callFlowOpen, setCallFlowOpen] = useState(false)
   const [licenseState, setLicenseState] = useState<VendorLicenseVerificationState>(
     initialLicenseVerificationState,
   )
-  const [localSetupState, setLocalSetupState] = useState<VendorSetupVerificationState>(
-    initialVendorSetupVerificationState,
-  )
-  const [pricingSyncTick, setPricingSyncTick] = useState(0)
-  const pricingSignatureRef = useRef('')
+  const [coiState, setCoiState] = useState<VendorCoiVerificationState>(initialCoiVerificationState)
   const [manualLicenseInput, setManualLicenseInput] = useState('')
   const [licenseVerifyError, setLicenseVerifyError] = useState<string | null>(null)
   const [licenseVerifying, setLicenseVerifying] = useState(false)
@@ -282,138 +233,46 @@ export function ExternalVendorVerificationView({
     [vendor, issueCategory, locationLabel],
   )
 
-  const setupContext = useMemo<VendorSetupThreadContext>(
-    () => ({
-      vendorName: vendor.name,
-      vendorPhone: vendor.phone,
-      vendorEmail: vendorEmailFromWebsite(vendor.website),
-      locationLabel,
-      tradeLabel: profile.tradeLabel,
-    }),
-    [vendor.name, vendor.phone, vendor.website, locationLabel, profile.tradeLabel],
-  )
-
-  const setupConversationId = useMemo(
-    () => resolveVendorSetupConversationId(setupContext),
-    [setupContext],
-  )
-
-  const setupState = useMemo(
-    () => resolveVendorSetupVerificationState(localSetupState, setupConversationId),
-    [localSetupState, setupConversationId, pricingSyncTick],
-  )
-
-  const intakeSubmission = useMemo(
-    () => readVendorIntakeSubmission(setupConversationId),
-    [setupConversationId, pricingSyncTick],
-  )
-
-  const pricingRows = useMemo(() => {
-    if (!intakeSubmission) return profile.pricingRows
-    const serviceCall = intakeSubmission.pricing.serviceCallFee.trim()
-    const hourly = intakeSubmission.pricing.hourlyRate.trim()
-    return profile.pricingRows.map((row) => {
-      if (row.label === 'Service call' && serviceCall) {
-        const num = Number(serviceCall.replace(/[^\d.]/g, ''))
-        const vendorPrice = Number.isFinite(num)
-          ? `$${num.toLocaleString(undefined, { maximumFractionDigits: 0 })}`
-          : `$${serviceCall}`
-        return { ...row, vendorPrice }
-      }
-      if (row.label === 'Hourly rate' && hourly) {
-        const num = Number(hourly.replace(/[^\d.]/g, ''))
-        const vendorPrice = Number.isFinite(num)
-          ? `$${num.toLocaleString(undefined, { maximumFractionDigits: 0 })}/hr`
-          : `$${hourly}/hr`
-        return { ...row, vendorPrice }
-      }
-      return row
-    })
-  }, [intakeSubmission, profile.pricingRows])
-
   const checklist = useMemo(
-    () => mergeVerificationChecklist(profile.checklist, licenseState, setupState),
-    [profile.checklist, licenseState, setupState],
+    () => mergeVerificationChecklist(profile.checklist, licenseState, coiState),
+    [profile.checklist, licenseState, coiState],
   )
 
   const metrics = useMemo(
-    () => computeVerificationMetrics(profile.checklist, licenseState, setupState),
-    [profile.checklist, licenseState, setupState],
-  )
-
-  const callContext = useMemo<VendorCallContext>(
-    () => ({
-      workOrderRef,
-      issueCategory,
-      locationLabel,
-      residentName,
-    }),
-    [workOrderRef, issueCategory, locationLabel, residentName],
+    () => computeVerificationMetrics(profile.checklist, licenseState, coiState),
+    [profile.checklist, licenseState, coiState],
   )
 
   const licenseVerified = isLicenseVerificationComplete(licenseState)
-  const setupComplete = setupState.status === 'complete'
-  const adminPricingConfirmed = isVendorPricingConfirmedByAdmin(setupConversationId)
+  const coiVerified = isCoiVerificationComplete(coiState)
   const assignBlocked =
-    !licenseVerified || licenseState.status === 'checking' || !setupComplete
-
-  function handleAdminConfirmPricing() {
-    markAdminPricingConfirmed(setupConversationId)
-    setPricingSyncTick((tick) => tick + 1)
-  }
+    !licenseVerified ||
+    licenseState.status === 'checking' ||
+    !coiVerified ||
+    coiState.status === 'checking'
 
   useEffect(() => {
     let cancelled = false
     setLicenseState(initialLicenseVerificationState())
+    setCoiState(initialCoiVerificationState())
     setManualLicenseInput('')
     setLicenseVerifyError(null)
     setLicenseVerifying(false)
-    setLocalSetupState(initialVendorSetupVerificationState())
-    setPricingSyncTick(0)
-    pricingSignatureRef.current = ''
 
     void lookupVendorLicense(vendor, profile.tradeLabel).then((result) => {
       if (cancelled) return
       setLicenseState(licenseStateFromLookup(result))
     })
 
-    const intakeTimer = window.setTimeout(() => {
+    void lookupVendorCoi(vendor).then((result) => {
       if (cancelled) return
-      registerVendorSetupConversation(setupContext, { sentAtMs: Date.now() })
-      setLocalSetupState(markVendorSetupRequestSent())
-    }, 900)
+      setCoiState(coiStateFromLookup(result))
+    })
 
     return () => {
       cancelled = true
-      window.clearTimeout(intakeTimer)
     }
-  }, [vendor, profile.tradeLabel, setupContext])
-
-  useEffect(() => {
-    function syncVendorSetupProgress() {
-      const conversationId = resolveVendorSetupConversationId(setupContext)
-      const pricing = readVendorPricingConfirmation(conversationId)
-      const pricingSignature = `${pricing.vendorConfirmedAtMs ?? ''}:${pricing.adminConfirmedAtMs ?? ''}`
-      if (pricingSignature !== pricingSignatureRef.current) {
-        pricingSignatureRef.current = pricingSignature
-        setPricingSyncTick((tick) => tick + 1)
-      }
-
-      if (hasVendorIntakeSubmission(conversationId)) {
-        setLocalSetupState((current) => {
-          if (current.status === 'sending' || current.status === 'awaiting') {
-            setPricingSyncTick((tick) => tick + 1)
-            return markVendorSetupFormReceived()
-          }
-          return current
-        })
-      }
-    }
-
-    syncVendorSetupProgress()
-    const interval = window.setInterval(syncVendorSetupProgress, 3000)
-    return () => window.clearInterval(interval)
-  }, [setupContext])
+  }, [vendor, profile.tradeLabel])
 
   async function handleVerifyLicense() {
     setLicenseVerifyError(null)
@@ -431,45 +290,6 @@ export function ExternalVendorVerificationView({
     } finally {
       setLicenseVerifying(false)
     }
-  }
-
-  if (setupMonitoringOpen && setupConversationId) {
-    return (
-      <div className="relative flex min-h-0 flex-1 flex-col">
-        <header className="relative border-b border-[#e5e7eb] px-6 pb-4 pt-6 pr-12">
-          <button
-            type="button"
-            disabled={saving}
-            onClick={() => onSetupMonitoringClose?.()}
-            className="inline-flex items-center gap-1 text-[12px] font-medium text-[#717182] outline-none hover:text-[#0a0a0a] focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2 disabled:opacity-50"
-          >
-            <ChevronLeftIcon />
-            Back to verification
-          </button>
-          <button
-            type="button"
-            disabled={saving}
-            onClick={() => onSetupMonitoringClose?.()}
-            aria-label="Close vendor setup messages"
-            className="absolute right-4 top-4 z-10 rounded-lg p-1 text-[#9ca3af] outline-none hover:bg-black/5 hover:text-[#364153] focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2 disabled:opacity-50"
-          >
-            <CloseIcon />
-          </button>
-          <h2 className="mt-3 text-[18px] font-semibold leading-7 tracking-[-0.3px] text-[#0a0a0a]">
-            Vendor setup messages
-          </h2>
-          <p className="mt-1 text-[13px] leading-5 text-[#6a7282]">
-            {profile.vendorName} · Ulo outreach and replies
-          </p>
-        </header>
-        <ConversationMonitoringPanel
-          conversationId={setupConversationId}
-          active={setupMonitoringOpen}
-          embedded
-          refreshKey={pricingSyncTick}
-        />
-      </div>
-    )
   }
 
   return (
@@ -541,7 +361,11 @@ export function ExternalVendorVerificationView({
               </div>
             </div>
 
-            <SectionCard title="Verification Checklist">
+            <SectionCard title="Verification Checklist" badge={<SimulatedBadge />}>
+              <p className="mb-3 rounded-lg border border-[#fde68a] bg-[#fffbeb] px-3 py-2 text-[10px] leading-[15px] text-[#92400e]">
+                Demo only: license and insurance results are simulated, not live checks against the
+                state licensing board or insurance carrier.
+              </p>
               <ul className="space-y-3">
                 {checklist.map((item) => (
                   <li
@@ -549,13 +373,7 @@ export function ExternalVendorVerificationView({
                     className={`flex items-start justify-between gap-3 rounded-xl border px-3 py-2.5 ${
                       item.id === 'license' && licenseRequiresManualVerify(licenseState)
                         ? 'border-[#fde68a] bg-[#fffbeb]'
-                        : item.id === 'vendor-setup' && setupState.status === 'form_received'
-                          ? 'border-[#fde68a] bg-[#fffbeb]'
-                          : item.id === 'vendor-setup' && setupState.status === 'awaiting'
-                            ? 'border-[#bfdbfe] bg-[#eff6ff]'
-                            : item.id === 'vendor-setup' && setupState.status === 'sending'
-                              ? 'border-[#e0e7ff] bg-[#f5f7ff]'
-                              : 'border-[#a4f4cf] bg-[#fafffd]'
+                        : 'border-[#a4f4cf] bg-[#fafffd]'
                     }`}
                   >
                     <div className="min-w-0 flex-1">
@@ -566,6 +384,7 @@ export function ExternalVendorVerificationView({
                             Required
                           </span>
                         ) : null}
+                        {item.id === 'license' || item.id === 'coi' ? <SimulatedBadge /> : null}
                       </div>
                       <p className="mt-0.5 text-[10px] leading-[15px] text-[#717182]">
                         {item.id === 'license' && licenseState.status === 'checking' ? (
@@ -573,53 +392,40 @@ export function ExternalVendorVerificationView({
                             <span className="size-2 animate-pulse rounded-full bg-[#155dfc]" aria-hidden />
                             {licenseState.detail}
                           </span>
-                        ) : item.id === 'vendor-setup' && setupState.status === 'sending' ? (
+                        ) : item.id === 'coi' && coiState.status === 'checking' ? (
                           <span className="inline-flex items-center gap-1.5">
                             <span className="size-2 animate-pulse rounded-full bg-[#155dfc]" aria-hidden />
-                            {setupState.detail}
+                            {coiState.detail}
                           </span>
                         ) : (
                           <>
                             {item.detail}
-                            {item.id === 'vendor-setup' && setupState.status === 'awaiting' ? (
+                            {item.id === 'coi' && coiState.monitoringActive ? (
                               <span className="mt-0.5 block text-[#6a7282]">
-                                Covers insurance, pricing, and availability
-                              </span>
-                            ) : null}
-                            {item.id === 'vendor-setup' && setupState.status === 'form_received' ? (
-                              <span className="mt-0.5 block text-[#6a7282]">
-                                Review submitted rates in Pricing vs Market, then confirm here once you
-                                agree
+                                Certificial continuous monitoring enrolled
+                                {coiState.expirationDate
+                                  ? ` · Exp ${coiState.expirationDate}`
+                                  : ''}
                               </span>
                             ) : null}
                           </>
                         )}
                       </p>
-                      {item.id === 'license' && item.requiresManualVerify ? (
+                      {item.id === 'license' && licenseRequiresManualVerify(licenseState) ? (
                         <div className="mt-2">
-                          <div className="flex items-stretch gap-2">
-                            <div className="flex min-h-[36px] min-w-0 flex-1 items-center rounded-[10px] border border-[#e5e7eb] bg-white px-3">
-                              <input
-                                type="text"
-                                value={manualLicenseInput}
-                                onChange={(event) => {
-                                  setManualLicenseInput(event.target.value)
-                                  if (licenseVerifyError) setLicenseVerifyError(null)
-                                }}
-                                onKeyDown={(event) => {
-                                  if (event.key === 'Enter' && manualLicenseInput.trim()) {
-                                    void handleVerifyLicense()
-                                  }
-                                }}
-                                placeholder="Enter license number"
-                                className="h-full w-full bg-transparent text-[12px] text-[#0a0a0a] outline-none placeholder:text-[#9ca3af]"
-                              />
-                            </div>
+                          <div className="flex flex-wrap items-center gap-2">
+                            <input
+                              type="text"
+                              value={manualLicenseInput}
+                              onChange={(event) => setManualLicenseInput(event.target.value)}
+                              placeholder="Enter license number"
+                              className="min-h-[36px] min-w-0 flex-1 rounded-[10px] border border-[#d1d5dc] bg-white px-3 py-2 text-[12px] text-[#101828] outline-none focus:border-[#155dfc] focus:ring-2 focus:ring-[#155dfc]/20"
+                            />
                             <button
                               type="button"
                               disabled={licenseVerifying || !manualLicenseInput.trim()}
                               onClick={() => void handleVerifyLicense()}
-                              className="inline-flex min-h-[36px] shrink-0 items-center justify-center rounded-[10px] border border-[#101828] bg-white px-3 py-2 text-[12px] font-semibold text-[#101828] outline-none hover:bg-[#f9fafb] focus-visible:ring-2 focus-visible:ring-[#0030b5] disabled:pointer-events-none disabled:opacity-50"
+                              className="inline-flex min-h-[36px] shrink-0 items-center justify-center rounded-[10px] border border-[#e5e7eb] bg-white px-3 py-2 text-[12px] font-semibold text-[#101828] outline-none hover:bg-[#f9fafb] focus-visible:ring-2 focus-visible:ring-[#0030b5] disabled:pointer-events-none disabled:opacity-50"
                             >
                               {licenseVerifying ? 'Checking…' : 'Verify License'}
                             </button>
@@ -631,21 +437,12 @@ export function ExternalVendorVerificationView({
                           ) : null}
                         </div>
                       ) : null}
-                      {item.id === 'vendor-setup' &&
-                      setupState.status === 'form_received' &&
-                      !adminPricingConfirmed ? (
-                        <div className="mt-2">
-                          <ConfirmPricingButton onClick={handleAdminConfirmPricing} />
-                        </div>
-                      ) : null}
                     </div>
                     {item.verified ? (
                       <VerifiedPill />
-                    ) : item.requiresViewMessageAction ? (
-                      <ViewMessageButton onClick={() => onSetupMonitoringOpen?.()} />
                     ) : item.id === 'license' && licenseState.status === 'checking' ? (
                       <PendingPill />
-                    ) : item.id === 'vendor-setup' && setupState.status === 'sending' ? (
+                    ) : item.id === 'coi' && coiState.status === 'checking' ? (
                       <PendingPill />
                     ) : null}
                   </li>
@@ -669,20 +466,9 @@ export function ExternalVendorVerificationView({
               </div>
             </SectionCard>
 
-            <SectionCard title="Work Order Fit">
-              <ul className="space-y-1.5">
-                {profile.workOrderFit.map((line) => (
-                  <li key={line} className="flex items-start gap-2">
-                    <CheckIcon className="mt-0.5 size-[13px] shrink-0 text-[#00bc7d]" />
-                    <span className="text-[11px] leading-[16.5px] text-[#0a0a0a]">{line}</span>
-                  </li>
-                ))}
-              </ul>
-            </SectionCard>
-
             <SectionCard title="Pricing vs Market">
               <div className="space-y-3">
-                {pricingRows.map((row) => (
+                {profile.pricingRows.map((row) => (
                   <div key={row.label}>
                     <div className="flex items-start justify-between gap-2">
                       <span className="text-[11px] text-[#717182]">{row.label}</span>
@@ -695,74 +481,42 @@ export function ExternalVendorVerificationView({
             </SectionCard>
           </div>
         </div>
+      </div>
 
-        <div className="mt-4 rounded-2xl border border-black/10 bg-white p-5">
-          <h3 className="text-[14px] font-bold leading-5 text-[#0a0a0a]">Admin Actions</h3>
-          {assignBlocked && !saving ? (
-            <p className="mt-2 text-[12px] leading-[18px] text-[#a16207]">
-              {licenseState.status === 'checking'
-                ? 'Waiting for state licensing API…'
+      <div className="shrink-0 px-6 pb-5 pt-3">
+        {assignBlocked && !saving ? (
+          <p className="mb-3 text-[12px] leading-[18px] text-[#a16207]">
+            {licenseState.status === 'checking'
+              ? 'Waiting for state licensing API (simulated)…'
+              : coiState.status === 'checking'
+                ? 'Waiting for Certificial COI verification (simulated)…'
                 : !licenseVerified
                   ? 'License verification is required before assigning this vendor.'
-                  : setupState.status === 'form_received'
-                    ? 'Confirm pricing with the vendor before assigning.'
-                    : setupState.status === 'awaiting' || setupState.status === 'sending'
-                      ? 'Vendor setup (insurance, pricing, availability) must be complete before assigning.'
-                      : 'Complete vendor verification before assigning.'}
-            </p>
-          ) : null}
-          <div className="mt-4 space-y-3">
-            <button
-              type="button"
-              disabled={saving || assignBlocked}
-              onClick={onAssign}
-              className="inline-flex min-h-[44px] w-full items-center justify-center gap-2 rounded-[10px] bg-[#0a4d38] px-4 py-2.5 text-[13px] font-medium text-white outline-none transition-colors hover:bg-[#083828] focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-60"
-            >
-              <ShieldCheckIcon />
-              {saving ? 'Assigning…' : 'Assign Vendor'}
-            </button>
+                  : !coiVerified
+                    ? 'Active COI verification is required before assigning this vendor.'
+                    : 'Complete vendor verification before assigning.'}
+          </p>
+        ) : null}
+        <div className="space-y-3">
+          <button
+            type="button"
+            disabled={saving || assignBlocked}
+            onClick={onAssign}
+            className="inline-flex min-h-[44px] w-full items-center justify-center gap-2 rounded-[10px] bg-[#0a4d38] px-4 py-2.5 text-[13px] font-medium text-white outline-none transition-colors hover:bg-[#083828] focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-60"
+          >
+            <ShieldCheckIcon />
+            {saving ? 'Assigning…' : 'Assign Vendor'}
+          </button>
 
-            <div className="grid gap-2 sm:grid-cols-2">
-              {profile.phone ? (
-                <button
-                  type="button"
-                  disabled={saving}
-                  onClick={() => setCallFlowOpen(true)}
-                  className="inline-flex min-h-[44px] w-full items-center justify-center gap-1.5 rounded-[10px] border border-black/10 bg-white px-4 py-2.5 text-[13px] font-medium text-[#0a0a0a] outline-none transition-colors hover:bg-[#f9fafb] focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50"
-                >
-                  <svg className="size-3.5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} aria-hidden>
-                    <path
-                      d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.127.96.361 1.903.7 2.81a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.907.339 1.85.573 2.81.7A2 2 0 0 1 22 16.92z"
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                    />
-                  </svg>
-                  Call Vendor
-                </button>
-              ) : (
-                <SecondaryActionButton label="Call Vendor" />
-              )}
-              <SecondaryActionButton label="Reject Vendor" destructive onClick={onReject} />
-            </div>
-          </div>
+          <SecondaryActionButton label="Reject Vendor" destructive onClick={onReject} />
         </div>
 
         {saveError ? (
-          <p className="mt-4 text-[13px] leading-4 text-error" role="alert">
+          <p className="mt-3 text-[13px] leading-4 text-error" role="alert">
             {saveError}
           </p>
         ) : null}
       </div>
-
-      {profile.phone ? (
-        <VendorCallFlowModal
-          open={callFlowOpen}
-          onClose={() => setCallFlowOpen(false)}
-          vendorName={profile.vendorName}
-          vendorPhone={profile.phone}
-          context={callContext}
-        />
-      ) : null}
     </div>
   )
 }

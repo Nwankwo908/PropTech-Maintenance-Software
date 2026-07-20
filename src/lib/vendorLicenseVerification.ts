@@ -1,6 +1,9 @@
-import type { ExternalVendorDisplayRow } from '@/lib/externalVendorDisplay'
-
 export type VendorLicenseLookupStatus = 'checking' | 'auto_verified' | 'not_found' | 'expired' | 'manual_verified'
+
+export type VendorLicenseLookupSubject = {
+  name: string
+  phone?: string | null
+}
 
 export type VendorLicenseLookupResult = {
   status: Exclude<VendorLicenseLookupStatus, 'checking' | 'manual_verified'>
@@ -37,18 +40,24 @@ function boardLabelForTrade(tradeLabel: string): string {
   if (trade.includes('plumb')) return 'Illinois Plumbing Contractor (IDFPR)'
   if (trade.includes('hvac')) return 'Illinois HVAC Contractor (IDFPR)'
   if (trade.includes('elect')) return 'Illinois Electrical Contractor (IDFPR)'
+  if (trade.includes('appliance')) return 'Illinois Appliance Repair (IDFPR)'
+  if (trade.includes('roof')) return 'Illinois Roofing Contractor (IDFPR)'
+  if (trade.includes('pest')) return 'Illinois Pest Control (IDFPR)'
   return 'Illinois Professional License (IDFPR)'
 }
 
-/** Simulates state licensing board API lookup when a vendor is selected. */
-export async function lookupVendorLicense(
-  vendor: ExternalVendorDisplayRow,
-  tradeLabel: string,
-): Promise<VendorLicenseLookupResult> {
-  await new Promise((resolve) => setTimeout(resolve, 900))
+function tradeLabelOrDefault(tradeLabel: string | null | undefined): string {
+  return tradeLabel?.trim() || 'Maintenance'
+}
 
-  const bucket = stableBucket(`${vendor.name}|${vendor.phone ?? ''}|${tradeLabel}`)
-  const boardLabel = boardLabelForTrade(tradeLabel)
+/** Synchronous state-board license resolution (same rules as the async lookup). */
+export function resolveVendorLicenseLookup(
+  vendor: VendorLicenseLookupSubject,
+  tradeLabel: string,
+): VendorLicenseLookupResult {
+  const trade = tradeLabelOrDefault(tradeLabel)
+  const bucket = stableBucket(`${vendor.name}|${vendor.phone ?? ''}|${trade}`)
+  const boardLabel = boardLabelForTrade(trade)
   const licenseNumber = mockLicenseNumber(vendor.name)
 
   if (bucket < 55) {
@@ -80,11 +89,36 @@ export async function lookupVendorLicense(
   }
 }
 
+/** True when the state API already returns an active verified license. */
+export function hasAutoVerifiedLicense(
+  vendor: VendorLicenseLookupSubject,
+  tradeLabel: string | null | undefined,
+): boolean {
+  return resolveVendorLicenseLookup(vendor, tradeLabelOrDefault(tradeLabel)).status === 'auto_verified'
+}
+
+/** Keep only vendors whose license already comes back verified (drop not-found / expired). */
+export function filterVendorsWithVerifiedLicense<T extends VendorLicenseLookupSubject>(
+  vendors: T[],
+  tradeLabel: string | null | undefined,
+): T[] {
+  return vendors.filter((vendor) => hasAutoVerifiedLicense(vendor, tradeLabel))
+}
+
+/** Simulates state licensing board API lookup when a vendor is selected. */
+export async function lookupVendorLicense(
+  vendor: VendorLicenseLookupSubject,
+  tradeLabel: string,
+): Promise<VendorLicenseLookupResult> {
+  await new Promise((resolve) => setTimeout(resolve, 900))
+  return resolveVendorLicenseLookup(vendor, tradeLabel)
+}
+
 export function initialLicenseVerificationState(): VendorLicenseVerificationState {
   return {
     status: 'checking',
     licenseNumber: null,
-    detail: 'Querying state licensing API…',
+    detail: 'Querying state licensing API (simulated)…',
     boardLabel: 'State licensing board',
     approverName: null,
   }
@@ -106,13 +140,13 @@ function normalizeLicenseNumber(value: string): string {
 }
 
 /** Expected license on file for this vendor (state licensing records). */
-export function expectedLicenseNumberForVendor(vendor: ExternalVendorDisplayRow): string {
+export function expectedLicenseNumberForVendor(vendor: VendorLicenseLookupSubject): string {
   return mockLicenseNumber(vendor.name)
 }
 
 /** Validates a manually entered license number against state licensing records. */
 export async function verifyManualLicenseNumber(
-  vendor: ExternalVendorDisplayRow,
+  vendor: VendorLicenseLookupSubject,
   licenseNumber: string,
 ): Promise<{ ok: true } | { ok: false; message: string }> {
   await new Promise((resolve) => setTimeout(resolve, 400))

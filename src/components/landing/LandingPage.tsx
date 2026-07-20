@@ -481,7 +481,7 @@ export function LandingPage() {
         {/* How it Works */}
         <section id="how-it-works" className={`scroll-mt-20 ${LANDING_SECTION_GAP}`}>
           <LandingContentShell>
-          <div className="rounded-3xl border border-gray-200/80 bg-[#E6E9F2] p-6 shadow-[0_20px_30px_rgba(0,0,0,0.03),0_1px_1.5px_rgba(0,0,0,0.02)] sm:p-10 lg:shadow-none">
+          <div className="rounded-3xl border border-gray-200/80 bg-white p-6 shadow-[0_20px_30px_rgba(0,0,0,0.03),0_1px_1.5px_rgba(0,0,0,0.02)] sm:p-10 lg:shadow-none">
             <h2 className="inline-flex items-center gap-2 rounded-full border border-[#e5e7eb] bg-white px-4 py-2 font-mono text-xs font-bold uppercase tracking-wide text-slate-900">
               <span className="size-2 shrink-0 rounded-full bg-[#7dd3fc]" aria-hidden />
               How it Works

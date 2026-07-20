@@ -1,4 +1,4 @@
-import { normIssueCategory } from '@/lib/vendorIssueCategory'
+import { formatVendorTradeLabel } from '@/lib/vendorTrades'
 
 export function buildLeaseRenewalCallReasonLine(workflowRef?: string | null): string {
   const ref = workflowRef?.trim()
@@ -33,23 +33,38 @@ const LIFECYCLE_WORK_ORDER_REF_TEMPLATES = new Set([
   'lease_renewal',
 ])
 
-/** Active Tasks pipeline ref — lifecycle runs use workflow run id (e.g. WO-D777). */
+/**
+ * Active Tasks pipeline ref.
+ * Lifecycle runs use workflow run id (e.g. WO-D777).
+ * Never format an sms_conversation id as WO-XXXX — that created phantom work orders.
+ */
 export function formatWorkOrderRefForWorkflowRun(
   templateId: string,
   runId: string,
   entityId?: string | null,
+  entityType?: string | null,
 ): string {
-  const source = LIFECYCLE_WORK_ORDER_REF_TEMPLATES.has(templateId)
-    ? runId
-    : (entityId?.trim() || runId)
+  if (LIFECYCLE_WORK_ORDER_REF_TEMPLATES.has(templateId)) {
+    return formatWorkOrderRefFromTicketId(runId)
+  }
+
+  const type = (entityType ?? '').trim().toLowerCase()
+  // Mid-intake without a ticket yet — use INT- from the run, not the conversation UUID.
+  if (
+    templateId === 'maintenance_intake' &&
+    (type === 'sms_conversation' || !type)
+  ) {
+    const compact = runId.replace(/-/g, '').slice(0, 4).toUpperCase()
+    return `INT-${compact || '0000'}`
+  }
+
+  const source = entityId?.trim() || runId
   return formatWorkOrderRefFromTicketId(source)
 }
 
 export function formatIssueLabel(issueCategory: string | null | undefined): string {
-  const n = normIssueCategory(issueCategory)
-  if (!n) return 'Maintenance repair'
-  if (n === 'hvac') return 'HVAC repair'
-  return `${n.replace(/_/g, ' ')} repair`.replace(/\b\w/g, (c) => c.toUpperCase())
+  if (!issueCategory?.trim()) return 'Maintenance repair'
+  return `${formatVendorTradeLabel(issueCategory)} repair`
 }
 
 export function buildVendorCallReasonLine(context: VendorCallContext): string {

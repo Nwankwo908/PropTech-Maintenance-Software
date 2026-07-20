@@ -3,6 +3,11 @@ import { useSearchParams } from 'react-router-dom'
 import { ConversationMonitoringModal } from '@/components/ConversationMonitoringModal'
 import { getActiveLandlordId } from '@/lib/activeLandlord'
 import {
+  isCommunicationConversationUnread,
+  markCommunicationConversationRead,
+} from '@/lib/communicationInboxRead'
+import { ensureOnboardingDashboardMatchesPortfolio } from '@/lib/landlordOnboarding'
+import {
   vendorSetupInboxContext,
   vendorSetupInboxStatus,
 } from '@/lib/vendorOutreachCopy'
@@ -95,12 +100,29 @@ function conversationStatusLabel(
   conversationType: string,
   status: string,
   hasMaintenanceRequest: boolean,
+  latestBody?: string,
 ): string {
+  if (latestBody && /finished the vendor verification form|verification form submitted/i.test(latestBody)) {
+    return 'Form submitted'
+  }
+  if (
+    latestBody &&
+    /submitted an estimate for this job|reply approve or decline/i.test(latestBody)
+  ) {
+    return 'Estimate pending'
+  }
   if (hasMaintenanceRequest) {
     return `Maintenance · ${humanizeStatus(status)}`
   }
   if (conversationType === 'ai_copilot') {
     return 'Handled by Ulo'
+  }
+  if (
+    conversationType === 'vendor_alert' &&
+    latestBody &&
+    /preferred vendor network|quick verification/i.test(latestBody)
+  ) {
+    return 'Waiting for reply'
   }
   return humanizeStatus(status)
 }
@@ -376,11 +398,6 @@ export function AdminCommunicationDashboard() {
   const [monitoringConversationId, setMonitoringConversationId] = useState<string | null>(null)
 
   useEffect(() => {
-    const thread = searchParams.get('thread')?.trim()
-    if (thread) setMonitoringConversationId(thread)
-  }, [searchParams])
-
-  useEffect(() => {
     let cancelled = false
 
     async function load() {
@@ -394,6 +411,11 @@ export function AdminCommunicationDashboard() {
       setError(null)
       setMetrics(null)
       const landlordId = getActiveLandlordId()
+
+      // Strict rule: guided New Landlord only surfaces portfolio-matched threads.
+      const dashboardSync = await ensureOnboardingDashboardMatchesPortfolio(landlordId)
+      if (cancelled) return
+      const allowImportedOperations = dashboardSync.allowImportedOperations
 
       // KPI metrics — scoped to the active landlord, computed from the full
       // conversation/message history (not just the 50-row inbox window).
@@ -471,7 +493,20 @@ export function AdminCommunicationDashboard() {
         for (const [id, status] of convStatusById) {
           const closed = CLOSED_STATUSES.has(status)
           if (!closed) openConversations += 1
-          if (latestDirectionByConv.get(id) === 'inbound' && !closed) unreadMessages += 1
+          const latest = messagesByConv.get(id)?.[0]
+          const lastActivityMs = latest?.createdAtMs ?? 0
+          const activityLooksUnread =
+            latest?.direction === 'inbound' && !closed
+          if (
+            isCommunicationConversationUnread({
+              landlordId,
+              conversationId: id,
+              lastActivityMs,
+              activityLooksUnread,
+            })
+          ) {
+            unreadMessages += 1
+          }
         }
 
         let repliedCount = 0
@@ -523,19 +558,54 @@ export function AdminCommunicationDashboard() {
         return
       }
 
-      const rows = (convRows ?? []).filter((row) =>
+      const rows = ((convRows ?? []).filter((row) =>
         isCommunicationInboxConversationType(
           asString((row as Record<string, unknown>).conversation_type),
         ),
-      ) as Record<string, unknown>[]
-      const conversationIds = rows.map((r) => asString(r.id)).filter(Boolean)
+      ) as Record<string, unknown>[])
+
+      // Fail-closed for guided: only conversations tied to this landlord's residents/vendors.
+      let scopedRows = rows
+      if (!allowImportedOperations) {
+        const [portfolioResidents, portfolioVendors] = await Promise.all([
+          supabase.from('users').select('id, phone').eq('landlord_id', landlordId).limit(2000),
+          supabase.from('vendors').select('id, phone').eq('landlord_id', landlordId).limit(500),
+        ])
+        if (cancelled) return
+        const allowedResidentIds = new Set(
+          (portfolioResidents.data ?? []).map((r) => asString((r as { id: string }).id)).filter(Boolean),
+        )
+        const allowedVendorIds = new Set(
+          (portfolioVendors.data ?? []).map((r) => asString((r as { id: string }).id)).filter(Boolean),
+        )
+        const allowedPhones = new Set<string>()
+        for (const r of portfolioResidents.data ?? []) {
+          const digits = asString((r as { phone?: string }).phone).replace(/\D/g, '')
+          if (digits) allowedPhones.add(digits)
+        }
+        for (const v of portfolioVendors.data ?? []) {
+          const digits = asString((v as { phone?: string }).phone).replace(/\D/g, '')
+          if (digits) allowedPhones.add(digits)
+        }
+        scopedRows = rows.filter((r) => {
+          const residentId = asString(r.resident_id)
+          const vendorId = asString(r.vendor_id)
+          const phone = asString(r.external_phone_number).replace(/\D/g, '')
+          if (residentId && allowedResidentIds.has(residentId)) return true
+          if (vendorId && allowedVendorIds.has(vendorId)) return true
+          if (phone && allowedPhones.has(phone)) return true
+          return false
+        })
+      }
+
+      const conversationIds = scopedRows.map((r) => asString(r.id)).filter(Boolean)
       const residentIds = [
-        ...new Set(rows.map((r) => asString(r.resident_id)).filter(Boolean)),
+        ...new Set(scopedRows.map((r) => asString(r.resident_id)).filter(Boolean)),
       ]
       const vendorIds = [
-        ...new Set(rows.map((r) => asString(r.vendor_id)).filter(Boolean)),
+        ...new Set(scopedRows.map((r) => asString(r.vendor_id)).filter(Boolean)),
       ]
-      const unitIds = [...new Set(rows.map((r) => asString(r.unit_id)).filter(Boolean))]
+      const unitIds = [...new Set(scopedRows.map((r) => asString(r.unit_id)).filter(Boolean))]
 
       const [messagesResult, residentsResult, vendorsResult, unitsResult] =
         await Promise.allSettled([
@@ -552,15 +622,21 @@ export function AdminCommunicationDashboard() {
             ? supabase
                 .from('users')
                 .select('id, full_name, unit, building')
+                .eq('landlord_id', landlordId)
                 .in('id', residentIds)
             : Promise.resolve({ data: [], error: null }),
           vendorIds.length
-            ? supabase.from('vendors').select('id, name').in('id', vendorIds)
+            ? supabase
+                .from('vendors')
+                .select('id, name')
+                .eq('landlord_id', landlordId)
+                .in('id', vendorIds)
             : Promise.resolve({ data: [], error: null }),
           unitIds.length
             ? supabase
                 .from('units')
                 .select('id, unit_label, building')
+                .eq('landlord_id', landlordId)
                 .in('id', unitIds)
             : Promise.resolve({ data: [], error: null }),
         ])
@@ -611,7 +687,7 @@ export function AdminCommunicationDashboard() {
         }
       }
 
-      const mapped: Conversation[] = rows.map((r) => {
+      const mapped: Conversation[] = scopedRows.map((r) => {
         const id = asString(r.id)
         const resident = residentById.get(asString(r.resident_id))
         const vendorName = vendorById.get(asString(r.vendor_id))
@@ -639,7 +715,14 @@ export function AdminCommunicationDashboard() {
           asString(r.conversation_type),
           status,
           Boolean(asString(r.maintenance_request_id)),
+          latest?.body,
         )
+        const lastActivity =
+          latest?.createdAt ?? new Date(asString(r.updated_at)).getTime()
+        const activityLooksUnread =
+          kind !== 'ai' &&
+          (NEEDS_ATTENTION_STATUSES.has(status) ||
+            (latest?.direction === 'inbound' && !CLOSED_STATUSES.has(status)))
 
         return {
           id,
@@ -648,16 +731,20 @@ export function AdminCommunicationDashboard() {
           context,
           preview: latest?.body || 'No messages yet.',
           status: statusLabel,
-          unread:
-            kind !== 'ai' &&
-            (NEEDS_ATTENTION_STATUSES.has(status) ||
-              (latest?.direction === 'inbound' && !CLOSED_STATUSES.has(status))),
-          lastActivity:
-            latest?.createdAt ?? new Date(asString(r.updated_at)).getTime(),
+          unread: isCommunicationConversationUnread({
+            landlordId,
+            conversationId: id,
+            lastActivityMs: lastActivity,
+            activityLooksUnread,
+          }),
+          lastActivity,
         }
       })
 
-      const workOrderInboxRows = await fetchCommunicationWorkOrderInboxRows().catch(() => [])
+      // Guided onboarding: never merge synthetic workflow / leftover import threads.
+      const workOrderInboxRows = allowImportedOperations
+        ? await fetchCommunicationWorkOrderInboxRows().catch(() => [])
+        : []
       if (cancelled) return
 
       const existingIds = new Set(mapped.map((entry) => entry.id))
@@ -680,7 +767,7 @@ export function AdminCommunicationDashboard() {
         existingIds.add(workOrder.id)
       }
 
-      for (const setup of listVendorSetupInboxEntries()) {
+      for (const setup of listVendorSetupInboxEntries(landlordId)) {
         if (existingIds.has(setup.conversationId)) continue
         mapped.push({
           id: setup.conversationId,
@@ -689,7 +776,13 @@ export function AdminCommunicationDashboard() {
           context: vendorSetupInboxContext(setup.locationLabel),
           preview: setup.preview,
           status: vendorSetupInboxStatus(),
-          unread: false,
+          unread: isCommunicationConversationUnread({
+            landlordId,
+            conversationId: setup.conversationId,
+            lastActivityMs: setup.lastActivityMs,
+            activityLooksUnread:
+              /submitted|finished the vendor verification|form submitted/i.test(setup.preview),
+          }),
           lastActivity: setup.lastActivityMs,
         })
         existingIds.add(setup.conversationId)
@@ -704,6 +797,38 @@ export function AdminCommunicationDashboard() {
       cancelled = true
     }
   }, [])
+
+  function openConversation(conversationId: string) {
+    const landlordId = getActiveLandlordId()
+    setConversations((prev) => {
+      const row = prev.find((entry) => entry.id === conversationId)
+      const readAt = Math.max(Date.now(), row?.lastActivity ?? 0)
+      markCommunicationConversationRead(landlordId, conversationId, readAt)
+      const wasUnread = Boolean(row?.unread)
+      if (wasUnread) {
+        setMetrics((metricsPrev) =>
+          metricsPrev
+            ? {
+                ...metricsPrev,
+                unreadMessages: Math.max(0, metricsPrev.unreadMessages - 1),
+              }
+            : metricsPrev,
+        )
+      }
+      return prev.map((entry) =>
+        entry.id === conversationId ? { ...entry, unread: false } : entry,
+      )
+    })
+    setMonitoringConversationId(conversationId)
+  }
+
+  useEffect(() => {
+    const thread = searchParams.get('thread')?.trim()
+    if (!thread) return
+    openConversation(thread)
+    // Deep-link open only — mark read when ?thread= is present.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams])
 
   const filtered = useMemo(() => {
     const sorted = [...conversations].sort((a, b) => b.lastActivity - a.lastActivity)
@@ -823,7 +948,7 @@ export function AdminCommunicationDashboard() {
               <button
                 key={c.id}
                 type="button"
-                onClick={() => setMonitoringConversationId(c.id)}
+                onClick={() => openConversation(c.id)}
                 className="flex w-full items-start gap-3 px-6 py-4 text-left transition-colors hover:bg-[#f9fafb]"
               >
                 <span className="relative flex shrink-0 items-center pt-0.5">
@@ -844,7 +969,11 @@ export function AdminCommunicationDashboard() {
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-2">
                     <span
-                      className={`truncate text-[14px] font-semibold leading-5 ${c.unread ? 'text-[#0a0a0a]' : 'text-[#101828]'}`}
+                      className={`truncate text-[14px] leading-5 ${
+                        c.unread
+                          ? 'font-semibold text-[#0a0a0a]'
+                          : 'font-medium text-[#101828]'
+                      }`}
                     >
                       {c.name}
                     </span>

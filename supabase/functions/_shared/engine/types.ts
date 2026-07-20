@@ -25,6 +25,7 @@ export type WorkflowTemplateId =
   | "vendor_job_response"
   | "identity_onboarding"
   | "landlord_command"
+  | "vendor_onboarding"
   // Seeded in workflow_templates; register in registry.ts when handlers ship:
   // | "move_in"
   // | "move_out"

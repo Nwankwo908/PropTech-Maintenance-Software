@@ -1,4 +1,4 @@
-import { useEffect, useId, useMemo, useState } from 'react'
+import { useEffect, useId, useState } from 'react'
 import type { ExternalVendorSuggestionDto } from '@/api/discoverExternalVendors'
 import { ExternalVendorVerificationView } from '@/components/ExternalVendorVerificationView'
 import {
@@ -14,11 +14,9 @@ import {
   formatSourceBadgeLabel,
   type ExternalVendorDisplayRow,
 } from '@/lib/externalVendorDisplay'
-import {
-  buildVendorSetupContextFromExternalVendor,
-  isVendorSetupAwaitingResponse,
-} from '@/lib/vendorSetupConversation'
-import { CallPhoneButton, PhoneTelLink } from '@/components/CallPhoneButton'
+import { PhoneTelLink } from '@/components/CallPhoneButton'
+import { InviteVendorModal, type InviteVendorPrefill } from '@/components/InviteVendorModal'
+import { noRosterVendorsAvailableMessage } from '@/lib/maintenanceAdminVendor'
 
 function CloseIcon() {
   return (
@@ -193,12 +191,14 @@ function VendorResultRow({
   saving,
   selected,
   onSelect,
+  onInvite,
 }: {
   vendor: ExternalVendorDisplayRow
   saving: boolean
   /** Outreach sent; vendor has not submitted the setup form yet. */
   selected?: boolean
   onSelect: () => void
+  onInvite: () => void
 }) {
   const distanceLabel =
     vendor.distanceMiles != null
@@ -288,7 +288,7 @@ function VendorResultRow({
           className={[
             'inline-flex min-h-[36px] shrink-0 items-center justify-center gap-1 rounded-[10px] px-3 py-2 text-[12px] font-semibold leading-4 outline-none transition-colors focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-60',
             selected
-              ? 'border border-[#101828] bg-white text-[#101828] hover:bg-[#f9fafb]'
+              ? 'border border-[#e5e7eb] bg-white text-[#101828] hover:bg-[#f9fafb]'
               : 'bg-[#0a4d38] text-white hover:bg-[#083828]',
           ].join(' ')}
         >
@@ -304,9 +304,14 @@ function VendorResultRow({
             </>
           )}
         </button>
-        {vendor.phone ? (
-          <CallPhoneButton phone={vendor.phone} label="Call" variant="outline" className="w-full" />
-        ) : null}
+        <button
+          type="button"
+          disabled={saving}
+          onClick={onInvite}
+          className="inline-flex min-h-[36px] shrink-0 items-center justify-center gap-1 rounded-[10px] border border-[#186179] px-3 py-2 text-[12px] font-semibold leading-4 text-[#186179] outline-none transition-colors hover:bg-[#186179]/5 focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-60"
+        >
+          Invite to verify
+        </button>
         </div>
       </div>
     </div>
@@ -330,8 +335,6 @@ export type FindExternalVendorRailProps = {
   cancelLabel?: string
   /** When set, header/footer back uses this instead of fully closing via `onClose`. */
   onBack?: () => void
-  workOrderRef?: string | null
-  residentName?: string | null
   /** Render only the panel (parent owns overlay, backdrop, and stacking). */
   panelOnly?: boolean
   /** When stacked beside another rail, drop outer rounding on the seam side. */
@@ -354,15 +357,12 @@ export function FindExternalVendorRail({
   saveError = null,
   cancelLabel = 'Cancel',
   onBack,
-  workOrderRef = null,
-  residentName = null,
   panelOnly = false,
   stackedPosition,
 }: FindExternalVendorRailProps) {
   const titleId = useId()
   const [verificationVendor, setVerificationVendor] = useState<ExternalVendorDisplayRow | null>(null)
-  const [setupMonitoringOpen, setSetupMonitoringOpen] = useState(false)
-  const [awaitingRefreshKey, setAwaitingRefreshKey] = useState(0)
+  const [invitePrefill, setInvitePrefill] = useState<InviteVendorPrefill | null>(null)
   const displayRows = enrichExternalVendorSuggestions(
     suggestions,
     issueCategory,
@@ -376,51 +376,15 @@ export function FindExternalVendorRail({
   const handleDismiss = panelOnly && onBack ? onBack : onClose
   const showBackNav = !panelOnly
 
-  const awaitingVendorKeys = useMemo(() => {
-    void awaitingRefreshKey
-    const keys = new Set<string>()
-    for (const vendor of displayRows) {
-      const setupContext = buildVendorSetupContextFromExternalVendor({
-        vendorName: vendor.name,
-        vendorPhone: vendor.phone,
-        vendorWebsite: vendor.website,
-        locationLabel,
-        issueCategory,
-      })
-      if (isVendorSetupAwaitingResponse(setupContext)) {
-        keys.add(`${vendor.name}-${vendor.primarySource}`)
-      }
-    }
-    return keys
-  }, [awaitingRefreshKey, displayRows, issueCategory, locationLabel])
-
   useEffect(() => {
     if (open) return
     setVerificationVendor(null)
-    setSetupMonitoringOpen(false)
   }, [open])
-
-  useEffect(() => {
-    setSetupMonitoringOpen(false)
-  }, [verificationVendor])
-
-  useEffect(() => {
-    if (!open || verificationVendor != null) return
-    setAwaitingRefreshKey((key) => key + 1)
-    const interval = window.setInterval(() => {
-      setAwaitingRefreshKey((key) => key + 1)
-    }, 1500)
-    return () => window.clearInterval(interval)
-  }, [open, verificationVendor])
 
   useEffect(() => {
     if (!open) return
     function onKey(event: KeyboardEvent) {
       if (event.key !== 'Escape' || saving) return
-      if (setupMonitoringOpen) {
-        setSetupMonitoringOpen(false)
-        return
-      }
       if (verificationVendor) {
         setVerificationVendor(null)
         return
@@ -429,14 +393,10 @@ export function FindExternalVendorRail({
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [open, handleDismiss, saving, setupMonitoringOpen, verificationVendor])
+  }, [open, handleDismiss, saving, verificationVendor])
 
   function handleRailDismiss() {
     if (saving) return
-    if (setupMonitoringOpen) {
-      setSetupMonitoringOpen(false)
-      return
-    }
     if (verificationVendor) {
       setVerificationVendor(null)
       return
@@ -446,11 +406,9 @@ export function FindExternalVendorRail({
 
   if (!open) return null
 
-  const panelWidthClass = setupMonitoringOpen
-    ? 'max-w-[min(100vw,560px)]'
-    : verificationStep
-      ? 'max-w-[min(100vw,960px)]'
-      : 'max-w-[min(100vw,520px)]'
+  const panelWidthClass = verificationStep
+    ? 'max-w-[min(100vw,960px)]'
+    : 'max-w-[min(100vw,520px)]'
 
   const panel = (
       <div
@@ -459,7 +417,6 @@ export function FindExternalVendorRail({
         aria-labelledby={titleId}
         className={adminRightRailPanelClass(stackedPosition, panelWidthClass)}
       >
-        {!setupMonitoringOpen ? (
         <button
           type="button"
           onClick={handleRailDismiss}
@@ -469,20 +426,14 @@ export function FindExternalVendorRail({
         >
           <CloseIcon />
         </button>
-        ) : null}
 
         {verificationVendor ? (
           <ExternalVendorVerificationView
             vendor={verificationVendor}
             locationLabel={locationLabel}
             issueCategory={issueCategory}
-            workOrderRef={workOrderRef}
-            residentName={residentName}
             saving={saving}
             saveError={saveError}
-            setupMonitoringOpen={setupMonitoringOpen}
-            onSetupMonitoringOpen={() => setSetupMonitoringOpen(true)}
-            onSetupMonitoringClose={() => setSetupMonitoringOpen(false)}
             onBack={() => setVerificationVendor(null)}
             onAssign={() => {
               void onSelect(verificationVendor)
@@ -517,7 +468,10 @@ export function FindExternalVendorRail({
             <h2 id={titleId} className="mt-2 text-[18px] font-semibold leading-7 tracking-[-0.3px] text-[#0a0a0a]">
               Find External Vendor
             </h2>
-            <p className="mt-1 text-[13px] leading-5 text-[#6a7282]">{locationLabel}</p>
+            <p className="mt-1 text-[13px] leading-5 text-[#6a7282]">
+              {noRosterVendorsAvailableMessage(issueCategory)}
+            </p>
+            <p className="mt-0.5 text-[12px] leading-[18px] text-[#9ca3af]">{locationLabel}</p>
           </header>
 
           <div className="border-b border-[#e5e7eb] bg-[#f9fafb] px-6 py-4">
@@ -553,7 +507,8 @@ export function FindExternalVendorRail({
 
             {!loading && !error && displayRows.length === 0 ? (
               <p className="py-6 text-[13px] leading-5 text-[#6a7282]">
-                No outside-network results yet. Configure external vendor search secrets on Supabase Edge.
+                No license- and COI-verified outside-network vendors found for this trade. Try
+                another category or configure external vendor search on Supabase Edge.
               </p>
             ) : null}
 
@@ -566,8 +521,14 @@ export function FindExternalVendorRail({
                       key={rowKey}
                       vendor={vendor}
                       saving={saving}
-                      selected={awaitingVendorKeys.has(rowKey)}
                       onSelect={() => setVerificationVendor(vendor)}
+                      onInvite={() =>
+                        setInvitePrefill({
+                          businessName: vendor.name,
+                          phone: vendor.phone ?? '',
+                          propertyName: locationLabel,
+                        })
+                      }
                     />
                   )
                 })}
@@ -599,7 +560,22 @@ export function FindExternalVendorRail({
       </div>
   )
 
-  if (panelOnly) return panel
+  const inviteModal = (
+    <InviteVendorModal
+      open={invitePrefill != null}
+      prefill={invitePrefill ?? undefined}
+      onClose={() => setInvitePrefill(null)}
+    />
+  )
+
+  if (panelOnly) {
+    return (
+      <>
+        {panel}
+        {inviteModal}
+      </>
+    )
+  }
 
   return (
     <div className={ADMIN_RIGHT_RAIL_STACK_HOST}>
@@ -610,6 +586,7 @@ export function FindExternalVendorRail({
         onClick={handleRailDismiss}
       />
       {panel}
+      {inviteModal}
     </div>
   )
 }

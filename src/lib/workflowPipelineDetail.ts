@@ -13,6 +13,7 @@ import {
   lifecycleStepKey,
   type WorkflowKanbanCategory,
 } from '@/lib/adminWorkflowKanban'
+import { formatVendorTradeLabel } from '@/lib/vendorTrades'
 import { formatWorkOrderRefForWorkflowRun } from '@/lib/vendorCallFlow'
 import {
   buildMoveOutTimeline,
@@ -20,7 +21,7 @@ import {
   moveOutPipelineTitle,
   moveOutProgressPercent,
 } from '@/lib/moveOutWorkflow'
-import { getActiveLandlordId } from '@/lib/activeLandlord'
+import { getActiveLandlordId, isDemoAccountActive } from '@/lib/activeLandlord'
 import {
   resolveWorkOrderInboxConversationId,
   type InspectionUloThreadInput,
@@ -93,6 +94,7 @@ export type WorkflowPipelineDetail = {
   maintenanceRequestId: string | null
   conversationId: string | null
   uloThread: WorkflowUloThreadInput | null
+  isMaintenanceWorkflow?: boolean
   isMoveOutWorkflow?: boolean
   moveOutProgressPercent?: number
   moveOutDateLabel?: string
@@ -160,7 +162,12 @@ function initials(name: string): string {
 }
 
 function formatWorkOrderRef(run: AdminWorkflowRow): string {
-  return formatWorkOrderRefForWorkflowRun(run.templateId, run.id, run.entityId)
+  return formatWorkOrderRefForWorkflowRun(
+    run.templateId,
+    run.id,
+    run.entityId,
+    run.entityType,
+  )
 }
 
 function formatCreatedLine(iso: string): string {
@@ -212,18 +219,30 @@ function deriveMaintenancePipelineIndex(
   ticket: Record<string, unknown> | null,
 ): number {
   const vendorStatus = asString(ticket?.vendor_work_status).toLowerCase()
-  if (row.status === 'completed' || vendorStatus === 'completed') return 7
-  if (vendorStatus === 'in_progress') return 6
-  if (vendorStatus === 'accepted') return 5
-  if (asString(ticket?.assigned_vendor_id) || vendorStatus === 'pending_accept') return 4
+  const assignedVendorId = asString(ticket?.assigned_vendor_id)
+  const hasVendor = Boolean(assignedVendorId)
 
-  const step = `${row.currentStep ?? ''} ${row.lastEventType ?? ''}`.toLowerCase()
-  if (/complete|closed|done/.test(step)) return 7
-  if (/progress|repair|working|await/.test(step)) return 6
-  if (/accept/.test(step)) return 5
-  if (/assign|dispatch|vendor|route/.test(step)) return 4
-  if (/work.?order|ticket/.test(step)) return 3
-  if (/intake|classif|trigger/.test(step)) return 2
+  if (row.status === 'completed' || vendorStatus === 'completed') return 7
+  if (hasVendor && vendorStatus === 'in_progress') return 6
+  if (hasVendor && vendorStatus === 'accepted') return 5
+  // Vendor Assigned only when a vendor is actually on the ticket.
+  if (hasVendor) return 4
+
+  const step = asString(row.currentStep).toLowerCase()
+  // Exact workflow steps only — do not regex-match "accept"/"await" inside intake
+  // steps like pending_accept (without vendor) or awaiting_confirm.
+  if (step === 'completed' || step === 'closed' || step === 'done') return 7
+  if (step === 'in_progress') return 6
+  if (step === 'pending_accept' && hasVendor) return 4
+  if (
+    step === 'unassigned' ||
+    step === 'submitted' ||
+    /work.?order|ticket/.test(step) ||
+    row.entityType === 'maintenance_request'
+  ) {
+    return 3
+  }
+  if (/intake|classif|collect|confirm|clarif|photo|trigger/.test(step)) return 2
   return 2
 }
 
@@ -302,11 +321,7 @@ function stageBadge(stage: ReturnType<typeof deriveWorkflowKanbanStage>) {
 }
 
 function formatCategoryLabel(raw: string | null | undefined): string {
-  if (!raw) return 'General'
-  return raw
-    .split(/[_-]/)
-    .map((part) => (part ? part[0].toUpperCase() + part.slice(1) : part))
-    .join(' ')
+  return formatVendorTradeLabel(raw, { emptyLabel: 'General' })
 }
 
 function formatCurrency(value: number | null | undefined): string {
@@ -412,6 +427,7 @@ function syntheticConversationPhotoAttachments(
   issueCategory: string,
   residentName: string,
 ): WorkflowPipelineAttachment[] {
+  if (!isDemoAccountActive()) return []
   const hay = `${description} ${issueCategory}`.toLowerCase()
   if (mentionsAc(hay) || issueCategory.toLowerCase() === 'hvac') {
     return DEMO_SMS_PHOTO_URLS.hvac.map((photo) => ({
@@ -437,70 +453,105 @@ function syntheticConversationPhotoAttachments(
   return []
 }
 
-async function loadInboundSmsPhotoAttachments(
+function isBrowserUnsafeMediaUrl(url: string): boolean {
+  const lower = url.toLowerCase()
+  // Twilio MMS media requires HTTP Basic (Account SID / Auth Token) — never open in <img>.
+  return (
+    lower.includes('api.twilio.com') ||
+    lower.includes('media.twilio.com') ||
+    lower.includes('api.telnyx.com')
+  )
+}
+
+async function loadTicketPhotoPathAttachments(
   enrichment: TicketEnrichment,
   residentName: string,
 ): Promise<WorkflowPipelineAttachment[]> {
   const { supabase } = await import('@/lib/supabase')
   if (!supabase) return []
 
+  const photoPaths = enrichment.ticket?.photo_paths
+  if (!Array.isArray(photoPaths) || photoPaths.length === 0) return []
+
+  const items: WorkflowPipelineAttachment[] = []
+  let photoIndex = 0
+  for (const rawPath of photoPaths) {
+    const path = asString(rawPath)
+    if (!path) continue
+    const { data, error } = await supabase.storage
+      .from('maintenance-uploads')
+      .createSignedUrl(path, 3600)
+    if (error || !data?.signedUrl) {
+      console.warn('[workflow-pipeline] signed photo url failed', path, error?.message)
+      continue
+    }
+    photoIndex += 1
+    items.push({
+      name: path.split('/').pop() || `tenant-photo-${photoIndex}.jpg`,
+      sizeLabel: 'From request',
+      kind: 'image',
+      url: data.signedUrl,
+      caption: `${residentName} · photo ${photoIndex}`,
+    })
+  }
+  return items
+}
+
+async function loadInboundSmsPhotoAttachments(
+  enrichment: TicketEnrichment,
+  residentName: string,
+): Promise<WorkflowPipelineAttachment[]> {
+  // Prefer durable ticket photos (signed storage URLs). Never use raw Twilio/Telnyx
+  // media URLs in the browser — they prompt for username/password.
+  const fromTicket = await loadTicketPhotoPathAttachments(enrichment, residentName)
+  if (fromTicket.length > 0) return fromTicket
+
+  // If the ticket already has photo_paths but signing failed, do not fall back to
+  // provider media (that is what triggers the auth dialog).
+  const photoPaths = enrichment.ticket?.photo_paths
+  if (Array.isArray(photoPaths) && photoPaths.length > 0) return []
+
+  const { supabase } = await import('@/lib/supabase')
+  if (!supabase) return []
+
   const landlordId = getActiveLandlordId()
   const conversationId = enrichment.conversationId
+  if (!conversationId) return []
+
+  const { data: messages } = await supabase
+    .from('sms_messages')
+    .select('body, direction, media_urls, created_at')
+    .eq('landlord_id', landlordId)
+    .eq('conversation_id', conversationId)
+    .eq('direction', 'inbound')
+    .order('created_at', { ascending: false })
+    .limit(8)
+
   const items: WorkflowPipelineAttachment[] = []
+  let photoIndex = 0
+  for (const message of (messages ?? []) as Record<string, unknown>[]) {
+    const rawUrls = message.media_urls
+    const urls = Array.isArray(rawUrls) ? rawUrls : []
+    const body = asString(message.body)
+    const sentAt = formatAttachmentTimestamp(asString(message.created_at))
 
-  if (conversationId) {
-    const { data: messages } = await supabase
-      .from('sms_messages')
-      .select('body, direction, media_urls, created_at')
-      .eq('landlord_id', landlordId)
-      .eq('conversation_id', conversationId)
-      .eq('direction', 'inbound')
-      .order('created_at', { ascending: true })
-
-    let photoIndex = 0
-    for (const message of (messages ?? []) as Record<string, unknown>[]) {
-      const rawUrls = message.media_urls
-      const urls = Array.isArray(rawUrls) ? rawUrls : []
-      const body = asString(message.body)
-      const sentAt = formatAttachmentTimestamp(asString(message.created_at))
-
-      for (const rawUrl of urls) {
-        const url = asString(rawUrl)
-        if (!url) continue
-        photoIndex += 1
-        items.push({
-          name: `tenant-photo-${photoIndex}.jpg`,
-          sizeLabel: sentAt,
-          kind: 'image',
-          url,
-          caption: body || `${residentName} · photo ${photoIndex}`,
-        })
-      }
-    }
-  }
-
-  const photoPaths = enrichment.ticket?.photo_paths
-  if (items.length === 0 && Array.isArray(photoPaths) && photoPaths.length > 0) {
-    let photoIndex = 0
-    for (const rawPath of photoPaths) {
-      const path = asString(rawPath)
-      if (!path) continue
-      const { data, error } = await supabase.storage
-        .from('maintenance-uploads')
-        .createSignedUrl(path, 3600)
-      if (error || !data?.signedUrl) continue
+    for (const rawUrl of urls) {
+      const url = asString(rawUrl)
+      if (!url || isBrowserUnsafeMediaUrl(url)) continue
       photoIndex += 1
       items.push({
-        name: path.split('/').pop() || `tenant-photo-${photoIndex}.jpg`,
-        sizeLabel: 'From SMS',
+        name: `tenant-photo-${photoIndex}.jpg`,
+        sizeLabel: sentAt,
         kind: 'image',
-        url: data.signedUrl,
-        caption: `${residentName} · conversation photo ${photoIndex}`,
+        url,
+        caption: body || `${residentName} · photo ${photoIndex}`,
       })
+      if (photoIndex >= 3) break
     }
+    if (photoIndex >= 3) break
   }
 
-  return items
+  return items.reverse()
 }
 
 const DEMO_INSPECTION_PHOTO_URLS = [
@@ -530,6 +581,7 @@ function syntheticInspectionConversationPhotos(
   input: InspectionUloThreadInput,
   residentName: string,
 ): WorkflowPipelineAttachment[] {
+  if (!isDemoAccountActive()) return []
   const photos = input.hasMaintenanceFollowUp
     ? DEMO_INSPECTION_PHOTO_URLS
     : DEMO_INSPECTION_PHOTO_URLS.slice(0, 2)
@@ -623,15 +675,22 @@ async function loadTicketEnrichment(
       vendorName = asString((vendorRow as Record<string, unknown> | null)?.name) || null
     }
 
-    if (!conversationId) {
-      const { data: convRows } = await supabase
-        .from('sms_conversations')
-        .select('id, conversation_type, updated_at')
-        .eq('landlord_id', landlordId)
-        .eq('maintenance_request_id', ticketId)
-        .order('updated_at', { ascending: false })
+    // Prefer vendor job SMS whenever linked — admin approve/decline updates land there.
+    // Do this even if metadata still points at the resident intake conversation.
+    const { data: convRows } = await supabase
+      .from('sms_conversations')
+      .select('id, conversation_type, updated_at')
+      .eq('landlord_id', landlordId)
+      .eq('maintenance_request_id', ticketId)
+      .order('updated_at', { ascending: false })
 
-      const rows = (convRows ?? []) as Record<string, unknown>[]
+    const rows = (convRows ?? []) as Record<string, unknown>[]
+    const vendorThread = rows.find(
+      (entry) => asString(entry.conversation_type) === 'vendor_alert',
+    )
+    if (vendorThread) {
+      conversationId = asString(vendorThread.id)
+    } else if (!conversationId) {
       const preferred =
         rows.find((entry) => asString(entry.conversation_type) === 'resident_intake') ??
         rows.find((entry) => {
@@ -903,7 +962,14 @@ export async function fetchCommunicationWorkOrderInboxRows(): Promise<Communicat
     const uloThread = buildWorkflowUloThreadInput(row, metadata, enrichment)
     if (!uloThread) continue
 
-    const stage = deriveWorkflowKanbanStage(row)
+    const rowForStage: AdminWorkflowRow = {
+      ...row,
+      vendorWorkStatus:
+        asString(enrichment.ticket?.vendor_work_status) || row.vendorWorkStatus,
+      assignedVendorId:
+        asString(enrichment.ticket?.assigned_vendor_id) || row.assignedVendorId,
+    }
+    const stage = deriveWorkflowKanbanStage(rowForStage)
     const startedMs = new Date(row.startedAt).getTime()
     const eventMs = row.lastEventAt ? new Date(row.lastEventAt).getTime() : 0
     const anchorMs =
@@ -945,9 +1011,6 @@ export async function fetchWorkflowPipelineDetail(
   if (!row) return null
 
   const metadata = runMetadata[row.id] ?? {}
-  const card = buildWorkflowKanbanCard(row, metadata)
-  const category = categoryBadge(card.category)
-  const stage = stageBadge(card.stage)
   const group = workflowTemplateGroupId(row.templateId)
   const isMaintenance = group === 'maintenance'
   const isMoveOut = row.templateId === 'move_out'
@@ -955,6 +1018,18 @@ export async function fetchWorkflowPipelineDetail(
   const enrichment = await loadTicketEnrichment(row, metadata)
   const ticket = enrichment.ticket
   const invoice = enrichment.invoice
+  const rowForStage: AdminWorkflowRow = isMaintenance
+    ? {
+        ...row,
+        vendorWorkStatus:
+          asString(ticket?.vendor_work_status) || row.vendorWorkStatus,
+        assignedVendorId:
+          asString(ticket?.assigned_vendor_id) || row.assignedVendorId,
+      }
+    : row
+  const card = buildWorkflowKanbanCard(rowForStage, metadata)
+  const category = categoryBadge(card.category)
+  const stage = stageBadge(card.stage)
   const urgency = asString(ticket?.urgency) || asString(ticket?.priority) || asString(metadata.urgency) || 'normal'
   const priority = PRIORITY_BADGE[urgency.toLowerCase()] ?? PRIORITY_BADGE.normal
 
@@ -1104,6 +1179,7 @@ export async function fetchWorkflowPipelineDetail(
     maintenanceRequestId: enrichment.maintenanceRequestId,
     conversationId: enrichment.conversationId,
     uloThread,
+    isMaintenanceWorkflow: isMaintenance,
     isMoveOutWorkflow: isMoveOut,
     moveOutProgressPercent: moveOutProgress,
     moveOutDateLabel,

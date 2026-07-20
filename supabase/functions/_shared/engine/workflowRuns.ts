@@ -166,6 +166,56 @@ export async function findActiveWorkflowRun(
     templateId?: WorkflowTemplateId
   },
 ): Promise<WorkflowRunRow | null> {
+  const templateId = params.templateId
+
+  // Prefer the run currently linked on the SMS conversation (survives entity
+  // upgrades from sms_conversation → maintenance_request during early ticket mint).
+  if (params.conversationId) {
+    const { data: convo } = await supabase
+      .from("sms_conversations")
+      .select("workflow_run_id, maintenance_request_id")
+      .eq("id", params.conversationId)
+      .maybeSingle()
+
+    const linkedRunId =
+      typeof convo?.workflow_run_id === "string" ? convo.workflow_run_id.trim() : ""
+    if (linkedRunId) {
+      const linked = await getWorkflowRunById(supabase, linkedRunId)
+      if (
+        linked &&
+        linked.status === "active" &&
+        (!templateId || linked.template_id === templateId) &&
+        (!params.landlordId || linked.landlord_id === params.landlordId)
+      ) {
+        return linked
+      }
+    }
+
+    const ticketId =
+      typeof convo?.maintenance_request_id === "string"
+        ? convo.maintenance_request_id.trim()
+        : ""
+    if (ticketId && templateId === "maintenance_intake") {
+      const { data: byTicket, error: byTicketErr } = await supabase
+        .from("workflow_runs")
+        .select(runSelect)
+        .eq("status", "active")
+        .eq("landlord_id", params.landlordId)
+        .eq("template_id", "maintenance_intake")
+        .eq("entity_type", "maintenance_request")
+        .eq("entity_id", ticketId)
+        .order("started_at", { ascending: false })
+        .limit(1)
+        .maybeSingle()
+      if (byTicketErr) {
+        console.error("[workflow-runs] find active by ticket", byTicketErr.message)
+      } else {
+        const run = normalizeRunRow(byTicket)
+        if (run) return run
+      }
+    }
+  }
+
   let query = supabase
     .from("workflow_runs")
     .select(runSelect)
@@ -177,8 +227,8 @@ export async function findActiveWorkflowRun(
     query = query.eq("landlord_id", params.landlordId)
   }
 
-  if (params.templateId) {
-    query = query.eq("template_id", params.templateId)
+  if (templateId) {
+    query = query.eq("template_id", templateId)
   }
 
   if (params.conversationId) {
@@ -492,18 +542,30 @@ export async function linkConversationToWorkflowRun(
     conversationId: string
     runId: string
     templateId: WorkflowTemplateId | string
+    /** When set, keep the run bound to the durable ticket (not the conversation id). */
+    maintenanceRequestId?: string | null
   },
 ): Promise<void> {
-  await updateWorkflowRun(supabase, params.runId, {
-    entityType: "sms_conversation",
-    entityId: params.conversationId,
-  })
+  const ticketId = params.maintenanceRequestId?.trim() || null
+  if (ticketId) {
+    await updateWorkflowRun(supabase, params.runId, {
+      entityType: "maintenance_request",
+      entityId: ticketId,
+      metadata: { conversation_id: params.conversationId },
+    })
+  } else {
+    await updateWorkflowRun(supabase, params.runId, {
+      entityType: "sms_conversation",
+      entityId: params.conversationId,
+    })
+  }
 
   const { error } = await supabase
     .from("sms_conversations")
     .update({
       workflow_run_id: params.runId,
       workflow_template_id: params.templateId,
+      ...(ticketId ? { maintenance_request_id: ticketId } : {}),
       updated_at: new Date().toISOString(),
     })
     .eq("id", params.conversationId)

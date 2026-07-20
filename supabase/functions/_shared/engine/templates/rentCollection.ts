@@ -144,10 +144,15 @@ export function rentCollectionPrompt(
     : "today"
 
   const payLine = paymentLink
-    ? ` Pay online: ${paymentLink}.`
+    ? ` You can pay online here: ${paymentLink}.`
     : ""
 
-  return `Hi — rent of ${amount} is due ${due}.${payLine} Reply PAID once you've sent payment, PARTIAL if you paid part of it, or QUESTIONS to talk with your property manager.`
+  return (
+    `Hi, this is a friendly reminder from your property management team. ` +
+    `Your rent of ${amount} is due ${due}.${payLine} ` +
+    `Once you've paid, reply PAID. If you paid part of it, reply PARTIAL. ` +
+    `Have a question? Reply QUESTIONS and we'll help.`
+  )
 }
 
 function rentCollectionEmailBody(
@@ -162,18 +167,30 @@ function rentCollectionEmailBody(
   const amount = state.amount_due != null
     ? formatCurrency(state.amount_due)
     : "your balance"
-  const due = state.rent_due_date ?? "this month"
-  const subject = `Rent payment reminder — due ${due}`
+  const due = state.rent_due_date
+    ? new Date(`${state.rent_due_date}T12:00:00`).toLocaleDateString("en-US", {
+      month: "long",
+      day: "numeric",
+    })
+    : "this month"
+  const subject = `Friendly reminder: rent is due ${due}`
   const payText = paymentLink
-    ? `\n\nPay online: ${paymentLink}`
+    ? `\n\nYou can pay online here: ${paymentLink}`
     : ""
   const payHtml = paymentLink
-    ? `<p><a href="${paymentLink}">Pay rent online</a></p>`
+    ? `<p><a href="${paymentLink}">Pay your rent online</a></p>`
     : ""
   const text =
-    `Hi ${residentName},\n\nRent of ${amount} is due ${due}. Please submit payment at your earliest convenience.${payText}\n\nIf you've already paid, reply PAID to this number or contact your property manager.\n\nThank you.`
+    `Hi ${residentName},\n\nThis is a friendly reminder from your property management team. ` +
+    `Your rent of ${amount} is due ${due}. Please submit your payment when you can.${payText}\n\n` +
+    `If you've already paid, reply PAID to your property text line — or reach out anytime and we're happy to help.\n\n` +
+    `Thank you,\nYour property management team`
   const html =
-    `<p>Hi ${residentName},</p><p>Rent of <strong>${amount}</strong> is due ${due}. Please submit payment at your earliest convenience.</p>${payHtml}<p>If you've already paid, reply <strong>PAID</strong> to your property SMS line or contact your property manager.</p><p>Thank you.</p>`
+    `<p>Hi ${residentName},</p>` +
+    `<p>This is a friendly reminder from your property management team. Your rent of <strong>${amount}</strong> is due ${due}. Please submit your payment when you can.</p>` +
+    `${payHtml}` +
+    `<p>If you've already paid, reply <strong>PAID</strong> to your property text line — or reach out anytime and we're happy to help.</p>` +
+    `<p>Thank you,<br/>Your property management team</p>`
   return { subject, text, html }
 }
 

@@ -1,0 +1,77 @@
+---
+description: Global writing standard for every Ulo SMS and email sent to tenants, vendors, or landlords. Apply whenever creating or editing outbound message copy.
+alwaysApply: true
+---
+
+# Ulo communication writing standard
+
+Every Ulo SMS and email must read as if a thoughtful, professional property manager wrote it — never like an automated system. The goal is to build trust and reduce confusion from the first message.
+
+## Voice
+- Clear, grammatically correct English at a 7th–9th grade reading level.
+- Warm, professional, and conversational. Short, easy sentences.
+- No technical or internal terminology (no "workflow", "verification record", "graph event", IDs, status enums, etc.).
+- No robotic or awkward phrasing. No emoji unless the user explicitly asks.
+
+## Structure — every message should make these answerable
+1. Who is contacting me? (identify the property management team / company)
+2. Why am I receiving this? (explain the reason before the ask)
+3. What do I need to do? (one clear action)
+4. How long will it take? (set expectations when there's a task)
+5. What happens next? (the benefit / outcome)
+
+Lead with the benefit, then the requirement. Don't cram multiple requirements into one sentence — use a short bulleted list (email) or a compact line (SMS).
+
+## SMS specifics
+- Open by identifying who it's from (e.g. "This is the property management team at {company}.").
+- One primary action. Put the link on its own line at the end.
+- Keep it tight; SMS is not the place for long bullet lists.
+- Preserve required compliance footers (HELP/STOP) on tenant marketing/consent texts.
+
+## Email specifics
+- Subject: plain, benefit-forward, no internal jargon.
+- Keep the plain-text and HTML bodies in sync — edit both.
+- Use a primary button/link, and always include a copy-paste fallback URL.
+- Use short bullet lists for multi-step requirements.
+
+## Reference — vendor invitation (canonical example)
+
+SMS:
+```
+Hi {vendor},
+
+This is the property management team at {company}.
+
+We'd like to invite you to join our preferred vendor network on Ulo. Complete a quick verification (about 5 minutes) so we can begin sending you work orders.
+
+{link}
+```
+
+Email (subject: "You're invited to join our vendor network"):
+```
+Hi {vendor},
+
+{company} would like to add you to our preferred vendor network on Ulo.
+
+Complete a quick verification to become eligible to receive work orders from our team.
+
+The process takes about 5 minutes and includes:
+• Verifying your professional license
+• Uploading your insurance certificate
+• Completing a background check
+• Providing a W-9
+• Confirming the services you offer and the areas you serve
+
+Once everything is verified, you'll be eligible to receive work orders through Ulo.
+
+[Start Verification]
+
+If the button doesn't work, copy and paste this link into your browser:
+{link}
+
+Thank you,
+{company}
+```
+
+## Apply everywhere
+Vendor onboarding, tenant onboarding, maintenance updates, work order assignments, vendor reassignment, inspection reminders, rent reminders, lease renewals, broadcasts, passwordless/login links, verification requests, and all SMS/email notifications. Where activity-feed descriptions are user-facing, follow the same plain, professional tone.

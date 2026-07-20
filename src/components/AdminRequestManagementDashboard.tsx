@@ -21,13 +21,16 @@ import { resolveDiscoverExternalVendorsUrl } from '@/api/discoverExternalVendors
 import { SparkleIcon } from '@/components/SparkleIcon'
 import { TableCheckbox } from '@/components/TableCheckbox'
 import { VendorDelayedAlternativesSection } from '@/components/VendorDelayedAlternativesSection'
-import { getActiveLandlordId } from '@/lib/activeLandlord'
+import { getActiveLandlordId, isDemoAccountActive } from '@/lib/activeLandlord'
 import { supabase } from '@/lib/supabase'
 import { isVendorPendingAcceptDelayed } from '@/lib/vendorDelayAlerts'
 import {
+  formatVendorTradeLabel,
   getIssueCategorySlugForTicket,
+  issueCategoryToVendorTrade,
   vendorMatchesTicketIssueCategory,
-} from '@/lib/vendorIssueCategory'
+  VENDOR_TRADE_OPTIONS,
+} from '@/lib/vendorTrades'
 
 type UrgencyUi = 'urgent' | 'normal' | 'low'
 
@@ -108,11 +111,10 @@ const URGENCY_FILTER_OPTIONS: { value: UrgencyUi; label: string }[] = [
 ]
 
 const CATEGORY_FILTER_OPTIONS: { value: string; label: string }[] = [
-  { value: 'plumbing', label: 'Plumbing' },
-  { value: 'hvac', label: 'HVAC' },
-  { value: 'electrical', label: 'Electrical' },
-  { value: 'appliance', label: 'Appliance' },
-  { value: 'door_window_noise', label: 'Door/Window Noise' },
+  ...VENDOR_TRADE_OPTIONS.map((trade) => ({
+    value: trade.value,
+    label: trade.label,
+  })),
 ]
 
 /**
@@ -304,9 +306,7 @@ function formatDateTimeLocalInputValue(
 }
 
 function formatIssueCategoryLabel(raw: string | null | undefined): string {
-  const t = (raw ?? '').trim()
-  if (!t) return 'Maintenance'
-  return t.charAt(0).toUpperCase() + t.slice(1).toLowerCase()
+  return formatVendorTradeLabel(raw, { emptyLabel: 'Maintenance' })
 }
 
 function resolveAdminStatusFromDb(dbRow: MaintenanceRequestRowDb): StatusUi {
@@ -443,25 +443,14 @@ function rowMatchesCategoryFilter(
   filterValue: string,
 ): boolean {
   if (!filterValue) return true
-  const cat = row.category.trim().toLowerCase()
-  switch (filterValue) {
-    case 'plumbing':
-      return cat.includes('plumb')
-    case 'hvac':
-      return cat === 'hvac' || cat.includes('hvac')
-    case 'electrical':
-      return cat.includes('electrical')
-    case 'appliance':
-      return cat.includes('appliance')
-    case 'door_window_noise':
-      return (
-        cat.includes('door') ||
-        cat.includes('window') ||
-        cat.includes('noise')
-      )
-    default:
-      return true
+  const trade = issueCategoryToVendorTrade(row.category)
+  if (filterValue === 'door_window_noise') {
+    return trade === 'windows' || trade === 'other'
   }
+  if (filterValue === 'appliance') {
+    return trade === 'appliance_repair'
+  }
+  return trade === filterValue || trade === issueCategoryToVendorTrade(filterValue)
 }
 
 /** Stable fake UUID for demo rows so Assigned Vendor card is not stuck in warning state offline. */
@@ -1579,7 +1568,7 @@ function ChipEditButton({ ariaLabel }: { ariaLabel: string }) {
 
 export function AdminRequestManagementDashboard() {
   const [tickets, setTickets] = useState<AdminTicketRow[]>(() =>
-    DEMO_TICKETS.slice(),
+    isDemoAccountActive() ? DEMO_TICKETS.slice() : [],
   )
   const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set())
   const [searchParams] = useSearchParams()
@@ -1757,7 +1746,7 @@ export function AdminRequestManagementDashboard() {
     let cancelled = false
     async function loadTickets() {
       if (!supabase) {
-        setTickets(DEMO_TICKETS.slice())
+        setTickets(isDemoAccountActive() ? DEMO_TICKETS.slice() : [])
         return
       }
 
@@ -1799,7 +1788,7 @@ export function AdminRequestManagementDashboard() {
       if (err) {
         console.error('[admin] maintenance_requests fetch failed', err.message)
         if (!liveTicketsLoadedRef.current) {
-          setTickets(DEMO_TICKETS.slice())
+          setTickets(isDemoAccountActive() ? DEMO_TICKETS.slice() : [])
         }
         return
       }

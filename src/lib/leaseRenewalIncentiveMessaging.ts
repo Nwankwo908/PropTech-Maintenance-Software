@@ -47,10 +47,10 @@ export function buildLeaseRenewalIncentiveBrief(
   const days = review.daysUntilLeaseEndLabel
 
   const primaryDraft =
-    `Hi ${fname} — we'd love for you to renew. We're offering a ${incentiveAmountLabel} rent credit if you sign your renewal in the next 7 days. Reply YES and I'll send the renewal details, or tell me what would make staying work better.`
+    `Hi ${fname}, we'd love for you to stay! We're offering a ${incentiveAmountLabel} rent credit if you sign your renewal in the next 7 days. Reply YES and I'll send the renewal details, or tell me what would make staying work better for you.`
 
   const alternateDraft =
-    `Hi ${fname}, checking in on your lease (ends in ${days}). To make renewing easier, we can apply a ${incentiveAmountLabel} credit to your next month's rent when you renew. Want me to hold that offer for you?`
+    `Hi ${fname}, just checking in on your lease (it ends in ${days}). To make renewing easier, we can apply a ${incentiveAmountLabel} credit to your next month's rent when you renew. Want me to hold that offer for you?`
 
   return {
     workflowRunId: review.workflowRunId,

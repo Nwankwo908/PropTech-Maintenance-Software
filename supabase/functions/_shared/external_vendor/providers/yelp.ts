@@ -38,6 +38,10 @@ export class YelpExternalVendorProvider implements ExternalVendorProvider {
         rating?: number
         review_count?: number
         price?: string
+        phone?: string
+        display_phone?: string
+        url?: string
+        location?: { display_address?: string[] }
       }>
     }
 
@@ -48,6 +52,14 @@ export class YelpExternalVendorProvider implements ExternalVendorProvider {
       const price = typeof b.price === "string" && b.price.trim()
         ? `${b.price.trim()} on Yelp`
         : null
+      const phone =
+        (typeof b.display_phone === "string" && b.display_phone.trim()) ||
+        (typeof b.phone === "string" && b.phone.trim()) ||
+        null
+      const listingUrl = typeof b.url === "string" && b.url.trim() ? b.url.trim() : null
+      const address = Array.isArray(b.location?.display_address)
+        ? b.location!.display_address!.map((p) => String(p).trim()).filter(Boolean).join(", ")
+        : null
       out.push({
         name,
         rating: typeof b.rating === "number" ? b.rating : null,
@@ -55,6 +67,9 @@ export class YelpExternalVendorProvider implements ExternalVendorProvider {
         priceLabel: price,
         source: "yelp",
         providerRef: typeof b.id === "string" ? b.id : null,
+        phone,
+        listingUrl,
+        address: address || null,
       })
     }
     return out

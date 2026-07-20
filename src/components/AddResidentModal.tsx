@@ -1,5 +1,5 @@
 import { useEffect, useId, useMemo, useState } from 'react'
-import { ALL_UNIT_OPTIONS } from '@/lib/propertyUnitOptions'
+import { getInventoryUnitOptions } from '@/lib/propertyUnitOptions'
 
 const STATUS_OPTIONS = [
   { value: 'active', label: 'Active' },
@@ -73,7 +73,7 @@ export function AddResidentModal({
   const unitOptions = useMemo(() => {
     const seen = new Set<string>()
     const merged: { value: string; label: string }[] = []
-    for (const o of ALL_UNIT_OPTIONS) {
+    for (const o of getInventoryUnitOptions()) {
       merged.push({ value: o.value, label: o.label })
       seen.add(o.value)
     }

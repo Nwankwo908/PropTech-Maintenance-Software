@@ -48,6 +48,12 @@ verify_jwt = false
 import_map = "./functions/admin-approve-maintenance-invoice/deno.json"
 entrypoint = "./functions/admin-approve-maintenance-invoice/index.ts"
 
+[functions.admin-delete-work-order]
+enabled = true
+verify_jwt = false
+import_map = "./functions/admin-delete-work-order/deno.json"
+entrypoint = "./functions/admin-delete-work-order/index.ts"
+
 [functions.recommend-vendor-alternatives]
 enabled = true
 verify_jwt = false
@@ -59,6 +65,12 @@ enabled = true
 verify_jwt = false
 import_map = "./functions/generate-late-rent-insights/deno.json"
 entrypoint = "./functions/generate-late-rent-insights/index.ts"
+
+[functions.ask-ulo]
+enabled = true
+verify_jwt = false
+import_map = "./functions/ask-ulo/deno.json"
+entrypoint = "./functions/ask-ulo/index.ts"
 
 [functions.send-late-rent-account-message]
 enabled = true
@@ -102,6 +114,39 @@ enabled = true
 verify_jwt = false
 import_map = "./functions/vendor-respond/deno.json"
 entrypoint = "./functions/vendor-respond/index.ts"
+
+# Public POST { token } — resolve vendor_action_token → ticket for /w/:token redirect.
+[functions.resolve-work-order-token]
+enabled = true
+verify_jwt = false
+import_map = "./functions/resolve-work-order-token/deno.json"
+entrypoint = "./functions/resolve-work-order-token/index.ts"
+
+# Public estimate submit (vendor_action_token) + landlord 1-tap respond.
+[functions.vendor-submit-maintenance-estimate]
+enabled = true
+verify_jwt = false
+import_map = "./functions/vendor-submit-maintenance-estimate/deno.json"
+entrypoint = "./functions/vendor-submit-maintenance-estimate/index.ts"
+
+[functions.landlord-respond-estimate]
+enabled = true
+verify_jwt = false
+import_map = "./functions/landlord-respond-estimate/deno.json"
+entrypoint = "./functions/landlord-respond-estimate/index.ts"
+
+# Public completion photo upload + job close (vendor_action_token) + landlord 1-tap rating.
+[functions.vendor-complete-job-upload]
+enabled = true
+verify_jwt = false
+import_map = "./functions/vendor-complete-job-upload/deno.json"
+entrypoint = "./functions/vendor-complete-job-upload/index.ts"
+
+[functions.landlord-rate-vendor]
+enabled = true
+verify_jwt = false
+import_map = "./functions/landlord-rate-vendor/deno.json"
+entrypoint = "./functions/landlord-rate-vendor/index.ts"
 
 # POST { token, vendorId } — matches vendors.portal_api_key; returns session tokens or hashed_token for verifyOtp.
 [functions.vendor-verify-token]
@@ -188,11 +233,34 @@ verify_jwt = false
 import_map = "./functions/register-unit/deno.json"
 entrypoint = "./functions/register-unit/index.ts"
 
+# Post-onboarding tenant activation/welcome SMS (ADMIN_REASSIGN_SECRET in handler).
+[functions.send-tenant-activation]
+enabled = true
+verify_jwt = false
+import_map = "./functions/send-tenant-activation/deno.json"
+entrypoint = "./functions/send-tenant-activation/index.ts"
+
 [functions.send-proxied-message]
 enabled = true
 verify_jwt = false
 import_map = "./functions/send-proxied-message/deno.json"
 entrypoint = "./functions/send-proxied-message/index.ts"
+
+# Landlord "Invite Vendor" — creates a vendor_verifications row + tokenized /v/:token
+# link and sends it via SMS/email (ADMIN_REASSIGN_SECRET in handler).
+[functions.send-vendor-invite]
+enabled = true
+verify_jwt = false
+import_map = "./functions/send-vendor-invite/deno.json"
+entrypoint = "./functions/send-vendor-invite/index.ts"
+
+# Public vendor verification portal API — token-authorized (vendor_verifications.token).
+# Handles resolve/save/upload/verifyLicense/startBackgroundCheck/submit.
+[functions.vendor-verification]
+enabled = true
+verify_jwt = false
+import_map = "./functions/vendor-verification/deno.json"
+entrypoint = "./functions/vendor-verification/index.ts"
 
 [functions.mark-unit-vacant]
 enabled = true
@@ -255,3 +323,8 @@ entrypoint = "./functions/run-workflow-escalations/index.ts"
 enabled = true
 verify_jwt = false
 entrypoint = "./functions/check-rent-collection/index.ts"
+
+[functions.refresh-ask-ulo-sources]
+enabled = true
+verify_jwt = false
+entrypoint = "./functions/refresh-ask-ulo-sources/index.ts"

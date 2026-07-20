@@ -1,4 +1,4 @@
-import { ALL_UNIT_OPTIONS } from '@/lib/propertyUnitOptions'
+import { getInventoryUnitOptions } from '@/lib/propertyUnitOptions'
 
 export type UnitCell =
   | { kind: 'assigned'; unit: string; building: string }
@@ -19,9 +19,9 @@ export function unitOptionValueToCell(unitValue: string): UnitCell {
   return { kind: 'assigned', unit: unit?.toUpperCase() ?? '', building }
 }
 
-/** Maps assigned unit+building to an `ALL_UNIT_OPTIONS` value, if on inventory. */
+/** Maps assigned unit+building to showcase inventory value when demo account is active. */
 export function inventoryKeyForAssignedUnit(unit: string, building: string): string | null {
-  for (const opt of ALL_UNIT_OPTIONS) {
+  for (const opt of getInventoryUnitOptions()) {
     const cell = unitOptionValueToCell(opt.value)
     if (cell.kind === 'assigned' && cell.unit === unit && cell.building === building) {
       return opt.value

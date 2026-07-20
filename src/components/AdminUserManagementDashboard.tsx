@@ -8,14 +8,22 @@ import {
   useState,
 } from 'react'
 import { useSearchParams } from 'react-router-dom'
-import { getActiveLandlordId } from '@/lib/activeLandlord'
+import { getActiveLandlordId, isDemoAccountActive } from '@/lib/activeLandlord'
 import { getErrorMessage } from '@/lib/errorMessage'
 import { supabase } from '@/lib/supabase'
-import { normIssueCategory } from '@/lib/vendorIssueCategory'
+import {
+  dbCategoryToVendorTrade,
+  formatVendorTradeLabel,
+  isGeneralistTrade,
+  isVendorTradeSlug,
+  VENDOR_TRADE_OPTIONS,
+  vendorTradeFilterOptions,
+  vendorTradeToDbCategory,
+} from '@/lib/vendorTrades'
 import { AddPropertyModal, type AddPropertyFormPayload } from '@/components/AddPropertyModal'
 import { TableCheckbox } from '@/components/TableCheckbox'
 import { CallPhoneButton, PhoneTelLink } from '@/components/CallPhoneButton'
-import { ALL_UNIT_OPTIONS } from '@/lib/propertyUnitOptions'
+import { getInventoryUnitOptions } from '@/lib/propertyUnitOptions'
 import {
   buildUnitOptionsFromPropertyPayload,
   customUnitPickKey,
@@ -32,7 +40,6 @@ import {
   type EditResidentModalRow,
   type EditResidentSavePayload,
 } from '@/components/EditResidentModal'
-import maintenanceVendorButtonIcon from '@/assets/Maintenance_Vendor.svg'
 import maintenanceVendorRailIcon from '@/assets/Maintenance_Vendor_2.svg'
 import {
   ensureLandlordSmsOnboarding,
@@ -45,6 +52,7 @@ import {
   ensureUnitsInDb,
   loadUnitsFromDb,
   markUnitVacant,
+  purgeShowcaseInventoryUnitsIfNeeded,
   type UnitRecord,
 } from '@/api/unitVacancy'
 import { MarkUnitVacantModal } from '@/components/MarkUnitVacantModal'
@@ -273,8 +281,12 @@ const DEMO_ROWS: UserManagementRow[] = [
 ]
 
 /** Survives leaving `/admin/users` (outlet unmount) so property-derived units stay in Add/Edit resident pickers. */
-const REGISTERED_PROPERTY_UNITS_SESSION_KEY =
+const REGISTERED_PROPERTY_UNITS_SESSION_PREFIX =
   'proptech.admin.registeredPropertyUnitOptions.v1'
+
+function registeredPropertyUnitsSessionKey(landlordId: string = getActiveLandlordId()): string {
+  return `${REGISTERED_PROPERTY_UNITS_SESSION_PREFIX}.${landlordId}`
+}
 
 function parseRegisteredPropertyUnitOptionsFromStorage(
   raw: string | null,
@@ -306,14 +318,16 @@ function parseRegisteredPropertyUnitOptionsFromStorage(
 function readRegisteredPropertyUnitsSession(): { value: string; label: string }[] {
   if (typeof sessionStorage === 'undefined') return []
   return parseRegisteredPropertyUnitOptionsFromStorage(
-    sessionStorage.getItem(REGISTERED_PROPERTY_UNITS_SESSION_KEY),
+    sessionStorage.getItem(registeredPropertyUnitsSessionKey()),
   )
 }
 
 function writeRegisteredPropertyUnitsSession(rows: { value: string; label: string }[]) {
   if (typeof sessionStorage === 'undefined') return
   try {
-    sessionStorage.setItem(REGISTERED_PROPERTY_UNITS_SESSION_KEY, JSON.stringify(rows))
+    sessionStorage.setItem(registeredPropertyUnitsSessionKey(), JSON.stringify(rows))
+    // Drop legacy unscoped key so demo inventory cannot bleed into New Landlord.
+    sessionStorage.removeItem(REGISTERED_PROPERTY_UNITS_SESSION_PREFIX)
   } catch {
     /* ignore quota / private mode */
   }
@@ -664,70 +678,27 @@ const VENDOR_CHANNEL_OPTIONS: { value: VendorNotificationChannel; label: string 
 ]
 
 /**
- * Postgres stores trade slugs or null (generalist); see `normalize_vendor_categories` migration
- * and `vendors_category_check` (appliance | plumbing | electrical | null).
+ * Postgres stores normalized trade slugs (`vendors.category`).
+ * Taxonomy: `@/lib/vendorTrades`.
  */
-const VENDOR_SPECIALTY_OPTIONS: { formValue: string; label: string; dbCategory: string | null }[] =
-  [
-    { formValue: 'appliance', label: 'Appliances', dbCategory: 'appliance' },
-    { formValue: 'plumbing', label: 'Plumbing', dbCategory: 'plumbing' },
-    { formValue: 'electrical', label: 'Electrical', dbCategory: 'electrical' },
-    { formValue: 'household', label: 'Household', dbCategory: null },
-    { formValue: 'pest', label: 'Pest Control', dbCategory: null },
-    { formValue: 'exterior', label: 'Outside/Exterior House', dbCategory: null },
-    { formValue: 'other', label: 'Other', dbCategory: null },
-  ]
-
-const VENDOR_FORM_VALUE_TO_DB = new Map(
-  VENDOR_SPECIALTY_OPTIONS.map((o) => [o.formValue, o.dbCategory] as const),
-)
+const VENDOR_SPECIALTY_OPTIONS = VENDOR_TRADE_OPTIONS.map((trade) => ({
+  formValue: trade.value,
+  label: trade.label,
+  dbCategory: trade.value as string,
+}))
 
 const VENDOR_FORM_VALUE_SET = new Set(VENDOR_SPECIALTY_OPTIONS.map((o) => o.formValue))
 
-/** Filter row: trade slugs + one bucket for null category. */
-const VENDOR_CATEGORY_FILTER_OPTIONS: { value: string; label: string }[] = [
-  { value: 'appliance', label: 'Appliances' },
-  { value: 'plumbing', label: 'Plumbing' },
-  { value: 'electrical', label: 'Electrical' },
-  { value: '__generalist__', label: 'Generalist' },
-]
-
-/** Legacy labels that were sent to DB before slugs; map to current form values. */
-const VENDOR_SPECIALTY_LEGACY_LABEL_TO_FORM: Record<string, string> = {
-  Appliances: 'appliance',
-  Plumbing: 'plumbing',
-  Electrical: 'electrical',
-  Household: 'household',
-  'Pest Control': 'pest',
-  'Outside/Exterior House': 'exterior',
-  Other: 'other',
-  'Outside/Exterior House Other': 'other',
-}
+/** Filter row: all standardized trades. */
+const VENDOR_CATEGORY_FILTER_OPTIONS = vendorTradeFilterOptions()
 
 function displayVendorCategoryLabel(category: string | null | undefined): string {
   if (category == null || String(category).trim() === '') return ''
-  const lower = String(category).trim().toLowerCase()
-  if (lower === 'appliance') return 'Appliances'
-  if (lower === 'plumbing') return 'Plumbing'
-  if (lower === 'electrical') return 'Electrical'
-  return String(category).trim()
+  return formatVendorTradeLabel(category, { emptyLabel: '' })
 }
 
 function normalizeVendorCategoryForForm(raw: string | null | undefined): string {
-  if (raw == null || raw === '') return 'other'
-  const t = raw.trim()
-  if (VENDOR_FORM_VALUE_SET.has(t)) return t
-  const legacy = VENDOR_SPECIALTY_LEGACY_LABEL_TO_FORM[t]
-  if (legacy && VENDOR_FORM_VALUE_SET.has(legacy)) return legacy
-  const lower = t.toLowerCase()
-  if (lower === 'appliance' || lower === 'appliances') return 'appliance'
-  if (lower === 'plumbing') return 'plumbing'
-  if (lower === 'electrical') return 'electrical'
-  const n = normIssueCategory(t)
-  if (n === 'appliance') return 'appliance'
-  if (n === 'plumbing') return 'plumbing'
-  if (n === 'electrical') return 'electrical'
-  return t
+  return dbCategoryToVendorTrade(raw) || 'other'
 }
 
 function resolveVendorCategoryPayload(categorySelect: string):
@@ -735,16 +706,14 @@ function resolveVendorCategoryPayload(categorySelect: string):
   | { ok: false; message: string } {
   const catRaw = categorySelect.trim()
   if (!catRaw) return { ok: false, message: 'Specialty is required.' }
-  let formKey = VENDOR_SPECIALTY_LEGACY_LABEL_TO_FORM[catRaw] ?? catRaw
-  if (!VENDOR_FORM_VALUE_SET.has(formKey)) {
-    const n = normIssueCategory(catRaw)
-    if (n === 'appliance' || n === 'plumbing' || n === 'electrical') {
-      formKey = n
-    } else {
+  if (!isVendorTradeSlug(catRaw) && !VENDOR_FORM_VALUE_SET.has(catRaw as never)) {
+    const normalized = vendorTradeToDbCategory(catRaw)
+    if (!normalized) {
       return { ok: false, message: 'Please select a valid specialty from the list.' }
     }
+    return { ok: true, payload: normalized }
   }
-  return { ok: true, payload: VENDOR_FORM_VALUE_TO_DB.get(formKey) ?? null }
+  return { ok: true, payload: vendorTradeToDbCategory(catRaw) }
 }
 
 function normalizeVendorChannel(raw: unknown): VendorNotificationChannel {
@@ -1176,9 +1145,7 @@ export function VendorFormModal({
                       {option.label}
                     </option>
                   ))}
-                  {category &&
-                  !VENDOR_FORM_VALUE_SET.has(category) &&
-                  !VENDOR_SPECIALTY_LEGACY_LABEL_TO_FORM[category] ? (
+                  {category && !VENDOR_FORM_VALUE_SET.has(category as never) ? (
                     <option value={category}>{category} (invalid — choose a listed specialty)</option>
                   ) : null}
                 </select>
@@ -1452,9 +1419,9 @@ function VendorManagementTabContent({
 
       const matchesCategory =
         !vendorCategoryFilter ||
-        (vendorCategoryFilter === '__generalist__'
-          ? v.category == null || String(v.category).trim() === ''
-          : (v.category?.toLowerCase() ?? '') === vendorCategoryFilter.toLowerCase())
+        (vendorCategoryFilter === 'general'
+          ? isGeneralistTrade(v.category)
+          : dbCategoryToVendorTrade(v.category) === vendorCategoryFilter)
       if (!matchesCategory) return false
 
       if (!vendorStatusFilter) return true
@@ -1756,6 +1723,7 @@ export function AdminUserManagementDashboard() {
   const [activateUnitTarget, setActivateUnitTarget] = useState<UnitRecord | null>(null)
 
   const loadUnits = useCallback(async () => {
+    await purgeShowcaseInventoryUnitsIfNeeded()
     const rows = await loadUnitsFromDb()
     setDbUnits(rows)
   }, [])
@@ -1766,8 +1734,9 @@ export function AdminUserManagementDashboard() {
 
   useEffect(() => {
     const syncInventory = async () => {
+      const inventory = getInventoryUnitOptions()
       const cells = [
-        ...ALL_UNIT_OPTIONS.map((o) => unitOptionValueToCell(o.value)),
+        ...inventory.map((o) => unitOptionValueToCell(o.value)),
         ...registeredPropertyUnitOptions.map((o) => unitOptionKeyToCell(o.value)),
       ].filter((c): c is { kind: 'assigned'; unit: string; building: string } => c.kind === 'assigned')
 
@@ -1787,7 +1756,7 @@ export function AdminUserManagementDashboard() {
   )
 
   const vacantUnitOptions = useMemo(() => {
-    return ALL_UNIT_OPTIONS.filter((opt) => {
+    return getInventoryUnitOptions().filter((opt) => {
       const cell = unitOptionValueToCell(opt.value)
       if (cell.kind !== 'assigned') return false
       return !residents.some((r) => {
@@ -1827,7 +1796,7 @@ export function AdminUserManagementDashboard() {
     const inv = inventoryKeyForAssignedUnit(unit, building)
     if (inv) {
       if (!opts.some((o) => o.value === inv)) {
-        const def = ALL_UNIT_OPTIONS.find((o) => o.value === inv)
+        const def = getInventoryUnitOptions().find((o) => o.value === inv)
         if (def) opts.unshift({ value: def.value, label: def.label })
       }
     } else {
@@ -1848,11 +1817,33 @@ export function AdminUserManagementDashboard() {
   }, [editResidentRow])
 
   /**
-   * Inventory units (`ALL_UNIT_OPTIONS`) plus units from registered properties; occupied = roster match.
-   * `rowCurrentlyOccupiesAssignedUnit` excludes `past_resident`, so they count as vacant for this rate.
+   * Demo: showcase inventory + registered properties.
+   * New Landlord / default: DB units + session-registered properties only.
    */
   const occupancyUnitStats = useMemo(() => {
-    const inventoryTotal = ALL_UNIT_OPTIONS.filter(
+    if (!isDemoAccountActive()) {
+      const buildingKeys = new Set(
+        dbUnits.map((u) => {
+          const building = (u.building ?? '').trim().toLowerCase()
+          const unitLabel = (u.unit_label ?? '').trim().toLowerCase()
+          return `${building}::${unitLabel}`
+        }),
+      )
+      for (const opt of registeredPropertyUnitOptions) {
+        const cell = unitOptionKeyToCell(opt.value)
+        if (cell.kind === 'assigned') {
+          buildingKeys.add(
+            `${cell.building.trim().toLowerCase()}::${cell.unit.trim().toLowerCase()}`,
+          )
+        }
+      }
+      const totalUnits = buildingKeys.size
+      const occupied = residents.filter((r) => rowCurrentlyOccupiesAssignedUnit(r)).length
+      const pct = totalUnits > 0 ? Math.round((Math.min(occupied, totalUnits) / totalUnits) * 100) : 0
+      return { occupied: Math.min(occupied, totalUnits), totalUnits, pct }
+    }
+
+    const inventoryTotal = getInventoryUnitOptions().filter(
       (opt) => unitOptionValueToCell(opt.value).kind === 'assigned',
     ).length
     const extraTotal = registeredPropertyUnitOptions.length
@@ -1862,7 +1853,13 @@ export function AdminUserManagementDashboard() {
     const occupied = Math.max(0, inventoryOccupied + propertyOccupied)
     const pct = totalUnits > 0 ? Math.round((occupied / totalUnits) * 100) : 0
     return { occupied, totalUnits, pct }
-  }, [vacantUnitOptions, vacantPropertyUnitOptions, registeredPropertyUnitOptions])
+  }, [
+    dbUnits,
+    residents,
+    vacantUnitOptions,
+    vacantPropertyUnitOptions,
+    registeredPropertyUnitOptions,
+  ])
 
   /**
    * Residents vs non-residents by **status only**: `past_resident` counts as non-resident; whether a unit is
@@ -1884,7 +1881,7 @@ export function AdminUserManagementDashboard() {
   const loadResidents = useCallback(async () => {
     if (!supabase) {
       setResidentsFetchError(null)
-      setResidents(DEMO_ROWS)
+      setResidents(isDemoAccountActive() ? DEMO_ROWS : [])
       return
     }
     const { data, error } = await supabase

@@ -1,0 +1,33 @@
+---
+description: When landlord onboarding completes, automatically start tenant activation and vendor verification for everyone listed in that run.
+alwaysApply: true
+---
+
+# Onboarding completion → automatic activation
+
+When a landlord finishes setup (`completeOnboarding`), **everyone listed in that onboarding run** is automatically started on their outbound activation flow. Landlords should not have to click per person.
+
+## Rule
+
+| Listed during onboarding | Automatic action on complete |
+|---|---|
+| Resident / tenant with a phone | Tenant welcome / activation SMS (`sendTenantActivationSms`) |
+| Vendor with phone and/or email | Unique vendor verification invite (`sendVendorInvite`) via SMS, email, or both |
+
+## Requirements
+
+- Pass each vendor’s `vendorId` so form submit updates that roster profile.
+- Mint a **unique** verification link per vendor invite.
+- Best-effort delivery: never block finishing setup on SMS/email failure; surface a combined `activationWarning` and log graph events for the activity feed.
+- Skip people with no usable contact info.
+- Follow the Ulo communication writing standard for all outbound copy.
+
+## Where it lives
+
+- Orchestration: `src/lib/landlordOnboarding.ts` → `completeOnboarding`
+- Tenant send: `src/api/tenantActivation.ts` / `send-tenant-activation`
+- Vendor send: `src/api/vendorVerification.ts` → `send-vendor-invite`
+
+Manual “Invite vendor” controls on the vendors list and vendor profile are removed —
+verification starts automatically at onboarding complete. Re-invites for vendors added
+later can still use programmatic `sendVendorInvite` (e.g. Find External Vendor) when needed.

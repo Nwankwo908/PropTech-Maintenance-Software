@@ -21,6 +21,7 @@ export type PropertyOperationsTimelineEvent = {
   createdAt: string
   unitLabel: string | null
   building: string | null
+  residentId?: string | null
   residentName: string | null
   vendorName: string | null
   maintenanceRequestId: string | null
@@ -175,6 +176,7 @@ function mapEnrichedGraphRow(row: EnrichedGraphRow): PropertyOperationsTimelineE
     createdAt: row.created_at,
     unitLabel: row.unit_label,
     building: row.building,
+    residentId: row.resident_id,
     residentName: row.resident_name,
     vendorName: row.vendor_name,
     maintenanceRequestId:
@@ -198,6 +200,7 @@ function mapLegacyBridgeRow(row: LegacyGraphRow): PropertyOperationsTimelineEven
     createdAt: row.created_at,
     unitLabel: null,
     building: null,
+    residentId: row.resident_id,
     residentName: null,
     vendorName: null,
     maintenanceRequestId:
@@ -266,26 +269,136 @@ function mergeSetupEventGroup(group: PropertyOperationsTimelineEvent[]): Propert
   }
 }
 
+/**
+ * Tenant onboarding lifecycle events. Activation welcome text, its delivery
+ * receipt, the resident's reply, and their consent decision are all one story —
+ * they collapse into a single "Tenant onboarding" feed card per resident/day.
+ */
+const TENANT_ONBOARDING_EVENT_TYPES = new Set([
+  'tenant.activation_sms_sent',
+  'tenant.activation_sms_failed',
+  'tenant.sms_opted_in',
+  'tenant.sms_opted_out',
+  'tenant.sms_help',
+])
+
+/** Generic SMS lifecycle events count as onboarding only when not tied to a ticket. */
+const TENANT_ONBOARDING_SMS_EVENT_TYPES = new Set([
+  'sms.delivered',
+  'sms.delivery_failed',
+  'sms.message_received',
+])
+
+function tenantOnboardingGroupKey(event: PropertyOperationsTimelineEvent): string | null {
+  const residentId = event.residentId?.trim()
+  if (!residentId) return null
+
+  const isTenantEvent = TENANT_ONBOARDING_EVENT_TYPES.has(event.eventType)
+  const isOnboardingSms =
+    TENANT_ONBOARDING_SMS_EVENT_TYPES.has(event.eventType) && !event.maintenanceRequestId
+  if (!isTenantEvent && !isOnboardingSms) return null
+
+  const day = event.createdAt.slice(0, 10)
+  return `tenant_onboarding|${residentId}|${day}`
+}
+
+function mergeTenantOnboardingGroup(
+  group: PropertyOperationsTimelineEvent[],
+  nameByResident: Map<string, string>,
+): PropertyOperationsTimelineEvent {
+  const sorted = [...group].sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+  const latest = sorted[0]!
+  const residentId = latest.residentId?.trim() ?? ''
+  const day = latest.createdAt.slice(0, 10)
+  const types = new Set(group.map((event) => event.eventType))
+
+  const residentName =
+    (residentId ? nameByResident.get(residentId) : null) ??
+    sorted.find((event) => event.residentName)?.residentName ??
+    null
+  const building = sorted.find((event) => event.building)?.building ?? null
+  const unitLabel = sorted.find((event) => event.unitLabel)?.unitLabel ?? null
+  const workflowRunId = sorted.find((event) => event.workflowRunId)?.workflowRunId ?? null
+
+  const sent = types.has('tenant.activation_sms_sent')
+  const delivered = types.has('sms.delivered')
+  const replied = types.has('sms.message_received')
+  const optedIn = types.has('tenant.sms_opted_in')
+  const optedOut = types.has('tenant.sms_opted_out')
+  const failed =
+    types.has('tenant.activation_sms_failed') || types.has('sms.delivery_failed')
+
+  const label = 'Tenant onboarding verification'
+
+  const steps: string[] = []
+  if (sent) steps.push('welcome text sent')
+  if (delivered) steps.push('delivered')
+  if (replied) steps.push('resident replied')
+  if (optedIn) steps.push('opted in to SMS updates')
+  if (optedOut) steps.push('opted out')
+  if (failed) steps.push('a delivery attempt failed')
+
+  const who = residentName ?? 'Resident'
+  const message = steps.length ? `${who}: ${steps.join(' → ')}.` : latest.message
+
+  return {
+    ...latest,
+    id: `tenant-onboarding:${residentId}:${day}`,
+    category: 'admin',
+    label,
+    message,
+    residentName,
+    building,
+    unitLabel,
+    workflowRunId,
+  }
+}
+
 /** Collapse repetitive setup logs (e.g. onboarding registering many units). */
 export function consolidateFeedEvents(
   events: PropertyOperationsTimelineEvent[],
 ): PropertyOperationsTimelineEvent[] {
   const passthrough: PropertyOperationsTimelineEvent[] = []
-  const groups = new Map<string, PropertyOperationsTimelineEvent[]>()
+  const setupGroups = new Map<string, PropertyOperationsTimelineEvent[]>()
+  const onboardingGroups = new Map<string, PropertyOperationsTimelineEvent[]>()
+
+  // Resolve resident names from any event that carries both id + name so the
+  // merged card can show the resident even when the SMS rows only have an id.
+  const nameByResident = new Map<string, string>()
+  for (const event of events) {
+    const residentId = event.residentId?.trim()
+    if (residentId && event.residentName && !nameByResident.has(residentId)) {
+      nameByResident.set(residentId, event.residentName)
+    }
+  }
 
   for (const event of events) {
+    const onboardingKey = tenantOnboardingGroupKey(event)
+    if (onboardingKey) {
+      const list = onboardingGroups.get(onboardingKey) ?? []
+      list.push(event)
+      onboardingGroups.set(onboardingKey, list)
+      continue
+    }
     const key = consolidationGroupKey(event)
     if (!key) {
       passthrough.push(event)
       continue
     }
-    const list = groups.get(key) ?? []
+    const list = setupGroups.get(key) ?? []
     list.push(event)
-    groups.set(key, list)
+    setupGroups.set(key, list)
   }
 
-  const consolidated = [...groups.values()].map(mergeSetupEventGroup)
-  return [...passthrough, ...consolidated].sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+  const consolidatedSetup = [...setupGroups.values()].map(mergeSetupEventGroup)
+  const consolidatedOnboarding = [...onboardingGroups.values()].flatMap((group) =>
+    // A lone event isn't a group — keep it as-is so single logs read naturally.
+    group.length > 1 ? [mergeTenantOnboardingGroup(group, nameByResident)] : group,
+  )
+
+  return [...passthrough, ...consolidatedSetup, ...consolidatedOnboarding].sort((a, b) =>
+    b.createdAt.localeCompare(a.createdAt),
+  )
 }
 
 function mapOperationsGraphRow(row: OperationsGraphRow): PropertyOperationsTimelineEvent {
@@ -301,7 +414,8 @@ function mapOperationsGraphRow(row: OperationsGraphRow): PropertyOperationsTimel
     createdAt: row.created_at,
     unitLabel: readMetadataString(metadata, 'unit_label'),
     building: readMetadataString(metadata, 'building'),
-    residentName: null,
+    residentId: row.resident_id,
+    residentName: readMetadataString(metadata, 'resident_name'),
     vendorName: null,
     maintenanceRequestId: row.maintenance_request_id,
     workflowRunId: row.workflow_run_id,
@@ -529,6 +643,171 @@ export function formatTimelineContextLine(
     return `${location} · ${people.join(' · ')}`
   }
   return location ?? (people.length ? people.join(' · ') : null)
+}
+
+/**
+ * Temporary overview feed samples so every category badge is visible for UI review.
+ * Does not change event taxonomy — showcase rows only.
+ */
+export function buildOverviewFeedBadgeShowcase(
+  nowMs: number = Date.now(),
+): PropertyOperationsTimelineEvent[] {
+  const minutesAgo = (minutes: number) =>
+    new Date(nowMs - minutes * 60_000).toISOString()
+
+  return [
+    {
+      id: 'showcase-maintenance-sla-reassign',
+      eventType: 'maintenance.sla_auto_reassigned',
+      label: "Vendor didn't respond in time. The job was reassigned.",
+      category: 'maintenance',
+      message: null,
+      eventSource: 'showcase',
+      createdAt: minutesAgo(12),
+      unitLabel: 'Unit 207',
+      building: 'Maple Heights',
+      residentName: 'Jordan Lee',
+      vendorName: 'Summit HVAC',
+      maintenanceRequestId: null,
+      workflowRunId: null,
+    },
+    {
+      id: 'showcase-vendor-external-assign',
+      eventType: 'vendor.external_assigned',
+      label: 'External vendor assigned',
+      category: 'vendor',
+      message: null,
+      eventSource: 'showcase',
+      createdAt: minutesAgo(28),
+      unitLabel: 'Unit 12B',
+      building: 'Cedar Court',
+      residentName: null,
+      vendorName: 'All-City Plumbing',
+      maintenanceRequestId: null,
+      workflowRunId: null,
+    },
+    {
+      id: 'showcase-rent-reminder',
+      eventType: 'rent.reminder_sent',
+      label: 'Rent reminder sent',
+      category: 'rent',
+      message: null,
+      eventSource: 'showcase',
+      createdAt: minutesAgo(45),
+      unitLabel: 'Unit 4A',
+      building: 'River Park',
+      residentName: 'Sam Ortiz',
+      vendorName: null,
+      maintenanceRequestId: null,
+      workflowRunId: null,
+    },
+    {
+      id: 'showcase-move-in-checklist',
+      eventType: 'move_in.checklist_sent',
+      label: 'Checklist sent',
+      category: 'move_in',
+      message: null,
+      eventSource: 'showcase',
+      createdAt: minutesAgo(70),
+      unitLabel: 'Unit 301',
+      building: 'Oak Street',
+      residentName: 'Avery Chen',
+      vendorName: null,
+      maintenanceRequestId: null,
+      workflowRunId: null,
+    },
+    {
+      id: 'showcase-move-out-started',
+      eventType: 'move_out.started',
+      label: 'Move-out started',
+      category: 'move_out',
+      message: null,
+      eventSource: 'showcase',
+      createdAt: minutesAgo(95),
+      unitLabel: 'Unit 8C',
+      building: 'Maple Heights',
+      residentName: 'Taylor Brooks',
+      vendorName: null,
+      maintenanceRequestId: null,
+      workflowRunId: null,
+    },
+    {
+      id: 'showcase-inspection-scheduled',
+      eventType: 'inspection.scheduled',
+      label: 'Inspection scheduled',
+      category: 'inspection',
+      message: null,
+      eventSource: 'showcase',
+      createdAt: minutesAgo(130),
+      unitLabel: 'Unit 15',
+      building: 'Cedar Court',
+      residentName: null,
+      vendorName: null,
+      maintenanceRequestId: null,
+      workflowRunId: null,
+    },
+    {
+      id: 'showcase-admin-unit-registered',
+      eventType: 'unit.registered',
+      label: 'Unit registered',
+      category: 'admin',
+      message: null,
+      eventSource: 'showcase',
+      createdAt: minutesAgo(180),
+      unitLabel: 'Unit 22',
+      building: 'River Park',
+      residentName: null,
+      vendorName: null,
+      maintenanceRequestId: null,
+      workflowRunId: null,
+    },
+  ]
+}
+
+/**
+ * Attach real workflow run IDs to showcase feed rows (by category) so the info
+ * icon can open a matching workflow card for admin verification.
+ */
+export function linkShowcaseFeedEventsToWorkflowRuns(
+  events: PropertyOperationsTimelineEvent[],
+  runIdsByCategory: Partial<Record<PropertyOperationsTimelineCategory, string[]>>,
+): PropertyOperationsTimelineEvent[] {
+  const queues: Partial<Record<PropertyOperationsTimelineCategory, string[]>> = {}
+  for (const category of PROPERTY_OPERATIONS_TIMELINE_CATEGORIES) {
+    const ids = runIdsByCategory[category]
+    if (ids?.length) queues[category] = [...ids]
+  }
+  const used = new Set<string>()
+
+  const takeNext = (category: PropertyOperationsTimelineCategory): string | null => {
+    const categoryQueue = queues[category]
+    while (categoryQueue?.length) {
+      const nextId = categoryQueue.shift()!
+      if (used.has(nextId)) continue
+      used.add(nextId)
+      return nextId
+    }
+    for (const fallbackCategory of PROPERTY_OPERATIONS_TIMELINE_CATEGORIES) {
+      if (fallbackCategory === category) continue
+      const fallbackQueue = queues[fallbackCategory]
+      while (fallbackQueue?.length) {
+        const nextId = fallbackQueue.shift()!
+        if (used.has(nextId)) continue
+        used.add(nextId)
+        return nextId
+      }
+    }
+    return null
+  }
+
+  return events.map((event) => {
+    if (event.workflowRunId || event.eventSource !== 'showcase') return event
+    // Unit registration opens the property card, not a workflow run.
+    if (event.eventType === 'unit.registered') return event
+    const nextId = takeNext(event.category)
+    if (!nextId) return event
+    return { ...event, workflowRunId: nextId }
+  })
 }
 
 export type TimelineResidentOption = {

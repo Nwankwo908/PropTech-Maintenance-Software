@@ -7,7 +7,6 @@ import failedDeliveryIcon from '@/assets/Failed Delivery.svg'
 import smsIcon from '@/assets/SMS.svg'
 import ticketIcon from '@/assets/Ticket2.svg'
 import overrideIcon from '@/assets/Override.svg'
-import retryIcon from '@/assets/Retry.svg'
 import { ConfigureAiDataSourcesModal } from '@/components/ConfigureAiDataSourcesModal'
 import {
   RetryFailedDeliveryModal,
@@ -49,7 +48,7 @@ import {
   type SendBroadcastPresentation,
 } from '@/components/SendBroadcastMessageModal'
 import { SendInspectionNoticeModal } from '@/components/SendInspectionNoticeModal'
-import { getActiveLandlordId } from '@/lib/activeLandlord'
+import { getActiveLandlordId, isDemoAccountActive } from '@/lib/activeLandlord'
 import { supabase } from '@/lib/supabase'
 
 const NOTIF_TAB_IDS = ['history', 'scheduled', 'external'] as const
@@ -994,7 +993,7 @@ export function AdminNotificationManagementDashboard() {
   const [broadcastDashboardStats, setBroadcastDashboardStats] =
     useState<BroadcastDashboardStats>(EMPTY_BROADCAST_DASHBOARD_STATS)
   const [messageHistoryRows, setMessageHistoryRows] =
-    useState<NotifRow[]>(MESSAGE_HISTORY_ROWS)
+    useState<NotifRow[]>(() => (isDemoAccountActive() ? MESSAGE_HISTORY_ROWS : []))
   const [scheduledBroadcastAutomations, setScheduledBroadcastAutomations] = useState<
     AutomationPanelItem[]
   >([])
@@ -1173,7 +1172,7 @@ export function AdminNotificationManagementDashboard() {
   useEffect(() => {
     if (!supabase) {
       setBroadcastDashboardStats(EMPTY_BROADCAST_DASHBOARD_STATS)
-      setMessageHistoryRows(MESSAGE_HISTORY_ROWS)
+      setMessageHistoryRows(isDemoAccountActive() ? MESSAGE_HISTORY_ROWS : [])
       setScheduledBroadcastAutomations([])
       return
     }

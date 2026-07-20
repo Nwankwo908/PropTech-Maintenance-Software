@@ -3,9 +3,10 @@ import type {
   MonitoringTranscriptItem,
   VendorOutreachChannel,
 } from '@/lib/conversationMonitoring'
+import { getActiveLandlordId, EMPTY_LANDLORD_ID } from '@/lib/activeLandlord'
 import { hasVendorIntakeSubmission } from '@/lib/vendorIntakeForm'
 import { markAdminPricingConfirmed } from '@/lib/vendorPricingConfirmation'
-import { normIssueCategory } from '@/lib/vendorIssueCategory'
+import { formatVendorTradeLabel } from '@/lib/vendorTrades'
 import {
   buildVendorVerificationEmail,
   buildVendorVerificationSms,
@@ -73,10 +74,8 @@ export function buildVendorSetupConversationId(context: VendorSetupThreadContext
 }
 
 function tradeLabelFromIssueCategory(issueCategory: string | null | undefined): string {
-  const n = normIssueCategory(issueCategory)
-  if (!n) return 'MAINTENANCE'
-  if (n === 'hvac') return 'HVAC'
-  return n.replace(/_/g, ' ').toUpperCase()
+  if (!issueCategory?.trim()) return 'MAINTENANCE'
+  return formatVendorTradeLabel(issueCategory).toUpperCase()
 }
 
 export function buildVendorSetupContextFromExternalVendor(input: {
@@ -222,22 +221,52 @@ export function readVendorSetupLoggedQuotes(conversationId: string): MonitoringT
   return stripLegacyVerbalQuoteAuditItems(stored ?? [])
 }
 
-function readVendorSetupInbox(): VendorSetupInboxEntry[] {
-  const current = readJson<VendorSetupInboxEntry[]>(INBOX_STORAGE_KEY) ?? []
-  const legacy = readJson<VendorSetupInboxEntry[]>('ulo.vendorPricingInbox') ?? []
-  const byId = new Map<string, VendorSetupInboxEntry>()
-  for (const row of [...legacy, ...current]) byId.set(row.conversationId, row)
-  return [...byId.values()]
+function inboxStorageKey(landlordId: string): string {
+  return `${INBOX_STORAGE_KEY}.${landlordId}`
 }
 
-function writeVendorSetupInbox(entries: VendorSetupInboxEntry[]): void {
-  writeJson(INBOX_STORAGE_KEY, entries)
+function readVendorSetupInbox(landlordId: string = getActiveLandlordId()): VendorSetupInboxEntry[] {
+  const scoped = readJson<VendorSetupInboxEntry[]>(inboxStorageKey(landlordId)) ?? []
+  // New Landlord: never bleed demo/default threads from the legacy global key.
+  if (landlordId === EMPTY_LANDLORD_ID) {
+    return stripLegacyVerbalQuoteAuditItems(scoped)
+  }
+  const legacyGlobal = readJson<VendorSetupInboxEntry[]>(INBOX_STORAGE_KEY) ?? []
+  const legacyPricing = readJson<VendorSetupInboxEntry[]>('ulo.vendorPricingInbox') ?? []
+  const byId = new Map<string, VendorSetupInboxEntry>()
+  for (const row of [...legacyPricing, ...legacyGlobal, ...scoped]) {
+    byId.set(row.conversationId, row)
+  }
+  return stripLegacyVerbalQuoteAuditItems([...byId.values()])
+}
+
+function writeVendorSetupInbox(
+  entries: VendorSetupInboxEntry[],
+  landlordId: string = getActiveLandlordId(),
+): void {
+  writeJson(inboxStorageKey(landlordId), entries)
+}
+
+export function clearVendorSetupInboxForLandlord(
+  landlordId: string = getActiveLandlordId(),
+): void {
+  try {
+    window.localStorage.removeItem(inboxStorageKey(landlordId))
+    if (landlordId === EMPTY_LANDLORD_ID) {
+      window.localStorage.removeItem(INBOX_STORAGE_KEY)
+    }
+  } catch {
+    // private mode
+  }
 }
 
 export function upsertVendorSetupInboxEntry(entry: VendorSetupInboxEntry): void {
-  const entries = readVendorSetupInbox().filter((row) => row.conversationId !== entry.conversationId)
+  const landlordId = getActiveLandlordId()
+  const entries = readVendorSetupInbox(landlordId).filter(
+    (row) => row.conversationId !== entry.conversationId,
+  )
   entries.push(entry)
-  writeVendorSetupInbox(entries)
+  writeVendorSetupInbox(entries, landlordId)
 }
 
 export function touchVendorSetupInboxActivity(
@@ -245,11 +274,12 @@ export function touchVendorSetupInboxActivity(
   preview: string,
   lastActivityMs = Date.now(),
 ): void {
-  const entries = readVendorSetupInbox()
+  const landlordId = getActiveLandlordId()
+  const entries = readVendorSetupInbox(landlordId)
   const index = entries.findIndex((row) => row.conversationId === conversationId)
   if (index < 0) return
   entries[index] = { ...entries[index], preview, lastActivityMs }
-  writeVendorSetupInbox(entries)
+  writeVendorSetupInbox(entries, landlordId)
 }
 
 /** Register vendor setup thread in Communication and persist context for review. */
@@ -268,7 +298,10 @@ export function registerVendorSetupConversation(
   stashVendorSetupThreadContext(conversationId, fullContext)
 
   const preview = vendorSetupInboxPreview(fullContext.locationLabel)
-  const existing = readVendorSetupInbox().find((row) => row.conversationId === conversationId)
+  const landlordId = getActiveLandlordId()
+  const existing = readVendorSetupInbox(landlordId).find(
+    (row) => row.conversationId === conversationId,
+  )
   upsertVendorSetupInboxEntry({
     conversationId,
     vendorName: context.vendorName,
@@ -290,8 +323,10 @@ export function registerVendorSetupConversation(
   return conversationId
 }
 
-export function listVendorSetupInboxEntries(): VendorSetupInboxEntry[] {
-  return readVendorSetupInbox().sort((a, b) => b.lastActivityMs - a.lastActivityMs)
+export function listVendorSetupInboxEntries(
+  landlordId: string = getActiveLandlordId(),
+): VendorSetupInboxEntry[] {
+  return readVendorSetupInbox(landlordId).sort((a, b) => b.lastActivityMs - a.lastActivityMs)
 }
 
 export function sortMonitoringTranscript(
@@ -473,10 +508,10 @@ export function buildVendorSetupMonitoringDetail(
 
   return {
     conversationId,
-    title: context.vendorName,
-    subtitle: `New job · ${areaPhrase}`,
-    riskLevel: null,
-    riskLabel: null,
+    title: 'Vendor onboarding',
+    subtitle: `${context.vendorName} · ${areaPhrase}`,
+    riskLevel: 'low',
+    riskLabel: 'NO RISK',
     summary: vendorSetupSmsMonitoringSummary(
       context.vendorName,
       phoneLabel,

@@ -1,11 +1,19 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
+import { Link } from 'react-router-dom'
 import { VendorFormModal } from '@/components/AdminUserManagementDashboard'
 import { TableCheckbox } from '@/components/TableCheckbox'
-import { CallPhoneButton } from '@/components/CallPhoneButton'
 import magnifyingGlassIcon from '@/assets/Magnifying glass.svg'
 import { getActiveLandlordId } from '@/lib/activeLandlord'
+import { vendorDetailPath } from '@/lib/vendorRoutes'
 import { dedupeVendorsByName, duplicateVendorIdsToRemove } from '@/lib/vendorDedup'
 import { supabase } from '@/lib/supabase'
+import {
+  dbCategoryToVendorTrade,
+  formatVendorTradeLabel,
+  isGeneralistTrade,
+  VENDOR_TRADE_OPTIONS,
+} from '@/lib/vendorTrades'
+import { resolveVendorCapacityChip } from '@/lib/vendorStatusChip'
 
 type VendorRow = {
   id: string
@@ -22,7 +30,6 @@ type VendorRow = {
   createdAt: string | null
 }
 
-type StatusFilter = 'all' | 'active' | 'backup'
 type RatingSort = 'desc' | 'asc'
 
 function asString(value: unknown): string {
@@ -40,25 +47,41 @@ function asFiniteNumber(value: unknown): number | null {
 }
 
 function formatTrade(category: string | null): string {
-  if (!category) return 'General'
-  return category
-    .split(/[_-]/)
-    .map((part) => (part ? part[0].toUpperCase() + part.slice(1) : part))
-    .join(' ')
+  return formatVendorTradeLabel(category)
 }
 
-function formatResponse(minutes: number | null): string {
-  if (minutes == null || !Number.isFinite(minutes)) return '—'
-  if (minutes < 60) return `${Math.round(minutes)}m`
-  const hours = minutes / 60
-  return hours < 24 ? `${Math.round(hours)}h` : `${Math.round(hours / 24)}d`
+function vendorMatchesTrade(vendor: VendorRow, tradeFilter: string): boolean {
+  if (!tradeFilter) return true
+  if (tradeFilter === 'general' || tradeFilter === '__generalist__') {
+    return isGeneralistTrade(vendor.category)
+  }
+  return dbCategoryToVendorTrade(vendor.category) === tradeFilter
 }
 
 function formatRating(score: number | null, reviewCount: number): string {
   if (score == null) return '—'
-  const reviews =
-    reviewCount === 1 ? '1 review' : `${reviewCount.toLocaleString()} reviews`
-  return `${score.toFixed(1)} (${reviews})`
+  return `${score.toFixed(1)} (${reviewCount.toLocaleString()})`
+}
+
+function VerificationPill({ status }: { status: string | undefined }) {
+  if (!status) {
+    return <span className="text-[13px] text-[#6a7282]">—</span>
+  }
+  const config: Record<string, { label: string; className: string }> = {
+    verified: { label: 'Verified', className: 'bg-[#dbfce7] text-[#008236]' },
+    needs_review: { label: 'Needs review', className: 'bg-[#fef9c3] text-[#92400e]' },
+    submitted: { label: 'In review', className: 'bg-[#fef9c3] text-[#92400e]' },
+    in_progress: { label: 'In progress', className: 'bg-[#e0e7ff] text-[#3730a3]' },
+    invited: { label: 'Invited', className: 'bg-[#f3f4f6] text-[#6a7282]' },
+  }
+  const entry = config[status] ?? { label: status, className: 'bg-[#f3f4f6] text-[#6a7282]' }
+  return (
+    <span
+      className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-[12px] font-medium ${entry.className}`}
+    >
+      {entry.label}
+    </span>
+  )
 }
 
 function StarIcon() {
@@ -75,14 +98,6 @@ function FilterChevronDown() {
       <path d="M6 9l6 6 6-6" />
     </svg>
   )
-}
-
-function vendorMatchesTrade(vendor: VendorRow, tradeFilter: string): boolean {
-  if (!tradeFilter) return true
-  if (tradeFilter === '__generalist__') {
-    return vendor.category == null || vendor.category.trim() === ''
-  }
-  return (vendor.category ?? '').toLowerCase() === tradeFilter.toLowerCase()
 }
 
 function FilterSelect({
@@ -164,9 +179,11 @@ export function AdminVendorsDashboard() {
   const [error, setError] = useState<string | null>(null)
   const [scoresError, setScoresError] = useState<string | null>(null)
   const [addVendorOpen, setAddVendorOpen] = useState(false)
+  const [verificationByVendor, setVerificationByVendor] = useState<Map<string, string>>(
+    () => new Map(),
+  )
   const [searchQuery, setSearchQuery] = useState('')
   const [tradeFilter, setTradeFilter] = useState('')
-  const [statusFilter, setStatusFilter] = useState<StatusFilter>('all')
   const [ratingSort, setRatingSort] = useState<RatingSort>('desc')
   const [selectedVendorIds, setSelectedVendorIds] = useState<Set<string>>(() => new Set())
   const [deleteVendorsSaving, setDeleteVendorsSaving] = useState(false)
@@ -292,28 +309,39 @@ export function AdminVendorsDashboard() {
     setLoading(false)
   }, [])
 
+  const loadVerifications = useCallback(async () => {
+    if (!supabase) return
+    const landlordId = getActiveLandlordId()
+    const { data, error: vErr } = await supabase
+      .from('vendor_verifications')
+      .select('vendor_id, status, updated_at')
+      .eq('landlord_id', landlordId)
+      .not('vendor_id', 'is', null)
+      .order('updated_at', { ascending: true })
+    if (vErr || !data) {
+      if (vErr) console.warn('[AdminVendorsDashboard] vendor_verifications', vErr.message)
+      return
+    }
+    const map = new Map<string, string>()
+    for (const raw of data as Record<string, unknown>[]) {
+      const vendorId = asString(raw.vendor_id)
+      const status = asString(raw.status)
+      if (vendorId && status) map.set(vendorId, status)
+    }
+    setVerificationByVendor(map)
+  }, [])
+
   useEffect(() => {
     void loadVendors()
-  }, [loadVendors])
+    void loadVerifications()
+  }, [loadVendors, loadVerifications])
 
   const tradeOptions = useMemo(() => {
-    const categories = new Set<string>()
-    let hasGeneralist = false
-    for (const vendor of vendors) {
-      if (vendor.category?.trim()) {
-        categories.add(vendor.category.trim().toLowerCase())
-      } else {
-        hasGeneralist = true
-      }
-    }
-    const options = [...categories]
-      .sort((a, b) => formatTrade(a).localeCompare(formatTrade(b)))
-      .map((value) => ({ value, label: formatTrade(value) }))
-    if (hasGeneralist) {
-      options.push({ value: '__generalist__', label: 'Generalist' })
-    }
-    return options
-  }, [vendors])
+    return VENDOR_TRADE_OPTIONS.map((trade) => ({
+      value: trade.value,
+      label: trade.label,
+    }))
+  }, [])
 
   const filteredVendors = useMemo(() => {
     const q = searchQuery.trim().toLowerCase()
@@ -326,8 +354,6 @@ export function AdminVendorsDashboard() {
         (vendor.phone?.toLowerCase().includes(q) ?? false)
       if (!matchesSearch) return false
       if (!vendorMatchesTrade(vendor, tradeFilter)) return false
-      if (statusFilter === 'active') return vendor.active
-      if (statusFilter === 'backup') return !vendor.active
       return true
     })
 
@@ -340,7 +366,7 @@ export function AdminVendorsDashboard() {
       if (jobsDelta !== 0) return jobsDelta
       return a.name.localeCompare(b.name)
     })
-  }, [vendors, searchQuery, tradeFilter, statusFilter, ratingSort])
+  }, [vendors, searchQuery, tradeFilter, ratingSort])
 
   const selectedVendorCount = selectedVendorIds.size
   const allFilteredVendorsSelected =
@@ -421,23 +447,25 @@ export function AdminVendorsDashboard() {
             Keep track of your vendors, assign work orders, and manage repairs in one place.
           </p>
         </div>
-        <button
-          type="button"
-          onClick={() => setAddVendorOpen(true)}
-          className="inline-flex h-9 shrink-0 cursor-pointer items-center justify-center gap-2 rounded-[10px] border border-black/10 bg-white px-4 text-[14px] font-medium leading-5 text-tertiary outline-none transition-colors duration-150 hover:bg-[#e2f5f1] focus-visible:ring-2 focus-visible:ring-[#101828] focus-visible:ring-offset-2"
-        >
-          <svg
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth={2}
-            className="size-4 shrink-0"
-            aria-hidden
+        <div className="flex shrink-0 items-center gap-2">
+          <button
+            type="button"
+            onClick={() => setAddVendorOpen(true)}
+            className="inline-flex h-9 cursor-pointer items-center justify-center gap-2 rounded-[10px] border border-black/10 bg-white px-4 text-[14px] font-medium leading-5 text-tertiary outline-none transition-colors duration-150 hover:bg-[#e2f5f1] focus-visible:ring-2 focus-visible:ring-[#101828] focus-visible:ring-offset-2"
           >
-            <path d="M12 5v14M5 12h14" strokeLinecap="round" />
-          </svg>
-          Add vendor
-        </button>
+            <svg
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth={2}
+              className="size-4 shrink-0"
+              aria-hidden
+            >
+              <path d="M12 5v14M5 12h14" strokeLinecap="round" />
+            </svg>
+            Add vendor
+          </button>
+        </div>
       </div>
 
       {error ? (
@@ -482,16 +510,6 @@ export function AdminVendorsDashboard() {
               options={tradeOptions}
               value={tradeFilter}
               onChange={setTradeFilter}
-            />
-            <FilterToggleGroup
-              label="Vendor status"
-              value={statusFilter}
-              options={[
-                { value: 'all', label: 'All' },
-                { value: 'active', label: 'Active' },
-                { value: 'backup', label: 'Backup' },
-              ]}
-              onChange={setStatusFilter}
             />
             <FilterToggleGroup
               label="Sort by rating"
@@ -556,21 +574,20 @@ export function AdminVendorsDashboard() {
                 <th className="px-6 py-3 text-[12px] font-medium text-[#6a7282]">Trade</th>
                 <th className="px-6 py-3 text-[12px] font-medium text-[#6a7282]">Rating</th>
                 <th className="px-6 py-3 text-[12px] font-medium text-[#6a7282]">Completed jobs</th>
-                <th className="px-6 py-3 text-[12px] font-medium text-[#6a7282]">Avg response</th>
+                <th className="px-6 py-3 text-[12px] font-medium text-[#6a7282]">Verification</th>
                 <th className="px-6 py-3 text-[12px] font-medium text-[#6a7282]">Status</th>
-                <th className="px-6 py-3 text-[12px] font-medium text-[#6a7282]">Call</th>
               </tr>
             </thead>
             <tbody>
               {loading ? (
                 <tr>
-                  <td colSpan={8} className="px-6 py-10 text-center text-[14px] text-[#6a7282]">
+                  <td colSpan={7} className="px-6 py-10 text-center text-[14px] text-[#6a7282]">
                     Loading vendors…
                   </td>
                 </tr>
               ) : filteredVendors.length === 0 ? (
                 <tr>
-                  <td colSpan={8} className="px-6 py-10 text-center text-[14px] text-[#6a7282]">
+                  <td colSpan={7} className="px-6 py-10 text-center text-[14px] text-[#6a7282]">
                     {vendors.length === 0
                       ? 'No vendors yet. Add vendors so Ulo can route work to them.'
                       : 'No vendors match your search or filters.'}
@@ -587,7 +604,12 @@ export function AdminVendorsDashboard() {
                       />
                     </td>
                     <td className="px-6 py-4 text-[14px] font-medium text-[#0a0a0a]">
-                      {vendor.name}
+                      <Link
+                        to={vendorDetailPath(vendor.id)}
+                        className="rounded-[4px] text-[#0a0a0a] transition-colors hover:text-[#186179] hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2"
+                      >
+                        {vendor.name}
+                      </Link>
                     </td>
                     <td className="px-6 py-4 text-[14px] text-[#6a7282]">{vendor.trade}</td>
                     <td className="px-6 py-4">
@@ -607,28 +629,23 @@ export function AdminVendorsDashboard() {
                     <td className="px-6 py-4 text-[14px] tabular-nums text-[#0a0a0a]">
                       {vendor.completedJobs}
                     </td>
-                    <td className="px-6 py-4 text-[14px] tabular-nums text-[#6a7282]">
-                      {formatResponse(vendor.avgResponseMinutes)}
+                    <td className="px-6 py-4">
+                      <VerificationPill status={verificationByVendor.get(vendor.id)} />
                     </td>
                     <td className="px-6 py-4">
-                      <span
-                        className={[
-                          'inline-flex items-center rounded-full px-2.5 py-0.5 text-[12px] font-medium',
-                          vendor.active
-                            ? 'bg-[#dbfce7] text-[#008236]'
-                            : 'bg-[#f3f4f6] text-[#6a7282]',
-                        ].join(' ')}
-                      >
-                        {vendor.active ? 'Active' : 'Backup'}
-                      </span>
-                    </td>
-                    <td className="px-6 py-4">
-                      <CallPhoneButton
-                        phone={vendor.phone}
-                        label="Call"
-                        variant="outline"
-                        className="text-[11px]"
-                      />
+                      {(() => {
+                        const chip = resolveVendorCapacityChip({
+                          verificationStatus: verificationByVendor.get(vendor.id),
+                          vendorActive: vendor.active,
+                        })
+                        return (
+                          <span
+                            className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-[12px] font-medium ${chip.className}`}
+                          >
+                            {chip.label}
+                          </span>
+                        )
+                      })()}
                     </td>
                   </tr>
                 ))

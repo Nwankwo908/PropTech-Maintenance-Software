@@ -1,4 +1,5 @@
 import { useEffect, useId } from 'react'
+import { isDemoAccountActive } from '@/lib/activeLandlord'
 
 type CommItem = {
   id: string
@@ -161,7 +162,12 @@ export function ExternalCommunicationsModal({
         </header>
 
         <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-auto px-6 py-6">
-          {DEMO_ITEMS.map((item) => (
+          {(isDemoAccountActive() ? DEMO_ITEMS : []).length === 0 ? (
+            <p className="rounded-[10px] border border-secondary bg-secondary px-4 py-6 text-center text-[13px] text-neutral">
+              No external communications yet.
+            </p>
+          ) : null}
+          {(isDemoAccountActive() ? DEMO_ITEMS : []).map((item) => (
             <article
               key={item.id}
               className="flex flex-col gap-2 rounded-[10px] border border-secondary px-[17px] pb-[17px] pt-[17px]"

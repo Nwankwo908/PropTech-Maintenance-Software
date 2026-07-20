@@ -1,5 +1,45 @@
 import type { ReactNode } from 'react'
-import type { OnboardingReviewData, OnboardingStep } from '@/lib/landlordOnboarding'
+import type {
+  OnboardingResident,
+  OnboardingReviewData,
+  OnboardingStep,
+} from '@/lib/landlordOnboarding'
+
+function formatRentDueDayOrdinal(day: number): string {
+  const mod100 = day % 100
+  if (mod100 >= 11 && mod100 <= 13) return `${day}th`
+  switch (day % 10) {
+    case 1:
+      return `${day}st`
+    case 2:
+      return `${day}nd`
+    case 3:
+      return `${day}rd`
+    default:
+      return `${day}th`
+  }
+}
+
+function formatResidentReviewValue(resident: OnboardingResident): string {
+  const parts: string[] = [resident.fullName]
+  if (resident.unit) parts.push(`Unit ${resident.unit}`)
+  if (resident.monthlyRent != null && Number.isFinite(resident.monthlyRent)) {
+    parts.push(
+      `$${resident.monthlyRent.toLocaleString('en-US', {
+        maximumFractionDigits: 2,
+      })}/mo`,
+    )
+  }
+  if (resident.rentDueDay != null) {
+    parts.push(`Due ${formatRentDueDayOrdinal(resident.rentDueDay)}`)
+  }
+  if (resident.leaseStart || resident.leaseEnd) {
+    parts.push(
+      `Lease ${resident.leaseStart ?? '—'} – ${resident.leaseEnd ?? '—'}`,
+    )
+  }
+  return parts.join(' · ')
+}
 
 function ReviewProgressIcon() {
   return (
@@ -197,9 +237,7 @@ export function OnboardingReviewStep({
                 <ReviewSummaryRow
                   key={resident.id}
                   label={reviewData.residents.length > 1 ? `Resident ${index + 1}` : 'Resident'}
-                  value={[resident.fullName, resident.unit ? `Unit ${resident.unit}` : null]
-                    .filter(Boolean)
-                    .join(' · ')}
+                  value={formatResidentReviewValue(resident)}
                 />
               ))
             ) : (

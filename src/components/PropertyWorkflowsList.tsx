@@ -1,9 +1,6 @@
 import { useNavigate } from 'react-router-dom'
 import type { PropertyWorkflowRow } from '@/lib/propertyWorkflowRows'
-import {
-  WORKFLOW_PIPELINE_MAINTENANCE_FILTER_HELPER,
-  workflowOperationsPath,
-} from '@/lib/adminWorkflowKanban'
+import { workflowOperationsPath } from '@/lib/adminWorkflowKanban'
 
 type PropertyWorkflowsListProps = {
   rows: PropertyWorkflowRow[]
@@ -26,8 +23,7 @@ export function PropertyWorkflowsList({ rows, loading = false }: PropertyWorkflo
     <div className="mt-6 w-full">
       <div className="mb-4 flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
         <p className="max-w-2xl text-[13px] leading-5 text-[#6a7282]">
-          {WORKFLOW_PIPELINE_MAINTENANCE_FILTER_HELPER} Other property tasks appear under Active Tasks
-          too — rent, inspections, move-ins, and more.
+          Maintenance work orders Ulo is currently helping move forward.
         </p>
         <button
           type="button"

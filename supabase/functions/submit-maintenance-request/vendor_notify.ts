@@ -25,6 +25,8 @@ export type TicketNotifyPayload = {
   dueAt?: string | null
   /** Deterministic SLA window in minutes (not from AI). */
   estimatedMinutes?: number | null
+  /** Scope vendor pick to this landlord when known. */
+  landlordId?: string | null
 }
 
 type VendorRow = {
@@ -195,12 +197,18 @@ function escapeHtml(s: string): string {
     .replace(/"/g, "&quot;")
 }
 
+function buildJobDetailUrl(actionToken: string | null | undefined): string | null {
+  const appBase = resolveAppBaseUrl()
+  const token = actionToken?.trim()
+  if (!appBase || !token) return null
+  return `${appBase}/w/${encodeURIComponent(token)}`
+}
+
 function buildSmsBody(
   payload: TicketNotifyPayload,
   vendorName: string,
-  primaryUrl: string | null,
-  acceptUrl: string | null,
-  _declineUrl: string | null,
+  actionToken: string | null,
+  legacyViewUrl: string | null,
 ): string {
   return buildVendorJobAssignmentSms({
     vendorName,
@@ -208,8 +216,7 @@ function buildSmsBody(
     unit: payload.unit,
     description: payload.description,
     ticketId: payload.ticketId,
-    viewJobUrl: primaryUrl,
-    acceptUrl,
+    jobDetailUrl: buildJobDetailUrl(actionToken) ?? legacyViewUrl,
   })
 }
 
@@ -219,12 +226,14 @@ function buildSmsBody(
 async function resolveVendorForNewTicket(
   supabase: SupabaseClient,
   issueCategory: string | null,
+  landlordId?: string | null,
 ): Promise<VendorRow | null> {
   const preferNot = await loadMostRecentlyAssignedVendorId(supabase)
   const picked = await pickVendorForAssignment(supabase, {
     issueCategory,
     excludeVendorIds: [],
     preferNotVendorId: preferNot,
+    landlordId,
   })
   return picked ? (picked as VendorRow) : null
 }
@@ -262,6 +271,7 @@ async function notifyChannelsForAssignment(
   ticketId: string,
   vendor: VendorRow,
   payload: TicketNotifyPayload,
+  actionToken: string | null,
 ): Promise<string[]> {
   const errors: string[] = []
   const ch = vendor.notification_channel
@@ -271,6 +281,7 @@ async function notifyChannelsForAssignment(
 
   const emailLinks = await buildVendorEmailLinks(ticketId, vendor.id)
   const legacyManage = portalManageUrl(ticketId)
+  const jobDetailUrl = buildJobDetailUrl(actionToken) ?? emailLinks?.viewJob ?? legacyManage
 
   if (wantEmail) {
     if (!vendor.email?.trim()) {
@@ -303,15 +314,29 @@ async function notifyChannelsForAssignment(
       const smsBody = buildSmsBody(
         payload,
         vendor.name,
-        emailLinks?.viewJob ?? legacyManage,
-        emailLinks?.acceptUrl ?? null,
-        emailLinks?.declineUrl ?? null,
+        actionToken,
+        jobDetailUrl,
       )
+      // Always scope the sender line to the ticket landlord — never fall back to
+      // DEFAULT_LANDLORD_ID or SMS will miss New Landlord's Twilio number.
+      let landlordId = payload.landlordId?.trim() || null
+      if (!landlordId) {
+        const { data: ticketLandlord } = await supabase
+          .from("maintenance_requests")
+          .select("landlord_id")
+          .eq("id", ticketId)
+          .maybeSingle()
+        landlordId =
+          typeof ticketLandlord?.landlord_id === "string"
+            ? ticketLandlord.landlord_id.trim()
+            : null
+      }
       const r = await sendVendorJobAlert(supabase, {
         ticketId,
         vendorId: vendor.id,
         vendorPhone: vendor.phone.trim(),
         body: smsBody,
+        landlordId,
       })
       if (!r.ok) {
         errors.push(`sms: ${r.error}`)
@@ -335,11 +360,12 @@ async function notifyChannelsForAssignment(
 /**
  * Assigns an active vendor to the ticket and sends email/SMS per vendor.notification_channel.
  * Does not throw — logs errors and sets maintenance_requests.vendor_notify_error.
+ * Returns whether a vendor was persisted on the ticket.
  */
 export async function assignVendorAndNotify(
   supabase: SupabaseClient,
   payload: TicketNotifyPayload,
-): Promise<void> {
+): Promise<{ assigned: boolean; vendorId: string | null }> {
   const { data: ticket } = await supabase
     .from("maintenance_requests")
     .select("id, vendor_notified_at, issue_category")
@@ -348,11 +374,20 @@ export async function assignVendorAndNotify(
 
   if (!ticket) {
     console.error("[vendor-notify] ticket not found", payload.ticketId)
-    return
+    return { assigned: false, vendorId: null }
   }
   if (ticket.vendor_notified_at) {
     console.log("[vendor-notify] skip, already notified", payload.ticketId)
-    return
+    const { data: existing } = await supabase
+      .from("maintenance_requests")
+      .select("assigned_vendor_id")
+      .eq("id", payload.ticketId)
+      .maybeSingle()
+    const vendorId =
+      typeof existing?.assigned_vendor_id === "string"
+        ? existing.assigned_vendor_id
+        : null
+    return { assigned: Boolean(vendorId), vendorId }
   }
 
   const issueCategory =
@@ -360,10 +395,36 @@ export async function assignVendorAndNotify(
       ? ticket.issue_category.trim()
       : null
 
-  const vendor = await resolveVendorForNewTicket(supabase, issueCategory)
+  let landlordId = payload.landlordId?.trim() || null
+  if (!landlordId) {
+    const { data: ticketLandlord } = await supabase
+      .from("maintenance_requests")
+      .select("landlord_id")
+      .eq("id", payload.ticketId)
+      .maybeSingle()
+    landlordId =
+      typeof ticketLandlord?.landlord_id === "string"
+        ? ticketLandlord.landlord_id.trim()
+        : null
+  }
+  payload.landlordId = landlordId
+
+  const vendor = await resolveVendorForNewTicket(supabase, issueCategory, landlordId)
   if (!vendor) {
-    console.warn("[vendor-notify] no active vendor; skipping assignment and notify")
-    return
+    console.warn("[vendor-notify] no active vendor; skipping assignment and notify", {
+      ticketId: payload.ticketId,
+      issueCategory,
+      landlordId,
+    })
+    await supabase
+      .from("maintenance_requests")
+      .update({
+        vendor_notify_error: landlordId
+          ? "No active vendor available for this trade"
+          : "No active vendor available",
+      })
+      .eq("id", payload.ticketId)
+    return { assigned: false, vendorId: null }
   }
   const assignedAt = new Date().toISOString()
   const actionToken = crypto.randomUUID()
@@ -388,7 +449,7 @@ export async function assignVendorAndNotify(
       .from("maintenance_requests")
       .update({ vendor_notify_error: assignError.message })
       .eq("id", payload.ticketId)
-    return
+    return { assigned: false, vendorId: null }
   }
 
   console.log("[vendor-notify] assigned vendor persisted", {
@@ -403,6 +464,7 @@ export async function assignVendorAndNotify(
     payload.ticketId,
     vendor,
     payload,
+    actionToken,
   )
 
   const now = new Date().toISOString()
@@ -418,6 +480,8 @@ export async function assignVendorAndNotify(
     console.warn("[vendor-notify] completed with errors", payload.ticketId, errors)
   }
 
+  // Resident is notified when a vendor is lined up; landlord confirmed-assignment
+  // wait until schedule is confirmed (see confirmVendorSchedule).
   const { data: contact } = await supabase
     .from("maintenance_requests")
     .select(
@@ -445,6 +509,8 @@ export async function assignVendorAndNotify(
       vendorName: vendor.name,
     })
   }
+
+  return { assigned: true, vendorId: vendor.id }
 }
 
 /**
@@ -469,7 +535,7 @@ export async function reassignVendorByIdAndNotify(
   const { data: ticket, error: tErr } = await supabase
     .from("maintenance_requests")
     .select(
-      "id, priority, urgency, unit, description, vendor_work_status, issue_category, due_at, estimated_minutes, severity",
+      "id, landlord_id, priority, urgency, unit, description, vendor_work_status, issue_category, due_at, estimated_minutes, severity",
     )
     .eq("id", ticketId)
     .maybeSingle()
@@ -554,6 +620,8 @@ export async function reassignVendorByIdAndNotify(
     description: ticket.description as string,
     dueAt: newDueAtIso,
     estimatedMinutes: estMin,
+    landlordId:
+      typeof ticket.landlord_id === "string" ? ticket.landlord_id.trim() : null,
   }
 
   const errors = await notifyChannelsForAssignment(
@@ -561,6 +629,7 @@ export async function reassignVendorByIdAndNotify(
     ticketId,
     vendor as VendorRow,
     payload,
+    actionToken,
   )
 
   const now = new Date().toISOString()

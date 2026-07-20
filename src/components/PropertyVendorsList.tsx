@@ -1,5 +1,7 @@
+import { Link } from 'react-router-dom'
 import type { PropertyActiveVendorRow } from '@/lib/propertyVendorRows'
 import { CallPhoneButton } from '@/components/CallPhoneButton'
+import { vendorDetailPath } from '@/lib/vendorRoutes'
 
 type PropertyVendorsListProps = {
   rows: PropertyActiveVendorRow[]
@@ -55,7 +57,14 @@ export function PropertyVendorsList({
         >
           <header className="flex flex-wrap items-center justify-between gap-3 border-b border-[#f3f4f6] px-5 py-4">
             <div className="min-w-0">
-              <h3 className="text-[15px] font-semibold leading-5 text-[#0a0a0a]">{vendor.vendorName}</h3>
+              <h3 className="text-[15px] font-semibold leading-5 text-[#0a0a0a]">
+                <Link
+                  to={vendorDetailPath(vendor.vendorId)}
+                  className="rounded-[4px] transition-colors hover:text-[#186179] hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2"
+                >
+                  {vendor.vendorName}
+                </Link>
+              </h3>
               <p className="mt-0.5 text-[13px] leading-5 text-[#6a7282]">
                 {vendor.trade} · {vendor.activeJobCount} active order{vendor.activeJobCount === 1 ? '' : 's'}
               </p>

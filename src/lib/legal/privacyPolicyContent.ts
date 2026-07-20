@@ -146,7 +146,7 @@ export const PRIVACY_POLICY_SECTIONS: LegalSection[] = [
       },
       {
         type: 'paragraph',
-        text: 'California residents have additional rights under the CCPA/CPRA, including the right to opt out of the sale or sharing of personal information (Ulo does not sell personal information), the right to limit use of sensitive personal information, and the right to non-discrimination for exercising these rights. The Do Not Sell or Share option is available at /privatepolicy#opt-out.',
+        text: 'California residents have additional rights under the CCPA/CPRA, including the right to opt out of the sale or sharing of personal information (Ulo does not sell personal information), the right to limit use of sensitive personal information, and the right to non-discrimination for exercising these rights. The Do Not Sell or Share option is available at /privatepolicy.',
       },
       {
         type: 'paragraph',

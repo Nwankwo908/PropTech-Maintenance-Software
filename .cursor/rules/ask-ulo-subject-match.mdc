@@ -1,0 +1,93 @@
+---
+description: Ask Ulo — answer the same subject/metric the landlord asked (no entity substitution)
+globs: supabase/functions/_shared/ask_ulo/**,supabase/functions/ask-ulo/**
+alwaysApply: false
+---
+
+# Ask Ulo subject + metric match
+
+Never answer a nearby question. Match the **subject** (vendor / property / unit / work order / resident / …) and the **metric** (fastest ≠ best, oldest ≠ most, cost, …).
+
+Contextualize before answering: subject + metric + scope (trade / building / period).
+
+## Hard subject evidence gate
+
+`planEvidenceForQuestion` / `subjectEvidenceGate.ts` runs before retrieval:
+
+- Subjects `vendor`, `resident`, `work_order`, `maintenance`, `finance`, `lease`, `unit`, `legal`, `document`, `market_intelligence`, `weather`, `incentives` set `blockPropertyDashboard`
+- When blocked: do **not** fetch property ranking or portfolio briefing (`propertyDashboardLock` in `runAskUlo.ts`)
+- Gated packets are also stripped before OpenAI synthesis
+- Fallbacks must use `incompleteSubjectGapAnswer` — never Oakwood / property priority
+
+## Fail closed on portfolio briefing
+
+`shouldFetchPortfolioBriefing` / `generic_ops.consultTier1First = false`:
+
+- Fetch the portfolio briefing packet **only** when intent is `executive_briefing` / `property_health`, reasoning mode is `executive_briefing`, or playbook is `executive_briefing`
+- Unmatched / `generic_ops` questions must **never** auto-consult Tier-1 briefing
+- Quality-gate rewrites may ship briefing markdown only when that same opt-in is true
+- Prefer honest gap or a subject packet over Health 70/100 dumps
+
+## Vendor subject lock
+
+Any question with subject **vendor** (`detectQuestionSubject` / `isVendorFocusedQuestion`):
+
+- Dedicated vendor playbook + lookup — **never** fall through to `generic_ops`
+- `needsBriefing` / `needsRanking` must stay **false**
+- Subject QC **fails** portfolio briefing / property priority answers
+- Synthesize prefers the vendor packet over briefing / ranking
+
+## Forbidden substitutions
+
+| Asked about | Must not answer with |
+|---|---|
+| Residents late on rent / arrears | Property priority / portfolio briefing |
+| Vendors that haven't accepted / inactive | Portfolio briefing (health score, occupancy, hotspots) |
+| Vendors that are overloaded / busiest | Best vendor / overall score ranking |
+| Vendors (response speed) | Property priority (“Oakwood needs attention first”) |
+| Vendor verification / compliance status | Portfolio briefing or vendors that haven’t accepted jobs |
+| Best electrician / best plumber | Response-speed-only (“timed vendor responses”) |
+| Repairs to approve | Tenant screening / Fair Housing refuse |
+| Work orders / maintenance | Property health briefing as the answer |
+| What tasks is Ulo handling / active workflows | Portfolio briefing (health score, occupancy) |
+| Weather alerts for properties | Portfolio briefing / generic ops gap |
+| Grants / tax incentives for landlords | Portfolio briefing / honest-gap refusal (use curated catalog) |
+| Lease / renewals | Maintenance KPI briefing |
+
+## Domain tools
+
+Prefer reusable tools in `domainTools/` (e.g. `searchWorkOrders`, `listActiveWorkflows`, `getWeatherAlerts`, `getLandlordIncentives`) over new one-off playbooks when extending ops retrieval.
+
+### Bounded tool select
+
+After capability route resolution, Ask Ulo may ask OpenAI to choose among **allowlisted live tools only** (`openaiToolSelect.ts`). The allowlist is `required ∪ optional` from `capabilityRoute`, filtered to `status: "live"` and subject gates (no `rank_properties` / property insights on vendor lock).
+
+- Empty or off-allowlist selection → log `no_tool_matched` → fall back to rule plan from required tools
+- Planned tools OR into `needs*` flags so playbook gaps still retrieve the right packet
+- `search_work_orders` may execute via `executeDomainTool` into the evidence bundle
+- Never put tool-calling inside `synthesize.ts`; never use Agents SDK as orchestrator
+- Audit: `ASK_ULO_TOOL_SELECT`, `ASK_ULO_TOOLS_CALLED`, `tools_planned:*`, `tools_called:*`
+
+### Catch-all work-order fallback
+
+When specialty packets miss for subjects `work_order` / `maintenance` / `unit` / `finance` / `other`, format live `search_work_orders` results as a prefer-packet (`catchAllFallback.ts`). Never use portfolio briefing or property ranking as this fallback. Vendor / resident / legal / market questions still fail closed to subject gap answers.
+
+### Structured incomplete ranking
+
+When property/unit ranking cannot complete (`canRank: false` + `missingData[]`), treat it as a structured signal (`incompleteEvidence.ts`):
+
+- Code renders the landlord gap message (`What I know` / `What's missing` / `What happens next`)
+- Prefer-packet + synthesize short-circuit — **do not** ask the LLM to invent a ranking and self-censor
+- `taskPacketSatisfied` is true for an honest incomplete ranking answer
+- Log `ASK_ULO_INCOMPLETE_EVIDENCE` with `authority: "code"`
+
+## When adding a new question type
+
+1. Add a gold-set row with subject + capability + intent (+ `forbidBriefing` / required tool when relevant) **before** shipping.
+2. Detect subject via `detectQuestionSubject` — extend the hard gate if property dashboard must stay off.
+3. Prefer a parameterized domain tool; playbooks only if still needed. **Do not** rely on `generic_ops` + Tier-1 briefing.
+4. Wire `subject_match` + `metric_match` QC.
+5. Add a regression test that the wrong packet is not preferred.
+6. `generic_ops` is last resort — `consultTier1First` must stay false unless the ask is an explicit briefing.
+
+Runtime: `SUBJECT_MATCH_GUIDE` / `questionSubjectMatch.ts`, `subjectEvidenceGate.ts`, `QUESTION_CONTEXTUALIZATION_GUIDE` / `questionMetricContext.ts`.

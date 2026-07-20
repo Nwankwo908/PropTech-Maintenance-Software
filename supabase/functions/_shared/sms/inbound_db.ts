@@ -225,7 +225,7 @@ export async function lookupSmsIdentity(
 export type UpsertSmsIdentityForPhoneParams = {
   landlordId: string
   phone: string
-  identityType: "resident" | "vendor"
+  identityType: "resident" | "vendor" | "landlord"
   residentId?: string | null
   vendorId?: string | null
   unitId?: string | null
@@ -262,13 +262,21 @@ export async function upsertSmsIdentityForPhone(
           unit_id: params.unitId?.trim() || null,
           verified: false,
         }
-      : {
-          identity_type: "vendor" as const,
-          vendor_id: params.vendorId?.trim() || null,
-          resident_id: null,
-          unit_id: null,
-          verified: false,
-        }
+      : params.identityType === "landlord"
+        ? {
+            identity_type: "landlord" as const,
+            resident_id: null,
+            vendor_id: null,
+            unit_id: null,
+            verified: true,
+          }
+        : {
+            identity_type: "vendor" as const,
+            vendor_id: params.vendorId?.trim() || null,
+            resident_id: null,
+            unit_id: null,
+            verified: false,
+          }
 
   let result: SmsIdentityRow
 

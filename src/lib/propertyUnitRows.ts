@@ -11,6 +11,7 @@ import {
   normalizeUnitLabel,
   type PropertyHealthUnit,
 } from '@/lib/propertyHealth'
+import { formatVendorTradeLabel } from '@/lib/vendorTrades'
 
 export type PropertyUnitResident = {
   id: string
@@ -93,34 +94,13 @@ function workflowMatchesUnit(row: AdminWorkflowRow, unitLabel: string, building:
   return normalizeUnitLabel(row.unitLabel) === normalizeUnitLabel(unitLabel)
 }
 
-function capitalizeWords(value: string): string {
-  return value
-    .split(/\s+/)
-    .filter(Boolean)
-    .map((word) => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
-    .join(' ')
-}
-
 function formatIssueCategoryLabel(category: string, urgency: string): string {
-  const normalized = category.trim().toLowerCase()
+  const label = formatVendorTradeLabel(category, { emptyLabel: '' })
   const isEmergency = urgency === 'emergency' || urgency === 'critical'
-
-  if (normalized.includes('plumb')) {
-    return isEmergency ? 'Emergency plumbing' : 'Plumbing issue'
-  }
-  if (
-    normalized.includes('hvac') ||
-    normalized.includes('cool') ||
-    normalized.includes('heat') ||
-    normalized.includes('air')
-  ) {
-    return 'AC not cooling'
-  }
-  if (normalized.includes('elect')) return 'Electrical issue'
-  if (normalized.includes('appliance')) return 'Appliance issue'
-
-  const words = capitalizeWords(normalized.replace(/_/g, ' '))
-  return words.toLowerCase().endsWith('issue') ? words : `${words} issue`
+  if (!label) return isEmergency ? 'Emergency maintenance' : 'Maintenance issue'
+  if (isEmergency) return `Emergency ${label.toLowerCase()}`
+  if (label.toLowerCase().endsWith('issue')) return label
+  return `${label} issue`
 }
 
 function formatWorkflowCategoryLabel(category: WorkflowKanbanCategory, templateId: string): string {

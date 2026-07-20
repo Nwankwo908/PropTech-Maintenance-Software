@@ -1,0 +1,35 @@
+---
+description: Vendor verification form submit must appear in the Communication inbox conversation so admins see the vendor responded.
+alwaysApply: true
+---
+
+# Vendor verification submit → conversation inbox
+
+## Rule
+
+When a vendor **submits the verification form**, that response must show up in the same **Communication inbox** thread as the invite (SMS conversation), so admins can tell the vendor responded without leaving the inbox.
+
+| Event | Inbox effect |
+|---|---|
+| Verification invite sent (SMS) | Opens / updates vendor onboarding thread |
+| Vendor submits `/v/:token` form | **Inbound** message appended to that thread; conversation `updated_at` bumped; thread unread |
+| Needs review vs verified | Message body states outcome in plain language |
+
+## Requirements
+
+1. Persist `invite_conversation_id` on `vendor_verifications` when the invite SMS thread is created.
+2. On submit (`vendor-verification` Edge Function), call `appendVendorVerificationSubmittedToInbox` (best-effort, with fallbacks: invite id → workflow run → vendor id → phone).
+3. Message is **inbound** from the vendor, source `vendor_verification_submitted`, idempotent per verification id.
+4. Monitoring title stays **Vendor onboarding**; risk stays **NO RISK**; summary should note the form was submitted.
+5. Inbox list status may show **Form submitted**; preview is the latest inbound body.
+
+## Do not
+
+- Only log a graph event without updating the SMS conversation.
+- Treat form submit as a silent backend-only status change for Communication.
+- Invent a separate inbox product — reuse the existing vendor onboarding thread.
+
+## Related
+
+- Onboarding title / no-risk: `.cursor/rules/onboarding-conversation-title-no-risk.mdc`
+- Shared helper: `supabase/functions/_shared/sms/vendorVerificationInbox.ts`

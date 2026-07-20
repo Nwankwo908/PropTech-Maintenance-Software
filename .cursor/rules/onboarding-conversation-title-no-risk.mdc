@@ -1,0 +1,32 @@
+---
+description: Vendor and tenant onboarding SMS threads use matching titles and are always NO RISK in Communication inbox monitoring.
+alwaysApply: true
+---
+
+# Onboarding conversations — title + no risk
+
+## Rule
+
+Communication inbox / right-rail monitoring titles must match the **direction of the interaction**, and onboarding threads are always **NO RISK**.
+
+| Thread | Title | Risk badge |
+|---|---|---|
+| Vendor verification / preferred network invite | **Vendor onboarding** | **NO RISK** (`low`) |
+| Vendor verification form submitted (same thread) | **Vendor onboarding** | **NO RISK** (`low`) |
+| Local vendor-setup / intake monitoring detail | **Vendor onboarding** | **NO RISK** (`low`) |
+| Tenant activation welcome / SMS consent thread | **Tenant onboarding** | **NO RISK** (`low`) |
+| Active work-order or maintenance SMS | Normal heuristics | Normal risk heuristics |
+
+## Meaning
+
+- Onboarding invites are informational. They are not urgent maintenance or resident issues.
+- Do **not** let message heuristics mis-label these threads (e.g. “Plumbing” in Flex Plumbing → plumbing issue; “repair” in the tenant welcome SMS → maintenance request).
+- Title and subtitle must say vendor/tenant **onboarding**; risk stays **NO RISK**.
+- When a vendor submits verification, the **same thread** gains an inbound response (see `vendor-verification-inbox-response.mdc`) — title/risk stay onboarding / no risk.
+
+## Implementation
+
+- `deriveRisk` / `buildTitle` / `buildSubtitle` in `src/lib/conversationMonitoring.ts` short-circuit onboarding invite **and** verification-submit copy before status/urgency/issue heuristics.
+- `buildVendorSetupMonitoringDetail` in `src/lib/vendorSetupConversation.ts` uses the same vendor onboarding title + NO RISK badge.
+- Detect tenant activation via welcome/consent copy (`Reply YES to get updates…`, reach-us-by-text welcome, opt-in confirmation).
+- When adding new invite or onboarding monitoring surfaces, reuse this labeling.

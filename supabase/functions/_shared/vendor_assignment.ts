@@ -1,4 +1,14 @@
 import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.49.1"
+import {
+  isGeneralistTrade,
+  normalizeVendorTrade,
+  vendorTradeMatchesFlexible,
+} from "./vendor_trades.ts"
+
+function normalizeIssueCategory(issueCat: string | null | undefined): string {
+  return normalizeVendorTrade(issueCat, { fallbackOther: false }) ??
+    (issueCat ?? "").trim().toLowerCase().replace(/[\s-]+/g, "_")
+}
 
 /** Row shape for vendor pick + notify (matches `vendors` select used by vendor_notify). */
 export type VendorAssignmentRow = {
@@ -15,29 +25,19 @@ export type VendorAssignmentRow = {
   created_at: string
 }
 
-function normalize(str: string | null | undefined): string {
-  return (str || "").trim().toLowerCase()
-}
-
 /**
- * Flexible match: vendor label and ticket issue can overlap by substring (e.g. "Appliance repair" vs "appliance").
+ * Specialist match via centralized trade taxonomy.
  * Empty vendor category is treated as non-matching here (generalists use `isGeneralist` in tier 2).
  */
 function categoryMatches(
   vendorCategory: string | null,
   issueCategory: string | null,
 ): boolean {
-  const v = normalize(vendorCategory)
-  const i = normalize(issueCategory)
-
-  if (!i) return true
-  if (!v) return false
-
-  return v.includes(i) || i.includes(v)
+  return vendorTradeMatchesFlexible(vendorCategory, issueCategory)
 }
 
 function isGeneralist(v: { category: string | null }): boolean {
-  return v.category == null || String(v.category).trim() === ""
+  return isGeneralistTrade(v.category)
 }
 
 export async function loadDeclinedVendorIdsForTicket(
@@ -150,6 +150,8 @@ export type PickVendorForAssignmentOptions = {
    * (avoid back-to-back assignments when alternatives exist).
    */
   preferNotVendorId?: string | null
+  /** When set, only consider vendors for this landlord. */
+  landlordId?: string | null
 }
 
 /**
@@ -168,12 +170,19 @@ export async function pickVendorForAssignment(
   const issueCat = options.issueCategory ?? null
   const avoid = options.preferNotVendorId?.trim() ?? null
 
-  const { data: rows, error } = await supabase
+  let query = supabase
     .from("vendors")
     .select(
       "id,name,email,phone,notification_channel,active,category,portal_api_key,last_assigned_at,created_at",
     )
     .eq("active", true)
+
+  const landlordId = options.landlordId?.trim() || null
+  if (landlordId) {
+    query = query.eq("landlord_id", landlordId)
+  }
+
+  const { data: rows, error } = await query
 
   if (error) {
     console.error("[vendor-assignment] list vendors", error)
@@ -188,7 +197,7 @@ export async function pickVendorForAssignment(
   if (base.length === 0) return null
 
   const counts = await loadActiveJobCounts(supabase)
-  const issueKey = normalize(issueCat)
+  const issueKey = normalizeIssueCategory(issueCat)
 
   const strict = base.filter((v) => {
     if (!issueKey) return false

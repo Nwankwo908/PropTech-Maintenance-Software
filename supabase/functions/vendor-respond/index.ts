@@ -204,7 +204,7 @@ serve(async (req) => {
 
   const msg =
     action === "accept"
-      ? "You accepted this job. Taking you to your vendor portal…"
+      ? "You accepted this job. We'll text you to ask for your earliest availability. Taking you to your vendor portal…"
       : "You declined this job. Taking you to your vendor portal…"
 
   return htmlResponse(action === "accept" ? "Accepted" : "Declined", msg, {

@@ -1,0 +1,38 @@
+---
+description: After vendor verification form submit, SMS acknowledge under review, then status — incomplete forms get outstanding items + document request with form link.
+alwaysApply: true
+---
+
+# Vendor verification form — SMS follow-up
+
+## Rule
+
+When a vendor **submits the verification form**, Ulo always texts them on the invite SMS thread:
+
+1. **Acknowledgement** — form received, under review.
+2. **Status follow-up**
+   - **Complete / verified** → approved; eligible for work orders.
+   - **Incomplete / needs review** → list outstanding required items in plain language and ask them to finish / upload missing documents via the same `/v/:token` form link.
+
+## Copy standards
+
+- Follow `.cursor/rules/ulo-communication-writing-standard.mdc`.
+- No internal jargon (no “checklist”, “needs_review”, IDs).
+- Incomplete SMS: short bullets of outstanding item labels + form link on its own line.
+
+## Implementation
+
+- Helper: `supabase/functions/_shared/sms/vendorVerificationFollowUp.ts`
+  - `buildVendorVerificationReceivedSms`
+  - `buildVendorVerificationApprovedSms`
+  - `buildVendorVerificationIncompleteSms` + `outstandingVerificationLabels`
+  - `sendVendorVerificationFollowUpSms` (best-effort after submit)
+- Triggered from `vendor-verification` Edge Function on successful form finalize/submit, after the inbox inbound mirror.
+- Messages are real outbound SMS on the invite conversation (also visible in Communication).
+- Graph events: `vendor.verification_ack_sent`, `vendor.verification_status_sent`, `vendor.verification_incomplete_followup_sent`.
+
+## Do not
+
+- Skip the acknowledgement when the form is already verified.
+- Send incomplete follow-ups without naming what’s missing or without the form link.
+- Rely only on in-app/admin UI — the vendor must hear status over SMS.

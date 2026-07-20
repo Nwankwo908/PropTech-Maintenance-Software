@@ -3,23 +3,16 @@
  * Uses OpenAI when OPENAI_API_KEY is set; otherwise first N category-matched vendors by name.
  */
 import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.49.1"
+import { vendorTradeMatchesFlexible } from "./vendor_trades.ts"
 
 export type AlternativeVendor = { id: string; name: string }
 
-function normalize(str: string | null | undefined): string {
-  return (str || "").trim().toLowerCase()
-}
-
-/** Same overlap rule as vendor_assignment.ts `categoryMatches`. */
+/** Same match rule as vendor_assignment.ts. */
 function categoryMatches(
   vendorCategory: string | null,
   issueCategory: string | null,
 ): boolean {
-  const v = normalize(vendorCategory)
-  const i = normalize(issueCategory)
-  if (!i) return true
-  if (!v) return false
-  return v.includes(i) || i.includes(v)
+  return vendorTradeMatchesFlexible(vendorCategory, issueCategory)
 }
 
 function stripJsonFence(s: string): string {

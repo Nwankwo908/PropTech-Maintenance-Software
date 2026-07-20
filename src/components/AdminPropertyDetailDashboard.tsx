@@ -18,7 +18,6 @@ import { PropertyWorkflowsList } from '@/components/PropertyWorkflowsList'
 import { getActiveLandlordId } from '@/lib/activeLandlord'
 import { fetchAdminWorkflowDashboard, type AdminWorkflowDashboardData } from '@/lib/adminWorkflows'
 import {
-  buildWorkflowKanbanCard,
   collectAdminWorkflowRuns,
   isOpenWorkflowKanbanCard,
   workflowOperationsPath,
@@ -909,7 +908,7 @@ export function AdminPropertyDetailDashboard() {
       </div>
 
       <nav
-        className="mt-6 -mx-8 overflow-x-auto overscroll-x-contain px-8 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden sm:mx-0 sm:px-0"
+        className="mt-6 shrink-0 -mx-8 overflow-x-auto overscroll-x-contain px-8 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden sm:mx-0 sm:px-0"
         aria-label="Property sections"
       >
         <div className="inline-flex w-max max-w-none flex-nowrap gap-1 rounded-full bg-[#f3f4f6] p-1">

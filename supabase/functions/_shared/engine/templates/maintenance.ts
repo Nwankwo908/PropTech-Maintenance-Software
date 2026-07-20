@@ -6,6 +6,7 @@ import {
   findActiveWorkflowRun,
   linkConversationToWorkflowRun,
   syncWorkflowRunIntakeState,
+  updateWorkflowRun,
 } from "../workflowRuns.ts"
 import { workflowRouteForTemplate } from "../logStage.ts"
 import type {
@@ -72,6 +73,8 @@ export const maintenanceIntakeTemplate: WorkflowTemplate = {
     }
 
     if (!runId) {
+      // Prefer a durable ticket when already linked; otherwise bind the run to the
+      // conversation temporarily until early-ticket minting upgrades entity_type.
       const linkedTicketId = sms.maintenanceRequestId?.trim() || null
       const run = await createWorkflowRun(supabase, {
         templateId: "maintenance_intake",
@@ -105,6 +108,7 @@ export const maintenanceIntakeTemplate: WorkflowTemplate = {
           conversationId: sms.conversationId,
           runId: run.id,
           templateId: "maintenance_intake",
+          maintenanceRequestId: linkedTicketId,
         })
       }
     } else {
@@ -116,12 +120,28 @@ export const maintenanceIntakeTemplate: WorkflowTemplate = {
     if (runId) {
       const { data: convo } = await supabase
         .from("sms_conversations")
-        .select("intake_state")
+        .select("intake_state, maintenance_request_id")
         .eq("id", sms.conversationId)
         .maybeSingle()
 
       const intakeState = (convo as { intake_state?: Record<string, unknown> } | null)
         ?.intake_state
+      const draftFromMeta =
+        typeof intake.metadata?.draft_ticket_id === "string"
+          ? intake.metadata.draft_ticket_id.trim()
+          : ""
+      const linkedTicket =
+        draftFromMeta ||
+        (typeof (convo as { maintenance_request_id?: string } | null)
+            ?.maintenance_request_id === "string"
+          ? String(
+            (convo as { maintenance_request_id?: string }).maintenance_request_id,
+          ).trim()
+          : "") ||
+        (typeof intakeState?.draft_ticket_id === "string"
+          ? intakeState.draft_ticket_id.trim()
+          : "")
+
       if (intakeState && typeof intakeState === "object") {
         await syncWorkflowRunIntakeState(supabase, {
           runId,
@@ -129,6 +149,29 @@ export const maintenanceIntakeTemplate: WorkflowTemplate = {
           currentStep:
             (intake.metadata?.intakeStep as string | undefined) ??
             (typeof intakeState.step === "string" ? intakeState.step : undefined),
+        })
+      }
+
+      // Upgrade entity from sms_conversation → maintenance_request once drafted.
+      // Re-link via conversation.workflow_run_id without reverting entity_type.
+      if (linkedTicket) {
+        await updateWorkflowRun(supabase, runId, {
+          entityType: "maintenance_request",
+          entityId: linkedTicket,
+          currentStep:
+            (intake.metadata?.intakeStep as string | undefined) ??
+            (typeof intakeState?.step === "string" ? intakeState.step : "collecting"),
+          metadata: {
+            early_ticket: true,
+            draft_ticket_id: linkedTicket,
+            conversation_id: sms.conversationId,
+          },
+        })
+        await linkConversationToWorkflowRun(supabase, {
+          conversationId: sms.conversationId,
+          runId,
+          templateId: "maintenance_intake",
+          maintenanceRequestId: linkedTicket,
         })
       }
     }

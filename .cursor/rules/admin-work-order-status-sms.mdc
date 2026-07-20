@@ -1,0 +1,72 @@
+---
+description: When an admin decides on a work order, SMS the vendor with status + action; keep asking YES/NO until they have accepted the job.
+alwaysApply: true
+---
+
+# Admin work-order decision → status SMS
+
+## Rule
+
+Whenever an **admin / property team** takes a decision on a live work order, Ulo texts the assigned vendor on the job SMS thread — unless they already **declined** the job (then follow reassignment; do not send continuation SMS).
+
+Every message must make clear:
+
+1. **Latest admin action** — what just happened (e.g. estimate approved)
+2. **What the vendor should do next**
+
+## Acceptance awareness (required)
+
+Track acceptance from `maintenance_requests.vendor_work_status` only — do **not** assume acceptance because an estimate was submitted or approved.
+
+| Vendor job state | SMS behavior |
+|---|---|
+| Not yet replied (`pending_accept` / unknown) | Include update **and** ask: Reply YES to accept the work order or NO if unable |
+| Explicitly accepted (`accepted` / `in_progress`) | Status update only — do not re-ask YES/NO |
+| Declined | **Do not send** approval/continuation SMS; use existing reassignment |
+
+## Canonical shapes
+
+**Pending — estimate approved:**
+```
+Hi {vendor},
+
+Update for work order {WO}.
+
+The property team approved your estimate of {$amount}.
+
+Would you like to continue with this job?
+
+Reply YES to accept the work order or NO if you're unable to take it.
+
+View details:
+{link}
+```
+
+**Accepted — estimate approved:**
+```
+Hi {vendor},
+
+Update for work order {WO}.
+
+The property team approved your estimate of {$amount}.
+
+You can now continue with the repair.
+
+View details:
+{link}
+```
+
+Initial assignment copy remains in `buildVendorJobAssignmentSms` (always asks YES/NO).
+
+## Implementation
+
+- Decision mapping: `vendorJobDecisionFromWorkStatus` in `workOrderAdminStatusSms.ts`
+- Estimate SMS builders: `buildEstimateDecisionStatusSms`
+- Notify path: `notifyVendorEstimateDecision` in `maintenanceEstimates.ts`
+- Delivery: `sendVendorJobAlert` (+ inbox mirror when needed)
+
+## Do not
+
+- Assume the vendor accepted because the workflow or estimate progressed
+- Suppress the YES/NO ask while `vendor_work_status` is still `pending_accept`
+- Text approval/continuation SMS to vendors who already declined the job

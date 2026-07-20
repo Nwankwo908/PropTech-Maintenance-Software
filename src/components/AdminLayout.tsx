@@ -1,6 +1,9 @@
 import { useRef, useState } from 'react'
 import { Outlet, useNavigate } from 'react-router-dom'
 import { AdminUloNotificationsBell } from '@/components/AdminUloNotificationsBell'
+import { AdminUniversalSearch } from '@/components/AdminUniversalSearch'
+import { AskUloProvider, useAskUlo } from '@/components/AskUloContext'
+import { AskUloPanel } from '@/components/AskUloPanel'
 import uloLogo from '@/assets/landing/ulo-logo.png'
 import { AdminSidebarContent } from '@/components/AdminSidebar'
 import { signOutAdmin } from '@/lib/adminAuth'
@@ -11,17 +14,8 @@ import {
   LANDLORD_ACCOUNT_OPTIONS,
   setActiveLandlordOverride,
 } from '@/lib/activeLandlord'
-import { isOnboardingLandlordAccount } from '@/lib/landlordOnboarding'
+import { isOnboardingLandlordAccount, restartNewLandlordOnboarding } from '@/lib/landlordOnboarding'
 import { supabase } from '@/lib/supabase'
-
-function SearchIcon() {
-  return (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} className="size-4">
-      <circle cx="11" cy="11" r="7" />
-      <path d="M21 21l-4.35-4.35" strokeLinecap="round" />
-    </svg>
-  )
-}
 
 // Sparkle strokes from assets/AI Icon (2).svg, without the purple circle
 // background; stroke follows the button text color.
@@ -71,41 +65,50 @@ function AdminHeaderActions({ onNavigate }: { onNavigate?: () => void }) {
 }
 
 function AdminTopBar() {
-  const navigate = useNavigate()
-  const [query, setQuery] = useState('')
+  const { open, openAskUlo } = useAskUlo()
+  const [resettingOnboarding, setResettingOnboarding] = useState(false)
+
+  async function handleResetOnboarding() {
+    if (resettingOnboarding) return
+    setResettingOnboarding(true)
+    try {
+      const result = await restartNewLandlordOnboarding()
+      if (!result.ok) {
+        console.error('[AdminLayout] reset onboarding failed', result.error)
+        window.alert(result.error ?? 'Could not reset onboarding.')
+        setResettingOnboarding(false)
+        return
+      }
+    } catch (err) {
+      console.error('[AdminLayout] reset onboarding failed', err)
+      window.alert(err instanceof Error ? err.message : 'Could not reset onboarding.')
+      setResettingOnboarding(false)
+      return
+    }
+    // Hard reload so wizard + guard remount on cleared not_started state.
+    window.location.assign('/admin/onboarding')
+  }
 
   return (
-    <header className="sticky top-0 z-10 hidden shrink-0 border-b border-[#e5e7eb] bg-white px-8 py-4 lg:block">
-      <div className="flex items-center gap-4">
-        <form
-          className="relative min-w-0 flex-1 lg:max-w-[727px]"
-          role="search"
-          onSubmit={(e) => {
-            e.preventDefault()
-            navigate(`/admin/requests?q=${encodeURIComponent(query.trim())}`)
-          }}
-        >
-          <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-[#717182]">
-            <SearchIcon />
-          </span>
-          <input
-            type="search"
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            placeholder="Search by resident, unit, or request ID..."
-            aria-label="Search by resident, unit, or request ID"
-            className="h-9 w-full rounded-[8px] border border-transparent bg-[#f3f3f5] py-1 pl-10 pr-3 text-[14px] tracking-[-0.1504px] text-[#0a0a0a] placeholder:text-[#717182] outline-none transition-[background-color,border-color,box-shadow] duration-150 hover:bg-[#ececef] focus:border-[#101828]/30 focus:bg-white focus:ring-2 focus:ring-[#101828]/15"
-          />
-        </form>
+    <header className="sticky top-0 z-10 hidden h-[68px] shrink-0 items-center border-b border-[#e5e7eb] bg-white px-8 lg:flex">
+      <div className="flex w-full items-center gap-4">
+        <AdminUniversalSearch />
         <button
           type="button"
           title="Ulo AI assistant"
-          className="flex shrink-0 cursor-pointer items-center gap-2 rounded-[10px] border border-current bg-transparent px-4 py-[9px] text-center text-[14px] font-medium leading-5 tracking-[-0.1504px] text-[#0A4D38] outline-none transition-colors duration-150 hover:bg-[#0A4D38]/5 active:bg-[#0A4D38]/10 focus-visible:ring-2 focus-visible:ring-[#0A4D38] focus-visible:ring-offset-2"
+          aria-pressed={open}
+          onClick={() => openAskUlo()}
+          className={[
+            'flex h-9 shrink-0 cursor-pointer items-center gap-2 rounded-[10px] border border-[#B4DFD6] px-4 text-center text-[14px] font-medium leading-5 tracking-[-0.1504px] text-[#0A4D38] outline-none transition-colors duration-150 focus-visible:ring-2 focus-visible:ring-[#0A4D38] focus-visible:ring-offset-2',
+            open
+              ? 'bg-[#0A4D38]/10'
+              : 'bg-transparent hover:bg-[#0A4D38]/5 active:bg-[#0A4D38]/10',
+          ].join(' ')}
         >
           <AiSparkleIcon />
           Ask Ulo AI
         </button>
-        <div className="flex-1" />
+        <div className="ml-auto flex shrink-0 items-center gap-4">
         {isDemoAccountActive() ? (
           <span className="shrink-0 rounded-full bg-[#fef9c2] px-3 py-1 text-[12px] font-semibold uppercase tracking-[0.06em] text-[#a65f00]">
             Demo data
@@ -114,18 +117,23 @@ function AdminTopBar() {
           <>
             <button
               type="button"
-              className="shrink-0 cursor-pointer rounded-[10px] border border-[#e5e7eb] bg-white px-3 py-1.5 text-[12px] font-medium text-[#364153] outline-none transition-colors duration-150 hover:bg-[#f3f4f6] focus-visible:ring-2 focus-visible:ring-[#101828]/20"
+              disabled={resettingOnboarding}
+              className="shrink-0 cursor-pointer rounded-[10px] border border-[#e5e7eb] bg-white px-3 py-1.5 text-[12px] font-medium text-[#364153] outline-none transition-colors duration-150 hover:bg-[#f3f4f6] focus-visible:ring-2 focus-visible:ring-[#101828]/20 disabled:cursor-wait disabled:opacity-60"
               onClick={() => {
-                window.location.assign('/admin/onboarding?reset=1')
+                void handleResetOnboarding()
               }}
             >
-              Reset onboarding
+              {resettingOnboarding ? 'Resetting…' : 'Reset onboarding'}
             </button>
             <span className="shrink-0 rounded-full bg-[#dbeafe] px-3 py-1 text-[12px] font-semibold uppercase tracking-[0.06em] text-[#1d4ed8]">
-              Onboarding
+              New Landlord
             </span>
           </>
-        ) : null}
+        ) : (
+          <span className="shrink-0 rounded-full bg-[#f3f4f6] px-3 py-1 text-[12px] font-semibold uppercase tracking-[0.06em] text-[#4b5563]">
+            Ulo Operations
+          </span>
+        )}
         {getSessionLandlordId() === null ? (
           <label className="flex shrink-0 items-center gap-2 text-[12px] text-[#6a7282]">
             Account
@@ -144,61 +152,108 @@ function AdminTopBar() {
           </label>
         ) : null}
         <AdminHeaderActions />
+        </div>
       </div>
     </header>
   )
 }
 
-export function AdminLayout() {
-  const mobileNavRef = useRef<HTMLDetailsElement>(null)
+function AdminMainContent() {
+  const { open, docked, closeAskUlo } = useAskUlo()
 
-  return (
-    <div className="flex min-h-dvh w-full bg-[#f9fafb] font-[family-name:var(--font-admin)]">
-      <aside className="relative z-20 hidden h-dvh max-h-dvh w-64 shrink-0 border-r border-[#e5e7eb] bg-white lg:sticky lg:top-0 lg:flex lg:flex-col">
-        <AdminSidebarContent forRail />
-      </aside>
-
-      <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-        <details
-          ref={mobileNavRef}
-          className="group border-b border-[#e5e7eb] bg-white lg:hidden"
-        >
-          <summary className="flex cursor-pointer list-none items-center justify-between gap-2 px-8 py-8 [&::-webkit-details-marker]:hidden">
-            <div className="flex min-w-0 items-center gap-2">
-              <img
-                src={uloLogo}
-                alt="Ulo Home"
-                className="h-8 w-auto shrink-0 object-contain"
-              />
-              <div className="min-w-0">
-                <p className="truncate text-[14px] font-semibold text-[#101828]">
-                  Admin Panel
-                </p>
-                <p className="text-[11px] text-[#6a7282]">Property Mgmt</p>
-              </div>
-            </div>
-            <div className="flex shrink-0 items-center gap-2">
-              <AdminHeaderActions
-                onNavigate={() => mobileNavRef.current?.removeAttribute('open')}
-              />
-              <span className="shrink-0 text-[12px] font-medium text-[#364153] group-open:rotate-180">
-              <svg className="size-5" viewBox="0 0 24 24" fill="none" stroke="currentColor">
-                <path d="M6 9l6 6 6-6" strokeWidth={2} />
-              </svg>
-              </span>
-            </div>
-          </summary>
-          <div className="flex max-h-[min(70dvh,520px)] flex-col overflow-hidden border-t border-[#e5e7eb]">
-            <AdminSidebarContent
-              onNavigate={() => mobileNavRef.current?.removeAttribute('open')}
-            />
-          </div>
-        </details>
-
-        <AdminTopBar />
-
+  if (!open) {
+    return (
+      <div className="flex min-h-0 flex-1 flex-col overflow-y-auto overscroll-y-contain bg-white">
         <Outlet />
       </div>
+    )
+  }
+
+  if (docked) {
+    return (
+      <div className="flex min-h-0 flex-1 overflow-hidden bg-white">
+        <div className="min-h-0 min-w-0 flex-1 overflow-y-auto overscroll-y-contain">
+          <Outlet />
+        </div>
+        <aside
+          className="ask-ulo-rail-enter relative z-20 flex h-full w-[min(100%,440px)] shrink-0 flex-col border-l border-[#e5e7eb] bg-white shadow-[-8px_0_24px_rgba(16,24,40,0.06)]"
+          aria-label="Ask Ulo"
+        >
+          <AskUloPanel onClose={closeAskUlo} variant="rail" />
+        </aside>
+      </div>
+    )
+  }
+
+  return (
+    <div className="flex min-h-0 flex-1 flex-col overflow-hidden bg-white">
+      <AskUloPanel onClose={closeAskUlo} variant="full" />
     </div>
+  )
+}
+
+export function AdminLayout() {
+  const mobileNavRef = useRef<HTMLDetailsElement>(null)
+  const [railCollapsed, setRailCollapsed] = useState(false)
+
+  return (
+    <AskUloProvider>
+      <div className="flex h-dvh max-h-dvh w-full overflow-hidden bg-[#f9fafb] font-[family-name:var(--font-admin)]">
+        <aside
+          className={[
+            'relative z-20 hidden h-dvh max-h-dvh shrink-0 border-r border-[#e5e7eb] bg-white transition-[width] duration-200 ease-out lg:flex lg:flex-col',
+            railCollapsed ? 'w-[72px]' : 'w-64',
+          ].join(' ')}
+        >
+          <AdminSidebarContent
+            forRail
+            collapsed={railCollapsed}
+            onCollapse={() => setRailCollapsed(true)}
+            onExpand={() => setRailCollapsed(false)}
+          />
+        </aside>
+
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+          <details
+            ref={mobileNavRef}
+            className="group shrink-0 border-b border-[#e5e7eb] bg-white lg:hidden"
+          >
+            <summary className="flex cursor-pointer list-none items-center justify-between gap-2 px-8 py-8 [&::-webkit-details-marker]:hidden">
+              <div className="flex min-w-0 items-center gap-2">
+                <img
+                  src={uloLogo}
+                  alt="Ulo Home"
+                  className="h-8 w-auto shrink-0 object-contain"
+                />
+                <div className="min-w-0">
+                  <p className="truncate text-[14px] font-semibold text-[#101828]">
+                    Admin Panel
+                  </p>
+                  <p className="text-[11px] text-[#6a7282]">Property Mgmt</p>
+                </div>
+              </div>
+              <div className="flex shrink-0 items-center gap-2">
+                <AdminHeaderActions
+                  onNavigate={() => mobileNavRef.current?.removeAttribute('open')}
+                />
+                <span className="shrink-0 text-[12px] font-medium text-[#364153] group-open:rotate-180">
+                <svg className="size-5" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                  <path d="M6 9l6 6 6-6" strokeWidth={2} />
+                </svg>
+                </span>
+              </div>
+            </summary>
+            <div className="flex max-h-[min(70dvh,520px)] flex-col overflow-hidden border-t border-[#e5e7eb]">
+              <AdminSidebarContent
+                onNavigate={() => mobileNavRef.current?.removeAttribute('open')}
+              />
+            </div>
+          </details>
+
+          <AdminTopBar />
+          <AdminMainContent />
+        </div>
+      </div>
+    </AskUloProvider>
   )
 }

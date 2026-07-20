@@ -132,7 +132,7 @@ export function AwaitingDecisionOutcomeModal({
 
           {outcome.removedFromQueue ? (
             <p className="mt-3 text-[12px] leading-4 text-[#6a7282]">
-              This item is no longer listed under Awaiting Your Decision on your overview.
+              This item is no longer listed under Needs Your Attention on your overview.
             </p>
           ) : null}
         </div>

@@ -39,6 +39,7 @@ function isResidentEventType(value: string): value is ResidentNotifyEvent {
     value === "ticket_submitted" ||
     value === "vendor_assigned" ||
     value === "vendor_accepted" ||
+    value === "schedule_confirmed" ||
     value === "repair_in_progress" ||
     value === "repair_completed"
   )

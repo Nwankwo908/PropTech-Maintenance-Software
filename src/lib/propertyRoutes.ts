@@ -1,3 +1,5 @@
+import { isDemoAccountActive } from '@/lib/activeLandlord'
+
 /** URL-safe building identifier for /admin/properties/:buildingSlug routes. */
 export function buildingDetailPath(
   building: string,
@@ -67,6 +69,11 @@ export function resolvePropertyBuildingMeta(
       addressLine: parts.length > 0 ? parts.join(' ') : null,
       yearBuilt: yearBuilt != null && Number.isFinite(yearBuilt) ? yearBuilt : null,
     }
+  }
+
+  // Never decorate New Landlord / default portfolios with showcase addresses.
+  if (!isDemoAccountActive()) {
+    return { addressLine: null, yearBuilt: null }
   }
 
   return DEMO_BUILDING_META[building] ?? { addressLine: null, yearBuilt: null }

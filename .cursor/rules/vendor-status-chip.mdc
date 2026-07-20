@@ -1,0 +1,34 @@
+---
+description: Vendor capacity/status chips stay Pending until verification is complete, then become Active (or Paused/Backup if availability is paused).
+alwaysApply: true
+---
+
+# Vendor status chip (pending → active)
+
+## Rule
+
+The vendor **capacity / status chip** (list + profile) is driven by verification readiness, not by a bare `vendors.active` flag alone.
+
+| Verification state | Chip |
+|---|---|
+| No verification, invited, in progress, submitted, or needs review | **Pending** |
+| Verification overall status `verified` (required documents checked off) | **Active** |
+| Verified but availability paused / `vendors.active === false` | **Paused** / **Backup** |
+
+## Meaning
+
+- **Pending** — invited or mid-onboarding; not ready for normal work-order assignment as a verified roster vendor.
+- **Active** — verification complete (`vendor_verifications.status = 'verified'`); eligible for assignments.
+- **Paused / Backup** — verified, but marked as not accepting new work.
+
+## Implementation notes
+
+- Source of truth for “complete” is the linked `vendor_verifications` row (`status === 'verified'`), which already reflects the checklist (license, COI, background, W-9, trades, service area).
+- UI chips on `AdminVendorsDashboard` and `AdminVendorDetailDashboard` must follow this mapping.
+- Prefer keeping `vendors.active` in sync on verification submit (active when verified + accepting work; inactive while still pending when practical), but **never** show **Active** on the chip while verification is incomplete.
+- Onboarding auto-invite starts vendors in **Pending** until they finish the verification form.
+
+## Related
+
+- Onboarding auto-activation: `.cursor/rules/onboarding-auto-activation.mdc`
+- Verification checklist: `vendorVerificationChecklist` / `vendor_verifications`

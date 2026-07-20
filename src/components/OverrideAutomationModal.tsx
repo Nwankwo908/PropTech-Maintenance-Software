@@ -1,6 +1,7 @@
 import { useEffect, useId, useLayoutEffect, useMemo, useState } from 'react'
 import overrideIcon from '@/assets/Override.svg'
 import { checkboxInputClassName, checkboxInputClassNameLg } from '@/components/TableCheckbox'
+import { isDemoAccountActive } from '@/lib/activeLandlord'
 
 export type OverrideAutomationContext = 'default' | 'rent-reminder'
 
@@ -1309,6 +1310,9 @@ export function OverrideAutomationModal({
       }
       return scopeOptionsOverride
     }
+
+    // Showcase scope lists are demo-account only — never invent tickets for New Landlord.
+    if (!isDemoAccountActive()) return []
 
     if (isRentReminder) return DEMO_RENT_REMINDER_RUNS
     if (automationCategory === 'maintenance') return DEMO_TICKETS

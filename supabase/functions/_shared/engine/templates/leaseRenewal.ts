@@ -62,10 +62,10 @@ function renewalPrompt(state: LeaseRenewalState): string {
     : "soon"
 
   if (state.step === "awaiting_response" || state.step === "initiated") {
-    return `Hi — your lease ends ${end}. Are you planning to renew? Reply YES to renew, NO if you're moving out, or QUESTIONS if you'd like to talk with your property manager.`
+    return `Hi, this is your property management team. Your lease ends ${end}, and we'd love for you to stay. Are you planning to renew? Reply YES to renew, NO if you're moving out, or QUESTIONS if you'd like to talk it through with us.`
   }
 
-  return "Thanks — your property manager will follow up about your lease."
+  return "Thanks! Your property manager will follow up with you about your lease."
 }
 
 export const leaseRenewalTemplate: WorkflowTemplate = {

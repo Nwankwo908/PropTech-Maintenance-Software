@@ -49,7 +49,7 @@ export class GooglePlacesExternalVendorProvider implements ExternalVendorProvide
         "Content-Type": "application/json",
         "X-Goog-Api-Key": this.apiKey.trim(),
         "X-Goog-FieldMask":
-          "places.displayName,places.rating,places.userRatingCount,places.priceLevel,places.formattedAddress,places.nationalPhoneNumber,places.websiteUri,places.types",
+          "places.displayName,places.rating,places.userRatingCount,places.priceLevel,places.formattedAddress,places.nationalPhoneNumber,places.websiteUri,places.googleMapsUri,places.types",
       },
       body: JSON.stringify({
         textQuery: input.textQuery,
@@ -73,6 +73,7 @@ export class GooglePlacesExternalVendorProvider implements ExternalVendorProvide
         formattedAddress?: string
         nationalPhoneNumber?: string
         websiteUri?: string
+        googleMapsUri?: string
         types?: string[]
       }>
     }
@@ -82,6 +83,10 @@ export class GooglePlacesExternalVendorProvider implements ExternalVendorProvide
       const name = String(p.displayName?.text ?? "").trim()
       if (!name) continue
       const tags = googlePlaceTags(p.types)
+      const mapsUri =
+        typeof p.googleMapsUri === "string" && p.googleMapsUri.trim()
+          ? p.googleMapsUri.trim()
+          : null
       out.push({
         name,
         rating: typeof p.rating === "number" ? p.rating : null,
@@ -91,6 +96,7 @@ export class GooglePlacesExternalVendorProvider implements ExternalVendorProvide
         address: typeof p.formattedAddress === "string" ? p.formattedAddress.trim() : null,
         phone: typeof p.nationalPhoneNumber === "string" ? p.nationalPhoneNumber.trim() : null,
         website: normalizeWebsite(p.websiteUri),
+        listingUrl: mapsUri,
         tags: tags.length > 0 ? tags : undefined,
       })
     }

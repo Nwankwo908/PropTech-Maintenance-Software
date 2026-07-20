@@ -15,6 +15,7 @@ import {
   sortVendorSetupMonitoringTranscript,
 } from '@/lib/vendorSetupConversation'
 import { isVendorPricingConfirmedByAdmin } from '@/lib/vendorPricingConfirmation'
+import { respondToEstimate } from '@/api/maintenanceEstimate'
 import sendIcon from '@/assets/noun-send.png'
 import confirmHourlyRateIcon from '@/assets/noun-checkmark-invoice.png'
 
@@ -322,7 +323,7 @@ function TranscriptMessage({
           <p className="mb-1 text-[11px] leading-4 text-[#6a7282]">
             {item.senderName} · {timeLabel}
           </p>
-          <div className="rounded-[12px] rounded-tl-[4px] border border-[#e9d5ff] bg-white px-3.5 py-2.5 text-[13px] leading-5 text-[#0a0a0a]">
+          <div className="overflow-hidden whitespace-pre-wrap break-words [overflow-wrap:anywhere] rounded-[12px] rounded-tl-[4px] border border-[#e9d5ff] bg-white px-3.5 py-2.5 text-[13px] leading-5 text-[#0a0a0a]">
             {item.body}
           </div>
         </div>
@@ -339,7 +340,7 @@ function TranscriptMessage({
         <p className="mb-1 text-[11px] leading-4 text-[#6a7282]">
           {item.senderName} · {timeLabel}
         </p>
-        <div className="rounded-[12px] rounded-tr-[4px] bg-[#dbeafe] px-3.5 py-2.5 text-left text-[13px] leading-5 text-[#0a0a0a]">
+        <div className="overflow-hidden whitespace-pre-wrap break-words [overflow-wrap:anywhere] rounded-[12px] rounded-tr-[4px] bg-[#dbeafe] px-3.5 py-2.5 text-left text-[13px] leading-5 text-[#0a0a0a]">
           {item.body}
         </div>
       </div>
@@ -388,6 +389,7 @@ export function ConversationMonitoringBody({
   detail,
   titleId,
   onTakeOver,
+  onEstimateDecided,
   embedded = false,
   showLogQuotedPrice = false,
   quotedPriceInput = '',
@@ -403,6 +405,7 @@ export function ConversationMonitoringBody({
   detail: ConversationMonitoringDetail
   titleId: string
   onTakeOver?: (conversationId: string) => void
+  onEstimateDecided?: () => void
   embedded?: boolean
   showLogQuotedPrice?: boolean
   quotedPriceInput?: string
@@ -415,6 +418,18 @@ export function ConversationMonitoringBody({
   vendorOutreachChannel?: VendorOutreachChannel
   onVendorOutreachChannelChange?: (channel: VendorOutreachChannel) => void
 }) {
+  const [estimateActing, setEstimateActing] = useState<'approve' | 'reject' | null>(null)
+  const [estimateActionError, setEstimateActionError] = useState<string | null>(null)
+  const [estimateResolved, setEstimateResolved] = useState<'approved' | 'rejected' | null>(
+    null,
+  )
+
+  useEffect(() => {
+    setEstimateActing(null)
+    setEstimateActionError(null)
+    setEstimateResolved(null)
+  }, [detail.conversationId, detail.pendingEstimateDecision?.estimateId])
+
   const channelViews = detail.vendorOutreachChannels
   const activeChannel = vendorOutreachChannel ?? 'sms'
   const channelView = channelViews?.[activeChannel]
@@ -427,6 +442,31 @@ export function ConversationMonitoringBody({
   const showChannelToggle = Boolean(channelViews && onVendorOutreachChannelChange)
   const showQuoteLogger = showLogQuotedPrice && activeChannel === 'sms'
   const suggestedMessages = detail.vendorSetupPricing?.suggestedMessages ?? []
+  const pendingEstimate =
+    estimateResolved || !detail.pendingEstimateDecision
+      ? null
+      : detail.pendingEstimateDecision
+
+  const handleEstimateDecision = async (action: 'approve' | 'reject') => {
+    if (!detail.pendingEstimateDecision || estimateActing) return
+    setEstimateActing(action)
+    setEstimateActionError(null)
+    try {
+      const result = await respondToEstimate({
+        estimateId: detail.pendingEstimateDecision.estimateId,
+        actionToken: detail.pendingEstimateDecision.actionToken,
+        action,
+      })
+      setEstimateResolved(result.status)
+      onEstimateDecided?.()
+    } catch (err) {
+      setEstimateActionError(
+        err instanceof Error ? err.message : 'Could not update this estimate.',
+      )
+    } finally {
+      setEstimateActing(null)
+    }
+  }
   const showNegotiationFooter = showQuoteLogger || suggestedMessages.length > 0
   const threadTranscript = channelViews
     ? transcript.filter((item) => !isVendorSetupFollowUpItem(item))
@@ -585,6 +625,65 @@ export function ConversationMonitoringBody({
               </div>
             ) : null}
           </div>
+        ) : null}
+        {pendingEstimate ? (
+          <div className="space-y-3 rounded-[12px] border border-[#e5e7eb] bg-[#fafafa] p-4">
+            <div>
+              <p className="text-[13px] font-semibold text-[#101828]">Vendor estimate</p>
+              <p className="mt-1 text-[12px] leading-4 text-[#364153]">
+                Parts{' '}
+                {pendingEstimate.partsCost.toLocaleString('en-US', {
+                  style: 'currency',
+                  currency: 'USD',
+                })}
+                {' · '}
+                Labor{' '}
+                {pendingEstimate.laborCost.toLocaleString('en-US', {
+                  style: 'currency',
+                  currency: 'USD',
+                })}
+                {' · '}
+                Total{' '}
+                <span className="font-semibold text-[#101828]">
+                  {pendingEstimate.totalCost.toLocaleString('en-US', {
+                    style: 'currency',
+                    currency: 'USD',
+                  })}
+                </span>
+              </p>
+              {pendingEstimate.notes ? (
+                <p className="mt-1 text-[12px] leading-4 text-[#6a7282]">{pendingEstimate.notes}</p>
+              ) : null}
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                disabled={Boolean(estimateActing)}
+                onClick={() => void handleEstimateDecision('approve')}
+                className="inline-flex items-center gap-2 rounded-full bg-[#186179] px-4 py-2 text-[13px] font-medium text-white outline-none hover:bg-[#145066] focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2 disabled:opacity-50"
+              >
+                {estimateActing === 'approve' ? 'Approving…' : 'Approve estimate'}
+              </button>
+              <button
+                type="button"
+                disabled={Boolean(estimateActing)}
+                onClick={() => void handleEstimateDecision('reject')}
+                className="inline-flex items-center gap-2 rounded-full border border-[#e5e7eb] bg-white px-4 py-2 text-[13px] font-medium text-[#101828] outline-none hover:bg-[#f3f4f6] focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2 disabled:opacity-50"
+              >
+                {estimateActing === 'reject' ? 'Declining…' : 'Decline'}
+              </button>
+            </div>
+            {estimateActionError ? (
+              <p className="text-[12px] leading-4 text-[#c10007]">{estimateActionError}</p>
+            ) : null}
+          </div>
+        ) : null}
+        {estimateResolved ? (
+          <p className="text-[12px] leading-4 text-[#186179]">
+            {estimateResolved === 'approved'
+              ? 'Estimate approved. The vendor was notified and can proceed.'
+              : 'Estimate declined. The vendor was notified.'}
+          </p>
         ) : null}
         {readOnlyNote.trim() ? (
           <p className="flex items-center gap-2 text-[12px] leading-4 text-[#6a7282]">
@@ -781,6 +880,7 @@ export function ConversationMonitoringPanel({
         detail={detail}
         titleId={titleId}
         onTakeOver={onTakeOver}
+        onEstimateDecided={() => void loadConversation({ showLoading: false })}
         embedded={embedded}
         showLogQuotedPrice={isVendorSetupThread}
         quotedPriceInput={quotedPriceInput}

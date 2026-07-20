@@ -11,14 +11,11 @@ import {
   type SlaOverdueTimelineEntry,
   type SlaOverdueVendorInput,
 } from '@/lib/slaOverdueActionReview'
-import { normIssueCategory } from '@/lib/vendorIssueCategory'
+import { formatVendorTradeLabel } from '@/lib/vendorTrades'
 import type { PropertyHealthVendorMetrics } from '@/lib/propertyHealth'
 
 function formatCategoryLabel(slug: string | null): string {
-  const n = normIssueCategory(slug)
-  if (!n) return 'Maintenance'
-  if (n === 'hvac') return 'HVAC'
-  return n.charAt(0).toUpperCase() + n.slice(1)
+  return formatVendorTradeLabel(slug, { emptyLabel: 'Maintenance' })
 }
 
 function formatLocation(propertyLabel: string | null, unitLabel: string | null): string {

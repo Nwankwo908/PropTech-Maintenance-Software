@@ -7,19 +7,24 @@ import {
 } from '@/components/ScheduleBroadcastModal'
 import { SparkleIcon } from '@/components/SparkleIcon'
 import { recordBroadcastSendAttempt } from '@/lib/broadcastMetrics'
-import { ALL_UNIT_OPTIONS } from '@/lib/propertyUnitOptions'
+import { getActiveLandlordId } from '@/lib/activeLandlord'
+import { getInventoryUnitOptions } from '@/lib/propertyUnitOptions'
 import { unitOptionValueToCell } from '@/lib/residentUnitKeys'
 import { supabase } from '@/lib/supabase'
 
 type Audience = 'all' | 'building' | 'units'
 
-const REGISTERED_PROPERTY_UNITS_SESSION_KEY =
+const REGISTERED_PROPERTY_UNITS_SESSION_PREFIX =
   'proptech.admin.registeredPropertyUnitOptions.v1'
+
+function registeredPropertyUnitsSessionKey(): string {
+  return `${REGISTERED_PROPERTY_UNITS_SESSION_PREFIX}.${getActiveLandlordId()}`
+}
 
 function readRegisteredPropertyUnitCountFromSession(): number {
   if (typeof sessionStorage === 'undefined') return 0
   try {
-    const raw = sessionStorage.getItem(REGISTERED_PROPERTY_UNITS_SESSION_KEY)
+    const raw = sessionStorage.getItem(registeredPropertyUnitsSessionKey())
     if (!raw) return 0
     const parsed = JSON.parse(raw) as unknown
     if (!Array.isArray(parsed)) return 0
@@ -38,7 +43,7 @@ function readRegisteredPropertyUnitCountFromSession(): number {
 function readRegisteredBuildingsFromSession(): string[] {
   if (typeof sessionStorage === 'undefined') return []
   try {
-    const raw = sessionStorage.getItem(REGISTERED_PROPERTY_UNITS_SESSION_KEY)
+    const raw = sessionStorage.getItem(registeredPropertyUnitsSessionKey())
     if (!raw) return []
     const parsed = JSON.parse(raw) as unknown
     if (!Array.isArray(parsed)) return []
@@ -60,7 +65,7 @@ function readRegisteredBuildingsFromSession(): string[] {
 
 function defaultBuildingOptions(): string[] {
   const out = new Set<string>()
-  for (const opt of ALL_UNIT_OPTIONS) {
+  for (const opt of getInventoryUnitOptions()) {
     const cell = unitOptionValueToCell(opt.value)
     if (cell.kind === 'assigned' && cell.building.trim()) {
       out.add(cell.building.trim())
@@ -75,7 +80,7 @@ function defaultBuildingOptions(): string[] {
 function readRegisteredUnitsFromSession(): string[] {
   if (typeof sessionStorage === 'undefined') return []
   try {
-    const raw = sessionStorage.getItem(REGISTERED_PROPERTY_UNITS_SESSION_KEY)
+    const raw = sessionStorage.getItem(registeredPropertyUnitsSessionKey())
     if (!raw) return []
     const parsed = JSON.parse(raw) as unknown
     if (!Array.isArray(parsed)) return []
@@ -96,7 +101,7 @@ function readRegisteredUnitsFromSession(): string[] {
 
 function defaultUnitOptions(): string[] {
   const out = new Set<string>()
-  for (const opt of ALL_UNIT_OPTIONS) {
+  for (const opt of getInventoryUnitOptions()) {
     const cell = unitOptionValueToCell(opt.value)
     if (cell.kind === 'assigned' && cell.unit.trim()) {
       out.add(cell.unit.trim())
@@ -271,14 +276,14 @@ export function SendBroadcastMessageModal({
     defaultUnitOptions(),
   )
   const [totalUnitsCount, setTotalUnitsCount] = useState(() => {
-    return ALL_UNIT_OPTIONS.length + readRegisteredPropertyUnitCountFromSession()
+    return getInventoryUnitOptions().length + readRegisteredPropertyUnitCountFromSession()
   })
   const closeAfterSuccessTimeoutRef = useRef<number | null>(null)
 
   useEffect(() => {
     if (!open) return
     setTotalUnitsCount(
-      ALL_UNIT_OPTIONS.length + readRegisteredPropertyUnitCountFromSession(),
+      getInventoryUnitOptions().length + readRegisteredPropertyUnitCountFromSession(),
     )
   }, [open])
 
@@ -292,7 +297,7 @@ export function SendBroadcastMessageModal({
     if (!supabase) return
 
     void (async () => {
-      const { data, error } = await supabase.from('users').select('building, unit')
+      const { data, error } = await supabase.from('users').select('building, unit').eq('landlord_id', getActiveLandlordId())
       if (cancelled || error) return
       const merged = new Set<string>(local)
       const mergedUnits = new Set<string>(localUnits)

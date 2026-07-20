@@ -14,6 +14,8 @@ const MOCK_BY_TRADE: Record<string, ExternalVendorHit[]> = {
       priceLabel: "$$ · Moderate",
       source: "mock",
       etaMinutes: 18,
+      phone: "(312) 555-0182",
+      website: "rapidplumb.com",
     },
     {
       name: "Metro Plumbing Services",
@@ -22,6 +24,8 @@ const MOCK_BY_TRADE: Record<string, ExternalVendorHit[]> = {
       priceLabel: "$ · Inexpensive",
       source: "mock",
       etaMinutes: 35,
+      phone: "(312) 555-0047",
+      website: "metroplumb.com",
     },
     {
       name: "Apex Pipe & Drain",
@@ -30,6 +34,8 @@ const MOCK_BY_TRADE: Record<string, ExternalVendorHit[]> = {
       priceLabel: "$$ · Moderate",
       source: "mock",
       etaMinutes: 25,
+      phone: "(312) 555-0219",
+      website: "apexpipedrain.com",
     },
   ],
   electrical: [
@@ -40,6 +46,8 @@ const MOCK_BY_TRADE: Record<string, ExternalVendorHit[]> = {
       priceLabel: "$$ · Moderate",
       source: "mock",
       etaMinutes: 40,
+      phone: "(312) 555-0144",
+      website: "brightwireelectric.com",
     },
     {
       name: "SafePanel Contractors",
@@ -48,6 +56,8 @@ const MOCK_BY_TRADE: Record<string, ExternalVendorHit[]> = {
       priceLabel: "$$$ · Expensive",
       source: "mock",
       etaMinutes: 55,
+      phone: "(312) 555-0199",
+      website: "safepanelelectric.com",
     },
   ],
   hvac: [
@@ -58,6 +68,8 @@ const MOCK_BY_TRADE: Record<string, ExternalVendorHit[]> = {
       priceLabel: "$$ · Moderate",
       source: "mock",
       etaMinutes: 45,
+      phone: "(312) 555-0177",
+      website: "summitclimatehvac.com",
     },
   ],
   default: [
@@ -68,6 +80,8 @@ const MOCK_BY_TRADE: Record<string, ExternalVendorHit[]> = {
       priceLabel: "$ · Inexpensive",
       source: "mock",
       etaMinutes: 60,
+      phone: "(312) 555-0100",
+      website: "alliedhomerepair.com",
     },
     {
       name: "Neighborhood Fix-It",
@@ -76,6 +90,8 @@ const MOCK_BY_TRADE: Record<string, ExternalVendorHit[]> = {
       priceLabel: "$ · Inexpensive",
       source: "mock",
       etaMinutes: 90,
+      phone: "(312) 555-0111",
+      website: "neighborhoodfixit.com",
     },
   ],
 }

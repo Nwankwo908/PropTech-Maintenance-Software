@@ -6,6 +6,7 @@ export type ResidentNotifyEvent =
   | "ticket_submitted"
   | "vendor_assigned"
   | "vendor_accepted"
+  | "schedule_confirmed"
   | "repair_in_progress"
   | "repair_completed"
 
@@ -64,6 +65,8 @@ function subjectForEvent(event: ResidentNotifyEvent): string {
       return "A vendor has been assigned to your request"
     case "vendor_accepted":
       return "Your vendor accepted your maintenance request"
+    case "schedule_confirmed":
+      return "Your repair appointment is confirmed"
     case "repair_in_progress":
       return "Repair in progress on your maintenance request"
     case "repair_completed":
@@ -80,6 +83,8 @@ function buildEmail(
     priority?: string
     descriptionPreview?: string
     vendorName?: string
+    scheduleWindow?: string
+    completionPhotoCount?: number
   },
 ): { text: string; html: string } {
   const name = recipientName.trim() || "there"
@@ -89,6 +94,17 @@ function buildEmail(
   const pri = ctx.priority?.trim()
   const desc = ctx.descriptionPreview?.trim()
   const vendor = ctx.vendorName?.trim()
+  const when = ctx.scheduleWindow?.trim()
+  const photoCount =
+    typeof ctx.completionPhotoCount === "number" && ctx.completionPhotoCount > 0
+      ? ctx.completionPhotoCount
+      : 0
+  const photoReceipt =
+    photoCount === 1
+      ? "Your vendor uploaded 1 completion photo for the record."
+      : photoCount > 1
+      ? `Your vendor uploaded ${photoCount} completion photos for the record.`
+      : null
 
   let bodyText = ""
   switch (event) {
@@ -116,6 +132,15 @@ function buildEmail(
         (unitLine ? `${unitLine}\n` : "") +
         `\nReference: ${ticketId}\n`
       break
+    case "schedule_confirmed":
+      bodyText =
+        `Hi ${name},\n\nYour repair appointment is confirmed` +
+        (vendor ? ` with ${vendor}` : "") +
+        (when ? ` for ${when}` : "") +
+        ".\n\n" +
+        (unitLine ? `${unitLine}\n` : "") +
+        `\nReference: ${ticketId}\n`
+      break
     case "repair_in_progress":
       bodyText =
         `Hi ${name},\n\nWork is now in progress on your maintenance request.\n\n` +
@@ -125,11 +150,28 @@ function buildEmail(
       break
     case "repair_completed":
       bodyText =
-        `Hi ${name},\n\nYour maintenance request has been marked complete. If anything still needs attention, please contact your property office.\n\n` +
+        `Hi ${name},\n\nYour maintenance request has been marked complete.` +
+        (photoReceipt ? ` ${photoReceipt}` : "") +
+        ` If anything still needs attention, please contact your property office.\n\n` +
         (unitLine ? `${unitLine}\n` : "") +
         `\nReference: ${ticketId}\n`
       break
   }
+
+  const leadHtml =
+    event === "ticket_submitted"
+      ? `<p>Thank you — we've received your <strong>maintenance request</strong> and will keep you updated.</p>`
+      : event === "vendor_assigned"
+      ? `<p>A vendor has been assigned to your maintenance request${vendor ? `: <strong>${escapeHtml(vendor)}</strong>` : ""}.</p>`
+      : event === "vendor_accepted"
+      ? `<p>Your vendor has accepted your maintenance request${vendor ? `: <strong>${escapeHtml(vendor)}</strong>` : ""}.</p>`
+      : event === "schedule_confirmed"
+      ? `<p>Your repair appointment is <strong>confirmed</strong>${vendor ? ` with <strong>${escapeHtml(vendor)}</strong>` : ""}${when ? ` for <strong>${escapeHtml(when)}</strong>` : ""}.</p>`
+      : event === "repair_in_progress"
+      ? `<p>Work is now <strong>in progress</strong> on your maintenance request.</p>`
+      : `<p>Your maintenance request has been marked <strong>complete</strong>.${
+          photoReceipt ? ` ${escapeHtml(photoReceipt)}` : ""
+        }</p>`
 
   const html = `
 <!DOCTYPE html>
@@ -137,15 +179,7 @@ function buildEmail(
 <head><meta charset="utf-8"/></head>
 <body style="font-family: system-ui, sans-serif; line-height: 1.5; color: #101828;">
   <p>Hi ${escapeHtml(name)},</p>
-  ${event === "ticket_submitted"
-    ? `<p>Thank you — we've received your <strong>maintenance request</strong> and will keep you updated.</p>`
-    : event === "vendor_assigned"
-    ? `<p>A vendor has been assigned to your maintenance request${vendor ? `: <strong>${escapeHtml(vendor)}</strong>` : ""}.</p>`
-    : event === "vendor_accepted"
-    ? `<p>Your vendor has accepted your maintenance request${vendor ? `: <strong>${escapeHtml(vendor)}</strong>` : ""}.</p>`
-    : event === "repair_in_progress"
-    ? `<p>Work is now <strong>in progress</strong> on your maintenance request.</p>`
-    : `<p>Your maintenance request has been marked <strong>complete</strong>.</p>`}
+  ${leadHtml}
   ${unitLine
     ? `<p style="color:#6a7282;font-size:14px;">${escapeHtml(unitLine)}</p>`
     : ""}
@@ -171,35 +205,59 @@ function buildSms(
   ctx: {
     unit?: string
     vendorName?: string
+    scheduleWindow?: string
+    completionPhotoCount?: number
   },
 ): string {
-  const unit = ctx.unit?.trim()
   const vendor = ctx.vendorName?.trim()
+  const when = ctx.scheduleWindow?.trim()
+  const ref = `Ref: ${ticketId}`
+  const photoCount =
+    typeof ctx.completionPhotoCount === "number" && ctx.completionPhotoCount > 0
+      ? ctx.completionPhotoCount
+      : 0
   switch (event) {
     case "ticket_submitted":
       return truncate(
-        `Maintenance request received. ${unit ? `Unit: ${unit}. ` : ""}Ref: ${ticketId}`,
+        `Thanks for letting us know! We've got your maintenance request and ` +
+          `we're on it. We'll text you right here with any updates. ${ref}`,
         300,
       )
     case "vendor_assigned":
       return truncate(
-        `Vendor assigned${vendor ? `: ${vendor}` : ""}. ${unit ? `Unit: ${unit}. ` : ""}Ref: ${ticketId}`,
+        `Good news! We've lined up ${vendor ? vendor : "a pro"} to take care ` +
+          `of your repair. They'll be in touch soon and we'll keep you posted. ${ref}`,
         300,
       )
     case "vendor_accepted":
       return truncate(
-        `Vendor accepted${vendor ? `: ${vendor}` : ""}. ${unit ? `Unit: ${unit}. ` : ""}Ref: ${ticketId}`,
+        `Your repair is confirmed${vendor ? ` with ${vendor}` : ""}. They're set ` +
+          `to take care of it soon and we'll let you know when they're on the way. ${ref}`,
+        300,
+      )
+    case "schedule_confirmed":
+      return truncate(
+        `Your repair is scheduled${when ? ` for ${when}` : ""}${
+          vendor ? ` with ${vendor}` : ""
+        }. We'll text you with any updates. ${ref}`,
         300,
       )
     case "repair_in_progress":
       return truncate(
-        `Repair in progress${vendor ? ` (${vendor})` : ""}. Ref: ${ticketId}`,
+        `Quick update: work is underway on your repair${vendor ? ` with ${vendor}` : ""}. ` +
+          `We're still on it and we'll let you know the moment it's done. ${ref}`,
         300,
       )
     case "repair_completed":
       return truncate(
-        `Maintenance request complete. ${unit ? `Unit: ${unit}. ` : ""}Ref: ${ticketId}`,
-        300,
+        `Good news! Your repair is all finished.` +
+          (photoCount > 0
+            ? ` Your vendor saved ${photoCount} completion photo${
+                photoCount === 1 ? "" : "s"
+              }.`
+            : "") +
+          ` If anything still isn't quite right, just text us back and we'll jump on it. ${ref}`,
+        320,
       )
   }
 }
@@ -266,6 +324,10 @@ export type ResidentNotifyInput = {
   priority?: string
   descriptionPreview?: string
   vendorName?: string
+  /** Confirmed appointment window from vendor SMS (schedule_confirmed). */
+  scheduleWindow?: string
+  /** Vendor before/after photos at close (repair_completed). */
+  completionPhotoCount?: number
 }
 
 /**
@@ -322,6 +384,8 @@ export async function notifyResident(
       priority: input.priority,
       descriptionPreview: input.descriptionPreview,
       vendorName: input.vendorName,
+      scheduleWindow: input.scheduleWindow,
+      completionPhotoCount: input.completionPhotoCount,
     },
   )
   const subject = subjectForEvent(input.event)
@@ -387,6 +451,8 @@ export async function notifyResident(
   const smsBody = buildSms(input.event, input.ticketId, {
     unit: input.unit,
     vendorName: input.vendorName,
+    scheduleWindow: input.scheduleWindow,
+    completionPhotoCount: input.completionPhotoCount,
   })
   const rSms = await sendOutboundSms(phoneE164, smsBody)
   if ("error" in rSms) {

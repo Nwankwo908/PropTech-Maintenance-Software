@@ -1,0 +1,170 @@
+/**
+ * US state + major-city lists for onboarding property location pickers.
+ * City options are filtered by the selected state code.
+ * Georgia and New Jersey include all incorporated municipalities.
+ */
+import { GA_CITIES, NJ_CITIES } from '@/lib/usLocationsGaNj'
+
+export type UsStateOption = {
+  code: string
+  name: string
+}
+
+export const US_STATE_OPTIONS: readonly UsStateOption[] = [
+  { code: 'AL', name: 'Alabama' },
+  { code: 'AK', name: 'Alaska' },
+  { code: 'AZ', name: 'Arizona' },
+  { code: 'AR', name: 'Arkansas' },
+  { code: 'CA', name: 'California' },
+  { code: 'CO', name: 'Colorado' },
+  { code: 'CT', name: 'Connecticut' },
+  { code: 'DE', name: 'Delaware' },
+  { code: 'DC', name: 'District of Columbia' },
+  { code: 'FL', name: 'Florida' },
+  { code: 'GA', name: 'Georgia' },
+  { code: 'HI', name: 'Hawaii' },
+  { code: 'ID', name: 'Idaho' },
+  { code: 'IL', name: 'Illinois' },
+  { code: 'IN', name: 'Indiana' },
+  { code: 'IA', name: 'Iowa' },
+  { code: 'KS', name: 'Kansas' },
+  { code: 'KY', name: 'Kentucky' },
+  { code: 'LA', name: 'Louisiana' },
+  { code: 'ME', name: 'Maine' },
+  { code: 'MD', name: 'Maryland' },
+  { code: 'MA', name: 'Massachusetts' },
+  { code: 'MI', name: 'Michigan' },
+  { code: 'MN', name: 'Minnesota' },
+  { code: 'MS', name: 'Mississippi' },
+  { code: 'MO', name: 'Missouri' },
+  { code: 'MT', name: 'Montana' },
+  { code: 'NE', name: 'Nebraska' },
+  { code: 'NV', name: 'Nevada' },
+  { code: 'NH', name: 'New Hampshire' },
+  { code: 'NJ', name: 'New Jersey' },
+  { code: 'NM', name: 'New Mexico' },
+  { code: 'NY', name: 'New York' },
+  { code: 'NC', name: 'North Carolina' },
+  { code: 'ND', name: 'North Dakota' },
+  { code: 'OH', name: 'Ohio' },
+  { code: 'OK', name: 'Oklahoma' },
+  { code: 'OR', name: 'Oregon' },
+  { code: 'PA', name: 'Pennsylvania' },
+  { code: 'RI', name: 'Rhode Island' },
+  { code: 'SC', name: 'South Carolina' },
+  { code: 'SD', name: 'South Dakota' },
+  { code: 'TN', name: 'Tennessee' },
+  { code: 'TX', name: 'Texas' },
+  { code: 'UT', name: 'Utah' },
+  { code: 'VT', name: 'Vermont' },
+  { code: 'VA', name: 'Virginia' },
+  { code: 'WA', name: 'Washington' },
+  { code: 'WV', name: 'West Virginia' },
+  { code: 'WI', name: 'Wisconsin' },
+  { code: 'WY', name: 'Wyoming' },
+] as const
+
+/** Major cities by state code — enough for onboarding vendor proximity matching. */
+export const US_CITIES_BY_STATE: Readonly<Record<string, readonly string[]>> = {
+  AL: ['Birmingham', 'Huntsville', 'Mobile', 'Montgomery', 'Tuscaloosa'],
+  AK: ['Anchorage', 'Fairbanks', 'Juneau', 'Sitka', 'Wasilla'],
+  AZ: ['Chandler', 'Gilbert', 'Glendale', 'Mesa', 'Phoenix', 'Scottsdale', 'Tempe', 'Tucson'],
+  AR: ['Fayetteville', 'Fort Smith', 'Jonesboro', 'Little Rock', 'Springdale'],
+  CA: [
+    'Anaheim',
+    'Bakersfield',
+    'Fresno',
+    'Irvine',
+    'Long Beach',
+    'Los Angeles',
+    'Oakland',
+    'Sacramento',
+    'San Diego',
+    'San Francisco',
+    'San Jose',
+    'Santa Ana',
+  ],
+  CO: ['Aurora', 'Boulder', 'Colorado Springs', 'Denver', 'Fort Collins'],
+  CT: ['Bridgeport', 'Hartford', 'New Haven', 'Stamford', 'Waterbury'],
+  DE: ['Dover', 'Middletown', 'Newark', 'Smyrna', 'Wilmington'],
+  DC: ['Washington'],
+  FL: [
+    'Fort Lauderdale',
+    'Jacksonville',
+    'Miami',
+    'Orlando',
+    'St. Petersburg',
+    'Tallahassee',
+    'Tampa',
+  ],
+  GA: GA_CITIES,
+  HI: ['Hilo', 'Honolulu', 'Kahului', 'Kailua', 'Pearl City'],
+  ID: ['Boise', 'Coeur d\'Alene', 'Idaho Falls', 'Meridian', 'Nampa'],
+  IL: ['Aurora', 'Chicago', 'Joliet', 'Naperville', 'Rockford', 'Springfield'],
+  IN: ['Bloomington', 'Evansville', 'Fort Wayne', 'Indianapolis', 'South Bend'],
+  IA: ['Cedar Rapids', 'Davenport', 'Des Moines', 'Iowa City', 'Sioux City'],
+  KS: ['Kansas City', 'Lawrence', 'Olathe', 'Overland Park', 'Topeka', 'Wichita'],
+  KY: ['Bowling Green', 'Lexington', 'Louisville', 'Owensboro'],
+  LA: ['Baton Rouge', 'Lafayette', 'New Orleans', 'Shreveport'],
+  ME: ['Auburn', 'Bangor', 'Lewiston', 'Portland', 'South Portland'],
+  MD: ['Baltimore', 'Frederick', 'Gaithersburg', 'Rockville', 'Silver Spring'],
+  MA: ['Boston', 'Cambridge', 'Lowell', 'Springfield', 'Worcester'],
+  MI: ['Ann Arbor', 'Detroit', 'Grand Rapids', 'Lansing', 'Warren'],
+  MN: ['Duluth', 'Minneapolis', 'Rochester', 'Saint Paul'],
+  MS: ['Biloxi', 'Gulfport', 'Hattiesburg', 'Jackson'],
+  MO: ['Columbia', 'Independence', 'Kansas City', 'Springfield', 'St. Louis'],
+  MT: ['Billings', 'Bozeman', 'Great Falls', 'Helena', 'Missoula'],
+  NE: ['Bellevue', 'Lincoln', 'Omaha'],
+  NV: ['Henderson', 'Las Vegas', 'North Las Vegas', 'Reno', 'Sparks'],
+  NH: ['Concord', 'Manchester', 'Nashua', 'Portsmouth'],
+  NJ: NJ_CITIES,
+  NM: ['Albuquerque', 'Las Cruces', 'Rio Rancho', 'Santa Fe'],
+  NY: [
+    'Albany',
+    'Brooklyn',
+    'Buffalo',
+    'New York',
+    'Queens',
+    'Rochester',
+    'Syracuse',
+    'Yonkers',
+  ],
+  NC: ['Asheville', 'Charlotte', 'Durham', 'Greensboro', 'Raleigh', 'Winston-Salem'],
+  ND: ['Bismarck', 'Fargo', 'Grand Forks', 'Minot'],
+  OH: ['Akron', 'Cincinnati', 'Cleveland', 'Columbus', 'Dayton', 'Toledo'],
+  OK: ['Broken Arrow', 'Edmond', 'Norman', 'Oklahoma City', 'Tulsa'],
+  OR: ['Bend', 'Eugene', 'Portland', 'Salem'],
+  PA: ['Allentown', 'Erie', 'Philadelphia', 'Pittsburgh', 'Reading', 'Scranton'],
+  RI: ['Cranston', 'Pawtucket', 'Providence', 'Warwick'],
+  SC: ['Charleston', 'Columbia', 'Greenville', 'Myrtle Beach', 'Rock Hill'],
+  SD: ['Aberdeen', 'Rapid City', 'Sioux Falls'],
+  TN: ['Chattanooga', 'Knoxville', 'Memphis', 'Nashville'],
+  TX: [
+    'Arlington',
+    'Austin',
+    'Dallas',
+    'El Paso',
+    'Fort Worth',
+    'Houston',
+    'Plano',
+    'San Antonio',
+  ],
+  UT: ['Ogden', 'Provo', 'Salt Lake City', 'West Jordan', 'West Valley City'],
+  VT: ['Burlington', 'Essex', 'Rutland', 'South Burlington'],
+  VA: ['Alexandria', 'Arlington', 'Chesapeake', 'Norfolk', 'Richmond', 'Virginia Beach'],
+  WA: ['Bellevue', 'Seattle', 'Spokane', 'Tacoma', 'Vancouver'],
+  WV: ['Charleston', 'Huntington', 'Morgantown', 'Parkersburg'],
+  WI: ['Green Bay', 'Madison', 'Milwaukee', 'Racine'],
+  WY: ['Casper', 'Cheyenne', 'Gillette', 'Laramie'],
+}
+
+export function citiesForState(stateCode: string | null | undefined): readonly string[] {
+  const code = (stateCode ?? '').trim().toUpperCase()
+  if (!code) return []
+  return US_CITIES_BY_STATE[code] ?? []
+}
+
+export function isUsStateCode(value: string | null | undefined): boolean {
+  const code = (value ?? '').trim().toUpperCase()
+  return US_STATE_OPTIONS.some((s) => s.code === code)
+}

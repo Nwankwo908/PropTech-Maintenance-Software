@@ -1,6 +1,12 @@
 import type { ExternalVendorSuggestionDto } from '@/api/discoverExternalVendors'
+import { isDemoAccountActive } from '@/lib/activeLandlord'
+import { filterVendorsWithVerifiedCoi } from '@/lib/vendorCoiVerification'
+import { filterVendorsWithVerifiedLicense } from '@/lib/vendorLicenseVerification'
 import { resolvePropertyBuildingMeta } from '@/lib/propertyRoutes'
-import { normIssueCategory } from '@/lib/vendorIssueCategory'
+import {
+  formatVendorTradeLabel,
+  issueCategoryToVendorTrade,
+} from '@/lib/vendorTrades'
 
 export type VendorRatingTier = {
   qualityLabel: string
@@ -126,10 +132,10 @@ const DEMO_ENRICHMENT_BY_TRADE: Record<string, DemoEnrichmentRow[]> = {
 }
 
 function demoTradeKey(issueCategory: string | null | undefined): string {
-  const norm = normIssueCategory(issueCategory)
-  if (norm === 'plumbing') return 'plumbing'
-  if (norm === 'electrical') return 'electrical'
-  if (issueCategory?.toLowerCase().includes('hvac')) return 'hvac'
+  const slug = issueCategoryToVendorTrade(issueCategory)
+  if (slug === 'plumbing') return 'plumbing'
+  if (slug === 'electrical') return 'electrical'
+  if (slug === 'hvac') return 'hvac'
   return 'default'
 }
 
@@ -149,9 +155,8 @@ function localDemoAddress(locationLabel: string, fallbackStreet: string, index: 
 }
 
 function categoryTag(issueCategory: string | null | undefined): string {
-  const c = String(issueCategory ?? '').trim()
-  if (!c) return 'Maintenance'
-  return c.charAt(0).toUpperCase() + c.slice(1).replace(/_/g, ' ')
+  if (!String(issueCategory ?? '').trim()) return 'Maintenance'
+  return formatVendorTradeLabel(issueCategory, { emptyLabel: 'Maintenance' })
 }
 
 export function formatExternalProviderChip(providersUsed: string[] | undefined): string {
@@ -281,8 +286,9 @@ export function enrichExternalVendorSuggestions(
     const demo = demoPool[index % demoPool.length]
     const primarySource = s.sources[0] ?? 'mock'
     const useDemoOverlay =
-      s.sources.every((src) => src === 'mock') ||
-      (s.sources.length === 1 && s.sources[0] === 'netvendor' && !s.address && !s.phone)
+      isDemoAccountActive() &&
+      (s.sources.every((src) => src === 'mock') ||
+        (s.sources.length === 1 && s.sources[0] === 'netvendor' && !s.address && !s.phone))
 
     const rating = s.rating ?? (useDemoOverlay ? demo.rating : null)
     const reviewCount = s.reviewCount ?? (useDemoOverlay ? demo.reviewCount : null)
@@ -319,7 +325,9 @@ export function enrichExternalVendorSuggestions(
     }
   })
 
-  return rows.sort(compareExternalVendorRows)
+  const ranked = rows.sort(compareExternalVendorRows)
+  const licenseVerified = filterVendorsWithVerifiedLicense(ranked, issueCategory)
+  return filterVendorsWithVerifiedCoi(licenseVerified)
 }
 
 export function formatSourceBadgeLabel(

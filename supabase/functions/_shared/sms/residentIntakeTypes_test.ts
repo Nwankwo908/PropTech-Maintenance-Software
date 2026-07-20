@@ -58,7 +58,7 @@ Deno.test("asks for room when location unknown", () => {
 
   assertEqual(
     intakeQuestionForStep(state, "room_or_area"),
-    "Sorry you're dealing with that. Which room is this happening in — kitchen, bathroom, basement, bedroom, or somewhere else?",
+    "Sorry you're dealing with that. Which room is this happening in? Kitchen, bathroom, basement, bedroom, or somewhere else?",
     "room prompt",
   )
 })

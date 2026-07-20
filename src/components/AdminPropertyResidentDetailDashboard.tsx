@@ -7,7 +7,7 @@ import {
   type EditResidentSavePayload,
 } from '@/components/EditResidentModal'
 import { getActiveLandlordId } from '@/lib/activeLandlord'
-import { fetchAdminWorkflowDashboard, type AdminWorkflowDashboardData } from '@/lib/adminWorkflows'
+import { fetchAdminWorkflowDashboard } from '@/lib/adminWorkflows'
 import {
   buildPropertyResidentUnitOptions,
   initialUnitOptionKeyForResident,
@@ -353,7 +353,6 @@ export function AdminPropertyResidentDetailDashboard() {
   const navigate = useNavigate()
   const building = parseBuildingSlug(buildingSlug)
 
-  const [workflowData, setWorkflowData] = useState<AdminWorkflowDashboardData | null>(null)
   const [profile, setProfile] = useState<ResidentProfileDetail | null>(null)
   const [loadedUser, setLoadedUser] = useState<LoadedResidentUser | null>(null)
   const [buildingUnits, setBuildingUnits] = useState<PropertyUnitOption[]>([])
@@ -455,7 +454,6 @@ export function AdminPropertyResidentDetailDashboard() {
           }))
         : []
 
-    setWorkflowData(workflowDashboard)
     setLoadedUser(loaded)
     setBuildingUnits(
       unitsResult.error

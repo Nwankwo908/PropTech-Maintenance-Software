@@ -56,9 +56,19 @@ function latePaymentNoticeSms(
   const amount = state.amount_due != null
     ? formatCurrency(state.amount_due)
     : "your rent balance"
-  const due = state.rent_due_date ?? "the due date"
-  const payLine = paymentLink ? ` Pay now: ${paymentLink}.` : ""
-  return `Important: your rent payment of ${amount} was due ${due} and is now overdue.${payLine} Please submit payment immediately or reply QUESTIONS to contact your property manager.`
+  const due = state.rent_due_date
+    ? new Date(`${state.rent_due_date}T12:00:00`).toLocaleDateString("en-US", {
+      month: "long",
+      day: "numeric",
+    })
+    : "the due date"
+  const payLine = paymentLink ? ` You can pay here: ${paymentLink}.` : ""
+  return (
+    `Hi, this is your property management team. Our records show your rent of ` +
+    `${amount} was due ${due} and is now past due.${payLine} ` +
+    `Please pay as soon as you can. If you need help or would like to set up a ` +
+    `payment plan, reply QUESTIONS and we'll work with you.`
+  )
 }
 
 function latePaymentNoticeEmail(
@@ -69,16 +79,31 @@ function latePaymentNoticeEmail(
   const amount = state.amount_due != null
     ? formatCurrency(state.amount_due)
     : "your rent balance"
-  const due = state.rent_due_date ?? "the due date"
-  const subject = `Late rent payment notice — ${due}`
-  const payText = paymentLink ? `\n\nPay online: ${paymentLink}` : ""
+  const due = state.rent_due_date
+    ? new Date(`${state.rent_due_date}T12:00:00`).toLocaleDateString("en-US", {
+      month: "long",
+      day: "numeric",
+    })
+    : "the due date"
+  const subject = "Your rent payment is past due"
+  const payText = paymentLink ? `\n\nYou can pay online here: ${paymentLink}` : ""
   const payHtml = paymentLink
-    ? `<p><a href="${paymentLink}">Pay rent online</a></p>`
+    ? `<p><a href="${paymentLink}">Pay your rent online</a></p>`
     : ""
   const text =
-    `Hi ${residentName},\n\nYour rent payment of ${amount} was due ${due} and is now overdue. Please submit payment immediately.${payText}\n\nIf you have questions or need a payment plan, reply QUESTIONS to your property SMS line or contact your property manager.\n\nThank you.`
+    `Hi ${residentName},\n\nThis is your property management team. Our records show your ` +
+    `rent of ${amount} was due ${due} and is now past due. Please submit your payment as ` +
+    `soon as you can.${payText}\n\n` +
+    `If you've already paid, thank you — you can ignore this message. If you need help or ` +
+    `would like to set up a payment plan, reply QUESTIONS to your property text line or reach ` +
+    `out anytime. We're here to help.\n\n` +
+    `Thank you,\nYour property management team`
   const html =
-    `<p>Hi ${residentName},</p><p>Your rent payment of <strong>${amount}</strong> was due ${due} and is <strong>now overdue</strong>. Please submit payment immediately.</p>${payHtml}<p>If you have questions or need a payment plan, reply <strong>QUESTIONS</strong> to your property SMS line or contact your property manager.</p><p>Thank you.</p>`
+    `<p>Hi ${residentName},</p>` +
+    `<p>This is your property management team. Our records show your rent of <strong>${amount}</strong> was due ${due} and is now past due. Please submit your payment as soon as you can.</p>` +
+    `${payHtml}` +
+    `<p>If you've already paid, thank you — you can ignore this message. If you need help or would like to set up a payment plan, reply <strong>QUESTIONS</strong> to your property text line or reach out anytime. We're here to help.</p>` +
+    `<p>Thank you,<br/>Your property management team</p>`
   return { subject, text, html }
 }
 

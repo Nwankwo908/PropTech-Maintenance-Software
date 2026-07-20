@@ -3,9 +3,9 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1"
 import {
   notifyResidentCompleted,
   notifyResidentInProgress,
-  notifyResidentVendorAccepted,
 } from "../submit-maintenance-request/resident_notify.ts"
 import { tryAutoReassignAfterDecline } from "../_shared/vendor_auto_reassign.ts"
+import { beginVendorAvailabilityAsk } from "../_shared/vendor_job_schedule.ts"
 import { bearerLooksLikeJwt } from "../_shared/vendor_portal_bearer.ts"
 import { getVendorFromPortalApiKey } from "../_shared/vendor_portal_api_key.ts"
 import { logGraphEvent } from "../_shared/graph/logGraphEvent.ts"
@@ -16,6 +16,10 @@ import {
   submitMaintenanceInvoice,
   type MaintenanceInvoiceInput,
 } from "../_shared/maintenanceSpend.ts"
+import {
+  notifyLandlordJobCompleted,
+  sendCompletionUploadNudge,
+} from "../_shared/maintenanceCompletion.ts"
 
 const corsHeaders: Record<string, string> = {
   "Access-Control-Allow-Origin": "*",
@@ -136,7 +140,7 @@ serve(async (req) => {
   const { data: row, error: rowErr } = await supabase
     .from("maintenance_requests")
     .select(
-      "id, assigned_vendor_id, vendor_work_status, vendor_action_token",
+      "id, assigned_vendor_id, vendor_work_status, vendor_action_token, completion_photo_paths, unit, landlord_id",
     )
     .eq("id", ticketId)
     .maybeSingle()
@@ -271,6 +275,29 @@ serve(async (req) => {
     )
   }
 
+  if (step.next === "completed") {
+    const paths = Array.isArray(row.completion_photo_paths)
+      ? (row.completion_photo_paths as string[]).filter(
+          (p): p is string => typeof p === "string" && p.trim().length > 0,
+        )
+      : []
+    if (paths.length < 1) {
+      const tokenEnc =
+        typeof row.vendor_action_token === "string" && row.vendor_action_token
+          ? encodeURIComponent(row.vendor_action_token)
+          : ""
+      return jsonResponse(
+        {
+          error:
+            "Upload at least one before/after photo before closing the job",
+          uploadPath: tokenEnc ? `/upload/${tokenEnc}` : null,
+          vendor_work_status: current,
+        },
+        422,
+      )
+    }
+  }
+
   const { error: upErr } = await supabase
     .from("maintenance_requests")
     .update({ vendor_work_status: step.next })
@@ -375,15 +402,35 @@ serve(async (req) => {
     }
   }
 
-  if (
-    step.next === "accepted" ||
-    step.next === "in_progress" ||
-    step.next === "completed"
-  ) {
+  if (step.next === "accepted" && vendorIdMatched) {
+    try {
+      await beginVendorAvailabilityAsk(supabase, {
+        ticketId,
+        vendorId: vendorIdMatched,
+      })
+    } catch (e) {
+      console.error("[vendor-update-job-status] availability ask", e)
+    }
+  }
+
+  if (step.next === "in_progress" && vendorIdMatched) {
+    try {
+      await sendCompletionUploadNudge(supabase, {
+        ticketId,
+        vendorId: vendorIdMatched,
+        jobToken:
+          typeof row.vendor_action_token === "string"
+            ? row.vendor_action_token
+            : null,
+      })
+    } catch (e) {
+      console.error("[vendor-update-job-status] upload nudge", e)
+    }
+  }
+
+  if (step.next === "in_progress" || step.next === "completed") {
     const event =
-      step.next === "accepted"
-        ? ("vendor_accepted" as const)
-        : step.next === "in_progress"
+      step.next === "in_progress"
         ? ("repair_in_progress" as const)
         : ("repair_completed" as const)
 
@@ -424,12 +471,18 @@ serve(async (req) => {
           priority: typeof trow.priority === "string" ? trow.priority : undefined,
           vendorName,
         }
-        if (event === "vendor_accepted") {
-          await notifyResidentVendorAccepted(supabase, base)
-        } else if (event === "repair_in_progress") {
+        if (event === "repair_in_progress") {
           await notifyResidentInProgress(supabase, base)
         } else {
-          await notifyResidentCompleted(supabase, base)
+          const photoCount = Array.isArray(row.completion_photo_paths)
+            ? (row.completion_photo_paths as string[]).filter(
+                (p): p is string => typeof p === "string" && p.trim().length > 0,
+              ).length
+            : 0
+          await notifyResidentCompleted(supabase, {
+            ...base,
+            completionPhotoCount: photoCount,
+          })
         }
 
         if (step.next === "completed" && trow?.landlord_id && vendorIdMatched) {
@@ -460,6 +513,38 @@ serve(async (req) => {
             })
           } catch (e) {
             console.error("[vendor-update-job-status] vendor feedback request", e)
+          }
+
+          const photoCount = Array.isArray(row.completion_photo_paths)
+            ? (row.completion_photo_paths as string[]).filter(
+                (p): p is string => typeof p === "string" && p.trim().length > 0,
+              ).length
+            : 0
+          const jobToken =
+            typeof row.vendor_action_token === "string"
+              ? row.vendor_action_token
+              : ""
+          if (jobToken) {
+            try {
+              await notifyLandlordJobCompleted(supabase, {
+                landlordId,
+                ticketId,
+                jobToken,
+                unit:
+                  typeof trow.unit === "string"
+                    ? trow.unit
+                    : typeof row.unit === "string"
+                    ? row.unit
+                    : "",
+                vendorName: vendorName ?? "Vendor",
+                photoCount,
+              })
+            } catch (e) {
+              console.error(
+                "[vendor-update-job-status] landlord completion notify",
+                e,
+              )
+            }
           }
         }
       } catch (e) {

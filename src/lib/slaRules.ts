@@ -25,10 +25,16 @@ type SlaCategory = keyof typeof SLA_RULES
 type SlaSeverity = keyof (typeof SLA_RULES)['plumbing']
 
 function normalizeCategory(raw: string | undefined): SlaCategory | 'other' {
-  const cat = (raw || '').trim().toLowerCase()
+  const cat = (raw || '').trim().toLowerCase().replace(/[\s-]+/g, '_')
   if (cat === 'plumbing') return 'plumbing'
   if (cat === 'electrical') return 'electrical'
-  if (cat === 'appliance' || cat === 'appliances') return 'appliance'
+  if (
+    cat === 'appliance' ||
+    cat === 'appliances' ||
+    cat === 'appliance_repair'
+  ) {
+    return 'appliance'
+  }
   return 'other'
 }
 

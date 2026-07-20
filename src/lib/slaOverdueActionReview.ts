@@ -1,8 +1,9 @@
 import { isDemoAccountActive } from '@/lib/activeLandlord'
 import {
+  formatVendorTradeLabel,
   normIssueCategory,
   vendorMatchesTicketIssueCategory,
-} from '@/lib/vendorIssueCategory'
+} from '@/lib/vendorTrades'
 import type { PropertyHealthVendorMetrics } from '@/lib/propertyHealth'
 
 export type SlaOverdueTimelineEntry = {
@@ -129,9 +130,7 @@ function formatLocation(building: string | null, unit: string): string {
 }
 
 function formatCategoryLabel(slug: string | null): string {
-  const n = normIssueCategory(slug)
-  if (!n) return 'Maintenance'
-  return n.charAt(0).toUpperCase() + n.slice(1)
+  return formatVendorTradeLabel(slug, { emptyLabel: 'Maintenance' })
 }
 
 function vendorStatusLabel(vendorWorkStatus: string, assignedVendorName: string | null): string {

@@ -1,5 +1,4 @@
 import { useEffect } from 'react'
-import { useLocation } from 'react-router-dom'
 import { LegalContentBlocks } from '@/components/legal/LegalContentBlocks'
 import { LegalDocumentLayout } from '@/components/legal/LegalDocumentLayout'
 import {
@@ -8,16 +7,9 @@ import {
 } from '@/lib/legal/privacyPolicyContent'
 
 export function PrivacyPolicyPage() {
-  const location = useLocation()
-
   useEffect(() => {
-    if (!location.hash) return
-    const id = decodeURIComponent(location.hash.slice(1))
-    const el = document.getElementById(id)
-    if (el) {
-      el.scrollIntoView({ behavior: 'smooth', block: 'start' })
-    }
-  }, [location.hash, location.pathname])
+    window.scrollTo(0, 0)
+  }, [])
 
   return (
     <LegalDocumentLayout
@@ -27,12 +19,7 @@ export function PrivacyPolicyPage() {
       version={PRIVACY_POLICY_META.version}
     >
       {PRIVACY_POLICY_SECTIONS.map((section) => (
-        <section
-          key={section.id}
-          id={section.id === 'your-rights' ? 'opt-out' : section.id}
-          aria-labelledby={`privacy-${section.id}`}
-          className="scroll-mt-24"
-        >
+        <section key={section.id} aria-labelledby={`privacy-${section.id}`}>
           <h2
             id={`privacy-${section.id}`}
             className="text-[18px] font-semibold leading-7 tracking-[-0.2px] text-[#101828]"

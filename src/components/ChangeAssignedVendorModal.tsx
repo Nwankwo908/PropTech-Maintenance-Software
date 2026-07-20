@@ -4,7 +4,7 @@ import {
   type ExternalVendorSuggestionDto,
 } from '@/api/discoverExternalVendors'
 import { FindExternalVendorRail } from '@/components/FindExternalVendorRail'
-import { formatWorkOrderRefFromTicketId } from '@/lib/vendorCallFlow'
+import { enrichExternalVendorSuggestions } from '@/lib/externalVendorDisplay'
 
 function IconWrenchHeader({ className = 'size-5 shrink-0 text-white' }: { className?: string }) {
   return (
@@ -119,7 +119,13 @@ export function ChangeAssignedVendorModal({
         if (res.notice) setExternalNotice(res.notice)
         if (res.locationLabel) setResolvedLocationLabel(res.locationLabel)
         if (res.issueCategory !== undefined) setResolvedIssueCategory(res.issueCategory)
-        setExternalSuggestions(res.suggestions ?? [])
+        setExternalSuggestions(
+          enrichExternalVendorSuggestions(
+            res.suggestions ?? [],
+            res.issueCategory,
+            res.locationLabel,
+          ),
+        )
         setExternalProvidersUsed(res.providersUsed ?? [])
       } catch (e) {
         if (!cancelled) {
@@ -172,11 +178,6 @@ export function ChangeAssignedVendorModal({
         }
         issueCategory={
           resolvedIssueCategory ?? externalDiscovery?.issueCategory ?? null
-        }
-        workOrderRef={
-          externalDiscovery?.ticketId
-            ? formatWorkOrderRefFromTicketId(externalDiscovery.ticketId)
-            : null
         }
         suggestions={externalSuggestions}
         providersUsed={externalProvidersUsed}

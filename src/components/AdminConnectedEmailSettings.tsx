@@ -1,14 +1,14 @@
 import { useId, useState, type ReactNode } from 'react'
 import { Link } from 'react-router-dom'
 import {
-  CONNECTED_EMAIL_ACCOUNT,
-  DISCOVERED_DOCUMENT_BUCKETS,
-  EMAIL_ACTIVITY_FEED,
   EMAIL_AUTOMATION_TOGGLES,
   EMAIL_DISCOVERY_CATEGORIES,
   EMAIL_PRIVACY_POINTS,
-  EMAIL_RECOMMENDED_ACTIONS,
-  RECENTLY_DISCOVERED_DOCUMENTS,
+  getConnectedEmailAccount,
+  getDiscoveredDocumentBuckets,
+  getEmailActivityFeed,
+  getEmailRecommendedActions,
+  getRecentlyDiscoveredDocuments,
   type EmailConfidenceLevel,
   type EmailDocumentStatus,
 } from '@/lib/connectedEmailIntegration'
@@ -283,7 +283,12 @@ export function AdminConnectedEmailSettings() {
     Object.fromEntries(EMAIL_AUTOMATION_TOGGLES.map((item) => [item.id, item.defaultOn])),
   )
 
-  const totalDocuments = DISCOVERED_DOCUMENT_BUCKETS.reduce((sum, bucket) => sum + bucket.count, 0)
+  const discoveredBuckets = getDiscoveredDocumentBuckets()
+  const recentlyDiscovered = getRecentlyDiscoveredDocuments()
+  const recommendedActions = getEmailRecommendedActions()
+  const activityFeed = getEmailActivityFeed()
+  const connectedAccount = getConnectedEmailAccount()
+  const totalDocuments = discoveredBuckets.reduce((sum, bucket) => sum + bucket.count, 0)
 
   return (
     <>
@@ -331,19 +336,19 @@ export function AdminConnectedEmailSettings() {
           >
             <div className="flex flex-col gap-4 rounded-[10px] border border-[#eef0f3] bg-[#f9fafb] p-4 sm:flex-row sm:items-center sm:justify-between">
               <div className="flex min-w-0 items-center gap-3">
-                <ProviderLogo provider={CONNECTED_EMAIL_ACCOUNT.provider} />
+                <ProviderLogo provider={connectedAccount.provider} />
                 <div className="min-w-0">
                   <div className="flex flex-wrap items-center gap-2">
                     <p className="text-[14px] font-semibold tracking-[-0.1504px] text-[#101828]">
-                      {CONNECTED_EMAIL_ACCOUNT.provider}
+                      {connectedAccount.provider}
                     </p>
                     <StatusChip label="Connected" tone="success" />
                   </div>
                   <p className="text-[13px] tracking-[-0.1504px] text-[#6a7282]">
-                    {CONNECTED_EMAIL_ACCOUNT.email}
+                    {connectedAccount.email}
                   </p>
                   <p className="text-[12px] tracking-[-0.1504px] text-[#9ca3af]">
-                    Last sync {CONNECTED_EMAIL_ACCOUNT.lastSyncLabel}
+                    Last sync {connectedAccount.lastSyncLabel}
                   </p>
                 </div>
               </div>
@@ -474,7 +479,7 @@ export function AdminConnectedEmailSettings() {
             }
           >
             <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-              {DISCOVERED_DOCUMENT_BUCKETS.map((bucket) => (
+              {discoveredBuckets.map((bucket) => (
                 <div
                   key={bucket.id}
                   className="flex flex-col rounded-[10px] border border-[#eef0f3] bg-[#f9fafb] p-4"
@@ -504,7 +509,7 @@ export function AdminConnectedEmailSettings() {
             action={
               <button
                 type="button"
-                className="text-[13px] font-medium tracking-[-0.1504px] text-[#155dfc] transition-colors hover:text-[#0030b5]"
+                className="admin-quiet-text-action"
               >
                 View all
               </button>
@@ -524,7 +529,7 @@ export function AdminConnectedEmailSettings() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-[#eef0f3] bg-white">
-                  {RECENTLY_DISCOVERED_DOCUMENTS.map((document) => (
+                  {recentlyDiscovered.map((document) => (
                     <tr key={document.id}>
                       <td className="px-4 py-3">
                         <div className="flex items-center gap-2">
@@ -604,7 +609,7 @@ export function AdminConnectedEmailSettings() {
         <aside className="flex w-full shrink-0 flex-col gap-6 xl:sticky xl:top-6 xl:w-[300px]">
           <SectionCard title="Recommended actions">
             <ul className="space-y-4">
-              {EMAIL_RECOMMENDED_ACTIONS.map((action) => (
+              {recommendedActions.map((action) => (
                 <li key={action.id} className="rounded-[10px] border border-[#eef0f3] bg-[#f9fafb] p-4">
                   <p className="text-[14px] font-semibold tracking-[-0.1504px] text-[#101828]">
                     {action.title}
@@ -641,7 +646,7 @@ export function AdminConnectedEmailSettings() {
 
           <SectionCard title="Activity">
             <ul className="space-y-4">
-              {EMAIL_ACTIVITY_FEED.map((item) => (
+              {activityFeed.map((item) => (
                 <li key={item.id}>
                   <p className="text-[11px] font-semibold uppercase tracking-[0.06em] text-[#9ca3af]">
                     {item.dayLabel}

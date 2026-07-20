@@ -4,12 +4,14 @@ import {
   classifyIssueForSla,
   severityFromResidentPriority,
 } from "../_shared/classify_issue_sla.ts"
+import { MAINTENANCE_CLASSIFICATION_EVENTS } from "../_shared/maintenance_classification/mod.ts"
 import { getEstimatedMinutes } from "../_shared/sla_rules.ts"
 import { notifyResidentSubmitted } from "./resident_notify.ts"
 import { assignVendorAndNotify } from "./vendor_notify.ts"
 import { logGraphEvent } from "../_shared/graph/logGraphEvent.ts"
 import { startMaintenanceRequestWorkflow } from "../_shared/engine/startMaintenanceRequestWorkflow.ts"
 import { resolveLandlordId } from "../_shared/sms/landlordSmsOnboarding.ts"
+import { issueCategoryToVendorTrade, VENDOR_TRADE_SLUGS } from "../_shared/vendor_trades.ts"
 
 const corsHeaders: Record<string, string> = {
   "Access-Control-Allow-Origin": "*",
@@ -58,12 +60,14 @@ function escapeIlikeLiteral(s: string): string {
   return s.replace(/\\/g, "\\\\").replace(/%/g, "\\%").replace(/_/g, "\\_")
 }
 
-/** Multipart `issueCategory` from the client — only these values are honored. */
+/** Multipart `issueCategory` from the client — standardized trade slugs only. */
+/** Multipart `issueCategory` from the client — standardized trade slugs only. */
 function normalizeFormIssueCategory(raw: string | null): string | null {
   if (!raw || typeof raw !== "string") return null
-  const c = raw.trim().toLowerCase()
-  if (c === "appliances") return "appliance"
-  if (c === "plumbing" || c === "electrical" || c === "appliance") return c
+  const normalized = issueCategoryToVendorTrade(raw)
+  if ((VENDOR_TRADE_SLUGS as readonly string[]).includes(normalized)) {
+    return normalized
+  }
   return null
 }
 
@@ -261,6 +265,22 @@ serve(async (req) => {
       severity: severityFromResidentPriority(priority),
     }
     : await classifyIssueForSla(description, priority)
+
+  if (!overrideCategory && slaClassification.classification) {
+    const c = slaClassification.classification
+    console.info("[submit-maintenance-request] classification", {
+      event: MAINTENANCE_CLASSIFICATION_EVENTS.CLASSIFIED,
+      vendor_trade: c.vendorTrade,
+      issue_type: c.issueType,
+      severity: c.severity,
+      confidence: c.classificationConfidence,
+      other_postcheck: c.otherPostcheckRan,
+      pipeline: c.pipelineVersion,
+      signals: c.signals.slice(0, 8),
+      sanitized: c.sanitizedDescription.slice(0, 160),
+    })
+  }
+
   const estimatedMinutes = getEstimatedMinutes(
     slaClassification.issue_category,
     slaClassification.severity,
@@ -313,24 +333,6 @@ serve(async (req) => {
   const ticketId = row.id as string
   const landlordId = resolveLandlordId()
 
-  let workflowRunId: string | null = null
-  try {
-    const started = await startMaintenanceRequestWorkflow(supabase, {
-      landlordId,
-      ticketId,
-      residentId: residentRow.id,
-      triggerType: "dashboard",
-      dueAt: dueAt.toISOString(),
-      issueCategory: slaClassification.issue_category,
-      severity: slaClassification.severity,
-      unitLabel: unit,
-      source: "web_form",
-    })
-    workflowRunId = started.workflowRunId
-  } catch (e) {
-    console.error("[submit-maintenance-request] workflow run", e)
-  }
-
   const paths: string[] = []
   const photoParts = form.getAll("photo")
 
@@ -378,17 +380,39 @@ serve(async (req) => {
     console.error("[submit-maintenance-request] resident notify failed", e)
   }
 
+  let vendorAssigned = false
   try {
-    await assignVendorAndNotify(supabase, {
+    const assignResult = await assignVendorAndNotify(supabase, {
       ticketId,
       priority,
       unit,
       description,
       dueAt: dueAt.toISOString(),
       estimatedMinutes,
+      landlordId,
     })
+    vendorAssigned = assignResult.assigned
   } catch (e) {
     console.error("[submit-maintenance-request] vendor notify failed", e)
+  }
+
+  let workflowRunId: string | null = null
+  try {
+    const started = await startMaintenanceRequestWorkflow(supabase, {
+      landlordId,
+      ticketId,
+      residentId: residentRow.id,
+      triggerType: "dashboard",
+      dueAt: dueAt.toISOString(),
+      issueCategory: slaClassification.issue_category,
+      severity: slaClassification.severity,
+      unitLabel: unit,
+      source: "web_form",
+      vendorAssigned,
+    })
+    workflowRunId = started.workflowRunId
+  } catch (e) {
+    console.error("[submit-maintenance-request] workflow run", e)
   }
 
   try {
@@ -409,6 +433,16 @@ serve(async (req) => {
         severity: slaClassification.severity,
         photo_count: paths.length,
         source: "web_form",
+        classification_event: MAINTENANCE_CLASSIFICATION_EVENTS.ROUTING_COMPLETED,
+        classification_pipeline:
+          slaClassification.classification?.pipelineVersion ?? null,
+        classification_confidence:
+          slaClassification.classification?.classificationConfidence ?? null,
+        sanitized_description:
+          slaClassification.classification?.sanitizedDescription?.slice(0, 240) ??
+          null,
+        other_postcheck_ran:
+          slaClassification.classification?.otherPostcheckRan ?? false,
       },
     })
   } catch (e) {

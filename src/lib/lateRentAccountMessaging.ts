@@ -122,8 +122,8 @@ export function buildPaymentPlanSmsDraft(
     .map((row) => `Payment ${row.index} of ${preview.length}: ${row.amountLabel} due ${row.dueLabel}`)
     .join('; ')
   return (
-    `Hi ${fname} — we can split your ${brief.balanceDueLabel} balance into ${installments} payments to catch up: ${schedule}. ` +
-    `Reply YES to accept this plan, or tell me what schedule works better.`
+    `Hi ${fname}, we can split your ${brief.balanceDueLabel} balance into ${installments} payments to help you catch up: ${schedule}. ` +
+    `Reply YES to accept this plan, or tell me what schedule works better for you.`
   )
 }
 
@@ -132,8 +132,8 @@ export function buildWaiveLateFeeSmsDraft(
 ): string {
   const fname = firstName(brief.residentName)
   return (
-    `Hi ${fname} — we've waived the ${brief.lateFeeLabel} late fee on your account. ` +
-    `Your remaining balance is ${brief.balanceDueLabel}. Reply PAID when you've sent payment, or QUESTIONS if you need a payment plan.`
+    `Hi ${fname}, good news: we've waived the ${brief.lateFeeLabel} late fee on your account. ` +
+    `Your remaining balance is ${brief.balanceDueLabel}. Reply PAID once you've sent payment, or QUESTIONS if you'd like a payment plan.`
   )
 }
 

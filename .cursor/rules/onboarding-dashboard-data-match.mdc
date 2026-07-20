@@ -1,0 +1,25 @@
+---
+description: New Landlord dashboards show live ops; wipe only on Reset onboarding
+globs: src/components/Admin*.tsx,src/lib/landlordOnboarding.ts,src/lib/vendorSetupConversation.ts,src/lib/workflowPipelineDetail.ts,src/lib/propertyConversations.ts
+alwaysApply: false
+---
+
+# Onboarding ↔ dashboard data match
+
+For **New Landlord** (`EMPTY_LANDLORD_ID` / `newlandlord@ulohome.io`):
+
+- Dashboards (Overview, Communication, Active Tasks) load **real** landlord-scoped tickets and workflow runs — including SMS intake / early tickets.
+- **Never** call `purge_empty_landlord_operations` / `purgeOnboardingImportedOperations` on dashboard load.
+- Destructive delete of `maintenance_requests` and `workflow_runs` happens **only** when the user clicks **Reset onboarding** (`restartNewLandlordOnboarding` → `resetOnboardingPortfolio`).
+
+## Required patterns
+
+1. `ensureOnboardingDashboardMatchesPortfolio()` is a no-op sync (always `allowImportedOperations: true`); it must not purge.
+2. Vendor-setup inbox storage is keyed by landlord (`ulo.vendorSetupInbox.${landlordId}`); never read the legacy global key for EMPTY.
+3. Reset/purge must clear tickets, workflow runs, and SMS for EMPTY only — never demo/default landlords.
+
+## Do not
+
+- Merge demo/default Communication threads into New Landlord
+- Auto-wipe live SMS work orders when opening Overview / Active Tasks
+- Report wipe success if active workflow runs remain for EMPTY after an explicit Reset

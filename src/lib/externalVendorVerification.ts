@@ -1,9 +1,9 @@
 import type { ExternalVendorDisplayRow } from '@/lib/externalVendorDisplay'
+import type { VendorCoiVerificationState } from '@/lib/vendorCoiVerification'
+import { isCoiVerificationComplete } from '@/lib/vendorCoiVerification'
 import type { VendorLicenseVerificationState } from '@/lib/vendorLicenseVerification'
 import { isLicenseVerificationComplete } from '@/lib/vendorLicenseVerification'
-import type { VendorSetupVerificationState } from '@/lib/vendorSetupVerification'
-import { buildVendorSetupChecklistItem } from '@/lib/vendorSetupVerification'
-import { normIssueCategory } from '@/lib/vendorIssueCategory'
+import { formatVendorTradeLabel } from '@/lib/vendorTrades'
 
 export type VerificationChecklistItem = {
   id: string
@@ -12,7 +12,6 @@ export type VerificationChecklistItem = {
   detail: string
   verified: boolean
   requiresManualVerify?: boolean
-  requiresViewMessageAction?: boolean
 }
 
 export type PricingComparisonRow = {
@@ -37,15 +36,12 @@ export type ExternalVendorVerificationProfile = {
   readinessLabel: string
   verificationScoreLabel: string
   checklist: VerificationChecklistItem[]
-  workOrderFit: string[]
   pricingRows: PricingComparisonRow[]
 }
 
 function tradeLabelFromCategory(issueCategory: string | null | undefined): string {
-  const n = normIssueCategory(issueCategory)
-  if (!n) return 'MAINTENANCE'
-  if (n === 'hvac') return 'HVAC'
-  return n.replace(/_/g, ' ').toUpperCase()
+  if (!issueCategory?.trim()) return 'MAINTENANCE'
+  return formatVendorTradeLabel(issueCategory).toUpperCase()
 }
 
 function etaLabel(vendor: ExternalVendorDisplayRow): string | null {
@@ -59,13 +55,6 @@ function etaLabel(vendor: ExternalVendorDisplayRow): string | null {
     return `ETA ${mins}–${mins + 10} min`
   }
   return null
-}
-
-function serviceAreaLabel(locationLabel: string): string {
-  const zip = locationLabel.match(/\b(\d{5})\b/)?.[1]
-  const property = locationLabel.split('·')[0]?.trim() || 'Property'
-  if (zip) return `Services ZIP ${zip} (${property})`
-  return `Services ${locationLabel.trim() || 'property area'}`
 }
 
 function stableYearsInBusiness(name: string): number {
@@ -103,16 +92,12 @@ export function buildExternalVendorVerificationProfile(
   options: { issueCategory?: string | null; locationLabel?: string } = {},
 ): ExternalVendorVerificationProfile {
   const trade = tradeLabelFromCategory(options.issueCategory)
-  const tradeLower = trade.toLowerCase().replace(/\s+/g, ' ')
-  const locationLabel = options.locationLabel?.trim() || 'Property · Unit'
   const eta = etaLabel(vendor)
   const { serviceCall: parsedServiceCall, hourly: parsedHourly } = parsePricingFromLabel(vendor.priceLabel)
   const serviceCall = parsedServiceCall ?? '$85'
   const hourly = parsedHourly ?? '$120/hr'
 
   const checklist: VerificationChecklistItem[] = []
-
-  const fitEta = eta?.replace(/^ETA\s/, 'Available within ') ?? 'Available within 35 minutes'
   const metrics = computeVerificationMetrics(checklist, null, null)
 
   return {
@@ -134,14 +119,6 @@ export function buildExternalVendorVerificationProfile(
     readinessLabel: metrics.readinessLabel,
     verificationScoreLabel: metrics.verificationScoreLabel,
     checklist,
-    workOrderFit: [
-      `Performs ${tradeLower} repairs`,
-      serviceAreaLabel(locationLabel),
-      'Meets 4-hour SLA requirement',
-      fitEta,
-      'Accepts emergency work',
-      'Pricing within market range',
-    ],
     pricingRows: [
       { label: 'Service call', vendorPrice: serviceCall, marketAverage: 'Market avg: $90–$110' },
       { label: 'Hourly rate', vendorPrice: hourly, marketAverage: 'Market avg: $110–$135' },
@@ -170,26 +147,47 @@ export function buildLicenseChecklistItem(
   }
 }
 
+export function buildCoiChecklistItem(coi: VendorCoiVerificationState): VerificationChecklistItem {
+  const verified = isCoiVerificationComplete(coi)
+  const requiresManualVerify = coi.status === 'not_found' || coi.status === 'expired'
+
+  let detail = coi.detail
+  if (coi.status === 'monitoring') {
+    detail = `${coi.detail}`
+  } else if (coi.status === 'verified') {
+    detail = `${coi.detail} · Pulled via Certificial`
+  }
+
+  return {
+    id: 'coi',
+    title: 'COI / Insurance',
+    required: true,
+    detail,
+    verified,
+    requiresManualVerify,
+  }
+}
+
 export function mergeVerificationChecklist(
   baseChecklist: VerificationChecklistItem[],
   license: VendorLicenseVerificationState | null,
-  vendorSetup: VendorSetupVerificationState | null = null,
+  coi: VendorCoiVerificationState | null = null,
 ): VerificationChecklistItem[] {
   const items: VerificationChecklistItem[] = []
   if (license) items.push(buildLicenseChecklistItem(license))
-  if (vendorSetup) items.push(buildVendorSetupChecklistItem(vendorSetup))
+  if (coi) items.push(buildCoiChecklistItem(coi))
   return [...items, ...baseChecklist]
 }
 
 export function computeVerificationMetrics(
   baseChecklist: VerificationChecklistItem[],
   license: VendorLicenseVerificationState | null,
-  vendorSetup: VendorSetupVerificationState | null = null,
+  coi: VendorCoiVerificationState | null = null,
 ): Pick<
   ExternalVendorVerificationProfile,
   'requirementsComplete' | 'requirementsTotal' | 'completionPercent' | 'readinessLabel' | 'verificationScoreLabel'
 > {
-  const checklist = mergeVerificationChecklist(baseChecklist, license, vendorSetup)
+  const checklist = mergeVerificationChecklist(baseChecklist, license, coi)
   const requirementsTotal = checklist.length
   const requirementsComplete = checklist.filter((item) => item.verified).length
   const completionPercent =

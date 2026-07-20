@@ -27,6 +27,8 @@ import {
   sendInboundAutoReply,
 } from "./inboundReply.ts"
 import { tryHandleVendorFeedbackInbound } from "../vendor_feedback.ts"
+import { tryHandleEstimateDecisionInbound } from "./estimateDecisionInbound.ts"
+import { tryHandleTenantConsentKeyword } from "./tenantMessaging.ts"
 
 export type ProcessInboundSmsResult =
   | {
@@ -350,6 +352,116 @@ export async function processInboundSms(
     landlordId,
     inbound,
   })
+
+  // Skip START/YES consent hijack while SMS maintenance intake is mid-flow
+  // (e.g. urgency "Yes") — STOP/HELP still apply.
+  let activeMaintenanceIntake = false
+  try {
+    const { data: intakeConv } = await supabase
+      .from("sms_conversations")
+      .select("intake_state")
+      .eq("id", conversationId)
+      .maybeSingle()
+    const intakeState = (intakeConv as { intake_state?: Record<string, unknown> | null } | null)
+      ?.intake_state
+    const step = typeof intakeState?.step === "string" ? intakeState.step : ""
+    activeMaintenanceIntake = Boolean(step && step !== "submitted")
+  } catch {
+    activeMaintenanceIntake = false
+  }
+
+  const consentResult = await tryHandleTenantConsentKeyword(supabase, {
+    body: inbound.body,
+    landlordId,
+    conversationId,
+    provider: inbound.provider,
+    uloNumber: inbound.to,
+    externalPhone: inbound.from,
+    residentId: identity.resident_id,
+    smsIdentityId: identity.id,
+    identityType: identity.identity_type,
+    conversationType,
+    activeMaintenanceIntake,
+  })
+
+  if (consentResult.handled) {
+    await recordGraphEvent(supabase, {
+      landlordId,
+      identity,
+      conversationId,
+      messageId,
+      maintenanceRequestId,
+      inbound,
+      workflowRoute: `tenant_consent_${consentResult.keyword}`,
+      selfHealed,
+      resolutionSource: resolution.source,
+      selfHealingPhase: resolution.selfHealingPhase,
+    })
+
+    return {
+      ok: true,
+      conversationId,
+      messageId,
+      outboundMessageId: consentResult.outboundMessageId,
+      workflowRoute: `tenant_consent_${consentResult.keyword}`,
+      identityType: identity.identity_type,
+      landlordId,
+      resolutionSource: resolution.source,
+      selfHealingPhase: resolution.selfHealingPhase,
+    }
+  }
+
+  const estimateDecision = await tryHandleEstimateDecisionInbound(supabase, {
+    landlordId,
+    conversationId,
+    messageId,
+    body: inbound.body,
+    identityType: identity.identity_type,
+  })
+
+  if (estimateDecision.handled) {
+    const outboundMessageId = await trySendAutoReply(supabase, {
+      conversationId,
+      landlordId,
+      uloNumber: inbound.to,
+      externalPhone: inbound.from,
+      provider: inbound.provider,
+      workflowHint: estimateDecision.replyBody,
+      source: `estimate_decision_${estimateDecision.action}`,
+      workflowRoute: "landlord_estimate_decision",
+    })
+
+    await recordGraphEvent(supabase, {
+      landlordId,
+      identity,
+      conversationId,
+      messageId,
+      maintenanceRequestId,
+      inbound,
+      workflowRoute: "landlord_estimate_decision",
+      workflowMetadata: {
+        estimate_id: estimateDecision.estimateId,
+        action: estimateDecision.action,
+        status: estimateDecision.status,
+        already: estimateDecision.already ?? false,
+      },
+      selfHealed,
+      resolutionSource: resolution.source,
+      selfHealingPhase: resolution.selfHealingPhase,
+    })
+
+    return {
+      ok: true,
+      conversationId,
+      messageId,
+      outboundMessageId,
+      workflowRoute: "landlord_estimate_decision",
+      identityType: identity.identity_type,
+      landlordId,
+      resolutionSource: resolution.source,
+      selfHealingPhase: resolution.selfHealingPhase,
+    }
+  }
 
   const feedbackResult = await tryHandleVendorFeedbackInbound(supabase, {
     landlordId,

@@ -251,15 +251,14 @@ begin
   -- ---------------------------------------------------------------------------
   -- Vendors
   -- ---------------------------------------------------------------------------
-  -- Canonical category slugs are plumbing / electrical / appliance; trades like
-  -- HVAC, cleaning, and general maintenance are NULL = generalist routing
-  -- (see 20260412130000_normalize_vendor_categories.sql + vendors_category_check).
+  -- Canonical category slugs include plumbing / electrical / hvac / appliance_repair / …
+  -- Cleaning and general maintenance may stay NULL for generalist routing when appropriate.
   insert into public.vendors (id, landlord_id, name, category, email, phone, notification_channel, active)
   values
     (v_apex, demo_landlord, 'Apex Plumbing Co', 'plumbing', 'dispatch@apexplumbing.example.com', '+15555610001', 'both', true),
     (v_rooter, demo_landlord, 'Rapid Rooter', 'plumbing', 'jobs@rapidrooter.example.com', '+15555610002', 'sms', true),
     (v_metro, demo_landlord, 'Metro Plumbing', 'plumbing', 'office@metroplumbing.example.com', '+15555610008', 'email', true),
-    (v_summit, demo_landlord, 'Summit HVAC', null, 'service@summithvac.example.com', '+15555610003', 'both', true),
+    (v_summit, demo_landlord, 'Summit HVAC', 'hvac', 'service@summithvac.example.com', '+15555610003', 'both', true),
     (v_bright, demo_landlord, 'Brightline Electrical', 'electrical', 'crew@brightline.example.com', '+15555610004', 'email', true),
     (v_allied, demo_landlord, 'Allied General Maintenance', null, 'work@alliedgm.example.com', '+15555610005', 'both', true),
     (v_fresh, demo_landlord, 'FreshNest Cleaning', null, 'book@freshnest.example.com', '+15555610006', 'sms', true),

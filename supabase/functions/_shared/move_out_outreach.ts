@@ -157,9 +157,9 @@ export function moveOutWelcomeMessage(
     datePart = ` at the end of your lease on ${formatted}`
   }
   return (
-    `Hi ${name}! We understand you'll be moving out${datePart}. ` +
-    "We'll use this conversation to help guide you through the move-out process. " +
-    "We'll let you know what to expect and what needs to be completed before your move-out date."
+    `Hi ${name}, this is your property management team. We understand you'll be ` +
+    `moving out${datePart}. We'll use this conversation to guide you through the ` +
+    "process, so you know what to expect and what to complete before your move-out date."
   )
 }
 
@@ -172,9 +172,12 @@ export function moveOutInstructionsMessage(
     ? `Your move-out date is ${new Date(`${moveOutDateIso.trim().slice(0, 10)}T12:00:00`).toLocaleDateString("en-US", { month: "long", day: "numeric" })}. `
     : ""
   return (
-    `${dateLine}` +
-    `${name}, here are your move-out steps: (1) Give formal notice if required, (2) Schedule cleaning, ` +
-    "(3) Return keys on vacate day, (4) Complete the move-out inspection. Reply here with any questions."
+    `${dateLine}${name}, here are your move-out steps:\n` +
+    "1. Give formal notice if required\n" +
+    "2. Schedule cleaning\n" +
+    "3. Return your keys on move-out day\n" +
+    "4. Complete the move-out inspection\n\n" +
+    "Reply here anytime with questions and we're happy to help."
   )
 }
 

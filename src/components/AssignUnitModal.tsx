@@ -1,4 +1,5 @@
 import { useEffect, useId, useState } from 'react'
+import { isDemoAccountActive } from '@/lib/activeLandlord'
 
 export type AssignUnitModalRow = {
   residentId: string
@@ -85,7 +86,8 @@ export function AssignUnitModal({
 
   if (!row) return null
 
-  const selected = DEMO_AVAILABLE_UNITS.find((u) => u.id === selectedId)
+  const availableUnits = isDemoAccountActive() ? DEMO_AVAILABLE_UNITS : []
+  const selected = availableUnits.find((u) => u.id === selectedId)
 
   function assign() {
     if (!selectedId) return
@@ -148,8 +150,13 @@ export function AssignUnitModal({
               <p className="text-[14px] font-medium leading-5 tracking-[-0.1504px] text-neutral-variant">
                 Select Available Unit
               </p>
+              {availableUnits.length === 0 ? (
+                <p className="rounded-[10px] border border-secondary bg-secondary px-4 py-6 text-center text-[13px] text-neutral">
+                  No vacant units in this portfolio yet.
+                </p>
+              ) : (
               <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
-                {DEMO_AVAILABLE_UNITS.map((u) => {
+                {availableUnits.map((u) => {
                   const isSel = selectedId === u.id
                   return (
                     <button
@@ -177,6 +184,7 @@ export function AssignUnitModal({
                   )
                 })}
               </div>
+              )}
             </div>
 
             <div className="rounded-[10px] border border-extended-2 bg-extended-2 px-[13px] py-[13px]">

@@ -1,5 +1,3 @@
 {
-  "npm.autoDetect": "on",
-  "npm.packageManager": "npm",
-  "npm.scriptExplorerAction": "run"
+  "css.lint.unknownAtRules": "ignore"
 }

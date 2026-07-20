@@ -3,6 +3,8 @@
  * Scoped to the New Landlord showcase account (EMPTY_LANDLORD_ID).
  */
 import { ensureUnitsInDb } from '@/api/unitVacancy'
+import { sendTenantActivationSms } from '@/api/tenantActivation'
+import { sendVendorInvite, type VendorInviteChannel } from '@/api/vendorVerification'
 import {
   EMPTY_LANDLORD_ID,
   getActiveLandlordId,
@@ -21,6 +23,12 @@ import { normalizeBuildingKey } from '@/lib/propertyHealth'
 import { supabase } from '@/lib/supabase'
 import { normalizePhoneForDb } from '@/lib/phoneFormat'
 import { dedupeVendorsByName } from '@/lib/vendorDedup'
+import { clearVendorSetupInboxForLandlord } from '@/lib/vendorSetupConversation'
+import {
+  issueCategoryToVendorTrade,
+  isGeneralistTrade,
+  normalizeVendorTrade,
+} from '@/lib/vendorTrades'
 
 export type OnboardingStatus = 'not_started' | 'in_progress' | 'completed'
 
@@ -58,6 +66,9 @@ export type OnboardingPropertyFormDraft = {
   id: string
   name: string
   address: string
+  city: string
+  state: string
+  zipCode: string
   propertyType: string
   unitCount: string
 }
@@ -77,6 +88,12 @@ export type OnboardingResidentFormDraft = {
   unit: string
   email: string
   phone: string
+  monthlyRent: string
+  /** '' | '1' | '5' | 'custom' — UI choice for rent due day */
+  rentDueDayMode?: string
+  rentDueDay: string
+  leaseStart: string
+  leaseEnd: string
 }
 
 export type OnboardingFormDraft = {
@@ -219,6 +236,26 @@ export function clearLocalOnboardingStorage(landlordId: string = getActiveLandlo
 
 export function isOnboardingLandlordAccount(landlordId: string = getActiveLandlordId()): boolean {
   return landlordId === EMPTY_LANDLORD_ID || getActiveLandlordKind() === 'empty'
+}
+
+/** Fail closed: onboarding mutations must never write to demo/default landlords. */
+export function requireOnboardingLandlord(
+  landlordId: string = getActiveLandlordId(),
+): { ok: true; landlordId: string } | { ok: false; error: string } {
+  if (!isOnboardingLandlordAccount(landlordId)) {
+    return {
+      ok: false,
+      error:
+        'Wrong landlord scope — switch to New Landlord (empty) before onboarding. Demo and Ulo Operations data stays isolated.',
+    }
+  }
+  if (landlordId !== EMPTY_LANDLORD_ID) {
+    return {
+      ok: false,
+      error: 'Wrong landlord scope — onboarding only writes to the New Landlord account.',
+    }
+  }
+  return { ok: true, landlordId }
 }
 
 export function defaultOnboardingState(landlordId: string = getActiveLandlordId()): LandlordOnboardingState {
@@ -493,8 +530,13 @@ export type OnboardingResident = {
   residentId: string
   fullName: string
   unit: string
+  building: string
   email: string
   phone: string
+  monthlyRent: number | null
+  rentDueDay: number | null
+  leaseStart: string | null
+  leaseEnd: string | null
 }
 
 function unitInventoryKey(unitLabel: string, building: string | null | undefined): string {
@@ -503,13 +545,28 @@ function unitInventoryKey(unitLabel: string, building: string | null | undefined
 
 function buildOnboardingUnitInventory(
   properties: OnboardingProperty[],
-): Array<{ unitLabel: string; building: string }> {
-  const units: Array<{ unitLabel: string; building: string }> = []
+): Array<{
+  unitLabel: string
+  building: string
+  city: string | null
+  state: string | null
+  zipCode: string | null
+}> {
+  const units: Array<{
+    unitLabel: string
+    building: string
+    city: string | null
+    state: string | null
+    zipCode: string | null
+  }> = []
   for (const property of properties) {
     const building = property.name.trim()
     if (!building) continue
+    const city = property.city.trim() || null
+    const state = property.state.trim() || null
+    const zipCode = property.zipCode.trim() || null
     for (const label of generateUnitLabels(property.unitCount)) {
-      units.push({ unitLabel: label, building })
+      units.push({ unitLabel: label, building, city, state, zipCode })
     }
   }
   return units
@@ -593,7 +650,13 @@ export async function deleteLandlordBuildings(
 /** Replace landlord unit inventory with exactly the onboarding property list (no cross-session accumulation). */
 async function syncOnboardingPropertyUnits(
   landlordId: string,
-  units: Array<{ unitLabel: string; building: string | null }>,
+  units: Array<{
+    unitLabel: string
+    building: string | null
+    city?: string | null
+    state?: string | null
+    zipCode?: string | null
+  }>,
 ): Promise<{ ok: boolean; error?: string }> {
   if (!supabase) {
     return { ok: false, error: 'Database unavailable.' }
@@ -628,16 +691,42 @@ async function syncOnboardingPropertyUnits(
     return removed
   }
 
+  const remainingRows = (existing ?? []).filter(
+    (row) => !staleUnitIds.includes(String((row as { id: string }).id)),
+  )
   const remainingKeys = new Set(
-    (existing ?? [])
-      .filter((row) => !staleUnitIds.includes(String((row as { id: string }).id)))
-      .map((row) =>
+    remainingRows.map((row) =>
+      unitInventoryKey(
+        String((row as { unit_label: string }).unit_label),
+        (row as { building?: string | null }).building,
+      ),
+    ),
+  )
+
+  // Refresh location on units that already exist for this property inventory.
+  for (const unit of units) {
+    const key = unitInventoryKey(unit.unitLabel, unit.building)
+    if (!remainingKeys.has(key)) continue
+    const match = remainingRows.find(
+      (row) =>
         unitInventoryKey(
           String((row as { unit_label: string }).unit_label),
           (row as { building?: string | null }).building,
-        ),
-      ),
-  )
+        ) === key,
+    )
+    if (!match) continue
+    const { error: updateError } = await supabase
+      .from('units')
+      .update({
+        city: unit.city?.trim() || null,
+        state: unit.state?.trim() || null,
+        zip_code: unit.zipCode?.trim() || null,
+      })
+      .eq('id', String((match as { id: string }).id))
+    if (updateError) {
+      return { ok: false, error: updateError.message }
+    }
+  }
 
   const toInsert = units.filter(
     (unit) => !remainingKeys.has(unitInventoryKey(unit.unitLabel, unit.building)),
@@ -651,6 +740,9 @@ async function syncOnboardingPropertyUnits(
       landlord_id: landlordId,
       unit_label: unit.unitLabel,
       building: unit.building?.trim() || null,
+      city: unit.city?.trim() || null,
+      state: unit.state?.trim() || null,
+      zip_code: unit.zipCode?.trim() || null,
       status: 'inactive',
     })),
   )
@@ -666,6 +758,9 @@ export async function persistOnboardingProperties(
   properties: OnboardingProperty[],
   landlordId: string = getActiveLandlordId(),
 ): Promise<{ ok: boolean; error?: string }> {
+  const scope = requireOnboardingLandlord(landlordId)
+  if (!scope.ok) return scope
+
   if (properties.length === 0) {
     return { ok: false, error: 'Add at least one property.' }
   }
@@ -678,13 +773,13 @@ export async function persistOnboardingProperties(
   try {
     const registeredViaSms = await ensureUnitsInDb(units)
     if (registeredViaSms) {
-      return syncOnboardingPropertyUnits(landlordId, units)
+      return syncOnboardingPropertyUnits(scope.landlordId, units)
     }
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : 'Failed to register units.' }
   }
 
-  return syncOnboardingPropertyUnits(landlordId, units)
+  return syncOnboardingPropertyUnits(scope.landlordId, units)
 }
 
 export async function fetchOnboardingVendors(
@@ -729,23 +824,97 @@ export async function fetchOnboardingResidents(
 
   const { data, error } = await supabase
     .from('users')
-    .select('id, resident_id, full_name, email, phone, unit')
+    .select(
+      'id, resident_id, full_name, email, phone, unit, building, monthly_rent, rent_due_day, move_in_date, lease_end_date',
+    )
     .eq('landlord_id', landlordId)
     .order('created_at', { ascending: true })
 
   if (error) {
+    // Columns may be missing before migration 20260716130000 — fall back.
+    if (/monthly_rent|rent_due_day|column/i.test(error.message)) {
+      const { data: legacy, error: legacyError } = await supabase
+        .from('users')
+        .select('id, resident_id, full_name, email, phone, unit, building, move_in_date, lease_end_date')
+        .eq('landlord_id', landlordId)
+        .order('created_at', { ascending: true })
+      if (legacyError) {
+        console.warn('[landlordOnboarding] fetch residents', legacyError.message)
+        return []
+      }
+      return (legacy ?? []).map((row) => mapOnboardingResidentRow(row as Record<string, unknown>))
+    }
     console.warn('[landlordOnboarding] fetch residents', error.message)
     return []
   }
 
-  return (data ?? []).map((row) => ({
-    id: String((row as { id: string }).id),
-    residentId: String((row as { resident_id: string }).resident_id ?? ''),
-    fullName: String((row as { full_name: string }).full_name ?? ''),
-    unit: String((row as { unit?: string | null }).unit ?? ''),
-    email: String((row as { email?: string | null }).email ?? ''),
-    phone: String((row as { phone?: string | null }).phone ?? ''),
-  }))
+  return (data ?? []).map((row) => mapOnboardingResidentRow(row as Record<string, unknown>))
+}
+
+function mapOnboardingResidentRow(row: Record<string, unknown>): OnboardingResident {
+  const monthlyRaw = row.monthly_rent
+  const dueRaw = row.rent_due_day
+  const monthlyRent =
+    monthlyRaw == null || monthlyRaw === ''
+      ? null
+      : Number(monthlyRaw)
+  const rentDueDay =
+    dueRaw == null || dueRaw === ''
+      ? null
+      : Number(dueRaw)
+  return {
+    id: String(row.id ?? ''),
+    residentId: String(row.resident_id ?? ''),
+    fullName: String(row.full_name ?? ''),
+    unit: String(row.unit ?? ''),
+    building: String(row.building ?? ''),
+    email: String(row.email ?? ''),
+    phone: String(row.phone ?? ''),
+    monthlyRent: Number.isFinite(monthlyRent) ? monthlyRent : null,
+    rentDueDay:
+      Number.isFinite(rentDueDay) && rentDueDay! >= 1 && rentDueDay! <= 31
+        ? Math.trunc(rentDueDay!)
+        : null,
+    leaseStart: asOptionalDateString(
+      typeof row.move_in_date === 'string' ? row.move_in_date : null,
+    ),
+    leaseEnd: asOptionalDateString(
+      typeof row.lease_end_date === 'string' ? row.lease_end_date : null,
+    ),
+  }
+}
+
+function asOptionalDateString(value: string | null | undefined): string | null {
+  if (!value?.trim()) return null
+  return value.trim().slice(0, 10)
+}
+
+/** Parse "$2,850" / "2850" into a numeric rent amount. */
+export function parseMonthlyRentInput(value: string): number | null {
+  const cleaned = value.replace(/[^0-9.]/g, '')
+  if (!cleaned) return null
+  const amount = Number(cleaned)
+  if (!Number.isFinite(amount) || amount < 0) return null
+  return amount
+}
+
+/** Parse rent due day (1–31). */
+export function parseRentDueDayInput(value: string): number | null {
+  const trimmed = value.trim()
+  if (!trimmed) return null
+  const day = Number.parseInt(trimmed, 10)
+  if (!Number.isFinite(day) || day < 1 || day > 31) return null
+  return day
+}
+
+/** Normalize date input (YYYY-MM-DD) for Postgres date columns. */
+export function parseLeaseDateInput(value: string): string | null {
+  const trimmed = value.trim()
+  if (!trimmed) return null
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) return null
+  const ms = Date.parse(`${trimmed}T12:00:00`)
+  if (!Number.isFinite(ms)) return null
+  return trimmed
 }
 
 export function maxOnboardingResidentSequence(residents: OnboardingResident[]): number {
@@ -881,65 +1050,349 @@ async function deleteInScopedRows(
   return { ok: true }
 }
 
-export async function resetOnboardingPortfolio(
-  landlordId: string = getActiveLandlordId(),
+/**
+ * Delete graph/SMS rows for a landlord that are NOT tied to a current portfolio
+ * resident/vendor. Keeps legitimately-created rows (e.g. tenant activation welcome
+ * texts) while stripping unscoped import leftovers. Client fallback mirror of the
+ * purge_empty_landlord_operations RPC preserve branch.
+ */
+async function deletePortfolioMismatchedRows(
+  table: string,
+  landlordId: string,
+  residentIds: Set<string>,
+  vendorIds: Set<string>,
 ): Promise<{ ok: boolean; error?: string }> {
-  if (!isOnboardingLandlordAccount(landlordId)) {
-    return { ok: true }
-  }
   if (!supabase) {
     return { ok: false, error: 'Database unavailable.' }
+  }
+  // Mirror of purge_empty_landlord_operations preserve logic: keep portfolio-tied
+  // rows AND onboarding comms (tenant.*/vendor.* graph events, vendor_onboarding
+  // SMS threads) so onboarding actions survive the dashboard refresh.
+  const selectColumns =
+    table === 'sms_conversations'
+      ? 'id, resident_id, vendor_id, workflow_template_id'
+      : 'id, resident_id, vendor_id, event_type'
+  const { data, error } = await supabase
+    .from(table)
+    .select(selectColumns)
+    .eq('landlord_id', landlordId)
+  if (error) {
+    if (/does not exist|Could not find the table/i.test(error.message)) return { ok: true }
+    return { ok: false, error: `${table}: ${error.message}` }
+  }
+  const idsToDelete = ((data ?? []) as Record<string, unknown>[])
+    .filter((row) => {
+      const residentId = row.resident_id ? String(row.resident_id) : null
+      const vendorId = row.vendor_id ? String(row.vendor_id) : null
+      const eventType = row.event_type ? String(row.event_type) : ''
+      const templateId = row.workflow_template_id ? String(row.workflow_template_id) : ''
+      const keepPortfolio =
+        (residentId && residentIds.has(residentId)) || (vendorId && vendorIds.has(vendorId))
+      const keepOnboarding =
+        eventType.startsWith('vendor.') ||
+        eventType.startsWith('tenant.') ||
+        templateId === 'vendor_onboarding'
+      return !(keepPortfolio || keepOnboarding)
+    })
+    .map((row) => String(row.id))
+  return deleteInScopedRows(table, 'id', idsToDelete)
+}
+
+/**
+ * Clear vendor assignment before deleting vendors.
+ * `assigned_vendor_id` is ON DELETE SET NULL; that alone leaves pending_accept/accepted/…
+ * rows invalid under require_vendor_for_progress.
+ */
+async function detachVendorsFromMaintenanceRequests(
+  landlordId: string,
+  vendorIds: string[],
+): Promise<{ ok: boolean; error?: string }> {
+  if (!supabase) {
+    return { ok: false, error: 'Database unavailable.' }
+  }
+
+  const cleared = {
+    assigned_vendor_id: null,
+    vendor_work_status: 'unassigned' as const,
+    assigned_at: null,
+  }
+
+  const { error: byLandlord } = await supabase
+    .from('maintenance_requests')
+    .update(cleared)
+    .eq('landlord_id', landlordId)
+
+  if (byLandlord) {
+    return { ok: false, error: `maintenance_requests: ${byLandlord.message}` }
+  }
+
+  if (vendorIds.length > 0) {
+    // Also clear any tickets (any landlord) still pointing at these vendor rows.
+    const { error: byVendor } = await supabase
+      .from('maintenance_requests')
+      .update(cleared)
+      .in('assigned_vendor_id', vendorIds)
+
+    if (byVendor) {
+      return { ok: false, error: `maintenance_requests: ${byVendor.message}` }
+    }
+  }
+
+  return { ok: true }
+}
+
+/**
+ * Remove tickets + workflow runs created by fast-track document import.
+ * Keeps properties, units, residents, and vendors (guided portfolio).
+ */
+export async function purgeOnboardingImportedOperations(
+  landlordId: string = getActiveLandlordId(),
+  preservePortfolioSms = false,
+): Promise<{ ok: boolean; error?: string }> {
+  const scope = requireOnboardingLandlord(landlordId)
+  if (!scope.ok) return scope
+  if (!supabase) {
+    return { ok: false, error: 'Database unavailable.' }
+  }
+
+  // Prefer fail-closed SECURITY DEFINER RPC (bypasses missing DELETE RLS on runs).
+  // preservePortfolioSms keeps SMS threads + graph events tied to current portfolio
+  // residents/vendors (e.g. tenant activation welcome texts) while stripping import junk.
+  const { error: rpcError } = await supabase.rpc('purge_empty_landlord_operations', {
+    p_preserve_portfolio_sms: preservePortfolioSms,
+  })
+  if (!rpcError) {
+    const remaining = await countLandlordOps(scope.landlordId)
+    // In preserve mode the purge intentionally keeps vendor_onboarding runs, so a
+    // remaining active run is expected — only gate on leftover imported tickets.
+    const blocked = preservePortfolioSms
+      ? remaining.tickets > 0
+      : remaining.tickets > 0 || remaining.activeWorkflowRuns > 0
+    if (blocked) {
+      return {
+        ok: false,
+        error: `Could not clear imported tasks (${remaining.activeWorkflowRuns} runs, ${remaining.tickets} tickets remain).`,
+      }
+    }
+    return { ok: true }
+  }
+
+  // RPC missing (migration not applied yet) — fall back to client deletes / cancel.
+  if (!/Could not find the function|PGRST202|404/i.test(rpcError.message)) {
+    console.warn('[landlordOnboarding] purge_empty_landlord_operations', rpcError.message)
   }
 
   const { data: ticketRows, error: ticketLoadError } = await supabase
     .from('maintenance_requests')
     .select('id')
-    .eq('landlord_id', landlordId)
+    .eq('landlord_id', scope.landlordId)
 
   if (ticketLoadError) {
     return { ok: false, error: ticketLoadError.message }
   }
 
   const ticketIds = (ticketRows ?? []).map((row) => String((row as { id: string }).id))
+  const childDelete = await deleteInScopedRows('vendor_status_events', 'ticket_id', ticketIds)
+  if (!childDelete.ok) return childDelete
+
+  let graphSmsDeletes: { ok: boolean; error?: string }[]
+  if (preservePortfolioSms) {
+    const [residentRows, vendorRows] = await Promise.all([
+      supabase.from('users').select('id').eq('landlord_id', scope.landlordId),
+      supabase.from('vendors').select('id').eq('landlord_id', scope.landlordId),
+    ])
+    const residentIds = new Set(
+      ((residentRows.data ?? []) as { id: string }[]).map((r) => String(r.id)),
+    )
+    const vendorIds = new Set(
+      ((vendorRows.data ?? []) as { id: string }[]).map((r) => String(r.id)),
+    )
+    graphSmsDeletes = [
+      await deletePortfolioMismatchedRows(
+        'operations_graph_events',
+        scope.landlordId,
+        residentIds,
+        vendorIds,
+      ),
+      await deletePortfolioMismatchedRows(
+        'property_operations_graph',
+        scope.landlordId,
+        residentIds,
+        vendorIds,
+      ),
+      // Messages cascade with their thread; delete mismatched threads only.
+      await deletePortfolioMismatchedRows(
+        'sms_conversations',
+        scope.landlordId,
+        residentIds,
+        vendorIds,
+      ),
+    ]
+  } else {
+    graphSmsDeletes = [
+      await deleteLandlordScopedRows('operations_graph_events', scope.landlordId),
+      await deleteLandlordScopedRows('property_operations_graph', scope.landlordId),
+      await deleteLandlordScopedRows('sms_messages', scope.landlordId),
+      await deleteLandlordScopedRows('sms_conversations', scope.landlordId),
+    ]
+  }
+
+  const ordered = [
+    await deleteLandlordScopedRows('vendor_feedback', scope.landlordId),
+    await deleteLandlordScopedRows('maintenance_invoices', scope.landlordId),
+    ...graphSmsDeletes,
+    await deleteLandlordScopedRows('workflow_events', scope.landlordId),
+    await deleteLandlordScopedRows('workflow_runs', scope.landlordId),
+    await deleteLandlordScopedRows('maintenance_requests', scope.landlordId),
+  ]
+
+  const failed = ordered.find((result) => !result.ok)
+  if (failed) return failed
+
+  // Staff historically lacked DELETE on workflow_runs; UPDATE is allowed — retire leftovers
+  // so Active tasks / Needs attention go empty for guided portfolios.
+  const cancelled = await cancelLandlordWorkflowRuns(scope.landlordId)
+  if (!cancelled.ok) return cancelled
+
+  const remaining = await countLandlordOps(scope.landlordId)
+  if (remaining.tickets > 0 || remaining.activeWorkflowRuns > 0) {
+    return {
+      ok: false,
+      error: `Could not clear imported tasks (${remaining.activeWorkflowRuns} active workflow runs still remain). Apply migration 20260716120000_onboarding_ops_purge_staff, then reset again.`,
+    }
+  }
+
+  return { ok: true }
+}
+
+async function cancelLandlordWorkflowRuns(
+  landlordId: string,
+): Promise<{ ok: boolean; error?: string }> {
+  if (!supabase) {
+    return { ok: false, error: 'Database unavailable.' }
+  }
+  const completedAt = new Date().toISOString()
+  const { error } = await supabase
+    .from('workflow_runs')
+    .update({ status: 'cancelled', completed_at: completedAt })
+    .eq('landlord_id', landlordId)
+    .in('status', ['active', 'escalated'])
+
+  if (error) {
+    return { ok: false, error: `workflow_runs: ${error.message}` }
+  }
+  return { ok: true }
+}
+
+async function countLandlordOps(
+  landlordId: string,
+): Promise<{ tickets: number; workflowRuns: number; activeWorkflowRuns: number }> {
+  if (!supabase) {
+    return { tickets: 0, workflowRuns: 0, activeWorkflowRuns: 0 }
+  }
+  const [tickets, runs, activeRuns] = await Promise.all([
+    supabase
+      .from('maintenance_requests')
+      .select('id', { count: 'exact', head: true })
+      .eq('landlord_id', landlordId),
+    supabase
+      .from('workflow_runs')
+      .select('id', { count: 'exact', head: true })
+      .eq('landlord_id', landlordId),
+    supabase
+      .from('workflow_runs')
+      .select('id', { count: 'exact', head: true })
+      .eq('landlord_id', landlordId)
+      .in('status', ['active', 'escalated']),
+  ])
+  return {
+    tickets: tickets.count ?? 0,
+    workflowRuns: runs.count ?? 0,
+    activeWorkflowRuns: activeRuns.count ?? 0,
+  }
+}
+
+/**
+ * New Landlord dashboard sync.
+ *
+ * Live SMS/web tickets and workflow runs are never deleted on dashboard load.
+ * Destructive wipe of workflow runs / tickets only happens when the user clicks
+ * **Reset onboarding** (`resetOnboardingPortfolio` / `restartNewLandlordOnboarding`).
+ */
+export type OnboardingDashboardSync = {
+  landlordId: string
+  /** Always true — dashboards load real ops for New Landlord. */
+  allowImportedOperations: boolean
+  purged: boolean
+  error?: string
+}
+
+export async function ensureOnboardingDashboardMatchesPortfolio(
+  landlordId: string = getActiveLandlordId(),
+): Promise<OnboardingDashboardSync> {
+  // Do not call purge_empty_landlord_operations here. That RPC deleted every
+  // maintenance ticket + non-onboarding workflow run on each Overview/Comms load,
+  // which wiped real SMS work orders (e.g. WO-3466). Reset is explicit-only.
+  return { landlordId, allowImportedOperations: true, purged: false }
+}
+
+export async function resetOnboardingPortfolio(
+  landlordId: string = getActiveLandlordId(),
+): Promise<{ ok: boolean; error?: string }> {
+  const scope = requireOnboardingLandlord(landlordId)
+  if (!scope.ok) {
+    // Non-onboarding accounts: no-op (never wipe demo/default).
+    return { ok: true }
+  }
+  if (!supabase) {
+    return { ok: false, error: 'Database unavailable.' }
+  }
+
+  const { data: vendorRows, error: vendorLoadError } = await supabase
+    .from('vendors')
+    .select('id')
+    .eq('landlord_id', scope.landlordId)
+
+  if (vendorLoadError) {
+    return { ok: false, error: vendorLoadError.message }
+  }
+
+  const vendorIds = (vendorRows ?? []).map((row) => String((row as { id: string }).id))
 
   const { data: unitRows, error: unitLoadError } = await supabase
     .from('units')
     .select('id')
-    .eq('landlord_id', landlordId)
+    .eq('landlord_id', scope.landlordId)
 
   if (unitLoadError) {
     return { ok: false, error: unitLoadError.message }
   }
 
   const unitIds = (unitRows ?? []).map((row) => String((row as { id: string }).id))
+
+  // Clear progress statuses before any vendor FK SET NULL can trip the check constraint.
+  const detached = await detachVendorsFromMaintenanceRequests(scope.landlordId, vendorIds)
+  if (!detached.ok) return detached
+
+  // Tickets + workflow runs (RPC when available; verifies leftovers).
+  const purged = await purgeOnboardingImportedOperations(scope.landlordId)
+  if (!purged.ok) return purged
+
+  const afterOps = [
+    await deleteLandlordScopedRows('preventive_maintenance_tasks', scope.landlordId),
+    await deleteLandlordScopedRows('unit_assets', scope.landlordId),
+    await deleteLandlordScopedRows('users', scope.landlordId),
+    await deleteInScopedRows('vendors', 'id', vendorIds),
+    await deleteLandlordScopedRows('vendors', scope.landlordId),
+  ]
+  const afterFailed = afterOps.find((result) => !result.ok)
+  if (afterFailed) return afterFailed
+
   const removed = await deleteUnitsByIds(unitIds)
-  if (!removed.ok) {
-    return removed
-  }
+  if (!removed.ok) return removed
 
-  const childDelete = await deleteInScopedRows('vendor_status_events', 'ticket_id', ticketIds)
-  if (!childDelete.ok) {
-    return childDelete
-  }
-
-  const parallelDeletes = await Promise.all([
-    deleteLandlordScopedRows('vendor_feedback', landlordId),
-    deleteLandlordScopedRows('maintenance_invoices', landlordId),
-    deleteLandlordScopedRows('preventive_maintenance_tasks', landlordId),
-    deleteLandlordScopedRows('unit_assets', landlordId),
-    deleteLandlordScopedRows('operations_graph_events', landlordId),
-    deleteLandlordScopedRows('workflow_events', landlordId),
-    deleteLandlordScopedRows('workflow_runs', landlordId),
-    deleteLandlordScopedRows('maintenance_requests', landlordId),
-    deleteLandlordScopedRows('users', landlordId),
-    deleteLandlordScopedRows('vendors', landlordId),
-    deleteLandlordScopedRows('units', landlordId),
-  ])
-
-  const failed = parallelDeletes.find((result) => !result.ok)
-  if (failed) {
-    return failed
-  }
+  const unitsScoped = await deleteLandlordScopedRows('units', scope.landlordId)
+  if (!unitsScoped.ok) return unitsScoped
 
   return { ok: true }
 }
@@ -948,25 +1401,33 @@ export async function resetOnboardingPortfolio(
 export async function restartNewLandlordOnboarding(
   landlordId: string = getActiveLandlordId(),
 ): Promise<{ ok: boolean; error?: string; state?: LandlordOnboardingState }> {
-  if (!isOnboardingLandlordAccount(landlordId)) {
-    return { ok: false, error: 'Only the New Landlord account can be reset.' }
+  const scope = requireOnboardingLandlord(landlordId)
+  if (!scope.ok) {
+    return { ok: false, error: scope.error }
   }
 
-  clearLocalOnboardingStorage(landlordId)
+  // Clear wizard status first so the guard cannot bounce on stale "completed" localStorage
+  // even if portfolio deletes partially fail.
+  clearLocalOnboardingStorage(scope.landlordId)
+  clearVendorSetupInboxForLandlord(scope.landlordId)
 
   const cleared: LandlordOnboardingState = {
-    ...defaultOnboardingState(landlordId),
+    ...defaultOnboardingState(scope.landlordId),
     onboardingStatus: 'not_started',
     currentStep: 'entry',
     setupPath: null,
     properties: [],
   }
-
   await saveLandlordOnboarding(cleared)
 
-  void resetOnboardingPortfolio(landlordId).catch((err) => {
-    console.warn('[landlordOnboarding] background portfolio reset failed', err)
-  })
+  const reset = await resetOnboardingPortfolio(scope.landlordId)
+  if (!reset.ok) {
+    return {
+      ok: false,
+      error: reset.error ?? 'Could not clear previous portfolio data.',
+      state: cleared,
+    }
+  }
 
   return { ok: true, state: cleared }
 }
@@ -978,27 +1439,32 @@ export async function clearOnboardingPortfolioSession(
   const landlordId = options.landlordId ?? getActiveLandlordId()
   const keepAccountSetup = options.keepAccountSetup !== false
 
-  if (!isOnboardingLandlordAccount(landlordId)) {
-    return { ok: true, state: defaultOnboardingState(landlordId) }
+  const scope = requireOnboardingLandlord(landlordId)
+  if (!scope.ok) {
+    return {
+      ok: false,
+      error: scope.error,
+      state: defaultOnboardingState(landlordId),
+    }
   }
 
-  const reset = await resetOnboardingPortfolio(landlordId)
+  const reset = await resetOnboardingPortfolio(scope.landlordId)
   if (!reset.ok) {
     return {
       ok: false,
       error: reset.error,
-      state: readLocalOnboardingState(landlordId) ?? defaultOnboardingState(landlordId),
+      state: readLocalOnboardingState(scope.landlordId) ?? defaultOnboardingState(scope.landlordId),
     }
   }
 
-  const draft = await readLandlordOnboardingDraft(landlordId)
+  const draft = await readLandlordOnboardingDraft(scope.landlordId)
   const accountSetup =
     keepAccountSetup && hasOnboardingAccountDraft(draft)
       ? draft.accountSetup
-      : defaultOnboardingState(landlordId).accountSetup
+      : defaultOnboardingState(scope.landlordId).accountSetup
 
   const cleared: LandlordOnboardingState = {
-    ...defaultOnboardingState(landlordId),
+    ...defaultOnboardingState(scope.landlordId),
     accountSetup,
     onboardingStatus: 'not_started',
     currentStep: 'entry',
@@ -1171,22 +1637,17 @@ function matchImportVendorForCategory(
 ): ImportVendorRow | undefined {
   if (vendors.length === 0) return undefined
 
-  const normalized = category.trim().toLowerCase()
-  const preferredCategories: string[] =
-    normalized === 'plumbing' || normalized === 'water_damage'
-      ? ['plumbing', 'general']
-      : normalized === 'electrical'
-        ? ['electrical', 'general']
-        : normalized === 'hvac'
-          ? ['hvac', 'general']
-          : normalized === 'appliance'
-            ? ['appliance', 'general']
-            : [normalized, 'general']
+  const issueTrade = issueCategoryToVendorTrade(category)
+  const preferred = [issueTrade, 'general'] as const
 
-  for (const preferred of preferredCategories) {
-    const match = vendors.find(
-      (vendor) => vendor.category.trim().toLowerCase() === preferred,
-    )
+  for (const preferredSlug of preferred) {
+    const match = vendors.find((vendor) => {
+      const vendorTrade = normalizeVendorTrade(vendor.category, { fallbackOther: false })
+      if (preferredSlug === 'general') {
+        return isGeneralistTrade(vendor.category) || vendorTrade === 'general'
+      }
+      return vendorTrade === preferredSlug
+    })
     if (match) return match
   }
 
@@ -1403,9 +1864,14 @@ export async function importMockExtraction(
   review: MockExtractionReview,
   landlordId: string = getActiveLandlordId(),
 ): Promise<{ ok: boolean; error?: string; imported: Record<string, number> }> {
+  const scope = requireOnboardingLandlord(landlordId)
+  if (!scope.ok) {
+    return { ok: false, error: scope.error, imported: {} }
+  }
   if (!supabase) {
     return { ok: false, error: 'Database unavailable.', imported: {} }
   }
+  landlordId = scope.landlordId
 
   const imported = {
     properties: 0,
@@ -1436,9 +1902,21 @@ export async function importMockExtraction(
   }
 
   const selectedResidents = review.residents.filter((r) => r.selected)
+  const selectedLeases = review.leases.filter((lease) => lease.selected)
   for (let i = 0; i < selectedResidents.length; i++) {
     const r = selectedResidents[i]!
     const residentId = `ONB-${String(i + 1).padStart(3, '0')}`
+    const matchedLease = selectedLeases.find(
+      (lease) =>
+        lease.residentName.trim().toLowerCase() === r.fullName.trim().toLowerCase() ||
+        (lease.unit.trim() &&
+          r.unit.trim() &&
+          lease.unit.trim().toLowerCase() === r.unit.trim().toLowerCase()),
+    )
+    const monthlyRent =
+      matchedLease?.rentAmount != null
+        ? parseMonthlyRentInput(matchedLease.rentAmount)
+        : null
     const { error } = await supabase.from('users').insert({
       resident_id: residentId,
       full_name: r.fullName,
@@ -1450,8 +1928,9 @@ export async function importMockExtraction(
       balance_due: 0,
       issues: [],
       landlord_id: landlordId,
-      move_in_date: r.leaseStart,
-      lease_end_date: r.leaseEnd,
+      move_in_date: r.leaseStart || null,
+      lease_end_date: r.leaseEnd || null,
+      monthly_rent: monthlyRent,
     })
     if (!error) imported.residents += 1
   }
@@ -1501,7 +1980,7 @@ export async function importMockExtraction(
         existingByName.set(nameKey, {
           id: `imported-${nameKey}`,
           name: vendor.name,
-          category: vendor.category,
+          category: vendor.category ?? '',
           email: vendor.email,
           phone: vendor.phone,
         })
@@ -1530,7 +2009,6 @@ export async function importMockExtraction(
     imported.workflowRuns += maintenanceImport.workflowRuns
   }
 
-  const selectedLeases = review.leases.filter((lease) => lease.selected)
   if (selectedLeases.length > 0) {
     const leaseImport = await importExtractedLeases(selectedLeases, {
       landlordId,
@@ -1615,20 +2093,124 @@ export async function completeOnboarding(
   vendors: OnboardingVendor[] = [],
   residents: OnboardingResident[] = [],
   dbCounts?: AccountSetupCounts,
-): Promise<{ ok: boolean; error?: string }> {
+): Promise<{ ok: boolean; error?: string; activationWarning?: string }> {
+  const scope = requireOnboardingLandlord(state.landlordId)
+  if (!scope.ok) return scope
+
   const check = canCompleteOnboarding(state, vendors, residents, dbCounts)
   if (!check.ok) {
     return { ok: false, error: `Missing: ${check.missing.join(', ')}` }
   }
 
+  // Do not purge tickets/workflow runs on complete — live SMS intake may already
+  // have created real work orders. Wipe only via Reset onboarding.
+
   const completed: LandlordOnboardingState = {
     ...state,
+    landlordId: scope.landlordId,
     onboardingStatus: 'completed',
     currentStep: 'review',
     completedAt: new Date().toISOString(),
   }
   await saveLandlordOnboarding(completed)
-  return { ok: true }
+
+  // General rule: anyone listed during onboarding is automatically started on
+  // their activation/verification flow when setup completes (tenants + vendors).
+  // Best-effort — never block finishing setup on delivery failures.
+  const warnings: string[] = []
+  const companyName = state.accountSetup.companyName.trim() || null
+  const propertyName = state.properties.map((p) => p.name.trim()).find(Boolean) || undefined
+
+  try {
+    const residentIds = residents
+      .filter((r) => r.phone.trim().length > 0)
+      .map((r) => r.id)
+      .filter((id) => id.trim().length > 0)
+    if (residentIds.length > 0) {
+      const summary = await sendTenantActivationSms({
+        landlordId: scope.landlordId,
+        residentIds,
+        companyName,
+      })
+      if (!summary.configured) {
+        console.warn('[landlordOnboarding] tenant activation not configured')
+      } else if (summary.error) {
+        warnings.push(`couldn't send welcome texts to your residents (${summary.error})`)
+      } else if ((summary.failed ?? 0) > 0) {
+        const failed = summary.failed ?? 0
+        warnings.push(
+          `couldn't send welcome texts to ${failed} resident${failed === 1 ? '' : 's'}`,
+        )
+      }
+    }
+  } catch (err) {
+    console.warn('[landlordOnboarding] tenant activation trigger failed', err)
+    warnings.push('the resident welcome texts could not be sent')
+  }
+
+  try {
+    const inviteable = vendors.filter(
+      (v) => v.phone.trim().length > 0 || v.email.trim().length > 0,
+    )
+    if (inviteable.length > 0) {
+      const results = await Promise.allSettled(
+        inviteable.map((vendor) => {
+          const phone = vendor.phone.trim()
+          const email = vendor.email.trim()
+          const channel: VendorInviteChannel =
+            phone && email ? 'both' : phone ? 'sms' : 'email'
+          const trade = normalizeVendorTrade(vendor.category, { fallbackOther: false })
+          return sendVendorInvite({
+            landlordId: scope.landlordId,
+            vendorId: vendor.id,
+            businessName: vendor.name.trim(),
+            email: email || undefined,
+            phone: phone || undefined,
+            propertyName,
+            channel,
+            tradeCategories: trade ? [trade] : undefined,
+          })
+        }),
+      )
+
+      let failed = 0
+      results.forEach((result, index) => {
+        if (result.status === 'rejected') {
+          failed += 1
+          console.warn('[landlordOnboarding] vendor invite failed', {
+            vendorId: inviteable[index]?.id,
+            reason: result.reason,
+          })
+          return
+        }
+        const delivery = result.value.delivery
+        const anySent = delivery.sms === 'sent' || delivery.email === 'sent'
+        if (!anySent) {
+          failed += 1
+          console.warn('[landlordOnboarding] vendor invite not delivered', {
+            vendorId: inviteable[index]?.id,
+            delivery,
+          })
+        }
+      })
+
+      if (failed > 0) {
+        warnings.push(
+          `couldn't send verification invites to ${failed} vendor${failed === 1 ? '' : 's'}`,
+        )
+      }
+    }
+  } catch (err) {
+    console.warn('[landlordOnboarding] vendor invite trigger failed', err)
+    warnings.push('the vendor verification invites could not be sent')
+  }
+
+  const activationWarning =
+    warnings.length > 0
+      ? `We finished setup, but ${warnings.join('; ')}. Check the activity feed for details.`
+      : undefined
+
+  return { ok: true, activationWarning }
 }
 
 export function shouldBlockDashboard(

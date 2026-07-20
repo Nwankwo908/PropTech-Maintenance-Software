@@ -40,6 +40,15 @@ export type AdminWorkflowRow = {
   lastEventAt: string | null
   /** From workflow_runs.metadata.escalation_reason when escalated. */
   escalationReason: string | null
+  /** From workflow_runs.metadata.issue_category when present. */
+  issueCategory: string | null
+  /**
+   * From linked `maintenance_requests.vendor_work_status` when the run targets a ticket.
+   * Drives Operations kanban: New Intake → Assigned → In Progress → Completed.
+   */
+  vendorWorkStatus: string | null
+  /** From linked `maintenance_requests.assigned_vendor_id` when present. */
+  assignedVendorId: string | null
   /** Step log for escalated run review rails. */
   timeline?: AdminWorkflowTimelineEvent[]
 }
@@ -314,7 +323,8 @@ const EVENT_LABELS: Record<string, string> = {
   'workflow.act': 'Action taken',
   'workflow.escalate': 'Escalated',
   'workflow.log': 'Logged',
-  'maintenance.sla_auto_reassigned': 'SLA auto-reassigned to backup vendor',
+  'maintenance.sla_auto_reassigned':
+    "Vendor didn't respond in time. The job was reassigned.",
   'maintenance.external_vendor_reassigned': 'External vendor assigned',
   'maintenance.sla_expired_needs_vendor': 'SLA expired — needs vendor',
   'unit.registered': 'Unit registered',
@@ -711,18 +721,22 @@ export function formatWorkflowTimestamp(iso: string | null | undefined): string 
 
 export { formatStepLabel, formatEventLabel }
 
+export function emptyAdminWorkflowDashboardData(): AdminWorkflowDashboardData {
+  return {
+    active: [],
+    escalated: [],
+    maintenanceRuns: [],
+    rentCollection: emptyRentCollectionDashboard(),
+    lifecycle: emptyLifecycleDashboard(),
+    groups: emptyWorkflowGroups(),
+    runMetadata: {},
+    stats: { activeCount: 0, escalatedCount: 0, completedCount: 0 },
+  }
+}
+
 export async function fetchAdminWorkflowDashboard(): Promise<AdminWorkflowDashboardData> {
   if (!supabase) {
-    return {
-      active: [],
-      escalated: [],
-      maintenanceRuns: [],
-      rentCollection: emptyRentCollectionDashboard(),
-      lifecycle: emptyLifecycleDashboard(),
-      groups: emptyWorkflowGroups(),
-      runMetadata: {},
-      stats: { activeCount: 0, escalatedCount: 0, completedCount: 0 },
-    }
+    return emptyAdminWorkflowDashboardData()
   }
 
   const { data: runsRaw, error: runsError } = await supabase
@@ -825,12 +839,63 @@ export async function fetchAdminWorkflowDashboard(): Promise<AdminWorkflowDashbo
     unitById.set(String(unit.id), unit)
   }
 
+  const maintenanceTicketIds = [
+    ...new Set(
+      runs
+        .filter(
+          (run) =>
+            MAINTENANCE_TEMPLATE_IDS.has(run.template_id) &&
+            typeof run.entity_id === 'string' &&
+            run.entity_id.trim().length > 0 &&
+            (run.entity_type === 'maintenance_request' ||
+              run.template_id === 'maintenance_request'),
+        )
+        .map((run) => run.entity_id!.trim()),
+    ),
+  ]
+
+  const ticketById = new Map<
+    string,
+    { vendor_work_status: string | null; assigned_vendor_id: string | null }
+  >()
+  if (maintenanceTicketIds.length) {
+    const { data: tickets, error: ticketsError } = await supabase
+      .from('maintenance_requests')
+      .select('id, vendor_work_status, assigned_vendor_id')
+      .in('id', maintenanceTicketIds)
+    if (ticketsError) {
+      console.error(
+        '[admin-workflows] maintenance_requests status fetch',
+        ticketsError.message,
+      )
+    } else {
+      for (const ticket of tickets ?? []) {
+        const id = typeof ticket.id === 'string' ? ticket.id : ''
+        if (!id) continue
+        ticketById.set(id, {
+          vendor_work_status:
+            typeof ticket.vendor_work_status === 'string'
+              ? ticket.vendor_work_status
+              : null,
+          assigned_vendor_id:
+            typeof ticket.assigned_vendor_id === 'string'
+              ? ticket.assigned_vendor_id
+              : null,
+        })
+      }
+    }
+  }
+
   const rows: AdminWorkflowRow[] = runs.map((run) => {
     const template = embedOne(run.workflow_templates)
     const metadata = run.metadata ?? {}
     const resident = run.resident_id ? residentById.get(run.resident_id) : null
     const unit = run.unit_id ? unitById.get(run.unit_id) : null
     const latestEvent = latestEventByRun.get(run.id)
+    const ticket =
+      typeof run.entity_id === 'string' && run.entity_id.trim()
+        ? ticketById.get(run.entity_id.trim())
+        : undefined
 
     const unitLabel =
       readMetaString(metadata, 'unit_label') ??
@@ -863,6 +928,9 @@ export async function fetchAdminWorkflowDashboard(): Promise<AdminWorkflowDashbo
       lastEventMessage: latestEvent?.message ?? null,
       lastEventAt: latestEvent?.created_at ?? null,
       escalationReason: readMetaString(metadata, 'escalation_reason'),
+      issueCategory: readMetaString(metadata, 'issue_category'),
+      vendorWorkStatus: ticket?.vendor_work_status ?? null,
+      assignedVendorId: ticket?.assigned_vendor_id ?? null,
     }
   })
 

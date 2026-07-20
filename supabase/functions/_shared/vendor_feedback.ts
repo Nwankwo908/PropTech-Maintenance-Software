@@ -66,6 +66,7 @@ async function lookupOpenFeedbackRequest(
       "id, vendor_id, maintenance_request_id, resident_id, phase, feedback_id",
     )
     .eq("landlord_id", params.landlordId)
+    .eq("rater_type", "resident")
     .eq("status", "open")
     .gt("expires_at", new Date().toISOString())
     .order("created_at", { ascending: false })
@@ -102,6 +103,7 @@ export async function requestVendorFeedback(
     .from("vendor_feedback")
     .select("id")
     .eq("maintenance_request_id", input.ticketId)
+    .eq("rater_type", "resident")
     .maybeSingle()
 
   if (existingFeedback?.id) {
@@ -113,6 +115,7 @@ export async function requestVendorFeedback(
     .from("vendor_feedback_requests")
     .select("id, status")
     .eq("maintenance_request_id", input.ticketId)
+    .eq("rater_type", "resident")
     .maybeSingle()
 
   if (existingRequest?.status === "open") {
@@ -155,6 +158,7 @@ export async function requestVendorFeedback(
       maintenance_request_id: input.ticketId,
       resident_id: input.residentId ?? null,
       conversation_id: conversationId,
+      rater_type: "resident",
       phase: "rating",
       status: "open",
     })
@@ -250,6 +254,7 @@ export async function tryHandleVendorFeedbackInbound(
         vendor_id: request.vendor_id,
         maintenance_request_id: request.maintenance_request_id,
         resident_id: request.resident_id,
+        rater_type: "resident",
         rating,
         submitted_at: now,
       })

@@ -171,3 +171,58 @@ export async function ensureUnitsInDb(
     units: units.map((u) => ({ unitLabel: u.unitLabel, building: u.building })),
   })
 }
+
+/** Showcase Building A/B/C rows that were historically auto-synced from ALL_UNIT_OPTIONS. */
+const SHOWCASE_INVENTORY_UNITS: Array<{ unitLabel: string; building: string }> = [
+  { unitLabel: '2B', building: 'Building A' },
+  { unitLabel: '5A', building: 'Building A' },
+  { unitLabel: '3D', building: 'Building A' },
+  { unitLabel: '8B', building: 'Building B' },
+  { unitLabel: '12C', building: 'Building C' },
+]
+
+/**
+ * Remove leftover showcase inventory units from New Landlord / non-demo accounts.
+ * Safe: only deletes exact Building A/B/C demo inventory labels under the active landlord.
+ */
+export async function purgeShowcaseInventoryUnitsIfNeeded(
+  landlordId?: string,
+): Promise<number> {
+  const { isDemoAccountActive } = await import('@/lib/activeLandlord')
+  if (isDemoAccountActive()) return 0
+
+  const { supabase } = await import('@/lib/supabase')
+  if (!supabase) return 0
+
+  const scopedLandlordId = landlordId?.trim() || defaultLandlordId()
+  if (!scopedLandlordId) return 0
+
+  const { data, error } = await supabase
+    .from('units')
+    .select('id, unit_label, building')
+    .eq('landlord_id', scopedLandlordId)
+
+  if (error || !data?.length) return 0
+
+  const showcaseKeys = new Set(
+    SHOWCASE_INVENTORY_UNITS.map(
+      (u) => `${u.building.trim().toLowerCase()}::${u.unitLabel.trim().toLowerCase()}`,
+    ),
+  )
+  const ids = data
+    .filter((row) => {
+      const building = String((row as { building?: unknown }).building ?? '').trim()
+      const unitLabel = String((row as { unit_label?: unknown }).unit_label ?? '').trim()
+      return showcaseKeys.has(`${building.toLowerCase()}::${unitLabel.toLowerCase()}`)
+    })
+    .map((row) => String((row as { id: string }).id))
+
+  if (ids.length === 0) return 0
+
+  const { error: deleteError } = await supabase.from('units').delete().in('id', ids)
+  if (deleteError) {
+    console.warn('[unitVacancy] purge showcase inventory', deleteError.message)
+    return 0
+  }
+  return ids.length
+}

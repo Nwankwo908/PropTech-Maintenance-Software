@@ -1,16 +1,26 @@
-import { NavLink } from 'react-router-dom'
+import { NavLink, useSearchParams } from 'react-router-dom'
+import type { ReactNode } from 'react'
 import residentsIcon from '@/assets/Residents.svg'
 import graphIcon from '@/assets/graph.svg'
 import settingIcon from '@/assets/Setting.svg'
 import uloLogo from '@/assets/landing/ulo-logo.png'
+import uloLogoSmall from '@/assets/Ulo_Logo_small.png'
+import webSectionIcon from '@/assets/noun-web-section.png'
+import askUloDockRailIcon from '@/assets/ask-ulo-dock-rail.png'
+import { AskUloConversationSidebar } from '@/components/AskUloConversationSidebar'
+import { useAskUlo, withAskUloSearch } from '@/components/AskUloContext'
 import { useSidebarAdminProfile } from '@/hooks/useSidebarAdminProfile'
 
 const navBase =
   'flex min-h-[44px] w-full cursor-pointer items-center gap-3 whitespace-nowrap rounded-[10px] px-4 text-left text-[14px] font-medium tracking-[-0.1504px] outline-none transition-colors duration-150 focus-visible:ring-2 focus-visible:ring-[#101828] focus-visible:ring-offset-2 focus-visible:ring-offset-white'
 
-function navClassName({ isActive }: { isActive: boolean }) {
+const navBaseCollapsed =
+  'flex size-11 cursor-pointer items-center justify-center rounded-[10px] outline-none transition-colors duration-150 focus-visible:ring-2 focus-visible:ring-[#101828] focus-visible:ring-offset-2 focus-visible:ring-offset-white'
+
+function navClassName({ isActive, collapsed }: { isActive: boolean; collapsed?: boolean }) {
+  const base = collapsed ? navBaseCollapsed : navBase
   return [
-    navBase,
+    base,
     isActive
       ? 'bg-[#101828]/8 text-[#101828]'
       : 'text-[#364153] opacity-60 hover:bg-[#f3f4f6] hover:opacity-100 active:bg-[#e5e7eb]',
@@ -66,101 +76,302 @@ function VendorsIcon() {
   )
 }
 
+/** Matches inactive nav icon color: text-[#364153] opacity-60. */
+const sidebarChromeIconBtn =
+  'inline-flex cursor-pointer items-center justify-center rounded-[8px] py-1.5 text-[#364153] opacity-100 outline-none transition-colors hover:bg-[#f3f4f6] hover:opacity-100 focus-visible:ring-2 focus-visible:ring-[#101828] focus-visible:ring-offset-2'
+
+/** Tint a black PNG glyph with currentColor (same as nav SVGs). */
+function SidebarChromeGlyph({ src }: { src: string }) {
+  return (
+    <span
+      className="block size-6 bg-current"
+      style={{
+        maskImage: `url(${src})`,
+        WebkitMaskImage: `url(${src})`,
+        maskSize: 'contain',
+        WebkitMaskSize: 'contain',
+        maskRepeat: 'no-repeat',
+        WebkitMaskRepeat: 'no-repeat',
+        maskPosition: 'center',
+        WebkitMaskPosition: 'center',
+      }}
+      aria-hidden
+    />
+  )
+}
+
+type NavItem = {
+  to: string
+  end?: boolean
+  label: string
+  icon: ReactNode
+  onClick?: () => void
+}
+
 export function AdminSidebarContent({
   onNavigate,
   forRail,
+  collapsed = false,
+  onCollapse,
+  onExpand,
 }: {
   onNavigate?: () => void
   forRail?: boolean
+  collapsed?: boolean
+  onCollapse?: () => void
+  onExpand?: () => void
 }) {
   const { profile, hideProfile } = useSidebarAdminProfile()
-  const gutter = forRail ? 'px-6 py-4' : 'px-8 py-8'
-  const navPad = forRail ? 'px-4 pt-6 pb-4' : 'px-8 py-8'
-  const footerPad = forRail ? 'p-4' : 'px-8 py-8'
+  const {
+    open: askUloOpen,
+    docked: askUloDocked,
+    setDocked: setAskUloDocked,
+    conversationId,
+    conversations,
+    conversationsLoading,
+    persistEnabled,
+    newChat,
+    setConversationId,
+    renameConversation,
+    deleteConversation,
+  } = useAskUlo()
+  const [searchParams] = useSearchParams()
+  const isCollapsedRail = Boolean(forRail && collapsed)
+
+  // Desktop rail brand height must match AdminTopBar so the shared grey rule lines up.
+  const gutter = forRail
+    ? isCollapsedRail
+      ? 'flex h-[68px] items-center justify-center px-2'
+      : 'flex h-[68px] items-center px-6'
+    : 'px-8 py-8'
+  const navPad = forRail
+    ? isCollapsedRail
+      ? 'items-center px-2 pt-6 pb-4'
+      : 'px-4 pt-6 pb-4'
+    : 'px-8 py-8'
+  const footerPad = forRail ? (isCollapsedRail ? 'p-2' : 'p-4') : 'px-8 py-8'
+
+  const items: NavItem[] = [
+    {
+      to: '/admin',
+      end: true,
+      label: 'Overview',
+      icon: <OverviewIcon />,
+      onClick: onNavigate,
+    },
+    {
+      to: '/admin/properties',
+      label: 'Properties',
+      icon: <PropertiesIcon />,
+      onClick: onNavigate,
+    },
+    {
+      to: '/admin/communication',
+      label: 'Communication',
+      icon: <MessagesIcon />,
+      onClick: onNavigate,
+    },
+    {
+      to: '/admin/vendors',
+      label: 'Vendors',
+      icon: <VendorsIcon />,
+      onClick: onNavigate,
+    },
+    {
+      to: '/admin/workflows',
+      label: 'Active Tasks',
+      icon: <OperationsIcon />,
+      onClick: onNavigate,
+    },
+    {
+      to: '/admin/residents',
+      label: 'Residents',
+      icon: <img src={residentsIcon} alt="" className="size-5" />,
+      onClick: onNavigate,
+    },
+    {
+      to: '/admin/analytics',
+      label: 'Analytics',
+      icon: <img src={graphIcon} alt="" className="size-5" />,
+      onClick: onNavigate,
+    },
+    {
+      to: '/admin/settings',
+      label: 'Settings',
+      icon: <img src={settingIcon} alt="" className="size-5" />,
+      onClick: onNavigate,
+    },
+  ]
 
   return (
     <div className="flex min-h-0 w-full flex-1 flex-col overflow-hidden">
       <div className={`shrink-0 border-b border-[#e5e7eb] ${gutter}`}>
-        <div className="flex items-center gap-3">
-          <img
-            src={uloLogo}
-            alt="Ulo Home"
-            className="h-9 w-auto shrink-0 object-contain"
-          />
-        </div>
+        {isCollapsedRail ? (
+          <div className="flex flex-col items-center gap-1">
+            <button
+              type="button"
+              onClick={onExpand}
+              className="inline-flex size-11 cursor-pointer items-center justify-center rounded-[10px] outline-none transition-colors hover:bg-[#f3f4f6] focus-visible:ring-2 focus-visible:ring-[#101828] focus-visible:ring-offset-2"
+              aria-label="Expand sidebar"
+              title="Expand sidebar"
+            >
+              <img
+                src={uloLogoSmall}
+                alt=""
+                className="size-8 object-contain"
+                aria-hidden
+              />
+            </button>
+            {askUloOpen ? (
+              <button
+                type="button"
+                onClick={() => setAskUloDocked(!askUloDocked)}
+                className={`${sidebarChromeIconBtn} size-9`}
+                aria-label={
+                  askUloDocked
+                    ? 'Expand Ask Ulo to full panel'
+                    : 'Dock Ask Ulo to the right rail'
+                }
+                title={
+                  askUloDocked
+                    ? 'Expand Ask Ulo'
+                    : 'Dock Ask Ulo to right rail'
+                }
+                aria-pressed={askUloDocked}
+              >
+                <SidebarChromeGlyph src={askUloDockRailIcon} />
+              </button>
+            ) : null}
+          </div>
+        ) : (
+          <div className="flex w-full items-center justify-between gap-3">
+            <img
+              src={uloLogo}
+              alt="Ulo Home"
+              className="h-9 w-auto shrink-0 object-contain"
+            />
+            <div className="flex shrink-0 items-center gap-[4px]">
+              {askUloOpen ? (
+                <button
+                  type="button"
+                  onClick={() => setAskUloDocked(!askUloDocked)}
+                  className={sidebarChromeIconBtn}
+                  aria-label={
+                    askUloDocked
+                      ? 'Expand Ask Ulo to full panel'
+                      : 'Dock Ask Ulo to the right rail'
+                  }
+                  title={
+                    askUloDocked
+                      ? 'Expand Ask Ulo'
+                      : 'Dock Ask Ulo to right rail'
+                  }
+                  aria-pressed={askUloDocked}
+                >
+                  <SidebarChromeGlyph src={askUloDockRailIcon} />
+                </button>
+              ) : null}
+              {forRail && onCollapse ? (
+                <button
+                  type="button"
+                  onClick={onCollapse}
+                  className={sidebarChromeIconBtn}
+                  aria-label="Collapse sidebar"
+                  title="Collapse sidebar"
+                >
+                  <SidebarChromeGlyph src={webSectionIcon} />
+                </button>
+              ) : null}
+            </div>
+          </div>
+        )}
       </div>
 
       <nav
         className={`flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto overscroll-y-contain ${navPad}`}
         aria-label="Admin"
       >
-        <NavLink to="/admin" end onClick={onNavigate} className={navClassName}>
-          <span className="size-5 shrink-0 text-current" aria-hidden>
-            <OverviewIcon />
-          </span>
-          Overview
-        </NavLink>
-        <NavLink to="/admin/properties" onClick={onNavigate} className={navClassName}>
-          <span className="size-5 shrink-0 text-current" aria-hidden>
-            <PropertiesIcon />
-          </span>
-          Properties
-        </NavLink>
-        <NavLink to="/admin/communication" onClick={onNavigate} className={navClassName}>
-          <span className="size-5 shrink-0 text-current" aria-hidden>
-            <MessagesIcon />
-          </span>
-          Communication
-        </NavLink>
-        <NavLink to="/admin/vendors" onClick={onNavigate} className={navClassName}>
-          <span className="size-5 shrink-0 text-current" aria-hidden>
-            <VendorsIcon />
-          </span>
-          Vendors
-        </NavLink>
-        <NavLink to="/admin/workflows" onClick={onNavigate} className={navClassName}>
-          <span className="size-5 shrink-0 text-current" aria-hidden>
-            <OperationsIcon />
-          </span>
-          Active Tasks
-        </NavLink>
-        <NavLink to="/admin/residents" onClick={onNavigate} className={navClassName}>
-          <span className="size-5 shrink-0 text-current" aria-hidden>
-            <img src={residentsIcon} alt="" className="size-5" />
-          </span>
-          Residents
-        </NavLink>
-        <NavLink to="/admin/analytics" onClick={onNavigate} className={navClassName}>
-          <span className="size-5 shrink-0 text-current" aria-hidden>
-            <img src={graphIcon} alt="" className="size-5" />
-          </span>
-          Analytics
-        </NavLink>
-        <NavLink to="/admin/settings" onClick={onNavigate} className={navClassName}>
-          <span className="size-5 shrink-0 text-current" aria-hidden>
-            <img src={settingIcon} alt="" className="size-5" />
-          </span>
-          Settings
-        </NavLink>
+        {items.map((item) => (
+          <NavLink
+            key={item.to}
+            to={
+              askUloOpen
+                ? withAskUloSearch(item.to, searchParams, { forceDock: true })
+                : item.to
+            }
+            end={item.end}
+            title={isCollapsedRail ? item.label : undefined}
+            aria-label={isCollapsedRail ? item.label : undefined}
+            onClick={item.onClick}
+            className={({ isActive }) =>
+              navClassName({
+                isActive,
+                collapsed: isCollapsedRail,
+              })
+            }
+          >
+            <span className="size-5 shrink-0 text-current" aria-hidden>
+              {item.icon}
+            </span>
+            {!isCollapsedRail ? item.label : null}
+          </NavLink>
+        ))}
+
+        {askUloOpen ? (
+          <>
+            <div
+              className={[
+                'shrink-0 border-t border-[#e5e7eb]',
+                isCollapsedRail ? 'mt-2 pt-2' : 'mt-3 pt-3',
+              ].join(' ')}
+              aria-hidden
+            />
+            <AskUloConversationSidebar
+              conversations={conversations}
+              activeId={conversationId}
+              persistEnabled={persistEnabled}
+              loading={conversationsLoading}
+              collapsed={isCollapsedRail}
+              onNewChat={() => {
+                newChat()
+                onNavigate?.()
+              }}
+              onSelect={(id) => {
+                setConversationId(id)
+                onNavigate?.()
+              }}
+              onRename={(id, title) => void renameConversation(id, title)}
+              onDelete={(id) => void deleteConversation(id)}
+            />
+          </>
+        ) : null}
       </nav>
 
       {!hideProfile && profile ? (
         <div className={`shrink-0 border-t border-[#e5e7eb] bg-white ${footerPad}`}>
-          <div className="flex w-full min-w-0 items-center gap-3 rounded-[10px] px-3 py-2">
+          <div
+            className={[
+              'flex w-full min-w-0 items-center rounded-[10px]',
+              isCollapsedRail ? 'justify-center px-0 py-2' : 'gap-3 px-3 py-2',
+            ].join(' ')}
+            title={isCollapsedRail ? `${profile.name} · ${profile.email}` : undefined}
+          >
             <div
               className="flex size-9 shrink-0 items-center justify-center rounded-full bg-[#9E439F] text-[12px] font-semibold leading-none tracking-[-0.02em] text-white"
               aria-hidden
             >
               {profile.initials}
             </div>
-            <div className="min-w-0 flex-1 text-left">
-              <p className="truncate text-[13px] font-semibold tracking-[-0.1504px] text-[#101828]">
-                {profile.name}
-              </p>
-              <p className="truncate text-[12px] leading-4 text-[#6a7282]">
-                {profile.email}
-              </p>
-            </div>
+            {!isCollapsedRail ? (
+              <div className="min-w-0 flex-1 text-left">
+                <p className="truncate text-[13px] font-semibold tracking-[-0.1504px] text-[#101828]">
+                  {profile.name}
+                </p>
+                <p className="truncate text-[12px] leading-4 text-[#6a7282]">
+                  {profile.email}
+                </p>
+              </div>
+            ) : null}
           </div>
         </div>
       ) : null}

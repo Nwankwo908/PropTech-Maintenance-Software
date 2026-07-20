@@ -82,6 +82,11 @@ type PropertyHealthBuildingGridProps = {
   loading: boolean
   buildings: PropertyHealthBuildingRow[]
   totalUnits: number
+  /**
+   * Portfolio building count for the section subtitle. Defaults to `buildings.length`.
+   * Pass the full portfolio count when `buildings` is a preview slice (e.g. overview).
+   */
+  buildingCount?: number
   emptyCtaHref?: string
   emptyCtaLabel?: string
   headerAction?: ReactNode
@@ -113,11 +118,22 @@ const HEADER_BTN_DANGER =
 const METRIC_CHIP =
   'inline-flex items-center gap-1.5 rounded-[8px] border border-[#e5e7eb] bg-transparent px-2.5 py-1 text-[12px] leading-4 text-[#6a7282]'
 
+function propertyHealthSubtitle(propertyCount: number): string {
+  if (propertyCount <= 0) {
+    return 'Add your first property to start tracking its health.'
+  }
+  if (propertyCount === 1) {
+    return 'See how your 1 property is doing and whether it needs attention.'
+  }
+  return `See which of your ${propertyCount} properties are in great shape and which need attention.`
+}
+
 export function PropertyHealthBuildingGrid({
   className = '',
   loading,
   buildings,
   totalUnits,
+  buildingCount,
   emptyCtaHref = '/admin/users',
   emptyCtaLabel = 'Add your first property',
   headerAction,
@@ -128,6 +144,7 @@ export function PropertyHealthBuildingGrid({
   onBuildingOpen,
 }: PropertyHealthBuildingGridProps) {
   const selectedCount = selection?.selectedBuildings.size ?? 0
+  const propertyCount = buildingCount ?? buildings.length
 
   return (
     <section
@@ -147,10 +164,7 @@ export function PropertyHealthBuildingGrid({
                 {totalUnits} units
               </>
             ) : (
-              <>
-                {buildings.length} propert{buildings.length === 1 ? 'y' : 'ies'} · {totalUnits}{' '}
-                units
-              </>
+              propertyHealthSubtitle(propertyCount)
             )}
           </p>
         </div>

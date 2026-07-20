@@ -1,5 +1,6 @@
 import { useEffect, useId, useState } from 'react'
 import { ConversationMonitoringBody } from '@/components/ConversationMonitoringModal'
+import { deleteWorkOrderPermanently } from '@/api/deleteWorkOrder'
 import {
   fetchWorkflowUloThreadMonitoring,
   type ConversationMonitoringDetail,
@@ -296,6 +297,10 @@ export function WorkflowPipelineDetailPanel({
   const [threadError, setThreadError] = useState<string | null>(null)
   const [moveOutActionSaving, setMoveOutActionSaving] = useState(false)
   const [moveOutActionError, setMoveOutActionError] = useState<string | null>(null)
+  const deleteConfirmTitleId = useId()
+  const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false)
+  const [deleteSaving, setDeleteSaving] = useState(false)
+  const [deleteError, setDeleteError] = useState<string | null>(null)
 
   useEffect(() => {
     if (!open) {
@@ -303,6 +308,9 @@ export function WorkflowPipelineDetailPanel({
       setThreadDetail(null)
       setThreadError(null)
       setThreadLoading(false)
+      setDeleteConfirmOpen(false)
+      setDeleteError(null)
+      setDeleteSaving(false)
     }
   }, [open])
 
@@ -311,12 +319,21 @@ export function WorkflowPipelineDetailPanel({
     setThreadDetail(null)
     setThreadError(null)
     setThreadLoading(false)
+    setDeleteConfirmOpen(false)
+    setDeleteError(null)
   }, [detail?.runId])
 
   useEffect(() => {
     if (!open) return
     function onKey(event: KeyboardEvent) {
       if (event.key !== 'Escape') return
+      if (deleteConfirmOpen) {
+        if (!deleteSaving) {
+          setDeleteError(null)
+          setDeleteConfirmOpen(false)
+        }
+        return
+      }
       if (panelView === 'thread') {
         setPanelView('work_order')
         return
@@ -325,7 +342,7 @@ export function WorkflowPipelineDetailPanel({
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [open, onClose, panelView])
+  }, [open, onClose, panelView, deleteConfirmOpen, deleteSaving])
 
   useEffect(() => {
     if (!open || panelView !== 'thread' || !detail) {
@@ -379,14 +396,41 @@ export function WorkflowPipelineDetailPanel({
     }
   }
 
+  const handleDeleteWorkOrder = async () => {
+    if (!detail?.runId) return
+    setDeleteSaving(true)
+    setDeleteError(null)
+    try {
+      await deleteWorkOrderPermanently({
+        workflowRunId: detail.runId,
+        maintenanceRequestId: detail.maintenanceRequestId,
+      })
+      setDeleteConfirmOpen(false)
+      onClose()
+      onWorkflowUpdated?.()
+    } catch (err) {
+      setDeleteError(err instanceof Error ? err.message : 'Delete failed')
+    } finally {
+      setDeleteSaving(false)
+    }
+  }
+
   if (!open) return null
 
   const canSeeThread = Boolean(detail?.uloThread)
   const showingThread = panelView === 'thread'
+  const canDeleteWorkOrder = Boolean(detail?.isMaintenanceWorkflow && detail.runId)
 
   return (
     <div className="fixed inset-0 z-50 flex justify-end">
-      <div role="presentation" className="absolute inset-0 bg-black/40" aria-hidden onClick={onClose} />
+      <div
+        role="presentation"
+        className="absolute inset-0 bg-black/40"
+        aria-hidden
+        onClick={() => {
+          if (!deleteSaving) onClose()
+        }}
+      />
       <div
         role="dialog"
         aria-modal="true"
@@ -472,7 +516,18 @@ export function WorkflowPipelineDetailPanel({
               </div>
             ) : threadDetail ? (
               <div className="flex min-h-[min(70dvh,720px)] flex-col overflow-hidden rounded-[10px] border border-[#e5e7eb] bg-white shadow-[0px_1px_2px_-1px_rgba(0,0,0,0.06)]">
-                <ConversationMonitoringBody detail={threadDetail} titleId={threadTitleId} embedded />
+                <ConversationMonitoringBody
+                  detail={threadDetail}
+                  titleId={threadTitleId}
+                  embedded
+                  onEstimateDecided={() => {
+                    if (!detail?.uloThread) return
+                    void fetchWorkflowUloThreadMonitoring(detail.uloThread).then((result) => {
+                      if (result) setThreadDetail(result)
+                    })
+                    onWorkflowUpdated?.()
+                  }}
+                />
               </div>
             ) : null
           ) : loading || !detail ? (
@@ -625,7 +680,92 @@ export function WorkflowPipelineDetailPanel({
             </div>
           )}
         </div>
+
+        {canDeleteWorkOrder && !showingThread && !loading && detail ? (
+          <div className="shrink-0 border-t border-[#e5e7eb] bg-white px-6 py-4">
+            <button
+              type="button"
+              onClick={() => {
+                setDeleteError(null)
+                setDeleteConfirmOpen(true)
+              }}
+              className="inline-flex w-full cursor-pointer items-center justify-center rounded-[8px] border border-[#b52a00]/30 bg-white px-3 py-2.5 text-[13px] font-medium text-[#b52a00] outline-none transition-colors hover:bg-[#fff4f0] focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2"
+            >
+              Delete work order
+            </button>
+          </div>
+        ) : null}
       </div>
+
+      {deleteConfirmOpen && detail ? (
+        <div className="fixed inset-0 z-[81] flex items-center justify-center bg-black/40 p-4">
+          <div
+            role="presentation"
+            className="absolute inset-0"
+            aria-hidden
+            onClick={() => {
+              if (!deleteSaving) {
+                setDeleteError(null)
+                setDeleteConfirmOpen(false)
+              }
+            }}
+          />
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby={deleteConfirmTitleId}
+            className="relative flex w-full max-w-[440px] flex-col overflow-hidden rounded-[10px] bg-white shadow-[0px_20px_25px_-5px_rgba(0,0,0,0.1),0px_8px_10px_-6px_rgba(0,0,0,0.1)]"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="border-b border-[#e5e7eb] px-6 py-4">
+              <h2
+                id={deleteConfirmTitleId}
+                className="text-[18px] font-semibold leading-[27px] tracking-[-0.4395px] text-[#0a0a0a]"
+              >
+                Are you sure you want to do this?
+              </h2>
+            </div>
+            <div className="flex flex-col gap-4 px-6 pb-6 pt-4">
+              <p className="text-[14px] leading-5 tracking-[-0.1504px] text-[#4a5565]">
+                This will permanently delete{' '}
+                <span className="font-medium text-[#0a0a0a]">{detail.workOrderRef}</span>, including
+                its ticket and workflow history. This cannot be undone.
+              </p>
+              <p className="text-[13px] leading-5 text-[#6a7282]">
+                Resident SMS history is kept; only this work order is deleted.
+              </p>
+              {deleteError ? (
+                <p className="text-[13px] leading-4 text-[#b52a00]" role="alert">
+                  {deleteError}
+                </p>
+              ) : null}
+              <div className="flex flex-wrap gap-3 pt-1">
+                <button
+                  type="button"
+                  disabled={deleteSaving}
+                  className="inline-flex h-9 min-w-0 flex-1 items-center justify-center rounded-lg border border-[#b52a00]/30 bg-[#fff4f0] px-4 text-[14px] font-medium leading-5 tracking-[-0.1504px] text-[#b52a00] outline-none transition-colors hover:bg-[#ffe9e1] focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-60 sm:flex-initial"
+                  onClick={() => void handleDeleteWorkOrder()}
+                >
+                  {deleteSaving ? 'Deleting…' : 'Yes, delete permanently'}
+                </button>
+                <button
+                  type="button"
+                  disabled={deleteSaving}
+                  className="inline-flex h-9 items-center justify-center rounded-lg border border-black/10 bg-white px-[17px] text-[14px] font-medium leading-5 tracking-[-0.1504px] text-[#0a0a0a] outline-none transition-colors hover:bg-[#f3f4f6] focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-60"
+                  onClick={() => {
+                    if (!deleteSaving) {
+                      setDeleteError(null)
+                      setDeleteConfirmOpen(false)
+                    }
+                  }}
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   )
 }

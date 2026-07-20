@@ -79,7 +79,7 @@ export function BeforeAfterWorkflowSection() {
   return (
     <div className="flex flex-col gap-4">
       <div
-        className={`${WORKFLOW_CARD.replace('bg-white', 'bg-[#E6F4E9]').replace('lg:overflow-visible', 'lg:overflow-x-clip')} [@media(min-width:2560px)_and_(min-height:1300px)_and_(max-height:1600px)]:min-h-[330px] [@media(min-width:2560px)_and_(min-height:1300px)_and_(max-height:1600px)]:lg:gap-[4.5rem] [@media(min-width:2560px)_and_(min-height:1300px)_and_(max-height:1600px)]:lg:py-12`}
+        className={`${WORKFLOW_CARD.replace('lg:overflow-visible', 'lg:overflow-x-clip')} [@media(min-width:2560px)_and_(min-height:1300px)_and_(max-height:1600px)]:min-h-[330px] [@media(min-width:2560px)_and_(min-height:1300px)_and_(max-height:1600px)]:lg:gap-[4.5rem] [@media(min-width:2560px)_and_(min-height:1300px)_and_(max-height:1600px)]:lg:py-12`}
       >
         <WorkflowLabel title="Before" subtitle="Messy. Slow. Frustration" />
         <WorkflowDiagram
@@ -94,10 +94,7 @@ export function BeforeAfterWorkflowSection() {
         />
       </div>
 
-      <div
-        className={WORKFLOW_CARD.replace(' bg-white', '')}
-        style={{ backgroundImage: 'linear-gradient(45deg, #E6E9F2 0%, #D2F4FF 100%)' }}
-      >
+      <div className={WORKFLOW_CARD}>
         <WorkflowLabel title="After" subtitle="Smart. Streamlined. Solved." />
         <WorkflowDiagram
           src={afterWorkflowDiagram}
