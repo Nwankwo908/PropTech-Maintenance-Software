@@ -357,12 +357,13 @@ function WorkOrderPublicPageInner() {
                   : 'Available after you upload completion photos'
               }
             />
-            <Link
-              to={portalPath}
-              className="mt-1 inline-flex items-center justify-center rounded-[10px] border border-[#d0d5dd] px-4 py-2.5 text-[14px] font-semibold text-[#344054] transition-colors hover:bg-[#f9fafb]"
-            >
-              Open full vendor portal
-            </Link>
+            <ActionLink
+              href={portalPath}
+              label="Open full vendor portal"
+              variant="secondary"
+              disabled={!job.estimateSubmitted}
+              disabledHint="Available after you submit an estimate"
+            />
           </div>
         </section>
       </main>
@@ -381,14 +382,16 @@ function ActionLink({
   label: string
   disabled?: boolean
   disabledHint?: string
-  variant?: 'primary' | 'submitted'
+  variant?: 'primary' | 'submitted' | 'secondary'
 }) {
   const className =
     variant === 'submitted'
       ? 'inline-flex items-center justify-center rounded-[10px] border border-[#a7f3d0] bg-[#ecfdf5] px-4 py-2.5 text-[14px] font-semibold text-[#065f46] transition-colors hover:bg-[#d1fae5]'
       : disabled
         ? 'inline-flex cursor-not-allowed items-center justify-center rounded-[10px] bg-[#e4e7ec] px-4 py-2.5 text-[14px] font-semibold text-[#98a2b3]'
-        : 'inline-flex items-center justify-center rounded-[10px] bg-[#186179] px-4 py-2.5 text-[14px] font-semibold text-white transition-colors hover:bg-[#145066]'
+        : variant === 'secondary'
+          ? 'inline-flex items-center justify-center rounded-[10px] border border-[#d0d5dd] px-4 py-2.5 text-[14px] font-semibold text-[#344054] transition-colors hover:bg-[#f9fafb]'
+          : 'inline-flex items-center justify-center rounded-[10px] bg-[#186179] px-4 py-2.5 text-[14px] font-semibold text-white transition-colors hover:bg-[#145066]'
 
   if (disabled) {
     return (
