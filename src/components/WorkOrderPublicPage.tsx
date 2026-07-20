@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { Component, useEffect, useState, type ErrorInfo, type ReactNode } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import {
   resolveWorkOrderToken,
@@ -10,16 +10,16 @@ import {
   VENDOR_TOKEN_STORAGE_KEY,
 } from '@/lib/vendorToken'
 
-function statusLabel(status: string | null): string {
-  if (!status) return 'Open'
-  const s = status.toLowerCase()
+function statusLabel(status: string | null | undefined): string {
+  if (status == null) return 'Open'
+  const s = String(status).toLowerCase()
   if (s === 'pending_accept') return 'Awaiting accept'
   if (s === 'accepted') return 'Accepted'
   if (s === 'in_progress') return 'In progress'
   if (s === 'completed') return 'Completed'
   if (s === 'declined') return 'Declined'
   if (s === 'unassigned') return 'Unassigned'
-  return status.replace(/_/g, ' ')
+  return String(status).replace(/_/g, ' ')
 }
 
 function formatWhen(iso: string | null, windowText: string | null): string {
@@ -51,7 +51,8 @@ function formatHistoryDate(iso: string): string {
 }
 
 /** Split stored description text into readable paragraphs (not a raw line dump). */
-function descriptionParagraphs(raw: string): string[] {
+function descriptionParagraphs(raw: unknown): string[] {
+  if (typeof raw !== 'string' || !raw.trim()) return []
   return raw
     .replace(/\r\n/g, '\n')
     .split(/\n\s*\n/)
@@ -59,10 +60,58 @@ function descriptionParagraphs(raw: string): string[] {
     .filter(Boolean)
 }
 
+class JobPageErrorBoundary extends Component<
+  { children: ReactNode },
+  { message: string | null }
+> {
+  state: { message: string | null } = { message: null }
+
+  static getDerivedStateFromError(error: unknown) {
+    return {
+      message:
+        error instanceof Error ? error.message : 'Something went wrong opening this job.',
+    }
+  }
+
+  componentDidCatch(error: unknown, info: ErrorInfo) {
+    console.error('[WorkOrderPublicPage]', error, info.componentStack)
+  }
+
+  render() {
+    if (this.state.message) {
+      return (
+        <div className="flex min-h-dvh items-center justify-center bg-[#f4f6f8] px-4">
+          <div className="w-full max-w-md text-center">
+            <h1 className="font-[family-name:var(--font-heading)] text-[22px] font-semibold text-[#101828]">
+              Couldn’t open this job
+            </h1>
+            <p className="mt-2 text-[14px] leading-6 text-[#475467]">{this.state.message}</p>
+            <Link
+              to="/vendor"
+              className="mt-6 inline-flex text-[14px] font-semibold text-[#186179] hover:underline"
+            >
+              Go to vendor portal
+            </Link>
+          </div>
+        </div>
+      )
+    }
+    return this.props.children
+  }
+}
+
 /**
  * Phase 2 / 4.2 — public no-login job detail at `/w/:token`.
  */
 export function WorkOrderPublicPage() {
+  return (
+    <JobPageErrorBoundary>
+      <WorkOrderPublicPageInner />
+    </JobPageErrorBoundary>
+  )
+}
+
+function WorkOrderPublicPageInner() {
   const { token } = useParams<{ token: string }>()
   const [error, setError] = useState<string | null>(null)
   const [data, setData] = useState<ResolveWorkOrderTokenResult | null>(null)
@@ -174,8 +223,8 @@ export function WorkOrderPublicPage() {
           <p className="mt-1 text-[13px] leading-5 text-[#667085]">{issueLabel}</p>
           {descriptionBlocks.length > 0 ? (
             <ul className="mt-2 list-disc space-y-2 pl-5 text-[14px] leading-6 text-[#364153]">
-              {descriptionBlocks.map((paragraph) => (
-                <li key={paragraph}>{paragraph}</li>
+              {descriptionBlocks.map((paragraph, index) => (
+                <li key={`${index}-${paragraph.slice(0, 24)}`}>{paragraph}</li>
               ))}
             </ul>
           ) : (

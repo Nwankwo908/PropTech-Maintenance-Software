@@ -100,6 +100,24 @@ export async function resolveWorkOrderToken(
   }
 
   const job = payload.job
+  const tenant =
+    job.tenant && typeof job.tenant === 'object'
+      ? job.tenant
+      : { name: 'Resident', phone: null }
+  const appointment =
+    job.appointment && typeof job.appointment === 'object'
+      ? job.appointment
+      : { windowText: null, scheduledAt: null, confirmedAt: null }
+  const links =
+    job.links && typeof job.links === 'object'
+      ? job.links
+      : {
+          estimate: `/estimate/${encodeURIComponent(trimmed)}`,
+          upload: `/upload/${encodeURIComponent(trimmed)}`,
+          invoice: `/invoice/${encodeURIComponent(trimmed)}`,
+          portal: payload.portalPath,
+        }
+
   return {
     ticketId: payload.ticketId,
     workOrderRef: payload.workOrderRef ?? `WO-${payload.ticketId.replace(/-/g, '').slice(0, 4).toUpperCase()}`,
@@ -110,6 +128,61 @@ export async function resolveWorkOrderToken(
         : null,
     job: {
       ...job,
+      address: typeof job.address === 'string' ? job.address : '',
+      unit: typeof job.unit === 'string' && job.unit.trim() ? job.unit : 'Unit',
+      description: typeof job.description === 'string' ? job.description : '',
+      photoUrls: Array.isArray(job.photoUrls)
+        ? job.photoUrls.filter((u): u is string => typeof u === 'string' && u.trim().length > 0)
+        : [],
+      accessInstructions:
+        typeof job.accessInstructions === 'string' ? job.accessInstructions : null,
+      accessInstructionsFallback:
+        typeof job.accessInstructionsFallback === 'string' &&
+        job.accessInstructionsFallback.trim()
+          ? job.accessInstructionsFallback
+          : 'Contact the property team if you need entry instructions for this unit.',
+      tenant: {
+        name:
+          typeof tenant.name === 'string' && tenant.name.trim()
+            ? tenant.name.trim()
+            : 'Resident',
+        phone:
+          typeof tenant.phone === 'string' && tenant.phone.trim()
+            ? tenant.phone.trim()
+            : null,
+      },
+      appointment: {
+        windowText:
+          typeof appointment.windowText === 'string' ? appointment.windowText : null,
+        scheduledAt:
+          typeof appointment.scheduledAt === 'string' ? appointment.scheduledAt : null,
+        confirmedAt:
+          typeof appointment.confirmedAt === 'string' ? appointment.confirmedAt : null,
+      },
+      propertyHistory: Array.isArray(job.propertyHistory)
+        ? job.propertyHistory.filter(
+            (item): item is WorkOrderPublicHistoryItem =>
+              Boolean(item && typeof item === 'object' && typeof item.ticketId === 'string'),
+          )
+        : [],
+      links: {
+        estimate:
+          typeof links.estimate === 'string' && links.estimate.trim()
+            ? links.estimate
+            : `/estimate/${encodeURIComponent(trimmed)}`,
+        upload:
+          typeof links.upload === 'string' && links.upload.trim()
+            ? links.upload
+            : `/upload/${encodeURIComponent(trimmed)}`,
+        invoice:
+          typeof links.invoice === 'string' && links.invoice.trim()
+            ? links.invoice
+            : `/invoice/${encodeURIComponent(trimmed)}`,
+        portal:
+          typeof links.portal === 'string' && links.portal.trim()
+            ? links.portal
+            : payload.portalPath,
+      },
       estimateStatus:
         typeof job.estimateStatus === 'string' ? job.estimateStatus : null,
       estimateSubmitted: Boolean(job.estimateSubmitted),

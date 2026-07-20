@@ -217,17 +217,28 @@ serve(async (req) => {
   }
 
   // Latest non-superseded estimate drives action gating on /w/:token.
-  const { data: estimateRow } = await supabase
-    .from("maintenance_estimates")
-    .select("status")
-    .eq("maintenance_request_id", ticketId)
-    .neq("status", "superseded")
-    .order("created_at", { ascending: false })
-    .limit(1)
-    .maybeSingle()
-
-  const estimateStatus =
-    typeof estimateRow?.status === "string" ? estimateRow.status : null
+  // Best-effort: never fail the public job page if estimates aren't available yet.
+  let estimateStatus: string | null = null
+  try {
+    const { data: estimateRow, error: estimateError } = await supabase
+      .from("maintenance_estimates")
+      .select("status")
+      .eq("maintenance_request_id", ticketId)
+      .neq("status", "superseded")
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle()
+    if (estimateError) {
+      console.error(
+        "[resolve-work-order-token] estimate lookup",
+        estimateError.message,
+      )
+    } else if (typeof estimateRow?.status === "string") {
+      estimateStatus = estimateRow.status
+    }
+  } catch (err) {
+    console.error("[resolve-work-order-token] estimate lookup threw", err)
+  }
   const estimateSubmitted =
     estimateStatus === "pending_approval" || estimateStatus === "approved"
   const estimateApproved = estimateStatus === "approved"
