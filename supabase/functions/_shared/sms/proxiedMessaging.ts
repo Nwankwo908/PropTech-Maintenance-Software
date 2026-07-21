@@ -154,7 +154,7 @@ export async function loadProxiedTicketContext(
   const { data: ticket, error } = await supabase
     .from("maintenance_requests")
     .select(
-      "id, unit, resident_phone, resident_name, email, resident_user_id, assigned_vendor_id, vendor_work_status",
+      "id, landlord_id, unit, resident_phone, resident_name, email, resident_user_id, assigned_vendor_id, vendor_work_status",
     )
     .eq("id", maintenanceRequestId)
     .maybeSingle()
@@ -209,9 +209,13 @@ export async function loadProxiedTicketContext(
     return { error: "Tenant has no phone on file for SMS proxy" }
   }
 
+  const ticketLandlordId =
+    typeof ticket.landlord_id === "string" ? ticket.landlord_id.trim() : ""
   let scopedLandlordId: string
   try {
-    scopedLandlordId = resolveLandlordId(landlordId)
+    scopedLandlordId = resolveLandlordId(
+      landlordId?.trim() || ticketLandlordId || null,
+    )
   } catch (e) {
     const message = e instanceof Error ? e.message : String(e)
     return { error: message }

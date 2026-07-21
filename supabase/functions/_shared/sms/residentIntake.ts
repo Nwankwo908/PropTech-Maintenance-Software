@@ -24,7 +24,7 @@ import {
   parseContactMethod,
   parseEditFieldChoice,
   parseIssueType,
-  parseUrgency,
+  resolveUrgencyReply,
   pipelineTradeToIssueType,
   recommendUrgency,
   sanitizeIntakeState,
@@ -338,7 +338,7 @@ function applyStepAnswer(
       next.step = "urgency"
       break
     case "urgency": {
-      const parsed = parseUrgency(answer)
+      const parsed = resolveUrgencyReply(answer, next.recommended_urgency)
       if (!parsed) {
         return {
           ok: false,

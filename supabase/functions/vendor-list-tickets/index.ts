@@ -167,7 +167,7 @@ serve(async (req) => {
   const { data: rows, error: qErr } = await supabase
     .from("maintenance_requests")
     .select(
-      "id, created_at, priority, urgency, resident_name, unit, description, photo_paths, vendor_work_status, assigned_vendor_id, due_at, estimated_minutes, severity, issue_category",
+      "id, created_at, priority, urgency, resident_name, unit, description, photo_paths, completion_photo_paths, vendor_work_status, assigned_vendor_id, due_at, estimated_minutes, severity, issue_category, vendor_action_token",
     )
     .eq("assigned_vendor_id", vendor.id)
     .order("created_at", { ascending: false })
@@ -177,10 +177,111 @@ serve(async (req) => {
     return jsonResponse({ error: "Query failed" }, 500)
   }
 
+  const ticketIds = (rows ?? []).map((r) => r.id as string).filter(Boolean)
+
+  const buildingById = new Map<string, string>()
+  const approvedEstimateById = new Map<
+    string,
+    {
+      parts_cost: number
+      labor_cost: number
+      total_cost: number
+      status: string
+      approved_at: string | null
+    }
+  >()
+  const awaitingFeedbackIds = new Set<string>()
+
+  if (ticketIds.length > 0) {
+    const { data: enrichedRows } = await supabase
+      .from("maintenance_request_enriched")
+      .select("id, building")
+      .in("id", ticketIds)
+    for (const e of enrichedRows ?? []) {
+      if (
+        typeof e.id === "string" &&
+        typeof e.building === "string" &&
+        e.building.trim()
+      ) {
+        buildingById.set(e.id, e.building.trim())
+      }
+    }
+
+    const { data: estimateRows } = await supabase
+      .from("maintenance_estimates")
+      .select(
+        "maintenance_request_id, parts_cost, labor_cost, total_cost, status, decided_at, created_at",
+      )
+      .in("maintenance_request_id", ticketIds)
+      .eq("status", "approved")
+      .order("created_at", { ascending: false })
+    for (const est of estimateRows ?? []) {
+      const tid =
+        typeof est.maintenance_request_id === "string"
+          ? est.maintenance_request_id
+          : ""
+      if (!tid || approvedEstimateById.has(tid)) continue
+      approvedEstimateById.set(tid, {
+        parts_cost: Number(est.parts_cost) || 0,
+        labor_cost: Number(est.labor_cost) || 0,
+        total_cost: Number(est.total_cost) || 0,
+        status: "approved",
+        approved_at:
+          typeof est.decided_at === "string"
+            ? est.decided_at
+            : typeof est.created_at === "string"
+            ? est.created_at
+            : null,
+      })
+    }
+
+    const { data: feedbackRows } = await supabase
+      .from("vendor_feedback_requests")
+      .select("maintenance_request_id")
+      .in("maintenance_request_id", ticketIds)
+      .eq("rater_type", "resident")
+      .eq("status", "open")
+    for (const f of feedbackRows ?? []) {
+      if (typeof f.maintenance_request_id === "string") {
+        awaitingFeedbackIds.add(f.maintenance_request_id)
+      }
+    }
+  }
+
   const tickets = await Promise.all(
     (rows ?? []).map(async (row) => {
+      const id = row.id as string
       const photo_urls = await photoSignedUrls(supabase, row.photo_paths)
-      return { ...row, photo_urls }
+      const completion_photo_urls = await photoSignedUrls(
+        supabase,
+        row.completion_photo_paths,
+      )
+      const completionPaths = Array.isArray(row.completion_photo_paths)
+        ? (row.completion_photo_paths as string[]).filter(
+          (p) => typeof p === "string" && p.trim(),
+        )
+        : []
+      const building = buildingById.get(id) ?? null
+      const unitLabel =
+        typeof row.unit === "string" && row.unit.trim() ? row.unit.trim() : ""
+      const building_address = building
+        ? unitLabel
+          ? `${building}`
+          : building
+        : unitLabel || null
+      return {
+        ...row,
+        building: building,
+        building_address,
+        photo_urls,
+        completion_photo_urls,
+        completion_photo_count: Math.max(
+          completionPaths.length,
+          completion_photo_urls.length,
+        ),
+        approved_estimate: approvedEstimateById.get(id) ?? null,
+        awaiting_resident_feedback: awaitingFeedbackIds.has(id),
+      }
     }),
   )
 

@@ -97,32 +97,29 @@ export function buildVendorJobAssignmentSms(input: {
   acceptUrl?: string | null
 }): string {
   const company = vendorCompanyName(input.vendorName)
-  const desc = input.description.trim().replace(/\s+/g, " ")
-  const issueSummary = desc.length > 100 ? `${desc.slice(0, 99)}…` : desc
+  const issueSummary = input.description.trim().replace(/\s+/g, " ")
   const wo = formatWorkOrderRef(input.ticketId)
-  const workOrderUrl =
-    input.jobDetailUrl?.trim() ||
-    input.viewJobUrl?.trim() ||
-    input.acceptUrl?.trim() ||
-    ""
 
-  const lines = [
+  // Job detail link is SMS 3 after accept + scheduling ask (`buildVendorJobDetailLinkSms`).
+  return [
     `Hi ${company},`,
     "",
     `Ulo has assigned you a new work order (${wo}).`,
     "",
     `Issue: ${issueSummary || "See work order for details."}`,
-  ]
-
-  if (workOrderUrl) {
-    lines.push("", "View the work order:", workOrderUrl)
-  }
-
-  lines.push(
     "",
     "Would you like to take this job? Reply YES to accept or NO to decline.",
-  )
-  return lines.join("\n")
+  ].join("\n")
+}
+
+/** Job detail link — sent after schedule is locked (completes the scheduling thread). */
+export function buildVendorJobDetailLinkSms(jobDetailUrl: string): string {
+  const url = jobDetailUrl.trim()
+  if (!url) return ""
+  return [
+    "Open the work order and submit your estimate when you can:",
+    url,
+  ].join("\n")
 }
 
 export function buildVendorAvailabilityAskSms(): string {
@@ -132,10 +129,41 @@ export function buildVendorAvailabilityAskSms(): string {
 export function buildVendorScheduleConfirmedSms(input: {
   workOrderRef: string
   windowText: string
+  /** When set, confirmation + next step ship in one SMS. */
+  jobDetailUrl?: string
 }): string {
   const wo = input.workOrderRef.trim() || "this job"
   const when = input.windowText.trim() || "the time you shared"
-  return `Confirmed. Job ${wo} scheduled ${when}. Tenant and property team notified.`
+  const lines = [
+    `Confirmed. Job ${wo} is scheduled for ${when}.`,
+    "We've notified the tenant and the property team.",
+  ]
+  const url = input.jobDetailUrl?.trim() ?? ""
+  if (url) {
+    lines.push("")
+    lines.push("Next, open the work order and submit your estimate:")
+    lines.push(url)
+  }
+  return lines.join("\n")
+}
+
+/** Soft confirmation before locking a medium-confidence parse. */
+export function buildVendorScheduleSoftConfirmSms(windowText: string): string {
+  const when = windowText.trim() || "that time"
+  return `Got it — ${when}. Reply YES to confirm, or send a different time.`
+}
+
+/** Soft clarification when availability is unclear (never a hard "couldn't save"). */
+export function buildVendorScheduleClarifySms(custom?: string): string {
+  const q = (custom ?? "").trim()
+  if (q) return q
+  return "Thanks — what day and time works best? For example: Tomorrow 9am."
+}
+
+/** Soft retry when persistence fails but we still understood the time. */
+export function buildVendorScheduleSaveRetrySms(windowText: string): string {
+  const when = windowText.trim() || "that time"
+  return `I have ${when} — reply YES and I'll lock it in.`
 }
 
 export function buildVendorRetryEmailSubject(ticketId: string): string {

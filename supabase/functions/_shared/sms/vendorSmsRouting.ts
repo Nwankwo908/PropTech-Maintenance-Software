@@ -23,6 +23,65 @@ export type VendorAlertSendResult =
     }
   | { ok: false; error: string }
 
+/**
+ * When a new ticket is linked to an existing vendor conversation, clear
+ * schedule / estimate wait flags that still point at an older ticket.
+ */
+export async function clearStaleVendorThreadStateForTicket(
+  supabase: SupabaseClient,
+  params: { conversationId: string; ticketId: string },
+): Promise<void> {
+  const { data: convo } = await supabase
+    .from("sms_conversations")
+    .select("intake_state, maintenance_request_id")
+    .eq("id", params.conversationId)
+    .maybeSingle()
+
+  const intake =
+    convo?.intake_state && typeof convo.intake_state === "object"
+      ? { ...(convo.intake_state as Record<string, unknown>) }
+      : {}
+
+  let changed = false
+  const schedule = intake.vendor_schedule
+  if (schedule && typeof schedule === "object") {
+    const scheduleTicket =
+      typeof (schedule as { ticketId?: unknown }).ticketId === "string"
+        ? (schedule as { ticketId: string }).ticketId.trim()
+        : ""
+    if (scheduleTicket && scheduleTicket !== params.ticketId) {
+      delete intake.vendor_schedule
+      changed = true
+    }
+  }
+
+  const estimateWait = intake.awaiting_estimate_decision
+  if (estimateWait && typeof estimateWait === "object") {
+    const estimateTicket =
+      typeof (estimateWait as { ticket_id?: unknown }).ticket_id === "string"
+        ? (estimateWait as { ticket_id: string }).ticket_id.trim()
+        : ""
+    if (estimateTicket && estimateTicket !== params.ticketId) {
+      delete intake.awaiting_estimate_decision
+      changed = true
+    }
+  }
+
+  const patch: Record<string, unknown> = {
+    maintenance_request_id: params.ticketId,
+    updated_at: new Date().toISOString(),
+  }
+  if (changed) patch.intake_state = intake
+
+  const { error } = await supabase
+    .from("sms_conversations")
+    .update(patch)
+    .eq("id", params.conversationId)
+  if (error) {
+    console.error("[vendorSms] clear stale thread state", error.message)
+  }
+}
+
 /** MVP: all vendor SMS uses the landlord's main line (per-vendor proxy comes later). */
 export async function resolveVendorAlertSenderNumber(
   supabase: SupabaseClient,
@@ -132,6 +191,26 @@ async function recordVendorAlertSentEvent(
  * Send a vendor job alert through SMSProvider and persist conversation + graph event.
  * Vendor real phone (`vendors.phone`) is the destination; sender is always landlord_main.
  */
+async function resolveLandlordIdForTicket(
+  supabase: SupabaseClient,
+  ticketId: string,
+  explicit?: string | null,
+): Promise<string> {
+  const fromParam = explicit?.trim()
+  if (fromParam) return resolveLandlordId(fromParam)
+
+  const { data } = await supabase
+    .from("maintenance_requests")
+    .select("landlord_id")
+    .eq("id", ticketId)
+    .maybeSingle()
+  const fromTicket =
+    typeof data?.landlord_id === "string" ? data.landlord_id.trim() : ""
+  if (fromTicket) return resolveLandlordId(fromTicket)
+
+  return resolveLandlordId()
+}
+
 export async function sendVendorJobAlert(
   supabase: SupabaseClient,
   params: {
@@ -149,7 +228,11 @@ export async function sendVendorJobAlert(
 
   let landlordId: string
   try {
-    landlordId = resolveLandlordId(params.landlordId)
+    landlordId = await resolveLandlordIdForTicket(
+      supabase,
+      params.ticketId,
+      params.landlordId,
+    )
   } catch (e) {
     const message = e instanceof Error ? e.message : String(e)
     return { ok: false, error: message }
@@ -180,6 +263,17 @@ export async function sendVendorJobAlert(
     maintenanceRequestId: params.ticketId,
     conversationStatus: "open",
   })
+
+  // New job alerts reuse the same vendor SMS thread — drop schedule / estimate
+  // wait state from a prior ticket so YES isn't stolen by the old FSM.
+  try {
+    await clearStaleVendorThreadStateForTicket(supabase, {
+      conversationId,
+      ticketId: params.ticketId,
+    })
+  } catch (e) {
+    console.error("[vendorSms] clear stale thread state", e)
+  }
 
   const provider = getSMSProvider()
   const sendResult = await provider.sendMessage({
@@ -271,6 +365,18 @@ export type VendorStatusTransitionResultMeta = {
   reason?: string
 }
 
+async function ticketStillExists(
+  supabase: SupabaseClient,
+  ticketId: string,
+): Promise<boolean> {
+  const { data } = await supabase
+    .from("maintenance_requests")
+    .select("id")
+    .eq("id", ticketId)
+    .maybeSingle()
+  return !!data?.id
+}
+
 /** Resolve open ticket for an inbound vendor reply. */
 export async function resolveVendorMaintenanceRequestId(
   supabase: SupabaseClient,
@@ -281,7 +387,8 @@ export async function resolveVendorMaintenanceRequestId(
   },
 ): Promise<string | null> {
   if (params.conversationMaintenanceRequestId) {
-    return params.conversationMaintenanceRequestId
+    const id = params.conversationMaintenanceRequestId.trim()
+    if (id && (await ticketStillExists(supabase, id))) return id
   }
 
   if (params.conversationId) {
@@ -293,7 +400,7 @@ export async function resolveVendorMaintenanceRequestId(
 
     const linked = (convo as { maintenance_request_id?: string | null } | null)
       ?.maintenance_request_id
-    if (linked) return linked
+    if (linked && (await ticketStillExists(supabase, linked))) return linked
   }
 
   const { data: ticket } = await supabase

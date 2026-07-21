@@ -1,9 +1,6 @@
 import { serve } from "https://deno.land/std/http/server.ts"
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1"
-import {
-  notifyResidentCompleted,
-  notifyResidentInProgress,
-} from "../submit-maintenance-request/resident_notify.ts"
+import { notifyResidentInProgress } from "../submit-maintenance-request/resident_notify.ts"
 import { tryAutoReassignAfterDecline } from "../_shared/vendor_auto_reassign.ts"
 import { beginVendorAvailabilityAsk } from "../_shared/vendor_job_schedule.ts"
 import { bearerLooksLikeJwt } from "../_shared/vendor_portal_bearer.ts"
@@ -12,14 +9,10 @@ import { logGraphEvent } from "../_shared/graph/logGraphEvent.ts"
 import { resolveLandlordId } from "../_shared/sms/landlordSmsOnboarding.ts"
 import { requestVendorFeedback } from "../_shared/vendor_feedback.ts"
 import {
-  markMaintenanceJobCompleted,
   submitMaintenanceInvoice,
   type MaintenanceInvoiceInput,
 } from "../_shared/maintenanceSpend.ts"
-import {
-  notifyLandlordJobCompleted,
-  sendCompletionUploadNudge,
-} from "../_shared/maintenanceCompletion.ts"
+import { sendCompletionUploadNudge } from "../_shared/maintenanceCompletion.ts"
 
 const corsHeaders: Record<string, string> = {
   "Access-Control-Allow-Origin": "*",
@@ -296,28 +289,11 @@ serve(async (req) => {
         422,
       )
     }
-  }
 
-  const { error: upErr } = await supabase
-    .from("maintenance_requests")
-    .update({ vendor_work_status: step.next })
-    .eq("id", ticketId)
-    .eq("assigned_vendor_id", vendorIdMatched)
-
-  if (upErr) {
-    console.error("[vendor-update-job-status] update", upErr)
-    return jsonResponse({ error: "Update failed" }, 500)
-  }
-
-  if (step.next === "completed") {
-    try {
-      await markMaintenanceJobCompleted(supabase, ticketId)
-    } catch (e) {
-      console.error("[vendor-update-job-status] mark completed", e)
-    }
-
+    // Mark complete → invoice + resident 1–5 rating. Status stays in_progress
+    // until feedback finalizes completion on both ends.
     const invoiceRaw = body.invoice
-    if (invoiceRaw && typeof invoiceRaw === "object") {
+    if (invoiceRaw && typeof invoiceRaw === "object" && vendorIdMatched) {
       const o = invoiceRaw as Record<string, unknown>
       const labor = Number(o.laborCost ?? o.labor_cost ?? 0)
       const material = Number(o.materialCost ?? o.material_cost ?? 0)
@@ -347,7 +323,7 @@ serve(async (req) => {
               : null,
         }
         const total = labor + material + tax
-        if (total > 0 && vendorIdMatched) {
+        if (total > 0) {
           const invResult = await submitMaintenanceInvoice(supabase, {
             maintenanceRequestId: ticketId,
             vendorId: vendorIdMatched,
@@ -363,6 +339,74 @@ serve(async (req) => {
         }
       }
     }
+
+    const { data: trow } = await supabase
+      .from("maintenance_requests")
+      .select("landlord_id, resident_name, resident_phone")
+      .eq("id", ticketId)
+      .maybeSingle()
+
+    const landlordId =
+      typeof trow?.landlord_id === "string" ? trow.landlord_id : null
+    if (landlordId && vendorIdMatched) {
+      const { data: enriched } = await supabase
+        .from("maintenance_request_enriched")
+        .select("resident_id")
+        .eq("id", ticketId)
+        .maybeSingle()
+      try {
+        await requestVendorFeedback(supabase, {
+          ticketId,
+          landlordId,
+          vendorId: vendorIdMatched,
+          residentId:
+            typeof enriched?.resident_id === "string"
+              ? enriched.resident_id
+              : null,
+          residentPhone:
+            typeof trow?.resident_phone === "string"
+              ? trow.resident_phone
+              : null,
+          residentName:
+            typeof trow?.resident_name === "string" ? trow.resident_name : null,
+        })
+      } catch (e) {
+        console.error("[vendor-update-job-status] vendor feedback request", e)
+      }
+
+      try {
+        await logGraphEvent(supabase, {
+          landlord_id: landlordId,
+          event_type: "maintenance.completion_pending_feedback",
+          source: source === "portal" ? "vendor_portal" : "edge_function",
+          actor_type: "vendor",
+          actor_id: vendorIdMatched,
+          vendor_id: vendorIdMatched,
+          maintenance_request_id: ticketId,
+          metadata: { from_status: current },
+        })
+      } catch (e) {
+        console.error("[vendor-update-job-status] pending feedback graph", e)
+      }
+    }
+
+    return jsonResponse({
+      ok: true,
+      ticketId,
+      vendor_work_status: "in_progress",
+      awaiting_feedback: true,
+    })
+  }
+
+  const { error: upErr } = await supabase
+    .from("maintenance_requests")
+    .update({ vendor_work_status: step.next })
+    .eq("id", ticketId)
+    .eq("assigned_vendor_id", vendorIdMatched)
+
+  if (upErr) {
+    console.error("[vendor-update-job-status] update", upErr)
+    return jsonResponse({ error: "Update failed" }, 500)
   }
 
   const { error: logErr } = await supabase.from("vendor_status_events").insert({
@@ -428,12 +472,7 @@ serve(async (req) => {
     }
   }
 
-  if (step.next === "in_progress" || step.next === "completed") {
-    const event =
-      step.next === "in_progress"
-        ? ("repair_in_progress" as const)
-        : ("repair_completed" as const)
-
+  if (step.next === "in_progress") {
     const { data: trow } = await supabase
       .from("maintenance_requests")
       .select(
@@ -454,7 +493,7 @@ serve(async (req) => {
 
     if (trow) {
       try {
-        const base = {
+        await notifyResidentInProgress(supabase, {
           ticketId,
           recipientName: String(trow.resident_name ?? ""),
           recipientEmail:
@@ -470,83 +509,7 @@ serve(async (req) => {
           unit: typeof trow.unit === "string" ? trow.unit : undefined,
           priority: typeof trow.priority === "string" ? trow.priority : undefined,
           vendorName,
-        }
-        if (event === "repair_in_progress") {
-          await notifyResidentInProgress(supabase, base)
-        } else {
-          const photoCount = Array.isArray(row.completion_photo_paths)
-            ? (row.completion_photo_paths as string[]).filter(
-                (p): p is string => typeof p === "string" && p.trim().length > 0,
-              ).length
-            : 0
-          await notifyResidentCompleted(supabase, {
-            ...base,
-            completionPhotoCount: photoCount,
-          })
-        }
-
-        if (step.next === "completed" && trow?.landlord_id && vendorIdMatched) {
-          const landlordId = String(trow.landlord_id)
-          const { data: enriched } = await supabase
-            .from("maintenance_request_enriched")
-            .select("resident_id")
-            .eq("id", ticketId)
-            .maybeSingle()
-
-          try {
-            await requestVendorFeedback(supabase, {
-              ticketId,
-              landlordId,
-              vendorId: vendorIdMatched,
-              residentId:
-                typeof enriched?.resident_id === "string"
-                  ? enriched.resident_id
-                  : null,
-              residentPhone:
-                typeof trow.resident_phone === "string"
-                  ? trow.resident_phone
-                  : null,
-              residentName:
-                typeof trow.resident_name === "string"
-                  ? trow.resident_name
-                  : null,
-            })
-          } catch (e) {
-            console.error("[vendor-update-job-status] vendor feedback request", e)
-          }
-
-          const photoCount = Array.isArray(row.completion_photo_paths)
-            ? (row.completion_photo_paths as string[]).filter(
-                (p): p is string => typeof p === "string" && p.trim().length > 0,
-              ).length
-            : 0
-          const jobToken =
-            typeof row.vendor_action_token === "string"
-              ? row.vendor_action_token
-              : ""
-          if (jobToken) {
-            try {
-              await notifyLandlordJobCompleted(supabase, {
-                landlordId,
-                ticketId,
-                jobToken,
-                unit:
-                  typeof trow.unit === "string"
-                    ? trow.unit
-                    : typeof row.unit === "string"
-                    ? row.unit
-                    : "",
-                vendorName: vendorName ?? "Vendor",
-                photoCount,
-              })
-            } catch (e) {
-              console.error(
-                "[vendor-update-job-status] landlord completion notify",
-                e,
-              )
-            }
-          }
-        }
+        })
       } catch (e) {
         console.error("[vendor-update-job-status] resident notify", e)
       }

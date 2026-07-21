@@ -350,6 +350,7 @@ async function notifyChannelsForAssignment(
           r.providerMessageSid,
           null,
         )
+        // Job detail link is SMS 3 after YES → scheduling ask (see beginVendorAvailabilityAsk).
       }
     }
   }

@@ -348,17 +348,59 @@ export function recommendUrgency(state: SmsIntakeState): string {
   return "normal"
 }
 
+/** Affirmations for “does that sound right?” style prompts. */
+export function isAffirmativeReply(input: string): boolean {
+  const t = input.trim().toLowerCase().replace(/\s+/g, " ")
+  if (!t) return false
+  return /^(y|yes|yeah|yep|yup|yea|correct|right|ok|okay|sure|agreed?|confirm(ed)?|sounds?\s+good|sounds?\s+right|that\s+sounds?\s+(right|good|correct|fine)|that'?s?\s+(right|correct|fine|good)|looks?\s+(right|good|correct)|works?\s+for\s+me|go\s+ahead)([.!?]|$)/.test(
+    t,
+  )
+}
+
+/**
+ * Parse urgency from free text. Accepts keywords anywhere in the phrase
+ * ("It's an emergency", "call it urgent please") — not only a bare keyword.
+ * When multiple levels appear, prefer the most severe.
+ */
 export function parseUrgency(input: string): string | null {
-  const t = input.trim().toLowerCase()
-  if (/^emergency\b/.test(t) || t === "1") return "emergency"
-  if (/^urgent\b/.test(t) || t === "2") return "urgent"
-  if (/^normal\b/.test(t) || t === "3") return "normal"
-  if (/^low\b/.test(t) || t === "4") return "low"
+  const t = input.trim().toLowerCase().replace(/\s+/g, " ")
+  if (!t) return null
+  if (t === "1") return "emergency"
+  if (t === "2") return "urgent"
+  if (t === "3") return "normal"
+  if (t === "4") return "low"
+
+  if (/\bemergenc(y|ies)\b/.test(t)) return "emergency"
+  if (/\burgents?\b/.test(t)) return "urgent"
+  if (/\b(normal|routine|standard)\b/.test(t)) return "normal"
+  if (/\b(low|minor)\b/.test(t) || /\bnot\s+urgent\b/.test(t)) return "low"
+  return null
+}
+
+/** Keyword parse, or accept recommended urgency on a clear yes/affirmation. */
+export function resolveUrgencyReply(
+  input: string,
+  recommended?: string | null,
+): string | null {
+  const parsed = parseUrgency(input)
+  if (parsed) return parsed
+  const rec = (recommended ?? "").trim().toLowerCase()
+  if (
+    (rec === "emergency" || rec === "urgent" || rec === "normal" || rec === "low") &&
+    isAffirmativeReply(input)
+  ) {
+    return rec
+  }
   return null
 }
 
 export function parseContactMethod(input: string): string | null {
-  const t = input.trim().toLowerCase()
+  const t = input.trim().toLowerCase().replace(/\s+/g, " ")
+  if (!t) return null
+  if (/\b(text|sms|message|messaging)\b/.test(t) && !/\bemail\b/.test(t)) {
+    return "text"
+  }
+  if (/\bemails?\b/.test(t) && !/\b(text|sms)\b/.test(t)) return "email"
   if (/^(text|sms)\b/.test(t)) return "text"
   if (/^email\b/.test(t)) return "email"
   return null
@@ -649,7 +691,7 @@ export function urgencyQuestion(state: SmsIntakeState, recommended?: string): st
 
   if (level === "emergency" || level === "urgent") {
     const priorityWord = level === "emergency" ? "an emergency" : "urgent"
-    return `Since ${reason}, I'd treat this as ${priorityWord}. Does that sound right, or would you rate it differently? (emergency / urgent / normal / low)`
+    return `Because ${reason}, I'd treat this as ${priorityWord}. Does that sound right, or would you rate it differently? (emergency / urgent / normal / low)`
   }
 
   return "How would you describe the priority? Emergency, urgent, normal, or low?"

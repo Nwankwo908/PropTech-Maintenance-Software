@@ -12,18 +12,48 @@ import { resolveLandlordId } from "./sms/landlordSmsOnboarding.ts"
 import { sendVendorJobAlert } from "./sms/vendorSmsRouting.ts"
 import {
   buildVendorAvailabilityAskSms,
+  buildVendorJobDetailLinkSms,
   buildVendorScheduleConfirmedSms,
   formatWorkOrderRef,
 } from "./vendor_outreach_copy.ts"
+import {
+  parseAvailabilityToScheduledAt,
+  type ResolvedAvailability,
+} from "./vendor_availability_parse.ts"
+import {
+  appendOutboundContext,
+  CONFIRM_TTL_MS,
+  createIdleScheduleState,
+  persistVendorScheduleFsm,
+  readVendorScheduleFsm,
+  reduceScheduleFsm,
+  SCHEDULE_TTL_MS,
+  type VendorScheduleFsmState,
+  type VendorScheduleStep,
+  withVendorScheduleFsm,
+} from "./vendor_schedule_fsm.ts"
 
-export type VendorScheduleStep = "awaiting_availability" | "scheduled"
+export { parseAvailabilityToScheduledAt } from "./vendor_availability_parse.ts"
+export type { VendorScheduleFsmState, VendorScheduleStep }
 
+function appBaseUrl(): string {
+  const raw = Deno.env.get("APP_URL")?.trim() ?? ""
+  if (!raw) return ""
+  const t = raw.replace(/\/$/, "")
+  if (/^https?:\/\//i.test(t)) return t
+  return `https://${t}`
+}
+
+/** @deprecated Prefer VendorScheduleFsmState — kept for older call sites. */
 export type VendorScheduleState = {
   step?: VendorScheduleStep
   ticketId?: string
+  pendingWindowText?: string
+  pendingScheduledAt?: string | null
+  pendingEndAt?: string | null
+  revision?: number
+  expiresAt?: string
 }
-
-const SCHEDULE_KEY = "vendor_schedule"
 
 export function formatWorkOrderRefFromTicketId(ticketId: string): string {
   return formatWorkOrderRef(ticketId)
@@ -32,72 +62,90 @@ export function formatWorkOrderRefFromTicketId(ticketId: string): string {
 export function readVendorScheduleState(
   intakeState: Record<string, unknown> | null | undefined,
 ): VendorScheduleState | null {
-  if (!intakeState || typeof intakeState !== "object") return null
-  const raw = intakeState[SCHEDULE_KEY]
-  if (!raw || typeof raw !== "object") return null
-  const obj = raw as Record<string, unknown>
-  const step = obj.step
-  const ticketId = typeof obj.ticketId === "string" ? obj.ticketId : undefined
-  if (step === "awaiting_availability" || step === "scheduled") {
-    return { step, ticketId }
+  const fsm = readVendorScheduleFsm(intakeState)
+  if (!fsm || fsm.step === "idle") return null
+  return {
+    step: fsm.step,
+    ticketId: fsm.ticketId,
+    pendingWindowText: fsm.pendingWindowText,
+    pendingScheduledAt: fsm.pendingScheduledAt,
+    pendingEndAt: fsm.pendingEndAt,
+    revision: fsm.revision,
+    expiresAt: fsm.expiresAt,
   }
-  return null
 }
 
 export function withVendorScheduleState(
   intakeState: Record<string, unknown> | null | undefined,
   schedule: VendorScheduleState | null,
 ): Record<string, unknown> {
-  const base =
-    intakeState && typeof intakeState === "object" ? { ...intakeState } : {}
   if (!schedule) {
-    delete base[SCHEDULE_KEY]
-    return base
+    return withVendorScheduleFsm(intakeState, null)
   }
-  base[SCHEDULE_KEY] = schedule
-  return base
+  const prev = readVendorScheduleFsm(intakeState) ??
+    createIdleScheduleState(schedule.ticketId ?? "")
+  const at = new Date().toISOString()
+  const step = schedule.step && schedule.step !== "idle"
+    ? schedule.step
+    : "awaiting_availability"
+  const next: VendorScheduleFsmState = {
+    ...prev,
+    step,
+    ticketId: schedule.ticketId ?? prev.ticketId,
+    pendingWindowText: schedule.pendingWindowText,
+    pendingScheduledAt: schedule.pendingScheduledAt,
+    pendingEndAt: schedule.pendingEndAt,
+    enteredAt: at,
+    expiresAt: schedule.expiresAt ??
+      new Date(
+        Date.now() +
+          (step === "awaiting_confirmation" ? CONFIRM_TTL_MS : SCHEDULE_TTL_MS),
+      ).toISOString(),
+    revision: prev.revision + 1,
+  }
+  return withVendorScheduleFsm(intakeState, next)
 }
 
-/** Best-effort parse of vendor availability into an ISO timestamp (null if unclear). */
-export function parseAvailabilityToScheduledAt(
-  raw: string,
-  now = new Date(),
-): string | null {
-  const text = raw.trim().toLowerCase().replace(/\s+/g, " ")
-  if (!text) return null
+export async function setVendorPendingConfirmation(
+  supabase: SupabaseClient,
+  params: {
+    conversationId: string
+    ticketId: string
+    pending: ResolvedAvailability
+  },
+): Promise<void> {
+  const { data: convo } = await supabase
+    .from("sms_conversations")
+    .select("intake_state")
+    .eq("id", params.conversationId)
+    .maybeSingle()
 
-  const timeMatch = text.match(
-    /\b(\d{1,2})(?::(\d{2}))?\s*(a\.?m\.?|p\.?m\.?)\b/i,
-  )
-  let hours: number | null = null
-  let minutes = 0
-  if (timeMatch) {
-    hours = Number(timeMatch[1])
-    minutes = timeMatch[2] ? Number(timeMatch[2]) : 0
-    const meridiem = (timeMatch[3] ?? "").toLowerCase().replace(/\./g, "")
-    if (meridiem.startsWith("p") && hours < 12) hours += 12
-    if (meridiem.startsWith("a") && hours === 12) hours = 0
-  } else {
-    const military = text.match(/\b([01]?\d|2[0-3]):([0-5]\d)\b/)
-    if (military) {
-      hours = Number(military[1])
-      minutes = Number(military[2])
-    }
+  const intake = (convo?.intake_state as Record<string, unknown> | null) ?? {}
+  const prev = readVendorScheduleFsm(intake)
+  const at = new Date().toISOString()
+  const transition = reduceScheduleFsm(prev, {
+    type: "SAVE_FAIL",
+    at,
+    windowText: params.pending.windowLabel,
+    scheduledAt: params.pending.scheduledAt,
+    endAt: params.pending.endAt,
+  })
+  // SAVE_FAIL enters awaiting_confirmation with pending — reuse for soft confirm too.
+  const next: VendorScheduleFsmState = {
+    ...transition.state,
+    ticketId: params.ticketId,
+    step: "awaiting_confirmation",
+    pendingWindowText: params.pending.windowLabel,
+    pendingScheduledAt: params.pending.scheduledAt,
+    pendingEndAt: params.pending.endAt,
+    pendingSince: at,
   }
-
-  const base = new Date(now.getTime())
-  if (/\btomorrow\b/.test(text)) {
-    base.setDate(base.getDate() + 1)
-  } else if (/\btoday\b/.test(text)) {
-    // keep today
-  } else if (hours == null) {
-    return null
-  }
-
-  if (hours == null) hours = 10
-  base.setHours(hours, minutes, 0, 0)
-  if (Number.isNaN(base.getTime())) return null
-  return base.toISOString()
+  await persistVendorScheduleFsm(supabase, {
+    conversationId: params.conversationId,
+    ticketId: params.ticketId,
+    next,
+    expectedRevision: prev?.revision,
+  })
 }
 
 async function loadVendorConversationId(
@@ -134,19 +182,20 @@ export async function setVendorAwaitingAvailability(
     .eq("id", params.conversationId)
     .maybeSingle()
 
-  const next = withVendorScheduleState(
-    (convo?.intake_state as Record<string, unknown> | null) ?? {},
-    { step: "awaiting_availability", ticketId: params.ticketId },
-  )
-
-  await supabase
-    .from("sms_conversations")
-    .update({
-      intake_state: next,
-      maintenance_request_id: params.ticketId,
-      updated_at: new Date().toISOString(),
-    })
-    .eq("id", params.conversationId)
+  const intake = (convo?.intake_state as Record<string, unknown> | null) ?? {}
+  const prev = readVendorScheduleFsm(intake)
+  const at = new Date().toISOString()
+  const transition = reduceScheduleFsm(prev, {
+    type: "JOB_ACCEPTED",
+    ticketId: params.ticketId,
+    at,
+  })
+  await persistVendorScheduleFsm(supabase, {
+    conversationId: params.conversationId,
+    ticketId: params.ticketId,
+    next: transition.state,
+    expectedRevision: prev?.revision,
+  })
 }
 
 /**
@@ -173,13 +222,33 @@ export async function beginVendorAvailabilityAsk(
     return { sentSms: false, conversationId: params.conversationId ?? null }
   }
 
+  // SMS 2 — scheduling ask (must use the ticket's landlord SMS line)
   const body = buildVendorAvailabilityAskSms()
+  const { data: ticketRow } = await supabase
+    .from("maintenance_requests")
+    .select("landlord_id")
+    .eq("id", params.ticketId)
+    .maybeSingle()
+  const landlordId =
+    typeof ticketRow?.landlord_id === "string"
+      ? ticketRow.landlord_id.trim()
+      : null
+
   const send = await sendVendorJobAlert(supabase, {
     ticketId: params.ticketId,
     vendorId: params.vendorId,
     vendorPhone: phone,
     body,
+    landlordId,
   })
+  if (!send.ok) {
+    console.error("[vendor-schedule] availability ask SMS failed", {
+      ticketId: params.ticketId,
+      vendorId: params.vendorId,
+      landlordId,
+      error: send.error,
+    })
+  }
 
   let conversationId = params.conversationId ?? null
   if (send.ok) {
@@ -192,13 +261,55 @@ export async function beginVendorAvailabilityAsk(
   }
 
   if (conversationId) {
-    await setVendorAwaitingAvailability(supabase, {
+    const { data: convo } = await supabase
+      .from("sms_conversations")
+      .select("intake_state")
+      .eq("id", conversationId)
+      .maybeSingle()
+    const intake = (convo?.intake_state as Record<string, unknown> | null) ?? {}
+    const prev = readVendorScheduleFsm(intake)
+    const at = new Date().toISOString()
+    let transition = reduceScheduleFsm(prev, {
+      type: "JOB_ACCEPTED",
+      ticketId: params.ticketId,
+      at,
+    })
+    if (send.ok) {
+      transition = {
+        ...transition,
+        state: appendOutboundContext(transition.state, body, at),
+      }
+    }
+    await persistVendorScheduleFsm(supabase, {
       conversationId,
       ticketId: params.ticketId,
+      next: transition.state,
+      expectedRevision: prev?.revision,
     })
   }
 
+  // Job detail / estimate link is sent after schedule lock (see confirmVendorSchedule).
   return { sentSms: send.ok, conversationId }
+}
+
+async function resolveVendorJobDetailUrl(
+  supabase: SupabaseClient,
+  ticketId: string,
+): Promise<string> {
+  const { data: ticket } = await supabase
+    .from("maintenance_requests")
+    .select("vendor_action_token")
+    .eq("id", ticketId)
+    .maybeSingle()
+  const token =
+    typeof ticket?.vendor_action_token === "string"
+      ? ticket.vendor_action_token.trim()
+      : ""
+  if (!token) return ""
+  const base = appBaseUrl()
+  return base
+    ? `${base}/w/${encodeURIComponent(token)}`
+    : `/w/${encodeURIComponent(token)}`
 }
 
 function adminNotifyEmails(): string[] {
@@ -267,6 +378,8 @@ export async function confirmVendorSchedule(
     vendorId: string
     conversationId?: string | null
     windowText: string
+    /** Pre-resolved start instant (from chrono/LLM). */
+    scheduledAt?: string | null
   },
 ): Promise<{ ok: true; replyHint: string } | { ok: false; error: string }> {
   const windowText = params.windowText.trim().replace(/\s+/g, " ")
@@ -274,56 +387,65 @@ export async function confirmVendorSchedule(
     return { ok: false, error: "empty_window" }
   }
 
-  const scheduledAt = parseAvailabilityToScheduledAt(windowText)
+  const scheduledAt =
+    (typeof params.scheduledAt === "string" && params.scheduledAt.trim()
+      ? params.scheduledAt.trim()
+      : null) ?? parseAvailabilityToScheduledAt(windowText)
   const nowIso = new Date().toISOString()
 
   const { data: ticket, error: tErr } = await supabase
     .from("maintenance_requests")
     .select(
-      "id, landlord_id, unit, resident_name, email, resident_phone, resident_notification_channel, priority, assigned_vendor_id, vendor_work_status",
+      "id, landlord_id, unit, resident_name, email, resident_phone, resident_notification_channel, priority, assigned_vendor_id, vendor_work_status, vendor_action_token",
     )
     .eq("id", params.ticketId)
     .maybeSingle()
 
   if (tErr || !ticket) {
+    console.error("[vendor-schedule] ticket lookup", tErr?.message)
     return { ok: false, error: "ticket_not_found" }
   }
-  if (ticket.assigned_vendor_id !== params.vendorId) {
-    return { ok: false, error: "not_assigned_to_vendor" }
+  // Soft check: still save availability when the vendor is texting on the job
+  // thread even if assigned_vendor_id drifted (reassign race / duplicate profiles).
+  if (
+    ticket.assigned_vendor_id &&
+    ticket.assigned_vendor_id !== params.vendorId
+  ) {
+    console.warn("[vendor-schedule] assigned vendor mismatch; saving anyway", {
+      ticketId: params.ticketId,
+      assigned: ticket.assigned_vendor_id,
+      replier: params.vendorId,
+    })
+  }
+
+  const patch: Record<string, unknown> = {
+    scheduled_window_text: windowText,
+    scheduled_at: scheduledAt,
+    schedule_confirmed_at: nowIso,
+  }
+  if (ticket.vendor_work_status === "pending_accept") {
+    patch.vendor_work_status = "accepted"
   }
 
   const { error: upErr } = await supabase
     .from("maintenance_requests")
-    .update({
-      scheduled_window_text: windowText,
-      scheduled_at: scheduledAt,
-      schedule_confirmed_at: nowIso,
-      vendor_work_status:
-        ticket.vendor_work_status === "pending_accept"
-          ? "accepted"
-          : ticket.vendor_work_status,
-    })
+    .update(patch)
     .eq("id", params.ticketId)
 
   if (upErr) {
-    console.error("[vendor-schedule] update ticket", upErr.message)
-    return { ok: false, error: "update_failed" }
-  }
-
-  if (params.conversationId) {
-    const { data: convo } = await supabase
-      .from("sms_conversations")
-      .select("intake_state")
-      .eq("id", params.conversationId)
-      .maybeSingle()
-    const next = withVendorScheduleState(
-      (convo?.intake_state as Record<string, unknown> | null) ?? {},
-      { step: "scheduled", ticketId: params.ticketId },
-    )
-    await supabase
-      .from("sms_conversations")
-      .update({ intake_state: next, updated_at: nowIso })
-      .eq("id", params.conversationId)
+    console.error("[vendor-schedule] update ticket", upErr.message, upErr)
+    // Retry without parsed timestamp — window text is the source of truth.
+    const { error: retryErr } = await supabase
+      .from("maintenance_requests")
+      .update({
+        scheduled_window_text: windowText,
+        schedule_confirmed_at: nowIso,
+      })
+      .eq("id", params.ticketId)
+    if (retryErr) {
+      console.error("[vendor-schedule] update retry", retryErr.message)
+      return { ok: false, error: `update_failed:${retryErr.message}` }
+    }
   }
 
   const { data: vendor } = await supabase
@@ -334,13 +456,68 @@ export async function confirmVendorSchedule(
 
   const vendorName =
     typeof vendor?.name === "string" ? vendor.name.trim() : "Vendor"
+  const vendorPhone =
+    typeof vendor?.phone === "string" ? vendor.phone.trim() : ""
   const workOrderRef = formatWorkOrderRef(params.ticketId)
   const unit = typeof ticket.unit === "string" ? ticket.unit : ""
-  // Caller (SMS workflow) sends this as the outbound reply.
+
+  let jobDetailUrl = ""
+  try {
+    jobDetailUrl = await resolveVendorJobDetailUrl(supabase, params.ticketId)
+  } catch (e) {
+    console.error("[vendor-schedule] resolve job detail url", e)
+  }
+
+  // Completes the scheduling interaction: confirm + clear next action (estimate).
   const replyHint = buildVendorScheduleConfirmedSms({
     workOrderRef,
     windowText,
+    jobDetailUrl,
   })
+
+  if (params.conversationId) {
+    const { data: convo } = await supabase
+      .from("sms_conversations")
+      .select("intake_state")
+      .eq("id", params.conversationId)
+      .maybeSingle()
+    const intake = (convo?.intake_state as Record<string, unknown> | null) ?? {}
+    const prev = readVendorScheduleFsm(intake)
+    const transition = reduceScheduleFsm(prev, {
+      type: "SAVE_OK",
+      at: nowIso,
+      windowText,
+    })
+    const withOut = appendOutboundContext(transition.state, replyHint, nowIso)
+    // No expectedRevision — caller may have already bumped the FSM this turn.
+    await persistVendorScheduleFsm(supabase, {
+      conversationId: params.conversationId,
+      ticketId: params.ticketId,
+      next: { ...withOut, ticketId: params.ticketId },
+    })
+  }
+
+  // Fallback follow-up if we confirmed without a portal link in the reply.
+  if (!jobDetailUrl && vendorPhone) {
+    try {
+      const url = await resolveVendorJobDetailUrl(supabase, params.ticketId)
+      const linkSms = url ? buildVendorJobDetailLinkSms(url) : ""
+      if (linkSms) {
+        const linkLandlordId =
+          (typeof ticket.landlord_id === "string" && ticket.landlord_id.trim()) ||
+          null
+        await sendVendorJobAlert(supabase, {
+          ticketId: params.ticketId,
+          vendorId: params.vendorId,
+          vendorPhone,
+          body: linkSms,
+          landlordId: linkLandlordId,
+        })
+      }
+    } catch (e) {
+      console.error("[vendor-schedule] post-confirm next-steps SMS", e)
+    }
+  }
 
   const residentInput: ResidentNotifyInput = {
     event: "schedule_confirmed",

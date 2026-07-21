@@ -4,9 +4,13 @@ import {
   extractRoomFromText,
   inferIssueTypeFromText,
   intakeQuestionForStep,
+  isAffirmativeReply,
   normalizeRoomOrArea,
+  parseUrgency,
   resolveRoomLabel,
+  resolveUrgencyReply,
   sanitizeIntakeState,
+  urgencyQuestion,
 } from "./residentIntakeTypes.ts"
 
 function assertEqual(actual: unknown, expected: unknown, label: string) {
@@ -61,4 +65,30 @@ Deno.test("asks for room when location unknown", () => {
     "Sorry you're dealing with that. Which room is this happening in? Kitchen, bathroom, basement, bedroom, or somewhere else?",
     "room prompt",
   )
+})
+
+Deno.test("urgency parse accepts natural phrases", () => {
+  assertEqual(parseUrgency("It's an emergency"), "emergency", "phrase emergency")
+  assertEqual(parseUrgency("call it urgent please"), "urgent", "phrase urgent")
+  assertEqual(parseUrgency("emergency"), "emergency", "bare")
+  assertEqual(
+    resolveUrgencyReply("That sounds right", "emergency"),
+    "emergency",
+    "affirm recommended",
+  )
+  assertEqual(isAffirmativeReply("That sounds right"), true, "affirm")
+  assertEqual(resolveUrgencyReply("maybe later", "emergency"), null, "non-match")
+})
+
+Deno.test("urgency question uses Because not Since of", () => {
+  const state = sanitizeIntakeState({
+    step: "urgency",
+    issue_type: "electrical",
+    recommended_urgency: "emergency",
+    safety_concerns: "sparks near wires",
+    initial_message: "sparks",
+  })
+  const q = urgencyQuestion(state)
+  assertEqual(q.startsWith("Because "), true, "because prefix")
+  assertEqual(q.includes("Since of"), false, "no since of")
 })

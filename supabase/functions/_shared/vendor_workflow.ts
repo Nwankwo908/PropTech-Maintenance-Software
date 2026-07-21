@@ -5,7 +5,14 @@ import { beginVendorAvailabilityAsk } from "./vendor_job_schedule.ts"
 export type VendorSmsReplyAction = "accept" | "decline"
 
 export type VendorStatusTransitionResult =
-  | { ok: true; fromStatus: string; toStatus: string; action: VendorSmsReplyAction }
+  | {
+      ok: true
+      fromStatus: string
+      toStatus: string
+      action: VendorSmsReplyAction
+      /** False when accept ran but "Earliest availability?" SMS did not send. */
+      availabilityAskSent?: boolean
+    }
   | { ok: false; reason: string; currentStatus?: string }
 
 /** Parse vendor SMS for accept/decline intent. */
@@ -116,15 +123,18 @@ export async function applyVendorStatusTransition(
   })
   if (logErr) console.error("[vendor-workflow] audit", logErr.message)
 
+  let availabilityAskSent: boolean | undefined
   if (next === "accepted" && params.askAvailability !== false) {
     try {
-      await beginVendorAvailabilityAsk(supabase, {
+      const ask = await beginVendorAvailabilityAsk(supabase, {
         ticketId: params.ticketId,
         vendorId: params.vendorId,
         conversationId: params.conversationId ?? null,
       })
+      availabilityAskSent = ask.sentSms
     } catch (e) {
       console.error("[vendor-workflow] begin availability ask", e)
+      availabilityAskSent = false
     }
   }
 
@@ -136,5 +146,11 @@ export async function applyVendorStatusTransition(
     }
   }
 
-  return { ok: true, fromStatus: current, toStatus: next, action: params.action }
+  return {
+    ok: true,
+    fromStatus: current,
+    toStatus: next,
+    action: params.action,
+    availabilityAskSent,
+  }
 }

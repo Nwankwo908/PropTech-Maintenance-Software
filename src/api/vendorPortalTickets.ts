@@ -18,6 +18,14 @@ function clearVendorTokenAndShowInvalidCode() {
   window.location.assign("/vendor")
 }
 
+export type VendorApprovedEstimate = {
+  parts_cost: number
+  labor_cost: number
+  total_cost: number
+  status: string
+  approved_at: string | null
+}
+
 export type VendorApiTicket = {
   id: string
   created_at: string
@@ -26,12 +34,21 @@ export type VendorApiTicket = {
   priority?: string | null
   resident_name: string
   unit: string
+  /** Building street address from property enrichment. */
+  building?: string | null
+  building_address?: string | null
   description: string
   photo_paths: string[] | null
   /** Time-limited signed URLs for `photo_paths` (from vendor-list-tickets). */
   photo_urls?: string[] | null
+  completion_photo_paths?: string[] | null
+  completion_photo_urls?: string[] | null
+  completion_photo_count?: number | null
   vendor_work_status: string
   assigned_vendor_id: string | null
+  vendor_action_token?: string | null
+  approved_estimate?: VendorApprovedEstimate | null
+  awaiting_resident_feedback?: boolean | null
   /** SLA target resolution time (ISO). */
   due_at?: string | null
   estimated_minutes?: number | null
@@ -159,7 +176,7 @@ export async function postVendorJobStatus(
   action: "accept" | "decline" | "in_progress" | "completed",
   vendorToken: string,
   invoice?: VendorInvoiceInput,
-): Promise<{ vendor_work_status: string }> {
+): Promise<{ vendor_work_status: string; awaiting_feedback?: boolean }> {
   if (!uuidRe.test(ticketId)) {
     throw new Error("Invalid ticket id")
   }
@@ -201,9 +218,15 @@ export async function postVendorJobStatus(
     if (err.vendor_work_status) e.vendor_work_status = err.vendor_work_status
     throw e
   }
-  const ok = parsed as { vendor_work_status?: string }
+  const ok = parsed as {
+    vendor_work_status?: string
+    awaiting_feedback?: boolean
+  }
   if (!ok.vendor_work_status) throw new Error("Vendor update: missing status")
-  return { vendor_work_status: ok.vendor_work_status }
+  return {
+    vendor_work_status: ok.vendor_work_status,
+    awaiting_feedback: ok.awaiting_feedback === true,
+  }
 }
 
 export async function postVendorMaintenanceInvoice(
@@ -262,13 +285,21 @@ export type UpdateJobStatusInput = {
 
 export async function updateJobStatus(
   input: UpdateJobStatusInput,
-): Promise<{ ok: true; vendor_work_status: string }> {
-  const { vendor_work_status } = await postVendorJobStatus(
+): Promise<{
+  ok: true
+  vendor_work_status: string
+  awaiting_feedback?: boolean
+}> {
+  const result = await postVendorJobStatus(
     input.updateUrl,
     input.ticketId,
     input.action,
     input.vendorToken,
     input.invoice,
   )
-  return { ok: true, vendor_work_status }
+  return {
+    ok: true,
+    vendor_work_status: result.vendor_work_status,
+    awaiting_feedback: result.awaiting_feedback,
+  }
 }

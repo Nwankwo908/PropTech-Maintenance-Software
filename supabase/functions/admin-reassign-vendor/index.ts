@@ -5,7 +5,21 @@ import { adminReassignSecretAuthorized } from "../_shared/admin_reassign_auth.ts
 import { reassignVendorByIdAndNotify } from "../submit-maintenance-request/vendor_notify.ts"
 import { logGraphEvent } from "../_shared/graph/logGraphEvent.ts"
 import { resolveLandlordId } from "../_shared/sms/landlordSmsOnboarding.ts"
+import { beginVendorAvailabilityAsk } from "../_shared/vendor_job_schedule.ts"
+import {
+  buildVendorScheduleConfirmedSms,
+  formatWorkOrderRef,
+} from "../_shared/vendor_outreach_copy.ts"
+import { sendVendorJobAlert } from "../_shared/sms/vendorSmsRouting.ts"
 import { isUuidShape } from "../_shared/uuid_shape.ts"
+
+function appBaseUrl(): string {
+  const raw = Deno.env.get("APP_URL")?.trim() ?? ""
+  if (!raw) return "https://www.ulohome.io"
+  const t = raw.replace(/\/$/, "")
+  if (/^https?:\/\//i.test(t)) return t
+  return `https://${t}`
+}
 
 const corsHeaders = adminEdgeCorsHeaders
 
@@ -38,6 +52,7 @@ serve(async (req) => {
   }
 
   let body: {
+    action?: string
     ticketId?: string
     vendorId?: string
     vendorName?: string
@@ -51,6 +66,8 @@ serve(async (req) => {
   }
 
   const ticketId = typeof body.ticketId === "string" ? body.ticketId.trim() : ""
+  const action =
+    typeof body.action === "string" ? body.action.trim().toLowerCase() : ""
   const vendorIdRaw =
     typeof body.vendorId === "string" ? body.vendorId.trim() : ""
   const vendorName =
@@ -77,7 +94,9 @@ serve(async (req) => {
 
   const { data: ticketRow, error: ticketLoadErr } = await supabase
     .from("maintenance_requests")
-    .select("id, landlord_id, issue_category")
+    .select(
+      "id, landlord_id, issue_category, assigned_vendor_id, vendor_work_status, scheduled_window_text, vendor_action_token",
+    )
     .eq("id", ticketId)
     .maybeSingle()
 
@@ -95,6 +114,89 @@ serve(async (req) => {
   const ticketIssueCategory = ticketRow.issue_category == null
     ? null
     : String(ticketRow.issue_category).trim()
+
+  // Ops heal: resend "Earliest availability?" after accept when the ask SMS failed.
+  if (action === "ask_availability") {
+    const assignedVendorId =
+      typeof ticketRow.assigned_vendor_id === "string"
+        ? ticketRow.assigned_vendor_id.trim()
+        : ""
+    if (!assignedVendorId) {
+      return jsonResponse({ error: "Ticket has no assigned vendor" }, 422)
+    }
+    try {
+      const ask = await beginVendorAvailabilityAsk(supabase, {
+        ticketId,
+        vendorId: assignedVendorId,
+      })
+      return jsonResponse({
+        ok: ask.sentSms,
+        ticketId,
+        assigned_vendor_id: assignedVendorId,
+        sentSms: ask.sentSms,
+        conversationId: ask.conversationId,
+        vendor_work_status: ticketRow.vendor_work_status ?? null,
+      }, ask.sentSms ? 200 : 502)
+    } catch (e) {
+      console.error("[admin-reassign-vendor] ask_availability", e)
+      return jsonResponse({ error: "Availability ask failed" }, 500)
+    }
+  }
+
+  // Ops heal: schedule was saved but confirm SMS was circuit-breaker suppressed.
+  if (action === "schedule_confirm") {
+    const assignedVendorId =
+      typeof ticketRow.assigned_vendor_id === "string"
+        ? ticketRow.assigned_vendor_id.trim()
+        : ""
+    if (!assignedVendorId) {
+      return jsonResponse({ error: "Ticket has no assigned vendor" }, 422)
+    }
+    const { data: vendor } = await supabase
+      .from("vendors")
+      .select("phone")
+      .eq("id", assignedVendorId)
+      .maybeSingle()
+    const phone = typeof vendor?.phone === "string" ? vendor.phone.trim() : ""
+    if (!phone) {
+      return jsonResponse({ error: "Vendor has no phone" }, 422)
+    }
+    const windowText =
+      (typeof ticketRow.scheduled_window_text === "string" &&
+          ticketRow.scheduled_window_text.trim()) ||
+        "the agreed time"
+    const token =
+      typeof ticketRow.vendor_action_token === "string"
+        ? ticketRow.vendor_action_token.trim()
+        : ""
+    const jobDetailUrl = token
+      ? `${appBaseUrl()}/w/${encodeURIComponent(token)}`
+      : ""
+    const body = buildVendorScheduleConfirmedSms({
+      workOrderRef: formatWorkOrderRef(ticketId),
+      windowText,
+      jobDetailUrl,
+    })
+    try {
+      const send = await sendVendorJobAlert(supabase, {
+        ticketId,
+        vendorId: assignedVendorId,
+        vendorPhone: phone,
+        body,
+        landlordId: ticketLandlordId,
+      })
+      return jsonResponse({
+        ok: send.ok,
+        ticketId,
+        sentSms: send.ok,
+        conversationId: send.ok ? send.conversationId : null,
+        error: send.ok ? undefined : send.error,
+      }, send.ok ? 200 : 502)
+    } catch (e) {
+      console.error("[admin-reassign-vendor] schedule_confirm", e)
+      return jsonResponse({ error: "Schedule confirm SMS failed" }, 500)
+    }
+  }
 
   let _vendorId = ""
   if (vendorIdRaw && isUuidShape(vendorIdRaw)) {

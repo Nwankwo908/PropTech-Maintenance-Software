@@ -1,4 +1,5 @@
 import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.49.1"
+import { finalizeJobAfterResidentFeedback } from "./finalizeAfterResidentFeedback.ts"
 import { logGraphEvent } from "./graph/logGraphEvent.ts"
 import {
   findOrCreateConversation,
@@ -10,7 +11,7 @@ import type { SmsProviderName } from "./sms/types.ts"
 import { normalizePhoneFlexible } from "./resident_notify.ts"
 
 const RATING_REQUEST_BODY =
-  "Was your maintenance issue resolved?\n\nReply:\n1 = Poor\n2 = Fair\n3 = Good\n4 = Very Good\n5 = Excellent"
+  "How was your repair experience? Reply 1–5."
 
 const LOW_RATING_FOLLOWUP_BODY =
   "We're sorry to hear that.\n\nCan you briefly tell us what went wrong?"
@@ -322,6 +323,18 @@ export async function tryHandleVendorFeedbackInbound(
       metadata: { rating },
     })
 
+    // Rating 3–5 closes the job on both ends; 4–5 also texts the landlord pay options.
+    try {
+      await finalizeJobAfterResidentFeedback(supabase, {
+        landlordId: params.landlordId,
+        ticketId: request.maintenance_request_id,
+        vendorId: request.vendor_id,
+        rating,
+      })
+    } catch (e) {
+      console.error("[vendor-feedback] finalize after rating", e)
+    }
+
     return {
       handled: true,
       replyBody: THANK_YOU_BODY,
@@ -372,6 +385,26 @@ export async function tryHandleVendorFeedbackInbound(
       message_id: params.messageId,
       metadata: { comment_preview: comment.slice(0, 280) },
     })
+
+    // Low ratings still close the job after the resident explains what went wrong.
+    try {
+      const { data: fb } = request.feedback_id
+        ? await supabase
+          .from("vendor_feedback")
+          .select("rating")
+          .eq("id", request.feedback_id)
+          .maybeSingle()
+        : { data: null }
+      const rating = Number(fb?.rating) || 1
+      await finalizeJobAfterResidentFeedback(supabase, {
+        landlordId: params.landlordId,
+        ticketId: request.maintenance_request_id,
+        vendorId: request.vendor_id,
+        rating,
+      })
+    } catch (e) {
+      console.error("[vendor-feedback] finalize after comment", e)
+    }
 
     return {
       handled: true,

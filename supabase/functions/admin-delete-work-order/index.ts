@@ -3,13 +3,15 @@
  * Auth: ADMIN_REASSIGN_SECRET via x-admin-reassign-secret.
  *
  * Removes the ticket + all linked maintenance_intake / maintenance_request runs.
- * SMS threads are left in place (maintenance_request_id SET NULL) so shared
- * resident conversations are not wiped.
+ * SMS message history is kept, but conversation linkage + schedule / estimate
+ * wait state for this ticket are cleared so the SMS AI does not keep acting
+ * on the deleted work order.
  */
 import { serve } from "https://deno.land/std/http/server.ts"
 import { createClient, type SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.49.1"
 import { adminEdgeCorsHeaders } from "../_shared/admin_edge_cors.ts"
 import { adminReassignSecretAuthorized } from "../_shared/admin_reassign_auth.ts"
+import { detachDeletedTicketFromSmsConversations } from "../_shared/sms/detachTicketFromConversations.ts"
 
 const corsHeaders = adminEdgeCorsHeaders
 
@@ -250,7 +252,18 @@ serve(async (req) => {
     }
   }
 
+  let smsConversationsDetached = 0
   if (ticketId) {
+    try {
+      const detached = await detachDeletedTicketFromSmsConversations(supabase, {
+        ticketId,
+        landlordId,
+      })
+      smsConversationsDetached = detached.conversationsUpdated
+    } catch (e) {
+      console.error("[admin-delete-work-order] detach SMS conversations", e)
+    }
+
     // Cascades invoices / estimates / feedback / notification logs.
     const { error: ticketDelErr } = await supabase
       .from("maintenance_requests")
@@ -269,5 +282,6 @@ serve(async (req) => {
     workflowRunId,
     maintenanceRequestId: ticketId,
     deletedRunIds: runIds,
+    smsConversationsDetached,
   })
 })

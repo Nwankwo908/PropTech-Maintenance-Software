@@ -16,8 +16,10 @@ import {
   vendorPortalListUrl,
   vendorPortalUpdateUrl,
   type VendorApiTicket,
+  type VendorApprovedEstimate,
   type VendorInvoiceInput,
 } from '@/api/vendorPortalTickets'
+import { uploadCompletionPhotos } from '@/api/maintenanceCompletion'
 import { VENDOR_TOKEN_STORAGE_KEY } from '@/lib/vendorToken'
 import {
   actionToStatus,
@@ -40,6 +42,7 @@ export type VendorWorkOrder = {
   id: string
   displayId: string
   title: string
+  /** Always the building street address when known. */
   location: string
   attachmentCount: number
   /** When set, shows red due row (omitted for normal/low when not used). */
@@ -52,6 +55,8 @@ export type VendorWorkOrder = {
   residentName?: string
   unitNumber?: string
   roomLabel?: string
+  /** Building street address (same as card location when enriched). */
+  buildingAddress?: string
   createdDisplay?: string
   /** Shown in Due Date card (no “Due:” prefix). */
   dueRangeDisplay?: string
@@ -65,6 +70,11 @@ export type VendorWorkOrder = {
   vendorDbStatus?: VendorDbWorkStatus
   /** From `assigned_vendor_id`; required before accept / start work when using live API. */
   assignedVendorId?: string | null
+  vendorActionToken?: string | null
+  approvedEstimate?: VendorApprovedEstimate | null
+  completionPhotoCount?: number
+  completionPhotoUrls?: string[]
+  awaitingResidentFeedback?: boolean
 }
 
 /** Maps stored `priority` strings to vendor badges (`low` | `normal` | `urgent`). Handles casing and common variants. */
@@ -180,6 +190,10 @@ function mapApiTicketToWorkOrder(t: VendorApiTicket): VendorWorkOrder {
     titleLine.length > 80 ? `${titleLine.slice(0, 77)}…` : titleLine || `${pri || '—'} — maintenance`
   const unitStr = t.unit ?? ''
   const roomFromDescription = extractRoomInUnitFromDescription(desc)
+  const buildingAddress =
+    (typeof t.building_address === 'string' && t.building_address.trim()) ||
+    (typeof t.building === 'string' && t.building.trim()) ||
+    ''
   const dueRaw = t.due_at
   let dueDisplay: string | undefined
   let dueRangeDisplay: string | undefined
@@ -204,11 +218,18 @@ function mapApiTicketToWorkOrder(t: VendorApiTicket): VendorWorkOrder {
       }
     }
   }
+  const completionUrls = (t.completion_photo_urls ?? []).filter(
+    (u): u is string => typeof u === 'string' && u.length > 0,
+  )
+  const completionCount = Math.max(
+    Number(t.completion_photo_count) || 0,
+    completionUrls.length,
+  )
   return {
     id: t.id,
     displayId: `MR-${String(t.id).replace(/-/g, '').slice(0, 6).toUpperCase()}`,
     title,
-    location: unitStr,
+    location: buildingAddress || unitStr || 'Address pending',
     attachmentCount: Math.max(photos.length, signedPreviews.length),
     ...(signedPreviews.length > 0 ? { attachmentPreviews: signedPreviews } : {}),
     priority: mapUrgencyToPriority(t.urgency || t.priority),
@@ -218,9 +239,16 @@ function mapApiTicketToWorkOrder(t: VendorApiTicket): VendorWorkOrder {
     residentName: t.resident_name ?? undefined,
     unitNumber: unitStr,
     roomLabel: roomFromDescription || undefined,
+    buildingAddress: buildingAddress || undefined,
     createdDisplay: formatCreatedDisplay(t.created_at ?? ''),
     vendorDbStatus: st,
     assignedVendorId: t.assigned_vendor_id ?? null,
+    vendorActionToken:
+      typeof t.vendor_action_token === 'string' ? t.vendor_action_token : null,
+    approvedEstimate: t.approved_estimate ?? null,
+    completionPhotoCount: completionCount,
+    completionPhotoUrls: completionUrls,
+    awaitingResidentFeedback: Boolean(t.awaiting_resident_feedback),
     ...(dueDisplay ? { dueDisplay } : {}),
     ...(dueRangeDisplay ? { dueRangeDisplay } : {}),
     ...(dueAtIso ? { dueAtIso } : {}),
@@ -249,7 +277,8 @@ const INITIAL_WORK_ORDERS: VendorWorkOrder[] = [
     id: 'wo1',
     displayId: 'AS123-4',
     title: 'Leaking Kitchen Faucet',
-    location: 'Unit 305',
+    location: '1200 Market St',
+    buildingAddress: '1200 Market St',
     attachmentCount: 2,
     dueDisplay: 'Due: Aug 14 - 28, 2025',
     priority: 'urgent',
@@ -271,7 +300,8 @@ const INITIAL_WORK_ORDERS: VendorWorkOrder[] = [
     id: 'wo2',
     displayId: 'AS123-5',
     title: 'HVAC Not Cooling',
-    location: 'Unit 512',
+    location: '450 Oak Avenue',
+    buildingAddress: '450 Oak Avenue',
     attachmentCount: 1,
     dueDisplay: 'Due: Aug 26 - 27, 2025',
     priority: 'urgent',
@@ -290,7 +320,8 @@ const INITIAL_WORK_ORDERS: VendorWorkOrder[] = [
     id: 'wo3',
     displayId: 'AS123-7',
     title: 'Broken Window Lock',
-    location: 'Unit 210',
+    location: '88 River Road',
+    buildingAddress: '88 River Road',
     attachmentCount: 0,
     priority: 'normal',
     column: 'assigned',
@@ -539,7 +570,9 @@ function VendorWorkOrderWideHeader({
 }
 
 function VendorWorkOrderWideScrollBody({ order }: { order: VendorWorkOrder }) {
-  const { unit, room } = parsedLocationParts(order)
+  const { unit } = parsedLocationParts(order)
+  const buildingAddress =
+    order.buildingAddress?.trim() || order.location?.trim() || '—'
   const dueRange = dueRangeForDetail(order)
   const issueText = order.issueDescription ?? order.description ?? 'No additional details were provided.'
   const resident = order.residentName ?? '—'
@@ -569,8 +602,10 @@ function VendorWorkOrderWideScrollBody({ order }: { order: VendorWorkOrder }) {
         <div className="flex flex-col gap-1 rounded-[10px] bg-[#f9fafb] px-4 pb-4 pt-4">
           <p className="text-[14px] font-normal leading-5 tracking-[-0.1504px] text-[#6a7282]">Location</p>
           <div className="flex items-center gap-2">
-            <IconMapPin className="size-4 text-[#101828]" />
-            <p className="text-[16px] font-semibold leading-6 tracking-[-0.3125px] text-[#101828]">{room}</p>
+            <IconMapPin className="size-4 shrink-0 text-[#101828]" />
+            <p className="text-[16px] font-semibold leading-6 tracking-[-0.3125px] text-[#101828]">
+              {buildingAddress}
+            </p>
           </div>
         </div>
         {dueRange ? (
@@ -764,8 +799,8 @@ function WorkOrderCard({
 }) {
   const att = order.attachmentCount
   const attLabel = att === 1 ? '1 attachment' : `${att} attachments`
-  const issueText = (order.description ?? order.issueDescription ?? '').trim()
-  const roomInUnit = extractRoomInUnitFromDescription(issueText)
+  const buildingAddress =
+    order.buildingAddress?.trim() || order.location?.trim() || ''
 
   return (
     <button
@@ -789,11 +824,11 @@ function WorkOrderCard({
         {order.title}
       </h3>
       <div className="mt-2 flex flex-col gap-1">
-        {roomInUnit ? (
+        {buildingAddress ? (
           <div className="flex items-center gap-2">
             <IconMapPin />
             <span className="text-[14px] leading-5 tracking-[-0.1504px] text-[#4a5565]">
-              {roomInUnit}
+              {buildingAddress}
             </span>
           </div>
         ) : null}
@@ -998,29 +1033,46 @@ function VendorAssignedWorkOrderDetailRail({
   )
 }
 
+function formatMoney(n: number): string {
+  return n.toLocaleString(undefined, {
+    style: 'currency',
+    currency: 'USD',
+    minimumFractionDigits: 2,
+  })
+}
+
 /** In-progress detail rail (Figma 136:20766). */
 function VendorInProgressWorkOrderDetailRail({
   order,
   onClose,
   onMarkComplete,
   onCancelWork,
+  onCompletionPhotosUpdated,
 }: {
   order: VendorWorkOrder
   onClose: () => void
-  onMarkComplete: (invoice: VendorInvoiceInput) => void
+  onMarkComplete: (invoice?: VendorInvoiceInput) => void
   onCancelWork: () => void
+  onCompletionPhotosUpdated: (patch: {
+    completionPhotoCount: number
+    completionPhotoUrls: string[]
+  }) => void
 }) {
   const titleId = useId()
-  const noteId = useId()
-  const laborId = useId()
-  const materialId = useId()
-  const taxId = useId()
-  const fileInputRef = useRef<HTMLInputElement>(null)
-  const [statusNote, setStatusNote] = useState('')
-  const [laborCost, setLaborCost] = useState('')
-  const [materialCost, setMaterialCost] = useState('')
-  const [taxAmount, setTaxAmount] = useState('')
-  const [invoiceError, setInvoiceError] = useState<string | null>(null)
+  const uploadInputRef = useRef<HTMLInputElement>(null)
+  const cameraInputRef = useRef<HTMLInputElement>(null)
+  const [completeError, setCompleteError] = useState<string | null>(null)
+  const [uploadError, setUploadError] = useState<string | null>(null)
+  const [uploading, setUploading] = useState(false)
+  const [localPreviews, setLocalPreviews] = useState<string[]>(
+    order.completionPhotoUrls ?? [],
+  )
+  const [photoCount, setPhotoCount] = useState(order.completionPhotoCount ?? 0)
+
+  useEffect(() => {
+    setLocalPreviews(order.completionPhotoUrls ?? [])
+    setPhotoCount(order.completionPhotoCount ?? 0)
+  }, [order.id, order.completionPhotoCount, order.completionPhotoUrls])
 
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
@@ -1029,6 +1081,11 @@ function VendorInProgressWorkOrderDetailRail({
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
   }, [onClose])
+
+  const hasPhotos = photoCount > 0 || localPreviews.length > 0
+  const awaitingFeedback = Boolean(order.awaitingResidentFeedback)
+  const estimate = order.approvedEstimate
+  const canMarkComplete = hasPhotos && !awaitingFeedback && !uploading
 
   function confirmCancelWork() {
     if (
@@ -1042,26 +1099,60 @@ function VendorInProgressWorkOrderDetailRail({
     onCancelWork()
   }
 
-  function submitCompleteWithInvoice() {
-    const labor = Number(laborCost)
-    const material = Number(materialCost)
-    const tax = Number(taxAmount)
-    if (![labor, material, tax].every((n) => Number.isFinite(n) && n >= 0)) {
-      setInvoiceError('Enter valid labor, materials, and tax amounts.')
+  async function handlePhotoFiles(files: FileList | null) {
+    if (!files?.length) return
+    const token = order.vendorActionToken?.trim()
+    if (!token) {
+      setUploadError('This job is missing an upload link. Refresh and try again.')
       return
     }
-    const total = labor + material + tax
-    if (total <= 0) {
-      setInvoiceError('Invoice total must be greater than zero.')
+    const list = Array.from(files).filter((f) => f.type.startsWith('image/'))
+    if (list.length === 0) {
+      setUploadError('Please choose photo files (images only).')
       return
     }
-    setInvoiceError(null)
-    onMarkComplete({
-      laborCost: labor,
-      materialCost: material,
-      taxAmount: tax,
-      vendorNotes: statusNote.trim() || null,
-    })
+    setUploading(true)
+    setUploadError(null)
+    try {
+      const result = await uploadCompletionPhotos(token, list)
+      const urls = result.completionPhotoUrls ?? []
+      setLocalPreviews(urls)
+      setPhotoCount(result.completionPhotoCount)
+      onCompletionPhotosUpdated({
+        completionPhotoCount: result.completionPhotoCount,
+        completionPhotoUrls: urls,
+      })
+    } catch (err) {
+      setUploadError(
+        err instanceof Error ? err.message : 'Could not upload photos. Try again.',
+      )
+    } finally {
+      setUploading(false)
+      if (uploadInputRef.current) uploadInputRef.current.value = ''
+      if (cameraInputRef.current) cameraInputRef.current.value = ''
+    }
+  }
+
+  function submitComplete() {
+    if (!canMarkComplete) {
+      setCompleteError(
+        awaitingFeedback
+          ? 'Waiting for the resident to rate the repair.'
+          : 'Upload at least one completion photo before marking complete.',
+      )
+      return
+    }
+    setCompleteError(null)
+    // Invoice amounts come from the approved estimate when present.
+    const invoice: VendorInvoiceInput | undefined = estimate
+      ? {
+          laborCost: Number(estimate.labor_cost) || 0,
+          materialCost: Number(estimate.parts_cost) || 0,
+          taxAmount: 0,
+          vendorNotes: null,
+        }
+      : undefined
+    onMarkComplete(invoice)
   }
 
   return (
@@ -1079,68 +1170,127 @@ function VendorInProgressWorkOrderDetailRail({
             <VendorWorkOrderWideScrollBody order={order} />
             <div className="border-t border-[#e5e7eb] pt-6">
               <h3 className="m-0 text-[18px] font-semibold leading-[27px] tracking-[-0.4395px] text-[#101828]">
-                Complete job &amp; submit invoice
+                Complete job
               </h3>
               <p className="mt-1 text-[13px] text-[#6a7282]">
-                Upload costs for landlord approval. Spend appears in analytics after approval.
+                Upload completion photos, then mark the job complete. The resident will be asked to
+                rate the repair before the job closes on both sides.
               </p>
-              <div className="mt-4 grid gap-3 sm:grid-cols-3">
-                <label className="flex flex-col gap-1 text-[13px] text-[#4a5565]" htmlFor={laborId}>
-                  Labor ($)
-                  <input
-                    id={laborId}
-                    type="number"
-                    min={0}
-                    step="0.01"
-                    value={laborCost}
-                    onChange={(e) => setLaborCost(e.target.value)}
-                    className="h-10 rounded-[8px] border border-[#e5e7eb] px-3 text-[14px] text-[#101828]"
-                  />
-                </label>
-                <label className="flex flex-col gap-1 text-[13px] text-[#4a5565]" htmlFor={materialId}>
-                  Materials ($)
-                  <input
-                    id={materialId}
-                    type="number"
-                    min={0}
-                    step="0.01"
-                    value={materialCost}
-                    onChange={(e) => setMaterialCost(e.target.value)}
-                    className="h-10 rounded-[8px] border border-[#e5e7eb] px-3 text-[14px] text-[#101828]"
-                  />
-                </label>
-                <label className="flex flex-col gap-1 text-[13px] text-[#4a5565]" htmlFor={taxId}>
-                  Tax ($)
-                  <input
-                    id={taxId}
-                    type="number"
-                    min={0}
-                    step="0.01"
-                    value={taxAmount}
-                    onChange={(e) => setTaxAmount(e.target.value)}
-                    className="h-10 rounded-[8px] border border-[#e5e7eb] px-3 text-[14px] text-[#101828]"
-                  />
-                </label>
+
+              {estimate ? (
+                <div className="mt-4 rounded-[10px] border border-[#d0d5dd] bg-[#f9fafb] px-4 py-3">
+                  <p className="text-[13px] font-semibold uppercase tracking-[0.04em] text-[#667085]">
+                    Approved estimate
+                  </p>
+                  <p className="mt-1 text-[15px] font-semibold text-[#101828]">
+                    {formatMoney(estimate.total_cost)}
+                  </p>
+                  <p className="mt-1 text-[13px] text-[#4a5565]">
+                    Parts {formatMoney(estimate.parts_cost)} · Labor{' '}
+                    {formatMoney(estimate.labor_cost)}
+                    {estimate.approved_at
+                      ? ` · Approved ${new Date(estimate.approved_at).toLocaleDateString()}`
+                      : ''}
+                  </p>
+                </div>
+              ) : (
+                <div className="mt-4 rounded-[10px] border border-dashed border-[#d0d5dd] bg-white px-4 py-3">
+                  <p className="text-[13px] text-[#6a7282]">
+                    No approved estimate on file for this job yet.
+                  </p>
+                </div>
+              )}
+
+              <div className="mt-4">
+                <p className="text-[13px] font-medium text-[#344054]">
+                  Completion photos {hasPhotos ? `(${Math.max(photoCount, localPreviews.length)})` : ''}
+                </p>
+                {localPreviews.length > 0 ? (
+                  <div className="mt-2 flex flex-wrap gap-2">
+                    {localPreviews.map((src) => (
+                      <img
+                        key={src}
+                        src={src}
+                        alt="Completion photo"
+                        className="size-16 rounded-lg object-cover"
+                      />
+                    ))}
+                  </div>
+                ) : null}
+                <input
+                  ref={uploadInputRef}
+                  type="file"
+                  accept="image/*"
+                  multiple
+                  className="sr-only"
+                  onChange={(e) => void handlePhotoFiles(e.target.files)}
+                />
+                <input
+                  ref={cameraInputRef}
+                  type="file"
+                  accept="image/*"
+                  capture="environment"
+                  className="sr-only"
+                  onChange={(e) => void handlePhotoFiles(e.target.files)}
+                />
+                <div className="mt-2 grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    disabled={uploading || awaitingFeedback}
+                    onClick={() => uploadInputRef.current?.click()}
+                    className="flex h-10 items-center justify-center gap-2 rounded-[10px] border-2 border-dashed border-[#d1d5dc] text-[14px] font-medium text-[#4a5565] outline-none hover:border-[#187960]/45 hover:bg-[#e8f5f0] disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    Upload photo
+                  </button>
+                  <button
+                    type="button"
+                    disabled={uploading || awaitingFeedback}
+                    onClick={() => cameraInputRef.current?.click()}
+                    className="flex h-10 items-center justify-center gap-2 rounded-[10px] border-2 border-dashed border-[#d1d5dc] text-[14px] font-medium text-[#4a5565] outline-none hover:border-[#187960]/45 hover:bg-[#e8f5f0] disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    <IconCameraSection className="size-5 text-[#4a5565]" />
+                    Camera
+                  </button>
+                </div>
+                {uploading ? (
+                  <p className="mt-2 text-[13px] text-[#667085]">Uploading…</p>
+                ) : null}
+                {uploadError ? (
+                  <p className="mt-2 text-[13px] text-[#c10007]" role="alert">
+                    {uploadError}
+                  </p>
+                ) : null}
               </div>
-              <VendorWorkOrderStatusNoteFields
-                noteId={noteId}
-                statusNote={statusNote}
-                setStatusNote={setStatusNote}
-                fileInputRef={fileInputRef}
-              />
-              {invoiceError ? (
-                <p className="mt-3 text-[13px] text-[#c10007]" role="alert">
-                  {invoiceError}
+
+              {awaitingFeedback ? (
+                <p className="mt-4 rounded-[10px] bg-[#eef6f8] px-3 py-2 text-[13px] text-[#186179]">
+                  Waiting for the resident to rate the repair (1–5). The job will close after a
+                  positive rating.
                 </p>
               ) : null}
-              <hr
-                className="mt-6 w-full border-0 border-t border-[#e5e7eb]"
-                aria-hidden
-              />
+
+              {completeError ? (
+                <p className="mt-3 text-[13px] text-[#c10007]" role="alert">
+                  {completeError}
+                </p>
+              ) : null}
+              <hr className="mt-6 w-full border-0 border-t border-[#e5e7eb]" aria-hidden />
               <button
                 type="button"
-                onClick={submitCompleteWithInvoice}
-                className="mt-6 flex h-10 w-full items-center justify-center gap-2 rounded-[10px] bg-[#ffee6c] text-[16px] font-medium leading-6 tracking-[-0.3125px] text-[#101828] outline-none hover:bg-[#f5e35e] focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2"
+                onClick={submitComplete}
+                disabled={!canMarkComplete}
+                title={
+                  canMarkComplete
+                    ? 'Mark complete and request resident feedback'
+                    : hasPhotos
+                      ? 'Waiting for resident feedback'
+                      : 'Upload at least one completion photo first'
+                }
+                className={
+                  canMarkComplete
+                    ? 'mt-6 flex h-10 w-full items-center justify-center gap-2 rounded-[10px] bg-[#187960] text-[16px] font-medium leading-6 tracking-[-0.3125px] text-white outline-none hover:bg-[#146650] focus-visible:ring-2 focus-visible:ring-[#187960] focus-visible:ring-offset-2'
+                    : 'mt-6 flex h-10 w-full cursor-not-allowed items-center justify-center gap-2 rounded-[10px] bg-[#d0d5dd] text-[16px] font-medium leading-6 tracking-[-0.3125px] text-[#667085]'
+                }
               >
                 <IconMarkCompleteCircle />
                 Mark as Complete
@@ -1339,7 +1489,13 @@ export function VendorPortalDashboard({
       return
     }
     const snapshot = orders
-    if (useLiveVendorApi && vendorToken?.trim()) {
+    // Don't optimistically move to Completed — mark-complete may only start
+    // resident feedback while status stays in_progress.
+    if (
+      useLiveVendorApi &&
+      vendorToken?.trim() &&
+      action !== 'completed'
+    ) {
       applyVendorStatusToOrder(ticketId, predictVendorStatus(action))
     }
     try {
@@ -1351,7 +1507,27 @@ export function VendorPortalDashboard({
         vendorToken,
         invoice,
       })
-      if (res.ok) applyVendorStatusToOrder(ticketId, res.vendor_work_status)
+      if (res.ok) {
+        if (action === 'completed' && res.awaiting_feedback) {
+          setOrders((prev) =>
+            prev.map((o) =>
+              o.id === ticketId
+                ? {
+                    ...o,
+                    vendorDbStatus: 'in_progress',
+                    column: 'in_progress',
+                    awaitingResidentFeedback: true,
+                  }
+                : o,
+            ),
+          )
+          setVendorToast(
+            'Photos and invoice received. We asked the resident to rate the repair (1–5).',
+          )
+        } else {
+          applyVendorStatusToOrder(ticketId, res.vendor_work_status)
+        }
+      }
     } catch (e) {
       setOrders(snapshot)
       const msg = e instanceof Error ? e.message : 'Update failed'
@@ -1454,9 +1630,11 @@ export function VendorPortalDashboard({
     patchOrder(id, { vendorDbStatus: 'accepted' })
   }
 
-  function completeWork(id: string, invoice: VendorInvoiceInput) {
+  function completeWork(id: string, invoice?: VendorInvoiceInput) {
     if (useLiveVendorApi) {
-      void runStatusAction(id, 'completed', invoice).then(() => setSelectedId(null))
+      // Keep the rail open — mark-complete starts resident feedback while
+      // the card stays In Progress until a rating finalizes both ends.
+      void runStatusAction(id, 'completed', invoice)
       return
     }
     patchOrder(id, { column: 'completed' })
@@ -1665,6 +1843,12 @@ export function VendorPortalDashboard({
           onClose={() => setSelectedId(null)}
           onMarkComplete={(invoice) => completeWork(selected.id, invoice)}
           onCancelWork={() => declineJob(selected.id)}
+          onCompletionPhotosUpdated={(patch) =>
+            patchOrder(selected.id, {
+              completionPhotoCount: patch.completionPhotoCount,
+              completionPhotoUrls: patch.completionPhotoUrls,
+            })
+          }
         />
       ) : selected && selected.column === 'completed' ? (
         <VendorCompletedWorkOrderDetailRail

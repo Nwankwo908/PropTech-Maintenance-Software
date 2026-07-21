@@ -1,9 +1,13 @@
 import { Component, useEffect, useState, type ErrorInfo, type ReactNode } from 'react'
-import { Link, useParams } from 'react-router-dom'
+import { Link, useNavigate, useParams } from 'react-router-dom'
 import {
   resolveWorkOrderToken,
   type ResolveWorkOrderTokenResult,
 } from '@/api/resolveWorkOrderToken'
+import {
+  updateJobStatus,
+  vendorPortalUpdateUrl,
+} from '@/api/vendorPortalTickets'
 import { formatVendorTradeLabel } from '@/lib/vendorTrades'
 import {
   VENDOR_TOKEN_CHANGED_EVENT,
@@ -113,8 +117,11 @@ export function WorkOrderPublicPage() {
 
 function WorkOrderPublicPageInner() {
   const { token } = useParams<{ token: string }>()
+  const navigate = useNavigate()
   const [error, setError] = useState<string | null>(null)
   const [data, setData] = useState<ResolveWorkOrderTokenResult | null>(null)
+  const [startingWork, setStartingWork] = useState(false)
+  const [startWorkError, setStartWorkError] = useState<string | null>(null)
 
   useEffect(() => {
     let cancelled = false
@@ -179,7 +186,7 @@ function WorkOrderPublicPageInner() {
     )
   }
 
-  const { job, workOrderRef, portalPath } = data
+  const { job, workOrderRef, ticketId, portalApiKey } = data
   const issueLabel = job.issueCategory
     ? formatVendorTradeLabel(job.issueCategory)
     : 'Maintenance'
@@ -192,6 +199,40 @@ function WorkOrderPublicPageInner() {
   const descriptionBlocks = job.description
     ? descriptionParagraphs(job.description)
     : []
+  const statusKey = (job.status ?? '').toLowerCase()
+  const workStarted =
+    statusKey === 'in_progress' || statusKey === 'completed'
+  const canStartWork =
+    statusKey === 'pending_accept' || statusKey === 'accepted'
+
+  async function handleStartWork() {
+    if (!canStartWork || startingWork) return
+    const updateUrl = vendorPortalUpdateUrl()
+    const vendorToken = portalApiKey?.trim() ?? ''
+    if (!updateUrl || !vendorToken) {
+      setStartWorkError('Unable to start work from this link. Try again shortly.')
+      return
+    }
+    setStartingWork(true)
+    setStartWorkError(null)
+    try {
+      await updateJobStatus({
+        ticketId,
+        action: 'in_progress',
+        updateUrl,
+        vendorToken,
+      })
+      // Open vendor portal with this work order's detail rail selected.
+      navigate(`/vendor/ticket/${encodeURIComponent(ticketId)}`, {
+        replace: true,
+      })
+    } catch (err) {
+      setStartWorkError(
+        err instanceof Error ? err.message : 'Could not start work. Try again.',
+      )
+      setStartingWork(false)
+    }
+  }
 
   return (
     <div className="min-h-dvh bg-[#f4f6f8] text-[#101828]">
@@ -334,13 +375,40 @@ function WorkOrderPublicPageInner() {
         </section>
 
         <section className="rounded-xl bg-white px-4 py-4 shadow-[0_1px_2px_rgba(16,24,40,0.04)]">
-          <h2 className="text-[15px] font-semibold leading-6 text-[#101828]">Actions</h2>
+          <h2 className="text-[15px] font-semibold leading-6 text-[#101828]">Next Steps</h2>
           <div className="mt-3 grid gap-2">
             <ActionLink
               href={job.links.estimate}
               label={job.estimateSubmitted ? 'Estimate submitted' : 'Submit estimate'}
               variant={job.estimateSubmitted ? 'submitted' : 'primary'}
             />
+            {workStarted ? (
+              <Link
+                to={`/vendor/ticket/${encodeURIComponent(ticketId)}`}
+                title="Open this work order in the vendor portal"
+                className="inline-flex items-center justify-center rounded-[10px] border border-[#a7f3d0] bg-[#ecfdf5] px-4 py-2.5 text-[14px] font-semibold text-[#065f46] transition-colors hover:bg-[#d1fae5]"
+              >
+                Work started
+              </Link>
+            ) : (
+              <button
+                type="button"
+                onClick={() => void handleStartWork()}
+                disabled={!canStartWork || startingWork}
+                title={
+                  canStartWork
+                    ? 'Mark this job as in progress'
+                    : 'Available after you accept this job'
+                }
+                className={
+                  !canStartWork || startingWork
+                    ? 'inline-flex cursor-not-allowed items-center justify-center rounded-[10px] border border-[#d0d5dd] bg-[#f9fafb] px-4 py-2.5 text-[14px] font-semibold text-[#98a2b3]'
+                    : 'inline-flex items-center justify-center rounded-[10px] border border-[#d0d5dd] px-4 py-2.5 text-[14px] font-semibold text-[#344054] transition-colors hover:bg-[#f9fafb]'
+                }
+              >
+                {startingWork ? 'Starting…' : 'Start work'}
+              </button>
+            )}
             <ActionLink
               href={job.links.upload}
               label="Upload completion photos"
@@ -357,14 +425,10 @@ function WorkOrderPublicPageInner() {
                   : 'Available after you upload completion photos'
               }
             />
-            <ActionLink
-              href={portalPath}
-              label="Open full vendor portal"
-              variant="secondary"
-              disabled={!job.estimateSubmitted}
-              disabledHint="Available after you submit an estimate"
-            />
           </div>
+          {startWorkError ? (
+            <p className="mt-2 text-[13px] leading-5 text-[#b42318]">{startWorkError}</p>
+          ) : null}
         </section>
       </main>
     </div>

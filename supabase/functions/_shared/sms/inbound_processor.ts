@@ -26,7 +26,14 @@ import {
   resolveInboundAutoReplyBody,
   sendInboundAutoReply,
 } from "./inboundReply.ts"
+import {
+  decideInboundDebounce,
+  shouldTripOutboundCircuit,
+  type SaveInboundResult,
+} from "./sms_inbound_guard.ts"
+import { readVendorScheduleFsm } from "../vendor_schedule_fsm.ts"
 import { tryHandleVendorFeedbackInbound } from "../vendor_feedback.ts"
+import { tryHandleInvoicePaymentInbound } from "../invoicePaymentSms.ts"
 import { tryHandleEstimateDecisionInbound } from "./estimateDecisionInbound.ts"
 import { tryHandleTenantConsentKeyword } from "./tenantMessaging.ts"
 
@@ -68,7 +75,7 @@ async function saveInboundMessage(
     landlordId: string
     inbound: InboundSMSMessage
   },
-): Promise<string> {
+): Promise<SaveInboundResult> {
   const { data: existing } = await supabase
     .from("sms_messages")
     .select("id")
@@ -77,7 +84,7 @@ async function saveInboundMessage(
     .maybeSingle()
 
   if (existing?.id) {
-    return existing.id as string
+    return { messageId: existing.id as string, duplicate: true }
   }
 
   const { data, error } = await supabase
@@ -99,11 +106,23 @@ async function saveInboundMessage(
     .single()
 
   if (error || !data?.id) {
+    // Unique race: treat as duplicate rather than failing the webhook.
+    if (error?.code === "23505") {
+      const { data: raced } = await supabase
+        .from("sms_messages")
+        .select("id")
+        .eq("provider", params.inbound.provider)
+        .eq("provider_message_sid", params.inbound.providerMessageSid)
+        .maybeSingle()
+      if (raced?.id) {
+        return { messageId: raced.id as string, duplicate: true }
+      }
+    }
     console.error("[sms-inbound] sms_messages insert", error?.message)
     throw new InboundSmsError("Failed to save inbound message", 500)
   }
 
-  return data.id as string
+  return { messageId: data.id as string, duplicate: false }
 }
 
 async function trySendAutoReply(
@@ -118,17 +137,34 @@ async function trySendAutoReply(
     workflowHint?: string
     source: string
     workflowRoute?: string
+    /** When true, never invent a generic maintenance fallback. */
+    skipGenericFallback?: boolean
   },
 ): Promise<string | undefined> {
-  const replyBody =
-    resolveInboundAutoReplyBody(
-      params.resolutionHint,
-      params.workflowHint,
-      params.workflowRoute,
-    ) ??
-    (params.workflowHint?.trim() ||
+  let replyBody = resolveInboundAutoReplyBody(
+    params.resolutionHint,
+    params.workflowHint,
+    params.workflowRoute,
+  )
+
+  if (!replyBody) {
+    const skipGeneric =
+      params.skipGenericFallback ||
+      params.workflowRoute === "vendor_response" ||
+      params.source.includes("vendor")
+    if (skipGeneric) {
+      console.info("[sms-inbound] auto-reply skipped — no workflow reply", {
+        conversationId: params.conversationId,
+        source: params.source,
+        workflowRoute: params.workflowRoute,
+      })
+      return undefined
+    }
+    replyBody =
+      params.workflowHint?.trim() ||
       params.resolutionHint?.trim() ||
-      "Thanks for reaching out — this is Ulo. How can we help with your maintenance issue today?")
+      "Thanks for reaching out — this is Ulo. How can we help with your maintenance issue today?"
+  }
 
   if (!replyBody) {
     console.warn("[sms-inbound] auto-reply skipped — no reply text", {
@@ -139,6 +175,41 @@ async function trySendAutoReply(
       hasWorkflowHint: !!params.workflowHint?.trim(),
     })
     return undefined
+  }
+
+  let scheduleState = null
+  try {
+    const { data: convo } = await supabase
+      .from("sms_conversations")
+      .select("intake_state")
+      .eq("id", params.conversationId)
+      .maybeSingle()
+    scheduleState = readVendorScheduleFsm(
+      (convo?.intake_state as Record<string, unknown> | null) ?? null,
+    )
+  } catch {
+    scheduleState = null
+  }
+
+  // Loop detector is for vendor scheduling echoes — not resident intake retries
+  // (validation prompts often repeat and must still deliver).
+  const applyCircuit =
+    params.workflowRoute === "vendor_response" ||
+    params.source.includes("vendor")
+  if (applyCircuit) {
+    const circuit = await shouldTripOutboundCircuit(supabase, {
+      conversationId: params.conversationId,
+      body: replyBody,
+      scheduleState,
+    })
+    if (circuit.trip) {
+      console.warn("[sms-inbound] outbound circuit breaker tripped", {
+        conversationId: params.conversationId,
+        reason: circuit.reason,
+        bodyPreview: replyBody.slice(0, 80),
+      })
+      return undefined
+    }
   }
 
   const sent = await sendInboundAutoReply(supabase, {
@@ -256,11 +327,20 @@ export async function processInboundSms(
         conversationStatus: "closed",
       })
 
-      const messageId = await saveInboundMessage(supabase, {
+      const saved = await saveInboundMessage(supabase, {
         conversationId,
         landlordId,
         inbound,
       })
+      const messageId = saved.messageId
+      if (saved.duplicate) {
+        return {
+          ok: true,
+          releasedPending: true,
+          conversationId,
+          messageId,
+        }
+      }
 
       const outboundMessageId = await trySendAutoReply(supabase, {
         conversationId,
@@ -347,11 +427,54 @@ export async function processInboundSms(
     conversation_id: conversationId,
   })
 
-  const messageId = await saveInboundMessage(supabase, {
+  const saved = await saveInboundMessage(supabase, {
     conversationId,
     landlordId,
     inbound,
   })
+  const messageId = saved.messageId
+
+  // Webhook retries: persist once, never re-run workflow / auto-reply.
+  if (saved.duplicate) {
+    console.info("[sms-inbound] duplicate provider SID — skip reprocess", {
+      conversationId,
+      messageId,
+      providerMessageSid: inbound.providerMessageSid,
+    })
+    return {
+      ok: true,
+      conversationId,
+      messageId,
+      workflowRoute: "duplicate_sid",
+      identityType: identity.identity_type,
+      landlordId,
+      resolutionSource: resolution.source,
+      selfHealingPhase: resolution.selfHealingPhase,
+    }
+  }
+
+  // Debounce: if a newer inbound landed within the window, let that webhook act.
+  const debounce = await decideInboundDebounce(supabase, {
+    conversationId,
+    messageId,
+  })
+  if (debounce.action === "skip") {
+    console.info("[sms-inbound] debounced inbound — skip workflow", {
+      conversationId,
+      messageId,
+      reason: debounce.reason,
+    })
+    return {
+      ok: true,
+      conversationId,
+      messageId,
+      workflowRoute: "debounced",
+      identityType: identity.identity_type,
+      landlordId,
+      resolutionSource: resolution.source,
+      selfHealingPhase: resolution.selfHealingPhase,
+    }
+  }
 
   // Skip START/YES consent hijack while SMS maintenance intake is mid-flow
   // (e.g. urgency "Yes") — STOP/HELP still apply.
@@ -456,6 +579,50 @@ export async function processInboundSms(
       messageId,
       outboundMessageId,
       workflowRoute: "landlord_estimate_decision",
+      identityType: identity.identity_type,
+      landlordId,
+      resolutionSource: resolution.source,
+      selfHealingPhase: resolution.selfHealingPhase,
+    }
+  }
+
+  const invoicePayResult = await tryHandleInvoicePaymentInbound(supabase, {
+    landlordId,
+    conversationId,
+    messageId,
+    body: inbound.body,
+    fromPhone: inbound.from,
+  })
+  if (invoicePayResult.handled) {
+    const outboundMessageId = await trySendAutoReply(supabase, {
+      conversationId,
+      landlordId,
+      uloNumber: inbound.to,
+      externalPhone: inbound.from,
+      provider: inbound.provider,
+      workflowHint: invoicePayResult.replyBody,
+      source: "invoice_payment_preference",
+      workflowRoute: "invoice_payment",
+    })
+    await recordGraphEvent(supabase, {
+      landlordId,
+      identity,
+      conversationId,
+      messageId,
+      maintenanceRequestId,
+      inbound,
+      workflowRoute: "invoice_payment",
+      workflowMetadata: { preference_reply: true },
+      selfHealed,
+      resolutionSource: resolution.source,
+      selfHealingPhase: resolution.selfHealingPhase,
+    })
+    return {
+      ok: true,
+      conversationId,
+      messageId,
+      outboundMessageId,
+      workflowRoute: "invoice_payment",
       identityType: identity.identity_type,
       landlordId,
       resolutionSource: resolution.source,
@@ -595,6 +762,8 @@ export async function processInboundSms(
     workflowHint: workflow.replyHint,
     source: `workflow_${workflow.route}`,
     workflowRoute: workflow.route,
+    skipGenericFallback: workflow.metadata?.skipGenericAutoReply === true ||
+      workflow.route === "vendor_response",
   })
 
   await recordGraphEvent(supabase, {
