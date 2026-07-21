@@ -11,6 +11,10 @@ export type WorkOrderPublicHistoryItem = {
 
 export type WorkOrderPublicJob = {
   address: string
+  streetAddress: string | null
+  city: string | null
+  state: string | null
+  zipCode: string | null
   building: string | null
   unit: string
   issueCategory: string | null
@@ -129,6 +133,18 @@ export async function resolveWorkOrderToken(
     job: {
       ...job,
       address: typeof job.address === 'string' ? job.address : '',
+      streetAddress:
+        typeof job.streetAddress === 'string' && job.streetAddress.trim()
+          ? job.streetAddress.trim()
+          : null,
+      city: typeof job.city === 'string' && job.city.trim() ? job.city.trim() : null,
+      state: typeof job.state === 'string' && job.state.trim() ? job.state.trim() : null,
+      zipCode:
+        typeof job.zipCode === 'string' && job.zipCode.trim() ? job.zipCode.trim() : null,
+      building:
+        typeof job.building === 'string' && job.building.trim()
+          ? job.building.trim()
+          : null,
       unit: typeof job.unit === 'string' && job.unit.trim() ? job.unit : 'Unit',
       description: typeof job.description === 'string' ? job.description : '',
       photoUrls: Array.isArray(job.photoUrls)

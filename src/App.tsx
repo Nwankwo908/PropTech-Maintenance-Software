@@ -32,7 +32,7 @@ import { VendorIntakePortal } from './VendorIntakePortal'
 import { WorkOrderPublicPage } from './components/WorkOrderPublicPage'
 import { WorkOrderEstimatePage } from './components/WorkOrderEstimatePage'
 import { WorkOrderUploadPage } from './components/WorkOrderUploadPage'
-import { WorkOrderTokenActionStub } from './components/WorkOrderTokenActionStub'
+import { WorkOrderInvoicePage } from './components/WorkOrderInvoicePage'
 
 export default function App() {
   useSessionAutoRefresh(supabase)
@@ -49,10 +49,7 @@ export default function App() {
         <Route path="/w/:token" element={<WorkOrderPublicPage />} />
         <Route path="/estimate/:token" element={<WorkOrderEstimatePage />} />
         <Route path="/upload/:token" element={<WorkOrderUploadPage />} />
-        <Route
-          path="/invoice/:token"
-          element={<WorkOrderTokenActionStub kind="invoice" />}
-        />
+        <Route path="/invoice/:token" element={<WorkOrderInvoicePage />} />
 
         <Route
           path="/vendor/*"

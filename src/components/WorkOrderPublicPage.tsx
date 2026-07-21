@@ -204,6 +204,24 @@ function WorkOrderPublicPageInner() {
     statusKey === 'in_progress' || statusKey === 'completed'
   const canStartWork =
     statusKey === 'pending_accept' || statusKey === 'accepted'
+  const unitPart = job.unit?.trim()
+    ? /^unit\b/i.test(job.unit.trim())
+      ? job.unit.trim()
+      : `Unit ${job.unit.trim()}`
+    : ''
+  const buildingPart = job.building?.trim() || ''
+  const tenantBuildingLine =
+    buildingPart && unitPart
+      ? `${buildingPart} · ${unitPart}`
+      : buildingPart || unitPart
+  const cityState = [job.city?.trim(), job.state?.trim()].filter(Boolean).join(', ')
+  const cityStateZip = [cityState, job.zipCode?.trim()].filter(Boolean).join(' ')
+  const tenantStreetLine = job.streetAddress?.trim() || ''
+  const tenantCityLine = cityStateZip
+  const tenantLocationFallback =
+    !tenantStreetLine && !tenantCityLine
+      ? job.address?.trim() || tenantBuildingLine
+      : ''
 
   async function handleStartWork() {
     if (!canStartWork || startingWork) return
@@ -318,6 +336,18 @@ function WorkOrderPublicPageInner() {
             Tenant contact
           </h2>
           <p className="mt-1 text-[15px] font-medium">{job.tenant.name}</p>
+          {tenantBuildingLine ? (
+            <p className="mt-1 text-[14px] leading-5 text-[#364153]">{tenantBuildingLine}</p>
+          ) : null}
+          {tenantStreetLine ? (
+            <p className="mt-0.5 text-[14px] leading-5 text-[#364153]">{tenantStreetLine}</p>
+          ) : null}
+          {tenantCityLine ? (
+            <p className="mt-0.5 text-[14px] leading-5 text-[#364153]">{tenantCityLine}</p>
+          ) : null}
+          {tenantLocationFallback ? (
+            <p className="mt-1 text-[14px] leading-5 text-[#364153]">{tenantLocationFallback}</p>
+          ) : null}
           {job.tenant.phone ? (
             <a
               href={`tel:${job.tenant.phone}`}

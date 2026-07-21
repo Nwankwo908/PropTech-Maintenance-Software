@@ -114,7 +114,7 @@ serve(async (req) => {
 
   const { data: enriched } = await supabase
     .from("maintenance_request_enriched")
-    .select("building, property_id, unit")
+    .select("building, property_id, unit, unit_id")
     .eq("id", ticketId)
     .maybeSingle()
 
@@ -126,7 +126,101 @@ serve(async (req) => {
     (typeof row.unit === "string" && row.unit.trim()) ||
     (typeof enriched?.unit === "string" && enriched.unit.trim()) ||
     "Unit"
-  const addressLine = building ? `${building}, ${unitLabel}` : unitLabel
+
+  let streetAddress: string | null = null
+  let city: string | null = null
+  let state: string | null = null
+  let zipCode: string | null = null
+
+  if (landlordId) {
+    const unitId =
+      typeof enriched?.unit_id === "string" && enriched.unit_id.trim()
+        ? enriched.unit_id.trim()
+        : null
+    if (unitId) {
+      const { data: unitRow } = await supabase
+        .from("units")
+        .select("city, state, zip_code, building")
+        .eq("id", unitId)
+        .maybeSingle()
+      if (unitRow) {
+        city =
+          typeof unitRow.city === "string" && unitRow.city.trim()
+            ? unitRow.city.trim()
+            : null
+        state =
+          typeof unitRow.state === "string" && unitRow.state.trim()
+            ? unitRow.state.trim()
+            : null
+        zipCode =
+          typeof unitRow.zip_code === "string" && unitRow.zip_code.trim()
+            ? unitRow.zip_code.trim()
+            : null
+      }
+    } else if (building) {
+      const { data: unitRow } = await supabase
+        .from("units")
+        .select("city, state, zip_code")
+        .eq("landlord_id", landlordId)
+        .eq("building", building)
+        .limit(1)
+        .maybeSingle()
+      if (unitRow) {
+        city =
+          typeof unitRow.city === "string" && unitRow.city.trim()
+            ? unitRow.city.trim()
+            : null
+        state =
+          typeof unitRow.state === "string" && unitRow.state.trim()
+            ? unitRow.state.trim()
+            : null
+        zipCode =
+          typeof unitRow.zip_code === "string" && unitRow.zip_code.trim()
+            ? unitRow.zip_code.trim()
+            : null
+      }
+    }
+
+    // Street address lives on onboarding properties (matched by building name).
+    const { data: onboarding } = await supabase
+      .from("landlord_onboarding")
+      .select("properties")
+      .eq("landlord_id", landlordId)
+      .maybeSingle()
+    const props = Array.isArray(onboarding?.properties)
+      ? (onboarding!.properties as Record<string, unknown>[])
+      : []
+    const buildingLc = (building ?? "").toLowerCase()
+    const match = props.find((p) => {
+      const name = typeof p.name === "string" ? p.name.trim().toLowerCase() : ""
+      return Boolean(buildingLc && name && name === buildingLc)
+    })
+    if (match) {
+      const street =
+        typeof match.streetAddress === "string"
+          ? match.streetAddress.trim()
+          : typeof match.address === "string"
+          ? match.address.trim()
+          : ""
+      if (street) streetAddress = street
+      if (typeof match.city === "string" && match.city.trim()) {
+        city = match.city.trim()
+      }
+      if (typeof match.state === "string" && match.state.trim()) {
+        state = match.state.trim()
+      }
+      if (typeof match.zipCode === "string" && match.zipCode.trim()) {
+        zipCode = match.zipCode.trim()
+      } else if (typeof match.zip_code === "string" && match.zip_code.trim()) {
+        zipCode = match.zip_code.trim()
+      }
+    }
+  }
+
+  const cityStateZip = [city, state].filter(Boolean).join(", ")
+  const cityStateZipLine = [cityStateZip, zipCode].filter(Boolean).join(" ")
+  const addressLine = [streetAddress, cityStateZipLine].filter(Boolean).join(", ")
+    || (building ? `${building}, ${unitLabel}` : unitLabel)
 
   let vendorName: string | null = null
   let portalApiKey: string | null = null
@@ -272,6 +366,10 @@ serve(async (req) => {
     portalApiKey,
     job: {
       address: addressLine,
+      streetAddress,
+      city,
+      state,
+      zipCode,
       building,
       unit: unitLabel,
       issueCategory:
