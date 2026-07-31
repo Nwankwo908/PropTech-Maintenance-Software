@@ -13,16 +13,9 @@ import {
   isAcceptedUploadFile,
   normalizeExtractionReview,
   runMockDocumentProcessing,
-  toMockExtractionReview,
-  hasExtractionReviewData,
-  summarizeReviewSelections,
   type OnboardingExtractionReview,
   type OnboardingUploadedDocument,
 } from '@/lib/onboardingDocumentUpload'
-import {
-  accountSetupFromReviewManual,
-  validateReviewManualAccount,
-} from '@/lib/onboardingReviewManual'
 import {
   createEmptyPropertyForm,
   normalizePropertyFormRow,
@@ -65,92 +58,34 @@ import {
   getPreviousOnboardingStep,
   isLandlordStripePayoutsReady,
   isOnboardingResetInProgress,
-  importMockExtraction,
   normalizeOnboardingStep,
   listOnboardingUnitOptions,
-  persistLandlordAccountProfile,
-  persistOnboardingProperties,
   persistOnboardingWizardLocally,
   readLocalOnboardingState,
-  requireOnboardingLandlord,
   resolveOnboardingStepForPath,
   saveLandlordOnboarding,
   saveOnboardingWizardDraft,
   type LandlordOnboardingState,
   type OnboardingAccountSetup,
-  type OnboardingProperty,
   type OnboardingResident,
   type OnboardingReviewData,
   type OnboardingFormDraft,
   type OnboardingStep,
   type OnboardingVendor,
 } from '@/lib/onboarding'
-import { supabase } from '@/lib/supabase'
+import { commitFastTrackImport } from '@/lib/onboarding/fastTrackImport'
+import {
+  buildOnboardingFormDraft,
+  readPersistedExtractionReview,
+  readPersistedUploadDocuments,
+} from '@/lib/onboarding/wizardDraft'
+import { hydratePropertyFormsFromOnboarding } from '@/lib/onboarding/wizardHydrate'
+import {
+  mergeOnboardingStep,
+  resolveWizardDisplayStep,
+  SETUP_COMPLETE_TRANSITION_MS,
+} from '@/lib/onboarding/wizardNavigation'
 import { type OnboardingApprovalRules } from '@/lib/onboardingApprovalRules'
-
-function buildFormDraft(
-  propertyForms: PropertyFormRow[],
-  vendorForms: VendorFormRow[],
-  residentForms: ResidentFormRow[],
-  fastTrack?: {
-    uploadDocuments?: OnboardingUploadedDocument[]
-    extractionReview?: OnboardingExtractionReview | null
-  },
-): OnboardingFormDraft {
-  const draft: OnboardingFormDraft = { propertyForms, vendorForms, residentForms }
-  if (fastTrack?.uploadDocuments?.length) {
-    draft.uploadDocuments = fastTrack.uploadDocuments
-  }
-  if (fastTrack?.extractionReview && hasExtractionReviewData(fastTrack.extractionReview)) {
-    draft.extractionReview = fastTrack.extractionReview
-  }
-  return draft
-}
-
-function readPersistedExtractionReview(
-  stateDraft: OnboardingFormDraft | undefined,
-): OnboardingExtractionReview | undefined {
-  if (stateDraft?.extractionReview && hasExtractionReviewData(stateDraft.extractionReview)) {
-    return stateDraft.extractionReview
-  }
-  const localDraft = readLocalOnboardingState()?.formDraft
-  if (localDraft?.extractionReview && hasExtractionReviewData(localDraft.extractionReview)) {
-    return localDraft.extractionReview
-  }
-  return undefined
-}
-
-function readPersistedUploadDocuments(
-  stateDraft: OnboardingFormDraft | undefined,
-): OnboardingUploadedDocument[] | undefined {
-  if (stateDraft?.uploadDocuments?.length) {
-    return stateDraft.uploadDocuments
-  }
-  const localDraft = readLocalOnboardingState()?.formDraft
-  if (localDraft?.uploadDocuments?.length) {
-    return localDraft.uploadDocuments
-  }
-  return undefined
-}
-
-function hydrateFormsFromOnboarding(
-  onboarding: LandlordOnboardingState,
-  setters: {
-    setPropertyForms: (rows: PropertyFormRow[]) => void
-    setVendorForms: (rows: VendorFormRow[]) => void
-    setResidentForms: (rows: ResidentFormRow[]) => void
-  },
-): void {
-  const draft = onboarding.formDraft
-
-  if (draft?.propertyForms?.length) {
-    setters.setPropertyForms(draft.propertyForms.map(normalizePropertyFormRow))
-  } else if (onboarding.properties.length > 0) {
-    setters.setPropertyForms(propertyFormsFromState(onboarding.properties))
-  }
-}
-
-const SETUP_COMPLETE_TRANSITION_MS = 5000
 
 export function useOnboardingWizard() {
   const navigate = useNavigate()
@@ -192,15 +127,13 @@ export function useOnboardingWizard() {
     extractionReview: null as OnboardingExtractionReview | null,
   })
 
-  const storedStep = normalizeOnboardingStep(state.currentStep)
-  // After Reset, status is not_started — always show the path-choice hub even if
-  // a stale current_step lingered in a draft for one paint.
-  const step =
-    editingFromReview && reviewEditStep != null
-      ? reviewEditStep
-      : state.onboardingStatus === 'not_started'
-        ? 'entry'
-        : resolveOnboardingStepForPath(storedStep, state.setupPath)
+  const step = resolveWizardDisplayStep({
+    storedStep: state.currentStep,
+    setupPath: state.setupPath,
+    onboardingStatus: state.onboardingStatus,
+    editingFromReview,
+    reviewEditStep,
+  })
   wizardSnapshotRef.current = {
     state,
     propertyForms,
@@ -261,7 +194,7 @@ export function useOnboardingWizard() {
     },
   ): OnboardingFormDraft {
     const source = snap ?? wizardSnapshotRef.current
-    return buildFormDraft(propertyForms, vendorForms, residentForms, {
+    return buildOnboardingFormDraft(propertyForms, vendorForms, residentForms, {
       uploadDocuments: source.uploadDocuments,
       extractionReview: source.extractionReview,
     })
@@ -389,11 +322,10 @@ export function useOnboardingWizard() {
       if (normalizedOnboarding.accountSetup.smsConsentAcceptedAt) {
         setSmsConsentAccepted(true)
       }
-      hydrateFormsFromOnboarding(normalizedOnboarding, {
-        setPropertyForms,
-        setVendorForms,
-        setResidentForms,
-      })
+      const propertyRows = hydratePropertyFormsFromOnboarding(normalizedOnboarding)
+      if (propertyRows) {
+        setPropertyForms(propertyRows)
+      }
       const persistedUploads = readPersistedUploadDocuments(normalizedOnboarding.formDraft)
       if (persistedUploads?.length) {
         setUploadDocuments(persistedUploads)
@@ -593,24 +525,6 @@ export function useOnboardingWizard() {
 
   async function refreshCounts() {
     await fetchAccountSetupCounts()
-  }
-
-  function mergeOnboardingStep(
-    prev: LandlordOnboardingState,
-    nextStep: OnboardingStep,
-    patch: Partial<LandlordOnboardingState> = {},
-  ): LandlordOnboardingState {
-    return {
-      ...prev,
-      ...patch,
-      currentStep: nextStep,
-      onboardingStatus:
-        patch.onboardingStatus === 'completed'
-          ? 'completed'
-          : nextStep === 'entry' && patch.onboardingStatus == null
-            ? prev.onboardingStatus
-            : patch.onboardingStatus ?? 'in_progress',
-    }
   }
 
   function updateAccountSetup(patch: Partial<OnboardingAccountSetup>) {
@@ -883,120 +797,20 @@ export function useOnboardingWizard() {
     await goTo('ai_review')
   }
 
-  async function commitFastTrackImport(review: OnboardingExtractionReview): Promise<boolean> {
-    const scope = requireOnboardingLandlord()
-    if (!scope.ok) {
-      setError(scope.error)
-      return false
-    }
-
-    const normalized = normalizeExtractionReview(review, state.accountSetup)
-    const accountCheck = validateReviewManualAccount(normalized.account)
-    if (!accountCheck.ok) {
-      setError(accountCheck.error)
-      return false
-    }
-
-    setExtractionReview(normalized)
-    setSaving(true)
-    setError(null)
-
-    const selectionLog = summarizeReviewSelections(normalized)
-    console.info('[onboarding] AI review continue selections', selectionLog)
-    if (supabase) {
-      try {
-        const { recordActivityLog } = await import('@/lib/recordActivityLog')
-        await recordActivityLog({
-          landlordId: scope.landlordId,
-          eventType: 'onboarding.extraction_review_continued',
-          source: 'onboarding',
-          actorType: 'landlord',
-          metadata: {
-            message: `Imported ${selectionLog.selected.total} item${
-              selectionLog.selected.total === 1 ? '' : 's'
-            }; skipped ${selectionLog.skipped.total}.`,
-            step: 'ai_review',
-            selected: selectionLog.selected,
-            skipped: selectionLog.skipped,
-            selected_ids: selectionLog.selectedIds,
-            skipped_ids: selectionLog.skippedIds,
-          },
-        })
-      } catch (err) {
-        console.warn('[onboarding] selection log failed', err)
-      }
-    }
-
-    const accountSetup = accountSetupFromReviewManual(normalized.account)
-    const profile = await persistLandlordAccountProfile(scope.landlordId, accountSetup)
-    if (!profile.ok) {
-      setSaving(false)
-      setError(profile.error ?? 'Could not save account details.')
-      return false
-    }
-
-    const hasImport =
-      normalized.properties.some((item) => item.selected) ||
-      normalized.units.some((item) => item.selected) ||
-      normalized.residents.some((item) => item.selected) ||
-      normalized.vendors.some((item) => item.selected) ||
-      normalized.leases.some((item) => item.selected) ||
-      normalized.maintenanceIssues.some((item) => item.selected)
-
-    let properties: OnboardingProperty[] = []
-
-    if (hasImport) {
-      // Only selected rows are imported (toMockExtractionReview filters by selected).
-      const result = await importMockExtraction(toMockExtractionReview(normalized))
-      if (!result.ok) {
-        setSaving(false)
-        setError(result.error ?? "We couldn't finish the import. Please try again.")
-        return false
-      }
-
-      properties = normalized.properties
-        .filter((property) => property.selected)
-        .map((property) => ({
-          id: property.id,
-          name: property.name,
-          streetAddress: property.address.split(',')[0]?.trim() ?? property.address,
-          city: property.city.trim(),
-          state: property.state.trim().toUpperCase(),
-          zipCode: property.zipCode.trim(),
-          unitCount: property.unitCount,
-          propertyType: property.propertyType.trim() || 'multifamily',
-          propertyManagerName: property.propertyManagerName.trim(),
-          propertyManagerPhone: property.propertyManagerPhone.trim(),
-        }))
-
-      if (properties.length > 0) {
-        const unitResult = await persistOnboardingProperties(properties)
-        if (!unitResult.ok) {
-          setSaving(false)
-          setError(unitResult.error ?? 'Could not save property locations.')
-          return false
-        }
-      }
-
-      await refreshCounts()
-    }
-
-    await goTo(
-      'approval',
-      { properties, accountSetup },
-      { extractionReview: normalized },
-    )
-    setSaving(false)
-    return true
-  }
-
   async function continueFromAiReview() {
     if (!extractionReview) return
     setImportingPortfolio(true)
     setError(null)
     try {
-      // Honor current checkbox state — do not force-select everything.
-      await commitFastTrackImport(extractionReview)
+      await commitFastTrackImport({
+        review: extractionReview,
+        accountSetup: state.accountSetup,
+        onError: setError,
+        onExtractionReview: setExtractionReview,
+        onSaving: setSaving,
+        refreshCounts,
+        goTo,
+      })
     } finally {
       setImportingPortfolio(false)
     }
