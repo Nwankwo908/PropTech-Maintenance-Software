@@ -8,7 +8,9 @@ import {
   FunctionsHttpError,
   FunctionsRelayError,
 } from '@supabase/supabase-js'
+import { getAdminEdgeSecret } from '@/lib/adminEdgeAuth'
 import { getActiveLandlordId } from '@/lib/activeLandlord'
+import { getErrorMessage } from '@/lib/errorMessage'
 import { supabase } from '@/lib/supabase'
 
 export type AskUloCitation = {
@@ -156,9 +158,6 @@ export function resolveAskUloUrl(): string | null {
   return null
 }
 
-function adminSecret(): string | undefined {
-  return import.meta.env.VITE_ADMIN_REASSIGN_SECRET?.trim() || undefined
-}
 
 function expectedAskUloHost(): string | null {
   const base = import.meta.env.VITE_SUPABASE_URL?.trim()
@@ -180,11 +179,11 @@ type InvokeAskUloResult = {
  * Distinguishes CORS/network, HTTP, auth, and invalid-body failures in logs + thrown errors.
  */
 async function invokeAskUlo(payload: Record<string, unknown>): Promise<InvokeAskUloResult> {
-  const secret = adminSecret()
+  const secret = getAdminEdgeSecret()
   const host = expectedAskUloHost()
   if (!supabase) {
     console.error('[ask-ulo] missing Supabase client — set VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY')
-    throw new Error('Ask Ulo: Supabase is not configured (VITE_SUPABASE_URL / VITE_SUPABASE_ANON_KEY)')
+    throw new Error("We can't reach the server right now. Please try again in a moment.")
   }
   if (!secret) {
     console.error('[ask-ulo] missing VITE_ADMIN_REASSIGN_SECRET')
@@ -258,22 +257,21 @@ async function invokeAskUlo(payload: Record<string, unknown>): Promise<InvokeAsk
       const msg =
         bodyJson && typeof bodyJson === 'object' && typeof (bodyJson as { error?: unknown }).error === 'string'
           ? (bodyJson as { error: string }).error
-          : error.message || `Ask Ulo failed (${status ?? 'unknown'})`
-      throw new Error(msg)
+          : error.message || "Ask Ulo couldn't answer that. Please try again."
+      throw new Error(
+        getErrorMessage(msg, "Ask Ulo couldn't answer that. Please try again."),
+      )
     }
 
     if (data == null || typeof data !== 'object') {
       console.error('[ask-ulo] invalid response body', { data, host })
-      throw new Error('Ask Ulo: invalid response body')
+      throw new Error("Ask Ulo couldn't answer that. Please try again.")
     }
 
     return { data, status: 200 }
   } catch (e) {
-    if (
-      e instanceof Error &&
-      (e.message.startsWith('Ask Ulo') || e.message.includes('authentication failed'))
-    ) {
-      throw e
+    if (e instanceof Error && e.message.includes('authentication failed')) {
+      throw new Error('Your session expired. Please sign in again.')
     }
     if (e instanceof TypeError) {
       console.error('[ask-ulo] CORS/preflight or network failure (TypeError)', {
@@ -281,24 +279,24 @@ async function invokeAskUlo(payload: Record<string, unknown>): Promise<InvokeAsk
         host,
         url: resolveAskUloUrl(),
       })
-      throw new Error(
-        `Ask Ulo network/CORS failure${host ? ` (${host})` : ''}: ${e.message}. Check DevTools → Network for a failed OPTIONS on ask-ulo.`,
-      )
+      throw new Error('Connection issue. Check your internet and try again.')
     }
     console.error('[ask-ulo] unexpected invoke failure', e)
-    throw e instanceof Error ? e : new Error('Ask Ulo failed')
+    throw e instanceof Error
+      ? e
+      : new Error("Ask Ulo couldn't answer that. Please try again.")
   }
 }
 
 function parseAskUloOk(body: unknown): AskUloOk {
   if (!body || typeof body !== 'object') {
     console.error('[ask-ulo] invalid response body', { body })
-    throw new Error('Ask Ulo: invalid response body')
+    throw new Error("Ask Ulo couldn't answer that. Please try again.")
   }
   const ok = body as AskUloOk
   if (typeof ok.answer !== 'string') {
     console.error('[ask-ulo] invalid response body — missing answer', { body })
-    throw new Error('Ask Ulo: response missing answer')
+    throw new Error("Ask Ulo couldn't answer that. Please try again.")
   }
   return {
     answer: ok.answer,

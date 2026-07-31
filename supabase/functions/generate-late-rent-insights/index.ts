@@ -4,7 +4,7 @@
  */
 import { serve } from "https://deno.land/std/http/server.ts"
 import { adminEdgeCorsHeaders } from "../_shared/admin_edge_cors.ts"
-import { adminReassignSecretAuthorized } from "../_shared/admin_reassign_auth.ts"
+import { requireAdminReassignAuth } from "../_shared/admin_edge_auth.ts"
 import {
   generateLateRentInsights,
   type LateRentInsightsAccountInput,
@@ -90,15 +90,9 @@ serve(async (req) => {
   if (req.method !== "POST") {
     return jsonResponse({ error: "Method not allowed" }, 405)
   }
+  const adminAuth = requireAdminReassignAuth(req, "[generate-late-rent-insights]", corsHeaders)
+  if (!adminAuth.ok) return adminAuth.response
 
-  if (!Deno.env.get("ADMIN_REASSIGN_SECRET")?.trim()) {
-    console.error("[generate-late-rent-insights] ADMIN_REASSIGN_SECRET not set")
-    return jsonResponse({ error: "Server misconfiguration" }, 500)
-  }
-
-  if (!adminReassignSecretAuthorized(req)) {
-    return jsonResponse({ error: "Unauthorized" }, 401)
-  }
 
   let body: Record<string, unknown> = {}
   try {

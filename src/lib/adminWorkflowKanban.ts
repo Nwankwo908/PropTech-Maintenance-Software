@@ -415,7 +415,7 @@ export function deriveWorkflowKanbanStage(
   if (row.templateId === 'move_out') {
     return deriveMoveOutKanbanStage(row, metadata)
   }
-  if (row.templateId === 'inspection' || row.templateId === 'unit_inspection') {
+  if (row.templateId === 'inspection') {
     return deriveInspectionKanbanStage(row)
   }
 

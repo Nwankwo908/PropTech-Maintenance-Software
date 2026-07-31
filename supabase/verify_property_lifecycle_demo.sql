@@ -157,7 +157,7 @@ select
     when wr.template_id = 'rent_collection' then 'rent_collection'
     when wr.template_id = 'move_in' then 'move_in'
     when wr.template_id = 'move_out' then 'move_out'
-    when wr.template_id in ('inspection', 'unit_inspection') then 'inspection'
+    when wr.template_id = 'inspection' then 'inspection'
     else 'other'
   end as dashboard_group,
   count(*) as run_count

@@ -45,12 +45,15 @@ function tradeLabel(trade: VendorTrade): string {
     appliance_repair: "appliance repair",
     carpentry: "carpentry",
     cleaning: "cleaning",
+    concrete: "concrete",
+    deck_builder: "deck builder",
     electrical: "electrical",
     flooring: "flooring",
     general: "general maintenance",
     hvac: "HVAC",
     landscaping: "landscaping",
     locksmith: "locksmith",
+    masonry: "masonry",
     painting: "painting",
     pest_control: "pest control",
     plumbing: "plumbing",
@@ -66,6 +69,7 @@ function runOtherPostcheck(params: {
   candidate: VendorTrade
   ruleTrade: VendorTrade | null
   semanticTrade: VendorTrade | null
+  semanticScore?: number
   llmTrade: VendorTrade | null
 }): { trade: VendorTrade; passed: boolean; signals: string[] } {
   const signals: string[] = []
@@ -78,7 +82,12 @@ function runOtherPostcheck(params: {
     signals.push(`other_postcheck_rule:${params.ruleTrade}`)
     return { trade: params.ruleTrade, passed: false, signals }
   }
-  if (params.semanticTrade && params.semanticTrade !== "other") {
+  // Require a real semantic match — weak Jaccard (e.g. 0.03) must not invent a trade.
+  if (
+    params.semanticTrade &&
+    params.semanticTrade !== "other" &&
+    (params.semanticScore ?? 0) >= 0.45
+  ) {
     signals.push(`other_postcheck_semantic:${params.semanticTrade}`)
     return { trade: params.semanticTrade, passed: false, signals }
   }
@@ -205,6 +214,7 @@ export async function classifyMaintenanceRequest(
     candidate: trade,
     ruleTrade: topRule?.trade ?? null,
     semanticTrade: topSemantic?.trade ?? null,
+    semanticScore: topSemantic?.score ?? 0,
     llmTrade: llm?.vendorTrade ?? null,
   })
   trade = otherCheck.trade

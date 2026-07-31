@@ -58,27 +58,27 @@ const FEATURE_PREVIEWS: Record<
 > = {
   'property-hub': {
     src: featuresPropertyHub,
-    alt: 'Property hub dashboard with portfolio overview, units, tenants, and maintenance history',
-    width: 1013,
-    height: 557,
+    alt: 'Property hub dashboard with portfolio overview, units, tenants, and activity timeline',
+    width: 1041,
+    height: 589,
   },
   'proactive-care': {
     src: featuresProactiveCare,
     alt: 'Proactive care dashboard with upcoming preventive checks, completion rate, and impact metrics',
-    width: 845,
-    height: 637,
+    width: 909,
+    height: 712,
   },
   'instant-automation': {
     src: featuresInstantAutomation,
     alt: 'Instant automation dashboard showing work order routing, vendor assignment, and completion flow',
-    width: 914,
-    height: 784,
+    width: 959,
+    height: 799,
   },
   'smart-insights': {
     src: featuresDashboard,
     alt: 'Smart insights dashboard with spend, response time, and property health scores',
-    width: 689,
-    height: 593,
+    width: 849,
+    height: 705,
   },
 }
 
@@ -105,22 +105,62 @@ function FeatureIcon({ feature, dimmed }: { feature: FeatureItem; dimmed?: boole
 }
 
 /** Features section interactive showcase (Figma 464:361). */
+/**
+ * Room for drop-shadow(8px 0 8.8px rgba(0,0,0,0.15)).
+ * Keep the shadow inside this box (not outside a flex item) so it is not
+ * clipped by flex overflow or the page overflow-x-hidden.
+ */
+const ELEVATED_SHADOW_PAD_RIGHT = 28
+/** Extra space under the image so the drop-shadow blur is fully visible. */
+const ELEVATED_SHADOW_PAD_BOTTOM = 48
+
 function FeaturePreviewPanel({ activeId }: { activeId: FeatureId }) {
   const preview = FEATURE_PREVIEWS[activeId]
+  const useElevatedPreview =
+    activeId === 'smart-insights' ||
+    activeId === 'proactive-care' ||
+    activeId === 'instant-automation' ||
+    activeId === 'property-hub'
+
+  if (!useElevatedPreview) {
+    return (
+      <div
+        className="relative min-w-0 w-full overflow-hidden px-3 pb-5 pt-0 sm:px-[14px] sm:pb-5 sm:pt-0 lg:ml-auto lg:w-auto lg:flex-1"
+        aria-live="polite"
+      >
+        <img
+          key={activeId}
+          src={preview.src}
+          alt={preview.alt}
+          className="h-auto w-[96%] max-w-full animate-[feature-preview-fade_0.35s_ease-out] lg:w-[80%]"
+          width={preview.width}
+          height={preview.height}
+        />
+      </div>
+    )
+  }
 
   return (
     <div
-      className="relative min-w-0 w-full overflow-hidden px-3 pb-5 pt-0 sm:px-[14px] sm:pb-5 sm:pt-0 lg:ml-auto lg:w-auto lg:flex-1"
+      className="relative min-w-0 w-full pb-12 pl-3 pt-3 sm:pl-[14px] lg:ml-auto lg:w-auto lg:flex-1 lg:pb-14"
       aria-live="polite"
     >
-      <img
-        key={activeId}
-        src={preview.src}
-        alt={preview.alt}
-        className="h-auto w-[96%] max-w-full animate-[feature-preview-fade_0.35s_ease-out] lg:w-[80%]"
-        width={preview.width}
-        height={preview.height}
-      />
+      <div
+        className="w-full"
+        style={{
+          paddingRight: ELEVATED_SHADOW_PAD_RIGHT,
+          paddingBottom: ELEVATED_SHADOW_PAD_BOTTOM,
+        }}
+      >
+        <img
+          key={activeId}
+          src={preview.src}
+          alt={preview.alt}
+          className="block h-auto w-full max-w-full animate-[feature-preview-fade_0.35s_ease-out] [filter:drop-shadow(8px_0_8.8px_rgba(0,0,0,0.15))]"
+          width={preview.width}
+          height={preview.height}
+        />
+      </div>
     </div>
   )
 }
@@ -129,7 +169,7 @@ export function FeaturesShowcase() {
   const [activeId, setActiveId] = useState<FeatureId>('smart-insights')
 
   return (
-    <div className="mx-auto mt-10 flex w-full flex-col items-start gap-[29px] lg:mt-12 lg:flex-row lg:items-start lg:justify-between lg:gap-6">
+    <div className="mx-auto mt-10 mb-4 flex w-full flex-col items-start gap-[29px] overflow-visible pb-8 lg:mt-12 lg:mb-6 lg:flex-row lg:items-start lg:justify-between lg:gap-6 lg:pb-10">
       <nav
         className="flex w-full shrink-0 flex-col gap-[38px] lg:w-auto lg:max-w-[463px] lg:gap-10"
         aria-label="Product features"
@@ -145,8 +185,8 @@ export function FeaturesShowcase() {
               onClick={() => setActiveId(feature.id)}
               className={
                 isActive
-                  ? 'w-full rounded-2xl border border-[#e5e7eb] bg-white p-[34px] text-left shadow-[0_4px_8px_rgba(0,0,0,0.04)] transition-shadow hover:shadow-[0_6px_12px_rgba(0,0,0,0.06)] lg:w-auto lg:p-[29px] lg:shadow-none'
-                  : 'flex w-full cursor-pointer items-center gap-5 rounded-2xl px-[34px] py-1 text-left opacity-50 transition-opacity hover:opacity-65 lg:w-auto lg:gap-4 lg:px-7'
+                  ? 'sa-card sa-press w-full rounded-2xl border border-[#e5e7eb] bg-white p-[34px] text-left shadow-[0_4px_8px_rgba(0,0,0,0.04)] hover:shadow-[0_6px_12px_rgba(0,0,0,0.06)] lg:w-auto lg:p-[29px] lg:shadow-none'
+                  : 'sa-press flex w-full cursor-pointer items-center gap-5 rounded-2xl px-[34px] py-1 text-left opacity-50 hover:opacity-65 lg:w-auto lg:gap-4 lg:px-7'
               }
             >
               {isActive ? (

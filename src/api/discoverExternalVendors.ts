@@ -6,6 +6,7 @@ import {
   adminEdgeInvokeHeaders,
   fetchAdminEdgeFunction,
 } from '@/api/adminReassignVendor'
+import { formatAdminEdgeUnauthorizedError } from '@/lib/adminEdgeAuth'
 
 export type ExternalVendorSuggestionDto = {
   name: string
@@ -69,9 +70,7 @@ export async function postDiscoverExternalVendors(input: {
       res.status === 401 &&
       String(err.error ?? '').toLowerCase() === 'unauthorized'
     ) {
-      throw new Error(
-        `${base} (401): Edge ADMIN_REASSIGN_SECRET must match VITE_ADMIN_REASSIGN_SECRET.`,
-      )
+      throw new Error(formatAdminEdgeUnauthorizedError(base))
     }
     throw new Error(base)
   }

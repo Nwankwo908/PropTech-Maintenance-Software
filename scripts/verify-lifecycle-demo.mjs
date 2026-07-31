@@ -59,7 +59,7 @@ function groupId(templateId) {
   if (templateId === 'rent_collection') return 'rent_collection'
   if (templateId === 'move_in') return 'move_in'
   if (templateId === 'move_out') return 'move_out'
-  if (templateId === 'inspection' || templateId === 'unit_inspection') return 'inspection'
+  if (templateId === 'inspection') return 'inspection'
   return 'other'
 }
 

@@ -5,8 +5,10 @@
  * Pattern: trigger → classify → route → act → escalate → log
  */
 import { serve } from "https://deno.land/std/http/server.ts"
+import { authorizedCronBearer } from "../_shared/admin_edge_auth.ts"
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1"
 import { runWorkflowEngine } from "../_shared/engine/runner.ts"
+import { runRentCollectionCronViaEngine } from "../_shared/engine/rentCollectionEngine.ts"
 import {
   fetchWorkflowTemplateConfig,
   leaseRenewalTimingFromConfig,
@@ -27,14 +29,6 @@ function jsonResponse(body: unknown, status = 200): Response {
   })
 }
 
-function authorized(req: Request): boolean {
-  const secret = Deno.env.get("RUN_WORKFLOW_TRIGGERS_SECRET")?.trim()
-  if (!secret) return true
-  const h = req.headers.get("Authorization")?.trim()
-  if (!h?.toLowerCase().startsWith("bearer ")) return false
-  return h.slice(7).trim() === secret
-}
-
 function resolveLandlordId(body: Record<string, unknown>): string | null {
   const fromBody = typeof body.landlord_id === "string"
     ? body.landlord_id.trim()
@@ -53,7 +47,7 @@ serve(async (req) => {
     return jsonResponse({ error: "Method not allowed" }, 405)
   }
 
-  if (!authorized(req)) {
+  if (!authorizedCronBearer(req, ["RUN_WORKFLOW_TRIGGERS_SECRET"])) {
     return jsonResponse({ error: "Unauthorized" }, 401)
   }
 
@@ -118,14 +112,10 @@ serve(async (req) => {
     ? body.late_payment_grace_days
     : rentTiming.latePaymentGraceDays
 
-  const rentCollection = await runWorkflowEngine(supabase, {
-    trigger: "cron",
+  const rentCollection = await runRentCollectionCronViaEngine(supabase, {
     landlordId,
-    cron: {
-      templateId: "rent_collection",
-      rentDueDay,
-      noResponseDays: latePaymentGraceDays,
-    },
+    rentDueDay,
+    latePaymentGraceDays,
   })
 
   return jsonResponse({

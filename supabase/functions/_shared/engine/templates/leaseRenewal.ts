@@ -1,6 +1,12 @@
 import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.49.1"
 import { logGraphEvent } from "../../graph/logGraphEvent.ts"
+import { notifyLandlordNeedsAttention } from "../../landlordAttentionNotify.ts"
 import { sendInboundAutoReply } from "../../sms/inboundReply.ts"
+import {
+  buildEarlyLeaseInquiryAckSms,
+  isLeaseRenewalInquirySms,
+  parseLeaseRenewalInquiry,
+} from "../../sms/leaseRenewalInquiry.ts"
 import {
   findOrCreateConversation,
   upsertSmsIdentityForPhone,
@@ -32,6 +38,7 @@ import type {
 
 export type LeaseRenewalStep =
   | "initiated"
+  | "early_inquiry"
   | "awaiting_response"
   | "completed"
   | "escalated"
@@ -42,6 +49,12 @@ export type LeaseRenewalState = {
   lease_end_date?: string
   unit_label?: string
   outreach_sent_at?: string
+  /** Tenant asked before cron outreach window. */
+  early_inquiry?: boolean
+  early_inquiry_at?: string
+  preferred_term_years?: 1 | 2 | "either" | null
+  wants_renewal_timing?: boolean
+  last_inbound_summary?: string
 }
 
 function parseRenewalReply(body: string): "renew" | "move_out" | "questions" | null {
@@ -62,7 +75,22 @@ function renewalPrompt(state: LeaseRenewalState): string {
     : "soon"
 
   if (state.step === "awaiting_response" || state.step === "initiated") {
-    return `Hi, this is your property management team. Your lease ends ${end}, and we'd love for you to stay. Are you planning to renew? Reply YES to renew, NO if you're moving out, or QUESTIONS if you'd like to talk it through with us.`
+    const termNote = state.preferred_term_years === "either"
+      ? " We also noted you're open to a 1- or 2-year term."
+      : state.preferred_term_years === 1
+      ? " We also noted you'd prefer a 1-year term."
+      : state.preferred_term_years === 2
+      ? " We also noted you'd prefer a 2-year term."
+      : ""
+
+    if (state.early_inquiry) {
+      return (
+        `Hi, this is your property management team. Following up on your lease renewal note — your lease ends ${end}, and we'd love for you to stay.${termNote} ` +
+        `Reply YES to renew, NO if you're moving out, or QUESTIONS if you'd like to talk it through with us.`
+      )
+    }
+
+    return `Hi, this is your property management team. Your lease ends ${end}, and we'd love for you to stay.${termNote} Are you planning to renew? Reply YES to renew, NO if you're moving out, or QUESTIONS if you'd like to talk it through with us.`
   }
 
   return "Thanks! Your property manager will follow up with you about your lease."
@@ -88,6 +116,18 @@ export const leaseRenewalTemplate: WorkflowTemplate = {
         templateId: "lease_renewal",
         confidence: "high",
         reason: "cron_trigger",
+      }
+    }
+
+    const sms = ctx.sms
+    if (
+      sms?.identity.resident_id?.trim() &&
+      isLeaseRenewalInquirySms(sms.inbound.body)
+    ) {
+      return {
+        templateId: "lease_renewal",
+        confidence: "high",
+        reason: "early_lease_inquiry_sms",
       }
     }
 
@@ -136,11 +176,192 @@ export const leaseRenewalTemplate: WorkflowTemplate = {
       },
     })
 
+    try {
+      await notifyLandlordNeedsAttention(supabase, {
+        landlordId: ctx.landlordId,
+        kind: "lease_renewal",
+        headline: "Lease renewal escalated",
+        detail: "No tenant response — review renewal options",
+        idempotencyKey: `lease_renewal:${ctx.runId}`,
+        workflowRunId: ctx.runId,
+        residentId: ctx.activeRun?.resident_id ?? null,
+        unitId: ctx.activeRun?.unit_id ?? null,
+      })
+    } catch (e) {
+      console.error("[lease-renewal] attention notify", e)
+    }
+
     return {
       escalated: true,
       reason: result.escalationReason ?? "no_response",
     }
   },
+}
+
+async function loadResidentLeaseRow(
+  supabase: SupabaseClient,
+  residentId: string,
+): Promise<{ lease_end_date: string | null; unit: string | null } | null> {
+  const { data, error } = await supabase
+    .from("users")
+    .select("lease_end_date, unit")
+    .eq("id", residentId)
+    .maybeSingle()
+  if (error || !data) {
+    if (error) console.error("[lease-renewal] resident lookup", error.message)
+    return null
+  }
+  return {
+    lease_end_date: typeof data.lease_end_date === "string"
+      ? data.lease_end_date
+      : null,
+    unit: typeof data.unit === "string" ? data.unit : null,
+  }
+}
+
+/**
+ * Pre-cron tenant inquiry: update lease_renewal run state + friendly ack.
+ * Never escalates to Needs your attention.
+ */
+async function processEarlyLeaseInquiry(
+  supabase: SupabaseClient,
+  ctx: WorkflowExecutionContext,
+  params: {
+    residentId: string
+    run: Awaited<ReturnType<typeof findActiveWorkflowRun>> | null
+  },
+): Promise<WorkflowActResult> {
+  const sms = ctx.sms!
+  const inquiry = parseLeaseRenewalInquiry(sms.inbound.body)
+  const resident = await loadResidentLeaseRow(supabase, params.residentId)
+  const leaseEnd = resident?.lease_end_date ??
+    (params.run ? runLeaseEndDate(params.run) : null)
+  const unitLabel = resident?.unit ?? undefined
+
+  let run = params.run
+  const nowIso = new Date().toISOString()
+
+  if (!run) {
+    run = await createWorkflowRun(supabase, {
+      templateId: "lease_renewal",
+      landlordId: ctx.landlordId,
+      triggerType: "sms_inbound",
+      currentStep: "early_inquiry",
+      residentId: params.residentId,
+      entityType: "sms_conversation",
+      entityId: sms.conversationId,
+      metadata: {
+        lease_end_date: leaseEnd,
+        early_inquiry: true,
+        unit_label: unitLabel,
+        step_state: {
+          step: "early_inquiry",
+          early_inquiry: true,
+          early_inquiry_at: nowIso,
+          lease_end_date: leaseEnd ?? undefined,
+          unit_label: unitLabel,
+        } satisfies LeaseRenewalState,
+      },
+    })
+  }
+
+  if (!run) {
+    return {
+      templateId: "lease_renewal",
+      route: workflowRouteForTemplate("lease_renewal"),
+      replyHint:
+        "Thanks for reaching out about your lease. I'm having trouble saving that just now — please try again in a moment, or contact your property manager directly.",
+      metadata: { error: "create_run_failed", early_inquiry: true },
+    }
+  }
+
+  ctx.runId = run.id
+  ctx.activeRun = run
+
+  await linkConversationToWorkflowRun(supabase, {
+    conversationId: sms.conversationId,
+    runId: run.id,
+    templateId: "lease_renewal",
+  })
+
+  const prev = runStepState<LeaseRenewalState>(run)
+  const nextState: LeaseRenewalState = {
+    ...prev,
+    step: inquiry.response === "move_out" ? "completed" : "early_inquiry",
+    early_inquiry: true,
+    early_inquiry_at: prev.early_inquiry_at ?? nowIso,
+    lease_end_date: leaseEnd ?? prev.lease_end_date,
+    unit_label: unitLabel ?? prev.unit_label,
+    response: inquiry.response ?? prev.response,
+    preferred_term_years: inquiry.preferredTermYears ??
+      prev.preferred_term_years ??
+      null,
+    wants_renewal_timing: inquiry.wantsRenewalTiming ||
+      Boolean(prev.wants_renewal_timing),
+    last_inbound_summary: inquiry.noted.join("; ") || sms.inbound.body.slice(0, 200),
+  }
+
+  const completed = inquiry.response === "move_out"
+  await updateWorkflowRun(supabase, run.id, {
+    status: completed ? "completed" : "active",
+    currentStep: nextState.step ?? "early_inquiry",
+    completedAt: completed ? nowIso : undefined,
+    metadata: {
+      lease_end_date: nextState.lease_end_date,
+      early_inquiry: true,
+      unit_label: nextState.unit_label,
+      step_state: nextState,
+    },
+    pipelineStage: "act",
+    eventMessage: completed
+      ? "Early lease inquiry — move-out noted"
+      : "Early lease inquiry recorded",
+    eventStep: nextState.step ?? "early_inquiry",
+  })
+
+  await logGraphEvent(supabase, {
+    landlord_id: ctx.landlordId,
+    event_type: completed
+      ? "lease.move_out_confirmed"
+      : "lease.early_inquiry_recorded",
+    source: "sms",
+    actor_type: "resident",
+    actor_id: params.residentId,
+    resident_id: params.residentId,
+    conversation_id: sms.conversationId,
+    message_id: sms.messageId,
+    workflow_run_id: run.id,
+    workflow_template_id: "lease_renewal",
+    metadata: {
+      lease_end_date: nextState.lease_end_date,
+      response: nextState.response,
+      preferred_term_years: nextState.preferred_term_years,
+      wants_renewal_timing: nextState.wants_renewal_timing,
+      early_inquiry: true,
+      noted: inquiry.noted,
+    },
+  })
+
+  const replyHint = buildEarlyLeaseInquiryAckSms({
+    parse: inquiry,
+    leaseEndDate: nextState.lease_end_date,
+  })
+
+  return {
+    templateId: "lease_renewal",
+    route: workflowRouteForTemplate("lease_renewal"),
+    runId: run.id,
+    replyHint,
+    // Pre-cron: pipeline only — never Needs your attention.
+    shouldEscalate: false,
+    metadata: {
+      early_inquiry: true,
+      response: nextState.response,
+      preferred_term_years: nextState.preferred_term_years,
+      wants_renewal_timing: nextState.wants_renewal_timing,
+      completed,
+    },
+  }
 }
 
 async function processLeaseRenewalSmsReply(
@@ -169,23 +390,41 @@ async function processLeaseRenewalSmsReply(
   }
 
   let run =
-    ctx.activeRun ??
-    (intent.runId
-      ? null
+    ctx.activeRun?.template_id === "lease_renewal"
+      ? ctx.activeRun
       : await findActiveWorkflowRun(supabase, {
         landlordId: ctx.landlordId,
         residentId,
         templateId: "lease_renewal",
-      }))
+      })
 
   if (!run && intent.runId) {
-    run = await getWorkflowRunById(supabase, intent.runId)
+    const byId = await getWorkflowRunById(supabase, intent.runId)
+    if (byId?.template_id === "lease_renewal") run = byId
+  }
+
+  const state = run ? runStepState<LeaseRenewalState>(run) : {}
+  const outreachOpen = Boolean(state.outreach_sent_at) ||
+    state.step === "awaiting_response"
+  const earlyInquirySms = isLeaseRenewalInquirySms(sms.inbound.body)
+  const onEarlyInquiryRun = Boolean(state.early_inquiry) ||
+    state.step === "early_inquiry"
+
+  // Pre-cron (or follow-up on an early-inquiry run): friendly ack + state update.
+  if (earlyInquirySms || (onEarlyInquiryRun && !outreachOpen)) {
+    return processEarlyLeaseInquiry(supabase, ctx, { residentId, run })
   }
 
   if (!run) {
+    // Short YES/NO without an open renewal — treat as early inquiry if lease-like, else nudge.
+    if (earlyInquirySms) {
+      return processEarlyLeaseInquiry(supabase, ctx, { residentId, run: null })
+    }
     return {
       templateId: "lease_renewal",
       route: workflowRouteForTemplate("lease_renewal"),
+      replyHint:
+        "Thanks for your message about your lease. Your property management team will follow up with renewal details when they're ready. If you have a maintenance issue, just describe what's going on and I'll help.",
       metadata: { no_active_run: true },
     }
   }
@@ -201,10 +440,13 @@ async function processLeaseRenewalSmsReply(
     })
   }
 
-  const state = runStepState<LeaseRenewalState>(run)
   const parsed = parseRenewalReply(sms.inbound.body)
 
   if (!parsed) {
+    // Free-text while awaiting cron outreach — record as early-style inquiry without escalating.
+    if (isLeaseRenewalInquirySms(sms.inbound.body) || onEarlyInquiryRun) {
+      return processEarlyLeaseInquiry(supabase, ctx, { residentId, run })
+    }
     return {
       templateId: "lease_renewal",
       route: workflowRouteForTemplate("lease_renewal"),
@@ -325,8 +567,67 @@ async function processLeaseRenewalCron(
       templateId: "lease_renewal",
     })
 
+    const existingState = existing
+      ? runStepState<LeaseRenewalState>(existing)
+      : null
+
+    // Same lease cycle already has a run — don't duplicate. If it was an early
+    // tenant inquiry without outreach yet, send the formal renew ask now.
     if (existing && runLeaseEndDate(existing) === leaseEnd) {
-      skipped++
+      const needsOutreach = Boolean(existingState?.early_inquiry) &&
+        !existingState?.outreach_sent_at &&
+        existing.status === "active"
+
+      if (!needsOutreach) {
+        skipped++
+        continue
+      }
+
+      const phone = String(row.phone ?? "").trim()
+      const mainLine = await lookupLandlordMainNumber(supabase, landlordId)
+      if (phone && mainLine) {
+        const prompt = renewalPrompt({
+          step: "awaiting_response",
+          lease_end_date: leaseEnd,
+          unit_label: row.unit,
+          preferred_term_years: existingState?.preferred_term_years,
+        })
+        const sent = await sendLeaseRenewalOutreach(supabase, {
+          landlordId,
+          residentId,
+          phone,
+          uloNumber: mainLine.phone,
+          smsNumberId: mainLine.id,
+          provider: mainLine.provider,
+          body: prompt,
+          runId: existing.id,
+        })
+        if (sent) {
+          outreachSent++
+          const dueAt = new Date()
+          dueAt.setDate(dueAt.getDate() + noResponseDays)
+          await updateWorkflowRun(supabase, existing.id, {
+            currentStep: "awaiting_response",
+            metadata: {
+              lease_end_date: leaseEnd,
+              due_at: dueAt.toISOString(),
+              early_inquiry: true,
+              step_state: {
+                ...existingState,
+                step: "awaiting_response",
+                lease_end_date: leaseEnd,
+                unit_label: row.unit,
+                outreach_sent_at: new Date().toISOString(),
+              },
+            },
+            pipelineStage: "route",
+            eventMessage: "Renewal offer sent after early inquiry",
+            eventStep: "awaiting_response",
+          })
+        }
+      } else {
+        skipped++
+      }
       continue
     }
 
@@ -534,6 +835,21 @@ async function escalateOverdueLeaseRenewals(
         reason: "no_response_by_due_date",
       },
     })
+
+    try {
+      await notifyLandlordNeedsAttention(supabase, {
+        landlordId,
+        kind: "lease_renewal",
+        headline: "Lease renewal escalated",
+        detail: "No tenant response — review renewal options",
+        idempotencyKey: `lease_renewal:${run.id}`,
+        workflowRunId: run.id,
+        residentId: run.resident_id,
+        unitId: run.unit_id,
+      })
+    } catch (e) {
+      console.error("[lease-renewal] attention notify", e)
+    }
     count++
   }
 

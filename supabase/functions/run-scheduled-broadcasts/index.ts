@@ -3,6 +3,7 @@
  * sets terminal status to sent | partial | failed.
  */
 import { serve } from "https://deno.land/std/http/server.ts"
+import { authorizedCronBearer } from "../_shared/admin_edge_auth.ts"
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1"
 import {
   deliverBroadcastMessages,
@@ -23,14 +24,6 @@ function jsonResponse(body: unknown, status = 200): Response {
     status,
     headers: { ...corsHeaders, "Content-Type": "application/json" },
   })
-}
-
-function authorized(req: Request): boolean {
-  const secret = Deno.env.get("RUN_SCHEDULED_BROADCASTS_SECRET")?.trim()
-  if (!secret) return true
-  const h = req.headers.get("Authorization")?.trim()
-  if (!h?.toLowerCase().startsWith("bearer ")) return false
-  return h.slice(7).trim() === secret
 }
 
 type BroadcastRow = {
@@ -67,7 +60,7 @@ serve(async (req) => {
     return jsonResponse({ error: "Method not allowed" }, 405)
   }
 
-  if (!authorized(req)) {
+  if (!authorizedCronBearer(req, ["RUN_SCHEDULED_BROADCASTS_SECRET"])) {
     return jsonResponse({ error: "Unauthorized" }, 401)
   }
 

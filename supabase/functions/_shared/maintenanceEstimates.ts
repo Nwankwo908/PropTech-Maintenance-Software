@@ -2,7 +2,7 @@
  * Vendor estimate submit + landlord 1-tap approve/reject (Phase 3 / 4.3).
  */
 import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.49.1"
-import { sendResendEmail } from "./delivery.ts"
+import { sendLandlordOpsEmail } from "./landlordOpsNotify.ts"
 import { logGraphEvent } from "./graph/logGraphEvent.ts"
 import {
   findActiveLandlordMainNumber,
@@ -26,6 +26,7 @@ import {
 } from "./sms/workOrderAdminStatusSms.ts"
 import { sendVendorJobAlert } from "./sms/vendorSmsRouting.ts"
 import { formatWorkOrderRef } from "./vendor_outreach_copy.ts"
+import { uloAppUrl } from "./uloAppUrl.ts"
 
 export type EstimateMoneyInput = {
   partsCost: number
@@ -38,14 +39,6 @@ function roundMoney(value: number): number {
   return Math.round(value * 100) / 100
 }
 
-function appBaseUrl(): string {
-  const raw = Deno.env.get("APP_URL")?.trim() ?? ""
-  if (!raw) return ""
-  const t = raw.replace(/\/$/, "")
-  if (/^https?:\/\//i.test(t)) return t
-  return `https://${t}`
-}
-
 function respondFnBase(): string {
   const explicit = Deno.env.get("LANDLORD_ESTIMATE_RESPOND_FN_URL")?.trim()?.replace(
     /\/$/,
@@ -55,15 +48,6 @@ function respondFnBase(): string {
   const supabaseUrl = Deno.env.get("SUPABASE_URL")?.trim()?.replace(/\/$/, "") ?? ""
   if (!supabaseUrl) return ""
   return `${supabaseUrl}/functions/v1/landlord-respond-estimate`
-}
-
-function adminNotifyEmails(): string[] {
-  const raw = Deno.env.get("SMS_ADMIN_NOTIFY_EMAILS")?.trim()
-  if (!raw) return []
-  return raw
-    .split(/[,;\s]+/)
-    .map((e: string) => e.trim())
-    .filter((e: string) => e.includes("@"))
 }
 
 function adminNotifyPhones(): string[] {
@@ -195,7 +179,10 @@ async function notifyLandlordEstimatePending(
     actionToken: string
     ticketId: string
     unit: string
+    vendorId: string
     vendorName: string
+    /** Submitting vendor email — never receive landlord approve/decline mail. */
+    vendorEmail?: string | null
     partsCost: number
     laborCost: number
     totalCost: number
@@ -259,16 +246,6 @@ async function notifyLandlordEstimatePending(
     }
   }
 
-  const emails = new Set(adminNotifyEmails())
-  const { data: landlord } = await supabase
-    .from("landlords")
-    .select("email")
-    .eq("id", params.landlordId)
-    .maybeSingle()
-  if (typeof landlord?.email === "string" && landlord.email.includes("@")) {
-    emails.add(landlord.email.trim())
-  }
-
   const subject = `Approve estimate for ${wo}`
   const text = [
     `A vendor submitted an estimate for work order ${wo}.`,
@@ -304,12 +281,14 @@ ${
       : "<p>Open the admin dashboard to review this estimate.</p>"
   }`
 
-  for (const email of emails) {
-    const result = await sendResendEmail(email, subject, text, html)
-    if ("error" in result) {
-      console.error("[maintenance-estimates] landlord email", email, result.error)
-    }
-  }
+  await sendLandlordOpsEmail(supabase, {
+    landlordId: params.landlordId,
+    subject,
+    text,
+    html,
+    excludeEmails: params.vendorEmail ? [params.vendorEmail] : [],
+    logLabel: `estimate-pending:${params.estimateId}`,
+  })
 }
 
 async function notifyVendorEstimateDecision(
@@ -356,13 +335,9 @@ async function notifyVendorEstimateDecision(
     typeof ticket?.vendor_action_token === "string"
       ? ticket.vendor_action_token.trim()
       : ""
-  const base = appBaseUrl()
-  const jobLink =
-    token && base
-      ? `${base}/w/${encodeURIComponent(token)}`
-      : token
-        ? `/w/${encodeURIComponent(token)}`
-        : null
+  const jobLink = token
+    ? uloAppUrl.workOrder(token, { fallback: "" })
+    : null
 
   const vendorName =
     typeof vendor?.name === "string" && vendor.name.trim()
@@ -502,7 +477,7 @@ export async function submitMaintenanceEstimate(
 
   const { data: vendor } = await supabase
     .from("vendors")
-    .select("name, phone")
+    .select("name, phone, email")
     .eq("id", params.vendorId)
     .maybeSingle()
   const vendorName =
@@ -535,7 +510,9 @@ export async function submitMaintenanceEstimate(
       actionToken,
       ticketId: params.ticketId,
       unit: typeof ticket.unit === "string" ? ticket.unit : "",
+      vendorId: params.vendorId,
       vendorName,
+      vendorEmail: typeof vendor?.email === "string" ? vendor.email : null,
       partsCost: moneyNorm.partsCost,
       laborCost: moneyNorm.laborCost,
       totalCost: moneyNorm.totalCost,

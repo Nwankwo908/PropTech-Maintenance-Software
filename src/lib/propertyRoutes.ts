@@ -3,7 +3,15 @@ import { isDemoAccountActive } from '@/lib/activeLandlord'
 /** URL-safe building identifier for /admin/properties/:buildingSlug routes. */
 export function buildingDetailPath(
   building: string,
-  tab?: 'overview' | 'units' | 'residents' | 'workflows' | 'conversations' | 'vendors' | 'analytics',
+  tab?:
+    | 'overview'
+    | 'details'
+    | 'units'
+    | 'residents'
+    | 'workflows'
+    | 'conversations'
+    | 'vendors'
+    | 'analytics',
 ): string {
   const base = `/admin/properties/${encodeURIComponent(building)}`
   if (tab && tab !== 'overview') return `${base}?tab=${tab}`

@@ -78,7 +78,7 @@ function VendorsIcon() {
 
 /** Matches inactive nav icon color: text-[#364153] opacity-60. */
 const sidebarChromeIconBtn =
-  'inline-flex cursor-pointer items-center justify-center rounded-[8px] py-1.5 text-[#364153] opacity-100 outline-none transition-colors hover:bg-[#f3f4f6] hover:opacity-100 focus-visible:ring-2 focus-visible:ring-[#101828] focus-visible:ring-offset-2'
+  'sa-press inline-flex cursor-pointer items-center justify-center rounded-[8px] py-1.5 text-[#364153] opacity-100 outline-none hover:bg-[#f3f4f6] hover:opacity-100 focus-visible:ring-2 focus-visible:ring-[#101828] focus-visible:ring-offset-2'
 
 /** Tint a black PNG glyph with currentColor (same as nav SVGs). */
 function SidebarChromeGlyph({ src }: { src: string }) {

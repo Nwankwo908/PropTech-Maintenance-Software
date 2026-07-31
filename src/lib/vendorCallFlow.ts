@@ -29,7 +29,6 @@ const LIFECYCLE_WORK_ORDER_REF_TEMPLATES = new Set([
   'move_out',
   'move_in',
   'inspection',
-  'unit_inspection',
   'lease_renewal',
 ])
 

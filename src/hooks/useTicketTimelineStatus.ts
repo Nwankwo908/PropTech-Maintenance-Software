@@ -9,6 +9,7 @@ import {
   type TicketTimelinePhase,
 } from '@/lib/maintenanceTicketTimeline'
 import { getCurrentResidentSession } from '@/lib/residentAuth'
+import { getErrorMessage } from '@/lib/errorMessage'
 
 export type UseTicketTimelineStatusResult = {
   phase: TicketTimelinePhase
@@ -62,7 +63,7 @@ export function useTicketTimelineStatus(
       } catch (e) {
         if (!cancelled) {
           setStatusError(
-            e instanceof Error ? e.message : 'Could not load ticket status.',
+            getErrorMessage(e, 'Could not load ticket status.'),
           )
         }
       }

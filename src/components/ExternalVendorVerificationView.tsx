@@ -162,7 +162,7 @@ function SecondaryActionButton({
     <button
       type="button"
       onClick={onClick}
-      className={`inline-flex min-h-[44px] w-full items-center justify-center rounded-[10px] border border-[#e5e7eb] px-4 py-2.5 text-[13px] font-medium outline-none transition-colors focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2 ${
+      className={`sa-press inline-flex min-h-[44px] w-full items-center justify-center rounded-[10px] border border-[#e5e7eb] px-4 py-2.5 text-[13px] font-medium outline-none focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2 ${
         destructive
           ? 'text-[#fb2c36] hover:bg-[#fef2f2]'
           : 'text-[#0a0a0a] hover:bg-[#f9fafb]'
@@ -293,13 +293,13 @@ export function ExternalVendorVerificationView({
   }
 
   return (
-    <div className="relative flex min-h-0 flex-1 flex-col">
+    <div className="sa-enter relative flex min-h-0 flex-1 flex-col">
       <header className="border-b border-[#e5e7eb] px-6 pb-4 pt-6 pr-12">
         <button
           type="button"
           disabled={saving}
           onClick={onBack}
-          className="inline-flex items-center gap-1 text-[12px] font-medium text-[#717182] outline-none hover:text-[#0a0a0a] focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2 disabled:opacity-50"
+          className="sa-link inline-flex items-center gap-1 text-[12px] font-medium text-[#717182] outline-none hover:text-[#0a0a0a] focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2 disabled:opacity-50"
         >
           <ChevronLeftIcon />
           Back to search
@@ -425,7 +425,7 @@ export function ExternalVendorVerificationView({
                               type="button"
                               disabled={licenseVerifying || !manualLicenseInput.trim()}
                               onClick={() => void handleVerifyLicense()}
-                              className="inline-flex min-h-[36px] shrink-0 items-center justify-center rounded-[10px] border border-[#e5e7eb] bg-white px-3 py-2 text-[12px] font-semibold text-[#101828] outline-none hover:bg-[#f9fafb] focus-visible:ring-2 focus-visible:ring-[#0030b5] disabled:pointer-events-none disabled:opacity-50"
+                              className="sa-press inline-flex min-h-[36px] shrink-0 items-center justify-center rounded-[10px] border border-[#e5e7eb] bg-white px-3 py-2 text-[12px] font-semibold text-[#101828] outline-none hover:bg-[#f9fafb] focus-visible:ring-2 focus-visible:ring-[#0030b5] disabled:pointer-events-none disabled:opacity-50"
                             >
                               {licenseVerifying ? 'Checking…' : 'Verify License'}
                             </button>
@@ -502,7 +502,7 @@ export function ExternalVendorVerificationView({
             type="button"
             disabled={saving || assignBlocked}
             onClick={onAssign}
-            className="inline-flex min-h-[44px] w-full items-center justify-center gap-2 rounded-[10px] bg-[#0a4d38] px-4 py-2.5 text-[13px] font-medium text-white outline-none transition-colors hover:bg-[#083828] focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-60"
+            className="sa-press inline-flex min-h-[44px] w-full items-center justify-center gap-2 rounded-[10px] bg-[#0a4d38] px-4 py-2.5 text-[13px] font-medium text-white outline-none hover:bg-[#083828] focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-60"
           >
             <ShieldCheckIcon />
             {saving ? 'Assigning…' : 'Assign Vendor'}

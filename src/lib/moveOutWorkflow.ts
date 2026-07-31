@@ -1,5 +1,6 @@
 import type { AdminWorkflowRow } from '@/lib/adminWorkflows'
 import { lifecycleStepKey } from '@/lib/adminWorkflowKanban'
+import { getErrorMessage } from '@/lib/errorMessage'
 
 export type MoveOutTimelineStepKey =
   | 'move_out_started'
@@ -272,7 +273,7 @@ export async function applyMoveOutAdminAction(
     .eq('template_id', 'move_out')
     .maybeSingle()
 
-  if (fetchError) return { ok: false, error: fetchError.message }
+  if (fetchError) return { ok: false, error: getErrorMessage(fetchError, 'Something went wrong. Please try again.') }
   if (!run) return { ok: false, error: 'Move-out workflow not found.' }
 
   const metadata = readRecord(run.metadata)
@@ -312,18 +313,19 @@ export async function applyMoveOutAdminAction(
     .eq('id', params.workflowRunId)
     .eq('landlord_id', params.landlordId)
 
-  if (updateError) return { ok: false, error: updateError.message }
+  if (updateError) return { ok: false, error: getErrorMessage(updateError, 'Something went wrong. Please try again.') }
 
   if (patch.graphEvent) {
-    await supabase.from('operations_graph_events').insert({
-      landlord_id: params.landlordId,
-      event_type: patch.graphEvent,
+    const { recordActivityLog } = await import('@/lib/recordActivityLog')
+    await recordActivityLog({
+      landlordId: params.landlordId,
+      eventType: patch.graphEvent,
       source: 'dashboard',
-      actor_type: 'landlord',
-      workflow_run_id: params.workflowRunId,
-      workflow_template_id: 'move_out',
-      resident_id: params.residentId ?? run.resident_id,
-      unit_id: params.unitId ?? run.unit_id,
+      actorType: 'landlord',
+      workflowRunId: params.workflowRunId,
+      workflowTemplateId: 'move_out',
+      residentId: params.residentId ?? run.resident_id,
+      unitId: params.unitId ?? run.unit_id,
       metadata: { action, message: patch.message },
     })
   }

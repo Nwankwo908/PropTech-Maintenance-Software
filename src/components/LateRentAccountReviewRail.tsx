@@ -1,4 +1,5 @@
 import { useEffect, useId, useState } from 'react'
+import { getAdminEdgeSecret } from '@/lib/adminEdgeAuth'
 import {
   postGenerateLateRentInsights,
   resolveGenerateLateRentInsightsUrl,
@@ -16,6 +17,7 @@ import {
   type LateRentAccountReview,
   type LateRentInsightCard,
 } from '@/lib/lateRentAccountReview'
+import { getErrorMessage } from '@/lib/errorMessage'
 
 function CloseIcon() {
   return (
@@ -125,7 +127,7 @@ export function LateRentAccountReviewRail({
 
     void (async () => {
       const url = resolveGenerateLateRentInsightsUrl()
-      const secret = import.meta.env.VITE_ADMIN_REASSIGN_SECRET?.trim()
+      const secret = getAdminEdgeSecret()
       if (!url || !secret) {
         if (!cancelled) {
           setInsights(fallback)
@@ -156,7 +158,7 @@ export function LateRentAccountReviewRail({
         setInsights(fallback)
         setInsightsMode('fallback')
         setInsightsError(
-          err instanceof Error ? err.message : 'Could not generate AI insights.',
+          getErrorMessage(err, 'Could not generate AI insights.'),
         )
       } finally {
         if (!cancelled) setInsightsLoading(false)

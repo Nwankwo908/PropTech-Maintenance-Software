@@ -5,9 +5,8 @@
  */
 import { serve } from "https://deno.land/std/http/server.ts"
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1"
-import { recommendAlternativeVendorsForTicket } from "../_shared/recommend_vendor_alternatives.ts"
-import { processSlaExpiredAutoReassign, escalateForNoVendor } from "../_shared/sla_expired_auto_reassign.ts"
-import { reassignVendorByIdAndNotify } from "../submit-maintenance-request/vendor_notify.ts"
+import { processSlaExpiredAutoReassign } from "../_shared/sla_expired_auto_reassign.ts"
+import { runMaintenanceRequestViaEngine } from "../_shared/engine/maintenanceRequestEngine.ts"
 
 const corsHeaders: Record<string, string> = {
   "Access-Control-Allow-Origin": "*",
@@ -80,44 +79,59 @@ serve(async (req) => {
     const ticketId = String(row.id ?? "")
     if (!ticketId) continue
 
-    const rec = await recommendAlternativeVendorsForTicket(supabase, ticketId, {
-      limit: 3,
-    })
-    if ("error" in rec) {
-      delayedResults.push({ ticketId, error: rec.error })
-      continue
-    }
-    const pick = rec.alternatives[0]
-    if (!pick) {
-      const { data: ticketRow } = await supabase
-        .from("maintenance_requests")
-        .select("id, landlord_id, assigned_vendor_id, issue_category, vendor_work_status")
-        .eq("id", ticketId)
-        .maybeSingle()
-      if (ticketRow) {
-        await escalateForNoVendor(supabase, {
-          id: ticketId,
-          landlord_id: ticketRow.landlord_id == null ? null : String(ticketRow.landlord_id),
-          assigned_vendor_id: ticketRow.assigned_vendor_id == null
-            ? null
-            : String(ticketRow.assigned_vendor_id),
-          issue_category: ticketRow.issue_category == null
-            ? null
-            : String(ticketRow.issue_category),
-          vendor_work_status: String(ticketRow.vendor_work_status ?? "").toLowerCase(),
-        })
-      }
-      delayedResults.push({ ticketId, error: "No alternative vendors — escalated for admin" })
+    const { data: ticketRow } = await supabase
+      .from("maintenance_requests")
+      .select("landlord_id, assigned_vendor_id, issue_category")
+      .eq("id", ticketId)
+      .maybeSingle()
+
+    const landlordId = ticketRow?.landlord_id == null
+      ? null
+      : String(ticketRow.landlord_id).trim()
+
+    if (!landlordId) {
+      delayedResults.push({ ticketId, error: "Missing landlord" })
       continue
     }
 
-    const r = await reassignVendorByIdAndNotify(supabase, ticketId, pick.id, {
-      eventSource: "auto_reassign",
+    const engineResult = await runMaintenanceRequestViaEngine(supabase, {
+      landlordId,
+      trigger: "automation",
+      maintenanceRequest: {
+        action: "auto_reassign",
+        autoReassign: {
+          ticketId,
+          trigger: "pending_accept_stale",
+          landlordId,
+          assignedVendorId: ticketRow?.assigned_vendor_id == null
+            ? null
+            : String(ticketRow.assigned_vendor_id),
+          issueCategory: ticketRow?.issue_category == null
+            ? null
+            : String(ticketRow.issue_category),
+          previousVendorId: ticketRow?.assigned_vendor_id == null
+            ? null
+            : String(ticketRow.assigned_vendor_id),
+          findStrategy: "recommend_ranked",
+        },
+      },
     })
-    if ("error" in r) {
-      delayedResults.push({ ticketId, error: r.error })
-    } else {
+
+    const meta = engineResult?.metadata ?? {}
+    const outcome = meta.outcome as string | undefined
+
+    if (outcome === "reassigned") {
       delayedResults.push({ ticketId, ok: true })
+    } else if (outcome === "needs_admin_vendor") {
+      delayedResults.push({
+        ticketId,
+        error: "No alternative vendors — escalated for admin",
+      })
+    } else {
+      delayedResults.push({
+        ticketId,
+        error: String(meta.reason ?? "Auto-reassign skipped"),
+      })
     }
   }
 

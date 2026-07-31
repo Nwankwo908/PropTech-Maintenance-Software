@@ -11,6 +11,7 @@ import {
   verifyEmailOtpAndSignIn,
   type ResidentAuthPayload,
 } from '@/lib/residentAuth'
+import { getErrorMessage } from '@/lib/errorMessage'
 
 /** Reported to parent so review-step buttons can disable during OTP send/verify. */
 export type OtpModalFlowState =
@@ -99,7 +100,7 @@ export function VerifyIdentityModal({
       } catch (e) {
         if (gen !== sendGenerationRef.current) return
         setSendError(
-          e instanceof Error ? e.message : 'Could not send verification code.',
+          getErrorMessage(e, 'Could not send verification code.'),
         )
         emitFlow('idle')
       } finally {
@@ -136,7 +137,7 @@ export function VerifyIdentityModal({
     } catch (e) {
       if (gen !== sendGenerationRef.current) return
       setSendError(
-        e instanceof Error ? e.message : 'Could not send verification code.',
+        getErrorMessage(e, 'Could not send verification code.'),
       )
       emitFlow('idle')
     } finally {
@@ -168,7 +169,7 @@ export function VerifyIdentityModal({
         setBusy(false)
         setStep('enter_code')
         emitFlow('enter_code')
-        const msg = e instanceof Error ? e.message : 'Verification failed.'
+        const msg = getErrorMessage(e, 'Verification failed.')
         const lower = msg.toLowerCase()
         if (
           lower.includes('expired') ||
@@ -209,7 +210,7 @@ export function VerifyIdentityModal({
       startCooldown()
     } catch (e) {
       setError(
-        e instanceof Error ? e.message : 'Could not resend the code.',
+        getErrorMessage(e, 'Could not resend the code.'),
       )
     } finally {
       setIsResending(false)

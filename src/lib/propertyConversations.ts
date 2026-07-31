@@ -21,6 +21,55 @@ export function isCommunicationInboxConversationType(conversationType: string): 
   return !isAdminDirectedConversationType(conversationType)
 }
 
+/** Plain-language label for sms_conversations.conversation_type (UI only). */
+export function conversationTypeLabel(conversationType: string): string {
+  switch (conversationType.trim()) {
+    case 'resident_intake':
+      return 'Resident message'
+    case 'vendor_alert':
+      return 'Vendor message'
+    case 'vendor_tenant_proxy':
+      return 'Vendor–resident thread'
+    case 'landlord_update':
+      return 'Team update'
+    case 'ai_copilot':
+      return 'Ulo AI'
+    default: {
+      const raw = conversationType.trim()
+      if (!raw) return 'Conversation'
+      return raw
+        .split(/[_-]/)
+        .filter(Boolean)
+        .map((part) => part[0]!.toUpperCase() + part.slice(1))
+        .join(' ')
+    }
+  }
+}
+
+/** Plain-language label for conversation status chips. */
+export function conversationStatusLabel(status: string): string {
+  const raw = status.trim()
+  if (!raw) return 'Open'
+  switch (raw.toLowerCase()) {
+    case 'open':
+      return 'Open'
+    case 'unread':
+      return 'Unread'
+    case 'action_required':
+      return 'Needs attention'
+    case 'completed':
+    case 'resolved':
+    case 'closed':
+      return 'Closed'
+    case 'scheduled':
+      return 'Scheduled'
+    case 'cancelled':
+      return 'Cancelled'
+    default:
+      return humanizeStatus(raw)
+  }
+}
+
 type ParticipantKind = 'tenant' | 'vendor' | 'ai' | 'landlord'
 
 function asString(value: unknown): string {

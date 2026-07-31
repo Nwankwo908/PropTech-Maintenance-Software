@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Navigate } from 'react-router-dom'
+import { Navigate, useLocation } from 'react-router-dom'
 import type { Session } from '@supabase/supabase-js'
 import { isAdminSessionAllowed, signOutAdmin } from '@/lib/adminAuth'
 import { setSessionLandlordFromEmail } from '@/lib/activeLandlord'
@@ -28,6 +28,7 @@ async function gateStateForSession(session: Session | null): Promise<GateState> 
  * In Vite dev without Supabase env, children render so local UI work stays possible.
  */
 export function AdminAuthGate({ children }: { children: React.ReactNode }) {
+  const location = useLocation()
   const [state, setState] = useState<GateState>('loading')
 
   useEffect(() => {
@@ -68,7 +69,12 @@ export function AdminAuthGate({ children }: { children: React.ReactNode }) {
   }
 
   if (state === 'anon') {
-    return <Navigate to="/admin/login" replace />
+    const next = `${location.pathname}${location.search}`
+    const loginTo =
+      next.startsWith('/admin') && next !== '/admin/login'
+        ? `/admin/login?next=${encodeURIComponent(next)}`
+        : '/admin/login'
+    return <Navigate to={loginTo} replace />
   }
 
   return <>{children}</>

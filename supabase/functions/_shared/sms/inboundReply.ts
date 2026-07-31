@@ -30,7 +30,8 @@ export function resolveInboundAutoReplyBody(
 
   if (
     workflowRoute === "resident_maintenance_intake" ||
-    workflowRoute === "lease_renewal"
+    workflowRoute === "lease_renewal" ||
+    workflowRoute === "unknown_sender_onboarding"
   ) {
     return workflow || resolution || null
   }

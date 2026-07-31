@@ -51,7 +51,9 @@
   color: #6a7282;
   text-decoration: none;
   outline: none;
-  transition: color 150ms ease;
+  transition:
+    color 150ms ease,
+    transform 120ms ease;
 
   &:hover,
   &:focus,
@@ -215,6 +217,735 @@ h6 {
   animation: ask-ulo-caret-blink 1s step-end infinite;
 }
 
+.property-tab-indicator {
+  transition:
+    left 320ms cubic-bezier(0.22, 1, 0.36, 1),
+    width 320ms cubic-bezier(0.22, 1, 0.36, 1),
+    opacity 180ms ease;
+}
+
+@keyframes property-tab-panel-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.property-tab-panel {
+  /* Do not use animation-fill-mode: both — it applies opacity:0 before the
+     animation runs and can leave the property detail body permanently invisible
+     if the animation is interrupted (Strict Mode remount / HMR / tab switch). */
+  animation: property-tab-panel-in 280ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.property-tab-trigger {
+  transition:
+    color 200ms ease,
+    transform 120ms ease;
+}
+
+.property-tab-trigger:active {
+  transform: scale(0.98);
+}
+
+@keyframes property-conversation-row-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.property-conversation-row {
+  animation: property-conversation-row-in 280ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.property-conversation-trigger {
+  transition:
+    background-color 180ms ease,
+    box-shadow 180ms ease,
+    transform 120ms ease;
+}
+
+.property-conversation-trigger:active {
+  transform: scale(0.995);
+}
+
+.property-conversation-backdrop {
+  transition: opacity 240ms ease;
+}
+
+.property-conversation-rail {
+  transition:
+    transform 300ms cubic-bezier(0.22, 1, 0.36, 1),
+    opacity 240ms ease;
+}
+
+@keyframes property-resident-card-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.property-resident-card {
+  animation: property-resident-card-in 300ms cubic-bezier(0.22, 1, 0.36, 1) both;
+  transition:
+    background-color 180ms ease,
+    border-color 180ms ease,
+    box-shadow 220ms ease,
+    transform 160ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.property-resident-card:hover:not(:disabled) {
+  transform: translateY(-2px);
+}
+
+.property-resident-card:active:not(:disabled) {
+  transform: translateY(0) scale(0.985);
+}
+
+.property-resident-card:disabled {
+  cursor: wait;
+  transform: translateY(-1px) scale(0.99);
+}
+
+@keyframes property-resident-detail-in {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.property-resident-detail-enter {
+  animation: property-resident-detail-in 320ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+/*
+ * Smart Animate — shared interaction motion (Figma-style state morphing).
+ * Apply to pressable surfaces, cards, pills, rows, bars, and dropzones.
+ */
+:root {
+  --sa-ease: cubic-bezier(0.22, 1, 0.36, 1);
+  --sa-duration: 280ms;
+  --sa-fast: 160ms;
+  --sa-press: 120ms;
+}
+
+@keyframes sa-enter {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes sa-enter-scale {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.985);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.sa-enter {
+  animation: sa-enter var(--sa-duration) var(--sa-ease);
+}
+
+.sa-enter-scale {
+  animation: sa-enter-scale 300ms var(--sa-ease);
+}
+
+/*
+ * Onboarding Smart Animate — step morphing, welcome stagger, progress.
+ * Avoid animation-fill-mode: both (can leave content invisible if interrupted).
+ */
+@keyframes onb-step-in {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes onb-welcome-in {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes onb-card-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.985);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes onb-marker-pop {
+  0% {
+    transform: scale(0.86);
+  }
+  70% {
+    transform: scale(1.06);
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+
+@keyframes onb-active-pulse {
+  0%,
+  100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+  50% {
+    transform: scale(0.82);
+    opacity: 0.72;
+  }
+}
+
+@keyframes onb-setup-ring {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.onb-step-panel {
+  animation: onb-step-in 320ms var(--sa-ease);
+}
+
+.onb-welcome-title {
+  animation: onb-welcome-in 380ms var(--sa-ease);
+}
+
+.onb-welcome-subtitle {
+  animation: onb-welcome-in 380ms var(--sa-ease) 60ms;
+  animation-fill-mode: backwards;
+}
+
+.onb-welcome-card {
+  /* backwards only — `both` can leave cards stuck at opacity:0 after
+     Strict Mode remount / HMR / Reset onboarding hard reload. */
+  animation: onb-card-in 380ms var(--sa-ease) backwards;
+  animation-delay: calc(120ms + var(--onb-stagger, 0) * 70ms);
+}
+
+.onb-form-card {
+  animation: onb-card-in 280ms var(--sa-ease) backwards;
+  animation-delay: calc(var(--onb-stagger, 0) * 45ms);
+}
+
+.onb-review-stack > .onb-form-card:nth-child(1) {
+  --onb-stagger: 0;
+}
+.onb-review-stack > .onb-form-card:nth-child(2) {
+  --onb-stagger: 1;
+}
+.onb-review-stack > .onb-form-card:nth-child(3) {
+  --onb-stagger: 2;
+}
+.onb-review-stack > .onb-form-card:nth-child(4) {
+  --onb-stagger: 3;
+}
+.onb-review-stack > .onb-form-card:nth-child(5) {
+  --onb-stagger: 4;
+}
+.onb-review-stack > .onb-form-card:nth-child(6) {
+  --onb-stagger: 5;
+}
+.onb-review-stack > .onb-form-card:nth-child(n + 7) {
+  --onb-stagger: 6;
+}
+
+.onb-stepper-connector {
+  transition: background-color 320ms var(--sa-ease);
+}
+
+.onb-stepper-marker {
+  transition:
+    background-color 220ms var(--sa-ease),
+    border-color 220ms var(--sa-ease),
+    box-shadow 220ms var(--sa-ease),
+    transform 220ms var(--sa-ease);
+}
+
+.onb-stepper-marker-done,
+.onb-stepper-marker-active {
+  animation: onb-marker-pop 320ms var(--sa-ease);
+}
+
+.onb-stepper-active-dot {
+  animation: onb-active-pulse 1.6s ease-in-out infinite;
+}
+
+.onb-stepper-label {
+  transition:
+    color 200ms ease,
+    font-weight 200ms ease;
+}
+
+.onb-setup-spinner {
+  width: 2.75rem;
+  height: 2.75rem;
+  border-radius: 9999px;
+  border: 3px solid #e5e7eb;
+  border-top-color: #187960;
+  animation: onb-setup-ring 700ms linear infinite;
+}
+
+.onb-setup-copy {
+  animation: onb-welcome-in 360ms var(--sa-ease);
+}
+
+.sa-press {
+  transition:
+    background-color var(--sa-fast) ease,
+    border-color var(--sa-fast) ease,
+    color var(--sa-fast) ease,
+    box-shadow var(--sa-fast) ease,
+    opacity var(--sa-fast) ease,
+    transform var(--sa-press) ease;
+}
+
+.sa-press:active:not(:disabled):not([aria-disabled='true']) {
+  transform: scale(0.98);
+}
+
+.sa-pill {
+  transition:
+    background-color var(--sa-fast) ease,
+    border-color var(--sa-fast) ease,
+    color var(--sa-fast) ease,
+    box-shadow var(--sa-fast) ease,
+    transform var(--sa-press) ease;
+}
+
+.sa-pill:hover:not(:disabled) {
+  transform: translateY(-1px);
+}
+
+.sa-pill:active:not(:disabled) {
+  transform: translateY(0) scale(0.97);
+}
+
+.sa-card {
+  transition:
+    background-color var(--sa-fast) ease,
+    border-color var(--sa-fast) ease,
+    box-shadow var(--sa-duration) var(--sa-ease),
+    transform var(--sa-fast) var(--sa-ease);
+}
+
+.sa-card:hover {
+  transform: translateY(-2px);
+}
+
+.sa-card:active {
+  transform: translateY(0) scale(0.99);
+}
+
+.sa-surface {
+  transition:
+    background-color var(--sa-fast) ease,
+    border-color var(--sa-fast) ease,
+    box-shadow var(--sa-duration) var(--sa-ease),
+    opacity var(--sa-fast) ease,
+    transform var(--sa-duration) var(--sa-ease);
+}
+
+.sa-row {
+  transition:
+    background-color var(--sa-fast) ease,
+    border-color var(--sa-fast) ease,
+    box-shadow var(--sa-fast) ease,
+    transform var(--sa-press) ease;
+}
+
+.sa-row:active:not(:disabled) {
+  transform: scale(0.995);
+}
+
+.sa-link {
+  transition:
+    color var(--sa-fast) ease,
+    opacity var(--sa-fast) ease,
+    text-decoration-color var(--sa-fast) ease,
+    transform var(--sa-press) ease;
+}
+
+.sa-link:active {
+  transform: scale(0.98);
+}
+
+.sa-bar {
+  transition:
+    width 500ms var(--sa-ease),
+    background-color var(--sa-duration) ease;
+  transform-origin: left center;
+}
+
+.sa-dropzone {
+  transition:
+    border-color var(--sa-fast) ease,
+    background-color var(--sa-fast) ease,
+    box-shadow var(--sa-fast) ease,
+    transform var(--sa-duration) var(--sa-ease);
+}
+
+.sa-dropzone[data-dragging='true'],
+.sa-dropzone.is-dragging {
+  transform: scale(1.01);
+}
+
+.sa-expand {
+  display: grid;
+  transition: grid-template-rows 380ms var(--sa-ease);
+}
+
+.sa-expand[data-open='true'] {
+  grid-template-rows: 1fr;
+}
+
+.sa-expand[data-open='false'] {
+  grid-template-rows: 0fr;
+}
+
+.sa-expand > .sa-expand-inner {
+  min-height: 0;
+  overflow: hidden;
+}
+
+.sa-expand-body {
+  transition:
+    opacity 300ms ease-out,
+    transform 300ms var(--sa-ease);
+}
+
+.sa-expand[data-open='true'] > .sa-expand-inner > .sa-expand-body {
+  opacity: 1;
+  transform: translateY(0);
+  transition-delay: 40ms;
+}
+
+.sa-expand[data-open='false'] > .sa-expand-inner > .sa-expand-body {
+  pointer-events: none;
+  opacity: 0;
+  transform: translateY(-6px);
+}
+
+.sa-switch-thumb {
+  transition: transform 200ms var(--sa-ease);
+}
+
+@keyframes sa-modal-in {
+  from {
+    opacity: 0;
+    transform: translateY(12px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes sa-rail-in {
+  from {
+    opacity: 0;
+    transform: translateX(18px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+.sa-modal-backdrop {
+  animation: none;
+  transition: opacity 220ms ease;
+}
+
+.sa-modal {
+  animation: sa-modal-in 280ms var(--sa-ease);
+}
+
+.sa-rail {
+  animation: sa-rail-in 300ms var(--sa-ease);
+}
+
+.sa-scrim {
+  transition: opacity 220ms ease;
+}
+
+/* Property Details buttons — enabled / hover / focus / pressed / disabled */
+.pd-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  outline: none;
+  border-style: solid;
+  border-width: 1px;
+  transition:
+    background-color 150ms ease,
+    border-color 150ms ease,
+    color 150ms ease,
+    box-shadow 150ms ease,
+    opacity 150ms ease,
+    transform 100ms ease;
+}
+
+.pd-btn:disabled,
+.pd-btn[aria-disabled='true'] {
+  cursor: not-allowed;
+  transform: none;
+  box-shadow: none;
+}
+
+/* Primary — filled #187960 */
+.pd-btn-primary:enabled {
+  background-color: #187960;
+  border-color: #187960;
+  color: #ffffff;
+}
+
+.pd-btn-primary:hover:enabled {
+  background-color: #146650;
+  border-color: #146650;
+}
+
+.pd-btn-primary:focus-visible:enabled {
+  background-color: #187960;
+  border-color: #187960;
+  box-shadow:
+    0 0 0 2px #ffffff,
+    0 0 0 4px #187960;
+}
+
+.pd-btn-primary:active:enabled {
+  background-color: #0f5544;
+  border-color: #0f5544;
+  transform: translateY(0.5px);
+}
+
+.pd-btn-primary:disabled,
+.pd-btn-primary[aria-disabled='true'] {
+  background-color: #94a3b8;
+  border-color: #94a3b8;
+  color: #ffffff;
+  opacity: 1;
+}
+
+/* Secondary — outline #187960 */
+.pd-btn-secondary:enabled {
+  background-color: #ffffff;
+  border-color: #187960;
+  color: #187960;
+}
+
+.pd-btn-secondary:hover:enabled {
+  background-color: #e2f5f1;
+  border-color: #146650;
+  color: #146650;
+}
+
+.pd-btn-secondary:focus-visible:enabled {
+  background-color: #ffffff;
+  border-color: #187960;
+  color: #187960;
+  box-shadow:
+    0 0 0 2px #ffffff,
+    0 0 0 4px #187960;
+}
+
+.pd-btn-secondary:active:enabled {
+  background-color: #c8ebe3;
+  border-color: #0f5544;
+  color: #0f5544;
+  transform: translateY(0.5px);
+}
+
+.pd-btn-secondary:disabled,
+.pd-btn-secondary[aria-disabled='true'] {
+  background-color: #f8fafc;
+  border-color: #94a3b8;
+  color: #94a3b8;
+  opacity: 1;
+}
+
+/* Ghost / text link — #187960 */
+.pd-btn-ghost {
+  border-color: transparent;
+  background-color: transparent;
+  color: #187960;
+}
+
+.pd-btn-ghost:enabled {
+  color: #187960;
+}
+
+.pd-btn-ghost:hover:enabled {
+  color: #146650;
+  background-color: #e2f5f1;
+  text-decoration: underline;
+}
+
+.pd-btn-ghost:focus-visible:enabled {
+  color: #187960;
+  background-color: #e2f5f1;
+  box-shadow:
+    0 0 0 2px #ffffff,
+    0 0 0 4px #187960;
+}
+
+.pd-btn-ghost:active:enabled {
+  color: #0f5544;
+  background-color: #c8ebe3;
+}
+
+.pd-btn-ghost:disabled,
+.pd-btn-ghost[aria-disabled='true'] {
+  color: #94a3b8;
+  background-color: transparent;
+  text-decoration: none;
+  opacity: 1;
+}
+
+/* Icon chip */
+.pd-btn-icon {
+  border-color: transparent;
+  background-color: transparent;
+  color: #64748b;
+}
+
+.pd-btn-icon:enabled {
+  color: #64748b;
+}
+
+.pd-btn-icon:hover:enabled {
+  background-color: #e2f5f1;
+  color: #187960;
+}
+
+.pd-btn-icon:focus-visible:enabled {
+  background-color: #e2f5f1;
+  color: #187960;
+  box-shadow:
+    0 0 0 2px #ffffff,
+    0 0 0 4px #187960;
+}
+
+.pd-btn-icon:active:enabled {
+  background-color: #c8ebe3;
+  color: #0f5544;
+}
+
+.pd-btn-icon:disabled,
+.pd-btn-icon[aria-disabled='true'] {
+  color: #94a3b8;
+  background-color: transparent;
+  opacity: 1;
+}
+
+.pd-btn-card:enabled {
+  border-width: 1px;
+}
+
+.pd-btn-card:focus-visible:enabled {
+  box-shadow:
+    0 0 0 2px #ffffff,
+    0 0 0 4px #187960;
+}
+
+.pd-btn-card:active:enabled {
+  transform: translateY(0.5px);
+  background-color: #c8ebe3;
+  border-color: #0f5544;
+}
+
+.pd-switch {
+  position: relative;
+  height: 1.25rem;
+  width: 2.5rem;
+  flex-shrink: 0;
+  cursor: pointer;
+  border-radius: 9999px;
+  border: none;
+  outline: none;
+  transition:
+    background-color 150ms ease,
+    box-shadow 150ms ease,
+    opacity 150ms ease;
+}
+
+.pd-switch:enabled[aria-checked='false'] {
+  background-color: #cbd5e1;
+}
+
+.pd-switch:enabled[aria-checked='true'] {
+  background-color: #187960;
+}
+
+.pd-switch:hover:enabled[aria-checked='false'] {
+  background-color: #94a3b8;
+}
+
+.pd-switch:hover:enabled[aria-checked='true'] {
+  background-color: #146650;
+}
+
+.pd-switch:focus-visible:enabled {
+  box-shadow:
+    0 0 0 2px #ffffff,
+    0 0 0 4px #187960;
+}
+
+.pd-switch:active:enabled[aria-checked='false'] {
+  background-color: #64748b;
+}
+
+.pd-switch:active:enabled[aria-checked='true'] {
+  background-color: #0f5544;
+}
+
+.pd-switch:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .ask-ulo-msg-enter,
   .ask-ulo-section-enter,
@@ -226,5 +957,109 @@ h6 {
   .ask-ulo-stream-caret {
     animation: none;
     opacity: 0.7;
+  }
+
+  .property-details-card {
+    transition: none;
+  }
+
+  .pd-btn,
+  .pd-switch {
+    transition: none;
+  }
+
+  .property-tab-indicator {
+    transition: none;
+  }
+
+  .property-tab-panel {
+    animation: none;
+  }
+
+  .property-tab-trigger:active {
+    transform: none;
+  }
+
+  .property-conversation-row {
+    animation: none;
+  }
+
+  .property-conversation-trigger:active {
+    transform: none;
+  }
+
+  .property-conversation-backdrop,
+  .property-conversation-rail {
+    transition: none;
+  }
+
+  .property-resident-card {
+    animation: none;
+  }
+
+  .property-resident-card:hover:not(:disabled),
+  .property-resident-card:active:not(:disabled),
+  .property-resident-card:disabled {
+    transform: none;
+  }
+
+  .property-resident-detail-enter {
+    animation: none;
+  }
+
+  .sa-enter,
+  .sa-enter-scale {
+    animation: none;
+  }
+
+  .onb-step-panel,
+  .onb-welcome-title,
+  .onb-welcome-subtitle,
+  .onb-welcome-card,
+  .onb-form-card,
+  .onb-stepper-marker-done,
+  .onb-stepper-marker-active,
+  .onb-stepper-active-dot,
+  .onb-setup-spinner,
+  .onb-setup-copy {
+    animation: none;
+  }
+
+  .onb-stepper-connector,
+  .onb-stepper-marker,
+  .onb-stepper-label {
+    transition: none;
+  }
+
+  .sa-modal,
+  .sa-rail {
+    animation: none;
+  }
+
+  .sa-press,
+  .sa-pill,
+  .sa-card,
+  .sa-surface,
+  .sa-row,
+  .sa-link,
+  .sa-bar,
+  .sa-dropzone,
+  .sa-expand,
+  .sa-expand-body,
+  .sa-switch-thumb,
+  .sa-scrim {
+    transition: none;
+  }
+
+  .sa-press:active:not(:disabled):not([aria-disabled='true']),
+  .sa-pill:hover:not(:disabled),
+  .sa-pill:active:not(:disabled),
+  .sa-card:hover,
+  .sa-card:active,
+  .sa-row:active:not(:disabled),
+  .sa-link:active,
+  .sa-dropzone[data-dragging='true'],
+  .sa-dropzone.is-dragging {
+    transform: none;
   }
 }

@@ -100,7 +100,6 @@ const WORKFLOW_TEMPLATE_LABELS: Record<string, string> = {
   move_in: 'Move in',
   move_out: 'Move out',
   inspection: 'Inspection',
-  unit_inspection: 'Inspection',
   vendor_job_response: 'Vendor job response',
   identity_onboarding: 'Identity onboarding',
   landlord_command: 'Landlord command',
@@ -181,7 +180,7 @@ function formatWorkflowTemplateName(templateId: string): string {
 function resolveWorkflowCategory(templateId: string): UniversalSearchCategory {
   if (templateId === 'lease_renewal') return 'lease_renewal'
   if (templateId === 'rent_collection') return 'rent_collection'
-  if (templateId === 'inspection' || templateId === 'unit_inspection') return 'inspection'
+  if (templateId === 'inspection') return 'inspection'
   return 'workflow'
 }
 

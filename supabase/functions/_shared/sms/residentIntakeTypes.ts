@@ -22,8 +22,19 @@ export type IntakeStep =
   | "preferred_contact_method"
   | "photo"
   | "awaiting_confirm"
+  | "awaiting_multi_issue_confirm"
   | "awaiting_edit_selection"
   | "submitted"
+
+export type PendingIntakeIssue = {
+  summary: string
+  description: string
+  vendor_trade: string
+  issue_type: string
+  room_or_area?: string
+  severity?: "low" | "normal" | "high"
+  draft_ticket_id?: string
+}
 
 export type SmsIntakeState = {
   step?: IntakeStep
@@ -32,6 +43,11 @@ export type SmsIntakeState = {
   vendor_trade?: string
   room_or_area?: string
   first_noticed?: string
+  /**
+   * Visit windows the resident offered in SMS (e.g. "Sat after 3pm; Sun 11–4").
+   * Passed to vendors on assign / availability ask.
+   */
+  preferred_visit_windows?: string
   safety_concerns?: string
   urgency?: string
   recommended_urgency?: string
@@ -54,6 +70,8 @@ export type SmsIntakeState = {
   classification_pipeline_version?: string
   /** Durable maintenance_requests id minted mid-intake (before final confirm). */
   draft_ticket_id?: string
+  /** When set (length ≥ 2), SMS contained multiple distinct asks. */
+  pending_issues?: PendingIntakeIssue[]
 }
 
 export const EMERGENCY_SIGNALS = [
@@ -88,7 +106,12 @@ const KNOWN_ROOM_PATTERNS: Array<{ pattern: RegExp; room: string }> = [
   { pattern: /\b(attic)\b/i, room: "attic" },
   { pattern: /\b(closet)\b/i, room: "closet" },
   { pattern: /\b(office)\b/i, room: "office" },
-  { pattern: /\b(patio|balcony|deck)\b/i, room: "patio" },
+  { pattern: /\b(patio|balcony)\b/i, room: "patio" },
+  { pattern: /\b(deck)\b/i, room: "deck" },
+  {
+    pattern: /\b(front\s*(?:entrance|entry|steps?|stairs?)|entrance|entryway|stairs?|stairway|stairwell)\b/i,
+    room: "front entrance",
+  },
 ]
 
 const ISSUE_DESCRIPTION_RE =
@@ -147,7 +170,17 @@ export function extractRoomFromText(text: string): string | null {
   )
   if (myRoom?.[1]) {
     const candidate = cleanRoomLabel(myRoom[1])
-    if (candidate && !isLikelyIssueDescription(candidate)) return candidate
+    // Avoid kinship / people phrases ("my daughter while she was…").
+    const looksLikePerson =
+      /\b(daughter|son|child|kid|kids|husband|wife|partner|roommate|mother|father|mom|dad|baby|guest)\b/i
+        .test(candidate)
+    if (
+      candidate &&
+      !looksLikePerson &&
+      !isLikelyIssueDescription(candidate)
+    ) {
+      return candidate
+    }
   }
 
   if (!isLikelyIssueDescription(trimmed) && trimmed.split(/\s+/).length <= 4) {
@@ -483,6 +516,19 @@ export function pipelineTradeToIssueType(
   if (trade === "pest_control") return "pest"
   if (trade === "locksmith") return "lock"
   if (trade === "general") return "general"
+  if (
+    trade === "carpentry" ||
+    trade === "deck_builder" ||
+    trade === "masonry" ||
+    trade === "concrete" ||
+    trade === "cleaning" ||
+    trade === "painting" ||
+    trade === "flooring" ||
+    trade === "landscaping" ||
+    trade === "windows"
+  ) {
+    return "general"
+  }
   if (trade === "roofing") return "other"
   return null
 }
@@ -591,6 +637,11 @@ export function buildIntakeDescription(state: SmsIntakeState): string {
   if (state.first_noticed?.trim()) {
     parts.push(`First noticed: ${state.first_noticed.trim()}.`)
   }
+  if (state.preferred_visit_windows?.trim()) {
+    parts.push(
+      `Resident availability: ${state.preferred_visit_windows.trim()}.`,
+    )
+  }
 
   return parts.join("\n\n").trim() || "Maintenance issue reported via SMS."
 }
@@ -619,7 +670,21 @@ function narrativeSummary(state: SmsIntakeState): string {
 
 export function buildConfirmationSummary(state: SmsIntakeState): string {
   const bullets: string[] = []
-  bullets.push(`• ${issueSummaryBullet(state)}`)
+  const pending = Array.isArray(state.pending_issues) ? state.pending_issues : []
+
+  if (pending.length >= 2) {
+    bullets.push(`• ${pending.length} separate work orders:`)
+    for (let i = 0; i < pending.length; i++) {
+      const trade = (pending[i].vendor_trade || "maintenance").replace(/_/g, " ")
+      bullets.push(`  ${i + 1}. ${trade} — ${pending[i].summary}`)
+    }
+  } else {
+    bullets.push(`• ${issueSummaryBullet(state)}`)
+  }
+
+  if (state.preferred_visit_windows?.trim()) {
+    bullets.push(`• Availability: ${state.preferred_visit_windows.trim()}`)
+  }
 
   if (state.first_noticed?.trim()) {
     const noticed = state.first_noticed.trim()
@@ -636,13 +701,24 @@ export function buildConfirmationSummary(state: SmsIntakeState): string {
 
   bullets.push(`• Priority: ${formatUrgencyLabel(state.urgency ?? state.recommended_urgency)}`)
 
+  if (state.preferred_contact_method?.trim()) {
+    bullets.push(`• Updates via: ${state.preferred_contact_method.trim()}`)
+  }
+
+  const photoCount = state.photo_urls?.length ?? 0
+  if (photoCount > 0) {
+    bullets.push(`• Photos attached: ${photoCount}`)
+  }
+
   return [
     "Thanks. Here's what I have:",
     "",
     ...bullets,
     "",
     "Summary:",
-    narrativeSummary(state),
+    pending.length >= 2
+      ? `I'll open ${pending.length} work orders with the details above and assign the right vendor to each.`
+      : narrativeSummary(state),
     "",
     "Reply YES if everything looks right, or tell me what you'd like to change.",
   ].join("\n")
@@ -748,7 +824,9 @@ export function nextCollectingStep(
 }
 
 export function conversationStatusForStep(step: IntakeStep): string {
-  if (step === "awaiting_confirm") return "intake_confirm"
+  if (step === "awaiting_confirm" || step === "awaiting_multi_issue_confirm") {
+    return "intake_confirm"
+  }
   if (step === "awaiting_edit_selection") return "intake_edit"
   if (step === "submitted") return "open"
   return "intake_collecting"

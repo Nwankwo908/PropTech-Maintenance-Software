@@ -5,16 +5,9 @@
 import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.49.1"
 import { logGraphEvent } from "./graph/logGraphEvent.ts"
 import { getSMSProvider } from "./sms/providerFactory.ts"
-import { findActiveLandlordMainNumber } from "./sms/smsNumberPool.ts"
+import { findActiveLandlordMain } from "./sms/smsNumberPool.ts"
 import { formatWorkOrderRef } from "./vendor_outreach_copy.ts"
-
-function appBaseUrl(): string {
-  const raw = Deno.env.get("APP_URL")?.trim() ?? ""
-  if (!raw) return "https://www.ulohome.io"
-  const t = raw.replace(/\/$/, "")
-  if (/^https?:\/\//i.test(t)) return t
-  return `https://${t}`
-}
+import { uloAppUrl } from "./uloAppUrl.ts"
 
 function money(n: number): string {
   return n.toLocaleString("en-US", {
@@ -38,7 +31,7 @@ export function buildLandlordInvoicePaymentSms(input: {
   totalCost: number
   unit: string
 }): string {
-  const dashboard = `${appBaseUrl()}/admin/analytics`
+  const dashboard = uloAppUrl.admin("analytics")
   return [
     `Invoice ready for ${input.workOrderRef}${input.unit ? ` (Unit ${input.unit})` : ""}.`,
     `${input.vendorName} · ${money(input.totalCost)}`,
@@ -71,7 +64,7 @@ export async function notifyLandlordInvoicePaymentOptions(
     return
   }
 
-  const sender = await findActiveLandlordMainNumber(supabase, params.landlordId)
+  const sender = await findActiveLandlordMain(supabase, params.landlordId)
   if (!sender?.phone_number) {
     console.warn("[invoice-payment-sms] no landlord_main SMS number")
     return

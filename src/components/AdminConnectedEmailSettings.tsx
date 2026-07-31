@@ -14,10 +14,10 @@ import {
 } from '@/lib/connectedEmailIntegration'
 
 const sectionCardClass =
-  'rounded-[10px] border border-[#e5e7eb] bg-white p-6 shadow-[0px_1px_2px_-1px_rgba(0,0,0,0.06)]'
+  'sa-surface rounded-[10px] border border-[#e5e7eb] bg-white p-6 shadow-[0px_1px_2px_-1px_rgba(0,0,0,0.06)]'
 
 const selectClass =
-  'h-10 w-full cursor-pointer appearance-none rounded-[8px] border border-[#e5e7eb] bg-white py-2 pl-3 pr-10 text-[14px] tracking-[-0.1504px] text-[#101828] outline-none focus:border-[#155dfc] focus:ring-2 focus:ring-[#155dfc]/20'
+  'sa-surface h-10 w-full cursor-pointer appearance-none rounded-[8px] border border-[#e5e7eb] bg-white py-2 pl-3 pr-10 text-[14px] tracking-[-0.1504px] text-[#101828] outline-none focus:border-[#155dfc] focus:ring-2 focus:ring-[#155dfc]/20'
 
 function SelectChevron() {
   return (
@@ -158,13 +158,13 @@ function SettingsToggle({
         aria-checked={checked}
         onClick={() => onChange(!checked)}
         className={[
-          'relative h-6 w-11 shrink-0 rounded-full transition-colors outline-none focus-visible:ring-2 focus-visible:ring-[#155dfc]/30 focus-visible:ring-offset-2',
+          'relative h-6 w-11 shrink-0 rounded-full outline-none focus-visible:ring-2 focus-visible:ring-[#155dfc]/30 focus-visible:ring-offset-2',
           checked ? 'bg-[#101828]' : 'bg-[#e5e7eb]',
         ].join(' ')}
       >
         <span
           className={[
-            'pointer-events-none absolute top-1 left-1 size-4 rounded-full bg-white shadow-sm transition-transform',
+            'sa-switch-thumb pointer-events-none absolute top-1 left-1 size-4 rounded-full bg-white shadow-sm',
             checked ? 'translate-x-5' : 'translate-x-0',
           ].join(' ')}
         />
@@ -218,7 +218,7 @@ function OutlineButton({
       type="button"
       onClick={onClick}
       className={[
-        'inline-flex items-center justify-center gap-2 rounded-[10px] border border-[#e5e7eb] bg-white px-3.5 py-2 text-[13px] font-medium tracking-[-0.1504px] text-[#101828] transition-colors hover:bg-[#f9fafb]',
+        'sa-press inline-flex items-center justify-center gap-2 rounded-[10px] border border-[#186179] bg-white px-3.5 py-2 text-[13px] font-medium tracking-[-0.1504px] text-[#186179] hover:bg-[#e8f2f5]',
         className,
       ].join(' ')}
     >
@@ -241,7 +241,7 @@ function PrimaryButton({
       type="button"
       onClick={onClick}
       className={[
-        'inline-flex items-center justify-center rounded-[10px] bg-[#101828] px-4 py-2.5 text-[14px] font-medium tracking-[-0.1504px] text-white transition-colors hover:bg-[#1f2937]',
+        'sa-press inline-flex items-center justify-center rounded-[10px] bg-[#101828] px-4 py-2.5 text-[14px] font-medium tracking-[-0.1504px] text-white hover:bg-[#1f2937]',
         className,
       ].join(' ')}
     >
@@ -255,7 +255,7 @@ function ConfidenceBar({ percent }: { percent: number }) {
   return (
     <div className="flex items-center gap-2">
       <div className="h-1.5 w-16 overflow-hidden rounded-full bg-[#eef0f3]">
-        <div className={['h-full rounded-full', tone].join(' ')} style={{ width: `${percent}%` }} />
+        <div className={['sa-bar h-full rounded-full', tone].join(' ')} style={{ width: `${percent}%` }} />
       </div>
       <span className="text-[13px] font-medium text-[#101828]">{percent}%</span>
     </div>
@@ -295,7 +295,7 @@ export function AdminConnectedEmailSettings() {
       <div className="py-6">
         <Link
           to="/admin/settings"
-          className="inline-flex items-center gap-1.5 text-[14px] font-medium tracking-[-0.1504px] text-[#6a7282] transition-colors hover:text-[#101828]"
+          className="sa-link inline-flex items-center gap-1.5 text-[14px] font-medium tracking-[-0.1504px] text-[#6a7282] hover:text-[#101828]"
         >
           <span aria-hidden>←</span>
           Settings
@@ -356,7 +356,7 @@ export function AdminConnectedEmailSettings() {
                 <OutlineButton>Sync now</OutlineButton>
                 <button
                   type="button"
-                  className="px-2 py-2 text-[13px] font-medium tracking-[-0.1504px] text-[#b42318] transition-colors hover:text-[#912018]"
+                  className="sa-link px-2 py-2 text-[13px] font-medium tracking-[-0.1504px] text-[#b42318] hover:text-[#912018]"
                 >
                   Disconnect
                 </button>
@@ -421,7 +421,7 @@ export function AdminConnectedEmailSettings() {
                     onChange={(e) =>
                       setFileTypes((current) => ({ ...current, [item.key]: e.target.checked }))
                     }
-                    className="size-4 rounded border-[#d1d5db] text-[#155dfc] focus:ring-[#155dfc]/30"
+                    className="size-4 rounded border-[#d1d5db] text-[#611879] accent-[#611879] focus:ring-[#611879]/30"
                   />
                   <span className="text-[13px] tracking-[-0.1504px] text-[#364153]">{item.label}</span>
                 </label>
@@ -479,10 +479,11 @@ export function AdminConnectedEmailSettings() {
             }
           >
             <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-              {discoveredBuckets.map((bucket) => (
+              {discoveredBuckets.map((bucket, index) => (
                 <div
                   key={bucket.id}
-                  className="flex flex-col rounded-[10px] border border-[#eef0f3] bg-[#f9fafb] p-4"
+                  style={{ animationDelay: `${Math.min(index, 8) * 30}ms` }}
+                  className="sa-enter flex flex-col rounded-[10px] border border-[#eef0f3] bg-[#f9fafb] p-4"
                 >
                   <div className="flex items-start justify-between gap-2">
                     <p className="text-[28px] font-semibold leading-none tracking-[-0.04em] text-[#101828]">
@@ -495,7 +496,7 @@ export function AdminConnectedEmailSettings() {
                   </p>
                   <button
                     type="button"
-                    className="mt-4 inline-flex w-full items-center justify-center rounded-[8px] border border-[#e5e7eb] bg-white px-3 py-2 text-[13px] font-medium tracking-[-0.1504px] text-[#101828] transition-colors hover:bg-[#f3f4f6]"
+                    className="sa-press mt-4 inline-flex w-full items-center justify-center rounded-[8px] border border-[#186179] bg-white px-3 py-2 text-[13px] font-medium tracking-[-0.1504px] text-[#186179] hover:bg-[#e8f2f5]"
                   >
                     Review
                   </button>
@@ -558,7 +559,7 @@ export function AdminConnectedEmailSettings() {
                       <td className="px-4 py-3">
                         <button
                           type="button"
-                          className="rounded-[8px] px-2.5 py-1.5 text-[13px] font-medium text-[#155dfc] transition-colors hover:bg-[#eff6ff]"
+                          className="sa-press rounded-[8px] px-2.5 py-1.5 text-[13px] font-medium text-[#186179] hover:bg-[#e8f2f5]"
                         >
                           Review
                         </button>
@@ -579,7 +580,7 @@ export function AdminConnectedEmailSettings() {
                   type="button"
                   onClick={() => setScanFrequency(option)}
                   className={[
-                    'rounded-[8px] px-4 py-2 text-[13px] font-medium capitalize tracking-[-0.1504px] transition-colors',
+                    'sa-pill rounded-[8px] px-4 py-2 text-[13px] font-medium capitalize tracking-[-0.1504px]',
                     scanFrequency === option
                       ? 'bg-white text-[#101828] shadow-[0px_1px_2px_rgba(0,0,0,0.06)]'
                       : 'text-[#6a7282] hover:text-[#101828]',
@@ -609,8 +610,12 @@ export function AdminConnectedEmailSettings() {
         <aside className="flex w-full shrink-0 flex-col gap-6 xl:sticky xl:top-6 xl:w-[300px]">
           <SectionCard title="Recommended actions">
             <ul className="space-y-4">
-              {recommendedActions.map((action) => (
-                <li key={action.id} className="rounded-[10px] border border-[#eef0f3] bg-[#f9fafb] p-4">
+              {recommendedActions.map((action, index) => (
+                <li
+                  key={action.id}
+                  style={{ animationDelay: `${Math.min(index, 8) * 30}ms` }}
+                  className="sa-enter rounded-[10px] border border-[#eef0f3] bg-[#f9fafb] p-4"
+                >
                   <p className="text-[14px] font-semibold tracking-[-0.1504px] text-[#101828]">
                     {action.title}
                   </p>

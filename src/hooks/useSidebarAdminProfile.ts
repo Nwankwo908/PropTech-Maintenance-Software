@@ -12,7 +12,7 @@ import {
   readLocalOnboardingState,
   shouldBlockDashboard,
   type LandlordOnboardingState,
-} from '@/lib/landlordOnboarding'
+} from '@/lib/onboarding'
 import { supabase } from '@/lib/supabase'
 
 type SidebarAdminProfileState = {

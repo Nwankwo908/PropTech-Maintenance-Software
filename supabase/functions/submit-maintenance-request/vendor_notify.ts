@@ -3,6 +3,7 @@ import {
   loadMostRecentlyAssignedVendorId,
   pickVendorForAssignment,
   touchVendorLastAssignedAt,
+  isVendorMatchableForDispatch,
 } from "../_shared/vendor_assignment.ts"
 import { sendResendEmail } from "../_shared/delivery.ts"
 import { sendVendorJobAlert } from "../_shared/sms/vendorSmsRouting.ts"
@@ -14,6 +15,7 @@ import {
 } from "../_shared/vendor_outreach_copy.ts"
 import { notifyResidentVendorAssigned } from "./resident_notify.ts"
 import { getEstimatedMinutes } from "../_shared/sla_rules.ts"
+import { uloAppOrigin, uloAppUrl } from "../_shared/uloAppUrl.ts"
 
 export type TicketNotifyPayload = {
   ticketId: string
@@ -27,6 +29,13 @@ export type TicketNotifyPayload = {
   estimatedMinutes?: number | null
   /** Scope vendor pick to this landlord when known. */
   landlordId?: string | null
+  /**
+   * When set (e.g. second same-trade ticket for the same unit), assign this
+   * vendor if still ACTIVE for dispatch instead of picking a new one.
+   */
+  preferVendorId?: string | null
+  /** Resident-offered visit windows from intake (shown on assignment SMS). */
+  residentAvailabilityText?: string | null
 }
 
 type VendorRow = {
@@ -47,18 +56,9 @@ type VendorEmailLinks = {
   declineUrl: string | null
 }
 
-/** Ensures vendor email links are absolute (mailto clients break on host-only origins). */
-function withHttpsScheme(origin: string): string {
-  const t = origin.trim().replace(/\/$/, "")
-  if (!t) return t
-  if (/^https?:\/\//i.test(t)) return t
-  return `https://${t}`
-}
-
 function resolveAppBaseUrl(): string | null {
-  const appRaw = Deno.env.get("APP_URL")?.trim() ?? ""
-  if (appRaw) return withHttpsScheme(appRaw)
-  return null
+  const origin = uloAppOrigin({ fallback: "" })
+  return origin || null
 }
 
 function resolveVendorRespondBaseUrl(): string | null {
@@ -198,10 +198,9 @@ function escapeHtml(s: string): string {
 }
 
 function buildJobDetailUrl(actionToken: string | null | undefined): string | null {
-  const appBase = resolveAppBaseUrl()
   const token = actionToken?.trim()
-  if (!appBase || !token) return null
-  return `${appBase}/w/${encodeURIComponent(token)}`
+  if (!token || !resolveAppBaseUrl()) return null
+  return uloAppUrl.workOrder(token)
 }
 
 function buildSmsBody(
@@ -217,23 +216,103 @@ function buildSmsBody(
     description: payload.description,
     ticketId: payload.ticketId,
     jobDetailUrl: buildJobDetailUrl(actionToken) ?? legacyViewUrl,
+    residentAvailabilityText: payload.residentAvailabilityText,
   })
 }
 
 /**
  * Picks vendor by strict issue_category match → generalists → any active (see `pickVendorForAssignment`).
  */
+function isEmergencyPriority(priority: string | null | undefined): boolean {
+  const p = (priority ?? "").trim().toLowerCase()
+  return p === "emergency" || p === "critical" || p === "urgent"
+}
+
+async function loadPreferredVendorIfMatchable(
+  supabase: SupabaseClient,
+  vendorId: string,
+  landlordId?: string | null,
+): Promise<VendorRow | null> {
+  const id = vendorId.trim()
+  if (!id) return null
+
+  let query = supabase
+    .from("vendors")
+    .select(
+      "id,name,email,phone,notification_channel,active,category,portal_api_key,roster_status",
+    )
+    .eq("id", id)
+    .eq("active", true)
+  const lid = landlordId?.trim() || null
+  if (lid) query = query.eq("landlord_id", lid)
+
+  const { data: vendor, error } = await query.maybeSingle()
+  if (error || !vendor) {
+    if (error) {
+      console.error("[vendor-notify] prefer vendor lookup", error.message)
+    }
+    return null
+  }
+
+  let verifQuery = supabase
+    .from("vendor_verifications")
+    .select("status, availability, updated_at")
+    .eq("vendor_id", vendor.id)
+    .order("updated_at", { ascending: false })
+    .limit(1)
+  if (lid) verifQuery = verifQuery.eq("landlord_id", lid)
+  const { data: verif } = await verifQuery.maybeSingle()
+
+  if (
+    !isVendorMatchableForDispatch({
+      verificationStatus: typeof verif?.status === "string" ? verif.status : null,
+      vendorActive: vendor.active,
+      availability: typeof verif?.availability === "string"
+        ? verif.availability
+        : null,
+      rosterStatus: typeof vendor.roster_status === "string"
+        ? vendor.roster_status
+        : null,
+    })
+  ) {
+    return null
+  }
+
+  return {
+    id: vendor.id,
+    name: vendor.name,
+    email: vendor.email,
+    phone: vendor.phone,
+    notification_channel: vendor.notification_channel,
+    active: vendor.active,
+    category: vendor.category,
+    portal_api_key: vendor.portal_api_key,
+  }
+}
+
 async function resolveVendorForNewTicket(
   supabase: SupabaseClient,
   issueCategory: string | null,
   landlordId?: string | null,
+  priority?: string | null,
+  preferVendorId?: string | null,
 ): Promise<VendorRow | null> {
+  if (preferVendorId?.trim()) {
+    const preferred = await loadPreferredVendorIfMatchable(
+      supabase,
+      preferVendorId,
+      landlordId,
+    )
+    if (preferred) return preferred
+  }
+
   const preferNot = await loadMostRecentlyAssignedVendorId(supabase)
   const picked = await pickVendorForAssignment(supabase, {
     issueCategory,
     excludeVendorIds: [],
     preferNotVendorId: preferNot,
     landlordId,
+    preferPreferredEmergency: isEmergencyPriority(priority),
   })
   return picked ? (picked as VendorRow) : null
 }
@@ -369,7 +448,7 @@ export async function assignVendorAndNotify(
 ): Promise<{ assigned: boolean; vendorId: string | null }> {
   const { data: ticket } = await supabase
     .from("maintenance_requests")
-    .select("id, vendor_notified_at, issue_category")
+    .select("id, vendor_notified_at, issue_category, resident_availability_text")
     .eq("id", payload.ticketId)
     .maybeSingle()
 
@@ -391,6 +470,13 @@ export async function assignVendorAndNotify(
     return { assigned: Boolean(vendorId), vendorId }
   }
 
+  if (!payload.residentAvailabilityText?.trim()) {
+    const fromTicket = typeof ticket.resident_availability_text === "string"
+      ? ticket.resident_availability_text.trim()
+      : ""
+    if (fromTicket) payload.residentAvailabilityText = fromTicket
+  }
+
   const issueCategory =
     typeof ticket.issue_category === "string" && ticket.issue_category.trim()
       ? ticket.issue_category.trim()
@@ -410,7 +496,13 @@ export async function assignVendorAndNotify(
   }
   payload.landlordId = landlordId
 
-  const vendor = await resolveVendorForNewTicket(supabase, issueCategory, landlordId)
+  const vendor = await resolveVendorForNewTicket(
+    supabase,
+    issueCategory,
+    landlordId,
+    payload.priority,
+    payload.preferVendorId,
+  )
   if (!vendor) {
     console.warn("[vendor-notify] no active vendor; skipping assignment and notify", {
       ticketId: payload.ticketId,
@@ -458,7 +550,7 @@ export async function assignVendorAndNotify(
     _vendorId: vendor.id,
   })
 
-  await touchVendorLastAssignedAt(supabase, vendor.id)
+  await touchVendorLastAssignedAt(supabase, vendor.id, landlordId)
 
   const errors = await notifyChannelsForAssignment(
     supabase,
@@ -551,7 +643,9 @@ export async function reassignVendorByIdAndNotify(
 
   const { data: vendor, error: vErr } = await supabase
     .from("vendors")
-    .select("id,name,email,phone,notification_channel,active,category,portal_api_key")
+    .select(
+      "id,name,email,phone,notification_channel,active,category,portal_api_key,roster_status",
+    )
     .eq("id", _vendorId)
     .eq("active", true)
     .maybeSingle()
@@ -562,6 +656,40 @@ export async function reassignVendorByIdAndNotify(
   }
   if (!vendor) {
     return { error: "Vendor not found or inactive" }
+  }
+
+  // Hard gate: only ACTIVE (verified + accepting + not platform-held) vendors.
+  const reassignLandlordIdEarly =
+    typeof ticket.landlord_id === "string" ? ticket.landlord_id.trim() : null
+  let verifStatus: string | null = null
+  let verifAvailability: string | null = null
+  {
+    let verifQuery = supabase
+      .from("vendor_verifications")
+      .select("status, availability, updated_at")
+      .eq("vendor_id", vendor.id)
+      .order("updated_at", { ascending: false })
+      .limit(1)
+    if (reassignLandlordIdEarly) {
+      verifQuery = verifQuery.eq("landlord_id", reassignLandlordIdEarly)
+    }
+    const { data: verif } = await verifQuery.maybeSingle()
+    verifStatus = typeof verif?.status === "string" ? verif.status : null
+    verifAvailability = typeof verif?.availability === "string"
+      ? verif.availability
+      : null
+  }
+  if (
+    !isVendorMatchableForDispatch({
+      verificationStatus: verifStatus,
+      vendorActive: vendor.active,
+      availability: verifAvailability,
+      rosterStatus: typeof vendor.roster_status === "string"
+        ? vendor.roster_status
+        : null,
+    })
+  ) {
+    return { error: "Vendor is not ACTIVE for matching" }
   }
   const prevStatus = ticket.vendor_work_status as string
   const actionToken = crypto.randomUUID()
@@ -612,7 +740,9 @@ export async function reassignVendorByIdAndNotify(
     return { error: upAssign.message ?? "Update failed" }
   }
 
-  await touchVendorLastAssignedAt(supabase, vendor.id)
+  const reassignLandlordId =
+    typeof ticket.landlord_id === "string" ? ticket.landlord_id.trim() : null
+  await touchVendorLastAssignedAt(supabase, vendor.id, reassignLandlordId)
 
   const payload: TicketNotifyPayload = {
     ticketId,
@@ -621,8 +751,7 @@ export async function reassignVendorByIdAndNotify(
     description: ticket.description as string,
     dueAt: newDueAtIso,
     estimatedMinutes: estMin,
-    landlordId:
-      typeof ticket.landlord_id === "string" ? ticket.landlord_id.trim() : null,
+    landlordId: reassignLandlordId,
   }
 
   const errors = await notifyChannelsForAssignment(

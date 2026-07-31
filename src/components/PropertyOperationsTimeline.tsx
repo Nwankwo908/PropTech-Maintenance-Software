@@ -10,6 +10,7 @@ import {
   type PropertyOperationsTimelineScope,
 } from '@/lib/propertyOperationsGraph'
 import { supabase } from '@/lib/supabase'
+import { getErrorMessage } from '@/lib/errorMessage'
 
 const CATEGORY_STYLES: Record<PropertyOperationsTimelineCategory, string> = {
   maintenance: 'bg-[#e8f4ff] text-[#0030b5]',
@@ -81,7 +82,7 @@ export function PropertyOperationsTimeline({
       })
       setEvents(rows)
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err)
+      const message = getErrorMessage(err, 'Something went wrong. Please try again.')
       setError(message)
       setEvents([])
     } finally {

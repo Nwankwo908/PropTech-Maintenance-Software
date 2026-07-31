@@ -14,7 +14,7 @@ export type CompletionJobContext = {
 
 async function invokeCompletion(body: Record<string, unknown>) {
   if (!supabase) {
-    throw new Error('Supabase is not configured (VITE_SUPABASE_URL / VITE_SUPABASE_ANON_KEY)')
+    throw new Error("We can't reach the server right now. Please try again in a moment.")
   }
   const { data, error } = await supabase.functions.invoke(
     'vendor-complete-job-upload',
@@ -90,7 +90,11 @@ export async function uploadCompletionPhotos(
     const base64 = await fileToBase64(file)
     photos.push({
       base64,
-      contentType: file.type || 'image/jpeg',
+      contentType:
+        file.type ||
+        (file.name.toLowerCase().match(/\.(mp4|mov|webm|m4v)$/)
+          ? 'video/mp4'
+          : 'image/jpeg'),
       fileName: file.name,
     })
   }

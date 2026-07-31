@@ -1,7 +1,7 @@
 import { serve } from "https://deno.land/std/http/server.ts"
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1"
 import { adminEdgeCorsHeaders } from "../_shared/admin_edge_cors.ts"
-import { adminReassignSecretAuthorized } from "../_shared/admin_reassign_auth.ts"
+import { requireAdminReassignAuth } from "../_shared/admin_edge_auth.ts"
 import {
   resolveLandlordId,
   resolveOutboundLandlordSmsLine,
@@ -13,13 +13,10 @@ import {
 import { sendInboundAutoReply } from "../_shared/sms/inboundReply.ts"
 import { sendResendEmail } from "../_shared/delivery.ts"
 import { logGraphEvent } from "../_shared/graph/logGraphEvent.ts"
-import {
-  createWorkflowRun,
-  linkConversationToWorkflowRun,
-  logPipelineStageEvent,
-  updateWorkflowRun,
-} from "../_shared/engine/workflowRuns.ts"
+import { startVendorOnboardingRun } from "../_shared/engine/vendorOnboardingProgress.ts"
+import { runVendorOnboardingViaEngine } from "../_shared/engine/vendorOnboardingEngine.ts"
 import { findLandlordVendorByContact } from "../_shared/vendor_verification/findVendor.ts"
+import { uloAppUrl } from "../_shared/uloAppUrl.ts"
 import type { SmsProviderName } from "../_shared/sms/types.ts"
 
 const corsHeaders = adminEdgeCorsHeaders
@@ -35,11 +32,6 @@ function generateToken(): string {
   return `vv_${crypto.randomUUID().replace(/-/g, "")}${
     crypto.randomUUID().replace(/-/g, "").slice(0, 12)
   }`
-}
-
-function resolveAppUrl(): string {
-  const raw = Deno.env.get("APP_URL")?.trim() || "https://app.ulohome.io"
-  return raw.replace(/\/$/, "")
 }
 
 function inviteSmsCopy(input: {
@@ -76,6 +68,7 @@ function inviteEmail(input: {
     "Uploading your insurance certificate",
     "Completing a background check",
     "Providing a W-9",
+    "Setting up your payout account",
     "Confirming the services you offer and the areas you serve",
   ]
   const text = [
@@ -133,15 +126,9 @@ serve(async (req) => {
   if (req.method !== "POST") {
     return jsonResponse({ error: "Method not allowed" }, 405)
   }
+  const adminAuth = requireAdminReassignAuth(req, "[send-vendor-invite]", corsHeaders)
+  if (!adminAuth.ok) return adminAuth.response
 
-  if (!Deno.env.get("ADMIN_REASSIGN_SECRET")?.trim()) {
-    console.error("[send-vendor-invite] ADMIN_REASSIGN_SECRET not set")
-    return jsonResponse({ error: "Server misconfiguration" }, 500)
-  }
-
-  if (!adminReassignSecretAuthorized(req)) {
-    return jsonResponse({ error: "Unauthorized" }, 401)
-  }
 
   let body: {
     landlordId?: string
@@ -243,24 +230,19 @@ serve(async (req) => {
     companyName = name || null
   }
 
-  // Start a vendor_onboarding workflow run (trigger stage). Best-effort: if the
-  // template is not seeded yet the run is null and the invite still sends.
-  const run = await createWorkflowRun(supabase, {
-    templateId: "vendor_onboarding",
+  // Start vendor_onboarding via the shared workflow engine.
+  const run = await startVendorOnboardingRun(supabase, {
     landlordId,
+    vendorId,
     triggerType: "dashboard",
-    currentStep: "invited",
-    metadata: {
-      channel,
-      business_name: businessName || null,
-      contact_name: contactName || null,
-      vendor_id: vendorId,
-    },
+    channel,
+    businessName: businessName || null,
+    contactName: contactName || null,
   })
   const workflowRunId = run?.id ?? null
 
   const token = generateToken()
-  const link = `${resolveAppUrl()}/v/${token}`
+  const link = uloAppUrl.vendorVerification(token)
 
   const { data: inserted, error: insertErr } = await supabase
     .from("vendor_verifications")
@@ -376,14 +358,10 @@ serve(async (req) => {
 
   const anyDelivered = delivery.sms === "sent" || delivery.email === "sent"
 
-  // Link the SMS thread to the run so the conversation box shows workflow context.
-  if (workflowRunId && inviteConversationId) {
-    await linkConversationToWorkflowRun(supabase, {
-      conversationId: inviteConversationId,
-      runId: workflowRunId,
-      templateId: "vendor_onboarding",
-    })
-  }
+  const deliveredVia = [
+    delivery.sms === "sent" ? "SMS" : null,
+    delivery.email === "sent" ? "email" : null,
+  ].filter(Boolean).join(" + ")
 
   if (inviteConversationId) {
     // Best-effort: column added in 20260717180000. Ignore if not migrated yet.
@@ -398,11 +376,6 @@ serve(async (req) => {
       )
     }
   }
-
-  const deliveredVia = [
-    delivery.sms === "sent" ? "SMS" : null,
-    delivery.email === "sent" ? "email" : null,
-  ].filter(Boolean).join(" + ")
 
   await logGraphEvent(supabase, {
     landlord_id: landlordId,
@@ -427,28 +400,24 @@ serve(async (req) => {
     },
   })
 
-  // Advance the pipeline: route/act (invite delivered) → log.
+  // Engine-owned pipeline stages: route → act (deliver) → log.
   if (workflowRunId) {
-    await logPipelineStageEvent(supabase, {
+    await runVendorOnboardingViaEngine(supabase, {
+      landlordId,
       runId: workflowRunId,
-      stage: "act",
-      step: "deliver_invite",
-      actorType: "landlord",
-      message: anyDelivered
-        ? `Invite delivered to ${vendorLabel}${deliveredVia ? ` via ${deliveredVia}` : ""}.`
-        : `Invite created for ${vendorLabel} (delivery pending).`,
-      metadata: { channel, delivery, verification_id: verificationId },
-    })
-    await logPipelineStageEvent(supabase, {
-      runId: workflowRunId,
-      stage: "log",
-      step: "append_graph_events",
-      message: "Vendor invite logged to operations graph.",
-      metadata: { verification_id: verificationId },
-    })
-    await updateWorkflowRun(supabase, workflowRunId, {
-      currentStep: "invited",
-      metadata: { verification_id: verificationId },
+      trigger: "dashboard",
+      vendorOnboarding: {
+        action: "invite_delivered",
+        inviteDelivered: {
+          verificationId,
+          vendorLabel,
+          channel,
+          delivery,
+          anyDelivered,
+          deliveredVia,
+          conversationId: inviteConversationId,
+        },
+      },
     })
   }
 

@@ -6,7 +6,12 @@ import {
   isCommunicationConversationUnread,
   markCommunicationConversationRead,
 } from '@/lib/communicationInboxRead'
-import { ensureOnboardingDashboardMatchesPortfolio } from '@/lib/landlordOnboarding'
+import {
+  formatResidentFeedbackPreview,
+  isResidentFeedbackAskBody,
+  parseResidentFeedbackRatingBody,
+} from '@/lib/conversationMonitoring'
+import { ensureOnboardingDashboardMatchesPortfolio } from '@/lib/onboarding'
 import {
   vendorSetupInboxContext,
   vendorSetupInboxStatus,
@@ -101,7 +106,22 @@ function conversationStatusLabel(
   status: string,
   hasMaintenanceRequest: boolean,
   latestBody?: string,
+  residentFeedbackRating?: number | null,
+  awaitingResidentFeedback?: boolean,
 ): string {
+  if (residentFeedbackRating != null && residentFeedbackRating >= 1 && residentFeedbackRating <= 5) {
+    return `Rated ${residentFeedbackRating}/5`
+  }
+  if (awaitingResidentFeedback || (latestBody && isResidentFeedbackAskBody(latestBody))) {
+    return 'Awaiting rating'
+  }
+  if (
+    latestBody &&
+    parseResidentFeedbackRatingBody(latestBody) != null &&
+    hasMaintenanceRequest
+  ) {
+    return `Rated ${parseResidentFeedbackRatingBody(latestBody)}/5`
+  }
   if (latestBody && /finished the vendor verification form|verification form submitted/i.test(latestBody)) {
     return 'Form submitted'
   }
@@ -318,7 +338,7 @@ function KpiCard({
   const neutral = delta === 0
   const good = neutral ? false : positive === goodWhenUp
   return (
-    <div className="flex min-w-0 flex-1 flex-col gap-4 rounded-[10px] border border-[#e5e7eb] bg-white p-6 shadow-[0px_1px_2px_-1px_rgba(0,0,0,0.06)]">
+    <div className="sa-enter-scale flex min-w-0 flex-1 flex-col gap-4 rounded-[10px] border border-[#e5e7eb] bg-white p-6 shadow-[0px_1px_2px_-1px_rgba(0,0,0,0.06)]">
       <p className="truncate text-[14px] leading-5 tracking-[-0.1504px] text-[#6a7282]">
         {label}
       </p>
@@ -606,8 +626,11 @@ export function AdminCommunicationDashboard() {
         ...new Set(scopedRows.map((r) => asString(r.vendor_id)).filter(Boolean)),
       ]
       const unitIds = [...new Set(scopedRows.map((r) => asString(r.unit_id)).filter(Boolean))]
+      const ticketIds = [
+        ...new Set(scopedRows.map((r) => asString(r.maintenance_request_id)).filter(Boolean)),
+      ]
 
-      const [messagesResult, residentsResult, vendorsResult, unitsResult] =
+      const [messagesResult, residentsResult, vendorsResult, unitsResult, feedbackResult, feedbackRequestResult] =
         await Promise.allSettled([
           conversationIds.length
             ? supabase
@@ -638,6 +661,23 @@ export function AdminCommunicationDashboard() {
                 .select('id, unit_label, building')
                 .eq('landlord_id', landlordId)
                 .in('id', unitIds)
+            : Promise.resolve({ data: [], error: null }),
+          ticketIds.length
+            ? supabase
+                .from('vendor_feedback')
+                .select('maintenance_request_id, rating')
+                .eq('landlord_id', landlordId)
+                .eq('rater_type', 'resident')
+                .in('maintenance_request_id', ticketIds)
+            : Promise.resolve({ data: [], error: null }),
+          ticketIds.length
+            ? supabase
+                .from('vendor_feedback_requests')
+                .select('maintenance_request_id, status')
+                .eq('landlord_id', landlordId)
+                .eq('rater_type', 'resident')
+                .eq('status', 'open')
+                .in('maintenance_request_id', ticketIds)
             : Promise.resolve({ data: [], error: null }),
         ])
 
@@ -687,11 +727,32 @@ export function AdminCommunicationDashboard() {
         }
       }
 
+      const ratingByTicketId = new Map<string, number>()
+      if (feedbackResult.status === 'fulfilled' && !feedbackResult.value.error) {
+        for (const row of (feedbackResult.value.data ?? []) as Record<string, unknown>[]) {
+          const ticketId = asString(row.maintenance_request_id)
+          const rating = Number(row.rating)
+          if (!ticketId || !Number.isInteger(rating) || rating < 1 || rating > 5) continue
+          ratingByTicketId.set(ticketId, rating)
+        }
+      }
+
+      const awaitingRatingTicketIds = new Set<string>()
+      if (feedbackRequestResult.status === 'fulfilled' && !feedbackRequestResult.value.error) {
+        for (const row of (feedbackRequestResult.value.data ?? []) as Record<string, unknown>[]) {
+          const ticketId = asString(row.maintenance_request_id)
+          if (ticketId && !ratingByTicketId.has(ticketId)) {
+            awaitingRatingTicketIds.add(ticketId)
+          }
+        }
+      }
+
       const mapped: Conversation[] = scopedRows.map((r) => {
         const id = asString(r.id)
         const resident = residentById.get(asString(r.resident_id))
         const vendorName = vendorById.get(asString(r.vendor_id))
         const unit = unitById.get(asString(r.unit_id))
+        const ticketId = asString(r.maintenance_request_id)
         const kind = conversationKind(
           asString(r.conversation_type),
           Boolean(asString(r.vendor_id)),
@@ -710,12 +771,16 @@ export function AdminCommunicationDashboard() {
           .join(' · ')
 
         const latest = latestMessageByConversation.get(id)
+        const residentRating = ticketId ? ratingByTicketId.get(ticketId) ?? null : null
+        const awaitingRating = Boolean(ticketId && awaitingRatingTicketIds.has(ticketId))
         const status = asString(r.status) || 'open'
         const statusLabel = conversationStatusLabel(
           asString(r.conversation_type),
           status,
-          Boolean(asString(r.maintenance_request_id)),
+          Boolean(ticketId),
           latest?.body,
+          residentRating,
+          awaitingRating,
         )
         const lastActivity =
           latest?.createdAt ?? new Date(asString(r.updated_at)).getTime()
@@ -724,12 +789,25 @@ export function AdminCommunicationDashboard() {
           (NEEDS_ATTENTION_STATUSES.has(status) ||
             (latest?.direction === 'inbound' && !CLOSED_STATUSES.has(status)))
 
+        let preview = latest?.body || 'No messages yet.'
+        if (residentRating != null) {
+          preview = formatResidentFeedbackPreview(residentRating)
+        } else if (awaitingRating || (latest?.body && isResidentFeedbackAskBody(latest.body))) {
+          preview = latest?.body && isResidentFeedbackAskBody(latest.body)
+            ? latest.body
+            : 'Waiting for the tenant to rate their repair (1–5).'
+        } else if (latest?.body && parseResidentFeedbackRatingBody(latest.body) != null) {
+          preview = formatResidentFeedbackPreview(
+            parseResidentFeedbackRatingBody(latest.body) as number,
+          )
+        }
+
         return {
           id,
           name,
           kind,
           context,
-          preview: latest?.body || 'No messages yet.',
+          preview,
           status: statusLabel,
           unread: isCommunicationConversationUnread({
             landlordId,
@@ -898,7 +976,7 @@ export function AdminCommunicationDashboard() {
         )}
       </div>
 
-      <section className="flex min-w-0 flex-col rounded-[10px] border border-[#e5e7eb] bg-white shadow-[0px_1px_2px_-1px_rgba(0,0,0,0.06)]">
+      <section className="sa-surface flex min-w-0 flex-col rounded-[10px] border border-[#e5e7eb] bg-white shadow-[0px_1px_2px_-1px_rgba(0,0,0,0.06)]">
         <div className="flex items-center justify-between gap-4 border-b border-[#e5e7eb] px-6 py-4">
           <div>
             <h2 className="text-[16px] font-semibold leading-6 text-[#0a0a0a]">
@@ -915,7 +993,7 @@ export function AdminCommunicationDashboard() {
                 type="button"
                 onClick={() => setFilter(f.id)}
                 className={[
-                  'cursor-pointer rounded-[10px] px-3 py-1 text-[13px] font-medium tracking-[-0.1504px] transition-colors',
+                  'sa-pill cursor-pointer rounded-[10px] px-3 py-1 text-[13px] font-medium tracking-[-0.1504px]',
                   filter === f.id
                     ? 'bg-white text-[#101828] shadow-[0px_1px_2px_-1px_rgba(0,0,0,0.12)]'
                     : 'text-[#6a7282] hover:text-[#364153]',
@@ -944,12 +1022,13 @@ export function AdminCommunicationDashboard() {
               </p>
             </div>
           ) : (
-            filtered.map((c) => (
+            filtered.map((c, index) => (
               <button
                 key={c.id}
                 type="button"
                 onClick={() => openConversation(c.id)}
-                className="flex w-full items-start gap-3 px-6 py-4 text-left transition-colors hover:bg-[#f9fafb]"
+                style={{ animationDelay: `${Math.min(index, 10) * 35}ms` }}
+                className="sa-enter sa-row flex w-full items-start gap-3 px-6 py-4 text-left hover:bg-[#f9fafb]"
               >
                 <span className="relative flex shrink-0 items-center pt-0.5">
                   {c.unread ? (

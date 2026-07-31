@@ -9,6 +9,7 @@
  *     -d '{"landlord_id":"YOUR_LANDLORD_UUID"}'
  */
 import { serve } from "https://deno.land/std/http/server.ts"
+import { authorizedCronBearer } from "../_shared/admin_edge_auth.ts"
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1"
 import { runWorkflowEscalations } from "../_shared/engine/runWorkflowEscalations.ts"
 
@@ -24,17 +25,6 @@ function jsonResponse(body: unknown, status = 200): Response {
     status,
     headers: { ...corsHeaders, "Content-Type": "application/json" },
   })
-}
-
-function authorized(req: Request): boolean {
-  const secret = Deno.env.get("RUN_WORKFLOW_ESCALATIONS_SECRET")?.trim() ??
-    Deno.env.get("CHECK_LEASE_RENEWALS_SECRET")?.trim() ??
-    Deno.env.get("RUN_WORKFLOW_ENGINE_SECRET")?.trim() ??
-    Deno.env.get("RUN_WORKFLOW_TRIGGERS_SECRET")?.trim()
-  if (!secret) return true
-  const h = req.headers.get("Authorization")?.trim()
-  if (!h?.toLowerCase().startsWith("bearer ")) return false
-  return h.slice(7).trim() === secret
 }
 
 function resolveLandlordId(body: Record<string, unknown>): string | null {
@@ -55,7 +45,7 @@ serve(async (req) => {
     return jsonResponse({ error: "Method not allowed" }, 405)
   }
 
-  if (!authorized(req)) {
+  if (!authorizedCronBearer(req, ["RUN_WORKFLOW_ESCALATIONS_SECRET","CHECK_LEASE_RENEWALS_SECRET","RUN_WORKFLOW_ENGINE_SECRET","RUN_WORKFLOW_TRIGGERS_SECRET"])) {
     return jsonResponse({ error: "Unauthorized" }, 401)
   }
 

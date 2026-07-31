@@ -1,11 +1,9 @@
 import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.49.1"
+import { isStaffAdminEmail } from "../../../shared/admin/staffAllowlist.ts"
 import { adminReassignSecretAuthorized } from "./admin_reassign_auth.ts"
 import { bearerLooksLikeJwt } from "./vendor_portal_bearer.ts"
 import { getVendorFromPortalApiKey } from "./vendor_portal_api_key.ts"
 import type { ProxiedSenderType } from "./sms/proxiedMessaging.ts"
-
-const ADMIN_ALLOWED_EMAILS = new Set(["emeka@ulohome.io", "osi@ulohome.io"])
-const ADMIN_DOMAIN = "property-admin.auth.local"
 
 const uuidRe =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
@@ -15,13 +13,6 @@ function bearerToken(req: Request): string | null {
   if (!h?.toLowerCase().startsWith("bearer ")) return null
   const t = h.slice(7).trim()
   return t || null
-}
-
-function isStaffAdminEmail(email: string | null | undefined): boolean {
-  const normalized = (email ?? "").trim().toLowerCase()
-  if (!normalized) return false
-  if (ADMIN_ALLOWED_EMAILS.has(normalized)) return true
-  return normalized.endsWith(`@${ADMIN_DOMAIN}`)
 }
 
 export type ProxiedAuthResult =

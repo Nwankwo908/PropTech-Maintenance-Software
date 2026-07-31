@@ -1,4 +1,5 @@
 import type { AdminWorkflowRow } from '@/lib/adminWorkflows'
+import { getErrorMessage } from '@/lib/errorMessage'
 
 export type LeaseRenewalRecommendAction =
   | 'call_tenant'
@@ -221,7 +222,7 @@ async function resumeLeaseRenewalAfterAdminResolve(
     .eq('template_id', 'lease_renewal')
     .maybeSingle()
 
-  if (fetchError) return { ok: false, error: fetchError.message }
+  if (fetchError) return { ok: false, error: getErrorMessage(fetchError, 'Something went wrong. Please try again.') }
   if (!run) return { ok: false, error: 'Workflow run not found.' }
   if (run.status !== 'escalated') return { ok: true }
 
@@ -259,7 +260,7 @@ async function resumeLeaseRenewalAfterAdminResolve(
     .eq('id', workflowRunId)
     .eq('landlord_id', landlordId)
 
-  if (updateError) return { ok: false, error: updateError.message }
+  if (updateError) return { ok: false, error: getErrorMessage(updateError, 'Something went wrong. Please try again.') }
 
   const { error: eventError } = await supabase.from('workflow_events').insert({
     workflow_run_id: workflowRunId,
@@ -270,7 +271,7 @@ async function resumeLeaseRenewalAfterAdminResolve(
     metadata: { admin_resolved_at: now },
   })
 
-  if (eventError) return { ok: false, error: eventError.message }
+  if (eventError) return { ok: false, error: getErrorMessage(eventError, 'Something went wrong. Please try again.') }
   return { ok: true }
 }
 
@@ -306,14 +307,15 @@ export async function applyLeaseRenewalEscalatedAction(
     if (!resumeResult.ok) return resumeResult
   }
 
-  const { error } = await supabase.from('operations_graph_events').insert({
-    landlord_id: landlordId,
-    event_type: LEASE_RENEWAL_ACTION_EVENT[action],
+  const { recordActivityLog } = await import('@/lib/recordActivityLog')
+  const eventId = await recordActivityLog({
+    landlordId,
+    eventType: LEASE_RENEWAL_ACTION_EVENT[action],
     source: 'dashboard',
-    actor_type: 'landlord',
-    workflow_run_id: review.workflowRunId,
-    workflow_template_id: 'lease_renewal',
-    resident_id: review.residentId,
+    actorType: 'landlord',
+    workflowRunId: review.workflowRunId,
+    workflowTemplateId: 'lease_renewal',
+    residentId: review.residentId,
     metadata: {
       action,
       workflow_ref: review.workflowRef,
@@ -321,6 +323,6 @@ export async function applyLeaseRenewalEscalatedAction(
     },
   })
 
-  if (error) return { ok: false, error: error.message }
+  if (!eventId) return { ok: false, error: 'Something went wrong. Please try again.' }
   return { ok: true }
 }

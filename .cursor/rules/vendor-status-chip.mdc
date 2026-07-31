@@ -1,32 +1,86 @@
 ---
-description: Vendor capacity/status chips stay Pending until verification is complete, then become Active (or Paused/Backup if availability is paused).
+description: Vendor status state machine — only ACTIVE vendors are matchable for job dispatch.
 alwaysApply: true
 ---
 
-# Vendor status chip (pending → active)
+# Vendor status state machine
 
-## Rule
+No vendor may receive a job dispatch until status = **ACTIVE** *and* capacity is accepting work.
+**Account status** (Pending → Active) is separate from **capacity** (Paused / weekly cap).
+A vendor can be ACTIVE (verified) but PAUSED (not accepting new jobs). Existing scheduled jobs are unaffected by PAUSE.
 
-The vendor **capacity / status chip** (list + profile) is driven by verification readiness, not by a bare `vendors.active` flag alone.
+## Capacity SMS / portal
 
-| Verification state | Chip |
+| Command | Effect |
 |---|---|
-| No verification, invited, in progress, submitted, or needs review | **Pending** |
-| Verification overall status `verified` (required documents checked off) | **Active** |
-| Verified but availability paused / `vendors.active === false` | **Paused** / **Backup** |
+| Reply **PAUSE** | Capacity paused — no new jobs. Scheduled jobs unchanged. |
+| Reply **RESUME** | Capacity active — dispatch resumes. Confirmation SMS sent. |
+| Reply **JOBS MAX n** | Weekly job cap = n. Auto-pauses when the week’s assignments hit the cap. |
+| Portal toggle on `/v/:token` | Same as PAUSE / RESUME. |
 
-## Meaning
+## COI & license expiration
 
-- **Pending** — invited or mid-onboarding; not ready for normal work-order assignment as a verified roster vendor.
-- **Active** — verification complete (`vendor_verifications.status = 'verified'`); eligible for assignments.
-- **Paused / Backup** — verified, but marked as not accepting new work.
+| Trigger | Action | Result |
+|---|---|---|
+| 30 days before | SMS warning + renewal link (`/v/:token`) | ACTIVE |
+| 7 days before | 2nd SMS + Ulo ops notified | ACTIVE |
+| Expiry date | Auto-SUSPENDED (`vendors.roster_status`) | SUSPENDED |
+| New COI/license verified | Clear suspension → ACTIVE | ACTIVE |
 
-## Implementation notes
+Cron: `check-vendor-compliance-expiry` (daily). Idempotent via `compliance_expiry_notices`.
 
-- Source of truth for “complete” is the linked `vendor_verifications` row (`status === 'verified'`), which already reflects the checklist (license, COI, background, W-9, trades, service area).
-- UI chips on `AdminVendorsDashboard` and `AdminVendorDetailDashboard` must follow this mapping.
-- Prefer keeping `vendors.active` in sync on verification submit (active when verified + accepting work; inactive while still pending when practical), but **never** show **Active** on the chip while verification is incomplete.
-- Onboarding auto-invite starts vendors in **Pending** until they finish the verification form.
+## Performance standards (§7)
+
+| Metric | Threshold | Consequence |
+|---|---|---|
+| Avg rating (5+ jobs) | &lt; 3.5 | Coaching (`performance_review = coaching`) + SMS + ops |
+| Avg rating — continued | &lt; 3.0 after coaching | Suspension review (ops urgent; not auto-suspend) |
+| No-show | &gt;2 in 30 days | Warning SMS + ops |
+| No-show — continued | &gt;3 in 60 days | Suspension review |
+| Job acceptance | &lt; 40% over 20+ offers | Profile review |
+| Misconduct Class A/B | Any | Immediate `roster_status = suspended` |
+
+Cron: `check-vendor-performance-standards` (daily). No-shows from confirmed appointments that lapse without progress (`vendor_job_no_shows`). Misconduct: `report-vendor-misconduct`.
+
+## Incident protocols (pre-launch gates)
+
+Matching requires **ACTIVE**. Nothing enters the queue without it (`isVendorMatchableForDispatch` / `pickVendorForAssignment`).
+
+| Protocol | Key rule | Implementation |
+|---|---|---|
+| **1 — No-Show** | T+120 landlord+tenant notified; T+125 rematch. Automated 2-hr window. | `check-vendor-incident-protocols` (every 5 min) |
+| **2 — Property Damage** | $1M COI + Ulo Additional Insured; Ulo does not pay claims; suspend pending review | Checklist gate + `report-property-damage` |
+| **3 — Bad Actor** | Suspend immediately before investigation; Class A founder call ≤15 min; permanent bans permanent | `report-vendor-misconduct` / `ban-vendor` |
+
+## Meaning & rules
+
+| Status | Meaning |
+|---|---|
+| **PENDING** | App received. No docs submitted. Not matchable. 48hr reminder if no action. |
+| **DOCS SUBMITTED** | Docs under review. Not matchable. Target: 48hrs (manual), 24hrs post-Checkr. |
+| **ACTIVE** | All requirements met. Enters matching queue. Only matchable state. |
+| **PAUSED** | Vendor-initiated hold. No new jobs. Self-reactivate via SMS or portal. |
+| **SUSPENDED** | Platform hold: incident, performance breach, or expired COI/license. Review in 1–2hrs. |
+| **BANNED** | Permanent removal. No reinstatement. Data retained for audit. |
+
+## Mapping from data
+
+| Chip | Source |
+|---|---|
+| Pending | No verification, or `vendor_verifications.status` in `invited` / `in_progress` |
+| Docs submitted | `vendor_verifications.status` in `submitted` / `needs_review` |
+| Active | `status = verified` and accepting work (`availability != paused`, `vendors.active != false`) |
+| Paused | Verified, but `availability = paused` or `vendors.active = false` |
+| Suspended | `vendors.roster_status = suspended` (overrides verification) |
+| Banned | `vendors.roster_status = banned` (overrides verification) |
+
+## Implementation
+
+- Resolver: `src/lib/vendorStatusChip.ts` → `resolveVendorCapacityChip` / `isVendorMatchable`
+- UI chips: `AdminVendorsDashboard`, `AdminVendorDetailDashboard`, `vendorComplianceProfile`
+- Matching: `pickVendorForAssignment` must only consider matchable (ACTIVE) vendors
+- Never show **Active** while verification is incomplete
+- Onboarding auto-invite starts vendors in **Pending** until they finish the verification form
 
 ## Related
 

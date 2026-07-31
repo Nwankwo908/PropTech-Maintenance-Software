@@ -1,0 +1,32 @@
+---
+description: One shared Stripe Connect readiness check; keep rent vs invoice flows separate
+alwaysApply: true
+---
+
+# Stripe Connect readiness — one shared check
+
+## Keep payment flows separate
+
+| Flow | Money path | Checkout |
+|---|---|---|
+| Rent | Tenant → Landlord | `rent-payment-checkout` / `rentStripeCheckout.ts` |
+| Invoice | Landlord/Admin → Vendor | `invoice-payment-checkout` |
+
+Do **not** merge these into one checkout. Destinations, payers, and ledgers differ.
+
+## Share readiness (and destination loading)
+
+Everyone asks “is this Stripe Connect account ready?” through one rule:
+
+**Ready = valid `acct_…` id AND `chargesEnabled === true`**
+
+| Runtime | API |
+|---|---|
+| Edge | `isStripeConnectReady` / `loadLandlordStripeDestination` / `loadVendorStripeDestination` in `_shared/stripeConnect.ts` |
+| Client | same names in `src/lib/stripeConnectReady.ts` |
+
+## Do not
+
+- Inline `acct_` + `charges_enabled` checks in new checkout or onboarding code
+- Duplicate landlord vs vendor readiness predicates with different rules
+- Use landlord Connect for vendor invoice payouts (or vice versa)

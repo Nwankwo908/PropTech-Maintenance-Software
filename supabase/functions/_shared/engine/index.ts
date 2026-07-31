@@ -36,8 +36,8 @@ export {
   checkRentCollection,
   findRentDueResidents,
   hasActiveRentCollectionForPeriod,
-  startRentCollectionWorkflow,
 } from "./checkRentCollection.ts"
+export { runRentCollectionCronViaEngine } from "./rentCollectionEngine.ts"
 export {
   executeRentCollectionRouteAndAct,
   sendRentCollectionPaymentReminder,
@@ -57,6 +57,34 @@ export {
 } from "./rentCollectionEscalation.ts"
 export type { RentCollectionEscalationResult } from "./rentCollectionEscalation.ts"
 export {
+  escalateVendorOnboardingRun,
+  vendorOnboardingActionDue,
+  buildVendorOnboardingReminderSms,
+  buildVendorOnboardingReminderEmail,
+} from "./vendorOnboardingEscalation.ts"
+export type { VendorOnboardingEscalationResult } from "./vendorOnboardingEscalation.ts"
+export {
+  startVendorOnboardingRun,
+  markVendorOnboardingInviteDelivered,
+  advanceVendorOnboardingInProgress,
+  advanceVendorOnboardingOnSubmit,
+  recordVendorOnboardingReminder,
+  readVendorOnboardingState,
+  VENDOR_ONBOARDING_WAITING_STEPS,
+  VENDOR_ONBOARDING_TERMINAL_STEPS,
+} from "./vendorOnboardingProgress.ts"
+export {
+  runVendorOnboardingViaEngine,
+} from "./vendorOnboardingEngine.ts"
+export type {
+  VendorOnboardingEngineAction,
+  VendorOnboardingEngineInput,
+} from "./vendorOnboardingEngine.ts"
+export type {
+  VendorOnboardingStep,
+  VendorOnboardingState,
+} from "./vendorOnboardingProgress.ts"
+export {
   runWorkflowEscalations,
   findEscalationCandidates,
   escalateWorkflowRun,
@@ -70,6 +98,8 @@ export type {
 } from "./runWorkflowEscalations.ts"
 export { startMaintenanceRequestWorkflow } from "./startMaintenanceRequestWorkflow.ts"
 export type { StartMaintenanceRequestWorkflowParams } from "./startMaintenanceRequestWorkflow.ts"
+export { runMaintenanceRequestViaEngine } from "./maintenanceRequestEngine.ts"
+export type { MaintenanceRequestEngineInput } from "./templates/maintenanceRequest.ts"
 export {
   startInspectionWorkflow,
   startMoveInWorkflow,
@@ -82,6 +112,37 @@ export type {
   StartMoveInWorkflowParams,
   StartMoveOutWorkflowParams,
 } from "./startLifecycleWorkflows.ts"
+export {
+  escalateLifecycleRun,
+  escalateLifecycleRunById,
+  lifecycleActionDue,
+} from "./lifecycleEscalation.ts"
+export type { LifecycleEscalationResult } from "./lifecycleEscalation.ts"
+export {
+  completeLifecycleWorkflow,
+  executeLifecycleInitialAct,
+  scheduleMoveInInspection,
+  scheduleMoveOutInspection,
+} from "./lifecycleProgress.ts"
+export {
+  buildInspectionNoticeSms,
+  buildInspectionReminderSms,
+  buildMoveInReminderSms,
+  buildMoveInWelcomeSms,
+  buildMoveOutReminderSms,
+  isLifecycleInitialActTrigger,
+  lifecycleTimingDefaults,
+  LIFECYCLE_TERMINAL_STEPS,
+  LIFECYCLE_WAITING_STEPS,
+  readLifecycleStepState,
+} from "./lifecyclePolicy.ts"
+export type {
+  InspectionStep,
+  LifecycleStep,
+  LifecycleStepState,
+  MoveInStep,
+  MoveOutStep,
+} from "./lifecyclePolicy.ts"
 export {
   InvokeWorkflowError,
   classifyEntityWorkflow,
@@ -144,8 +205,21 @@ export type {
 } from "./rentCollectionGraph.ts"
 export { logLedgerEvent } from "./ledgerEvents.ts"
 export type { LedgerEventParams, LedgerEventDirection } from "./ledgerEvents.ts"
-export { runWorkflowEngine } from "./runner.ts"
+export {
+  lifecycleStartEngineTrigger,
+  runWorkflowEngine,
+  runWorkflowEngineForExistingRun,
+} from "./runner.ts"
 export { logWorkflowStage, workflowRouteForTemplate } from "./logStage.ts"
+export {
+  recordActivityLog,
+  normalizeActivityLogSource,
+} from "../graph/recordActivityLog.ts"
+export type {
+  RecordActivityLogInput,
+  ActivityLogSource,
+  ActivityLogActorType,
+} from "../graph/recordActivityLog.ts"
 export {
   backfillPipelineStageEvents,
   createWorkflowRun,

@@ -1,4 +1,5 @@
 import type { LeaseRenewalEscalatedReview } from '@/lib/leaseRenewalEscalatedReview'
+import { getErrorMessage } from '@/lib/errorMessage'
 
 export type LeaseRenewalIncentiveChatMessage = {
   id: string
@@ -76,13 +77,14 @@ export async function sendLeaseRenewalIncentiveMessage(
   const trimmed = message.trim()
   if (!trimmed) return { ok: false, error: 'Message is empty.' }
 
-  const { error } = await supabase.from('operations_graph_events').insert({
-    landlord_id: landlordId,
-    event_type: 'lease.renewal_incentive_sms_drafted',
+  const { recordActivityLog } = await import('@/lib/recordActivityLog')
+  const eventId = await recordActivityLog({
+    landlordId,
+    eventType: 'lease.renewal_incentive_sms_drafted',
     source: 'dashboard',
-    actor_type: 'landlord',
-    workflow_run_id: brief.workflowRunId,
-    workflow_template_id: 'lease_renewal',
+    actorType: 'landlord',
+    workflowRunId: brief.workflowRunId,
+    workflowTemplateId: 'lease_renewal',
     metadata: {
       incentive_amount_label: brief.incentiveAmountLabel,
       message: trimmed,
@@ -92,7 +94,7 @@ export async function sendLeaseRenewalIncentiveMessage(
     },
   })
 
-  if (error) return { ok: false, error: error.message }
+  if (!eventId) return { ok: false, error: 'Something went wrong. Please try again.' }
   return { ok: true }
 }
 

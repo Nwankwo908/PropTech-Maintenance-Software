@@ -190,6 +190,7 @@ function VendorResultRow({
   vendor,
   saving,
   selected,
+  enterDelayMs,
   onSelect,
   onInvite,
 }: {
@@ -197,6 +198,7 @@ function VendorResultRow({
   saving: boolean
   /** Outreach sent; vendor has not submitted the setup form yet. */
   selected?: boolean
+  enterDelayMs?: number
   onSelect: () => void
   onInvite: () => void
 }) {
@@ -206,7 +208,10 @@ function VendorResultRow({
       : vendor.address
 
   return (
-    <div className="border-b border-[#e5e7eb] py-4 last:border-b-0">
+    <div
+      style={enterDelayMs != null ? { animationDelay: `${enterDelayMs}ms` } : undefined}
+      className="sa-enter border-b border-[#e5e7eb] py-4 last:border-b-0"
+    >
       <div className="flex items-start gap-3">
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
@@ -286,7 +291,7 @@ function VendorResultRow({
           onClick={onSelect}
           aria-pressed={selected}
           className={[
-            'inline-flex min-h-[36px] shrink-0 items-center justify-center gap-1 rounded-[10px] px-3 py-2 text-[12px] font-semibold leading-4 outline-none transition-colors focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-60',
+            'sa-press inline-flex min-h-[36px] shrink-0 items-center justify-center gap-1 rounded-[10px] px-3 py-2 text-[12px] font-semibold leading-4 outline-none focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-60',
             selected
               ? 'border border-[#e5e7eb] bg-white text-[#101828] hover:bg-[#f9fafb]'
               : 'bg-[#0a4d38] text-white hover:bg-[#083828]',
@@ -308,7 +313,7 @@ function VendorResultRow({
           type="button"
           disabled={saving}
           onClick={onInvite}
-          className="inline-flex min-h-[36px] shrink-0 items-center justify-center gap-1 rounded-[10px] border border-[#186179] px-3 py-2 text-[12px] font-semibold leading-4 text-[#186179] outline-none transition-colors hover:bg-[#186179]/5 focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-60"
+          className="sa-press inline-flex min-h-[36px] shrink-0 items-center justify-center gap-1 rounded-[10px] border border-[#186179] px-3 py-2 text-[12px] font-semibold leading-4 text-[#186179] outline-none hover:bg-[#186179]/5 focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-60"
         >
           Invite to verify
         </button>
@@ -422,7 +427,7 @@ export function FindExternalVendorRail({
           onClick={handleRailDismiss}
           disabled={saving}
           aria-label="Close"
-          className="absolute right-4 top-4 z-10 rounded-lg p-1 text-[#9ca3af] outline-none hover:bg-black/5 hover:text-[#364153] focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2 disabled:opacity-50"
+          className="sa-press absolute right-4 top-4 z-10 rounded-lg p-1 text-[#9ca3af] outline-none hover:bg-black/5 hover:text-[#364153] focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2 disabled:opacity-50"
         >
           <CloseIcon />
         </button>
@@ -451,7 +456,7 @@ export function FindExternalVendorRail({
                 type="button"
                 disabled={saving}
                 onClick={handleBack}
-                className="inline-flex items-center gap-1 text-[12px] font-medium text-[#717182] outline-none hover:text-[#0a0a0a] focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2 disabled:opacity-50"
+                className="sa-link inline-flex items-center gap-1 text-[12px] font-medium text-[#717182] outline-none hover:text-[#0a0a0a] focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2 disabled:opacity-50"
               >
                 <ChevronLeftIcon />
                 {cancelLabel}
@@ -514,13 +519,14 @@ export function FindExternalVendorRail({
 
             {!loading && !error && displayRows.length > 0 ? (
               <div>
-                {displayRows.map((vendor) => {
+                {displayRows.map((vendor, index) => {
                   const rowKey = `${vendor.name}-${vendor.primarySource}`
                   return (
                     <VendorResultRow
                       key={rowKey}
                       vendor={vendor}
                       saving={saving}
+                      enterDelayMs={Math.min(index, 8) * 40}
                       onSelect={() => setVerificationVendor(vendor)}
                       onInvite={() =>
                         setInvitePrefill({
@@ -549,7 +555,7 @@ export function FindExternalVendorRail({
               type="button"
               disabled={saving}
               onClick={handleBack}
-              className="inline-flex min-h-[44px] items-center justify-center rounded-[10px] border border-[#e5e7eb] bg-white px-4 py-2.5 text-[13px] font-medium text-[#364153] outline-none hover:bg-[#f9fafb] focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2 disabled:opacity-50"
+              className="sa-press inline-flex min-h-[44px] items-center justify-center rounded-[10px] border border-[#e5e7eb] bg-white px-4 py-2.5 text-[13px] font-medium text-[#364153] outline-none hover:bg-[#f9fafb] focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2 disabled:opacity-50"
             >
               {cancelLabel}
             </button>

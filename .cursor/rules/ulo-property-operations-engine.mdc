@@ -22,25 +22,31 @@ Implementation lives in `supabase/functions/_shared/engine/`:
 
 Add new domains (move-in, move-out, inspection, lease, rent, maintenance) as **workflow templates**, not new apps.
 
-## Shared property operations graph
+## Shared activity log (one official method)
 
-Every meaningful interaction must append to `operations_graph_events` via `logGraphEvent` or `operationsGraph.ts`.
+Every meaningful interaction must be recorded through **one** method:
 
-Link graph events to all applicable entities:
+| Runtime | Official API |
+|---|---|
+| Edge Functions | `recordActivityLog` in `_shared/graph/recordActivityLog.ts` |
+| Dashboard / client | `recordActivityLog` in `src/lib/recordActivityLog.ts` |
 
-- `landlord_id`, `property_id`, `unit_id`, `resident_id`
-- `vendor_id`, `maintenance_request_id`
-- `occupancy_id`, `inspection_id`, `task_id`
-- `workflow_run_id`, `workflow_template_id`
-- `conversation_id`, `message_id` (SMS)
+Legacy helpers (`logGraphEvent`, `logOperationsGraphEvent`, `logPropertyOperationsGraph`) **delegate** to `recordActivityLog`. Prefer calling `recordActivityLog` directly in new code.
 
-Domain events use dotted names (`rent.reminder_sent`, `move_in.checklist_sent`, `inspection.scheduled`). Pipeline stages use `workflow.{stage}`.
+`recordActivityLog` writes:
+1. `operations_graph_events` (primary)
+2. `property_operations_graph` (best-effort dual-write for Overview)
+
+Link events to all applicable entities (`landlordId`, `propertyId`, `unitId`, `residentId`, `vendorId`, `maintenanceRequestId`, `occupancyId`, `inspectionId`, `taskId`, `workflowRunId`, `workflowTemplateId`, `conversationId`, `messageId`).
+
+Domain events use dotted names (`rent.reminder_sent`, `move_in.checklist_sent`, `inspection.scheduled`). Pipeline stages use `workflow.{stage}`. Prefer a user-facing `metadata.message` for the activity feed.
 
 ## What not to do
 
 - No standalone “Move In product” UI module with its own backend
 - No duplicate cron/edge paths that skip `workflow_runs`
-- No domain logging that only touches a local table without a graph event
+- No domain logging that only touches a local table without an activity log event
+- **No raw inserts** into `operations_graph_events` or `property_operations_graph`
 - No new migrations that edit old migration files
 
 ## Adding a workflow
@@ -48,5 +54,5 @@ Domain events use dotted names (`rent.reminder_sent`, `move_in.checklist_sent`, 
 1. Seed `workflow_templates` (trigger/route/escalation config)
 2. Add `templates/<name>.ts` implementing `classify` + `act` (+ `escalate`)
 3. Register in `registry.ts` and extend `WorkflowTemplateId` in `types.ts`
-4. Log domain events through `operationsGraph.ts` with full entity scope
+4. Log domain events with `recordActivityLog` (full entity scope)
 5. Reuse existing channels (SMS, email, dashboard) — route in `act`, don’t fork delivery

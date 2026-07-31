@@ -44,7 +44,7 @@ function parseScheduledAt(value: string | null | undefined): Date | null {
 }
 
 export function isInspectionWorkflow(row: AdminWorkflowRow, card: WorkflowKanbanCard): boolean {
-  return card.category === 'inspection' || row.templateId === 'inspection' || row.templateId === 'unit_inspection'
+  return card.category === 'inspection' || row.templateId === 'inspection'
 }
 
 export function buildInspectionWorkflowContext(

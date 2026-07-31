@@ -6,6 +6,7 @@ import {
   adminEdgeInvokeHeaders,
   fetchAdminEdgeFunction,
 } from '@/api/adminReassignVendor'
+import { getAdminEdgeSecret } from '@/lib/adminEdgeAuth'
 import { getActiveLandlordId } from '@/lib/activeLandlord'
 
 export type LifecycleWorkflowType = 'move_in' | 'move_out' | 'inspection'
@@ -41,9 +42,6 @@ function supabaseFunctionsBase(): string | undefined {
   return base || undefined
 }
 
-function adminSecret(): string | undefined {
-  return import.meta.env.VITE_ADMIN_REASSIGN_SECRET?.trim() || undefined
-}
 
 function defaultLandlordId(): string | undefined {
   return getActiveLandlordId()
@@ -58,7 +56,7 @@ export async function startLifecycleWorkflow(
   payload: StartLifecycleWorkflowPayload,
 ): Promise<StartLifecycleWorkflowResult> {
   const url = functionUrl()
-  const secret = adminSecret()
+  const secret = getAdminEdgeSecret()
   if (!url || !secret) {
     return { ok: false, error: 'Admin workflow configuration is missing.' }
   }

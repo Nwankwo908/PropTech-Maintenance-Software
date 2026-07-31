@@ -6,6 +6,7 @@ import {
   adminEdgeInvokeHeaders,
   fetchAdminEdgeFunction,
 } from '@/api/adminReassignVendor'
+import { getAdminEdgeSecret } from '@/lib/adminEdgeAuth'
 import { getActiveLandlordId } from '@/lib/activeLandlord'
 
 function deleteWorkOrderUrl(): string | null {
@@ -34,7 +35,7 @@ export async function deleteWorkOrderPermanently(params: {
   maintenanceRequestId?: string | null
 }): Promise<DeleteWorkOrderResult> {
   const url = deleteWorkOrderUrl()
-  const secret = import.meta.env.VITE_ADMIN_REASSIGN_SECRET?.trim()
+  const secret = getAdminEdgeSecret()
   if (!url || !secret) {
     throw new Error(
       'Work order delete is not configured (admin Edge URL/secret).',

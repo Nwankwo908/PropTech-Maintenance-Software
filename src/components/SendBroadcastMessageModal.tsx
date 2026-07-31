@@ -11,6 +11,7 @@ import { getActiveLandlordId } from '@/lib/activeLandlord'
 import { getInventoryUnitOptions } from '@/lib/propertyUnitOptions'
 import { unitOptionValueToCell } from '@/lib/residentUnitKeys'
 import { supabase } from '@/lib/supabase'
+import { getErrorMessage } from '@/lib/errorMessage'
 
 type Audience = 'all' | 'building' | 'units'
 
@@ -577,7 +578,7 @@ export function SendBroadcastMessageModal({
     } catch (error) {
       recordBroadcastSendAttempt(payload.channels, false)
       const msg =
-        error instanceof Error ? error.message : 'Failed to send broadcast. Please try again.'
+        getErrorMessage(error, 'Failed to send broadcast. Please try again.')
       setSubmitError(
         msg.toLowerCase().includes('failed to fetch')
           ? 'Failed to reach broadcast service. Confirm send-broadcast is deployed and CORS is enabled.'
@@ -613,7 +614,7 @@ export function SendBroadcastMessageModal({
       setScheduleModalOpen(false)
       onClose()
     } catch (error) {
-      setSubmitError(error instanceof Error ? error.message : 'Could not schedule broadcast.')
+      setSubmitError(getErrorMessage(error, 'Could not schedule broadcast.'))
     } finally {
       setScheduling(false)
     }
@@ -674,7 +675,7 @@ export function SendBroadcastMessageModal({
     } catch (error) {
       setMessage(getFallback(detectIntent(message)))
       const msg =
-        error instanceof Error ? error.message : "Couldn’t enhance message — using default template."
+        getErrorMessage(error, "Couldn’t enhance message — using default template.")
       setSubmitError(`${msg} (using default template)`)
     } finally {
       setEnhancing(false)
@@ -936,7 +937,7 @@ export function SendBroadcastMessageModal({
                           Specific Units
                         </p>
                         <p className="text-[12px] leading-4 text-neutral">
-                          Select units from User Management
+                          Select units from Properties or Residents
                         </p>
                       </div>
                     </div>
@@ -1315,7 +1316,7 @@ function AutomationSettingRow({
         onClick={() => enabled && onCheckedChange(!checked)}
         className={[
           'mt-1 flex size-4 shrink-0 items-center justify-center rounded border shadow-[0px_1px_2px_0px_rgba(0,0,0,0.05)] outline-none transition-colors focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50',
-          checked ? 'border-extended-3 bg-extended-3' : 'border-black/10 bg-secondary',
+          checked ? 'border-[#611879] bg-[#611879]' : 'border-black/10 bg-secondary',
         ].join(' ')}
       >
         {checked ? (
@@ -1389,14 +1390,14 @@ function ChannelCard({
       onClick={onToggle}
       className={[
         'flex rounded-[10px] border-2 p-4 text-left transition-colors',
-        selected ? 'border-extended-1 bg-white' : 'border-secondary bg-white',
+        selected ? 'border-[#186179] bg-[#e8f2f5]' : 'border-secondary bg-white',
       ].join(' ')}
     >
       <div className="flex items-center gap-3">
         <span
           className={[
             'flex size-4 shrink-0 items-center justify-center rounded border shadow-sm',
-            selected ? 'border-extended-3 bg-extended-3' : 'border-black/10 bg-secondary',
+            selected ? 'border-[#611879] bg-[#611879]' : 'border-black/10 bg-secondary',
           ].join(' ')}
           aria-hidden
         >

@@ -1,7 +1,7 @@
 /**
  * Mock AI document extraction for onboarding — deterministic demo data until real OCR is wired.
  */
-import type { OnboardingProperty } from '@/lib/landlordOnboarding'
+import type { OnboardingProperty } from '@/lib/onboarding'
 
 export type DocumentCategory =
   | 'lease_agreements'
@@ -42,6 +42,10 @@ export type ExtractedResident = {
   leaseStart: string
   leaseEnd: string
   selected: boolean
+  monthlyRent?: string
+  rentDueDay?: string
+  occupancyStatus?: string
+  maintenanceResponsibilitiesClause?: string
 }
 
 export type ExtractedVendor = {
@@ -51,6 +55,7 @@ export type ExtractedVendor = {
   phone: string
   email: string
   selected: boolean
+  preferredEmergency?: boolean
 }
 
 export type ExtractedMaintenanceIssue = {

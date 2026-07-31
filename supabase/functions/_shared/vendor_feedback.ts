@@ -39,11 +39,133 @@ export type VendorFeedbackHandleResult =
       rating?: number
     }
 
-function parseRating(body: string): number | null {
+const RATING_WORD: Record<string, number> = {
+  one: 1,
+  two: 2,
+  three: 3,
+  four: 4,
+  five: 5,
+}
+
+/** Parse a 1–5 repair rating from a short SMS body. */
+export function parseRating(body: string): number | null {
   const trimmed = body.trim()
-  const match = trimmed.match(/^([1-5])$/)
-  if (!match) return null
-  return Number(match[1])
+  if (!trimmed) return null
+
+  const exact = trimmed.match(/^([1-5])$/)
+  if (exact) return Number(exact[1])
+
+  const withScale = trimmed.match(/^([1-5])\s*[/／]\s*5$/)
+  if (withScale) return Number(withScale[1])
+
+  const stars = trimmed.match(/^([1-5])\s*(?:stars?|★|⭐️?)$/i)
+  if (stars) return Number(stars[1])
+
+  const starPrefix = trimmed.match(/^(?:★|⭐️?)\s*([1-5])$/i)
+  if (starPrefix) return Number(starPrefix[1])
+
+  const labeled = trimmed.match(/^(?:rate[d]?|rating)[:\s]+([1-5])(?:\s*[/／]\s*5)?$/i)
+  if (labeled) return Number(labeled[1])
+
+  const word = trimmed.toLowerCase().replace(/[^a-z]/g, "")
+  if (word in RATING_WORD) return RATING_WORD[word]
+
+  return null
+}
+
+export function ratingQualityLabel(rating: number): string {
+  switch (rating) {
+    case 1:
+      return "Poor"
+    case 2:
+      return "Fair"
+    case 3:
+      return "Good"
+    case 4:
+      return "Very Good"
+    case 5:
+      return "Excellent"
+    default:
+      return ""
+  }
+}
+
+type OpenFeedbackRequest = {
+  id: string
+  vendor_id: string
+  maintenance_request_id: string
+  resident_id: string | null
+  conversation_id: string | null
+  phase: string
+  feedback_id: string | null
+}
+
+async function fetchOpenFeedbackRequest(
+  supabase: SupabaseClient,
+  params: {
+    landlordId: string
+    conversationId?: string | null
+    residentId?: string | null
+  },
+): Promise<OpenFeedbackRequest | null> {
+  const base = () =>
+    supabase
+      .from("vendor_feedback_requests")
+      .select(
+        "id, vendor_id, maintenance_request_id, resident_id, conversation_id, phase, feedback_id",
+      )
+      .eq("landlord_id", params.landlordId)
+      .eq("rater_type", "resident")
+      .eq("status", "open")
+      .gt("expires_at", new Date().toISOString())
+      .order("created_at", { ascending: false })
+      .limit(1)
+
+  if (params.conversationId) {
+    const { data, error } = await base()
+      .eq("conversation_id", params.conversationId)
+      .maybeSingle()
+    if (error) {
+      console.error("[vendor-feedback] lookup by conversation", error.message)
+    } else if (data) {
+      return data as OpenFeedbackRequest
+    }
+  }
+
+  // Fall back when the reply landed on a different conversation than the ask
+  // (identity heal, new thread, or maintenance_request_id rebind).
+  if (params.residentId) {
+    const { data, error } = await base()
+      .eq("resident_id", params.residentId)
+      .maybeSingle()
+    if (error) {
+      console.error("[vendor-feedback] lookup by resident", error.message)
+      return null
+    }
+    if (!data) return null
+    const row = data as OpenFeedbackRequest
+    if (
+      params.conversationId &&
+      row.conversation_id &&
+      row.conversation_id !== params.conversationId
+    ) {
+      const { error: healErr } = await supabase
+        .from("vendor_feedback_requests")
+        .update({ conversation_id: params.conversationId })
+        .eq("id", row.id)
+      if (healErr) {
+        console.warn(
+          "[vendor-feedback] heal conversation_id",
+          healErr.message,
+        )
+      } else {
+        row.conversation_id = params.conversationId
+      }
+    }
+    return row
+  }
+
+  return null
 }
 
 async function lookupOpenFeedbackRequest(
@@ -53,40 +175,9 @@ async function lookupOpenFeedbackRequest(
     conversationId?: string | null
     residentId?: string | null
   },
-): Promise<{
-  id: string
-  vendor_id: string
-  maintenance_request_id: string
-  resident_id: string | null
-  phase: string
-  feedback_id: string | null
-} | null> {
-  let query = supabase
-    .from("vendor_feedback_requests")
-    .select(
-      "id, vendor_id, maintenance_request_id, resident_id, phase, feedback_id",
-    )
-    .eq("landlord_id", params.landlordId)
-    .eq("rater_type", "resident")
-    .eq("status", "open")
-    .gt("expires_at", new Date().toISOString())
-    .order("created_at", { ascending: false })
-    .limit(1)
-
-  if (params.conversationId) {
-    query = query.eq("conversation_id", params.conversationId)
-  } else if (params.residentId) {
-    query = query.eq("resident_id", params.residentId)
-  } else {
-    return null
-  }
-
-  const { data, error } = await query.maybeSingle()
-  if (error) {
-    console.error("[vendor-feedback] lookup open request", error.message)
-    return null
-  }
-  return data as typeof data
+): Promise<OpenFeedbackRequest | null> {
+  if (!params.conversationId && !params.residentId) return null
+  return fetchOpenFeedbackRequest(supabase, params)
 }
 
 /** Send post-completion resident SMS rating request (non-throwing). */
@@ -323,7 +414,7 @@ export async function tryHandleVendorFeedbackInbound(
       metadata: { rating },
     })
 
-    // Rating 3–5 closes the job on both ends; 4–5 also texts the landlord pay options.
+    // Rating 3–5 closes the job on both ends; 4–5 queues invoice for Needs Your Attention.
     try {
       await finalizeJobAfterResidentFeedback(supabase, {
         landlordId: params.landlordId,

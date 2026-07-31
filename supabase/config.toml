@@ -48,6 +48,24 @@ verify_jwt = false
 import_map = "./functions/admin-approve-maintenance-invoice/deno.json"
 entrypoint = "./functions/admin-approve-maintenance-invoice/index.ts"
 
+[functions.invoice-payment-checkout]
+enabled = true
+verify_jwt = false
+import_map = "./functions/invoice-payment-checkout/deno.json"
+entrypoint = "./functions/invoice-payment-checkout/index.ts"
+
+[functions.rent-payment-checkout]
+enabled = true
+verify_jwt = false
+import_map = "./functions/rent-payment-checkout/deno.json"
+entrypoint = "./functions/rent-payment-checkout/index.ts"
+
+[functions.landlord-stripe-connect]
+enabled = true
+verify_jwt = false
+import_map = "./functions/landlord-stripe-connect/deno.json"
+entrypoint = "./functions/landlord-stripe-connect/index.ts"
+
 [functions.admin-delete-work-order]
 enabled = true
 verify_jwt = false
@@ -324,7 +342,47 @@ enabled = true
 verify_jwt = false
 entrypoint = "./functions/check-rent-collection/index.ts"
 
+[functions.check-vendor-compliance-expiry]
+enabled = true
+verify_jwt = false
+entrypoint = "./functions/check-vendor-compliance-expiry/index.ts"
+
+[functions.check-vendor-performance-standards]
+enabled = true
+verify_jwt = false
+entrypoint = "./functions/check-vendor-performance-standards/index.ts"
+
+[functions.check-tenant-activation-retries]
+enabled = true
+verify_jwt = false
+entrypoint = "./functions/check-tenant-activation-retries/index.ts"
+
+[functions.check-vendor-incident-protocols]
+enabled = true
+verify_jwt = false
+entrypoint = "./functions/check-vendor-incident-protocols/index.ts"
+
+[functions.report-property-damage]
+enabled = true
+verify_jwt = false
+entrypoint = "./functions/report-property-damage/index.ts"
+
+[functions.ban-vendor]
+enabled = true
+verify_jwt = false
+entrypoint = "./functions/ban-vendor/index.ts"
+
+[functions.report-vendor-misconduct]
+enabled = true
+verify_jwt = false
+entrypoint = "./functions/report-vendor-misconduct/index.ts"
+
 [functions.refresh-ask-ulo-sources]
 enabled = true
 verify_jwt = false
 entrypoint = "./functions/refresh-ask-ulo-sources/index.ts"
+
+[functions.inspection-asset-assess]
+enabled = true
+verify_jwt = false
+entrypoint = "./functions/inspection-asset-assess/index.ts"

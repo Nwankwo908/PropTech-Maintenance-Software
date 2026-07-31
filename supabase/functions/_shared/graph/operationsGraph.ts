@@ -1,10 +1,10 @@
 import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.49.1"
+import { resolvePropertyId } from "../properties/ensureProperty.ts"
 import {
-  logGraphEvent,
   type GraphEventActorType,
   type GraphEventSource,
-  type LogGraphEventInput,
 } from "./logGraphEvent.ts"
+import { recordActivityLog } from "./recordActivityLog.ts"
 
 /** Canonical graph event namespaces by workflow domain. */
 export const GRAPH_EVENT_NAMESPACES = {
@@ -105,24 +105,25 @@ export async function resolveOperationsGraphScope(
   if (!building && unitId) {
     const { data: unit } = await supabase
       .from("units")
-      .select("building")
+      .select("building, property_id")
       .eq("id", unitId)
       .maybeSingle()
 
     if (unit?.building != null) {
       building = String(unit.building)
     }
+    if (!propertyId && unit?.property_id) {
+      propertyId = String(unit.property_id)
+    }
   }
 
   if (!propertyId && scope.landlordId) {
-    const { data, error } = await supabase.rpc("derive_property_id", {
-      p_landlord_id: scope.landlordId,
-      p_building: building ?? "",
+    propertyId = await resolvePropertyId(supabase, {
+      landlordId: scope.landlordId,
+      unitId,
+      building,
+      propertyId,
     })
-
-    if (!error && data != null) {
-      propertyId = String(data)
-    }
   }
 
   return {
@@ -142,35 +143,36 @@ export type LogOperationsGraphEventParams = {
   metadata?: Record<string, unknown>
 }
 
-/** Append a domain event to the shared property operations graph. */
+/**
+ * Domain helper: resolve entity scope, then write via official `recordActivityLog`.
+ * Prefer `recordActivityLog` when scope is already resolved.
+ */
 export async function logOperationsGraphEvent(
   supabase: SupabaseClient,
   params: LogOperationsGraphEventParams,
 ): Promise<string | null> {
   const resolved = await resolveOperationsGraphScope(supabase, params.scope)
 
-  const input: LogGraphEventInput = {
-    landlord_id: resolved.landlordId,
-    event_type: params.eventType,
+  return recordActivityLog(supabase, {
+    landlordId: resolved.landlordId,
+    eventType: params.eventType,
     source: params.source ?? "automation",
-    actor_type: params.actorType ?? "system",
-    actor_id: params.actorId ?? null,
-    property_id: resolved.propertyId,
-    unit_id: resolved.unitId,
-    resident_id: resolved.residentId,
-    vendor_id: params.scope.vendorId ?? null,
-    maintenance_request_id: params.scope.maintenanceRequestId ?? null,
-    conversation_id: params.scope.conversationId ?? null,
-    message_id: params.scope.messageId ?? null,
-    workflow_run_id: params.scope.workflowRunId ?? null,
-    workflow_template_id: params.scope.workflowTemplateId ?? null,
-    occupancy_id: params.scope.occupancyId ?? null,
-    inspection_id: params.scope.inspectionId ?? null,
-    task_id: params.scope.taskId ?? null,
+    actorType: params.actorType ?? "system",
+    actorId: params.actorId ?? null,
+    propertyId: resolved.propertyId,
+    unitId: resolved.unitId,
+    residentId: resolved.residentId,
+    vendorId: params.scope.vendorId ?? null,
+    maintenanceRequestId: params.scope.maintenanceRequestId ?? null,
+    conversationId: params.scope.conversationId ?? null,
+    messageId: params.scope.messageId ?? null,
+    workflowRunId: params.scope.workflowRunId ?? null,
+    workflowTemplateId: params.scope.workflowTemplateId ?? null,
+    occupancyId: params.scope.occupancyId ?? null,
+    inspectionId: params.scope.inspectionId ?? null,
+    taskId: params.scope.taskId ?? null,
     metadata: params.metadata ?? {},
-  }
-
-  return logGraphEvent(supabase, input)
+  })
 }
 
 export function graphScopeFromWorkflowRun(

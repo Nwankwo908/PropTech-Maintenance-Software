@@ -36,9 +36,10 @@ export type VendorServiceArea = {
 }
 
 export type VendorCapacity = {
-  status: 'active' | 'paused' | 'pending'
+  status: 'pending' | 'docs_submitted' | 'active' | 'paused' | 'suspended' | 'banned'
   label: string
   detail: string
+  matchable: boolean
 }
 
 export type VendorTradeCategories = {
@@ -67,6 +68,8 @@ export type VendorComplianceSubject = {
   phone?: string | null
   category?: string | null
   active?: boolean | null
+  /** Platform hold: suspended | banned */
+  rosterStatus?: string | null
 }
 
 /** Empty compliance requirement — nothing retrieved during onboarding. */
@@ -183,17 +186,15 @@ function buildCapacity(
 ): VendorCapacity {
   const chip = resolveVendorCapacityChip({
     verificationStatus: verification?.status,
-    vendorActive: verification?.availability === 'paused' ? false : subject.active !== false,
+    vendorActive: subject.active,
+    availability: verification?.availability,
+    rosterStatus: subject.rosterStatus,
   })
   return {
     status: chip.status,
     label: chip.label,
-    detail:
-      chip.status === 'active'
-        ? 'Available to receive new work orders.'
-        : chip.status === 'paused'
-          ? 'Not accepting new work orders — kept as backup.'
-          : 'Verification pending — vendor completes onboarding before going active.',
+    detail: chip.detail,
+    matchable: chip.matchable,
   }
 }
 
@@ -219,7 +220,7 @@ export function buildVendorComplianceProfile(
   const emptyW9 = emptyDocument(
     'w9',
     'W-9 on file',
-    'Not collected yet — request a W-9 for 1099 tax reporting.',
+    'Not collected yet — entity type + SSN/EIN + W-9 required for 1099 reporting.',
   )
 
   let stateLicense = emptyLicense

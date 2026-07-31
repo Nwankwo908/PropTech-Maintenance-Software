@@ -365,7 +365,7 @@ export function AddPropertyModal({ open, onClose, onSubmit }: AddPropertyModalPr
             type="button"
             disabled={!formValid}
             onClick={submit}
-            className="inline-flex h-9 min-w-0 flex-1 items-center justify-center gap-2 rounded-lg bg-[#b58500] px-4 text-[14px] font-medium leading-5 tracking-[-0.1504px] text-white outline-none focus-visible:ring-2 focus-visible:ring-[#b58500] focus-visible:ring-offset-2 focus-visible:ring-offset-secondary enabled:hover:bg-[#9a7310] disabled:cursor-not-allowed disabled:opacity-50"
+            className="inline-flex h-9 min-w-0 flex-1 items-center justify-center gap-2 rounded-lg bg-transparent px-4 text-[14px] font-medium leading-5 tracking-[-0.1504px] text-[#186179] outline-none focus-visible:ring-2 focus-visible:ring-[#186179] focus-visible:ring-offset-2 focus-visible:ring-offset-secondary disabled:cursor-not-allowed disabled:opacity-50"
           >
          
             Add Property

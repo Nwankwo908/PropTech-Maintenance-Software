@@ -88,14 +88,13 @@ export async function resolveRentCollectionGraphScope(
   }
 
   if (!propertyId && scope.landlordId) {
-    const { data, error } = await supabase.rpc("derive_property_id", {
-      p_landlord_id: scope.landlordId,
-      p_building: building ?? "",
+    const { resolvePropertyId } = await import("../properties/ensureProperty.ts")
+    propertyId = await resolvePropertyId(supabase, {
+      landlordId: scope.landlordId,
+      unitId,
+      building,
+      propertyId,
     })
-
-    if (!error && data != null) {
-      propertyId = String(data)
-    }
   }
 
   return {

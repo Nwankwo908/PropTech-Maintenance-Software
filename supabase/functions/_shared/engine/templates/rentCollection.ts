@@ -365,6 +365,25 @@ async function processRentDueTrigger(
   let started = 0
   let skipped = 0
   let remindersSent = 0
+  const startedRuns: Array<{
+    resident_id: string
+    billing_period: string
+    amount_due: number
+    workflow_run_id: string
+    workflow_type: "rent_collection"
+    rent_classification: RentCollectionClassification
+    stage: "routed" | "awaiting_payment"
+    sms_sent: boolean
+    email_sent: boolean
+    route_channels: string[]
+    payment_link: string | null
+    payment_requested: boolean
+  }> = []
+  const startErrors: Array<{
+    resident_id: string
+    billing_period: string
+    error: string
+  }> = []
 
   for (const row of residents ?? []) {
     const resident = row as ResidentRow
@@ -386,6 +405,7 @@ async function processRentDueTrigger(
       continue
     }
 
+    try {
     const dueAt = rentCollectionEscalationDeadline(rentDueDate, latePaymentGraceDays)
     const classification = classifyRentCollection({
       balanceDue: amountDue,
@@ -426,7 +446,9 @@ async function processRentDueTrigger(
       },
     })
 
-    if (!run) continue
+    if (!run) {
+      throw new Error("Failed to create workflow_run for rent_collection")
+    }
     started++
 
     await logPipelineStageEvent(supabase, {
@@ -511,6 +533,34 @@ async function processRentDueTrigger(
     })
 
     if (routed.smsSent || routed.emailSent) remindersSent++
+
+    startedRuns.push({
+      resident_id: residentId,
+      billing_period: billingPeriod,
+      amount_due: amountDue,
+      workflow_run_id: run.id,
+      workflow_type: "rent_collection",
+      rent_classification: classification,
+      stage: routed.smsSent || routed.emailSent ? "routed" : "awaiting_payment",
+      sms_sent: routed.smsSent,
+      email_sent: routed.emailSent,
+      route_channels: routed.channels,
+      payment_link: routed.paymentLink,
+      payment_requested: routed.paymentRequested,
+    })
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err)
+      console.error("[rent-collection] start failed", {
+        residentId,
+        billingPeriod,
+        error: message,
+      })
+      startErrors.push({
+        resident_id: residentId,
+        billing_period: billingPeriod,
+        error: message,
+      })
+    }
   }
 
   const { escalateLatePaymentRuns } = await import("../rentCollectionEscalation.ts")
@@ -531,6 +581,8 @@ async function processRentDueTrigger(
       skipped,
       reminders_sent: remindersSent,
       late_payment_escalated: escalated,
+      started_runs: startedRuns,
+      errors: startErrors,
     },
   }
 }
@@ -578,6 +630,8 @@ export async function executeRentCollectionRouteAndAct(
     runId: params.runId,
     billingPeriod: params.state.billing_period ?? currentBillingPeriod(),
     amountDue: params.state.amount_due ?? 0,
+    residentName: params.resident.full_name,
+    unitLabel: params.resident.unit ?? params.state.unit_label,
   })
 
   const graphScope = graphScopeForRouteAct(params)

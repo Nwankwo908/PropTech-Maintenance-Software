@@ -1,7 +1,7 @@
 import { serve } from "https://deno.land/std/http/server.ts"
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1"
 import { adminEdgeCorsHeaders } from "../_shared/admin_edge_cors.ts"
-import { adminReassignSecretAuthorized } from "../_shared/admin_reassign_auth.ts"
+import { requireAdminReassignAuth } from "../_shared/admin_edge_auth.ts"
 import { reassignExternalVendorToTicket } from "../_shared/external_vendor/reassign_external.ts"
 import type { ExternalVendorSource } from "../_shared/external_vendor/types.ts"
 import { isUuidShape } from "../_shared/uuid_shape.ts"
@@ -36,18 +36,9 @@ serve(async (req) => {
   if (req.method !== "POST") {
     return jsonResponse({ error: "Method not allowed" }, 405)
   }
+  const adminAuth = requireAdminReassignAuth(req, "[reassign-external-vendor]", corsHeaders)
+  if (!adminAuth.ok) return adminAuth.response
 
-  if (!Deno.env.get("ADMIN_REASSIGN_SECRET")?.trim()) {
-    console.error("[reassign-external-vendor] ADMIN_REASSIGN_SECRET not set")
-    return jsonResponse({ error: "Server misconfiguration" }, 500)
-  }
-
-  if (!adminReassignSecretAuthorized(req)) {
-    console.warn(
-      "[reassign-external-vendor] 401 Unauthorized: x-admin-reassign-secret mismatch",
-    )
-    return jsonResponse({ error: "Unauthorized" }, 401)
-  }
 
   let body: {
     ticketId?: string

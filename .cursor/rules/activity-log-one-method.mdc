@@ -1,0 +1,67 @@
+---
+description: Every new feature must record activity via recordActivityLog()
+alwaysApply: true
+---
+
+# Activity log — required for every new feature
+
+## Rule
+
+**Every new feature that changes operational state must call `recordActivityLog()`.**
+
+No exceptions for “small” features, dashboard-only actions, SMS side effects, or Edge Functions. If a landlord, resident, vendor, or automation did something meaningful, log it.
+
+| Runtime | Official API |
+|---|---|
+| Edge Functions | `recordActivityLog` from `_shared/graph/recordActivityLog.ts` |
+| React / client | `recordActivityLog` from `src/lib/recordActivityLog.ts` |
+
+## New-feature checklist
+
+Before shipping any new feature:
+
+1. Identify the meaningful events (created, sent, reminded, completed, failed, escalated, etc.).
+2. Call `recordActivityLog` for each event (best-effort; do not block the user action on log failure).
+3. Use a dotted `eventType` (`domain.action`, e.g. `rent.reminder_sent`).
+4. Attach entity IDs (`landlordId`, `propertyId`, `unitId`, `residentId`, `vendorId`, `workflowRunId`, …).
+5. Put a plain-language `metadata.message` for the Overview activity feed.
+6. Use a valid `source`: `sms` | `dashboard` | `vendor_portal` | `edge_function` | `automation`.
+
+## Examples
+
+Edge:
+
+```ts
+await recordActivityLog(supabase, {
+  landlordId,
+  eventType: "move_in.checklist_sent",
+  source: "automation",
+  actorType: "system",
+  propertyId,
+  unitId,
+  residentId,
+  workflowRunId,
+  metadata: { message: "Welcome instructions sent to the resident." },
+})
+```
+
+Client:
+
+```ts
+await recordActivityLog({
+  landlordId,
+  eventType: "unit.activated",
+  source: "dashboard",
+  actorType: "landlord",
+  unitId,
+  metadata: { message: "Unit 4B activated" },
+})
+```
+
+## Do not
+
+- `.from("operations_graph_events").insert(...)`
+- `.from("property_operations_graph").insert(...)`
+- Invent a parallel activity-feed table or writer
+- Ship a feature that only updates domain tables with no activity log
+- Call legacy helpers in new code (`logGraphEvent`, `logOperationsGraphEvent`, `logPropertyOperationsGraph`) — they still delegate, but new code must use `recordActivityLog` directly

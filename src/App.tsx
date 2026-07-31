@@ -3,6 +3,7 @@ import { useSessionAutoRefresh } from './hooks/useSessionAutoRefresh'
 import { supabase } from './lib/supabase'
 import { ReferralLandingRedirect } from './components/ReferralLandingRedirect'
 import { LandingPage } from './components/landing/LandingPage'
+import { DemoPageRedirect } from './components/DemoPageRedirect'
 import { ResidentPortal } from './ResidentPortal'
 import { VendorPortal } from './VendorPortal'
 import VendorAuthGate from './components/VendorAuthGate'
@@ -23,7 +24,6 @@ import { AdminVendorDetailDashboard } from './components/AdminVendorDetailDashbo
 import { AdminResidentsDashboard } from './components/AdminResidentsDashboard'
 import { AdminAnalyticsDashboard } from './components/AdminAnalyticsDashboard'
 import { AdminSettingsDashboard } from './components/AdminSettingsDashboard'
-import { AdminUserManagementDashboard } from './components/AdminUserManagementDashboard'
 import { AdminOnboardingDashboard } from './components/AdminOnboardingDashboard'
 import { AdminOnboardingGuard } from './components/AdminOnboardingGuard'
 import { TermsOfServicePage } from './components/legal/TermsOfServicePage'
@@ -33,6 +33,7 @@ import { WorkOrderPublicPage } from './components/WorkOrderPublicPage'
 import { WorkOrderEstimatePage } from './components/WorkOrderEstimatePage'
 import { WorkOrderUploadPage } from './components/WorkOrderUploadPage'
 import { WorkOrderInvoicePage } from './components/WorkOrderInvoicePage'
+import { RentPaymentPage } from './components/RentPaymentPage'
 
 export default function App() {
   useSessionAutoRefresh(supabase)
@@ -42,6 +43,7 @@ export default function App() {
       <ReferralLandingRedirect />
       <Routes>
         <Route path="/" element={<LandingPage />} />
+        <Route path="/demo" element={<DemoPageRedirect />} />
         <Route path="/terms" element={<TermsOfServicePage />} />
         <Route path="/privatepolicy" element={<PrivacyPolicyPage />} />
         <Route path="/request" element={<ResidentPortal />} />
@@ -50,6 +52,7 @@ export default function App() {
         <Route path="/estimate/:token" element={<WorkOrderEstimatePage />} />
         <Route path="/upload/:token" element={<WorkOrderUploadPage />} />
         <Route path="/invoice/:token" element={<WorkOrderInvoicePage />} />
+        <Route path="/pay/rent" element={<RentPaymentPage />} />
 
         <Route
           path="/vendor/*"
@@ -91,7 +94,6 @@ export default function App() {
               path="notifications"
               element={<AdminNotificationManagementDashboard />}
             />
-            <Route path="users" element={<AdminUserManagementDashboard />} />
           </Route>
         </Route>
       </Routes>

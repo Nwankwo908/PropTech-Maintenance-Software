@@ -9,6 +9,7 @@ export type VerificationItemId =
   | 'coi_coverage'
   | 'background_check'
   | 'w9'
+  | 'stripe_connect'
   | 'trade_categories'
   | 'service_area'
   | 'availability'
@@ -35,12 +36,21 @@ export type VerificationRecord = {
   license_status?: string | null
   license_number?: string | null
   license_state?: string | null
+  license_expiration?: string | null
   coi_general_liability?: number | null
   coi_expiration?: string | null
   coi_additional_insured?: boolean | null
   coi_status?: string | null
   background_check_status?: string | null
   w9_received?: boolean | null
+  tax_entity_type?: string | null
+  tin_type?: string | null
+  tin_last4?: string | null
+  tin_fingerprint?: string | null
+  w9_variant?: string | null
+  tax_1099_treatment?: string | null
+  /** True when Stripe Express can accept destination charges. */
+  stripe_connect_ready?: boolean | null
   trade_categories?: string[] | null
   service_area?: VerificationServiceArea | Record<string, unknown> | null
   availability?: string | null
@@ -75,26 +85,31 @@ function serviceAreaHasCoverage(area: VerificationRecord['service_area']): boole
 
 function licenseItem(record: VerificationRecord): VerificationChecklistItem {
   const status = (record.license_status ?? '').toLowerCase()
-  if (['verified', 'active', 'manual_verified'].includes(status)) {
+  const licenseExp = record.license_expiration ?? null
+  const licenseDateExpired = Boolean(licenseExp && licenseExp < todayIso())
+  if (
+    ['verified', 'active', 'manual_verified'].includes(status) &&
+    !licenseDateExpired
+  ) {
     return {
       id: 'license',
       label: 'State License',
       status: 'complete',
       required: true,
       detail: record.license_number
-        ? `${record.license_number} · Active (simulated)`
-        : 'Active (simulated)',
+        ? `${record.license_number} · Active${licenseExp ? ` · through ${licenseExp}` : ''}`
+        : 'Active',
     }
   }
-  if (['expired', 'not_found'].includes(status)) {
+  if (['expired', 'not_found'].includes(status) || licenseDateExpired) {
     return {
       id: 'license',
       label: 'State License',
       status: 'action_needed',
       required: true,
       detail:
-        status === 'expired'
-          ? 'License expired — needs renewal (simulated)'
+        licenseDateExpired || status === 'expired'
+          ? `License expired${licenseExp ? ` (${licenseExp})` : ''} — needs renewal`
           : 'No match in state licensing database (simulated)',
     }
   }
@@ -110,6 +125,7 @@ function licenseItem(record: VerificationRecord): VerificationChecklistItem {
 function coiCoverageItem(record: VerificationRecord): VerificationChecklistItem {
   const gl = typeof record.coi_general_liability === 'number' ? record.coi_general_liability : null
   const exp = record.coi_expiration ?? null
+  const additionalInsured = record.coi_additional_insured === true
   if (gl == null) {
     return {
       id: 'coi_coverage',
@@ -121,13 +137,15 @@ function coiCoverageItem(record: VerificationRecord): VerificationChecklistItem 
   }
   const meetsCoverage = gl >= MIN_GENERAL_LIABILITY
   const notExpired = !exp || exp >= todayIso()
-  if (meetsCoverage && notExpired) {
+  if (meetsCoverage && notExpired && additionalInsured) {
     return {
       id: 'coi_coverage',
       label: 'General Liability ≥ $1M',
       status: 'complete',
       required: true,
-      detail: `$${gl.toLocaleString()} general liability${exp ? ` · valid through ${exp}` : ''} (simulated)`,
+      detail: `$${gl.toLocaleString()} GL · Ulo Additional Insured${
+        exp ? ` · valid through ${exp}` : ''
+      } (simulated)`,
     }
   }
   return {
@@ -137,7 +155,9 @@ function coiCoverageItem(record: VerificationRecord): VerificationChecklistItem 
     required: true,
     detail: !meetsCoverage
       ? `$${gl.toLocaleString()} is below the $1M minimum (simulated)`
-      : 'Insurance certificate is expired (simulated)',
+      : !notExpired
+        ? 'Insurance certificate is expired (simulated)'
+        : 'Ulo must be listed as Additional Insured on the COI',
   }
 }
 
@@ -180,14 +200,61 @@ function backgroundItem(record: VerificationRecord): VerificationChecklistItem {
 }
 
 function w9Item(record: VerificationRecord): VerificationChecklistItem {
-  return record.w9_received === true
-    ? { id: 'w9', label: 'W-9 Received', status: 'complete', required: true, detail: 'W-9 on file' }
+  const uploaded = record.w9_received === true
+  const entityOk = Boolean((record.tax_entity_type ?? '').trim())
+  const tinOk = Boolean(
+    (record.tin_type ?? '').trim() &&
+      /^\d{4}$/.test((record.tin_last4 ?? '').trim()) &&
+      (record.tin_fingerprint ?? '').trim(),
+  )
+  if (uploaded && entityOk && tinOk) {
+    const entity = (record.tax_entity_type ?? '').replace(/_/g, ' ')
+    const tin = (record.tin_type ?? '').toUpperCase()
+    const treatment = record.tax_1099_treatment === 'none' ? 'no 1099' : '1099-NEC'
+    return {
+      id: 'w9',
+      label: 'W-9 Received',
+      status: 'complete',
+      required: true,
+      detail: `W-9 on file · ${entity} · ${tin} · ${treatment}`,
+    }
+  }
+  if (uploaded && (!entityOk || !tinOk)) {
+    return {
+      id: 'w9',
+      label: 'W-9 Received',
+      status: 'action_needed',
+      required: true,
+      detail:
+        'W-9 uploaded — choose entity type and enter SSN (sole prop) or EIN (LLC/corp)',
+    }
+  }
+  return {
+    id: 'w9',
+    label: 'W-9 Received',
+    status: 'missing',
+    required: true,
+    detail: 'W-9 not uploaded yet',
+  }
+}
+
+function stripeConnectItem(record: VerificationRecord): VerificationChecklistItem {
+  // stripe_connect_ready is persisted from isStripeConnectReady (acct_ + charges).
+  const ready = record.stripe_connect_ready === true
+  return ready
+    ? {
+        id: 'stripe_connect',
+        label: 'Payout account',
+        status: 'complete',
+        required: true,
+        detail: 'Payout account connected',
+      }
     : {
-        id: 'w9',
-        label: 'W-9 Received',
+        id: 'stripe_connect',
+        label: 'Set up your payout account',
         status: 'missing',
         required: true,
-        detail: 'W-9 not uploaded yet',
+        detail: 'Set up your payout account',
       }
 }
 
@@ -248,6 +315,7 @@ export function computeVerificationChecklist(record: VerificationRecord): Verifi
     coiCoverageItem(record),
     backgroundItem(record),
     w9Item(record),
+    stripeConnectItem(record),
     tradeItem(record),
     serviceAreaItem(record),
     availabilityItem(record),

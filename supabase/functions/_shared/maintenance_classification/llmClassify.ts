@@ -12,12 +12,15 @@ const TRADES: VendorTrade[] = [
   "appliance_repair",
   "carpentry",
   "cleaning",
+  "concrete",
+  "deck_builder",
   "electrical",
   "flooring",
   "general",
   "hvac",
   "landscaping",
   "locksmith",
+  "masonry",
   "painting",
   "pest_control",
   "plumbing",
@@ -44,6 +47,10 @@ function asTrade(raw: unknown): VendorTrade | null {
   const v = raw.trim().toLowerCase().replace(/[\s-]+/g, "_")
   if (v === "appliance") return "appliance_repair"
   if (v === "pest") return "pest_control"
+  if (v === "deck" || v === "decking") return "deck_builder"
+  if (v === "mason" || v === "brick") return "masonry"
+  if (v === "cement" || v === "concrete_contractor") return "concrete"
+  if (v === "handyman") return "general"
   if ((TRADES as string[]).includes(v)) return v as VendorTrade
   return null
 }

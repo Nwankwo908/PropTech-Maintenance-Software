@@ -10,6 +10,7 @@ import {
 } from '@/lib/maintenanceTicketTimeline'
 import { getCurrentResidentSession } from '@/lib/residentAuth'
 import { MaintenancePortalPageHeader } from '@/components/MaintenancePortalPageHeader'
+import { getErrorMessage } from '@/lib/errorMessage'
 
 export type MaintenanceRequestSubmittedViewProps = {
   /** Friendly reference shown on the success screen (e.g. MNT-…). */
@@ -175,7 +176,7 @@ export function MaintenanceRequestSubmittedView({
       window.setTimeout(() => setCommentOk(null), 4000)
     } catch (e) {
       setCommentError(
-        e instanceof Error ? e.message : 'Could not add your comment.',
+        getErrorMessage(e, 'Could not add your comment.'),
       )
     } finally {
       setCommentBusy(false)

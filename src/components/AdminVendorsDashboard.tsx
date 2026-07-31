@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { VendorFormModal } from '@/components/AdminUserManagementDashboard'
+import { VendorFormModal } from '@/components/VendorFormModal'
 import { TableCheckbox } from '@/components/TableCheckbox'
 import magnifyingGlassIcon from '@/assets/Magnifying glass.svg'
 import { getActiveLandlordId } from '@/lib/activeLandlord'
@@ -27,6 +27,7 @@ type VendorRow = {
   completedJobs: number
   avgResponseMinutes: number | null
   active: boolean
+  rosterStatus: string | null
   createdAt: string | null
 }
 
@@ -117,7 +118,7 @@ function FilterSelect({
         aria-label={label}
         value={value}
         onChange={(e) => onChange(e.target.value)}
-        className="peer h-9 min-w-[140px] cursor-pointer appearance-none rounded-lg border border-transparent bg-[#f3f3f5] py-1 pl-3 pr-9 text-[14px] font-medium tracking-[-0.1504px] text-[#0a0a0a] shadow-none outline-none transition-[background-color,border-color,box-shadow] duration-150 hover:border-black/10 hover:bg-[#e8eaee] focus:border-[#0030b5]/45 focus:bg-white focus:ring-2 focus:ring-[#0030b5]/30"
+        className="sa-surface peer h-9 min-w-[140px] cursor-pointer appearance-none rounded-lg border border-transparent bg-[#f3f3f5] py-1 pl-3 pr-9 text-[14px] font-medium tracking-[-0.1504px] text-[#0a0a0a] shadow-none outline-none hover:border-black/10 hover:bg-[#e8eaee] focus:border-[#0030b5]/45 focus:bg-white focus:ring-2 focus:ring-[#0030b5]/30"
       >
         <option value="">{label}</option>
         {options.map((option) => (
@@ -159,7 +160,7 @@ function FilterToggleGroup<T extends string>({
             aria-pressed={isActive}
             onClick={() => onChange(option.value)}
             className={[
-              'inline-flex h-8 cursor-pointer items-center rounded-md px-3 text-[13px] font-medium tracking-[-0.1504px] outline-none transition-colors duration-150 focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-1',
+              'sa-pill inline-flex h-8 cursor-pointer items-center rounded-md px-3 text-[13px] font-medium tracking-[-0.1504px] outline-none focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-1',
               isActive
                 ? 'bg-white text-[#0a0a0a] shadow-sm'
                 : 'text-[#6a7282] hover:text-[#364153]',
@@ -182,12 +183,16 @@ export function AdminVendorsDashboard() {
   const [verificationByVendor, setVerificationByVendor] = useState<Map<string, string>>(
     () => new Map(),
   )
+  const [availabilityByVendor, setAvailabilityByVendor] = useState<Map<string, string>>(
+    () => new Map(),
+  )
   const [searchQuery, setSearchQuery] = useState('')
   const [tradeFilter, setTradeFilter] = useState('')
   const [ratingSort, setRatingSort] = useState<RatingSort>('desc')
   const [selectedVendorIds, setSelectedVendorIds] = useState<Set<string>>(() => new Set())
   const [deleteVendorsSaving, setDeleteVendorsSaving] = useState(false)
   const [deleteVendorsError, setDeleteVendorsError] = useState<string | null>(null)
+  const [inviteWarning, setInviteWarning] = useState<string | null>(null)
 
   const loadVendors = useCallback(async () => {
     if (!supabase) {
@@ -204,7 +209,7 @@ export function AdminVendorsDashboard() {
     const [vendorsResult, scoresResult] = await Promise.allSettled([
       supabase
         .from('vendors')
-        .select('id, name, category, active, email, phone, created_at')
+        .select('id, name, category, active, roster_status, email, phone, created_at')
         .eq('landlord_id', landlordId)
         .order('created_at', { ascending: true }),
       supabase.rpc('get_vendor_scores_for_landlord', {
@@ -275,6 +280,7 @@ export function AdminVendorsDashboard() {
         completedJobs: metrics?.completedJobs ?? 0,
         avgResponseMinutes: metrics?.avgResponseMinutes ?? null,
         active: raw.active !== false,
+        rosterStatus: asString(raw.roster_status) || null,
         createdAt: asString(raw.created_at) || null,
       }
     })
@@ -314,7 +320,7 @@ export function AdminVendorsDashboard() {
     const landlordId = getActiveLandlordId()
     const { data, error: vErr } = await supabase
       .from('vendor_verifications')
-      .select('vendor_id, status, updated_at')
+      .select('vendor_id, status, availability, updated_at')
       .eq('landlord_id', landlordId)
       .not('vendor_id', 'is', null)
       .order('updated_at', { ascending: true })
@@ -323,12 +329,16 @@ export function AdminVendorsDashboard() {
       return
     }
     const map = new Map<string, string>()
+    const availabilityMap = new Map<string, string>()
     for (const raw of data as Record<string, unknown>[]) {
       const vendorId = asString(raw.vendor_id)
       const status = asString(raw.status)
+      const availability = asString(raw.availability)
       if (vendorId && status) map.set(vendorId, status)
+      if (vendorId && availability) availabilityMap.set(vendorId, availability)
     }
     setVerificationByVendor(map)
+    setAvailabilityByVendor(availabilityMap)
   }, [])
 
   useEffect(() => {
@@ -451,7 +461,7 @@ export function AdminVendorsDashboard() {
           <button
             type="button"
             onClick={() => setAddVendorOpen(true)}
-            className="inline-flex h-9 cursor-pointer items-center justify-center gap-2 rounded-[10px] border border-black/10 bg-white px-4 text-[14px] font-medium leading-5 text-tertiary outline-none transition-colors duration-150 hover:bg-[#e2f5f1] focus-visible:ring-2 focus-visible:ring-[#101828] focus-visible:ring-offset-2"
+            className="sa-press inline-flex h-9 cursor-pointer items-center justify-center gap-2 rounded-[10px] bg-transparent px-4 text-[14px] font-medium leading-5 text-[#186179] outline-none focus-visible:ring-2 focus-visible:ring-[#186179] focus-visible:ring-offset-2"
           >
             <svg
               viewBox="0 0 24 24"
@@ -481,7 +491,7 @@ export function AdminVendorsDashboard() {
         </div>
       ) : null}
 
-      <div className="mb-4 rounded-[10px] border border-[#e5e7eb] bg-white p-4 shadow-[0px_1px_2px_-1px_rgba(0,0,0,0.06)]">
+      <div className="sa-surface mb-4 rounded-[10px] border border-[#e5e7eb] bg-white p-4 shadow-[0px_1px_2px_-1px_rgba(0,0,0,0.06)]">
         <div className="flex flex-col gap-3 xl:flex-row xl:items-center">
           <div className="relative min-w-0 flex-1 xl:min-w-[240px]">
             <span className="pointer-events-none absolute left-3 top-1/2 flex size-4 -translate-y-1/2 items-center justify-center">
@@ -500,7 +510,7 @@ export function AdminVendorsDashboard() {
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               placeholder="Search vendors by name, trade, email, or phone…"
-              className="h-9 w-full rounded-lg border border-transparent bg-[#e8e9ed] py-1 pl-10 pr-3 text-[14px] tracking-[-0.1504px] text-[#0a0a0a] shadow-none placeholder:text-[#717182] outline-none transition-[background-color,border-color,box-shadow] duration-150 hover:border-black/10 hover:bg-[#dfe0e6] focus:border-[#0030b5]/45 focus:bg-white focus:ring-2 focus:ring-[#0030b5]/30"
+              className="sa-surface h-9 w-full rounded-lg border border-transparent bg-[#e8e9ed] py-1 pl-10 pr-3 text-[14px] tracking-[-0.1504px] text-[#0a0a0a] shadow-none placeholder:text-[#717182] outline-none hover:border-black/10 hover:bg-[#dfe0e6] focus:border-[#0030b5]/45 focus:bg-white focus:ring-2 focus:ring-[#0030b5]/30"
               aria-label="Search vendors"
             />
           </div>
@@ -529,6 +539,11 @@ export function AdminVendorsDashboard() {
           Could not delete selected vendors: {deleteVendorsError}
         </div>
       ) : null}
+      {inviteWarning ? (
+        <div className="mb-4 rounded-[10px] border border-[#fde68a] bg-[#fffbeb] px-4 py-3 text-[13px] text-[#92400e]">
+          {inviteWarning}
+        </div>
+      ) : null}
 
       {selectedVendorCount > 0 ? (
         <div className="mb-4 flex flex-wrap items-center justify-between gap-2 rounded-[10px] border border-[#e5e7eb] bg-white px-4 py-3 shadow-[0px_1px_2px_-1px_rgba(0,0,0,0.06)]">
@@ -540,7 +555,7 @@ export function AdminVendorsDashboard() {
             <button
               type="button"
               onClick={() => setSelectedVendorIds(new Set())}
-              className="inline-flex h-9 items-center justify-center rounded-lg border border-black/10 bg-white px-3 text-[14px] font-medium text-[#0a0a0a] outline-none hover:bg-[#f3f4f6] focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2"
+              className="sa-press inline-flex h-9 items-center justify-center rounded-lg border border-black/10 bg-white px-3 text-[14px] font-medium text-[#0a0a0a] outline-none hover:bg-[#f3f4f6] focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2"
             >
               Clear selection
             </button>
@@ -548,7 +563,7 @@ export function AdminVendorsDashboard() {
               type="button"
               disabled={deleteVendorsSaving}
               onClick={() => void deleteSelectedVendors()}
-              className="inline-flex h-9 items-center justify-center rounded-lg border border-[#b52a00]/30 bg-[#fff4f0] px-3 text-[14px] font-medium text-[#b52a00] outline-none hover:bg-[#ffe9e1] focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50"
+              className="sa-press inline-flex h-9 items-center justify-center rounded-lg border border-[#b52a00]/30 bg-[#fff4f0] px-3 text-[14px] font-medium text-[#b52a00] outline-none hover:bg-[#ffe9e1] focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50"
             >
               {deleteVendorsSaving ? 'Deleting…' : 'Delete selected'}
             </button>
@@ -556,7 +571,7 @@ export function AdminVendorsDashboard() {
         </div>
       ) : null}
 
-      <section className="overflow-hidden rounded-[10px] border border-[#e5e7eb] bg-white shadow-[0px_1px_2px_-1px_rgba(0,0,0,0.06)]">
+      <section className="sa-surface overflow-hidden rounded-[10px] border border-[#e5e7eb] bg-white shadow-[0px_1px_2px_-1px_rgba(0,0,0,0.06)]">
         <div className="overflow-x-auto">
           <table className="min-w-full border-collapse text-left">
             <thead>
@@ -594,8 +609,12 @@ export function AdminVendorsDashboard() {
                   </td>
                 </tr>
               ) : (
-                filteredVendors.map((vendor) => (
-                  <tr key={vendor.id} className="border-b border-[#f3f4f6] last:border-b-0">
+                filteredVendors.map((vendor, index) => (
+                  <tr
+                    key={vendor.id}
+                    style={{ animationDelay: `${Math.min(index, 12) * 30}ms` }}
+                    className="sa-enter border-b border-[#f3f4f6] last:border-b-0"
+                  >
                     <td className="w-12 px-4 py-4">
                       <TableCheckbox
                         aria-label={`Select ${vendor.name}`}
@@ -606,7 +625,7 @@ export function AdminVendorsDashboard() {
                     <td className="px-6 py-4 text-[14px] font-medium text-[#0a0a0a]">
                       <Link
                         to={vendorDetailPath(vendor.id)}
-                        className="rounded-[4px] text-[#0a0a0a] transition-colors hover:text-[#186179] hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2"
+                        className="sa-link rounded-[4px] text-[#0a0a0a] hover:text-[#186179] hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2"
                       >
                         {vendor.name}
                       </Link>
@@ -637,9 +656,12 @@ export function AdminVendorsDashboard() {
                         const chip = resolveVendorCapacityChip({
                           verificationStatus: verificationByVendor.get(vendor.id),
                           vendorActive: vendor.active,
+                          availability: availabilityByVendor.get(vendor.id),
+                          rosterStatus: vendor.rosterStatus,
                         })
                         return (
                           <span
+                            title={chip.detail}
                             className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-[12px] font-medium ${chip.className}`}
                           >
                             {chip.label}
@@ -660,8 +682,9 @@ export function AdminVendorsDashboard() {
         mode="add"
         initial={null}
         onClose={() => setAddVendorOpen(false)}
-        onSaved={() => {
+        onSaved={(meta) => {
           setAddVendorOpen(false)
+          setInviteWarning(meta?.inviteWarning ?? null)
           void loadVendors()
         }}
       />

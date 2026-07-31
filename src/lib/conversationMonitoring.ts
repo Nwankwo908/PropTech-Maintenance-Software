@@ -179,6 +179,10 @@ type ConversationContext = {
   updatedAtMs: number
   messages: DbMessage[]
   pendingEstimateDecision: PendingEstimateDecision | null
+  /** Resident 1–5 repair rating when recorded. */
+  residentFeedbackRating: number | null
+  /** True when an open resident rating request exists and no rating yet. */
+  awaitingResidentFeedback: boolean
 }
 
 function asString(value: unknown): string {
@@ -213,8 +217,10 @@ function resolveBuilding(input: {
   return input.unitBuilding || input.residentBuilding
 }
 
+import { mentionsHvacCooling } from '@shared/maintenance/deterministicRules.ts'
+
 function mentionsAc(text: string): boolean {
-  return /\b(ac|a\/c|air conditioning|air.?condition)\b/i.test(text)
+  return mentionsHvacCooling(text)
 }
 
 /** Vendor estimate submitted into the job SMS thread (awaiting landlord approval). */
@@ -222,6 +228,52 @@ export function isMaintenanceEstimateSubmittedBody(text: string): boolean {
   return /submitted an estimate for this job|estimate submitted for approval|reply approve or decline/i.test(
     text,
   )
+}
+
+/** Post-repair resident rating ask SMS. */
+export function isResidentFeedbackAskBody(text: string): boolean {
+  return (
+    /how was your repair experience/i.test(text) ||
+    /was your maintenance issue resolved/i.test(text) ||
+    /reply:\s*1\s*=\s*poor/i.test(text) ||
+    /reply 1[–-]5/i.test(text)
+  )
+}
+
+export function parseResidentFeedbackRatingBody(text: string): number | null {
+  const trimmed = text.trim()
+  if (!trimmed) return null
+  const exact = trimmed.match(/^([1-5])$/)
+  if (exact) return Number(exact[1])
+  const withScale = trimmed.match(/^([1-5])\s*[/／]\s*5$/)
+  if (withScale) return Number(withScale[1])
+  const stars = trimmed.match(/^([1-5])\s*(?:stars?|★|⭐️?)$/i)
+  if (stars) return Number(stars[1])
+  const labeled = trimmed.match(/^(?:rate[d]?|rating)[:\s]+([1-5])(?:\s*[/／]\s*5)?$/i)
+  if (labeled) return Number(labeled[1])
+  return null
+}
+
+export function residentFeedbackQualityLabel(rating: number): string {
+  switch (rating) {
+    case 1:
+      return 'Poor'
+    case 2:
+      return 'Fair'
+    case 3:
+      return 'Good'
+    case 4:
+      return 'Very Good'
+    case 5:
+      return 'Excellent'
+    default:
+      return ''
+  }
+}
+
+export function formatResidentFeedbackPreview(rating: number): string {
+  const label = residentFeedbackQualityLabel(rating)
+  return label ? `Tenant rated ${rating}/5 — ${label}` : `Tenant rated ${rating}/5`
 }
 
 /** Vendor verification invite SMS/email (not a maintenance work-order thread). */
@@ -271,6 +323,14 @@ function deriveRisk(ctx: ConversationContext): { level: MonitoringRiskLevel | nu
 
   if (ctx.conversationType === 'ai_copilot') {
     return { level: 'low', label: 'AUTO-HANDLED' }
+  }
+
+  if (ctx.residentFeedbackRating != null) {
+    return { level: 'low', label: 'RATED' }
+  }
+
+  if (ctx.awaitingResidentFeedback || isResidentFeedbackAskBody(combinedText)) {
+    return { level: 'low', label: 'AWAITING RATING' }
   }
 
   if (ctx.pendingEstimateDecision || isMaintenanceEstimateSubmittedBody(combinedText)) {
@@ -332,6 +392,16 @@ function buildTitle(ctx: ConversationContext): string {
     return 'Tenant onboarding'
   }
 
+  if (ctx.residentFeedbackRating != null) {
+    return location
+      ? `Repair rating · ${location}`
+      : `Repair rating · ${ctx.residentFeedbackRating}/5`
+  }
+
+  if (ctx.awaitingResidentFeedback || isResidentFeedbackAskBody(combinedText)) {
+    return location ? `Awaiting rating · ${location}` : 'Awaiting repair rating'
+  }
+
   if (ctx.pendingEstimateDecision || isMaintenanceEstimateSubmittedBody(combinedText)) {
     return location ? `Estimate approval · ${location}` : 'Estimate approval'
   }
@@ -385,6 +455,14 @@ function buildSummary(ctx: ConversationContext): string {
   const latest = ctx.messages[ctx.messages.length - 1]?.body || ''
   const tenant = ctx.residentName || 'the resident'
   const place = buildingShortName(ctx.building) || 'this property'
+
+  if (ctx.residentFeedbackRating != null) {
+    return `${formatResidentFeedbackPreview(ctx.residentFeedbackRating)}. Ulo logged the score for vendor quality — no further action needed.`
+  }
+
+  if (ctx.awaitingResidentFeedback || isResidentFeedbackAskBody(combined) || isResidentFeedbackAskBody(latest)) {
+    return `Ulo asked ${tenant} to rate their repair at ${place} (1–5). Waiting for their reply — no landlord action required.`
+  }
 
   if (mentionsAc(combined) || (ctx.ticketCategory === 'hvac' && ctx.status === 'in_progress')) {
     return buildAcFailureSummary(ctx)
@@ -499,6 +577,7 @@ function buildDemoAcFailureTranscript(ctx: ConversationContext): MonitoringTrans
 
 function mapDbMessagesToTranscript(ctx: ConversationContext): MonitoringTranscriptItem[] {
   const items: MonitoringTranscriptItem[] = []
+  let sawFeedbackAsk = false
 
   for (const message of ctx.messages) {
     const inbound = message.direction === 'inbound'
@@ -518,13 +597,48 @@ function mapDbMessagesToTranscript(ctx: ConversationContext): MonitoringTranscri
       senderName = 'Ulo AI'
     }
 
+    if (!inbound && isResidentFeedbackAskBody(message.body)) {
+      sawFeedbackAsk = true
+    }
+
+    const inboundRating =
+      inbound && sawFeedbackAsk ? parseResidentFeedbackRatingBody(message.body) : null
+    const displayBody =
+      inboundRating != null
+        ? formatResidentFeedbackPreview(inboundRating)
+        : message.body
+
     items.push({
       type: 'message',
       sender,
       senderName,
-      body: message.body,
+      body: displayBody,
       timestampMs: message.createdAtMs,
     })
+
+    if (inboundRating != null) {
+      items.push({
+        type: 'tool_action',
+        label: `logged repair rating → ${inboundRating}/5`,
+        timestampMs: message.createdAtMs + 1,
+      })
+    } else if (
+      ctx.residentFeedbackRating != null &&
+      inbound &&
+      parseResidentFeedbackRatingBody(message.body) === ctx.residentFeedbackRating &&
+      !sawFeedbackAsk
+    ) {
+      // Rating exists in DB but ask copy wasn't in this window — still label it.
+      items[items.length - 1] = {
+        ...items[items.length - 1],
+        body: formatResidentFeedbackPreview(ctx.residentFeedbackRating),
+      }
+      items.push({
+        type: 'tool_action',
+        label: `logged repair rating → ${ctx.residentFeedbackRating}/5`,
+        timestampMs: message.createdAtMs + 1,
+      })
+    }
 
     if (
       sender === 'ulo' &&
@@ -538,6 +652,24 @@ function mapDbMessagesToTranscript(ctx: ConversationContext): MonitoringTranscri
         timestampMs: message.createdAtMs,
       })
     }
+  }
+
+  // If rating is recorded but the inbound digit isn't in the thread, still surface it.
+  if (
+    ctx.residentFeedbackRating != null &&
+    !items.some(
+      (i) =>
+        i.type === 'tool_action' &&
+        i.label.includes('logged repair rating'),
+    )
+  ) {
+    const stamp =
+      ctx.messages[ctx.messages.length - 1]?.createdAtMs ?? ctx.updatedAtMs
+    items.push({
+      type: 'tool_action',
+      label: `logged repair rating → ${ctx.residentFeedbackRating}/5`,
+      timestampMs: stamp + 1,
+    })
   }
 
   return items
@@ -636,7 +768,7 @@ async function loadConversationContext(
   const unitId = asString(row.unit_id)
   const ticketId = asString(row.maintenance_request_id)
 
-  const [messagesResult, residentResult, vendorResult, unitResult, ticketResult, estimateResult] =
+  const [messagesResult, residentResult, vendorResult, unitResult, ticketResult, estimateResult, feedbackResult, feedbackRequestResult] =
     await Promise.allSettled([
       supabase
         .from('sms_messages')
@@ -668,6 +800,23 @@ async function loadConversationContext(
             )
             .eq('maintenance_request_id', ticketId)
             .eq('status', 'pending_approval')
+            .maybeSingle()
+        : Promise.resolve({ data: null, error: null }),
+      ticketId
+        ? supabase
+            .from('vendor_feedback')
+            .select('rating')
+            .eq('maintenance_request_id', ticketId)
+            .eq('rater_type', 'resident')
+            .maybeSingle()
+        : Promise.resolve({ data: null, error: null }),
+      ticketId
+        ? supabase
+            .from('vendor_feedback_requests')
+            .select('id, status')
+            .eq('maintenance_request_id', ticketId)
+            .eq('rater_type', 'resident')
+            .eq('status', 'open')
             .maybeSingle()
         : Promise.resolve({ data: null, error: null }),
     ])
@@ -715,6 +864,21 @@ async function loadConversationContext(
         }
       : null
 
+  const feedbackRow =
+    feedbackResult.status === 'fulfilled' && feedbackResult.value.data
+      ? (feedbackResult.value.data as Record<string, unknown>)
+      : null
+  const ratingRaw = feedbackRow != null ? Number(feedbackRow.rating) : NaN
+  const residentFeedbackRating =
+    Number.isInteger(ratingRaw) && ratingRaw >= 1 && ratingRaw <= 5 ? ratingRaw : null
+
+  const openFeedbackRequest =
+    feedbackRequestResult.status === 'fulfilled' && feedbackRequestResult.value.data
+      ? (feedbackRequestResult.value.data as Record<string, unknown>)
+      : null
+  const awaitingResidentFeedback =
+    residentFeedbackRating == null && Boolean(openFeedbackRequest?.id)
+
   return {
     id: conversationId,
     conversationType: asString(row.conversation_type),
@@ -738,10 +902,104 @@ async function loadConversationContext(
     updatedAtMs: new Date(asString(row.updated_at)).getTime(),
     messages,
     pendingEstimateDecision,
+    residentFeedbackRating,
+    awaitingResidentFeedback,
   }
 }
 
-/** Ulo admin summaries for the header notification panel (admin-directed SMS only). */
+/** Synthetic conversation id for activation undeliverable alerts in the notification panel. */
+export function activationFailureNotificationId(residentId: string): string {
+  return `activation-failure-${residentId}`
+}
+
+export function parseActivationFailureNotificationId(id: string): string | null {
+  if (!id.startsWith('activation-failure-')) return null
+  const residentId = id.slice('activation-failure-'.length).trim()
+  return residentId || null
+}
+
+async function fetchActivationFailureNotifications(
+  landlordId: string,
+  limit: number,
+): Promise<AdminUloNotification[]> {
+  const { supabase } = await import('@/lib/supabase')
+  if (!supabase) return []
+
+  const since = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString()
+  const { data, error } = await supabase
+    .from('operations_graph_events')
+    .select('id, resident_id, created_at, metadata, event_type')
+    .eq('landlord_id', landlordId)
+    .in('event_type', [
+      'tenant.activation_action_required',
+      'tenant.activation_admin_alert_sent',
+      'tenant.activation_admin_alert_failed',
+    ])
+    .gte('created_at', since)
+    .order('created_at', { ascending: false })
+    .limit(Math.max(limit * 3, 30))
+
+  if (error || !data?.length) return []
+
+  const resolvedResidentIds = new Set<string>()
+  const { data: resolvedRows } = await supabase
+    .from('operations_graph_events')
+    .select('resident_id, created_at')
+    .eq('landlord_id', landlordId)
+    .eq('event_type', 'tenant.activation_failure_resolved')
+    .gte('created_at', since)
+    .order('created_at', { ascending: false })
+    .limit(80)
+
+  const latestResolvedAt = new Map<string, number>()
+  for (const row of resolvedRows ?? []) {
+    const rid = asString((row as Record<string, unknown>).resident_id)
+    if (!rid || latestResolvedAt.has(rid)) continue
+    latestResolvedAt.set(rid, new Date(asString((row as Record<string, unknown>).created_at)).getTime())
+  }
+
+  const notifications: AdminUloNotification[] = []
+  const seenResidents = new Set<string>()
+
+  for (const row of data as Record<string, unknown>[]) {
+    const residentId = asString(row.resident_id)
+    if (!residentId || seenResidents.has(residentId)) continue
+    const createdMs = new Date(asString(row.created_at)).getTime()
+    const resolvedAt = latestResolvedAt.get(residentId)
+    if (resolvedAt != null && resolvedAt >= createdMs) {
+      resolvedResidentIds.add(residentId)
+      continue
+    }
+
+    const meta = (row.metadata && typeof row.metadata === 'object'
+      ? (row.metadata as Record<string, unknown>)
+      : {}) as Record<string, unknown>
+    if (asString(meta.notification_status) === 'resolved') continue
+
+    seenResidents.add(residentId)
+    const unitLabel = asString(meta.unit_label) || '—'
+    const title = asString(meta.title) || 'Resident phone needs attention'
+    const summary =
+      asString(meta.message) ||
+      `Unit ${unitLabel} — We couldn't deliver the activation text. Verify or update the resident's phone number before activating SMS access.`
+
+    notifications.push({
+      conversationId: activationFailureNotificationId(residentId),
+      title,
+      summary,
+      riskLevel: 'medium',
+      riskLabel: 'NEEDS ATTENTION',
+      timeLabel: formatNotificationRelativeTime(createdMs),
+      updatedAtMs: createdMs,
+    })
+
+    if (notifications.length >= limit) break
+  }
+
+  return notifications
+}
+
+/** Ulo admin summaries for the header notification panel (admin-directed SMS + activation alerts). */
 export async function fetchAdminUloNotifications(limit = 15): Promise<AdminUloNotification[]> {
   const { supabase } = await import('@/lib/supabase')
   if (!supabase) return []
@@ -758,18 +1016,21 @@ export async function fetchAdminUloNotifications(limit = 15): Promise<AdminUloNo
     .order('updated_at', { ascending: false })
     .limit(limit)
 
-  if (convError || !convRows?.length) return []
-
   const notifications: AdminUloNotification[] = []
 
-  for (const convRow of convRows as Record<string, unknown>[]) {
-    if (!isAdminDirectedConversationType(asString(convRow.conversation_type))) continue
-    const ctx = await loadConversationContext(convRow, landlordId, supabase)
-    if (!ctx) continue
-    notifications.push(buildAdminNotification(ctx))
+  if (!convError && convRows?.length) {
+    for (const convRow of convRows as Record<string, unknown>[]) {
+      if (!isAdminDirectedConversationType(asString(convRow.conversation_type))) continue
+      const ctx = await loadConversationContext(convRow, landlordId, supabase)
+      if (!ctx) continue
+      notifications.push(buildAdminNotification(ctx))
+    }
   }
 
-  return notifications.sort((a, b) => b.updatedAtMs - a.updatedAtMs)
+  const activationNotes = await fetchActivationFailureNotifications(landlordId, limit)
+  notifications.push(...activationNotes)
+
+  return notifications.sort((a, b) => b.updatedAtMs - a.updatedAtMs).slice(0, limit)
 }
 
 /** Full admin monitoring payload for a single SMS conversation. */

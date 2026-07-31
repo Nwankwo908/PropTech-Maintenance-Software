@@ -4,8 +4,9 @@ import {
   type GraphEventActorType,
   type GraphEventSource,
 } from "./graph/logGraphEvent.ts"
-import { logPropertyOperationsGraph } from "./graph/logPropertyOperationsGraph.ts"
 import { logLedgerEvent } from "./engine/ledgerEvents.ts"
+import { notifyLandlordNeedsAttention } from "./landlordAttentionNotify.ts"
+import { formatWorkOrderRef } from "./vendor_outreach_copy.ts"
 
 /** Canonical maintenance spend graph event types. */
 export const MAINTENANCE_GRAPH_EVENTS = {
@@ -85,7 +86,8 @@ async function logMaintenanceGraphEvent(
     metadata?: Record<string, unknown>
   },
 ): Promise<string | null> {
-  const graphEventId = await logGraphEvent(supabase, {
+  // Official activity log path (dual-writes property_operations_graph).
+  return logGraphEvent(supabase, {
     landlord_id: scope.landlordId,
     event_type: params.eventType,
     source: params.source,
@@ -96,25 +98,11 @@ async function logMaintenanceGraphEvent(
     unit_id: scope.unitId ?? null,
     property_id: scope.propertyId ?? null,
     resident_id: scope.residentId ?? null,
-    metadata: params.metadata ?? {},
-  })
-
-  await logPropertyOperationsGraph(supabase, {
-    landlord_id: scope.landlordId,
-    property_id: scope.propertyId ?? null,
-    unit_id: scope.unitId ?? null,
-    resident_id: scope.residentId ?? null,
-    vendor_id: scope.vendorId ?? null,
-    event_type: params.eventType,
-    event_source: params.source,
-    event_payload: {
+    metadata: {
       maintenance_request_id: scope.maintenanceRequestId,
-      operations_graph_event_id: graphEventId,
       ...(params.metadata ?? {}),
     },
   })
-
-  return graphEventId
 }
 
 /** Vendor uploads invoice after job completion → pending landlord approval. */
@@ -136,12 +124,23 @@ export async function submitMaintenanceInvoice(
 
   const { data: ticket, error: ticketErr } = await supabase
     .from("maintenance_requests")
-    .select("id, vendor_work_status, spend_status")
+    .select("id, vendor_work_status, spend_status, completion_photo_paths")
     .eq("id", params.maintenanceRequestId)
     .maybeSingle()
 
   if (ticketErr || !ticket) return { error: "ticket_not_found" }
-  if (String(ticket.vendor_work_status) !== "completed") {
+  const workStatus = String(ticket.vendor_work_status ?? "")
+  const photoCount = Array.isArray(ticket.completion_photo_paths)
+    ? (ticket.completion_photo_paths as unknown[]).filter(
+      (p) => typeof p === "string" && p.trim(),
+    ).length
+    : 0
+  // Allow submit after photos while awaiting resident rating (in_progress),
+  // or after the job is fully completed.
+  const canInvoice =
+    workStatus === "completed" ||
+    (workStatus === "in_progress" && photoCount > 0)
+  if (!canInvoice) {
     return { error: "job_not_completed" }
   }
 
@@ -202,6 +201,45 @@ export async function submitMaintenanceInvoice(
     },
   })
 
+  try {
+    const [{ data: ticketRow }, { data: vendorRow }] = await Promise.all([
+      supabase
+        .from("maintenance_requests")
+        .select("unit, resident_name")
+        .eq("id", params.maintenanceRequestId)
+        .maybeSingle(),
+      supabase.from("vendors").select("name").eq("id", params.vendorId).maybeSingle(),
+    ])
+    const unit =
+      typeof ticketRow?.unit === "string" && ticketRow.unit.trim()
+        ? ticketRow.unit.trim()
+        : ""
+    const vendorName =
+      typeof vendorRow?.name === "string" && vendorRow.name.trim()
+        ? vendorRow.name.trim()
+        : "Vendor"
+    const amount = totalCost.toLocaleString("en-US", {
+      style: "currency",
+      currency: "USD",
+      minimumFractionDigits: 2,
+    })
+    const wo = formatWorkOrderRef(params.maintenanceRequestId)
+    await notifyLandlordNeedsAttention(supabase, {
+      landlordId: scope.landlordId,
+      kind: "invoice_ready",
+      headline: "Invoice ready to pay",
+      detail: `${wo}${unit ? ` · Unit ${unit}` : ""} · ${vendorName} · ${amount}`,
+      idempotencyKey: `invoice:${invoice.id}`,
+      maintenanceRequestId: params.maintenanceRequestId,
+      vendorId: params.vendorId,
+      unitId: scope.unitId,
+      propertyId: scope.propertyId,
+      residentId: scope.residentId,
+    })
+  } catch (e) {
+    console.error("[maintenance-spend] attention notify", e)
+  }
+
   return {
     invoiceId: String(invoice.id),
     totalCost: Number(invoice.total_cost ?? totalCost),
@@ -221,7 +259,7 @@ export async function approveMaintenanceInvoice(
   const { data: invoice, error: invErr } = await supabase
     .from("maintenance_invoices")
     .select(
-      "id, landlord_id, maintenance_request_id, vendor_id, total_cost, labor_cost, material_cost, tax_amount, status, invoice_number",
+      "id, landlord_id, maintenance_request_id, vendor_id, total_cost, labor_cost, material_cost, tax_amount, status, invoice_number, metadata",
     )
     .eq("id", params.invoiceId)
     .maybeSingle()
@@ -250,6 +288,10 @@ export async function approveMaintenanceInvoice(
 
   const approvedAt = new Date().toISOString()
   const billingPeriod = billingPeriodFromDate(approvedAt)
+  const existingMeta =
+    invoice.metadata && typeof invoice.metadata === "object" && !Array.isArray(invoice.metadata)
+      ? invoice.metadata as Record<string, unknown>
+      : {}
 
   const { error: approveErr } = await supabase
     .from("maintenance_invoices")
@@ -258,6 +300,11 @@ export async function approveMaintenanceInvoice(
       approved_at: approvedAt,
       approved_by: params.approvedByUserId ?? null,
       updated_at: approvedAt,
+      metadata: {
+        ...existingMeta,
+        billing_event: "paid",
+        billing_logged_at: approvedAt,
+      },
     })
     .eq("id", params.invoiceId)
 
@@ -347,4 +394,165 @@ export async function markMaintenanceJobCompleted(
     .update({ spend_status: "awaiting_invoice" })
     .eq("id", ticketId)
     .eq("spend_status", "none")
+}
+
+/** Load public invoice form context for `/invoice/:token`. */
+export async function loadInvoiceContextForJobToken(
+  supabase: SupabaseClient,
+  jobToken: string,
+): Promise<
+  | {
+      ok: true
+      ticketId: string
+      vendorId: string
+      workOrderRef: string
+      unit: string
+      description: string
+      vendorWorkStatus: string
+      completionPhotoCount: number
+      canSubmit: boolean
+      approvedEstimate: {
+        partsCost: number
+        laborCost: number
+        totalCost: number
+      } | null
+      existingInvoice: {
+        id: string
+        laborCost: number
+        materialCost: number
+        taxAmount: number
+        totalCost: number
+        status: string
+      } | null
+    }
+  | { ok: false; error: string; status: number }
+> {
+  const { data: ticket, error } = await supabase
+    .from("maintenance_requests")
+    .select(
+      "id, unit, description, assigned_vendor_id, vendor_action_token, vendor_work_status, completion_photo_paths",
+    )
+    .eq("vendor_action_token", jobToken)
+    .maybeSingle()
+
+  if (error || !ticket?.id) {
+    return { ok: false, error: "Job not found", status: 404 }
+  }
+  if (typeof ticket.assigned_vendor_id !== "string" || !ticket.assigned_vendor_id) {
+    return { ok: false, error: "No vendor assigned to this job", status: 400 }
+  }
+
+  const workStatus = String(ticket.vendor_work_status ?? "")
+  const photoCount = Array.isArray(ticket.completion_photo_paths)
+    ? (ticket.completion_photo_paths as unknown[]).filter(
+      (p) => typeof p === "string" && p.trim(),
+    ).length
+    : 0
+  const canSubmit =
+    workStatus === "completed" ||
+    (workStatus === "in_progress" && photoCount > 0)
+
+  const { data: approved } = await supabase
+    .from("maintenance_estimates")
+    .select("parts_cost, labor_cost, total_cost")
+    .eq("maintenance_request_id", ticket.id)
+    .eq("status", "approved")
+    .order("decided_at", { ascending: false })
+    .limit(1)
+    .maybeSingle()
+
+  const { data: existing } = await supabase
+    .from("maintenance_invoices")
+    .select(
+      "id, labor_cost, material_cost, tax_amount, total_cost, status",
+    )
+    .eq("maintenance_request_id", ticket.id)
+    .maybeSingle()
+
+  return {
+    ok: true,
+    ticketId: ticket.id as string,
+    vendorId: ticket.assigned_vendor_id,
+    workOrderRef: formatWorkOrderRef(ticket.id as string),
+    unit: typeof ticket.unit === "string" ? ticket.unit : "",
+    description: typeof ticket.description === "string" ? ticket.description : "",
+    vendorWorkStatus: workStatus,
+    completionPhotoCount: photoCount,
+    canSubmit,
+    approvedEstimate: approved
+      ? {
+          partsCost: Number(approved.parts_cost) || 0,
+          laborCost: Number(approved.labor_cost) || 0,
+          totalCost: Number(approved.total_cost) || 0,
+        }
+      : null,
+    existingInvoice: existing
+      ? {
+          id: String(existing.id),
+          laborCost: Number(existing.labor_cost) || 0,
+          materialCost: Number(existing.material_cost) || 0,
+          taxAmount: Number(existing.tax_amount) || 0,
+          totalCost: Number(existing.total_cost) || 0,
+          status: String(existing.status),
+        }
+      : null,
+  }
+}
+
+/**
+ * If the vendor never submitted an invoice but an approved estimate exists,
+ * create a submitted invoice from that estimate (for admin pay attention).
+ */
+export async function ensureInvoiceFromApprovedEstimate(
+  supabase: SupabaseClient,
+  params: {
+    ticketId: string
+    vendorId: string
+    source?: GraphEventSource
+  },
+): Promise<{ invoiceId: string; totalCost: number } | { skipped: string } | { error: string }> {
+  const { data: existing } = await supabase
+    .from("maintenance_invoices")
+    .select("id, total_cost, status")
+    .eq("maintenance_request_id", params.ticketId)
+    .maybeSingle()
+
+  if (existing?.id) {
+    return {
+      invoiceId: String(existing.id),
+      totalCost: Number(existing.total_cost) || 0,
+    }
+  }
+
+  const { data: approved } = await supabase
+    .from("maintenance_estimates")
+    .select("parts_cost, labor_cost, total_cost")
+    .eq("maintenance_request_id", params.ticketId)
+    .eq("status", "approved")
+    .order("decided_at", { ascending: false })
+    .limit(1)
+    .maybeSingle()
+
+  if (!approved) {
+    return { skipped: "no_approved_estimate" }
+  }
+
+  const laborCost = Number(approved.labor_cost) || 0
+  const materialCost = Number(approved.parts_cost) || 0
+  const total = laborCost + materialCost
+  if (total <= 0) {
+    return { skipped: "estimate_zero" }
+  }
+
+  return await submitMaintenanceInvoice(supabase, {
+    maintenanceRequestId: params.ticketId,
+    vendorId: params.vendorId,
+    invoice: {
+      laborCost,
+      materialCost,
+      taxAmount: 0,
+      vendorNotes: "Created from approved estimate",
+    },
+    source: params.source ?? "edge_function",
+  })
 }

@@ -3,21 +3,9 @@
  * Admin approval is only required when no vendor exists in the system (vendor API / onboarding).
  */
 import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.49.1"
-import {
-  escalateMaintenanceNeedsVendor,
-  linkedWorkflowNeedsAdminVendor,
-  resumeMaintenanceWorkflowAfterAutoReassign,
-} from "./maintenance_admin_escalation.ts"
-import { logGraphEvent } from "./graph/logGraphEvent.ts"
-import {
-  loadAlternativeVendorCandidates,
-  type AlternativeVendor,
-} from "./recommend_vendor_alternatives.ts"
-import {
-  loadDeclinedVendorIdsForTicket,
-  pickVendorForAssignment,
-} from "./vendor_assignment.ts"
-import { reassignVendorByIdAndNotify } from "../submit-maintenance-request/vendor_notify.ts"
+import { runMaintenanceRequestViaEngine } from "./engine/maintenanceRequestEngine.ts"
+import { linkedWorkflowNeedsAdminVendor } from "./maintenance_admin_escalation.ts"
+import { escalateWhenNoReplacementVendor } from "./vendor_reassignment.ts"
 
 const TERMINAL_STATUSES = new Set(["completed", "cancelled"])
 /** Only reassign before a vendor has actively committed to the job. */
@@ -49,39 +37,12 @@ type SlaTicketRow = {
   vendor_work_status: string
 }
 
-async function findReplacementVendor(
-  supabase: SupabaseClient,
-  ticket: SlaTicketRow,
-): Promise<AlternativeVendor | null> {
-  const fromAlternatives = await loadAlternativeVendorCandidates(supabase, {
-    assigned_vendor_id: ticket.assigned_vendor_id,
-    issue_category: ticket.issue_category,
-  })
-  if (fromAlternatives[0]) return fromAlternatives[0]
-
-  const declined = await loadDeclinedVendorIdsForTicket(supabase, ticket.id)
-  const exclude = new Set(declined)
-  if (ticket.assigned_vendor_id) exclude.add(ticket.assigned_vendor_id)
-
-  const picked = await pickVendorForAssignment(supabase, {
-    issueCategory: ticket.issue_category,
-    excludeVendorIds: [...exclude],
-  })
-  if (!picked) return null
-  return { id: picked.id, name: picked.name }
-}
-
+/** @deprecated Use escalateWhenNoReplacementVendor from vendor_reassignment.ts */
 export async function escalateForNoVendor(
   supabase: SupabaseClient,
   ticket: SlaTicketRow,
 ): Promise<void> {
-  await escalateMaintenanceNeedsVendor(supabase, ticket, {
-    escalationReason: "sla_expired_no_vendor",
-    eventMessage: "SLA expired — no roster vendor available for reassignment",
-    graphEventType: "maintenance.sla_expired_needs_vendor",
-    graphMessage:
-      "SLA expired with no vendor in roster — admin must assign or onboard a vendor.",
-  })
+  await escalateWhenNoReplacementVendor(supabase, ticket, "sla_expired")
 }
 
 async function processSlaExpiredTicketRow(
@@ -124,61 +85,53 @@ async function processSlaExpiredTicketRow(
     }
   }
 
-  const replacement = await findReplacementVendor(supabase, ticket)
-  if (!replacement) {
-    await escalateForNoVendor(supabase, ticket)
-    return { ticketId: ticket.id, outcome: "needs_admin_vendor" }
+  const landlordId = ticket.landlord_id?.trim()
+  if (!landlordId) {
+    return { ticketId: ticket.id, outcome: "skipped", reason: "missing_landlord" }
   }
 
-  const reassign = await reassignVendorByIdAndNotify(
-    supabase,
-    ticket.id,
-    replacement.id,
-    { eventSource: "auto_reassign", notifyResident: false },
-  )
+  const engineResult = await runMaintenanceRequestViaEngine(supabase, {
+    landlordId,
+    trigger: "automation",
+    maintenanceRequest: {
+      action: "auto_reassign",
+      autoReassign: {
+        ticketId: ticket.id,
+        trigger: "sla_expired",
+        landlordId,
+        assignedVendorId: ticket.assigned_vendor_id,
+        issueCategory: ticket.issue_category,
+        previousVendorId: ticket.assigned_vendor_id,
+        findStrategy: "alternatives_then_pick",
+      },
+    },
+  })
 
-  if ("error" in reassign) {
-    console.error(
-      "[sla-expired-auto-reassign] reassign failed",
-      ticket.id,
-      reassign.error,
-    )
+  const meta = engineResult?.metadata ?? {}
+  const outcome = meta.outcome as string | undefined
+
+  if (outcome === "reassigned" && typeof meta.new_vendor_id === "string") {
+    return {
+      ticketId: ticket.id,
+      outcome: "reassigned",
+      newVendorId: meta.new_vendor_id,
+    }
+  }
+  if (outcome === "needs_admin_vendor") {
+    return { ticketId: ticket.id, outcome: "needs_admin_vendor" }
+  }
+  if (outcome === "failed") {
     return {
       ticketId: ticket.id,
       outcome: "skipped",
-      reason: reassign.error,
+      reason: String(meta.reason ?? "reassign_failed"),
     }
-  }
-
-  try {
-    await resumeMaintenanceWorkflowAfterAutoReassign(
-      supabase,
-      ticket.id,
-      `Auto-reassigned to ${replacement.name} after SLA expired`,
-    )
-  } catch (e) {
-    console.error("[sla-expired-auto-reassign] resume workflow", e)
-  }
-
-  if (ticket.landlord_id) {
-    await logGraphEvent(supabase, {
-      landlord_id: ticket.landlord_id,
-      event_type: "maintenance.sla_auto_reassigned",
-      source: "automation",
-      actor_type: "system",
-      maintenance_request_id: ticket.id,
-      vendor_id: replacement.id,
-      metadata: {
-        message: `SLA expired — auto-reassigned to ${replacement.name}.`,
-        previous_vendor_id: ticket.assigned_vendor_id,
-      },
-    })
   }
 
   return {
     ticketId: ticket.id,
-    outcome: "reassigned",
-    newVendorId: replacement.id,
+    outcome: "skipped",
+    reason: String(meta.reason ?? "engine_skipped"),
   }
 }
 
@@ -190,7 +143,6 @@ export async function processSlaExpiredAutoReassignForTicket(
   const id = ticketId.trim()
   if (!id) return { error: "Missing ticketId" }
 
-  const nowIso = new Date().toISOString()
   const { data: raw, error } = await supabase
     .from("maintenance_requests")
     .select(

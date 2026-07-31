@@ -5,6 +5,7 @@ import { recordBroadcastSendAttempt } from '@/lib/broadcastMetrics'
 import { getActiveLandlordId } from '@/lib/activeLandlord'
 import { getInventoryUnitOptions } from '@/lib/propertyUnitOptions'
 import { unitOptionValueToCell } from '@/lib/residentUnitKeys'
+import { getErrorMessage } from '@/lib/errorMessage'
 
 const INSPECTION_TYPES = [
   { id: 'annual' as const, emoji: '📋', title: 'Annual Inspection', subtitle: 'Yearly property review' },
@@ -463,7 +464,7 @@ export function SendInspectionNoticeModal({
     } catch (error) {
       recordBroadcastSendAttempt(channels, false)
       const msg =
-        error instanceof Error ? error.message : 'Failed to send inspection notice. Please try again.'
+        getErrorMessage(error, 'Failed to send inspection notice. Please try again.')
       setSubmitError(
         msg.toLowerCase().includes('failed to fetch')
           ? 'Failed to reach broadcast service. Confirm send-broadcast is deployed and CORS is enabled.'
@@ -1118,14 +1119,14 @@ function DeliveryToggleCard({
       onClick={onToggle}
       className={[
         'rounded-[10px] border-2 p-4 text-left transition-colors',
-        selected ? 'border-primary bg-secondary' : 'border-secondary bg-white',
+        selected ? 'border-[#186179] bg-[#e8f2f5]' : 'border-secondary bg-white',
       ].join(' ')}
     >
       <div className="flex items-center gap-3">
         <span
           className={[
             'flex size-4 shrink-0 items-center justify-center rounded border shadow-sm',
-            selected ? 'border-extended-3 bg-extended-3' : 'border-black/10 bg-secondary',
+            selected ? 'border-[#611879] bg-[#611879]' : 'border-black/10 bg-secondary',
           ].join(' ')}
           aria-hidden
         >
@@ -1181,7 +1182,7 @@ function InspectionAutomationRow({
         onClick={() => onCheckedChange(!checked)}
         className={[
           'mt-1 flex size-4 shrink-0 items-center justify-center rounded border shadow-[0px_1px_2px_0px_rgba(0,0,0,0.05)] outline-none transition-colors focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2',
-          checked ? 'border-extended-3 bg-extended-3' : 'border-black/10 bg-secondary',
+          checked ? 'border-[#611879] bg-[#611879]' : 'border-black/10 bg-secondary',
         ].join(' ')}
       >
         {checked ? (
@@ -1259,7 +1260,7 @@ function InspectionEventTriggerRow({
       <span
         className={[
           'flex size-4 shrink-0 items-center justify-center rounded border shadow-[0px_1px_2px_0px_rgba(0,0,0,0.05)]',
-          checked ? 'border-extended-3 bg-extended-3' : 'border-black/10 bg-secondary',
+          checked ? 'border-[#611879] bg-[#611879]' : 'border-black/10 bg-secondary',
         ].join(' ')}
         aria-hidden
       >

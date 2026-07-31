@@ -12,6 +12,12 @@ import {
 } from "./inbound_db.ts"
 import { getSMSProvider } from "./providerFactory.ts"
 import { logGraphEvent } from "../graph/logGraphEvent.ts"
+import type { VendorOpenJobSmsLine } from "../vendor_outreach_copy.ts"
+import {
+  listVendorActiveJobs,
+  matchActiveJobsFromReply,
+  type VendorActiveJob,
+} from "./vendorWorkOrderClarification.ts"
 
 export type VendorAlertSendResult =
   | {
@@ -377,40 +383,122 @@ async function ticketStillExists(
   return !!data?.id
 }
 
-/** Resolve open ticket for an inbound vendor reply. */
+function toOpenJobSmsLines(jobs: VendorActiveJob[]): VendorOpenJobSmsLine[] {
+  return jobs.map((j) => ({
+    ticketId: j.ticketId,
+    workOrderRef: j.workOrderRef,
+    unit: j.unit,
+    building: j.building,
+    issueCategory: j.issueCategory,
+    description: j.description,
+  }))
+}
+
+export async function listVendorOpenJobs(
+  supabase: SupabaseClient,
+  vendorId: string,
+): Promise<VendorOpenJobSmsLine[]> {
+  return toOpenJobSmsLines(await listVendorActiveJobs(supabase, vendorId))
+}
+
+export type ResolveVendorTicketForInboundResult =
+  | {
+      ok: true
+      ticketId: string
+      boundBy: string
+      openJobs: VendorActiveJob[]
+    }
+  | {
+      ok: false
+      reason: "need_work_order" | "unknown_work_order" | "no_open_jobs"
+      openJobs: VendorActiveJob[]
+    }
+
+/**
+ * Bind an inbound vendor SMS to a specific work order.
+ * Never falls back to "most recent open job" when multiple are active.
+ */
+export async function resolveVendorTicketForInbound(
+  supabase: SupabaseClient,
+  params: {
+    vendorId: string
+    inboundBody: string
+    /** Mid-flow schedule FSM already tied to a ticket. */
+    scheduleTicketId?: string | null
+    /** Optional preloaded jobs (avoids a second query). */
+    openJobs?: VendorActiveJob[]
+  },
+): Promise<ResolveVendorTicketForInboundResult> {
+  const openJobs = params.openJobs ??
+    (await listVendorActiveJobs(supabase, params.vendorId))
+
+  const scheduleTicketId = params.scheduleTicketId?.trim() || null
+  if (scheduleTicketId) {
+    const stillOpen = openJobs.some((j) => j.ticketId === scheduleTicketId)
+    if (stillOpen || (await ticketStillExists(supabase, scheduleTicketId))) {
+      return {
+        ok: true,
+        ticketId: scheduleTicketId,
+        boundBy: "schedule_fsm",
+        openJobs,
+      }
+    }
+  }
+
+  if (openJobs.length === 0) {
+    return { ok: false, reason: "no_open_jobs", openJobs }
+  }
+
+  if (openJobs.length === 1) {
+    return {
+      ok: true,
+      ticketId: openJobs[0].ticketId,
+      boundBy: "single_open_job",
+      openJobs,
+    }
+  }
+
+  const match = matchActiveJobsFromReply(params.inboundBody, openJobs)
+  if (match.kind === "unique") {
+    return {
+      ok: true,
+      ticketId: match.job.ticketId,
+      boundBy: match.boundBy,
+      openJobs,
+    }
+  }
+
+  if (match.kind === "ambiguous") {
+    return { ok: false, reason: "need_work_order", openJobs: match.jobs }
+  }
+
+  // Explicit WO that didn't match any open job
+  const hasWo = /\bWO[- ]?[0-9A-Fa-f]{4}\b/i.test(params.inboundBody)
+  if (hasWo) {
+    return { ok: false, reason: "unknown_work_order", openJobs }
+  }
+
+  return { ok: false, reason: "need_work_order", openJobs }
+}
+
+/**
+ * @deprecated Prefer resolveVendorTicketForInbound — does not guess among multiple jobs.
+ * Kept for narrow callers that only need a single unambiguous open ticket.
+ */
 export async function resolveVendorMaintenanceRequestId(
   supabase: SupabaseClient,
   params: {
     vendorId: string
     conversationId?: string | null
     conversationMaintenanceRequestId?: string | null
+    inboundBody?: string | null
+    scheduleTicketId?: string | null
   },
 ): Promise<string | null> {
-  if (params.conversationMaintenanceRequestId) {
-    const id = params.conversationMaintenanceRequestId.trim()
-    if (id && (await ticketStillExists(supabase, id))) return id
-  }
-
-  if (params.conversationId) {
-    const { data: convo } = await supabase
-      .from("sms_conversations")
-      .select("maintenance_request_id")
-      .eq("id", params.conversationId)
-      .maybeSingle()
-
-    const linked = (convo as { maintenance_request_id?: string | null } | null)
-      ?.maintenance_request_id
-    if (linked && (await ticketStillExists(supabase, linked))) return linked
-  }
-
-  const { data: ticket } = await supabase
-    .from("maintenance_requests")
-    .select("id")
-    .eq("assigned_vendor_id", params.vendorId)
-    .in("vendor_work_status", ["pending_accept", "accepted", "in_progress"])
-    .order("created_at", { ascending: false })
-    .limit(1)
-    .maybeSingle()
-
-  return (ticket?.id as string | undefined) ?? null
+  const resolved = await resolveVendorTicketForInbound(supabase, {
+    vendorId: params.vendorId,
+    inboundBody: params.inboundBody ?? "",
+    scheduleTicketId: params.scheduleTicketId,
+  })
+  return resolved.ok ? resolved.ticketId : null
 }

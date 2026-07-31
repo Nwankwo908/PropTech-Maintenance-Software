@@ -26,10 +26,10 @@ type CallPhoneButtonProps = {
 
 const variantClass: Record<NonNullable<CallPhoneButtonProps['variant']>, string> = {
   solid:
-    'inline-flex min-h-[36px] items-center justify-center gap-1.5 rounded-[10px] bg-[#101828] px-3 py-2 text-[12px] font-semibold text-white hover:bg-[#1e2939] focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50',
+    'sa-press inline-flex min-h-[36px] items-center justify-center gap-1.5 rounded-[10px] bg-[#101828] px-3 py-2 text-[12px] font-semibold text-white hover:bg-[#1e2939] focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50',
   outline:
-    'inline-flex min-h-[36px] items-center justify-center gap-1.5 rounded-[10px] border border-black/10 bg-white px-3 py-2 text-[12px] font-medium text-[#0a0a0a] hover:bg-[#f9fafb] focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50',
-  link: 'inline-flex items-center gap-1 text-[12px] font-medium text-[#0030b5] underline decoration-[#0030b5]/30 underline-offset-2 hover:text-[#002080] focus-visible:rounded-sm focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#0030b5]',
+    'sa-press inline-flex min-h-[36px] items-center justify-center gap-1.5 rounded-[10px] border border-black/10 bg-white px-3 py-2 text-[12px] font-medium text-[#0a0a0a] hover:bg-[#f9fafb] focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50',
+  link: 'sa-link inline-flex items-center gap-1 text-[12px] font-medium text-[#0030b5] underline decoration-[#0030b5]/30 underline-offset-2 hover:text-[#002080] focus-visible:rounded-sm focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#0030b5]',
 }
 
 /** Opens the native phone dialer via `tel:` — no in-app VoIP. */

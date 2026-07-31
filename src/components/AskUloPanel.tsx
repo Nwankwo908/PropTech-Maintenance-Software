@@ -17,6 +17,7 @@ import {
 } from '@/lib/askUloConversations'
 import { askUloLoadingMessagesForPrompt } from '@/lib/askUloLoadingCopy'
 import { streamAskUloAnswer } from '@/lib/askUloStreamText'
+import { getErrorMessage } from '@/lib/errorMessage'
 
 type AskUloPanelProps = {
   onClose: () => void
@@ -476,7 +477,7 @@ function LegalContextBanner({
           aria-expanded={open}
           aria-controls={panelId}
           onClick={() => setOpen((v) => !v)}
-          className="inline-flex cursor-pointer items-center gap-1 text-[12px] font-medium text-[#0A4D38] outline-none hover:underline focus-visible:ring-2 focus-visible:ring-[#0A4D38]/30"
+          className="sa-link inline-flex cursor-pointer items-center gap-1 text-[12px] font-medium text-[#0A4D38] outline-none hover:underline focus-visible:ring-2 focus-visible:ring-[#0A4D38]/30"
         >
           {open ? 'Hide details' : 'View details'}
           <svg
@@ -609,7 +610,7 @@ function CounselHandoffModal({
     <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/40 p-4">
       <button
         type="button"
-        className="absolute inset-0 cursor-default"
+        className="sa-scrim absolute inset-0 cursor-default"
         aria-label="Close flag for review"
         disabled={busy}
         onClick={onClose}
@@ -618,7 +619,7 @@ function CounselHandoffModal({
         role="dialog"
         aria-modal="true"
         aria-labelledby="ask-ulo-counsel-title"
-        className="relative z-[1] w-full max-w-md space-y-3 rounded-xl border border-[#e5e7eb] bg-white p-4 text-[13px] leading-5 text-[#4b5563] shadow-lg"
+        className="sa-modal relative z-[1] w-full max-w-md space-y-3 rounded-xl border border-[#e5e7eb] bg-white p-4 text-[13px] leading-5 text-[#4b5563] shadow-lg"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-start justify-between gap-3">
@@ -629,7 +630,7 @@ function CounselHandoffModal({
             type="button"
             disabled={busy}
             onClick={onClose}
-            className="rounded-md px-1.5 py-0.5 text-[12px] font-medium text-[#6b7280] outline-none hover:bg-[#f3f4f6] hover:text-[#111827] focus-visible:ring-2 focus-visible:ring-[#101828]"
+            className="sa-press rounded-md px-1.5 py-0.5 text-[12px] font-medium text-[#6b7280] outline-none hover:bg-[#f3f4f6] hover:text-[#111827] focus-visible:ring-2 focus-visible:ring-[#101828]"
           >
             Close
           </button>
@@ -677,7 +678,7 @@ function CounselHandoffModal({
             type="button"
             disabled={busy}
             onClick={onClose}
-            className="inline-flex items-center justify-center rounded-md px-3 py-1.5 text-[12px] font-medium text-[#4b5563] outline-none transition-colors hover:bg-[#f3f4f6] focus-visible:ring-2 focus-visible:ring-[#101828] disabled:opacity-60"
+            className="sa-press inline-flex items-center justify-center rounded-md px-3 py-1.5 text-[12px] font-medium text-[#4b5563] outline-none hover:bg-[#f3f4f6] focus-visible:ring-2 focus-visible:ring-[#101828] disabled:opacity-60"
           >
             Cancel
           </button>
@@ -704,13 +705,13 @@ function CounselHandoffModal({
                   onFlagged(msg.id, result.confirmationMarkdown)
                   onClose()
                 } catch (err) {
-                  setError(err instanceof Error ? err.message : 'Could not flag for review')
+                  setError(getErrorMessage(err, "Couldn't flag that for review. Please try again."))
                 } finally {
                   setBusy(false)
                 }
               })()
             }}
-            className="inline-flex items-center justify-center rounded-md bg-[#101828] px-3 py-1.5 text-[12px] font-medium text-white outline-none transition-colors hover:bg-[#1e2939] focus-visible:ring-2 focus-visible:ring-[#101828] focus-visible:ring-offset-1 disabled:cursor-not-allowed disabled:opacity-60"
+            className="sa-press inline-flex items-center justify-center rounded-md bg-[#101828] px-3 py-1.5 text-[12px] font-medium text-white outline-none hover:bg-[#1e2939] focus-visible:ring-2 focus-visible:ring-[#101828] focus-visible:ring-offset-1 disabled:cursor-not-allowed disabled:opacity-60"
           >
             {busy ? 'Flagging…' : 'Flag for human review'}
           </button>
@@ -812,7 +813,7 @@ function CitationChips({ citations }: { citations: AskUloCitation[] }) {
               href={c.url}
               target="_blank"
               rel="noreferrer"
-              className="outline-none transition-opacity hover:opacity-80 focus-visible:ring-2 focus-visible:ring-[#101828]"
+              className="sa-link outline-none hover:opacity-80 focus-visible:ring-2 focus-visible:ring-[#101828]"
               title={c.excerpt ?? c.title}
             >
               {chip}
@@ -892,8 +893,8 @@ function MessageActions({
         aria-pressed={copied}
         className={
           copied
-            ? 'inline-flex cursor-pointer items-center justify-center rounded-md bg-[#ecfdf5] px-2 py-1 text-[#065f46] outline-none transition-colors focus-visible:ring-2 focus-visible:ring-[#101828]'
-            : 'inline-flex cursor-pointer items-center justify-center rounded-md px-2 py-1 text-[#6a7282] outline-none transition-colors hover:bg-[#f3f4f6] hover:text-[#0a0a0a] active:bg-[#e5e7eb] focus-visible:ring-2 focus-visible:ring-[#101828]'
+            ? 'sa-press inline-flex cursor-pointer items-center justify-center rounded-md bg-[#ecfdf5] px-2 py-1 text-[#065f46] outline-none focus-visible:ring-2 focus-visible:ring-[#101828]'
+            : 'sa-press inline-flex cursor-pointer items-center justify-center rounded-md px-2 py-1 text-[#6a7282] outline-none hover:bg-[#f3f4f6] hover:text-[#0a0a0a] active:bg-[#e5e7eb] focus-visible:ring-2 focus-visible:ring-[#101828]'
         }
         onClick={async () => {
           try {
@@ -920,7 +921,7 @@ function MessageActions({
           type="button"
           aria-label="Regenerate"
           title="Regenerate"
-          className="inline-flex cursor-pointer items-center justify-center rounded-md px-2 py-1 text-[#6a7282] outline-none transition-colors hover:bg-[#f3f4f6] hover:text-[#0a0a0a] focus-visible:ring-2 focus-visible:ring-[#101828] disabled:cursor-not-allowed disabled:opacity-40"
+          className="sa-press inline-flex cursor-pointer items-center justify-center rounded-md px-2 py-1 text-[#6a7282] outline-none hover:bg-[#f3f4f6] hover:text-[#0a0a0a] focus-visible:ring-2 focus-visible:ring-[#101828] disabled:cursor-not-allowed disabled:opacity-40"
           onClick={onRegenerate}
         >
           <img src={regenerateIcon} alt="" aria-hidden className="size-4 object-contain opacity-90" />
@@ -941,7 +942,7 @@ function MessageActions({
           <button
             type="button"
             aria-label="Thumbs up"
-            className="inline-flex cursor-pointer items-center justify-center rounded-md px-2 py-1 text-[#6a7282] outline-none transition-colors hover:bg-[#f3f4f6] hover:text-[#0a0a0a] focus-visible:ring-2 focus-visible:ring-[#101828]"
+            className="sa-press inline-flex cursor-pointer items-center justify-center rounded-md px-2 py-1 text-[#6a7282] outline-none hover:bg-[#f3f4f6] hover:text-[#0a0a0a] focus-visible:ring-2 focus-visible:ring-[#101828]"
             onClick={() => onFeedback('up')}
           >
             <ThumbUpIcon />
@@ -952,8 +953,8 @@ function MessageActions({
             aria-pressed={feedback === 'down'}
             className={
               feedback === 'down'
-                ? 'inline-flex cursor-pointer items-center justify-center rounded-md bg-[#fff7ed] px-2 py-1 text-[#9a3412] outline-none transition-colors hover:bg-[#ffedd5] focus-visible:ring-2 focus-visible:ring-[#101828]'
-                : 'inline-flex cursor-pointer items-center justify-center rounded-md px-2 py-1 text-[#6a7282] outline-none transition-colors hover:bg-[#f3f4f6] hover:text-[#0a0a0a] focus-visible:ring-2 focus-visible:ring-[#101828]'
+                ? 'sa-press inline-flex cursor-pointer items-center justify-center rounded-md bg-[#fff7ed] px-2 py-1 text-[#9a3412] outline-none hover:bg-[#ffedd5] focus-visible:ring-2 focus-visible:ring-[#101828]'
+                : 'sa-press inline-flex cursor-pointer items-center justify-center rounded-md px-2 py-1 text-[#6a7282] outline-none hover:bg-[#f3f4f6] hover:text-[#0a0a0a] focus-visible:ring-2 focus-visible:ring-[#101828]'
             }
             onClick={() => onFeedback('down')}
           >
@@ -971,8 +972,8 @@ function MessageActions({
               aria-pressed={overrideReason === opt.id}
               className={
                 overrideReason === opt.id
-                  ? 'rounded-md bg-[#fff7ed] px-2 py-1 text-[11px] font-medium text-[#9a3412] outline-none ring-1 ring-[#fdba74] focus-visible:ring-2 focus-visible:ring-[#101828]'
-                  : 'rounded-md bg-[#f9fafb] px-2 py-1 text-[11px] font-medium text-[#4b5563] outline-none hover:bg-[#f3f4f6] focus-visible:ring-2 focus-visible:ring-[#101828]'
+                  ? 'sa-pill rounded-md bg-[#fff7ed] px-2 py-1 text-[11px] font-medium text-[#9a3412] outline-none ring-1 ring-[#fdba74] focus-visible:ring-2 focus-visible:ring-[#101828]'
+                  : 'sa-pill rounded-md bg-[#f9fafb] px-2 py-1 text-[11px] font-medium text-[#4b5563] outline-none hover:bg-[#f3f4f6] focus-visible:ring-2 focus-visible:ring-[#101828]'
               }
               onClick={() => onOverrideReason(opt.id)}
             >
@@ -1061,7 +1062,7 @@ function Composer({
               aria-label={`Ulo agent mode: ${agentModeLabel(agentMode)}`}
               onClick={() => setModeMenuOpen((open) => !open)}
               className={[
-                'inline-flex h-8 max-w-full cursor-pointer items-center gap-1.5 rounded-full px-2.5 text-[12px] font-medium outline-none transition-colors focus-visible:ring-2 focus-visible:ring-[#101828] focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-60',
+                'sa-pill inline-flex h-8 max-w-full cursor-pointer items-center gap-1.5 rounded-full px-2.5 text-[12px] font-medium outline-none focus-visible:ring-2 focus-visible:ring-[#101828] focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-60',
                 modeTheme
                   ? modeTheme.chip
                   : 'bg-transparent text-[#6a7282] hover:bg-[#f3f4f6] hover:text-[#374151]',
@@ -1088,7 +1089,7 @@ function Composer({
               <div
                 role="listbox"
                 aria-label="Ulo agent modes"
-                className="absolute bottom-[calc(100%+8px)] left-0 z-30 w-[min(100vw-2rem,280px)] overflow-hidden rounded-[12px] border border-[#e5e7eb] bg-white py-1 shadow-[0px_12px_32px_rgba(16,24,40,0.12)]"
+                className="sa-enter absolute bottom-[calc(100%+8px)] left-0 z-30 w-[min(100vw-2rem,280px)] overflow-hidden rounded-[12px] border border-[#e5e7eb] bg-white py-1 shadow-[0px_12px_32px_rgba(16,24,40,0.12)]"
               >
                 {ASK_ULO_AGENT_MODES.map((mode) => {
                   const selected = mode.id === agentMode
@@ -1105,7 +1106,7 @@ function Composer({
                         setModeMenuOpen(false)
                       }}
                       className={[
-                        'flex w-full cursor-pointer items-center gap-2.5 px-3 py-2.5 text-left outline-none transition-colors',
+                        'sa-row flex w-full cursor-pointer items-center gap-2.5 px-3 py-2.5 text-left outline-none',
                         selected ? 'bg-[#f3f4f6]' : 'hover:bg-[#f9fafb]',
                       ].join(' ')}
                     >
@@ -1130,7 +1131,7 @@ function Composer({
           disabled={!canSend || loading}
           onClick={onSend}
           className={[
-            'inline-flex size-9 shrink-0 cursor-pointer items-center justify-center rounded-full bg-[#d1d5db] text-white outline-none transition-colors focus-visible:ring-2 focus-visible:ring-offset-2 disabled:cursor-not-allowed',
+            'sa-press inline-flex size-9 shrink-0 cursor-pointer items-center justify-center rounded-full bg-[#d1d5db] text-white outline-none focus-visible:ring-2 focus-visible:ring-offset-2 disabled:cursor-not-allowed',
             modeTheme?.send ??
               'enabled:bg-[#101828] enabled:hover:bg-[#1e2939] focus-visible:ring-[#101828]',
           ].join(' ')}
@@ -1171,7 +1172,7 @@ function PropertyClarifyChips({
             type="button"
             disabled={disabled}
             onClick={() => onSelect(building)}
-            className="cursor-pointer rounded-lg border border-[#d1d5db] bg-white px-2.5 py-1.5 text-left text-[12px] font-medium text-[#111827] transition-colors hover:border-[#0A4D38] hover:bg-[#E0F2EF] hover:text-[#0A4D38] disabled:cursor-not-allowed disabled:opacity-50"
+            className="sa-pill cursor-pointer rounded-lg border border-[#d1d5db] bg-white px-2.5 py-1.5 text-left text-[12px] font-medium text-[#111827] hover:border-[#0A4D38] hover:bg-[#E0F2EF] hover:text-[#0A4D38] disabled:cursor-not-allowed disabled:opacity-50"
           >
             {building}
           </button>
@@ -1615,7 +1616,7 @@ export function AskUloPanel({ onClose, variant = 'full' }: AskUloPanelProps) {
       if (gen !== requestGenRef.current) return
       window.clearInterval(rotateTimer)
       setStatusLine(null)
-      const message = err instanceof Error ? err.message : 'Ask Ulo failed'
+      const message = getErrorMessage(err, "Ask Ulo couldn't answer that. Please try again.")
       setMessages((prev) =>
         prev.map((m) =>
           m.id === assistantId
@@ -1682,7 +1683,7 @@ export function AskUloPanel({ onClose, variant = 'full' }: AskUloPanelProps) {
         type="button"
         onClick={onClose}
         className={[
-          'absolute top-1.5 z-20 inline-flex size-8 cursor-pointer items-center justify-center rounded-[10px] text-[#6a7282] outline-none transition-colors hover:bg-[#e5e7eb]/70 hover:text-[#0a0a0a] focus-visible:ring-2 focus-visible:ring-[#101828] focus-visible:ring-offset-2',
+          'sa-press absolute top-1.5 z-20 inline-flex size-8 cursor-pointer items-center justify-center rounded-[10px] text-[#6a7282] outline-none hover:bg-[#e5e7eb]/70 hover:text-[#0a0a0a] focus-visible:ring-2 focus-visible:ring-[#101828] focus-visible:ring-offset-2',
           isRail ? 'right-3' : 'right-4 sm:right-6',
         ].join(' ')}
         aria-label="Close Ask Ulo"
@@ -1772,7 +1773,7 @@ export function AskUloPanel({ onClose, variant = 'full' }: AskUloPanelProps) {
                 key={suggestion.id}
                 type="button"
                 onClick={() => applySuggestion(suggestion.prompt)}
-                className="flex min-h-[52px] cursor-pointer items-center gap-2.5 rounded-[14px] border border-[#e5e7eb] bg-white px-4 py-3 text-left text-[13px] font-medium leading-5 text-[#0a0a0a] outline-none transition-colors hover:border-[#d1d5dc] hover:bg-[#fafafa] focus-visible:ring-2 focus-visible:ring-[#101828] focus-visible:ring-offset-2"
+                className="sa-card flex min-h-[52px] cursor-pointer items-center gap-2.5 rounded-[14px] border border-[#e5e7eb] bg-white px-4 py-3 text-left text-[13px] font-medium leading-5 text-[#0a0a0a] outline-none hover:border-[#d1d5dc] hover:bg-[#fafafa] focus-visible:ring-2 focus-visible:ring-[#101828] focus-visible:ring-offset-2"
               >
                 <SuggestionIcon kind={suggestion.icon} />
                 <span>{suggestion.prompt}</span>

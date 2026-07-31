@@ -5,6 +5,7 @@ import {
   type SendVendorInviteResult,
   type VendorInviteChannel,
 } from '@/api/vendorVerification'
+import { getErrorMessage } from '@/lib/errorMessage'
 
 export type InviteVendorPrefill = {
   vendorId?: string | null
@@ -36,7 +37,7 @@ function TextInput({
       value={value}
       placeholder={placeholder}
       onChange={(e) => onChange(e.target.value)}
-      className="mt-1.5 w-full rounded-[10px] border border-[#d1d5dc] bg-white px-3 py-2.5 text-[14px] text-[#0a0a0a] outline-none transition-colors focus:border-[#186179] focus:ring-2 focus:ring-[#186179]/20"
+      className="sa-surface mt-1.5 w-full rounded-[10px] border border-[#d1d5dc] bg-white px-3 py-2.5 text-[14px] text-[#0a0a0a] outline-none focus:border-[#186179] focus:ring-2 focus:ring-[#186179]/20"
     />
   )
 }
@@ -105,7 +106,7 @@ export function InviteVendorModal({
       setResult(res)
       onInvited?.(res)
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Could not send the invite.')
+      setError(getErrorMessage(err, 'Could not send the invite.'))
     } finally {
       setSaving(false)
     }
@@ -124,7 +125,7 @@ export function InviteVendorModal({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4 py-8">
-      <div className="w-full max-w-[480px] rounded-[16px] bg-white p-6 shadow-[0px_20px_60px_rgba(0,0,0,0.2)]">
+      <div className="sa-modal w-full max-w-[480px] rounded-[16px] bg-white p-6 shadow-[0px_20px_60px_rgba(0,0,0,0.2)]">
         <div className="flex items-start justify-between gap-3">
           <div>
             <h2 className="text-[18px] font-semibold text-[#0a0a0a]">Invite a vendor</h2>
@@ -135,7 +136,7 @@ export function InviteVendorModal({
           <button
             type="button"
             onClick={onClose}
-            className="rounded-md p-1 text-[#6a7282] hover:bg-[#f3f4f6]"
+            className="sa-press rounded-md p-1 text-[#6a7282] hover:bg-[#f3f4f6]"
             aria-label="Close"
           >
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} className="size-5">
@@ -176,7 +177,7 @@ export function InviteVendorModal({
                 <button
                   type="button"
                   onClick={copyLink}
-                  className="shrink-0 rounded-[10px] border border-[#186179] px-3 py-2.5 text-[13px] font-semibold text-[#186179] hover:bg-[#186179]/5"
+                  className="sa-press shrink-0 rounded-[10px] border border-[#186179] px-3 py-2.5 text-[13px] font-semibold text-[#186179] hover:bg-[#186179]/5"
                 >
                   {copied ? 'Copied' : 'Copy'}
                 </button>
@@ -185,7 +186,7 @@ export function InviteVendorModal({
             <button
               type="button"
               onClick={onClose}
-              className="w-full rounded-[10px] bg-[#186179] px-4 py-3 text-[15px] font-semibold text-white hover:bg-[#134e60]"
+              className="sa-press w-full rounded-[10px] bg-[#186179] px-4 py-3 text-[15px] font-semibold text-white hover:bg-[#134e60]"
             >
               Done
             </button>
@@ -227,7 +228,7 @@ export function InviteVendorModal({
                     key={opt}
                     type="button"
                     onClick={() => setChannel(opt)}
-                    className={`flex-1 rounded-[10px] px-3 py-2 text-[13px] font-medium capitalize transition-colors ${
+                    className={`sa-pill flex-1 rounded-[10px] px-3 py-2 text-[13px] font-medium capitalize ${
                       channel === opt
                         ? 'bg-[#186179] text-white'
                         : 'bg-[#f3f4f6] text-[#364153] hover:bg-[#e5e7eb]'
@@ -242,7 +243,7 @@ export function InviteVendorModal({
               type="button"
               disabled={!canSend || saving}
               onClick={() => void handleSend()}
-              className="w-full rounded-[10px] bg-[#186179] px-4 py-3 text-[15px] font-semibold text-white transition-colors hover:bg-[#134e60] disabled:cursor-not-allowed disabled:opacity-50"
+              className="sa-press w-full rounded-[10px] bg-[#186179] px-4 py-3 text-[15px] font-semibold text-white hover:bg-[#134e60] disabled:cursor-not-allowed disabled:opacity-50"
             >
               {saving ? 'Sending…' : 'Send invite'}
             </button>

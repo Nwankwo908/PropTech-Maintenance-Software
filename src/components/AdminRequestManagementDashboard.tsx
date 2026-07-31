@@ -1,3 +1,4 @@
+import { getAdminEdgeSecret } from '@/lib/adminEdgeAuth'
 import {
   Fragment,
   useCallback,
@@ -24,6 +25,7 @@ import { VendorDelayedAlternativesSection } from '@/components/VendorDelayedAlte
 import { getActiveLandlordId, isDemoAccountActive } from '@/lib/activeLandlord'
 import { supabase } from '@/lib/supabase'
 import { isVendorPendingAcceptDelayed } from '@/lib/vendorDelayAlerts'
+import { vendorDetailPath } from '@/lib/vendorRoutes'
 import {
   formatVendorTradeLabel,
   getIssueCategorySlugForTicket,
@@ -31,6 +33,7 @@ import {
   vendorMatchesTicketIssueCategory,
   VENDOR_TRADE_OPTIONS,
 } from '@/lib/vendorTrades'
+import { getErrorMessage } from '@/lib/errorMessage'
 
 type UrgencyUi = 'urgent' | 'normal' | 'low'
 
@@ -66,7 +69,7 @@ export type AdminTicketRow = {
   residentPhone?: string
   unit: string
   category: string
-  /** Raw `maintenance_requests.issue_category` (e.g. plumbing); used to match vendors like User Management. */
+  /** Raw `maintenance_requests.issue_category` (e.g. plumbing); used to match vendors like Vendors. */
   issueCategoryRaw?: string | null
   descriptionPreview: string
   /** Longer description in accordion; falls back to `descriptionPreview`. */
@@ -846,7 +849,7 @@ function AssignedVendorCard({
   estimatedCompletion,
 }: {
   vendorName?: string | null
-  /** When set, the vendor name links to User Management (vendor profile). */
+  /** When set, the vendor name links to the vendor profile. */
   assignedVendorId?: string | null
   vendorPhone?: string | null
   emptyMessage?: string
@@ -861,9 +864,7 @@ function AssignedVendorCard({
   const _vendorIdTrim = assignedVendorId?.trim() ?? ''
   const warnNoVendorId = _vendorIdTrim === ''
   const vendorProfileTo =
-    _vendorIdTrim !== ''
-      ? `/admin/users?vendorId=${encodeURIComponent(_vendorIdTrim)}`
-      : null
+    _vendorIdTrim !== '' ? vendorDetailPath(_vendorIdTrim) : null
 
   const shellClass =
     'rounded-lg border border-[#e5e7eb] bg-white p-4 shadow-sm'
@@ -984,7 +985,7 @@ function RequestRowOverdueCard({
       setIsEditing(false)
     } catch (error) {
       setSaveError(
-        error instanceof Error ? error.message : 'Could not update urgency date.',
+        getErrorMessage(error, 'Could not update urgency date.'),
       )
     } finally {
       setSaving(false)
@@ -1269,7 +1270,7 @@ function vendorIdForActiveName(
   return id || undefined
 }
 
-/** Vendors offered in the change-vendor modal: active vendors from the DB whose specialty matches this ticket’s category (same as User Management → Vendors). */
+/** Vendors offered in the change-vendor modal: active vendors from the DB whose specialty matches this ticket’s category (same as Vendors). */
 function buildVendorOptionsForRow(
   row: AdminTicketRow,
   activeVendorsFromDb: VendorPickerRow[],
@@ -1638,7 +1639,7 @@ export function AdminRequestManagementDashboard() {
       const nextVendor = choice.vendorName.trim()
       const ticketUuid = resolveBackendTicketId(targetRow)
       const reassignUrl = import.meta.env.VITE_ADMIN_REASSIGN_URL?.trim()
-      const reassignSecret = import.meta.env.VITE_ADMIN_REASSIGN_SECRET?.trim()
+      const reassignSecret = getAdminEdgeSecret()
       if (ticketUuid && reassignUrl && reassignSecret) {
         const reassignResult = await postAdminReassignVendor({
           url: reassignUrl,
@@ -1721,7 +1722,7 @@ export function AdminRequestManagementDashboard() {
           .from('maintenance_requests')
           .update({ due_at: parsed.toISOString() })
           .eq('id', ticketUuid)
-        if (error) throw new Error(error.message)
+        if (error) throw new Error(getErrorMessage(error, 'Something went wrong. Please try again.'))
       }
       const dueAtDisplay = formatDueAtDisplay(parsed.toISOString())
       const isSlaOverdue =
@@ -2071,7 +2072,7 @@ export function AdminRequestManagementDashboard() {
             const row = tickets.find((r) => r.id === vendorModal.rowId)
             const tid = row ? resolveBackendTicketId(row) : null
             const url = resolveDiscoverExternalVendorsUrl()
-            const secret = import.meta.env.VITE_ADMIN_REASSIGN_SECRET?.trim()
+            const secret = getAdminEdgeSecret()
             if (!tid || !url || !secret) return null
             const locationLabel = [row?.unit, row?.residentName].filter(Boolean).join(' · ')
             return {
@@ -2102,7 +2103,7 @@ export function AdminRequestManagementDashboard() {
             const ticketUuid = resolveBackendTicketId(row)
             const reassignUrl = import.meta.env.VITE_ADMIN_REASSIGN_URL?.trim()
             const reassignSecret =
-              import.meta.env.VITE_ADMIN_REASSIGN_SECRET?.trim()
+              getAdminEdgeSecret()
             if (ticketUuid && reassignUrl && reassignSecret) {
               setVendorSaving(true)
               try {
@@ -2116,9 +2117,7 @@ export function AdminRequestManagementDashboard() {
                 })
               } catch (e) {
                 setVendorSaveError(
-                  e instanceof Error
-                    ? e.message
-                    : 'Could not save vendor assignment',
+                  getErrorMessage(e, 'Could not save vendor assignment'),
                 )
                 setVendorSaving(false)
                 return

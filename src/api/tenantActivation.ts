@@ -1,3 +1,4 @@
+import { getErrorMessage } from '@/lib/errorMessage'
 /**
  * Post-onboarding tenant activation SMS trigger.
  * Uses the same ADMIN_REASSIGN_SECRET as other admin Edge calls.
@@ -7,7 +8,9 @@ import {
   adminEdgeInvokeHeaders,
   fetchAdminEdgeFunction,
 } from '@/api/adminReassignVendor'
+import { getAdminEdgeSecret } from '@/lib/adminEdgeAuth'
 import { getActiveLandlordId } from '@/lib/activeLandlord'
+import { supabase } from '@/lib/supabase'
 
 function functionUrl(): string | undefined {
   const explicit = import.meta.env.VITE_SEND_TENANT_ACTIVATION_URL?.trim()
@@ -16,9 +19,6 @@ function functionUrl(): string | undefined {
   return base ? `${base}/functions/v1/send-tenant-activation` : undefined
 }
 
-function adminSecret(): string | undefined {
-  return import.meta.env.VITE_ADMIN_REASSIGN_SECRET?.trim() || undefined
-}
 
 export type TenantActivationSummary = {
   ok: boolean
@@ -44,7 +44,7 @@ export async function sendTenantActivationSms(params: {
   resend?: boolean
 }): Promise<TenantActivationSummary> {
   const url = functionUrl()
-  const secret = adminSecret()
+  const secret = getAdminEdgeSecret()
   if (!url || !secret) {
     return { ok: false, configured: false, error: 'Tenant activation SMS is not configured.' }
   }
@@ -79,11 +79,184 @@ export async function sendTenantActivationSms(params: {
     const summary = (await res.json()) as Partial<TenantActivationSummary>
     return { configured: true, ...summary, ok: summary.ok !== false }
   } catch (err) {
-    console.warn('[tenantActivation] send failed', err)
-    return {
-      ok: false,
-      configured: true,
-      error: err instanceof Error ? err.message : 'Activation request failed.',
+    const message = getErrorMessage(err, 'Something went wrong. Please try again.')
+    console.warn('[tenantActivation]', message)
+    return { ok: false, configured: true, error: message }
+  }
+}
+
+async function loadLandlordCompanyName(landlordId: string): Promise<string | null> {
+  if (!supabase) return null
+  const { data } = await supabase
+    .from('landlords')
+    .select('name')
+    .eq('id', landlordId)
+    .maybeSingle()
+  const name = typeof data?.name === 'string' ? data.name.trim() : ''
+  return name || null
+}
+
+/**
+ * After a resident is added post-onboarding: send the same welcome / YES
+ * activation SMS used at setup complete. Best-effort — never throws.
+ *
+ * Also use when a phone is added later to a resident who was created without one
+ * (`phoneNewlyAdded`). Edge send is idempotent via `activation_sms_sent_at`.
+ */
+export async function activateTenantAfterAdd(params: {
+  landlordId?: string
+  residentId: string
+  phone?: string | null
+  companyName?: string | null
+}): Promise<TenantActivationSummary> {
+  const phone = params.phone?.trim() ?? ''
+  if (!phone) {
+    return { ok: true, configured: true, attempted: 0, sent: 0, skipped: 1 }
+  }
+
+  const residentId = params.residentId.trim()
+  if (!residentId) {
+    return { ok: false, configured: true, error: 'Missing resident id.' }
+  }
+
+  const landlordId = params.landlordId?.trim() || getActiveLandlordId()
+  let companyName = params.companyName?.trim() || null
+  if (!companyName && landlordId) {
+    try {
+      companyName = await loadLandlordCompanyName(landlordId)
+    } catch {
+      companyName = null
     }
   }
+
+  return sendTenantActivationSms({
+    landlordId,
+    residentIds: [residentId],
+    companyName,
+  })
+}
+
+/** True when phone goes from empty → non-empty (first usable contact). */
+export function phoneNewlyAdded(
+  previousPhone: string | null | undefined,
+  nextPhone: string | null | undefined,
+): boolean {
+  return !(previousPhone?.trim()) && Boolean(nextPhone?.trim())
+}
+
+/** Digits-only compare for phone edits. */
+function phoneDigits(value: string | null | undefined): string {
+  return (value ?? '').replace(/\D/g, '')
+}
+
+/** True when the stored phone number changed to a different value. */
+export function phoneChanged(
+  previousPhone: string | null | undefined,
+  nextPhone: string | null | undefined,
+): boolean {
+  const prev = phoneDigits(previousPhone)
+  const next = phoneDigits(nextPhone)
+  if (!next) return false
+  return prev !== next
+}
+
+/**
+ * After the landlord updates a resident phone following a delivery failure:
+ * clear failure state and mark the in-app alert resolved. Does not auto-resend
+ * unless the caller also invokes activate/resend.
+ */
+export async function clearActivationFailureOnPhoneUpdate(params: {
+  landlordId?: string
+  residentId: string
+}): Promise<void> {
+  if (!supabase) return
+  const landlordId = params.landlordId?.trim() || getActiveLandlordId()
+  const residentId = params.residentId.trim()
+  if (!landlordId || !residentId) return
+
+  const { data: row } = await supabase
+    .from('users')
+    .select('activation_status')
+    .eq('id', residentId)
+    .eq('landlord_id', landlordId)
+    .maybeSingle()
+
+  const status = String((row as { activation_status?: string } | null)?.activation_status ?? '')
+    .trim()
+    .toLowerCase()
+  if (status !== 'action_required' && status !== 'delivery_failed') return
+
+  await supabase
+    .from('users')
+    .update({
+      activation_status: 'not_started',
+      last_delivery_error: null,
+      activation_attempt_count: 0,
+      first_activation_attempt_at: null,
+      last_activation_attempt_at: null,
+      activation_sms_sent_at: null,
+      activation_phone_normalized: null,
+    })
+    .eq('id', residentId)
+    .eq('landlord_id', landlordId)
+
+  const { recordActivityLog } = await import('@/lib/recordActivityLog')
+  await recordActivityLog({
+    landlordId,
+    eventType: 'tenant.activation_failure_resolved',
+    source: 'admin_ui',
+    actorType: 'landlord',
+    residentId,
+    metadata: {
+      message: 'Activation failure resolved (phone_updated).',
+      reason: 'phone_updated',
+      notification_status: 'resolved',
+    },
+  })
+}
+
+/** Plain-language warning for toast / banner when activation SMS fails. */
+export function tenantActivationWarningMessage(
+  summary: TenantActivationSummary,
+): string | null {
+  if (!summary.configured) return null
+  if (summary.error) {
+    return `Resident saved, but the welcome text could not be sent (${summary.error}).`
+  }
+  if ((summary.failed ?? 0) > 0) {
+    return 'Resident saved, but the welcome text could not be delivered.'
+  }
+  return null
+}
+
+/**
+ * Landlord-initiated resend. Restarts the automatic retry sequence after a
+ * successful send (attempt 1 again). Best-effort — never throws.
+ */
+export async function resendTenantActivationSms(params: {
+  landlordId?: string
+  residentId: string
+  companyName?: string | null
+}): Promise<TenantActivationSummary> {
+  const residentId = params.residentId.trim()
+  if (!residentId) {
+    return { ok: false, configured: true, error: 'Missing resident id.' }
+  }
+
+  const landlordId = params.landlordId?.trim() || getActiveLandlordId()
+  let companyName = params.companyName?.trim() || null
+  if (!companyName && landlordId) {
+    try {
+      companyName = await loadLandlordCompanyName(landlordId)
+    } catch {
+      companyName = null
+    }
+  }
+
+  return sendTenantActivationSms({
+    landlordId,
+    residentIds: [residentId],
+    companyName,
+    resend: true,
+  })
 }

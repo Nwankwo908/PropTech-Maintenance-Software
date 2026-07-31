@@ -1,7 +1,7 @@
 import { serve } from "https://deno.land/std/http/server.ts"
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1"
 import { adminEdgeCorsHeaders } from "../_shared/admin_edge_cors.ts"
-import { adminReassignSecretAuthorized } from "../_shared/admin_reassign_auth.ts"
+import { requireAdminReassignAuth } from "../_shared/admin_edge_auth.ts"
 import { approveMaintenanceInvoice } from "../_shared/maintenanceSpend.ts"
 
 const corsHeaders = adminEdgeCorsHeaders
@@ -24,10 +24,9 @@ serve(async (req) => {
   if (req.method !== "POST") {
     return jsonResponse({ error: "Method not allowed" }, 405)
   }
+  const adminAuth = requireAdminReassignAuth(req, "[admin-approve-maintenance-invoice]", corsHeaders)
+  if (!adminAuth.ok) return adminAuth.response
 
-  if (!adminReassignSecretAuthorized(req)) {
-    return jsonResponse({ error: "Unauthorized" }, 401)
-  }
 
   let body: {
     invoiceId?: string
@@ -70,7 +69,7 @@ serve(async (req) => {
 
     const { data: invoice, error: fetchErr } = await supabase
       .from("maintenance_invoices")
-      .select("id, landlord_id, maintenance_request_id, status")
+      .select("id, landlord_id, maintenance_request_id, status, metadata")
       .eq("id", invoiceId)
       .maybeSingle()
 
@@ -82,12 +81,23 @@ serve(async (req) => {
     }
 
     const now = new Date().toISOString()
+    const existingMeta =
+      invoice.metadata && typeof invoice.metadata === "object" && !Array.isArray(invoice.metadata)
+        ? invoice.metadata as Record<string, unknown>
+        : {}
+
     await supabase
       .from("maintenance_invoices")
       .update({
         status: "rejected",
         rejection_reason: reason,
         updated_at: now,
+        metadata: {
+          ...existingMeta,
+          billing_event: "rejected",
+          billing_logged_at: now,
+          rejection_reason: reason,
+        },
       })
       .eq("id", invoiceId)
 

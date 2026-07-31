@@ -2,6 +2,11 @@ import { useEffect, useId, useLayoutEffect, useMemo, useState } from 'react'
 import overrideIcon from '@/assets/Override.svg'
 import { checkboxInputClassName, checkboxInputClassNameLg } from '@/components/TableCheckbox'
 import { isDemoAccountActive } from '@/lib/activeLandlord'
+import { getErrorMessage } from '@/lib/errorMessage'
+import {
+  vendorTradeFilterSubset,
+  type VendorTradeSlug,
+} from '@/lib/vendorTrades'
 
 export type OverrideAutomationContext = 'default' | 'rent-reminder'
 
@@ -752,7 +757,9 @@ type OverrideTypeId =
   | SafetyOverrideTypeId
   | InspectionOverrideTypeId
 
-type VendorTradeCategory = 'plumbing' | 'electrical' | 'general' | 'hvac'
+const VENDOR_FILTER_SLUGS = ['plumbing', 'electrical', 'hvac', 'general'] as const satisfies readonly VendorTradeSlug[]
+
+type VendorTradeCategory = (typeof VENDOR_FILTER_SLUGS)[number]
 
 type VendorRow = {
   id: string
@@ -764,13 +771,12 @@ type VendorRow = {
   statusLabel: string
 }
 
-const VENDOR_CATEGORY_FILTER_OPTIONS: { value: 'all' | VendorTradeCategory; label: string }[] = [
-  { value: 'all', label: 'All categories' },
-  { value: 'plumbing', label: 'Plumbing' },
-  { value: 'electrical', label: 'Electrical' },
-  { value: 'hvac', label: 'HVAC' },
-  { value: 'general', label: 'General' },
-]
+const VENDOR_CATEGORY_FILTER_OPTIONS: {
+  value: 'all' | VendorTradeCategory
+  label: string
+}[] = vendorTradeFilterSubset(VENDOR_FILTER_SLUGS, {
+  includeAll: true,
+}) as { value: 'all' | VendorTradeCategory; label: string }[]
 
 const VENDORS: VendorRow[] = [
   {
@@ -1860,7 +1866,7 @@ export function OverrideAutomationModal({
       })
       onClose()
     } catch (error) {
-      setApplyError(error instanceof Error ? error.message : 'Failed to apply override.')
+      setApplyError(getErrorMessage(error, 'Failed to apply override.'))
     } finally {
       setApplyingOverride(false)
     }
@@ -2264,7 +2270,7 @@ export function OverrideAutomationModal({
                           className={[
                             'flex min-h-[64px] cursor-pointer flex-col rounded-[10px] border-2 px-[14px] py-[14px] transition-colors',
                             included
-                              ? 'border-[#2b7fff] bg-[#eff6ff]'
+                              ? 'border-[#611879]/40 bg-[#f5f0f8]'
                               : 'border-[#e5e7eb] bg-white',
                           ].join(' ')}
                         >
@@ -2287,7 +2293,7 @@ export function OverrideAutomationModal({
                               className={[
                                 'mt-0.5 flex size-5 shrink-0 items-center justify-center rounded border-2',
                                 included
-                                  ? 'border-[#2b7fff] bg-[#2b7fff]'
+                                  ? 'border-[#611879] bg-[#611879]'
                                   : 'border-[#d1d5dc] bg-white',
                               ].join(' ')}
                               aria-hidden
@@ -2319,7 +2325,7 @@ export function OverrideAutomationModal({
                               <p className="text-[12px] leading-4 text-[#6a7282]">{item.category}</p>
                             </div>
                             {included ? (
-                              <span className="inline-flex shrink-0 items-center rounded-lg bg-[#dbeafe] px-2.5 py-0.5 text-[12px] font-medium text-[#1447e6]">
+                              <span className="inline-flex shrink-0 items-center rounded-lg bg-[#f3e8ff] px-2.5 py-0.5 text-[12px] font-medium text-[#611879]">
                                 Included
                               </span>
                             ) : null}
@@ -2330,11 +2336,11 @@ export function OverrideAutomationModal({
                     {inspectionScopeCustomItems.map((item) => (
                       <div
                         key={item.id}
-                        className="flex min-h-[64px] flex-col rounded-[10px] border-2 border-[#2b7fff] bg-[#eff6ff] px-[14px] py-[14px]"
+                        className="flex min-h-[64px] flex-col rounded-[10px] border-2 border-[#611879]/40 bg-[#f5f0f8] px-[14px] py-[14px]"
                       >
                         <div className="flex w-full items-center gap-3">
                           <span
-                            className="mt-0.5 flex size-5 shrink-0 items-center justify-center rounded border-2 border-[#2b7fff] bg-[#2b7fff]"
+                            className="mt-0.5 flex size-5 shrink-0 items-center justify-center rounded border-2 border-[#611879] bg-[#611879]"
                             aria-hidden
                           >
                             <svg
@@ -2361,7 +2367,7 @@ export function OverrideAutomationModal({
                             </p>
                             <p className="text-[12px] leading-4 text-[#6a7282]">{item.category}</p>
                           </div>
-                          <span className="inline-flex shrink-0 items-center rounded-lg bg-[#dbeafe] px-2.5 py-0.5 text-[12px] font-medium text-[#1447e6]">
+                          <span className="inline-flex shrink-0 items-center rounded-lg bg-[#f3e8ff] px-2.5 py-0.5 text-[12px] font-medium text-[#611879]">
                             Included
                           </span>
                         </div>

@@ -2,6 +2,7 @@ import {
   adminEdgeInvokeHeaders,
   fetchAdminEdgeFunction,
 } from '@/api/adminReassignVendor'
+import { getAdminEdgeSecret } from '@/lib/adminEdgeAuth'
 import { getActiveLandlordId } from '@/lib/activeLandlord'
 
 export type TriggerMoveOutFromLeaseRenewalResult =
@@ -18,16 +19,13 @@ function functionUrl(): string | undefined {
   return base ? `${base}/functions/v1/trigger-move-out-from-lease-renewal` : undefined
 }
 
-function adminSecret(): string | undefined {
-  return import.meta.env.VITE_ADMIN_REASSIGN_SECRET?.trim() || undefined
-}
 
 export async function postTriggerMoveOutFromLeaseRenewal(
   leaseRenewalRunId: string,
   landlordId?: string,
 ): Promise<TriggerMoveOutFromLeaseRenewalResult> {
   const url = functionUrl()
-  const secret = adminSecret()
+  const secret = getAdminEdgeSecret()
   if (!url || !secret) {
     return { ok: false, error: 'Admin workflow configuration is missing.' }
   }

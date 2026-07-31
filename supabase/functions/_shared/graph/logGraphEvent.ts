@@ -1,17 +1,16 @@
+/**
+ * Legacy flat activity-log helper.
+ * Delegates to the official `recordActivityLog` — prefer calling that directly.
+ */
 import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.49.1"
+import {
+  recordActivityLog,
+  type ActivityLogActorType,
+  type ActivityLogSource,
+} from "./recordActivityLog.ts"
 
-export type GraphEventSource =
-  | "sms"
-  | "dashboard"
-  | "vendor_portal"
-  | "edge_function"
-  | "automation"
-
-export type GraphEventActorType =
-  | "resident"
-  | "vendor"
-  | "landlord"
-  | "system"
+export type GraphEventSource = ActivityLogSource
+export type GraphEventActorType = ActivityLogActorType
 
 export type LogGraphEventInput = {
   landlord_id: string
@@ -34,45 +33,37 @@ export type LogGraphEventInput = {
   metadata?: Record<string, unknown>
 }
 
-/** Append an operations graph event (non-throwing on insert failure). */
+/** @deprecated Prefer `recordActivityLog`. Delegates to the official activity log. */
 export async function logGraphEvent(
   supabase: SupabaseClient,
   params: LogGraphEventInput,
 ): Promise<string | null> {
-  const { data, error } = await supabase
-    .from("operations_graph_events")
-    .insert({
-      landlord_id: params.landlord_id,
-      event_type: params.event_type,
-      source: params.source,
-      actor_type: params.actor_type ?? null,
-      actor_id: params.actor_id ?? null,
-      property_id: params.property_id ?? null,
-      unit_id: params.unit_id ?? null,
-      resident_id: params.resident_id ?? null,
-      vendor_id: params.vendor_id ?? null,
-      maintenance_request_id: params.maintenance_request_id ?? null,
-      conversation_id: params.conversation_id ?? null,
-      message_id: params.message_id ?? null,
-      workflow_run_id: params.workflow_run_id ?? null,
-      workflow_template_id: params.workflow_template_id ?? null,
-      occupancy_id: params.occupancy_id ?? null,
-      inspection_id: params.inspection_id ?? null,
-      task_id: params.task_id ?? null,
-      metadata: params.metadata ?? {},
-    })
-    .select("id")
-    .single()
-
-  if (error) {
-    console.error(
-      "[logGraphEvent]",
-      params.event_type,
-      params.source,
-      error.message,
-    )
-    return null
-  }
-
-  return (data?.id as string | undefined) ?? null
+  return recordActivityLog(supabase, {
+    landlordId: params.landlord_id,
+    eventType: params.event_type,
+    source: params.source,
+    actorType: params.actor_type ?? null,
+    actorId: params.actor_id ?? null,
+    propertyId: params.property_id ?? null,
+    unitId: params.unit_id ?? null,
+    residentId: params.resident_id ?? null,
+    vendorId: params.vendor_id ?? null,
+    maintenanceRequestId: params.maintenance_request_id ?? null,
+    conversationId: params.conversation_id ?? null,
+    messageId: params.message_id ?? null,
+    workflowRunId: params.workflow_run_id ?? null,
+    workflowTemplateId: params.workflow_template_id ?? null,
+    occupancyId: params.occupancy_id ?? null,
+    inspectionId: params.inspection_id ?? null,
+    taskId: params.task_id ?? null,
+    metadata: params.metadata ?? {},
+  })
 }
+
+export {
+  recordActivityLog,
+  normalizeActivityLogSource,
+  type RecordActivityLogInput,
+  type ActivityLogSource,
+  type ActivityLogActorType,
+} from "./recordActivityLog.ts"

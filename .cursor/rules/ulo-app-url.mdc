@@ -1,0 +1,42 @@
+---
+description: One shared helper for public Ulo app URLs (vendor, rent, work order, estimate, invoice)
+alwaysApply: true
+---
+
+# Ulo public app URLs — one builder
+
+Every feature that needs a **website** link (SMS, email, Connect return, deep link) must use the shared helpers — do not concatenate `APP_URL` / `window.location.origin` + path in feature code.
+
+## APIs
+
+| Runtime | Module |
+|---|---|
+| Edge | `supabase/functions/_shared/uloAppUrl.ts` → `uloAppOrigin`, `uloAppUrl.*` |
+| Client | `src/lib/uloAppUrl.ts` → `uloAppOrigin`, `uloAppUrl.*` |
+
+Named routes:
+
+| Helper | Path |
+|---|---|
+| `uloAppUrl.vendorVerification(token)` | `/v/:token` |
+| `uloAppUrl.rentPayment({ runId, residentId, billingPeriod, amountDue })` | `/pay/rent?...` |
+| `uloAppUrl.workOrder(token)` | `/w/:token` |
+| `uloAppUrl.estimate(token)` | `/estimate/:token` |
+| `uloAppUrl.invoice(token)` | `/invoice/:token` |
+| `uloAppUrl.upload(token)` | `/upload/:token` |
+| `uloAppUrl.admin(path?)` | `/admin` or `/admin/...` |
+| `uloAppUrl.absolute(path)` | any other app path |
+
+Connect return/refresh base: `resolveConnectAppBaseUrl` (delegates to `uloAppOrigin`) or `uloAppOrigin({ returnOrigin, requestOrigin, fallback: "" })`.
+
+## Do not
+
+- Rebuild `APP_URL + "/v/" + token` (or estimate/invoice/upload/work-order) in new feature code
+- Put **Stripe Checkout session URLs** or **`…/functions/v1/…` invoke URLs** into this helper — those are not public app pages
+- URL-encode Stripe’s `{CHECKOUT_SESSION_ID}` placeholder (keep it literal in success_url)
+
+## When adding a new public page
+
+1. Add a named helper on `uloAppUrl` (edge + client)
+2. Call it from SMS/email/Connect/deep-link builders
+3. Keep path shapes identical across runtimes

@@ -7,67 +7,12 @@
  * `x-admin-reassign-secret` when `VITE_SUPABASE_ANON_KEY` is set.
  */
 
-/** Dev-only: warn when reassign URL points at a different host than `VITE_SUPABASE_URL` (typos → Failed to fetch). */
-function warnIfAdminReassignHostMismatch(url: string): void {
-  if (!import.meta.env.DEV) return
-  const base = import.meta.env.VITE_SUPABASE_URL?.trim()
-  if (!base) return
-  try {
-    const u = new URL(url)
-    const b = new URL(base.replace(/\/$/, ''))
-    if (u.hostname !== b.hostname) {
-      console.warn(
-        '[admin reassign] VITE_ADMIN_REASSIGN_URL host differs from VITE_SUPABASE_URL — wrong project ref often causes Failed to fetch.',
-        { reassignHost: u.hostname, supabaseHost: b.hostname },
-      )
-    }
-  } catch {
-    console.warn('[admin reassign] VITE_ADMIN_REASSIGN_URL is not a valid URL:', url)
-  }
-}
+import { requireAdminEdgeSecret, formatAdminEdgeUnauthorizedError } from '@/lib/adminEdgeAuth'
 
-/**
- * `fetch` for admin Edge URLs; turns opaque `TypeError: Failed to fetch` into
- * actionable text (CORS preflight, bad host, offline, extensions).
- */
-export async function fetchAdminEdgeFunction(
-  url: string,
-  init: RequestInit,
-): Promise<Response> {
-  warnIfAdminReassignHostMismatch(url)
-  try {
-    return await fetch(url, init)
-  } catch (e) {
-    if (e instanceof TypeError) {
-      const u = url.trim()
-      throw new TypeError(
-        `Failed to reach ${u}: ${e.message}. Check DevTools → Network for a failed OPTIONS (CORS) or DNS error; copy the function URL from Supabase Dashboard (same project as VITE_SUPABASE_URL); redeploy admin-reassign-vendor / recommend-vendor-alternatives after CORS changes.`,
-      )
-    }
-    throw e
-  }
-}
-
-/** Headers for admin-only Edge calls from the browser against hosted Supabase. */
-export function adminEdgeInvokeHeaders(secret: string): Record<string, string> {
-  const s = secret.trim()
-  const anon =
-    typeof import.meta !== "undefined" &&
-    import.meta.env?.VITE_SUPABASE_ANON_KEY != null
-      ? String(import.meta.env.VITE_SUPABASE_ANON_KEY).trim()
-      : ""
-  const h: Record<string, string> = {
-    "Content-Type": "application/json",
-    "x-admin-reassign-secret": s,
-  }
-  if (anon) {
-    h.apikey = anon
-    h.Authorization = `Bearer ${anon}`
-  } else {
-    h.Authorization = `Bearer ${s}`
-  }
-  return h
-}
+export {
+  adminEdgeInvokeHeaders,
+  fetchAdminEdgeFunction,
+} from '@/lib/adminEdgeAuth'
 
 export type AdminVendorReassignChoice = {
   vendorName: string
@@ -78,28 +23,37 @@ export type AdminVendorReassignChoice = {
   vendorCategory?: string | null
 }
 
-export type AdminReassignVendorInput = {
-  url: string
-  secret: string
-  ticketId: string
-} & AdminVendorReassignChoice
-
 export type AdminReassignVendorOk = {
   ok: true
   ticketId: string
-  assigned_vendor_id: string
+  vendorId: string
+  vendorName: string
 }
 
-export async function postAdminReassignVendor(
-  input: AdminReassignVendorInput,
-): Promise<AdminReassignVendorOk> {
+export function resolveAdminReassignUrl(): string | null {
+  const explicit = import.meta.env.VITE_ADMIN_REASSIGN_URL?.trim()
+  if (explicit) return explicit
+  const base = import.meta.env.VITE_SUPABASE_URL?.trim()?.replace(/\/$/, '')
+  if (base) return `${base}/functions/v1/admin-reassign-vendor`
+  return null
+}
+
+export async function postAdminReassignVendor(input: {
+  url: string
+  secret?: string
+  ticketId: string
+  vendorName?: string
+  vendorId?: string
+  createVendorIfMissing?: boolean
+  vendorCategory?: string | null
+}): Promise<AdminReassignVendorOk> {
   const url = input.url.trim()
-  const secret = input.secret.trim()
-  if (!url || !secret) {
-    throw new Error("Admin reassign: missing URL or secret")
+  const secret = (input.secret ?? requireAdminEdgeSecret('Admin reassign')).trim()
+  if (!url) {
+    throw new Error('Admin reassign: missing URL')
   }
   const vid = input.vendorId?.trim()
-  const name = input.vendorName.trim()
+  const name = input.vendorName?.trim()
   if (!vid && !name) {
     throw new Error("Admin reassign: vendorName or vendorId required")
   }
@@ -108,7 +62,7 @@ export async function postAdminReassignVendor(
   }
   if (vid) {
     requestJson.vendorId = vid
-  } else {
+  } else if (name) {
     requestJson.vendorName = name
   }
   if (input.createVendorIfMissing === true) {
@@ -138,9 +92,7 @@ export async function postAdminReassignVendor(
       res.status === 401 &&
       String(err.error ?? '').toLowerCase() === 'unauthorized'
     ) {
-      throw new Error(
-        `${base} (401): Edge secret ADMIN_REASSIGN_SECRET must exactly match VITE_ADMIN_REASSIGN_SECRET for this project (trimmed; check Dashboard → Edge Functions → Secrets).`,
-      )
+      throw new Error(formatAdminEdgeUnauthorizedError(base))
     }
     throw new Error(base)
   }

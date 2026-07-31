@@ -1,8 +1,26 @@
+import { getErrorMessage } from '@/lib/errorMessage'
 /**
  * New Landlord onboarding — bulk document upload, mock OCR pipeline, and extraction review.
  * V1 uses client-side mock processing until real document AI is wired.
+ * File bytes are stored in the landlord-onboarding-documents bucket for later preview.
  */
-import type { MockExtractionReview } from '@/lib/onboardingMockExtraction'
+import type { OnboardingAccountSetup, OnboardingOccupancyStatus } from '@/lib/onboarding'
+import {
+  buildMockExtractionReview,
+  type DocumentCategory,
+  type MockExtractionReview,
+  type UploadedOnboardingDoc,
+} from '@/lib/onboardingMockExtraction'
+import {
+  emptyReviewManualAccount,
+  normalizeReviewManualAccount,
+  type OnboardingReviewManualAccount,
+} from '@/lib/onboardingReviewManual'
+import { supabase } from '@/lib/supabase'
+
+export type { OnboardingReviewManualAccount } from '@/lib/onboardingReviewManual'
+
+export const LANDLORD_ONBOARDING_DOCUMENTS_BUCKET = 'landlord-onboarding-documents'
 
 export type UploadFileStatus =
   | 'waiting'
@@ -48,6 +66,10 @@ export type OnboardingUploadedDocument = {
   errorMessage: string | null
   imageLabels: string[]
   hasHandwriting: boolean
+  /** Private storage object for Org Settings preview (set after upload). */
+  storageBucket?: string | null
+  storagePath?: string | null
+  contentType?: string | null
 }
 
 export type ExtractedLeaseInfo = {
@@ -95,9 +117,15 @@ export type OnboardingExtractedProperty = {
   id: string
   name: string
   address: string
+  /** Street line when address is a full line; city/state/zip collected manually. */
+  city: string
+  state: string
+  zipCode: string
   propertyType: string
   unitCount: number
   unitLabels: string
+  propertyManagerName: string
+  propertyManagerPhone: string
   sourceDocumentName: string
   confidence: number
   selected: boolean
@@ -122,6 +150,10 @@ export type OnboardingExtractedResident = {
   email: string
   leaseStart: string
   leaseEnd: string
+  monthlyRent: string
+  rentDueDay: string
+  occupancyStatus: OnboardingOccupancyStatus
+  maintenanceResponsibilitiesClause: string
   sourceDocumentName: string
   confidence: number
   selected: boolean
@@ -134,6 +166,7 @@ export type OnboardingExtractedVendor = {
   category: string | null
   phone: string
   email: string
+  preferredEmergency: boolean
   sourceDocumentName: string
   confidence: number
   selected: boolean
@@ -155,6 +188,8 @@ export type OnboardingExtractedMaintenanceIssue = {
 }
 
 export type OnboardingExtractionReview = {
+  /** Manual account fields — required on Fast Track even when docs fill the portfolio. */
+  account: OnboardingReviewManualAccount
   properties: OnboardingExtractedProperty[]
   units: OnboardingExtractedUnit[]
   residents: OnboardingExtractedResident[]
@@ -346,7 +381,37 @@ export function createUploadedDocumentFromFile(file: File): OnboardingUploadedDo
         )
       : [],
     hasHandwriting: /move.?in|inspection|checklist|signed|handwritten/i.test(file.name),
+    storageBucket: null,
+    storagePath: null,
+    contentType: file.type || null,
   }
+}
+
+function safeStorageFileName(fileName: string): string {
+  const trimmed = fileName.trim() || 'document'
+  return trimmed.replace(/[^\w.\- ()]+/g, '_').slice(0, 120)
+}
+
+/** Persist onboarding file bytes so Org Settings can open a signed preview later. */
+export async function persistOnboardingDocumentFile(
+  landlordId: string,
+  docId: string,
+  file: File,
+): Promise<{ storageBucket: string; storagePath: string } | { error: string }> {
+  if (!supabase) return { error: 'Storage unavailable' }
+  if (!landlordId.trim() || !docId.trim()) return { error: 'Missing landlord or document id' }
+
+  const storageBucket = LANDLORD_ONBOARDING_DOCUMENTS_BUCKET
+  const storagePath = `${landlordId}/${docId}/${safeStorageFileName(file.name)}`
+  const { error } = await supabase.storage.from(storageBucket).upload(storagePath, file, {
+    contentType: file.type || 'application/octet-stream',
+    upsert: true,
+  })
+  if (error) {
+    console.warn('[onboardingDocumentUpload] storage upload failed', error.message)
+    return { error: getErrorMessage(error, 'Upload failed. Please try again.') }
+  }
+  return { storageBucket, storagePath }
 }
 
 export function formatFileSize(bytes: number): string {
@@ -434,17 +499,160 @@ export function anyDocumentProcessing(docs: OnboardingUploadedDocument[]): boole
   )
 }
 
-/** Document upload review: never invent portfolio entities.
- * Real OCR can replace this later; until then New Landlord only keeps what the user enters. */
-export function buildOnboardingExtractionReview(
-  documents: OnboardingUploadedDocument[],
-): OnboardingExtractionReview {
-  void documents
-  return emptyExtractionReview()
+function mapUploadCategoryToMock(category: OnboardingDocumentCategory): DocumentCategory {
+  switch (category) {
+    case 'lease_agreement':
+    case 'move_in_document':
+      return 'lease_agreements'
+    case 'resident_roster':
+    case 'rent_roll':
+      return 'rent_roll'
+    case 'inspection_report':
+      return 'inspection_report'
+    case 'vendor_invoice':
+    case 'vendor_contract':
+    case 'w9_form':
+      return 'vendor_invoice'
+    case 'insurance_certificate':
+      return 'insurance_certificate'
+    case 'expense_report':
+    case 'property_statement':
+      return 'maintenance_history'
+    default:
+      return 'lease_agreements'
+  }
 }
 
-export function emptyExtractionReview(): OnboardingExtractionReview {
+function parseAddressParts(address: string): { street: string; city: string; state: string; zipCode: string } {
+  const parts = address.split(',').map((part) => part.trim()).filter(Boolean)
+  if (parts.length >= 3) {
+    const stateZip = parts[parts.length - 1] ?? ''
+    const stateZipMatch = stateZip.match(/^([A-Za-z]{2})\s+(\d{5}(?:-\d{4})?)$/)
+    return {
+      street: parts[0] ?? '',
+      city: parts[parts.length - 2] ?? '',
+      state: stateZipMatch?.[1]?.toUpperCase() ?? stateZip.slice(0, 2).toUpperCase(),
+      zipCode: stateZipMatch?.[2] ?? '',
+    }
+  }
+  return { street: address.trim(), city: '', state: '', zipCode: '' }
+}
+
+/** Build extraction review from uploaded docs (mock OCR) + empty manual account seed. */
+export function buildOnboardingExtractionReview(
+  documents: OnboardingUploadedDocument[],
+  accountSeed?: Partial<OnboardingAccountSetup> | null,
+): OnboardingExtractionReview {
+  const account = emptyReviewManualAccount(accountSeed)
+  if (documents.length === 0) {
+    return emptyExtractionReview(accountSeed)
+  }
+
+  const mockDocs: UploadedOnboardingDoc[] = documents.map((doc) => ({
+    id: doc.id,
+    fileName: doc.fileName,
+    category: mapUploadCategoryToMock(doc.documentCategory),
+  }))
+  const mock = buildMockExtractionReview([], mockDocs)
+  const sourceName = documents[0]?.fileName ?? 'Uploaded document'
+
   return {
+    account,
+    properties: mock.properties.map((item) => {
+      const parts = parseAddressParts(item.address)
+      return {
+        id: item.id,
+        name: item.name,
+        address: parts.street || item.address,
+        city: parts.city,
+        state: parts.state,
+        zipCode: parts.zipCode,
+        propertyType: 'multifamily',
+        unitCount: item.unitCount,
+        unitLabels: Array.from({ length: item.unitCount }, (_, i) => String(101 + i)).join(', '),
+        propertyManagerName: '',
+        propertyManagerPhone: '',
+        sourceDocumentName: sourceName,
+        confidence: 86,
+        selected: item.selected,
+        needsReview: !parts.city || !parts.state || !parts.zipCode,
+      }
+    }),
+    units: mock.units.map((item) => ({
+      id: item.id,
+      label: item.label,
+      building: item.building,
+      sourceDocumentName: sourceName,
+      confidence: 90,
+      selected: item.selected,
+    })),
+    residents: mock.residents.map((item) => ({
+      id: item.id,
+      fullName: item.fullName,
+      unit: item.unit,
+      building: item.building,
+      phone: item.phone,
+      email: item.email,
+      leaseStart: item.leaseStart,
+      leaseEnd: item.leaseEnd,
+      monthlyRent: '',
+      rentDueDay: '',
+      occupancyStatus: 'active' as const,
+      maintenanceResponsibilitiesClause: '',
+      sourceDocumentName: sourceName,
+      confidence: 84,
+      selected: item.selected,
+      needsReview: true,
+    })),
+    leases: mock.leases.map((item) => ({
+      id: item.id,
+      residentName: item.residentName,
+      unit: item.unit,
+      building: item.building,
+      leaseStart: item.leaseStart,
+      leaseEnd: item.leaseEnd,
+      rentAmount: item.rentAmount ?? '',
+      securityDeposit: '',
+      sourceDocumentName: sourceName,
+      confidence: 82,
+      selected: item.selected,
+      needsReview: false,
+    })),
+    vendors: mock.vendors.map((item) => ({
+      id: item.id,
+      name: item.name,
+      category: item.category,
+      phone: item.phone,
+      email: item.email,
+      preferredEmergency: false,
+      sourceDocumentName: sourceName,
+      confidence: 83,
+      selected: item.selected,
+      needsReview: false,
+    })),
+    maintenanceIssues: mock.maintenanceIssues.map((item) => ({
+      id: item.id,
+      unit: item.unit,
+      building: item.building,
+      category: item.category,
+      description: item.description,
+      priority: item.priority,
+      sourceDocumentName: sourceName,
+      confidence: 80,
+      selected: item.selected,
+      needsReview: false,
+    })),
+    financialRecords: [],
+    needsReview: [],
+    imageLabels: [],
+  }
+}
+
+export function emptyExtractionReview(
+  accountSeed?: Partial<OnboardingAccountSetup> | null,
+): OnboardingExtractionReview {
+  return {
+    account: emptyReviewManualAccount(accountSeed),
     properties: [],
     units: [],
     residents: [],
@@ -457,6 +665,43 @@ export function emptyExtractionReview(): OnboardingExtractionReview {
   }
 }
 
+/** Ensure older persisted reviews still have account + new entity fields. */
+export function normalizeExtractionReview(
+  review: OnboardingExtractionReview | null | undefined,
+  accountSeed?: Partial<OnboardingAccountSetup> | null,
+): OnboardingExtractionReview {
+  if (!review) return emptyExtractionReview(accountSeed)
+  return {
+    account: normalizeReviewManualAccount(review.account ?? accountSeed),
+    properties: (review.properties ?? []).map((item) => ({
+      ...item,
+      city: item.city ?? '',
+      state: item.state ?? '',
+      zipCode: item.zipCode ?? '',
+      propertyType: item.propertyType || 'multifamily',
+      propertyManagerName: item.propertyManagerName ?? '',
+      propertyManagerPhone: item.propertyManagerPhone ?? '',
+    })),
+    units: review.units ?? [],
+    residents: (review.residents ?? []).map((item) => ({
+      ...item,
+      monthlyRent: item.monthlyRent ?? '',
+      rentDueDay: item.rentDueDay ?? '',
+      occupancyStatus: item.occupancyStatus ?? 'active',
+      maintenanceResponsibilitiesClause: item.maintenanceResponsibilitiesClause ?? '',
+    })),
+    leases: review.leases ?? [],
+    vendors: (review.vendors ?? []).map((item) => ({
+      ...item,
+      preferredEmergency: Boolean(item.preferredEmergency),
+    })),
+    maintenanceIssues: review.maintenanceIssues ?? [],
+    financialRecords: review.financialRecords ?? [],
+    needsReview: review.needsReview ?? [],
+    imageLabels: review.imageLabels ?? [],
+  }
+}
+
 export function toMockExtractionReview(review: OnboardingExtractionReview): MockExtractionReview {
   return {
     properties: review.properties
@@ -464,7 +709,7 @@ export function toMockExtractionReview(review: OnboardingExtractionReview): Mock
       .map((item) => ({
         id: item.id,
         name: item.name,
-        address: item.address,
+        address: [item.address, item.city, item.state, item.zipCode].filter(Boolean).join(', '),
         unitCount: item.unitCount,
         selected: true,
       })),
@@ -488,6 +733,10 @@ export function toMockExtractionReview(review: OnboardingExtractionReview): Mock
         leaseStart: item.leaseStart,
         leaseEnd: item.leaseEnd,
         selected: true,
+        monthlyRent: item.monthlyRent,
+        rentDueDay: item.rentDueDay,
+        occupancyStatus: item.occupancyStatus,
+        maintenanceResponsibilitiesClause: item.maintenanceResponsibilitiesClause,
       })),
     vendors: review.vendors
       .filter((item) => item.selected)
@@ -498,6 +747,7 @@ export function toMockExtractionReview(review: OnboardingExtractionReview): Mock
         phone: item.phone,
         email: item.email,
         selected: true,
+        preferredEmergency: item.preferredEmergency,
       })),
     maintenanceIssues: review.maintenanceIssues
       .filter((item) => item.selected)
@@ -539,8 +789,168 @@ export function countSelectedInReview(review: OnboardingExtractionReview): numbe
   )
 }
 
+export type OnboardingReviewSelectionLog = {
+  selected: {
+    properties: number
+    units: number
+    residents: number
+    leases: number
+    vendors: number
+    maintenanceIssues: number
+    financialRecords: number
+    needsReview: number
+    imageLabels: number
+    total: number
+  }
+  skipped: {
+    properties: number
+    units: number
+    residents: number
+    leases: number
+    vendors: number
+    maintenanceIssues: number
+    financialRecords: number
+    needsReview: number
+    imageLabels: number
+    total: number
+  }
+  selectedIds: {
+    properties: string[]
+    units: string[]
+    residents: string[]
+    leases: string[]
+    vendors: string[]
+    maintenanceIssues: string[]
+    financialRecords: string[]
+  }
+  skippedIds: {
+    properties: string[]
+    units: string[]
+    residents: string[]
+    leases: string[]
+    vendors: string[]
+    maintenanceIssues: string[]
+    financialRecords: string[]
+  }
+}
+
+function countPair(items: Array<{ selected: boolean }>): { selected: number; skipped: number } {
+  let selected = 0
+  let skipped = 0
+  for (const item of items) {
+    if (item.selected) selected += 1
+    else skipped += 1
+  }
+  return { selected, skipped }
+}
+
+function idsBySelection<T extends { id: string; selected: boolean }>(
+  items: T[],
+): { selectedIds: string[]; skippedIds: string[] } {
+  const selectedIds: string[] = []
+  const skippedIds: string[] = []
+  for (const item of items) {
+    if (item.selected) selectedIds.push(item.id)
+    else skippedIds.push(item.id)
+  }
+  return { selectedIds, skippedIds }
+}
+
+/** Snapshot of what Continue will import vs leave out. */
+export function summarizeReviewSelections(
+  review: OnboardingExtractionReview,
+): OnboardingReviewSelectionLog {
+  const properties = countPair(review.properties)
+  const units = countPair(review.units)
+  const residents = countPair(review.residents)
+  const leases = countPair(review.leases)
+  const vendors = countPair(review.vendors)
+  const maintenanceIssues = countPair(review.maintenanceIssues)
+  const financialRecords = countPair(review.financialRecords)
+  const needsReviewSelected = review.needsReview.filter((i) => i.includeInImport).length
+  const needsReviewSkipped = review.needsReview.length - needsReviewSelected
+  const imageLabelsSelected = review.imageLabels.filter((i) => i.includeInImport).length
+  const imageLabelsSkipped = review.imageLabels.length - imageLabelsSelected
+
+  const propIds = idsBySelection(review.properties)
+  const unitIds = idsBySelection(review.units)
+  const residentIds = idsBySelection(review.residents)
+  const leaseIds = idsBySelection(review.leases)
+  const vendorIds = idsBySelection(review.vendors)
+  const issueIds = idsBySelection(review.maintenanceIssues)
+  const financialIds = idsBySelection(review.financialRecords)
+
+  const selectedTotal =
+    properties.selected +
+    units.selected +
+    residents.selected +
+    leases.selected +
+    vendors.selected +
+    maintenanceIssues.selected +
+    financialRecords.selected +
+    needsReviewSelected +
+    imageLabelsSelected
+  const skippedTotal =
+    properties.skipped +
+    units.skipped +
+    residents.skipped +
+    leases.skipped +
+    vendors.skipped +
+    maintenanceIssues.skipped +
+    financialRecords.skipped +
+    needsReviewSkipped +
+    imageLabelsSkipped
+
+  return {
+    selected: {
+      properties: properties.selected,
+      units: units.selected,
+      residents: residents.selected,
+      leases: leases.selected,
+      vendors: vendors.selected,
+      maintenanceIssues: maintenanceIssues.selected,
+      financialRecords: financialRecords.selected,
+      needsReview: needsReviewSelected,
+      imageLabels: imageLabelsSelected,
+      total: selectedTotal,
+    },
+    skipped: {
+      properties: properties.skipped,
+      units: units.skipped,
+      residents: residents.skipped,
+      leases: leases.skipped,
+      vendors: vendors.skipped,
+      maintenanceIssues: maintenanceIssues.skipped,
+      financialRecords: financialRecords.skipped,
+      needsReview: needsReviewSkipped,
+      imageLabels: imageLabelsSkipped,
+      total: skippedTotal,
+    },
+    selectedIds: {
+      properties: propIds.selectedIds,
+      units: unitIds.selectedIds,
+      residents: residentIds.selectedIds,
+      leases: leaseIds.selectedIds,
+      vendors: vendorIds.selectedIds,
+      maintenanceIssues: issueIds.selectedIds,
+      financialRecords: financialIds.selectedIds,
+    },
+    skippedIds: {
+      properties: propIds.skippedIds,
+      units: unitIds.skippedIds,
+      residents: residentIds.skippedIds,
+      leases: leaseIds.skippedIds,
+      vendors: vendorIds.skippedIds,
+      maintenanceIssues: issueIds.skippedIds,
+      financialRecords: financialIds.skippedIds,
+    },
+  }
+}
+
 export function hasExtractionReviewData(review: OnboardingExtractionReview): boolean {
   return (
+    Boolean(review.account?.companyName?.trim()) ||
+    Boolean(review.account?.contactName?.trim()) ||
     review.properties.length > 0 ||
     review.units.length > 0 ||
     review.residents.length > 0 ||
@@ -560,6 +970,7 @@ export function setAllReviewSelections(
   const mapSelected = <T extends { selected: boolean }>(items: T[]) =>
     items.map((item) => ({ ...item, selected }))
   return {
+    account: review.account ?? emptyReviewManualAccount(),
     properties: mapSelected(review.properties),
     units: mapSelected(review.units),
     residents: mapSelected(review.residents),

@@ -1,7 +1,7 @@
 import { serve } from "https://deno.land/std/http/server.ts"
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1"
 import { adminEdgeCorsHeaders } from "../_shared/admin_edge_cors.ts"
-import { adminReassignSecretAuthorized } from "../_shared/admin_reassign_auth.ts"
+import { requireAdminReassignAuth } from "../_shared/admin_edge_auth.ts"
 import { activateUnit } from "../_shared/unitVacancy.ts"
 
 const corsHeaders = adminEdgeCorsHeaders
@@ -24,10 +24,9 @@ serve(async (req) => {
   if (req.method !== "POST") {
     return jsonResponse({ error: "Method not allowed" }, 405)
   }
+  const adminAuth = requireAdminReassignAuth(req, "[activate-unit]", corsHeaders)
+  if (!adminAuth.ok) return adminAuth.response
 
-  if (!adminReassignSecretAuthorized(req)) {
-    return jsonResponse({ error: "Unauthorized" }, 401)
-  }
 
   let body: {
     landlordId?: string

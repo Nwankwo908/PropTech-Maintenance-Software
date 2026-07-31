@@ -8,11 +8,16 @@ import {
   updateJobStatus,
   vendorPortalUpdateUrl,
 } from '@/api/vendorPortalTickets'
+import {
+  normalizePropertyAccess,
+  propertyAccessDisplayRows,
+} from '@/lib/propertyAccess'
 import { formatVendorTradeLabel } from '@/lib/vendorTrades'
 import {
   VENDOR_TOKEN_CHANGED_EVENT,
   VENDOR_TOKEN_STORAGE_KEY,
 } from '@/lib/vendorToken'
+import { getErrorMessage } from '@/lib/errorMessage'
 
 function statusLabel(status: string | null | undefined): string {
   if (status == null) return 'Open'
@@ -73,7 +78,7 @@ class JobPageErrorBoundary extends Component<
   static getDerivedStateFromError(error: unknown) {
     return {
       message:
-        error instanceof Error ? error.message : 'Something went wrong opening this job.',
+        getErrorMessage(error, 'Something went wrong opening this job.'),
     }
   }
 
@@ -147,9 +152,7 @@ function WorkOrderPublicPageInner() {
       } catch (err) {
         if (cancelled) return
         setError(
-          err instanceof Error
-            ? err.message
-            : 'This job link is invalid or has expired.',
+          getErrorMessage(err, 'This job link is invalid or has expired.'),
         )
       }
     })()
@@ -190,8 +193,11 @@ function WorkOrderPublicPageInner() {
   const issueLabel = job.issueCategory
     ? formatVendorTradeLabel(job.issueCategory)
     : 'Maintenance'
-  const accessText =
-    job.accessInstructions?.trim() || job.accessInstructionsFallback
+  const accessRows = job.propertyAccess
+    ? propertyAccessDisplayRows(normalizePropertyAccess(job.propertyAccess))
+    : []
+  const ticketAccessNotes = job.accessInstructions?.trim() || ''
+  const accessFallback = job.accessInstructionsFallback
   const appointmentText = formatWhen(
     job.appointment.scheduledAt,
     job.appointment.windowText,
@@ -246,7 +252,7 @@ function WorkOrderPublicPageInner() {
       })
     } catch (err) {
       setStartWorkError(
-        err instanceof Error ? err.message : 'Could not start work. Try again.',
+        getErrorMessage(err, 'Could not start work. Try again.'),
       )
       setStartingWork(false)
     }
@@ -324,11 +330,36 @@ function WorkOrderPublicPageInner() {
 
         <section className="rounded-xl bg-white px-4 py-4 shadow-[0_1px_2px_rgba(16,24,40,0.04)]">
           <h2 className="text-[15px] font-semibold leading-6 text-[#101828]">
-            Access instructions
+            Property access
           </h2>
-          <p className="mt-2 whitespace-pre-wrap text-[14px] leading-6 text-[#364153]">
-            {accessText}
-          </p>
+          {accessRows.length > 0 ? (
+            <dl className="mt-3 space-y-3">
+              {accessRows.map((row) => (
+                <div key={row.label}>
+                  <dt className="text-[12px] font-semibold text-[#667085]">
+                    {row.label}
+                  </dt>
+                  <dd className="mt-0.5 text-[14px] leading-5 text-[#101828]">
+                    {row.value}
+                  </dd>
+                </div>
+              ))}
+            </dl>
+          ) : (
+            <p className="mt-2 whitespace-pre-wrap text-[14px] leading-6 text-[#364153]">
+              {ticketAccessNotes || accessFallback}
+            </p>
+          )}
+          {accessRows.length > 0 && ticketAccessNotes ? (
+            <div className="mt-4 border-t border-[#f2f4f7] pt-3">
+              <p className="text-[12px] font-semibold text-[#667085]">
+                Job-specific notes
+              </p>
+              <p className="mt-1 whitespace-pre-wrap text-[14px] leading-6 text-[#364153]">
+                {ticketAccessNotes}
+              </p>
+            </div>
+          ) : null}
         </section>
 
         <section className="rounded-xl bg-white px-4 py-4 shadow-[0_1px_2px_rgba(16,24,40,0.04)]">
@@ -441,7 +472,7 @@ function WorkOrderPublicPageInner() {
             )}
             <ActionLink
               href={job.links.upload}
-              label="Upload completion photos"
+              label="Upload completion photos & videos"
               disabled={!job.estimateApproved}
               disabledHint="Available after your estimate is approved"
             />

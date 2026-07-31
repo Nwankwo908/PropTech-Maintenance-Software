@@ -7,6 +7,7 @@ import {
   createClient,
   type SupabaseClient,
 } from "https://esm.sh/@supabase/supabase-js@2.49.1"
+import { uloAppUrl } from "../_shared/uloAppUrl.ts"
 
 const corsHeaders: Record<string, string> = {
   "Access-Control-Allow-Origin": "*",
@@ -50,14 +51,6 @@ async function photoSignedUrls(
     if (data?.signedUrl) urls.push(data.signedUrl)
   }
   return urls
-}
-
-function appBaseUrl(): string {
-  const raw = Deno.env.get("APP_URL")?.trim() ?? ""
-  if (!raw) return ""
-  const t = raw.replace(/\/$/, "")
-  if (/^https?:\/\//i.test(t)) return t
-  return `https://${t}`
 }
 
 serve(async (req) => {
@@ -344,12 +337,10 @@ serve(async (req) => {
     : []
   const completionPhotosUploaded = completionPhotoPaths.length > 0
 
-  const base = appBaseUrl()
-  const tokenEnc = encodeURIComponent(token)
   const links = {
-    estimate: base ? `${base}/estimate/${tokenEnc}` : `/estimate/${tokenEnc}`,
-    upload: base ? `${base}/upload/${tokenEnc}` : `/upload/${tokenEnc}`,
-    invoice: base ? `${base}/invoice/${tokenEnc}` : `/invoice/${tokenEnc}`,
+    estimate: uloAppUrl.estimate(token, { fallback: "" }),
+    upload: uloAppUrl.upload(token, { fallback: "" }),
+    invoice: uloAppUrl.invoice(token, { fallback: "" }),
     portal: `/vendor/ticket/${ticketId}`,
   }
 
@@ -357,6 +348,90 @@ serve(async (req) => {
     typeof row.access_instructions === "string"
       ? row.access_instructions.trim()
       : ""
+
+  let propertyAccess: {
+    buildingEntry: string
+    gateCode: string
+    lockboxLocation: string
+    lockboxCode: string
+    utilityRoomAccess: string
+    visitorParking: string
+    superintendentContact: string
+    emergencyAccessNotes: string
+  } | null = null
+
+  if (landlordId && building) {
+    const { data: accessRow } = await supabase
+      .from("property_access_profiles")
+      .select(
+        "building_entry, gate_code, lockbox_location, lockbox_code, utility_room_access, visitor_parking, superintendent_contact, emergency_access_notes",
+      )
+      .eq("landlord_id", landlordId)
+      .eq("building", building)
+      .maybeSingle()
+
+    if (accessRow) {
+      const mapped = {
+        buildingEntry:
+          typeof accessRow.building_entry === "string"
+            ? accessRow.building_entry.trim()
+            : "",
+        gateCode:
+          typeof accessRow.gate_code === "string" ? accessRow.gate_code.trim() : "",
+        lockboxLocation:
+          typeof accessRow.lockbox_location === "string"
+            ? accessRow.lockbox_location.trim()
+            : "",
+        lockboxCode:
+          typeof accessRow.lockbox_code === "string"
+            ? accessRow.lockbox_code.trim()
+            : "",
+        utilityRoomAccess:
+          typeof accessRow.utility_room_access === "string"
+            ? accessRow.utility_room_access.trim()
+            : "",
+        visitorParking:
+          typeof accessRow.visitor_parking === "string"
+            ? accessRow.visitor_parking.trim()
+            : "",
+        superintendentContact:
+          typeof accessRow.superintendent_contact === "string"
+            ? accessRow.superintendent_contact.trim()
+            : "",
+        emergencyAccessNotes:
+          typeof accessRow.emergency_access_notes === "string"
+            ? accessRow.emergency_access_notes.trim()
+            : "",
+      }
+      const hasAny = Object.values(mapped).some((v) => v.length > 0)
+      if (hasAny) propertyAccess = mapped
+    }
+  }
+
+  const propertyAccessPlain = propertyAccess
+    ? [
+        propertyAccess.buildingEntry &&
+          `Building entry: ${propertyAccess.buildingEntry}`,
+        propertyAccess.gateCode && `Gate code: ${propertyAccess.gateCode}`,
+        propertyAccess.lockboxLocation &&
+          `Lockbox location: ${propertyAccess.lockboxLocation}`,
+        propertyAccess.lockboxCode &&
+          `Lockbox code: ${propertyAccess.lockboxCode}`,
+        propertyAccess.utilityRoomAccess &&
+          `Utility room: ${propertyAccess.utilityRoomAccess}`,
+        propertyAccess.visitorParking &&
+          `Visitor parking: ${propertyAccess.visitorParking}`,
+        propertyAccess.superintendentContact &&
+          `Superintendent: ${propertyAccess.superintendentContact}`,
+        propertyAccess.emergencyAccessNotes &&
+          `Emergency access: ${propertyAccess.emergencyAccessNotes}`,
+      ]
+        .filter(Boolean)
+        .join("\n")
+    : ""
+
+  const mergedAccess =
+    accessRaw || propertyAccessPlain || null
 
   return jsonResponse({
     ok: true,
@@ -391,6 +466,9 @@ serve(async (req) => {
       accessInstructions: accessRaw || null,
       accessInstructionsFallback:
         "Contact the property team if you need entry instructions for this unit.",
+      propertyAccess,
+      /** Combined plain text when UI needs a single block (ticket notes preferred, else building profile). */
+      accessInstructionsCombined: mergedAccess,
       tenant: {
         name:
           typeof row.resident_name === "string" && row.resident_name.trim()

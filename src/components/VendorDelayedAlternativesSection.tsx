@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { getAdminEdgeSecret } from '@/lib/adminEdgeAuth'
 import {
   adminEdgeInvokeHeaders,
   fetchAdminEdgeFunction,
@@ -13,6 +14,7 @@ import {
   isVendorPendingAcceptDelayed,
   vendorAutoReassignDeadlineLabel,
 } from '@/lib/vendorDelayAlerts'
+import { getErrorMessage } from '@/lib/errorMessage'
 
 export type VendorDelayRowInput = {
   id: string
@@ -81,7 +83,7 @@ export function VendorDelayedAlternativesSection({
   )
   const ticketId = row.backendTicketId?.trim() || ''
   const recommendUrl = resolveVendorRecommendAlternativesUrl()
-  const secret = import.meta.env.VITE_ADMIN_REASSIGN_SECRET?.trim()
+  const secret = getAdminEdgeSecret()
   const vws = (row.vendorWorkStatus ?? '').trim().toLowerCase()
   const delayed = isVendorPendingAcceptDelayed(
     row.vendorWorkStatus,
@@ -164,7 +166,7 @@ export function VendorDelayedAlternativesSection({
           if (cancelled) return
           setAlternativesFromApi(false)
           setErr(
-            e instanceof Error ? e.message : 'Could not load suggestions',
+            getErrorMessage(e, 'Could not load suggestions'),
           )
           setCandidates(heur.length > 0 ? heur : staticList)
         } finally {

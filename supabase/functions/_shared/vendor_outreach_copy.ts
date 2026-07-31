@@ -6,6 +6,43 @@ export function formatWorkOrderRef(ticketId: string): string {
   return `WO-${compact || "0000"}`
 }
 
+/** Extract a WO-XXXX token from vendor SMS (case-insensitive). */
+export function extractWorkOrderRefFromSms(body: string): string | null {
+  const match = body.match(/\bWO[- ]?([0-9A-Fa-f]{4})\b/i)
+  if (!match?.[1]) return null
+  return `WO-${match[1].toUpperCase()}`
+}
+
+/** Remove WO-XXXX tokens so availability parsers see only the time text. */
+export function stripWorkOrderRefFromSms(body: string): string {
+  return body
+    .replace(/\bWO[- ]?[0-9A-Fa-f]{4}\b/gi, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+}
+
+export function workOrderRefMatchesTicket(
+  workOrderRef: string,
+  ticketId: string,
+): boolean {
+  const normalized = workOrderRef.trim().toUpperCase().replace(/\s+/g, "")
+  const withPrefix = normalized.startsWith("WO-")
+    ? normalized
+    : normalized.startsWith("WO")
+    ? `WO-${normalized.slice(2)}`
+    : `WO-${normalized}`
+  return formatWorkOrderRef(ticketId) === withPrefix
+}
+
+export type VendorOpenJobSmsLine = {
+  ticketId: string
+  workOrderRef: string
+  unit: string | null
+  building?: string | null
+  issueCategory?: string | null
+  description?: string | null
+}
+
 /** Full company / legal business name for greetings. */
 export function vendorCompanyName(vendorName: string): string {
   const trimmed = vendorName.trim()
@@ -95,21 +132,31 @@ export function buildVendorJobAssignmentSms(input: {
   jobDetailUrl?: string | null
   viewJobUrl?: string | null
   acceptUrl?: string | null
+  /** Resident-offered visit windows from intake. */
+  residentAvailabilityText?: string | null
 }): string {
   const company = vendorCompanyName(input.vendorName)
   const issueSummary = input.description.trim().replace(/\s+/g, " ")
   const wo = formatWorkOrderRef(input.ticketId)
+  const avail = input.residentAvailabilityText?.trim()
 
   // Job detail link is SMS 3 after accept + scheduling ask (`buildVendorJobDetailLinkSms`).
-  return [
+  const lines = [
     `Hi ${company},`,
     "",
     `Ulo has assigned you a new work order (${wo}).`,
     "",
     `Issue: ${issueSummary || "See work order for details."}`,
-    "",
-    "Would you like to take this job? Reply YES to accept or NO to decline.",
-  ].join("\n")
+  ]
+  if (avail) {
+    lines.push("")
+    lines.push(`Resident availability: ${avail}`)
+  }
+  lines.push("")
+  lines.push(
+    `Would you like to take this job? Reply YES ${wo} to accept or NO ${wo} to decline.`,
+  )
+  return lines.join("\n")
 }
 
 /** Job detail link — sent after schedule is locked (completes the scheduling thread). */
@@ -122,8 +169,24 @@ export function buildVendorJobDetailLinkSms(jobDetailUrl: string): string {
   ].join("\n")
 }
 
-export function buildVendorAvailabilityAskSms(): string {
-  return "Earliest availability?"
+export function buildVendorAvailabilityAskSms(
+  workOrderRef?: string | null,
+  residentAvailabilityText?: string | null,
+): string {
+  const wo = workOrderRef?.trim()
+  const forJob = wo ? ` for ${wo}` : ""
+  const avail = residentAvailabilityText?.trim()
+  if (avail) {
+    return (
+      `The resident shared these times${forJob}: ${avail}. ` +
+      "Please reply with a day and arrival window that works within those times " +
+      "(or the closest option you can do), e.g. Sat after 3pm or Mon 10:30am–12pm."
+    )
+  }
+  return (
+    `What's your earliest availability${forJob}? ` +
+    "Reply with a day and arrival window (e.g. Wed 9am–12pm) or an exact time (e.g. Wed at 10am)."
+  )
 }
 
 export function buildVendorScheduleConfirmedSms(input: {
@@ -147,17 +210,20 @@ export function buildVendorScheduleConfirmedSms(input: {
   return lines.join("\n")
 }
 
-/** Soft confirmation before locking a medium-confidence parse. */
+/** Soft confirmation before sending a window to the tenant. */
 export function buildVendorScheduleSoftConfirmSms(windowText: string): string {
-  const when = windowText.trim() || "that time"
-  return `Got it — ${when}. Reply YES to confirm, or send a different time.`
+  const when = windowText.trim() || "that arrival window"
+  return `Got it — ${when}. Reply YES to send that to the tenant, or send a different window.`
 }
 
 /** Soft clarification when availability is unclear (never a hard "couldn't save"). */
 export function buildVendorScheduleClarifySms(custom?: string): string {
   const q = (custom ?? "").trim()
   if (q) return q
-  return "Thanks — what day and time works best? For example: Tomorrow 9am."
+  return (
+    "Please reply with a specific date and arrival window " +
+    "(e.g. Tomorrow between 9am–12pm), or an exact time (e.g. Tomorrow at 10am)."
+  )
 }
 
 /** Soft retry when persistence fails but we still understood the time. */
@@ -208,14 +274,21 @@ export function buildVendorRetrySms(input: {
   return `Job alert resend · ${pri} job at ${unit}. Ref ${input.ticketId}. Check your email or portal to respond.`
 }
 
-export function buildVendorSmsAcceptReply(): string {
-  return buildVendorAvailabilityAskSms()
+export function buildVendorSmsAcceptReply(workOrderRef?: string | null): string {
+  return buildVendorAvailabilityAskSms(workOrderRef)
 }
 
 export function buildVendorSmsDeclineReply(): string {
   return "Thanks — we recorded your decline. We'll find another vendor for this job."
 }
 
-export function buildVendorSmsReplyPrompt(): string {
-  return "Would you like to take this job? Reply YES to accept or NO to decline."
+export function buildVendorSmsReplyPrompt(workOrderRef?: string | null): string {
+  const wo = workOrderRef?.trim()
+  if (wo) {
+    return `Would you like to take this job? Reply YES ${wo} to accept or NO ${wo} to decline.`
+  }
+  return (
+    "Would you like to take this job? Reply YES WO-XXXX to accept or NO WO-XXXX to decline " +
+    "(use the job ref from the offer)."
+  )
 }

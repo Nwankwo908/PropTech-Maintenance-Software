@@ -76,6 +76,48 @@ Deno.test("fridge not cold → appliance repair", async () => {
   assertEqual(r.vendorTrade, "appliance_repair", "trade")
 })
 
+Deno.test("mouse behind stove → pest_control not appliance", async () => {
+  const r = await classify(
+    "Today I saw a mouse come out from behind the stove and run across my kitchen counter.",
+  )
+  assertEqual(r.vendorTrade, "pest_control", "trade")
+})
+
+Deno.test("front steps metal piece + injury → carpentry urgent", async () => {
+  const r = await classify(
+    "Wanted to bring to your attention the steps leading to the front entrance. The metal piece is broken and almost hurt my daughter while she was climbing the stairs. It moves and the edge caught onto her sandal.",
+  )
+  assertEqual(r.vendorTrade, "carpentry", "trade")
+  assertTrue(
+    r.severity === "urgent" || r.severity === "critical",
+    "injury elevates severity",
+  )
+  assertTrue(
+    r.entities.safetyRisks.some((s) => /injury/i.test(s)),
+    "injury risk entity",
+  )
+})
+
+Deno.test("cracked concrete steps → concrete", async () => {
+  const r = await classify("The concrete front steps are cracked and crumbling.")
+  assertEqual(r.vendorTrade, "concrete", "trade")
+})
+
+Deno.test("loose deck board → deck_builder", async () => {
+  const r = await classify("A deck board is loose and unsafe near the railing.")
+  assertEqual(r.vendorTrade, "deck_builder", "trade")
+})
+
+Deno.test("brick step mortar → masonry", async () => {
+  const r = await classify("The brick step mortar is crumbling at the entrance.")
+  assertEqual(r.vendorTrade, "masonry", "trade")
+})
+
+Deno.test("handyman request → general", async () => {
+  const r = await classify("Need a handyman for general maintenance around the unit.")
+  assertEqual(r.vendorTrade, "general", "trade")
+})
+
 Deno.test("AC blowing warm air → HVAC", async () => {
   const r = await classify("AC blowing warm air")
   assertEqual(r.vendorTrade, "hvac", "trade")

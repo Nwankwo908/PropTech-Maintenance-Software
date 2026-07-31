@@ -1,4 +1,9 @@
+import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
+import {
+  UnitOccupancyStatusMenu,
+  type UnitOccupancyStatus,
+} from '@/components/UnitOccupancyStatusMenu'
 import type { PropertyUnitRow } from '@/lib/propertyUnitRows'
 import { propertyResidentDetailPath } from '@/lib/propertyRoutes'
 
@@ -10,30 +15,42 @@ function formatBalance(amount: number): string {
   })
 }
 
-function OccupancyBadge({ status }: { status: PropertyUnitRow['occupancyStatus'] }) {
-  if (status === 'occupied') {
-    return (
-      <span className="inline-flex rounded-[4px] bg-[#dcfce7] px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.06em] text-[#008236]">
-        Occupied
-      </span>
-    )
-  }
-
-  return (
-    <span className="inline-flex rounded-[4px] bg-[#f3f4f6] px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.06em] text-[#6a7282]">
-      Vacant
-    </span>
-  )
-}
-
 type PropertyUnitsTableProps = {
   building: string
   rows: PropertyUnitRow[]
   loading?: boolean
+  onOccupancyStatusChange?: (
+    unitId: string,
+    status: UnitOccupancyStatus,
+  ) => void | Promise<void | boolean>
 }
 
 /** Property detail — Units tab table (Figma property overview). */
-export function PropertyUnitsTable({ building, rows, loading = false }: PropertyUnitsTableProps) {
+export function PropertyUnitsTable({
+  building,
+  rows,
+  loading = false,
+  onOccupancyStatusChange,
+}: PropertyUnitsTableProps) {
+  const [statusOverrides, setStatusOverrides] = useState<
+    Partial<Record<string, UnitOccupancyStatus>>
+  >({})
+
+  // Drop optimistic overrides once persisted row status catches up.
+  useEffect(() => {
+    setStatusOverrides((prev) => {
+      let changed = false
+      const next = { ...prev }
+      for (const row of rows) {
+        if (next[row.id] != null && next[row.id] === row.occupancyStatus) {
+          delete next[row.id]
+          changed = true
+        }
+      }
+      return changed ? next : prev
+    })
+  }, [rows])
+
   if (loading) {
     return (
       <div className="mt-6 rounded-[10px] border border-[#e5e7eb] bg-white px-6 py-10 shadow-[0px_1px_2px_-1px_rgba(0,0,0,0.06)]">
@@ -70,37 +87,57 @@ export function PropertyUnitsTable({ building, rows, loading = false }: Property
             </tr>
           </thead>
           <tbody>
-            {rows.map((row) => (
-              <tr key={row.id} className="border-b border-[#f3f4f6] last:border-b-0">
-                <td className="whitespace-nowrap px-5 py-4 text-[14px] font-semibold leading-5 text-[#0a0a0a]">
-                  {row.unitDisplay}
-                </td>
-                <td className="whitespace-nowrap px-5 py-4 text-[14px] leading-5 text-[#364153]">
-                  {row.residentId && row.residentName ? (
-                    <Link
-                      to={propertyResidentDetailPath(building, row.residentId)}
-                      className="font-medium text-[#186179] transition-colors hover:text-[#0f4d5f] hover:underline"
-                    >
-                      {row.residentName}
-                    </Link>
-                  ) : (
-                    '—'
-                  )}
-                </td>
-                <td className="whitespace-nowrap px-5 py-4">
-                  <OccupancyBadge status={row.occupancyStatus} />
-                </td>
-                <td className="whitespace-nowrap px-5 py-4 text-[14px] leading-5 text-[#364153]">
-                  {row.openWorkflowLabel ?? '—'}
-                </td>
-                <td className="whitespace-nowrap px-5 py-4 text-[14px] leading-5 tabular-nums text-[#364153]">
-                  {row.occupancyStatus === 'occupied' ? formatBalance(row.balanceDue) : '—'}
-                </td>
-                <td className="whitespace-nowrap px-5 py-4 text-[14px] leading-5 text-[#364153]">
-                  {row.leaseEndLabel ?? '—'}
-                </td>
-              </tr>
-            ))}
+            {rows.map((row) => {
+              const status = statusOverrides[row.id] ?? row.occupancyStatus
+              const showOccupiedFields = status === 'occupied'
+
+              return (
+                <tr key={row.id} className="border-b border-[#f3f4f6] last:border-b-0">
+                  <td className="whitespace-nowrap px-5 py-4 text-[14px] font-semibold leading-5 text-[#0a0a0a]">
+                    {row.unitDisplay}
+                  </td>
+                  <td className="whitespace-nowrap px-5 py-4 text-[14px] leading-5 text-[#364153]">
+                    {showOccupiedFields && row.residentId && row.residentName ? (
+                      <Link
+                        to={propertyResidentDetailPath(building, row.residentId)}
+                        className="sa-link font-medium text-[#186179] hover:text-[#0f4d5f] hover:underline"
+                      >
+                        {row.residentName}
+                      </Link>
+                    ) : (
+                      '—'
+                    )}
+                  </td>
+                  <td className="whitespace-nowrap px-5 py-4">
+                    <UnitOccupancyStatusMenu
+                      status={status}
+                      onStatusChange={(next) => {
+                        setStatusOverrides((prev) => ({ ...prev, [row.id]: next }))
+                        void (async () => {
+                          const result = await onOccupancyStatusChange?.(row.id, next)
+                          if (result === false) {
+                            setStatusOverrides((prev) => {
+                              const copy = { ...prev }
+                              delete copy[row.id]
+                              return copy
+                            })
+                          }
+                        })()
+                      }}
+                    />
+                  </td>
+                  <td className="whitespace-nowrap px-5 py-4 text-[14px] leading-5 text-[#364153]">
+                    {row.openWorkflowLabel ?? '—'}
+                  </td>
+                  <td className="whitespace-nowrap px-5 py-4 text-[14px] leading-5 tabular-nums text-[#364153]">
+                    {showOccupiedFields ? formatBalance(row.balanceDue) : '—'}
+                  </td>
+                  <td className="whitespace-nowrap px-5 py-4 text-[14px] leading-5 text-[#364153]">
+                    {showOccupiedFields ? (row.leaseEndLabel ?? '—') : '—'}
+                  </td>
+                </tr>
+              )
+            })}
           </tbody>
         </table>
       </div>

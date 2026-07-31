@@ -29,6 +29,7 @@ import {
 import { fetchWorkflowPipelineDetail, type WorkflowPipelineDetail } from '@/lib/workflowPipelineDetail'
 import { WorkflowPipelineDetailPanel } from '@/components/WorkflowPipelineDetailPanel'
 import { supabase } from '@/lib/supabase'
+import { getErrorMessage } from '@/lib/errorMessage'
 
 type StageId = WorkflowKanbanStageId
 const STAGE_ORDER = WORKFLOW_KANBAN_STAGES
@@ -148,7 +149,7 @@ function StartLifecycleWorkflowModal({
       <div
         role="dialog"
         aria-modal="true"
-        className="w-full max-w-md rounded-[10px] border border-secondary bg-white shadow-lg"
+        className="sa-modal w-full max-w-md rounded-[10px] border border-secondary bg-white shadow-lg"
       >
         <div className="border-b border-secondary px-6 py-4">
           <h2 className="text-[16px] font-semibold text-extended-3">{titles[workflow]}</h2>
@@ -173,7 +174,7 @@ function StartLifecycleWorkflowModal({
               value={unitId}
               onChange={(e) => setUnitId(e.target.value)}
               disabled={loadingUnits || submitting}
-              className="h-10 w-full rounded-lg border border-secondary bg-white px-3 text-[14px] text-extended-3 outline-none focus:border-primary"
+              className="sa-surface h-10 w-full rounded-lg border border-secondary bg-white px-3 text-[14px] text-extended-3 outline-none focus:border-primary"
             >
               <option value="">{loadingUnits ? 'Loading units…' : 'Select unit'}</option>
               {units.map((unit) => (
@@ -286,14 +287,14 @@ function StartLifecycleWorkflowModal({
               type="button"
               onClick={onClose}
               disabled={submitting}
-              className="inline-flex h-9 cursor-pointer items-center rounded-[10px] border border-secondary px-4 text-[14px] font-medium text-extended-3 hover:bg-secondary disabled:opacity-60"
+              className="sa-press inline-flex h-9 cursor-pointer items-center rounded-[10px] border border-secondary px-4 text-[14px] font-medium text-extended-3 hover:bg-secondary disabled:opacity-60"
             >
               Cancel
             </button>
             <button
               type="submit"
               disabled={submitting || !unitId}
-              className="inline-flex h-9 cursor-pointer items-center rounded-[10px] bg-primary px-4 text-[14px] font-medium text-white hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
+              className="sa-press inline-flex h-9 cursor-pointer items-center rounded-[10px] bg-primary px-4 text-[14px] font-medium text-white hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
             >
               {submitting ? 'Starting…' : 'Start workflow'}
             </button>
@@ -327,7 +328,7 @@ function StartWorkflowChooser({
       <div
         role="dialog"
         aria-modal="true"
-        className="w-full max-w-sm rounded-[10px] border border-secondary bg-white p-2 shadow-lg"
+        className="sa-modal w-full max-w-sm rounded-[10px] border border-secondary bg-white p-2 shadow-lg"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="px-4 py-3">
@@ -340,7 +341,7 @@ function StartWorkflowChooser({
               key={opt.id}
               type="button"
               onClick={() => onPick(opt.id)}
-              className="flex cursor-pointer flex-col rounded-[10px] border border-secondary px-3 py-2.5 text-left transition-colors hover:bg-secondary"
+              className="sa-card flex cursor-pointer flex-col rounded-[10px] border border-secondary px-3 py-2.5 text-left hover:bg-secondary"
             >
               <span className="text-[14px] font-medium text-extended-3">{opt.label}</span>
               <span className="text-[12px] text-neutral">{opt.desc}</span>
@@ -368,7 +369,7 @@ function KanbanCardItem({
       id={`workflow-card-${card.id}`}
       onClick={() => onSelect(card.id)}
       className={[
-        'flex w-full flex-col gap-2 rounded-[10px] border bg-white p-3 text-left shadow-[0px_1px_2px_-1px_rgba(0,0,0,0.06)] transition-shadow outline-none hover:border-[#d1d5dc] focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2',
+        'sa-card flex w-full flex-col gap-2 rounded-[10px] border bg-white p-3 text-left shadow-[0px_1px_2px_-1px_rgba(0,0,0,0.06)] outline-none hover:border-[#d1d5dc] focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2',
         highlighted
           ? 'border-[#101828] ring-2 ring-[#101828]/20'
           : 'border-[#e5e7eb]',
@@ -464,7 +465,7 @@ export function AdminWorkflowOperationsDashboard() {
     try {
       setData(await fetchAdminWorkflowDashboard())
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err))
+      setError(getErrorMessage(err, 'Something went wrong. Please try again.'))
     } finally {
       setLoading(false)
     }
@@ -589,7 +590,7 @@ export function AdminWorkflowOperationsDashboard() {
       ) : null}
 
       {/* Workflow Pipeline (kanban) — grow with content; AdminLayout owns vertical scroll */}
-      <section className="flex w-full min-w-0 flex-col rounded-[10px] border border-[#e5e7eb] bg-white shadow-[0px_1px_2px_-1px_rgba(0,0,0,0.06)]">
+      <section className="sa-surface flex w-full min-w-0 flex-col rounded-[10px] border border-[#e5e7eb] bg-white shadow-[0px_1px_2px_-1px_rgba(0,0,0,0.06)]">
         <div className="flex flex-col gap-3 border-b border-[#e5e7eb] px-6 py-4 lg:flex-row lg:items-start lg:justify-between">
           <div className="min-w-0">
             <h2 className="text-[16px] font-semibold leading-6 text-[#0a0a0a]">
@@ -609,7 +610,7 @@ export function AdminWorkflowOperationsDashboard() {
                 type="button"
                 onClick={() => setCategoryFilter(pill.id)}
                 className={[
-                  'inline-flex cursor-pointer items-center rounded-[10px] px-3 py-1.5 text-[13px] font-medium transition-colors',
+                  'sa-pill inline-flex cursor-pointer items-center rounded-[10px] px-3 py-1.5 text-[13px] font-medium',
                   categoryFilter === pill.id
                     ? 'bg-[#101828] text-white'
                     : 'bg-[#f3f4f6] text-[#364153] hover:bg-[#e5e7eb]',
@@ -644,7 +645,7 @@ export function AdminWorkflowOperationsDashboard() {
                     type="button"
                     onClick={() => setChooserOpen(true)}
                     aria-label={`Add workflow to ${column.label}`}
-                    className="flex size-6 cursor-pointer items-center justify-center rounded-[10px] text-[#6a7282] transition-colors hover:bg-[#e5e7eb] hover:text-[#101828]"
+                    className="sa-press flex size-6 cursor-pointer items-center justify-center rounded-[10px] text-[#6a7282] hover:bg-[#e5e7eb] hover:text-[#101828]"
                   >
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} className="size-4">
                       <path d="M12 5v14M5 12h14" strokeLinecap="round" />

@@ -10,7 +10,7 @@
 import { serve } from "https://deno.land/std/http/server.ts"
 import { createClient, type SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.49.1"
 import { adminEdgeCorsHeaders } from "../_shared/admin_edge_cors.ts"
-import { adminReassignSecretAuthorized } from "../_shared/admin_reassign_auth.ts"
+import { requireAdminReassignAuth } from "../_shared/admin_edge_auth.ts"
 import { detachDeletedTicketFromSmsConversations } from "../_shared/sms/detachTicketFromConversations.ts"
 
 const corsHeaders = adminEdgeCorsHeaders
@@ -114,15 +114,9 @@ serve(async (req) => {
   if (req.method !== "POST") {
     return jsonResponse({ error: "Method not allowed" }, 405)
   }
+  const adminAuth = requireAdminReassignAuth(req, "[admin-delete-work-order]", corsHeaders)
+  if (!adminAuth.ok) return adminAuth.response
 
-  if (!Deno.env.get("ADMIN_REASSIGN_SECRET")?.trim()) {
-    console.error("[admin-delete-work-order] ADMIN_REASSIGN_SECRET not set")
-    return jsonResponse({ error: "Server misconfiguration" }, 500)
-  }
-
-  if (!adminReassignSecretAuthorized(req)) {
-    return jsonResponse({ error: "Unauthorized" }, 401)
-  }
 
   let body: {
     landlordId?: string

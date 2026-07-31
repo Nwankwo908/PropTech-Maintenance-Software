@@ -5,12 +5,7 @@ import {
   type WorkflowKanbanCategory,
 } from '@/lib/adminWorkflowKanban'
 import type { AdminWorkflowDashboardData, AdminWorkflowRow } from '@/lib/adminWorkflows'
-import {
-  isUnitOccupiedByResident,
-  normalizeBuildingKey,
-  normalizeUnitLabel,
-  type PropertyHealthUnit,
-} from '@/lib/propertyHealth'
+import { normalizeBuildingKey, normalizeUnitLabel } from '@/lib/propertyHealth'
 import { formatVendorTradeLabel } from '@/lib/vendorTrades'
 
 export type PropertyUnitResident = {
@@ -40,12 +35,14 @@ export type PropertyUnitTicket = {
   vendorWorkStatus: string
 }
 
+export type PropertyUnitOccupancyStatus = 'occupied' | 'vacant' | 'under_maintenance'
+
 export type PropertyUnitRow = {
   id: string
   unitDisplay: string
   residentId: string | null
   residentName: string | null
-  occupancyStatus: 'occupied' | 'vacant'
+  occupancyStatus: PropertyUnitOccupancyStatus
   openWorkflowLabel: string | null
   balanceDue: number
   leaseEndLabel: string | null
@@ -53,6 +50,7 @@ export type PropertyUnitRow = {
 }
 
 const CLOSED_WORK_STATUSES = new Set(['completed', 'cancelled'])
+const OCCUPYING_RESIDENT_STATUSES = new Set(['active', 'pending', 'suspended'])
 
 function unitSortKey(label: string): number {
   const digits = label.replace(/\D/g, '')
@@ -72,6 +70,16 @@ export function formatPropertyLeaseEnd(value: string | null): string | null {
   const date = new Date(`${value.trim()}T12:00:00`)
   if (Number.isNaN(date.getTime())) return null
   return date.toLocaleDateString(undefined, { month: 'short', year: 'numeric' })
+}
+
+/** Persisted `units.status` is the source of truth for the Units tab chip. */
+export function resolvePropertyUnitOccupancyStatus(
+  unitStatus: string | null | undefined,
+): PropertyUnitOccupancyStatus {
+  const status = (unitStatus ?? '').trim().toLowerCase()
+  if (status === 'active') return 'occupied'
+  if (status === 'under_maintenance') return 'under_maintenance'
+  return 'vacant'
 }
 
 function isOpenTicket(ticket: PropertyUnitTicket): boolean {
@@ -158,21 +166,18 @@ function findResidentForUnit(
   residents: PropertyUnitResident[],
 ): PropertyUnitResident | null {
   const unitKey = normalizeUnitLabel(unitLabel)
+  const matches = residents.filter((resident) => {
+    if (normalizeBuildingKey(resident.building) !== normalizeBuildingKey(building)) return false
+    return normalizeUnitLabel(resident.unit) === unitKey
+  })
+  if (matches.length === 0) return null
   return (
-    residents.find((resident) => {
-      if (normalizeBuildingKey(resident.building) !== normalizeBuildingKey(building)) return false
-      return normalizeUnitLabel(resident.unit) === unitKey
-    }) ?? null
+    matches.find((resident) =>
+      OCCUPYING_RESIDENT_STATUSES.has(resident.status.trim().toLowerCase()),
+    ) ??
+    matches[0] ??
+    null
   )
-}
-
-function toHealthUnit(unit: PropertyUnitRecord): PropertyHealthUnit {
-  return {
-    id: unit.id,
-    unitLabel: unit.unitLabel,
-    building: unit.building,
-    status: unit.status,
-  }
 }
 
 export function buildPropertyUnitRows(input: {
@@ -189,18 +194,27 @@ export function buildPropertyUnitRows(input: {
     .filter((unit) => normalizeBuildingKey(unit.building) === normalizeBuildingKey(building))
     .map((unit) => {
       const resident = findResidentForUnit(unit.unitLabel, building, residents)
-      const isOccupied = isUnitOccupiedByResident(toHealthUnit(unit), building, residents)
+      const occupancyStatus = resolvePropertyUnitOccupancyStatus(unit.status)
+      const showOccupiedDetails = occupancyStatus === 'occupied'
+      const openWorkflowLabel = pickOpenWorkflowLabel(
+        unit.unitLabel,
+        building,
+        tickets,
+        workflowRows,
+      )
 
       return {
         id: unit.id,
         unitDisplay: formatPropertyUnitDisplay(unit.unitLabel),
-        residentId: isOccupied && resident ? resident.id : null,
-        residentName: isOccupied && resident ? resident.fullName : null,
-        occupancyStatus: isOccupied ? 'occupied' : 'vacant',
-        openWorkflowLabel: pickOpenWorkflowLabel(unit.unitLabel, building, tickets, workflowRows),
-        balanceDue: isOccupied && resident ? resident.balanceDue : 0,
+        residentId: showOccupiedDetails && resident ? resident.id : null,
+        residentName: showOccupiedDetails && resident ? resident.fullName : null,
+        occupancyStatus,
+        openWorkflowLabel,
+        balanceDue: showOccupiedDetails && resident ? resident.balanceDue : 0,
         leaseEndLabel:
-          isOccupied && resident ? formatPropertyLeaseEnd(resident.leaseEndDate) : null,
+          showOccupiedDetails && resident
+            ? formatPropertyLeaseEnd(resident.leaseEndDate)
+            : null,
         sortKey: unitSortKey(unit.unitLabel),
       }
     })

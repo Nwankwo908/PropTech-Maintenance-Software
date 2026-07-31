@@ -40,7 +40,7 @@ function EditMessageChannelRow({
         className={[
           'flex size-4 shrink-0 items-center justify-center rounded border shadow-[0px_1px_2px_0px_rgba(0,0,0,0.05)] transition-[background-color,border-color,box-shadow] duration-150 peer-focus-visible:ring-2 peer-focus-visible:ring-primary peer-focus-visible:ring-offset-2',
           checked
-            ? 'border-extended-3 bg-extended-3 group-hover:brightness-95'
+            ? 'border-[#611879] bg-[#611879] group-hover:brightness-95'
             : 'border-black/10 bg-secondary group-hover:border-black/15 group-hover:bg-[#e8eaee] group-hover:shadow-sm',
         ].join(' ')}
       >

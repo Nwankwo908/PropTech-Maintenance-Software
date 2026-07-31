@@ -1,5 +1,5 @@
 import { useEffect, useState, type FormEvent } from 'react'
-import { Navigate, Link, useNavigate } from 'react-router-dom'
+import { Navigate, Link, useNavigate, useSearchParams } from 'react-router-dom'
 import bgLogin from '@/assets/BG_Login.png'
 import uloLogo from '@/assets/Ulo_Logo_small.png'
 import {
@@ -10,6 +10,22 @@ import {
   verifyAdminEmailOtp,
 } from '@/lib/adminAuth'
 import { supabase } from '@/lib/supabase'
+import { getErrorMessage } from '@/lib/errorMessage'
+
+/** Only allow same-app admin paths (blocks open redirects). */
+function safeAdminNextPath(raw: string | null): string {
+  if (!raw) return '/admin'
+  let decoded = raw
+  try {
+    decoded = decodeURIComponent(raw)
+  } catch {
+    return '/admin'
+  }
+  if (!decoded.startsWith('/admin') || decoded.startsWith('//') || decoded.includes('://')) {
+    return '/admin'
+  }
+  return decoded
+}
 
 function IconGoogle({ className = 'size-5' }: { className?: string }) {
   return (
@@ -36,6 +52,8 @@ function IconGoogle({ className = 'size-5' }: { className?: string }) {
 
 export function AdminLoginPage() {
   const navigate = useNavigate()
+  const [searchParams] = useSearchParams()
+  const afterLoginPath = safeAdminNextPath(searchParams.get('next'))
   const [step, setStep] = useState<'email' | 'otp'>('email')
   const [email, setEmail] = useState('')
   const [otp, setOtp] = useState('')
@@ -79,7 +97,7 @@ export function AdminLoginPage() {
   }, [])
 
   if (alreadyAuthed === true) {
-    return <Navigate to="/admin" replace />
+    return <Navigate to={afterLoginPath} replace />
   }
 
   if (alreadyAuthed === null) {
@@ -104,7 +122,7 @@ export function AdminLoginPage() {
       await sendAdminEmailOtp(email)
       setStep('otp')
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Could not send verification code')
+      setError(getErrorMessage(err, 'Could not send verification code'))
     } finally {
       setSubmitting(false)
     }
@@ -120,9 +138,9 @@ export function AdminLoginPage() {
     setSubmitting(true)
     try {
       await verifyAdminEmailOtp(email, otp)
-      navigate('/admin', { replace: true })
+      navigate(afterLoginPath, { replace: true })
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Verification failed')
+      setError(getErrorMessage(err, 'Verification failed'))
     } finally {
       setSubmitting(false)
     }
@@ -138,7 +156,7 @@ export function AdminLoginPage() {
     try {
       await signInAdminWithOAuth('google')
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Sign in failed')
+      setError(getErrorMessage(err, 'Sign in failed'))
       setSubmitting(false)
     }
   }

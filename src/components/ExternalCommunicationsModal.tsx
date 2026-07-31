@@ -127,12 +127,12 @@ export function ExternalCommunicationsModal({
 
   return (
     <div className="fixed inset-0 z-50 flex justify-end">
-      <div role="presentation" className="absolute inset-0 bg-black/40" aria-hidden onClick={onClose} />
+      <div role="presentation" className="sa-scrim absolute inset-0 bg-black/40" aria-hidden onClick={onClose} />
       <div
         role="dialog"
         aria-modal="true"
         aria-labelledby={titleId}
-        className="relative flex h-full max-h-dvh w-full max-w-[min(100vw,640px)] flex-col overflow-hidden border-l border-secondary bg-white shadow-[inset_1px_0_0_0_#A788964D]"
+        className="sa-rail relative flex h-full max-h-dvh w-full max-w-[min(100vw,640px)] flex-col overflow-hidden border-l border-secondary bg-white shadow-[inset_1px_0_0_0_#A788964D]"
       >
         <header className="flex h-[81px] shrink-0 items-center justify-between border-b border-secondary px-6">
           <div className="flex min-w-0 items-center gap-3">
@@ -155,7 +155,7 @@ export function ExternalCommunicationsModal({
             type="button"
             onClick={onClose}
             aria-label="Close"
-            className="flex size-9 shrink-0 items-center justify-center rounded-lg outline-none hover:bg-secondary focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2"
+            className="sa-press flex size-9 shrink-0 items-center justify-center rounded-lg outline-none hover:bg-secondary focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2"
           >
             <IconClose />
           </button>
@@ -214,7 +214,7 @@ export function ExternalCommunicationsModal({
           <button
             type="button"
             onClick={onClose}
-            className="inline-flex h-10 items-center justify-center rounded-[10px] bg-neutral-variant px-8 text-[16px] font-medium leading-6 tracking-[-0.3125px] text-white outline-none hover:bg-neutral-variant focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2"
+            className="sa-press inline-flex h-10 items-center justify-center rounded-[10px] bg-neutral-variant px-8 text-[16px] font-medium leading-6 tracking-[-0.3125px] text-white outline-none hover:bg-neutral-variant focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2"
           >
             Close
           </button>

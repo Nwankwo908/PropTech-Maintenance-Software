@@ -1,4 +1,4 @@
-import type { OnboardingAccountSetup } from '@/lib/landlordOnboarding'
+import type { OnboardingAccountSetup } from '@/lib/onboarding'
 
 export type SidebarAdminProfile = {
   name: string

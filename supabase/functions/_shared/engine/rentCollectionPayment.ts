@@ -6,10 +6,19 @@ import {
   type RentCollectionGraphScope,
 } from "./rentCollectionGraph.ts"
 import { logPipelineStageEvent, logWorkflowEvent } from "./workflowRuns.ts"
+import {
+  createRentCheckoutSession,
+  isLandlordRentPayoutsReady,
+  isRentStripeConfigured,
+  rentPaymentAppOrigin,
+  stampRentCheckoutOnRun,
+} from "./rentStripeCheckout.ts"
+import { normalizeAppOrigin, uloAppUrl } from "../uloAppUrl.ts"
 
 export type RentPaymentProvider = {
   provider: string
   paymentLink: string
+  sessionId?: string
 }
 
 export type RentCollectionActResult = {
@@ -19,10 +28,25 @@ export type RentCollectionActResult = {
 }
 
 function withHttpsScheme(origin: string): string {
-  const trimmed = origin.trim().replace(/\/$/, "")
-  if (!trimmed) return trimmed
-  if (/^https?:\/\//i.test(trimmed)) return trimmed
-  return `https://${trimmed}`
+  return normalizeAppOrigin(origin)
+}
+
+function durablePayRentUrl(params: {
+  origin: string
+  runId: string
+  residentId: string
+  billingPeriod: string
+  amountDue: number
+}): string {
+  return uloAppUrl.rentPayment(
+    {
+      runId: params.runId,
+      residentId: params.residentId,
+      billingPeriod: params.billingPeriod,
+      amountDue: params.amountDue,
+    },
+    { returnOrigin: params.origin, preferRentBase: true },
+  )
 }
 
 function paymentLinkFromTemplateConfig(
@@ -47,16 +71,28 @@ function paymentLinkFromTemplateConfig(
 
   if (!provider || !baseUrl) return null
 
-  const url = new URL(`${baseUrl.replace(/\/$/, "")}/pay/rent`)
-  url.searchParams.set("run", params.runId)
-  url.searchParams.set("resident", params.residentId)
-  url.searchParams.set("period", params.billingPeriod)
-  url.searchParams.set("amount", String(params.amountDue))
-
-  return { provider, paymentLink: url.toString() }
+  return {
+    provider,
+    paymentLink: durablePayRentUrl({
+      origin: baseUrl,
+      runId: params.runId,
+      residentId: params.residentId,
+      billingPeriod: params.billingPeriod,
+      amountDue: params.amountDue,
+    }),
+  }
 }
 
-/** Resolve an online rent payment link when a provider is configured. */
+function rentPaymentProviderEnabled(): boolean {
+  const raw = Deno.env.get("RENT_PAYMENT_PROVIDER")?.trim().toLowerCase() ?? ""
+  if (raw === "off" || raw === "none" || raw === "false" || raw === "0") {
+    return false
+  }
+  if (raw === "stripe" || raw === "") return true
+  return Boolean(raw)
+}
+
+/** Resolve an online rent payment link when landlord payouts are ready. */
 export async function resolveRentPaymentLink(
   supabase: SupabaseClient,
   params: {
@@ -65,27 +101,77 @@ export async function resolveRentPaymentLink(
     runId: string
     billingPeriod: string
     amountDue: number
+    residentName?: string | null
+    unitLabel?: string | null
   },
 ): Promise<RentPaymentProvider | null> {
-  const envProvider = Deno.env.get("RENT_PAYMENT_PROVIDER")?.trim() ?? ""
-  const envBase = Deno.env.get("RENT_PAYMENT_BASE_URL")?.trim() ??
-    Deno.env.get("APP_URL")?.trim() ??
-    ""
+  if (!rentPaymentProviderEnabled()) {
+    return null
+  }
 
-  if (envProvider && envBase) {
-    const baseUrl = withHttpsScheme(envBase)
-    const url = new URL(`${baseUrl.replace(/\/$/, "")}/pay/rent`)
-    url.searchParams.set("run", params.runId)
-    url.searchParams.set("resident", params.residentId)
-    url.searchParams.set("period", params.billingPeriod)
-    url.searchParams.set("amount", String(params.amountDue))
-    return { provider: envProvider, paymentLink: url.toString() }
+  // Do not embed a pay link until the landlord can receive destination charges.
+  const payoutsReady = await isLandlordRentPayoutsReady(
+    supabase,
+    params.landlordId,
+  )
+  if (!payoutsReady) {
+    return null
+  }
+
+  const origin = rentPaymentAppOrigin()
+  const durable = origin
+    ? durablePayRentUrl({
+      origin,
+      runId: params.runId,
+      residentId: params.residentId,
+      billingPeriod: params.billingPeriod,
+      amountDue: params.amountDue,
+    })
+    : null
+
+  if (isRentStripeConfigured()) {
+    const created = await createRentCheckoutSession(supabase, {
+      landlordId: params.landlordId,
+      runId: params.runId,
+      residentId: params.residentId,
+      billingPeriod: params.billingPeriod,
+      amountDue: params.amountDue,
+      residentName: params.residentName,
+      unitLabel: params.unitLabel,
+    })
+    if (created.ok) {
+      await stampRentCheckoutOnRun(supabase, {
+        runId: params.runId,
+        sessionId: created.sessionId,
+        paymentLink: created.url,
+      })
+      return {
+        provider: "stripe",
+        paymentLink: created.url,
+        sessionId: created.sessionId,
+      }
+    }
+    console.error(
+      "[rent-collection] Stripe Checkout create failed; falling back to /pay/rent",
+      created.error,
+    )
+    if (durable) {
+      return { provider: "stripe", paymentLink: durable }
+    }
+  }
+
+  const envProvider = Deno.env.get("RENT_PAYMENT_PROVIDER")?.trim() ?? ""
+  if (envProvider && durable) {
+    return { provider: envProvider, paymentLink: durable }
   }
 
   const template = await fetchWorkflowTemplateConfig(supabase, "rent_collection")
-  if (!template?.route_config) return null
+  if (!template?.route_config) {
+    return durable ? { provider: "stripe", paymentLink: durable } : null
+  }
 
-  return paymentLinkFromTemplateConfig(template.route_config, params)
+  return paymentLinkFromTemplateConfig(template.route_config, params) ??
+    (durable ? { provider: "stripe", paymentLink: durable } : null)
 }
 
 /**
@@ -122,6 +208,7 @@ export async function actRentCollectionPaymentRequest(
       metadata: {
         payment_link: paymentLink,
         payment_provider: provider,
+        stripe_checkout_session_id: params.paymentProvider?.sessionId ?? null,
         channels: params.routeChannels,
         sms_sent: params.smsSent,
         email_sent: params.emailSent,
@@ -149,12 +236,22 @@ export async function actRentCollectionPaymentRequest(
     }
   }
 
+  const payoutsReady = await isLandlordRentPayoutsReady(
+    supabase,
+    params.landlordId,
+  )
+  const reason = payoutsReady
+    ? "no_payment_provider"
+    : "landlord_payouts_not_ready"
+
   await logWorkflowEvent(supabase, {
     workflowRunId: params.runId,
     eventType: "payment_requested",
     step: "payment_requested",
     stage: "act",
-    message: "Rent payment requested (no payment provider configured)",
+    message: payoutsReady
+      ? "Rent payment requested (no payment provider configured)"
+      : "Rent payment requested (landlord payouts not ready)",
     landlordId: params.landlordId,
     workflowType: "rent_collection",
     metadata: {
@@ -163,6 +260,7 @@ export async function actRentCollectionPaymentRequest(
       channels: params.routeChannels,
       sms_sent: params.smsSent,
       email_sent: params.emailSent,
+      reason,
     },
   })
 
@@ -174,7 +272,7 @@ export async function actRentCollectionPaymentRequest(
       channels: params.routeChannels,
       sms_sent: params.smsSent,
       email_sent: params.emailSent,
-      reason: "no_payment_provider",
+      reason,
     },
   })
 
@@ -182,10 +280,13 @@ export async function actRentCollectionPaymentRequest(
     runId: params.runId,
     stage: "act",
     step: "payment_requested",
-    message: "Payment requested (no payment provider)",
+    message: payoutsReady
+      ? "Payment requested (no payment provider)"
+      : "Payment requested (landlord payouts not ready)",
     metadata: {
       amount_due: params.amountDue,
       billing_period: params.billingPeriod,
+      reason,
     },
   })
 

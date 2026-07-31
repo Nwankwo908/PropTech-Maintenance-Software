@@ -1,5 +1,6 @@
 import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.49.1"
-import { sendResendEmail } from "../delivery.ts"
+import { escalationNotifyEmailsFromEnv } from "../landlordOpsNotify.ts"
+import { notifyLandlordNeedsAttention } from "../landlordAttentionNotify.ts"
 import { logGraphEvent } from "../graph/logGraphEvent.ts"
 import {
   fetchWorkflowTemplateConfig,
@@ -7,6 +8,10 @@ import {
 } from "./templateConfig.ts"
 import type { WorkflowRunRow } from "./types.ts"
 import { escalateRentCollectionRun } from "./rentCollectionEscalation.ts"
+import { escalateVendorOnboardingRun } from "./vendorOnboardingEscalation.ts"
+import { vendorOnboardingActionDue } from "./vendorOnboardingPolicy.ts"
+import { escalateLifecycleRun } from "./lifecycleEscalation.ts"
+import { lifecycleActionDue } from "./lifecyclePolicy.ts"
 import {
   findActiveWorkflowRunsForLandlord,
   runDueAt,
@@ -26,6 +31,27 @@ const WAITING_STEPS = new Set([
   "awaiting_confirm",
   "awaiting_edit_selection",
   "pending_accept",
+  // Vendor onboarding
+  "invited",
+  "in_progress",
+  "submitted",
+  "needs_review",
+  "reminder_sent",
+  // Lifecycle: move_in / move_out / inspection
+  "occupancy_registered",
+  "checklist_sent",
+  "utilities_confirmed",
+  "notice_sent",
+  "awaiting_vacate",
+  "turnover_in_progress",
+  "unit_vacated",
+  "inspection_scheduled",
+  "deposit_pending",
+  "scheduled",
+  "awaiting_resident",
+  "in_progress",
+  "rescheduled",
+  "no_show",
 ])
 
 export type EscalationCandidate = {
@@ -70,12 +96,7 @@ function readString(value: unknown): string | null {
 }
 
 export function escalationNotifyEmails(): string[] {
-  const raw = Deno.env.get("WORKFLOW_ESCALATION_NOTIFY_EMAILS")?.trim() ??
-    Deno.env.get("SMS_ADMIN_NOTIFY_EMAILS")?.trim()
-  if (raw) {
-    return raw.split(",").map((e) => e.trim()).filter(Boolean)
-  }
-  return ["emeka@ulohome.io", "osi@ulohome.io"]
+  return escalationNotifyEmailsFromEnv()
 }
 
 export function isWaitingWorkflowRun(run: WorkflowRunRow): boolean {
@@ -139,6 +160,14 @@ function graphEventTypeForTemplate(templateId: string): string {
       return "maintenance.intake_escalated"
     case "rent_collection":
       return "rent.late_escalated"
+    case "vendor_onboarding":
+      return "vendor.onboarding_escalated"
+    case "move_in":
+      return "move_in.escalated"
+    case "move_out":
+      return "move_out.escalated"
+    case "inspection":
+      return "inspection.escalated"
     default:
       return "workflow.escalated"
   }
@@ -180,6 +209,40 @@ export async function findEscalationCandidates(
     const template = templates.get(run.template_id)
     if (!template) continue
 
+    if (run.template_id === "vendor_onboarding") {
+      const { due, reason, overdueByMs } = vendorOnboardingActionDue(
+        run,
+        template.escalation_config,
+      )
+      if (!due) continue
+      candidates.push({
+        run,
+        template,
+        reason,
+        overdue_by_ms: overdueByMs,
+      })
+      continue
+    }
+
+    if (
+      run.template_id === "move_in" ||
+      run.template_id === "move_out" ||
+      run.template_id === "inspection"
+    ) {
+      const { due, reason, overdueByMs } = lifecycleActionDue(
+        run,
+        template.escalation_config,
+      )
+      if (!due) continue
+      candidates.push({
+        run,
+        template,
+        reason,
+        overdue_by_ms: overdueByMs,
+      })
+      continue
+    }
+
     const { due, reason, overdueByMs } = isEscalationDue(
       run,
       template.escalation_config,
@@ -197,77 +260,7 @@ export async function findEscalationCandidates(
   return candidates
 }
 
-async function notifyLandlordAdmin(
-  params: {
-    emails: string[]
-    subject: string
-    text: string
-    html: string
-  },
-): Promise<{ notified: string[]; errors: string[] }> {
-  const notified: string[] = []
-  const errors: string[] = []
-
-  for (const email of params.emails) {
-    const result = await sendResendEmail(
-      email,
-      params.subject,
-      params.text,
-      params.html,
-    )
-    if ("error" in result) {
-      errors.push(`${email}: ${result.error}`)
-    } else {
-      notified.push(email)
-    }
-  }
-
-  return { notified, errors: errors }
-}
-
-function buildEscalationEmail(
-  run: WorkflowRunRow,
-  template: WorkflowTemplateConfigRow,
-  reason: string,
-): { subject: string; text: string; html: string } {
-  const action = readString(template.escalation_config.action) ?? "notify_landlord"
-  const label = readString(template.escalation_config.label) ??
-    "Workflow response threshold exceeded"
-  const leaseEnd = runLeaseEndDate(run)
-  const residentId = run.resident_id ?? "—"
-  const step = run.current_step ?? runStepState<{ step?: string }>(run).step ?? "—"
-
-  const subject = `[Ulo] Workflow escalation: ${template.name}`
-  const text = [
-    label,
-    "",
-    `Template: ${template.name} (${template.id})`,
-    `Workflow run: ${run.id}`,
-    `Waiting step: ${step}`,
-    `Escalation action: ${action}`,
-    `Reason: ${reason}`,
-    leaseEnd ? `Lease end date: ${leaseEnd}` : null,
-    residentId !== "—" ? `Resident: ${residentId}` : null,
-    "",
-    "Review this workflow in the admin dashboard.",
-  ].filter(Boolean).join("\n")
-
-  const html = `<p>${label}</p>
-<ul>
-<li><strong>Template:</strong> ${template.name} (${template.id})</li>
-<li><strong>Workflow run:</strong> ${run.id}</li>
-<li><strong>Waiting step:</strong> ${step}</li>
-<li><strong>Escalation action:</strong> ${action}</li>
-<li><strong>Reason:</strong> ${reason}</li>
-${leaseEnd ? `<li><strong>Lease end:</strong> ${leaseEnd}</li>` : ""}
-${residentId !== "—" ? `<li><strong>Resident:</strong> ${residentId}</li>` : ""}
-</ul>
-<p>Review this workflow in the admin dashboard.</p>`
-
-  return { subject, text, html }
-}
-
-/** Escalate one overdue workflow run: workflow_event, graph event, admin email, status update. */
+/** Escalate one overdue workflow run: workflow_event, graph event, landlord alert, status update. */
 export async function escalateWorkflowRun(
   supabase: SupabaseClient,
   params: {
@@ -312,25 +305,45 @@ export async function escalateWorkflowRun(
     },
   })
 
-  const email = buildEscalationEmail(run, template, reason)
-  const { notified, errors: notifyErrors } = await notifyLandlordAdmin({
-    emails: escalationNotifyEmails(),
-    ...email,
-  })
-
-  if (notifyErrors.length) {
-    console.error("[run-workflow-escalations] notify failed", {
+  try {
+    const label =
+      readString(template.escalation_config.label) ??
+      `${template.name} needs a decision`
+    const attention = await notifyLandlordNeedsAttention(supabase, {
+      landlordId: params.landlordId,
+      kind: "workflow_escalated",
+      headline: label,
+      detail: `${template.name}${run.current_step ? ` · waiting on ${run.current_step}` : ""}`,
+      idempotencyKey: `workflow:${run.id}:escalated`,
       workflowRunId: run.id,
-      notifyErrors,
+      residentId: run.resident_id,
+      unitId: run.unit_id,
+      maintenanceRequestId:
+        run.entity_type === "maintenance_request" ? run.entity_id : null,
     })
-  }
-
-  return {
-    workflow_run_id: run.id,
-    template_id: template.id,
-    reason,
-    notified,
-    notify_errors: notifyErrors,
+    if (attention.errors.length) {
+      console.error("[run-workflow-escalations] attention notify failed", {
+        workflowRunId: run.id,
+        errors: attention.errors,
+      })
+    }
+    return {
+      workflow_run_id: run.id,
+      template_id: template.id,
+      reason,
+      notified: [...attention.smsSent, ...attention.emailSent],
+      notify_errors: attention.errors,
+    }
+  } catch (e) {
+    const message = e instanceof Error ? e.message : String(e)
+    console.error("[run-workflow-escalations] attention notify", e)
+    return {
+      workflow_run_id: run.id,
+      template_id: template.id,
+      reason,
+      notified: [],
+      notify_errors: [message],
+    }
   }
 }
 
@@ -375,6 +388,48 @@ export async function runWorkflowEscalations(
             reason: candidate.reason,
             notified: rentResult.admin_notified,
             notify_errors: rentResult.admin_notify_errors,
+          })
+        }
+        continue
+      }
+
+      if (candidate.run.template_id === "vendor_onboarding") {
+        const vendorResult = await escalateVendorOnboardingRun(supabase, {
+          landlordId: params.landlordId,
+          run: candidate.run,
+          reason: candidate.reason,
+          escalationConfig: candidate.template.escalation_config,
+        })
+        if (vendorResult && vendorResult.action !== "skipped") {
+          escalations.push({
+            workflow_run_id: vendorResult.workflow_run_id,
+            template_id: "vendor_onboarding",
+            reason: vendorResult.reason,
+            notified: vendorResult.admin_notified,
+            notify_errors: vendorResult.admin_notify_errors,
+          })
+        }
+        continue
+      }
+
+      if (
+        candidate.run.template_id === "move_in" ||
+        candidate.run.template_id === "move_out" ||
+        candidate.run.template_id === "inspection"
+      ) {
+        const lifeResult = await escalateLifecycleRun(supabase, {
+          landlordId: params.landlordId,
+          run: candidate.run,
+          reason: candidate.reason,
+          escalationConfig: candidate.template.escalation_config,
+        })
+        if (lifeResult && lifeResult.action !== "skipped") {
+          escalations.push({
+            workflow_run_id: lifeResult.workflow_run_id,
+            template_id: lifeResult.template_id,
+            reason: lifeResult.reason,
+            notified: lifeResult.admin_notified,
+            notify_errors: lifeResult.admin_notify_errors,
           })
         }
         continue

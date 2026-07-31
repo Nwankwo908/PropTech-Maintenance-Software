@@ -2,8 +2,19 @@ import type { ReactNode } from 'react'
 import type {
   OnboardingResident,
   OnboardingReviewData,
+  OnboardingSetupPath,
   OnboardingStep,
-} from '@/lib/landlordOnboarding'
+} from '@/lib/onboarding'
+import { communicationStyleLabel } from '@/lib/communicationStyle'
+import { onboardingOccupancyStatusLabel } from '@/lib/onboarding'
+import {
+  afterHoursRuleLabel,
+  emergencyTypeLabel,
+  marketplacePreferenceLabel,
+  notificationChannelLabel,
+  notificationPreferenceLabel,
+  quietHoursLabel,
+} from '@/lib/onboardingApprovalRules'
 
 function formatRentDueDayOrdinal(day: number): string {
   const mod100 = day % 100
@@ -23,6 +34,7 @@ function formatRentDueDayOrdinal(day: number): string {
 function formatResidentReviewValue(resident: OnboardingResident): string {
   const parts: string[] = [resident.fullName]
   if (resident.unit) parts.push(`Unit ${resident.unit}`)
+  parts.push(onboardingOccupancyStatusLabel(resident.occupancyStatus))
   if (resident.monthlyRent != null && Number.isFinite(resident.monthlyRent)) {
     parts.push(
       `$${resident.monthlyRent.toLocaleString('en-US', {
@@ -37,6 +49,9 @@ function formatResidentReviewValue(resident: OnboardingResident): string {
     parts.push(
       `Lease ${resident.leaseStart ?? '—'} – ${resident.leaseEnd ?? '—'}`,
     )
+  }
+  if (resident.maintenanceResponsibilitiesClause?.trim()) {
+    parts.push('Maintenance clause on file')
   }
   return parts.join(' · ')
 }
@@ -102,13 +117,13 @@ function ReviewSummaryCard({
   children: ReactNode
 }) {
   return (
-    <section className="rounded-2xl border border-[#e8eaef] bg-white px-6 py-5 shadow-[0_1px_2px_rgba(16,24,40,0.04)]">
+    <section className="onb-form-card sa-surface rounded-2xl border border-[#e8eaef] bg-white px-6 py-5 shadow-[0_1px_2px_rgba(16,24,40,0.04)]">
       <div className="mb-2 flex items-center justify-between gap-4">
         <h3 className="text-[17px] font-semibold tracking-[-0.2px] text-[#111827]">{title}</h3>
         <button
           type="button"
           onClick={onEdit}
-          className="inline-flex shrink-0 items-center gap-1.5 text-[14px] font-medium text-[#9E439F] transition-colors hover:text-[#863786]"
+          className="sa-press inline-flex shrink-0 items-center gap-1.5 text-[14px] font-medium text-[#9E439F] transition-colors hover:text-[#863786]"
         >
           <EditIcon />
           Edit
@@ -125,7 +140,11 @@ function formatPropertyLine(property: OnboardingReviewData['properties'][number]
     .filter(Boolean)
     .join(', ')
   const unitLabel = property.unitCount === 1 ? '1 unit' : `${property.unitCount} units`
-  return [property.name, address, unitLabel].filter(Boolean).join(' · ')
+  const manager = [property.propertyManagerName?.trim(), property.propertyManagerPhone?.trim()]
+    .filter(Boolean)
+    .join(' · ')
+  const managerLabel = manager ? `Manager: ${manager}` : null
+  return [property.name, address, unitLabel, managerLabel].filter(Boolean).join(' · ')
 }
 
 function formatVendorCategory(category: string): string {
@@ -144,8 +163,12 @@ export type OnboardingReviewStepProps = {
   loading: boolean
   saving: boolean
   reviewData: OnboardingReviewData | null
+  setupPath?: OnboardingSetupPath
   completionDisabled: boolean
   completionMissing: string[]
+  payoutsReady?: boolean
+  /** Masked bank/card summary from Stripe Connect, e.g. "Chase •••• 6789". */
+  payoutMethodLabel?: string | null
   onEditStep: (step: OnboardingStep) => void
   onBack: () => void
   onComplete: () => void
@@ -155,8 +178,11 @@ export function OnboardingReviewStep({
   loading,
   saving,
   reviewData,
+  setupPath = null,
   completionDisabled,
   completionMissing,
+  payoutsReady = false,
+  payoutMethodLabel = null,
   onEditStep,
   onBack,
   onComplete,
@@ -168,6 +194,7 @@ export function OnboardingReviewStep({
     : contactName
       ? `Ready to launch Ulo, ${contactName}?`
       : 'Ready to complete your setup?'
+  const notificationPrefsOnApproval = setupPath === 'fast_track'
 
   return (
     <div className="mx-auto w-full max-w-[680px]">
@@ -185,13 +212,62 @@ export function OnboardingReviewStep({
       {loading || !reviewData ? (
         <p className="mt-10 text-center text-[14px] text-[#6a7282]">Loading your setup…</p>
       ) : (
-        <div className="mt-8 space-y-4">
+        <div className="onb-review-stack mt-8 space-y-4">
           <ReviewSummaryCard title="Account" onEdit={() => onEditStep('account_setup')}>
             <ReviewSummaryRow label="Company" value={reviewData.accountSetup.companyName} />
             <ReviewSummaryRow label="Contact" value={reviewData.accountSetup.contactName} />
             <ReviewSummaryRow label="Email" value={reviewData.accountSetup.email} />
             <ReviewSummaryRow label="Phone" value={reviewData.accountSetup.phone} />
+            <ReviewSummaryRow
+              label="Backup contact"
+              value={
+                [
+                  reviewData.accountSetup.backupContactName?.trim(),
+                  reviewData.accountSetup.backupContactPhone?.trim(),
+                ]
+                  .filter(Boolean)
+                  .join(' · ') || 'Not added'
+              }
+            />
+            {!notificationPrefsOnApproval ? (
+              <>
+                <ReviewSummaryRow
+                  label="Notification preference"
+                  value={notificationPreferenceLabel(reviewData.approvalRules.notificationPreference)}
+                />
+                <ReviewSummaryRow
+                  label="Channel preference"
+                  value={notificationChannelLabel(reviewData.approvalRules.notificationChannel)}
+                />
+                <ReviewSummaryRow
+                  label="Quiet hours"
+                  value={quietHoursLabel(reviewData.approvalRules)}
+                />
+              </>
+            ) : null}
           </ReviewSummaryCard>
+
+          <section className="onb-form-card sa-surface rounded-2xl border border-[#e8eaef] bg-white px-6 py-5 shadow-[0_1px_2px_rgba(16,24,40,0.04)]">
+            <div className="mb-1 flex items-start justify-between gap-3">
+              <h3 className="text-[16px] font-semibold tracking-[-0.2px] text-[#111827]">
+                Resident SMS intake
+              </h3>
+            </div>
+            <p className="mb-2 text-[13px] leading-5 text-[#6b7280]">
+              Residents text this Ulo number to report maintenance and get updates. Share it after
+              setup, or include it in your welcome messages.
+            </p>
+            <dl>
+              <ReviewSummaryRow
+                label="SMS intake number"
+                value={
+                  reviewData.smsIntakeNumberDisplay ||
+                  reviewData.smsIntakeNumber ||
+                  'Assigning your number…'
+                }
+              />
+            </dl>
+          </section>
 
           <ReviewSummaryCard title="Properties" onEdit={() => onEditStep('property')}>
             {reviewData.properties.length > 0 ? (
@@ -220,7 +296,13 @@ export function OnboardingReviewStep({
                 <ReviewSummaryRow
                   key={vendor.id}
                   label={reviewData.vendors.length > 1 ? `Vendor ${index + 1}` : 'Vendor'}
-                  value={[vendor.name, formatVendorCategory(vendor.category)].filter((part) => part && part !== '—').join(' · ')}
+                  value={[
+                    vendor.name,
+                    formatVendorCategory(vendor.category),
+                    vendor.preferredEmergency ? 'Preferred emergency' : null,
+                  ]
+                    .filter((part) => part && part !== '—')
+                    .join(' · ')}
                 />
               ))
             ) : (
@@ -247,11 +329,65 @@ export function OnboardingReviewStep({
               />
             )}
           </ReviewSummaryCard>
+
+          <ReviewSummaryCard title="Maintenance approval rules" onEdit={() => onEditStep('approval')}>
+            <ReviewSummaryRow
+              label="Auto-approval threshold"
+              value={`$${reviewData.approvalRules.autoApprovalThreshold.toLocaleString('en-US')}`}
+            />
+            <ReviewSummaryRow
+              label="Emergencies"
+              value={reviewData.approvalRules.emergencyTypes
+                .map((id) => emergencyTypeLabel(id))
+                .join(', ')}
+            />
+            <ReviewSummaryRow
+              label="After hours"
+              value={afterHoursRuleLabel(reviewData.approvalRules.afterHoursRule)}
+            />
+            <ReviewSummaryRow
+              label="Marketplace"
+              value={marketplacePreferenceLabel(reviewData.approvalRules.marketplacePreference)}
+            />
+            <ReviewSummaryRow
+              label="Communication style"
+              value={communicationStyleLabel(reviewData.approvalRules.communicationStyle)}
+            />
+            {notificationPrefsOnApproval ? (
+              <>
+                <ReviewSummaryRow
+                  label="Notification preference"
+                  value={notificationPreferenceLabel(reviewData.approvalRules.notificationPreference)}
+                />
+                <ReviewSummaryRow
+                  label="Channel preference"
+                  value={notificationChannelLabel(reviewData.approvalRules.notificationChannel)}
+                />
+                <ReviewSummaryRow
+                  label="Quiet hours"
+                  value={quietHoursLabel(reviewData.approvalRules)}
+                />
+              </>
+            ) : null}
+          </ReviewSummaryCard>
+
+          <ReviewSummaryCard title="Payouts" onEdit={() => onEditStep('payouts')}>
+            <ReviewSummaryRow
+              label="Rent payouts"
+              value={
+                payoutsReady
+                  ? payoutMethodLabel
+                    ? `Connected — ${payoutMethodLabel}`
+                    : 'Connected — rent payments go to your bank account'
+                  : 'Not set up yet — required before you finish'
+              }
+            />
+          </ReviewSummaryCard>
         </div>
       )}
 
-      <div className="mt-8 flex flex-col items-center gap-3">
-        <div className="flex flex-wrap items-center justify-center gap-3">
+      <div className="mt-8 flex flex-col items-end gap-3">
+        <div className="flex flex-wrap items-center justify-end gap-3">
           <button
             type="button"
             disabled={saving || loading}
@@ -266,11 +402,11 @@ export function OnboardingReviewStep({
             onClick={onComplete}
             className={btnReviewPrimary}
           >
-            Complete setup
+            Complete
           </button>
         </div>
         {completionDisabled && completionMissing.length > 0 && !loading ? (
-          <p className="max-w-[480px] text-center text-[13px] leading-relaxed text-[#6b7280]">
+          <p className="max-w-[480px] text-right text-[13px] leading-relaxed text-[#6b7280]">
             Complete required setup: {completionMissing.join(', ')}. Use Edit on the summary cards above to
             fill in missing details.
           </p>

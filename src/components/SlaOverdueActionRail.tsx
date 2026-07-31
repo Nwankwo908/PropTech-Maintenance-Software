@@ -132,11 +132,11 @@ export function SlaOverdueActionRail({
       : 'Take action'
 
   const dismissButtonClass =
-    'inline-flex min-h-[44px] w-full items-center justify-center rounded-[10px] border border-[#e5e7eb] bg-white px-4 py-2.5 text-[13px] font-medium text-[#364153] outline-none hover:bg-[#f9fafb] focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2 disabled:opacity-50'
+    'sa-press inline-flex min-h-[44px] w-full items-center justify-center rounded-[10px] border border-[#e5e7eb] bg-white px-4 py-2.5 text-[13px] font-medium text-[#364153] outline-none hover:bg-[#f9fafb] focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2 disabled:opacity-50'
 
   const actionButtonClass = isVendorSuggestionAction
-    ? 'inline-flex min-h-[44px] w-full items-center justify-center rounded-[10px] bg-[#0a4d38] px-4 py-2.5 text-[13px] font-medium text-white outline-none hover:bg-[#083828] focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2 disabled:opacity-50'
-    : 'inline-flex min-h-[44px] w-full items-center justify-center rounded-[10px] bg-[#0a0a0a] px-4 py-2.5 text-[13px] font-medium text-white outline-none hover:bg-[#1f2937] focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2 disabled:opacity-50'
+    ? 'sa-press inline-flex min-h-[44px] w-full items-center justify-center rounded-[10px] bg-[#0a4d38] px-4 py-2.5 text-[13px] font-medium text-white outline-none hover:bg-[#083828] focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2 disabled:opacity-50'
+    : 'sa-press inline-flex min-h-[44px] w-full items-center justify-center rounded-[10px] bg-[#0a0a0a] px-4 py-2.5 text-[13px] font-medium text-white outline-none hover:bg-[#1f2937] focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2 disabled:opacity-50'
 
   const panel = (
       <div
@@ -149,7 +149,7 @@ export function SlaOverdueActionRail({
           type="button"
           onClick={onClose}
           aria-label="Close"
-          className="absolute right-4 top-4 z-10 rounded-lg p-1 text-[#9ca3af] outline-none hover:bg-black/5 hover:text-[#364153] focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2"
+          className="sa-press absolute right-4 top-4 z-10 rounded-lg p-1 text-[#9ca3af] outline-none hover:bg-black/5 hover:text-[#364153] focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2"
         >
           <CloseIcon />
         </button>

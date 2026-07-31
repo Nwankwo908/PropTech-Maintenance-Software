@@ -1,11 +1,16 @@
-import { useState } from 'react'
-import { TableCheckbox } from '@/components/TableCheckbox'
+import { useId, useState } from 'react'
+import { Link } from 'react-router-dom'
+import { TableCheckbox, checkboxInputClassName } from '@/components/TableCheckbox'
+import { PRIVACY_POLICY_PATH } from '@/lib/legal/privacyPolicyContent'
+import {
+  ONBOARDING_OCCUPANCY_STATUS_OPTIONS,
+  normalizeOnboardingOccupancyStatus,
+} from '@/lib/onboarding'
 import {
   countSelectedInReview,
   setAllReviewSelections,
   type ExtractedFinancialRecord,
   type ExtractedLeaseInfo,
-  type ExtractedReviewItem,
   type OnboardingExtractionReview,
   type OnboardingExtractedMaintenanceIssue,
   type OnboardingExtractedProperty,
@@ -13,18 +18,20 @@ import {
   type OnboardingExtractedUnit,
   type OnboardingExtractedVendor,
 } from '@/lib/onboardingDocumentUpload'
+import { US_STATE_OPTIONS } from '@/lib/usLocations'
 
 const btnPrimary =
   'inline-flex cursor-pointer items-center justify-center rounded-[10px] bg-[#187960] px-5 py-2.5 text-[14px] font-semibold text-white transition-colors hover:bg-[#146b52] disabled:cursor-not-allowed disabled:opacity-50'
-
-const btnSecondary =
-  'inline-flex cursor-pointer items-center justify-center rounded-[10px] border border-[#e5e7eb] bg-white px-5 py-2.5 text-[14px] font-medium text-[#101828] transition-colors hover:bg-[#f9fafb] disabled:cursor-not-allowed disabled:opacity-50'
 
 const btnGhost =
   'inline-flex cursor-pointer items-center justify-center rounded-[10px] px-4 py-2.5 text-[14px] font-medium text-[#6a7282] transition-colors hover:bg-[#f3f4f6] hover:text-[#101828] disabled:cursor-not-allowed disabled:opacity-50'
 
 const inputClass =
   'mt-1 h-9 w-full rounded-[8px] border border-[#e5e7eb] bg-white px-3 text-[13px] text-[#101828] outline-none focus:border-[#155dfc] focus:ring-2 focus:ring-[#155dfc]/20'
+
+const selectClass = `${inputClass} appearance-none pr-8`
+
+const fieldLabelClass = 'block text-[12px] font-medium text-[#6a7282]'
 
 function ConfidenceBadge({ value }: { value: number }) {
   const tone =
@@ -50,6 +57,7 @@ function ReviewItemRow({
   onSaveEdit,
   onCancelEdit,
   onEditChange,
+  children,
 }: {
   checked: boolean
   onToggle: () => void
@@ -64,6 +72,7 @@ function ReviewItemRow({
   onSaveEdit: () => void
   onCancelEdit: () => void
   onEditChange: (value: string) => void
+  children?: React.ReactNode
 }) {
   return (
     <li className="rounded-[8px] border border-[#eef0f3] px-3 py-3">
@@ -97,6 +106,7 @@ function ReviewItemRow({
             <p className="mt-1 text-[13px] leading-relaxed text-[#364153]">{value}</p>
           )}
           <p className="mt-1 text-[11px] text-[#9ca3af]">Source: {sourceDocumentName}</p>
+          {children}
         </div>
         {!editing ? (
           <button
@@ -119,16 +129,18 @@ function ReviewSection({
   children,
 }: {
   title: string
-  count: number
-  emptyLabel: string
+  count?: number
+  emptyLabel?: string
   children: React.ReactNode
 }) {
   return (
     <section className="rounded-[10px] border border-[#e5e7eb] bg-white p-4">
       <h3 className="text-[15px] font-semibold text-[#101828]">
-        {title} ({count})
+        {count != null ? `${title} (${count})` : title}
       </h3>
-      {children ?? <p className="mt-2 text-[13px] text-[#6a7282]">{emptyLabel}</p>}
+      {children ?? (
+        emptyLabel ? <p className="mt-2 text-[13px] text-[#6a7282]">{emptyLabel}</p> : null
+      )}
     </section>
   )
 }
@@ -138,9 +150,7 @@ export type OnboardingAiReviewStepProps = {
   saving: boolean
   onReviewChange: (review: OnboardingExtractionReview) => void
   onBackToUploads: () => void
-  onImportSelected: () => void
   onImportAll: () => void
-  onSkipImport: () => void
 }
 
 export function OnboardingAiReviewStep({
@@ -148,12 +158,11 @@ export function OnboardingAiReviewStep({
   saving,
   onReviewChange,
   onBackToUploads,
-  onImportSelected,
   onImportAll,
-  onSkipImport,
 }: OnboardingAiReviewStepProps) {
   const [editingId, setEditingId] = useState<string | null>(null)
   const [editDraft, setEditDraft] = useState('')
+  const smsConsentId = useId()
 
   const selectedCount = countSelectedInReview(review)
   const isEmpty =
@@ -165,6 +174,34 @@ export function OnboardingAiReviewStep({
     review.maintenanceIssues.length === 0 &&
     review.financialRecords.length === 0
 
+  function patchAccount(patch: Partial<OnboardingExtractionReview['account']>) {
+    onReviewChange({
+      ...review,
+      account: { ...review.account, ...patch },
+    })
+  }
+
+  function patchProperty(id: string, patch: Partial<OnboardingExtractedProperty>) {
+    onReviewChange({
+      ...review,
+      properties: review.properties.map((row) => (row.id === id ? { ...row, ...patch } : row)),
+    })
+  }
+
+  function patchResident(id: string, patch: Partial<OnboardingExtractedResident>) {
+    onReviewChange({
+      ...review,
+      residents: review.residents.map((row) => (row.id === id ? { ...row, ...patch } : row)),
+    })
+  }
+
+  function patchVendor(id: string, patch: Partial<OnboardingExtractedVendor>) {
+    onReviewChange({
+      ...review,
+      vendors: review.vendors.map((row) => (row.id === id ? { ...row, ...patch } : row)),
+    })
+  }
+
   function startEdit(id: string, value: string) {
     setEditingId(id)
     setEditDraft(value)
@@ -174,7 +211,6 @@ export function OnboardingAiReviewStep({
     section: keyof OnboardingExtractionReview,
     field: string,
     items: T[],
-    getValue: (item: T) => string,
   ) {
     onReviewChange({
       ...review,
@@ -196,14 +232,7 @@ export function OnboardingAiReviewStep({
           <ReviewItemRow
             key={item.id}
             checked={item.selected}
-            onToggle={() =>
-              onReviewChange({
-                ...review,
-                properties: review.properties.map((row) =>
-                  row.id === item.id ? { ...row, selected: !row.selected } : row,
-                ),
-              })
-            }
+            onToggle={() => patchProperty(item.id, { selected: !item.selected })}
             label={item.name}
             value={`${item.address} · ${item.propertyType} · Units ${item.unitLabels}`}
             sourceDocumentName={item.sourceDocumentName}
@@ -212,16 +241,219 @@ export function OnboardingAiReviewStep({
             editing={editingId === item.id}
             editValue={editDraft}
             onEdit={() => startEdit(item.id, item.address)}
-            onSaveEdit={() => saveEdit('properties', 'address', review.properties, (row) => row.address)}
+            onSaveEdit={() => saveEdit('properties', 'address', review.properties)}
             onCancelEdit={() => setEditingId(null)}
             onEditChange={setEditDraft}
-          />
+          >
+            <div className="mt-3 grid gap-3 border-t border-[#f3f4f6] pt-3 sm:grid-cols-2">
+              <p className="sm:col-span-2 text-[12px] font-medium text-[#364153]">
+                Complete location details (not always on the document)
+              </p>
+              <label className="block">
+                <span className={fieldLabelClass}>City</span>
+                <input
+                  className={inputClass}
+                  value={item.city}
+                  onChange={(e) => patchProperty(item.id, { city: e.target.value })}
+                  placeholder="City"
+                />
+              </label>
+              <label className="block">
+                <span className={fieldLabelClass}>State</span>
+                <div className="relative">
+                  <select
+                    className={selectClass}
+                    value={item.state}
+                    onChange={(e) => patchProperty(item.id, { state: e.target.value })}
+                  >
+                    <option value="">Select state</option>
+                    {US_STATE_OPTIONS.map((option) => (
+                      <option key={option.code} value={option.code}>
+                        {option.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </label>
+              <label className="block">
+                <span className={fieldLabelClass}>ZIP</span>
+                <input
+                  className={inputClass}
+                  value={item.zipCode}
+                  onChange={(e) => patchProperty(item.id, { zipCode: e.target.value })}
+                  placeholder="07102"
+                />
+              </label>
+              <label className="block">
+                <span className={fieldLabelClass}>Property type</span>
+                <input
+                  className={inputClass}
+                  value={item.propertyType}
+                  onChange={(e) => patchProperty(item.id, { propertyType: e.target.value })}
+                  placeholder="multifamily"
+                />
+              </label>
+              <label className="block">
+                <span className={fieldLabelClass}>Property manager name</span>
+                <input
+                  className={inputClass}
+                  value={item.propertyManagerName}
+                  onChange={(e) => patchProperty(item.id, { propertyManagerName: e.target.value })}
+                  placeholder="Optional"
+                />
+              </label>
+              <label className="block">
+                <span className={fieldLabelClass}>Property manager phone</span>
+                <input
+                  className={inputClass}
+                  value={item.propertyManagerPhone}
+                  onChange={(e) =>
+                    patchProperty(item.id, { propertyManagerPhone: e.target.value })
+                  }
+                  placeholder="Optional"
+                />
+              </label>
+            </div>
+          </ReviewItemRow>
         ))}
       </ul>
     )
   }
 
-  function renderSimpleRows<T extends { id: string; selected: boolean; sourceDocumentName: string; confidence: number; needsReview?: boolean }>(
+  function renderResidentRows() {
+    if (review.residents.length === 0) {
+      return <p className="mt-2 text-[13px] text-[#6a7282]">No residents detected.</p>
+    }
+    return (
+      <ul className="mt-3 space-y-2">
+        {review.residents.map((item) => (
+          <ReviewItemRow
+            key={item.id}
+            checked={item.selected}
+            onToggle={() => patchResident(item.id, { selected: !item.selected })}
+            label={item.fullName}
+            value={`${item.unit} · ${item.phone} · ${item.email}`}
+            sourceDocumentName={item.sourceDocumentName}
+            confidence={item.confidence}
+            needsReview={item.needsReview}
+            editing={editingId === item.id}
+            editValue={editDraft}
+            onEdit={() => startEdit(item.id, item.email)}
+            onSaveEdit={() => saveEdit('residents', 'email', review.residents)}
+            onCancelEdit={() => setEditingId(null)}
+            onEditChange={setEditDraft}
+          >
+            <div className="mt-3 grid gap-3 border-t border-[#f3f4f6] pt-3 sm:grid-cols-2">
+              <p className="sm:col-span-2 text-[12px] font-medium text-[#364153]">
+                Lease details to confirm
+              </p>
+              <label className="block">
+                <span className={fieldLabelClass}>Occupancy status</span>
+                <select
+                  className={selectClass}
+                  value={item.occupancyStatus}
+                  onChange={(e) =>
+                    patchResident(item.id, {
+                      occupancyStatus: normalizeOnboardingOccupancyStatus(e.target.value),
+                    })
+                  }
+                >
+                  {ONBOARDING_OCCUPANCY_STATUS_OPTIONS.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="block">
+                <span className={fieldLabelClass}>Monthly rent</span>
+                <input
+                  className={inputClass}
+                  value={item.monthlyRent}
+                  onChange={(e) => patchResident(item.id, { monthlyRent: e.target.value })}
+                  placeholder="$2,850"
+                />
+              </label>
+              <label className="block">
+                <span className={fieldLabelClass}>Rent due day (1–31)</span>
+                <input
+                  className={inputClass}
+                  value={item.rentDueDay}
+                  onChange={(e) => patchResident(item.id, { rentDueDay: e.target.value })}
+                  placeholder="1"
+                />
+              </label>
+              <label className="block sm:col-span-2">
+                <span className={fieldLabelClass}>Maintenance responsibilities clause</span>
+                <textarea
+                  className={`${inputClass} min-h-[72px] resize-y py-2`}
+                  value={item.maintenanceResponsibilitiesClause}
+                  onChange={(e) =>
+                    patchResident(item.id, {
+                      maintenanceResponsibilitiesClause: e.target.value,
+                    })
+                  }
+                  placeholder="Optional. Who handles what from the lease."
+                />
+              </label>
+            </div>
+          </ReviewItemRow>
+        ))}
+      </ul>
+    )
+  }
+
+  function renderVendorRows() {
+    if (review.vendors.length === 0) {
+      return <p className="mt-2 text-[13px] text-[#6a7282]">No vendors detected.</p>
+    }
+    return (
+      <ul className="mt-3 space-y-2">
+        {review.vendors.map((item) => (
+          <ReviewItemRow
+            key={item.id}
+            checked={item.selected}
+            onToggle={() => patchVendor(item.id, { selected: !item.selected })}
+            label={item.name}
+            value={[item.category, item.phone, item.email].filter(Boolean).join(' · ')}
+            sourceDocumentName={item.sourceDocumentName}
+            confidence={item.confidence}
+            needsReview={item.needsReview}
+            editing={editingId === item.id}
+            editValue={editDraft}
+            onEdit={() => startEdit(item.id, item.email)}
+            onSaveEdit={() => saveEdit('vendors', 'email', review.vendors)}
+            onCancelEdit={() => setEditingId(null)}
+            onEditChange={setEditDraft}
+          >
+            <label className="mt-3 flex cursor-pointer items-start gap-2 border-t border-[#f3f4f6] pt-3">
+              <input
+                type="checkbox"
+                checked={item.preferredEmergency}
+                onChange={(e) =>
+                  patchVendor(item.id, { preferredEmergency: e.target.checked })
+                }
+                className={`${checkboxInputClassName} mt-0.5 accent-[#611879]`}
+              />
+              <span className="text-[12px] leading-5 text-[#364153]">
+                Preferred emergency vendor for urgent after-hours work
+              </span>
+            </label>
+          </ReviewItemRow>
+        ))}
+      </ul>
+    )
+  }
+
+  function renderSimpleRows<
+    T extends {
+      id: string
+      selected: boolean
+      sourceDocumentName: string
+      confidence: number
+      needsReview?: boolean
+    },
+  >(
     items: T[],
     section: keyof OnboardingExtractionReview,
     labelFor: (item: T) => string,
@@ -253,7 +485,7 @@ export function OnboardingAiReviewStep({
             editing={editingId === item.id}
             editValue={editDraft}
             onEdit={() => startEdit(item.id, getEditValue(item))}
-            onSaveEdit={() => saveEdit(section, editField, items, getEditValue)}
+            onSaveEdit={() => saveEdit(section, editField, items)}
             onCancelEdit={() => setEditingId(null)}
             onEditChange={setEditDraft}
           />
@@ -292,7 +524,9 @@ export function OnboardingAiReviewStep({
               }
             }}
             label={item.label}
-            value={item.imageTags?.length ? `${item.value} · Tags: ${item.imageTags.join(', ')}` : item.value}
+            value={
+              item.imageTags?.length ? `${item.value} · Tags: ${item.imageTags.join(', ')}` : item.value
+            }
             sourceDocumentName={item.sourceDocumentName}
             confidence={item.confidence}
             needsReview={item.needsReview}
@@ -319,103 +553,203 @@ export function OnboardingAiReviewStep({
     )
   }
 
+  const account = review.account
+  const smsChecked = Boolean(account.smsConsentAcceptedAt)
+
   return (
     <section className="rounded-[10px] border border-[#e5e7eb] bg-white p-6 shadow-[0px_1px_2px_-1px_rgba(0,0,0,0.06)]">
       <h2 className="text-[18px] font-semibold text-[#101828]">Review and Approve Information</h2>
       <p className="mt-1 text-[14px] leading-relaxed text-[#6a7282]">
-      Nothing will be added until you approve it.
+        Documents fill most of your portfolio. Complete the fields below that uploads usually miss —
+        nothing is added until you approve.
       </p>
 
-      {isEmpty ? (
-        <div className="mt-4 rounded-[10px] border border-dashed border-[#e5e7eb] bg-[#fafafa] px-4 py-8 text-center">
-          <p className="text-[14px] font-medium text-[#101828]">No extracted data yet</p>
+      <div className="mt-4 space-y-3">
+        <ReviewSection title="Your organization">
           <p className="mt-1 text-[13px] text-[#6a7282]">
-            Upload documents to extract properties, residents, vendors, and financial records — or skip
-            import to continue onboarding.
+            Required for Fast Track — same details as the manual Account setup step.
           </p>
-        </div>
-      ) : (
-        <div className="mt-4 space-y-3">
-          <ReviewSection title="Properties Found" count={review.properties.length} emptyLabel="">
-            {renderPropertyRows()}
-          </ReviewSection>
-          <ReviewSection title="Units Found" count={review.units.length} emptyLabel="">
-            {renderSimpleRows<OnboardingExtractedUnit>(
-              review.units,
-              'units',
-              (item) => `Unit ${item.label}`,
-              (item) => item.building,
-              'building',
-              (item) => item.building,
-              'No units detected.',
-            )}
-          </ReviewSection>
-          <ReviewSection title="Residents Found" count={review.residents.length} emptyLabel="">
-            {renderSimpleRows<OnboardingExtractedResident>(
-              review.residents,
-              'residents',
-              (item) => item.fullName,
-              (item) => `${item.unit} · ${item.phone} · ${item.email}`,
-              'email',
-              (item) => item.email,
-              'No residents detected.',
-            )}
-          </ReviewSection>
-          <ReviewSection title="Lease Information Found" count={review.leases.length} emptyLabel="">
-            {renderSimpleRows<ExtractedLeaseInfo>(
-              review.leases,
-              'leases',
-              (item) => item.residentName,
-              (item) =>
-                `${item.leaseStart} – ${item.leaseEnd} · Rent ${item.rentAmount} · Deposit ${item.securityDeposit}`,
-              'rentAmount',
-              (item) => item.rentAmount,
-              'No lease information detected.',
-            )}
-          </ReviewSection>
-          <ReviewSection title="Vendors Found" count={review.vendors.length} emptyLabel="">
-            {renderSimpleRows<OnboardingExtractedVendor>(
-              review.vendors,
-              'vendors',
-              (item) => item.name,
-              (item) => [item.category, item.phone, item.email].filter(Boolean).join(' · '),
-              'email',
-              (item) => item.email,
-              'No vendors detected.',
-            )}
-          </ReviewSection>
-          <ReviewSection title="Maintenance Issues Found" count={review.maintenanceIssues.length} emptyLabel="">
-            {renderSimpleRows<OnboardingExtractedMaintenanceIssue>(
-              review.maintenanceIssues,
-              'maintenanceIssues',
-              (item) => item.description,
-              (item) =>
-                `${item.building} · Unit ${item.unit}${item.imageTags?.length ? ` · ${item.imageTags.join(', ')}` : ''}`,
-              'description',
-              (item) => item.description,
-              'No maintenance issues detected.',
-            )}
-          </ReviewSection>
-          <ReviewSection title="Financial Records Found" count={review.financialRecords.length} emptyLabel="">
-            {renderSimpleRows<ExtractedFinancialRecord>(
-              review.financialRecords,
-              'financialRecords',
-              (item) => item.recordType,
-              (item) => `${item.description} · ${item.amount} · ${item.period}`,
-              'amount',
-              (item) => item.amount,
-              'No financial records detected.',
-            )}
-          </ReviewSection>
-          <ReviewSection
-            title="Items Needing Review"
-            count={review.needsReview.length + review.imageLabels.length}
-            emptyLabel=""
-          >
-            {renderNeedsReviewRows()}
-          </ReviewSection>
-        </div>
-      )}
+          <div className="mt-3 grid gap-3 sm:grid-cols-2">
+            <label className="block sm:col-span-2">
+              <span className={fieldLabelClass}>Company name</span>
+              <input
+                className={inputClass}
+                value={account.companyName}
+                onChange={(e) => patchAccount({ companyName: e.target.value })}
+                placeholder="Company name"
+              />
+            </label>
+            <label className="block">
+              <span className={fieldLabelClass}>Your name</span>
+              <input
+                className={inputClass}
+                value={account.contactName}
+                onChange={(e) => patchAccount({ contactName: e.target.value })}
+                placeholder="Your name"
+              />
+            </label>
+            <label className="block">
+              <span className={fieldLabelClass}>Email</span>
+              <input
+                className={inputClass}
+                type="email"
+                value={account.email}
+                onChange={(e) => patchAccount({ email: e.target.value })}
+                placeholder="Email"
+              />
+            </label>
+            <label className="block sm:col-span-2">
+              <span className={fieldLabelClass}>Phone</span>
+              <input
+                className={inputClass}
+                type="tel"
+                value={account.phone}
+                onChange={(e) => patchAccount({ phone: e.target.value })}
+                placeholder="(555) 123-4567"
+                aria-describedby={`${smsConsentId}-disclosure`}
+              />
+              <p
+                id={`${smsConsentId}-disclosure`}
+                className="mt-2 text-[12px] leading-[18px] text-[#6a7282]"
+              >
+                By signing up, you agree to receive recurring SMS messages from Ulo related to account
+                verification, maintenance requests, vendor coordination, work order updates,
+                appointment reminders, and other property management notifications. Consent is not a
+                condition of purchase. Reply STOP to opt out. Reply HELP for help. Message frequency
+                varies. Message and data rates may apply. View our{' '}
+                <Link
+                  to={PRIVACY_POLICY_PATH}
+                  className="font-medium text-[#9E439F] underline underline-offset-2 hover:text-[#7f3680]"
+                >
+                  Privacy Policy
+                </Link>{' '}
+                and{' '}
+                <Link
+                  to="/terms"
+                  className="font-medium text-[#9E439F] underline underline-offset-2 hover:text-[#7f3680]"
+                >
+                  Terms of Service
+                </Link>
+                .
+              </p>
+              <label
+                htmlFor={smsConsentId}
+                className="mt-2 flex cursor-pointer items-start gap-2.5"
+              >
+                <input
+                  id={smsConsentId}
+                  type="checkbox"
+                  checked={smsChecked}
+                  onChange={(e) =>
+                    patchAccount({
+                      smsConsentAcceptedAt: e.target.checked
+                        ? account.smsConsentAcceptedAt || new Date().toISOString()
+                        : null,
+                    })
+                  }
+                  className={`${checkboxInputClassName} mt-0.5 accent-[#611879]`}
+                />
+                <span className="text-[12px] leading-[18px] text-[#364153]">
+                  I agree to receive SMS messages as described above.
+                </span>
+              </label>
+            </label>
+            <label className="block">
+              <span className={fieldLabelClass}>Backup contact name (optional)</span>
+              <input
+                className={inputClass}
+                value={account.backupContactName}
+                onChange={(e) => patchAccount({ backupContactName: e.target.value })}
+                placeholder="Backup contact name"
+              />
+            </label>
+            <label className="block">
+              <span className={fieldLabelClass}>Backup contact phone (optional)</span>
+              <input
+                className={inputClass}
+                type="tel"
+                value={account.backupContactPhone}
+                onChange={(e) => patchAccount({ backupContactPhone: e.target.value })}
+                placeholder="Backup contact number"
+              />
+            </label>
+          </div>
+        </ReviewSection>
+
+        {isEmpty ? (
+          <div className="rounded-[10px] border border-dashed border-[#e5e7eb] bg-[#fafafa] px-4 py-8 text-center">
+            <p className="text-[14px] font-medium text-[#101828]">No extracted portfolio data yet</p>
+            <p className="mt-1 text-[13px] text-[#6a7282]">
+              Upload documents to extract properties, residents, and vendors — or complete your
+              organization details above and continue.
+            </p>
+          </div>
+        ) : (
+          <>
+            <ReviewSection title="Properties Found" count={review.properties.length}>
+              {renderPropertyRows()}
+            </ReviewSection>
+            <ReviewSection title="Units Found" count={review.units.length}>
+              {renderSimpleRows<OnboardingExtractedUnit>(
+                review.units,
+                'units',
+                (item) => `Unit ${item.label}`,
+                (item) => item.building,
+                'building',
+                (item) => item.building,
+                'No units detected.',
+              )}
+            </ReviewSection>
+            <ReviewSection title="Residents Found" count={review.residents.length}>
+              {renderResidentRows()}
+            </ReviewSection>
+            <ReviewSection title="Lease Information Found" count={review.leases.length}>
+              {renderSimpleRows<ExtractedLeaseInfo>(
+                review.leases,
+                'leases',
+                (item) => item.residentName,
+                (item) =>
+                  `${item.leaseStart} – ${item.leaseEnd} · Rent ${item.rentAmount} · Deposit ${item.securityDeposit}`,
+                'rentAmount',
+                (item) => item.rentAmount,
+                'No lease information detected.',
+              )}
+            </ReviewSection>
+            <ReviewSection title="Vendors Found" count={review.vendors.length}>
+              {renderVendorRows()}
+            </ReviewSection>
+            <ReviewSection title="Maintenance Issues Found" count={review.maintenanceIssues.length}>
+              {renderSimpleRows<OnboardingExtractedMaintenanceIssue>(
+                review.maintenanceIssues,
+                'maintenanceIssues',
+                (item) => item.description,
+                (item) =>
+                  `${item.building} · Unit ${item.unit}${item.imageTags?.length ? ` · ${item.imageTags.join(', ')}` : ''}`,
+                'description',
+                (item) => item.description,
+                'No maintenance issues detected.',
+              )}
+            </ReviewSection>
+            <ReviewSection title="Financial Records Found" count={review.financialRecords.length}>
+              {renderSimpleRows<ExtractedFinancialRecord>(
+                review.financialRecords,
+                'financialRecords',
+                (item) => item.recordType,
+                (item) => `${item.description} · ${item.amount} · ${item.period}`,
+                'amount',
+                (item) => item.amount,
+                'No financial records detected.',
+              )}
+            </ReviewSection>
+            <ReviewSection
+              title="Items Needing Review"
+              count={review.needsReview.length + review.imageLabels.length}
+            >
+              {renderNeedsReviewRows()}
+            </ReviewSection>
+          </>
+        )}
+      </div>
 
       <div className="mt-6 flex flex-col gap-4 border-t border-[#eef0f3] pt-4">
         <div className="flex flex-wrap items-center justify-between gap-3">
@@ -444,31 +778,18 @@ export function OnboardingAiReviewStep({
           ) : null}
         </div>
 
-        <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex flex-wrap items-center justify-end gap-3">
           <button type="button" disabled={saving} onClick={onBackToUploads} className={btnGhost}>
-            Back to uploads
+            Back
           </button>
-          <div className="flex flex-wrap items-center gap-3">
-            <button type="button" disabled={saving} onClick={onSkipImport} className={btnSecondary}>
-              Skip import
-            </button>
-            <button
-              type="button"
-              disabled={saving || selectedCount === 0}
-              onClick={onImportSelected}
-              className={btnSecondary}
-            >
-              Import selected
-            </button>
-            <button
-              type="button"
-              disabled={saving || isEmpty}
-              onClick={onImportAll}
-              className={btnPrimary}
-            >
-              Import everything
-            </button>
-          </div>
+          <button
+            type="button"
+            disabled={saving}
+            onClick={onImportAll}
+            className={btnPrimary}
+          >
+            Continue
+          </button>
         </div>
       </div>
     </section>

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import {
   HEALTH_BADGE_LABELS,
@@ -15,6 +15,7 @@ import { PropertyResidentsGrid } from '@/components/PropertyResidentsGrid'
 import { PropertyUnitsTable } from '@/components/PropertyUnitsTable'
 import { PropertyVendorsList } from '@/components/PropertyVendorsList'
 import { PropertyWorkflowsList } from '@/components/PropertyWorkflowsList'
+import { PropertyDetailsPanel } from '@/components/PropertyDetailsPanel'
 import { getActiveLandlordId } from '@/lib/activeLandlord'
 import { fetchAdminWorkflowDashboard, type AdminWorkflowDashboardData } from '@/lib/adminWorkflows'
 import {
@@ -24,7 +25,12 @@ import {
   WORKFLOW_STAGE_LABEL,
   type WorkflowKanbanCategory,
 } from '@/lib/adminWorkflowKanban'
-import { buildEmergencyApprovalReview } from '@/lib/emergencyApprovalReview'
+import {
+  buildEmergencyApprovalReview,
+  deriveVendorSmsReviewState,
+  type VendorSmsReviewState,
+} from '@/lib/emergencyApprovalReview'
+import { fetchConversationMonitoringByMaintenanceRequest } from '@/lib/conversationMonitoring'
 import { buildPropertyAiInsights } from '@/lib/propertyAiInsights'
 import { fetchRecognizedMaintenanceSpend, type RecognizedMaintenanceSpend } from '@/api/maintenanceInvoice'
 import { fetchPmCompliance, type PmComplianceTask } from '@/lib/pmCompliance'
@@ -60,10 +66,14 @@ import {
   buildPropertyActiveVendorRows,
   type PropertyVendorRecord,
 } from '@/lib/propertyVendorRows'
+import { applyAdminUnitOccupancyStatus, activateUnitsFromResidentAssignments, reconcileOccupiedUnitResidents } from '@/lib/unitActivation'
 import { supabase } from '@/lib/supabase'
+import type { UnitOccupancyStatus } from '@/components/UnitOccupancyStatusMenu'
+import { getErrorMessage } from '@/lib/errorMessage'
 
 type PropertyTab =
   | 'overview'
+  | 'details'
   | 'units'
   | 'residents'
   | 'workflows'
@@ -85,6 +95,8 @@ type PropertyTicket = {
   email: string | null
   estimatedMinutes: number | null
   totalCost: number | null
+  laborCost: number | null
+  materialCost: number | null
   completedAt: string | null
 }
 
@@ -109,6 +121,7 @@ type UrgentItem = {
 
 const TABS: { id: PropertyTab; label: string; href?: string }[] = [
   { id: 'overview', label: 'Overview' },
+  { id: 'details', label: 'Property Details' },
   { id: 'units', label: 'Units' },
   { id: 'residents', label: 'Residents' },
   { id: 'workflows', label: 'Active Tasks' },
@@ -164,7 +177,7 @@ function StatTile({
   icon: ReactNode
 }) {
   return (
-    <div className="flex min-w-0 flex-1 flex-col gap-3 rounded-[10px] border border-[#e5e7eb] bg-white p-5 shadow-[0px_1px_2px_-1px_rgba(0,0,0,0.06)]">
+    <div className="sa-enter-scale flex min-w-0 flex-1 flex-col gap-3 rounded-[10px] border border-[#e5e7eb] bg-white p-5 shadow-[0px_1px_2px_-1px_rgba(0,0,0,0.06)]">
       <div className="flex items-start justify-between gap-2">
         <p className="text-[13px] leading-5 text-[#6a7282]">{label}</p>
         <span className="text-[#9ca3af]">{icon}</span>
@@ -266,6 +279,7 @@ export function AdminPropertyDetailDashboard() {
   const [activeTab, setActiveTab] = useState<PropertyTab>(() => {
     const tab = searchParams.get('tab')
     if (
+      tab === 'details' ||
       tab === 'units' ||
       tab === 'residents' ||
       tab === 'workflows' ||
@@ -278,6 +292,9 @@ export function AdminPropertyDetailDashboard() {
     }
     return 'overview'
   })
+  const tabListRef = useRef<HTMLDivElement>(null)
+  const tabItemRefs = useRef<Map<PropertyTab, HTMLElement>>(new Map())
+  const [tabIndicator, setTabIndicator] = useState({ left: 0, width: 0, ready: false })
   const [tickets, setTickets] = useState<PropertyTicket[]>([])
   const [units, setUnits] = useState<PropertyUnit[]>([])
   const [pmTasks, setPmTasks] = useState<PropertyHealthPmTask[]>([])
@@ -291,6 +308,9 @@ export function AdminPropertyDetailDashboard() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [reviewTicketId, setReviewTicketId] = useState<string | null>(null)
+  const [reviewVendorSmsState, setReviewVendorSmsState] = useState<VendorSmsReviewState | null>(
+    null,
+  )
   const [messageVendorTicketId, setMessageVendorTicketId] = useState<string | null>(null)
   const [dismissedWorkflowIds, setDismissedWorkflowIds] = useState<Set<string>>(() => new Set())
   const [approvalSaving, setApprovalSaving] = useState(false)
@@ -302,6 +322,7 @@ export function AdminPropertyDetailDashboard() {
   const [propertyConversations, setPropertyConversations] = useState<PropertyConversationRow[]>([])
   const [vendors, setVendors] = useState<PropertyVendorRecord[]>([])
   const [recognizedSpend, setRecognizedSpend] = useState<RecognizedMaintenanceSpend[]>([])
+  const [unitStatusError, setUnitStatusError] = useState<string | null>(null)
 
   const loadProperty = useCallback(async () => {
     if (!building) {
@@ -318,187 +339,262 @@ export function AdminPropertyDetailDashboard() {
     setLoading(true)
     setError(null)
 
-    const landlordId = getActiveLandlordId()
-    const enrichedTickets = await supabase
-      .from('maintenance_request_enriched')
-      .select(
-        'id, created_at, unit, unit_id, building, email, issue_category, description, assigned_vendor_id, vendor_work_status, severity, priority, estimated_minutes, total_cost, invoice_total, amount, labor_cost, material_cost, materials_cost, tax_amount, tax, completed_at, resolved_at, closed_at',
-      )
-      .eq('landlord_id', landlordId)
-      .order('created_at', { ascending: false })
-      .limit(500)
+    let timedOut = false
+    const timeoutId = window.setTimeout(() => {
+      timedOut = true
+      setLoading(false)
+      setError('This property is taking too long to load. Try refreshing.')
+    }, 20000)
 
-    const ticketsResult =
-      enrichedTickets.error == null
-        ? enrichedTickets
-        : await supabase
-            .from('maintenance_requests')
-            .select('*')
+    try {
+      const landlordId = getActiveLandlordId()
+
+      // Fire-and-forget unit heal — never block first paint of the property page.
+      void activateUnitsFromResidentAssignments({
+        landlordId,
+        source: 'property_sync',
+      }).catch((err) => {
+        console.warn('[admin property detail] unit activation sync failed', err)
+      })
+      void reconcileOccupiedUnitResidents({ landlordId }).catch((err) => {
+        console.warn('[admin property detail] occupancy rematch failed', err)
+      })
+
+      const [enrichedTickets, mrTickets, unitsResult, healthSignals, onboardingResult, workflowDashboard, pmCompliance, residentsResult, vendorsResult, recognizedSpendResult] =
+        await Promise.all([
+          supabase
+            .from('maintenance_request_enriched')
+            .select(
+              'id, created_at, unit, unit_id, building, email, issue_category, description, assigned_vendor_id, vendor_work_status, urgency, severity, priority, estimated_minutes',
+            )
             .eq('landlord_id', landlordId)
             .order('created_at', { ascending: false })
-            .limit(500)
+            .limit(500),
+          supabase
+            .from('maintenance_requests')
+            .select(
+              'id, created_at, unit, email, issue_category, description, assigned_vendor_id, vendor_work_status, urgency, severity, priority, estimated_minutes, completed_at, recognized_spend_amount',
+            )
+            .eq('landlord_id', landlordId)
+            .order('created_at', { ascending: false })
+            .limit(500),
+          supabase
+            .from('units')
+            .select('id, unit_label, building, status')
+            .eq('landlord_id', landlordId)
+            .limit(1000),
+          fetchPropertyHealthSignals(),
+          supabase
+            .from('landlord_onboarding')
+            .select('properties, auto_approval_threshold')
+            .eq('landlord_id', landlordId)
+            .maybeSingle(),
+          fetchAdminWorkflowDashboard().catch(() => null),
+          fetchPmCompliance().catch(() => ({ tasks: [] as PmComplianceTask[] })),
+          supabase
+            .from('users')
+            .select('id, full_name, email, unit, building, status, balance_due, lease_end_date')
+            .eq('landlord_id', landlordId)
+            .neq('status', 'past_resident')
+            .limit(2000),
+          supabase
+            .from('vendors')
+            .select('id, name, category, phone')
+            .eq('landlord_id', landlordId)
+            .order('name'),
+          fetchRecognizedMaintenanceSpend(),
+        ])
 
-    const [unitsResult, healthSignals, onboardingResult, workflowDashboard, pmCompliance, residentsResult, vendorsResult, recognizedSpendResult] =
-      await Promise.all([
-        supabase
-          .from('units')
-          .select('id, unit_label, building, status')
-          .eq('landlord_id', landlordId)
-          .limit(1000),
-        fetchPropertyHealthSignals(),
-        supabase
-          .from('landlord_onboarding')
-          .select('properties, auto_approval_threshold')
-          .eq('landlord_id', landlordId)
-          .maybeSingle(),
-        fetchAdminWorkflowDashboard().catch(() => null),
-        fetchPmCompliance().catch(() => ({ tasks: [] as PmComplianceTask[] })),
-        supabase
-          .from('users')
-          .select('id, full_name, email, unit, building, status, balance_due, lease_end_date')
-          .eq('landlord_id', landlordId)
-          .neq('status', 'past_resident')
-          .limit(2000),
-        supabase
-          .from('vendors')
-          .select('id, name, category, phone')
-          .eq('landlord_id', landlordId)
-          .order('name'),
-        fetchRecognizedMaintenanceSpend(),
-      ])
+      if (timedOut) return
+      const spendById = new Map<string, Record<string, unknown>>()
+      if (!mrTickets.error) {
+        for (const row of (mrTickets.data ?? []) as Record<string, unknown>[]) {
+          const id = asString(row.id)
+          if (id) spendById.set(id, row)
+        }
+      }
 
-    const parsedTickets = !ticketsResult.error
-      ? ((ticketsResult.data ?? []) as Record<string, unknown>[]).map((raw) => ({
-          id: asString(raw.id),
-          createdAt: asString(raw.created_at),
+      const ticketSource =
+        enrichedTickets.error == null
+          ? ((enrichedTickets.data ?? []) as Record<string, unknown>[])
+          : !mrTickets.error
+            ? ((mrTickets.data ?? []) as Record<string, unknown>[])
+            : []
+
+      const parsedTickets = ticketSource.map((raw) => {
+        const spend = spendById.get(asString(raw.id))
+        const merged: Record<string, unknown> = spend ? { ...raw, ...spend } : { ...raw }
+        if (
+          merged.recognized_spend_amount != null &&
+          merged.total_cost == null &&
+          merged.invoice_total == null
+        ) {
+          merged.total_cost = merged.recognized_spend_amount
+        }
+        return {
+          id: asString(merged.id),
+          createdAt: asString(merged.created_at),
           urgency: (
-            asString(raw.urgency) ||
-            asString(raw.severity) ||
-            asString(raw.priority)
+            asString(merged.urgency) ||
+            asString(merged.severity) ||
+            asString(merged.priority)
           ).toLowerCase(),
-          vendorWorkStatus: asString(raw.vendor_work_status).toLowerCase(),
-          unit: asString(raw.unit),
-          unitId: asString(raw.unit_id) || null,
-          building: asString(raw.building) || null,
-          issueCategory: asString(raw.issue_category) || null,
-          description: asString(raw.description) || null,
-          assignedVendorId: asString(raw.assigned_vendor_id) || null,
-          email: asString(raw.email) || null,
+          vendorWorkStatus: asString(merged.vendor_work_status).toLowerCase(),
+          unit: asString(merged.unit),
+          unitId: asString(merged.unit_id) || null,
+          building: asString(merged.building) || null,
+          issueCategory: asString(merged.issue_category) || null,
+          description: asString(merged.description) || null,
+          assignedVendorId: asString(merged.assigned_vendor_id) || null,
+          email: asString(merged.email) || null,
           estimatedMinutes:
-            typeof raw.estimated_minutes === 'number' && Number.isFinite(raw.estimated_minutes)
-              ? raw.estimated_minutes
+            typeof merged.estimated_minutes === 'number' && Number.isFinite(merged.estimated_minutes)
+              ? merged.estimated_minutes
               : null,
-          totalCost: invoiceTotalFromRow(raw),
+          totalCost: invoiceTotalFromRow(merged),
+          laborCost: asFiniteNumber(merged.labor_cost) || null,
+          materialCost: asFiniteNumber(merged.material_cost ?? merged.materials_cost) || null,
           completedAt:
-            asString(raw.completed_at) ||
-            asString(raw.resolved_at) ||
-            asString(raw.closed_at) ||
+            asString(merged.completed_at) ||
+            asString(merged.resolved_at) ||
+            asString(merged.closed_at) ||
             null,
-        }))
-      : []
+        }
+      })
 
-    const parsedUnits = !unitsResult.error
-      ? ((unitsResult.data ?? []) as Record<string, unknown>[]).map((r) => ({
-          id: asString(r.id),
-          unitLabel: asString(r.unit_label),
-          building: asString(r.building) || null,
-          status: asString(r.status).toLowerCase(),
-        }))
-      : []
-
-    const unitBuildingById = new Map(
-      parsedUnits.map((unit) => [unit.id, unit.building] as const),
-    )
-
-    const ticketsWithBuilding = parsedTickets.map((ticket) => {
-      if (ticket.building?.trim() || !ticket.unitId) return ticket
-      const fromUnit = unitBuildingById.get(ticket.unitId)
-      return fromUnit ? { ...ticket, building: fromUnit } : ticket
-    })
-
-    if (!ticketsResult.error) {
-      setTickets(ticketsWithBuilding)
-    }
-
-    const parsedResidents = !residentsResult.error
-      ? ((residentsResult.data ?? []) as Record<string, unknown>[])
-          .map((raw) => ({
-            id: asString(raw.id),
-            fullName: asString(raw.full_name) || 'Unnamed resident',
-            unit: asString(raw.unit),
-            building: asString(raw.building) || null,
-            email: asString(raw.email) || null,
-            status: asString(raw.status).toLowerCase() || 'active',
-            balanceDue: asFiniteNumber(raw.balance_due),
-            leaseEndDate: asString(raw.lease_end_date) || null,
+      const parsedUnits = !unitsResult.error
+        ? ((unitsResult.data ?? []) as Record<string, unknown>[]).map((r) => ({
+            id: asString(r.id),
+            unitLabel: asString(r.unit_label),
+            building: asString(r.building) || null,
+            status: asString(r.status).toLowerCase(),
           }))
-          .filter((row) => row.id)
-      : []
+        : []
 
-    const conversationRows = await fetchPropertyConversations(
-      building,
-      ticketsWithBuilding.map((ticket) => ({
-        id: ticket.id,
-        unit: ticket.unit,
-        building: ticket.building,
-        email: ticket.email,
-      })),
-      parsedResidents.map((resident) => ({
-        email: resident.email ?? null,
-        building: resident.building,
-      })),
-    ).catch(() => [] as PropertyConversationRow[])
-    setPropertyConversations(conversationRows)
-
-    setUnits(parsedUnits)
-
-    setPmTasks(healthSignals.pmTasks)
-    setFeedback(healthSignals.feedback)
-    setVendorMetrics(healthSignals.vendorMetrics)
-
-    const propsRaw = onboardingResult.data?.properties
-    setOnboardingProperties(Array.isArray(propsRaw) ? (propsRaw as Record<string, unknown>[]) : [])
-
-    const threshold = onboardingResult.data?.auto_approval_threshold
-    if (typeof threshold === 'number' && Number.isFinite(threshold) && threshold > 0) {
-      setAutoApprovalCap(threshold)
-    } else {
-      setAutoApprovalCap(1000)
-    }
-
-    if (workflowDashboard) {
-      setWorkflowData(workflowDashboard)
-    } else {
-      setWorkflowData(null)
-    }
-
-    setPmComplianceTasks(pmCompliance.tasks ?? [])
-
-    if (!residentsResult.error) {
-      setResidents(parsedResidents)
-    } else {
-      setResidents([])
-    }
-
-    if (!vendorsResult.error) {
-      setVendors(
-        ((vendorsResult.data ?? []) as Record<string, unknown>[])
-          .map((raw) => ({
-            id: asString(raw.id),
-            name: asString(raw.name) || 'Vendor',
-            category: asString(raw.category) || null,
-            phone: asString(raw.phone) || null,
-          }))
-          .filter((row) => row.id),
+      const unitBuildingById = new Map(
+        parsedUnits.map((unit) => [unit.id, unit.building] as const),
       )
-    } else {
-      setVendors([])
+
+      const ticketsWithBuilding = parsedTickets.map((ticket) => {
+        if (ticket.building?.trim() || !ticket.unitId) return ticket
+        const fromUnit = unitBuildingById.get(ticket.unitId)
+        return fromUnit ? { ...ticket, building: fromUnit } : ticket
+      })
+
+      const parsedResidents = !residentsResult.error
+        ? ((residentsResult.data ?? []) as Record<string, unknown>[])
+            .map((raw) => ({
+              id: asString(raw.id),
+              fullName: asString(raw.full_name) || 'Unnamed resident',
+              unit: asString(raw.unit),
+              building: asString(raw.building) || null,
+              email: asString(raw.email) || null,
+              status: asString(raw.status).toLowerCase() || 'active',
+              balanceDue: asFiniteNumber(raw.balance_due),
+              leaseEndDate: asString(raw.lease_end_date) || null,
+            }))
+            .filter((row) => row.id)
+        : []
+
+      setTickets(ticketsWithBuilding)
+      setUnits(parsedUnits)
+      setPmTasks(healthSignals.pmTasks)
+      setFeedback(healthSignals.feedback)
+      setVendorMetrics(healthSignals.vendorMetrics)
+
+      const propsRaw = onboardingResult.data?.properties
+      setOnboardingProperties(Array.isArray(propsRaw) ? (propsRaw as Record<string, unknown>[]) : [])
+
+      const threshold = onboardingResult.data?.auto_approval_threshold
+      if (typeof threshold === 'number' && Number.isFinite(threshold) && threshold > 0) {
+        setAutoApprovalCap(threshold)
+      } else {
+        setAutoApprovalCap(1000)
+      }
+
+      if (workflowDashboard) {
+        setWorkflowData(workflowDashboard)
+      } else {
+        setWorkflowData(null)
+      }
+
+      setPmComplianceTasks(pmCompliance.tasks ?? [])
+      setResidents(parsedResidents)
+
+      if (!vendorsResult.error) {
+        setVendors(
+          ((vendorsResult.data ?? []) as Record<string, unknown>[])
+            .map((raw) => ({
+              id: asString(raw.id),
+              name: asString(raw.name) || 'Vendor',
+              category: asString(raw.category) || null,
+              phone: asString(raw.phone) || null,
+            }))
+            .filter((row) => row.id),
+        )
+      } else {
+        setVendors([])
+      }
+
+      setRecognizedSpend(recognizedSpendResult ?? [])
+      setError(null)
+
+      // Conversations are secondary — don't block the property overview on them.
+      void fetchPropertyConversations(
+        building,
+        ticketsWithBuilding.map((ticket) => ({
+          id: ticket.id,
+          unit: ticket.unit,
+          building: ticket.building,
+          email: ticket.email,
+        })),
+        parsedResidents.map((resident) => ({
+          email: resident.email ?? null,
+          building: resident.building,
+        })),
+      )
+        .then((rows) => {
+          if (!timedOut) setPropertyConversations(rows)
+        })
+        .catch(() => {
+          if (!timedOut) setPropertyConversations([])
+        })
+    } catch (err) {
+      if (timedOut) return
+      console.error('[admin property detail] load failed', err)
+      setError(getErrorMessage(err, 'Could not load property.'))
+    } finally {
+      window.clearTimeout(timeoutId)
+      if (!timedOut) setLoading(false)
     }
-
-    setRecognizedSpend(recognizedSpendResult ?? [])
-
-    setLoading(false)
   }, [building])
+
+  const handleOccupancyStatusChange = useCallback(
+    async (unitId: string, status: UnitOccupancyStatus): Promise<boolean> => {
+      setUnitStatusError(null)
+      const result = await applyAdminUnitOccupancyStatus({
+        unitId,
+        status,
+        landlordId: getActiveLandlordId(),
+      })
+      if (!result.ok) {
+        setUnitStatusError(result.error)
+        return false
+      }
+      setUnits((prev) =>
+        prev.map((unit) => {
+          if (unit.id !== unitId) return unit
+          if (status === 'occupied') return { ...unit, status: 'active' }
+          if (status === 'vacant') return { ...unit, status: 'vacant' }
+          if (status === 'under_maintenance') return { ...unit, status: 'under_maintenance' }
+          return unit
+        }),
+      )
+      await loadProperty()
+      return true
+    },
+    [loadProperty],
+  )
 
   useEffect(() => {
     void loadProperty()
@@ -507,6 +603,7 @@ export function AdminPropertyDetailDashboard() {
   useEffect(() => {
     const tab = searchParams.get('tab')
     if (
+      tab === 'details' ||
       tab === 'units' ||
       tab === 'residents' ||
       tab === 'workflows' ||
@@ -518,6 +615,32 @@ export function AdminPropertyDetailDashboard() {
       setActiveTab(tab)
     }
   }, [searchParams])
+
+  useLayoutEffect(() => {
+    function measureIndicator() {
+      const list = tabListRef.current
+      const item = tabItemRefs.current.get(activeTab)
+      if (!list || !item) return
+      setTabIndicator({
+        left: item.offsetLeft,
+        width: item.offsetWidth,
+        ready: true,
+      })
+    }
+    measureIndicator()
+    window.addEventListener('resize', measureIndicator)
+    return () => window.removeEventListener('resize', measureIndicator)
+  }, [activeTab, building])
+
+  function selectPropertyTab(tab: PropertyTab) {
+    if (tab === activeTab) return
+    setActiveTab(tab)
+  }
+
+  function setTabItemRef(tab: PropertyTab, node: HTMLElement | null) {
+    if (node) tabItemRefs.current.set(tab, node)
+    else tabItemRefs.current.delete(tab)
+  }
 
   const buildingUnits = useMemo(
     () => units.filter((u) => normalizeBuildingKey(u.building) === normalizeBuildingKey(building)),
@@ -779,12 +902,99 @@ export function AdminPropertyDetailDashboard() {
     })
   }, [building, buildingTickets, recognizedSpend, buildingPmTasks])
 
+  useEffect(() => {
+    if (!reviewTicketId) {
+      setReviewVendorSmsState(null)
+      return
+    }
+
+    let cancelled = false
+    const ticketId = reviewTicketId
+    setReviewVendorSmsState(null)
+
+    async function refreshVendorSmsState() {
+      try {
+        const detail = await fetchConversationMonitoringByMaintenanceRequest(ticketId)
+        if (cancelled) return
+        setReviewVendorSmsState(deriveVendorSmsReviewState(detail))
+      } catch {
+        if (cancelled) return
+        setReviewVendorSmsState((prev) => prev ?? 'no_thread')
+      }
+    }
+
+    void refreshVendorSmsState()
+
+    const pollId = window.setInterval(() => {
+      if (!cancelled) void refreshVendorSmsState()
+    }, 3000)
+
+    const onVisibility = () => {
+      if (document.visibilityState === 'visible' && !cancelled) {
+        void refreshVendorSmsState()
+      }
+    }
+    document.addEventListener('visibilitychange', onVisibility)
+
+    const landlordId = getActiveLandlordId()
+    const channel =
+      supabase != null
+        ? supabase
+            .channel(`property-urgent-review-sms-${ticketId}`)
+            .on(
+              'postgres_changes',
+              {
+                event: '*',
+                schema: 'public',
+                table: 'sms_messages',
+                filter: `landlord_id=eq.${landlordId}`,
+              },
+              () => {
+                void refreshVendorSmsState()
+              },
+            )
+            .on(
+              'postgres_changes',
+              {
+                event: '*',
+                schema: 'public',
+                table: 'sms_conversations',
+                filter: `maintenance_request_id=eq.${ticketId}`,
+              },
+              () => {
+                void refreshVendorSmsState()
+              },
+            )
+            .subscribe()
+        : null
+
+    return () => {
+      cancelled = true
+      window.clearInterval(pollId)
+      document.removeEventListener('visibilitychange', onVisibility)
+      if (channel && supabase) void supabase.removeChannel(channel)
+    }
+  }, [reviewTicketId])
+
   const activeReview = useMemo(() => {
     if (!reviewTicketId) return null
     const ticket = buildingTickets.find((t) => t.id === reviewTicketId)
     if (!ticket) return null
-    return buildEmergencyApprovalReview(ticket, building, autoApprovalCap)
-  }, [reviewTicketId, buildingTickets, building, autoApprovalCap])
+    const vendorName = ticket.assignedVendorId
+      ? (vendors.find((vendor) => vendor.id === ticket.assignedVendorId)?.name ?? null)
+      : null
+    return buildEmergencyApprovalReview(ticket, building, autoApprovalCap, {
+      vendorName,
+      vendorSmsState: reviewVendorSmsState,
+    })
+  }, [
+    reviewTicketId,
+    buildingTickets,
+    building,
+    autoApprovalCap,
+    vendors,
+    reviewVendorSmsState,
+  ])
 
   const activeVendorBrief = useMemo(() => {
     if (!messageVendorTicketId) return null
@@ -795,11 +1005,13 @@ export function AdminPropertyDetailDashboard() {
 
   function openReview(ticketId: string) {
     setMessageVendorTicketId(null)
+    setReviewVendorSmsState(null)
     setReviewTicketId(ticketId)
   }
 
   function closeReview() {
     setReviewTicketId(null)
+    setReviewVendorSmsState(null)
   }
 
   function openMessageVendor(ticketId: string) {
@@ -841,7 +1053,7 @@ export function AdminPropertyDetailDashboard() {
     return (
       <main className="flex min-h-0 flex-1 flex-col px-8 pb-12 pt-6">
         <p className="text-[14px] text-[#6a7282]">Property not found.</p>
-        <Link to="/admin/properties" className="mt-3 text-[14px] font-medium text-[#186179]">
+        <Link to="/admin/properties" className="sa-link mt-3 text-[14px] font-medium text-[#186179]">
           ← All properties
         </Link>
       </main>
@@ -861,7 +1073,7 @@ export function AdminPropertyDetailDashboard() {
       <div className="py-6">
         <Link
           to="/admin/properties"
-          className="inline-flex items-center gap-1 text-[13px] font-medium text-[#6a7282] transition-colors hover:text-[#101828]"
+          className="sa-link inline-flex items-center gap-1 text-[13px] font-medium text-[#6a7282] hover:text-[#101828]"
         >
           <span aria-hidden>←</span> All properties
         </Link>
@@ -911,38 +1123,62 @@ export function AdminPropertyDetailDashboard() {
         className="mt-6 shrink-0 -mx-8 overflow-x-auto overscroll-x-contain px-8 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden sm:mx-0 sm:px-0"
         aria-label="Property sections"
       >
-        <div className="inline-flex w-max max-w-none flex-nowrap gap-1 rounded-full bg-[#f3f4f6] p-1">
-        {TABS.map((tab) => {
-          const isActive = activeTab === tab.id
-          const className = [
-            'shrink-0 whitespace-nowrap rounded-full px-4 py-2 text-[13px] font-medium leading-5 transition-colors',
-            isActive
-              ? 'bg-white text-[#0a0a0a] shadow-[0px_1px_2px_rgba(0,0,0,0.06)] border border-[#e5e7eb]'
-              : 'text-[#6a7282] hover:text-[#101828]',
-          ].join(' ')
+        <div
+          ref={tabListRef}
+          className="property-tab-list relative inline-flex w-max max-w-none flex-nowrap gap-1 rounded-full bg-[#f3f4f6] p-1"
+        >
+          <span
+            aria-hidden
+            className={[
+              'property-tab-indicator pointer-events-none absolute top-1 bottom-1 rounded-full bg-white shadow-[0px_1px_2px_rgba(0,0,0,0.06)] border border-[#e5e7eb]',
+              tabIndicator.ready ? 'opacity-100' : 'opacity-0',
+            ].join(' ')}
+            style={{
+              left: tabIndicator.left,
+              width: tabIndicator.width,
+            }}
+          />
+          {TABS.map((tab) => {
+            const isActive = activeTab === tab.id
+            const className = [
+              'property-tab-trigger relative z-[1] shrink-0 whitespace-nowrap rounded-full px-4 py-2 text-[13px] font-medium leading-5 outline-none transition-colors duration-200',
+              'focus-visible:shadow-[0_0_0_2px_#ffffff,0_0_0_4px_#187960]',
+              isActive
+                ? 'text-[#0a0a0a]'
+                : 'text-[#6a7282] hover:text-[#101828] active:text-[#0a0a0a]',
+            ].join(' ')
 
-          if (tab.href && tab.id !== 'overview') {
+            if (tab.href && tab.id !== 'overview') {
+              return (
+                <Link
+                  key={tab.id}
+                  ref={(node) => setTabItemRef(tab.id, node)}
+                  to={tab.href}
+                  className={className}
+                  aria-current={isActive ? 'page' : undefined}
+                >
+                  {tab.label}
+                </Link>
+              )
+            }
+
             return (
-              <Link key={tab.id} to={tab.href} className={className}>
+              <button
+                key={tab.id}
+                ref={(node) => setTabItemRef(tab.id, node)}
+                type="button"
+                onClick={() => selectPropertyTab(tab.id)}
+                className={className}
+                aria-pressed={isActive}
+              >
                 {tab.label}
-              </Link>
+              </button>
             )
-          }
-
-          return (
-            <button
-              key={tab.id}
-              type="button"
-              onClick={() => setActiveTab(tab.id)}
-              className={className}
-            >
-              {tab.label}
-            </button>
-          )
-        })}
+          })}
         </div>
       </nav>
 
+      <div key={activeTab} className="property-tab-panel min-w-0">
       {activeTab === 'overview' ? (
         <div className="mt-6 flex flex-col gap-4">
           <section
@@ -957,9 +1193,9 @@ export function AdminPropertyDetailDashboard() {
               }
             }}
             className={[
-              'rounded-[10px] border border-[#e5e7eb] bg-white p-6 shadow-[0px_1px_2px_-1px_rgba(0,0,0,0.06)]',
+              'sa-surface rounded-[10px] border border-[#e5e7eb] bg-white p-6 shadow-[0px_1px_2px_-1px_rgba(0,0,0,0.06)]',
               propertyAiInsights
-                ? 'cursor-pointer transition-colors hover:border-[#d1d5dc] hover:bg-[#fafafa] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2'
+                ? 'sa-card cursor-pointer hover:border-[#d1d5dc] hover:bg-[#fafafa] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2'
                 : '',
             ].join(' ')}
           >
@@ -982,7 +1218,7 @@ export function AdminPropertyDetailDashboard() {
                 <div className="mt-3 h-2 w-full overflow-hidden rounded-full bg-[#f3f4f6]">
                   {buildingHealth && buildingHealth.status !== 'pending_setup' ? (
                     <div
-                      className={`h-full rounded-full ${HEALTH_BAR_STYLES[buildingHealth.status]}`}
+                      className={`sa-bar h-full rounded-full ${HEALTH_BAR_STYLES[buildingHealth.status]}`}
                       style={{ width: `${buildingHealth.score}%` }}
                     />
                   ) : (
@@ -1026,10 +1262,11 @@ export function AdminPropertyDetailDashboard() {
               <p className="mt-4 text-[13px] text-[#6a7282]">No urgent items for this property.</p>
             ) : (
               <ul className="mt-4 flex flex-col gap-3">
-                {urgentItems.map((item) => (
+                {urgentItems.map((item, index) => (
                   <li
                     key={item.id}
-                    className="flex flex-col gap-3 rounded-[10px] border border-[#f3f4f6] bg-[#fafafa] px-4 py-3 sm:flex-row sm:items-center sm:justify-between"
+                    style={{ animationDelay: `${Math.min(index, 6) * 40}ms` }}
+                    className="sa-enter sa-surface flex flex-col gap-3 rounded-[10px] border border-[#f3f4f6] bg-[#fafafa] px-4 py-3 sm:flex-row sm:items-center sm:justify-between"
                   >
                     <div className="min-w-0">
                       <p className="text-[14px] font-semibold leading-5 text-[#0a0a0a]">
@@ -1044,7 +1281,7 @@ export function AdminPropertyDetailDashboard() {
                         type="button"
                         onClick={() => item.ticketId && openReview(item.ticketId)}
                         disabled={!item.ticketId}
-                        className="inline-flex items-center gap-1.5 rounded-full border border-[#e5e7eb] bg-white px-3 py-1.5 text-[12px] font-medium text-[#364153] hover:bg-[#f9fafb] disabled:pointer-events-none disabled:opacity-40"
+                        className="sa-pill inline-flex items-center gap-1.5 rounded-full border border-[#e5e7eb] bg-white px-3 py-1.5 text-[12px] font-medium text-[#364153] hover:bg-[#f9fafb] disabled:pointer-events-none disabled:opacity-40"
                       >
                         <EyeIcon />
                         Review
@@ -1053,7 +1290,7 @@ export function AdminPropertyDetailDashboard() {
                         type="button"
                         onClick={() => item.ticketId && openMessageVendor(item.ticketId)}
                         disabled={!item.ticketId}
-                        className="inline-flex items-center gap-1.5 rounded-full border border-[#e5e7eb] bg-white px-3 py-1.5 text-[12px] font-medium text-[#364153] hover:bg-[#f9fafb] disabled:pointer-events-none disabled:opacity-40"
+                        className="sa-pill inline-flex items-center gap-1.5 rounded-full border border-[#e5e7eb] bg-white px-3 py-1.5 text-[12px] font-medium text-[#364153] hover:bg-[#f9fafb] disabled:pointer-events-none disabled:opacity-40"
                       >
                         <MessageIcon />
                         Message Vendor
@@ -1061,7 +1298,7 @@ export function AdminPropertyDetailDashboard() {
                       <button
                         type="button"
                         onClick={() => navigate(workflowOperationsPath(item.workflowRunId))}
-                        className="inline-flex items-center gap-1.5 rounded-full border border-[#e5e7eb] bg-white px-3 py-1.5 text-[12px] font-medium text-[#364153] hover:bg-[#f9fafb]"
+                        className="sa-pill inline-flex items-center gap-1.5 rounded-full border border-[#e5e7eb] bg-white px-3 py-1.5 text-[12px] font-medium text-[#364153] hover:bg-[#f9fafb]"
                       >
                         <LinkIcon />
                         View Workflow
@@ -1073,8 +1310,26 @@ export function AdminPropertyDetailDashboard() {
             )}
           </section>
         </div>
+      ) : activeTab === 'details' ? (
+        <PropertyDetailsPanel
+          building={building ?? ''}
+          loading={loading}
+          initialYearBuilt={meta.yearBuilt}
+        />
       ) : activeTab === 'units' ? (
-        <PropertyUnitsTable building={building ?? ''} rows={propertyUnitRows} loading={loading} />
+        <>
+          {unitStatusError ? (
+            <p className="mt-4 rounded-lg border border-[#fecaca] bg-[#fef2f2] px-3 py-2 text-[13px] text-[#b91c1c]">
+              {unitStatusError}
+            </p>
+          ) : null}
+          <PropertyUnitsTable
+            building={building ?? ''}
+            rows={propertyUnitRows}
+            loading={loading}
+            onOccupancyStatusChange={(unitId, status) => handleOccupancyStatusChange(unitId, status)}
+          />
+        </>
       ) : activeTab === 'residents' ? (
         <PropertyResidentsGrid
           building={building}
@@ -1087,6 +1342,7 @@ export function AdminPropertyDetailDashboard() {
         <PropertyConversationsList
           rows={propertyConversations}
           loading={loading}
+          selectedConversationId={monitoringConversationId}
           onSelectConversation={setMonitoringConversationId}
         />
       ) : activeTab === 'vendors' ? (
@@ -1109,6 +1365,7 @@ export function AdminPropertyDetailDashboard() {
           </p>
         </div>
       )}
+      </div>
       <EmergencyApprovalRail
         open={reviewTicketId != null}
         review={activeReview}

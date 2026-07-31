@@ -52,8 +52,10 @@ export type ResidentProfileDetail = {
   leaseEndLabel: string
   monthlyRentLabel: string
   depositLabel: string
-  tenantMaintenance: string
-  landlordMaintenance: string
+  tenantMaintenance: string | null
+  landlordMaintenance: string | null
+  /** Free-text lease maintenance responsibilities clause from onboarding. */
+  maintenanceResponsibilitiesClause: string | null
   balanceDue: number
   balanceLabel: string
   workflows: ResidentWorkflowSummaryItem[]
@@ -70,12 +72,23 @@ export type ResidentProfileUserRow = {
   status: string
   balanceDue: number
   leaseEndDate: string | null
+  /** Contract rent from users.monthly_rent when set during onboarding/edit. */
+  monthlyRent?: number | null
+  maintenanceResponsibilitiesClause?: string | null
 }
 
-const TENANT_MAINTENANCE =
-  'Light bulbs, batteries, lawn watering, pest prevention'
-const LANDLORD_MAINTENANCE =
-  'HVAC, plumbing, appliances, structural, roof'
+/** Placeholder emails minted when onboarding saved a resident without an email. */
+export function isPlaceholderResidentEmail(email: string | null | undefined): boolean {
+  const value = (email ?? '').trim().toLowerCase()
+  if (!value) return true
+  return value.endsWith('@onboarding.local')
+}
+
+export function displayResidentEmail(email: string | null | undefined): string | null {
+  const value = (email ?? '').trim()
+  if (!value || isPlaceholderResidentEmail(value)) return null
+  return value
+}
 
 function formatPhone(value: string | null): string | null {
   if (!value?.trim()) return null
@@ -101,16 +114,6 @@ function buildingShortName(building: string): string {
   return building.replace(/\s+Apartments$/i, '').trim() || building
 }
 
-function estimateMonthlyRent(unit: string): number {
-  const unitNumber = Number.parseInt(unit.replace(/\D/g, ''), 10)
-  if (!Number.isFinite(unitNumber)) return 1800
-  if (unitNumber >= 500) return 2400
-  if (unitNumber >= 400) return 2200
-  if (unitNumber >= 300) return 2000
-  if (unitNumber >= 200) return 1850
-  return 1650
-}
-
 function resolveStanding(status: string, balanceDue: number): {
   standing: ResidentStanding
   standingLabel: string
@@ -125,28 +128,6 @@ function resolveStanding(status: string, balanceDue: number): {
     return { standing: 'at_risk', standingLabel: 'MOVE-IN PENDING' }
   }
   return { standing: 'good_standing', standingLabel: 'GOOD STANDING' }
-}
-
-function demoEmergencyContact(user: ResidentProfileUserRow): ResidentEmergencyContact | null {
-  if (!user.fullName.trim()) return null
-  const parts = user.fullName.trim().split(/\s+/).filter(Boolean)
-  const last = parts[parts.length - 1] ?? 'Contact'
-  return {
-    name: `Jamie ${last.charAt(0)}.`,
-    relationship: 'Spouse',
-    phone: '(503) 348-5376',
-  }
-}
-
-function demoPets(user: ResidentProfileUserRow): ResidentPet[] {
-  const key = user.fullName.toLowerCase()
-  if (key.includes('walker') || key.includes('ramirez') || key.includes('silva')) {
-    return [{ name: 'Milo', species: 'Cat', breed: 'Domestic shorthair' }]
-  }
-  if (key.includes('rossi')) {
-    return [{ name: 'Biscuit', species: 'Dog', breed: 'Lab mix' }]
-  }
-  return []
 }
 
 function workflowPriorityLabel(row: ReturnType<typeof collectAdminWorkflowRuns>[number]): {
@@ -230,9 +211,10 @@ export function buildResidentProfileDetail(input: {
 }): ResidentProfileDetail {
   const { user, workflowData, communications = [] } = input
   const standing = resolveStanding(user.status, user.balanceDue)
-  const monthlyRent = estimateMonthlyRent(user.unit)
-  const emergencyContact = demoEmergencyContact(user)
-  const pets = demoPets(user)
+  const monthlyRent =
+    typeof user.monthlyRent === 'number' && Number.isFinite(user.monthlyRent) && user.monthlyRent > 0
+      ? user.monthlyRent
+      : null
 
   return {
     id: user.id,
@@ -243,15 +225,17 @@ export function buildResidentProfileDetail(input: {
     standing: standing.standing,
     standingLabel: standing.standingLabel,
     phone: formatPhone(user.phone),
-    email: user.email.trim() || null,
-    emergencyContact,
-    pets,
+    email: displayResidentEmail(user.email),
+    emergencyContact: null,
+    pets: [],
     leaseStatus: user.status === 'pending' ? 'Pending move-in' : 'Occupied',
     leaseEndLabel: formatPropertyLeaseEnd(user.leaseEndDate) ?? '—',
-    monthlyRentLabel: formatCurrency(monthlyRent),
-    depositLabel: formatCurrency(monthlyRent),
-    tenantMaintenance: TENANT_MAINTENANCE,
-    landlordMaintenance: LANDLORD_MAINTENANCE,
+    monthlyRentLabel: monthlyRent != null ? formatCurrency(monthlyRent) : '—',
+    depositLabel: '—',
+    tenantMaintenance: null,
+    landlordMaintenance: null,
+    maintenanceResponsibilitiesClause:
+      user.maintenanceResponsibilitiesClause?.trim() || null,
     balanceDue: user.balanceDue,
     balanceLabel: formatCurrency(user.balanceDue),
     workflows: buildResidentWorkflowSummaries(user.id, workflowData),

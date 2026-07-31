@@ -24,6 +24,44 @@ type VendorRecord = {
   email: string | null
   phone: string | null
   active: boolean
+  rosterStatus: string | null
+  performanceReview: string | null
+  rosterStatusReason: string | null
+}
+
+function performanceReviewLabel(value: string | null): string | null {
+  switch ((value ?? '').trim()) {
+    case 'coaching':
+      return 'Performance coaching'
+    case 'profile_review':
+      return 'Profile review'
+    case 'suspension_review':
+      return 'Suspension review'
+    default:
+      return null
+  }
+}
+
+function capacityChipClasses(status: VendorComplianceProfile['capacity']['status']): {
+  pill: string
+  dot: string
+} {
+  switch (status) {
+    case 'active':
+      return { pill: 'bg-[#dbfce7] text-[#008236]', dot: 'bg-[#00a63e]' }
+    case 'docs_submitted':
+      return { pill: 'bg-[#e0e7ff] text-[#3730a3]', dot: 'bg-[#4338ca]' }
+    case 'pending':
+      return { pill: 'bg-[#fef9c3] text-[#92400e]', dot: 'bg-[#d97706]' }
+    case 'paused':
+      return { pill: 'bg-[#f3f4f6] text-[#6a7282]', dot: 'bg-[#9ca3af]' }
+    case 'suspended':
+      return { pill: 'bg-[#ffedd5] text-[#9a3412]', dot: 'bg-[#ea580c]' }
+    case 'banned':
+      return { pill: 'bg-[#fee2e2] text-[#991b1b]', dot: 'bg-[#dc2626]' }
+    default:
+      return { pill: 'bg-[#f3f4f6] text-[#6a7282]', dot: 'bg-[#9ca3af]' }
+  }
 }
 
 type VendorMetrics = {
@@ -59,7 +97,7 @@ function formatResponse(minutes: number | null): string {
 
 function StatTile({ label, value, sub }: { label: string; value: string; sub?: string }) {
   return (
-    <div className="rounded-[10px] border border-[#e5e7eb] bg-white p-5 shadow-[0px_1px_2px_-1px_rgba(0,0,0,0.06)]">
+    <div className="sa-enter-scale rounded-[10px] border border-[#e5e7eb] bg-white p-5 shadow-[0px_1px_2px_-1px_rgba(0,0,0,0.06)]">
       <p className="text-[12px] font-medium uppercase tracking-[0.06em] text-[#6a7282]">{label}</p>
       <p className="mt-2 text-[24px] font-bold leading-none tracking-[0.4px] text-[#0a0a0a] tabular-nums">
         {value}
@@ -71,7 +109,7 @@ function StatTile({ label, value, sub }: { label: string; value: string; sub?: s
 
 function ComplianceCard({ item }: { item: VendorComplianceItem }) {
   return (
-    <div className="rounded-[10px] border border-[#e5e7eb] bg-white p-5 shadow-[0px_1px_2px_-1px_rgba(0,0,0,0.06)]">
+    <div className="sa-enter-scale sa-surface rounded-[10px] border border-[#e5e7eb] bg-white p-5 shadow-[0px_1px_2px_-1px_rgba(0,0,0,0.06)]">
       <div className="flex items-start justify-between gap-3">
         <p className="text-[12px] font-medium uppercase tracking-[0.06em] text-[#6a7282]">
           {item.label}
@@ -160,7 +198,9 @@ export function AdminVendorDetailDashboard() {
     const [vendorResult, scoresResult, verificationResult] = await Promise.allSettled([
       supabase
         .from('vendors')
-        .select('id, name, category, active, email, phone')
+        .select(
+          'id, name, category, active, roster_status, roster_status_reason, performance_review, email, phone',
+        )
         .eq('landlord_id', landlordId)
         .eq('id', vendorId)
         .maybeSingle(),
@@ -168,7 +208,7 @@ export function AdminVendorDetailDashboard() {
       supabase
         .from('vendor_verifications')
         .select(
-          'license_status, license_number, license_state, coi_general_liability, coi_expiration, coi_additional_insured, coi_status, background_check_status, w9_received, trade_categories, service_area, availability, status',
+          'license_status, license_number, license_state, coi_general_liability, coi_expiration, coi_additional_insured, coi_status, background_check_status, w9_received, tax_entity_type, tin_type, tin_last4, tin_fingerprint, w9_variant, tax_1099_treatment, trade_categories, service_area, availability, status',
         )
         .eq('landlord_id', landlordId)
         .eq('vendor_id', vendorId)
@@ -202,6 +242,9 @@ export function AdminVendorDetailDashboard() {
       email: asString(raw.email) || null,
       phone: asString(raw.phone) || null,
       active: raw.active !== false,
+      rosterStatus: asString(raw.roster_status) || null,
+      rosterStatusReason: asString(raw.roster_status_reason) || null,
+      performanceReview: asString(raw.performance_review) || null,
     })
 
     if (scoresResult.status === 'fulfilled' && !scoresResult.value.error) {
@@ -245,6 +288,7 @@ export function AdminVendorDetailDashboard() {
         phone: vendor.phone,
         category: vendor.category,
         active: vendor.active,
+        rosterStatus: vendor.rosterStatus,
       },
       verification,
     )
@@ -261,7 +305,7 @@ export function AdminVendorDetailDashboard() {
         <p className="text-[14px] text-[#6a7282]">
           {error ? `Could not load vendor: ${error}` : 'Vendor not found.'}
         </p>
-        <Link to="/admin/vendors" className="mt-3 text-[14px] font-medium text-[#186179]">
+        <Link to="/admin/vendors" className="sa-link mt-3 text-[14px] font-medium text-[#186179]">
           ← All vendors
         </Link>
       </main>
@@ -275,7 +319,7 @@ export function AdminVendorDetailDashboard() {
       <div className="py-6">
         <Link
           to="/admin/vendors"
-          className="inline-flex items-center gap-1 text-[13px] font-medium text-[#6a7282] transition-colors hover:text-[#101828]"
+          className="sa-link inline-flex items-center gap-1 text-[13px] font-medium text-[#6a7282] hover:text-[#101828]"
         >
           <span aria-hidden>←</span> All vendors
         </Link>
@@ -294,30 +338,36 @@ export function AdminVendorDetailDashboard() {
           <div className="flex flex-wrap items-center gap-2">
             {compliance ? (
               <span
+                title={compliance.capacity.detail}
                 className={[
                   'inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-[12px] font-medium',
-                  compliance.capacity.status === 'active'
-                    ? 'bg-[#dbfce7] text-[#008236]'
-                    : compliance.capacity.status === 'pending'
-                      ? 'bg-[#fef9c3] text-[#92400e]'
-                      : 'bg-[#f3f4f6] text-[#6a7282]',
+                  capacityChipClasses(compliance.capacity.status).pill,
                 ].join(' ')}
               >
                 <span
                   className={`inline-block size-2 rounded-full ${
-                    compliance.capacity.status === 'active'
-                      ? 'bg-[#00a63e]'
-                      : compliance.capacity.status === 'pending'
-                        ? 'bg-[#d97706]'
-                        : 'bg-[#9ca3af]'
+                    capacityChipClasses(compliance.capacity.status).dot
                   }`}
                   aria-hidden
                 />
                 {compliance.capacity.label}
               </span>
             ) : null}
+            {performanceReviewLabel(vendor?.performanceReview ?? null) ? (
+              <span className="inline-flex items-center rounded-full bg-[#fff7ed] px-3 py-1 text-[12px] font-medium text-[#9a3412]">
+                {performanceReviewLabel(vendor?.performanceReview ?? null)}
+              </span>
+            ) : null}
           </div>
         </div>
+        {vendor?.performanceReview === 'suspension_review' ||
+        (vendor?.rosterStatusReason ?? '').startsWith('misconduct') ? (
+          <p className="mt-3 rounded-lg border border-[#fed7aa] bg-[#fff7ed] px-3 py-2 text-[13px] leading-5 text-[#9a3412]">
+            {(vendor?.rosterStatusReason ?? '').startsWith('misconduct')
+              ? 'Immediate hold after a Class A/B misconduct report. Review within 1–2 hours; contact safety@ulohome.com as needed.'
+              : 'Open suspension review from performance standards (ratings or no-shows). Decide whether to restore or keep the hold.'}
+          </p>
+        ) : null}
       </div>
 
       {loading ? (
@@ -445,16 +495,12 @@ export function AdminVendorDetailDashboard() {
 
             <div className="rounded-[10px] border border-[#e5e7eb] bg-white p-5 shadow-[0px_1px_2px_-1px_rgba(0,0,0,0.06)]">
               <p className="text-[12px] font-medium uppercase tracking-[0.06em] text-[#6a7282]">
-                Capacity status
+                Vendor status
               </p>
               <div className="mt-3 flex items-center gap-2">
                 <span
                   className={`inline-block size-2.5 rounded-full ${
-                    compliance.capacity.status === 'active'
-                      ? 'bg-[#00a63e]'
-                      : compliance.capacity.status === 'pending'
-                        ? 'bg-[#d97706]'
-                        : 'bg-[#9ca3af]'
+                    capacityChipClasses(compliance.capacity.status).dot
                   }`}
                   aria-hidden
                 />
@@ -463,6 +509,11 @@ export function AdminVendorDetailDashboard() {
                 </p>
               </div>
               <p className="mt-1.5 text-[13px] leading-5 text-[#6a7282]">{compliance.capacity.detail}</p>
+              <p className="mt-2 text-[12px] leading-4 text-[#9ca3af]">
+                {compliance.capacity.matchable
+                  ? 'Eligible for job dispatch.'
+                  : 'Not matchable — no new job dispatch until Active.'}
+              </p>
             </div>
           </section>
         </div>

@@ -1,4 +1,5 @@
 import { supabase } from '@/lib/supabase'
+import { uloAppUrl } from '@/lib/uloAppUrl'
 
 export type WorkOrderPublicHistoryItem = {
   ticketId: string
@@ -7,6 +8,17 @@ export type WorkOrderPublicHistoryItem = {
   description: string
   status: string
   createdAt: string
+}
+
+export type WorkOrderPropertyAccess = {
+  buildingEntry: string
+  gateCode: string
+  lockboxLocation: string
+  lockboxCode: string
+  utilityRoomAccess: string
+  visitorParking: string
+  superintendentContact: string
+  emergencyAccessNotes: string
 }
 
 export type WorkOrderPublicJob = {
@@ -26,6 +38,8 @@ export type WorkOrderPublicJob = {
   photoUrls: string[]
   accessInstructions: string | null
   accessInstructionsFallback: string
+  /** Structured building access from Property Details when available. */
+  propertyAccess: WorkOrderPropertyAccess | null
   tenant: {
     name: string
     phone: string | null
@@ -65,7 +79,7 @@ export async function resolveWorkOrderToken(
   token: string,
 ): Promise<ResolveWorkOrderTokenResult> {
   if (!supabase) {
-    throw new Error('Supabase is not configured (VITE_SUPABASE_URL / VITE_SUPABASE_ANON_KEY)')
+    throw new Error("We can't reach the server right now. Please try again in a moment.")
   }
   const trimmed = token.trim()
   if (!trimmed) throw new Error('Missing job link token')
@@ -116,9 +130,9 @@ export async function resolveWorkOrderToken(
     job.links && typeof job.links === 'object'
       ? job.links
       : {
-          estimate: `/estimate/${encodeURIComponent(trimmed)}`,
-          upload: `/upload/${encodeURIComponent(trimmed)}`,
-          invoice: `/invoice/${encodeURIComponent(trimmed)}`,
+          estimate: uloAppUrl.estimate(trimmed),
+          upload: uloAppUrl.upload(trimmed),
+          invoice: uloAppUrl.invoice(trimmed),
           portal: payload.portalPath,
         }
 
@@ -157,6 +171,43 @@ export async function resolveWorkOrderToken(
         job.accessInstructionsFallback.trim()
           ? job.accessInstructionsFallback
           : 'Contact the property team if you need entry instructions for this unit.',
+      propertyAccess:
+        job.propertyAccess && typeof job.propertyAccess === 'object'
+          ? {
+              buildingEntry:
+                typeof job.propertyAccess.buildingEntry === 'string'
+                  ? job.propertyAccess.buildingEntry
+                  : '',
+              gateCode:
+                typeof job.propertyAccess.gateCode === 'string'
+                  ? job.propertyAccess.gateCode
+                  : '',
+              lockboxLocation:
+                typeof job.propertyAccess.lockboxLocation === 'string'
+                  ? job.propertyAccess.lockboxLocation
+                  : '',
+              lockboxCode:
+                typeof job.propertyAccess.lockboxCode === 'string'
+                  ? job.propertyAccess.lockboxCode
+                  : '',
+              utilityRoomAccess:
+                typeof job.propertyAccess.utilityRoomAccess === 'string'
+                  ? job.propertyAccess.utilityRoomAccess
+                  : '',
+              visitorParking:
+                typeof job.propertyAccess.visitorParking === 'string'
+                  ? job.propertyAccess.visitorParking
+                  : '',
+              superintendentContact:
+                typeof job.propertyAccess.superintendentContact === 'string'
+                  ? job.propertyAccess.superintendentContact
+                  : '',
+              emergencyAccessNotes:
+                typeof job.propertyAccess.emergencyAccessNotes === 'string'
+                  ? job.propertyAccess.emergencyAccessNotes
+                  : '',
+            }
+          : null,
       tenant: {
         name:
           typeof tenant.name === 'string' && tenant.name.trim()
@@ -185,15 +236,15 @@ export async function resolveWorkOrderToken(
         estimate:
           typeof links.estimate === 'string' && links.estimate.trim()
             ? links.estimate
-            : `/estimate/${encodeURIComponent(trimmed)}`,
+            : uloAppUrl.estimate(trimmed),
         upload:
           typeof links.upload === 'string' && links.upload.trim()
             ? links.upload
-            : `/upload/${encodeURIComponent(trimmed)}`,
+            : uloAppUrl.upload(trimmed),
         invoice:
           typeof links.invoice === 'string' && links.invoice.trim()
             ? links.invoice
-            : `/invoice/${encodeURIComponent(trimmed)}`,
+            : uloAppUrl.invoice(trimmed),
         portal:
           typeof links.portal === 'string' && links.portal.trim()
             ? links.portal

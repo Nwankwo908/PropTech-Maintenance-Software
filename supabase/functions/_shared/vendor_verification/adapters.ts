@@ -219,10 +219,12 @@ export function parseCoi(input: CoiParseInput): CoiParseResult {
   ]
   const carrier = carriers[bucket % carriers.length]
   const generalLiability = bucket < 78 ? 1_000_000 : 500_000
-  const additionalInsured = bucket % 3 !== 0
+  // Protocol 2: every preferred vendor lists Ulo as Additional Insured.
+  const additionalInsured = generalLiability >= 1_000_000
   const policyNumber = `GL-${String(200000 + bucket * 91).slice(0, 6)}`
   const expirationDate = bucket < 88 ? futureDateIso(240) : futureDateIso(-30)
   const meetsCoverage = generalLiability >= 1_000_000 &&
+    additionalInsured &&
     expirationDate >= new Date().toISOString().slice(0, 10)
 
   return {
@@ -234,8 +236,8 @@ export function parseCoi(input: CoiParseInput): CoiParseResult {
     expirationDate,
     additionalInsured,
     detail: meetsCoverage
-      ? `${carrier} · $${generalLiability.toLocaleString()} GL (simulated OCR)`
-      : `${carrier} · needs review — coverage or expiration below requirement (simulated OCR)`,
+      ? `${carrier} · $${generalLiability.toLocaleString()} GL · Ulo Additional Insured (simulated OCR)`
+      : `${carrier} · needs review — coverage, Additional Insured, or expiration below requirement (simulated OCR)`,
   }
 }
 

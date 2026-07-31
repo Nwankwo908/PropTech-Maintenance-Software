@@ -2,6 +2,7 @@ import {
   adminEdgeInvokeHeaders,
   fetchAdminEdgeFunction,
 } from '@/api/adminReassignVendor'
+import { getAdminEdgeSecret } from '@/lib/adminEdgeAuth'
 import { getActiveLandlordId } from '@/lib/activeLandlord'
 
 export type SendLeaseRenewalIncentiveMessageResult =
@@ -19,9 +20,6 @@ function functionUrl(): string | undefined {
   return base ? `${base}/functions/v1/send-lease-renewal-incentive-message` : undefined
 }
 
-function adminSecret(): string | undefined {
-  return import.meta.env.VITE_ADMIN_REASSIGN_SECRET?.trim() || undefined
-}
 
 export async function postSendLeaseRenewalIncentiveMessage(params: {
   workflowRunId: string
@@ -32,7 +30,7 @@ export async function postSendLeaseRenewalIncentiveMessage(params: {
   landlordId?: string
 }): Promise<SendLeaseRenewalIncentiveMessageResult> {
   const url = functionUrl()
-  const secret = adminSecret()
+  const secret = getAdminEdgeSecret()
   if (!url || !secret) {
     return { ok: false, error: 'Admin SMS configuration is missing.' }
   }

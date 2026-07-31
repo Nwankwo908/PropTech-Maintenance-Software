@@ -43,7 +43,7 @@ const SETTINGS_CATEGORIES: SettingsCategory[] = [
 
 function settingsCardClassName(active: boolean, interactive: boolean) {
   return [
-    'flex h-full min-h-[104px] flex-col gap-1 rounded-[10px] border bg-white p-6 text-left shadow-[0px_1px_2px_-1px_rgba(0,0,0,0.06)] outline-none transition-[border-color,box-shadow] duration-150',
+    'sa-card flex h-full min-h-[104px] flex-col gap-1 rounded-[10px] border bg-white p-6 text-left shadow-[0px_1px_2px_-1px_rgba(0,0,0,0.06)] outline-none',
     active
       ? 'border-[#155dfc]'
       : interactive
@@ -56,9 +56,11 @@ function settingsCardClassName(active: boolean, interactive: boolean) {
 function SettingsCategoryCard({
   category,
   active,
+  index = 0,
 }: {
   category: SettingsCategory
   active: boolean
+  index?: number
 }) {
   const content = (
     <>
@@ -71,9 +73,16 @@ function SettingsCategoryCard({
     </>
   )
 
+  const enterClass = 'sa-enter-scale'
+  const enterStyle = { animationDelay: `${Math.min(index, 8) * 40}ms` }
+
   if (category.href) {
     return (
-      <Link to={category.href} className={settingsCardClassName(active, true)}>
+      <Link
+        to={category.href}
+        className={`${enterClass} ${settingsCardClassName(active, true)}`}
+        style={enterStyle}
+      >
         {content}
       </Link>
     )
@@ -82,7 +91,8 @@ function SettingsCategoryCard({
   if (category.comingSoon) {
     return (
       <div
-        className={settingsCardClassName(active, false)}
+        className={`${enterClass} ${settingsCardClassName(active, false)}`}
+        style={enterStyle}
         aria-disabled="true"
         title="Coming soon"
       >
@@ -92,7 +102,11 @@ function SettingsCategoryCard({
   }
 
   return (
-    <div className={settingsCardClassName(active, false)} aria-current={active ? 'page' : undefined}>
+    <div
+      className={`${enterClass} ${settingsCardClassName(active, false)}`}
+      style={enterStyle}
+      aria-current={active ? 'page' : undefined}
+    >
       {content}
     </div>
   )
@@ -113,13 +127,18 @@ function SettingsHome() {
       </div>
 
       <div className="grid gap-4 sm:grid-cols-2">
-        {SETTINGS_CATEGORIES.map((category) => {
+        {SETTINGS_CATEGORIES.map((category, index) => {
           const active =
             (category.activeOnExactPath != null && pathname === category.activeOnExactPath) ||
             (category.href != null && pathname.startsWith(category.href))
 
           return (
-            <SettingsCategoryCard key={category.id} category={category} active={active} />
+            <SettingsCategoryCard
+              key={category.id}
+              category={category}
+              active={active}
+              index={index}
+            />
           )
         })}
       </div>

@@ -71,7 +71,7 @@ export function AskUloConversationSidebar({
         <button
           type="button"
           onClick={onNewChat}
-          className="inline-flex size-11 cursor-pointer items-center justify-center rounded-[10px] text-[#364153] outline-none transition-colors hover:bg-[#f3f4f6] focus-visible:ring-2 focus-visible:ring-[#101828]"
+          className="sa-press inline-flex size-11 cursor-pointer items-center justify-center rounded-[10px] text-[#364153] outline-none hover:bg-[#f3f4f6] focus-visible:ring-2 focus-visible:ring-[#101828]"
           aria-label="New chat"
           title="New chat"
         >
@@ -89,7 +89,7 @@ export function AskUloConversationSidebar({
         <button
           type="button"
           onClick={onNewChat}
-          className="flex min-h-[44px] w-full cursor-pointer items-center justify-start gap-3 rounded-[10px] px-4 text-left text-[14px] font-medium tracking-[-0.1504px] text-[#364153] outline-none transition-colors hover:bg-[#f3f4f6] focus-visible:ring-2 focus-visible:ring-[#101828]"
+          className="sa-press flex min-h-[44px] w-full cursor-pointer items-center justify-start gap-3 rounded-[10px] px-4 text-left text-[14px] font-medium tracking-[-0.1504px] text-[#364153] outline-none hover:bg-[#f3f4f6] focus-visible:ring-2 focus-visible:ring-[#101828]"
         >
           <svg className="size-5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.25} aria-hidden>
             <path d="M12 5v14M5 12h14" strokeLinecap="round" />
@@ -157,7 +157,7 @@ export function AskUloConversationSidebar({
                         </form>
                       ) : (
                         <div
-                          className={`group flex items-center gap-1 rounded-[10px] ${
+                          className={`sa-surface group flex items-center gap-1 rounded-[10px] ${
                             active
                               ? 'bg-[#101828]/8 text-[#101828]'
                               : 'text-[#0a0a0a] hover:bg-[#f3f4f6]'
@@ -166,7 +166,7 @@ export function AskUloConversationSidebar({
                           <button
                             type="button"
                             onClick={() => onSelect(c.id)}
-                            className="min-w-0 flex-1 cursor-pointer px-2.5 py-2 text-left outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[#101828]"
+                            className="sa-row min-w-0 flex-1 cursor-pointer px-2.5 py-2 text-left outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[#101828]"
                           >
                             <span className="block truncate text-[12px] font-medium leading-4">
                               {c.title}
@@ -181,7 +181,7 @@ export function AskUloConversationSidebar({
                           </button>
                           <button
                             type="button"
-                            className={`mr-1 inline-flex size-7 shrink-0 cursor-pointer items-center justify-center rounded-md outline-none ${
+                            className={`sa-press mr-1 inline-flex size-7 shrink-0 cursor-pointer items-center justify-center rounded-md outline-none ${
                               active
                                 ? 'text-[#6a7282] hover:bg-[#101828]/8'
                                 : 'text-[#9ca3af] opacity-0 hover:bg-[#e5e7eb] group-hover:opacity-100'
@@ -199,17 +199,17 @@ export function AskUloConversationSidebar({
                       )}
 
                       {menuId === c.id ? (
-                        <div className="absolute right-1 top-full z-20 mt-1 w-36 overflow-hidden rounded-[10px] border border-[#e5e7eb] bg-white py-1 shadow-[0_8px_24px_rgba(16,24,40,0.12)]">
+                        <div className="sa-enter absolute right-1 top-full z-20 mt-1 w-36 overflow-hidden rounded-[10px] border border-[#e5e7eb] bg-white py-1 shadow-[0_8px_24px_rgba(16,24,40,0.12)]">
                           <button
                             type="button"
-                            className="block w-full cursor-pointer px-3 py-1.5 text-left text-[12px] text-[#0a0a0a] hover:bg-[#f3f4f6]"
+                            className="sa-press block w-full cursor-pointer px-3 py-1.5 text-left text-[12px] text-[#0a0a0a] hover:bg-[#f3f4f6]"
                             onClick={() => startRename(c)}
                           >
                             Rename
                           </button>
                           <button
                             type="button"
-                            className="block w-full cursor-pointer px-3 py-1.5 text-left text-[12px] text-[#b91c1c] hover:bg-[#fef2f2]"
+                            className="sa-press block w-full cursor-pointer px-3 py-1.5 text-left text-[12px] text-[#b91c1c] hover:bg-[#fef2f2]"
                             onClick={() => {
                               setMenuId(null)
                               onDelete(c.id)

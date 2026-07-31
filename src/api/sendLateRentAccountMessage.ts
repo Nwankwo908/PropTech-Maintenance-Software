@@ -2,6 +2,7 @@ import {
   adminEdgeInvokeHeaders,
   fetchAdminEdgeFunction,
 } from '@/api/adminReassignVendor'
+import { getAdminEdgeSecret } from '@/lib/adminEdgeAuth'
 import { getActiveLandlordId } from '@/lib/activeLandlord'
 import type { LateRentMessageAction } from '@/lib/lateRentAccountMessaging'
 
@@ -22,9 +23,6 @@ function functionUrl(): string | undefined {
   return base ? `${base}/functions/v1/send-late-rent-account-message` : undefined
 }
 
-function adminSecret(): string | undefined {
-  return import.meta.env.VITE_ADMIN_REASSIGN_SECRET?.trim() || undefined
-}
 
 export async function postSendLateRentAccountMessage(params: {
   workflowRunId: string
@@ -37,7 +35,7 @@ export async function postSendLateRentAccountMessage(params: {
   landlordId?: string
 }): Promise<SendLateRentAccountMessageResult> {
   const url = functionUrl()
-  const secret = adminSecret()
+  const secret = getAdminEdgeSecret()
   if (!url || !secret) {
     return { ok: false, error: 'Admin SMS configuration is missing.' }
   }

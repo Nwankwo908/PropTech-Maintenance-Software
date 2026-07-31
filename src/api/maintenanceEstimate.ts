@@ -19,7 +19,7 @@ export type EstimateJobContext = {
 
 async function invokeEstimate(body: Record<string, unknown>) {
   if (!supabase) {
-    throw new Error('Supabase is not configured (VITE_SUPABASE_URL / VITE_SUPABASE_ANON_KEY)')
+    throw new Error("We can't reach the server right now. Please try again in a moment.")
   }
   const { data, error } = await supabase.functions.invoke(
     'vendor-submit-maintenance-estimate',
@@ -97,7 +97,7 @@ export async function respondToEstimate(input: {
   action: 'approve' | 'reject'
 }): Promise<{ status: 'approved' | 'rejected'; already?: boolean }> {
   if (!supabase) {
-    throw new Error('Supabase is not configured (VITE_SUPABASE_URL / VITE_SUPABASE_ANON_KEY)')
+    throw new Error("We can't reach the server right now. Please try again in a moment.")
   }
   const { data, error } = await supabase.functions.invoke('landlord-respond-estimate', {
     body: {

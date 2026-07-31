@@ -3,9 +3,17 @@ import { classifyWorkflow } from "./classify.ts"
 import { getWorkflowTemplate } from "./registry.ts"
 import { logWorkflowStage } from "./logStage.ts"
 import type {
+  ClassifiedIntent,
   WorkflowEngineResult,
   WorkflowExecutionContext,
+  WorkflowRunRow,
+  WorkflowTriggerType,
 } from "./types.ts"
+
+export type RunWorkflowEngineOptions = {
+  /** Pin classification when the active run is already known (lifecycle start, portal advance). */
+  classified?: ClassifiedIntent
+}
 
 /**
  * Execute the property operations workflow pipeline:
@@ -14,6 +22,7 @@ import type {
 export async function runWorkflowEngine(
   supabase: SupabaseClient,
   ctx: WorkflowExecutionContext,
+  opts?: RunWorkflowEngineOptions,
 ): Promise<WorkflowEngineResult> {
   const stages: WorkflowEngineResult["stages"] = []
   const identity = ctx.sms?.identity
@@ -30,7 +39,8 @@ export async function runWorkflowEngine(
   })
 
   stages.push("classify")
-  const classified = await classifyWorkflow(supabase, ctx)
+  const classified = opts?.classified ??
+    await classifyWorkflow(supabase, ctx)
   ctx.runId = classified.runId ?? ctx.runId
 
   await logWorkflowStage(supabase, {
@@ -91,4 +101,42 @@ export async function runWorkflowEngine(
   })
 
   return { ...result, stages, classified }
+}
+
+/** Map lifecycle start triggers so initial outreach runs (not cron escalation sweep). */
+export function lifecycleStartEngineTrigger(
+  triggerType: WorkflowTriggerType,
+): WorkflowTriggerType {
+  if (triggerType === "cron") return "automation"
+  return triggerType
+}
+
+/**
+ * Run the engine pipeline for an existing workflow_run (skips open classification).
+ */
+export async function runWorkflowEngineForExistingRun(
+  supabase: SupabaseClient,
+  params: {
+    landlordId: string
+    run: WorkflowRunRow
+    trigger: WorkflowTriggerType
+    extras?: Partial<WorkflowExecutionContext>
+  },
+): Promise<WorkflowEngineResult> {
+  const ctx: WorkflowExecutionContext = {
+    trigger: params.trigger,
+    landlordId: params.landlordId,
+    runId: params.run.id,
+    activeRun: params.run,
+    ...params.extras,
+  }
+
+  return runWorkflowEngine(supabase, ctx, {
+    classified: {
+      templateId: params.run.template_id,
+      confidence: "high",
+      reason: "existing_workflow_run",
+      runId: params.run.id,
+    },
+  })
 }

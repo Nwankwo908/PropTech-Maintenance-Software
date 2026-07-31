@@ -5,6 +5,7 @@ import {
   submitEstimate,
   type EstimateJobContext,
 } from '@/api/maintenanceEstimate'
+import { getErrorMessage } from '@/lib/errorMessage'
 
 function parseMoney(raw: string): number | null {
   const n = Number(raw.replace(/[^0-9.-]/g, ''))
@@ -106,7 +107,7 @@ export function WorkOrderEstimatePage() {
         }
       } catch (err) {
         if (cancelled) return
-        setError(err instanceof Error ? err.message : 'Could not load this job.')
+        setError(getErrorMessage(err, 'Could not load this job.'))
       }
     })()
     return () => {
@@ -145,7 +146,7 @@ export function WorkOrderEstimatePage() {
       const job = await resolveEstimateJob(t)
       setCtx(job)
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Could not submit estimate.')
+      setError(getErrorMessage(err, 'Could not submit estimate.'))
     } finally {
       setBusy(false)
     }

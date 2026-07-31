@@ -1,5 +1,6 @@
 import { getActiveLandlordId } from '@/lib/activeLandlord'
 import { supabase } from '@/lib/supabase'
+import { getErrorMessage } from '@/lib/errorMessage'
 
 export type WorkflowRunStatus = 'active' | 'completed' | 'escalated' | 'cancelled'
 
@@ -182,7 +183,7 @@ export function workflowTemplateGroupId(templateId: string): WorkflowTemplateGro
   if (templateId === 'rent_collection') return 'rent_collection'
   if (templateId === 'move_in') return 'move_in'
   if (templateId === 'move_out') return 'move_out'
-  if (templateId === 'inspection' || templateId === 'unit_inspection') return 'inspection'
+  if (templateId === 'inspection') return 'inspection'
   return null
 }
 
@@ -266,7 +267,6 @@ const TEMPLATE_LABELS: Record<string, string> = {
   move_in: 'Move in',
   move_out: 'Move out',
   inspection: 'Inspection',
-  unit_inspection: 'Inspection',
   vendor_job_response: 'Vendor job response',
   identity_onboarding: 'Identity onboarding',
   landlord_command: 'Landlord command',
@@ -640,7 +640,7 @@ function isLifecycleOverdue(
   if (templateId === 'move_out') {
     return isPastIsoDate(readMetaString(metadata, 'move_out_date'))
   }
-  if (templateId === 'inspection' || templateId === 'unit_inspection') {
+  if (templateId === 'inspection') {
     return isPastIsoDate(readMetaString(metadata, 'scheduled_at'))
   }
   return false
@@ -764,7 +764,7 @@ export async function fetchAdminWorkflowDashboard(): Promise<AdminWorkflowDashbo
 
   if (runsError) {
     console.error('[admin-workflows] workflow_runs fetch', runsError.message)
-    throw new Error(runsError.message)
+    throw new Error(getErrorMessage(runsError, 'Something went wrong. Please try again.'))
   }
 
   const runs = (runsRaw ?? []) as WorkflowRunRecord[]
@@ -1028,9 +1028,7 @@ export async function fetchAdminWorkflowDashboard(): Promise<AdminWorkflowDashbo
     ),
     buildWorkflowGroupCard(
       'inspection',
-      lifecycleRuns.filter(
-        (row) => row.templateId === 'inspection' || row.templateId === 'unit_inspection',
-      ),
+      lifecycleRuns.filter((row) => row.templateId === 'inspection'),
       metadataByRunId,
       (row, metadata) => isLifecycleOverdue(row, metadata, row.templateId),
     ),

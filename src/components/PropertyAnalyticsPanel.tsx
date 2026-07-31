@@ -33,7 +33,7 @@ function formatSpend(amount: number): string {
   }).format(amount)
 }
 
-function PmComplianceRow({ task }: { task: PmComplianceTask }) {
+function PmComplianceRow({ task, index = 0 }: { task: PmComplianceTask; index?: number }) {
   const due = formatPmDueLabel(task.dueAt, task.status)
   const taskIcon = pmTaskKindUsesApplianceIcon(task.kind)
     ? applianceRepairIcon
@@ -44,7 +44,10 @@ function PmComplianceRow({ task }: { task: PmComplianceTask }) {
         : null
 
   return (
-    <div className="flex flex-wrap items-start justify-between gap-3 py-3 first:pt-0 last:pb-0">
+    <div
+      className="sa-enter flex flex-wrap items-start justify-between gap-3 py-3 first:pt-0 last:pb-0"
+      style={{ animationDelay: `${Math.min(index, 12) * 30}ms` }}
+    >
       <div className="flex min-w-0 flex-1 gap-3">
         {taskIcon ? (
           <img src={taskIcon} alt="" className="mt-0.5 size-8 shrink-0 object-contain" aria-hidden />
@@ -53,6 +56,13 @@ function PmComplianceRow({ task }: { task: PmComplianceTask }) {
           <p className="text-[14px] font-medium text-[#0a0a0a]">{task.title}</p>
           <p className="text-[12px] text-[#6a7282]">{task.location}</p>
           <p className="mt-1 text-[12px] leading-5 text-[#4b5563]">{formatPmTaskSubtitle(task)}</p>
+          {task.ageBasis === 'estimated_from_build_year' ||
+          task.ageBasis === 'ai_estimated' ? (
+            <p className="mt-1 text-[11px] font-medium uppercase tracking-wide text-[#94a3b8]">
+              Age estimated
+              {task.ageBasis === 'estimated_from_build_year' ? ' from build year' : ''}
+            </p>
+          ) : null}
           {task.kind === 'appliance' && task.estimatedReplacementCost != null ? (
             <p className="mt-1 text-[12px] font-medium text-[#0a0a0a]">
               Est. replacement {formatSpend(task.estimatedReplacementCost)}
@@ -117,7 +127,7 @@ function MaintenanceSpendBar({
               tabIndex={0}
               aria-label={`${tooltipTitle}: ${formatSpend(month.proactive)} proactive, ${formatSpend(month.reactive)} reactive, ${formatSpend(total)} total`}
               className={[
-                'flex w-full flex-col justify-end overflow-hidden rounded-[4px] outline-none focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2',
+                'sa-surface flex w-full flex-col justify-end overflow-hidden rounded-[4px] outline-none focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2',
                 month.isProjection ? 'ring-1 ring-dashed ring-[#d1d5dc]' : '',
               ].join(' ')}
               style={{ height: totalPx }}
@@ -148,7 +158,7 @@ export function PropertyAnalyticsPanel({
 
   return (
     <div className="mt-6 flex flex-col gap-4">
-      <section className="rounded-[10px] border border-[#e5e7eb] bg-white shadow-[0px_1px_2px_-1px_rgba(0,0,0,0.06)]">
+      <section className="sa-surface rounded-[10px] border border-[#e5e7eb] bg-white shadow-[0px_1px_2px_-1px_rgba(0,0,0,0.06)]">
         <div className="flex flex-wrap items-start justify-between gap-3 border-b border-[#e5e7eb] px-6 py-4">
           <div>
             <h2 className="text-[16px] font-semibold leading-6 text-[#0a0a0a]">
@@ -243,7 +253,7 @@ export function PropertyAnalyticsPanel({
         </div>
       </section>
 
-      <section className="overflow-hidden rounded-[10px] border border-[#e5e7eb] bg-white shadow-[0px_1px_2px_-1px_rgba(0,0,0,0.06)]">
+      <section className="sa-surface overflow-hidden rounded-[10px] border border-[#e5e7eb] bg-white shadow-[0px_1px_2px_-1px_rgba(0,0,0,0.06)]">
         <div className="flex flex-wrap items-start justify-between gap-3 border-b border-[#e5e7eb] px-6 py-4">
           <div>
             <h2 className="text-[16px] font-semibold leading-6 text-[#0a0a0a]">PM compliance</h2>
@@ -284,7 +294,7 @@ export function PropertyAnalyticsPanel({
             </div>
             <div className="mt-3 h-2 overflow-hidden rounded-full bg-[#f3f4f6]">
               <div
-                className="h-full rounded-full bg-[#00c950] transition-all duration-300"
+                className="sa-bar h-full rounded-full bg-[#00c950]"
                 style={{
                   width: loading || pm?.compliancePct == null ? '0%' : `${pm.compliancePct}%`,
                 }}
@@ -319,8 +329,8 @@ export function PropertyAnalyticsPanel({
                 </span>
               </div>
               <div className="divide-y divide-[#f3f4f6]">
-                {openPmTasks.map((task) => (
-                  <PmComplianceRow key={task.id} task={task} />
+                {openPmTasks.map((task, index) => (
+                  <PmComplianceRow key={task.id} task={task} index={index} />
                 ))}
               </div>
             </div>
@@ -334,7 +344,7 @@ export function PropertyAnalyticsPanel({
         <div className="border-t border-[#e5e7eb] px-6 py-4 text-center">
           <Link
             to="/admin/workflows"
-            className="inline-flex h-9 items-center justify-center rounded-[10px] border border-black/10 bg-white px-4 text-[14px] font-medium text-tertiary transition-colors duration-150 hover:bg-[#e2f5f1]"
+            className="sa-press inline-flex h-9 items-center justify-center rounded-[10px] border border-[#186179] bg-white px-4 text-[14px] font-medium text-[#186179] hover:bg-[#e8f2f5]"
           >
             View preventive workflows →
           </Link>

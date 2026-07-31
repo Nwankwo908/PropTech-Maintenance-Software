@@ -1,11 +1,13 @@
 ---
-description: When landlord onboarding completes, automatically start tenant activation and vendor verification for everyone listed in that run.
+description: When landlord onboarding completes — and whenever residents/vendors are added later — automatically start outbound activation. Tenant welcome SMS uses a 3-attempt delivery retry schedule.
 alwaysApply: true
 ---
 
 # Onboarding completion → automatic activation
 
 When a landlord finishes setup (`completeOnboarding`), **everyone listed in that onboarding run** is automatically started on their outbound activation flow. Landlords should not have to click per person.
+
+The same tenant welcome SMS also runs when a resident is **added after setup** (Residents / User Management → Add resident), if they have a phone.
 
 ## Rule
 
@@ -14,20 +16,52 @@ When a landlord finishes setup (`completeOnboarding`), **everyone listed in that
 | Resident / tenant with a phone | Tenant welcome / activation SMS (`sendTenantActivationSms`) |
 | Vendor with phone and/or email | Unique vendor verification invite (`sendVendorInvite`) via SMS, email, or both |
 
+| Added after onboarding | Automatic action |
+|---|---|
+| Resident with a phone | Same welcome / YES SMS (`activateTenantAfterAdd`) |
+| Resident created without phone, phone added later | Same welcome SMS when phone first saved (`phoneNewlyAdded`) |
+| Vendor with phone and/or email | Same verification invite (`inviteVendorAfterAdd` → `sendVendorInvite`) from Vendors list / User Management Add Vendor |
+| Vendor (Find External Vendor) | `sendVendorInvite` via Invite to verify |
+
+## Tenant activation SMS retries
+
+| Attempt | When |
+|---|---|
+| 1 | Immediate on onboarding complete / add / phone first set |
+| 2 | 24 hours after attempt 1, only if attempt 1 was a **delivery** failure |
+| 3 | 72 hours after attempt 1 (final automatic retry) |
+| After 3 failures | Stop; `activation_status = action_required`; notify landlord |
+
+**Retry only** on delivery problems (invalid number, carrier/network/provider errors).
+
+**Never auto-retry** when the resident replied STOP, already opted in / activated, or the phone number changed (landlord must update + **Resend Welcome Text**).
+
+YES/START → `activated` (stop retries). STOP → `opted_out` (stop retries).
+
+Landlord-facing statuses: Activated · Waiting for Resident · Delivery Failed (Retry X of 3) · Action Required.
+
+Manual **Resend Welcome Text** (Action Required) restarts the retry sequence after a successful send.
+
+Cron: `check-tenant-activation-retries`. Attempts audited in `tenant_activation_attempts`.
+
 ## Requirements
 
 - Pass each vendor’s `vendorId` so form submit updates that roster profile.
 - Mint a **unique** verification link per vendor invite.
-- Best-effort delivery: never block finishing setup on SMS/email failure; surface a combined `activationWarning` and log graph events for the activity feed.
+- Best-effort delivery: never block finishing setup (or saving a new resident) on SMS/email failure; surface a combined `activationWarning` / add-resident warning and log graph events for the activity feed.
 - Skip people with no usable contact info.
 - Follow the Ulo communication writing standard for all outbound copy.
+- Idempotent: skip if welcome already sent and waiting (`activation_sms_sent_at` / `waiting`) unless landlord `resend`.
 
 ## Where it lives
 
 - Orchestration: `src/lib/landlordOnboarding.ts` → `completeOnboarding`
-- Tenant send: `src/api/tenantActivation.ts` / `send-tenant-activation`
+- Post-onboarding add: `src/api/tenantActivation.ts` → `activateTenantAfterAdd` (wired from `AdminResidentsDashboard` / `AdminUserManagementDashboard`)
+- Post-onboarding vendor add: `src/api/vendorVerification.ts` → `inviteVendorAfterAdd` (wired from `VendorFormModal`)
+- Tenant send + retries: `supabase/functions/_shared/sms/tenantActivation.ts` / `send-tenant-activation` / `check-tenant-activation-retries`
+- Status UI: `src/lib/tenantActivationStatus.ts`, Residents / User Management / resident detail
 - Vendor send: `src/api/vendorVerification.ts` → `send-vendor-invite`
 
 Manual “Invite vendor” controls on the vendors list and vendor profile are removed —
-verification starts automatically at onboarding complete. Re-invites for vendors added
-later can still use programmatic `sendVendorInvite` (e.g. Find External Vendor) when needed.
+verification starts automatically at onboarding complete **and** when a vendor is added
+later with phone/email. Find External Vendor can still call `sendVendorInvite` explicitly.

@@ -68,7 +68,7 @@ const components: Components = {
       href={href}
       target="_blank"
       rel="noreferrer"
-      className="font-medium text-[#0A4D38] underline-offset-2 hover:underline"
+      className="sa-link font-medium text-[#0A4D38] underline-offset-2 hover:underline"
     >
       {children}
     </a>

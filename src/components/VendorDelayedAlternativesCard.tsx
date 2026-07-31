@@ -71,7 +71,7 @@ export function VendorDelayedAlternativesCard({
                     setPicking(null)
                   }
                 }}
-                className="flex h-[38px] w-full shrink-0 items-center rounded-lg border border-[#e5e7eb] bg-white px-3 text-left text-[14px] font-medium tracking-[-0.1504px] text-[#0a0a0a] outline-none transition-colors hover:border-black/10 hover:bg-[#f3f3f5] focus-visible:ring-2 focus-visible:ring-[#0030b5]/35 focus-visible:ring-offset-1 disabled:cursor-not-allowed disabled:opacity-60"
+                className="sa-press flex h-[38px] w-full shrink-0 items-center rounded-lg border border-[#e5e7eb] bg-white px-3 text-left text-[14px] font-medium tracking-[-0.1504px] text-[#0a0a0a] outline-none hover:border-black/10 hover:bg-[#f3f3f5] focus-visible:ring-2 focus-visible:ring-[#0030b5]/35 focus-visible:ring-offset-1 disabled:cursor-not-allowed disabled:opacity-60"
               >
                 {picking === c.name ? 'Applying…' : c.name}
               </button>

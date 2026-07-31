@@ -3,6 +3,7 @@ import {
   type AdminRentCollectionRow,
   type AdminWorkflowDashboardData,
 } from '@/lib/adminWorkflows'
+import { getErrorMessage } from '@/lib/errorMessage'
 
 export type LateRentInsightTag = 'ON-TIME HISTORY' | 'ENGAGEMENT' | 'INTENT' | 'RISK'
 
@@ -384,7 +385,7 @@ async function completeRentCollectionRunsAfterPayment(
       .eq('id', review.residentId)
       .eq('landlord_id', landlordId)
     if (balanceError) {
-      return { ok: false, error: balanceError.message }
+      return { ok: false, error: getErrorMessage(balanceError, 'Something went wrong. Please try again.') }
     }
   }
 
@@ -400,7 +401,7 @@ async function completeRentCollectionRunsAfterPayment(
       .eq('template_id', 'rent_collection')
       .in('status', ['active', 'escalated'])
 
-    if (runsError) return { ok: false, error: runsError.message }
+    if (runsError) return { ok: false, error: getErrorMessage(runsError, 'Something went wrong. Please try again.') }
     for (const row of openRuns ?? []) {
       if (typeof row.id === 'string' && row.id) runIds.add(row.id)
     }
@@ -415,7 +416,7 @@ async function completeRentCollectionRunsAfterPayment(
       .eq('template_id', 'rent_collection')
       .maybeSingle()
 
-    if (fetchError) return { ok: false, error: fetchError.message }
+    if (fetchError) return { ok: false, error: getErrorMessage(fetchError, 'Something went wrong. Please try again.') }
     if (!run) {
       if (runId === review.workflowRunId) {
         return { ok: false, error: 'Workflow run not found.' }
@@ -462,7 +463,7 @@ async function completeRentCollectionRunsAfterPayment(
       .eq('id', runId)
       .eq('landlord_id', landlordId)
 
-    if (updateError) return { ok: false, error: updateError.message }
+    if (updateError) return { ok: false, error: getErrorMessage(updateError, 'Something went wrong. Please try again.') }
 
     const { error: eventError } = await supabase.from('workflow_events').insert({
       workflow_run_id: runId,
@@ -476,7 +477,7 @@ async function completeRentCollectionRunsAfterPayment(
         source: 'dashboard',
       },
     })
-    if (eventError) return { ok: false, error: eventError.message }
+    if (eventError) return { ok: false, error: getErrorMessage(eventError, 'Something went wrong. Please try again.') }
   }
 
   return { ok: true }
@@ -495,14 +496,15 @@ export async function applyLateRentAccountAction(
     if (!completed.ok) return completed
   }
 
-  const { error: graphError } = await supabase.from('operations_graph_events').insert({
-    landlord_id: landlordId,
-    event_type: LATE_RENT_ACTION_EVENT[action],
+  const { recordActivityLog } = await import('@/lib/recordActivityLog')
+  const eventId = await recordActivityLog({
+    landlordId,
+    eventType: LATE_RENT_ACTION_EVENT[action],
     source: 'dashboard',
-    actor_type: 'landlord',
-    workflow_run_id: review.workflowRunId,
-    workflow_template_id: 'rent_collection',
-    resident_id: review.residentId,
+    actorType: 'landlord',
+    workflowRunId: review.workflowRunId,
+    workflowTemplateId: 'rent_collection',
+    residentId: review.residentId,
     metadata: {
       action,
       resident_name: review.residentName,
@@ -510,8 +512,8 @@ export async function applyLateRentAccountAction(
     },
   })
 
-  if (graphError) {
-    return { ok: false, error: graphError.message }
+  if (!eventId) {
+    return { ok: false, error: 'Something went wrong. Please try again.' }
   }
 
   return { ok: true }

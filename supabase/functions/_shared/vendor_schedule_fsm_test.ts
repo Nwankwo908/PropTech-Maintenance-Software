@@ -43,7 +43,7 @@ Deno.test("FSM: YES while awaiting_availability clarifies (no re-ask loop)", () 
   assertEquals(yes.suppressReply, false)
 })
 
-Deno.test("FSM: soft confirm then YES persists", () => {
+Deno.test("FSM: soft confirm then YES asks tenant", () => {
   const started = reduceScheduleFsm(null, {
     type: "JOB_ACCEPTED",
     ticketId: "t1",
@@ -65,13 +65,62 @@ Deno.test("FSM: soft confirm then YES persists", () => {
     at: "2026-07-20T20:02:00.000Z",
     inboundSid: "SM3",
   })
-  assertEquals(yes.effect.kind, "persist")
-  if (yes.effect.kind === "persist") {
+  assertEquals(yes.state.step, "awaiting_tenant_confirmation")
+  assertEquals(yes.effect.kind, "ask_tenant")
+  if (yes.effect.kind === "ask_tenant") {
     assertEquals(yes.effect.windowText, "Tomorrow 9-12pm")
   }
 })
 
-Deno.test("FSM: SAVE_FAIL keeps pending for YES lock-in", () => {
+Deno.test("FSM: high-confidence availability asks tenant", () => {
+  const started = reduceScheduleFsm(null, {
+    type: "JOB_ACCEPTED",
+    ticketId: "t1",
+    at: "2026-07-20T20:00:00.000Z",
+  })
+  const proposed = reduceScheduleFsm(started.state, {
+    type: "AVAILABILITY_TEXT",
+    at: "2026-07-20T20:01:00.000Z",
+    inboundSid: "SM2",
+    windowText: "Tomorrow 9am",
+    scheduledAt: "2026-07-21T13:00:00.000Z",
+    outcome: "resolved",
+  })
+  assertEquals(proposed.state.step, "awaiting_tenant_confirmation")
+  assertEquals(proposed.effect.kind, "ask_tenant")
+})
+
+Deno.test("FSM: tenant YES persists; tenant NO re-asks availability", () => {
+  const started = reduceScheduleFsm(null, {
+    type: "JOB_ACCEPTED",
+    ticketId: "t1",
+    at: "2026-07-20T20:00:00.000Z",
+  })
+  const proposed = reduceScheduleFsm(started.state, {
+    type: "AVAILABILITY_TEXT",
+    at: "2026-07-20T20:01:00.000Z",
+    inboundSid: "SM2",
+    windowText: "Tomorrow 9am",
+    scheduledAt: "2026-07-21T13:00:00.000Z",
+    outcome: "resolved",
+  })
+  const accepted = reduceScheduleFsm(proposed.state, {
+    type: "TENANT_YES",
+    at: "2026-07-20T20:03:00.000Z",
+    inboundSid: "SM3",
+  })
+  assertEquals(accepted.effect.kind, "persist")
+
+  const declined = reduceScheduleFsm(proposed.state, {
+    type: "TENANT_NO",
+    at: "2026-07-20T20:03:00.000Z",
+    inboundSid: "SM4",
+  })
+  assertEquals(declined.state.step, "awaiting_availability")
+  assertEquals(declined.effect.kind, "tenant_declined")
+})
+
+Deno.test("FSM: SAVE_FAIL keeps pending for YES → tenant ask", () => {
   const started = reduceScheduleFsm(null, {
     type: "JOB_ACCEPTED",
     ticketId: "t1",
@@ -92,7 +141,7 @@ Deno.test("FSM: SAVE_FAIL keeps pending for YES lock-in", () => {
     at: "2026-07-20T20:02:00.000Z",
     inboundSid: "SM9",
   })
-  assertEquals(yes.effect.kind, "persist")
+  assertEquals(yes.effect.kind, "ask_tenant")
 })
 
 Deno.test("FSM: duplicate SID and stale inbound suppress reply", () => {

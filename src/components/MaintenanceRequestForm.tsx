@@ -48,6 +48,7 @@ import radioButtonUnchecked from '@/assets/radio_button_unchecked.svg'
 import uploadIcon from '@/assets/Upload_Icon.svg'
 import lightbulbIcon from '@/assets/Lightbulb.svg'
 import maintenanceRequestHeroIllustration from '@/assets/Maintenance Request illustration (8).png'
+import { getErrorMessage } from '@/lib/errorMessage'
 
 /** API / client messages that mean the JWT is unusable and the resident should re-verify. */
 function isAuthSessionSubmitError(message: string): boolean {
@@ -462,7 +463,7 @@ export function MaintenanceRequestForm({
           if (aborted) return
           if (!cancelled) {
             setClarifyError(
-              e instanceof Error ? e.message : 'Could not load suggestions.',
+              getErrorMessage(e, 'Could not load suggestions.'),
             )
             setClarifyQuestions([])
             setIssueParsed(null)
@@ -622,7 +623,7 @@ export function MaintenanceRequestForm({
         }
       } catch (err) {
         const msg =
-          err instanceof Error ? err.message : 'Something went wrong.'
+          getErrorMessage(err, 'Something went wrong.')
         if (isResidentAuthEnabled() && isAuthSessionSubmitError(msg)) {
           setOtpFlowState('idle')
           setVerifyModalOpen(true)

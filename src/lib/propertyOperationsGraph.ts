@@ -450,7 +450,7 @@ export async function fetchPropertyOperationsTimeline(
   params: FetchPropertyOperationsTimelineParams,
 ): Promise<PropertyOperationsTimelineEvent[]> {
   if (!supabase) {
-    throw new Error('Supabase is not configured.')
+    throw new Error("We can't reach the server right now. Please try again in a moment.")
   }
 
   const unitId = 'unitId' in params.scope ? params.scope.unitId?.trim() : undefined

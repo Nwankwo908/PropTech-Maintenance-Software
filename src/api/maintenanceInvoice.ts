@@ -5,6 +5,7 @@ import {
   adminEdgeInvokeHeaders,
   fetchAdminEdgeFunction,
 } from '@/api/adminReassignVendor'
+import { getAdminEdgeSecret } from '@/lib/adminEdgeAuth'
 import { getActiveLandlordId } from '@/lib/activeLandlord'
 
 export type PendingMaintenanceInvoice = {
@@ -34,6 +35,33 @@ export type RecognizedMaintenanceSpend = {
   urgency: string | null
   issue_category: string | null
   unit: string | null
+}
+
+export type MaintenanceBillingHistoryItem = {
+  id: string
+  status: 'approved' | 'rejected'
+  totalCost: number
+  invoiceNumber: string | null
+  vendorName: string
+  unit: string | null
+  issueCategory: string | null
+  eventAt: string
+  rejectionReason: string | null
+  paymentSource: string | null
+  transactionId: string | null
+  receiptUrl: string | null
+}
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null
+}
+
+function metaString(meta: Record<string, unknown> | null, key: string): string | null {
+  if (!meta) return null
+  const value = meta[key]
+  return typeof value === 'string' && value.trim() ? value.trim() : null
 }
 
 function approveInvoiceUrl(): string | undefined {
@@ -97,9 +125,94 @@ export async function fetchRecognizedMaintenanceSpend(): Promise<
   return (data ?? []) as RecognizedMaintenanceSpend[]
 }
 
-export async function approveMaintenanceInvoice(invoiceId: string): Promise<void> {
+/** Paid (approved) + rejected vendor invoices for Settings → Billing history. */
+export async function fetchMaintenanceBillingHistory(): Promise<
+  MaintenanceBillingHistoryItem[]
+> {
+  const { supabase } = await import('@/lib/supabase')
+  if (!supabase) return []
+
+  const { data, error } = await supabase
+    .from('maintenance_invoices')
+    .select(
+      `id, status, total_cost, invoice_number, submitted_at, approved_at, updated_at,
+       rejection_reason, metadata, vendor_id,
+       vendors ( name ),
+       maintenance_requests ( unit, issue_category )`,
+    )
+    .eq('landlord_id', getActiveLandlordId())
+    .in('status', ['approved', 'rejected'])
+    .order('updated_at', { ascending: false })
+    .limit(100)
+
+  if (error) {
+    console.error('[maintenance-invoice] billing history fetch', error.message)
+    return []
+  }
+
+  return (data ?? []).flatMap((row) => {
+    const status = String(row.status)
+    if (status !== 'approved' && status !== 'rejected') return []
+
+    const vendorJoin = Array.isArray(row.vendors) ? row.vendors[0] : row.vendors
+    const requestJoin = Array.isArray(row.maintenance_requests)
+      ? row.maintenance_requests[0]
+      : row.maintenance_requests
+    const vendorName =
+      vendorJoin && typeof vendorJoin === 'object' && 'name' in vendorJoin
+        ? String((vendorJoin as { name?: string | null }).name ?? '').trim() || 'Vendor'
+        : 'Vendor'
+    const unit =
+      requestJoin && typeof requestJoin === 'object' && 'unit' in requestJoin
+        ? String((requestJoin as { unit?: string | null }).unit ?? '').trim() || null
+        : null
+    const issueCategory =
+      requestJoin && typeof requestJoin === 'object' && 'issue_category' in requestJoin
+        ? String((requestJoin as { issue_category?: string | null }).issue_category ?? '')
+            .trim() || null
+        : null
+
+    const meta = asRecord(row.metadata)
+    const approvedAt =
+      typeof row.approved_at === 'string' && row.approved_at.trim() ? row.approved_at : null
+    const updatedAt =
+      typeof row.updated_at === 'string' && row.updated_at.trim() ? row.updated_at : null
+    const submittedAt =
+      typeof row.submitted_at === 'string' && row.submitted_at.trim()
+        ? row.submitted_at
+        : new Date(0).toISOString()
+
+    return [
+      {
+        id: String(row.id),
+        status,
+        totalCost: Number(row.total_cost ?? 0),
+        invoiceNumber:
+          typeof row.invoice_number === 'string' && row.invoice_number.trim()
+            ? row.invoice_number.trim()
+            : null,
+        vendorName,
+        unit,
+        issueCategory,
+        eventAt: (status === 'approved' ? approvedAt : updatedAt) || updatedAt || submittedAt,
+        rejectionReason:
+          typeof row.rejection_reason === 'string' && row.rejection_reason.trim()
+            ? row.rejection_reason.trim()
+            : metaString(meta, 'rejection_reason'),
+        paymentSource: metaString(meta, 'payment_source'),
+        transactionId: metaString(meta, 'transaction_id'),
+        receiptUrl: metaString(meta, 'receipt_url'),
+      } satisfies MaintenanceBillingHistoryItem,
+    ]
+  })
+}
+
+export async function approveMaintenanceInvoice(
+  invoiceId: string,
+  note?: string,
+): Promise<void> {
   const url = approveInvoiceUrl()
-  const secret = import.meta.env.VITE_ADMIN_REASSIGN_SECRET?.trim()
+  const secret = getAdminEdgeSecret()
   if (!url || !secret) {
     throw new Error('Invoice approval is not configured (admin Edge URL/secret).')
   }
@@ -111,6 +224,7 @@ export async function approveMaintenanceInvoice(invoiceId: string): Promise<void
       invoiceId,
       landlordId: getActiveLandlordId(),
       action: 'approve',
+      note: note?.trim() || undefined,
     }),
   })
 
@@ -125,7 +239,7 @@ export async function rejectMaintenanceInvoice(
   reason?: string,
 ): Promise<void> {
   const url = approveInvoiceUrl()
-  const secret = import.meta.env.VITE_ADMIN_REASSIGN_SECRET?.trim()
+  const secret = getAdminEdgeSecret()
   if (!url || !secret) {
     throw new Error('Invoice approval is not configured (admin Edge URL/secret).')
   }

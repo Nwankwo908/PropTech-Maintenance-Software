@@ -6,6 +6,7 @@ import {
   uploadCompletionPhotos,
   type CompletionJobContext,
 } from '@/api/maintenanceCompletion'
+import { getErrorMessage } from '@/lib/errorMessage'
 
 /** Phase 4 / 4.4 — public before/after photo upload + complete at `/upload/:token`. */
 export function WorkOrderUploadPage() {
@@ -37,7 +38,7 @@ export function WorkOrderUploadPage() {
         }
       } catch (err) {
         if (cancelled) return
-        setError(err instanceof Error ? err.message : 'Could not load this job.')
+        setError(getErrorMessage(err, 'Could not load this job.'))
       }
     })()
     return () => {
@@ -58,7 +59,9 @@ export function WorkOrderUploadPage() {
     if (!list?.length) return
     const next = [...pendingFiles]
     for (const file of Array.from(list)) {
-      if (!file.type.startsWith('image/')) continue
+      const isImage = file.type.startsWith('image/')
+      const isVideo = file.type.startsWith('video/')
+      if (!isImage && !isVideo) continue
       if (next.length >= 12) break
       next.push(file)
     }
@@ -72,7 +75,7 @@ export function WorkOrderUploadPage() {
 
   async function onUpload() {
     if (!t || !pendingFiles.length) {
-      setError('Choose at least one photo to upload.')
+      setError('Choose at least one photo or video to upload.')
       return
     }
     setBusy(true)
@@ -84,7 +87,7 @@ export function WorkOrderUploadPage() {
       const job = await resolveCompletionJob(t)
       setCtx(job)
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Could not upload photos.')
+      setError(getErrorMessage(err, 'Could not upload media.'))
     } finally {
       setBusy(false)
     }
@@ -104,7 +107,7 @@ export function WorkOrderUploadPage() {
       const job = await resolveCompletionJob(t)
       setCtx(job)
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Could not complete job.')
+      setError(getErrorMessage(err, 'Could not complete job.'))
     } finally {
       setBusy(false)
     }
@@ -137,7 +140,7 @@ export function WorkOrderUploadPage() {
       <header className="border-b border-[#e5e7eb] bg-white">
         <div className="mx-auto max-w-lg px-4 py-4">
           <p className="text-[12px] font-medium uppercase tracking-[0.06em] text-[#667085]">
-            Photos &amp; completion
+            Photos, videos &amp; completion
           </p>
           <h1 className="font-[family-name:var(--font-heading)] text-[22px] font-semibold">
             {ctx.workOrderRef}
@@ -154,8 +157,8 @@ export function WorkOrderUploadPage() {
         ) : null}
 
         <div className="rounded-xl border border-[#d0d5dd] bg-white px-4 py-3 text-[13px] leading-5 text-[#475467]">
-          Upload at least one before/after photo, then mark the job complete. The
-          resident and property team get a completion notice with your photo count.
+          Upload at least one before/after photo or video, then mark the job complete.
+          The resident and property team get a completion notice with your media count.
         </div>
 
         {success ? (
@@ -176,30 +179,44 @@ export function WorkOrderUploadPage() {
               Uploaded ({ctx.completionPhotoCount})
             </p>
             <div className="mt-3 grid grid-cols-3 gap-2">
-              {ctx.completionPhotoUrls.map((url) => (
-                <a
-                  key={url}
-                  href={url}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="block overflow-hidden rounded-lg border border-[#e5e7eb]"
-                >
-                  <img src={url} alt="Completion" className="h-24 w-full object-cover" />
-                </a>
-              ))}
+              {ctx.completionPhotoUrls.map((url) => {
+                const isVideo = /\.(mp4|webm|mov|m4v|mkv|3gp)(\?|$)/i.test(
+                  url.split('?')[0] ?? '',
+                )
+                return (
+                  <a
+                    key={url}
+                    href={url}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="block overflow-hidden rounded-lg border border-[#e5e7eb] bg-black"
+                  >
+                    {isVideo ? (
+                      <video
+                        src={url}
+                        className="h-24 w-full object-cover"
+                        muted
+                        playsInline
+                        preload="metadata"
+                      />
+                    ) : (
+                      <img src={url} alt="Completion" className="h-24 w-full object-cover" />
+                    )}
+                  </a>
+                )
+              })}
             </div>
           </section>
         ) : null}
 
         {!done ? (
           <section className="space-y-3 rounded-xl bg-white px-4 py-4 shadow-[0_1px_2px_rgba(16,24,40,0.04)]">
-            <p className="text-[13px] font-medium text-[#344054]">Add photos</p>
+            <p className="text-[13px] font-medium text-[#344054]">Add photos or videos</p>
             <input
               ref={inputRef}
               type="file"
-              accept="image/*"
+              accept="image/*,video/*"
               multiple
-              capture="environment"
               className="hidden"
               onChange={onPick}
               disabled={busy}
@@ -210,23 +227,37 @@ export function WorkOrderUploadPage() {
               onClick={() => inputRef.current?.click()}
               className="w-full rounded-[10px] border border-[#d0d5dd] px-4 py-2.5 text-[14px] font-semibold text-[#344054] hover:bg-[#f9fafb] disabled:opacity-50"
             >
-              Choose photos
+              Choose photos or videos
             </button>
 
             {previews.length > 0 ? (
               <div className="grid grid-cols-3 gap-2">
-                {previews.map((url, i) => (
-                  <div key={url} className="relative overflow-hidden rounded-lg border border-[#e5e7eb]">
-                    <img src={url} alt="" className="h-24 w-full object-cover" />
-                    <button
-                      type="button"
-                      onClick={() => removePending(i)}
-                      className="absolute right-1 top-1 rounded bg-black/60 px-1.5 py-0.5 text-[11px] text-white"
-                    >
-                      Remove
-                    </button>
-                  </div>
-                ))}
+                {previews.map((url, i) => {
+                  const file = pendingFiles[i]
+                  const isVideo = Boolean(file?.type.startsWith('video/'))
+                  return (
+                    <div key={url} className="relative overflow-hidden rounded-lg border border-[#e5e7eb] bg-black">
+                      {isVideo ? (
+                        <video
+                          src={url}
+                          className="h-24 w-full object-cover"
+                          muted
+                          playsInline
+                          preload="metadata"
+                        />
+                      ) : (
+                        <img src={url} alt="" className="h-24 w-full object-cover" />
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => removePending(i)}
+                        className="absolute right-1 top-1 rounded bg-black/60 px-1.5 py-0.5 text-[11px] text-white"
+                      >
+                        Remove
+                      </button>
+                    </div>
+                  )
+                })}
               </div>
             ) : null}
 
@@ -236,7 +267,7 @@ export function WorkOrderUploadPage() {
               onClick={() => void onUpload()}
               className="w-full rounded-[10px] border border-[#186179] px-4 py-2.5 text-[14px] font-semibold text-[#186179] hover:bg-[#f0f7f9] disabled:opacity-50"
             >
-              {busy ? 'Working…' : 'Upload photos'}
+              {busy ? 'Working…' : 'Upload media'}
             </button>
 
             <button

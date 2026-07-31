@@ -1,8 +1,11 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { Link, useNavigate } from 'react-router-dom'
+import { useNavigate, useSearchParams } from 'react-router-dom'
+import { AddPropertyModal, type AddPropertyFormPayload } from '@/components/AddPropertyModal'
 import { PropertyHealthBuildingGrid } from '@/components/PropertyHealthBuildingGrid'
-import { getActiveLandlordId } from '@/lib/activeLandlord'
-import { deleteLandlordBuildings } from '@/lib/landlordOnboarding'
+import { registerPropertyUnitsSms } from '@/api/landlordSmsOnboarding'
+import { getActiveLandlordId, getActiveLandlordKind } from '@/lib/activeLandlord'
+import { deleteLandlordBuildings } from '@/lib/onboarding'
+import { ensureProperty, linkUnitsToProperty } from '@/lib/properties'
 import {
   buildPropertyHealthReport,
   computeOccupancyStats,
@@ -21,7 +24,12 @@ import {
 import { fetchRecognizedMaintenanceSpend, type RecognizedMaintenanceSpend } from '@/api/maintenanceInvoice'
 import { buildMonthlySpendByBuilding, type PropertyAnalyticsTicket } from '@/lib/propertyAnalytics'
 import { buildingDetailPath } from '@/lib/propertyRoutes'
+import {
+  buildUnitOptionsFromPropertyPayload,
+  unitOptionKeyToCell,
+} from '@/lib/residentUnitKeys'
 import { supabase } from '@/lib/supabase'
+import { getErrorMessage } from '@/lib/errorMessage'
 
 type PropertyTicket = {
   id: string
@@ -322,6 +330,7 @@ function KpiCard({
 
 export function AdminPropertiesDashboard() {
   const navigate = useNavigate()
+  const [searchParams, setSearchParams] = useSearchParams()
   const [tickets, setTickets] = useState<PropertyTicket[]>([])
   const [units, setUnits] = useState<PropertyUnit[]>([])
   const [pmTasks, setPmTasks] = useState<PropertyHealthPmTask[]>([])
@@ -335,6 +344,16 @@ export function AdminPropertiesDashboard() {
   const [deleteBuildingsSaving, setDeleteBuildingsSaving] = useState(false)
   const [deleteBuildingsError, setDeleteBuildingsError] = useState<string | null>(null)
   const [recognizedSpend, setRecognizedSpend] = useState<RecognizedMaintenanceSpend[]>([])
+  const [addPropertyOpen, setAddPropertyOpen] = useState(false)
+  const [propertyRegisterNotice, setPropertyRegisterNotice] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (searchParams.get('add') !== '1') return
+    setAddPropertyOpen(true)
+    const next = new URLSearchParams(searchParams)
+    next.delete('add')
+    setSearchParams(next, { replace: true })
+  }, [searchParams, setSearchParams])
 
   const loadProperties = useCallback(async () => {
     if (!supabase) {
@@ -347,96 +366,141 @@ export function AdminPropertiesDashboard() {
     setError(null)
 
     const landlordId = getActiveLandlordId()
-    const enrichedTickets = await supabase
-      .from('maintenance_request_enriched')
-      .select(
-        'id, created_at, unit, unit_id, building, email, issue_category, assigned_vendor_id, vendor_work_status, estimated_minutes, total_cost, invoice_total, amount, labor_cost, material_cost, materials_cost, tax_amount, tax, completed_at, resolved_at, closed_at',
-      )
-      .eq('landlord_id', landlordId)
-      .order('created_at', { ascending: false })
-      .limit(500)
+    let timedOut = false
+    const timeoutId = window.setTimeout(() => {
+      timedOut = true
+      setLoading(false)
+      setError('Properties is taking too long to load. Try refreshing the page.')
+    }, 20000)
 
-    const ticketsResult =
-      enrichedTickets.error == null
-        ? enrichedTickets
-        : await supabase
-            .from('maintenance_requests')
-            .select('*')
+    try {
+      // Enriched view: building/unit join only (no invoice cost columns).
+      // maintenance_requests: completion + recognized spend amount (no total_cost column).
+      const [enrichedTickets, mrTickets, unitsResult, healthSignals, residentsResult, recognizedSpendResult] =
+        await Promise.all([
+          supabase
+            .from('maintenance_request_enriched')
+            .select(
+              'id, created_at, unit, unit_id, building, email, issue_category, assigned_vendor_id, vendor_work_status, estimated_minutes, urgency, severity, priority',
+            )
             .eq('landlord_id', landlordId)
             .order('created_at', { ascending: false })
-            .limit(500)
+            .limit(500),
+          supabase
+            .from('maintenance_requests')
+            .select(
+              'id, created_at, unit, email, issue_category, assigned_vendor_id, vendor_work_status, estimated_minutes, urgency, severity, priority, completed_at, recognized_spend_amount',
+            )
+            .eq('landlord_id', landlordId)
+            .order('created_at', { ascending: false })
+            .limit(500),
+          supabase
+            .from('units')
+            .select('id, unit_label, building, status')
+            .eq('landlord_id', landlordId)
+            .limit(1000),
+          fetchPropertyHealthSignals(),
+          supabase
+            .from('users')
+            .select('id, full_name, unit, building, status, email')
+            .eq('landlord_id', landlordId)
+            .neq('status', 'past_resident')
+            .limit(2000),
+          fetchRecognizedMaintenanceSpend(),
+        ])
 
-    const [unitsResult, healthSignals, residentsResult, recognizedSpendResult] = await Promise.all([
-      supabase
-        .from('units')
-        .select('id, unit_label, building, status')
-        .eq('landlord_id', landlordId)
-        .limit(1000),
-      fetchPropertyHealthSignals(),
-      supabase
-        .from('users')
-        .select('id, full_name, unit, building, status, email')
-        .eq('landlord_id', landlordId)
-        .neq('status', 'past_resident')
-        .limit(2000),
-      fetchRecognizedMaintenanceSpend(),
-    ])
+      if (timedOut) return
 
-    if (!ticketsResult.error) {
-      setTickets(
-        ((ticketsResult.data ?? []) as Record<string, unknown>[]).map(normalizeTicketRow),
-      )
-    } else {
-      console.error(
-        '[admin properties] maintenance requests fetch failed',
-        ticketsResult.error.message,
-      )
+      const spendById = new Map<string, Record<string, unknown>>()
+      if (!mrTickets.error) {
+        for (const row of (mrTickets.data ?? []) as Record<string, unknown>[]) {
+          const id = asString(row.id)
+          if (id) spendById.set(id, row)
+        }
+      }
+
+      const ticketRows =
+        enrichedTickets.error == null
+          ? ((enrichedTickets.data ?? []) as Record<string, unknown>[])
+          : !mrTickets.error
+            ? ((mrTickets.data ?? []) as Record<string, unknown>[])
+            : null
+
+      if (ticketRows) {
+        setTickets(
+          ticketRows.map((raw) => {
+            const spend = spendById.get(asString(raw.id))
+            const merged = spend ? { ...raw, ...spend } : raw
+            // Map recognized spend onto the invoice-total fields normalizeTicketRow already reads.
+            if (
+              merged.recognized_spend_amount != null &&
+              merged.total_cost == null &&
+              merged.invoice_total == null
+            ) {
+              merged.total_cost = merged.recognized_spend_amount
+            }
+            return normalizeTicketRow(merged)
+          }),
+        )
+      } else {
+        console.error(
+          '[admin properties] maintenance requests fetch failed',
+          enrichedTickets.error?.message ?? mrTickets.error?.message,
+        )
+      }
+
+      if (!unitsResult.error) {
+        setUnits(
+          ((unitsResult.data ?? []) as Record<string, unknown>[]).map((r) => ({
+            id: asString(r.id),
+            unitLabel: asString(r.unit_label),
+            building: asString(r.building) || null,
+            status: asString(r.status).toLowerCase(),
+          })),
+        )
+      } else {
+        console.error('[admin properties] units fetch failed', unitsResult.error.message)
+      }
+
+      setPmTasks(healthSignals.pmTasks)
+      setFeedback(healthSignals.feedback)
+      setVendorMetrics(healthSignals.vendorMetrics)
+      setRecognizedSpend(recognizedSpendResult ?? [])
+
+      if (!residentsResult.error) {
+        setResidents(
+          ((residentsResult.data ?? []) as Record<string, unknown>[])
+            .map((raw) => ({
+              id: asString(raw.id),
+              fullName: asString(raw.full_name) || 'Unnamed resident',
+              unit: asString(raw.unit),
+              building: asString(raw.building) || null,
+              status: asString(raw.status).toLowerCase() || 'active',
+              email: asString(raw.email) || null,
+            }))
+            .filter((row) => row.id),
+        )
+      } else {
+        setResidents([])
+      }
+
+      setLastUpdated(new Date())
+      setError(null)
+    } catch (err) {
+      if (timedOut) return
+      console.error('[admin properties] load failed', err)
+      setError(getErrorMessage(err, 'Could not load properties.'))
+    } finally {
+      window.clearTimeout(timeoutId)
+      if (!timedOut) setLoading(false)
     }
-
-    if (!unitsResult.error) {
-      setUnits(
-        ((unitsResult.data ?? []) as Record<string, unknown>[]).map((r) => ({
-          id: asString(r.id),
-          unitLabel: asString(r.unit_label),
-          building: asString(r.building) || null,
-          status: asString(r.status).toLowerCase(),
-        })),
-      )
-    } else {
-      console.error('[admin properties] units fetch failed', unitsResult.error.message)
-    }
-
-    setPmTasks(healthSignals.pmTasks)
-    setFeedback(healthSignals.feedback)
-    setVendorMetrics(healthSignals.vendorMetrics)
-    setRecognizedSpend(recognizedSpendResult ?? [])
-
-    if (!residentsResult.error) {
-      setResidents(
-        ((residentsResult.data ?? []) as Record<string, unknown>[])
-          .map((raw) => ({
-            id: asString(raw.id),
-            fullName: asString(raw.full_name) || 'Unnamed resident',
-            unit: asString(raw.unit),
-            building: asString(raw.building) || null,
-            status: asString(raw.status).toLowerCase() || 'active',
-            email: asString(raw.email) || null,
-          }))
-          .filter((row) => row.id),
-      )
-    } else {
-      setResidents([])
-    }
-
-    setLastUpdated(new Date())
-    setLoading(false)
   }, [])
 
   useEffect(() => {
     void loadProperties()
   }, [loadProperties])
 
-  const now = Date.now()
+  const now = lastUpdated?.getTime() ?? Date.now()
   const fourWeeksMs = 28 * 24 * 60 * 60 * 1000
 
   const healthReport = useMemo(() => {
@@ -597,6 +661,93 @@ export function AdminPropertiesDashboard() {
     await loadProperties()
   }
 
+  function mergeRegisteredPropertyUnitOptions(options: { value: string; label: string }[]) {
+    if (typeof sessionStorage === 'undefined' || options.length === 0) return
+    const key = `proptech.admin.registeredPropertyUnitOptions.v1.${getActiveLandlordId()}`
+    try {
+      const raw = sessionStorage.getItem(key)
+      const prev: { value: string; label: string }[] = raw ? JSON.parse(raw) : []
+      const list = Array.isArray(prev) ? prev : []
+      const seen = new Set(list.map((o) => o.value))
+      const merged = [...list]
+      for (const o of options) {
+        if (seen.has(o.value)) continue
+        seen.add(o.value)
+        merged.push(o)
+      }
+      sessionStorage.setItem(key, JSON.stringify(merged))
+      sessionStorage.removeItem('proptech.admin.registeredPropertyUnitOptions.v1')
+    } catch {
+      /* ignore quota / private mode */
+    }
+  }
+
+  async function addPropertyFromModal(payload: AddPropertyFormPayload) {
+    setPropertyRegisterNotice(null)
+    const yearRaw = payload.yearBuilt?.trim()
+    const yearBuilt =
+      yearRaw && Number.isFinite(Number(yearRaw)) && Number(yearRaw) >= 1800 && Number(yearRaw) <= 2100
+        ? Number(yearRaw)
+        : null
+
+    const unitCountRaw = Number.parseInt(payload.totalUnits.trim(), 10)
+    const unitCount = Number.isFinite(unitCountRaw) && unitCountRaw > 0 ? unitCountRaw : null
+
+    const ensured = await ensureProperty({
+      landlordId: getActiveLandlordId(),
+      name: payload.propertyName,
+      streetAddress: payload.streetAddress,
+      city: payload.city,
+      state: payload.state,
+      zipCode: payload.zipCode,
+      propertyType: payload.propertyType,
+      unitCount,
+      yearBuilt,
+    })
+    if (!ensured.ok) {
+      setPropertyRegisterNotice(ensured.error)
+      return
+    }
+
+    if (yearBuilt != null) {
+      const { savePropertyBuildingProfile } = await import('@/lib/propertyBuildingProfile')
+      await savePropertyBuildingProfile(payload.propertyName, yearBuilt).catch(() => {
+        // best-effort; Property Details can set it later
+      })
+    }
+
+    const unitOptions = buildUnitOptionsFromPropertyPayload(payload)
+    mergeRegisteredPropertyUnitOptions(unitOptions)
+
+    const unitsToRegister = unitOptions
+      .map((option) => {
+        const cell = unitOptionKeyToCell(option.value)
+        if (cell.kind !== 'assigned') return null
+        return { unitLabel: cell.unit, building: cell.building }
+      })
+      .filter((u): u is { unitLabel: string; building: string } => u != null)
+
+    if (unitsToRegister.length > 0) {
+      const ok = await registerPropertyUnitsSms({ units: unitsToRegister })
+      await linkUnitsToProperty({
+        landlordId: getActiveLandlordId(),
+        propertyId: ensured.propertyId,
+        buildingName: payload.propertyName,
+      })
+      await loadProperties()
+      setPropertyRegisterNotice(
+        ok
+          ? `Property “${payload.propertyName}” registered (${unitsToRegister.length} units linked to Ulo SMS).`
+          : `Property “${payload.propertyName}” saved (${unitsToRegister.length} units). SMS registration skipped — set VITE_DEFAULT_LANDLORD_ID and VITE_ADMIN_REASSIGN_SECRET.`,
+      )
+      return
+    }
+
+    setPropertyRegisterNotice(
+      `Property “${payload.propertyName}” saved. Add a valid unit count to register SMS units.`,
+    )
+  }
+
   return (
     <main className="flex min-h-0 flex-1 flex-col px-8 pb-12">
       <div className="flex items-center justify-between py-6">
@@ -657,6 +808,12 @@ export function AdminPropertiesDashboard() {
         />
       </div>
 
+      {propertyRegisterNotice ? (
+        <div className="mb-4 rounded-[10px] border border-[#bbf7d0] bg-[#f0fdf4] px-4 py-3 text-[13px] text-[#166534]">
+          {propertyRegisterNotice}
+        </div>
+      ) : null}
+
       {deleteBuildingsError ? (
         <div className="mb-4 rounded-[10px] border border-[#fecaca] bg-[#fef2f2] px-4 py-3 text-[13px] text-[#b91c1c]">
           Could not delete selected properties: {deleteBuildingsError}
@@ -671,21 +828,30 @@ export function AdminPropertiesDashboard() {
         showMonthlySpend
         formatSpend={formatSpend}
         monthlySpendByBuilding={monthlySpendByBuilding}
-        selection={{
-          selectedBuildings,
-          onToggleBuilding: toggleBuildingSelected,
-          allSelected: allVisibleBuildingsSelected,
-          someSelected: someVisibleBuildingsSelected,
-          onToggleAll: toggleAllVisibleBuildingsSelected,
-          onClearSelection: () => setSelectedBuildings(new Set()),
-          onDeleteSelected: () => void deleteSelectedBuildings(),
-          deleteSelectedSaving: deleteBuildingsSaving,
-        }}
+        onEmptyCtaClick={() => setAddPropertyOpen(true)}
+        selection={
+          getActiveLandlordKind() === 'demo'
+            ? undefined
+            : {
+                selectedBuildings,
+                onToggleBuilding: toggleBuildingSelected,
+                allSelected: allVisibleBuildingsSelected,
+                someSelected: someVisibleBuildingsSelected,
+                onToggleAll: toggleAllVisibleBuildingsSelected,
+                onClearSelection: () => setSelectedBuildings(new Set()),
+                onDeleteSelected: () => void deleteSelectedBuildings(),
+                deleteSelectedSaving: deleteBuildingsSaving,
+              }
+        }
         onBuildingOpen={(building) => navigate(buildingDetailPath(building))}
         headerAction={
-          <Link
-            to="/admin/users"
-            className="inline-flex shrink-0 items-center justify-center gap-1.5 rounded-[10px] border border-black/10 bg-white px-4 py-2 text-[13px] font-medium leading-5 text-[#6a7282] transition-colors duration-150 hover:bg-[#e2f5f1]"
+          <button
+            type="button"
+            onClick={() => {
+              setPropertyRegisterNotice(null)
+              setAddPropertyOpen(true)
+            }}
+            className="sa-press inline-flex shrink-0 items-center justify-center gap-1.5 rounded-[10px] bg-transparent px-4 py-2 text-[13px] font-medium leading-5 text-[#186179]"
           >
             <svg viewBox="0 0 24 24" fill="none" aria-hidden className="size-3.5 shrink-0">
               <path
@@ -696,8 +862,16 @@ export function AdminPropertiesDashboard() {
               />
             </svg>
             Add Properties
-          </Link>
+          </button>
         }
+      />
+
+      <AddPropertyModal
+        open={addPropertyOpen}
+        onClose={() => setAddPropertyOpen(false)}
+        onSubmit={(payload) => {
+          void addPropertyFromModal(payload)
+        }}
       />
     </main>
   )

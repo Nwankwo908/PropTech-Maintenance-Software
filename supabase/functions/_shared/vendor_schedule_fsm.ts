@@ -1,7 +1,8 @@
 /**
  * Vendor scheduling finite state machine.
  *
- * States: idle → awaiting_availability → awaiting_confirmation → scheduled
+ * States: idle → awaiting_availability → awaiting_confirmation →
+ *         awaiting_tenant_confirmation → scheduled
  * Cross-cutting: TTL expiry, context window, revision for out-of-order guards.
  */
 import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.49.1"
@@ -20,6 +21,7 @@ export type VendorScheduleStep =
   | "idle"
   | "awaiting_availability"
   | "awaiting_confirmation"
+  | "awaiting_tenant_confirmation"
   | "scheduled"
 
 export type ScheduleContextTurn = {
@@ -43,6 +45,8 @@ export type VendorScheduleFsmState = {
   pendingScheduledAt?: string | null
   pendingEndAt?: string | null
   pendingSince?: string
+  /** How many vague/unbounded clarify prompts we've sent on this thread. */
+  clarifyAttempts?: number
   contextWindow: ScheduleContextTurn[]
   recentOutboundNorm: string[]
 }
@@ -65,6 +69,16 @@ export type ScheduleFsmEvent =
   }
   | {
     type: "CONFIRM_YES"
+    at: string
+    inboundSid?: string
+  }
+  | {
+    type: "TENANT_YES"
+    at: string
+    inboundSid?: string
+  }
+  | {
+    type: "TENANT_NO"
     at: string
     inboundSid?: string
   }
@@ -100,6 +114,12 @@ export type ScheduleFsmEffect =
   | { kind: "soft_confirm"; windowText: string }
   | { kind: "clarify"; prompt?: string }
   | {
+    kind: "ask_tenant"
+    windowText: string
+    scheduledAt: string | null
+  }
+  | { kind: "waiting_on_tenant"; windowText: string }
+  | {
     kind: "persist"
     windowText: string
     scheduledAt: string | null
@@ -107,6 +127,7 @@ export type ScheduleFsmEffect =
   | { kind: "save_retry"; windowText: string }
   | { kind: "confirmed_copy"; windowText: string }
   | { kind: "decline_ack" }
+  | { kind: "tenant_declined"; windowText: string }
   | { kind: "expired"; prompt: string }
   | { kind: "noop"; reason: string }
 
@@ -336,6 +357,7 @@ export function reduceScheduleFsm(
           pendingScheduledAt: undefined,
           pendingEndAt: undefined,
           pendingSince: undefined,
+          clarifyAttempts: 0,
           lastProcessedInboundAt: event.at,
           lastProcessedInboundSid: event.inboundSid ?? null,
         },
@@ -380,21 +402,42 @@ export function reduceScheduleFsm(
           suppressReply: true,
         }
       }
+      if (base.step === "awaiting_tenant_confirmation") {
+        const windowText = base.pendingWindowText?.trim() || "that time"
+        return {
+          state: {
+            ...base,
+            revision: base.revision + 1,
+            lastProcessedInboundAt: event.at,
+            lastProcessedInboundSid: event.inboundSid ?? base.lastProcessedInboundSid,
+          },
+          effect: { kind: "waiting_on_tenant", windowText },
+          suppressReply: false,
+        }
+      }
       const windowText = base.pendingWindowText?.trim()
       if (
         (base.step === "awaiting_confirmation" || windowText) &&
         windowText
       ) {
-        const next: VendorScheduleFsmState = {
-          ...base,
-          revision: base.revision + 1,
-          lastProcessedInboundAt: event.at,
-          lastProcessedInboundSid: event.inboundSid ?? base.lastProcessedInboundSid,
-        }
+        const next = enterStep(
+          {
+            ...base,
+            pendingWindowText: windowText,
+            pendingScheduledAt: base.pendingScheduledAt ?? null,
+            pendingEndAt: base.pendingEndAt ?? null,
+            pendingSince: base.pendingSince ?? event.at,
+            lastProcessedInboundAt: event.at,
+            lastProcessedInboundSid: event.inboundSid ?? base.lastProcessedInboundSid,
+          },
+          "awaiting_tenant_confirmation",
+          event.at,
+          SCHEDULE_TTL_MS,
+        )
         return {
           state: next,
           effect: {
-            kind: "persist",
+            kind: "ask_tenant",
             windowText,
             scheduledAt: base.pendingScheduledAt ?? null,
           },
@@ -421,6 +464,54 @@ export function reduceScheduleFsm(
         state: base,
         effect: { kind: "noop", reason: "yes_without_context" },
         suppressReply: true,
+      }
+    }
+
+    case "TENANT_YES": {
+      const windowText = base.pendingWindowText?.trim()
+      if (!windowText || base.step === "scheduled") {
+        return {
+          state: base,
+          effect: { kind: "noop", reason: "tenant_yes_without_pending" },
+          suppressReply: true,
+        }
+      }
+      return {
+        state: {
+          ...base,
+          revision: base.revision + 1,
+          lastProcessedInboundAt: event.at,
+          lastProcessedInboundSid: event.inboundSid ?? base.lastProcessedInboundSid,
+        },
+        effect: {
+          kind: "persist",
+          windowText,
+          scheduledAt: base.pendingScheduledAt ?? null,
+        },
+        suppressReply: false,
+      }
+    }
+
+    case "TENANT_NO": {
+      const windowText = base.pendingWindowText?.trim() || "that time"
+      const next = enterStep(
+        {
+          ...base,
+          pendingWindowText: undefined,
+          pendingScheduledAt: undefined,
+          pendingEndAt: undefined,
+          pendingSince: undefined,
+          lastProcessedInboundAt: event.at,
+          lastProcessedInboundSid: event.inboundSid ?? base.lastProcessedInboundSid,
+        },
+        "awaiting_availability",
+        event.at,
+        SCHEDULE_TTL_MS,
+      )
+      return {
+        state: next,
+        effect: { kind: "tenant_declined", windowText },
+        suppressReply: false,
       }
     }
 
@@ -453,7 +544,10 @@ export function reduceScheduleFsm(
 
       if (event.outcome === "needs_clarification") {
         return {
-          state: withInbound,
+          state: {
+            ...withInbound,
+            clarifyAttempts: (withInbound.clarifyAttempts ?? 0) + 1,
+          },
           effect: { kind: "clarify" },
           suppressReply: false,
         }
@@ -479,17 +573,23 @@ export function reduceScheduleFsm(
         }
       }
 
-      // High confidence — persist immediately.
-      return {
-        state: {
+      // High confidence — confirm with the tenant before locking.
+      const next = enterStep(
+        {
           ...withInbound,
           pendingWindowText: event.windowText,
           pendingScheduledAt: event.scheduledAt,
           pendingEndAt: event.endAt ?? null,
           pendingSince: event.at,
         },
+        "awaiting_tenant_confirmation",
+        event.at,
+        SCHEDULE_TTL_MS,
+      )
+      return {
+        state: next,
         effect: {
-          kind: "persist",
+          kind: "ask_tenant",
           windowText: event.windowText,
           scheduledAt: event.scheduledAt,
         },
@@ -566,6 +666,7 @@ export function parseVendorScheduleFsm(
   const legacyOk =
     step === "awaiting_availability" ||
     step === "awaiting_confirmation" ||
+    step === "awaiting_tenant_confirmation" ||
     step === "scheduled" ||
     step === "idle"
   if (!legacyOk) return null
@@ -626,6 +727,10 @@ export function parseVendorScheduleFsm(
     pendingSince: typeof obj.pendingSince === "string"
       ? obj.pendingSince
       : undefined,
+    clarifyAttempts:
+      typeof obj.clarifyAttempts === "number" && Number.isFinite(obj.clarifyAttempts)
+        ? Math.max(0, Math.floor(obj.clarifyAttempts))
+        : undefined,
     contextWindow,
     recentOutboundNorm,
   }

@@ -18,6 +18,7 @@ import { isVendorPricingConfirmedByAdmin } from '@/lib/vendorPricingConfirmation
 import { respondToEstimate } from '@/api/maintenanceEstimate'
 import sendIcon from '@/assets/noun-send.png'
 import confirmHourlyRateIcon from '@/assets/noun-checkmark-invoice.png'
+import { getErrorMessage } from '@/lib/errorMessage'
 
 function CloseIcon() {
   return (
@@ -134,7 +135,7 @@ function VendorSetupSuggestedMessages({
       <button
         type="button"
         onClick={() => setExpanded((open) => !open)}
-        className="flex w-full items-center justify-between gap-2 rounded-[8px] outline-none hover:text-[#4b5563] focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2"
+        className="sa-press flex w-full items-center justify-between gap-2 rounded-[8px] outline-none hover:text-[#4b5563] focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2"
         aria-expanded={expanded}
       >
         <span className="flex min-w-0 items-center gap-1.5">
@@ -155,7 +156,7 @@ function VendorSetupSuggestedMessages({
         <button
           type="button"
           onClick={() => setExpanded(true)}
-          className="w-full rounded-[10px] border border-[#7c3aed] bg-[#ede9fe] px-3 py-2 text-left text-[12px] leading-5 text-[#5b21b6] outline-none hover:bg-[#f3e8ff] focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2"
+          className="sa-press w-full rounded-[10px] border border-[#7c3aed] bg-[#ede9fe] px-3 py-2 text-left text-[12px] leading-5 text-[#5b21b6] outline-none hover:bg-[#f3e8ff] focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2"
         >
           {selectedMessage}
         </button>
@@ -171,7 +172,7 @@ function VendorSetupSuggestedMessages({
                   type="button"
                   onClick={() => handleSelect(message)}
                   disabled={!onSelect}
-                  className={`w-full rounded-[10px] border px-3 py-2 text-left text-[12px] leading-5 outline-none transition-colors focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2 disabled:cursor-default ${
+                  className={`sa-row w-full rounded-[10px] border px-3 py-2 text-left text-[12px] leading-5 outline-none focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2 disabled:cursor-default ${
                     selected
                       ? 'border-[#7c3aed] bg-[#ede9fe] text-[#5b21b6] ring-1 ring-[#7c3aed]/30'
                       : 'border-[#e9d5ff] bg-[#faf5ff] text-[#6b21a8] hover:bg-[#f3e8ff] disabled:hover:bg-[#faf5ff]'
@@ -231,7 +232,7 @@ function DeliveryEventRow({
       <button
         type="button"
         onClick={() => setExpanded((open) => !open)}
-        className="flex w-full items-start gap-2 rounded-[10px] border border-[#e5e7eb] bg-[#f9fafb] px-3 py-2.5 text-left outline-none hover:bg-[#f3f4f6] focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2"
+        className="sa-row flex w-full items-start gap-2 rounded-[10px] border border-[#e5e7eb] bg-[#f9fafb] px-3 py-2.5 text-left outline-none hover:bg-[#f3f4f6] focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2"
         aria-expanded={expanded}
       >
         <CheckCircleIcon className="mt-0.5 size-3.5 shrink-0 text-[#008236]" />
@@ -291,7 +292,7 @@ function VendorOutreachChannelToggle({
             aria-selected={selected}
             onClick={() => onChange(option.id)}
             className={[
-              'min-w-[88px] flex-1 rounded-[8px] px-3 py-1.5 text-[12px] font-semibold leading-4 transition-colors outline-none focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-1',
+              'sa-pill min-w-[88px] flex-1 rounded-[8px] px-3 py-1.5 text-[12px] font-semibold leading-4 outline-none focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-1',
               selected
                 ? 'bg-white text-[#0a0a0a] shadow-[0px_1px_2px_rgba(0,0,0,0.06)]'
                 : 'text-[#6a7282] hover:text-[#364153]',
@@ -461,7 +462,7 @@ export function ConversationMonitoringBody({
       onEstimateDecided?.()
     } catch (err) {
       setEstimateActionError(
-        err instanceof Error ? err.message : 'Could not update this estimate.',
+        getErrorMessage(err, 'Could not update this estimate.'),
       )
     } finally {
       setEstimateActing(null)
@@ -599,7 +600,7 @@ export function ConversationMonitoringBody({
                           ? 'Hourly rate already confirmed'
                           : 'Confirm hourly rate with vendor'
                       }
-                      className="inline-flex size-7 shrink-0 items-center justify-center rounded-[8px] bg-transparent outline-none hover:bg-[#f0fdf4] focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-40"
+                      className="sa-press inline-flex size-7 shrink-0 items-center justify-center rounded-[8px] bg-transparent outline-none hover:bg-[#f0fdf4] focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-40"
                     >
                       {confirmingHourlyRate ? (
                         <span className="text-[11px] font-semibold text-[#101828]">…</span>
@@ -613,7 +614,7 @@ export function ConversationMonitoringBody({
                     disabled={loggingQuote || !quotedPriceInput.trim()}
                     onClick={() => onLogQuotedPrice?.()}
                     aria-label={loggingQuote ? 'Sending message' : 'Send message'}
-                    className="inline-flex size-7 shrink-0 items-center justify-center rounded-[8px] bg-transparent outline-none hover:bg-[#f3f4f6] focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50"
+                    className="sa-press inline-flex size-7 shrink-0 items-center justify-center rounded-[8px] bg-transparent outline-none hover:bg-[#f3f4f6] focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50"
                   >
                     {loggingQuote ? (
                       <span className="text-[11px] font-semibold text-[#101828]">…</span>
@@ -660,7 +661,7 @@ export function ConversationMonitoringBody({
                 type="button"
                 disabled={Boolean(estimateActing)}
                 onClick={() => void handleEstimateDecision('approve')}
-                className="inline-flex items-center gap-2 rounded-full bg-[#186179] px-4 py-2 text-[13px] font-medium text-white outline-none hover:bg-[#145066] focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2 disabled:opacity-50"
+                className="sa-press inline-flex items-center gap-2 rounded-full bg-[#186179] px-4 py-2 text-[13px] font-medium text-white outline-none hover:bg-[#145066] focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2 disabled:opacity-50"
               >
                 {estimateActing === 'approve' ? 'Approving…' : 'Approve estimate'}
               </button>
@@ -668,7 +669,7 @@ export function ConversationMonitoringBody({
                 type="button"
                 disabled={Boolean(estimateActing)}
                 onClick={() => void handleEstimateDecision('reject')}
-                className="inline-flex items-center gap-2 rounded-full border border-[#e5e7eb] bg-white px-4 py-2 text-[13px] font-medium text-[#101828] outline-none hover:bg-[#f3f4f6] focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2 disabled:opacity-50"
+                className="sa-press inline-flex items-center gap-2 rounded-full border border-[#e5e7eb] bg-white px-4 py-2 text-[13px] font-medium text-[#101828] outline-none hover:bg-[#f3f4f6] focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2 disabled:opacity-50"
               >
                 {estimateActing === 'reject' ? 'Declining…' : 'Decline'}
               </button>
@@ -696,7 +697,7 @@ export function ConversationMonitoringBody({
             <button
               type="button"
               onClick={() => onTakeOver?.(detail.conversationId)}
-              className="inline-flex items-center gap-2 rounded-full border border-[#1447e6] bg-white px-4 py-2 text-[13px] font-medium text-[#1447e6] outline-none hover:bg-[#eff6ff] focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2"
+              className="sa-press inline-flex items-center gap-2 rounded-full border border-[#1447e6] bg-white px-4 py-2 text-[13px] font-medium text-[#1447e6] outline-none hover:bg-[#eff6ff] focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2"
             >
               <WrenchIcon />
               Take over
@@ -911,6 +912,27 @@ export function ConversationMonitoringModal({
   onTakeOver,
   overlayClassName = 'z-50',
 }: ConversationMonitoringModalProps) {
+  const [renderOpen, setRenderOpen] = useState(false)
+  const [entered, setEntered] = useState(false)
+  const [activeId, setActiveId] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (open && conversationId) {
+      setActiveId(conversationId)
+      setRenderOpen(true)
+      const frame = window.requestAnimationFrame(() => {
+        window.requestAnimationFrame(() => setEntered(true))
+      })
+      return () => window.cancelAnimationFrame(frame)
+    }
+    setEntered(false)
+    const timeout = window.setTimeout(() => {
+      setRenderOpen(false)
+      setActiveId(null)
+    }, 280)
+    return () => window.clearTimeout(timeout)
+  }, [open, conversationId])
+
   useEffect(() => {
     if (!open) return
     function onKey(event: KeyboardEvent) {
@@ -920,27 +942,38 @@ export function ConversationMonitoringModal({
     return () => window.removeEventListener('keydown', onKey)
   }, [open, onClose])
 
-  if (!open || !conversationId) return null
+  if (!renderOpen || !activeId) return null
 
   return (
     <div className={`fixed inset-0 flex justify-end ${overlayClassName}`}>
-      <div role="presentation" className="absolute inset-0 bg-black/40" aria-hidden onClick={onClose} />
+      <div
+        role="presentation"
+        className={[
+          'property-conversation-backdrop sa-scrim absolute inset-0 bg-black/40',
+          entered ? 'opacity-100' : 'opacity-0',
+        ].join(' ')}
+        aria-hidden
+        onClick={onClose}
+      />
       <div
         role="dialog"
         aria-modal="true"
-        className="relative flex h-full max-h-dvh w-full max-w-[min(100vw,560px)] flex-col overflow-hidden rounded-l-[12px] border border-[#e5e7eb] bg-white shadow-[0px_8px_24px_rgba(0,0,0,0.12)]"
+        className={[
+          'property-conversation-rail relative flex h-full max-h-dvh w-full max-w-[min(100vw,560px)] flex-col overflow-hidden rounded-l-[12px] border border-[#e5e7eb] bg-white shadow-[0px_8px_24px_rgba(0,0,0,0.12)]',
+          entered ? 'translate-x-0 opacity-100' : 'translate-x-8 opacity-0',
+        ].join(' ')}
       >
         <button
           type="button"
           onClick={onClose}
           aria-label="Close"
-          className="absolute right-4 top-4 z-10 rounded-lg p-1 text-[#9ca3af] outline-none hover:bg-black/5 hover:text-[#364153] focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2"
+          className="sa-press absolute right-4 top-4 z-10 rounded-lg p-1 text-[#9ca3af] outline-none hover:bg-black/5 hover:text-[#364153] focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2"
         >
           <CloseIcon />
         </button>
 
         <ConversationMonitoringPanel
-          conversationId={conversationId}
+          conversationId={activeId}
           onTakeOver={onTakeOver}
           active={open}
         />

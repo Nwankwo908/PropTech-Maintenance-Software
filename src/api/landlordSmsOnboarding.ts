@@ -7,6 +7,7 @@ import {
   adminEdgeInvokeHeaders,
   fetchAdminEdgeFunction,
 } from '@/api/adminReassignVendor'
+import { getAdminEdgeSecret } from '@/lib/adminEdgeAuth'
 import { getActiveLandlordId } from '@/lib/activeLandlord'
 
 function supabaseFunctionsBase(): string | undefined {
@@ -14,9 +15,6 @@ function supabaseFunctionsBase(): string | undefined {
   return base || undefined
 }
 
-function adminSecret(): string | undefined {
-  return import.meta.env.VITE_ADMIN_REASSIGN_SECRET?.trim() || undefined
-}
 
 function defaultLandlordId(): string | undefined {
   return getActiveLandlordId()
@@ -33,7 +31,7 @@ async function postAdminFunction<T>(
   url: string | undefined,
   body: Record<string, unknown>,
 ): Promise<T | null> {
-  const secret = adminSecret()
+  const secret = getAdminEdgeSecret()
   if (!url || !secret) return null
 
   const res = await fetchAdminEdgeFunction(url, {

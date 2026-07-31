@@ -20,6 +20,20 @@ export type ScheduleAnchor = {
 
 export type AvailabilityConfidence = "high" | "medium" | "low"
 
+/** Structured arrival slot preserved through confirm / correction (not a single timestamp). */
+export type ArrivalEntityType = "WINDOW" | "EXACT"
+
+export type ArrivalEntity = {
+  /** Calendar date in landlord TZ (YYYY-MM-DD). */
+  date: string
+  type: ArrivalEntityType
+  /** Wall-clock HH:mm in landlord TZ. */
+  start_time: string
+  /** Wall-clock HH:mm in landlord TZ; null for EXACT. */
+  end_time: string | null
+  display_text: string
+}
+
 export type ResolvedAvailability = {
   scheduledAt: string
   endAt: string | null
@@ -27,6 +41,8 @@ export type ResolvedAvailability = {
   windowLabel: string
   confidence: AvailabilityConfidence
   source: "chrono" | "regex" | "llm"
+  /** Structured window/exact entity — source of truth for confirm copy. */
+  entity?: ArrivalEntity
 }
 
 export type AvailabilityResolveResult =
@@ -178,6 +194,13 @@ function normalizeVendorText(raw: string): string {
   return raw.trim().replace(/\s+/g, " ")
 }
 
+/** Max length for an accepted bounded arrival window (4 hours). */
+export const MAX_BOUNDED_WINDOW_MS = 4 * 60 * 60 * 1000
+/** Soft-anchor length when a vendor sends an oversized range. */
+export const PREFERRED_WINDOW_MS = 3 * 60 * 60 * 1000
+
+export type ArrivalWindowKind = "exact" | "bounded" | "oversized" | "unbounded"
+
 function looksVague(text: string): boolean {
   const t = text.toLowerCase()
   if (
@@ -198,6 +221,243 @@ function hasExplicitClock(text: string): boolean {
     /\b\d{1,2}(?::\d{2})?\s*(a\.?m\.?|p\.?m\.?)\b/i.test(text) ||
     /\b([01]?\d|2[0-3]):([0-5]\d)\b/.test(text) ||
     /\b\d{1,2}\s*[-–—to]+\s*\d{1,2}/i.test(text)
+  )
+}
+
+/** Open-ended / vague inputs that should not go to the tenant yet. */
+export function isUnboundedAvailabilityText(text: string): boolean {
+  const t = normalizeVendorText(text).toLowerCase()
+  if (!t) return true
+  if (
+    /\b(sometime|whenever|asap|soon|flexible|this week|next week)\b/.test(t) &&
+    !/\d\s*[-–—to]+\s*\d/.test(t)
+  ) {
+    return true
+  }
+  // "after 3pm" / "before noon" without an end bound
+  if (
+    /\b(after|before)\s+\d{1,2}/i.test(t) &&
+    !/\d\s*[-–—to]+\s*\d/.test(t)
+  ) {
+    return true
+  }
+  if (looksVague(t) && !hasExplicitClock(t)) return true
+  return false
+}
+
+export function windowDurationMs(value: ResolvedAvailability): number {
+  const start = Date.parse(value.scheduledAt)
+  if (Number.isNaN(start)) return 0
+  if (!value.endAt) return 0
+  const end = Date.parse(value.endAt)
+  if (Number.isNaN(end) || end <= start) return 0
+  return end - start
+}
+
+export function classifyArrivalWindow(
+  value: ResolvedAvailability,
+  rawText: string,
+): ArrivalWindowKind {
+  if (isUnboundedAvailabilityText(rawText) && windowDurationMs(value) <= 0) {
+    return "unbounded"
+  }
+  if (isUnboundedAvailabilityText(rawText) && !hasExplicitClock(rawText)) {
+    return "unbounded"
+  }
+  const duration = windowDurationMs(value)
+  if (duration <= 15 * 60 * 1000) return "exact"
+  if (duration <= MAX_BOUNDED_WINDOW_MS) return "bounded"
+  return "oversized"
+}
+
+function wallTimeHm(date: Date, timeZone: string): string {
+  const z = zonedParts(date, timeZone)
+  return `${pad2(z.hour)}:${pad2(z.minute)}`
+}
+
+function calendarDateYmd(date: Date, timeZone: string): string {
+  const z = zonedParts(date, timeZone)
+  return `${z.year}-${pad2(z.month)}-${pad2(z.day)}`
+}
+
+export function formatArrivalWindowLabel(
+  startIso: string,
+  endIso: string | null,
+  timeZone: string,
+): string {
+  const start = new Date(startIso)
+  if (Number.isNaN(start.getTime())) return "that time"
+  const day = new Intl.DateTimeFormat("en-US", {
+    timeZone,
+    weekday: "long",
+    month: "short",
+    day: "numeric",
+  }).format(start)
+  const startTime = new Intl.DateTimeFormat("en-US", {
+    timeZone,
+    hour: "numeric",
+    minute: "2-digit",
+  }).format(start)
+  if (!endIso) return `${day} at ${startTime}`
+  const end = new Date(endIso)
+  if (Number.isNaN(end.getTime())) return `${day} at ${startTime}`
+  const duration = end.getTime() - start.getTime()
+  if (duration <= 15 * 60 * 1000) return `${day} at ${startTime}`
+  const endTime = new Intl.DateTimeFormat("en-US", {
+    timeZone,
+    hour: "numeric",
+    minute: "2-digit",
+  }).format(end)
+  return `${day} between ${startTime} and ${endTime}`
+}
+
+/** Build structured WINDOW/EXACT entity from resolved instants. */
+export function toArrivalEntity(
+  scheduledAt: string,
+  endAt: string | null,
+  timeZone: string,
+): ArrivalEntity {
+  const start = new Date(scheduledAt)
+  const date = calendarDateYmd(start, timeZone)
+  const start_time = wallTimeHm(start, timeZone)
+  const duration = endAt ? Date.parse(endAt) - Date.parse(scheduledAt) : 0
+  const isWindow = Number.isFinite(duration) && duration > 15 * 60 * 1000
+  if (isWindow && endAt) {
+    return {
+      date,
+      type: "WINDOW",
+      start_time,
+      end_time: wallTimeHm(new Date(endAt), timeZone),
+      display_text: formatArrivalWindowLabel(scheduledAt, endAt, timeZone),
+    }
+  }
+  return {
+    date,
+    type: "EXACT",
+    start_time,
+    end_time: null,
+    display_text: formatArrivalWindowLabel(scheduledAt, null, timeZone),
+  }
+}
+
+const WEEKDAY_ALIASES: Record<string, number> = {
+  sun: 0,
+  sunday: 0,
+  mon: 1,
+  monday: 1,
+  tue: 2,
+  tues: 2,
+  tuesday: 2,
+  wed: 3,
+  weds: 3,
+  wednesday: 3,
+  thu: 4,
+  thur: 4,
+  thurs: 4,
+  thursday: 4,
+  fri: 5,
+  friday: 5,
+  sat: 6,
+  saturday: 6,
+}
+
+/** Extract named weekday index (0=Sun) from free text, or null. */
+export function extractNamedWeekdayIndex(text: string): number | null {
+  const t = text.toLowerCase()
+  // Longer aliases first so "thursday" wins over "thu".
+  const keys = Object.keys(WEEKDAY_ALIASES).sort((a, b) => b.length - a.length)
+  for (const key of keys) {
+    if (new RegExp(`\\b${key}\\b`, "i").test(t)) return WEEKDAY_ALIASES[key]!
+  }
+  return null
+}
+
+/**
+ * Resolve a named weekday against the system anchor.
+ * Never returns today when the vendor named a different weekday.
+ */
+export function resolveNamedWeekdayDate(
+  namedWeekdayIndex: number,
+  anchor: ScheduleAnchor,
+): { year: number; month: number; day: number } {
+  const zNow = zonedParts(anchor.now, anchor.timeZone)
+  const todayIndex = [
+    "sunday",
+    "monday",
+    "tuesday",
+    "wednesday",
+    "thursday",
+    "friday",
+    "saturday",
+  ].indexOf(zNow.weekday.toLowerCase())
+
+  // Different weekday named → start searching tomorrow (never pin to today).
+  const startAdd = todayIndex === namedWeekdayIndex ? 0 : 1
+  for (let add = startAdd; add <= startAdd + 7; add++) {
+    const probe = new Date(
+      zonedWallTimeToUtc(
+        {
+          year: zNow.year,
+          month: zNow.month,
+          day: zNow.day,
+          hour: 12,
+          minute: 0,
+        },
+        anchor.timeZone,
+      ).getTime() + add * 24 * 60 * 60 * 1000,
+    )
+    const zp = zonedParts(probe, anchor.timeZone)
+    const idx = [
+      "sunday",
+      "monday",
+      "tuesday",
+      "wednesday",
+      "thursday",
+      "friday",
+      "saturday",
+    ].indexOf(zp.weekday.toLowerCase())
+    if (idx === namedWeekdayIndex) {
+      return { year: zp.year, month: zp.month, day: zp.day }
+    }
+  }
+  return { year: zNow.year, month: zNow.month, day: zNow.day }
+}
+
+/** True when text looks like a start–end clock range (incl. "9am-12pm"). */
+export function hasClockRange(text: string): boolean {
+  return (
+    /\d\s*[-–—to]+\s*\d/i.test(text) ||
+    /\b\d{1,2}(?::\d{2})?\s*(a\.?m\.?|p\.?m\.?)\s*[-–—to]+\s*\d{1,2}/i.test(
+      text,
+    )
+  )
+}
+
+/** Cap an oversized range to a preferred arrival window from the start. */
+export function softAnchorArrivalWindow(
+  value: ResolvedAvailability,
+  timeZone: string,
+  windowMs = PREFERRED_WINDOW_MS,
+): ResolvedAvailability {
+  const start = new Date(value.scheduledAt)
+  const end = new Date(start.getTime() + windowMs)
+  const endAt = end.toISOString()
+  const entity = toArrivalEntity(value.scheduledAt, endAt, timeZone)
+  return {
+    ...value,
+    endAt,
+    windowLabel: entity.display_text,
+    confidence: "medium",
+    entity,
+  }
+}
+
+export function buildOversizedWindowPrompt(anchored: ResolvedAvailability): string {
+  const when = anchored.windowLabel.trim() || "that arrival window"
+  return (
+    `Got it — I'll propose ${when} (a tighter arrival window from what you sent). ` +
+    `Reply YES to send that to the tenant, or reply with a tighter window ` +
+    `(e.g. Wed 9am–12pm).`
   )
 }
 
@@ -275,39 +535,37 @@ export function parseAvailabilityRegex(
     month = zT.month
     day = zT.day
   } else if (!/\btoday\b/.test(text)) {
-    // Weekday names: next occurrence (including today if still ahead)
-    const weekdays = [
-      "sunday",
-      "monday",
-      "tuesday",
-      "wednesday",
-      "thursday",
-      "friday",
-      "saturday",
-    ]
-    const wd = weekdays.find((d) => new RegExp(`\\b${d}\\b`).test(text))
-    if (wd) {
-      for (let add = 0; add <= 7; add++) {
-        const probe = new Date(
-          zonedWallTimeToUtc(
-            { year: zNow.year, month: zNow.month, day: zNow.day, hour: 12, minute: 0 },
-            anchor.timeZone,
-          ).getTime() + add * 24 * 60 * 60 * 1000,
-        )
-        const zp = zonedParts(probe, anchor.timeZone)
-        const name = zp.weekday.toLowerCase()
-        if (name === wd) {
-          year = zp.year
-          month = zp.month
-          day = zp.day
-          const candidate = zonedWallTimeToUtc(
-            { year, month, day, hour: hours, minute: minutes },
-            anchor.timeZone,
-          )
-          if (candidate.getTime() >= anchor.now.getTime() - 60_000 || add > 0) {
-            break
-          }
-        }
+    const namedIdx = extractNamedWeekdayIndex(text)
+    if (namedIdx != null) {
+      const resolved = resolveNamedWeekdayDate(namedIdx, anchor)
+      year = resolved.year
+      month = resolved.month
+      day = resolved.day
+      // Same weekday as today but wall time already passed → next week.
+      const candidate = zonedWallTimeToUtc(
+        { year, month, day, hour: hours, minute: minutes },
+        anchor.timeZone,
+      )
+      const todayIdx = [
+        "sunday",
+        "monday",
+        "tuesday",
+        "wednesday",
+        "thursday",
+        "friday",
+        "saturday",
+      ].indexOf(zNow.weekday.toLowerCase())
+      if (
+        namedIdx === todayIdx &&
+        candidate.getTime() < anchor.now.getTime() - 60_000
+      ) {
+        const nextWeek = resolveNamedWeekdayDate(namedIdx, {
+          ...anchor,
+          now: new Date(anchor.now.getTime() + 24 * 60 * 60 * 1000),
+        })
+        year = nextWeek.year
+        month = nextWeek.month
+        day = nextWeek.day
       }
     }
   }
@@ -327,13 +585,15 @@ export function parseAvailabilityRegex(
     if (!Number.isNaN(end.getTime())) endAt = end.toISOString()
   }
 
-  const vendorLabel = normalizeVendorText(raw)
+  const scheduledAt = start.toISOString()
+  const entity = toArrivalEntity(scheduledAt, endAt, anchor.timeZone)
   return {
-    scheduledAt: start.toISOString(),
-    endAt,
-    windowLabel: vendorLabel || formatWindowLabel(start, anchor.timeZone),
+    scheduledAt,
+    endAt: entity.type === "WINDOW" ? endAt : null,
+    windowLabel: entity.display_text,
     confidence: hasExplicitClock(text) ? "high" : "medium",
     source: "regex",
+    entity,
   }
 }
 
@@ -409,12 +669,47 @@ export function parseAvailabilityChrono(
 
     if (confidence === "low" && looksVague(text)) return null
 
+    // Prefer named-weekday calendar date over chrono when they disagree
+    // (chrono can still land on "today" for abbreviations in edge cases).
+    const namedIdx = extractNamedWeekdayIndex(text)
+    let scheduledAt = scheduled.toISOString()
+    if (namedIdx != null && !/\b(today|tomorrow)\b/i.test(text)) {
+      const dateParts = resolveNamedWeekdayDate(namedIdx, anchor)
+      const startZ = zonedParts(scheduled, anchor.timeZone)
+      const rebuilt = zonedWallTimeToUtc(
+        {
+          year: dateParts.year,
+          month: dateParts.month,
+          day: dateParts.day,
+          hour: startZ.hour,
+          minute: startZ.minute,
+        },
+        anchor.timeZone,
+      )
+      scheduledAt = rebuilt.toISOString()
+      if (endAt) {
+        const endZ = zonedParts(new Date(endAt), anchor.timeZone)
+        endAt = zonedWallTimeToUtc(
+          {
+            year: dateParts.year,
+            month: dateParts.month,
+            day: dateParts.day,
+            hour: endZ.hour,
+            minute: endZ.minute,
+          },
+          anchor.timeZone,
+        ).toISOString()
+      }
+    }
+
+    const entity = toArrivalEntity(scheduledAt, endAt, anchor.timeZone)
     return {
-      scheduledAt: scheduled.toISOString(),
-      endAt,
-      windowLabel: text,
+      scheduledAt,
+      endAt: entity.type === "WINDOW" ? endAt : null,
+      windowLabel: entity.display_text,
       confidence,
       source: "chrono",
+      entity,
     }
   } catch (e) {
     console.error("[vendor-availability] chrono parse", e)
@@ -603,13 +898,14 @@ export async function extractAvailabilityWithLlm(
         : "low"
       : "medium"
 
+    const entity = toArrivalEntity(startIso, endIso, anchor.timeZone)
     return {
       scheduledAt: startIso,
-      endAt: endIso,
-      windowLabel: (args.display_label ?? normalizeVendorText(raw)).trim() ||
-        normalizeVendorText(raw),
+      endAt: entity.type === "WINDOW" ? endIso : null,
+      windowLabel: entity.display_text,
       confidence,
       source: "llm",
+      entity,
     }
   } catch (e) {
     console.error("[vendor-availability] llm extract", e)
@@ -617,20 +913,129 @@ export async function extractAvailabilityWithLlm(
   }
 }
 
-export function buildSoftConfirmationPrompt(value: ResolvedAvailability): string {
-  const when = value.windowLabel.trim() || "that time"
-  return `Got it — ${when}. Reply YES to confirm, or send a different time.`
+export function buildSoftConfirmationPrompt(
+  value: ResolvedAvailability,
+  timeZone = DEFAULT_TZ,
+): string {
+  const when = (value.entity?.display_text ?? value.windowLabel).trim() ||
+    toArrivalEntity(value.scheduledAt, value.endAt, timeZone).display_text ||
+    "that arrival window"
+  return `Got it — ${when}. Reply YES to send that to the tenant, or send a different window.`
 }
 
 export function buildSoftClarificationPrompt(custom?: string): string {
   const q = (custom ?? "").trim()
   if (q) return q
-  return "Thanks — what day and time works best? For example: Tomorrow 9am."
+  return (
+    "Please reply with a specific date and arrival window " +
+    "(e.g. Tomorrow between 9am–12pm), or an exact time (e.g. Tomorrow at 10am)."
+  )
+}
+
+function standardizeWindowLabel(
+  value: ResolvedAvailability,
+  timeZone: string,
+): ResolvedAvailability {
+  const entity = toArrivalEntity(value.scheduledAt, value.endAt, timeZone)
+  return {
+    ...value,
+    endAt: entity.type === "WINDOW" ? value.endAt : null,
+    windowLabel: entity.display_text,
+    entity,
+  }
+}
+
+/**
+ * Merge regex clock range with chrono/weekday calendar date so abbreviations
+ * like "Wed 9-12pm" keep both the WINDOW bounds and the correct day.
+ */
+function mergeRangeWithBestDate(
+  regexHit: ResolvedAvailability | null,
+  chronoHit: ResolvedAvailability | null,
+  text: string,
+  anchor: ScheduleAnchor,
+): ResolvedAvailability | null {
+  if (!regexHit && !chronoHit) return null
+  if (!regexHit) return chronoHit
+  if (!chronoHit) return regexHit
+
+  const namedIdx = extractNamedWeekdayIndex(text)
+  // Prefer regex times (more reliable for "9-12pm") + chrono/weekday date.
+  let scheduledAt = regexHit.scheduledAt
+  let endAt = regexHit.endAt
+  if (namedIdx != null && !/\b(today|tomorrow)\b/i.test(text)) {
+    const dateParts = resolveNamedWeekdayDate(namedIdx, anchor)
+    const startZ = zonedParts(new Date(regexHit.scheduledAt), anchor.timeZone)
+    scheduledAt = zonedWallTimeToUtc(
+      {
+        year: dateParts.year,
+        month: dateParts.month,
+        day: dateParts.day,
+        hour: startZ.hour,
+        minute: startZ.minute,
+      },
+      anchor.timeZone,
+    ).toISOString()
+    if (endAt) {
+      const endZ = zonedParts(new Date(endAt), anchor.timeZone)
+      endAt = zonedWallTimeToUtc(
+        {
+          year: dateParts.year,
+          month: dateParts.month,
+          day: dateParts.day,
+          hour: endZ.hour,
+          minute: endZ.minute,
+        },
+        anchor.timeZone,
+      ).toISOString()
+    }
+  } else if (chronoHit.scheduledAt) {
+    // No explicit weekday — keep regex times on chrono's date when available.
+    const chronoDay = zonedParts(new Date(chronoHit.scheduledAt), anchor.timeZone)
+    const startZ = zonedParts(new Date(regexHit.scheduledAt), anchor.timeZone)
+    scheduledAt = zonedWallTimeToUtc(
+      {
+        year: chronoDay.year,
+        month: chronoDay.month,
+        day: chronoDay.day,
+        hour: startZ.hour,
+        minute: startZ.minute,
+      },
+      anchor.timeZone,
+    ).toISOString()
+    if (endAt) {
+      const endZ = zonedParts(new Date(endAt), anchor.timeZone)
+      endAt = zonedWallTimeToUtc(
+        {
+          year: chronoDay.year,
+          month: chronoDay.month,
+          day: chronoDay.day,
+          hour: endZ.hour,
+          minute: endZ.minute,
+        },
+        anchor.timeZone,
+      ).toISOString()
+    }
+  }
+
+  const entity = toArrivalEntity(scheduledAt, endAt, anchor.timeZone)
+  const confidence =
+    regexHit.confidence === "high" || chronoHit.confidence === "high"
+      ? "high"
+      : regexHit.confidence
+  return {
+    scheduledAt,
+    endAt: entity.type === "WINDOW" ? endAt : null,
+    windowLabel: entity.display_text,
+    confidence,
+    source: "regex",
+    entity,
+  }
 }
 
 /**
  * Resolve vendor free-text availability:
- * chrono → regex → LLM function call, then soft confirm / clarify.
+ * chrono → regex → LLM function call, then classify exact / bounded / oversized / unbounded.
  */
 export async function resolveVendorAvailability(
   raw: string,
@@ -642,13 +1047,14 @@ export async function resolveVendorAvailability(
     allowLlm?: boolean
     /** Rolling SMS thread for LLM context integrity. */
     conversationContext?: string
+    /** Prior clarify prompts on this schedule thread (anti-loop). */
+    clarifyAttempts?: number
   },
 ): Promise<AvailabilityResolveResult> {
-  const anchor = buildScheduleAnchor(
-    options?.now ?? new Date(),
-    options?.timeZone ?? scheduleTimeZone(),
-  )
+  const timeZone = options?.timeZone ?? scheduleTimeZone()
+  const anchor = buildScheduleAnchor(options?.now ?? new Date(), timeZone)
   const text = normalizeVendorText(raw)
+  const clarifyAttempts = options?.clarifyAttempts ?? 0
   if (!text) {
     return {
       status: "needs_clarification",
@@ -656,13 +1062,20 @@ export async function resolveVendorAvailability(
     }
   }
 
-  // Ranges like "9-12pm" are more reliable via regex (chrono often treats 9 as pm).
-  const hasRange = /\d\s*[-–—to]+\s*\d/i.test(text)
-  let resolved = hasRange
-    ? (parseAvailabilityRegex(text, anchor) ??
-      parseAvailabilityChrono(text, anchor))
-    : (parseAvailabilityChrono(text, anchor) ??
-      parseAvailabilityRegex(text, anchor))
+  // Ranges: merge regex times with chrono/weekday date (never drop WINDOW end).
+  const range = hasClockRange(text)
+  let resolved: ResolvedAvailability | null = null
+  if (range) {
+    resolved = mergeRangeWithBestDate(
+      parseAvailabilityRegex(text, anchor),
+      parseAvailabilityChrono(text, anchor),
+      text,
+      anchor,
+    )
+  } else {
+    resolved = parseAvailabilityChrono(text, anchor) ??
+      parseAvailabilityRegex(text, anchor)
+  }
 
   if (!resolved && options?.allowLlm !== false) {
     const llm = await extractAvailabilityWithLlm(
@@ -687,23 +1100,73 @@ export async function resolveVendorAvailability(
     }
   }
 
-  if (resolved.confidence === "low" || looksVague(text)) {
+  resolved = standardizeWindowLabel(resolved, timeZone)
+  const kind = classifyArrivalWindow(resolved, text)
+
+  // Unbounded / vague — re-prompt (after 2 attempts, soft-anchor any usable start).
+  if (kind === "unbounded") {
+    if (clarifyAttempts >= 1 && resolved.scheduledAt) {
+      const anchored = softAnchorArrivalWindow(resolved, timeZone)
+      return {
+        status: "needs_confirmation",
+        value: anchored,
+        softPrompt: buildOversizedWindowPrompt(anchored),
+      }
+    }
     return {
-      status: "needs_confirmation",
-      value: resolved,
-      softPrompt: buildSoftConfirmationPrompt(resolved),
+      status: "needs_clarification",
+      softPrompt: buildSoftClarificationPrompt(),
     }
   }
 
-  if (resolved.confidence === "medium") {
+  // Oversized range — propose a tighter arrival window for 1-tap YES.
+  if (kind === "oversized") {
+    const anchored = softAnchorArrivalWindow(resolved, timeZone)
+    return {
+      status: "needs_confirmation",
+      value: anchored,
+      softPrompt: buildOversizedWindowPrompt(anchored),
+    }
+  }
+
+  // Bounded window or exact slot.
+  if (resolved.confidence === "high" && (kind === "bounded" || kind === "exact")) {
+    return { status: "resolved", value: resolved }
+  }
+
+  if (resolved.confidence === "low" || resolved.confidence === "medium") {
     return {
       status: "needs_confirmation",
       value: resolved,
-      softPrompt: buildSoftConfirmationPrompt(resolved),
+      softPrompt: buildSoftConfirmationPrompt(resolved, timeZone),
     }
   }
 
   return { status: "resolved", value: resolved }
+}
+
+/**
+ * Full re-parse for correction / persist fallback — preserves WINDOW endAt.
+ * Prefer carrying pendingScheduledAt/pendingEndAt instead of re-parsing.
+ */
+export function parseAvailabilityResolved(
+  raw: string,
+  now = new Date(),
+  timeZone = scheduleTimeZone(),
+): ResolvedAvailability | null {
+  const anchor = buildScheduleAnchor(now, timeZone)
+  const text = normalizeVendorText(raw)
+  if (!text) return null
+  const hit = hasClockRange(text)
+    ? mergeRangeWithBestDate(
+      parseAvailabilityRegex(text, anchor),
+      parseAvailabilityChrono(text, anchor),
+      text,
+      anchor,
+    )
+    : (parseAvailabilityChrono(text, anchor) ??
+      parseAvailabilityRegex(text, anchor))
+  return hit ? standardizeWindowLabel(hit, timeZone) : null
 }
 
 /** Backward-compatible helper: ISO start or null. */
@@ -712,12 +1175,6 @@ export function parseAvailabilityToScheduledAt(
   now = new Date(),
   timeZone = scheduleTimeZone(),
 ): string | null {
-  const anchor = buildScheduleAnchor(now, timeZone)
-  const hasRange = /\d\s*[-–—to]+\s*\d/i.test(raw)
-  const hit = hasRange
-    ? (parseAvailabilityRegex(raw, anchor) ??
-      parseAvailabilityChrono(raw, anchor))
-    : (parseAvailabilityChrono(raw, anchor) ??
-      parseAvailabilityRegex(raw, anchor))
-  return hit?.scheduledAt ?? null
+  return parseAvailabilityResolved(raw, now, timeZone)?.scheduledAt ?? null
 }
+

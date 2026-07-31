@@ -15,8 +15,11 @@ export function resolveWorkflowRoute(
   identity: SmsIdentityRow,
   continueIntake: boolean,
 ): SmsWorkflowRoute {
-  if (continueIntake) return "resident_maintenance_intake"
-  if (identity.identity_type === "resident") return "resident_maintenance_intake"
+  const hasResident = Boolean(identity.resident_id?.trim())
+  if (continueIntake && hasResident) return "resident_maintenance_intake"
+  if (identity.identity_type === "resident" && hasResident) {
+    return "resident_maintenance_intake"
+  }
   if (identity.identity_type === "vendor" && identity.vendor_id?.trim()) {
     return "vendor_response"
   }

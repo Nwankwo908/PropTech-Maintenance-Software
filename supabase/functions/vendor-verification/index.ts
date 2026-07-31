@@ -11,13 +11,29 @@ import {
   verifyLicense,
 } from "../_shared/vendor_verification/adapters.ts"
 import { computeVerificationChecklist } from "../_shared/vendor_verification/checklist.ts"
-import { findLandlordVendorByContact } from "../_shared/vendor_verification/findVendor.ts"
 import {
-  logPipelineStageEvent,
-  updateWorkflowRun,
-} from "../_shared/engine/workflowRuns.ts"
+  normalizeTinDigits,
+  parseTaxEntityFromPatch,
+  taxProfileForEntity,
+  tinFingerprint,
+  tinLast4,
+  validateTinDigits,
+} from "../_shared/vendor_verification/w9TaxProfile.ts"
+import { findLandlordVendorByContact } from "../_shared/vendor_verification/findVendor.ts"
+import { runVendorOnboardingViaEngine } from "../_shared/engine/vendorOnboardingEngine.ts"
 import { appendVendorVerificationSubmittedToInbox } from "../_shared/sms/vendorVerificationInbox.ts"
 import { sendVendorVerificationFollowUpSms } from "../_shared/sms/vendorVerificationFollowUp.ts"
+import {
+  createConnectAccountLink,
+  createExpressConnectAccount,
+  isStripeConfigured,
+  isStripeConnectReady,
+  listConnectPayoutMethods,
+  resolveConnectAppBaseUrl,
+  retrieveConnectAccount,
+  type StripeConnectPayoutMethod,
+} from "../_shared/stripeConnect.ts"
+import { uloAppUrl } from "../_shared/uloAppUrl.ts"
 
 const corsHeaders: Record<string, string> = {
   "Access-Control-Allow-Origin": "*",
@@ -49,6 +65,7 @@ type VerificationRow = {
   license_number: string | null
   license_type: string | null
   license_status: string | null
+  license_expiration?: string | null
   coi_general_liability: number | null
   coi_expiration: string | null
   coi_additional_insured: boolean | null
@@ -56,6 +73,13 @@ type VerificationRow = {
   background_check_status: string | null
   background_check_ref: string | null
   w9_received: boolean | null
+  tax_entity_type: string | null
+  tin_type: string | null
+  tin_last4: string | null
+  tin_fingerprint: string | null
+  w9_variant: string | null
+  tax_1099_treatment: string | null
+  stripe_connect_ready: boolean | null
   trade_categories: string[] | null
   service_area: Record<string, unknown> | null
   availability: string | null
@@ -64,13 +88,94 @@ type VerificationRow = {
   workflow_run_id: string | null
   /** Present after migration 20260717180000; optional for older DBs. */
   invite_conversation_id?: string | null
+  compliance_expiry_notices?: Record<string, unknown> | null
 }
 
 const ROW_SELECT =
-  "id, landlord_id, vendor_id, token, status, business_name, contact_name, vendor_first_name, email, phone, property_name, license_state, license_number, license_type, license_status, coi_general_liability, coi_expiration, coi_additional_insured, coi_status, background_check_status, background_check_ref, w9_received, trade_categories, service_area, availability, progress, expires_at, workflow_run_id"
+  "id, landlord_id, vendor_id, token, status, business_name, contact_name, vendor_first_name, email, phone, property_name, license_state, license_number, license_type, license_status, license_expiration, coi_general_liability, coi_expiration, coi_additional_insured, coi_status, background_check_status, background_check_ref, w9_received, tax_entity_type, tin_type, tin_last4, tin_fingerprint, w9_variant, tax_1099_treatment, stripe_connect_ready, trade_categories, service_area, availability, progress, expires_at, workflow_run_id, invite_conversation_id, compliance_expiry_notices"
+
+async function applyTaxProfilePatch(
+  patch: Record<string, unknown>,
+  update: Record<string, unknown>,
+  existing?: { tin_type?: string | null },
+): Promise<{ error?: string }> {
+  const entity = parseTaxEntityFromPatch(patch)
+  const tinRaw = typeof patch.tin === "string"
+    ? patch.tin
+    : typeof patch.taxId === "string"
+    ? patch.taxId
+    : null
+
+  if (!entity && tinRaw == null) return {}
+
+  if (!entity) {
+    return { error: "Choose your business entity type before entering a tax ID." }
+  }
+
+  const profile = taxProfileForEntity(entity)
+  update.tax_entity_type = profile.taxEntityType
+  update.tin_type = profile.tinType
+  update.w9_variant = profile.w9Variant
+  update.tax_1099_treatment = profile.tax1099Treatment
+
+  if (tinRaw != null) {
+    const digits = normalizeTinDigits(tinRaw)
+    if (!digits) {
+      return {}
+    }
+    const valid = validateTinDigits(digits, profile.tinType)
+    if (!valid.ok) return { error: valid.error }
+    update.tin_last4 = tinLast4(digits)
+    update.tin_fingerprint = await tinFingerprint(digits)
+  } else if (existing?.tin_type && existing.tin_type !== profile.tinType) {
+    // Entity change invalidated prior TIN — require a fresh entry.
+    update.tin_last4 = null
+    update.tin_fingerprint = null
+  }
+
+  return {}
+}
+
+function appBaseUrl(req: Request, bodyOrigin?: string): string {
+  return resolveConnectAppBaseUrl({
+    returnOrigin: bodyOrigin,
+    requestOrigin: req.headers.get("origin"),
+  })
+}
+
+async function loadPayoutMethods(
+  accountId: string | null | undefined,
+): Promise<StripeConnectPayoutMethod[]> {
+  const id = typeof accountId === "string" ? accountId.trim() : ""
+  if (!id.startsWith("acct_") || !isStripeConfigured()) return []
+  const listed = await listConnectPayoutMethods(id)
+  if (!listed.ok) {
+    console.warn("[vendor-verification] payout methods", listed.error)
+    return []
+  }
+  return listed.methods
+}
+
+async function payoutMethodsForVendor(
+  supabase: SupabaseClient,
+  vendorId: string | null | undefined,
+): Promise<StripeConnectPayoutMethod[]> {
+  const id = typeof vendorId === "string" ? vendorId.trim() : ""
+  if (!id) return []
+  const { data } = await supabase
+    .from("vendors")
+    .select("stripe_connect_account_id")
+    .eq("id", id)
+    .maybeSingle()
+  return loadPayoutMethods(data?.stripe_connect_account_id)
+}
 
 /** Public-safe view of the verification record (no token / landlord_id). */
-function sessionView(row: VerificationRow, documents: unknown[]) {
+function sessionView(
+  row: VerificationRow,
+  documents: unknown[],
+  payoutMethods: StripeConnectPayoutMethod[] = [],
+) {
   const checklist = computeVerificationChecklist(row)
   return {
     status: row.status,
@@ -97,6 +202,13 @@ function sessionView(row: VerificationRow, documents: unknown[]) {
       ref: row.background_check_ref,
     },
     w9Received: row.w9_received ?? false,
+    taxEntityType: row.tax_entity_type ?? null,
+    tinType: row.tin_type ?? null,
+    tinLast4: row.tin_last4 ?? null,
+    w9Variant: row.w9_variant ?? null,
+    tax1099Treatment: row.tax_1099_treatment ?? null,
+    stripeConnectReady: row.stripe_connect_ready === true,
+    payoutMethods,
     tradeCategories: row.trade_categories ?? [],
     serviceArea: row.service_area ?? {},
     availability: row.availability ?? "active",
@@ -104,6 +216,98 @@ function sessionView(row: VerificationRow, documents: unknown[]) {
     documents,
     checklist,
   }
+}
+
+async function ensureVendorRow(
+  supabase: SupabaseClient,
+  row: VerificationRow,
+  landlordId: string,
+): Promise<string | null> {
+  let vendorId = await findLandlordVendorByContact(supabase, landlordId, {
+    vendorId: row.vendor_id,
+    email: row.email,
+    phone: row.phone,
+  })
+  if (vendorId) {
+    if (row.vendor_id !== vendorId) {
+      await supabase
+        .from("vendor_verifications")
+        .update({ vendor_id: vendorId })
+        .eq("id", row.id)
+    }
+    return vendorId
+  }
+
+  const vendorPhone = normalizePhoneFlexible(row.phone)
+  const { data: ins, error: insErr } = await supabase
+    .from("vendors")
+    .insert({
+      landlord_id: landlordId,
+      name: row.business_name || row.contact_name || "Vendor",
+      email: row.email,
+      phone: vendorPhone,
+      active: false,
+      notification_channel: row.phone && row.email
+        ? "both"
+        : row.phone
+        ? "sms"
+        : "email",
+      onboarded_from_external: true,
+    })
+    .select("id")
+    .single()
+  if (insErr || !ins?.id) {
+    console.error("[vendor-verification] ensure vendor", insErr)
+    return null
+  }
+  vendorId = ins.id as string
+  await supabase
+    .from("vendor_verifications")
+    .update({ vendor_id: vendorId })
+    .eq("id", row.id)
+  return vendorId
+}
+
+async function persistConnectSnapshot(
+  supabase: SupabaseClient,
+  params: {
+    vendorId: string
+    verificationId: string
+    landlordId: string
+    accountId: string
+    chargesEnabled: boolean
+    payoutsEnabled: boolean
+    detailsSubmitted: boolean
+  },
+): Promise<boolean> {
+  const nowIso = new Date().toISOString()
+  const ready = isStripeConnectReady({
+    accountId: params.accountId,
+    chargesEnabled: params.chargesEnabled,
+  })
+  const { error: vErr } = await supabase
+    .from("vendors")
+    .update({
+      stripe_connect_account_id: params.accountId,
+      stripe_connect_charges_enabled: params.chargesEnabled,
+      stripe_connect_payouts_enabled: params.payoutsEnabled,
+      stripe_connect_details_submitted: params.detailsSubmitted,
+      stripe_connect_updated_at: nowIso,
+    })
+    .eq("id", params.vendorId)
+  if (vErr) {
+    console.error("[vendor-verification] persist connect vendor", vErr)
+    return false
+  }
+  const { error: verErr } = await supabase
+    .from("vendor_verifications")
+    .update({ stripe_connect_ready: ready })
+    .eq("id", params.verificationId)
+  if (verErr) {
+    console.error("[vendor-verification] persist connect verification", verErr)
+    return false
+  }
+  return ready
 }
 
 async function loadDocuments(supabase: SupabaseClient, verificationId: string) {
@@ -203,18 +407,35 @@ serve(async (req) => {
       .maybeSingle()
     const current = (fresh as unknown as VerificationRow) ?? row
     const documents = await loadDocuments(supabase, row.id)
-    return jsonResponse({ ok: true, session: sessionView(current, documents) }, status)
+    const payoutMethods = await payoutMethodsForVendor(supabase, current.vendor_id)
+    return jsonResponse(
+      { ok: true, session: sessionView(current, documents, payoutMethods) },
+      status,
+    )
   }
 
   try {
     switch (action) {
       case "resolve": {
-        // First open flips invited -> in_progress.
+        // First open flips invited -> in_progress (engine advances the run).
         if (row.status === "invited") {
           await supabase
             .from("vendor_verifications")
             .update({ status: "in_progress" })
             .eq("id", row.id)
+          if (row.workflow_run_id) {
+            await runVendorOnboardingViaEngine(supabase, {
+              landlordId,
+              runId: row.workflow_run_id,
+              trigger: "vendor_portal",
+              vendorOnboarding: {
+                action: "portal_in_progress",
+                verificationId: row.id,
+                vendorId: row.vendor_id,
+                vendorLabel: row.business_name || row.contact_name || "Vendor",
+              },
+            })
+          }
         }
         return await reloadAndRespond()
       }
@@ -248,14 +469,18 @@ serve(async (req) => {
         if (patch.serviceArea && typeof patch.serviceArea === "object") {
           update.service_area = patch.serviceArea
         }
-        if (patch.availability === "active" || patch.availability === "paused") {
-          update.availability = patch.availability
-        }
         if (patch.progress && typeof patch.progress === "object") {
           update.progress = patch.progress
         }
+        const taxResult = await applyTaxProfilePatch(patch, update, {
+          tin_type: row.tin_type,
+        })
+        if (taxResult.error) {
+          return jsonResponse({ error: taxResult.error }, 400)
+        }
         if (Object.keys(update).length > 0) {
-          if (row.status === "invited") update.status = "in_progress"
+          const flippedToInProgress = row.status === "invited"
+          if (flippedToInProgress) update.status = "in_progress"
           const { error } = await supabase
             .from("vendor_verifications")
             .update(update)
@@ -264,6 +489,42 @@ serve(async (req) => {
             console.error("[vendor-verification] save", error)
             return jsonResponse({ error: "Could not save" }, 500)
           }
+          if (flippedToInProgress && row.workflow_run_id) {
+            await runVendorOnboardingViaEngine(supabase, {
+              landlordId,
+              runId: row.workflow_run_id,
+              trigger: "vendor_portal",
+              vendorOnboarding: {
+                action: "portal_in_progress",
+                verificationId: row.id,
+                vendorId: row.vendor_id,
+                vendorLabel: row.business_name || row.contact_name || "Vendor",
+              },
+            })
+          }
+        }
+        // Capacity toggle (PAUSE/RESUME) — separate from account verification status.
+        if (
+          (patch.availability === "active" || patch.availability === "paused") &&
+          row.vendor_id
+        ) {
+          const { setVendorCapacityAvailability } = await import(
+            "../_shared/vendor_capacity.ts"
+          )
+          await setVendorCapacityAvailability(supabase, {
+            landlordId,
+            vendorId: String(row.vendor_id),
+            availability: patch.availability,
+            source: "portal",
+          })
+        } else if (
+          patch.availability === "active" ||
+          patch.availability === "paused"
+        ) {
+          await supabase
+            .from("vendor_verifications")
+            .update({ availability: patch.availability })
+            .eq("id", row.id)
         }
         return await reloadAndRespond()
       }
@@ -289,12 +550,35 @@ serve(async (req) => {
             license_number: result.licenseNumber,
             license_type: result.licenseType,
             license_status: result.status,
+            license_expiration: result.expirationDate,
             status: row.status === "invited" ? "in_progress" : row.status,
           })
           .eq("id", row.id)
         if (error) {
           console.error("[vendor-verification] verifyLicense", error)
           return jsonResponse({ error: "Could not verify license" }, 500)
+        }
+        if (row.vendor_id) {
+          const { maybeRestoreVendorAfterComplianceRenewal } = await import(
+            "../_shared/vendor_verification/vendorComplianceExpiry.ts"
+          )
+          await maybeRestoreVendorAfterComplianceRenewal(supabase, {
+            landlordId,
+            vendorId: row.vendor_id,
+            verificationId: row.id,
+            token: row.token,
+            phone: row.phone,
+            inviteConversationId: row.invite_conversation_id,
+            vendorLabel: row.business_name || row.contact_name,
+            coi_expiration: row.coi_expiration,
+            coi_general_liability: row.coi_general_liability,
+            coi_status: row.coi_status,
+            coi_additional_insured: row.coi_additional_insured,
+            license_expiration: result.expirationDate,
+            license_status: result.status,
+            license_number: result.licenseNumber,
+            compliance_expiry_notices: row.compliance_expiry_notices,
+          })
         }
         return await reloadAndRespond()
       }
@@ -357,6 +641,7 @@ serve(async (req) => {
           verificationUpdate.license_number = scan.licenseNumber
           verificationUpdate.license_type = scan.licenseType
           verificationUpdate.license_status = scan.status
+          verificationUpdate.license_expiration = scan.expirationDate
           if (scan.licenseState) verificationUpdate.license_state = scan.licenseState
         } else if (kind === "coi") {
           const coi = parseCoi({
@@ -388,6 +673,53 @@ serve(async (req) => {
           .from("vendor_verifications")
           .update(verificationUpdate)
           .eq("id", row.id)
+
+        if (
+          row.vendor_id &&
+          (kind === "coi" || kind === "license")
+        ) {
+          const { maybeRestoreVendorAfterComplianceRenewal } = await import(
+            "../_shared/vendor_verification/vendorComplianceExpiry.ts"
+          )
+          await maybeRestoreVendorAfterComplianceRenewal(supabase, {
+            landlordId,
+            vendorId: row.vendor_id,
+            verificationId: row.id,
+            token: row.token,
+            phone: row.phone,
+            inviteConversationId: row.invite_conversation_id,
+            vendorLabel: row.business_name || row.contact_name,
+            coi_expiration:
+              typeof verificationUpdate.coi_expiration === "string"
+                ? verificationUpdate.coi_expiration
+                : row.coi_expiration,
+            coi_general_liability:
+              typeof verificationUpdate.coi_general_liability === "number"
+                ? verificationUpdate.coi_general_liability
+                : row.coi_general_liability,
+            coi_status:
+              typeof verificationUpdate.coi_status === "string"
+                ? verificationUpdate.coi_status
+                : row.coi_status,
+            coi_additional_insured:
+              typeof verificationUpdate.coi_additional_insured === "boolean"
+                ? verificationUpdate.coi_additional_insured
+                : row.coi_additional_insured,
+            license_expiration:
+              typeof verificationUpdate.license_expiration === "string"
+                ? verificationUpdate.license_expiration
+                : row.license_expiration,
+            license_status:
+              typeof verificationUpdate.license_status === "string"
+                ? verificationUpdate.license_status
+                : row.license_status,
+            license_number:
+              typeof verificationUpdate.license_number === "string"
+                ? verificationUpdate.license_number
+                : row.license_number,
+            compliance_expiry_notices: row.compliance_expiry_notices,
+          })
+        }
 
         return await reloadAndRespond()
       }
@@ -427,6 +759,206 @@ serve(async (req) => {
         return await reloadAndRespond()
       }
 
+      case "create_connect_account_link": {
+        if (!isStripeConfigured()) {
+          return jsonResponse(
+            {
+              error:
+                "Payout setup is temporarily unavailable. Please try again later.",
+            },
+            503,
+          )
+        }
+        const base = appBaseUrl(
+          req,
+          typeof body.returnOrigin === "string" ? body.returnOrigin : undefined,
+        )
+        if (!base) {
+          return jsonResponse(
+            {
+              error:
+                "Could not determine Connect return URL. Open this link from the app, or ask the property manager to check setup.",
+            },
+            500,
+          )
+        }
+
+        const vendorId = await ensureVendorRow(supabase, row, landlordId)
+        if (!vendorId) {
+          return jsonResponse(
+            { error: "Could not prepare your profile for payouts." },
+            500,
+          )
+        }
+
+        const { data: vendorRow } = await supabase
+          .from("vendors")
+          .select("stripe_connect_account_id")
+          .eq("id", vendorId)
+          .maybeSingle()
+
+        let accountId =
+          typeof vendorRow?.stripe_connect_account_id === "string"
+            ? vendorRow.stripe_connect_account_id.trim()
+            : ""
+
+        if (!accountId) {
+          const created = await createExpressConnectAccount({
+            vendorId,
+            landlordId,
+            email: row.email,
+            businessName: row.business_name || row.contact_name,
+          })
+          if (!created.ok) {
+            return jsonResponse({ error: created.error }, 502)
+          }
+          accountId = created.account.id
+          await persistConnectSnapshot(supabase, {
+            vendorId,
+            verificationId: row.id,
+            landlordId,
+            accountId,
+            chargesEnabled: created.account.chargesEnabled,
+            payoutsEnabled: created.account.payoutsEnabled,
+            detailsSubmitted: created.account.detailsSubmitted,
+          })
+          await logGraphEvent(supabase, {
+            landlord_id: landlordId,
+            event_type: "vendor.stripe_connect_started",
+            source: "vendor_portal",
+            actor_type: "vendor",
+            vendor_id: vendorId,
+            workflow_run_id: row.workflow_run_id,
+            workflow_template_id: row.workflow_run_id
+              ? "vendor_onboarding"
+              : null,
+            metadata: {
+              message: "Vendor started payout account setup.",
+              verification_id: row.id,
+              stripe_connect_account_id: accountId,
+            },
+          })
+        }
+
+        const returnUrl = uloAppUrl.vendorVerification(token, {
+          returnOrigin: base,
+          connect: "return",
+        })
+        const refreshUrl = uloAppUrl.vendorVerification(token, {
+          returnOrigin: base,
+          connect: "refresh",
+        })
+        const link = await createConnectAccountLink({
+          accountId,
+          refreshUrl,
+          returnUrl,
+        })
+        if (!link.ok) {
+          return jsonResponse({ error: link.error }, 502)
+        }
+
+        if (row.status === "invited") {
+          await supabase
+            .from("vendor_verifications")
+            .update({ status: "in_progress" })
+            .eq("id", row.id)
+        }
+
+        const { data: fresh } = await supabase
+          .from("vendor_verifications")
+          .select(ROW_SELECT)
+          .eq("id", row.id)
+          .maybeSingle()
+        const current = (fresh as unknown as VerificationRow) ?? row
+        const documents = await loadDocuments(supabase, row.id)
+        const payoutMethods = await loadPayoutMethods(accountId)
+        return jsonResponse({
+          ok: true,
+          url: link.url,
+          session: sessionView(current, documents, payoutMethods),
+        })
+      }
+
+      case "refresh_connect_status": {
+        if (!isStripeConfigured()) {
+          return jsonResponse(
+            {
+              error:
+                "Payout setup is temporarily unavailable. Please try again later.",
+            },
+            503,
+          )
+        }
+
+        const vendorId = await ensureVendorRow(supabase, row, landlordId)
+        if (!vendorId) {
+          return jsonResponse(
+            { error: "Could not load your payout profile." },
+            500,
+          )
+        }
+
+        const { data: vendorRow } = await supabase
+          .from("vendors")
+          .select(
+            "stripe_connect_account_id, stripe_connect_charges_enabled",
+          )
+          .eq("id", vendorId)
+          .maybeSingle()
+
+        const accountId =
+          typeof vendorRow?.stripe_connect_account_id === "string"
+            ? vendorRow.stripe_connect_account_id.trim()
+            : ""
+        if (!accountId) {
+          await supabase
+            .from("vendor_verifications")
+            .update({ stripe_connect_ready: false })
+            .eq("id", row.id)
+          return await reloadAndRespond()
+        }
+
+        const retrieved = await retrieveConnectAccount(accountId)
+        if (!retrieved.ok) {
+          return jsonResponse({ error: retrieved.error }, 502)
+        }
+
+        const wasReady = isStripeConnectReady({
+          accountId: vendorRow?.stripe_connect_account_id,
+          chargesEnabled: vendorRow?.stripe_connect_charges_enabled,
+        })
+        const ready = await persistConnectSnapshot(supabase, {
+          vendorId,
+          verificationId: row.id,
+          landlordId,
+          accountId: retrieved.account.id,
+          chargesEnabled: retrieved.account.chargesEnabled,
+          payoutsEnabled: retrieved.account.payoutsEnabled,
+          detailsSubmitted: retrieved.account.detailsSubmitted,
+        })
+
+        if (ready && !wasReady) {
+          await logGraphEvent(supabase, {
+            landlord_id: landlordId,
+            event_type: "vendor.stripe_connect_ready",
+            source: "vendor_portal",
+            actor_type: "vendor",
+            vendor_id: vendorId,
+            workflow_run_id: row.workflow_run_id,
+            workflow_template_id: row.workflow_run_id
+              ? "vendor_onboarding"
+              : null,
+            metadata: {
+              message: "Vendor payout account is ready.",
+              verification_id: row.id,
+              stripe_connect_account_id: accountId,
+            },
+          })
+        }
+
+        return await reloadAndRespond()
+      }
+
       case "submit": {
         // Persist any final patch first.
         const patch = (body.patch ?? {}) as Record<string, unknown>
@@ -441,6 +973,12 @@ serve(async (req) => {
         }
         if (patch.availability === "active" || patch.availability === "paused") {
           finalUpdate.availability = patch.availability
+        }
+        const taxResult = await applyTaxProfilePatch(patch, finalUpdate, {
+          tin_type: row.tin_type,
+        })
+        if (taxResult.error) {
+          return jsonResponse({ error: taxResult.error }, 400)
         }
         if (Object.keys(finalUpdate).length > 0) {
           await supabase
@@ -481,9 +1019,9 @@ serve(async (req) => {
           email: fresh.email,
           phone: vendorPhone,
           category: primaryTrade,
-          active:
-            overall === "verified" &&
-            (fresh.availability ?? "active") === "active",
+          // Account readiness (verified) is separate from capacity (availability).
+          // Paused vendors stay active on the roster but are not matchable.
+          active: overall === "verified",
           notification_channel: notificationChannel,
         }
 
@@ -629,40 +1167,33 @@ serve(async (req) => {
           },
         })
 
-        // Advance + close the vendor_onboarding workflow run.
+        // Advance + close the vendor_onboarding workflow run via the engine.
         if (workflowRunId) {
-          await logPipelineStageEvent(supabase, {
+          await runVendorOnboardingViaEngine(supabase, {
+            landlordId,
             runId: workflowRunId,
-            stage: "act",
-            step: "verify_and_roster",
-            actorType: "vendor",
-            message: `${vendorLabel} submitted verification (${checklist.completeCount}/${checklist.requiredCount} complete).`,
-            metadata: { verification_id: row.id, overall },
-          })
-          await logPipelineStageEvent(supabase, {
-            runId: workflowRunId,
-            stage: "log",
-            step: "append_graph_events",
-            message: overall === "verified"
-              ? `${vendorLabel} verified and added to the roster.`
-              : `${vendorLabel} needs review before roster assignment.`,
-            metadata: { verification_id: row.id, overall },
-          })
-          await updateWorkflowRun(supabase, workflowRunId, {
-            status: overall === "verified" ? "completed" : "active",
-            currentStep: overall,
-            completedAt: overall === "verified" ? nowIso : null,
-            metadata: { verification_id: row.id, vendor_id: vendorId },
+            trigger: "vendor_portal",
+            vendorOnboarding: {
+              action: "submit",
+              verificationId: row.id,
+              vendorId,
+              vendorLabel,
+              overall,
+              completeCount: checklist.completeCount,
+              requiredCount: checklist.requiredCount,
+            },
           })
         }
 
         const documents = await loadDocuments(supabase, row.id)
+        const payoutMethods = await payoutMethodsForVendor(supabase, vendorId)
         return jsonResponse({
           ok: true,
           overall,
           session: sessionView(
             { ...fresh, vendor_id: vendorId, status: overall },
             documents,
+            payoutMethods,
           ),
         })
       }

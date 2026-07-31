@@ -1,30 +1,36 @@
 import { useEffect, useId, useMemo, useState, type ReactNode } from 'react'
 import { Link } from 'react-router-dom'
 import {
+  COMMUNICATION_STYLE_OPTIONS,
+  type CommunicationStyle,
+} from '@/lib/communicationStyle'
+import {
   DEFAULT_ORGANIZATION_SETTINGS,
+  loadOrganizationComplianceDocuments,
   loadOrganizationSettings,
   loadOrganizationWorkspaceSummary,
+  openOrganizationDocumentPreview,
   ORGANIZATION_BRAND_ACCENTS,
-  ORGANIZATION_COMPLIANCE_DOCUMENTS,
   saveOrganizationSettings,
+  type OrganizationDocument,
   type OrganizationDocumentStatus,
   type OrganizationSettingsForm,
   type OrganizationWorkspaceSummary,
 } from '@/lib/organizationSettings'
 
 const inputClass =
-  'h-10 w-full rounded-[8px] border border-[#e5e7eb] bg-white px-3 text-[14px] tracking-[-0.1504px] text-[#101828] outline-none placeholder:text-[#9ca3af] focus:border-[#155dfc] focus:ring-2 focus:ring-[#155dfc]/20'
+  'sa-surface h-10 w-full rounded-[8px] border border-[#e5e7eb] bg-white px-3 text-[14px] tracking-[-0.1504px] text-[#101828] outline-none placeholder:text-[#9ca3af] focus:border-[#155dfc] focus:ring-2 focus:ring-[#155dfc]/20'
 
 const selectClass =
-  'h-10 w-full cursor-pointer appearance-none rounded-[8px] border border-[#e5e7eb] bg-white py-2 pl-3 pr-10 text-[14px] tracking-[-0.1504px] text-[#101828] outline-none focus:border-[#155dfc] focus:ring-2 focus:ring-[#155dfc]/20'
+  'sa-surface h-10 w-full cursor-pointer appearance-none rounded-[8px] border border-[#e5e7eb] bg-white py-2 pl-3 pr-10 text-[14px] tracking-[-0.1504px] text-[#101828] outline-none focus:border-[#155dfc] focus:ring-2 focus:ring-[#155dfc]/20'
 
 const textareaClass =
-  'min-h-[96px] w-full resize-y rounded-[8px] border border-[#e5e7eb] bg-white px-3 py-2.5 text-[14px] tracking-[-0.1504px] text-[#101828] outline-none placeholder:text-[#9ca3af] focus:border-[#155dfc] focus:ring-2 focus:ring-[#155dfc]/20'
+  'sa-surface min-h-[96px] w-full resize-y rounded-[8px] border border-[#e5e7eb] bg-white px-3 py-2.5 text-[14px] tracking-[-0.1504px] text-[#101828] outline-none placeholder:text-[#9ca3af] focus:border-[#155dfc] focus:ring-2 focus:ring-[#155dfc]/20'
 
 const fieldLabelClass = 'mb-1.5 block text-[13px] font-medium tracking-[-0.1504px] text-[#364153]'
 
 const sectionCardClass =
-  'rounded-[10px] border border-[#e5e7eb] bg-white p-6 shadow-[0px_1px_2px_-1px_rgba(0,0,0,0.06)]'
+  'sa-surface rounded-[10px] border border-[#e5e7eb] bg-white p-6 shadow-[0px_1px_2px_-1px_rgba(0,0,0,0.06)]'
 
 function SettingsSection({
   title,
@@ -148,13 +154,13 @@ function SettingsToggle({
         aria-checked={checked}
         onClick={() => onChange(!checked)}
         className={[
-          'relative mt-0.5 h-6 w-11 shrink-0 rounded-full transition-colors outline-none focus-visible:ring-2 focus-visible:ring-[#155dfc]/30 focus-visible:ring-offset-2',
+          'relative mt-0.5 h-6 w-11 shrink-0 rounded-full outline-none focus-visible:ring-2 focus-visible:ring-[#155dfc]/30 focus-visible:ring-offset-2',
           checked ? 'bg-[#101828]' : 'bg-[#e5e7eb]',
         ].join(' ')}
       >
         <span
           className={[
-            'pointer-events-none absolute top-1 left-1 size-4 rounded-full bg-white shadow-sm transition-transform',
+            'sa-switch-thumb pointer-events-none absolute top-1 left-1 size-4 rounded-full bg-white shadow-sm',
             checked ? 'translate-x-5' : 'translate-x-0',
           ].join(' ')}
         />
@@ -176,7 +182,7 @@ function NotificationToggleRow({
 }) {
   const switchId = useId()
   return (
-    <div className="flex items-center justify-between gap-4 rounded-[8px] border border-[#eef0f3] bg-[#f9fafb] px-4 py-3">
+    <div className="sa-surface flex items-center justify-between gap-4 rounded-[8px] border border-[#eef0f3] bg-[#f9fafb] px-4 py-3">
       <div className="flex min-w-0 items-center gap-3">
         <span className="flex size-8 shrink-0 items-center justify-center rounded-full bg-white text-[#364153] shadow-[0px_1px_2px_rgba(0,0,0,0.04)]">
           {icon}
@@ -193,13 +199,13 @@ function NotificationToggleRow({
         aria-label={label}
         onClick={() => onChange(!checked)}
         className={[
-          'relative h-6 w-11 shrink-0 rounded-full transition-colors outline-none focus-visible:ring-2 focus-visible:ring-[#155dfc]/30 focus-visible:ring-offset-2',
+          'relative h-6 w-11 shrink-0 rounded-full outline-none focus-visible:ring-2 focus-visible:ring-[#155dfc]/30 focus-visible:ring-offset-2',
           checked ? 'bg-[#101828]' : 'bg-[#d1d5db]',
         ].join(' ')}
       >
         <span
           className={[
-            'pointer-events-none absolute top-1 left-1 size-4 rounded-full bg-white shadow-sm transition-transform',
+            'sa-switch-thumb pointer-events-none absolute top-1 left-1 size-4 rounded-full bg-white shadow-sm',
             checked ? 'translate-x-5' : 'translate-x-0',
           ].join(' ')}
         />
@@ -251,22 +257,27 @@ export function AdminOrganizationSettings() {
   const [savedSettings, setSavedSettings] = useState<OrganizationSettingsForm>(DEFAULT_ORGANIZATION_SETTINGS)
   const [draft, setDraft] = useState<OrganizationSettingsForm>(DEFAULT_ORGANIZATION_SETTINGS)
   const [workspace, setWorkspace] = useState<OrganizationWorkspaceSummary | null>(null)
+  const [documents, setDocuments] = useState<OrganizationDocument[]>([])
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [saveMessage, setSaveMessage] = useState<string | null>(null)
+  const [previewError, setPreviewError] = useState<string | null>(null)
 
   useEffect(() => {
     let cancelled = false
     setLoading(true)
-    void Promise.all([loadOrganizationSettings(), loadOrganizationWorkspaceSummary()]).then(
-      ([settings, summary]) => {
-        if (cancelled) return
-        setSavedSettings(settings)
-        setDraft(settings)
-        setWorkspace(summary)
-        setLoading(false)
-      },
-    )
+    void Promise.all([
+      loadOrganizationSettings(),
+      loadOrganizationWorkspaceSummary(),
+      loadOrganizationComplianceDocuments(),
+    ]).then(([settings, summary, complianceDocs]) => {
+      if (cancelled) return
+      setSavedSettings(settings)
+      setDraft(settings)
+      setWorkspace(summary)
+      setDocuments(complianceDocs)
+      setLoading(false)
+    })
     return () => {
       cancelled = true
     }
@@ -278,11 +289,11 @@ export function AdminOrganizationSettings() {
   )
 
   const documentSummary = useMemo(() => {
-    const valid = ORGANIZATION_COMPLIANCE_DOCUMENTS.filter((doc) => doc.status === 'valid').length
-    const expiring = ORGANIZATION_COMPLIANCE_DOCUMENTS.filter((doc) => doc.status === 'expiring').length
-    const expired = ORGANIZATION_COMPLIANCE_DOCUMENTS.filter((doc) => doc.status === 'expired').length
+    const valid = documents.filter((doc) => doc.status === 'valid').length
+    const expiring = documents.filter((doc) => doc.status === 'expiring').length
+    const expired = documents.filter((doc) => doc.status === 'expired').length
     return { valid, expiring, expired }
-  }, [])
+  }, [documents])
 
   function updateDraft(patch: Partial<OrganizationSettingsForm>) {
     setDraft((current) => patchSettings(current, patch))
@@ -315,7 +326,7 @@ export function AdminOrganizationSettings() {
       <div className="py-6">
         <Link
           to="/admin/settings"
-          className="inline-flex items-center gap-1.5 text-[14px] font-medium tracking-[-0.1504px] text-[#6a7282] transition-colors hover:text-[#101828]"
+          className="sa-link inline-flex items-center gap-1.5 text-[14px] font-medium tracking-[-0.1504px] text-[#6a7282] hover:text-[#101828]"
         >
           <span aria-hidden>←</span>
           Settings
@@ -347,13 +358,13 @@ export function AdminOrganizationSettings() {
                 <div className="flex flex-wrap gap-2">
                   <button
                     type="button"
-                    className="rounded-[8px] border border-[#e5e7eb] bg-white px-3.5 py-2 text-[13px] font-medium tracking-[-0.1504px] text-[#101828] transition-colors hover:bg-[#f9fafb]"
+                    className="sa-press rounded-[8px] bg-transparent px-3.5 py-2 text-[13px] font-medium tracking-[-0.1504px] text-[#186179]"
                   >
                     Upload logo
                   </button>
                   <button
                     type="button"
-                    className="rounded-[8px] px-3.5 py-2 text-[13px] font-medium tracking-[-0.1504px] text-[#6a7282] transition-colors hover:text-[#101828]"
+                    className="sa-press rounded-[8px] bg-transparent px-3.5 py-2 text-[13px] font-medium tracking-[-0.1504px] text-[#186179]"
                   >
                     Remove
                   </button>
@@ -504,7 +515,7 @@ export function AdminOrganizationSettings() {
                       aria-pressed={selected}
                       onClick={() => updateDraft({ brandAccent: accent.color })}
                       className={[
-                        'relative flex size-10 items-center justify-center rounded-full transition-transform outline-none focus-visible:ring-2 focus-visible:ring-[#155dfc]/30 focus-visible:ring-offset-2',
+                        'sa-press relative flex size-10 items-center justify-center rounded-full outline-none focus-visible:ring-2 focus-visible:ring-[#155dfc]/30 focus-visible:ring-offset-2',
                         selected ? 'scale-105 ring-2 ring-[#155dfc] ring-offset-2' : '',
                       ].join(' ')}
                       style={{ backgroundColor: accent.color }}
@@ -577,8 +588,8 @@ export function AdminOrganizationSettings() {
                     value={draft.preferredVendorPool}
                     onChange={(preferredVendorPool) => updateDraft({ preferredVendorPool })}
                     options={[
-                      { value: 'Tier 1 — Certified', label: 'Tier 1 — Certified' },
-                      { value: 'Tier 2 — Preferred', label: 'Tier 2 — Preferred' },
+                      { value: 'Ulo-vetted vendors only', label: 'Ulo-vetted vendors only' },
+                      { value: 'Include imported vendors', label: 'Include imported vendors' },
                       { value: 'All active vendors', label: 'All active vendors' },
                     ]}
                   />
@@ -598,6 +609,50 @@ export function AdminOrganizationSettings() {
                   onChange={(allowAiDispatch) => updateDraft({ allowAiDispatch })}
                   label="Allow AI to dispatch routine requests"
                 />
+              </div>
+
+              <p className="mt-8 text-[11px] font-semibold uppercase tracking-[0.08em] text-[#6a7282]">
+                Communication Style
+              </p>
+              <p className="mt-1 text-[13px] leading-5 text-[#6a7282]">
+                Controls the tone of automated SMS and email to residents, vendors, and your team.
+              </p>
+              <div className="mt-3 space-y-2">
+                {COMMUNICATION_STYLE_OPTIONS.map((option) => {
+                  const selected = draft.communicationStyle === option.id
+                  return (
+                    <button
+                      key={option.id}
+                      type="button"
+                      onClick={() =>
+                        updateDraft({
+                          communicationStyle: option.id as CommunicationStyle,
+                        })
+                      }
+                      className={[
+                        'sa-press w-full rounded-[10px] border px-3.5 py-3 text-left',
+                        selected
+                          ? 'border-[#186179] bg-[#f0f7fa] ring-1 ring-[#186179]/25'
+                          : 'border-[#e5e7eb] bg-white hover:border-[#cfd4dc]',
+                      ].join(' ')}
+                      aria-pressed={selected}
+                    >
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="text-[14px] font-semibold text-[#101828]">
+                          {option.label}
+                        </span>
+                        {option.recommended ? (
+                          <span className="rounded-full bg-[#C4E5C9] px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.06em] text-[#187930]">
+                            Recommended
+                          </span>
+                        ) : null}
+                      </div>
+                      <span className="mt-1 block text-[13px] leading-5 text-[#6a7282]">
+                        {option.description}
+                      </span>
+                    </button>
+                  )
+                })}
               </div>
 
               <p className="mt-8 text-[11px] font-semibold uppercase tracking-[0.08em] text-[#6a7282]">
@@ -633,6 +688,22 @@ export function AdminOrganizationSettings() {
                   label="SMS alerts"
                   checked={draft.smsAlerts}
                   onChange={(smsAlerts) => updateDraft({ smsAlerts })}
+                />
+                <NotificationToggleRow
+                  icon={
+                    <svg className="size-4" viewBox="0 0 16 16" fill="none" aria-hidden>
+                      <path
+                        d="M2.5 4.5H13.5V12.5H2.5V4.5ZM2.5 7H13.5M6 4.5V12.5"
+                        stroke="currentColor"
+                        strokeWidth="1.4"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                      />
+                    </svg>
+                  }
+                  label="Ulo Activity Feed"
+                  checked={draft.activityFeedAlerts}
+                  onChange={(activityFeedAlerts) => updateDraft({ activityFeedAlerts })}
                 />
                 <NotificationToggleRow
                   icon={
@@ -695,90 +766,121 @@ export function AdminOrganizationSettings() {
 
             <SettingsSection
               title="Compliance & business documents"
-              description="Store incorporation, insurance, and licensing files in one place."
-              action={
-                <button
-                  type="button"
-                  className="rounded-[8px] border border-[#e5e7eb] bg-white px-3.5 py-2 text-[13px] font-medium tracking-[-0.1504px] text-[#101828] transition-colors hover:bg-[#f9fafb]"
-                >
-                  Upload document
-                </button>
-              }
+              description="Documents uploaded during fast-track onboarding and vendor verification appear here."
             >
-              <div className="overflow-hidden rounded-[10px] border border-[#eef0f3]">
-                {ORGANIZATION_COMPLIANCE_DOCUMENTS.map((document, index) => (
-                  <div
-                    key={document.id}
-                    className={[
-                      'flex flex-wrap items-center gap-3 px-4 py-3.5 sm:flex-nowrap',
-                      index > 0 ? 'border-t border-[#eef0f3]' : '',
-                    ].join(' ')}
-                  >
-                    <div className="flex min-w-0 flex-1 items-center gap-3">
-                      <span className="flex size-9 shrink-0 items-center justify-center rounded-[8px] bg-[#f3f4f6] text-[#364153]">
-                        <svg className="size-4" viewBox="0 0 16 16" fill="none" aria-hidden>
-                          <path
-                            d="M4.5 2.5H9.5L12.5 5.5V13.5H4.5V2.5Z"
-                            stroke="currentColor"
-                            strokeWidth="1.4"
-                            strokeLinejoin="round"
-                          />
-                          <path d="M9.5 2.5V5.5H12.5" stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round" />
-                        </svg>
-                      </span>
-                      <div className="min-w-0">
-                        <p className="truncate text-[14px] font-medium tracking-[-0.1504px] text-[#101828]">
-                          {document.name}
-                        </p>
-                        <p className="text-[12px] tracking-[-0.1504px] text-[#6a7282]">
-                          {document.meta} · {document.updatedLabel}
-                        </p>
-                      </div>
-                    </div>
-                    <DocumentStatusBadge status={document.status} />
-                    <div className="flex items-center gap-1">
-                      <button
-                        type="button"
-                        aria-label={`Download ${document.name}`}
-                        className="rounded-[8px] p-2 text-[#6a7282] transition-colors hover:bg-[#f3f4f6] hover:text-[#101828]"
-                      >
-                        <svg className="size-4" viewBox="0 0 16 16" fill="none" aria-hidden>
-                          <path
-                            d="M8 3.5V10.5M8 10.5L5.5 8M8 10.5L10.5 8M3.5 12.5H12.5"
-                            stroke="currentColor"
-                            strokeWidth="1.4"
-                            strokeLinecap="round"
-                            strokeLinejoin="round"
-                          />
-                        </svg>
-                      </button>
-                      <button
-                        type="button"
-                        aria-label={`More actions for ${document.name}`}
-                        className="rounded-[8px] p-2 text-[#6a7282] transition-colors hover:bg-[#f3f4f6] hover:text-[#101828]"
-                      >
-                        <svg className="size-4" viewBox="0 0 16 16" fill="none" aria-hidden>
-                          <circle cx="8" cy="4" r="1" fill="currentColor" />
-                          <circle cx="8" cy="8" r="1" fill="currentColor" />
-                          <circle cx="8" cy="12" r="1" fill="currentColor" />
-                        </svg>
-                      </button>
-                    </div>
+              {documents.length === 0 ? (
+                <div className="rounded-[10px] border border-dashed border-[#e5e7eb] bg-[#fafafa] px-4 py-8 text-center">
+                  <p className="text-[14px] font-medium tracking-[-0.1504px] text-[#101828]">
+                    No documents yet
+                  </p>
+                  <p className="mt-1 text-[13px] tracking-[-0.1504px] text-[#6a7282]">
+                    Upload files in fast-track onboarding, or collect license, insurance, and W-9
+                    files when vendors complete verification.
+                  </p>
+                </div>
+              ) : (
+                <>
+                  <div className="overflow-hidden rounded-[10px] border border-[#eef0f3]">
+                    {documents.map((document, index) => {
+                      const canPreview = Boolean(
+                        document.previewUrl || (document.storageBucket && document.storagePath),
+                      )
+                      return (
+                        <div
+                          key={document.id}
+                          className={[
+                            'flex flex-wrap items-center gap-3 px-4 py-3.5 sm:flex-nowrap',
+                            index > 0 ? 'border-t border-[#eef0f3]' : '',
+                          ].join(' ')}
+                        >
+                          <div className="flex min-w-0 flex-1 items-center gap-3">
+                            <span className="flex size-9 shrink-0 items-center justify-center rounded-[8px] bg-[#f3f4f6] text-[#364153]">
+                              <svg className="size-4" viewBox="0 0 16 16" fill="none" aria-hidden>
+                                <path
+                                  d="M4.5 2.5H9.5L12.5 5.5V13.5H4.5V2.5Z"
+                                  stroke="currentColor"
+                                  strokeWidth="1.4"
+                                  strokeLinejoin="round"
+                                />
+                                <path
+                                  d="M9.5 2.5V5.5H12.5"
+                                  stroke="currentColor"
+                                  strokeWidth="1.4"
+                                  strokeLinejoin="round"
+                                />
+                              </svg>
+                            </span>
+                            <div className="min-w-0">
+                              {canPreview ? (
+                                <a
+                                  href={document.previewUrl ?? '#'}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="sa-link block truncate text-[14px] font-medium tracking-[-0.1504px] text-[#155dfc] underline-offset-2 hover:underline"
+                                  onClick={(event) => {
+                                    if (document.previewUrl) return
+                                    event.preventDefault()
+                                    setPreviewError(null)
+                                    void openOrganizationDocumentPreview(document).then((result) => {
+                                      if (!result.ok) setPreviewError(result.error)
+                                    })
+                                  }}
+                                >
+                                  {document.name}
+                                </a>
+                              ) : (
+                                <p className="truncate text-[14px] font-medium tracking-[-0.1504px] text-[#101828]">
+                                  {document.name}
+                                </p>
+                              )}
+                              <p className="text-[12px] tracking-[-0.1504px] text-[#6a7282]">
+                                {document.sourceLabel} · {document.meta} · {document.updatedLabel}
+                                {canPreview ? '' : ' · Preview unavailable'}
+                              </p>
+                            </div>
+                          </div>
+                          <DocumentStatusBadge status={document.status} />
+                          {canPreview ? (
+                            <a
+                              href={document.previewUrl ?? '#'}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              aria-label={`Preview ${document.name}`}
+                              className="sa-press rounded-[8px] p-2 text-[#6a7282] hover:bg-[#f3f4f6] hover:text-[#101828]"
+                              onClick={(event) => {
+                                if (document.previewUrl) return
+                                event.preventDefault()
+                                setPreviewError(null)
+                                void openOrganizationDocumentPreview(document).then((result) => {
+                                  if (!result.ok) setPreviewError(result.error)
+                                })
+                              }}
+                            >
+                              <svg className="size-4" viewBox="0 0 16 16" fill="none" aria-hidden>
+                                <path
+                                  d="M2.5 8C3.7 5.5 5.7 4 8 4C10.3 4 12.3 5.5 13.5 8C12.3 10.5 10.3 12 8 12C5.7 12 3.7 10.5 2.5 8Z"
+                                  stroke="currentColor"
+                                  strokeWidth="1.4"
+                                  strokeLinejoin="round"
+                                />
+                                <circle cx="8" cy="8" r="1.75" stroke="currentColor" strokeWidth="1.4" />
+                              </svg>
+                            </a>
+                          ) : null}
+                        </div>
+                      )
+                    })}
                   </div>
-                ))}
-              </div>
-              <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
-                <p className="text-[13px] tracking-[-0.1504px] text-[#6a7282]">
-                  {documentSummary.valid} valid · {documentSummary.expiring} expiring · {documentSummary.expired}{' '}
-                  expired
-                </p>
-                <button
-                  type="button"
-                  className="text-[13px] font-medium tracking-[-0.1504px] text-[#155dfc] transition-colors hover:text-[#0030b5]"
-                >
-                  View archive →
-                </button>
-              </div>
+                  {previewError ? (
+                    <p className="mt-3 text-[13px] tracking-[-0.1504px] text-[#b42318]">{previewError}</p>
+                  ) : null}
+                  <p className="mt-4 text-[13px] tracking-[-0.1504px] text-[#6a7282]">
+                    {documents.length} document{documents.length === 1 ? '' : 's'} ·{' '}
+                    {documentSummary.valid} ready · {documentSummary.expiring} needs attention ·{' '}
+                    {documentSummary.expired} failed
+                  </p>
+                </>
+              )}
             </SettingsSection>
           </div>
 
@@ -804,7 +906,7 @@ export function AdminOrganizationSettings() {
                   type="button"
                   disabled={!isDirty || saving}
                   onClick={() => void handleSave()}
-                  className="h-10 w-full rounded-[10px] bg-[#101828] text-[14px] font-medium tracking-[-0.1504px] text-white transition-colors hover:bg-[#1f2937] disabled:cursor-not-allowed disabled:opacity-50"
+                  className="sa-press h-10 w-full rounded-[10px] bg-[#101828] text-[14px] font-medium tracking-[-0.1504px] text-white hover:bg-[#1f2937] disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   {saving ? 'Saving…' : 'Save changes'}
                 </button>
@@ -812,7 +914,7 @@ export function AdminOrganizationSettings() {
                   type="button"
                   disabled={!isDirty || saving}
                   onClick={handleDiscard}
-                  className="h-10 w-full rounded-[10px] border border-[#e5e7eb] bg-white text-[14px] font-medium tracking-[-0.1504px] text-[#101828] transition-colors hover:bg-[#f9fafb] disabled:cursor-not-allowed disabled:opacity-50"
+                  className="sa-press h-10 w-full rounded-[10px] bg-transparent text-[14px] font-medium tracking-[-0.1504px] text-[#186179] disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   Discard
                 </button>

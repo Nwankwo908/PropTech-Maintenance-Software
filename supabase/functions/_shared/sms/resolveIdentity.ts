@@ -1,5 +1,5 @@
 import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.49.1"
-import { sendResendEmail } from "../delivery.ts"
+import { sendLandlordOpsEmail } from "../landlordOpsNotify.ts"
 import { normalizePhoneFlexible } from "../resident_notify.ts"
 import {
   createUnknownIdentity,
@@ -60,7 +60,6 @@ type ResidentRow = {
 }
 
 const AWAITING_UNIT_STATUS = "awaiting_unit_number"
-const UNRESOLVED_STATUS = "unresolved"
 
 /** Unit comparison: ignore case, labels, #, spaces, and punctuation. */
 export function normalizeUnitForMatch(v: string | null | undefined): string {
@@ -69,14 +68,6 @@ export function normalizeUnitForMatch(v: string | null | undefined): string {
   s = s.replace(/\b(unit|apt|apartment|suite|ste)\b/g, "")
   s = s.replace(/[^a-z0-9]/g, "")
   return s
-}
-
-function adminNotifyEmails(): string[] {
-  const raw = Deno.env.get("SMS_ADMIN_NOTIFY_EMAILS")?.trim()
-  if (raw) {
-    return raw.split(",").map((e) => e.trim()).filter(Boolean)
-  }
-  return ["emeka@ulohome.io", "osi@ulohome.io"]
 }
 
 function generateSmsResidentId(): string {
@@ -89,7 +80,7 @@ function looksLikeUnitToken(token: string): boolean {
   return /\d/.test(norm) || (norm.length <= 4 && /^[a-z0-9]+$/.test(norm))
 }
 
-function extractUnitFromMessage(body: string): string | null {
+export function extractUnitFromMessage(body: string): string | null {
   const trimmed = body.trim()
   if (!trimmed) return null
 
@@ -193,7 +184,7 @@ async function suggestUnitFromRecentInvite(
   return pendingUnit ?? null
 }
 
-async function findActiveResidentsByUnit(
+export async function findActiveResidentsByUnit(
   supabase: SupabaseClient,
   unitInput: string,
 ): Promise<ResidentRow[]> {
@@ -217,12 +208,18 @@ async function findActiveResidentsByUnit(
   )
 }
 
-async function ensureResidentForUnitMatch(
+/**
+ * Attach an unknown phone to a roster unit (vacant row or new SMS resident).
+ * Call only after the sender consents to saving their number.
+ */
+export async function attachPhoneToUnitResident(
   supabase: SupabaseClient,
   params: {
     fromNumber: string
     unit: string
     matchedResidents: ResidentRow[]
+    fullName?: string | null
+    building?: string | null
   },
 ): Promise<ResidentRow> {
   const normalizedFrom = normalizeSmsPhone(params.fromNumber)
@@ -238,7 +235,11 @@ async function ensureResidentForUnitMatch(
   if (vacant) {
     const { data, error } = await supabase
       .from("users")
-      .update({ phone: normalizedFrom })
+      .update({
+        phone: normalizedFrom,
+        ...(params.fullName?.trim() ? { full_name: params.fullName.trim() } : {}),
+        ...(params.building?.trim() ? { building: params.building.trim() } : {}),
+      })
       .eq("id", vacant.id)
       .select("id, resident_id, full_name, email, phone, unit, building, status")
       .single()
@@ -255,10 +256,11 @@ async function ensureResidentForUnitMatch(
     .from("users")
     .insert({
       resident_id: generateSmsResidentId(),
-      full_name: "SMS Resident",
+      full_name: params.fullName?.trim() || "SMS Resident",
       email: `${normalizedFrom.replace(/\D/g, "")}@sms-resident.ulohome.local`,
       phone: normalizedFrom,
       unit: params.unit,
+      building: params.building?.trim() || null,
       status: "active",
       balance_due: 0,
       issues: [],
@@ -297,12 +299,13 @@ export async function notifyLandlordUnresolvedTenant(
     .filter(Boolean)
     .join("\n")
 
-  for (const to of adminNotifyEmails()) {
-    const result = await sendResendEmail(to, subject, text, `<pre>${text}</pre>`)
-    if ("error" in result) {
-      console.error("[resolveIdentity] admin notify email", to, result.error)
-    }
-  }
+  const notify = await sendLandlordOpsEmail(supabase, {
+    landlordId: params.landlordId,
+    subject,
+    text,
+    html: `<pre>${text}</pre>`,
+    logLabel: "sms-unresolved-tenant",
+  })
 
   await logGraphEvent(supabase, {
     landlord_id: params.landlordId,
@@ -313,88 +316,53 @@ export async function notifyLandlordUnresolvedTenant(
     metadata: {
       from: normalizeSmsPhone(params.fromNumber),
       attempted_unit: params.attemptedUnit,
-      notified_emails: adminNotifyEmails(),
+      notified_emails: notify.sent,
+      blocked_vendor_emails: notify.blocked,
     },
   })
 }
 
+/**
+ * While a conversation is in unit/onboarding healing, keep the identity unknown
+ * and let `identity_onboarding` / unknownContactIntake drive consent-gated attach.
+ * (Legacy auto-attach on unit reply is intentionally disabled.)
+ */
 async function processUnitNumberSelfHealing(
   supabase: SupabaseClient,
   input: ResolveIdentityInput,
 ): Promise<ResolveIdentityResult> {
-  const body = input.messageBody?.trim() ?? ""
-  const unitInput = extractUnitFromMessage(body)
-  let identity =
+  const identity =
     (await lookupSmsIdentity(supabase, input.fromNumber, input.landlordId)) ??
     (await createUnknownIdentity(supabase, input.fromNumber, input.landlordId))
 
-  if (!unitInput) {
+  // If already linked (e.g. consent just completed mid-turn), allow intake.
+  if (
+    identity.identity_type === "resident" &&
+    identity.resident_id?.trim()
+  ) {
     return {
       identity,
-      source: "unknown",
+      source: "self_healed_unit",
       suggestedUnit: null,
-      selfHealingPhase: "awaiting_unit_number",
-      replyHint:
-        "Got it — what's your unit number? (Something like 5A works.) If you can, include a quick note about what's going on.",
+      selfHealingPhase: "resolved",
       notifyLandlord: false,
-      continueIntake: false,
+      continueIntake: true,
       createdOrUpdated: false,
-      conversationStatus: AWAITING_UNIT_STATUS,
+      conversationStatus: "open",
     }
   }
-
-  const matchedResidents = await findActiveResidentsByUnit(supabase, unitInput)
-  if (matchedResidents.length === 0) {
-    await notifyLandlordUnresolvedTenant(supabase, {
-      landlordId: input.landlordId,
-      fromNumber: input.fromNumber,
-      attemptedUnit: unitInput,
-      conversationId: input.conversationId,
-    })
-
-    return {
-      identity,
-      source: "unknown",
-      suggestedUnit: null,
-      selfHealingPhase: "unresolved",
-      replyHint:
-        "I wasn't able to match that unit on our end. I've flagged your property manager — someone will follow up with you shortly.",
-      notifyLandlord: true,
-      continueIntake: false,
-      createdOrUpdated: false,
-      conversationStatus: UNRESOLVED_STATUS,
-    }
-  }
-
-  const resident = await ensureResidentForUnitMatch(supabase, {
-    fromNumber: input.fromNumber,
-    unit: matchedResidents[0].unit ?? unitInput,
-    matchedResidents,
-  })
-
-  identity = await upsertSmsIdentity(supabase, {
-    fromNumber: input.fromNumber,
-    landlordId: input.landlordId,
-    existing: identity,
-    patch: {
-      identity_type: "resident",
-      resident_id: resident.id,
-      unit_id: null,
-      verified: false,
-    },
-  })
 
   return {
     identity,
-    source: "self_healed_unit",
-    suggestedUnit: resident.unit,
-    selfHealingPhase: "resolved",
-    replyHint:
-      "Great — I found your unit. When you're ready, tell me what's going on (a photo helps too).",
+    source: "unknown",
+    suggestedUnit: null,
+    selfHealingPhase: "awaiting_unit_number",
+    // Workflow (unknownContactIntake) owns the reply copy.
+    replyHint: undefined,
     notifyLandlord: false,
-    continueIntake: true,
-    createdOrUpdated: true,
-    conversationStatus: "open",
+    continueIntake: false,
+    createdOrUpdated: false,
+    conversationStatus: AWAITING_UNIT_STATUS,
   }
 }
 
@@ -558,16 +526,13 @@ export async function resolvePhoneIdentity(
     createdOrUpdated = true
   }
 
-  const replyHint = suggestedUnit
-    ? `Hi — this is Ulo. I think you may be in unit ${suggestedUnit}. What's your unit number, and what's going on?`
-    : "Hi — this is Ulo. What's your unit number, and what's going on with the maintenance issue?"
-
   return {
     identity,
     source: suggestedUnit ? "invite_unit_suggestion" : "unknown",
     suggestedUnit,
     selfHealingPhase: "awaiting_unit_number",
-    replyHint,
+    // Conversational unknown-contact intake owns the first reply.
+    replyHint: undefined,
     notifyLandlord: false,
     continueIntake: false,
     createdOrUpdated,

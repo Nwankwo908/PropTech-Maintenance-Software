@@ -3,7 +3,7 @@
  */
 import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.49.1"
 import { logGraphEvent } from "./graph/logGraphEvent.ts"
-import { sendResendEmail } from "./delivery.ts"
+import { sendLandlordOpsEmail } from "./landlordOpsNotify.ts"
 import {
   notifyResident,
   type ResidentNotifyInput,
@@ -17,6 +17,7 @@ import {
   formatWorkOrderRef,
 } from "./vendor_outreach_copy.ts"
 import {
+  parseAvailabilityResolved,
   parseAvailabilityToScheduledAt,
   type ResolvedAvailability,
 } from "./vendor_availability_parse.ts"
@@ -32,17 +33,10 @@ import {
   type VendorScheduleStep,
   withVendorScheduleFsm,
 } from "./vendor_schedule_fsm.ts"
+import { uloAppUrl } from "./uloAppUrl.ts"
 
 export { parseAvailabilityToScheduledAt } from "./vendor_availability_parse.ts"
 export type { VendorScheduleFsmState, VendorScheduleStep }
-
-function appBaseUrl(): string {
-  const raw = Deno.env.get("APP_URL")?.trim() ?? ""
-  if (!raw) return ""
-  const t = raw.replace(/\/$/, "")
-  if (/^https?:\/\//i.test(t)) return t
-  return `https://${t}`
-}
 
 /** @deprecated Prefer VendorScheduleFsmState — kept for older call sites. */
 export type VendorScheduleState = {
@@ -222,17 +216,25 @@ export async function beginVendorAvailabilityAsk(
     return { sentSms: false, conversationId: params.conversationId ?? null }
   }
 
-  // SMS 2 — scheduling ask (must use the ticket's landlord SMS line)
-  const body = buildVendorAvailabilityAskSms()
   const { data: ticketRow } = await supabase
     .from("maintenance_requests")
-    .select("landlord_id")
+    .select("landlord_id, resident_availability_text")
     .eq("id", params.ticketId)
     .maybeSingle()
   const landlordId =
     typeof ticketRow?.landlord_id === "string"
       ? ticketRow.landlord_id.trim()
       : null
+  const residentAvail =
+    typeof ticketRow?.resident_availability_text === "string"
+      ? ticketRow.resident_availability_text.trim()
+      : ""
+
+  // SMS 2 — scheduling ask (must use the ticket's landlord SMS line)
+  const body = buildVendorAvailabilityAskSms(
+    formatWorkOrderRef(params.ticketId),
+    residentAvail || null,
+  )
 
   const send = await sendVendorJobAlert(supabase, {
     ticketId: params.ticketId,
@@ -306,19 +308,7 @@ async function resolveVendorJobDetailUrl(
       ? ticket.vendor_action_token.trim()
       : ""
   if (!token) return ""
-  const base = appBaseUrl()
-  return base
-    ? `${base}/w/${encodeURIComponent(token)}`
-    : `/w/${encodeURIComponent(token)}`
-}
-
-function adminNotifyEmails(): string[] {
-  const raw = Deno.env.get("SMS_ADMIN_NOTIFY_EMAILS")?.trim()
-  if (!raw) return []
-  return raw
-    .split(/[,;\s]+/)
-    .map((e: string) => e.trim())
-    .filter((e: string) => e.includes("@"))
+  return uloAppUrl.workOrder(token, { fallback: "" })
 }
 
 async function notifyLandlordScheduleConfirmed(
@@ -332,16 +322,6 @@ async function notifyLandlordScheduleConfirmed(
     vendorName: string
   },
 ): Promise<void> {
-  const emails = new Set(adminNotifyEmails())
-  const { data: landlord } = await supabase
-    .from("landlords")
-    .select("email")
-    .eq("id", params.landlordId)
-    .maybeSingle()
-  if (typeof landlord?.email === "string" && landlord.email.includes("@")) {
-    emails.add(landlord.email.trim())
-  }
-
   const subject = `Job ${params.workOrderRef} scheduled`
   const text = [
     `A vendor confirmed an appointment.`,
@@ -355,17 +335,14 @@ async function notifyLandlordScheduleConfirmed(
     "Review the work order in the admin dashboard.",
   ].join("\n")
 
-  for (const email of emails) {
-    const result = await sendResendEmail(
-      email,
-      subject,
-      text,
+  await sendLandlordOpsEmail(supabase, {
+    landlordId: params.landlordId,
+    subject,
+    text,
+    html:
       `<pre style="font-family:system-ui,sans-serif;white-space:pre-wrap;">${text}</pre>`,
-    )
-    if ("error" in result) {
-      console.error("[vendor-schedule] landlord email", email, result.error)
-    }
-  }
+    logLabel: `schedule-confirmed:${params.ticketId}`,
+  })
 }
 
 /**
@@ -380,6 +357,8 @@ export async function confirmVendorSchedule(
     windowText: string
     /** Pre-resolved start instant (from chrono/LLM). */
     scheduledAt?: string | null
+    /** When true, skip resident notify (caller already texted the tenant). */
+    skipResidentNotify?: boolean
   },
 ): Promise<{ ok: true; replyHint: string } | { ok: false; error: string }> {
   const windowText = params.windowText.trim().replace(/\s+/g, " ")
@@ -387,10 +366,21 @@ export async function confirmVendorSchedule(
     return { ok: false, error: "empty_window" }
   }
 
-  const scheduledAt =
-    (typeof params.scheduledAt === "string" && params.scheduledAt.trim()
-      ? params.scheduledAt.trim()
-      : null) ?? parseAvailabilityToScheduledAt(windowText)
+  // Prefer pre-resolved instants; on fallback re-parse keeping WINDOW endAt
+  // so correction steps never collapse to a single start/end timestamp.
+  const hasPreResolved =
+    typeof params.scheduledAt === "string" && !!params.scheduledAt.trim()
+  const fallbackResolved = hasPreResolved
+    ? null
+    : parseAvailabilityResolved(windowText)
+  const scheduledAt = hasPreResolved
+    ? params.scheduledAt!.trim()
+    : (fallbackResolved?.scheduledAt ??
+      parseAvailabilityToScheduledAt(windowText))
+  const lockedWindowText =
+    fallbackResolved?.entity?.display_text?.trim() ||
+    fallbackResolved?.windowLabel?.trim() ||
+    windowText
   const nowIso = new Date().toISOString()
 
   const { data: ticket, error: tErr } = await supabase
@@ -419,7 +409,7 @@ export async function confirmVendorSchedule(
   }
 
   const patch: Record<string, unknown> = {
-    scheduled_window_text: windowText,
+    scheduled_window_text: lockedWindowText,
     scheduled_at: scheduledAt,
     schedule_confirmed_at: nowIso,
   }
@@ -438,7 +428,7 @@ export async function confirmVendorSchedule(
     const { error: retryErr } = await supabase
       .from("maintenance_requests")
       .update({
-        scheduled_window_text: windowText,
+        scheduled_window_text: lockedWindowText,
         schedule_confirmed_at: nowIso,
       })
       .eq("id", params.ticketId)
@@ -471,7 +461,7 @@ export async function confirmVendorSchedule(
   // Completes the scheduling interaction: confirm + clear next action (estimate).
   const replyHint = buildVendorScheduleConfirmedSms({
     workOrderRef,
-    windowText,
+    windowText: lockedWindowText,
     jobDetailUrl,
   })
 
@@ -486,7 +476,7 @@ export async function confirmVendorSchedule(
     const transition = reduceScheduleFsm(prev, {
       type: "SAVE_OK",
       at: nowIso,
-      windowText,
+      windowText: lockedWindowText,
     })
     const withOut = appendOutboundContext(transition.state, replyHint, nowIso)
     // No expectedRevision — caller may have already bumped the FSM this turn.
@@ -519,26 +509,28 @@ export async function confirmVendorSchedule(
     }
   }
 
-  const residentInput: ResidentNotifyInput = {
-    event: "schedule_confirmed",
-    ticketId: params.ticketId,
-    recipientName: String(ticket.resident_name ?? ""),
-    recipientEmail: typeof ticket.email === "string" ? ticket.email.trim() : "",
-    recipientPhone:
-      typeof ticket.resident_phone === "string" ? ticket.resident_phone : null,
-    notificationChannel:
-      typeof ticket.resident_notification_channel === "string"
-        ? ticket.resident_notification_channel
-        : null,
-    unit: unit || undefined,
-    priority: typeof ticket.priority === "string" ? ticket.priority : undefined,
-    vendorName,
-    scheduleWindow: windowText,
-  }
-  try {
-    await notifyResident(supabase, residentInput)
-  } catch (e) {
-    console.error("[vendor-schedule] resident notify", e)
+  if (!params.skipResidentNotify) {
+    const residentInput: ResidentNotifyInput = {
+      event: "schedule_confirmed",
+      ticketId: params.ticketId,
+      recipientName: String(ticket.resident_name ?? ""),
+      recipientEmail: typeof ticket.email === "string" ? ticket.email.trim() : "",
+      recipientPhone:
+        typeof ticket.resident_phone === "string" ? ticket.resident_phone : null,
+      notificationChannel:
+        typeof ticket.resident_notification_channel === "string"
+          ? ticket.resident_notification_channel
+          : null,
+      unit: unit || undefined,
+      priority: typeof ticket.priority === "string" ? ticket.priority : undefined,
+      vendorName,
+      scheduleWindow: lockedWindowText,
+    }
+    try {
+      await notifyResident(supabase, residentInput)
+    } catch (e) {
+      console.error("[vendor-schedule] resident notify", e)
+    }
   }
 
   const landlordId =
@@ -550,7 +542,7 @@ export async function confirmVendorSchedule(
       ticketId: params.ticketId,
       workOrderRef,
       unit,
-      windowText,
+      windowText: lockedWindowText,
       vendorName,
     })
   } catch (e) {
@@ -568,9 +560,11 @@ export async function confirmVendorSchedule(
       maintenance_request_id: params.ticketId,
       conversation_id: params.conversationId ?? null,
       metadata: {
-        scheduled_window_text: windowText,
+        scheduled_window_text: lockedWindowText,
         scheduled_at: scheduledAt,
         work_order_ref: workOrderRef,
+        arrival_type: fallbackResolved?.entity?.type ?? null,
+        arrival_end_at: fallbackResolved?.endAt ?? null,
       },
     })
   } catch (e) {

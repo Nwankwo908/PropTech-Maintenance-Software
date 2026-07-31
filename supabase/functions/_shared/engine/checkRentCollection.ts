@@ -2,37 +2,25 @@ import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.49.1
 import { logGraphEvent } from "../graph/logGraphEvent.ts"
 import {
   currentBillingPeriod,
-  executeRentCollectionRouteAndAct,
   isRentDueDateReached,
   rentDueDateIso,
-  type RentCollectionResident,
-  type RentCollectionState,
 } from "./templates/rentCollection.ts"
+import type { RentCollectionClassification } from "./rentCollectionClassify.ts"
 import {
   fetchWorkflowTemplateConfig,
-  rentCollectionEscalationDeadline,
   rentCollectionTimingFromConfig,
 } from "./templateConfig.ts"
-import {
-  createWorkflowRun,
-  findActiveWorkflowRun,
-  logWorkflowEvent,
-  runBillingPeriod,
-  updateWorkflowRun,
-} from "./workflowRuns.ts"
-import {
-  buildRentClassificationMetadata,
-  classifyRentCollection,
-  type RentCollectionClassification,
-} from "./rentCollectionClassify.ts"
-import {
-  logRentCollectionGraphEvent,
-  logRentCollectionLedgerWithGraph,
-  rentCollectionGraphScopeFromResident,
-  RENT_GRAPH_EVENTS,
-} from "./rentCollectionGraph.ts"
+import { runRentCollectionCronViaEngine } from "./rentCollectionEngine.ts"
 
-export type RentDueResidentRow = RentCollectionResident
+export type RentDueResidentRow = {
+  id: string
+  full_name: string | null
+  email: string | null
+  phone: string | null
+  unit: string | null
+  building: string | null
+  balance_due: number
+}
 
 export type RentCollectionStartResult = {
   resident_id: string
@@ -41,7 +29,7 @@ export type RentCollectionStartResult = {
   workflow_run_id: string
   workflow_type: "rent_collection"
   rent_classification: RentCollectionClassification
-  stage: "routed"
+  stage: "routed" | "awaiting_payment"
   sms_sent: boolean
   email_sent: boolean
   route_channels: string[]
@@ -100,6 +88,7 @@ export async function hasActiveRentCollectionForPeriod(
     billingPeriod: string
   },
 ): Promise<boolean> {
+  const { findActiveWorkflowRun, runBillingPeriod } = await import("./workflowRuns.ts")
   const existing = await findActiveWorkflowRun(supabase, {
     landlordId: params.landlordId,
     residentId: params.residentId,
@@ -111,182 +100,8 @@ export async function hasActiveRentCollectionForPeriod(
 }
 
 /**
- * Start one rent_collection run: create run → rent.due_detected → SMS/email → stage routed.
- */
-export async function startRentCollectionWorkflow(
-  supabase: SupabaseClient,
-  params: {
-    landlordId: string
-    resident: RentDueResidentRow
-    billingPeriod: string
-    rentDueDate: string
-    latePaymentGraceDays: number
-  },
-): Promise<RentCollectionStartResult> {
-  const amountDue = params.resident.balance_due
-  const dueAt = rentCollectionEscalationDeadline(
-    params.rentDueDate,
-    params.latePaymentGraceDays,
-  )
-
-  const classification = classifyRentCollection({
-    balanceDue: amountDue,
-    rentDueDate: params.rentDueDate,
-  })
-  const classificationMeta = buildRentClassificationMetadata(
-    classification,
-    "balance_and_due_date",
-  )
-
-  const reminderState: RentCollectionState = {
-    step: "initiated",
-    classified_intent: "payment_reminder",
-    amount_due: amountDue,
-    billing_period: params.billingPeriod,
-    rent_due_date: params.rentDueDate,
-    unit_label: params.resident.unit,
-    ...classificationMeta,
-  }
-
-  const run = await createWorkflowRun(supabase, {
-    templateId: "rent_collection",
-    landlordId: params.landlordId,
-    triggerType: "cron",
-    currentStep: "initiated",
-    entityType: "user",
-    entityId: params.resident.id,
-    residentId: params.resident.id,
-    metadata: {
-      amount_due: amountDue,
-      billing_period: params.billingPeriod,
-      rent_due_date: params.rentDueDate,
-      due_at: dueAt,
-      unit_label: params.resident.unit,
-      building: params.resident.building,
-      classified_intent: "payment_reminder",
-      ...classificationMeta,
-      step_state: reminderState,
-      cron_source: "check-rent-collection",
-    },
-    logTriggerEvent: true,
-  })
-
-  if (!run) {
-    throw new Error("Failed to create workflow_run for rent_collection")
-  }
-
-  const graphScope = rentCollectionGraphScopeFromResident({
-    landlordId: params.landlordId,
-    workflowRunId: run.id,
-    resident: params.resident,
-  })
-
-  await logWorkflowEvent(supabase, {
-    workflowRunId: run.id,
-    eventType: RENT_GRAPH_EVENTS.dueDetected,
-    step: "initiated",
-    stage: "classify",
-    message: "Rent due today or overdue",
-    landlordId: params.landlordId,
-    workflowType: "rent_collection",
-    metadata: {
-      rent_classification: classification,
-      amount_due: amountDue,
-      billing_period: params.billingPeriod,
-      rent_due_date: params.rentDueDate,
-      unit: params.resident.unit,
-      building: params.resident.building,
-      source: "check-rent-collection",
-    },
-  })
-
-  await logRentCollectionGraphEvent(supabase, graphScope, {
-    eventType: RENT_GRAPH_EVENTS.dueDetected,
-    metadata: {
-      rent_classification: classification,
-      amount_due: amountDue,
-      billing_period: params.billingPeriod,
-      rent_due_date: params.rentDueDate,
-      unit: params.resident.unit,
-      building: params.resident.building,
-      source: "check-rent-collection",
-    },
-  })
-
-  await logRentCollectionLedgerWithGraph(supabase, graphScope, {
-    ledgerEventType: "rent_due",
-    direction: "debit",
-    amount: amountDue,
-    billingPeriod: params.billingPeriod,
-    description: `Rent due for ${params.billingPeriod}`,
-    metadata: {
-      rent_due_date: params.rentDueDate,
-      source: "check-rent-collection",
-    },
-  })
-
-  const routed = await executeRentCollectionRouteAndAct(supabase, {
-    landlordId: params.landlordId,
-    resident: params.resident,
-    runId: run.id,
-    state: reminderState,
-  })
-
-  await updateWorkflowRun(supabase, run.id, {
-    currentStep: "routed",
-    currentStage: "routed",
-    pipelineStage: "act",
-    eventMessage: routed.paymentLink
-      ? "Payment reminder sent with payment link"
-      : routed.paymentRequested
-      ? "Payment requested (no payment provider)"
-      : routed.smsSent || routed.emailSent
-      ? "Payment reminder sent"
-      : "Routed (no SMS/email channel available)",
-    eventStep: "routed",
-    metadata: {
-      ...classificationMeta,
-      route_channels: routed.channels,
-      payment_link: routed.paymentLink,
-      payment_requested: routed.paymentRequested,
-      payment_provider: routed.provider,
-      step_state: {
-        ...reminderState,
-        step: "routed",
-        outreach_sent_at: new Date().toISOString(),
-        sms_sent: routed.smsSent,
-        email_sent: routed.emailSent,
-        route_channels: routed.channels,
-        payment_link: routed.paymentLink,
-        payment_requested: routed.paymentRequested,
-        payment_provider: routed.provider,
-      },
-    },
-  })
-
-  return {
-    resident_id: params.resident.id,
-    billing_period: params.billingPeriod,
-    amount_due: amountDue,
-    workflow_run_id: run.id,
-    workflow_type: "rent_collection",
-    rent_classification: classification,
-    stage: "routed",
-    sms_sent: routed.smsSent,
-    email_sent: routed.emailSent,
-    route_channels: routed.channels,
-    payment_link: routed.paymentLink,
-    payment_requested: routed.paymentRequested,
-  }
-}
-
-/**
- * check-rent-collection core:
- * 1. Find active residents with rent due today or overdue
- * 2. Start workflow_run (workflow_type = rent_collection)
- * 3. Log rent.due_detected
- * 4. Send SMS/email reminder
- * 5. Update stage to routed
+ * Daily rent collection cron — runs through the official workflow engine
+ * (trigger → classify → route → act → escalate → log).
  */
 export async function checkRentCollection(
   supabase: SupabaseClient,
@@ -322,86 +137,47 @@ export async function checkRentCollection(
     },
   })
 
-  if (!rentDueWindow) {
-    return {
-      landlord_id: params.landlordId,
-      billing_period: billingPeriod,
-      rent_due_date: rentDueDate,
-      rent_due_day: timing.rentDueDay,
-      late_payment_grace_days: timing.latePaymentGraceDays,
-      rent_due_window: false,
-      candidates: 0,
-      started: 0,
-      skipped: 0,
-      reminders_sent: 0,
-      late_payment_escalated: 0,
-      started_runs: [],
-      errors: [],
-    }
-  }
-
-  const residents = await findRentDueResidents(supabase)
-
-  let started = 0
-  let skipped = 0
-  let remindersSent = 0
-  const startedRuns: RentCollectionStartResult[] = []
-  const errors: CheckRentCollectionResult["errors"] = []
-
-  for (const resident of residents) {
-    const duplicate = await hasActiveRentCollectionForPeriod(supabase, {
-      landlordId: params.landlordId,
-      residentId: resident.id,
-      billingPeriod,
-    })
-
-    if (duplicate) {
-      skipped++
-      continue
-    }
-
-    try {
-      const result = await startRentCollectionWorkflow(supabase, {
-        landlordId: params.landlordId,
-        resident,
-        billingPeriod,
-        rentDueDate,
-        latePaymentGraceDays: timing.latePaymentGraceDays,
-      })
-      startedRuns.push(result)
-      started++
-      if (result.sms_sent || result.email_sent) remindersSent++
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err)
-      console.error("[check-rent-collection] start failed", {
-        residentId: resident.id,
-        billingPeriod,
-        error: message,
-      })
-      errors.push({
-        resident_id: resident.id,
-        billing_period: billingPeriod,
-        error: message,
-      })
-    }
-  }
-
-  const { escalateLatePaymentRuns } = await import("./rentCollectionEscalation.ts")
-  const latePaymentEscalated = await escalateLatePaymentRuns(supabase, params.landlordId)
-
-  return {
+  const emptyResult: CheckRentCollectionResult = {
     landlord_id: params.landlordId,
     billing_period: billingPeriod,
     rent_due_date: rentDueDate,
     rent_due_day: timing.rentDueDay,
     late_payment_grace_days: timing.latePaymentGraceDays,
+    rent_due_window: rentDueWindow,
+    candidates: 0,
+    started: 0,
+    skipped: 0,
+    reminders_sent: 0,
+    late_payment_escalated: 0,
+    started_runs: [],
+    errors: [],
+  }
+
+  if (!rentDueWindow) {
+    return emptyResult
+  }
+
+  const engineResult = await runRentCollectionCronViaEngine(supabase, {
+    landlordId: params.landlordId,
+    rentDueDay: timing.rentDueDay,
+    latePaymentGraceDays: timing.latePaymentGraceDays,
+  })
+
+  const meta = engineResult.metadata ?? {}
+
+  return {
+    ...emptyResult,
     rent_due_window: true,
-    candidates: residents.length,
-    started,
-    skipped,
-    reminders_sent: remindersSent,
-    late_payment_escalated: latePaymentEscalated,
-    started_runs: startedRuns,
-    errors,
+    candidates: Number(meta.candidates ?? 0),
+    started: Number(meta.started ?? 0),
+    skipped: Number(meta.skipped ?? 0),
+    reminders_sent: Number(meta.reminders_sent ?? 0),
+    late_payment_escalated: Number(meta.late_payment_escalated ?? 0),
+    started_runs: Array.isArray(meta.started_runs)
+      ? (meta.started_runs as RentCollectionStartResult[])
+      : [],
+    errors: Array.isArray(meta.errors)
+      ? (meta.errors as CheckRentCollectionResult["errors"])
+      : [],
   }
 }

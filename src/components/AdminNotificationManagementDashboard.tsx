@@ -50,6 +50,7 @@ import {
 import { SendInspectionNoticeModal } from '@/components/SendInspectionNoticeModal'
 import { getActiveLandlordId, isDemoAccountActive } from '@/lib/activeLandlord'
 import { supabase } from '@/lib/supabase'
+import { getErrorMessage } from '@/lib/errorMessage'
 
 const NOTIF_TAB_IDS = ['history', 'scheduled', 'external'] as const
 type TabId = (typeof NOTIF_TAB_IDS)[number]
@@ -1210,7 +1211,7 @@ export function AdminNotificationManagementDashboard() {
       } catch (error) {
         console.error(
           '[notifications] get-broadcast-stats failed',
-          error instanceof Error ? error.message : String(error),
+          getErrorMessage(error, 'Something went wrong. Please try again.'),
         )
       }
 
@@ -1945,7 +1946,7 @@ export function AdminNotificationManagementDashboard() {
                                 window.alert('Retry sent using existing channel.')
                               })
                               .catch((err) => {
-                                window.alert(err instanceof Error ? err.message : 'Retry failed')
+                                window.alert(getErrorMessage(err, 'Retry failed'))
                               })
                               .finally(() => {
                                 setRetryingRowId((prev) => (prev === row.id ? null : prev))

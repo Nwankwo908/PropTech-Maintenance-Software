@@ -293,7 +293,7 @@ export function FailedMessageDetailsModal({
                     className={[
                       'group block cursor-pointer rounded-[10px] border-2 px-[18px] pb-[10px] pt-[18px] shadow-[0px_1px_2px_0px_rgba(0,0,0,0.05)] outline-none transition-colors focus-within:ring-2 focus-within:ring-primary focus-within:ring-offset-2',
                       channelEmail
-                        ? 'border-extended-1 bg-extended-2'
+                        ? 'border-[#186179] bg-[#e8f2f5]'
                         : 'border-secondary bg-white',
                     ].join(' ')}
                   >
@@ -309,7 +309,7 @@ export function FailedMessageDetailsModal({
                         className={[
                           'flex size-4 shrink-0 items-center justify-center rounded border shadow-[0px_1px_2px_0px_rgba(0,0,0,0.05)] transition-[background-color,border-color,box-shadow] duration-150',
                           channelEmail
-                            ? 'border-extended-3 bg-extended-3 group-hover:brightness-95'
+                            ? 'border-[#611879] bg-[#611879] group-hover:brightness-95'
                             : 'border-black/10 bg-secondary group-hover:border-black/15 group-hover:bg-[#e8eaee] group-hover:shadow-sm',
                         ].join(' ')}
                         aria-hidden
@@ -339,7 +339,7 @@ export function FailedMessageDetailsModal({
                     className={[
                       'group block cursor-pointer rounded-[10px] border-2 px-[18px] pb-[10px] pt-[18px] shadow-[0px_1px_2px_0px_rgba(0,0,0,0.05)] outline-none transition-colors focus-within:ring-2 focus-within:ring-primary focus-within:ring-offset-2',
                       channelSms
-                        ? 'border-extended-1 bg-extended-2'
+                        ? 'border-[#186179] bg-[#e8f2f5]'
                         : 'border-secondary bg-white',
                     ].join(' ')}
                   >
@@ -355,7 +355,7 @@ export function FailedMessageDetailsModal({
                         className={[
                           'flex size-4 shrink-0 items-center justify-center rounded border shadow-[0px_1px_2px_0px_rgba(0,0,0,0.05)] transition-[background-color,border-color,box-shadow] duration-150',
                           channelSms
-                            ? 'border-extended-3 bg-extended-3 group-hover:brightness-95'
+                            ? 'border-[#611879] bg-[#611879] group-hover:brightness-95'
                             : 'border-black/10 bg-secondary group-hover:border-black/15 group-hover:bg-[#e8eaee] group-hover:shadow-sm',
                         ].join(' ')}
                         aria-hidden

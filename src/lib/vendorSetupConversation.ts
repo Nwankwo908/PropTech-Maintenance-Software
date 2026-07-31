@@ -20,6 +20,7 @@ import {
   vendorSetupSmsMonitoringSummary,
   vendorSetupSmsReadOnlyNote,
 } from '@/lib/vendorOutreachCopy'
+import { uloAppUrl } from '@/lib/uloAppUrl'
 
 export const VENDOR_SETUP_THREAD_ID_PREFIX = 'vendor-setup-'
 const LEGACY_PRICING_THREAD_ID_PREFIX = 'vendor-pricing-'
@@ -169,8 +170,7 @@ export function buildVendorSetupFormToken(context: VendorSetupThreadContext): st
 
 export function buildVendorSetupFormLink(context: VendorSetupThreadContext): string {
   const token = buildVendorSetupFormToken(context)
-  const origin = typeof window !== 'undefined' ? window.location.origin : 'https://onboard.ulo.app'
-  return `${origin}/v/${token}`
+  return uloAppUrl.vendorVerification(token, true)
 }
 
 export function buildVendorSetupSmsMessage(context: VendorSetupThreadContext): string {

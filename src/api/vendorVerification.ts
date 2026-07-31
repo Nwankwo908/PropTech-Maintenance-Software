@@ -6,8 +6,11 @@
  * - `vendorVerificationAction` → public token-authorized `vendor-verification`
  *   Edge Function, invoked through the shared Supabase client.
  */
-import { supabase } from '@/lib/supabase'
 import { adminEdgeInvokeHeaders, fetchAdminEdgeFunction } from '@/api/adminReassignVendor'
+import { getAdminEdgeSecret } from '@/lib/adminEdgeAuth'
+import { getActiveLandlordId } from '@/lib/activeLandlord'
+import { getErrorMessage } from '@/lib/errorMessage'
+import { supabase } from '@/lib/supabase'
 import type { VerificationChecklist } from '@/lib/vendorVerificationChecklist'
 
 export type VendorInviteChannel = 'sms' | 'email' | 'both'
@@ -40,22 +43,19 @@ export type SendVendorInviteResult = {
   delivery: VendorInviteDelivery
 }
 
-function adminSecret(): string {
-  const secret = import.meta.env.VITE_ADMIN_REASSIGN_SECRET?.trim()
-  if (!secret) throw new Error('Missing VITE_ADMIN_REASSIGN_SECRET configuration')
-  return secret
-}
 
 function resolveEdgeUrl(fn: string): string {
   const base = import.meta.env.VITE_SUPABASE_URL?.trim()?.replace(/\/$/, '')
-  if (!base) throw new Error('Missing VITE_SUPABASE_URL configuration')
+  if (!base) {
+    throw new Error("This feature isn't available right now. Please try again later.")
+  }
   return `${base}/functions/v1/${fn}`
 }
 
 export async function sendVendorInvite(
   input: SendVendorInviteInput,
 ): Promise<SendVendorInviteResult> {
-  const secret = adminSecret()
+  const secret = getAdminEdgeSecret()
   const url = resolveEdgeUrl('send-vendor-invite')
   const res = await fetchAdminEdgeFunction(url, {
     method: 'POST',
@@ -76,6 +76,90 @@ export async function sendVendorInvite(
   return parsed as SendVendorInviteResult
 }
 
+export type InviteVendorAfterAddResult = {
+  ok: boolean
+  /** False when invite was skipped (no contact) or not attempted. */
+  attempted: boolean
+  delivery?: VendorInviteDelivery
+  error?: string
+}
+
+/**
+ * After a vendor is added post-onboarding: send the same verification invite
+ * used at setup complete. Best-effort — never throws.
+ */
+export async function inviteVendorAfterAdd(params: {
+  landlordId?: string
+  vendorId: string
+  businessName: string
+  contactName?: string | null
+  email?: string | null
+  phone?: string | null
+  tradeCategories?: string[]
+  propertyName?: string | null
+}): Promise<InviteVendorAfterAddResult> {
+  const vendorId = params.vendorId.trim()
+  if (!vendorId) {
+    return { ok: false, attempted: false, error: 'Missing vendor id.' }
+  }
+
+  const phone = params.phone?.trim() ?? ''
+  const email = params.email?.trim() ?? ''
+  if (!phone && !email) {
+    return { ok: true, attempted: false }
+  }
+
+  const channel: VendorInviteChannel =
+    phone && email ? 'both' : phone ? 'sms' : 'email'
+
+  const landlordId = params.landlordId?.trim() || getActiveLandlordId()
+
+  if (!landlordId) {
+    return { ok: false, attempted: false, error: 'No active landlord.' }
+  }
+
+  try {
+    const result = await sendVendorInvite({
+      landlordId,
+      vendorId,
+      businessName: params.businessName.trim() || 'Vendor',
+      contactName: params.contactName?.trim() || undefined,
+      email: email || undefined,
+      phone: phone || undefined,
+      propertyName: params.propertyName?.trim() || undefined,
+      channel,
+      tradeCategories: params.tradeCategories,
+    })
+    const anySent =
+      result.delivery.sms === 'sent' || result.delivery.email === 'sent'
+    if (!anySent) {
+      return {
+        ok: false,
+        attempted: true,
+        delivery: result.delivery,
+        error: 'Verification invite could not be delivered.',
+      }
+    }
+    return { ok: true, attempted: true, delivery: result.delivery }
+  } catch (err) {
+    const message = getErrorMessage(err, 'Something went wrong. Please try again.')
+    console.warn('[vendorVerification] inviteVendorAfterAdd', message)
+    return { ok: false, attempted: true, error: message }
+  }
+}
+
+/** Plain-language warning when roster save succeeded but invite failed. */
+export function vendorInviteWarningMessage(
+  result: InviteVendorAfterAddResult,
+): string | null {
+  if (!result.attempted) return null
+  if (result.ok) return null
+  if (result.error) {
+    return `Vendor saved, but the verification invite could not be sent (${result.error}).`
+  }
+  return 'Vendor saved, but the verification invite could not be delivered.'
+}
+
 // --- Vendor portal (token-authorized) ---------------------------------------
 
 export type VendorVerificationDocument = {
@@ -85,6 +169,18 @@ export type VendorVerificationDocument = {
   contentType: string | null
   uploadedAt: string
   parsed: Record<string, unknown>
+}
+
+export type VendorStripePayoutMethod = {
+  id: string
+  kind: 'bank_account' | 'card'
+  label: string
+  last4: string | null
+  bankName: string | null
+  brand: string | null
+  funding: string | null
+  defaultForCurrency: boolean
+  currency: string | null
 }
 
 export type VendorVerificationSession = {
@@ -112,6 +208,13 @@ export type VendorVerificationSession = {
     ref: string | null
   }
   w9Received: boolean
+  taxEntityType: string | null
+  tinType: 'ssn' | 'ein' | null
+  tinLast4: string | null
+  w9Variant: 'individual' | 'business' | null
+  tax1099Treatment: 'nec' | 'none' | null
+  stripeConnectReady: boolean
+  payoutMethods: VendorStripePayoutMethod[]
   tradeCategories: string[]
   serviceArea: {
     zips?: string[]
@@ -137,6 +240,15 @@ export type VendorVerificationPatch = {
   serviceArea?: VendorVerificationSession['serviceArea']
   availability?: 'active' | 'paused'
   progress?: Record<string, unknown>
+  /** Legal entity — drives SSN vs EIN, W-9 variant, and 1099 treatment. */
+  taxEntityType?:
+    | 'sole_proprietor'
+    | 'llc'
+    | 'corporation'
+    | 'partnership'
+    | 'other'
+  /** Full TIN digits (or formatted); only last4 + fingerprint are stored. */
+  tin?: string
 }
 
 type VendorVerificationBody = {
@@ -148,6 +260,8 @@ type VendorVerificationBody = {
     | 'upload'
     | 'startBackgroundCheck'
     | 'backgroundStatus'
+    | 'create_connect_account_link'
+    | 'refresh_connect_status'
     | 'submit'
   patch?: VendorVerificationPatch
   licenseState?: string
@@ -156,13 +270,49 @@ type VendorVerificationBody = {
   fileName?: string
   contentType?: string
   dataBase64?: string
+  returnOrigin?: string
+}
+
+function parsePayoutMethod(raw: unknown): VendorStripePayoutMethod | null {
+  if (!raw || typeof raw !== 'object') return null
+  const row = raw as Record<string, unknown>
+  const id = typeof row.id === 'string' ? row.id.trim() : ''
+  const kind = row.kind === 'bank_account' || row.kind === 'card' ? row.kind : null
+  const label = typeof row.label === 'string' ? row.label.trim() : ''
+  if (!id || !kind || !label) return null
+  return {
+    id,
+    kind,
+    label,
+    last4: typeof row.last4 === 'string' ? row.last4 : null,
+    bankName: typeof row.bankName === 'string' ? row.bankName : null,
+    brand: typeof row.brand === 'string' ? row.brand : null,
+    funding: typeof row.funding === 'string' ? row.funding : null,
+    defaultForCurrency: row.defaultForCurrency === true,
+    currency: typeof row.currency === 'string' ? row.currency : null,
+  }
+}
+
+function normalizeSession(session: VendorVerificationSession): VendorVerificationSession {
+  const methodsRaw = Array.isArray(session.payoutMethods) ? session.payoutMethods : []
+  const payoutMethods = methodsRaw
+    .map(parsePayoutMethod)
+    .filter((m): m is VendorStripePayoutMethod => m != null)
+  return {
+    ...session,
+    payoutMethods,
+  }
 }
 
 async function invokeVendorVerification(
   body: VendorVerificationBody,
-): Promise<{ session: VendorVerificationSession; overall?: 'verified' | 'needs_review' }> {
+): Promise<{
+  session: VendorVerificationSession
+  overall?: 'verified' | 'needs_review'
+  url?: string
+}> {
   if (!supabase) {
-    throw new Error('Supabase is not configured (VITE_SUPABASE_URL / VITE_SUPABASE_ANON_KEY)')
+    throw new Error("We can't reach the server right now. Please try again in a moment.")
   }
   const { data, error } = await supabase.functions.invoke('vendor-verification', { body })
   if (error) {
@@ -178,18 +328,30 @@ async function invokeVendorVerification(
         /* ignore */
       }
     }
-    throw new Error(message)
+    throw new Error(
+      getErrorMessage(message, "We couldn't complete that request. Please try again."),
+    )
   }
   const payload = data as {
     ok?: boolean
     session?: VendorVerificationSession
     overall?: 'verified' | 'needs_review'
+    url?: string
     error?: string
   }
   if (!payload?.session) {
-    throw new Error(payload?.error ?? 'Vendor verification: empty response')
+    throw new Error(
+      getErrorMessage(
+        payload?.error,
+        "We couldn't load your verification form. Please refresh and try again.",
+      ),
+    )
   }
-  return { session: payload.session, overall: payload.overall }
+  return {
+    session: normalizeSession(payload.session),
+    overall: payload.overall,
+    url: typeof payload.url === 'string' ? payload.url : undefined,
+  }
 }
 
 export function resolveVendorVerification(token: string) {
@@ -229,6 +391,32 @@ export function refreshVendorBackgroundStatus(token: string) {
 
 export function submitVendorVerification(token: string, patch?: VendorVerificationPatch) {
   return invokeVendorVerification({ token, action: 'submit', patch })
+}
+
+/** Start Stripe Express Connect onboarding; returns hosted Account Link URL. */
+export function createVendorConnectAccountLink(token: string) {
+  const returnOrigin =
+    typeof window !== 'undefined' ? window.location.origin.replace(/\/$/, '') : undefined
+  return invokeVendorVerification({
+    token,
+    action: 'create_connect_account_link',
+    ...(returnOrigin ? { returnOrigin } : {}),
+  })
+}
+
+/** Sync Connect charges/payouts flags after Stripe return or refresh. */
+export function refreshVendorConnectStatus(token: string) {
+  return invokeVendorVerification({ token, action: 'refresh_connect_status' })
+}
+
+/** Primary masked payout destination for confirmation copy. */
+export function primaryVendorPayoutMethodLabel(
+  session: VendorVerificationSession | null | undefined,
+): string | null {
+  if (!session?.payoutMethods?.length) return null
+  const preferred =
+    session.payoutMethods.find((m) => m.defaultForCurrency) ?? session.payoutMethods[0]
+  return preferred?.label?.trim() || null
 }
 
 /** Read a File into a base64 string (data URL prefix stripped server-side). */

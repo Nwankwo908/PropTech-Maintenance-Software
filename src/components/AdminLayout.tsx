@@ -1,5 +1,5 @@
-import { useRef, useState } from 'react'
-import { Outlet, useNavigate } from 'react-router-dom'
+import { useEffect, useRef, useState } from 'react'
+import { Outlet, useLocation, useNavigate } from 'react-router-dom'
 import { AdminUloNotificationsBell } from '@/components/AdminUloNotificationsBell'
 import { AdminUniversalSearch } from '@/components/AdminUniversalSearch'
 import { AskUloProvider, useAskUlo } from '@/components/AskUloContext'
@@ -14,8 +14,13 @@ import {
   LANDLORD_ACCOUNT_OPTIONS,
   setActiveLandlordOverride,
 } from '@/lib/activeLandlord'
-import { isOnboardingLandlordAccount, restartNewLandlordOnboarding } from '@/lib/landlordOnboarding'
+import {
+  isOnboardingLandlordAccount,
+  markOnboardingResetInProgress,
+  restartNewLandlordOnboarding,
+} from '@/lib/onboarding'
 import { supabase } from '@/lib/supabase'
+import { getErrorMessage } from '@/lib/errorMessage'
 
 // Sparkle strokes from assets/AI Icon (2).svg, without the purple circle
 // background; stroke follows the button text color.
@@ -71,21 +76,28 @@ function AdminTopBar() {
   async function handleResetOnboarding() {
     if (resettingOnboarding) return
     setResettingOnboarding(true)
+    // Set before any await so a beforeunload flush during navigation cannot
+    // rewrite the wiped wizard into localStorage.
+    markOnboardingResetInProgress()
+    // Cancel any pending debounced wizard saves from the open onboarding page.
+    try {
+      window.dispatchEvent(new Event('ulo:onboarding-reset'))
+    } catch {
+      // ignore
+    }
     try {
       const result = await restartNewLandlordOnboarding()
       if (!result.ok) {
         console.error('[AdminLayout] reset onboarding failed', result.error)
-        window.alert(result.error ?? 'Could not reset onboarding.')
-        setResettingOnboarding(false)
-        return
+        window.alert(
+          `${result.error ?? 'Could not fully clear portfolio data.'}\n\nReturning to the setup choice screen.`,
+        )
       }
     } catch (err) {
       console.error('[AdminLayout] reset onboarding failed', err)
-      window.alert(err instanceof Error ? err.message : 'Could not reset onboarding.')
-      setResettingOnboarding(false)
-      return
+      window.alert(getErrorMessage(err, 'Could not reset onboarding.'))
     }
-    // Hard reload so wizard + guard remount on cleared not_started state.
+    // Always hard-reload so the welcome hub remounts on not_started / entry.
     window.location.assign('/admin/onboarding')
   }
 
@@ -99,7 +111,7 @@ function AdminTopBar() {
           aria-pressed={open}
           onClick={() => openAskUlo()}
           className={[
-            'flex h-9 shrink-0 cursor-pointer items-center gap-2 rounded-[10px] border border-[#B4DFD6] px-4 text-center text-[14px] font-medium leading-5 tracking-[-0.1504px] text-[#0A4D38] outline-none transition-colors duration-150 focus-visible:ring-2 focus-visible:ring-[#0A4D38] focus-visible:ring-offset-2',
+            'sa-press flex h-9 shrink-0 cursor-pointer items-center gap-2 rounded-[10px] border border-[#B4DFD6] px-4 text-center text-[14px] font-medium leading-5 tracking-[-0.1504px] text-[#0A4D38] outline-none focus-visible:ring-2 focus-visible:ring-[#0A4D38] focus-visible:ring-offset-2',
             open
               ? 'bg-[#0A4D38]/10'
               : 'bg-transparent hover:bg-[#0A4D38]/5 active:bg-[#0A4D38]/10',
@@ -159,7 +171,18 @@ function AdminTopBar() {
 }
 
 function AdminMainContent() {
-  const { open, docked, closeAskUlo } = useAskUlo()
+  const { open, docked, closeAskUlo, setDocked } = useAskUlo()
+  const location = useLocation()
+  const prevPathRef = useRef(location.pathname)
+
+  // Full-screen Ask Ulo used to replace <Outlet />, so navigating to Properties
+  // while Ask Ulo was open showed a blank/stuck shell. Always keep the route
+  // mounted, and auto-dock on path changes so the destination is visible.
+  useEffect(() => {
+    if (prevPathRef.current === location.pathname) return
+    prevPathRef.current = location.pathname
+    if (open && !docked) setDocked(true)
+  }, [location.pathname, open, docked, setDocked])
 
   if (!open) {
     return (
@@ -169,25 +192,29 @@ function AdminMainContent() {
     )
   }
 
-  if (docked) {
-    return (
-      <div className="flex min-h-0 flex-1 overflow-hidden bg-white">
-        <div className="min-h-0 min-w-0 flex-1 overflow-y-auto overscroll-y-contain">
-          <Outlet />
-        </div>
+  return (
+    <div className="relative flex min-h-0 flex-1 overflow-hidden bg-white">
+      <div
+        className={[
+          'min-h-0 min-w-0 flex-1 overflow-y-auto overscroll-y-contain',
+          docked ? '' : 'pointer-events-none',
+        ].join(' ')}
+        aria-hidden={!docked}
+      >
+        <Outlet />
+      </div>
+      {docked ? (
         <aside
           className="ask-ulo-rail-enter relative z-20 flex h-full w-[min(100%,440px)] shrink-0 flex-col border-l border-[#e5e7eb] bg-white shadow-[-8px_0_24px_rgba(16,24,40,0.06)]"
           aria-label="Ask Ulo"
         >
           <AskUloPanel onClose={closeAskUlo} variant="rail" />
         </aside>
-      </div>
-    )
-  }
-
-  return (
-    <div className="flex min-h-0 flex-1 flex-col overflow-hidden bg-white">
-      <AskUloPanel onClose={closeAskUlo} variant="full" />
+      ) : (
+        <div className="sa-enter absolute inset-0 z-30 flex flex-col bg-white">
+          <AskUloPanel onClose={closeAskUlo} variant="full" />
+        </div>
+      )}
     </div>
   )
 }

@@ -28,7 +28,7 @@ export function PropertyWorkflowsList({ rows, loading = false }: PropertyWorkflo
         <button
           type="button"
           onClick={() => navigate('/admin/workflows')}
-          className="shrink-0 text-[13px] font-medium text-[#1447e6] outline-none hover:underline focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2"
+          className="sa-link shrink-0 text-[13px] font-medium text-[#1447e6] outline-none hover:underline focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2"
         >
           Open workflow pipeline
         </button>
@@ -53,7 +53,7 @@ export function PropertyWorkflowsList({ rows, loading = false }: PropertyWorkflo
                 <button
                   type="button"
                   onClick={() => navigate(workflowOperationsPath(row.id))}
-                  className="grid w-full grid-cols-[minmax(0,1fr)_120px_140px] items-center gap-4 px-5 py-4 text-left transition-colors hover:bg-[#fafafa] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[#0030b5] sm:grid-cols-[minmax(0,2fr)_minmax(0,1fr)_minmax(0,1fr)]"
+                  className="sa-row grid w-full grid-cols-[minmax(0,1fr)_120px_140px] items-center gap-4 px-5 py-4 text-left hover:bg-[#fafafa] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[#0030b5] sm:grid-cols-[minmax(0,2fr)_minmax(0,1fr)_minmax(0,1fr)]"
                 >
                   <div className="min-w-0">
                     <p className="text-[15px] font-semibold leading-5 text-[#0a0a0a]">{row.title}</p>

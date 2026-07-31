@@ -4,6 +4,7 @@ import { verifyVendorEmailAction } from "../_shared/vendor_action_token.ts"
 import { applyVendorStatusTransition } from "../_shared/vendor_workflow.ts"
 import { logGraphEvent } from "../_shared/graph/logGraphEvent.ts"
 import { resolveLandlordId } from "../_shared/sms/landlordSmsOnboarding.ts"
+import { uloAppOrigin, uloAppUrl } from "../_shared/uloAppUrl.ts"
 
 const corsHeaders: Record<string, string> = {
   "Access-Control-Allow-Origin": "*",
@@ -198,9 +199,9 @@ serve(async (req) => {
     }),
   )
 
-  const appUrl = Deno.env.get("APP_URL")?.trim()?.replace(/\/$/, "") ?? ""
-  const redirectUrl =
-    appUrl.length > 0 ? `${appUrl}/vendor/ticket/${ticketId}` : null
+  const redirectUrl = uloAppOrigin({ fallback: "" })
+    ? uloAppUrl.absolute(`/vendor/ticket/${ticketId}`)
+    : null
 
   const msg =
     action === "accept"

@@ -7,10 +7,16 @@ import {
   buildScheduleAnchor,
   buildSoftClarificationPrompt,
   buildSoftConfirmationPrompt,
+  classifyArrivalWindow,
+  extractNamedWeekdayIndex,
   parseAvailabilityChrono,
   parseAvailabilityRegex,
+  parseAvailabilityResolved,
   parseAvailabilityToScheduledAt,
+  resolveNamedWeekdayDate,
   resolveVendorAvailability,
+  softAnchorArrivalWindow,
+  toArrivalEntity,
   zonedWallTimeToUtc,
 } from "./vendor_availability_parse.ts"
 import {
@@ -94,14 +100,66 @@ Deno.test("resolve vague text asks soft confirmation or clarification", async ()
   )
 })
 
+Deno.test("bounded range resolves for tenant ask", async () => {
+  const now = new Date("2026-07-20T17:47:00.000Z")
+  const result = await resolveVendorAvailability("Tomorrow 9-12pm", {
+    now,
+    timeZone: TZ,
+    allowLlm: false,
+  })
+  assertEquals(result.status, "resolved")
+  if (result.status === "resolved") {
+    assertEquals(classifyArrivalWindow(result.value, "Tomorrow 9-12pm"), "bounded")
+    assertEquals(result.value.endAt != null, true)
+  }
+})
+
+Deno.test("oversized range soft-anchors to a tighter window", async () => {
+  const now = new Date("2026-07-20T17:47:00.000Z")
+  const result = await resolveVendorAvailability("Tomorrow 9am-5pm", {
+    now,
+    timeZone: TZ,
+    allowLlm: false,
+  })
+  assertEquals(result.status, "needs_confirmation")
+  if (result.status === "needs_confirmation") {
+    assertEquals(result.softPrompt.includes("tighter"), true)
+    assertEquals(result.value.endAt != null, true)
+  }
+})
+
+Deno.test("unbounded after-time asks for a specific window", async () => {
+  const now = new Date("2026-07-20T17:47:00.000Z")
+  const result = await resolveVendorAvailability("after 3pm", {
+    now,
+    timeZone: TZ,
+    allowLlm: false,
+  })
+  assertEquals(result.status, "needs_clarification")
+})
+
+Deno.test("softAnchorArrivalWindow caps duration", () => {
+  const anchored = softAnchorArrivalWindow(
+    {
+      scheduledAt: "2026-07-21T15:00:00.000Z",
+      endAt: "2026-07-21T21:00:00.000Z",
+      windowLabel: "Wed 11am-5pm",
+      confidence: "high",
+      source: "regex",
+    },
+    TZ,
+  )
+  assertEquals(anchored.windowLabel.includes("between"), true)
+})
+
 Deno.test("soft confirmation copy is forgiving", () => {
   assertEquals(
     buildVendorScheduleSoftConfirmSms("Tomorrow 9am"),
-    "Got it — Tomorrow 9am. Reply YES to confirm, or send a different time.",
+    "Got it — Tomorrow 9am. Reply YES to send that to the tenant, or send a different window.",
   )
   assertEquals(
-    buildVendorScheduleClarifySms(),
-    "Thanks — what day and time works best? For example: Tomorrow 9am.",
+    buildVendorScheduleClarifySms().includes("arrival window"),
+    true,
   )
   assertEquals(
     buildVendorScheduleSaveRetrySms("Tomorrow 9am"),
@@ -117,11 +175,107 @@ Deno.test("soft confirmation copy is forgiving", () => {
     }).includes("Reply YES"),
     true,
   )
-  assertEquals(buildSoftClarificationPrompt().includes("day and time"), true)
+  assertEquals(buildSoftClarificationPrompt().includes("arrival window"), true)
 })
 
 Deno.test("parseAvailabilityToScheduledAt re-export stays timezone aware", () => {
   const now = new Date("2026-07-20T17:47:00.000Z")
   const iso = parseAvailabilityToScheduledAt("Tomorrow 9am", now, TZ)
   assertEquals(iso, "2026-07-21T13:00:00.000Z")
+})
+
+Deno.test("named weekday abbrev never pins to a different today", () => {
+  // Tuesday Jul 21, 2026 5pm ET
+  const now = new Date("2026-07-21T21:00:00.000Z")
+  const anchor = buildScheduleAnchor(now, TZ)
+  assertEquals(extractNamedWeekdayIndex("Wed 9-12pm"), 3)
+  const date = resolveNamedWeekdayDate(3, anchor)
+  assertEquals(date.year, 2026)
+  assertEquals(date.month, 7)
+  assertEquals(date.day, 22)
+})
+
+Deno.test("Wed 9-12pm resolves WINDOW on next Wednesday (not today)", async () => {
+  const now = new Date("2026-07-21T21:00:00.000Z") // Tuesday
+  const result = await resolveVendorAvailability("Wed 9-12pm", {
+    now,
+    timeZone: TZ,
+    allowLlm: false,
+  })
+  assertEquals(result.status, "resolved")
+  if (result.status === "resolved") {
+    assertEquals(result.value.scheduledAt, "2026-07-22T13:00:00.000Z")
+    assertEquals(result.value.endAt, "2026-07-22T16:00:00.000Z")
+    assertEquals(result.value.entity?.type, "WINDOW")
+    assertEquals(result.value.entity?.date, "2026-07-22")
+    assertEquals(result.value.entity?.start_time, "09:00")
+    assertEquals(result.value.entity?.end_time, "12:00")
+    assertEquals(
+      result.value.entity?.display_text,
+      "Wednesday, Jul 22 between 9:00 AM and 12:00 PM",
+    )
+  }
+})
+
+Deno.test("Wed at 12pm resolves EXACT confirmation copy", async () => {
+  const now = new Date("2026-07-21T21:00:00.000Z") // Tuesday
+  const result = await resolveVendorAvailability("Wed at 12pm", {
+    now,
+    timeZone: TZ,
+    allowLlm: false,
+  })
+  assertEquals(result.status, "resolved")
+  if (result.status === "resolved") {
+    assertEquals(result.value.entity?.type, "EXACT")
+    assertEquals(result.value.entity?.end_time, null)
+    assertEquals(
+      result.value.entity?.display_text,
+      "Wednesday, Jul 22 at 12:00 PM",
+    )
+    assertEquals(
+      buildSoftConfirmationPrompt(result.value, TZ).startsWith(
+        "Got it — Wednesday, Jul 22 at 12:00 PM.",
+      ),
+      true,
+    )
+  }
+})
+
+Deno.test("WINDOW soft confirm uses between copy", () => {
+  const scheduledAt = "2026-07-22T13:00:00.000Z"
+  const endAt = "2026-07-22T16:00:00.000Z"
+  const entity = toArrivalEntity(scheduledAt, endAt, TZ)
+  assertEquals(entity.type, "WINDOW")
+  assertEquals(
+    buildSoftConfirmationPrompt(
+      {
+        scheduledAt,
+        endAt,
+        windowLabel: entity.display_text,
+        confidence: "medium",
+        source: "regex",
+        entity,
+      },
+      TZ,
+    ),
+    "Got it — Wednesday, Jul 22 between 9:00 AM and 12:00 PM. Reply YES to send that to the tenant, or send a different window.",
+  )
+})
+
+Deno.test("re-parse correction keeps WINDOW endAt", () => {
+  const now = new Date("2026-07-21T21:00:00.000Z")
+  const hit = parseAvailabilityResolved("Wed 9am-12pm", now, TZ)
+  assertExists(hit)
+  assertEquals(hit!.entity?.type, "WINDOW")
+  assertEquals(hit!.endAt, "2026-07-22T16:00:00.000Z")
+  assertEquals(hit!.scheduledAt, "2026-07-22T13:00:00.000Z")
+})
+
+Deno.test("regex Wed abbrev uses next Wednesday", () => {
+  const now = new Date("2026-07-21T21:00:00.000Z")
+  const anchor = buildScheduleAnchor(now, TZ)
+  const hit = parseAvailabilityRegex("Wed 9-12pm", anchor)
+  assertExists(hit)
+  assertEquals(hit!.scheduledAt, "2026-07-22T13:00:00.000Z")
+  assertEquals(hit!.endAt, "2026-07-22T16:00:00.000Z")
 })

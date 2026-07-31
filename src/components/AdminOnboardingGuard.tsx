@@ -8,7 +8,8 @@ import {
   restartNewLandlordOnboarding,
   shouldBlockDashboard,
   type LandlordOnboardingState,
-} from '@/lib/landlordOnboarding'
+} from '@/lib/onboarding'
+import { getErrorMessage } from '@/lib/errorMessage'
 
 /**
  * Prefer in-memory guard state once loaded. Do not let a stale localStorage
@@ -65,7 +66,7 @@ export function AdminOnboardingGuard() {
         setState(defaultOnboardingState())
         setLoading(false)
         hasFetchedRef.current = true
-        setResetError(err instanceof Error ? err.message : 'Reset failed.')
+        setResetError(getErrorMessage(err, "Couldn't reset setup. Please try again."))
         navigate('/admin/onboarding', { replace: true })
       })
 

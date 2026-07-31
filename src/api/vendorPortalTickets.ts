@@ -121,18 +121,28 @@ async function executeVendorListFetch(
   return data
 }
 
+/** Drop cached list responses so photo / status changes are not overwritten by stale data. */
+export function invalidateVendorTicketsCache(): void {
+  vendorListRecentOk.clear()
+}
+
 export async function fetchVendorTickets(
   url: string,
   vendorToken: string,
+  opts?: { force?: boolean },
 ): Promise<VendorListResponse> {
   const bearer = readVendorAccessToken() || vendorToken.trim()
   if (!bearer) throw new Error("Missing vendor token")
 
   const key = `${url}::${bearer}`
 
-  const recent = vendorListRecentOk.get(key)
-  if (recent && Date.now() - recent.at < VENDOR_LIST_DEDUPE_MS) {
-    return recent.data
+  if (opts?.force) {
+    vendorListRecentOk.delete(key)
+  } else {
+    const recent = vendorListRecentOk.get(key)
+    if (recent && Date.now() - recent.at < VENDOR_LIST_DEDUPE_MS) {
+      return recent.data
+    }
   }
 
   let p = vendorListInflight.get(key)

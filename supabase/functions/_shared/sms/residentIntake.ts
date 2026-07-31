@@ -9,7 +9,18 @@ import {
   shouldMintEarlyTicket,
   withDraftTicketId,
 } from "./ensureEarlySmsTicket.ts"
+import { processUnknownContactIntakeTurn } from "./unknownContactIntake.ts"
+import {
+  beginMultiIssueSharedIntake,
+  buildMultiIssueConfirmSms,
+  buildMultiIssueSubmittedSms,
+  detectMultipleMaintenanceIssues,
+  intakeSliceForPendingIssue,
+  intakeStateForMultiIssueConfirm,
+  isNoReply,
+} from "./multiIssueIntake.ts"
 import type { WorkflowContext, WorkflowResult } from "./workflow_types.ts"
+import { extractResidentAvailabilityText } from "./residentAvailabilityExtract.ts"
 import { submitSmsMaintenanceRequest } from "./submitSmsMaintenanceRequest.ts"
 import {
   buildConfirmationSummary,
@@ -173,10 +184,13 @@ async function initializeIntake(
       ? classification.entities.location
       : null)
 
+  const visitWindows = extractResidentAvailabilityText(initial) ?? undefined
+
   const base: SmsIntakeState = {
     initial_message: initial,
     description: initial,
     sanitized_description: classification.sanitizedDescription,
+    preferred_visit_windows: visitWindows,
     vendor_trade:
       classification.vendorTrade !== "other" || !classification.clarificationRequired
         ? classification.vendorTrade
@@ -386,11 +400,45 @@ export async function processResidentMaintenanceIntake(
   })
 
   if (!residentId) {
-    return {
-      route: "resident_maintenance_intake",
-      replyHint:
-        "Happy to help! I'll just need your unit number first so I can pull up the right home.",
-      metadata: { blocked: "missing_resident_id" },
+    // Hand off to conversational unknown-contact intake so unit replies like
+    // "1a" are parsed instead of looping the same "need your unit" prompt.
+    try {
+      const priorIntake = await loadIntakeState(supabase, ctx.conversationId)
+      const seedIssue =
+        priorIntake.initial_message?.trim() ||
+        priorIntake.description?.trim() ||
+        null
+      const turn = await processUnknownContactIntakeTurn(supabase, {
+        landlordId: ctx.landlordId,
+        conversationId: ctx.conversationId,
+        senderPhone: ctx.inbound.from,
+        inboundBody: body,
+        identity: ctx.identity,
+        suggestedUnit: ctx.suggestedUnit,
+        seedIssueMessage: seedIssue,
+      })
+      return {
+        route: "unknown_sender_onboarding",
+        replyHint: turn.replyHint,
+        metadata: {
+          blocked: "missing_resident_id",
+          handoff_unknown_contact: true,
+          selfHealingPhase: turn.selfHealingPhase,
+          ...turn.metadata,
+        },
+      }
+    } catch (err) {
+      console.error("[sms-intake] unknown-contact handoff failed", err)
+      return {
+        route: "unknown_sender_onboarding",
+        replyHint:
+          "Hi! I can help with that. I don't recognize this phone number yet. Which property and apartment are you contacting us about?",
+        metadata: {
+          blocked: "missing_resident_id",
+          handoff_unknown_contact: true,
+          handoff_error: true,
+        },
+      }
     }
   }
 
@@ -417,6 +465,38 @@ export async function processResidentMaintenanceIntake(
   const isFresh = !state.step || state.step === "submitted"
 
   if (isFresh) {
+    // Multi-ask path: confirm split before the single-issue wizard.
+    try {
+      const multiIssues = await detectMultipleMaintenanceIssues(body)
+      if (multiIssues.length >= 2) {
+        state = intakeStateForMultiIssueConfirm(body, multiIssues)
+        state = captureInboundMedia(
+          state,
+          ctx.inbound.mediaUrls,
+          ctx.inbound.provider,
+        )
+        await saveIntakeState(supabase, ctx.conversationId, state)
+        console.info("[sms-intake] multi-issue confirm", {
+          conversationId: ctx.conversationId,
+          issueCount: multiIssues.length,
+          trades: multiIssues.map((i) => i.vendor_trade),
+        })
+        return {
+          route: "resident_maintenance_intake",
+          replyHint: buildMultiIssueConfirmSms(multiIssues),
+          metadata: {
+            intakeStep: state.step,
+            started: true,
+            multiIssue: true,
+            issueCount: multiIssues.length,
+            trades: multiIssues.map((i) => i.vendor_trade),
+          },
+        }
+      }
+    } catch (err) {
+      console.warn("[sms-intake] multi-issue detect failed; single path", err)
+    }
+
     state = await initializeIntake(body, ctx.inbound.mediaUrls.length)
     state = captureInboundMedia(state, ctx.inbound.mediaUrls, ctx.inbound.provider)
     state = sanitizeIntakeState(state)
@@ -514,8 +594,136 @@ export async function processResidentMaintenanceIntake(
     }
   }
 
+  if (step === "awaiting_multi_issue_confirm") {
+    const issues = Array.isArray(state.pending_issues) ? state.pending_issues : []
+    if (isYesReply(body) && issues.length >= 2) {
+      // Keep the split, then run the normal shared intake script for assets/info.
+      state = beginMultiIssueSharedIntake({
+        ...state,
+        pending_issues: issues,
+      })
+      state = captureInboundMedia(
+        state,
+        ctx.inbound.mediaUrls,
+        ctx.inbound.provider,
+      )
+      state = sanitizeIntakeState(state)
+      await saveIntakeState(supabase, ctx.conversationId, state)
+      const nextStep = state.step as IntakeStep
+      const followUp =
+        nextStep === "room_or_area"
+          ? "Great — I'll open a separate work order for each. Which room are these mostly happening in? Kitchen, bathroom, basement, bedroom, or somewhere else?"
+          : questionForStep(state, nextStep)
+      return {
+        route: "resident_maintenance_intake",
+        replyHint: followUp,
+        metadata: {
+          intakeStep: state.step,
+          multiIssue: true,
+          multiIssueConfirmed: true,
+          issueCount: issues.length,
+        },
+      }
+    }
+
+    if (isNoReply(body)) {
+      // Fall back to normal single-issue wizard on the full message.
+      state = await initializeIntake(
+        state.initial_message || state.description || body,
+        0,
+      )
+      state = captureInboundMedia(
+        state,
+        ctx.inbound.mediaUrls,
+        ctx.inbound.provider,
+      )
+      state = sanitizeIntakeState(state)
+      state = await persistEarlyTicket(supabase, ctx, state)
+      await saveIntakeState(supabase, ctx.conversationId, state)
+      return {
+        route: "resident_maintenance_intake",
+        replyHint: questionForStep(state, state.step as IntakeStep),
+        metadata: {
+          intakeStep: state.step,
+          multiIssueDeclined: true,
+          draft_ticket_id: state.draft_ticket_id,
+        },
+      }
+    }
+
+    return {
+      route: "resident_maintenance_intake",
+      replyHint: issues.length >= 2
+        ? buildMultiIssueConfirmSms(issues)
+        : "Reply YES to open separate work orders, or NO to treat this as one request.",
+      metadata: { intakeStep: step, multiIssue: true },
+    }
+  }
+
   if (step === "awaiting_confirm") {
     if (isYesReply(body)) {
+      const multiIssues = Array.isArray(state.pending_issues)
+        ? state.pending_issues
+        : []
+      if (multiIssues.length >= 2) {
+        try {
+          const ticketIds: string[] = []
+          // Same unit + same trade → reuse the first assigned vendor.
+          const vendorByTrade = new Map<string, string>()
+          for (let i = 0; i < multiIssues.length; i++) {
+            const issue = multiIssues[i]
+            const slice = intakeSliceForPendingIssue(state, issue, {
+              forceNewTicket: i > 0,
+            })
+            const tradeKey = (issue.vendor_trade || "").trim().toLowerCase()
+            const preferVendorId = tradeKey
+              ? vendorByTrade.get(tradeKey) ?? null
+              : null
+            const { ticketId, vendorId } = await submitSmsMaintenanceRequest(
+              supabase,
+              {
+                landlordId: ctx.landlordId,
+                conversationId: ctx.conversationId,
+                residentId,
+                intake: slice,
+                forceNewTicket: i > 0,
+                preferVendorId,
+              },
+            )
+            ticketIds.push(ticketId)
+            if (tradeKey && vendorId) {
+              vendorByTrade.set(tradeKey, vendorId)
+            }
+          }
+          const submitted: SmsIntakeState = {
+            ...state,
+            step: "submitted",
+            pending_issues: multiIssues,
+            draft_ticket_id: ticketIds[0],
+          }
+          await saveIntakeState(supabase, ctx.conversationId, submitted)
+          return {
+            route: "resident_maintenance_intake",
+            replyHint: buildMultiIssueSubmittedSms(ticketIds),
+            metadata: {
+              submitted: true,
+              multiIssue: true,
+              ticketIds,
+              intakeStep: "submitted",
+            },
+          }
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err)
+          console.error("[sms-intake] multi-issue submit failed", message)
+          return {
+            route: "resident_maintenance_intake",
+            replyHint:
+              "Sorry about that. I couldn't submit those requests just now. Please try again in a moment, or reach out to your property manager if it keeps happening.",
+            metadata: { submitError: message, multiIssue: true },
+          }
+        }
+      }
+
       try {
         const { ticketId } = await submitSmsMaintenanceRequest(supabase, {
           landlordId: ctx.landlordId,

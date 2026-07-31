@@ -143,6 +143,23 @@ export function buildVendorAssignedOutcome(input: {
   }
 }
 
+export function buildInvoiceApprovedOutcome(input: {
+  context: string
+  totalLabel: string
+  vendorName: string
+}): AwaitingDecisionOutcome {
+  return {
+    operationTitle: 'Invoice ready to pay',
+    context: input.context,
+    kind: 'resolved',
+    headline: 'Removed from Needs Your Attention',
+    detail: `Approved ${input.totalLabel} for ${input.vendorName}. Ulo recorded the spend and cleared this invoice from your queue.`,
+    removedFromQueue: true,
+    actionLabel: 'View in Analytics',
+    actionTo: '/admin/analytics',
+  }
+}
+
 export function buildAutoRemovedAttentionOutcome(input: {
   title: string
   context: string

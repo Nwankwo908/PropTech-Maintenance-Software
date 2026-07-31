@@ -15,16 +15,19 @@ import {
 } from '@/lib/notificationSettings'
 
 const sectionCardClass =
-  'rounded-[10px] border border-[#e5e7eb] bg-white p-6 shadow-[0px_1px_2px_-1px_rgba(0,0,0,0.06)]'
+  'sa-surface rounded-[10px] border border-[#e5e7eb] bg-white p-6 shadow-[0px_1px_2px_-1px_rgba(0,0,0,0.06)]'
 
 const selectClass =
-  'h-10 w-full cursor-pointer appearance-none rounded-[8px] border border-[#e5e7eb] bg-white py-2 pl-3 pr-10 text-[14px] tracking-[-0.1504px] text-[#101828] outline-none focus:border-[#155dfc] focus:ring-2 focus:ring-[#155dfc]/20'
+  'sa-surface h-10 w-full cursor-pointer appearance-none rounded-[8px] border border-[#e5e7eb] bg-white py-2 pl-3 pr-10 text-[14px] tracking-[-0.1504px] text-[#101828] outline-none focus:border-[#155dfc] focus:ring-2 focus:ring-[#155dfc]/20'
 
 const CHANNEL_LABELS: Record<NotificationChannel, string> = {
   email: 'Email',
   sms: 'SMS',
+  activity_feed: 'Activity feed',
   push: 'Push',
 }
+
+const EVENT_CHANNELS: NotificationChannel[] = ['email', 'sms', 'activity_feed', 'push']
 
 function SelectChevron() {
   return (
@@ -65,13 +68,13 @@ function ToggleSwitch({
       aria-label={label}
       onClick={() => onChange(!checked)}
       className={[
-        'relative mx-auto h-6 w-11 shrink-0 rounded-full transition-colors outline-none focus-visible:ring-2 focus-visible:ring-[#155dfc]/30 focus-visible:ring-offset-2',
+        'relative mx-auto h-6 w-11 shrink-0 rounded-full outline-none focus-visible:ring-2 focus-visible:ring-[#155dfc]/30 focus-visible:ring-offset-2',
         checked ? 'bg-[#101828]' : 'bg-[#e5e7eb]',
       ].join(' ')}
     >
       <span
         className={[
-          'pointer-events-none absolute top-1 left-1 size-4 rounded-full bg-white shadow-sm transition-transform',
+          'sa-switch-thumb pointer-events-none absolute top-1 left-1 size-4 rounded-full bg-white shadow-sm',
           checked ? 'translate-x-5' : 'translate-x-0',
         ].join(' ')}
       />
@@ -104,7 +107,7 @@ function PrimaryButton({
       disabled={disabled}
       onClick={onClick}
       className={[
-        'inline-flex items-center justify-center rounded-[10px] bg-[#101828] px-4 py-2.5 text-[14px] font-medium tracking-[-0.1504px] text-white transition-colors hover:bg-[#1f2937] disabled:cursor-not-allowed disabled:opacity-50',
+        'sa-press inline-flex items-center justify-center rounded-[10px] bg-[#101828] px-4 py-2.5 text-[14px] font-medium tracking-[-0.1504px] text-white hover:bg-[#1f2937] disabled:cursor-not-allowed disabled:opacity-50',
         className,
       ].join(' ')}
     >
@@ -130,7 +133,7 @@ function OutlineButton({
       disabled={disabled}
       onClick={onClick}
       className={[
-        'inline-flex items-center justify-center rounded-[10px] border border-[#e5e7eb] bg-white px-4 py-2.5 text-[14px] font-medium tracking-[-0.1504px] text-[#101828] transition-colors hover:bg-[#f9fafb] disabled:cursor-not-allowed disabled:opacity-50',
+        'sa-press inline-flex items-center justify-center rounded-[10px] border border-[#186179] bg-white px-4 py-2.5 text-[14px] font-medium tracking-[-0.1504px] text-[#186179] hover:bg-[#e8f2f5] disabled:cursor-not-allowed disabled:opacity-50',
         className,
       ].join(' ')}
     >
@@ -171,7 +174,7 @@ function DeliveryChannelCard({
       {!connected && actionLabel ? (
         <button
           type="button"
-          className="mt-3 text-[13px] font-medium tracking-[-0.1504px] text-[#155dfc] transition-colors hover:text-[#0030b5]"
+          className="sa-link mt-3 text-[13px] font-medium tracking-[-0.1504px] text-[#155dfc] hover:text-[#0030b5]"
         >
           {actionLabel}
         </button>
@@ -203,7 +206,7 @@ function EventCategorySection({
         <button
           type="button"
           onClick={onMuteAll}
-          className="text-[13px] font-medium tracking-[-0.1504px] text-[#6a7282] transition-colors hover:text-[#101828]"
+          className="sa-link text-[13px] font-medium tracking-[-0.1504px] text-[#6a7282] hover:text-[#101828]"
         >
           Mute all
         </button>
@@ -216,6 +219,7 @@ function EventCategorySection({
               <th className="px-4 py-3 font-semibold">Event</th>
               <th className="px-4 py-3 text-center font-semibold">Email</th>
               <th className="px-4 py-3 text-center font-semibold">SMS</th>
+              <th className="px-4 py-3 text-center font-semibold">Activity feed</th>
               <th className="px-4 py-3 text-center font-semibold">Push</th>
             </tr>
           </thead>
@@ -228,7 +232,7 @@ function EventCategorySection({
                   </span>
                   {item.critical ? <CriticalChip /> : null}
                 </td>
-                {(['email', 'sms', 'push'] as const).map((channel) => (
+                {EVENT_CHANNELS.map((channel) => (
                   <td key={channel} className="px-4 py-3 text-center">
                     <ToggleSwitch
                       id={`${category.id}-${item.id}-${channel}`}
@@ -314,7 +318,7 @@ export function AdminNotificationSettings() {
           className="flex flex-wrap items-center gap-2 text-[14px] tracking-[-0.1504px] text-[#6a7282]"
           aria-label="Breadcrumb"
         >
-          <Link to="/admin/settings" className="font-medium transition-colors hover:text-[#101828]">
+          <Link to="/admin/settings" className="sa-link font-medium hover:text-[#101828]">
             ← Settings
           </Link>
           <span aria-hidden>/</span>
@@ -354,9 +358,10 @@ export function AdminNotificationSettings() {
               Set default channels for operational alerts. Event-level settings below can override these.
             </p>
 
-            <div className="mt-5 grid gap-3 sm:grid-cols-3">
+            <div className="mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
               <DeliveryChannelCard label="Email" connected />
               <DeliveryChannelCard label="SMS" connected />
+              <DeliveryChannelCard label="Activity feed" connected />
               <DeliveryChannelCard
                 label="Push"
                 connected={draft.delivery.pushEnabled}
@@ -380,6 +385,7 @@ export function AdminNotificationSettings() {
                   >
                     <option value="email">Email</option>
                     <option value="sms">SMS</option>
+                    <option value="activity_feed">Activity feed</option>
                     <option value="push">Push</option>
                   </select>
                   <SelectChevron />
@@ -400,6 +406,7 @@ export function AdminNotificationSettings() {
                   >
                     <option value="email">Email</option>
                     <option value="sms">SMS</option>
+                    <option value="activity_feed">Activity feed</option>
                     <option value="push">Push</option>
                   </select>
                   <SelectChevron />
@@ -532,7 +539,7 @@ export function AdminNotificationSettings() {
             </div>
           </section>
 
-          <section className="rounded-[10px] border border-[#dbeafe] bg-[#eff6ff] p-5">
+          <section className="sa-surface rounded-[10px] border border-[#dbeafe] bg-[#eff6ff] p-5">
             <p className="text-[13px] font-semibold tracking-[-0.1504px] text-[#101828]">
               Reduce notification noise
             </p>

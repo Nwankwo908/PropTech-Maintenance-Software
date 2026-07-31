@@ -10,6 +10,7 @@
  * Prefer official .gov / HUD APIs. Aggregator URLs are refused.
  */
 import { serve } from "https://deno.land/std/http/server.ts"
+import { authorizedCronBearer } from "../_shared/admin_edge_auth.ts"
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1"
 import { refreshAskUloSources } from "../_shared/ask_ulo/runAskUloSourceRefresh.ts"
 
@@ -27,17 +28,6 @@ function jsonResponse(body: unknown, status = 200): Response {
   })
 }
 
-function authorized(req: Request): boolean {
-  const secret =
-    Deno.env.get("REFRESH_ASK_ULO_SOURCES_SECRET")?.trim() ??
-    Deno.env.get("ADMIN_REASSIGN_SECRET")?.trim() ??
-    Deno.env.get("RUN_WORKFLOW_ENGINE_SECRET")?.trim()
-  if (!secret) return true
-  const h = req.headers.get("Authorization")?.trim()
-  if (!h?.toLowerCase().startsWith("bearer ")) return false
-  return h.slice(7).trim() === secret
-}
-
 serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { status: 204, headers: corsHeaders })
@@ -45,7 +35,7 @@ serve(async (req) => {
   if (req.method !== "POST") {
     return jsonResponse({ error: "method_not_allowed" }, 405)
   }
-  if (!authorized(req)) {
+  if (!authorizedCronBearer(req, ["REFRESH_ASK_ULO_SOURCES_SECRET","ADMIN_REASSIGN_SECRET","RUN_WORKFLOW_ENGINE_SECRET"])) {
     return jsonResponse({ error: "unauthorized" }, 401)
   }
 

@@ -88,6 +88,18 @@ export function isDemoAccountActive(): boolean {
 }
 
 /**
+ * Persist Demo Property Management as the active landlord scope for the next
+ * admin load (public /demo entry + staff switcher). Session-bound emails still win.
+ */
+export function prepareDemoLandlordScope(): void {
+  try {
+    window.localStorage.setItem(OVERRIDE_STORAGE_KEY, DEMO_LANDLORD_ID)
+  } catch {
+    // localStorage unavailable (private mode)
+  }
+}
+
+/**
  * Switch the active account for testing (staff logins only) and reload so all
  * dashboards refetch under the new scope.
  */

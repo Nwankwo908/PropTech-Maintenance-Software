@@ -76,6 +76,11 @@ interface ImportMetaEnv {
   readonly VITE_SEND_LEASE_RENEWAL_INCENTIVE_MESSAGE_URL?: string
   /** Optional POST endpoint for retrying a failed resident/vendor/broadcast delivery. */
   readonly VITE_RETRY_FAILED_DELIVERY_URL?: string
+  /**
+   * POST invoice-payment-checkout (Stripe Checkout for invoice pay).
+   * If omitted, defaults to `${VITE_SUPABASE_URL}/functions/v1/invoice-payment-checkout`.
+   */
+  readonly VITE_INVOICE_PAYMENT_CHECKOUT_URL?: string
   /** UUID tenant scope for SMS onboarding (matches Edge secret DEFAULT_LANDLORD_ID). */
   readonly VITE_DEFAULT_LANDLORD_ID?: string
   /**

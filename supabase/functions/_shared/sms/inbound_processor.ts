@@ -35,7 +35,9 @@ import { readVendorScheduleFsm } from "../vendor_schedule_fsm.ts"
 import { tryHandleVendorFeedbackInbound } from "../vendor_feedback.ts"
 import { tryHandleInvoicePaymentInbound } from "../invoicePaymentSms.ts"
 import { tryHandleEstimateDecisionInbound } from "./estimateDecisionInbound.ts"
+import { tryHandleTenantScheduleConfirmInbound } from "./tenantScheduleConfirm.ts"
 import { tryHandleTenantConsentKeyword } from "./tenantMessaging.ts"
+import { tryHandleVendorCapacityInbound } from "../vendor_capacity.ts"
 
 export type ProcessInboundSmsResult =
   | {
@@ -489,8 +491,58 @@ export async function processInboundSms(
       ?.intake_state
     const step = typeof intakeState?.step === "string" ? intakeState.step : ""
     activeMaintenanceIntake = Boolean(step && step !== "submitted")
+    if (intakeState?.awaiting_schedule_confirmation) {
+      activeMaintenanceIntake = true
+    }
   } catch {
     activeMaintenanceIntake = false
+  }
+
+  const scheduleConfirm = await tryHandleTenantScheduleConfirmInbound(supabase, {
+    landlordId,
+    conversationId,
+    messageId,
+    body: inbound.body,
+    identityType: identity.identity_type,
+  })
+  if (scheduleConfirm.handled) {
+    const outboundMessageId = await trySendAutoReply(supabase, {
+      conversationId,
+      landlordId,
+      uloNumber: inbound.to,
+      externalPhone: inbound.from,
+      provider: inbound.provider,
+      workflowHint: scheduleConfirm.replyBody,
+      source: `tenant_schedule_${scheduleConfirm.action}`,
+      workflowRoute: "tenant_schedule_confirm",
+    })
+    await recordGraphEvent(supabase, {
+      landlordId,
+      identity,
+      conversationId,
+      messageId,
+      maintenanceRequestId: scheduleConfirm.ticketId,
+      inbound,
+      workflowRoute: "tenant_schedule_confirm",
+      workflowMetadata: {
+        action: scheduleConfirm.action,
+        ticket_id: scheduleConfirm.ticketId,
+      },
+      selfHealed,
+      resolutionSource: resolution.source,
+      selfHealingPhase: resolution.selfHealingPhase,
+    })
+    return {
+      ok: true,
+      conversationId,
+      messageId,
+      outboundMessageId,
+      workflowRoute: "tenant_schedule_confirm",
+      identityType: identity.identity_type,
+      landlordId,
+      resolutionSource: resolution.source,
+      selfHealingPhase: resolution.selfHealingPhase,
+    }
   }
 
   const consentResult = await tryHandleTenantConsentKeyword(supabase, {
@@ -623,6 +675,54 @@ export async function processInboundSms(
       messageId,
       outboundMessageId,
       workflowRoute: "invoice_payment",
+      identityType: identity.identity_type,
+      landlordId,
+      resolutionSource: resolution.source,
+      selfHealingPhase: resolution.selfHealingPhase,
+    }
+  }
+
+  const capacityResult = await tryHandleVendorCapacityInbound(supabase, {
+    landlordId,
+    vendorId: identity.vendor_id,
+    identityType: identity.identity_type,
+    body: inbound.body,
+  })
+  if (capacityResult.handled) {
+    const outboundMessageId = await trySendAutoReply(supabase, {
+      conversationId,
+      landlordId,
+      uloNumber: inbound.to,
+      externalPhone: inbound.from,
+      provider: inbound.provider,
+      workflowHint: capacityResult.replyBody,
+      source: `vendor_capacity_${capacityResult.command === "unknown" ? "unknown" : capacityResult.command.kind}`,
+      workflowRoute: "vendor_capacity",
+    })
+    await recordGraphEvent(supabase, {
+      landlordId,
+      identity,
+      conversationId,
+      messageId,
+      maintenanceRequestId,
+      inbound,
+      workflowRoute: "vendor_capacity",
+      workflowMetadata: {
+        capacity_command:
+          capacityResult.command === "unknown"
+            ? "unknown"
+            : capacityResult.command.kind,
+      },
+      selfHealed,
+      resolutionSource: resolution.source,
+      selfHealingPhase: resolution.selfHealingPhase,
+    })
+    return {
+      ok: true,
+      conversationId,
+      messageId,
+      outboundMessageId,
+      workflowRoute: "vendor_capacity",
       identityType: identity.identity_type,
       landlordId,
       resolutionSource: resolution.source,

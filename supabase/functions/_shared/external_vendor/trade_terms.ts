@@ -1,6 +1,6 @@
 /**
  * External vendor search helpers.
- * Trade taxonomy lives in `_shared/vendor_trades.ts` (keep in sync with `src/lib/vendorTrades.ts`).
+ * Trade taxonomy: shared/maintenance/vendorTrades.ts
  */
 export {
   buildExternalSearchQueryFromTrade as buildExternalSearchQuery,

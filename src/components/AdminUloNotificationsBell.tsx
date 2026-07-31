@@ -1,11 +1,15 @@
 import { useEffect, useId, useRef, useState } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import { ConversationMonitoringModal } from '@/components/ConversationMonitoringModal'
+import { getActiveLandlordId } from '@/lib/activeLandlord'
 import {
   fetchAdminUloNotifications,
+  parseActivationFailureNotificationId,
   type AdminUloNotification,
   type MonitoringRiskLevel,
 } from '@/lib/conversationMonitoring'
+import { propertyResidentDetailPath } from '@/lib/propertyRoutes'
+import { supabase } from '@/lib/supabase'
 
 function BellIcon() {
   return (
@@ -40,7 +44,7 @@ function NotificationItem({
     <button
       type="button"
       onClick={() => onSelect(item.conversationId)}
-      className="w-full border-b border-[#e5e7eb] px-4 py-3.5 text-left outline-none transition-colors hover:bg-[#fafafa] focus-visible:bg-[#fafafa] focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[#0030b5] last:border-b-0"
+      className="sa-row w-full border-b border-[#e5e7eb] px-4 py-3.5 text-left outline-none hover:bg-[#fafafa] focus-visible:bg-[#fafafa] focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[#0030b5] last:border-b-0"
     >
       <div className="flex items-start justify-between gap-2">
         <p className="text-[13px] font-semibold leading-5 text-[#0a0a0a]">{item.title}</p>
@@ -68,6 +72,7 @@ type AdminUloNotificationsBellProps = {
 
 /** Header bell — Ulo admin summaries with transcript drill-in. */
 export function AdminUloNotificationsBell({ onNavigate }: AdminUloNotificationsBellProps) {
+  const navigate = useNavigate()
   const panelId = useId()
   const rootRef = useRef<HTMLDivElement>(null)
   const [open, setOpen] = useState(false)
@@ -120,6 +125,33 @@ export function AdminUloNotificationsBell({ onNavigate }: AdminUloNotificationsB
   function handleSelect(conversationId: string) {
     setOpen(false)
     onNavigate?.()
+
+    const activationResidentId = parseActivationFailureNotificationId(conversationId)
+    if (activationResidentId) {
+      void (async () => {
+        if (!supabase) {
+          navigate('/admin/residents')
+          return
+        }
+        const { data } = await supabase
+          .from('users')
+          .select('building')
+          .eq('id', activationResidentId)
+          .eq('landlord_id', getActiveLandlordId())
+          .maybeSingle()
+        const building =
+          typeof data?.building === 'string' && data.building.trim()
+            ? data.building.trim()
+            : null
+        if (building) {
+          navigate(propertyResidentDetailPath(building, activationResidentId))
+          return
+        }
+        navigate('/admin/residents')
+      })()
+      return
+    }
+
     setMonitoringConversationId(conversationId)
   }
 
@@ -135,7 +167,7 @@ export function AdminUloNotificationsBell({ onNavigate }: AdminUloNotificationsB
             event.stopPropagation()
             setOpen((value) => !value)
           }}
-          className="relative flex size-9 shrink-0 items-center justify-center rounded-full text-[#101828] outline-none transition-colors duration-150 hover:bg-[#f3f4f6] active:bg-[#e5e7eb] focus-visible:ring-2 focus-visible:ring-[#101828] focus-visible:ring-offset-2"
+          className="sa-press relative flex size-9 shrink-0 items-center justify-center rounded-full text-[#101828] outline-none hover:bg-[#f3f4f6] active:bg-[#e5e7eb] focus-visible:ring-2 focus-visible:ring-[#101828] focus-visible:ring-offset-2"
         >
           <BellIcon />
           {unreadCount > 0 ? (
@@ -150,7 +182,7 @@ export function AdminUloNotificationsBell({ onNavigate }: AdminUloNotificationsB
             id={panelId}
             role="dialog"
             aria-label="Ulo notifications"
-            className="absolute right-0 top-[calc(100%+8px)] z-50 w-[min(calc(100vw-2rem),420px)] overflow-hidden rounded-[12px] border border-[#e5e7eb] bg-white shadow-[0px_8px_24px_rgba(0,0,0,0.12)]"
+            className="sa-enter absolute right-0 top-[calc(100%+8px)] z-50 w-[min(calc(100vw-2rem),420px)] overflow-hidden rounded-[12px] border border-[#e5e7eb] bg-white shadow-[0px_8px_24px_rgba(0,0,0,0.12)]"
           >
             <div className="flex items-center justify-between border-b border-[#e5e7eb] px-4 py-3">
               <p className="text-[14px] font-semibold text-[#0a0a0a]">Notifications</p>
@@ -160,7 +192,7 @@ export function AdminUloNotificationsBell({ onNavigate }: AdminUloNotificationsB
                   setOpen(false)
                   onNavigate?.()
                 }}
-                className="text-[12px] font-medium text-[#1447e6] outline-none hover:underline focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2"
+                className="sa-link text-[12px] font-medium text-[#1447e6] outline-none hover:underline focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2"
               >
                 All conversations
               </Link>

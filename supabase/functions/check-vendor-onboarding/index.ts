@@ -8,6 +8,7 @@
  *     -d '{"landlord_id":"YOUR_LANDLORD_UUID"}'
  */
 import { serve } from "https://deno.land/std/http/server.ts"
+import { authorizedCronBearer } from "../_shared/admin_edge_auth.ts"
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1"
 import { checkVendorOnboarding } from "../_shared/vendor_verification/checkVendorOnboarding.ts"
 
@@ -25,17 +26,6 @@ function jsonResponse(body: unknown, status = 200): Response {
   })
 }
 
-function authorized(req: Request): boolean {
-  const secret = Deno.env.get("CHECK_VENDOR_ONBOARDING_SECRET")?.trim() ??
-    Deno.env.get("CHECK_RENT_COLLECTION_SECRET")?.trim() ??
-    Deno.env.get("RUN_WORKFLOW_TRIGGERS_SECRET")?.trim() ??
-    Deno.env.get("ADMIN_REASSIGN_SECRET")?.trim()
-  if (!secret) return true
-  const h = req.headers.get("Authorization")?.trim()
-  if (!h?.toLowerCase().startsWith("bearer ")) return false
-  return h.slice(7).trim() === secret
-}
-
 serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response("ok", { headers: corsHeaders })
@@ -43,7 +33,7 @@ serve(async (req) => {
   if (req.method !== "POST") {
     return jsonResponse({ error: "Method not allowed" }, 405)
   }
-  if (!authorized(req)) {
+  if (!authorizedCronBearer(req, ["CHECK_VENDOR_ONBOARDING_SECRET","CHECK_RENT_COLLECTION_SECRET","RUN_WORKFLOW_TRIGGERS_SECRET","ADMIN_REASSIGN_SECRET"])) {
     return jsonResponse({ error: "Unauthorized" }, 401)
   }
 

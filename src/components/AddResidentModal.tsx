@@ -40,10 +40,10 @@ function IconChevronDown({ className = 'size-4 text-extended-3' }: { className?:
 }
 
 const inputClass =
-  'h-9 w-full rounded-lg border border-transparent bg-secondary px-3 text-[14px] tracking-[-0.1504px] text-extended-3 outline-none placeholder:text-neutral focus:border-secondary focus:ring-1 focus:ring-secondary'
+  'sa-surface h-9 w-full rounded-lg border border-transparent bg-secondary px-3 text-[14px] tracking-[-0.1504px] text-extended-3 outline-none placeholder:text-neutral focus:border-secondary focus:ring-1 focus:ring-secondary'
 
 const selectClass =
-  'h-9 w-full cursor-pointer appearance-none rounded-lg border border-transparent bg-secondary py-1 pl-3 pr-9 text-[14px] font-medium tracking-[-0.1504px] outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2'
+  'sa-surface h-9 w-full cursor-pointer appearance-none rounded-lg border border-transparent bg-secondary py-1 pl-3 pr-9 text-[14px] font-medium tracking-[-0.1504px] outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2'
 
 /** Add New Resident form (Figma 129:16139). */
 export function AddResidentModal({
@@ -123,12 +123,12 @@ export function AddResidentModal({
 
   return (
     <div className="fixed inset-0 z-50 flex justify-end">
-      <div role="presentation" className="absolute inset-0 bg-black/40" aria-hidden onClick={onClose} />
+      <div role="presentation" className="sa-scrim absolute inset-0 bg-black/40" aria-hidden onClick={onClose} />
       <div
         role="dialog"
         aria-modal="true"
         aria-labelledby={titleId}
-        className="relative flex h-full max-h-dvh w-full max-w-[min(100vw,560px)] flex-col overflow-hidden border-l border-secondary bg-white shadow-[inset_1px_0_0_0_#A788964D]"
+        className="sa-rail relative flex h-full max-h-dvh w-full max-w-[min(100vw,560px)] flex-col overflow-hidden border-l border-secondary bg-white shadow-[inset_1px_0_0_0_#A788964D]"
       >
         <header className="flex h-[81px] shrink-0 items-center justify-between border-b border-secondary px-6">
           <div className="flex min-w-0 items-center gap-3">
@@ -151,7 +151,7 @@ export function AddResidentModal({
             type="button"
             onClick={onClose}
             aria-label="Close"
-            className="shrink-0 rounded-lg p-1 text-neutral outline-none hover:bg-black/5 hover:text-extended-3 focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2"
+            className="sa-press shrink-0 rounded-lg p-1 text-neutral outline-none hover:bg-black/5 hover:text-extended-3 focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2"
           >
             <svg className="size-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} aria-hidden>
               <path d="M18 6L6 18M6 6l12 12" strokeLinecap="round" />
@@ -266,7 +266,7 @@ export function AddResidentModal({
             type="button"
             disabled={!formValid}
             onClick={submit}
-            className="inline-flex h-[42px] min-w-0 flex-1 items-center justify-center rounded-[10px] bg-[#187960] px-4 text-[16px] font-medium leading-6 tracking-[-0.3125px] text-white outline-none focus-visible:ring-2 focus-visible:ring-[#b58500] focus-visible:ring-offset-2 focus-visible:ring-offset-secondary enabled:hover:bg-[#9a7310] disabled:cursor-not-allowed disabled:opacity-50"
+            className="sa-press inline-flex h-[42px] min-w-0 flex-1 items-center justify-center rounded-[10px] bg-[#187960] px-4 text-[16px] font-medium leading-6 tracking-[-0.3125px] text-white outline-none focus-visible:ring-2 focus-visible:ring-[#b58500] focus-visible:ring-offset-2 focus-visible:ring-offset-secondary enabled:hover:bg-[#9a7310] disabled:cursor-not-allowed disabled:opacity-50"
           >
             Add Resident
           </button>

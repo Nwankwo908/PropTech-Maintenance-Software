@@ -22,6 +22,7 @@ import { supabase } from '@/lib/supabase'
 import applianceRepairIcon from '@/assets/appliance-repair.png'
 import inspectionReviewIcon from '@/assets/inspection-review.png'
 import pmServiceIcon from '@/assets/pm-service.png'
+import { getErrorMessage } from '@/lib/errorMessage'
 
 type AnalyticsTicket = {
   id: string
@@ -230,7 +231,7 @@ function KpiCard({
   const neutral = delta === 0
   const good = neutral ? false : positive === goodWhenUp
   return (
-    <div className="flex min-w-0 flex-1 flex-col gap-4 rounded-[10px] border border-[#e5e7eb] bg-white p-6 shadow-[0px_1px_2px_-1px_rgba(0,0,0,0.06)]">
+    <div className="sa-enter-scale flex min-w-0 flex-1 flex-col gap-4 rounded-[10px] border border-[#e5e7eb] bg-white p-6 shadow-[0px_1px_2px_-1px_rgba(0,0,0,0.06)]">
       <p className="truncate text-[14px] leading-5 tracking-[-0.1504px] text-[#6a7282]">
         {label}
       </p>
@@ -272,7 +273,7 @@ function StatusText({ tone, children }: { tone: PmTaskStatusTone; children: Reac
   return <span className={className}>{children}</span>
 }
 
-function PmComplianceRow({ task }: { task: PmComplianceTask }) {
+function PmComplianceRow({ task, index = 0 }: { task: PmComplianceTask; index?: number }) {
   const due = formatPmDueLabel(task.dueAt, task.status)
   const taskIcon = pmTaskKindUsesApplianceIcon(task.kind)
     ? applianceRepairIcon
@@ -283,7 +284,10 @@ function PmComplianceRow({ task }: { task: PmComplianceTask }) {
         : null
 
   return (
-    <div className="flex flex-wrap items-start justify-between gap-3 py-3 first:pt-0 last:pb-0">
+    <div
+      className="sa-enter flex flex-wrap items-start justify-between gap-3 py-3 first:pt-0 last:pb-0"
+      style={{ animationDelay: `${Math.min(index, 12) * 30}ms` }}
+    >
       <div className="flex min-w-0 flex-1 gap-3">
         {taskIcon ? (
           <img
@@ -297,6 +301,13 @@ function PmComplianceRow({ task }: { task: PmComplianceTask }) {
           <p className="text-[14px] font-medium text-[#0a0a0a]">{task.title}</p>
           <p className="text-[12px] text-[#6a7282]">{task.location}</p>
           <p className="mt-1 text-[12px] leading-5 text-[#4b5563]">{formatPmTaskSubtitle(task)}</p>
+          {task.ageBasis === 'estimated_from_build_year' ||
+          task.ageBasis === 'ai_estimated' ? (
+            <p className="mt-1 text-[11px] font-medium uppercase tracking-wide text-[#94a3b8]">
+              Age estimated
+              {task.ageBasis === 'estimated_from_build_year' ? ' from build year' : ''}
+            </p>
+          ) : null}
           {task.kind === 'appliance' && task.estimatedReplacementCost != null ? (
             <p className="mt-1 text-[12px] font-medium text-[#0a0a0a]">
               Est. replacement {formatSpend(task.estimatedReplacementCost)}
@@ -358,7 +369,7 @@ function MaintenanceSpendBar({
               tabIndex={0}
               aria-label={`${tooltipTitle}: ${formatSpend(month.proactive)} proactive, ${formatSpend(month.reactive)} reactive, ${formatSpend(total)} total`}
               className={[
-                'flex w-full flex-col justify-end overflow-hidden rounded-[4px] outline-none focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2',
+                'sa-surface flex w-full flex-col justify-end overflow-hidden rounded-[4px] outline-none focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2',
                 month.isProjection ? 'ring-1 ring-dashed ring-[#d1d5dc]' : '',
               ].join(' ')}
               style={{ height: totalPx }}
@@ -434,7 +445,12 @@ export function AdminAnalyticsDashboard() {
           ((ticketsResult.data ?? []) as Record<string, unknown>[]).map(normalizeTicketRow),
         )
       } else {
-        setError(ticketsResult.error.message ?? 'Failed to load maintenance data.')
+        setError(
+          getErrorMessage(
+            ticketsResult.error,
+            "We couldn't load maintenance data. Please try again.",
+          ),
+        )
       }
 
       setRecognizedSpend(recognized)
@@ -457,7 +473,7 @@ export function AdminAnalyticsDashboard() {
       await reloadSpend()
       setLastUpdated(new Date())
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Failed to approve invoice.')
+      setError(getErrorMessage(e, 'Failed to approve invoice.'))
     } finally {
       setApprovingId(null)
     }
@@ -513,6 +529,7 @@ export function AdminAnalyticsDashboard() {
       complianceLabel: null,
       attentionCount: 0,
       replacementRecommendedCount: 0,
+      safetyHazardAlerts: [],
     }
     const pmCompliance = pm.compliancePct
     const pmComplianceLabel = pm.complianceLabel ?? '—'
@@ -617,7 +634,7 @@ export function AdminAnalyticsDashboard() {
       ) : null}
 
       {!loading && analytics.pendingInvoices.length > 0 ? (
-        <section className="mb-4 rounded-[10px] border border-[#fde68a] bg-[#fffbeb] px-6 py-4">
+        <section className="sa-surface mb-4 rounded-[10px] border border-[#fde68a] bg-[#fffbeb] px-6 py-4">
           <h2 className="text-[14px] font-semibold text-[#92400e]">
             {analytics.pendingInvoices.length} invoice
             {analytics.pendingInvoices.length === 1 ? '' : 's'} awaiting approval
@@ -626,12 +643,13 @@ export function AdminAnalyticsDashboard() {
             Approve vendor invoices to record spend and update maintenance analytics.
           </p>
           <ul className="mt-3 divide-y divide-[#fde68a]/60">
-            {analytics.pendingInvoices.slice(0, 5).map((inv) => {
+            {analytics.pendingInvoices.slice(0, 5).map((inv, index) => {
               const ticket = inv.maintenance_requests
               return (
                 <li
                   key={inv.id}
-                  className="flex flex-wrap items-center justify-between gap-3 py-3 first:pt-0 last:pb-0"
+                  style={{ animationDelay: `${Math.min(index, 8) * 30}ms` }}
+                  className="sa-enter flex flex-wrap items-center justify-between gap-3 py-3 first:pt-0 last:pb-0"
                 >
                   <div className="min-w-0">
                     <p className="text-[14px] font-medium text-[#0a0a0a]">
@@ -648,7 +666,7 @@ export function AdminAnalyticsDashboard() {
                     type="button"
                     disabled={approvingId === inv.id}
                     onClick={() => void handleApproveInvoice(inv.id)}
-                    className="h-9 shrink-0 rounded-[10px] bg-[#008236] px-4 text-[13px] font-medium text-white hover:bg-[#006b2d] disabled:opacity-50"
+                    className="sa-press h-9 shrink-0 rounded-[10px] bg-[#008236] px-4 text-[13px] font-medium text-white hover:bg-[#006b2d] disabled:opacity-50"
                   >
                     {approvingId === inv.id ? 'Approving…' : 'Approve cost'}
                   </button>
@@ -703,7 +721,7 @@ export function AdminAnalyticsDashboard() {
         />
       </div>
 
-      <section className="mt-4 rounded-[10px] border border-[#e5e7eb] bg-white shadow-[0px_1px_2px_-1px_rgba(0,0,0,0.06)]">
+      <section className="sa-surface mt-4 rounded-[10px] border border-[#e5e7eb] bg-white shadow-[0px_1px_2px_-1px_rgba(0,0,0,0.06)]">
         <div className="flex flex-wrap items-start justify-between gap-3 border-b border-[#e5e7eb] px-6 py-4">
           <div>
             <h2 className="text-[16px] font-semibold leading-6 text-[#0a0a0a]">
@@ -797,7 +815,7 @@ export function AdminAnalyticsDashboard() {
         </div>
       </section>
 
-      <section className="mt-4 overflow-hidden rounded-[10px] border border-[#e5e7eb] bg-white shadow-[0px_1px_2px_-1px_rgba(0,0,0,0.06)]">
+      <section className="sa-surface mt-4 overflow-hidden rounded-[10px] border border-[#e5e7eb] bg-white shadow-[0px_1px_2px_-1px_rgba(0,0,0,0.06)]">
         <div className="flex flex-wrap items-start justify-between gap-3 border-b border-[#e5e7eb] px-6 py-4">
           <div>
             <h2 className="text-[16px] font-semibold leading-6 text-[#0a0a0a]">PM compliance</h2>
@@ -842,7 +860,7 @@ export function AdminAnalyticsDashboard() {
             </div>
             <div className="mt-3 h-2 overflow-hidden rounded-full bg-[#f3f4f6]">
               <div
-                className="h-full rounded-full bg-[#00c950] transition-all duration-300"
+                className="sa-bar h-full rounded-full bg-[#00c950]"
                 style={{
                   width: loading || analytics.pmCompliance == null ? '0%' : `${analytics.pmCompliance}%`,
                 }}
@@ -858,6 +876,27 @@ export function AdminAnalyticsDashboard() {
                     : 'Tasks appear when property assets generate preventive work'}
             </p>
           </div>
+
+          {!loading && (pmComplianceData?.safetyHazardAlerts?.length ?? 0) > 0 ? (
+            <div className="mb-4 rounded-[10px] border border-[#fecaca] bg-[#fef2f2] px-4 py-3">
+              <p className="text-[13px] font-semibold text-[#991b1b]">
+                Safety hazards from inspection
+              </p>
+              <p className="mt-0.5 text-[12px] text-[#b91c1c]">
+                Separate from routine PM scheduling — address these before they become emergencies.
+              </p>
+              <ul className="mt-2 space-y-1.5">
+                {(pmComplianceData?.safetyHazardAlerts ?? []).slice(0, 8).map((alert, idx) => (
+                  <li key={`${alert.unitAssetId}-${idx}`} className="text-[12px] text-[#7f1d1d]">
+                    <span className="font-semibold">{alert.label}</span>
+                    {alert.building ? ` · ${alert.building}` : ''}
+                    {' — '}
+                    {alert.description}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ) : null}
 
           {loading ? (
             <p className="py-6 text-center text-[13px] text-[#6a7282]">Loading tasks…</p>
@@ -878,8 +917,8 @@ export function AdminAnalyticsDashboard() {
                 </span>
               </div>
               <div className="divide-y divide-[#f3f4f6]">
-                {analytics.pmTasks.map((task) => (
-                  <PmComplianceRow key={task.id} task={task} />
+                {analytics.pmTasks.map((task, index) => (
+                  <PmComplianceRow key={task.id} task={task} index={index} />
                 ))}
               </div>
             </div>
@@ -893,7 +932,7 @@ export function AdminAnalyticsDashboard() {
         <div className="border-t border-[#e5e7eb] px-6 py-4 text-center">
           <Link
             to="/admin/workflows"
-            className="inline-flex h-9 items-center justify-center rounded-[10px] border border-black/10 bg-white px-4 text-[14px] font-medium text-tertiary transition-colors duration-150 hover:bg-[#e2f5f1]"
+            className="sa-press inline-flex h-9 items-center justify-center rounded-[10px] border border-[#186179] bg-white px-4 text-[14px] font-medium text-[#186179] hover:bg-[#e8f2f5]"
           >
             Schedule all overdue tasks →
           </Link>

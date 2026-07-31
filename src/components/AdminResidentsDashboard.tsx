@@ -1,17 +1,30 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import magnifyingGlassIcon from '@/assets/Magnifying glass.svg'
 import { TableCheckbox } from '@/components/TableCheckbox'
 import { loadUnitsFromDb } from '@/api/unitVacancy'
 import { registerUnitSms, syncSmsIdentity } from '@/api/landlordSmsOnboarding'
 import {
+  activateTenantAfterAdd,
+  resendTenantActivationSms,
+  tenantActivationWarningMessage,
+} from '@/api/tenantActivation'
+import {
   AddResidentModal,
   type AddResidentSubmitPayload,
 } from '@/components/AddResidentModal'
+import {
+  TenantActivationActionRequiredActions,
+  TenantActivationStatusChip,
+} from '@/components/TenantActivationStatusChip'
 import { getActiveLandlordId } from '@/lib/activeLandlord'
 import { customUnitPickKey, unitOptionKeyToCell } from '@/lib/residentUnitKeys'
 import { propertyResidentDetailPath } from '@/lib/propertyRoutes'
+import { displayResidentEmail } from '@/lib/residentProfileDetail'
+import { deleteResidentsForLandlord } from '@/lib/residentDeletion'
+import { resolveTenantActivationChip } from '@/lib/tenantActivationStatus'
 import { supabase } from '@/lib/supabase'
+import { getErrorMessage } from '@/lib/errorMessage'
 
 type Sentiment = 'positive' | 'at_risk' | 'neutral'
 type SentimentFilter = 'all' | Sentiment
@@ -30,6 +43,10 @@ type ResidentRow = {
   balanceDue: number
   sentiment: Sentiment
   status: string
+  activationStatus: string | null
+  smsConsentStatus: string | null
+  activationAttemptCount: number
+  activationSmsSentAt: string | null
 }
 
 function asString(value: unknown): string {
@@ -75,22 +92,17 @@ function formatMoveIn(value: string | null): string {
   return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })
 }
 
-function estimateMonthlyRent(unit: string | null): number {
-  const unitNumber = Number.parseInt((unit ?? '').replace(/\D/g, ''), 10)
-  if (!Number.isFinite(unitNumber)) return 1800
-  if (unitNumber >= 500) return 2400
-  if (unitNumber >= 400) return 2200
-  if (unitNumber >= 300) return 2000
-  if (unitNumber >= 200) return 1850
-  return 1650
-}
-
 function formatBalance(amount: number): string {
   return amount.toLocaleString(undefined, {
     style: 'currency',
     currency: 'USD',
     maximumFractionDigits: 0,
   })
+}
+
+function formatMonthlyRent(amount: number | null): string {
+  if (amount == null || !Number.isFinite(amount) || amount <= 0) return '—'
+  return formatBalance(amount)
 }
 
 /** Infer sentiment from lease, balance, and account signals (proxy until AI sentiment pipeline ships). */
@@ -179,7 +191,7 @@ function FilterSelect({
         aria-label={label}
         value={value}
         onChange={(e) => onChange(e.target.value)}
-        className="peer h-9 min-w-[140px] cursor-pointer appearance-none rounded-lg border border-transparent bg-[#f3f3f5] py-1 pl-3 pr-9 text-[14px] font-medium tracking-[-0.1504px] text-[#0a0a0a] shadow-none outline-none transition-[background-color,border-color,box-shadow] duration-150 hover:border-black/10 hover:bg-[#e8eaee] focus:border-[#0030b5]/45 focus:bg-white focus:ring-2 focus:ring-[#0030b5]/30"
+        className="sa-surface peer h-9 min-w-[140px] cursor-pointer appearance-none rounded-lg border border-transparent bg-[#f3f3f5] py-1 pl-3 pr-9 text-[14px] font-medium tracking-[-0.1504px] text-[#0a0a0a] shadow-none outline-none hover:border-black/10 hover:bg-[#e8eaee] focus:border-[#0030b5]/45 focus:bg-white focus:ring-2 focus:ring-[#0030b5]/30"
       >
         <option value="">{label}</option>
         {options.map((option) => (
@@ -221,7 +233,7 @@ function FilterToggleGroup<T extends string>({
             aria-pressed={isActive}
             onClick={() => onChange(option.value)}
             className={[
-              'inline-flex h-8 cursor-pointer items-center rounded-md px-3 text-[13px] font-medium tracking-[-0.1504px] outline-none transition-colors duration-150 focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-1',
+              'sa-pill inline-flex h-8 cursor-pointer items-center rounded-md px-3 text-[13px] font-medium tracking-[-0.1504px] outline-none focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-1',
               isActive
                 ? 'bg-white text-[#0a0a0a] shadow-sm'
                 : 'text-[#6a7282] hover:text-[#364153]',
@@ -236,6 +248,7 @@ function FilterToggleGroup<T extends string>({
 }
 
 export function AdminResidentsDashboard() {
+  const navigate = useNavigate()
   const [residents, setResidents] = useState<ResidentRow[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -248,6 +261,8 @@ export function AdminResidentsDashboard() {
   const [selectedResidentIds, setSelectedResidentIds] = useState<Set<string>>(() => new Set())
   const [deleteResidentsSaving, setDeleteResidentsSaving] = useState(false)
   const [deleteResidentsError, setDeleteResidentsError] = useState<string | null>(null)
+  const [resendingResidentId, setResendingResidentId] = useState<string | null>(null)
+  const [activationActionError, setActivationActionError] = useState<string | null>(null)
 
   const loadResidents = useCallback(async () => {
     if (!supabase) {
@@ -259,16 +274,35 @@ export function AdminResidentsDashboard() {
     setLoading(true)
     setError(null)
 
-    const { data, error: fetchError } = await supabase
+    const selectWithActivation =
+      'id, full_name, unit, building, status, balance_due, lease_end_date, move_in_date, phone, email, issues, monthly_rent, activation_status, sms_consent_status, activation_attempt_count, activation_sms_sent_at'
+    const selectLegacy =
+      'id, full_name, unit, building, status, balance_due, lease_end_date, move_in_date, phone, email, issues, monthly_rent'
+
+    let data: Record<string, unknown>[] | null = null
+    let fetchError: { message: string } | null = null
+
+    const primary = await supabase
       .from('users')
-      .select(
-        'id, full_name, unit, building, status, balance_due, lease_end_date, move_in_date, phone, email, issues',
-      )
+      .select(selectWithActivation)
       .eq('landlord_id', getActiveLandlordId())
       .neq('status', 'past_resident')
 
+    if (primary.error && /column .* does not exist/i.test(primary.error.message)) {
+      const legacy = await supabase
+        .from('users')
+        .select(selectLegacy)
+        .eq('landlord_id', getActiveLandlordId())
+        .neq('status', 'past_resident')
+      data = (legacy.data as Record<string, unknown>[] | null) ?? null
+      fetchError = legacy.error
+    } else {
+      data = (primary.data as Record<string, unknown>[] | null) ?? null
+      fetchError = primary.error
+    }
+
     if (fetchError) {
-      setError(fetchError.message)
+      setError(getErrorMessage(fetchError, 'Something went wrong. Please try again.'))
       setResidents([])
       setLoading(false)
       return
@@ -281,13 +315,14 @@ export function AdminResidentsDashboard() {
         const leaseEndDate = asString(raw.lease_end_date) || null
         const unit = asString(raw.unit) || null
         const phone = asString(raw.phone) || null
-        const email = asString(raw.email) || null
+        const email = displayResidentEmail(asString(raw.email) || null)
+        const monthlyRent = asFiniteNumber(raw.monthly_rent)
         return {
           id: asString(raw.id),
           name: asString(raw.full_name) || 'Unnamed resident',
           building: asString(raw.building) || null,
           unitLabel: formatUnit(asString(raw.building) || null, unit),
-          rentLabel: formatBalance(estimateMonthlyRent(unit)),
+          rentLabel: formatMonthlyRent(monthlyRent > 0 ? monthlyRent : null),
           moveInLabel: formatMoveIn(asString(raw.move_in_date) || null),
           contactPhone: phone,
           contactEmail: email,
@@ -300,6 +335,10 @@ export function AdminResidentsDashboard() {
             issues: asStringArray(raw.issues),
           }),
           status,
+          activationStatus: asString(raw.activation_status) || null,
+          smsConsentStatus: asString(raw.sms_consent_status) || null,
+          activationAttemptCount: asFiniteNumber(raw.activation_attempt_count),
+          activationSmsSentAt: asString(raw.activation_sms_sent_at) || null,
         }
       })
       .filter((row) => row.id)
@@ -307,6 +346,20 @@ export function AdminResidentsDashboard() {
     setResidents(rows)
     setLoading(false)
   }, [])
+
+  async function handleResendWelcome(residentId: string) {
+    setActivationActionError(null)
+    setResendingResidentId(residentId)
+    const result = await resendTenantActivationSms({ residentId })
+    setResendingResidentId(null)
+    if (!result.ok || (result.failed ?? 0) > 0) {
+      setActivationActionError(
+        result.error ||
+          'Welcome text could not be delivered. Check the phone number and try again.',
+      )
+    }
+    await loadResidents()
+  }
 
   useEffect(() => {
     void loadResidents()
@@ -398,7 +451,18 @@ export function AdminResidentsDashboard() {
       })
     }
 
+    if (newResidentId && payload.phone?.trim()) {
+      const activation = await activateTenantAfterAdd({
+        landlordId,
+        residentId: newResidentId,
+        phone: payload.phone,
+      })
+      const warning = tenantActivationWarningMessage(activation)
+      if (warning) setAddResidentError(warning)
+    }
+
     await loadResidents()
+    setAddResidentOpen(false)
   }
 
   const filteredResidents = useMemo(() => {
@@ -463,14 +527,13 @@ export function AdminResidentsDashboard() {
     const landlordId = getActiveLandlordId()
     const idsToDelete = Array.from(selectedResidentIds)
 
-    const { error } = await supabase
-      .from('users')
-      .delete()
-      .eq('landlord_id', landlordId)
-      .in('id', idsToDelete)
+    const result = await deleteResidentsForLandlord({
+      landlordId,
+      residentIds: idsToDelete,
+    })
 
-    if (error) {
-      setDeleteResidentsError(error.message)
+    if (!result.ok) {
+      setDeleteResidentsError(result.error)
       setDeleteResidentsSaving(false)
       return
     }
@@ -498,7 +561,7 @@ export function AdminResidentsDashboard() {
             setAddResidentError(null)
             setAddResidentOpen(true)
           }}
-          className="inline-flex h-9 shrink-0 cursor-pointer items-center justify-center gap-2 rounded-[10px] border border-black/10 bg-white px-4 text-[14px] font-medium leading-5 text-tertiary outline-none transition-colors duration-150 hover:bg-[#e2f5f1] focus-visible:ring-2 focus-visible:ring-[#101828] focus-visible:ring-offset-2"
+          className="sa-press inline-flex h-9 shrink-0 cursor-pointer items-center justify-center gap-2 rounded-[10px] bg-transparent px-4 text-[14px] font-medium leading-5 text-[#186179] outline-none focus-visible:ring-2 focus-visible:ring-[#186179] focus-visible:ring-offset-2"
         >
           <svg
             viewBox="0 0 24 24"
@@ -526,7 +589,7 @@ export function AdminResidentsDashboard() {
         </div>
       ) : null}
 
-      <div className="mb-4 rounded-[10px] border border-[#e5e7eb] bg-white p-4 shadow-[0px_1px_2px_-1px_rgba(0,0,0,0.06)]">
+      <div className="sa-surface mb-4 rounded-[10px] border border-[#e5e7eb] bg-white p-4 shadow-[0px_1px_2px_-1px_rgba(0,0,0,0.06)]">
         <div className="flex flex-col gap-3 xl:flex-row xl:items-center">
           <div className="relative min-w-0 flex-1 xl:min-w-[240px]">
             <span className="pointer-events-none absolute left-3 top-1/2 flex size-4 -translate-y-1/2 items-center justify-center">
@@ -545,7 +608,7 @@ export function AdminResidentsDashboard() {
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               placeholder="Search residents by name or unit…"
-              className="h-9 w-full rounded-lg border border-transparent bg-[#e8e9ed] py-1 pl-10 pr-3 text-[14px] tracking-[-0.1504px] text-[#0a0a0a] shadow-none placeholder:text-[#717182] outline-none transition-[background-color,border-color,box-shadow] duration-150 hover:border-black/10 hover:bg-[#dfe0e6] focus:border-[#0030b5]/45 focus:bg-white focus:ring-2 focus:ring-[#0030b5]/30"
+              className="sa-surface h-9 w-full rounded-lg border border-transparent bg-[#e8e9ed] py-1 pl-10 pr-3 text-[14px] tracking-[-0.1504px] text-[#0a0a0a] shadow-none placeholder:text-[#717182] outline-none hover:border-black/10 hover:bg-[#dfe0e6] focus:border-[#0030b5]/45 focus:bg-white focus:ring-2 focus:ring-[#0030b5]/30"
               aria-label="Search residents"
             />
           </div>
@@ -576,6 +639,11 @@ export function AdminResidentsDashboard() {
           Could not delete selected residents: {deleteResidentsError}
         </div>
       ) : null}
+      {activationActionError ? (
+        <div className="mb-4 rounded-[10px] border border-[#fecaca] bg-[#fef2f2] px-4 py-3 text-[13px] text-[#b91c1c]">
+          {activationActionError}
+        </div>
+      ) : null}
 
       {selectedResidentCount > 0 ? (
         <div className="mb-4 flex flex-wrap items-center justify-between gap-2 rounded-[10px] border border-[#e5e7eb] bg-white px-4 py-3 shadow-[0px_1px_2px_-1px_rgba(0,0,0,0.06)]">
@@ -587,7 +655,7 @@ export function AdminResidentsDashboard() {
             <button
               type="button"
               onClick={() => setSelectedResidentIds(new Set())}
-              className="inline-flex h-9 items-center justify-center rounded-lg border border-black/10 bg-white px-3 text-[14px] font-medium text-[#0a0a0a] outline-none hover:bg-[#f3f4f6] focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2"
+              className="sa-press inline-flex h-9 items-center justify-center rounded-lg border border-black/10 bg-white px-3 text-[14px] font-medium text-[#0a0a0a] outline-none hover:bg-[#f3f4f6] focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2"
             >
               Clear selection
             </button>
@@ -595,7 +663,7 @@ export function AdminResidentsDashboard() {
               type="button"
               disabled={deleteResidentsSaving}
               onClick={() => void deleteSelectedResidents()}
-              className="inline-flex h-9 items-center justify-center rounded-lg border border-[#b52a00]/30 bg-[#fff4f0] px-3 text-[14px] font-medium text-[#b52a00] outline-none hover:bg-[#ffe9e1] focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50"
+              className="sa-press inline-flex h-9 items-center justify-center rounded-lg border border-[#b52a00]/30 bg-[#fff4f0] px-3 text-[14px] font-medium text-[#b52a00] outline-none hover:bg-[#ffe9e1] focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50"
             >
               {deleteResidentsSaving ? 'Deleting…' : 'Delete selected'}
             </button>
@@ -603,7 +671,7 @@ export function AdminResidentsDashboard() {
         </div>
       ) : null}
 
-      <section className="rounded-[10px] border border-[#e5e7eb] bg-white shadow-[0px_1px_2px_-1px_rgba(0,0,0,0.06)]">
+      <section className="sa-surface rounded-[10px] border border-[#e5e7eb] bg-white shadow-[0px_1px_2px_-1px_rgba(0,0,0,0.06)]">
         <div className="overflow-x-auto overscroll-x-contain">
           <table className="min-w-full border-collapse text-left">
             <thead>
@@ -624,28 +692,33 @@ export function AdminResidentsDashboard() {
                 <th className="px-6 py-3 text-[12px] font-medium text-[#6a7282]">Contact</th>
                 <th className="px-6 py-3 text-[12px] font-medium text-[#6a7282]">Lease ends</th>
                 <th className="px-6 py-3 text-[12px] font-medium text-[#6a7282]">Balance</th>
+                <th className="px-6 py-3 text-[12px] font-medium text-[#6a7282]">Activation</th>
                 <th className="px-6 py-3 text-[12px] font-medium text-[#6a7282]">Sentiment</th>
               </tr>
             </thead>
             <tbody>
               {loading ? (
                 <tr>
-                  <td colSpan={9} className="px-6 py-10 text-center text-[14px] text-[#6a7282]">
+                  <td colSpan={10} className="px-6 py-10 text-center text-[14px] text-[#6a7282]">
                     Loading residents…
                   </td>
                 </tr>
               ) : filteredResidents.length === 0 ? (
                 <tr>
-                  <td colSpan={9} className="px-6 py-10 text-center text-[14px] text-[#6a7282]">
+                  <td colSpan={10} className="px-6 py-10 text-center text-[14px] text-[#6a7282]">
                     {residents.length === 0 ? (
                       <>
                         No residents yet.{' '}
-                        <Link
-                          to="/admin/users"
-                          className="text-tertiary underline-offset-2 hover:underline"
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setAddResidentError(null)
+                            setAddResidentOpen(true)
+                          }}
+                          className="sa-link text-tertiary underline-offset-2 hover:underline"
                         >
                           Add residents
-                        </Link>{' '}
+                        </button>{' '}
                         so Ulo can reach them.
                       </>
                     ) : (
@@ -654,8 +727,12 @@ export function AdminResidentsDashboard() {
                   </td>
                 </tr>
               ) : (
-                filteredResidents.map((resident) => (
-                  <tr key={resident.id} className="border-b border-[#f3f4f6] last:border-b-0">
+                filteredResidents.map((resident, index) => (
+                  <tr
+                    key={resident.id}
+                    style={{ animationDelay: `${Math.min(index, 12) * 30}ms` }}
+                    className="sa-enter border-b border-[#f3f4f6] last:border-b-0"
+                  >
                     <td className="w-12 px-4 py-4">
                       <TableCheckbox
                         aria-label={`Select ${resident.name}`}
@@ -667,7 +744,7 @@ export function AdminResidentsDashboard() {
                       {resident.building ? (
                         <Link
                           to={propertyResidentDetailPath(resident.building, resident.id)}
-                          className="rounded-[4px] text-[#0a0a0a] transition-colors hover:text-[#186179] hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2"
+                          className="sa-link rounded-[4px] text-[#0a0a0a] hover:text-[#186179] hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2"
                         >
                           {resident.name}
                         </Link>
@@ -709,6 +786,35 @@ export function AdminResidentsDashboard() {
                       ].join(' ')}
                     >
                       {formatBalance(resident.balanceDue)}
+                    </td>
+                    <td className="px-6 py-4 align-top">
+                      {(() => {
+                        const chip = resolveTenantActivationChip({
+                          activationStatus: resident.activationStatus,
+                          smsConsentStatus: resident.smsConsentStatus,
+                          activationAttemptCount: resident.activationAttemptCount,
+                          activationSmsSentAt: resident.activationSmsSentAt,
+                        })
+                        return (
+                          <div className="flex min-w-0 flex-col items-start gap-2">
+                            <TenantActivationStatusChip chip={chip} />
+                            {chip.actionRequired ? (
+                              <TenantActivationActionRequiredActions
+                                phone={resident.contactPhone}
+                                resending={resendingResidentId === resident.id}
+                                onResend={() => void handleResendWelcome(resident.id)}
+                                onEditPhone={() => {
+                                  if (resident.building) {
+                                    navigate(
+                                      propertyResidentDetailPath(resident.building, resident.id),
+                                    )
+                                  }
+                                }}
+                              />
+                            ) : null}
+                          </div>
+                        )
+                      })()}
                     </td>
                     <td className="px-6 py-4">
                       <SentimentBadge sentiment={resident.sentiment} />

@@ -143,8 +143,15 @@ export async function submitSmsMaintenanceRequest(
     conversationId: string
     residentId: string
     intake: SmsIntakeState
+    /** When true, always insert a new ticket (multi-issue follow-on submits). */
+    forceNewTicket?: boolean
+    /**
+     * Reuse this vendor when assigning (same unit + same trade multi-issue).
+     * Falls back to normal trade pick if the vendor is no longer ACTIVE.
+     */
+    preferVendorId?: string | null
   },
-): Promise<{ ticketId: string }> {
+): Promise<{ ticketId: string; vendorId: string | null }> {
   const { data: resident, error: residentErr } = await supabase
     .from("users")
     .select("id, full_name, email, phone, unit")
@@ -174,6 +181,9 @@ export async function submitSmsMaintenanceRequest(
     params.intake.preferred_contact_method,
   )
 
+  const residentAvailability =
+    params.intake.preferred_visit_windows?.trim() || null
+
   const ticketFields = {
     landlord_id: params.landlordId,
     priority,
@@ -190,13 +200,16 @@ export async function submitSmsMaintenanceRequest(
     estimated_minutes: estimatedMinutes,
     due_at: dueAt.toISOString(),
     vendor_work_status: "unassigned",
+    resident_availability_text: residentAvailability,
   }
 
-  const existingTicketId = await resolveExistingDraftTicketId(
-    supabase,
-    params.conversationId,
-    params.intake,
-  )
+  const existingTicketId = params.forceNewTicket
+    ? null
+    : await resolveExistingDraftTicketId(
+      supabase,
+      params.conversationId,
+      params.intake,
+    )
 
   let ticketId: string
   let created = false
@@ -306,6 +319,7 @@ export async function submitSmsMaintenanceRequest(
   }
 
   let vendorAssigned = false
+  let assignedVendorId: string | null = null
   try {
     const assignResult = await assignVendorAndNotify(supabase, {
       ticketId,
@@ -315,8 +329,11 @@ export async function submitSmsMaintenanceRequest(
       dueAt: dueAt.toISOString(),
       estimatedMinutes,
       landlordId: params.landlordId,
+      preferVendorId: params.preferVendorId,
+      residentAvailabilityText: residentAvailability,
     })
     vendorAssigned = assignResult.assigned
+    assignedVendorId = assignResult.vendorId
   } catch (e) {
     console.error("[sms-intake] vendor notify failed", e)
   }
@@ -379,5 +396,5 @@ export async function submitSmsMaintenanceRequest(
     earlyTicketFinalized: !created,
   })
 
-  return { ticketId }
+  return { ticketId, vendorId: assignedVendorId }
 }

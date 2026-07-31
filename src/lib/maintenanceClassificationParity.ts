@@ -1,19 +1,19 @@
 /**
- * Client-side helpers kept aligned with the server unified classification
- * heuristics (supabase/functions/_shared/maintenance_classification).
- *
- * Full LLM/embedding pipeline runs on the edge. This module covers the
- * deterministic signals used for local UX (category chips, previews).
+ * Client-side helpers aligned with shared maintenance classification rules.
+ * Full LLM/embedding pipeline runs on the edge.
  */
+import { inferTradeFromText } from '@shared/maintenance/deterministicRules.ts'
+import {
+  issueCategoryToVendorTrade,
+  type VendorTradeSlug,
+} from '@/lib/vendorTrades'
 
-import { issueCategoryToVendorTrade, type VendorTradeSlug } from './vendorTrades'
-
-/** Deterministic trade inference for free-text descriptions (parity with edge rules). */
+/** Deterministic trade inference for free-text descriptions (shared rules). */
 export function inferTradeFromDescription(text: string): VendorTradeSlug {
-  return issueCategoryToVendorTrade(text)
+  return inferTradeFromText(text) ?? issueCategoryToVendorTrade(text)
 }
 
-/** Examples that must stay plumbing on both client and server. */
+/** Examples that must classify the same on client and edge. */
 export const CLASSIFICATION_PARITY_EXAMPLES: Array<{
   text: string
   trade: VendorTradeSlug

@@ -1,5 +1,6 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1"
 import { logGraphEvent } from "../_shared/graph/logGraphEvent.ts"
+import { handleActivationSmsDeliveryFailure } from "../_shared/sms/tenantActivation.ts"
 import { getSMSProvider } from "../_shared/sms/providerFactory.ts"
 import type { SMSStatusUpdate } from "../_shared/sms/types.ts"
 
@@ -149,6 +150,30 @@ async function processStatusUpdate(
       conversation,
       eventType: "sms.delivery_failed",
     })
+
+    // Welcome/activation SMS: update activation state + landlord ops alert when final.
+    if (row.direction === "outbound") {
+      try {
+        const activation = await handleActivationSmsDeliveryFailure(supabase, {
+          landlordId: row.landlord_id,
+          messageId: row.id,
+          conversationId: row.conversation_id,
+          residentId: conversation?.resident_id ?? null,
+          providerStatus: statusUpdate.status,
+          errorCode: statusUpdate.errorCode ?? null,
+        })
+        if (activation.handled) {
+          console.info("[sms-status-callback] activation undeliverable handled", {
+            messageId: row.id,
+            actionRequired: activation.actionRequired ?? false,
+            reason: activation.reason ?? null,
+          })
+        }
+      } catch (e) {
+        console.error("[sms-status-callback] activation undeliverable handler", e)
+      }
+    }
+
     return { ok: true, messageId: row.id, graphEvent: "sms.delivery_failed" }
   }
 

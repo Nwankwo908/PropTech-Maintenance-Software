@@ -2,14 +2,17 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useParams } from 'react-router-dom'
 import { VENDOR_TRADE_OPTIONS } from '@/lib/vendorTrades'
 import {
+  createVendorConnectAccountLink,
   fileToBase64,
   refreshVendorBackgroundStatus,
+  refreshVendorConnectStatus,
   resolveVendorVerification,
   saveVendorVerification,
   startVendorBackgroundCheck,
   submitVendorVerification,
   uploadVendorDocument,
   verifyVendorLicense,
+  type VendorStripePayoutMethod,
   type VendorVerificationDocument,
   type VendorVerificationSession,
 } from '@/api/vendorVerification'
@@ -17,6 +20,18 @@ import type {
   VerificationChecklistItem,
   VerificationItemStatus,
 } from '@/lib/vendorVerificationChecklist'
+import {
+  isTaxEntityType,
+  maskTin,
+  normalizeTinDigits,
+  TAX_ENTITY_OPTIONS,
+  taxProfileComplete,
+  taxProfileForEntity,
+  tinFieldHint,
+  tinFieldLabel,
+  type TaxEntityType,
+} from '@/lib/vendorW9Tax'
+import { getErrorMessage } from '@/lib/errorMessage'
 
 const STEPS = [
   { id: 'business', label: 'Business Info' },
@@ -60,6 +75,35 @@ function InvalidLinkView({ message }: { message: string }) {
         <p className="mt-2 text-[14px] leading-6 text-[#6a7282]">{message}</p>
       </Card>
     </Shell>
+  )
+}
+
+function PayoutMethodsList({ methods }: { methods: VendorStripePayoutMethod[] }) {
+  if (methods.length === 0) return null
+  return (
+    <ul className="mt-3 space-y-2">
+      {methods.map((method) => (
+        <li
+          key={method.id}
+          className="rounded-[10px] border border-[#dbe4ea] bg-white px-3 py-2.5"
+        >
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <p className="text-[13px] font-semibold text-[#101828]">{method.label}</p>
+              <p className="mt-0.5 text-[12px] text-[#6a7282]">
+                {method.kind === 'bank_account' ? 'Bank account' : 'Debit card'}
+                {method.currency ? ` · ${method.currency}` : ''}
+              </p>
+            </div>
+            {method.defaultForCurrency ? (
+              <span className="shrink-0 rounded-md bg-[#ecfdf3] px-2 py-0.5 text-[11px] font-semibold text-[#15803d]">
+                Default
+              </span>
+            ) : null}
+          </div>
+        </li>
+      ))}
+    </ul>
   )
 }
 
@@ -197,6 +241,9 @@ export function VendorIntakePortal() {
   const [cities, setCities] = useState('')
   const [radiusMiles, setRadiusMiles] = useState('')
   const [availability, setAvailability] = useState<'active' | 'paused'>('active')
+  const [taxEntityType, setTaxEntityType] = useState<TaxEntityType | ''>('')
+  const [tin, setTin] = useState('')
+  const [tinSavedLast4, setTinSavedLast4] = useState<string | null>(null)
 
   const initializedRef = useRef(false)
   // Documents already on the record when the vendor opened the link. We only
@@ -223,13 +270,21 @@ export function VendorIntakePortal() {
       setZips('')
       setCities('')
       setRadiusMiles('')
-      setAvailability('active')
+      setAvailability(s.availability === 'paused' ? 'paused' : 'active')
+      setTaxEntityType(isTaxEntityType(s.taxEntityType) ? s.taxEntityType : '')
+      setTin('')
+      setTinSavedLast4(s.tinLast4)
     } else {
       // Later refreshes (after an upload/verify): only fold in server-computed
       // license fields (e.g. the scanned number) and never clobber what the
       // vendor has already typed or selected.
       setLicenseState((prev) => s.license.state ?? prev)
       setLicenseNumber((prev) => s.license.number ?? prev)
+      if (s.availability === 'active' || s.availability === 'paused') {
+        setAvailability(s.availability)
+      }
+      if (isTaxEntityType(s.taxEntityType)) setTaxEntityType(s.taxEntityType)
+      if (s.tinLast4) setTinSavedLast4(s.tinLast4)
     }
 
     if (s.status === 'verified' || s.status === 'needs_review' || s.status === 'submitted') {
@@ -244,17 +299,36 @@ export function VendorIntakePortal() {
       setLoading(false)
       return
     }
-    resolveVendorVerification(token)
-      .then(({ session: s }) => {
+
+    const connectParam = new URLSearchParams(window.location.search).get('connect')
+    const returningFromConnect =
+      connectParam === 'return' || connectParam === 'refresh'
+
+    const boot = async () => {
+      try {
+        if (returningFromConnect) {
+          setStep(4)
+          const { session: s } = await refreshVendorConnectStatus(token)
+          if (!active) return
+          hydrate(s)
+          // Drop the query flag so refresh doesn't re-hit Stripe every time.
+          const url = new URL(window.location.href)
+          url.searchParams.delete('connect')
+          window.history.replaceState({}, '', url.toString())
+        } else {
+          const { session: s } = await resolveVendorVerification(token)
+          if (!active) return
+          hydrate(s)
+        }
+      } catch (err) {
         if (!active) return
-        hydrate(s)
-        setLoading(false)
-      })
-      .catch((err) => {
-        if (!active) return
-        setInvalid(err instanceof Error ? err.message : 'This link is not valid.')
-        setLoading(false)
-      })
+        setInvalid(getErrorMessage(err, 'This link is not valid.'))
+      } finally {
+        if (active) setLoading(false)
+      }
+    }
+
+    void boot()
     return () => {
       active = false
     }
@@ -269,7 +343,7 @@ export function VendorIntakePortal() {
         hydrate(s)
         return s
       } catch (err) {
-        setActionError(err instanceof Error ? err.message : 'Something went wrong. Try again.')
+        setActionError(getErrorMessage(err, 'Something went wrong. Try again.'))
         return null
       } finally {
         setBusy(false)
@@ -293,6 +367,14 @@ export function VendorIntakePortal() {
     [zips, cities, radiusMiles],
   )
 
+  const taxProfile = taxEntityType ? taxProfileForEntity(taxEntityType) : null
+  const w9TaxReady = taxProfileComplete({
+    w9Received: session?.w9Received ?? false,
+    taxEntityType: taxEntityType || session?.taxEntityType,
+    tinType: taxProfile?.tinType ?? session?.tinType,
+    tinLast4: tinSavedLast4 ?? session?.tinLast4,
+  })
+
   if (loading) return <LoadingView />
   if (invalid) return <InvalidLinkView message={invalid} />
   if (!session) return <InvalidLinkView message="This link is not valid." />
@@ -300,6 +382,7 @@ export function VendorIntakePortal() {
   if (completed) {
     const checklist = session.checklist
     const verified = checklist.overall === 'verified'
+    const capacityPaused = availability === 'paused'
     return (
       <Shell>
         <Card>
@@ -316,10 +399,50 @@ export function VendorIntakePortal() {
             </h1>
             <p className="mt-2 text-[14px] leading-6 text-[#6a7282]">
               {verified
-                ? 'Your profile is complete and the property manager can start sending you work.'
+                ? 'Your account is active. Use the toggle below when you need to pause or resume new job offers.'
                 : 'We received your information. A few items still need review before you can be assigned work.'}
             </p>
           </div>
+          {verified ? (
+            <div className="mt-6 rounded-[12px] border border-[#e5e7eb] bg-[#f9fafb] p-4">
+              <p className="text-[13px] font-semibold text-[#0a0a0a]">Job offers</p>
+              <p className="mt-1 text-[12px] leading-5 text-[#6a7282]">
+                Capacity is separate from verification. Pausing stops new jobs only — work you
+                already accepted stays on your schedule.
+              </p>
+              <div className="mt-3 flex gap-2">
+                {(['active', 'paused'] as const).map((opt) => (
+                  <button
+                    key={opt}
+                    type="button"
+                    disabled={busy}
+                    onClick={() => {
+                      void (async () => {
+                        const prev = availability
+                        setAvailability(opt)
+                        const s = await runAction(() =>
+                          saveVendorVerification(token, { availability: opt }),
+                        )
+                        if (!s) setAvailability(prev)
+                      })()
+                    }}
+                    className={`flex-1 rounded-[10px] px-3 py-2.5 text-[14px] font-medium transition-colors disabled:opacity-50 ${
+                      availability === opt
+                        ? 'bg-[#186179] text-white'
+                        : 'bg-white text-[#364153] ring-1 ring-[#e5e7eb] hover:bg-[#f3f4f6]'
+                    }`}
+                  >
+                    {opt === 'active' ? 'Accepting work' : 'Paused'}
+                  </button>
+                ))}
+              </div>
+              <p className="mt-2 text-[12px] text-[#6a7282]">
+                {capacityPaused
+                  ? 'Paused — no new job offers. Reply RESUME by text anytime.'
+                  : 'Accepting work — reply PAUSE by text anytime to stop new offers.'}
+              </p>
+            </div>
+          ) : null}
           <ul className="mt-6 divide-y divide-[#f3f4f6]">
             {checklist.items.map((item) => (
               <ChecklistRow key={item.id} item={item} />
@@ -548,6 +671,93 @@ export function VendorIntakePortal() {
 
         {step === 4 ? (
           <div className="space-y-4">
+            <div className="rounded-[12px] border border-[#e5e7eb] bg-[#f9fafb] p-4">
+              <p className="text-[13px] font-semibold text-[#0a0a0a]">Tax entity (W-9)</p>
+              <p className="mt-1 text-[12px] leading-5 text-[#6a7282]">
+                Sole proprietors: SSN. LLCs/corps: EIN. Entity type determines W-9 variant and
+                1099 treatment — must be captured correctly.
+              </p>
+              <label className="mt-3 block">
+                <span className="text-[13px] font-medium text-[#364153]">Entity type</span>
+                <select
+                  value={taxEntityType}
+                  onChange={(e) => {
+                    const next = e.target.value
+                    setTaxEntityType(isTaxEntityType(next) ? next : '')
+                    setTin('')
+                    if (isTaxEntityType(next)) {
+                      const nextTin = taxProfileForEntity(next).tinType
+                      if (session.tinType && session.tinType !== nextTin) {
+                        setTinSavedLast4(null)
+                      }
+                    } else {
+                      setTinSavedLast4(null)
+                    }
+                  }}
+                  className="mt-1.5 w-full rounded-[10px] border border-[#d1d5dc] bg-white px-3 py-2.5 text-[15px] text-[#0a0a0a] outline-none focus:border-[#186179] focus:ring-2 focus:ring-[#186179]/20"
+                >
+                  <option value="">Select entity type…</option>
+                  {TAX_ENTITY_OPTIONS.map((opt) => (
+                    <option key={opt.value} value={opt.value}>
+                      {opt.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              {taxProfile ? (
+                <div className="mt-3 space-y-2">
+                  <p className="text-[12px] leading-5 text-[#364153]">
+                    Uses <strong>{taxProfile.tinType.toUpperCase()}</strong> ·{' '}
+                    {taxProfile.w9Variant === 'individual' ? 'Individual' : 'Business'} W-9 ·{' '}
+                    {taxProfile.tax1099Treatment === 'nec'
+                      ? 'Eligible for 1099-NEC'
+                      : 'Corporation — typically no 1099'}
+                  </p>
+                  <Field
+                    label={tinFieldLabel(taxProfile.tinType)}
+                    value={tin}
+                    onChange={setTin}
+                    type="text"
+                    placeholder={
+                      tinSavedLast4
+                        ? `Saved ${maskTin(taxProfile.tinType, tinSavedLast4)} — enter to update`
+                        : taxProfile.tinType === 'ssn'
+                          ? 'XXX-XX-XXXX'
+                          : 'XX-XXXXXXX'
+                    }
+                  />
+                  <p className="text-[11px] leading-4 text-[#6a7282]">
+                    {tinFieldHint(taxProfile.tinType)} We store only the last four digits for
+                    display.
+                  </p>
+                  <button
+                    type="button"
+                    disabled={
+                      busy ||
+                      !taxEntityType ||
+                      (normalizeTinDigits(tin).length === 0 && !tinSavedLast4)
+                    }
+                    onClick={async () => {
+                      if (!taxEntityType) return
+                      const digits = normalizeTinDigits(tin)
+                      const patch =
+                        digits.length > 0
+                          ? { taxEntityType, tin: digits }
+                          : { taxEntityType }
+                      const s = await runAction(() => saveVendorVerification(token, patch))
+                      if (s?.tinLast4) {
+                        setTinSavedLast4(s.tinLast4)
+                        setTin('')
+                      }
+                    }}
+                    className="w-full rounded-[10px] border border-[#186179] px-4 py-2.5 text-[14px] font-semibold text-[#186179] transition-colors hover:bg-[#186179]/5 disabled:opacity-50"
+                  >
+                    {busy ? 'Saving…' : 'Save tax details'}
+                  </button>
+                </div>
+              ) : null}
+            </div>
+
             <FileUpload
               label="Upload your W-9"
               accept="image/*,application/pdf"
@@ -566,6 +776,95 @@ export function VendorIntakePortal() {
               }}
             />
             <UploadedDocs docs={docsOfKind('w9')} />
+
+            <div className="rounded-[12px] border border-[#e5e7eb] bg-[#f9fafb] p-4">
+              <p className="text-[13px] font-semibold text-[#0a0a0a]">Payout account</p>
+              <p className="mt-1 text-[13px] leading-5 text-[#6a7282]">
+                {session.stripeConnectReady
+                  ? 'Confirm this is the account where you want invoice payments deposited.'
+                  : 'Set up payouts so you can get paid when invoices are approved. Takes a few minutes with Stripe.'}
+              </p>
+              {session.stripeConnectReady ? (
+                <>
+                  <p className="mt-3 text-[13px] font-medium text-[#15803d]">
+                    Payout account connected
+                  </p>
+                  {session.payoutMethods.length > 0 ? (
+                    <PayoutMethodsList methods={session.payoutMethods} />
+                  ) : (
+                    <p className="mt-2 text-[12px] text-[#6a7282]">
+                      Stripe is still finishing your account. Tap refresh in a moment if your bank
+                      details don’t appear.
+                    </p>
+                  )}
+                  <div className="mt-3 flex flex-col gap-2 sm:flex-row">
+                    <button
+                      type="button"
+                      disabled={busy}
+                      onClick={async () => {
+                        await runAction(() => refreshVendorConnectStatus(token))
+                      }}
+                      className="rounded-[10px] border border-[#e5e7eb] bg-white px-4 py-2.5 text-[14px] font-medium text-[#101828] transition-colors hover:bg-[#f3f4f6] disabled:opacity-50"
+                    >
+                      Refresh status
+                    </button>
+                    <button
+                      type="button"
+                      disabled={busy}
+                      onClick={async () => {
+                        setBusy(true)
+                        setActionError(null)
+                        try {
+                          const { session: s, url } = await createVendorConnectAccountLink(token)
+                          hydrate(s)
+                          if (url) {
+                            window.location.assign(url)
+                            return
+                          }
+                          setActionError('Could not open payout setup. Try again.')
+                        } catch (err) {
+                          setActionError(
+                            getErrorMessage(err, 'Could not open payout setup. Try again.'),
+                          )
+                        } finally {
+                          setBusy(false)
+                        }
+                      }}
+                      className="rounded-[10px] border border-[#e5e7eb] bg-white px-4 py-2.5 text-[14px] font-medium text-[#101828] transition-colors hover:bg-[#f3f4f6] disabled:opacity-50"
+                    >
+                      Update payout account
+                    </button>
+                  </div>
+                </>
+              ) : (
+                <button
+                  type="button"
+                  disabled={busy}
+                  onClick={async () => {
+                    setBusy(true)
+                    setActionError(null)
+                    try {
+                      const { session: s, url } = await createVendorConnectAccountLink(token)
+                      hydrate(s)
+                      if (url) {
+                        window.location.assign(url)
+                        return
+                      }
+                      setActionError('Could not open payout setup. Try again.')
+                    } catch (err) {
+                      setActionError(
+                        getErrorMessage(err, 'Could not open payout setup. Try again.'),
+                      )
+                    } finally {
+                      setBusy(false)
+                    }
+                  }}
+                  className="mt-3 w-full rounded-[10px] bg-[#186179] px-4 py-2.5 text-[14px] font-semibold text-white transition-colors hover:bg-[#145066] disabled:opacity-50"
+                >
+                  Set up payouts
+                </button>
+              )}
+            </div>
 
             <div>
               <span className="text-[13px] font-medium text-[#364153]">Trades you handle</span>
@@ -629,13 +928,28 @@ export function VendorIntakePortal() {
               <BackButton onClick={goBack} />
               <PrimaryButton
                 loading={busy}
-                disabled={trades.length === 0}
+                disabled={trades.length === 0 || !w9TaxReady}
                 onClick={async () => {
+                  if (!taxEntityType) {
+                    setActionError('Choose your business entity type for the W-9.')
+                    return
+                  }
+                  const digits = normalizeTinDigits(tin)
+                  if (!tinSavedLast4 && digits.length === 0) {
+                    setActionError(
+                      taxProfile?.tinType === 'ssn'
+                        ? 'Enter your Social Security number.'
+                        : 'Enter your Employer Identification Number (EIN).',
+                    )
+                    return
+                  }
                   const s = await runAction(() =>
                     submitVendorVerification(token, {
                       tradeCategories: trades,
                       serviceArea: serviceAreaPatch,
                       availability,
+                      taxEntityType,
+                      ...(digits.length > 0 ? { tin: digits } : {}),
                     }),
                   )
                   if (s) setCompleted(true)
@@ -644,6 +958,12 @@ export function VendorIntakePortal() {
                 Submit
               </PrimaryButton>
             </div>
+            {!w9TaxReady ? (
+              <p className="text-[12px] leading-5 text-[#9a3412]">
+                Finish tax entity, {taxProfile ? taxProfile.tinType.toUpperCase() : 'SSN/EIN'}, and
+                W-9 upload before submitting.
+              </p>
+            ) : null}
           </div>
         ) : null}
       </Card>

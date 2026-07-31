@@ -16,10 +16,7 @@ import { resolveOutboundLandlordSmsLine } from "./landlordSmsOnboarding.ts"
 import { resolveVendorVerificationConversationId } from "./vendorVerificationInbox.ts"
 import type { SmsProviderName } from "./types.ts"
 
-function resolveAppUrl(): string {
-  const raw = Deno.env.get("APP_URL")?.trim() || "https://app.ulohome.io"
-  return raw.replace(/\/$/, "")
-}
+import { uloAppUrl } from "../uloAppUrl.ts"
 
 function firstNameOrVendor(vendorLabel: string): string {
   const trimmed = vendorLabel.trim()
@@ -269,7 +266,7 @@ export async function sendVendorVerificationFollowUpSms(
       })
     }
 
-    const formLink = `${resolveAppUrl()}/v/${params.token}`
+    const formLink = uloAppUrl.vendorVerification(params.token)
     const outstanding = outstandingVerificationLabels(params.checklist)
     const statusBody = params.overall === "verified"
       ? buildVendorVerificationApprovedSms({

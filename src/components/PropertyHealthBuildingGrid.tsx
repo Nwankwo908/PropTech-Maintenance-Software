@@ -89,6 +89,8 @@ type PropertyHealthBuildingGridProps = {
   buildingCount?: number
   emptyCtaHref?: string
   emptyCtaLabel?: string
+  /** When set, empty-state CTA is a button (opens rail) instead of a link. */
+  onEmptyCtaClick?: () => void
   headerAction?: ReactNode
   showMonthlySpend?: boolean
   formatSpend?: (amount: number) => string
@@ -107,13 +109,13 @@ type PropertyHealthBuildingGridProps = {
 }
 
 const HEADER_BTN =
-  'inline-flex shrink-0 items-center justify-center rounded-[10px] border border-black/10 bg-white px-4 py-2 text-[13px] font-medium leading-5 text-tertiary transition-colors duration-150 hover:bg-[#e2f5f1] disabled:pointer-events-none disabled:opacity-50'
+  'sa-press inline-flex shrink-0 items-center justify-center rounded-[10px] bg-transparent px-4 py-2 text-[13px] font-medium leading-5 text-[#186179] disabled:pointer-events-none disabled:opacity-50'
 
 const HEADER_BTN_GHOST =
-  'inline-flex shrink-0 items-center justify-center rounded-[10px] bg-transparent px-4 py-2 text-[13px] font-medium leading-5 text-[#6a7282] transition-colors duration-150 hover:bg-[#f3f4f6] disabled:pointer-events-none disabled:opacity-50'
+  'sa-press inline-flex shrink-0 items-center justify-center rounded-[10px] bg-transparent px-4 py-2 text-[13px] font-medium leading-5 text-[#6a7282] hover:bg-[#f3f4f6] disabled:pointer-events-none disabled:opacity-50'
 
 const HEADER_BTN_DANGER =
-  'inline-flex shrink-0 items-center justify-center gap-1.5 rounded-[10px] bg-transparent px-4 py-2 text-[13px] font-medium leading-5 text-[#b52a00] transition-colors duration-150 hover:bg-[#fff4f0] disabled:pointer-events-none disabled:opacity-50'
+  'sa-press inline-flex shrink-0 items-center justify-center gap-1.5 rounded-[10px] bg-transparent px-4 py-2 text-[13px] font-medium leading-5 text-[#b52a00] hover:bg-[#fff4f0] disabled:pointer-events-none disabled:opacity-50'
 
 const METRIC_CHIP =
   'inline-flex items-center gap-1.5 rounded-[8px] border border-[#e5e7eb] bg-transparent px-2.5 py-1 text-[12px] leading-4 text-[#6a7282]'
@@ -134,8 +136,9 @@ export function PropertyHealthBuildingGrid({
   buildings,
   totalUnits,
   buildingCount,
-  emptyCtaHref = '/admin/users',
+  emptyCtaHref = '/admin/properties',
   emptyCtaLabel = 'Add your first property',
+  onEmptyCtaClick,
   headerAction,
   showMonthlySpend = false,
   formatSpend,
@@ -216,15 +219,25 @@ export function PropertyHealthBuildingGrid({
             <p className="text-[13px] text-[#6a7282]">
               No properties yet. Add buildings and units to start tracking operational health.
             </p>
-            <Link
-              to={emptyCtaHref}
-              className="mt-3 inline-block rounded-[10px] bg-[#101828] px-4 py-2 text-[13px] font-medium text-white hover:bg-[#1e2939]"
-            >
-              {emptyCtaLabel}
-            </Link>
+            {onEmptyCtaClick ? (
+              <button
+                type="button"
+                onClick={onEmptyCtaClick}
+                className="sa-press mt-3 inline-block rounded-[10px] bg-[#101828] px-4 py-2 text-[13px] font-medium text-white hover:bg-[#1e2939]"
+              >
+                {emptyCtaLabel}
+              </button>
+            ) : (
+              <Link
+                to={emptyCtaHref}
+                className="sa-press mt-3 inline-block rounded-[10px] bg-[#101828] px-4 py-2 text-[13px] font-medium text-white hover:bg-[#1e2939]"
+              >
+                {emptyCtaLabel}
+              </Link>
+            )}
           </div>
         ) : (
-          buildings.map((b) => {
+          buildings.map((b, index) => {
             const selected = selection?.selectedBuildings.has(b.building) ?? false
             return (
             <div
@@ -248,8 +261,9 @@ export function PropertyHealthBuildingGrid({
                     }
                   : undefined
               }
+              style={{ animationDelay: `${Math.min(index, 8) * 40}ms` }}
               className={[
-                'group flex flex-col gap-3 rounded-[10px] border bg-white p-4 transition-[border-color,box-shadow,background-color] duration-150',
+                'sa-enter-scale sa-card group flex flex-col gap-3 rounded-[10px] border bg-white p-4',
                 onBuildingOpen ? 'cursor-pointer' : '',
                 selected
                   ? 'border-[#0030b5]/35 ring-1 ring-[#0030b5]/15 hover:border-[#0030b5]/50 hover:shadow-[0px_4px_12px_rgba(0,48,181,0.08)]'
@@ -318,7 +332,7 @@ export function PropertyHealthBuildingGrid({
                     </p>
                     <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-[#f3f4f6]">
                       <div
-                        className={`h-full rounded-full ${HEALTH_BAR_STYLES[b.status]}`}
+                        className={`sa-bar h-full rounded-full ${HEALTH_BAR_STYLES[b.status]}`}
                         style={{ width: `${b.score}%` }}
                       />
                     </div>

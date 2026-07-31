@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { getAdminEdgeSecret } from '@/lib/adminEdgeAuth'
 import { Link, useLocation, useNavigate } from 'react-router-dom'
 import {
   postDiscoverExternalVendors,
@@ -19,13 +20,14 @@ import { LateRentAccountReviewRail } from '@/components/LateRentAccountReviewRai
 import { LateRentAccountMessageRail } from '@/components/LateRentAccountMessageRail'
 import { LeaseRenewalEscalatedRail } from '@/components/LeaseRenewalEscalatedRail'
 import { LeaseRenewalIncentiveMessageRail } from '@/components/LeaseRenewalIncentiveMessageRail'
+import { InvoicePaymentRail, type InvoicePaymentReview, type InvoicePaymentSuccessDetails } from '@/components/InvoicePaymentRail'
 import { SlaOverdueActionRail } from '@/components/SlaOverdueActionRail'
 import { FindExternalVendorRail } from '@/components/FindExternalVendorRail'
 import { VendorCallFlowModal } from '@/components/VendorCallFlowModal'
 import { getActiveLandlordId, isDemoAccountActive } from '@/lib/activeLandlord'
 import {
   ensureOnboardingDashboardMatchesPortfolio,
-} from '@/lib/landlordOnboarding'
+} from '@/lib/onboarding'
 import { useSidebarAdminProfile } from '@/hooks/useSidebarAdminProfile'
 import {
   isMaintenanceAdminVendorEscalationReason,
@@ -44,6 +46,7 @@ import {
   snapshotActiveOperations,
   workflowOperationsPath,
 } from '@/lib/adminWorkflowKanban'
+import { fetchVendorYtdPaidTotal } from '@/lib/workflowPipelineDetail'
 import {
   ADMIN_RIGHT_RAIL_SCRIM,
   ADMIN_RIGHT_RAIL_STACK_HOST,
@@ -111,6 +114,11 @@ import {
   type SlaOverdueTicketInput,
 } from '@/lib/slaOverdueActionReview'
 import {
+  approveMaintenanceInvoice,
+  rejectMaintenanceInvoice,
+} from '@/api/maintenanceInvoice'
+import { completeInvoicePaymentCheckout } from '@/api/invoicePaymentCheckout'
+import {
   buildAutoRemovedAttentionOutcome,
   buildLateRentActionOutcome,
   buildLeaseRenewalActionOutcome,
@@ -125,6 +133,7 @@ import {
 } from '@/lib/leaseRenewalIncentiveMessaging'
 import { enrichExternalVendorSuggestions } from '@/lib/externalVendorDisplay'
 import { supabase } from '@/lib/supabase'
+import { getErrorMessage } from '@/lib/errorMessage'
 
 type OverviewTicket = {
   id: string
@@ -531,7 +540,7 @@ function FeedEventInfo({
         disabled={!target}
         onClick={openTarget}
         className={[
-          'inline-flex rounded p-0.5 outline-none transition-opacity focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-1',
+          'sa-press inline-flex rounded p-0.5 outline-none focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-1',
           target ? 'cursor-pointer hover:opacity-70' : 'cursor-default opacity-40',
         ].join(' ')}
         aria-label={
@@ -618,7 +627,7 @@ function KpiBreakdownInfo({
       <button
         type="button"
         tabIndex={0}
-        className="inline-flex rounded p-0.5 outline-none transition-opacity hover:opacity-70 focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-1"
+        className="sa-press inline-flex rounded p-0.5 outline-none hover:opacity-70 focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-1"
         aria-label={`${title} breakdown`}
       >
         <img
@@ -692,7 +701,7 @@ function KpiCard({
   const neutral = delta === 0
   const good = neutral ? false : positive === goodWhenUp
   return (
-    <div className="flex min-w-0 flex-1 flex-col gap-4 rounded-[10px] border border-[#e5e7eb] bg-white p-6 shadow-[0px_1px_2px_-1px_rgba(0,0,0,0.06)]">
+    <div className="sa-enter-scale flex min-w-0 flex-1 flex-col gap-4 rounded-[10px] border border-[#e5e7eb] bg-white p-6 shadow-[0px_1px_2px_-1px_rgba(0,0,0,0.06)]">
       <div className="flex min-w-0 items-center gap-1.5">
         <p className="truncate text-[14px] leading-5 tracking-[-0.1504px] text-[#6a7282]">
           {label}
@@ -793,7 +802,7 @@ function RecurringIssuesInsightCard({ insight }: { insight: SmartInsight }) {
   const requestWord = requestCount === 1 ? 'Request' : 'Requests'
 
   return (
-    <div className="flex flex-col gap-2 rounded-[12px] border border-[#eef2ff] bg-white p-4 shadow-[0px_1px_3px_rgba(0,0,0,0.08)]">
+    <div className="sa-enter-scale sa-surface flex flex-col gap-2 rounded-[12px] border border-[#eef2ff] bg-white p-4 shadow-[0px_1px_3px_rgba(0,0,0,0.08)]">
       <div className="flex items-start justify-between gap-2">
         <p className="text-[12px] font-extrabold uppercase leading-normal tracking-[0.04em] text-[#9E439F]">
           Recurring Issues
@@ -822,7 +831,7 @@ function RiskInsightCard({ insight }: { insight: SmartInsight }) {
   const requestWord = requestCount === 1 ? 'Request' : 'Requests'
 
   return (
-    <div className="flex flex-col gap-2 rounded-[12px] border border-[#eef2ff] bg-white p-4 shadow-[0px_1px_3px_rgba(0,0,0,0.08)]">
+    <div className="sa-enter-scale sa-surface flex flex-col gap-2 rounded-[12px] border border-[#eef2ff] bg-white p-4 shadow-[0px_1px_3px_rgba(0,0,0,0.08)]">
       <div className="flex items-start justify-between gap-2">
         <p className="text-[12px] font-extrabold uppercase leading-normal tracking-[0.04em] text-[#9E439F]">
           Needs Attention
@@ -851,7 +860,7 @@ function VendorResponseInsightCard({ insight }: { insight: SmartInsight }) {
   const assignedWord = assignedCount === 1 ? 'Work Order' : 'Work Orders'
 
   return (
-    <div className="flex flex-col gap-2 rounded-[12px] border border-[#eef2ff] bg-white p-4 shadow-[0px_1px_3px_rgba(0,0,0,0.08)]">
+    <div className="sa-enter-scale sa-surface flex flex-col gap-2 rounded-[12px] border border-[#eef2ff] bg-white p-4 shadow-[0px_1px_3px_rgba(0,0,0,0.08)]">
       <div className="flex items-start justify-between gap-2">
         <p className="text-[12px] font-extrabold uppercase leading-normal tracking-[0.04em] text-[#9E439F]">
           Vendor Response
@@ -881,7 +890,7 @@ function PreventFutureRepairsInsightCard({ insight }: { insight: SmartInsight })
   const requestWord = requestCount === 1 ? 'Request' : 'Requests'
 
   return (
-    <div className="flex flex-col gap-2 rounded-[12px] border border-[#eef2ff] bg-white p-4 shadow-[0px_1px_3px_rgba(0,0,0,0.08)]">
+    <div className="sa-enter-scale sa-surface flex flex-col gap-2 rounded-[12px] border border-[#eef2ff] bg-white p-4 shadow-[0px_1px_3px_rgba(0,0,0,0.08)]">
       <div className="flex items-start justify-between gap-2">
         <p className="text-[12px] font-extrabold uppercase leading-normal tracking-[0.04em] text-[#9E439F]">
           Prevent Future Repairs
@@ -993,6 +1002,12 @@ export function AdminOverviewDashboard() {
   const [lateRentRailRunId, setLateRentRailRunId] = useState<string | null>(null)
   const [lateRentRailSaving, setLateRentRailSaving] = useState(false)
   const [lateRentRailError, setLateRentRailError] = useState<string | null>(null)
+  const [invoicePayReviews, setInvoicePayReviews] = useState<InvoicePaymentReview[]>([])
+  const [invoicePayRailId, setInvoicePayRailId] = useState<string | null>(null)
+  const [invoicePaySaving, setInvoicePaySaving] = useState(false)
+  const [invoicePayError, setInvoicePayError] = useState<string | null>(null)
+  const [invoicePaySuccess, setInvoicePaySuccess] =
+    useState<InvoicePaymentSuccessDetails | null>(null)
   const [lateRentMessageBrief, setLateRentMessageBrief] =
     useState<LateRentAccountMessageBrief | null>(null)
   const [lateRentMessageSending, setLateRentMessageSending] = useState(false)
@@ -1017,6 +1032,9 @@ export function AdminOverviewDashboard() {
   const skipAutoOutcomeKeysRef = useRef<Set<string>>(new Set())
   const attentionTrackingReadyRef = useRef(false)
   const allowImportedOperationsRef = useRef(true)
+  const invoicePaymentReturnHandledRef = useRef<string | null>(null)
+  const invoicePayReviewsRef = useRef(invoicePayReviews)
+  invoicePayReviewsRef.current = invoicePayReviews
 
   const showAwaitingDecisionOutcome = useCallback(
     (outcome: AwaitingDecisionOutcome, itemKey?: string) => {
@@ -1025,6 +1043,93 @@ export function AdminOverviewDashboard() {
     },
     [],
   )
+
+  useEffect(() => {
+    const params = new URLSearchParams(location.search)
+    const paymentStatus = params.get('invoice_payment')
+    if (paymentStatus !== 'success' && paymentStatus !== 'cancel') return
+
+    const invoiceId = params.get('invoice_id')?.trim() ?? ''
+    const sessionId = params.get('session_id')?.trim() ?? ''
+    const handleKey = `${paymentStatus}:${sessionId || invoiceId}`
+    if (invoicePaymentReturnHandledRef.current === handleKey) return
+    invoicePaymentReturnHandledRef.current = handleKey
+
+    const clearPaymentParams = () => {
+      const next = new URLSearchParams(location.search)
+      next.delete('invoice_payment')
+      next.delete('session_id')
+      next.delete('invoice_id')
+      next.delete('method')
+      const qs = next.toString()
+      navigate({ pathname: location.pathname, search: qs ? `?${qs}` : '' }, { replace: true })
+    }
+
+    if (paymentStatus === 'cancel') {
+      if (invoiceId) {
+        setInvoicePayRailId(invoiceId)
+        setInvoicePayError('Payment canceled. Choose a payment method to try again.')
+      }
+      clearPaymentParams()
+      return
+    }
+
+    if (!sessionId) {
+      setInvoicePayError('Missing Stripe checkout session after payment.')
+      clearPaymentParams()
+      return
+    }
+
+    let cancelled = false
+    setInvoicePaySaving(true)
+    setInvoicePayError(null)
+
+    void (async () => {
+      try {
+        const result = await completeInvoicePaymentCheckout({ sessionId })
+        if (cancelled) return
+
+        const paidInvoiceId = result.invoiceId || invoiceId
+        const review =
+          invoicePayReviewsRef.current.find((r) => r.invoiceId === paidInvoiceId) ?? null
+        const ytdPaidTotal = review?.vendorId
+          ? await fetchVendorYtdPaidTotal({
+              landlordId: getActiveLandlordId(),
+              vendorId: review.vendorId,
+            })
+          : null
+
+        setInvoicePayReviews((prev) => prev.filter((r) => r.invoiceId !== paidInvoiceId))
+        setInvoicePaySuccess({
+          amountPaid: result.amountPaid || review?.totalCost || 0,
+          vendorName: result.vendorName || review?.vendorName || 'Vendor',
+          sourceLabel: result.sourceLabel,
+          transactionId: result.transactionId,
+          paidAt: result.paidAt,
+          receiptUrl: result.receiptUrl,
+          ytdPaidTotal,
+        })
+        setInvoicePayRailId(paidInvoiceId)
+        skipAutoOutcomeKeysRef.current.add(`invoice-${paidInvoiceId}`)
+      } catch (err) {
+        if (!cancelled) {
+          setInvoicePayError(
+            getErrorMessage(err, 'Could not confirm invoice payment.'),
+          )
+          if (invoiceId) setInvoicePayRailId(invoiceId)
+        }
+      } finally {
+        if (!cancelled) {
+          setInvoicePaySaving(false)
+          clearPaymentParams()
+        }
+      }
+    })()
+
+    return () => {
+      cancelled = true
+    }
+  }, [location.pathname, location.search, navigate])
 
   useEffect(() => {
     let cancelled = false
@@ -1047,8 +1152,18 @@ export function AdminOverviewDashboard() {
       const allowImportedOperations = dashboardSync.allowImportedOperations
       allowImportedOperationsRef.current = allowImportedOperations
 
-      const [ticketsResult, vendorsResult, unitsResult, workflowResult, feedResult, healthSignals, residentsResult] =
-        await Promise.all([
+      const [
+        ticketsResult,
+        vendorsResult,
+        vendorScoresResult,
+        unitsResult,
+        workflowResult,
+        feedResult,
+        healthSignals,
+        residentsResult,
+        invoicesResult,
+        feedbackResult,
+      ] = await Promise.all([
           allowImportedOperations
             ? supabase
                 .from('maintenance_request_enriched')
@@ -1075,6 +1190,9 @@ export function AdminOverviewDashboard() {
             .eq('landlord_id', landlordId)
             .eq('active', true)
             .limit(500),
+          allowImportedOperations
+            ? supabase.rpc('get_vendor_scores_for_landlord', { p_landlord_id: landlordId })
+            : Promise.resolve({ data: [], error: null }),
           supabase
             .from('units')
             .select('id, unit_label, building, status')
@@ -1091,6 +1209,26 @@ export function AdminOverviewDashboard() {
             .eq('landlord_id', landlordId)
             .neq('status', 'past_resident')
             .limit(2000),
+          allowImportedOperations
+            ? supabase
+                .from('maintenance_invoices')
+                .select(
+                  'id, maintenance_request_id, total_cost, labor_cost, material_cost, tax_amount, vendor_id, submitted_at, status, invoice_number, document_path',
+                )
+                .eq('landlord_id', landlordId)
+                .eq('status', 'submitted')
+                .order('submitted_at', { ascending: false })
+                .limit(50)
+            : Promise.resolve({ data: [], error: null }),
+          allowImportedOperations
+            ? supabase
+                .from('vendor_feedback')
+                .select('maintenance_request_id, rating')
+                .eq('landlord_id', landlordId)
+                .eq('rater_type', 'resident')
+                .gte('rating', 4)
+                .limit(200)
+            : Promise.resolve({ data: [], error: null }),
         ])
 
       if (cancelled) return
@@ -1123,6 +1261,78 @@ export function AdminOverviewDashboard() {
           ticketsResult.error.message,
         )
       }
+
+      const ratingByTicket = new Map<string, number>()
+      if (!feedbackResult.error) {
+        for (const row of (feedbackResult.data ?? []) as Record<string, unknown>[]) {
+          const tid = asString(row.maintenance_request_id)
+          const rating = Number(row.rating)
+          if (!tid || !Number.isFinite(rating)) continue
+          ratingByTicket.set(tid, rating)
+        }
+      }
+
+      const vendorScoreById = new Map<string, { rating: number | null; reviewCount: number }>()
+      if (!vendorScoresResult.error) {
+        for (const raw of (vendorScoresResult.data ?? []) as Record<string, unknown>[]) {
+          const vendorId = asString(raw.vendor_id)
+          if (!vendorId) continue
+          vendorScoreById.set(vendorId, {
+            rating: asFiniteNumber(raw.vendor_score),
+            reviewCount: asFiniteNumber(raw.review_count) ?? 0,
+          })
+        }
+      } else if (vendorScoresResult.error) {
+        console.warn(
+          '[admin overview] get_vendor_scores_for_landlord',
+          vendorScoresResult.error.message,
+        )
+      }
+
+      const ticketRowsForInvoice = !ticketsResult.error
+        ? ((ticketsResult.data ?? []) as Record<string, unknown>[]).map((raw) =>
+            normalizeTicketRow(raw, vendorNameById),
+          )
+        : []
+      const ticketById = new Map(ticketRowsForInvoice.map((t) => [t.id, t]))
+
+      const payReviews: InvoicePaymentReview[] = []
+      if (!invoicesResult.error) {
+        for (const row of (invoicesResult.data ?? []) as Record<string, unknown>[]) {
+          const invoiceId = asString(row.id)
+          const ticketId = asString(row.maintenance_request_id)
+          if (!invoiceId || !ticketId) continue
+          const rating = ratingByTicket.get(ticketId)
+          if (rating == null || rating < 4) continue
+          const ticket = ticketById.get(ticketId)
+          const vendorId = asString(row.vendor_id)
+          const vendorScore = vendorId ? vendorScoreById.get(vendorId) : undefined
+          payReviews.push({
+            invoiceId,
+            maintenanceRequestId: ticketId,
+            totalCost: Number(row.total_cost) || 0,
+            laborCost: Number(row.labor_cost) || 0,
+            materialCost: Number(row.material_cost) || 0,
+            taxAmount: Number(row.tax_amount) || 0,
+            unit: ticket?.unit ?? '',
+            building: ticket?.building ?? null,
+            residentName: ticket?.residentName ?? '',
+            vendorName:
+              (vendorId ? vendorNameById[vendorId] : '') ||
+              ticket?.assignedVendorName ||
+              'Vendor',
+            vendorId: vendorId || null,
+            issueCategory: ticket?.issueCategory ?? null,
+            submittedAt: asString(row.submitted_at),
+            rating,
+            invoiceNumber: asString(row.invoice_number) || null,
+            documentPath: asString(row.document_path) || null,
+            vendorRating: vendorScore?.rating ?? null,
+            vendorReviewCount: vendorScore?.reviewCount ?? null,
+          })
+        }
+      }
+      setInvoicePayReviews(payReviews)
 
       if (!unitsResult.error) {
         setUnits(
@@ -1346,7 +1556,7 @@ export function AdminOverviewDashboard() {
   useEffect(() => {
     if (loading) return
     const url = resolveSlaAutoReassignUrl()
-    const secret = import.meta.env.VITE_ADMIN_REASSIGN_SECRET?.trim()
+    const secret = getAdminEdgeSecret()
     if (!url || !secret || slaOverdueTickets.length === 0) return
 
     const toAuto = slaOverdueTickets.filter(
@@ -1627,8 +1837,31 @@ export function AdminOverviewDashboard() {
       }
     }
 
+    for (const inv of invoicePayReviews) {
+      const totalLabel = inv.totalCost.toLocaleString('en-US', {
+        style: 'currency',
+        currency: 'USD',
+      })
+      items.push({
+        key: `invoice-${inv.invoiceId}`,
+        badge: 'warning',
+        title: 'Invoice ready to pay',
+        context: formatLocationContextLabel({
+          propertyLabel: inv.building,
+          unitLabel: inv.unit,
+          residentName: inv.residentName,
+        }),
+        meta: `${inv.vendorName} · ${totalLabel}${inv.rating != null ? ` · Rated ${inv.rating}/5` : ''}`,
+        actionLabel: 'Review & pay',
+        onAction: () => {
+          setInvoicePayError(null)
+          setInvoicePayRailId(inv.invoiceId)
+        },
+      })
+    }
+
     return items.sort((a, b) => (a.badge === b.badge ? 0 : a.badge === 'critical' ? -1 : 1))
-  }, [workflowData, slaOverdueTickets, slaEscalatedNoVendorKeys, units, vendors, tickets, lateRentReviewRuns, openEscalatedRailForTicket, openEscalatedRailForRun, openLateRentRail, openLeaseRenewalRail])
+  }, [workflowData, slaOverdueTickets, slaEscalatedNoVendorKeys, units, vendors, tickets, lateRentReviewRuns, invoicePayReviews, openEscalatedRailForTicket, openEscalatedRailForRun, openLateRentRail, openLeaseRenewalRail])
 
   const attentionItems = useMemo(() => allAttentionItems.slice(0, 4), [allAttentionItems])
 
@@ -1733,7 +1966,7 @@ export function AdminOverviewDashboard() {
 
     if (builtReview && !preferExternalVendor && ticketIdForAction) {
       const autoUrl = resolveSlaAutoReassignUrl()
-      const secret = import.meta.env.VITE_ADMIN_REASSIGN_SECRET?.trim()
+      const secret = getAdminEdgeSecret()
       setEscalatedRailLoading(true)
       if (autoUrl && secret) {
         void postSlaAutoReassign({ url: autoUrl, secret, ticketId: ticketIdForAction })
@@ -1747,7 +1980,7 @@ export function AdminOverviewDashboard() {
           .catch((err) => {
             if (cancelled) return
             console.warn('[admin overview] sla auto-reassign rail', err)
-            setEscalatedRailError(err instanceof Error ? err.message : 'Auto-reassign failed')
+            setEscalatedRailError(getErrorMessage(err, "Couldn't reassign the vendor. Please try again."))
           })
           .finally(() => {
             if (!cancelled) setEscalatedRailLoading(false)
@@ -1782,7 +2015,7 @@ export function AdminOverviewDashboard() {
     }
 
     const discoverUrl = resolveDiscoverExternalVendorsUrl()
-    const secret = import.meta.env.VITE_ADMIN_REASSIGN_SECRET?.trim()
+    const secret = getAdminEdgeSecret()
     if (!discoverUrl || !secret || !ticketIdForAction) {
       setEscalatedRailLoading(false)
       if (preferExternalVendor) {
@@ -1841,7 +2074,7 @@ export function AdminOverviewDashboard() {
       .catch((err) => {
         if (cancelled) return
         console.warn('[admin overview] discover external vendors', err)
-        const message = err instanceof Error ? err.message : 'External vendor search failed'
+        const message = getErrorMessage(err, "Couldn't find vendors nearby. Please try again.")
         setEscalatedRailError(message)
         setExternalVendorDiscoverError(message)
       })
@@ -1913,7 +2146,7 @@ export function AdminOverviewDashboard() {
         setEscalatedRailError('Could not link this vendor to a maintenance ticket.')
         return
       }
-      const secret = import.meta.env.VITE_ADMIN_REASSIGN_SECRET?.trim()
+      const secret = getAdminEdgeSecret()
       const reassignUrl = resolveReassignExternalVendorUrl()
       if (!secret || !reassignUrl) {
         setEscalatedRailError('External reassign is not configured.')
@@ -1964,7 +2197,7 @@ export function AdminOverviewDashboard() {
           `sla-${ticketId}`,
         )
       } catch (err) {
-        setEscalatedRailError(err instanceof Error ? err.message : 'External assign failed')
+        setEscalatedRailError(getErrorMessage(err, "Couldn't assign that vendor. Please try again."))
       } finally {
         setEscalatedRailSaving(false)
       }
@@ -2027,7 +2260,7 @@ export function AdminOverviewDashboard() {
           `rent-${review.workflowRunId}`,
         )
       } catch (err) {
-        setLateRentRailError(err instanceof Error ? err.message : 'Action failed')
+        setLateRentRailError(getErrorMessage(err, "That action didn't work. Please try again."))
       } finally {
         setLateRentRailSaving(false)
       }
@@ -2075,7 +2308,7 @@ export function AdminOverviewDashboard() {
         const nextWorkflowData = await fetchAdminWorkflowDashboard()
         setWorkflowData(nextWorkflowData)
       } catch (err) {
-        setLateRentMessageError(err instanceof Error ? err.message : 'Send failed')
+        setLateRentMessageError(getErrorMessage(err, "Couldn't send that message. Please try again."))
       } finally {
         setLateRentMessageSending(false)
       }
@@ -2147,7 +2380,7 @@ export function AdminOverviewDashboard() {
           })
         }
       } catch (err) {
-        setLeaseRenewalRailError(err instanceof Error ? err.message : 'Action failed')
+        setLeaseRenewalRailError(getErrorMessage(err, "That action didn't work. Please try again."))
       } finally {
         setLeaseRenewalRailSaving(false)
       }
@@ -2176,7 +2409,7 @@ export function AdminOverviewDashboard() {
         }
         setLeaseRenewalIncentiveBrief(appendLeaseRenewalIncentiveSentMessage(brief, message))
       } catch (err) {
-        setLeaseRenewalIncentiveError(err instanceof Error ? err.message : 'Send failed')
+        setLeaseRenewalIncentiveError(getErrorMessage(err, "Couldn't send that message. Please try again."))
       } finally {
         setLeaseRenewalIncentiveSending(false)
       }
@@ -2322,6 +2555,86 @@ export function AdminOverviewDashboard() {
 
   const escalatedRailOpen = escalatedRailTarget != null && escalatedReview != null
   const stackedVendorRails = escalatedRailOpen && findExternalVendorOpen
+  const invoicePayReview = useMemo(
+    () => invoicePayReviews.find((r) => r.invoiceId === invoicePayRailId) ?? null,
+    [invoicePayReviews, invoicePayRailId],
+  )
+
+  const closeInvoicePayRail = useCallback(() => {
+    if (invoicePaySaving) return
+    setInvoicePayRailId(null)
+    setInvoicePayError(null)
+    setInvoicePaySuccess(null)
+  }, [invoicePaySaving])
+
+  const handleInvoicePayApprove = useCallback(async (note?: string) => {
+    if (!invoicePayReview) return
+    setInvoicePaySaving(true)
+    setInvoicePayError(null)
+    try {
+      await approveMaintenanceInvoice(invoicePayReview.invoiceId, note)
+      const ytdPaidTotal = invoicePayReview.vendorId
+        ? await fetchVendorYtdPaidTotal({
+            landlordId: getActiveLandlordId(),
+            vendorId: invoicePayReview.vendorId,
+          })
+        : null
+      setInvoicePayReviews((prev) =>
+        prev.filter((r) => r.invoiceId !== invoicePayReview.invoiceId),
+      )
+      setInvoicePaySuccess({
+        amountPaid: invoicePayReview.totalCost,
+        vendorName: invoicePayReview.vendorName,
+        sourceLabel: 'Payment method',
+        transactionId: `TXN-${invoicePayReview.invoiceId.replace(/-/g, '').slice(0, 8).toUpperCase()}-ULO`,
+        paidAt: new Date().toISOString(),
+        receiptUrl: null,
+        ytdPaidTotal,
+      })
+      setInvoicePayRailId(invoicePayReview.invoiceId)
+      skipAutoOutcomeKeysRef.current.add(`invoice-${invoicePayReview.invoiceId}`)
+    } catch (err) {
+      setInvoicePayError(getErrorMessage(err, 'Could not approve invoice'))
+    } finally {
+      setInvoicePaySaving(false)
+    }
+  }, [invoicePayReview])
+
+  const handleInvoicePayReject = useCallback(async () => {
+    if (!invoicePayReview) return
+    setInvoicePaySaving(true)
+    setInvoicePayError(null)
+    try {
+      await rejectMaintenanceInvoice(
+        invoicePayReview.invoiceId,
+        'Rejected from Needs Your Attention',
+      )
+      setInvoicePayReviews((prev) =>
+        prev.filter((r) => r.invoiceId !== invoicePayReview.invoiceId),
+      )
+      setInvoicePayRailId(null)
+      showAwaitingDecisionOutcome(
+        {
+          operationTitle: 'Invoice ready to pay',
+          context: formatLocationContextLabel({
+            propertyLabel: invoicePayReview.building,
+            unitLabel: invoicePayReview.unit,
+            residentName: invoicePayReview.residentName,
+          }),
+          kind: 'resolved',
+          headline: 'Removed from Needs Your Attention',
+          detail: `Rejected the invoice from ${invoicePayReview.vendorName}. Ask the vendor to resubmit if needed.`,
+          removedFromQueue: true,
+        },
+        `invoice-${invoicePayReview.invoiceId}`,
+      )
+    } catch (err) {
+      setInvoicePayError(getErrorMessage(err, 'Could not reject invoice'))
+    } finally {
+      setInvoicePaySaving(false)
+    }
+  }, [invoicePayReview, showAwaitingDecisionOutcome])
+
   const lateRentRailOpen = lateRentRailRunId != null && lateRentReview != null
   const stackedLateRentRails = lateRentRailOpen && lateRentMessageBrief != null
   const leaseRenewalRailOpen = leaseRenewalRailRunId != null && leaseRenewalReview != null
@@ -2349,7 +2662,7 @@ export function AdminOverviewDashboard() {
           <button
             type="button"
             onClick={() => setOnboardingNotice(null)}
-            className="shrink-0 text-[12px] font-medium text-[#92400e] underline"
+            className="sa-link shrink-0 text-[12px] font-medium text-[#92400e] underline"
           >
             Dismiss
           </button>
@@ -2377,19 +2690,19 @@ export function AdminOverviewDashboard() {
                 step: '1',
                 title: 'Add a property',
                 desc: 'Register your first building and units.',
-                to: '/admin/users',
+                to: '/admin/properties?add=1',
               },
               {
                 step: '2',
                 title: 'Import residents',
                 desc: 'Add residents so Ulo can reach them.',
-                to: '/admin/users',
+                to: '/admin/residents',
               },
               {
                 step: '3',
                 title: 'Add vendors',
                 desc: 'Plumbing, HVAC, electrical, and more.',
-                to: '/admin/users',
+                to: '/admin/vendors',
               },
               {
                 step: '4',
@@ -2407,7 +2720,7 @@ export function AdminOverviewDashboard() {
               <li key={item.step}>
                 <Link
                   to={item.to}
-                  className="flex h-full flex-col gap-1 rounded-[10px] border border-[#e5e7eb] bg-[#f9fafb] p-4 transition-colors hover:border-[#101828]/30 hover:bg-white"
+                  className="sa-card flex h-full flex-col gap-1 rounded-[10px] border border-[#e5e7eb] bg-[#f9fafb] p-4 hover:border-[#101828]/30 hover:bg-white"
                 >
                   <span className="flex size-6 items-center justify-center rounded-full bg-[#101828] text-[12px] font-semibold text-white">
                     {item.step}
@@ -2522,7 +2835,7 @@ export function AdminOverviewDashboard() {
                 type="button"
                 onClick={() => setAwaitingDecisionListOpen(true)}
                 disabled={loading}
-                className="admin-quiet-text-action"
+                className="admin-quiet-text-action sa-link"
               >
                 View all →
               </button>
@@ -2536,8 +2849,12 @@ export function AdminOverviewDashboard() {
                 Nothing needs attention.
               </p>
             ) : (
-              attentionItems.map((item) => (
-                <div key={item.key} className="flex items-center gap-4 px-6 py-4">
+              attentionItems.map((item, index) => (
+                <div
+                  key={item.key}
+                  style={{ animationDelay: `${Math.min(index, 4) * 40}ms` }}
+                  className="sa-enter flex items-center gap-4 px-6 py-4"
+                >
                   <div className="min-w-0 flex-1">
                     <div className="flex flex-wrap items-center gap-2">
                       <p className="text-[14px] font-semibold leading-5 tracking-[-0.1504px] text-[#0a0a0a]">
@@ -2568,7 +2885,7 @@ export function AdminOverviewDashboard() {
                       type="button"
                       onClick={item.onAction}
                       className={[
-                        'shrink-0 rounded-[10px] border px-4 py-2 text-[13px] font-medium leading-5 transition-colors duration-150',
+                        'sa-press shrink-0 rounded-[10px] border px-4 py-2 text-[13px] font-medium leading-5',
                         item.actionStyle === 'alert'
                           ? 'border-transparent bg-[#187960] text-white hover:bg-[#0A4D38]'
                           : 'border-[#0A4D38] bg-white text-[#0A4D38] hover:bg-[#e8f3ef]',
@@ -2580,7 +2897,7 @@ export function AdminOverviewDashboard() {
                     <Link
                       to={item.actionTo ?? '/admin/workflows'}
                       className={[
-                        'shrink-0 rounded-[10px] border px-4 py-2 text-[13px] font-medium leading-5 transition-colors duration-150',
+                        'sa-press shrink-0 rounded-[10px] border px-4 py-2 text-[13px] font-medium leading-5',
                         item.actionStyle === 'alert'
                           ? 'border-transparent bg-[#187960] text-white hover:bg-[#0A4D38]'
                           : 'border-[#0A4D38] bg-white text-[#0A4D38] hover:bg-[#e8f3ef]',
@@ -2619,7 +2936,11 @@ export function AdminOverviewDashboard() {
                 const isLast = index === linkedFeedEvents.length - 1
                 const isFirst = index === 0
                 return (
-                  <div key={event.id} className="flex gap-3 px-6">
+                  <div
+                    key={event.id}
+                    style={{ animationDelay: `${Math.min(index, 8) * 35}ms` }}
+                    className="sa-enter flex gap-3 px-6"
+                  >
                     <div className="flex w-[4.75rem] shrink-0 flex-col items-center self-stretch">
                       <span
                         className={[
@@ -2668,7 +2989,7 @@ export function AdminOverviewDashboard() {
           buildingCount={healthReport.buildings.length}
           totalUnits={units.length}
           headerAction={
-            <Link to="/admin/properties" className="admin-quiet-text-action">
+            <Link to="/admin/properties" className="admin-quiet-text-action sa-link">
               View all properties →
             </Link>
           }
@@ -2755,6 +3076,19 @@ export function AdminOverviewDashboard() {
         onClose={() => setAwaitingDecisionListOpen(false)}
         onItemAction={handleAwaitingDecisionItemAction}
       />
+
+      {invoicePaySuccess || invoicePayReview ? (
+        <InvoicePaymentRail
+          open
+          review={invoicePayReview}
+          successDetails={invoicePaySuccess}
+          saving={invoicePaySaving}
+          error={invoicePayError}
+          onClose={closeInvoicePayRail}
+          onApprove={(note) => void handleInvoicePayApprove(note)}
+          onReject={() => void handleInvoicePayReject()}
+        />
+      ) : null}
 
       {stackedLateRentRails ? (
         <div className={ADMIN_RIGHT_RAIL_STACK_HOST}>

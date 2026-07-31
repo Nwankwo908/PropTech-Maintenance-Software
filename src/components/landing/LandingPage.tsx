@@ -163,7 +163,7 @@ function HeroHeadlineAndCopy() {
       <h1
         ref={headlineRef}
         className="mt-4 w-fit max-w-full font-[family-name:var(--font-landing-heading)] text-[clamp(2.25rem,6vw+1.2rem,9rem)] font-bold tracking-[-0.03em] text-[#0f1623] sm:mt-6 max-[1019px]:!w-full [@media(min-width:451px)_and_(max-width:1019px)_and_(min-height:1400px)_and_(max-height:1500px)]:text-[clamp(3.375rem,9vw+1.8rem,13.5rem)] [@media(min-width:300px)_and_(max-width:349px)_and_(min-height:850px)_and_(max-height:920px)]:text-[clamp(2.475rem,6.6vw+1.32rem,9.9rem)] [@media(min-width:350px)_and_(max-width:399px)_and_(min-height:850px)_and_(max-height:920px)]:text-[clamp(2.7rem,7.2vw+1.44rem,10.8rem)] [@media(min-width:350px)_and_(max-width:399px)_and_(min-height:1400px)_and_(max-height:1500px)]:text-[clamp(2.5875rem,6.9vw+1.38rem,10.35rem)] [@media(min-width:400px)_and_(max-width:500px)_and_(min-height:850px)_and_(max-height:920px)]:text-[clamp(2.8125rem,7.5vw+1.5rem,11.25rem)] [@media(min-width:400px)_and_(max-width:450px)_and_(min-height:1400px)_and_(max-height:1500px)]:text-[clamp(2.5875rem,6.9vw+1.38rem,10.35rem)] [@media(min-width:768px)_and_(max-width:850px)_and_(min-height:850px)_and_(max-height:920px)]:text-[clamp(3.6rem,9.6vw+1.92rem,14.4rem)] [@media(min-width:768px)_and_(max-width:850px)_and_(min-height:1400px)_and_(max-height:1500px)]:text-[clamp(3.375rem,9vw+1.8rem,13.5rem)] [@media(min-width:851px)_and_(max-width:1019px)_and_(min-height:1400px)_and_(max-height:1500px)]:text-[clamp(3.375rem,8.5vw+1.6rem,13.5rem)] [@media(min-width:1024px)_and_(max-width:1100px)_and_(min-height:850px)_and_(max-height:920px)]:text-[clamp(2.625rem,5.25vw,4.125rem)] [@media(min-width:1021px)_and_(max-width:1440px)_and_(min-height:1400px)_and_(max-height:1500px)]:text-[clamp(2.625rem,6.144vw,9.6rem)] min-[1440px]:text-[clamp(2.25rem,3.84vw,6rem)] [@media(min-width:1440px)_and_(max-width:1535px)_and_(min-height:850px)_and_(max-height:920px)]:text-[clamp(3.825rem,6.528vw,10.2rem)] [@media(min-width:1440px)_and_(max-width:1535px)_and_(min-height:1400px)_and_(max-height:1500px)]:text-[clamp(3.6rem,6.144vw,9.6rem)] lg:tracking-[-0.025em]"
-        style={{ lineHeight: 0.82 }}
+        style={{ lineHeight: '75px' }}
       >
         <span className="block whitespace-nowrap">Your tenants</span>
         <span className="block whitespace-nowrap">
@@ -183,9 +183,9 @@ function HeroHeadlineAndCopy() {
       </h1>
 
       <p
-        className="mt-4 box-border max-w-full border-l-[3px] border-[#187960] pl-4 text-base text-[#4b5563] sm:mt-6 sm:pl-5 sm:text-lg max-[1019px]:!w-full"
+        className="mt-4 box-border max-w-full border-l-[3px] border-[#187960] pl-4 text-base font-normal text-[#4b5563] sm:mt-6 sm:pl-5 sm:text-lg max-[1019px]:!w-full"
         style={{
-          lineHeight: 1.15,
+          lineHeight: '28px',
           width: fullWidthCopy ? undefined : copyWidth,
         }}
       >
@@ -205,7 +205,7 @@ function PrimaryButton({
     <button
       type="button"
       className={[
-        'inline-flex items-center justify-center gap-2 rounded-lg px-5 py-2.5',
+        'sa-press inline-flex items-center justify-center gap-2 rounded-lg px-5 py-2.5',
         'text-sm font-semibold text-white',
         'shadow-[0_4px_14px_rgba(14,92,68,0.4)]',
         'transition-[transform,box-shadow,filter] duration-150 ease-out',
@@ -221,6 +221,32 @@ function PrimaryButton({
       {...props}
     >
       {children}
+    </button>
+  )
+}
+
+function ExploreDemoButton({
+  className = '',
+  ...props
+}: React.ComponentProps<'button'>) {
+  return (
+    <button
+      type="button"
+      className={[
+        'sa-press inline-flex items-center justify-center gap-2 rounded-2xl border border-[#e5e7eb] bg-white',
+        'px-[25px] py-[17px] font-[family-name:var(--font-landing)] text-sm font-semibold leading-5 text-[#1f2937]',
+        'shadow-[0_4px_6px_rgba(0,0,0,0.05)]',
+        'transition-[transform,box-shadow,background-color] duration-150 ease-out',
+        'hover:-translate-y-0.5 hover:bg-[#f9fafb] hover:shadow-[0_6px_10px_rgba(0,0,0,0.07)]',
+        'active:translate-y-px active:scale-[0.98] active:shadow-[0_2px_4px_rgba(0,0,0,0.05)]',
+        'focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-slate-300/60 focus-visible:ring-offset-2 focus-visible:ring-offset-[#f0fdf4]',
+        className,
+      ]
+        .filter(Boolean)
+        .join(' ')}
+      {...props}
+    >
+      Explore Demo
     </button>
   )
 }
@@ -296,6 +322,12 @@ export function LandingPage() {
     setEarlyAccessOpen(true)
   }
 
+  function exploreDemo() {
+    playUiClickSound()
+    setMobileMenuOpen(false)
+    navigate('/demo')
+  }
+
   function closeEarlyAccess() {
     setEarlyAccessOpen(false)
     setEarlyAccessSuccess(false)
@@ -319,7 +351,7 @@ export function LandingPage() {
       <header className="sticky top-0 z-50 border-b border-emerald-500/10 bg-white/80 shadow-[0_1px_3px_rgba(0,0,0,0.02)] backdrop-blur-sm">
         <div className={`${LANDING_NAV} h-16 items-center gap-0`}>
           <div className="flex h-full shrink-0 items-center border-r border-gray-200/60 pr-6">
-            <Link to="/" className="block h-11 w-[121px] lg:h-11 lg:w-[108px]">
+            <Link to="/" className="sa-press block h-11 w-[121px] rounded-lg lg:h-11 lg:w-[108px]">
               <img src={uloLogo} alt="ülo home" className="h-full w-full object-contain object-left" />
             </Link>
           </div>
@@ -331,7 +363,7 @@ export function LandingPage() {
                     key={label}
                     type="button"
                     onClick={() => scrollTo(target)}
-                    className="rounded-xl px-3 py-2 text-sm font-medium text-[#6b7280] transition hover:bg-gray-50 hover:text-[#111827]"
+                    className="sa-press rounded-xl px-3 py-2 text-sm font-medium text-[#6b7280] hover:bg-gray-50 hover:text-[#111827]"
                   >
                     {label}
                   </button>
@@ -339,7 +371,7 @@ export function LandingPage() {
               </nav>
               <Link
                 to="/admin/login"
-                className="ml-2 rounded-xl px-3 py-2 text-sm font-medium text-[#6b7280] transition hover:bg-gray-50 hover:text-[#111827]"
+                className="sa-press ml-2 rounded-xl px-3 py-2 text-sm font-medium text-[#6b7280] hover:bg-gray-50 hover:text-[#111827]"
               >
                 Login
               </Link>
@@ -350,7 +382,7 @@ export function LandingPage() {
             </div>
             <button
               type="button"
-              className="rounded-xl p-2 text-[#6b7280] transition hover:bg-gray-50 lg:hidden"
+              className="sa-press rounded-xl p-2 text-[#6b7280] hover:bg-gray-50 lg:hidden"
               aria-expanded={mobileMenuOpen}
               aria-label={mobileMenuOpen ? 'Close menu' : 'Open menu'}
               onClick={() => setMobileMenuOpen((open) => !open)}
@@ -360,14 +392,14 @@ export function LandingPage() {
           </div>
         </div>
         {mobileMenuOpen ? (
-          <div className="border-t border-gray-200/80 bg-white px-6 py-4 lg:hidden">
+          <div className="sa-enter border-t border-gray-200/80 bg-white px-6 py-4 lg:hidden">
             <nav className="flex flex-col gap-1" aria-label="Mobile">
               {navLinks.map(({ label, target }) => (
                 <button
                   key={label}
                   type="button"
                   onClick={() => scrollTo(target)}
-                  className="rounded-xl px-3 py-3 text-left text-sm font-medium text-[#6b7280] transition hover:bg-gray-50 hover:text-[#111827]"
+                  className="sa-press rounded-xl px-3 py-3 text-left text-sm font-medium text-[#6b7280] hover:bg-gray-50 hover:text-[#111827]"
                 >
                   {label}
                 </button>
@@ -376,7 +408,7 @@ export function LandingPage() {
             <div className="mt-4 flex flex-col gap-3 border-t border-gray-100 pt-4">
               <Link
                 to="/admin/login"
-                className="rounded-xl px-3 py-2 text-sm font-medium text-[#6b7280] transition hover:bg-gray-50 hover:text-[#111827]"
+                className="sa-press rounded-xl px-3 py-2 text-sm font-medium text-[#6b7280] hover:bg-gray-50 hover:text-[#111827]"
                 onClick={() => setMobileMenuOpen(false)}
               >
                 Login
@@ -431,18 +463,24 @@ export function LandingPage() {
 
                 <HeroHeadlineAndCopy />
 
-                <div className="mt-5 flex w-full max-w-full flex-col gap-4 sm:mt-6 md:flex-row md:flex-wrap md:items-center">
-                  <PrimaryButton
-                    onClick={openEarlyAccess}
-                    className="w-full justify-center px-7 py-3.5 sm:py-4 md:w-auto"
-                  >
-                    Request Early Access
-                    <IconArrowRight />
-                  </PrimaryButton>
-                  <div className="flex flex-nowrap items-center justify-center gap-2 md:justify-start [@media(min-width:300px)_and_(max-width:349px)_and_(min-height:1400px)_and_(max-height:1500px)]:flex-col [@media(min-width:300px)_and_(max-width:349px)_and_(min-height:1400px)_and_(max-height:1500px)]:items-center [@media(min-width:300px)_and_(max-width:349px)_and_(min-height:1400px)_and_(max-height:1500px)]:gap-1">
+                <div className="mt-5 flex w-full max-w-full flex-col items-stretch sm:mt-6 sm:items-start">
+                  <div className="flex w-full flex-col items-stretch gap-3 sm:w-auto sm:flex-row sm:items-center">
+                    <PrimaryButton
+                      onClick={openEarlyAccess}
+                      className="w-full justify-center px-7 py-3.5 sm:w-auto sm:py-4"
+                    >
+                      Request Early Access
+                      <IconArrowRight />
+                    </PrimaryButton>
+                    <ExploreDemoButton
+                      onClick={exploreDemo}
+                      className="w-full justify-center sm:w-auto"
+                    />
+                  </div>
+                  <div className="mt-6 flex flex-nowrap items-center justify-center gap-2 sm:justify-start">
                     <button
                       type="button"
-                      className="shrink-0 whitespace-nowrap text-sm font-medium text-[#6b7280] underline decoration-solid underline-offset-2"
+                      className="sa-link shrink-0 whitespace-nowrap text-sm font-medium text-[#6b7280] underline decoration-solid underline-offset-2"
                     >
                       Bring Your Existing Data
                     </button>
@@ -481,8 +519,8 @@ export function LandingPage() {
         {/* How it Works */}
         <section id="how-it-works" className={`scroll-mt-20 ${LANDING_SECTION_GAP}`}>
           <LandingContentShell>
-          <div className="rounded-3xl border border-gray-200/80 bg-white p-6 shadow-[0_20px_30px_rgba(0,0,0,0.03),0_1px_1.5px_rgba(0,0,0,0.02)] sm:p-10 lg:shadow-none">
-            <h2 className="inline-flex items-center gap-2 rounded-full border border-[#e5e7eb] bg-white px-4 py-2 font-mono text-xs font-bold uppercase tracking-wide text-slate-900">
+          <div className="sa-surface rounded-3xl border border-gray-200/80 bg-white p-6 shadow-[0_20px_30px_rgba(0,0,0,0.03),0_1px_1.5px_rgba(0,0,0,0.02)] sm:p-10 lg:shadow-none">
+            <h2 className="sa-pill inline-flex items-center gap-2 rounded-full border border-[#e5e7eb] bg-white px-4 py-2 font-mono text-xs font-bold uppercase tracking-wide text-slate-900">
               <span className="size-2 shrink-0 rounded-full bg-[#7dd3fc]" aria-hidden />
               How it Works
             </h2>
@@ -501,7 +539,7 @@ export function LandingPage() {
                 <HowItWorksStepReveal
                   key={`${step.alt}-${index}`}
                   index={index}
-                  className="group mx-auto w-[91%] overflow-hidden rounded-2xl border border-[#e5e7eb] bg-white shadow-[0_1px_3px_rgba(0,0,0,0.04)] transition-[box-shadow] duration-500 ease-out hover:shadow-[0_20px_25px_-5px_rgba(0,0,0,0.05)] motion-reduce:transition-none"
+                  className="sa-card sa-press group mx-auto w-[91%] overflow-hidden rounded-2xl border border-[#e5e7eb] bg-white shadow-[0_1px_3px_rgba(0,0,0,0.04)] hover:shadow-[0_20px_25px_-5px_rgba(0,0,0,0.05)] motion-reduce:transition-none"
                 >
                   <img
                     src={step.src}
@@ -518,13 +556,16 @@ export function LandingPage() {
         </section>
 
         {/* Features */}
-        <section id="features" className={`scroll-mt-20 ${LANDING_SECTION_GAP}`}>
+        <section id="features" className={`scroll-mt-20 overflow-visible ${LANDING_SECTION_GAP}`}>
           <div className={LANDING_VIEWPORT_GUTTER}>
             <div className={`border-t ${LANDING_SECTION_RULE}`} aria-hidden />
           </div>
-          <LandingContentShell className="py-16">
+          <LandingContentShell
+            className="overflow-visible pb-24 pt-16"
+            contentClassName="overflow-visible"
+          >
           <div>
-            <h2 className="inline-flex items-center gap-2 rounded-full border border-[#e5e7eb] bg-white px-4 py-2 font-mono text-xs font-bold uppercase tracking-wide text-black">
+            <h2 className="sa-pill inline-flex items-center gap-2 rounded-full border border-[#e5e7eb] bg-white px-4 py-2 font-mono text-xs font-bold uppercase tracking-wide text-black">
               <span className="size-2 shrink-0 rounded-full bg-[#7dd3fc]" aria-hidden />
               Features
             </h2>
@@ -565,7 +606,7 @@ export function LandingPage() {
         >
           <Link
             to="/terms"
-            className="font-medium text-[#9E439F] underline-offset-2 transition-colors hover:text-[#7f3680] hover:underline"
+            className="sa-link font-medium text-[#9E439F] underline-offset-2 hover:text-[#7f3680] hover:underline"
           >
             Terms of Service
           </Link>
@@ -574,7 +615,7 @@ export function LandingPage() {
           </span>
           <Link
             to={PRIVACY_POLICY_PATH}
-            className="font-medium text-[#9E439F] underline-offset-2 transition-colors hover:text-[#7f3680] hover:underline"
+            className="sa-link font-medium text-[#9E439F] underline-offset-2 hover:text-[#7f3680] hover:underline"
           >
             Privacy Policy
           </Link>

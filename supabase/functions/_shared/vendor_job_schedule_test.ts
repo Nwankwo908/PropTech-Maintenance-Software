@@ -38,7 +38,7 @@ Deno.test("dispatch SMS includes WO + YES/NO; link is post-schedule", () => {
   assertEquals(body.includes("Issue: Leaking kitchen sink"), true)
   assertEquals(
     body.includes(
-      "Would you like to take this job? Reply YES to accept or NO to decline.",
+      "Would you like to take this job? Reply YES WO-3B00 to accept or NO WO-3B00 to decline.",
     ),
     true,
   )
@@ -56,7 +56,9 @@ Deno.test("dispatch SMS includes WO + YES/NO; link is post-schedule", () => {
 })
 
 Deno.test("availability ask + confirm copy completes with next step", () => {
-  assertEquals(buildVendorAvailabilityAskSms(), "Earliest availability?")
+  const ask = buildVendorAvailabilityAskSms()
+  assertEquals(ask.includes("earliest availability"), true)
+  assertEquals(ask.includes("arrival window"), true)
   const confirm = buildVendorScheduleConfirmedSms({
     workOrderRef: "WO-3B00",
     windowText: "Tomorrow 10am",

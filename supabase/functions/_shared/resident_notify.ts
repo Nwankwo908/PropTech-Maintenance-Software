@@ -7,8 +7,10 @@ export type ResidentNotifyEvent =
   | "vendor_assigned"
   | "vendor_accepted"
   | "schedule_confirmed"
+  | "schedule_rescheduled"
   | "repair_in_progress"
   | "repair_completed"
+  | "vendor_no_show"
 
 function escapeHtml(s: string): string {
   return s
@@ -71,6 +73,8 @@ function subjectForEvent(event: ResidentNotifyEvent): string {
       return "Repair in progress on your maintenance request"
     case "repair_completed":
       return "Your maintenance request is complete"
+    case "vendor_no_show":
+      return "We're finding another vendor for your repair"
   }
 }
 
@@ -156,6 +160,15 @@ function buildEmail(
         (unitLine ? `${unitLine}\n` : "") +
         `\nReference: ${ticketId}\n`
       break
+    case "vendor_no_show":
+      bodyText =
+        `Hi ${name},\n\nWe're sorry — ${vendor ? `${vendor} ` : "your vendor "}` +
+        `didn't make the confirmed appointment` +
+        (when ? ` (${when})` : "") +
+        `. We're finding another vendor for you and will text you with an update.\n\n` +
+        (unitLine ? `${unitLine}\n` : "") +
+        `\nReference: ${ticketId}\n`
+      break
   }
 
   const leadHtml =
@@ -169,6 +182,10 @@ function buildEmail(
       ? `<p>Your repair appointment is <strong>confirmed</strong>${vendor ? ` with <strong>${escapeHtml(vendor)}</strong>` : ""}${when ? ` for <strong>${escapeHtml(when)}</strong>` : ""}.</p>`
       : event === "repair_in_progress"
       ? `<p>Work is now <strong>in progress</strong> on your maintenance request.</p>`
+      : event === "vendor_no_show"
+      ? `<p>We're sorry — ${vendor ? `<strong>${escapeHtml(vendor)}</strong> ` : "your vendor "}` +
+        `didn't make the confirmed appointment${when ? ` (${escapeHtml(when)})` : ""}. ` +
+        `We're finding another vendor for you and will text you with an update.</p>`
       : `<p>Your maintenance request has been marked <strong>complete</strong>.${
           photoReceipt ? ` ${escapeHtml(photoReceipt)}` : ""
         }</p>`
@@ -257,6 +274,13 @@ function buildSms(
               }.`
             : "") +
           ` If anything still isn't quite right, just text us back and we'll jump on it. ${ref}`,
+        320,
+      )
+    case "vendor_no_show":
+      return truncate(
+        `We're sorry — ${vendor ? vendor : "your vendor"} missed the appointment` +
+          (when ? ` (${when})` : "") +
+          `. We're lining up another pro and will text you soon. ${ref}`,
         320,
       )
   }

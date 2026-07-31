@@ -71,6 +71,20 @@ export type WorkflowPipelineProperty = {
   entryCode: string
 }
 
+export type WorkflowPipelineInvoiceSection = {
+  status: string
+  statusLabel: string
+  laborCost: number | null
+  materialCost: number | null
+  taxAmount: number | null
+  totalCost: number | null
+  invoiceNumber: string | null
+  /** Calendar-year approved payments to this vendor (includes this invoice when paid). */
+  ytdPaidTotal: number | null
+  /** Shown when spend is recognized / invoice approved. */
+  necTrackingNote: string | null
+}
+
 export type WorkflowPipelineDetail = {
   runId: string
   workOrderRef: string
@@ -88,9 +102,13 @@ export type WorkflowPipelineDetail = {
   progressCaption: string
   overviewFields: WorkflowPipelineField[]
   maintenanceDetails: WorkflowPipelineField[]
+  /** Vendor invoice + 1099-NEC YTD tracking for maintenance jobs. */
+  invoiceSection: WorkflowPipelineInvoiceSection | null
   resident: WorkflowPipelineResident | null
   property: WorkflowPipelineProperty
   attachments: WorkflowPipelineAttachment[]
+  /** Vendor close-out photos (`completion_photo_paths`). */
+  vendorAttachments: WorkflowPipelineAttachment[]
   maintenanceRequestId: string | null
   conversationId: string | null
   uloThread: WorkflowUloThreadInput | null
@@ -288,7 +306,7 @@ function deriveLifecyclePipeline(
   if (row.templateId === 'move_out') {
     return { labels: MOVE_OUT_PIPELINE_LABELS, index: deriveMoveOutPipelineIndex(row) }
   }
-  if (row.templateId === 'inspection' || row.templateId === 'unit_inspection') {
+  if (row.templateId === 'inspection') {
     return { labels: INSPECTION_PIPELINE_LABELS, index: deriveInspectionPipelineIndex(row) }
   }
   return { labels: GENERIC_PIPELINE_LABELS, index: deriveGenericPipelineIndex(row) }
@@ -349,6 +367,86 @@ function invoiceTotalFromRow(raw: Record<string, unknown>): number | null {
   return (labor ?? 0) + (material ?? 0) + (tax ?? 0)
 }
 
+function invoiceStatusLabel(status: string): string {
+  switch (status) {
+    case 'approved':
+      return 'Paid'
+    case 'submitted':
+      return 'Ready to pay'
+    case 'rejected':
+      return 'Disputed'
+    case 'draft':
+      return 'Draft'
+    default:
+      return status ? status.replace(/_/g, ' ') : '—'
+  }
+}
+
+/** Sum of landlord-approved invoice totals for a vendor in the current calendar year. */
+export async function fetchVendorYtdPaidTotal(params: {
+  landlordId: string
+  vendorId: string
+}): Promise<number | null> {
+  const { supabase } = await import('@/lib/supabase')
+  if (!supabase) return null
+  const landlordId = params.landlordId.trim()
+  const vendorId = params.vendorId.trim()
+  if (!landlordId || !vendorId) return null
+
+  const yearStart = new Date(new Date().getFullYear(), 0, 1).toISOString()
+  const { data, error } = await supabase
+    .from('maintenance_invoices')
+    .select('total_cost')
+    .eq('landlord_id', landlordId)
+    .eq('vendor_id', vendorId)
+    .eq('status', 'approved')
+    .gte('approved_at', yearStart)
+
+  if (error) {
+    console.warn('[workflow-pipeline] vendor YTD paid total', error.message)
+    return null
+  }
+
+  let sum = 0
+  for (const row of data ?? []) {
+    const amount = asFiniteNumber((row as Record<string, unknown>).total_cost)
+    if (amount != null && amount > 0) sum += amount
+  }
+  return sum
+}
+
+async function buildInvoiceSection(
+  invoice: Record<string, unknown> | null,
+  vendorId: string | null,
+): Promise<WorkflowPipelineInvoiceSection | null> {
+  if (!invoice) return null
+  const status = asString(invoice.status).toLowerCase() || 'submitted'
+  const totalCost = invoiceTotalFromRow(invoice)
+  const paid = status === 'approved'
+
+  let ytdPaidTotal: number | null = null
+  let necTrackingNote: string | null = null
+  if (paid && vendorId) {
+    ytdPaidTotal = await fetchVendorYtdPaidTotal({
+      landlordId: getActiveLandlordId(),
+      vendorId,
+    })
+    necTrackingNote = 'Cumulative payment total updated for 1099-NEC tracking.'
+  }
+
+  return {
+    status,
+    statusLabel: invoiceStatusLabel(status),
+    laborCost: asFiniteNumber(invoice.labor_cost),
+    materialCost: asFiniteNumber(invoice.material_cost ?? invoice.materials_cost),
+    taxAmount: asFiniteNumber(invoice.tax_amount ?? invoice.tax),
+    totalCost,
+    invoiceNumber: asString(invoice.invoice_number) || null,
+    ytdPaidTotal,
+    necTrackingNote,
+  }
+}
+
 /** Cost proxy shared with unit_maintenance_cost_view: estimated_minutes × $1.25/min. */
 function ticketCostEstimate(estimatedMinutes: number | null | undefined): number {
   return (estimatedMinutes ?? 240) * 1.25
@@ -390,8 +488,10 @@ function buildPropertyBlock(row: AdminWorkflowRow, metadata: Record<string, unkn
   }
 }
 
+import { mentionsHvacCooling } from '@shared/maintenance/deterministicRules.ts'
+
 function mentionsAc(text: string): boolean {
-  return /\b(ac|a\/c|air conditioning|air.?condition)\b/i.test(text)
+  return mentionsHvacCooling(text)
 }
 
 const DEMO_SMS_PHOTO_URLS = {
@@ -463,14 +563,16 @@ function isBrowserUnsafeMediaUrl(url: string): boolean {
   )
 }
 
-async function loadTicketPhotoPathAttachments(
-  enrichment: TicketEnrichment,
-  residentName: string,
+async function signMaintenanceUploadPaths(
+  photoPaths: unknown,
+  opts: {
+    sizeLabel: string
+    captionPrefix: string
+    nameFallbackPrefix: string
+  },
 ): Promise<WorkflowPipelineAttachment[]> {
   const { supabase } = await import('@/lib/supabase')
   if (!supabase) return []
-
-  const photoPaths = enrichment.ticket?.photo_paths
   if (!Array.isArray(photoPaths) || photoPaths.length === 0) return []
 
   const items: WorkflowPipelineAttachment[] = []
@@ -487,14 +589,36 @@ async function loadTicketPhotoPathAttachments(
     }
     photoIndex += 1
     items.push({
-      name: path.split('/').pop() || `tenant-photo-${photoIndex}.jpg`,
-      sizeLabel: 'From request',
+      name: path.split('/').pop() || `${opts.nameFallbackPrefix}-${photoIndex}.jpg`,
+      sizeLabel: opts.sizeLabel,
       kind: 'image',
       url: data.signedUrl,
-      caption: `${residentName} · photo ${photoIndex}`,
+      caption: `${opts.captionPrefix} · photo ${photoIndex}`,
     })
   }
   return items
+}
+
+async function loadTicketPhotoPathAttachments(
+  enrichment: TicketEnrichment,
+  residentName: string,
+): Promise<WorkflowPipelineAttachment[]> {
+  return signMaintenanceUploadPaths(enrichment.ticket?.photo_paths, {
+    sizeLabel: 'From request',
+    captionPrefix: residentName,
+    nameFallbackPrefix: 'tenant-photo',
+  })
+}
+
+async function loadVendorCompletionPhotoAttachments(
+  enrichment: TicketEnrichment,
+  vendorName: string,
+): Promise<WorkflowPipelineAttachment[]> {
+  return signMaintenanceUploadPaths(enrichment.ticket?.completion_photo_paths, {
+    sizeLabel: 'Vendor completion',
+    captionPrefix: vendorName || 'Vendor',
+    nameFallbackPrefix: 'vendor-completion',
+  })
 }
 
 async function loadInboundSmsPhotoAttachments(
@@ -654,7 +778,7 @@ async function loadTicketEnrichment(
     const { data } = await supabase
       .from('maintenance_requests')
       .select(
-        'description, priority, urgency, issue_category, unit, due_at, vendor_work_status, assigned_vendor_id, assigned_at, resident_name, email, resident_phone, estimated_minutes, recognized_spend_amount, spend_status, photo_paths',
+        'description, priority, urgency, issue_category, unit, due_at, vendor_work_status, assigned_vendor_id, assigned_at, resident_name, email, resident_phone, estimated_minutes, recognized_spend_amount, spend_status, photo_paths, completion_photo_paths',
       )
       .eq('landlord_id', landlordId)
       .eq('id', ticketId)
@@ -663,13 +787,18 @@ async function loadTicketEnrichment(
 
     const { data: invoiceRow } = await supabase
       .from('maintenance_invoices')
-      .select('total_cost, labor_cost, material_cost, tax_amount, status')
+      .select(
+        'total_cost, labor_cost, material_cost, tax_amount, status, invoice_number, vendor_id, approved_at',
+      )
       .eq('landlord_id', landlordId)
       .eq('maintenance_request_id', ticketId)
+      .order('submitted_at', { ascending: false })
+      .limit(1)
       .maybeSingle()
     invoice = (invoiceRow as Record<string, unknown> | null) ?? null
 
-    const vendorId = asString(ticket?.assigned_vendor_id)
+    const vendorId =
+      asString(ticket?.assigned_vendor_id) || asString(invoice?.vendor_id)
     if (vendorId) {
       const { data: vendorRow } = await supabase.from('vendors').select('name').eq('id', vendorId).maybeSingle()
       vendorName = asString((vendorRow as Record<string, unknown> | null)?.name) || null
@@ -803,7 +932,7 @@ function parseMoveInDateMs(iso: string, fallbackMs: number): number {
 }
 
 function isInspectionTemplateId(templateId: string): boolean {
-  return templateId === 'inspection' || templateId === 'unit_inspection'
+  return templateId === 'inspection'
 }
 
 function inspectionHasMaintenanceFollowUp(
@@ -1091,6 +1220,11 @@ export async function fetchWorkflowPipelineDetail(
 
   const dueAt = asString(ticket?.due_at) || asString(metadata.due_at)
   const estimatedCost = resolveEstimatedCost(ticket, invoice, metadata)
+  const invoiceVendorId =
+    asString(ticket?.assigned_vendor_id) || asString(invoice?.vendor_id) || null
+  const invoiceSection = isMaintenance
+    ? await buildInvoiceSection(invoice, invoiceVendorId)
+    : null
   const uloThread = buildWorkflowUloThreadInput(row, metadata, enrichment)
   const attachments =
     isMaintenance
@@ -1107,6 +1241,13 @@ export async function fetchWorkflowPipelineDetail(
             residentName || 'Resident',
           )
         : []
+
+  const vendorAttachments = isMaintenance
+    ? await loadVendorCompletionPhotoAttachments(
+        enrichment,
+        enrichment.vendorName || 'Vendor',
+      )
+    : []
 
   const moveOutProgressSteps =
     isMoveOut && moveOutTimeline
@@ -1173,9 +1314,11 @@ export async function fetchWorkflowPipelineDetail(
           },
         ]
       : [],
+    invoiceSection,
     resident: residentBlock,
     property: buildPropertyBlock(row, metadata),
     attachments,
+    vendorAttachments,
     maintenanceRequestId: enrichment.maintenanceRequestId,
     conversationId: enrichment.conversationId,
     uloThread,

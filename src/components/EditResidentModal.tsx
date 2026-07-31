@@ -32,10 +32,10 @@ const STATUS_OPTIONS: { value: ResidentStatus; label: string }[] = [
 ]
 
 const inputClass =
-  'h-9 w-full rounded-lg border border-transparent bg-secondary px-3 text-[14px] tracking-[-0.1504px] text-extended-3 outline-none placeholder:text-neutral focus:border-secondary focus:ring-1 focus:ring-secondary'
+  'sa-surface h-9 w-full rounded-lg border border-transparent bg-secondary px-3 text-[14px] tracking-[-0.1504px] text-extended-3 outline-none placeholder:text-neutral focus:border-secondary focus:ring-1 focus:ring-secondary'
 
 const selectClass =
-  'h-9 w-full cursor-pointer appearance-none rounded-lg border border-transparent bg-secondary py-1 pl-3 pr-9 text-[14px] font-medium tracking-[-0.1504px] text-extended-3 outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2'
+  'sa-surface h-9 w-full cursor-pointer appearance-none rounded-lg border border-transparent bg-secondary py-1 pl-3 pr-9 text-[14px] font-medium tracking-[-0.1504px] text-extended-3 outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2'
 
 function IconPencilHeader({ className = 'size-5 text-extended-1' }: { className?: string }) {
   return (
@@ -139,7 +139,7 @@ export function EditResidentModal({
       })
       onClose()
     } catch (e) {
-      setSaveError(getErrorMessage(e, 'Save failed.'))
+      setSaveError(getErrorMessage(e, "Couldn't save. Please try again."))
     } finally {
       setSaving(false)
     }
@@ -147,12 +147,12 @@ export function EditResidentModal({
 
   return (
     <div className="fixed inset-0 z-50 flex justify-end">
-      <div role="presentation" className="absolute inset-0 bg-black/40" aria-hidden onClick={onClose} />
+      <div role="presentation" className="sa-scrim absolute inset-0 bg-black/40" aria-hidden onClick={onClose} />
       <div
         role="dialog"
         aria-modal="true"
         aria-labelledby={titleId}
-        className="relative flex h-full max-h-dvh w-full max-w-[min(100vw,560px)] flex-col overflow-hidden border-l border-secondary bg-white shadow-[inset_1px_0_0_0_#A788964D]"
+        className="sa-rail relative flex h-full max-h-dvh w-full max-w-[min(100vw,560px)] flex-col overflow-hidden border-l border-secondary bg-white shadow-[inset_1px_0_0_0_#A788964D]"
       >
         <header className="flex h-[81px] shrink-0 items-center justify-between border-b border-secondary px-6">
           <div className="flex min-w-0 items-center gap-3">
@@ -175,7 +175,7 @@ export function EditResidentModal({
             type="button"
             onClick={onClose}
             aria-label="Close"
-            className="flex size-9 shrink-0 items-center justify-center rounded-lg text-neutral outline-none hover:bg-secondary focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2"
+            className="sa-press flex size-9 shrink-0 items-center justify-center rounded-lg text-neutral outline-none hover:bg-secondary focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2"
           >
             <svg className="size-5" viewBox="0 0 24 24" fill="none" aria-hidden>
               <path d="M18 6L6 18M6 6l12 12" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" />
@@ -291,7 +291,7 @@ export function EditResidentModal({
             type="button"
             onClick={onClose}
             disabled={saving}
-            className="flex h-[42px] min-w-0 flex-1 basis-0 items-center justify-center gap-2 rounded-[10px] border border-error px-4 text-[16px] font-medium leading-6 tracking-[-0.3125px] text-error outline-none hover:bg-error focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 disabled:opacity-50"
+            className="sa-press flex h-[42px] min-w-0 flex-1 basis-0 items-center justify-center gap-2 rounded-[10px] border border-error px-4 text-[16px] font-medium leading-6 tracking-[-0.3125px] text-error outline-none hover:bg-error focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 disabled:opacity-50"
           >
             <IconTrash />
             Delete Account
@@ -300,7 +300,7 @@ export function EditResidentModal({
             type="button"
             onClick={() => void save()}
             disabled={!formValid || saving}
-            className="flex h-[42px] min-w-0 flex-1 basis-0 items-center justify-center rounded-[10px] bg-extended-1 px-5 text-[16px] font-medium leading-6 tracking-[-0.3125px] text-white outline-none hover:bg-extended-1 focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50"
+            className="sa-press flex h-[42px] min-w-0 flex-1 basis-0 items-center justify-center rounded-[10px] bg-extended-1 px-5 text-[16px] font-medium leading-6 tracking-[-0.3125px] text-white outline-none hover:bg-extended-1 focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50"
           >
             {saving ? 'Saving…' : 'Save Changes'}
           </button>

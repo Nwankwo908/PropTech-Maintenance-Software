@@ -78,15 +78,38 @@ export function composeTenantWelcomeSms(params: {
 /** Auto-reply after a tenant confirms consent (YES/START). */
 export function tenantOptInConfirmationSms(params: {
   companyName?: string | null
+  unit?: string | null
 }): string {
   const company = params.companyName?.trim()
+  const unit = params.unit?.trim()
   const signoff = company ? ` The ${company} team is just a text away.` : ""
+  const saveAs = unit
+    ? `Save this number as "Repairs ${unit}".`
+    : `Save this number as "Repairs".`
   return (
     `You're all set, thank you. We'll text you here about your maintenance ` +
     `requests and anything important for your home. Need a repair? Just text us ` +
-    `anytime and we're happy to help.${signoff} ` +
+    `anytime and we're happy to help.${signoff}\n\n` +
+    `${saveAs}\n\n` +
     `Reply STOP to unsubscribe.`
   )
+}
+
+async function fetchResidentUnit(
+  supabase: SupabaseClient,
+  residentId: string,
+): Promise<string | null> {
+  const { data, error } = await supabase
+    .from("users")
+    .select("unit")
+    .eq("id", residentId)
+    .maybeSingle()
+  if (error) {
+    console.warn("[tenantMessaging] fetchResidentUnit", error.message)
+    return null
+  }
+  const unit = (data as { unit?: string | null } | null)?.unit
+  return unit?.trim() || null
 }
 
 /** Auto-reply for HELP. */
@@ -252,6 +275,9 @@ export async function tryHandleTenantConsentKeyword(
       await updateTenantConsent(supabase, residentId, {
         sms_consent_status: "opted_out",
         sms_opt_out_at: nowIso,
+        // Stop all future welcome SMS retries immediately.
+        activation_status: "opted_out",
+        last_delivery_error: null,
       })
     }
     if (params.smsIdentityId) {
@@ -264,12 +290,33 @@ export async function tryHandleTenantConsentKeyword(
       await updateTenantConsent(supabase, residentId, {
         sms_consent_status: "opted_in",
         sms_consent_at: nowIso,
+        // YES/START: activated — cancel any pending delivery retries.
+        activation_status: "activated",
+        last_delivery_error: null,
       })
+      try {
+        const { resolveActivationAdminAlerts } = await import(
+          "./tenantActivationAdminAlert.ts"
+        )
+        await resolveActivationAdminAlerts(supabase, {
+          landlordId: params.landlordId,
+          residentId,
+          reason: "activated",
+        })
+      } catch (e) {
+        console.warn("[tenantMessaging] resolve activation alerts", e)
+      }
     }
     if (params.smsIdentityId) {
       await markSmsIdentityVerified(supabase, params.smsIdentityId, true)
     }
-    replyBody = tenantOptInConfirmationSms({ companyName: params.companyName })
+    const unit = residentId
+      ? await fetchResidentUnit(supabase, residentId)
+      : null
+    replyBody = tenantOptInConfirmationSms({
+      companyName: params.companyName,
+      unit,
+    })
     eventType = "tenant.sms_opted_in"
   } else {
     replyBody = tenantHelpReplySms({ companyName: params.companyName })
@@ -318,6 +365,16 @@ export type TenantConsentUpdate = {
   sms_consent_at?: string | null
   sms_opt_out_at?: string | null
   activation_sms_sent_at?: string | null
+  /** Landlord-facing activation status (stops retries on YES / STOP). */
+  activation_status?:
+    | "not_started"
+    | "waiting"
+    | "delivery_failed"
+    | "action_required"
+    | "activated"
+    | "opted_out"
+    | null
+  last_delivery_error?: string | null
 }
 
 /**

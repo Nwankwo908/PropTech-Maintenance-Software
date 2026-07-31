@@ -4,7 +4,7 @@
  */
 import { serve } from "https://deno.land/std/http/server.ts"
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1"
-import { adminReassignSecretAuthorized } from "../_shared/admin_reassign_auth.ts"
+import { requireAdminReassignAuth } from "../_shared/admin_edge_auth.ts"
 import { runAskUlo } from "../_shared/ask_ulo/runAskUlo.ts"
 import { parseAskUloAgentMode } from "../_shared/ask_ulo/agentMode.ts"
 import { recordCounselHandoff } from "../_shared/ask_ulo/recordCounselHandoff.ts"
@@ -48,16 +48,9 @@ serve(async (req) => {
     if (req.method !== "POST") {
       return jsonResponse({ error: "Method not allowed" }, 405)
     }
+  const adminAuth = requireAdminReassignAuth(req, "[ask-ulo]", corsHeaders)
+  if (!adminAuth.ok) return adminAuth.response
 
-    if (!Deno.env.get("ADMIN_REASSIGN_SECRET")?.trim()) {
-      console.error("[ask-ulo] ADMIN_REASSIGN_SECRET not set")
-      return jsonResponse({ error: "Server misconfiguration" }, 500)
-    }
-
-    if (!adminReassignSecretAuthorized(req)) {
-      console.warn("[ask-ulo] 401 Unauthorized: x-admin-reassign-secret mismatch")
-      return jsonResponse({ error: "Unauthorized" }, 401)
-    }
 
     let body: Record<string, unknown>
     try {
@@ -152,6 +145,11 @@ serve(async (req) => {
 
     const question = asString(body.question)
     const landlordId = asString(body.landlordId) ?? asString(body.landlord_id)
+    const userId =
+      asString(body.userId) ??
+      asString(body.user_id) ??
+      asString(body.authUserId) ??
+      asString(body.auth_user_id)
     const conversationId = asString(body.conversationId) ?? asString(body.conversation_id)
     const agentMode = parseAskUloAgentMode(body.agentMode ?? body.agent_mode)
     if (!question) {
@@ -183,6 +181,7 @@ serve(async (req) => {
       const result = await runAskUlo(supabase, {
         question,
         landlordId,
+        userId,
         history,
         conversationId,
         agentMode,

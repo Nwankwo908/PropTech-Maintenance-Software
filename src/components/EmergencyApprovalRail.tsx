@@ -84,6 +84,7 @@ export function EmergencyApprovalRail({
   if (!open || !review) return null
 
   const totalLabel = formatEmergencyCurrency(review.totalAmount)
+  const approveLabel = review.hasQuote ? `Approve ${totalLabel}` : 'Approve'
 
   return (
     <div className={ADMIN_RIGHT_RAIL_OVERLAY_HOST}>
@@ -106,7 +107,7 @@ export function EmergencyApprovalRail({
         <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-6 pb-6 pt-6">
           <span className="inline-flex items-center gap-1.5 rounded-full bg-[#ffe2e2] px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.06em] text-[#c10007]">
             <span aria-hidden>⚠</span>
-            Emergency · Needs approval
+            Urgent · Needs approval
           </span>
 
           <div className="mt-4 flex items-start gap-2">
@@ -127,7 +128,20 @@ export function EmergencyApprovalRail({
               <p className="text-[13px] font-semibold text-[#c10007]">Why this is urgent</p>
             </div>
             <ul className="mt-3 list-disc space-y-2 pl-5 text-[13px] leading-5 text-[#364153]">
-              {review.urgentReasons.map((reason) => (
+              {review.urgentReasons.slice(0, 1).map((reason) => (
+                <li key={reason}>{reason}</li>
+              ))}
+              {review.tenantNotes.length > 0 ? (
+                <li>
+                  Tenant notes
+                  <ul className="mt-2 list-disc space-y-1.5 pl-5">
+                    {review.tenantNotes.map((note) => (
+                      <li key={note}>{note}</li>
+                    ))}
+                  </ul>
+                </li>
+              ) : null}
+              {review.urgentReasons.slice(1).map((reason) => (
                 <li key={reason}>{reason}</li>
               ))}
             </ul>
@@ -135,27 +149,45 @@ export function EmergencyApprovalRail({
 
           <div className="mt-5 rounded-[10px] border border-[#e5e7eb] bg-[#f9fafb] p-4">
             <p className="text-[10px] font-semibold uppercase tracking-[0.08em] text-[#9ca3af]">
-              Vendor quote — {review.vendorName}
+              {review.hasQuote
+                ? `Vendor quote — ${review.vendorName}`
+                : `Assigned vendor — ${review.vendorName}`}
             </p>
-            <ul className="mt-4 space-y-2">
-              {review.quoteLines.map((line) => (
-                <li
-                  key={line.label}
-                  className="flex items-start justify-between gap-4 text-[13px] leading-5 text-[#364153]"
-                >
-                  <span>{line.label}</span>
-                  <span className="shrink-0 tabular-nums">{formatEmergencyCurrency(line.amount)}</span>
-                </li>
-              ))}
-            </ul>
-            <div className="mt-4 flex items-center justify-between border-t border-[#e5e7eb] pt-3">
-              <span className="text-[14px] font-semibold text-[#0a0a0a]">Total</span>
-              <span className="text-[14px] font-semibold tabular-nums text-[#0a0a0a]">{totalLabel}</span>
-            </div>
+            {review.hasQuote ? (
+              <>
+                <ul className="mt-4 space-y-2">
+                  {review.quoteLines.map((line) => (
+                    <li
+                      key={line.label}
+                      className="flex items-start justify-between gap-4 text-[13px] leading-5 text-[#364153]"
+                    >
+                      <span>{line.label}</span>
+                      <span className="shrink-0 tabular-nums">
+                        {formatEmergencyCurrency(line.amount)}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+                <div className="mt-4 flex items-center justify-between border-t border-[#e5e7eb] pt-3">
+                  <span className="text-[14px] font-semibold text-[#0a0a0a]">Total</span>
+                  <span className="text-[14px] font-semibold tabular-nums text-[#0a0a0a]">
+                    {totalLabel}
+                  </span>
+                </div>
+              </>
+            ) : (
+              <p className="mt-4 text-[13px] leading-5 text-[#6a7282]">
+                No quote amount is on this work order yet.
+              </p>
+            )}
             <p className="mt-3 text-[12px] leading-4 text-[#6a7282]">
               Auto-approval cap: {formatEmergencyCurrency(review.autoApprovalCap)}
-              {review.vendorRating != null ? ` · Vendor rating ${review.vendorRating.toFixed(1)}` : ''}
-              {review.vendorEtaMinutes != null ? ` · On-site ETA ${review.vendorEtaMinutes} min` : ''}
+              {review.vendorRating != null
+                ? ` · Vendor rating ${review.vendorRating.toFixed(1)}`
+                : ''}
+              {review.vendorEtaMinutes != null
+                ? ` · On-site ETA ${review.vendorEtaMinutes} min`
+                : ''}
             </p>
           </div>
 
@@ -179,7 +211,7 @@ export function EmergencyApprovalRail({
             className="inline-flex items-center gap-2 rounded-full bg-[#fb2c36] px-4 py-2 text-[13px] font-medium text-white outline-none hover:bg-[#e11d48] focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2 disabled:opacity-50"
           >
             <ApproveCircleIcon />
-            {saving ? 'Approving…' : `Approve ${totalLabel}`}
+            {saving ? 'Approving…' : approveLabel}
           </button>
         </footer>
       </div>

@@ -1,4 +1,5 @@
 import { supabase } from '@/lib/supabase'
+import { getErrorMessage } from '@/lib/errorMessage'
 
 const WAITLIST_OAUTH_FLAG = 'ulo_waitlist_oauth'
 const WAITLIST_REF_KEY = 'ulo_waitlist_ref'
@@ -177,5 +178,5 @@ export async function signInWaitlistWithGoogle(): Promise<void> {
     provider: 'google',
     options: { redirectTo: `${window.location.origin}/` },
   })
-  if (error) throw new Error(error.message)
+  if (error) throw new Error(getErrorMessage(error, 'Something went wrong. Please try again.'))
 }

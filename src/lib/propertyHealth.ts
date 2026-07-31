@@ -277,6 +277,9 @@ export function collectPortfolioBuildingKeys(
   for (const unit of units) {
     keys.add(normalizeBuildingKey(unit.building))
   }
+  for (const resident of residents) {
+    if (resident.building?.trim()) keys.add(normalizeBuildingKey(resident.building))
+  }
   for (const task of pmTasks) {
     if (task.building?.trim()) keys.add(normalizeBuildingKey(task.building))
   }

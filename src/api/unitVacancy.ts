@@ -6,6 +6,7 @@ import {
   adminEdgeInvokeHeaders,
   fetchAdminEdgeFunction,
 } from '@/api/adminReassignVendor'
+import { getAdminEdgeSecret } from '@/lib/adminEdgeAuth'
 import { getActiveLandlordId } from '@/lib/activeLandlord'
 
 export type UnitRecord = {
@@ -13,7 +14,7 @@ export type UnitRecord = {
   landlord_id: string
   unit_label: string
   building: string | null
-  status: 'vacant' | 'active' | 'inactive'
+  status: 'vacant' | 'active' | 'inactive' | 'under_maintenance'
   skip_tenant_registration: boolean
 }
 
@@ -22,9 +23,6 @@ function supabaseFunctionsBase(): string | undefined {
   return base || undefined
 }
 
-function adminSecret(): string | undefined {
-  return import.meta.env.VITE_ADMIN_REASSIGN_SECRET?.trim() || undefined
-}
 
 function defaultLandlordId(): string | undefined {
   return getActiveLandlordId()
@@ -39,7 +37,7 @@ async function postAdminFunction<T>(
   url: string | undefined,
   body: Record<string, unknown>,
 ): Promise<{ ok: true; data: T } | { ok: false; error: string }> {
-  const secret = adminSecret()
+  const secret = getAdminEdgeSecret()
   if (!url || !secret) {
     return { ok: false, error: 'Admin SMS configuration is missing.' }
   }
@@ -162,7 +160,7 @@ export async function ensureUnitsInDb(
   units: Array<{ unitLabel: string; building: string | null }>,
 ): Promise<boolean> {
   const landlordId = defaultLandlordId()
-  const secret = adminSecret()
+  const secret = getAdminEdgeSecret()
   if (!landlordId || !secret || units.length === 0) return false
 
   const { registerPropertyUnitsSms } = await import('@/api/landlordSmsOnboarding')

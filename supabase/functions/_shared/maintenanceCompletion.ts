@@ -3,7 +3,7 @@
  * Min 1 completion photo required. Landlord gets photo receipt + 1-tap star rating.
  */
 import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.49.1"
-import { sendResendEmail } from "./delivery.ts"
+import { sendLandlordOpsEmail } from "./landlordOpsNotify.ts"
 import { logGraphEvent } from "./graph/logGraphEvent.ts"
 import { sendOutboundSms } from "./sms/adapters.ts"
 import { resolveLandlordId } from "./sms/landlordSmsOnboarding.ts"
@@ -11,20 +11,12 @@ import { normalizePhoneFlexible } from "./resident_notify.ts"
 import { sendVendorJobAlert } from "./sms/vendorSmsRouting.ts"
 import { formatWorkOrderRef } from "./vendor_outreach_copy.ts"
 import { requestVendorFeedback } from "./vendor_feedback.ts"
-import {
-  notifyResidentCompleted,
-} from "../submit-maintenance-request/resident_notify.ts"
+import { ensureInvoiceFromApprovedEstimate } from "./maintenanceSpend.ts"
+import { uloAppOrigin, uloAppUrl } from "./uloAppUrl.ts"
 
 const MAX_PHOTOS = 12
-const MAX_BYTES = 12 * 1024 * 1024
-
-function appBaseUrl(): string {
-  const raw = Deno.env.get("APP_URL")?.trim() ?? ""
-  if (!raw) return ""
-  const t = raw.replace(/\/$/, "")
-  if (/^https?:\/\//i.test(t)) return t
-  return `https://${t}`
-}
+const MAX_IMAGE_BYTES = 12 * 1024 * 1024
+const MAX_VIDEO_BYTES = 50 * 1024 * 1024
 
 function rateFnBase(): string {
   const explicit = Deno.env.get("LANDLORD_RATE_VENDOR_FN_URL")?.trim()?.replace(
@@ -35,15 +27,6 @@ function rateFnBase(): string {
   const supabaseUrl = Deno.env.get("SUPABASE_URL")?.trim()?.replace(/\/$/, "") ?? ""
   if (!supabaseUrl) return ""
   return `${supabaseUrl}/functions/v1/landlord-rate-vendor`
-}
-
-function adminNotifyEmails(): string[] {
-  const raw = Deno.env.get("SMS_ADMIN_NOTIFY_EMAILS")?.trim()
-  if (!raw) return []
-  return raw
-    .split(/[,;\s]+/)
-    .map((e: string) => e.trim())
-    .filter((e: string) => e.includes("@"))
 }
 
 function adminNotifyPhones(): string[] {
@@ -60,11 +43,27 @@ function adminNotifyPhones(): string[] {
 
 function extFromContentType(ct: string): string {
   const c = ct.toLowerCase()
+  if (c.startsWith("video/")) {
+    if (c.includes("webm")) return "webm"
+    if (c.includes("quicktime") || c.includes("mov")) return "mov"
+    if (c.includes("3gpp")) return "3gp"
+    if (c.includes("mpeg")) return "mpg"
+    return "mp4"
+  }
   if (c.includes("png")) return "png"
   if (c.includes("webp")) return "webp"
   if (c.includes("heic") || c.includes("heif")) return "heic"
   if (c.includes("jpeg") || c.includes("jpg")) return "jpg"
   return "jpg"
+}
+
+function isAllowedCompletionMedia(ct: string): boolean {
+  const c = ct.toLowerCase()
+  return c.startsWith("image/") || c.startsWith("video/")
+}
+
+function maxBytesForContentType(ct: string): number {
+  return ct.toLowerCase().startsWith("video/") ? MAX_VIDEO_BYTES : MAX_IMAGE_BYTES
 }
 
 export type CompletionPhotoInput = {
@@ -155,7 +154,7 @@ export async function uploadCompletionPhotos(
   | { ok: false; error: string; status?: number }
 > {
   if (!params.photos.length) {
-    return { ok: false, error: "Add at least one photo", status: 400 }
+    return { ok: false, error: "Add at least one photo or video", status: 400 }
   }
 
   const { data: ticket, error } = await supabase
@@ -192,20 +191,25 @@ export async function uploadCompletionPhotos(
     : []
 
   if (existing.length >= MAX_PHOTOS) {
-    return { ok: false, error: `At most ${MAX_PHOTOS} completion photos`, status: 400 }
+    return {
+      ok: false,
+      error: `At most ${MAX_PHOTOS} completion photos or videos`,
+      status: 400,
+    }
   }
 
   const addedPaths: string[] = []
   for (const photo of params.photos) {
     if (existing.length + addedPaths.length >= MAX_PHOTOS) break
-    if (!photo.bytes.length || photo.bytes.length > MAX_BYTES) continue
     const ct = photo.contentType?.trim() || "image/jpeg"
-    if (!ct.startsWith("image/")) continue
+    if (!isAllowedCompletionMedia(ct)) continue
+    const maxBytes = maxBytesForContentType(ct)
+    if (!photo.bytes.length || photo.bytes.length > maxBytes) continue
     const ext = extFromContentType(ct)
     const safe =
-      (photo.fileName ?? `photo.${ext}`)
+      (photo.fileName ?? `media.${ext}`)
         .replace(/[^a-zA-Z0-9._-]/g, "_")
-        .slice(0, 80) || `photo.${ext}`
+        .slice(0, 80) || `media.${ext}`
     const objectPath = `${params.ticketId}/completion/${crypto.randomUUID()}-${safe}`
     const { error: upErr } = await supabase.storage
       .from("maintenance-uploads")
@@ -223,7 +227,8 @@ export async function uploadCompletionPhotos(
   if (!addedPaths.length) {
     return {
       ok: false,
-      error: "Could not save photos. Use JPG or PNG under 12MB.",
+      error:
+        "Could not save media. Use JPG/PNG under 12MB, or MP4/MOV under 50MB.",
       status: 400,
     }
   }
@@ -277,12 +282,9 @@ export async function notifyLandlordJobCompleted(
 ): Promise<void> {
   const wo = formatWorkOrderRef(params.ticketId)
   const rateBase = rateFnBase()
-  const jobUrl = (() => {
-    const base = appBaseUrl()
-    return base
-      ? `${base}/w/${encodeURIComponent(params.jobToken)}`
-      : null
-  })()
+  const jobUrl = uloAppOrigin({ fallback: "" })
+    ? uloAppUrl.workOrder(params.jobToken)
+    : null
 
   const starLinks = rateBase
     ? [1, 2, 3, 4, 5]
@@ -317,52 +319,33 @@ export async function notifyLandlordJobCompleted(
     }
   }
 
-  const emails = adminNotifyEmails()
-  let landlordEmail: string | null = null
-  const { data: landlord } = await supabase
-    .from("landlords")
-    .select("email")
-    .eq("id", params.landlordId)
-    .maybeSingle()
-  if (typeof landlord?.email === "string" && landlord.email.includes("@")) {
-    landlordEmail = landlord.email.trim()
-  }
-  const allEmails = [...new Set([...emails, ...(landlordEmail ? [landlordEmail] : [])])]
-
-  if (allEmails.length) {
-    const starHtml = rateBase
-      ? `<p>Rate the vendor:</p><p>${[1, 2, 3, 4, 5]
-          .map(
-            (n) =>
-              `<a href="${rateBase}?rating=${n}&ticketId=${encodeURIComponent(params.ticketId)}&token=${encodeURIComponent(params.jobToken)}" style="margin-right:8px;">${n}</a>`,
-          )
-          .join("")}</p>`
-      : ""
-    const text =
-      `${wo} (${params.unit || "unit"}) is complete.\n` +
-      `${params.vendorName} uploaded ${photoBit}.\n` +
-      (jobUrl ? `Job: ${jobUrl}\n` : "") +
-      (starLinks ? `\nRate the vendor (1–5):\n${starLinks}\n` : "")
-    const html = `
+  const starHtml = rateBase
+    ? `<p>Rate the vendor:</p><p>${[1, 2, 3, 4, 5]
+        .map(
+          (n) =>
+            `<a href="${rateBase}?rating=${n}&ticketId=${encodeURIComponent(params.ticketId)}&token=${encodeURIComponent(params.jobToken)}" style="margin-right:8px;">${n}</a>`,
+        )
+        .join("")}</p>`
+    : ""
+  const text =
+    `${wo} (${params.unit || "unit"}) is complete.\n` +
+    `${params.vendorName} uploaded ${photoBit}.\n` +
+    (jobUrl ? `Job: ${jobUrl}\n` : "") +
+    (starLinks ? `\nRate the vendor (1–5):\n${starLinks}\n` : "")
+  const html = `
 <!DOCTYPE html><html><body style="font-family:system-ui,sans-serif;line-height:1.5;color:#101828;">
   <p><strong>${wo}</strong> (${params.unit || "unit"}) is complete.</p>
   <p>${params.vendorName} uploaded ${photoBit}.</p>
   ${jobUrl ? `<p><a href="${jobUrl}">View job</a></p>` : ""}
   ${starHtml}
 </body></html>`
-    for (const to of allEmails) {
-      try {
-        await sendResendEmail(
-          to,
-          `${wo} complete — rate the vendor`,
-          text,
-          html,
-        )
-      } catch (e) {
-        console.error("[maintenance-completion] landlord email", e)
-      }
-    }
-  }
+  await sendLandlordOpsEmail(supabase, {
+    landlordId: params.landlordId,
+    subject: `${wo} complete — rate the vendor`,
+    text,
+    html,
+    logLabel: `job-complete:${params.ticketId}`,
+  })
 
   // Track open landlord rating request (1-tap completes it; no SMS inbound needed).
   const { data: existing } = await supabase
@@ -470,70 +453,29 @@ export async function completeJobWithPhotos(
   if (paths.length < 1) {
     return {
       ok: false,
-      error: "Upload at least one before/after photo before closing the job",
+      error: "Upload at least one before/after photo or video before closing the job",
       status: 422,
     }
   }
 
-  const { error: upErr } = await supabase
-    .from("maintenance_requests")
-    .update({ vendor_work_status: "completed" })
-    .eq("id", params.ticketId)
-    .eq("assigned_vendor_id", params.vendorId)
+  // Keep in_progress until the resident rates — finalizeAfterResidentFeedback
+  // closes both ends (same as the vendor portal complete path).
+  if (status !== "in_progress") {
+    const { error: upErr } = await supabase
+      .from("maintenance_requests")
+      .update({ vendor_work_status: "in_progress" })
+      .eq("id", params.ticketId)
+      .eq("assigned_vendor_id", params.vendorId)
 
-  if (upErr) {
-    console.error("[maintenance-completion] complete update", upErr.message)
-    return { ok: false, error: "Could not complete job", status: 500 }
+    if (upErr) {
+      console.error("[maintenance-completion] set in_progress", upErr.message)
+      return { ok: false, error: "Could not update job", status: 500 }
+    }
   }
-
-  try {
-    const { markMaintenanceJobCompleted } = await import("./maintenanceSpend.ts")
-    await markMaintenanceJobCompleted(supabase, params.ticketId)
-  } catch (e) {
-    console.error("[maintenance-completion] mark completed", e)
-  }
-
-  await supabase.from("vendor_status_events").insert({
-    ticket_id: params.ticketId,
-    from_status: status,
-    to_status: "completed",
-    source: "email_link",
-    vendor_id: params.vendorId,
-  })
 
   const landlordId =
     (typeof ticket.landlord_id === "string" && ticket.landlord_id.trim()) ||
     resolveLandlordId()
-
-  const { data: vendor } = await supabase
-    .from("vendors")
-    .select("name")
-    .eq("id", params.vendorId)
-    .maybeSingle()
-  const vendorName =
-    typeof vendor?.name === "string" && vendor.name.trim()
-      ? vendor.name.trim()
-      : "Vendor"
-
-  try {
-    await notifyResidentCompleted(supabase, {
-      ticketId: params.ticketId,
-      recipientName: String(ticket.resident_name ?? ""),
-      recipientEmail: typeof ticket.email === "string" ? ticket.email.trim() : "",
-      recipientPhone:
-        typeof ticket.resident_phone === "string" ? ticket.resident_phone : null,
-      notificationChannel:
-        typeof ticket.resident_notification_channel === "string"
-          ? ticket.resident_notification_channel
-          : null,
-      unit: typeof ticket.unit === "string" ? ticket.unit : undefined,
-      priority: typeof ticket.priority === "string" ? ticket.priority : undefined,
-      vendorName,
-      completionPhotoCount: paths.length,
-    })
-  } catch (e) {
-    console.error("[maintenance-completion] resident notify", e)
-  }
 
   try {
     const { data: enriched } = await supabase
@@ -557,44 +499,39 @@ export async function completeJobWithPhotos(
   }
 
   try {
-    await notifyLandlordJobCompleted(supabase, {
-      landlordId,
+    await ensureInvoiceFromApprovedEstimate(supabase, {
       ticketId: params.ticketId,
-      jobToken: params.jobToken,
-      unit: typeof ticket.unit === "string" ? ticket.unit : "",
-      vendorName,
-      photoCount: paths.length,
+      vendorId: params.vendorId,
+      source: "edge_function",
     })
   } catch (e) {
-    console.error("[maintenance-completion] landlord notify", e)
+    console.error("[maintenance-completion] ensure invoice", e)
   }
 
   try {
     await logGraphEvent(supabase, {
       landlord_id: landlordId,
-      event_type: "vendor.work_status_changed",
+      event_type: "maintenance.completion_pending_feedback",
       source: "edge_function",
       actor_type: "vendor",
       actor_id: params.vendorId,
       vendor_id: params.vendorId,
       maintenance_request_id: params.ticketId,
       metadata: {
-        action: "completed",
-        from_status: status,
-        to_status: "completed",
         auth_source: "upload_token",
         completion_photo_count: paths.length,
+        from_status: status,
       },
     })
   } catch (e) {
-    console.error("[maintenance-completion] graph complete", e)
+    console.error("[maintenance-completion] graph pending feedback", e)
   }
 
   return {
     ok: true,
     photoCount: paths.length,
     message:
-      "Job marked complete. The resident and property team were notified with your photos.",
+      "Photos saved. We texted the resident for a quick rating — the job closes when they reply.",
   }
 }
 
@@ -615,11 +552,8 @@ export async function sendCompletionUploadNudge(
   const phone = typeof vendor?.phone === "string" ? vendor.phone.trim() : ""
   if (!phone || !params.jobToken) return
 
-  const base = appBaseUrl()
-  const uploadUrl = base
-    ? `${base}/upload/${encodeURIComponent(params.jobToken)}`
-    : null
-  if (!uploadUrl) return
+  if (!uloAppOrigin({ fallback: "" })) return
+  const uploadUrl = uloAppUrl.upload(params.jobToken)
 
   const wo = formatWorkOrderRef(params.ticketId)
   await sendVendorJobAlert(supabase, {

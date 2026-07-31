@@ -1,4 +1,4 @@
-export type NotificationChannel = 'email' | 'sms' | 'push'
+export type NotificationChannel = 'email' | 'sms' | 'activity_feed' | 'push'
 
 export type NotificationEventChannels = Record<NotificationChannel, boolean>
 
@@ -32,10 +32,17 @@ export type NotificationSettingsState = {
 
 const STORAGE_KEY = 'ulo.notificationSettings'
 
+const CHANNELS: NotificationChannel[] = ['email', 'sms', 'activity_feed', 'push']
+
 function event(
   id: string,
   label: string,
-  channels: Partial<NotificationEventChannels> & { email?: boolean; sms?: boolean; push?: boolean },
+  channels: Partial<NotificationEventChannels> & {
+    email?: boolean
+    sms?: boolean
+    activity_feed?: boolean
+    push?: boolean
+  },
   critical = false,
 ): NotificationEvent {
   return {
@@ -45,6 +52,7 @@ function event(
     channels: {
       email: channels.email ?? true,
       sms: channels.sms ?? false,
+      activity_feed: channels.activity_feed ?? true,
       push: channels.push ?? false,
     },
   }
@@ -111,6 +119,12 @@ export const DEFAULT_NOTIFICATION_SETTINGS: NotificationSettingsState = {
       description: 'Automation runs, escalations, failures, and routing exceptions.',
       events: [
         event('workflow_started', 'Workflow started', { email: false, sms: false }),
+        event(
+          'needs_your_attention',
+          'Needs Your Attention item added',
+          { email: true, sms: true, push: true },
+          true,
+        ),
         event('workflow_escalated', 'Workflow escalated', { email: true, sms: true, push: true }, true),
         event('automation_failed', 'Automation failed', { email: true, sms: true, push: true }, true),
         event('vendor_unassigned', 'Vendor could not be assigned', { email: true, sms: true, push: true }, true),
@@ -159,14 +173,64 @@ function cloneDefaults(): NotificationSettingsState {
   return JSON.parse(JSON.stringify(DEFAULT_NOTIFICATION_SETTINGS)) as NotificationSettingsState
 }
 
+function normalizeChannel(raw: unknown, fallback: NotificationChannel): NotificationChannel {
+  return typeof raw === 'string' && CHANNELS.includes(raw as NotificationChannel)
+    ? (raw as NotificationChannel)
+    : fallback
+}
+
+function normalizeEventChannels(raw: unknown): NotificationEventChannels {
+  const row = raw && typeof raw === 'object' ? (raw as Record<string, unknown>) : {}
+  return {
+    email: row.email !== false,
+    sms: row.sms === true,
+    activity_feed: row.activity_feed !== false,
+    push: row.push === true,
+  }
+}
+
+function normalizeCategories(raw: unknown): NotificationEventCategory[] {
+  if (!Array.isArray(raw) || raw.length === 0) return cloneDefaults().categories
+  return raw.map((category) => {
+    const cat = category as Partial<NotificationEventCategory>
+    return {
+      id: typeof cat.id === 'string' ? cat.id : 'unknown',
+      title: typeof cat.title === 'string' ? cat.title : 'Alerts',
+      description: typeof cat.description === 'string' ? cat.description : '',
+      events: Array.isArray(cat.events)
+        ? cat.events.map((item) => {
+            const ev = item as Partial<NotificationEvent>
+            return {
+              id: typeof ev.id === 'string' ? ev.id : 'event',
+              label: typeof ev.label === 'string' ? ev.label : 'Event',
+              critical: ev.critical === true,
+              channels: normalizeEventChannels(ev.channels),
+            }
+          })
+        : [],
+    }
+  })
+}
+
 export function loadNotificationSettings(): NotificationSettingsState {
   try {
     const raw = window.localStorage.getItem(STORAGE_KEY)
     if (!raw) return cloneDefaults()
-    const parsed = JSON.parse(raw) as NotificationSettingsState
+    const parsed = JSON.parse(raw) as Partial<NotificationSettingsState>
     return {
-      delivery: { ...DEFAULT_NOTIFICATION_SETTINGS.delivery, ...parsed.delivery },
-      categories: parsed.categories?.length ? parsed.categories : cloneDefaults().categories,
+      delivery: {
+        ...DEFAULT_NOTIFICATION_SETTINGS.delivery,
+        ...parsed.delivery,
+        primaryChannel: normalizeChannel(
+          parsed.delivery?.primaryChannel,
+          DEFAULT_NOTIFICATION_SETTINGS.delivery.primaryChannel,
+        ),
+        fallbackChannel: normalizeChannel(
+          parsed.delivery?.fallbackChannel,
+          DEFAULT_NOTIFICATION_SETTINGS.delivery.fallbackChannel,
+        ),
+      },
+      categories: normalizeCategories(parsed.categories),
     }
   } catch {
     return cloneDefaults()
@@ -201,7 +265,7 @@ export function muteCategory(
           ...category,
           events: category.events.map((item) => ({
             ...item,
-            channels: { email: false, sms: false, push: false },
+            channels: { email: false, sms: false, activity_feed: false, push: false },
           })),
         },
   )

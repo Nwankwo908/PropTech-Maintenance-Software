@@ -1,4 +1,5 @@
 import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.49.1"
+import { isLeaseRenewalInquirySms } from "../sms/leaseRenewalInquiry.ts"
 import { listWorkflowTemplates } from "./registry.ts"
 import { findActiveWorkflowRun } from "./workflowRuns.ts"
 import type {
@@ -21,14 +22,46 @@ export async function classifyWorkflow(
     })
 
     if (byConversation) {
-      ctx.activeRun = byConversation
-      ctx.runId = byConversation.id
-      return {
-        templateId: byConversation.template_id as WorkflowTemplateId,
-        confidence: "high",
-        reason: "active_workflow_run_on_conversation",
-        runId: byConversation.id,
+      const hasResident = Boolean(sms.identity.resident_id?.trim())
+      const stuckMaintenanceWithoutResident =
+        byConversation.template_id === "maintenance_intake" &&
+        !hasResident &&
+        (sms.identity.identity_type === "unknown" ||
+          sms.selfHealingPhase === "awaiting_unit_number" ||
+          sms.selfHealingPhase === "unresolved" ||
+          !sms.continueIntake)
+
+      // Don't pin a lease/renewal ask to a maintenance_intake run — route to lease_renewal.
+      const leaseInquiryOnMaintenance =
+        byConversation.template_id === "maintenance_intake" &&
+        isLeaseRenewalInquirySms(sms.inbound.body)
+
+      // Don't pin unknown / unlinked senders to a stuck maintenance_intake run —
+      // that path only loops "need your unit number" without parsing unit replies.
+      if (!stuckMaintenanceWithoutResident && !leaseInquiryOnMaintenance) {
+        ctx.activeRun = byConversation
+        ctx.runId = byConversation.id
+        return {
+          templateId: byConversation.template_id as WorkflowTemplateId,
+          confidence: "high",
+          reason: "active_workflow_run_on_conversation",
+          runId: byConversation.id,
+        }
       }
+
+      if (leaseInquiryOnMaintenance) {
+        console.info("[workflow-classify] lease inquiry overrides maintenance pin", {
+          runId: byConversation.id,
+          conversationId: sms.conversationId,
+        })
+      }
+
+      console.info("[workflow-classify] skipping stuck maintenance_intake run", {
+        runId: byConversation.id,
+        conversationId: sms.conversationId,
+        identityType: sms.identity.identity_type,
+        selfHealingPhase: sms.selfHealingPhase,
+      })
     }
 
     const residentId = sms.identity.resident_id?.trim()

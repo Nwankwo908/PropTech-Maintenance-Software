@@ -178,20 +178,33 @@ export function OnboardingDocumentUploadStep({
     )
 
   return (
-    <section className="rounded-[10px] border border-[#e5e7eb] bg-white p-6 shadow-[0px_1px_2px_-1px_rgba(0,0,0,0.06)]">
-      <h2 className="text-[18px] font-semibold text-[#101828]">Upload your documents</h2>
-      <p className="mt-1 text-[14px] leading-relaxed text-[#6a7282]">
-        Upload leases, spreadsheets, photos, or property documents and Ulo will pull out the important
-        details for you to review before importing.
-      </p>
+    <section className="sa-surface rounded-[10px] border border-[#e5e7eb] bg-white p-6 shadow-[0px_1px_2px_-1px_rgba(0,0,0,0.06)]">
+      <div className="flex items-start justify-between gap-4">
+        <div className="min-w-0">
+          <h2 className="text-[18px] font-semibold text-[#101828]">Upload your documents</h2>
+          <p className="mt-1 text-[14px] leading-relaxed text-[#6a7282]">
+            Upload leases, spreadsheets, photos, or property documents and Ulo will pull out the
+            important details for you to review before importing.
+          </p>
+        </div>
+        <button
+          type="button"
+          disabled={processing}
+          onClick={onSkip}
+          className={`${btnGhost} shrink-0`}
+        >
+          Skip for now
+        </button>
+      </div>
 
       <div
         className={[
-          'mt-4 flex cursor-pointer flex-col items-center justify-center rounded-[10px] border-2 border-dashed px-6 py-14 text-center transition-colors',
+          'sa-dropzone mt-4 flex cursor-pointer flex-col items-center justify-center rounded-[10px] border-2 border-dashed px-6 py-14 text-center',
           dragActive
-            ? 'border-[#187960] bg-[#f0fdf8]'
+            ? 'is-dragging border-[#187960] bg-[#f0fdf8]'
             : 'border-[#e5e7eb] bg-white hover:border-[#d1d5dc] hover:bg-[#fafafa]',
         ].join(' ')}
+        data-dragging={dragActive ? 'true' : 'false'}
         onDragEnter={(event) => {
           event.preventDefault()
           setDragActive(true)
@@ -271,23 +284,18 @@ export function OnboardingDocumentUploadStep({
         </div>
       ) : null}
 
-      <div className="mt-6 flex flex-wrap items-center justify-between gap-3">
-        <button type="button" disabled={processing} onClick={onSkip} className={btnGhost}>
-          Skip for now
+      <div className="mt-6 flex flex-wrap items-center justify-end gap-3">
+        <button type="button" disabled={processing} onClick={onBack} className={btnSecondary}>
+          Back
         </button>
-        <div className="flex flex-wrap items-center gap-3">
-          <button type="button" disabled={processing} onClick={onBack} className={btnSecondary}>
-            Back
-          </button>
-          <button
-            type="button"
-            disabled={processing || !canContinue}
-            onClick={onContinue}
-            className={btnPrimary}
-          >
-            {processing ? 'Processing…' : 'Review extracted data'}
-          </button>
-        </div>
+        <button
+          type="button"
+          disabled={processing || !canContinue}
+          onClick={onContinue}
+          className={btnPrimary}
+        >
+          {processing ? 'Processing…' : 'Review data'}
+        </button>
       </div>
     </section>
   )

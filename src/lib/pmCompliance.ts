@@ -24,6 +24,8 @@ export function pmTaskKindUsesServiceIcon(kind: PmTaskKind): boolean {
   return kind === 'service'
 }
 
+export type PmAgeBasis = 'known' | 'estimated_from_build_year' | 'ai_estimated'
+
 export type PmComplianceTask = {
   id: string
   title: string
@@ -35,11 +37,20 @@ export type PmComplianceTask = {
   workflowRunId: string | null
   unitAssetId: string | null
   estimatedAgeYears: number | null
+  /** Lower-confidence ages (build year / AI) should show an estimated indicator. */
+  ageBasis: PmAgeBasis | null
   usefulLifeYears: number | null
   failureRiskPct: number | null
   failurePredictionWindow: string | null
   replacementRecommended: boolean
   estimatedReplacementCost: number | null
+}
+
+export type PmSafetyHazardAlert = {
+  unitAssetId: string
+  label: string
+  description: string
+  building: string | null
 }
 
 export type PmComplianceSummary = {
@@ -51,6 +62,8 @@ export type PmComplianceSummary = {
   complianceLabel: 'Good' | 'Fair' | 'Needs attention' | null
   attentionCount: number
   replacementRecommendedCount: number
+  /** Distinct safety_hazard deficiencies from linked unit_assets.metadata */
+  safetyHazardAlerts: PmSafetyHazardAlert[]
 }
 
 type DashboardRow = {
@@ -93,6 +106,7 @@ function mapDashboardRow(row: DashboardRow): PmComplianceTask {
     unitAssetId: row.unit_asset_id,
     estimatedAgeYears:
       row.estimated_age_years != null ? Number(row.estimated_age_years) : null,
+    ageBasis: null,
     usefulLifeYears:
       row.useful_life_years != null ? Number(row.useful_life_years) : null,
     failureRiskPct: row.failure_risk_pct != null ? Number(row.failure_risk_pct) : null,
@@ -103,6 +117,17 @@ function mapDashboardRow(row: DashboardRow): PmComplianceTask {
         ? Number(row.estimated_replacement_cost)
         : null,
   }
+}
+
+function parseAgeBasis(raw: unknown): PmAgeBasis | null {
+  if (raw === 'known' || raw === 'estimated_from_build_year' || raw === 'ai_estimated') {
+    return raw
+  }
+  if (typeof raw === 'string' && /build|year built|property/i.test(raw)) {
+    return 'estimated_from_build_year'
+  }
+  if (typeof raw === 'string' && raw.trim()) return 'ai_estimated'
+  return null
 }
 
 export function formatPmDueLabel(
@@ -137,7 +162,11 @@ export function formatPmTaskSubtitle(task: PmComplianceTask): string {
     task.usefulLifeYears != null &&
     task.failureRiskPct != null
   ) {
-    const age = `${task.estimatedAgeYears} yr${task.estimatedAgeYears === 1 ? '' : 's'} old`
+    const estimated =
+      task.ageBasis === 'estimated_from_build_year' || task.ageBasis === 'ai_estimated'
+        ? ' (estimated)'
+        : ''
+    const age = `${task.estimatedAgeYears} yr${task.estimatedAgeYears === 1 ? '' : 's'} old${estimated}`
     const life = `${task.usefulLifeYears} yr useful life`
     const risk = `${task.failureRiskPct}% fail risk${
       task.failurePredictionWindow ? ` (${task.failurePredictionWindow})` : ''
@@ -145,6 +174,12 @@ export function formatPmTaskSubtitle(task: PmComplianceTask): string {
     return `${age} · ${life} · ${risk}`
   }
   return task.failurePredictionWindow ?? 'Preventive maintenance'
+}
+
+export function pmAgeIsEstimated(task: PmComplianceTask): boolean {
+  return (
+    task.ageBasis === 'estimated_from_build_year' || task.ageBasis === 'ai_estimated'
+  )
 }
 
 function complianceLabel(pct: number | null): PmComplianceSummary['complianceLabel'] {
@@ -172,7 +207,10 @@ export function sortPmComplianceTasks(tasks: PmComplianceTask[]): PmComplianceTa
   })
 }
 
-function buildSummary(tasks: PmComplianceTask[]): PmComplianceSummary {
+function buildSummary(
+  tasks: PmComplianceTask[],
+  safetyHazardAlerts: PmSafetyHazardAlert[] = [],
+): PmComplianceSummary {
   const totalTasks = tasks.length
   const completedTasks = tasks.filter((t) => t.status === 'completed').length
   const compliancePct =
@@ -201,6 +239,7 @@ function buildSummary(tasks: PmComplianceTask[]): PmComplianceSummary {
     complianceLabel: complianceLabel(compliancePct),
     attentionCount,
     replacementRecommendedCount,
+    safetyHazardAlerts,
   }
 }
 
@@ -215,6 +254,7 @@ export async function fetchPmCompliance(): Promise<PmComplianceSummary> {
     return buildSummary([])
   }
 
+  const landlordId = getActiveLandlordId()
   const { data, error } = await supabase
     .from('pm_compliance_dashboard_view')
     .select(
@@ -223,7 +263,7 @@ export async function fetchPmCompliance(): Promise<PmComplianceSummary> {
        estimated_age_years, useful_life_years, failure_risk_pct, failure_prediction_window,
        replacement_recommended, estimated_replacement_cost`,
     )
-    .eq('landlord_id', getActiveLandlordId())
+    .eq('landlord_id', landlordId)
     .order('due_at', { ascending: true })
 
   if (error) {
@@ -232,6 +272,48 @@ export async function fetchPmCompliance(): Promise<PmComplianceSummary> {
     return buildSummary([])
   }
 
-  const tasks = ((data ?? []) as DashboardRow[]).map(mapDashboardRow)
-  return buildSummary(tasks)
+  let tasks = ((data ?? []) as DashboardRow[]).map(mapDashboardRow)
+
+  const assetIds = [
+    ...new Set(tasks.map((t) => t.unitAssetId).filter((id): id is string => Boolean(id))),
+  ]
+  const safetyHazardAlerts: PmSafetyHazardAlert[] = []
+  const ageBasisByAsset = new Map<string, PmAgeBasis>()
+  if (assetIds.length > 0) {
+    const { data: assets, error: assetError } = await supabase
+      .from('unit_assets')
+      .select('id, appliance_label, appliance_type, building, metadata, detection_source')
+      .eq('landlord_id', landlordId)
+      .in('id', assetIds)
+
+    if (!assetError && assets) {
+      for (const asset of assets) {
+        const meta =
+          asset.metadata && typeof asset.metadata === 'object'
+            ? (asset.metadata as Record<string, unknown>)
+            : {}
+        const basis = parseAgeBasis(meta.ageBasis)
+        if (basis) ageBasisByAsset.set(String(asset.id), basis)
+        const defs = Array.isArray(meta.deficiencies) ? meta.deficiencies : []
+        for (const raw of defs) {
+          if (!raw || typeof raw !== 'object') continue
+          const d = raw as { severity?: string; description?: string }
+          if (d.severity !== 'safety_hazard') continue
+          safetyHazardAlerts.push({
+            unitAssetId: String(asset.id),
+            label: String(asset.appliance_label || asset.appliance_type || 'Asset'),
+            description: String(d.description || 'Safety hazard noted during inspection'),
+            building: asset.building != null ? String(asset.building) : null,
+          })
+        }
+      }
+    }
+  }
+
+  tasks = tasks.map((task) => ({
+    ...task,
+    ageBasis: task.unitAssetId ? ageBasisByAsset.get(task.unitAssetId) ?? null : null,
+  }))
+
+  return buildSummary(tasks, safetyHazardAlerts)
 }

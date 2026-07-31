@@ -113,6 +113,8 @@ export async function ensureEarlySmsMaintenanceTicket(
         due_at: dueAt.toISOString(),
         resident_name: row.full_name?.trim() || "Resident",
         resident_phone: row.phone,
+        resident_availability_text:
+          params.intake.preferred_visit_windows?.trim() || null,
       })
       .eq("id", draftId)
 
@@ -150,6 +152,8 @@ export async function ensureEarlySmsMaintenanceTicket(
       estimated_minutes: estimatedMinutes,
       due_at: dueAt.toISOString(),
       vendor_work_status: "unassigned",
+      resident_availability_text:
+        params.intake.preferred_visit_windows?.trim() || null,
     })
     .select("id")
     .single()

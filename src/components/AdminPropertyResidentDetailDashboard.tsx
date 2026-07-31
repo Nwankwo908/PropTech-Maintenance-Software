@@ -2,6 +2,18 @@ import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { syncSmsIdentity } from '@/api/landlordSmsOnboarding'
 import {
+  activateTenantAfterAdd,
+  clearActivationFailureOnPhoneUpdate,
+  phoneChanged,
+  phoneNewlyAdded,
+  resendTenantActivationSms,
+  tenantActivationWarningMessage,
+} from '@/api/tenantActivation'
+import {
+  TenantActivationActionRequiredActions,
+  TenantActivationStatusChip,
+} from '@/components/TenantActivationStatusChip'
+import {
   EditResidentModal,
   type EditResidentModalRow,
   type EditResidentSavePayload,
@@ -14,6 +26,8 @@ import {
 } from '@/lib/propertyResidentUnitOptions'
 import {
   buildResidentProfileDetail,
+  displayResidentEmail,
+  isPlaceholderResidentEmail,
   RESIDENT_STANDING_STYLES,
   type ResidentCommunicationItem,
   type ResidentProfileDetail,
@@ -24,7 +38,14 @@ import {
   parseBuildingSlug,
 } from '@/lib/propertyRoutes'
 import { normalizeBuildingKey } from '@/lib/propertyHealth'
+import {
+  conversationStatusLabel,
+  conversationTypeLabel,
+} from '@/lib/propertyConversations'
+import { deleteResidentsForLandlord } from '@/lib/residentDeletion'
+import { resolveTenantActivationChip } from '@/lib/tenantActivationStatus'
 import { supabase } from '@/lib/supabase'
+import { getErrorMessage } from '@/lib/errorMessage'
 
 function asString(value: unknown): string {
   if (value == null) return ''
@@ -53,6 +74,12 @@ type LoadedResidentUser = {
   status: ResidentStatus
   balanceDue: number
   leaseEndDate: string | null
+  monthlyRent: number | null
+  maintenanceResponsibilitiesClause: string | null
+  activationStatus: string | null
+  smsConsentStatus: string | null
+  activationAttemptCount: number
+  activationSmsSentAt: string | null
 }
 
 type PropertyUnitOption = {
@@ -85,7 +112,7 @@ function toEditResidentRow(user: LoadedResidentUser): EditResidentModalRow {
     id: user.id,
     residentId: user.residentId,
     name: user.fullName,
-    email: user.email,
+    email: displayResidentEmail(user.email) ?? '',
     phone: user.phone ?? undefined,
     unit: user.unit.trim()
       ? { kind: 'assigned', unit: user.unit, building: user.building }
@@ -209,47 +236,56 @@ function ProfileContent({ profile }: { profile: ResidentProfileDetail }) {
       <div className="grid gap-4 xl:grid-cols-3">
         <ProfileCard title="Personal info" icon={<PersonIcon />}>
           <div className="flex flex-col gap-4">
-            <div className="flex flex-col gap-2">
-              {profile.phone ? (
-                <div className="flex items-center gap-2 text-[14px] leading-5 text-[#364153]">
-                  <PhoneIcon />
-                  {profile.phone}
+            {!profile.phone && !profile.email && !profile.emergencyContact && profile.pets.length === 0 ? (
+              <p className="text-[13px] leading-5 text-[#6a7282]">No contact details on file.</p>
+            ) : (
+              <>
+                <div className="flex flex-col gap-2">
+                  {profile.phone ? (
+                    <div className="flex items-center gap-2 text-[14px] leading-5 text-[#364153]">
+                      <PhoneIcon />
+                      {profile.phone}
+                    </div>
+                  ) : null}
+                  {profile.email ? (
+                    <div className="flex items-center gap-2 text-[14px] leading-5 text-[#364153]">
+                      <MailIcon />
+                      {profile.email}
+                    </div>
+                  ) : null}
                 </div>
-              ) : null}
-              {profile.email ? (
-                <div className="flex items-center gap-2 text-[14px] leading-5 text-[#364153]">
-                  <MailIcon />
-                  {profile.email}
-                </div>
-              ) : null}
-            </div>
 
-            {profile.emergencyContact ? (
-              <div>
-                <div className="flex items-center gap-1.5 text-[12px] leading-4 text-[#6a7282]">
-                  <InfoIcon />
-                  Emergency contact
-                </div>
-                <p className="mt-1 text-[14px] font-medium leading-5 text-[#0a0a0a]">
-                  {profile.emergencyContact.name} · {profile.emergencyContact.relationship}
-                </p>
-                <p className="text-[13px] leading-5 text-[#364153]">{profile.emergencyContact.phone}</p>
-              </div>
-            ) : null}
+                {profile.emergencyContact ? (
+                  <div>
+                    <div className="flex items-center gap-1.5 text-[12px] leading-4 text-[#6a7282]">
+                      <InfoIcon />
+                      Emergency contact
+                    </div>
+                    <p className="mt-1 text-[14px] font-medium leading-5 text-[#0a0a0a]">
+                      {profile.emergencyContact.name} · {profile.emergencyContact.relationship}
+                    </p>
+                    <p className="text-[13px] leading-5 text-[#364153]">{profile.emergencyContact.phone}</p>
+                  </div>
+                ) : null}
 
-            {profile.pets.length > 0 ? (
-              <div>
-                <div className="flex items-center gap-1.5 text-[12px] leading-4 text-[#6a7282]">
-                  <PawIcon />
-                  Pets
-                </div>
-                {profile.pets.map((pet) => (
-                  <p key={`${pet.name}-${pet.species}`} className="mt-1 text-[14px] leading-5 text-[#364153]">
-                    {pet.name} · {pet.species} · {pet.breed}
-                  </p>
-                ))}
-              </div>
-            ) : null}
+                {profile.pets.length > 0 ? (
+                  <div>
+                    <div className="flex items-center gap-1.5 text-[12px] leading-4 text-[#6a7282]">
+                      <PawIcon />
+                      Pets
+                    </div>
+                    {profile.pets.map((pet) => (
+                      <p
+                        key={`${pet.name}-${pet.species}`}
+                        className="mt-1 text-[14px] leading-5 text-[#364153]"
+                      >
+                        {pet.name} · {pet.species} · {pet.breed}
+                      </p>
+                    ))}
+                  </div>
+                ) : null}
+              </>
+            )}
           </div>
         </ProfileCard>
 
@@ -273,15 +309,29 @@ function ProfileContent({ profile }: { profile: ResidentProfileDetail }) {
             </div>
           </div>
 
-          <div className="mt-5 border-t border-[#f3f4f6] pt-4">
-            <p className="text-[12px] leading-4 text-[#6a7282]">Maintenance responsibility</p>
-            <p className="mt-2 text-[13px] leading-5 text-[#364153]">
-              <span className="font-medium text-[#0a0a0a]">Tenant:</span> {profile.tenantMaintenance}
-            </p>
-            <p className="mt-1 text-[13px] leading-5 text-[#364153]">
-              <span className="font-medium text-[#0a0a0a]">Landlord:</span> {profile.landlordMaintenance}
-            </p>
-          </div>
+          {profile.maintenanceResponsibilitiesClause ||
+          profile.tenantMaintenance ||
+          profile.landlordMaintenance ? (
+            <div className="mt-5 border-t border-[#f3f4f6] pt-4">
+              <p className="text-[12px] leading-4 text-[#6a7282]">Maintenance responsibility</p>
+              {profile.maintenanceResponsibilitiesClause ? (
+                <p className="mt-2 whitespace-pre-wrap text-[13px] leading-5 text-[#364153]">
+                  {profile.maintenanceResponsibilitiesClause}
+                </p>
+              ) : null}
+              {profile.tenantMaintenance ? (
+                <p className="mt-2 text-[13px] leading-5 text-[#364153]">
+                  <span className="font-medium text-[#0a0a0a]">Tenant:</span> {profile.tenantMaintenance}
+                </p>
+              ) : null}
+              {profile.landlordMaintenance ? (
+                <p className="mt-1 text-[13px] leading-5 text-[#364153]">
+                  <span className="font-medium text-[#0a0a0a]">Landlord:</span>{' '}
+                  {profile.landlordMaintenance}
+                </p>
+              ) : null}
+            </div>
+          ) : null}
 
           <div className="mt-5 flex items-center justify-between border-t border-[#f3f4f6] pt-4">
             <div className="flex items-center gap-2">
@@ -330,15 +380,19 @@ function ProfileContent({ profile }: { profile: ResidentProfileDetail }) {
         ) : (
           <ul className="mt-4 flex flex-col gap-3">
             {profile.communications.map((item) => (
-              <li
-                key={item.id}
-                className="flex items-start justify-between gap-3 border-b border-[#f3f4f6] pb-3 last:border-b-0 last:pb-0"
-              >
-                <div className="min-w-0">
-                  <p className="text-[14px] leading-5 text-[#364153]">{item.preview}</p>
-                  <p className="mt-0.5 text-[12px] leading-4 text-[#6a7282]">{item.channel}</p>
-                </div>
-                <span className="shrink-0 text-[12px] leading-4 text-[#9ca3af]">{item.dateLabel}</span>
+              <li key={item.id} className="border-b border-[#f3f4f6] pb-3 last:border-b-0 last:pb-0">
+                <Link
+                  to={`/admin/communication?thread=${encodeURIComponent(item.id)}`}
+                  className="sa-row group flex items-start justify-between gap-3 rounded-[8px] px-1 py-0.5 hover:bg-[#f9fafb] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#186179]"
+                >
+                  <div className="min-w-0">
+                    <p className="text-[14px] leading-5 text-[#364153] group-hover:text-[#186179] group-hover:underline">
+                      {item.preview}
+                    </p>
+                    <p className="mt-0.5 text-[12px] leading-4 text-[#6a7282]">{item.channel}</p>
+                  </div>
+                  <span className="shrink-0 text-[12px] leading-4 text-[#9ca3af]">{item.dateLabel}</span>
+                </Link>
               </li>
             ))}
           </ul>
@@ -360,6 +414,7 @@ export function AdminPropertyResidentDetailDashboard() {
   const [editOpen, setEditOpen] = useState(false)
   const [deleteSaving, setDeleteSaving] = useState(false)
   const [actionError, setActionError] = useState<string | null>(null)
+  const [resendingActivation, setResendingActivation] = useState(false)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
@@ -384,7 +439,7 @@ export function AdminPropertyResidentDetailDashboard() {
       supabase
         .from('users')
         .select(
-          'id, resident_id, full_name, email, phone, unit, building, status, balance_due, lease_end_date',
+          'id, resident_id, full_name, email, phone, unit, building, status, balance_due, lease_end_date, monthly_rent, maintenance_responsibilities_clause, activation_status, sms_consent_status, activation_attempt_count, activation_sms_sent_at',
         )
         .eq('landlord_id', landlordId)
         .eq('id', residentId)
@@ -410,15 +465,45 @@ export function AdminPropertyResidentDetailDashboard() {
         .limit(2000),
     ])
 
-    if (userResult.error || !userResult.data) {
-      setError(userResult.error?.message ?? 'Resident not found.')
-      setProfile(null)
-      setLoadedUser(null)
-      setLoading(false)
-      return
+    let raw: Record<string, unknown> | null =
+      userResult.error || !userResult.data
+        ? null
+        : (userResult.data as Record<string, unknown>)
+
+    if (!raw) {
+      if (
+        userResult.error &&
+        /column .* does not exist/i.test(userResult.error.message)
+      ) {
+        const legacy = await supabase
+          .from('users')
+          .select(
+            'id, resident_id, full_name, email, phone, unit, building, status, balance_due, lease_end_date, monthly_rent',
+          )
+          .eq('landlord_id', landlordId)
+          .eq('id', residentId)
+          .maybeSingle()
+        if (legacy.error || !legacy.data) {
+          setError(
+            getErrorMessage(legacy.error, "We couldn't find that resident."),
+          )
+          setProfile(null)
+          setLoadedUser(null)
+          setLoading(false)
+          return
+        }
+        raw = legacy.data as Record<string, unknown>
+      } else {
+        setError(
+          getErrorMessage(userResult.error, "We couldn't find that resident."),
+        )
+        setProfile(null)
+        setLoadedUser(null)
+        setLoading(false)
+        return
+      }
     }
 
-    const raw = userResult.data as Record<string, unknown>
     const userBuilding = asString(raw.building) || building
     if (userBuilding && userBuilding.toLowerCase() !== building.toLowerCase()) {
       setError('Resident does not belong to this property.')
@@ -429,29 +514,51 @@ export function AdminPropertyResidentDetailDashboard() {
     }
 
     const userId = asString(raw.id)
+    const monthlyRentRaw = asFiniteNumber(raw.monthly_rent)
+    let email = asString(raw.email)
+    // Clear invented onboarding placeholder emails so they never linger on New Landlord.
+    if (isPlaceholderResidentEmail(email)) {
+      void supabase
+        .from('users')
+        .update({ email: '' })
+        .eq('id', userId)
+        .eq('landlord_id', landlordId)
+      email = ''
+    }
     const loaded: LoadedResidentUser = {
       id: userId,
       residentId:
         asString(raw.resident_id) ||
         `RES-${userId.replace(/-/g, '').slice(0, 6).toUpperCase()}`,
       fullName: asString(raw.full_name) || 'Unnamed resident',
-      email: asString(raw.email),
+      email,
       phone: asString(raw.phone) || null,
       unit: asString(raw.unit),
       building: userBuilding,
       status: parseResidentStatus(asString(raw.status)),
       balanceDue: asFiniteNumber(raw.balance_due),
       leaseEndDate: asString(raw.lease_end_date) || null,
+      monthlyRent: monthlyRentRaw > 0 ? monthlyRentRaw : null,
+      maintenanceResponsibilitiesClause:
+        asString(raw.maintenance_responsibilities_clause) || null,
+      activationStatus: asString(raw.activation_status) || null,
+      smsConsentStatus: asString(raw.sms_consent_status) || null,
+      activationAttemptCount: asFiniteNumber(raw.activation_attempt_count),
+      activationSmsSentAt: asString(raw.activation_sms_sent_at) || null,
     }
 
     const communications: ResidentCommunicationItem[] =
       conversationsResult.error == null
-        ? ((conversationsResult.data ?? []) as Record<string, unknown>[]).map((row) => ({
-            id: asString(row.id),
-            preview: `${asString(row.conversation_type) || 'Conversation'} · ${asString(row.status) || 'open'}`,
-            channel: asString(row.conversation_type) || 'SMS',
-            dateLabel: formatCommDate(asString(row.updated_at)),
-          }))
+        ? ((conversationsResult.data ?? []) as Record<string, unknown>[]).map((row) => {
+            const typeLabel = conversationTypeLabel(asString(row.conversation_type))
+            const statusLabel = conversationStatusLabel(asString(row.status) || 'open')
+            return {
+              id: asString(row.id),
+              preview: `${typeLabel} · ${statusLabel}`,
+              channel: typeLabel,
+              dateLabel: formatCommDate(asString(row.updated_at)),
+            }
+          })
         : []
 
     setLoadedUser(loaded)
@@ -493,6 +600,8 @@ export function AdminPropertyResidentDetailDashboard() {
           status: loaded.status,
           balanceDue: loaded.balanceDue,
           leaseEndDate: loaded.leaseEndDate,
+          monthlyRent: loaded.monthlyRent,
+          maintenanceResponsibilitiesClause: loaded.maintenanceResponsibilitiesClause,
         },
         workflowData: workflowDashboard,
         communications,
@@ -532,10 +641,11 @@ export function AdminPropertyResidentDetailDashboard() {
   }, [loadedUser])
 
   async function handleResidentSave(payload: EditResidentSavePayload) {
-    if (!supabase) throw new Error('Supabase is not configured.')
+    if (!supabase) throw new Error("We can't reach the server right now. Please try again in a moment.")
     setActionError(null)
 
     const unitCell = unitOptionKeyToCell(payload.unitOptionKey)
+    const previousPhone = loadedUser?.phone ?? null
     const { error: updateError } = await supabase
       .from('users')
       .update({
@@ -550,8 +660,8 @@ export function AdminPropertyResidentDetailDashboard() {
       .eq('landlord_id', getActiveLandlordId())
 
     if (updateError) {
-      setActionError(updateError.message)
-      throw new Error(updateError.message)
+      setActionError(getErrorMessage(updateError, 'Something went wrong. Please try again.'))
+      throw new Error(getErrorMessage(updateError, 'Something went wrong. Please try again.'))
     }
 
     if (payload.phone?.trim()) {
@@ -562,6 +672,23 @@ export function AdminPropertyResidentDetailDashboard() {
         unitLabel: unitCell.kind === 'assigned' ? unitCell.unit : null,
         building: unitCell.kind === 'assigned' ? unitCell.building : null,
       })
+    }
+
+    if (phoneChanged(previousPhone, payload.phone)) {
+      await clearActivationFailureOnPhoneUpdate({
+        landlordId: getActiveLandlordId(),
+        residentId: payload.id,
+      })
+    }
+
+    if (phoneNewlyAdded(previousPhone, payload.phone)) {
+      const activation = await activateTenantAfterAdd({
+        landlordId: getActiveLandlordId(),
+        residentId: payload.id,
+        phone: payload.phone,
+      })
+      const warning = tenantActivationWarningMessage(activation)
+      if (warning) setActionError(warning)
     }
 
     setEditOpen(false)
@@ -578,14 +705,13 @@ export function AdminPropertyResidentDetailDashboard() {
     setActionError(null)
     setDeleteSaving(true)
 
-    const { error: deleteError } = await supabase
-      .from('users')
-      .delete()
-      .eq('id', loadedUser.id)
-      .eq('landlord_id', getActiveLandlordId())
+    const result = await deleteResidentsForLandlord({
+      landlordId: getActiveLandlordId(),
+      residentIds: [loadedUser.id],
+    })
 
-    if (deleteError) {
-      setActionError(deleteError.message)
+    if (!result.ok) {
+      setActionError(result.error)
       setDeleteSaving(false)
       return
     }
@@ -593,11 +719,37 @@ export function AdminPropertyResidentDetailDashboard() {
     navigate(backHref)
   }
 
+  async function handleResendWelcome() {
+    if (!loadedUser) return
+    setActionError(null)
+    setResendingActivation(true)
+    const result = await resendTenantActivationSms({
+      residentId: loadedUser.id,
+    })
+    setResendingActivation(false)
+    if (!result.ok || (result.failed ?? 0) > 0) {
+      setActionError(
+        result.error ||
+          'Welcome text could not be delivered. Check the phone number and try again.',
+      )
+    }
+    await loadResident()
+  }
+
+  const activationChip = loadedUser
+    ? resolveTenantActivationChip({
+        activationStatus: loadedUser.activationStatus,
+        smsConsentStatus: loadedUser.smsConsentStatus,
+        activationAttemptCount: loadedUser.activationAttemptCount,
+        activationSmsSentAt: loadedUser.activationSmsSentAt,
+      })
+    : null
+
   if (!building) {
     return (
       <main className="flex min-h-0 flex-1 flex-col px-8 pb-12 pt-6">
         <p className="text-[14px] text-[#6a7282]">Property not found.</p>
-        <Link to="/admin/properties" className="mt-3 text-[14px] font-medium text-[#186179]">
+        <Link to="/admin/properties" className="sa-link mt-3 text-[14px] font-medium text-[#186179]">
           ← All properties
         </Link>
       </main>
@@ -605,11 +757,11 @@ export function AdminPropertyResidentDetailDashboard() {
   }
 
   return (
-    <main className="flex min-h-0 flex-1 flex-col px-8 pb-12">
+    <main className="property-resident-detail-enter flex min-h-0 flex-1 flex-col px-8 pb-12">
       <div className="py-6">
         <Link
           to={backHref}
-          className="inline-flex items-center gap-1 text-[13px] font-medium text-[#6a7282] transition-colors hover:text-[#101828]"
+          className="sa-link inline-flex items-center gap-1 text-[13px] font-medium text-[#6a7282] hover:text-[#101828]"
         >
           <span aria-hidden>←</span> Back to {profile?.buildingShort ?? building.replace(/\s+Apartments$/i, '')}
         </Link>
@@ -632,6 +784,27 @@ export function AdminPropertyResidentDetailDashboard() {
                 <p className="mt-1 text-[14px] leading-5 text-[#6a7282]">
                   {profile.buildingShort} · {profile.unitDisplay}
                 </p>
+                {activationChip ? (
+                  <div className="mt-3 flex flex-col gap-2">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="text-[12px] font-medium text-[#6a7282]">
+                        Activation
+                      </span>
+                      <TenantActivationStatusChip chip={activationChip} />
+                    </div>
+                    <p className="max-w-xl text-[12px] leading-4 text-[#6a7282]">
+                      {activationChip.detail}
+                    </p>
+                    {activationChip.actionRequired ? (
+                      <TenantActivationActionRequiredActions
+                        phone={loadedUser?.phone}
+                        resending={resendingActivation}
+                        onResend={() => void handleResendWelcome()}
+                        onEditPhone={() => setEditOpen(true)}
+                      />
+                    ) : null}
+                  </div>
+                ) : null}
               </div>
               <div className="flex flex-wrap items-center gap-2">
                 <span
@@ -642,7 +815,7 @@ export function AdminPropertyResidentDetailDashboard() {
                 <button
                   type="button"
                   onClick={() => setEditOpen(true)}
-                  className="inline-flex h-9 items-center rounded-[10px] border border-[#e5e7eb] bg-white px-4 text-[13px] font-medium leading-5 text-[#101828] transition-colors hover:bg-[#f9fafb]"
+                  className="sa-press inline-flex h-9 items-center rounded-[10px] border border-[#e5e7eb] bg-white px-4 text-[13px] font-medium leading-5 text-[#101828] hover:bg-[#f9fafb]"
                 >
                   Edit profile
                 </button>
@@ -650,7 +823,7 @@ export function AdminPropertyResidentDetailDashboard() {
                   type="button"
                   onClick={() => void handleDeleteResident()}
                   disabled={deleteSaving}
-                  className="inline-flex h-9 items-center rounded-[10px] border border-[#fecaca] bg-white px-4 text-[13px] font-medium leading-5 text-[#b91c1c] transition-colors hover:bg-[#fef2f2] disabled:opacity-50"
+                  className="sa-press inline-flex h-9 items-center rounded-[10px] border border-[#fecaca] bg-white px-4 text-[13px] font-medium leading-5 text-[#b91c1c] hover:bg-[#fef2f2] disabled:opacity-50"
                 >
                   {deleteSaving ? 'Deleting…' : 'Delete resident'}
                 </button>

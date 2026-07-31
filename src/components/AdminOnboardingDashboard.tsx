@@ -1,549 +1,21 @@
-import { useEffect, useId, useRef, useState, type ReactNode } from 'react'
-import { Link, useNavigate } from 'react-router-dom'
-import {
-  anyDocumentProcessing,
-  buildOnboardingExtractionReview,
-  createUploadedDocumentFromFile,
-  emptyExtractionReview,
-  isAcceptedUploadFile,
-  runMockDocumentProcessing,
-  setAllReviewSelections,
-  toMockExtractionReview,
-  countSelectedInReview,
-  hasExtractionReviewData,
-  type OnboardingExtractionReview,
-  type OnboardingUploadedDocument,
-} from '@/lib/onboardingDocumentUpload'
+import { Link } from 'react-router-dom'
+import { getActiveLandlordId } from '@/lib/activeLandlord'
+import { primaryPayoutMethodLabel } from '@/api/landlordStripeConnect'
 import { OnboardingWelcomeHub } from '@/components/onboarding/OnboardingWelcomeHub'
 import { OnboardingStepIndicator } from '@/components/onboarding/OnboardingStepIndicator'
 import { OnboardingReviewStep } from '@/components/onboarding/OnboardingReviewStep'
 import { OnboardingAiReviewStep } from '@/components/onboarding/OnboardingAiReviewStep'
 import { OnboardingDocumentUploadStep } from '@/components/onboarding/OnboardingDocumentUploadStep'
-import { checkboxInputClassName } from '@/components/TableCheckbox'
-import { getActiveLandlordId } from '@/lib/activeLandlord'
-import { PRIVACY_POLICY_PATH } from '@/lib/legal/privacyPolicyContent'
-import {
-  buildOnboardingReviewData,
-  canCompleteOnboarding,
-  completeOnboarding,
-  createPropertyId,
-  defaultOnboardingState,
-  fetchAccountSetupCounts,
-  fetchLandlordOnboarding,
-  fetchOnboardingReviewData,
-  fetchOnboardingReviewSupplement,
-  fetchOnboardingResidents,
-  fetchOnboardingVendors,
-  clearOnboardingPortfolioSession,
-  getPreviousOnboardingStep,
-  importMockExtraction,
-  maxOnboardingResidentSequence,
-  nextOnboardingResidentIdFromSequence,
-  normalizeOnboardingStepId,
-  parseLeaseDateInput,
-  parseMonthlyRentInput,
-  parseRentDueDayInput,
-  persistOnboardingProperties,
-  persistOnboardingWizardLocally,
-  readLocalOnboardingState,
-  requireOnboardingLandlord,
-  resolveOnboardingStepForPath,
-  saveLandlordOnboarding,
-  saveOnboardingWizardDraft,
-  type LandlordOnboardingState,
-  type OnboardingAccountSetup,
-  type OnboardingProperty,
-  type OnboardingResident,
-  type OnboardingReviewData,
-  type OnboardingFormDraft,
-  type OnboardingStep,
-  type OnboardingVendor,
-} from '@/lib/landlordOnboarding'
-import { supabase } from '@/lib/supabase'
-import {
-  VENDOR_TRADE_OPTIONS as CANONICAL_VENDOR_TRADE_OPTIONS,
-  dbCategoryToVendorTrade,
-  vendorTradeToDbCategory,
-} from '@/lib/vendorTrades'
-import { phoneForDbOrError } from '@/lib/phoneFormat'
-import { citiesForState, US_STATE_OPTIONS } from '@/lib/usLocations'
-
-const inputClass =
-  'h-10 w-full rounded-[8px] border border-[#e5e7eb] bg-white px-3 text-[14px] text-[#101828] outline-none placeholder:text-[#9ca3af] focus:border-[#155dfc] focus:ring-2 focus:ring-[#155dfc]/20'
-
-const fieldLabelClass = 'mb-1 block text-[13px] font-medium text-[#364153]'
-
-const selectClass =
-  'h-10 w-full cursor-pointer appearance-none rounded-[8px] border border-[#e5e7eb] bg-white py-2 pl-3 pr-10 text-[14px] text-[#101828] outline-none focus:border-[#155dfc] focus:ring-2 focus:ring-[#155dfc]/20'
-
-const PROPERTY_TYPE_OPTIONS: { value: string; label: string }[] = [
-  { value: 'multifamily', label: 'Multifamily' },
-  { value: 'single_family', label: 'Single Family' },
-  { value: 'mixed_use', label: 'Mixed Use' },
-  { value: 'commercial', label: 'Commercial' },
-  { value: 'student_housing', label: 'Student Housing' },
-]
-
-const VENDOR_TRADE_OPTIONS: { value: string; label: string }[] = [
-  { value: '', label: 'Select trade' },
-  ...CANONICAL_VENDOR_TRADE_OPTIONS.map((trade) => ({
-    value: trade.value,
-    label: trade.label,
-  })),
-]
-
-const UUID_RE =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
-
-function isPersistedVendorId(id: string): boolean {
-  return UUID_RE.test(id)
-}
-
-type PropertyFormRow = {
-  id: string
-  name: string
-  address: string
-  city: string
-  state: string
-  zipCode: string
-  propertyType: string
-  unitCount: string
-}
-
-function createEmptyPropertyForm(): PropertyFormRow {
-  return {
-    id: createPropertyId(),
-    name: '',
-    address: '',
-    city: '',
-    state: '',
-    zipCode: '',
-    propertyType: 'multifamily',
-    unitCount: '',
-  }
-}
-
-function normalizePropertyFormRow(
-  form: Partial<PropertyFormRow> & { id: string },
-): PropertyFormRow {
-  const state = (form.state ?? '').trim().toUpperCase()
-  const city = (form.city ?? '').trim()
-  return {
-    id: form.id,
-    name: form.name ?? '',
-    address: form.address ?? '',
-    city,
-    state,
-    zipCode: form.zipCode ?? '',
-    propertyType: form.propertyType ?? 'multifamily',
-    unitCount: form.unitCount ?? '',
-  }
-}
-
-function cityOptionsForProperty(form: PropertyFormRow): string[] {
-  const cities = [...citiesForState(form.state)]
-  const current = form.city.trim()
-  if (current && !cities.includes(current)) {
-    cities.unshift(current)
-  }
-  return cities
-}
-
-function formatPropertyAddress(property: OnboardingProperty): string {
-  return [property.streetAddress, property.city, property.state, property.zipCode]
-    .map((part) => part.trim())
-    .filter(Boolean)
-    .join(', ')
-}
-
-function propertyFormToOnboarding(form: PropertyFormRow): OnboardingProperty | null {
-  const unitCount = Number.parseInt(form.unitCount, 10)
-  const name = form.name.trim()
-  const streetAddress = form.address.trim()
-  const city = form.city.trim()
-  const state = form.state.trim().toUpperCase()
-  const zipCode = form.zipCode.trim()
-  if (
-    !name ||
-    !streetAddress ||
-    !city ||
-    !state ||
-    !zipCode ||
-    !Number.isFinite(unitCount) ||
-    unitCount < 1
-  ) {
-    return null
-  }
-  return {
-    id: form.id,
-    name,
-    streetAddress,
-    city,
-    state,
-    zipCode,
-    unitCount,
-  }
-}
-
-type VendorFormRow = {
-  id: string
-  name: string
-  category: string
-  email: string
-  phone: string
-}
-
-function createEmptyVendorForm(): VendorFormRow {
-  return {
-    id: `vendor-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-    name: '',
-    category: '',
-    email: '',
-    phone: '',
-  }
-}
-
-function vendorToFormRow(vendor: OnboardingVendor): VendorFormRow {
-  return {
-    id: vendor.id,
-    name: vendor.name,
-    category: dbCategoryToVendorTrade(vendor.category),
-    email: vendor.email,
-    phone: vendor.phone,
-  }
-}
-
-function propertyFormsFromState(properties: OnboardingProperty[]): PropertyFormRow[] {
-  return properties.map((property) => ({
-    id: property.id,
-    name: property.name,
-    address: property.streetAddress || formatPropertyAddress(property),
-    city: property.city ?? '',
-    state: property.state ?? '',
-    zipCode: property.zipCode ?? '',
-    propertyType: 'multifamily',
-    unitCount: String(property.unitCount),
-  }))
-}
-
-function dedupeVendorForms(forms: VendorFormRow[]): VendorFormRow[] {
-  const seenIds = new Set<string>()
-  const byName = new Map<string, VendorFormRow>()
-  const unnamed: VendorFormRow[] = []
-
-  for (const form of forms) {
-    const id = form.id.trim()
-    if (id && seenIds.has(id)) continue
-    if (id) seenIds.add(id)
-
-    const nameKey = form.name.trim().toLowerCase()
-    if (!nameKey) {
-      unnamed.push(form)
-      continue
-    }
-
-    const existing = byName.get(nameKey)
-    if (!existing) {
-      byName.set(nameKey, form)
-      continue
-    }
-
-    // Prefer the persisted database row when names collide.
-    if (!isPersistedVendorId(existing.id) && isPersistedVendorId(form.id)) {
-      byName.set(nameKey, form)
-    }
-  }
-
-  const deduped = [...byName.values(), ...unnamed]
-  return deduped.length > 0 ? deduped : [createEmptyVendorForm()]
-}
-
-/** Accepts UI rows and persisted drafts (draft `rentDueDayMode` is optional string). */
-type ResidentFormInput = {
-  id: string
-  residentId?: string
-  fullName?: string
-  unit?: string
-  email?: string
-  phone?: string
-  monthlyRent?: string
-  rentDueDayMode?: string
-  rentDueDay?: string
-  leaseStart?: string
-  leaseEnd?: string
-}
-
-function residentFormRowHasUserInput(form: ResidentFormInput): boolean {
-  return (
-    (form.fullName ?? '').trim() !== '' ||
-    (form.unit ?? '').trim() !== '' ||
-    (form.phone ?? '').trim() !== '' ||
-    (form.email ?? '').trim() !== '' ||
-    (form.monthlyRent ?? '').trim() !== '' ||
-    (form.rentDueDayMode ?? '') !== '' ||
-    (form.rentDueDay ?? '').trim() !== '' ||
-    (form.leaseStart ?? '').trim() !== '' ||
-    (form.leaseEnd ?? '').trim() !== ''
-  )
-}
-
-function residentFormsHaveData(forms: ResidentFormInput[] | undefined): boolean {
-  return (forms ?? []).some(residentFormRowHasUserInput)
-}
-
-function pickResidentFormsForStep(
-  preferred: ResidentFormRow[],
-  reviewResidents: OnboardingResident[] | undefined,
-): ResidentFormRow[] {
-  if (residentFormsHaveData(preferred)) return preferred.map(normalizeResidentFormRow)
-  if (reviewResidents?.length) return reviewResidents.map(residentToFormRow)
-  return preferred.length > 0
-    ? preferred.map(normalizeResidentFormRow)
-    : [createEmptyResidentForm()]
-}
-
-function normalizeResidentFormRow(form: ResidentFormInput): ResidentFormRow {
-  const rentDueDay = form.rentDueDay ?? ''
-  return {
-    id: form.id,
-    residentId: form.residentId,
-    fullName: form.fullName ?? '',
-    unit: form.unit ?? '',
-    email: form.email ?? '',
-    phone: form.phone ?? '',
-    monthlyRent: form.monthlyRent ?? '',
-    rentDueDayMode: resolveRentDueDayMode(form.rentDueDayMode, rentDueDay),
-    rentDueDay,
-    leaseStart: form.leaseStart ?? '',
-    leaseEnd: form.leaseEnd ?? '',
-  }
-}
-
-function readPersistedResidentForms(
-  stateDraft: OnboardingFormDraft | undefined,
-): ResidentFormRow[] | undefined {
-  const stateForms = stateDraft?.residentForms
-  if (stateForms && residentFormsHaveData(stateForms)) {
-    return stateForms.map(normalizeResidentFormRow)
-  }
-  const localForms = readLocalOnboardingState()?.formDraft?.residentForms
-  if (localForms && residentFormsHaveData(localForms)) {
-    return localForms.map(normalizeResidentFormRow)
-  }
-  return undefined
-}
-
-function buildFormDraft(
-  propertyForms: PropertyFormRow[],
-  vendorForms: VendorFormRow[],
-  residentForms: ResidentFormRow[],
-  fastTrack?: {
-    uploadDocuments?: OnboardingUploadedDocument[]
-    extractionReview?: OnboardingExtractionReview | null
-  },
-): OnboardingFormDraft {
-  const draft: OnboardingFormDraft = { propertyForms, vendorForms, residentForms }
-  if (fastTrack?.uploadDocuments?.length) {
-    draft.uploadDocuments = fastTrack.uploadDocuments
-  }
-  if (fastTrack?.extractionReview && hasExtractionReviewData(fastTrack.extractionReview)) {
-    draft.extractionReview = fastTrack.extractionReview
-  }
-  return draft
-}
-
-function readPersistedExtractionReview(
-  stateDraft: OnboardingFormDraft | undefined,
-): OnboardingExtractionReview | undefined {
-  if (stateDraft?.extractionReview && hasExtractionReviewData(stateDraft.extractionReview)) {
-    return stateDraft.extractionReview
-  }
-  const localDraft = readLocalOnboardingState()?.formDraft
-  if (localDraft?.extractionReview && hasExtractionReviewData(localDraft.extractionReview)) {
-    return localDraft.extractionReview
-  }
-  return undefined
-}
-
-function readPersistedUploadDocuments(
-  stateDraft: OnboardingFormDraft | undefined,
-): OnboardingUploadedDocument[] | undefined {
-  if (stateDraft?.uploadDocuments?.length) {
-    return stateDraft.uploadDocuments
-  }
-  const localDraft = readLocalOnboardingState()?.formDraft
-  if (localDraft?.uploadDocuments?.length) {
-    return localDraft.uploadDocuments
-  }
-  return undefined
-}
-
-function hydrateFormsFromOnboarding(
-  onboarding: LandlordOnboardingState,
-  setters: {
-    setPropertyForms: (rows: PropertyFormRow[]) => void
-    setVendorForms: (rows: VendorFormRow[]) => void
-    setResidentForms: (rows: ResidentFormRow[]) => void
-  },
-): void {
-  const draft = onboarding.formDraft
-
-  if (draft?.propertyForms?.length) {
-    setters.setPropertyForms(draft.propertyForms.map(normalizePropertyFormRow))
-  } else if (onboarding.properties.length > 0) {
-    setters.setPropertyForms(propertyFormsFromState(onboarding.properties))
-  }
-}
-
-type RentDueDayChoice = '' | '1' | '5' | 'custom'
-
-type ResidentFormRow = {
-  id: string
-  residentId?: string
-  fullName: string
-  unit: string
-  email: string
-  phone: string
-  monthlyRent: string
-  rentDueDayMode: RentDueDayChoice
-  rentDueDay: string
-  leaseStart: string
-  leaseEnd: string
-}
-
-function rentDueDayModeFromDay(day: number | null | undefined): RentDueDayChoice {
-  if (day == null || !Number.isFinite(day)) return ''
-  if (day === 1) return '1'
-  if (day === 5) return '5'
-  return 'custom'
-}
-
-function resolveRentDueDayMode(
-  mode: string | undefined,
-  dayValue: string,
-): RentDueDayChoice {
-  if (mode === '1' || mode === '5' || mode === 'custom' || mode === '') {
-    return mode
-  }
-  const trimmed = dayValue.trim()
-  if (!trimmed) return ''
-  if (trimmed === '1') return '1'
-  if (trimmed === '5') return '5'
-  return 'custom'
-}
-
-function createEmptyResidentForm(): ResidentFormRow {
-  return {
-    id: `resident-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-    fullName: '',
-    unit: '',
-    email: '',
-    phone: '',
-    monthlyRent: '',
-    rentDueDayMode: '',
-    rentDueDay: '',
-    leaseStart: '',
-    leaseEnd: '',
-  }
-}
-
-function residentToFormRow(resident: OnboardingResident): ResidentFormRow {
-  const rentDueDay =
-    resident.rentDueDay != null && Number.isFinite(resident.rentDueDay)
-      ? String(resident.rentDueDay)
-      : ''
-  return {
-    id: resident.id,
-    residentId: resident.residentId,
-    fullName: resident.fullName,
-    unit: resident.unit,
-    email: resident.email.endsWith('@onboarding.local') ? '' : resident.email,
-    phone: resident.phone,
-    monthlyRent:
-      resident.monthlyRent != null && Number.isFinite(resident.monthlyRent)
-        ? String(resident.monthlyRent)
-        : '',
-    rentDueDayMode: rentDueDayModeFromDay(resident.rentDueDay),
-    rentDueDay,
-    leaseStart: resident.leaseStart ?? '',
-    leaseEnd: resident.leaseEnd ?? '',
-  }
-}
-
-function residentEmailForDb(email: string, residentId: string): string {
-  const trimmed = email.trim()
-  if (trimmed) return trimmed
-  return `${residentId.toLowerCase()}@onboarding.local`
-}
-
-const btnNav =
-  'inline-flex items-center gap-1.5 rounded-[8px] px-2 py-1.5 text-[14px] font-medium tracking-[-0.1504px] text-[#364153] outline-none transition-[color,background-color] duration-150 hover:bg-[#f3f4f6] hover:text-[#101828] active:bg-[#e5e7eb] focus-visible:ring-2 focus-visible:ring-[#101828]/20 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-transparent disabled:hover:text-[#364153]'
+import { OnboardingPayoutsStep } from '@/components/onboarding/OnboardingPayoutsStep'
+import { OnboardingApprovalRulesStep } from '@/components/onboarding/OnboardingApprovalRulesStep'
+import { OnboardingAccountSetupStep } from '@/components/onboarding/OnboardingAccountSetupStep'
+import { OnboardingPropertyStep } from '@/components/onboarding/OnboardingPropertyStep'
+import { OnboardingVendorsStep } from '@/components/onboarding/OnboardingVendorsStep'
+import { OnboardingResidentsStep } from '@/components/onboarding/OnboardingResidentsStep'
+import { useOnboardingWizard } from '@/components/onboarding/useOnboardingWizard'
 
 const btnSecondary =
   'inline-flex cursor-pointer items-center justify-center rounded-[10px] border border-[#e5e7eb] bg-white px-4 py-2.5 text-[14px] font-medium text-[#101828] transition-colors hover:bg-[#f9fafb] disabled:cursor-not-allowed disabled:opacity-50'
-
-function OnboardingBackButton({ disabled, onClick }: { disabled?: boolean; onClick: () => void }) {
-  return (
-    <button type="button" disabled={disabled} onClick={onClick} className={btnNav}>
-      <svg viewBox="0 0 24 24" fill="none" className="size-4" aria-hidden>
-        <path
-          d="M15 18l-6-6 6-6"
-          stroke="currentColor"
-          strokeWidth="2"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-        />
-      </svg>
-      Back
-    </button>
-  )
-}
-
-function OnboardingContinueButton({
-  disabled,
-  onClick,
-  children,
-}: {
-  disabled?: boolean
-  onClick: () => void
-  children: ReactNode
-}) {
-  return (
-    <button type="button" disabled={disabled} onClick={onClick} className={btnNav}>
-      {children}
-      <svg viewBox="0 0 24 24" fill="none" className="size-4" aria-hidden>
-        <path
-          d="M9 18l6-6-6-6"
-          stroke="currentColor"
-          strokeWidth="2"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-        />
-      </svg>
-    </button>
-  )
-}
-
-function OnboardingStepNav({
-  showBack,
-  onBack,
-  saving,
-  children,
-}: {
-  showBack: boolean
-  onBack: () => void
-  saving: boolean
-  children: ReactNode
-}) {
-  return (
-    <div className="mt-6 flex items-center justify-between gap-4">
-      {showBack ? <OnboardingBackButton disabled={saving} onClick={onBack} /> : <span aria-hidden />}
-      <div className="flex items-center gap-3">{children}</div>
-    </div>
-  )
-}
-
-const SETUP_COMPLETE_TRANSITION_MS = 5000
 
 function OnboardingSetupTransition({
   title = 'Setting up your dashboard',
@@ -558,12 +30,8 @@ function OnboardingSetupTransition({
       aria-busy="true"
       aria-live="polite"
     >
-      <div
-        className="size-11 animate-spin rounded-full border-[3px] border-[#e5e7eb] border-t-[#187960]"
-        role="status"
-        aria-label="Loading"
-      />
-      <div className="text-center">
+      <div className="onb-setup-spinner" role="status" aria-label="Loading" />
+      <div className="onb-setup-copy text-center">
         <p className="text-[16px] font-semibold text-[#101828]">{title}</p>
         <p className="mt-1 text-[14px] text-[#6a7282]">{subtitle}</p>
       </div>
@@ -572,1199 +40,66 @@ function OnboardingSetupTransition({
 }
 
 export function AdminOnboardingDashboard() {
-  const navigate = useNavigate()
-  const [loading, setLoading] = useState(true)
-  const [saving, setSaving] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-  const [state, setState] = useState<LandlordOnboardingState>(() => defaultOnboardingState())
-
-  const [propertyForms, setPropertyForms] = useState<PropertyFormRow[]>(() => [createEmptyPropertyForm()])
-
-  const [vendorForms, setVendorForms] = useState<VendorFormRow[]>(() => [createEmptyVendorForm()])
-
-  const [residentForms, setResidentForms] = useState<ResidentFormRow[]>(() => [createEmptyResidentForm()])
-
-  const [uploadDocuments, setUploadDocuments] = useState<OnboardingUploadedDocument[]>([])
-  const [uploadProcessing, setUploadProcessing] = useState(false)
-  const [uploadError, setUploadError] = useState<string | null>(null)
-  const [extractionReview, setExtractionReview] = useState<OnboardingExtractionReview | null>(null)
-  const [reviewData, setReviewData] = useState<OnboardingReviewData | null>(null)
-  const [reviewLoading, setReviewLoading] = useState(false)
-  const [completingSetup, setCompletingSetup] = useState(false)
-  const [importingPortfolio, setImportingPortfolio] = useState(false)
-  const [editingFromReview, setEditingFromReview] = useState(false)
-  const [reviewEditStep, setReviewEditStep] = useState<OnboardingStep | null>(null)
-  const [smsConsentAccepted, setSmsConsentAccepted] = useState(false)
-  const smsConsentCheckboxId = useId()
-  const editingFromReviewRef = useRef(false)
-  const wizardRemoteSaveTimer = useRef<number | null>(null)
-  const processingControllersRef = useRef<Map<string, AbortController>>(new Map())
-  const formsHydratedRef = useRef(false)
-  const wizardSnapshotRef = useRef({
-    state: defaultOnboardingState(),
-    propertyForms: [] as PropertyFormRow[],
-    vendorForms: [] as VendorFormRow[],
-    residentForms: [] as ResidentFormRow[],
-    uploadDocuments: [] as OnboardingUploadedDocument[],
-    extractionReview: null as OnboardingExtractionReview | null,
-  })
-
-  const storedStep = normalizeOnboardingStepId(state.currentStep)
-  const step =
-    editingFromReview && reviewEditStep != null
-      ? reviewEditStep
-      : resolveOnboardingStepForPath(storedStep, state.setupPath)
-  wizardSnapshotRef.current = {
+  const {
+    loading,
+    saving,
+    setSaving,
+    error,
+    setError,
+    completingSetup,
+    importingPortfolio,
+    step,
     state,
+    isWelcomeStep,
+    isReviewStep,
+    isComplete,
+    showBackButton,
+    editContinueLabel,
+    editingFromReview,
+    editingFromReviewRef,
     propertyForms,
+    setPropertyForms,
     vendorForms,
+    setVendorForms,
     residentForms,
+    setResidentForms,
+    propertyNames,
+    unitOptions,
+    multiPropertyPortfolio,
+    smsConsentAccepted,
+    setSmsConsentAccepted,
+    smsConsentCheckboxId,
+    updateAccountSetup,
+    updateApprovalRules,
     uploadDocuments,
+    uploadProcessing,
+    uploadError,
     extractionReview,
-  }
-  const completionCheck = canCompleteOnboarding(
-    reviewData
-      ? { ...state, accountSetup: reviewData.accountSetup, properties: reviewData.properties }
-      : state,
-    reviewData?.vendors ?? [],
-    reviewData?.residents ?? [],
-    reviewData?.metrics,
-  )
-  const isWelcomeStep = step === 'entry'
-  const isReviewStep = step === 'review'
-  const isComplete = state.onboardingStatus === 'completed'
-  const showBackButton =
-    editingFromReview ||
-    (step !== 'entry' && getPreviousOnboardingStep(step, state.setupPath) != null)
-  const editContinueLabel = editingFromReview ? 'Save and return to review' : undefined
-
-  function enterReviewEditMode(targetStep: OnboardingStep) {
-    editingFromReviewRef.current = true
-    setEditingFromReview(true)
-    setReviewEditStep(targetStep)
-  }
-
-  function clearReviewEditMode() {
-    editingFromReviewRef.current = false
-    setEditingFromReview(false)
-    setReviewEditStep(null)
-  }
-
-  useEffect(() => {
-    return () => {
-      if (wizardRemoteSaveTimer.current != null) {
-        window.clearTimeout(wizardRemoteSaveTimer.current)
-      }
-    }
-  }, [])
-
-  function buildWizardFormDraft(
-    propertyForms: PropertyFormRow[],
-    vendorForms: VendorFormRow[],
-    residentForms: ResidentFormRow[],
-    snap?: {
-      uploadDocuments?: OnboardingUploadedDocument[]
-      extractionReview?: OnboardingExtractionReview | null
-    },
-  ): OnboardingFormDraft {
-    const source = snap ?? wizardSnapshotRef.current
-    return buildFormDraft(propertyForms, vendorForms, residentForms, {
-      uploadDocuments: source.uploadDocuments,
-      extractionReview: source.extractionReview,
-    })
-  }
-
-  function scheduleWizardPersist() {
-    const snap = wizardSnapshotRef.current
-    const formDraft = buildWizardFormDraft(snap.propertyForms, snap.vendorForms, snap.residentForms, snap)
-    persistOnboardingWizardLocally(snap.state, formDraft)
-
-    if (wizardRemoteSaveTimer.current != null) {
-      window.clearTimeout(wizardRemoteSaveTimer.current)
-    }
-    wizardRemoteSaveTimer.current = window.setTimeout(() => {
-      const latest = wizardSnapshotRef.current
-      const latestDraft = buildWizardFormDraft(
-        latest.propertyForms,
-        latest.vendorForms,
-        latest.residentForms,
-        latest,
-      )
-      void saveOnboardingWizardDraft(latest.state, latestDraft)
-    }, 400)
-  }
-
-  useEffect(() => {
-    if (loading || !formsHydratedRef.current) return
-    scheduleWizardPersist()
-  }, [loading, state, propertyForms, vendorForms, residentForms, uploadDocuments, extractionReview])
-
-  useEffect(() => {
-    if (loading) return
-
-    const flush = () => {
-      const snap = wizardSnapshotRef.current
-      const formDraft = buildWizardFormDraft(snap.propertyForms, snap.vendorForms, snap.residentForms, snap)
-      persistOnboardingWizardLocally(snap.state, formDraft)
-    }
-
-    window.addEventListener('beforeunload', flush)
-    return () => window.removeEventListener('beforeunload', flush)
-  }, [loading])
-
-  useEffect(() => {
-    let cancelled = false
-    void (async () => {
-      setLoading(true)
-      const onboarding = await fetchLandlordOnboarding()
-      if (cancelled) return
-
-      const onWelcome = normalizeOnboardingStepId(onboarding.currentStep) === 'entry'
-      const localSnapshot = readLocalOnboardingState()
-      const localInProgress =
-        localSnapshot != null &&
-        localSnapshot.onboardingStatus === 'in_progress' &&
-        normalizeOnboardingStepId(localSnapshot.currentStep) !== 'entry'
-      const counts = onWelcome && !localInProgress ? await fetchAccountSetupCounts() : null
-      const hasStalePortfolio =
-        onWelcome &&
-        !localInProgress &&
-        (onboarding.properties.length > 0 ||
-          (counts != null &&
-            (counts.properties > 0 ||
-              counts.units > 0 ||
-              counts.residents > 0 ||
-              counts.vendors > 0 ||
-              counts.workflowRuns > 0)))
-
-      if (hasStalePortfolio) {
-        const cleared = await clearOnboardingPortfolioSession({ keepAccountSetup: true })
-        if (cancelled) return
-        if (!cleared.ok) {
-          setError(cleared.error ?? 'Could not clear previous portfolio data.')
-          setState(onboarding)
-        } else {
-          setState(cleared.state)
-        }
-        setPropertyForms([createEmptyPropertyForm()])
-        setVendorForms([createEmptyVendorForm()])
-        setResidentForms([createEmptyResidentForm()])
-        formsHydratedRef.current = true
-        setLoading(false)
-        return
-      }
-
-      const resolvedStep = resolveOnboardingStepForPath(
-        normalizeOnboardingStepId(onboarding.currentStep),
-        onboarding.setupPath,
-      )
-      const normalizedOnboarding =
-        resolvedStep === normalizeOnboardingStepId(onboarding.currentStep)
-          ? onboarding
-          : { ...onboarding, currentStep: resolvedStep }
-      setState(normalizedOnboarding)
-      if (normalizedOnboarding !== onboarding) {
-        void saveLandlordOnboarding(normalizedOnboarding)
-      }
-      hydrateFormsFromOnboarding(normalizedOnboarding, {
-        setPropertyForms,
-        setVendorForms,
-        setResidentForms,
-      })
-      const persistedUploads = readPersistedUploadDocuments(normalizedOnboarding.formDraft)
-      if (persistedUploads?.length) {
-        setUploadDocuments(persistedUploads)
-      }
-      const persistedExtraction = readPersistedExtractionReview(normalizedOnboarding.formDraft)
-      if (persistedExtraction) {
-        setExtractionReview(persistedExtraction)
-      }
-      formsHydratedRef.current = true
-      setLoading(false)
-    })()
-    return () => {
-      cancelled = true
-    }
-  }, [])
-
-  useEffect(() => {
-    if (loading || step !== 'property') return
-    if (state.formDraft?.propertyForms?.length) {
-      setPropertyForms(state.formDraft.propertyForms.map(normalizePropertyFormRow))
-      return
-    }
-    if (state.properties.length > 0) {
-      setPropertyForms(propertyFormsFromState(state.properties))
-    }
-  }, [loading, step, state.formDraft, state.properties])
-
-  useEffect(() => {
-    if (loading || step !== 'vendors') return
-
-    let cancelled = false
-    void (async () => {
-      const dbVendors = await fetchOnboardingVendors()
-      if (cancelled) return
-
-      if (dbVendors.length > 0) {
-        setVendorForms(dedupeVendorForms(dbVendors.map(vendorToFormRow)))
-        return
-      }
-
-      if (state.formDraft?.vendorForms?.length) {
-        setVendorForms(dedupeVendorForms(state.formDraft.vendorForms))
-        return
-      }
-
-      setVendorForms([createEmptyVendorForm()])
-    })()
-
-    return () => {
-      cancelled = true
-    }
-  }, [loading, step, state.formDraft])
-
-  useEffect(() => {
-    if (loading || step !== 'residents') return
-    if (residentFormsHaveData(residentForms)) return
-
-    let cancelled = false
-    void (async () => {
-      const dbResidents = await fetchOnboardingResidents()
-      if (cancelled) return
-      if (residentFormsHaveData(wizardSnapshotRef.current.residentForms)) return
-
-      if (dbResidents.length > 0) {
-        setResidentForms(dbResidents.map(residentToFormRow))
-        return
-      }
-
-      const persistedForms = readPersistedResidentForms(state.formDraft)
-      if (persistedForms) {
-        setResidentForms(persistedForms)
-        return
-      }
-
-      setResidentForms([createEmptyResidentForm()])
-    })()
-
-    return () => {
-      cancelled = true
-    }
-  }, [loading, step, state.formDraft])
-
-  useEffect(() => {
-    if (loading || step !== 'document_upload') return
-    if (uploadDocuments.length > 0) return
-    const persistedUploads = readPersistedUploadDocuments(state.formDraft)
-    if (persistedUploads?.length) {
-      setUploadDocuments(persistedUploads)
-    }
-  }, [loading, step, uploadDocuments.length, state.formDraft])
-
-  useEffect(() => {
-    if (loading || step !== 'ai_review') return
-    if (extractionReview && hasExtractionReviewData(extractionReview)) return
-    const persistedExtraction = readPersistedExtractionReview(state.formDraft)
-    if (persistedExtraction) {
-      setExtractionReview(persistedExtraction)
-      return
-    }
-    if (uploadDocuments.length > 0) {
-      setExtractionReview(buildOnboardingExtractionReview(uploadDocuments))
-      return
-    }
-    if (!extractionReview) {
-      setExtractionReview(emptyExtractionReview())
-    }
-  }, [loading, step, extractionReview, uploadDocuments, state.formDraft])
-
-  useEffect(() => {
-    setUploadProcessing(anyDocumentProcessing(uploadDocuments))
-  }, [uploadDocuments])
-
-  useEffect(() => {
-    return () => {
-      for (const controller of processingControllersRef.current.values()) {
-        controller.abort()
-      }
-      processingControllersRef.current.clear()
-    }
-  }, [])
-
-  useEffect(() => {
-    if (loading || step !== 'review') {
-      return
-    }
-
-    let cancelled = false
-    setReviewData((prev) => prev ?? buildOnboardingReviewData(state))
-    setReviewLoading(false)
-
-    void (async () => {
-      const supplement = await fetchOnboardingReviewSupplement(state)
-      if (cancelled) return
-      setReviewData(
-        buildOnboardingReviewData(
-          state,
-          supplement.vendors,
-          supplement.residents,
-          supplement.dbCounts,
-        ),
-      )
-    })()
-
-    return () => {
-      cancelled = true
-    }
-  }, [loading, step, state])
-
-  async function refreshCounts() {
-    await fetchAccountSetupCounts()
-  }
-
-  function mergeOnboardingStep(
-    prev: LandlordOnboardingState,
-    nextStep: OnboardingStep,
-    patch: Partial<LandlordOnboardingState> = {},
-  ): LandlordOnboardingState {
-    return {
-      ...prev,
-      ...patch,
-      currentStep: nextStep,
-      onboardingStatus:
-        patch.onboardingStatus === 'completed'
-          ? 'completed'
-          : nextStep === 'entry' && patch.onboardingStatus == null
-            ? prev.onboardingStatus
-            : patch.onboardingStatus ?? 'in_progress',
-    }
-  }
-
-  function updateAccountSetup(patch: Partial<OnboardingAccountSetup>) {
-    setState((prev) => {
-      const next: LandlordOnboardingState = {
-        ...prev,
-        accountSetup: { ...prev.accountSetup, ...patch },
-      }
-      const snap = wizardSnapshotRef.current
-      const formDraft = buildWizardFormDraft(snap.propertyForms, snap.vendorForms, snap.residentForms, snap)
-      persistOnboardingWizardLocally(next, formDraft)
-      return next
-    })
-  }
-
-  async function goTo(
-    nextStep: OnboardingStep,
-    patch: Partial<LandlordOnboardingState> = {},
-    forms?: {
-      propertyForms?: PropertyFormRow[]
-      vendorForms?: VendorFormRow[]
-      residentForms?: ResidentFormRow[]
-    },
-  ) {
-    if (step === 'review' && nextStep !== 'review') {
-      setReviewLoading(false)
-      setReviewData(null)
-    }
-
-    const snap = wizardSnapshotRef.current
-    const draftPropertyForms = forms?.propertyForms ?? snap.propertyForms
-    const draftVendorForms = forms?.vendorForms ?? snap.vendorForms
-    const draftResidentForms = pickResidentFormsForStep(
-      forms?.residentForms ?? snap.residentForms,
-      step === 'review' && nextStep === 'residents' ? reviewData?.residents : undefined,
-    )
-
-    let next!: LandlordOnboardingState
-    setState((prev) => {
-      next = mergeOnboardingStep(prev, nextStep, {
-        ...patch,
-        formDraft: buildWizardFormDraft(
-          draftPropertyForms,
-          draftVendorForms,
-          draftResidentForms,
-          snap,
-        ),
-      })
-      return next
-    })
-
-    if (nextStep === 'residents') {
-      setResidentForms(draftResidentForms)
-    }
-
-    setSaving(true)
-    setError(null)
-    try {
-      await saveLandlordOnboarding(next!)
-    } finally {
-      setSaving(false)
-    }
-  }
-
-  function resetOnboardingForms() {
-    setPropertyForms([createEmptyPropertyForm()])
-    setVendorForms([createEmptyVendorForm()])
-    setResidentForms([createEmptyResidentForm()])
-    setReviewData(null)
-    setUploadDocuments([])
-    setUploadError(null)
-    setExtractionReview(null)
-    setSmsConsentAccepted(false)
-  }
-
-  async function wipePortfolioSession(): Promise<LandlordOnboardingState | null> {
-    setSaving(true)
-    setError(null)
-    const cleared = await clearOnboardingPortfolioSession({ keepAccountSetup: true })
-    setSaving(false)
-    if (!cleared.ok) {
-      setError(cleared.error ?? 'Could not clear previous portfolio data.')
-      return null
-    }
-    setState(cleared.state)
-    resetOnboardingForms()
-    return cleared.state
-  }
-
-  async function beginOnboarding(path: 'guided' | 'fast_track', targetStep: OnboardingStep) {
-    const clearedState = await wipePortfolioSession()
-    if (!clearedState) return
-
-    setSaving(true)
-    await goTo(targetStep, {
-      onboardingStatus: 'in_progress',
-      setupPath: path,
-      accountSetup: clearedState.accountSetup,
-      properties: [],
-    })
-    setSaving(false)
-  }
-
-  async function handleStartScratch() {
-    await beginOnboarding('guided', 'account_setup')
-  }
-
-  async function handleStartFastTrack() {
-    await beginOnboarding('fast_track', 'document_upload')
-  }
-
-  async function handleBack() {
-    if (editingFromReviewRef.current) {
-      setError(null)
-      clearReviewEditMode()
-      await goTo('review')
-      return
-    }
-    const previous = getPreviousOnboardingStep(step, state.setupPath)
-    if (!previous) return
-    setError(null)
-    if (previous === 'entry') {
-      await wipePortfolioSession()
-      return
-    }
-    if (step === 'review' && previous === 'residents' && state.setupPath !== 'fast_track') {
-      const snap = wizardSnapshotRef.current
-      await goTo(
-        'residents',
-        {},
-        {
-          residentForms: pickResidentFormsForStep(snap.residentForms, reviewData?.residents),
-        },
-      )
-      return
-    }
-    await goTo(previous)
-  }
-
-  async function saveAccountSetup() {
-    if (!state.accountSetup.companyName.trim() || !state.accountSetup.contactName.trim()) {
-      setError('Enter your company and contact name.')
-      return
-    }
-    if (!smsConsentAccepted) {
-      setError('Please agree to the SMS terms to continue.')
-      return
-    }
-    if (editingFromReviewRef.current) {
-      await returnToReviewAfterEdit({ accountSetup: state.accountSetup })
-      return
-    }
-    await goTo('property', { accountSetup: state.accountSetup })
-  }
-
-  async function saveProperty() {
-    const properties = propertyForms
-      .map(propertyFormToOnboarding)
-      .filter((property): property is OnboardingProperty => property != null)
-
-    if (properties.length !== propertyForms.length) {
-      setError('Each property needs a name, street address, city, state, ZIP code, and at least one unit.')
-      return
-    }
-
-    setSaving(true)
-    setError(null)
-    const result = await persistOnboardingProperties(properties)
-    if (!result.ok) {
-      setSaving(false)
-      setError(result.error ?? 'Could not register units.')
-      return
-    }
-
-    if (editingFromReviewRef.current) {
-      await returnToReviewAfterEdit({ properties })
-      setSaving(false)
-      return
-    }
-
-    await goTo('vendors', { properties })
-    await refreshCounts()
-    setSaving(false)
-  }
-
-  function updatePropertyForm(id: string, patch: Partial<PropertyFormRow>) {
-    setPropertyForms((prev) =>
-      prev.map((row) => {
-        if (row.id !== id) return row
-        const next = { ...row, ...patch }
-        if (patch.state !== undefined) {
-          const state = patch.state.trim().toUpperCase()
-          next.state = state
-          const allowed = citiesForState(state)
-          if (next.city && !allowed.includes(next.city)) {
-            next.city = ''
-          }
-        }
-        return next
-      }),
-    )
-  }
-
-  function addPropertyForm() {
-    setPropertyForms((prev) => [...prev, createEmptyPropertyForm()])
-  }
-
-  function removePropertyForm(id: string) {
-    if (propertyForms.length <= 1) return
-    setPropertyForms((prev) => prev.filter((row) => row.id !== id))
-  }
-
-  function queueDocumentUploads(files: FileList | File[]) {
-    const errors: string[] = []
-    const newDocs: OnboardingUploadedDocument[] = []
-
-    for (const file of Array.from(files)) {
-      const check = isAcceptedUploadFile(file)
-      if (!check.ok) {
-        errors.push(check.error)
-        continue
-      }
-      newDocs.push(createUploadedDocumentFromFile(file))
-    }
-
-    if (errors.length > 0) {
-      setUploadError(errors.join(' '))
-    } else {
-      setUploadError(null)
-    }
-    if (newDocs.length === 0) return
-
-    setUploadDocuments((prev) => [...prev, ...newDocs])
-    setUploadProcessing(true)
-
-    for (const doc of newDocs) {
-      const controller = new AbortController()
-      processingControllersRef.current.set(doc.id, controller)
-      void runMockDocumentProcessing(
-        doc,
-        (updated) => {
-          setUploadDocuments((prev) =>
-            prev.map((row) => (row.id === updated.id ? updated : row)),
-          )
-        },
-        controller.signal,
-      ).finally(() => {
-        processingControllersRef.current.delete(doc.id)
-      })
-    }
-  }
-
-  function removeUploadDocument(id: string) {
-    processingControllersRef.current.get(id)?.abort()
-    processingControllersRef.current.delete(id)
-    setUploadDocuments((prev) => prev.filter((doc) => doc.id !== id))
-  }
-
-  async function continueFromDocumentUpload() {
-    if (uploadDocuments.length === 0) {
-      setError('Upload at least one document, or choose Skip for now.')
-      return
-    }
-    if (anyDocumentProcessing(uploadDocuments)) {
-      return
-    }
-    setSaving(true)
-    setError(null)
-    setExtractionReview(buildOnboardingExtractionReview(uploadDocuments))
-    await goTo('ai_review')
-    setSaving(false)
-  }
-
-  async function skipDocumentUpload() {
-    setError(null)
-    setExtractionReview(emptyExtractionReview())
-    await goTo('ai_review')
-  }
-
-  async function commitFastTrackImport(review: OnboardingExtractionReview): Promise<boolean> {
-    const scope = requireOnboardingLandlord()
-    if (!scope.ok) {
-      setError(scope.error)
-      return false
-    }
-
-    setExtractionReview(review)
-    setSaving(true)
-    setError(null)
-
-    const hasImport =
-      review.properties.some((item) => item.selected) ||
-      review.residents.some((item) => item.selected) ||
-      review.vendors.some((item) => item.selected)
-
-    let properties: OnboardingProperty[] = []
-
-    if (hasImport) {
-      const result = await importMockExtraction(toMockExtractionReview(review))
-      if (!result.ok) {
-        setSaving(false)
-        setError(result.error ?? 'Import failed.')
-        return false
-      }
-
-      properties = review.properties
-        .filter((property) => property.selected)
-        .map((property) => ({
-          id: property.id,
-          name: property.name,
-          streetAddress: property.address.split(',')[0]?.trim() ?? property.address,
-          city: 'East Orange',
-          state: 'NJ',
-          zipCode: '',
-          unitCount: property.unitCount,
-        }))
-
-      await refreshCounts()
-    }
-
-    const [vendors, residents] = await Promise.all([
-      fetchOnboardingVendors(),
-      fetchOnboardingResidents(),
-    ])
-    const nextState: LandlordOnboardingState = { ...state, properties }
-    setReviewData(buildOnboardingReviewData(nextState, vendors, residents))
-    await goTo('review', { properties })
-    setSaving(false)
-    return true
-  }
-
-  async function importSelectedFromReview() {
-    if (!extractionReview) return
-    if (countSelectedInReview(extractionReview) === 0) {
-      setError('Select at least one item to import.')
-      return
-    }
-    setImportingPortfolio(true)
-    setError(null)
-    try {
-      await commitFastTrackImport(extractionReview)
-    } finally {
-      setImportingPortfolio(false)
-    }
-  }
-
-  async function importAllFromReview() {
-    if (!extractionReview) return
-    setImportingPortfolio(true)
-    setError(null)
-    try {
-      await commitFastTrackImport(setAllReviewSelections(extractionReview, true))
-    } finally {
-      setImportingPortfolio(false)
-    }
-  }
-
-  async function skipImportFromReview() {
-    const snapshot = extractionReview
-    const reviewForImport = snapshot
-      ? setAllReviewSelections(snapshot, false)
-      : emptyExtractionReview()
-    const ok = await commitFastTrackImport(reviewForImport)
-    if (ok && snapshot) {
-      setExtractionReview(snapshot)
-    }
-  }
-
-  async function saveVendorsAndContinue() {
-    if (!supabase) {
-      setError('Database unavailable.')
-      return
-    }
-    const scope = requireOnboardingLandlord()
-    if (!scope.ok) {
-      setError(scope.error)
-      return
-    }
-
-    const vendorsToSave = vendorForms.filter((form) => form.name.trim())
-    for (const form of vendorForms) {
-      const hasPartialData =
-        form.name.trim() ||
-        form.category.trim() ||
-        form.email.trim() ||
-        form.phone.trim()
-      if (hasPartialData && !form.name.trim()) {
-        setError('Each vendor needs a name, or clear empty vendor rows.')
-        return
-      }
-    }
-
-    setSaving(true)
-    setError(null)
-
-    const existingVendors = await fetchOnboardingVendors()
-    const existingByName = new Map(
-      existingVendors.map((vendor) => [vendor.name.trim().toLowerCase(), vendor]),
-    )
-
-    const vendorPhones: Array<{ phone: string | null }> = []
-    for (const form of vendorsToSave) {
-      const phoneResult = phoneForDbOrError(form.phone)
-      if (phoneResult.error) {
-        setSaving(false)
-        setError(`${form.name.trim()}: ${phoneResult.error}`)
-        return
-      }
-      vendorPhones.push({ phone: phoneResult.phone })
-    }
-
-    for (let i = 0; i < vendorsToSave.length; i++) {
-      const form = vendorsToSave[i]!
-      const payload = {
-        name: form.name.trim(),
-        category: vendorTradeToDbCategory(form.category),
-        email: form.email.trim() || null,
-        phone: vendorPhones[i]!.phone,
-        notification_channel: 'both' as const,
-        active: true,
-      }
-
-      if (isPersistedVendorId(form.id)) {
-        const { error: updateError } = await supabase
-          .from('vendors')
-          .update(payload)
-          .eq('id', form.id)
-          .eq('landlord_id', getActiveLandlordId())
-        if (updateError) {
-          setSaving(false)
-          setError(updateError.message)
-          return
-        }
-        continue
-      }
-
-      const existing = existingByName.get(form.name.trim().toLowerCase())
-      if (existing) {
-        const { error: updateError } = await supabase
-          .from('vendors')
-          .update(payload)
-          .eq('id', existing.id)
-          .eq('landlord_id', getActiveLandlordId())
-        if (updateError) {
-          setSaving(false)
-          setError(updateError.message)
-          return
-        }
-        continue
-      }
-
-      const { error: insertError } = await supabase.from('vendors').insert({
-        ...payload,
-        landlord_id: getActiveLandlordId(),
-      })
-      if (insertError) {
-        setSaving(false)
-        setError(insertError.message)
-        return
-      }
-    }
-
-    await refreshCounts()
-    const savedVendors = await fetchOnboardingVendors()
-    const savedVendorForms = dedupeVendorForms(
-      savedVendors.length > 0 ? savedVendors.map(vendorToFormRow) : [createEmptyVendorForm()],
-    )
-    setVendorForms(savedVendorForms)
-    setSaving(false)
-    if (editingFromReviewRef.current) {
-      await returnToReviewAfterEdit()
-      return
-    }
-    await goTo('residents', {}, { vendorForms: savedVendorForms })
-  }
-
-  function updateVendorForm(id: string, patch: Partial<VendorFormRow>) {
-    setVendorForms((prev) => prev.map((row) => (row.id === id ? { ...row, ...patch } : row)))
-  }
-
-  function addVendorForm() {
-    setVendorForms((prev) => [...prev, createEmptyVendorForm()])
-  }
-
-  function removeVendorForm(id: string) {
-    if (vendorForms.length <= 1) return
-    setVendorForms((prev) => prev.filter((row) => row.id !== id))
-    if (isPersistedVendorId(id) && supabase) {
-      void supabase
-        .from('vendors')
-        .delete()
-        .eq('id', id)
-        .eq('landlord_id', getActiveLandlordId())
-        .then(({ error: deleteError }) => {
-          if (deleteError) {
-            setError(deleteError.message)
-            return
-          }
-          void refreshCounts()
-        })
-    }
-  }
-
-  async function saveResidentsAndContinue() {
-    if (!supabase) {
-      setError('Database unavailable.')
-      return
-    }
-    const scope = requireOnboardingLandlord()
-    if (!scope.ok) {
-      setError(scope.error)
-      return
-    }
-
-    const residentsToSave = residentForms.filter((form) => form.fullName.trim())
-    for (const form of residentForms) {
-      const hasPartialData = residentFormRowHasUserInput(form)
-      if (hasPartialData && !form.fullName.trim()) {
-        setError('Each resident needs a name, or clear empty resident rows.')
-        return
-      }
-    }
-
-    type ResidentLeasePayload = {
-      monthly_rent: number | null
-      rent_due_day: number | null
-      move_in_date: string | null
-      lease_end_date: string | null
-    }
-    const leasePayloads: ResidentLeasePayload[] = []
-    for (const form of residentsToSave) {
-      if (form.monthlyRent.trim() && parseMonthlyRentInput(form.monthlyRent) == null) {
-        setError(`${form.fullName.trim()}: Enter a valid monthly rent amount.`)
-        return
-      }
-      if (form.rentDueDayMode === 'custom' && !form.rentDueDay.trim()) {
-        setError(`${form.fullName.trim()}: Enter a custom rent due day (1–31).`)
-        return
-      }
-      if (form.rentDueDay.trim() && parseRentDueDayInput(form.rentDueDay) == null) {
-        setError(`${form.fullName.trim()}: Rent due day must be between 1 and 31.`)
-        return
-      }
-      if (form.leaseStart.trim() && parseLeaseDateInput(form.leaseStart) == null) {
-        setError(`${form.fullName.trim()}: Lease start must be a valid date.`)
-        return
-      }
-      if (form.leaseEnd.trim() && parseLeaseDateInput(form.leaseEnd) == null) {
-        setError(`${form.fullName.trim()}: Lease end must be a valid date.`)
-        return
-      }
-      leasePayloads.push({
-        monthly_rent: parseMonthlyRentInput(form.monthlyRent),
-        rent_due_day: parseRentDueDayInput(form.rentDueDay),
-        move_in_date: parseLeaseDateInput(form.leaseStart),
-        lease_end_date: parseLeaseDateInput(form.leaseEnd),
-      })
-    }
-
-    setSaving(true)
-    setError(null)
-
-    const building = state.properties[0]?.name ?? propertyForms[0]?.name.trim() ?? ''
-    const landlordId = scope.landlordId
-    const existingResidents = await fetchOnboardingResidents(landlordId)
-    let nextResidentSequence = maxOnboardingResidentSequence(existingResidents)
-    const residentPhones: Array<{ phone: string | null }> = []
-    for (const form of residentsToSave) {
-      const phoneResult = phoneForDbOrError(form.phone)
-      if (phoneResult.error) {
-        setSaving(false)
-        setError(`${form.fullName.trim()}: ${phoneResult.error}`)
-        return
-      }
-      residentPhones.push({ phone: phoneResult.phone })
-    }
-
-    for (let i = 0; i < residentsToSave.length; i++) {
-      const form = residentsToSave[i]!
-      const phone = residentPhones[i]!.phone
-      const unit = form.unit.trim() || null
-      const lease = leasePayloads[i]!
-
-      if (isPersistedVendorId(form.id)) {
-        const { error: updateError } = await supabase
-          .from('users')
-          .update({
-            full_name: form.fullName.trim(),
-            email: residentEmailForDb(form.email, form.residentId ?? 'ONB-000'),
-            phone,
-            unit,
-            building: building || null,
-            ...lease,
-          })
-          .eq('id', form.id)
-          .eq('landlord_id', landlordId)
-        if (updateError) {
-          // Retry without rent columns if migration 20260716130000 is not applied yet.
-          if (/monthly_rent|rent_due_day|column/i.test(updateError.message)) {
-            const { error: retryError } = await supabase
-              .from('users')
-              .update({
-                full_name: form.fullName.trim(),
-                email: residentEmailForDb(form.email, form.residentId ?? 'ONB-000'),
-                phone,
-                unit,
-                building: building || null,
-                move_in_date: lease.move_in_date,
-                lease_end_date: lease.lease_end_date,
-              })
-              .eq('id', form.id)
-              .eq('landlord_id', landlordId)
-            if (retryError) {
-              setSaving(false)
-              setError(retryError.message)
-              return
-            }
-            continue
-          }
-          setSaving(false)
-          setError(updateError.message)
-          return
-        }
-        continue
-      }
-
-      nextResidentSequence += 1
-      const residentId = nextOnboardingResidentIdFromSequence(nextResidentSequence)
-      const { error: insertError } = await supabase.from('users').insert({
-        resident_id: residentId,
-        full_name: form.fullName.trim(),
-        email: residentEmailForDb(form.email, residentId),
-        phone,
-        unit,
-        building: building || null,
-        status: 'active',
-        balance_due: 0,
-        issues: [],
-        landlord_id: landlordId,
-        ...lease,
-      })
-      if (insertError) {
-        if (/monthly_rent|rent_due_day|column/i.test(insertError.message)) {
-          const { error: retryError } = await supabase.from('users').insert({
-            resident_id: residentId,
-            full_name: form.fullName.trim(),
-            email: residentEmailForDb(form.email, residentId),
-            phone,
-            unit,
-            building: building || null,
-            status: 'active',
-            balance_due: 0,
-            issues: [],
-            landlord_id: landlordId,
-            move_in_date: lease.move_in_date,
-            lease_end_date: lease.lease_end_date,
-          })
-          if (retryError) {
-            setSaving(false)
-            setError(retryError.message)
-            return
-          }
-          continue
-        }
-        setSaving(false)
-        setError(insertError.message)
-        return
-      }
-    }
-
-    const [savedVendors, savedResidents] = await Promise.all([
-      fetchOnboardingVendors(),
-      fetchOnboardingResidents(),
-    ])
-    setResidentForms(
-      savedResidents.length > 0 ? savedResidents.map(residentToFormRow) : [createEmptyResidentForm()],
-    )
-    setSaving(false)
-    await continueToReview({ vendors: savedVendors, residents: savedResidents })
-  }
-
-  function updateResidentForm(id: string, patch: Partial<ResidentFormRow>) {
-    setResidentForms((prev) => prev.map((row) => (row.id === id ? { ...row, ...patch } : row)))
-  }
-
-  function addResidentForm() {
-    setResidentForms((prev) => [...prev, createEmptyResidentForm()])
-  }
-
-  function removeResidentForm(id: string) {
-    if (residentForms.length <= 1) return
-    setResidentForms((prev) => prev.filter((row) => row.id !== id))
-    if (isPersistedVendorId(id) && supabase) {
-      void supabase
-        .from('users')
-        .delete()
-        .eq('id', id)
-        .eq('landlord_id', getActiveLandlordId())
-        .then(({ error: deleteError }) => {
-          if (deleteError) {
-            setError(deleteError.message)
-            return
-          }
-          void refreshCounts()
-        })
-    }
-  }
-
-  async function continueToReview(cached?: {
-    vendors: OnboardingVendor[]
-    residents: OnboardingResident[]
-  }) {
-    clearReviewEditMode()
-    let snapshot = state
-    setState((prev) => {
-      snapshot = prev
-      return prev
-    })
-
-    const [vendors, residents] = cached
-      ? [cached.vendors, cached.residents]
-      : await Promise.all([fetchOnboardingVendors(), fetchOnboardingResidents()])
-
-    setReviewData(buildOnboardingReviewData(snapshot, vendors, residents))
-    await goTo('review')
-  }
-
-  async function returnToReviewAfterEdit(patch: Partial<LandlordOnboardingState> = {}) {
-    clearReviewEditMode()
-    setSaving(true)
-    setError(null)
-
-    let snapshot = state
-    setState((prev) => {
-      snapshot = { ...prev, ...patch }
-      return snapshot
-    })
-
-    const [vendors, residents] = await Promise.all([
-      fetchOnboardingVendors(),
-      fetchOnboardingResidents(),
-    ])
-    const nextState: LandlordOnboardingState = { ...snapshot, ...patch }
-    setReviewData(buildOnboardingReviewData(nextState, vendors, residents))
-    await goTo('review', patch)
-    await refreshCounts()
-    setSaving(false)
-  }
-
-  async function editReviewStep(targetStep: OnboardingStep) {
-    setError(null)
-    enterReviewEditMode(targetStep)
-
-    if (targetStep === 'account_setup' && reviewData) {
-      setState((prev) => ({ ...prev, accountSetup: reviewData.accountSetup }))
-    }
-    if (targetStep === 'property') {
-      const properties = reviewData?.properties.length
-        ? reviewData.properties
-        : state.properties
-      if (properties.length > 0) {
-        setPropertyForms(propertyFormsFromState(properties))
-      }
-    }
-    if (targetStep === 'vendors' && reviewData?.vendors.length) {
-      setVendorForms(dedupeVendorForms(reviewData.vendors.map(vendorToFormRow)))
-    }
-    if (targetStep === 'residents') {
-      const snap = wizardSnapshotRef.current
-      await goTo(
-        'residents',
-        {},
-        {
-          residentForms: pickResidentFormsForStep(snap.residentForms, reviewData?.residents),
-        },
-      )
-      return
-    }
-    await goTo(targetStep)
-  }
-
-  async function finishReview() {
-    const data = reviewData ?? (await fetchOnboardingReviewData())
-    const reviewState: LandlordOnboardingState = {
-      ...state,
-      accountSetup: data.accountSetup,
-      properties: data.properties,
-    }
-    const check = canCompleteOnboarding(reviewState, data.vendors, data.residents, data.metrics)
-    if (!check.ok) {
-      setError(`Complete required setup: ${check.missing.join(', ')}`)
-      return
-    }
-    if (wizardRemoteSaveTimer.current != null) {
-      window.clearTimeout(wizardRemoteSaveTimer.current)
-      wizardRemoteSaveTimer.current = null
-    }
-    const transitionStartedAt = Date.now()
-    setCompletingSetup(true)
-    setSaving(true)
-    const result = await completeOnboarding(reviewState, data.vendors, data.residents, data.metrics)
-    if (!result.ok) {
-      setCompletingSetup(false)
-      setSaving(false)
-      setError(result.error ?? 'Could not complete onboarding.')
-      return
-    }
-    const completedState: LandlordOnboardingState = {
-      ...reviewState,
-      onboardingStatus: 'completed',
-      currentStep: 'review',
-      completedAt: new Date().toISOString(),
-    }
-    setState(completedState)
-    persistOnboardingWizardLocally(completedState)
-    const remainingMs = SETUP_COMPLETE_TRANSITION_MS - (Date.now() - transitionStartedAt)
-    if (remainingMs > 0) {
-      await new Promise((resolve) => window.setTimeout(resolve, remainingMs))
-    }
-    navigate('/admin', {
-      replace: true,
-      state: result.activationWarning
-        ? { onboardingNotice: result.activationWarning }
-        : undefined,
-    })
-  }
+    setExtractionReview,
+    queueDocumentUploads,
+    removeUploadDocument,
+    continueFromDocumentUpload,
+    skipDocumentUpload,
+    continueFromAiReview,
+    reviewData,
+    reviewLoading,
+    completionCheck,
+    payoutsReady,
+    setPayoutsReady,
+    payoutMethodLabel,
+    setPayoutMethodLabel,
+    goTo,
+    handleStartScratch,
+    handleStartFastTrack,
+    handleBack,
+    refreshCounts,
+    returnToReviewAfterEdit,
+    continueToApprovalRules,
+    saveApprovalRulesAndContinue,
+    continueToReview,
+    editReviewStep,
+    finishReview,
+  } = useOnboardingWizard()
 
   if (loading) {
     return (
@@ -1823,11 +158,12 @@ export function AdminOnboardingDashboard() {
         ) : null}
 
         {error ? (
-          <div className="mb-4 rounded-[10px] border border-[#fecaca] bg-[#fef2f2] px-4 py-3 text-[13px] text-[#b91c1c]">
+          <div className="sa-enter mb-4 rounded-[10px] border border-[#fecaca] bg-[#fef2f2] px-4 py-3 text-[13px] text-[#b91c1c]">
             {error}
           </div>
         ) : null}
 
+        <div key={step} className={isWelcomeStep ? undefined : 'onb-step-panel'}>
         {step === 'entry' ? (
           <OnboardingWelcomeHub
             onStartScratch={() => void handleStartScratch()}
@@ -1835,108 +171,32 @@ export function AdminOnboardingDashboard() {
           />
         ) : null}
 
-        {step === 'account_setup' ? (
-          <section className="rounded-[10px] border border-[#e5e7eb] bg-white p-6 shadow-[0px_1px_2px_-1px_rgba(0,0,0,0.06)]">
-            <h2 className="text-[18px] font-semibold text-[#101828]">Account setup</h2>
-            <p className="mt-1 text-[14px] text-[#6a7282]">
-              Tell us about your organization before adding properties and people.
-            </p>
-            <div className="mt-4 grid gap-4 sm:grid-cols-2">
-              <input
-                className={`${inputClass} sm:col-span-2`}
-                value={state.accountSetup.companyName}
-                onChange={(e) => updateAccountSetup({ companyName: e.target.value })}
-                placeholder="Company name"
-                aria-label="Company name"
-              />
-              <input
-                className={inputClass}
-                value={state.accountSetup.contactName}
-                onChange={(e) => updateAccountSetup({ contactName: e.target.value })}
-                placeholder="Your name"
-                aria-label="Your name"
-              />
-              <input
-                className={inputClass}
-                type="email"
-                value={state.accountSetup.email}
-                onChange={(e) => updateAccountSetup({ email: e.target.value })}
-                placeholder="Email"
-                aria-label="Email"
-              />
-              <div className="flex flex-col gap-2 sm:col-span-2">
-                <input
-                  className={inputClass}
-                  type="tel"
-                  autoComplete="tel"
-                  value={state.accountSetup.phone}
-                  onChange={(e) => updateAccountSetup({ phone: e.target.value })}
-                  placeholder="(555) 123-4567"
-                  aria-label="Phone"
-                  aria-describedby={`${smsConsentCheckboxId}-disclosure`}
-                />
-                <p
-                  id={`${smsConsentCheckboxId}-disclosure`}
-                  className="text-[12px] leading-[18px] tracking-[-0.01em] text-[#6a7282]"
-                >
-                  By signing up, you agree to receive recurring SMS messages from Ulo related to
-                  account verification, maintenance requests, vendor coordination, work order
-                  updates, appointment reminders, and other property management notifications.
-                  Consent is not a condition of purchase. Reply STOP to opt out. Reply HELP for
-                  help. Message frequency varies. Message and data rates may apply.                   View our{' '}
-                  <Link
-                    to={PRIVACY_POLICY_PATH}
-                    className="font-medium text-[#9E439F] underline underline-offset-2 hover:text-[#7f3680]"
-                  >
-                    Privacy Policy
-                  </Link>{' '}
-                  and{' '}
-                  <Link
-                    to="/terms"
-                    className="font-medium text-[#9E439F] underline underline-offset-2 hover:text-[#7f3680]"
-                  >
-                    Terms of Service
-                  </Link>
-                  .
-                </p>
-                <label
-                  htmlFor={smsConsentCheckboxId}
-                  className="flex cursor-pointer items-start gap-2.5 pt-1"
-                >
-                  <input
-                    id={smsConsentCheckboxId}
-                    type="checkbox"
-                    checked={smsConsentAccepted}
-                    onChange={(e) => {
-                      setSmsConsentAccepted(e.target.checked)
-                      if (e.target.checked) {
-                        setError((prev) =>
-                          prev === 'Please agree to the SMS terms to continue.' ? null : prev,
-                        )
-                      }
-                    }}
-                    aria-describedby={`${smsConsentCheckboxId}-disclosure`}
-                    className={`${checkboxInputClassName} mt-0.5 accent-[#9E439F]`}
-                  />
-                  <span className="text-[12px] leading-[18px] text-[#364153]">
-                    I agree to receive SMS messages as described above.
-                  </span>
-                </label>
-              </div>
-            </div>
-            <OnboardingStepNav
-              showBack={showBackButton}
-              onBack={() => void handleBack()}
-              saving={saving}
-            >
-              <OnboardingContinueButton
-                disabled={saving || !smsConsentAccepted}
-                onClick={() => void saveAccountSetup()}
-              >
-                {editContinueLabel ?? 'Continue'}
-              </OnboardingContinueButton>
-            </OnboardingStepNav>
-          </section>
+{step === 'account_setup' ? (
+          <OnboardingAccountSetupStep
+            accountSetup={state.accountSetup}
+            approvalRules={state.approvalRules}
+            smsConsentAccepted={smsConsentAccepted}
+            setSmsConsentAccepted={setSmsConsentAccepted}
+            smsConsentCheckboxId={smsConsentCheckboxId}
+            landlordId={state.landlordId}
+            updateAccountSetup={updateAccountSetup}
+            updateApprovalRules={updateApprovalRules}
+            setError={setError}
+            saveDeps={{
+              get editingFromReview() {
+                return editingFromReviewRef.current
+              },
+              setSaving,
+              setError,
+              setSmsConsentAccepted,
+              returnToReviewAfterEdit,
+              goTo,
+            }}
+            showBackButton={showBackButton}
+            saving={saving}
+            editContinueLabel={editContinueLabel}
+            onBack={() => void handleBack()}
+          />
         ) : null}
 
         {step === 'document_upload' ? (
@@ -1958,441 +218,114 @@ export function AdminOnboardingDashboard() {
             saving={saving}
             onReviewChange={setExtractionReview}
             onBackToUploads={() => void goTo('document_upload')}
-            onImportSelected={() => void importSelectedFromReview()}
-            onImportAll={() => void importAllFromReview()}
-            onSkipImport={() => void skipImportFromReview()}
+            onImportAll={() => void continueFromAiReview()}
           />
         ) : null}
 
-        {step === 'property' ? (
-          <section className="rounded-[10px] border border-[#e5e7eb] bg-white p-6 shadow-[0px_1px_2px_-1px_rgba(0,0,0,0.06)]">
-            <h2 className="text-[18px] font-semibold text-[#101828]">Add your properties</h2>
-            <p className="mt-1 text-[14px] text-[#6a7282]">
-              Tell us about the properties you manage, including city, state, and ZIP so we can match
-              nearby vendors. You can always add more properties later.
-            </p>
-
-            <div className="mt-4 flex flex-col gap-4">
-              {propertyForms.map((form, index) => (
-                <div key={form.id} className="rounded-[10px] border border-[#e5e7eb] p-4">
-                  <div className="mb-4 flex items-center justify-between gap-3">
-                    <p className="text-[14px] font-semibold text-[#101828]">Property {index + 1}</p>
-                    {propertyForms.length > 1 ? (
-                      <button
-                        type="button"
-                        className="shrink-0 rounded-[8px] px-2 py-1 text-[13px] font-medium text-[#64748b] transition-colors hover:bg-[#fef2f2] hover:text-[#b91c1c] active:bg-[#fee2e2]"
-                        onClick={() => removePropertyForm(form.id)}
-                        aria-label={`Remove property ${index + 1}`}
-                      >
-                        Remove
-                      </button>
-                    ) : null}
-                  </div>
-                  <div className="grid gap-4 sm:grid-cols-2">
-                    <label className="block sm:col-span-2">
-                      <span className={fieldLabelClass}>Property name</span>
-                      <input
-                        className={inputClass}
-                        value={form.name}
-                        onChange={(e) => updatePropertyForm(form.id, { name: e.target.value })}
-                        placeholder="Riverside Lofts"
-                        aria-label={`Property ${index + 1} name`}
-                      />
-                    </label>
-                    <label className="block sm:col-span-2">
-                      <span className={fieldLabelClass}>Street address</span>
-                      <input
-                        className={inputClass}
-                        value={form.address}
-                        onChange={(e) => updatePropertyForm(form.id, { address: e.target.value })}
-                        placeholder="123 Main St"
-                        aria-label={`Property ${index + 1} street address`}
-                      />
-                    </label>
-                    <label className="block">
-                      <span className={fieldLabelClass}>State</span>
-                      <div className="relative">
-                        <select
-                          className={`${selectClass} ${!form.state ? 'text-[#9ca3af]' : ''}`}
-                          value={form.state}
-                          onChange={(e) => updatePropertyForm(form.id, { state: e.target.value })}
-                          aria-label={`Property ${index + 1} state`}
-                        >
-                          <option value="">Select state</option>
-                          {US_STATE_OPTIONS.map((state) => (
-                            <option key={state.code} value={state.code}>
-                              {state.name}
-                            </option>
-                          ))}
-                        </select>
-                        <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-[#6a7282]" aria-hidden>
-                          <svg viewBox="0 0 24 24" fill="none" className="size-4">
-                            <path d="M6 9l6 6 6-6" stroke="currentColor" strokeWidth={2} strokeLinecap="round" />
-                          </svg>
-                        </span>
-                      </div>
-                    </label>
-                    <label className="block">
-                      <span className={fieldLabelClass}>City</span>
-                      <div className="relative">
-                        <select
-                          className={`${selectClass} ${!form.city ? 'text-[#9ca3af]' : ''}`}
-                          value={form.city}
-                          onChange={(e) => updatePropertyForm(form.id, { city: e.target.value })}
-                          disabled={!form.state}
-                          aria-label={`Property ${index + 1} city`}
-                        >
-                          <option value="">{form.state ? 'Select city' : 'Select state first'}</option>
-                          {cityOptionsForProperty(form).map((city) => (
-                            <option key={city} value={city}>
-                              {city}
-                            </option>
-                          ))}
-                        </select>
-                        <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-[#6a7282]" aria-hidden>
-                          <svg viewBox="0 0 24 24" fill="none" className="size-4">
-                            <path d="M6 9l6 6 6-6" stroke="currentColor" strokeWidth={2} strokeLinecap="round" />
-                          </svg>
-                        </span>
-                      </div>
-                    </label>
-                    <label className="block">
-                      <span className={fieldLabelClass}>ZIP code</span>
-                      <input
-                        className={inputClass}
-                        value={form.zipCode}
-                        onChange={(e) => updatePropertyForm(form.id, { zipCode: e.target.value })}
-                        placeholder="07102"
-                        inputMode="numeric"
-                        aria-label={`Property ${index + 1} ZIP code`}
-                      />
-                    </label>
-                    <label className="block">
-                      <span className={fieldLabelClass}>Type</span>
-                      <div className="relative">
-                        <select
-                          className={selectClass}
-                          value={form.propertyType}
-                          onChange={(e) => updatePropertyForm(form.id, { propertyType: e.target.value })}
-                          aria-label={`Property ${index + 1} type`}
-                        >
-                          {PROPERTY_TYPE_OPTIONS.map((option) => (
-                            <option key={option.value} value={option.value}>
-                              {option.label}
-                            </option>
-                          ))}
-                        </select>
-                        <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-[#6a7282]" aria-hidden>
-                          <svg viewBox="0 0 24 24" fill="none" className="size-4">
-                            <path d="M6 9l6 6 6-6" stroke="currentColor" strokeWidth={2} strokeLinecap="round" />
-                          </svg>
-                        </span>
-                      </div>
-                    </label>
-                    <label className="block">
-                      <span className={fieldLabelClass}>Total units</span>
-                      <input
-                        className={inputClass}
-                        type="number"
-                        min={1}
-                        value={form.unitCount}
-                        onChange={(e) => updatePropertyForm(form.id, { unitCount: e.target.value })}
-                        placeholder="48"
-                        aria-label={`Property ${index + 1} total units`}
-                      />
-                    </label>
-                  </div>
-                </div>
-              ))}
-
-              <button
-                type="button"
-                className="w-full rounded-[10px] border border-[#e5e7eb] bg-white py-2.5 text-[14px] font-medium text-[#101828] transition-colors hover:bg-[#f9fafb] active:bg-[#f3f4f6]"
-                onClick={addPropertyForm}
-              >
-                + Add another property
-              </button>
-            </div>
-            <OnboardingStepNav
-              showBack={showBackButton}
-              onBack={() => void handleBack()}
-              saving={saving}
-            >
-              <OnboardingContinueButton disabled={saving} onClick={() => void saveProperty()}>
-                {editContinueLabel ?? 'Save & continue'}
-              </OnboardingContinueButton>
-            </OnboardingStepNav>
-          </section>
+{step === 'property' ? (
+          <OnboardingPropertyStep
+            propertyForms={propertyForms}
+            setPropertyForms={setPropertyForms}
+            saveDeps={{
+              get editingFromReview() {
+                return editingFromReviewRef.current
+              },
+              setSaving,
+              setError,
+              returnToReviewAfterEdit,
+              goTo,
+              refreshCounts,
+            }}
+            showBackButton={showBackButton}
+            saving={saving}
+            editContinueLabel={editContinueLabel}
+            onBack={() => void handleBack()}
+          />
         ) : null}
 
-        {step === 'vendors' ? (
-          <section className="rounded-[10px] border border-[#e5e7eb] bg-white p-6 shadow-[0px_1px_2px_-1px_rgba(0,0,0,0.06)]">
-            <h2 className="text-[18px] font-semibold text-[#101828]">Add vendors</h2>
-            <p className="mt-1 text-[14px] text-[#6a7282]">
-            Tell us about the vendors you work with for repairs, maintenance, and property services.
-            </p>
-            <div className="mt-4 flex flex-col gap-4">
-              {vendorForms.map((form, index) => (
-                <div key={form.id} className="rounded-[10px] border border-[#e5e7eb] p-4">
-                  <div className="mb-4 flex items-center justify-between gap-3">
-                    <p className="text-[14px] font-semibold text-[#101828]">Vendor {index + 1}</p>
-                    {vendorForms.length > 1 ? (
-                      <button
-                        type="button"
-                        className="shrink-0 rounded-[8px] px-2 py-1 text-[13px] font-medium text-[#64748b] transition-colors hover:bg-[#fef2f2] hover:text-[#b91c1c] active:bg-[#fee2e2]"
-                        onClick={() => removeVendorForm(form.id)}
-                        aria-label={`Remove vendor ${index + 1}`}
-                      >
-                        Remove
-                      </button>
-                    ) : null}
-                  </div>
-                  <div className="grid gap-4 sm:grid-cols-2">
-                    <input
-                      className={`${inputClass} sm:col-span-2`}
-                      value={form.name}
-                      onChange={(e) => updateVendorForm(form.id, { name: e.target.value })}
-                      placeholder="Vendor name"
-                      aria-label={`Vendor ${index + 1} name`}
-                    />
-                    <div className="relative">
-                      <select
-                        className={`${selectClass} ${!form.category ? 'text-[#9ca3af]' : ''}`}
-                        value={form.category}
-                        onChange={(e) => updateVendorForm(form.id, { category: e.target.value })}
-                        aria-label={`Vendor ${index + 1} trade`}
-                      >
-                        {VENDOR_TRADE_OPTIONS.map((option) => (
-                          <option key={option.value || 'placeholder'} value={option.value}>
-                            {option.label}
-                          </option>
-                        ))}
-                      </select>
-                      <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-[#6a7282]" aria-hidden>
-                        <svg viewBox="0 0 24 24" fill="none" className="size-4">
-                          <path d="M6 9l6 6 6-6" stroke="currentColor" strokeWidth={2} strokeLinecap="round" />
-                        </svg>
-                      </span>
-                    </div>
-                    <input
-                      className={inputClass}
-                      value={form.phone}
-                      onChange={(e) => updateVendorForm(form.id, { phone: e.target.value })}
-                      placeholder="(555) 123-4567"
-                      aria-label={`Vendor ${index + 1} phone`}
-                    />
-                    <input
-                      className={`${inputClass} sm:col-span-2`}
-                      type="email"
-                      value={form.email}
-                      onChange={(e) => updateVendorForm(form.id, { email: e.target.value })}
-                      placeholder="Email"
-                      aria-label={`Vendor ${index + 1} email`}
-                    />
-                  </div>
-                </div>
-              ))}
-
-              <button
-                type="button"
-                className="w-full rounded-[10px] border border-[#e5e7eb] bg-white py-2.5 text-[14px] font-medium text-[#101828] transition-colors hover:bg-[#f9fafb] active:bg-[#f3f4f6]"
-                onClick={addVendorForm}
-              >
-                + Add another vendor
-              </button>
-            </div>
-            <OnboardingStepNav
-              showBack={showBackButton}
-              onBack={() => void handleBack()}
-              saving={saving}
-            >
-              <OnboardingContinueButton disabled={saving} onClick={() => void saveVendorsAndContinue()}>
-                {editContinueLabel ?? 'Continue'}
-              </OnboardingContinueButton>
-            </OnboardingStepNav>
-          </section>
+{step === 'vendors' ? (
+          <OnboardingVendorsStep
+            vendorForms={vendorForms}
+            setVendorForms={setVendorForms}
+            saveDeps={{
+              get editingFromReview() {
+                return editingFromReviewRef.current
+              },
+              setSaving,
+              setError,
+              setVendorForms,
+              returnToReviewAfterEdit,
+              goTo,
+              refreshCounts,
+            }}
+            showBackButton={showBackButton}
+            saving={saving}
+            editContinueLabel={editContinueLabel}
+            onBack={() => void handleBack()}
+          />
         ) : null}
 
-        {step === 'residents' ? (
-          <section className="rounded-[10px] border border-[#e5e7eb] bg-white p-6 shadow-[0px_1px_2px_-1px_rgba(0,0,0,0.06)]">
-            <h2 className="text-[18px] font-semibold text-[#101828]">Add residents</h2>
-            <p className="mt-1 text-[14px] text-[#6a7282]">
-              Residents receive maintenance updates and can report issues by text.
-            </p>
-            <div className="mt-4 flex flex-col gap-4">
-              {residentForms.map((form, index) => (
-                <div key={form.id} className="rounded-[10px] border border-[#e5e7eb] p-4">
-                  <div className="mb-4 flex items-center justify-between gap-3">
-                    <p className="text-[14px] font-semibold text-[#101828]">Resident {index + 1}</p>
-                    {residentForms.length > 1 ? (
-                      <button
-                        type="button"
-                        className="shrink-0 rounded-[8px] px-2 py-1 text-[13px] font-medium text-[#64748b] transition-colors hover:bg-[#fef2f2] hover:text-[#b91c1c] active:bg-[#fee2e2]"
-                        onClick={() => removeResidentForm(form.id)}
-                        aria-label={`Remove resident ${index + 1}`}
-                      >
-                        Remove
-                      </button>
-                    ) : null}
-                  </div>
-                  <div className="grid gap-4 sm:grid-cols-2">
-                    <label className="block sm:col-span-2">
-                      <span className={fieldLabelClass}>Full name</span>
-                      <input
-                        className={inputClass}
-                        value={form.fullName}
-                        onChange={(e) => updateResidentForm(form.id, { fullName: e.target.value })}
-                        placeholder="Jordan Lee"
-                        aria-label={`Resident ${index + 1} full name`}
-                      />
-                    </label>
-                    <label className="block">
-                      <span className={fieldLabelClass}>Unit</span>
-                      <input
-                        className={inputClass}
-                        value={form.unit}
-                        onChange={(e) => updateResidentForm(form.id, { unit: e.target.value })}
-                        placeholder="4B"
-                        aria-label={`Resident ${index + 1} unit`}
-                      />
-                    </label>
-                    <label className="block">
-                      <span className={fieldLabelClass}>Phone</span>
-                      <input
-                        className={inputClass}
-                        value={form.phone}
-                        onChange={(e) => updateResidentForm(form.id, { phone: e.target.value })}
-                        placeholder="(555) 123-4567"
-                        aria-label={`Resident ${index + 1} phone`}
-                      />
-                    </label>
-                    <label className="block sm:col-span-2">
-                      <span className={fieldLabelClass}>Email</span>
-                      <input
-                        className={inputClass}
-                        type="email"
-                        value={form.email}
-                        onChange={(e) => updateResidentForm(form.id, { email: e.target.value })}
-                        placeholder="jordan@email.com"
-                        aria-label={`Resident ${index + 1} email`}
-                      />
-                    </label>
-                    <label className="block">
-                      <span className={fieldLabelClass}>Monthly rent</span>
-                      <input
-                        className={inputClass}
-                        inputMode="decimal"
-                        value={form.monthlyRent}
-                        onChange={(e) => updateResidentForm(form.id, { monthlyRent: e.target.value })}
-                        placeholder="$2,850"
-                        aria-label={`Resident ${index + 1} monthly rent`}
-                      />
-                    </label>
-                    <label className="block">
-                      <span className={fieldLabelClass}>Rent due day</span>
-                      <div className="relative">
-                        <select
-                          className={selectClass}
-                          value={form.rentDueDayMode}
-                          onChange={(e) => {
-                            const choice = e.target.value as RentDueDayChoice
-                            if (choice === '1' || choice === '5') {
-                              updateResidentForm(form.id, {
-                                rentDueDayMode: choice,
-                                rentDueDay: choice,
-                              })
-                              return
-                            }
-                            if (choice === 'custom') {
-                              const current = form.rentDueDay.trim()
-                              updateResidentForm(form.id, {
-                                rentDueDayMode: 'custom',
-                                rentDueDay:
-                                  current === '1' || current === '5' ? '' : current,
-                              })
-                              return
-                            }
-                            updateResidentForm(form.id, {
-                              rentDueDayMode: '',
-                              rentDueDay: '',
-                            })
-                          }}
-                          aria-label={`Resident ${index + 1} rent due day`}
-                        >
-                          <option value="">Select day</option>
-                          <option value="1">1st</option>
-                          <option value="5">5th</option>
-                          <option value="custom">Custom</option>
-                        </select>
-                        <span
-                          className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-[#6a7282]"
-                          aria-hidden
-                        >
-                          <svg viewBox="0 0 24 24" fill="none" className="size-4">
-                            <path
-                              d="M6 9l6 6 6-6"
-                              stroke="currentColor"
-                              strokeWidth={2}
-                              strokeLinecap="round"
-                            />
-                          </svg>
-                        </span>
-                      </div>
-                      {form.rentDueDayMode === 'custom' ? (
-                        <input
-                          className={`${inputClass} mt-2`}
-                          inputMode="numeric"
-                          value={form.rentDueDay}
-                          onChange={(e) =>
-                            updateResidentForm(form.id, { rentDueDay: e.target.value })
-                          }
-                          placeholder="Day of month (1–31)"
-                          aria-label={`Resident ${index + 1} custom rent due day`}
-                        />
-                      ) : null}
-                    </label>
-                    <label className="block">
-                      <span className={fieldLabelClass}>Lease starts</span>
-                      <input
-                        className={inputClass}
-                        type="date"
-                        value={form.leaseStart}
-                        onChange={(e) => updateResidentForm(form.id, { leaseStart: e.target.value })}
-                        aria-label={`Resident ${index + 1} lease starts`}
-                      />
-                    </label>
-                    <label className="block">
-                      <span className={fieldLabelClass}>Lease ends</span>
-                      <input
-                        className={inputClass}
-                        type="date"
-                        value={form.leaseEnd}
-                        onChange={(e) => updateResidentForm(form.id, { leaseEnd: e.target.value })}
-                        aria-label={`Resident ${index + 1} lease ends`}
-                      />
-                    </label>
-                  </div>
-                </div>
-              ))}
+{step === 'residents' ? (
+          <OnboardingResidentsStep
+            residentForms={residentForms}
+            setResidentForms={setResidentForms}
+            saveDeps={{
+              properties: state.properties,
+              propertyForms,
+              get editingFromReview() {
+                return editingFromReviewRef.current
+              },
+              setSaving,
+              setError,
+              setResidentForms,
+              returnToReviewAfterEdit,
+              continueToApprovalRules,
+              refreshCounts,
+            }}
+            unitOptions={unitOptions}
+            propertyNames={propertyNames}
+            multiPropertyPortfolio={multiPropertyPortfolio}
+            defaultBuilding={
+              state.properties[0]?.name ?? propertyForms[0]?.name.trim() ?? ''
+            }
+            showBackButton={showBackButton}
+            saving={saving}
+            editContinueLabel={editContinueLabel}
+            onBack={() => void handleBack()}
+          />
+        ) : null}
 
-              <button
-                type="button"
-                className="w-full rounded-[10px] border border-[#e5e7eb] bg-white py-2.5 text-[14px] font-medium text-[#101828] transition-colors hover:bg-[#f9fafb] active:bg-[#f3f4f6]"
-                onClick={addResidentForm}
-              >
-                + Add another resident
-              </button>
-            </div>
-            <OnboardingStepNav
-              showBack={showBackButton}
-              onBack={() => void handleBack()}
-              saving={saving}
-            >
-              <OnboardingContinueButton disabled={saving} onClick={() => void saveResidentsAndContinue()}>
-                {editContinueLabel ?? 'Continue to review'}
-              </OnboardingContinueButton>
-            </OnboardingStepNav>
-          </section>
+        {step === 'approval' ? (
+          <OnboardingApprovalRulesStep
+            key={JSON.stringify(state.approvalRules)}
+            initialRules={state.approvalRules}
+            saving={saving}
+            showBack={showBackButton}
+            showNotificationPreferences={state.setupPath === 'fast_track'}
+            continueLabel={editContinueLabel ?? 'Continue'}
+            onBack={() => void handleBack()}
+            onContinue={(rules) => void saveApprovalRulesAndContinue(rules)}
+          />
+        ) : null}
+
+        {step === 'payouts' ? (
+          <OnboardingPayoutsStep
+            landlordId={getActiveLandlordId()}
+            saving={saving}
+            showBack={showBackButton}
+            onBack={() => void handleBack()}
+            onContinue={() => {
+              if (editingFromReviewRef.current) {
+                void returnToReviewAfterEdit()
+                return
+              }
+              void continueToReview()
+            }}
+            onReadyChange={setPayoutsReady}
+            onStatusChange={(next) => {
+              setPayoutMethodLabel(primaryPayoutMethodLabel(next))
+            }}
+          />
         ) : null}
 
         {step === 'review' ? (
@@ -2400,13 +333,17 @@ export function AdminOnboardingDashboard() {
             loading={reviewLoading}
             saving={saving}
             reviewData={reviewData}
+            setupPath={state.setupPath}
             completionDisabled={!completionCheck.ok}
             completionMissing={completionCheck.missing}
+            payoutsReady={payoutsReady}
+            payoutMethodLabel={payoutMethodLabel}
             onEditStep={(targetStep) => void editReviewStep(targetStep)}
             onBack={() => void handleBack()}
             onComplete={() => void finishReview()}
           />
         ) : null}
+        </div>
       </div>
     </main>
   )

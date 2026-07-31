@@ -1,4 +1,5 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
+import { getErrorMessage, toUserFriendlyMessage } from '@/lib/errorMessage'
 import { supabase } from './supabase'
 
 export type ResidentAuthPayload = {
@@ -55,16 +56,10 @@ export const OTP_RESEND_COOLDOWN_SECONDS = 60
 
 /** Maps Supabase Auth errors to clearer copy for residents. */
 function userFacingAuthError(raw: string): string {
-  const m = raw.toLowerCase()
-  if (
-    m.includes('rate limit') ||
-    m.includes('too many') ||
-    m.includes('over_email_send_rate_limit') ||
-    m.includes('email rate')
-  ) {
-    return 'Too many verification emails were sent from this app. Please wait a few minutes, then use Resend code or try again later. If you are testing, reduce how often you request a new code.'
-  }
-  return raw
+  return toUserFriendlyMessage(
+    raw,
+    'Something went wrong. Please try again.',
+  )
 }
 
 /**
@@ -187,5 +182,5 @@ export async function syncResidentProfileMetadata(
       unit_number: unit.trim(),
     },
   })
-  if (error) throw new Error(error.message)
+  if (error) throw new Error(getErrorMessage(error, 'Something went wrong. Please try again.'))
 }

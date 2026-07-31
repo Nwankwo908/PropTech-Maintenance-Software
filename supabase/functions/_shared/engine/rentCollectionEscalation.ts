@@ -1,5 +1,5 @@
 import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.49.1"
-import { sendResendEmail } from "../delivery.ts"
+import { notifyLandlordNeedsAttention } from "../landlordAttentionNotify.ts"
 import {
   logRentCollectionGraphEvent,
   logRentCollectionLedgerWithGraph,
@@ -7,7 +7,6 @@ import {
   RENT_GRAPH_EVENTS,
 } from "./rentCollectionGraph.ts"
 import { resolveRentPaymentLink } from "./rentCollectionPayment.ts"
-import { escalationNotifyEmails } from "./runWorkflowEscalations.ts"
 import {
   buildRentClassificationMetadata,
   classifyRentCollection,
@@ -204,7 +203,9 @@ async function sendLatePaymentNotice(
 }
 
 async function notifyAdminDashboard(
+  supabase: SupabaseClient,
   params: {
+    landlordId: string
     run: WorkflowRunRow
     resident: ResidentContactRow | null
     amountDue: number | null
@@ -219,53 +220,33 @@ async function notifyAdminDashboard(
   const unitLabel = params.resident?.unit?.trim() ||
     (typeof params.run.metadata?.unit_label === "string"
       ? params.run.metadata.unit_label
-      : "—")
+      : "")
   const amountLabel = params.amountDue != null
     ? formatCurrency(params.amountDue)
-    : "—"
+    : null
 
-  const subject = "[Ulo] Late rent payment escalated"
-  const text = [
-    "A rent collection workflow was escalated for late payment.",
-    "",
-    `Workflow run: ${params.run.id}`,
-    `Resident: ${residentLabel}`,
-    `Unit: ${unitLabel}`,
-    `Amount due: ${amountLabel}`,
-    params.billingPeriod ? `Billing period: ${params.billingPeriod}` : null,
-    `Reason: ${params.reason}`,
-    `Late notice SMS: ${params.noticeSmsSent ? "sent" : "not sent"}`,
-    `Late notice email: ${params.noticeEmailSent ? "sent" : "not sent"}`,
-    "",
-    "Review this escalation in the admin Workflows dashboard.",
-  ].filter(Boolean).join("\n")
+  const detailParts = [
+    residentLabel,
+    unitLabel ? `Unit ${unitLabel}` : null,
+    amountLabel,
+    params.billingPeriod,
+  ].filter(Boolean)
 
-  const html = `<p>A rent collection workflow was escalated for late payment.</p>
-<ul>
-<li><strong>Workflow run:</strong> ${params.run.id}</li>
-<li><strong>Resident:</strong> ${residentLabel}</li>
-<li><strong>Unit:</strong> ${unitLabel}</li>
-<li><strong>Amount due:</strong> ${amountLabel}</li>
-${params.billingPeriod ? `<li><strong>Billing period:</strong> ${params.billingPeriod}</li>` : ""}
-<li><strong>Reason:</strong> ${params.reason}</li>
-<li><strong>Late notice SMS:</strong> ${params.noticeSmsSent ? "sent" : "not sent"}</li>
-<li><strong>Late notice email:</strong> ${params.noticeEmailSent ? "sent" : "not sent"}</li>
-</ul>
-<p>Review this escalation in the admin <strong>Workflows</strong> dashboard.</p>`
+  const attention = await notifyLandlordNeedsAttention(supabase, {
+    landlordId: params.landlordId,
+    kind: "late_rent",
+    headline: "Late rent escalation",
+    detail: detailParts.join(" · "),
+    idempotencyKey: `late_rent:${params.run.id}`,
+    workflowRunId: params.run.id,
+    residentId: params.run.resident_id,
+    unitId: params.run.unit_id,
+  })
 
-  const notified: string[] = []
-  const errors: string[] = []
-
-  for (const email of escalationNotifyEmails()) {
-    const result = await sendResendEmail(email, subject, text, html)
-    if ("error" in result) {
-      errors.push(`${email}: ${result.error}`)
-    } else {
-      notified.push(email)
-    }
+  return {
+    notified: [...attention.smsSent, ...attention.emailSent],
+    errors: attention.errors,
   }
-
-  return { notified, errors }
 }
 
 /**
@@ -383,6 +364,8 @@ export async function escalateRentCollectionRun(
       runId: params.run.id,
       billingPeriod: billingPeriod ?? "",
       amountDue: amountDue ?? 0,
+      residentName: resident.full_name,
+      unitLabel: resident.unit,
     })
     : null
 
@@ -397,7 +380,8 @@ export async function escalateRentCollectionRun(
     })
     : { smsSent: false, emailSent: false }
 
-  const adminNotify = await notifyAdminDashboard({
+  const adminNotify = await notifyAdminDashboard(supabase, {
+    landlordId: params.landlordId,
     run: params.run,
     resident,
     amountDue,

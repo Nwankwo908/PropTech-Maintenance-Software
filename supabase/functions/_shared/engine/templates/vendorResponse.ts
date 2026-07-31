@@ -8,12 +8,34 @@ import {
   buildVendorSmsAcceptReply,
   buildVendorSmsDeclineReply,
   buildVendorSmsReplyPrompt,
+  formatWorkOrderRef,
+  stripWorkOrderRefFromSms,
 } from "../../vendor_outreach_copy.ts"
+import {
+  buildVendorWorkOrderClarifySms,
+  createVendorWorkOrderClarification,
+  isVendorWorkOrderClarificationExpired,
+  listVendorActiveJobs,
+  persistVendorWorkOrderClarification,
+  readVendorWorkOrderClarification,
+  resolveClarificationSelection,
+  VENDOR_WO_CLARIFICATION_KEY,
+} from "../../sms/vendorWorkOrderClarification.ts"
 import { resolveVendorAvailability } from "../../vendor_availability_parse.ts"
 import { confirmVendorSchedule } from "../../vendor_job_schedule.ts"
 import {
+  askTenantScheduleConfirmation,
+  buildVendorWaitingOnTenantSms,
+} from "../../sms/tenantScheduleConfirm.ts"
+import {
+  detectVendorRescheduleIntent,
+  readVendorReschedulePending,
+  tryHandleVendorRescheduleSms,
+} from "../../sms/vendorRescheduleSms.ts"
+import {
   appendInboundContext,
   appendOutboundContext,
+  createIdleScheduleState,
   formatScheduleContextForPrompt,
   persistVendorScheduleFsm,
   readVendorScheduleFsm,
@@ -25,7 +47,7 @@ import {
 import { inboundOccurredAt } from "../../sms/sms_inbound_guard.ts"
 import {
   recordVendorRepliedEvent,
-  resolveVendorMaintenanceRequestId,
+  resolveVendorTicketForInbound,
   type VendorStatusTransitionResultMeta,
 } from "../../sms/vendorSmsRouting.ts"
 import { workflowRouteForTemplate } from "../logStage.ts"
@@ -60,6 +82,8 @@ function effectToReply(effect: ScheduleFsmEffect): string | undefined {
       return buildVendorScheduleSoftConfirmSms(effect.windowText)
     case "clarify":
       return buildVendorScheduleClarifySms(effect.prompt)
+    case "waiting_on_tenant":
+      return buildVendorWaitingOnTenantSms(effect.windowText)
     case "save_retry":
       return buildVendorScheduleSaveRetrySms(effect.windowText)
     case "expired":
@@ -69,6 +93,55 @@ function effectToReply(effect: ScheduleFsmEffect): string | undefined {
     default:
       return undefined
   }
+}
+
+async function runAskTenantEffect(
+  supabase: SupabaseClient,
+  params: {
+    ticketId: string
+    vendorId: string
+    conversationId: string
+    windowText: string
+    scheduledAt: string | null
+    prev: VendorScheduleFsmState | null
+    draftState: VendorScheduleFsmState
+    inboundBody: string
+    inboundAt: string
+    inboundSid?: string
+  },
+): Promise<{ replyHint: string; state: VendorScheduleFsmState }> {
+  const ask = await askTenantScheduleConfirmation(supabase, {
+    ticketId: params.ticketId,
+    vendorId: params.vendorId,
+    vendorConversationId: params.conversationId,
+    windowText: params.windowText,
+    scheduledAt: params.scheduledAt,
+  })
+
+  const replyHint = ask.ok
+    ? buildVendorWaitingOnTenantSms(params.windowText)
+    : buildVendorScheduleClarifySms(
+      "Thanks — we couldn't reach the resident yet. We'll keep trying. Reply with another time if this one changes.",
+    )
+
+  if (!ask.ok) {
+    console.error("[vendor_job_response] tenant schedule ask failed", {
+      ticketId: params.ticketId,
+      error: ask.error,
+    })
+  }
+
+  const state = await persistScheduleTurn(supabase, {
+    conversationId: params.conversationId,
+    ticketId: params.ticketId,
+    prev: params.prev,
+    next: params.draftState,
+    inboundBody: params.inboundBody,
+    inboundAt: params.inboundAt,
+    inboundSid: params.inboundSid,
+    outboundBody: replyHint,
+  })
+  return { replyHint, state }
 }
 
 async function persistScheduleTurn(
@@ -222,11 +295,6 @@ export const vendorJobResponseTemplate: WorkflowTemplate = {
     }
 
     const vendorId = sms.identity.vendor_id.trim()
-    const ticketId = await resolveVendorMaintenanceRequestId(supabase, {
-      vendorId,
-      conversationId: sms.conversationId,
-      conversationMaintenanceRequestId: sms.maintenanceRequestId,
-    })
 
     const { data: convo } = await supabase
       .from("sms_conversations")
@@ -234,28 +302,236 @@ export const vendorJobResponseTemplate: WorkflowTemplate = {
       .eq("id", sms.conversationId)
       .maybeSingle()
 
-    const intake = (convo?.intake_state as Record<string, unknown> | null) ?? null
+    let intake = (convo?.intake_state as Record<string, unknown> | null) ?? null
     const prev = readVendorScheduleFsm(intake)
     const inboundAt = inboundOccurredAt(
       sms.inbound.rawPayload as Record<string, unknown>,
       new Date(),
     )
     const inboundSid = sms.inbound.providerMessageSid
-    const parsedAction = parseVendorSmsReply(sms.inbound.body)
     let transition: VendorStatusTransitionResultMeta | undefined
     let replyHint: string | undefined
     let scheduleStep = prev?.step
     let fsmMeta: Record<string, unknown> = {}
 
+    const openJobs = await listVendorActiveJobs(supabase, vendorId)
+    let effectiveBody = sms.inbound.body
+    let forcedTicketId: string | null = null
+    let resumedFromClarification = false
+    let clarificationOriginalIntent: string | null = null
+
+    const pendingClarify = readVendorWorkOrderClarification(intake)
+    if (pendingClarify) {
+      if (isVendorWorkOrderClarificationExpired(pendingClarify)) {
+        await persistVendorWorkOrderClarification(supabase, {
+          conversationId: sms.conversationId,
+          clarification: null,
+        })
+        intake = { ...intake }
+        delete intake[VENDOR_WO_CLARIFICATION_KEY]
+      } else {
+        const selectedId = resolveClarificationSelection(
+          sms.inbound.body,
+          pendingClarify,
+          openJobs,
+        )
+        if (selectedId) {
+          forcedTicketId = selectedId
+          effectiveBody = pendingClarify.originalMessage
+          resumedFromClarification = true
+          clarificationOriginalIntent = pendingClarify.originalIntent
+          await persistVendorWorkOrderClarification(supabase, {
+            conversationId: sms.conversationId,
+            clarification: null,
+          })
+        } else {
+          const candidates = openJobs.filter((j) =>
+            pendingClarify.candidateWorkOrderIds.includes(j.ticketId)
+          )
+          replyHint = buildVendorWorkOrderClarifySms(
+            candidates.length > 0 ? candidates : openJobs,
+            "need_work_order",
+          )
+          await recordVendorRepliedEvent(supabase, {
+            landlordId: ctx.landlordId,
+            vendorId,
+            conversationId: sms.conversationId,
+            messageId: sms.messageId,
+            maintenanceRequestId: null,
+            bodyPreview: sms.inbound.body,
+            parsedAction: null,
+            transition: undefined,
+          })
+          return {
+            templateId: "vendor_job_response",
+            route: workflowRouteForTemplate("vendor_job_response"),
+            replyHint,
+            metadata: {
+              vendorId,
+              maintenanceRequestId: null,
+              awaitingWorkOrderClarification: true,
+              bodyPreview: sms.inbound.body.slice(0, 160),
+              skipGenericAutoReply: true,
+            },
+          }
+        }
+      }
+    }
+
+    // Vendor reschedule (post-lock appointment moves) — before accept / schedule FSM.
+    const pendingReschedule = readVendorReschedulePending(intake)
+    const rescheduleIntent = detectVendorRescheduleIntent(effectiveBody)
+    const continueReschedulePending = Boolean(
+      pendingReschedule &&
+        pendingReschedule.vendorId === vendorId &&
+        !rescheduleIntent.isReschedule,
+    )
+    const treatAsReschedule =
+      rescheduleIntent.isReschedule ||
+      continueReschedulePending ||
+      clarificationOriginalIntent === "reschedule"
+
+    // Don't steal initial negotiation ("Wed 2pm") when still collecting first availability.
+    const blockingInitialSchedule =
+      !!prev &&
+      (prev.step === "awaiting_availability" ||
+        prev.step === "awaiting_confirmation") &&
+      !rescheduleIntent.isReschedule &&
+      !continueReschedulePending &&
+      clarificationOriginalIntent !== "reschedule"
+
+    if (treatAsReschedule && !blockingInitialSchedule) {
+      const rescheduleBody = continueReschedulePending && pendingReschedule
+        ? `${pendingReschedule.originalMessage}\n${sms.inbound.body}`
+        : effectiveBody
+      const rescheduleResult = await tryHandleVendorRescheduleSms(supabase, {
+        landlordId: ctx.landlordId,
+        vendorId,
+        conversationId: sms.conversationId,
+        messageId: sms.messageId,
+        inboundBody: rescheduleBody,
+        forcedTicketId: forcedTicketId || pendingReschedule?.ticketId || null,
+        continuePending: continueReschedulePending ||
+          clarificationOriginalIntent === "reschedule",
+      })
+      if (rescheduleResult.handled) {
+        await recordVendorRepliedEvent(supabase, {
+          landlordId: ctx.landlordId,
+          vendorId,
+          conversationId: sms.conversationId,
+          messageId: sms.messageId,
+          maintenanceRequestId: rescheduleResult.ticketId,
+          bodyPreview: sms.inbound.body,
+          parsedAction: "reschedule",
+          transition: undefined,
+        })
+        return {
+          templateId: "vendor_job_response",
+          route: workflowRouteForTemplate("vendor_job_response"),
+          replyHint: rescheduleResult.replyHint,
+          metadata: {
+            vendorId,
+            maintenanceRequestId: rescheduleResult.ticketId,
+            vendorReschedule: true,
+            ...rescheduleResult.metadata,
+            bodyPreview: sms.inbound.body.slice(0, 160),
+            skipGenericAutoReply: true,
+          },
+        }
+      }
+    }
+
+    const parsedAction = parseVendorSmsReply(effectiveBody)
+
+    const prevInScheduleSteps =
+      !!prev &&
+      (prev.step === "awaiting_availability" ||
+        prev.step === "awaiting_confirmation" ||
+        prev.step === "awaiting_tenant_confirmation" ||
+        !!prev.pendingWindowText?.trim())
+
+    const ticketBind = forcedTicketId
+      ? {
+          ok: true as const,
+          ticketId: forcedTicketId,
+          boundBy: "clarification",
+          openJobs,
+        }
+      : await resolveVendorTicketForInbound(supabase, {
+          vendorId,
+          inboundBody: effectiveBody,
+          scheduleTicketId: prevInScheduleSteps ? prev?.ticketId : null,
+          openJobs,
+        })
+
+    if (!ticketBind.ok) {
+      if (
+        ticketBind.reason === "need_work_order" ||
+        ticketBind.reason === "unknown_work_order"
+      ) {
+        await persistVendorWorkOrderClarification(supabase, {
+          conversationId: sms.conversationId,
+          clarification: createVendorWorkOrderClarification({
+            vendorId,
+            conversationId: sms.conversationId,
+            landlordId: ctx.landlordId,
+            originalMessage: effectiveBody,
+            originalIntent: parsedAction,
+            candidateWorkOrderIds: ticketBind.openJobs.map((j) => j.ticketId),
+          }),
+        })
+      }
+      replyHint = buildVendorWorkOrderClarifySms(
+        ticketBind.openJobs,
+        ticketBind.reason,
+      )
+      await recordVendorRepliedEvent(supabase, {
+        landlordId: ctx.landlordId,
+        vendorId,
+        conversationId: sms.conversationId,
+        messageId: sms.messageId,
+        maintenanceRequestId: null,
+        bodyPreview: sms.inbound.body,
+        parsedAction,
+        transition: undefined,
+      })
+      return {
+        templateId: "vendor_job_response",
+        route: workflowRouteForTemplate("vendor_job_response"),
+        replyHint,
+        metadata: {
+          vendorId,
+          maintenanceRequestId: null,
+          parsedAction,
+          ticketBindReason: ticketBind.reason,
+          openJobCount: ticketBind.openJobs.length,
+          awaitingWorkOrderClarification: true,
+          bodyPreview: sms.inbound.body.slice(0, 160),
+          skipGenericAutoReply: true,
+        },
+      }
+    }
+
+    const ticketId = ticketBind.ticketId
+    const workOrderRef = formatWorkOrderRef(ticketId)
+
     const staleSchedule = isStaleScheduleForTicket(prev, ticketId)
     // Stale FSM from a prior job on this SMS thread must not steal YES / times
     // from a new assignment (skips accept + "Earliest availability?").
-    const inScheduleFlow =
-      !!prev &&
-      !staleSchedule &&
-      (prev.step === "awaiting_availability" ||
-        prev.step === "awaiting_confirmation" ||
-        !!prev.pendingWindowText?.trim())
+    let schedulePrev = prev
+    let inScheduleFlow = Boolean(prevInScheduleSteps && !staleSchedule && prev)
+
+    // After WO clarification, re-apply the original message (e.g. "tomorrow at 10")
+    // even if the schedule FSM was idle or pointed at another job.
+    if (
+      resumedFromClarification &&
+      !parsedAction &&
+      !inScheduleFlow &&
+      stripWorkOrderRefFromSms(effectiveBody).length >= 3
+    ) {
+      schedulePrev = createIdleScheduleState(ticketId)
+      inScheduleFlow = true
+    }
 
     if (staleSchedule) {
       console.warn("[vendor_job_response] stale schedule ticket ignored", {
@@ -265,12 +541,12 @@ export const vendorJobResponseTemplate: WorkflowTemplate = {
       })
     }
 
-    if (inScheduleFlow && parsedAction !== "decline") {
-      const scheduleTicketId = prev.ticketId || ticketId
+    if (inScheduleFlow && schedulePrev && parsedAction !== "decline") {
+      const scheduleTicketId = schedulePrev.ticketId || ticketId
       if (!scheduleTicketId) {
         replyHint = buildVendorScheduleClarifySms()
       } else if (parsedAction === "accept") {
-        const reduced = reduceScheduleFsm(prev, {
+        const reduced = reduceScheduleFsm(schedulePrev, {
           type: "CONFIRM_YES",
           at: inboundAt,
           inboundSid,
@@ -282,12 +558,27 @@ export const vendorJobResponseTemplate: WorkflowTemplate = {
           await persistScheduleTurn(supabase, {
             conversationId: sms.conversationId,
             ticketId: scheduleTicketId,
-            prev,
+            schedulePrev,
             next: reduced.state,
-            inboundBody: sms.inbound.body,
+            inboundBody: effectiveBody,
             inboundAt,
             inboundSid,
           })
+        } else if (reduced.effect.kind === "ask_tenant") {
+          const asked = await runAskTenantEffect(supabase, {
+            ticketId: scheduleTicketId,
+            vendorId,
+            conversationId: sms.conversationId,
+            windowText: reduced.effect.windowText,
+            scheduledAt: reduced.effect.scheduledAt,
+            schedulePrev,
+            draftState: reduced.state,
+            inboundBody: effectiveBody,
+            inboundAt,
+            inboundSid,
+          })
+          replyHint = guardLoop(schedulePrev, asked.replyHint, { allowRepeat: true })
+          scheduleStep = "awaiting_tenant_confirmation"
         } else if (reduced.effect.kind === "persist") {
           const persisted = await runPersistEffect(supabase, {
             ticketId: scheduleTicketId,
@@ -295,26 +586,27 @@ export const vendorJobResponseTemplate: WorkflowTemplate = {
             conversationId: sms.conversationId,
             windowText: reduced.effect.windowText,
             scheduledAt: reduced.effect.scheduledAt,
-            prev,
+            schedulePrev,
             draftState: reduced.state,
-            inboundBody: sms.inbound.body,
+            inboundBody: effectiveBody,
             inboundAt,
             inboundSid,
           })
           // Always deliver confirm / save-retry — repeating "lock it in" is OK.
-          replyHint = guardLoop(prev, persisted.replyHint, { allowRepeat: true })
+          replyHint = guardLoop(schedulePrev, persisted.replyHint, { allowRepeat: true })
           scheduleStep = "scheduled"
         } else {
-          replyHint = guardLoop(prev, effectToReply(reduced.effect), {
+          replyHint = guardLoop(schedulePrev, effectToReply(reduced.effect), {
             allowRepeat: reduced.effect.kind === "save_retry" ||
-              reduced.effect.kind === "clarify",
+              reduced.effect.kind === "clarify" ||
+              reduced.effect.kind === "waiting_on_tenant",
           })
           await persistScheduleTurn(supabase, {
             conversationId: sms.conversationId,
             ticketId: scheduleTicketId,
-            prev,
+            schedulePrev,
             next: reduced.state,
-            inboundBody: sms.inbound.body,
+            inboundBody: effectiveBody,
             inboundAt,
             inboundSid,
             outboundBody: replyHint,
@@ -322,8 +614,11 @@ export const vendorJobResponseTemplate: WorkflowTemplate = {
           scheduleStep = reduced.state.step
         }
       } else {
-        const resolved = await resolveVendorAvailability(sms.inbound.body, {
-          conversationContext: formatScheduleContextForPrompt(prev),
+        const availabilityBody = stripWorkOrderRefFromSms(effectiveBody) ||
+          effectiveBody
+        const resolved = await resolveVendorAvailability(availabilityBody, {
+          conversationContext: formatScheduleContextForPrompt(schedulePrev),
+          clarifyAttempts: schedulePrev.clarifyAttempts ?? 0,
         })
         const outcome =
           resolved.status === "resolved"
@@ -333,8 +628,9 @@ export const vendorJobResponseTemplate: WorkflowTemplate = {
             : "needs_clarification" as const
         const windowText =
           resolved.status === "needs_clarification"
-            ? sms.inbound.body.trim()
-            : resolved.value.windowLabel
+            ? availabilityBody.trim()
+            : (resolved.value.entity?.display_text ??
+              resolved.value.windowLabel)
         const scheduledAt =
           resolved.status === "needs_clarification"
             ? null
@@ -342,9 +638,11 @@ export const vendorJobResponseTemplate: WorkflowTemplate = {
         const endAt =
           resolved.status === "needs_clarification"
             ? null
-            : resolved.value.endAt
+            : (resolved.value.entity?.type === "WINDOW"
+              ? resolved.value.endAt
+              : null)
 
-        const reduced = reduceScheduleFsm(prev, {
+        const reduced = reduceScheduleFsm(schedulePrev, {
           type: "AVAILABILITY_TEXT",
           at: inboundAt,
           inboundSid,
@@ -360,12 +658,27 @@ export const vendorJobResponseTemplate: WorkflowTemplate = {
           await persistScheduleTurn(supabase, {
             conversationId: sms.conversationId,
             ticketId: scheduleTicketId,
-            prev,
+            schedulePrev,
             next: reduced.state,
-            inboundBody: sms.inbound.body,
+            inboundBody: effectiveBody,
             inboundAt,
             inboundSid,
           })
+        } else if (reduced.effect.kind === "ask_tenant") {
+          const asked = await runAskTenantEffect(supabase, {
+            ticketId: scheduleTicketId,
+            vendorId,
+            conversationId: sms.conversationId,
+            windowText: reduced.effect.windowText,
+            scheduledAt: reduced.effect.scheduledAt,
+            schedulePrev,
+            draftState: reduced.state,
+            inboundBody: effectiveBody,
+            inboundAt,
+            inboundSid,
+          })
+          replyHint = guardLoop(schedulePrev, asked.replyHint, { allowRepeat: true })
+          scheduleStep = "awaiting_tenant_confirmation"
         } else if (reduced.effect.kind === "persist") {
           const persisted = await runPersistEffect(supabase, {
             ticketId: scheduleTicketId,
@@ -373,14 +686,14 @@ export const vendorJobResponseTemplate: WorkflowTemplate = {
             conversationId: sms.conversationId,
             windowText: reduced.effect.windowText,
             scheduledAt: reduced.effect.scheduledAt,
-            prev,
+            schedulePrev,
             draftState: reduced.state,
-            inboundBody: sms.inbound.body,
+            inboundBody: effectiveBody,
             inboundAt,
             inboundSid,
           })
           // Confirm copy is already on the FSM for context; still must deliver SMS.
-          replyHint = guardLoop(prev, persisted.replyHint, { allowRepeat: true })
+          replyHint = guardLoop(schedulePrev, persisted.replyHint, { allowRepeat: true })
           scheduleStep = "scheduled"
         } else {
           let reply = effectToReply(reduced.effect)
@@ -390,17 +703,25 @@ export const vendorJobResponseTemplate: WorkflowTemplate = {
           ) {
             reply = buildVendorScheduleClarifySms(resolved.softPrompt)
           }
-          replyHint = guardLoop(prev, reply, {
+          if (
+            reduced.effect.kind === "soft_confirm" &&
+            resolved.status === "needs_confirmation"
+          ) {
+            // Prefer typed WINDOW/EXACT softPrompt over raw windowText.
+            reply = resolved.softPrompt
+          }
+          replyHint = guardLoop(schedulePrev, reply, {
             allowRepeat: reduced.effect.kind === "soft_confirm" ||
               reduced.effect.kind === "clarify" ||
-              reduced.effect.kind === "save_retry",
+              reduced.effect.kind === "save_retry" ||
+              reduced.effect.kind === "waiting_on_tenant",
           })
           await persistScheduleTurn(supabase, {
             conversationId: sms.conversationId,
             ticketId: scheduleTicketId,
-            prev,
+            schedulePrev,
             next: reduced.state,
-            inboundBody: sms.inbound.body,
+            inboundBody: effectiveBody,
             inboundAt,
             inboundSid,
             outboundBody: replyHint,
@@ -430,6 +751,9 @@ export const vendorJobResponseTemplate: WorkflowTemplate = {
           parsedAction,
           scheduleStep,
           fsm: fsmMeta,
+          boundBy: ticketBind.boundBy,
+          resumedFromClarification,
+          effectiveBodyPreview: effectiveBody.slice(0, 160),
           bodyPreview: sms.inbound.body.slice(0, 160),
           // Signal inbound_processor: do not invent a generic fallback reply.
           skipGenericAutoReply: true,
@@ -437,20 +761,20 @@ export const vendorJobResponseTemplate: WorkflowTemplate = {
       }
     }
 
-    if (inScheduleFlow && parsedAction === "decline") {
-      const scheduleTicketId = prev.ticketId || ticketId
-      const reduced = reduceScheduleFsm(prev, {
+    if (inScheduleFlow && schedulePrev && parsedAction === "decline") {
+      const scheduleTicketId = schedulePrev.ticketId || ticketId
+      const reduced = reduceScheduleFsm(schedulePrev, {
         type: "DECLINE",
         at: inboundAt,
         inboundSid,
       })
-      replyHint = guardLoop(prev, effectToReply(reduced.effect))
+      replyHint = guardLoop(schedulePrev, effectToReply(reduced.effect))
       await persistScheduleTurn(supabase, {
         conversationId: sms.conversationId,
         ticketId: scheduleTicketId,
-        prev,
+        schedulePrev,
         next: reduced.state,
-        inboundBody: sms.inbound.body,
+        inboundBody: effectiveBody,
         inboundAt,
         inboundSid,
         outboundBody: replyHint,
@@ -528,15 +852,15 @@ export const vendorJobResponseTemplate: WorkflowTemplate = {
         // Prefer the dedicated ask SMS; if it failed, reply on this thread instead.
         replyHint =
           result.availabilityAskSent === false
-            ? buildVendorAvailabilityAskSms()
+            ? buildVendorAvailabilityAskSms(workOrderRef)
             : undefined
       } else if (parsedAction === "decline") {
         replyHint = buildVendorSmsDeclineReply()
       } else if (parsedAction === "accept") {
-        replyHint = buildVendorSmsAcceptReply()
+        replyHint = buildVendorSmsAcceptReply(workOrderRef)
       }
     } else if (ticketId && !inScheduleFlow) {
-      replyHint = buildVendorSmsReplyPrompt()
+      replyHint = buildVendorSmsReplyPrompt(workOrderRef)
     }
 
     await recordVendorRepliedEvent(supabase, {
@@ -569,6 +893,9 @@ export const vendorJobResponseTemplate: WorkflowTemplate = {
         maintenanceRequestId: ticketId,
         parsedAction,
         transition,
+        boundBy: ticketBind.boundBy,
+        resumedFromClarification,
+        effectiveBodyPreview: effectiveBody.slice(0, 160),
         bodyPreview: sms.inbound.body.slice(0, 160),
         skipGenericAutoReply: true,
       },

@@ -1,4 +1,5 @@
-import { Link } from 'react-router-dom'
+import { useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import type { PropertyResidentCard } from '@/lib/propertyResidentCards'
 import { propertyResidentDetailPath } from '@/lib/propertyRoutes'
 
@@ -8,14 +9,49 @@ type PropertyResidentsGridProps = {
   loading?: boolean
 }
 
-function ResidentCard({ resident, building }: { resident: PropertyResidentCard; building: string }) {
+function ResidentCard({
+  resident,
+  building,
+  index,
+}: {
+  resident: PropertyResidentCard
+  building: string
+  index: number
+}) {
+  const navigate = useNavigate()
+  const [selecting, setSelecting] = useState(false)
+  const path = propertyResidentDetailPath(building, resident.id)
+
+  function handleSelect() {
+    if (selecting) return
+    setSelecting(true)
+    window.setTimeout(() => {
+      navigate(path)
+    }, 180)
+  }
+
   return (
-    <Link
-      to={propertyResidentDetailPath(building, resident.id)}
-      className="block rounded-[10px] border border-[#e5e7eb] bg-white p-5 shadow-[0px_1px_2px_-1px_rgba(0,0,0,0.06)] transition-colors hover:border-[#d1d5dc] hover:bg-[#fafafa] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2"
+    <button
+      type="button"
+      onClick={handleSelect}
+      disabled={selecting}
+      aria-busy={selecting}
+      className={[
+        'property-resident-card block w-full rounded-[10px] border bg-white p-5 text-left shadow-[0px_1px_2px_-1px_rgba(0,0,0,0.06)] outline-none',
+        selecting
+          ? 'border-[#187960] bg-[#e2f5f1] shadow-[0px_4px_14px_rgba(24,121,96,0.14)]'
+          : 'border-[#e5e7eb] hover:border-[#187960]/50 hover:bg-[#f8fafc] hover:shadow-[0px_4px_12px_rgba(15,23,42,0.06)]',
+        'focus-visible:shadow-[0_0_0_2px_#ffffff,0_0_0_4px_#187960]',
+      ].join(' ')}
+      style={{ animationDelay: `${Math.min(index, 12) * 45}ms` }}
     >
       <div className="flex items-start gap-3">
-        <span className="inline-flex size-10 shrink-0 items-center justify-center rounded-full bg-[#f3f4f6] text-[13px] font-semibold text-[#6a7282]">
+        <span
+          className={[
+            'inline-flex size-10 shrink-0 items-center justify-center rounded-full text-[13px] font-semibold transition-colors duration-200',
+            selecting ? 'bg-[#187960] text-white' : 'bg-[#f3f4f6] text-[#6a7282]',
+          ].join(' ')}
+        >
           {resident.initials}
         </span>
         <div className="min-w-0">
@@ -40,7 +76,7 @@ function ResidentCard({ resident, building }: { resident: PropertyResidentCard; 
           </p>
         </div>
       </div>
-    </Link>
+    </button>
   )
 }
 
@@ -68,8 +104,13 @@ export function PropertyResidentsGrid({
 
   return (
     <div className="mt-6 grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-      {residents.map((resident) => (
-        <ResidentCard key={resident.id} resident={resident} building={building} />
+      {residents.map((resident, index) => (
+        <ResidentCard
+          key={resident.id}
+          resident={resident}
+          building={building}
+          index={index}
+        />
       ))}
     </div>
   )

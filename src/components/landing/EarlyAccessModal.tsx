@@ -7,6 +7,7 @@ import {
   signInWaitlistWithGoogle,
 } from '@/lib/landingWaitlist'
 import { playWaitlistSuccessSound, primeWaitlistSuccessSound } from '@/lib/uiSuccessSound'
+import { getErrorMessage } from '@/lib/errorMessage'
 
 function IconGoogle({ className = 'size-[18px]' }: { className?: string }) {
   return (
@@ -119,7 +120,7 @@ export function EarlyAccessModal({
       setReferralLink(result.referralLink)
       setSuccess(true)
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Could not join the waitlist.')
+      setError(getErrorMessage(err, 'Could not join the waitlist.'))
     } finally {
       setSubmitting(false)
     }
@@ -135,7 +136,7 @@ export function EarlyAccessModal({
         setSuccess(true)
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Google sign-in failed.')
+      setError(getErrorMessage(err, 'Google sign-in failed.'))
     } finally {
       setSubmitting(false)
     }
@@ -155,20 +156,20 @@ export function EarlyAccessModal({
 
   return (
     <div
-      className="fixed inset-0 z-[100] flex items-center justify-center bg-[rgba(147,137,199,0.4)] p-4"
+      className="sa-scrim fixed inset-0 z-[100] flex items-center justify-center bg-[rgba(147,137,199,0.4)] p-4"
       role="dialog"
       aria-modal="true"
       aria-labelledby="early-access-title"
       onClick={onClose}
     >
       <div
-        className="relative flex max-h-[min(90dvh,640px)] w-full max-w-[896px] flex-col overflow-hidden rounded-3xl bg-[#f5f3ff] shadow-[0_25px_50px_-12px_rgba(0,0,0,0.25)] lg:max-h-[500px] lg:min-h-[500px] lg:flex-row"
+        className="sa-modal relative flex max-h-[min(90dvh,640px)] w-full max-w-[896px] flex-col overflow-hidden rounded-3xl bg-[#f5f3ff] shadow-[0_25px_50px_-12px_rgba(0,0,0,0.25)] lg:max-h-[500px] lg:min-h-[500px] lg:flex-row"
         onClick={(e) => e.stopPropagation()}
       >
         <button
           type="button"
           onClick={onClose}
-          className="absolute right-4 top-4 z-10 flex size-10 items-center justify-center rounded-full bg-black/5 text-[#6b7280] transition hover:bg-black/10"
+          className="sa-press absolute right-4 top-4 z-10 flex size-10 items-center justify-center rounded-full bg-black/5 text-[#6b7280] hover:bg-black/10"
           aria-label="Close"
         >
           <IconClose />
@@ -204,7 +205,7 @@ export function EarlyAccessModal({
                 <Link
                   to="/#how-it-works"
                   onClick={onClose}
-                  className="font-medium text-[#6366f1] hover:underline"
+                  className="sa-link font-medium text-[#6366f1] hover:underline"
                 >
                   Learn more about Ulo Home →
                 </Link>
@@ -220,7 +221,7 @@ export function EarlyAccessModal({
                     type="button"
                     onClick={() => void onCopyReferralLink()}
                     disabled={!referralLink}
-                    className="h-[58px] shrink-0 rounded-2xl bg-[#1f2937] px-5 text-sm font-semibold text-white transition hover:bg-[#111827] disabled:opacity-60 sm:min-w-[114px]"
+                    className="sa-press h-[58px] shrink-0 rounded-2xl bg-[#1f2937] px-5 text-sm font-semibold text-white hover:bg-[#111827] disabled:opacity-60 sm:min-w-[114px]"
                   >
                     {copyLabel}
                   </button>
@@ -255,7 +256,7 @@ export function EarlyAccessModal({
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
                   disabled={submitting}
-                  className="mt-2 h-[50px] w-full rounded-2xl border border-[#e5e7eb] bg-white px-[17px] text-base text-[#1f2937] outline-none placeholder:text-[rgba(31,41,55,0.5)] focus:border-emerald-500/35 focus:ring-2 focus:ring-emerald-500/20 disabled:opacity-60"
+                  className="sa-surface mt-2 h-[50px] w-full rounded-2xl border border-[#e5e7eb] bg-white px-[17px] text-base text-[#1f2937] outline-none placeholder:text-[rgba(31,41,55,0.5)] focus:border-emerald-500/35 focus:ring-2 focus:ring-emerald-500/20 disabled:opacity-60"
                 />
 
                 <div className="mt-3 min-h-4" aria-live="polite">
@@ -269,7 +270,7 @@ export function EarlyAccessModal({
                 <button
                   type="submit"
                   disabled={submitting}
-                  className="mt-4 flex h-[46px] shrink-0 w-full items-center justify-center rounded-2xl bg-[#0e5c45] text-sm font-semibold text-white outline-none transition hover:opacity-95 focus-visible:ring-2 focus-visible:ring-emerald-600 focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-60"
+                  className="sa-press mt-4 flex h-[46px] shrink-0 w-full items-center justify-center rounded-2xl bg-[#0e5c45] text-sm font-semibold text-white outline-none hover:opacity-95 focus-visible:ring-2 focus-visible:ring-emerald-600 focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-60"
                 >
                   {submitting ? 'Joining…' : 'Continue'}
                 </button>
@@ -285,7 +286,7 @@ export function EarlyAccessModal({
                 type="button"
                 disabled={submitting}
                 onClick={() => void onGoogleSignIn()}
-                className="mt-6 flex h-[46px] shrink-0 w-full items-center justify-center gap-2 rounded-2xl border border-[#e5e7eb] bg-white text-sm font-medium leading-none text-[#1f2937] outline-none transition hover:bg-gray-50 focus-visible:ring-2 focus-visible:ring-emerald-600 focus-visible:ring-offset-2 disabled:opacity-60"
+                className="sa-press mt-6 flex h-[46px] shrink-0 w-full items-center justify-center gap-2 rounded-2xl border border-[#e5e7eb] bg-white text-sm font-medium leading-none text-[#1f2937] outline-none hover:bg-gray-50 focus-visible:ring-2 focus-visible:ring-emerald-600 focus-visible:ring-offset-2 disabled:opacity-60"
               >
                 <IconGoogle />
                 Continue with Google
@@ -296,7 +297,7 @@ export function EarlyAccessModal({
                 <Link
                   to="/admin/login"
                   onClick={onClose}
-                  className="font-medium text-[#6366f1] hover:underline"
+                  className="sa-link font-medium text-[#6366f1] hover:underline"
                 >
                   Sign in here.
                 </Link>

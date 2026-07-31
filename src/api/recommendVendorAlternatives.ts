@@ -43,16 +43,17 @@ export async function postRecommendVendorAlternatives(input: {
   }
   if (!res.ok) {
     const err = body as { error?: string }
-    const base = err.error ?? `Vendor recommendations failed (${res.status})`
     if (
       res.status === 401 &&
       String(err.error ?? '').toLowerCase() === 'unauthorized'
     ) {
-      throw new Error(
-        `${base} (401): Edge ADMIN_REASSIGN_SECRET must match VITE_ADMIN_REASSIGN_SECRET.`,
-      )
+      throw new Error("This feature isn't available right now. Please try again later.")
     }
-    throw new Error(base)
+    throw new Error(
+      typeof err.error === 'string' && err.error.trim()
+        ? err.error.trim()
+        : "Couldn't find vendors nearby. Please try again.",
+    )
   }
   return body as RecommendVendorAlternativesOk
 }

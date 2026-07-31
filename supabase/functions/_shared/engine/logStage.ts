@@ -129,12 +129,22 @@ export function workflowRouteForTemplate(
   switch (templateId) {
     case "maintenance_intake":
       return "resident_maintenance_intake"
+    case "maintenance_request":
+      return "maintenance_request"
     case "lease_renewal":
       return "lease_renewal"
     case "rent_collection":
       return "rent_collection"
     case "vendor_job_response":
       return "vendor_response"
+    case "vendor_onboarding":
+      return "vendor_onboarding"
+    case "move_in":
+      return "move_in"
+    case "move_out":
+      return "move_out"
+    case "inspection":
+      return "inspection"
     case "identity_onboarding":
       return "unknown_sender_onboarding"
     case "landlord_command":

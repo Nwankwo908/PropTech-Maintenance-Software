@@ -17,6 +17,7 @@ import type {
   WorkflowPipelineField,
   WorkflowPipelineStep,
 } from '@/lib/workflowPipelineDetail'
+import { getErrorMessage } from '@/lib/errorMessage'
 
 function CloseIcon() {
   return (
@@ -78,19 +79,21 @@ function DocumentIcon() {
   )
 }
 
-function ConversationPhotosSection({
-  attachments,
+function WorkOrderPhotosSection({
+  title,
   subtitle,
+  attachments,
 }: {
-  attachments: WorkflowPipelineAttachment[]
+  title: string
   subtitle: string
+  attachments: WorkflowPipelineAttachment[]
 }) {
   if (attachments.length === 0) return null
 
   return (
     <section className="rounded-[10px] border border-[#e5e7eb] bg-white p-5 shadow-[0px_1px_2px_-1px_rgba(0,0,0,0.06)]">
       <div>
-        <h3 className="text-[15px] font-semibold leading-6 text-[#0a0a0a]">Photos from conversation</h3>
+        <h3 className="text-[15px] font-semibold leading-6 text-[#0a0a0a]">{title}</h3>
         <p className="text-[12px] leading-4 text-[#6a7282]">{subtitle}</p>
       </div>
       <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2">
@@ -390,7 +393,7 @@ export function WorkflowPipelineDetailPanel({
       }
       onWorkflowUpdated?.()
     } catch (err) {
-      setMoveOutActionError(err instanceof Error ? err.message : 'Action failed')
+      setMoveOutActionError(getErrorMessage(err, "That action didn't work. Please try again."))
     } finally {
       setMoveOutActionSaving(false)
     }
@@ -409,7 +412,7 @@ export function WorkflowPipelineDetailPanel({
       onClose()
       onWorkflowUpdated?.()
     } catch (err) {
-      setDeleteError(err instanceof Error ? err.message : 'Delete failed')
+      setDeleteError(getErrorMessage(err, 'Delete failed'))
     } finally {
       setDeleteSaving(false)
     }
@@ -425,7 +428,7 @@ export function WorkflowPipelineDetailPanel({
     <div className="fixed inset-0 z-50 flex justify-end">
       <div
         role="presentation"
-        className="absolute inset-0 bg-black/40"
+        className="sa-scrim absolute inset-0 bg-black/40"
         aria-hidden
         onClick={() => {
           if (!deleteSaving) onClose()
@@ -435,7 +438,7 @@ export function WorkflowPipelineDetailPanel({
         role="dialog"
         aria-modal="true"
         aria-labelledby={titleId}
-        className="relative flex h-full max-h-dvh w-full max-w-[min(100vw,920px)] flex-col overflow-hidden rounded-l-[12px] border border-[#e5e7eb] bg-[#f9fafb] shadow-[0px_8px_24px_rgba(0,0,0,0.12)]"
+        className="sa-rail relative flex h-full max-h-dvh w-full max-w-[min(100vw,920px)] flex-col overflow-hidden rounded-l-[12px] border border-[#e5e7eb] bg-[#f9fafb] shadow-[0px_8px_24px_rgba(0,0,0,0.12)]"
       >
         <div className="flex shrink-0 items-start justify-between gap-4 border-b border-[#e5e7eb] bg-white px-6 py-4">
           <div className="min-w-0 flex-1">
@@ -444,7 +447,7 @@ export function WorkflowPipelineDetailPanel({
                 <button
                   type="button"
                   onClick={() => setPanelView('work_order')}
-                  className="inline-flex items-center gap-1.5 rounded-lg px-1 py-1 text-[13px] font-medium text-[#1447e6] outline-none hover:bg-[#eff6ff] focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2"
+                  className="sa-link inline-flex items-center gap-1.5 rounded-lg px-1 py-1 text-[13px] font-medium text-[#1447e6] outline-none hover:bg-[#eff6ff] focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2"
                 >
                   <BackIcon />
                   Back to task
@@ -498,7 +501,7 @@ export function WorkflowPipelineDetailPanel({
             type="button"
             onClick={onClose}
             aria-label="Close"
-            className="rounded-lg p-1 text-[#9ca3af] outline-none hover:bg-black/5 hover:text-[#364153] focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2"
+            className="sa-press rounded-lg p-1 text-[#9ca3af] outline-none hover:bg-black/5 hover:text-[#364153] focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2"
           >
             <CloseIcon />
           </button>
@@ -563,7 +566,7 @@ export function WorkflowPipelineDetailPanel({
                         type="button"
                         disabled={moveOutActionSaving}
                         onClick={() => void handleMoveOutAction(action)}
-                        className="inline-flex cursor-pointer items-center rounded-[8px] border border-[#e5e7eb] bg-white px-3 py-2 text-[12px] font-medium text-[#364153] outline-none transition-colors hover:bg-[#f9fafb] focus-visible:ring-2 focus-visible:ring-[#0030b5] disabled:opacity-50"
+                        className="sa-press inline-flex cursor-pointer items-center rounded-[8px] border border-[#e5e7eb] bg-white px-3 py-2 text-[12px] font-medium text-[#364153] outline-none hover:bg-[#f9fafb] focus-visible:ring-2 focus-visible:ring-[#0030b5] disabled:opacity-50"
                       >
                         {MOVE_OUT_ADMIN_ACTION_LABELS[action]}
                       </button>
@@ -595,12 +598,95 @@ export function WorkflowPipelineDetailPanel({
                     </div>
                   </div>
                 ) : null}
+                {detail.invoiceSection ? (
+                  <div className="mt-5 border-t border-[#f3f4f6] pt-5">
+                    <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
+                      <p className="text-[12px] font-semibold uppercase tracking-[0.06em] text-[#6a7282]">
+                        Invoice
+                      </p>
+                      <span className="inline-flex items-center rounded-full bg-[#f3f4f6] px-2.5 py-0.5 text-[11px] font-medium text-[#364153]">
+                        {detail.invoiceSection.statusLabel}
+                      </span>
+                    </div>
+                    <div className="space-y-2 text-[13px]">
+                      {detail.invoiceSection.invoiceNumber ? (
+                        <div className="flex items-center justify-between gap-3">
+                          <span className="text-[#6a7282]">Invoice number</span>
+                          <span className="font-medium text-[#0a0a0a]">
+                            {detail.invoiceSection.invoiceNumber}
+                          </span>
+                        </div>
+                      ) : null}
+                      <div className="flex items-center justify-between gap-3">
+                        <span className="text-[#6a7282]">Labor</span>
+                        <span className="font-medium text-[#0a0a0a]">
+                          {detail.invoiceSection.laborCost != null
+                            ? `$${detail.invoiceSection.laborCost.toLocaleString(undefined, {
+                                minimumFractionDigits: 2,
+                                maximumFractionDigits: 2,
+                              })}`
+                            : '—'}
+                        </span>
+                      </div>
+                      <div className="flex items-center justify-between gap-3">
+                        <span className="text-[#6a7282]">Parts &amp; materials</span>
+                        <span className="font-medium text-[#0a0a0a]">
+                          {detail.invoiceSection.materialCost != null
+                            ? `$${detail.invoiceSection.materialCost.toLocaleString(undefined, {
+                                minimumFractionDigits: 2,
+                                maximumFractionDigits: 2,
+                              })}`
+                            : '—'}
+                        </span>
+                      </div>
+                      <div className="flex items-center justify-between gap-3">
+                        <span className="text-[#6a7282]">Tax</span>
+                        <span className="font-medium text-[#0a0a0a]">
+                          {detail.invoiceSection.taxAmount != null
+                            ? `$${detail.invoiceSection.taxAmount.toLocaleString(undefined, {
+                                minimumFractionDigits: 2,
+                                maximumFractionDigits: 2,
+                              })}`
+                            : '—'}
+                        </span>
+                      </div>
+                      <div className="flex items-center justify-between gap-3 border-t border-[#f3f4f6] pt-2">
+                        <span className="font-semibold text-[#0a0a0a]">Total</span>
+                        <span className="text-[15px] font-semibold text-[#0a0a0a]">
+                          {detail.invoiceSection.totalCost != null
+                            ? `$${detail.invoiceSection.totalCost.toLocaleString(undefined, {
+                                minimumFractionDigits: 2,
+                                maximumFractionDigits: 2,
+                              })}`
+                            : '—'}
+                        </span>
+                      </div>
+                      {detail.invoiceSection.ytdPaidTotal != null ? (
+                        <div className="flex items-center justify-between gap-3 pt-1">
+                          <span className="text-[#6a7282]">YTD paid to vendor</span>
+                          <span className="font-medium text-[#0a0a0a]">
+                            $
+                            {detail.invoiceSection.ytdPaidTotal.toLocaleString(undefined, {
+                              minimumFractionDigits: 2,
+                              maximumFractionDigits: 2,
+                            })}
+                          </span>
+                        </div>
+                      ) : null}
+                    </div>
+                    {detail.invoiceSection.necTrackingNote ? (
+                      <p className="mt-3 rounded-[8px] border border-[#dbeafe] bg-[#eff6ff] px-3 py-2 text-[12px] leading-4 text-[#1e40af]">
+                        {detail.invoiceSection.necTrackingNote}
+                      </p>
+                    ) : null}
+                  </div>
+                ) : null}
                 {canSeeThread && !detail.resident ? (
                   <div className="mt-5 border-t border-[#f3f4f6] pt-5">
                     <button
                       type="button"
                       onClick={() => setPanelView('thread')}
-                      className="inline-flex w-full items-center justify-center gap-1.5 rounded-[10px] border border-[#dbeafe] bg-[#eff6ff] px-3 py-2 text-[12px] font-medium text-[#1447e6] outline-none hover:bg-[#dbeafe] focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2 sm:w-auto"
+                      className="sa-press inline-flex w-full items-center justify-center gap-1.5 rounded-[10px] border border-[#dbeafe] bg-[#eff6ff] px-3 py-2 text-[12px] font-medium text-[#1447e6] outline-none hover:bg-[#dbeafe] focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2 sm:w-auto"
                     >
                       <ThreadIcon />
                       See thread
@@ -638,14 +724,14 @@ export function WorkflowPipelineDetailPanel({
                       <button
                         type="button"
                         onClick={() => setPanelView('thread')}
-                        className="inline-flex w-full items-center justify-center gap-1.5 rounded-[10px] border border-[#dbeafe] bg-[#eff6ff] px-3 py-2 text-[12px] font-medium text-[#1447e6] outline-none hover:bg-[#dbeafe] focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2"
+                        className="sa-press inline-flex w-full items-center justify-center gap-1.5 rounded-[10px] border border-[#dbeafe] bg-[#eff6ff] px-3 py-2 text-[12px] font-medium text-[#1447e6] outline-none hover:bg-[#dbeafe] focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2"
                       >
                         <ThreadIcon />
                         See thread
                       </button>
                       <button
                         type="button"
-                        className="inline-flex w-full items-center justify-center gap-1.5 rounded-[10px] border border-[#e5e7eb] bg-white px-3 py-2 text-[12px] font-medium text-[#364153] outline-none hover:bg-[#f9fafb] focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2"
+                        className="sa-press inline-flex w-full items-center justify-center gap-1.5 rounded-[10px] border border-[#e5e7eb] bg-white px-3 py-2 text-[12px] font-medium text-[#364153] outline-none hover:bg-[#f9fafb] focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2"
                       >
                         <MailIcon />
                         Email
@@ -673,9 +759,15 @@ export function WorkflowPipelineDetailPanel({
                 </section>
               </div>
 
-              <ConversationPhotosSection
-                attachments={detail.attachments}
+              <WorkOrderPhotosSection
+                title="Photos from conversation"
                 subtitle={conversationPhotosSubtitle(detail)}
+                attachments={detail.attachments}
+              />
+              <WorkOrderPhotosSection
+                title="Vendor completion photos"
+                subtitle="Uploaded by the vendor when closing out the job"
+                attachments={detail.vendorAttachments ?? []}
               />
             </div>
           )}
@@ -689,7 +781,7 @@ export function WorkflowPipelineDetailPanel({
                 setDeleteError(null)
                 setDeleteConfirmOpen(true)
               }}
-              className="inline-flex w-full cursor-pointer items-center justify-center rounded-[8px] border border-[#b52a00]/30 bg-white px-3 py-2.5 text-[13px] font-medium text-[#b52a00] outline-none transition-colors hover:bg-[#fff4f0] focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2"
+              className="sa-press inline-flex w-full cursor-pointer items-center justify-center rounded-[8px] border border-[#b52a00]/30 bg-white px-3 py-2.5 text-[13px] font-medium text-[#b52a00] outline-none hover:bg-[#fff4f0] focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2"
             >
               Delete work order
             </button>
@@ -714,7 +806,7 @@ export function WorkflowPipelineDetailPanel({
             role="dialog"
             aria-modal="true"
             aria-labelledby={deleteConfirmTitleId}
-            className="relative flex w-full max-w-[440px] flex-col overflow-hidden rounded-[10px] bg-white shadow-[0px_20px_25px_-5px_rgba(0,0,0,0.1),0px_8px_10px_-6px_rgba(0,0,0,0.1)]"
+            className="sa-modal relative flex w-full max-w-[440px] flex-col overflow-hidden rounded-[10px] bg-white shadow-[0px_20px_25px_-5px_rgba(0,0,0,0.1),0px_8px_10px_-6px_rgba(0,0,0,0.1)]"
             onClick={(e) => e.stopPropagation()}
           >
             <div className="border-b border-[#e5e7eb] px-6 py-4">
@@ -743,7 +835,7 @@ export function WorkflowPipelineDetailPanel({
                 <button
                   type="button"
                   disabled={deleteSaving}
-                  className="inline-flex h-9 min-w-0 flex-1 items-center justify-center rounded-lg border border-[#b52a00]/30 bg-[#fff4f0] px-4 text-[14px] font-medium leading-5 tracking-[-0.1504px] text-[#b52a00] outline-none transition-colors hover:bg-[#ffe9e1] focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-60 sm:flex-initial"
+                  className="sa-press inline-flex h-9 min-w-0 flex-1 items-center justify-center rounded-lg border border-[#b52a00]/30 bg-[#fff4f0] px-4 text-[14px] font-medium leading-5 tracking-[-0.1504px] text-[#b52a00] outline-none hover:bg-[#ffe9e1] focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-60 sm:flex-initial"
                   onClick={() => void handleDeleteWorkOrder()}
                 >
                   {deleteSaving ? 'Deleting…' : 'Yes, delete permanently'}
@@ -751,7 +843,7 @@ export function WorkflowPipelineDetailPanel({
                 <button
                   type="button"
                   disabled={deleteSaving}
-                  className="inline-flex h-9 items-center justify-center rounded-lg border border-black/10 bg-white px-[17px] text-[14px] font-medium leading-5 tracking-[-0.1504px] text-[#0a0a0a] outline-none transition-colors hover:bg-[#f3f4f6] focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-60"
+                  className="sa-press inline-flex h-9 items-center justify-center rounded-lg border border-black/10 bg-white px-[17px] text-[14px] font-medium leading-5 tracking-[-0.1504px] text-[#0a0a0a] outline-none hover:bg-[#f3f4f6] focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-60"
                   onClick={() => {
                     if (!deleteSaving) {
                       setDeleteError(null)

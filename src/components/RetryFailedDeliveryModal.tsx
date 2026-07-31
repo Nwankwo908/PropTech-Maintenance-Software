@@ -69,7 +69,7 @@ function ChannelCheckbox({ checked }: { checked: boolean }) {
     <span
       className={[
         'flex size-5 shrink-0 items-center justify-center rounded border-2',
-        checked ? 'border-extended-1 bg-extended-2' : 'border-secondary bg-white',
+        checked ? 'border-[#611879] bg-[#611879]' : 'border-secondary bg-white',
       ].join(' ')}
       aria-hidden
     >
@@ -258,7 +258,7 @@ export function RetryFailedDeliveryModal({
                       onClick={() => setChannel(ch.id)}
                       className={[
                         'flex min-h-[140px] flex-col rounded-[10px] border-2 p-4 text-left outline-none transition-colors focus-visible:ring-2 focus-visible:ring-extended-1 focus-visible:ring-offset-2',
-                        selected ? 'border-extended-1 bg-extended-2' : 'border-secondary bg-white hover:bg-secondary',
+                        selected ? 'border-[#611879]/40 bg-[#f5f0f8]' : 'border-secondary bg-white hover:bg-secondary',
                       ].join(' ')}
                     >
                       <div className="mb-3 flex items-center gap-2">

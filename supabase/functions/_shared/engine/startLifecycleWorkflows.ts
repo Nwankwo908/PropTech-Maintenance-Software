@@ -1,5 +1,4 @@
 import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.49.1"
-import { logPropertyOperationsGraph } from "../graph/logPropertyOperationsGraph.ts"
 import {
   logOperationsGraphEvent,
   resolveOperationsGraphScope,
@@ -7,10 +6,14 @@ import {
 } from "../graph/operationsGraph.ts"
 import { LIFECYCLE_GRAPH_EVENTS } from "./lifecycleWorkflowTemplates.ts"
 import {
+  lifecycleStartEngineTrigger,
+  runWorkflowEngineForExistingRun,
+} from "./runner.ts"
+import {
   createWorkflowRun,
   logWorkflowEvent,
 } from "./workflowRuns.ts"
-import type { WorkflowEntityType, WorkflowTriggerType } from "./types.ts"
+import type { WorkflowEntityType, WorkflowRunRow, WorkflowTriggerType } from "./types.ts"
 
 export type LifecycleWorkflowStartResult = {
   workflow_run_id: string
@@ -49,6 +52,29 @@ function triggerToGraphSource(
   }
 }
 
+/** Run welcome / notice outreach through the official engine pipeline. */
+async function runLifecycleInitialActViaEngine(
+  supabase: SupabaseClient,
+  params: {
+    landlordId: string
+    run: WorkflowRunRow
+    triggerType: WorkflowTriggerType
+  },
+): Promise<void> {
+  try {
+    await runWorkflowEngineForExistingRun(supabase, {
+      landlordId: params.landlordId,
+      run: params.run,
+      trigger: lifecycleStartEngineTrigger(params.triggerType),
+    })
+  } catch (err) {
+    console.error(
+      `[${params.run.template_id}] engine initial act failed`,
+      err,
+    )
+  }
+}
+
 function buildClassificationMetadata(
   classification: string,
   source: LifecycleClassificationSource,
@@ -67,27 +93,12 @@ async function resolvePropertyIdForUnit(
     building?: string | null
   },
 ): Promise<string | null> {
-  let building = params.building?.trim() || null
-
-  if (!building && params.unitId) {
-    const { data: unit } = await supabase
-      .from("units")
-      .select("building")
-      .eq("id", params.unitId)
-      .maybeSingle()
-
-    if (unit?.building != null) {
-      building = String(unit.building)
-    }
-  }
-
-  const { data, error } = await supabase.rpc("derive_property_id", {
-    p_landlord_id: params.landlordId,
-    p_building: building ?? "",
+  const { resolvePropertyId } = await import("../properties/ensureProperty.ts")
+  return resolvePropertyId(supabase, {
+    landlordId: params.landlordId,
+    unitId: params.unitId,
+    building: params.building,
   })
-
-  if (error || data == null) return null
-  return String(data)
 }
 
 async function writeLifecycleGraphStartedEvent(
@@ -107,17 +118,7 @@ async function writeLifecycleGraphStartedEvent(
     ...params.payload,
   }
 
-  await logPropertyOperationsGraph(supabase, {
-    landlord_id: params.links.landlordId,
-    property_id: params.links.propertyId,
-    unit_id: params.links.unitId,
-    resident_id: params.links.residentId,
-    workflow_run_id: params.links.workflowRunId,
-    event_type: params.eventType,
-    event_source: params.eventSource,
-    event_payload: eventPayload,
-  })
-
+  // Official activity log (also dual-writes property_operations_graph).
   await logOperationsGraphEvent(supabase, {
     scope: params.legacyScope,
     eventType: params.eventType,
@@ -323,6 +324,12 @@ export async function startMoveInWorkflow(
     },
   })
 
+  await runLifecycleInitialActViaEngine(supabase, {
+    landlordId: params.landlordId,
+    run,
+    triggerType,
+  })
+
   return { workflow_run_id: run.id }
 }
 
@@ -470,6 +477,12 @@ export async function startMoveOutWorkflow(
       unit_id: params.unitId,
       resident_id: params.residentId ?? null,
     },
+  })
+
+  await runLifecycleInitialActViaEngine(supabase, {
+    landlordId: params.landlordId,
+    run,
+    triggerType,
   })
 
   return { workflow_run_id: run.id }
@@ -637,6 +650,12 @@ export async function startInspectionWorkflow(
       resident_id: params.residentId ?? null,
       scheduled_at: params.scheduledAt ?? null,
     },
+  })
+
+  await runLifecycleInitialActViaEngine(supabase, {
+    landlordId: params.landlordId,
+    run,
+    triggerType,
   })
 
   return { workflow_run_id: run.id }

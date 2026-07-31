@@ -1,4 +1,5 @@
 import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.49.1"
+import { isLeaseRenewalInquirySms } from "../../sms/leaseRenewalInquiry.ts"
 import { processResidentMaintenanceIntake } from "../../sms/residentIntake.ts"
 import {
   backfillPipelineStageEvents,
@@ -24,6 +25,15 @@ export const maintenanceIntakeTemplate: WorkflowTemplate = {
   classify(ctx): ClassifiedIntent | null {
     const sms = ctx.sms
     if (!sms) return null
+
+    const residentId = sms.identity.resident_id?.trim()
+    // Without a linked resident, unit/self-heal onboarding must own the thread.
+    if (!residentId) return null
+
+    // Lease / renewal asks belong on lease_renewal — not the maintenance wizard.
+    if (isLeaseRenewalInquirySms(sms.inbound.body)) {
+      return null
+    }
 
     if (sms.continueIntake) {
       return {
@@ -57,6 +67,43 @@ export const maintenanceIntakeTemplate: WorkflowTemplate = {
         templateId: "maintenance_intake",
         route: workflowRouteForTemplate("maintenance_intake"),
         metadata: { error: "missing_sms_context" },
+      }
+    }
+
+    // Unlinked sender reached this template (e.g. stuck active run) — heal via
+    // unknown-contact intake and release the maintenance run so replies can progress.
+    if (!sms.identity.resident_id?.trim()) {
+      const intake = await processResidentMaintenanceIntake(supabase, sms)
+      const stuckRunId = intent.runId ?? ctx.runId ?? ctx.activeRun?.id ?? null
+      if (stuckRunId) {
+        await updateWorkflowRun(supabase, stuckRunId, {
+          status: "cancelled",
+          currentStep: "awaiting_identity",
+          completedAt: new Date().toISOString(),
+          metadata: {
+            cancelled_reason: "missing_resident_id_handoff_unknown_contact",
+            conversation_id: sms.conversationId,
+          },
+        })
+        await supabase
+          .from("sms_conversations")
+          .update({
+            workflow_run_id: null,
+            updated_at: new Date().toISOString(),
+          })
+          .eq("id", sms.conversationId)
+          .eq("workflow_run_id", stuckRunId)
+      }
+      return {
+        templateId: "identity_onboarding",
+        route: workflowRouteForTemplate("identity_onboarding"),
+        replyHint: intake.replyHint,
+        metadata: {
+          ...intake.metadata,
+          workflow_route: intake.route,
+          cancelled_stuck_run_id: stuckRunId,
+          skipGenericAutoReply: true,
+        },
       }
     }
 

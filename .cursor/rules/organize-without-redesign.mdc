@@ -1,0 +1,45 @@
+---
+description: Reorganize code without redesigning product behavior (Ask Ulo, onboarding, etc.)
+alwaysApply: true
+---
+
+# Organize without redesign
+
+When cleaning up or restructuring code (Ask Ulo, onboarding, dashboards, edge functions):
+
+## The main rule
+
+**First, move the existing code into better-organized files.**
+
+Do **not** redesign the product experience in the same pull request.
+
+## Goal
+
+| Keep identical | Change freely |
+|---|---|
+| Screens, copy, buttons | File layout, module names |
+| Save / submit behavior | Stage boundaries, re-exports |
+| Navigation | Thin orchestrators that call the same helpers |
+| Completion / activation process | Tests and docs that describe the move |
+| Answers, refuse/clarify, tool packets (Ask Ulo) | Where lookups live (as long as packets match) |
+
+Better-organized code underneath — same thing for the user.
+
+## How to work
+
+1. **Move first** — extract helpers, split stages, add shims/re-exports so callers stay stable.
+2. **Preserve contracts** — same function inputs/outputs, same DB writes, same SMS/email copy, same packet shapes.
+3. **One concern per PR** — organization only. No “while we’re here” UX or policy changes.
+4. **Park product decisions** — anything that needs “should we show X instead?” goes in a later PR.
+
+## Tests before merge
+
+- Same user-visible path still works (same screens / same Ask Ulo answers for the same questions).
+- Prefer behavioral tests or gold-set checks over “it compiles.”
+
+## What not to do
+
+- Redesign onboarding steps, Ask Ulo answer format, or verification UX in a cleanup PR
+- Change refuse/clarify/prefer policy while renaming files
+- Delete a dual path until the new path returns the **same** packets
+- Mix “wrap as domain tool” with “change when that tool runs” in one PR

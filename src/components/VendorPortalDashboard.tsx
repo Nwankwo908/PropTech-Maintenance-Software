@@ -12,6 +12,7 @@ import {
 import { useNavigate } from 'react-router-dom'
 import {
   fetchVendorTickets,
+  invalidateVendorTicketsCache,
   updateJobStatus,
   vendorPortalListUrl,
   vendorPortalUpdateUrl,
@@ -27,6 +28,7 @@ import {
   isValidMove,
   type VendorDbWorkStatus,
 } from '@/lib/statusColumns'
+import { getErrorMessage } from '@/lib/errorMessage'
 
 export type { VendorDbWorkStatus }
 
@@ -569,6 +571,60 @@ function VendorWorkOrderWideHeader({
   )
 }
 
+function VendorWorkOrderPhotoGrid({
+  orderId,
+  title,
+  urls,
+  onOpen,
+}: {
+  orderId: string
+  title: string
+  urls: string[]
+  onOpen: (src: string) => void
+}) {
+  if (urls.length === 0) return null
+  return (
+    <div>
+      <div className="flex items-center gap-2">
+        <IconCameraSection />
+        <h3 className="m-0 text-[18px] font-semibold leading-[27px] tracking-[-0.4395px] text-[#101828]">
+          {title} ({urls.length})
+        </h3>
+      </div>
+      <div className="mt-2 flex flex-wrap gap-3">
+        {urls.map((src, i) => (
+          <button
+            key={`${orderId}-photo-${title}-${i}`}
+            type="button"
+            onClick={() => onOpen(src)}
+            className="group relative h-32 w-[min(100%,270px)] shrink-0 overflow-hidden rounded-[10px] border border-[#e5e7eb] bg-black/5 text-left outline-none transition-[box-shadow,transform] hover:border-[#0030b5]/40 hover:shadow-md focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2 active:scale-[0.99]"
+            aria-label={`Expand ${title.toLowerCase()} ${i + 1}`}
+          >
+            {isProbablyVideoAssetUrl(src) ? (
+              <video
+                src={src}
+                controls
+                playsInline
+                className="pointer-events-none size-full max-h-32 bg-black object-contain"
+                preload="metadata"
+                tabIndex={-1}
+                aria-hidden
+              />
+            ) : (
+              <img src={src} alt="" className="size-full object-cover" />
+            )}
+            <span className="pointer-events-none absolute inset-0 flex items-center justify-center bg-black/0 opacity-0 transition-opacity group-hover:bg-black/10 group-hover:opacity-100">
+              <span className="rounded-full bg-white/90 px-2 py-1 text-[11px] font-medium text-[#101828] shadow">
+                View larger
+              </span>
+            </span>
+          </button>
+        ))}
+      </div>
+    </div>
+  )
+}
+
 function VendorWorkOrderWideScrollBody({ order }: { order: VendorWorkOrder }) {
   const { unit } = parsedLocationParts(order)
   const buildingAddress =
@@ -577,6 +633,9 @@ function VendorWorkOrderWideScrollBody({ order }: { order: VendorWorkOrder }) {
   const issueText = order.issueDescription ?? order.description ?? 'No additional details were provided.'
   const resident = order.residentName ?? '—'
   const previews = attachmentPreviewList(order)
+  const completionUrls = (order.completionPhotoUrls ?? []).filter(
+    (u): u is string => typeof u === 'string' && u.length > 0,
+  )
   const [lightbox, setLightbox] = useState<{ src: string; isVideo: boolean } | null>(null)
 
   useEffect(() => {
@@ -587,6 +646,10 @@ function VendorWorkOrderWideScrollBody({ order }: { order: VendorWorkOrder }) {
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
   }, [lightbox])
+
+  function openLightbox(src: string) {
+    setLightbox({ src, isVideo: isProbablyVideoAssetUrl(src) })
+  }
 
   return (
     <>
@@ -641,7 +704,7 @@ function VendorWorkOrderWideScrollBody({ order }: { order: VendorWorkOrder }) {
           <div className="flex items-center gap-2">
             <IconCameraSection />
             <h3 className="m-0 text-[18px] font-semibold leading-[27px] tracking-[-0.4395px] text-[#101828]">
-              Attachments ({order.attachmentCount})
+              Resident photos ({order.attachmentCount})
             </h3>
           </div>
           <div className="mt-2 flex flex-wrap gap-3">
@@ -650,14 +713,9 @@ function VendorWorkOrderWideScrollBody({ order }: { order: VendorWorkOrder }) {
                 <button
                   key={`${order.id}-att-${i}`}
                   type="button"
-                  onClick={() =>
-                    setLightbox({
-                      src,
-                      isVideo: isProbablyVideoAssetUrl(src),
-                    })
-                  }
+                  onClick={() => openLightbox(src)}
                   className="group relative h-32 w-[min(100%,270px)] shrink-0 overflow-hidden rounded-[10px] border border-[#e5e7eb] bg-black/5 text-left outline-none transition-[box-shadow,transform] hover:border-[#0030b5]/40 hover:shadow-md focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2 active:scale-[0.99]"
-                  aria-label={`Expand attachment ${i + 1}`}
+                  aria-label={`Expand resident photo ${i + 1}`}
                 >
                   {isProbablyVideoAssetUrl(src) ? (
                     <video
@@ -694,6 +752,13 @@ function VendorWorkOrderWideScrollBody({ order }: { order: VendorWorkOrder }) {
           </div>
         </div>
       ) : null}
+
+      <VendorWorkOrderPhotoGrid
+        orderId={order.id}
+        title="Your completion photos"
+        urls={completionUrls}
+        onOpen={openLightbox}
+      />
 
       {lightbox ? (
         <div
@@ -744,11 +809,19 @@ function VendorWorkOrderStatusNoteFields({
   statusNote,
   setStatusNote,
   fileInputRef,
+  completionUrls,
+  uploading,
+  uploadError,
+  onPickFiles,
 }: {
   noteId: string
   statusNote: string
   setStatusNote: (v: string) => void
   fileInputRef: RefObject<HTMLInputElement | null>
+  completionUrls: string[]
+  uploading: boolean
+  uploadError: string | null
+  onPickFiles: (files: FileList | null) => void
 }) {
   return (
     <>
@@ -762,6 +835,29 @@ function VendorWorkOrderStatusNoteFields({
         placeholder="Add a note about this status update (optional)"
         className="mt-3 h-[250px] w-full resize-y rounded-[10px] border border-[#d1d5dc] px-3 py-2 text-[16px] leading-6 tracking-[-0.3125px] text-[#0a0a0a] outline-none placeholder:text-[rgba(10,10,10,0.5)] focus:border-[#0030b5] focus:ring-1 focus:ring-[#0030b5]"
       />
+      {completionUrls.length > 0 ? (
+        <div className="mt-3 flex flex-wrap gap-2">
+          {completionUrls.map((src) =>
+            isProbablyVideoAssetUrl(src) ? (
+              <video
+                key={src}
+                src={src}
+                className="size-16 rounded-lg object-cover"
+                muted
+                playsInline
+                preload="metadata"
+              />
+            ) : (
+              <img
+                key={src}
+                src={src}
+                alt="Uploaded job media"
+                className="size-16 rounded-lg object-cover"
+              />
+            ),
+          )}
+        </div>
+      ) : null}
       <input
         ref={fileInputRef}
         type="file"
@@ -769,19 +865,25 @@ function VendorWorkOrderStatusNoteFields({
         multiple
         className="sr-only"
         tabIndex={-1}
-        aria-hidden
-        onChange={() => {
+        onChange={(e) => {
+          onPickFiles(e.target.files)
           if (fileInputRef.current) fileInputRef.current.value = ''
         }}
       />
       <button
         type="button"
+        disabled={uploading}
         onClick={() => fileInputRef.current?.click()}
-        className="mt-3 flex h-10 w-full items-center justify-center gap-2 rounded-[10px] border-2 border-dashed border-[#d1d5dc] text-[14px] font-medium leading-5 tracking-[-0.1504px] text-[#4a5565] outline-none hover:border-[#0030b5]/45 hover:bg-[#e2f4ed] focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2"
+        className="mt-3 flex h-10 w-full items-center justify-center gap-2 rounded-[10px] border-2 border-dashed border-[#d1d5dc] text-[14px] font-medium leading-5 tracking-[-0.1504px] text-[#4a5565] outline-none hover:border-[#0030b5]/45 hover:bg-[#e2f4ed] focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
       >
         <IconCameraSection className="size-5 text-[#4a5565]" />
-        Upload Photos/Videos
+        {uploading ? 'Uploading…' : 'Upload Photos/Videos'}
       </button>
+      {uploadError ? (
+        <p className="mt-2 text-[13px] text-[#c10007]" role="alert">
+          {uploadError}
+        </p>
+      ) : null}
     </>
   )
 }
@@ -797,10 +899,18 @@ function WorkOrderCard({
   onSelect: () => void
   onDragEnd: () => void
 }) {
-  const att = order.attachmentCount
-  const attLabel = att === 1 ? '1 attachment' : `${att} attachments`
+  const residentAtt = order.attachmentCount
+  const completionUrls = (order.completionPhotoUrls ?? []).filter(Boolean)
+  const completionCount = Math.max(
+    order.completionPhotoCount ?? 0,
+    completionUrls.length,
+  )
+  const totalMedia = residentAtt + completionCount
+  const attLabel =
+    totalMedia === 1 ? '1 photo' : totalMedia > 0 ? `${totalMedia} photos` : null
   const buildingAddress =
     order.buildingAddress?.trim() || order.location?.trim() || ''
+  const cardThumbs = completionUrls.slice(0, 3)
 
   return (
     <button
@@ -832,13 +942,30 @@ function WorkOrderCard({
             </span>
           </div>
         ) : null}
-        {att > 0 ? (
+        {attLabel ? (
           <div className="flex items-center gap-2">
             <IconAttachment />
             <span className="text-[14px] leading-5 tracking-[-0.1504px] text-[#4a5565]">{attLabel}</span>
           </div>
         ) : null}
       </div>
+      {cardThumbs.length > 0 ? (
+        <div className="mt-3 flex gap-1.5">
+          {cardThumbs.map((src, i) => (
+            <img
+              key={`${order.id}-thumb-${i}`}
+              src={src}
+              alt=""
+              className="size-12 rounded-md object-cover ring-1 ring-[#e5e7eb]"
+            />
+          ))}
+          {completionCount > cardThumbs.length ? (
+            <span className="flex size-12 items-center justify-center rounded-md bg-[#f3f4f6] text-[12px] font-medium text-[#4a5565] ring-1 ring-[#e5e7eb]">
+              +{completionCount - cardThumbs.length}
+            </span>
+          ) : null}
+        </div>
+      ) : null}
       {order.dueDisplay ? (
         <div className="mt-3 flex items-center gap-2">
           <IconDueClock />
@@ -931,6 +1058,7 @@ function VendorAssignedWorkOrderDetailRail({
   onStartWork,
   onAcceptJob,
   onDeclineJob,
+  onCompletionPhotosUpdated,
   startWorkDisabled,
   startWorkTitle,
   acceptDisabled,
@@ -943,6 +1071,10 @@ function VendorAssignedWorkOrderDetailRail({
   /** Accept assignment (`pending_accept` → `accepted`). */
   onAcceptJob: () => void
   onDeclineJob: () => void
+  onCompletionPhotosUpdated: (patch: {
+    completionPhotoCount: number
+    completionPhotoUrls: string[]
+  }) => void
   startWorkDisabled?: boolean
   startWorkTitle?: string
   acceptDisabled?: boolean
@@ -952,6 +1084,15 @@ function VendorAssignedWorkOrderDetailRail({
   const noteId = useId()
   const fileInputRef = useRef<HTMLInputElement>(null)
   const [statusNote, setStatusNote] = useState('')
+  const [uploading, setUploading] = useState(false)
+  const [uploadError, setUploadError] = useState<string | null>(null)
+  const [localPreviews, setLocalPreviews] = useState<string[]>(
+    order.completionPhotoUrls ?? [],
+  )
+
+  useEffect(() => {
+    setLocalPreviews(order.completionPhotoUrls ?? [])
+  }, [order.id, order.completionPhotoUrls])
 
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
@@ -960,6 +1101,40 @@ function VendorAssignedWorkOrderDetailRail({
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
   }, [onClose])
+
+  async function handlePhotoFiles(files: FileList | null) {
+    if (!files?.length) return
+    const token = order.vendorActionToken?.trim()
+    if (!token) {
+      setUploadError('This job is missing an upload link. Refresh and try again.')
+      return
+    }
+    const list = Array.from(files).filter(
+      (f) => f.type.startsWith('image/') || f.type.startsWith('video/'),
+    )
+    if (list.length === 0) {
+      setUploadError('Please choose photo or video files.')
+      return
+    }
+    setUploading(true)
+    setUploadError(null)
+    try {
+      const result = await uploadCompletionPhotos(token, list)
+      const urls = result.completionPhotoUrls ?? []
+      setLocalPreviews(urls)
+      invalidateVendorTicketsCache()
+      onCompletionPhotosUpdated({
+        completionPhotoCount: result.completionPhotoCount,
+        completionPhotoUrls: urls,
+      })
+    } catch (err) {
+      setUploadError(
+        getErrorMessage(err, 'Could not upload media. Try again.'),
+      )
+    } finally {
+      setUploading(false)
+    }
+  }
 
   function decline() {
     if (typeof window !== 'undefined' && !window.confirm('Decline this job? The request will be removed from your board (demo).')) {
@@ -985,13 +1160,20 @@ function VendorAssignedWorkOrderDetailRail({
               <VendorWorkOrderWideScrollBody order={order} />
               <div className="border-t border-[#e5e7eb] pt-6">
                 <h3 className="m-0 text-[18px] font-semibold leading-[27px] tracking-[-0.4395px] text-[#101828]">
-                  Update Status
+                  Job photos
                 </h3>
+                <p className="mt-1 text-[13px] text-[#6a7282]">
+                  Upload photos from the job. They stay on this work order for you and the property team.
+                </p>
                 <VendorWorkOrderStatusNoteFields
                   noteId={noteId}
                   statusNote={statusNote}
                   setStatusNote={setStatusNote}
                   fileInputRef={fileInputRef}
+                  completionUrls={localPreviews}
+                  uploading={uploading}
+                  uploadError={uploadError}
+                  onPickFiles={(files) => void handlePhotoFiles(files)}
                 />
               </div>
             </div>
@@ -1106,9 +1288,11 @@ function VendorInProgressWorkOrderDetailRail({
       setUploadError('This job is missing an upload link. Refresh and try again.')
       return
     }
-    const list = Array.from(files).filter((f) => f.type.startsWith('image/'))
+    const list = Array.from(files).filter(
+      (f) => f.type.startsWith('image/') || f.type.startsWith('video/'),
+    )
     if (list.length === 0) {
-      setUploadError('Please choose photo files (images only).')
+      setUploadError('Please choose photo or video files.')
       return
     }
     setUploading(true)
@@ -1118,13 +1302,14 @@ function VendorInProgressWorkOrderDetailRail({
       const urls = result.completionPhotoUrls ?? []
       setLocalPreviews(urls)
       setPhotoCount(result.completionPhotoCount)
+      invalidateVendorTicketsCache()
       onCompletionPhotosUpdated({
         completionPhotoCount: result.completionPhotoCount,
         completionPhotoUrls: urls,
       })
     } catch (err) {
       setUploadError(
-        err instanceof Error ? err.message : 'Could not upload photos. Try again.',
+        getErrorMessage(err, 'Could not upload media. Try again.'),
       )
     } finally {
       setUploading(false)
@@ -1203,24 +1388,35 @@ function VendorInProgressWorkOrderDetailRail({
 
               <div className="mt-4">
                 <p className="text-[13px] font-medium text-[#344054]">
-                  Completion photos {hasPhotos ? `(${Math.max(photoCount, localPreviews.length)})` : ''}
+                  Completion media {hasPhotos ? `(${Math.max(photoCount, localPreviews.length)})` : ''}
                 </p>
                 {localPreviews.length > 0 ? (
                   <div className="mt-2 flex flex-wrap gap-2">
-                    {localPreviews.map((src) => (
-                      <img
-                        key={src}
-                        src={src}
-                        alt="Completion photo"
-                        className="size-16 rounded-lg object-cover"
-                      />
-                    ))}
+                    {localPreviews.map((src) =>
+                      isProbablyVideoAssetUrl(src) ? (
+                        <video
+                          key={src}
+                          src={src}
+                          className="size-16 rounded-lg object-cover"
+                          muted
+                          playsInline
+                          preload="metadata"
+                        />
+                      ) : (
+                        <img
+                          key={src}
+                          src={src}
+                          alt="Completion media"
+                          className="size-16 rounded-lg object-cover"
+                        />
+                      ),
+                    )}
                   </div>
                 ) : null}
                 <input
                   ref={uploadInputRef}
                   type="file"
-                  accept="image/*"
+                  accept="image/*,video/*"
                   multiple
                   className="sr-only"
                   onChange={(e) => void handlePhotoFiles(e.target.files)}
@@ -1228,7 +1424,7 @@ function VendorInProgressWorkOrderDetailRail({
                 <input
                   ref={cameraInputRef}
                   type="file"
-                  accept="image/*"
+                  accept="image/*,video/*"
                   capture="environment"
                   className="sr-only"
                   onChange={(e) => void handlePhotoFiles(e.target.files)}
@@ -1240,7 +1436,7 @@ function VendorInProgressWorkOrderDetailRail({
                     onClick={() => uploadInputRef.current?.click()}
                     className="flex h-10 items-center justify-center gap-2 rounded-[10px] border-2 border-dashed border-[#d1d5dc] text-[14px] font-medium text-[#4a5565] outline-none hover:border-[#187960]/45 hover:bg-[#e8f5f0] disabled:cursor-not-allowed disabled:opacity-50"
                   >
-                    Upload photo
+                    Upload photo/video
                   </button>
                   <button
                     type="button"
@@ -1392,7 +1588,11 @@ export function VendorPortalDashboard({
       if (!opts?.silent) setApiLoading(true)
       setApiError(null)
       try {
-        const res = await fetchVendorTickets(listUrl, vendorToken)
+        // Silent polls must bypass the short-lived list cache so uploaded photos
+        // are not wiped by a pre-upload response still sitting in memory.
+        const res = await fetchVendorTickets(listUrl, vendorToken, {
+          force: Boolean(opts?.silent),
+        })
         setVendorHeaderName(res.vendor?.name ?? null)
         setVendorId(res.vendor?.id ?? null)
         setOrders(
@@ -1401,7 +1601,7 @@ export function VendorPortalDashboard({
             .filter((o): o is VendorWorkOrder => o != null),
         )
       } catch (e) {
-        setApiError(e instanceof Error ? e.message : 'Failed to load tickets')
+        setApiError(getErrorMessage(e, 'Failed to load tickets'))
         setOrders([])
         setVendorId(null)
       } finally {
@@ -1530,7 +1730,7 @@ export function VendorPortalDashboard({
       }
     } catch (e) {
       setOrders(snapshot)
-      const msg = e instanceof Error ? e.message : 'Update failed'
+      const msg = getErrorMessage(e, 'Update failed')
       setActionError(msg)
       window.alert(msg)
     }
@@ -1817,6 +2017,12 @@ export function VendorPortalDashboard({
           onStartWork={() => startWork(selected.id)}
           onAcceptJob={() => acceptJob(selected.id)}
           onDeclineJob={() => declineJob(selected.id)}
+          onCompletionPhotosUpdated={(patch) =>
+            patchOrder(selected.id, {
+              completionPhotoCount: patch.completionPhotoCount,
+              completionPhotoUrls: patch.completionPhotoUrls,
+            })
+          }
           startWorkDisabled={
             useLiveVendorApi && selected.vendorDbStatus === 'pending_accept'
           }

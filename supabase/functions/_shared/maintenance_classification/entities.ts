@@ -2,10 +2,10 @@ import { matchDeterministicRules } from "./deterministicRules.ts"
 import type { ClassificationEntities, EmergencyType } from "./types.ts"
 
 const ROOM_RE =
-  /\b(kitchen|bathroom|bath|bedroom|living\s*room|basement|laundry|utility|hallway|closet|balcony|garage|attic)\b/i
+  /\b(kitchen|bathroom|bath|bedroom|living\s*room|basement|laundry|utility|hallway|closet|balcony|garage|attic|front\s*entrance|entrance|entryway|stairs?|stairway|deck|porch)\b/i
 
 const OBJECT_RE =
-  /\b(faucet|tap|sink|basin|toilet|pipe|drain|outlet|breaker|fridge|refrigerator|washer|dryer|oven|stove|dishwasher|thermostat|furnace|ac|window|door|lock|ceiling|roof)\b/i
+  /\b(faucet|tap|sink|basin|toilet|pipe|drain|outlet|breaker|fridge|refrigerator|washer|dryer|oven|stove|dishwasher|thermostat|furnace|ac|window|door|lock|ceiling|roof|step|stairs?|handrail|railing|metal\s*piece|nosing|deck)\b/i
 
 const DURATION_RE =
   /\b(since\s+[\w\s]{1,24}|for\s+\d+\s+(?:hour|day|week|minute)s?|last\s+night|yesterday|this\s+morning|all\s+day)\b/i
@@ -28,6 +28,12 @@ export function extractEntities(sanitized: string): ClassificationEntities {
   }
   if (/\blocked\s*out\b/i.test(hay)) safetyRisks.push("lockout")
   if (/\bno\s*heat\b/i.test(hay)) safetyRisks.push("no heat")
+  if (
+    /\b(?:hurt|injured|injury|almost\s+hurt|trip(?:ped|ping)?|slip(?:ped|ping)?|fell|fall(?:ing)?|caught\s+onto|sharp\s+edge|hazard)\b/i
+      .test(hay)
+  ) {
+    safetyRisks.push("injury risk")
+  }
 
   const activeDamage =
     /\b(wet|soaking|damage|damaged|flood|pouring|spreading|mold)\b/i.test(hay)
@@ -65,7 +71,10 @@ export function extractEntities(sanitized: string): ClassificationEntities {
     accessConstraints: /\b(no\s*access|gate|lockbox|dog|pet)\b/i.test(hay)
       ? "mentioned"
       : null,
-    residentAvailability: null,
+    residentAvailability: /\b(?:available|availability|saturday|sunday|after\s+\d|between\s+\d)\b/i
+        .test(hay)
+      ? "mentioned"
+      : null,
     photoMentioned: /\b(photo|picture|pic|image|attached)\b/i.test(hay),
     missingInfo,
     emergencyType,

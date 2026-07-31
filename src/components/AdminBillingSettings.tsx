@@ -1,4 +1,9 @@
+import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
+import {
+  fetchMaintenanceBillingHistory,
+  type MaintenanceBillingHistoryItem,
+} from '@/api/maintenanceInvoice'
 import {
   BETA_ACCOMPLISHMENTS,
   BETA_INCLUDED_FEATURES,
@@ -9,9 +14,10 @@ import {
   FUTURE_SUBSCRIPTION_FEATURES,
   MONTHLY_ACTIVITY_STATS,
 } from '@/lib/billingBeta'
+import { getErrorMessage } from '@/lib/errorMessage'
 
 const sectionCardClass =
-  'rounded-[10px] border border-[#e5e7eb] bg-white p-6 shadow-[0px_1px_2px_-1px_rgba(0,0,0,0.06)]'
+  'sa-surface rounded-[10px] border border-[#e5e7eb] bg-white p-6 shadow-[0px_1px_2px_-1px_rgba(0,0,0,0.06)]'
 
 function SectionCard({
   title,
@@ -53,6 +59,21 @@ function StatusChip({ label }: { label: string }) {
   )
 }
 
+function InvoiceStatusChip({ status }: { status: 'approved' | 'rejected' }) {
+  if (status === 'approved') {
+    return (
+      <span className="inline-flex items-center rounded-full border border-[#abefc6] bg-[#ecfdf3] px-2.5 py-0.5 text-[11px] font-semibold uppercase tracking-[0.04em] text-[#067647]">
+        Paid
+      </span>
+    )
+  }
+  return (
+    <span className="inline-flex items-center rounded-full border border-[#fecdca] bg-[#fef3f2] px-2.5 py-0.5 text-[11px] font-semibold uppercase tracking-[0.04em] text-[#b42318]">
+      Rejected
+    </span>
+  )
+}
+
 function CheckIcon() {
   return (
     <svg className="size-4 shrink-0 text-[#12b76a]" viewBox="0 0 16 16" fill="none" aria-hidden>
@@ -78,7 +99,7 @@ function PrimaryButton({
     <button
       type="button"
       className={[
-        'inline-flex items-center justify-center rounded-[10px] bg-[#101828] px-4 py-2.5 text-[14px] font-medium tracking-[-0.1504px] text-white transition-colors hover:bg-[#1f2937]',
+        'sa-press inline-flex items-center justify-center rounded-[10px] bg-[#101828] px-4 py-2.5 text-[14px] font-medium tracking-[-0.1504px] text-white hover:bg-[#1f2937]',
         className,
       ].join(' ')}
     >
@@ -98,7 +119,7 @@ function OutlineButton({
     <button
       type="button"
       className={[
-        'inline-flex items-center justify-center rounded-[10px] border border-[#e5e7eb] bg-white px-4 py-2.5 text-[14px] font-medium tracking-[-0.1504px] text-[#101828] transition-colors hover:bg-[#f9fafb]',
+        'sa-press inline-flex items-center justify-center rounded-[10px] border border-[#186179] bg-white px-4 py-2.5 text-[14px] font-medium tracking-[-0.1504px] text-[#186179] hover:bg-[#e8f2f5]',
         className,
       ].join(' ')}
     >
@@ -141,15 +162,75 @@ function MetaItem({ label, value }: { label: string; value: string }) {
   )
 }
 
+function formatMoney(n: number): string {
+  return n.toLocaleString('en-US', {
+    style: 'currency',
+    currency: 'USD',
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  })
+}
+
+function formatHistoryDate(iso: string): string {
+  const date = new Date(iso)
+  if (Number.isNaN(date.getTime())) return '—'
+  return date.toLocaleDateString(undefined, {
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+  })
+}
+
+function billingHistoryTitle(item: MaintenanceBillingHistoryItem): string {
+  const invoiceLabel = item.invoiceNumber?.trim() || 'Vendor invoice'
+  return `${invoiceLabel} · ${item.vendorName}`
+}
+
+function billingHistoryDetail(item: MaintenanceBillingHistoryItem): string {
+  const parts: string[] = []
+  if (item.unit?.trim()) parts.push(`Unit ${item.unit.trim()}`)
+  if (item.issueCategory?.trim()) parts.push(item.issueCategory.trim())
+  if (item.status === 'approved' && item.paymentSource) parts.push(item.paymentSource)
+  if (item.status === 'rejected' && item.rejectionReason) parts.push(item.rejectionReason)
+  if (item.transactionId) parts.push(item.transactionId)
+  return parts.join(' · ')
+}
+
 export function AdminBillingSettings() {
   const activityMonth = currentActivityMonthLabel()
+  const [history, setHistory] = useState<MaintenanceBillingHistoryItem[]>([])
+  const [historyLoading, setHistoryLoading] = useState(true)
+  const [historyError, setHistoryError] = useState<string | null>(null)
+
+  useEffect(() => {
+    let cancelled = false
+    setHistoryLoading(true)
+    setHistoryError(null)
+    void (async () => {
+      try {
+        const rows = await fetchMaintenanceBillingHistory()
+        if (!cancelled) setHistory(rows)
+      } catch (err) {
+        if (!cancelled) {
+          setHistoryError(
+            getErrorMessage(err, 'Could not load billing history.'),
+          )
+        }
+      } finally {
+        if (!cancelled) setHistoryLoading(false)
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [])
 
   return (
     <>
       <div className="py-6">
         <Link
           to="/admin/settings"
-          className="inline-flex items-center gap-1.5 text-[14px] font-medium tracking-[-0.1504px] text-[#6a7282] transition-colors hover:text-[#101828]"
+          className="sa-link inline-flex items-center gap-1.5 text-[14px] font-medium tracking-[-0.1504px] text-[#6a7282] hover:text-[#101828]"
         >
           <span aria-hidden>←</span>
           Settings
@@ -161,7 +242,7 @@ export function AdminBillingSettings() {
               Subscription & Billing
             </h1>
             <p className="mt-2 max-w-2xl text-[14px] leading-6 tracking-[-0.1504px] text-[#6a7282]">
-              Manage your Ulo subscription, beta access, and future billing information.
+              Manage your Ulo subscription, beta access, and invoice payment history.
             </p>
           </div>
           <OutlineButton className="self-start">
@@ -180,7 +261,7 @@ export function AdminBillingSettings() {
 
       <div className="flex flex-col gap-8 xl:flex-row xl:items-start">
         <div className="flex min-w-0 flex-1 flex-col gap-6">
-          <section className="overflow-hidden rounded-[10px] border border-[#dbeafe] bg-gradient-to-br from-[#eff6ff] via-white to-[#f9fafb] p-6 shadow-[0px_1px_2px_-1px_rgba(0,0,0,0.06)]">
+          <section className="sa-surface overflow-hidden rounded-[10px] border border-[#dbeafe] bg-gradient-to-br from-[#eff6ff] via-white to-[#f9fafb] p-6 shadow-[0px_1px_2px_-1px_rgba(0,0,0,0.06)]">
             <div className="flex flex-wrap items-start justify-between gap-4">
               <div className="min-w-0 flex-1">
                 <div className="flex flex-wrap items-center gap-2">
@@ -280,22 +361,81 @@ export function AdminBillingSettings() {
             />
           </SectionCard>
 
-          <SectionCard title="Billing history">
-            <EmptyState
-              icon={
-                <svg className="size-5" viewBox="0 0 20 20" fill="none" aria-hidden>
-                  <path
-                    d="M6 3.5H14L16.5 6V16.5H3.5V3.5H6Z"
-                    stroke="currentColor"
-                    strokeWidth="1.5"
-                    strokeLinejoin="round"
-                  />
-                  <path d="M7 9H13M7 12H11" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
-                </svg>
-              }
-              title="No billing activity"
-              description="Invoices and payment history will appear here once paid subscriptions become available."
-            />
+          <SectionCard
+            title="Billing history"
+            action={
+              history.length > 0 ? (
+                <span className="text-[13px] font-medium tracking-[-0.1504px] text-[#6a7282]">
+                  {history.length} record{history.length === 1 ? '' : 's'}
+                </span>
+              ) : null
+            }
+          >
+            {historyLoading ? (
+              <p className="py-6 text-center text-[14px] text-[#6a7282]">Loading billing history…</p>
+            ) : historyError ? (
+              <p className="rounded-lg border border-[#fecaca] bg-[#fef2f2] px-3 py-2 text-[13px] text-[#b91c1c]">
+                {historyError}
+              </p>
+            ) : history.length === 0 ? (
+              <EmptyState
+                icon={
+                  <svg className="size-5" viewBox="0 0 20 20" fill="none" aria-hidden>
+                    <path
+                      d="M6 3.5H14L16.5 6V16.5H3.5V3.5H6Z"
+                      stroke="currentColor"
+                      strokeWidth="1.5"
+                      strokeLinejoin="round"
+                    />
+                    <path d="M7 9H13M7 12H11" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+                  </svg>
+                }
+                title="No billing activity yet"
+                description="When you pay or reject a vendor invoice, it will show up here."
+              />
+            ) : (
+              <ul className="divide-y divide-[#eef0f3]">
+                {history.map((item) => (
+                  <li
+                    key={item.id}
+                    className="flex flex-col gap-3 py-4 first:pt-0 last:pb-0 sm:flex-row sm:items-center sm:justify-between"
+                  >
+                    <div className="min-w-0 flex-1">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <p className="truncate text-[14px] font-semibold tracking-[-0.1504px] text-[#101828]">
+                          {billingHistoryTitle(item)}
+                        </p>
+                        <InvoiceStatusChip status={item.status} />
+                      </div>
+                      <p className="mt-1 text-[13px] tracking-[-0.1504px] text-[#6a7282]">
+                        {formatHistoryDate(item.eventAt)}
+                        {billingHistoryDetail(item) ? ` · ${billingHistoryDetail(item)}` : ''}
+                      </p>
+                    </div>
+                    <div className="flex shrink-0 items-center gap-3">
+                      <p
+                        className={`text-[15px] font-semibold tracking-[-0.1504px] ${
+                          item.status === 'rejected' ? 'text-[#b42318]' : 'text-[#101828]'
+                        }`}
+                      >
+                        {item.status === 'rejected' ? '—' : ''}
+                        {formatMoney(item.totalCost)}
+                      </p>
+                      {item.receiptUrl ? (
+                        <a
+                          href={item.receiptUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="sa-link text-[13px] font-medium text-[#065f46] underline hover:text-[#064e3b]"
+                        >
+                          Receipt
+                        </a>
+                      ) : null}
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            )}
           </SectionCard>
 
           <SectionCard

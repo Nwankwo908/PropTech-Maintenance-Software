@@ -4,6 +4,7 @@
  */
 import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.49.1"
 import { vendorTradeMatchesFlexible } from "./vendor_trades.ts"
+import { isVendorMatchableForDispatch } from "./vendor_assignment.ts"
 
 export type AlternativeVendor = { id: string; name: string }
 
@@ -26,12 +27,20 @@ export async function loadAlternativeVendorCandidates(
   ticket: {
     assigned_vendor_id: string | null
     issue_category: string | null
+    landlord_id?: string | null
   },
 ): Promise<AlternativeVendor[]> {
-  const { data: vendors, error } = await supabase
+  let query = supabase
     .from("vendors")
-    .select("id, name, category, active")
+    .select("id, name, category, active, roster_status, landlord_id")
     .eq("active", true)
+
+  const landlordId = ticket.landlord_id?.trim() || null
+  if (landlordId) {
+    query = query.eq("landlord_id", landlordId)
+  }
+
+  const { data: vendors, error } = await query
 
   if (error || !vendors) {
     console.error("[recommend-vendor-alt] load vendors", error)
@@ -44,6 +53,34 @@ export async function loadAlternativeVendorCandidates(
       : String(ticket.issue_category)
   const aid = ticket.assigned_vendor_id
 
+  const candidateIds = vendors
+    .map((v) => String(v.id ?? ""))
+    .filter(Boolean)
+  const verificationByVendor = new Map<
+    string,
+    { status: string | null; availability: string | null }
+  >()
+  if (candidateIds.length > 0) {
+    let verifQuery = supabase
+      .from("vendor_verifications")
+      .select("vendor_id, status, availability, updated_at")
+      .in("vendor_id", candidateIds)
+      .order("updated_at", { ascending: false })
+    if (landlordId) {
+      verifQuery = verifQuery.eq("landlord_id", landlordId)
+    }
+    const { data: verifs } = await verifQuery
+    for (const raw of verifs ?? []) {
+      const rec = raw as Record<string, unknown>
+      const vendorId = typeof rec.vendor_id === "string" ? rec.vendor_id : ""
+      if (!vendorId || verificationByVendor.has(vendorId)) continue
+      verificationByVendor.set(vendorId, {
+        status: typeof rec.status === "string" ? rec.status : null,
+        availability: typeof rec.availability === "string" ? rec.availability : null,
+      })
+    }
+  }
+
   const candidates: AlternativeVendor[] = []
   for (const v of vendors) {
     const id = String(v.id ?? "")
@@ -52,6 +89,17 @@ export async function loadAlternativeVendorCandidates(
     if (aid && id === aid) continue
     const cat = v.category == null ? null : String(v.category)
     if (!categoryMatches(cat, issueCat)) continue
+    const verif = verificationByVendor.get(id)
+    if (
+      !isVendorMatchableForDispatch({
+        verificationStatus: verif?.status ?? null,
+        vendorActive: v.active,
+        availability: verif?.availability ?? null,
+        rosterStatus: typeof v.roster_status === "string" ? v.roster_status : null,
+      })
+    ) {
+      continue
+    }
     candidates.push({ id, name })
   }
   candidates.sort((a, b) => a.name.localeCompare(b.name))
@@ -146,7 +194,7 @@ export async function recommendAlternativeVendorsForTicket(
   const { data: ticket, error } = await supabase
     .from("maintenance_requests")
     .select(
-      "id, assigned_vendor_id, issue_category, description, priority, vendor_work_status, due_at",
+      "id, landlord_id, assigned_vendor_id, issue_category, description, priority, vendor_work_status, due_at",
     )
     .eq("id", ticketId)
     .maybeSingle()
@@ -179,6 +227,7 @@ export async function recommendAlternativeVendorsForTicket(
   const candidates = await loadAlternativeVendorCandidates(supabase, {
     assigned_vendor_id: ticket.assigned_vendor_id as string | null,
     issue_category: ticket.issue_category as string | null,
+    landlord_id: typeof ticket.landlord_id === "string" ? ticket.landlord_id : null,
   })
 
   const limit = opts?.limit ?? 3

@@ -31,6 +31,13 @@ export const SEMANTIC_PHRASE_LIBRARY: PhraseExample[] = [
   { phrase: "roach infestation in kitchen", trade: "pest_control", issueType: "pest" },
   { phrase: "water pouring through the ceiling", trade: "roofing", issueType: "roofing" },
   { phrase: "ceiling leak after rain", trade: "roofing", issueType: "roofing" },
+  { phrase: "broken metal piece on front steps", trade: "carpentry", issueType: "general" },
+  { phrase: "loose handrail on the stairs", trade: "carpentry", issueType: "general" },
+  { phrase: "front entrance steps are broken", trade: "carpentry", issueType: "general" },
+  { phrase: "deck board is loose and unsafe", trade: "deck_builder", issueType: "general" },
+  { phrase: "cracked concrete front steps", trade: "concrete", issueType: "general" },
+  { phrase: "brick step mortar crumbling", trade: "masonry", issueType: "general" },
+  { phrase: "need a handyman for general repair", trade: "general", issueType: "general" },
 ]
 
 function tokenize(text: string): Set<string> {

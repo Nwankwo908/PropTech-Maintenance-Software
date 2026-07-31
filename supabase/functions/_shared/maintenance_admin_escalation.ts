@@ -5,6 +5,8 @@
 import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.49.1"
 import { updateWorkflowRun } from "./engine/workflowRuns.ts"
 import { logGraphEvent } from "./graph/logGraphEvent.ts"
+import { notifyLandlordNeedsAttention } from "./landlordAttentionNotify.ts"
+import { formatWorkOrderRef } from "./vendor_outreach_copy.ts"
 
 export type MaintenanceAdminVendorEscalationReason =
   | "sla_expired_no_vendor"
@@ -102,6 +104,33 @@ export async function escalateMaintenanceNeedsVendor(
     workflow_template_id: run?.template_id ?? null,
     metadata: { message: opts.graphMessage },
   })
+
+  try {
+    const { data: ticketRow } = await supabase
+      .from("maintenance_requests")
+      .select("unit, issue_category")
+      .eq("id", ticket.id)
+      .maybeSingle()
+    const unit =
+      typeof ticketRow?.unit === "string" && ticketRow.unit.trim()
+        ? ticketRow.unit.trim()
+        : ""
+    const headline =
+      opts.escalationReason === "vendor_declined_no_vendor"
+        ? "Vendor declined — assign a vendor"
+        : "SLA breached — assign a vendor"
+    await notifyLandlordNeedsAttention(supabase, {
+      landlordId,
+      kind: "assign_vendor",
+      headline,
+      detail: `${formatWorkOrderRef(ticket.id)}${unit ? ` · Unit ${unit}` : ""}`,
+      idempotencyKey: `assign_vendor:${ticket.id}:${opts.escalationReason}`,
+      maintenanceRequestId: ticket.id,
+      workflowRunId: run?.id ?? null,
+    })
+  } catch (e) {
+    console.error("[maintenance-admin-escalation] attention notify", e)
+  }
 }
 
 /** After successful auto-reassign, return escalated decline runs to active intake. */

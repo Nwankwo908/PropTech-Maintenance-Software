@@ -5,6 +5,7 @@ import {
   submitPublicInvoice,
   type InvoiceJobContext,
 } from '@/api/maintenanceInvoicePublic'
+import { getErrorMessage } from '@/lib/errorMessage'
 
 function parseMoney(raw: string): number | null {
   const n = Number(raw.replace(/[^0-9.-]/g, ''))
@@ -112,7 +113,7 @@ export function WorkOrderInvoicePage() {
         }
       } catch (err) {
         if (cancelled) return
-        setError(err instanceof Error ? err.message : 'Could not load this job.')
+        setError(getErrorMessage(err, 'Could not load this job.'))
       }
     })()
     return () => {
@@ -152,7 +153,7 @@ export function WorkOrderInvoicePage() {
       const job = await resolveInvoiceJob(t)
       setCtx(job)
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Could not submit invoice.')
+      setError(getErrorMessage(err, 'Could not submit invoice.'))
     } finally {
       setBusy(false)
     }

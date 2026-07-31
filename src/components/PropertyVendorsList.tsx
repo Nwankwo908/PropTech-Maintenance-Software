@@ -50,17 +50,18 @@ export function PropertyVendorsList({
   return (
     <div className="mt-6 flex flex-col gap-4">
       <p className="text-[13px] leading-5 text-[#6a7282]">{intro}</p>
-      {rows.map((vendor) => (
+      {rows.map((vendor, index) => (
         <section
           key={vendor.vendorId}
-          className="overflow-hidden rounded-[10px] border border-[#e5e7eb] bg-white shadow-[0px_1px_2px_-1px_rgba(0,0,0,0.06)]"
+          style={{ animationDelay: `${Math.min(index, 6) * 40}ms` }}
+          className="sa-enter-scale sa-surface overflow-hidden rounded-[10px] border border-[#e5e7eb] bg-white shadow-[0px_1px_2px_-1px_rgba(0,0,0,0.06)]"
         >
           <header className="flex flex-wrap items-center justify-between gap-3 border-b border-[#f3f4f6] px-5 py-4">
             <div className="min-w-0">
               <h3 className="text-[15px] font-semibold leading-5 text-[#0a0a0a]">
                 <Link
                   to={vendorDetailPath(vendor.vendorId)}
-                  className="rounded-[4px] transition-colors hover:text-[#186179] hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2"
+                  className="sa-link rounded-[4px] hover:text-[#186179] hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2"
                 >
                   {vendor.vendorName}
                 </Link>
@@ -100,7 +101,7 @@ export function PropertyVendorsList({
                       <button
                         type="button"
                         onClick={() => onMessageVendor(order.ticketId)}
-                        className="inline-flex items-center gap-1.5 rounded-full border border-[#e5e7eb] bg-white px-3 py-1.5 text-[12px] font-medium text-[#364153] hover:bg-[#f9fafb] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2"
+                        className="sa-pill inline-flex items-center gap-1.5 rounded-full border border-[#e5e7eb] bg-white px-3 py-1.5 text-[12px] font-medium text-[#364153] hover:bg-[#f9fafb] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2"
                       >
                         <MessageIcon />
                         Message

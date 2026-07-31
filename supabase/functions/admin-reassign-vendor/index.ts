@@ -1,9 +1,10 @@
 import { serve } from "https://deno.land/std/http/server.ts"
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1"
 import { adminEdgeCorsHeaders } from "../_shared/admin_edge_cors.ts"
-import { adminReassignSecretAuthorized } from "../_shared/admin_reassign_auth.ts"
+import { requireAdminReassignAuth } from "../_shared/admin_edge_auth.ts"
 import { reassignVendorByIdAndNotify } from "../submit-maintenance-request/vendor_notify.ts"
 import { logGraphEvent } from "../_shared/graph/logGraphEvent.ts"
+import { runMaintenanceRequestViaEngine } from "../_shared/engine/maintenanceRequestEngine.ts"
 import { resolveLandlordId } from "../_shared/sms/landlordSmsOnboarding.ts"
 import { beginVendorAvailabilityAsk } from "../_shared/vendor_job_schedule.ts"
 import {
@@ -12,14 +13,7 @@ import {
 } from "../_shared/vendor_outreach_copy.ts"
 import { sendVendorJobAlert } from "../_shared/sms/vendorSmsRouting.ts"
 import { isUuidShape } from "../_shared/uuid_shape.ts"
-
-function appBaseUrl(): string {
-  const raw = Deno.env.get("APP_URL")?.trim() ?? ""
-  if (!raw) return "https://www.ulohome.io"
-  const t = raw.replace(/\/$/, "")
-  if (/^https?:\/\//i.test(t)) return t
-  return `https://${t}`
-}
+import { uloAppUrl } from "../_shared/uloAppUrl.ts"
 
 const corsHeaders = adminEdgeCorsHeaders
 
@@ -38,18 +32,9 @@ serve(async (req) => {
   if (req.method !== "POST") {
     return jsonResponse({ error: "Method not allowed" }, 405)
   }
+  const adminAuth = requireAdminReassignAuth(req, "[admin-reassign-vendor]", corsHeaders)
+  if (!adminAuth.ok) return adminAuth.response
 
-  if (!Deno.env.get("ADMIN_REASSIGN_SECRET")?.trim()) {
-    console.error("[admin-reassign-vendor] ADMIN_REASSIGN_SECRET not set")
-    return jsonResponse({ error: "Server misconfiguration" }, 500)
-  }
-
-  if (!adminReassignSecretAuthorized(req)) {
-    console.warn(
-      "[admin-reassign-vendor] 401 Unauthorized: x-admin-reassign-secret (or legacy Bearer admin secret) does not match ADMIN_REASSIGN_SECRET on this deployment",
-    )
-    return jsonResponse({ error: "Unauthorized" }, 401)
-  }
 
   let body: {
     action?: string
@@ -169,9 +154,7 @@ serve(async (req) => {
       typeof ticketRow.vendor_action_token === "string"
         ? ticketRow.vendor_action_token.trim()
         : ""
-    const jobDetailUrl = token
-      ? `${appBaseUrl()}/w/${encodeURIComponent(token)}`
-      : ""
+    const jobDetailUrl = token ? uloAppUrl.workOrder(token) : ""
     const body = buildVendorScheduleConfirmedSms({
       workOrderRef: formatWorkOrderRef(ticketId),
       windowText,
@@ -295,6 +278,35 @@ serve(async (req) => {
     })
   } catch (e) {
     console.error("[admin-reassign-vendor] graph event", e)
+  }
+
+  const resolvedLandlordId = ticketLandlordId ?? resolveLandlordId()
+  if (resolvedLandlordId) {
+    try {
+      const { data: vendorRow } = await supabase
+        .from("vendors")
+        .select("name")
+        .eq("id", _vendorId)
+        .maybeSingle()
+      const resolvedVendorName = typeof vendorRow?.name === "string"
+        ? vendorRow.name
+        : vendorName || "Vendor"
+
+      await runMaintenanceRequestViaEngine(supabase, {
+        landlordId: resolvedLandlordId,
+        trigger: "dashboard",
+        maintenanceRequest: {
+          action: "admin_reassigned",
+          adminReassigned: {
+            ticketId,
+            vendorId: _vendorId,
+            vendorName: resolvedVendorName,
+          },
+        },
+      })
+    } catch (e) {
+      console.error("[admin-reassign-vendor] workflow engine", e)
+    }
   }
 
   return jsonResponse({ ok: true, ticketId, assigned_vendor_id: _vendorId })

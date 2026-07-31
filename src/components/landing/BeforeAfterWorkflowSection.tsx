@@ -2,7 +2,7 @@ import beforeWorkflow from '@/assets/landing/before-workflow.png'
 import afterWorkflowDiagram from '@/assets/landing/after-workflow-diagram.png'
 
 const WORKFLOW_CARD =
-  'flex min-h-[192px] flex-col gap-8 overflow-x-clip rounded-3xl border border-[#e5e7eb] bg-white px-6 py-5 sm:px-10 lg:flex-row lg:items-center lg:gap-12 lg:overflow-visible lg:px-[38px] lg:py-8'
+  'sa-surface flex min-h-[192px] flex-col gap-8 overflow-x-clip rounded-3xl border border-[#e5e7eb] bg-white px-6 py-5 sm:px-10 lg:flex-row lg:items-center lg:gap-12 lg:overflow-visible lg:px-[38px] lg:py-8'
 
 function WorkflowLabel({ title, subtitle }: { title: string; subtitle: string }) {
   return (
