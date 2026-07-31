@@ -52,6 +52,109 @@ function asRecord(row: Record<string, unknown>): PropertyRecord {
   }
 }
 
+/** Deterministic properties.id for landlord + building name (matches DB derive_property_id). */
+export async function derivePropertyId(
+  landlordId: string,
+  name: string,
+): Promise<{ ok: true; propertyId: string } | { ok: false; error: string }> {
+  if (!supabase) {
+    return { ok: false, error: "We can't reach the server right now. Please try again in a moment." }
+  }
+
+  const trimmed = name.trim()
+  if (!trimmed) {
+    return { ok: false, error: 'Property name is required.' }
+  }
+
+  const { data, error } = await supabase.rpc('derive_property_id', {
+    p_landlord_id: landlordId,
+    p_building: trimmed,
+  })
+
+  if (error || data == null) {
+    return {
+      ok: false,
+      error: getErrorMessage(error, "Couldn't resolve the property id."),
+    }
+  }
+
+  return { ok: true, propertyId: String(data) }
+}
+
+export async function findPropertyByName(
+  landlordId: string,
+  name: string,
+): Promise<{ ok: true; property: PropertyRecord | null } | { ok: false; error: string }> {
+  if (!supabase) {
+    return { ok: false, error: "We can't reach the server right now. Please try again in a moment." }
+  }
+
+  const trimmed = name.trim()
+  if (!trimmed) {
+    return { ok: true, property: null }
+  }
+
+  const { data, error } = await supabase
+    .from('properties')
+    .select(
+      'id, landlord_id, name, street_address, city, state, zip_code, property_type, manager_name, manager_phone, unit_count, year_built',
+    )
+    .eq('landlord_id', landlordId)
+    .ilike('name', trimmed)
+    .limit(1)
+    .maybeSingle()
+
+  if (error) {
+    return { ok: false, error: getErrorMessage(error, "Couldn't load the property.") }
+  }
+
+  return {
+    ok: true,
+    property: data ? asRecord(data as Record<string, unknown>) : null,
+  }
+}
+
+export async function findPropertyById(
+  landlordId: string,
+  propertyId: string,
+): Promise<{ ok: true; property: PropertyRecord | null } | { ok: false; error: string }> {
+  if (!supabase) {
+    return { ok: false, error: "We can't reach the server right now. Please try again in a moment." }
+  }
+
+  const id = propertyId.trim()
+  if (!id) {
+    return { ok: true, property: null }
+  }
+
+  const { data, error } = await supabase
+    .from('properties')
+    .select(
+      'id, landlord_id, name, street_address, city, state, zip_code, property_type, manager_name, manager_phone, unit_count, year_built',
+    )
+    .eq('landlord_id', landlordId)
+    .eq('id', id)
+    .maybeSingle()
+
+  if (error) {
+    return { ok: false, error: getErrorMessage(error, "Couldn't load the property.") }
+  }
+
+  return {
+    ok: true,
+    property: data ? asRecord(data as Record<string, unknown>) : null,
+  }
+}
+
+export function propertyRecordToAddressLine(property: PropertyRecord): string | null {
+  const parts = [
+    property.streetAddress?.trim(),
+    [property.city, property.state].filter(Boolean).join(', '),
+    property.zipCode?.trim(),
+  ].filter(Boolean)
+  return parts.length > 0 ? parts.join(' ') : null
+}
+
 /** Upsert a property row; returns the stable properties.id. */
 export async function ensureProperty(
   input: EnsurePropertyInput,

@@ -17,6 +17,7 @@ function formatBalance(amount: number): string {
 
 type PropertyUnitsTableProps = {
   building: string
+  propertyId?: string
   rows: PropertyUnitRow[]
   loading?: boolean
   onOccupancyStatusChange?: (
@@ -28,6 +29,7 @@ type PropertyUnitsTableProps = {
 /** Property detail — Units tab table (Figma property overview). */
 export function PropertyUnitsTable({
   building,
+  propertyId,
   rows,
   loading = false,
   onOccupancyStatusChange,
@@ -99,7 +101,7 @@ export function PropertyUnitsTable({
                   <td className="whitespace-nowrap px-5 py-4 text-[14px] leading-5 text-[#364153]">
                     {showOccupiedFields && row.residentId && row.residentName ? (
                       <Link
-                        to={propertyResidentDetailPath(building, row.residentId)}
+                        to={propertyResidentDetailPath(propertyId ?? building, row.residentId)}
                         className="sa-link font-medium text-[#186179] hover:text-[#0f4d5f] hover:underline"
                       >
                         {row.residentName}

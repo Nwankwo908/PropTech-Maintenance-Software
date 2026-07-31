@@ -287,7 +287,10 @@ async function syncOnboardingPropertyUnits(
 export async function persistOnboardingProperties(
   properties: OnboardingProperty[],
   landlordId: string = getActiveLandlordId(),
-): Promise<{ ok: boolean; error?: string }> {
+): Promise<
+  | { ok: true; properties: OnboardingProperty[] }
+  | { ok: false; error: string }
+> {
   const scope = requireOnboardingLandlord(landlordId)
   if (!scope.ok) return scope
 
@@ -296,6 +299,7 @@ export async function persistOnboardingProperties(
   }
 
   const propertyIdByBuilding = new Map<string, string>()
+  const canonicalProperties: OnboardingProperty[] = []
   for (const property of properties) {
     const name = property.name.trim()
     if (!name) continue
@@ -313,12 +317,13 @@ export async function persistOnboardingProperties(
     })
     if (!ensured.ok) return ensured
     propertyIdByBuilding.set(normalizeBuildingKey(name), ensured.propertyId)
+    canonicalProperties.push({ ...property, id: ensured.propertyId })
     const linked = await linkUnitsToProperty({
       landlordId: scope.landlordId,
       propertyId: ensured.propertyId,
       buildingName: name,
     })
-    if (!linked.ok) return linked
+    if (!linked.ok) return { ok: false, error: linked.error ?? 'Could not link units to the property.' }
   }
 
   const units = buildOnboardingUnitInventory(properties).map((unit) => ({
@@ -332,7 +337,9 @@ export async function persistOnboardingProperties(
   try {
     const registeredViaSms = await ensureUnitsInDb(units)
     if (registeredViaSms) {
-      return syncOnboardingPropertyUnits(scope.landlordId, units)
+      const synced = await syncOnboardingPropertyUnits(scope.landlordId, units)
+      if (!synced.ok) return { ok: false, error: synced.error ?? 'Could not sync units.' }
+      return { ok: true, properties: canonicalProperties }
     }
   } catch (e) {
     return {
@@ -341,9 +348,12 @@ export async function persistOnboardingProperties(
     }
   }
 
-  return syncOnboardingPropertyUnits(scope.landlordId, units)
+  const synced = await syncOnboardingPropertyUnits(scope.landlordId, units)
+  if (!synced.ok) return { ok: false, error: synced.error ?? 'Could not sync units.' }
+  return { ok: true, properties: canonicalProperties }
 }
 
+/** Temporary wizard row id — replaced with properties.id on save. */
 export function createPropertyId(): string {
-  return `prop-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+  return `draft-${crypto.randomUUID()}`
 }

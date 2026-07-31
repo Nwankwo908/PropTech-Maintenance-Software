@@ -1,8 +1,35 @@
 import { isDemoAccountActive } from '@/lib/activeLandlord'
+import { type PropertyRecord, propertyRecordToAddressLine } from '@/lib/properties'
 
-/** URL-safe building identifier for /admin/properties/:buildingSlug routes. */
-export function buildingDetailPath(
-  building: string,
+const PROPERTY_ID_SLUG_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
+
+export type PropertyRouteSlug =
+  | { kind: 'id'; value: string }
+  | { kind: 'name'; value: string }
+
+/** True when the URL segment is a canonical properties.id UUID. */
+export function isPropertyIdSlug(slug: string): boolean {
+  return PROPERTY_ID_SLUG_RE.test(slug.trim())
+}
+
+/** Parse /admin/properties/:slug — UUID id or legacy building name. */
+export function parsePropertyRouteSlug(slug: string | undefined): PropertyRouteSlug | null {
+  if (!slug?.trim()) return null
+  try {
+    const decoded = decodeURIComponent(slug.trim())
+    if (isPropertyIdSlug(decoded)) {
+      return { kind: 'id', value: decoded }
+    }
+    return { kind: 'name', value: decoded }
+  } catch {
+    return null
+  }
+}
+
+/** Canonical admin property detail URL — uses stable properties.id. */
+export function propertyDetailPath(
+  propertyId: string,
   tab?:
     | 'overview'
     | 'details'
@@ -13,22 +40,36 @@ export function buildingDetailPath(
     | 'vendors'
     | 'analytics',
 ): string {
-  const base = `/admin/properties/${encodeURIComponent(building)}`
+  const base = `/admin/properties/${encodeURIComponent(propertyId)}`
   if (tab && tab !== 'overview') return `${base}?tab=${tab}`
   return base
 }
 
-export function propertyResidentDetailPath(building: string, residentId: string): string {
-  return `${buildingDetailPath(building)}/residents/${encodeURIComponent(residentId)}`
+/** @deprecated Prefer propertyDetailPath(propertyId). Accepts id or legacy building name. */
+export function buildingDetailPath(
+  buildingOrPropertyId: string,
+  tab?:
+    | 'overview'
+    | 'details'
+    | 'units'
+    | 'residents'
+    | 'workflows'
+    | 'conversations'
+    | 'vendors'
+    | 'analytics',
+): string {
+  return propertyDetailPath(buildingOrPropertyId, tab)
 }
 
+export function propertyResidentDetailPath(propertyId: string, residentId: string): string {
+  return `${propertyDetailPath(propertyId)}/residents/${encodeURIComponent(residentId)}`
+}
+
+/** @deprecated Prefer parsePropertyRouteSlug */
 export function parseBuildingSlug(slug: string | undefined): string | null {
-  if (!slug?.trim()) return null
-  try {
-    return decodeURIComponent(slug)
-  } catch {
-    return null
-  }
+  const parsed = parsePropertyRouteSlug(slug)
+  if (!parsed) return null
+  return parsed.value
 }
 
 export type PropertyBuildingMeta = {
@@ -56,7 +97,15 @@ export function resolvePropertyBuildingMeta(
     zipCode?: string
     yearBuilt?: number | string | null
   }>,
+  canonicalProperty?: PropertyRecord | null,
 ): PropertyBuildingMeta {
+  if (canonicalProperty) {
+    return {
+      addressLine: propertyRecordToAddressLine(canonicalProperty),
+      yearBuilt: canonicalProperty.yearBuilt,
+    }
+  }
+
   const fromOnboarding = onboardingProperties.find(
     (p) => p.name?.trim().toLowerCase() === building.trim().toLowerCase(),
   )

@@ -5,6 +5,7 @@ import { propertyResidentDetailPath } from '@/lib/propertyRoutes'
 
 type PropertyResidentsGridProps = {
   building: string
+  propertyId?: string
   residents: PropertyResidentCard[]
   loading?: boolean
 }
@@ -12,15 +13,17 @@ type PropertyResidentsGridProps = {
 function ResidentCard({
   resident,
   building,
+  propertyId,
   index,
 }: {
   resident: PropertyResidentCard
   building: string
+  propertyId?: string
   index: number
 }) {
   const navigate = useNavigate()
   const [selecting, setSelecting] = useState(false)
-  const path = propertyResidentDetailPath(building, resident.id)
+  const path = propertyResidentDetailPath(propertyId ?? building, resident.id)
 
   function handleSelect() {
     if (selecting) return
@@ -83,6 +86,7 @@ function ResidentCard({
 /** Property detail — Residents tab card grid (Figma property overview). */
 export function PropertyResidentsGrid({
   building,
+  propertyId,
   residents,
   loading = false,
 }: PropertyResidentsGridProps) {
@@ -109,6 +113,7 @@ export function PropertyResidentsGrid({
           key={resident.id}
           resident={resident}
           building={building}
+          propertyId={propertyId}
           index={index}
         />
       ))}

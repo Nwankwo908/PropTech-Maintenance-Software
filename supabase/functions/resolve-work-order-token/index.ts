@@ -8,6 +8,7 @@ import {
   type SupabaseClient,
 } from "https://esm.sh/@supabase/supabase-js@2.49.1"
 import { uloAppUrl } from "../_shared/uloAppUrl.ts"
+import { resolvePropertyLocation } from "../_shared/properties/propertyLocation.ts"
 
 const corsHeaders: Record<string, string> = {
   "Access-Control-Allow-Origin": "*",
@@ -120,6 +121,11 @@ serve(async (req) => {
     (typeof enriched?.unit === "string" && enriched.unit.trim()) ||
     "Unit"
 
+  const propertyId =
+    typeof enriched?.property_id === "string" && enriched.property_id.trim()
+      ? enriched.property_id.trim()
+      : null
+
   let streetAddress: string | null = null
   let city: string | null = null
   let state: string | null = null
@@ -174,40 +180,21 @@ serve(async (req) => {
       }
     }
 
-    // Street address lives on onboarding properties (matched by building name).
     const { data: onboarding } = await supabase
       .from("landlord_onboarding")
       .select("properties")
       .eq("landlord_id", landlordId)
       .maybeSingle()
-    const props = Array.isArray(onboarding?.properties)
-      ? (onboarding!.properties as Record<string, unknown>[])
-      : []
-    const buildingLc = (building ?? "").toLowerCase()
-    const match = props.find((p) => {
-      const name = typeof p.name === "string" ? p.name.trim().toLowerCase() : ""
-      return Boolean(buildingLc && name && name === buildingLc)
+
+    const resolved = await resolvePropertyLocation(supabase, landlordId, {
+      propertyId,
+      building,
+      onboardingProperties: onboarding?.properties,
     })
-    if (match) {
-      const street =
-        typeof match.streetAddress === "string"
-          ? match.streetAddress.trim()
-          : typeof match.address === "string"
-          ? match.address.trim()
-          : ""
-      if (street) streetAddress = street
-      if (typeof match.city === "string" && match.city.trim()) {
-        city = match.city.trim()
-      }
-      if (typeof match.state === "string" && match.state.trim()) {
-        state = match.state.trim()
-      }
-      if (typeof match.zipCode === "string" && match.zipCode.trim()) {
-        zipCode = match.zipCode.trim()
-      } else if (typeof match.zip_code === "string" && match.zip_code.trim()) {
-        zipCode = match.zip_code.trim()
-      }
-    }
+    if (resolved.streetAddress) streetAddress = resolved.streetAddress
+    if (resolved.city) city = resolved.city
+    if (resolved.state) state = resolved.state
+    if (resolved.zipCode) zipCode = resolved.zipCode
   }
 
   const cityStateZip = [city, state].filter(Boolean).join(", ")

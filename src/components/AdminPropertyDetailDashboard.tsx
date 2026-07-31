@@ -51,9 +51,11 @@ import {
 } from '@/lib/propertyHealth'
 import {
   formatPropertySubtitle,
-  parseBuildingSlug,
+  parsePropertyRouteSlug,
+  propertyDetailPath,
   resolvePropertyBuildingMeta,
 } from '@/lib/propertyRoutes'
+import { findPropertyById, findPropertyByName, type PropertyRecord } from '@/lib/properties'
 import {
   buildPropertyUnitRows,
   type PropertyUnitResident,
@@ -271,10 +273,10 @@ function LinkIcon() {
 }
 
 export function AdminPropertyDetailDashboard() {
-  const { buildingSlug } = useParams<{ buildingSlug: string }>()
+  const { propertySlug } = useParams<{ propertySlug: string }>()
   const [searchParams] = useSearchParams()
   const navigate = useNavigate()
-  const building = parseBuildingSlug(buildingSlug)
+  const [building, setBuilding] = useState<string | null>(null)
 
   const [activeTab, setActiveTab] = useState<PropertyTab>(() => {
     const tab = searchParams.get('tab')
@@ -303,6 +305,7 @@ export function AdminPropertyDetailDashboard() {
   const [onboardingProperties, setOnboardingProperties] = useState<
     Array<Record<string, unknown>>
   >([])
+  const [canonicalProperty, setCanonicalProperty] = useState<PropertyRecord | null>(null)
   const [autoApprovalCap, setAutoApprovalCap] = useState(1000)
   const [workflowData, setWorkflowData] = useState<AdminWorkflowDashboardData | null>(null)
   const [loading, setLoading] = useState(true)
@@ -325,7 +328,8 @@ export function AdminPropertyDetailDashboard() {
   const [unitStatusError, setUnitStatusError] = useState<string | null>(null)
 
   const loadProperty = useCallback(async () => {
-    if (!building) {
+    const slug = parsePropertyRouteSlug(propertySlug)
+    if (!slug) {
       setLoading(false)
       setError('Property not found.')
       return
@@ -339,6 +343,53 @@ export function AdminPropertyDetailDashboard() {
     setLoading(true)
     setError(null)
 
+    const landlordId = getActiveLandlordId()
+    let buildingName: string
+    let propertyRecord: PropertyRecord | null = null
+
+    if (slug.kind === 'id') {
+      const byId = await findPropertyById(landlordId, slug.value)
+      if (!byId.ok) {
+        setLoading(false)
+        setError(byId.error)
+        return
+      }
+      if (!byId.property) {
+        setLoading(false)
+        setError('Property not found.')
+        return
+      }
+      propertyRecord = byId.property
+      buildingName = byId.property.name
+    } else {
+      const byName = await findPropertyByName(landlordId, slug.value)
+      if (!byName.ok) {
+        setLoading(false)
+        setError(byName.error)
+        return
+      }
+      if (byName.property) {
+        const tab = searchParams.get('tab')
+        const tabParam =
+          tab === 'details' ||
+          tab === 'units' ||
+          tab === 'residents' ||
+          tab === 'workflows' ||
+          tab === 'conversations' ||
+          tab === 'vendors' ||
+          tab === 'analytics'
+            ? tab
+            : undefined
+        navigate(propertyDetailPath(byName.property.id, tabParam), { replace: true })
+        return
+      }
+      buildingName = slug.value
+    }
+
+    setBuilding(buildingName)
+    setCanonicalProperty(propertyRecord)
+    setOnboardingProperties([])
+
     let timedOut = false
     const timeoutId = window.setTimeout(() => {
       timedOut = true
@@ -347,8 +398,6 @@ export function AdminPropertyDetailDashboard() {
     }, 20000)
 
     try {
-      const landlordId = getActiveLandlordId()
-
       // Fire-and-forget unit heal — never block first paint of the property page.
       void activateUnitsFromResidentAssignments({
         landlordId,
@@ -386,7 +435,7 @@ export function AdminPropertyDetailDashboard() {
           fetchPropertyHealthSignals(),
           supabase
             .from('landlord_onboarding')
-            .select('properties, auto_approval_threshold')
+            .select('auto_approval_threshold')
             .eq('landlord_id', landlordId)
             .maybeSingle(),
           fetchAdminWorkflowDashboard().catch(() => null),
@@ -502,9 +551,6 @@ export function AdminPropertyDetailDashboard() {
       setFeedback(healthSignals.feedback)
       setVendorMetrics(healthSignals.vendorMetrics)
 
-      const propsRaw = onboardingResult.data?.properties
-      setOnboardingProperties(Array.isArray(propsRaw) ? (propsRaw as Record<string, unknown>[]) : [])
-
       const threshold = onboardingResult.data?.auto_approval_threshold
       if (typeof threshold === 'number' && Number.isFinite(threshold) && threshold > 0) {
         setAutoApprovalCap(threshold)
@@ -541,7 +587,7 @@ export function AdminPropertyDetailDashboard() {
 
       // Conversations are secondary — don't block the property overview on them.
       void fetchPropertyConversations(
-        building,
+        buildingName,
         ticketsWithBuilding.map((ticket) => ({
           id: ticket.id,
           unit: ticket.unit,
@@ -567,7 +613,7 @@ export function AdminPropertyDetailDashboard() {
       window.clearTimeout(timeoutId)
       if (!timedOut) setLoading(false)
     }
-  }, [building])
+  }, [propertySlug, navigate, searchParams])
 
   const handleOccupancyStatusChange = useCallback(
     async (unitId: string, status: UnitOccupancyStatus): Promise<boolean> => {
@@ -730,8 +776,9 @@ export function AdminPropertyDetailDashboard() {
         zipCode: asString(p.zipCode ?? p.zip_code),
         yearBuilt: (p.yearBuilt ?? p.year_built) as number | string | null | undefined,
       })),
+      canonicalProperty,
     )
-  }, [building, onboardingProperties])
+  }, [building, onboardingProperties, canonicalProperty])
 
   const occupiedCount = useMemo(() => {
     if (!building) return 0
@@ -1050,6 +1097,13 @@ export function AdminPropertyDetailDashboard() {
   }
 
   if (!building) {
+    if (loading) {
+      return (
+        <main className="flex min-h-0 flex-1 items-center justify-center px-8 py-12">
+          <p className="text-[14px] text-[#6a7282]">Loading property…</p>
+        </main>
+      )
+    }
     return (
       <main className="flex min-h-0 flex-1 flex-col px-8 pb-12 pt-6">
         <p className="text-[14px] text-[#6a7282]">Property not found.</p>
@@ -1325,6 +1379,7 @@ export function AdminPropertyDetailDashboard() {
           ) : null}
           <PropertyUnitsTable
             building={building ?? ''}
+            propertyId={canonicalProperty?.id}
             rows={propertyUnitRows}
             loading={loading}
             onOccupancyStatusChange={(unitId, status) => handleOccupancyStatusChange(unitId, status)}
@@ -1332,7 +1387,8 @@ export function AdminPropertyDetailDashboard() {
         </>
       ) : activeTab === 'residents' ? (
         <PropertyResidentsGrid
-          building={building}
+          building={building ?? ''}
+          propertyId={canonicalProperty?.id}
           residents={propertyResidentCards}
           loading={loading}
         />

@@ -5,7 +5,7 @@ import { PropertyHealthBuildingGrid } from '@/components/PropertyHealthBuildingG
 import { registerPropertyUnitsSms } from '@/api/landlordSmsOnboarding'
 import { getActiveLandlordId, getActiveLandlordKind } from '@/lib/activeLandlord'
 import { deleteLandlordBuildings } from '@/lib/onboarding'
-import { ensureProperty, linkUnitsToProperty } from '@/lib/properties'
+import { ensureProperty, linkUnitsToProperty, listPropertiesForLandlord } from '@/lib/properties'
 import {
   buildPropertyHealthReport,
   computeOccupancyStats,
@@ -14,6 +14,7 @@ import {
   fetchPropertyHealthSignals,
   mapTicketsForPropertyHealth,
   mapUnitsForPropertyHealth,
+  normalizeBuildingKey,
   PROPERTY_HEALTH_KPI_CAPTION,
   propertyHealthFactorBreakdownLines,
   type PropertyHealthFeedback,
@@ -23,7 +24,7 @@ import {
 } from '@/lib/propertyHealth'
 import { fetchRecognizedMaintenanceSpend, type RecognizedMaintenanceSpend } from '@/api/maintenanceInvoice'
 import { buildMonthlySpendByBuilding, type PropertyAnalyticsTicket } from '@/lib/propertyAnalytics'
-import { buildingDetailPath } from '@/lib/propertyRoutes'
+import { propertyDetailPath } from '@/lib/propertyRoutes'
 import {
   buildUnitOptionsFromPropertyPayload,
   unitOptionKeyToCell,
@@ -346,6 +347,9 @@ export function AdminPropertiesDashboard() {
   const [recognizedSpend, setRecognizedSpend] = useState<RecognizedMaintenanceSpend[]>([])
   const [addPropertyOpen, setAddPropertyOpen] = useState(false)
   const [propertyRegisterNotice, setPropertyRegisterNotice] = useState<string | null>(null)
+  const [propertyIdByBuilding, setPropertyIdByBuilding] = useState<Map<string, string>>(
+    () => new Map(),
+  )
 
   useEffect(() => {
     if (searchParams.get('add') !== '1') return
@@ -376,7 +380,7 @@ export function AdminPropertiesDashboard() {
     try {
       // Enriched view: building/unit join only (no invoice cost columns).
       // maintenance_requests: completion + recognized spend amount (no total_cost column).
-      const [enrichedTickets, mrTickets, unitsResult, healthSignals, residentsResult, recognizedSpendResult] =
+      const [enrichedTickets, mrTickets, unitsResult, healthSignals, residentsResult, recognizedSpendResult, canonicalPropertiesResult] =
         await Promise.all([
           supabase
             .from('maintenance_request_enriched')
@@ -407,6 +411,7 @@ export function AdminPropertiesDashboard() {
             .neq('status', 'past_resident')
             .limit(2000),
           fetchRecognizedMaintenanceSpend(),
+          listPropertiesForLandlord(landlordId),
         ])
 
       if (timedOut) return
@@ -482,6 +487,16 @@ export function AdminPropertiesDashboard() {
         )
       } else {
         setResidents([])
+      }
+
+      if (canonicalPropertiesResult.ok) {
+        const idMap = new Map<string, string>()
+        for (const property of canonicalPropertiesResult.properties) {
+          idMap.set(normalizeBuildingKey(property.name), property.id)
+        }
+        setPropertyIdByBuilding(idMap)
+      } else {
+        setPropertyIdByBuilding(new Map())
       }
 
       setLastUpdated(new Date())
@@ -843,7 +858,10 @@ export function AdminPropertiesDashboard() {
                 deleteSelectedSaving: deleteBuildingsSaving,
               }
         }
-        onBuildingOpen={(building) => navigate(buildingDetailPath(building))}
+        onBuildingOpen={(buildingName) => {
+          const propertyId = propertyIdByBuilding.get(normalizeBuildingKey(buildingName))
+          navigate(propertyDetailPath(propertyId ?? buildingName))
+        }}
         headerAction={
           <button
             type="button"

@@ -77,9 +77,9 @@ export default function App() {
             <Route index element={<AdminOverviewDashboard />} />
             <Route path="onboarding" element={<AdminOnboardingDashboard />} />
             <Route path="properties" element={<AdminPropertiesDashboard />} />
-            <Route path="properties/:buildingSlug" element={<AdminPropertyDetailDashboard />} />
+            <Route path="properties/:propertySlug" element={<AdminPropertyDetailDashboard />} />
             <Route
-              path="properties/:buildingSlug/residents/:residentId"
+              path="properties/:propertySlug/residents/:residentId"
               element={<AdminPropertyResidentDetailDashboard />}
             />
             <Route path="communication" element={<AdminCommunicationDashboard />} />

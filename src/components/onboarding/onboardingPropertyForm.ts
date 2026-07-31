@@ -176,13 +176,15 @@ export async function saveOnboardingPropertyStep(
     return
   }
 
+  const savedProperties = result.properties
+
   if (editingFromReview) {
-    await returnToReviewAfterEdit({ properties })
+    await returnToReviewAfterEdit({ properties: savedProperties })
     setSaving(false)
     return
   }
 
-  await goTo('vendors', { properties })
+  await goTo('vendors', { properties: savedProperties })
   await refreshCounts()
   setSaving(false)
 }

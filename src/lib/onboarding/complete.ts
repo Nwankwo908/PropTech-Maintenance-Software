@@ -13,6 +13,7 @@ import {
   requireOnboardingLandlord,
   saveLandlordOnboarding,
 } from './draftStorage'
+import { persistOnboardingProperties } from './persist/properties'
 import {
   persistLandlordAccountProfile,
   persistLandlordCommunicationStyle,
@@ -91,8 +92,24 @@ export async function completeOnboarding(
     console.warn('[landlordOnboarding] unit activation from residents failed', err)
   }
 
+  // Ensure canonical properties rows exist for every onboarding property.
+  let properties = state.properties
+  if (properties.length > 0) {
+    try {
+      const synced = await persistOnboardingProperties(properties, scope.landlordId)
+      if (synced.ok) {
+        properties = synced.properties
+      } else {
+        console.warn('[landlordOnboarding] properties sync on complete failed', synced.error)
+      }
+    } catch (err) {
+      console.warn('[landlordOnboarding] properties sync on complete failed', err)
+    }
+  }
+
   const completed: LandlordOnboardingState = {
     ...state,
+    properties,
     landlordId: scope.landlordId,
     onboardingStatus: 'completed',
     currentStep: 'review',

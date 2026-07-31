@@ -15,6 +15,7 @@ const {
   activateUnitsFromResidentAssignments,
   persistLandlordAccountProfile,
   persistLandlordCommunicationStyle,
+  persistOnboardingProperties,
   supabaseFrom,
 } = vi.hoisted(() => {
   const supabaseFrom = vi.fn()
@@ -26,6 +27,7 @@ const {
     activateUnitsFromResidentAssignments: vi.fn(),
     persistLandlordAccountProfile: vi.fn(),
     persistLandlordCommunicationStyle: vi.fn(),
+    persistOnboardingProperties: vi.fn(),
     supabaseFrom,
   }
 })
@@ -50,6 +52,10 @@ vi.mock('./draftStorage', () => ({
 vi.mock('./persist/account', () => ({
   persistLandlordAccountProfile,
   persistLandlordCommunicationStyle,
+}))
+
+vi.mock('./persist/properties', () => ({
+  persistOnboardingProperties,
 }))
 
 vi.mock('@/lib/supabase', () => ({
@@ -117,6 +123,10 @@ describe('completeOnboarding', () => {
     activateUnitsFromResidentAssignments.mockResolvedValue(undefined)
     persistLandlordAccountProfile.mockResolvedValue({ ok: true })
     persistLandlordCommunicationStyle.mockResolvedValue(undefined)
+    persistOnboardingProperties.mockImplementation(async (properties) => ({
+      ok: true,
+      properties,
+    }))
     mockPayoutsReady(true)
     sendTenantActivationSms.mockResolvedValue({
       configured: true,

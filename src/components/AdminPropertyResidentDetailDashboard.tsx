@@ -35,8 +35,11 @@ import {
 import { unitOptionKeyToCell } from '@/lib/residentUnitKeys'
 import {
   buildingDetailPath,
-  parseBuildingSlug,
+  parsePropertyRouteSlug,
+  propertyDetailPath,
+  propertyResidentDetailPath,
 } from '@/lib/propertyRoutes'
+import { findPropertyById, findPropertyByName } from '@/lib/properties'
 import { normalizeBuildingKey } from '@/lib/propertyHealth'
 import {
   conversationStatusLabel,
@@ -403,9 +406,10 @@ function ProfileContent({ profile }: { profile: ResidentProfileDetail }) {
 }
 
 export function AdminPropertyResidentDetailDashboard() {
-  const { buildingSlug, residentId } = useParams<{ buildingSlug: string; residentId: string }>()
+  const { propertySlug, residentId } = useParams<{ propertySlug: string; residentId: string }>()
   const navigate = useNavigate()
-  const building = parseBuildingSlug(buildingSlug)
+  const [building, setBuilding] = useState<string | null>(null)
+  const [propertyId, setPropertyId] = useState<string | null>(null)
 
   const [profile, setProfile] = useState<ResidentProfileDetail | null>(null)
   const [loadedUser, setLoadedUser] = useState<LoadedResidentUser | null>(null)
@@ -419,7 +423,8 @@ export function AdminPropertyResidentDetailDashboard() {
   const [error, setError] = useState<string | null>(null)
 
   const loadResident = useCallback(async () => {
-    if (!building || !residentId) {
+    const slug = parsePropertyRouteSlug(propertySlug)
+    if (!slug || !residentId) {
       setLoading(false)
       setError('Resident not found.')
       return
@@ -434,6 +439,40 @@ export function AdminPropertyResidentDetailDashboard() {
     setError(null)
 
     const landlordId = getActiveLandlordId()
+    let buildingName: string
+    let resolvedPropertyId: string | null = null
+
+    if (slug.kind === 'id') {
+      const byId = await findPropertyById(landlordId, slug.value)
+      if (!byId.ok) {
+        setLoading(false)
+        setError(byId.error)
+        return
+      }
+      if (!byId.property) {
+        setLoading(false)
+        setError('Property not found.')
+        return
+      }
+      resolvedPropertyId = byId.property.id
+      buildingName = byId.property.name
+    } else {
+      const byName = await findPropertyByName(landlordId, slug.value)
+      if (!byName.ok) {
+        setLoading(false)
+        setError(byName.error)
+        return
+      }
+      if (byName.property) {
+        navigate(propertyResidentDetailPath(byName.property.id, residentId), { replace: true })
+        return
+      }
+      buildingName = slug.value
+    }
+
+    setBuilding(buildingName)
+    setPropertyId(resolvedPropertyId)
+
     const [userResult, workflowDashboard, conversationsResult, unitsResult, residentsResult] =
       await Promise.all([
       supabase
@@ -504,8 +543,8 @@ export function AdminPropertyResidentDetailDashboard() {
       }
     }
 
-    const userBuilding = asString(raw.building) || building
-    if (userBuilding && userBuilding.toLowerCase() !== building.toLowerCase()) {
+    const userBuilding = asString(raw.building) || buildingName
+    if (userBuilding && userBuilding.toLowerCase() !== buildingName.toLowerCase()) {
       setError('Resident does not belong to this property.')
       setProfile(null)
       setLoadedUser(null)
@@ -568,10 +607,10 @@ export function AdminPropertyResidentDetailDashboard() {
         : ((unitsResult.data ?? []) as Record<string, unknown>[])
             .map((row) => ({
               unitLabel: asString(row.unit_label),
-              building: asString(row.building) || building,
+              building: asString(row.building) || buildingName,
             }))
             .filter(
-              (row) => normalizeBuildingKey(row.building) === normalizeBuildingKey(building),
+              (row) => normalizeBuildingKey(row.building) === normalizeBuildingKey(buildingName),
             ),
     )
     setBuildingResidents(
@@ -581,11 +620,11 @@ export function AdminPropertyResidentDetailDashboard() {
             .map((row) => ({
               id: asString(row.id),
               unit: asString(row.unit),
-              building: asString(row.building) || building,
+              building: asString(row.building) || buildingName,
               status: asString(row.status).toLowerCase() || 'active',
             }))
             .filter(
-              (row) => normalizeBuildingKey(row.building) === normalizeBuildingKey(building),
+              (row) => normalizeBuildingKey(row.building) === normalizeBuildingKey(buildingName),
             ),
     )
     setProfile(
@@ -608,15 +647,20 @@ export function AdminPropertyResidentDetailDashboard() {
       }),
     )
     setLoading(false)
-  }, [building, residentId])
+  }, [propertySlug, residentId, navigate])
 
   useEffect(() => {
     void loadResident()
   }, [loadResident])
 
   const backHref = useMemo(
-    () => (building ? buildingDetailPath(building, 'residents') : '/admin/properties'),
-    [building],
+    () =>
+      propertyId
+        ? propertyDetailPath(propertyId, 'residents')
+        : building
+          ? buildingDetailPath(building, 'residents')
+          : '/admin/properties',
+    [propertyId, building],
   )
 
   const editResidentRow = useMemo(
@@ -746,6 +790,13 @@ export function AdminPropertyResidentDetailDashboard() {
     : null
 
   if (!building) {
+    if (loading) {
+      return (
+        <main className="flex min-h-0 flex-1 items-center justify-center px-8 py-12">
+          <p className="text-[14px] text-[#6a7282]">Loading resident…</p>
+        </main>
+      )
+    }
     return (
       <main className="flex min-h-0 flex-1 flex-col px-8 pb-12 pt-6">
         <p className="text-[14px] text-[#6a7282]">Property not found.</p>

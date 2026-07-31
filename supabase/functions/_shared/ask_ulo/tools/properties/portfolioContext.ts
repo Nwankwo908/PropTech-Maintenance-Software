@@ -2,14 +2,16 @@
  * Resolve landlord footprint → primary state_code / city for Ask Ulo jurisdiction filters.
  *
  * Source of truth priority (user input first — never invent geography):
- * 1. landlord_onboarding.properties (and draft_state.properties if present)
- * 2. units.city / units.state (persisted from onboarding)
- * 3. Demo building name map — only when no user locations exist (demo accounts)
+ * 1. properties table (canonical address fields)
+ * 2. landlord_onboarding.properties (and draft_state.properties if present)
+ * 3. units.city / units.state (persisted from onboarding)
+ * 4. Demo building name map — only when no user locations exist (demo accounts)
  */
 
 import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.49.1"
 
 export type PortfolioLocationSource =
+  | "properties_table"
   | "onboarding_properties"
   | "units"
   | "demo_buildings"
@@ -83,6 +85,25 @@ export function collectFromOnboardingProperties(
   return out
 }
 
+/** Collect city/state from canonical properties rows. */
+export function collectFromPropertiesTable(
+  rows: unknown,
+): Array<{ city: string; state: string; name: string }> {
+  if (!Array.isArray(rows)) return []
+  const out: Array<{ city: string; state: string; name: string }> = []
+  for (const raw of rows) {
+    if (!raw || typeof raw !== "object") continue
+    const row = raw as Record<string, unknown>
+    const name = typeof row.name === "string" ? row.name.trim() : ""
+    const city = typeof row.city === "string" ? row.city.trim() : ""
+    const state = typeof row.state === "string" ? row.state.trim().toUpperCase() : ""
+    if (city && state.length === 2) {
+      out.push({ city, state, name: name || city })
+    }
+  }
+  return out
+}
+
 export function majorityJurisdiction(
   locations: Array<{ city: string; state: string }>,
 ): { stateCode: string | null; cityLabel: string | null; citySlug: string | null } {
@@ -135,27 +156,45 @@ export async function resolvePortfolioJurisdiction(
   const locations: Array<{ city: string; state: string }> = []
   let locationSource: PortfolioLocationSource = "none"
 
+  const { data: propertyRows } = await supabase
+    .from("properties")
+    .select("name, city, state")
+    .eq("landlord_id", landlordId)
+    .limit(200)
+
+  for (const row of collectFromPropertiesTable(propertyRows)) {
+    if (row.name) buildings.add(row.name)
+    locations.push({ city: row.city, state: row.state })
+  }
+  if (locations.length > 0) locationSource = "properties_table"
+
   const { data: onboarding } = await supabase
     .from("landlord_onboarding")
     .select("properties, draft_state")
     .eq("landlord_id", landlordId)
     .maybeSingle()
 
-  // Primary: top-level properties column (where the wizard persists user input).
-  for (const row of collectFromOnboardingProperties(onboarding?.properties)) {
-    if (row.name) buildings.add(row.name)
-    locations.push({ city: row.city, state: row.state })
+  if (locationSource === "none") {
+    // Primary: top-level properties column (where the wizard persists user input).
+    for (const row of collectFromOnboardingProperties(onboarding?.properties)) {
+      if (row.name) buildings.add(row.name)
+      locations.push({ city: row.city, state: row.state })
+    }
+    // Fallback: older drafts that nested properties inside draft_state.
+    const draft =
+      onboarding?.draft_state && typeof onboarding.draft_state === "object"
+        ? (onboarding.draft_state as Record<string, unknown>)
+        : null
+    for (const row of collectFromOnboardingProperties(draft?.properties)) {
+      if (row.name) buildings.add(row.name)
+      locations.push({ city: row.city, state: row.state })
+    }
+    if (locations.length > 0) locationSource = "onboarding_properties"
+  } else {
+    for (const row of collectFromOnboardingProperties(onboarding?.properties)) {
+      if (row.name) buildings.add(row.name)
+    }
   }
-  // Fallback: older drafts that nested properties inside draft_state.
-  const draft =
-    onboarding?.draft_state && typeof onboarding.draft_state === "object"
-      ? (onboarding.draft_state as Record<string, unknown>)
-      : null
-  for (const row of collectFromOnboardingProperties(draft?.properties)) {
-    if (row.name) buildings.add(row.name)
-    locations.push({ city: row.city, state: row.state })
-  }
-  if (locations.length > 0) locationSource = "onboarding_properties"
 
   const { data: units } = await supabase
     .from("units")

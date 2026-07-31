@@ -123,6 +123,10 @@ export {
 export { commitFastTrackImport } from './fastTrackImport'
 export type { CommitFastTrackImportInput } from './fastTrackImport'
 export {
+  loadCanonicalOnboardingProperties,
+  propertyRecordToOnboardingProperty,
+} from './hydrateProperties'
+export {
   buildOnboardingFormDraft,
   readPersistedExtractionReview,
   readPersistedUploadDocuments,

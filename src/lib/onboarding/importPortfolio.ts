@@ -452,8 +452,8 @@ export async function importMockExtraction(
   if (onboardingProperties.length > 0) {
     const unitResult = await persistOnboardingProperties(onboardingProperties)
     if (!unitResult.ok) return { ...unitResult, imported }
-    imported.properties = onboardingProperties.length
-    imported.units = onboardingProperties.reduce((s, p) => s + p.unitCount, 0)
+    imported.properties = unitResult.properties.length
+    imported.units = unitResult.properties.reduce((s, p) => s + p.unitCount, 0)
   }
 
   const selectedResidents = review.residents.filter((r) => r.selected)

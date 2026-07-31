@@ -2,9 +2,26 @@
 import { assertEquals } from "https://deno.land/std@0.224.0/assert/mod.ts"
 import {
   collectFromOnboardingProperties,
+  collectFromPropertiesTable,
   majorityJurisdiction,
   parseStateCityFromAddress,
 } from "../../tools/properties/portfolioContext.ts"
+
+Deno.test("collectFromPropertiesTable reads canonical property rows", () => {
+  const rows = collectFromPropertiesTable([
+    {
+      name: "Maple Heights",
+      street_address: "901 Maple Heights Blvd",
+      city: "Hillsboro",
+      state: "OR",
+      zip_code: "97124",
+    },
+  ])
+  assertEquals(rows.length, 1)
+  assertEquals(rows[0].city, "Hillsboro")
+  assertEquals(rows[0].state, "OR")
+  assertEquals(rows[0].name, "Maple Heights")
+})
 
 Deno.test("collectFromOnboardingProperties reads city/state fields", () => {
   const rows = collectFromOnboardingProperties([

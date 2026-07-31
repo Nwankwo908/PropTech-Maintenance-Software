@@ -2,6 +2,7 @@
  * Onboarding draft persistence — localStorage + landlord_onboarding row.
  */
 import { getActiveLandlordId } from '@/lib/activeLandlord'
+import { loadCanonicalOnboardingProperties } from './hydrateProperties'
 import {
   defaultOnboardingApprovalRules,
   normalizeOnboardingApprovalRules,
@@ -236,7 +237,8 @@ function stateToRow(state: LandlordOnboardingState): Record<string, unknown> {
     landlord_id: state.landlordId,
     onboarding_status: state.onboardingStatus,
     current_step: state.currentStep,
-    properties: state.properties,
+    // After complete, canonical data lives in properties — keep onboarding JSON draft-only.
+    properties: state.onboardingStatus === 'completed' ? [] : state.properties,
     auto_approval_threshold: rules.autoApprovalThreshold,
     emergency_types: rules.emergencyTypes,
     after_hours_rule: rules.afterHoursRule,
@@ -378,7 +380,13 @@ export async function fetchLandlordOnboarding(
     })
   }
 
-  const state = await readLandlordOnboardingDraft(landlordId)
+  let state = await readLandlordOnboardingDraft(landlordId)
+  if (state.onboardingStatus === 'completed') {
+    const canonical = await loadCanonicalOnboardingProperties(landlordId)
+    if (canonical.length > 0) {
+      state = { ...state, properties: canonical }
+    }
+  }
   const counts = await fetchAccountSetupCounts(landlordId)
   return reconcileNewLandlordOnboarding(state, counts)
 }

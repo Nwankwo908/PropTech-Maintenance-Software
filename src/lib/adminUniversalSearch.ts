@@ -1,4 +1,4 @@
-import { buildingDetailPath, propertyResidentDetailPath } from '@/lib/propertyRoutes'
+import { propertyDetailPath, propertyResidentDetailPath } from '@/lib/propertyRoutes'
 import { supabase } from '@/lib/supabase'
 
 export type UniversalSearchCategory =
@@ -415,8 +415,21 @@ export function groupSearchResults(items: UniversalSearchItem[]): GroupedSearchR
   })
 }
 
+function buildPropertyIdByBuilding(
+  rows: Array<{ id: string; name: string }>,
+): Map<string, string> {
+  const map = new Map<string, string>()
+  for (const row of rows) {
+    const name = row.name.trim()
+    if (!name) continue
+    map.set(name.toLowerCase(), row.id)
+  }
+  return map
+}
+
 function mapUnitsToSearchItems(
   rows: Record<string, unknown>[],
+  propertyIdByBuilding: Map<string, string>,
 ): UniversalSearchItem[] {
   const items: UniversalSearchItem[] = []
   const buildings = new Set<string>()
@@ -434,7 +447,7 @@ function mapUnitsToSearchItems(
         category: 'property',
         title: building,
         subtitle: 'Property',
-        href: buildingDetailPath(building),
+        href: propertyDetailPath(propertyIdByBuilding.get(building.toLowerCase()) ?? building),
         keywords: buildKeywords([building, 'property', 'building']),
       })
     }
@@ -444,7 +457,7 @@ function mapUnitsToSearchItems(
       category: 'unit',
       title: formatUnitLabel(unitLabel),
       subtitle: building,
-      href: `${buildingDetailPath(building)}?tab=units&unit=${encodeURIComponent(unitLabel || unitId)}`,
+      href: `${propertyDetailPath(propertyIdByBuilding.get(building.toLowerCase()) ?? building)}?tab=units&unit=${encodeURIComponent(unitLabel || unitId)}`,
       keywords: buildKeywords([unitLabel, building, 'unit']),
     })
   }
@@ -452,7 +465,10 @@ function mapUnitsToSearchItems(
   return items
 }
 
-function mapResidentsToSearchItems(rows: Record<string, unknown>[]): UniversalSearchItem[] {
+function mapResidentsToSearchItems(
+  rows: Record<string, unknown>[],
+  propertyIdByBuilding: Map<string, string>,
+): UniversalSearchItem[] {
   return rows.flatMap((row) => {
     const id = asString(row.id)
     const name = asString(row.full_name) || 'Unnamed resident'
@@ -462,7 +478,7 @@ function mapResidentsToSearchItems(rows: Record<string, unknown>[]): UniversalSe
 
     const subtitle = [building, unit ? formatUnitLabel(unit) : null].filter(Boolean).join(' · ') || 'Resident'
     const href = building
-      ? propertyResidentDetailPath(building, id)
+      ? propertyResidentDetailPath(propertyIdByBuilding.get(building.toLowerCase()) ?? building, id)
       : '/admin/residents'
 
     return [
@@ -585,6 +601,7 @@ export async function loadAdminSearchIndex(landlordId: string): Promise<Universa
     vendorsResult,
     enrichedTicketsResult,
     workflowRunsResult,
+    propertiesResult,
   ] = await Promise.all([
     supabase
       .from('units')
@@ -614,14 +631,34 @@ export async function loadAdminSearchIndex(landlordId: string): Promise<Universa
       .eq('landlord_id', landlordId)
       .order('started_at', { ascending: false })
       .limit(100),
+    supabase.from('properties').select('id, name').eq('landlord_id', landlordId).limit(200),
   ])
 
+  const propertyIdByBuilding = propertiesResult.error
+    ? new Map<string, string>()
+    : buildPropertyIdByBuilding(
+        ((propertiesResult.data ?? []) as Array<{ id: string; name: string }>).map((row) => ({
+          id: String(row.id),
+          name: String(row.name ?? ''),
+        })),
+      )
+
   if (!unitsResult.error) {
-    items.push(...mapUnitsToSearchItems((unitsResult.data ?? []) as Record<string, unknown>[]))
+    items.push(
+      ...mapUnitsToSearchItems(
+        (unitsResult.data ?? []) as Record<string, unknown>[],
+        propertyIdByBuilding,
+      ),
+    )
   }
 
   if (!usersResult.error) {
-    items.push(...mapResidentsToSearchItems((usersResult.data ?? []) as Record<string, unknown>[]))
+    items.push(
+      ...mapResidentsToSearchItems(
+        (usersResult.data ?? []) as Record<string, unknown>[],
+        propertyIdByBuilding,
+      ),
+    )
   }
 
   if (!vendorsResult.error) {

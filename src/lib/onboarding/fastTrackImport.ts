@@ -125,6 +125,7 @@ export async function commitFastTrackImport(
         input.onError(unitResult.error ?? 'Could not save property locations.')
         return false
       }
+      properties = unitResult.properties
     }
 
     await input.refreshCounts()
