@@ -12,7 +12,7 @@ import {
   emptyExtractionReview,
   isAcceptedUploadFile,
   normalizeExtractionReview,
-  runMockDocumentProcessing,
+  runDocumentProcessing,
   type OnboardingExtractionReview,
   type OnboardingUploadedDocument,
 } from '@/lib/onboardingDocumentUpload'
@@ -452,7 +452,8 @@ export function useOnboardingWizard() {
       return
     }
     const persistedExtraction = readPersistedExtractionReview(state.formDraft)
-    if (persistedExtraction) {
+    const hasRealExtractions = uploadDocuments.some((doc) => doc.extractedPayload)
+    if (persistedExtraction && !hasRealExtractions) {
       setExtractionReview(normalizeExtractionReview(persistedExtraction, state.accountSetup))
       return
     }
@@ -744,8 +745,9 @@ export function useOnboardingWizard() {
               }
             : {}),
         }
-        await runMockDocumentProcessing(
+        await runDocumentProcessing(
           latest,
+          file,
           (updated) => {
             setUploadDocuments((prev) =>
               prev.map((row) =>

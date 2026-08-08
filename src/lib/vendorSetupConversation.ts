@@ -3,7 +3,8 @@ import type {
   MonitoringTranscriptItem,
   VendorOutreachChannel,
 } from '@/lib/conversationMonitoring'
-import { getActiveLandlordId, EMPTY_LANDLORD_ID } from '@/lib/activeLandlord'
+import { getActiveLandlordId } from '@/lib/activeLandlord'
+import { isOnboardingLandlordAccount } from '@/lib/onboarding/scope'
 import { hasVendorIntakeSubmission } from '@/lib/vendorIntakeForm'
 import { markAdminPricingConfirmed } from '@/lib/vendorPricingConfirmation'
 import { formatVendorTradeLabel } from '@/lib/vendorTrades'
@@ -227,8 +228,8 @@ function inboxStorageKey(landlordId: string): string {
 
 function readVendorSetupInbox(landlordId: string = getActiveLandlordId()): VendorSetupInboxEntry[] {
   const scoped = readJson<VendorSetupInboxEntry[]>(inboxStorageKey(landlordId)) ?? []
-  // New Landlord: never bleed demo/default threads from the legacy global key.
-  if (landlordId === EMPTY_LANDLORD_ID) {
+  // Onboarding accounts (Alpha + New Landlord): never bleed demo threads from legacy global keys.
+  if (isOnboardingLandlordAccount(landlordId)) {
     return stripLegacyVerbalQuoteAuditItems(scoped)
   }
   const legacyGlobal = readJson<VendorSetupInboxEntry[]>(INBOX_STORAGE_KEY) ?? []
@@ -252,7 +253,7 @@ export function clearVendorSetupInboxForLandlord(
 ): void {
   try {
     window.localStorage.removeItem(inboxStorageKey(landlordId))
-    if (landlordId === EMPTY_LANDLORD_ID) {
+    if (isOnboardingLandlordAccount(landlordId)) {
       window.localStorage.removeItem(INBOX_STORAGE_KEY)
     }
   } catch {

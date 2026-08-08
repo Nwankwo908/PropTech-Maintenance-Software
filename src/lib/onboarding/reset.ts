@@ -154,8 +154,11 @@ export async function purgeOnboardingImportedOperations(
     return { ok: false, error: 'We can\'t reach the server right now. Please try again in a moment.' }
   }
 
-  // Alpha (production): full portfolio purge via service/staff RPC when not preserving.
-  if (scope.landlordId === DEFAULT_LANDLORD_ID && !preservePortfolioSms) {
+  const isAlphaLandlord = scope.landlordId === DEFAULT_LANDLORD_ID
+
+  // Alpha (production): full portfolio purge via staff RPC when not preserving.
+  // Never call purge_empty_landlord_operations for Alpha — that RPC is scoped to New Landlord only.
+  if (isAlphaLandlord && !preservePortfolioSms) {
     const { error: alphaPurgeError } = await supabase.rpc('purge_landlord_portfolio', {
       p_landlord_id: scope.landlordId,
     })
@@ -172,33 +175,34 @@ export async function purgeOnboardingImportedOperations(
     if (!/Could not find the function|PGRST202|404/i.test(alphaPurgeError.message)) {
       console.warn('[landlordOnboarding] purge_landlord_portfolio', alphaPurgeError.message)
     }
-  }
-
-  // New Landlord (empty): prefer fail-closed SECURITY DEFINER RPC (bypasses missing DELETE RLS on runs).
-  // preservePortfolioSms keeps SMS threads + graph events tied to current portfolio
-  // residents/vendors (e.g. tenant activation welcome texts) while stripping import junk.
-  const { error: rpcError } = await supabase.rpc('purge_empty_landlord_operations', {
-    p_preserve_portfolio_sms: preservePortfolioSms,
-  })
-  if (!rpcError) {
-    const remaining = await countLandlordOps(scope.landlordId)
-    // In preserve mode the purge intentionally keeps vendor_onboarding runs, so a
-    // remaining active run is expected — only gate on leftover imported tickets.
-    const blocked = preservePortfolioSms
-      ? remaining.tickets > 0
-      : remaining.tickets > 0 || remaining.activeWorkflowRuns > 0
-    if (blocked) {
-      return {
-        ok: false,
-        error: `Could not clear imported tasks (${remaining.activeWorkflowRuns} runs, ${remaining.tickets} tickets remain).`,
+    // RPC missing or failed — fall through to Alpha-scoped client deletes below.
+  } else if (!isAlphaLandlord) {
+    // New Landlord (empty): prefer fail-closed SECURITY DEFINER RPC (bypasses missing DELETE RLS on runs).
+    // preservePortfolioSms keeps SMS threads + graph events tied to current portfolio
+    // residents/vendors (e.g. tenant activation welcome texts) while stripping import junk.
+    const { error: rpcError } = await supabase.rpc('purge_empty_landlord_operations', {
+      p_preserve_portfolio_sms: preservePortfolioSms,
+    })
+    if (!rpcError) {
+      const remaining = await countLandlordOps(scope.landlordId)
+      // In preserve mode the purge intentionally keeps vendor_onboarding runs, so a
+      // remaining active run is expected — only gate on leftover imported tickets.
+      const blocked = preservePortfolioSms
+        ? remaining.tickets > 0
+        : remaining.tickets > 0 || remaining.activeWorkflowRuns > 0
+      if (blocked) {
+        return {
+          ok: false,
+          error: `Could not clear imported tasks (${remaining.activeWorkflowRuns} runs, ${remaining.tickets} tickets remain).`,
+        }
       }
+      return { ok: true }
     }
-    return { ok: true }
-  }
 
-  // RPC missing (migration not applied yet) — fall back to client deletes / cancel.
-  if (!/Could not find the function|PGRST202|404/i.test(rpcError.message)) {
-    console.warn('[landlordOnboarding] purge_empty_landlord_operations', rpcError.message)
+    // RPC missing (migration not applied yet) — fall back to client deletes / cancel.
+    if (!/Could not find the function|PGRST202|404/i.test(rpcError.message)) {
+      console.warn('[landlordOnboarding] purge_empty_landlord_operations', rpcError.message)
+    }
   }
 
   const { data: ticketRows, error: ticketLoadError } = await supabase

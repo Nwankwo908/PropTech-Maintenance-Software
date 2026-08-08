@@ -1,15 +1,12 @@
+import { extractOnboardingDocument, type PortfolioDocumentExtractPayload } from '@/api/onboardingDocumentExtract'
 import { getErrorMessage } from '@/lib/errorMessage'
 /**
- * New Landlord onboarding — bulk document upload, mock OCR pipeline, and extraction review.
- * V1 uses client-side mock processing until real document AI is wired.
- * File bytes are stored in the landlord-onboarding-documents bucket for later preview.
+ * Onboarding fast-track — document upload, GPT-4o extraction, and review import.
+ * File bytes are stored in the landlord-onboarding-documents bucket for preview.
  */
 import type { OnboardingAccountSetup, OnboardingOccupancyStatus } from '@/lib/onboarding'
 import {
-  buildMockExtractionReview,
-  type DocumentCategory,
   type MockExtractionReview,
-  type UploadedOnboardingDoc,
 } from '@/lib/onboardingMockExtraction'
 import {
   emptyReviewManualAccount,
@@ -70,6 +67,8 @@ export type OnboardingUploadedDocument = {
   storageBucket?: string | null
   storagePath?: string | null
   contentType?: string | null
+  /** GPT extraction from onboarding-document-extract (per file). */
+  extractedPayload?: PortfolioDocumentExtractPayload | null
 }
 
 export type ExtractedLeaseInfo = {
@@ -374,12 +373,7 @@ export function createUploadedDocumentFromFile(file: File): OnboardingUploadedDo
     extractionStatus: 'waiting',
     processingLabel: UPLOAD_STATUS_LABELS.waiting,
     errorMessage: null,
-    imageLabels: isImageExtension(ext)
-      ? ['Water damage', 'Roof issue', 'HVAC unit', 'Kitchen appliance', 'Electrical panel'].slice(
-          0,
-          2 + (file.name.length % 3),
-        )
-      : [],
+    imageLabels: [],
     hasHandwriting: /move.?in|inspection|checklist|signed|handwritten/i.test(file.name),
     storageBucket: null,
     storagePath: null,
@@ -428,30 +422,42 @@ export function documentCategoryLabel(category: OnboardingDocumentCategory): str
   return 'Document'
 }
 
-/** Mock async pipeline — digitizing, scanning, OCR, optional handwriting pass. */
-export async function runMockDocumentProcessing(
+async function fileToBase64(file: File): Promise<string> {
+  const buffer = await file.arrayBuffer()
+  const bytes = new Uint8Array(buffer)
+  let binary = ''
+  const chunk = 0x8000
+  for (let i = 0; i < bytes.length; i += chunk) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + chunk))
+  }
+  return btoa(binary)
+}
+
+/** Real document pipeline — upload progress UI, then GPT-4o extract via edge function. */
+export async function runDocumentProcessing(
   doc: OnboardingUploadedDocument,
+  file: File | null,
   onUpdate: (updated: OnboardingUploadedDocument) => void,
   signal?: AbortSignal,
 ): Promise<OnboardingUploadedDocument> {
-  let current = { ...doc, uploadStatus: 'uploading' as UploadFileStatus, processingLabel: UPLOAD_STATUS_LABELS.uploading }
+  let current = {
+    ...doc,
+    uploadStatus: 'uploading' as UploadFileStatus,
+    processingLabel: UPLOAD_STATUS_LABELS.uploading,
+  }
 
-  for (let progress = 0; progress <= 100; progress += 20) {
+  for (let progress = 0; progress <= 100; progress += 25) {
     if (signal?.aborted) return current
     current = { ...current, uploadProgress: progress }
     onUpdate(current)
-    await sleep(120)
+    await sleep(80)
   }
 
   const stages: Array<{ status: UploadFileStatus; label: string; ms: number }> = [
-    { status: 'digitizing', label: UPLOAD_STATUS_LABELS.digitizing, ms: 650 },
-    { status: 'scanning', label: UPLOAD_STATUS_LABELS.scanning, ms: isScannedDocument(`.${doc.fileType}`) ? 750 : 450 },
-    { status: 'extracting', label: UPLOAD_STATUS_LABELS.extracting, ms: 800 },
+    { status: 'digitizing', label: UPLOAD_STATUS_LABELS.digitizing, ms: 400 },
+    { status: 'scanning', label: UPLOAD_STATUS_LABELS.scanning, ms: 500 },
+    { status: 'extracting', label: UPLOAD_STATUS_LABELS.extracting, ms: 300 },
   ]
-
-  if (doc.hasHandwriting) {
-    stages.push({ status: 'handwriting', label: UPLOAD_STATUS_LABELS.handwriting, ms: 600 })
-  }
 
   for (const stage of stages) {
     if (signal?.aborted) return current
@@ -465,16 +471,71 @@ export async function runMockDocumentProcessing(
     await sleep(stage.ms)
   }
 
-  const needsAttention = doc.documentCategory === 'unknown'
-  current = {
-    ...current,
-    uploadStatus: needsAttention ? 'needs_attention' : 'ready_for_review',
-    extractionStatus: needsAttention ? 'needs_attention' : 'ready_for_review',
-    processingLabel: UPLOAD_STATUS_LABELS[needsAttention ? 'needs_attention' : 'ready_for_review'],
-    uploadProgress: 100,
+  if (doc.hasHandwriting) {
+    if (signal?.aborted) return current
+    current = {
+      ...current,
+      uploadStatus: 'handwriting',
+      extractionStatus: 'handwriting',
+      processingLabel: UPLOAD_STATUS_LABELS.handwriting,
+    }
+    onUpdate(current)
+    await sleep(400)
   }
+
+  try {
+    const fileBase64 =
+      !doc.storagePath && file ? await fileToBase64(file) : undefined
+
+    const result = await extractOnboardingDocument({
+      docId: doc.id,
+      fileName: doc.fileName,
+      documentCategory: doc.documentCategory,
+      storageBucket: doc.storageBucket,
+      storagePath: doc.storagePath,
+      contentType: doc.contentType,
+      fileBase64,
+    })
+
+    const warning = result.extracted.warnings[0] ?? null
+    const needsAttention =
+      result.needsAttention ||
+      doc.documentCategory === 'unknown' ||
+      (!result.hasData && !warning)
+
+    current = {
+      ...current,
+      extractedPayload: result.extracted,
+      imageLabels: result.extracted.imageLabels,
+      uploadStatus: needsAttention ? 'needs_attention' : 'ready_for_review',
+      extractionStatus: needsAttention ? 'needs_attention' : 'ready_for_review',
+      processingLabel:
+        UPLOAD_STATUS_LABELS[needsAttention ? 'needs_attention' : 'ready_for_review'],
+      uploadProgress: 100,
+      errorMessage: needsAttention ? warning : null,
+    }
+  } catch (err) {
+    current = {
+      ...current,
+      uploadStatus: 'failed',
+      extractionStatus: 'failed',
+      processingLabel: UPLOAD_STATUS_LABELS.failed,
+      uploadProgress: 100,
+      errorMessage: getErrorMessage(err, 'Could not extract this document. Try PDF or CSV.'),
+    }
+  }
+
   onUpdate(current)
   return current
+}
+
+/** @deprecated Use runDocumentProcessing — kept for tests. */
+export async function runMockDocumentProcessing(
+  doc: OnboardingUploadedDocument,
+  onUpdate: (updated: OnboardingUploadedDocument) => void,
+  signal?: AbortSignal,
+): Promise<OnboardingUploadedDocument> {
+  return runDocumentProcessing(doc, null, onUpdate, signal)
 }
 
 export function allDocumentsReadyForReview(docs: OnboardingUploadedDocument[]): boolean {
@@ -499,153 +560,202 @@ export function anyDocumentProcessing(docs: OnboardingUploadedDocument[]): boole
   )
 }
 
-function mapUploadCategoryToMock(category: OnboardingDocumentCategory): DocumentCategory {
-  switch (category) {
-    case 'lease_agreement':
-    case 'move_in_document':
-      return 'lease_agreements'
-    case 'resident_roster':
-    case 'rent_roll':
-      return 'rent_roll'
-    case 'inspection_report':
-      return 'inspection_report'
-    case 'vendor_invoice':
-    case 'vendor_contract':
-    case 'w9_form':
-      return 'vendor_invoice'
-    case 'insurance_certificate':
-      return 'insurance_certificate'
-    case 'expense_report':
-    case 'property_statement':
-      return 'maintenance_history'
-    default:
-      return 'lease_agreements'
-  }
-}
-
-function parseAddressParts(address: string): { street: string; city: string; state: string; zipCode: string } {
-  const parts = address.split(',').map((part) => part.trim()).filter(Boolean)
-  if (parts.length >= 3) {
-    const stateZip = parts[parts.length - 1] ?? ''
-    const stateZipMatch = stateZip.match(/^([A-Za-z]{2})\s+(\d{5}(?:-\d{4})?)$/)
-    return {
-      street: parts[0] ?? '',
-      city: parts[parts.length - 2] ?? '',
-      state: stateZipMatch?.[1]?.toUpperCase() ?? stateZip.slice(0, 2).toUpperCase(),
-      zipCode: stateZipMatch?.[2] ?? '',
-    }
-  }
-  return { street: address.trim(), city: '', state: '', zipCode: '' }
-}
-
-/** Build extraction review from uploaded docs (mock OCR) + empty manual account seed. */
-export function buildOnboardingExtractionReview(
+function mergeExtractedDocuments(
   documents: OnboardingUploadedDocument[],
   accountSeed?: Partial<OnboardingAccountSetup> | null,
 ): OnboardingExtractionReview {
   const account = emptyReviewManualAccount(accountSeed)
-  if (documents.length === 0) {
+  const payloads = documents
+    .map((doc) => ({ doc, payload: doc.extractedPayload }))
+    .filter((row): row is { doc: OnboardingUploadedDocument; payload: PortfolioDocumentExtractPayload } =>
+      Boolean(row.payload),
+    )
+
+  if (payloads.length === 0) {
     return emptyExtractionReview(accountSeed)
   }
 
-  const mockDocs: UploadedOnboardingDoc[] = documents.map((doc) => ({
-    id: doc.id,
-    fileName: doc.fileName,
-    category: mapUploadCategoryToMock(doc.documentCategory),
-  }))
-  const mock = buildMockExtractionReview([], mockDocs)
-  const sourceName = documents[0]?.fileName ?? 'Uploaded document'
+  const properties: OnboardingExtractedProperty[] = []
+  const units: OnboardingExtractedUnit[] = []
+  const residents: OnboardingExtractedResident[] = []
+  const leases: ExtractedLeaseInfo[] = []
+  const vendors: OnboardingExtractedVendor[] = []
+  const maintenanceIssues: OnboardingExtractedMaintenanceIssue[] = []
+  const financialRecords: ExtractedFinancialRecord[] = []
+  const needsReview: ExtractedReviewItem[] = []
+  const imageLabels: ExtractedReviewItem[] = []
+
+  for (const { doc, payload } of payloads) {
+    const source = doc.fileName
+
+    payload.properties.forEach((item, index) => {
+      const needsReviewRow = item.confidence < 75 || !item.city || !item.state
+      properties.push({
+        id: `ext-prop-${doc.id}-${index}`,
+        name: item.name,
+        address: item.streetAddress,
+        city: item.city,
+        state: item.state,
+        zipCode: item.zipCode,
+        propertyType: item.propertyType || 'multifamily',
+        unitCount: item.unitCount,
+        unitLabels: '',
+        propertyManagerName: '',
+        propertyManagerPhone: '',
+        sourceDocumentName: source,
+        confidence: item.confidence,
+        selected: !needsReviewRow,
+        needsReview: needsReviewRow,
+      })
+    })
+
+    payload.units.forEach((item, index) => {
+      units.push({
+        id: `ext-unit-${doc.id}-${index}`,
+        label: item.label,
+        building: item.building,
+        sourceDocumentName: source,
+        confidence: item.confidence,
+        selected: item.confidence >= 70,
+      })
+    })
+
+    payload.residents.forEach((item, index) => {
+      const needsReviewRow = item.confidence < 75
+      residents.push({
+        id: `ext-res-${doc.id}-${index}`,
+        fullName: item.fullName,
+        unit: item.unit,
+        building: item.building,
+        phone: item.phone,
+        email: item.email,
+        leaseStart: item.leaseStart,
+        leaseEnd: item.leaseEnd,
+        monthlyRent: item.monthlyRent,
+        rentDueDay: '',
+        occupancyStatus: 'active',
+        maintenanceResponsibilitiesClause: '',
+        sourceDocumentName: source,
+        confidence: item.confidence,
+        selected: !needsReviewRow,
+        needsReview: needsReviewRow,
+      })
+    })
+
+    payload.leases.forEach((item, index) => {
+      leases.push({
+        id: `ext-lease-${doc.id}-${index}`,
+        residentName: item.residentName,
+        unit: item.unit,
+        building: item.building,
+        leaseStart: item.leaseStart,
+        leaseEnd: item.leaseEnd,
+        rentAmount: item.rentAmount,
+        securityDeposit: item.securityDeposit,
+        sourceDocumentName: source,
+        confidence: item.confidence,
+        selected: item.confidence >= 70,
+        needsReview: item.confidence < 75,
+      })
+    })
+
+    payload.vendors.forEach((item, index) => {
+      vendors.push({
+        id: `ext-vendor-${doc.id}-${index}`,
+        name: item.name,
+        category: item.category || null,
+        phone: item.phone,
+        email: item.email,
+        preferredEmergency: false,
+        sourceDocumentName: source,
+        confidence: item.confidence,
+        selected: item.confidence >= 70,
+        needsReview: item.confidence < 75,
+      })
+    })
+
+    payload.maintenanceIssues.forEach((item, index) => {
+      maintenanceIssues.push({
+        id: `ext-maint-${doc.id}-${index}`,
+        unit: item.unit,
+        building: item.building,
+        category: item.category,
+        description: item.description,
+        priority: item.priority,
+        sourceDocumentName: source,
+        confidence: item.confidence,
+        selected: item.confidence >= 70,
+        needsReview: item.confidence < 75,
+        imageTags: doc.imageLabels,
+      })
+    })
+
+    payload.financialRecords.forEach((item, index) => {
+      financialRecords.push({
+        id: `ext-fin-${doc.id}-${index}`,
+        recordType: item.recordType,
+        description: item.description,
+        amount: item.amount,
+        period: item.period,
+        sourceDocumentName: source,
+        confidence: item.confidence,
+        selected: item.confidence >= 70,
+        needsReview: item.confidence < 75,
+      })
+    })
+
+    payload.warnings.forEach((warning, index) => {
+      needsReview.push({
+        id: `ext-warn-${doc.id}-${index}`,
+        uploadedDocumentId: doc.id,
+        sourceDocumentName: source,
+        dataType: 'warning',
+        label: 'Extraction note',
+        value: warning,
+        confidence: 100,
+        includeInImport: false,
+        needsReview: true,
+      })
+    })
+
+    payload.imageLabels.forEach((label, index) => {
+      imageLabels.push({
+        id: `ext-img-${doc.id}-${index}`,
+        uploadedDocumentId: doc.id,
+        sourceDocumentName: source,
+        dataType: 'image_label',
+        label: 'Photo label',
+        value: label,
+        confidence: 80,
+        includeInImport: true,
+        needsReview: false,
+      })
+    })
+  }
 
   return {
     account,
-    properties: mock.properties.map((item) => {
-      const parts = parseAddressParts(item.address)
-      return {
-        id: item.id,
-        name: item.name,
-        address: parts.street || item.address,
-        city: parts.city,
-        state: parts.state,
-        zipCode: parts.zipCode,
-        propertyType: 'multifamily',
-        unitCount: item.unitCount,
-        unitLabels: Array.from({ length: item.unitCount }, (_, i) => String(101 + i)).join(', '),
-        propertyManagerName: '',
-        propertyManagerPhone: '',
-        sourceDocumentName: sourceName,
-        confidence: 86,
-        selected: item.selected,
-        needsReview: !parts.city || !parts.state || !parts.zipCode,
-      }
-    }),
-    units: mock.units.map((item) => ({
-      id: item.id,
-      label: item.label,
-      building: item.building,
-      sourceDocumentName: sourceName,
-      confidence: 90,
-      selected: item.selected,
-    })),
-    residents: mock.residents.map((item) => ({
-      id: item.id,
-      fullName: item.fullName,
-      unit: item.unit,
-      building: item.building,
-      phone: item.phone,
-      email: item.email,
-      leaseStart: item.leaseStart,
-      leaseEnd: item.leaseEnd,
-      monthlyRent: '',
-      rentDueDay: '',
-      occupancyStatus: 'active' as const,
-      maintenanceResponsibilitiesClause: '',
-      sourceDocumentName: sourceName,
-      confidence: 84,
-      selected: item.selected,
-      needsReview: true,
-    })),
-    leases: mock.leases.map((item) => ({
-      id: item.id,
-      residentName: item.residentName,
-      unit: item.unit,
-      building: item.building,
-      leaseStart: item.leaseStart,
-      leaseEnd: item.leaseEnd,
-      rentAmount: item.rentAmount ?? '',
-      securityDeposit: '',
-      sourceDocumentName: sourceName,
-      confidence: 82,
-      selected: item.selected,
-      needsReview: false,
-    })),
-    vendors: mock.vendors.map((item) => ({
-      id: item.id,
-      name: item.name,
-      category: item.category,
-      phone: item.phone,
-      email: item.email,
-      preferredEmergency: false,
-      sourceDocumentName: sourceName,
-      confidence: 83,
-      selected: item.selected,
-      needsReview: false,
-    })),
-    maintenanceIssues: mock.maintenanceIssues.map((item) => ({
-      id: item.id,
-      unit: item.unit,
-      building: item.building,
-      category: item.category,
-      description: item.description,
-      priority: item.priority,
-      sourceDocumentName: sourceName,
-      confidence: 80,
-      selected: item.selected,
-      needsReview: false,
-    })),
-    financialRecords: [],
-    needsReview: [],
-    imageLabels: [],
+    properties,
+    units,
+    residents,
+    leases,
+    vendors,
+    maintenanceIssues,
+    financialRecords,
+    needsReview,
+    imageLabels,
   }
+}
+
+/** Build extraction review from per-document GPT payloads (no demo/mock filler). */
+export function buildOnboardingExtractionReview(
+  documents: OnboardingUploadedDocument[],
+  accountSeed?: Partial<OnboardingAccountSetup> | null,
+): OnboardingExtractionReview {
+  if (documents.length === 0) {
+    return emptyExtractionReview(accountSeed)
+  }
+  return mergeExtractedDocuments(documents, accountSeed)
 }
 
 export function emptyExtractionReview(
