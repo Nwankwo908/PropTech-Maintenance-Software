@@ -1,5 +1,8 @@
 import { useEffect, useId } from 'react'
 import {
+  ADMIN_RAIL_FOOTER_CLASS,
+  ADMIN_RAIL_FOOTER_DANGER_BUTTON_CLASS,
+  ADMIN_RAIL_FOOTER_SECONDARY_BUTTON_CLASS,
   ADMIN_RIGHT_RAIL_OVERLAY_HOST,
   ADMIN_RIGHT_RAIL_SCRIM,
   adminRightRailPanelClass,
@@ -194,12 +197,12 @@ export function EmergencyApprovalRail({
           <p className="mt-5 text-[13px] leading-5 text-[#6a7282]">{review.footerNote}</p>
         </div>
 
-        <footer className="flex shrink-0 items-center justify-end gap-3 border-t border-[#e5e7eb] px-6 py-4">
+        <footer className={ADMIN_RAIL_FOOTER_CLASS}>
           <button
             type="button"
             disabled={saving}
             onClick={() => onDecline(review.ticketId)}
-            className="inline-flex items-center gap-2 rounded-full border border-[#e5e7eb] bg-white px-4 py-2 text-[13px] font-medium text-[#0a0a0a] outline-none hover:bg-[#f9fafb] focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2 disabled:opacity-50"
+            className={ADMIN_RAIL_FOOTER_SECONDARY_BUTTON_CLASS}
           >
             <DeclineCircleIcon />
             Decline
@@ -208,7 +211,7 @@ export function EmergencyApprovalRail({
             type="button"
             disabled={saving}
             onClick={() => onApprove(review.ticketId)}
-            className="inline-flex items-center gap-2 rounded-full bg-[#fb2c36] px-4 py-2 text-[13px] font-medium text-white outline-none hover:bg-[#e11d48] focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2 disabled:opacity-50"
+            className={ADMIN_RAIL_FOOTER_DANGER_BUTTON_CLASS}
           >
             <ApproveCircleIcon />
             {saving ? 'Approving…' : approveLabel}

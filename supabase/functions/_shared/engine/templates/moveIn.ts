@@ -3,13 +3,20 @@
  */
 import { workflowRouteForTemplate } from "../logStage.ts"
 import { escalateLifecycleRunById } from "../lifecycleEscalation.ts"
-import { executeLifecycleInitialAct } from "../lifecycleProgress.ts"
-import { readLifecycleStepState, isLifecycleInitialActTrigger } from "../lifecyclePolicy.ts"
-import { getWorkflowRunById } from "../workflowRuns.ts"
+import {
+  completeMoveInWorkflow,
+  executeMoveInOutreach,
+  executeMoveInRegisterAndOutreach,
+  executeMoveInRegisterOccupancy,
+  processMoveInResidentReply,
+} from "../moveInProgress.ts"
+import { ensureLifecycleWorkflowStartedLogged } from "../lifecycleStartLog.ts"
+import { isLifecycleInitialActTrigger } from "../lifecyclePolicy.ts"
 import type {
   ClassifiedIntent,
   EscalationResult,
   WorkflowActResult,
+  WorkflowExecutionContext,
   WorkflowTemplate,
 } from "../types.ts"
 
@@ -52,9 +59,109 @@ export const moveInTemplate: WorkflowTemplate = {
 
   async act(supabase, ctx, intent): Promise<WorkflowActResult> {
     const runId = intent.runId ?? ctx.runId ?? ctx.activeRun?.id ?? null
+    if (runId) {
+      await ensureLifecycleWorkflowStartedLogged(supabase, {
+        landlordId: ctx.landlordId,
+        runId,
+        trigger: ctx.trigger,
+      })
+    }
+    const moveIn = (ctx as WorkflowExecutionContext & {
+      moveIn?: {
+        action?: string
+        register?: {
+          tenantName?: string | null
+          tenantPhone?: string | null
+          tenantEmail?: string | null
+          moveInDate?: string | null
+          residentId?: string | null
+        }
+        smsBody?: string
+      }
+    }).moveIn
+
+    if (runId && moveIn?.action === "register_occupancy" && moveIn.register) {
+      const result = await executeMoveInRegisterOccupancy(supabase, {
+        landlordId: ctx.landlordId,
+        runId,
+        register: moveIn.register,
+      })
+      return {
+        templateId: "move_in",
+        route: workflowRouteForTemplate("move_in"),
+        runId,
+        metadata: {
+          action: "register_occupancy",
+          ok: result.ok,
+          error: result.error,
+          residentId: result.activation?.residentId ?? null,
+          occupancyId: result.activation?.occupancyId ?? null,
+        },
+      }
+    }
+
+    if (runId && moveIn?.action === "send_outreach") {
+      const result = await executeMoveInOutreach(supabase, {
+        landlordId: ctx.landlordId,
+        runId,
+      })
+      return {
+        templateId: "move_in",
+        route: workflowRouteForTemplate("move_in"),
+        runId,
+        metadata: { action: "send_outreach", ...result },
+      }
+    }
+
+    if (runId && moveIn?.action === "register_and_outreach") {
+      const result = await executeMoveInRegisterAndOutreach(supabase, {
+        landlordId: ctx.landlordId,
+        runId,
+        register: moveIn.register,
+      })
+      return {
+        templateId: "move_in",
+        route: workflowRouteForTemplate("move_in"),
+        runId,
+        metadata: { action: "register_and_outreach", ...result },
+      }
+    }
+
+    if (runId && moveIn?.action === "complete") {
+      await completeMoveInWorkflow(supabase, {
+        landlordId: ctx.landlordId,
+        runId,
+      })
+      return {
+        templateId: "move_in",
+        route: workflowRouteForTemplate("move_in"),
+        runId,
+        metadata: { action: "complete", step: "completed" },
+      }
+    }
+
+    if (runId && moveIn?.action === "resident_replied") {
+      const body = moveIn.smsBody ?? ctx.sms?.inbound.body ?? ""
+      const result = await processMoveInResidentReply(supabase, {
+        landlordId: ctx.landlordId,
+        runId,
+        body,
+      })
+      return {
+        templateId: "move_in",
+        route: workflowRouteForTemplate("move_in"),
+        runId,
+        replyHint: result.replyHint,
+        metadata: {
+          action: "resident_replied",
+          step: result.step,
+          completed: result.completed,
+        },
+      }
+    }
 
     if (runId && isLifecycleInitialActTrigger(ctx.trigger)) {
-      const result = await executeLifecycleInitialAct(supabase, {
+      const result = await executeMoveInOutreach(supabase, {
         landlordId: ctx.landlordId,
         runId,
       })
@@ -67,16 +174,22 @@ export const moveInTemplate: WorkflowTemplate = {
     }
 
     if (ctx.trigger === "sms_inbound" && runId) {
-      const run = ctx.activeRun ?? await getWorkflowRunById(supabase, runId)
-      const step = run ? readLifecycleStepState(run).step : null
+      const body = ctx.sms?.inbound.body ?? ""
+      const result = await processMoveInResidentReply(supabase, {
+        landlordId: ctx.landlordId,
+        runId,
+        body,
+      })
       return {
         templateId: "move_in",
         route: workflowRouteForTemplate("move_in"),
         runId,
-        replyHint: step === "completed"
-          ? "Your move-in is complete. Reply here anytime if you need help."
-          : "Thanks — please finish any remaining move-in checklist items. Reply here if you need help.",
-        metadata: { action: "sms_ack", step },
+        replyHint: result.replyHint,
+        metadata: {
+          action: "sms_inbound",
+          step: result.step,
+          completed: result.completed,
+        },
       }
     }
 
@@ -86,7 +199,8 @@ export const moveInTemplate: WorkflowTemplate = {
       runId,
       metadata: { action: "noop" },
       shouldEscalate: ctx.trigger === "cron",
-      escalationReason: ctx.trigger === "cron" ? "cron_sweep" : undefined,
+      escalationReason: ctx.cron?.escalationReason ??
+        (ctx.trigger === "cron" ? "cron_sweep" : undefined),
     }
   },
 
@@ -96,15 +210,26 @@ export const moveInTemplate: WorkflowTemplate = {
     const out = await escalateLifecycleRunById(supabase, {
       landlordId: ctx.landlordId,
       runId,
-      reason: result.escalationReason ?? "stalled_move_in",
+      reason: result.escalationReason ?? ctx.cron?.escalationReason ??
+        "stalled_move_in",
+      escalationConfig: ctx.cron?.escalationConfig,
     })
     if (!out || out.action === "skipped") {
-      return { escalated: false, reason: out?.reason ?? "skipped" }
+      return {
+        escalated: false,
+        reason: out?.reason ?? "skipped",
+        metadata: { action: "skipped" },
+      }
     }
     return {
       escalated: out.action === "escalated",
       reason: out.reason,
-      metadata: { action: out.action, sms_sent: out.sms_sent },
+      metadata: {
+        action: out.action,
+        sms_sent: out.sms_sent,
+        admin_notified: out.admin_notified,
+        admin_notify_errors: out.admin_notify_errors,
+      },
     }
   },
 }

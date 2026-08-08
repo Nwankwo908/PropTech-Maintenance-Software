@@ -1,5 +1,8 @@
 import { useEffect, useId, type ReactNode } from 'react'
 import {
+  ADMIN_RAIL_FOOTER_CLASS,
+  ADMIN_RAIL_FOOTER_PRIMARY_BUTTON_CLASS,
+  ADMIN_RAIL_FOOTER_SECONDARY_BUTTON_CLASS,
   ADMIN_RIGHT_RAIL_OVERLAY_HOST,
   ADMIN_RIGHT_RAIL_SCRIM,
   adminRightRailPanelClass,
@@ -202,12 +205,12 @@ export function LeaseRenewalEscalatedRail({
         </div>
       </div>
 
-      <footer className="flex shrink-0 flex-col gap-2 border-t border-[#e5e7eb] px-6 py-4">
+      <footer className={ADMIN_RAIL_FOOTER_CLASS}>
         <button
           type="button"
           disabled={saving}
           onClick={onClose}
-          className="inline-flex min-h-[44px] w-full cursor-pointer items-center justify-center rounded-[10px] border border-[#e5e7eb] bg-white px-4 py-2.5 text-[13px] font-medium text-[#364153] outline-none transition-colors duration-150 hover:bg-[#f9fafb] focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2 disabled:opacity-50"
+          className={ADMIN_RAIL_FOOTER_SECONDARY_BUTTON_CLASS}
         >
           Close
         </button>
@@ -215,7 +218,7 @@ export function LeaseRenewalEscalatedRail({
           type="button"
           disabled={saving || !onAction}
           onClick={() => onAction?.('mark_resolved', review)}
-          className="inline-flex min-h-[44px] w-full cursor-pointer items-center justify-center gap-2 rounded-[10px] bg-[#0A4D38] px-4 py-2.5 text-[13px] font-medium text-white outline-none transition-colors duration-150 hover:bg-[#083d2d] active:bg-[#062e22] focus-visible:ring-2 focus-visible:ring-[#0A4D38] focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+          className={ADMIN_RAIL_FOOTER_PRIMARY_BUTTON_CLASS}
         >
           <CheckCircleIcon />
           {saving ? 'Working…' : 'Mark resolved'}

@@ -13,6 +13,7 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1"
 import { adminEdgeCorsHeaders } from "../_shared/admin_edge_cors.ts"
 import { requireAdminReassignAuth } from "../_shared/admin_edge_auth.ts"
 import { logGraphEvent } from "../_shared/graph/logGraphEvent.ts"
+import { recordLandlordStripeConnectReadyIfTransition } from "../_shared/paymentActivityEvents.ts"
 import {
   createConnectAccountLink,
   createExpressConnectAccount,
@@ -269,15 +270,10 @@ serve(async (req) => {
     }
 
     if (nowReady && !wasReady) {
-      await logGraphEvent(supabase, {
-        landlord_id: landlordId,
-        event_type: "landlord.stripe_connect_ready",
-        source: "dashboard",
-        actor_type: "landlord",
-        metadata: {
-          message: "Landlord rent payout account is ready.",
-          stripe_connect_account_id: accountId,
-        },
+      await recordLandlordStripeConnectReadyIfTransition(supabase, {
+        landlordId,
+        wasReady,
+        nowReady,
       })
     }
 

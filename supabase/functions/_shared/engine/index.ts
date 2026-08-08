@@ -68,6 +68,7 @@ export {
   markVendorOnboardingInviteDelivered,
   advanceVendorOnboardingInProgress,
   advanceVendorOnboardingOnSubmit,
+  advanceVendorOnboardingAdminApprove,
   recordVendorOnboardingReminder,
   readVendorOnboardingState,
   VENDOR_ONBOARDING_WAITING_STEPS,
@@ -101,23 +102,94 @@ export type { StartMaintenanceRequestWorkflowParams } from "./startMaintenanceRe
 export { runMaintenanceRequestViaEngine } from "./maintenanceRequestEngine.ts"
 export type { MaintenanceRequestEngineInput } from "./templates/maintenanceRequest.ts"
 export {
+  startWorkflow,
   startInspectionWorkflow,
   startMoveInWorkflow,
   startMoveOutWorkflow,
-} from "./startLifecycleWorkflows.ts"
+} from "./startWorkflow.ts"
 export type {
   InspectionType,
+  LifecycleTemplateId,
   LifecycleWorkflowStartResult,
   StartInspectionWorkflowParams,
   StartMoveInWorkflowParams,
   StartMoveOutWorkflowParams,
-} from "./startLifecycleWorkflows.ts"
+  StartWorkflowInitialAction,
+  StartWorkflowParams,
+} from "./startWorkflow.ts"
+export { ensureLifecycleWorkflowStartedLogged } from "./lifecycleStartLog.ts"
 export {
   escalateLifecycleRun,
   escalateLifecycleRunById,
   lifecycleActionDue,
 } from "./lifecycleEscalation.ts"
 export type { LifecycleEscalationResult } from "./lifecycleEscalation.ts"
+export {
+  runMoveInViaEngine,
+} from "./moveInEngine.ts"
+export type {
+  MoveInEngineAction,
+  MoveInEngineInput,
+} from "./moveInEngine.ts"
+export {
+  runMoveOutViaEngine,
+} from "./moveOutEngine.ts"
+export type {
+  MoveOutEngineAction,
+  MoveOutEngineInput,
+} from "./moveOutEngine.ts"
+export {
+  runInspectionViaEngine,
+} from "./inspectionEngine.ts"
+export type {
+  InspectionEngineAction,
+  InspectionEngineInput,
+} from "./inspectionEngine.ts"
+export {
+  executeMoveInOutreach,
+  executeMoveInRegisterOccupancy,
+  executeMoveInRegisterAndOutreach,
+  completeMoveInWorkflow,
+  processMoveInResidentReply,
+} from "./moveInProgress.ts"
+export {
+  initMoveInChecklist,
+  readMoveInChecklist,
+  buildMoveInChecklistSms,
+  parseMoveInResidentReply,
+} from "./moveInChecklist.ts"
+export {
+  executeMoveOutOutreach,
+  executeMoveOutMarkVacated,
+  executeMoveOutScheduleInspection,
+  completeMoveOutWorkflow,
+  processMoveOutResidentReply,
+  executeMoveOutAdminAction,
+  findActiveMoveOutRunForUnit,
+} from "./moveOutProgress.ts"
+export {
+  initMoveOutChecklist,
+  readMoveOutChecklist,
+  parseMoveOutResidentReply,
+  buildMoveOutDateConfirmPrompt,
+} from "./moveOutChecklist.ts"
+export {
+  executeInspectionOutreach,
+  ensureUnitInspectionRecord,
+  executeInspectionRegisterAndOutreach,
+  recordInspectionOutcome,
+  processInspectionResidentReply,
+  completeInspectionWorkflow,
+  executeInspectionAdminAction,
+  executeInspectionMissedWindow,
+} from "./inspectionProgress.ts"
+export {
+  initInspectionChecklist,
+  readInspectionChecklist,
+  parseInspectionResidentReply,
+  buildInspectionStartGuideSms,
+  normalizeInspectionOutcome,
+} from "./inspectionChecklist.ts"
 export {
   completeLifecycleWorkflow,
   executeLifecycleInitialAct,
@@ -151,6 +223,10 @@ export {
   resolveWorkflowNextAction,
 } from "./invokeWorkflow.ts"
 export { getWorkflowTemplate, listWorkflowTemplates } from "./registry.ts"
+export { vendorOnboardingTemplate } from "./vendorOnboarding.ts"
+export { moveInTemplate } from "./moveIn.ts"
+export { moveOutTemplate } from "./moveOut.ts"
+export { inspectionTemplate } from "./inspection.ts"
 export {
   fetchActiveWorkflowTemplate,
   fetchLifecycleWorkflowTemplates,

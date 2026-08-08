@@ -1,4 +1,4 @@
-import { BrowserRouter, Routes, Route } from 'react-router-dom'
+import { BrowserRouter, Navigate, Routes, Route } from 'react-router-dom'
 import { useSessionAutoRefresh } from './hooks/useSessionAutoRefresh'
 import { supabase } from './lib/supabase'
 import { ReferralLandingRedirect } from './components/ReferralLandingRedirect'
@@ -17,7 +17,6 @@ import { AdminPropertyDetailDashboard } from './components/AdminPropertyDetailDa
 import { AdminPropertyResidentDetailDashboard } from './components/AdminPropertyResidentDetailDashboard'
 import { AdminRequestManagementDashboard } from './components/AdminRequestManagementDashboard'
 import { AdminWorkflowOperationsDashboard } from './components/AdminWorkflowOperationsDashboard'
-import { AdminNotificationManagementDashboard } from './components/AdminNotificationManagementDashboard'
 import { AdminCommunicationDashboard } from './components/AdminCommunicationDashboard'
 import { AdminVendorsDashboard } from './components/AdminVendorsDashboard'
 import { AdminVendorDetailDashboard } from './components/AdminVendorDetailDashboard'
@@ -45,7 +44,8 @@ export default function App() {
         <Route path="/" element={<LandingPage />} />
         <Route path="/demo" element={<DemoPageRedirect />} />
         <Route path="/terms" element={<TermsOfServicePage />} />
-        <Route path="/privatepolicy" element={<PrivacyPolicyPage />} />
+        <Route path="/privacy" element={<PrivacyPolicyPage />} />
+        <Route path="/privatepolicy" element={<Navigate to="/privacy" replace />} />
         <Route path="/request" element={<ResidentPortal />} />
         <Route path="/v/:token" element={<VendorIntakePortal />} />
         <Route path="/w/:token" element={<WorkOrderPublicPage />} />
@@ -90,10 +90,6 @@ export default function App() {
             <Route path="residents" element={<AdminResidentsDashboard />} />
             <Route path="analytics" element={<AdminAnalyticsDashboard />} />
             <Route path="settings/*" element={<AdminSettingsDashboard />} />
-            <Route
-              path="notifications"
-              element={<AdminNotificationManagementDashboard />}
-            />
           </Route>
         </Route>
       </Routes>

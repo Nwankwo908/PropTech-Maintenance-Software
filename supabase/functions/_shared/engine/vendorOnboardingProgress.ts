@@ -276,6 +276,57 @@ export async function advanceVendorOnboardingOnSubmit(
   })
 }
 
+/** Admin approved a needs_review vendor — complete the onboarding run. */
+export async function advanceVendorOnboardingAdminApprove(
+  supabase: SupabaseClient,
+  params: {
+    runId: string
+    verificationId: string
+    vendorId: string | null
+    vendorLabel: string
+  },
+): Promise<void> {
+  const run = await getWorkflowRunById(supabase, params.runId)
+  if (!run) return
+
+  const nowIso = new Date().toISOString()
+
+  await logPipelineStageEvent(supabase, {
+    runId: params.runId,
+    stage: "act",
+    step: "verify_and_roster",
+    actorType: "landlord",
+    message: `${params.vendorLabel} was approved and added to the active roster.`,
+    metadata: {
+      verification_id: params.verificationId,
+      approved_by_admin: true,
+    },
+  })
+
+  await logPipelineStageEvent(supabase, {
+    runId: params.runId,
+    stage: "log",
+    step: "append_graph_events",
+    message: `${params.vendorLabel} verified and added to the roster.`,
+    metadata: { verification_id: params.verificationId },
+  })
+
+  await updateWorkflowRun(supabase, params.runId, {
+    status: "completed",
+    currentStep: "verified",
+    completedAt: nowIso,
+    metadata: {
+      verification_id: params.verificationId,
+      vendor_id: params.vendorId,
+      step_state: mergeStepState(run, {
+        step: "verified",
+        verification_id: params.verificationId,
+        vendor_id: params.vendorId,
+      }),
+    },
+  })
+}
+
 export async function recordVendorOnboardingReminder(
   supabase: SupabaseClient,
   params: {

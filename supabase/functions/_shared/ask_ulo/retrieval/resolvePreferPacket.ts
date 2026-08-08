@@ -91,6 +91,7 @@ export type PreferPacketBag = {
     found?: boolean
     available?: boolean
     markdown?: string | null
+    recommendationMarkdown?: string | null
   } | null
   deepOpsInvestigation?: {
     found?: boolean
@@ -294,6 +295,11 @@ export function resolvePreferPacket(bag: PreferPacketBag): PreferPacketResult {
 
   const recurringMd = availableMarkdown(bag.recurringRepairs)
   if (recurringMd) return hit("recurring_repairs", recurringMd)
+
+  const recommendationMd = bag.propertyInsights?.recommendationMarkdown?.trim()
+  if (bag.reasoningMode === "recommendation" && recommendationMd) {
+    return hit("portfolio_recommendations", recommendationMd)
+  }
 
   if (
     !isMarketQuestion(bag) &&

@@ -24,12 +24,12 @@ import type { OnboardingVendor } from './persist/vendors'
 import type { AccountSetupCounts, LandlordOnboardingState } from './types'
 import { normalizeVendorTrade } from '@/lib/vendorTrades'
 
-/** Landlord Connect ready for rent payouts (shared readiness rule). */
+/** Landlord Connect ready for rent payouts (onboarding + Checkout gate). */
 export async function isLandlordStripePayoutsReady(
   landlordId: string = getActiveLandlordId(),
 ): Promise<boolean> {
-  const { isLandlordStripeConnectReady } = await import('@/lib/stripeConnectReady')
-  return isLandlordStripeConnectReady(landlordId)
+  const { canLandlordReceivePayments } = await import('@/lib/paymentReadiness')
+  return canLandlordReceivePayments(landlordId)
 }
 
 export function canCompleteOnboarding(

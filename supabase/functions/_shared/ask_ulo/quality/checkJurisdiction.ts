@@ -9,6 +9,7 @@
  */
 
 import type { PortfolioJurisdiction } from "../tools/properties/portfolioContext.ts"
+import type { PropertyPlace } from "../tools/properties/propertyRecords.ts"
 import {
   classifyLegalSourceTrust,
   isOfficialLegalSourceUrl as isOfficialUrlFromTrust,
@@ -53,17 +54,6 @@ type PlaceMeta = {
   city: string
   state: string
   county: string
-}
-
-const DEMO_BUILDING_META: Record<string, PlaceMeta> = {
-  "Oakwood Apartments": { city: "Portland", state: "OR", county: "Multnomah" },
-  "Pine Ridge": { city: "Portland", state: "OR", county: "Multnomah" },
-  "Cedar Court": { city: "Beaverton", state: "OR", county: "Washington" },
-  "Maple Heights": { city: "Hillsboro", state: "OR", county: "Washington" },
-  "Birch Tower": { city: "Portland", state: "OR", county: "Multnomah" },
-  "Willow Park": { city: "Gresham", state: "OR", county: "Multnomah" },
-  // Used when a portfolio sample spans states (tests + multi-market landlords).
-  "Seattle Tower": { city: "Seattle", state: "WA", county: "King" },
 }
 
 const STATE_NAMES: Record<string, string> = {
@@ -177,12 +167,34 @@ export function codeSetForQuestion(
   return "Local property maintenance code (IPMC-aligned)"
 }
 
-function matchBuildingName(corpus: string): string | null {
+function matchBuildingName(corpus: string, buildingNames: readonly string[]): string | null {
   const q = corpus.toLowerCase()
-  for (const name of Object.keys(DEMO_BUILDING_META)) {
+  for (const name of buildingNames) {
     if (q.includes(name.toLowerCase())) return name
   }
   return null
+}
+
+function placeByName(
+  places: readonly PropertyPlace[],
+): Map<string, PropertyPlace> {
+  const map = new Map<string, PropertyPlace>()
+  for (const place of places) {
+    map.set(place.name.toLowerCase(), place)
+  }
+  return map
+}
+
+function buildingNamesFrom(
+  portfolio: PortfolioJurisdiction,
+  propertyPlaces: readonly PropertyPlace[],
+): string[] {
+  return [
+    ...new Set([
+      ...portfolio.sampleBuildings,
+      ...propertyPlaces.map((p) => p.name),
+    ]),
+  ]
 }
 
 function extractExplicitJurisdiction(text: string): {
@@ -326,10 +338,14 @@ export function resolveLegalJurisdiction(input: {
   priorUserTurns?: string[]
   portfolio: PortfolioJurisdiction
   buildingHint?: string | null
+  propertyPlaces?: readonly PropertyPlace[]
 }): LegalJurisdictionResolution {
   const question = input.question.trim()
   const prior = (input.priorUserTurns ?? []).slice(-3)
   const corpusLatest = [question, ...prior].join("\n")
+  const propertyPlaces = input.propertyPlaces ?? []
+  const placesByName = placeByName(propertyPlaces)
+  const buildingNames = buildingNamesFrom(input.portfolio, propertyPlaces)
 
   // 1) Explicit state/city/county in the latest question (strongest).
   const explicitQ = extractExplicitJurisdiction(question)
@@ -341,7 +357,7 @@ export function resolveLegalJurisdiction(input: {
         countyLabel: explicitQ.countyLabel,
         citySlug: explicitQ.citySlug,
         cityLabel: explicitQ.cityLabel,
-        buildingName: matchBuildingName(question),
+        buildingName: matchBuildingName(question, buildingNames),
         confidence: explicitQ.cityLabel || explicitQ.countyLabel ? "high" : "medium",
         needsClarification: false,
         clarificationPrompt: null,
@@ -353,18 +369,19 @@ export function resolveLegalJurisdiction(input: {
 
   // 2) Named property in question or building hint.
   const building =
-    matchBuildingName(question) ||
-    (input.buildingHint ? matchBuildingName(input.buildingHint) : null) ||
-    matchBuildingName(corpusLatest)
-  if (building && DEMO_BUILDING_META[building]) {
-    const meta = DEMO_BUILDING_META[building]
+    matchBuildingName(question, buildingNames) ||
+    (input.buildingHint ? matchBuildingName(input.buildingHint, buildingNames) : null) ||
+    matchBuildingName(corpusLatest, buildingNames)
+  const place = building ? placesByName.get(building.toLowerCase()) : null
+  if (building && place?.state) {
+    const county = countyFromCity(place.city, place.state)
     return withPlaceExtras(
       {
-        stateCode: meta.state,
-        countySlug: slugify(meta.county),
-        countyLabel: meta.county,
-        citySlug: slugifyCity(meta.city),
-        cityLabel: meta.city,
+        stateCode: place.state,
+        countySlug: county?.countySlug ?? null,
+        countyLabel: county?.countyLabel ?? null,
+        citySlug: slugifyCity(place.city),
+        cityLabel: place.city,
         buildingName: building,
         confidence: "high",
         needsClarification: false,
@@ -386,7 +403,7 @@ export function resolveLegalJurisdiction(input: {
           countyLabel: ex.countyLabel,
           citySlug: ex.citySlug,
           cityLabel: ex.cityLabel,
-          buildingName: matchBuildingName(corpusLatest),
+          buildingName: matchBuildingName(corpusLatest, buildingNames),
           confidence: "medium",
           needsClarification: false,
           clarificationPrompt: null,
@@ -400,9 +417,8 @@ export function resolveLegalJurisdiction(input: {
   // 4) Portfolio only when unambiguous single-state footprint.
   const portfolio = input.portfolio
   const sampleStates = new Set<string>()
-  for (const b of portfolio.sampleBuildings) {
-    const meta = DEMO_BUILDING_META[b]
-    if (meta) sampleStates.add(meta.state)
+  for (const placeRow of propertyPlaces) {
+    if (placeRow.state) sampleStates.add(placeRow.state)
   }
   if (portfolio.stateCode) sampleStates.add(portfolio.stateCode)
 
@@ -711,25 +727,13 @@ export function checkAnswerJurisdiction(input: {
     }
   }
 
-  // Buildings outside this landlord’s portfolio
-  if (portfolio.length > 0) {
-    const knownOutside = Object.keys(DEMO_BUILDING_META).filter(
-      (b) => !portfolio.some((p) => p.toLowerCase() === b.toLowerCase()),
-    )
-    for (const b of knownOutside) {
-      if (new RegExp(`\\b${escapeRegExp(b)}\\b`, "i").test(answer)) {
-        reasons.push(`out_of_portfolio_building:${b}`)
-        break
-      }
-    }
-  }
+  // Scoped building vs other portfolio buildings is handled above (wrong_property).
 
   const failClosed =
     reasons.includes("leaked_landlord_identifier") ||
     reasons.includes("foreign_uuid_in_answer") ||
     reasons.some((r) => r.startsWith("wrong_state_mentioned:")) ||
-    reasons.some((r) => r.startsWith("wrong_property:")) ||
-    reasons.some((r) => r.startsWith("out_of_portfolio_building:"))
+    reasons.some((r) => r.startsWith("wrong_property:"))
 
   const needsClarify =
     input.intent === "legal" && !input.stateCode && /\b(must|required|illegal|notice)\b/i.test(answer)

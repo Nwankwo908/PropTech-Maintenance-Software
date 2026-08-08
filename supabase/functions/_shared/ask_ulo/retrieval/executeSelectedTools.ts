@@ -134,8 +134,11 @@ import {
   insertAskUloEval,
   extractAskUloFailureTags,
 } from "../audit/buildAuditRecord.ts"
-import { DEMO_GEO } from "../core/config.ts"
 import { buildAskUloTurnContext } from "../core/context.ts"
+import {
+  loadLandlordPropertyRecords,
+  propertyPlacesFromRecords,
+} from "../tools/properties/propertyRecords.ts"
 import type {
   AskUloHistoryMessage,
   AskUloLegalAudit,
@@ -179,6 +182,8 @@ export async function executeSelectedTools(
   } = safety
   const plan = route.legacyToolPlan
   const buildingFilter = propertyScope.buildingFilter
+  const propertyRecords = await loadLandlordPropertyRecords(supabase, landlordId)
+  const propertyPlaces = propertyPlacesFromRecords(propertyRecords)
 
   const toolsUsed: string[] = [
     `intent:${intentResult.intent}`,
@@ -251,6 +256,7 @@ export async function executeSelectedTools(
       priorUserTurns,
       portfolio: portfolioJurisdiction,
       buildingHint: buildingFilter,
+      propertyPlaces,
     })
     toolsUsed.push(`legal_jurisdiction:${legalResolution.source}`)
     if (legalResolution.stateCode) {
@@ -915,6 +921,7 @@ export async function executeSelectedTools(
       priorUserTurns,
       portfolio: portfolioJurisdiction,
       buildingHint: buildingFilter ?? property.buildingName,
+      propertyPlaces,
     })
     effectiveJurisdiction = {
       countryCode: refreshed.countryCode,

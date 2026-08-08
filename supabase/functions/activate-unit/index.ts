@@ -3,6 +3,7 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1"
 import { adminEdgeCorsHeaders } from "../_shared/admin_edge_cors.ts"
 import { requireAdminReassignAuth } from "../_shared/admin_edge_auth.ts"
 import { activateUnit } from "../_shared/unitVacancy.ts"
+import { startMoveInWorkflow } from "../_shared/engine/startWorkflow.ts"
 
 const corsHeaders = adminEdgeCorsHeaders
 
@@ -26,7 +27,6 @@ serve(async (req) => {
   }
   const adminAuth = requireAdminReassignAuth(req, "[activate-unit]", corsHeaders)
   if (!adminAuth.ok) return adminAuth.response
-
 
   let body: {
     landlordId?: string
@@ -56,20 +56,74 @@ serve(async (req) => {
   }
 
   const supabase = createClient(supabaseUrl, serviceKey)
+  const skip = body.skipTenantRegistration === true
 
   try {
-    const result = await activateUnit(supabase, {
-      landlordId: body.landlordId,
+    if (skip) {
+      const result = await activateUnit(supabase, {
+        landlordId: body.landlordId,
+        unitId,
+        skipTenantRegistration: true,
+        residentId: body.residentId,
+      })
+      return jsonResponse({ ok: true, ...result })
+    }
+
+    const landlordId = typeof body.landlordId === "string" ? body.landlordId.trim() : ""
+    if (!landlordId || !uuidRe.test(landlordId)) {
+      return jsonResponse({ error: "Missing or invalid landlordId" }, 400)
+    }
+
+    const residentId = typeof body.residentId === "string" ? body.residentId.trim() : null
+    const moveInDate = typeof body.moveInDate === "string" ? body.moveInDate.trim() : null
+
+    const started = await startMoveInWorkflow(supabase, {
+      landlordId,
       unitId,
-      skipTenantRegistration: body.skipTenantRegistration === true,
-      tenantName: body.tenantName,
-      tenantPhone: body.tenantPhone,
-      tenantEmail: body.tenantEmail,
-      moveInDate: body.moveInDate,
-      residentId: body.residentId,
+      residentId,
+      moveInDate,
+      triggerType: "dashboard",
+      classification: "new_occupancy",
+      reuseActiveRun: true,
+      initialAction: {
+        moveIn: {
+          action: "register_and_outreach",
+          register: {
+            tenantName: body.tenantName,
+            tenantPhone: body.tenantPhone,
+            tenantEmail: body.tenantEmail,
+            moveInDate,
+            residentId,
+          },
+        },
+      },
     })
 
-    return jsonResponse({ ok: true, ...result })
+    const meta = started.engineResult?.metadata ?? {}
+    if (meta.error || meta.ok === false) {
+      return jsonResponse(
+        { error: typeof meta.error === "string" ? meta.error : "Move-in activation failed" },
+        400,
+      )
+    }
+
+    const { data: runRow } = await supabase
+      .from("workflow_runs")
+      .select("metadata, resident_id")
+      .eq("id", started.workflow_run_id)
+      .maybeSingle()
+
+    const runMeta = (runRow?.metadata ?? {}) as Record<string, unknown>
+    return jsonResponse({
+      ok: true,
+      unitId,
+      residentId: (runRow?.resident_id as string | null) ??
+        (typeof meta.residentId === "string" ? meta.residentId : null) ??
+        (typeof runMeta.resident_id === "string" ? runMeta.resident_id : null),
+      occupancyId: typeof runMeta.occupancy_id === "string" ? runMeta.occupancy_id : null,
+      skippedTenantRegistration: false,
+      workflowRunId: started.workflow_run_id,
+    })
   } catch (err) {
     console.error("[activate-unit]", err)
     const message = err instanceof Error ? err.message : String(err)

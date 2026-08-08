@@ -1,8 +1,12 @@
 /**
  * Shared Stripe Connect readiness — same rule as Edge `_shared/stripeConnect.ts`.
  *
- * Rent (tenant → landlord) and invoice (landlord → vendor) stay separate flows.
- * Both ask "is this Connect account ready?" through these helpers.
+ * Prefer `@/lib/paymentReadiness` (`canReceivePayments`) for the product-facing
+ * "ready to get paid?" question. Use `@/lib/paymentSettlement` for whether a
+ * specific rent run or invoice was paid.
+ *
+ * Connect readiness transitions (NOT READY → READY) are logged by callers via
+ * paymentActivityMessages.ts — not by these helpers.
  */
 import { getActiveLandlordId } from '@/lib/activeLandlord'
 import { supabase } from '@/lib/supabase'

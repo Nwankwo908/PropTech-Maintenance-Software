@@ -2,22 +2,9 @@ import { serve } from "https://deno.land/std/http/server.ts"
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1"
 import { adminEdgeCorsHeaders } from "../_shared/admin_edge_cors.ts"
 import { requireAdminReassignAuth } from "../_shared/admin_edge_auth.ts"
-import {
-  resolveLandlordId,
-  resolveOutboundLandlordSmsLine,
-} from "../_shared/sms/landlordSmsOnboarding.ts"
-import {
-  findOrCreateConversation,
-  upsertSmsIdentityForPhone,
-} from "../_shared/sms/inbound_db.ts"
-import { sendInboundAutoReply } from "../_shared/sms/inboundReply.ts"
-import { sendResendEmail } from "../_shared/delivery.ts"
-import { logGraphEvent } from "../_shared/graph/logGraphEvent.ts"
-import { startVendorOnboardingRun } from "../_shared/engine/vendorOnboardingProgress.ts"
+import { resolveLandlordId } from "../_shared/sms/landlordSmsOnboarding.ts"
 import { runVendorOnboardingViaEngine } from "../_shared/engine/vendorOnboardingEngine.ts"
 import { findLandlordVendorByContact } from "../_shared/vendor_verification/findVendor.ts"
-import { uloAppUrl } from "../_shared/uloAppUrl.ts"
-import type { SmsProviderName } from "../_shared/sms/types.ts"
 
 const corsHeaders = adminEdgeCorsHeaders
 
@@ -26,96 +13,6 @@ function jsonResponse(body: unknown, status = 200): Response {
     status,
     headers: { ...corsHeaders, "Content-Type": "application/json" },
   })
-}
-
-function generateToken(): string {
-  return `vv_${crypto.randomUUID().replace(/-/g, "")}${
-    crypto.randomUUID().replace(/-/g, "").slice(0, 12)
-  }`
-}
-
-function inviteSmsCopy(input: {
-  vendorName: string | null
-  companyName: string | null
-  link: string
-}): string {
-  const greeting = input.vendorName ? `Hi ${input.vendorName},` : "Hi,"
-  const team = input.companyName
-    ? `This is the property management team at ${input.companyName}.`
-    : "This is the property management team."
-  return [
-    greeting,
-    "",
-    team,
-    "",
-    "We'd like to invite you to join our preferred vendor network on Ulo. " +
-    "Complete a quick verification (about 5 minutes) so we can begin sending you work orders.",
-    "",
-    input.link,
-  ].join("\n")
-}
-
-function inviteEmail(input: {
-  vendorName: string | null
-  companyName: string | null
-  link: string
-}): { subject: string; text: string; html: string } {
-  const vendor = input.vendorName || "there"
-  const company = input.companyName || "Our property management team"
-  const subject = "You're invited to join our vendor network"
-  const steps = [
-    "Verifying your professional license",
-    "Uploading your insurance certificate",
-    "Completing a background check",
-    "Providing a W-9",
-    "Setting up your payout account",
-    "Confirming the services you offer and the areas you serve",
-  ]
-  const text = [
-    `Hi ${vendor},`,
-    "",
-    `${company} would like to add you to our preferred vendor network on Ulo.`,
-    "",
-    "Complete a quick verification to become eligible to receive work orders from our team.",
-    "",
-    "The process takes about 5 minutes and includes:",
-    ...steps.map((step) => `• ${step}`),
-    "",
-    "Once everything is verified, you'll be eligible to receive work orders through Ulo.",
-    "",
-    `Start verification: ${input.link}`,
-    "",
-    "If the button doesn't work, copy and paste this link into your browser:",
-    input.link,
-    "",
-    "Thank you,",
-    company,
-  ].join("\n")
-
-  const stepsHtml = steps
-    .map(
-      (step) =>
-        `<li style="margin:4px 0">${step}</li>`,
-    )
-    .join("")
-
-  const html = `
-    <div style="font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;color:#0a0a0a;line-height:1.6;max-width:520px;margin:0 auto">
-      <p>Hi ${vendor},</p>
-      <p><strong>${company}</strong> would like to add you to our preferred vendor network on Ulo.</p>
-      <p>Complete a quick verification to become eligible to receive work orders from our team.</p>
-      <p style="margin-bottom:6px">The process takes about <strong>5 minutes</strong> and includes:</p>
-      <ul style="margin:0 0 8px 20px;padding:0">${stepsHtml}</ul>
-      <p>Once everything is verified, you'll be eligible to receive work orders through Ulo.</p>
-      <p style="margin:24px 0">
-        <a href="${input.link}" style="background:#186179;color:#fff;text-decoration:none;padding:12px 20px;border-radius:8px;font-weight:600;display:inline-block">Start Verification</a>
-      </p>
-      <p style="color:#6a7282;font-size:13px">If the button doesn't work, copy and paste this link into your browser:<br/>${input.link}</p>
-      <p>Thank you,<br/>${company}</p>
-    </div>
-  `.trim()
-
-  return { subject, text, html }
 }
 
 serve(async (req) => {
@@ -128,7 +25,6 @@ serve(async (req) => {
   }
   const adminAuth = requireAdminReassignAuth(req, "[send-vendor-invite]", corsHeaders)
   if (!adminAuth.ok) return adminAuth.response
-
 
   let body: {
     landlordId?: string
@@ -206,18 +102,12 @@ serve(async (req) => {
     auth: { persistSession: false, autoRefreshToken: false },
   })
 
-  // Link to an existing roster vendor when possible, but always mint a fresh
-  // unique verification token/link for this invite.
   const vendorId = await findLandlordVendorByContact(supabase, landlordId, {
     vendorId: requestedVendorId,
     email: email || null,
     phone: phone || null,
   })
 
-  const vendorLabel = businessName || contactName || "vendor"
-
-  // Prefer the vendor's business name for the greeting; resolve the property
-  // management company name so copy reads as a person, not a system.
   const vendorName = businessName || vendorFirstName || contactName || null
   let companyName: string | null = null
   {
@@ -230,195 +120,48 @@ serve(async (req) => {
     companyName = name || null
   }
 
-  // Start vendor_onboarding via the shared workflow engine.
-  const run = await startVendorOnboardingRun(supabase, {
+  const engineResult = await runVendorOnboardingViaEngine(supabase, {
     landlordId,
-    vendorId,
-    triggerType: "dashboard",
-    channel,
-    businessName: businessName || null,
-    contactName: contactName || null,
-  })
-  const workflowRunId = run?.id ?? null
-
-  const token = generateToken()
-  const link = uloAppUrl.vendorVerification(token)
-
-  const { data: inserted, error: insertErr } = await supabase
-    .from("vendor_verifications")
-    .insert({
-      landlord_id: landlordId,
-      vendor_id: vendorId,
-      token,
-      status: "invited",
-      business_name: businessName || null,
-      contact_name: contactName || null,
-      vendor_first_name: vendorFirstName || null,
-      email: email || null,
-      phone: phone || null,
-      property_name: propertyName || null,
-      trade_categories: tradeCategories,
-      invited_channel: channel,
-      workflow_run_id: workflowRunId,
-    })
-    .select("id")
-    .single()
-
-  if (insertErr || !inserted?.id) {
-    console.error("[send-vendor-invite] insert failed", insertErr)
-    return jsonResponse({ error: "Could not create invite" }, 500)
-  }
-
-  const verificationId = inserted.id as string
-
-  const delivery: {
-    sms: "sent" | "skipped" | "failed" | null
-    email: "sent" | "skipped" | "failed" | null
-    smsError?: string
-    emailError?: string
-  } = { sms: null, email: null }
-
-  let inviteConversationId: string | null = null
-  let inviteMessageId: string | null = null
-
-  // Email
-  if ((channel === "email" || channel === "both") && email) {
-    const { subject, text, html } = inviteEmail({
-      vendorName,
-      companyName,
-      link,
-    })
-    const res = await sendResendEmail(email, subject, text, html)
-    if ("error" in res) {
-      delivery.email = "failed"
-      delivery.emailError = res.error
-      console.error("[send-vendor-invite] email failed", res.error)
-    } else {
-      delivery.email = "sent"
-    }
-  } else if (channel === "email" && !email) {
-    delivery.email = "skipped"
-  }
-
-  // SMS (routed through the landlord's shared line + conversation thread)
-  if ((channel === "sms" || channel === "both") && phone) {
-    try {
-      const line = await resolveOutboundLandlordSmsLine(supabase, landlordId)
-      if (!line) {
-        delivery.sms = "skipped"
-        delivery.smsError = "no_active_landlord_sms_line"
-      } else {
-        const provider: SmsProviderName = line.provider === "telnyx"
-          ? "telnyx"
-          : "twilio"
-        const identity = await upsertSmsIdentityForPhone(supabase, {
-          landlordId,
-          phone,
-          identityType: "vendor",
-          vendorId,
-        })
-        if (!identity) {
-          delivery.sms = "failed"
-          delivery.smsError = "invalid_phone"
-        } else {
-          const { conversationId } = await findOrCreateConversation(supabase, {
-            landlordId,
-            smsNumberId: line.id,
-            externalPhone: phone,
-            identity,
-            conversationStatus: "open",
-          })
-          inviteConversationId = conversationId
-          const sent = await sendInboundAutoReply(supabase, {
-            conversationId,
-            landlordId,
-            fromNumber: line.phone,
-            toNumber: phone,
-            body: inviteSmsCopy({
-              vendorName,
-              companyName,
-              link,
-            }),
-            provider,
-            source: "vendor_invite",
-          })
-          delivery.sms = sent.ok ? "sent" : "failed"
-          if (sent.messageId) inviteMessageId = sent.messageId
-          if (!sent.ok) delivery.smsError = sent.error
-        }
-      }
-    } catch (err) {
-      delivery.sms = "failed"
-      delivery.smsError = err instanceof Error ? err.message : String(err)
-      console.error("[send-vendor-invite] sms failed", err)
-    }
-  } else if (channel === "sms" && !phone) {
-    delivery.sms = "skipped"
-  }
-
-  const anyDelivered = delivery.sms === "sent" || delivery.email === "sent"
-
-  const deliveredVia = [
-    delivery.sms === "sent" ? "SMS" : null,
-    delivery.email === "sent" ? "email" : null,
-  ].filter(Boolean).join(" + ")
-
-  if (inviteConversationId) {
-    // Best-effort: column added in 20260717180000. Ignore if not migrated yet.
-    const { error: linkErr } = await supabase
-      .from("vendor_verifications")
-      .update({ invite_conversation_id: inviteConversationId })
-      .eq("id", verificationId)
-    if (linkErr) {
-      console.warn(
-        "[send-vendor-invite] invite_conversation_id not saved",
-        linkErr.message,
-      )
-    }
-  }
-
-  await logGraphEvent(supabase, {
-    landlord_id: landlordId,
-    event_type: "vendor.invited",
-    source: "dashboard",
-    actor_type: "landlord",
-    vendor_id: vendorId,
-    conversation_id: inviteConversationId,
-    message_id: inviteMessageId,
-    workflow_run_id: workflowRunId,
-    workflow_template_id: workflowRunId ? "vendor_onboarding" : null,
-    metadata: {
-      message: `Verification invite sent to ${vendorLabel}${
-        deliveredVia ? ` via ${deliveredVia}` : ""
-      }.`,
-      verification_id: verificationId,
-      business_name: businessName || null,
-      contact_name: contactName || null,
+    trigger: "dashboard",
+    vendorOnboarding: {
+      action: "start_invite",
+      vendorId,
       channel,
-      delivery,
-      workflow_run_id: workflowRunId,
+      businessName: businessName || null,
+      contactName: contactName || null,
+      inviteRequest: {
+        vendorId,
+        businessName: businessName || null,
+        contactName: contactName || null,
+        vendorFirstName: vendorFirstName || null,
+        email: email || null,
+        phone: phone || null,
+        propertyName: propertyName || null,
+        channel,
+        tradeCategories,
+        vendorName,
+        companyName,
+      },
     },
   })
 
-  // Engine-owned pipeline stages: route → act (deliver) → log.
-  if (workflowRunId) {
-    await runVendorOnboardingViaEngine(supabase, {
-      landlordId,
-      runId: workflowRunId,
-      trigger: "dashboard",
-      vendorOnboarding: {
-        action: "invite_delivered",
-        inviteDelivered: {
-          verificationId,
-          vendorLabel,
-          channel,
-          delivery,
-          anyDelivered,
-          deliveredVia,
-          conversationId: inviteConversationId,
-        },
-      },
-    })
+  const meta = engineResult?.metadata ?? {}
+  const workflowRunId = (typeof meta.workflowRunId === "string"
+    ? meta.workflowRunId
+    : engineResult?.runId) ?? null
+  const verificationId = typeof meta.verificationId === "string"
+    ? meta.verificationId
+    : null
+  const token = typeof meta.token === "string" ? meta.token : null
+  const link = typeof meta.link === "string" ? meta.link : null
+  const delivery = meta.delivery ?? null
+  const anyDelivered = meta.anyDelivered === true
+
+  if (meta.error === "invite_delivery_failed" || !verificationId) {
+    return jsonResponse(
+      { error: "Could not create invite", workflowRunId },
+      500,
+    )
   }
 
   return jsonResponse({

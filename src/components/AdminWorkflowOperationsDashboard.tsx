@@ -17,34 +17,49 @@ import {
 import {
   WORKFLOW_CATEGORY_BADGE,
   WORKFLOW_KANBAN_STAGES,
-  WORKFLOW_PIPELINE_MAINTENANCE_FILTER_HELPER,
   WORKFLOW_PIPELINE_PAGE_SUBTITLE,
-  WORKFLOW_PIPELINE_SECTION_HELPER,
   buildWorkflowKanbanCard,
   collectAdminWorkflowRuns,
   type WorkflowKanbanCard,
-  type WorkflowKanbanCategory,
   type WorkflowKanbanStageId,
 } from '@/lib/adminWorkflowKanban'
 import { fetchWorkflowPipelineDetail, type WorkflowPipelineDetail } from '@/lib/workflowPipelineDetail'
 import { WorkflowPipelineDetailPanel } from '@/components/WorkflowPipelineDetailPanel'
+import { AdminFilterToolbar } from '@/components/AdminFilterToolbar'
 import { supabase } from '@/lib/supabase'
 import { getErrorMessage } from '@/lib/errorMessage'
 
 type StageId = WorkflowKanbanStageId
 const STAGE_ORDER = WORKFLOW_KANBAN_STAGES
-type Category = WorkflowKanbanCategory
 const CATEGORY_BADGE = WORKFLOW_CATEGORY_BADGE
 type KanbanCard = WorkflowKanbanCard
 
-type PillId = 'all' | 'maintenance' | 'lease' | 'payment'
+type WorkflowFilterKey = 'maintenance' | 'lease' | 'payment' | 'critical'
 
-const FILTER_PILLS: { id: PillId; label: string }[] = [
-  { id: 'all', label: 'All' },
+const WORKFLOW_FILTER_OPTIONS: { id: WorkflowFilterKey; label: string }[] = [
   { id: 'maintenance', label: 'Maintenance' },
   { id: 'lease', label: 'Lease' },
   { id: 'payment', label: 'Payment' },
+  { id: 'critical', label: 'Critical' },
 ]
+
+const CATEGORY_FILTER_KEYS = new Set<WorkflowFilterKey>(['maintenance', 'lease', 'payment'])
+
+function cardMatchesWorkflowFilters(card: KanbanCard, filters: Set<WorkflowFilterKey>): boolean {
+  if (filters.size === 0) return true
+
+  const categoryFilters = WORKFLOW_FILTER_OPTIONS.filter(
+    (option) => CATEGORY_FILTER_KEYS.has(option.id) && filters.has(option.id),
+  ).map((option) => option.id as 'maintenance' | 'lease' | 'payment')
+
+  const wantsCritical = filters.has('critical')
+  const categoryOk =
+    categoryFilters.length === 0 ||
+    categoryFilters.includes(card.category as 'maintenance' | 'lease' | 'payment')
+  const criticalOk = !wantsCritical || card.critical
+
+  return categoryOk && criticalOk
+}
 
 function StartLifecycleWorkflowModal({
   open,
@@ -413,7 +428,7 @@ export function AdminWorkflowOperationsDashboard() {
   const [data, setData] = useState<AdminWorkflowDashboardData | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
-  const [categoryFilter, setCategoryFilter] = useState<PillId>('all')
+  const [activeFilters, setActiveFilters] = useState<Set<WorkflowFilterKey>>(() => new Set())
   const [highlightRunId, setHighlightRunId] = useState<string | null>(null)
 
   const [chooserOpen, setChooserOpen] = useState(false)
@@ -432,10 +447,8 @@ export function AdminWorkflowOperationsDashboard() {
     const all = allRuns
       .filter((row) => row.status !== 'cancelled')
       .map((row) => buildWorkflowKanbanCard(row, runMetadata[row.id]))
-    if (categoryFilter === 'all') return all
-    const target: Category = categoryFilter === 'payment' ? 'payment' : categoryFilter
-    return all.filter((card) => card.category === target)
-  }, [allRuns, categoryFilter, data?.runMetadata])
+    return all.filter((card) => cardMatchesWorkflowFilters(card, activeFilters))
+  }, [allRuns, activeFilters, data?.runMetadata])
 
   const columns = useMemo(() => {
     const byStage = new Map<StageId, KanbanCard[]>()
@@ -446,11 +459,6 @@ export function AdminWorkflowOperationsDashboard() {
       cards: byStage.get(stage.id) ?? [],
     }))
   }, [cards])
-
-  const activeCount = useMemo(
-    () => cards.filter((card) => card.stage !== 'completed').length,
-    [cards],
-  )
 
   const load = useCallback(async () => {
     if (!supabase) {
@@ -536,10 +544,14 @@ export function AdminWorkflowOperationsDashboard() {
     }
   }, [load])
 
-  const pipelineHelperText =
-    categoryFilter === 'maintenance'
-      ? WORKFLOW_PIPELINE_MAINTENANCE_FILTER_HELPER
-      : WORKFLOW_PIPELINE_SECTION_HELPER
+  function toggleWorkflowFilter(key: WorkflowFilterKey) {
+    setActiveFilters((current) => {
+      const next = new Set(current)
+      if (next.has(key)) next.delete(key)
+      else next.add(key)
+      return next
+    })
+  }
 
   return (
     <main className="w-full min-w-0 px-8 pb-12">
@@ -591,36 +603,12 @@ export function AdminWorkflowOperationsDashboard() {
 
       {/* Workflow Pipeline (kanban) — grow with content; AdminLayout owns vertical scroll */}
       <section className="sa-surface flex w-full min-w-0 flex-col rounded-[10px] border border-[#e5e7eb] bg-white shadow-[0px_1px_2px_-1px_rgba(0,0,0,0.06)]">
-        <div className="flex flex-col gap-3 border-b border-[#e5e7eb] px-6 py-4 lg:flex-row lg:items-start lg:justify-between">
-          <div className="min-w-0">
-            <h2 className="text-[16px] font-semibold leading-6 text-[#0a0a0a]">
-              Workflow Pipeline
-            </h2>
-            <p className="text-[12px] leading-4 text-[#6a7282]">
-              {loading ? 'Loading…' : `${activeCount} active tasks across ${STAGE_ORDER.length} stages`}
-            </p>
-            <p className="mt-1.5 max-w-2xl text-[12px] leading-4 text-[#6a7282]">
-              {pipelineHelperText}
-            </p>
-          </div>
-          <div className="flex flex-wrap items-center gap-1.5">
-            {FILTER_PILLS.map((pill) => (
-              <button
-                key={pill.id}
-                type="button"
-                onClick={() => setCategoryFilter(pill.id)}
-                className={[
-                  'sa-pill inline-flex cursor-pointer items-center rounded-[10px] px-3 py-1.5 text-[13px] font-medium',
-                  categoryFilter === pill.id
-                    ? 'bg-[#101828] text-white'
-                    : 'bg-[#f3f4f6] text-[#364153] hover:bg-[#e5e7eb]',
-                ].join(' ')}
-              >
-                {pill.label}
-              </button>
-            ))}
-          </div>
-        </div>
+        <AdminFilterToolbar
+          options={WORKFLOW_FILTER_OPTIONS}
+          activeFilters={activeFilters}
+          onToggle={toggleWorkflowFilter}
+          onClear={() => setActiveFilters(new Set())}
+        />
 
         <div
           className="overflow-x-auto overscroll-x-contain touch-pan-x [-ms-overflow-style:none] [-webkit-overflow-scrolling:touch] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden lg:overflow-visible"

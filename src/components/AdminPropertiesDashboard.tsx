@@ -3,7 +3,7 @@ import { useNavigate, useSearchParams } from 'react-router-dom'
 import { AddPropertyModal, type AddPropertyFormPayload } from '@/components/AddPropertyModal'
 import { PropertyHealthBuildingGrid } from '@/components/PropertyHealthBuildingGrid'
 import { registerPropertyUnitsSms } from '@/api/landlordSmsOnboarding'
-import { getActiveLandlordId, getActiveLandlordKind } from '@/lib/activeLandlord'
+import { getActiveLandlordId } from '@/lib/activeLandlord'
 import { deleteLandlordBuildings } from '@/lib/onboarding'
 import { ensureProperty, linkUnitsToProperty, listPropertiesForLandlord } from '@/lib/properties'
 import {
@@ -844,20 +844,16 @@ export function AdminPropertiesDashboard() {
         formatSpend={formatSpend}
         monthlySpendByBuilding={monthlySpendByBuilding}
         onEmptyCtaClick={() => setAddPropertyOpen(true)}
-        selection={
-          getActiveLandlordKind() === 'demo'
-            ? undefined
-            : {
-                selectedBuildings,
-                onToggleBuilding: toggleBuildingSelected,
-                allSelected: allVisibleBuildingsSelected,
-                someSelected: someVisibleBuildingsSelected,
-                onToggleAll: toggleAllVisibleBuildingsSelected,
-                onClearSelection: () => setSelectedBuildings(new Set()),
-                onDeleteSelected: () => void deleteSelectedBuildings(),
-                deleteSelectedSaving: deleteBuildingsSaving,
-              }
-        }
+        selection={{
+          selectedBuildings,
+          onToggleBuilding: toggleBuildingSelected,
+          allSelected: allVisibleBuildingsSelected,
+          someSelected: someVisibleBuildingsSelected,
+          onToggleAll: toggleAllVisibleBuildingsSelected,
+          onClearSelection: () => setSelectedBuildings(new Set()),
+          onDeleteSelected: () => void deleteSelectedBuildings(),
+          deleteSelectedSaving: deleteBuildingsSaving,
+        }}
         onBuildingOpen={(buildingName) => {
           const propertyId = propertyIdByBuilding.get(normalizeBuildingKey(buildingName))
           navigate(propertyDetailPath(propertyId ?? buildingName))

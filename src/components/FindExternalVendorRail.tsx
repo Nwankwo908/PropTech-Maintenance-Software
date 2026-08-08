@@ -2,6 +2,8 @@ import { useEffect, useId, useState } from 'react'
 import type { ExternalVendorSuggestionDto } from '@/api/discoverExternalVendors'
 import { ExternalVendorVerificationView } from '@/components/ExternalVendorVerificationView'
 import {
+  ADMIN_RAIL_FOOTER_CLASS,
+  ADMIN_RAIL_FOOTER_SECONDARY_BUTTON_CLASS,
   ADMIN_RIGHT_RAIL_STACK_HOST,
   ADMIN_RIGHT_RAIL_SCRIM,
   adminRightRailPanelClass,
@@ -550,12 +552,12 @@ export function FindExternalVendorRail({
         </div>
 
         {showBackNav ? (
-          <footer className="flex shrink-0 justify-end border-t border-[#e5e7eb] px-6 py-4">
+          <footer className={ADMIN_RAIL_FOOTER_CLASS}>
             <button
               type="button"
               disabled={saving}
               onClick={handleBack}
-              className="sa-press inline-flex min-h-[44px] items-center justify-center rounded-[10px] border border-[#e5e7eb] bg-white px-4 py-2.5 text-[13px] font-medium text-[#364153] outline-none hover:bg-[#f9fafb] focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2 disabled:opacity-50"
+              className={ADMIN_RAIL_FOOTER_SECONDARY_BUTTON_CLASS}
             >
               {cancelLabel}
             </button>

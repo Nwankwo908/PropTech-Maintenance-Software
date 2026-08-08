@@ -1,4 +1,5 @@
 import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.49.1"
+import { isRentChargePaidFromRun } from "../paymentSettlement.ts"
 import { notifyLandlordNeedsAttention } from "../landlordAttentionNotify.ts"
 import {
   logRentCollectionGraphEvent,
@@ -261,8 +262,8 @@ export async function escalateRentCollectionRun(
     reason?: string
   },
 ): Promise<RentCollectionEscalationResult | null> {
+  if (isRentChargePaidFromRun(params.run).paid) return null
   const state = runStepState<RentCollectionState>(params.run)
-  if (state.payment_intent === "paid") return null
   if (params.run.status !== "active") return null
 
   const reason = params.reason ?? "unpaid_after_due_date_and_grace_period"

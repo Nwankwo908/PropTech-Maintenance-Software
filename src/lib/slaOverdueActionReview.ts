@@ -1,4 +1,3 @@
-import { isDemoAccountActive } from '@/lib/activeLandlord'
 import {
   formatVendorTradeLabel,
   normIssueCategory,
@@ -237,40 +236,6 @@ function buildTimeline(
   return entries.filter((e) => e.timeLabel)
 }
 
-/** Rich demo copy for Oakwood 304 emergency plumbing (Figma SLA rail). Display fields only. */
-function demoShowcaseReview(ticket: SlaOverdueTicketInput): Partial<SlaOverdueActionReview> | null {
-  if (!isDemoAccountActive()) return null
-  const unit = ticket.unit.trim()
-  const building = (ticket.building ?? '').toLowerCase()
-  const isOak304 =
-    unit === '304' &&
-    building.includes('oakwood') &&
-    normIssueCategory(ticket.issueCategory) === 'plumbing'
-
-  if (!isOak304) return null
-
-  const created = ticket.createdAt
-  const due = ticket.dueAt ?? addMinutes(created, 60)
-
-  return {
-    locationLabel: 'Oakwood Apartments · Unit 304',
-    issueSummary:
-      ticket.description?.trim() ||
-      'Active leak from ceiling in master bathroom, water pooling on floor.',
-    timeline: [
-      { timeLabel: '9:12 AM', description: 'Tenant reported via SMS', actor: 'Daniel Rivera' },
-      { timeLabel: '9:13 AM', description: 'Classified as Emergency · Plumbing', actor: 'Ulo AI' },
-      { timeLabel: '9:14 AM', description: 'Dispatched to Metro Plumbing', actor: 'Ulo AI' },
-      { timeLabel: '9:42 AM', description: 'Auto-followed up — no response', actor: 'Ulo AI' },
-      { timeLabel: '10:12 AM', description: 'SLA breached', actor: 'System' },
-    ],
-    reportedAtLabel: formatTicketTime(created),
-    slaDueLabel: `${formatTicketTime(due).replace(/^Today · /, 'Today · ')} (${formatSlaDuration(created, due) ?? '1 Hr SLA'})`,
-    slaDurationLabel: formatSlaDuration(created, due) ?? '1 Hr SLA',
-    urgencyLabel: 'Emergency',
-  }
-}
-
 export function buildSlaOverdueActionReview(
   ticket: SlaOverdueTicketInput,
   vendors: SlaOverdueVendorInput[],
@@ -308,36 +273,29 @@ export function buildSlaOverdueActionReview(
 
   const noVendorOnRoster =
     alternatives.length === 0 && !suggestion?.vendorId && !suggestion?.vendorName
-  const showcase = demoShowcaseReview(ticket)
-
   return {
     ticketId: ticket.id,
     badgeLabel: 'SLA OVERDUE · MAINTENANCE',
     headerTitle: `Escalated Maintenance · ${formatCategoryLabel(ticket.issueCategory)}`,
-    locationLabel: showcase?.locationLabel ?? formatLocation(ticket.building, ticket.unit),
+    locationLabel: formatLocation(ticket.building, ticket.unit),
     ticketRef: formatTicketRef(ticket.id),
-    urgencyLabel: showcase?.urgencyLabel ?? formatUrgencyLabel(ticket.urgency),
+    urgencyLabel: formatUrgencyLabel(ticket.urgency),
     urgencyIsCritical: isUrgencyCritical(ticket.urgency),
-    reportedAtLabel: showcase?.reportedAtLabel ?? formatTicketTime(ticket.createdAt, now),
-    slaDueLabel:
-      showcase?.slaDueLabel ??
-      `${formatTicketTime(ticket.dueAt, now)}${
-        formatSlaDuration(ticket.createdAt, ticket.dueAt)
-          ? ` (${formatSlaDuration(ticket.createdAt, ticket.dueAt)})`
-          : ''
-      }`,
-    slaDurationLabel:
-      showcase?.slaDurationLabel ??
-      formatSlaDuration(ticket.createdAt, ticket.dueAt),
+    reportedAtLabel: formatTicketTime(ticket.createdAt, now),
+    slaDueLabel: `${formatTicketTime(ticket.dueAt, now)}${
+      formatSlaDuration(ticket.createdAt, ticket.dueAt)
+        ? ` (${formatSlaDuration(ticket.createdAt, ticket.dueAt)})`
+        : ''
+    }`,
+    slaDurationLabel: formatSlaDuration(ticket.createdAt, ticket.dueAt),
     minutesPastSla,
     pastSlaLabel: formatPastSlaLabel(minutesPastSla),
     issueSummary:
-      showcase?.issueSummary ??
-      (ticket.description?.trim() ||
-        `${formatCategoryLabel(ticket.issueCategory)} maintenance request`),
+      ticket.description?.trim() ||
+      `${formatCategoryLabel(ticket.issueCategory)} maintenance request`,
     currentVendorName: ticket.assignedVendorName,
     currentVendorStatus: vendorStatusLabel(ticket.vendorWorkStatus, ticket.assignedVendorName),
-    timeline: showcase?.timeline ?? buildTimeline(ticket, now),
+    timeline: buildTimeline(ticket, now),
     suggestion,
     suggestionLine: buildSuggestionLine(
       suggestion,

@@ -12,7 +12,7 @@
  * Missing signals use PROPERTY_HEALTH_NEUTRAL_SCORE (50) — neither rewards nor
  * penalizes until real data exists. Resident satisfaction never uses derived proxies.
  */
-import { DEMO_LANDLORD_ID, getActiveLandlordId } from '@/lib/activeLandlord'
+import { getActiveLandlordId } from '@/lib/activeLandlord'
 
 /** Neither penalize nor reward when a signal has no underlying data yet. */
 export const PROPERTY_HEALTH_NEUTRAL_SCORE = 50
@@ -30,21 +30,6 @@ export const PROPERTY_HEALTH_WEIGHTS = {
 export const REPEAT_ISSUE_WINDOW_DAYS = 45
 
 export const PROPERTY_HEALTH_KPI_CAPTION = 'Operational health score.'
-
-/**
- * Canonical property names per landlord. Merged with unit-derived buildings so the
- * Property Health grid count matches the Buildings KPI (e.g. demo portfolio = 6).
- */
-export const LANDLORD_REGISTERED_BUILDINGS: Partial<Record<string, readonly string[]>> = {
-  [DEMO_LANDLORD_ID]: [
-    'Oakwood Apartments',
-    'Pine Ridge',
-    'Cedar Court',
-    'Maple Heights',
-    'Birch Tower',
-    'Willow Park',
-  ],
-}
 
 export type PropertyHealthStatus = 'healthy' | 'monitor' | 'at_risk' | 'pending_setup'
 
@@ -284,10 +269,7 @@ export function collectPortfolioBuildingKeys(
     if (task.building?.trim()) keys.add(normalizeBuildingKey(task.building))
   }
   for (const ticket of tickets) {
-    keys.add(ticketBuilding(ticket, ticketBuildingCtx, emailBuildingMap, landlordId))
-  }
-  for (const building of LANDLORD_REGISTERED_BUILDINGS[landlordId] ?? []) {
-    keys.add(normalizeBuildingKey(building))
+    keys.add(ticketBuilding(ticket, ticketBuildingCtx, emailBuildingMap))
   }
 
   if (keys.size > 1) keys.delete('Portfolio')
@@ -356,6 +338,7 @@ function ratingToScore(rating: number): number {
 type TicketBuildingContext = {
   unitIdBuildingMap: Map<string, string>
   uniqueUnitLabelBuildingMap: Map<string, string>
+  knownBuildingNames: string[]
 }
 
 function buildResidentEmailBuildingMap(
@@ -371,15 +354,14 @@ function buildResidentEmailBuildingMap(
   return emailBuildingMap
 }
 
-/** Map short demo labels ("Oakwood") to roster building names ("Oakwood Apartments"). */
+/** Map short labels ("Oakwood") to roster building names ("Oakwood Apartments"). */
 function resolveCanonicalBuildingLabel(
   label: string,
-  landlordId: string = getActiveLandlordId(),
+  knownBuildingNames: readonly string[],
 ): string {
   const normalized = normalizeBuildingKey(label)
   const normalizedLower = normalized.toLowerCase()
-  const registered = LANDLORD_REGISTERED_BUILDINGS[landlordId] ?? []
-  for (const name of registered) {
+  for (const name of knownBuildingNames) {
     const canonical = normalizeBuildingKey(name)
     const canonicalLower = canonical.toLowerCase()
     if (canonicalLower === normalizedLower) return canonical
@@ -398,20 +380,24 @@ function resolveCanonicalBuildingLabel(
 
 function parseBuildingPrefixFromUnit(
   unit: string,
-  landlordId: string = getActiveLandlordId(),
+  knownBuildingNames: readonly string[],
 ): string | null {
   const trimmed = unit.trim()
   if (!trimmed.includes('·')) return null
   const prefix = trimmed.split('·')[0]?.trim()
   if (!prefix) return null
-  return resolveCanonicalBuildingLabel(prefix, landlordId)
+  return resolveCanonicalBuildingLabel(prefix, knownBuildingNames)
 }
 
 function buildTicketBuildingContext(units: PropertyHealthUnit[]): TicketBuildingContext {
   const unitIdBuildingMap = new Map<string, string>()
   const labelToBuildings = new Map<string, Set<string>>()
+  const knownBuildingNamesSet = new Set<string>()
 
   for (const unit of units) {
+    if (unit.building?.trim()) {
+      knownBuildingNamesSet.add(normalizeBuildingKey(unit.building))
+    }
     if (unit.id) {
       unitIdBuildingMap.set(unit.id, normalizeBuildingKey(unit.building))
     }
@@ -429,19 +415,22 @@ function buildTicketBuildingContext(units: PropertyHealthUnit[]): TicketBuilding
     }
   }
 
-  return { unitIdBuildingMap, uniqueUnitLabelBuildingMap }
+  return {
+    unitIdBuildingMap,
+    uniqueUnitLabelBuildingMap,
+    knownBuildingNames: [...knownBuildingNamesSet],
+  }
 }
 
 function ticketBuilding(
   ticket: PropertyHealthTicket,
   ctx: TicketBuildingContext,
   emailBuildingMap?: Map<string, string>,
-  landlordId: string = getActiveLandlordId(),
 ): string {
   if (ticket.building?.trim()) {
-    return resolveCanonicalBuildingLabel(ticket.building, landlordId)
+    return resolveCanonicalBuildingLabel(ticket.building, ctx.knownBuildingNames)
   }
-  const fromUnitPrefix = parseBuildingPrefixFromUnit(ticket.unit, landlordId)
+  const fromUnitPrefix = parseBuildingPrefixFromUnit(ticket.unit, ctx.knownBuildingNames)
   if (fromUnitPrefix) return fromUnitPrefix
   const ticketEmail = ticket.email?.trim().toLowerCase()
   if (ticketEmail && emailBuildingMap?.get(ticketEmail)) {
@@ -469,7 +458,7 @@ export function filterTicketsForBuildingScope<T extends PropertyHealthTicket>(
   return tickets.filter((ticket) => {
     if (
       ticket.building?.trim() &&
-      resolveCanonicalBuildingLabel(ticket.building) === key
+      resolveCanonicalBuildingLabel(ticket.building, ctx.knownBuildingNames) === key
     ) {
       return true
     }

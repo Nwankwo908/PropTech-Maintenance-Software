@@ -73,7 +73,7 @@ export type WorkflowKanbanCard = {
 
 /** User-facing helper copy for the workflow pipeline (Operations / Active Tasks). */
 export const WORKFLOW_PIPELINE_PAGE_SUBTITLE =
-  'Active tasks Ulo is coordinating — not a separate work order list. Maintenance, rent, inspections, move-ins, move-outs, and lease renewals all run here.'
+  'See everything Ulo is actively coordinating, from maintenance and rent collection to inspections, move ins, move outs, and lease renewals, all in one place.'
 
 export const WORKFLOW_PIPELINE_SECTION_HELPER =
   'Each card is one workflow run. Open work orders live on the Work Orders page; maintenance orders Ulo is moving forward also appear here under Maintenance.'

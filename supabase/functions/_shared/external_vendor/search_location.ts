@@ -1,18 +1,13 @@
 import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.49.1"
+import {
+  formatPropertyAddressLine,
+  loadLandlordPropertyRecords,
+  matchPropertyByName,
+} from "../ask_ulo/tools/properties/propertyRecords.ts"
 
 export type ResolvedVendorSearchContext = {
   searchLocation: string
   locationLabel: string
-}
-
-/** Showcase portfolio addresses (mirrors src/lib/propertyRoutes.ts demo meta). */
-const DEMO_BUILDING_ADDRESSES: Record<string, string> = {
-  "Oakwood Apartments": "812 Oakwood Ave, Portland, OR 97214",
-  "Pine Ridge": "220 Pine Ridge Dr, Portland, OR 97229",
-  "Cedar Court": "45 Cedar Court Ln, Beaverton, OR 97005",
-  "Maple Heights": "901 Maple Heights Blvd, Hillsboro, OR 97123",
-  "Birch Tower": "12 Birch Tower Way, Portland, OR 97209",
-  "Willow Park": "330 Willow Park Rd, Gresham, OR 97030",
 }
 
 function pickAddressFromOnboardingDraft(
@@ -40,6 +35,17 @@ function pickAddressFromOnboardingDraft(
   return null
 }
 
+async function propertyAddressForBuilding(
+  supabase: SupabaseClient,
+  landlordId: string,
+  building: string,
+): Promise<string | null> {
+  const records = await loadLandlordPropertyRecords(supabase, landlordId)
+  const matched = matchPropertyByName(records, building)
+  if (!matched) return null
+  return formatPropertyAddressLine(matched)
+}
+
 export function formatVendorSetupLocationLabel(unit: string, building: string): string {
   const u = unit.trim()
   const b = building.trim()
@@ -56,6 +62,17 @@ function looksGeocodable(value: string): boolean {
   if (/\b\d{5}(?:-\d{4})?\b/.test(v)) return true
   if (v.includes(",") && /\d/.test(v)) return true
   return false
+}
+
+function cityStateFromRecords(
+  records: Awaited<ReturnType<typeof loadLandlordPropertyRecords>>,
+): string | null {
+  for (const record of records) {
+    const city = record.city?.trim()
+    const state = record.state?.trim()
+    if (city && state) return `${city}, ${state}`
+  }
+  return null
 }
 
 /** Resolve a geocodable search anchor near the ticket property (not a bare unit label). */
@@ -80,10 +97,10 @@ export async function resolveExternalVendorSearchContext(
       .eq("landlord_id", input.landlordId)
       .maybeSingle()
     addressLine = pickAddressFromOnboardingDraft(building, data?.draft_state)
-  }
 
-  if (!addressLine && building) {
-    addressLine = DEMO_BUILDING_ADDRESSES[building] ?? null
+    if (!addressLine) {
+      addressLine = await propertyAddressForBuilding(supabase, input.landlordId, building)
+    }
   }
 
   if (addressLine) {
@@ -126,6 +143,8 @@ export async function resolvePortfolioExternalSearchContext(
   }
 
   if (landlordId) {
+    const propertyRecords = await loadLandlordPropertyRecords(supabase, landlordId)
+
     const { data } = await supabase
       .from("landlord_onboarding")
       .select("draft_state")
@@ -155,6 +174,16 @@ export async function resolvePortfolioExternalSearchContext(
       }
     }
 
+    for (const record of propertyRecords) {
+      const address = formatPropertyAddressLine(record)
+      if (address && looksGeocodable(address)) {
+        return {
+          searchLocation: address,
+          locationLabel: record.name || "Portfolio property",
+        }
+      }
+    }
+
     const { data: units } = await supabase
       .from("units")
       .select("building")
@@ -167,10 +196,16 @@ export async function resolvePortfolioExternalSearchContext(
       const b = typeof u.building === "string" ? u.building.trim() : ""
       if (!b || seen.has(b)) continue
       seen.add(b)
-      const demo = DEMO_BUILDING_ADDRESSES[b]
-      if (demo) {
-        return { searchLocation: demo, locationLabel: b }
+      const matched = matchPropertyByName(propertyRecords, b)
+      const address = matched ? formatPropertyAddressLine(matched) : null
+      if (address && looksGeocodable(address)) {
+        return { searchLocation: address, locationLabel: b }
       }
+    }
+
+    const cityState = cityStateFromRecords(propertyRecords)
+    if (cityState) {
+      return { searchLocation: cityState, locationLabel: "Portfolio area" }
     }
   }
 
@@ -179,5 +214,5 @@ export async function resolvePortfolioExternalSearchContext(
     return { searchLocation: envLoc, locationLabel: "Portfolio area" }
   }
 
-  return { searchLocation: "Portland, OR", locationLabel: "Portfolio area" }
+  return { searchLocation: "United States", locationLabel: "Portfolio area" }
 }

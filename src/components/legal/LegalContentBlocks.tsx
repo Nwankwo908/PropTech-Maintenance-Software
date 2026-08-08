@@ -3,9 +3,9 @@ import { PRIVACY_POLICY_PATH } from '@/lib/legal/privacyPolicyContent'
 import type { LegalBlock } from '@/lib/legal/termsOfServiceContent'
 
 function renderInlineLinks(text: string) {
-  const parts = text.split(/(\/privatepolicy(?:#[\w-]+)?|\/privacy)/g)
+  const parts = text.split(/(\/privacy(?:#[\w-]+)?)/g)
   return parts.map((part, index) => {
-    if (part === '/privacy' || part.startsWith('/privatepolicy')) {
+    if (part === '/privacy' || part.startsWith('/privacy#')) {
       return (
         <Link
           key={`privacy-${index}`}

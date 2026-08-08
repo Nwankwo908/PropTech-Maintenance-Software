@@ -6,6 +6,13 @@ import { getActiveLandlordId } from '@/lib/activeLandlord'
 import { getInventoryUnitOptions } from '@/lib/propertyUnitOptions'
 import { unitOptionValueToCell } from '@/lib/residentUnitKeys'
 import { getErrorMessage } from '@/lib/errorMessage'
+import {
+  buildInspectionScheduledAt,
+  loadResidentsForUnit,
+  loadUnitsForInspectionScope,
+  mapModalInspectionType,
+  startLifecycleWorkflow,
+} from '@/api/lifecycleWorkflow'
 
 const INSPECTION_TYPES = [
   { id: 'annual' as const, emoji: '📋', title: 'Annual Inspection', subtitle: 'Yearly property review' },
@@ -451,25 +458,77 @@ export function SendInspectionNoticeModal({
     setSubmitError(null)
     setSuccessMessage(null)
     setSendingNotice(true)
-    const body = buildInspectionBroadcastBody()
-    const channels = body.channels as BroadcastChannel[]
+
     try {
-      await postBroadcast(import.meta.env.VITE_BROADCAST_SEND_URL, body)
-      recordBroadcastSendAttempt(channels, true)
-      onBroadcastStatsInvalidate?.()
-      setSuccessMessage('Inspection notice sent. Delivery has started.')
+      const units = await loadUnitsForInspectionScope({
+        scope: unitScope,
+        building: inspectionBuilding,
+        unitLabel: specificUnits,
+      })
+      if (!units.length) {
+        setSubmitError('No matching units found for this selection.')
+        return
+      }
+
+      const scheduledAt = buildInspectionScheduledAt(inspectionDate, timeWindow)
+      const mappedInspectionType = mapModalInspectionType(inspectionType)
+      let started = 0
+      let failed = 0
+
+      for (const unit of units) {
+        const residents = await loadResidentsForUnit(unit.id)
+        const result = await startLifecycleWorkflow({
+          workflow: 'inspection',
+          unitId: unit.id,
+          unitLabel: unit.unit_label,
+          building: unit.building,
+          residentId: residents[0]?.id,
+          scheduledAt,
+          inspectionType: mappedInspectionType,
+          ...(deliverySms
+            ? { initialAction: { inspection: { action: 'register_and_outreach' as const } } }
+            : {}),
+        })
+        if (result.ok) started += 1
+        else failed += 1
+      }
+
+      if (started === 0) {
+        setSubmitError('Could not start inspection workflows. Please try again.')
+        return
+      }
+
+      if (deliveryEmail) {
+        const body = {
+          ...buildInspectionBroadcastBody(),
+          channels: ['email'] as BroadcastChannel[],
+        }
+        const channels = body.channels as BroadcastChannel[]
+        try {
+          await postBroadcast(import.meta.env.VITE_BROADCAST_SEND_URL, body)
+          recordBroadcastSendAttempt(channels, true)
+          onBroadcastStatsInvalidate?.()
+        } catch (error) {
+          recordBroadcastSendAttempt(channels, false)
+          const msg = getErrorMessage(error, 'Inspection workflows started, but email notice failed.')
+          setSubmitError(msg)
+          return
+        }
+      }
+
+      setSuccessMessage(
+        failed > 0
+          ? `Inspection started for ${started} unit(s). ${failed} could not be started.`
+          : deliveryEmail
+            ? `Inspection started for ${started} unit(s). Email notice delivery has started.`
+            : `Inspection notice started for ${started} unit(s).`,
+      )
       closeAfterSuccessTimeoutRef.current = window.setTimeout(() => {
         onClose()
       }, 1500)
     } catch (error) {
-      recordBroadcastSendAttempt(channels, false)
-      const msg =
-        getErrorMessage(error, 'Failed to send inspection notice. Please try again.')
-      setSubmitError(
-        msg.toLowerCase().includes('failed to fetch')
-          ? 'Failed to reach broadcast service. Confirm send-broadcast is deployed and CORS is enabled.'
-          : msg,
-      )
+      const msg = getErrorMessage(error, 'Failed to send inspection notice. Please try again.')
+      setSubmitError(msg)
     } finally {
       setSendingNotice(false)
     }

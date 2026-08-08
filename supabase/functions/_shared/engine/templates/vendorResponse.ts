@@ -28,11 +28,6 @@ import {
   buildVendorWaitingOnTenantSms,
 } from "../../sms/tenantScheduleConfirm.ts"
 import {
-  detectVendorRescheduleIntent,
-  readVendorReschedulePending,
-  tryHandleVendorRescheduleSms,
-} from "../../sms/vendorRescheduleSms.ts"
-import {
   appendInboundContext,
   appendOutboundContext,
   createIdleScheduleState,
@@ -50,6 +45,7 @@ import {
   resolveVendorTicketForInbound,
   type VendorStatusTransitionResultMeta,
 } from "../../sms/vendorSmsRouting.ts"
+import { tryActVendorRescheduleTurn } from "../../sms/vendorRescheduleWorkflowAct.ts"
 import { workflowRouteForTemplate } from "../logStage.ts"
 import type {
   ClassifiedIntent,
@@ -280,6 +276,7 @@ export const vendorJobResponseTemplate: WorkflowTemplate = {
   async act(
     supabase: SupabaseClient,
     ctx: WorkflowExecutionContext,
+    intent: ClassifiedIntent,
   ): Promise<WorkflowActResult> {
     const sms = ctx.sms
     if (!sms) {
@@ -289,6 +286,9 @@ export const vendorJobResponseTemplate: WorkflowTemplate = {
         metadata: { error: "missing_sms_context" },
       }
     }
+
+    const rescheduleTurn = await tryActVendorRescheduleTurn(supabase, ctx, intent)
+    if (rescheduleTurn) return rescheduleTurn
 
     if (!sms.identity.vendor_id?.trim()) {
       return handleUnknownSender(ctx)
@@ -374,69 +374,6 @@ export const vendorJobResponseTemplate: WorkflowTemplate = {
               skipGenericAutoReply: true,
             },
           }
-        }
-      }
-    }
-
-    // Vendor reschedule (post-lock appointment moves) — before accept / schedule FSM.
-    const pendingReschedule = readVendorReschedulePending(intake)
-    const rescheduleIntent = detectVendorRescheduleIntent(effectiveBody)
-    const continueReschedulePending = Boolean(
-      pendingReschedule &&
-        pendingReschedule.vendorId === vendorId &&
-        !rescheduleIntent.isReschedule,
-    )
-    const treatAsReschedule =
-      rescheduleIntent.isReschedule ||
-      continueReschedulePending ||
-      clarificationOriginalIntent === "reschedule"
-
-    // Don't steal initial negotiation ("Wed 2pm") when still collecting first availability.
-    const blockingInitialSchedule =
-      !!prev &&
-      (prev.step === "awaiting_availability" ||
-        prev.step === "awaiting_confirmation") &&
-      !rescheduleIntent.isReschedule &&
-      !continueReschedulePending &&
-      clarificationOriginalIntent !== "reschedule"
-
-    if (treatAsReschedule && !blockingInitialSchedule) {
-      const rescheduleBody = continueReschedulePending && pendingReschedule
-        ? `${pendingReschedule.originalMessage}\n${sms.inbound.body}`
-        : effectiveBody
-      const rescheduleResult = await tryHandleVendorRescheduleSms(supabase, {
-        landlordId: ctx.landlordId,
-        vendorId,
-        conversationId: sms.conversationId,
-        messageId: sms.messageId,
-        inboundBody: rescheduleBody,
-        forcedTicketId: forcedTicketId || pendingReschedule?.ticketId || null,
-        continuePending: continueReschedulePending ||
-          clarificationOriginalIntent === "reschedule",
-      })
-      if (rescheduleResult.handled) {
-        await recordVendorRepliedEvent(supabase, {
-          landlordId: ctx.landlordId,
-          vendorId,
-          conversationId: sms.conversationId,
-          messageId: sms.messageId,
-          maintenanceRequestId: rescheduleResult.ticketId,
-          bodyPreview: sms.inbound.body,
-          parsedAction: "reschedule",
-          transition: undefined,
-        })
-        return {
-          templateId: "vendor_job_response",
-          route: workflowRouteForTemplate("vendor_job_response"),
-          replyHint: rescheduleResult.replyHint,
-          metadata: {
-            vendorId,
-            maintenanceRequestId: rescheduleResult.ticketId,
-            vendorReschedule: true,
-            ...rescheduleResult.metadata,
-            bodyPreview: sms.inbound.body.slice(0, 160),
-            skipGenericAutoReply: true,
-          },
         }
       }
     }

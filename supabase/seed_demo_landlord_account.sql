@@ -189,6 +189,34 @@ begin
   delete from public.users where landlord_id = demo_landlord;
   delete from public.vendors where landlord_id = demo_landlord;
   delete from public.units where landlord_id = demo_landlord;
+  delete from public.properties where landlord_id = demo_landlord;
+
+  -- ---------------------------------------------------------------------------
+  -- Canonical property records (addresses for admin UI + Ask Ulo jurisdiction)
+  -- ---------------------------------------------------------------------------
+  insert into public.properties (
+    id, landlord_id, name, street_address, city, state, zip_code, property_type, unit_count, year_built, latitude, longitude
+  )
+  values
+    (p_oakwood, demo_landlord, 'Oakwood Apartments', '812 Oakwood Ave', 'Portland', 'OR', '97214', 'Garden-style multifamily (mid-rise)', 124, 2014, 45.5152, -122.6486),
+    (p_pine, demo_landlord, 'Pine Ridge', '220 Pine Ridge Dr', 'Portland', 'OR', '97210', 'Garden-style multifamily', 68, 2008, 45.582, -122.678),
+    (p_cedar, demo_landlord, 'Cedar Court', '45 Cedar Court Ln', 'Beaverton', 'OR', '97005', 'Townhome / small multifamily', 48, 2011, 45.487, -122.803),
+    (p_maple, demo_landlord, 'Maple Heights', '901 Maple Heights Blvd', 'Hillsboro', 'OR', '97124', 'Garden-style multifamily', 96, 2016, 45.5229, -122.9898),
+    (p_birch, demo_landlord, 'Birch Tower', '12 Birch Tower Way', 'Portland', 'OR', '97209', 'High-rise multifamily', 210, 2019, 45.5308, -122.682),
+    (p_willow, demo_landlord, 'Willow Park', '330 Willow Park Rd', 'Gresham', 'OR', '97030', 'Garden-style multifamily', 36, 2005, 45.498, -122.43)
+  on conflict (id) do update
+  set
+    name = excluded.name,
+    street_address = excluded.street_address,
+    city = excluded.city,
+    state = excluded.state,
+    zip_code = excluded.zip_code,
+    property_type = excluded.property_type,
+    unit_count = excluded.unit_count,
+    year_built = excluded.year_built,
+    latitude = excluded.latitude,
+    longitude = excluded.longitude,
+    updated_at = now();
 
   -- ---------------------------------------------------------------------------
   -- Units — 6 properties, 582 units
@@ -214,6 +242,13 @@ begin
       ('Willow Park', 36, 6)
   ) as b(building, unit_count, per_floor)
   cross join lateral generate_series(1, b.unit_count) as gs(n);
+
+  update public.units u
+  set property_id = p.id
+  from public.properties p
+  where u.landlord_id = demo_landlord
+    and p.landlord_id = demo_landlord
+    and lower(trim(u.building)) = lower(trim(p.name));
 
   -- Showcase unit lookups (and force them active so scenarios are coherent)
   select id into u_oak_103 from public.units where landlord_id = demo_landlord and building = 'Oakwood Apartments' and unit_label = '103';

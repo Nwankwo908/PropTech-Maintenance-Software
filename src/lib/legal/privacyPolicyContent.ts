@@ -1,6 +1,6 @@
 import type { LegalSection } from '@/lib/legal/termsOfServiceContent'
 
-export const PRIVACY_POLICY_PATH = '/privatepolicy' as const
+export const PRIVACY_POLICY_PATH = '/privacy' as const
 
 export const PRIVACY_POLICY_META = {
   title: 'Privacy Policy',
@@ -146,7 +146,7 @@ export const PRIVACY_POLICY_SECTIONS: LegalSection[] = [
       },
       {
         type: 'paragraph',
-        text: 'California residents have additional rights under the CCPA/CPRA, including the right to opt out of the sale or sharing of personal information (Ulo does not sell personal information), the right to limit use of sensitive personal information, and the right to non-discrimination for exercising these rights. The Do Not Sell or Share option is available at /privatepolicy.',
+        text: 'California residents have additional rights under the CCPA/CPRA, including the right to opt out of the sale or sharing of personal information (Ulo does not sell personal information), the right to limit use of sensitive personal information, and the right to non-discrimination for exercising these rights. The Do Not Sell or Share option is available at /privacy.',
       },
       {
         type: 'paragraph',

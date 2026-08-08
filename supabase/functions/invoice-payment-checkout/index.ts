@@ -12,11 +12,18 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1"
 import { adminEdgeCorsHeaders } from "../_shared/admin_edge_cors.ts"
 import { requireAdminReassignAuth } from "../_shared/admin_edge_auth.ts"
 import { approveMaintenanceInvoice } from "../_shared/maintenanceSpend.ts"
+import { canReceivePayments } from "../_shared/paymentReadiness.ts"
+import {
+  isMaintenanceInvoicePaid,
+  isMaintenanceInvoicePaidFromRow,
+} from "../_shared/paymentSettlement.ts"
+import {
+  isStripeCheckoutSessionPaymentFailed,
+  recordInvoicePaymentFailedActivity,
+} from "../_shared/paymentActivityEvents.ts"
 import {
   applicationFeeCents,
   isStripeConfigured,
-  isStripeConnectReady,
-  loadVendorStripeDestination,
   stripeForm,
   stripeGet,
 } from "../_shared/stripeConnect.ts"
@@ -203,10 +210,31 @@ serve(async (req) => {
       )
     }
 
+    const metadata = (retrieved.json.metadata ?? {}) as Record<string, unknown>
+    const invoiceIdFromMeta =
+      typeof metadata.invoice_id === "string" ? metadata.invoice_id.trim() : ""
+
+    if (isStripeCheckoutSessionPaymentFailed(retrieved.json)) {
+      await recordInvoicePaymentFailedActivity(supabase, {
+        landlordId,
+        invoiceId: invoiceIdFromMeta || null,
+        reason: String(retrieved.json.payment_status ?? "checkout_failed"),
+      })
+      return jsonResponse(
+        { error: "Invoice payment failed. Please try again or use a different payment method." },
+        402,
+      )
+    }
+
     const paymentStatus = String(retrieved.json.payment_status ?? "")
     if (paymentStatus !== "paid" && paymentStatus !== "no_payment_required") {
       // ACH may land as unpaid briefly; still require paid for invoice approval.
       if (paymentStatus !== "unpaid") {
+        await recordInvoicePaymentFailedActivity(supabase, {
+          landlordId,
+          invoiceId: invoiceIdFromMeta || null,
+          reason: paymentStatus || "unknown",
+        })
         return jsonResponse(
           { error: `Payment not completed (status: ${paymentStatus || "unknown"})` },
           402,
@@ -216,6 +244,11 @@ serve(async (req) => {
       const piProbe = asRecord(retrieved.json.payment_intent)
       const piStatus = typeof piProbe?.status === "string" ? piProbe.status : ""
       if (!["processing", "succeeded", "requires_capture"].includes(piStatus)) {
+        await recordInvoicePaymentFailedActivity(supabase, {
+          landlordId,
+          invoiceId: invoiceIdFromMeta || null,
+          reason: piStatus || paymentStatus || "unknown",
+        })
         return jsonResponse(
           { error: `Payment not completed (status: ${paymentStatus || "unknown"})` },
           402,
@@ -223,9 +256,7 @@ serve(async (req) => {
       }
     }
 
-    const metadata = (retrieved.json.metadata ?? {}) as Record<string, unknown>
-    const invoiceId =
-      typeof metadata.invoice_id === "string" ? metadata.invoice_id.trim() : ""
+    const invoiceId = invoiceIdFromMeta
     const metaLandlord =
       typeof metadata.landlord_id === "string" ? metadata.landlord_id.trim() : ""
     if (!invoiceId || !uuidRe.test(invoiceId)) {
@@ -233,6 +264,53 @@ serve(async (req) => {
     }
     if (metaLandlord && metaLandlord !== landlordId) {
       return jsonResponse({ error: "Forbidden" }, 403)
+    }
+
+    const existingPaid = await isMaintenanceInvoicePaid(supabase, {
+      invoiceId,
+      landlordId,
+      stripeCheckoutSessionId: sessionId,
+    })
+    if (existingPaid.paid) {
+      const { data: invoiceRow } = await supabase
+        .from("maintenance_invoices")
+        .select("vendor_id, metadata, total_cost")
+        .eq("id", invoiceId)
+        .maybeSingle()
+      let vendorName = "Vendor"
+      if (invoiceRow?.vendor_id) {
+        const { data: vendor } = await supabase
+          .from("vendors")
+          .select("name")
+          .eq("id", invoiceRow.vendor_id)
+          .maybeSingle()
+        if (vendor?.name) vendorName = String(vendor.name)
+      }
+      const existingMeta =
+        invoiceRow?.metadata &&
+          typeof invoiceRow.metadata === "object" &&
+          !Array.isArray(invoiceRow.metadata)
+          ? invoiceRow.metadata as Record<string, unknown>
+          : {}
+      const paidAt =
+        typeof existingMeta.billing_logged_at === "string"
+          ? existingMeta.billing_logged_at
+          : new Date().toISOString()
+      const existingNote =
+        typeof existingMeta.payment_note === "string" && existingMeta.payment_note.trim()
+          ? existingMeta.payment_note.trim()
+          : null
+      return jsonResponse({
+        ok: true,
+        invoiceId,
+        sessionId,
+        alreadyCompleted: true,
+        recognizedAmount: Number(invoiceRow?.total_cost ?? 0),
+        amountPaid: Number(invoiceRow?.total_cost ?? 0),
+        vendorName,
+        paidAt,
+        ...(existingNote ? { note: existingNote } : {}),
+      })
     }
 
     const fallbackMethod =
@@ -249,6 +327,11 @@ serve(async (req) => {
     })
 
     if ("error" in result) {
+      await recordInvoicePaymentFailedActivity(supabase, {
+        landlordId,
+        invoiceId,
+        reason: result.error,
+      })
       const status =
         result.error === "forbidden"
           ? 403
@@ -365,7 +448,7 @@ serve(async (req) => {
   const { data: invoice, error: invErr } = await supabase
     .from("maintenance_invoices")
     .select(
-      "id, landlord_id, status, total_cost, invoice_number, maintenance_request_id, vendor_id",
+      "id, landlord_id, status, total_cost, invoice_number, maintenance_request_id, vendor_id, metadata",
     )
     .eq("id", invoiceId)
     .maybeSingle()
@@ -375,6 +458,12 @@ serve(async (req) => {
   }
   if (String(invoice.landlord_id) !== landlordId) {
     return jsonResponse({ error: "Forbidden" }, 403)
+  }
+  if (isMaintenanceInvoicePaidFromRow(invoice).paid) {
+    return jsonResponse(
+      { error: "Invoice has already been paid" },
+      409,
+    )
   }
   if (String(invoice.status) !== "submitted") {
     return jsonResponse(
@@ -398,11 +487,11 @@ serve(async (req) => {
       .maybeSingle()
     if (vendor?.name) vendorName = String(vendor.name)
 
-    const destination = await loadVendorStripeDestination(
-      supabase,
-      String(invoice.vendor_id),
-    )
-    if (isStripeConnectReady(destination) && destination) {
+    const { ready, destination } = await canReceivePayments(supabase, {
+      party: "vendor",
+      vendorId: String(invoice.vendor_id),
+    })
+    if (ready && destination) {
       connectAccountId = destination.accountId
     }
   }

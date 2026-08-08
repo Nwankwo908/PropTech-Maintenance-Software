@@ -1,0 +1,92 @@
+---
+description: Inbound SMS handler registry — atomic one-shot replies only; multi-turn flows stay in the workflow engine. Apply when adding or changing INBOUND_SMS_HANDLERS, inbound_processor routing, or SMS reply specialists.
+alwaysApply: true
+---
+
+# SMS handler registry — four rules
+
+The inbound SMS registry (`INBOUND_SMS_HANDLERS` in `inboundHandlerRegistry.ts`) is **not** a second workflow system. It recognizes **one short reply** to a **pending ask**. Everything else falls through to `routeInboundSmsWorkflow()` → `runWorkflowEngine()`.
+
+Pipeline (do not invert):
+
+```text
+inbound_processor setup (identity, conversation, save, debounce)
+  → tryInboundSmsHandlers()     ← specialists (first match wins)
+  → finishHandledInbound()      ← when handled: true (workflow MUST NOT run)
+  → routeInboundSmsWorkflow()   ← multi-turn / classify / escalate
+```
+
+## R1 — Handlers must be atomic
+
+One inbound message → **one** domain mutation (+ optional ack SMS). No staged “wait for next message” orchestration inside a handler adapter.
+
+- Adapter pattern: **parse keyword → pending gate → call one domain helper → return**
+- Outbound orchestration (welcome send, retries, cron) lives in domain modules (`tenantActivation.ts`, etc.) — never in the registry
+
+## R2 — Handlers must require clear pending context
+
+Return `{ handled: true }` only when a **stored pending ask** exists (or global compliance — see below).
+
+| Handler | Pending gate |
+|---|---|
+| `compliance_stop_help` | **Global** STOP/HELP only (sole exception) |
+| `schedule_confirm` | `intake_state.awaiting_schedule_confirmation` |
+| `estimate_decision` | `awaiting_estimate_decision` or pending estimate on thread WO |
+| `invoice_payment` | Admin notify phone + recent `maintenance.invoice_payment_options_sent` |
+| `tenant_activation_reply` | `users.activation_status === waiting` |
+| `vendor_reschedule` | Reschedule intent (`shouldAttemptVendorRescheduleInbound`) → **dispatch only** to `vendor_job_response` |
+| `vendor_capacity` | Vendor identity + PAUSE/RESUME/JOBS MAX command (command-style, not workflow) |
+| `vendor_feedback` | Open `vendor_feedback_requests` row (documented two-phase exception — see R4) |
+| `vendor_tenant_proxy` | `conversation_type === vendor_tenant_proxy` |
+
+Export a pure `canHandle*` / `shouldAttempt*` gate when practical; test it without Supabase.
+
+If pending context is missing → **`{ handled: false }`** (let workflow or fallback route).
+
+## R3 — Only one layer performs the business action
+
+If a handler returns `{ handled: true }`, **`routeInboundSmsWorkflow()` must not run** for that message (`inbound_processor.ts` early return via `finishHandledInbound`).
+
+- Do **not** duplicate the same mutation in a workflow template and a registry handler
+- When extracting a specialist from a template, **remove** duplicate mutation from the other layer
+- **`vendor_reschedule`**: registry detects intent + calls `runWorkflowEngine`; **`vendor_job_response`** owns the conversation via `vendorRescheduleWorkflowAct.ts`
+
+## R4 — Multi-turn / reminders / escalation → Workflow Engine only
+
+These belong in workflow templates (`maintenance_intake`, `rent_collection`, `lease_renewal`, `move_in`, `move_out`, `inspection`, `vendor_job_response`, …):
+
+- Free-text intake, missing details, photos
+- Rent / lease lifecycle with cron reminders
+- Escalation timers and ops notify
+
+**Do not** add new registry handlers for those flows.
+
+### Documented exceptions (keep narrow; do not copy)
+
+| Handler | Why it stays in registry |
+|---|---|
+| `vendor_feedback` | Two SMS phases (rating → low-score comment) on one `vendor_feedback_requests` row; no cron. Prefer new multi-step product flows as workflow templates. |
+
+**Vendor rescheduling is not a registry exception.** Registry = intent detection + workflow dispatch. Conversation = `vendor_job_response` + `vendorRescheduleWorkflowAct.ts`.
+
+## Adding a new handler — checklist
+
+1. Is it **one message, one action** with a **pending ask**? If no → workflow template.
+2. Export pending gate + tests: no pending → false; pending + token → true.
+3. Confirm **no duplicate** logic in `supabase/functions/_shared/engine/templates/*`.
+4. Thin adapter in `inboundHandlerRegistry.ts`; domain helper elsewhere.
+5. Update `INBOUND_SMS_HANDLER_PENDING_GATES` and contract tests.
+6. Assign priority band: compliance (1–9) → active conversation (10–29) → activation reply (30–39) → vendor ops (40–59) → relay (60–79).
+
+## Do not
+
+- Put maintenance intake, rent collection, lease renewal, or move-out logic in the registry
+- Infer pending activation from “is a tenant” alone
+- Run workflow engine after `{ handled: true }`
+- Send welcome SMS / activation retries from a registry handler
+
+## Related
+
+- Pre-registry setup stays in `inbound_processor.ts` (identity, save, debounce, `activeMaintenanceIntake`)
+- Workflow pipeline: `.cursor/rules/ulo-property-operations-engine.mdc`
+- Tenant activation reply only: `tenant_activation_reply` + `tenantActivation.ts`

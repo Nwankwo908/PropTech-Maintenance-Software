@@ -1,5 +1,6 @@
 import { useEffect, useId, useState } from 'react'
-import { isDemoAccountActive } from '@/lib/activeLandlord'
+import { getActiveLandlordId } from '@/lib/activeLandlord'
+import { supabase } from '@/lib/supabase'
 
 export type AssignUnitModalRow = {
   residentId: string
@@ -11,16 +12,6 @@ type AvailableUnit = {
   unit: string
   building: string
 }
-
-/** Demo inventory (Figma 130:20369). Replace with API data when wired. */
-const DEMO_AVAILABLE_UNITS: AvailableUnit[] = [
-  { id: 'u1', unit: '3C', building: 'Building A' },
-  { id: 'u2', unit: '4A', building: 'Building A' },
-  { id: 'u3', unit: '6B', building: 'Building B' },
-  { id: 'u4', unit: '7C', building: 'Building B' },
-  { id: 'u5', unit: '10D', building: 'Building C' },
-  { id: 'u6', unit: '11A', building: 'Building C' },
-]
 
 function IconKeyHeader({ className = 'size-5 text-extended-1' }: { className?: string }) {
   return (
@@ -68,6 +59,7 @@ export function AssignUnitModal({
 }) {
   const titleId = useId()
   const [selectedId, setSelectedId] = useState<string | null>(null)
+  const [availableUnits, setAvailableUnits] = useState<AvailableUnit[]>([])
   const residentId = row?.residentId ?? ''
   const [prevResidentId, setPrevResidentId] = useState(residentId)
   if (residentId !== prevResidentId) {
@@ -84,9 +76,42 @@ export function AssignUnitModal({
     return () => window.removeEventListener('keydown', onKey)
   }, [row, onClose])
 
+  useEffect(() => {
+    if (!row || !supabase) {
+      setAvailableUnits([])
+      return
+    }
+    let cancelled = false
+    void (async () => {
+      const { data, error } = await supabase
+        .from('units')
+        .select('id, unit_label, building')
+        .eq('landlord_id', getActiveLandlordId())
+        .eq('status', 'vacant')
+        .order('building')
+        .order('unit_label')
+        .limit(100)
+      if (cancelled) return
+      if (error) {
+        console.error('[assign-unit] vacant units load failed', error.message)
+        setAvailableUnits([])
+        return
+      }
+      setAvailableUnits(
+        (data ?? []).map((unit) => ({
+          id: String(unit.id),
+          unit: typeof unit.unit_label === 'string' ? unit.unit_label : String(unit.unit_label ?? ''),
+          building: typeof unit.building === 'string' ? unit.building : String(unit.building ?? ''),
+        })),
+      )
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [row])
+
   if (!row) return null
 
-  const availableUnits = isDemoAccountActive() ? DEMO_AVAILABLE_UNITS : []
   const selected = availableUnits.find((u) => u.id === selectedId)
 
   function assign() {

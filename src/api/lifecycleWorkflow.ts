@@ -31,6 +31,11 @@ export type StartLifecycleWorkflowPayload = {
   scheduledAt?: string
   inspectionType?: InspectionType
   skipTenantRegistration?: boolean
+  initialAction?: {
+    moveIn?: { action: 'register_and_outreach' | 'send_outreach' }
+    moveOut?: { action: 'send_outreach' }
+    inspection?: { action: 'register_and_outreach' | 'send_outreach' }
+  }
 }
 
 export type StartLifecycleWorkflowResult =
@@ -183,4 +188,38 @@ export async function loadResidentsForUnit(unitId: string): Promise<ResidentOpti
   }
 
   return (data ?? []) as ResidentOption[]
+}
+
+export type InspectionNoticeUnitScope = 'all' | 'building' | 'units'
+
+export type ModalInspectionTypeId = 'annual' | 'unit' | 'safety' | 'maintenance'
+
+export function mapModalInspectionType(id: ModalInspectionTypeId): InspectionType {
+  if (id === 'annual') return 'annual'
+  return 'periodic'
+}
+
+export function buildInspectionScheduledAt(date: string, timeWindow: string): string {
+  const day = date.trim().slice(0, 10)
+  const hour = timeWindow === 'afternoon' ? '12:00:00' : '09:00:00'
+  return `${day}T${hour}`
+}
+
+export async function loadUnitsForInspectionScope(params: {
+  scope: InspectionNoticeUnitScope
+  building?: string
+  unitLabel?: string
+}): Promise<UnitOption[]> {
+  const units = await loadUnitsForWorkflowPicker()
+  if (params.scope === 'all') return units
+
+  if (params.scope === 'building') {
+    const building = params.building?.trim()
+    if (!building) return []
+    return units.filter((unit) => (unit.building ?? '').trim() === building)
+  }
+
+  const unitLabel = params.unitLabel?.trim()
+  if (!unitLabel) return []
+  return units.filter((unit) => unit.unit_label.trim() === unitLabel)
 }

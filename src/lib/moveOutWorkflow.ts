@@ -190,63 +190,6 @@ export function formatMoveOutDateLabel(iso: string | null | undefined): string {
   return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })
 }
 
-const ACTION_PATCH: Partial<
-  Record<
-    MoveOutAdminAction,
-    {
-      checklist?: Partial<Record<MoveOutChecklistKey, boolean>>
-      milestone?: MoveOutTimelineStepKey
-      currentStep?: string
-      status?: 'active' | 'completed' | 'cancelled'
-      graphEvent?: string
-      message: string
-    }
-  >
-> = {
-  send_reminder: {
-    graphEvent: 'move_out.reminder_sent',
-    message: 'Move-out reminder sent by admin',
-  },
-  schedule_inspection: {
-    checklist: { inspection_scheduled: true },
-    milestone: 'inspection_scheduled',
-    currentStep: 'inspection_scheduled',
-    graphEvent: 'move_out.inspection_scheduled',
-    message: 'Move-out inspection scheduled',
-  },
-  mark_keys_returned: {
-    checklist: { keys_returned: true },
-    milestone: 'keys_returned',
-    currentStep: 'unit_vacated',
-    graphEvent: 'move_out.keys_returned',
-    message: 'Keys marked returned by admin',
-  },
-  complete_cleaning: {
-    checklist: { cleaning_scheduled: true },
-    milestone: 'cleaning_scheduled',
-    currentStep: 'turnover_in_progress',
-    graphEvent: 'move_out.cleaning_completed',
-    message: 'Cleaning marked complete',
-  },
-  complete_move_out: {
-    checklist: {
-      deposit_review_completed: true,
-      property_ready_for_turnover: true,
-    },
-    milestone: 'move_out_complete',
-    currentStep: 'completed',
-    status: 'completed',
-    graphEvent: 'move_out.completed',
-    message: 'Move-out workflow completed',
-  },
-  cancel_move_out: {
-    status: 'cancelled',
-    currentStep: 'cancelled',
-    graphEvent: 'move_out.cancelled',
-    message: 'Move-out workflow cancelled by admin',
-  },
-}
-
 export async function applyMoveOutAdminAction(
   action: MoveOutAdminAction,
   params: {
@@ -257,87 +200,78 @@ export async function applyMoveOutAdminAction(
     moveOutDate?: string | null
   },
 ): Promise<{ ok: true } | { ok: false; error: string }> {
-  const patch = ACTION_PATCH[action]
-  if (!patch) {
-    return { ok: false, error: 'This action is not available yet.' }
+  const engineActions: MoveOutAdminAction[] = [
+    'send_reminder',
+    'schedule_inspection',
+    'mark_keys_returned',
+    'complete_cleaning',
+    'complete_move_out',
+    'cancel_move_out',
+  ]
+
+  if (engineActions.includes(action)) {
+    const { postMoveOutWorkflowAction } = await import('@/api/moveOutWorkflowAction')
+    const result = await postMoveOutWorkflowAction({
+      workflowRunId: params.workflowRunId,
+      action,
+      landlordId: params.landlordId,
+    })
+    if (!result.ok) return result
+    return { ok: true }
   }
 
-  const { supabase } = await import('@/lib/supabase')
-  if (!supabase) return { ok: false, error: 'Supabase is not configured.' }
-
-  const { data: run, error: fetchError } = await supabase
-    .from('workflow_runs')
-    .select('id, status, metadata, resident_id, unit_id')
-    .eq('id', params.workflowRunId)
-    .eq('landlord_id', params.landlordId)
-    .eq('template_id', 'move_out')
-    .maybeSingle()
-
-  if (fetchError) return { ok: false, error: getErrorMessage(fetchError, 'Something went wrong. Please try again.') }
-  if (!run) return { ok: false, error: 'Move-out workflow not found.' }
-
-  const metadata = readRecord(run.metadata)
-  const checklist = readRecord(metadata.checklist)
-  const milestones = readRecord(metadata.milestones)
-  const now = new Date().toISOString()
-
-  if (patch.checklist) {
-    for (const [key, value] of Object.entries(patch.checklist)) {
-      if (value === true) checklist[key] = true
+  if (action === 'update_move_out_date') {
+    if (!params.moveOutDate?.trim()) {
+      return { ok: false, error: 'Move-out date is required.' }
     }
-  }
-  if (patch.milestone) milestones[patch.milestone] = now
 
-  const updatePayload: Record<string, unknown> = {
-    metadata: {
-      ...metadata,
-      checklist,
-      milestones,
-      ...(action === 'update_move_out_date' && params.moveOutDate
-        ? { move_out_date: params.moveOutDate, step_state: { ...readRecord(metadata.step_state), move_out_date: params.moveOutDate } }
-        : {}),
-    },
-  }
+    const { supabase } = await import('@/lib/supabase')
+    if (!supabase) return { ok: false, error: 'Supabase is not configured.' }
 
-  if (patch.currentStep) updatePayload.current_step = patch.currentStep
-  if (patch.status === 'completed') {
-    updatePayload.status = 'completed'
-    updatePayload.completed_at = now
-  } else if (patch.status === 'cancelled') {
-    updatePayload.status = 'cancelled'
-  }
+    const { data: run, error: fetchError } = await supabase
+      .from('workflow_runs')
+      .select('id, metadata')
+      .eq('id', params.workflowRunId)
+      .eq('landlord_id', params.landlordId)
+      .eq('template_id', 'move_out')
+      .maybeSingle()
 
-  const { error: updateError } = await supabase
-    .from('workflow_runs')
-    .update(updatePayload)
-    .eq('id', params.workflowRunId)
-    .eq('landlord_id', params.landlordId)
+    if (fetchError) return { ok: false, error: getErrorMessage(fetchError, 'Something went wrong. Please try again.') }
+    if (!run) return { ok: false, error: 'Move-out workflow not found.' }
 
-  if (updateError) return { ok: false, error: getErrorMessage(updateError, 'Something went wrong. Please try again.') }
+    const metadata = readRecord(run.metadata)
+    const { error: updateError } = await supabase
+      .from('workflow_runs')
+      .update({
+        metadata: {
+          ...metadata,
+          move_out_date: params.moveOutDate,
+          step_state: {
+            ...readRecord(metadata.step_state),
+            move_out_date: params.moveOutDate,
+          },
+        },
+      })
+      .eq('id', params.workflowRunId)
+      .eq('landlord_id', params.landlordId)
 
-  if (patch.graphEvent) {
+    if (updateError) return { ok: false, error: getErrorMessage(updateError, 'Something went wrong. Please try again.') }
+
     const { recordActivityLog } = await import('@/lib/recordActivityLog')
     await recordActivityLog({
       landlordId: params.landlordId,
-      eventType: patch.graphEvent,
+      eventType: 'move_out.date_updated',
       source: 'dashboard',
       actorType: 'landlord',
       workflowRunId: params.workflowRunId,
       workflowTemplateId: 'move_out',
-      residentId: params.residentId ?? run.resident_id,
-      unitId: params.unitId ?? run.unit_id,
-      metadata: { action, message: patch.message },
+      residentId: params.residentId ?? null,
+      unitId: params.unitId ?? null,
+      metadata: { action, message: 'Move-out date updated by admin' },
     })
+
+    return { ok: true }
   }
 
-  await supabase.from('workflow_events').insert({
-    workflow_run_id: params.workflowRunId,
-    event_type: patch.graphEvent ?? `move_out.${action}`,
-    step: patch.currentStep ?? null,
-    actor_type: 'landlord',
-    message: patch.message,
-    metadata: { action },
-  })
-
-  return { ok: true }
+  return { ok: false, error: 'This action is not available yet.' }
 }

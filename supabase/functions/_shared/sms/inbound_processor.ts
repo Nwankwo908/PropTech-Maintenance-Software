@@ -8,67 +8,29 @@ import {
   normalizeSmsPhone,
   resolveInboundSmsNumber,
   resolveOpenMaintenanceRequestId,
-  type SmsIdentityRow,
 } from "./inbound_db.ts"
-import {
-  resolvePhoneIdentity,
-  type IdentityResolutionSource,
-  type SelfHealingPhase,
-} from "./resolveIdentity.ts"
-import {
-  actorIdForIdentity,
-  actorTypeForIdentity,
-  routeInboundSmsWorkflow,
-} from "./workflow_router.ts"
-import { relayInboundProxiedMessage } from "./proxiedMessaging.ts"
-import { logGraphEvent } from "../graph/logGraphEvent.ts"
-import {
-  resolveInboundAutoReplyBody,
-  sendInboundAutoReply,
-} from "./inboundReply.ts"
+import { resolvePhoneIdentity } from "./resolveIdentity.ts"
+import { routeInboundSmsWorkflow } from "./workflow_router.ts"
 import {
   decideInboundDebounce,
-  shouldTripOutboundCircuit,
   type SaveInboundResult,
 } from "./sms_inbound_guard.ts"
-import { readVendorScheduleFsm } from "../vendor_schedule_fsm.ts"
-import { tryHandleVendorFeedbackInbound } from "../vendor_feedback.ts"
-import { tryHandleInvoicePaymentInbound } from "../invoicePaymentSms.ts"
-import { tryHandleEstimateDecisionInbound } from "./estimateDecisionInbound.ts"
-import { tryHandleTenantScheduleConfirmInbound } from "./tenantScheduleConfirm.ts"
-import { tryHandleTenantConsentKeyword } from "./tenantMessaging.ts"
-import { tryHandleVendorCapacityInbound } from "../vendor_capacity.ts"
+import {
+  finishHandledInbound,
+  recordInboundSmsGraphEvent,
+  trySendAutoReply,
+} from "./inboundFinish.ts"
+import { tryInboundSmsHandlers } from "./inboundHandlerRegistry.ts"
+import {
+  InboundSmsError,
+  type InboundSmsHandlerContext,
+  type ProcessInboundSmsResult,
+} from "./inboundHandlerTypes.ts"
 
-export type ProcessInboundSmsResult =
-  | {
-      ok: true
-      releasedPending: true
-      conversationId: string
-      messageId: string
-      outboundMessageId?: string
-    }
-  | {
-      ok: true
-      releasedPending?: false
-      conversationId: string
-      messageId: string
-      outboundMessageId?: string
-      workflowRoute: string
-      identityType: string
-      landlordId: string
-      resolutionSource: IdentityResolutionSource
-      selfHealingPhase: SelfHealingPhase
-    }
-
-export class InboundSmsError extends Error {
-  constructor(
-    message: string,
-    readonly status = 400,
-  ) {
-    super(message)
-    this.name = "InboundSmsError"
-  }
-}
+export {
+  InboundSmsError,
+  type ProcessInboundSmsResult,
+} from "./inboundHandlerTypes.ts"
 
 async function saveInboundMessage(
   supabase: SupabaseClient,
@@ -108,7 +70,6 @@ async function saveInboundMessage(
     .single()
 
   if (error || !data?.id) {
-    // Unique race: treat as duplicate rather than failing the webhook.
     if (error?.code === "23505") {
       const { data: raced } = await supabase
         .from("sms_messages")
@@ -127,169 +88,25 @@ async function saveInboundMessage(
   return { messageId: data.id as string, duplicate: false }
 }
 
-async function trySendAutoReply(
+async function loadActiveMaintenanceIntake(
   supabase: SupabaseClient,
-  params: {
-    conversationId: string
-    landlordId: string
-    uloNumber: string
-    externalPhone: string
-    provider: InboundSMSMessage["provider"]
-    resolutionHint?: string
-    workflowHint?: string
-    source: string
-    workflowRoute?: string
-    /** When true, never invent a generic maintenance fallback. */
-    skipGenericFallback?: boolean
-  },
-): Promise<string | undefined> {
-  let replyBody = resolveInboundAutoReplyBody(
-    params.resolutionHint,
-    params.workflowHint,
-    params.workflowRoute,
-  )
-
-  if (!replyBody) {
-    const skipGeneric =
-      params.skipGenericFallback ||
-      params.workflowRoute === "vendor_response" ||
-      params.source.includes("vendor")
-    if (skipGeneric) {
-      console.info("[sms-inbound] auto-reply skipped — no workflow reply", {
-        conversationId: params.conversationId,
-        source: params.source,
-        workflowRoute: params.workflowRoute,
-      })
-      return undefined
-    }
-    replyBody =
-      params.workflowHint?.trim() ||
-      params.resolutionHint?.trim() ||
-      "Thanks for reaching out — this is Ulo. How can we help with your maintenance issue today?"
-  }
-
-  if (!replyBody) {
-    console.warn("[sms-inbound] auto-reply skipped — no reply text", {
-      conversationId: params.conversationId,
-      source: params.source,
-      workflowRoute: params.workflowRoute,
-      hasResolutionHint: !!params.resolutionHint?.trim(),
-      hasWorkflowHint: !!params.workflowHint?.trim(),
-    })
-    return undefined
-  }
-
-  let scheduleState = null
+  conversationId: string,
+): Promise<boolean> {
   try {
-    const { data: convo } = await supabase
+    const { data: intakeConv } = await supabase
       .from("sms_conversations")
       .select("intake_state")
-      .eq("id", params.conversationId)
+      .eq("id", conversationId)
       .maybeSingle()
-    scheduleState = readVendorScheduleFsm(
-      (convo?.intake_state as Record<string, unknown> | null) ?? null,
-    )
+    const intakeState = (intakeConv as { intake_state?: Record<string, unknown> | null } | null)
+      ?.intake_state
+    const step = typeof intakeState?.step === "string" ? intakeState.step : ""
+    if (step && step !== "submitted") return true
+    if (intakeState?.awaiting_schedule_confirmation) return true
+    return false
   } catch {
-    scheduleState = null
+    return false
   }
-
-  // Loop detector is for vendor scheduling echoes — not resident intake retries
-  // (validation prompts often repeat and must still deliver).
-  const applyCircuit =
-    params.workflowRoute === "vendor_response" ||
-    params.source.includes("vendor")
-  if (applyCircuit) {
-    const circuit = await shouldTripOutboundCircuit(supabase, {
-      conversationId: params.conversationId,
-      body: replyBody,
-      scheduleState,
-    })
-    if (circuit.trip) {
-      console.warn("[sms-inbound] outbound circuit breaker tripped", {
-        conversationId: params.conversationId,
-        reason: circuit.reason,
-        bodyPreview: replyBody.slice(0, 80),
-      })
-      return undefined
-    }
-  }
-
-  const sent = await sendInboundAutoReply(supabase, {
-    conversationId: params.conversationId,
-    landlordId: params.landlordId,
-    fromNumber: params.uloNumber,
-    toNumber: params.externalPhone,
-    body: replyBody,
-    provider: params.provider,
-    source: params.source,
-  })
-
-  if (!sent.ok) {
-    console.warn("[sms-inbound] auto-reply not delivered", {
-      conversationId: params.conversationId,
-      source: params.source,
-      workflowRoute: params.workflowRoute,
-      error: sent.error,
-    })
-    return undefined
-  }
-
-  return sent.messageId
-}
-
-async function recordGraphEvent(
-  supabase: SupabaseClient,
-  params: {
-    landlordId: string
-    identity: SmsIdentityRow
-    conversationId: string
-    messageId: string
-    maintenanceRequestId: string | null
-    inbound: InboundSMSMessage
-    workflowRoute: string
-    workflowMetadata?: Record<string, unknown>
-    selfHealed: boolean
-    resolutionSource: IdentityResolutionSource
-    selfHealingPhase: SelfHealingPhase
-  },
-): Promise<void> {
-  const templateId =
-    typeof params.workflowMetadata?.workflow_template_id === "string"
-      ? params.workflowMetadata.workflow_template_id
-      : null
-  const runId =
-    typeof params.workflowMetadata?.workflow_run_id === "string"
-      ? params.workflowMetadata.workflow_run_id
-      : null
-
-  await logGraphEvent(supabase, {
-    landlord_id: params.landlordId,
-    event_type: "sms.message_received",
-    source: "sms",
-    actor_type: actorTypeForIdentity(params.identity.identity_type),
-    actor_id: actorIdForIdentity(params.identity),
-    unit_id: params.identity.unit_id,
-    resident_id: params.identity.resident_id,
-    vendor_id: params.identity.vendor_id,
-    maintenance_request_id: params.maintenanceRequestId,
-    conversation_id: params.conversationId,
-    message_id: params.messageId,
-    workflow_run_id: runId,
-    workflow_template_id: templateId,
-    metadata: {
-      workflow_route: params.workflowRoute,
-      workflow_template_id: templateId ?? undefined,
-      workflow_run_id: runId ?? undefined,
-      provider_message_sid: params.inbound.providerMessageSid,
-      from: params.inbound.from,
-      to: params.inbound.to,
-      body_preview: params.inbound.body.slice(0, 280),
-      media_count: params.inbound.mediaUrls.length,
-      self_healed: params.selfHealed,
-      resolution_source: params.resolutionSource,
-      self_healing_phase: params.selfHealingPhase,
-    },
-  })
 }
 
 /** Core inbound SMS pipeline (webhook-agnostic). */
@@ -436,7 +253,6 @@ export async function processInboundSms(
   })
   const messageId = saved.messageId
 
-  // Webhook retries: persist once, never re-run workflow / auto-reply.
   if (saved.duplicate) {
     console.info("[sms-inbound] duplicate provider SID — skip reprocess", {
       conversationId,
@@ -455,7 +271,6 @@ export async function processInboundSms(
     }
   }
 
-  // Debounce: if a newer inbound landed within the window, let that webhook act.
   const debounce = await decideInboundDebounce(supabase, {
     conversationId,
     messageId,
@@ -478,349 +293,27 @@ export async function processInboundSms(
     }
   }
 
-  // Skip START/YES consent hijack while SMS maintenance intake is mid-flow
-  // (e.g. urgency "Yes") — STOP/HELP still apply.
-  let activeMaintenanceIntake = false
-  try {
-    const { data: intakeConv } = await supabase
-      .from("sms_conversations")
-      .select("intake_state")
-      .eq("id", conversationId)
-      .maybeSingle()
-    const intakeState = (intakeConv as { intake_state?: Record<string, unknown> | null } | null)
-      ?.intake_state
-    const step = typeof intakeState?.step === "string" ? intakeState.step : ""
-    activeMaintenanceIntake = Boolean(step && step !== "submitted")
-    if (intakeState?.awaiting_schedule_confirmation) {
-      activeMaintenanceIntake = true
-    }
-  } catch {
-    activeMaintenanceIntake = false
-  }
-
-  const scheduleConfirm = await tryHandleTenantScheduleConfirmInbound(supabase, {
+  const handlerContext: InboundSmsHandlerContext = {
+    supabase,
+    inbound,
     landlordId,
     conversationId,
-    messageId,
-    body: inbound.body,
-    identityType: identity.identity_type,
-  })
-  if (scheduleConfirm.handled) {
-    const outboundMessageId = await trySendAutoReply(supabase, {
-      conversationId,
-      landlordId,
-      uloNumber: inbound.to,
-      externalPhone: inbound.from,
-      provider: inbound.provider,
-      workflowHint: scheduleConfirm.replyBody,
-      source: `tenant_schedule_${scheduleConfirm.action}`,
-      workflowRoute: "tenant_schedule_confirm",
-    })
-    await recordGraphEvent(supabase, {
-      landlordId,
-      identity,
-      conversationId,
-      messageId,
-      maintenanceRequestId: scheduleConfirm.ticketId,
-      inbound,
-      workflowRoute: "tenant_schedule_confirm",
-      workflowMetadata: {
-        action: scheduleConfirm.action,
-        ticket_id: scheduleConfirm.ticketId,
-      },
-      selfHealed,
-      resolutionSource: resolution.source,
-      selfHealingPhase: resolution.selfHealingPhase,
-    })
-    return {
-      ok: true,
-      conversationId,
-      messageId,
-      outboundMessageId,
-      workflowRoute: "tenant_schedule_confirm",
-      identityType: identity.identity_type,
-      landlordId,
-      resolutionSource: resolution.source,
-      selfHealingPhase: resolution.selfHealingPhase,
-    }
-  }
-
-  const consentResult = await tryHandleTenantConsentKeyword(supabase, {
-    body: inbound.body,
-    landlordId,
-    conversationId,
-    provider: inbound.provider,
-    uloNumber: inbound.to,
-    externalPhone: inbound.from,
-    residentId: identity.resident_id,
-    smsIdentityId: identity.id,
-    identityType: identity.identity_type,
     conversationType,
-    activeMaintenanceIntake,
-  })
-
-  if (consentResult.handled) {
-    await recordGraphEvent(supabase, {
-      landlordId,
-      identity,
-      conversationId,
-      messageId,
-      maintenanceRequestId,
-      inbound,
-      workflowRoute: `tenant_consent_${consentResult.keyword}`,
-      selfHealed,
-      resolutionSource: resolution.source,
-      selfHealingPhase: resolution.selfHealingPhase,
-    })
-
-    return {
-      ok: true,
-      conversationId,
-      messageId,
-      outboundMessageId: consentResult.outboundMessageId,
-      workflowRoute: `tenant_consent_${consentResult.keyword}`,
-      identityType: identity.identity_type,
-      landlordId,
-      resolutionSource: resolution.source,
-      selfHealingPhase: resolution.selfHealingPhase,
-    }
-  }
-
-  const estimateDecision = await tryHandleEstimateDecisionInbound(supabase, {
-    landlordId,
-    conversationId,
     messageId,
-    body: inbound.body,
-    identityType: identity.identity_type,
-  })
-
-  if (estimateDecision.handled) {
-    const outboundMessageId = await trySendAutoReply(supabase, {
+    identity,
+    maintenanceRequestId,
+    selfHealed,
+    resolutionSource: resolution.source,
+    selfHealingPhase: resolution.selfHealingPhase,
+    activeMaintenanceIntake: await loadActiveMaintenanceIntake(
+      supabase,
       conversationId,
-      landlordId,
-      uloNumber: inbound.to,
-      externalPhone: inbound.from,
-      provider: inbound.provider,
-      workflowHint: estimateDecision.replyBody,
-      source: `estimate_decision_${estimateDecision.action}`,
-      workflowRoute: "landlord_estimate_decision",
-    })
-
-    await recordGraphEvent(supabase, {
-      landlordId,
-      identity,
-      conversationId,
-      messageId,
-      maintenanceRequestId,
-      inbound,
-      workflowRoute: "landlord_estimate_decision",
-      workflowMetadata: {
-        estimate_id: estimateDecision.estimateId,
-        action: estimateDecision.action,
-        status: estimateDecision.status,
-        already: estimateDecision.already ?? false,
-      },
-      selfHealed,
-      resolutionSource: resolution.source,
-      selfHealingPhase: resolution.selfHealingPhase,
-    })
-
-    return {
-      ok: true,
-      conversationId,
-      messageId,
-      outboundMessageId,
-      workflowRoute: "landlord_estimate_decision",
-      identityType: identity.identity_type,
-      landlordId,
-      resolutionSource: resolution.source,
-      selfHealingPhase: resolution.selfHealingPhase,
-    }
+    ),
   }
 
-  const invoicePayResult = await tryHandleInvoicePaymentInbound(supabase, {
-    landlordId,
-    conversationId,
-    messageId,
-    body: inbound.body,
-    fromPhone: inbound.from,
-  })
-  if (invoicePayResult.handled) {
-    const outboundMessageId = await trySendAutoReply(supabase, {
-      conversationId,
-      landlordId,
-      uloNumber: inbound.to,
-      externalPhone: inbound.from,
-      provider: inbound.provider,
-      workflowHint: invoicePayResult.replyBody,
-      source: "invoice_payment_preference",
-      workflowRoute: "invoice_payment",
-    })
-    await recordGraphEvent(supabase, {
-      landlordId,
-      identity,
-      conversationId,
-      messageId,
-      maintenanceRequestId,
-      inbound,
-      workflowRoute: "invoice_payment",
-      workflowMetadata: { preference_reply: true },
-      selfHealed,
-      resolutionSource: resolution.source,
-      selfHealingPhase: resolution.selfHealingPhase,
-    })
-    return {
-      ok: true,
-      conversationId,
-      messageId,
-      outboundMessageId,
-      workflowRoute: "invoice_payment",
-      identityType: identity.identity_type,
-      landlordId,
-      resolutionSource: resolution.source,
-      selfHealingPhase: resolution.selfHealingPhase,
-    }
-  }
-
-  const capacityResult = await tryHandleVendorCapacityInbound(supabase, {
-    landlordId,
-    vendorId: identity.vendor_id,
-    identityType: identity.identity_type,
-    body: inbound.body,
-  })
-  if (capacityResult.handled) {
-    const outboundMessageId = await trySendAutoReply(supabase, {
-      conversationId,
-      landlordId,
-      uloNumber: inbound.to,
-      externalPhone: inbound.from,
-      provider: inbound.provider,
-      workflowHint: capacityResult.replyBody,
-      source: `vendor_capacity_${capacityResult.command === "unknown" ? "unknown" : capacityResult.command.kind}`,
-      workflowRoute: "vendor_capacity",
-    })
-    await recordGraphEvent(supabase, {
-      landlordId,
-      identity,
-      conversationId,
-      messageId,
-      maintenanceRequestId,
-      inbound,
-      workflowRoute: "vendor_capacity",
-      workflowMetadata: {
-        capacity_command:
-          capacityResult.command === "unknown"
-            ? "unknown"
-            : capacityResult.command.kind,
-      },
-      selfHealed,
-      resolutionSource: resolution.source,
-      selfHealingPhase: resolution.selfHealingPhase,
-    })
-    return {
-      ok: true,
-      conversationId,
-      messageId,
-      outboundMessageId,
-      workflowRoute: "vendor_capacity",
-      identityType: identity.identity_type,
-      landlordId,
-      resolutionSource: resolution.source,
-      selfHealingPhase: resolution.selfHealingPhase,
-    }
-  }
-
-  const feedbackResult = await tryHandleVendorFeedbackInbound(supabase, {
-    landlordId,
-    conversationId,
-    messageId,
-    body: inbound.body,
-    residentId: identity.resident_id,
-    identityType: identity.identity_type,
-  })
-
-  if (feedbackResult.handled) {
-    const outboundMessageId = await trySendAutoReply(supabase, {
-      conversationId,
-      landlordId,
-      uloNumber: inbound.to,
-      externalPhone: inbound.from,
-      provider: inbound.provider,
-      workflowHint: feedbackResult.replyBody,
-      source: `vendor_feedback_${feedbackResult.eventType}`,
-      workflowRoute: "vendor_feedback",
-    })
-
-    await recordGraphEvent(supabase, {
-      landlordId,
-      identity,
-      conversationId,
-      messageId,
-      maintenanceRequestId: feedbackResult.maintenanceRequestId,
-      inbound,
-      workflowRoute: "vendor_feedback",
-      workflowMetadata: {
-        vendor_feedback_event: feedbackResult.eventType,
-        rating: feedbackResult.rating,
-      },
-      selfHealed,
-      resolutionSource: resolution.source,
-      selfHealingPhase: resolution.selfHealingPhase,
-    })
-
-    return {
-      ok: true,
-      conversationId,
-      messageId,
-      outboundMessageId,
-      workflowRoute: "vendor_feedback",
-      identityType: identity.identity_type,
-      landlordId,
-      resolutionSource: resolution.source,
-      selfHealingPhase: resolution.selfHealingPhase,
-    }
-  }
-
-  if (conversationType === "vendor_tenant_proxy") {
-    const relay = await relayInboundProxiedMessage(supabase, {
-      conversationId,
-      inboundMessageId: messageId,
-      inboundFrom: inbound.from,
-      body: inbound.body,
-      mediaUrls: inbound.mediaUrls,
-    })
-    console.info("[sms-inbound] vendor_tenant_proxy relay", {
-      conversationId,
-      inboundMessageId: messageId,
-      relayOk: relay.ok,
-      skipped: "skipped" in relay ? relay.skipped : false,
-      reason: "reason" in relay ? relay.reason : undefined,
-      eventType: relay.ok ? relay.eventType : undefined,
-    })
-
-    await recordGraphEvent(supabase, {
-      landlordId,
-      identity,
-      conversationId,
-      messageId,
-      maintenanceRequestId,
-      inbound,
-      workflowRoute: "vendor_tenant_proxy",
-      selfHealed,
-      resolutionSource: resolution.source,
-      selfHealingPhase: resolution.selfHealingPhase,
-    })
-
-    return {
-      ok: true,
-      conversationId,
-      messageId,
-      workflowRoute: "vendor_tenant_proxy",
-      identityType: identity.identity_type,
-      landlordId,
-      resolutionSource: resolution.source,
-      selfHealingPhase: resolution.selfHealingPhase,
-    }
+  const handlerResult = await tryInboundSmsHandlers(handlerContext)
+  if (handlerResult.handled) {
+    return finishHandledInbound(handlerContext, handlerResult)
   }
 
   let workflow
@@ -866,7 +359,7 @@ export async function processInboundSms(
       workflow.route === "vendor_response",
   })
 
-  await recordGraphEvent(supabase, {
+  await recordInboundSmsGraphEvent(supabase, {
     landlordId,
     identity,
     conversationId,

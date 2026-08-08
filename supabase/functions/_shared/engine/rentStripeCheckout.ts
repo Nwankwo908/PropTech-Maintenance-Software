@@ -5,22 +5,26 @@
 import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.49.1"
 import {
   applicationFeeCents,
-  isLandlordStripeConnectReady,
   isStripeConfigured,
-  isStripeConnectReady,
   loadLandlordStripeDestination,
   stripeForm,
   stripeGet,
   type StripeConnectDestination,
 } from "../stripeConnect.ts"
+import { canReceivePayments } from "../paymentReadiness.ts"
 import {
-  logRentCollectionGraphEvent,
+  isStripeCheckoutSessionPaymentFailed,
+  recordRentPaymentFailedActivity,
+  recordRentPaymentReceivedActivity,
+} from "../paymentActivityEvents.ts"
+import {
   logRentCollectionLedgerWithGraph,
   rentCollectionGraphScopeFromRun,
-  RENT_GRAPH_EVENTS,
 } from "./rentCollectionGraph.ts"
 import { logPipelineStageEvent, logWorkflowEvent } from "./workflowRuns.ts"
+import type { WorkflowRunRow } from "./types.ts"
 import { uloAppOrigin } from "../uloAppUrl.ts"
+import { isRentChargePaidFromRun } from "../paymentSettlement.ts"
 
 /** @deprecated Prefer StripeConnectDestination from stripeConnect.ts */
 export type LandlordRentDestination = StripeConnectDestination
@@ -38,7 +42,8 @@ export async function isLandlordRentPayoutsReady(
   supabase: SupabaseClient,
   landlordId: string,
 ): Promise<boolean> {
-  return isLandlordStripeConnectReady(supabase, landlordId)
+  const { canLandlordReceivePayments } = await import("../paymentReadiness.ts")
+  return canLandlordReceivePayments(supabase, landlordId)
 }
 
 export type RentCheckoutCreateResult =
@@ -92,11 +97,11 @@ export async function createRentCheckoutSession(
     return { ok: false, error: "Stripe is not configured for rent payments." }
   }
 
-  const destination = await loadLandlordRentDestination(
-    supabase,
-    params.landlordId,
-  )
-  if (!isStripeConnectReady(destination)) {
+  const { ready, destination } = await canReceivePayments(supabase, {
+    party: "landlord",
+    landlordId: params.landlordId,
+  })
+  if (!ready || !destination) {
     return {
       ok: false,
       error:
@@ -288,9 +293,31 @@ export async function completeRentCheckoutFromSession(
     typeof session.payment_status === "string" ? session.payment_status : ""
   const status = typeof session.status === "string" ? session.status : ""
 
-  // ACH can be processing while unpaid — accept paid or processing with a PI.
   const pi = asRecord(session.payment_intent)
   const piStatus = typeof pi?.status === "string" ? pi.status : ""
+  if (isStripeCheckoutSessionPaymentFailed(session)) {
+    const metaProbe = asRecord(session.metadata) ?? {}
+    const landlordProbe =
+      typeof metaProbe.landlord_id === "string" ? metaProbe.landlord_id.trim() : ""
+    const runProbe =
+      typeof metaProbe.workflow_run_id === "string"
+        ? metaProbe.workflow_run_id.trim()
+        : ""
+    if (landlordProbe) {
+      await recordRentPaymentFailedActivity(supabase, {
+        landlordId: landlordProbe,
+        workflowRunId: runProbe || null,
+        reason: piStatus || paymentStatus || "checkout_failed",
+      })
+    }
+    return {
+      ok: false,
+      error: "Rent payment failed. Please try again or use a different payment method.",
+      status: 402,
+    }
+  }
+
+  // ACH can be processing while unpaid — accept paid or processing with a PI.
   const accepted =
     paymentStatus === "paid" ||
     (paymentStatus === "unpaid" &&
@@ -337,7 +364,8 @@ export async function completeRentCheckoutFromSession(
     return { ok: false, error: "Rent collection run not found.", status: 404 }
   }
 
-  if (run.status === "completed") {
+  const settled = isRentChargePaidFromRun(run as WorkflowRunRow)
+  if (settled.paid) {
     return {
       ok: true,
       runId,
@@ -491,17 +519,29 @@ export async function completeRentCheckoutFromSession(
     },
   })
 
-  await logRentCollectionGraphEvent(supabase, scope, {
-    eventType: RENT_GRAPH_EVENTS.paymentReceived,
-    source: "automation",
-    actorType: "resident",
-    metadata: {
-      message: "Resident paid rent via Stripe Checkout.",
-      stripe_checkout_session_id: sessionId,
-      amount_paid: amountPaid,
-      billing_period: billingPeriod,
-      source: "stripe_checkout",
-    },
+  let residentName: string | null = null
+  if (resolvedResidentId) {
+    const { data: residentRow } = await supabase
+      .from("users")
+      .select("full_name")
+      .eq("id", resolvedResidentId)
+      .maybeSingle()
+    residentName =
+      typeof residentRow?.full_name === "string"
+        ? residentRow.full_name.trim()
+        : null
+  }
+
+  await recordRentPaymentReceivedActivity(supabase, {
+    landlordId,
+    workflowRunId: runId,
+    residentId: resolvedResidentId,
+    unitId: run.unit_id ? String(run.unit_id) : null,
+    propertyId: run.property_id ? String(run.property_id) : null,
+    billingPeriod,
+    residentName,
+    source: "stripe_checkout",
+    notifyLandlord: false,
   })
 
   await logWorkflowEvent(supabase, {

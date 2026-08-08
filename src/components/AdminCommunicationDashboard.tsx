@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { ConversationMonitoringModal } from '@/components/ConversationMonitoringModal'
+import { AdminFilterToolbar } from '@/components/AdminFilterToolbar'
 import { getActiveLandlordId } from '@/lib/activeLandlord'
 import {
   isCommunicationConversationUnread,
@@ -401,12 +402,22 @@ function AiSparkleAvatar() {
   )
 }
 
-const FILTERS = [
-  { id: 'all', label: 'All' },
-  { id: 'unread', label: 'Unread' },
-] as const
+type ParticipantFilterKey = 'tenant' | 'vendor'
 
-type FilterId = (typeof FILTERS)[number]['id']
+const PARTICIPANT_FILTER_OPTIONS: { id: ParticipantFilterKey; label: string }[] = [
+  { id: 'tenant', label: 'Tenant' },
+  { id: 'vendor', label: 'Vendor' },
+]
+
+function conversationMatchesParticipantFilters(
+  conversation: Conversation,
+  filters: Set<ParticipantFilterKey>,
+): boolean {
+  if (filters.size === 0) return true
+  if (filters.has('tenant') && conversation.kind === 'tenant') return true
+  if (filters.has('vendor') && conversation.kind === 'vendor') return true
+  return false
+}
 
 export function AdminCommunicationDashboard() {
   const [searchParams, setSearchParams] = useSearchParams()
@@ -414,7 +425,9 @@ export function AdminCommunicationDashboard() {
   const [metrics, setMetrics] = useState<CommMetrics | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
-  const [filter, setFilter] = useState<FilterId>('all')
+  const [participantFilters, setParticipantFilters] = useState<Set<ParticipantFilterKey>>(
+    () => new Set(),
+  )
   const [monitoringConversationId, setMonitoringConversationId] = useState<string | null>(null)
 
   useEffect(() => {
@@ -910,9 +923,19 @@ export function AdminCommunicationDashboard() {
 
   const filtered = useMemo(() => {
     const sorted = [...conversations].sort((a, b) => b.lastActivity - a.lastActivity)
-    if (filter === 'unread') return sorted.filter((c) => c.unread)
-    return sorted
-  }, [conversations, filter])
+    return sorted.filter((conversation) =>
+      conversationMatchesParticipantFilters(conversation, participantFilters),
+    )
+  }, [conversations, participantFilters])
+
+  function toggleParticipantFilter(key: ParticipantFilterKey) {
+    setParticipantFilters((current) => {
+      const next = new Set(current)
+      if (next.has(key)) next.delete(key)
+      else next.add(key)
+      return next
+    })
+  }
 
   const updatedCaption = metrics ? formatUpdatedAt(metrics.lastUpdated) : 'Updating…'
 
@@ -920,10 +943,10 @@ export function AdminCommunicationDashboard() {
     <main className="flex min-h-0 flex-1 flex-col px-8 pb-12">
       <div className="py-6">
         <h1 className="text-[24px] font-semibold leading-8 tracking-[0.0703px] text-[#0a0a0a]">
-          Conversations
+          Messages
         </h1>
         <p className="text-[14px] leading-5 tracking-[-0.1504px] text-[#6a7282]">
-          Tenant and vendor SMS threads — Ulo handles messages automatically. Admin-directed updates appear in notifications.
+          See all resident and vendor conversations in one place.
         </p>
       </div>
 
@@ -977,33 +1000,12 @@ export function AdminCommunicationDashboard() {
       </div>
 
       <section className="sa-surface flex min-w-0 flex-col rounded-[10px] border border-[#e5e7eb] bg-white shadow-[0px_1px_2px_-1px_rgba(0,0,0,0.06)]">
-        <div className="flex items-center justify-between gap-4 border-b border-[#e5e7eb] px-6 py-4">
-          <div>
-            <h2 className="text-[16px] font-semibold leading-6 text-[#0a0a0a]">
-              Conversation Inbox
-            </h2>
-            <p className="text-[12px] leading-4 text-[#6a7282]">
-              Tenant and vendor threads · admin updates in notifications
-            </p>
-          </div>
-          <div className="flex shrink-0 items-center gap-1 rounded-[10px] bg-[#f3f4f6] p-1">
-            {FILTERS.map((f) => (
-              <button
-                key={f.id}
-                type="button"
-                onClick={() => setFilter(f.id)}
-                className={[
-                  'sa-pill cursor-pointer rounded-[10px] px-3 py-1 text-[13px] font-medium tracking-[-0.1504px]',
-                  filter === f.id
-                    ? 'bg-white text-[#101828] shadow-[0px_1px_2px_-1px_rgba(0,0,0,0.12)]'
-                    : 'text-[#6a7282] hover:text-[#364153]',
-                ].join(' ')}
-              >
-                {f.label}
-              </button>
-            ))}
-          </div>
-        </div>
+        <AdminFilterToolbar
+          options={PARTICIPANT_FILTER_OPTIONS}
+          activeFilters={participantFilters}
+          onToggle={toggleParticipantFilter}
+          onClear={() => setParticipantFilters(new Set())}
+        />
 
         <div className="divide-y divide-[#f3f4f6]">
           {loading ? (

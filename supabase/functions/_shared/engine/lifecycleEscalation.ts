@@ -293,12 +293,12 @@ export async function escalateLifecycleRun(
     ].includes(step)
     if (canSchedule) {
       try {
-        const { scheduleMoveOutInspection } = await import(
-          "./lifecycleProgress.ts"
+        const { executeMoveOutScheduleInspection } = await import(
+          "./moveOutProgress.ts"
         )
-        await scheduleMoveOutInspection(supabase, {
+        await executeMoveOutScheduleInspection(supabase, {
           landlordId,
-          moveOutRunId: run.id,
+          runId: run.id,
         })
         autoForwardedInspection = true
       } catch (err) {
@@ -438,6 +438,7 @@ export async function escalateLifecycleRunById(
     landlordId: string
     runId: string
     reason: string
+    escalationConfig?: Record<string, unknown>
   },
 ): Promise<LifecycleEscalationResult | null> {
   const run = await getWorkflowRunById(supabase, params.runId)
@@ -446,5 +447,6 @@ export async function escalateLifecycleRunById(
     landlordId: params.landlordId,
     run,
     reason: params.reason,
+    escalationConfig: params.escalationConfig,
   })
 }

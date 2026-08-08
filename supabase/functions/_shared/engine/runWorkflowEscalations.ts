@@ -6,12 +6,11 @@ import {
   fetchWorkflowTemplateConfig,
   type WorkflowTemplateConfigRow,
 } from "./templateConfig.ts"
-import type { WorkflowRunRow } from "./types.ts"
+import type { WorkflowRunRow, WorkflowTemplateId } from "./types.ts"
 import { escalateRentCollectionRun } from "./rentCollectionEscalation.ts"
-import { escalateVendorOnboardingRun } from "./vendorOnboardingEscalation.ts"
 import { vendorOnboardingActionDue } from "./vendorOnboardingPolicy.ts"
-import { escalateLifecycleRun } from "./lifecycleEscalation.ts"
 import { lifecycleActionDue } from "./lifecyclePolicy.ts"
+import { runWorkflowEngineForExistingRun } from "./runner.ts"
 import {
   findActiveWorkflowRunsForLandlord,
   runDueAt,
@@ -19,6 +18,14 @@ import {
   runStepState,
   updateWorkflowRun,
 } from "./workflowRuns.ts"
+
+const ENGINE_ESCALATION_TEMPLATES = new Set<string>([
+  "vendor_onboarding",
+  "move_in",
+  "move_out",
+  "inspection",
+  "lease_renewal",
+])
 
 /** Steps where the workflow is waiting on tenant, vendor, or admin action. */
 const WAITING_STEPS = new Set([
@@ -260,6 +267,56 @@ export async function findEscalationCandidates(
   return candidates
 }
 
+function readStringArray(value: unknown): string[] {
+  if (!Array.isArray(value)) return []
+  return value.filter((item): item is string => typeof item === "string")
+}
+
+/**
+ * Escalate via the official engine pipeline (trigger → act → escalate).
+ * Used for vendor onboarding and lifecycle workflows.
+ */
+async function escalateWorkflowCandidateViaEngine(
+  supabase: SupabaseClient,
+  params: {
+    landlordId: string
+    candidate: EscalationCandidate
+  },
+): Promise<WorkflowEscalationResult | null> {
+  const { run, template, reason } = params.candidate
+  if (!ENGINE_ESCALATION_TEMPLATES.has(run.template_id)) return null
+
+  const engineResult = await runWorkflowEngineForExistingRun(supabase, {
+    landlordId: params.landlordId,
+    run,
+    trigger: "cron",
+    extras: {
+      cron: {
+        templateId: run.template_id as WorkflowTemplateId,
+        escalationReason: reason,
+        escalationConfig: template.escalation_config,
+      },
+    },
+  })
+
+  const escalation = engineResult.escalation
+  if (!escalation) return null
+
+  const meta = escalation.metadata ?? {}
+  const action = typeof meta.action === "string" ? meta.action : null
+  if (action === "skipped" || escalation.reason === "skipped") {
+    return null
+  }
+
+  return {
+    workflow_run_id: run.id,
+    template_id: run.template_id,
+    reason: escalation.reason,
+    notified: readStringArray(meta.admin_notified),
+    notify_errors: readStringArray(meta.admin_notify_errors),
+  }
+}
+
 /** Escalate one overdue workflow run: workflow_event, graph event, landlord alert, status update. */
 export async function escalateWorkflowRun(
   supabase: SupabaseClient,
@@ -393,44 +450,13 @@ export async function runWorkflowEscalations(
         continue
       }
 
-      if (candidate.run.template_id === "vendor_onboarding") {
-        const vendorResult = await escalateVendorOnboardingRun(supabase, {
+      if (ENGINE_ESCALATION_TEMPLATES.has(candidate.run.template_id)) {
+        const engineResult = await escalateWorkflowCandidateViaEngine(supabase, {
           landlordId: params.landlordId,
-          run: candidate.run,
-          reason: candidate.reason,
-          escalationConfig: candidate.template.escalation_config,
+          candidate,
         })
-        if (vendorResult && vendorResult.action !== "skipped") {
-          escalations.push({
-            workflow_run_id: vendorResult.workflow_run_id,
-            template_id: "vendor_onboarding",
-            reason: vendorResult.reason,
-            notified: vendorResult.admin_notified,
-            notify_errors: vendorResult.admin_notify_errors,
-          })
-        }
-        continue
-      }
-
-      if (
-        candidate.run.template_id === "move_in" ||
-        candidate.run.template_id === "move_out" ||
-        candidate.run.template_id === "inspection"
-      ) {
-        const lifeResult = await escalateLifecycleRun(supabase, {
-          landlordId: params.landlordId,
-          run: candidate.run,
-          reason: candidate.reason,
-          escalationConfig: candidate.template.escalation_config,
-        })
-        if (lifeResult && lifeResult.action !== "skipped") {
-          escalations.push({
-            workflow_run_id: lifeResult.workflow_run_id,
-            template_id: lifeResult.template_id,
-            reason: lifeResult.reason,
-            notified: lifeResult.admin_notified,
-            notify_errors: lifeResult.admin_notify_errors,
-          })
+        if (engineResult) {
+          escalations.push(engineResult)
         }
         continue
       }

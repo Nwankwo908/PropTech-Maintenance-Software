@@ -4,7 +4,7 @@ import {
   assertStringIncludes,
 } from "https://deno.land/std@0.224.0/assert/mod.ts"
 import {
-  DEMO_PROPERTY_PROFILES,
+  companyPolicyBulletsFromApprovalRules,
   formatPropertyScopeClarifyMarkdown,
   legalOpsContextFromOpsBullets,
   needsPortfolioPropertyScope,
@@ -58,22 +58,20 @@ Deno.test("legalOpsContextFromOpsBullets strips ticket dumps", () => {
   assertEquals(out.some((b) => /3 open maintenance/i.test(b)), true)
 })
 
-Deno.test("Maple Heights demo profile flags Section 8", () => {
-  const maple = DEMO_PROPERTY_PROFILES["Maple Heights"]
-  assertEquals(maple.housingPrograms.includes("section_8_hcv"), true)
-  assertEquals(
-    maple.companyPolicies.some((p) => /PHA|HCV|Section 8/i.test(p)),
-    true,
-  )
+Deno.test("companyPolicyBulletsFromApprovalRules includes auto-approve threshold", () => {
+  const bullets = companyPolicyBulletsFromApprovalRules({
+    autoApprovalThreshold: 250,
+    afterHoursRule: "auto_approve_emergencies",
+  })
+  assertEquals(bullets.some((p) => /Auto-approve maintenance under \$250/.test(p)), true)
+  assertEquals(bullets.some((p) => /After hours, emergencies/.test(p)), true)
 })
 
-Deno.test("Oakwood demo profile has no HCV but has rent-increase policy", () => {
-  const oak = DEMO_PROPERTY_PROFILES["Oakwood Apartments"]
-  assertEquals(oak.housingPrograms.length, 0)
-  assertEquals(
-    oak.companyPolicies.some((p) => /60-day|rent increase/i.test(p)),
-    true,
-  )
+Deno.test("companyPolicyBulletsFromApprovalRules handles require_approval after hours", () => {
+  const bullets = companyPolicyBulletsFromApprovalRules({
+    afterHoursRule: "require_approval",
+  })
+  assertEquals(bullets.some((p) => /After-hours work requires your approval/.test(p)), true)
 })
 
 Deno.test("formatPropertyScopeClarifyMarkdown encourages portfolio-specific answer", () => {

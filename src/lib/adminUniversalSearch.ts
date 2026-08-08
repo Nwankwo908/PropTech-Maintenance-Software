@@ -115,9 +115,9 @@ const STATIC_NAV_SHORTCUTS: UniversalSearchItem[] = [
     keywords: 'reports analytics dashboard metrics performance insights charts',
   },
   {
-    id: 'nav-communication',
+    id: 'nav-messages',
     category: 'conversation',
-    title: 'Communication',
+    title: 'Messages',
     subtitle: 'SMS inbox and resident or vendor threads',
     href: '/admin/communication',
     keywords: 'communication inbox messages sms threads conversations',

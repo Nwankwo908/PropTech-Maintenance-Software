@@ -292,6 +292,18 @@ verify_jwt = false
 import_map = "./functions/activate-unit/deno.json"
 entrypoint = "./functions/activate-unit/index.ts"
 
+[functions.run-move-out-action]
+enabled = true
+verify_jwt = false
+import_map = "./functions/run-move-out-action/deno.json"
+entrypoint = "./functions/run-move-out-action/index.ts"
+
+[functions.run-inspection-action]
+enabled = true
+verify_jwt = false
+import_map = "./functions/run-inspection-action/deno.json"
+entrypoint = "./functions/run-inspection-action/index.ts"
+
 [functions.start-lifecycle-workflow]
 enabled = true
 verify_jwt = false
@@ -341,6 +353,11 @@ entrypoint = "./functions/run-workflow-escalations/index.ts"
 enabled = true
 verify_jwt = false
 entrypoint = "./functions/check-rent-collection/index.ts"
+
+[functions.check-proactive-recommendations]
+enabled = true
+verify_jwt = false
+entrypoint = "./functions/check-proactive-recommendations/index.ts"
 
 [functions.check-vendor-compliance-expiry]
 enabled = true

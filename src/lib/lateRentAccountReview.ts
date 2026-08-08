@@ -4,6 +4,8 @@ import {
   type AdminWorkflowDashboardData,
 } from '@/lib/adminWorkflows'
 import { getErrorMessage } from '@/lib/errorMessage'
+import { isRentChargePaidFromRun } from '@/lib/paymentSettlement'
+import { buildRentPaymentReceivedMessage } from '@/lib/paymentActivityMessages'
 
 export type LateRentInsightTag = 'ON-TIME HISTORY' | 'ENGAGEMENT' | 'INTENT' | 'RISK'
 
@@ -153,6 +155,23 @@ function monthsOnTime(moveInDate: string | null | undefined, now = Date.now()): 
   return months > 0 ? months : null
 }
 
+/** Completed runs use Helper 2; in-flight resident signals stay on row fields. */
+function isLateRentChargeSettled(row: AdminRentCollectionRow): boolean {
+  if (row.status === 'completed') {
+    return isRentChargePaidFromRun({
+      id: row.id,
+      template_id: 'rent_collection',
+      status: row.status,
+      metadata: {
+        payment_intent: row.paymentIntent,
+        rent_classification: row.rentClassification,
+        billing_period: row.billingPeriod,
+      },
+    }).paid
+  }
+  return row.paymentIntent === 'paid' || row.rentClassification === 'paid'
+}
+
 function buildOnTimeHistoryInsight(
   row: AdminRentCollectionRow,
   resident?: LateRentResidentContext | null,
@@ -232,7 +251,7 @@ function buildRiskInsight(
 }
 
 function buildNextReminderLabel(row: AdminRentCollectionRow): string | null {
-  if (row.paymentIntent === 'paid' || row.rentClassification === 'paid') return null
+  if (isLateRentChargeSettled(row)) return null
   const channel =
     row.reminderSmsSent && row.reminderEmailSent
       ? 'SMS + email'
@@ -424,6 +443,19 @@ async function completeRentCollectionRunsAfterPayment(
       continue
     }
     if (run.status === 'completed') continue
+    if (
+      isRentChargePaidFromRun({
+        id: String(run.id),
+        template_id: 'rent_collection',
+        status: String(run.status),
+        metadata:
+          run.metadata && typeof run.metadata === 'object' && !Array.isArray(run.metadata)
+            ? (run.metadata as Record<string, unknown>)
+            : {},
+      }).paid
+    ) {
+      continue
+    }
 
     const metadata =
       run.metadata && typeof run.metadata === 'object' && !Array.isArray(run.metadata)
@@ -497,6 +529,10 @@ export async function applyLateRentAccountAction(
   }
 
   const { recordActivityLog } = await import('@/lib/recordActivityLog')
+  const activityMessage =
+    action === 'mark_payment_received'
+      ? buildRentPaymentReceivedMessage({ residentName: review.residentName })
+      : LATE_RENT_ACTION_MESSAGE[action]
   const eventId = await recordActivityLog({
     landlordId,
     eventType: LATE_RENT_ACTION_EVENT[action],
@@ -508,7 +544,7 @@ export async function applyLateRentAccountAction(
     metadata: {
       action,
       resident_name: review.residentName,
-      message: LATE_RENT_ACTION_MESSAGE[action],
+      message: activityMessage,
     },
   })
 

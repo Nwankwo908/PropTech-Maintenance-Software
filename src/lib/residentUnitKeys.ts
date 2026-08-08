@@ -19,7 +19,7 @@ export function unitOptionValueToCell(unitValue: string): UnitCell {
   return { kind: 'assigned', unit: unit?.toUpperCase() ?? '', building }
 }
 
-/** Maps assigned unit+building to showcase inventory value when demo account is active. */
+/** Maps assigned unit+building to inventory option value when one exists. */
 export function inventoryKeyForAssignedUnit(unit: string, building: string): string | null {
   for (const opt of getInventoryUnitOptions()) {
     const cell = unitOptionValueToCell(opt.value)

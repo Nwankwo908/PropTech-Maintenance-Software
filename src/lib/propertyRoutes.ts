@@ -1,4 +1,3 @@
-import { isDemoAccountActive } from '@/lib/activeLandlord'
 import { type PropertyRecord, propertyRecordToAddressLine } from '@/lib/properties'
 
 const PROPERTY_ID_SLUG_RE =
@@ -77,16 +76,6 @@ export type PropertyBuildingMeta = {
   yearBuilt: number | null
 }
 
-/** Showcase addresses for demo portfolio buildings (Figma reference data). */
-const DEMO_BUILDING_META: Record<string, PropertyBuildingMeta> = {
-  'Oakwood Apartments': { addressLine: '812 Oakwood Ave, Portland, OR', yearBuilt: 2014 },
-  'Pine Ridge': { addressLine: '220 Pine Ridge Dr, Portland, OR', yearBuilt: 2008 },
-  'Cedar Court': { addressLine: '45 Cedar Court Ln, Beaverton, OR', yearBuilt: 2011 },
-  'Maple Heights': { addressLine: '901 Maple Heights Blvd, Hillsboro, OR', yearBuilt: 2016 },
-  'Birch Tower': { addressLine: '12 Birch Tower Way, Portland, OR', yearBuilt: 2019 },
-  'Willow Park': { addressLine: '330 Willow Park Rd, Gresham, OR', yearBuilt: 2005 },
-}
-
 export function resolvePropertyBuildingMeta(
   building: string,
   onboardingProperties: Array<{
@@ -128,12 +117,7 @@ export function resolvePropertyBuildingMeta(
     }
   }
 
-  // Never decorate New Landlord / default portfolios with showcase addresses.
-  if (!isDemoAccountActive()) {
-    return { addressLine: null, yearBuilt: null }
-  }
-
-  return DEMO_BUILDING_META[building] ?? { addressLine: null, yearBuilt: null }
+  return { addressLine: null, yearBuilt: null }
 }
 
 export function formatPropertySubtitle(meta: PropertyBuildingMeta, unitCount: number): string {

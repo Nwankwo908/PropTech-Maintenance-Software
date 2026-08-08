@@ -2,8 +2,17 @@
  * Scheduled POST: send incomplete vendor-verification reminders (SMS + email)
  * into the invite conversation thread.
  *
+ * @deprecated Prefer `run-workflow-escalations` — this edge is a thin wrapper that
+ * runs the vendor_onboarding slice of the shared escalation runner.
+ *
  *   curl -X POST ".../functions/v1/check-vendor-onboarding" \
  *     -H "Authorization: Bearer $CHECK_VENDOR_ONBOARDING_SECRET" \
+ *     -H "Content-Type: application/json" \
+ *     -d '{"landlord_id":"YOUR_LANDLORD_UUID"}'
+ *
+ * Equivalent:
+ *   curl -X POST ".../functions/v1/run-workflow-escalations" \
+ *     -H "Authorization: Bearer $RUN_WORKFLOW_ESCALATIONS_SECRET" \
  *     -H "Content-Type: application/json" \
  *     -d '{"landlord_id":"YOUR_LANDLORD_UUID"}'
  */

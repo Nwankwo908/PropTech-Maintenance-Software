@@ -26,6 +26,7 @@ Deno.test("legal: named property resolves Hillsboro OR with Washington County", 
   const r = resolveLegalJurisdiction({
     question: "What is the security deposit limit for Maple Heights?",
     portfolio: emptyPortfolio(),
+    propertyPlaces: [{ name: "Maple Heights", city: "Hillsboro", state: "OR" }],
   })
   assertEquals(r.needsClarification, false)
   assertEquals(r.stateCode, "OR")
@@ -103,6 +104,10 @@ Deno.test("legal: multi-state portfolio asks which property", () => {
       sampleBuildings: ["Maple Heights", "Seattle Tower"],
       locationSource: "onboarding_properties",
     },
+    propertyPlaces: [
+      { name: "Maple Heights", city: "Hillsboro", state: "OR" },
+      { name: "Seattle Tower", city: "Seattle", state: "WA" },
+    ],
   })
   assertEquals(r.needsClarification, true)
   assertEquals(r.stateCode, null)

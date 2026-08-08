@@ -1,4 +1,3 @@
-import { isDemoAccountActive } from '@/lib/activeLandlord'
 import type { RecognizedMaintenanceSpend } from '@/api/maintenanceInvoice'
 import type { PmComplianceSummary, PmComplianceTask } from '@/lib/pmCompliance'
 import { summarizePmComplianceTasks } from '@/lib/pmCompliance'
@@ -52,44 +51,6 @@ const MONTH_LABELS = [
 ] as const
 
 const CHART_Y_MAX = 5000
-
-/** Fallback MTD when demo DB has not been re-seeded (matches seed_demo_maintenance_spend.sql). */
-const DEMO_MTD_BY_BUILDING: Record<string, { total: number; reactive: number }> = {
-  'oakwood apartments': { total: 920, reactive: 645 },
-  'birch tower': { total: 1307, reactive: 1307 },
-  'maple heights': { total: 329, reactive: 0 },
-  'pine ridge': { total: 238, reactive: 0 },
-  'cedar court': { total: 0, reactive: 0 },
-  'willow park': { total: 1144, reactive: 1144 },
-}
-
-function demoMtdForBuilding(building: string): { total: number; reactive: number } | null {
-  if (!isDemoAccountActive()) return null
-  const key = normalizeBuildingKey(building).toLowerCase()
-  return DEMO_MTD_BY_BUILDING[key] ?? null
-}
-
-function withDemoMtdFallback(building: string, amount: number): number {
-  if (amount > 0) return amount
-  return demoMtdForBuilding(building)?.total ?? 0
-}
-
-function seededUnit(seed: number): number {
-  const x = Math.sin(seed * 12.9898 + 78.233) * 43758.5453
-  return x - Math.floor(x)
-}
-
-function demoMonthProjection(
-  monthIndex: number,
-  year: number,
-): { proactive: number; reactive: number } {
-  const totalSeed = year * 100 + monthIndex
-  const splitSeed = totalSeed + 7919
-  const total = Math.round(900 + seededUnit(totalSeed) * 1400)
-  const reactiveShare = 0.22 + seededUnit(splitSeed) * 0.38
-  const reactive = Math.round(total * reactiveShare)
-  return { proactive: total - reactive, reactive }
-}
 
 function averageMonthProjection(
   actualMonths: PropertyMonthlySpend[],
@@ -219,10 +180,7 @@ export function buildMonthlySpendByBuilding(input: {
     const ticketIds = new Set(scoped.map((ticket) => ticket.id))
     byBuilding.set(
       building,
-      withDemoMtdFallback(
-        building,
-        spendBetween(input.recognizedSpend, scoped, ticketIds, fromMs, toMs),
-      ),
+      spendBetween(input.recognizedSpend, scoped, ticketIds, fromMs, toMs),
     )
   }
 
@@ -269,15 +227,12 @@ export function buildPropertyAnalytics(input: {
     now,
     true,
   )
-  const mtdTotal = withDemoMtdFallback(
-    input.building,
-    spendBetween(
-      input.recognizedSpend,
-      scopedTickets,
-      input.buildingTicketIds,
-      startOfMonth,
-      now,
-    ),
+  const mtdTotal = spendBetween(
+    input.recognizedSpend,
+    scopedTickets,
+    input.buildingTicketIds,
+    startOfMonth,
+    now,
   )
 
   const actualMonthlySpend: PropertyMonthlySpend[] = MONTH_LABELS.map((label, monthIndex) => {
@@ -304,13 +259,6 @@ export function buildPropertyAnalytics(input: {
           monthEnd,
           true,
         )
-    if (!isFuture && monthIndex === currentMonthIndex && proactive + reactive === 0) {
-      const demo = demoMtdForBuilding(input.building)
-      if (demo) {
-        reactive = demo.reactive
-        proactive = demo.total - demo.reactive
-      }
-    }
     return {
       monthIndex,
       label,
@@ -321,13 +269,10 @@ export function buildPropertyAnalytics(input: {
     }
   })
 
-  const useDemoProjections = isDemoAccountActive()
   const averageProjection = averageMonthProjection(actualMonthlySpend)
   const monthlySpend = actualMonthlySpend.map((month) => {
     if (!month.isFuture) return month
-    const projected = useDemoProjections
-      ? demoMonthProjection(month.monthIndex, year)
-      : averageProjection
+    const projected = averageProjection
     return {
       ...month,
       proactive: projected.proactive,

@@ -1,6 +1,9 @@
 import { useEffect, useId } from 'react'
 import { Link } from 'react-router-dom'
 import {
+  ADMIN_ATTENTION_ACTION_CLASS,
+  ADMIN_RAIL_FOOTER_CLASS,
+  ADMIN_RAIL_FOOTER_SECONDARY_BUTTON_CLASS,
   ADMIN_RIGHT_RAIL_OVERLAY_HOST,
   ADMIN_RIGHT_RAIL_SCRIM,
   adminRightRailPanelClass,
@@ -121,12 +124,7 @@ export function AwaitingDecisionListRail({
                     <button
                       type="button"
                       onClick={() => onItemAction(item)}
-                      className={[
-                        'shrink-0 rounded-[10px] border px-4 py-2 text-[13px] font-medium leading-5 transition-colors duration-150',
-                        item.actionStyle === 'alert'
-                          ? 'border-transparent bg-[#187960] text-white hover:bg-[#0A4D38]'
-                          : 'border-[#0A4D38] bg-white text-[#0A4D38] hover:bg-[#e8f3ef]',
-                      ].join(' ')}
+                      className={ADMIN_ATTENTION_ACTION_CLASS}
                     >
                       {item.actionLabel} →
                     </button>
@@ -134,12 +132,7 @@ export function AwaitingDecisionListRail({
                     <Link
                       to={item.actionTo ?? '/admin/workflows'}
                       onClick={() => onClose()}
-                      className={[
-                        'shrink-0 rounded-[10px] border px-4 py-2 text-[13px] font-medium leading-5 transition-colors duration-150',
-                        item.actionStyle === 'alert'
-                          ? 'border-transparent bg-[#187960] text-white hover:bg-[#0A4D38]'
-                          : 'border-[#0A4D38] bg-white text-[#0A4D38] hover:bg-[#e8f3ef]',
-                      ].join(' ')}
+                      className={ADMIN_ATTENTION_ACTION_CLASS}
                     >
                       {item.actionLabel} →
                     </Link>
@@ -150,11 +143,11 @@ export function AwaitingDecisionListRail({
           )}
         </div>
 
-        <footer className="flex shrink-0 justify-end border-t border-[#e5e7eb] px-6 py-4">
+        <footer className={ADMIN_RAIL_FOOTER_CLASS}>
           <button
             type="button"
             onClick={onClose}
-            className="cursor-pointer rounded-[10px] border border-[#e5e7eb] bg-white px-4 py-2 text-[13px] font-medium text-[#364153] outline-none transition-colors duration-150 hover:bg-[#f9fafb] focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2"
+            className={ADMIN_RAIL_FOOTER_SECONDARY_BUTTON_CLASS}
           >
             Close
           </button>

@@ -1,5 +1,4 @@
 import { useEffect, useId } from 'react'
-import { isDemoAccountActive } from '@/lib/activeLandlord'
 
 type CommItem = {
   id: string
@@ -11,39 +10,6 @@ type CommItem = {
   priorityClass: string
   priorityLabel: string
 }
-
-const DEMO_ITEMS: CommItem[] = [
-  {
-    id: '1',
-    title: 'Annual Inspection Notice - Building A',
-    fromLabel: 'From: City Housing Department',
-    channel: 'email',
-    dateLabel: '3/25/2026',
-    readState: 'unread',
-    priorityClass: 'bg-tertiary text-error',
-    priorityLabel: 'high',
-  },
-  {
-    id: '2',
-    title: 'Fire Safety Compliance Update Required',
-    fromLabel: 'From: City Code Enforcement',
-    channel: 'sms',
-    dateLabel: '3/24/2026',
-    readState: 'read',
-    priorityClass: 'bg-error text-white',
-    priorityLabel: 'urgent',
-  },
-  {
-    id: '3',
-    title: 'Scheduled Water Main Maintenance - April 5',
-    fromLabel: 'From: Water Department',
-    channel: 'email',
-    dateLabel: '3/23/2026',
-    readState: 'read',
-    priorityClass: 'bg-extended-1 text-white',
-    priorityLabel: 'medium',
-  },
-]
 
 function IconClose({ className = 'size-5 text-neutral' }: { className?: string }) {
   return (
@@ -162,12 +128,12 @@ export function ExternalCommunicationsModal({
         </header>
 
         <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-auto px-6 py-6">
-          {(isDemoAccountActive() ? DEMO_ITEMS : []).length === 0 ? (
+          {[].length === 0 ? (
             <p className="rounded-[10px] border border-secondary bg-secondary px-4 py-6 text-center text-[13px] text-neutral">
               No external communications yet.
             </p>
           ) : null}
-          {(isDemoAccountActive() ? DEMO_ITEMS : []).map((item) => (
+          {([] as CommItem[]).map((item) => (
             <article
               key={item.id}
               className="flex flex-col gap-2 rounded-[10px] border border-secondary px-[17px] pb-[17px] pt-[17px]"

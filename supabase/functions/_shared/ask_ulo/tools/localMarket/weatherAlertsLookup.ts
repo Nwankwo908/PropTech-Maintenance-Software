@@ -5,6 +5,10 @@
 
 import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.49.1"
 import type { AskUloCitation } from "../../retrieval/searchInternalData.ts"
+import {
+  loadLandlordPropertyRecords,
+  propertyRecordToPlace,
+} from "../properties/propertyRecords.ts"
 
 export type WeatherAlertItem = {
   id: string
@@ -29,15 +33,6 @@ export type WeatherAlertsResult = {
   propertiesScoped: Array<{ name: string; city: string; state: string }>
   statesQueried: string[]
   error?: string | null
-}
-
-const DEMO_BUILDING_META: Record<string, { city: string; state: string; name: string }> = {
-  "Oakwood Apartments": { city: "Portland", state: "OR", name: "Oakwood Apartments" },
-  "Pine Ridge": { city: "Portland", state: "OR", name: "Pine Ridge" },
-  "Cedar Court": { city: "Beaverton", state: "OR", name: "Cedar Court" },
-  "Maple Heights": { city: "Hillsboro", state: "OR", name: "Maple Heights" },
-  "Birch Tower": { city: "Portland", state: "OR", name: "Birch Tower" },
-  "Willow Park": { city: "Gresham", state: "OR", name: "Willow Park" },
 }
 
 const NWS_USER_AGENT = "UloAskUlo/1.0 (property-operations; ask-ulo weather alerts)"
@@ -222,13 +217,19 @@ export async function loadPortfolioWeatherLocations(
     byKey.set(`${row.state}:${row.city.toLowerCase()}:${row.name.toLowerCase()}`, row)
   }
 
+  const propertyRecords = await loadLandlordPropertyRecords(supabase, landlordId)
+  for (const record of propertyRecords) {
+    const place = propertyRecordToPlace(record)
+    if (!place) continue
+    byKey.set(`${place.state}:${place.city.toLowerCase()}:${place.name.toLowerCase()}`, place)
+  }
+
   const { data: units } = await supabase
     .from("units")
     .select("building, city, state")
     .eq("landlord_id", landlordId)
     .limit(200)
 
-  let hasUserLocations = byKey.size > 0
   for (const u of units ?? []) {
     const building = typeof u.building === "string" ? u.building.trim() : ""
     const city = typeof u.city === "string" ? u.city.trim() : ""
@@ -240,23 +241,6 @@ export async function loadPortfolioWeatherLocations(
         city,
         state,
       })
-      hasUserLocations = true
-    }
-  }
-
-  // Demo building map only when this landlord has zero user-entered locations.
-  if (!hasUserLocations) {
-    for (const u of units ?? []) {
-      const building = typeof u.building === "string" ? u.building.trim() : ""
-      if (!building) continue
-      const demo = DEMO_BUILDING_META[building]
-      if (demo) {
-        byKey.set(`${demo.state}:${demo.city.toLowerCase()}:${demo.name.toLowerCase()}`, {
-          name: demo.name,
-          city: demo.city,
-          state: demo.state,
-        })
-      }
     }
   }
 

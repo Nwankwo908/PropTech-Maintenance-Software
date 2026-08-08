@@ -22,7 +22,7 @@ import { resolveDiscoverExternalVendorsUrl } from '@/api/discoverExternalVendors
 import { SparkleIcon } from '@/components/SparkleIcon'
 import { TableCheckbox } from '@/components/TableCheckbox'
 import { VendorDelayedAlternativesSection } from '@/components/VendorDelayedAlternativesSection'
-import { getActiveLandlordId, isDemoAccountActive } from '@/lib/activeLandlord'
+import { getActiveLandlordId } from '@/lib/activeLandlord'
 import { supabase } from '@/lib/supabase'
 import { isVendorPendingAcceptDelayed } from '@/lib/vendorDelayAlerts'
 import { vendorDetailPath } from '@/lib/vendorRoutes'
@@ -455,147 +455,6 @@ function rowMatchesCategoryFilter(
   }
   return trade === filterValue || trade === issueCategoryToVendorTrade(filterValue)
 }
-
-/** Stable fake UUID for demo rows so Assigned Vendor card is not stuck in warning state offline. */
-const DEMO_ASSIGNED_VENDOR_ID = '00000000-0000-4000-8000-000000000001'
-
-const DEMO_TICKETS: AdminTicketRow[] = [
-  {
-    id: '1',
-    assignedVendorId: DEMO_ASSIGNED_VENDOR_ID,
-    requestId: 'MNT-482156-A4F2',
-    submittedLabel: '9 hours ago',
-    submittedAtDisplay: 'Mar 25, 8:30 AM',
-    residentName: 'Sarah Johnson',
-    residentEmail: 'sarah.johnson@email.com',
-    unit: 'Unit 2B',
-    category: 'Plumbing',
-    descriptionPreview:
-      'Kitchen sink is leaking under the cabinet. Water dripping constantly.',
-    status: 'in_progress',
-    vendor: 'QuickFix Plumbing',
-    estimatedCompletion: 'Mar 25, 2:00 PM',
-    dueAtDisplay: 'Mar 25, 2:00 PM',
-    isSlaOverdue: true,
-    isOverdue: true,
-    urgency: 'urgent',
-    photoAttached: true,
-  },
-  {
-    id: '2',
-    assignedVendorId: DEMO_ASSIGNED_VENDOR_ID,
-    requestId: 'MNT-481923-B7C1',
-    submittedLabel: '10 hours ago',
-    submittedAtDisplay: 'Mar 25, 6:45 AM',
-    residentName: 'Michael Chen',
-    residentEmail: 'michael.chen@email.com',
-    unit: 'Unit 5A',
-    category: 'HVAC',
-    descriptionPreview:
-      'Air conditioning not working. Temperature in unit is 82°F.',
-    status: 'assigned',
-    vendor: 'CoolAir Solutions',
-    vendorWorkStatus: 'pending_accept',
-    assignedAtIso: new Date(Date.now() - 50 * 60 * 60 * 1000).toISOString(),
-    estimatedCompletion: 'Mar 26, 5:00 PM',
-    urgency: 'urgent',
-  },
-  {
-    id: '3',
-    requestId: 'MNT-481745-D3E8',
-    submittedLabel: '12 hours ago',
-    submittedAtDisplay: 'Mar 25, 8:30 AM',
-    residentName: 'David Park',
-    residentEmail: 'david.park@email.com',
-    unit: 'Unit 9C',
-    category: 'Electrical',
-    descriptionPreview:
-      'Bedroom outlet not working. Tried resetting circuit breaker.',
-    status: 'under_review',
-    vendor: 'QuickFix Plumbing',
-    estimatedCompletion: 'Mar 25, 2:00 PM',
-    underReviewPanel: {
-      recurringAlert:
-        'This resident has submitted 3 similar requests in the past 30 days.',
-      recurringPrevious: 'Electrical problems on Mar 10, Mar 15',
-      recommendedVendorOptions: [
-        'Bright Electric',
-        'PowerUp Electricians',
-        'Volt Electrical Services',
-      ],
-      defaultRecommendedVendor: 'Bright Electric',
-    },
-    urgency: 'normal',
-  },
-  {
-    id: '4',
-    assignedVendorId: DEMO_ASSIGNED_VENDOR_ID,
-    requestId: 'MNT-480956-H1J4',
-    submittedLabel: 'Mar 24, 4:45 PM',
-    submittedAtDisplay: 'Mar 24, 4:45 PM',
-    residentName: 'Jessica Martinez',
-    residentEmail: 'jessica.m@email.com',
-    unit: 'Unit 3D',
-    category: 'Door/Window',
-    descriptionPreview:
-      'Front door lock is stuck. Cannot lock or unlock properly.',
-    status: 'in_progress',
-    vendor: 'SecureLock Services',
-    estimatedCompletion: 'Mar 27, 11:00 AM',
-    urgency: 'urgent',
-    photoAttached: true,
-  },
-  {
-    id: '5',
-    assignedVendorId: DEMO_ASSIGNED_VENDOR_ID,
-    requestId: 'MNT-480721-K5L7',
-    submittedLabel: 'Mar 24, 2:20 PM',
-    submittedAtDisplay: 'Mar 24, 2:20 PM',
-    residentName: 'Robert Kim',
-    residentEmail: 'robert.kim@email.com',
-    unit: 'Unit 15A',
-    category: 'Noise',
-    descriptionPreview:
-      'Strange banging noise coming from pipes late at night.',
-    status: 'under_review',
-    vendor: 'Building Maintenance Co.',
-    estimatedCompletion: 'Mar 28, 3:00 PM',
-    underReviewPanel: {
-      recurringAlert:
-        'Similar noise complaints were logged for this stack in the past 30 days.',
-      recurringPrevious: 'Pipe noise reports on Mar 12, Mar 19',
-      recommendedVendorOptions: [
-        'QuietLine Acoustics',
-        'City Plumbing Noise',
-        'StackSound Inspectors',
-      ],
-      defaultRecommendedVendor: 'QuietLine Acoustics',
-      alternativeVendors: [
-        'QuietLine Acoustics',
-        'City Plumbing Noise',
-        'StackSound Inspectors',
-      ],
-      omitRecurringIssueCard: true,
-    },
-    urgency: 'low',
-  },
-  {
-    id: '6',
-    assignedVendorId: DEMO_ASSIGNED_VENDOR_ID,
-    requestId: 'MNT-480445-M8N3',
-    submittedLabel: 'Mar 23, 10:00 AM',
-    submittedAtDisplay: 'Mar 23, 10:00 AM',
-    residentName: 'Amanda Foster',
-    residentEmail: 'amanda.f@email.com',
-    unit: 'Unit 7C',
-    category: 'Plumbing',
-    descriptionPreview: 'Toilet running continuously. Water bill concern.',
-    status: 'completed',
-    vendor: 'QuickFix Plumbing',
-    estimatedCompletion: 'Mar 22, 4:00 PM',
-    urgency: 'normal',
-  },
-]
 
 /** Corner icons on the three stat summary cards (matches label tone `text-[#6a7282]`). */
 const STAT_SUMMARY_CORNER_ICON_CLASS = 'size-5 shrink-0 text-[#6a7282]'
@@ -1568,9 +1427,7 @@ function ChipEditButton({ ariaLabel }: { ariaLabel: string }) {
 }
 
 export function AdminRequestManagementDashboard() {
-  const [tickets, setTickets] = useState<AdminTicketRow[]>(() =>
-    isDemoAccountActive() ? DEMO_TICKETS.slice() : [],
-  )
+  const [tickets, setTickets] = useState<AdminTicketRow[]>(() => [])
   const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set())
   const [searchParams] = useSearchParams()
   const globalSearchQuery = searchParams.get('q')
@@ -1747,7 +1604,7 @@ export function AdminRequestManagementDashboard() {
     let cancelled = false
     async function loadTickets() {
       if (!supabase) {
-        setTickets(isDemoAccountActive() ? DEMO_TICKETS.slice() : [])
+        setTickets([])
         return
       }
 
@@ -1789,7 +1646,7 @@ export function AdminRequestManagementDashboard() {
       if (err) {
         console.error('[admin] maintenance_requests fetch failed', err.message)
         if (!liveTicketsLoadedRef.current) {
-          setTickets(isDemoAccountActive() ? DEMO_TICKETS.slice() : [])
+          setTickets([])
         }
         return
       }

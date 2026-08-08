@@ -1,5 +1,4 @@
 import { useEffect, useId } from 'react'
-import { isDemoAccountActive } from '@/lib/activeLandlord'
 
 type StaffMember = {
   id: string
@@ -11,39 +10,6 @@ type StaffMember = {
   lastLogin: string
   showDelete: boolean
 }
-
-const DEMO_STAFF: StaffMember[] = [
-  {
-    id: '1',
-    initials: 'AU',
-    name: 'Admin User',
-    email: 'admin@property.com',
-    roleLabel: 'Property Manager',
-    permissions: ['Full Access'],
-    lastLogin: '3/29/2026, 8:00:00 AM',
-    showDelete: false,
-  },
-  {
-    id: '2',
-    initials: 'MC',
-    name: 'Maintenance Coordinator',
-    email: 'maintenance@property.com',
-    roleLabel: 'Maintenance Manager',
-    permissions: ['view requests', 'assign vendors', 'update status'],
-    lastLogin: '3/29/2026, 7:30:00 AM',
-    showDelete: true,
-  },
-  {
-    id: '3',
-    initials: 'LA',
-    name: 'Leasing Agent',
-    email: 'leasing@property.com',
-    roleLabel: 'Leasing Agent',
-    permissions: ['view residents', 'add residents', 'assign units'],
-    lastLogin: '3/28/2026, 4:45:00 PM',
-    showDelete: true,
-  },
-]
 
 function IconShieldHeader({ className = 'size-5 text-primary' }: { className?: string }) {
   return (
@@ -181,12 +147,12 @@ export function ManageStaffModal({ open, onClose }: { open: boolean; onClose: ()
           </div>
 
           <div className="flex flex-col gap-3">
-            {(isDemoAccountActive() ? DEMO_STAFF : []).length === 0 ? (
+            {[].length === 0 ? (
               <p className="rounded-[10px] border border-secondary bg-secondary px-4 py-6 text-center text-[13px] text-neutral">
                 No staff members yet. Add someone to get started.
               </p>
             ) : null}
-            {(isDemoAccountActive() ? DEMO_STAFF : []).map((member) => (
+            {([] as StaffMember[]).map((member) => (
               <div
                 key={member.id}
                 className="rounded-[10px] border border-secondary bg-white p-4"

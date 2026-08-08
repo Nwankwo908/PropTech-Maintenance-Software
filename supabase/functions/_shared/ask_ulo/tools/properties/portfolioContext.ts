@@ -5,7 +5,6 @@
  * 1. properties table (canonical address fields)
  * 2. landlord_onboarding.properties (and draft_state.properties if present)
  * 3. units.city / units.state (persisted from onboarding)
- * 4. Demo building name map — only when no user locations exist (demo accounts)
  */
 
 import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.49.1"
@@ -14,7 +13,6 @@ export type PortfolioLocationSource =
   | "properties_table"
   | "onboarding_properties"
   | "units"
-  | "demo_buildings"
   | "none"
 
 export type PortfolioJurisdiction = {
@@ -25,16 +23,6 @@ export type PortfolioJurisdiction = {
   sampleBuildings: string[]
   /** How city/state were resolved — for logs / evals. */
   locationSource: PortfolioLocationSource
-}
-
-/** Demo OR buildings — used only when the landlord has no user-entered locations. */
-export const DEMO_BUILDING_META: Record<string, { city: string; state: string }> = {
-  "Oakwood Apartments": { city: "Portland", state: "OR" },
-  "Pine Ridge": { city: "Portland", state: "OR" },
-  "Cedar Court": { city: "Beaverton", state: "OR" },
-  "Maple Heights": { city: "Hillsboro", state: "OR" },
-  "Birch Tower": { city: "Portland", state: "OR" },
-  "Willow Park": { city: "Gresham", state: "OR" },
 }
 
 export function slugifyCity(city: string): string {
@@ -211,15 +199,6 @@ export async function resolvePortfolioJurisdiction(
       locations.push({ city, state })
       if (locationSource === "none") locationSource = "units"
     }
-  }
-
-  // Demo building map only when this landlord has zero user-entered locations.
-  if (locations.length === 0) {
-    for (const building of buildings) {
-      const demo = DEMO_BUILDING_META[building]
-      if (demo) locations.push(demo)
-    }
-    if (locations.length > 0) locationSource = "demo_buildings"
   }
 
   const voted = majorityJurisdiction(locations)

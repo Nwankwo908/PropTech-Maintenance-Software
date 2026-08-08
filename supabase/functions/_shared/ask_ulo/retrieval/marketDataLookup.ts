@@ -39,15 +39,6 @@ export type MarketDataLookupResult = {
   gapNote: string | null
 }
 
-const DEMO_ADDRESSES: Record<string, string> = {
-  "Oakwood Apartments": "812 Oakwood Ave, Portland, OR 97214",
-  "Pine Ridge": "220 Pine Ridge Dr, Portland, OR 97217",
-  "Cedar Court": "45 Cedar Court Ln, Beaverton, OR 97005",
-  "Maple Heights": "901 Maple Heights Blvd, Hillsboro, OR 97124",
-  "Birch Tower": "12 Birch Tower Way, Portland, OR 97209",
-  "Willow Park": "330 Willow Park Rd, Gresham, OR 97030",
-}
-
 const ZORI_ZIP_CSV =
   "https://files.zillowstatic.com/research/public_csvs/zori/Zip_zori_uc_sfrcondomfr_sm_month.csv"
 const ZORI_CITY_CSV =
@@ -110,13 +101,6 @@ export function resolveMarketSearchAddress(input: {
   if (input.addressLine?.trim()) {
     return {
       address: input.addressLine.trim(),
-      city: input.cityLabel,
-      state: input.stateCode,
-    }
-  }
-  if (input.buildingName && DEMO_ADDRESSES[input.buildingName]) {
-    return {
-      address: DEMO_ADDRESSES[input.buildingName],
       city: input.cityLabel,
       state: input.stateCode,
     }

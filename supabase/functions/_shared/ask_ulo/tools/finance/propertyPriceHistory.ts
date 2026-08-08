@@ -1,6 +1,6 @@
 /**
  * Property sale / valuation history for Ask Ulo.
- * Demo buildings use curated sale + valuation points; ZIP ZHVI adds neighborhood index context.
+ * Returns unavailable until county recorder / AVM integrations are wired.
  */
 
 import type { AskUloCitation } from "../../retrieval/searchInternalData.ts"
@@ -41,225 +41,18 @@ export type PropertyPriceHistoryResult = {
   clarificationPrompt: string | null
 }
 
-type DemoSeries = {
-  address: string
-  zip: string
-  events: Array<{
-    date: string
-    event: string
-    price: number
-    source: string
-  }>
-  drivers: string[]
-}
-
-/** Curated multifamily sale/valuation history for demo portfolio buildings. */
-const DEMO_PRICE_HISTORY: Record<string, DemoSeries> = {
-  "Maple Heights": {
-    address: "901 Maple Heights Blvd, Hillsboro, OR 97124",
-    zip: "97124",
-    events: [
-      {
-        date: "2022-08-15",
-        event: "Last recorded sale",
-        price: 11_600_000,
-        source: "County recorder / portfolio close package",
-      },
-      {
-        date: "2025-01-31",
-        event: "Estimated value",
-        price: 12_100_000,
-        source: "Portfolio valuation model",
-      },
-      {
-        date: "2026-05-31",
-        event: "Estimated value",
-        price: 12_400_000,
-        source: "Portfolio valuation model",
-      },
-    ],
-    drivers: [
-      "Rental income increased with renewals above prior-year rents",
-      "Local multifamily values improved with Hillsboro employment demand",
-      "Occupancy remained stable",
-      "Interest-rate pressure limited faster appreciation",
-    ],
-  },
-  "Oakwood Apartments": {
-    address: "812 Oakwood Ave, Portland, OR 97214",
-    zip: "97214",
-    events: [
-      {
-        date: "2021-06-01",
-        event: "Last recorded sale",
-        price: 8_400_000,
-        source: "County recorder / portfolio close package",
-      },
-      {
-        date: "2024-12-31",
-        event: "Estimated value",
-        price: 9_050_000,
-        source: "Portfolio valuation model",
-      },
-      {
-        date: "2026-05-31",
-        event: "Estimated value",
-        price: 9_350_000,
-        source: "Portfolio valuation model",
-      },
-    ],
-    drivers: [
-      "Inner-east Portland rents supported NOI growth",
-      "Cap-rate compression paused after 2023 rate resets",
-      "Occupancy stayed high with limited new supply nearby",
-    ],
-  },
-  "Pine Ridge": {
-    address: "220 Pine Ridge Dr, Portland, OR 97217",
-    zip: "97217",
-    events: [
-      {
-        date: "2020-11-12",
-        event: "Last recorded sale",
-        price: 6_900_000,
-        source: "County recorder / portfolio close package",
-      },
-      {
-        date: "2025-01-31",
-        event: "Estimated value",
-        price: 7_450_000,
-        source: "Portfolio valuation model",
-      },
-      {
-        date: "2026-05-31",
-        event: "Estimated value",
-        price: 7_600_000,
-        source: "Portfolio valuation model",
-      },
-    ],
-    drivers: [
-      "North Portland demand remained resilient",
-      "Deferred capex limited upside vs newer stock",
-    ],
-  },
-  "Cedar Court": {
-    address: "45 Cedar Court Ln, Beaverton, OR 97005",
-    zip: "97005",
-    events: [
-      {
-        date: "2019-09-30",
-        event: "Last recorded sale",
-        price: 5_200_000,
-        source: "County recorder / portfolio close package",
-      },
-      {
-        date: "2025-01-31",
-        event: "Estimated value",
-        price: 5_850_000,
-        source: "Portfolio valuation model",
-      },
-      {
-        date: "2026-05-31",
-        event: "Estimated value",
-        price: 6_000_000,
-        source: "Portfolio valuation model",
-      },
-    ],
-    drivers: [
-      "Beaverton suburban rent growth outpaced downtown Portland",
-      "Stable occupancy supported valuation",
-    ],
-  },
-  "Birch Tower": {
-    address: "12 Birch Tower Way, Portland, OR 97209",
-    zip: "97209",
-    events: [
-      {
-        date: "2023-03-01",
-        event: "Last recorded sale",
-        price: 18_200_000,
-        source: "County recorder / portfolio close package",
-      },
-      {
-        date: "2025-06-30",
-        event: "Estimated value",
-        price: 17_800_000,
-        source: "Portfolio valuation model",
-      },
-      {
-        date: "2026-05-31",
-        event: "Estimated value",
-        price: 18_050_000,
-        source: "Portfolio valuation model",
-      },
-    ],
-    drivers: [
-      "Pearl District condo/multifamily values softened then stabilized",
-      "Higher rates weighed on high-rise valuations after acquisition",
-    ],
-  },
-  "Willow Park": {
-    address: "330 Willow Park Rd, Gresham, OR 97030",
-    zip: "97030",
-    events: [
-      {
-        date: "2018-05-20",
-        event: "Last recorded sale",
-        price: 4_100_000,
-        source: "County recorder / portfolio close package",
-      },
-      {
-        date: "2025-01-31",
-        event: "Estimated value",
-        price: 4_750_000,
-        source: "Portfolio valuation model",
-      },
-      {
-        date: "2026-05-31",
-        event: "Estimated value",
-        price: 4_900_000,
-        source: "Portfolio valuation model",
-      },
-    ],
-    drivers: [
-      "Gresham rents grew from a lower base",
-      "Long hold period produced moderate cumulative appreciation",
-    ],
-  },
-}
-
-function money(n: number): string {
-  return `$${Math.round(n).toLocaleString("en-US")}`
-}
-
 function moneyCompact(n: number): string {
   if (n >= 1_000_000) {
     const m = n / 1_000_000
     return `$${m.toFixed(m >= 10 ? 1 : 1)}M`.replace(/\.0M$/, "M")
   }
-  return money(n)
+  return `$${Math.round(n).toLocaleString("en-US")}`
 }
 
 function formatMonth(iso: string): string {
   const d = new Date(iso.includes("T") ? iso : `${iso}T12:00:00Z`)
   if (Number.isNaN(d.getTime())) return iso
   return d.toLocaleDateString("en-US", { month: "short", year: "numeric", timeZone: "UTC" })
-}
-
-function yearsBetween(a: string, b: string): number {
-  const da = new Date(a).getTime()
-  const db = new Date(b).getTime()
-  if (!Number.isFinite(da) || !Number.isFinite(db) || db <= da) return 0
-  return (db - da) / (365.25 * 24 * 60 * 60 * 1000)
-}
-
-function matchDemoKey(buildingName: string | null): string | null {
-  if (!buildingName?.trim()) return null
-  const q = buildingName.trim().toLowerCase()
-  for (const key of Object.keys(DEMO_PRICE_HISTORY)) {
-    if (q.includes(key.toLowerCase()) || key.toLowerCase().includes(q)) return key
-  }
-  return null
 }
 
 function parseUtc(iso: string): number {
@@ -286,7 +79,6 @@ export function buildValuationChartSeries(
   targetStart.setUTCFullYear(targetStart.getUTCFullYear() - 10)
   const startMs = Math.min(parseUtc(first.date), targetStart.getTime())
 
-  // Backfill pre-sale with gentle ~1.5%/yr growth into the first known point.
   const annual = 0.015
   const yearsBack = Math.max(0, (parseUtc(first.date) - startMs) / (365.25 * 86400000))
   const startValue = first.price / Math.pow(1 + annual, yearsBack)
@@ -296,9 +88,8 @@ export function buildValuationChartSeries(
     ...sorted.map((a) => ({ t: parseUtc(a.date), v: a.price })),
   ]
 
-  // Mild mid-period wobble so the line isn't a ruler (still deterministic).
   const out: PriceChartPoint[] = []
-  const stepMs = 30.44 * 86400000 // ~monthly
+  const stepMs = 30.44 * 86400000
   for (let t = startMs, i = 0; t <= endMs + 1; t += stepMs, i++) {
     let v = knots[knots.length - 1].v
     for (let k = 0; k < knots.length - 1; k++) {
@@ -306,7 +97,6 @@ export function buildValuationChartSeries(
       const b = knots[k + 1]
       if (t >= a.t && t <= b.t) {
         const u = b.t === a.t ? 0 : (t - a.t) / (b.t - a.t)
-        // Ease-in-out for a softer curve
         const e = u * u * (3 - 2 * u)
         v = a.v + (b.v - a.v) * e
         break
@@ -319,7 +109,6 @@ export function buildValuationChartSeries(
     const wobble = 1 + 0.004 * Math.sin(i * 0.55) + 0.002 * Math.sin(i * 1.3)
     out.push({ date: toIsoDate(t), value: Math.round(v * wobble) })
   }
-  // Ensure exact end value
   if (out.length) out[out.length - 1] = { date: last.date, value: last.price }
   return out
 }
@@ -362,118 +151,16 @@ export async function propertyPriceHistoryLookup(input: {
     })
   }
 
-  const key = matchDemoKey(input.buildingName)
-  if (!key) {
-    return emptyPriceResult({
-      available: false,
-      needsClarification: false,
-      gapNote:
-        "I need a specific building name to pull sale and valuation history (e.g. Maple Heights).",
-    })
-  }
+  const scopeParts = [input.buildingName?.trim(), input.addressLine?.trim()].filter(Boolean)
+  const scope = scopeParts.length > 0 ? scopeParts.join(" · ") : null
 
-  const demo = DEMO_PRICE_HISTORY[key]
-  const events: PriceHistoryEvent[] = []
-  let prev: number | null = null
-  for (const e of demo.events) {
-    const changePct =
-      prev != null && prev > 0 ? Math.round(((e.price - prev) / prev) * 1000) / 10 : null
-    events.push({
-      date: e.date,
-      event: e.event,
-      price: e.price,
-      changePct,
-      source: e.source,
-      asOf: e.date,
-    })
-    prev = e.price
-  }
-
-  const sale = [...events].reverse().find((e) => /sale/i.test(e.event))
-  const current = events[events.length - 1] ?? null
-  const chartSeries = buildValuationChartSeries(
-    events.map((e) => ({ date: e.date, price: e.price })),
-  )
-  const chartStart = chartSeries[0]?.value ?? null
-  const chartEnd = chartSeries[chartSeries.length - 1]?.value ?? current?.price ?? null
-  const chartSpanYrs =
-    chartSeries.length >= 2
-      ? yearsBetween(chartSeries[0].date, chartSeries[chartSeries.length - 1].date)
-      : 0
-  const chartChangePct =
-    chartStart != null && chartEnd != null && chartStart > 0
-      ? Math.round(((chartEnd - chartStart) / chartStart) * 1000) / 10
-      : null
-
-  const appreciationSinceSalePct =
-    sale && current && sale.price > 0
-      ? Math.round(((current.price - sale.price) / sale.price) * 1000) / 10
-      : null
-  const yrs = sale && current ? yearsBetween(sale.date, current.date) : 0
-  const avgAnnualAppreciationPct =
-    appreciationSinceSalePct != null && yrs > 0
-      ? Math.round((appreciationSinceSalePct / yrs) * 10) / 10
-      : null
-
-  const changeLabel =
-    chartChangePct != null && chartSpanYrs > 0
-      ? `${chartChangePct >= 0 ? "+" : ""}${chartChangePct}% in last ${Math.max(1, Math.round(chartSpanYrs))} years`
-      : appreciationSinceSalePct != null
-        ? `${appreciationSinceSalePct >= 0 ? "+" : ""}${appreciationSinceSalePct}% since sale`
-        : null
-
-  const bullets: string[] = [
-    `Property: ${key} — ${demo.address}.`,
-  ]
-  if (sale) {
-    bullets.push(
-      `Last recorded sale: ${moneyCompact(sale.price)} (${formatMonth(sale.date)}).`,
-    )
-  }
-  if (current) {
-    bullets.push(
-      `Current estimated value: ${moneyCompact(current.price)} (as of ${formatMonth(current.date)}).`,
-    )
-  }
-  if (appreciationSinceSalePct != null) {
-    bullets.push(
-      `Estimated appreciation since sale: ${appreciationSinceSalePct >= 0 ? "+" : ""}${appreciationSinceSalePct}%.`,
-    )
-  }
-  if (avgAnnualAppreciationPct != null) {
-    bullets.push(
-      `Average annual appreciation: approximately ${avgAnnualAppreciationPct}%.`,
-    )
-  }
-
-  const citations: AskUloCitation[] = [
-    {
-      tool: "market_data",
-      title: "Property valuation history",
-      citation: key,
-      excerpt: current ? `Est. ${moneyCompact(current.price)}` : "Sale / valuation timeline",
-    },
-  ]
-
-  return {
-    available: true,
-    bullets,
-    citations,
-    events,
-    chartSeries,
-    summary: {
-      lastSale: sale?.price ?? null,
-      lastSaleDate: sale?.date ?? null,
-      currentEstimate: current?.price ?? null,
-      appreciationSinceSalePct,
-      avgAnnualAppreciationPct,
-      changeLabel,
-    },
-    drivers: demo.drivers,
-    gapNote: null,
+  return emptyPriceResult({
+    available: false,
     needsClarification: false,
-    clarificationPrompt: null,
-  }
+    gapNote: scope
+      ? `Sale and valuation history is not available for ${scope} yet. Ask for market comps or a rent analysis instead.`
+      : "Name a specific property to scope sale and valuation history.",
+  })
 }
 
 /** Format price-history markdown table for synthesis / fallback. */
@@ -493,7 +180,6 @@ export function formatPriceHistoryMarkdown(result: PropertyPriceHistoryResult): 
     ].join("\n")
   }
 
-  // Chart is rendered in the UI — keep markdown focused on narrative.
   const parts: string[] = ["## Summary"]
   const s = result.summary
   if (s.lastSale != null) {

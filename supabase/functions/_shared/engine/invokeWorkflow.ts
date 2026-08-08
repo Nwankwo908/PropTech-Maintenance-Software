@@ -22,6 +22,8 @@ const ENTITY_TYPES = new Set<WorkflowEntityType>([
   "maintenance_request",
   "user",
   "unit",
+  "occupancy",
+  "inspection",
 ])
 
 const TRIGGER_TYPES = new Set<WorkflowTriggerType>([
@@ -72,7 +74,7 @@ export function parseInvokeWorkflowRequest(
   const entityType = readString(body.entity_type)
   if (!entityType || !ENTITY_TYPES.has(entityType as WorkflowEntityType)) {
     throw new InvokeWorkflowError(
-      "entity_type must be one of: sms_conversation, maintenance_request, user, unit",
+      "entity_type must be one of: sms_conversation, maintenance_request, user, unit, occupancy, inspection",
       400,
     )
   }

@@ -111,6 +111,9 @@ export type WorkflowExecutionContext = {
     noResponseDays?: number
     /** Rent collection: day of month rent is due (1–28). */
     rentDueDay?: number
+    /** Scheduled escalation sweep reason (reminder_due, missed_inspection_window, …). */
+    escalationReason?: string
+    escalationConfig?: Record<string, unknown>
   }
 }
 
@@ -151,6 +154,7 @@ export type WorkflowTemplate = {
 export type WorkflowEngineResult = WorkflowActResult & {
   stages: WorkflowStage[]
   classified: ClassifiedIntent
+  escalation?: EscalationResult | null
 }
 
 /** POST body for programmatic workflow invocation (run-workflow-engine). */

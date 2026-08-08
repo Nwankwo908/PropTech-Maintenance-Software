@@ -64,6 +64,7 @@ export type LifecycleStepState = {
   move_out_date?: string | null
   scheduled_at?: string | null
   inspection_type?: string | null
+  inspection_id?: string | null
 }
 
 export const LIFECYCLE_WAITING_STEPS = new Set<string>([
@@ -164,6 +165,34 @@ export function lifecycleActionDue(
     (typeof meta.landlord_alerted_at === "string" && meta.landlord_alerted_at)
   ) {
     return { due: false, reason: "already_alerted", overdueByMs: 0 }
+  }
+
+  // Inspection: scheduled window passed without completion.
+  if (templateId === "inspection") {
+    const scheduledAt = state.scheduled_at ??
+      (typeof meta.scheduled_at === "string" ? meta.scheduled_at : null)
+    if (scheduledAt?.trim()) {
+      const scheduledMs = new Date(scheduledAt).getTime()
+      const waitingForAccess = new Set([
+        "scheduled",
+        "notice_sent",
+        "awaiting_resident",
+        "in_progress",
+        "rescheduled",
+        "reminder_sent",
+      ])
+      if (
+        !Number.isNaN(scheduledMs) &&
+        scheduledMs <= now.getTime() &&
+        waitingForAccess.has(state.step ?? "")
+      ) {
+        return {
+          due: true,
+          reason: "missed_inspection_window",
+          overdueByMs: now.getTime() - scheduledMs,
+        }
+      }
+    }
   }
 
   const defaults = lifecycleTimingDefaults(templateId)

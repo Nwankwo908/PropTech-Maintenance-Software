@@ -14,45 +14,17 @@ export type PropertySnapshotResult = {
   cityLabel: string | null
   stateCode: string | null
   addressLine: string | null
+  latitude: number | null
+  longitude: number | null
   /** Median active resident monthly rent at the scoped building, when known. */
   portfolioMonthlyRent: number | null
 }
 
-const DEMO_BUILDING_META: Record<
-  string,
-  { city: string; state: string; address: string }
-> = {
-  "Oakwood Apartments": {
-    city: "Portland",
-    state: "OR",
-    address: "812 Oakwood Ave, Portland, OR 97214",
-  },
-  "Pine Ridge": {
-    city: "Portland",
-    state: "OR",
-    address: "220 Pine Ridge Dr, Portland, OR 97217",
-  },
-  "Cedar Court": {
-    city: "Beaverton",
-    state: "OR",
-    address: "45 Cedar Court Ln, Beaverton, OR 97005",
-  },
-  "Maple Heights": {
-    city: "Hillsboro",
-    state: "OR",
-    address: "901 Maple Heights Blvd, Hillsboro, OR 97124",
-  },
-  "Birch Tower": {
-    city: "Portland",
-    state: "OR",
-    address: "12 Birch Tower Way, Portland, OR 97209",
-  },
-  "Willow Park": {
-    city: "Gresham",
-    state: "OR",
-    address: "330 Willow Park Rd, Gresham, OR 97030",
-  },
-}
+import {
+  formatPropertyAddressLine,
+  loadLandlordPropertyRecords,
+  matchPropertyByName,
+} from "./propertyRecords.ts"
 
 function extractBuildingName(question: string, known: string[]): string | null {
   const q = question.toLowerCase()
@@ -118,14 +90,24 @@ export async function propertySnapshotLookup(
     buildingName &&
     buildings.find((b) => b.toLowerCase().includes(buildingName.toLowerCase()))
 
-  const demo =
-    (matchedBuilding && DEMO_BUILDING_META[matchedBuilding]) ||
-    (buildingName && DEMO_BUILDING_META[buildingName]) ||
-    null
+  const propertyFocusName = matchedBuilding ?? buildingName
+  let cityLabel = input.jurisdiction.cityLabel
+  let stateCode = input.jurisdiction.stateCode
+  let addressLine: string | null = null
+  let latitude: number | null = null
+  let longitude: number | null = null
 
-  const cityLabel = demo?.city ?? input.jurisdiction.cityLabel
-  const stateCode = demo?.state ?? input.jurisdiction.stateCode
-  const addressLine = demo?.address ?? null
+  const propertyRecords = await loadLandlordPropertyRecords(supabase, landlordId)
+  const matchedRecord = propertyFocusName
+    ? matchPropertyByName(propertyRecords, propertyFocusName)
+    : null
+  if (matchedRecord) {
+    cityLabel = matchedRecord.city ?? cityLabel
+    stateCode = matchedRecord.state ?? stateCode
+    addressLine = formatPropertyAddressLine(matchedRecord)
+    latitude = matchedRecord.latitude
+    longitude = matchedRecord.longitude
+  }
 
   const vacant = scoped.filter((u) => u.status === "vacant").length
   const active = scoped.filter((u) => u.status === "active").length
@@ -182,6 +164,8 @@ export async function propertySnapshotLookup(
     cityLabel,
     stateCode,
     addressLine,
+    latitude,
+    longitude,
     portfolioMonthlyRent,
   }
 }

@@ -1,4 +1,3 @@
-import { isDemoAccountActive } from '@/lib/activeLandlord'
 import type { AdminWorkflowRow, AdminWorkflowTimelineEvent } from '@/lib/adminWorkflows'
 import {
   buildSlaOverdueActionReview,
@@ -117,55 +116,6 @@ function etaFromMetrics(metrics: PropertyHealthVendorMetrics | undefined): numbe
   return null
 }
 
-/** Figma escalated HVAC SLA rail (demo). */
-function demoHvacEscalatedShowcase(
-  run: AdminWorkflowRow,
-): Partial<SlaOverdueActionReview> | null {
-  if (!isDemoAccountActive()) return null
-  const unit = (run.unitLabel ?? '').trim()
-  const building = (run.propertyLabel ?? '').toLowerCase()
-  const isBirch902 =
-    (unit === '902' || unit === 'Unit 902') && building.includes('birch')
-  const isMaple207 = unit === '207' && building.includes('maple')
-
-  if (!isBirch902 && !isMaple207) return null
-
-  return {
-    badgeLabel: 'SLA OVERDUE · MAINTENANCE',
-    headerTitle: 'Escalated Maintenance · HVAC',
-    locationLabel: isBirch902 ? 'Birch Tower · Unit 902' : 'Maple Heights · Unit 207',
-    ticketRef: 'REQ-4902',
-    urgencyLabel: 'High',
-    urgencyIsCritical: true,
-    reportedAtLabel: 'Today · 7:45 AM',
-    slaDueLabel: 'Today · 11:45 AM (4 Hr SLA)',
-    minutesPastSla: 80,
-    pastSlaLabel: '1 hour 20 minutes past SLA',
-    issueSummary:
-      'No cooling in unit, indoor temp 84°F. Tenant has infant — heat advisory active.',
-    timeline: [
-      { timeLabel: '7:45 AM', description: 'Tenant reported via app', actor: 'M. Chen' },
-      { timeLabel: '7:46 AM', description: 'Classified as High · HVAC', actor: 'Ulo AI' },
-      { timeLabel: '7:48 AM', description: 'Dispatched to Cool Air HVAC', actor: 'Ulo AI' },
-      {
-        timeLabel: '9:30 AM',
-        description: 'Vendor confirmed — ETA 11:00 AM',
-        actor: 'Cool Air HVAC',
-      },
-      {
-        timeLabel: '11:45 AM',
-        description: 'SLA breached — vendor delayed by parts',
-        actor: 'System',
-      },
-      {
-        timeLabel: '12:05 PM',
-        description: 'Auto-notified tenant of delay + offered portable AC',
-        actor: 'Ulo AI',
-      },
-    ],
-  }
-}
-
 export function buildEscalatedWorkflowReview(
   run: AdminWorkflowRow,
   ticket: SlaOverdueTicketInput | null,
@@ -174,8 +124,6 @@ export function buildEscalatedWorkflowReview(
   suggested?: { id: string; name: string } | null,
   now = Date.now(),
 ): SlaOverdueActionReview | null {
-  const showcase = demoHvacEscalatedShowcase(run)
-
   if (ticket) {
     const slaReview = buildSlaOverdueActionReview(
       ticket,
@@ -185,29 +133,17 @@ export function buildEscalatedWorkflowReview(
       now,
     )
     if (slaReview) {
-      const timeline =
-        showcase?.timeline ??
-        (run.timeline?.length
-          ? timelineFromWorkflowEvents(run.timeline)
-          : slaReview.timeline)
+      const timeline = run.timeline?.length
+        ? timelineFromWorkflowEvents(run.timeline)
+        : slaReview.timeline
       return {
         ...slaReview,
         workflowRunId: run.id,
-        badgeLabel: showcase?.badgeLabel ?? slaReview.badgeLabel,
-        headerTitle:
-          showcase?.headerTitle ??
-          `Escalated Maintenance · ${formatCategoryLabel(ticket.issueCategory)}`,
-        locationLabel:
-          showcase?.locationLabel ??
-          formatLocation(run.propertyLabel ?? ticket.building, run.unitLabel ?? ticket.unit),
-        ticketRef: showcase?.ticketRef ?? slaReview.ticketRef,
-        urgencyLabel: showcase?.urgencyLabel ?? slaReview.urgencyLabel,
-        urgencyIsCritical: showcase?.urgencyIsCritical ?? slaReview.urgencyIsCritical,
-        reportedAtLabel: showcase?.reportedAtLabel ?? slaReview.reportedAtLabel,
-        slaDueLabel: showcase?.slaDueLabel ?? slaReview.slaDueLabel,
-        minutesPastSla: showcase?.minutesPastSla ?? slaReview.minutesPastSla,
-        pastSlaLabel: showcase?.pastSlaLabel ?? slaReview.pastSlaLabel,
-        issueSummary: showcase?.issueSummary ?? slaReview.issueSummary,
+        headerTitle: `Escalated Maintenance · ${formatCategoryLabel(ticket.issueCategory)}`,
+        locationLabel: formatLocation(
+          run.propertyLabel ?? ticket.building,
+          run.unitLabel ?? ticket.unit,
+        ),
         timeline,
       }
     }
@@ -245,17 +181,15 @@ export function buildEscalatedWorkflowReview(
 
   const noVendorOnRoster =
     alternatives.length === 0 && !suggestion?.vendorId && !suggestion?.vendorName
-  const timeline =
-    showcase?.timeline ??
-    (run.timeline?.length
-      ? timelineFromWorkflowEvents(run.timeline)
-      : [
-          {
-            timeLabel: run.lastEventAt ? timeOnly(run.lastEventAt) : '',
-            description: run.lastEventMessage?.trim() || `${run.templateName} escalated`,
-            actor: 'System',
-          },
-        ].filter((e) => e.timeLabel))
+  const timeline = run.timeline?.length
+    ? timelineFromWorkflowEvents(run.timeline)
+    : [
+        {
+          timeLabel: run.lastEventAt ? timeOnly(run.lastEventAt) : '',
+          description: run.lastEventMessage?.trim() || `${run.templateName} escalated`,
+          actor: 'System',
+        },
+      ].filter((e) => e.timeLabel)
 
   const urgency = ticket?.urgency ?? 'high'
   const ticketId = ticket?.id ?? run.entityId ?? run.id
@@ -264,41 +198,34 @@ export function buildEscalatedWorkflowReview(
     ticketId,
     workflowRunId: run.id,
     badgeLabel:
-      showcase?.badgeLabel ??
-      (minutesPastSla != null ? 'SLA OVERDUE · MAINTENANCE' : 'ESCALATED · MAINTENANCE'),
-    headerTitle: showcase?.headerTitle ?? `Escalated Maintenance · ${categoryLabel}`,
-    locationLabel:
-      showcase?.locationLabel ??
-      formatLocation(
-        run.propertyLabel ?? ticket?.building ?? null,
-        run.unitLabel ?? ticket?.unit ?? null,
-      ),
+      minutesPastSla != null ? 'SLA OVERDUE · MAINTENANCE' : 'ESCALATED · MAINTENANCE',
+    headerTitle: `Escalated Maintenance · ${categoryLabel}`,
+    locationLabel: formatLocation(
+      run.propertyLabel ?? ticket?.building ?? null,
+      run.unitLabel ?? ticket?.unit ?? null,
+    ),
     ticketRef: ticket ? formatTicketRef(ticket.id) : formatTicketRef(run.id),
-    urgencyLabel: showcase?.urgencyLabel ?? formatUrgencyLabel(urgency),
-    urgencyIsCritical: showcase?.urgencyIsCritical ?? isUrgencyCritical(urgency),
-    reportedAtLabel:
-      showcase?.reportedAtLabel ??
-      (ticket ? formatTicketTime(ticket.createdAt, now) : formatTicketTime(run.startedAt, now)),
+    urgencyLabel: formatUrgencyLabel(urgency),
+    urgencyIsCritical: isUrgencyCritical(urgency),
+    reportedAtLabel: ticket
+      ? formatTicketTime(ticket.createdAt, now)
+      : formatTicketTime(run.startedAt, now),
     slaDueLabel:
-      showcase?.slaDueLabel ??
-      (dueAt && ticket
+      dueAt && ticket
         ? `${formatTicketTime(dueAt, now)}${
             formatSlaDuration(ticket.createdAt, dueAt)
               ? ` (${formatSlaDuration(ticket.createdAt, dueAt)})`
               : ''
           }`
-        : '—'),
-    slaDurationLabel:
-      ticket && dueAt ? formatSlaDuration(ticket.createdAt, dueAt) : null,
-    minutesPastSla: showcase?.minutesPastSla ?? minutesPastSla,
+        : '—',
+    slaDurationLabel: ticket && dueAt ? formatSlaDuration(ticket.createdAt, dueAt) : null,
+    minutesPastSla,
     pastSlaLabel:
-      showcase?.pastSlaLabel ??
-      (minutesPastSla != null ? formatPastSlaLabel(minutesPastSla) : run.lastEventMessage),
+      minutesPastSla != null ? formatPastSlaLabel(minutesPastSla) : run.lastEventMessage,
     issueSummary:
-      showcase?.issueSummary ??
-      (ticket?.description?.trim() ||
-        run.lastEventMessage?.trim() ||
-        `${categoryLabel} escalation requires your review.`),
+      ticket?.description?.trim() ||
+      run.lastEventMessage?.trim() ||
+      `${categoryLabel} escalation requires your review.`,
     currentVendorName: ticket?.assignedVendorName ?? null,
     currentVendorStatus: vendorStatusLabel(
       ticket?.vendorWorkStatus ?? 'escalated',

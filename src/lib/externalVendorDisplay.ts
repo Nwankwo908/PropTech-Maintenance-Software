@@ -1,8 +1,6 @@
 import type { ExternalVendorSuggestionDto } from '@/api/discoverExternalVendors'
-import { isDemoAccountActive } from '@/lib/activeLandlord'
 import { filterVendorsWithVerifiedCoi } from '@/lib/vendorCoiVerification'
 import { filterVendorsWithVerifiedLicense } from '@/lib/vendorLicenseVerification'
-import { resolvePropertyBuildingMeta } from '@/lib/propertyRoutes'
 import {
   formatVendorTradeLabel,
   issueCategoryToVendorTrade,
@@ -36,122 +34,6 @@ export type ExternalVendorDisplayRow = ExternalVendorSuggestionDto & {
   ratingTier: VendorRatingTier
   confidenceTier: VendorConfidenceTier
   distanceTier: VendorDistanceTier | null
-}
-
-type DemoEnrichmentRow = {
-  distanceMiles: number
-  address: string
-  phone: string
-  website: string
-  tags: string[]
-  rating: number
-  reviewCount: number
-}
-
-const DEMO_ENRICHMENT_BY_TRADE: Record<string, DemoEnrichmentRow[]> = {
-  plumbing: [
-    {
-      distanceMiles: 1.2,
-      address: '840 N. Clark St',
-      phone: '(312) 555-0182',
-      website: 'allcityplumbing.com',
-      tags: ['Plumbing', 'Drain Cleaning', 'Emergency'],
-      rating: 4.9,
-      reviewCount: 128,
-    },
-    {
-      distanceMiles: 2.1,
-      address: '1504 W. Division St',
-      phone: '(312) 555-0047',
-      website: 'rapidfixplumb.com',
-      tags: ['Plumbing', 'Pipe Repair'],
-      rating: 4.7,
-      reviewCount: 42,
-    },
-    {
-      distanceMiles: 3.4,
-      address: '2200 S. Michigan Ave',
-      phone: '(312) 555-0219',
-      website: 'proflowmech.com',
-      tags: ['Plumbing', 'Water Heater'],
-      rating: 4.5,
-      reviewCount: 24,
-    },
-  ],
-  electrical: [
-    {
-      distanceMiles: 1.8,
-      address: '455 W. Chicago Ave',
-      phone: '(312) 555-0144',
-      website: 'brightwireelectric.com',
-      tags: ['Electrical', 'Panel Repair'],
-      rating: 4.8,
-      reviewCount: 96,
-    },
-    {
-      distanceMiles: 2.6,
-      address: '901 W. Fulton Market',
-      phone: '(312) 555-0199',
-      website: 'safepanelelectric.com',
-      tags: ['Electrical', 'Emergency'],
-      rating: 4.6,
-      reviewCount: 58,
-    },
-  ],
-  hvac: [
-    {
-      distanceMiles: 2.0,
-      address: '1800 W. Irving Park Rd',
-      phone: '(312) 555-0177',
-      website: 'summitclimatehvac.com',
-      tags: ['HVAC', 'Air Conditioning'],
-      rating: 4.8,
-      reviewCount: 112,
-    },
-    {
-      distanceMiles: 3.1,
-      address: '3200 N. Sheffield Ave',
-      phone: '(312) 555-0166',
-      website: 'coolflowhvac.com',
-      tags: ['HVAC', 'Heating'],
-      rating: 4.7,
-      reviewCount: 74,
-    },
-  ],
-  default: [
-    {
-      distanceMiles: 2.5,
-      address: '500 W. Madison St',
-      phone: '(312) 555-0100',
-      website: 'alliedhomerepair.com',
-      tags: ['General Maintenance'],
-      rating: 4.5,
-      reviewCount: 38,
-    },
-  ],
-}
-
-function demoTradeKey(issueCategory: string | null | undefined): string {
-  const slug = issueCategoryToVendorTrade(issueCategory)
-  if (slug === 'plumbing') return 'plumbing'
-  if (slug === 'electrical') return 'electrical'
-  if (slug === 'hvac') return 'hvac'
-  return 'default'
-}
-
-function localDemoAddress(locationLabel: string, fallbackStreet: string, index: number): string {
-  const building = locationLabel.split('·')[0]?.trim() ?? ''
-  const meta = resolvePropertyBuildingMeta(building, [])
-  const base = meta.addressLine?.split(',')[0]?.trim() || fallbackStreet
-  const suffix = meta.addressLine?.includes(',')
-    ? meta.addressLine.slice(meta.addressLine.indexOf(','))
-    : ', Portland, OR'
-  const numMatch = base.match(/^(\d+)\s+(.+)$/)
-  if (numMatch) {
-    const num = Number(numMatch[1]) + index * 2
-    return `${num} ${numMatch[2]}${suffix}`
-  }
-  return `${base}${suffix}`
 }
 
 function categoryTag(issueCategory: string | null | undefined): string {
@@ -275,39 +157,24 @@ export function compareExternalVendorRows(a: ExternalVendorDisplayRow, b: Extern
 export function enrichExternalVendorSuggestions(
   suggestions: ExternalVendorSuggestionDto[],
   issueCategory: string | null | undefined,
-  locationLabel?: string | null,
+  _locationLabel?: string | null,
 ): ExternalVendorDisplayRow[] {
   const fallbackTag = categoryTag(issueCategory)
-  const tradeKey = demoTradeKey(issueCategory)
-  const demoPool = DEMO_ENRICHMENT_BY_TRADE[tradeKey] ?? DEMO_ENRICHMENT_BY_TRADE.default
-  const loc = locationLabel?.trim() ?? ''
 
-  const rows = suggestions.map((s, index) => {
-    const demo = demoPool[index % demoPool.length]
+  const rows = suggestions.map((s) => {
     const primarySource = s.sources[0] ?? 'mock'
-    const useDemoOverlay =
-      isDemoAccountActive() &&
-      (s.sources.every((src) => src === 'mock') ||
-        (s.sources.length === 1 && s.sources[0] === 'netvendor' && !s.address && !s.phone))
-
-    const rating = s.rating ?? (useDemoOverlay ? demo.rating : null)
-    const reviewCount = s.reviewCount ?? (useDemoOverlay ? demo.reviewCount : null)
+    const rating = s.rating ?? null
+    const reviewCount = s.reviewCount ?? null
 
     const tags =
       s.tags && s.tags.length > 0
         ? s.tags
         : primarySource === 'netvendor' && s.priceLabel
           ? [fallbackTag, 'Compliant']
-          : useDemoOverlay
-            ? demo.tags
-            : [fallbackTag]
+          : [fallbackTag]
 
     const distanceMiles =
-      s.etaMinutes != null
-        ? Math.max(0.5, s.etaMinutes / 18)
-        : useDemoOverlay
-          ? demo.distanceMiles
-          : null
+      s.etaMinutes != null ? Math.max(0.5, s.etaMinutes / 18) : null
 
     return {
       ...s,
@@ -315,9 +182,9 @@ export function enrichExternalVendorSuggestions(
       reviewCount,
       primarySource,
       distanceMiles,
-      address: s.address ?? (useDemoOverlay ? localDemoAddress(loc, demo.address, index) : null),
-      phone: s.phone ?? (useDemoOverlay ? demo.phone : null),
-      website: s.website ?? (useDemoOverlay ? demo.website : null),
+      address: s.address ?? null,
+      phone: s.phone ?? null,
+      website: s.website ?? null,
       tags,
       ratingTier: getVendorRatingTier(rating, reviewCount),
       confidenceTier: getVendorConfidenceTier(reviewCount),

@@ -5,8 +5,8 @@ import { getActiveLandlordId } from '@/lib/activeLandlord'
 import {
   fetchAdminUloNotifications,
   parseActivationFailureNotificationId,
+  parseRecommendationNotificationId,
   type AdminUloNotification,
-  type MonitoringRiskLevel,
 } from '@/lib/conversationMonitoring'
 import { propertyResidentDetailPath } from '@/lib/propertyRoutes'
 import { supabase } from '@/lib/supabase'
@@ -17,20 +17,6 @@ function BellIcon() {
       <path d="M18 8a6 6 0 10-12 0c0 7-3 9-3 9h18s-3-2-3-9M13.73 21a2 2 0 01-3.46 0" />
     </svg>
   )
-}
-
-function SparkleIcon() {
-  return (
-    <svg className="size-3.5 text-[#7c3aed]" viewBox="0 0 24 24" fill="currentColor" aria-hidden>
-      <path d="M12 2l1.2 4.2L17.5 8 13.2 9.2 12 13.5 10.8 9.2 6.5 8l4.3-1.8L12 2zm7 9 1 3.5L23.5 16l-3.5 1-1 3.5-1-3.5-3.5-1 3.5-1 1-3.5zm-14 0 1 3.5L9.5 16l-3.5 1-1 3.5-1-3.5L.5 16l3.5-1 1-3.5z" />
-    </svg>
-  )
-}
-
-const RISK_STYLES: Record<MonitoringRiskLevel, string> = {
-  high: 'border-[#fecaca] bg-[#fff5f5] text-[#c10007]',
-  medium: 'border-[#fde68a] bg-[#fffbeb] text-[#a65f00]',
-  low: 'border-[#bbf7d0] bg-[#f0fdf4] text-[#008236]',
 }
 
 function NotificationItem({
@@ -50,18 +36,7 @@ function NotificationItem({
         <p className="text-[13px] font-semibold leading-5 text-[#0a0a0a]">{item.title}</p>
         <span className="shrink-0 text-[11px] leading-4 text-[#6a7282]">{item.timeLabel}</span>
       </div>
-      {item.riskLabel && item.riskLevel ? (
-        <span
-          className={`mt-1.5 inline-flex rounded-[6px] border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.06em] ${RISK_STYLES[item.riskLevel]}`}
-        >
-          {item.riskLabel}
-        </span>
-      ) : null}
-      <p className="mt-2 flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-[0.08em] text-[#7c3aed]">
-        <SparkleIcon />
-        Ulo summary for admin
-      </p>
-      <p className="mt-1.5 line-clamp-3 text-[13px] leading-5 text-[#364153]">{item.summary}</p>
+      <p className="mt-2 line-clamp-3 text-[13px] leading-5 text-[#364153]">{item.summary}</p>
     </button>
   )
 }
@@ -125,6 +100,12 @@ export function AdminUloNotificationsBell({ onNavigate }: AdminUloNotificationsB
   function handleSelect(conversationId: string) {
     setOpen(false)
     onNavigate?.()
+
+    const recommendationKey = parseRecommendationNotificationId(conversationId)
+    if (recommendationKey) {
+      navigate('/admin')
+      return
+    }
 
     const activationResidentId = parseActivationFailureNotificationId(conversationId)
     if (activationResidentId) {

@@ -24,7 +24,7 @@ import { InvoicePaymentRail, type InvoicePaymentReview, type InvoicePaymentSucce
 import { SlaOverdueActionRail } from '@/components/SlaOverdueActionRail'
 import { FindExternalVendorRail } from '@/components/FindExternalVendorRail'
 import { VendorCallFlowModal } from '@/components/VendorCallFlowModal'
-import { getActiveLandlordId, isDemoAccountActive } from '@/lib/activeLandlord'
+import { getActiveLandlordId } from '@/lib/activeLandlord'
 import {
   ensureOnboardingDashboardMatchesPortfolio,
 } from '@/lib/onboarding'
@@ -38,7 +38,6 @@ import {
   emptyAdminWorkflowDashboardData,
   fetchAdminWorkflowDashboard,
   formatLocationContextLabel,
-  workflowTemplateGroupId,
   type AdminWorkflowDashboardData,
 } from '@/lib/adminWorkflows'
 import {
@@ -48,6 +47,7 @@ import {
 } from '@/lib/adminWorkflowKanban'
 import { fetchVendorYtdPaidTotal } from '@/lib/workflowPipelineDetail'
 import {
+  ADMIN_ATTENTION_ACTION_CLASS,
   ADMIN_RIGHT_RAIL_SCRIM,
   ADMIN_RIGHT_RAIL_STACK_HOST,
 } from '@/lib/adminRightRail'
@@ -57,17 +57,15 @@ import {
   splitEmphasizedText,
   type FeedTooltipDestination,
 } from '@/lib/activityFeedTooltip'
+import { PORTFOLIO_RECOMMENDATION_EVENT } from '@/lib/conversationMonitoring'
 import {
   buildLeaseRenewalCallReasonLine,
   type VendorCallContext,
 } from '@/lib/vendorCallFlow'
 import {
-  buildOverviewFeedBadgeShowcase,
   fetchRecentPropertyOperationsEvents,
   formatTimelineCategoryLabel,
   formatTimelineContextLine,
-  linkShowcaseFeedEventsToWorkflowRuns,
-  type PropertyOperationsTimelineCategory,
   type PropertyOperationsTimelineEvent,
 } from '@/lib/propertyOperationsGraph'
 import {
@@ -134,6 +132,10 @@ import {
 import { enrichExternalVendorSuggestions } from '@/lib/externalVendorDisplay'
 import { supabase } from '@/lib/supabase'
 import { getErrorMessage } from '@/lib/errorMessage'
+import {
+  computePortfolioInsights,
+  type PortfolioInsightFinding,
+} from '@shared/portfolioIntelligence'
 
 type OverviewTicket = {
   id: string
@@ -171,18 +173,7 @@ type OverviewUnit = {
   status: string
 }
 
-type SmartInsight = {
-  tag: 'RECURRING ISSUES' | 'VENDOR RESPONSE' | 'RISK' | 'PREVENT FUTURE REPAIRS'
-  text: string
-  score: number
-  /** Structured fields for insight cards (Figma). */
-  building?: string
-  categoryLabel?: string
-  requestCount?: number
-  unitLabel?: string
-  responseRate?: number
-  assignedCount?: number
-}
+type SmartInsight = PortfolioInsightFinding
 
 type AttentionItem = {
   key: string
@@ -485,26 +476,16 @@ function TrendingDownIcon() {
   )
 }
 
-function timelineCategoryForWorkflowTemplate(
-  templateId: string,
-): PropertyOperationsTimelineCategory | null {
-  const group = workflowTemplateGroupId(templateId)
-  if (group === 'maintenance') return 'maintenance'
-  if (group === 'rent_collection') return 'rent'
-  if (group === 'move_in') return 'move_in'
-  if (group === 'move_out') return 'move_out'
-  if (group === 'inspection') return 'inspection'
-  if (templateId === 'lease_renewal') return 'admin'
-  return null
-}
-
 function isUnitRegisteredFeedEvent(event: PropertyOperationsTimelineEvent): boolean {
-  return event.eventType === 'unit.registered' || event.id === 'showcase-admin-unit-registered'
+  return event.eventType === 'unit.registered'
 }
 
 function feedEventOpenTarget(
   event: PropertyOperationsTimelineEvent,
 ): FeedTooltipDestination | null {
+  if (event.eventType === PORTFOLIO_RECOMMENDATION_EVENT) {
+    return { kind: 'property', path: '/admin' }
+  }
   if (isUnitRegisteredFeedEvent(event)) {
     const building = event.building?.trim()
     return {
@@ -924,9 +905,7 @@ const FEED_BADGE_STYLES: Record<string, string> = {
   admin: 'bg-[#f3f4f6] text-[#364153]',
 }
 
-/** Demo overview: show every feed badge category for UI review. */
 async function loadOverviewFeedEvents(): Promise<PropertyOperationsTimelineEvent[]> {
-  if (isDemoAccountActive()) return buildOverviewFeedBadgeShowcase()
   return fetchRecentPropertyOperationsEvents(8)
 }
 
@@ -1439,26 +1418,6 @@ export function AdminOverviewDashboard() {
       count: line.count,
     }))
 
-    const workOrders = openTickets.length
-    const workOrdersCritical = openTickets.filter(isTicketCritical).length
-    const workOrdersStandard = workOrders - workOrdersCritical
-    const workOrdersBreakdown = [
-      { label: 'Critical', count: workOrdersCritical },
-      { label: 'Standard', count: workOrdersStandard },
-    ].filter((line) => line.count > 0)
-    const ordersRecent = countCreatedBetween(
-      tickets,
-      now - fourWeeksMs,
-      now,
-      isTicketOpen,
-    )
-    const ordersPrevious = countCreatedBetween(
-      tickets,
-      now - 2 * fourWeeksMs,
-      now - fourWeeksMs,
-      isTicketOpen,
-    )
-
     const propertyHealth = healthReport.portfolio?.score ?? null
     const propertyHealthDelta = healthReport.portfolioDelta
 
@@ -1518,9 +1477,6 @@ export function AdminOverviewDashboard() {
         ? opsNowSnapshot.total - opsPreviousSnapshot.total
         : null,
       activeOpsBreakdown,
-      workOrders,
-      workOrdersBreakdown,
-      workOrdersDelta: ordersRecent - ordersPrevious,
       propertyHealth,
       propertyHealthDelta,
       vendorResponse,
@@ -1639,25 +1595,6 @@ export function AdminOverviewDashboard() {
     () => (workflowData ? collectLateRentReviewRuns(workflowData) : []),
     [workflowData],
   )
-
-  const linkedFeedEvents = useMemo(() => {
-    if (!workflowData) return feedEvents
-    const runIdsByCategory: Partial<
-      Record<PropertyOperationsTimelineCategory, string[]>
-    > = {}
-    for (const run of collectAdminWorkflowRuns(workflowData)) {
-      const category = timelineCategoryForWorkflowTemplate(run.templateId)
-      if (!category) continue
-      const bucket = runIdsByCategory[category] ?? []
-      bucket.push(run.id)
-      runIdsByCategory[category] = bucket
-    }
-    // Vendor showcase rows share maintenance workflow cards when present.
-    if (runIdsByCategory.maintenance?.length) {
-      runIdsByCategory.vendor = [...runIdsByCategory.maintenance]
-    }
-    return linkShowcaseFeedEventsToWorkflowRuns(feedEvents, runIdsByCategory)
-  }, [feedEvents, workflowData])
 
   const openFeedTarget = useCallback(
     (target: FeedTooltipDestination) => {
@@ -2427,111 +2364,25 @@ export function AdminOverviewDashboard() {
   )
 
   const smartInsights = useMemo<SmartInsight[]>(() => {
-    const insights: SmartInsight[] = []
-    const sixtyDaysAgo = now - 60 * 24 * 60 * 60 * 1000
-
-    const buildingByUnitLabel = new Map<string, string>()
-    for (const u of units) {
-      if (u.building) buildingByUnitLabel.set(normalizeUnitLabel(u.unitLabel), u.building)
-    }
-
-    const recentTickets = tickets.filter((t) => {
-      const ts = new Date(t.createdAt).getTime()
-      return !Number.isNaN(ts) && ts >= sixtyDaysAgo
+    return computePortfolioInsights({
+      tickets: tickets.map((t) => ({
+        id: t.id,
+        building: t.building,
+        unit: t.unit,
+        issueCategory: t.issueCategory,
+        vendorWorkStatus: t.vendorWorkStatus,
+        createdAt: t.createdAt,
+        assignedVendorId: t.assignedVendorId,
+        urgency: t.urgency,
+      })),
+      units: units.map((u) => ({
+        unitLabel: u.unitLabel,
+        building: u.building,
+      })),
+      vendorResponsePct: kpis.vendorResponse,
+      assignedWorkOrderCount: tickets.filter((t) => t.assignedVendorId).length,
+      now,
     })
-
-    const byBuildingCategory = new Map<string, number>()
-    for (const t of recentTickets) {
-      const building = buildingByUnitLabel.get(normalizeUnitLabel(t.unit))
-      if (!building || !t.issueCategory) continue
-      const key = `${building}|${t.issueCategory}`
-      byBuildingCategory.set(key, (byBuildingCategory.get(key) ?? 0) + 1)
-    }
-    const topPattern = [...byBuildingCategory.entries()].sort((a, b) => b[1] - a[1])[0]
-    let recurringBuilding: string | null = null
-    let recurringCategory: string | null = null
-    if (topPattern && topPattern[1] >= 2) {
-      const [key, count] = topPattern
-      const [building, category] = key.split('|')
-      recurringBuilding = building
-      recurringCategory = category
-      const categoryLabel = formatCategoryName(category)
-      insights.push({
-        tag: 'RECURRING ISSUES',
-        text: `${categoryLabel} issues keep occurring in ${building}.`,
-        score: Math.min(95, 70 + count * 5),
-        building,
-        categoryLabel,
-        requestCount: count,
-      })
-    }
-
-    const byUnit = new Map<string, number>()
-    for (const t of recentTickets) {
-      const key = normalizeUnitLabel(t.unit)
-      if (!key) continue
-      byUnit.set(key, (byUnit.get(key) ?? 0) + 1)
-    }
-    const topUnit = [...byUnit.entries()].sort((a, b) => b[1] - a[1])[0]
-    if (topUnit && topUnit[1] >= 2) {
-      const unitLabel = `Unit ${topUnit[0].toUpperCase()}`
-      insights.push({
-        tag: 'RISK',
-        text: `${unitLabel} has generated the most maintenance requests.`,
-        score: Math.min(90, 60 + topUnit[1] * 6),
-        unitLabel,
-        requestCount: topUnit[1],
-      })
-    }
-
-    if (kpis.vendorResponse != null) {
-      const assignedCount = tickets.filter((t) => t.assignedVendorId).length
-      insights.push({
-        tag: 'VENDOR RESPONSE',
-        text: `Vendors have responded to ${kpis.vendorResponse}% of assigned work orders.`,
-        score: kpis.vendorResponse,
-        responseRate: kpis.vendorResponse,
-        assignedCount,
-      })
-    }
-
-    // Unit-level preventive signal (distinct from Recurring Issues, which is building+category).
-    const byUnitCategory = new Map<string, number>()
-    for (const t of recentTickets) {
-      const unitKey = normalizeUnitLabel(t.unit)
-      if (!unitKey || !t.issueCategory) continue
-      const key = `${unitKey}|${t.issueCategory}`
-      byUnitCategory.set(key, (byUnitCategory.get(key) ?? 0) + 1)
-    }
-    const unitCategoryCandidates = [...byUnitCategory.entries()]
-      .filter(([, count]) => count >= 2)
-      .sort((a, b) => b[1] - a[1])
-    // Prefer a unit that isn't just restating the same building+category as Recurring Issues.
-    const preventPick =
-      unitCategoryCandidates.find(([key]) => {
-        const [unitKey, category] = key.split('|')
-        if (recurringCategory && category === recurringCategory) {
-          const building = buildingByUnitLabel.get(unitKey)
-          if (building && building === recurringBuilding) return false
-        }
-        return true
-      }) ?? unitCategoryCandidates[0]
-    if (preventPick) {
-      const [key, count] = preventPick
-      const [unitKey, category] = key.split('|')
-      const categoryLabel = formatCategoryName(category)
-      const unitLabel = `Unit ${unitKey.toUpperCase()}`
-      insights.push({
-        tag: 'PREVENT FUTURE REPAIRS',
-        text: `A preventive ${categoryLabel.toLowerCase()} inspection is recommended for ${unitLabel}.`,
-        score: Math.min(95, 65 + count * 4),
-        categoryLabel,
-        requestCount: count,
-        unitLabel,
-      })
-    }
-
-    return insights.slice(0, 4)
   }, [tickets, units, kpis.vendorResponse, now])
 
   const updatedCaption =
@@ -2708,7 +2559,7 @@ export function AdminOverviewDashboard() {
                 step: '4',
                 title: 'Connect channels',
                 desc: 'Set up SMS and email communication.',
-                to: '/admin/notifications',
+                to: '/admin/settings/operations/notifications',
               },
               {
                 step: '5',
@@ -2738,7 +2589,7 @@ export function AdminOverviewDashboard() {
         </section>
       ) : null}
 
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-2 xl:grid-cols-4">
         <KpiCard
           label="Critical Issues"
           value={loading ? '—' : String(kpis.criticalOpen)}
@@ -2753,15 +2604,6 @@ export function AdminOverviewDashboard() {
           infoTitle="Active tasks breakdown"
           infoDescription="Shows the tasks Ulo is actively managing, such as maintenance, rent, inspections, move-ins, move-outs, and lease renewals. It doesn't include every open work order—only those currently in progress."
           infoLines={loading ? undefined : kpis.activeOpsBreakdown}
-        />
-        <KpiCard
-          label="Open Work Orders"
-          value={loading ? '—' : String(kpis.workOrders)}
-          delta={loading ? null : kpis.workOrdersDelta}
-          caption={updatedCaption}
-          infoTitle="Open work orders breakdown"
-          infoDescription="Shows all open maintenance work orders across your properties, including standard and critical issues."
-          infoLines={loading ? undefined : kpis.workOrdersBreakdown}
         />
         <KpiCard
           label="Property Health"
@@ -2884,24 +2726,14 @@ export function AdminOverviewDashboard() {
                     <button
                       type="button"
                       onClick={item.onAction}
-                      className={[
-                        'sa-press shrink-0 rounded-[10px] border px-4 py-2 text-[13px] font-medium leading-5',
-                        item.actionStyle === 'alert'
-                          ? 'border-transparent bg-[#187960] text-white hover:bg-[#0A4D38]'
-                          : 'border-[#0A4D38] bg-white text-[#0A4D38] hover:bg-[#e8f3ef]',
-                      ].join(' ')}
+                      className={ADMIN_ATTENTION_ACTION_CLASS}
                     >
                       {item.actionLabel} →
                     </button>
                   ) : (
                     <Link
                       to={item.actionTo ?? '/admin/workflows'}
-                      className={[
-                        'sa-press shrink-0 rounded-[10px] border px-4 py-2 text-[13px] font-medium leading-5',
-                        item.actionStyle === 'alert'
-                          ? 'border-transparent bg-[#187960] text-white hover:bg-[#0A4D38]'
-                          : 'border-[#0A4D38] bg-white text-[#0A4D38] hover:bg-[#e8f3ef]',
-                      ].join(' ')}
+                      className={ADMIN_ATTENTION_ACTION_CLASS}
                     >
                       {item.actionLabel} →
                     </Link>
@@ -2926,14 +2758,14 @@ export function AdminOverviewDashboard() {
           <div className="flex flex-col">
             {loading ? (
               <p className="px-6 py-8 text-center text-[13px] text-[#6a7282]">Loading…</p>
-            ) : linkedFeedEvents.length === 0 ? (
+            ) : feedEvents.length === 0 ? (
               <p className="px-6 py-8 text-center text-[13px] text-[#6a7282]">
                 No AI actions yet. Activity will stream here as Ulo starts working.
               </p>
             ) : (
-              linkedFeedEvents.map((event, index) => {
+              feedEvents.map((event, index) => {
                 const context = formatTimelineContextLine(event)
-                const isLast = index === linkedFeedEvents.length - 1
+                const isLast = index === feedEvents.length - 1
                 const isFirst = index === 0
                 return (
                   <div

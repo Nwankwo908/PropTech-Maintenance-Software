@@ -1,5 +1,4 @@
 import { useEffect, useId } from 'react'
-import { isDemoAccountActive } from '@/lib/activeLandlord'
 
 type NonResidentRow = {
   id: string
@@ -8,16 +7,6 @@ type NonResidentRow = {
   lastUnit: string
   balanceCents: number
 }
-
-const DEMO_NON_RESIDENTS: NonResidentRow[] = [
-  {
-    id: '1',
-    name: 'Amanda Foster',
-    email: 'amanda.f@email.com',
-    lastUnit: '7C',
-    balanceCents: 25000,
-  },
-]
 
 function formatBalance(cents: number) {
   const n = cents / 100
@@ -122,14 +111,14 @@ export function NonResidentAccountsModal({
                 </tr>
               </thead>
               <tbody>
-                {(isDemoAccountActive() ? DEMO_NON_RESIDENTS : []).length === 0 ? (
+                {[].length === 0 ? (
                   <tr>
                     <td colSpan={4} className="px-4 py-8 text-center text-[13px] text-neutral">
                       No past residents with outstanding balances.
                     </td>
                   </tr>
                 ) : null}
-                {(isDemoAccountActive() ? DEMO_NON_RESIDENTS : []).map((row) => (
+                {([] as NonResidentRow[]).map((row) => (
                   <tr key={row.id} className="border-b border-secondary last:border-b-0">
                     <td className="px-4 py-3 align-middle">
                       <div className="flex flex-col gap-0.5">

@@ -5,6 +5,7 @@
 import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.49.1"
 import { workflowRouteForTemplate } from "../logStage.ts"
 import {
+  advanceVendorOnboardingAdminApprove,
   advanceVendorOnboardingInProgress,
   advanceVendorOnboardingOnSubmit,
   markVendorOnboardingInviteDelivered,
@@ -14,6 +15,12 @@ import {
 import type { VendorOnboardingStep } from "../vendorOnboardingPolicy.ts"
 import { escalateVendorOnboardingRun } from "../vendorOnboardingEscalation.ts"
 import { getWorkflowRunById } from "../workflowRuns.ts"
+import { deliverVendorInvite } from "../../vendor_verification/deliverVendorInvite.ts"
+import {
+  finalizeVendorVerificationAdminApprove,
+  finalizeVendorVerificationSubmit,
+  VendorVerificationSubmitError,
+} from "../../vendor_verification/finalizeVendorVerificationSubmit.ts"
 import type {
   ClassifiedIntent,
   EscalationResult,
@@ -98,6 +105,19 @@ export const vendorOnboardingTemplate: WorkflowTemplate = {
         channel?: string
         businessName?: string | null
         contactName?: string | null
+        inviteRequest?: {
+          vendorId: string | null
+          businessName: string | null
+          contactName: string | null
+          vendorFirstName: string | null
+          email: string | null
+          phone: string | null
+          propertyName: string | null
+          channel: string
+          tradeCategories: string[]
+          vendorName: string | null
+          companyName: string | null
+        }
         inviteDelivered?: {
           verificationId: string
           vendorLabel: string
@@ -114,16 +134,54 @@ export const vendorOnboardingTemplate: WorkflowTemplate = {
     if (meta?.action === "start_invite" && !runId) {
       const run = await startVendorOnboardingRun(supabase, {
         landlordId: ctx.landlordId,
-        vendorId: meta.vendorId ?? null,
-        channel: meta.channel ?? "both",
-        businessName: meta.businessName,
-        contactName: meta.contactName,
+        vendorId: meta.vendorId ?? meta.inviteRequest?.vendorId ?? null,
+        channel: meta.channel ?? meta.inviteRequest?.channel ?? "both",
+        businessName: meta.businessName ?? meta.inviteRequest?.businessName,
+        contactName: meta.contactName ?? meta.inviteRequest?.contactName,
         triggerType: ctx.trigger,
       })
+      const newRunId = run?.id ?? null
+
+      if (newRunId && meta.inviteRequest) {
+        const delivered = await deliverVendorInvite(supabase, {
+          landlordId: ctx.landlordId,
+          workflowRunId: newRunId,
+          ...meta.inviteRequest,
+        })
+        if (!delivered) {
+          return {
+            templateId: "vendor_onboarding",
+            route: workflowRouteForTemplate("vendor_onboarding"),
+            runId: newRunId,
+            metadata: {
+              action: "start_invite",
+              step: "invited",
+              error: "invite_delivery_failed",
+            },
+          }
+        }
+        return {
+          templateId: "vendor_onboarding",
+          route: workflowRouteForTemplate("vendor_onboarding"),
+          runId: newRunId,
+          metadata: {
+            action: "start_invite",
+            step: "invited",
+            verificationId: delivered.verificationId,
+            token: delivered.token,
+            link: delivered.link,
+            delivery: delivered.delivery,
+            anyDelivered: delivered.anyDelivered,
+            deliveredVia: delivered.deliveredVia,
+            workflowRunId: newRunId,
+          },
+        }
+      }
+
       return {
         templateId: "vendor_onboarding",
         route: workflowRouteForTemplate("vendor_onboarding"),
-        runId: run?.id ?? null,
+        runId: newRunId,
         metadata: { action: "start_invite", step: "invited" },
       }
     }
@@ -166,23 +224,84 @@ export const vendorOnboardingTemplate: WorkflowTemplate = {
     if (
       runId &&
       meta?.action === "submit" &&
-      meta.verificationId &&
-      meta.overall
+      meta.verificationId
     ) {
-      await advanceVendorOnboardingOnSubmit(supabase, {
-        runId,
-        verificationId: meta.verificationId,
-        vendorId: meta.vendorId ?? null,
-        vendorLabel: meta.vendorLabel ?? "Vendor",
-        overall: meta.overall,
-        completeCount: meta.completeCount ?? 0,
-        requiredCount: meta.requiredCount ?? 0,
-      })
-      return {
-        templateId: "vendor_onboarding",
-        route: workflowRouteForTemplate("vendor_onboarding"),
-        runId,
-        metadata: { action: "submit", step: meta.overall },
+      try {
+        const finalized = await finalizeVendorVerificationSubmit(supabase, {
+          landlordId: ctx.landlordId,
+          verificationId: meta.verificationId,
+        })
+        await advanceVendorOnboardingOnSubmit(supabase, {
+          runId,
+          verificationId: meta.verificationId,
+          vendorId: finalized.vendorId,
+          vendorLabel: finalized.vendorLabel,
+          overall: finalized.overall,
+          completeCount: finalized.checklist.completeCount,
+          requiredCount: finalized.checklist.requiredCount,
+        })
+        return {
+          templateId: "vendor_onboarding",
+          route: workflowRouteForTemplate("vendor_onboarding"),
+          runId,
+          metadata: {
+            action: "submit",
+            step: finalized.overall,
+            overall: finalized.overall,
+            vendorId: finalized.vendorId,
+          },
+        }
+      } catch (err) {
+        const message = err instanceof VendorVerificationSubmitError
+          ? err.message
+          : err instanceof Error
+          ? err.message
+          : String(err)
+        console.error("[vendor_onboarding] submit failed", message)
+        return {
+          templateId: "vendor_onboarding",
+          route: workflowRouteForTemplate("vendor_onboarding"),
+          runId,
+          metadata: { action: "submit", error: message },
+        }
+      }
+    }
+
+    if (runId && meta?.action === "admin_approve" && meta.verificationId) {
+      try {
+        const finalized = await finalizeVendorVerificationAdminApprove(supabase, {
+          landlordId: ctx.landlordId,
+          verificationId: meta.verificationId,
+        })
+        await advanceVendorOnboardingAdminApprove(supabase, {
+          runId,
+          verificationId: meta.verificationId,
+          vendorId: finalized.vendorId,
+          vendorLabel: finalized.vendorLabel,
+        })
+        return {
+          templateId: "vendor_onboarding",
+          route: workflowRouteForTemplate("vendor_onboarding"),
+          runId,
+          metadata: {
+            action: "admin_approve",
+            step: "verified",
+            vendorId: finalized.vendorId,
+          },
+        }
+      } catch (err) {
+        const message = err instanceof VendorVerificationSubmitError
+          ? err.message
+          : err instanceof Error
+          ? err.message
+          : String(err)
+        console.error("[vendor_onboarding] admin_approve failed", message)
+        return {
+          templateId: "vendor_onboarding",
+          route: workflowRouteForTemplate("vendor_onboarding"),
+          runId,
+          metadata: { action: "admin_approve", error: message },
+        }
       }
     }
 
@@ -232,7 +351,8 @@ export const vendorOnboardingTemplate: WorkflowTemplate = {
           : null,
       },
       shouldEscalate: ctx.trigger === "cron",
-      escalationReason: ctx.trigger === "cron" ? "cron_sweep" : undefined,
+      escalationReason: ctx.cron?.escalationReason ??
+        (ctx.trigger === "cron" ? "cron_sweep" : undefined),
     }
   },
 
@@ -246,7 +366,9 @@ export const vendorOnboardingTemplate: WorkflowTemplate = {
     const escalated = await escalateVendorOnboardingRun(supabase, {
       landlordId: ctx.landlordId,
       run,
-      reason: result.escalationReason ?? "stalled_vendor_onboarding",
+      reason: result.escalationReason ?? ctx.cron?.escalationReason ??
+        "stalled_vendor_onboarding",
+      escalationConfig: ctx.cron?.escalationConfig,
     })
 
     if (!escalated || escalated.action === "skipped") {

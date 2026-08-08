@@ -1,3 +1,4 @@
+import { getActiveLandlordId } from '@/lib/activeLandlord'
 import {
   fetchAdminWorkflowDashboard,
   formatWorkflowTimestamp,
@@ -21,7 +22,7 @@ import {
   moveOutPipelineTitle,
   moveOutProgressPercent,
 } from '@/lib/moveOutWorkflow'
-import { getActiveLandlordId, isDemoAccountActive } from '@/lib/activeLandlord'
+import { isMaintenanceInvoicePaidFromRow } from '@/lib/paymentSettlement'
 import {
   resolveWorkOrderInboxConversationId,
   type InspectionUloThreadInput,
@@ -422,7 +423,7 @@ async function buildInvoiceSection(
   if (!invoice) return null
   const status = asString(invoice.status).toLowerCase() || 'submitted'
   const totalCost = invoiceTotalFromRow(invoice)
-  const paid = status === 'approved'
+  const paid = isMaintenanceInvoicePaidFromRow(invoice).paid
 
   let ytdPaidTotal: number | null = null
   let necTrackingNote: string | null = null
@@ -494,28 +495,6 @@ function mentionsAc(text: string): boolean {
   return mentionsHvacCooling(text)
 }
 
-const DEMO_SMS_PHOTO_URLS = {
-  hvac: [
-    {
-      url: 'https://images.unsplash.com/photo-1631545806604-aa4a6292c1a9?auto=format&fit=crop&w=800&q=80',
-      name: 'ac-unit.jpg',
-      caption: 'AC unit — not running',
-    },
-    {
-      url: 'https://images.unsplash.com/photo-1558002038-1055906df827?auto=format&fit=crop&w=800&q=80',
-      name: 'thermostat.jpg',
-      caption: 'Thermostat reading',
-    },
-  ],
-  general: [
-    {
-      url: 'https://images.unsplash.com/photo-1581578731548-c64695cc6952?auto=format&fit=crop&w=800&q=80',
-      name: 'tenant-photo.jpg',
-      caption: 'Issue photo from SMS',
-    },
-  ],
-} as const
-
 function formatAttachmentTimestamp(iso: string): string {
   const date = new Date(iso)
   if (Number.isNaN(date.getTime())) return 'From SMS'
@@ -523,33 +502,10 @@ function formatAttachmentTimestamp(iso: string): string {
 }
 
 function syntheticConversationPhotoAttachments(
-  description: string,
-  issueCategory: string,
-  residentName: string,
+  _description: string,
+  _issueCategory: string,
+  _residentName: string,
 ): WorkflowPipelineAttachment[] {
-  if (!isDemoAccountActive()) return []
-  const hay = `${description} ${issueCategory}`.toLowerCase()
-  if (mentionsAc(hay) || issueCategory.toLowerCase() === 'hvac') {
-    return DEMO_SMS_PHOTO_URLS.hvac.map((photo) => ({
-      name: photo.name,
-      sizeLabel: 'From SMS',
-      kind: 'image' as const,
-      url: photo.url,
-      caption: `${residentName} · ${photo.caption}`,
-    }))
-  }
-  if (/photo|image|picture|leak|sink|chip|damage|broken|stain/i.test(hay)) {
-    const photo = DEMO_SMS_PHOTO_URLS.general[0]
-    return [
-      {
-        name: photo.name,
-        sizeLabel: 'From SMS',
-        kind: 'image',
-        url: photo.url,
-        caption: `${residentName} · ${photo.caption}`,
-      },
-    ]
-  }
   return []
 }
 
@@ -678,45 +634,11 @@ async function loadInboundSmsPhotoAttachments(
   return items.reverse()
 }
 
-const DEMO_INSPECTION_PHOTO_URLS = [
-  {
-    url: 'https://images.unsplash.com/photo-1556911220-bff31c812dba?auto=format&fit=crop&w=800&q=80',
-    name: 'kitchen-counter.jpg',
-    caption: 'Counter chip by sink',
-  },
-  {
-    url: 'https://images.unsplash.com/photo-1585704032915-07195aafc03c?auto=format&fit=crop&w=800&q=80',
-    name: 'under-sink.jpg',
-    caption: 'Slow drip under kitchen sink',
-  },
-  {
-    url: 'https://images.unsplash.com/photo-1600585154340-be6161a56a0c?auto=format&fit=crop&w=800&q=80',
-    name: 'closet-door.jpg',
-    caption: 'Sticking bedroom closet door',
-  },
-  {
-    url: 'https://images.unsplash.com/photo-1591696205602-890fa717050b?auto=format&fit=crop&w=800&q=80',
-    name: 'bedroom-outlet.jpg',
-    caption: 'Dead outlet by window',
-  },
-] as const
-
 function syntheticInspectionConversationPhotos(
-  input: InspectionUloThreadInput,
-  residentName: string,
+  _input: InspectionUloThreadInput,
+  _residentName: string,
 ): WorkflowPipelineAttachment[] {
-  if (!isDemoAccountActive()) return []
-  const photos = input.hasMaintenanceFollowUp
-    ? DEMO_INSPECTION_PHOTO_URLS
-    : DEMO_INSPECTION_PHOTO_URLS.slice(0, 2)
-
-  return photos.map((photo) => ({
-    name: photo.name,
-    sizeLabel: 'From SMS',
-    kind: 'image' as const,
-    url: photo.url,
-    caption: `${residentName} · ${photo.caption}`,
-  }))
+  return []
 }
 
 async function loadInspectionConversationAttachments(

@@ -2,6 +2,10 @@ import { useEffect, useId, type ReactNode } from 'react'
 import {
   ADMIN_RIGHT_RAIL_OVERLAY_HOST,
   ADMIN_RIGHT_RAIL_SCRIM,
+  ADMIN_RAIL_FOOTER_CLASS,
+  ADMIN_RAIL_FOOTER_DARK_PRIMARY_BUTTON_CLASS,
+  ADMIN_RAIL_FOOTER_PRIMARY_BUTTON_CLASS,
+  ADMIN_RAIL_FOOTER_SECONDARY_BUTTON_CLASS,
   adminRightRailPanelClass,
   type AdminRightRailStackedPosition,
 } from '@/lib/adminRightRail'
@@ -131,12 +135,11 @@ export function SlaOverdueActionRail({
       ? 'Open workflows'
       : 'Take action'
 
-  const dismissButtonClass =
-    'sa-press inline-flex min-h-[44px] w-full items-center justify-center rounded-[10px] border border-[#e5e7eb] bg-white px-4 py-2.5 text-[13px] font-medium text-[#364153] outline-none hover:bg-[#f9fafb] focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2 disabled:opacity-50'
+  const dismissButtonClass = ADMIN_RAIL_FOOTER_SECONDARY_BUTTON_CLASS
 
   const actionButtonClass = isVendorSuggestionAction
-    ? 'sa-press inline-flex min-h-[44px] w-full items-center justify-center rounded-[10px] bg-[#0a4d38] px-4 py-2.5 text-[13px] font-medium text-white outline-none hover:bg-[#083828] focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2 disabled:opacity-50'
-    : 'sa-press inline-flex min-h-[44px] w-full items-center justify-center rounded-[10px] bg-[#0a0a0a] px-4 py-2.5 text-[13px] font-medium text-white outline-none hover:bg-[#1f2937] focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2 disabled:opacity-50'
+    ? ADMIN_RAIL_FOOTER_PRIMARY_BUTTON_CLASS
+    : ADMIN_RAIL_FOOTER_DARK_PRIMARY_BUTTON_CLASS
 
   const panel = (
       <div
@@ -206,16 +209,12 @@ export function SlaOverdueActionRail({
           </div>
         </div>
 
-        <footer
-          className={`shrink-0 border-t border-[#e5e7eb] px-6 py-4 ${
-            isVendorSuggestionAction ? 'grid grid-cols-2 gap-3' : 'flex items-center justify-end gap-3'
-          }`}
-        >
+        <footer className={ADMIN_RAIL_FOOTER_CLASS}>
           <button
             type="button"
             disabled={saving}
             onClick={onClose}
-            className={isVendorSuggestionAction ? dismissButtonClass : `${dismissButtonClass} w-auto`}
+            className={dismissButtonClass}
           >
             {isVendorSuggestionAction ? 'Close' : dismissLabel}
           </button>
@@ -223,7 +222,7 @@ export function SlaOverdueActionRail({
             type="button"
             disabled={saving || loading}
             onClick={() => onTakeAction(review)}
-            className={isVendorSuggestionAction ? actionButtonClass : `${actionButtonClass} w-auto gap-2`}
+            className={actionButtonClass}
           >
             {!isVendorSuggestionAction ? <ActionCircleIcon /> : null}
             {saving

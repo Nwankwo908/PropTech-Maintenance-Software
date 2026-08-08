@@ -12,12 +12,14 @@ import type {
   WorkflowExecutionContext,
   WorkflowTriggerType,
 } from "./types.ts"
+import type { VendorInviteRequest } from "../vendor_verification/deliverVendorInvite.ts"
 
 export type VendorOnboardingEngineAction =
   | "start_invite"
   | "invite_delivered"
   | "portal_in_progress"
   | "submit"
+  | "admin_approve"
 
 export type VendorOnboardingEngineInput = {
   action: VendorOnboardingEngineAction
@@ -30,6 +32,8 @@ export type VendorOnboardingEngineInput = {
   channel?: string
   businessName?: string | null
   contactName?: string | null
+  /** Full invite payload — engine creates verification row and delivers outreach. */
+  inviteRequest?: Omit<VendorInviteRequest, "landlordId" | "workflowRunId">
   inviteDelivered?: {
     verificationId: string
     vendorLabel: string

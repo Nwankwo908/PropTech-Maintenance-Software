@@ -22,7 +22,7 @@ function navClassName({ isActive, collapsed }: { isActive: boolean; collapsed?: 
   return [
     base,
     isActive
-      ? 'bg-[#101828]/8 text-[#101828]'
+      ? 'bg-[#E0F2EF] text-[#101828]'
       : 'text-[#364153] opacity-60 hover:bg-[#f3f4f6] hover:opacity-100 active:bg-[#e5e7eb]',
   ].join(' ')
 }
@@ -167,7 +167,7 @@ export function AdminSidebarContent({
     },
     {
       to: '/admin/communication',
-      label: 'Communication',
+      label: 'Messages',
       icon: <MessagesIcon />,
       onClick: onNavigate,
     },

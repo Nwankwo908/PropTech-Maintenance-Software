@@ -1,7 +1,6 @@
 import { useEffect, useId, useLayoutEffect, useMemo, useState } from 'react'
 import overrideIcon from '@/assets/Override.svg'
 import { checkboxInputClassName, checkboxInputClassNameLg } from '@/components/TableCheckbox'
-import { isDemoAccountActive } from '@/lib/activeLandlord'
 import { getErrorMessage } from '@/lib/errorMessage'
 import {
   vendorTradeFilterSubset,
@@ -39,55 +38,7 @@ const AUTOMATION_CATEGORIES = [
   },
 ] as const
 
-const DEMO_TICKETS = [
-  {
-    value: 'MNT-AUTO-UPD',
-    label:
-      'MNT-AUTO-UPD — Maintenance request update notifications (status change · submitter · Email + SMS)',
-  },
-  { value: 'MNT-482156-A4F2', label: 'MNT-482156-A4F2 — Kitchen leak (Unit 2B)' },
-  { value: 'MNT-481923-B7C1', label: 'MNT-481923-B7C1 — HVAC (Unit 5A)' },
-  { value: 'MNT-481100-F8D2', label: 'MNT-481100-F8D2 — Electrical (Unit 3C)' },
-  { value: 'MNT-480901-A1B2', label: 'MNT-480901-A1B2 — Plumbing (Unit 8D)' },
-]
-
-const DEMO_RENT_REMINDER_RUNS = [
-  {
-    value: 'rr-mar-2025',
-    label: 'March 2025 billing — all residents (7 days before due · Email + SMS)',
-  },
-  {
-    value: 'rr-mar-2025-late',
-    label: 'March 2025 — late-payment follow-up cohort only',
-  },
-  {
-    value: 'rr-apr-2025',
-    label: 'April 2025 billing — scheduled preview run',
-  },
-] as const
-
-const DEMO_BILLING_AUTOMATIONS = [
-  {
-    value: 'bil-rent-rem',
-    label: 'Monthly rent reminders — 7 days before due · Email + SMS (all residents)',
-  },
-  { value: 'bil-ach-mar', label: 'ACH rent collection — March cycle' },
-  { value: 'bil-late-fee', label: 'Automated late-fee assessment rules' },
-  { value: 'bil-inv-batch', label: 'Monthly invoice batch — commercial units' },
-]
-
 export const PGE_GAS_LEAK_ADVISORY_AUTOMATION_ID = 'saf-pge-gas-leak' as const
-
-const DEMO_SAFETY_AUTOMATIONS = [
-  {
-    value: PGE_GAS_LEAK_ADVISORY_AUTOMATION_ID,
-    label:
-      'PG&E Gas Leak Advisory — San Francisco, CA 94103 (Critical · Mar 25, 2026 2:00 PM)',
-  },
-  { value: 'saf-fire-test', label: 'Fire system test escalation — Building A' },
-  { value: 'saf-water-leak', label: 'Building 4 - Water Pressure Drop' },
-  { value: 'saf-co', label: 'CO detector threshold monitoring' },
-]
 
 /** Customize Notification Distribution — safety → Override Notification Rules (Figma 117:10408). */
 const SAFETY_NOTIF_RECIPIENT_GROUPS = [
@@ -203,16 +154,6 @@ const SAFETY_ALERT_SEVERITY_OPTIONS = [
 ] as const
 
 type SafetyAlertSeverityId = (typeof SAFETY_ALERT_SEVERITY_OPTIONS)[number]['id']
-
-const DEMO_INSPECTION_AUTOMATIONS = [
-  {
-    value: 'insp-72hr',
-    label: 'Inspection reminder (72hr notice) — affected unit · Email + SMS',
-  },
-  { value: 'insp-q1', label: 'Q1 unit inspections — 30-day notices' },
-  { value: 'insp-move', label: 'Move-out inspection reminders (rolling)' },
-  { value: 'insp-annual', label: 'Annual common-area inspection cadence' },
-]
 
 /** Inspection Notices → reschedule panel (Figma 121:12906). */
 const INSPECTION_RESCHEDULE_REASON_OPTIONS = [
@@ -1317,14 +1258,8 @@ export function OverrideAutomationModal({
       return scopeOptionsOverride
     }
 
-    // Showcase scope lists are demo-account only — never invent tickets for New Landlord.
-    if (!isDemoAccountActive()) return []
-
-    if (isRentReminder) return DEMO_RENT_REMINDER_RUNS
-    if (automationCategory === 'maintenance') return DEMO_TICKETS
-    if (automationCategory === 'billing') return DEMO_BILLING_AUTOMATIONS
-    if (automationCategory === 'safety') return DEMO_SAFETY_AUTOMATIONS
-    return DEMO_INSPECTION_AUTOMATIONS
+    // Scope lists come from caller override or workflow/ticket data — no hardcoded demo rows.
+    return []
   }, [scopeOptionsOverride, isRentReminder, automationCategory])
 
   const effectiveScopeOptions = scopeOptions
@@ -1753,7 +1688,7 @@ export function OverrideAutomationModal({
   const currentSafetyAlertSummary =
     ticketId && isSafetyCategory
       ? (() => {
-          const opt = DEMO_SAFETY_AUTOMATIONS.find((o) => o.value === ticketId)
+          const opt = effectiveScopeOptions.find((o) => o.value === ticketId)
           if (!opt) return null
           return {
             title: opt.label,

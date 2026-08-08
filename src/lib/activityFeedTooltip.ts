@@ -45,6 +45,7 @@ type FeedCopyContext = {
   unit: string | null
   building: string | null
   location: string | null
+  message: string | null
 }
 
 function cleanUnitLabel(unitLabel: string | null): string | null {
@@ -80,6 +81,7 @@ function buildContext(event: ActivityFeedTooltipEvent): FeedCopyContext {
     unit,
     building,
     location: formatLocation(unit, building),
+    message: event.message?.trim() || null,
   }
 }
 
@@ -164,6 +166,58 @@ const EVENT_COPY: Record<string, EventCopyTemplate> = {
     },
     status: 'Reminder sent',
     actionLabel: 'Review payment',
+  },
+  'rent.payment_received': {
+    title: 'Rent payment received',
+    summary: ({ resident }) =>
+      resident
+        ? `Rent payment received from **${resident}**.`
+        : 'Rent payment was received.',
+    status: 'Paid',
+    actionLabel: 'Review payment',
+  },
+  'rent.payment_failed': {
+    title: 'Rent payment failed',
+    summary: () => 'A rent payment attempt did not complete.',
+    status: 'Failed',
+    actionLabel: 'Review payment',
+  },
+  'maintenance.invoice_paid': {
+    title: 'Invoice paid',
+    summary: () => 'A maintenance invoice was paid.',
+    status: 'Paid',
+    actionLabel: 'View invoice',
+  },
+  'maintenance.invoice_payment_failed': {
+    title: 'Invoice payment failed',
+    summary: () => 'An invoice payment attempt did not complete.',
+    status: 'Failed',
+    actionLabel: 'View invoice',
+  },
+  'payment.landlord_connect_ready': {
+    title: 'Online rent payments enabled',
+    summary: () => 'Your property can now accept online rent payments.',
+    status: 'Ready',
+    actionLabel: 'View payout settings',
+  },
+  'payment.vendor_connect_ready': {
+    title: 'Vendor payout setup complete',
+    summary: ({ vendor }) =>
+      vendor
+        ? `**${vendor}** can now receive online payments.`
+        : 'A vendor can now receive online payments.',
+    status: 'Ready',
+    actionLabel: 'View vendor',
+  },
+  'portfolio.recommendation_surfaced': {
+    title: 'Ulo recommendation',
+    summary: ({ message, building }) => {
+      if (message) return message
+      if (building) return `Review the priority recommendation for **${building}**.`
+      return 'Review this portfolio priority on Overview.'
+    },
+    status: 'Recommended',
+    actionLabel: 'View Overview',
   },
   'lease_renewal.escalated': {
     title: 'Lease renewal needs a decision',

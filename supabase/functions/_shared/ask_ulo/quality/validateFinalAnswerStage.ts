@@ -33,7 +33,6 @@ import {
   buildFaithfulnessForEval,
   estimateTokensFromText,
 } from "../audit/buildAuditRecord.ts"
-import { DEMO_GEO } from "../core/config.ts"
 import type { AskUloResponse } from "../core/types.ts"
 import type { AskUloContext } from "../core/context.ts"
 import type { AskUloExecutionPlan } from "../routing/buildExecutionPlan.ts"
@@ -607,12 +606,8 @@ export async function validateFinalAnswer(input: {
           address: property?.addressLine ?? null,
           cityLabel: property?.cityLabel ?? jurisdiction.cityLabel,
           stateCode: property?.stateCode ?? jurisdiction.stateCode,
-          lat: property?.addressLine
-            ? (DEMO_GEO[property.addressLine]?.lat ?? null)
-            : null,
-          lng: property?.addressLine
-            ? (DEMO_GEO[property.addressLine]?.lng ?? null)
-            : null,
+          lat: property?.latitude ?? null,
+          lng: property?.longitude ?? null,
           comps: (market?.comps ?? []).slice(0, 8).map((c) => ({
             address: c.address,
             rent: c.price,

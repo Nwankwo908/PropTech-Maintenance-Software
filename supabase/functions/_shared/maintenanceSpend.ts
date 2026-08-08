@@ -6,6 +6,7 @@ import {
 } from "./graph/logGraphEvent.ts"
 import { logLedgerEvent } from "./engine/ledgerEvents.ts"
 import { notifyLandlordNeedsAttention } from "./landlordAttentionNotify.ts"
+import { recordMaintenanceInvoicePaidActivity } from "./paymentActivityEvents.ts"
 import { formatWorkOrderRef } from "./vendor_outreach_copy.ts"
 
 /** Canonical maintenance spend graph event types. */
@@ -334,16 +335,17 @@ export async function approveMaintenanceInvoice(
     },
   })
 
-  await logMaintenanceGraphEvent(supabase, scope, {
-    eventType: MAINTENANCE_GRAPH_EVENTS.invoiceApproved,
-    source: params.source ?? "dashboard",
-    actorType: "landlord",
-    actorId: params.approvedByUserId ?? null,
-    metadata: {
-      invoice_id: params.invoiceId,
-      total_cost: totalCost,
-      approved_at: approvedAt,
-    },
+  await recordMaintenanceInvoicePaidActivity(supabase, {
+    landlordId: scope.landlordId,
+    invoiceId: params.invoiceId,
+    invoiceNumber:
+      typeof invoice.invoice_number === "string" ? invoice.invoice_number : null,
+    maintenanceRequestId: scope.maintenanceRequestId,
+    vendorId: scope.vendorId ?? null,
+    unitId: scope.unitId ?? null,
+    propertyId: scope.propertyId ?? null,
+    residentId: scope.residentId ?? null,
+    source: params.source === "dashboard" ? "dashboard" : "automation",
   })
 
   await logMaintenanceGraphEvent(supabase, scope, {

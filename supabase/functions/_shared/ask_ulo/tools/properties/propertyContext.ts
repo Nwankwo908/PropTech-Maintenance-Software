@@ -6,68 +6,79 @@
 
 import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.49.1"
 import type { AskUloCitation } from "../../retrieval/searchInternalData.ts"
+import {
+  loadLandlordPropertyRecords,
+  matchPropertyByName,
+} from "./propertyRecords.ts"
 
-export type DemoPropertyProfile = {
-  propertyType: string
-  /** Housing programs present at this building (e.g. section_8_hcv). */
-  housingPrograms: string[]
-  companyPolicies: string[]
-  /** Typical in-place rent when rent roll column is unavailable (demo). */
-  typicalMonthlyRent?: number
+export type ApprovalRulesSnapshot = {
+  autoApprovalThreshold?: number | null
+  afterHoursRule?: string | null
+  emergencyTypes?: string[] | null
 }
 
-/** Curated demo profiles — live tables supply leases/ops; these fill gaps. */
-export const DEMO_PROPERTY_PROFILES: Record<string, DemoPropertyProfile> = {
-  "Oakwood Apartments": {
-    propertyType: "Garden-style multifamily (mid-rise)",
-    housingPrograms: [],
-    companyPolicies: [
-      "Written 60-day notice for rent increases on month-to-month tenancies (company policy).",
-      "Renewal offers require regional PM approval when increase exceeds 5%.",
-    ],
-    typicalMonthlyRent: 2140,
-  },
-  "Pine Ridge": {
-    propertyType: "Garden-style multifamily",
-    housingPrograms: [],
-    companyPolicies: [
-      "Standard Oregon Residential Landlord and Tenant Act notice templates only.",
-    ],
-    typicalMonthlyRent: 1795,
-  },
-  "Cedar Court": {
-    propertyType: "Townhome / small multifamily",
-    housingPrograms: [],
-    companyPolicies: [
-      "Lease renewals prefer 12-month fixed terms; MTM only with PM approval.",
-    ],
-    typicalMonthlyRent: 1885,
-  },
-  "Maple Heights": {
-    propertyType: "Garden-style multifamily",
-    housingPrograms: ["section_8_hcv"],
-    companyPolicies: [
-      "HCV / Section 8 units: rent changes require PHA approval before notice to tenant.",
-      "Company policy: no mid-lease rent increases on fixed-term leases.",
-    ],
-    typicalMonthlyRent: 1945,
-  },
-  "Birch Tower": {
-    propertyType: "High-rise multifamily",
-    housingPrograms: [],
-    companyPolicies: [
-      "Corporate counsel reviews any increase above local CPI + 3% before notice.",
-    ],
-    typicalMonthlyRent: 2400,
-  },
-  "Willow Park": {
-    propertyType: "Garden-style multifamily",
-    housingPrograms: [],
-    companyPolicies: [
-      "Written 60-day notice for rent increases on month-to-month tenancies (company policy).",
-    ],
-    typicalMonthlyRent: 1650,
-  },
+/** Plain-language company-policy bullets from onboarding approval rules. */
+export function companyPolicyBulletsFromApprovalRules(
+  rules: ApprovalRulesSnapshot,
+): string[] {
+  const bullets: string[] = []
+  const threshold = rules.autoApprovalThreshold
+  if (typeof threshold === "number" && Number.isFinite(threshold) && threshold > 0) {
+    bullets.push(
+      `Auto-approve maintenance under $${threshold.toLocaleString("en-US")} (company policy).`,
+    )
+  }
+  if (rules.afterHoursRule === "auto_approve_emergencies") {
+    bullets.push(
+      "After hours, emergencies can proceed without waiting on your approval (company policy).",
+    )
+  } else if (rules.afterHoursRule === "require_approval") {
+    bullets.push(
+      "After-hours work requires your approval before proceeding (company policy).",
+    )
+  } else if (rules.afterHoursRule === "no_after_hours") {
+    bullets.push("No after-hours dispatch without your explicit approval (company policy).")
+  }
+  const emergencies = rules.emergencyTypes?.filter(Boolean) ?? []
+  if (emergencies.length > 0 && emergencies.length < 6) {
+    bullets.push(
+      `Emergency auto-dispatch types on file: ${emergencies.join(", ").replace(/_/g, " ")}.`,
+    )
+  }
+  return bullets.slice(0, 3)
+}
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null
+}
+
+function approvalRulesFromOnboardingRow(row: Record<string, unknown> | null): ApprovalRulesSnapshot {
+  if (!row) return {}
+  const draft = asRecord(row.draft_state)
+  const draftRules = asRecord(draft?.approvalRules)
+  const threshold =
+    typeof row.auto_approval_threshold === "number"
+      ? row.auto_approval_threshold
+      : typeof draftRules?.autoApprovalThreshold === "number"
+        ? draftRules.autoApprovalThreshold
+        : null
+  const afterHours =
+    typeof row.after_hours_rule === "string"
+      ? row.after_hours_rule
+      : typeof draftRules?.afterHoursRule === "string"
+        ? draftRules.afterHoursRule
+        : null
+  const emergencyRaw = row.emergency_types ?? draftRules?.emergencyTypes
+  const emergencyTypes = Array.isArray(emergencyRaw)
+    ? emergencyRaw.filter((v): v is string => typeof v === "string")
+    : null
+  return {
+    autoApprovalThreshold: threshold,
+    afterHoursRule: afterHours,
+    emergencyTypes,
+  }
 }
 
 /**
@@ -209,36 +220,28 @@ export async function enrichPropertyContextForLegal(
   }
 
   const profile =
-    DEMO_PROPERTY_PROFILES[buildingName] ??
-    Object.entries(DEMO_PROPERTY_PROFILES).find(([k]) =>
-      buildingName.toLowerCase().includes(k.toLowerCase()) ||
-      k.toLowerCase().includes(buildingName.toLowerCase())
-    )?.[1] ??
-    null
+    matchPropertyByName(await loadLandlordPropertyRecords(supabase, landlordId), buildingName)
 
-  if (profile) {
+  const { data: onboardingRow } = await supabase
+    .from("landlord_onboarding")
+    .select("auto_approval_threshold, after_hours_rule, emergency_types, draft_state")
+    .eq("landlord_id", landlordId)
+    .maybeSingle()
+
+  const companyPolicies = companyPolicyBulletsFromApprovalRules(
+    approvalRulesFromOnboardingRow(
+      (onboardingRow as Record<string, unknown> | null) ?? null,
+    ),
+  )
+
+  if (profile?.propertyType) {
     bullets.push(`Property type: ${profile.propertyType}.`)
-    if (profile.housingPrograms.includes("section_8_hcv")) {
-      housingProgramHint = "section_8_hcv"
-      bullets.push(
-        "Some units here use Section 8 Housing Choice Vouchers. Rent changes on those units usually need housing authority approval first.",
-      )
-    } else {
-      bullets.push("Housing programs: no voucher / HCV program flagged on this building’s profile.")
+    if (profile.yearBuilt != null) {
+      bullets.push(`Year built: ${profile.yearBuilt}.`)
     }
-    if (profile.typicalMonthlyRent != null) {
-      bullets.push(
-        `Typical in-place rent at this building is about $${profile.typicalMonthlyRent.toLocaleString("en-US")}/mo.`,
-      )
+    if (profile.unitCount != null && profile.unitCount > 0) {
+      bullets.push(`Units on file: ${profile.unitCount}.`)
     }
-    for (const p of profile.companyPolicies.slice(0, 3)) {
-      bullets.push(`Your company policy: ${p}`)
-    }
-    citations.push({
-      tool: "ops_graph",
-      title: "Property profile & company policies",
-      excerpt: `${buildingName}: type, programs, and internal policies for legal application.`,
-    })
   } else {
     const unitCountHint = portfolioBuildingNames.length
     bullets.push(
@@ -246,6 +249,22 @@ export async function enrichPropertyContextForLegal(
         ? "Property type: multifamily portfolio building (type not tagged in profile)."
         : "Property type: residential rental (type not tagged in profile).",
     )
+  }
+
+  bullets.push(
+    "Housing programs: confirm on file whether any units use Section 8 / HCV vouchers.",
+  )
+
+  for (const p of companyPolicies) {
+    bullets.push(`Your company policy: ${p}`)
+  }
+
+  if (profile || companyPolicies.length > 0) {
+    citations.push({
+      tool: "ops_graph",
+      title: "Property profile & company policies",
+      excerpt: `${buildingName}: type, programs, and internal policies for legal application.`,
+    })
   }
 
   // Active residents / lease terms at this building

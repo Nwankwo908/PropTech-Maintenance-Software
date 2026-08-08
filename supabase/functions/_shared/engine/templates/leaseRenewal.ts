@@ -15,7 +15,6 @@ import type { SmsProviderName } from "../../sms/types.ts"
 import {
   createWorkflowRun,
   findActiveWorkflowRun,
-  findOverdueLeaseRenewalRuns,
   getWorkflowRunById,
   linkConversationToWorkflowRun,
   runConversationId,
@@ -140,6 +139,16 @@ export const leaseRenewalTemplate: WorkflowTemplate = {
     intent: ClassifiedIntent,
   ): Promise<WorkflowActResult> {
     if (ctx.trigger === "cron") {
+      if (ctx.runId && ctx.cron?.escalationReason) {
+        return {
+          templateId: "lease_renewal",
+          route: workflowRouteForTemplate("lease_renewal"),
+          runId: ctx.runId,
+          shouldEscalate: true,
+          escalationReason: ctx.cron.escalationReason,
+          metadata: { action: "cron_escalation" },
+        }
+      }
       return processLeaseRenewalCron(supabase, ctx)
     }
 
@@ -710,8 +719,6 @@ async function processLeaseRenewalCron(
     }
   }
 
-  const escalated = await escalateOverdueLeaseRenewals(supabase, landlordId)
-
   return {
     templateId: "lease_renewal",
     route: workflowRouteForTemplate("lease_renewal"),
@@ -723,7 +730,6 @@ async function processLeaseRenewalCron(
       started,
       skipped,
       outreach_sent: outreachSent,
-      escalated,
     },
   }
 }
@@ -801,59 +807,4 @@ async function sendLeaseRenewalOutreach(
   return sent.ok
 }
 
-async function escalateOverdueLeaseRenewals(
-  supabase: SupabaseClient,
-  landlordId: string,
-): Promise<number> {
-  const now = new Date().toISOString()
-  const overdue = await findOverdueLeaseRenewalRuns(supabase, landlordId)
-
-  if (!overdue.length) return 0
-
-  let count = 0
-  for (const run of overdue) {
-    await updateWorkflowRun(supabase, run.id, {
-      status: "escalated",
-      currentStep: "escalated",
-      metadata: { escalated_at: now },
-      pipelineStage: "escalate",
-      eventMessage: "no_response_by_due_date",
-      eventStep: "escalated",
-    })
-
-    await logGraphEvent(supabase, {
-      landlord_id: landlordId,
-      event_type: "lease.renewal_escalated",
-      source: "automation",
-      actor_type: "system",
-      resident_id: run.resident_id,
-      unit_id: run.unit_id,
-      workflow_run_id: run.id,
-      workflow_template_id: "lease_renewal",
-      metadata: {
-        lease_end_date: runLeaseEndDate(run),
-        reason: "no_response_by_due_date",
-      },
-    })
-
-    try {
-      await notifyLandlordNeedsAttention(supabase, {
-        landlordId,
-        kind: "lease_renewal",
-        headline: "Lease renewal escalated",
-        detail: "No tenant response — review renewal options",
-        idempotencyKey: `lease_renewal:${run.id}`,
-        workflowRunId: run.id,
-        residentId: run.resident_id,
-        unitId: run.unit_id,
-      })
-    } catch (e) {
-      console.error("[lease-renewal] attention notify", e)
-    }
-    count++
-  }
-
-  return count
-}
-
-export { renewalPrompt, escalateOverdueLeaseRenewals }
+export { renewalPrompt }

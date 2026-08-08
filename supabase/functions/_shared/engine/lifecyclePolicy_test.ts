@@ -123,6 +123,26 @@ Deno.test("lifecycleActionDue: terminal steps are not due", () => {
   assertEquals(due.reason, "terminal")
 })
 
+Deno.test("lifecycleActionDue: missed inspection window", () => {
+  const scheduledAt = new Date(Date.now() - 2 * 3600000).toISOString()
+  const run = makeRun({
+    template_id: "inspection",
+    current_step: "awaiting_resident",
+    metadata: {
+      scheduled_at: scheduledAt,
+      step_state: {
+        step: "awaiting_resident",
+        scheduled_at: scheduledAt,
+        last_activity_at: scheduledAt,
+      },
+    },
+  })
+
+  const due = lifecycleActionDue(run, { reminder_days: 1, no_response_days: 3 })
+  assertEquals(due.due, true)
+  assertEquals(due.reason, "missed_inspection_window")
+})
+
 Deno.test("readLifecycleStepState prefers current_step", () => {
   const run = makeRun({
     template_id: "inspection",

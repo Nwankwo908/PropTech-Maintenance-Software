@@ -77,6 +77,21 @@ export type AdminUloNotification = {
   riskLabel: string | null
   timeLabel: string
   updatedAtMs: number
+  /** Proactive portfolio recommendation vs SMS conversation. */
+  kind?: 'conversation' | 'activation' | 'recommendation'
+}
+
+export const PORTFOLIO_RECOMMENDATION_EVENT = 'portfolio.recommendation_surfaced'
+
+/** Synthetic id for proactive recommendation alerts in the notification panel. */
+export function recommendationNotificationId(deduplicationKey: string): string {
+  return `recommendation-${deduplicationKey}`
+}
+
+export function parseRecommendationNotificationId(id: string): string | null {
+  if (!id.startsWith('recommendation-')) return null
+  const key = id.slice('recommendation-'.length).trim()
+  return key || null
 }
 
 export const WORK_ORDER_THREAD_ID_PREFIX = 'work-order-'
@@ -999,7 +1014,67 @@ async function fetchActivationFailureNotifications(
   return notifications
 }
 
-/** Ulo admin summaries for the header notification panel (admin-directed SMS + activation alerts). */
+async function fetchProactiveRecommendationNotifications(
+  landlordId: string,
+  limit: number,
+): Promise<AdminUloNotification[]> {
+  const { supabase } = await import('@/lib/supabase')
+  if (!supabase) return []
+
+  const since = new Date(Date.now() - 14 * 24 * 60 * 60 * 1000).toISOString()
+  const { data, error } = await supabase
+    .from('operations_graph_events')
+    .select('id, created_at, metadata')
+    .eq('landlord_id', landlordId)
+    .eq('event_type', PORTFOLIO_RECOMMENDATION_EVENT)
+    .gte('created_at', since)
+    .order('created_at', { ascending: false })
+    .limit(Math.max(limit * 2, 20))
+
+  if (error || !data?.length) return []
+
+  const seen = new Set<string>()
+  const out: AdminUloNotification[] = []
+
+  for (const row of data as Record<string, unknown>[]) {
+    const meta =
+      row.metadata && typeof row.metadata === 'object'
+        ? (row.metadata as Record<string, unknown>)
+        : {}
+    const dedupeKey =
+      typeof meta.deduplication_key === 'string' ? meta.deduplication_key.trim() : ''
+    if (!dedupeKey || seen.has(dedupeKey)) continue
+    seen.add(dedupeKey)
+
+    const title =
+      typeof meta.title === 'string' && meta.title.trim()
+        ? meta.title.trim()
+        : 'Ulo recommendation'
+    const summary =
+      typeof meta.message === 'string' && meta.message.trim()
+        ? meta.message.trim()
+        : 'Review this portfolio priority on Overview.'
+    const severity = typeof meta.severity === 'string' ? meta.severity : 'warning'
+    const createdMs = new Date(asString(row.created_at)).getTime()
+
+    out.push({
+      conversationId: recommendationNotificationId(dedupeKey),
+      title,
+      summary,
+      riskLevel: severity === 'critical' ? 'high' : 'medium',
+      riskLabel: severity === 'critical' ? 'PRIORITY' : 'RECOMMENDED',
+      timeLabel: formatNotificationRelativeTime(createdMs),
+      updatedAtMs: createdMs,
+      kind: 'recommendation',
+    })
+
+    if (out.length >= limit) break
+  }
+
+  return out
+}
+
+/** Ulo admin summaries for the header notification panel (SMS + activation + proactive recommendations). */
 export async function fetchAdminUloNotifications(limit = 15): Promise<AdminUloNotification[]> {
   const { supabase } = await import('@/lib/supabase')
   if (!supabase) return []
@@ -1023,12 +1098,15 @@ export async function fetchAdminUloNotifications(limit = 15): Promise<AdminUloNo
       if (!isAdminDirectedConversationType(asString(convRow.conversation_type))) continue
       const ctx = await loadConversationContext(convRow, landlordId, supabase)
       if (!ctx) continue
-      notifications.push(buildAdminNotification(ctx))
+      notifications.push({ ...buildAdminNotification(ctx), kind: 'conversation' })
     }
   }
 
   const activationNotes = await fetchActivationFailureNotifications(landlordId, limit)
-  notifications.push(...activationNotes)
+  notifications.push(...activationNotes.map((n) => ({ ...n, kind: 'activation' as const })))
+
+  const recommendationNotes = await fetchProactiveRecommendationNotifications(landlordId, limit)
+  notifications.push(...recommendationNotes)
 
   return notifications.sort((a, b) => b.updatedAtMs - a.updatedAtMs).slice(0, limit)
 }

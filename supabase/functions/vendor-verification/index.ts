@@ -2,6 +2,7 @@ import { serve } from "https://deno.land/std/http/server.ts"
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1"
 import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.49.1"
 import { logGraphEvent } from "../_shared/graph/logGraphEvent.ts"
+import { recordVendorStripeConnectReadyIfTransition } from "../_shared/paymentActivityEvents.ts"
 import { normalizePhoneFlexible } from "../_shared/resident_notify.ts"
 import {
   getBackgroundStatus,
@@ -20,9 +21,8 @@ import {
   validateTinDigits,
 } from "../_shared/vendor_verification/w9TaxProfile.ts"
 import { findLandlordVendorByContact } from "../_shared/vendor_verification/findVendor.ts"
+import { finalizeVendorVerificationSubmit } from "../_shared/vendor_verification/finalizeVendorVerificationSubmit.ts"
 import { runVendorOnboardingViaEngine } from "../_shared/engine/vendorOnboardingEngine.ts"
-import { appendVendorVerificationSubmittedToInbox } from "../_shared/sms/vendorVerificationInbox.ts"
-import { sendVendorVerificationFollowUpSms } from "../_shared/sms/vendorVerificationFollowUp.ts"
 import {
   createConnectAccountLink,
   createExpressConnectAccount,
@@ -938,21 +938,13 @@ serve(async (req) => {
         })
 
         if (ready && !wasReady) {
-          await logGraphEvent(supabase, {
-            landlord_id: landlordId,
-            event_type: "vendor.stripe_connect_ready",
-            source: "vendor_portal",
-            actor_type: "vendor",
-            vendor_id: vendorId,
-            workflow_run_id: row.workflow_run_id,
-            workflow_template_id: row.workflow_run_id
-              ? "vendor_onboarding"
-              : null,
-            metadata: {
-              message: "Vendor payout account is ready.",
-              verification_id: row.id,
-              stripe_connect_account_id: accountId,
-            },
+          await recordVendorStripeConnectReadyIfTransition(supabase, {
+            landlordId,
+            vendorId,
+            verificationId: row.id,
+            wasReady,
+            nowReady: ready,
+            workflowRunId: row.workflow_run_id,
           })
         }
 
@@ -987,203 +979,46 @@ serve(async (req) => {
             .eq("id", row.id)
         }
 
-        const { data: freshRaw } = await supabase
-          .from("vendor_verifications")
-          .select(ROW_SELECT)
-          .eq("id", row.id)
-          .maybeSingle()
-        const fresh = (freshRaw as unknown as VerificationRow) ?? row
-        const workflowRunId = fresh.workflow_run_id ?? null
-        const checklist = computeVerificationChecklist(fresh)
-        const overall = checklist.overall // 'verified' | 'needs_review'
+        const workflowRunId = row.workflow_run_id ?? null
 
-        const primaryTrade = (fresh.trade_categories ?? [])[0] ?? null
-        const notificationChannel = fresh.phone && fresh.email
-          ? "both"
-          : fresh.phone
-          ? "sms"
-          : "email"
-
-        // Create or link the vendors row. Prefer the verification's vendor_id,
-        // otherwise match an existing roster vendor by email/phone so submit
-        // updates the profile the landlord already has (instead of a duplicate).
-        // Normalize phone to E.164 for vendors.phone_format_check.
-        let vendorId = await findLandlordVendorByContact(supabase, landlordId, {
-          vendorId: fresh.vendor_id,
-          email: fresh.email,
-          phone: fresh.phone,
-        })
-        const vendorPhone = normalizePhoneFlexible(fresh.phone)
-        const vendorPayload: Record<string, unknown> = {
-          name: fresh.business_name || fresh.contact_name || "Vendor",
-          email: fresh.email,
-          phone: vendorPhone,
-          category: primaryTrade,
-          // Account readiness (verified) is separate from capacity (availability).
-          // Paused vendors stay active on the roster but are not matchable.
-          active: overall === "verified",
-          notification_channel: notificationChannel,
-        }
-
-        if (vendorId) {
-          const { error: updErr } = await supabase
-            .from("vendors")
-            .update(vendorPayload)
-            .eq("id", vendorId)
-            .eq("landlord_id", landlordId)
-          if (updErr) {
-            console.error("[vendor-verification] update vendor", updErr)
-            return jsonResponse(
-              {
-                error: `Could not update vendor profile${
-                  updErr.message ? `: ${updErr.message}` : ""
-                }`,
-              },
-              500,
-            )
-          }
-        } else {
-          const { data: ins, error: insErr } = await supabase
-            .from("vendors")
-            .insert({
-              landlord_id: landlordId,
-              ...vendorPayload,
-              onboarded_from_external: true,
-            })
-            .select("id")
-            .single()
-          if (insErr || !ins?.id) {
-            console.error("[vendor-verification] create vendor", insErr)
-            return jsonResponse(
-              {
-                error: `Could not finalize vendor${
-                  insErr?.message ? `: ${insErr.message}` : ""
-                }`,
-              },
-              500,
-            )
-          }
-          vendorId = ins.id as string
-        }
-
-        const nowIso = new Date().toISOString()
-        await supabase
-          .from("vendor_verifications")
-          .update({
-            vendor_id: vendorId,
-            status: overall,
-            submitted_at: nowIso,
-            verified_at: overall === "verified" ? nowIso : null,
-          })
-          .eq("id", row.id)
-
-        // Stamp documents with the resolved vendor id.
-        await supabase
-          .from("vendor_documents")
-          .update({ vendor_id: vendorId })
-          .eq("verification_id", row.id)
-
-        const vendorLabel = fresh.business_name || fresh.contact_name || "Vendor"
-        const workflowTemplateId = workflowRunId ? "vendor_onboarding" : null
-
-        let inviteConversationId = fresh.invite_conversation_id ?? null
-        if (!inviteConversationId) {
-          const { data: linkRow } = await supabase
-            .from("vendor_verifications")
-            .select("invite_conversation_id")
-            .eq("id", row.id)
-            .maybeSingle()
-          inviteConversationId =
-            (linkRow as { invite_conversation_id?: string | null } | null)
-              ?.invite_conversation_id ?? null
-        }
-
-        const inbox = await appendVendorVerificationSubmittedToInbox(supabase, {
-          landlordId,
-          inviteConversationId,
-          workflowRunId,
-          vendorId,
-          phone: vendorPhone ?? fresh.phone,
-          vendorLabel,
-          overall,
-          checklist,
-          trades: fresh.trade_categories,
-          verificationId: row.id,
-        })
-
-        // Ack under review, then status (approved) or incomplete outstanding-items SMS.
-        await sendVendorVerificationFollowUpSms(supabase, {
-          landlordId,
-          verificationId: row.id,
-          token,
-          vendorLabel,
-          overall,
-          checklist,
-          inviteConversationId: inbox.conversationId ?? inviteConversationId,
-          workflowRunId,
-          vendorId,
-          phone: vendorPhone ?? fresh.phone,
-        })
-
-        await logGraphEvent(supabase, {
-          landlord_id: landlordId,
-          event_type: "vendor.verification_submitted",
-          source: "vendor_portal",
-          actor_type: "vendor",
-          vendor_id: vendorId,
-          conversation_id: inbox.conversationId,
-          message_id: inbox.messageId,
-          workflow_run_id: workflowRunId,
-          workflow_template_id: workflowTemplateId,
-          metadata: {
-            message: `${vendorLabel} completed vendor verification.`,
-            verification_id: row.id,
-            checklist_complete: checklist.completeCount,
-            checklist_required: checklist.requiredCount,
-            workflow_run_id: workflowRunId,
-          },
-        })
-        await logGraphEvent(supabase, {
-          landlord_id: landlordId,
-          event_type: overall === "verified"
-            ? "vendor.verified"
-            : "vendor.verification_needs_review",
-          source: "vendor_portal",
-          actor_type: "system",
-          vendor_id: vendorId,
-          conversation_id: inbox.conversationId,
-          message_id: inbox.messageId,
-          workflow_run_id: workflowRunId,
-          workflow_template_id: workflowTemplateId,
-          metadata: {
-            message: overall === "verified"
-              ? `${vendorLabel} is verified and ready for assignments.`
-              : `${vendorLabel} needs review: ${
-                checklist.missingReasons.join("; ")
-              }`,
-            verification_id: row.id,
-            missing_reasons: checklist.missingReasons,
-            workflow_run_id: workflowRunId,
-          },
-        })
-
-        // Advance + close the vendor_onboarding workflow run via the engine.
         if (workflowRunId) {
-          await runVendorOnboardingViaEngine(supabase, {
+          const engineResult = await runVendorOnboardingViaEngine(supabase, {
             landlordId,
             runId: workflowRunId,
             trigger: "vendor_portal",
             vendorOnboarding: {
               action: "submit",
               verificationId: row.id,
-              vendorId,
-              vendorLabel,
-              overall,
-              completeCount: checklist.completeCount,
-              requiredCount: checklist.requiredCount,
             },
           })
+          const submitError = typeof engineResult?.metadata?.error === "string"
+            ? engineResult.metadata.error
+            : null
+          if (submitError) {
+            return jsonResponse({ error: submitError }, 500)
+          }
+        } else {
+          // Legacy verifications without a workflow run — run side effects directly.
+          try {
+            await finalizeVendorVerificationSubmit(supabase, {
+              landlordId,
+              verificationId: row.id,
+            })
+          } catch (err) {
+            const message = err instanceof Error ? err.message : String(err)
+            return jsonResponse({ error: message }, 500)
+          }
         }
+
+        const { data: freshRaw } = await supabase
+          .from("vendor_verifications")
+          .select(ROW_SELECT)
+          .eq("id", row.id)
+          .maybeSingle()
+        const fresh = (freshRaw as unknown as VerificationRow) ?? row
+        const checklist = computeVerificationChecklist(fresh)
+        const overall = checklist.overall
+        const vendorId = fresh.vendor_id
 
         const documents = await loadDocuments(supabase, row.id)
         const payoutMethods = await payoutMethodsForVendor(supabase, vendorId)
@@ -1191,7 +1026,7 @@ serve(async (req) => {
           ok: true,
           overall,
           session: sessionView(
-            { ...fresh, vendor_id: vendorId, status: overall },
+            { ...fresh, status: overall },
             documents,
             payoutMethods,
           ),

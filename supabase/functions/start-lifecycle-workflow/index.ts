@@ -17,7 +17,8 @@ import {
   startMoveInWorkflow,
   startMoveOutWorkflow,
   type InspectionType,
-} from "../_shared/engine/startLifecycleWorkflows.ts"
+  type StartWorkflowInitialAction,
+} from "../_shared/engine/startWorkflow.ts"
 
 const corsHeaders = adminEdgeCorsHeaders
 
@@ -37,6 +38,40 @@ function readString(value: unknown): string | null {
   if (typeof value !== "string") return null
   const trimmed = value.trim()
   return trimmed || null
+}
+
+function parseInitialAction(
+  body: Record<string, unknown>,
+): StartWorkflowInitialAction | undefined {
+  const raw = body.initialAction
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return undefined
+
+  const initial: StartWorkflowInitialAction = {}
+  const moveIn = (raw as Record<string, unknown>).moveIn
+  if (moveIn && typeof moveIn === "object" && !Array.isArray(moveIn)) {
+    const action = readString((moveIn as Record<string, unknown>).action)
+    if (action === "register_and_outreach" || action === "send_outreach") {
+      initial.moveIn = { action }
+    }
+  }
+
+  const moveOut = (raw as Record<string, unknown>).moveOut
+  if (moveOut && typeof moveOut === "object" && !Array.isArray(moveOut)) {
+    const action = readString((moveOut as Record<string, unknown>).action)
+    if (action === "send_outreach") {
+      initial.moveOut = { action }
+    }
+  }
+
+  const inspection = (raw as Record<string, unknown>).inspection
+  if (inspection && typeof inspection === "object" && !Array.isArray(inspection)) {
+    const action = readString((inspection as Record<string, unknown>).action)
+    if (action === "send_outreach" || action === "register_and_outreach") {
+      initial.inspection = { action }
+    }
+  }
+
+  return initial.moveIn || initial.moveOut || initial.inspection ? initial : undefined
 }
 
 serve(async (req) => {
@@ -92,6 +127,7 @@ serve(async (req) => {
   const moveOutDate = readString(body.moveOutDate)
   const scheduledAt = readString(body.scheduledAt)
   const inspectionType = readString(body.inspectionType) as InspectionType | null
+  const initialAction = parseInitialAction(body)
 
   try {
     if (workflow === "move_in") {
@@ -108,6 +144,7 @@ serve(async (req) => {
         classification: body.skipTenantRegistration === true
           ? "skip_registration"
           : undefined,
+        initialAction,
       })
       return jsonResponse({
         ok: true,
@@ -126,6 +163,7 @@ serve(async (req) => {
         building,
         moveOutDate,
         triggerType: "dashboard",
+        initialAction,
       })
       return jsonResponse({
         ok: true,
@@ -144,6 +182,7 @@ serve(async (req) => {
       scheduledAt,
       inspectionType: inspectionType ?? "periodic",
       triggerType: "dashboard",
+      initialAction,
     })
 
     return jsonResponse({

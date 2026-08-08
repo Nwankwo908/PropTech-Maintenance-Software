@@ -1,12 +1,11 @@
 import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.49.1"
 import { resolveDemoMoveOutRunId } from "./demo_workflow_ids.ts"
-import { logGraphEvent } from "./graph/logGraphEvent.ts"
-import { startMoveOutWorkflow } from "./engine/startLifecycleWorkflows.ts"
+import { recordActivityLog } from "./graph/recordActivityLog.ts"
+import { startMoveOutWorkflow } from "./engine/startWorkflow.ts"
 import {
   getWorkflowRunById,
   updateWorkflowRun,
 } from "./engine/workflowRuns.ts"
-import { sendMoveOutOutreach } from "./move_out_outreach.ts"
 
 export type TriggerMoveOutFromLeaseRenewalResult = {
   ok: true
@@ -134,7 +133,6 @@ export async function triggerMoveOutFromLeaseRenewal(
   }
 
   const moveOutDate = leaseEndDate ?? readString(resident.lease_end_date)
-  const residentFirstName = readString(resident.full_name)?.split(/\s+/)[0] ?? "there"
   const now = new Date().toISOString()
 
   const demoMoveOutRunId = resolveDemoMoveOutRunId(params.landlordId)
@@ -152,6 +150,12 @@ export async function triggerMoveOutFromLeaseRenewal(
     runId: demoMoveOutRunId,
     sourceWorkflowRunId: params.leaseRenewalRunId,
     sourceWorkflowTemplateId: "lease_renewal",
+    initialAction: {
+      moveOut: {
+        action: "send_outreach",
+        sourceWorkflowRunId: params.leaseRenewalRunId,
+      },
+    },
   })
 
   const moveOutRunId = moveOutStart.workflow_run_id
@@ -172,15 +176,15 @@ export async function triggerMoveOutFromLeaseRenewal(
     eventStep: "completed",
   })
 
-  await logGraphEvent(supabase, {
-    landlord_id: params.landlordId,
-    event_type: "lease.move_out_prep_triggered",
+  await recordActivityLog(supabase, {
+    landlordId: params.landlordId,
+    eventType: "lease.move_out_prep_triggered",
     source: "dashboard",
-    actor_type: "landlord",
-    resident_id: residentId,
-    unit_id: unitScope.unitId,
-    workflow_run_id: params.leaseRenewalRunId,
-    workflow_template_id: "lease_renewal",
+    actorType: "landlord",
+    residentId,
+    unitId: unitScope.unitId,
+    workflowRunId: params.leaseRenewalRunId,
+    workflowTemplateId: "lease_renewal",
     metadata: {
       linked_move_out_run_id: moveOutRunId,
       move_out_date: moveOutDate,
@@ -188,45 +192,39 @@ export async function triggerMoveOutFromLeaseRenewal(
     },
   })
 
-  await logGraphEvent(supabase, {
-    landlord_id: params.landlordId,
-    event_type: "lease.renewal_resolved",
+  await recordActivityLog(supabase, {
+    landlordId: params.landlordId,
+    eventType: "lease.renewal_resolved",
     source: "dashboard",
-    actor_type: "landlord",
-    resident_id: residentId,
-    unit_id: unitScope.unitId,
-    workflow_run_id: params.leaseRenewalRunId,
-    workflow_template_id: "lease_renewal",
+    actorType: "landlord",
+    residentId,
+    unitId: unitScope.unitId,
+    workflowRunId: params.leaseRenewalRunId,
+    workflowTemplateId: "lease_renewal",
     metadata: {
       resolution: "move_out",
       linked_move_out_run_id: moveOutRunId,
     },
   })
 
-  const propertyId = leaseRun.property_id ?? null
-  const outreach = await sendMoveOutOutreach(supabase, {
-    landlordId: params.landlordId,
-    residentId,
-    residentPhone,
-    residentFirstName,
-    moveOutRunId,
-    moveOutDate,
-    unitId: unitScope.unitId,
-    propertyId,
-    sourceWorkflowRunId: params.leaseRenewalRunId,
-  })
-
-  if (!outreach.ok) {
+  const meta = moveOutStart.engineResult?.metadata ?? {}
+  if (meta.outreachSent === false) {
     return {
       ok: false,
-      error: outreach.error ?? "Move-out workflow started but outreach failed.",
+      error: "Move-out workflow started but outreach failed.",
     }
   }
+
+  const freshRun = await getWorkflowRunById(supabase, moveOutRunId)
+  const conversationId = freshRun?.metadata &&
+      typeof freshRun.metadata.conversation_id === "string"
+    ? freshRun.metadata.conversation_id
+    : null
 
   return {
     ok: true,
     leaseRenewalRunId: params.leaseRenewalRunId,
     moveOutRunId,
-    conversationId: outreach.conversationId,
+    conversationId,
   }
 }

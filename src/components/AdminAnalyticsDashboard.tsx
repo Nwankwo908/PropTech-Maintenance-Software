@@ -7,7 +7,7 @@ import {
   type PendingMaintenanceInvoice,
   type RecognizedMaintenanceSpend,
 } from '@/api/maintenanceInvoice'
-import { getActiveLandlordId, isDemoAccountActive } from '@/lib/activeLandlord'
+import { getActiveLandlordId } from '@/lib/activeLandlord'
 import {
   fetchPmCompliance,
   formatPmDueLabel,
@@ -114,24 +114,6 @@ function formatSpend(amount: number): string {
 function formatChartYTick(amount: number): string {
   if (amount === 0) return '$0'
   return `$${amount / 1000}k`
-}
-
-/** Deterministic 0–1 float so demo projections stay stable across re-renders. */
-function seededUnit(seed: number): number {
-  const x = Math.sin(seed * 12.9898 + 78.233) * 43758.5453
-  return x - Math.floor(x)
-}
-
-function demoMonthProjection(
-  monthIndex: number,
-  year: number,
-): { proactive: number; reactive: number } {
-  const totalSeed = year * 100 + monthIndex
-  const splitSeed = totalSeed + 7919
-  const total = Math.round(2200 + seededUnit(totalSeed) * 2600)
-  const reactiveShare = 0.22 + seededUnit(splitSeed) * 0.38
-  const reactive = Math.round(total * reactiveShare)
-  return { proactive: total - reactive, reactive }
 }
 
 function averageMonthProjection(
@@ -551,14 +533,11 @@ export function AdminAnalyticsDashboard() {
       }
     })
 
-    const useDemoProjections = isDemoAccountActive()
     const averageProjection = averageMonthProjection(actualMonthlySpend)
 
     const monthlySpend: MonthlySpend[] = actualMonthlySpend.map((month) => {
       if (!month.isFuture) return month
-      const projected = useDemoProjections
-        ? demoMonthProjection(month.monthIndex, year)
-        : averageProjection
+      const projected = averageProjection
       return {
         ...month,
         proactive: projected.proactive,

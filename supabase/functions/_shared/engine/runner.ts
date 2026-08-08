@@ -4,6 +4,7 @@ import { getWorkflowTemplate } from "./registry.ts"
 import { logWorkflowStage } from "./logStage.ts"
 import type {
   ClassifiedIntent,
+  EscalationResult,
   WorkflowEngineResult,
   WorkflowExecutionContext,
   WorkflowRunRow,
@@ -72,10 +73,11 @@ export async function runWorkflowEngine(
     identity,
   })
 
+  let escalation: EscalationResult | null = null
   if (result.shouldEscalate && template.escalate) {
     stages.push("escalate")
-    const escalation = await template.escalate(supabase, ctx, result)
-    if (escalation?.escalated) {
+    escalation = await template.escalate(supabase, ctx, result)
+    if (escalation) {
       await logWorkflowStage(supabase, {
         stage: "escalate",
         ctx,
@@ -84,6 +86,7 @@ export async function runWorkflowEngine(
         identity,
         metadata: {
           escalation_reason: escalation.reason,
+          escalated: escalation.escalated,
           ...escalation.metadata,
         },
       })
@@ -100,7 +103,7 @@ export async function runWorkflowEngine(
     metadata: { pipeline_complete: true },
   })
 
-  return { ...result, stages, classified }
+  return { ...result, stages, classified, escalation }
 }
 
 /** Map lifecycle start triggers so initial outreach runs (not cron escalation sweep). */
