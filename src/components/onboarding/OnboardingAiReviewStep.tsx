@@ -8,6 +8,7 @@ import {
 } from '@/lib/onboarding'
 import {
   countSelectedInReview,
+  formatExtractedUnitPlacement,
   setAllReviewSelections,
   type ExtractedFinancialRecord,
   type ExtractedLeaseInfo,
@@ -18,6 +19,11 @@ import {
   type OnboardingExtractedUnit,
   type OnboardingExtractedVendor,
 } from '@/lib/onboardingDocumentUpload'
+import {
+  ONBOARDING_PROPERTY_TYPE_OPTIONS,
+  onboardingPropertyTypeLabel,
+  resolveOnboardingPropertyType,
+} from './onboardingFieldStyles'
 import { US_STATE_OPTIONS } from '@/lib/usLocations'
 
 const btnPrimary =
@@ -234,7 +240,7 @@ export function OnboardingAiReviewStep({
             checked={item.selected}
             onToggle={() => patchProperty(item.id, { selected: !item.selected })}
             label={item.name}
-            value={`${item.address} · ${item.propertyType} · Units ${item.unitLabels}`}
+            value={`${item.address} · ${onboardingPropertyTypeLabel(item.propertyType)} · Units ${item.unitLabels}`}
             sourceDocumentName={item.sourceDocumentName}
             confidence={item.confidence}
             needsReview={item.needsReview}
@@ -286,12 +292,33 @@ export function OnboardingAiReviewStep({
               </label>
               <label className="block">
                 <span className={fieldLabelClass}>Property type</span>
-                <input
-                  className={inputClass}
-                  value={item.propertyType}
-                  onChange={(e) => patchProperty(item.id, { propertyType: e.target.value })}
-                  placeholder="multifamily"
-                />
+                <div className="relative">
+                  <select
+                    className={`${selectClass} pr-10`}
+                    value={resolveOnboardingPropertyType(item.propertyType)}
+                    onChange={(e) => patchProperty(item.id, { propertyType: e.target.value })}
+                  >
+                    <option value="">Select property type</option>
+                    {ONBOARDING_PROPERTY_TYPE_OPTIONS.map((option) => (
+                      <option key={option.value} value={option.value}>
+                        {option.label}
+                      </option>
+                    ))}
+                  </select>
+                  <span
+                    className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-[#6a7282]"
+                    aria-hidden
+                  >
+                    <svg viewBox="0 0 24 24" fill="none" className="size-4">
+                      <path
+                        d="M6 9l6 6 6-6"
+                        stroke="currentColor"
+                        strokeWidth={2}
+                        strokeLinecap="round"
+                      />
+                    </svg>
+                  </span>
+                </div>
               </label>
               <label className="block">
                 <span className={fieldLabelClass}>Property manager name</span>
@@ -332,7 +359,9 @@ export function OnboardingAiReviewStep({
             checked={item.selected}
             onToggle={() => patchResident(item.id, { selected: !item.selected })}
             label={item.fullName}
-            value={`${item.unit} · ${item.phone} · ${item.email}`}
+            value={[formatExtractedUnitPlacement(item.building, item.unit), item.phone, item.email]
+              .filter(Boolean)
+              .join(' · ')}
             sourceDocumentName={item.sourceDocumentName}
             confidence={item.confidence}
             needsReview={item.needsReview}
@@ -345,8 +374,26 @@ export function OnboardingAiReviewStep({
           >
             <div className="mt-3 grid gap-3 border-t border-[#f3f4f6] pt-3 sm:grid-cols-2">
               <p className="sm:col-span-2 text-[12px] font-medium text-[#364153]">
-                Lease details to confirm
+                Unit assignment and lease details
               </p>
+              <label className="block">
+                <span className={fieldLabelClass}>Building</span>
+                <input
+                  className={inputClass}
+                  value={item.building}
+                  onChange={(e) => patchResident(item.id, { building: e.target.value })}
+                  placeholder="Property or building name"
+                />
+              </label>
+              <label className="block">
+                <span className={fieldLabelClass}>Unit</span>
+                <input
+                  className={inputClass}
+                  value={item.unit}
+                  onChange={(e) => patchResident(item.id, { unit: e.target.value })}
+                  placeholder="101"
+                />
+              </label>
               <label className="block">
                 <span className={fieldLabelClass}>Occupancy status</span>
                 <select
@@ -709,7 +756,14 @@ export function OnboardingAiReviewStep({
                 'leases',
                 (item) => item.residentName,
                 (item) =>
-                  `${item.leaseStart} – ${item.leaseEnd} · Rent ${item.rentAmount} · Deposit ${item.securityDeposit}`,
+                  [
+                    formatExtractedUnitPlacement(item.building, item.unit),
+                    `${item.leaseStart} – ${item.leaseEnd}`,
+                    `Rent ${item.rentAmount}`,
+                    `Deposit ${item.securityDeposit}`,
+                  ]
+                    .filter(Boolean)
+                    .join(' · '),
                 'rentAmount',
                 (item) => item.rentAmount,
                 'No lease information detected.',

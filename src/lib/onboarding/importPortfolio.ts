@@ -468,6 +468,8 @@ export async function importMockExtraction(
           r.unit.trim() &&
           lease.unit.trim().toLowerCase() === r.unit.trim().toLowerCase()),
     )
+    const resolvedUnit = r.unit.trim() || matchedLease?.unit.trim() || ''
+    const resolvedBuilding = r.building.trim() || matchedLease?.building.trim() || ''
     const monthlyRent =
       parseMonthlyRentInput(String((r as { monthlyRent?: string }).monthlyRent ?? '')) ??
       (matchedLease?.rentAmount != null
@@ -498,8 +500,8 @@ export async function importMockExtraction(
             full_name: r.fullName,
             email: r.email,
             phone,
-            unit: r.unit,
-            building: r.building,
+            unit: resolvedUnit,
+            building: resolvedBuilding,
             status: occupancyStatus,
             move_in_date: r.leaseStart || null,
             lease_end_date: r.leaseEnd || null,
@@ -518,8 +520,8 @@ export async function importMockExtraction(
       full_name: r.fullName,
       email: r.email,
       phone,
-      unit: r.unit,
-      building: r.building,
+      unit: resolvedUnit,
+      building: resolvedBuilding,
       status: occupancyStatus,
       balance_due: 0,
       issues: [],

@@ -563,6 +563,128 @@ export function anyDocumentProcessing(docs: OnboardingUploadedDocument[]): boole
   )
 }
 
+function preferFullerPersonName(primary: string, secondary: string): string {
+  const left = primary.trim()
+  const right = secondary.trim()
+  if (!left) return right
+  if (!right) return left
+  const leftWords = left.split(/\s+/).filter(Boolean).length
+  const rightWords = right.split(/\s+/).filter(Boolean).length
+  if (rightWords > leftWords) return right
+  if (leftWords > rightWords) return left
+  return right.length > left.length ? right : left
+}
+
+function residentMatchKey(unit: string, building: string): string {
+  return `${building.trim().toLowerCase()}|${unit.trim().toLowerCase()}`
+}
+
+function personNamesMatch(left: string, right: string): boolean {
+  const a = left.trim().toLowerCase()
+  const b = right.trim().toLowerCase()
+  return Boolean(a && b && a === b)
+}
+
+export function formatExtractedUnitPlacement(building: string, unit: string): string {
+  const buildingLabel = building.trim()
+  const unitLabel = unit.trim()
+  if (buildingLabel && unitLabel) return `${buildingLabel} · Unit ${unitLabel}`
+  if (unitLabel) return `Unit ${unitLabel}`
+  if (buildingLabel) return buildingLabel
+  return 'Unit not linked'
+}
+
+function defaultExtractedBuilding(properties: OnboardingExtractedProperty[]): string {
+  if (properties.length !== 1) return ''
+  const property = properties[0]
+  if (!property) return ''
+  return property.name.trim() || property.address.trim()
+}
+
+function enrichExtractedResidentPlacement(
+  residents: OnboardingExtractedResident[],
+  leases: ExtractedLeaseInfo[],
+  units: OnboardingExtractedUnit[],
+  properties: OnboardingExtractedProperty[],
+): { residents: OnboardingExtractedResident[]; leases: ExtractedLeaseInfo[] } {
+  const fallbackBuilding = defaultExtractedBuilding(properties)
+
+  const enrichedResidents = residents.map((resident) => {
+    let unit = resident.unit.trim()
+    let building = resident.building.trim()
+
+    const leaseByKey = leases.find(
+      (lease) =>
+        (lease.unit.trim() || lease.building.trim()) &&
+        residentMatchKey(lease.unit, lease.building) === residentMatchKey(resident.unit, resident.building),
+    )
+    const leaseByName = leases.find((lease) => personNamesMatch(lease.residentName, resident.fullName))
+    const leaseMatch = leaseByKey ?? leaseByName
+    if (leaseMatch) {
+      unit = unit || leaseMatch.unit.trim()
+      building = building || leaseMatch.building.trim()
+    }
+
+    if (unit && !building) {
+      const unitRow = units.find((row) => row.label.trim().toLowerCase() === unit.toLowerCase())
+      if (unitRow?.building.trim()) {
+        building = unitRow.building.trim()
+      }
+    }
+
+    if (!building && fallbackBuilding) {
+      building = fallbackBuilding
+    }
+
+    const missingPlacement = Boolean(resident.fullName.trim() && !unit.trim())
+    return {
+      ...resident,
+      unit,
+      building,
+      needsReview: resident.needsReview || missingPlacement,
+    }
+  })
+
+  const enrichedLeases = leases.map((lease) => {
+    let unit = lease.unit.trim()
+    let building = lease.building.trim()
+
+    const residentByKey = enrichedResidents.find(
+      (resident) =>
+        (resident.unit.trim() || resident.building.trim()) &&
+        residentMatchKey(resident.unit, resident.building) === residentMatchKey(lease.unit, lease.building),
+    )
+    const residentByName = enrichedResidents.find((resident) =>
+      personNamesMatch(resident.fullName, lease.residentName),
+    )
+    const residentMatch = residentByKey ?? residentByName
+    if (residentMatch) {
+      unit = unit || residentMatch.unit.trim()
+      building = building || residentMatch.building.trim()
+    }
+
+    if (unit && !building) {
+      const unitRow = units.find((row) => row.label.trim().toLowerCase() === unit.toLowerCase())
+      if (unitRow?.building.trim()) {
+        building = unitRow.building.trim()
+      }
+    }
+
+    if (!building && fallbackBuilding) {
+      building = fallbackBuilding
+    }
+
+    return {
+      ...lease,
+      unit,
+      building,
+      needsReview: lease.needsReview || Boolean(lease.residentName.trim() && !unit.trim()),
+    }
+  })
+
+  return { residents: enrichedResidents, leases: enrichedLeases }
+}
+
 function mergeExtractedDocuments(
   documents: OnboardingUploadedDocument[],
   accountSeed?: Partial<OnboardingAccountSetup> | null,
@@ -625,9 +747,13 @@ function mergeExtractedDocuments(
 
     payload.residents.forEach((item, index) => {
       const needsReviewRow = item.confidence < 75
+      const leaseMatch = payload.leases.find(
+        (lease) => residentMatchKey(lease.unit, lease.building) === residentMatchKey(item.unit, item.building),
+      )
+      const fullName = preferFullerPersonName(item.fullName, leaseMatch?.residentName ?? '')
       residents.push({
         id: `ext-res-${doc.id}-${index}`,
-        fullName: item.fullName,
+        fullName,
         unit: item.unit,
         building: item.building,
         phone: item.phone,
@@ -646,9 +772,14 @@ function mergeExtractedDocuments(
     })
 
     payload.leases.forEach((item, index) => {
+      const residentMatch = payload.residents.find(
+        (resident) =>
+          residentMatchKey(resident.unit, resident.building) === residentMatchKey(item.unit, item.building),
+      )
+      const residentName = preferFullerPersonName(item.residentName, residentMatch?.fullName ?? '')
       leases.push({
         id: `ext-lease-${doc.id}-${index}`,
-        residentName: item.residentName,
+        residentName,
         unit: item.unit,
         building: item.building,
         leaseStart: item.leaseStart,
@@ -736,18 +867,54 @@ function mergeExtractedDocuments(
     })
   }
 
+  const enrichedPlacement = enrichExtractedResidentPlacement(residents, leases, units, properties)
+  const enrichedResidents = enrichExtractedPersonNames(enrichedPlacement.residents, enrichedPlacement.leases)
+  const enrichedLeases = enrichExtractedLeaseNames(enrichedResidents, enrichedPlacement.leases)
+
   return {
     account,
     properties,
     units,
-    residents,
-    leases,
+    residents: enrichedResidents,
+    leases: enrichedLeases,
     vendors,
     maintenanceIssues,
     financialRecords,
     needsReview,
     imageLabels,
   }
+}
+
+function enrichExtractedPersonNames(
+  residents: OnboardingExtractedResident[],
+  leases: ExtractedLeaseInfo[],
+): OnboardingExtractedResident[] {
+  return residents.map((resident) => {
+    const leaseMatch = leases.find(
+      (lease) =>
+        residentMatchKey(lease.unit, lease.building) === residentMatchKey(resident.unit, resident.building),
+    )
+    return {
+      ...resident,
+      fullName: preferFullerPersonName(resident.fullName, leaseMatch?.residentName ?? ''),
+    }
+  })
+}
+
+function enrichExtractedLeaseNames(
+  residents: OnboardingExtractedResident[],
+  leases: ExtractedLeaseInfo[],
+): ExtractedLeaseInfo[] {
+  return leases.map((lease) => {
+    const residentMatch = residents.find(
+      (resident) =>
+        residentMatchKey(resident.unit, resident.building) === residentMatchKey(lease.unit, lease.building),
+    )
+    return {
+      ...lease,
+      residentName: preferFullerPersonName(lease.residentName, residentMatch?.fullName ?? ''),
+    }
+  })
 }
 
 /** Build extraction review from per-document GPT payloads (no demo/mock filler). */
@@ -784,26 +951,41 @@ export function normalizeExtractionReview(
   accountSeed?: Partial<OnboardingAccountSetup> | null,
 ): OnboardingExtractionReview {
   if (!review) return emptyExtractionReview(accountSeed)
+  const normalizedLeases = (review.leases ?? []).map((item) => ({ ...item }))
+  const normalizedUnits = review.units ?? []
+  const normalizedProperties = (review.properties ?? []).map((item) => ({
+    ...item,
+    city: item.city ?? '',
+    state: item.state ?? '',
+    zipCode: item.zipCode ?? '',
+    propertyType: item.propertyType || 'multifamily',
+    propertyManagerName: item.propertyManagerName ?? '',
+    propertyManagerPhone: item.propertyManagerPhone ?? '',
+  }))
+  const normalizedResidents = (review.residents ?? []).map((item) => ({
+    ...item,
+    monthlyRent: item.monthlyRent ?? '',
+    rentDueDay: item.rentDueDay ?? '',
+    occupancyStatus: item.occupancyStatus ?? 'active',
+    maintenanceResponsibilitiesClause: item.maintenanceResponsibilitiesClause ?? '',
+  }))
+  const enrichedPlacement = enrichExtractedResidentPlacement(
+    normalizedResidents,
+    normalizedLeases,
+    normalizedUnits,
+    normalizedProperties,
+  )
+  const enrichedResidents = enrichExtractedPersonNames(
+    enrichedPlacement.residents,
+    enrichedPlacement.leases,
+  )
+  const enrichedLeases = enrichExtractedLeaseNames(enrichedResidents, enrichedPlacement.leases)
   return {
     account: normalizeReviewManualAccount(review.account ?? accountSeed),
-    properties: (review.properties ?? []).map((item) => ({
-      ...item,
-      city: item.city ?? '',
-      state: item.state ?? '',
-      zipCode: item.zipCode ?? '',
-      propertyType: item.propertyType || 'multifamily',
-      propertyManagerName: item.propertyManagerName ?? '',
-      propertyManagerPhone: item.propertyManagerPhone ?? '',
-    })),
-    units: review.units ?? [],
-    residents: (review.residents ?? []).map((item) => ({
-      ...item,
-      monthlyRent: item.monthlyRent ?? '',
-      rentDueDay: item.rentDueDay ?? '',
-      occupancyStatus: item.occupancyStatus ?? 'active',
-      maintenanceResponsibilitiesClause: item.maintenanceResponsibilitiesClause ?? '',
-    })),
-    leases: review.leases ?? [],
+    properties: normalizedProperties,
+    units: normalizedUnits,
+    residents: enrichedResidents,
+    leases: enrichedLeases,
     vendors: (review.vendors ?? []).map((item) => ({
       ...item,
       preferredEmergency: Boolean(item.preferredEmergency),

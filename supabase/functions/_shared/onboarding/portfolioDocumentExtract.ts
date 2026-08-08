@@ -102,7 +102,9 @@ export const PORTFOLIO_EXTRACT_JSON_SCHEMA = {
   units: [{ label: "string", building: "string", confidence: "number" }],
   residents: [
     {
-      fullName: "string",
+      fullName: "first and last name combined (never first name only when last name is visible)",
+      firstName: "optional when columns are split",
+      lastName: "optional when columns are split",
       unit: "string",
       building: "string",
       phone: "string",
@@ -124,7 +126,9 @@ export const PORTFOLIO_EXTRACT_JSON_SCHEMA = {
   ],
   leases: [
     {
-      residentName: "string",
+      residentName: "first and last name combined (never first name only when last name is visible)",
+      firstName: "optional when columns are split",
+      lastName: "optional when columns are split",
       unit: "string",
       building: "string",
       leaseStart: "string",
@@ -163,6 +167,10 @@ Rules:
 - Extract ONLY information explicitly visible in the document. Never invent names, addresses, units, rents, or vendors.
 - If nothing portfolio-related is present, return empty arrays and explain in warnings.
 - Prefer exact text from the document over inference.
+- For residents/tenants/lessees: always return the full person name (first and last) in fullName or residentName.
+- When a rent roll or spreadsheet has separate first/last name columns (e.g. First Name, Last Name, Tenant First, Tenant Last), combine them into one full name. Never return only a first name if a last name appears in the same row.
+- For every tenant/resident/lease row, include unit and building from the same row when shown (unit may appear as Unit, Apt, Suite, or Unit #; building may appear as Building, Property, or Property Name).
+- Keep each tenant linked to the unit and building on their row — do not list tenants without their unit when the document shows both on the same line.
 - Dates: YYYY-MM-DD when unambiguous; otherwise empty string.
 - Phone numbers: include country code when shown; otherwise as printed.
 - confidence: 0-100 for how clearly each row's fields appear in the document.
@@ -172,6 +180,112 @@ Return ONLY valid JSON matching the requested schema.`
 
 function asString(value: unknown): string {
   return typeof value === "string" ? value.trim() : ""
+}
+
+function readField(row: Record<string, unknown>, keys: string[]): string {
+  for (const key of keys) {
+    const value = asString(row[key])
+    if (value) return value
+  }
+  return ""
+}
+
+export function resolveExtractedUnit(row: Record<string, unknown>): string {
+  return readField(row, [
+    "unit",
+    "unitNumber",
+    "unit_number",
+    "unitLabel",
+    "unit_label",
+    "unitNo",
+    "unit_no",
+    "apt",
+    "apartment",
+    "suite",
+    "flat",
+    "space",
+  ])
+}
+
+export function resolveExtractedBuilding(row: Record<string, unknown>): string {
+  return readField(row, [
+    "building",
+    "buildingName",
+    "building_name",
+    "property",
+    "propertyName",
+    "property_name",
+    "site",
+    "community",
+    "address",
+    "location",
+  ])
+}
+
+function readNameField(row: Record<string, unknown>, keys: string[]): string {
+  for (const key of keys) {
+    const value = asString(row[key])
+    if (value) return value
+  }
+  return ""
+}
+
+/** Combine direct full-name fields with split first/last columns from rent rolls and leases. */
+export function resolveExtractedPersonName(row: Record<string, unknown>): string {
+  const first = readNameField(row, [
+    "firstName",
+    "first_name",
+    "givenName",
+    "given_name",
+    "tenantFirstName",
+    "tenant_first_name",
+    "residentFirstName",
+    "resident_first_name",
+    "first",
+  ])
+  const middle = readNameField(row, ["middleName", "middle_name", "middle", "mi"])
+  const last = readNameField(row, [
+    "lastName",
+    "last_name",
+    "surname",
+    "familyName",
+    "family_name",
+    "tenantLastName",
+    "tenant_last_name",
+    "residentLastName",
+    "resident_last_name",
+    "last",
+  ])
+
+  if (first && last) {
+    return [first, middle, last].filter(Boolean).join(" ").replace(/\s+/g, " ").trim()
+  }
+
+  const direct = readNameField(row, [
+    "fullName",
+    "full_name",
+    "tenantName",
+    "tenant_name",
+    "residentName",
+    "resident_name",
+    "occupantName",
+    "occupant_name",
+    "lessee",
+    "lessee_name",
+    "name",
+  ])
+
+  if (direct && last && direct.split(/\s+/).length === 1 && !direct.toLowerCase().includes(last.toLowerCase())) {
+    return `${direct} ${last}`.trim()
+  }
+  if (direct && first && direct.split(/\s+/).length === 1 && !direct.toLowerCase().includes(first.toLowerCase())) {
+    return `${first} ${direct}`.trim()
+  }
+  if (direct) return direct
+  if (first && last) return `${first} ${last}`.trim()
+  if (first) return first
+  if (last) return last
+  return ""
 }
 
 function asNumber(value: unknown, fallback = 0): number {
@@ -218,8 +332,8 @@ export function normalizePortfolioDocumentExtract(raw: unknown): PortfolioDocume
   return {
     properties: normalizeArray(root.properties, normalizeProperty),
     units: normalizeArray(root.units, (row) => {
-      const label = asString(row.label)
-      const building = asString(row.building)
+      const label = resolveExtractedUnit(row) || asString(row.label)
+      const building = resolveExtractedBuilding(row)
       if (!label && !building) return null
       return {
         label,
@@ -228,12 +342,12 @@ export function normalizePortfolioDocumentExtract(raw: unknown): PortfolioDocume
       }
     }),
     residents: normalizeArray(root.residents, (row) => {
-      const fullName = asString(row.fullName ?? row.full_name ?? row.name)
+      const fullName = resolveExtractedPersonName(row)
       if (!fullName) return null
       return {
         fullName,
-        unit: asString(row.unit),
-        building: asString(row.building),
+        unit: resolveExtractedUnit(row),
+        building: resolveExtractedBuilding(row),
         phone: asString(row.phone),
         email: asString(row.email),
         leaseStart: asString(row.leaseStart ?? row.lease_start),
@@ -254,12 +368,12 @@ export function normalizePortfolioDocumentExtract(raw: unknown): PortfolioDocume
       }
     }),
     leases: normalizeArray(root.leases, (row) => {
-      const residentName = asString(row.residentName ?? row.resident_name ?? row.name)
+      const residentName = resolveExtractedPersonName(row)
       if (!residentName) return null
       return {
         residentName,
-        unit: asString(row.unit),
-        building: asString(row.building),
+        unit: resolveExtractedUnit(row),
+        building: resolveExtractedBuilding(row),
         leaseStart: asString(row.leaseStart ?? row.lease_start),
         leaseEnd: asString(row.leaseEnd ?? row.lease_end),
         rentAmount: asString(row.rentAmount ?? row.rent_amount ?? row.rent),
@@ -271,8 +385,8 @@ export function normalizePortfolioDocumentExtract(raw: unknown): PortfolioDocume
       const description = asString(row.description)
       if (!description) return null
       return {
-        unit: asString(row.unit),
-        building: asString(row.building),
+        unit: resolveExtractedUnit(row),
+        building: resolveExtractedBuilding(row),
         category: asString(row.category),
         description,
         priority: asString(row.priority) || "normal",
@@ -316,6 +430,156 @@ function bytesToBase64(bytes: Uint8Array): string {
 
 const TABULAR_TEXT_LIMIT = WORD_TEXT_LIMIT
 
+function normalizeSpreadsheetHeader(header: string): string {
+  return header
+    .trim()
+    .toLowerCase()
+    .replace(/[_\-./]+/g, " ")
+    .replace(/\s+/g, " ")
+}
+
+function isFullNameSpreadsheetHeader(header: string): boolean {
+  const normalized = normalizeSpreadsheetHeader(header)
+  if (!normalized || normalized === "name") return false
+  return (
+    normalized.includes("full name") ||
+    normalized.includes("tenant name") ||
+    normalized.includes("resident name") ||
+    normalized.includes("occupant name") ||
+    normalized.includes("lessee name") ||
+    normalized === "tenant" ||
+    normalized === "resident" ||
+    normalized === "occupant" ||
+    normalized === "lessee"
+  )
+}
+
+function isFirstNameSpreadsheetHeader(header: string): boolean {
+  const normalized = normalizeSpreadsheetHeader(header)
+  if (!normalized || isFullNameSpreadsheetHeader(header)) return false
+  return (
+    normalized === "first" ||
+    normalized === "fname" ||
+    normalized === "given name" ||
+    normalized === "given" ||
+    /^first name$/.test(normalized) ||
+    /^tenant first name$/.test(normalized) ||
+    /^tenant first$/.test(normalized) ||
+    /^resident first name$/.test(normalized) ||
+    /^resident first$/.test(normalized) ||
+    /^occupant first name$/.test(normalized) ||
+    /^occupant first$/.test(normalized)
+  )
+}
+
+function isLastNameSpreadsheetHeader(header: string): boolean {
+  const normalized = normalizeSpreadsheetHeader(header)
+  if (!normalized || isFullNameSpreadsheetHeader(header)) return false
+  return (
+    normalized === "last" ||
+    normalized === "lname" ||
+    normalized === "surname" ||
+    normalized === "family name" ||
+    normalized === "family" ||
+    /^last name$/.test(normalized) ||
+    /^tenant last name$/.test(normalized) ||
+    /^tenant last$/.test(normalized) ||
+    /^resident last name$/.test(normalized) ||
+    /^resident last$/.test(normalized) ||
+    /^occupant last name$/.test(normalized) ||
+    /^occupant last$/.test(normalized)
+  )
+}
+
+function parseCsvLine(line: string): string[] {
+  const out: string[] = []
+  let current = ""
+  let inQuotes = false
+  for (let index = 0; index < line.length; index += 1) {
+    const char = line[index]
+    if (char === '"') {
+      if (inQuotes && line[index + 1] === '"') {
+        current += '"'
+        index += 1
+      } else {
+        inQuotes = !inQuotes
+      }
+      continue
+    }
+    if (char === "," && !inQuotes) {
+      out.push(current)
+      current = ""
+      continue
+    }
+    current += char
+  }
+  out.push(current)
+  return out
+}
+
+function escapeCsvField(value: string): string {
+  if (/[",\n\r]/.test(value)) {
+    return `"${value.replace(/"/g, '""')}"`
+  }
+  return value
+}
+
+function formatCsvRow(values: string[]): string {
+  return values.map((value) => escapeCsvField(value)).join(",")
+}
+
+/** Merge split first/last name columns so GPT always sees a single tenant name column. */
+export function mergeSplitNameColumnsInCsv(csv: string): string {
+  const lines = csv.split(/\r?\n/)
+  const headerIndex = lines.findIndex((line) => line.trim().length > 0)
+  if (headerIndex < 0) return csv
+
+  const headers = parseCsvLine(lines[headerIndex] ?? "")
+  if (headers.length === 0) return csv
+
+  const firstIndex = headers.findIndex((header) => isFirstNameSpreadsheetHeader(header))
+  const lastIndex = headers.findIndex((header) => isLastNameSpreadsheetHeader(header))
+  if (firstIndex < 0 || lastIndex < 0) return csv
+
+  const mergedHeader = "Tenant Name"
+  const mergedHeaders = headers.filter((_, index) => index !== firstIndex && index !== lastIndex)
+  mergedHeaders.splice(Math.min(firstIndex, lastIndex), 0, mergedHeader)
+
+  const mergedLines = [formatCsvRow(mergedHeaders)]
+  for (let lineIndex = headerIndex + 1; lineIndex < lines.length; lineIndex += 1) {
+    const line = lines[lineIndex] ?? ""
+    if (!line.trim()) continue
+    const cells = parseCsvLine(line)
+    if (cells.length === 0) continue
+
+    const first = (cells[firstIndex] ?? "").trim()
+    const last = (cells[lastIndex] ?? "").trim()
+    const fullName = [first, last].filter(Boolean).join(" ").replace(/\s+/g, " ").trim()
+    const mergedCells = cells.filter((_, index) => index !== firstIndex && index !== lastIndex)
+    mergedCells.splice(Math.min(firstIndex, lastIndex), 0, fullName)
+    mergedLines.push(formatCsvRow(mergedCells))
+  }
+
+  return mergedLines.join("\n")
+}
+
+export function mergeSplitNameColumnsInTabularText(text: string): string {
+  if (!text.trim()) return text
+  const sections = text.split(/\n\n---\n\n/)
+  const merged = sections.map((section) => {
+    const lines = section.split(/\r?\n/)
+    const headerLineIndex = lines.findIndex((line) => line.trim().startsWith("Sheet:"))
+    if (headerLineIndex < 0) {
+      return mergeSplitNameColumnsInCsv(section)
+    }
+    const prefix = lines.slice(0, headerLineIndex + 1).join("\n")
+    const csv = lines.slice(headerLineIndex + 1).join("\n")
+    const mergedCsv = mergeSplitNameColumnsInCsv(csv)
+    return mergedCsv.trim() ? `${prefix}\n${mergedCsv}` : prefix
+  })
+  return merged.join("\n\n---\n\n")
+}
+
 function isExcelFile(fileName: string, contentType: string): boolean {
   const lower = fileName.toLowerCase()
   if (/\.(xlsx?|xls)$/i.test(lower)) return true
@@ -337,9 +601,9 @@ export function excelBytesToTabularText(bytes: Uint8Array): string {
       if (!sheet) continue
       const csv = XLSX.utils.sheet_to_csv(sheet, { blankrows: false })
       if (!csv.trim()) continue
-      parts.push(`Sheet: ${sheetName}\n${csv}`)
+      parts.push(`Sheet: ${sheetName}\n${mergeSplitNameColumnsInCsv(csv)}`)
     }
-    return parts.join("\n\n---\n\n").slice(0, TABULAR_TEXT_LIMIT)
+    return mergeSplitNameColumnsInTabularText(parts.join("\n\n---\n\n")).slice(0, TABULAR_TEXT_LIMIT)
   } catch {
     return ""
   }
@@ -355,10 +619,16 @@ function buildUserContent(
   const categoryHint = documentCategory
     ? `Document category hint from filename/rules: ${documentCategory}.`
     : ""
-  const intro = `File: ${fileName}\n${categoryHint}\nExtract portfolio data from this document.`
+  const rentRollNameHint =
+    documentCategory === "rent_roll" ||
+    /rent\s*roll|tenant\s*list|resident\s*list/i.test(fileName)
+      ? "Rent rolls often split tenant names into First Name and Last Name columns — combine both into fullName/residentName for each row."
+      : ""
+  const intro = `File: ${fileName}\n${categoryHint}${rentRollNameHint ? `\n${rentRollNameHint}` : ""}\nExtract portfolio data from this document.`
 
   if (contentType === "text/csv" || fileName.toLowerCase().endsWith(".csv")) {
-    const text = new TextDecoder().decode(bytes).slice(0, TABULAR_TEXT_LIMIT)
+    const rawText = new TextDecoder().decode(bytes)
+    const text = mergeSplitNameColumnsInCsv(rawText).slice(0, TABULAR_TEXT_LIMIT)
     return [
       { type: "text", text: `${intro}\n\nCSV contents:\n${text}` },
     ]
