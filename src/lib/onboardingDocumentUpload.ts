@@ -802,6 +802,194 @@ export function enrichExtractedUnits(
   })
 }
 
+function normalizePropertyIdentityKey(name: string, address: string): string {
+  const label = name.trim() || address.trim()
+  return label.toLowerCase().replace(/\s+/g, ' ')
+}
+
+function looksLikeStreetAddress(value: string): boolean {
+  const trimmed = value.trim()
+  return /^\d+\s+\S/.test(trimmed) || /\b\d{5}(?:-\d{4})?\b/.test(trimmed)
+}
+
+function splitPropertyCandidate(building: string): { name: string; address: string } {
+  const trimmed = building.trim()
+  if (!trimmed) return { name: '', address: '' }
+  if (looksLikeStreetAddress(trimmed)) {
+    return { name: trimmed, address: trimmed }
+  }
+  return { name: trimmed, address: '' }
+}
+
+function propertyMatchesIdentity(
+  property: OnboardingExtractedProperty,
+  identityKey: string,
+): boolean {
+  if (!identityKey) return false
+  return (
+    normalizePropertyIdentityKey(property.name, property.address) === identityKey ||
+    normalizePropertyIdentityKey(property.address, property.name) === identityKey
+  )
+}
+
+function countUnitsForBuilding(
+  building: string,
+  residents: OnboardingExtractedResident[],
+  leases: ExtractedLeaseInfo[],
+  units: OnboardingExtractedUnit[],
+): number {
+  const buildingKey = building.trim().toLowerCase()
+  if (!buildingKey) return 0
+  const labels = new Set<string>()
+  for (const resident of residents) {
+    if (resident.building.trim().toLowerCase() !== buildingKey) continue
+    const label = resident.unit.trim().toLowerCase()
+    if (label) labels.add(label)
+  }
+  for (const lease of leases) {
+    if (lease.building.trim().toLowerCase() !== buildingKey) continue
+    const label = lease.unit.trim().toLowerCase()
+    if (label) labels.add(label)
+  }
+  for (const unit of units) {
+    if (unit.building.trim().toLowerCase() !== buildingKey) continue
+    const label = unit.label.trim().toLowerCase()
+    if (label) labels.add(label)
+  }
+  return labels.size
+}
+
+/** Build property rows from rent-roll building names when GPT only filled tenant rows. */
+export function enrichExtractedProperties(
+  properties: OnboardingExtractedProperty[],
+  residents: OnboardingExtractedResident[],
+  leases: ExtractedLeaseInfo[],
+  units: OnboardingExtractedUnit[],
+): OnboardingExtractedProperty[] {
+  const merged = new Map<string, OnboardingExtractedProperty>()
+
+  const remember = (row: OnboardingExtractedProperty) => {
+    const key = normalizePropertyIdentityKey(row.name, row.address)
+    if (!key) return
+    const existing = merged.get(key)
+    if (!existing) {
+      merged.set(key, row)
+      return
+    }
+    merged.set(key, {
+      ...existing,
+      name: existing.name.trim() || row.name,
+      address: existing.address.trim() || row.address,
+      city: existing.city.trim() || row.city,
+      state: existing.state.trim() || row.state,
+      zipCode: existing.zipCode.trim() || row.zipCode,
+      propertyType: existing.propertyType || row.propertyType,
+      unitCount: Math.max(existing.unitCount, row.unitCount),
+      confidence: Math.max(existing.confidence, row.confidence),
+      selected: existing.selected && row.selected,
+      needsReview: existing.needsReview || row.needsReview,
+    })
+  }
+
+  for (const property of properties) {
+    remember(property)
+  }
+
+  const buildingMeta = new Map<
+    string,
+    { building: string; sourceDocumentName: string; confidence: number }
+  >()
+
+  const noteBuilding = (building: string, sourceDocumentName: string, confidence: number) => {
+    const trimmed = building.trim()
+    if (!trimmed) return
+    const key = normalizePropertyIdentityKey(trimmed, trimmed)
+    const existing = buildingMeta.get(key)
+    if (!existing || confidence > existing.confidence) {
+      buildingMeta.set(key, { building: trimmed, sourceDocumentName, confidence })
+    }
+  }
+
+  for (const resident of residents) {
+    noteBuilding(resident.building, resident.sourceDocumentName, resident.confidence)
+  }
+  for (const lease of leases) {
+    noteBuilding(lease.building, lease.sourceDocumentName, lease.confidence)
+  }
+  for (const unit of units) {
+    noteBuilding(unit.building, unit.sourceDocumentName, unit.confidence)
+  }
+
+  let derivedIndex = 0
+  for (const [identityKey, meta] of buildingMeta) {
+    const existing = [...merged.values()].find((property) => propertyMatchesIdentity(property, identityKey))
+    const unitCount = countUnitsForBuilding(meta.building, residents, leases, units)
+
+    if (existing) {
+      if (unitCount > existing.unitCount) {
+        remember({ ...existing, unitCount })
+      }
+      continue
+    }
+
+    const { name, address } = splitPropertyCandidate(meta.building)
+    if (!name && !address) continue
+
+    derivedIndex += 1
+    const needsReview = true
+    remember({
+      id: `ext-prop-derived-${derivedIndex}`,
+      name: name || address,
+      address,
+      city: '',
+      state: '',
+      zipCode: '',
+      propertyType: 'multifamily',
+      unitCount,
+      unitLabels: '',
+      propertyManagerName: '',
+      propertyManagerPhone: '',
+      sourceDocumentName: meta.sourceDocumentName,
+      confidence: meta.confidence,
+      selected: !needsReview,
+      needsReview,
+    })
+  }
+
+  return [...merged.values()].sort((left, right) => left.name.localeCompare(right.name))
+}
+
+function finalizeExtractionReviewEntities(input: {
+  properties: OnboardingExtractedProperty[]
+  units: OnboardingExtractedUnit[]
+  residents: OnboardingExtractedResident[]
+  leases: ExtractedLeaseInfo[]
+}): {
+  properties: OnboardingExtractedProperty[]
+  units: OnboardingExtractedUnit[]
+  residents: OnboardingExtractedResident[]
+  leases: ExtractedLeaseInfo[]
+} {
+  let placement = enrichExtractedResidentPlacement(
+    input.residents,
+    input.leases,
+    input.units,
+    input.properties,
+  )
+  let residents = enrichExtractedPersonNames(placement.residents, placement.leases)
+  let leases = enrichExtractedLeaseNames(residents, placement.leases)
+  let properties = enrichExtractedProperties(input.properties, residents, leases, input.units)
+
+  placement = enrichExtractedResidentPlacement(residents, leases, input.units, properties)
+  residents = placement.residents
+  leases = placement.leases
+
+  const units = enrichExtractedUnits(input.units, residents, leases, properties)
+  properties = enrichExtractedProperties(properties, residents, leases, units)
+
+  return { properties, units, residents, leases }
+}
+
 function mergeExtractedDocuments(
   documents: OnboardingUploadedDocument[],
   accountSeed?: Partial<OnboardingAccountSetup> | null,
@@ -984,17 +1172,14 @@ function mergeExtractedDocuments(
     })
   }
 
-  const enrichedPlacement = enrichExtractedResidentPlacement(residents, leases, units, properties)
-  const enrichedResidents = enrichExtractedPersonNames(enrichedPlacement.residents, enrichedPlacement.leases)
-  const enrichedLeases = enrichExtractedLeaseNames(enrichedResidents, enrichedPlacement.leases)
-  const enrichedUnits = enrichExtractedUnits(units, enrichedResidents, enrichedLeases, properties)
+  const finalized = finalizeExtractionReviewEntities({ properties, units, residents, leases })
 
   return {
     account,
-    properties,
-    units: enrichedUnits,
-    residents: enrichedResidents,
-    leases: enrichedLeases,
+    properties: finalized.properties,
+    units: finalized.units,
+    residents: finalized.residents,
+    leases: finalized.leases,
     vendors,
     maintenanceIssues,
     financialRecords,
@@ -1087,29 +1272,18 @@ export function normalizeExtractionReview(
     occupancyStatus: item.occupancyStatus ?? 'active',
     maintenanceResponsibilitiesClause: item.maintenanceResponsibilitiesClause ?? '',
   }))
-  const enrichedPlacement = enrichExtractedResidentPlacement(
-    normalizedResidents,
-    normalizedLeases,
-    normalizedUnits,
-    normalizedProperties,
-  )
-  const enrichedResidents = enrichExtractedPersonNames(
-    enrichedPlacement.residents,
-    enrichedPlacement.leases,
-  )
-  const enrichedLeases = enrichExtractedLeaseNames(enrichedResidents, enrichedPlacement.leases)
-  const enrichedUnits = enrichExtractedUnits(
-    normalizedUnits,
-    enrichedResidents,
-    enrichedLeases,
-    normalizedProperties,
-  )
+  const finalized = finalizeExtractionReviewEntities({
+    properties: normalizedProperties,
+    units: normalizedUnits,
+    residents: normalizedResidents,
+    leases: normalizedLeases,
+  })
   return {
     account: normalizeReviewManualAccount(review.account ?? accountSeed),
-    properties: normalizedProperties,
-    units: enrichedUnits,
-    residents: enrichedResidents,
-    leases: enrichedLeases,
+    properties: finalized.properties,
+    units: finalized.units,
+    residents: finalized.residents,
+    leases: finalized.leases,
     vendors: (review.vendors ?? []).map((item) => ({
       ...item,
       preferredEmergency: Boolean(item.preferredEmergency),

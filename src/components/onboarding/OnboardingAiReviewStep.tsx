@@ -39,6 +39,61 @@ const selectClass = `${inputClass} appearance-none pr-8`
 
 const fieldLabelClass = 'block text-[12px] font-medium text-[#6a7282]'
 
+function normalizeBuildingLabel(value: string): string {
+  return value.trim().toLowerCase().replace(/\s+/g, ' ')
+}
+
+function propertyIdentity(property: OnboardingExtractedProperty): string {
+  return normalizeBuildingLabel(property.name || property.address)
+}
+
+function unitsForProperty(
+  property: OnboardingExtractedProperty,
+  units: OnboardingExtractedUnit[],
+  allProperties: OnboardingExtractedProperty[],
+): OnboardingExtractedUnit[] {
+  const identity = propertyIdentity(property)
+  return units.filter((unit) => {
+    const unitBuilding = normalizeBuildingLabel(unit.building)
+    if (identity && unitBuilding) {
+      return (
+        unitBuilding === identity ||
+        unitBuilding === normalizeBuildingLabel(property.address) ||
+        unitBuilding === normalizeBuildingLabel(property.name)
+      )
+    }
+    return allProperties.length === 1
+  })
+}
+
+function residentNameForUnit(
+  unit: OnboardingExtractedUnit,
+  residents: OnboardingExtractedResident[],
+): string {
+  const unitLabel = unit.label.trim().toLowerCase()
+  const unitBuilding = normalizeBuildingLabel(unit.building)
+  const match = residents.find((resident) => {
+    if (resident.unit.trim().toLowerCase() !== unitLabel) return false
+    const residentBuilding = normalizeBuildingLabel(resident.building)
+    if (unitBuilding && residentBuilding) return unitBuilding === residentBuilding
+    return true
+  })
+  return match?.fullName.trim() ?? ''
+}
+
+function formatPropertyUnitSummary(
+  units: OnboardingExtractedUnit[],
+  residents: OnboardingExtractedResident[],
+): string {
+  if (units.length === 0) return 'No units detected'
+  return units
+    .map((unit) => {
+      const tenant = residentNameForUnit(unit, residents)
+      return tenant ? `Unit ${unit.label} · ${tenant}` : `Unit ${unit.label}`
+    })
+    .join(' · ')
+}
+
 function ConfidenceBadge({ value }: { value: number }) {
   const tone =
     value >= 90 ? 'text-[#187930] bg-[#ecfdf3]' : value >= 80 ? 'text-[#186179] bg-[#eef6fa]' : 'text-[#a65f00] bg-[#fef9c2]'
@@ -264,170 +319,233 @@ export function OnboardingAiReviewStep({
   }
 
   function renderPropertyRows() {
-    if (review.properties.length === 0) {
+    if (review.properties.length === 0 && review.units.length === 0) {
       return <p className="mt-2 text-[13px] text-[#6a7282]">No properties detected.</p>
     }
-    return (
-      <ul className="mt-3 space-y-2">
-        {review.properties.map((item) => (
-          <ReviewItemRow
-            key={item.id}
-            checked={item.selected}
-            onToggle={() => patchProperty(item.id, { selected: !item.selected })}
-            label={item.name}
-            value={`${item.address} · ${onboardingPropertyTypeLabel(item.propertyType)} · Units ${item.unitLabels}`}
-            sourceDocumentName={item.sourceDocumentName}
-            confidence={item.confidence}
-            needsReview={item.needsReview}
-            editing={editingId === item.id}
-            editValue={editDraft}
-            editMode="label"
-            editFieldLabel="Property name"
-            onEdit={() => startEdit(item.id, item.name)}
-            onSaveEdit={() => saveEdit('properties', 'name', review.properties)}
-            onCancelEdit={() => setEditingId(null)}
-            onEditChange={setEditDraft}
-          >
-            <div className="mt-3 grid gap-3 border-t border-[#f3f4f6] pt-3 sm:grid-cols-2">
-              <p className="sm:col-span-2 text-[12px] font-medium text-[#364153]">
-                Complete location details (not always on the document)
-              </p>
-              <label className="block sm:col-span-2">
-                <span className={fieldLabelClass}>Street address</span>
-                <input
-                  className={inputClass}
-                  value={item.address}
-                  onChange={(e) => patchProperty(item.id, { address: e.target.value })}
-                  placeholder="Street address"
-                />
-              </label>
-              <label className="block">
-                <span className={fieldLabelClass}>City</span>
-                <input
-                  className={inputClass}
-                  value={item.city}
-                  onChange={(e) => patchProperty(item.id, { city: e.target.value })}
-                  placeholder="City"
-                />
-              </label>
-              <label className="block">
-                <span className={fieldLabelClass}>State</span>
-                <div className="relative">
-                  <select
-                    className={selectClass}
-                    value={item.state}
-                    onChange={(e) => patchProperty(item.id, { state: e.target.value })}
-                  >
-                    <option value="">Select state</option>
-                    {US_STATE_OPTIONS.map((option) => (
-                      <option key={option.code} value={option.code}>
-                        {option.name}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-              </label>
-              <label className="block">
-                <span className={fieldLabelClass}>ZIP</span>
-                <input
-                  className={inputClass}
-                  value={item.zipCode}
-                  onChange={(e) => patchProperty(item.id, { zipCode: e.target.value })}
-                  placeholder="07102"
-                />
-              </label>
-              <label className="block">
-                <span className={fieldLabelClass}>Property type</span>
-                <div className="relative">
-                  <select
-                    className={`${selectClass} pr-10`}
-                    value={resolveOnboardingPropertyType(item.propertyType)}
-                    onChange={(e) => patchProperty(item.id, { propertyType: e.target.value })}
-                  >
-                    <option value="">Select property type</option>
-                    {ONBOARDING_PROPERTY_TYPE_OPTIONS.map((option) => (
-                      <option key={option.value} value={option.value}>
-                        {option.label}
-                      </option>
-                    ))}
-                  </select>
-                  <span
-                    className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-[#6a7282]"
-                    aria-hidden
-                  >
-                    <svg viewBox="0 0 24 24" fill="none" className="size-4">
-                      <path
-                        d="M6 9l6 6 6-6"
-                        stroke="currentColor"
-                        strokeWidth={2}
-                        strokeLinecap="round"
-                      />
-                    </svg>
-                  </span>
-                </div>
-              </label>
-              <label className="block">
-                <span className={fieldLabelClass}>Property manager name</span>
-                <input
-                  className={inputClass}
-                  value={item.propertyManagerName}
-                  onChange={(e) => patchProperty(item.id, { propertyManagerName: e.target.value })}
-                  placeholder="Optional"
-                />
-              </label>
-              <label className="block">
-                <span className={fieldLabelClass}>Property manager phone</span>
-                <input
-                  className={inputClass}
-                  value={item.propertyManagerPhone}
-                  onChange={(e) =>
-                    patchProperty(item.id, { propertyManagerPhone: e.target.value })
-                  }
-                  placeholder="Optional"
-                />
-              </label>
-            </div>
-          </ReviewItemRow>
-        ))}
-      </ul>
-    )
-  }
 
-  function renderUnitRows() {
-    if (review.units.length === 0) {
-      return <p className="mt-2 text-[13px] text-[#6a7282]">No units detected.</p>
-    }
+    const assignedUnitIds = new Set<string>()
+
+    const propertyRows =
+      review.properties.length > 0
+        ? review.properties.map((item) => {
+            const propertyUnits = unitsForProperty(item, review.units, review.properties)
+            propertyUnits.forEach((unit) => assignedUnitIds.add(unit.id))
+
+            return (
+              <ReviewItemRow
+                key={item.id}
+                checked={item.selected}
+                onToggle={() => patchProperty(item.id, { selected: !item.selected })}
+                label={item.name}
+                value={[
+                  item.address,
+                  onboardingPropertyTypeLabel(item.propertyType),
+                  formatPropertyUnitSummary(propertyUnits, review.residents),
+                ]
+                  .filter(Boolean)
+                  .join(' · ')}
+                sourceDocumentName={item.sourceDocumentName}
+                confidence={item.confidence}
+                needsReview={item.needsReview}
+                editing={editingId === item.id}
+                editValue={editDraft}
+                editMode="label"
+                editFieldLabel="Property name"
+                onEdit={() => startEdit(item.id, item.name)}
+                onSaveEdit={() => saveEdit('properties', 'name', review.properties)}
+                onCancelEdit={() => setEditingId(null)}
+                onEditChange={setEditDraft}
+              >
+                  <div className="mt-3 grid gap-3 border-t border-[#f3f4f6] pt-3 sm:grid-cols-2">
+                    <p className="sm:col-span-2 text-[12px] font-medium text-[#364153]">
+                      Complete location details (not always on the document)
+                    </p>
+                    <label className="block sm:col-span-2">
+                      <span className={fieldLabelClass}>Street address</span>
+                      <input
+                        className={inputClass}
+                        value={item.address}
+                        onChange={(e) => patchProperty(item.id, { address: e.target.value })}
+                        placeholder="Street address"
+                      />
+                    </label>
+                    <label className="block">
+                      <span className={fieldLabelClass}>City</span>
+                      <input
+                        className={inputClass}
+                        value={item.city}
+                        onChange={(e) => patchProperty(item.id, { city: e.target.value })}
+                        placeholder="City"
+                      />
+                    </label>
+                    <label className="block">
+                      <span className={fieldLabelClass}>State</span>
+                      <div className="relative">
+                        <select
+                          className={selectClass}
+                          value={item.state}
+                          onChange={(e) => patchProperty(item.id, { state: e.target.value })}
+                        >
+                          <option value="">Select state</option>
+                          {US_STATE_OPTIONS.map((option) => (
+                            <option key={option.code} value={option.code}>
+                              {option.name}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    </label>
+                    <label className="block">
+                      <span className={fieldLabelClass}>ZIP</span>
+                      <input
+                        className={inputClass}
+                        value={item.zipCode}
+                        onChange={(e) => patchProperty(item.id, { zipCode: e.target.value })}
+                        placeholder="07102"
+                      />
+                    </label>
+                    <label className="block">
+                      <span className={fieldLabelClass}>Property type</span>
+                      <div className="relative">
+                        <select
+                          className={`${selectClass} pr-10`}
+                          value={resolveOnboardingPropertyType(item.propertyType)}
+                          onChange={(e) => patchProperty(item.id, { propertyType: e.target.value })}
+                        >
+                          <option value="">Select property type</option>
+                          {ONBOARDING_PROPERTY_TYPE_OPTIONS.map((option) => (
+                            <option key={option.value} value={option.value}>
+                              {option.label}
+                            </option>
+                          ))}
+                        </select>
+                        <span
+                          className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-[#6a7282]"
+                          aria-hidden
+                        >
+                          <svg viewBox="0 0 24 24" fill="none" className="size-4">
+                            <path
+                              d="M6 9l6 6 6-6"
+                              stroke="currentColor"
+                              strokeWidth={2}
+                              strokeLinecap="round"
+                            />
+                          </svg>
+                        </span>
+                      </div>
+                    </label>
+                    <label className="block">
+                      <span className={fieldLabelClass}>Property manager name</span>
+                      <input
+                        className={inputClass}
+                        value={item.propertyManagerName}
+                        onChange={(e) =>
+                          patchProperty(item.id, { propertyManagerName: e.target.value })
+                        }
+                        placeholder="Optional"
+                      />
+                    </label>
+                    <label className="block">
+                      <span className={fieldLabelClass}>Property manager phone</span>
+                      <input
+                        className={inputClass}
+                        value={item.propertyManagerPhone}
+                        onChange={(e) =>
+                          patchProperty(item.id, { propertyManagerPhone: e.target.value })
+                        }
+                        placeholder="Optional"
+                      />
+                    </label>
+                  </div>
+
+                  {propertyUnits.length > 0 ? (
+                    <div className="mt-3 border-t border-[#f3f4f6] pt-3">
+                      <p className="text-[12px] font-medium text-[#364153]">Units</p>
+                      <ul className="mt-2 space-y-2">
+                        {propertyUnits.map((unit) => {
+                          const tenantName = residentNameForUnit(unit, review.residents)
+                          return (
+                            <ReviewItemRow
+                              key={unit.id}
+                              checked={unit.selected}
+                              onToggle={() => patchUnit(unit.id, { selected: !unit.selected })}
+                              label={`Unit ${unit.label}`}
+                              value={tenantName || 'No tenant linked'}
+                              sourceDocumentName={unit.sourceDocumentName}
+                              confidence={unit.confidence}
+                              editing={editingId === unit.id}
+                              editValue={editDraft}
+                              editMode="label"
+                              editFieldLabel="Unit number"
+                              onEdit={() => startEdit(unit.id, unit.label)}
+                              onSaveEdit={() => saveEdit('units', 'label', review.units)}
+                              onCancelEdit={() => setEditingId(null)}
+                              onEditChange={setEditDraft}
+                            >
+                              <label className="mt-3 block border-t border-[#f3f4f6] pt-3">
+                                <span className={fieldLabelClass}>Building</span>
+                                <input
+                                  className={inputClass}
+                                  value={unit.building}
+                                  onChange={(e) => patchUnit(unit.id, { building: e.target.value })}
+                                  placeholder="Property or building name"
+                                />
+                              </label>
+                            </ReviewItemRow>
+                          )
+                        })}
+                      </ul>
+                    </div>
+                  ) : null}
+              </ReviewItemRow>
+            )
+          })
+        : []
+
+    const orphanUnits = review.units.filter((unit) => !assignedUnitIds.has(unit.id))
+
     return (
       <ul className="mt-3 space-y-2">
-        {review.units.map((item) => (
-          <ReviewItemRow
-            key={item.id}
-            checked={item.selected}
-            onToggle={() => patchUnit(item.id, { selected: !item.selected })}
-            label={`Unit ${item.label}`}
-            value={formatExtractedUnitPlacement(item.building, item.label)}
-            sourceDocumentName={item.sourceDocumentName}
-            confidence={item.confidence}
-            editing={editingId === item.id}
-            editValue={editDraft}
-            editMode="label"
-            editFieldLabel="Unit number"
-            onEdit={() => startEdit(item.id, item.label)}
-            onSaveEdit={() => saveEdit('units', 'label', review.units)}
-            onCancelEdit={() => setEditingId(null)}
-            onEditChange={setEditDraft}
-          >
-            <label className="mt-3 block border-t border-[#f3f4f6] pt-3">
-              <span className={fieldLabelClass}>Building</span>
-              <input
-                className={inputClass}
-                value={item.building}
-                onChange={(e) => patchUnit(item.id, { building: e.target.value })}
-                placeholder="Property or building name"
-              />
-            </label>
-          </ReviewItemRow>
-        ))}
+        {propertyRows}
+        {orphanUnits.length > 0 ? (
+          <li className="list-none rounded-[8px] border border-[#eef0f3] px-3 py-3">
+            <p className="text-[12px] font-medium text-[#364153]">Units without a matched property</p>
+            <ul className="mt-2 list-none space-y-2 pl-0">
+              {orphanUnits.map((unit) => {
+                const tenantName = residentNameForUnit(unit, review.residents)
+                return (
+                  <ReviewItemRow
+                    key={unit.id}
+                    checked={unit.selected}
+                    onToggle={() => patchUnit(unit.id, { selected: !unit.selected })}
+                    label={`Unit ${unit.label}`}
+                    value={tenantName || 'No tenant linked'}
+                    sourceDocumentName={unit.sourceDocumentName}
+                    confidence={unit.confidence}
+                    editing={editingId === unit.id}
+                    editValue={editDraft}
+                    editMode="label"
+                    editFieldLabel="Unit number"
+                    onEdit={() => startEdit(unit.id, unit.label)}
+                    onSaveEdit={() => saveEdit('units', 'label', review.units)}
+                    onCancelEdit={() => setEditingId(null)}
+                    onEditChange={setEditDraft}
+                  >
+                    <label className="mt-3 block border-t border-[#f3f4f6] pt-3">
+                      <span className={fieldLabelClass}>Building</span>
+                      <input
+                        className={inputClass}
+                        value={unit.building}
+                        onChange={(e) => patchUnit(unit.id, { building: e.target.value })}
+                        placeholder="Property or building name"
+                      />
+                    </label>
+                  </ReviewItemRow>
+                )
+              })}
+            </ul>
+          </li>
+        ) : null}
       </ul>
     )
   }
@@ -840,11 +958,11 @@ export function OnboardingAiReviewStep({
           </div>
         ) : (
           <>
-            <ReviewSection title="Properties Found" count={review.properties.length}>
+            <ReviewSection
+              title="Properties Found"
+              count={review.properties.length || (review.units.length > 0 ? 1 : 0)}
+            >
               {renderPropertyRows()}
-            </ReviewSection>
-            <ReviewSection title="Units Found" count={review.units.length}>
-              {renderUnitRows()}
             </ReviewSection>
             <ReviewSection title="Residents Found" count={review.residents.length}>
               {renderResidentRows()}

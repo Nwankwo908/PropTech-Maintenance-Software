@@ -172,6 +172,7 @@ Rules:
 - For every tenant/resident/lease row, include unit and building from the same row when shown (unit may appear as Unit, Apt, Suite, or Unit #; building may appear as Building, Property, or Property Name).
 - Keep each tenant linked to the unit and building on their row — do not list tenants without their unit when the document shows both on the same line.
 - On rent rolls and unit rosters, also populate the units array with one entry per distinct unit number, each with its building/property when shown.
+- On rent rolls, populate the properties array with one entry per distinct property or building name/address shown in the document header, Property column, or Building column.
 - Dates: YYYY-MM-DD when unambiguous; otherwise empty string.
 - Phone numbers: include country code when shown; otherwise as printed.
 - confidence: 0-100 for how clearly each row's fields appear in the document.
@@ -299,8 +300,23 @@ function clampConfidence(value: unknown): number {
 }
 
 function normalizeProperty(row: Record<string, unknown>): PortfolioExtractProperty | null {
-  const name = asString(row.name)
-  const streetAddress = asString(row.streetAddress ?? row.street_address ?? row.address)
+  const name = readField(row, [
+    "name",
+    "propertyName",
+    "property_name",
+    "buildingName",
+    "building_name",
+    "building",
+    "site",
+  ])
+  const streetAddress = readField(row, [
+    "streetAddress",
+    "street_address",
+    "address",
+    "propertyAddress",
+    "property_address",
+    "location",
+  ])
   if (!name && !streetAddress) return null
   return {
     name: name || streetAddress,
@@ -623,7 +639,7 @@ function buildUserContent(
   const rentRollNameHint =
     documentCategory === "rent_roll" ||
     /rent\s*roll|tenant\s*list|resident\s*list/i.test(fileName)
-      ? "Rent rolls often split tenant names into First Name and Last Name columns — combine both into fullName/residentName for each row."
+      ? "Rent rolls often split tenant names into First Name and Last Name columns — combine both into fullName/residentName for each row. Also add one properties entry per distinct property/building name or address, plus one units entry per distinct unit number."
       : ""
   const intro = `File: ${fileName}\n${categoryHint}${rentRollNameHint ? `\n${rentRollNameHint}` : ""}\nExtract portfolio data from this document.`
 
