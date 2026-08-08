@@ -171,6 +171,7 @@ Rules:
 - When a rent roll or spreadsheet has separate first/last name columns (e.g. First Name, Last Name, Tenant First, Tenant Last), combine them into one full name. Never return only a first name if a last name appears in the same row.
 - For every tenant/resident/lease row, include unit and building from the same row when shown (unit may appear as Unit, Apt, Suite, or Unit #; building may appear as Building, Property, or Property Name).
 - Keep each tenant linked to the unit and building on their row — do not list tenants without their unit when the document shows both on the same line.
+- On rent rolls and unit rosters, also populate the units array with one entry per distinct unit number, each with its building/property when shown.
 - Dates: YYYY-MM-DD when unambiguous; otherwise empty string.
 - Phone numbers: include country code when shown; otherwise as printed.
 - confidence: 0-100 for how clearly each row's fields appear in the document.

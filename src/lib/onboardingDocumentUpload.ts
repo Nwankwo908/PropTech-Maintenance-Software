@@ -685,6 +685,123 @@ function enrichExtractedResidentPlacement(
   return { residents: enrichedResidents, leases: enrichedLeases }
 }
 
+function collectDerivedUnitCandidates(
+  residents: OnboardingExtractedResident[],
+  leases: ExtractedLeaseInfo[],
+): Array<{
+  label: string
+  building: string
+  sourceDocumentName: string
+  confidence: number
+}> {
+  const candidates: Array<{
+    label: string
+    building: string
+    sourceDocumentName: string
+    confidence: number
+  }> = []
+
+  for (const resident of residents) {
+    const label = resident.unit.trim()
+    if (!label) continue
+    candidates.push({
+      label,
+      building: resident.building.trim(),
+      sourceDocumentName: resident.sourceDocumentName,
+      confidence: resident.confidence,
+    })
+  }
+
+  for (const lease of leases) {
+    const label = lease.unit.trim()
+    if (!label) continue
+    candidates.push({
+      label,
+      building: lease.building.trim(),
+      sourceDocumentName: lease.sourceDocumentName,
+      confidence: lease.confidence,
+    })
+  }
+
+  return candidates
+}
+
+/** Build and enrich unit inventory from explicit unit rows plus tenant/lease placement. */
+export function enrichExtractedUnits(
+  units: OnboardingExtractedUnit[],
+  residents: OnboardingExtractedResident[],
+  leases: ExtractedLeaseInfo[],
+  properties: OnboardingExtractedProperty[],
+): OnboardingExtractedUnit[] {
+  const fallbackBuilding = defaultExtractedBuilding(properties)
+  const merged = new Map<string, OnboardingExtractedUnit>()
+
+  const remember = (row: OnboardingExtractedUnit) => {
+    const label = row.label.trim()
+    if (!label) return
+    const building = row.building.trim() || fallbackBuilding
+    const key = residentMatchKey(label, building)
+    const existing = merged.get(key)
+    if (!existing) {
+      merged.set(key, { ...row, label, building })
+      return
+    }
+    merged.set(key, {
+      ...existing,
+      building: existing.building.trim() || building,
+      confidence: Math.max(existing.confidence, row.confidence),
+      selected: existing.selected || row.selected,
+    })
+  }
+
+  for (const unit of units) {
+    remember(unit)
+  }
+
+  let derivedIndex = 0
+  for (const candidate of collectDerivedUnitCandidates(residents, leases)) {
+    const building = candidate.building.trim() || fallbackBuilding
+    const key = residentMatchKey(candidate.label, building)
+    if (merged.has(key)) {
+      const existing = merged.get(key)!
+      if (!existing.building.trim() && building) {
+        merged.set(key, { ...existing, building })
+      }
+      continue
+    }
+
+    const labelMatch = [...merged.values()].find(
+      (row) => row.label.trim().toLowerCase() === candidate.label.toLowerCase(),
+    )
+    if (labelMatch) {
+      const nextBuilding = labelMatch.building.trim() || building
+      merged.delete(residentMatchKey(labelMatch.label, labelMatch.building))
+      merged.set(residentMatchKey(labelMatch.label, nextBuilding), {
+        ...labelMatch,
+        building: nextBuilding,
+        confidence: Math.max(labelMatch.confidence, candidate.confidence),
+      })
+      continue
+    }
+
+    derivedIndex += 1
+    remember({
+      id: `ext-unit-derived-${derivedIndex}`,
+      label: candidate.label,
+      building,
+      sourceDocumentName: candidate.sourceDocumentName,
+      confidence: candidate.confidence,
+      selected: candidate.confidence >= 70,
+    })
+  }
+
+  return [...merged.values()].sort((left, right) => {
+    const buildingSort = left.building.localeCompare(right.building)
+    if (buildingSort !== 0) return buildingSort
+    return left.label.localeCompare(right.label, undefined, { numeric: true })
+  })
+}
+
 function mergeExtractedDocuments(
   documents: OnboardingUploadedDocument[],
   accountSeed?: Partial<OnboardingAccountSetup> | null,
@@ -870,11 +987,12 @@ function mergeExtractedDocuments(
   const enrichedPlacement = enrichExtractedResidentPlacement(residents, leases, units, properties)
   const enrichedResidents = enrichExtractedPersonNames(enrichedPlacement.residents, enrichedPlacement.leases)
   const enrichedLeases = enrichExtractedLeaseNames(enrichedResidents, enrichedPlacement.leases)
+  const enrichedUnits = enrichExtractedUnits(units, enrichedResidents, enrichedLeases, properties)
 
   return {
     account,
     properties,
-    units,
+    units: enrichedUnits,
     residents: enrichedResidents,
     leases: enrichedLeases,
     vendors,
@@ -980,10 +1098,16 @@ export function normalizeExtractionReview(
     enrichedPlacement.leases,
   )
   const enrichedLeases = enrichExtractedLeaseNames(enrichedResidents, enrichedPlacement.leases)
+  const enrichedUnits = enrichExtractedUnits(
+    normalizedUnits,
+    enrichedResidents,
+    enrichedLeases,
+    normalizedProperties,
+  )
   return {
     account: normalizeReviewManualAccount(review.account ?? accountSeed),
     properties: normalizedProperties,
-    units: normalizedUnits,
+    units: enrichedUnits,
     residents: enrichedResidents,
     leases: enrichedLeases,
     vendors: (review.vendors ?? []).map((item) => ({

@@ -59,6 +59,8 @@ function ReviewItemRow({
   needsReview,
   editing,
   editValue,
+  editMode = 'value',
+  editFieldLabel,
   onEdit,
   onSaveEdit,
   onCancelEdit,
@@ -74,6 +76,8 @@ function ReviewItemRow({
   needsReview?: boolean
   editing: boolean
   editValue: string
+  editMode?: 'label' | 'value'
+  editFieldLabel?: string
   onEdit: () => void
   onSaveEdit: () => void
   onCancelEdit: () => void
@@ -88,16 +92,40 @@ function ReviewItemRow({
         </div>
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
-            <p className="text-[13px] font-medium text-[#101828]">{label}</p>
-            <ConfidenceBadge value={confidence} />
-            {needsReview ? (
+            {editing && editMode === 'label' ? (
+              <div className="min-w-0 flex-1">
+                {editFieldLabel ? (
+                  <span className={fieldLabelClass}>{editFieldLabel}</span>
+                ) : null}
+                <input
+                  className={inputClass}
+                  value={editValue}
+                  onChange={(e) => onEditChange(e.target.value)}
+                  aria-label={editFieldLabel ?? 'Edit name'}
+                />
+              </div>
+            ) : (
+              <p className="text-[13px] font-medium text-[#101828]">{label}</p>
+            )}
+            {!editing || editMode !== 'label' ? <ConfidenceBadge value={confidence} /> : null}
+            {needsReview && (!editing || editMode !== 'label') ? (
               <span className="rounded-[4px] bg-[#fef9c2] px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-[0.04em] text-[#a65f00]">
                 Needs review
               </span>
             ) : null}
           </div>
-          {editing ? (
+          {editing && editMode === 'label' ? (
+            <div className="mt-2 flex gap-2">
+              <button type="button" onClick={onSaveEdit} className="text-[12px] font-medium text-[#187960]">
+                Save
+              </button>
+              <button type="button" onClick={onCancelEdit} className="text-[12px] font-medium text-[#6a7282]">
+                Cancel
+              </button>
+            </div>
+          ) : editing && editMode === 'value' ? (
             <div className="mt-2">
+              {editFieldLabel ? <span className={fieldLabelClass}>{editFieldLabel}</span> : null}
               <input className={inputClass} value={editValue} onChange={(e) => onEditChange(e.target.value)} />
               <div className="mt-2 flex gap-2">
                 <button type="button" onClick={onSaveEdit} className="text-[12px] font-medium text-[#187960]">
@@ -201,6 +229,13 @@ export function OnboardingAiReviewStep({
     })
   }
 
+  function patchUnit(id: string, patch: Partial<OnboardingExtractedUnit>) {
+    onReviewChange({
+      ...review,
+      units: review.units.map((row) => (row.id === id ? { ...row, ...patch } : row)),
+    })
+  }
+
   function patchVendor(id: string, patch: Partial<OnboardingExtractedVendor>) {
     onReviewChange({
       ...review,
@@ -246,8 +281,10 @@ export function OnboardingAiReviewStep({
             needsReview={item.needsReview}
             editing={editingId === item.id}
             editValue={editDraft}
-            onEdit={() => startEdit(item.id, item.address)}
-            onSaveEdit={() => saveEdit('properties', 'address', review.properties)}
+            editMode="label"
+            editFieldLabel="Property name"
+            onEdit={() => startEdit(item.id, item.name)}
+            onSaveEdit={() => saveEdit('properties', 'name', review.properties)}
             onCancelEdit={() => setEditingId(null)}
             onEditChange={setEditDraft}
           >
@@ -255,6 +292,15 @@ export function OnboardingAiReviewStep({
               <p className="sm:col-span-2 text-[12px] font-medium text-[#364153]">
                 Complete location details (not always on the document)
               </p>
+              <label className="block sm:col-span-2">
+                <span className={fieldLabelClass}>Street address</span>
+                <input
+                  className={inputClass}
+                  value={item.address}
+                  onChange={(e) => patchProperty(item.id, { address: e.target.value })}
+                  placeholder="Street address"
+                />
+              </label>
               <label className="block">
                 <span className={fieldLabelClass}>City</span>
                 <input
@@ -347,6 +393,45 @@ export function OnboardingAiReviewStep({
     )
   }
 
+  function renderUnitRows() {
+    if (review.units.length === 0) {
+      return <p className="mt-2 text-[13px] text-[#6a7282]">No units detected.</p>
+    }
+    return (
+      <ul className="mt-3 space-y-2">
+        {review.units.map((item) => (
+          <ReviewItemRow
+            key={item.id}
+            checked={item.selected}
+            onToggle={() => patchUnit(item.id, { selected: !item.selected })}
+            label={`Unit ${item.label}`}
+            value={formatExtractedUnitPlacement(item.building, item.label)}
+            sourceDocumentName={item.sourceDocumentName}
+            confidence={item.confidence}
+            editing={editingId === item.id}
+            editValue={editDraft}
+            editMode="label"
+            editFieldLabel="Unit number"
+            onEdit={() => startEdit(item.id, item.label)}
+            onSaveEdit={() => saveEdit('units', 'label', review.units)}
+            onCancelEdit={() => setEditingId(null)}
+            onEditChange={setEditDraft}
+          >
+            <label className="mt-3 block border-t border-[#f3f4f6] pt-3">
+              <span className={fieldLabelClass}>Building</span>
+              <input
+                className={inputClass}
+                value={item.building}
+                onChange={(e) => patchUnit(item.id, { building: e.target.value })}
+                placeholder="Property or building name"
+              />
+            </label>
+          </ReviewItemRow>
+        ))}
+      </ul>
+    )
+  }
+
   function renderResidentRows() {
     if (review.residents.length === 0) {
       return <p className="mt-2 text-[13px] text-[#6a7282]">No residents detected.</p>
@@ -367,8 +452,10 @@ export function OnboardingAiReviewStep({
             needsReview={item.needsReview}
             editing={editingId === item.id}
             editValue={editDraft}
-            onEdit={() => startEdit(item.id, item.email)}
-            onSaveEdit={() => saveEdit('residents', 'email', review.residents)}
+            editMode="label"
+            editFieldLabel="Resident name"
+            onEdit={() => startEdit(item.id, item.fullName)}
+            onSaveEdit={() => saveEdit('residents', 'fullName', review.residents)}
             onCancelEdit={() => setEditingId(null)}
             onEditChange={setEditDraft}
           >
@@ -392,6 +479,26 @@ export function OnboardingAiReviewStep({
                   value={item.unit}
                   onChange={(e) => patchResident(item.id, { unit: e.target.value })}
                   placeholder="101"
+                />
+              </label>
+              <label className="block">
+                <span className={fieldLabelClass}>Email</span>
+                <input
+                  className={inputClass}
+                  type="email"
+                  value={item.email}
+                  onChange={(e) => patchResident(item.id, { email: e.target.value })}
+                  placeholder="Email"
+                />
+              </label>
+              <label className="block">
+                <span className={fieldLabelClass}>Phone</span>
+                <input
+                  className={inputClass}
+                  type="tel"
+                  value={item.phone}
+                  onChange={(e) => patchResident(item.id, { phone: e.target.value })}
+                  placeholder="Phone"
                 />
               </label>
               <label className="block">
@@ -737,15 +844,7 @@ export function OnboardingAiReviewStep({
               {renderPropertyRows()}
             </ReviewSection>
             <ReviewSection title="Units Found" count={review.units.length}>
-              {renderSimpleRows<OnboardingExtractedUnit>(
-                review.units,
-                'units',
-                (item) => `Unit ${item.label}`,
-                (item) => item.building,
-                'building',
-                (item) => item.building,
-                'No units detected.',
-              )}
+              {renderUnitRows()}
             </ReviewSection>
             <ReviewSection title="Residents Found" count={review.residents.length}>
               {renderResidentRows()}
