@@ -45,10 +45,10 @@ describe('canCompleteOnboarding', () => {
     expect(canCompleteOnboarding(state, [], [], undefined, true).ok).toBe(true)
   })
 
-  it('requires Stripe payout readiness', () => {
+  it('allows completion when Stripe payouts are not set up yet', () => {
     const check = canCompleteOnboarding(validOnboardingState(), [], [], undefined, false)
-    expect(check.ok).toBe(false)
-    expect(check.missing).toContain('Payout account (Set up payouts)')
+    expect(check.ok).toBe(true)
+    expect(check.missing).not.toContain('Payout account (Set up payouts)')
   })
 })
 

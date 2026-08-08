@@ -288,6 +288,13 @@ export function OnboardingWizardShell() {
                 }
                 void continueToReview()
               }}
+              onSkip={() => {
+                if (editingFromReviewRef.current) {
+                  void returnToReviewAfterEdit()
+                  return
+                }
+                void continueToReview()
+              }}
               onReadyChange={setPayoutsReady}
               onStatusChange={(next) => {
                 setPayoutMethodLabel(primaryPayoutMethodLabel(next))

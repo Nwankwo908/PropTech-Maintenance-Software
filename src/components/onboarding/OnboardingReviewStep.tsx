@@ -379,7 +379,7 @@ export function OnboardingReviewStep({
                   ? payoutMethodLabel
                     ? `Connected — ${payoutMethodLabel}`
                     : 'Connected — rent payments go to your bank account'
-                  : 'Not set up yet — required before you finish'
+                  : 'Not set up yet — add when you are ready to collect rent'
               }
             />
           </ReviewSummaryCard>

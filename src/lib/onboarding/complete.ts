@@ -37,7 +37,8 @@ export function canCompleteOnboarding(
   vendors: OnboardingVendor[] = [],
   residents: OnboardingResident[] = [],
   dbCounts?: AccountSetupCounts,
-  payoutsReady?: boolean,
+  /** Unused — payouts can be skipped during onboarding; rent checkout stays gated separately. */
+  _payoutsReady?: boolean,
 ): { ok: boolean; missing: string[] } {
   const metrics = buildOnboardingReviewMetrics(state, vendors, residents, dbCounts)
   const missing: string[] = []
@@ -51,7 +52,7 @@ export function canCompleteOnboarding(
   if (!approvalCheck.ok) {
     missing.push('Maintenance approval rules')
   }
-  if (payoutsReady !== true) missing.push('Payout account (Set up payouts)')
+  // Payouts are optional during onboarding — rent collection stays gated until Connect is ready.
   return { ok: missing.length === 0, missing }
 }
 

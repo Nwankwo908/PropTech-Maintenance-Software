@@ -18,12 +18,16 @@ const btnSecondary =
 const btnContinue =
   'inline-flex cursor-pointer items-center justify-center rounded-[10px] bg-[#187960] px-6 py-2.5 text-[14px] font-semibold text-white transition-colors hover:bg-[#146b52] disabled:cursor-not-allowed disabled:opacity-50'
 
+const btnGhost =
+  'inline-flex cursor-pointer items-center justify-center rounded-[10px] px-4 py-2.5 text-[14px] font-medium text-[#6a7282] transition-colors hover:bg-[#f3f4f6] hover:text-[#101828] disabled:cursor-not-allowed disabled:opacity-50'
+
 export type OnboardingPayoutsStepProps = {
   landlordId: string
   saving: boolean
   showBack: boolean
   onBack: () => void
   onContinue: () => void
+  onSkip: () => void
   onReadyChange?: (ready: boolean) => void
   onStatusChange?: (status: LandlordStripeConnectStatus | null) => void
 }
@@ -63,6 +67,7 @@ export function OnboardingPayoutsStep({
   showBack,
   onBack,
   onContinue,
+  onSkip,
   onReadyChange,
   onStatusChange,
 }: OnboardingPayoutsStepProps) {
@@ -147,13 +152,27 @@ export function OnboardingPayoutsStep({
 
   return (
     <section className="mx-auto w-full max-w-[560px]">
-      <h2 className="text-[22px] font-semibold tracking-[-0.3px] text-[#111827]">
-        Set up rent payouts
-      </h2>
-      <p className="mt-2 text-[14px] leading-6 text-[#6b7280]">
-        Connect a bank account so rent payments from tenants go to you. This takes a few minutes
-        with Stripe and is required before you finish setup.
-      </p>
+      <div className="flex items-start justify-between gap-4">
+        <div className="min-w-0">
+          <h2 className="text-[22px] font-semibold tracking-[-0.3px] text-[#111827]">
+            Set up rent payouts
+          </h2>
+          <p className="mt-2 text-[14px] leading-6 text-[#6b7280]">
+            Connect a bank account so rent payments from tenants go to you. This takes a few minutes
+            with Stripe. You can skip for now and add it later from your setup review.
+          </p>
+        </div>
+        {!ready && !loading ? (
+          <button
+            type="button"
+            disabled={saving || busy}
+            onClick={onSkip}
+            className={`${btnGhost} shrink-0`}
+          >
+            Skip for now
+          </button>
+        ) : null}
+      </div>
 
       <div className="mt-6 rounded-2xl border border-[#e5e7eb] bg-[#f9fafb] p-5">
         {loading ? (
@@ -258,7 +277,7 @@ export function OnboardingPayoutsStep({
       </div>
       {!ready && !loading ? (
         <p className="mt-3 text-center text-[12px] text-[#6b7280]">
-          Complete payout setup to continue.
+          Set up payouts now, or choose Skip for now to continue without a connected account.
         </p>
       ) : null}
     </section>
