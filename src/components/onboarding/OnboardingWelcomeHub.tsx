@@ -63,7 +63,7 @@ export function OnboardingWelcomeHub({ onStartScratch, onStartFastTrack }: Onboa
           <span className="mt-2 flex-1 text-[14px] leading-5 tracking-[-0.1504px] text-[#6a7282]">
             Upload leases, tenant list, spreadsheets, or photos of documents and Ulo will help fill in your account information automatically.
           </span>
-          <span className="mt-6 text-[12px] font-medium text-[#6a7282]">~2 minutes · PDF, CSV, XLSX</span>
+          <span className="mt-6 text-[12px] font-medium text-[#6a7282]">~2 minutes · PDF, Word, Excel, CSV</span>
         </button>
       </div>
     </div>

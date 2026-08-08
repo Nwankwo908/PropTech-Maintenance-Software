@@ -2,6 +2,12 @@
  * GPT-4o portfolio extraction for onboarding fast-track uploads.
  * Extract only fields visibly present in the document — never invent demo data.
  */
+import * as XLSX from "npm:xlsx@0.18.5"
+import {
+  isWordFile,
+  wordBytesToPlainText,
+  WORD_TEXT_LIMIT,
+} from "./wordDocumentText.ts"
 
 export type PortfolioExtractProperty = {
   name: string
@@ -308,11 +314,43 @@ function bytesToBase64(bytes: Uint8Array): string {
   return btoa(binary)
 }
 
+const TABULAR_TEXT_LIMIT = WORD_TEXT_LIMIT
+
+function isExcelFile(fileName: string, contentType: string): boolean {
+  const lower = fileName.toLowerCase()
+  if (/\.(xlsx?|xls)$/i.test(lower)) return true
+  const type = contentType.toLowerCase()
+  return (
+    type.includes("spreadsheetml") ||
+    type === "application/vnd.ms-excel" ||
+    type === "application/excel"
+  )
+}
+
+/** Convert workbook sheets to CSV-like text for GPT (same path as rent-roll CSV). */
+export function excelBytesToTabularText(bytes: Uint8Array): string {
+  try {
+    const workbook = XLSX.read(bytes, { type: "array", cellDates: true, dense: true })
+    const parts: string[] = []
+    for (const sheetName of workbook.SheetNames) {
+      const sheet = workbook.Sheets[sheetName]
+      if (!sheet) continue
+      const csv = XLSX.utils.sheet_to_csv(sheet, { blankrows: false })
+      if (!csv.trim()) continue
+      parts.push(`Sheet: ${sheetName}\n${csv}`)
+    }
+    return parts.join("\n\n---\n\n").slice(0, TABULAR_TEXT_LIMIT)
+  } catch {
+    return ""
+  }
+}
+
 function buildUserContent(
   fileName: string,
   documentCategory: string,
   contentType: string,
   bytes: Uint8Array,
+  options?: { spreadsheetText?: string; wordText?: string },
 ): Array<Record<string, unknown>> {
   const categoryHint = documentCategory
     ? `Document category hint from filename/rules: ${documentCategory}.`
@@ -320,9 +358,48 @@ function buildUserContent(
   const intro = `File: ${fileName}\n${categoryHint}\nExtract portfolio data from this document.`
 
   if (contentType === "text/csv" || fileName.toLowerCase().endsWith(".csv")) {
-    const text = new TextDecoder().decode(bytes).slice(0, 120_000)
+    const text = new TextDecoder().decode(bytes).slice(0, TABULAR_TEXT_LIMIT)
     return [
       { type: "text", text: `${intro}\n\nCSV contents:\n${text}` },
+    ]
+  }
+
+  if (isExcelFile(fileName, contentType)) {
+    const text = options?.spreadsheetText ?? excelBytesToTabularText(bytes)
+    if (!text.trim()) {
+      return [
+        {
+          type: "text",
+          text:
+            `${intro}\n\nCould not read rows from this spreadsheet. Try saving as CSV or check that the file is not empty or password-protected.`,
+        },
+      ]
+    }
+    return [
+      {
+        type: "text",
+        text:
+          `${intro}\n\nSpreadsheet contents (all sheets as tabular rows):\n${text}`,
+      },
+    ]
+  }
+
+  if (isWordFile(fileName, contentType)) {
+    const text = options?.wordText ?? ""
+    if (!text.trim()) {
+      return [
+        {
+          type: "text",
+          text:
+            `${intro}\n\nCould not read text from this Word document. Check that the file is not empty or password-protected.`,
+        },
+      ]
+    }
+    return [
+      {
+        type: "text",
+        text: `${intro}\n\nWord document text:\n${text}`,
+      },
     ]
   }
 
@@ -354,7 +431,7 @@ function buildUserContent(
     {
       type: "text",
       text:
-        `${intro}\n\nThis file type is not supported for automatic extraction. Upload PDF, CSV, or clear photos/scans instead.`,
+        `${intro}\n\nThis file type is not supported for automatic extraction. Upload PDF, CSV, Excel (.xlsx), Word (.doc/.docx), or clear photos/scans instead.`,
     },
   ]
 }
@@ -366,25 +443,47 @@ export async function extractPortfolioDocument(input: {
   contentType: string
   bytes: Uint8Array
 }): Promise<PortfolioDocumentExtractPayload> {
-  const lower = input.fileName.toLowerCase()
-  const unsupported =
-    /\.(docx?|xlsx?|xls)$/i.test(lower) &&
-    input.contentType !== "text/csv" &&
-    !lower.endsWith(".csv")
+  let spreadsheetText: string | undefined
+  if (isExcelFile(input.fileName, input.contentType)) {
+    spreadsheetText = excelBytesToTabularText(input.bytes)
+    if (!spreadsheetText.trim()) {
+      return {
+        properties: [],
+        units: [],
+        residents: [],
+        vendors: [],
+        leases: [],
+        maintenanceIssues: [],
+        financialRecords: [],
+        imageLabels: [],
+        warnings: [
+          "Could not read rows from this spreadsheet. Try saving as CSV or check that the file is not empty or password-protected.",
+        ],
+      }
+    }
+  }
 
-  if (unsupported) {
-    return {
-      properties: [],
-      units: [],
-      residents: [],
-      vendors: [],
-      leases: [],
-      maintenanceIssues: [],
-      financialRecords: [],
-      imageLabels: [],
-      warnings: [
-        "This file type needs a PDF export or CSV rent roll for reliable extraction. Word and Excel uploads are not parsed yet.",
-      ],
+  let wordText: string | undefined
+  if (isWordFile(input.fileName, input.contentType)) {
+    wordText = await wordBytesToPlainText(
+      input.bytes,
+      input.fileName,
+      input.contentType,
+    )
+    if (!wordText.trim()) {
+      return {
+        properties: [],
+        units: [],
+        residents: [],
+        vendors: [],
+        leases: [],
+        maintenanceIssues: [],
+        financialRecords: [],
+        imageLabels: [],
+        warnings: [
+          "Could not read text from this Word document. Check that the file is not empty or password-protected.",
+        ],
+      }
     }
   }
 
@@ -393,6 +492,7 @@ export async function extractPortfolioDocument(input: {
     input.documentCategory,
     input.contentType,
     input.bytes,
+    { spreadsheetText, wordText },
   )
 
   const response = await fetch("https://api.openai.com/v1/chat/completions", {
