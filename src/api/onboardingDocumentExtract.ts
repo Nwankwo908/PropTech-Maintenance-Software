@@ -1,4 +1,6 @@
+import { FunctionsFetchError, FunctionsHttpError, FunctionsRelayError } from '@supabase/supabase-js'
 import { getActiveLandlordId } from '@/lib/activeLandlord'
+import { getErrorMessage } from '@/lib/errorMessage'
 import { supabase } from '@/lib/supabase'
 
 /** Per-document GPT extraction payload (matches edge function output). */
@@ -78,6 +80,31 @@ export type ExtractOnboardingDocumentResult = {
   needsAttention: boolean
 }
 
+function readInvokeErrorBody(data: unknown): string | null {
+  if (data && typeof data === 'object' && 'error' in data) {
+    const msg = (data as { error: unknown }).error
+    if (typeof msg === 'string' && msg.trim()) return msg.trim()
+  }
+  return null
+}
+
+async function readHttpErrorMessage(error: FunctionsHttpError): Promise<string | null> {
+  const ctx = error.context as Response | undefined
+  if (!ctx) return null
+  try {
+    const json = (await ctx.clone().json()) as { error?: unknown }
+    if (typeof json.error === 'string' && json.error.trim()) return json.error.trim()
+  } catch {
+    try {
+      const text = (await ctx.clone().text()).trim()
+      return text || null
+    } catch {
+      return null
+    }
+  }
+  return null
+}
+
 export async function extractOnboardingDocument(
   input: ExtractOnboardingDocumentInput,
 ): Promise<ExtractOnboardingDocumentResult> {
@@ -100,15 +127,39 @@ export async function extractOnboardingDocument(
   })
 
   if (error) {
-    const msg =
-      typeof data === 'object' && data && 'error' in data
-        ? String((data as { error: unknown }).error)
-        : error.message
-    throw new Error(msg || 'Document extraction failed')
+    if (error instanceof FunctionsFetchError) {
+      throw new Error(
+        getErrorMessage(
+          error.message,
+          'Could not reach document scanning. Check your connection and try again.',
+        ),
+      )
+    }
+
+    const fromData = readInvokeErrorBody(data)
+    if (fromData) {
+      throw new Error(getErrorMessage(fromData, 'Document extraction failed'))
+    }
+
+    if (error instanceof FunctionsHttpError) {
+      const fromHttp = await readHttpErrorMessage(error)
+      throw new Error(
+        getErrorMessage(fromHttp ?? error.message, 'Document extraction failed'),
+      )
+    }
+
+    if (error instanceof FunctionsRelayError) {
+      throw new Error(
+        getErrorMessage(error.message, 'Document extraction failed. Please try again.'),
+      )
+    }
+
+    throw new Error(getErrorMessage(error.message, 'Document extraction failed'))
   }
 
-  if (data && typeof data === 'object' && 'error' in data && (data as { error: unknown }).error) {
-    throw new Error(String((data as { error: unknown }).error))
+  const bodyError = readInvokeErrorBody(data)
+  if (bodyError) {
+    throw new Error(getErrorMessage(bodyError, 'Document extraction failed'))
   }
 
   const payload = data as {

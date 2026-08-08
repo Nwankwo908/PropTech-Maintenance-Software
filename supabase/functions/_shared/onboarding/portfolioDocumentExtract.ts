@@ -519,6 +519,20 @@ export async function extractPortfolioDocument(input: {
 
   if (!response.ok) {
     const text = await response.text().catch(() => "")
+    const lower = text.toLowerCase()
+    if (
+      response.status === 401 ||
+      response.status === 403 ||
+      lower.includes("incorrect api key") ||
+      lower.includes("invalid_api_key")
+    ) {
+      throw new Error(
+        "Document scanning is not configured. Set a valid OPENAI_API_KEY on Supabase Edge secrets.",
+      )
+    }
+    if (response.status === 429 || lower.includes("rate limit")) {
+      throw new Error("Document scanning is busy right now. Please wait a moment and try again.")
+    }
     throw new Error(`Document extract failed (${response.status}): ${text.slice(0, 300)}`)
   }
 

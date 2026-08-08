@@ -521,7 +521,10 @@ export async function runDocumentProcessing(
       extractionStatus: 'failed',
       processingLabel: UPLOAD_STATUS_LABELS.failed,
       uploadProgress: 100,
-      errorMessage: getErrorMessage(err, 'Could not extract this document. Try PDF or CSV.'),
+      errorMessage: getErrorMessage(
+        err,
+        'Could not extract this document. Try again or use PDF, CSV, or Excel.',
+      ),
     }
   }
 

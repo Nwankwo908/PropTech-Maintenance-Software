@@ -151,8 +151,17 @@ export function toUserFriendlyMessage(raw: string, fallback: string): string {
   }
 
   if (
+    lower.includes('openai_api_key') ||
+    lower.includes('incorrect api key') ||
+    lower.includes('invalid_api_key') ||
+    (lower.includes('document scanning') && lower.includes('not configured'))
+  ) {
+    return "Document scanning isn't set up yet. Add a valid OpenAI key to Supabase Edge secrets, then try again."
+  }
+
+  if (
     lower.includes('edge function') ||
-    lower.includes('function') && lower.includes('non-2xx') ||
+    (lower.includes('function') && lower.includes('non-2xx')) ||
     lower.includes('functionsrelayerror')
   ) {
     return "We couldn't complete that request. Please try again."
