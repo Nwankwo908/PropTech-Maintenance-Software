@@ -9,6 +9,7 @@ import { AdminSidebarContent } from '@/components/AdminSidebar'
 import { signOutAdmin } from '@/lib/adminAuth'
 import {
   getActiveLandlordId,
+  getActiveLandlordLabel,
   getSessionLandlordId,
   isDemoAccountActive,
   LANDLORD_ACCOUNT_OPTIONS,
@@ -138,12 +139,12 @@ function AdminTopBar() {
               {resettingOnboarding ? 'Resetting…' : 'Reset onboarding'}
             </button>
             <span className="shrink-0 rounded-full bg-[#dbeafe] px-3 py-1 text-[12px] font-semibold uppercase tracking-[0.06em] text-[#1d4ed8]">
-              New Landlord
+              {getActiveLandlordLabel()}
             </span>
           </>
         ) : (
           <span className="shrink-0 rounded-full bg-[#f3f4f6] px-3 py-1 text-[12px] font-semibold uppercase tracking-[0.06em] text-[#4b5563]">
-            Ulo Operations
+            {getActiveLandlordLabel()}
           </span>
         )}
         {getSessionLandlordId() === null ? (

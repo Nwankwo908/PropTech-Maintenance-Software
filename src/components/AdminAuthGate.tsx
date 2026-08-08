@@ -24,7 +24,7 @@ async function gateStateForSession(session: Session | null): Promise<GateState> 
 
 /**
  * Requires a Supabase session for /admin/* (except /admin/login, which renders outside this gate).
- * Only emeka@ulohome.io and osi@ulohome.io may access admin routes.
+ * Access is limited to allowlisted portal emails (staff, Alpha, demo accounts).
  * In Vite dev without Supabase env, children render so local UI work stays possible.
  */
 export function AdminAuthGate({ children }: { children: React.ReactNode }) {

@@ -10,12 +10,18 @@ export const ADMIN_DEMO_ALLOWED_EMAILS = [
   'newlandlord@ulohome.io',
 ] as const
 
+/** Production landlord portal accounts (client admin login only). */
+export const ADMIN_PRODUCTION_ALLOWED_EMAILS = [
+  'ceorentalsnj@gmail.com',
+] as const
+
 export const ADMIN_LOGIN_EMAIL_DOMAIN = 'property-admin.auth.local'
 
 const coreSet = new Set<string>(ADMIN_CORE_ALLOWED_EMAILS)
 const portalSet = new Set<string>([
   ...ADMIN_CORE_ALLOWED_EMAILS,
   ...ADMIN_DEMO_ALLOWED_EMAILS,
+  ...ADMIN_PRODUCTION_ALLOWED_EMAILS,
 ])
 
 export function loginIdToAdminEmail(loginId: string): string {

@@ -54,6 +54,7 @@ export function AdminLoginPage() {
   const navigate = useNavigate()
   const [searchParams] = useSearchParams()
   const afterLoginPath = safeAdminNextPath(searchParams.get('next'))
+  const oauthDenied = searchParams.get('error') === 'not_authorized'
   const [step, setStep] = useState<'email' | 'otp'>('email')
   const [email, setEmail] = useState('')
   const [otp, setOtp] = useState('')
@@ -202,6 +203,13 @@ export function AdminLoginPage() {
                     : 'Enter the verification code we sent to your email'}
                 </p>
               </div>
+
+              {oauthDenied ? (
+                <p className="mt-6 rounded-lg border border-[#fecaca] bg-[#fef2f2] px-3 py-2 text-[13px] leading-5 text-[#991b1b]" role="alert">
+                  That Google account is not authorized for the admin portal. Sign in with an
+                  allowlisted email (for Alpha, use ceorentalsnj@gmail.com).
+                </p>
+              ) : null}
 
               {step === 'email' ? (
                 <form className="mt-8 flex flex-col gap-4" onSubmit={onContinue} noValidate>

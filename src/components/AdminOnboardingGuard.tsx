@@ -24,8 +24,8 @@ function resolveGuardOnboardingState(
 }
 
 /**
- * Redirects New Landlord accounts to onboarding until setup is complete.
- * Demo and Ulo Operations accounts are never affected.
+ * Redirects Alpha + New Landlord accounts to onboarding until setup is complete.
+ * Demo showcase data is never affected.
  */
 export function AdminOnboardingGuard() {
   const location = useLocation()

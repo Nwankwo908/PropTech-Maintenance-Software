@@ -1,33 +1,40 @@
 /**
- * Onboarding landlord scope guards — New Landlord (empty) only.
+ * Onboarding landlord scope guards — New Landlord (empty) + Alpha (production).
  */
 import {
+  DEFAULT_LANDLORD_ID,
+  DEMO_LANDLORD_ID,
   EMPTY_LANDLORD_ID,
   getActiveLandlordId,
-  getActiveLandlordKind,
 } from '@/lib/activeLandlord'
+
+/** Landlord ids that run the setup wizard until onboarding_status = completed. */
+export const ONBOARDING_LANDLORD_IDS = [EMPTY_LANDLORD_ID, DEFAULT_LANDLORD_ID] as const
+
+export type OnboardingLandlordId = (typeof ONBOARDING_LANDLORD_IDS)[number]
 
 export function isOnboardingLandlordAccount(
   landlordId: string = getActiveLandlordId(),
 ): boolean {
-  return landlordId === EMPTY_LANDLORD_ID || getActiveLandlordKind() === 'empty'
+  return (ONBOARDING_LANDLORD_IDS as readonly string[]).includes(landlordId)
 }
 
-/** Fail closed: onboarding mutations must never write to demo/default landlords. */
+/** Fail closed: onboarding mutations must never write to demo/showcase landlords. */
 export function requireOnboardingLandlord(
   landlordId: string = getActiveLandlordId(),
 ): { ok: true; landlordId: string } | { ok: false; error: string } {
+  if (landlordId === DEMO_LANDLORD_ID) {
+    return {
+      ok: false,
+      error:
+        'Wrong landlord scope — demo data is read-only. Switch to Alpha or New Landlord before onboarding.',
+    }
+  }
   if (!isOnboardingLandlordAccount(landlordId)) {
     return {
       ok: false,
       error:
-        'Wrong landlord scope — switch to New Landlord (empty) before onboarding. Demo and Ulo Operations data stays isolated.',
-    }
-  }
-  if (landlordId !== EMPTY_LANDLORD_ID) {
-    return {
-      ok: false,
-      error: 'Wrong landlord scope — onboarding only writes to the New Landlord account.',
+        'Wrong landlord scope — onboarding only runs on Alpha or New Landlord accounts.',
     }
   }
   return { ok: true, landlordId }

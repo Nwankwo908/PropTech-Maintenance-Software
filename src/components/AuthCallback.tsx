@@ -65,7 +65,9 @@ export function AuthCallback() {
   }, [])
 
   if (phase === 'admin') return <Navigate to="/admin" replace />
-  if (phase === 'denied') return <Navigate to="/admin/login" replace />
+  if (phase === 'denied') {
+    return <Navigate to="/admin/login?error=not_authorized" replace />
+  }
 
   return (
     <div

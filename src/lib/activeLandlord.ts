@@ -4,13 +4,14 @@
  * Every admin dashboard query is scoped to one landlord account:
  *  - demo@ulohome.io        → Demo Property Management (seeded showcase data)
  *  - newlandlord@ulohome.io → New Landlord (empty state / onboarding)
- *  - staff logins           → default landlord (existing operational data),
+ *  - ceorentalsnj@gmail.com → Alpha (real production account)
+ *  - staff logins           → default landlord (Alpha),
  *                             with a dev account switcher override for testing.
  *
  * The login email mapping always wins over the switcher override, so demo data
  * can never leak into a real customer account or vice versa.
  *
- * Onboarding writes are fail-closed to EMPTY_LANDLORD_ID only (see
+ * Onboarding writes are fail-closed to Alpha + New Landlord ids (see
  * requireOnboardingLandlord). Switching to New Landlord always resets via
  * /admin/onboarding?reset=1 so prior fast-track imports cannot linger.
  */
@@ -34,12 +35,13 @@ export type LandlordAccountOption = {
 }
 
 export const LANDLORD_ACCOUNT_OPTIONS: LandlordAccountOption[] = [
-  { kind: 'default', id: DEFAULT_LANDLORD_ID, label: 'Ulo Operations' },
+  { kind: 'default', id: DEFAULT_LANDLORD_ID, label: 'Alpha' },
   { kind: 'demo', id: DEMO_LANDLORD_ID, label: 'Demo Property Management' },
   { kind: 'empty', id: EMPTY_LANDLORD_ID, label: 'New Landlord (empty)' },
 ]
 
 const EMAIL_TO_LANDLORD_ID: Record<string, string> = {
+  'ceorentalsnj@gmail.com': DEFAULT_LANDLORD_ID,
   'demo@ulohome.io': DEMO_LANDLORD_ID,
   'newlandlord@ulohome.io': EMPTY_LANDLORD_ID,
 }
@@ -81,6 +83,11 @@ export function getActiveLandlordKind(): LandlordAccountKind {
   if (id === DEMO_LANDLORD_ID) return 'demo'
   if (id === EMPTY_LANDLORD_ID) return 'empty'
   return 'default'
+}
+
+export function getActiveLandlordLabel(): string {
+  const id = getActiveLandlordId()
+  return LANDLORD_ACCOUNT_OPTIONS.find((opt) => opt.id === id)?.label ?? 'Alpha'
 }
 
 export function isDemoAccountActive(): boolean {
