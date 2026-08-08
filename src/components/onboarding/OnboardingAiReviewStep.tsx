@@ -21,7 +21,6 @@ import {
 } from '@/lib/onboardingDocumentUpload'
 import {
   ONBOARDING_PROPERTY_TYPE_OPTIONS,
-  onboardingPropertyTypeLabel,
   resolveOnboardingPropertyType,
 } from './onboardingFieldStyles'
 import { US_STATE_OPTIONS } from '@/lib/usLocations'
@@ -66,32 +65,37 @@ function unitsForProperty(
   })
 }
 
-function residentNameForUnit(
+function residentForUnit(
   unit: OnboardingExtractedUnit,
   residents: OnboardingExtractedResident[],
-): string {
+): OnboardingExtractedResident | undefined {
   const unitLabel = unit.label.trim().toLowerCase()
   const unitBuilding = normalizeBuildingLabel(unit.building)
-  const match = residents.find((resident) => {
+  return residents.find((resident) => {
     if (resident.unit.trim().toLowerCase() !== unitLabel) return false
     const residentBuilding = normalizeBuildingLabel(resident.building)
     if (unitBuilding && residentBuilding) return unitBuilding === residentBuilding
     return true
   })
-  return match?.fullName.trim() ?? ''
 }
 
-function formatPropertyUnitSummary(
-  units: OnboardingExtractedUnit[],
+function residentsForProperty(
+  property: OnboardingExtractedProperty,
   residents: OnboardingExtractedResident[],
-): string {
-  if (units.length === 0) return 'No units detected'
-  return units
-    .map((unit) => {
-      const tenant = residentNameForUnit(unit, residents)
-      return tenant ? `Unit ${unit.label} · ${tenant}` : `Unit ${unit.label}`
-    })
-    .join(' · ')
+  allProperties: OnboardingExtractedProperty[],
+): OnboardingExtractedResident[] {
+  const identity = propertyIdentity(property)
+  return residents.filter((resident) => {
+    const residentBuilding = normalizeBuildingLabel(resident.building)
+    if (identity && residentBuilding) {
+      return (
+        residentBuilding === identity ||
+        residentBuilding === normalizeBuildingLabel(property.address) ||
+        residentBuilding === normalizeBuildingLabel(property.name)
+      )
+    }
+    return allProperties.length === 1
+  })
 }
 
 function ConfidenceBadge({ value }: { value: number }) {
@@ -121,11 +125,12 @@ function ReviewItemRow({
   onCancelEdit,
   onEditChange,
   children,
+  as = 'li',
 }: {
   checked: boolean
   onToggle: () => void
   label: string
-  value: string
+  value?: string
   sourceDocumentName: string
   confidence: number
   needsReview?: boolean
@@ -138,9 +143,11 @@ function ReviewItemRow({
   onCancelEdit: () => void
   onEditChange: (value: string) => void
   children?: React.ReactNode
+  as?: 'li' | 'div'
 }) {
+  const Wrapper = as
   return (
-    <li className="rounded-[8px] border border-[#eef0f3] px-3 py-3">
+    <Wrapper className="rounded-[8px] border border-[#eef0f3] px-3 py-3">
       <div className="flex items-start gap-3">
         <div className="pt-0.5">
           <TableCheckbox aria-label={`Include ${label}`} checked={checked} onChange={onToggle} />
@@ -191,9 +198,9 @@ function ReviewItemRow({
                 </button>
               </div>
             </div>
-          ) : (
+          ) : value?.trim() ? (
             <p className="mt-1 text-[13px] leading-relaxed text-[#364153]">{value}</p>
-          )}
+          ) : null}
           <p className="mt-1 text-[11px] text-[#9ca3af]">Source: {sourceDocumentName}</p>
           {children}
         </div>
@@ -207,7 +214,7 @@ function ReviewItemRow({
           </button>
         ) : null}
       </div>
-    </li>
+    </Wrapper>
   )
 }
 
@@ -318,12 +325,111 @@ export function OnboardingAiReviewStep({
     setEditDraft('')
   }
 
+  function renderResidentEditFields(item: OnboardingExtractedResident) {
+    return (
+      <div className="mt-3 grid gap-3 border-t border-[#f3f4f6] pt-3 sm:grid-cols-2">
+        <label className="block">
+          <span className={fieldLabelClass}>Building</span>
+          <input
+            className={inputClass}
+            value={item.building}
+            onChange={(e) => patchResident(item.id, { building: e.target.value })}
+            placeholder="Property or building name"
+          />
+        </label>
+        <label className="block">
+          <span className={fieldLabelClass}>Unit</span>
+          <input
+            className={inputClass}
+            value={item.unit}
+            onChange={(e) => patchResident(item.id, { unit: e.target.value })}
+            placeholder="101"
+          />
+        </label>
+        <label className="block">
+          <span className={fieldLabelClass}>Email</span>
+          <input
+            className={inputClass}
+            type="email"
+            value={item.email}
+            onChange={(e) => patchResident(item.id, { email: e.target.value })}
+            placeholder="Email"
+          />
+        </label>
+        <label className="block">
+          <span className={fieldLabelClass}>Phone</span>
+          <input
+            className={inputClass}
+            type="tel"
+            value={item.phone}
+            onChange={(e) => patchResident(item.id, { phone: e.target.value })}
+            placeholder="Phone"
+          />
+        </label>
+        <label className="block">
+          <span className={fieldLabelClass}>Occupancy status</span>
+          <select
+            className={selectClass}
+            value={item.occupancyStatus}
+            onChange={(e) =>
+              patchResident(item.id, {
+                occupancyStatus: normalizeOnboardingOccupancyStatus(e.target.value),
+              })
+            }
+          >
+            {ONBOARDING_OCCUPANCY_STATUS_OPTIONS.map((option) => (
+              <option key={option.value} value={option.value}>
+                {option.label}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="block">
+          <span className={fieldLabelClass}>Monthly rent</span>
+          <input
+            className={inputClass}
+            value={item.monthlyRent}
+            onChange={(e) => patchResident(item.id, { monthlyRent: e.target.value })}
+            placeholder="$2,850"
+          />
+        </label>
+        <label className="block">
+          <span className={fieldLabelClass}>Rent due day (1–31)</span>
+          <input
+            className={inputClass}
+            value={item.rentDueDay}
+            onChange={(e) => patchResident(item.id, { rentDueDay: e.target.value })}
+            placeholder="1"
+          />
+        </label>
+        <label className="block sm:col-span-2">
+          <span className={fieldLabelClass}>Maintenance responsibilities clause</span>
+          <textarea
+            className={`${inputClass} min-h-[72px] resize-y py-2`}
+            value={item.maintenanceResponsibilitiesClause}
+            onChange={(e) =>
+              patchResident(item.id, {
+                maintenanceResponsibilitiesClause: e.target.value,
+              })
+            }
+            placeholder="Optional. Who handles what from the lease."
+          />
+        </label>
+      </div>
+    )
+  }
+
   function renderPropertyRows() {
-    if (review.properties.length === 0 && review.units.length === 0) {
+    if (
+      review.properties.length === 0 &&
+      review.units.length === 0 &&
+      review.residents.length === 0
+    ) {
       return <p className="mt-2 text-[13px] text-[#6a7282]">No properties detected.</p>
     }
 
     const assignedUnitIds = new Set<string>()
+    const assignedResidentIds = new Set<string>()
 
     const propertyRows =
       review.properties.length > 0
@@ -337,13 +443,6 @@ export function OnboardingAiReviewStep({
                 checked={item.selected}
                 onToggle={() => patchProperty(item.id, { selected: !item.selected })}
                 label={item.name}
-                value={[
-                  item.address,
-                  onboardingPropertyTypeLabel(item.propertyType),
-                  formatPropertyUnitSummary(propertyUnits, review.residents),
-                ]
-                  .filter(Boolean)
-                  .join(' · ')}
                 sourceDocumentName={item.sourceDocumentName}
                 confidence={item.confidence}
                 needsReview={item.needsReview}
@@ -460,49 +559,127 @@ export function OnboardingAiReviewStep({
 
                   {propertyUnits.length > 0 ? (
                     <div className="mt-3 border-t border-[#f3f4f6] pt-3">
-                      <p className="text-[12px] font-medium text-[#364153]">Units</p>
-                      <ul className="mt-2 space-y-2">
+                      <p className="text-[12px] font-medium text-[#364153]">Units and residents</p>
+                      <ul className="mt-2 list-none space-y-2 pl-0">
                         {propertyUnits.map((unit) => {
-                          const tenantName = residentNameForUnit(unit, review.residents)
+                          const resident = residentForUnit(unit, review.residents)
+                          if (resident) assignedResidentIds.add(resident.id)
                           return (
-                            <ReviewItemRow
-                              key={unit.id}
-                              checked={unit.selected}
-                              onToggle={() => patchUnit(unit.id, { selected: !unit.selected })}
-                              label={`Unit ${unit.label}`}
-                              value={tenantName || 'No tenant linked'}
-                              sourceDocumentName={unit.sourceDocumentName}
-                              confidence={unit.confidence}
-                              editing={editingId === unit.id}
-                              editValue={editDraft}
-                              editMode="label"
-                              editFieldLabel="Unit number"
-                              onEdit={() => startEdit(unit.id, unit.label)}
-                              onSaveEdit={() => saveEdit('units', 'label', review.units)}
-                              onCancelEdit={() => setEditingId(null)}
-                              onEditChange={setEditDraft}
-                            >
-                              <label className="mt-3 block border-t border-[#f3f4f6] pt-3">
-                                <span className={fieldLabelClass}>Building</span>
-                                <input
-                                  className={inputClass}
-                                  value={unit.building}
-                                  onChange={(e) => patchUnit(unit.id, { building: e.target.value })}
-                                  placeholder="Property or building name"
-                                />
-                              </label>
-                            </ReviewItemRow>
+                            <li key={unit.id} className="list-none space-y-2">
+                              <ReviewItemRow
+                                as="div"
+                                checked={unit.selected}
+                                onToggle={() => patchUnit(unit.id, { selected: !unit.selected })}
+                                label={`Unit ${unit.label}`}
+                                sourceDocumentName={unit.sourceDocumentName}
+                                confidence={unit.confidence}
+                                editing={editingId === unit.id}
+                                editValue={editDraft}
+                                editMode="label"
+                                editFieldLabel="Unit number"
+                                onEdit={() => startEdit(unit.id, unit.label)}
+                                onSaveEdit={() => saveEdit('units', 'label', review.units)}
+                                onCancelEdit={() => setEditingId(null)}
+                                onEditChange={setEditDraft}
+                              >
+                                <label className="mt-3 block border-t border-[#f3f4f6] pt-3">
+                                  <span className={fieldLabelClass}>Building</span>
+                                  <input
+                                    className={inputClass}
+                                    value={unit.building}
+                                    onChange={(e) => patchUnit(unit.id, { building: e.target.value })}
+                                    placeholder="Property or building name"
+                                  />
+                                </label>
+                              </ReviewItemRow>
+                              {resident ? (
+                                <ReviewItemRow
+                                  as="div"
+                                  checked={resident.selected}
+                                  onToggle={() =>
+                                    patchResident(resident.id, { selected: !resident.selected })
+                                  }
+                                  label={resident.fullName}
+                                  sourceDocumentName={resident.sourceDocumentName}
+                                  confidence={resident.confidence}
+                                  needsReview={resident.needsReview}
+                                  editing={editingId === resident.id}
+                                  editValue={editDraft}
+                                  editMode="label"
+                                  editFieldLabel="Resident name"
+                                  onEdit={() => startEdit(resident.id, resident.fullName)}
+                                  onSaveEdit={() =>
+                                    saveEdit('residents', 'fullName', review.residents)
+                                  }
+                                  onCancelEdit={() => setEditingId(null)}
+                                  onEditChange={setEditDraft}
+                                >
+                                  {renderResidentEditFields(resident)}
+                                </ReviewItemRow>
+                              ) : null}
+                            </li>
                           )
                         })}
                       </ul>
                     </div>
                   ) : null}
+
+                  {(() => {
+                    const propertyResidents = residentsForProperty(
+                      item,
+                      review.residents,
+                      review.properties,
+                    ).filter((resident) => !assignedResidentIds.has(resident.id))
+                    if (propertyResidents.length === 0) return null
+                    propertyResidents.forEach((resident) => assignedResidentIds.add(resident.id))
+                    return (
+                      <div className="mt-3 border-t border-[#f3f4f6] pt-3">
+                        <p className="text-[12px] font-medium text-[#364153]">
+                          Residents without a linked unit
+                        </p>
+                        <ul className="mt-2 list-none space-y-2 pl-0">
+                          {propertyResidents.map((resident) => (
+                            <li key={resident.id} className="list-none">
+                              <ReviewItemRow
+                                as="div"
+                                checked={resident.selected}
+                                onToggle={() =>
+                                  patchResident(resident.id, { selected: !resident.selected })
+                                }
+                                label={resident.fullName}
+                                sourceDocumentName={resident.sourceDocumentName}
+                                confidence={resident.confidence}
+                                needsReview={resident.needsReview}
+                                editing={editingId === resident.id}
+                                editValue={editDraft}
+                                editMode="label"
+                                editFieldLabel="Resident name"
+                                onEdit={() => startEdit(resident.id, resident.fullName)}
+                                onSaveEdit={() =>
+                                  saveEdit('residents', 'fullName', review.residents)
+                                }
+                                onCancelEdit={() => setEditingId(null)}
+                                onEditChange={setEditDraft}
+                              >
+                                {renderResidentEditFields(resident)}
+                              </ReviewItemRow>
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    )
+                  })()}
               </ReviewItemRow>
             )
           })
         : []
 
     const orphanUnits = review.units.filter((unit) => !assignedUnitIds.has(unit.id))
+    for (const unit of orphanUnits) {
+      const resident = residentForUnit(unit, review.residents)
+      if (resident) assignedResidentIds.add(resident.id)
+    }
+    const orphanResidents = review.residents.filter((resident) => !assignedResidentIds.has(resident.id))
 
     return (
       <ul className="mt-3 space-y-2">
@@ -512,165 +689,93 @@ export function OnboardingAiReviewStep({
             <p className="text-[12px] font-medium text-[#364153]">Units without a matched property</p>
             <ul className="mt-2 list-none space-y-2 pl-0">
               {orphanUnits.map((unit) => {
-                const tenantName = residentNameForUnit(unit, review.residents)
+                const resident = residentForUnit(unit, review.residents)
+                if (resident) assignedResidentIds.add(resident.id)
                 return (
-                  <ReviewItemRow
-                    key={unit.id}
-                    checked={unit.selected}
-                    onToggle={() => patchUnit(unit.id, { selected: !unit.selected })}
-                    label={`Unit ${unit.label}`}
-                    value={tenantName || 'No tenant linked'}
-                    sourceDocumentName={unit.sourceDocumentName}
-                    confidence={unit.confidence}
-                    editing={editingId === unit.id}
-                    editValue={editDraft}
-                    editMode="label"
-                    editFieldLabel="Unit number"
-                    onEdit={() => startEdit(unit.id, unit.label)}
-                    onSaveEdit={() => saveEdit('units', 'label', review.units)}
-                    onCancelEdit={() => setEditingId(null)}
-                    onEditChange={setEditDraft}
-                  >
-                    <label className="mt-3 block border-t border-[#f3f4f6] pt-3">
-                      <span className={fieldLabelClass}>Building</span>
-                      <input
-                        className={inputClass}
-                        value={unit.building}
-                        onChange={(e) => patchUnit(unit.id, { building: e.target.value })}
-                        placeholder="Property or building name"
-                      />
-                    </label>
-                  </ReviewItemRow>
+                  <li key={unit.id} className="list-none space-y-2">
+                    <ReviewItemRow
+                      as="div"
+                      checked={unit.selected}
+                      onToggle={() => patchUnit(unit.id, { selected: !unit.selected })}
+                      label={`Unit ${unit.label}`}
+                      sourceDocumentName={unit.sourceDocumentName}
+                      confidence={unit.confidence}
+                      editing={editingId === unit.id}
+                      editValue={editDraft}
+                      editMode="label"
+                      editFieldLabel="Unit number"
+                      onEdit={() => startEdit(unit.id, unit.label)}
+                      onSaveEdit={() => saveEdit('units', 'label', review.units)}
+                      onCancelEdit={() => setEditingId(null)}
+                      onEditChange={setEditDraft}
+                    >
+                      <label className="mt-3 block border-t border-[#f3f4f6] pt-3">
+                        <span className={fieldLabelClass}>Building</span>
+                        <input
+                          className={inputClass}
+                          value={unit.building}
+                          onChange={(e) => patchUnit(unit.id, { building: e.target.value })}
+                          placeholder="Property or building name"
+                        />
+                      </label>
+                    </ReviewItemRow>
+                    {resident ? (
+                      <ReviewItemRow
+                        as="div"
+                        checked={resident.selected}
+                        onToggle={() => patchResident(resident.id, { selected: !resident.selected })}
+                        label={resident.fullName}
+                        sourceDocumentName={resident.sourceDocumentName}
+                        confidence={resident.confidence}
+                        needsReview={resident.needsReview}
+                        editing={editingId === resident.id}
+                        editValue={editDraft}
+                        editMode="label"
+                        editFieldLabel="Resident name"
+                        onEdit={() => startEdit(resident.id, resident.fullName)}
+                        onSaveEdit={() => saveEdit('residents', 'fullName', review.residents)}
+                        onCancelEdit={() => setEditingId(null)}
+                        onEditChange={setEditDraft}
+                      >
+                        {renderResidentEditFields(resident)}
+                      </ReviewItemRow>
+                    ) : null}
+                  </li>
                 )
               })}
             </ul>
           </li>
         ) : null}
-      </ul>
-    )
-  }
-
-  function renderResidentRows() {
-    if (review.residents.length === 0) {
-      return <p className="mt-2 text-[13px] text-[#6a7282]">No residents detected.</p>
-    }
-    return (
-      <ul className="mt-3 space-y-2">
-        {review.residents.map((item) => (
-          <ReviewItemRow
-            key={item.id}
-            checked={item.selected}
-            onToggle={() => patchResident(item.id, { selected: !item.selected })}
-            label={item.fullName}
-            value={[formatExtractedUnitPlacement(item.building, item.unit), item.phone, item.email]
-              .filter(Boolean)
-              .join(' · ')}
-            sourceDocumentName={item.sourceDocumentName}
-            confidence={item.confidence}
-            needsReview={item.needsReview}
-            editing={editingId === item.id}
-            editValue={editDraft}
-            editMode="label"
-            editFieldLabel="Resident name"
-            onEdit={() => startEdit(item.id, item.fullName)}
-            onSaveEdit={() => saveEdit('residents', 'fullName', review.residents)}
-            onCancelEdit={() => setEditingId(null)}
-            onEditChange={setEditDraft}
-          >
-            <div className="mt-3 grid gap-3 border-t border-[#f3f4f6] pt-3 sm:grid-cols-2">
-              <p className="sm:col-span-2 text-[12px] font-medium text-[#364153]">
-                Unit assignment and lease details
-              </p>
-              <label className="block">
-                <span className={fieldLabelClass}>Building</span>
-                <input
-                  className={inputClass}
-                  value={item.building}
-                  onChange={(e) => patchResident(item.id, { building: e.target.value })}
-                  placeholder="Property or building name"
-                />
-              </label>
-              <label className="block">
-                <span className={fieldLabelClass}>Unit</span>
-                <input
-                  className={inputClass}
-                  value={item.unit}
-                  onChange={(e) => patchResident(item.id, { unit: e.target.value })}
-                  placeholder="101"
-                />
-              </label>
-              <label className="block">
-                <span className={fieldLabelClass}>Email</span>
-                <input
-                  className={inputClass}
-                  type="email"
-                  value={item.email}
-                  onChange={(e) => patchResident(item.id, { email: e.target.value })}
-                  placeholder="Email"
-                />
-              </label>
-              <label className="block">
-                <span className={fieldLabelClass}>Phone</span>
-                <input
-                  className={inputClass}
-                  type="tel"
-                  value={item.phone}
-                  onChange={(e) => patchResident(item.id, { phone: e.target.value })}
-                  placeholder="Phone"
-                />
-              </label>
-              <label className="block">
-                <span className={fieldLabelClass}>Occupancy status</span>
-                <select
-                  className={selectClass}
-                  value={item.occupancyStatus}
-                  onChange={(e) =>
-                    patchResident(item.id, {
-                      occupancyStatus: normalizeOnboardingOccupancyStatus(e.target.value),
-                    })
-                  }
-                >
-                  {ONBOARDING_OCCUPANCY_STATUS_OPTIONS.map((option) => (
-                    <option key={option.value} value={option.value}>
-                      {option.label}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label className="block">
-                <span className={fieldLabelClass}>Monthly rent</span>
-                <input
-                  className={inputClass}
-                  value={item.monthlyRent}
-                  onChange={(e) => patchResident(item.id, { monthlyRent: e.target.value })}
-                  placeholder="$2,850"
-                />
-              </label>
-              <label className="block">
-                <span className={fieldLabelClass}>Rent due day (1–31)</span>
-                <input
-                  className={inputClass}
-                  value={item.rentDueDay}
-                  onChange={(e) => patchResident(item.id, { rentDueDay: e.target.value })}
-                  placeholder="1"
-                />
-              </label>
-              <label className="block sm:col-span-2">
-                <span className={fieldLabelClass}>Maintenance responsibilities clause</span>
-                <textarea
-                  className={`${inputClass} min-h-[72px] resize-y py-2`}
-                  value={item.maintenanceResponsibilitiesClause}
-                  onChange={(e) =>
-                    patchResident(item.id, {
-                      maintenanceResponsibilitiesClause: e.target.value,
-                    })
-                  }
-                  placeholder="Optional. Who handles what from the lease."
-                />
-              </label>
-            </div>
-          </ReviewItemRow>
-        ))}
+        {orphanResidents.length > 0 ? (
+          <li className="list-none rounded-[8px] border border-[#eef0f3] px-3 py-3">
+            <p className="text-[12px] font-medium text-[#364153]">Residents without a matched property</p>
+            <ul className="mt-2 list-none space-y-2 pl-0">
+              {orphanResidents.map((resident) => (
+                <li key={resident.id} className="list-none">
+                  <ReviewItemRow
+                    as="div"
+                    checked={resident.selected}
+                    onToggle={() => patchResident(resident.id, { selected: !resident.selected })}
+                    label={resident.fullName}
+                    sourceDocumentName={resident.sourceDocumentName}
+                    confidence={resident.confidence}
+                    needsReview={resident.needsReview}
+                    editing={editingId === resident.id}
+                    editValue={editDraft}
+                    editMode="label"
+                    editFieldLabel="Resident name"
+                    onEdit={() => startEdit(resident.id, resident.fullName)}
+                    onSaveEdit={() => saveEdit('residents', 'fullName', review.residents)}
+                    onCancelEdit={() => setEditingId(null)}
+                    onEditChange={setEditDraft}
+                  >
+                    {renderResidentEditFields(resident)}
+                  </ReviewItemRow>
+                </li>
+              ))}
+            </ul>
+          </li>
+        ) : null}
       </ul>
     )
   }
@@ -831,10 +936,6 @@ export function OnboardingAiReviewStep({
   return (
     <section className="rounded-[10px] border border-[#e5e7eb] bg-white p-6 shadow-[0px_1px_2px_-1px_rgba(0,0,0,0.06)]">
       <h2 className="text-[18px] font-semibold text-[#101828]">Review and Approve Information</h2>
-      <p className="mt-1 text-[14px] leading-relaxed text-[#6a7282]">
-        Documents fill most of your portfolio. Complete the fields below that uploads usually miss —
-        nothing is added until you approve.
-      </p>
 
       <div className="mt-4 space-y-3">
         <ReviewSection title="Your organization">
@@ -960,12 +1061,12 @@ export function OnboardingAiReviewStep({
           <>
             <ReviewSection
               title="Properties Found"
-              count={review.properties.length || (review.units.length > 0 ? 1 : 0)}
+              count={
+                review.properties.length ||
+                (review.units.length > 0 || review.residents.length > 0 ? 1 : 0)
+              }
             >
               {renderPropertyRows()}
-            </ReviewSection>
-            <ReviewSection title="Residents Found" count={review.residents.length}>
-              {renderResidentRows()}
             </ReviewSection>
             <ReviewSection title="Lease Information Found" count={review.leases.length}>
               {renderSimpleRows<ExtractedLeaseInfo>(

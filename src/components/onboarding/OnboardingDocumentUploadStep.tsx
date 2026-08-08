@@ -2,9 +2,7 @@ import { useCallback, useRef, useState } from 'react'
 import {
   ACCEPTED_UPLOAD_MIME,
   formatFileSize,
-  UPLOAD_STATUS_LABELS,
   type OnboardingUploadedDocument,
-  type UploadFileStatus,
 } from '@/lib/onboardingDocumentUpload'
 
 const btnPrimary =
@@ -33,24 +31,6 @@ function UploadDocumentsIcon() {
         strokeLinecap="round"
       />
     </svg>
-  )
-}
-
-function statusTone(status: UploadFileStatus): string {
-  if (status === 'ready_for_review') return 'text-[#187930] bg-[#ecfdf3]'
-  if (status === 'needs_attention') return 'text-[#a65f00] bg-[#fef9c2]'
-  if (status === 'failed') return 'text-[#b91c1c] bg-[#fef2f2]'
-  if (status === 'waiting') return 'text-[#6a7282] bg-[#f3f4f6]'
-  return 'text-[#186179] bg-[#eef6fa]'
-}
-
-function FileStatusBadge({ status }: { status: UploadFileStatus }) {
-  return (
-    <span
-      className={`inline-flex rounded-[4px] px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-[0.04em] ${statusTone(status)}`}
-    >
-      {UPLOAD_STATUS_LABELS[status]}
-    </span>
   )
 }
 
@@ -89,13 +69,6 @@ function FileRow({
         </button>
       </div>
 
-      <div className="mt-3 flex flex-wrap items-center gap-2">
-        <FileStatusBadge status={doc.uploadStatus} />
-        {doc.processingLabel && doc.uploadStatus !== 'ready_for_review' ? (
-          <span className="text-[12px] text-[#6a7282]">{doc.processingLabel}</span>
-        ) : null}
-      </div>
-
       {doc.uploadStatus === 'uploading' || isProcessing ? (
         <div className="mt-3">
           <div className="h-1.5 w-full overflow-hidden rounded-full bg-[#f3f4f6]">
@@ -109,19 +82,6 @@ function FileRow({
 
       {doc.errorMessage ? (
         <p className="mt-2 text-[12px] text-[#b91c1c]">{doc.errorMessage}</p>
-      ) : null}
-
-      {doc.imageLabels.length > 0 && doc.uploadStatus === 'ready_for_review' ? (
-        <div className="mt-2 flex flex-wrap gap-1.5">
-          {doc.imageLabels.map((label) => (
-            <span
-              key={label}
-              className="rounded-[4px] bg-[#f3f4f6] px-2 py-0.5 text-[11px] font-medium text-[#364153]"
-            >
-              {label}
-            </span>
-          ))}
-        </div>
       ) : null}
 
       {doc.hasHandwriting && doc.uploadStatus === 'handwriting' ? (
