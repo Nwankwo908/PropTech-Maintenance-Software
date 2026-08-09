@@ -85,19 +85,19 @@ begin
      0, 1.0, 0, 'Semi-annual', false, 'monitor', null, 'inspection', 'inspection',
      jsonb_build_object('seed', 'demo_preventive_maintenance')),
     (asset_boiler, demo_landlord, '301', 'Pine Ridge', 'boiler_service', 'Boiler annual service',
-     0, 1.0, 0, 'Annual cycle', false, 'monitor', null, 'inspection', 'service',
+     0, 1.0, 0, 'Annual cycle', false, 'monitor', null, 'inspection', 'inspection',
      jsonb_build_object('seed', 'demo_preventive_maintenance')),
     (asset_co, demo_landlord, null, 'Pine Ridge', 'co_detector_test', 'Corridor CO detector test',
      0, 1.0, 0, 'Annual cycle', false, 'monitor', null, 'inspection', 'inspection',
      jsonb_build_object('seed', 'demo_preventive_maintenance', 'scope', 'common_area')),
     (asset_dryer, demo_landlord, null, 'Oakwood Apartments', 'dryer_vent_cleaning', 'Common laundry dryer vent cleaning',
-     0, 1.0, 0, 'Semi-annual', false, 'monitor', null, 'inspection', 'service',
+     0, 1.0, 0, 'Semi-annual', false, 'monitor', null, 'inspection', 'inspection',
      jsonb_build_object('seed', 'demo_preventive_maintenance', 'scope', 'common_area')),
     (asset_filter, demo_landlord, null, 'Maple Heights', 'hvac_filter_change', 'Quarterly HVAC filter change',
-     0, 0.25, 0, 'Quarterly cycle', false, 'monitor', null, 'inspection', 'service',
+     0, 0.25, 0, 'Quarterly cycle', false, 'monitor', null, 'inspection', 'inspection',
      jsonb_build_object('seed', 'demo_preventive_maintenance', 'scope', 'common_area')),
     (asset_furnace_tune, demo_landlord, '201', 'Willow Park', 'furnace_tune', 'Annual furnace tune-up',
-     0, 1.0, 0, 'Annual cycle', false, 'monitor', null, 'inspection', 'service',
+     0, 1.0, 0, 'Annual cycle', false, 'monitor', null, 'inspection', 'inspection',
      jsonb_build_object('seed', 'demo_preventive_maintenance'));
 
   -- Workflow runs -------------------------------------------------------------

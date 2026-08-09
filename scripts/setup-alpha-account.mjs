@@ -116,7 +116,6 @@ async function ensureAlphaAuthUser() {
 }
 
 async function main() {
-  await purgeLandlord(DEMO_LANDLORD_ID, 'Demo')
   await purgeLandlord(ALPHA_LANDLORD_ID, 'Alpha')
 
   const { error: landlordError } = await supabase
@@ -139,7 +138,7 @@ async function main() {
 Alpha is ready:
   • Log in at /admin/login with ${ALPHA_EMAIL}
   • Portfolio is empty — add properties/residents from the dashboard
-  • Demo showcase data has been wiped (do not re-run seed_demo_landlord_account.sql)
+  • Demo showcase (${DEMO_LANDLORD_ID}) is unchanged — re-seed with scripts/seed-demo-portfolio.mjs if needed
 `)
 }
 
