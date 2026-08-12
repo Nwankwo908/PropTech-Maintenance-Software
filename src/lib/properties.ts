@@ -253,14 +253,36 @@ export async function linkUnitsToProperty(params: {
   }
 
   const building = params.buildingName.trim()
+  const { data: unitRows, error: loadError } = await supabase
+    .from('units')
+    .select('id, building, property_id')
+    .eq('landlord_id', params.landlordId)
+
+  if (loadError) {
+    return { ok: false, error: getErrorMessage(loadError, "Couldn't link units to the property.") }
+  }
+
+  const buildingLower = building.toLowerCase()
+  const unitIds = (unitRows ?? [])
+    .filter((row) => {
+      const raw = row as { id: string; building?: string | null; property_id?: string | null }
+      if (raw.property_id === params.propertyId) return true
+      const label = String(raw.building ?? '').trim()
+      if (!label) return false
+      const labelLower = label.toLowerCase()
+      return labelLower === buildingLower || labelLower.startsWith(`${buildingLower} (`)
+    })
+    .map((row) => String((row as { id: string }).id))
+
+  if (unitIds.length === 0) return { ok: true }
+
   const { error } = await supabase
     .from('units')
     .update({
       property_id: params.propertyId,
       building,
     })
-    .eq('landlord_id', params.landlordId)
-    .ilike('building', building)
+    .in('id', unitIds)
 
   if (error) {
     return { ok: false, error: getErrorMessage(error, "Couldn't link units to the property.") }

@@ -7,7 +7,7 @@ let cachedProvider: SMSProvider | null = null
 let cachedProviderName: SmsProviderName | null = null
 
 export function resolveProviderName(): SmsProviderName {
-  const raw = Deno.env.get("SMS_PROVIDER")?.trim().toLowerCase() || "twilio"
+  const raw = Deno.env.get("SMS_PROVIDER")?.trim().toLowerCase() || "telnyx"
   if (raw === "twilio") return "twilio"
   if (raw === "telnyx") return "telnyx"
   throw new Error(`Unknown SMS_PROVIDER: ${raw}`)

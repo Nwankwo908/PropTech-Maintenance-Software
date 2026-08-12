@@ -1,18 +1,13 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
-import { Link, useNavigate, useParams } from 'react-router-dom'
+import { Link, useLocation, useNavigate, useParams } from 'react-router-dom'
 import { syncSmsIdentity } from '@/api/landlordSmsOnboarding'
 import {
-  activateTenantAfterAdd,
   clearActivationFailureOnPhoneUpdate,
   phoneChanged,
-  phoneNewlyAdded,
   resendTenantActivationSms,
-  tenantActivationWarningMessage,
+  sendTenantWelcomeSms,
 } from '@/api/tenantActivation'
-import {
-  TenantActivationActionRequiredActions,
-  TenantActivationStatusChip,
-} from '@/components/TenantActivationStatusChip'
+import { TenantActivationStatusChip } from '@/components/TenantActivationStatusChip'
 import {
   EditResidentModal,
   type EditResidentModalRow,
@@ -28,13 +23,11 @@ import {
   buildResidentProfileDetail,
   displayResidentEmail,
   isPlaceholderResidentEmail,
-  RESIDENT_STANDING_STYLES,
   type ResidentCommunicationItem,
   type ResidentProfileDetail,
 } from '@/lib/residentProfileDetail'
 import { unitOptionKeyToCell } from '@/lib/residentUnitKeys'
 import {
-  buildingDetailPath,
   parsePropertyRouteSlug,
   propertyDetailPath,
   propertyResidentDetailPath,
@@ -45,7 +38,6 @@ import {
   conversationStatusLabel,
   conversationTypeLabel,
 } from '@/lib/propertyConversations'
-import { deleteResidentsForLandlord } from '@/lib/residentDeletion'
 import { resolveTenantActivationChip } from '@/lib/tenantActivationStatus'
 import { supabase } from '@/lib/supabase'
 import { getErrorMessage } from '@/lib/errorMessage'
@@ -408,6 +400,7 @@ function ProfileContent({ profile }: { profile: ResidentProfileDetail }) {
 export function AdminPropertyResidentDetailDashboard() {
   const { propertySlug, residentId } = useParams<{ propertySlug: string; residentId: string }>()
   const navigate = useNavigate()
+  const location = useLocation()
   const [building, setBuilding] = useState<string | null>(null)
   const [propertyId, setPropertyId] = useState<string | null>(null)
 
@@ -416,7 +409,6 @@ export function AdminPropertyResidentDetailDashboard() {
   const [buildingUnits, setBuildingUnits] = useState<PropertyUnitOption[]>([])
   const [buildingResidents, setBuildingResidents] = useState<PropertyResidentOption[]>([])
   const [editOpen, setEditOpen] = useState(false)
-  const [deleteSaving, setDeleteSaving] = useState(false)
   const [actionError, setActionError] = useState<string | null>(null)
   const [resendingActivation, setResendingActivation] = useState(false)
   const [loading, setLoading] = useState(true)
@@ -653,15 +645,27 @@ export function AdminPropertyResidentDetailDashboard() {
     void loadResident()
   }, [loadResident])
 
-  const backHref = useMemo(
+  const backFallbackHref = useMemo(
     () =>
       propertyId
         ? propertyDetailPath(propertyId, 'residents')
-        : building
-          ? buildingDetailPath(building, 'residents')
-          : '/admin/properties',
-    [propertyId, building],
+        : '/admin/residents',
+    [propertyId],
   )
+
+  function handleBack() {
+    const from = (location.state as { from?: string } | null)?.from
+    if (typeof from === 'string' && from.startsWith('/')) {
+      navigate(from)
+      return
+    }
+    const historyIdx = (window.history.state as { idx?: number } | null)?.idx
+    if (typeof historyIdx === 'number' && historyIdx > 0) {
+      navigate(-1)
+      return
+    }
+    navigate(backFallbackHref)
+  }
 
   const editResidentRow = useMemo(
     () => (editOpen && loadedUser ? toEditResidentRow(loadedUser) : null),
@@ -725,58 +729,7 @@ export function AdminPropertyResidentDetailDashboard() {
       })
     }
 
-    if (phoneNewlyAdded(previousPhone, payload.phone)) {
-      const activation = await activateTenantAfterAdd({
-        landlordId: getActiveLandlordId(),
-        residentId: payload.id,
-        phone: payload.phone,
-      })
-      const warning = tenantActivationWarningMessage(activation)
-      if (warning) setActionError(warning)
-    }
-
     setEditOpen(false)
-    await loadResident()
-  }
-
-  async function handleDeleteResident() {
-    if (!loadedUser || !supabase) return
-    const confirmed = window.confirm(
-      `Delete ${loadedUser.fullName}? This removes their profile from your roster.`,
-    )
-    if (!confirmed) return
-
-    setActionError(null)
-    setDeleteSaving(true)
-
-    const result = await deleteResidentsForLandlord({
-      landlordId: getActiveLandlordId(),
-      residentIds: [loadedUser.id],
-    })
-
-    if (!result.ok) {
-      setActionError(result.error)
-      setDeleteSaving(false)
-      return
-    }
-
-    navigate(backHref)
-  }
-
-  async function handleResendWelcome() {
-    if (!loadedUser) return
-    setActionError(null)
-    setResendingActivation(true)
-    const result = await resendTenantActivationSms({
-      residentId: loadedUser.id,
-    })
-    setResendingActivation(false)
-    if (!result.ok || (result.failed ?? 0) > 0) {
-      setActionError(
-        result.error ||
-          'Welcome text could not be delivered. Check the phone number and try again.',
-      )
-    }
     await loadResident()
   }
 
@@ -788,6 +741,29 @@ export function AdminPropertyResidentDetailDashboard() {
         activationSmsSentAt: loadedUser.activationSmsSentAt,
       })
     : null
+
+  const showStartOnboarding =
+    activationChip &&
+    activationChip.status !== 'activated' &&
+    activationChip.status !== 'opted_out' &&
+    activationChip.status !== 'waiting'
+
+  async function handleStartOnboarding() {
+    if (!loadedUser || !activationChip) return
+    setActionError(null)
+    setResendingActivation(true)
+    const result = activationChip.actionRequired
+      ? await resendTenantActivationSms({ residentId: loadedUser.id })
+      : await sendTenantWelcomeSms({ residentId: loadedUser.id })
+    setResendingActivation(false)
+    if (!result.ok || (result.failed ?? 0) > 0) {
+      setActionError(
+        result.error ||
+          'Welcome text could not be delivered. Check the phone number and try again.',
+      )
+    }
+    await loadResident()
+  }
 
   if (!building) {
     if (loading) {
@@ -810,12 +786,13 @@ export function AdminPropertyResidentDetailDashboard() {
   return (
     <main className="property-resident-detail-enter flex min-h-0 flex-1 flex-col px-8 pb-12">
       <div className="py-6">
-        <Link
-          to={backHref}
+        <button
+          type="button"
+          onClick={handleBack}
           className="sa-link inline-flex items-center gap-1 text-[13px] font-medium text-[#6a7282] hover:text-[#101828]"
         >
-          <span aria-hidden>←</span> Back to {profile?.buildingShort ?? building.replace(/\s+Apartments$/i, '')}
-        </Link>
+          <span aria-hidden>←</span> Back
+        </button>
 
         {loading ? (
           <div className="mt-6">
@@ -837,46 +814,27 @@ export function AdminPropertyResidentDetailDashboard() {
                 </p>
                 {activationChip ? (
                   <div className="mt-3 flex flex-col gap-2">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <span className="text-[12px] font-medium text-[#6a7282]">
-                        Activation
-                      </span>
-                      <TenantActivationStatusChip chip={activationChip} />
-                    </div>
-                    <p className="max-w-xl text-[12px] leading-4 text-[#6a7282]">
-                      {activationChip.detail}
-                    </p>
-                    {activationChip.actionRequired ? (
-                      <TenantActivationActionRequiredActions
-                        phone={loadedUser?.phone}
-                        resending={resendingActivation}
-                        onResend={() => void handleResendWelcome()}
-                        onEditPhone={() => setEditOpen(true)}
-                      />
+                    <TenantActivationStatusChip chip={activationChip} />
+                    {showStartOnboarding ? (
+                      <button
+                        type="button"
+                        disabled={resendingActivation}
+                        onClick={() => void handleStartOnboarding()}
+                        className="sa-press inline-flex h-9 w-fit items-center rounded-[10px] bg-[#187960] px-4 text-[13px] font-medium leading-5 text-white hover:bg-[#146b52] disabled:opacity-50"
+                      >
+                        {resendingActivation ? 'Sending…' : 'Start onboarding'}
+                      </button>
                     ) : null}
                   </div>
                 ) : null}
               </div>
               <div className="flex flex-wrap items-center gap-2">
-                <span
-                  className={`rounded-[4px] px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.06em] ${RESIDENT_STANDING_STYLES[profile.standing]}`}
-                >
-                  {profile.standingLabel}
-                </span>
                 <button
                   type="button"
                   onClick={() => setEditOpen(true)}
                   className="sa-press inline-flex h-9 items-center rounded-[10px] border border-[#e5e7eb] bg-white px-4 text-[13px] font-medium leading-5 text-[#101828] hover:bg-[#f9fafb]"
                 >
                   Edit profile
-                </button>
-                <button
-                  type="button"
-                  onClick={() => void handleDeleteResident()}
-                  disabled={deleteSaving}
-                  className="sa-press inline-flex h-9 items-center rounded-[10px] border border-[#fecaca] bg-white px-4 text-[13px] font-medium leading-5 text-[#b91c1c] hover:bg-[#fef2f2] disabled:opacity-50"
-                >
-                  {deleteSaving ? 'Deleting…' : 'Delete resident'}
                 </button>
               </div>
             </div>

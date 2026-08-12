@@ -13,6 +13,7 @@ import {
   normalizeReviewManualAccount,
   type OnboardingReviewManualAccount,
 } from '@/lib/onboardingReviewManual'
+import { FAST_TRACK_DEFAULT_PROPERTY_TYPE } from '@/components/onboarding/onboardingFieldStyles'
 import { supabase } from '@/lib/supabase'
 
 export type { OnboardingReviewManualAccount } from '@/lib/onboardingReviewManual'
@@ -1027,7 +1028,7 @@ function mergeExtractedDocuments(
         city: item.city,
         state: item.state,
         zipCode: item.zipCode,
-        propertyType: item.propertyType || 'multifamily',
+        propertyType: item.propertyType || FAST_TRACK_DEFAULT_PROPERTY_TYPE,
         unitCount: item.unitCount,
         unitLabels: '',
         propertyManagerName: '',
@@ -1261,7 +1262,7 @@ export function normalizeExtractionReview(
     city: item.city ?? '',
     state: item.state ?? '',
     zipCode: item.zipCode ?? '',
-    propertyType: item.propertyType || 'multifamily',
+    propertyType: item.propertyType || FAST_TRACK_DEFAULT_PROPERTY_TYPE,
     propertyManagerName: item.propertyManagerName ?? '',
     propertyManagerPhone: item.propertyManagerPhone ?? '',
   }))

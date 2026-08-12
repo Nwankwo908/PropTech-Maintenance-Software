@@ -19,23 +19,13 @@ import { supabase } from '@/lib/supabase'
 import {
   IconArrowRight,
   IconClose,
+  IconGraph,
   LANDING_DOCUMENT_IMPORT_ICONS,
   IconMenu,
 } from '@/components/landing/LandingIcons'
 import { FeaturesShowcase } from '@/components/landing/FeaturesShowcase'
 import { BeforeAfterWorkflowSection } from '@/components/landing/BeforeAfterWorkflowSection'
-import { HowItWorksStepReveal, HowItWorksStepsGrid } from '@/components/landing/HowItWorksStepReveal'
-import smrStep from '@/assets/SMR_1.png'
-import vaStep from '@/assets/VC_0_1.png'
-import vcStep from '@/assets/VC_2_1.png'
-import jtStep from '@/assets/JT_1.png'
-
-const HOW_IT_WORKS_STEPS = [
-  { src: smrStep, alt: 'Smart Maintenance Requests' },
-  { src: vaStep, alt: 'Vendor Communication' },
-  { src: vcStep, alt: 'Vendor Coordination dashboard' },
-  { src: jtStep, alt: 'Job Tracking' },
-] as const
+import howItWorksIpad from '@/assets/iPad Pro (portrait).png'
 
 const TEAL_GRADIENT =
   'linear-gradient(169deg, rgb(34, 154, 127) 0%, rgb(14, 92, 68) 100%)'
@@ -49,12 +39,22 @@ const LANDING_NAV = `mx-auto flex w-full ${LANDING_VIEWPORT_GUTTER}`
 /** Desktop offset from gutter (logo zone + 56px divider gap). */
 const LANDING_CONTENT_ALIGN = '2xl:ml-[calc(8.25rem+3.5rem)]'
 
-/** Full-page vertical divider — wide desktop only. */
-const LANDING_NAV_DIVIDER =
-  'pointer-events-none absolute inset-y-0 left-[calc(3.5rem+8.25rem)] z-[51] hidden w-px bg-gray-200/60 2xl:block'
+/** Right edge of header logo column — viewport gutter + logo width + pr-6. */
+const LANDING_LOGO_COLUMN_RULE_LEFT =
+  'left-[calc(1.5rem+121px+1.5rem)] lg:left-[calc(3.5rem+108px+1.5rem)]'
 
-/** Horizontal section rules — align with LANDING_NAV_DIVIDER on wide desktop. */
-const LANDING_SECTION_RULE = 'border-gray-200/80 2xl:ml-[8.25rem]'
+/** Vertical rule aligned with the header logo column’s right border. */
+const LANDING_LOGO_COLUMN_DIVIDER = `pointer-events-none absolute w-px bg-gray-200/60 ${LANDING_LOGO_COLUMN_RULE_LEFT}`
+
+/** Section content inset — right of logo-column divider + 56px gap; keeps right viewport gutter. */
+const LANDING_BEYOND_LOGO_COLUMN_INSET =
+  'w-full pl-[calc(1.5rem+121px+1.5rem+3.5rem)] pr-6 lg:pl-[calc(3.5rem+108px+1.5rem+3.5rem)] lg:pr-14'
+
+/** Full-page vertical divider — wide desktop only. */
+const LANDING_NAV_DIVIDER = `${LANDING_LOGO_COLUMN_DIVIDER} inset-y-0 z-[51] hidden 2xl:block`
+
+/** Full-bleed horizontal rule — spans viewport edge to edge. */
+const LANDING_FULL_WIDTH_RULE = 'border-gray-200/80'
 
 /** Consistent vertical gap between landing sections — 64px. */
 const LANDING_SECTION_GAP = 'pb-16'
@@ -189,8 +189,7 @@ function HeroHeadlineAndCopy() {
           width: fullWidthCopy ? undefined : copyWidth,
         }}
       >
-        From routine maintenance to emergency repairs, Ulo creates work orders, dispatches the right
-        vendor, and tracks every repair from request to resolution.
+        Ulo helps landlords automate day-to-day maintenance, rent collection, and tenant communication through SMS workflows. No apps required for tenants or vendors.
       </p>
     </>
   )
@@ -257,6 +256,8 @@ export function LandingPage() {
   const [earlyAccessOpen, setEarlyAccessOpen] = useState(false)
   const [earlyAccessSuccess, setEarlyAccessSuccess] = useState(false)
   const [earlyAccessReferralLink, setEarlyAccessReferralLink] = useState('')
+  const [earlyAccessInitialEmail, setEarlyAccessInitialEmail] = useState('')
+  const [heroWaitlistEmail, setHeroWaitlistEmail] = useState('')
   useEffect(() => {
     primeUiClickSound()
   }, [])
@@ -314,11 +315,12 @@ export function LandingPage() {
     })()
   }, [])
 
-  function openEarlyAccess() {
+  function openEarlyAccess(prefillEmail?: string) {
     playUiClickSound()
     setMobileMenuOpen(false)
     setEarlyAccessSuccess(false)
     setEarlyAccessReferralLink('')
+    setEarlyAccessInitialEmail(prefillEmail?.trim() ?? '')
     setEarlyAccessOpen(true)
   }
 
@@ -332,6 +334,12 @@ export function LandingPage() {
     setEarlyAccessOpen(false)
     setEarlyAccessSuccess(false)
     setEarlyAccessReferralLink('')
+    setEarlyAccessInitialEmail('')
+  }
+
+  function submitHeroWaitlistEmail(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    openEarlyAccess(heroWaitlistEmail)
   }
 
   const navLinks = [
@@ -375,7 +383,7 @@ export function LandingPage() {
               >
                 Login
               </Link>
-              <PrimaryButton onClick={openEarlyAccess} className="ml-2 inline-flex">
+              <PrimaryButton onClick={() => openEarlyAccess()} className="ml-2 inline-flex">
                 Request Early Access
                 <IconArrowRight />
               </PrimaryButton>
@@ -414,7 +422,7 @@ export function LandingPage() {
                 Login
               </Link>
               <PrimaryButton
-                onClick={openEarlyAccess}
+                onClick={() => openEarlyAccess()}
                 className="w-full justify-center py-3.5"
               >
                 Request Early Access
@@ -447,17 +455,13 @@ export function LandingPage() {
               }
             >
               <div className="relative z-10 min-w-0 w-full max-w-full max-[1019px]:max-w-none [@media(min-width:1024px)_and_(max-width:1100px)_and_(min-height:850px)_and_(max-height:920px)]:max-w-[22rem] [@media(min-width:1024px)_and_(max-width:1100px)_and_(min-height:850px)_and_(max-height:920px)]:shrink [@media(min-width:1021px)_and_(max-width:1440px)_and_(min-height:1400px)_and_(max-height:1500px)]:ml-0 [@media(min-width:1021px)_and_(max-width:1440px)_and_(min-height:1400px)_and_(max-height:1500px)]:max-w-[clamp(20rem,38vw,40rem)] [@media(min-width:1021px)_and_(max-width:1440px)_and_(min-height:1400px)_and_(max-height:1500px)]:shrink [@media(min-width:1021px)_and_(max-width:1440px)_and_(min-height:1400px)_and_(max-height:1500px)]:pr-0 min-[1440px]:ml-0 min-[1440px]:max-w-[var(--hero-copy-max-w)] min-[1440px]:pr-0 min-[1440px]:shrink">
-                <span className="inline-flex max-w-full flex-wrap items-center gap-2 rounded-full border border-[#e5e7eb] bg-white px-3 py-1.5 font-mono text-[10px] font-bold uppercase leading-snug tracking-wide text-black sm:px-4 sm:py-2 sm:text-xs [@media(min-width:1021px)_and_(max-width:1440px)_and_(min-height:1400px)_and_(max-height:1500px)]:flex-nowrap [@media(min-width:1021px)_and_(max-width:1440px)_and_(min-height:1400px)_and_(max-height:1500px)]:whitespace-nowrap [@media(min-width:1021px)_and_(max-width:1440px)_and_(min-height:1400px)_and_(max-height:1500px)]:gap-0 [@media(min-width:1021px)_and_(max-width:1440px)_and_(min-height:1400px)_and_(max-height:1500px)]:text-[9px] [@media(min-width:1021px)_and_(max-width:1440px)_and_(min-height:1400px)_and_(max-height:1500px)]:tracking-tight">
-                  <span className="inline-flex items-center gap-2 [@media(min-width:1021px)_and_(max-width:1440px)_and_(min-height:1400px)_and_(max-height:1500px)]:hidden">
-                    <span className="size-2 shrink-0 rounded-full bg-[#7dd3fc]" aria-hidden />
-                    What If Rental Maintenance Ran Itself?
+                <span className="inline-flex max-w-full flex-wrap items-center gap-2 rounded-full border border-black/[0.04] bg-black/[0.06] px-[17px] py-[9px] shadow-[0px_2px_8px_0px_rgba(16,185,129,0.1)]">
+                  <span className="landing-alpha-status-dot" aria-hidden />
+                  <span className="font-mono text-[12px] font-normal leading-4 text-[#059669]">
+                    Now in Alpha
                   </span>
-                  <span className="hidden [@media(min-width:1021px)_and_(max-width:1440px)_and_(min-height:1400px)_and_(max-height:1500px)]:inline-flex [@media(min-width:1021px)_and_(max-width:1440px)_and_(min-height:1400px)_and_(max-height:1500px)]:items-center [@media(min-width:1021px)_and_(max-width:1440px)_and_(min-height:1400px)_and_(max-height:1500px)]:whitespace-nowrap">
-                    <span className="inline-flex items-center gap-1">
-                      <span className="size-2 shrink-0 rounded-full bg-[#7dd3fc]" aria-hidden />
-                      What
-                    </span>
-                    <span> If Rental Maintenance Ran Itself?</span>
+                  <span className="inline-flex shrink-0 items-center justify-center rounded-full bg-[#55b6a1] px-2 py-1 text-[12px] font-medium leading-normal text-white">
+                    Pilot Program
                   </span>
                 </span>
 
@@ -465,13 +469,21 @@ export function LandingPage() {
 
                 <div className="mt-5 flex w-full max-w-full flex-col items-stretch sm:mt-6 sm:items-start">
                   <div className="flex w-full flex-col items-stretch gap-3 sm:w-auto sm:flex-row sm:items-center">
-                    <PrimaryButton
-                      onClick={openEarlyAccess}
-                      className="w-full justify-center px-7 py-3.5 sm:w-auto sm:py-4"
+                    <form
+                      onSubmit={submitHeroWaitlistEmail}
+                      className="w-full sm:w-auto"
                     >
-                      Request Early Access
-                      <IconArrowRight />
-                    </PrimaryButton>
+                      <input
+                        type="email"
+                        name="email"
+                        autoComplete="email"
+                        placeholder="Enter your email"
+                        value={heroWaitlistEmail}
+                        onChange={(event) => setHeroWaitlistEmail(event.target.value)}
+                        className="sa-surface h-full w-full rounded-lg border border-[#55B6A1] bg-white px-7 py-3.5 text-sm font-medium text-[#0f1623] outline-none placeholder:text-[#6b7280] focus:border-[#55B6A1] focus:ring-2 focus:ring-[#55B6A1]/25 sm:w-[min(100%,20rem)] sm:py-4 sm:text-base"
+                        aria-label="Email for early access"
+                      />
+                    </form>
                     <ExploreDemoButton
                       onClick={exploreDemo}
                       className="w-full justify-center sm:w-auto"
@@ -520,69 +532,56 @@ export function LandingPage() {
         <section id="how-it-works" className={`scroll-mt-20 ${LANDING_SECTION_GAP}`}>
           <LandingContentShell>
           <div className="sa-surface rounded-3xl border border-gray-200/80 bg-white p-6 shadow-[0_20px_30px_rgba(0,0,0,0.03),0_1px_1.5px_rgba(0,0,0,0.02)] sm:p-10 lg:shadow-none">
-            <h2 className="sa-pill inline-flex items-center gap-2 rounded-full border border-[#e5e7eb] bg-white px-4 py-2 font-mono text-xs font-bold uppercase tracking-wide text-slate-900">
-              <span className="size-2 shrink-0 rounded-full bg-[#7dd3fc]" aria-hidden />
-              How it Works
-            </h2>
+            <div className="flex justify-center">
+              <h2 className="sa-pill inline-flex items-center gap-2 rounded-full bg-white px-4 py-2 font-mono text-xs font-normal uppercase tracking-wide text-slate-900">
+                <IconGraph className="size-4 shrink-0 text-[#81228A]" />
+                Property Dashboard
+              </h2>
+            </div>
 
-            <div className="mt-4 grid grid-cols-1 gap-6 lg:grid-cols-2 lg:gap-10 lg:items-start">
+            <div className="mt-4 flex flex-col items-center gap-4 text-center">
               <p className="font-[family-name:var(--font-landing-heading)] text-[48px] font-medium leading-[1.1] tracking-[-0.02em] text-slate-900">
-                From report to resolution in four simple steps
+                Every workflow keeps your properties running smoothly
               </p>
-              <p className="text-lg font-normal leading-relaxed text-slate-700">
-                Ulo automates the day to day work of rental property ownership so landlords get their time back and tenants get faster, better service.
+              <p className="max-w-2xl text-lg font-normal leading-relaxed text-slate-700">
+                One view across all your properties; built from every job, text, and vendor interaction.
               </p>
             </div>
 
-            <HowItWorksStepsGrid className="mt-10 grid grid-cols-1 items-start gap-4 sm:grid-cols-2 lg:grid-cols-4">
-              {HOW_IT_WORKS_STEPS.map((step, index) => (
-                <HowItWorksStepReveal
-                  key={`${step.alt}-${index}`}
-                  index={index}
-                  className="sa-card sa-press group mx-auto w-[91%] overflow-hidden rounded-2xl border border-[#e5e7eb] bg-white shadow-[0_1px_3px_rgba(0,0,0,0.04)] hover:shadow-[0_20px_25px_-5px_rgba(0,0,0,0.05)] motion-reduce:transition-none"
-                >
-                  <img
-                    src={step.src}
-                    alt={step.alt}
-                    className="block h-auto w-full origin-center transition-transform duration-500 ease-out group-hover:-translate-y-2 group-hover:scale-[1.03] motion-reduce:transition-none motion-reduce:group-hover:translate-y-0 motion-reduce:group-hover:scale-100"
-                    loading="lazy"
-                    decoding="async"
-                  />
-                </HowItWorksStepReveal>
-              ))}
-            </HowItWorksStepsGrid>
+            <div className="mt-10 flex justify-center">
+              <img
+                src={howItWorksIpad}
+                alt="Ulo property operations dashboard on iPad"
+                className="block h-auto w-full max-w-5xl"
+                loading="lazy"
+                decoding="async"
+              />
+            </div>
           </div>
           </LandingContentShell>
         </section>
 
         {/* Features */}
-        <section id="features" className={`scroll-mt-20 overflow-visible ${LANDING_SECTION_GAP}`}>
-          <div className={LANDING_VIEWPORT_GUTTER}>
-            <div className={`border-t ${LANDING_SECTION_RULE}`} aria-hidden />
-          </div>
-          <LandingContentShell
-            className="overflow-visible pb-24 pt-16"
-            contentClassName="overflow-visible"
-          >
+        <section id="features" className={`relative scroll-mt-20 overflow-visible ${LANDING_SECTION_GAP}`}>
+          <div className={`border-t ${LANDING_FULL_WIDTH_RULE}`} aria-hidden />
+          <div className={`${LANDING_LOGO_COLUMN_DIVIDER} top-0 bottom-0`} aria-hidden />
+          <div className={`${LANDING_BEYOND_LOGO_COLUMN_INSET} overflow-visible pb-24 pt-16`}>
           <div>
             <h2 className="sa-pill inline-flex items-center gap-2 rounded-full border border-[#e5e7eb] bg-white px-4 py-2 font-mono text-xs font-bold uppercase tracking-wide text-black">
               <span className="size-2 shrink-0 rounded-full bg-[#7dd3fc]" aria-hidden />
               Features
             </h2>
-            <div className="mt-4 grid grid-cols-1 gap-6 lg:grid-cols-2 lg:gap-10 lg:items-start">
+            <div className="mt-4">
               <p className="font-[family-name:var(--font-landing-heading)] text-[48px] font-medium leading-[1.1] tracking-[-0.02em] text-[#111827]">
-                Everything your property needs, automated.
-              </p>
-              <p className="text-lg font-normal leading-relaxed text-[#4b5563]">
-              Ulo communicates with vendors, tracks progress, and follows up automatically so repairs stay on track. It can automate up to 80% of the coordination work that normally falls on landlords.
+                Every workflow your property needs.
               </p>
             </div>
           </div>
 
           <FeaturesShowcase />
-          </LandingContentShell>
-          <div className={LANDING_VIEWPORT_GUTTER}>
-            <div className={`border-b ${LANDING_SECTION_RULE}`} aria-hidden />
+          </div>
+          <div className={LANDING_BEYOND_LOGO_COLUMN_INSET}>
+            <div className={`border-b ${LANDING_FULL_WIDTH_RULE}`} aria-hidden />
           </div>
         </section>
 
@@ -630,6 +629,7 @@ export function LandingPage() {
         onClose={closeEarlyAccess}
         initialSuccess={earlyAccessSuccess}
         initialReferralLink={earlyAccessReferralLink}
+        initialEmail={earlyAccessInitialEmail}
       />
     </div>
   )

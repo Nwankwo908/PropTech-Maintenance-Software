@@ -74,10 +74,8 @@ export function buildUnitOptionsFromPropertyPayload(
 ): { value: string; label: string }[] {
   const n = Number.parseInt(p.totalUnits.trim(), 10)
   if (!Number.isFinite(n) || n < 1) return []
-  const name = p.propertyName.trim()
-  const city = p.city.trim()
-  const state = p.state.trim()
-  const building = name ? `${name} (${city}, ${state})` : `${city}, ${state}`
+  const building = p.propertyName.trim()
+  if (!building) return []
   const out: { value: string; label: string }[] = []
   for (let i = 1; i <= n; i++) {
     const unit = `Unit ${i}`

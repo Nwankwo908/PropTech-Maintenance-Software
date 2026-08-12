@@ -4,7 +4,7 @@ import { classifyAskUloIntent } from "../../routing/detectIntent.ts"
 import {
   buildFallbackAskUloAnswer,
   type AskUloToolPackets,
-} from "../../synthesis/synthesizeAnswer.ts"
+} from "../../synthesis/index.ts"
 import {
   classifyTaskContract,
   evaluateTaskCompletionQc,

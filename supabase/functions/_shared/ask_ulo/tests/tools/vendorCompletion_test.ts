@@ -15,7 +15,7 @@ import {
   hasSubjectMismatch,
 } from "../../routing/detectSubject.ts"
 import { classifyTaskContract } from "../../tools/maintenance/taskCompletion.ts"
-import { synthesizeAskUloAnswer } from "../../synthesis/synthesizeAnswer.ts"
+import { synthesizeAskUloAnswer } from "../../synthesis/index.ts"
 
 Deno.test("highest completion rate routes to vendor_completion — not property priority", () => {
   const q = "Which vendor has the highest completion rate?"

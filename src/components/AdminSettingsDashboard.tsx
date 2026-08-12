@@ -3,43 +3,7 @@ import { AdminBillingSettings } from '@/components/AdminBillingSettings'
 import { AdminConnectedEmailSettings } from '@/components/AdminConnectedEmailSettings'
 import { AdminNotificationSettings } from '@/components/AdminNotificationSettings'
 import { AdminOrganizationSettings } from '@/components/AdminOrganizationSettings'
-
-type SettingsCategory = {
-  id: string
-  title: string
-  description: string
-  href?: string
-  activeOnExactPath?: string
-  comingSoon?: boolean
-}
-
-const SETTINGS_CATEGORIES: SettingsCategory[] = [
-  {
-    id: 'organization',
-    title: 'Organization',
-    description: 'Company profile, branding, and time zone.',
-    href: '/admin/settings/organization',
-    activeOnExactPath: '/admin/settings',
-  },
-  {
-    id: 'connected-email',
-    title: 'Connected Email',
-    description: 'Discover leases, invoices, and inspection reports from your inbox.',
-    href: '/admin/settings/integrations/email',
-  },
-  {
-    id: 'billing',
-    title: 'Billing',
-    description: 'Beta access, subscription details, and future billing.',
-    href: '/admin/settings/billing',
-  },
-  {
-    id: 'notifications',
-    title: 'Notifications',
-    description: 'Operational alerts by event, channel, and priority.',
-    href: '/admin/settings/operations/notifications',
-  },
-]
+import { getAdminSettingsNavCategories } from '@/lib/adminNavigation'
 
 function settingsCardClassName(active: boolean, interactive: boolean) {
   return [
@@ -58,7 +22,7 @@ function SettingsCategoryCard({
   active,
   index = 0,
 }: {
-  category: SettingsCategory
+  category: ReturnType<typeof getAdminSettingsNavCategories>[number]
   active: boolean
   index?: number
 }) {
@@ -76,44 +40,20 @@ function SettingsCategoryCard({
   const enterClass = 'sa-enter-scale'
   const enterStyle = { animationDelay: `${Math.min(index, 8) * 40}ms` }
 
-  if (category.href) {
-    return (
-      <Link
-        to={category.href}
-        className={`${enterClass} ${settingsCardClassName(active, true)}`}
-        style={enterStyle}
-      >
-        {content}
-      </Link>
-    )
-  }
-
-  if (category.comingSoon) {
-    return (
-      <div
-        className={`${enterClass} ${settingsCardClassName(active, false)}`}
-        style={enterStyle}
-        aria-disabled="true"
-        title="Coming soon"
-      >
-        {content}
-      </div>
-    )
-  }
-
   return (
-    <div
-      className={`${enterClass} ${settingsCardClassName(active, false)}`}
+    <Link
+      to={category.href}
+      className={`${enterClass} ${settingsCardClassName(active, true)}`}
       style={enterStyle}
-      aria-current={active ? 'page' : undefined}
     >
       {content}
-    </div>
+    </Link>
   )
 }
 
 function SettingsHome() {
   const { pathname } = useLocation()
+  const settingsCategories = getAdminSettingsNavCategories()
 
   return (
     <>
@@ -127,10 +67,10 @@ function SettingsHome() {
       </div>
 
       <div className="grid gap-4 sm:grid-cols-2">
-        {SETTINGS_CATEGORIES.map((category, index) => {
+        {settingsCategories.map((category, index) => {
           const active =
             (category.activeOnExactPath != null && pathname === category.activeOnExactPath) ||
-            (category.href != null && pathname.startsWith(category.href))
+            pathname.startsWith(category.href)
 
           return (
             <SettingsCategoryCard

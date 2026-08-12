@@ -6,6 +6,9 @@ import { AskUloProvider, useAskUlo } from '@/components/AskUloContext'
 import { AskUloPanel } from '@/components/AskUloPanel'
 import uloLogo from '@/assets/landing/ulo-logo.png'
 import { AdminSidebarContent } from '@/components/AdminSidebar'
+import { IconClose, IconMenu } from '@/components/landing/LandingIcons'
+import type { SidebarAdminProfile } from '@/constants/sidebarAdminProfile'
+import { useSidebarAdminProfile } from '@/hooks/useSidebarAdminProfile'
 import { signOutAdmin } from '@/lib/adminAuth'
 import {
   getActiveLandlordId,
@@ -46,25 +49,78 @@ function AiSparkleIcon() {
   )
 }
 
-function AdminHeaderActions({ onNavigate }: { onNavigate?: () => void }) {
+function AdminSignOutButton({
+  className,
+  onNavigate,
+}: {
+  className: string
+  onNavigate?: () => void
+}) {
   const navigate = useNavigate()
 
+  if (!supabase) return null
+
   return (
-    <div className="flex shrink-0 items-center gap-2">
-      <AdminUloNotificationsBell onNavigate={onNavigate} />
-      {supabase ? (
-        <button
-          type="button"
+    <button
+      type="button"
+      className={className}
+      onClick={async (event) => {
+        event.stopPropagation()
+        await signOutAdmin()
+        onNavigate?.()
+        navigate('/admin/login', { replace: true })
+      }}
+    >
+      Sign out
+    </button>
+  )
+}
+
+function AdminProfileAvatar({
+  profile,
+  compact = false,
+}: {
+  profile: SidebarAdminProfile
+  compact?: boolean
+}) {
+  return (
+    <div
+      className={[
+        'flex shrink-0 items-center justify-center rounded-full bg-[#9E439F] font-semibold leading-none tracking-[-0.02em] text-white',
+        compact ? 'size-[1.8rem] text-[10px]' : 'size-9 text-[12px]',
+      ].join(' ')}
+      title={`${profile.name} · ${profile.email}`}
+      aria-label={profile.name}
+    >
+      {profile.initials}
+    </div>
+  )
+}
+
+function AdminHeaderActions({
+  onNavigate,
+  showSignOut = true,
+  compact = false,
+  showProfileAvatar = false,
+}: {
+  onNavigate?: () => void
+  showSignOut?: boolean
+  compact?: boolean
+  showProfileAvatar?: boolean
+}) {
+  const { profile, hideProfile } = useSidebarAdminProfile()
+
+  return (
+    <div className={['flex shrink-0 items-center', compact ? 'gap-4' : 'gap-2'].join(' ')}>
+      <AdminUloNotificationsBell compact={compact} onNavigate={onNavigate} />
+      {showProfileAvatar && !hideProfile && profile ? (
+        <AdminProfileAvatar profile={profile} compact={compact} />
+      ) : null}
+      {showSignOut ? (
+        <AdminSignOutButton
           className="shrink-0 cursor-pointer rounded-[10px] border border-[#e5e7eb] bg-white px-3 py-1.5 text-[13px] font-medium text-[#364153] outline-none transition-colors duration-150 hover:bg-[#f3f4f6] active:bg-[#e5e7eb] focus-visible:ring-2 focus-visible:ring-[#101828] focus-visible:ring-offset-2"
-          onClick={async (e) => {
-            e.stopPropagation()
-            await signOutAdmin()
-            onNavigate?.()
-            navigate('/admin/login', { replace: true })
-          }}
-        >
-          Sign out
-        </button>
+          onNavigate={onNavigate}
+        />
       ) : null}
     </div>
   )
@@ -246,35 +302,46 @@ export function AdminLayout() {
             ref={mobileNavRef}
             className="group shrink-0 border-b border-[#e5e7eb] bg-white lg:hidden"
           >
-            <summary className="flex cursor-pointer list-none items-center justify-between gap-2 px-8 py-8 [&::-webkit-details-marker]:hidden">
+            <summary
+              className="flex cursor-pointer list-none items-center justify-between gap-1.5 pl-[1.4rem] pr-4 py-[1.4rem] [&::-webkit-details-marker]:hidden"
+              aria-label="Open navigation menu"
+            >
               <div className="flex min-w-0 items-center gap-2">
                 <img
                   src={uloLogo}
                   alt="Ulo Home"
-                  className="h-8 w-auto shrink-0 object-contain"
+                  className="h-[2.4rem] w-auto shrink-0 object-contain"
                 />
-                <div className="min-w-0">
-                  <p className="truncate text-[14px] font-semibold text-[#101828]">
-                    Admin Panel
-                  </p>
-                  <p className="text-[11px] text-[#6a7282]">Property Mgmt</p>
-                </div>
               </div>
-              <div className="flex shrink-0 items-center gap-2">
+              <div className="flex shrink-0 items-center gap-4">
                 <AdminHeaderActions
+                  compact
+                  showProfileAvatar
+                  showSignOut={false}
                   onNavigate={() => mobileNavRef.current?.removeAttribute('open')}
                 />
-                <span className="shrink-0 text-[12px] font-medium text-[#364153] group-open:rotate-180">
-                <svg className="size-5" viewBox="0 0 24 24" fill="none" stroke="currentColor">
-                  <path d="M6 9l6 6 6-6" strokeWidth={2} />
-                </svg>
+                <span
+                  className="flex size-8 shrink-0 items-center justify-center rounded-[8px] border border-[#e5e7eb] bg-white text-[#364153]"
+                  aria-hidden
+                >
+                  <IconMenu className="size-4 group-open:hidden" />
+                  <IconClose className="hidden size-4 group-open:block" />
                 </span>
               </div>
             </summary>
             <div className="flex max-h-[min(70dvh,520px)] flex-col overflow-hidden border-t border-[#e5e7eb]">
-              <AdminSidebarContent
-                onNavigate={() => mobileNavRef.current?.removeAttribute('open')}
-              />
+              <div className="min-h-0 flex-1 overflow-y-auto">
+                <AdminSidebarContent
+                  hideBrand
+                  onNavigate={() => mobileNavRef.current?.removeAttribute('open')}
+                />
+              </div>
+              <div className="shrink-0 border-t border-[#e5e7eb] p-4">
+                <AdminSignOutButton
+                  className="flex h-11 w-full cursor-pointer items-center justify-center rounded-[10px] border border-[#e5e7eb] bg-white px-4 text-[14px] font-medium text-[#364153] outline-none transition-colors duration-150 hover:bg-[#f3f4f6] active:bg-[#e5e7eb] focus-visible:ring-2 focus-visible:ring-[#101828] focus-visible:ring-offset-2"
+                  onNavigate={() => mobileNavRef.current?.removeAttribute('open')}
+                />
+              </div>
             </div>
           </details>
 

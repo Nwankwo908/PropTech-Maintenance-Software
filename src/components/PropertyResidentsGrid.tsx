@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import type { PropertyResidentCard } from '@/lib/propertyResidentCards'
-import { propertyResidentDetailPath } from '@/lib/propertyRoutes'
+import { propertyResidentDetailPath, propertyResidentDetailPathForBuilding } from '@/lib/propertyRoutes'
 
 type PropertyResidentsGridProps = {
   building: string
@@ -23,7 +23,9 @@ function ResidentCard({
 }) {
   const navigate = useNavigate()
   const [selecting, setSelecting] = useState(false)
-  const path = propertyResidentDetailPath(propertyId ?? building, resident.id)
+  const path = propertyId
+    ? propertyResidentDetailPath(propertyId, resident.id)
+    : propertyResidentDetailPathForBuilding(building, resident.id, new Map())
 
   function handleSelect() {
     if (selecting) return

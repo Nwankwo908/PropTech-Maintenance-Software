@@ -5,6 +5,10 @@ import { supabase } from '@/lib/supabase'
 import { formatVendorTradeLabel } from '@/lib/vendorTrades'
 import { parseVendorId } from '@/lib/vendorRoutes'
 import {
+  vendorCapacityChipVisualClasses,
+  type VendorCapacityChipStatus,
+} from '@/lib/vendorStatusChip'
+import {
   buildVendorComplianceProfile,
   type VendorComplianceItem,
   type VendorComplianceProfile,
@@ -16,6 +20,12 @@ import {
   type VerificationItemStatus,
   type VerificationRecord,
 } from '@/lib/vendorVerificationChecklist'
+import { InviteVendorModal } from '@/components/InviteVendorModal'
+import {
+  VendorFormModal,
+  type VendorManagementRow,
+  type VendorNotificationChannel,
+} from '@/components/VendorFormModal'
 
 type VendorRecord = {
   id: string
@@ -27,6 +37,8 @@ type VendorRecord = {
   rosterStatus: string | null
   performanceReview: string | null
   rosterStatusReason: string | null
+  notificationChannel: VendorNotificationChannel
+  portalApiKey: string | null
 }
 
 function performanceReviewLabel(value: string | null): string | null {
@@ -39,28 +51,6 @@ function performanceReviewLabel(value: string | null): string | null {
       return 'Suspension review'
     default:
       return null
-  }
-}
-
-function capacityChipClasses(status: VendorComplianceProfile['capacity']['status']): {
-  pill: string
-  dot: string
-} {
-  switch (status) {
-    case 'active':
-      return { pill: 'bg-[#dbfce7] text-[#008236]', dot: 'bg-[#00a63e]' }
-    case 'docs_submitted':
-      return { pill: 'bg-[#e0e7ff] text-[#3730a3]', dot: 'bg-[#4338ca]' }
-    case 'pending':
-      return { pill: 'bg-[#fef9c3] text-[#92400e]', dot: 'bg-[#d97706]' }
-    case 'paused':
-      return { pill: 'bg-[#f3f4f6] text-[#6a7282]', dot: 'bg-[#9ca3af]' }
-    case 'suspended':
-      return { pill: 'bg-[#ffedd5] text-[#9a3412]', dot: 'bg-[#ea580c]' }
-    case 'banned':
-      return { pill: 'bg-[#fee2e2] text-[#991b1b]', dot: 'bg-[#dc2626]' }
-    default:
-      return { pill: 'bg-[#f3f4f6] text-[#6a7282]', dot: 'bg-[#9ca3af]' }
   }
 }
 
@@ -182,6 +172,9 @@ export function AdminVendorDetailDashboard() {
   const [vendor, setVendor] = useState<VendorRecord | null>(null)
   const [metrics, setMetrics] = useState<VendorMetrics | null>(null)
   const [verification, setVerification] = useState<VerificationRecord | null>(null)
+  const [inviteOpen, setInviteOpen] = useState(false)
+  const [editOpen, setEditOpen] = useState(false)
+  const [inviteNotice, setInviteNotice] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
@@ -199,7 +192,7 @@ export function AdminVendorDetailDashboard() {
       supabase
         .from('vendors')
         .select(
-          'id, name, category, active, roster_status, roster_status_reason, performance_review, email, phone',
+          'id, name, category, active, roster_status, roster_status_reason, performance_review, email, phone, notification_channel, portal_api_key',
         )
         .eq('landlord_id', landlordId)
         .eq('id', vendorId)
@@ -235,6 +228,10 @@ export function AdminVendorDetailDashboard() {
       return
     }
 
+    const notificationRaw = asString(raw.notification_channel)
+    const notificationChannel: VendorNotificationChannel =
+      notificationRaw === 'sms' || notificationRaw === 'both' ? notificationRaw : 'email'
+
     setVendor({
       id: asString(raw.id),
       name: asString(raw.name) || 'Unnamed vendor',
@@ -245,6 +242,8 @@ export function AdminVendorDetailDashboard() {
       rosterStatus: asString(raw.roster_status) || null,
       rosterStatusReason: asString(raw.roster_status_reason) || null,
       performanceReview: asString(raw.performance_review) || null,
+      notificationChannel,
+      portalApiKey: asString(raw.portal_api_key) || null,
     })
 
     if (scoresResult.status === 'fulfilled' && !scoresResult.value.error) {
@@ -299,6 +298,26 @@ export function AdminVendorDetailDashboard() {
     return computeVerificationChecklist(verification)
   }, [verification])
 
+  const editVendorRow = useMemo((): VendorManagementRow | null => {
+    if (!vendor) return null
+    return {
+      id: vendor.id,
+      name: vendor.name,
+      category: vendor.category,
+      email: vendor.email,
+      phone: vendor.phone,
+      notification_channel: vendor.notificationChannel,
+      active: vendor.active,
+      portal_api_key: vendor.portalApiKey,
+    }
+  }, [vendor])
+
+  const canSendVerificationInvite = Boolean(
+    vendor &&
+      (vendor.phone?.trim() || vendor.email?.trim()) &&
+      (verification?.status ?? '') !== 'verified',
+  )
+
   if (!loading && !vendor) {
     return (
       <main className="flex min-h-0 flex-1 flex-col px-8 pb-12 pt-6">
@@ -334,32 +353,63 @@ export function AdminVendorDetailDashboard() {
                 ? ' '
                 : [tradeLabel, vendor?.phone, vendor?.email].filter(Boolean).join(' · ')}
             </p>
+            {!loading && compliance ? (
+              <div className="mt-3 flex flex-col gap-2">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span
+                    title={compliance.capacity.detail}
+                    className={[
+                      'inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-[12px] font-medium',
+                      vendorCapacityChipVisualClasses(
+                        compliance.capacity.status as VendorCapacityChipStatus,
+                      ).pill,
+                    ].join(' ')}
+                  >
+                    <span
+                      className={`inline-block size-2 rounded-full ${
+                        vendorCapacityChipVisualClasses(
+                          compliance.capacity.status as VendorCapacityChipStatus,
+                        ).dot
+                      }`}
+                      aria-hidden
+                    />
+                    {compliance.capacity.label}
+                  </span>
+                  {performanceReviewLabel(vendor?.performanceReview ?? null) ? (
+                    <span className="inline-flex items-center rounded-full bg-[#fff7ed] px-3 py-1 text-[12px] font-medium text-[#9a3412]">
+                      {performanceReviewLabel(vendor?.performanceReview ?? null)}
+                    </span>
+                  ) : null}
+                </div>
+                {canSendVerificationInvite ? (
+                  <button
+                    type="button"
+                    onClick={() => setInviteOpen(true)}
+                    className="sa-press inline-flex h-9 w-fit items-center rounded-[10px] bg-[#187960] px-4 text-[13px] font-medium leading-5 text-white hover:bg-[#146b52]"
+                  >
+                    Start onboarding
+                  </button>
+                ) : null}
+              </div>
+            ) : null}
           </div>
-          <div className="flex flex-wrap items-center gap-2">
-            {compliance ? (
-              <span
-                title={compliance.capacity.detail}
-                className={[
-                  'inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-[12px] font-medium',
-                  capacityChipClasses(compliance.capacity.status).pill,
-                ].join(' ')}
+          {!loading && vendor ? (
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setEditOpen(true)}
+                className="sa-press inline-flex h-9 items-center rounded-[10px] border border-[#e5e7eb] bg-white px-4 text-[13px] font-medium leading-5 text-[#101828] hover:bg-[#f9fafb]"
               >
-                <span
-                  className={`inline-block size-2 rounded-full ${
-                    capacityChipClasses(compliance.capacity.status).dot
-                  }`}
-                  aria-hidden
-                />
-                {compliance.capacity.label}
-              </span>
-            ) : null}
-            {performanceReviewLabel(vendor?.performanceReview ?? null) ? (
-              <span className="inline-flex items-center rounded-full bg-[#fff7ed] px-3 py-1 text-[12px] font-medium text-[#9a3412]">
-                {performanceReviewLabel(vendor?.performanceReview ?? null)}
-              </span>
-            ) : null}
-          </div>
+                Edit profile
+              </button>
+            </div>
+          ) : null}
         </div>
+        {inviteNotice ? (
+          <p className="mt-3 rounded-lg border border-[#bbf7d0] bg-[#f0fdf4] px-3 py-2 text-[13px] leading-5 text-[#166534]">
+            {inviteNotice}
+          </p>
+        ) : null}
         {vendor?.performanceReview === 'suspension_review' ||
         (vendor?.rosterStatusReason ?? '').startsWith('misconduct') ? (
           <p className="mt-3 rounded-lg border border-[#fed7aa] bg-[#fff7ed] px-3 py-2 text-[13px] leading-5 text-[#9a3412]">
@@ -376,7 +426,7 @@ export function AdminVendorDetailDashboard() {
         </div>
       ) : compliance && vendor ? (
         <div className="flex flex-col gap-8">
-          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
             <StatTile
               label="Rating"
               value={metrics?.rating != null ? metrics.rating.toFixed(1) : '—'}
@@ -500,7 +550,9 @@ export function AdminVendorDetailDashboard() {
               <div className="mt-3 flex items-center gap-2">
                 <span
                   className={`inline-block size-2.5 rounded-full ${
-                    capacityChipClasses(compliance.capacity.status).dot
+                    vendorCapacityChipVisualClasses(
+                      compliance.capacity.status as VendorCapacityChipStatus,
+                    ).dot
                   }`}
                   aria-hidden
                 />
@@ -518,6 +570,36 @@ export function AdminVendorDetailDashboard() {
           </section>
         </div>
       ) : null}
+
+      <InviteVendorModal
+        open={inviteOpen}
+        onClose={() => setInviteOpen(false)}
+        prefill={
+          vendor
+            ? {
+                vendorId: vendor.id,
+                businessName: vendor.name,
+                email: vendor.email ?? undefined,
+                phone: vendor.phone ?? undefined,
+              }
+            : undefined
+        }
+        onInvited={() => {
+          setInviteOpen(false)
+          setInviteNotice('Verification invite sent. The vendor can complete their profile from the link.')
+          void loadVendor()
+        }}
+      />
+      <VendorFormModal
+        open={editOpen}
+        mode="edit"
+        initial={editVendorRow}
+        onClose={() => setEditOpen(false)}
+        onSaved={() => {
+          setEditOpen(false)
+          void loadVendor()
+        }}
+      />
     </main>
   )
 }

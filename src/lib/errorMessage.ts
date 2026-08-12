@@ -116,6 +116,15 @@ export function toUserFriendlyMessage(raw: string, fallback: string): string {
   }
 
   if (lower.includes('check constraint') || lower.includes('violates check')) {
+    if (lower.includes('vendors_category') || lower.includes('category_check')) {
+      return 'Please select a valid specialty from the list.'
+    }
+    if (lower.includes('phone_format') || lower.includes('vendors_phone')) {
+      return 'Enter a valid phone number like (555) 123-4567.'
+    }
+    if (lower.includes('notification_channel')) {
+      return 'Choose a delivery channel that matches the contact info you entered.'
+    }
     return "Some of the information entered isn't valid. Please review and try again."
   }
 

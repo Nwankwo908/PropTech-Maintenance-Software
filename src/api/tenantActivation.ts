@@ -230,6 +230,36 @@ export function tenantActivationWarningMessage(
 }
 
 /**
+ * Landlord-initiated first welcome send. Best-effort — never throws.
+ */
+export async function sendTenantWelcomeSms(params: {
+  landlordId?: string
+  residentId: string
+  companyName?: string | null
+}): Promise<TenantActivationSummary> {
+  const residentId = params.residentId.trim()
+  if (!residentId) {
+    return { ok: false, configured: true, error: 'Missing resident id.' }
+  }
+
+  const landlordId = params.landlordId?.trim() || getActiveLandlordId()
+  let companyName = params.companyName?.trim() || null
+  if (!companyName && landlordId) {
+    try {
+      companyName = await loadLandlordCompanyName(landlordId)
+    } catch {
+      companyName = null
+    }
+  }
+
+  return sendTenantActivationSms({
+    landlordId,
+    residentIds: [residentId],
+    companyName,
+  })
+}
+
+/**
  * Landlord-initiated resend. Restarts the automatic retry sequence after a
  * successful send (attempt 1 again). Best-effort — never throws.
  */

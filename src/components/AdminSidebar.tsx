@@ -10,6 +10,10 @@ import askUloDockRailIcon from '@/assets/ask-ulo-dock-rail.png'
 import { AskUloConversationSidebar } from '@/components/AskUloConversationSidebar'
 import { useAskUlo, withAskUloSearch } from '@/components/AskUloContext'
 import { useSidebarAdminProfile } from '@/hooks/useSidebarAdminProfile'
+import {
+  getAdminSidebarNavItems,
+  type AdminNavId,
+} from '@/lib/adminNavigation'
 
 const navBase =
   'flex min-h-[44px] w-full cursor-pointer items-center gap-3 whitespace-nowrap rounded-[10px] px-4 text-left text-[14px] font-medium tracking-[-0.1504px] outline-none transition-colors duration-150 focus-visible:ring-2 focus-visible:ring-[#101828] focus-visible:ring-offset-2 focus-visible:ring-offset-white'
@@ -101,11 +105,32 @@ function SidebarChromeGlyph({ src }: { src: string }) {
 }
 
 type NavItem = {
+  id: AdminNavId
   to: string
   end?: boolean
   label: string
   icon: ReactNode
   onClick?: () => void
+}
+
+const ADMIN_NAV_ICONS: Record<AdminNavId, ReactNode> = {
+  overview: <OverviewIcon />,
+  onboarding: <OverviewIcon />,
+  properties: <PropertiesIcon />,
+  property_detail: <PropertiesIcon />,
+  property_resident_detail: <PropertiesIcon />,
+  communication: <MessagesIcon />,
+  requests: <OperationsIcon />,
+  vendors: <VendorsIcon />,
+  vendor_detail: <VendorsIcon />,
+  workflows: <OperationsIcon />,
+  residents: <img src={residentsIcon} alt="" className="size-5" />,
+  analytics: <img src={graphIcon} alt="" className="size-5" />,
+  settings: <img src={settingIcon} alt="" className="size-5" />,
+  settings_organization: <img src={settingIcon} alt="" className="size-5" />,
+  settings_connected_email: <img src={settingIcon} alt="" className="size-5" />,
+  settings_billing: <img src={settingIcon} alt="" className="size-5" />,
+  settings_notifications: <img src={settingIcon} alt="" className="size-5" />,
 }
 
 export function AdminSidebarContent({
@@ -114,12 +139,15 @@ export function AdminSidebarContent({
   collapsed = false,
   onCollapse,
   onExpand,
+  hideBrand = false,
 }: {
   onNavigate?: () => void
   forRail?: boolean
   collapsed?: boolean
   onCollapse?: () => void
   onExpand?: () => void
+  /** Mobile drawer — brand already shown in the header bar. */
+  hideBrand?: boolean
 }) {
   const { profile, hideProfile } = useSidebarAdminProfile()
   const {
@@ -148,63 +176,20 @@ export function AdminSidebarContent({
     ? isCollapsedRail
       ? 'items-center px-2 pt-6 pb-4'
       : 'px-4 pt-6 pb-4'
-    : 'px-8 py-8'
+    : hideBrand
+      ? 'px-8 pt-4 pb-8'
+      : 'px-8 py-8'
   const footerPad = forRail ? (isCollapsedRail ? 'p-2' : 'p-4') : 'px-8 py-8'
 
-  const items: NavItem[] = [
-    {
-      to: '/admin',
-      end: true,
-      label: 'Overview',
-      icon: <OverviewIcon />,
-      onClick: onNavigate,
-    },
-    {
-      to: '/admin/properties',
-      label: 'Properties',
-      icon: <PropertiesIcon />,
-      onClick: onNavigate,
-    },
-    {
-      to: '/admin/communication',
-      label: 'Messages',
-      icon: <MessagesIcon />,
-      onClick: onNavigate,
-    },
-    {
-      to: '/admin/vendors',
-      label: 'Vendors',
-      icon: <VendorsIcon />,
-      onClick: onNavigate,
-    },
-    {
-      to: '/admin/workflows',
-      label: 'Active Tasks',
-      icon: <OperationsIcon />,
-      onClick: onNavigate,
-    },
-    {
-      to: '/admin/residents',
-      label: 'Residents',
-      icon: <img src={residentsIcon} alt="" className="size-5" />,
-      onClick: onNavigate,
-    },
-    {
-      to: '/admin/analytics',
-      label: 'Analytics',
-      icon: <img src={graphIcon} alt="" className="size-5" />,
-      onClick: onNavigate,
-    },
-    {
-      to: '/admin/settings',
-      label: 'Settings',
-      icon: <img src={settingIcon} alt="" className="size-5" />,
-      onClick: onNavigate,
-    },
-  ]
+  const items: NavItem[] = getAdminSidebarNavItems().map((item) => ({
+    ...item,
+    icon: ADMIN_NAV_ICONS[item.id],
+    onClick: onNavigate,
+  }))
 
   return (
     <div className="flex min-h-0 w-full flex-1 flex-col overflow-hidden">
+      {!hideBrand ? (
       <div className={`shrink-0 border-b border-[#e5e7eb] ${gutter}`}>
         {isCollapsedRail ? (
           <div className="flex flex-col items-center gap-1">
@@ -286,6 +271,7 @@ export function AdminSidebarContent({
           </div>
         )}
       </div>
+      ) : null}
 
       <nav
         className={`flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto overscroll-y-contain ${navPad}`}

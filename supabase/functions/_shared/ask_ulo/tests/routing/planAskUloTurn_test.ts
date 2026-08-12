@@ -22,6 +22,12 @@ Deno.test("planAskUloTurn: late rent returns required search_residents + retriev
     "late_rent",
   )
   assertEquals(plan.retrievalNeeds.needsListResidents, true)
+  assertEquals(
+    plan.plannedTools.some((t) =>
+      t.name === "search_residents" || t.name === "rank_properties"
+    ),
+    true,
+  )
   assertEquals(typeof plan.toolSelectSource, "string")
   assertEquals(plan.classification.subject, "resident")
   assertEquals(plan.decision.propertyLabel, "Maple Heights")

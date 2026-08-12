@@ -51,6 +51,7 @@ type EarlyAccessModalProps = {
   onClose: () => void
   initialSuccess?: boolean
   initialReferralLink?: string
+  initialEmail?: string
 }
 
 export function EarlyAccessModal({
@@ -58,6 +59,7 @@ export function EarlyAccessModal({
   onClose,
   initialSuccess = false,
   initialReferralLink = '',
+  initialEmail = '',
 }: EarlyAccessModalProps) {
   const [email, setEmail] = useState('')
   const [error, setError] = useState<string | null>(null)
@@ -91,9 +93,9 @@ export function EarlyAccessModal({
     setCopyLabel('Copy Link')
     if (!initialSuccess) {
       setError(null)
-      setEmail('')
+      setEmail(initialEmail)
     }
-  }, [open, initialSuccess, initialReferralLink])
+  }, [open, initialSuccess, initialReferralLink, initialEmail])
 
   useEffect(() => {
     if (!open) return

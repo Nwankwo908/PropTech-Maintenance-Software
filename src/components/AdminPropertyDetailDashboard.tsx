@@ -37,16 +37,20 @@ import { fetchPmCompliance, type PmComplianceTask } from '@/lib/pmCompliance'
 import { buildVendorNegotiationBrief } from '@/lib/vendorNegotiationBrief'
 import {
   buildPropertyHealthReport,
-  computeOccupancyStats,
+  computeGridOccupancyForBuilding,
   enrichFeedbackFromTickets,
   fetchPropertyHealthSignals,
+  filterUnitsForCanonicalProperty,
   mapTicketsForPropertyHealth,
   mapUnitsForPropertyHealth,
   filterTicketsForBuildingScope,
   normalizeBuildingKey,
+  resolveBuildingHealthRow,
   type PropertyHealthBuildingRow,
+  type PropertyHealthCanonicalProperty,
   type PropertyHealthFeedback,
   type PropertyHealthPmTask,
+  type PropertyHealthResident,
   type PropertyHealthVendorMetrics,
 } from '@/lib/propertyHealth'
 import {
@@ -55,7 +59,7 @@ import {
   propertyDetailPath,
   resolvePropertyBuildingMeta,
 } from '@/lib/propertyRoutes'
-import { findPropertyById, findPropertyByName, type PropertyRecord } from '@/lib/properties'
+import { findPropertyById, findPropertyByName, listPropertiesForLandlord, type PropertyRecord } from '@/lib/properties'
 import {
   buildPropertyUnitRows,
   type PropertyUnitResident,
@@ -302,10 +306,8 @@ export function AdminPropertyDetailDashboard() {
   const [pmTasks, setPmTasks] = useState<PropertyHealthPmTask[]>([])
   const [feedback, setFeedback] = useState<PropertyHealthFeedback[]>([])
   const [vendorMetrics, setVendorMetrics] = useState<PropertyHealthVendorMetrics[]>([])
-  const [onboardingProperties, setOnboardingProperties] = useState<
-    Array<Record<string, unknown>>
-  >([])
   const [canonicalProperty, setCanonicalProperty] = useState<PropertyRecord | null>(null)
+  const [canonicalProperties, setCanonicalProperties] = useState<PropertyRecord[]>([])
   const [autoApprovalCap, setAutoApprovalCap] = useState(1000)
   const [workflowData, setWorkflowData] = useState<AdminWorkflowDashboardData | null>(null)
   const [loading, setLoading] = useState(true)
@@ -388,7 +390,6 @@ export function AdminPropertyDetailDashboard() {
 
     setBuilding(buildingName)
     setCanonicalProperty(propertyRecord)
-    setOnboardingProperties([])
 
     let timedOut = false
     const timeoutId = window.setTimeout(() => {
@@ -409,7 +410,7 @@ export function AdminPropertyDetailDashboard() {
         console.warn('[admin property detail] occupancy rematch failed', err)
       })
 
-      const [enrichedTickets, mrTickets, unitsResult, healthSignals, onboardingResult, workflowDashboard, pmCompliance, residentsResult, vendorsResult, recognizedSpendResult] =
+      const [enrichedTickets, mrTickets, unitsResult, healthSignals, onboardingResult, workflowDashboard, pmCompliance, residentsResult, vendorsResult, recognizedSpendResult, canonicalPropertiesResult] =
         await Promise.all([
           supabase
             .from('maintenance_request_enriched')
@@ -429,7 +430,7 @@ export function AdminPropertyDetailDashboard() {
             .limit(500),
           supabase
             .from('units')
-            .select('id, unit_label, building, status')
+            .select('id, unit_label, building, status, property_id')
             .eq('landlord_id', landlordId)
             .limit(1000),
           fetchPropertyHealthSignals(),
@@ -452,6 +453,7 @@ export function AdminPropertyDetailDashboard() {
             .eq('landlord_id', landlordId)
             .order('name'),
           fetchRecognizedMaintenanceSpend(),
+          listPropertiesForLandlord(landlordId),
         ])
 
       if (timedOut) return
@@ -550,6 +552,12 @@ export function AdminPropertyDetailDashboard() {
       setPmTasks(healthSignals.pmTasks)
       setFeedback(healthSignals.feedback)
       setVendorMetrics(healthSignals.vendorMetrics)
+
+      if (canonicalPropertiesResult.ok) {
+        setCanonicalProperties(canonicalPropertiesResult.properties)
+      } else {
+        setCanonicalProperties([])
+      }
 
       const threshold = onboardingResult.data?.auto_approval_threshold
       if (typeof threshold === 'number' && Number.isFinite(threshold) && threshold > 0) {
@@ -688,10 +696,37 @@ export function AdminPropertyDetailDashboard() {
     else tabItemRefs.current.delete(tab)
   }
 
-  const buildingUnits = useMemo(
-    () => units.filter((u) => normalizeBuildingKey(u.building) === normalizeBuildingKey(building)),
-    [units, building],
+  const canonicalPropertiesForHealth = useMemo(
+    (): PropertyHealthCanonicalProperty[] =>
+      canonicalProperties.map((property) => ({ id: property.id, name: property.name })),
+    [canonicalProperties],
   )
+
+  const activeCanonicalProperty = useMemo((): PropertyHealthCanonicalProperty | null => {
+    if (canonicalProperty) {
+      return { id: canonicalProperty.id, name: canonicalProperty.name }
+    }
+    if (!building) return null
+    return canonicalPropertiesForHealth.find(
+      (property) => normalizeBuildingKey(property.name) === normalizeBuildingKey(building),
+    ) ?? null
+  }, [canonicalProperty, building, canonicalPropertiesForHealth])
+
+  const buildingUnits = useMemo(() => {
+    if (!building) return []
+    const healthUnits = mapUnitsForPropertyHealth(units as unknown as Record<string, unknown>[])
+    if (activeCanonicalProperty) {
+      return filterUnitsForCanonicalProperty(healthUnits, activeCanonicalProperty).map((unit) => ({
+        id: unit.id,
+        unitLabel: unit.unitLabel,
+        building: unit.building,
+        status: unit.status,
+      }))
+    }
+    return units.filter(
+      (unit) => normalizeBuildingKey(unit.building) === normalizeBuildingKey(building),
+    )
+  }, [units, building, activeCanonicalProperty])
 
   const buildingTickets = useMemo(() => {
     if (!building) return []
@@ -753,53 +788,45 @@ export function AdminPropertyDetailDashboard() {
         status: resident.status,
         email: resident.email ?? null,
       })),
+      canonicalProperties: canonicalPropertiesForHealth,
     })
-  }, [units, tickets, pmTasks, feedback, vendorMetrics, residents])
+  }, [units, tickets, pmTasks, feedback, vendorMetrics, residents, canonicalPropertiesForHealth])
 
-  const buildingHealth: PropertyHealthBuildingRow | null = useMemo(
-    () =>
-      healthReport.buildings.find(
-        (row) => normalizeBuildingKey(row.building) === normalizeBuildingKey(building),
-      ) ?? null,
-    [healthReport.buildings, building],
-  )
+  const buildingHealth: PropertyHealthBuildingRow | null = useMemo(() => {
+    const lookupName = activeCanonicalProperty?.name ?? building
+    if (!lookupName) return null
+    return resolveBuildingHealthRow(healthReport, lookupName)
+  }, [healthReport, building, activeCanonicalProperty])
 
   const meta = useMemo(() => {
     if (!building) return { addressLine: null, yearBuilt: null }
-    return resolvePropertyBuildingMeta(
-      building,
-      onboardingProperties.map((p) => ({
-        name: asString(p.name),
-        streetAddress: asString(p.streetAddress ?? p.street_address),
-        city: asString(p.city),
-        state: asString(p.state),
-        zipCode: asString(p.zipCode ?? p.zip_code),
-        yearBuilt: (p.yearBuilt ?? p.year_built) as number | string | null | undefined,
-      })),
-      canonicalProperty,
-    )
-  }, [building, onboardingProperties, canonicalProperty])
+    const record =
+      canonicalProperty ??
+      canonicalProperties.find(
+        (property) => normalizeBuildingKey(property.name) === normalizeBuildingKey(building),
+      ) ??
+      null
+    return resolvePropertyBuildingMeta(building, [], record, false)
+  }, [building, canonicalProperty, canonicalProperties])
 
   const occupiedCount = useMemo(() => {
     if (!building) return 0
-    const healthUnits = buildingUnits.map((unit) => ({
-      id: unit.id,
-      unitLabel: unit.unitLabel,
-      building: unit.building,
-      status: unit.status,
+    const lookupName = activeCanonicalProperty?.name ?? building
+    const healthUnits = mapUnitsForPropertyHealth(units as unknown as Record<string, unknown>[])
+    const healthResidents: PropertyHealthResident[] = residents.map((resident) => ({
+      id: resident.id,
+      fullName: resident.fullName,
+      unit: resident.unit,
+      building: resident.building,
+      status: resident.status,
     }))
-    return computeOccupancyStats(
+    return computeGridOccupancyForBuilding(
       healthUnits,
-      residents.map((resident) => ({
-        id: resident.id,
-        fullName: resident.fullName,
-        unit: resident.unit,
-        building: resident.building,
-        status: resident.status,
-      })),
-      building,
+      healthResidents,
+      lookupName,
+      activeCanonicalProperty,
     ).occupied
-  }, [building, buildingUnits, residents])
+  }, [building, units, residents, activeCanonicalProperty])
 
   const urgentItems: UrgentItem[] = useMemo(() => {
     if (!workflowData || !building) return []
@@ -1157,7 +1184,7 @@ export function AdminPropertyDetailDashboard() {
         </div>
       ) : null}
 
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
+      <div className="grid grid-cols-2 gap-4 lg:grid-cols-5">
         <StatTile label="Units" value={loading ? '—' : String(buildingUnits.length)} icon={<BuildingStatIcon />} />
         <StatTile label="Occupied" value={loading ? '—' : String(occupiedCount)} icon={<UsersStatIcon />} />
         <StatTile

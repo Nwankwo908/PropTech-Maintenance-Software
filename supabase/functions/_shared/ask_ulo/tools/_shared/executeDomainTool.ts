@@ -41,6 +41,8 @@ import {
   rankUnitsByMaintenance,
   summarizePeriod,
   getPropertySnapshot,
+  getPropertyPriceHistory,
+  getRentHistory,
 } from "./extendedDomainTools.ts"
 
 export type ExecuteDomainToolContext = {
@@ -87,6 +89,11 @@ export type ExecuteDomainToolResult =
     toolId: "get_property_snapshot"
     result: Awaited<ReturnType<typeof getPropertySnapshot>>
   }
+  | {
+    toolId: "get_property_price_history"
+    result: Awaited<ReturnType<typeof getPropertyPriceHistory>>
+  }
+  | { toolId: "get_rent_history"; result: Awaited<ReturnType<typeof getRentHistory>> }
 
 function asString(v: unknown): string | null {
   return typeof v === "string" && v.trim() ? v.trim() : null
@@ -379,6 +386,25 @@ export async function executeDomainTool(
             cityLabel: asString(args.cityLabel),
             citySlug: asString(args.citySlug),
           },
+        }),
+      }
+    case "get_property_price_history":
+      return {
+        toolId: "get_property_price_history",
+        result: await getPropertyPriceHistory({
+          buildingName: asString(args.buildingName) ?? ctx.buildingFilter ?? null,
+          addressLine: asString(args.addressLine),
+          clarifyOnly: asBool(args.clarifyOnly),
+        }),
+      }
+    case "get_rent_history":
+      return {
+        toolId: "get_rent_history",
+        result: await getRentHistory({
+          buildingName: asString(args.buildingName) ?? ctx.buildingFilter ?? null,
+          cityLabel: asString(args.cityLabel),
+          stateCode: asString(args.stateCode),
+          addressLine: asString(args.addressLine),
         }),
       }
     default:

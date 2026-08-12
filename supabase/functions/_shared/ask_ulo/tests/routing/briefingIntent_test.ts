@@ -8,7 +8,7 @@ import {
   isRecommendationQuestion,
 } from "../../routing/briefingIntent.ts"
 import { classifyAskUloIntent, planToolsForIntent } from "../../routing/detectIntent.ts"
-import { buildFallbackAskUloAnswer, type AskUloToolPackets } from "../../synthesis/synthesizeAnswer.ts"
+import { buildFallbackAskUloAnswer, type AskUloToolPackets } from "../../synthesis/index.ts"
 
 Deno.test("executive briefing: how healthy is my portfolio", () => {
   assertEquals(isExecutiveBriefingQuestion("How healthy is my portfolio right now?"), true)

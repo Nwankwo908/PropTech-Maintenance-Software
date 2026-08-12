@@ -23,6 +23,8 @@ import {
   deriveRetrievalNeeds,
   type AskUloRetrievalNeeds,
 } from "./deriveRetrievalNeeds.ts"
+import { buildRetrievalToolPlan } from "./buildRetrievalToolPlan.ts"
+import { mergePlannedToolCalls } from "./mergePlannedTools.ts"
 import type { AskUloClassification } from "./classifyQuestion.ts"
 import type { AskUloExecutionPlan } from "./buildExecutionPlan.ts"
 import type { DomainToolId } from "../tools/_shared/registry.ts"
@@ -98,7 +100,16 @@ export async function planAskUloTurn(
     legacyToolPlan,
   })
 
-  const plannedTools = toolSelection.plannedTools
+  const retrievalToolPlan = buildRetrievalToolPlan({
+    retrievalNeeds,
+    classification,
+    legacyToolPlan,
+    toolNeeds: toolSelection.toolNeeds,
+  })
+  const plannedTools = mergePlannedToolCalls(
+    toolSelection.plannedTools,
+    retrievalToolPlan,
+  )
   const toolSelectSource = toolSelection.toolSelectSource
   const usedRuleBackup =
     toolSelectSource === "rules" ||

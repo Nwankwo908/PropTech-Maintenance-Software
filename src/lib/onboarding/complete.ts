@@ -1,8 +1,6 @@
 /**
- * Complete onboarding — activation SMS / vendor invites + status flip.
+ * Complete onboarding — persist portfolio + flip status (no automatic outreach).
  */
-import { sendTenantActivationSms } from '@/api/tenantActivation'
-import { sendVendorInvite, type VendorInviteChannel } from '@/api/vendorVerification'
 import { getActiveLandlordId } from '@/lib/activeLandlord'
 import {
   normalizeOnboardingApprovalRules,
@@ -22,7 +20,6 @@ import { buildOnboardingReviewMetrics } from './review'
 import type { OnboardingResident } from './persist/residents'
 import type { OnboardingVendor } from './persist/vendors'
 import type { AccountSetupCounts, LandlordOnboardingState } from './types'
-import { normalizeVendorTrade } from '@/lib/vendorTrades'
 
 /** Landlord Connect ready for rent payouts (onboarding + Checkout gate). */
 export async function isLandlordStripePayoutsReady(
@@ -138,101 +135,32 @@ export async function completeOnboarding(
     console.warn('[landlordOnboarding] communication style persist failed', err)
   }
 
-  // General rule: anyone listed during onboarding is automatically started on
-  // their activation/verification flow when setup completes (tenants + vendors).
-  // Best-effort — never block finishing setup on delivery failures.
-  const warnings: string[] = []
-  const companyName = state.accountSetup.companyName.trim() || null
-  const propertyName = state.properties.map((p) => p.name.trim()).find(Boolean) || undefined
+  // Outreach is manual: managers send tenant welcome texts and vendor verification
+  // invites from Residents / Vendors when they are ready.
+  const tenantsPendingOutreach = residents.filter((r) => r.phone.trim().length > 0).length
+  const vendorsPendingOutreach = vendors.filter(
+    (v) => v.phone.trim().length > 0 || v.email.trim().length > 0,
+  ).length
 
   try {
-    const residentIds = residents
-      .filter((r) => r.phone.trim().length > 0)
-      .map((r) => r.id)
-      .filter((id) => id.trim().length > 0)
-    if (residentIds.length > 0) {
-      const summary = await sendTenantActivationSms({
-        landlordId: scope.landlordId,
-        residentIds,
-        companyName,
-      })
-      if (!summary.configured) {
-        console.warn('[landlordOnboarding] tenant activation not configured')
-      } else if (summary.error) {
-        warnings.push(`couldn't send welcome texts to your residents (${summary.error})`)
-      } else if ((summary.failed ?? 0) > 0) {
-        const failed = summary.failed ?? 0
-        warnings.push(
-          `couldn't send welcome texts to ${failed} resident${failed === 1 ? '' : 's'}`,
-        )
-      }
-    }
+    const { recordActivityLog } = await import('@/lib/recordActivityLog')
+    await recordActivityLog({
+      landlordId: scope.landlordId,
+      eventType: 'onboarding.completed',
+      source: 'onboarding',
+      actorType: 'landlord',
+      metadata: {
+        message:
+          tenantsPendingOutreach > 0 || vendorsPendingOutreach > 0
+            ? 'Setup complete. Send resident welcome texts and vendor verification invites from Residents and Vendors when you are ready.'
+            : 'Setup complete.',
+        tenants_pending_outreach: tenantsPendingOutreach,
+        vendors_pending_outreach: vendorsPendingOutreach,
+      },
+    })
   } catch (err) {
-    console.warn('[landlordOnboarding] tenant activation trigger failed', err)
-    warnings.push('the resident welcome texts could not be sent')
+    console.warn('[landlordOnboarding] completion activity log failed', err)
   }
 
-  try {
-    const inviteable = vendors.filter(
-      (v) => v.phone.trim().length > 0 || v.email.trim().length > 0,
-    )
-    if (inviteable.length > 0) {
-      const results = await Promise.allSettled(
-        inviteable.map((vendor) => {
-          const phone = vendor.phone.trim()
-          const email = vendor.email.trim()
-          const channel: VendorInviteChannel =
-            phone && email ? 'both' : phone ? 'sms' : 'email'
-          const trade = normalizeVendorTrade(vendor.category, { fallbackOther: false })
-          return sendVendorInvite({
-            landlordId: scope.landlordId,
-            vendorId: vendor.id,
-            businessName: vendor.name.trim(),
-            email: email || undefined,
-            phone: phone || undefined,
-            propertyName,
-            channel,
-            tradeCategories: trade ? [trade] : undefined,
-          })
-        }),
-      )
-
-      let failed = 0
-      results.forEach((result, index) => {
-        if (result.status === 'rejected') {
-          failed += 1
-          console.warn('[landlordOnboarding] vendor invite failed', {
-            vendorId: inviteable[index]?.id,
-            reason: result.reason,
-          })
-          return
-        }
-        const delivery = result.value.delivery
-        const anySent = delivery.sms === 'sent' || delivery.email === 'sent'
-        if (!anySent) {
-          failed += 1
-          console.warn('[landlordOnboarding] vendor invite not delivered', {
-            vendorId: inviteable[index]?.id,
-            delivery,
-          })
-        }
-      })
-
-      if (failed > 0) {
-        warnings.push(
-          `couldn't send verification invites to ${failed} vendor${failed === 1 ? '' : 's'}`,
-        )
-      }
-    }
-  } catch (err) {
-    console.warn('[landlordOnboarding] vendor invite trigger failed', err)
-    warnings.push('the vendor verification invites could not be sent')
-  }
-
-  const activationWarning =
-    warnings.length > 0
-      ? `We finished setup, but ${warnings.join('; ')}. Check the activity feed for details.`
-      : undefined
-
-  return { ok: true, activationWarning }
+  return { ok: true }
 }

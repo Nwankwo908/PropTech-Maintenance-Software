@@ -31,6 +31,17 @@ export const REPEAT_ISSUE_WINDOW_DAYS = 45
 
 export const PROPERTY_HEALTH_KPI_CAPTION = 'Operational health score.'
 
+/** Main KPI value — omit "%" when the score is exactly 0. */
+export function formatPropertyHealthKpiValue(score: number): string {
+  return score === 0 ? '0' : `${score}%`
+}
+
+/** Trend pill — hide when there is no change (0%). */
+export function propertyHealthKpiDelta(delta: number | null | undefined): number | null {
+  if (delta == null || delta === 0) return null
+  return delta
+}
+
 export type PropertyHealthStatus = 'healthy' | 'monitor' | 'at_risk' | 'pending_setup'
 
 export type PropertyHealthComponentKey =
@@ -82,6 +93,13 @@ export type PropertyHealthUnit = {
   unitLabel: string
   building: string | null
   status: string
+  propertyId?: string | null
+}
+
+/** Saved property row from `properties` — always shown on the Properties grid. */
+export type PropertyHealthCanonicalProperty = {
+  id: string
+  name: string
 }
 
 export type PropertyHealthResident = {
@@ -191,6 +209,8 @@ export type PropertyHealthInputs = {
   pmTasks: PropertyHealthPmTask[]
   feedback: PropertyHealthFeedback[]
   vendorMetrics: PropertyHealthVendorMetrics[]
+  /** Saved properties — merged into the grid even without units or active residents. */
+  canonicalProperties?: PropertyHealthCanonicalProperty[]
   /** Roster rows used for occupancy (units with an assigned active resident). */
   residents?: PropertyHealthResident[]
   now?: number
@@ -276,6 +296,40 @@ export function collectPortfolioBuildingKeys(
   return [...keys].sort((a, b) => a.localeCompare(b))
 }
 
+/**
+ * Building keys for the Properties grid: every saved property plus operational
+ * buildings that are not already mapped to a canonical property row.
+ */
+export function collectPropertyGridBuildingKeys(
+  units: PropertyHealthUnit[],
+  pmTasks: PropertyHealthPmTask[],
+  tickets: PropertyHealthTicket[],
+  landlordId: string = getActiveLandlordId(),
+  residents: PropertyHealthResident[] = [],
+  canonicalProperties: PropertyHealthCanonicalProperty[] = [],
+): string[] {
+  const operational = collectPortfolioBuildingKeys(
+    units,
+    pmTasks,
+    tickets,
+    landlordId,
+    residents,
+  )
+  const keys = new Set<string>()
+
+  for (const property of canonicalProperties) {
+    keys.add(normalizeBuildingKey(property.name))
+  }
+
+  for (const opKey of operational) {
+    const canonical = findCanonicalPropertyByGridKey(opKey, canonicalProperties, units)
+    keys.add(canonical ? normalizeBuildingKey(canonical.name) : opKey)
+  }
+
+  if (keys.size > 1) keys.delete('Portfolio')
+  return [...keys].sort((a, b) => a.localeCompare(b))
+}
+
 /** Building count shared by the Buildings KPI and Property Health section header. */
 export function countPortfolioBuildings(
   units: PropertyHealthUnit[],
@@ -283,8 +337,16 @@ export function countPortfolioBuildings(
   tickets: PropertyHealthTicket[] = [],
   landlordId: string = getActiveLandlordId(),
   residents: PropertyHealthResident[] = [],
+  canonicalProperties: PropertyHealthCanonicalProperty[] = [],
 ): number {
-  return collectPortfolioBuildingKeys(units, pmTasks, tickets, landlordId, residents).length
+  return collectPropertyGridBuildingKeys(
+    units,
+    pmTasks,
+    tickets,
+    landlordId,
+    residents,
+    canonicalProperties,
+  ).length
 }
 
 export function isPendingSetupHealth(components: PropertyHealthComponent[]): boolean {
@@ -312,6 +374,83 @@ export function normalizeUnitLabel(label: string): string {
 export function normalizeBuildingKey(building: string | null | undefined): string {
   const trimmed = building?.trim()
   return trimmed || 'Portfolio'
+}
+
+/** True when a unit row belongs to a saved property (by id or building alias). */
+export function unitBelongsToCanonicalProperty(
+  unit: PropertyHealthUnit,
+  property: PropertyHealthCanonicalProperty,
+): boolean {
+  if (unit.propertyId?.trim() && unit.propertyId === property.id) return true
+  const unitBuilding = normalizeBuildingKey(unit.building)
+  const canonical = normalizeBuildingKey(property.name)
+  if (unitBuilding === canonical) return true
+  // Legacy Add Property units used `"Name (City, State)"` as building.
+  if (unitBuilding.startsWith(`${canonical} (`)) return true
+  return false
+}
+
+export function filterUnitsForCanonicalProperty(
+  units: PropertyHealthUnit[],
+  property: PropertyHealthCanonicalProperty,
+): PropertyHealthUnit[] {
+  return units.filter((unit) => unitBelongsToCanonicalProperty(unit, property))
+}
+
+/** Match a property detail/overview row to the same building card as the Properties grid. */
+export function resolveBuildingHealthRow(
+  report: PropertyHealthReport,
+  buildingName: string,
+): PropertyHealthBuildingRow | null {
+  const key = normalizeBuildingKey(buildingName)
+  return report.buildings.find((row) => normalizeBuildingKey(row.building) === key) ?? null
+}
+
+export function buildingKeyMatchesCanonicalProperty(
+  buildingKey: string,
+  property: PropertyHealthCanonicalProperty,
+  units: PropertyHealthUnit[] = [],
+): boolean {
+  const key = normalizeBuildingKey(buildingKey)
+  const canonical = normalizeBuildingKey(property.name)
+  if (key === canonical) return true
+  if (key.startsWith(`${canonical} (`)) return true
+  return units.some(
+    (unit) =>
+      unitBelongsToCanonicalProperty(unit, property) &&
+      normalizeBuildingKey(unit.building) === key,
+  )
+}
+
+function findCanonicalPropertyByGridKey(
+  building: string,
+  canonicalProperties: PropertyHealthCanonicalProperty[],
+  units: PropertyHealthUnit[],
+): PropertyHealthCanonicalProperty | null {
+  const byName = canonicalProperties.find(
+    (property) => normalizeBuildingKey(property.name) === normalizeBuildingKey(building),
+  )
+  if (byName) return byName
+  for (const property of canonicalProperties) {
+    if (buildingKeyMatchesCanonicalProperty(building, property, units)) return property
+  }
+  return null
+}
+
+function buildingScopeAliasKeys(
+  building: string,
+  property: PropertyHealthCanonicalProperty | null,
+  units: PropertyHealthUnit[],
+): Set<string> {
+  const aliases = new Set<string>([normalizeBuildingKey(building)])
+  if (!property) return aliases
+  aliases.add(normalizeBuildingKey(property.name))
+  for (const unit of units) {
+    if (unitBelongsToCanonicalProperty(unit, property) && unit.building?.trim()) {
+      aliases.add(normalizeBuildingKey(unit.building))
+    }
+  }
+  return aliases
 }
 
 function isTicketOpen(ticket: PropertyHealthTicket): boolean {
@@ -482,31 +621,110 @@ function filterUnitsForBuilding(
   return units.filter((u) => normalizeBuildingKey(u.building) === key)
 }
 
-function filterTicketsForBuilding(
+function filterUnitsForScope(
+  units: PropertyHealthUnit[],
+  building: string,
+  property: PropertyHealthCanonicalProperty | null,
+): PropertyHealthUnit[] {
+  if (property) {
+    return units.filter((unit) => unitBelongsToCanonicalProperty(unit, property))
+  }
+  return filterUnitsForBuilding(units, building)
+}
+
+function filterResidentsForScope(
+  residents: PropertyHealthResident[],
+  building: string,
+  property: PropertyHealthCanonicalProperty | null,
+  units: PropertyHealthUnit[],
+): PropertyHealthResident[] {
+  const aliases = buildingScopeAliasKeys(building, property, units)
+  return residents.filter((resident) =>
+    aliases.has(normalizeBuildingKey(resident.building)),
+  )
+}
+
+function filterPmForScope(
+  tasks: PropertyHealthPmTask[],
+  building: string,
+  property: PropertyHealthCanonicalProperty | null,
+  units: PropertyHealthUnit[],
+): PropertyHealthPmTask[] {
+  const aliases = buildingScopeAliasKeys(building, property, units)
+  return tasks.filter((task) => aliases.has(normalizeBuildingKey(task.building)))
+}
+
+function filterTicketsForScope(
   tickets: PropertyHealthTicket[],
   building: string,
   units: PropertyHealthUnit[],
-  residents: PropertyHealthResident[] = [],
+  residents: PropertyHealthResident[],
+  property: PropertyHealthCanonicalProperty | null,
 ): PropertyHealthTicket[] {
-  return filterTicketsForBuildingScope(tickets, building, units, residents)
+  const aliases = buildingScopeAliasKeys(building, property, units)
+  const seen = new Set<string>()
+  const scoped: PropertyHealthTicket[] = []
+  for (const alias of aliases) {
+    for (const ticket of filterTicketsForBuildingScope(
+      tickets,
+      alias,
+      units,
+      residents,
+    )) {
+      if (seen.has(ticket.id)) continue
+      seen.add(ticket.id)
+      scoped.push(ticket)
+    }
+  }
+  return scoped
 }
 
-function filterPmForBuilding(tasks: PropertyHealthPmTask[], building: string): PropertyHealthPmTask[] {
-  return tasks.filter((t) => normalizeBuildingKey(t.building) === building)
-}
-
-function filterFeedbackForBuilding(
+function filterFeedbackForScope(
   feedback: PropertyHealthFeedback[],
   building: string,
   ctx: TicketBuildingContext,
+  property: PropertyHealthCanonicalProperty | null,
+  units: PropertyHealthUnit[],
 ): PropertyHealthFeedback[] {
+  const aliases = buildingScopeAliasKeys(building, property, units)
   return feedback.filter((f) => {
-    if (f.building?.trim()) return normalizeBuildingKey(f.building) === building
+    if (f.building?.trim()) return aliases.has(normalizeBuildingKey(f.building))
     if (f.unit) {
-      return ctx.uniqueUnitLabelBuildingMap.get(normalizeUnitLabel(f.unit)) === building
+      const mapped = ctx.uniqueUnitLabelBuildingMap.get(normalizeUnitLabel(f.unit))
+      return mapped != null && aliases.has(mapped)
     }
-    return building === 'Portfolio'
+    return aliases.has('Portfolio')
   })
+}
+
+export function computeGridOccupancyForBuilding(
+  units: PropertyHealthUnit[],
+  residents: PropertyHealthResident[],
+  building: string,
+  scopeProperty: PropertyHealthCanonicalProperty | null,
+): { occupied: number; tracked: number; occupancyPct: number } {
+  const buildingUnits = filterUnitsForScope(units, building, scopeProperty)
+  const scopedResidents = filterResidentsForScope(
+    residents,
+    building,
+    scopeProperty,
+    units,
+  )
+  const tracked = buildingUnits.filter((unit) => unit.status !== 'inactive')
+  let occupied = 0
+  for (const unit of tracked) {
+    const resident = scopedResidents.find((row) => {
+      if (normalizeUnitLabel(row.unit) !== normalizeUnitLabel(unit.unitLabel)) return false
+      if (!isOccupyingResidentStatus(row.status)) return false
+      if (scopeProperty) {
+        return unitBelongsToCanonicalProperty(unit, scopeProperty)
+      }
+      return normalizeBuildingKey(row.building) === normalizeBuildingKey(unit.building)
+    })
+    if (resident) occupied += 1
+  }
+  const occupancyPct = tracked.length ? Math.round((occupied / tracked.length) * 100) : 0
+  return { occupied, tracked: tracked.length, occupancyPct }
 }
 
 function scoreOpenMaintenance(
@@ -781,42 +999,60 @@ function aggregateWeightedScore(components: PropertyHealthComponent[]): number {
 
 export function computePropertyHealthScope(
   inputs: PropertyHealthInputs,
-  scope: { building?: string } = {},
+  scope: { building?: string; property?: PropertyHealthCanonicalProperty } = {},
 ): PropertyHealthScopeScore | null {
   const now = inputs.now ?? Date.now()
   const repeatWindowMs =
     inputs.repeatWindowMs ?? REPEAT_ISSUE_WINDOW_DAYS * 24 * 60 * 60 * 1000
   const ticketBuildingCtx = buildTicketBuildingContext(inputs.units)
+  const scopeBuilding = scope.building?.trim()
+  const scopeProperty = scope.property ?? null
 
-  const scopedUnits = scope.building
-    ? filterUnitsForBuilding(inputs.units, scope.building)
-    : inputs.units
+  const scopedUnits =
+    scopeBuilding != null
+      ? filterUnitsForScope(inputs.units, scopeBuilding, scopeProperty)
+      : inputs.units
   const trackedUnits = scopedUnits.filter((u) => u.status !== 'inactive')
   if (trackedUnits.length === 0) {
-    if (!scope.building) return null
+    if (scopeBuilding == null) return null
     return buildNeutralScopeScore()
   }
 
-  const scopedTickets = scope.building
-    ? filterTicketsForBuilding(
-        inputs.tickets,
-        scope.building,
-        inputs.units,
-        inputs.residents ?? [],
-      )
-    : inputs.tickets
+  const scopedResidents =
+    scopeBuilding != null
+      ? filterResidentsForScope(inputs.residents ?? [], scopeBuilding, scopeProperty, inputs.units)
+      : (inputs.residents ?? [])
+
+  const scopedTickets =
+    scopeBuilding != null
+      ? filterTicketsForScope(
+          inputs.tickets,
+          scopeBuilding,
+          inputs.units,
+          inputs.residents ?? [],
+          scopeProperty,
+        )
+      : inputs.tickets
   const openTickets = scopedTickets.filter(isTicketOpen)
-  const scopedPm = scope.building
-    ? filterPmForBuilding(inputs.pmTasks, scope.building)
-    : inputs.pmTasks
-  const scopedFeedback = scope.building
-    ? filterFeedbackForBuilding(inputs.feedback, scope.building, ticketBuildingCtx)
-    : inputs.feedback
+  const scopedPm =
+    scopeBuilding != null
+      ? filterPmForScope(inputs.pmTasks, scopeBuilding, scopeProperty, inputs.units)
+      : inputs.pmTasks
+  const scopedFeedback =
+    scopeBuilding != null
+      ? filterFeedbackForScope(
+          inputs.feedback,
+          scopeBuilding,
+          ticketBuildingCtx,
+          scopeProperty,
+          inputs.units,
+        )
+      : inputs.feedback
 
   const components: PropertyHealthComponent[] = [
     scoreOpenMaintenance(trackedUnits, openTickets, inputs.openIssuesCreatedBeforeMs),
     scorePmCompliance(scopedPm),
-    scoreVacancy(trackedUnits, inputs.residents ?? [], scope.building),
+    scoreVacancy(trackedUnits, scopedResidents, scopeBuilding),
     scoreResidentSatisfaction(scopedFeedback),
     scoreRepeatIssueRisk(trackedUnits, scopedTickets, now, repeatWindowMs),
     scoreVendorPerformance(scopedTickets, inputs.vendorMetrics),
@@ -850,39 +1086,56 @@ export function buildPropertyHealthReport(
     return previous ? portfolio.score - previous.score : null
   })()
 
-  const buildingKeys = collectPortfolioBuildingKeys(
+  const buildingKeys = collectPropertyGridBuildingKeys(
     inputs.units,
     inputs.pmTasks,
     inputs.tickets,
     landlordId,
     inputs.residents ?? [],
+    inputs.canonicalProperties ?? [],
   )
 
   const openTickets = inputs.tickets.filter(isTicketOpen)
 
   const buildings: PropertyHealthBuildingRow[] = []
   for (const building of buildingKeys) {
-    const buildingUnits = filterUnitsForBuilding(inputs.units, building)
+    const scopeProperty = findCanonicalPropertyByGridKey(
+      building,
+      inputs.canonicalProperties ?? [],
+      inputs.units,
+    )
+    const buildingUnits = filterUnitsForScope(inputs.units, building, scopeProperty)
     const scopeScore =
       buildingUnits.length > 0
-        ? computePropertyHealthScope(inputs, { building })
+        ? computePropertyHealthScope(inputs, {
+            building,
+            property: scopeProperty ?? undefined,
+          })
         : buildNeutralScopeScore()
 
     if (!scopeScore) continue
 
-    const occupancy = computeOccupancyStats(inputs.units, inputs.residents ?? [], building)
+    const occupancy = computeGridOccupancyForBuilding(
+      inputs.units,
+      inputs.residents ?? [],
+      building,
+      scopeProperty,
+    )
 
-    const openWorkOrderCount = filterTicketsForBuilding(
+    const scopedOpenTickets = filterTicketsForScope(
       openTickets,
       building,
       inputs.units,
       inputs.residents ?? [],
-    ).length
+      scopeProperty,
+    )
 
-    const scopedFeedback = filterFeedbackForBuilding(
+    const scopedFeedback = filterFeedbackForScope(
       inputs.feedback,
       building,
       ticketBuildingCtx,
+      scopeProperty,
+      inputs.units,
     )
     const ratings = scopedFeedback
       .map((f) => f.rating)
@@ -895,7 +1148,7 @@ export function buildPropertyHealthReport(
     buildings.push({
       building,
       unitCount: buildingUnits.length,
-      openTickets: openWorkOrderCount,
+      openTickets: scopedOpenTickets.length,
       occupancyPct: occupancy.occupancyPct,
       residentRating,
       feedbackCount: ratings.length,
@@ -972,6 +1225,7 @@ export function mapUnitsForPropertyHealth(
     unitLabel: asString(raw.unit_label) || asString(raw.unitLabel),
     building: asString(raw.building) || null,
     status: asString(raw.status).toLowerCase(),
+    propertyId: asString(raw.property_id ?? raw.propertyId) || null,
   }))
 }
 

@@ -18,7 +18,7 @@ import {
   isVendorResponseSpeedQuestion,
 } from "../../routing/detectSubject.ts"
 import { classifyTaskContract } from "../../tools/maintenance/taskCompletion.ts"
-import { synthesizeAskUloAnswer } from "../../synthesis/synthesizeAnswer.ts"
+import { synthesizeAskUloAnswer } from "../../synthesis/index.ts"
 
 Deno.test("recommend another plumber routes to vendor_best — not generic gap", () => {
   const q = "Recommend another plumber."

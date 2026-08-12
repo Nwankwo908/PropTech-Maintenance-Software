@@ -1,10 +1,10 @@
 # Vendor email/SMS on new maintenance tickets
 
-When a resident submits a maintenance request through the `submit-maintenance-request` Edge Function, the function assigns an active vendor (`vendors` table) and sends **email** and/or **SMS** with **priority** (resident “urgency” level), **unit/location**, and **description**. Delivery uses **Resend** and **Twilio**; API keys must never be exposed to the browser.
+When a resident submits a maintenance request through the `submit-maintenance-request` Edge Function, the function assigns an active vendor (`vendors` table) and sends **email** and/or **SMS** with **priority** (resident “urgency” level), **unit/location**, and **description**. Delivery uses **Resend** and **Telnyx** (primary SMS provider); API keys must never be exposed to the browser.
 
 ## Resident lifecycle (email + SMS)
 
-The same **Resend** and **Twilio** secrets notify the **submitter** (resident) on: ticket received (after optional media uploads); vendor assigned (including after admin reassign via `reassignVendorByIdAndNotify`); vendor **accepted**; repair **in progress**; repair **completed** (`vendor-update-job-status`). **`resident_notification_channel`** on `maintenance_requests` is **`email`**, **`sms`**, or **`both`** (default `both`; set from multipart `residentNotificationChannel`). Per channel: **email** sends Resend only; **sms** sends Twilio only when **`resident_phone`** is valid; **both** sends email and SMS when possible. Missing phone on **both** / **sms** logs a skipped SMS row. Attempts are logged in **`resident_notification_log`**.
+The same **Resend** and **Telnyx** secrets notify the **submitter** (resident) on: ticket received (after optional media uploads); vendor assigned (including after admin reassign via `reassignVendorByIdAndNotify`); vendor **accepted**; repair **in progress**; repair **completed** (`vendor-update-job-status`). **`resident_notification_channel`** on `maintenance_requests` is **`email`**, **`sms`**, or **`both`** (default `both`; set from multipart `residentNotificationChannel`). Per channel: **email** sends Resend only; **sms** sends Telnyx only when **`resident_phone`** is valid; **both** sends email and SMS when possible. Missing phone on **both** / **sms** logs a skipped SMS row. Attempts are logged in **`resident_notification_log`**.
 
 ## Database
 
@@ -27,13 +27,36 @@ Configure in the Supabase Dashboard: **Project Settings → Edge Functions → S
 |--------|----------------|---------|
 | `RESEND_API_KEY` | Sending email | Resend API |
 | `RESEND_FROM_EMAIL` | Optional | From address; must sit on a **verified** domain in Resend. If unset, defaults to `noreply@assetwise.site` (see **Verify `assetwise.site` on Resend** below). |
-| `SMS_PROVIDER` | Sending SMS | Set to `twilio` (default if unset) |
-| `TWILIO_ACCOUNT_SID` | Sending SMS | Twilio account |
-| `TWILIO_AUTH_TOKEN` | Sending SMS | Twilio auth |
-| `TWILIO_FROM_NUMBER` | Sending SMS | E.164 sender when not using a Messaging Service |
-| `TWILIO_MESSAGING_SERVICE_SID` | Optional | Send via Twilio Messaging Service instead of `From` |
-| `TWILIO_STATUS_CALLBACK_URL` | Optional | Status callback URL on outbound messages |
-| `TWILIO_INBOUND_WEBHOOK_URL` | Recommended | Exact public URL Twilio POSTs to (e.g. `https://YOUR_REF.supabase.co/functions/v1/sms-inbound`); used for signature validation instead of internal `req.url` |
+| `SMS_PROVIDER` | Sending SMS | Set to `telnyx` (default if unset) |
+| `TELNYX_API_KEY` | Sending SMS (`SMS_PROVIDER=telnyx`) | Telnyx API key |
+| `TELNYX_FROM_NUMBER` | Sending SMS | E.164 sender (e.g. `+19734005760`) |
+| `TELNYX_MESSAGING_PROFILE_ID` | Optional | Messaging profile when not sending from explicit `from` |
+| `TELNYX_PUBLIC_KEY` | Recommended | Ed25519 webhook verification for inbound + status callbacks |
+| `TELNYX_STATUS_CALLBACK_URL` | Recommended | Delivery status webhook (e.g. `https://YOUR_REF.supabase.co/functions/v1/sms-status-callback`) |
+| `TWILIO_ACCOUNT_SID` | Legacy Twilio (`SMS_PROVIDER=twilio`) | Twilio account |
+| `TWILIO_AUTH_TOKEN` | Legacy Twilio | Twilio auth |
+| `TWILIO_FROM_NUMBER` | Legacy Twilio | E.164 sender when not using a Messaging Service |
+| `TWILIO_MESSAGING_SERVICE_SID` | Optional (Twilio) | Send via Twilio Messaging Service instead of `From` |
+| `TWILIO_STATUS_CALLBACK_URL` | Optional (Twilio) | Status callback URL on outbound messages |
+| `TWILIO_INBOUND_WEBHOOK_URL` | Optional (Twilio) | Exact public URL Twilio POSTs to (e.g. `https://YOUR_REF.supabase.co/functions/v1/sms-inbound`); used for signature validation instead of internal `req.url` |
+
+### Telnyx webhooks (primary — `SMS_PROVIDER=telnyx`)
+
+Configure in **Telnyx Mission Control → Messaging → Messaging Profile** (for `TELNYX_MESSAGING_PROFILE_ID`):
+
+| Webhook | URL |
+|---------|-----|
+| **Inbound** (message.received) | `https://YOUR_REF.supabase.co/functions/v1/sms-inbound` |
+| **Delivery status** (per outbound send + Edge secret) | `https://YOUR_REF.supabase.co/functions/v1/sms-status-callback` |
+
+Alpha (`mzpqwuizhiaczxcnmxbt`) — confirmed Edge secrets match these URLs:
+
+- Inbound: `https://mzpqwuizhiaczxcnmxbt.supabase.co/functions/v1/sms-inbound`
+- Status: `https://mzpqwuizhiaczxcnmxbt.supabase.co/functions/v1/sms-status-callback` (`TELNYX_STATUS_CALLBACK_URL`)
+- From line: `+19734005760` (`TELNYX_FROM_NUMBER`)
+- Webhook verification: `TELNYX_PUBLIC_KEY` set (Ed25519)
+
+Also set **Webhook API version v2** on the messaging profile if Telnyx prompts for it (matches `TelnyxProvider` event parsing).
 | `VENDOR_PORTAL_BASE_URL` | Optional | Legacy fallback: origin parsed for links if `APP_URL` is unset |
 | `APP_URL` | Recommended | Public site origin for vendor links, e.g. `https://app.example.com` (no trailing slash). Host-only values get **`https://` prepended** when building links. Used for **Vendor portal**, **View job** (`/vendor`, `/vendor/ticket/:id?k=…`), and redirects from **`vendor-respond`**. |
 | `VENDOR_EMAIL_ACTION_SECRET` | Recommended | Long random string (32+ chars). HMAC secret for **Accept job** / **Decline job** links handled by **`vendor-respond`**. Without it, emails still send **View job** but not signed action buttons. |
@@ -74,7 +97,7 @@ Emails use **`APP_URL`** for **Vendor portal** and **View job** (`/vendor`, `/ve
 ## Vendor `notification_channel`
 
 - `email` — Resend only
-- `sms` — Twilio only  
+- `sms` — Telnyx only  
 - `both` — both (if `email`/`phone` missing on the row, that channel logs an error; ticket creation still succeeds)
 
 ## Audit

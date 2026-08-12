@@ -7,7 +7,7 @@ import {
   normalizeRepairFamily,
   normalizeRepairType,
 } from "../../tools/maintenance/recurringRepairsLookup.ts"
-import { synthesizeAskUloAnswer } from "../../synthesis/synthesizeAnswer.ts"
+import { synthesizeAskUloAnswer } from "../../synthesis/index.ts"
 
 Deno.test("recurring question phrases classify as recurring_repairs", () => {
   for (const q of [

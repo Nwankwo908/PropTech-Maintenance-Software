@@ -16,7 +16,7 @@ import {
   looksLikePortfolioBriefingAnswer,
 } from "../../routing/detectSubject.ts"
 import { classifyTaskContract } from "../../tools/maintenance/taskCompletion.ts"
-import { synthesizeAskUloAnswer } from "../../synthesis/synthesizeAnswer.ts"
+import { synthesizeAskUloAnswer } from "../../synthesis/index.ts"
 
 const INACTIVE_Q = "Show vendors that haven't accepted jobs recently."
 

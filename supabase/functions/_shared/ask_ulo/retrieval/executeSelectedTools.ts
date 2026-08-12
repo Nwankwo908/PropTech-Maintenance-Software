@@ -44,7 +44,7 @@ import {
   isLandlordIncentivesQuestion,
 } from "../routing/detectSubject.ts"
 import { shouldFetchPortfolioBriefing } from "../routing/reasoningMode.ts"
-import { buildExecutionPlan } from "../routing/buildExecutionPlan.ts"
+import type { AskUloClassification } from "../routing/classifyQuestion.ts"
 import {
   buildOrganizedEvidencePacket,
   emptyEvidenceBundle,
@@ -57,7 +57,11 @@ import {
   type PlannedDomainToolCall,
 } from "../routing/selectTools.ts"
 import { applyPlannedToolsToNeeds } from "../routing/toolSelectNeeds.ts"
-import { executePlannedDomainTools } from "../tools/_shared/executeDomainTool.ts"
+import { buildRetrievalToolPlan } from "../routing/buildRetrievalToolPlan.ts"
+import { mergePlannedToolCalls } from "../routing/mergePlannedTools.ts"
+import { resolveRetrievalNeeds, type AskUloRetrievalNeeds } from "../routing/deriveRetrievalNeeds.ts"
+import { filterPlannedToolsByPermissions } from "../guards/filterPlannedToolsByPermissions.ts"
+import { executeDomainTool, executePlannedDomainTools } from "../tools/_shared/executeDomainTool.ts"
 import {
   buildCatchAllWorkOrderPacket,
   shouldAttemptCatchAllWorkOrderFallback,
@@ -105,7 +109,6 @@ import { type AskUloCitation } from "../retrieval/searchInternalData.ts"
 import { resolvePortfolioJurisdiction } from "../tools/properties/portfolioContext.ts"
 import {
   formatPriceHistoryMarkdown,
-  propertyPriceHistoryLookup,
 } from "../tools/finance/propertyPriceHistory.ts"
 import {
   leasingImpactFromOpsBullets,
@@ -119,7 +122,6 @@ import {
 } from "../tools/properties/propertyContext.ts"
 import {
   formatRentHistoryMarkdown,
-  rentHistoryLookup,
 } from "../tools/rent/rentHistoryLookup.ts"
 import {
   assessAnswerConfidence,
@@ -127,7 +129,7 @@ import {
   confidenceLabel,
   type AnswerConfidence,
 } from "../retrieval/rankEvidence.ts"
-import { synthesizeAskUloAnswer } from "../synthesis/synthesizeAnswer.ts"
+import { synthesizeAskUloAnswer } from "../synthesis/index.ts"
 import {
   buildFaithfulnessForEval,
   estimateTokensFromText,
@@ -146,7 +148,7 @@ import type {
 } from "../core/types.ts"
 
 
-import { applyPermissionToolGates } from "../guards/permissionGuard.ts"
+import { applyPermissionGatesToRetrievalNeeds } from "../guards/permissionGuard.ts"
 import type { AskUloContext } from "../core/context.ts"
 import type { AskUloExecutionPlan } from "../routing/buildExecutionPlan.ts"
 import type { AskUloSafetyContinue } from "../guards/runSafetyChecks.ts"
@@ -346,6 +348,23 @@ export async function executeSelectedTools(
   const vendorSubjectLock = toolSelectLocks.vendorLock
   /** Hard subject gate: never fetch property ranking / portfolio briefing for wrong subjects. */
   const propertyDashboardLock = toolSelectLocks.blockPropertyDashboard
+  const classificationForPlan: AskUloClassification = {
+    intentResult,
+    subject: evidencePlan.subject,
+    capability: capabilityResult,
+    capabilityRoute,
+    playbook,
+    reasoningMode: reasoningEarly,
+    analytical,
+    responseFormat: executionPlan.responseFormat,
+    compound: compoundVendorMarket,
+    epistemic: epistemicAsk,
+    evidencePlan,
+    toolSelectLocks,
+    propertyLabel: executionPlan.propertyLabel,
+    propertyId: executionPlan.propertyId,
+    decision: executionPlan.decision,
+  }
   logPlaybook({
     id: playbook.id,
     consultTier1First: playbook.consultTier1First,
@@ -377,10 +396,10 @@ export async function executeSelectedTools(
   let toolNeeds: ReturnType<typeof applyPlannedToolsToNeeds>
 
   if (executionPlan.toolSelection) {
-    plannedTools = executionPlan.toolSelection.plannedTools
     toolSelectSource = executionPlan.toolSelection.toolSelectSource
     noToolMatched = executionPlan.toolSelection.noToolMatched
     toolNeeds = executionPlan.toolSelection.toolNeeds
+    plannedTools = executionPlan.toolSelection.plannedTools
   } else {
     const { resolveToolSelection } = await import(
       "../routing/resolveToolSelection.ts"
@@ -405,163 +424,61 @@ export async function executeSelectedTools(
     toolsUsed.push(`tools_planned:${id}`)
   }
 
-  const precomputedNeeds = (executionPlan as { retrievalNeeds?: Record<string, boolean> })
-    .retrievalNeeds
-  let needsPeriodSummary = Boolean(precomputedNeeds?.needsPeriodSummary)
-  let needsOldestWaiting = Boolean(precomputedNeeds?.needsOldestWaiting)
-  let needsEntityInvestigation = Boolean(precomputedNeeds?.needsEntityInvestigation)
-  let deepOpsCandidate = Boolean(precomputedNeeds?.deepOpsCandidate)
-  let needsDeepOps = Boolean(precomputedNeeds?.needsDeepOps)
-  let needsDraftCommunication = Boolean(precomputedNeeds?.needsDraftCommunication)
-  let needsActiveWorkflows = Boolean(precomputedNeeds?.needsActiveWorkflows)
-  let needsWeatherAlerts = Boolean(precomputedNeeds?.needsWeatherAlerts)
-  let needsLandlordIncentives = Boolean(precomputedNeeds?.needsLandlordIncentives)
-  let needsListResidents = Boolean(precomputedNeeds?.needsListResidents)
-  let needsPropertyInsights = Boolean(precomputedNeeds?.needsPropertyInsights)
-  let needsRecurringRepairs = Boolean(precomputedNeeds?.needsRecurringRepairs)
-  let needsApproveRepairs = Boolean(precomputedNeeds?.needsApproveRepairs)
-  let needsMissingUpdates = Boolean(precomputedNeeds?.needsMissingUpdates)
-  let needsVendorResponseSpeed = Boolean(precomputedNeeds?.needsVendorResponseSpeed)
-  let needsVendorCompletion = Boolean(precomputedNeeds?.needsVendorCompletion)
-  let needsVendorInactive = Boolean(precomputedNeeds?.needsVendorInactive)
-  let needsVendorOverload = Boolean(precomputedNeeds?.needsVendorOverload)
-  let needsVendorVerification = Boolean(precomputedNeeds?.needsVendorVerification)
-  let needsVendorBest = Boolean(precomputedNeeds?.needsVendorBest)
-  let needsUnitRanking = Boolean(precomputedNeeds?.needsUnitRanking)
-  let needsBriefing = Boolean(precomputedNeeds?.needsBriefing)
-  let needsRanking = Boolean(precomputedNeeds?.needsRanking)
-
-  if (!precomputedNeeds) {
-    // Fallback when callers only built a sync execution plan (no decide stage).
-    const { deriveRetrievalNeeds } = await import(
-      "../routing/deriveRetrievalNeeds.ts"
-    )
-    const derived = deriveRetrievalNeeds({
-      question,
-      classification: {
-        intentResult,
-        subject: evidencePlan.subject,
-        capability: capabilityResult,
-        capabilityRoute,
-        playbook,
-        reasoningMode: reasoningEarly,
-        analytical,
-        responseFormat: executionPlan.responseFormat,
-        compound: compoundVendorMarket,
-        epistemic: epistemicAsk,
-        evidencePlan,
-        toolSelectLocks,
-        propertyLabel: executionPlan.propertyLabel,
-        propertyId: executionPlan.propertyId,
-        decision: executionPlan.decision,
-      },
-      toolNeeds,
-      legacyToolPlan: plan,
-    })
-    needsPeriodSummary = derived.needsPeriodSummary
-    needsOldestWaiting = derived.needsOldestWaiting
-    needsEntityInvestigation = derived.needsEntityInvestigation
-    deepOpsCandidate = derived.deepOpsCandidate
-    needsDeepOps = derived.needsDeepOps
-    needsDraftCommunication = derived.needsDraftCommunication
-    needsActiveWorkflows = derived.needsActiveWorkflows
-    needsWeatherAlerts = derived.needsWeatherAlerts
-    needsLandlordIncentives = derived.needsLandlordIncentives
-    needsListResidents = derived.needsListResidents
-    needsPropertyInsights = derived.needsPropertyInsights
-    needsRecurringRepairs = derived.needsRecurringRepairs
-    needsApproveRepairs = derived.needsApproveRepairs
-    needsMissingUpdates = derived.needsMissingUpdates
-    needsVendorResponseSpeed = derived.needsVendorResponseSpeed
-    needsVendorCompletion = derived.needsVendorCompletion
-    needsVendorInactive = derived.needsVendorInactive
-    needsVendorOverload = derived.needsVendorOverload
-    needsVendorVerification = derived.needsVendorVerification
-    needsVendorBest = derived.needsVendorBest
-    needsUnitRanking = derived.needsUnitRanking
-    needsBriefing = derived.needsBriefing
-    needsRanking = derived.needsRanking
+  const turnPlan = executionPlan as {
+    plannedTools?: PlannedDomainToolCall[]
+    retrievalNeeds?: AskUloRetrievalNeeds
+  }
+  if (turnPlan.plannedTools?.length) {
+    plannedTools = turnPlan.plannedTools
   }
 
-  // Domain-tool plan can also request these (live tools).
-  if (toolNeeds.needsRankProperties) needsRanking = true
-  const needsOpsGraph =
-    Boolean(toolNeeds.needsOpsGraph) ||
-    (Boolean(plan.runOpsGraph) &&
-      !needsUnitRanking &&
-      !needsPeriodSummary &&
-      !needsOldestWaiting &&
-      !needsEntityInvestigation &&
-      !needsListResidents &&
-      !needsDraftCommunication &&
-      !needsActiveWorkflows &&
-      !needsWeatherAlerts &&
-      !needsLandlordIncentives &&
-      !(needsDeepOps && playbook.deepOpsPrimary))
+  let retrievalNeeds = resolveRetrievalNeeds({
+    question,
+    classification: classificationForPlan,
+    toolNeeds,
+    legacyToolPlan: plan,
+    precomputed: turnPlan.retrievalNeeds,
+  })
 
-  // Defense-in-depth: never run resident/vendor/finance/legal tools without permission
-  // (subject-level refuse already handled in runGuards).
-  {
-    const gated = applyPermissionToolGates(context.permissions, {
-      needsListResidents,
-      needsVendorBest,
-      needsVendorResponseSpeed,
-      needsVendorCompletion,
-      needsVendorInactive,
-      needsVendorOverload,
-      needsVendorVerification,
-      needsLandlordIncentives,
-      runLegalTools,
+  if (!turnPlan.plannedTools?.length) {
+    const retrievalToolPlan = buildRetrievalToolPlan({
+      retrievalNeeds,
+      classification: classificationForPlan,
+      legacyToolPlan: plan,
+      toolNeeds,
     })
-    needsListResidents = Boolean(gated.needsListResidents)
-    needsVendorBest = Boolean(gated.needsVendorBest)
-    needsVendorResponseSpeed = Boolean(gated.needsVendorResponseSpeed)
-    needsVendorCompletion = Boolean(gated.needsVendorCompletion)
-    needsVendorInactive = Boolean(gated.needsVendorInactive)
-    needsVendorOverload = Boolean(gated.needsVendorOverload)
-    needsVendorVerification = Boolean(gated.needsVendorVerification)
-    needsLandlordIncentives = Boolean(gated.needsLandlordIncentives)
-    runLegalTools = Boolean(gated.runLegalTools)
-    if (!context.permissions.canSeeResidents && evidencePlan.subject === "resident") {
-      toolsUsed.push("permission:gated:canSeeResidents")
-    }
-    if (!context.permissions.canSeeVendors && evidencePlan.subject === "vendor") {
-      toolsUsed.push("permission:gated:canSeeVendors")
-    }
-    if (!context.permissions.canAskLegal && intentResult.intent === "legal") {
-      toolsUsed.push("permission:gated:canAskLegal")
-    }
+    plannedTools = mergePlannedToolCalls(plannedTools, retrievalToolPlan)
+  }
+
+  plannedTools = filterPlannedToolsByPermissions(plannedTools, context.permissions)
+
+  // Playbook flags below: permission audit + graph metadata — not retrieval dispatch.
+  const permissionGated = applyPermissionGatesToRetrievalNeeds(
+    context.permissions,
+    retrievalNeeds,
+    {
+      runLegalTools,
+      forcePropertyRanking: toolNeeds.needsRankProperties,
+    },
+  )
+  retrievalNeeds = permissionGated.retrievalNeeds
+  runLegalTools = permissionGated.runLegalTools
+
+  if (!context.permissions.canSeeResidents && evidencePlan.subject === "resident") {
+    toolsUsed.push("permission:gated:canSeeResidents")
+  }
+  if (!context.permissions.canSeeVendors && evidencePlan.subject === "vendor") {
+    toolsUsed.push("permission:gated:canSeeVendors")
+  }
+  if (!context.permissions.canAskLegal && intentResult.intent === "legal") {
+    toolsUsed.push("permission:gated:canAskLegal")
   }
 
   const specialty = await fetchSpecialtyEvidence(
     {
-      needsOpsGraph,
-      runLegalTools,
       runStructured: plan.runStructured,
       intentIsLegal: intentResult.intent === "legal",
-      needsDraftCommunication,
-      needsActiveWorkflows,
-      needsWeatherAlerts,
-      needsLandlordIncentives,
-      runPropertySnapshot: plan.runPropertySnapshot,
-      needsListResidents,
-      needsBriefing,
-      needsPropertyInsights,
-      needsRecurringRepairs,
-      needsApproveRepairs,
-      needsMissingUpdates,
-      needsVendorResponseSpeed,
-      needsVendorBest,
-      needsVendorCompletion,
-      needsVendorInactive,
-      needsVendorOverload,
-      needsVendorVerification,
-      needsRanking,
-      needsUnitRanking,
-      needsPeriodSummary,
-      needsOldestWaiting,
-      needsEntityInvestigation,
-      needsDeepOps,
+      runLegalTools,
       needsMarketIntelligence:
         Boolean(plan.runMarketData) || Boolean(toolNeeds.needsMarketIntelligence),
     },
@@ -1158,26 +1075,52 @@ export async function executeSelectedTools(
       })
     : null
 
-  const priceHistory =
-    intentResult.intent === "price_history_ambiguous"
-      ? await propertyPriceHistoryLookup({
+  const priceHistoryRow = intentResult.intent === "price_history_ambiguous"
+    ? await executeDomainTool(
+      supabase,
+      {
+        name: "get_property_price_history",
+        arguments: {
           buildingName: property?.buildingName ?? buildingFilter,
           clarifyOnly: true,
-        })
-      : context.permissions.canSeeFinance && plan.runPriceHistory
-        ? await propertyPriceHistoryLookup({
-            buildingName: property?.buildingName ?? buildingFilter,
-            addressLine: property?.addressLine ?? null,
-          })
-        : null
+        },
+      },
+      { organizationId: landlordId, question, buildingFilter },
+    )
+    : context.permissions.canSeeFinance && plan.runPriceHistory
+    ? await executeDomainTool(
+      supabase,
+      {
+        name: "get_property_price_history",
+        arguments: {
+          buildingName: property?.buildingName ?? buildingFilter,
+          addressLine: property?.addressLine ?? null,
+        },
+      },
+      { organizationId: landlordId, question, buildingFilter },
+    )
+    : null
+  const priceHistory = priceHistoryRow?.toolId === "get_property_price_history"
+    ? priceHistoryRow.result
+    : null
 
-  const rentHistory = context.permissions.canSeeFinance && plan.runRentHistory
-    ? await rentHistoryLookup({
-        buildingName: property?.buildingName ?? buildingFilter,
-        cityLabel: property?.cityLabel ?? jurisdiction.cityLabel,
-        stateCode: property?.stateCode ?? jurisdiction.stateCode,
-        addressLine: property?.addressLine ?? null,
-      })
+  const rentHistoryRow = context.permissions.canSeeFinance && plan.runRentHistory
+    ? await executeDomainTool(
+      supabase,
+      {
+        name: "get_rent_history",
+        arguments: {
+          buildingName: property?.buildingName ?? buildingFilter,
+          cityLabel: property?.cityLabel ?? jurisdiction.cityLabel,
+          stateCode: property?.stateCode ?? jurisdiction.stateCode,
+          addressLine: property?.addressLine ?? null,
+        },
+      },
+      { organizationId: landlordId, question, buildingFilter },
+    )
+    : null
+  const rentHistory = rentHistoryRow?.toolId === "get_rent_history"
+    ? rentHistoryRow.result
     : null
 
   let ops:
@@ -1397,29 +1340,7 @@ export async function executeSelectedTools(
     toolSelectSource,
     noToolMatched,
     toolNeeds,
-    needsPeriodSummary,
-    needsOldestWaiting,
-    needsEntityInvestigation,
-    deepOpsCandidate,
-    needsDeepOps,
-    needsDraftCommunication,
-    needsActiveWorkflows,
-    needsWeatherAlerts,
-    needsLandlordIncentives,
-    needsListResidents,
-    needsPropertyInsights,
-    needsRecurringRepairs,
-    needsApproveRepairs,
-    needsMissingUpdates,
-    needsVendorResponseSpeed,
-    needsVendorCompletion,
-    needsVendorInactive,
-    needsVendorOverload,
-    needsVendorVerification,
-    needsVendorBest,
-    needsUnitRanking,
-    needsBriefing,
-    needsRanking,
+    retrievalNeeds,
     propertyInsightsForAnswer,
     toolsCalled,
     searchWorkOrdersHit,

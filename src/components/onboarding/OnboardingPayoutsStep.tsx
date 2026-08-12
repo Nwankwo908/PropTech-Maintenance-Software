@@ -8,18 +8,22 @@ import {
   type LandlordStripePayoutMethod,
 } from '@/api/landlordStripeConnect'
 import { getErrorMessage } from '@/lib/errorMessage'
+import {
+  onboardingBtnGhostClass,
+  onboardingBtnPrimaryClass,
+  onboardingBtnSecondaryClass,
+  onboardingNestedCardClass,
+  onboardingSurfaceSectionClass,
+} from './onboardingFieldStyles'
 
 const btnPrimary =
-  'inline-flex w-full cursor-pointer items-center justify-center rounded-[10px] bg-[#186179] px-4 py-3 text-[15px] font-semibold text-white transition-colors hover:bg-[#145066] disabled:cursor-not-allowed disabled:opacity-50'
+  'sa-press inline-flex w-full cursor-pointer items-center justify-center rounded-[10px] bg-[#186179] px-4 py-3 text-[15px] font-semibold text-white transition-colors hover:bg-[#145066] disabled:cursor-not-allowed disabled:opacity-50'
 
-const btnSecondary =
-  'inline-flex cursor-pointer items-center justify-center rounded-[10px] border border-[#e5e7eb] bg-white px-6 py-2.5 text-[14px] font-medium text-[#101828] transition-colors hover:bg-[#f9fafb] disabled:cursor-not-allowed disabled:opacity-50'
+const btnSecondary = onboardingBtnSecondaryClass
 
-const btnContinue =
-  'inline-flex cursor-pointer items-center justify-center rounded-[10px] bg-[#187960] px-6 py-2.5 text-[14px] font-semibold text-white transition-colors hover:bg-[#146b52] disabled:cursor-not-allowed disabled:opacity-50'
+const btnContinue = onboardingBtnPrimaryClass
 
-const btnGhost =
-  'inline-flex cursor-pointer items-center justify-center rounded-[10px] px-4 py-2.5 text-[14px] font-medium text-[#6a7282] transition-colors hover:bg-[#f3f4f6] hover:text-[#101828] disabled:cursor-not-allowed disabled:opacity-50'
+const btnGhost = onboardingBtnGhostClass
 
 export type OnboardingPayoutsStepProps = {
   landlordId: string
@@ -36,10 +40,11 @@ function PayoutMethodsList({ methods }: { methods: LandlordStripePayoutMethod[] 
   if (methods.length === 0) return null
   return (
     <ul className="mt-3 space-y-2">
-      {methods.map((method) => (
+      {methods.map((method, index) => (
         <li
           key={method.id}
-          className="rounded-[10px] border border-[#dbe4ea] bg-white px-3 py-2.5"
+          className={onboardingNestedCardClass}
+          style={{ ['--onb-stagger' as string]: index }}
         >
           <div className="flex items-start justify-between gap-3">
             <div>
@@ -151,7 +156,7 @@ export function OnboardingPayoutsStep({
   const primaryLabel = primaryPayoutMethodLabel(status)
 
   return (
-    <section className="mx-auto w-full max-w-[560px]">
+    <section className={`${onboardingSurfaceSectionClass} mx-auto w-full max-w-[560px]`}>
       <div className="flex items-start justify-between gap-4">
         <div className="min-w-0">
           <h2 className="text-[22px] font-semibold tracking-[-0.3px] text-[#111827]">
@@ -174,9 +179,12 @@ export function OnboardingPayoutsStep({
         ) : null}
       </div>
 
-      <div className="mt-6 rounded-2xl border border-[#e5e7eb] bg-[#f9fafb] p-5">
+      <div className="onb-form-card sa-surface mt-6 rounded-2xl border border-[#e5e7eb] bg-[#f9fafb] p-5">
         {loading ? (
-          <p className="text-[14px] text-[#6a7282]">Checking payout status…</p>
+          <div className="flex flex-col items-center gap-3 py-4">
+            <div className="onb-setup-spinner" role="status" aria-label="Loading payout status" />
+            <p className="onb-setup-copy text-[14px] text-[#6a7282]">Checking payout status…</p>
+          </div>
         ) : ready ? (
           <>
             <p className="text-[14px] font-semibold text-[#15803d]">Payout account connected</p>
@@ -240,7 +248,7 @@ export function OnboardingPayoutsStep({
                 type="button"
                 disabled={busy || saving}
                 onClick={() => void handleRefresh()}
-                className="mt-3 w-full text-center text-[13px] font-medium text-[#186179] hover:underline disabled:opacity-50"
+                className="sa-link mt-3 w-full text-center text-[13px] font-medium text-[#186179] hover:underline disabled:opacity-50"
               >
                 I finished on Stripe — refresh status
               </button>
@@ -250,7 +258,7 @@ export function OnboardingPayoutsStep({
       </div>
 
       {error ? (
-        <p className="mt-3 text-[13px] leading-5 text-[#b91c1c]">{error}</p>
+        <p className="sa-enter mt-3 text-[13px] leading-5 text-[#b91c1c]">{error}</p>
       ) : null}
 
       <div className="mt-8 flex flex-wrap items-center justify-between gap-3">

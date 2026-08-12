@@ -7,6 +7,7 @@ import {
   assertStringIncludes,
 } from "https://deno.land/std@0.224.0/assert/mod.ts"
 import {
+  applyPermissionGatesToRetrievalNeeds,
   applyPermissionToolGates,
   checkAskUloPermissions,
   requiredCapabilityForSubject,
@@ -102,4 +103,43 @@ Deno.test("applyPermissionToolGates drops resident and vendor needs", () => {
   assertEquals(gated.needsVendorBest, false)
   assertEquals(gated.needsVendorResponseSpeed, false)
   assertEquals(gated.runLegalTools, true)
+})
+
+Deno.test("applyPermissionGatesToRetrievalNeeds clears vendor flags without canSeeVendors", () => {
+  const { retrievalNeeds } = applyPermissionGatesToRetrievalNeeds(
+    {
+      canAskLegal: true,
+      canSeeResidents: true,
+      canSeeVendors: false,
+      canSeeFinance: true,
+    },
+    {
+      needsPeriodSummary: false,
+      needsOldestWaiting: false,
+      needsEntityInvestigation: false,
+      deepOpsCandidate: false,
+      needsDeepOps: false,
+      needsDraftCommunication: false,
+      needsActiveWorkflows: false,
+      needsWeatherAlerts: false,
+      needsLandlordIncentives: false,
+      needsListResidents: false,
+      needsPropertyInsights: false,
+      needsRecurringRepairs: false,
+      needsApproveRepairs: false,
+      needsMissingUpdates: false,
+      needsVendorResponseSpeed: true,
+      needsVendorCompletion: false,
+      needsVendorInactive: false,
+      needsVendorOverload: false,
+      needsVendorVerification: false,
+      needsVendorBest: true,
+      needsUnitRanking: false,
+      needsBriefing: false,
+      needsRanking: false,
+    },
+    { runLegalTools: true },
+  )
+  assertEquals(retrievalNeeds.needsVendorBest, false)
+  assertEquals(retrievalNeeds.needsVendorResponseSpeed, false)
 })

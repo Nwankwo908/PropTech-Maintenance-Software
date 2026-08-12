@@ -146,7 +146,7 @@ export async function resolveLandlordOpsPhones(
 
   const { data: onboarding } = await supabase
     .from("landlord_onboarding")
-    .select("draft_state, properties")
+    .select("draft_state, properties, onboarding_status")
     .eq("landlord_id", landlordId)
     .maybeSingle()
 
@@ -159,22 +159,39 @@ export async function resolveLandlordOpsPhones(
     if (n) candidates.add(n)
   }
 
-  const properties = Array.isArray(onboarding?.properties)
-    ? onboarding.properties
-    : Array.isArray(draft.properties)
-      ? draft.properties
-      : []
-  for (const raw of properties) {
-    if (!raw || typeof raw !== "object") continue
-    const row = raw as Record<string, unknown>
+  const { data: propertyRows } = await supabase
+    .from("properties")
+    .select("manager_phone")
+    .eq("landlord_id", landlordId)
+    .limit(200)
+
+  for (const row of propertyRows ?? []) {
     const n = normalizePhoneFlexible(
-      typeof row.propertyManagerPhone === "string"
-        ? row.propertyManagerPhone
-        : typeof row.property_manager_phone === "string"
-          ? row.property_manager_phone
-          : "",
+      typeof row.manager_phone === "string" ? row.manager_phone : "",
     )
     if (n) candidates.add(n)
+  }
+
+  const onboardingCompleted = onboarding?.onboarding_status === "completed"
+  const hasCanonicalProperties = (propertyRows?.length ?? 0) > 0
+  if (!onboardingCompleted && !hasCanonicalProperties) {
+    const properties = Array.isArray(onboarding?.properties)
+      ? onboarding.properties
+      : Array.isArray(draft.properties)
+        ? draft.properties
+        : []
+    for (const raw of properties) {
+      if (!raw || typeof raw !== "object") continue
+      const row = raw as Record<string, unknown>
+      const n = normalizePhoneFlexible(
+        typeof row.propertyManagerPhone === "string"
+          ? row.propertyManagerPhone
+          : typeof row.property_manager_phone === "string"
+            ? row.property_manager_phone
+            : "",
+      )
+      if (n) candidates.add(n)
+    }
   }
 
   const vendorPhones = await loadVendorPhonesForLandlord(supabase, landlordId)

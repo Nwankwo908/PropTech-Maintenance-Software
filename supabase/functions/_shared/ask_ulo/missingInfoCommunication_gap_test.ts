@@ -1,2 +1,0 @@
-/** Re-export shim — implementation moved to tests/guards/missingInfoCommunication_gap_test.ts */
-export * from "./tests/guards/missingInfoCommunication_gap_test.ts";

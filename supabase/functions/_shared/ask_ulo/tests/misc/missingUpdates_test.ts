@@ -3,7 +3,7 @@ import { assertEquals, assertStringIncludes } from "https://deno.land/std@0.224.
 import { classifyInvestigationPlaybook } from "../../routing/investigationPlaybooks.ts"
 import { requiresDeepOperationalInvestigation } from "../../tools/maintenance/deepOperationalInvestigation.ts"
 import { isMissingUpdatesQuestion } from "../../tools/maintenance/missingUpdatesLookup.ts"
-import { synthesizeAskUloAnswer } from "../../synthesis/synthesizeAnswer.ts"
+import { synthesizeAskUloAnswer } from "../../synthesis/index.ts"
 
 Deno.test("missing-updates phrases classify correctly and skip deep ops", () => {
   for (const q of [

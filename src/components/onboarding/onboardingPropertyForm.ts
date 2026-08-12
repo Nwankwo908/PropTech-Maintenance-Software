@@ -9,6 +9,8 @@ import {
   type OnboardingStep,
   type PropertyFormRow,
 } from '@/lib/onboarding'
+import { ensureProperty } from '@/lib/properties'
+import { isPropertyIdSlug } from '@/lib/propertyRoutes'
 import { citiesForState } from '@/lib/usLocations'
 
 export type { PropertyFormRow }
@@ -128,6 +130,39 @@ export function applyPropertyFormPatch(
     }
     return next
   })
+}
+
+function isDraftOnboardingPropertyId(id: string): boolean {
+  return id.startsWith('draft-') || id.startsWith('ext-prop-')
+}
+
+/**
+ * Mint or retrieve the canonical properties.id as soon as the landlord names a property.
+ * Best-effort — wizard continues with the draft id if the server call fails.
+ */
+export async function mintOnboardingPropertyIdIfNeeded(
+  form: PropertyFormRow,
+): Promise<string | null> {
+  const name = form.name.trim()
+  if (!name) return null
+  if (isPropertyIdSlug(form.id) && !isDraftOnboardingPropertyId(form.id)) {
+    return form.id
+  }
+
+  const unitCount = Number.parseInt(form.unitCount, 10)
+  const ensured = await ensureProperty({
+    name,
+    streetAddress: form.address.trim() || null,
+    city: form.city.trim() || null,
+    state: form.state.trim().toUpperCase() || null,
+    zipCode: form.zipCode.trim() || null,
+    propertyType: form.propertyType?.trim() || null,
+    managerName: form.propertyManagerName.trim() || null,
+    managerPhone: form.propertyManagerPhone.trim() || null,
+    unitCount: Number.isFinite(unitCount) && unitCount >= 1 ? unitCount : null,
+  })
+  if (!ensured.ok) return null
+  return ensured.propertyId
 }
 
 export type SaveOnboardingPropertyStepInput = {

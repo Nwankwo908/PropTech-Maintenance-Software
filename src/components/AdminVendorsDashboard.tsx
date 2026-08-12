@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
+import { sendVendorInvite, type VendorInviteChannel } from '@/api/vendorVerification'
 import { VendorFormModal } from '@/components/VendorFormModal'
 import { TableCheckbox } from '@/components/TableCheckbox'
 import magnifyingGlassIcon from '@/assets/Magnifying glass.svg'
 import { getActiveLandlordId } from '@/lib/activeLandlord'
+import { getErrorMessage } from '@/lib/errorMessage'
 import { vendorDetailPath } from '@/lib/vendorRoutes'
 import { dedupeVendorsByName, duplicateVendorIdsToRemove } from '@/lib/vendorDedup'
 import { supabase } from '@/lib/supabase'
@@ -13,7 +15,7 @@ import {
   isGeneralistTrade,
   VENDOR_TRADE_OPTIONS,
 } from '@/lib/vendorTrades'
-import { resolveVendorCapacityChip } from '@/lib/vendorStatusChip'
+import { resolveVendorCapacityChip, countUnactivatedVendors, vendorCapacityChipVisualClasses } from '@/lib/vendorStatusChip'
 
 type VendorRow = {
   id: string
@@ -66,7 +68,11 @@ function formatRating(score: number | null, reviewCount: number): string {
 
 function VerificationPill({ status }: { status: string | undefined }) {
   if (!status) {
-    return <span className="text-[13px] text-[#6a7282]">—</span>
+    return (
+      <span className="inline-flex items-center rounded-full bg-[#f3f4f6] px-2.5 py-0.5 text-[12px] font-medium text-[#6a7282]">
+        Not started
+      </span>
+    )
   }
   const config: Record<string, { label: string; className: string }> = {
     verified: { label: 'Verified', className: 'bg-[#dbfce7] text-[#008236]' },
@@ -174,6 +180,26 @@ function FilterToggleGroup<T extends string>({
   )
 }
 
+function ActivationReminderAlertIcon() {
+  return (
+    <svg
+      className="mt-0.5 size-4 shrink-0 text-[#101828]"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={1.8}
+      aria-hidden
+    >
+      <path
+        d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+      <path d="M12 9v4M12 17h.01" strokeLinecap="round" />
+    </svg>
+  )
+}
+
 export function AdminVendorsDashboard() {
   const [vendors, setVendors] = useState<VendorRow[]>([])
   const [loading, setLoading] = useState(true)
@@ -192,8 +218,8 @@ export function AdminVendorsDashboard() {
   const [selectedVendorIds, setSelectedVendorIds] = useState<Set<string>>(() => new Set())
   const [deleteVendorsSaving, setDeleteVendorsSaving] = useState(false)
   const [deleteVendorsError, setDeleteVendorsError] = useState<string | null>(null)
-  const [inviteWarning, setInviteWarning] = useState<string | null>(null)
-
+  const [onboardingSaving, setOnboardingSaving] = useState(false)
+  const [onboardingNotice, setOnboardingNotice] = useState<string | null>(null)
   const loadVendors = useCallback(async () => {
     if (!supabase) {
       setLoading(false)
@@ -378,6 +404,19 @@ export function AdminVendorsDashboard() {
     })
   }, [vendors, searchQuery, tradeFilter, ratingSort])
 
+  const unactivatedVendorCount = useMemo(
+    () =>
+      countUnactivatedVendors(
+        vendors.map((vendor) => ({
+          verificationStatus: verificationByVendor.get(vendor.id),
+          vendorActive: vendor.active,
+          availability: availabilityByVendor.get(vendor.id),
+          rosterStatus: vendor.rosterStatus,
+        })),
+      ),
+    [vendors, verificationByVendor, availabilityByVendor],
+  )
+
   const selectedVendorCount = selectedVendorIds.size
   const allFilteredVendorsSelected =
     filteredVendors.length > 0 && filteredVendors.every((vendor) => selectedVendorIds.has(vendor.id))
@@ -446,6 +485,133 @@ export function AdminVendorsDashboard() {
     setDeleteVendorsSaving(false)
   }
 
+  async function startOnboardingForSelected() {
+    if (selectedVendorIds.size === 0) return
+
+    setOnboardingNotice(null)
+    setOnboardingSaving(true)
+
+    const landlordId = getActiveLandlordId()
+    const selected = vendors.filter((vendor) => selectedVendorIds.has(vendor.id))
+    const toInvite: VendorRow[] = []
+    let missingContact = 0
+    let alreadyComplete = 0
+
+    for (const vendor of selected) {
+      const phone = vendor.phone?.trim() ?? ''
+      const email = vendor.email?.trim() ?? ''
+      if (!phone && !email) {
+        missingContact += 1
+        continue
+      }
+
+      const chip = resolveVendorCapacityChip({
+        verificationStatus: verificationByVendor.get(vendor.id),
+        vendorActive: vendor.active,
+        availability: availabilityByVendor.get(vendor.id),
+        rosterStatus: vendor.rosterStatus,
+      })
+
+      if (
+        chip.status === 'active' ||
+        chip.status === 'paused' ||
+        chip.status === 'pending' ||
+        chip.status === 'docs_submitted' ||
+        chip.status === 'suspended' ||
+        chip.status === 'banned'
+      ) {
+        alreadyComplete += 1
+        continue
+      }
+
+      if (chip.status === 'not_started') {
+        toInvite.push(vendor)
+      }
+    }
+
+    if (toInvite.length === 0) {
+      setOnboardingSaving(false)
+      if (missingContact > 0 && alreadyComplete === 0) {
+        setOnboardingNotice(
+          'Selected vendors need a phone number or email before onboarding can start.',
+        )
+      } else if (alreadyComplete > 0 && missingContact === 0) {
+        setOnboardingNotice(
+          'Selected vendors are already activated, waiting for verification, or under review.',
+        )
+      } else {
+        setOnboardingNotice(
+          'No selected vendors are ready for onboarding. Add contact info or choose vendors who have not been invited yet.',
+        )
+      }
+      return
+    }
+
+    let sent = 0
+    let failed = 0
+    let lastError: string | undefined
+
+    for (const vendor of toInvite) {
+      const phone = vendor.phone?.trim() ?? ''
+      const email = vendor.email?.trim() ?? ''
+      const channel: VendorInviteChannel =
+        phone && email ? 'both' : phone ? 'sms' : 'email'
+
+      try {
+        const result = await sendVendorInvite({
+          landlordId,
+          vendorId: vendor.id,
+          businessName: vendor.name,
+          email: email || undefined,
+          phone: phone || undefined,
+          channel,
+          tradeCategories: vendor.category ? [vendor.category] : undefined,
+        })
+        const anySent =
+          result.delivery.sms === 'sent' || result.delivery.email === 'sent'
+        if (anySent) {
+          sent += 1
+        } else {
+          failed += 1
+          lastError = 'Verification invite could not be delivered.'
+        }
+      } catch (err) {
+        failed += 1
+        lastError = getErrorMessage(err, 'Something went wrong. Please try again.')
+      }
+    }
+
+    await Promise.all([loadVendors(), loadVerifications()])
+    setOnboardingSaving(false)
+
+    if (sent > 0 && failed === 0) {
+      const parts = [
+        sent === 1
+          ? 'Verification invite sent to 1 vendor.'
+          : `Verification invites sent to ${sent} vendors.`,
+      ]
+      if (missingContact > 0) {
+        parts.push(`${missingContact} skipped (no contact info on file).`)
+      }
+      setOnboardingNotice(parts.join(' '))
+      return
+    }
+
+    if (sent > 0) {
+      setOnboardingNotice(
+        `Verification invites sent to ${sent} vendor${sent === 1 ? '' : 's'}, but ${failed} could not be delivered.${
+          missingContact > 0 ? ` ${missingContact} skipped (no contact info on file).` : ''
+        }`,
+      )
+      return
+    }
+
+    setOnboardingNotice(
+      lastError ??
+        'Verification invites could not be sent. Check contact info and try again.',
+    )
+  }
+
   return (
     <main className="flex min-h-0 flex-1 flex-col px-8 pb-12">
       <div className="flex items-start justify-between gap-3 py-6">
@@ -488,6 +654,21 @@ export function AdminVendorsDashboard() {
         <div className="mb-4 rounded-[10px] border border-[#fde68a] bg-[#fffbeb] px-4 py-3 text-[13px] text-[#92400e]">
           Vendor scores could not be loaded ({scoresError}). Ratings and response times may be
           incomplete.
+        </div>
+      ) : null}
+
+      {!loading && unactivatedVendorCount > 0 ? (
+        <div
+          className="mb-4 flex items-start gap-2.5 rounded-[10px] border border-[#E8A5AA] bg-[#F6B9BE] px-4 py-3 text-[13px] leading-5 text-[#364153]"
+          role="status"
+        >
+          <ActivationReminderAlertIcon />
+          <p className="text-[#101828]">
+            {unactivatedVendorCount === 1
+              ? '1 vendor has not been activated yet.'
+              : `${unactivatedVendorCount} vendors have not been activated yet.`}{' '}
+            Select the checkbox to start onboarding when you&apos;re ready.
+          </p>
         </div>
       ) : null}
 
@@ -539,9 +720,9 @@ export function AdminVendorsDashboard() {
           Could not delete selected vendors: {deleteVendorsError}
         </div>
       ) : null}
-      {inviteWarning ? (
-        <div className="mb-4 rounded-[10px] border border-[#fde68a] bg-[#fffbeb] px-4 py-3 text-[13px] text-[#92400e]">
-          {inviteWarning}
+      {onboardingNotice ? (
+        <div className="mb-4 rounded-[10px] border border-[#E8A5AA] bg-[#F6B9BE] px-4 py-3 text-[13px] leading-5 text-[#101828]">
+          {onboardingNotice}
         </div>
       ) : null}
 
@@ -561,7 +742,15 @@ export function AdminVendorsDashboard() {
             </button>
             <button
               type="button"
-              disabled={deleteVendorsSaving}
+              disabled={onboardingSaving || deleteVendorsSaving}
+              onClick={() => void startOnboardingForSelected()}
+              className="sa-press inline-flex h-9 items-center justify-center rounded-lg bg-[#187960] px-3 text-[14px] font-medium text-white outline-none hover:bg-[#146b52] focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50"
+            >
+              {onboardingSaving ? 'Starting…' : 'Start onboarding'}
+            </button>
+            <button
+              type="button"
+              disabled={deleteVendorsSaving || onboardingSaving}
               onClick={() => void deleteSelectedVendors()}
               className="sa-press inline-flex h-9 items-center justify-center rounded-lg border border-[#b52a00]/30 bg-[#fff4f0] px-3 text-[14px] font-medium text-[#b52a00] outline-none hover:bg-[#ffe9e1] focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50"
             >
@@ -590,7 +779,7 @@ export function AdminVendorsDashboard() {
                 <th className="px-6 py-3 text-[12px] font-medium text-[#6a7282]">Rating</th>
                 <th className="px-6 py-3 text-[12px] font-medium text-[#6a7282]">Completed jobs</th>
                 <th className="px-6 py-3 text-[12px] font-medium text-[#6a7282]">Verification</th>
-                <th className="px-6 py-3 text-[12px] font-medium text-[#6a7282]">Status</th>
+                <th className="px-6 py-3 text-[12px] font-medium text-[#6a7282]">Activation</th>
               </tr>
             </thead>
             <tbody>
@@ -659,11 +848,16 @@ export function AdminVendorsDashboard() {
                           availability: availabilityByVendor.get(vendor.id),
                           rosterStatus: vendor.rosterStatus,
                         })
+                        const styles = vendorCapacityChipVisualClasses(chip.status)
                         return (
                           <span
                             title={chip.detail}
-                            className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-[12px] font-medium ${chip.className}`}
+                            className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-[12px] font-medium ${styles.pill}`}
                           >
+                            <span
+                              className={`inline-block size-2 shrink-0 rounded-full ${styles.dot}`}
+                              aria-hidden
+                            />
                             {chip.label}
                           </span>
                         )
@@ -682,9 +876,8 @@ export function AdminVendorsDashboard() {
         mode="add"
         initial={null}
         onClose={() => setAddVendorOpen(false)}
-        onSaved={(meta) => {
+        onSaved={() => {
           setAddVendorOpen(false)
-          setInviteWarning(meta?.inviteWarning ?? null)
           void loadVendors()
         }}
       />

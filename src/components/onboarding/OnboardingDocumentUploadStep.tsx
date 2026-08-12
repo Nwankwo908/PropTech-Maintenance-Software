@@ -4,15 +4,18 @@ import {
   formatFileSize,
   type OnboardingUploadedDocument,
 } from '@/lib/onboardingDocumentUpload'
+import {
+  onboardingBtnGhostClass,
+  onboardingBtnPrimaryClass,
+  onboardingBtnSecondaryClass,
+  onboardingSurfaceSectionClass,
+} from './onboardingFieldStyles'
 
-const btnPrimary =
-  'inline-flex cursor-pointer items-center justify-center rounded-[10px] bg-[#187960] px-6 py-2.5 text-[14px] font-semibold text-white transition-colors hover:bg-[#146b52] disabled:cursor-not-allowed disabled:opacity-50'
+const btnPrimary = onboardingBtnPrimaryClass
 
-const btnSecondary =
-  'inline-flex cursor-pointer items-center justify-center rounded-[10px] border border-[#e5e7eb] bg-white px-6 py-2.5 text-[14px] font-medium text-[#101828] transition-colors hover:bg-[#f9fafb] disabled:cursor-not-allowed disabled:opacity-50'
+const btnSecondary = onboardingBtnSecondaryClass
 
-const btnGhost =
-  'inline-flex cursor-pointer items-center justify-center rounded-[10px] px-4 py-2.5 text-[14px] font-medium text-[#6a7282] transition-colors hover:bg-[#f3f4f6] hover:text-[#101828] disabled:cursor-not-allowed disabled:opacity-50'
+const btnGhost = onboardingBtnGhostClass
 
 function UploadDocumentsIcon() {
   return (
@@ -38,10 +41,12 @@ function FileRow({
   doc,
   onRemove,
   disabled,
+  staggerIndex,
 }: {
   doc: OnboardingUploadedDocument
   onRemove: (id: string) => void
   disabled: boolean
+  staggerIndex: number
 }) {
   const isProcessing =
     doc.uploadStatus === 'uploading' ||
@@ -51,7 +56,10 @@ function FileRow({
     doc.uploadStatus === 'handwriting'
 
   return (
-    <li className="rounded-[10px] border border-[#e5e7eb] bg-white px-4 py-3">
+    <li
+      className="onb-file-row sa-surface rounded-[10px] border border-[#e5e7eb] bg-white px-4 py-3"
+      style={{ ['--onb-stagger' as string]: staggerIndex }}
+    >
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0 flex-1">
           <p className="truncate text-[14px] font-medium text-[#101828]">{doc.fileName}</p>
@@ -73,7 +81,7 @@ function FileRow({
         <div className="mt-3">
           <div className="h-1.5 w-full overflow-hidden rounded-full bg-[#f3f4f6]">
             <div
-              className="h-full rounded-full bg-[#187960] transition-all duration-200"
+              className="sa-bar h-full rounded-full bg-[#187960] transition-all duration-200"
               style={{ width: `${Math.max(doc.uploadProgress, isProcessing ? 100 : 0)}%` }}
             />
           </div>
@@ -138,7 +146,7 @@ export function OnboardingDocumentUploadStep({
     )
 
   return (
-    <section className="sa-surface rounded-[10px] border border-[#e5e7eb] bg-white p-6 shadow-[0px_1px_2px_-1px_rgba(0,0,0,0.06)]">
+    <section className={onboardingSurfaceSectionClass}>
       <div className="flex items-start justify-between gap-4">
         <div className="min-w-0">
           <h2 className="text-[18px] font-semibold text-[#101828]">Upload your documents</h2>
@@ -212,7 +220,7 @@ export function OnboardingDocumentUploadStep({
       </div>
 
       {uploadError ? (
-        <div className="mt-3 rounded-[8px] border border-[#fecaca] bg-[#fef2f2] px-3 py-2 text-[13px] text-[#b91c1c]">
+        <div className="sa-enter mt-3 rounded-[8px] border border-[#fecaca] bg-[#fef2f2] px-3 py-2 text-[13px] text-[#b91c1c]">
           {uploadError}
         </div>
       ) : null}
@@ -228,11 +236,12 @@ export function OnboardingDocumentUploadStep({
             ) : null}
           </div>
           <ul className="space-y-2">
-            {documents.map((doc) => (
+            {documents.map((doc, index) => (
               <FileRow
                 key={doc.id}
                 doc={doc}
                 disabled={processing}
+                staggerIndex={index}
                 onRemove={onRemoveDocument}
               />
             ))}

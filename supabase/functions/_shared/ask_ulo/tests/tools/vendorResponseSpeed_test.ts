@@ -16,7 +16,7 @@ import {
   looksLikeBestForResponseSpeedAnswer,
 } from "../../tools/_shared/questionMetricContext.ts"
 import { buildVendorResponseSpeedMarkdown } from "../../tools/vendors/vendorResponseSpeedLookup.ts"
-import { synthesizeAskUloAnswer } from "../../synthesis/synthesizeAnswer.ts"
+import { synthesizeAskUloAnswer } from "../../synthesis/index.ts"
 
 Deno.test("vendor response-speed phrases classify correctly and skip deep ops / property priority", () => {
   for (const q of [

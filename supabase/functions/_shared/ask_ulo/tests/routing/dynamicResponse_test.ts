@@ -7,7 +7,7 @@ import {
 } from "../../routing/dynamicResponse.ts"
 import { classifyAskUloIntent } from "../../routing/detectIntent.ts"
 import { requiresReasoningTransparency } from "../../synthesis/reasoningTransparency.ts"
-import { buildFallbackAskUloAnswer, type AskUloToolPackets } from "../../synthesis/synthesizeAnswer.ts"
+import { buildFallbackAskUloAnswer, type AskUloToolPackets } from "../../synthesis/index.ts"
 
 Deno.test("period summary question detection", () => {
   assertEquals(

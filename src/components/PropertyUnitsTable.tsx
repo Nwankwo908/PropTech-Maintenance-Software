@@ -5,7 +5,7 @@ import {
   type UnitOccupancyStatus,
 } from '@/components/UnitOccupancyStatusMenu'
 import type { PropertyUnitRow } from '@/lib/propertyUnitRows'
-import { propertyResidentDetailPath } from '@/lib/propertyRoutes'
+import { propertyResidentDetailPath, propertyResidentDetailPathForBuilding } from '@/lib/propertyRoutes'
 
 function formatBalance(amount: number): string {
   return amount.toLocaleString(undefined, {
@@ -101,7 +101,15 @@ export function PropertyUnitsTable({
                   <td className="whitespace-nowrap px-5 py-4 text-[14px] leading-5 text-[#364153]">
                     {showOccupiedFields && row.residentId && row.residentName ? (
                       <Link
-                        to={propertyResidentDetailPath(propertyId ?? building, row.residentId)}
+                        to={
+                          propertyId
+                            ? propertyResidentDetailPath(propertyId, row.residentId)
+                            : propertyResidentDetailPathForBuilding(
+                                building,
+                                row.residentId,
+                                new Map(),
+                              )
+                        }
                         className="sa-link font-medium text-[#186179] hover:text-[#0f4d5f] hover:underline"
                       >
                         {row.residentName}

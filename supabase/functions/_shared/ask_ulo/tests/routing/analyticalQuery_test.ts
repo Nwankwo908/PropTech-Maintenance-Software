@@ -6,7 +6,7 @@ import {
 } from "../../routing/analyticalQuery.ts"
 import { classifyAskUloIntent, planToolsForIntent } from "../../routing/detectIntent.ts"
 import { classifyAskUloReasoningMode } from "../../routing/reasoningMode.ts"
-import { buildFallbackAskUloAnswer, type AskUloToolPackets } from "../../synthesis/synthesizeAnswer.ts"
+import { buildFallbackAskUloAnswer, type AskUloToolPackets } from "../../synthesis/index.ts"
 
 Deno.test("unit maintenance volume question is detected analytically", () => {
   const q = "Which units generate the most maintenance requests?"

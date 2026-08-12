@@ -17,6 +17,7 @@ import {
   applyPropertyFormPatch,
   cityOptionsForProperty,
   createEmptyPropertyForm,
+  mintOnboardingPropertyIdIfNeeded,
   saveOnboardingPropertyStep,
   type PropertyFormRow,
   type SaveOnboardingPropertyStepInput,
@@ -52,6 +53,14 @@ export function OnboardingPropertyStep({
 }: OnboardingPropertyStepProps) {
   function updatePropertyForm(id: string, patch: Partial<PropertyFormRow>) {
     setPropertyForms((prev) => applyPropertyFormPatch(prev, id, patch))
+  }
+
+  async function commitPropertyIdWhenNamed(form: PropertyFormRow) {
+    const propertyId = await mintOnboardingPropertyIdIfNeeded(form)
+    if (!propertyId || propertyId === form.id) return
+    setPropertyForms((prev) =>
+      prev.map((row) => (row.id === form.id ? { ...row, id: propertyId } : row)),
+    )
   }
 
   function addPropertyForm() {
@@ -105,6 +114,9 @@ export function OnboardingPropertyStep({
                       className={onboardingInputClass}
                       value={form.name}
                       onChange={(e) => updatePropertyForm(form.id, { name: e.target.value })}
+                      onBlur={(event) =>
+                        void commitPropertyIdWhenNamed({ ...form, name: event.target.value })
+                      }
                       placeholder="Riverside Lofts"
                       aria-label={`Property ${index + 1} name`}
                     />

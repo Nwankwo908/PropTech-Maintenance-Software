@@ -27,6 +27,8 @@ export type DomainToolId =
   | "investigate_operations"
   | "rank_units_by_maintenance"
   | "get_property_snapshot"
+  | "get_property_price_history"
+  | "get_rent_history"
 
 export type DomainToolSubject =
   | "work_order"
@@ -216,6 +218,20 @@ export const DOMAIN_TOOL_REGISTRY: DomainToolMeta[] = [
     subject: "property",
     description:
       "Lightweight building inventory and location context for market, finance, and legal personalization.",
+    status: "live",
+  },
+  {
+    id: "get_property_price_history",
+    label: "Property price history",
+    subject: "finance",
+    description: "Sale and valuation history for a scoped property.",
+    status: "live",
+  },
+  {
+    id: "get_rent_history",
+    label: "Rent history",
+    subject: "finance",
+    description: "Historical rent trends for a scoped property or market.",
     status: "live",
   },
 ]

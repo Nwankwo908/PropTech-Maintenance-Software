@@ -6,12 +6,12 @@ import { serve } from "https://deno.land/std/http/server.ts"
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1"
 import { requireAdminReassignAuth } from "../_shared/admin_edge_auth.ts"
 import { runAskUlo } from "../_shared/ask_ulo/runAskUlo.ts"
-import { parseAskUloAgentMode } from "../_shared/ask_ulo/agentMode.ts"
-import { recordCounselHandoff } from "../_shared/ask_ulo/recordCounselHandoff.ts"
+import { parseAskUloAgentMode } from "../_shared/ask_ulo/routing/selectMode.ts"
+import { recordCounselHandoff } from "../_shared/ask_ulo/audit/recordCounselHandoff.ts"
 import {
   markEvalCounselHandoff,
   recordAskUloFeedback,
-} from "../_shared/ask_ulo/evalRecord.ts"
+} from "../_shared/ask_ulo/audit/buildAuditRecord.ts"
 
 /**
  * Explicit CORS for browser → Edge (localhost and deployed admin UI).

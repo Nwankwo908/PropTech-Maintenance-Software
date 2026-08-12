@@ -11,9 +11,15 @@ import {
 import { propertyResidentDetailPath } from '@/lib/propertyRoutes'
 import { supabase } from '@/lib/supabase'
 
-function BellIcon() {
+function BellIcon({ compact = false }: { compact?: boolean }) {
   return (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} className="size-5">
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={2}
+      className={compact ? 'size-4' : 'size-5'}
+    >
       <path d="M18 8a6 6 0 10-12 0c0 7-3 9-3 9h18s-3-2-3-9M13.73 21a2 2 0 01-3.46 0" />
     </svg>
   )
@@ -43,10 +49,14 @@ function NotificationItem({
 
 type AdminUloNotificationsBellProps = {
   onNavigate?: () => void
+  compact?: boolean
 }
 
 /** Header bell — Ulo admin summaries with transcript drill-in. */
-export function AdminUloNotificationsBell({ onNavigate }: AdminUloNotificationsBellProps) {
+export function AdminUloNotificationsBell({
+  onNavigate,
+  compact = false,
+}: AdminUloNotificationsBellProps) {
   const navigate = useNavigate()
   const panelId = useId()
   const rootRef = useRef<HTMLDivElement>(null)
@@ -148,11 +158,21 @@ export function AdminUloNotificationsBell({ onNavigate }: AdminUloNotificationsB
             event.stopPropagation()
             setOpen((value) => !value)
           }}
-          className="sa-press relative flex size-9 shrink-0 items-center justify-center rounded-full text-[#101828] outline-none hover:bg-[#f3f4f6] active:bg-[#e5e7eb] focus-visible:ring-2 focus-visible:ring-[#101828] focus-visible:ring-offset-2"
+          className={[
+            'sa-press relative flex shrink-0 items-center justify-center rounded-full text-[#101828] outline-none hover:bg-[#f3f4f6] active:bg-[#e5e7eb] focus-visible:ring-2 focus-visible:ring-[#101828] focus-visible:ring-offset-2',
+            compact ? 'size-[1.8rem]' : 'size-9',
+          ].join(' ')}
         >
-          <BellIcon />
+          <BellIcon compact={compact} />
           {unreadCount > 0 ? (
-            <span className="absolute right-1 top-1 flex size-4 items-center justify-center rounded-full bg-[#c10007] text-[10px] font-semibold leading-none text-white">
+            <span
+              className={[
+                'absolute flex items-center justify-center rounded-full bg-[#c10007] font-semibold leading-none text-white',
+                compact
+                  ? 'right-0.5 top-0.5 size-3.5 text-[9px]'
+                  : 'right-1 top-1 size-4 text-[10px]',
+              ].join(' ')}
+            >
               {unreadCount > 9 ? '9+' : unreadCount}
             </span>
           ) : null}

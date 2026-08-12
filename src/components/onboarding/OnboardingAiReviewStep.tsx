@@ -20,16 +20,19 @@ import {
   type OnboardingExtractedVendor,
 } from '@/lib/onboardingDocumentUpload'
 import {
+  onboardingBtnGhostClass,
+  onboardingBtnPrimaryClass,
+  onboardingNestedCardClass,
+  onboardingSectionStackClass,
+  onboardingSurfaceSectionClass,
   ONBOARDING_PROPERTY_TYPE_OPTIONS,
   resolveOnboardingPropertyType,
 } from './onboardingFieldStyles'
 import { US_STATE_OPTIONS } from '@/lib/usLocations'
 
-const btnPrimary =
-  'inline-flex cursor-pointer items-center justify-center rounded-[10px] bg-[#187960] px-5 py-2.5 text-[14px] font-semibold text-white transition-colors hover:bg-[#146b52] disabled:cursor-not-allowed disabled:opacity-50'
+const btnPrimary = onboardingBtnPrimaryClass
 
-const btnGhost =
-  'inline-flex cursor-pointer items-center justify-center rounded-[10px] px-4 py-2.5 text-[14px] font-medium text-[#6a7282] transition-colors hover:bg-[#f3f4f6] hover:text-[#101828] disabled:cursor-not-allowed disabled:opacity-50'
+const btnGhost = onboardingBtnGhostClass
 
 const inputClass =
   'mt-1 h-9 w-full rounded-[8px] border border-[#e5e7eb] bg-white px-3 text-[13px] text-[#101828] outline-none focus:border-[#155dfc] focus:ring-2 focus:ring-[#155dfc]/20'
@@ -147,7 +150,7 @@ function ReviewItemRow({
 }) {
   const Wrapper = as
   return (
-    <Wrapper className="rounded-[8px] border border-[#eef0f3] px-3 py-3">
+    <Wrapper className="sa-row rounded-[8px] border border-[#eef0f3] px-3 py-3">
       <div className="flex items-start gap-3">
         <div className="pt-0.5">
           <TableCheckbox aria-label={`Include ${label}`} checked={checked} onChange={onToggle} />
@@ -230,7 +233,7 @@ function ReviewSection({
   children: React.ReactNode
 }) {
   return (
-    <section className="rounded-[10px] border border-[#e5e7eb] bg-white p-4">
+    <section className={onboardingNestedCardClass}>
       <h3 className="text-[15px] font-semibold text-[#101828]">
         {count != null ? `${title} (${count})` : title}
       </h3>
@@ -934,10 +937,10 @@ export function OnboardingAiReviewStep({
   const smsChecked = Boolean(account.smsConsentAcceptedAt)
 
   return (
-    <section className="rounded-[10px] border border-[#e5e7eb] bg-white p-6 shadow-[0px_1px_2px_-1px_rgba(0,0,0,0.06)]">
+    <section className={onboardingSurfaceSectionClass}>
       <h2 className="text-[18px] font-semibold text-[#101828]">Review and Approve Information</h2>
 
-      <div className="mt-4 space-y-3">
+      <div className={`${onboardingSectionStackClass} mt-4`}>
         <ReviewSection title="Your organization">
           <p className="mt-1 text-[13px] text-[#6a7282]">
             Required for Fast Track — same details as the manual Account setup step.

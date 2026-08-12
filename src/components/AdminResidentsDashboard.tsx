@@ -1,20 +1,17 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { Link, useNavigate } from 'react-router-dom'
+import { Link } from 'react-router-dom'
 import magnifyingGlassIcon from '@/assets/Magnifying glass.svg'
 import { TableCheckbox } from '@/components/TableCheckbox'
 import { loadUnitsFromDb } from '@/api/unitVacancy'
 import { registerUnitSms, syncSmsIdentity } from '@/api/landlordSmsOnboarding'
 import {
-  activateTenantAfterAdd,
-  resendTenantActivationSms,
-  tenantActivationWarningMessage,
+  sendTenantActivationSms,
 } from '@/api/tenantActivation'
 import {
   AddResidentModal,
   type AddResidentSubmitPayload,
 } from '@/components/AddResidentModal'
 import {
-  TenantActivationActionRequiredActions,
   TenantActivationStatusChip,
 } from '@/components/TenantActivationStatusChip'
 import { getActiveLandlordId } from '@/lib/activeLandlord'
@@ -22,7 +19,7 @@ import { customUnitPickKey, unitOptionKeyToCell } from '@/lib/residentUnitKeys'
 import { propertyResidentDetailPath } from '@/lib/propertyRoutes'
 import { displayResidentEmail } from '@/lib/residentProfileDetail'
 import { deleteResidentsForLandlord } from '@/lib/residentDeletion'
-import { resolveTenantActivationChip } from '@/lib/tenantActivationStatus'
+import { resolveTenantActivationChip, countUnactivatedTenants } from '@/lib/tenantActivationStatus'
 import { supabase } from '@/lib/supabase'
 import { getErrorMessage } from '@/lib/errorMessage'
 
@@ -247,8 +244,27 @@ function FilterToggleGroup<T extends string>({
   )
 }
 
+function ActivationReminderAlertIcon() {
+  return (
+    <svg
+      className="mt-0.5 size-4 shrink-0 text-[#101828]"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={1.8}
+      aria-hidden
+    >
+      <path
+        d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+      <path d="M12 9v4M12 17h.01" strokeLinecap="round" />
+    </svg>
+  )
+}
+
 export function AdminResidentsDashboard() {
-  const navigate = useNavigate()
   const [residents, setResidents] = useState<ResidentRow[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -261,8 +277,8 @@ export function AdminResidentsDashboard() {
   const [selectedResidentIds, setSelectedResidentIds] = useState<Set<string>>(() => new Set())
   const [deleteResidentsSaving, setDeleteResidentsSaving] = useState(false)
   const [deleteResidentsError, setDeleteResidentsError] = useState<string | null>(null)
-  const [resendingResidentId, setResendingResidentId] = useState<string | null>(null)
-  const [activationActionError, setActivationActionError] = useState<string | null>(null)
+  const [onboardingSaving, setOnboardingSaving] = useState(false)
+  const [onboardingNotice, setOnboardingNotice] = useState<string | null>(null)
 
   const loadResidents = useCallback(async () => {
     if (!supabase) {
@@ -346,20 +362,6 @@ export function AdminResidentsDashboard() {
     setResidents(rows)
     setLoading(false)
   }, [])
-
-  async function handleResendWelcome(residentId: string) {
-    setActivationActionError(null)
-    setResendingResidentId(residentId)
-    const result = await resendTenantActivationSms({ residentId })
-    setResendingResidentId(null)
-    if (!result.ok || (result.failed ?? 0) > 0) {
-      setActivationActionError(
-        result.error ||
-          'Welcome text could not be delivered. Check the phone number and try again.',
-      )
-    }
-    await loadResidents()
-  }
 
   useEffect(() => {
     void loadResidents()
@@ -451,16 +453,6 @@ export function AdminResidentsDashboard() {
       })
     }
 
-    if (newResidentId && payload.phone?.trim()) {
-      const activation = await activateTenantAfterAdd({
-        landlordId,
-        residentId: newResidentId,
-        phone: payload.phone,
-      })
-      const warning = tenantActivationWarningMessage(activation)
-      if (warning) setAddResidentError(warning)
-    }
-
     await loadResidents()
     setAddResidentOpen(false)
   }
@@ -488,6 +480,19 @@ export function AdminResidentsDashboard() {
       return a.name.localeCompare(b.name)
     })
   }, [residents, searchQuery, sentimentFilter, balanceSort])
+
+  const unactivatedResidentCount = useMemo(
+    () =>
+      countUnactivatedTenants(
+        residents.map((resident) => ({
+          activationStatus: resident.activationStatus,
+          smsConsentStatus: resident.smsConsentStatus,
+          activationAttemptCount: resident.activationAttemptCount,
+          activationSmsSentAt: resident.activationSmsSentAt,
+        })),
+      ),
+    [residents],
+  )
 
   const selectedResidentCount = selectedResidentIds.size
   const allFilteredResidentsSelected =
@@ -543,6 +548,119 @@ export function AdminResidentsDashboard() {
     setDeleteResidentsSaving(false)
   }
 
+  async function startOnboardingForSelected() {
+    if (selectedResidentIds.size === 0) return
+
+    setOnboardingNotice(null)
+    setOnboardingSaving(true)
+
+    const selected = residents.filter((resident) => selectedResidentIds.has(resident.id))
+    const firstSendIds: string[] = []
+    const resendIds: string[] = []
+    let missingPhone = 0
+    let alreadyComplete = 0
+
+    for (const resident of selected) {
+      if (!resident.contactPhone?.trim()) {
+        missingPhone += 1
+        continue
+      }
+
+      const chip = resolveTenantActivationChip({
+        activationStatus: resident.activationStatus,
+        smsConsentStatus: resident.smsConsentStatus,
+        activationAttemptCount: resident.activationAttemptCount,
+        activationSmsSentAt: resident.activationSmsSentAt,
+      })
+
+      if (
+        chip.status === 'activated' ||
+        chip.status === 'opted_out' ||
+        chip.status === 'waiting'
+      ) {
+        alreadyComplete += 1
+        continue
+      }
+
+      if (chip.actionRequired) {
+        resendIds.push(resident.id)
+      } else {
+        firstSendIds.push(resident.id)
+      }
+    }
+
+    if (firstSendIds.length === 0 && resendIds.length === 0) {
+      setOnboardingSaving(false)
+      if (missingPhone > 0 && alreadyComplete === 0) {
+        setOnboardingNotice('Selected residents need a phone number before onboarding can start.')
+      } else if (alreadyComplete > 0 && missingPhone === 0) {
+        setOnboardingNotice('Selected residents are already activated or waiting for a reply.')
+      } else {
+        setOnboardingNotice(
+          'No selected residents are ready for onboarding. Add phone numbers or choose residents who have not been activated yet.',
+        )
+      }
+      return
+    }
+
+    let sent = 0
+    let failed = 0
+    let skipped = 0
+    let lastError: string | undefined
+
+    if (firstSendIds.length > 0) {
+      const result = await sendTenantActivationSms({ residentIds: firstSendIds })
+      sent += result.sent ?? 0
+      failed += result.failed ?? 0
+      skipped += result.skipped ?? 0
+      if (result.error) lastError = result.error
+    }
+
+    if (resendIds.length > 0) {
+      const result = await sendTenantActivationSms({
+        residentIds: resendIds,
+        resend: true,
+      })
+      sent += result.sent ?? 0
+      failed += result.failed ?? 0
+      skipped += result.skipped ?? 0
+      if (result.error) lastError = result.error
+    }
+
+    await loadResidents()
+    setOnboardingSaving(false)
+
+    if (sent > 0 && failed === 0) {
+      const parts = [
+        sent === 1
+          ? 'Welcome text sent to 1 resident.'
+          : `Welcome texts sent to ${sent} residents.`,
+      ]
+      if (skipped > 0) {
+        parts.push(`${skipped} skipped.`)
+      }
+      if (missingPhone > 0) {
+        parts.push(`${missingPhone} skipped (no phone on file).`)
+      }
+      setOnboardingNotice(parts.join(' '))
+      return
+    }
+
+    if (sent > 0) {
+      setOnboardingNotice(
+        `Welcome texts sent to ${sent} resident${sent === 1 ? '' : 's'}, but ${failed} could not be delivered.${
+          missingPhone > 0 ? ` ${missingPhone} skipped (no phone on file).` : ''
+        }`,
+      )
+      return
+    }
+
+    setOnboardingNotice(
+      lastError ??
+        'Welcome texts could not be sent. Check phone numbers and try again.',
+    )
+  }
+
   return (
     // Natural height so AdminLayout's scroll region owns vertical scrolling.
     <main className="px-8 pb-12">
@@ -552,7 +670,7 @@ export function AdminResidentsDashboard() {
             Residents
           </h1>
           <p className="text-[14px] leading-5 tracking-[-0.1504px] text-[#6a7282]">
-            Lease status, balances, and AI-inferred sentiment across your tenant base.
+          See your residents' lease status and balances at a glance.
           </p>
         </div>
         <button
@@ -586,6 +704,21 @@ export function AdminResidentsDashboard() {
       {error ? (
         <div className="mb-4 rounded-[10px] border border-[#fde68a] bg-[#fffbeb] px-4 py-3 text-[13px] text-[#92400e]">
           {error}
+        </div>
+      ) : null}
+
+      {!loading && unactivatedResidentCount > 0 ? (
+        <div
+          className="mb-4 flex items-start gap-2.5 rounded-[10px] border border-[#E8A5AA] bg-[#F6B9BE] px-4 py-3 text-[13px] leading-5 text-[#364153]"
+          role="status"
+        >
+          <ActivationReminderAlertIcon />
+          <p className="text-[#101828]">
+            {unactivatedResidentCount === 1
+              ? '1 resident has not been activated yet.'
+              : `${unactivatedResidentCount} residents have not been activated yet.`}{' '}
+            Select the checkbox to start onboarding when you're ready.
+          </p>
         </div>
       ) : null}
 
@@ -639,12 +772,11 @@ export function AdminResidentsDashboard() {
           Could not delete selected residents: {deleteResidentsError}
         </div>
       ) : null}
-      {activationActionError ? (
-        <div className="mb-4 rounded-[10px] border border-[#fecaca] bg-[#fef2f2] px-4 py-3 text-[13px] text-[#b91c1c]">
-          {activationActionError}
+      {onboardingNotice ? (
+        <div className="mb-4 rounded-[10px] border border-[#E8A5AA] bg-[#F6B9BE] px-4 py-3 text-[13px] leading-5 text-[#101828]">
+          {onboardingNotice}
         </div>
       ) : null}
-
       {selectedResidentCount > 0 ? (
         <div className="mb-4 flex flex-wrap items-center justify-between gap-2 rounded-[10px] border border-[#e5e7eb] bg-white px-4 py-3 shadow-[0px_1px_2px_-1px_rgba(0,0,0,0.06)]">
           <p className="text-[14px] leading-5 tracking-[-0.1504px] text-[#0a0a0a]">
@@ -661,7 +793,15 @@ export function AdminResidentsDashboard() {
             </button>
             <button
               type="button"
-              disabled={deleteResidentsSaving}
+              disabled={onboardingSaving || deleteResidentsSaving}
+              onClick={() => void startOnboardingForSelected()}
+              className="sa-press inline-flex h-9 items-center justify-center rounded-lg bg-[#187960] px-3 text-[14px] font-medium text-white outline-none hover:bg-[#146b52] focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50"
+            >
+              {onboardingSaving ? 'Starting…' : 'Start onboarding'}
+            </button>
+            <button
+              type="button"
+              disabled={deleteResidentsSaving || onboardingSaving}
               onClick={() => void deleteSelectedResidents()}
               className="sa-press inline-flex h-9 items-center justify-center rounded-lg border border-[#b52a00]/30 bg-[#fff4f0] px-3 text-[14px] font-medium text-[#b52a00] outline-none hover:bg-[#ffe9e1] focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50"
             >
@@ -688,8 +828,8 @@ export function AdminResidentsDashboard() {
                 <th className="px-6 py-3 text-[12px] font-medium text-[#6a7282]">Resident</th>
                 <th className="px-6 py-3 text-[12px] font-medium text-[#6a7282]">Unit</th>
                 <th className="px-6 py-3 text-[12px] font-medium text-[#6a7282]">Rent</th>
-                <th className="px-6 py-3 text-[12px] font-medium text-[#6a7282]">Move-in</th>
                 <th className="px-6 py-3 text-[12px] font-medium text-[#6a7282]">Contact</th>
+                <th className="px-6 py-3 text-[12px] font-medium text-[#6a7282]">Move-in</th>
                 <th className="px-6 py-3 text-[12px] font-medium text-[#6a7282]">Lease ends</th>
                 <th className="px-6 py-3 text-[12px] font-medium text-[#6a7282]">Balance</th>
                 <th className="px-6 py-3 text-[12px] font-medium text-[#6a7282]">Activation</th>
@@ -756,9 +896,6 @@ export function AdminResidentsDashboard() {
                     <td className="px-6 py-4 text-[14px] tabular-nums text-[#0a0a0a]">
                       {resident.rentLabel}
                     </td>
-                    <td className="px-6 py-4 text-[14px] tabular-nums text-[#6a7282]">
-                      {resident.moveInLabel}
-                    </td>
                     <td className="px-6 py-4">
                       <div className="flex flex-col gap-0.5">
                         {resident.contactPhone ? (
@@ -773,6 +910,9 @@ export function AdminResidentsDashboard() {
                           <span className="text-[14px] text-[#6a7282]">—</span>
                         ) : null}
                       </div>
+                    </td>
+                    <td className="px-6 py-4 text-[14px] tabular-nums text-[#6a7282]">
+                      {resident.moveInLabel}
                     </td>
                     <td className="px-6 py-4 text-[14px] tabular-nums text-[#6a7282]">
                       {resident.leaseEndLabel}
@@ -795,25 +935,7 @@ export function AdminResidentsDashboard() {
                           activationAttemptCount: resident.activationAttemptCount,
                           activationSmsSentAt: resident.activationSmsSentAt,
                         })
-                        return (
-                          <div className="flex min-w-0 flex-col items-start gap-2">
-                            <TenantActivationStatusChip chip={chip} />
-                            {chip.actionRequired ? (
-                              <TenantActivationActionRequiredActions
-                                phone={resident.contactPhone}
-                                resending={resendingResidentId === resident.id}
-                                onResend={() => void handleResendWelcome(resident.id)}
-                                onEditPhone={() => {
-                                  if (resident.building) {
-                                    navigate(
-                                      propertyResidentDetailPath(resident.building, resident.id),
-                                    )
-                                  }
-                                }}
-                              />
-                            ) : null}
-                          </div>
-                        )
+                        return <TenantActivationStatusChip chip={chip} />
                       })()}
                     </td>
                     <td className="px-6 py-4">

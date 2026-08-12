@@ -27,6 +27,27 @@ export type TenantActivationChip = {
   attemptCount: number
 }
 
+/** Pill + dot colors for landlord-facing tenant activation chips. */
+export function tenantActivationChipVisualClasses(status: TenantActivationStatus): {
+  pill: string
+  dot: string
+} {
+  switch (status) {
+    case 'activated':
+      return { pill: 'bg-[#dbfce7] text-[#008236]', dot: 'bg-[#00a63e]' }
+    case 'waiting':
+      return { pill: 'bg-[#fef9c3] text-[#92400e]', dot: 'bg-[#d97706]' }
+    case 'delivery_failed':
+      return { pill: 'bg-[#ffedd5] text-[#9a3412]', dot: 'bg-[#ea580c]' }
+    case 'action_required':
+      return { pill: 'bg-[#fee2e2] text-[#991b1b]', dot: 'bg-[#dc2626]' }
+    case 'opted_out':
+    case 'not_started':
+    default:
+      return { pill: 'bg-[#f3f4f6] text-[#6a7282]', dot: 'bg-[#9ca3af]' }
+  }
+}
+
 export function resolveTenantActivationChip(input: {
   activationStatus?: string | null
   smsConsentStatus?: string | null
@@ -97,4 +118,21 @@ export function resolveTenantActivationChip(input: {
     actionRequired: false,
     attemptCount: attempts,
   }
+}
+
+export type TenantActivationFields = {
+  activationStatus?: string | null
+  smsConsentStatus?: string | null
+  activationAttemptCount?: number | null
+  activationSmsSentAt?: string | null
+}
+
+/** True when the resident has opted in and can receive tenant SMS. */
+export function isTenantActivated(input: TenantActivationFields): boolean {
+  return resolveTenantActivationChip(input).status === 'activated'
+}
+
+/** Count roster residents who have not completed tenant activation. */
+export function countUnactivatedTenants(rows: TenantActivationFields[]): number {
+  return rows.filter((row) => !isTenantActivated(row)).length
 }

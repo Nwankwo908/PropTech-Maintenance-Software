@@ -13,6 +13,10 @@ import {
   createEmptyPropertyForm,
   propertyFormToOnboarding,
 } from './onboardingPropertyForm'
+import {
+  FAST_TRACK_DEFAULT_PROPERTY_TYPE,
+  resolveOnboardingPropertyType,
+} from './onboardingFieldStyles'
 
 describe('resident form cleanup / blank rows', () => {
   it('treats empty rows as having no user input', () => {
@@ -124,5 +128,18 @@ describe('propertyFormToOnboarding', () => {
       state: 'GA',
       unitCount: 4,
     })
+  })
+})
+
+describe('fast-track property type defaults', () => {
+  it('defaults empty or unknown extracted property types to single-family', () => {
+    expect(resolveOnboardingPropertyType('')).toBe(FAST_TRACK_DEFAULT_PROPERTY_TYPE)
+    expect(resolveOnboardingPropertyType(undefined)).toBe(FAST_TRACK_DEFAULT_PROPERTY_TYPE)
+    expect(resolveOnboardingPropertyType('unknown type')).toBe(FAST_TRACK_DEFAULT_PROPERTY_TYPE)
+  })
+
+  it('still resolves explicit extracted property types', () => {
+    expect(resolveOnboardingPropertyType('multifamily')).toBe('multifamily')
+    expect(resolveOnboardingPropertyType('Single-Family Home')).toBe('single_family_home')
   })
 })

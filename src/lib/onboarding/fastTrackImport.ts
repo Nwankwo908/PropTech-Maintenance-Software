@@ -11,6 +11,7 @@ import {
   accountSetupFromReviewManual,
   validateReviewManualAccount,
 } from '@/lib/onboardingReviewManual'
+import { FAST_TRACK_DEFAULT_PROPERTY_TYPE } from '@/components/onboarding/onboardingFieldStyles'
 import { supabase } from '@/lib/supabase'
 import { importMockExtraction } from './importPortfolio'
 import { persistLandlordAccountProfile } from './persist/account'
@@ -113,7 +114,7 @@ export async function commitFastTrackImport(
         state: property.state.trim().toUpperCase(),
         zipCode: property.zipCode.trim(),
         unitCount: property.unitCount,
-        propertyType: property.propertyType.trim() || 'multifamily',
+        propertyType: property.propertyType.trim() || FAST_TRACK_DEFAULT_PROPERTY_TYPE,
         propertyManagerName: property.propertyManagerName.trim(),
         propertyManagerPhone: property.propertyManagerPhone.trim(),
       }))

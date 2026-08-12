@@ -1,6 +1,7 @@
 /**
- * Derive retrieval need flags from classification + tool selection.
- * Belongs with “decide what information is needed” — not inside retrieve.
+ * Retrieval playbook flags — used at plan time (`buildRetrievalToolPlan`) and for
+ * permission / audit metadata after retrieve. Does **not** dispatch lookups;
+ * `plannedTools` + `executePlannedDomainTools` do.
  */
 
 import type { AskUloClassification } from "./classifyQuestion.ts"
@@ -346,4 +347,16 @@ export function deriveRetrievalNeeds(input: {
     needsBriefing,
     needsRanking,
   }
+}
+
+/** Prefer turn-plan flags; derive when retrieve runs without a full turn plan. */
+export function resolveRetrievalNeeds(input: {
+  question: string
+  classification: AskUloClassification
+  toolNeeds: DomainToolNeedsPatch
+  legacyToolPlan: AskUloToolPlan
+  precomputed?: AskUloRetrievalNeeds | null
+}): AskUloRetrievalNeeds {
+  if (input.precomputed) return input.precomputed
+  return deriveRetrievalNeeds(input)
 }

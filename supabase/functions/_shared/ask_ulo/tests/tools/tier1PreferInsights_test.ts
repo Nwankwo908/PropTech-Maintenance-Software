@@ -1,6 +1,6 @@
 /// <reference lib="deno.ns" />
 import { assertEquals, assertStringIncludes } from "https://deno.land/std@0.224.0/assert/mod.ts"
-import { synthesizeAskUloAnswer } from "../../synthesis/synthesizeAnswer.ts"
+import { synthesizeAskUloAnswer } from "../../synthesis/index.ts"
 
 Deno.test("synthesize prefers Property Insights over empty deep-ops shell", async () => {
   const prev = Deno.env.get("OPENAI_API_KEY")

@@ -22,12 +22,14 @@ import {
   type NotificationPreferenceId,
   type OnboardingApprovalRules,
 } from '@/lib/onboardingApprovalRules'
+import {
+  onboardingBtnPrimaryClass,
+  onboardingBtnSecondaryClass,
+} from './onboardingFieldStyles'
 
-const btnSecondary =
-  'inline-flex cursor-pointer items-center justify-center rounded-[10px] border border-[#e5e7eb] bg-white px-6 py-2.5 text-[14px] font-medium text-[#101828] transition-colors hover:bg-[#f9fafb] disabled:cursor-not-allowed disabled:opacity-50'
+const btnSecondary = onboardingBtnSecondaryClass
 
-const btnContinue =
-  'inline-flex cursor-pointer items-center justify-center rounded-[10px] bg-[#187960] px-6 py-2.5 text-[14px] font-semibold text-white transition-colors hover:bg-[#146b52] disabled:cursor-not-allowed disabled:opacity-50'
+const btnContinue = onboardingBtnPrimaryClass
 
 function ChoiceCard({
   selected,

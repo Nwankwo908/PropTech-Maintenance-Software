@@ -1,4 +1,11 @@
-import { propertyDetailPath, propertyResidentDetailPath } from '@/lib/propertyRoutes'
+import {
+  buildPropertyIdByBuilding,
+  propertyDetailPath,
+  propertyDetailPathForBuilding,
+  propertyResidentDetailPathForBuilding,
+} from '@/lib/propertyRoutes'
+import { normalizeBuildingKey } from '@/lib/propertyHealth'
+import { getAdminNavSearchItems } from '@/lib/adminNavigation'
 import { supabase } from '@/lib/supabase'
 
 export type UniversalSearchCategory =
@@ -104,25 +111,6 @@ const WORKFLOW_TEMPLATE_LABELS: Record<string, string> = {
   identity_onboarding: 'Identity onboarding',
   landlord_command: 'Landlord command',
 }
-
-const STATIC_NAV_SHORTCUTS: UniversalSearchItem[] = [
-  {
-    id: 'nav-reports',
-    category: 'report',
-    title: 'Reports & Analytics',
-    subtitle: 'Portfolio performance and operational metrics',
-    href: '/admin/analytics',
-    keywords: 'reports analytics dashboard metrics performance insights charts',
-  },
-  {
-    id: 'nav-messages',
-    category: 'conversation',
-    title: 'Messages',
-    subtitle: 'SMS inbox and resident or vendor threads',
-    href: '/admin/communication',
-    keywords: 'communication inbox messages sms threads conversations',
-  },
-]
 
 function asString(value: unknown): string {
   if (value == null) return ''
@@ -415,18 +403,6 @@ export function groupSearchResults(items: UniversalSearchItem[]): GroupedSearchR
   })
 }
 
-function buildPropertyIdByBuilding(
-  rows: Array<{ id: string; name: string }>,
-): Map<string, string> {
-  const map = new Map<string, string>()
-  for (const row of rows) {
-    const name = row.name.trim()
-    if (!name) continue
-    map.set(name.toLowerCase(), row.id)
-  }
-  return map
-}
-
 function mapUnitsToSearchItems(
   rows: Record<string, unknown>[],
   propertyIdByBuilding: Map<string, string>,
@@ -447,7 +423,7 @@ function mapUnitsToSearchItems(
         category: 'property',
         title: building,
         subtitle: 'Property',
-        href: propertyDetailPath(propertyIdByBuilding.get(building.toLowerCase()) ?? building),
+        href: propertyDetailPathForBuilding(building, propertyIdByBuilding),
         keywords: buildKeywords([building, 'property', 'building']),
       })
     }
@@ -457,7 +433,7 @@ function mapUnitsToSearchItems(
       category: 'unit',
       title: formatUnitLabel(unitLabel),
       subtitle: building,
-      href: `${propertyDetailPath(propertyIdByBuilding.get(building.toLowerCase()) ?? building)}?tab=units&unit=${encodeURIComponent(unitLabel || unitId)}`,
+      href: `${propertyDetailPathForBuilding(building, propertyIdByBuilding)}?tab=units&unit=${encodeURIComponent(unitLabel || unitId)}`,
       keywords: buildKeywords([unitLabel, building, 'unit']),
     })
   }
@@ -478,7 +454,7 @@ function mapResidentsToSearchItems(
 
     const subtitle = [building, unit ? formatUnitLabel(unit) : null].filter(Boolean).join(' · ') || 'Resident'
     const href = building
-      ? propertyResidentDetailPath(propertyIdByBuilding.get(building.toLowerCase()) ?? building, id)
+      ? propertyResidentDetailPathForBuilding(building, id, propertyIdByBuilding)
       : '/admin/residents'
 
     return [
@@ -589,7 +565,7 @@ function mapWorkflowRunsToSearchItems(rows: Record<string, unknown>[]): Universa
 
 /** Load landlord-scoped records for the universal search index. */
 export async function loadAdminSearchIndex(landlordId: string): Promise<UniversalSearchItem[]> {
-  const items: UniversalSearchItem[] = [...STATIC_NAV_SHORTCUTS]
+  const items: UniversalSearchItem[] = getAdminNavSearchItems() as UniversalSearchItem[]
 
   if (!supabase || !landlordId.trim()) {
     return items

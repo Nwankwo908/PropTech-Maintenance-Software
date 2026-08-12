@@ -438,6 +438,66 @@ h6 {
   }
 }
 
+@keyframes landing-alpha-status-dot {
+  0%,
+  100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+  50% {
+    transform: scale(1.2);
+    opacity: 0.75;
+  }
+}
+
+@keyframes landing-alpha-status-dot-ring {
+  0% {
+    transform: scale(1);
+    opacity: 0.55;
+  }
+  100% {
+    transform: scale(2.4);
+    opacity: 0;
+  }
+}
+
+.landing-alpha-status-dot {
+  position: relative;
+  display: inline-flex;
+  width: 9px;
+  height: 9px;
+  flex-shrink: 0;
+}
+
+.landing-alpha-status-dot::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: 9999px;
+  background: #059669;
+  animation: landing-alpha-status-dot-ring 1.8s ease-out infinite;
+}
+
+.landing-alpha-status-dot::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: 9999px;
+  background: #059669;
+  animation: landing-alpha-status-dot 1.8s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .landing-alpha-status-dot::before,
+  .landing-alpha-status-dot::after {
+    animation: none;
+  }
+
+  .landing-alpha-status-dot::before {
+    opacity: 0;
+  }
+}
+
 @keyframes onb-setup-ring {
   to {
     transform: rotate(360deg);
@@ -489,6 +549,49 @@ h6 {
 }
 .onb-review-stack > .onb-form-card:nth-child(n + 7) {
   --onb-stagger: 6;
+}
+
+.onb-section-stack > .onb-form-card:nth-child(1) {
+  --onb-stagger: 0;
+}
+.onb-section-stack > .onb-form-card:nth-child(2) {
+  --onb-stagger: 1;
+}
+.onb-section-stack > .onb-form-card:nth-child(3) {
+  --onb-stagger: 2;
+}
+.onb-section-stack > .onb-form-card:nth-child(4) {
+  --onb-stagger: 3;
+}
+.onb-section-stack > .onb-form-card:nth-child(5) {
+  --onb-stagger: 4;
+}
+.onb-section-stack > .onb-form-card:nth-child(6) {
+  --onb-stagger: 5;
+}
+.onb-section-stack > .onb-form-card:nth-child(n + 7) {
+  --onb-stagger: 6;
+}
+
+.onb-step-header {
+  animation: onb-welcome-in 320ms var(--sa-ease);
+}
+
+.onb-file-row {
+  animation: onb-card-in 280ms var(--sa-ease) backwards;
+  animation-delay: calc(var(--onb-stagger, 0) * 45ms);
+}
+
+.onb-review-hero-icon {
+  animation: onb-card-in 400ms var(--sa-ease);
+}
+
+.onb-review-hero-title {
+  animation: onb-welcome-in 380ms var(--sa-ease) 80ms backwards;
+}
+
+.onb-review-hero-subtitle {
+  animation: onb-welcome-in 380ms var(--sa-ease) 140ms backwards;
 }
 
 .onb-stepper-connector {
@@ -1017,6 +1120,11 @@ h6 {
   .onb-welcome-subtitle,
   .onb-welcome-card,
   .onb-form-card,
+  .onb-step-header,
+  .onb-file-row,
+  .onb-review-hero-icon,
+  .onb-review-hero-title,
+  .onb-review-hero-subtitle,
   .onb-stepper-marker-done,
   .onb-stepper-marker-active,
   .onb-stepper-active-dot,

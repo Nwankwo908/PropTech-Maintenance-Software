@@ -25,6 +25,7 @@ import { SlaOverdueActionRail } from '@/components/SlaOverdueActionRail'
 import { FindExternalVendorRail } from '@/components/FindExternalVendorRail'
 import { VendorCallFlowModal } from '@/components/VendorCallFlowModal'
 import { getActiveLandlordId } from '@/lib/activeLandlord'
+import { listPropertiesForLandlord, type PropertyRecord } from '@/lib/properties'
 import {
   ensureOnboardingDashboardMatchesPortfolio,
 } from '@/lib/onboarding'
@@ -51,7 +52,7 @@ import {
   ADMIN_RIGHT_RAIL_SCRIM,
   ADMIN_RIGHT_RAIL_STACK_HOST,
 } from '@/lib/adminRightRail'
-import { buildingDetailPath } from '@/lib/propertyRoutes'
+import { buildPropertyIdByBuilding, propertyDetailPathForBuilding } from '@/lib/propertyRoutes'
 import {
   buildActivityFeedTooltipCopy,
   splitEmphasizedText,
@@ -75,7 +76,10 @@ import {
   mapTicketsForPropertyHealth,
   mapUnitsForPropertyHealth,
   PROPERTY_HEALTH_KPI_CAPTION,
+  formatPropertyHealthKpiValue,
   propertyHealthFactorBreakdownLines,
+  propertyHealthKpiDelta,
+  type PropertyHealthCanonicalProperty,
   type PropertyHealthFeedback,
   type PropertyHealthPmTask,
   type PropertyHealthResident,
@@ -482,6 +486,7 @@ function isUnitRegisteredFeedEvent(event: PropertyOperationsTimelineEvent): bool
 
 function feedEventOpenTarget(
   event: PropertyOperationsTimelineEvent,
+  propertyIdByBuilding: Map<string, string>,
 ): FeedTooltipDestination | null {
   if (event.eventType === PORTFOLIO_RECOMMENDATION_EVENT) {
     return { kind: 'property', path: '/admin' }
@@ -490,7 +495,9 @@ function feedEventOpenTarget(
     const building = event.building?.trim()
     return {
       kind: 'property',
-      path: building ? buildingDetailPath(building) : '/admin/properties',
+      path: building
+        ? propertyDetailPathForBuilding(building, propertyIdByBuilding)
+        : '/admin/properties',
     }
   }
   const runId = event.workflowRunId?.trim()
@@ -500,12 +507,14 @@ function feedEventOpenTarget(
 
 function FeedEventInfo({
   event,
+  propertyIdByBuilding,
   onOpen,
 }: {
   event: PropertyOperationsTimelineEvent
+  propertyIdByBuilding: Map<string, string>
   onOpen: (target: FeedTooltipDestination) => void
 }) {
-  const target = feedEventOpenTarget(event)
+  const target = feedEventOpenTarget(event, propertyIdByBuilding)
   const copy = buildActivityFeedTooltipCopy(event, target)
   const summaryParts = splitEmphasizedText(copy.summary)
 
@@ -955,6 +964,7 @@ export function AdminOverviewDashboard() {
   const [vendorMetrics, setVendorMetrics] = useState<PropertyHealthVendorMetrics[]>([])
   const [residents, setResidents] = useState<PropertyHealthResident[]>([])
   const [overviewResidents, setOverviewResidents] = useState<OverviewResident[]>([])
+  const [canonicalProperties, setCanonicalProperties] = useState<PropertyRecord[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null)
@@ -1142,6 +1152,7 @@ export function AdminOverviewDashboard() {
         residentsResult,
         invoicesResult,
         feedbackResult,
+        canonicalPropertiesResult,
       ] = await Promise.all([
           allowImportedOperations
             ? supabase
@@ -1174,7 +1185,7 @@ export function AdminOverviewDashboard() {
             : Promise.resolve({ data: [], error: null }),
           supabase
             .from('units')
-            .select('id, unit_label, building, status')
+            .select('id, unit_label, building, status, property_id')
             .eq('landlord_id', landlordId)
             .limit(1000),
           allowImportedOperations
@@ -1208,6 +1219,7 @@ export function AdminOverviewDashboard() {
                 .gte('rating', 4)
                 .limit(200)
             : Promise.resolve({ data: [], error: null }),
+          listPropertiesForLandlord(landlordId),
         ])
 
       if (cancelled) return
@@ -1330,6 +1342,12 @@ export function AdminOverviewDashboard() {
       setFeedback(healthSignals.feedback)
       setVendorMetrics(healthSignals.vendorMetrics)
 
+      if (canonicalPropertiesResult.ok) {
+        setCanonicalProperties(canonicalPropertiesResult.properties)
+      } else {
+        setCanonicalProperties([])
+      }
+
       if (!residentsResult.error) {
         const mapped = ((residentsResult.data ?? []) as Record<string, unknown>[])
           .map((raw) => ({
@@ -1375,6 +1393,17 @@ export function AdminOverviewDashboard() {
 
   const openTickets = useMemo(() => tickets.filter(isTicketOpen), [tickets])
 
+  const canonicalPropertiesForHealth = useMemo(
+    (): PropertyHealthCanonicalProperty[] =>
+      canonicalProperties.map((property) => ({ id: property.id, name: property.name })),
+    [canonicalProperties],
+  )
+
+  const propertyIdByBuilding = useMemo(
+    () => buildPropertyIdByBuilding(canonicalProperties),
+    [canonicalProperties],
+  )
+
   const healthReport = useMemo(() => {
     const healthTickets = mapTicketsForPropertyHealth(
       tickets as unknown as Record<string, unknown>[],
@@ -1386,9 +1415,10 @@ export function AdminOverviewDashboard() {
       feedback: enrichFeedbackFromTickets(feedback, healthTickets),
       vendorMetrics,
       residents,
+      canonicalProperties: canonicalPropertiesForHealth,
       now,
     })
-  }, [units, tickets, pmTasks, feedback, vendorMetrics, residents, now])
+  }, [units, tickets, pmTasks, feedback, vendorMetrics, residents, canonicalPropertiesForHealth, now])
 
   const kpis = useMemo(() => {
     const criticalOpen = openTickets.filter(isTicketCritical).length
@@ -2402,7 +2432,7 @@ export function AdminOverviewDashboard() {
       ? '—'
       : portfolioPendingSetup
         ? 'Pending'
-        : `${healthReport.portfolio.score}%`
+        : formatPropertyHealthKpiValue(healthReport.portfolio.score)
 
   const escalatedRailOpen = escalatedRailTarget != null && escalatedReview != null
   const stackedVendorRails = escalatedRailOpen && findExternalVendorOpen
@@ -2589,7 +2619,7 @@ export function AdminOverviewDashboard() {
         </section>
       ) : null}
 
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-2 xl:grid-cols-4">
+      <div className="grid grid-cols-2 gap-4 xl:grid-cols-4">
         <KpiCard
           label="Critical Issues"
           value={loading ? '—' : String(kpis.criticalOpen)}
@@ -2608,7 +2638,11 @@ export function AdminOverviewDashboard() {
         <KpiCard
           label="Property Health"
           value={healthKpiValue}
-          delta={loading || portfolioPendingSetup ? null : kpis.propertyHealthDelta}
+          delta={
+            loading || portfolioPendingSetup
+              ? null
+              : propertyHealthKpiDelta(kpis.propertyHealthDelta)
+          }
           deltaSuffix="%"
           goodWhenUp
           caption={healthKpiCaption}
@@ -2807,7 +2841,11 @@ export function AdminOverviewDashboard() {
                         </span>
                       </div>
                     </div>
-                    <FeedEventInfo event={event} onOpen={openFeedTarget} />
+                    <FeedEventInfo
+                      event={event}
+                      propertyIdByBuilding={propertyIdByBuilding}
+                      onOpen={openFeedTarget}
+                    />
                   </div>
                 )
               })
@@ -2820,6 +2858,9 @@ export function AdminOverviewDashboard() {
           buildings={overviewBuildingHealth}
           buildingCount={healthReport.buildings.length}
           totalUnits={units.length}
+          onBuildingOpen={(building) =>
+            navigate(propertyDetailPathForBuilding(building, propertyIdByBuilding))
+          }
           headerAction={
             <Link to="/admin/properties" className="admin-quiet-text-action sa-link">
               View all properties →

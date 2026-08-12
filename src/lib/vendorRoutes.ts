@@ -1,6 +1,8 @@
+import { adminNavPath } from '@/lib/adminNavigation'
+
 /** URL-safe vendor identifier for /admin/vendors/:vendorId routes. */
 export function vendorDetailPath(vendorId: string): string {
-  return `/admin/vendors/${encodeURIComponent(vendorId)}`
+  return `${adminNavPath('vendors')}/${encodeURIComponent(vendorId)}`
 }
 
 export function parseVendorId(slug: string | undefined): string | null {

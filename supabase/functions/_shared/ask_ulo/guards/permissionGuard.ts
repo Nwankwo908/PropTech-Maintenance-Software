@@ -7,6 +7,7 @@
 
 import type { AskUloContext } from "../core/context.ts"
 import type { AskUloPermissions } from "../core/types.ts"
+import type { AskUloRetrievalNeeds } from "../routing/deriveRetrievalNeeds.ts"
 import type { AskUloQuestionSubject } from "../routing/detectSubject.ts"
 import { detectQuestionSubject } from "../routing/detectSubject.ts"
 import type { GuardCapability } from "./types.ts"
@@ -144,6 +145,46 @@ export function applyPermissionToolGates(
     next.runLegalTools = false
   }
   return next
+}
+
+/** Apply permission gates to retrieval playbook flags + legal toggle (audit / defense-in-depth). */
+export function applyPermissionGatesToRetrievalNeeds(
+  permissions: AskUloPermissions,
+  retrievalNeeds: AskUloRetrievalNeeds,
+  opts?: { runLegalTools?: boolean; forcePropertyRanking?: boolean },
+): { retrievalNeeds: AskUloRetrievalNeeds; runLegalTools: boolean } {
+  let next: AskUloRetrievalNeeds = opts?.forcePropertyRanking
+    ? { ...retrievalNeeds, needsRanking: true }
+    : retrievalNeeds
+
+  const gated = applyPermissionToolGates(permissions, {
+    needsListResidents: next.needsListResidents,
+    needsVendorBest: next.needsVendorBest,
+    needsVendorResponseSpeed: next.needsVendorResponseSpeed,
+    needsVendorCompletion: next.needsVendorCompletion,
+    needsVendorInactive: next.needsVendorInactive,
+    needsVendorOverload: next.needsVendorOverload,
+    needsVendorVerification: next.needsVendorVerification,
+    needsLandlordIncentives: next.needsLandlordIncentives,
+    runLegalTools: opts?.runLegalTools,
+  })
+
+  next = {
+    ...next,
+    needsListResidents: Boolean(gated.needsListResidents),
+    needsVendorBest: Boolean(gated.needsVendorBest),
+    needsVendorResponseSpeed: Boolean(gated.needsVendorResponseSpeed),
+    needsVendorCompletion: Boolean(gated.needsVendorCompletion),
+    needsVendorInactive: Boolean(gated.needsVendorInactive),
+    needsVendorOverload: Boolean(gated.needsVendorOverload),
+    needsVendorVerification: Boolean(gated.needsVendorVerification),
+    needsLandlordIncentives: Boolean(gated.needsLandlordIncentives),
+  }
+
+  return {
+    retrievalNeeds: next,
+    runLegalTools: Boolean(gated.runLegalTools),
+  }
 }
 
 /** @deprecated Prefer checkAskUloPermissions — kept for older imports. */

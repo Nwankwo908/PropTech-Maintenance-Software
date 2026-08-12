@@ -1,4 +1,6 @@
 import { type PropertyRecord, propertyRecordToAddressLine } from '@/lib/properties'
+import { normalizeBuildingKey } from '@/lib/propertyHealth'
+import { adminNavPath } from '@/lib/adminNavigation'
 
 const PROPERTY_ID_SLUG_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
@@ -26,6 +28,46 @@ export function parsePropertyRouteSlug(slug: string | undefined): PropertyRouteS
   }
 }
 
+/** Build building name → properties.id for admin links. */
+export function buildPropertyIdByBuilding(
+  properties: Array<{ id: string; name: string }>,
+): Map<string, string> {
+  const map = new Map<string, string>()
+  for (const property of properties) {
+    const name = property.name.trim()
+    if (!name) continue
+    map.set(normalizeBuildingKey(name), property.id)
+  }
+  return map
+}
+
+/** Prefer stable property id; fall back to legacy building-name slug when id unknown. */
+export function propertyDetailPathForBuilding(
+  buildingName: string,
+  propertyIdByBuilding: ReadonlyMap<string, string>,
+  tab?:
+    | 'overview'
+    | 'details'
+    | 'units'
+    | 'residents'
+    | 'workflows'
+    | 'conversations'
+    | 'vendors'
+    | 'analytics',
+): string {
+  const propertyId = propertyIdByBuilding.get(normalizeBuildingKey(buildingName))
+  return propertyDetailPath(propertyId ?? buildingName, tab)
+}
+
+export function propertyResidentDetailPathForBuilding(
+  buildingName: string,
+  residentId: string,
+  propertyIdByBuilding: ReadonlyMap<string, string>,
+): string {
+  const propertyId = propertyIdByBuilding.get(normalizeBuildingKey(buildingName))
+  return propertyResidentDetailPath(propertyId ?? buildingName, residentId)
+}
+
 /** Canonical admin property detail URL — uses stable properties.id. */
 export function propertyDetailPath(
   propertyId: string,
@@ -39,7 +81,7 @@ export function propertyDetailPath(
     | 'vendors'
     | 'analytics',
 ): string {
-  const base = `/admin/properties/${encodeURIComponent(propertyId)}`
+  const base = `${adminNavPath('properties')}/${encodeURIComponent(propertyId)}`
   if (tab && tab !== 'overview') return `${base}?tab=${tab}`
   return base
 }
@@ -87,12 +129,18 @@ export function resolvePropertyBuildingMeta(
     yearBuilt?: number | string | null
   }>,
   canonicalProperty?: PropertyRecord | null,
+  /** When false, skip onboarding JSON (post-complete / canonical-only callers). */
+  allowOnboardingFallback = true,
 ): PropertyBuildingMeta {
   if (canonicalProperty) {
     return {
       addressLine: propertyRecordToAddressLine(canonicalProperty),
       yearBuilt: canonicalProperty.yearBuilt,
     }
+  }
+
+  if (!allowOnboardingFallback) {
+    return { addressLine: null, yearBuilt: null }
   }
 
   const fromOnboarding = onboardingProperties.find(

@@ -77,7 +77,7 @@ import {
   buildSourcesUsed,
   type AnswerConfidence,
 } from "../retrieval/rankEvidence.ts"
-import { synthesizeAskUloAnswer } from "../synthesis/synthesizeAnswer.ts"
+import { synthesizeAskUloAnswer } from "../synthesis/index.ts"
 import type { AskUloResponse } from "../core/types.ts"
 import type { AskUloContext } from "../core/context.ts"
 import type { AskUloExecutionPlan } from "../routing/buildExecutionPlan.ts"
@@ -142,29 +142,6 @@ export async function synthesizeAnswer(input: {
   const toolSelectSource = e.toolSelectSource
   const noToolMatched = e.noToolMatched
   const toolNeeds = e.toolNeeds
-  const needsPeriodSummary = e.needsPeriodSummary
-  const needsOldestWaiting = e.needsOldestWaiting
-  const needsEntityInvestigation = e.needsEntityInvestigation
-  const deepOpsCandidate = e.deepOpsCandidate
-  const needsDeepOps = e.needsDeepOps
-  const needsDraftCommunication = e.needsDraftCommunication
-  const needsActiveWorkflows = e.needsActiveWorkflows
-  const needsWeatherAlerts = e.needsWeatherAlerts
-  const needsLandlordIncentives = e.needsLandlordIncentives
-  const needsListResidents = e.needsListResidents
-  const needsPropertyInsights = e.needsPropertyInsights
-  const needsRecurringRepairs = e.needsRecurringRepairs
-  const needsApproveRepairs = e.needsApproveRepairs
-  const needsMissingUpdates = e.needsMissingUpdates
-  const needsVendorResponseSpeed = e.needsVendorResponseSpeed
-  const needsVendorCompletion = e.needsVendorCompletion
-  const needsVendorInactive = e.needsVendorInactive
-  const needsVendorOverload = e.needsVendorOverload
-  const needsVendorVerification = e.needsVendorVerification
-  const needsVendorBest = e.needsVendorBest
-  const needsUnitRanking = e.needsUnitRanking
-  const needsBriefing = e.needsBriefing
-  const needsRanking = e.needsRanking
   const propertyInsightsForAnswer = e.propertyInsightsForAnswer
   const toolsCalled = e.toolsCalled
   const searchWorkOrdersHit = e.searchWorkOrdersHit

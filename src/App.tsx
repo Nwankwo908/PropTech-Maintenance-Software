@@ -73,6 +73,7 @@ export default function App() {
             </AdminAuthGate>
           }
         >
+          {/* Route segments must match `ADMIN_NAV_TREE` — see adminNavigation.test.ts */}
           <Route element={<AdminOnboardingGuard />}>
             <Route index element={<AdminOverviewDashboard />} />
             <Route path="onboarding" element={<AdminOnboardingDashboard />} />

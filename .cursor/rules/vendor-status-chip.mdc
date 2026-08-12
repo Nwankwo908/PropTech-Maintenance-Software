@@ -56,7 +56,8 @@ Matching requires **ACTIVE**. Nothing enters the queue without it (`isVendorMatc
 
 | Status | Meaning |
 |---|---|
-| **PENDING** | App received. No docs submitted. Not matchable. 48hr reminder if no action. |
+| **NOT STARTED** | On roster only. Verification invite not sent yet. Not matchable. |
+| **WAITING FOR VENDOR** | Invite sent (`invited` / `in_progress`). Not matchable until verified. |
 | **DOCS SUBMITTED** | Docs under review. Not matchable. Target: 48hrs (manual), 24hrs post-Checkr. |
 | **ACTIVE** | All requirements met. Enters matching queue. Only matchable state. |
 | **PAUSED** | Vendor-initiated hold. No new jobs. Self-reactivate via SMS or portal. |
@@ -67,7 +68,8 @@ Matching requires **ACTIVE**. Nothing enters the queue without it (`isVendorMatc
 
 | Chip | Source |
 |---|---|
-| Pending | No verification, or `vendor_verifications.status` in `invited` / `in_progress` |
+| Not started | No `vendor_verifications` row yet (manual outreach not sent) |
+| Waiting for vendor | `vendor_verifications.status` in `invited` / `in_progress` |
 | Docs submitted | `vendor_verifications.status` in `submitted` / `needs_review` |
 | Active | `status = verified` and accepting work (`availability != paused`, `vendors.active != false`) |
 | Paused | Verified, but `availability = paused` or `vendors.active = false` |

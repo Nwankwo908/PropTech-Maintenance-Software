@@ -3,7 +3,7 @@ import { assertEquals, assertStringIncludes } from "https://deno.land/std@0.224.
 import { classifyInvestigationPlaybook } from "../../routing/investigationPlaybooks.ts"
 import { isRepairsToApproveQuestion } from "../../tools/maintenance/repairsToApproveLookup.ts"
 import { detectFairHousingSafety } from "../../guards/fairHousingSafety.ts"
-import { synthesizeAskUloAnswer } from "../../synthesis/synthesizeAnswer.ts"
+import { synthesizeAskUloAnswer } from "../../synthesis/index.ts"
 
 Deno.test("approve-repairs question phrases classify as approve_repairs", () => {
   for (const q of [

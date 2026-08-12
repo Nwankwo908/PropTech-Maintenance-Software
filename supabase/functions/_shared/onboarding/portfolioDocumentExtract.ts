@@ -177,6 +177,7 @@ Rules:
 - Phone numbers: include country code when shown; otherwise as printed.
 - confidence: 0-100 for how clearly each row's fields appear in the document.
 - Do not return placeholder or example people (no "John Doe", no sample@example.com).
+- propertyType: use an explicit type when the document states it (multifamily, single-family, condo, etc.). If property type is not stated or is ambiguous, use single_family_home unless the document clearly indicates a multifamily/apartment building or commercial use.
 
 Return ONLY valid JSON matching the requested schema.`
 
@@ -324,7 +325,7 @@ function normalizeProperty(row: Record<string, unknown>): PortfolioExtractProper
     city: asString(row.city),
     state: asString(row.state).toUpperCase().slice(0, 2),
     zipCode: asString(row.zipCode ?? row.zip_code),
-    propertyType: asString(row.propertyType ?? row.property_type) || "multifamily",
+    propertyType: asString(row.propertyType ?? row.property_type) || "single_family_home",
     unitCount: Math.max(0, Math.round(asNumber(row.unitCount ?? row.unit_count, 0))),
     confidence: clampConfidence(row.confidence),
   }

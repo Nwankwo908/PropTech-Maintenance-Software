@@ -8,8 +8,7 @@ import {
 } from './testFixtures'
 
 const {
-  sendTenantActivationSms,
-  sendVendorInvite,
+  recordActivityLog,
   saveLandlordOnboarding,
   requireOnboardingLandlord,
   activateUnitsFromResidentAssignments,
@@ -20,8 +19,7 @@ const {
 } = vi.hoisted(() => {
   const supabaseFrom = vi.fn()
   return {
-    sendTenantActivationSms: vi.fn(),
-    sendVendorInvite: vi.fn(),
+    recordActivityLog: vi.fn(),
     saveLandlordOnboarding: vi.fn(),
     requireOnboardingLandlord: vi.fn(),
     activateUnitsFromResidentAssignments: vi.fn(),
@@ -31,14 +29,6 @@ const {
     supabaseFrom,
   }
 })
-
-vi.mock('@/api/tenantActivation', () => ({
-  sendTenantActivationSms,
-}))
-
-vi.mock('@/api/vendorVerification', () => ({
-  sendVendorInvite,
-}))
 
 vi.mock('@/lib/unitActivation', () => ({
   activateUnitsFromResidentAssignments,
@@ -62,6 +52,10 @@ vi.mock('@/lib/supabase', () => ({
   supabase: {
     from: (...args: unknown[]) => supabaseFrom(...args),
   },
+}))
+
+vi.mock('@/lib/recordActivityLog', () => ({
+  recordActivityLog,
 }))
 
 import { completeOnboarding, isLandlordStripePayoutsReady } from './complete'
@@ -127,18 +121,11 @@ describe('completeOnboarding', () => {
       ok: true,
       properties,
     }))
+    recordActivityLog.mockResolvedValue(undefined)
     mockPayoutsReady(true)
-    sendTenantActivationSms.mockResolvedValue({
-      configured: true,
-      sent: 1,
-      failed: 0,
-    })
-    sendVendorInvite.mockResolvedValue({
-      delivery: { sms: 'sent', email: 'sent' },
-    })
   })
 
-  it('saves completed state and sends resident activation + vendor invites', async () => {
+  it('saves completed state without automatic tenant or vendor outreach', async () => {
     const state = validOnboardingState()
     const residents = [
       sampleResident({ id: 'res-phone', phone: '+12025550111' }),
@@ -160,7 +147,7 @@ describe('completeOnboarding', () => {
 
     const result = await completeOnboarding(state, vendors, residents)
 
-    expect(result).toEqual({ ok: true, activationWarning: undefined })
+    expect(result).toEqual({ ok: true })
     expect(saveLandlordOnboarding).toHaveBeenCalledTimes(1)
     const saved = saveLandlordOnboarding.mock.calls[0]?.[0] as LandlordOnboardingState
     expect(saved.onboardingStatus).toBe('completed')
@@ -168,33 +155,21 @@ describe('completeOnboarding', () => {
     expect(saved.completedAt).toBeTruthy()
     expect(saved.landlordId).toBe(TEST_LANDLORD_ID)
 
-    expect(sendTenantActivationSms).toHaveBeenCalledWith({
-      landlordId: TEST_LANDLORD_ID,
-      residentIds: ['res-phone'],
-      companyName: 'Acme Properties',
-    })
-
-    expect(sendVendorInvite).toHaveBeenCalledTimes(1)
-    expect(sendVendorInvite).toHaveBeenCalledWith(
+    expect(recordActivityLog).toHaveBeenCalledWith(
       expect.objectContaining({
         landlordId: TEST_LANDLORD_ID,
-        vendorId: 'vendor-both',
-        businessName: 'Flex Plumbing',
-        channel: 'both',
-        propertyName: 'Maple Court',
+        eventType: 'onboarding.completed',
+        metadata: expect.objectContaining({
+          tenants_pending_outreach: 1,
+          vendors_pending_outreach: 1,
+          message: expect.stringMatching(/Residents and Vendors/i),
+        }),
       }),
     )
   })
 
-  it('still finishes setup when activation delivery fails', async () => {
-    sendTenantActivationSms.mockResolvedValue({
-      configured: true,
-      sent: 0,
-      failed: 1,
-    })
-    sendVendorInvite.mockResolvedValue({
-      delivery: { sms: 'failed', email: 'failed' },
-    })
+  it('still finishes setup when activity log fails', async () => {
+    recordActivityLog.mockRejectedValue(new Error('log failed'))
 
     const result = await completeOnboarding(
       validOnboardingState(),
@@ -202,14 +177,11 @@ describe('completeOnboarding', () => {
       [sampleResident()],
     )
 
-    expect(result.ok).toBe(true)
-    expect(result.activationWarning).toMatch(/finished setup/i)
-    expect(result.activationWarning).toMatch(/welcome texts/i)
-    expect(result.activationWarning).toMatch(/verification invites/i)
+    expect(result).toEqual({ ok: true })
     expect(saveLandlordOnboarding).toHaveBeenCalled()
   })
 
-  it('does not send activation when required setup is missing', async () => {
+  it('does not complete when required setup is missing', async () => {
     mockPayoutsReady(false)
     const result = await completeOnboarding(
       validOnboardingState({
@@ -229,7 +201,6 @@ describe('completeOnboarding', () => {
     expect(result.ok).toBe(false)
     expect(result.error).toMatch(/Missing/)
     expect(saveLandlordOnboarding).not.toHaveBeenCalled()
-    expect(sendTenantActivationSms).not.toHaveBeenCalled()
-    expect(sendVendorInvite).not.toHaveBeenCalled()
+    expect(recordActivityLog).not.toHaveBeenCalled()
   })
 })

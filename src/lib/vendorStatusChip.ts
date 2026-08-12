@@ -8,6 +8,7 @@
  */
 
 export type VendorCapacityChipStatus =
+  | 'not_started'
   | 'pending'
   | 'docs_submitted'
   | 'active'
@@ -30,9 +31,14 @@ export const VENDOR_STATUS_MEANINGS: Record<
   VendorCapacityChipStatus,
   { label: string; detail: string; className: string }
 > = {
+  not_started: {
+    label: 'Not started',
+    detail: 'Verification invite has not been sent yet.',
+    className: 'bg-[#f3f4f6] text-[#6a7282]',
+  },
   pending: {
-    label: 'Pending',
-    detail: 'App received. No docs submitted. Not matchable. 48hr reminder if no action.',
+    label: 'Waiting for vendor',
+    detail: 'Verification invite sent. Waiting for the vendor to complete their profile.',
     className: 'bg-[#fef9c3] text-[#92400e]',
   },
   docs_submitted: {
@@ -62,6 +68,29 @@ export const VENDOR_STATUS_MEANINGS: Record<
   },
 }
 
+export function vendorCapacityChipVisualClasses(status: VendorCapacityChipStatus): {
+  pill: string
+  dot: string
+} {
+  switch (status) {
+    case 'active':
+      return { pill: 'bg-[#dbfce7] text-[#008236]', dot: 'bg-[#00a63e]' }
+    case 'docs_submitted':
+      return { pill: 'bg-[#e0e7ff] text-[#3730a3]', dot: 'bg-[#4338ca]' }
+    case 'pending':
+      return { pill: 'bg-[#fef9c3] text-[#92400e]', dot: 'bg-[#d97706]' }
+    case 'paused':
+    case 'not_started':
+      return { pill: 'bg-[#f3f4f6] text-[#6a7282]', dot: 'bg-[#9ca3af]' }
+    case 'suspended':
+      return { pill: 'bg-[#ffedd5] text-[#9a3412]', dot: 'bg-[#ea580c]' }
+    case 'banned':
+      return { pill: 'bg-[#fee2e2] text-[#991b1b]', dot: 'bg-[#dc2626]' }
+    default:
+      return { pill: 'bg-[#f3f4f6] text-[#6a7282]', dot: 'bg-[#9ca3af]' }
+  }
+}
+
 export function isVendorVerificationComplete(
   verificationStatus: string | null | undefined,
 ): boolean {
@@ -89,7 +118,7 @@ function chipFor(status: VendorCapacityChipStatus): VendorCapacityChip {
  * Precedence:
  * 1. Platform holds (banned → suspended)
  * 2. Docs submitted / under review
- * 3. Pending (invite / in progress / no verification)
+ * 3. Not started (roster only) vs Waiting for vendor (invite sent)
  * 4. Verified → Active, or Paused if vendor hold
  */
 export function resolveVendorCapacityChip(input: {
@@ -112,6 +141,10 @@ export function resolveVendorCapacityChip(input: {
   }
 
   if (!isVendorVerificationComplete(verification)) {
+    if (!verification) return chipFor('not_started')
+    if (verification === 'invited' || verification === 'in_progress') {
+      return chipFor('pending')
+    }
     return chipFor('pending')
   }
 
@@ -131,4 +164,24 @@ export function isVendorMatchable(input: {
   rosterStatus?: string | null
 }): boolean {
   return resolveVendorCapacityChip(input).matchable
+}
+
+export type VendorActivationFields = {
+  verificationStatus?: string | null
+  vendorActive?: boolean | null
+  availability?: string | null
+  rosterStatus?: string | null
+}
+
+/** True when the vendor is verified and eligible for job dispatch (Active). */
+export function isVendorActivated(input: VendorActivationFields): boolean {
+  return resolveVendorCapacityChip(input).status === 'active'
+}
+
+/** Count roster vendors still in verification / activation (not yet Active for dispatch). */
+export function countUnactivatedVendors(rows: VendorActivationFields[]): number {
+  return rows.filter((row) => {
+    const status = resolveVendorCapacityChip(row).status
+    return status === 'not_started' || status === 'pending' || status === 'docs_submitted'
+  }).length
 }

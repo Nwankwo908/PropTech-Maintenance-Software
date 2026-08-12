@@ -4,11 +4,11 @@ import mechanicIcon from '@/assets/landing/mechanic.png'
 import peopleIcon from '@/assets/landing/people.png'
 import alignIcon from '@/assets/align.png'
 import featuresDashboard from '@/assets/landing/features-dashboard.png'
-import featuresProactiveCare from '@/assets/landing/features-proactive-care.png'
+import featuresMaintenanceRequest from '@/assets/Maintenance Request.png'
 import featuresInstantAutomation from '@/assets/landing/features-instant-automation.png'
 import featuresPropertyHub from '@/assets/landing/features-property-hub.png'
 
-type FeatureId = 'property-hub' | 'proactive-care' | 'instant-automation' | 'smart-insights'
+type FeatureId = 'property-hub' | 'maintenance-request' | 'instant-automation' | 'smart-insights'
 
 type FeatureItem = {
   id: FeatureId
@@ -17,6 +17,8 @@ type FeatureItem = {
   icon: string
   iconWrap?: boolean
   inactiveTitleClass?: string
+  /** Icon + title only — centered row, width hugs content. */
+  compactCenter?: boolean
 }
 
 const FEATURES: FeatureItem[] = [
@@ -28,12 +30,11 @@ const FEATURES: FeatureItem[] = [
     icon: alignIcon,
   },
   {
-    id: 'proactive-care',
-    title: 'Proactive care',
-    description:
-      'Ulo schedules preventive checks before things break, keeping tenants happy and costs low.',
+    id: 'maintenance-request',
+    title: 'Maintenance Request',
     icon: mechanicIcon,
     inactiveTitleClass: 'text-[#6a7282]',
+    compactCenter: true,
   },
   {
     id: 'instant-automation',
@@ -54,7 +55,7 @@ const FEATURES: FeatureItem[] = [
 
 const FEATURE_PREVIEWS: Record<
   FeatureId,
-  { src: string; alt: string; width: number; height: number }
+  { src: string; alt: string; width: number; height: number; displayWidthClass?: string }
 > = {
   'property-hub': {
     src: featuresPropertyHub,
@@ -62,11 +63,12 @@ const FEATURE_PREVIEWS: Record<
     width: 1041,
     height: 589,
   },
-  'proactive-care': {
-    src: featuresProactiveCare,
-    alt: 'Proactive care dashboard with upcoming preventive checks, completion rate, and impact metrics',
-    width: 909,
-    height: 712,
+  'maintenance-request': {
+    src: featuresMaintenanceRequest,
+    alt: 'Maintenance request workflow: tenant texts an issue, Ulo classifies it, matches vendors, and coordinates approval through live status',
+    width: 4195,
+    height: 4098,
+    displayWidthClass: 'mx-auto w-1/2',
   },
   'instant-automation': {
     src: featuresInstantAutomation,
@@ -105,62 +107,23 @@ function FeatureIcon({ feature, dimmed }: { feature: FeatureItem; dimmed?: boole
 }
 
 /** Features section interactive showcase (Figma 464:361). */
-/**
- * Room for drop-shadow(8px 0 8.8px rgba(0,0,0,0.15)).
- * Keep the shadow inside this box (not outside a flex item) so it is not
- * clipped by flex overflow or the page overflow-x-hidden.
- */
-const ELEVATED_SHADOW_PAD_RIGHT = 28
-/** Extra space under the image so the drop-shadow blur is fully visible. */
-const ELEVATED_SHADOW_PAD_BOTTOM = 48
-
 function FeaturePreviewPanel({ activeId }: { activeId: FeatureId }) {
   const preview = FEATURE_PREVIEWS[activeId]
-  const useElevatedPreview =
-    activeId === 'smart-insights' ||
-    activeId === 'proactive-care' ||
-    activeId === 'instant-automation' ||
-    activeId === 'property-hub'
-
-  if (!useElevatedPreview) {
-    return (
-      <div
-        className="relative min-w-0 w-full overflow-hidden px-3 pb-5 pt-0 sm:px-[14px] sm:pb-5 sm:pt-0 lg:ml-auto lg:w-auto lg:flex-1"
-        aria-live="polite"
-      >
-        <img
-          key={activeId}
-          src={preview.src}
-          alt={preview.alt}
-          className="h-auto w-[96%] max-w-full animate-[feature-preview-fade_0.35s_ease-out] lg:w-[80%]"
-          width={preview.width}
-          height={preview.height}
-        />
-      </div>
-    )
-  }
+  const widthClass = preview.displayWidthClass ?? 'w-full'
 
   return (
     <div
-      className="relative min-w-0 w-full pb-12 pl-3 pt-3 sm:pl-[14px] lg:ml-auto lg:w-auto lg:flex-1 lg:pb-14"
+      className="relative min-w-0 w-full px-3 pb-5 pt-3 sm:px-[14px] sm:pb-5 lg:ml-auto lg:w-auto lg:flex-1"
       aria-live="polite"
     >
-      <div
-        className="w-full"
-        style={{
-          paddingRight: ELEVATED_SHADOW_PAD_RIGHT,
-          paddingBottom: ELEVATED_SHADOW_PAD_BOTTOM,
-        }}
-      >
-        <img
-          key={activeId}
-          src={preview.src}
-          alt={preview.alt}
-          className="block h-auto w-full max-w-full animate-[feature-preview-fade_0.35s_ease-out] [filter:drop-shadow(8px_0_8.8px_rgba(0,0,0,0.15))]"
-          width={preview.width}
-          height={preview.height}
-        />
-      </div>
+      <img
+        key={activeId}
+        src={preview.src}
+        alt={preview.alt}
+        className={`block h-auto max-w-full animate-[feature-preview-fade_0.35s_ease-out] ${widthClass}`}
+        width={preview.width}
+        height={preview.height}
+      />
     </div>
   )
 }
@@ -176,6 +139,7 @@ export function FeaturesShowcase() {
       >
         {FEATURES.map((feature) => {
           const isActive = feature.id === activeId
+          const compact = feature.compactCenter === true
 
           return (
             <button
@@ -185,24 +149,37 @@ export function FeaturesShowcase() {
               onClick={() => setActiveId(feature.id)}
               className={
                 isActive
-                  ? 'sa-card sa-press w-full rounded-2xl border border-[#e5e7eb] bg-white p-[34px] text-left shadow-[0_4px_8px_rgba(0,0,0,0.04)] hover:shadow-[0_6px_12px_rgba(0,0,0,0.06)] lg:w-auto lg:p-[29px] lg:shadow-none'
-                  : 'sa-press flex w-full cursor-pointer items-center gap-5 rounded-2xl px-[34px] py-1 text-left opacity-50 hover:opacity-65 lg:w-auto lg:gap-4 lg:px-7'
+                  ? compact
+                    ? 'sa-card sa-press flex w-fit items-center justify-center rounded-2xl border border-[#e5e7eb] bg-white p-[34px] shadow-[0_4px_8px_rgba(0,0,0,0.04)] hover:shadow-[0_6px_12px_rgba(0,0,0,0.06)] lg:p-[29px] lg:shadow-none'
+                    : 'sa-card sa-press w-full rounded-2xl border border-[#e5e7eb] bg-white p-[34px] text-left shadow-[0_4px_8px_rgba(0,0,0,0.04)] hover:shadow-[0_6px_12px_rgba(0,0,0,0.06)] lg:w-auto lg:p-[29px] lg:shadow-none'
+                  : compact
+                    ? 'sa-press flex w-fit cursor-pointer items-center justify-center gap-5 rounded-2xl px-[34px] py-1 opacity-50 hover:opacity-65 lg:gap-4 lg:px-7'
+                    : 'sa-press flex w-full cursor-pointer items-center gap-5 rounded-2xl px-[34px] py-1 text-left opacity-50 hover:opacity-65 lg:w-auto lg:gap-4 lg:px-7'
               }
             >
               {isActive ? (
-                <div className="flex gap-5 lg:gap-4">
-                  <FeatureIcon feature={feature} />
-                  <div className="min-w-0 flex-1">
+                compact ? (
+                  <div className="flex items-center justify-center gap-5 lg:gap-4">
+                    <FeatureIcon feature={feature} />
                     <h3 className="font-[family-name:var(--font-landing-heading)] text-[19px] font-bold text-[#111827] lg:text-base">
                       {feature.title}
                     </h3>
-                    {feature.description ? (
-                      <p className="mt-2 text-[17px] leading-[1.625] text-[#6b7280] lg:text-sm">
-                        {feature.description}
-                      </p>
-                    ) : null}
                   </div>
-                </div>
+                ) : (
+                  <div className="flex gap-5 lg:gap-4">
+                    <FeatureIcon feature={feature} />
+                    <div className="min-w-0 flex-1">
+                      <h3 className="font-[family-name:var(--font-landing-heading)] text-[19px] font-bold text-[#111827] lg:text-base">
+                        {feature.title}
+                      </h3>
+                      {feature.description ? (
+                        <p className="mt-2 text-[17px] leading-[1.625] text-[#6b7280] lg:text-sm">
+                          {feature.description}
+                        </p>
+                      ) : null}
+                    </div>
+                  </div>
+                )
               ) : (
                 <>
                   <FeatureIcon feature={feature} dimmed />

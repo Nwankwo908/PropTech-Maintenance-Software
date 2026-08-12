@@ -16,7 +16,7 @@ import { OnboardingSetupTransition } from '@/components/onboarding/OnboardingSet
 import { useOnboardingWizard } from '@/components/onboarding/useOnboardingWizard'
 
 const btnSecondary =
-  'inline-flex cursor-pointer items-center justify-center rounded-[10px] border border-[#e5e7eb] bg-white px-4 py-2.5 text-[14px] font-medium text-[#101828] transition-colors hover:bg-[#f9fafb] disabled:cursor-not-allowed disabled:opacity-50'
+  'sa-press inline-flex cursor-pointer items-center justify-center rounded-[10px] border border-[#e5e7eb] bg-white px-4 py-2.5 text-[14px] font-medium text-[#101828] transition-colors hover:bg-[#f9fafb] disabled:cursor-not-allowed disabled:opacity-50'
 
 /** Layout shell + step router for landlord onboarding (guided and fast-track). */
 export function OnboardingWizardShell() {
@@ -24,9 +24,10 @@ export function OnboardingWizardShell() {
 
   if (wizard.loading) {
     return (
-      <main className="flex flex-1 items-center justify-center p-8">
-        <p className="text-[14px] text-[#6a7282]">Loading onboarding…</p>
-      </main>
+      <OnboardingSetupTransition
+        title="Loading your setup"
+        subtitle="Restoring your progress…"
+      />
     )
   }
 
@@ -130,7 +131,7 @@ export function OnboardingWizardShell() {
         }
       >
         {!isWelcomeStep && !isReviewStep ? (
-          <div className="mb-6">
+          <div key={step} className="onb-step-header mb-6">
             <div className="flex items-start justify-between gap-4">
               <h1 className="text-[24px] font-semibold tracking-[-0.4px] text-[#101828]">
                 {editingFromReview ? 'Edit your setup' : 'Set up Ulo for your portfolio'}

@@ -5,7 +5,7 @@ import { PropertyHealthBuildingGrid } from '@/components/PropertyHealthBuildingG
 import { registerPropertyUnitsSms } from '@/api/landlordSmsOnboarding'
 import { getActiveLandlordId } from '@/lib/activeLandlord'
 import { deleteLandlordBuildings } from '@/lib/onboarding'
-import { ensureProperty, linkUnitsToProperty, listPropertiesForLandlord } from '@/lib/properties'
+import { ensureProperty, linkUnitsToProperty, listPropertiesForLandlord, type PropertyRecord } from '@/lib/properties'
 import {
   buildPropertyHealthReport,
   computeOccupancyStats,
@@ -16,7 +16,10 @@ import {
   mapUnitsForPropertyHealth,
   normalizeBuildingKey,
   PROPERTY_HEALTH_KPI_CAPTION,
+  formatPropertyHealthKpiValue,
   propertyHealthFactorBreakdownLines,
+  propertyHealthKpiDelta,
+  type PropertyHealthCanonicalProperty,
   type PropertyHealthFeedback,
   type PropertyHealthPmTask,
   type PropertyHealthResident,
@@ -24,7 +27,7 @@ import {
 } from '@/lib/propertyHealth'
 import { fetchRecognizedMaintenanceSpend, type RecognizedMaintenanceSpend } from '@/api/maintenanceInvoice'
 import { buildMonthlySpendByBuilding, type PropertyAnalyticsTicket } from '@/lib/propertyAnalytics'
-import { propertyDetailPath } from '@/lib/propertyRoutes'
+import { propertyDetailPathForBuilding, propertyResidentDetailPathForBuilding, buildPropertyIdByBuilding } from '@/lib/propertyRoutes'
 import {
   buildUnitOptionsFromPropertyPayload,
   unitOptionKeyToCell,
@@ -350,6 +353,13 @@ export function AdminPropertiesDashboard() {
   const [propertyIdByBuilding, setPropertyIdByBuilding] = useState<Map<string, string>>(
     () => new Map(),
   )
+  const [canonicalProperties, setCanonicalProperties] = useState<PropertyRecord[]>([])
+
+  const canonicalPropertiesForHealth = useMemo(
+    (): PropertyHealthCanonicalProperty[] =>
+      canonicalProperties.map((property) => ({ id: property.id, name: property.name })),
+    [canonicalProperties],
+  )
 
   useEffect(() => {
     if (searchParams.get('add') !== '1') return
@@ -400,7 +410,7 @@ export function AdminPropertiesDashboard() {
             .limit(500),
           supabase
             .from('units')
-            .select('id, unit_label, building, status')
+            .select('id, unit_label, building, status, property_id')
             .eq('landlord_id', landlordId)
             .limit(1000),
           fetchPropertyHealthSignals(),
@@ -490,12 +500,10 @@ export function AdminPropertiesDashboard() {
       }
 
       if (canonicalPropertiesResult.ok) {
-        const idMap = new Map<string, string>()
-        for (const property of canonicalPropertiesResult.properties) {
-          idMap.set(normalizeBuildingKey(property.name), property.id)
-        }
-        setPropertyIdByBuilding(idMap)
+        setCanonicalProperties(canonicalPropertiesResult.properties)
+        setPropertyIdByBuilding(buildPropertyIdByBuilding(canonicalPropertiesResult.properties))
       } else {
+        setCanonicalProperties([])
         setPropertyIdByBuilding(new Map())
       }
 
@@ -529,9 +537,10 @@ export function AdminPropertiesDashboard() {
       feedback: enrichFeedbackFromTickets(feedback, healthTickets),
       vendorMetrics,
       residents,
+      canonicalProperties: canonicalPropertiesForHealth,
       now,
     })
-  }, [units, tickets, pmTasks, feedback, vendorMetrics, residents, now])
+  }, [units, tickets, pmTasks, feedback, vendorMetrics, residents, canonicalPropertiesForHealth, now])
 
   const monthlySpendByBuilding = useMemo(() => {
     const healthUnits = mapUnitsForPropertyHealth(units as unknown as Record<string, unknown>[])
@@ -575,6 +584,7 @@ export function AdminPropertiesDashboard() {
       healthTickets,
       getActiveLandlordId(),
       residents,
+      canonicalPropertiesForHealth,
     )
     const totalUnits = units.length
 
@@ -608,7 +618,7 @@ export function AdminPropertiesDashboard() {
       ytdMaintenanceCost,
       ytdMaintenanceCostDelta,
     }
-  }, [units, tickets, pmTasks, healthReport, residents, now, fourWeeksMs])
+  }, [units, tickets, pmTasks, healthReport, residents, canonicalPropertiesForHealth, now, fourWeeksMs])
 
   const updatedCaption =
     loading || !lastUpdated ? 'Updating…' : formatUpdatedAt(lastUpdated)
@@ -627,7 +637,7 @@ export function AdminPropertiesDashboard() {
       ? '—'
       : portfolioPendingSetup
         ? 'Pending'
-        : `${healthReport.portfolio.score}%`
+        : formatPropertyHealthKpiValue(healthReport.portfolio.score)
 
   const visibleBuildings = healthReport.buildings
   const allVisibleBuildingsSelected =
@@ -755,9 +765,12 @@ export function AdminPropertiesDashboard() {
           ? `Property “${payload.propertyName}” registered (${unitsToRegister.length} units linked to Ulo SMS).`
           : `Property “${payload.propertyName}” saved (${unitsToRegister.length} units). SMS registration skipped — set VITE_DEFAULT_LANDLORD_ID and VITE_ADMIN_REASSIGN_SECRET.`,
       )
+      setAddPropertyOpen(false)
       return
     }
 
+    await loadProperties()
+    setAddPropertyOpen(false)
     setPropertyRegisterNotice(
       `Property “${payload.propertyName}” saved. Add a valid unit count to register SMS units.`,
     )
@@ -782,7 +795,7 @@ export function AdminPropertiesDashboard() {
         </div>
       ) : null}
 
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
+      <div className="grid grid-cols-2 gap-4 lg:grid-cols-3 xl:grid-cols-5">
         <KpiCard
           label="Buildings"
           value={loading ? '—' : String(kpis.buildings)}
@@ -806,7 +819,11 @@ export function AdminPropertiesDashboard() {
         <KpiCard
           label="Property Health"
           value={healthKpiValue}
-          delta={loading || portfolioPendingSetup ? null : kpis.propertyHealthDelta}
+          delta={
+            loading || portfolioPendingSetup
+              ? null
+              : propertyHealthKpiDelta(kpis.propertyHealthDelta)
+          }
           deltaSuffix="%"
           goodWhenUp
           caption={healthKpiCaption}
@@ -855,8 +872,7 @@ export function AdminPropertiesDashboard() {
           deleteSelectedSaving: deleteBuildingsSaving,
         }}
         onBuildingOpen={(buildingName) => {
-          const propertyId = propertyIdByBuilding.get(normalizeBuildingKey(buildingName))
-          navigate(propertyDetailPath(propertyId ?? buildingName))
+          navigate(propertyDetailPathForBuilding(buildingName, propertyIdByBuilding))
         }}
         headerAction={
           <button

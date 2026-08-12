@@ -2,9 +2,9 @@
  * Shared back / continue nav chrome for guided onboarding steps.
  */
 import type { ReactNode } from 'react'
+import { onboardingNavBtnClass } from './onboardingFieldStyles'
 
-const btnNav =
-  'inline-flex items-center gap-1.5 rounded-[8px] px-2 py-1.5 text-[14px] font-medium tracking-[-0.1504px] text-[#364153] outline-none transition-[color,background-color] duration-150 hover:bg-[#f3f4f6] hover:text-[#101828] active:bg-[#e5e7eb] focus-visible:ring-2 focus-visible:ring-[#101828]/20 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-transparent disabled:hover:text-[#364153]'
+const btnNav = onboardingNavBtnClass
 
 export function OnboardingBackButton({
   disabled,

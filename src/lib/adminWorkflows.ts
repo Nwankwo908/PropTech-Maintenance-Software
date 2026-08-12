@@ -326,7 +326,7 @@ const EVENT_LABELS: Record<string, string> = {
   'maintenance.sla_auto_reassigned':
     "Vendor didn't respond in time. The job was reassigned.",
   'maintenance.external_vendor_reassigned': 'External vendor assigned',
-  'maintenance.sla_expired_needs_vendor': 'SLA expired — needs vendor',
+  'maintenance.sla_expired_needs_vendor': 'Vendor Needed, Response Time Expired',
   'unit.registered': 'Unit registered',
   'tenant.sms_registered': 'Resident SMS linked',
 }

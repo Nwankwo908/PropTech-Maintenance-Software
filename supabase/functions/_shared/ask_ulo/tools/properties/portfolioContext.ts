@@ -3,7 +3,7 @@
  *
  * Source of truth priority (user input first — never invent geography):
  * 1. properties table (canonical address fields)
- * 2. landlord_onboarding.properties (and draft_state.properties if present)
+ * 2. landlord_onboarding.properties (in-progress setup only)
  * 3. units.city / units.state (persisted from onboarding)
  */
 
@@ -158,11 +158,15 @@ export async function resolvePortfolioJurisdiction(
 
   const { data: onboarding } = await supabase
     .from("landlord_onboarding")
-    .select("properties, draft_state")
+    .select("properties, draft_state, onboarding_status")
     .eq("landlord_id", landlordId)
     .maybeSingle()
 
-  if (locationSource === "none") {
+  const onboardingCompleted = onboarding?.onboarding_status === "completed"
+  const skipOnboardingProperties =
+    locationSource === "properties_table" || onboardingCompleted
+
+  if (locationSource === "none" && !skipOnboardingProperties) {
     // Primary: top-level properties column (where the wizard persists user input).
     for (const row of collectFromOnboardingProperties(onboarding?.properties)) {
       if (row.name) buildings.add(row.name)
@@ -178,10 +182,6 @@ export async function resolvePortfolioJurisdiction(
       locations.push({ city: row.city, state: row.state })
     }
     if (locations.length > 0) locationSource = "onboarding_properties"
-  } else {
-    for (const row of collectFromOnboardingProperties(onboarding?.properties)) {
-      if (row.name) buildings.add(row.name)
-    }
   }
 
   const { data: units } = await supabase

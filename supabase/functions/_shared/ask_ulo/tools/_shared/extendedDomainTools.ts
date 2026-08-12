@@ -13,6 +13,14 @@ import { entityInvestigationLookup } from "../maintenance/entityInvestigationLoo
 import { deepOperationalInvestigationLookup } from "../maintenance/deepOperationalInvestigationLookup.ts"
 import { unitMaintenanceRankingLookup } from "../maintenance/unitMaintenanceRankingLookup.ts"
 import { propertySnapshotLookup } from "../properties/propertySnapshot.ts"
+import {
+  propertyPriceHistoryLookup,
+  type PropertyPriceHistoryResult,
+} from "../finance/propertyPriceHistory.ts"
+import {
+  rentHistoryLookup,
+  type RentHistoryResult,
+} from "../rent/rentHistoryLookup.ts"
 
 export type ExtendedDomainToolId =
   | "get_recurring_repairs"
@@ -25,6 +33,8 @@ export type ExtendedDomainToolId =
   | "investigate_operations"
   | "rank_units_by_maintenance"
   | "get_property_snapshot"
+  | "get_property_price_history"
+  | "get_rent_history"
 
 export async function getRecurringRepairs(
   supabase: SupabaseClient,
@@ -222,6 +232,57 @@ export async function getPropertySnapshot(
   }
 }
 
+export async function getPropertyPriceHistory(params: {
+  buildingName: string | null
+  addressLine?: string | null
+  clarifyOnly?: boolean
+}): Promise<PropertyPriceHistoryResult & {
+  toolId: "get_property_price_history"
+  params: Record<string, unknown>
+}> {
+  const base = await propertyPriceHistoryLookup({
+    buildingName: params.buildingName,
+    addressLine: params.addressLine ?? null,
+    clarifyOnly: params.clarifyOnly,
+  })
+  return {
+    ...base,
+    toolId: "get_property_price_history",
+    params: {
+      buildingName: params.buildingName,
+      addressLine: params.addressLine ?? null,
+      clarifyOnly: Boolean(params.clarifyOnly),
+    },
+  }
+}
+
+export async function getRentHistory(params: {
+  buildingName: string | null
+  cityLabel: string | null
+  stateCode: string | null
+  addressLine?: string | null
+}): Promise<RentHistoryResult & {
+  toolId: "get_rent_history"
+  params: Record<string, unknown>
+}> {
+  const base = await rentHistoryLookup({
+    buildingName: params.buildingName,
+    cityLabel: params.cityLabel,
+    stateCode: params.stateCode,
+    addressLine: params.addressLine ?? null,
+  })
+  return {
+    ...base,
+    toolId: "get_rent_history",
+    params: {
+      buildingName: params.buildingName,
+      cityLabel: params.cityLabel,
+      stateCode: params.stateCode,
+      addressLine: params.addressLine ?? null,
+    },
+  }
+}
+
 export type ExtendedDomainToolResult =
   | Awaited<ReturnType<typeof getRecurringRepairs>>
   | Awaited<ReturnType<typeof getMissingUpdates>>
@@ -233,3 +294,5 @@ export type ExtendedDomainToolResult =
   | Awaited<ReturnType<typeof investigateOperations>>
   | Awaited<ReturnType<typeof rankUnitsByMaintenance>>
   | Awaited<ReturnType<typeof getPropertySnapshot>>
+  | Awaited<ReturnType<typeof getPropertyPriceHistory>>
+  | Awaited<ReturnType<typeof getRentHistory>>

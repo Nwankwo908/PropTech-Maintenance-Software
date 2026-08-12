@@ -15,6 +15,10 @@ import {
   notificationPreferenceLabel,
   quietHoursLabel,
 } from '@/lib/onboardingApprovalRules'
+import {
+  onboardingBtnPrimaryClass,
+  onboardingBtnSecondaryClass,
+} from './onboardingFieldStyles'
 
 function formatRentDueDayOrdinal(day: number): string {
   const mod100 = day % 100
@@ -153,11 +157,9 @@ function formatVendorCategory(category: string): string {
   return value.charAt(0).toUpperCase() + value.slice(1).replace(/_/g, ' ')
 }
 
-const btnReviewPrimary =
-  'inline-flex cursor-pointer items-center justify-center rounded-[10px] bg-[#187960] px-6 py-2.5 text-[14px] font-semibold text-white transition-colors hover:bg-[#146b52] disabled:cursor-not-allowed disabled:opacity-50'
+const btnReviewPrimary = onboardingBtnPrimaryClass
 
-const btnReviewSecondary =
-  'inline-flex cursor-pointer items-center justify-center rounded-[10px] border border-[#e5e7eb] bg-white px-6 py-2.5 text-[14px] font-medium text-[#101828] transition-colors hover:bg-[#f9fafb] disabled:cursor-not-allowed disabled:opacity-50'
+const btnReviewSecondary = onboardingBtnSecondaryClass
 
 export type OnboardingReviewStepProps = {
   loading: boolean
@@ -199,18 +201,23 @@ export function OnboardingReviewStep({
   return (
     <div className="mx-auto w-full max-w-[680px]">
       <div className="text-center">
-        <ReviewProgressIcon />
-        <h2 className="mt-5 text-[28px] font-semibold leading-tight tracking-[-0.5px] text-[#111827] sm:text-[32px]">
+        <div className="onb-review-hero-icon">
+          <ReviewProgressIcon />
+        </div>
+        <h2 className="onb-review-hero-title mt-5 text-[28px] font-semibold leading-tight tracking-[-0.5px] text-[#111827] sm:text-[32px]">
           {headline}
         </h2>
-        <p className="mx-auto mt-3 max-w-[540px] text-[15px] leading-relaxed text-[#6b7280]">
+        <p className="onb-review-hero-subtitle mx-auto mt-3 max-w-[540px] text-[15px] leading-relaxed text-[#6b7280]">
           If the details look good, complete setup to open your dashboard. You can go back and edit any
           section before finishing.
         </p>
       </div>
 
       {loading || !reviewData ? (
-        <p className="mt-10 text-center text-[14px] text-[#6a7282]">Loading your setup…</p>
+        <div className="mt-10 flex flex-col items-center gap-3">
+          <div className="onb-setup-spinner" role="status" aria-label="Loading setup summary" />
+          <p className="onb-setup-copy text-[14px] text-[#6a7282]">Loading your setup…</p>
+        </div>
       ) : (
         <div className="onb-review-stack mt-8 space-y-4">
           <ReviewSummaryCard title="Account" onEdit={() => onEditStep('account_setup')}>

@@ -1,9 +1,9 @@
 import { useEffect, useId, useState } from 'react'
-import { inviteVendorAfterAdd, vendorInviteWarningMessage } from '@/api/vendorVerification'
 import { syncSmsIdentity } from '@/api/landlordSmsOnboarding'
 import maintenanceVendorRailIcon from '@/assets/Maintenance_Vendor_2.svg'
 import { getActiveLandlordId } from '@/lib/activeLandlord'
 import { getErrorMessage } from '@/lib/errorMessage'
+import { phoneForDbOrError } from '@/lib/phoneFormat'
 import { supabase } from '@/lib/supabase'
 import {
   dbCategoryToVendorTrade,
@@ -61,6 +61,20 @@ function IconChevronDown({ className = 'size-4 text-[#0a0a0a]' }: { className?: 
   return (
     <svg className={className} viewBox="0 0 24 24" fill="none" aria-hidden>
       <path d="M6 9l6 6 6-6" stroke="currentColor" strokeWidth={2} strokeLinecap="round" />
+    </svg>
+  )
+}
+
+function IconPencilHeader({ className = 'size-5 text-extended-1' }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 24 24" fill="none" aria-hidden>
+      <path
+        d="M12 20h9M16.5 3.5a2.12 2.12 0 013 3L7 19l-4 1 1-4L16.5 3.5z"
+        stroke="currentColor"
+        strokeWidth={1.8}
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
     </svg>
   )
 }
@@ -136,12 +150,37 @@ export function VendorFormModal({
       setSaveError('Name is required.')
       return
     }
+    if (!contactName.trim()) {
+      setSaveError('Contact name is required.')
+      return
+    }
     const categoryResolved = resolveVendorCategoryPayload(category)
     if (!categoryResolved.ok) {
       setSaveError(categoryResolved.message)
       return
     }
     const categoryPayload = categoryResolved.payload
+    const emailPayload = email.trim() || null
+    const phoneResult = phoneForDbOrError(phone)
+    if (phoneResult.error) {
+      setSaveError(phoneResult.error)
+      return
+    }
+    const phonePayload = phoneResult.phone
+
+    if (emailSelected && !emailPayload) {
+      setSaveError('Email is required when Email delivery is selected.')
+      return
+    }
+    if (smsSelected && !phonePayload) {
+      setSaveError('A valid phone number is required when SMS delivery is selected.')
+      return
+    }
+    if (!emailPayload && !phonePayload) {
+      setSaveError('Enter an email address or phone number so we can reach this vendor.')
+      return
+    }
+
     if (!supabase) {
       setSaveError('Supabase is not configured.')
       return
@@ -149,8 +188,6 @@ export function VendorFormModal({
     setSaving(true)
     setSaveError(null)
     try {
-      const emailPayload = email.trim() || null
-      const phonePayload = phone.trim() || null
       if (mode === 'add') {
         console.log('[vendor-form] submit (add)', {
           name: n,
@@ -181,21 +218,7 @@ export function VendorFormModal({
             vendorId: data.id,
           })
         }
-        let inviteWarning: string | undefined
-        if (data?.id && (phonePayload || emailPayload)) {
-          const trade = normalizeVendorTrade(categoryPayload, { fallbackOther: false })
-          const invite = await inviteVendorAfterAdd({
-            landlordId: getActiveLandlordId(),
-            vendorId: data.id,
-            businessName: n,
-            contactName: contactName.trim() || null,
-            email: emailPayload,
-            phone: phonePayload,
-            tradeCategories: trade ? [trade] : undefined,
-          })
-          inviteWarning = vendorInviteWarningMessage(invite) ?? undefined
-        }
-        onSaved(inviteWarning ? { inviteWarning } : undefined)
+        onSaved(undefined)
         return
       } else if (initial) {
         console.log('[vendor-form] submit (update)', {
@@ -229,6 +252,7 @@ export function VendorFormModal({
       }
       onSaved()
     } catch (e) {
+      console.warn('[vendor-form] save failed', e)
       setSaveError(getErrorMessage(e, "Couldn't save this vendor. Please try again."))
     } finally {
       setSaving(false)
@@ -267,9 +291,15 @@ export function VendorFormModal({
       >
         <header className="flex h-[81px] shrink-0 items-center justify-between border-b border-[#e5e7eb] px-6">
           <div className="flex min-w-0 items-center gap-3">
-            <div className="flex size-10 shrink-0 items-center justify-center rounded-[10px] bg-[#dbeafe]">
-              <img src={maintenanceVendorRailIcon} alt="" aria-hidden className="size-5 shrink-0" />
-            </div>
+            {mode === 'edit' ? (
+              <div className="flex size-10 shrink-0 items-center justify-center rounded-[10px] bg-extended-2">
+                <IconPencilHeader />
+              </div>
+            ) : (
+              <div className="flex size-10 shrink-0 items-center justify-center rounded-[10px] bg-[#dbeafe]">
+                <img src={maintenanceVendorRailIcon} alt="" aria-hidden className="size-5 shrink-0" />
+              </div>
+            )}
             <div className="min-w-0">
               <h2
                 id={titleId}

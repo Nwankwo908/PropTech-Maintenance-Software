@@ -10,7 +10,7 @@ import {
   buildFallbackAskUloAnswer,
   ensureReasoningTransparency,
   type AskUloToolPackets,
-} from "../../synthesis/synthesizeAnswer.ts"
+} from "../../synthesis/index.ts"
 
 Deno.test("analytical intents require transparency; narrow factual does not", () => {
   assertEquals(
