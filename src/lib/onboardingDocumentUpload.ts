@@ -13,7 +13,10 @@ import {
   normalizeReviewManualAccount,
   type OnboardingReviewManualAccount,
 } from '@/lib/onboardingReviewManual'
-import { FAST_TRACK_DEFAULT_PROPERTY_TYPE } from '@/components/onboarding/onboardingFieldStyles'
+import {
+  inferOnboardingPropertyTypeFromUnitCount,
+  resolveOnboardingPropertyType,
+} from '@/lib/onboarding/propertyType'
 import { supabase } from '@/lib/supabase'
 
 export type { OnboardingReviewManualAccount } from '@/lib/onboardingReviewManual'
@@ -884,7 +887,7 @@ export function enrichExtractedProperties(
       city: existing.city.trim() || row.city,
       state: existing.state.trim() || row.state,
       zipCode: existing.zipCode.trim() || row.zipCode,
-      propertyType: existing.propertyType || row.propertyType,
+      propertyType: resolveOnboardingPropertyType(existing.propertyType || row.propertyType),
       unitCount: Math.max(existing.unitCount, row.unitCount),
       confidence: Math.max(existing.confidence, row.confidence),
       selected: existing.selected && row.selected,
@@ -945,7 +948,7 @@ export function enrichExtractedProperties(
       city: '',
       state: '',
       zipCode: '',
-      propertyType: 'multifamily',
+      propertyType: inferOnboardingPropertyTypeFromUnitCount(unitCount),
       unitCount,
       unitLabels: '',
       propertyManagerName: '',
@@ -1028,7 +1031,7 @@ function mergeExtractedDocuments(
         city: item.city,
         state: item.state,
         zipCode: item.zipCode,
-        propertyType: item.propertyType || FAST_TRACK_DEFAULT_PROPERTY_TYPE,
+        propertyType: resolveOnboardingPropertyType(item.propertyType),
         unitCount: item.unitCount,
         unitLabels: '',
         propertyManagerName: '',
@@ -1262,7 +1265,7 @@ export function normalizeExtractionReview(
     city: item.city ?? '',
     state: item.state ?? '',
     zipCode: item.zipCode ?? '',
-    propertyType: item.propertyType || FAST_TRACK_DEFAULT_PROPERTY_TYPE,
+    propertyType: resolveOnboardingPropertyType(item.propertyType),
     propertyManagerName: item.propertyManagerName ?? '',
     propertyManagerPhone: item.propertyManagerPhone ?? '',
   }))

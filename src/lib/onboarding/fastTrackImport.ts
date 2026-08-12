@@ -11,7 +11,7 @@ import {
   accountSetupFromReviewManual,
   validateReviewManualAccount,
 } from '@/lib/onboardingReviewManual'
-import { FAST_TRACK_DEFAULT_PROPERTY_TYPE } from '@/components/onboarding/onboardingFieldStyles'
+import { resolveOnboardingPropertyType } from '@/lib/onboarding/propertyType'
 import { supabase } from '@/lib/supabase'
 import { importMockExtraction } from './importPortfolio'
 import { persistLandlordAccountProfile } from './persist/account'
@@ -104,6 +104,16 @@ export async function commitFastTrackImport(
       return false
     }
 
+    const selectedResidentCount = normalized.residents.filter((row) => row.selected).length
+    if (selectedResidentCount > 0 && result.imported.residents < selectedResidentCount) {
+      console.warn(
+        '[onboarding] fast-track resident import partial',
+        result.imported.residents,
+        'of',
+        selectedResidentCount,
+      )
+    }
+
     properties = normalized.properties
       .filter((property) => property.selected)
       .map((property) => ({
@@ -114,7 +124,7 @@ export async function commitFastTrackImport(
         state: property.state.trim().toUpperCase(),
         zipCode: property.zipCode.trim(),
         unitCount: property.unitCount,
-        propertyType: property.propertyType.trim() || FAST_TRACK_DEFAULT_PROPERTY_TYPE,
+        propertyType: resolveOnboardingPropertyType(property.propertyType),
         propertyManagerName: property.propertyManagerName.trim(),
         propertyManagerPhone: property.propertyManagerPhone.trim(),
       }))

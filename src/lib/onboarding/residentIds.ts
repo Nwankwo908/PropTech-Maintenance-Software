@@ -14,7 +14,7 @@ export function onboardingResidentIdPrefix(landlordId: string): string {
   return `ONB${compact}`
 }
 
-function parseOnboardingResidentSequence(
+export function parseOnboardingResidentSequence(
   residentId: string,
   landlordId?: string,
 ): number | null {

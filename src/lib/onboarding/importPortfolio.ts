@@ -18,15 +18,10 @@ import {
   normalizeVendorTrade,
 } from '@/lib/vendorTrades'
 import { requireOnboardingLandlord } from './draftStorage'
+import { importOnboardingResidentsFromExtraction } from './persist/importResidents'
 import { persistOnboardingProperties } from './persist/properties'
-import {
-  parseMonthlyRentInput,
-  parseRentDueDayInput,
-  fetchOnboardingResidents,
-} from './persist/residents'
+import { fetchOnboardingResidents } from './persist/residents'
 import { fetchOnboardingVendors } from './persist/vendors'
-import { allocateOnboardingResidentId } from './residentIds'
-import { normalizeOnboardingOccupancyStatus } from './types'
 import type { OnboardingProperty } from './types'
 
 type ImportUnitRow = {
@@ -458,85 +453,11 @@ export async function importMockExtraction(
 
   const selectedResidents = review.residents.filter((r) => r.selected)
   const selectedLeases = review.leases.filter((lease) => lease.selected)
-  for (let i = 0; i < selectedResidents.length; i++) {
-    const r = selectedResidents[i]!
-    const residentId = await allocateOnboardingResidentId(landlordId)
-    const matchedLease = selectedLeases.find(
-      (lease) =>
-        lease.residentName.trim().toLowerCase() === r.fullName.trim().toLowerCase() ||
-        (lease.unit.trim() &&
-          r.unit.trim() &&
-          lease.unit.trim().toLowerCase() === r.unit.trim().toLowerCase()),
-    )
-    const resolvedUnit = r.unit.trim() || matchedLease?.unit.trim() || ''
-    const resolvedBuilding = r.building.trim() || matchedLease?.building.trim() || ''
-    const monthlyRent =
-      parseMonthlyRentInput(String((r as { monthlyRent?: string }).monthlyRent ?? '')) ??
-      (matchedLease?.rentAmount != null
-        ? parseMonthlyRentInput(matchedLease.rentAmount)
-        : null)
-    const rentDueDay = parseRentDueDayInput(
-      String((r as { rentDueDay?: string }).rentDueDay ?? ''),
-    )
-    const occupancyStatus = normalizeOnboardingOccupancyStatus(
-      (r as { occupancyStatus?: string }).occupancyStatus,
-    )
-    const maintenanceClause =
-      String((r as { maintenanceResponsibilitiesClause?: string }).maintenanceResponsibilitiesClause ?? '')
-        .trim() || null
-    const phone = normalizePhoneForDb(r.phone) ?? r.phone ?? null
-    // Prefer update when the same phone is already on this landlord (re-import).
-    if (phone) {
-      const { data: existingByPhone } = await supabase
-        .from('users')
-        .select('id')
-        .eq('landlord_id', landlordId)
-        .eq('phone', phone)
-        .maybeSingle()
-      if (existingByPhone?.id) {
-        const { error: updateError } = await supabase
-          .from('users')
-          .update({
-            full_name: r.fullName,
-            email: r.email,
-            phone,
-            unit: resolvedUnit,
-            building: resolvedBuilding,
-            status: occupancyStatus,
-            move_in_date: r.leaseStart || null,
-            lease_end_date: r.leaseEnd || null,
-            monthly_rent: monthlyRent,
-            rent_due_day: rentDueDay,
-            maintenance_responsibilities_clause: maintenanceClause,
-          })
-          .eq('id', String(existingByPhone.id))
-          .eq('landlord_id', landlordId)
-        if (!updateError) imported.residents += 1
-        continue
-      }
-    }
-    const { error } = await supabase.from('users').insert({
-      resident_id: residentId,
-      full_name: r.fullName,
-      email: r.email,
-      phone,
-      unit: resolvedUnit,
-      building: resolvedBuilding,
-      status: occupancyStatus,
-      balance_due: 0,
-      issues: [],
-      landlord_id: landlordId,
-      move_in_date: r.leaseStart || null,
-      lease_end_date: r.leaseEnd || null,
-      monthly_rent: monthlyRent,
-      rent_due_day: rentDueDay,
-      maintenance_responsibilities_clause: maintenanceClause,
-    })
-    if (!error) imported.residents += 1
-    else if (isUniqueViolation(error)) {
-      console.warn('[landlordOnboarding] import resident unique', error.message, residentId)
-    }
-  }
+  imported.residents = await importOnboardingResidentsFromExtraction(
+    selectedResidents,
+    selectedLeases,
+    landlordId,
+  )
 
   const selectedVendors = review.vendors.filter((v) => v.selected)
   const seenVendorNames = new Set<string>()

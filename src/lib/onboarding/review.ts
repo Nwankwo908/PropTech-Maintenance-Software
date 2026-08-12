@@ -8,6 +8,10 @@ import { normalizeOnboardingApprovalRules, type OnboardingApprovalRules } from '
 import { supabase } from '@/lib/supabase'
 import { fetchAccountSetupCounts } from './persist/account'
 import { fetchOnboardingResidents, type OnboardingResident } from './persist/residents'
+import {
+  mergeFastTrackReviewResidents,
+  type ImportExtractedResidentRow,
+} from './persist/importResidents'
 import { fetchOnboardingVendors, type OnboardingVendor } from './persist/vendors'
 import { readLandlordOnboardingDraft } from './draftStorage'
 import type {
@@ -52,15 +56,20 @@ export function buildOnboardingReviewData(
   residents: OnboardingResident[] = [],
   dbCounts?: AccountSetupCounts,
   smsIntakeNumber: string | null = null,
+  extractedResidents?: ImportExtractedResidentRow[],
 ): OnboardingReviewData {
   const normalized = smsIntakeNumber?.trim() || null
+  const mergedResidents =
+    state.setupPath === 'fast_track' && extractedResidents?.length
+      ? mergeFastTrackReviewResidents(residents, extractedResidents)
+      : residents
   return {
     accountSetup: state.accountSetup,
     properties: state.properties,
     vendors,
-    residents,
+    residents: mergedResidents,
     approvalRules: normalizeOnboardingApprovalRules(state.approvalRules),
-    metrics: buildOnboardingReviewMetrics(state, vendors, residents, dbCounts),
+    metrics: buildOnboardingReviewMetrics(state, vendors, mergedResidents, dbCounts),
     smsIntakeNumber: normalized,
     smsIntakeNumberDisplay: normalized ? formatPhoneNational(normalized) : null,
   }
@@ -139,6 +148,7 @@ export async function fetchOnboardingReviewSupplement(
 
 export async function fetchOnboardingReviewData(
   landlordId: string = getActiveLandlordId(),
+  extractedResidents?: ImportExtractedResidentRow[],
 ): Promise<OnboardingReviewData> {
   const onboarding = await readLandlordOnboardingDraft(landlordId)
   const supplement = await fetchOnboardingReviewSupplement(onboarding, landlordId)
@@ -148,5 +158,6 @@ export async function fetchOnboardingReviewData(
     supplement.residents,
     supplement.dbCounts,
     supplement.smsIntakeNumber,
+    extractedResidents,
   )
 }

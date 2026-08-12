@@ -1,6 +1,7 @@
 /**
- * Complete onboarding — persist portfolio + flip status (no automatic outreach).
+ * Complete onboarding — persist portfolio + flip status + landlord welcome message.
  */
+import { sendLandlordOnboardingWelcome } from '@/api/landlordOnboardingWelcome'
 import { getActiveLandlordId } from '@/lib/activeLandlord'
 import {
   normalizeOnboardingApprovalRules,
@@ -135,25 +136,52 @@ export async function completeOnboarding(
     console.warn('[landlordOnboarding] communication style persist failed', err)
   }
 
-  // Outreach is manual: managers send tenant welcome texts and vendor verification
-  // invites from Residents / Vendors when they are ready.
+  // Tenant/vendor outreach stays manual. Landlord welcome is sent once on complete.
   const tenantsPendingOutreach = residents.filter((r) => r.phone.trim().length > 0).length
   const vendorsPendingOutreach = vendors.filter(
     (v) => v.phone.trim().length > 0 || v.email.trim().length > 0,
   ).length
+  const warnings: string[] = []
+  let welcomeDelivered = false
+
+  try {
+    const welcome = await sendLandlordOnboardingWelcome({
+      landlordId: scope.landlordId,
+      companyName: state.accountSetup.companyName.trim() || null,
+      contactName: state.accountSetup.contactName.trim() || null,
+    })
+    if (!welcome.configured) {
+      console.warn('[landlordOnboarding] landlord welcome not configured')
+    } else if (welcome.skipped && welcome.reason === 'already_sent') {
+      welcomeDelivered = true
+    } else if (!welcome.ok || welcome.error) {
+      warnings.push("we couldn't send your setup welcome message")
+    } else if ((welcome.smsSent?.length ?? 0) > 0 || (welcome.emailSent?.length ?? 0) > 0) {
+      welcomeDelivered = true
+    } else if (welcome.reason === 'no_contact_info') {
+      warnings.push('add a phone or email in Account setup to receive your welcome message')
+    } else {
+      warnings.push("we couldn't deliver your setup welcome message")
+    }
+  } catch (err) {
+    console.warn('[landlordOnboarding] landlord welcome trigger failed', err)
+    warnings.push('your setup welcome message could not be sent')
+  }
 
   try {
     const { recordActivityLog } = await import('@/lib/recordActivityLog')
+    const outreachNote =
+      tenantsPendingOutreach > 0 || vendorsPendingOutreach > 0
+        ? ' Send resident welcome texts and vendor verification invites from Residents and Vendors when you are ready.'
+        : ''
+    const welcomeNote = welcomeDelivered ? ' Your welcome message was sent.' : ''
     await recordActivityLog({
       landlordId: scope.landlordId,
       eventType: 'onboarding.completed',
       source: 'onboarding',
       actorType: 'landlord',
       metadata: {
-        message:
-          tenantsPendingOutreach > 0 || vendorsPendingOutreach > 0
-            ? 'Setup complete. Send resident welcome texts and vendor verification invites from Residents and Vendors when you are ready.'
-            : 'Setup complete.',
+        message: `Setup complete.${welcomeNote}${outreachNote}`.trim(),
         tenants_pending_outreach: tenantsPendingOutreach,
         vendors_pending_outreach: vendorsPendingOutreach,
       },
@@ -162,5 +190,12 @@ export async function completeOnboarding(
     console.warn('[landlordOnboarding] completion activity log failed', err)
   }
 
-  return { ok: true }
+  const activationWarning =
+    warnings.length > 0
+      ? `Setup finished, but ${warnings.join('; ')}.`
+      : tenantsPendingOutreach > 0 || vendorsPendingOutreach > 0
+        ? 'Setup complete. Send resident welcome texts and vendor verification invites from Residents and Vendors when you are ready.'
+        : undefined
+
+  return { ok: true, activationWarning }
 }

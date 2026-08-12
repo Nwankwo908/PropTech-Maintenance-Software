@@ -50,7 +50,40 @@ describe('enrichExtractedProperties', () => {
     expect(properties).toHaveLength(1)
     expect(properties[0]?.name).toBe('Riverview Apartments')
     expect(properties[0]?.unitCount).toBe(2)
+    expect(properties[0]?.propertyType).toBe('multifamily')
     expect(properties[0]?.needsReview).toBe(true)
+  })
+
+  it('derives single-family type when rent roll shows one unit in a building', () => {
+    const properties = enrichExtractedProperties(
+      [],
+      [
+        {
+          id: 'res-1',
+          fullName: 'Jamie Tenant',
+          unit: '101',
+          building: 'Oak Cottage',
+          phone: '',
+          email: '',
+          leaseStart: '',
+          leaseEnd: '',
+          monthlyRent: '',
+          rentDueDay: '',
+          occupancyStatus: 'active',
+          maintenanceResponsibilitiesClause: '',
+          sourceDocumentName: 'rent-roll.xlsx',
+          confidence: 90,
+          selected: true,
+          needsReview: false,
+        },
+      ],
+      [],
+      [],
+    )
+
+    expect(properties).toHaveLength(1)
+    expect(properties[0]?.propertyType).toBe('single_family_home')
+    expect(properties[0]?.unitCount).toBe(1)
   })
 
   it('merges GPT property rows with derived building inventory', () => {

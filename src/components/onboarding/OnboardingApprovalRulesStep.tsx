@@ -67,6 +67,8 @@ export type OnboardingApprovalRulesStepProps = {
   showBack: boolean
   /** Fast-track skips account setup, so surface notification prefs here. */
   showNotificationPreferences?: boolean
+  /** Fast-track uses default marketplace dispatch rules without asking. */
+  showMarketplacePreference?: boolean
   continueLabel?: string
   onBack: () => void
   onContinue: (rules: OnboardingApprovalRules) => void
@@ -77,6 +79,7 @@ export function OnboardingApprovalRulesStep({
   saving,
   showBack,
   showNotificationPreferences = false,
+  showMarketplacePreference = true,
   continueLabel = 'Continue',
   onBack,
   onContinue,
@@ -210,25 +213,27 @@ export function OnboardingApprovalRulesStep({
           </div>
         </div>
 
-        <div>
-          <h3 className="text-[15px] font-semibold text-[#111827]">Marketplace preference</h3>
-          <p className="mt-1 text-[13px] leading-5 text-[#6b7280]">
-            Choose who Ulo can assign work to.
-          </p>
-          <div className="mt-3 space-y-2">
-            {MARKETPLACE_PREFERENCE_OPTIONS.map((option) => (
-              <ChoiceCard
-                key={option.id}
-                selected={rules.marketplacePreference === option.id}
-                title={option.label}
-                description={option.description}
-                onSelect={() =>
-                  patch({ marketplacePreference: option.id as MarketplacePreferenceId })
-                }
-              />
-            ))}
+        {showMarketplacePreference ? (
+          <div>
+            <h3 className="text-[15px] font-semibold text-[#111827]">Marketplace preference</h3>
+            <p className="mt-1 text-[13px] leading-5 text-[#6b7280]">
+              Choose who Ulo can assign work to.
+            </p>
+            <div className="mt-3 space-y-2">
+              {MARKETPLACE_PREFERENCE_OPTIONS.map((option) => (
+                <ChoiceCard
+                  key={option.id}
+                  selected={rules.marketplacePreference === option.id}
+                  title={option.label}
+                  description={option.description}
+                  onSelect={() =>
+                    patch({ marketplacePreference: option.id as MarketplacePreferenceId })
+                  }
+                />
+              ))}
+            </div>
           </div>
-        </div>
+        ) : null}
 
         <div>
           <h3 className="text-[15px] font-semibold text-[#111827]">Communication Style</h3>

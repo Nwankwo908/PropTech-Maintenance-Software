@@ -258,6 +258,12 @@ verify_jwt = false
 import_map = "./functions/send-tenant-activation/deno.json"
 entrypoint = "./functions/send-tenant-activation/index.ts"
 
+[functions.send-landlord-onboarding-welcome]
+enabled = true
+verify_jwt = false
+import_map = "./functions/send-landlord-onboarding-welcome/deno.json"
+entrypoint = "./functions/send-landlord-onboarding-welcome/index.ts"
+
 [functions.send-proxied-message]
 enabled = true
 verify_jwt = false

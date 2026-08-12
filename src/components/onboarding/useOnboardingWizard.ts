@@ -164,6 +164,13 @@ export function useOnboardingWizard() {
   const unitOptions = listOnboardingUnitOptions(state.properties)
   const multiPropertyPortfolio = propertyNames.length > 1
 
+  function reviewExtractedResidents() {
+    if (state.setupPath !== 'fast_track' || !extractionReview?.residents.length) {
+      return undefined
+    }
+    return extractionReview.residents
+  }
+
   function enterReviewEditMode(targetStep: OnboardingStep) {
     editingFromReviewRef.current = true
     setEditingFromReview(true)
@@ -485,7 +492,7 @@ export function useOnboardingWizard() {
     }
 
     let cancelled = false
-    setReviewData((prev) => prev ?? buildOnboardingReviewData(state))
+    setReviewData((prev) => prev ?? buildOnboardingReviewData(state, [], [], undefined, null, reviewExtractedResidents()))
     setReviewLoading(false)
 
     void (async () => {
@@ -504,6 +511,7 @@ export function useOnboardingWizard() {
           supplement.residents,
           supplement.dbCounts,
           supplement.smsIntakeNumber,
+          reviewExtractedResidents(),
         ),
       )
     })()
@@ -856,7 +864,14 @@ export function useOnboardingWizard() {
         ])
 
     setReviewData(
-      buildOnboardingReviewData(snapshot, vendors, residents, undefined, smsIntakeNumber),
+      buildOnboardingReviewData(
+        snapshot,
+        vendors,
+        residents,
+        undefined,
+        smsIntakeNumber,
+        reviewExtractedResidents(),
+      ),
     )
     await goTo('review')
   }
@@ -879,7 +894,14 @@ export function useOnboardingWizard() {
     ])
     const nextState: LandlordOnboardingState = { ...snapshot, ...patch }
     setReviewData(
-      buildOnboardingReviewData(nextState, vendors, residents, undefined, smsIntakeNumber),
+      buildOnboardingReviewData(
+        nextState,
+        vendors,
+        residents,
+        undefined,
+        smsIntakeNumber,
+        reviewExtractedResidents(),
+      ),
     )
     await goTo('review', patch)
     await refreshCounts()
@@ -919,7 +941,9 @@ export function useOnboardingWizard() {
   }
 
   async function finishReview() {
-    const data = reviewData ?? (await fetchOnboardingReviewData())
+    const data =
+      reviewData ??
+      (await fetchOnboardingReviewData(state.landlordId, reviewExtractedResidents()))
     const reviewState: LandlordOnboardingState = {
       ...state,
       accountSetup: data.accountSetup,
@@ -928,10 +952,11 @@ export function useOnboardingWizard() {
     }
     const ready = await isLandlordStripePayoutsReady(reviewState.landlordId)
     setPayoutsReady(ready)
+    const persistedResidents = await fetchOnboardingResidents(reviewState.landlordId)
     const check = canCompleteOnboarding(
       reviewState,
       data.vendors,
-      data.residents,
+      persistedResidents,
       data.metrics,
       ready,
     )
@@ -946,7 +971,12 @@ export function useOnboardingWizard() {
     const transitionStartedAt = Date.now()
     setCompletingSetup(true)
     setSaving(true)
-    const result = await completeOnboarding(reviewState, data.vendors, data.residents, data.metrics)
+    const result = await completeOnboarding(
+      reviewState,
+      data.vendors,
+      persistedResidents,
+      data.metrics,
+    )
     if (!result.ok) {
       setCompletingSetup(false)
       setSaving(false)

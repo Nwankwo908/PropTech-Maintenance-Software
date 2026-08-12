@@ -31,46 +31,10 @@ export const onboardingBtnGhostClass =
 export const onboardingNavBtnClass =
   'sa-press inline-flex items-center gap-1.5 rounded-[8px] px-2 py-1.5 text-[14px] font-medium tracking-[-0.1504px] text-[#364153] outline-none transition-[color,background-color,transform] duration-150 hover:bg-[#f3f4f6] hover:text-[#101828] active:bg-[#e5e7eb] focus-visible:ring-2 focus-visible:ring-[#101828]/20 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-transparent disabled:hover:text-[#364153]'
 
-/** Default when fast-track document extraction omits or cannot classify property type. */
-export const FAST_TRACK_DEFAULT_PROPERTY_TYPE = 'single_family_home'
-
-export const ONBOARDING_PROPERTY_TYPE_OPTIONS: { value: string; label: string }[] = [
-  { value: 'single_family_home', label: 'Single-Family Home' },
-  { value: 'multifamily', label: 'Multifamily / Apartment Building' },
-  { value: 'condo', label: 'Condo' },
-  { value: 'townhouse', label: 'Townhouse' },
-  { value: 'commercial', label: 'Commercial Property' },
-]
-
-/** Map extracted or legacy property type strings to a review dropdown value. */
-export function resolveOnboardingPropertyType(value: string | undefined | null): string {
-  const raw = (value ?? '').trim().toLowerCase()
-  if (!raw) return FAST_TRACK_DEFAULT_PROPERTY_TYPE
-
-  const exact = ONBOARDING_PROPERTY_TYPE_OPTIONS.find(
-    (option) =>
-      option.value === raw ||
-      option.label.toLowerCase() === raw ||
-      option.label.toLowerCase().replace(/\s+/g, '_') === raw,
-  )
-  if (exact) return exact.value
-
-  if (raw.includes('single') || raw === 'single_family' || raw === 'sfr') {
-    return 'single_family_home'
-  }
-  if (raw.includes('multi') || raw.includes('apartment')) return 'multifamily'
-  if (raw.includes('condo')) return 'condo'
-  if (raw.includes('town')) return 'townhouse'
-  if (raw.includes('commercial') || raw === 'mixed_use') return 'commercial'
-
-  return FAST_TRACK_DEFAULT_PROPERTY_TYPE
-}
-
-export function onboardingPropertyTypeLabel(value: string | undefined | null): string {
-  const resolved = resolveOnboardingPropertyType(value)
-  if (resolved) {
-    return ONBOARDING_PROPERTY_TYPE_OPTIONS.find((option) => option.value === resolved)?.label ?? resolved
-  }
-  const trimmed = (value ?? '').trim()
-  return trimmed || 'Property type not set'
-}
+export {
+  FAST_TRACK_DEFAULT_PROPERTY_TYPE,
+  ONBOARDING_PROPERTY_TYPE_OPTIONS,
+  inferOnboardingPropertyTypeFromUnitCount,
+  onboardingPropertyTypeLabel,
+  resolveOnboardingPropertyType,
+} from '@/lib/onboarding/propertyType'

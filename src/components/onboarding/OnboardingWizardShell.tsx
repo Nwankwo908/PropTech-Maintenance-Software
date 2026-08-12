@@ -130,39 +130,40 @@ export function OnboardingWizardShell() {
               : 'mx-auto w-full max-w-3xl'
         }
       >
-        {!isWelcomeStep && !isReviewStep ? (
-          <div key={step} className="onb-step-header mb-6">
-            <div className="flex items-start justify-between gap-4">
-              <h1 className="text-[24px] font-semibold tracking-[-0.4px] text-[#101828]">
-                {editingFromReview ? 'Edit your setup' : 'Set up Ulo for your portfolio'}
-              </h1>
-              {isComplete ? (
-                <Link to="/admin" className={`${btnSecondary} shrink-0`}>
-                  Go to dashboard
-                </Link>
-              ) : null}
-            </div>
-            {!editingFromReview ? (
-              <OnboardingStepIndicator
-                current={step}
-                setupPath={state.setupPath}
-                className="mb-0 mt-4"
-              />
-            ) : (
-              <p className="mt-2 text-[14px] text-[#6a7282]">
-                Update this section, then save to return to your review summary.
-              </p>
-            )}
-          </div>
-        ) : null}
-
         {error ? (
           <div className="sa-enter mb-4 rounded-[10px] border border-[#fecaca] bg-[#fef2f2] px-4 py-3 text-[13px] text-[#b91c1c]">
             {error}
           </div>
         ) : null}
 
-        <div key={step} className={isWelcomeStep ? undefined : 'onb-step-panel'}>
+        <div key={step}>
+          {!isWelcomeStep && !isReviewStep ? (
+            <div className="onb-step-header mb-6">
+              <div className="flex items-start justify-between gap-4">
+                <h1 className="text-[24px] font-semibold tracking-[-0.4px] text-[#101828]">
+                  {editingFromReview ? 'Edit your setup' : 'Set up Ulo for your portfolio'}
+                </h1>
+                {isComplete ? (
+                  <Link to="/admin" className={`${btnSecondary} shrink-0`}>
+                    Go to dashboard
+                  </Link>
+                ) : null}
+              </div>
+              {!editingFromReview ? (
+                <OnboardingStepIndicator
+                  current={step}
+                  setupPath={state.setupPath}
+                  className="mb-0 mt-4"
+                />
+              ) : (
+                <p className="mt-2 text-[14px] text-[#6a7282]">
+                  Update this section, then save to return to your review summary.
+                </p>
+              )}
+            </div>
+          ) : null}
+
+          <div className={isWelcomeStep ? undefined : 'onb-step-panel'}>
           {step === 'entry' ? (
             <OnboardingWelcomeHub
               onStartScratch={() => void handleStartScratch()}
@@ -270,6 +271,7 @@ export function OnboardingWizardShell() {
               saving={saving}
               showBack={showBackButton}
               showNotificationPreferences={state.setupPath === 'fast_track'}
+              showMarketplacePreference={state.setupPath !== 'fast_track'}
               continueLabel={editContinueLabel ?? 'Continue'}
               onBack={() => void handleBack()}
               onContinue={(rules) => void saveApprovalRulesAndContinue(rules)}
@@ -318,6 +320,7 @@ export function OnboardingWizardShell() {
               onComplete={() => void finishReview()}
             />
           ) : null}
+          </div>
         </div>
       </div>
     </main>

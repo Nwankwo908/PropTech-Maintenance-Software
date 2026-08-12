@@ -352,10 +352,12 @@ export function OnboardingReviewStep({
               label="After hours"
               value={afterHoursRuleLabel(reviewData.approvalRules.afterHoursRule)}
             />
-            <ReviewSummaryRow
-              label="Marketplace"
-              value={marketplacePreferenceLabel(reviewData.approvalRules.marketplacePreference)}
-            />
+            {setupPath !== 'fast_track' ? (
+              <ReviewSummaryRow
+                label="Marketplace"
+                value={marketplacePreferenceLabel(reviewData.approvalRules.marketplacePreference)}
+              />
+            ) : null}
             <ReviewSummaryRow
               label="Communication style"
               value={communicationStyleLabel(reviewData.approvalRules.communicationStyle)}

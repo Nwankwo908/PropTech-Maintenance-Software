@@ -15,6 +15,7 @@ const {
   persistLandlordAccountProfile,
   persistLandlordCommunicationStyle,
   persistOnboardingProperties,
+  sendLandlordOnboardingWelcome,
   supabaseFrom,
 } = vi.hoisted(() => {
   const supabaseFrom = vi.fn()
@@ -26,9 +27,14 @@ const {
     persistLandlordAccountProfile: vi.fn(),
     persistLandlordCommunicationStyle: vi.fn(),
     persistOnboardingProperties: vi.fn(),
+    sendLandlordOnboardingWelcome: vi.fn(),
     supabaseFrom,
   }
 })
+
+vi.mock('@/api/landlordOnboardingWelcome', () => ({
+  sendLandlordOnboardingWelcome,
+}))
 
 vi.mock('@/lib/unitActivation', () => ({
   activateUnitsFromResidentAssignments,
@@ -122,10 +128,16 @@ describe('completeOnboarding', () => {
       properties,
     }))
     recordActivityLog.mockResolvedValue(undefined)
+    sendLandlordOnboardingWelcome.mockResolvedValue({
+      ok: true,
+      configured: true,
+      smsSent: ['+12025550100'],
+      emailSent: ['owner@example.com'],
+    })
     mockPayoutsReady(true)
   })
 
-  it('saves completed state without automatic tenant or vendor outreach', async () => {
+  it('saves completed state and sends landlord welcome message', async () => {
     const state = validOnboardingState()
     const residents = [
       sampleResident({ id: 'res-phone', phone: '+12025550111' }),
@@ -147,13 +159,25 @@ describe('completeOnboarding', () => {
 
     const result = await completeOnboarding(state, vendors, residents)
 
-    expect(result).toEqual({ ok: true })
+    expect(result).toEqual({
+      ok: true,
+      activationWarning:
+        'Setup complete. Send resident welcome texts and vendor verification invites from Residents and Vendors when you are ready.',
+    })
     expect(saveLandlordOnboarding).toHaveBeenCalledTimes(1)
     const saved = saveLandlordOnboarding.mock.calls[0]?.[0] as LandlordOnboardingState
     expect(saved.onboardingStatus).toBe('completed')
     expect(saved.currentStep).toBe('review')
     expect(saved.completedAt).toBeTruthy()
     expect(saved.landlordId).toBe(TEST_LANDLORD_ID)
+
+    expect(sendLandlordOnboardingWelcome).toHaveBeenCalledWith(
+      expect.objectContaining({
+        landlordId: TEST_LANDLORD_ID,
+        companyName: expect.any(String),
+        contactName: expect.any(String),
+      }),
+    )
 
     expect(recordActivityLog).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -162,7 +186,7 @@ describe('completeOnboarding', () => {
         metadata: expect.objectContaining({
           tenants_pending_outreach: 1,
           vendors_pending_outreach: 1,
-          message: expect.stringMatching(/Residents and Vendors/i),
+          message: expect.stringMatching(/welcome message was sent/i),
         }),
       }),
     )
@@ -177,7 +201,11 @@ describe('completeOnboarding', () => {
       [sampleResident()],
     )
 
-    expect(result).toEqual({ ok: true })
+    expect(result).toEqual({
+      ok: true,
+      activationWarning:
+        'Setup complete. Send resident welcome texts and vendor verification invites from Residents and Vendors when you are ready.',
+    })
     expect(saveLandlordOnboarding).toHaveBeenCalled()
   })
 
