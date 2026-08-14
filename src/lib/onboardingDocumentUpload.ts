@@ -345,7 +345,9 @@ export function isAcceptedUploadFile(file: File): { ok: true } | { ok: false; er
 
 export function inferDocumentCategory(fileName: string): OnboardingDocumentCategory {
   const lower = fileName.toLowerCase()
-  if (/lease|rental/.test(lower)) return 'lease_agreement'
+  if (/lease|rental|tenancy|occupancy.?agreement|housing.?agreement/.test(lower)) {
+    return 'lease_agreement'
+  }
   if (/rent.?roll|roster|tenant/.test(lower)) return 'rent_roll'
   if (/inspection|walkthrough/.test(lower)) return 'inspection_report'
   if (/invoice|bill/.test(lower)) return 'vendor_invoice'
@@ -1102,6 +1104,35 @@ function mergeExtractedDocuments(
         needsReview: item.confidence < 75,
       })
     })
+
+    for (const [index, item] of payload.leases.entries()) {
+      const alreadyResident = residents.some(
+        (resident) =>
+          personNamesMatch(resident.fullName, item.residentName) ||
+          (item.unit.trim() &&
+            residentMatchKey(resident.unit, resident.building) ===
+              residentMatchKey(item.unit, item.building)),
+      )
+      if (!item.residentName.trim() || alreadyResident) continue
+      residents.push({
+        id: `ext-res-lease-${doc.id}-${index}`,
+        fullName: item.residentName,
+        unit: item.unit,
+        building: item.building,
+        phone: '',
+        email: '',
+        leaseStart: item.leaseStart,
+        leaseEnd: item.leaseEnd,
+        monthlyRent: item.rentAmount,
+        rentDueDay: '',
+        occupancyStatus: 'active',
+        maintenanceResponsibilitiesClause: '',
+        sourceDocumentName: source,
+        confidence: item.confidence,
+        selected: true,
+        needsReview: item.confidence < 75 || !item.unit.trim(),
+      })
+    }
 
     payload.vendors.forEach((item, index) => {
       vendors.push({

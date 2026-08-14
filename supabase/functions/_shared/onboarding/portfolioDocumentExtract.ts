@@ -4,6 +4,11 @@
  */
 import * as XLSX from "npm:xlsx@0.18.5"
 import {
+  isPdfFile,
+  MIN_PDF_TEXT_CHARS,
+  pdfBytesToPlainText,
+} from "./pdfDocumentText.ts"
+import {
   isWordFile,
   wordBytesToPlainText,
   WORD_TEXT_LIMIT,
@@ -173,6 +178,7 @@ Rules:
 - Keep each tenant linked to the unit and building on their row — do not list tenants without their unit when the document shows both on the same line.
 - On rent rolls and unit rosters, also populate the units array with one entry per distinct unit number, each with its building/property when shown.
 - On rent rolls, populate the properties array with one entry per distinct property or building name/address shown in the document header, Property column, or Building column.
+- Residential leases, rental agreements, occupancy agreements, and tenancy contracts are first-class sources. For each lease, populate BOTH leases[] and residents[] (same tenant, unit, building, dates, and rent). Pull the premises address into properties[] and the unit/apt number into units[]. Use commencement/start and expiration/end dates as leaseStart and leaseEnd. Do not skip a lease because it is a long legal form instead of a spreadsheet.
 - Dates: YYYY-MM-DD when unambiguous; otherwise empty string.
 - Phone numbers: include country code when shown; otherwise as printed.
 - confidence: 0-100 for how clearly each row's fields appear in the document.
@@ -639,12 +645,22 @@ export function excelBytesToTabularText(bytes: Uint8Array): string {
   }
 }
 
-function buildUserContent(
+function leaseDocumentHint(fileName: string, documentCategory: string): string {
+  if (
+    documentCategory === "lease_agreement" ||
+    /lease|tenancy|rental\s+agreement|occupancy\s+agreement/i.test(fileName)
+  ) {
+    return "This is a residential lease or occupancy agreement. Extract the tenant(s), unit, property address, lease start, lease end, monthly rent, and security deposit into residents[] and leases[]. Do not return empty arrays when those fields are printed in the document."
+  }
+  return ""
+}
+
+export function buildUserContent(
   fileName: string,
   documentCategory: string,
   contentType: string,
   bytes: Uint8Array,
-  options?: { spreadsheetText?: string; wordText?: string },
+  options?: { spreadsheetText?: string; wordText?: string; pdfText?: string },
 ): Array<Record<string, unknown>> {
   const categoryHint = documentCategory
     ? `Document category hint from filename/rules: ${documentCategory}.`
@@ -654,7 +670,9 @@ function buildUserContent(
     /rent\s*roll|tenant\s*list|resident\s*list/i.test(fileName)
       ? "Rent rolls often split tenant names into First Name and Last Name columns — combine both into fullName/residentName for each row. Also add one properties entry per distinct property/building name or address, plus one units entry per distinct unit number."
       : ""
-  const intro = `File: ${fileName}\n${categoryHint}${rentRollNameHint ? `\n${rentRollNameHint}` : ""}\nExtract portfolio data from this document.`
+  const leaseHint = leaseDocumentHint(fileName, documentCategory)
+  const extraHints = [rentRollNameHint, leaseHint].filter(Boolean).join("\n")
+  const intro = `File: ${fileName}\n${categoryHint}${extraHints ? `\n${extraHints}` : ""}\nExtract portfolio data from this document.`
 
   if (contentType === "text/csv" || fileName.toLowerCase().endsWith(".csv")) {
     const rawText = new TextDecoder().decode(bytes)
@@ -703,19 +721,33 @@ function buildUserContent(
     ]
   }
 
-  const mediaType =
-    contentType.startsWith("image/") || contentType === "application/pdf"
-      ? contentType
-      : contentType.startsWith("image/")
-        ? contentType
-        : fileName.toLowerCase().endsWith(".pdf")
-          ? "application/pdf"
-          : "image/jpeg"
+  if (isPdfFile(fileName, contentType)) {
+    const pdfText = options?.pdfText ?? ""
+    if (pdfText.trim().length >= MIN_PDF_TEXT_CHARS) {
+      return [
+        {
+          type: "text",
+          text: `${intro}\n\nPDF text:\n${pdfText}`,
+        },
+      ]
+    }
+    return [
+      { type: "text", text: intro },
+      {
+        type: "file",
+        file: {
+          filename: fileName,
+          file_data: `data:application/pdf;base64,${bytesToBase64(bytes)}`,
+        },
+      },
+    ]
+  }
 
-  if (
-    mediaType.startsWith("image/") ||
-    mediaType === "application/pdf"
-  ) {
+  const mediaType = contentType.startsWith("image/")
+    ? contentType
+    : "image/jpeg"
+
+  if (mediaType.startsWith("image/")) {
     return [
       { type: "text", text: intro },
       {
@@ -763,6 +795,11 @@ export async function extractPortfolioDocument(input: {
     }
   }
 
+  let pdfText: string | undefined
+  if (isPdfFile(input.fileName, input.contentType)) {
+    pdfText = await pdfBytesToPlainText(input.bytes)
+  }
+
   let wordText: string | undefined
   if (isWordFile(input.fileName, input.contentType)) {
     wordText = await wordBytesToPlainText(
@@ -792,7 +829,7 @@ export async function extractPortfolioDocument(input: {
     input.documentCategory,
     input.contentType,
     input.bytes,
-    { spreadsheetText, wordText },
+    { spreadsheetText, wordText, pdfText },
   )
 
   const response = await fetch("https://api.openai.com/v1/chat/completions", {
