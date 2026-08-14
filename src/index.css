@@ -125,6 +125,15 @@ h6 {
   }
 }
 
+@keyframes features-marquee {
+  from {
+    transform: translateX(0);
+  }
+  to {
+    transform: translateX(-50%);
+  }
+}
+
 @keyframes ask-ulo-icon-marquee {
   from {
     transform: translateX(0);

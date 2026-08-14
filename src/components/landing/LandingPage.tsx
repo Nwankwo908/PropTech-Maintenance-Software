@@ -19,10 +19,12 @@ import { supabase } from '@/lib/supabase'
 import {
   IconArrowRight,
   IconClose,
+  IconFocusFeature,
   IconGraph,
   LANDING_DOCUMENT_IMPORT_ICONS,
   IconMenu,
 } from '@/components/landing/LandingIcons'
+import { FeaturesMarquee } from '@/components/landing/FeaturesMarquee'
 import { FeaturesShowcase } from '@/components/landing/FeaturesShowcase'
 import { BeforeAfterWorkflowSection } from '@/components/landing/BeforeAfterWorkflowSection'
 import howItWorksIpad from '@/assets/iPad Pro (portrait).png'
@@ -343,7 +345,7 @@ export function LandingPage() {
   }
 
   const navLinks = [
-    { label: 'How it Works', target: 'how-it-works' },
+    { label: 'Property Dashboard', target: 'property-dashboard' },
     { label: 'Features', target: 'features' },
   ] as const
 
@@ -528,8 +530,8 @@ export function LandingPage() {
           </LandingContentShell>
         </section>
 
-        {/* How it Works */}
-        <section id="how-it-works" className={`scroll-mt-20 ${LANDING_SECTION_GAP}`}>
+        {/* Property Dashboard */}
+        <section id="property-dashboard" className={`scroll-mt-20 ${LANDING_SECTION_GAP}`}>
           <LandingContentShell>
           <div className="sa-surface rounded-3xl border border-gray-200/80 bg-white p-6 shadow-[0_20px_30px_rgba(0,0,0,0.03),0_1px_1.5px_rgba(0,0,0,0.02)] sm:p-10 lg:shadow-none">
             <div className="flex justify-center">
@@ -541,18 +543,21 @@ export function LandingPage() {
 
             <div className="mt-4 flex flex-col items-center gap-4 text-center">
               <p className="font-[family-name:var(--font-landing-heading)] text-[48px] font-medium leading-[1.1] tracking-[-0.02em] text-slate-900">
-                Every workflow keeps your properties running smoothly
+              Maintenance OS for independent landlords
               </p>
               <p className="max-w-2xl text-lg font-normal leading-relaxed text-slate-700">
                 One view across all your properties; built from every job, text, and vendor interaction.
               </p>
             </div>
 
-            <div className="mt-10 flex justify-center">
+            <div
+              className="mt-10 mx-auto w-full max-w-5xl overflow-hidden"
+              style={{ aspectRatio: '6163 / 4115' }}
+            >
               <img
                 src={howItWorksIpad}
                 alt="Ulo property operations dashboard on iPad"
-                className="block h-auto w-full max-w-5xl"
+                className="block h-full w-full object-cover object-top"
                 loading="lazy"
                 decoding="async"
               />
@@ -566,17 +571,19 @@ export function LandingPage() {
           <div className={`border-t ${LANDING_FULL_WIDTH_RULE}`} aria-hidden />
           <div className={`${LANDING_LOGO_COLUMN_DIVIDER} top-0 bottom-0`} aria-hidden />
           <div className={`${LANDING_BEYOND_LOGO_COLUMN_INSET} overflow-visible pb-24 pt-16`}>
-          <div>
-            <h2 className="sa-pill inline-flex items-center gap-2 rounded-full border border-[#e5e7eb] bg-white px-4 py-2 font-mono text-xs font-bold uppercase tracking-wide text-black">
-              <span className="size-2 shrink-0 rounded-full bg-[#7dd3fc]" aria-hidden />
+          <div className="flex flex-col items-center text-center">
+            <h2 className="sa-pill inline-flex items-center gap-2 font-mono text-xs font-normal uppercase tracking-wide text-slate-900">
+              <IconFocusFeature className="size-4 shrink-0 text-[#81228A]" />
               Features
             </h2>
             <div className="mt-4">
               <p className="font-[family-name:var(--font-landing-heading)] text-[48px] font-medium leading-[1.1] tracking-[-0.02em] text-[#111827]">
-                Every workflow your property needs.
+              Run your property on autopilot
               </p>
             </div>
           </div>
+
+          <FeaturesMarquee />
 
           <FeaturesShowcase />
           </div>

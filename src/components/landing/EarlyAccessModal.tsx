@@ -205,7 +205,7 @@ export function EarlyAccessModal({
               <p className="mt-2 max-w-md text-sm leading-5 text-[#6b7280]">
                 Thanks for signing up! We&apos;ll notify you when Ulo is available and ready to try.{' '}
                 <Link
-                  to="/#how-it-works"
+                  to="/#property-dashboard"
                   onClick={onClose}
                   className="sa-link font-medium text-[#6366f1] hover:underline"
                 >
