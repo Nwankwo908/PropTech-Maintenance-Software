@@ -1,7 +1,9 @@
 import { useCallback, useRef, useState } from 'react'
 import {
   ACCEPTED_UPLOAD_MIME,
+  canRetryOnboardingDocumentExtract,
   formatFileSize,
+  isOnboardingDocumentProcessing,
   UPLOAD_STATUS_LABELS,
   type OnboardingUploadedDocument,
 } from '@/lib/onboardingDocumentUpload'
@@ -41,20 +43,16 @@ function UploadDocumentsIcon() {
 function FileRow({
   doc,
   onRemove,
-  disabled,
+  onRetry,
   staggerIndex,
 }: {
   doc: OnboardingUploadedDocument
   onRemove: (id: string) => void
-  disabled: boolean
+  onRetry: (id: string) => void
   staggerIndex: number
 }) {
-  const isProcessing =
-    doc.uploadStatus === 'uploading' ||
-    doc.uploadStatus === 'scanning' ||
-    doc.uploadStatus === 'extracting' ||
-    doc.uploadStatus === 'digitizing' ||
-    doc.uploadStatus === 'handwriting'
+  const isProcessing = isOnboardingDocumentProcessing(doc)
+  const showRetry = canRetryOnboardingDocumentExtract(doc) && !isProcessing
 
   const statusLabel =
     doc.processingLabel?.trim() ||
@@ -90,14 +88,25 @@ function FileRow({
             {formatFileSize(doc.fileSize)} · {doc.fileType.toUpperCase()}
           </p>
         </div>
-        <button
-          type="button"
-          disabled={disabled || isProcessing}
-          onClick={() => onRemove(doc.id)}
-          className="shrink-0 rounded-[6px] px-2 py-1 text-[12px] font-medium text-[#64748b] transition-colors hover:bg-[#fef2f2] hover:text-[#b91c1c] disabled:cursor-not-allowed disabled:opacity-40"
-        >
-          Remove
-        </button>
+        <div className="flex shrink-0 items-center gap-1">
+          {showRetry ? (
+            <button
+              type="button"
+              onClick={() => onRetry(doc.id)}
+              className="rounded-[6px] px-2 py-1 text-[12px] font-semibold text-[#187960] transition-colors hover:bg-[#f0fdf8]"
+            >
+              Retry
+            </button>
+          ) : null}
+          <button
+            type="button"
+            disabled={isProcessing}
+            onClick={() => onRemove(doc.id)}
+            className="rounded-[6px] px-2 py-1 text-[12px] font-medium text-[#64748b] transition-colors hover:bg-[#fef2f2] hover:text-[#b91c1c] disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            Remove
+          </button>
+        </div>
       </div>
 
       {doc.uploadStatus === 'uploading' || isProcessing ? (
@@ -129,6 +138,7 @@ export type OnboardingDocumentUploadStepProps = {
   uploadError: string | null
   onFilesSelected: (files: FileList | File[]) => void
   onRemoveDocument: (id: string) => void
+  onRetryDocument: (id: string) => void
   onBack: () => void
   onContinue: () => void
   onSkip: () => void
@@ -140,6 +150,7 @@ export function OnboardingDocumentUploadStep({
   uploadError,
   onFilesSelected,
   onRemoveDocument,
+  onRetryDocument,
   onBack,
   onContinue,
   onSkip,
@@ -262,9 +273,9 @@ export function OnboardingDocumentUploadStep({
               <FileRow
                 key={doc.id}
                 doc={doc}
-                disabled={processing}
                 staggerIndex={index}
                 onRemove={onRemoveDocument}
+                onRetry={onRetryDocument}
               />
             ))}
           </ul>

@@ -183,6 +183,8 @@ Rules:
 - Phone numbers: include country code when shown; otherwise as printed.
 - confidence: 0-100 for how clearly each row's fields appear in the document.
 - Do not return placeholder or example people (no "John Doe", no sample@example.com).
+- Never put status labels, error copy, or commentary in data fields (no "needs attention", "needs review", "unknown", "n/a", "string"). Those are not tenants, properties, or leases.
+- warnings: only real document caveats (illegible page, missing signature). Leave warnings empty when extraction succeeded. Do not echo schema examples into warnings.
 - propertyType: use one of these exact values when the document states or clearly implies the type: single_family_home, multifamily, condo, townhouse, commercial. Map synonyms (e.g. "Single Family", "SFR", "Apartment Building", "Duplex") to the closest value. If property type is not stated or is ambiguous, use single_family_home unless the document clearly indicates a multifamily/apartment building or commercial use.
 
 Return ONLY valid JSON matching the requested schema.`
@@ -191,9 +193,32 @@ function asString(value: unknown): string {
   return typeof value === "string" ? value.trim() : ""
 }
 
+/** Drop model/status leftovers that are not real portfolio values. */
+export function isExtractedPlaceholderValue(value: string): boolean {
+  const lower = value.trim().toLowerCase().replace(/[_-]+/g, " ").replace(/\s+/g, " ")
+  if (!lower) return true
+  if (
+    /^(needs attention|needs review|ready for review|failed|error|n\/a|na|none|null|undefined|unknown|string|number|boolean|extraction note|not available|not found|not provided|not specified|unable to extract|unable to read|could not extract|could not read|see warning|see warnings)$/
+      .test(lower)
+  ) {
+    return true
+  }
+  if (
+    /extraction caveats|illegible sections|short visible labels from photos/.test(lower)
+  ) {
+    return true
+  }
+  return false
+}
+
+function cleanExtractedText(value: unknown): string {
+  const text = asString(value)
+  return isExtractedPlaceholderValue(text) ? "" : text
+}
+
 function readField(row: Record<string, unknown>, keys: string[]): string {
   for (const key of keys) {
-    const value = asString(row[key])
+    const value = cleanExtractedText(row[key])
     if (value) return value
   }
   return ""
@@ -233,7 +258,7 @@ export function resolveExtractedBuilding(row: Record<string, unknown>): string {
 
 function readNameField(row: Record<string, unknown>, keys: string[]): string {
   for (const key of keys) {
-    const value = asString(row[key])
+    const value = cleanExtractedText(row[key])
     if (value) return value
   }
   return ""
@@ -303,7 +328,8 @@ function asNumber(value: unknown, fallback = 0): number {
 }
 
 function clampConfidence(value: unknown): number {
-  return Math.max(0, Math.min(100, Math.round(asNumber(value, 50))))
+  if (value == null || value === "") return 80
+  return Math.max(0, Math.min(100, Math.round(asNumber(value, 80))))
 }
 
 import { normalizeExtractedPropertyType } from "./propertyType.ts"
@@ -330,9 +356,9 @@ function normalizeProperty(row: Record<string, unknown>): PortfolioExtractProper
   return {
     name: name || streetAddress,
     streetAddress,
-    city: asString(row.city),
-    state: asString(row.state).toUpperCase().slice(0, 2),
-    zipCode: asString(row.zipCode ?? row.zip_code),
+    city: cleanExtractedText(row.city),
+    state: cleanExtractedText(row.state).toUpperCase().slice(0, 2),
+    zipCode: cleanExtractedText(row.zipCode ?? row.zip_code),
     propertyType: normalizeExtractedPropertyType(
       readField(row, [
         "propertyType",
@@ -368,7 +394,7 @@ export function normalizePortfolioDocumentExtract(raw: unknown): PortfolioDocume
   return {
     properties: normalizeArray(root.properties, normalizeProperty),
     units: normalizeArray(root.units, (row) => {
-      const label = resolveExtractedUnit(row) || asString(row.label)
+      const label = resolveExtractedUnit(row) || cleanExtractedText(row.label)
       const building = resolveExtractedBuilding(row)
       if (!label && !building) return null
       return {
@@ -384,22 +410,22 @@ export function normalizePortfolioDocumentExtract(raw: unknown): PortfolioDocume
         fullName,
         unit: resolveExtractedUnit(row),
         building: resolveExtractedBuilding(row),
-        phone: asString(row.phone),
-        email: asString(row.email),
-        leaseStart: asString(row.leaseStart ?? row.lease_start),
-        leaseEnd: asString(row.leaseEnd ?? row.lease_end),
-        monthlyRent: asString(row.monthlyRent ?? row.monthly_rent ?? row.rent),
+        phone: cleanExtractedText(row.phone),
+        email: cleanExtractedText(row.email),
+        leaseStart: cleanExtractedText(row.leaseStart ?? row.lease_start),
+        leaseEnd: cleanExtractedText(row.leaseEnd ?? row.lease_end),
+        monthlyRent: cleanExtractedText(row.monthlyRent ?? row.monthly_rent ?? row.rent),
         confidence: clampConfidence(row.confidence),
       }
     }),
     vendors: normalizeArray(root.vendors, (row) => {
-      const name = asString(row.name)
+      const name = cleanExtractedText(row.name)
       if (!name) return null
       return {
         name,
-        category: asString(row.category),
-        phone: asString(row.phone),
-        email: asString(row.email),
+        category: cleanExtractedText(row.category),
+        phone: cleanExtractedText(row.phone),
+        email: cleanExtractedText(row.email),
         confidence: clampConfidence(row.confidence),
       }
     }),
@@ -410,41 +436,41 @@ export function normalizePortfolioDocumentExtract(raw: unknown): PortfolioDocume
         residentName,
         unit: resolveExtractedUnit(row),
         building: resolveExtractedBuilding(row),
-        leaseStart: asString(row.leaseStart ?? row.lease_start),
-        leaseEnd: asString(row.leaseEnd ?? row.lease_end),
-        rentAmount: asString(row.rentAmount ?? row.rent_amount ?? row.rent),
-        securityDeposit: asString(row.securityDeposit ?? row.security_deposit),
+        leaseStart: cleanExtractedText(row.leaseStart ?? row.lease_start),
+        leaseEnd: cleanExtractedText(row.leaseEnd ?? row.lease_end),
+        rentAmount: cleanExtractedText(row.rentAmount ?? row.rent_amount ?? row.rent),
+        securityDeposit: cleanExtractedText(row.securityDeposit ?? row.security_deposit),
         confidence: clampConfidence(row.confidence),
       }
     }),
     maintenanceIssues: normalizeArray(root.maintenanceIssues ?? root.maintenance_issues, (row) => {
-      const description = asString(row.description)
+      const description = cleanExtractedText(row.description)
       if (!description) return null
       return {
         unit: resolveExtractedUnit(row),
         building: resolveExtractedBuilding(row),
-        category: asString(row.category),
+        category: cleanExtractedText(row.category),
         description,
-        priority: asString(row.priority) || "normal",
+        priority: cleanExtractedText(row.priority) || "normal",
         confidence: clampConfidence(row.confidence),
       }
     }),
     financialRecords: normalizeArray(root.financialRecords ?? root.financial_records, (row) => {
-      const description = asString(row.description)
+      const description = cleanExtractedText(row.description)
       if (!description) return null
       return {
-        recordType: asString(row.recordType ?? row.record_type),
+        recordType: cleanExtractedText(row.recordType ?? row.record_type),
         description,
-        amount: asString(row.amount),
-        period: asString(row.period),
+        amount: cleanExtractedText(row.amount),
+        period: cleanExtractedText(row.period),
         confidence: clampConfidence(row.confidence),
       }
     }),
     imageLabels: Array.isArray(root.imageLabels)
-      ? root.imageLabels.map((v) => asString(v)).filter(Boolean).slice(0, 12)
+      ? root.imageLabels.map((v) => cleanExtractedText(v)).filter(Boolean).slice(0, 12)
       : [],
     warnings: Array.isArray(root.warnings)
-      ? root.warnings.map((v) => asString(v)).filter(Boolean).slice(0, 8)
+      ? root.warnings.map((v) => cleanExtractedText(v)).filter(Boolean).slice(0, 8)
       : [],
   }
 }

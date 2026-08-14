@@ -1,5 +1,9 @@
 import { assertEquals } from "https://deno.land/std@0.224.0/assert/mod.ts"
-import { buildUserContent } from "./portfolioDocumentExtract.ts"
+import {
+  buildUserContent,
+  isExtractedPlaceholderValue,
+  normalizePortfolioDocumentExtract,
+} from "./portfolioDocumentExtract.ts"
 
 Deno.test("PDF with extracted text is sent as text, not an image", () => {
   const parts = buildUserContent(
@@ -32,4 +36,24 @@ Deno.test("scanned PDF without text is sent as a file part, not image_url", () =
   )
   assertEquals(parts.some((part) => part.type === "file"), true)
   assertEquals(parts.some((part) => part.type === "image_url"), false)
+})
+
+Deno.test("placeholder status values are stripped from extracted fields", () => {
+  assertEquals(isExtractedPlaceholderValue("Needs attention"), true)
+  const payload = normalizePortfolioDocumentExtract({
+    residents: [{ fullName: "Needs attention", unit: "4B", confidence: 40 }],
+    leases: [{ residentName: "n/a", unit: "4B" }],
+    vendors: [{ name: "unknown" }],
+    maintenanceIssues: [{ description: "needs review" }],
+    warnings: ["Needs attention", "Page 2 is illegible"],
+    imageLabels: ["string", "Kitchen leak"],
+    properties: [{ name: "Ready for review" }],
+  })
+  assertEquals(payload.residents.length, 0)
+  assertEquals(payload.leases.length, 0)
+  assertEquals(payload.vendors.length, 0)
+  assertEquals(payload.maintenanceIssues.length, 0)
+  assertEquals(payload.properties.length, 0)
+  assertEquals(payload.warnings, ["Page 2 is illegible"])
+  assertEquals(payload.imageLabels, ["Kitchen leak"])
 })

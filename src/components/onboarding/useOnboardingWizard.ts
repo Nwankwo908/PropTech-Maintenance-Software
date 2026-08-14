@@ -11,6 +11,7 @@ import {
   persistOnboardingDocumentFile,
   emptyExtractionReview,
   isAcceptedUploadFile,
+  canRetryOnboardingDocumentExtract,
   normalizeExtractionReview,
   runDocumentProcessing,
   UPLOAD_STATUS_LABELS,
@@ -118,6 +119,7 @@ export function useOnboardingWizard() {
   const editingFromReviewRef = useRef(false)
   const wizardRemoteSaveTimer = useRef<number | null>(null)
   const processingControllersRef = useRef<Map<string, AbortController>>(new Map())
+  const uploadFilesRef = useRef<Map<string, File>>(new Map())
   const formsHydratedRef = useRef(false)
   const wizardSnapshotRef = useRef({
     state: defaultOnboardingState(),
@@ -697,6 +699,51 @@ export function useOnboardingWizard() {
     await goTo(previous)
   }
 
+  function applyDocumentUpdate(updated: OnboardingUploadedDocument) {
+    setUploadDocuments((prev) =>
+      prev.map((row) =>
+        row.id === updated.id
+          ? {
+              ...updated,
+              storageBucket: row.storageBucket ?? updated.storageBucket,
+              storagePath: row.storagePath ?? updated.storagePath,
+              contentType: row.contentType ?? updated.contentType,
+            }
+          : row,
+      ),
+    )
+  }
+
+  function startDocumentProcessing(doc: OnboardingUploadedDocument, file: File | null) {
+    const controller = new AbortController()
+    processingControllersRef.current.set(doc.id, controller)
+    setUploadProcessing(true)
+
+    void (async () => {
+      let latest = { ...doc }
+      if (file && !doc.storagePath) {
+        const persisted = await persistOnboardingDocumentFile(getActiveLandlordId(), doc.id, file)
+        if ('storagePath' in persisted) {
+          latest = {
+            ...latest,
+            storageBucket: persisted.storageBucket,
+            storagePath: persisted.storagePath,
+            contentType: file.type || latest.contentType || null,
+          }
+          setUploadDocuments((prev) =>
+            prev.map((row) => (row.id === doc.id ? { ...row, ...latest } : row)),
+          )
+        } else {
+          console.warn('[onboarding] document preview upload skipped', persisted.error)
+        }
+      }
+
+      await runDocumentProcessing(latest, file, applyDocumentUpdate, controller.signal)
+    })().finally(() => {
+      processingControllersRef.current.delete(doc.id)
+    })
+  }
+
   function queueDocumentUploads(files: FileList | File[]) {
     const errors: string[] = []
     const queued: { doc: OnboardingUploadedDocument; file: File }[] = []
@@ -724,69 +771,52 @@ export function useOnboardingWizard() {
       uploadProgress: 8,
     }))
     setUploadDocuments((prev) => [...prev, ...newDocs])
-    setUploadProcessing(true)
 
-    const landlordId = getActiveLandlordId()
     for (const { doc, file } of queued) {
-      const controller = new AbortController()
-      processingControllersRef.current.set(doc.id, controller)
-      void (async () => {
-        const persisted = await persistOnboardingDocumentFile(landlordId, doc.id, file)
-        if ('storagePath' in persisted) {
-          setUploadDocuments((prev) =>
-            prev.map((row) =>
-              row.id === doc.id
-                ? {
-                    ...row,
-                    storageBucket: persisted.storageBucket,
-                    storagePath: persisted.storagePath,
-                    contentType: file.type || row.contentType || null,
-                  }
-                : row,
-            ),
-          )
-        } else {
-          console.warn('[onboarding] document preview upload skipped', persisted.error)
-        }
-
-        const latest: OnboardingUploadedDocument = {
+      uploadFilesRef.current.set(doc.id, file)
+      startDocumentProcessing(
+        {
           ...doc,
-          ...('storagePath' in persisted
-            ? {
-                storageBucket: persisted.storageBucket,
-                storagePath: persisted.storagePath,
-                contentType: file.type || doc.contentType || null,
-              }
-            : {}),
-        }
-        await runDocumentProcessing(
-          latest,
-          file,
-          (updated) => {
-            setUploadDocuments((prev) =>
-              prev.map((row) =>
-                row.id === updated.id
-                  ? {
-                      ...updated,
-                      storageBucket: row.storageBucket ?? updated.storageBucket,
-                      storagePath: row.storagePath ?? updated.storagePath,
-                      contentType: row.contentType ?? updated.contentType,
-                    }
-                  : row,
-              ),
-            )
-          },
-          controller.signal,
-        )
-      })().finally(() => {
-        processingControllersRef.current.delete(doc.id)
-      })
+          uploadStatus: 'uploading',
+          processingLabel: UPLOAD_STATUS_LABELS.uploading,
+          uploadProgress: 8,
+        },
+        file,
+      )
     }
+  }
+
+  function retryDocumentExtract(id: string) {
+    const doc = wizardSnapshotRef.current.uploadDocuments.find((row) => row.id === id)
+    if (!doc || !canRetryOnboardingDocumentExtract(doc)) return
+
+    const file = uploadFilesRef.current.get(id) ?? null
+    if (!file && !doc.storagePath) {
+      setUploadError('This file is no longer available to retry. Please upload it again.')
+      return
+    }
+
+    processingControllersRef.current.get(id)?.abort()
+    processingControllersRef.current.delete(id)
+    setUploadError(null)
+
+    const reset: OnboardingUploadedDocument = {
+      ...doc,
+      uploadStatus: 'uploading',
+      extractionStatus: 'waiting',
+      processingLabel: UPLOAD_STATUS_LABELS.uploading,
+      uploadProgress: 8,
+      errorMessage: null,
+      extractedPayload: null,
+    }
+    setUploadDocuments((prev) => prev.map((row) => (row.id === id ? reset : row)))
+    startDocumentProcessing(reset, file)
   }
 
   function removeUploadDocument(id: string) {
     processingControllersRef.current.get(id)?.abort()
     processingControllersRef.current.delete(id)
+    uploadFilesRef.current.delete(id)
     setUploadDocuments((prev) => prev.filter((doc) => doc.id !== id))
   }
 
@@ -1052,6 +1082,7 @@ export function useOnboardingWizard() {
     setExtractionReview,
     queueDocumentUploads,
     removeUploadDocument,
+    retryDocumentExtract,
     continueFromDocumentUpload,
     skipDocumentUpload,
     continueFromAiReview,

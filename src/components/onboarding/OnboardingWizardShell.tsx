@@ -79,6 +79,7 @@ export function OnboardingWizardShell() {
     setExtractionReview,
     queueDocumentUploads,
     removeUploadDocument,
+    retryDocumentExtract,
     continueFromDocumentUpload,
     skipDocumentUpload,
     continueFromAiReview,
@@ -200,6 +201,7 @@ export function OnboardingWizardShell() {
               uploadError={uploadError}
               onFilesSelected={queueDocumentUploads}
               onRemoveDocument={removeUploadDocument}
+              onRetryDocument={retryDocumentExtract}
               onBack={() => void handleBack()}
               onContinue={() => void continueFromDocumentUpload()}
               onSkip={() => void skipDocumentUpload()}
