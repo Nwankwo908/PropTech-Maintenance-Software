@@ -10,7 +10,9 @@ import {
 } from '@/api/adminReassignVendor'
 import { getAdminEdgeSecret } from '@/lib/adminEdgeAuth'
 import { getActiveLandlordId } from '@/lib/activeLandlord'
+import { normalizePhoneForDb } from '@/lib/phoneFormat'
 import { supabase } from '@/lib/supabase'
+import { recordActivityLog } from '@/lib/recordActivityLog'
 
 function functionUrl(): string | undefined {
   const explicit = import.meta.env.VITE_SEND_TENANT_ACTIVATION_URL?.trim()
@@ -144,9 +146,8 @@ export function phoneNewlyAdded(
   return !(previousPhone?.trim()) && Boolean(nextPhone?.trim())
 }
 
-/** Digits-only compare for phone edits. */
-function phoneDigits(value: string | null | undefined): string {
-  return (value ?? '').replace(/\D/g, '')
+function normalizedPhone(value: string | null | undefined): string {
+  return normalizePhoneForDb(value) ?? ''
 }
 
 /** True when the stored phone number changed to a different value. */
@@ -154,10 +155,62 @@ export function phoneChanged(
   previousPhone: string | null | undefined,
   nextPhone: string | null | undefined,
 ): boolean {
-  const prev = phoneDigits(previousPhone)
-  const next = phoneDigits(nextPhone)
+  const prev = normalizedPhone(previousPhone)
+  const next = normalizedPhone(nextPhone)
   if (!next) return false
   return prev !== next
+}
+
+/** Offer restart when replacing a number that already received (or was meant to receive) welcome SMS. */
+export function shouldOfferRestartTenantOnboarding(
+  previousPhone: string | null | undefined,
+  nextPhone: string | null | undefined,
+): boolean {
+  if (!normalizedPhone(previousPhone)) return false
+  return phoneChanged(previousPhone, nextPhone)
+}
+
+const ACTIVATION_RESET_PATCH = {
+  activation_status: 'not_started',
+  sms_consent_status: 'pending',
+  last_delivery_error: null,
+  activation_attempt_count: 0,
+  first_activation_attempt_at: null,
+  last_activation_attempt_at: null,
+  activation_sms_sent_at: null,
+  activation_phone_normalized: null,
+} as const
+
+/**
+ * Phone change invalidates prior welcome/consent (that applied to the old number).
+ * Does not send SMS — the landlord must opt in via Start onboarding again.
+ */
+export async function resetTenantActivationForPhoneChange(params: {
+  landlordId?: string
+  residentId: string
+}): Promise<void> {
+  if (!supabase) return
+  const landlordId = params.landlordId?.trim() || getActiveLandlordId()
+  const residentId = params.residentId.trim()
+  if (!landlordId || !residentId) return
+
+  await supabase
+    .from('users')
+    .update({ ...ACTIVATION_RESET_PATCH })
+    .eq('id', residentId)
+    .eq('landlord_id', landlordId)
+
+  await recordActivityLog({
+    landlordId,
+    eventType: 'tenant.activation_reset_phone_changed',
+    source: 'dashboard',
+    actorType: 'landlord',
+    residentId,
+    metadata: {
+      message: 'Tenant phone updated. Welcome text for the previous number was cleared.',
+      reason: 'phone_changed',
+    },
+  })
 }
 
 /**
@@ -169,50 +222,37 @@ export async function clearActivationFailureOnPhoneUpdate(params: {
   landlordId?: string
   residentId: string
 }): Promise<void> {
-  if (!supabase) return
-  const landlordId = params.landlordId?.trim() || getActiveLandlordId()
-  const residentId = params.residentId.trim()
-  if (!landlordId || !residentId) return
+  await resetTenantActivationForPhoneChange(params)
+}
 
-  const { data: row } = await supabase
-    .from('users')
-    .select('activation_status')
-    .eq('id', residentId)
-    .eq('landlord_id', landlordId)
-    .maybeSingle()
-
-  const status = String((row as { activation_status?: string } | null)?.activation_status ?? '')
-    .trim()
-    .toLowerCase()
-  if (status !== 'action_required' && status !== 'delivery_failed') return
-
-  await supabase
-    .from('users')
-    .update({
-      activation_status: 'not_started',
-      last_delivery_error: null,
-      activation_attempt_count: 0,
-      first_activation_attempt_at: null,
-      last_activation_attempt_at: null,
-      activation_sms_sent_at: null,
-      activation_phone_normalized: null,
-    })
-    .eq('id', residentId)
-    .eq('landlord_id', landlordId)
-
-  const { recordActivityLog } = await import('@/lib/recordActivityLog')
-  await recordActivityLog({
-    landlordId,
-    eventType: 'tenant.activation_failure_resolved',
-    source: 'admin_ui',
-    actorType: 'landlord',
-    residentId,
-    metadata: {
-      message: 'Activation failure resolved (phone_updated).',
-      reason: 'phone_updated',
-      notification_status: 'resolved',
-    },
+/**
+ * Landlord chose to start tenant onboarding again after correcting the phone.
+ * Resets prior activation/consent, then sends the welcome text to the new number.
+ */
+export async function restartTenantOnboardingAfterPhoneChange(params: {
+  landlordId?: string
+  residentId: string
+  companyName?: string | null
+}): Promise<TenantActivationSummary> {
+  await resetTenantActivationForPhoneChange({
+    landlordId: params.landlordId,
+    residentId: params.residentId,
   })
+  const summary = await resendTenantActivationSms(params)
+  const landlordId = params.landlordId?.trim() || getActiveLandlordId()
+  if (landlordId && summary.ok && (summary.sent ?? 0) > 0) {
+    await recordActivityLog({
+      landlordId,
+      eventType: 'tenant.onboarding_restarted',
+      source: 'dashboard',
+      actorType: 'landlord',
+      residentId: params.residentId,
+      metadata: {
+        message: 'Welcome text sent to the updated tenant number.',
+      },
+    })
+  }
+  return summary
 }
 
 /** Plain-language warning for toast / banner when activation SMS fails. */

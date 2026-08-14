@@ -12,8 +12,8 @@ import {
   type PortfolioRecommendation,
   type PropertyInsightFinding,
   type PropertyInsightTag,
-} from "../../portfolioIntelligence/index.ts"
-import { loadPortfolioIntelligenceInput } from "../../portfolioIntelligence/loadSnapshot.ts"
+} from "../../../portfolioIntelligence/index.ts"
+import { loadPortfolioIntelligenceInput } from "../../../portfolioIntelligence/loadSnapshot.ts"
 
 export type { PropertyInsightTag, PropertyInsightFinding }
 

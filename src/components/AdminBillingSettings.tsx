@@ -5,15 +5,13 @@ import {
   type MaintenanceBillingHistoryItem,
 } from '@/api/maintenanceInvoice'
 import {
-  BETA_ACCOMPLISHMENTS,
   BETA_INCLUDED_FEATURES,
-  BETA_LATEST_IMPROVEMENTS,
   BETA_PROGRAM,
   currentActivityMonthLabel,
   FUTURE_BILLING_PREVIEW,
   FUTURE_SUBSCRIPTION_FEATURES,
-  MONTHLY_ACTIVITY_STATS,
 } from '@/lib/billingBeta'
+import { loadLandlordSettings } from '@/lib/landlordSettings'
 import { getErrorMessage } from '@/lib/errorMessage'
 
 const sectionCardClass =
@@ -91,15 +89,21 @@ function CheckIcon() {
 function PrimaryButton({
   children,
   className = '',
+  disabled,
+  title,
 }: {
   children: React.ReactNode
   className?: string
+  disabled?: boolean
+  title?: string
 }) {
   return (
     <button
       type="button"
+      disabled={disabled}
+      title={title}
       className={[
-        'sa-press inline-flex items-center justify-center rounded-[10px] bg-[#101828] px-4 py-2.5 text-[14px] font-medium tracking-[-0.1504px] text-white hover:bg-[#1f2937]',
+        'sa-press inline-flex items-center justify-center rounded-[10px] bg-[#101828] px-4 py-2.5 text-[14px] font-medium tracking-[-0.1504px] text-white hover:bg-[#1f2937] disabled:cursor-not-allowed disabled:opacity-50',
         className,
       ].join(' ')}
     >
@@ -111,15 +115,21 @@ function PrimaryButton({
 function OutlineButton({
   children,
   className = '',
+  disabled,
+  title,
 }: {
   children: React.ReactNode
   className?: string
+  disabled?: boolean
+  title?: string
 }) {
   return (
     <button
       type="button"
+      disabled={disabled}
+      title={title}
       className={[
-        'sa-press inline-flex items-center justify-center rounded-[10px] border border-[#186179] bg-white px-4 py-2.5 text-[14px] font-medium tracking-[-0.1504px] text-[#186179] hover:bg-[#e8f2f5]',
+        'sa-press inline-flex items-center justify-center rounded-[10px] border border-[#186179] bg-white px-4 py-2.5 text-[14px] font-medium tracking-[-0.1504px] text-[#186179] hover:bg-[#e8f2f5] disabled:cursor-not-allowed disabled:opacity-50',
         className,
       ].join(' ')}
     >
@@ -201,6 +211,22 @@ export function AdminBillingSettings() {
   const [history, setHistory] = useState<MaintenanceBillingHistoryItem[]>([])
   const [historyLoading, setHistoryLoading] = useState(true)
   const [historyError, setHistoryError] = useState<string | null>(null)
+  const [memberSince, setMemberSince] = useState<string>(BETA_PROGRAM.memberSince)
+  const [planLabel, setPlanLabel] = useState('Ulo Alpha')
+
+  useEffect(() => {
+    void loadLandlordSettings().then((snapshot) => {
+      setPlanLabel(snapshot.planLabel)
+      if (snapshot.memberSince) {
+        setMemberSince(
+          new Date(snapshot.memberSince).toLocaleDateString('en-US', {
+            month: 'long',
+            year: 'numeric',
+          }),
+        )
+      }
+    })
+  }, [])
 
   useEffect(() => {
     let cancelled = false
@@ -242,18 +268,10 @@ export function AdminBillingSettings() {
               Subscription & Billing
             </h1>
             <p className="mt-2 max-w-2xl text-[14px] leading-6 tracking-[-0.1504px] text-[#6a7282]">
-              Manage your Ulo subscription, beta access, and invoice payment history.
+              Manage your Ulo subscription and vendor payment activity on {planLabel}.
             </p>
           </div>
-          <OutlineButton className="self-start">
-            <svg className="mr-2 size-4" viewBox="0 0 16 16" fill="none" aria-hidden>
-              <path
-                d="M2.5 3.5H13.5L11.5 9.5C10.8 11.4 9.1 12.5 7.5 12.5C5.9 12.5 4.2 11.4 3.5 9.5L2.5 3.5Z"
-                stroke="currentColor"
-                strokeWidth="1.4"
-                strokeLinejoin="round"
-              />
-            </svg>
+          <OutlineButton className="self-start" disabled title="Coming soon">
             Share feedback
           </OutlineButton>
         </div>
@@ -265,7 +283,7 @@ export function AdminBillingSettings() {
             <div className="flex flex-wrap items-start justify-between gap-4">
               <div className="min-w-0 flex-1">
                 <div className="flex flex-wrap items-center gap-2">
-                  <StatusChip label="Beta access" />
+                  <StatusChip label={`${planLabel} access`} />
                   <StatusChip label="Active" />
                 </div>
                 <h2 className="mt-4 text-[20px] font-semibold tracking-[-0.02em] text-[#101828]">
@@ -285,13 +303,13 @@ export function AdminBillingSettings() {
 
             <div className="mt-6 grid gap-4 border-t border-[#e5e7eb]/80 pt-6 sm:grid-cols-3">
               <MetaItem label="Status" value={BETA_PROGRAM.status} />
-              <MetaItem label="Member since" value={BETA_PROGRAM.memberSince} />
+              <MetaItem label="Member since" value={memberSince} />
               <MetaItem label="Expiration" value={BETA_PROGRAM.expiration} />
             </div>
 
             <div className="mt-6 border-t border-[#e5e7eb]/80 pt-6">
               <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-[#6a7282]">
-                Included in your beta access
+                Included in your Alpha access
               </p>
               <ul className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
                 {BETA_INCLUDED_FEATURES.map((feature) => (
@@ -304,47 +322,11 @@ export function AdminBillingSettings() {
             </div>
           </section>
 
-          <SectionCard
-            title="You're helping build Ulo"
-            action={
-              <span className="rounded-full border border-[#e5e7eb] bg-[#f9fafb] px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.04em] text-[#364153]">
-                {BETA_PROGRAM.version}
-              </span>
-            }
-          >
+          <SectionCard title="Program updates" description={`What's included on ${planLabel}.`}>
             <p className="text-[14px] leading-6 tracking-[-0.1504px] text-[#4b5563]">
-              Thank you for being an early Ulo customer. Your feedback directly shapes what we ship next—and
-              during beta you receive the full product at no cost.
+              Thank you for being an early Ulo customer. On {planLabel}, you receive full product access
+              at no subscription charge while we build together.
             </p>
-
-            <div className="mt-5 grid gap-4 lg:grid-cols-2">
-              <div className="rounded-[10px] border border-[#eef0f3] bg-[#f9fafb] p-4">
-                <p className="text-[11px] font-semibold uppercase tracking-[0.06em] text-[#9ca3af]">
-                  Current version
-                </p>
-                <p className="mt-2 text-[14px] font-medium tracking-[-0.1504px] text-[#101828]">
-                  {BETA_PROGRAM.version} (Released this month)
-                </p>
-              </div>
-              <div className="rounded-[10px] border border-[#eef0f3] bg-[#f9fafb] p-4">
-                <p className="text-[11px] font-semibold uppercase tracking-[0.06em] text-[#9ca3af]">
-                  Latest improvements
-                </p>
-                <ul className="mt-2 space-y-1.5">
-                  {BETA_LATEST_IMPROVEMENTS.map((item) => (
-                    <li key={item} className="text-[14px] capitalize tracking-[-0.1504px] text-[#101828]">
-                      {item}
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            </div>
-
-            <div className="mt-5 flex flex-wrap gap-2">
-              <PrimaryButton>Give feedback</PrimaryButton>
-              <OutlineButton>Report a bug</OutlineButton>
-              <OutlineButton>View release notes</OutlineButton>
-            </div>
           </SectionCard>
 
           <SectionCard title="Payment method">
@@ -356,13 +338,14 @@ export function AdminBillingSettings() {
                 </svg>
               }
               title="No payment method required"
-              description="Ulo is currently free during beta. You won't be charged while participating in the beta program."
-              action={<OutlineButton>Learn about future plans</OutlineButton>}
+              description={`Ulo is currently free on ${planLabel}. You won't be charged while participating.`}
+              action={<OutlineButton disabled title="Coming soon">Learn about future plans</OutlineButton>}
             />
           </SectionCard>
 
           <SectionCard
-            title="Billing history"
+            title="Vendor payment activity"
+            description="Payments and rejections for vendor invoices on your properties — not Ulo subscription charges."
             action={
               history.length > 0 ? (
                 <span className="text-[13px] font-medium tracking-[-0.1504px] text-[#6a7282]">
@@ -439,54 +422,22 @@ export function AdminBillingSettings() {
           </SectionCard>
 
           <SectionCard
-            title="Your activity this month"
-            description="Snapshot of your Ulo workspace activity."
+            title="Workspace activity"
+            description="Operational counts for your account will appear here as you use Ulo."
             action={
               <span className="text-[13px] font-medium tracking-[-0.1504px] text-[#6a7282]">{activityMonth}</span>
             }
           >
-            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-              {MONTHLY_ACTIVITY_STATS.map((stat) => (
-                <div
-                  key={stat.id}
-                  className="rounded-[10px] border border-[#eef0f3] bg-[#f9fafb] px-4 py-4"
-                >
-                  <p className="text-[24px] font-semibold leading-none tracking-[-0.03em] text-[#101828]">
-                    {stat.value}
-                  </p>
-                  <p className="mt-2 text-[13px] leading-5 tracking-[-0.1504px] text-[#6a7282]">{stat.label}</p>
-                </div>
-              ))}
-            </div>
-          </SectionCard>
-
-          <SectionCard
-            title="What Ulo helped you accomplish"
-            description="Value delivered during your beta participation."
-          >
-            <div className="grid gap-4 sm:grid-cols-2">
-              {BETA_ACCOMPLISHMENTS.map((item) => (
-                <div
-                  key={item.id}
-                  className="rounded-[10px] border border-[#eef0f3] bg-gradient-to-br from-white to-[#f9fafb] p-5"
-                >
-                  <p className="text-[28px] font-semibold leading-none tracking-[-0.04em] text-[#101828]">
-                    {item.value}
-                  </p>
-                  <p className="mt-3 text-[14px] font-semibold tracking-[-0.1504px] text-[#101828]">
-                    {item.title}
-                  </p>
-                  <p className="mt-1 text-[13px] tracking-[-0.1504px] text-[#6a7282]">{item.detail}</p>
-                </div>
-              ))}
-            </div>
+            <p className="text-[14px] leading-6 tracking-[-0.1504px] text-[#6a7282]">
+              Activity summaries are not shown until enough real usage data exists for your account.
+            </p>
           </SectionCard>
         </div>
 
         <aside className="flex w-full shrink-0 flex-col gap-6 xl:sticky xl:top-6 xl:w-[300px]">
           <SectionCard
             title="Subscription management"
-            description="When Ulo exits beta, you'll be able to:"
+            description="When Ulo exits Alpha, you'll be able to:"
           >
             <ul className="space-y-3">
               {FUTURE_SUBSCRIPTION_FEATURES.map((feature) => (
@@ -505,7 +456,7 @@ export function AdminBillingSettings() {
             </ul>
           </SectionCard>
 
-          <SectionCard title="Future billing preview" description="A glimpse of what's coming after beta.">
+          <SectionCard title="Future billing preview" description="A glimpse of what's coming after Alpha.">
             <div className="grid grid-cols-2 gap-3">
               {FUTURE_BILLING_PREVIEW.map((item) => (
                 <div
@@ -528,11 +479,15 @@ export function AdminBillingSettings() {
 
           <SectionCard
             title="Need help?"
-            description="Questions about beta access? We're here for early customers."
+            description="Questions about Alpha access? We're here for early customers."
           >
             <div className="space-y-2">
-              <PrimaryButton className="w-full">Contact support</PrimaryButton>
-              <OutlineButton className="w-full">Visit help center</OutlineButton>
+              <PrimaryButton className="w-full" disabled title="Coming soon">
+                Contact support
+              </PrimaryButton>
+              <OutlineButton className="w-full" disabled title="Coming soon">
+                Visit help center
+              </OutlineButton>
             </div>
           </SectionCard>
         </aside>

@@ -1,5 +1,6 @@
 import { getActiveLandlordId } from '@/lib/activeLandlord'
 import { normalizeBuildingKey } from '@/lib/propertyHealth'
+import { inboxPreviewForSmsMessage } from '@/lib/smsMedia'
 
 export type PropertyConversationRow = {
   id: string
@@ -213,7 +214,7 @@ export async function fetchPropertyConversations(
     conversationIds.length
       ? supabase
           .from('sms_messages')
-          .select('conversation_id, body, created_at')
+          .select('conversation_id, body, media_urls, created_at')
           .eq('landlord_id', landlordId)
           .in('conversation_id', conversationIds)
           .order('created_at', { ascending: false })
@@ -230,7 +231,10 @@ export async function fetchPropertyConversations(
       : Promise.resolve({ data: [], error: null }),
   ])
 
-  const latestMessageByConversation = new Map<string, { body: string; createdAt: number }>()
+  const latestMessageByConversation = new Map<
+    string,
+    { body: string; createdAt: number; mediaUrls: unknown }
+  >()
   if (messagesResult.status === 'fulfilled' && !messagesResult.value.error) {
     for (const message of (messagesResult.value.data ?? []) as Record<string, unknown>[]) {
       const conversationId = asString(message.conversation_id)
@@ -238,6 +242,7 @@ export async function fetchPropertyConversations(
       latestMessageByConversation.set(conversationId, {
         body: asString(message.body),
         createdAt: new Date(asString(message.created_at)).getTime(),
+        mediaUrls: message.media_urls,
       })
     }
   }
@@ -313,7 +318,9 @@ export async function fetchPropertyConversations(
     mapped.push({
       id,
       headerLine: `${name} · ${participantLabel(kind)}`,
-      preview: truncatePreview(latest?.body || 'No messages yet.'),
+      preview: truncatePreview(
+        inboxPreviewForSmsMessage(latest?.body ?? '', latest?.mediaUrls),
+      ),
       metaLine: buildMetaLine(building, resolvedUnit, conversationType, status, hasMaintenanceRequest),
       timeLabel: formatRelativeTime(
         latest?.createdAt ?? new Date(asString(row.updated_at)).getTime(),

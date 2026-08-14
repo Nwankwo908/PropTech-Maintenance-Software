@@ -255,15 +255,19 @@ function skipReasonForResident(
 ): string | null {
   const consent = (row.sms_consent_status ?? "").trim().toLowerCase()
   const activation = (row.activation_status ?? "").trim().toLowerCase()
+  const phone = row.phone?.trim() ?? ""
+  const storedPhone = normalizeActivationPhone(row.activation_phone_normalized)
+  const currentPhone = normalizeActivationPhone(phone)
+  const phoneChangedOnRow = Boolean(
+    storedPhone && currentPhone && storedPhone !== currentPhone,
+  )
 
   if (consent === "opted_out" || activation === "opted_out") {
-    return "opted_out"
-  }
-  if (consent === "opted_in" || activation === "activated") {
-    return "opted_in"
+    if (!(params.resend && phoneChangedOnRow)) return "opted_out"
+  } else if (consent === "opted_in" || activation === "activated") {
+    if (!(params.resend && phoneChangedOnRow)) return "opted_in"
   }
 
-  const phone = row.phone?.trim() ?? ""
   if (!phone) return "missing_phone"
 
   if (params.automaticRetry) {
@@ -272,8 +276,6 @@ function skipReasonForResident(
     if (attempts >= MAX_ACTIVATION_ATTEMPTS || activation === "action_required") {
       return "max_attempts"
     }
-    const storedPhone = normalizeActivationPhone(row.activation_phone_normalized)
-    const currentPhone = normalizeActivationPhone(phone)
     if (storedPhone && currentPhone && storedPhone !== currentPhone) {
       return "phone_changed"
     }

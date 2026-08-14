@@ -4,7 +4,11 @@ import {
   normalizeCommunicationStyle,
   type CommunicationStyle,
 } from '@/lib/communicationStyle'
-import { persistLandlordCommunicationStyle } from '@/lib/onboarding'
+import {
+  loadLandlordSettings,
+  loadOrganizationWorkspaceSummary as loadWorkspaceSummaryFromSettings,
+  saveLandlordOrganizationSettings,
+} from '@/lib/landlordSettings'
 import {
   documentCategoryLabel,
   formatFileSize,
@@ -38,8 +42,11 @@ const VENDOR_DOCUMENTS_BUCKET = 'vendor-documents'
 export type OrganizationSettingsForm = {
   legalName: string
   displayName: string
+  contactName: string
   supportEmail: string
   phone: string
+  backupContactName: string
+  backupContactPhone: string
   about: string
   street: string
   city: string
@@ -79,15 +86,18 @@ export type OrganizationWorkspaceSummary = {
 const STORAGE_PREFIX = 'ulo.organizationSettings.'
 
 export const DEFAULT_ORGANIZATION_SETTINGS: OrganizationSettingsForm = {
-  legalName: 'Ulo Home Management, Inc.',
-  displayName: 'Ulo Home',
-  supportEmail: 'support@ulohome.com',
-  phone: '+1 (415) 555-0143',
-  about: 'Modern property operations for multi-family portfolios across the West Coast.',
-  street: '1230 Market Street, Suite 400',
-  city: 'San Francisco',
-  state: 'CA',
-  zip: '94103',
+  legalName: '',
+  displayName: '',
+  contactName: '',
+  supportEmail: '',
+  phone: '',
+  backupContactName: '',
+  backupContactPhone: '',
+  about: '',
+  street: '',
+  city: '',
+  state: '',
+  zip: '',
   timeZone: 'America/Los_Angeles',
   currency: 'USD',
   dateFormat: 'MM/DD/YYYY',
@@ -121,33 +131,24 @@ function storageKey(landlordId: string): string {
   return `${STORAGE_PREFIX}${landlordId}`
 }
 
-function formatCreatedLabel(value: string | null | undefined): string {
-  if (!value) return '—'
-  const date = new Date(value)
-  if (Number.isNaN(date.getTime())) return '—'
-  return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+export async function loadOrganizationSettings(
+  landlordId: string = getActiveLandlordId(),
+): Promise<OrganizationSettingsForm> {
+  const snapshot = await loadLandlordSettings(landlordId)
+  return snapshot.organization
 }
 
-function workspaceIdFromLandlord(landlordId: string): string {
-  const compact = landlordId.replace(/-/g, '').slice(0, 5)
-  return `ulo_${compact}`
-}
-
-function readStoredSettings(landlordId: string): OrganizationSettingsForm | null {
-  try {
-    const raw = window.localStorage.getItem(storageKey(landlordId))
-    if (!raw) return null
-    const merged = {
-      ...DEFAULT_ORGANIZATION_SETTINGS,
-      ...(JSON.parse(raw) as Partial<OrganizationSettingsForm>),
-    }
-    merged.communicationStyle = normalizeCommunicationStyle(merged.communicationStyle)
-    return merged
-  } catch {
-    return null
+export async function saveOrganizationSettings(
+  settings: OrganizationSettingsForm,
+  landlordId: string = getActiveLandlordId(),
+): Promise<void> {
+  const result = await saveLandlordOrganizationSettings(settings, landlordId)
+  if (!result.ok) {
+    throw new Error(result.error ?? 'Could not save organization settings.')
   }
 }
 
+/** @deprecated Account settings no longer use localStorage. Kept for migration shims. */
 export function writeStoredOrganizationSettings(
   landlordId: string,
   settings: OrganizationSettingsForm,
@@ -156,199 +157,6 @@ export function writeStoredOrganizationSettings(
     window.localStorage.setItem(storageKey(landlordId), JSON.stringify(settings))
   } catch {
     // private mode
-  }
-}
-
-export async function loadOrganizationSettings(
-  landlordId: string = getActiveLandlordId(),
-): Promise<OrganizationSettingsForm> {
-  const stored = readStoredSettings(landlordId)
-  const next = stored ?? { ...DEFAULT_ORGANIZATION_SETTINGS }
-
-  if (!supabase) return next
-
-  const [{ data: landlord }, { data: onboarding }] = await Promise.all([
-    supabase
-      .from('landlords')
-      .select('name, email, communication_style')
-      .eq('id', landlordId)
-      .maybeSingle(),
-    supabase
-      .from('landlord_onboarding')
-      .select(
-        'auto_approval_threshold, marketplace_preference, draft_state, communication_style, notification_channel',
-      )
-      .eq('landlord_id', landlordId)
-      .maybeSingle(),
-  ])
-
-  // Prefer DB communication style over stale localStorage.
-  const styleFromLandlord = (landlord as { communication_style?: string } | null)
-    ?.communication_style
-  const styleFromOnboarding = (onboarding as { communication_style?: string } | null)
-    ?.communication_style
-  if (styleFromLandlord || styleFromOnboarding) {
-    next.communicationStyle = normalizeCommunicationStyle(
-      styleFromLandlord ?? styleFromOnboarding,
-    )
-  }
-
-  if (stored) return next
-
-  if (landlord?.name) {
-    next.legalName = landlord.name
-    if (!next.displayName || next.displayName === DEFAULT_ORGANIZATION_SETTINGS.displayName) {
-      next.displayName = landlord.name
-    }
-  }
-  if (landlord?.email) {
-    next.supportEmail = landlord.email
-  }
-
-  const threshold = onboarding?.auto_approval_threshold
-  if (threshold != null && Number.isFinite(Number(threshold))) {
-    next.autoApprovalLimit = String(Math.round(Number(threshold)))
-  }
-
-  const marketplace = (onboarding as { marketplace_preference?: string } | null)
-    ?.marketplace_preference
-  if (marketplace === 'ulo_vetted_only') {
-    next.preferredVendorPool = 'Ulo-vetted vendors only'
-  } else if (marketplace === 'include_imported') {
-    next.preferredVendorPool = 'Include imported vendors'
-  }
-
-  const draft = (onboarding?.draft_state ?? {}) as Record<string, unknown>
-  const accountSetup = (draft.accountSetup ?? {}) as Record<string, unknown>
-  if (typeof accountSetup.companyName === 'string' && accountSetup.companyName.trim()) {
-    next.legalName = accountSetup.companyName.trim()
-  }
-  if (typeof accountSetup.phone === 'string' && accountSetup.phone.trim()) {
-    next.phone = accountSetup.phone.trim()
-  }
-  if (typeof accountSetup.email === 'string' && accountSetup.email.trim()) {
-    next.supportEmail = accountSetup.email.trim()
-  }
-
-  const notificationChannel = String(
-    (onboarding as { notification_channel?: string } | null)?.notification_channel ??
-      (typeof (draft.approvalRules as { notificationChannel?: string } | undefined)
-        ?.notificationChannel === 'string'
-        ? (draft.approvalRules as { notificationChannel?: string }).notificationChannel
-        : ''),
-  ).trim()
-  if (notificationChannel === 'sms') {
-    next.smsAlerts = true
-    next.emailUpdates = false
-    next.activityFeedAlerts = false
-  } else if (notificationChannel === 'email') {
-    next.smsAlerts = false
-    next.emailUpdates = true
-    next.activityFeedAlerts = false
-  } else if (notificationChannel === 'activity_feed') {
-    next.smsAlerts = false
-    next.emailUpdates = false
-    next.activityFeedAlerts = true
-  } else if (notificationChannel === 'both') {
-    next.smsAlerts = true
-    next.emailUpdates = true
-    next.activityFeedAlerts = true
-  }
-
-  return next
-}
-
-export async function saveOrganizationSettings(
-  settings: OrganizationSettingsForm,
-  landlordId: string = getActiveLandlordId(),
-): Promise<void> {
-  writeStoredOrganizationSettings(landlordId, settings)
-
-  if (!supabase) return
-
-  const autoApproval = Number.parseFloat(settings.autoApprovalLimit.replace(/[^\d.]/g, ''))
-  const marketplacePreference =
-    settings.preferredVendorPool === 'Ulo-vetted vendors only'
-      ? 'ulo_vetted_only'
-      : settings.preferredVendorPool === 'Include imported vendors'
-        ? 'include_imported'
-        : null
-
-  const { data: existing } = await supabase
-    .from('landlord_onboarding')
-    .select('draft_state')
-    .eq('landlord_id', landlordId)
-    .maybeSingle()
-
-  const draft = (existing?.draft_state ?? {}) as Record<string, unknown>
-  const accountSetup = (draft.accountSetup ?? {}) as Record<string, unknown>
-
-  const upsertRow: Record<string, unknown> = {
-    landlord_id: landlordId,
-    auto_approval_threshold: Number.isFinite(autoApproval) ? autoApproval : 250,
-    draft_state: {
-      ...draft,
-      accountSetup: {
-        ...accountSetup,
-        companyName: settings.legalName,
-        email: settings.supportEmail,
-        phone: settings.phone,
-      },
-      organizationSettings: settings,
-    },
-    updated_at: new Date().toISOString(),
-  }
-  if (marketplacePreference) {
-    upsertRow.marketplace_preference = marketplacePreference
-  }
-  const communicationStyle = normalizeCommunicationStyle(settings.communicationStyle)
-  upsertRow.communication_style = communicationStyle
-
-  const { error } = await supabase.from('landlord_onboarding').upsert(upsertRow, {
-    onConflict: 'landlord_id',
-  })
-  if (
-    error &&
-    (error.code === '42703' ||
-      /marketplace_preference|communication_style/i.test(error.message))
-  ) {
-    const {
-      marketplace_preference: _dropMarket,
-      communication_style: _dropStyle,
-      ...legacy
-    } = upsertRow
-    await supabase.from('landlord_onboarding').upsert(legacy, { onConflict: 'landlord_id' })
-  }
-
-  await persistLandlordCommunicationStyle(landlordId, communicationStyle, {
-    eventType: 'landlord.communication_style_updated',
-    step: 'settings',
-    source: 'admin_ui',
-  })
-
-  // Keep landlords profile aligned with organization settings (same fields as onboarding).
-  const legalName = settings.legalName.trim()
-  if (legalName) {
-    const landlordPayload: Record<string, unknown> = {
-      name: legalName,
-      email: settings.supportEmail.trim() || null,
-      phone: settings.phone.trim() || null,
-    }
-    const { error: landlordError } = await supabase
-      .from('landlords')
-      .update(landlordPayload)
-      .eq('id', landlordId)
-    if (landlordError && /phone|column .* does not exist/i.test(landlordError.message)) {
-      await supabase
-        .from('landlords')
-        .update({
-          name: legalName,
-          email: settings.supportEmail.trim() || null,
-        })
-        .eq('id', landlordId)
-    } else if (landlordError) {
-      console.warn('[organizationSettings] landlords profile', landlordError.message)
-    }
   }
 }
 
@@ -560,34 +368,5 @@ export async function loadOrganizationComplianceDocuments(
 export async function loadOrganizationWorkspaceSummary(
   landlordId: string = getActiveLandlordId(),
 ): Promise<OrganizationWorkspaceSummary> {
-  const fallback: OrganizationWorkspaceSummary = {
-    planLabel: 'Enterprise',
-    propertyCount: 24,
-    activeUnitCount: 1286,
-    teamMemberCount: 15,
-    createdLabel: 'Mar 4, 2023',
-    workspaceId: workspaceIdFromLandlord(landlordId),
-  }
-
-  if (!supabase) return fallback
-
-  const [{ data: landlord }, { data: units, count: unitCount }, { count: residentCount }] =
-    await Promise.all([
-      supabase.from('landlords').select('created_at').eq('id', landlordId).maybeSingle(),
-      supabase.from('units').select('building', { count: 'exact' }).eq('landlord_id', landlordId),
-      supabase.from('users').select('id', { count: 'exact', head: true }).eq('landlord_id', landlordId),
-    ])
-
-  const buildings = new Set(
-    (units ?? []).map((row) => String(row.building ?? '').trim()).filter(Boolean),
-  )
-
-  return {
-    planLabel: 'Enterprise',
-    propertyCount: buildings.size || fallback.propertyCount,
-    activeUnitCount: unitCount ?? fallback.activeUnitCount,
-    teamMemberCount: residentCount ?? fallback.teamMemberCount,
-    createdLabel: formatCreatedLabel(landlord?.created_at) || fallback.createdLabel,
-    workspaceId: workspaceIdFromLandlord(landlordId),
-  }
+  return loadWorkspaceSummaryFromSettings(landlordId)
 }

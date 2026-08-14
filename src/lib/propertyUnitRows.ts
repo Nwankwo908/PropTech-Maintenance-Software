@@ -166,10 +166,21 @@ function findResidentForUnit(
   residents: PropertyUnitResident[],
 ): PropertyUnitResident | null {
   const unitKey = normalizeUnitLabel(unitLabel)
-  const matches = residents.filter((resident) => {
-    if (normalizeBuildingKey(resident.building) !== normalizeBuildingKey(building)) return false
-    return normalizeUnitLabel(resident.unit) === unitKey
-  })
+  const unitMatches = residents.filter(
+    (resident) => normalizeUnitLabel(resident.unit) === unitKey,
+  )
+  if (unitMatches.length === 0) return null
+
+  const buildingKey = normalizeBuildingKey(building)
+  const matches =
+    unitMatches.length === 1
+      ? unitMatches
+      : unitMatches.filter((resident) => {
+          const residentBuilding = resident.building?.trim()
+          if (!residentBuilding) return true
+          return normalizeBuildingKey(residentBuilding) === buildingKey
+        })
+
   if (matches.length === 0) return null
   return (
     matches.find((resident) =>
@@ -190,15 +201,16 @@ export function buildPropertyUnitRows(input: {
   const { building, units, residents, tickets, workflowData } = input
   const workflowRows = workflowData ? collectAdminWorkflowRuns(workflowData) : []
 
+  // Caller passes property-scoped units; match residents/workflows per unit building alias.
   return units
-    .filter((unit) => normalizeBuildingKey(unit.building) === normalizeBuildingKey(building))
     .map((unit) => {
-      const resident = findResidentForUnit(unit.unitLabel, building, residents)
+      const unitBuilding = unit.building?.trim() || building
+      const resident = findResidentForUnit(unit.unitLabel, unitBuilding, residents)
       const occupancyStatus = resolvePropertyUnitOccupancyStatus(unit.status)
       const showOccupiedDetails = occupancyStatus === 'occupied'
       const openWorkflowLabel = pickOpenWorkflowLabel(
         unit.unitLabel,
-        building,
+        unitBuilding,
         tickets,
         workflowRows,
       )

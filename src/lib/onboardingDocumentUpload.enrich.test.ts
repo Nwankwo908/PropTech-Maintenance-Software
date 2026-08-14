@@ -52,6 +52,7 @@ describe('enrichExtractedProperties', () => {
     expect(properties[0]?.unitCount).toBe(2)
     expect(properties[0]?.propertyType).toBe('multifamily')
     expect(properties[0]?.needsReview).toBe(true)
+    expect(properties[0]?.selected).toBe(true)
   })
 
   it('derives single-family type when rent roll shows one unit in a building', () => {

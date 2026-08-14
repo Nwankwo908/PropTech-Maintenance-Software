@@ -5,6 +5,7 @@ import { requireAdminReassignAuth } from "../_shared/admin_edge_auth.ts"
 import { resolveLandlordId } from "../_shared/sms/landlordSmsOnboarding.ts"
 import { runVendorOnboardingViaEngine } from "../_shared/engine/vendorOnboardingEngine.ts"
 import { findLandlordVendorByContact } from "../_shared/vendor_verification/findVendor.ts"
+import { vendorInviteFailureUserMessage } from "../_shared/vendor_verification/deliverVendorInvite.ts"
 
 const corsHeaders = adminEdgeCorsHeaders
 
@@ -157,10 +158,22 @@ serve(async (req) => {
   const delivery = meta.delivery ?? null
   const anyDelivered = meta.anyDelivered === true
 
-  if (meta.error === "invite_delivery_failed" || !verificationId) {
+  if (meta.error === "invite_delivery_failed" || !verificationId || !anyDelivered) {
+    const deliveryRecord =
+      delivery && typeof delivery === "object"
+        ? (delivery as {
+            sms?: string | null
+            email?: string | null
+            smsError?: string
+            emailError?: string
+          })
+        : null
     return jsonResponse(
-      { error: "Could not create invite", workflowRunId },
-      500,
+      {
+        error: vendorInviteFailureUserMessage(deliveryRecord),
+        delivery,
+      },
+      422,
     )
   }
 

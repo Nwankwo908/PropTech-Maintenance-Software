@@ -293,18 +293,39 @@ export function beginMultiIssueSharedIntake(
   }
 }
 
+export function buildRequestSubmittedSms(
+  ticketId: string,
+  vendorAssigned: boolean,
+): string {
+  const ref = ticketId.slice(0, 8).toUpperCase()
+  const followUp = vendorAssigned
+    ? "We'll keep you posted right here."
+    : "The property team has it and will follow up with you here."
+  return `You're all set. I've submitted your request (ref ${ref}). ${followUp}`
+}
+
 export function buildMultiIssueSubmittedSms(
   ticketIds: string[],
+  vendorAssigned = true,
 ): string {
   const refs = ticketIds
     .map((id) => id.slice(0, 8).toUpperCase())
     .join(", ")
   const n = ticketIds.length
+  const followUp = vendorAssigned
+    ? "We'll line up the right vendor for each and keep you posted right here."
+    : "The property team has them and will follow up with you here."
   return (
-    `You're all set! I've opened ${n} work order${n === 1 ? "" : "s"} (${refs}). ` +
-    `We'll line up the right vendor for each and keep you posted right here.`
+    `You're all set. I've opened ${n} work order${n === 1 ? "" : "s"} (${refs}). ` +
+    followUp
   )
 }
+
+export const INTAKE_SUBMIT_FAILED_SMS =
+  "Sorry about that. I couldn't submit your request just now. Please try again in a moment."
+
+export const INTAKE_MULTI_SUBMIT_FAILED_SMS =
+  "Sorry about that. I couldn't submit those requests just now. Please try again in a moment."
 
 export function intakeStateForMultiIssueConfirm(
   raw: string,

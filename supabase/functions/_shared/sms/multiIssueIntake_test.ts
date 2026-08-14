@@ -2,8 +2,11 @@ import { assertEquals, assertMatch } from "https://deno.land/std@0.224.0/assert/
 import {
   beginMultiIssueSharedIntake,
   buildMultiIssueConfirmSms,
+  buildMultiIssueSubmittedSms,
+  buildRequestSubmittedSms,
   clusterIssueSegments,
   detectMultipleMaintenanceIssues,
+  INTAKE_SUBMIT_FAILED_SMS,
   splitMaintenanceIssueSegments,
 } from "./multiIssueIntake.ts"
 
@@ -134,4 +137,22 @@ Deno.test("beginMultiIssueSharedIntake enters wizard, keeps pending issues", () 
   assertEquals(next.pending_issues?.length, 2)
   assertEquals(next.preferred_contact_method, undefined)
   assertEquals(next.room_or_area, "kitchen")
+})
+
+Deno.test("buildRequestSubmittedSms does not ask the tenant to call the manager", () => {
+  const noVendor = buildRequestSubmittedSms("abc12345-uuid", false)
+  assertMatch(noVendor, /property team has it/i)
+  assertEquals(/property manager/i.test(noVendor), false)
+  assertEquals(/line up a vendor/i.test(noVendor), false)
+
+  const assigned = buildRequestSubmittedSms("abc12345-uuid", true)
+  assertMatch(assigned, /keep you posted/i)
+
+  assertEquals(/property manager/i.test(INTAKE_SUBMIT_FAILED_SMS), false)
+})
+
+Deno.test("buildMultiIssueSubmittedSms follows up with the team when no vendor", () => {
+  const body = buildMultiIssueSubmittedSms(["aaaaaaaa", "bbbbbbbb"], false)
+  assertMatch(body, /property team has them/i)
+  assertEquals(/line up the right vendor/i.test(body), false)
 })

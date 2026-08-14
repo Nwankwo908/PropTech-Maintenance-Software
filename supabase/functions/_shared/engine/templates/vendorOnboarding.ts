@@ -8,11 +8,15 @@ import {
   advanceVendorOnboardingAdminApprove,
   advanceVendorOnboardingInProgress,
   advanceVendorOnboardingOnSubmit,
+  abortFailedVendorOnboardingInvite,
   markVendorOnboardingInviteDelivered,
   readVendorOnboardingState,
   startVendorOnboardingRun,
 } from "../vendorOnboardingProgress.ts"
-import type { VendorOnboardingStep } from "../vendorOnboardingPolicy.ts"
+import {
+  vendorOnboardingInviteWasDelivered,
+  type VendorOnboardingStep,
+} from "../vendorOnboardingPolicy.ts"
 import { escalateVendorOnboardingRun } from "../vendorOnboardingEscalation.ts"
 import { getWorkflowRunById } from "../workflowRuns.ts"
 import { deliverVendorInvite } from "../../vendor_verification/deliverVendorInvite.ts"
@@ -148,15 +152,30 @@ export const vendorOnboardingTemplate: WorkflowTemplate = {
           workflowRunId: newRunId,
           ...meta.inviteRequest,
         })
-        if (!delivered) {
+        if (!delivered || !vendorOnboardingInviteWasDelivered(delivered)) {
+          if (newRunId) {
+            await abortFailedVendorOnboardingInvite(supabase, {
+              runId: newRunId,
+              landlordId: ctx.landlordId,
+              vendorId: meta.vendorId ?? meta.inviteRequest?.vendorId ?? null,
+              vendorLabel:
+                meta.businessName ??
+                meta.contactName ??
+                meta.inviteRequest?.businessName ??
+                meta.inviteRequest?.contactName ??
+                "vendor",
+              verificationId: delivered?.verificationId ?? null,
+              delivery: delivered?.delivery ?? null,
+            })
+          }
           return {
             templateId: "vendor_onboarding",
             route: workflowRouteForTemplate("vendor_onboarding"),
-            runId: newRunId,
+            runId: null,
             metadata: {
               action: "start_invite",
-              step: "invited",
               error: "invite_delivery_failed",
+              delivery: delivered?.delivery ?? null,
             },
           }
         }

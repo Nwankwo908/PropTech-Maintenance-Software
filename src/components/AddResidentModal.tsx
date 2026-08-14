@@ -1,4 +1,5 @@
 import { useEffect, useId, useMemo, useState } from 'react'
+import { optionalPhoneForDbOrError } from '@/lib/phoneFormat'
 import { getInventoryUnitOptions } from '@/lib/propertyUnitOptions'
 
 const STATUS_OPTIONS = [
@@ -14,6 +15,10 @@ export type AddResidentSubmitPayload = {
   phone: string
   unit: string
   status: (typeof STATUS_OPTIONS)[number]['value']
+  /** YYYY-MM-DD; empty when unset */
+  leaseStart: string
+  /** YYYY-MM-DD; empty when unset */
+  leaseEnd: string
 }
 
 function IconUserPlusHeader({ className = 'size-5 text-extended-1' }: { className?: string }) {
@@ -63,8 +68,10 @@ export function AddResidentModal({
   const [email, setEmail] = useState('')
   const [phone, setPhone] = useState('')
   const [unit, setUnit] = useState('')
-  const [moveInDate, setMoveInDate] = useState('')
+  const [leaseStart, setLeaseStart] = useState('')
+  const [leaseEnd, setLeaseEnd] = useState('')
   const [status, setStatus] = useState<(typeof STATUS_OPTIONS)[number]['value']>('active')
+  const [phoneError, setPhoneError] = useState<string | null>(null)
 
   const formValid = useMemo(() => {
     return fullName.trim().length > 0 && email.trim().length > 0
@@ -93,8 +100,10 @@ export function AddResidentModal({
       setEmail('')
       setPhone('')
       setUnit('')
-      setMoveInDate('')
+      setLeaseStart('')
+      setLeaseEnd('')
       setStatus('active')
+      setPhoneError(null)
     }
   }
 
@@ -111,12 +120,20 @@ export function AddResidentModal({
 
   function submit() {
     if (!formValid) return
+    const phoneResult = optionalPhoneForDbOrError(phone)
+    if (phoneResult.error) {
+      setPhoneError(phoneResult.error)
+      return
+    }
+    setPhoneError(null)
     onSubmit({
       fullName: fullName.trim(),
       email: email.trim(),
-      phone: phone.trim(),
+      phone: phoneResult.phone ?? '',
       unit,
       status,
+      leaseStart: leaseStart.trim(),
+      leaseEnd: leaseEnd.trim(),
     })
     onClose()
   }
@@ -195,10 +212,22 @@ export function AddResidentModal({
                 id="add-resident-phone"
                 type="tel"
                 value={phone}
-                onChange={(e) => setPhone(e.target.value)}
+                onChange={(e) => {
+                  setPhone(e.target.value)
+                  if (phoneError) setPhoneError(null)
+                }}
                 placeholder="e.g., (555) 123-4567"
                 className={inputClass}
               />
+              {phoneError ? (
+                <p className="text-[12px] font-medium leading-4 text-error" role="alert">
+                  {phoneError}
+                </p>
+              ) : (
+                <p className="text-[12px] font-normal leading-4 text-neutral">
+                  US numbers only — any common format is fine.
+                </p>
+              )}
             </div>
             <div className="space-y-2">
               <label htmlFor="add-resident-unit" className="block text-[14px] font-medium tracking-[-0.1504px] text-neutral-variant">
@@ -222,17 +251,37 @@ export function AddResidentModal({
                 </span>
               </div>
             </div>
-            <div className="space-y-2">
-              <label htmlFor="add-resident-move-in" className="block text-[14px] font-medium tracking-[-0.1504px] text-neutral-variant">
-                Move-In Date
-              </label>
-              <input
-                id="add-resident-move-in"
-                type="date"
-                value={moveInDate}
-                onChange={(e) => setMoveInDate(e.target.value)}
-                className={`${inputClass} min-h-9`}
-              />
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+              <div className="space-y-2">
+                <label
+                  htmlFor="add-resident-lease-start"
+                  className="block text-[14px] font-medium tracking-[-0.1504px] text-neutral-variant"
+                >
+                  Lease start date
+                </label>
+                <input
+                  id="add-resident-lease-start"
+                  type="date"
+                  value={leaseStart}
+                  onChange={(e) => setLeaseStart(e.target.value)}
+                  className={`${inputClass} min-h-9`}
+                />
+              </div>
+              <div className="space-y-2">
+                <label
+                  htmlFor="add-resident-lease-end"
+                  className="block text-[14px] font-medium tracking-[-0.1504px] text-neutral-variant"
+                >
+                  Lease end date
+                </label>
+                <input
+                  id="add-resident-lease-end"
+                  type="date"
+                  value={leaseEnd}
+                  onChange={(e) => setLeaseEnd(e.target.value)}
+                  className={`${inputClass} min-h-9`}
+                />
+              </div>
             </div>
             <div className="space-y-2">
               <label htmlFor="add-resident-status" className="block text-[14px] font-medium tracking-[-0.1504px] text-neutral-variant">

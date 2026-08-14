@@ -4,7 +4,7 @@ import {
   upsertSmsIdentityForPhone,
   type SmsIdentityRow,
 } from "./inbound_db.ts"
-import { ensureUnitRow } from "../unitVacancy.ts"
+import { ensureUnitRow, findUnitRow } from "../unitVacancy.ts"
 import { logGraphEvent } from "../graph/logGraphEvent.ts"
 import { resolveProviderName } from "./providerFactory.ts"
 import {
@@ -221,12 +221,12 @@ export async function syncResidentSmsIdentity(
 ): Promise<SmsIdentityRow | null> {
   let unitId = params.unitId?.trim() || null
   if (!unitId && params.unitLabel?.trim()) {
-    const unitRow = await ensureUnitRow(supabase, {
+    const unitRow = await findUnitRow(supabase, {
       landlordId: params.landlordId,
       unitLabel: params.unitLabel.trim(),
       building: params.building?.trim() || null,
     })
-    unitId = unitRow.id
+    unitId = unitRow?.id ?? null
   }
 
   return createResidentSmsIdentity(supabase, {

@@ -7,7 +7,7 @@ import {
   syncResidentSmsIdentity,
 } from "../_shared/sms/landlordSmsOnboarding.ts"
 import { syncVendorSmsIdentity } from "../_shared/sms/vendorSmsRouting.ts"
-import { ensureUnitRow } from "../_shared/unitVacancy.ts"
+import { findUnitRow } from "../_shared/unitVacancy.ts"
 
 const corsHeaders = adminEdgeCorsHeaders
 
@@ -106,12 +106,12 @@ serve(async (req) => {
       typeof body.building === "string" ? body.building.trim() : null
 
     if (!resolvedUnitId && unitLabel) {
-      const unitRow = await ensureUnitRow(supabase, {
+      const unitRow = await findUnitRow(supabase, {
         landlordId,
         unitLabel,
         building,
       })
-      resolvedUnitId = unitRow.id
+      resolvedUnitId = unitRow?.id ?? null
     }
 
     const identity =

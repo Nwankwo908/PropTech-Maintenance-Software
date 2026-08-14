@@ -337,7 +337,7 @@ export async function saveOnboardingResidentsStep(
   }
 
   for (const form of residentsToSave) {
-    const building = form.building.trim() || fallbackBuilding
+    let building = form.building.trim() || fallbackBuilding
     const unit = form.unit.trim()
     if (!unit) {
       setSaving(false)
@@ -345,6 +345,14 @@ export async function saveOnboardingResidentsStep(
       return
     }
     if (unitOptions.length > 0) {
+      const matchedOption = unitOptions.find(
+        (option) =>
+          option.unitLabel === unit &&
+          (!building || option.building === building),
+      )
+      if (matchedOption?.building) {
+        building = matchedOption.building
+      }
       const matched = unitOptions.some(
         (option) =>
           option.unitLabel === unit &&
@@ -364,7 +372,17 @@ export async function saveOnboardingResidentsStep(
     const form = residentsToSave[i]!
     const phone = residentPhones[i]!.phone
     const unit = form.unit.trim() || null
-    const building = form.building.trim() || fallbackBuilding || null
+    let building = form.building.trim() || fallbackBuilding || null
+    if (unit && unitOptions.length > 0) {
+      const matchedOption = unitOptions.find(
+        (option) =>
+          option.unitLabel === unit &&
+          (!building || option.building === building),
+      )
+      if (matchedOption?.building) {
+        building = matchedOption.building
+      }
+    }
     const lease = leasePayloads[i]!
 
     const occupancyStatus = normalizeOnboardingOccupancyStatus(form.occupancyStatus)

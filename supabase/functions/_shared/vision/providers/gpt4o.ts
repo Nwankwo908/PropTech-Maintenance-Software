@@ -7,6 +7,7 @@ import {
   normalizeApplianceVisionResult,
   normalizeApplianceVisionResultList,
 } from "../normalize.ts"
+import { parseModelJsonContent } from "../parseModelJson.ts"
 
 function stripDataUrl(imageBase64: string): string {
   return imageBase64.replace(/^data:[^;]+;base64,/, "").replace(/\s/g, "")
@@ -77,12 +78,7 @@ export function createGpt4oVisionProvider(apiKey: string): VisionProvider {
         choices?: Array<{ message?: { content?: string } }>
       }
       const content = json.choices?.[0]?.message?.content ?? ""
-      let parsed: unknown
-      try {
-        parsed = JSON.parse(content)
-      } catch {
-        throw new Error("GPT-4o returned non-JSON content")
-      }
+      const parsed = parseModelJsonContent(content, "GPT-4o")
       return normalizeApplianceVisionResult(parsed)
     },
 
@@ -132,12 +128,7 @@ export function createGpt4oVisionProvider(apiKey: string): VisionProvider {
         choices?: Array<{ message?: { content?: string } }>
       }
       const content = json.choices?.[0]?.message?.content ?? ""
-      let parsed: unknown
-      try {
-        parsed = JSON.parse(content)
-      } catch {
-        throw new Error("GPT-4o document extract returned non-JSON content")
-      }
+      const parsed = parseModelJsonContent(content, "GPT-4o document extract")
       return normalizeApplianceVisionResultList(parsed)
     },
   }

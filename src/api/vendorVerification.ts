@@ -71,9 +71,19 @@ export async function sendVendorInvite(
   }
   if (!res.ok) {
     const err = parsed as { error?: string }
-    throw new Error(err.error ?? `Vendor invite failed (${res.status})`)
+    throw new Error(
+      err.error ?? "We couldn't send the verification invite. Check the vendor's contact info and try again.",
+    )
   }
-  return parsed as SendVendorInviteResult
+  const result = parsed as SendVendorInviteResult
+  const anySent =
+    result.delivery?.sms === 'sent' || result.delivery?.email === 'sent'
+  if (!result.ok || !anySent) {
+    throw new Error(
+      "We couldn't send the verification invite. Check the vendor's contact info and try again.",
+    )
+  }
+  return result
 }
 
 export type InviteVendorAfterAddResult = {

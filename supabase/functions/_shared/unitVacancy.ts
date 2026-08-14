@@ -15,6 +15,79 @@ export type UnitRow = {
 }
 
 const OCCUPIES_UNIT_STATUSES = ["active", "pending", "suspended"] as const
+const UNIT_SELECT =
+  "id, landlord_id, unit_label, building, status, skip_tenant_registration"
+
+function normalizeUnitLabelKey(label: string): string {
+  return label.toLowerCase().replace(/^unit\s+/, "").trim()
+}
+
+function normalizeBuildingKey(building: string | null | undefined): string {
+  return (building ?? "").trim().toLowerCase()
+}
+
+function unitRowMatches(
+  row: UnitRow,
+  unitLabel: string,
+  building: string | null,
+): boolean {
+  if (normalizeUnitLabelKey(row.unit_label) !== normalizeUnitLabelKey(unitLabel)) {
+    return false
+  }
+  const rowBuilding = normalizeBuildingKey(row.building)
+  const wantBuilding = normalizeBuildingKey(building)
+  if (!rowBuilding || !wantBuilding) return true
+  return rowBuilding === wantBuilding
+}
+
+/** Look up an existing inventory unit. Never inserts. */
+export async function findUnitRow(
+  supabase: SupabaseClient,
+  params: {
+    landlordId: string
+    unitLabel: string
+    building?: string | null
+  },
+): Promise<UnitRow | null> {
+  const unitLabel = params.unitLabel.trim()
+  const building = params.building?.trim() || null
+  if (!unitLabel) return null
+
+  let exactQuery = supabase
+    .from("units")
+    .select(UNIT_SELECT)
+    .eq("landlord_id", params.landlordId)
+    .eq("unit_label", unitLabel)
+
+  exactQuery = building
+    ? exactQuery.eq("building", building)
+    : exactQuery.is("building", null)
+
+  const { data: exact } = await exactQuery.maybeSingle()
+  if (exact?.id) return exact as UnitRow
+
+  const { data: rows, error } = await supabase
+    .from("units")
+    .select(UNIT_SELECT)
+    .eq("landlord_id", params.landlordId)
+
+  if (error) {
+    console.warn("[unitVacancy] find unit lookup", error.message)
+    return null
+  }
+
+  const matches = ((rows ?? []) as UnitRow[]).filter((row) =>
+    unitRowMatches(row, unitLabel, building),
+  )
+  if (matches.length === 1) return matches[0]!
+  if (matches.length > 1 && building) {
+    const sameBuilding = matches.filter(
+      (row) => normalizeBuildingKey(row.building) === normalizeBuildingKey(building),
+    )
+    if (sameBuilding.length === 1) return sameBuilding[0]!
+  }
+  return matches[0] ?? null
+}
 
 export async function ensureUnitRow(
   supabase: SupabaseClient,
@@ -29,21 +102,12 @@ export async function ensureUnitRow(
   const building = params.building?.trim() || null
   if (!unitLabel) throw new Error("unitLabel is required")
 
-  let existingQuery = supabase
-    .from("units")
-    .select("id, landlord_id, unit_label, building, status, skip_tenant_registration")
-    .eq("landlord_id", params.landlordId)
-    .eq("unit_label", unitLabel)
-
-  existingQuery = building
-    ? existingQuery.eq("building", building)
-    : existingQuery.is("building", null)
-
-  const { data: existing } = await existingQuery.maybeSingle()
-
-  if (existing?.id) {
-    return existing as UnitRow
-  }
+  const existing = await findUnitRow(supabase, {
+    landlordId: params.landlordId,
+    unitLabel,
+    building,
+  })
+  if (existing) return existing
 
   const { data: created, error } = await supabase
     .from("units")
@@ -53,7 +117,7 @@ export async function ensureUnitRow(
       building,
       status: params.status ?? "inactive",
     })
-    .select("id, landlord_id, unit_label, building, status, skip_tenant_registration")
+    .select(UNIT_SELECT)
     .single()
 
   if (error || !created?.id) {
@@ -76,7 +140,7 @@ export async function resolveUnitByIdOrLabel(
   if (params.unitId?.trim()) {
     const { data } = await supabase
       .from("units")
-      .select("id, landlord_id, unit_label, building, status, skip_tenant_registration")
+      .select(UNIT_SELECT)
       .eq("id", params.unitId.trim())
       .eq("landlord_id", params.landlordId)
       .maybeSingle()
@@ -86,18 +150,11 @@ export async function resolveUnitByIdOrLabel(
   const unitLabel = params.unitLabel?.trim()
   if (!unitLabel) return null
 
-  const building = params.building?.trim() || null
-  let query = supabase
-    .from("units")
-    .select("id, landlord_id, unit_label, building, status, skip_tenant_registration")
-    .eq("landlord_id", params.landlordId)
-    .eq("unit_label", unitLabel)
-
-  query = building ? query.eq("building", building) : query.is("building", null)
-
-  const { data } = await query.maybeSingle()
-
-  return (data as UnitRow | null) ?? null
+  return findUnitRow(supabase, {
+    landlordId: params.landlordId,
+    unitLabel,
+    building: params.building,
+  })
 }
 
 async function findOccupantsForUnit(
@@ -303,15 +360,6 @@ export async function markUnitVacant(
       unitLabel: params.unitLabel,
       building: params.building,
     })) ?? null
-
-  if (!unit && params.unitLabel?.trim()) {
-    unit = await ensureUnitRow(supabase, {
-      landlordId,
-      unitLabel: params.unitLabel.trim(),
-      building: params.building,
-      status: "inactive",
-    })
-  }
 
   if (!unit) {
     throw new Error("Unit not found")

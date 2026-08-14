@@ -30,6 +30,8 @@ export type NotificationSettingsState = {
   categories: NotificationEventCategory[]
 }
 
+import { getActiveLandlordId } from '@/lib/activeLandlord'
+
 const STORAGE_KEY = 'ulo.notificationSettings'
 
 const CHANNELS: NotificationChannel[] = ['email', 'sms', 'activity_feed', 'push']
@@ -217,31 +219,58 @@ export function loadNotificationSettings(): NotificationSettingsState {
     const raw = window.localStorage.getItem(STORAGE_KEY)
     if (!raw) return cloneDefaults()
     const parsed = JSON.parse(raw) as Partial<NotificationSettingsState>
-    return {
-      delivery: {
-        ...DEFAULT_NOTIFICATION_SETTINGS.delivery,
-        ...parsed.delivery,
-        primaryChannel: normalizeChannel(
-          parsed.delivery?.primaryChannel,
-          DEFAULT_NOTIFICATION_SETTINGS.delivery.primaryChannel,
-        ),
-        fallbackChannel: normalizeChannel(
-          parsed.delivery?.fallbackChannel,
-          DEFAULT_NOTIFICATION_SETTINGS.delivery.fallbackChannel,
-        ),
-      },
-      categories: normalizeCategories(parsed.categories),
-    }
+    return normalizeNotificationSettings(parsed)
   } catch {
     return cloneDefaults()
   }
 }
 
+export function normalizeNotificationSettings(
+  parsed: Partial<NotificationSettingsState>,
+): NotificationSettingsState {
+  return {
+    delivery: {
+      ...DEFAULT_NOTIFICATION_SETTINGS.delivery,
+      ...parsed.delivery,
+      primaryChannel: normalizeChannel(
+        parsed.delivery?.primaryChannel,
+        DEFAULT_NOTIFICATION_SETTINGS.delivery.primaryChannel,
+      ),
+      fallbackChannel: normalizeChannel(
+        parsed.delivery?.fallbackChannel,
+        DEFAULT_NOTIFICATION_SETTINGS.delivery.fallbackChannel,
+      ),
+    },
+    categories: normalizeCategories(parsed.categories),
+  }
+}
+
+/** Merge event-level preferences with account profile delivery defaults. */
+export async function loadNotificationSettingsForAccount(
+  landlordId: string = getActiveLandlordId(),
+): Promise<NotificationSettingsState> {
+  const { loadLandlordSettings } = await import('@/lib/landlordSettings')
+  const snapshot = await loadLandlordSettings(landlordId)
+  return snapshot.notifications
+}
+
 export function saveNotificationSettings(state: NotificationSettingsState): void {
+  // Deprecated: notifications persist server-side via saveNotificationSettingsForAccount.
   try {
     window.localStorage.setItem(STORAGE_KEY, JSON.stringify(state))
   } catch {
     // private mode
+  }
+}
+
+export async function saveNotificationSettingsForAccount(
+  state: NotificationSettingsState,
+  landlordId: string = getActiveLandlordId(),
+): Promise<void> {
+  const { saveLandlordNotificationSettings } = await import('@/lib/landlordSettings')
+  const result = await saveLandlordNotificationSettings(state, landlordId)
+  if (!result.ok) {
+    throw new Error(result.error ?? 'Could not save notification settings.')
   }
 }
 

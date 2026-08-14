@@ -10,6 +10,10 @@ import { notifyResidentSubmitted } from "./resident_notify.ts"
 import { assignVendorAndNotify } from "./vendor_notify.ts"
 import { logGraphEvent } from "../_shared/graph/logGraphEvent.ts"
 import { startMaintenanceRequestWorkflow } from "../_shared/engine/startMaintenanceRequestWorkflow.ts"
+import {
+  escalateMaintenanceNeedsVendor,
+  SUBMITTED_NO_VENDOR_ESCALATION,
+} from "../_shared/maintenance_admin_escalation.ts"
 import { resolveLandlordId } from "../_shared/sms/landlordSmsOnboarding.ts"
 import { issueCategoryToVendorTrade, VENDOR_TRADE_SLUGS } from "../_shared/vendor_trades.ts"
 
@@ -381,6 +385,7 @@ serve(async (req) => {
   }
 
   let vendorAssigned = false
+  let needsVendorEscalation = false
   try {
     const assignResult = await assignVendorAndNotify(supabase, {
       ticketId,
@@ -392,8 +397,10 @@ serve(async (req) => {
       landlordId,
     })
     vendorAssigned = assignResult.assigned
+    needsVendorEscalation = assignResult.skipReason === "no_vendor"
   } catch (e) {
     console.error("[submit-maintenance-request] vendor notify failed", e)
+    needsVendorEscalation = true
   }
 
   let workflowRunId: string | null = null
@@ -409,10 +416,23 @@ serve(async (req) => {
       unitLabel: unit,
       source: "web_form",
       vendorAssigned,
+      needsVendorEscalation,
     })
     workflowRunId = started.workflowRunId
   } catch (e) {
     console.error("[submit-maintenance-request] workflow run", e)
+  }
+
+  if (needsVendorEscalation && !workflowRunId) {
+    try {
+      await escalateMaintenanceNeedsVendor(
+        supabase,
+        { id: ticketId, landlord_id: landlordId },
+        SUBMITTED_NO_VENDOR_ESCALATION,
+      )
+    } catch (e) {
+      console.error("[submit-maintenance-request] no-vendor escalation failed", e)
+    }
   }
 
   try {

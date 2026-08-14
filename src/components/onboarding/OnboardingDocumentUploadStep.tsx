@@ -2,6 +2,7 @@ import { useCallback, useRef, useState } from 'react'
 import {
   ACCEPTED_UPLOAD_MIME,
   formatFileSize,
+  UPLOAD_STATUS_LABELS,
   type OnboardingUploadedDocument,
 } from '@/lib/onboardingDocumentUpload'
 import {
@@ -55,6 +56,28 @@ function FileRow({
     doc.uploadStatus === 'digitizing' ||
     doc.uploadStatus === 'handwriting'
 
+  const statusLabel =
+    doc.processingLabel?.trim() ||
+    UPLOAD_STATUS_LABELS[doc.uploadStatus] ||
+    null
+
+  const showStatusText =
+    Boolean(statusLabel) &&
+    (isProcessing ||
+      doc.uploadStatus === 'uploading' ||
+      doc.uploadStatus === 'ready_for_review' ||
+      doc.uploadStatus === 'needs_attention' ||
+      doc.uploadStatus === 'failed')
+
+  const statusTextClass =
+    doc.uploadStatus === 'failed'
+      ? 'text-[#b91c1c]'
+      : doc.uploadStatus === 'needs_attention'
+        ? 'text-[#b54708]'
+        : doc.uploadStatus === 'ready_for_review'
+          ? 'text-[#067647]'
+          : 'text-[#187960]'
+
   return (
     <li
       className="onb-file-row sa-surface rounded-[10px] border border-[#e5e7eb] bg-white px-4 py-3"
@@ -79,6 +102,9 @@ function FileRow({
 
       {doc.uploadStatus === 'uploading' || isProcessing ? (
         <div className="mt-3">
+          {showStatusText && statusLabel ? (
+            <p className={`mb-2 text-[12px] font-medium ${statusTextClass}`}>{statusLabel}…</p>
+          ) : null}
           <div className="h-1.5 w-full overflow-hidden rounded-full bg-[#f3f4f6]">
             <div
               className="sa-bar h-full rounded-full bg-[#187960] transition-all duration-200"
@@ -86,16 +112,12 @@ function FileRow({
             />
           </div>
         </div>
+      ) : showStatusText && statusLabel ? (
+        <p className={`mt-2 text-[12px] font-medium ${statusTextClass}`}>{statusLabel}</p>
       ) : null}
 
       {doc.errorMessage ? (
         <p className="mt-2 text-[12px] text-[#b91c1c]">{doc.errorMessage}</p>
-      ) : null}
-
-      {doc.hasHandwriting && doc.uploadStatus === 'handwriting' ? (
-        <p className="mt-2 text-[12px] italic text-[#6a7282]">
-          Reading handwritten notes from signed sheets and checklists…
-        </p>
       ) : null}
     </li>
   )

@@ -42,6 +42,13 @@ export const VENDOR_ONBOARDING_TERMINAL_STEPS = new Set<string>([
   "escalated",
 ])
 
+/** Invite must actually reach SMS or email before the run stays on Active Tasks. */
+export function vendorOnboardingInviteWasDelivered(
+  delivered: { anyDelivered?: boolean } | null | undefined,
+): boolean {
+  return delivered?.anyDelivered === true
+}
+
 export function readVendorOnboardingState(
   run: WorkflowRunRow,
 ): VendorOnboardingState {

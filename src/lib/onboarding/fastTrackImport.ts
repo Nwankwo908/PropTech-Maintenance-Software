@@ -15,7 +15,7 @@ import { resolveOnboardingPropertyType } from '@/lib/onboarding/propertyType'
 import { supabase } from '@/lib/supabase'
 import { importMockExtraction } from './importPortfolio'
 import { persistLandlordAccountProfile } from './persist/account'
-import { persistOnboardingProperties } from './persist/properties'
+import { persistOnboardingProperties, collectExtractedUnitLabels } from './persist/properties'
 import { requireOnboardingLandlord } from './scope'
 import type { LandlordOnboardingState, OnboardingProperty, OnboardingStep } from './types'
 
@@ -116,18 +116,31 @@ export async function commitFastTrackImport(
 
     properties = normalized.properties
       .filter((property) => property.selected)
-      .map((property) => ({
-        id: property.id,
-        name: property.name,
-        streetAddress: property.address.split(',')[0]?.trim() ?? property.address,
-        city: property.city.trim(),
-        state: property.state.trim().toUpperCase(),
-        zipCode: property.zipCode.trim(),
-        unitCount: property.unitCount,
-        propertyType: resolveOnboardingPropertyType(property.propertyType),
-        propertyManagerName: property.propertyManagerName.trim(),
-        propertyManagerPhone: property.propertyManagerPhone.trim(),
-      }))
+      .map((property) => {
+        const selectedPropertyNames = normalized.properties
+          .filter((row) => row.selected)
+          .map((row) => row.name)
+        const unitLabels = collectExtractedUnitLabels({
+          propertyName: property.name,
+          otherPropertyNames: selectedPropertyNames,
+          units: normalized.units,
+          residents: normalized.residents,
+          leases: normalized.leases,
+        })
+        return {
+          id: property.id,
+          name: property.name,
+          streetAddress: property.address.split(',')[0]?.trim() ?? property.address,
+          city: property.city.trim(),
+          state: property.state.trim().toUpperCase(),
+          zipCode: property.zipCode.trim(),
+          unitCount: Math.max(property.unitCount || 0, unitLabels.length, 1),
+          unitLabels: unitLabels.length > 0 ? unitLabels : undefined,
+          propertyType: resolveOnboardingPropertyType(property.propertyType),
+          propertyManagerName: property.propertyManagerName.trim(),
+          propertyManagerPhone: property.propertyManagerPhone.trim(),
+        }
+      })
 
     if (properties.length > 0) {
       const unitResult = await persistOnboardingProperties(properties)

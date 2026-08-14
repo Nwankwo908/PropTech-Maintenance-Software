@@ -1,12 +1,12 @@
 export const BETA_PROGRAM = {
-  name: 'Ulo Beta',
-  version: 'Beta 0.9',
+  name: 'Ulo Alpha',
+  version: 'Alpha',
   tagline: 'Full access to every Ulo capability while we build together.',
   priceLabel: 'Free',
-  priceNote: 'During beta program',
+  priceNote: 'During the Alpha program',
   status: 'Active',
   memberSince: 'June 2024',
-  expiration: 'No expiration during beta',
+  expiration: 'No expiration during Alpha',
 }
 
 export const BETA_INCLUDED_FEATURES = [

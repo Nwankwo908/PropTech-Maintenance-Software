@@ -17,6 +17,7 @@ import {
   inferOnboardingPropertyTypeFromUnitCount,
   resolveOnboardingPropertyType,
 } from '@/lib/onboarding/propertyType'
+import { normalizeBuildingKey } from '@/lib/propertyHealth'
 import { supabase } from '@/lib/supabase'
 
 export type { OnboardingReviewManualAccount } from '@/lib/onboardingReviewManual'
@@ -795,7 +796,7 @@ export function enrichExtractedUnits(
       building,
       sourceDocumentName: candidate.sourceDocumentName,
       confidence: candidate.confidence,
-      selected: candidate.confidence >= 70,
+      selected: Boolean(candidate.label.trim()),
     })
   }
 
@@ -842,21 +843,21 @@ function countUnitsForBuilding(
   leases: ExtractedLeaseInfo[],
   units: OnboardingExtractedUnit[],
 ): number {
-  const buildingKey = building.trim().toLowerCase()
-  if (!buildingKey) return 0
+  const buildingKey = normalizeBuildingKey(building).toLowerCase()
+  if (!buildingKey || buildingKey === 'portfolio') return 0
   const labels = new Set<string>()
   for (const resident of residents) {
-    if (resident.building.trim().toLowerCase() !== buildingKey) continue
+    if (normalizeBuildingKey(resident.building).toLowerCase() !== buildingKey) continue
     const label = resident.unit.trim().toLowerCase()
     if (label) labels.add(label)
   }
   for (const lease of leases) {
-    if (lease.building.trim().toLowerCase() !== buildingKey) continue
+    if (normalizeBuildingKey(lease.building).toLowerCase() !== buildingKey) continue
     const label = lease.unit.trim().toLowerCase()
     if (label) labels.add(label)
   }
   for (const unit of units) {
-    if (unit.building.trim().toLowerCase() !== buildingKey) continue
+    if (normalizeBuildingKey(unit.building).toLowerCase() !== buildingKey) continue
     const label = unit.label.trim().toLowerCase()
     if (label) labels.add(label)
   }
@@ -955,7 +956,7 @@ export function enrichExtractedProperties(
       propertyManagerPhone: '',
       sourceDocumentName: meta.sourceDocumentName,
       confidence: meta.confidence,
-      selected: !needsReview,
+      selected: true,
       needsReview,
     })
   }
@@ -1038,7 +1039,7 @@ function mergeExtractedDocuments(
         propertyManagerPhone: '',
         sourceDocumentName: source,
         confidence: item.confidence,
-        selected: !needsReviewRow,
+        selected: Boolean(item.name.trim() || item.streetAddress.trim()),
         needsReview: needsReviewRow,
       })
     })
@@ -1050,7 +1051,7 @@ function mergeExtractedDocuments(
         building: item.building,
         sourceDocumentName: source,
         confidence: item.confidence,
-        selected: item.confidence >= 70,
+        selected: Boolean(item.label.trim()),
       })
     })
 
@@ -1075,7 +1076,7 @@ function mergeExtractedDocuments(
         maintenanceResponsibilitiesClause: '',
         sourceDocumentName: source,
         confidence: item.confidence,
-        selected: !needsReviewRow,
+        selected: Boolean(fullName.trim()),
         needsReview: needsReviewRow,
       })
     })
@@ -1097,7 +1098,7 @@ function mergeExtractedDocuments(
         securityDeposit: item.securityDeposit,
         sourceDocumentName: source,
         confidence: item.confidence,
-        selected: item.confidence >= 70,
+        selected: Boolean(residentName.trim()),
         needsReview: item.confidence < 75,
       })
     })
@@ -1189,6 +1190,212 @@ function mergeExtractedDocuments(
     financialRecords,
     needsReview,
     imageLabels,
+  }
+}
+
+function parseUploadedDocumentIdFromExtractedId(id: string): string {
+  const match = id.match(/^ext-(?:prop|res|unit|lease|vendor|maint|fin)-([^-]+)-\d+$/)
+  return match?.[1] ?? ''
+}
+
+function reviewItemFromExtractedRow(input: {
+  id: string
+  dataType: string
+  label: string
+  value: string
+  sourceDocumentName: string
+  confidence: number
+  selected: boolean
+}): ExtractedReviewItem {
+  return {
+    id: input.id,
+    uploadedDocumentId: parseUploadedDocumentIdFromExtractedId(input.id),
+    sourceDocumentName: input.sourceDocumentName,
+    dataType: input.dataType,
+    label: input.label,
+    value: input.value,
+    confidence: input.confidence,
+    includeInImport: input.selected,
+    needsReview: true,
+  }
+}
+
+/** Build review-section rows from extracted entities flagged during merge/enrichment. */
+export function buildFlaggedExtractionReviewItems(
+  review: Pick<
+    OnboardingExtractionReview,
+    | 'properties'
+    | 'units'
+    | 'residents'
+    | 'leases'
+    | 'vendors'
+    | 'maintenanceIssues'
+    | 'financialRecords'
+  >,
+): ExtractedReviewItem[] {
+  const items: ExtractedReviewItem[] = []
+
+  for (const property of review.properties) {
+    if (!property.needsReview) continue
+    items.push(
+      reviewItemFromExtractedRow({
+        id: property.id,
+        dataType: 'flagged_property',
+        label: 'Property',
+        value: [property.name, property.address, property.city, property.state]
+          .filter(Boolean)
+          .join(', '),
+        sourceDocumentName: property.sourceDocumentName,
+        confidence: property.confidence,
+        selected: property.selected,
+      }),
+    )
+  }
+
+  for (const unit of review.units) {
+    if (unit.confidence >= 75 && unit.label.trim()) continue
+    items.push(
+      reviewItemFromExtractedRow({
+        id: unit.id,
+        dataType: 'flagged_unit',
+        label: 'Unit',
+        value: formatExtractedUnitPlacement(unit.building, unit.label),
+        sourceDocumentName: unit.sourceDocumentName,
+        confidence: unit.confidence,
+        selected: unit.selected,
+      }),
+    )
+  }
+
+  for (const resident of review.residents) {
+    if (!resident.needsReview) continue
+    items.push(
+      reviewItemFromExtractedRow({
+        id: resident.id,
+        dataType: 'flagged_resident',
+        label: 'Resident',
+        value: [resident.fullName, formatExtractedUnitPlacement(resident.building, resident.unit)]
+          .filter(Boolean)
+          .join(' · '),
+        sourceDocumentName: resident.sourceDocumentName,
+        confidence: resident.confidence,
+        selected: resident.selected,
+      }),
+    )
+  }
+
+  for (const lease of review.leases) {
+    if (!lease.needsReview) continue
+    items.push(
+      reviewItemFromExtractedRow({
+        id: lease.id,
+        dataType: 'flagged_lease',
+        label: 'Lease',
+        value: [lease.residentName, formatExtractedUnitPlacement(lease.building, lease.unit), lease.rentAmount]
+          .filter(Boolean)
+          .join(' · '),
+        sourceDocumentName: lease.sourceDocumentName,
+        confidence: lease.confidence,
+        selected: lease.selected,
+      }),
+    )
+  }
+
+  for (const vendor of review.vendors) {
+    if (!vendor.needsReview) continue
+    items.push(
+      reviewItemFromExtractedRow({
+        id: vendor.id,
+        dataType: 'flagged_vendor',
+        label: 'Vendor',
+        value: [vendor.name, vendor.category, vendor.phone, vendor.email].filter(Boolean).join(' · '),
+        sourceDocumentName: vendor.sourceDocumentName,
+        confidence: vendor.confidence,
+        selected: vendor.selected,
+      }),
+    )
+  }
+
+  for (const issue of review.maintenanceIssues) {
+    if (!issue.needsReview) continue
+    items.push(
+      reviewItemFromExtractedRow({
+        id: issue.id,
+        dataType: 'flagged_maintenance',
+        label: 'Maintenance issue',
+        value: [issue.description, formatExtractedUnitPlacement(issue.building, issue.unit)].filter(Boolean).join(' · '),
+        sourceDocumentName: issue.sourceDocumentName,
+        confidence: issue.confidence,
+        selected: issue.selected,
+      }),
+    )
+  }
+
+  for (const record of review.financialRecords) {
+    if (!record.needsReview) continue
+    items.push(
+      reviewItemFromExtractedRow({
+        id: record.id,
+        dataType: 'flagged_financial',
+        label: 'Financial record',
+        value: [record.recordType, record.description, record.amount, record.period]
+          .filter(Boolean)
+          .join(' · '),
+        sourceDocumentName: record.sourceDocumentName,
+        confidence: record.confidence,
+        selected: record.selected,
+      }),
+    )
+  }
+
+  return items
+}
+
+export function listNeedsReviewSectionItems(review: OnboardingExtractionReview): ExtractedReviewItem[] {
+  return [...review.needsReview, ...buildFlaggedExtractionReviewItems(review), ...review.imageLabels]
+}
+
+function toggleReviewEntitySelected(
+  review: OnboardingExtractionReview,
+  itemId: string,
+): OnboardingExtractionReview {
+  const toggle = <T extends { id: string; selected: boolean }>(items: T[]) =>
+    items.map((row) => (row.id === itemId ? { ...row, selected: !row.selected } : row))
+
+  return {
+    ...review,
+    properties: toggle(review.properties),
+    units: toggle(review.units),
+    residents: toggle(review.residents),
+    leases: toggle(review.leases),
+    vendors: toggle(review.vendors),
+    maintenanceIssues: toggle(review.maintenanceIssues),
+    financialRecords: toggle(review.financialRecords),
+  }
+}
+
+export function toggleExtractionReviewItem(
+  review: OnboardingExtractionReview,
+  itemId: string,
+): OnboardingExtractionReview {
+  if (buildFlaggedExtractionReviewItems(review).some((item) => item.id === itemId)) {
+    return toggleReviewEntitySelected(review, itemId)
+  }
+
+  if (review.needsReview.some((row) => row.id === itemId)) {
+    return {
+      ...review,
+      needsReview: review.needsReview.map((row) =>
+        row.id === itemId ? { ...row, includeInImport: !row.includeInImport } : row,
+      ),
+    }
+  }
+
+  return {
+    ...review,
+    imageLabels: review.imageLabels.map((row) =>
+      row.id === itemId ? { ...row, includeInImport: !row.includeInImport } : row,
+    ),
   }
 }
 

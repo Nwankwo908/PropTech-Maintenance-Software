@@ -52,12 +52,40 @@ const MONTH_LABELS = [
 
 const CHART_Y_MAX = 5000
 
+/** Minimum completed months with recognized spend before future months are projected. */
+export const ANALYTICS_PROJECTION_MIN_MONTHS = 2
+
+export type MonthlySpendChartRow = {
+  monthIndex: number
+  label: string
+  proactive: number
+  reactive: number
+  isFuture: boolean
+  isProjection: boolean
+}
+
+export function countMonthsWithRecognizedSpend(
+  actualMonths: MonthlySpendChartRow[],
+): number {
+  return actualMonths.filter(
+    (month) => !month.isFuture && month.proactive + month.reactive > 0,
+  ).length
+}
+
+export function projectionsEnabledForMonthlySpend(
+  actualMonths: MonthlySpendChartRow[],
+): boolean {
+  return countMonthsWithRecognizedSpend(actualMonths) >= ANALYTICS_PROJECTION_MIN_MONTHS
+}
+
 function averageMonthProjection(
-  actualMonths: PropertyMonthlySpend[],
+  actualMonths: MonthlySpendChartRow[],
 ): { proactive: number; reactive: number } {
-  const withSpend = actualMonths.filter((month) => month.proactive + month.reactive > 0)
-  if (!withSpend.length) {
-    return { proactive: 650, reactive: 350 }
+  const withSpend = actualMonths.filter(
+    (month) => !month.isFuture && month.proactive + month.reactive > 0,
+  )
+  if (withSpend.length < ANALYTICS_PROJECTION_MIN_MONTHS) {
+    return { proactive: 0, reactive: 0 }
   }
   const proactive = Math.round(
     withSpend.reduce((sum, month) => sum + month.proactive, 0) / withSpend.length,
@@ -66,6 +94,25 @@ function averageMonthProjection(
     withSpend.reduce((sum, month) => sum + month.reactive, 0) / withSpend.length,
   )
   return { proactive, reactive }
+}
+
+/** Future months stay at $0 until enough historical spend exists to project. */
+export function applyFutureMonthProjections(
+  actualMonthlySpend: MonthlySpendChartRow[],
+): MonthlySpendChartRow[] {
+  if (!projectionsEnabledForMonthlySpend(actualMonthlySpend)) {
+    return actualMonthlySpend
+  }
+  const averageProjection = averageMonthProjection(actualMonthlySpend)
+  return actualMonthlySpend.map((month) => {
+    if (!month.isFuture) return month
+    return {
+      ...month,
+      proactive: averageProjection.proactive,
+      reactive: averageProjection.reactive,
+      isProjection: true,
+    }
+  })
 }
 
 function ticketSpendAmount(ticket: PropertyAnalyticsTicket): number {
@@ -269,17 +316,7 @@ export function buildPropertyAnalytics(input: {
     }
   })
 
-  const averageProjection = averageMonthProjection(actualMonthlySpend)
-  const monthlySpend = actualMonthlySpend.map((month) => {
-    if (!month.isFuture) return month
-    const projected = averageProjection
-    return {
-      ...month,
-      proactive: projected.proactive,
-      reactive: projected.reactive,
-      isProjection: true,
-    }
-  })
+  const monthlySpend = applyFutureMonthProjections(actualMonthlySpend)
 
   const reactiveMultiple =
     ytdProactive > 0 ? Math.round((ytdReactive / ytdProactive) * 10) / 10 : null

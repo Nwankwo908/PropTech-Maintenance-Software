@@ -37,10 +37,10 @@ import { fetchPmCompliance, type PmComplianceTask } from '@/lib/pmCompliance'
 import { buildVendorNegotiationBrief } from '@/lib/vendorNegotiationBrief'
 import {
   buildPropertyHealthReport,
-  computeGridOccupancyForBuilding,
   enrichFeedbackFromTickets,
   fetchPropertyHealthSignals,
-  filterUnitsForCanonicalProperty,
+  filterUnitsForPropertyDetailScope,
+  filterResidentsForPropertyScope,
   mapTicketsForPropertyHealth,
   mapUnitsForPropertyHealth,
   filterTicketsForBuildingScope,
@@ -111,6 +111,7 @@ type PropertyUnit = {
   unitLabel: string
   building: string | null
   status: string
+  propertyId: string | null
 }
 
 type UrgentItem = {
@@ -328,8 +329,52 @@ export function AdminPropertyDetailDashboard() {
   const [vendors, setVendors] = useState<PropertyVendorRecord[]>([])
   const [recognizedSpend, setRecognizedSpend] = useState<RecognizedMaintenanceSpend[]>([])
   const [unitStatusError, setUnitStatusError] = useState<string | null>(null)
+  const loadSeqRef = useRef(0)
+
+  const refreshResidents = useCallback(async () => {
+    if (!supabase) return
+    const landlordId = getActiveLandlordId()
+    const { data, error } = await supabase
+      .from('users')
+      .select('id, full_name, email, unit, building, status, balance_due, lease_end_date')
+      .eq('landlord_id', landlordId)
+      .neq('status', 'past_resident')
+      .limit(2000)
+    if (error) {
+      console.warn('[admin property detail] residents refresh failed', error.message)
+      return
+    }
+    setResidents(
+      ((data ?? []) as Record<string, unknown>[])
+        .map((raw) => ({
+          id: asString(raw.id),
+          fullName: asString(raw.full_name) || 'Unnamed resident',
+          unit: asString(raw.unit),
+          building: asString(raw.building) || null,
+          email: asString(raw.email) || null,
+          status: asString(raw.status).toLowerCase() || 'active',
+          balanceDue: asFiniteNumber(raw.balance_due),
+          leaseEndDate: asString(raw.lease_end_date) || null,
+        }))
+        .filter((row) => row.id),
+    )
+  }, [])
+
+  useEffect(() => {
+    const landlordId = getActiveLandlordId()
+    void activateUnitsFromResidentAssignments({
+      landlordId,
+      source: 'property_sync',
+    }).catch((err) => {
+      console.warn('[admin property detail] unit activation sync failed', err)
+    })
+    void reconcileOccupiedUnitResidents({ landlordId }).catch((err) => {
+      console.warn('[admin property detail] occupancy rematch failed', err)
+    })
+  }, [])
 
   const loadProperty = useCallback(async () => {
+    const loadSeq = ++loadSeqRef.current
     const slug = parsePropertyRouteSlug(propertySlug)
     if (!slug) {
       setLoading(false)
@@ -399,17 +444,6 @@ export function AdminPropertyDetailDashboard() {
     }, 20000)
 
     try {
-      // Fire-and-forget unit heal — never block first paint of the property page.
-      void activateUnitsFromResidentAssignments({
-        landlordId,
-        source: 'property_sync',
-      }).catch((err) => {
-        console.warn('[admin property detail] unit activation sync failed', err)
-      })
-      void reconcileOccupiedUnitResidents({ landlordId }).catch((err) => {
-        console.warn('[admin property detail] occupancy rematch failed', err)
-      })
-
       const [enrichedTickets, mrTickets, unitsResult, healthSignals, onboardingResult, workflowDashboard, pmCompliance, residentsResult, vendorsResult, recognizedSpendResult, canonicalPropertiesResult] =
         await Promise.all([
           supabase
@@ -430,7 +464,7 @@ export function AdminPropertyDetailDashboard() {
             .limit(500),
           supabase
             .from('units')
-            .select('id, unit_label, building, status, property_id')
+            .select('id, unit_label, building, status, property_id, updated_at')
             .eq('landlord_id', landlordId)
             .limit(1000),
           fetchPropertyHealthSignals(),
@@ -456,7 +490,7 @@ export function AdminPropertyDetailDashboard() {
           listPropertiesForLandlord(landlordId),
         ])
 
-      if (timedOut) return
+      if (timedOut || loadSeq !== loadSeqRef.current) return
       const spendById = new Map<string, Record<string, unknown>>()
       if (!mrTickets.error) {
         for (const row of (mrTickets.data ?? []) as Record<string, unknown>[]) {
@@ -519,6 +553,7 @@ export function AdminPropertyDetailDashboard() {
             unitLabel: asString(r.unit_label),
             building: asString(r.building) || null,
             status: asString(r.status).toLowerCase(),
+            propertyId: asString(r.property_id) || null,
           }))
         : []
 
@@ -546,6 +581,8 @@ export function AdminPropertyDetailDashboard() {
             }))
             .filter((row) => row.id)
         : []
+
+      if (loadSeq !== loadSeqRef.current) return
 
       setTickets(ticketsWithBuilding)
       setUnits(parsedUnits)
@@ -608,18 +645,18 @@ export function AdminPropertyDetailDashboard() {
         })),
       )
         .then((rows) => {
-          if (!timedOut) setPropertyConversations(rows)
+          if (!timedOut && loadSeq === loadSeqRef.current) setPropertyConversations(rows)
         })
         .catch(() => {
-          if (!timedOut) setPropertyConversations([])
+          if (!timedOut && loadSeq === loadSeqRef.current) setPropertyConversations([])
         })
     } catch (err) {
-      if (timedOut) return
+      if (timedOut || loadSeq !== loadSeqRef.current) return
       console.error('[admin property detail] load failed', err)
       setError(getErrorMessage(err, 'Could not load property.'))
     } finally {
       window.clearTimeout(timeoutId)
-      if (!timedOut) setLoading(false)
+      if (!timedOut && loadSeq === loadSeqRef.current) setLoading(false)
     }
   }, [propertySlug, navigate, searchParams])
 
@@ -644,10 +681,12 @@ export function AdminPropertyDetailDashboard() {
           return unit
         }),
       )
-      await loadProperty()
+      if (status === 'occupied' || status === 'vacant') {
+        await refreshResidents()
+      }
       return true
     },
-    [loadProperty],
+    [refreshResidents],
   )
 
   useEffect(() => {
@@ -715,18 +754,39 @@ export function AdminPropertyDetailDashboard() {
   const buildingUnits = useMemo(() => {
     if (!building) return []
     const healthUnits = mapUnitsForPropertyHealth(units as unknown as Record<string, unknown>[])
-    if (activeCanonicalProperty) {
-      return filterUnitsForCanonicalProperty(healthUnits, activeCanonicalProperty).map((unit) => ({
-        id: unit.id,
-        unitLabel: unit.unitLabel,
-        building: unit.building,
-        status: unit.status,
-      }))
-    }
-    return units.filter(
-      (unit) => normalizeBuildingKey(unit.building) === normalizeBuildingKey(building),
-    )
+    return filterUnitsForPropertyDetailScope(
+      healthUnits,
+      building,
+      activeCanonicalProperty,
+    ).map((unit) => ({
+      id: unit.id,
+      unitLabel: unit.unitLabel,
+      building: unit.building,
+      status: unit.status,
+    }))
   }, [units, building, activeCanonicalProperty])
+
+  const buildingResidents = useMemo((): PropertyUnitResident[] => {
+    if (!building) return []
+    const lookupName = activeCanonicalProperty?.name ?? building
+    const healthUnits = mapUnitsForPropertyHealth(units as unknown as Record<string, unknown>[])
+    const healthResidents: PropertyHealthResident[] = residents.map((resident) => ({
+      id: resident.id,
+      fullName: resident.fullName,
+      unit: resident.unit,
+      building: resident.building,
+      status: resident.status,
+      email: resident.email ?? null,
+    }))
+    const scoped = filterResidentsForPropertyScope(
+      healthResidents,
+      lookupName,
+      activeCanonicalProperty,
+      healthUnits,
+    )
+    const scopedIds = new Set(scoped.map((resident) => resident.id))
+    return residents.filter((resident) => scopedIds.has(resident.id))
+  }, [building, units, residents, activeCanonicalProperty])
 
   const buildingTickets = useMemo(() => {
     if (!building) return []
@@ -810,23 +870,8 @@ export function AdminPropertyDetailDashboard() {
   }, [building, canonicalProperty, canonicalProperties])
 
   const occupiedCount = useMemo(() => {
-    if (!building) return 0
-    const lookupName = activeCanonicalProperty?.name ?? building
-    const healthUnits = mapUnitsForPropertyHealth(units as unknown as Record<string, unknown>[])
-    const healthResidents: PropertyHealthResident[] = residents.map((resident) => ({
-      id: resident.id,
-      fullName: resident.fullName,
-      unit: resident.unit,
-      building: resident.building,
-      status: resident.status,
-    }))
-    return computeGridOccupancyForBuilding(
-      healthUnits,
-      healthResidents,
-      lookupName,
-      activeCanonicalProperty,
-    ).occupied
-  }, [building, units, residents, activeCanonicalProperty])
+    return buildingUnits.filter((unit) => unit.status === 'active').length
+  }, [buildingUnits])
 
   const urgentItems: UrgentItem[] = useMemo(() => {
     if (!workflowData || !building) return []
@@ -899,9 +944,7 @@ export function AdminPropertyDetailDashboard() {
       pmTasks: buildingPmTasks,
       leaseRenewalCount,
       urgentItems,
-      residents: residents.filter(
-        (resident) => normalizeBuildingKey(resident.building) === normalizeBuildingKey(building),
-      ),
+      residents: buildingResidents,
     })
   }, [
     building,
@@ -911,7 +954,7 @@ export function AdminPropertyDetailDashboard() {
     buildingPmTasks,
     leaseRenewalCount,
     urgentItems,
-    residents,
+    buildingResidents,
   ])
 
   const propertyUnitRows = useMemo(() => {
@@ -919,18 +962,16 @@ export function AdminPropertyDetailDashboard() {
     return buildPropertyUnitRows({
       building,
       units: buildingUnits,
-      residents: residents.filter(
-        (resident) => normalizeBuildingKey(resident.building) === normalizeBuildingKey(building),
-      ),
+      residents: buildingResidents,
       tickets: buildingTickets,
       workflowData,
     })
-  }, [building, buildingUnits, residents, buildingTickets, workflowData])
+  }, [building, buildingUnits, buildingResidents, buildingTickets, workflowData])
 
   const propertyResidentCards = useMemo(() => {
     if (!building) return []
-    return buildPropertyResidentCards(building, residents)
-  }, [building, residents])
+    return buildPropertyResidentCards(building, buildingResidents)
+  }, [building, buildingResidents])
 
   const propertyWorkflowRows = useMemo(() => {
     if (!building) return []
@@ -1185,7 +1226,11 @@ export function AdminPropertyDetailDashboard() {
       ) : null}
 
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-5">
-        <StatTile label="Units" value={loading ? '—' : String(buildingUnits.length)} icon={<BuildingStatIcon />} />
+        <StatTile
+          label="Units"
+          value={loading ? '—' : String(propertyUnitRows.length || buildingUnits.length)}
+          icon={<BuildingStatIcon />}
+        />
         <StatTile label="Occupied" value={loading ? '—' : String(occupiedCount)} icon={<UsersStatIcon />} />
         <StatTile
           label="Open work orders"

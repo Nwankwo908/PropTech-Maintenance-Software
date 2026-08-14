@@ -306,6 +306,46 @@ function VendorOutreachChannelToggle({
   )
 }
 
+function TranscriptMedia({
+  media,
+  align,
+}: {
+  media: NonNullable<Extract<MonitoringTranscriptItem, { type: 'message' }>['media']>
+  align: 'left' | 'right'
+}) {
+  if (media.length === 0) return null
+  return (
+    <div className={`flex flex-col gap-2 ${align === 'right' ? 'items-end' : 'items-start'}`}>
+      {media.map((item, index) =>
+        item.kind === 'video' ? (
+          <video
+            key={`${item.url}-${index}`}
+            src={item.url}
+            controls
+            playsInline
+            preload="metadata"
+            className="max-h-64 w-full max-w-[260px] rounded-[12px] bg-[#0a0a0a] object-contain"
+          />
+        ) : (
+          <a
+            key={`${item.url}-${index}`}
+            href={item.url}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="block overflow-hidden rounded-[12px]"
+          >
+            <img
+              src={item.url}
+              alt="Sent over text"
+              className="max-h-64 w-full max-w-[260px] object-cover"
+            />
+          </a>
+        ),
+      )}
+    </div>
+  )
+}
+
 function TranscriptMessage({
   item,
   tenantInitials,
@@ -315,6 +355,8 @@ function TranscriptMessage({
 }) {
   const isUlo = item.sender === 'ulo'
   const timeLabel = formatMonitoringTime(item.timestampMs)
+  const media = item.media ?? []
+  const hasBody = Boolean(item.body.trim())
 
   if (isUlo) {
     return (
@@ -324,8 +366,13 @@ function TranscriptMessage({
           <p className="mb-1 text-[11px] leading-4 text-[#6a7282]">
             {item.senderName} · {timeLabel}
           </p>
-          <div className="overflow-hidden whitespace-pre-wrap break-words [overflow-wrap:anywhere] rounded-[12px] rounded-tl-[4px] border border-[#e9d5ff] bg-white px-3.5 py-2.5 text-[13px] leading-5 text-[#0a0a0a]">
-            {item.body}
+          <div className="flex flex-col gap-2">
+            {hasBody ? (
+              <div className="overflow-hidden whitespace-pre-wrap break-words [overflow-wrap:anywhere] rounded-[12px] rounded-tl-[4px] border border-[#e9d5ff] bg-white px-3.5 py-2.5 text-[13px] leading-5 text-[#0a0a0a]">
+                {item.body}
+              </div>
+            ) : null}
+            <TranscriptMedia media={media} align="left" />
           </div>
         </div>
       </div>
@@ -341,8 +388,13 @@ function TranscriptMessage({
         <p className="mb-1 text-[11px] leading-4 text-[#6a7282]">
           {item.senderName} · {timeLabel}
         </p>
-        <div className="overflow-hidden whitespace-pre-wrap break-words [overflow-wrap:anywhere] rounded-[12px] rounded-tr-[4px] bg-[#dbeafe] px-3.5 py-2.5 text-left text-[13px] leading-5 text-[#0a0a0a]">
-          {item.body}
+        <div className="flex flex-col items-end gap-2">
+          {hasBody ? (
+            <div className="overflow-hidden whitespace-pre-wrap break-words [overflow-wrap:anywhere] rounded-[12px] rounded-tr-[4px] bg-[#dbeafe] px-3.5 py-2.5 text-left text-[13px] leading-5 text-[#0a0a0a]">
+              {item.body}
+            </div>
+          ) : null}
+          <TranscriptMedia media={media} align="right" />
         </div>
       </div>
     </div>

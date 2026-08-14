@@ -33,6 +33,8 @@ export type OnboardingProperty = {
   state: string
   zipCode: string
   unitCount: number
+  /** Real unit numbers from documents / inventory. When set, persist these instead of 101…N. */
+  unitLabels?: string[]
   /** Property type collected in the wizard (multifamily, etc.). */
   propertyType?: string
   /** Optional on-site / assigned property manager for this building. */

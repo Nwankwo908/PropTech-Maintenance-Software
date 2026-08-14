@@ -14,14 +14,26 @@ import {
 import {
   TenantActivationStatusChip,
 } from '@/components/TenantActivationStatusChip'
+import { optionalPhoneForDbOrError } from '@/lib/phoneFormat'
 import { getActiveLandlordId } from '@/lib/activeLandlord'
 import { customUnitPickKey, unitOptionKeyToCell } from '@/lib/residentUnitKeys'
-import { propertyResidentDetailPath } from '@/lib/propertyRoutes'
+import {
+  buildPropertyIdByBuilding,
+  propertyResidentDetailPath,
+} from '@/lib/propertyRoutes'
+import { listPropertiesForLandlord } from '@/lib/properties'
+import {
+  findCanonicalPropertyForResident,
+  mapUnitsForPropertyHealth,
+  normalizeBuildingKey,
+} from '@/lib/propertyHealth'
 import { displayResidentEmail } from '@/lib/residentProfileDetail'
 import { deleteResidentsForLandlord } from '@/lib/residentDeletion'
 import { resolveTenantActivationChip, countUnactivatedTenants } from '@/lib/tenantActivationStatus'
 import { supabase } from '@/lib/supabase'
 import { getErrorMessage } from '@/lib/errorMessage'
+import { parseLeaseDateInput } from '@/lib/onboarding'
+import { activateUnitsFromResidentAssignments } from '@/lib/unitActivation'
 
 type Sentiment = 'positive' | 'at_risk' | 'neutral'
 type SentimentFilter = 'all' | Sentiment
@@ -31,6 +43,7 @@ type ResidentRow = {
   id: string
   name: string
   building: string | null
+  propertyLinkId: string | null
   unitLabel: string
   rentLabel: string
   moveInLabel: string
@@ -244,6 +257,19 @@ function FilterToggleGroup<T extends string>({
   )
 }
 
+const ONBOARDING_STARTED_BANNER_MS = 30_000
+
+type ResidentsBannerState =
+  | { kind: 'onboarding_started'; count: number; expiresAt: number }
+  | { kind: 'error'; message: string }
+  | null
+
+function onboardingStartedBannerMessage(count: number): string {
+  return count === 1
+    ? '1 resident is starting onboarding.'
+    : `${count} residents are starting onboarding.`
+}
+
 function ActivationReminderAlertIcon() {
   return (
     <svg
@@ -278,7 +304,18 @@ export function AdminResidentsDashboard() {
   const [deleteResidentsSaving, setDeleteResidentsSaving] = useState(false)
   const [deleteResidentsError, setDeleteResidentsError] = useState<string | null>(null)
   const [onboardingSaving, setOnboardingSaving] = useState(false)
-  const [onboardingNotice, setOnboardingNotice] = useState<string | null>(null)
+  const [residentsBanner, setResidentsBanner] = useState<ResidentsBannerState>(null)
+
+  useEffect(() => {
+    if (residentsBanner?.kind !== 'onboarding_started') return
+    const remaining = residentsBanner.expiresAt - Date.now()
+    if (remaining <= 0) {
+      setResidentsBanner(null)
+      return
+    }
+    const timerId = window.setTimeout(() => setResidentsBanner(null), remaining)
+    return () => window.clearTimeout(timerId)
+  }, [residentsBanner])
 
   const loadResidents = useCallback(async () => {
     if (!supabase) {
@@ -324,20 +361,52 @@ export function AdminResidentsDashboard() {
       return
     }
 
+    const landlordId = getActiveLandlordId()
+    const [propertiesResult, unitsResult] = await Promise.all([
+      listPropertiesForLandlord(landlordId),
+      supabase
+        .from('units')
+        .select('id, unit_label, building, status, property_id')
+        .eq('landlord_id', landlordId)
+        .limit(2000),
+    ])
+
+    const canonicalProperties =
+      propertiesResult.ok
+        ? propertiesResult.properties.map((property) => ({
+            id: property.id,
+            name: property.name,
+          }))
+        : []
+    const propertyIdByBuilding = buildPropertyIdByBuilding(canonicalProperties)
+    const healthUnits = mapUnitsForPropertyHealth(
+      (unitsResult.data ?? []) as Record<string, unknown>[],
+    )
+
     const rows: ResidentRow[] = ((data ?? []) as Record<string, unknown>[])
       .map((raw) => {
         const balanceDue = asFiniteNumber(raw.balance_due)
         const status = asString(raw.status) || 'active'
         const leaseEndDate = asString(raw.lease_end_date) || null
         const unit = asString(raw.unit) || null
+        const building = asString(raw.building) || null
         const phone = asString(raw.phone) || null
         const email = displayResidentEmail(asString(raw.email) || null)
         const monthlyRent = asFiniteNumber(raw.monthly_rent)
+        const matchedProperty = findCanonicalPropertyForResident(
+          { unit: unit ?? '', building },
+          canonicalProperties,
+          healthUnits,
+        )
+        const propertyLinkId =
+          matchedProperty?.id ??
+          (building ? propertyIdByBuilding.get(normalizeBuildingKey(building)) ?? null : null)
         return {
           id: asString(raw.id),
           name: asString(raw.full_name) || 'Unnamed resident',
-          building: asString(raw.building) || null,
-          unitLabel: formatUnit(asString(raw.building) || null, unit),
+          building,
+          propertyLinkId,
+          unitLabel: formatUnit(building, unit),
           rentLabel: formatMonthlyRent(monthlyRent > 0 ? monthlyRent : null),
           moveInLabel: formatMoveIn(asString(raw.move_in_date) || null),
           contactPhone: phone,
@@ -414,6 +483,11 @@ export function AdminResidentsDashboard() {
 
     const residentId = `RES-${String(nextResidentNumber).padStart(3, '0')}`
     const unitCell = payload.unit ? unitOptionKeyToCell(payload.unit) : { kind: 'unassigned' as const }
+    const phoneResult = optionalPhoneForDbOrError(payload.phone)
+    if (phoneResult.error) {
+      setAddResidentError(phoneResult.error)
+      return
+    }
 
     const { data: insertedRow, error: insertError } = await supabase
       .from('users')
@@ -421,13 +495,15 @@ export function AdminResidentsDashboard() {
         resident_id: residentId,
         full_name: payload.fullName,
         email: payload.email,
-        phone: payload.phone || null,
+        phone: phoneResult.phone,
         unit: unitCell.kind === 'assigned' ? unitCell.unit : null,
         building: unitCell.kind === 'assigned' ? unitCell.building : null,
         status: payload.status,
         balance_due: 0,
         issues: [],
         landlord_id: landlordId,
+        move_in_date: parseLeaseDateInput(payload.leaseStart),
+        lease_end_date: parseLeaseDateInput(payload.leaseEnd),
       })
       .select('id')
       .single()
@@ -443,11 +519,25 @@ export function AdminResidentsDashboard() {
         unitLabel: unitCell.unit,
         building: unitCell.building,
         residentId: newResidentId,
-        tenantPhone: payload.phone || null,
+        tenantPhone: phoneResult.phone,
       })
-    } else if (payload.phone?.trim() && newResidentId) {
+      void activateUnitsFromResidentAssignments({
+        landlordId,
+        residents: [
+          {
+            id: newResidentId,
+            unit: unitCell.unit,
+            building: unitCell.building,
+            status: payload.status,
+            moveInDate: parseLeaseDateInput(payload.leaseStart),
+            leaseEndDate: parseLeaseDateInput(payload.leaseEnd),
+          },
+        ],
+        source: 'add_resident',
+      })
+    } else if (phoneResult.phone && newResidentId) {
       void syncSmsIdentity({
-        phone: payload.phone,
+        phone: phoneResult.phone,
         identityType: 'resident',
         residentId: newResidentId,
       })
@@ -551,7 +641,7 @@ export function AdminResidentsDashboard() {
   async function startOnboardingForSelected() {
     if (selectedResidentIds.size === 0) return
 
-    setOnboardingNotice(null)
+    setResidentsBanner(null)
     setOnboardingSaving(true)
 
     const selected = residents.filter((resident) => selectedResidentIds.has(resident.id))
@@ -592,13 +682,21 @@ export function AdminResidentsDashboard() {
     if (firstSendIds.length === 0 && resendIds.length === 0) {
       setOnboardingSaving(false)
       if (missingPhone > 0 && alreadyComplete === 0) {
-        setOnboardingNotice('Selected residents need a phone number before onboarding can start.')
+        setResidentsBanner({
+          kind: 'error',
+          message: 'Selected residents need a phone number before onboarding can start.',
+        })
       } else if (alreadyComplete > 0 && missingPhone === 0) {
-        setOnboardingNotice('Selected residents are already activated or waiting for a reply.')
+        setResidentsBanner({
+          kind: 'error',
+          message: 'Selected residents are already activated or waiting for a reply.',
+        })
       } else {
-        setOnboardingNotice(
-          'No selected residents are ready for onboarding. Add phone numbers or choose residents who have not been activated yet.',
-        )
+        setResidentsBanner({
+          kind: 'error',
+          message:
+            'No selected residents are ready for onboarding. Add phone numbers or choose residents who have not been activated yet.',
+        })
       }
       return
     }
@@ -631,35 +729,39 @@ export function AdminResidentsDashboard() {
     setOnboardingSaving(false)
 
     if (sent > 0 && failed === 0) {
-      const parts = [
-        sent === 1
-          ? 'Welcome text sent to 1 resident.'
-          : `Welcome texts sent to ${sent} residents.`,
-      ]
-      if (skipped > 0) {
-        parts.push(`${skipped} skipped.`)
-      }
-      if (missingPhone > 0) {
-        parts.push(`${missingPhone} skipped (no phone on file).`)
-      }
-      setOnboardingNotice(parts.join(' '))
+      setResidentsBanner({
+        kind: 'onboarding_started',
+        count: sent,
+        expiresAt: Date.now() + ONBOARDING_STARTED_BANNER_MS,
+      })
       return
     }
 
     if (sent > 0) {
-      setOnboardingNotice(
-        `Welcome texts sent to ${sent} resident${sent === 1 ? '' : 's'}, but ${failed} could not be delivered.${
+      setResidentsBanner({
+        kind: 'error',
+        message: `Welcome texts sent to ${sent} resident${sent === 1 ? '' : 's'}, but ${failed} could not be delivered.${
           missingPhone > 0 ? ` ${missingPhone} skipped (no phone on file).` : ''
         }`,
-      )
+      })
       return
     }
 
-    setOnboardingNotice(
-      lastError ??
+    setResidentsBanner({
+      kind: 'error',
+      message:
+        lastError ??
         'Welcome texts could not be sent. Check phone numbers and try again.',
-    )
+    })
   }
+
+  const showOnboardingStartedBanner =
+    residentsBanner?.kind === 'onboarding_started' &&
+    residentsBanner.expiresAt > Date.now()
+  const showUnactivatedReminderBanner =
+    !loading && unactivatedResidentCount > 0 && !showOnboardingStartedBanner
+  const showResidentsErrorBanner =
+    residentsBanner?.kind === 'error' && !showOnboardingStartedBanner
 
   return (
     // Natural height so AdminLayout's scroll region owns vertical scrolling.
@@ -707,7 +809,21 @@ export function AdminResidentsDashboard() {
         </div>
       ) : null}
 
-      {!loading && unactivatedResidentCount > 0 ? (
+      {showOnboardingStartedBanner && residentsBanner?.kind === 'onboarding_started' ? (
+        <div
+          className="mb-4 flex items-start gap-2.5 rounded-[10px] border border-[#7fb889] bg-[#9DD4A6] px-4 py-3 text-[13px] leading-5 text-[#101828]"
+          role="status"
+        >
+          <p>{onboardingStartedBannerMessage(residentsBanner.count)}</p>
+        </div>
+      ) : showResidentsErrorBanner && residentsBanner?.kind === 'error' ? (
+        <div
+          className="mb-4 rounded-[10px] border border-[#E8A5AA] bg-[#F6B9BE] px-4 py-3 text-[13px] leading-5 text-[#101828]"
+          role="alert"
+        >
+          {residentsBanner.message}
+        </div>
+      ) : showUnactivatedReminderBanner ? (
         <div
           className="mb-4 flex items-start gap-2.5 rounded-[10px] border border-[#E8A5AA] bg-[#F6B9BE] px-4 py-3 text-[13px] leading-5 text-[#364153]"
           role="status"
@@ -770,11 +886,6 @@ export function AdminResidentsDashboard() {
       {deleteResidentsError ? (
         <div className="mb-4 rounded-[10px] border border-[#fecaca] bg-[#fef2f2] px-4 py-3 text-[13px] text-[#b91c1c]">
           Could not delete selected residents: {deleteResidentsError}
-        </div>
-      ) : null}
-      {onboardingNotice ? (
-        <div className="mb-4 rounded-[10px] border border-[#E8A5AA] bg-[#F6B9BE] px-4 py-3 text-[13px] leading-5 text-[#101828]">
-          {onboardingNotice}
         </div>
       ) : null}
       {selectedResidentCount > 0 ? (
@@ -881,9 +992,9 @@ export function AdminResidentsDashboard() {
                       />
                     </td>
                     <td className="px-6 py-4 text-[14px] font-medium text-[#0a0a0a]">
-                      {resident.building ? (
+                      {resident.propertyLinkId ? (
                         <Link
-                          to={propertyResidentDetailPath(resident.building, resident.id)}
+                          to={propertyResidentDetailPath(resident.propertyLinkId, resident.id)}
                           className="sa-link rounded-[4px] text-[#0a0a0a] hover:text-[#186179] hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2"
                         >
                           {resident.name}

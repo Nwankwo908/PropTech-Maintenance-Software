@@ -137,6 +137,21 @@ export function inviteEmailCopy(input: {
   return { subject, text, html }
 }
 
+export function vendorInviteFailureUserMessage(delivery?: {
+  sms?: string | null
+  email?: string | null
+  smsError?: string
+  emailError?: string
+} | null): string {
+  if (
+    delivery?.smsError === "no_active_landlord_sms_line" &&
+    delivery.email !== "sent"
+  ) {
+    return "We couldn't send the verification invite because this account doesn't have an SMS line set up yet."
+  }
+  return "We couldn't send the verification invite. Check the vendor's contact info and try again."
+}
+
 /**
  * Create verification row, deliver SMS/email, link conversation, and advance the run.
  */
@@ -277,6 +292,19 @@ export async function deliverVendorInvite(
     delivery.sms === "sent" ? "SMS" : null,
     delivery.email === "sent" ? "email" : null,
   ].filter(Boolean).join(" + ")
+
+  if (!anyDelivered) {
+    return {
+      verificationId,
+      token,
+      link,
+      delivery,
+      anyDelivered,
+      deliveredVia,
+      inviteConversationId,
+      inviteMessageId,
+    }
+  }
 
   if (inviteConversationId) {
     const { error: linkErr } = await supabase

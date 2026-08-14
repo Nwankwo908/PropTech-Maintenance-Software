@@ -6,6 +6,7 @@ import {
   buildVendorOnboardingReminderSms,
   readVendorOnboardingState,
   vendorOnboardingActionDue,
+  vendorOnboardingInviteWasDelivered,
   VENDOR_ONBOARDING_WAITING_STEPS,
 } from "./vendorOnboardingPolicy.ts"
 import type { WorkflowRunRow } from "./types.ts"
@@ -35,6 +36,12 @@ function makeRun(patch: Partial<WorkflowRunRow> & {
     ...patch,
   }
 }
+
+Deno.test("failed invite delivery must not stay on Active Tasks", () => {
+  assertEquals(vendorOnboardingInviteWasDelivered(null), false)
+  assertEquals(vendorOnboardingInviteWasDelivered({ anyDelivered: false }), false)
+  assertEquals(vendorOnboardingInviteWasDelivered({ anyDelivered: true }), true)
+})
 
 Deno.test("vendor onboarding waiting steps include invited and reminder_sent", () => {
   for (const step of ["invited", "in_progress", "needs_review", "reminder_sent"]) {

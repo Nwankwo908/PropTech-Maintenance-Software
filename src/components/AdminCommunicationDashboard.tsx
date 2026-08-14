@@ -20,6 +20,7 @@ import {
 import { listVendorSetupInboxEntries } from '@/lib/vendorSetupConversation'
 import { fetchCommunicationWorkOrderInboxRows } from '@/lib/workflowPipelineDetail'
 import { isCommunicationInboxConversationType } from '@/lib/propertyConversations'
+import { inboxPreviewForSmsMessage } from '@/lib/smsMedia'
 import { supabase } from '@/lib/supabase'
 
 type ParticipantKind = 'tenant' | 'vendor' | 'ai' | 'landlord'
@@ -648,7 +649,7 @@ export function AdminCommunicationDashboard() {
           conversationIds.length
             ? supabase
                 .from('sms_messages')
-                .select('conversation_id, body, direction, created_at')
+                .select('conversation_id, body, direction, media_urls, created_at')
                 .eq('landlord_id', landlordId)
                 .in('conversation_id', conversationIds)
                 .order('created_at', { ascending: false })
@@ -698,7 +699,7 @@ export function AdminCommunicationDashboard() {
 
       const latestMessageByConversation = new Map<
         string,
-        { body: string; direction: string; createdAt: number }
+        { body: string; direction: string; createdAt: number; mediaUrls: unknown }
       >()
       if (messagesResult.status === 'fulfilled' && !messagesResult.value.error) {
         for (const m of (messagesResult.value.data ?? []) as Record<string, unknown>[]) {
@@ -708,6 +709,7 @@ export function AdminCommunicationDashboard() {
             body: asString(m.body),
             direction: asString(m.direction),
             createdAt: new Date(asString(m.created_at)).getTime(),
+            mediaUrls: m.media_urls,
           })
         }
       }
@@ -802,7 +804,7 @@ export function AdminCommunicationDashboard() {
           (NEEDS_ATTENTION_STATUSES.has(status) ||
             (latest?.direction === 'inbound' && !CLOSED_STATUSES.has(status)))
 
-        let preview = latest?.body || 'No messages yet.'
+        let preview = inboxPreviewForSmsMessage(latest?.body ?? '', latest?.mediaUrls)
         if (residentRating != null) {
           preview = formatResidentFeedbackPreview(residentRating)
         } else if (awaitingRating || (latest?.body && isResidentFeedbackAskBody(latest.body))) {

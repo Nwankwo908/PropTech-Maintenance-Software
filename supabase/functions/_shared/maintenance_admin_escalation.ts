@@ -1,20 +1,25 @@
 /**
- * Escalate maintenance to admin when no roster vendor is available for auto-reassign
- * (SLA expired or vendor declined).
+ * Escalate maintenance to admin when no roster vendor is available
+ * (submit with empty roster, SLA expired, or vendor declined).
  */
 import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.49.1"
 import { updateWorkflowRun } from "./engine/workflowRuns.ts"
-import { logGraphEvent } from "./graph/logGraphEvent.ts"
+import { recordActivityLog } from "./graph/recordActivityLog.ts"
 import { notifyLandlordNeedsAttention } from "./landlordAttentionNotify.ts"
 import { formatWorkOrderRef } from "./vendor_outreach_copy.ts"
 
 export type MaintenanceAdminVendorEscalationReason =
   | "sla_expired_no_vendor"
   | "vendor_declined_no_vendor"
+  | "no_vendor_available"
 
 export const MAINTENANCE_ADMIN_VENDOR_ESCALATION_REASONS = new Set<
   MaintenanceAdminVendorEscalationReason
->(["sla_expired_no_vendor", "vendor_declined_no_vendor"])
+>([
+  "sla_expired_no_vendor",
+  "vendor_declined_no_vendor",
+  "no_vendor_available",
+])
 
 export type MaintenanceTicketScope = {
   id: string
@@ -54,11 +59,19 @@ export async function linkedWorkflowNeedsAdminVendor(
   )
 }
 
-type EscalateMaintenanceNeedsVendorOpts = {
+export type EscalateMaintenanceNeedsVendorOpts = {
   escalationReason: MaintenanceAdminVendorEscalationReason
   eventMessage: string
   graphEventType: string
   graphMessage: string
+}
+
+export const SUBMITTED_NO_VENDOR_ESCALATION: EscalateMaintenanceNeedsVendorOpts = {
+  escalationReason: "no_vendor_available",
+  eventMessage: "No vendor available to assign this request",
+  graphEventType: "maintenance.submitted_needs_vendor",
+  graphMessage:
+    "No vendor was available when this request was submitted. Assign or find a vendor to continue.",
 }
 
 export async function escalateMaintenanceNeedsVendor(
@@ -94,14 +107,14 @@ export async function escalateMaintenanceNeedsVendor(
     })
   }
 
-  await logGraphEvent(supabase, {
-    landlord_id: landlordId,
-    event_type: opts.graphEventType,
+  await recordActivityLog(supabase, {
+    landlordId,
+    eventType: opts.graphEventType,
     source: "automation",
-    actor_type: "system",
-    maintenance_request_id: ticket.id,
-    workflow_run_id: run?.id ?? null,
-    workflow_template_id: run?.template_id ?? null,
+    actorType: "system",
+    maintenanceRequestId: ticket.id,
+    workflowRunId: run?.id ?? null,
+    workflowTemplateId: run?.template_id ?? null,
     metadata: { message: opts.graphMessage },
   })
 
@@ -118,7 +131,9 @@ export async function escalateMaintenanceNeedsVendor(
     const headline =
       opts.escalationReason === "vendor_declined_no_vendor"
         ? "Vendor declined — assign a vendor"
-        : "SLA breached — assign a vendor"
+        : opts.escalationReason === "no_vendor_available"
+          ? "No vendor available — assign a vendor"
+          : "SLA breached — assign a vendor"
     await notifyLandlordNeedsAttention(supabase, {
       landlordId,
       kind: "assign_vendor",

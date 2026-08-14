@@ -9,7 +9,9 @@ import {
 import {
   countSelectedInReview,
   formatExtractedUnitPlacement,
+  listNeedsReviewSectionItems,
   setAllReviewSelections,
+  toggleExtractionReviewItem,
   type ExtractedFinancialRecord,
   type ExtractedLeaseInfo,
   type OnboardingExtractionReview,
@@ -875,34 +877,17 @@ export function OnboardingAiReviewStep({
   }
 
   function renderNeedsReviewRows() {
-    if (review.needsReview.length === 0 && review.imageLabels.length === 0) {
+    const combined = listNeedsReviewSectionItems(review)
+    if (combined.length === 0) {
       return <p className="mt-2 text-[13px] text-[#6a7282]">No items flagged for manual review.</p>
     }
-    const combined = [...review.needsReview, ...review.imageLabels]
     return (
       <ul className="mt-3 space-y-2">
         {combined.map((item) => (
           <ReviewItemRow
             key={item.id}
             checked={item.includeInImport}
-            onToggle={() => {
-              const inNeeds = review.needsReview.some((row) => row.id === item.id)
-              if (inNeeds) {
-                onReviewChange({
-                  ...review,
-                  needsReview: review.needsReview.map((row) =>
-                    row.id === item.id ? { ...row, includeInImport: !row.includeInImport } : row,
-                  ),
-                })
-              } else {
-                onReviewChange({
-                  ...review,
-                  imageLabels: review.imageLabels.map((row) =>
-                    row.id === item.id ? { ...row, includeInImport: !row.includeInImport } : row,
-                  ),
-                })
-              }
-            }}
+            onToggle={() => onReviewChange(toggleExtractionReviewItem(review, item.id))}
             label={item.label}
             value={
               item.imageTags?.length ? `${item.value} · Tags: ${item.imageTags.join(', ')}` : item.value
@@ -1118,7 +1103,7 @@ export function OnboardingAiReviewStep({
             </ReviewSection>
             <ReviewSection
               title="Items Needing Review"
-              count={review.needsReview.length + review.imageLabels.length}
+              count={listNeedsReviewSectionItems(review).length}
             >
               {renderNeedsReviewRows()}
             </ReviewSection>

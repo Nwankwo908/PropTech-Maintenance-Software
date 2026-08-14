@@ -19,7 +19,7 @@ import {
 } from '@/lib/vendorTrades'
 import { requireOnboardingLandlord } from './draftStorage'
 import { importOnboardingResidentsFromExtraction } from './persist/importResidents'
-import { persistOnboardingProperties } from './persist/properties'
+import { persistOnboardingProperties, collectExtractedUnitLabels } from './persist/properties'
 import { fetchOnboardingResidents } from './persist/residents'
 import { fetchOnboardingVendors } from './persist/vendors'
 import type { OnboardingProperty } from './types'
@@ -432,23 +432,38 @@ export async function importMockExtraction(
   }
 
   const selectedProperties = review.properties.filter((p) => p.selected)
-  const onboardingProperties: OnboardingProperty[] = selectedProperties.map((p) => ({
-    id: p.id,
-    name: p.name,
-    streetAddress: p.address.split(',')[0]?.trim() ?? p.address,
-    city: '',
-    state: '',
-    zipCode: '',
-    unitCount: p.unitCount,
-    propertyManagerName: '',
-    propertyManagerPhone: '',
-  }))
+  const onboardingProperties: OnboardingProperty[] = selectedProperties.map((p) => {
+    const unitLabels = collectExtractedUnitLabels({
+      propertyName: p.name,
+      otherPropertyNames: selectedProperties.map((property) => property.name),
+      units: review.units,
+      residents: review.residents,
+      leases: review.leases,
+    })
+    return {
+      id: p.id,
+      name: p.name,
+      streetAddress: p.address.split(',')[0]?.trim() ?? p.address,
+      city: '',
+      state: '',
+      zipCode: '',
+      unitCount: Math.max(p.unitCount || 0, unitLabels.length, 1),
+      unitLabels: unitLabels.length > 0 ? unitLabels : undefined,
+      propertyManagerName: '',
+      propertyManagerPhone: '',
+    }
+  })
 
+  let persistedProperties: OnboardingProperty[] = []
   if (onboardingProperties.length > 0) {
     const unitResult = await persistOnboardingProperties(onboardingProperties)
     if (!unitResult.ok) return { ...unitResult, imported }
+    persistedProperties = unitResult.properties
     imported.properties = unitResult.properties.length
-    imported.units = unitResult.properties.reduce((s, p) => s + p.unitCount, 0)
+    imported.units = unitResult.properties.reduce(
+      (s, p) => s + (p.unitLabels?.length || p.unitCount),
+      0,
+    )
   }
 
   const selectedResidents = review.residents.filter((r) => r.selected)
@@ -457,6 +472,12 @@ export async function importMockExtraction(
     selectedResidents,
     selectedLeases,
     landlordId,
+    {
+      properties: persistedProperties.map((property) => ({
+        id: property.id,
+        name: property.name,
+      })),
+    },
   )
 
   const selectedVendors = review.vendors.filter((v) => v.selected)

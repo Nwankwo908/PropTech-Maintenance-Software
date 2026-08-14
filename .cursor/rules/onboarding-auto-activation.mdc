@@ -17,6 +17,7 @@ Managers send outreach when they are ready from **Residents** (welcome text) and
 | Onboarding complete — vendor with phone/email | **None** — send manually from Vendors |
 | Resident added after setup (with phone) | **None** — send manually from Residents |
 | Phone added later to existing resident | **None** — send manually from Residents |
+| Phone changed after setup (wrong number) | **None** — offer **Start onboarding again** on save; send only if checked |
 | Vendor added after setup (with phone/email) | **None** — send manually from vendor profile |
 | Find External Vendor → Invite to verify | **Manual** — explicit `sendVendorInvite` via invite modal |
 
@@ -40,7 +41,7 @@ Retries apply **after** the manager sends the first welcome text (or resends).
 
 **Retry only** on delivery problems (invalid number, carrier/network/provider errors).
 
-**Never auto-retry** when the resident replied STOP, already opted in / activated, or the phone number changed (landlord must update + **Resend Welcome Text**).
+**Never auto-retry** when the resident replied STOP, already opted in / activated, or the phone number changed (landlord must update + **Start onboarding again** / **Resend Welcome Text**).
 
 YES/START → `activated` (stop retries). STOP → `opted_out` (stop retries).
 
@@ -62,8 +63,8 @@ Cron: `check-tenant-activation-retries`. Attempts audited in `tenant_activation_
 ## Where it lives
 
 - Onboarding complete (no auto-send): `src/lib/onboarding/complete.ts` → `completeOnboarding`
-- Manual tenant send: `src/api/tenantActivation.ts` → `sendTenantWelcomeSms` / `resendTenantActivationSms`
-- Manual tenant UI: `TenantActivationManualActions` in Residents + resident profile
+- Manual tenant send: `src/api/tenantActivation.ts` → `sendTenantWelcomeSms` / `resendTenantActivationSms` / `restartTenantOnboardingAfterPhoneChange`
+- Manual tenant UI: `TenantActivationManualActions` in Residents + resident profile; **Start onboarding again** checkbox on `EditResidentModal` when the phone changes
 - Manual vendor invite: `src/api/vendorVerification.ts` → `sendVendorInvite`; UI on `AdminVendorDetailDashboard` + `InviteVendorModal`
 - Tenant send + retries: `supabase/functions/_shared/sms/tenantActivation.ts` / `send-tenant-activation` / `check-tenant-activation-retries`
 - Status UI: `src/lib/tenantActivationStatus.ts`

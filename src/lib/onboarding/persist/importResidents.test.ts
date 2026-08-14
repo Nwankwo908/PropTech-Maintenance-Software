@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   mergeFastTrackReviewResidents,
   onboardingResidentScopeKey,
+  resolveImportResidentBuilding,
 } from './importResidents'
 import type { OnboardingResident } from './residents'
 
@@ -10,6 +11,28 @@ describe('onboardingResidentScopeKey', () => {
     expect(onboardingResidentScopeKey('Jamie Tenant', '101', 'Riverview')).toBe(
       onboardingResidentScopeKey('jamie tenant', '101', 'Riverview'),
     )
+  })
+})
+
+describe('resolveImportResidentBuilding', () => {
+  const properties = [{ id: 'prop-1', name: 'Maple Court' }]
+  const units = [
+    { unitLabel: '101', building: 'Maple Court', propertyId: 'prop-1' },
+    { unitLabel: '102', building: 'Maple Court', propertyId: 'prop-1' },
+  ]
+
+  it('maps an empty building to the property inventory when the unit is unique', () => {
+    expect(resolveImportResidentBuilding('101', '', units, properties)).toBe('Maple Court')
+  })
+
+  it('maps drifted rent-roll building labels to the saved property name', () => {
+    expect(
+      resolveImportResidentBuilding('102', 'Maple Court Rent Roll', units, properties),
+    ).toBe('Maple Court')
+  })
+
+  it('falls back to the only saved property for multifamily portfolios with one property', () => {
+    expect(resolveImportResidentBuilding('', '', units, properties)).toBe('Maple Court')
   })
 })
 

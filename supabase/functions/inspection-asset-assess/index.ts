@@ -13,6 +13,15 @@
 import { serve } from "https://deno.land/std/http/server.ts"
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1"
 import { confirmInspectionAssessment } from "../_shared/vision/confirmAssessment.ts"
+import {
+  createInspectionUploadSignedUrl,
+  identifyWithDibSmartAdd,
+  isDibSmartAddEnabled,
+} from "../_shared/vision/dibSmartAdd.ts"
+import {
+  buildHybridVisionProviderLabel,
+  mergeDibIdentificationWithVisionAssessment,
+} from "../_shared/vision/dibHybrid.ts"
 import { getVisionProvider, getVisionProviderName } from "../_shared/vision/getProvider.ts"
 import {
   mergeHintCategory,
@@ -86,6 +95,7 @@ async function analyzePhotoRow(
   contentType: string,
   hintCategory: string | null,
   mode: "photo" | "document",
+  storagePath: string | null = null,
 ): Promise<Record<string, unknown>> {
   const started = Date.now()
   await supabase
@@ -144,14 +154,26 @@ async function analyzePhotoRow(
       return data as Record<string, unknown>
     }
 
+    let dibPass: Awaited<ReturnType<typeof identifyWithDibSmartAdd>> = null
+    if (mode === "photo" && storagePath && isDibSmartAddEnabled()) {
+      const signedUrl = await createInspectionUploadSignedUrl(supabase, storagePath)
+      if (signedUrl) {
+        dibPass = await identifyWithDibSmartAdd(signedUrl)
+      }
+    }
+
     const result = await provider.analyzeImage(
       imageBase64,
       effectiveHint ?? undefined,
       contentType,
     )
+    const merged = mergeDibIdentificationWithVisionAssessment(
+      dibPass?.identification ?? null,
+      result,
+    )
     const enriched = {
-      ...result,
-      rawConfidenceNotes: [result.rawConfidenceNotes, roboflow?.note]
+      ...merged,
+      rawConfidenceNotes: [merged.rawConfidenceNotes, roboflow?.note]
         .filter(Boolean)
         .join(" "),
       ...(roboflow
@@ -168,8 +190,25 @@ async function analyzePhotoRow(
           },
         }
         : {}),
+      ...(dibPass
+        ? {
+          _dib: {
+            confidence: dibPass.identification.confidence,
+            confidenceThreshold: dibPass.confidenceThreshold,
+            latencyMs: dibPass.latencyMs,
+            rawCandidateCount: dibPass.rawCandidateCount,
+            category: dibPass.identification.dibCategory,
+            subCategory: dibPass.identification.dibSubCategory,
+            itemId: dibPass.identification.dibItemId,
+            identifiedItem: dibPass.identification,
+          },
+        }
+        : {}),
     }
     const latencyMs = Date.now() - started
+    const providerLabel = dibPass
+      ? buildHybridVisionProviderLabel(providerName)
+      : providerName
     const { data, error } = await supabase
       .from("property_inspection_photos")
       .update({
@@ -177,9 +216,9 @@ async function analyzePhotoRow(
         ai_result: enriched,
         // Persist resolved hint when Roboflow filled a gap (keeps retry consistent)
         ...(effectiveHint && !hintCategory ? { hint_category: effectiveHint } : {}),
-        provider: providerName,
+        provider: providerLabel,
         latency_ms: latencyMs,
-        estimated_cost_usd: 0.008,
+        estimated_cost_usd: dibPass ? 0.012 : 0.008,
         updated_at: new Date().toISOString(),
       })
       .eq("id", photoId)
@@ -385,6 +424,7 @@ serve(async (req) => {
         contentType,
         hintCategory,
         mode,
+        storagePath,
       )
       return jsonResponse({ photo: mapPhotoRow(analyzed) })
     }
@@ -424,6 +464,7 @@ serve(async (req) => {
         contentType,
         photo.hint_category != null ? String(photo.hint_category) : null,
         mode,
+        String(photo.storage_path),
       )
       return jsonResponse({ photo: mapPhotoRow(analyzed) })
     }

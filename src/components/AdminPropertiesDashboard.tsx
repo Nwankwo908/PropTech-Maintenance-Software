@@ -15,10 +15,10 @@ import {
   mapTicketsForPropertyHealth,
   mapUnitsForPropertyHealth,
   normalizeBuildingKey,
-  PROPERTY_HEALTH_KPI_CAPTION,
   formatPropertyHealthKpiValue,
   propertyHealthFactorBreakdownLines,
   propertyHealthKpiDelta,
+  resolvePropertyHealthKpiCaption,
   type PropertyHealthCanonicalProperty,
   type PropertyHealthFeedback,
   type PropertyHealthPmTask,
@@ -410,7 +410,7 @@ export function AdminPropertiesDashboard() {
             .limit(500),
           supabase
             .from('units')
-            .select('id, unit_label, building, status, property_id')
+            .select('id, unit_label, building, status, property_id, updated_at')
             .eq('landlord_id', landlordId)
             .limit(1000),
           fetchPropertyHealthSignals(),
@@ -622,22 +622,19 @@ export function AdminPropertiesDashboard() {
 
   const updatedCaption =
     loading || !lastUpdated ? 'Updating…' : formatUpdatedAt(lastUpdated)
-  const portfolioPendingSetup = healthReport.portfolio?.status === 'pending_setup'
-  const healthKpiCaption = healthReport.portfolio
-    ? portfolioPendingSetup
-      ? 'Units are inactive — activate units to measure portfolio health.'
-      : PROPERTY_HEALTH_KPI_CAPTION
-    : updatedCaption
+  const portfolioPendingSetup =
+    !healthReport.portfolio || healthReport.portfolio.status === 'pending_setup'
+  const healthKpiCaption = resolvePropertyHealthKpiCaption(healthReport.portfolio)
   const healthFactorBreakdown =
     !loading && healthReport.portfolio && !portfolioPendingSetup
       ? propertyHealthFactorBreakdownLines(healthReport.portfolio.components)
       : undefined
   const healthKpiValue =
-    loading || !healthReport.portfolio
+    loading
       ? '—'
       : portfolioPendingSetup
         ? 'Pending'
-        : formatPropertyHealthKpiValue(healthReport.portfolio.score)
+        : formatPropertyHealthKpiValue(healthReport.portfolio!.score)
 
   const visibleBuildings = healthReport.buildings
   const allVisibleBuildingsSelected =

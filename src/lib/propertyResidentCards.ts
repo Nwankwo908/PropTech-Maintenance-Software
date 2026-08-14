@@ -3,7 +3,7 @@ import {
   formatPropertyUnitDisplay,
   type PropertyUnitResident,
 } from '@/lib/propertyUnitRows'
-import { normalizeBuildingKey, normalizeUnitLabel } from '@/lib/propertyHealth'
+import { normalizeUnitLabel } from '@/lib/propertyHealth'
 
 export type PropertyResidentCard = {
   id: string
@@ -36,12 +36,12 @@ function unitSortKey(label: string): number {
   return Number.isFinite(parsed) ? parsed : Number.MAX_SAFE_INTEGER
 }
 
+/** Pass residents already scoped to the property (see filterResidentsForPropertyScope). */
 export function buildPropertyResidentCards(
-  building: string,
+  _building: string,
   residents: PropertyUnitResident[],
 ): PropertyResidentCard[] {
   return residents
-    .filter((resident) => normalizeBuildingKey(resident.building) === normalizeBuildingKey(building))
     .filter((resident) => !['past_resident', 'inactive'].includes(resident.status.toLowerCase()))
     .map((resident) => ({
       id: resident.id,

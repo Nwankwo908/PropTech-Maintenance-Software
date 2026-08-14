@@ -14,9 +14,12 @@ import {
   beginMultiIssueSharedIntake,
   buildMultiIssueConfirmSms,
   buildMultiIssueSubmittedSms,
+  buildRequestSubmittedSms,
   detectMultipleMaintenanceIssues,
   intakeSliceForPendingIssue,
   intakeStateForMultiIssueConfirm,
+  INTAKE_MULTI_SUBMIT_FAILED_SMS,
+  INTAKE_SUBMIT_FAILED_SMS,
   isNoReply,
 } from "./multiIssueIntake.ts"
 import type { WorkflowContext, WorkflowResult } from "./workflow_types.ts"
@@ -668,6 +671,7 @@ export async function processResidentMaintenanceIntake(
       if (multiIssues.length >= 2) {
         try {
           const ticketIds: string[] = []
+          let allVendorsAssigned = true
           // Same unit + same trade → reuse the first assigned vendor.
           const vendorByTrade = new Map<string, string>()
           for (let i = 0; i < multiIssues.length; i++) {
@@ -679,18 +683,17 @@ export async function processResidentMaintenanceIntake(
             const preferVendorId = tradeKey
               ? vendorByTrade.get(tradeKey) ?? null
               : null
-            const { ticketId, vendorId } = await submitSmsMaintenanceRequest(
-              supabase,
-              {
+            const { ticketId, vendorId, vendorAssigned } =
+              await submitSmsMaintenanceRequest(supabase, {
                 landlordId: ctx.landlordId,
                 conversationId: ctx.conversationId,
                 residentId,
                 intake: slice,
                 forceNewTicket: i > 0,
                 preferVendorId,
-              },
-            )
+              })
             ticketIds.push(ticketId)
+            if (!vendorAssigned) allVendorsAssigned = false
             if (tradeKey && vendorId) {
               vendorByTrade.set(tradeKey, vendorId)
             }
@@ -704,7 +707,10 @@ export async function processResidentMaintenanceIntake(
           await saveIntakeState(supabase, ctx.conversationId, submitted)
           return {
             route: "resident_maintenance_intake",
-            replyHint: buildMultiIssueSubmittedSms(ticketIds),
+            replyHint: buildMultiIssueSubmittedSms(
+              ticketIds,
+              allVendorsAssigned,
+            ),
             metadata: {
               submitted: true,
               multiIssue: true,
@@ -717,26 +723,27 @@ export async function processResidentMaintenanceIntake(
           console.error("[sms-intake] multi-issue submit failed", message)
           return {
             route: "resident_maintenance_intake",
-            replyHint:
-              "Sorry about that. I couldn't submit those requests just now. Please try again in a moment, or reach out to your property manager if it keeps happening.",
+            replyHint: INTAKE_MULTI_SUBMIT_FAILED_SMS,
             metadata: { submitError: message, multiIssue: true },
           }
         }
       }
 
       try {
-        const { ticketId } = await submitSmsMaintenanceRequest(supabase, {
-          landlordId: ctx.landlordId,
-          conversationId: ctx.conversationId,
-          residentId,
-          intake: state,
-        })
+        const { ticketId, vendorAssigned } = await submitSmsMaintenanceRequest(
+          supabase,
+          {
+            landlordId: ctx.landlordId,
+            conversationId: ctx.conversationId,
+            residentId,
+            intake: state,
+          },
+        )
         const submitted: SmsIntakeState = { ...state, step: "submitted" }
         await saveIntakeState(supabase, ctx.conversationId, submitted)
         return {
           route: "resident_maintenance_intake",
-          replyHint:
-            `You're all set! I've submitted your request (ref ${ticketId.slice(0, 8).toUpperCase()}). We'll line up a vendor and keep you posted right here.`,
+          replyHint: buildRequestSubmittedSms(ticketId, vendorAssigned),
           metadata: { submitted: true, ticketId, intakeStep: "submitted" },
         }
       } catch (err) {
@@ -744,8 +751,7 @@ export async function processResidentMaintenanceIntake(
         console.error("[sms-intake] submit failed", message)
         return {
           route: "resident_maintenance_intake",
-          replyHint:
-            "Sorry about that. I couldn't submit your request just now. Please try again in a moment, or reach out to your property manager if it keeps happening.",
+          replyHint: INTAKE_SUBMIT_FAILED_SMS,
           metadata: { submitError: message },
         }
       }

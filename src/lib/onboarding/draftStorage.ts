@@ -180,6 +180,9 @@ function normalizeOnboardingProperty(raw: unknown): OnboardingProperty | null {
     propertyType: propertyType || undefined,
     propertyManagerName,
     propertyManagerPhone,
+    unitLabels: Array.isArray(row.unitLabels)
+      ? row.unitLabels.map((label) => String(label).trim()).filter(Boolean)
+      : undefined,
   }
 }
 

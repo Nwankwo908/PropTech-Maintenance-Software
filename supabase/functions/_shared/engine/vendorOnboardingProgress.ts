@@ -4,6 +4,7 @@
  */
 import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.49.1"
 import { logGraphEvent } from "../graph/logGraphEvent.ts"
+import { recordActivityLog } from "../graph/recordActivityLog.ts"
 import {
   readVendorOnboardingState,
   type VendorOnboardingState,
@@ -76,6 +77,52 @@ export async function startVendorOnboardingRun(
         last_activity_at: now,
         reminder_count: 0,
       } satisfies VendorOnboardingState,
+    },
+  })
+}
+
+/** Invite never reached the vendor — drop the run so it does not sit on Active Tasks. */
+export async function abortFailedVendorOnboardingInvite(
+  supabase: SupabaseClient,
+  params: {
+    runId: string
+    landlordId: string
+    vendorId: string | null
+    vendorLabel: string
+    verificationId?: string | null
+    delivery?: Record<string, unknown> | null
+  },
+): Promise<void> {
+  if (params.verificationId) {
+    await supabase.from("vendor_verifications").delete().eq("id", params.verificationId)
+  } else {
+    await supabase
+      .from("vendor_verifications")
+      .delete()
+      .eq("workflow_run_id", params.runId)
+  }
+
+  await updateWorkflowRun(supabase, params.runId, {
+    status: "cancelled",
+    currentStep: "cancelled",
+    completedAt: new Date().toISOString(),
+    metadata: {
+      cancelled_reason: "invite_delivery_failed",
+      delivery: params.delivery ?? null,
+    },
+  })
+
+  await recordActivityLog(supabase, {
+    landlordId: params.landlordId,
+    eventType: "vendor.invite_failed",
+    source: "dashboard",
+    actorType: "landlord",
+    vendorId: params.vendorId,
+    workflowRunId: params.runId,
+    workflowTemplateId: "vendor_onboarding",
+    metadata: {
+      message: `Verification invite could not be sent to ${params.vendorLabel}.`,
+      delivery: params.delivery ?? null,
     },
   })
 }

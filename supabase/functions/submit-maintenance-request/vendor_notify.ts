@@ -437,6 +437,18 @@ async function notifyChannelsForAssignment(
   return errors
 }
 
+export type VendorAssignSkipReason =
+  | "no_vendor"
+  | "ai_dispatch_disabled"
+  | "assign_failed"
+  | "ticket_missing"
+
+export type AssignVendorResult = {
+  assigned: boolean
+  vendorId: string | null
+  skipReason?: VendorAssignSkipReason
+}
+
 /**
  * Assigns an active vendor to the ticket and sends email/SMS per vendor.notification_channel.
  * Does not throw — logs errors and sets maintenance_requests.vendor_notify_error.
@@ -445,7 +457,7 @@ async function notifyChannelsForAssignment(
 export async function assignVendorAndNotify(
   supabase: SupabaseClient,
   payload: TicketNotifyPayload,
-): Promise<{ assigned: boolean; vendorId: string | null }> {
+): Promise<AssignVendorResult> {
   const { data: ticket } = await supabase
     .from("maintenance_requests")
     .select("id, vendor_notified_at, issue_category, resident_availability_text")
@@ -454,7 +466,7 @@ export async function assignVendorAndNotify(
 
   if (!ticket) {
     console.error("[vendor-notify] ticket not found", payload.ticketId)
-    return { assigned: false, vendorId: null }
+    return { assigned: false, vendorId: null, skipReason: "ticket_missing" }
   }
   if (ticket.vendor_notified_at) {
     console.log("[vendor-notify] skip, already notified", payload.ticketId)
@@ -467,7 +479,11 @@ export async function assignVendorAndNotify(
       typeof existing?.assigned_vendor_id === "string"
         ? existing.assigned_vendor_id
         : null
-    return { assigned: Boolean(vendorId), vendorId }
+    return {
+      assigned: Boolean(vendorId),
+      vendorId,
+      skipReason: vendorId ? undefined : "no_vendor",
+    }
   }
 
   if (!payload.residentAvailabilityText?.trim()) {
@@ -496,6 +512,28 @@ export async function assignVendorAndNotify(
   }
   payload.landlordId = landlordId
 
+  const operational = landlordId
+    ? await (async () => {
+      const { loadLandlordOperationalSettings } = await import(
+        "../_shared/landlordNotificationPrefs.ts"
+      )
+      return loadLandlordOperationalSettings(supabase, landlordId)
+    })()
+    : null
+  if (operational && operational.allowAiDispatch === false) {
+    console.log("[vendor-notify] AI dispatch disabled; awaiting landlord approval", {
+      ticketId: payload.ticketId,
+      landlordId,
+    })
+    await supabase
+      .from("maintenance_requests")
+      .update({
+        vendor_notify_error: "Awaiting landlord approval before vendor dispatch",
+      })
+      .eq("id", payload.ticketId)
+    return { assigned: false, vendorId: null, skipReason: "ai_dispatch_disabled" }
+  }
+
   const vendor = await resolveVendorForNewTicket(
     supabase,
     issueCategory,
@@ -517,7 +555,7 @@ export async function assignVendorAndNotify(
           : "No active vendor available",
       })
       .eq("id", payload.ticketId)
-    return { assigned: false, vendorId: null }
+    return { assigned: false, vendorId: null, skipReason: "no_vendor" }
   }
   const assignedAt = new Date().toISOString()
   const actionToken = crypto.randomUUID()
@@ -542,7 +580,7 @@ export async function assignVendorAndNotify(
       .from("maintenance_requests")
       .update({ vendor_notify_error: assignError.message })
       .eq("id", payload.ticketId)
-    return { assigned: false, vendorId: null }
+    return { assigned: false, vendorId: null, skipReason: "assign_failed" }
   }
 
   console.log("[vendor-notify] assigned vendor persisted", {

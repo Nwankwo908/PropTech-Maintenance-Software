@@ -1,5 +1,8 @@
 import { useEffect, useId, useMemo, useState } from 'react'
 import { getErrorMessage } from '@/lib/errorMessage'
+import { formatPhoneNational, optionalPhoneForDbOrError } from '@/lib/phoneFormat'
+import { shouldOfferRestartTenantOnboarding } from '@/api/tenantActivation'
+import { checkboxInputClassName } from '@/components/TableCheckbox'
 
 type ResidentStatus = 'active' | 'pending' | 'past_resident' | 'suspended'
 
@@ -11,6 +14,12 @@ export type EditResidentSavePayload = {
   status: ResidentStatus
   /** Inventory key (e.g. `2b-a`); empty string = unassigned */
   unitOptionKey: string
+  /** YYYY-MM-DD; empty when unset */
+  leaseStart: string
+  /** YYYY-MM-DD; empty when unset */
+  leaseEnd: string
+  /** Send welcome SMS to the new number after a phone change. */
+  restartOnboarding?: boolean
 }
 
 export type EditResidentModalRow = {
@@ -22,6 +31,10 @@ export type EditResidentModalRow = {
   phone?: string
   unit: { kind: 'unassigned' } | { kind: 'assigned'; unit: string; building: string }
   status: ResidentStatus
+  /** YYYY-MM-DD */
+  leaseStart?: string | null
+  /** YYYY-MM-DD */
+  leaseEnd?: string | null
 }
 
 const STATUS_OPTIONS: { value: ResidentStatus; label: string }[] = [
@@ -57,6 +70,11 @@ function IconChevronDown({ className = 'size-4 text-extended-3' }: { className?:
       <path d="M6 9l6 6 6-6" stroke="currentColor" strokeWidth={2} strokeLinecap="round" />
     </svg>
   )
+}
+
+function toDateInputValue(raw: string | null | undefined): string {
+  const value = (raw ?? '').trim().slice(0, 10)
+  return /^\d{4}-\d{2}-\d{2}$/.test(value) ? value : ''
 }
 
 function IconTrash({ className = 'size-4 shrink-0 text-error' }: { className?: string }) {
@@ -96,22 +114,39 @@ export function EditResidentModal({
   const [phone, setPhone] = useState('')
   const [status, setStatus] = useState<ResidentStatus>('active')
   const [unitKey, setUnitKey] = useState('')
+  const [leaseStart, setLeaseStart] = useState('')
+  const [leaseEnd, setLeaseEnd] = useState('')
   const [saving, setSaving] = useState(false)
   const [saveError, setSaveError] = useState<string | null>(null)
+  const [restartOnboarding, setRestartOnboarding] = useState(true)
 
   const formValid = useMemo(() => {
     return fullName.trim().length > 0 && email.trim().length > 0
   }, [fullName, email])
 
+  const offerRestartOnboarding = Boolean(row) && shouldOfferRestartTenantOnboarding(row?.phone, phone)
+
   useEffect(() => {
     if (!row) return
     setFullName(row.name)
     setEmail(row.email)
-    setPhone(row.phone ?? '')
+    setPhone(row.phone ? formatPhoneNational(row.phone) : '')
     setStatus(row.status)
     setUnitKey(initialUnitOptionKey)
+    setLeaseStart(toDateInputValue(row.leaseStart))
+    setLeaseEnd(toDateInputValue(row.leaseEnd))
     setSaveError(null)
-  }, [row?.id, row?.name, row?.email, row?.phone, row?.status, initialUnitOptionKey])
+    setRestartOnboarding(true)
+  }, [
+    row?.id,
+    row?.name,
+    row?.email,
+    row?.phone,
+    row?.status,
+    row?.leaseStart,
+    row?.leaseEnd,
+    initialUnitOptionKey,
+  ])
 
   useEffect(() => {
     if (!row) return
@@ -128,14 +163,23 @@ export function EditResidentModal({
     if (!formValid || !row) return
     setSaving(true)
     setSaveError(null)
+    const phoneResult = optionalPhoneForDbOrError(phone)
+    if (phoneResult.error) {
+      setSaveError(phoneResult.error)
+      setSaving(false)
+      return
+    }
     try {
       await onSave({
         id: row.id,
         fullName: fullName.trim(),
         email: email.trim(),
-        phone: phone.trim() || undefined,
+        phone: phoneResult.phone ?? undefined,
         status,
         unitOptionKey: unitKey.trim(),
+        leaseStart: leaseStart.trim(),
+        leaseEnd: leaseEnd.trim(),
+        restartOnboarding: offerRestartOnboarding && restartOnboarding,
       })
       onClose()
     } catch (e) {
@@ -227,7 +271,30 @@ export function EditResidentModal({
                 onChange={(e) => setPhone(e.target.value)}
                 className={inputClass}
                 autoComplete="tel"
+                placeholder="(555) 123-4567"
               />
+              <p className="text-[12px] font-normal leading-4 text-neutral">
+                US numbers only — any common format is fine.
+              </p>
+              {offerRestartOnboarding ? (
+                <label className="mt-2 flex cursor-pointer items-start gap-2.5">
+                  <input
+                    type="checkbox"
+                    className={`${checkboxInputClassName} mt-0.5`}
+                    checked={restartOnboarding}
+                    onChange={(e) => setRestartOnboarding(e.target.checked)}
+                    aria-label="Start onboarding again"
+                  />
+                  <span className="min-w-0">
+                    <span className="block text-[14px] font-medium leading-5 text-extended-3">
+                      Start onboarding again
+                    </span>
+                    <span className="mt-0.5 block text-[12px] font-normal leading-4 text-neutral">
+                      Send a welcome text to this number so they can opt in. Use this if the original number was wrong.
+                    </span>
+                  </span>
+                </label>
+              ) : null}
             </div>
             <div className="space-y-2">
               <label
@@ -257,6 +324,38 @@ export function EditResidentModal({
               <p className="text-[12px] font-normal leading-4 text-neutral">
                 Shows vacant units and this resident&apos;s current unit so you can reassign if needed.
               </p>
+            </div>
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+              <div className="space-y-2">
+                <label
+                  htmlFor="edit-resident-lease-start"
+                  className="block text-[14px] font-medium leading-5 tracking-[-0.1504px] text-neutral-variant"
+                >
+                  Lease start date
+                </label>
+                <input
+                  id="edit-resident-lease-start"
+                  type="date"
+                  value={leaseStart}
+                  onChange={(e) => setLeaseStart(e.target.value)}
+                  className={`${inputClass} min-h-9`}
+                />
+              </div>
+              <div className="space-y-2">
+                <label
+                  htmlFor="edit-resident-lease-end"
+                  className="block text-[14px] font-medium leading-5 tracking-[-0.1504px] text-neutral-variant"
+                >
+                  Lease end date
+                </label>
+                <input
+                  id="edit-resident-lease-end"
+                  type="date"
+                  value={leaseEnd}
+                  onChange={(e) => setLeaseEnd(e.target.value)}
+                  className={`${inputClass} min-h-9`}
+                />
+              </div>
             </div>
             <div className="space-y-2">
               <label

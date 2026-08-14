@@ -1,18 +1,20 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import {
   countCriticalPushEvents,
   CRITICAL_SAFETY_ALERTS,
   DEFAULT_NOTIFICATION_SETTINGS,
-  DELIVERY_HEALTH,
-  loadNotificationSettings,
+  loadNotificationSettingsForAccount,
   muteCategory,
-  saveNotificationSettings,
+  saveNotificationSettingsForAccount,
   updateEventChannel,
   type NotificationChannel,
   type NotificationEventCategory,
   type NotificationSettingsState,
 } from '@/lib/notificationSettings'
+import { fetchNotificationDeliveryHealth, type NotificationDeliveryHealth } from '@/lib/notificationDeliveryHealth'
+import { sendSettingsTestNotification } from '@/api/settingsTestNotification'
+import { fetchLandlordAccountProfile } from '@/lib/landlordAccountProfile'
 
 const sectionCardClass =
   'sa-surface rounded-[10px] border border-[#e5e7eb] bg-white p-6 shadow-[0px_1px_2px_-1px_rgba(0,0,0,0.06)]'
@@ -27,7 +29,7 @@ const CHANNEL_LABELS: Record<NotificationChannel, string> = {
   push: 'Push',
 }
 
-const EVENT_CHANNELS: NotificationChannel[] = ['email', 'sms', 'activity_feed', 'push']
+const EVENT_CHANNELS: NotificationChannel[] = ['email', 'sms', 'activity_feed']
 
 function SelectChevron() {
   return (
@@ -220,7 +222,6 @@ function EventCategorySection({
               <th className="px-4 py-3 text-center font-semibold">Email</th>
               <th className="px-4 py-3 text-center font-semibold">SMS</th>
               <th className="px-4 py-3 text-center font-semibold">Activity feed</th>
-              <th className="px-4 py-3 text-center font-semibold">Push</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-[#eef0f3] bg-white">
@@ -261,9 +262,47 @@ function SidebarStat({ label, value }: { label: string; value: string }) {
 }
 
 export function AdminNotificationSettings() {
-  const [saved, setSaved] = useState<NotificationSettingsState>(() => loadNotificationSettings())
-  const [draft, setDraft] = useState<NotificationSettingsState>(() => loadNotificationSettings())
+  const [saved, setSaved] = useState<NotificationSettingsState>(() => ({
+    delivery: { ...DEFAULT_NOTIFICATION_SETTINGS.delivery },
+    categories: JSON.parse(
+      JSON.stringify(DEFAULT_NOTIFICATION_SETTINGS.categories),
+    ) as NotificationEventCategory[],
+  }))
+  const [draft, setDraft] = useState<NotificationSettingsState>(() => ({
+    delivery: { ...DEFAULT_NOTIFICATION_SETTINGS.delivery },
+    categories: JSON.parse(
+      JSON.stringify(DEFAULT_NOTIFICATION_SETTINGS.categories),
+    ) as NotificationEventCategory[],
+  }))
+  const [loading, setLoading] = useState(true)
+  const [profileEmail, setProfileEmail] = useState('')
+  const [profilePhone, setProfilePhone] = useState('')
   const [saveMessage, setSaveMessage] = useState<string | null>(null)
+  const [saveError, setSaveError] = useState<string | null>(null)
+  const [deliveryHealth, setDeliveryHealth] = useState<NotificationDeliveryHealth | null>(null)
+  const [testState, setTestState] = useState<Record<string, 'idle' | 'sending' | 'sent' | 'failed'>>({
+    email: 'idle',
+    sms: 'idle',
+  })
+  const [testMessage, setTestMessage] = useState<string | null>(null)
+
+  useEffect(() => {
+    let cancelled = false
+    void Promise.all([loadNotificationSettingsForAccount(), fetchLandlordAccountProfile(), fetchNotificationDeliveryHealth()]).then(
+      ([settings, profile, health]) => {
+        if (cancelled) return
+        setSaved(settings)
+        setDraft(settings)
+        setProfileEmail(profile.email)
+        setProfilePhone(profile.phone)
+        setDeliveryHealth(health)
+        setLoading(false)
+      },
+    )
+    return () => {
+      cancelled = true
+    }
+  }, [])
 
   const isDirty = useMemo(() => JSON.stringify(saved) !== JSON.stringify(draft), [draft, saved])
   const criticalPushCount = useMemo(() => countCriticalPushEvents(draft.categories), [draft.categories])
@@ -306,9 +345,35 @@ export function AdminNotificationSettings() {
   }
 
   function handleSave() {
-    saveNotificationSettings(draft)
-    setSaved(draft)
-    setSaveMessage('Notification settings saved.')
+    setSaveError(null)
+    void saveNotificationSettingsForAccount(draft)
+      .then(() => {
+        setSaved(draft)
+        setSaveMessage('Notification settings saved.')
+      })
+      .catch((err: unknown) => {
+        setSaveError(err instanceof Error ? err.message : 'Could not save notification settings.')
+      })
+  }
+
+  function handleSendTest(channel: 'email' | 'sms') {
+    setTestMessage(null)
+    setTestState((current) => ({ ...current, [channel]: 'sending' }))
+    void sendSettingsTestNotification({ channel }).then((result) => {
+      setTestState((current) => ({
+        ...current,
+        [channel]: result.ok ? 'sent' : 'failed',
+      }))
+      setTestMessage(result.ok ? (result.message ?? 'Sent.') : (result.error ?? 'Failed to send.'))
+    })
+  }
+
+  if (loading) {
+    return (
+      <main className="px-8 pb-12">
+        <p className="py-6 text-[14px] text-[#6a7282]">Loading notification settings…</p>
+      </main>
+    )
   }
 
   return (
@@ -346,6 +411,9 @@ export function AdminNotificationSettings() {
         {saveMessage ? (
           <p className="mt-3 text-[13px] font-medium tracking-[-0.1504px] text-[#067647]">{saveMessage}</p>
         ) : null}
+        {saveError ? (
+          <p className="mt-3 text-[13px] font-medium tracking-[-0.1504px] text-[#b42318]">{saveError}</p>
+        ) : null}
       </div>
 
       <div className="flex flex-col gap-8 xl:flex-row xl:items-start">
@@ -359,13 +427,13 @@ export function AdminNotificationSettings() {
             </p>
 
             <div className="mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-              <DeliveryChannelCard label="Email" connected />
-              <DeliveryChannelCard label="SMS" connected />
+              <DeliveryChannelCard label="Email" connected={Boolean(profileEmail.trim())} />
+              <DeliveryChannelCard label="SMS" connected={Boolean(profilePhone.trim())} />
               <DeliveryChannelCard label="Activity feed" connected />
               <DeliveryChannelCard
                 label="Push"
-                connected={draft.delivery.pushEnabled}
-                actionLabel="Enable push"
+                connected={false}
+                actionLabel="Coming soon"
               />
             </div>
 
@@ -386,7 +454,6 @@ export function AdminNotificationSettings() {
                     <option value="email">Email</option>
                     <option value="sms">SMS</option>
                     <option value="activity_feed">Activity feed</option>
-                    <option value="push">Push</option>
                   </select>
                   <SelectChevron />
                 </div>
@@ -407,7 +474,6 @@ export function AdminNotificationSettings() {
                     <option value="email">Email</option>
                     <option value="sms">SMS</option>
                     <option value="activity_feed">Activity feed</option>
-                    <option value="push">Push</option>
                   </select>
                   <SelectChevron />
                 </div>
@@ -490,19 +556,32 @@ export function AdminNotificationSettings() {
             <p className="mt-1 text-[14px] leading-5 tracking-[-0.1504px] text-[#6a7282]">
               Send a sample alert to confirm your channels are working.
             </p>
-            <div className="mt-5 grid gap-3 sm:grid-cols-3">
-              {(['Email', 'SMS', 'Push'] as const).map((label) => (
-                <div
-                  key={label}
-                  className="rounded-[10px] border border-[#eef0f3] bg-[#f9fafb] px-4 py-4 text-center"
-                >
-                  <p className="text-[14px] font-medium tracking-[-0.1504px] text-[#101828]">
-                    Send test {label}
-                  </p>
-                  <OutlineButton className="mt-3 w-full">Send</OutlineButton>
-                </div>
-              ))}
+            <div className="mt-5 grid gap-3 sm:grid-cols-2">
+              {(['Email', 'SMS'] as const).map((label) => {
+                const channel = label.toLowerCase() as 'email' | 'sms'
+                const state = testState[channel]
+                return (
+                  <div
+                    key={label}
+                    className="rounded-[10px] border border-[#eef0f3] bg-[#f9fafb] px-4 py-4 text-center"
+                  >
+                    <p className="text-[14px] font-medium tracking-[-0.1504px] text-[#101828]">
+                      Send test {label}
+                    </p>
+                    <OutlineButton
+                      className="mt-3 w-full"
+                      disabled={state === 'sending'}
+                      onClick={() => handleSendTest(channel)}
+                    >
+                      {state === 'sending' ? 'Sending…' : state === 'sent' ? 'Sent' : 'Send'}
+                    </OutlineButton>
+                  </div>
+                )
+              })}
             </div>
+            {testMessage ? (
+              <p className="mt-3 text-[13px] tracking-[-0.1504px] text-[#6a7282]">{testMessage}</p>
+            ) : null}
           </section>
         </div>
 
@@ -518,10 +597,24 @@ export function AdminNotificationSettings() {
                 label="Quiet hours"
                 value={`${draft.delivery.quietHoursStart} — ${draft.delivery.quietHoursEnd}`}
               />
-              <SidebarStat label="Sent (7 days)" value={DELIVERY_HEALTH.sent7Days} />
-              <SidebarStat label="Delivery rate" value={DELIVERY_HEALTH.deliveryRate} />
-              <SidebarStat label="Unsubscribe rate" value={DELIVERY_HEALTH.unsubscribeRate} />
+              <SidebarStat
+                label="Sent (7 days)"
+                value={deliveryHealth?.hasData ? String(deliveryHealth.sent7Days) : '—'}
+              />
+              <SidebarStat
+                label="Delivery rate"
+                value={deliveryHealth?.hasData ? deliveryHealth.deliveryRateLabel : '—'}
+              />
+              <SidebarStat
+                label="Failed (7 days)"
+                value={deliveryHealth?.hasData ? String(deliveryHealth.failed7Days) : '—'}
+              />
             </div>
+            {!deliveryHealth?.hasData ? (
+              <p className="mt-3 text-[13px] leading-5 tracking-[-0.1504px] text-[#6a7282]">
+                Delivery health will appear after you start sending notifications.
+              </p>
+            ) : null}
           </section>
 
           <section className={sectionCardClass}>

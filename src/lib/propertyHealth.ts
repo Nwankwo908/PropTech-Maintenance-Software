@@ -11,11 +11,18 @@
  *
  * Missing signals use PROPERTY_HEALTH_NEUTRAL_SCORE (50) — neither rewards nor
  * penalizes until real data exists. Resident satisfaction never uses derived proxies.
+ *
+ * Scores stay in "Pending setup" until the scope has enough real signal:
+ *   30+ days of operational history (earliest tracked unit or ticket), OR
+ *   at least one completed preventive-maintenance (PM) task.
  */
 import { getActiveLandlordId } from '@/lib/activeLandlord'
 
 /** Neither penalize nor reward when a signal has no underlying data yet. */
 export const PROPERTY_HEALTH_NEUTRAL_SCORE = 50
+
+/** Days of ops history required before showing a numeric health score. */
+export const PROPERTY_HEALTH_OPS_MATURITY_DAYS = 30
 
 export const PROPERTY_HEALTH_WEIGHTS = {
   openMaintenance: 0.4,
@@ -30,6 +37,31 @@ export const PROPERTY_HEALTH_WEIGHTS = {
 export const REPEAT_ISSUE_WINDOW_DAYS = 45
 
 export const PROPERTY_HEALTH_KPI_CAPTION = 'Operational health score.'
+
+export type PropertyHealthPendingReason = 'inactive_units' | 'collecting_history'
+
+/** KPI helper copy while health is still pending setup. */
+export function resolvePropertyHealthKpiCaption(
+  portfolio: PropertyHealthScopeScore | null,
+): string {
+  if (!portfolio || portfolio.status !== 'pending_setup') {
+    return portfolio ? PROPERTY_HEALTH_KPI_CAPTION : 'Activate units to start measuring property health.'
+  }
+  if (portfolio.pendingReason === 'collecting_history') {
+    return 'Collecting operational history — score appears after 30 days or your first PM cycle.'
+  }
+  return 'Activate units to start measuring property health.'
+}
+
+/** Building-card copy while health is pending setup. */
+export function resolvePropertyHealthPendingMessage(
+  pendingReason: PropertyHealthPendingReason | null | undefined,
+): string {
+  if (pendingReason === 'collecting_history') {
+    return 'Collecting history — score after 30 days or first PM cycle'
+  }
+  return 'Pending setup — activate units to score health'
+}
 
 /** Main KPI value — omit "%" when the score is exactly 0. */
 export function formatPropertyHealthKpiValue(score: number): string {
@@ -68,6 +100,7 @@ export type PropertyHealthScopeScore = {
   components: PropertyHealthComponent[]
   /** Tracked units (status !== inactive) in this scope. */
   trackedUnitCount: number
+  pendingReason?: PropertyHealthPendingReason | null
 }
 
 export type PropertyHealthBuildingRow = PropertyHealthScopeScore & {
@@ -94,6 +127,8 @@ export type PropertyHealthUnit = {
   building: string | null
   status: string
   propertyId?: string | null
+  /** Best-effort start of tracked ops (typically units.updated_at when active/vacant). */
+  trackedSinceMs?: number | null
 }
 
 /** Saved property row from `properties` — always shown on the Properties grid. */
@@ -264,7 +299,48 @@ function buildNeutralScopeScore(): PropertyHealthScopeScore {
     status: resolvePropertyHealthStatus(score, components),
     components,
     trackedUnitCount: 0,
+    pendingReason: 'inactive_units',
   }
+}
+
+function hasCompletedPmCycle(tasks: PropertyHealthPmTask[]): boolean {
+  return tasks.some((task) => task.taskStatus === 'completed')
+}
+
+function resolveTrackedUnitOpsStartMs(units: PropertyHealthUnit[]): number | null {
+  const times = units
+    .map((unit) => unit.trackedSinceMs)
+    .filter((value): value is number => value != null && Number.isFinite(value))
+  return times.length ? Math.min(...times) : null
+}
+
+function resolveScopeOpsStartMs(
+  trackedUnits: PropertyHealthUnit[],
+  tickets: PropertyHealthTicket[],
+): number | null {
+  const candidates: number[] = []
+  const unitStart = resolveTrackedUnitOpsStartMs(trackedUnits)
+  if (unitStart != null) candidates.push(unitStart)
+  for (const ticket of tickets) {
+    const ts = new Date(ticket.createdAt).getTime()
+    if (!Number.isNaN(ts)) candidates.push(ts)
+  }
+  return candidates.length ? Math.min(...candidates) : null
+}
+
+/** True when a scope has enough real ops history to show a health score. */
+export function hasPropertyHealthOperationalSignal(
+  trackedUnits: PropertyHealthUnit[],
+  pmTasks: PropertyHealthPmTask[],
+  tickets: PropertyHealthTicket[],
+  now: number,
+  maturityDays: number = PROPERTY_HEALTH_OPS_MATURITY_DAYS,
+): boolean {
+  if (trackedUnits.length === 0) return false
+  if (hasCompletedPmCycle(pmTasks)) return true
+  const opsStart = resolveScopeOpsStartMs(trackedUnits, tickets)
+  if (opsStart == null) return false
+  return now - opsStart >= maturityDays * 24 * 60 * 60 * 1000
 }
 
 /** All distinct portfolio buildings for a landlord (units + PM + tickets + registry). */
@@ -362,8 +438,10 @@ export function propertyHealthStatus(score: number): PropertyHealthStatus {
 export function resolvePropertyHealthStatus(
   score: number,
   components: PropertyHealthComponent[],
+  options?: { insufficientOperationalSignal?: boolean },
 ): PropertyHealthStatus {
   if (isPendingSetupHealth(components)) return 'pending_setup'
+  if (options?.insufficientOperationalSignal) return 'pending_setup'
   return propertyHealthStatus(score)
 }
 
@@ -395,6 +473,49 @@ export function filterUnitsForCanonicalProperty(
   property: PropertyHealthCanonicalProperty,
 ): PropertyHealthUnit[] {
   return units.filter((unit) => unitBelongsToCanonicalProperty(unit, property))
+}
+
+/** Collapse duplicate inventory rows that share a unit label under one property scope. */
+export function dedupePropertyUnitsByLabel<
+  T extends { id: string; unitLabel: string; building: string | null },
+>(units: T[], preferredBuilding?: string | null): T[] {
+  const preferredKey = preferredBuilding ? normalizeBuildingKey(preferredBuilding) : null
+  const byLabel = new Map<string, T>()
+
+  for (const unit of units) {
+    const labelKey = normalizeUnitLabel(unit.unitLabel)
+    if (!labelKey) continue
+
+    const existing = byLabel.get(labelKey)
+    if (!existing) {
+      byLabel.set(labelKey, unit)
+      continue
+    }
+
+    const score = (row: T) => {
+      if (!preferredKey) return 0
+      return normalizeBuildingKey(row.building) === preferredKey ? 1 : 0
+    }
+    if (score(unit) > score(existing)) {
+      byLabel.set(labelKey, unit)
+    }
+  }
+
+  return Array.from(byLabel.values())
+}
+
+/** Property detail Units tab — canonical scope plus one row per unit label. */
+export function filterUnitsForPropertyDetailScope(
+  units: PropertyHealthUnit[],
+  building: string,
+  property: PropertyHealthCanonicalProperty | null,
+): PropertyHealthUnit[] {
+  const scoped = property
+    ? filterUnitsForCanonicalProperty(units, property)
+    : units.filter(
+        (unit) => normalizeBuildingKey(unit.building) === normalizeBuildingKey(building),
+      )
+  return dedupePropertyUnitsByLabel(scoped, property?.name ?? building)
 }
 
 /** Match a property detail/overview row to the same building card as the Properties grid. */
@@ -632,16 +753,102 @@ function filterUnitsForScope(
   return filterUnitsForBuilding(units, building)
 }
 
-function filterResidentsForScope(
+/** Residents for a property detail scope — building aliases plus unit-inventory match. */
+export function filterResidentsForPropertyScope(
   residents: PropertyHealthResident[],
   building: string,
   property: PropertyHealthCanonicalProperty | null,
   units: PropertyHealthUnit[],
 ): PropertyHealthResident[] {
   const aliases = buildingScopeAliasKeys(building, property, units)
-  return residents.filter((resident) =>
-    aliases.has(normalizeBuildingKey(resident.building)),
-  )
+  const scopedUnits = filterUnitsForScope(units, building, property)
+
+  return residents.filter((resident) => {
+    if (aliases.has(normalizeBuildingKey(resident.building))) return true
+
+    const unitKey = normalizeUnitLabel(resident.unit)
+    if (!unitKey) return false
+
+    const matchingUnits = scopedUnits.filter(
+      (unit) => normalizeUnitLabel(unit.unitLabel) === unitKey,
+    )
+    if (matchingUnits.length === 0) return false
+
+    const residentBuilding = resident.building?.trim()
+    if (!residentBuilding) return true
+
+    const residentBuildingKey = normalizeBuildingKey(residentBuilding)
+    if (aliases.has(residentBuildingKey)) return true
+    if (
+      matchingUnits.some(
+        (unit) => normalizeBuildingKey(unit.building) === residentBuildingKey,
+      )
+    ) {
+      return true
+    }
+
+    // Onboarding / rent-roll labels may drift from the saved property name — trust
+    // a unique unit match inside a canonical property inventory unless the building
+    // text clearly belongs to another property in the portfolio.
+    if (
+      property &&
+      matchingUnits.length === 1 &&
+      unitBelongsToCanonicalProperty(matchingUnits[0]!, property) &&
+      !residentBuildingNamesOtherProperty(residentBuildingKey, property, units)
+    ) {
+      return true
+    }
+
+    return false
+  })
+}
+
+function residentBuildingNamesOtherProperty(
+  residentBuildingKey: string,
+  scopeProperty: PropertyHealthCanonicalProperty,
+  allUnits: PropertyHealthUnit[],
+): boolean {
+  for (const unit of allUnits) {
+    if (unit.propertyId && unit.propertyId !== scopeProperty.id) {
+      if (normalizeBuildingKey(unit.building) === residentBuildingKey) return true
+    }
+  }
+  return false
+}
+
+/** Best-effort property match for admin links when roster building text drifted or is empty. */
+export function findCanonicalPropertyForResident(
+  resident: Pick<PropertyHealthResident, 'unit' | 'building'>,
+  properties: PropertyHealthCanonicalProperty[],
+  units: PropertyHealthUnit[],
+): PropertyHealthCanonicalProperty | null {
+  for (const property of properties) {
+    const scoped = filterResidentsForPropertyScope(
+      [
+        {
+          id: '_',
+          fullName: '',
+          unit: resident.unit,
+          building: resident.building,
+          status: 'active',
+        },
+      ],
+      property.name,
+      property,
+      units,
+    )
+    if (scoped.length > 0) return property
+  }
+  return null
+}
+
+function filterResidentsForScope(
+  residents: PropertyHealthResident[],
+  building: string,
+  property: PropertyHealthCanonicalProperty | null,
+  units: PropertyHealthUnit[],
+): PropertyHealthResident[] {
+  return filterResidentsForPropertyScope(residents, building, property, units)
 }
 
 function filterPmForScope(
@@ -1059,11 +1266,24 @@ export function computePropertyHealthScope(
   ]
 
   const score = aggregateWeightedScore(components)
+  const insufficientOperationalSignal = !hasPropertyHealthOperationalSignal(
+    trackedUnits,
+    scopedPm,
+    scopedTickets,
+    now,
+  )
+  const pendingReason: PropertyHealthPendingReason | null = isPendingSetupHealth(components)
+    ? 'inactive_units'
+    : insufficientOperationalSignal
+      ? 'collecting_history'
+      : null
+
   return {
     score,
-    status: resolvePropertyHealthStatus(score, components),
+    status: resolvePropertyHealthStatus(score, components, { insufficientOperationalSignal }),
     components,
     trackedUnitCount: trackedUnits.length,
+    pendingReason,
   }
 }
 
@@ -1200,6 +1420,13 @@ function asFiniteNumber(value: unknown): number | null {
   return null
 }
 
+function parseTimestampMs(value: unknown): number | null {
+  const raw = asString(value)
+  if (!raw) return null
+  const ts = new Date(raw).getTime()
+  return Number.isNaN(ts) ? null : ts
+}
+
 /** Map dashboard maintenance ticket rows into property-health inputs. */
 export function mapTicketsForPropertyHealth(
   rows: Record<string, unknown>[],
@@ -1226,6 +1453,7 @@ export function mapUnitsForPropertyHealth(
     building: asString(raw.building) || null,
     status: asString(raw.status).toLowerCase(),
     propertyId: asString(raw.property_id ?? raw.propertyId) || null,
+    trackedSinceMs: parseTimestampMs(raw.updated_at ?? raw.updatedAt),
   }))
 }
 

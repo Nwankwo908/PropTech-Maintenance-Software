@@ -4,7 +4,7 @@
 import type { ExtractedLease, ExtractedResident } from '@/lib/onboardingMockExtraction'
 import { isUniqueViolation } from '@/lib/errorMessage'
 import { normalizePhoneForDb } from '@/lib/phoneFormat'
-import { normalizeBuildingKey } from '@/lib/propertyHealth'
+import { normalizeBuildingKey, normalizeUnitLabel } from '@/lib/propertyHealth'
 import { supabase } from '@/lib/supabase'
 import {
   nextOnboardingResidentIdFromSequence,
@@ -19,6 +19,93 @@ import {
 } from './residents'
 
 export type ImportExtractedResidentRow = ExtractedResident
+
+type ImportUnitInventoryRow = {
+  unitLabel: string
+  building: string | null
+  propertyId?: string | null
+}
+
+type ImportPropertyNameRow = {
+  id?: string
+  name: string
+}
+
+/** Map rent-roll / onboarding rows onto the saved property + unit inventory. */
+export function resolveImportResidentBuilding(
+  unit: string,
+  extractedBuilding: string,
+  units: ImportUnitInventoryRow[],
+  properties: ImportPropertyNameRow[],
+): string {
+  const trimmedUnit = asTrimmed(unit)
+  const trimmedBuilding = asTrimmed(extractedBuilding)
+  const unitKey = trimmedUnit ? normalizeUnitLabel(trimmedUnit) : ''
+
+  if (trimmedBuilding) {
+    const canonical = properties.find(
+      (property) =>
+        normalizeBuildingKey(property.name) === normalizeBuildingKey(trimmedBuilding),
+    )
+    if (canonical?.name.trim()) return canonical.name.trim()
+
+    const buildingMatch = units.find(
+      (row) =>
+        unitKey &&
+        normalizeUnitLabel(row.unitLabel) === unitKey &&
+        normalizeBuildingKey(row.building) === normalizeBuildingKey(trimmedBuilding),
+    )
+    if (buildingMatch?.building?.trim()) return buildingMatch.building.trim()
+
+    if (unitKey) {
+      const unitMatches = units.filter(
+        (row) => normalizeUnitLabel(row.unitLabel) === unitKey,
+      )
+      if (unitMatches.length === 1 && unitMatches[0]!.building?.trim()) {
+        return unitMatches[0]!.building.trim()
+      }
+      for (const property of properties) {
+        const propertyId = property.id?.trim()
+        const propertyName = property.name.trim()
+        if (!propertyName) continue
+        const belongs = unitMatches.some(
+          (row) =>
+            (propertyId && row.propertyId === propertyId) ||
+            normalizeBuildingKey(row.building) === normalizeBuildingKey(propertyName),
+        )
+        if (belongs) return propertyName
+      }
+    }
+
+    return trimmedBuilding
+  }
+
+  if (unitKey) {
+    const unitMatches = units.filter(
+      (row) => normalizeUnitLabel(row.unitLabel) === unitKey,
+    )
+    if (unitMatches.length === 1 && unitMatches[0]!.building?.trim()) {
+      return unitMatches[0]!.building.trim()
+    }
+    for (const property of properties) {
+      const propertyId = property.id?.trim()
+      const propertyName = property.name.trim()
+      if (!propertyName) continue
+      const belongs = unitMatches.some(
+        (row) =>
+          (propertyId && row.propertyId === propertyId) ||
+          normalizeBuildingKey(row.building) === normalizeBuildingKey(propertyName),
+      )
+      if (belongs) return propertyName
+    }
+  }
+
+  if (properties.length === 1 && properties[0]!.name.trim()) {
+    return properties[0]!.name.trim()
+  }
+
+  return ''
+}
 
 function asTrimmed(value: string | null | undefined): string {
   return (value ?? '').trim()
@@ -185,7 +272,11 @@ async function insertImportedResident(
       return { ok: true, nextSeq: seq }
     }
     if (isUniqueViolation(error)) {
-      continue
+      if (/resident_id/i.test(error.message)) {
+        continue
+      }
+      console.warn('[landlordOnboarding] insert imported resident', error.message)
+      return { ok: false, nextSeq: seq }
     }
     console.warn('[landlordOnboarding] insert imported resident', error.message)
     return { ok: false, nextSeq: seq }
@@ -198,10 +289,31 @@ export async function importOnboardingResidentsFromExtraction(
   residents: ImportExtractedResidentRow[],
   leases: ExtractedLease[],
   landlordId: string,
+  options?: {
+    properties?: ImportPropertyNameRow[]
+    units?: ImportUnitInventoryRow[]
+  },
 ): Promise<number> {
   const selectedResidents = residents.filter((row) => row.selected)
   const selectedLeases = leases.filter((lease) => lease.selected)
   if (selectedResidents.length === 0 || !supabase) return 0
+
+  let unitInventory = options?.units ?? []
+  if (unitInventory.length === 0) {
+    const { data, error } = await supabase
+      .from('units')
+      .select('unit_label, building, property_id')
+      .eq('landlord_id', landlordId)
+    if (!error) {
+      unitInventory = (data ?? []).map((row) => ({
+        unitLabel: String((row as { unit_label?: string }).unit_label ?? ''),
+        building: String((row as { building?: string | null }).building ?? '') || null,
+        propertyId: String((row as { property_id?: string | null }).property_id ?? '') || null,
+      }))
+    }
+  }
+
+  const properties = options?.properties ?? []
 
   let imported = 0
   let seq = await startResidentIdSequence(landlordId)
@@ -210,7 +322,12 @@ export async function importOnboardingResidentsFromExtraction(
   for (const resident of selectedResidents) {
     const matchedLease = resolveLeaseMatch(resident, selectedLeases)
     const resolvedUnit = asTrimmed(resident.unit) || asTrimmed(matchedLease?.unit) || ''
-    const resolvedBuilding = asTrimmed(resident.building) || asTrimmed(matchedLease?.building) || ''
+    const resolvedBuilding = resolveImportResidentBuilding(
+      resolvedUnit,
+      asTrimmed(resident.building) || asTrimmed(matchedLease?.building) || '',
+      unitInventory,
+      properties,
+    )
     const monthlyRent =
       parseMonthlyRentInput(String(resident.monthlyRent ?? '')) ??
       (matchedLease?.rentAmount != null ? parseMonthlyRentInput(matchedLease.rentAmount) : null)

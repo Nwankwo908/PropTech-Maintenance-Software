@@ -47,7 +47,11 @@ function normalizeSeverity(raw: string | undefined): SlaSeverity {
 export function getEstimatedMinutes(
   category?: string,
   severity?: string,
+  overrideMinutes?: number | null,
 ): number {
+  if (overrideMinutes != null && Number.isFinite(overrideMinutes) && overrideMinutes > 0) {
+    return Math.round(overrideMinutes)
+  }
   const cat = normalizeCategory(category)
   const sev = normalizeSeverity(severity)
   if (cat === 'other') return 240

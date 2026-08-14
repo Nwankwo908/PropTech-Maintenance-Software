@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom'
 import { TableCheckbox } from '@/components/TableCheckbox'
 import {
   formatPropertyHealthTooltip,
+  resolvePropertyHealthPendingMessage,
   type PropertyHealthBuildingRow,
   type PropertyHealthStatus,
 } from '@/lib/propertyHealth'
@@ -318,7 +319,7 @@ export function PropertyHealthBuildingGrid({
                   <>
                     <p className="text-[28px] font-bold leading-8 text-[#6a7282]">—</p>
                     <p className="text-[12px] leading-4 text-[#6a7282]">
-                      Pending setup — activate units to score health
+                      {resolvePropertyHealthPendingMessage(b.pendingReason)}
                     </p>
                     <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-[#f3f4f6]">
                       <div className="h-full w-0 rounded-full bg-[#d1d5dc]" />

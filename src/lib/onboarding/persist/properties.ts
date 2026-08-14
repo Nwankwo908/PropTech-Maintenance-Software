@@ -13,7 +13,7 @@ import {
   ensureProperty,
   linkUnitsToProperty,
 } from '@/lib/properties'
-import { normalizeBuildingKey } from '@/lib/propertyHealth'
+import { normalizeBuildingKey, normalizeUnitLabel } from '@/lib/propertyHealth'
 import { deleteResidentsForLandlord } from '@/lib/residentDeletion'
 import { supabase } from '@/lib/supabase'
 import { requireOnboardingLandlord } from '../scope'
@@ -27,6 +27,81 @@ export function generateUnitLabels(count: number): string[] {
   return labels
 }
 
+export function uniqueOnboardingUnitLabels(labels: Iterable<string>): string[] {
+  const seen = new Set<string>()
+  const out: string[] = []
+  for (const raw of labels) {
+    const label = String(raw ?? '').trim()
+    if (!label) continue
+    const key = normalizeUnitLabel(label)
+    if (!key || seen.has(key)) continue
+    seen.add(key)
+    out.push(label)
+  }
+  return out
+}
+
+/** Prefer extracted / saved labels. Only invent 101…N when the property has no inventory yet. */
+export function resolveOnboardingUnitLabels(
+  property: Pick<OnboardingProperty, 'unitCount' | 'unitLabels'>,
+  existingLabels: string[] = [],
+): string[] {
+  const explicit = uniqueOnboardingUnitLabels(property.unitLabels ?? [])
+  if (explicit.length > 0) return explicit
+  const existing = uniqueOnboardingUnitLabels(existingLabels)
+  if (existing.length > 0) return existing
+  const count = Number.isFinite(property.unitCount) ? Math.max(0, Math.round(property.unitCount)) : 0
+  return generateUnitLabels(count)
+}
+
+/** Distinct unit numbers from a rent roll / extraction for one property. */
+export function collectExtractedUnitLabels(input: {
+  propertyName: string
+  otherPropertyNames?: string[]
+  units?: Array<{ label?: string; building?: string; selected?: boolean }>
+  residents?: Array<{ unit?: string; building?: string; selected?: boolean }>
+  leases?: Array<{ unit?: string; building?: string; selected?: boolean }>
+}): string[] {
+  const propertyKey = normalizeBuildingKey(input.propertyName).toLowerCase()
+  const otherKeys = new Set(
+    (input.otherPropertyNames ?? [])
+      .map((name) => normalizeBuildingKey(name).toLowerCase())
+      .filter((key) => key && key !== propertyKey && key !== 'portfolio'),
+  )
+
+  const matchesThis = (building: string | undefined) => {
+    const trimmed = (building ?? '').trim()
+    if (!trimmed) return true
+    if (!propertyKey || propertyKey === 'portfolio') return true
+    return normalizeBuildingKey(trimmed).toLowerCase() === propertyKey
+  }
+  const matchesOther = (building: string | undefined) => {
+    const trimmed = (building ?? '').trim()
+    if (!trimmed) return false
+    return otherKeys.has(normalizeBuildingKey(trimmed).toLowerCase())
+  }
+
+  const labels: string[] = []
+  const consider = (building: string | undefined, label: string | undefined, selected?: boolean) => {
+    if (selected === false) return
+    const trimmedLabel = (label ?? '').trim()
+    if (!trimmedLabel) return
+    if (matchesOther(building)) return
+    if (matchesThis(building) || otherKeys.size === 0) labels.push(trimmedLabel)
+  }
+
+  for (const unit of input.units ?? []) {
+    consider(unit.building, unit.label, unit.selected)
+  }
+  for (const resident of input.residents ?? []) {
+    consider(resident.building, resident.unit, resident.selected)
+  }
+  for (const lease of input.leases ?? []) {
+    consider(lease.building, lease.unit, lease.selected)
+  }
+  return uniqueOnboardingUnitLabels(labels)
+}
+
 /** Unit options derived from onboarding properties (matches inventory written to `units`). */
 export function listOnboardingUnitOptions(
   properties: OnboardingProperty[],
@@ -35,7 +110,7 @@ export function listOnboardingUnitOptions(
   for (const property of properties) {
     const building = property.name.trim()
     if (!building) continue
-    for (const unitLabel of generateUnitLabels(property.unitCount)) {
+    for (const unitLabel of resolveOnboardingUnitLabels(property)) {
       options.push({
         building,
         unitLabel,
@@ -73,7 +148,7 @@ function buildOnboardingUnitInventory(
     const city = property.city.trim() || null
     const state = property.state.trim() || null
     const zipCode = property.zipCode.trim() || null
-    for (const label of generateUnitLabels(property.unitCount)) {
+    for (const label of resolveOnboardingUnitLabels(property)) {
       units.push({ unitLabel: label, building, city, state, zipCode })
     }
   }
@@ -168,6 +243,47 @@ export async function deleteLandlordBuildings(
   return { ok: true }
 }
 
+/** Keep units that still have occupancy or a roster tenant — never drop people to shrink inventory. */
+async function unitIdsSafeToRemove(
+  landlordId: string,
+  stale: Array<{ id: string; unitLabel: string; building: string | null }>,
+): Promise<string[]> {
+  if (!supabase || stale.length === 0) return []
+
+  const staleIds = stale.map((row) => row.id)
+  const { data: occupancyRows } = await supabase
+    .from('occupancy')
+    .select('unit_id')
+    .in('unit_id', staleIds)
+  const occupied = new Set(
+    (occupancyRows ?? [])
+      .map((row) => String((row as { unit_id?: string }).unit_id ?? ''))
+      .filter(Boolean),
+  )
+
+  const { data: residentRows } = await supabase
+    .from('users')
+    .select('unit, building')
+    .eq('landlord_id', landlordId)
+
+  return stale
+    .filter((unit) => {
+      if (occupied.has(unit.id)) return false
+      const unitKey = normalizeUnitLabel(unit.unitLabel)
+      if (!unitKey) return true
+      const buildingKey = normalizeBuildingKey(unit.building)
+      return !(residentRows ?? []).some((row) => {
+        if (normalizeUnitLabel(String((row as { unit?: string | null }).unit ?? '')) !== unitKey) {
+          return false
+        }
+        const residentBuilding = String((row as { building?: string | null }).building ?? '').trim()
+        if (!residentBuilding || !unit.building?.trim()) return true
+        return normalizeBuildingKey(residentBuilding) === buildingKey
+      })
+    })
+    .map((unit) => unit.id)
+}
+
 /** Replace landlord unit inventory with exactly the onboarding property list (no cross-session accumulation). */
 async function syncOnboardingPropertyUnits(
   landlordId: string,
@@ -197,16 +313,24 @@ async function syncOnboardingPropertyUnits(
     return { ok: false, error: getErrorMessage(loadError, 'Something went wrong. Please try again.') }
   }
 
-  const staleUnitIds = (existing ?? [])
-    .filter((row) =>
+  const staleRows = (existing ?? []).filter(
+    (row) =>
       !desiredKeys.has(
         unitInventoryKey(
           String((row as { unit_label: string }).unit_label),
           (row as { building?: string | null }).building,
         ),
       ),
-    )
-    .map((row) => String((row as { id: string }).id))
+  )
+
+  const staleUnitIds = await unitIdsSafeToRemove(
+    landlordId,
+    staleRows.map((row) => ({
+      id: String((row as { id: string }).id),
+      unitLabel: String((row as { unit_label: string }).unit_label),
+      building: (row as { building?: string | null }).building ?? null,
+    })),
+  )
 
   const removed = await deleteUnitsByIds(staleUnitIds)
   if (!removed.ok) {
@@ -298,11 +422,52 @@ export async function persistOnboardingProperties(
     return { ok: false, error: 'Add at least one property.' }
   }
 
+  const existingUnitRows = supabase
+    ? (
+        await supabase
+          .from('units')
+          .select('unit_label, building, property_id')
+          .eq('landlord_id', scope.landlordId)
+      ).data ?? []
+    : []
+  const existingResidentRows = supabase
+    ? (
+        await supabase
+          .from('users')
+          .select('unit, building')
+          .eq('landlord_id', scope.landlordId)
+      ).data ?? []
+    : []
+
   const propertyIdByBuilding = new Map<string, string>()
   const canonicalProperties: OnboardingProperty[] = []
   for (const property of properties) {
     const name = property.name.trim()
     if (!name) continue
+    const buildingKey = normalizeBuildingKey(name)
+    const existingLabels = [
+      ...existingUnitRows
+        .filter((row) => {
+          const propertyId = String((row as { property_id?: string | null }).property_id ?? '')
+          const building = String((row as { building?: string | null }).building ?? '')
+          return (
+            (property.id && propertyId === property.id) ||
+            normalizeBuildingKey(building) === buildingKey
+          )
+        })
+        .map((row) => String((row as { unit_label?: string }).unit_label ?? '')),
+      ...existingResidentRows
+        .filter((row) => {
+          const building = String((row as { building?: string | null }).building ?? '')
+          const unit = String((row as { unit?: string | null }).unit ?? '').trim()
+          if (!unit) return false
+          if (!building.trim()) return true
+          return normalizeBuildingKey(building) === buildingKey
+        })
+        .map((row) => String((row as { unit?: string | null }).unit ?? '')),
+    ]
+    const unitLabels = resolveOnboardingUnitLabels(property, existingLabels)
+    const unitCount = Math.max(property.unitCount || 0, unitLabels.length, 1)
     const ensured = await ensureProperty({
       landlordId: scope.landlordId,
       name,
@@ -313,11 +478,11 @@ export async function persistOnboardingProperties(
       propertyType: property.propertyType,
       managerName: property.propertyManagerName,
       managerPhone: property.propertyManagerPhone,
-      unitCount: property.unitCount,
+      unitCount,
     })
     if (!ensured.ok) return ensured
-    propertyIdByBuilding.set(normalizeBuildingKey(name), ensured.propertyId)
-    canonicalProperties.push({ ...property, id: ensured.propertyId })
+    propertyIdByBuilding.set(buildingKey, ensured.propertyId)
+    canonicalProperties.push({ ...property, id: ensured.propertyId, unitLabels, unitCount })
     const linked = await linkUnitsToProperty({
       landlordId: scope.landlordId,
       propertyId: ensured.propertyId,
@@ -326,7 +491,7 @@ export async function persistOnboardingProperties(
     if (!linked.ok) return { ok: false, error: linked.error ?? 'Could not link units to the property.' }
   }
 
-  const units = buildOnboardingUnitInventory(properties).map((unit) => ({
+  const units = buildOnboardingUnitInventory(canonicalProperties).map((unit) => ({
     ...unit,
     propertyId: propertyIdByBuilding.get(normalizeBuildingKey(unit.building)) ?? null,
   }))

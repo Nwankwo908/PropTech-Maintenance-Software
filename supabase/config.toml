@@ -258,6 +258,13 @@ verify_jwt = false
 import_map = "./functions/send-tenant-activation/deno.json"
 entrypoint = "./functions/send-tenant-activation/index.ts"
 
+# Settings → Notifications test delivery (ADMIN_REASSIGN_SECRET in handler).
+[functions.send-settings-test-notification]
+enabled = true
+verify_jwt = false
+import_map = "./functions/send-settings-test-notification/deno.json"
+entrypoint = "./functions/send-settings-test-notification/index.ts"
+
 [functions.send-landlord-onboarding-welcome]
 enabled = true
 verify_jwt = false

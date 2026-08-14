@@ -5,6 +5,10 @@ import { updateWorkflowRun } from "../engine/workflowRuns.ts"
 import { startMaintenanceRequestWorkflow } from "../engine/startMaintenanceRequestWorkflow.ts"
 import { assignVendorAndNotify } from "../../submit-maintenance-request/vendor_notify.ts"
 import { notifyResidentSubmitted } from "../../submit-maintenance-request/resident_notify.ts"
+import {
+  escalateMaintenanceNeedsVendor,
+  SUBMITTED_NO_VENDOR_ESCALATION,
+} from "../maintenance_admin_escalation.ts"
 import type { SmsIntakeState } from "./residentIntakeTypes.ts"
 import {
   buildIntakeDescription,
@@ -12,6 +16,7 @@ import {
   severityToDb,
 } from "./residentIntakeTypes.ts"
 import { issueCategoryToVendorTrade } from "../vendor_trades.ts"
+import { rehostInboundSmsMedia } from "./rehostInboundMedia.ts"
 
 type ResidentRow = {
   id: string
@@ -30,76 +35,18 @@ function notificationChannelFromPreference(
   return "both"
 }
 
-function extFromContentType(contentType: string): string {
-  const ct = contentType.toLowerCase()
-  if (ct.includes("png")) return "png"
-  if (ct.includes("gif")) return "gif"
-  if (ct.includes("webp")) return "webp"
-  if (ct.includes("heic")) return "heic"
-  if (ct.includes("heif")) return "heif"
-  return "jpg"
-}
-
-/**
- * Download SMS/MMS media and rehost into the private `maintenance-uploads`
- * bucket so it renders through the same signed-URL path as web uploads.
- * Best-effort: any failing item is skipped and never blocks submission.
- * Twilio media requires Basic Auth; Telnyx URLs are fetched directly.
- */
 async function rehostSmsPhotos(
   supabase: SupabaseClient,
   ticketId: string,
   mediaUrls: string[] | undefined,
   provider: string | undefined,
 ): Promise<string[]> {
-  if (!Array.isArray(mediaUrls) || mediaUrls.length === 0) return []
-
-  const twilioSid = Deno.env.get("TWILIO_ACCOUNT_SID")?.trim()
-  const twilioToken = Deno.env.get("TWILIO_AUTH_TOKEN")?.trim()
-  const paths: string[] = []
-  let idx = 0
-
-  for (const rawUrl of mediaUrls) {
-    if (typeof rawUrl !== "string" || !rawUrl.trim()) continue
-    const url = rawUrl.trim()
-    try {
-      const headers: Record<string, string> = {}
-      const isTwilio = provider === "twilio" || url.includes("api.twilio.com")
-      if (isTwilio && twilioSid && twilioToken) {
-        headers.Authorization = `Basic ${btoa(`${twilioSid}:${twilioToken}`)}`
-      }
-
-      const res = await fetch(url, { headers })
-      if (!res.ok) {
-        console.error("[sms-intake] media fetch failed", url, res.status)
-        continue
-      }
-
-      const contentType = res.headers.get("content-type") || "image/jpeg"
-      if (!contentType.toLowerCase().startsWith("image/")) {
-        console.warn("[sms-intake] skipping non-image media", url, contentType)
-        continue
-      }
-
-      const bytes = new Uint8Array(await res.arrayBuffer())
-      const path = `sms/${ticketId}/${Date.now()}-${idx}.${extFromContentType(contentType)}`
-      const { error } = await supabase.storage
-        .from("maintenance-uploads")
-        .upload(path, bytes, { contentType, upsert: false })
-
-      if (error) {
-        console.error("[sms-intake] media upload failed", path, error.message)
-        continue
-      }
-
-      paths.push(path)
-      idx += 1
-    } catch (e) {
-      console.error("[sms-intake] media rehost error", url, e)
-    }
-  }
-
-  return paths
+  const rehosted = await rehostInboundSmsMedia(supabase, {
+    mediaUrls,
+    provider,
+    storagePrefix: `sms/${ticketId}`,
+  })
+  return rehosted.filter((path) => !/^https?:\/\//i.test(path))
 }
 
 async function resolveExistingDraftTicketId(
@@ -151,7 +98,7 @@ export async function submitSmsMaintenanceRequest(
      */
     preferVendorId?: string | null
   },
-): Promise<{ ticketId: string; vendorId: string | null }> {
+): Promise<{ ticketId: string; vendorId: string | null; vendorAssigned: boolean }> {
   const { data: resident, error: residentErr } = await supabase
     .from("users")
     .select("id, full_name, email, phone, unit")
@@ -281,23 +228,27 @@ export async function submitSmsMaintenanceRequest(
   const intakeRunId = conversation?.workflow_run_id ?? null
 
   if (intakeRunId) {
-    await updateWorkflowRun(supabase, intakeRunId, {
-      status: "completed",
-      currentStep: "submitted",
-      entityType: "maintenance_request",
-      entityId: ticketId,
-      completedAt: new Date().toISOString(),
-      metadata: {
-        intake_state: params.intake as Record<string, unknown>,
-        submitted_at: new Date().toISOString(),
-        early_ticket: !created,
-      },
-      pipelineStage: "act",
-      eventMessage: created
-        ? "Ticket created from SMS intake"
-        : "Early SMS ticket finalized from intake",
-      eventStep: "submitted",
-    })
+    try {
+      await updateWorkflowRun(supabase, intakeRunId, {
+        status: "completed",
+        currentStep: "submitted",
+        entityType: "maintenance_request",
+        entityId: ticketId,
+        completedAt: new Date().toISOString(),
+        metadata: {
+          intake_state: params.intake as Record<string, unknown>,
+          submitted_at: new Date().toISOString(),
+          early_ticket: !created,
+        },
+        pipelineStage: "act",
+        eventMessage: created
+          ? "Ticket created from SMS intake"
+          : "Early SMS ticket finalized from intake",
+        eventStep: "submitted",
+      })
+    } catch (e) {
+      console.error("[sms-intake] intake workflow complete failed", e)
+    }
   }
 
   const descPrev =
@@ -320,6 +271,7 @@ export async function submitSmsMaintenanceRequest(
 
   let vendorAssigned = false
   let assignedVendorId: string | null = null
+  let needsVendorEscalation = false
   try {
     const assignResult = await assignVendorAndNotify(supabase, {
       ticketId,
@@ -334,8 +286,10 @@ export async function submitSmsMaintenanceRequest(
     })
     vendorAssigned = assignResult.assigned
     assignedVendorId = assignResult.vendorId
+    needsVendorEscalation = assignResult.skipReason === "no_vendor"
   } catch (e) {
     console.error("[sms-intake] vendor notify failed", e)
+    needsVendorEscalation = true
   }
 
   let maintenanceWorkflowRunId: string | null = null
@@ -353,14 +307,28 @@ export async function submitSmsMaintenanceRequest(
       intakeRunId,
       conversationId: params.conversationId,
       vendorAssigned,
+      needsVendorEscalation,
     })
     maintenanceWorkflowRunId = started.workflowRunId
   } catch (e) {
     console.error("[sms-intake] maintenance_request workflow", e)
   }
 
-  await logGraphEvent(supabase, {
-    landlord_id: params.landlordId,
+  if (needsVendorEscalation && !maintenanceWorkflowRunId) {
+    try {
+      await escalateMaintenanceNeedsVendor(
+        supabase,
+        { id: ticketId, landlord_id: params.landlordId },
+        SUBMITTED_NO_VENDOR_ESCALATION,
+      )
+    } catch (e) {
+      console.error("[sms-intake] no-vendor escalation failed", e)
+    }
+  }
+
+  try {
+    await logGraphEvent(supabase, {
+      landlord_id: params.landlordId,
     event_type: "maintenance.request_submitted",
     source: "sms",
     actor_type: "resident",
@@ -382,9 +350,12 @@ export async function submitSmsMaintenanceRequest(
       preferred_contact_method: params.intake.preferred_contact_method,
       photo_count: photoPaths.length,
       source: "sms_intake",
-      early_ticket_finalized: !created,
-    },
-  })
+        early_ticket_finalized: !created,
+      },
+    })
+  } catch (e) {
+    console.error("[sms-intake] graph event", e)
+  }
 
   console.info("[sms-intake] maintenance request submitted", {
     ticketId,
@@ -396,5 +367,5 @@ export async function submitSmsMaintenanceRequest(
     earlyTicketFinalized: !created,
   })
 
-  return { ticketId, vendorId: assignedVendorId }
+  return { ticketId, vendorId: assignedVendorId, vendorAssigned }
 }

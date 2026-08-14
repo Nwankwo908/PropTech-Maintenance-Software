@@ -23,6 +23,10 @@ import applianceRepairIcon from '@/assets/appliance-repair.png'
 import inspectionReviewIcon from '@/assets/inspection-review.png'
 import pmServiceIcon from '@/assets/pm-service.png'
 import { getErrorMessage } from '@/lib/errorMessage'
+import {
+  applyFutureMonthProjections,
+  projectionsEnabledForMonthlySpend,
+} from '@/lib/propertyAnalytics'
 
 type AnalyticsTicket = {
   id: string
@@ -114,22 +118,6 @@ function formatSpend(amount: number): string {
 function formatChartYTick(amount: number): string {
   if (amount === 0) return '$0'
   return `$${amount / 1000}k`
-}
-
-function averageMonthProjection(
-  actualMonths: MonthlySpend[],
-): { proactive: number; reactive: number } {
-  const withSpend = actualMonths.filter((m) => m.proactive + m.reactive > 0)
-  if (!withSpend.length) {
-    return { proactive: 1800, reactive: 900 }
-  }
-  const proactive = Math.round(
-    withSpend.reduce((sum, m) => sum + m.proactive, 0) / withSpend.length,
-  )
-  const reactive = Math.round(
-    withSpend.reduce((sum, m) => sum + m.reactive, 0) / withSpend.length,
-  )
-  return { proactive, reactive }
 }
 
 /** Fixed Y-axis scale for the monthly maintenance cost chart. */
@@ -533,18 +521,8 @@ export function AdminAnalyticsDashboard() {
       }
     })
 
-    const averageProjection = averageMonthProjection(actualMonthlySpend)
-
-    const monthlySpend: MonthlySpend[] = actualMonthlySpend.map((month) => {
-      if (!month.isFuture) return month
-      const projected = averageProjection
-      return {
-        ...month,
-        proactive: projected.proactive,
-        reactive: projected.reactive,
-        isProjection: true,
-      }
-    })
+    const monthlySpend = applyFutureMonthProjections(actualMonthlySpend) as MonthlySpend[]
+    const showProjections = projectionsEnabledForMonthlySpend(actualMonthlySpend)
 
     const applianceAttentionCount = pm.attentionCount
 
@@ -584,6 +562,7 @@ export function AdminAnalyticsDashboard() {
       ytdTotal,
       ytdDeltaPct,
       monthlySpend,
+      showProjections,
       pmTasks: pm.tasks,
       applianceReplacementCount: pm.replacementRecommendedCount,
       applianceAttentionCount,
@@ -715,10 +694,12 @@ export function AdminAnalyticsDashboard() {
                 <span className="size-2.5 rounded-[2px] bg-[#fb2c36]" />
                 Reactive
               </span>
-              <span className="inline-flex items-center gap-1.5 opacity-50">
-                <span className="size-2.5 rounded-[2px] border border-dashed border-[#99a1af] bg-[#e5e7eb]" />
-                Projected
-              </span>
+              {!loading && analytics.showProjections ? (
+                <span className="inline-flex items-center gap-1.5 opacity-50">
+                  <span className="size-2.5 rounded-[2px] border border-dashed border-[#99a1af] bg-[#e5e7eb]" />
+                  Projected
+                </span>
+              ) : null}
             </div>
           </div>
           <span className="rounded-full bg-[#dbfce7] px-3 py-1 text-[12px] font-medium text-[#008236]">

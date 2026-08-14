@@ -2,8 +2,9 @@ import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react
 import { Link, useLocation, useNavigate, useParams } from 'react-router-dom'
 import { syncSmsIdentity } from '@/api/landlordSmsOnboarding'
 import {
-  clearActivationFailureOnPhoneUpdate,
   phoneChanged,
+  restartTenantOnboardingAfterPhoneChange,
+  resetTenantActivationForPhoneChange,
   resendTenantActivationSms,
   sendTenantWelcomeSms,
 } from '@/api/tenantActivation'
@@ -18,6 +19,7 @@ import { fetchAdminWorkflowDashboard } from '@/lib/adminWorkflows'
 import {
   buildPropertyResidentUnitOptions,
   initialUnitOptionKeyForResident,
+  resolveInventoryUnitForResidentSave,
 } from '@/lib/propertyResidentUnitOptions'
 import {
   buildResidentProfileDetail,
@@ -32,8 +34,14 @@ import {
   propertyDetailPath,
   propertyResidentDetailPath,
 } from '@/lib/propertyRoutes'
-import { findPropertyById, findPropertyByName } from '@/lib/properties'
-import { normalizeBuildingKey } from '@/lib/propertyHealth'
+import { findPropertyById, findPropertyByName, listPropertiesForLandlord } from '@/lib/properties'
+import {
+  filterResidentsForPropertyScope,
+  filterUnitsForCanonicalProperty,
+  mapUnitsForPropertyHealth,
+  normalizeBuildingKey,
+  type PropertyHealthCanonicalProperty,
+} from '@/lib/propertyHealth'
 import {
   conversationStatusLabel,
   conversationTypeLabel,
@@ -41,6 +49,8 @@ import {
 import { resolveTenantActivationChip } from '@/lib/tenantActivationStatus'
 import { supabase } from '@/lib/supabase'
 import { getErrorMessage } from '@/lib/errorMessage'
+import { parseLeaseDateInput } from '@/lib/onboarding'
+import { activateUnitsFromResidentAssignments } from '@/lib/unitActivation'
 
 function asString(value: unknown): string {
   if (value == null) return ''
@@ -68,6 +78,7 @@ type LoadedResidentUser = {
   building: string
   status: ResidentStatus
   balanceDue: number
+  leaseStartDate: string | null
   leaseEndDate: string | null
   monthlyRent: number | null
   maintenanceResponsibilitiesClause: string | null
@@ -78,6 +89,7 @@ type LoadedResidentUser = {
 }
 
 type PropertyUnitOption = {
+  id?: string
   unitLabel: string
   building: string | null
 }
@@ -113,6 +125,8 @@ function toEditResidentRow(user: LoadedResidentUser): EditResidentModalRow {
       ? { kind: 'assigned', unit: user.unit, building: user.building }
       : { kind: 'unassigned' },
     status: user.status,
+    leaseStart: user.leaseStartDate,
+    leaseEnd: user.leaseEndDate,
   }
 }
 
@@ -291,6 +305,10 @@ function ProfileContent({ profile }: { profile: ResidentProfileDetail }) {
               <p className="mt-1 text-[14px] font-semibold leading-5 text-[#0a0a0a]">{profile.leaseStatus}</p>
             </div>
             <div>
+              <p className="text-[12px] leading-4 text-[#6a7282]">Lease starts</p>
+              <p className="mt-1 text-[14px] font-semibold leading-5 text-[#0a0a0a]">{profile.leaseStartLabel}</p>
+            </div>
+            <div>
               <p className="text-[12px] leading-4 text-[#6a7282]">Lease ends</p>
               <p className="mt-1 text-[14px] font-semibold leading-5 text-[#0a0a0a]">{profile.leaseEndLabel}</p>
             </div>
@@ -433,6 +451,7 @@ export function AdminPropertyResidentDetailDashboard() {
     const landlordId = getActiveLandlordId()
     let buildingName: string
     let resolvedPropertyId: string | null = null
+    let activeCanonicalProperty: PropertyHealthCanonicalProperty | null = null
 
     if (slug.kind === 'id') {
       const byId = await findPropertyById(landlordId, slug.value)
@@ -448,6 +467,7 @@ export function AdminPropertyResidentDetailDashboard() {
       }
       resolvedPropertyId = byId.property.id
       buildingName = byId.property.name
+      activeCanonicalProperty = { id: byId.property.id, name: byId.property.name }
     } else {
       const byName = await findPropertyByName(landlordId, slug.value)
       if (!byName.ok) {
@@ -462,6 +482,20 @@ export function AdminPropertyResidentDetailDashboard() {
       buildingName = slug.value
     }
 
+    if (!activeCanonicalProperty && buildingName) {
+      const propertiesResult = await listPropertiesForLandlord(landlordId)
+      const match = propertiesResult.ok
+        ? propertiesResult.properties.find(
+            (property) =>
+              normalizeBuildingKey(property.name) === normalizeBuildingKey(buildingName),
+          )
+        : null
+      if (match) {
+        activeCanonicalProperty = { id: match.id, name: match.name }
+        resolvedPropertyId = match.id
+      }
+    }
+
     setBuilding(buildingName)
     setPropertyId(resolvedPropertyId)
 
@@ -470,7 +504,7 @@ export function AdminPropertyResidentDetailDashboard() {
       supabase
         .from('users')
         .select(
-          'id, resident_id, full_name, email, phone, unit, building, status, balance_due, lease_end_date, monthly_rent, maintenance_responsibilities_clause, activation_status, sms_consent_status, activation_attempt_count, activation_sms_sent_at',
+          'id, resident_id, full_name, email, phone, unit, building, status, balance_due, move_in_date, lease_end_date, monthly_rent, maintenance_responsibilities_clause, activation_status, sms_consent_status, activation_attempt_count, activation_sms_sent_at',
         )
         .eq('landlord_id', landlordId)
         .eq('id', residentId)
@@ -485,7 +519,7 @@ export function AdminPropertyResidentDetailDashboard() {
         .limit(10),
       supabase
         .from('units')
-        .select('unit_label, building')
+        .select('unit_label, building, property_id')
         .eq('landlord_id', landlordId)
         .limit(2000),
       supabase
@@ -509,7 +543,7 @@ export function AdminPropertyResidentDetailDashboard() {
         const legacy = await supabase
           .from('users')
           .select(
-            'id, resident_id, full_name, email, phone, unit, building, status, balance_due, lease_end_date, monthly_rent',
+            'id, resident_id, full_name, email, phone, unit, building, status, balance_due, move_in_date, lease_end_date, monthly_rent',
           )
           .eq('landlord_id', landlordId)
           .eq('id', residentId)
@@ -535,14 +569,39 @@ export function AdminPropertyResidentDetailDashboard() {
       }
     }
 
-    const userBuilding = asString(raw.building) || buildingName
-    if (userBuilding && userBuilding.toLowerCase() !== buildingName.toLowerCase()) {
+    const healthUnits = mapUnitsForPropertyHealth(
+      ((unitsResult.data ?? []) as Record<string, unknown>[]) ?? [],
+    )
+    const lookupName = activeCanonicalProperty?.name ?? buildingName
+    const scopedResidentIds = new Set(
+      filterResidentsForPropertyScope(
+        [
+          {
+            id: residentId,
+            fullName: asString(raw.full_name) || 'Resident',
+            unit: asString(raw.unit),
+            building: asString(raw.building) || null,
+            status: asString(raw.status).toLowerCase() || 'active',
+          },
+        ],
+        lookupName,
+        activeCanonicalProperty,
+        healthUnits,
+      ).map((row) => row.id),
+    )
+
+    if (!scopedResidentIds.has(residentId)) {
       setError('Resident does not belong to this property.')
       setProfile(null)
       setLoadedUser(null)
       setLoading(false)
       return
     }
+
+    const userBuilding =
+      asString(raw.building) ||
+      activeCanonicalProperty?.name ||
+      buildingName
 
     const userId = asString(raw.id)
     const monthlyRentRaw = asFiniteNumber(raw.monthly_rent)
@@ -568,6 +627,7 @@ export function AdminPropertyResidentDetailDashboard() {
       building: userBuilding,
       status: parseResidentStatus(asString(raw.status)),
       balanceDue: asFiniteNumber(raw.balance_due),
+      leaseStartDate: asString(raw.move_in_date) || null,
       leaseEndDate: asString(raw.lease_end_date) || null,
       monthlyRent: monthlyRentRaw > 0 ? monthlyRentRaw : null,
       maintenanceResponsibilitiesClause:
@@ -593,31 +653,42 @@ export function AdminPropertyResidentDetailDashboard() {
         : []
 
     setLoadedUser(loaded)
+    const scopedUnits = activeCanonicalProperty
+      ? filterUnitsForCanonicalProperty(healthUnits, activeCanonicalProperty)
+      : healthUnits.filter(
+          (unit) => normalizeBuildingKey(unit.building) === normalizeBuildingKey(buildingName),
+        )
+
     setBuildingUnits(
       unitsResult.error
         ? []
-        : ((unitsResult.data ?? []) as Record<string, unknown>[])
-            .map((row) => ({
-              unitLabel: asString(row.unit_label),
-              building: asString(row.building) || buildingName,
-            }))
-            .filter(
-              (row) => normalizeBuildingKey(row.building) === normalizeBuildingKey(buildingName),
-            ),
+        : scopedUnits.map((unit) => ({
+            id: unit.id,
+            unitLabel: unit.unitLabel,
+            building: unit.building || buildingName,
+          })),
     )
-    setBuildingResidents(
+    const scopedBuildingResidents = filterResidentsForPropertyScope(
       residentsResult.error
         ? []
-        : ((residentsResult.data ?? []) as Record<string, unknown>[])
-            .map((row) => ({
-              id: asString(row.id),
-              unit: asString(row.unit),
-              building: asString(row.building) || buildingName,
-              status: asString(row.status).toLowerCase() || 'active',
-            }))
-            .filter(
-              (row) => normalizeBuildingKey(row.building) === normalizeBuildingKey(buildingName),
-            ),
+        : ((residentsResult.data ?? []) as Record<string, unknown>[]).map((row) => ({
+            id: asString(row.id),
+            fullName: asString(row.full_name) || 'Resident',
+            unit: asString(row.unit),
+            building: asString(row.building) || null,
+            status: asString(row.status).toLowerCase() || 'active',
+          })),
+      lookupName,
+      activeCanonicalProperty,
+      healthUnits,
+    )
+    setBuildingResidents(
+      scopedBuildingResidents.map((row) => ({
+        id: row.id,
+        unit: row.unit,
+        building: row.building || buildingName,
+        status: row.status,
+      })),
     )
     setProfile(
       buildResidentProfileDetail({
@@ -630,6 +701,7 @@ export function AdminPropertyResidentDetailDashboard() {
           building: loaded.building,
           status: loaded.status,
           balanceDue: loaded.balanceDue,
+          leaseStartDate: loaded.leaseStartDate,
           leaseEndDate: loaded.leaseEndDate,
           monthlyRent: loaded.monthlyRent,
           maintenanceResponsibilitiesClause: loaded.maintenanceResponsibilitiesClause,
@@ -685,14 +757,21 @@ export function AdminPropertyResidentDetailDashboard() {
 
   const editInitialUnitKey = useMemo(() => {
     if (!loadedUser?.unit.trim()) return ''
-    return initialUnitOptionKeyForResident(loadedUser.unit, loadedUser.building)
-  }, [loadedUser])
+    return initialUnitOptionKeyForResident(loadedUser.unit, loadedUser.building, buildingUnits)
+  }, [loadedUser, buildingUnits])
 
   async function handleResidentSave(payload: EditResidentSavePayload) {
     if (!supabase) throw new Error("We can't reach the server right now. Please try again in a moment.")
     setActionError(null)
 
     const unitCell = unitOptionKeyToCell(payload.unitOptionKey)
+    const assigned =
+      unitCell.kind === 'assigned'
+        ? resolveInventoryUnitForResidentSave(buildingUnits, {
+            unit: unitCell.unit,
+            building: unitCell.building,
+          })
+        : null
     const previousPhone = loadedUser?.phone ?? null
     const { error: updateError } = await supabase
       .from('users')
@@ -701,8 +780,10 @@ export function AdminPropertyResidentDetailDashboard() {
         email: payload.email,
         phone: payload.phone ?? null,
         status: payload.status,
-        unit: unitCell.kind === 'assigned' ? unitCell.unit : null,
-        building: unitCell.kind === 'assigned' ? unitCell.building : null,
+        unit: assigned?.unitLabel ?? null,
+        building: assigned?.building ?? null,
+        move_in_date: parseLeaseDateInput(payload.leaseStart),
+        lease_end_date: parseLeaseDateInput(payload.leaseEnd),
       })
       .eq('id', payload.id)
       .eq('landlord_id', getActiveLandlordId())
@@ -712,21 +793,52 @@ export function AdminPropertyResidentDetailDashboard() {
       throw new Error(getErrorMessage(updateError, 'Something went wrong. Please try again.'))
     }
 
+    if (assigned) {
+      void activateUnitsFromResidentAssignments({
+        landlordId: getActiveLandlordId(),
+        residents: [
+          {
+            id: payload.id,
+            unit: assigned.unitLabel,
+            building: assigned.building,
+            status: payload.status,
+            moveInDate: parseLeaseDateInput(payload.leaseStart),
+            leaseEndDate: parseLeaseDateInput(payload.leaseEnd),
+          },
+        ],
+        source: 'edit_resident',
+      })
+    }
+
     if (payload.phone?.trim()) {
       void syncSmsIdentity({
         phone: payload.phone,
         identityType: 'resident',
         residentId: payload.id,
-        unitLabel: unitCell.kind === 'assigned' ? unitCell.unit : null,
-        building: unitCell.kind === 'assigned' ? unitCell.building : null,
+        unitId: assigned?.unitId ?? null,
+        unitLabel: assigned?.unitLabel ?? null,
+        building: assigned?.building ?? null,
       })
     }
 
     if (phoneChanged(previousPhone, payload.phone)) {
-      await clearActivationFailureOnPhoneUpdate({
-        landlordId: getActiveLandlordId(),
-        residentId: payload.id,
-      })
+      if (payload.restartOnboarding && payload.phone?.trim()) {
+        const result = await restartTenantOnboardingAfterPhoneChange({
+          landlordId: getActiveLandlordId(),
+          residentId: payload.id,
+        })
+        if (!result.ok || (result.failed ?? 0) > 0) {
+          setActionError(
+            result.error ||
+              'Resident saved, but the welcome text could not be delivered. You can start onboarding again from this page.',
+          )
+        }
+      } else {
+        await resetTenantActivationForPhoneChange({
+          landlordId: getActiveLandlordId(),
+          residentId: payload.id,
+        })
+      }
     }
 
     setEditOpen(false)

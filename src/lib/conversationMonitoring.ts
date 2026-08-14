@@ -9,6 +9,8 @@ import {
   stripLegacyVerbalQuoteAuditItems,
 } from '@/lib/vendorSetupConversation'
 import type { VendorSetupPricingNegotiationBrief } from '@/lib/vendorSetupPricingNegotiation'
+import type { SmsMediaItem } from '@/lib/smsMedia'
+import { resolveSmsMediaForMessages } from '@/lib/smsMedia'
 
 export type MonitoringRiskLevel = 'high' | 'medium' | 'low'
 
@@ -22,6 +24,7 @@ export type MonitoringTranscriptItem =
       body: string
       timestampMs: number
       outreachChannel?: VendorOutreachChannel | 'both'
+      media?: SmsMediaItem[]
     }
   | {
       type: 'tool_action'
@@ -176,6 +179,7 @@ type DbMessage = {
   direction: string
   body: string
   createdAtMs: number
+  media: SmsMediaItem[]
 }
 
 type ConversationContext = {
@@ -623,12 +627,15 @@ function mapDbMessagesToTranscript(ctx: ConversationContext): MonitoringTranscri
         ? formatResidentFeedbackPreview(inboundRating)
         : message.body
 
+    if (!displayBody && message.media.length === 0) continue
+
     items.push({
       type: 'message',
       sender,
       senderName,
       body: displayBody,
       timestampMs: message.createdAtMs,
+      media: message.media.length > 0 ? message.media : undefined,
     })
 
     if (inboundRating != null) {
@@ -787,7 +794,7 @@ async function loadConversationContext(
     await Promise.allSettled([
       supabase
         .from('sms_messages')
-        .select('direction, body, created_at')
+        .select('direction, body, media_urls, created_at')
         .eq('landlord_id', landlordId)
         .eq('conversation_id', conversationId)
         .order('created_at', { ascending: true }),
@@ -837,14 +844,21 @@ async function loadConversationContext(
     ])
 
   const messages: DbMessage[] = []
+  const mediaUrlsByMessage: unknown[] = []
   if (messagesResult.status === 'fulfilled' && !messagesResult.value.error) {
     for (const message of (messagesResult.value.data ?? []) as Record<string, unknown>[]) {
       messages.push({
         direction: asString(message.direction),
         body: asString(message.body),
         createdAtMs: new Date(asString(message.created_at)).getTime(),
+        media: [],
       })
+      mediaUrlsByMessage.push(message.media_urls)
     }
+  }
+  const resolvedMedia = await resolveSmsMediaForMessages(mediaUrlsByMessage)
+  for (let i = 0; i < messages.length; i += 1) {
+    messages[i].media = resolvedMedia[i] ?? []
   }
 
   const resident =

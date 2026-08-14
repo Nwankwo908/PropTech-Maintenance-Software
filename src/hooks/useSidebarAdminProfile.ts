@@ -1,11 +1,13 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useLocation } from 'react-router-dom'
 import {
+  contactInitials,
   profileFromAccountSetup,
   profileFromSessionUser,
   type SidebarAdminProfile,
 } from '@/constants/sidebarAdminProfile'
 import { getActiveLandlordId } from '@/lib/activeLandlord'
+import { fetchLandlordAccountProfile } from '@/lib/landlordAccountProfile'
 import {
   fetchLandlordOnboarding,
   isOnboardingLandlordAccount,
@@ -20,11 +22,29 @@ type SidebarAdminProfileState = {
   hideProfile: boolean
 }
 
+function profileFromLandlordRecord(input: {
+  companyName: string
+  contactName: string
+  email: string
+}): SidebarAdminProfile | null {
+  const email = input.email.trim()
+  const name = input.contactName.trim() || input.companyName.trim()
+  if (!name && !email) return null
+  const displayName = name || email.split('@')[0] || 'Account'
+  return {
+    name: displayName,
+    email,
+    initials: contactInitials(displayName),
+  }
+}
+
 function resolveProfile(
+  landlordProfile: SidebarAdminProfile | null,
   onboardingState: LandlordOnboardingState | null,
   sessionEmail: string | null,
   sessionName: string | null,
 ): SidebarAdminProfile | null {
+  if (landlordProfile) return landlordProfile
   if (isOnboardingLandlordAccount()) {
     const fromSetup = onboardingState
       ? profileFromAccountSetup(onboardingState.accountSetup)
@@ -54,6 +74,7 @@ export function useSidebarAdminProfile(): SidebarAdminProfileState {
   const [onboardingState, setOnboardingState] = useState<LandlordOnboardingState | null>(() =>
     isOnboardingLandlordAccount(landlordId) ? readLocalOnboardingState(landlordId) : null,
   )
+  const [landlordProfile, setLandlordProfile] = useState<SidebarAdminProfile | null>(null)
   const [sessionEmail, setSessionEmail] = useState<string | null>(null)
   const [sessionName, setSessionName] = useState<string | null>(null)
 
@@ -99,6 +120,29 @@ export function useSidebarAdminProfile(): SidebarAdminProfileState {
     }
   }, [landlordId, location.pathname])
 
+  useEffect(() => {
+    if (!isOnboardingLandlordAccount(landlordId)) {
+      setLandlordProfile(null)
+      return
+    }
+
+    let cancelled = false
+    void fetchLandlordAccountProfile(landlordId).then((profile) => {
+      if (cancelled) return
+      setLandlordProfile(
+        profileFromLandlordRecord({
+          companyName: profile.companyName,
+          contactName: profile.contactName,
+          email: profile.email,
+        }),
+      )
+    })
+
+    return () => {
+      cancelled = true
+    }
+  }, [landlordId, location.pathname])
+
   return useMemo(() => {
     const hideProfile = shouldHideSidebarProfile(onOnboardingRoute, onboardingState)
     if (hideProfile) {
@@ -106,8 +150,8 @@ export function useSidebarAdminProfile(): SidebarAdminProfileState {
     }
 
     return {
-      profile: resolveProfile(onboardingState, sessionEmail, sessionName),
+      profile: resolveProfile(landlordProfile, onboardingState, sessionEmail, sessionName),
       hideProfile: false,
     }
-  }, [onOnboardingRoute, onboardingState, sessionEmail, sessionName])
+  }, [onOnboardingRoute, onboardingState, landlordProfile, sessionEmail, sessionName])
 }

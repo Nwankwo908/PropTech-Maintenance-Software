@@ -5,6 +5,7 @@
 import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.49.1"
 import {
   escalateMaintenanceNeedsVendor,
+  SUBMITTED_NO_VENDOR_ESCALATION,
   type MaintenanceAdminVendorEscalationReason,
   type MaintenanceTicketScope,
 } from "../../maintenance_admin_escalation.ts"
@@ -142,6 +143,17 @@ export const maintenanceRequestTemplate: WorkflowTemplate = {
         supabase,
         meta.ticketSubmitted,
       )
+      const needsVendor = Boolean(meta.ticketSubmitted.needsVendorEscalation)
+      if (needsVendor) {
+        await escalateMaintenanceNeedsVendor(
+          supabase,
+          {
+            id: meta.ticketSubmitted.ticketId,
+            landlord_id: meta.ticketSubmitted.landlordId,
+          },
+          SUBMITTED_NO_VENDOR_ESCALATION,
+        )
+      }
       return {
         templateId: "maintenance_request",
         route: workflowRouteForTemplate("maintenance_request"),
@@ -150,7 +162,9 @@ export const maintenanceRequestTemplate: WorkflowTemplate = {
           action: "ticket_submitted",
           ticket_id: meta.ticketSubmitted.ticketId,
           vendor_assigned: Boolean(meta.ticketSubmitted.vendorAssigned),
+          needs_vendor: needsVendor,
         },
+        shouldEscalate: needsVendor,
       }
     }
 

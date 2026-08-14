@@ -26,6 +26,10 @@ import {
   type InboundSmsHandlerContext,
   type ProcessInboundSmsResult,
 } from "./inboundHandlerTypes.ts"
+import {
+  inboundMediaWasRehosted,
+  rehostInboundSmsMedia,
+} from "./rehostInboundMedia.ts"
 
 export {
   InboundSmsError,
@@ -86,6 +90,38 @@ async function saveInboundMessage(
   }
 
   return { messageId: data.id as string, duplicate: false }
+}
+
+/** Rehost MMS into private storage so Messages / work orders can render it. */
+async function persistRehostedInboundMedia(
+  supabase: SupabaseClient,
+  params: {
+    inbound: InboundSMSMessage
+    conversationId: string
+    messageId: string
+    duplicate: boolean
+  },
+): Promise<void> {
+  if (params.duplicate || params.inbound.mediaUrls.length === 0) return
+  try {
+    const rehosted = await rehostInboundSmsMedia(supabase, {
+      mediaUrls: params.inbound.mediaUrls,
+      provider: params.inbound.provider,
+      storagePrefix: `sms/${params.conversationId}/${params.messageId}`,
+    })
+    if (!inboundMediaWasRehosted(params.inbound.mediaUrls, rehosted)) return
+    const { error } = await supabase
+      .from("sms_messages")
+      .update({ media_urls: rehosted })
+      .eq("id", params.messageId)
+    if (error) {
+      console.error("[sms-inbound] media_urls update failed", error.message)
+      return
+    }
+    params.inbound.mediaUrls = rehosted
+  } catch (e) {
+    console.error("[sms-inbound] media rehost failed", e)
+  }
 }
 
 async function loadActiveMaintenanceIntake(
@@ -152,6 +188,12 @@ export async function processInboundSms(
         inbound,
       })
       const messageId = saved.messageId
+      await persistRehostedInboundMedia(supabase, {
+        inbound,
+        conversationId,
+        messageId,
+        duplicate: saved.duplicate,
+      })
       if (saved.duplicate) {
         return {
           ok: true,
@@ -252,6 +294,12 @@ export async function processInboundSms(
     inbound,
   })
   const messageId = saved.messageId
+  await persistRehostedInboundMedia(supabase, {
+    inbound,
+    conversationId,
+    messageId,
+    duplicate: saved.duplicate,
+  })
 
   if (saved.duplicate) {
     console.info("[sms-inbound] duplicate provider SID — skip reprocess", {

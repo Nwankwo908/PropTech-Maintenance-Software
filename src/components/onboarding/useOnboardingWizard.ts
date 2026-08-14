@@ -13,6 +13,7 @@ import {
   isAcceptedUploadFile,
   normalizeExtractionReview,
   runDocumentProcessing,
+  UPLOAD_STATUS_LABELS,
   type OnboardingExtractionReview,
   type OnboardingUploadedDocument,
 } from '@/lib/onboardingDocumentUpload'
@@ -716,7 +717,12 @@ export function useOnboardingWizard() {
     }
     if (queued.length === 0) return
 
-    const newDocs = queued.map((item) => item.doc)
+    const newDocs = queued.map((item) => ({
+      ...item.doc,
+      uploadStatus: 'uploading' as const,
+      processingLabel: UPLOAD_STATUS_LABELS.uploading,
+      uploadProgress: 8,
+    }))
     setUploadDocuments((prev) => [...prev, ...newDocs])
     setUploadProcessing(true)
 

@@ -1,7 +1,6 @@
 import { getActiveLandlordId } from '@/lib/activeLandlord'
 import {
   fetchAdminWorkflowDashboard,
-  formatWorkflowTimestamp,
   workflowTemplateGroupId,
   type AdminWorkflowRow,
 } from '@/lib/adminWorkflows'
@@ -30,6 +29,12 @@ import {
   type MoveInUloThreadInput,
   type WorkflowUloThreadInput,
 } from '@/lib/conversationMonitoring'
+import {
+  isProviderAuthMediaUrl,
+  isStorageMediaPath,
+  normalizeMediaRefs,
+  resolveSmsMediaForMessages,
+} from '@/lib/smsMedia'
 
 export type WorkflowPipelineStepState = 'complete' | 'active' | 'upcoming'
 
@@ -46,7 +51,7 @@ export type WorkflowPipelineField = {
 export type WorkflowPipelineAttachment = {
   name: string
   sizeLabel: string
-  kind: 'image' | 'document'
+  kind: 'image' | 'video' | 'document'
   url?: string
   caption?: string
 }
@@ -192,12 +197,8 @@ function formatWorkOrderRef(run: AdminWorkflowRow): string {
 function formatCreatedLine(iso: string): string {
   const date = new Date(iso)
   if (Number.isNaN(date.getTime())) return 'Created recently'
-  const now = new Date()
-  const startOfToday = new Date(now)
-  startOfToday.setHours(0, 0, 0, 0)
-  const dayLabel = date >= startOfToday ? 'Today' : formatWorkflowTimestamp(iso).split(',')[0]
-  const timeLabel = date.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })
-  return `Created ${dayLabel} · ${timeLabel}`
+  const monthDay = date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
+  return `Created ${monthDay}`
 }
 
 function formatDueLabel(iso: string | null | undefined): string {
@@ -341,6 +342,52 @@ function stageBadge(stage: ReturnType<typeof deriveWorkflowKanbanStage>) {
 
 function formatCategoryLabel(raw: string | null | undefined): string {
   return formatVendorTradeLabel(raw, { emptyLabel: 'General' })
+}
+
+const PRIORITY_TITLE_PREFIX =
+  /^(?:\[(?:emergency|urgent|critical|high|medium|low|priority)\]\s*|(?:emergency|urgent|critical|high|medium|low|priority)\s*[:\-–—]\s*)+/i
+
+function firstSentence(text: string): string {
+  return text.split(/[.!?]/)[0]?.trim() ?? ''
+}
+
+function stripPriorityFromTitle(text: string): string {
+  let result = text.trim()
+  for (let i = 0; i < 3; i++) {
+    const next = result.replace(PRIORITY_TITLE_PREFIX, '').trim()
+    if (next === result) break
+    result = next
+  }
+  return result.replace(/^(?:emergency|urgent|critical)\s+/i, '').trim()
+}
+
+function truncateConciseTitle(text: string, maxLen = 64): string {
+  const trimmed = text.trim()
+  if (trimmed.length <= maxLen) return trimmed
+  const cut = trimmed.slice(0, maxLen)
+  const lastSpace = cut.lastIndexOf(' ')
+  if (lastSpace > maxLen * 0.5) return `${cut.slice(0, lastSpace).trim()}…`
+  return `${cut.trim()}…`
+}
+
+function toSentenceCase(text: string): string {
+  const trimmed = text.trim()
+  if (!trimmed) return trimmed
+  return trimmed.charAt(0).toUpperCase() + trimmed.slice(1)
+}
+
+function buildConciseWorkOrderTitle(input: {
+  description: string
+  issueCategory: string
+  fallback: string
+}): string {
+  const stripped = stripPriorityFromTitle(firstSentence(input.description))
+  if (stripped) {
+    const concise =
+      stripped.length > 72 && stripped.includes(',') ? stripped.split(',')[0].trim() : stripped
+    return truncateConciseTitle(toSentenceCase(concise))
+  }
+  return formatCategoryLabel(input.issueCategory) || input.fallback || 'Work order'
 }
 
 function formatCurrency(value: number | null | undefined): string {
@@ -510,13 +557,7 @@ function syntheticConversationPhotoAttachments(
 }
 
 function isBrowserUnsafeMediaUrl(url: string): boolean {
-  const lower = url.toLowerCase()
-  // Twilio MMS media requires HTTP Basic (Account SID / Auth Token) — never open in <img>.
-  return (
-    lower.includes('api.twilio.com') ||
-    lower.includes('media.twilio.com') ||
-    lower.includes('api.telnyx.com')
-  )
+  return isProviderAuthMediaUrl(url)
 }
 
 async function signMaintenanceUploadPaths(
@@ -527,29 +568,30 @@ async function signMaintenanceUploadPaths(
     nameFallbackPrefix: string
   },
 ): Promise<WorkflowPipelineAttachment[]> {
-  const { supabase } = await import('@/lib/supabase')
-  if (!supabase) return []
-  if (!Array.isArray(photoPaths) || photoPaths.length === 0) return []
+  const paths = normalizeMediaRefs(photoPaths)
+  if (paths.length === 0) return []
 
+  const resolvedByPath = await resolveSmsMediaForMessages(paths.map((path) => [path]))
   const items: WorkflowPipelineAttachment[] = []
-  let photoIndex = 0
-  for (const rawPath of photoPaths) {
-    const path = asString(rawPath)
-    if (!path) continue
-    const { data, error } = await supabase.storage
-      .from('maintenance-uploads')
-      .createSignedUrl(path, 3600)
-    if (error || !data?.signedUrl) {
-      console.warn('[workflow-pipeline] signed photo url failed', path, error?.message)
+  let mediaIndex = 0
+  for (let i = 0; i < paths.length; i += 1) {
+    const path = paths[i]
+    const media = resolvedByPath[i]?.[0]
+    if (!media) {
+      if (isStorageMediaPath(path)) {
+        console.warn('[workflow-pipeline] signed media url failed', path)
+      }
       continue
     }
-    photoIndex += 1
+    mediaIndex += 1
+    const kind = media.kind === 'video' ? 'video' : 'image'
+    const noun = kind === 'video' ? 'video' : 'photo'
     items.push({
-      name: path.split('/').pop() || `${opts.nameFallbackPrefix}-${photoIndex}.jpg`,
+      name: path.split('/').pop() || `${opts.nameFallbackPrefix}-${mediaIndex}.${kind === 'video' ? 'mp4' : 'jpg'}`,
       sizeLabel: opts.sizeLabel,
-      kind: 'image',
-      url: data.signedUrl,
-      caption: `${opts.captionPrefix} · photo ${photoIndex}`,
+      kind,
+      url: media.url,
+      caption: `${opts.captionPrefix} · ${noun} ${mediaIndex}`,
     })
   }
   return items
@@ -581,57 +623,65 @@ async function loadInboundSmsPhotoAttachments(
   enrichment: TicketEnrichment,
   residentName: string,
 ): Promise<WorkflowPipelineAttachment[]> {
-  // Prefer durable ticket photos (signed storage URLs). Never use raw Twilio/Telnyx
-  // media URLs in the browser — they prompt for username/password.
   const fromTicket = await loadTicketPhotoPathAttachments(enrichment, residentName)
-  if (fromTicket.length > 0) return fromTicket
-
-  // If the ticket already has photo_paths but signing failed, do not fall back to
-  // provider media (that is what triggers the auth dialog).
-  const photoPaths = enrichment.ticket?.photo_paths
-  if (Array.isArray(photoPaths) && photoPaths.length > 0) return []
+  const ticketPaths = new Set(normalizeMediaRefs(enrichment.ticket?.photo_paths))
 
   const { supabase } = await import('@/lib/supabase')
-  if (!supabase) return []
+  if (!supabase) return fromTicket
 
   const landlordId = getActiveLandlordId()
-  const conversationId = enrichment.conversationId
-  if (!conversationId) return []
+  const conversationIds =
+    enrichment.conversationIds.length > 0
+      ? enrichment.conversationIds
+      : enrichment.conversationId
+        ? [enrichment.conversationId]
+        : []
+  if (conversationIds.length === 0) return fromTicket
 
   const { data: messages } = await supabase
     .from('sms_messages')
     .select('body, direction, media_urls, created_at')
     .eq('landlord_id', landlordId)
-    .eq('conversation_id', conversationId)
+    .in('conversation_id', conversationIds)
     .eq('direction', 'inbound')
-    .order('created_at', { ascending: false })
-    .limit(8)
+    .order('created_at', { ascending: true })
 
-  const items: WorkflowPipelineAttachment[] = []
-  let photoIndex = 0
+  const extraRefs: string[] = []
+  const metaByRef = new Map<string, { body: string; sentAt: string }>()
   for (const message of (messages ?? []) as Record<string, unknown>[]) {
-    const rawUrls = message.media_urls
-    const urls = Array.isArray(rawUrls) ? rawUrls : []
     const body = asString(message.body)
     const sentAt = formatAttachmentTimestamp(asString(message.created_at))
-
-    for (const rawUrl of urls) {
-      const url = asString(rawUrl)
-      if (!url || isBrowserUnsafeMediaUrl(url)) continue
-      photoIndex += 1
-      items.push({
-        name: `tenant-photo-${photoIndex}.jpg`,
-        sizeLabel: sentAt,
-        kind: 'image',
-        url,
-        caption: body || `${residentName} · photo ${photoIndex}`,
-      })
-      if (photoIndex >= 3) break
+    for (const ref of normalizeMediaRefs(message.media_urls)) {
+      if (ticketPaths.has(ref) || extraRefs.includes(ref)) continue
+      if (isBrowserUnsafeMediaUrl(ref)) continue
+      extraRefs.push(ref)
+      metaByRef.set(ref, { body, sentAt })
     }
-    if (photoIndex >= 3) break
   }
 
-  return items.reverse()
+  const extraItems: WorkflowPipelineAttachment[] = []
+  const resolvedByRef = await resolveSmsMediaForMessages(extraRefs.map((ref) => [ref]))
+  let mediaIndex = fromTicket.length
+  for (let i = 0; i < extraRefs.length; i += 1) {
+    const ref = extraRefs[i]
+    const media = resolvedByRef[i]?.[0]
+    if (!media) continue
+    mediaIndex += 1
+    const kind = media.kind === 'video' ? 'video' : 'image'
+    const noun = kind === 'video' ? 'video' : 'photo'
+    const meta = metaByRef.get(ref)
+    extraItems.push({
+      name:
+        (isStorageMediaPath(ref) ? ref.split('/').pop() : '') ||
+        `conversation-${noun}-${mediaIndex}.${kind === 'video' ? 'mp4' : 'jpg'}`,
+      sizeLabel: meta?.sentAt || 'From SMS',
+      kind,
+      url: media.url,
+      caption: meta?.body || `${residentName} · ${noun} ${mediaIndex}`,
+    })
+  }
+
+  return [...fromTicket, ...extraItems]
 }
 
 function syntheticInspectionConversationPhotos(
@@ -668,6 +718,7 @@ type TicketEnrichment = {
   vendorName: string | null
   resident: Record<string, unknown> | null
   conversationId: string | null
+  conversationIds: string[]
   maintenanceRequestId: string | null
 }
 
@@ -683,6 +734,7 @@ async function loadTicketEnrichment(
       vendorName: null,
       resident: null,
       conversationId: null,
+      conversationIds: [],
       maintenanceRequestId: null,
     }
   }
@@ -695,6 +747,7 @@ async function loadTicketEnrichment(
   let vendorName: string | null = null
   let resident: Record<string, unknown> | null = null
   let conversationId = asString(metadata.conversation_id)
+  let conversationIds: string[] = []
 
   if (ticketId) {
     const { data } = await supabase
@@ -751,6 +804,13 @@ async function loadTicketEnrichment(
         rows[0]
       conversationId = asString(preferred?.id)
     }
+    conversationIds = rows
+      .filter((entry) => {
+        const type = asString(entry.conversation_type)
+        return type !== 'ai_copilot' && type !== 'landlord_update'
+      })
+      .map((entry) => asString(entry.id))
+      .filter(Boolean)
   }
 
   const residentId = row.residentId
@@ -779,7 +839,19 @@ async function loadTicketEnrichment(
     conversationId = asString(metadata.conversation_id)
   }
 
-  return { ticket, invoice, vendorName, resident, conversationId, maintenanceRequestId: ticketId || null }
+  if (conversationId && !conversationIds.includes(conversationId)) {
+    conversationIds = [conversationId, ...conversationIds]
+  }
+
+  return {
+    ticket,
+    invoice,
+    vendorName,
+    resident,
+    conversationId,
+    conversationIds,
+    maintenanceRequestId: ticketId || null,
+  }
 }
 
 function buildWorkOrderUloThreadInput(
@@ -1094,9 +1166,11 @@ export async function fetchWorkflowPipelineDetail(
 
   const title = isMoveOut
     ? moveOutPipelineTitle()
-    : asString(ticket?.description).split(/[.!?]/)[0]?.trim() ||
-      row.templateName ||
-      'Workflow'
+    : buildConciseWorkOrderTitle({
+        description: asString(ticket?.description),
+        issueCategory: asString(ticket?.issue_category) || row.templateType || 'general',
+        fallback: row.templateName || 'Workflow',
+      })
 
   const description = isMoveOut
     ? 'Ulo is coordinating move-out with the resident — instructions, inspection, keys, and deposit review stay in one SMS thread.'

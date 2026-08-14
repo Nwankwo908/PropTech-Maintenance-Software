@@ -319,7 +319,11 @@ export function AdminOrganizationSettings() {
     }
   }
 
-  const logoInitial = draft.displayName.trim().charAt(0).toUpperCase() || 'U'
+  const logoInitial =
+    draft.displayName.trim().charAt(0).toUpperCase() ||
+    draft.contactName.trim().charAt(0).toUpperCase() ||
+    draft.legalName.trim().charAt(0).toUpperCase() ||
+    'U'
 
   return (
     <>
@@ -358,15 +362,11 @@ export function AdminOrganizationSettings() {
                 <div className="flex flex-wrap gap-2">
                   <button
                     type="button"
-                    className="sa-press rounded-[8px] bg-transparent px-3.5 py-2 text-[13px] font-medium tracking-[-0.1504px] text-[#186179]"
+                    disabled
+                    title="Logo upload coming soon"
+                    className="cursor-not-allowed rounded-[8px] bg-transparent px-3.5 py-2 text-[13px] font-medium tracking-[-0.1504px] text-[#9ca3af]"
                   >
-                    Upload logo
-                  </button>
-                  <button
-                    type="button"
-                    className="sa-press rounded-[8px] bg-transparent px-3.5 py-2 text-[13px] font-medium tracking-[-0.1504px] text-[#186179]"
-                  >
-                    Remove
+                    Upload logo (coming soon)
                   </button>
                 </div>
               </div>
@@ -388,6 +388,14 @@ export function AdminOrganizationSettings() {
                     onChange={(e) => updateDraft({ displayName: e.target.value })}
                   />
                 </FormField>
+                <FormField label="Primary contact" htmlFor="org-contact-name">
+                  <input
+                    id="org-contact-name"
+                    className={inputClass}
+                    value={draft.contactName}
+                    onChange={(e) => updateDraft({ contactName: e.target.value })}
+                  />
+                </FormField>
                 <FormField label="Support email" htmlFor="org-support-email">
                   <input
                     id="org-support-email"
@@ -403,6 +411,22 @@ export function AdminOrganizationSettings() {
                     className={inputClass}
                     value={draft.phone}
                     onChange={(e) => updateDraft({ phone: e.target.value })}
+                  />
+                </FormField>
+                <FormField label="Backup contact" htmlFor="org-backup-contact-name">
+                  <input
+                    id="org-backup-contact-name"
+                    className={inputClass}
+                    value={draft.backupContactName}
+                    onChange={(e) => updateDraft({ backupContactName: e.target.value })}
+                  />
+                </FormField>
+                <FormField label="Backup phone" htmlFor="org-backup-contact-phone">
+                  <input
+                    id="org-backup-contact-phone"
+                    className={inputClass}
+                    value={draft.backupContactPhone}
+                    onChange={(e) => updateDraft({ backupContactPhone: e.target.value })}
                   />
                 </FormField>
                 <FormField label="About" htmlFor="org-about" className="sm:col-span-2">
@@ -889,7 +913,7 @@ export function AdminOrganizationSettings() {
               <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-[#6a7282]">Workspace</p>
               <div className="mt-3 flex items-center gap-2">
                 <span className="inline-flex rounded-full bg-[#101828] px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.04em] text-white">
-                  {workspace?.planLabel ?? 'Enterprise'}
+                  {workspace?.planLabel ?? 'Ulo Alpha'}
                 </span>
               </div>
 

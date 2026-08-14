@@ -79,6 +79,15 @@ function DocumentIcon() {
   )
 }
 
+function VideoIcon() {
+  return (
+    <svg className="size-5 text-[#6a7282]" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} aria-hidden>
+      <rect x="3" y="6" width="14" height="12" rx="2" />
+      <path d="m17 10 4-2v8l-4-2z" strokeLinejoin="round" />
+    </svg>
+  )
+}
+
 function WorkOrderPhotosSection({
   title,
   subtitle,
@@ -102,7 +111,17 @@ function WorkOrderPhotosSection({
             key={`${attachment.name}-${attachment.url ?? attachment.sizeLabel}`}
             className="overflow-hidden rounded-[10px] border border-[#e5e7eb] bg-[#fafafa]"
           >
-            {attachment.url && attachment.kind === 'image' ? (
+            {attachment.url && attachment.kind === 'video' ? (
+              <div className="aspect-[4/3] overflow-hidden bg-[#0a0a0a]">
+                <video
+                  src={attachment.url}
+                  controls
+                  playsInline
+                  preload="metadata"
+                  className="size-full object-contain"
+                />
+              </div>
+            ) : attachment.url && attachment.kind === 'image' ? (
               <a
                 href={attachment.url}
                 target="_blank"
@@ -117,7 +136,13 @@ function WorkOrderPhotosSection({
               </a>
             ) : (
               <div className="flex aspect-[4/3] items-center justify-center bg-[#f3f4f6]">
-                {attachment.kind === 'image' ? <ImageIcon /> : <DocumentIcon />}
+                {attachment.kind === 'video' ? (
+                  <VideoIcon />
+                ) : attachment.kind === 'image' ? (
+                  <ImageIcon />
+                ) : (
+                  <DocumentIcon />
+                )}
               </div>
             )}
             <div className="px-3 py-2.5">
@@ -138,7 +163,7 @@ function conversationPhotosSubtitle(detail: WorkflowPipelineDetail): string {
   if (detail.uloThread?.kind === 'inspection') {
     return 'Captured during the guided SMS inspection'
   }
-  return 'Sent by the tenant in the SMS thread'
+  return 'Sent by the tenant or vendor over text'
 }
 
 function FieldGrid({ fields, columns = 4 }: { fields: WorkflowPipelineField[]; columns?: 2 | 4 }) {
@@ -178,6 +203,28 @@ function WorkflowStepIndicator({
   )
 }
 
+const VISIBLE_WORKFLOW_STAGE_COUNT = 4
+
+function resolveWorkflowProgressIndex(steps: WorkflowPipelineStep[]): number {
+  const activeIndex = steps.findIndex((step) => step.state === 'active')
+  const lastCompleteIndex = steps.reduce(
+    (lastIndex, step, index) => (step.state === 'complete' ? index : lastIndex),
+    -1,
+  )
+  return activeIndex >= 0 ? activeIndex : Math.max(0, lastCompleteIndex)
+}
+
+function resolveVisibleStageWindow(
+  stepCount: number,
+  progressIndex: number,
+  windowSize = VISIBLE_WORKFLOW_STAGE_COUNT,
+): { start: number; size: number } {
+  if (stepCount <= windowSize) return { start: 0, size: stepCount }
+  const maxStart = stepCount - windowSize
+  const start = Math.min(Math.max(0, progressIndex - 1), maxStart)
+  return { start, size: windowSize }
+}
+
 function WorkflowProgressStepper({
   steps,
   caption,
@@ -186,17 +233,15 @@ function WorkflowProgressStepper({
   caption: string
 }) {
   const stepCount = steps.length
-  const activeIndex = steps.findIndex((step) => step.state === 'active')
-  const lastCompleteIndex = steps.reduce(
-    (lastIndex, step, index) => (step.state === 'complete' ? index : lastIndex),
-    -1,
-  )
-  const progressIndex = activeIndex >= 0 ? activeIndex : Math.max(0, lastCompleteIndex)
-  const trackInset = stepCount > 0 ? `${100 / (2 * stepCount)}%` : '0%'
+  const progressIndex = resolveWorkflowProgressIndex(steps)
+  const { start: windowStart, size: visibleCount } = resolveVisibleStageWindow(stepCount, progressIndex)
+  const visibleSteps = steps.slice(windowStart, windowStart + visibleCount)
+  const localProgressIndex = Math.max(0, Math.min(progressIndex - windowStart, visibleCount - 1))
+  const trackInset = visibleCount > 0 ? `${100 / (2 * visibleCount)}%` : '0%'
   const fillWidth =
-    stepCount <= 1
+    visibleCount <= 1
       ? '0%'
-      : `calc((100% - ${100 / stepCount}%) * ${progressIndex / (stepCount - 1)})`
+      : `calc((100% - ${100 / visibleCount}%) * ${localProgressIndex / (visibleCount - 1)})`
 
   return (
     <section className="w-full rounded-[10px] border border-[#e5e7eb] bg-white p-5 shadow-[0px_1px_2px_-1px_rgba(0,0,0,0.06)]">
@@ -205,41 +250,8 @@ function WorkflowProgressStepper({
         <span className="text-[12px] font-medium text-[#6a7282]">{caption}</span>
       </div>
 
-      {/* Small screens: vertical list so every stage label stays readable */}
-      <ol className="flex flex-col md:hidden">
-        {steps.map((step, index) => (
-          <li key={step.label} className="flex gap-3">
-            <div className="flex w-7 shrink-0 flex-col items-center">
-              <WorkflowStepIndicator step={step} index={index} />
-              {index < steps.length - 1 ? (
-                <div
-                  className={[
-                    'my-1 w-0.5 flex-1 min-h-3',
-                    step.state === 'complete' ? 'bg-[#00a63e]' : 'bg-[#e5e7eb]',
-                  ].join(' ')}
-                  aria-hidden
-                />
-              ) : null}
-            </div>
-            <p
-              className={[
-                'min-w-0 flex-1 pb-4 pt-1 text-[13px] leading-5',
-                step.state === 'active'
-                  ? 'font-semibold text-[#0a0a0a]'
-                  : step.state === 'complete'
-                    ? 'text-[#364153]'
-                    : 'text-[#6a7282]',
-              ].join(' ')}
-            >
-              {step.label}
-            </p>
-          </li>
-        ))}
-      </ol>
-
-      {/* md+: horizontal stepper */}
-      <div className="relative hidden w-full md:block">
-        {stepCount > 1 ? (
+      <div className="relative w-full">
+        {visibleCount > 1 ? (
           <>
             <div
               className="absolute top-[14px] h-0.5 bg-[#e5e7eb]"
@@ -253,23 +265,28 @@ function WorkflowProgressStepper({
         ) : null}
         <div
           className="relative grid w-full"
-          style={{ gridTemplateColumns: `repeat(${Math.max(stepCount, 1)}, minmax(0, 1fr))` }}
+          style={{ gridTemplateColumns: `repeat(${Math.max(visibleCount, 1)}, minmax(0, 1fr))` }}
         >
-          {steps.map((step, index) => (
-            <div key={step.label} className="flex min-w-0 flex-col items-center px-1">
-              <WorkflowStepIndicator step={step} index={index} />
-              <p
-                className={[
-                  'mt-2 w-full px-0.5 text-center text-[11px] leading-4 break-words',
-                  step.state === 'active'
-                    ? 'font-semibold text-[#0a0a0a]'
-                    : 'text-[#364153]',
-                ].join(' ')}
-              >
-                {step.label}
-              </p>
-            </div>
-          ))}
+          {visibleSteps.map((step, visibleIndex) => {
+            const globalIndex = windowStart + visibleIndex
+            return (
+              <div key={`${step.label}-${globalIndex}`} className="flex min-w-0 flex-col items-center px-1">
+                <WorkflowStepIndicator step={step} index={globalIndex} />
+                <p
+                  className={[
+                    'mt-2 w-full px-0.5 text-center text-[11px] leading-4 break-words',
+                    step.state === 'active'
+                      ? 'font-semibold text-[#0a0a0a]'
+                      : step.state === 'complete'
+                        ? 'text-[#364153]'
+                        : 'text-[#6a7282]',
+                  ].join(' ')}
+                >
+                  {step.label}
+                </p>
+              </div>
+            )
+          })}
         </div>
       </div>
     </section>
@@ -478,9 +495,6 @@ export function WorkflowPipelineDetailPanel({
                   <span className={`inline-flex rounded-[6px] px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.06em] ${detail.categoryClassName}`}>
                     {detail.categoryLabel}
                   </span>
-                  <span className={`inline-flex rounded-[6px] border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.06em] ${detail.stageClassName}`}>
-                    {detail.stageLabel}
-                  </span>
                   {detail.priorityLabel && detail.priorityClassName ? (
                     <span className={`inline-flex rounded-[6px] border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.06em] ${detail.priorityClassName}`}>
                       {detail.priorityLabel}
@@ -492,7 +506,6 @@ export function WorkflowPipelineDetailPanel({
                 </h2>
                 <p className="mt-1 text-[13px] leading-5 text-[#6a7282]">
                   {detail.createdLine}
-                  {detail.locationLine ? ` · ${detail.locationLine}` : ''}
                 </p>
               </>
             )}
@@ -760,7 +773,7 @@ export function WorkflowPipelineDetailPanel({
               </div>
 
               <WorkOrderPhotosSection
-                title="Photos from conversation"
+                title="Photos & videos from conversation"
                 subtitle={conversationPhotosSubtitle(detail)}
                 attachments={detail.attachments}
               />

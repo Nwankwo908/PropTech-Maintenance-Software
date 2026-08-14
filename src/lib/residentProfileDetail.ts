@@ -49,6 +49,7 @@ export type ResidentProfileDetail = {
   emergencyContact: ResidentEmergencyContact | null
   pets: ResidentPet[]
   leaseStatus: string
+  leaseStartLabel: string
   leaseEndLabel: string
   monthlyRentLabel: string
   depositLabel: string
@@ -71,6 +72,7 @@ export type ResidentProfileUserRow = {
   building: string | null
   status: string
   balanceDue: number
+  leaseStartDate?: string | null
   leaseEndDate: string | null
   /** Contract rent from users.monthly_rent when set during onboarding/edit. */
   monthlyRent?: number | null
@@ -229,6 +231,7 @@ export function buildResidentProfileDetail(input: {
     emergencyContact: null,
     pets: [],
     leaseStatus: user.status === 'pending' ? 'Pending move-in' : 'Occupied',
+    leaseStartLabel: formatPropertyLeaseEnd(user.leaseStartDate ?? null) ?? '—',
     leaseEndLabel: formatPropertyLeaseEnd(user.leaseEndDate) ?? '—',
     monthlyRentLabel: monthlyRent != null ? formatCurrency(monthlyRent) : '—',
     depositLabel: '—',

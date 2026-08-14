@@ -25,6 +25,8 @@ export type StartMaintenanceRequestRunParams = {
   intakeRunId?: string | null
   conversationId?: string | null
   vendorAssigned?: boolean
+  /** True when submit found no matchable vendor — escalate to Needs Your Attention. */
+  needsVendorEscalation?: boolean
 }
 
 export async function findMaintenanceRequestRunId(

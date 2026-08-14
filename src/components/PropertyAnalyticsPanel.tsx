@@ -3,6 +3,7 @@ import type { PropertyAnalyticsSnapshot, PropertyMonthlySpend } from '@/lib/prop
 import {
   formatPropertyChartYTick,
   formatPropertySpendCompact,
+  projectionsEnabledForMonthlySpend,
   PROPERTY_CHART_BAR_AREA_PX,
   PROPERTY_CHART_Y_MAX,
   PROPERTY_CHART_Y_TICKS,
@@ -155,6 +156,8 @@ export function PropertyAnalyticsPanel({
   const buildingShort = building.replace(/\s+Apartments$/i, '').trim()
   const pm = analytics?.pm
   const openPmTasks = pm?.tasks.filter((task) => task.status !== 'completed') ?? []
+  const showProjections =
+    analytics != null && projectionsEnabledForMonthlySpend(analytics.monthlySpend)
 
   return (
     <div className="mt-6 flex flex-col gap-4">
@@ -173,10 +176,12 @@ export function PropertyAnalyticsPanel({
                 <span className="size-2.5 rounded-[2px] bg-[#fb2c36]" />
                 Reactive
               </span>
-              <span className="inline-flex items-center gap-1.5 opacity-50">
-                <span className="size-2.5 rounded-[2px] border border-dashed border-[#99a1af] bg-[#e5e7eb]" />
-                Projected
-              </span>
+              {showProjections ? (
+                <span className="inline-flex items-center gap-1.5 opacity-50">
+                  <span className="size-2.5 rounded-[2px] border border-dashed border-[#99a1af] bg-[#e5e7eb]" />
+                  Projected
+                </span>
+              ) : null}
             </div>
           </div>
           <span className="rounded-full bg-[#dbfce7] px-3 py-1 text-[12px] font-medium text-[#008236]">

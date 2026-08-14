@@ -9,6 +9,12 @@ import { normalizePhoneFlexible } from "./resident_notify.ts"
 import { findActiveLandlordMainNumber } from "./sms/landlordSmsOnboarding.ts"
 import { getSMSProvider } from "./sms/providerFactory.ts"
 import { uloAppUrl } from "./uloAppUrl.ts"
+import {
+  loadLandlordNotificationSettings,
+  loadLandlordOperationalSettings,
+  resolveLandlordNotificationDelivery,
+} from "./landlordNotificationPrefs.ts"
+import { resolveLandlordOpsPhones } from "./sms/tenantActivationAdminAlert.ts"
 
 export type LandlordAttentionKind =
   | "invoice_ready"
@@ -182,6 +188,29 @@ export async function notifyLandlordNeedsAttention(
     }
   }
 
+  const [notificationSettings, operationalSettings] = await Promise.all([
+    loadLandlordNotificationSettings(supabase, landlordId),
+    loadLandlordOperationalSettings(supabase, landlordId),
+  ])
+  const deliveryPlan = resolveLandlordNotificationDelivery({
+    settings: notificationSettings,
+    attentionKind: params.kind,
+    timeZone: operationalSettings.timeZone,
+    quietHoursEnabled: operationalSettings.quietHoursEnabled,
+  })
+  if (!deliveryPlan.allowed) {
+    return {
+      skipped: true,
+      reason: deliveryPlan.reason ?? "notifications_blocked",
+      smsSent: [],
+      emailSent: [],
+      errors: [],
+    }
+  }
+
+  const allowSms = deliveryPlan.channels.includes("sms")
+  const allowEmail = deliveryPlan.channels.includes("email")
+
   const dashboardUrl = attentionDashboardUrl()
   const smsBody = buildLandlordAttentionSms({
     headline: params.headline,
@@ -198,8 +227,10 @@ export async function notifyLandlordNeedsAttention(
   const smsSent: string[] = []
   const emailSent: string[] = []
 
-  const phones = adminNotifyPhones()
-  if (phones.length > 0) {
+  const phones = allowSms
+    ? (await resolveLandlordOpsPhones(supabase, landlordId)).phones
+    : []
+  if (allowSms && phones.length > 0) {
     const sender = await findActiveLandlordMainNumber(supabase, landlordId)
     const from = sender?.phone_number?.trim() || undefined
     if (!from) {
@@ -219,15 +250,17 @@ export async function notifyLandlordNeedsAttention(
     }
   }
 
-  const mail = await sendLandlordOpsEmail(supabase, {
-    landlordId,
-    subject: email.subject,
-    text: email.text,
-    html: email.html,
-    logLabel: `attention:${params.kind}:${key}`,
-  })
-  emailSent.push(...mail.sent)
-  for (const e of mail.errors) errors.push(`email:${e}`)
+  if (allowEmail) {
+    const mail = await sendLandlordOpsEmail(supabase, {
+      landlordId,
+      subject: email.subject,
+      text: email.text,
+      html: email.html,
+      logLabel: `attention:${params.kind}:${key}`,
+    })
+    emailSent.push(...mail.sent)
+    for (const e of mail.errors) errors.push(`email:${e}`)
+  }
 
   if (smsSent.length === 0 && emailSent.length === 0) {
     console.warn("[landlord-attention] no delivery", {

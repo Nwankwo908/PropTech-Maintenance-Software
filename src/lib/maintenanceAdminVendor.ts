@@ -6,6 +6,7 @@ import {
 export const MAINTENANCE_ADMIN_VENDOR_ESCALATION_REASONS = [
   'sla_expired_no_vendor',
   'vendor_declined_no_vendor',
+  'no_vendor_available',
 ] as const
 
 export type MaintenanceAdminVendorEscalationReason =
@@ -15,7 +16,9 @@ export function isMaintenanceAdminVendorEscalationReason(
   reason: string | null | undefined,
 ): reason is MaintenanceAdminVendorEscalationReason {
   return (
-    reason === 'sla_expired_no_vendor' || reason === 'vendor_declined_no_vendor'
+    reason === 'sla_expired_no_vendor' ||
+    reason === 'vendor_declined_no_vendor' ||
+    reason === 'no_vendor_available'
   )
 }
 
@@ -23,6 +26,8 @@ export function maintenanceAdminVendorAttentionTitle(
   reason: MaintenanceAdminVendorEscalationReason,
 ): string {
   switch (reason) {
+    case 'no_vendor_available':
+      return 'Assign a vendor'
     case 'sla_expired_no_vendor':
     case 'vendor_declined_no_vendor':
       return 'Find a Replacement Vendor'
@@ -56,6 +61,7 @@ export function maintenanceAdminVendorAttentionMeta(
     case 'sla_expired_no_vendor':
       return 'The response deadline has passed.'
     case 'vendor_declined_no_vendor':
+    case 'no_vendor_available':
       return noRosterVendorsAvailableMessage(issueCategory)
   }
 }

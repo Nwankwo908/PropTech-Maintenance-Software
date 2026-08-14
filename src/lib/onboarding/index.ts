@@ -69,6 +69,9 @@ export {
 
 export {
   generateUnitLabels,
+  uniqueOnboardingUnitLabels,
+  resolveOnboardingUnitLabels,
+  collectExtractedUnitLabels,
   listOnboardingUnitOptions,
   deleteLandlordBuildings,
   persistOnboardingProperties,

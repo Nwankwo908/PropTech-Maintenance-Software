@@ -475,6 +475,24 @@ export async function submitMaintenanceEstimate(
 
   const estimateId = inserted.id as string
 
+  const { data: onboardingRow } = await supabase
+    .from("landlord_onboarding")
+    .select("auto_approval_threshold")
+    .eq("landlord_id", landlordId)
+    .maybeSingle()
+  const threshold = Number(onboardingRow?.auto_approval_threshold)
+  if (Number.isFinite(threshold) && moneyNorm.totalCost <= threshold) {
+    const auto = await decideMaintenanceEstimate(supabase, {
+      estimateId,
+      actionToken,
+      action: "approve",
+      source: "admin",
+    })
+    if (auto.ok) {
+      return { ok: true, estimateId, status: "approved" as const, autoApproved: true }
+    }
+  }
+
   const { data: vendor } = await supabase
     .from("vendors")
     .select("name, phone, email")
