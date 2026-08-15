@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { enrichExtractedProperties } from './onboardingDocumentUpload'
+import { enrichExtractedProperties, buildOnboardingExtractionReview } from './onboardingDocumentUpload'
 
 describe('enrichExtractedProperties', () => {
   it('derives a property row from distinct resident building names on rent rolls', () => {
@@ -136,5 +136,110 @@ describe('enrichExtractedProperties', () => {
     expect(properties[0]?.address).toBe('123 Main St')
     expect(properties[0]?.unitCount).toBe(1)
     expect(properties[0]?.selected).toBe(true)
+  })
+})
+
+describe('extraction review unit counts', () => {
+  it('counts nine rent-roll tenants even when GPT unitCount is 4', () => {
+    const review = buildOnboardingExtractionReview([
+      {
+        id: 'roll',
+        fileName: 'rent-roll.xlsx',
+        fileType: 'xlsx',
+        fileSize: 12,
+        documentCategory: 'rent_roll',
+        categoryGroup: 'property',
+        uploadStatus: 'ready_for_review',
+        uploadProgress: 100,
+        extractionStatus: 'ready_for_review',
+        processingLabel: 'Ready for review',
+        errorMessage: null,
+        imageLabels: [],
+        hasHandwriting: false,
+        extractedPayload: {
+          properties: [
+            {
+              name: 'Maple Court',
+              streetAddress: '100 Maple St',
+              city: 'Atlanta',
+              state: 'GA',
+              zipCode: '30301',
+              propertyType: 'multifamily',
+              unitCount: 4,
+              confidence: 90,
+            },
+          ],
+          units: [],
+          residents: Array.from({ length: 9 }, (_, index) => ({
+            fullName: `Tenant ${index + 1}`,
+            unit: String(101 + index),
+            building: 'Maple Court',
+            phone: '',
+            email: '',
+            leaseStart: '',
+            leaseEnd: '',
+            monthlyRent: '',
+            confidence: 90,
+          })),
+          vendors: [],
+          leases: [],
+          maintenanceIssues: [],
+          financialRecords: [],
+          imageLabels: [],
+          warnings: [],
+        },
+      },
+    ])
+
+    expect(review.properties[0]?.unitCount).toBe(9)
+    expect(review.units).toHaveLength(9)
+  })
+
+  it('counts Unit 4B and 4B as one unit', () => {
+    const review = buildOnboardingExtractionReview([
+      {
+        id: 'lease',
+        fileName: 'lease.pdf',
+        fileType: 'pdf',
+        fileSize: 12,
+        documentCategory: 'lease_agreement',
+        categoryGroup: 'resident',
+        uploadStatus: 'ready_for_review',
+        uploadProgress: 100,
+        extractionStatus: 'ready_for_review',
+        processingLabel: 'Ready for review',
+        errorMessage: null,
+        imageLabels: [],
+        hasHandwriting: false,
+        extractedPayload: {
+          properties: [
+            {
+              name: 'Maple Court',
+              streetAddress: '',
+              city: '',
+              state: '',
+              zipCode: '',
+              propertyType: 'multifamily',
+              unitCount: 2,
+              confidence: 80,
+            },
+          ],
+          units: [
+            { label: 'Unit 4B', building: 'Maple Court', confidence: 90 },
+            { label: '4B', building: 'Maple Court', confidence: 88 },
+          ],
+          residents: [],
+          vendors: [],
+          leases: [],
+          maintenanceIssues: [],
+          financialRecords: [],
+          imageLabels: [],
+          warnings: [],
+        },
+      },
+    ])
+
+    expect(review.units).toHaveLength(1)
+    expect(review.properties[0]?.unitCount).toBe(1)
   })
 })

@@ -51,7 +51,7 @@ export async function loadCanonicalOnboardingProperties(
     return {
       ...property,
       unitLabels: unitLabels.length > 0 ? unitLabels : property.unitLabels,
-      unitCount: Math.max(property.unitCount, unitLabels.length, 1),
+      unitCount: unitLabels.length > 0 ? unitLabels.length : Math.max(property.unitCount, 1),
     }
   })
 }

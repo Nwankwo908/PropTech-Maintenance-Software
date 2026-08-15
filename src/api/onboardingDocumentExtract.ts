@@ -5,6 +5,12 @@ import { supabase } from '@/lib/supabase'
 
 /** Per-document GPT extraction payload (matches edge function output). */
 export type PortfolioDocumentExtractPayload = {
+  account?: {
+    companyName?: string
+    contactName?: string
+    email?: string
+    phone?: string
+  }
   properties: Array<{
     name: string
     streetAddress: string

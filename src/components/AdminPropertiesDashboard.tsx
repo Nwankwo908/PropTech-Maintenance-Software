@@ -14,6 +14,7 @@ import {
   fetchPropertyHealthSignals,
   mapTicketsForPropertyHealth,
   mapUnitsForPropertyHealth,
+  countDistinctPortfolioUnits,
   normalizeBuildingKey,
   formatPropertyHealthKpiValue,
   propertyHealthFactorBreakdownLines,
@@ -586,7 +587,7 @@ export function AdminPropertiesDashboard() {
       residents,
       canonicalPropertiesForHealth,
     )
-    const totalUnits = units.length
+    const totalUnits = countDistinctPortfolioUnits(healthUnits)
 
     const trackedUnits = healthUnits.filter((u) => u.status !== 'inactive')
     const occupancy = computeOccupancyStats(healthUnits, residents)

@@ -15,7 +15,8 @@ export function isPdfFile(fileName: string, contentType: string): boolean {
 
 export async function pdfBytesToPlainText(bytes: Uint8Array): Promise<string> {
   try {
-    const pdf = await getDocumentProxy(bytes)
+    // Copy so PDF.js cannot detach the original ArrayBuffer (storage/retry downloads).
+    const pdf = await getDocumentProxy(bytes.slice())
     const extracted = await extractText(pdf, { mergePages: true })
     const text = typeof extracted.text === "string"
       ? extracted.text

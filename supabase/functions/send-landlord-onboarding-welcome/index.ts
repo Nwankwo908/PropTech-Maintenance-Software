@@ -30,6 +30,8 @@ serve(async (req) => {
     landlordId?: string
     companyName?: string | null
     contactName?: string | null
+    email?: string | null
+    forceEmail?: boolean
   }
   try {
     body = await req.json()
@@ -56,6 +58,10 @@ serve(async (req) => {
   const contactName =
     typeof body.contactName === "string" ? body.contactName.trim() || null : null
 
+  const email =
+    typeof body.email === "string" ? body.email.trim() || null : null
+  const forceEmail = body.forceEmail === true
+
   const supabase = createClient(supabaseUrl, serviceKey)
 
   try {
@@ -63,6 +69,8 @@ serve(async (req) => {
       landlordId,
       companyName,
       contactName,
+      email,
+      forceEmail,
     })
     return jsonResponse(summary)
   } catch (err) {

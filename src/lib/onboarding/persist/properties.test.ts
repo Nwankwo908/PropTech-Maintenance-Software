@@ -48,6 +48,33 @@ describe('collectExtractedUnitLabels', () => {
     expect(labels[8]).toBe('109')
   })
 
+  it('collapses Unit 4B, 4-B, and 4B into one inventory label', () => {
+    expect(uniqueOnboardingUnitLabels(['4B', 'Unit 4B', '4-B'])).toEqual(['4B'])
+  })
+
+  it('does not copy empty-building units onto every property', () => {
+    expect(
+      collectExtractedUnitLabels({
+        propertyName: 'Maple Court',
+        otherPropertyNames: ['Maple Court', 'Oak House'],
+        residents: [{ unit: '1A', building: '', selected: true }],
+      }),
+    ).toEqual([])
+  })
+
+  it('still matches rent-roll building text that adds extra words', () => {
+    expect(
+      collectExtractedUnitLabels({
+        propertyName: 'Maple Court',
+        otherPropertyNames: ['Maple Court', 'Oak House'],
+        residents: [
+          { unit: '1A', building: 'Maple Court Rent Roll', selected: true },
+          { unit: '2A', building: 'Oak House', selected: true },
+        ],
+      }),
+    ).toEqual(['1A'])
+  })
+
   it('still collects resident units when building text drifted from the property name', () => {
     expect(
       collectExtractedUnitLabels({

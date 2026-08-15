@@ -1,6 +1,6 @@
 /**
- * Manual fields collected on Fast Track AI review that documents don't cover
- * (account profile, property location/PM, resident lease extras, preferred emergency).
+ * Fast Track account + extra review fields. Company name can come from documents
+ * (landlord / lessor / management company) or from the saved landlord profile.
  */
 import type { OnboardingAccountSetup, OnboardingOccupancyStatus } from '@/lib/onboarding'
 import { normalizeOnboardingOccupancyStatus } from '@/lib/onboarding'
@@ -15,11 +15,28 @@ export type OnboardingReviewManualAccount = {
   smsConsentAcceptedAt: string | null
 }
 
+const PLACEHOLDER_COMPANY_NAMES = new Set([
+  'new landlord',
+  'your portfolio',
+  'ulo',
+  'ulo home',
+  'ulo home, inc',
+  'ulo home inc',
+])
+
+/** Drop empty and system placeholder company names so extraction can fill the field. */
+export function usableOnboardingCompanyName(raw: string | null | undefined): string {
+  const name = (raw ?? '').trim()
+  if (!name) return ''
+  if (PLACEHOLDER_COMPANY_NAMES.has(name.toLowerCase())) return ''
+  return name
+}
+
 export function emptyReviewManualAccount(
-  seed?: Partial<OnboardingAccountSetup> | null,
+  seed?: Partial<OnboardingAccountSetup> | OnboardingReviewManualAccount | null,
 ): OnboardingReviewManualAccount {
   return {
-    companyName: seed?.companyName?.trim() ?? '',
+    companyName: usableOnboardingCompanyName(seed?.companyName),
     contactName: seed?.contactName?.trim() ?? '',
     email: seed?.email?.trim() ?? '',
     phone: seed?.phone?.trim() ?? '',
@@ -34,14 +51,32 @@ export function normalizeReviewManualAccount(raw: unknown): OnboardingReviewManu
   const row = raw as Record<string, unknown>
   const consent = row.smsConsentAcceptedAt ?? row.sms_consent_accepted_at
   return {
-    companyName: String(row.companyName ?? ''),
-    contactName: String(row.contactName ?? ''),
-    email: String(row.email ?? ''),
-    phone: String(row.phone ?? ''),
-    backupContactName: String(row.backupContactName ?? row.backup_contact_name ?? ''),
-    backupContactPhone: String(row.backupContactPhone ?? row.backup_contact_phone ?? ''),
+    companyName: usableOnboardingCompanyName(String(row.companyName ?? '')),
+    contactName: String(row.contactName ?? '').trim(),
+    email: String(row.email ?? '').trim(),
+    phone: String(row.phone ?? '').trim(),
+    backupContactName: String(row.backupContactName ?? row.backup_contact_name ?? '').trim(),
+    backupContactPhone: String(row.backupContactPhone ?? row.backup_contact_phone ?? '').trim(),
     smsConsentAcceptedAt:
       typeof consent === 'string' && consent.trim() ? consent.trim() : null,
+  }
+}
+
+/** Fill blank account fields from a fallback (profile seed or extracted landlord). */
+export function mergeReviewManualAccount(
+  primary: unknown,
+  fallback?: Partial<OnboardingAccountSetup> | OnboardingReviewManualAccount | null,
+): OnboardingReviewManualAccount {
+  const a = normalizeReviewManualAccount(primary)
+  const b = emptyReviewManualAccount(fallback)
+  return {
+    companyName: a.companyName || b.companyName,
+    contactName: a.contactName || b.contactName,
+    email: a.email || b.email,
+    phone: a.phone || b.phone,
+    backupContactName: a.backupContactName || b.backupContactName,
+    backupContactPhone: a.backupContactPhone || b.backupContactPhone,
+    smsConsentAcceptedAt: a.smsConsentAcceptedAt || b.smsConsentAcceptedAt,
   }
 }
 

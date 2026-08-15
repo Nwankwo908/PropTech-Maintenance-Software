@@ -47,7 +47,11 @@ import {
   conversationTypeLabel,
 } from '@/lib/propertyConversations'
 import { resolveTenantActivationChip } from '@/lib/tenantActivationStatus'
-import { supabase } from '@/lib/supabase'
+import {
+  openOrganizationDocumentPreview,
+  type OrganizationDocument,
+} from '@/lib/organizationSettings'
+import { loadResidentLeaseDocuments } from '@/lib/residentLeaseDocuments'
 import { getErrorMessage } from '@/lib/errorMessage'
 import { parseLeaseDateInput } from '@/lib/onboarding'
 import { activateUnitsFromResidentAssignments } from '@/lib/unitActivation'
@@ -239,7 +243,31 @@ function ProfileCard({
   )
 }
 
-function ProfileContent({ profile }: { profile: ResidentProfileDetail }) {
+function FileGlyph() {
+  return (
+    <svg className="size-4" viewBox="0 0 16 16" fill="none" aria-hidden>
+      <path
+        d="M4.5 2.5H9.5L12.5 5.5V13.5H4.5V2.5Z"
+        stroke="currentColor"
+        strokeWidth="1.4"
+        strokeLinejoin="round"
+      />
+      <path d="M9.5 2.5V5.5H12.5" stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round" />
+    </svg>
+  )
+}
+
+function ProfileContent({
+  profile,
+  leaseDocuments,
+  documentPreviewError,
+  onPreviewDocument,
+}: {
+  profile: ResidentProfileDetail
+  leaseDocuments: OrganizationDocument[]
+  documentPreviewError: string | null
+  onPreviewDocument: (document: OrganizationDocument) => void
+}) {
   return (
     <>
       <div className="grid gap-4 xl:grid-cols-3">
@@ -320,6 +348,50 @@ function ProfileContent({ profile }: { profile: ResidentProfileDetail }) {
               <p className="text-[12px] leading-4 text-[#6a7282]">Deposit</p>
               <p className="mt-1 text-[14px] font-semibold leading-5 text-[#0a0a0a]">{profile.depositLabel}</p>
             </div>
+          </div>
+
+          <div className="mt-5 border-t border-[#f3f4f6] pt-4">
+            <p className="text-[12px] leading-4 text-[#6a7282]">Documents</p>
+            {documentPreviewError ? (
+              <p className="mt-2 text-[13px] leading-5 text-[#b91c1c]">{documentPreviewError}</p>
+            ) : null}
+            {leaseDocuments.length === 0 ? (
+              <p className="mt-2 text-[13px] leading-5 text-[#6a7282]">No lease documents on file.</p>
+            ) : (
+              <ul className="mt-2 flex flex-col">
+                {leaseDocuments.map((document) => {
+                  const canPreview = Boolean(
+                    document.previewUrl || (document.storageBucket && document.storagePath),
+                  )
+                  return (
+                    <li key={document.id} className="flex items-start gap-2 py-2">
+                      <span className="mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-[8px] bg-[#f3f4f6] text-[#364153]">
+                        <FileGlyph />
+                      </span>
+                      <div className="min-w-0">
+                        {canPreview ? (
+                          <button
+                            type="button"
+                            className="sa-link block truncate text-left text-[14px] font-medium leading-5 text-[#155dfc] underline-offset-2 hover:underline"
+                            onClick={() => onPreviewDocument(document)}
+                          >
+                            {document.name}
+                          </button>
+                        ) : (
+                          <p className="truncate text-[14px] font-medium leading-5 text-[#0a0a0a]">
+                            {document.name}
+                          </p>
+                        )}
+                        <p className="text-[12px] leading-4 text-[#6a7282]">
+                          {document.meta}
+                          {canPreview ? '' : ' · Preview unavailable'}
+                        </p>
+                      </div>
+                    </li>
+                  )
+                })}
+              </ul>
+            )}
           </div>
 
           {profile.maintenanceResponsibilitiesClause ||
@@ -431,6 +503,8 @@ export function AdminPropertyResidentDetailDashboard() {
   const [resendingActivation, setResendingActivation] = useState(false)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [leaseDocuments, setLeaseDocuments] = useState<OrganizationDocument[]>([])
+  const [documentPreviewError, setDocumentPreviewError] = useState<string | null>(null)
 
   const loadResident = useCallback(async () => {
     const slug = parsePropertyRouteSlug(propertySlug)
@@ -447,6 +521,8 @@ export function AdminPropertyResidentDetailDashboard() {
 
     setLoading(true)
     setError(null)
+    setLeaseDocuments([])
+    setDocumentPreviewError(null)
 
     const landlordId = getActiveLandlordId()
     let buildingName: string
@@ -710,6 +786,23 @@ export function AdminPropertyResidentDetailDashboard() {
         communications,
       }),
     )
+    try {
+      setLeaseDocuments(
+        await loadResidentLeaseDocuments(
+          {
+            fullName: loaded.fullName,
+            unit: loaded.unit,
+            building: loaded.building,
+            phone: loaded.phone,
+            email: loaded.email,
+          },
+          landlordId,
+        ),
+      )
+    } catch (documentError) {
+      console.warn('[resident-profile] lease documents', documentError)
+      setLeaseDocuments([])
+    }
     setLoading(false)
   }, [propertySlug, residentId, navigate])
 
@@ -958,7 +1051,17 @@ export function AdminPropertyResidentDetailDashboard() {
             ) : null}
 
             <div className="mt-6">
-              <ProfileContent profile={profile} />
+              <ProfileContent
+                profile={profile}
+                leaseDocuments={leaseDocuments}
+                documentPreviewError={documentPreviewError}
+                onPreviewDocument={(document) => {
+                  setDocumentPreviewError(null)
+                  void openOrganizationDocumentPreview(document).then((result) => {
+                    if (!result.ok) setDocumentPreviewError(result.error)
+                  })
+                }}
+              />
             </div>
           </>
         )}

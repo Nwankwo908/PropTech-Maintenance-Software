@@ -54,6 +54,15 @@ export function resolveOnboardingUnitLabels(
   return generateUnitLabels(count)
 }
 
+function extractedBuildingMatchesProperty(building: string | undefined, propertyName: string): boolean {
+  const propertyKey = normalizeBuildingKey(propertyName).toLowerCase()
+  const buildingKey = normalizeBuildingKey(building).toLowerCase()
+  if (!propertyKey || propertyKey === 'portfolio') return false
+  if (!building?.trim() || buildingKey === 'portfolio') return false
+  if (buildingKey === propertyKey) return true
+  return buildingKey.startsWith(`${propertyKey} `) || propertyKey.startsWith(`${buildingKey} `)
+}
+
 /** Distinct unit numbers from a rent roll / extraction for one property. */
 export function collectExtractedUnitLabels(input: {
   propertyName: string
@@ -68,17 +77,22 @@ export function collectExtractedUnitLabels(input: {
       .map((name) => normalizeBuildingKey(name).toLowerCase())
       .filter((key) => key && key !== propertyKey && key !== 'portfolio'),
   )
+  const singleProperty = otherKeys.size === 0
 
   const matchesThis = (building: string | undefined) => {
     const trimmed = (building ?? '').trim()
-    if (!trimmed) return true
-    if (!propertyKey || propertyKey === 'portfolio') return true
-    return normalizeBuildingKey(trimmed).toLowerCase() === propertyKey
+    if (!trimmed) return singleProperty
+    if (!propertyKey || propertyKey === 'portfolio') return singleProperty
+    return extractedBuildingMatchesProperty(trimmed, input.propertyName)
   }
   const matchesOther = (building: string | undefined) => {
     const trimmed = (building ?? '').trim()
     if (!trimmed) return false
-    return otherKeys.has(normalizeBuildingKey(trimmed).toLowerCase())
+    return (input.otherPropertyNames ?? []).some(
+      (name) =>
+        normalizeBuildingKey(name).toLowerCase() !== propertyKey &&
+        extractedBuildingMatchesProperty(trimmed, name),
+    )
   }
 
   const labels: string[] = []
@@ -122,8 +136,7 @@ export function listOnboardingUnitOptions(
 }
 
 function unitInventoryKey(unitLabel: string, building: string | null | undefined): string {
-  // Match units_landlord_label_building_unique_idx coalesce(building, '') semantics.
-  return `${unitLabel.trim().toLowerCase()}::${String(building ?? '').trim().toLowerCase()}`
+  return `${normalizeUnitLabel(unitLabel)}::${normalizeBuildingKey(building).toLowerCase()}`
 }
 
 function buildOnboardingUnitInventory(

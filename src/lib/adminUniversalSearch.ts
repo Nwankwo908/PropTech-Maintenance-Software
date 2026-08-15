@@ -7,6 +7,7 @@ import {
 import { normalizeBuildingKey } from '@/lib/propertyHealth'
 import { getAdminNavSearchItems } from '@/lib/adminNavigation'
 import { supabase } from '@/lib/supabase'
+import { isOnboardingImportLeaseRenewalRun } from '@/lib/onboardingImportLeaseRenewal'
 
 export type UniversalSearchCategory =
   | 'property'
@@ -603,7 +604,7 @@ export async function loadAdminSearchIndex(landlordId: string): Promise<Universa
       .limit(200),
     supabase
       .from('workflow_runs')
-      .select('id, template_id, status, metadata')
+      .select('id, template_id, status, entity_type, metadata')
       .eq('landlord_id', landlordId)
       .order('started_at', { ascending: false })
       .limit(100),
@@ -658,9 +659,15 @@ export async function loadAdminSearchIndex(landlordId: string): Promise<Universa
   items.push(...mapMaintenanceToSearchItems(maintenanceRows))
 
   if (!workflowRunsResult.error) {
-    items.push(
-      ...mapWorkflowRunsToSearchItems((workflowRunsResult.data ?? []) as Record<string, unknown>[]),
+    const operationalRuns = ((workflowRunsResult.data ?? []) as Record<string, unknown>[]).filter(
+      (row) =>
+        !isOnboardingImportLeaseRenewalRun(
+          asString(row.template_id),
+          asRecord(row.metadata),
+          asString(row.entity_type),
+        ),
     )
+    items.push(...mapWorkflowRunsToSearchItems(operationalRuns))
   }
 
   return items

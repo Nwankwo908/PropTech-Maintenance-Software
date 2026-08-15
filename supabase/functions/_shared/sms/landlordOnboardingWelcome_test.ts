@@ -1,6 +1,7 @@
 import {
   buildLandlordOnboardingWelcomeEmail,
   buildLandlordOnboardingWelcomeSms,
+  collectLandlordWelcomeEmails,
 } from "./landlordOnboardingWelcome.ts"
 
 Deno.test("landlord onboarding welcome SMS includes dashboard and intake number", () => {
@@ -26,5 +27,16 @@ Deno.test("landlord onboarding welcome email omits intake line when absent", () 
   if (!mail.subject.includes("complete")) throw new Error("unexpected subject")
   if (mail.text.includes("Residents can report maintenance")) {
     throw new Error("should omit intake line")
+  }
+})
+
+Deno.test("welcome emails keep the landlord address even if a vendor reused it", () => {
+  const emails = collectLandlordWelcomeEmails({
+    landlordEmail: "ceorentalsnj@gmail.com",
+    accountEmail: "ceorentalsnj@gmail.com",
+    requestedEmail: "  CEORENTALSNJ@gmail.com ",
+  })
+  if (emails.length !== 1 || emails[0] !== "ceorentalsnj@gmail.com") {
+    throw new Error(`expected one landlord email, got ${JSON.stringify(emails)}`)
   }
 })

@@ -75,6 +75,7 @@ import {
   fetchPropertyHealthSignals,
   mapTicketsForPropertyHealth,
   mapUnitsForPropertyHealth,
+  countDistinctPortfolioUnits,
   formatPropertyHealthKpiValue,
   propertyHealthFactorBreakdownLines,
   propertyHealthKpiDelta,
@@ -2854,7 +2855,7 @@ export function AdminOverviewDashboard() {
           loading={loading}
           buildings={overviewBuildingHealth}
           buildingCount={healthReport.buildings.length}
-          totalUnits={units.length}
+          totalUnits={countDistinctPortfolioUnits(units)}
           onBuildingOpen={(building) =>
             navigate(propertyDetailPathForBuilding(building, propertyIdByBuilding))
           }

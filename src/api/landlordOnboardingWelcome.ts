@@ -32,6 +32,7 @@ export async function sendLandlordOnboardingWelcome(params: {
   landlordId?: string
   companyName?: string | null
   contactName?: string | null
+  email?: string | null
 }): Promise<LandlordOnboardingWelcomeSummary> {
   const url = functionUrl()
   const secret = getAdminEdgeSecret()
@@ -56,6 +57,7 @@ export async function sendLandlordOnboardingWelcome(params: {
         landlordId,
         companyName: params.companyName ?? null,
         contactName: params.contactName ?? null,
+        email: params.email ?? null,
       }),
     })
 

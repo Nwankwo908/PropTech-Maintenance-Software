@@ -2,11 +2,8 @@
  * One-time landlord welcome SMS + email when onboarding completes.
  */
 import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.49.1"
-import {
-  filterVendorEmailsFromOpsRecipients,
-  normalizeOpsEmail,
-  sendLandlordOpsEmail,
-} from "../landlordOpsNotify.ts"
+import { sendResendEmail } from "../delivery.ts"
+import { normalizeOpsEmail } from "../landlordOpsNotify.ts"
 import { recordActivityLog } from "../graph/recordActivityLog.ts"
 import { normalizePhoneFlexible } from "../resident_notify.ts"
 import { findActiveLandlordMainNumber } from "./landlordSmsOnboarding.ts"
@@ -17,6 +14,9 @@ export type LandlordOnboardingWelcomeParams = {
   landlordId: string
   companyName?: string | null
   contactName?: string | null
+  email?: string | null
+  /** Send email even if a prior welcome event already recorded email_sent. */
+  forceEmail?: boolean
 }
 
 export type LandlordOnboardingWelcomeResult = {
@@ -154,47 +154,26 @@ async function loadWelcomePhones(
   return [...candidates].filter((phone) => !vendorPhones.has(phone))
 }
 
-async function loadWelcomeEmails(
-  supabase: SupabaseClient,
-  landlordId: string,
-): Promise<string[]> {
-  const candidates = new Set<string>()
-  const { data: landlord } = await supabase
-    .from("landlords")
-    .select("email")
-    .eq("id", landlordId)
-    .maybeSingle()
-  if (typeof landlord?.email === "string") {
-    const n = normalizeOpsEmail(landlord.email)
-    if (n) candidates.add(n)
+/** Landlord identity emails are never dropped, even if a vendor row reuses the address. */
+export function collectLandlordWelcomeEmails(input: {
+  landlordEmail?: string | null
+  accountEmail?: string | null
+  requestedEmail?: string | null
+}): string[] {
+  const out: string[] = []
+  const seen = new Set<string>()
+  for (const raw of [input.requestedEmail, input.accountEmail, input.landlordEmail]) {
+    const email = normalizeOpsEmail(raw ?? "")
+    if (!email || seen.has(email)) continue
+    seen.add(email)
+    out.push(email)
   }
+  return out
+}
 
-  const { data: onboarding } = await supabase
-    .from("landlord_onboarding")
-    .select("draft_state")
-    .eq("landlord_id", landlordId)
-    .maybeSingle()
-  const draft = (onboarding?.draft_state ?? {}) as Record<string, unknown>
-  const account = (draft.accountSetup ?? {}) as Record<string, unknown>
-  const email = normalizeOpsEmail(
-    typeof account.email === "string" ? account.email : "",
-  )
-  if (email) candidates.add(email)
-
-  const { data: vendors } = await supabase
-    .from("vendors")
-    .select("email")
-    .eq("landlord_id", landlordId)
-    .not("email", "is", null)
-    .limit(2000)
-  const vendorEmails = (vendors ?? [])
-    .map((row) =>
-      normalizeOpsEmail(typeof row.email === "string" ? row.email : "")
-    )
-    .filter((e): e is string => Boolean(e))
-
-  const { allowed } = filterVendorEmailsFromOpsRecipients(candidates, vendorEmails)
-  return allowed
+function stringListFromMeta(value: unknown): string[] {
+  if (!Array.isArray(value)) return []
+  return value.filter((item): item is string => typeof item === "string" && item.trim().length > 0)
 }
 
 async function loadSmsIntakeDisplay(
@@ -225,22 +204,70 @@ async function loadSmsIntakeDisplay(
   return uloPhone || null
 }
 
-async function alreadyWelcomed(
+async function loadWelcomeEmails(
   supabase: SupabaseClient,
   landlordId: string,
-): Promise<boolean> {
+  requestedEmail?: string | null,
+): Promise<string[]> {
+  const { data: landlord } = await supabase
+    .from("landlords")
+    .select("email")
+    .eq("id", landlordId)
+    .maybeSingle()
+
+  const { data: onboarding } = await supabase
+    .from("landlord_onboarding")
+    .select("draft_state")
+    .eq("landlord_id", landlordId)
+    .maybeSingle()
+  const draft = (onboarding?.draft_state ?? {}) as Record<string, unknown>
+  const account = (draft.accountSetup ?? {}) as Record<string, unknown>
+
+  return collectLandlordWelcomeEmails({
+    requestedEmail,
+    landlordEmail: typeof landlord?.email === "string" ? landlord.email : null,
+    accountEmail: typeof account.email === "string" ? account.email : null,
+  })
+}
+
+type PriorWelcome = {
+  exists: boolean
+  smsSent: string[]
+  emailSent: string[]
+}
+
+async function loadPriorWelcome(
+  supabase: SupabaseClient,
+  landlordId: string,
+): Promise<PriorWelcome> {
   const { data, error } = await supabase
     .from("operations_graph_events")
-    .select("id")
+    .select("id, metadata")
     .eq("landlord_id", landlordId)
-    .eq("event_type", "landlord.onboarding_welcome_sent")
-    .limit(1)
-    .maybeSingle()
+    .in("event_type", [
+      "landlord.onboarding_welcome_sent",
+      "landlord.onboarding_welcome_email_sent",
+    ])
+    .order("created_at", { ascending: false })
+    .limit(20)
+
   if (error) {
     console.warn("[landlord-onboarding-welcome] idempotency lookup", error.message)
-    return false
+    return { exists: false, smsSent: [], emailSent: [] }
   }
-  return Boolean(data?.id)
+
+  const smsSent = new Set<string>()
+  const emailSent = new Set<string>()
+  for (const row of data ?? []) {
+    const metadata = (row as { metadata?: Record<string, unknown> }).metadata ?? {}
+    for (const item of stringListFromMeta(metadata.sms_sent)) smsSent.add(item)
+    for (const item of stringListFromMeta(metadata.email_sent)) emailSent.add(item)
+  }
+  return {
+    exists: (data ?? []).length > 0,
+    smsSent: [...smsSent],
+    emailSent: [...emailSent],
+  }
 }
 
 export async function sendLandlordOnboardingWelcome(
@@ -259,13 +286,16 @@ export async function sendLandlordOnboardingWelcome(
     }
   }
 
-  if (await alreadyWelcomed(supabase, landlordId)) {
+  const prior = await loadPriorWelcome(supabase, landlordId)
+  const skipSms = prior.smsSent.length > 0
+  const skipEmail = prior.emailSent.length > 0 && !params.forceEmail
+  if (skipSms && skipEmail) {
     return {
       ok: true,
       skipped: true,
       reason: "already_sent",
-      smsSent: [],
-      emailSent: [],
+      smsSent: prior.smsSent,
+      emailSent: prior.emailSent,
       errors: [],
     }
   }
@@ -304,7 +334,7 @@ export async function sendLandlordOnboardingWelcome(
   const smsSent: string[] = []
   const emailSent: string[] = []
 
-  const phones = await loadWelcomePhones(supabase, landlordId)
+  const phones = skipSms ? [] : await loadWelcomePhones(supabase, landlordId)
   if (phones.length > 0) {
     const sender = await findActiveLandlordMainNumber(supabase, landlordId)
     const from = sender?.phone_number?.trim() || undefined
@@ -323,19 +353,23 @@ export async function sendLandlordOnboardingWelcome(
     }
   }
 
-  const welcomeEmails = await loadWelcomeEmails(supabase, landlordId)
+  const welcomeEmails = skipEmail
+    ? []
+    : await loadWelcomeEmails(supabase, landlordId, params.email)
   if (welcomeEmails.length > 0) {
-    const mail = await sendLandlordOpsEmail(supabase, {
-      landlordId,
-      subject: emailCopy.subject,
-      text: emailCopy.text,
-      html: emailCopy.html,
-      extraEmails: welcomeEmails,
-      envEmails: [],
-      logLabel: `onboarding-welcome:${landlordId}`,
-    })
-    emailSent.push(...mail.sent)
-    for (const e of mail.errors) errors.push(`email:${e}`)
+    for (const to of welcomeEmails) {
+      const mail = await sendResendEmail(
+        to,
+        emailCopy.subject,
+        emailCopy.text,
+        emailCopy.html,
+      )
+      if ("error" in mail) {
+        errors.push(`email:${to}:${mail.error}`)
+        continue
+      }
+      emailSent.push(to)
+    }
   }
 
   if (smsSent.length === 0 && emailSent.length === 0) {
@@ -343,7 +377,7 @@ export async function sendLandlordOnboardingWelcome(
       ok: false,
       skipped: false,
       reason: phones.length === 0 && welcomeEmails.length === 0
-        ? "no_contact_info"
+        ? (prior.exists ? "already_sent" : "no_contact_info")
         : "delivery_failed",
       smsSent,
       emailSent,
@@ -354,11 +388,15 @@ export async function sendLandlordOnboardingWelcome(
   try {
     await recordActivityLog(supabase, {
       landlordId,
-      eventType: "landlord.onboarding_welcome_sent",
+      eventType: skipSms && !skipEmail
+        ? "landlord.onboarding_welcome_email_sent"
+        : "landlord.onboarding_welcome_sent",
       source: "automation",
       actorType: "system",
       metadata: {
-        message: "Welcome message sent after setup was completed.",
+        message: skipSms && !skipEmail
+          ? "Welcome email sent after setup was completed."
+          : "Welcome message sent after setup was completed.",
         sms_sent: smsSent,
         email_sent: emailSent,
         sms_intake_number: smsIntakeDisplay,

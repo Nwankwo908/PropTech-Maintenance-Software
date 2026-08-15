@@ -149,6 +149,7 @@ export async function completeOnboarding(
       landlordId: scope.landlordId,
       companyName: state.accountSetup.companyName.trim() || null,
       contactName: state.accountSetup.contactName.trim() || null,
+      email: state.accountSetup.email.trim() || null,
     })
     if (!welcome.configured) {
       console.warn('[landlordOnboarding] landlord welcome not configured')

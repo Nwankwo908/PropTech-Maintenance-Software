@@ -29,7 +29,7 @@ describe('inferDocumentCategory', () => {
 })
 
 describe('canRetryOnboardingDocumentExtract', () => {
-  it('allows retry only after a failed extract', () => {
+  it('allows retry after a failed or empty extract', () => {
     const base = {
       id: 'doc-1',
       fileName: 'Lease.pdf',
@@ -49,6 +49,14 @@ describe('canRetryOnboardingDocumentExtract', () => {
         ...base,
         uploadStatus: 'failed',
         extractionStatus: 'failed',
+      }),
+    ).toBe(true)
+    expect(
+      canRetryOnboardingDocumentExtract({
+        ...base,
+        uploadStatus: 'needs_attention',
+        extractionStatus: 'needs_attention',
+        errorMessage: 'No content could be read from this document.',
       }),
     ).toBe(true)
     expect(

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   buildPropertyHealthReport,
   collectPropertyGridBuildingKeys,
+  countDistinctPortfolioUnits,
   dedupePropertyUnitsByLabel,
   filterResidentsForPropertyScope,
   filterUnitsForPropertyDetailScope,
@@ -262,5 +263,17 @@ describe('filterUnitsForPropertyDetailScope', () => {
     )
     expect(deduped).toHaveLength(1)
     expect(deduped[0]?.id).toBe('canonical')
+  })
+})
+
+describe('countDistinctPortfolioUnits', () => {
+  it('counts Unit 4B and 4-B once per building', () => {
+    expect(
+      countDistinctPortfolioUnits([
+        { unitLabel: 'Unit 4B', building: 'Maple Court' },
+        { unitLabel: '4-B', building: 'Maple Court' },
+        { unitLabel: '4B', building: 'Oak House' },
+      ]),
+    ).toBe(2)
   })
 })

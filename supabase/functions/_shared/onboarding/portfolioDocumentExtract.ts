@@ -79,7 +79,15 @@ export type PortfolioExtractFinancialRecord = {
   confidence: number
 }
 
+export type PortfolioExtractAccount = {
+  companyName: string
+  contactName: string
+  email: string
+  phone: string
+}
+
 export type PortfolioDocumentExtractPayload = {
+  account: PortfolioExtractAccount
   properties: PortfolioExtractProperty[]
   units: PortfolioExtractUnit[]
   residents: PortfolioExtractResident[]
@@ -92,6 +100,12 @@ export type PortfolioDocumentExtractPayload = {
 }
 
 export const PORTFOLIO_EXTRACT_JSON_SCHEMA = {
+  account: {
+    companyName: "landlord, lessor, or management company as printed — not the tenant, not a street address",
+    contactName: "landlord or property manager person name if labeled, else empty",
+    email: "landlord/management email if shown, else empty",
+    phone: "landlord/management phone if shown, else empty",
+  },
   properties: [
     {
       name: "string",
@@ -178,7 +192,9 @@ Rules:
 - Keep each tenant linked to the unit and building on their row — do not list tenants without their unit when the document shows both on the same line.
 - On rent rolls and unit rosters, also populate the units array with one entry per distinct unit number, each with its building/property when shown.
 - On rent rolls, populate the properties array with one entry per distinct property or building name/address shown in the document header, Property column, or Building column.
-- Residential leases, rental agreements, occupancy agreements, and tenancy contracts are first-class sources. For each lease, populate BOTH leases[] and residents[] (same tenant, unit, building, dates, and rent). Pull the premises address into properties[] and the unit/apt number into units[]. Use commencement/start and expiration/end dates as leaseStart and leaseEnd. Do not skip a lease because it is a long legal form instead of a spreadsheet.
+- account.companyName: the landlord / lessor / management company / property management firm as printed (letterhead, "Landlord:", "Lessor:", "Managed by:", LLC/Inc legal name). Never use a tenant name, unit number, or street address. Leave empty if the document does not show a company.
+- account.contactName, email, and phone: only the landlord or property manager when clearly labeled. Never copy tenant contact fields into account.
+- Each real tenant belongs in residents[] once. If the same person appears on multiple pages, a rent roll, and a lease, return one resident row (and one leases[] row) and fill missing fields from all sources. Never duplicate a tenant because they showed up in more than one place.
 - Dates: YYYY-MM-DD when unambiguous; otherwise empty string.
 - Phone numbers: include country code when shown; otherwise as printed.
 - confidence: 0-100 for how clearly each row's fields appear in the document.
@@ -389,9 +405,58 @@ function normalizeArray<T>(
   return out
 }
 
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null
+}
+
+export function normalizeExtractedAccount(root: Record<string, unknown>): PortfolioExtractAccount {
+  const fromObject =
+    asRecord(root.account) ??
+    asRecord(root.landlord) ??
+    asRecord(root.managementCompany) ??
+    asRecord(root.management_company) ??
+    asRecord(root.company)
+  const nested = fromObject ?? root
+  const companyName = readField(nested, [
+    "companyName",
+    "company_name",
+    "legalName",
+    "legal_name",
+    "landlordName",
+    "landlord_name",
+    "landlord",
+    "lessor",
+    "lessorName",
+    "lessor_name",
+    "managementCompany",
+    "management_company",
+    "managedBy",
+    "managed_by",
+    "organization",
+    "organisation",
+    ...(fromObject ? ["name"] : []),
+  ])
+  return {
+    companyName,
+    contactName: readField(nested, [
+      "contactName",
+      "contact_name",
+      "propertyManager",
+      "property_manager",
+      "managerName",
+      "manager_name",
+    ]),
+    email: readField(nested, ["email", "contactEmail", "contact_email"]),
+    phone: readField(nested, ["phone", "contactPhone", "contact_phone"]),
+  }
+}
+
 export function normalizePortfolioDocumentExtract(raw: unknown): PortfolioDocumentExtractPayload {
   const root = raw && typeof raw === "object" ? (raw as Record<string, unknown>) : {}
   return {
+    account: normalizeExtractedAccount(root),
     properties: normalizeArray(root.properties, normalizeProperty),
     units: normalizeArray(root.units, (row) => {
       const label = resolveExtractedUnit(row) || cleanExtractedText(row.label)
@@ -488,6 +553,137 @@ function bytesToBase64(bytes: Uint8Array): string {
     binary += String.fromCharCode(...bytes.subarray(i, i + chunk))
   }
   return btoa(binary)
+}
+
+export function pdfNeedsNativeFileRead(pdfText: string | undefined): boolean {
+  return (pdfText ?? "").trim().length < MIN_PDF_TEXT_CHARS
+}
+
+function throwExtractHttpError(status: number, text: string): never {
+  const lower = text.toLowerCase()
+  if (
+    status === 401 ||
+    status === 403 ||
+    lower.includes("incorrect api key") ||
+    lower.includes("invalid_api_key")
+  ) {
+    throw new Error(
+      "Document scanning is not configured. Set a valid OPENAI_API_KEY on Supabase Edge secrets.",
+    )
+  }
+  if (status === 429 || lower.includes("rate limit")) {
+    throw new Error("Document scanning is busy right now. Please wait a moment and try again.")
+  }
+  throw new Error(`Document extract failed (${status}): ${text.slice(0, 300)}`)
+}
+
+function readResponsesOutputText(json: unknown): string {
+  if (!json || typeof json !== "object") return ""
+  const root = json as Record<string, unknown>
+  if (typeof root.output_text === "string" && root.output_text.trim()) {
+    return root.output_text
+  }
+  const output = Array.isArray(root.output) ? root.output : []
+  const chunks: string[] = []
+  for (const item of output) {
+    if (!item || typeof item !== "object") continue
+    const content = (item as { content?: unknown }).content
+    if (!Array.isArray(content)) continue
+    for (const part of content) {
+      if (!part || typeof part !== "object") continue
+      const text = (part as { text?: unknown }).text
+      if (typeof text === "string" && text.trim()) chunks.push(text)
+    }
+  }
+  return chunks.join("\n")
+}
+
+function parseExtractedJson(content: string): PortfolioDocumentExtractPayload {
+  const parsed = JSON.parse(stripJsonFence(content)) as unknown
+  return normalizePortfolioDocumentExtract(parsed)
+}
+
+const EXTRACT_SYSTEM_PROMPT =
+  SYSTEM_PROMPT +
+  `\n\nJSON schema:\n${JSON.stringify(PORTFOLIO_EXTRACT_JSON_SCHEMA, null, 2)}`
+
+async function extractWithChatCompletions(
+  apiKey: string,
+  userContent: Array<Record<string, unknown>>,
+): Promise<PortfolioDocumentExtractPayload> {
+  const response = await fetch("https://api.openai.com/v1/chat/completions", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      model: "gpt-4o",
+      temperature: 0.1,
+      response_format: { type: "json_object" },
+      messages: [
+        { role: "system", content: EXTRACT_SYSTEM_PROMPT },
+        { role: "user", content: userContent },
+      ],
+    }),
+  })
+  if (!response.ok) {
+    throwExtractHttpError(response.status, await response.text().catch(() => ""))
+  }
+  const json = (await response.json()) as {
+    choices?: Array<{ message?: { content?: string } }>
+  }
+  const content = json.choices?.[0]?.message?.content ?? ""
+  try {
+    return parseExtractedJson(content)
+  } catch {
+    throw new Error("Document extract returned non-JSON content")
+  }
+}
+
+/** Chat Completions ignores PDF `file` parts; Responses API actually reads the PDF. */
+async function extractWithResponsesPdf(input: {
+  apiKey: string
+  fileName: string
+  introText: string
+  bytes: Uint8Array
+}): Promise<PortfolioDocumentExtractPayload> {
+  const response = await fetch("https://api.openai.com/v1/responses", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${input.apiKey}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      model: "gpt-4o",
+      temperature: 0.1,
+      text: { format: { type: "json_object" } },
+      input: [
+        { role: "system", content: EXTRACT_SYSTEM_PROMPT },
+        {
+          role: "user",
+          content: [
+            {
+              type: "input_file",
+              filename: input.fileName,
+              file_data: `data:application/pdf;base64,${bytesToBase64(input.bytes)}`,
+              detail: "high",
+            },
+            { type: "input_text", text: input.introText },
+          ],
+        },
+      ],
+    }),
+  })
+  if (!response.ok) {
+    throwExtractHttpError(response.status, await response.text().catch(() => ""))
+  }
+  const content = readResponsesOutputText(await response.json())
+  try {
+    return parseExtractedJson(content)
+  } catch {
+    throw new Error("Document extract returned non-JSON content")
+  }
 }
 
 const TABULAR_TEXT_LIMIT = WORD_TEXT_LIMIT
@@ -749,7 +945,7 @@ export function buildUserContent(
 
   if (isPdfFile(fileName, contentType)) {
     const pdfText = options?.pdfText ?? ""
-    if (pdfText.trim().length >= MIN_PDF_TEXT_CHARS) {
+    if (pdfText.trim()) {
       return [
         {
           type: "text",
@@ -758,13 +954,10 @@ export function buildUserContent(
       ]
     }
     return [
-      { type: "text", text: intro },
       {
-        type: "file",
-        file: {
-          filename: fileName,
-          file_data: `data:application/pdf;base64,${bytesToBase64(bytes)}`,
-        },
+        type: "text",
+        text:
+          `${intro}\n\nThis PDF has no extractable text layer. Read the attached PDF file (including scanned pages).`,
       },
     ]
   }
@@ -858,62 +1051,38 @@ export async function extractPortfolioDocument(input: {
     { spreadsheetText, wordText, pdfText },
   )
 
-  const response = await fetch("https://api.openai.com/v1/chat/completions", {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${input.apiKey}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      model: "gpt-4o",
-      temperature: 0.1,
-      response_format: { type: "json_object" },
-      messages: [
-        {
-          role: "system",
-          content:
-            SYSTEM_PROMPT +
-            `\n\nJSON schema:\n${JSON.stringify(PORTFOLIO_EXTRACT_JSON_SCHEMA, null, 2)}`,
-        },
-        { role: "user", content: userContent },
-      ],
-    }),
-  })
+  const introText = userContent
+    .filter((part) => part.type === "text")
+    .map((part) => String(part.text ?? ""))
+    .join("\n")
 
-  if (!response.ok) {
-    const text = await response.text().catch(() => "")
-    const lower = text.toLowerCase()
-    if (
-      response.status === 401 ||
-      response.status === 403 ||
-      lower.includes("incorrect api key") ||
-      lower.includes("invalid_api_key")
-    ) {
-      throw new Error(
-        "Document scanning is not configured. Set a valid OPENAI_API_KEY on Supabase Edge secrets.",
-      )
-    }
-    if (response.status === 429 || lower.includes("rate limit")) {
-      throw new Error("Document scanning is busy right now. Please wait a moment and try again.")
-    }
-    throw new Error(`Document extract failed (${response.status}): ${text.slice(0, 300)}`)
+  if (isPdfFile(input.fileName, input.contentType) && pdfNeedsNativeFileRead(pdfText)) {
+    return await extractWithResponsesPdf({
+      apiKey: input.apiKey,
+      fileName: input.fileName,
+      introText,
+      bytes: input.bytes,
+    })
   }
 
-  const json = (await response.json()) as {
-    choices?: Array<{ message?: { content?: string } }>
+  const extracted = await extractWithChatCompletions(input.apiKey, userContent)
+  if (
+    isPdfFile(input.fileName, input.contentType) &&
+    extractLooksUnread(extracted)
+  ) {
+    return await extractWithResponsesPdf({
+      apiKey: input.apiKey,
+      fileName: input.fileName,
+      introText,
+      bytes: input.bytes,
+    })
   }
-  const content = stripJsonFence(json.choices?.[0]?.message?.content ?? "")
-  let parsed: unknown
-  try {
-    parsed = JSON.parse(content)
-  } catch {
-    throw new Error("Document extract returned non-JSON content")
-  }
-  return normalizePortfolioDocumentExtract(parsed)
+  return extracted
 }
 
 export function portfolioExtractHasData(payload: PortfolioDocumentExtractPayload): boolean {
   return (
+    Boolean(payload.account?.companyName?.trim()) ||
     payload.properties.length > 0 ||
     payload.residents.length > 0 ||
     payload.vendors.length > 0 ||
@@ -921,5 +1090,13 @@ export function portfolioExtractHasData(payload: PortfolioDocumentExtractPayload
     payload.units.length > 0 ||
     payload.maintenanceIssues.length > 0 ||
     payload.financialRecords.length > 0
+  )
+}
+
+export function extractLooksUnread(payload: PortfolioDocumentExtractPayload): boolean {
+  if (portfolioExtractHasData(payload)) return false
+  const blob = payload.warnings.join(" ").toLowerCase()
+  return /no content|could not (be )?read|unable to (read|extract)|did not (receive|contain|include)|empty document|no (visible|readable) (text|content)|nothing to extract/.test(
+    blob,
   )
 }

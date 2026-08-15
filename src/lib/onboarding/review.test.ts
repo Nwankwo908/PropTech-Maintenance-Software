@@ -56,4 +56,22 @@ describe('buildOnboardingReviewMetrics', () => {
     expect(metrics.residents).toBe(0)
     expect(metrics.workflowRuns).toBe(3)
   })
+
+  it('counts extracted unit labels instead of a stale GPT unitCount', () => {
+    const state = validOnboardingState({
+      properties: [
+        {
+          id: 'p1',
+          name: 'Maple Court',
+          streetAddress: '100 Maple St',
+          city: 'Atlanta',
+          state: 'GA',
+          zipCode: '30301',
+          unitCount: 4,
+          unitLabels: ['101', '102', '103', '104', '105', '106', '107', '108', '109'],
+        },
+      ],
+    })
+    expect(buildOnboardingReviewMetrics(state, [], []).units).toBe(9)
+  })
 })

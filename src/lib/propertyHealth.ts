@@ -446,7 +446,11 @@ export function resolvePropertyHealthStatus(
 }
 
 export function normalizeUnitLabel(label: string): string {
-  return label.toLowerCase().replace(/^unit\s+/, '').trim()
+  return label
+    .toLowerCase()
+    .replace(/^(unit|apt|apartment|suite|ste|#)\s*/i, '')
+    .replace(/[\s.#-]+/g, '')
+    .trim()
 }
 
 export function normalizeBuildingKey(building: string | null | undefined): string {
@@ -502,6 +506,19 @@ export function dedupePropertyUnitsByLabel<
   }
 
   return Array.from(byLabel.values())
+}
+
+/** Distinct unit inventory for KPI cards (same unit spelled 4B / Unit 4B / 4-B counts once). */
+export function countDistinctPortfolioUnits(
+  units: Array<{ unitLabel: string; building?: string | null }>,
+): number {
+  const keys = new Set<string>()
+  for (const unit of units) {
+    const label = normalizeUnitLabel(unit.unitLabel)
+    if (!label) continue
+    keys.add(`${normalizeBuildingKey(unit.building)}::${label}`)
+  }
+  return keys.size
 }
 
 /** Property detail Units tab — canonical scope plus one row per unit label. */
@@ -1324,7 +1341,10 @@ export function buildPropertyHealthReport(
       inputs.canonicalProperties ?? [],
       inputs.units,
     )
-    const buildingUnits = filterUnitsForScope(inputs.units, building, scopeProperty)
+    const buildingUnits = dedupePropertyUnitsByLabel(
+      filterUnitsForScope(inputs.units, building, scopeProperty),
+      scopeProperty?.name ?? building,
+    )
     const scopeScore =
       buildingUnits.length > 0
         ? computePropertyHealthScope(inputs, {

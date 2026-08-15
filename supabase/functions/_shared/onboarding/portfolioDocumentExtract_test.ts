@@ -1,8 +1,10 @@
 import { assertEquals } from "https://deno.land/std@0.224.0/assert/mod.ts"
 import {
   buildUserContent,
+  extractLooksUnread,
   isExtractedPlaceholderValue,
   normalizePortfolioDocumentExtract,
+  pdfNeedsNativeFileRead,
 } from "./portfolioDocumentExtract.ts"
 
 Deno.test("PDF with extracted text is sent as text, not an image", () => {
@@ -26,7 +28,7 @@ Deno.test("PDF with extracted text is sent as text, not an image", () => {
   assertEquals(parts.some((part) => part.type === "image_url"), false)
 })
 
-Deno.test("scanned PDF without text is sent as a file part, not image_url", () => {
+Deno.test("scanned PDF without text is not sent as a fake chat image", () => {
   const parts = buildUserContent(
     "signed-lease.pdf",
     "lease_agreement",
@@ -34,8 +36,29 @@ Deno.test("scanned PDF without text is sent as a file part, not image_url", () =
     new Uint8Array([37, 80, 68, 70]),
     { pdfText: "" },
   )
-  assertEquals(parts.some((part) => part.type === "file"), true)
   assertEquals(parts.some((part) => part.type === "image_url"), false)
+  assertEquals(parts.some((part) => part.type === "file"), false)
+  assertEquals(pdfNeedsNativeFileRead(""), true)
+  assertEquals(pdfNeedsNativeFileRead("short"), true)
+  assertEquals(pdfNeedsNativeFileRead("RESIDENTIAL LEASE AGREEMENT\n".repeat(20)), false)
+})
+
+Deno.test("empty extract warnings about unread files are detected", () => {
+  assertEquals(
+    extractLooksUnread({
+      account: { companyName: "", contactName: "", email: "", phone: "" },
+      properties: [],
+      units: [],
+      residents: [],
+      vendors: [],
+      leases: [],
+      maintenanceIssues: [],
+      financialRecords: [],
+      imageLabels: [],
+      warnings: ["No content could be read from this document."],
+    }),
+    true,
+  )
 })
 
 Deno.test("placeholder status values are stripped from extracted fields", () => {
@@ -56,4 +79,19 @@ Deno.test("placeholder status values are stripped from extracted fields", () => 
   assertEquals(payload.properties.length, 0)
   assertEquals(payload.warnings, ["Page 2 is illegible"])
   assertEquals(payload.imageLabels, ["Kitchen leak"])
+})
+
+Deno.test("landlord / management company is read into account.companyName", () => {
+  const nested = normalizePortfolioDocumentExtract({
+    account: { companyName: "CEO Rentals NJ LLC", contactName: "Alex Manager" },
+    residents: [{ fullName: "Jane Smith", unit: "4B" }],
+  })
+  assertEquals(nested.account.companyName, "CEO Rentals NJ LLC")
+  assertEquals(nested.account.contactName, "Alex Manager")
+
+  const fromLandlordLine = normalizePortfolioDocumentExtract({
+    landlord: "Acme Property Management",
+    leases: [{ residentName: "Jamie Tenant", unit: "1A" }],
+  })
+  assertEquals(fromLandlordLine.account.companyName, "Acme Property Management")
 })

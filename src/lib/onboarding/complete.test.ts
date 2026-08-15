@@ -176,6 +176,7 @@ describe('completeOnboarding', () => {
         landlordId: TEST_LANDLORD_ID,
         companyName: expect.any(String),
         contactName: expect.any(String),
+        email: 'alex@acme.test',
       }),
     )
 

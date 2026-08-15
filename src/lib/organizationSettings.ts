@@ -14,6 +14,7 @@ import {
   formatFileSize,
   LANDLORD_ONBOARDING_DOCUMENTS_BUCKET,
   type OnboardingDocumentCategory,
+  type OnboardingExtractionReview,
   type OnboardingUploadedDocument,
   type UploadFileStatus,
 } from '@/lib/onboardingDocumentUpload'
@@ -206,20 +207,65 @@ function asOnboardingUploadedDocuments(value: unknown): OnboardingUploadedDocume
   })
 }
 
-function readLocalOnboardingUploadDocuments(
+function readLocalOnboardingFormDraft(
   landlordId: string,
-): OnboardingUploadedDocument[] {
+): { uploadDocuments?: unknown; extractionReview?: unknown } | null {
   try {
     const raw = window.localStorage.getItem(`ulo.landlordOnboarding.${landlordId}`)
-    if (!raw) return []
-    const parsed = JSON.parse(raw) as { formDraft?: { uploadDocuments?: unknown } }
-    return asOnboardingUploadedDocuments(parsed.formDraft?.uploadDocuments)
+    if (!raw) return null
+    const parsed = JSON.parse(raw) as { formDraft?: { uploadDocuments?: unknown; extractionReview?: unknown } }
+    return parsed.formDraft ?? null
   } catch {
-    return []
+    return null
   }
 }
 
-function mapOnboardingDoc(doc: OnboardingUploadedDocument): OrganizationDocument {
+function asOnboardingExtractionReview(value: unknown): OnboardingExtractionReview | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null
+  const rec = value as Partial<OnboardingExtractionReview>
+  if (!Array.isArray(rec.residents) && !Array.isArray(rec.leases)) return null
+  return rec as OnboardingExtractionReview
+}
+
+export type OnboardingDocumentArchive = {
+  documents: OnboardingUploadedDocument[]
+  review: OnboardingExtractionReview | null
+}
+
+/** Fast-track files + AI review from local draft and landlord_onboarding.draft_state. */
+export async function loadOnboardingDocumentArchive(
+  landlordId: string = getActiveLandlordId(),
+): Promise<OnboardingDocumentArchive> {
+  const byId = new Map<string, OnboardingUploadedDocument>()
+  let review: OnboardingExtractionReview | null = null
+
+  const localDraft = readLocalOnboardingFormDraft(landlordId)
+  for (const doc of asOnboardingUploadedDocuments(localDraft?.uploadDocuments)) {
+    byId.set(doc.id, doc)
+  }
+  review = asOnboardingExtractionReview(localDraft?.extractionReview)
+
+  if (supabase) {
+    const { data: onboarding } = await supabase
+      .from('landlord_onboarding')
+      .select('draft_state')
+      .eq('landlord_id', landlordId)
+      .maybeSingle()
+
+    const draft = (onboarding?.draft_state ?? {}) as Record<string, unknown>
+    const formDraft = (draft.formDraft ?? {}) as Record<string, unknown>
+    for (const doc of asOnboardingUploadedDocuments(formDraft.uploadDocuments)) {
+      byId.set(doc.id, doc)
+    }
+    review = asOnboardingExtractionReview(formDraft.extractionReview) ?? review
+  }
+
+  return { documents: Array.from(byId.values()), review }
+}
+
+export function organizationDocumentFromOnboarding(
+  doc: OnboardingUploadedDocument,
+): OrganizationDocument {
   const category = documentCategoryLabel(
     (doc.documentCategory ?? 'unknown') as OnboardingDocumentCategory,
   )
@@ -285,23 +331,12 @@ export async function loadOrganizationComplianceDocuments(
 ): Promise<OrganizationDocument[]> {
   const byId = new Map<string, OrganizationDocument>()
 
-  for (const doc of readLocalOnboardingUploadDocuments(landlordId)) {
-    byId.set(`onboarding:${doc.id}`, mapOnboardingDoc(doc))
+  const archive = await loadOnboardingDocumentArchive(landlordId)
+  for (const doc of archive.documents) {
+    byId.set(`onboarding:${doc.id}`, organizationDocumentFromOnboarding(doc))
   }
 
   if (supabase) {
-    const { data: onboarding } = await supabase
-      .from('landlord_onboarding')
-      .select('draft_state')
-      .eq('landlord_id', landlordId)
-      .maybeSingle()
-
-    const draft = (onboarding?.draft_state ?? {}) as Record<string, unknown>
-    const formDraft = (draft.formDraft ?? {}) as Record<string, unknown>
-    for (const doc of asOnboardingUploadedDocuments(formDraft.uploadDocuments)) {
-      byId.set(`onboarding:${doc.id}`, mapOnboardingDoc(doc))
-    }
-
     const { data: vendorDocs } = await supabase
       .from('vendor_documents')
       .select(

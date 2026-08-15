@@ -63,7 +63,9 @@ function unitsForProperty(
       return (
         unitBuilding === identity ||
         unitBuilding === normalizeBuildingLabel(property.address) ||
-        unitBuilding === normalizeBuildingLabel(property.name)
+        unitBuilding === normalizeBuildingLabel(property.name) ||
+        unitBuilding.startsWith(`${identity} `) ||
+        identity.startsWith(`${unitBuilding} `)
       )
     }
     return allProperties.length === 1

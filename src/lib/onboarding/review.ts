@@ -39,7 +39,10 @@ export function buildOnboardingReviewMetrics(
   residents: OnboardingResident[],
   dbCounts?: AccountSetupCounts,
 ): AccountSetupCounts {
-  const draftUnits = state.properties.reduce((sum, property) => sum + property.unitCount, 0)
+  const draftUnits = state.properties.reduce((sum, property) => {
+    const labels = property.unitLabels?.filter((label) => label.trim()).length ?? 0
+    return sum + (labels > 0 ? labels : property.unitCount)
+  }, 0)
   return {
     properties:
       state.properties.length > 0 ? state.properties.length : (dbCounts?.properties ?? 0),

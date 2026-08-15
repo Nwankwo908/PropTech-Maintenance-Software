@@ -10,14 +10,16 @@ import {
 } from '@/lib/onboardingMockExtraction'
 import {
   emptyReviewManualAccount,
-  normalizeReviewManualAccount,
+  mergeReviewManualAccount,
+  usableOnboardingCompanyName,
   type OnboardingReviewManualAccount,
 } from '@/lib/onboardingReviewManual'
 import {
   inferOnboardingPropertyTypeFromUnitCount,
   resolveOnboardingPropertyType,
 } from '@/lib/onboarding/propertyType'
-import { normalizeBuildingKey } from '@/lib/propertyHealth'
+import { normalizeBuildingKey, normalizeUnitLabel } from '@/lib/propertyHealth'
+import { collectExtractedUnitLabels } from '@/lib/onboarding/persist/properties'
 import { supabase } from '@/lib/supabase'
 
 export type { OnboardingReviewManualAccount } from '@/lib/onboardingReviewManual'
@@ -499,8 +501,8 @@ export async function runDocumentProcessing(
 
   if (doc.hasHandwriting) {
     if (signal?.aborted) return current
-    current = {
-      ...current,
+  current = {
+    ...current,
       uploadStatus: 'handwriting',
       extractionStatus: 'handwriting',
       processingLabel: UPLOAD_STATUS_LABELS.handwriting,
@@ -511,7 +513,9 @@ export async function runDocumentProcessing(
 
   try {
     const fileBase64 =
-      !doc.storagePath && file ? await fileToBase64(file) : undefined
+      file && (file.size <= 4 * 1024 * 1024 || !doc.storagePath)
+        ? await fileToBase64(file)
+        : undefined
 
     const result = await extractOnboardingDocument({
       docId: doc.id,
@@ -535,11 +539,11 @@ export async function runDocumentProcessing(
       imageLabels: result.extracted.imageLabels.filter(
         (label) => !isOnboardingExtractJunkValue(label),
       ),
-      uploadStatus: needsAttention ? 'needs_attention' : 'ready_for_review',
-      extractionStatus: needsAttention ? 'needs_attention' : 'ready_for_review',
+    uploadStatus: needsAttention ? 'needs_attention' : 'ready_for_review',
+    extractionStatus: needsAttention ? 'needs_attention' : 'ready_for_review',
       processingLabel:
         UPLOAD_STATUS_LABELS[needsAttention ? 'needs_attention' : 'ready_for_review'],
-      uploadProgress: 100,
+    uploadProgress: 100,
       errorMessage: needsAttention
         ? warning ||
           'We couldn’t find property, tenant, or lease details in this file.'
@@ -584,11 +588,11 @@ export function allDocumentsReadyForReview(docs: OnboardingUploadedDocument[]): 
 
 export function isOnboardingDocumentProcessing(doc: OnboardingUploadedDocument): boolean {
   return (
-    doc.uploadStatus === 'waiting' ||
-    doc.uploadStatus === 'uploading' ||
-    doc.uploadStatus === 'scanning' ||
-    doc.uploadStatus === 'extracting' ||
-    doc.uploadStatus === 'digitizing' ||
+      doc.uploadStatus === 'waiting' ||
+      doc.uploadStatus === 'uploading' ||
+      doc.uploadStatus === 'scanning' ||
+      doc.uploadStatus === 'extracting' ||
+      doc.uploadStatus === 'digitizing' ||
     doc.uploadStatus === 'handwriting'
   )
 }
@@ -597,9 +601,9 @@ export function anyDocumentProcessing(docs: OnboardingUploadedDocument[]): boole
   return docs.some(isOnboardingDocumentProcessing)
 }
 
-/** Failed extracts (rate limits, timeouts) can be retried without re-uploading. */
+/** Failed or empty extracts can be retried without re-uploading. */
 export function canRetryOnboardingDocumentExtract(doc: OnboardingUploadedDocument): boolean {
-  return doc.uploadStatus === 'failed'
+  return doc.uploadStatus === 'failed' || doc.uploadStatus === 'needs_attention'
 }
 
 function preferFullerPersonName(primary: string, secondary: string): string {
@@ -618,10 +622,226 @@ function residentMatchKey(unit: string, building: string): string {
   return `${building.trim().toLowerCase()}|${unit.trim().toLowerCase()}`
 }
 
+function extractedUnitMatchKey(unit: string, building: string): string {
+  return `${normalizeBuildingKey(building).toLowerCase()}|${normalizeUnitLabel(unit)}`
+}
+
+function normalizeExtractedUnitKey(unit: string): string {
+  return normalizeUnitLabel(unit)
+}
+
+function normalizePersonNameKey(name: string): string {
+  let text = name
+    .trim()
+    .toLowerCase()
+    .replace(/[.'’]/g, '')
+    .replace(/,/g, ' ')
+    .replace(/\b(jr|sr|ii|iii|iv|esq)\b/g, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+  if (name.includes(',')) {
+    const [last, ...rest] = name
+      .split(',')
+      .map((part) => part.trim().toLowerCase().replace(/[.'’]/g, ''))
+    const first = rest.join(' ').replace(/\b(jr|sr|ii|iii|iv|esq)\b/g, '').trim()
+    if (first && last) text = `${first} ${last}`.replace(/\s+/g, ' ').trim()
+  }
+  return text
+}
+
+function personNameParts(name: string): { first: string; last: string } {
+  const parts = normalizePersonNameKey(name).split(' ').filter(Boolean)
+  if (parts.length === 0) return { first: '', last: '' }
+  if (parts.length === 1) return { first: parts[0] ?? '', last: '' }
+  return { first: parts[0] ?? '', last: parts[parts.length - 1] ?? '' }
+}
+
+function personGivenNamesMatch(left: string, right: string): boolean {
+  if (!left || !right) return false
+  if (left === right) return true
+  if (left.length === 1) return right.startsWith(left)
+  if (right.length === 1) return left.startsWith(right)
+  return false
+}
+
 function personNamesMatch(left: string, right: string): boolean {
-  const a = left.trim().toLowerCase()
-  const b = right.trim().toLowerCase()
-  return Boolean(a && b && a === b)
+  const aKey = normalizePersonNameKey(left)
+  const bKey = normalizePersonNameKey(right)
+  if (!aKey || !bKey) return false
+  if (aKey === bKey) return true
+  const a = personNameParts(left)
+  const b = personNameParts(right)
+  if (!a.first || !b.first || !a.last || !b.last) return false
+  return personGivenNamesMatch(a.first, b.first) && a.last === b.last
+}
+
+function joinExtractedSourceNames(left: string, right: string): string {
+  const parts = [...new Set(
+    [left, right]
+      .flatMap((value) => value.split(' · '))
+      .map((value) => value.trim())
+      .filter(Boolean),
+  )]
+  return parts.join(' · ')
+}
+
+export function extractedResidentIdentityMatch(
+  left: Pick<OnboardingExtractedResident, 'fullName' | 'unit' | 'building' | 'phone' | 'email'>,
+  right: Pick<OnboardingExtractedResident, 'fullName' | 'unit' | 'building' | 'phone' | 'email'>,
+): boolean {
+  const nameMatch = personNamesMatch(left.fullName, right.fullName)
+  const unitLeft = normalizeExtractedUnitKey(left.unit)
+  const unitRight = normalizeExtractedUnitKey(right.unit)
+  const unitMatch = Boolean(unitLeft && unitRight && unitLeft === unitRight)
+  const buildingLeft = normalizeBuildingKey(left.building)
+  const buildingRight = normalizeBuildingKey(right.building)
+  const buildingCompatible = !buildingLeft || !buildingRight || buildingLeft === buildingRight
+  const phoneLeft = left.phone.trim()
+  const phoneRight = right.phone.trim()
+  const phoneMatch = Boolean(phoneLeft && phoneRight && phoneLeft === phoneRight)
+  const emailLeft = left.email.trim().toLowerCase()
+  const emailRight = right.email.trim().toLowerCase()
+  const emailMatch = Boolean(emailLeft && emailRight && emailLeft === emailRight)
+
+  if ((phoneMatch || emailMatch) && (nameMatch || !left.fullName.trim() || !right.fullName.trim())) {
+    return true
+  }
+  if (nameMatch && unitMatch && buildingCompatible) return true
+  if (nameMatch && buildingCompatible && (!unitLeft || !unitRight)) return true
+  if (unitMatch && buildingCompatible && (nameMatch || !left.fullName.trim() || !right.fullName.trim())) {
+    return true
+  }
+  return false
+}
+
+function mergeExtractedResidentRow(
+  primary: OnboardingExtractedResident,
+  extra: OnboardingExtractedResident,
+): OnboardingExtractedResident {
+  const fullName = preferFullerPersonName(primary.fullName, extra.fullName)
+  const unit = primary.unit.trim() || extra.unit.trim()
+  const building = primary.building.trim() || extra.building.trim()
+  const confidence = Math.max(primary.confidence, extra.confidence)
+    return {
+    ...primary,
+    fullName,
+    unit,
+    building,
+    phone: primary.phone.trim() || extra.phone.trim(),
+    email: primary.email.trim() || extra.email.trim(),
+    leaseStart: primary.leaseStart.trim() || extra.leaseStart.trim(),
+    leaseEnd: primary.leaseEnd.trim() || extra.leaseEnd.trim(),
+    monthlyRent: primary.monthlyRent.trim() || extra.monthlyRent.trim(),
+    sourceDocumentName: joinExtractedSourceNames(
+      primary.sourceDocumentName,
+      extra.sourceDocumentName,
+    ),
+    confidence,
+    selected: primary.selected || extra.selected,
+    needsReview: confidence < 75 || Boolean(fullName.trim() && !unit.trim()),
+  }
+}
+
+export function dedupeOnboardingExtractedResidents(
+  residents: OnboardingExtractedResident[],
+): OnboardingExtractedResident[] {
+  const merged: OnboardingExtractedResident[] = []
+  for (const row of residents) {
+    const index = merged.findIndex((existing) => extractedResidentIdentityMatch(existing, row))
+    if (index === -1) {
+      merged.push(row)
+      continue
+    }
+    const current = merged[index]
+    if (!current) continue
+    merged[index] = mergeExtractedResidentRow(current, row)
+  }
+  return merged
+}
+
+function mergeExtractedLeaseRow(primary: ExtractedLeaseInfo, extra: ExtractedLeaseInfo): ExtractedLeaseInfo {
+  const residentName = preferFullerPersonName(primary.residentName, extra.residentName)
+  const unit = primary.unit.trim() || extra.unit.trim()
+  const confidence = Math.max(primary.confidence, extra.confidence)
+  return {
+    ...primary,
+    residentName,
+    unit,
+    building: primary.building.trim() || extra.building.trim(),
+    leaseStart: primary.leaseStart.trim() || extra.leaseStart.trim(),
+    leaseEnd: primary.leaseEnd.trim() || extra.leaseEnd.trim(),
+    rentAmount: primary.rentAmount.trim() || extra.rentAmount.trim(),
+    securityDeposit: primary.securityDeposit.trim() || extra.securityDeposit.trim(),
+    sourceDocumentName: joinExtractedSourceNames(
+      primary.sourceDocumentName,
+      extra.sourceDocumentName,
+    ),
+    confidence,
+    selected: primary.selected || extra.selected,
+    needsReview: confidence < 75 || Boolean(residentName.trim() && !unit.trim()),
+  }
+}
+
+export function dedupeOnboardingExtractedLeases(leases: ExtractedLeaseInfo[]): ExtractedLeaseInfo[] {
+  const merged: ExtractedLeaseInfo[] = []
+  for (const row of leases) {
+    const index = merged.findIndex((existing) =>
+      extractedResidentIdentityMatch(
+        {
+          fullName: existing.residentName,
+          unit: existing.unit,
+          building: existing.building,
+          phone: '',
+          email: '',
+        },
+        {
+          fullName: row.residentName,
+          unit: row.unit,
+          building: row.building,
+          phone: '',
+          email: '',
+        },
+      ),
+    )
+    if (index === -1) {
+      merged.push(row)
+      continue
+    }
+    const current = merged[index]
+    if (!current) continue
+    merged[index] = mergeExtractedLeaseRow(current, row)
+  }
+  return merged
+}
+
+function fillExtractedResidentsFromLeases(
+  residents: OnboardingExtractedResident[],
+  leases: ExtractedLeaseInfo[],
+): OnboardingExtractedResident[] {
+  return residents.map((resident) => {
+    const lease = leases.find((row) =>
+      extractedResidentIdentityMatch(resident, {
+        fullName: row.residentName,
+        unit: row.unit,
+        building: row.building,
+        phone: '',
+        email: '',
+      }),
+    )
+    if (!lease) return resident
+    const fullName = preferFullerPersonName(resident.fullName, lease.residentName)
+    const unit = resident.unit.trim() || lease.unit.trim()
+    return {
+      ...resident,
+      fullName,
+      unit,
+      building: resident.building.trim() || lease.building.trim(),
+      leaseStart: resident.leaseStart.trim() || lease.leaseStart.trim(),
+      leaseEnd: resident.leaseEnd.trim() || lease.leaseEnd.trim(),
+      monthlyRent: resident.monthlyRent.trim() || lease.rentAmount.trim(),
+      needsReview: resident.confidence < 75 || Boolean(fullName.trim() && !unit.trim()),
+    }
+  })
 }
 
 export function formatExtractedUnitPlacement(building: string, unit: string): string {
@@ -779,7 +999,7 @@ export function enrichExtractedUnits(
     const label = row.label.trim()
     if (!label) return
     const building = row.building.trim() || fallbackBuilding
-    const key = residentMatchKey(label, building)
+    const key = extractedUnitMatchKey(label, building)
     const existing = merged.get(key)
     if (!existing) {
       merged.set(key, { ...row, label, building })
@@ -800,7 +1020,7 @@ export function enrichExtractedUnits(
   let derivedIndex = 0
   for (const candidate of collectDerivedUnitCandidates(residents, leases)) {
     const building = candidate.building.trim() || fallbackBuilding
-    const key = residentMatchKey(candidate.label, building)
+    const key = extractedUnitMatchKey(candidate.label, building)
     if (merged.has(key)) {
       const existing = merged.get(key)!
       if (!existing.building.trim() && building) {
@@ -810,12 +1030,12 @@ export function enrichExtractedUnits(
     }
 
     const labelMatch = [...merged.values()].find(
-      (row) => row.label.trim().toLowerCase() === candidate.label.toLowerCase(),
+      (row) => normalizeUnitLabel(row.label) === normalizeUnitLabel(candidate.label),
     )
     if (labelMatch) {
       const nextBuilding = labelMatch.building.trim() || building
-      merged.delete(residentMatchKey(labelMatch.label, labelMatch.building))
-      merged.set(residentMatchKey(labelMatch.label, nextBuilding), {
+      merged.delete(extractedUnitMatchKey(labelMatch.label, labelMatch.building))
+      merged.set(extractedUnitMatchKey(labelMatch.label, nextBuilding), {
         ...labelMatch,
         building: nextBuilding,
         confidence: Math.max(labelMatch.confidence, candidate.confidence),
@@ -876,26 +1096,15 @@ function countUnitsForBuilding(
   residents: OnboardingExtractedResident[],
   leases: ExtractedLeaseInfo[],
   units: OnboardingExtractedUnit[],
+  otherPropertyNames: string[] = [],
 ): number {
-  const buildingKey = normalizeBuildingKey(building).toLowerCase()
-  if (!buildingKey || buildingKey === 'portfolio') return 0
-  const labels = new Set<string>()
-  for (const resident of residents) {
-    if (normalizeBuildingKey(resident.building).toLowerCase() !== buildingKey) continue
-    const label = resident.unit.trim().toLowerCase()
-    if (label) labels.add(label)
-  }
-  for (const lease of leases) {
-    if (normalizeBuildingKey(lease.building).toLowerCase() !== buildingKey) continue
-    const label = lease.unit.trim().toLowerCase()
-    if (label) labels.add(label)
-  }
-  for (const unit of units) {
-    if (normalizeBuildingKey(unit.building).toLowerCase() !== buildingKey) continue
-    const label = unit.label.trim().toLowerCase()
-    if (label) labels.add(label)
-  }
-  return labels.size
+  return collectExtractedUnitLabels({
+    propertyName: building,
+    otherPropertyNames,
+    units,
+    residents,
+    leases,
+  }).length
 }
 
 /** Build property rows from rent-roll building names when GPT only filled tenant rows. */
@@ -962,7 +1171,18 @@ export function enrichExtractedProperties(
   let derivedIndex = 0
   for (const [identityKey, meta] of buildingMeta) {
     const existing = [...merged.values()].find((property) => propertyMatchesIdentity(property, identityKey))
-    const unitCount = countUnitsForBuilding(meta.building, residents, leases, units)
+    const otherPropertyNames = [
+      ...[...merged.values()].map((property) => property.name),
+      existing?.name ?? '',
+      meta.building,
+    ].filter(Boolean)
+    const unitCount = countUnitsForBuilding(
+      existing?.name || meta.building,
+      residents,
+      leases,
+      units,
+      otherPropertyNames,
+    )
 
     if (existing) {
       if (unitCount > existing.unitCount) {
@@ -1025,15 +1245,164 @@ function finalizeExtractionReviewEntities(input: {
 
   const units = enrichExtractedUnits(input.units, residents, leases, properties)
   properties = enrichExtractedProperties(properties, residents, leases, units)
+  leases = dedupeOnboardingExtractedLeases(leases)
+  residents = fillExtractedResidentsFromLeases(
+    dedupeOnboardingExtractedResidents(residents),
+    leases,
+  )
+
+  const propertyNames = properties.map((property) => property.name)
+  properties = properties.map((property) => {
+    const labels = collectExtractedUnitLabels({
+      propertyName: property.name,
+      otherPropertyNames: propertyNames,
+      units,
+      residents,
+      leases,
+    })
+    return {
+      ...property,
+      unitCount: labels.length > 0 ? labels.length : Math.max(property.unitCount || 0, 1),
+    }
+  })
 
   return { properties, units, residents, leases }
+}
+
+const MANAGEMENT_COMPANY_HINT =
+  /\b(llc|l\.l\.c|inc|incorporated|llp|lp|corp|corporation|management|properties|property management|rentals|holdings|group|partners|associates|realty|real estate)\b/i
+
+export function looksLikeExtractedCompanyName(name: string): boolean {
+  const usable = usableOnboardingCompanyName(name)
+  if (!usable) return false
+  if (looksLikeStreetAddress(usable)) return false
+  return MANAGEMENT_COMPANY_HINT.test(usable)
+}
+
+function mostFrequentName(names: string[]): string {
+  const counts = new Map<string, { value: string; count: number }>()
+  for (const raw of names) {
+    const key = raw.trim().toLowerCase()
+    if (!key) continue
+    const current = counts.get(key)
+    if (current) current.count += 1
+    else counts.set(key, { value: raw.trim(), count: 1 })
+  }
+  let best = ''
+  let bestCount = 0
+  for (const row of counts.values()) {
+    if (row.count > bestCount) {
+      best = row.value
+      bestCount = row.count
+    }
+  }
+  return best
+}
+
+function payloadAccountField(
+  payload: PortfolioDocumentExtractPayload,
+  key: 'companyName' | 'contactName' | 'email' | 'phone',
+): string {
+  const account = payload.account
+  if (!account) return ''
+  const value = account[key]
+  return typeof value === 'string' ? value.trim() : ''
+}
+
+/** Landlord / management company from extract payloads, never a tenant name. */
+export function collectExtractedAccount(
+  payloads: PortfolioDocumentExtractPayload[],
+  residentNames: string[] = [],
+): OnboardingReviewManualAccount {
+  const blocked = new Set(
+    residentNames.map((name) => name.trim().toLowerCase()).filter(Boolean),
+  )
+  const companyFromAccount: string[] = []
+  const companyFromProperties: string[] = []
+  const contacts: string[] = []
+  const emails: string[] = []
+  const phones: string[] = []
+
+  for (const payload of payloads) {
+    const company = usableOnboardingCompanyName(payloadAccountField(payload, 'companyName'))
+    if (company && !blocked.has(company.toLowerCase())) companyFromAccount.push(company)
+
+    const contact = payloadAccountField(payload, 'contactName')
+    if (contact && !blocked.has(contact.toLowerCase())) contacts.push(contact)
+    const email = payloadAccountField(payload, 'email')
+    if (email && !blocked.has(email.toLowerCase())) emails.push(email)
+    const phone = payloadAccountField(payload, 'phone')
+    if (phone) phones.push(phone)
+
+    for (const property of payload.properties ?? []) {
+      const name = usableOnboardingCompanyName(property.name)
+      if (name && looksLikeExtractedCompanyName(name) && !blocked.has(name.toLowerCase())) {
+        companyFromProperties.push(name)
+      }
+    }
+  }
+
+  return {
+    companyName: mostFrequentName(companyFromAccount) || mostFrequentName(companyFromProperties),
+    contactName: mostFrequentName(contacts),
+    email: mostFrequentName(emails),
+    phone: mostFrequentName(phones),
+    backupContactName: '',
+    backupContactPhone: '',
+    smsConsentAcceptedAt: null,
+  }
+}
+
+function inferredCompanyFromReviewProperties(
+  review: Pick<OnboardingExtractionReview, 'properties' | 'residents'>,
+): string {
+  const blocked = new Set(
+    review.residents.map((row) => row.fullName.trim().toLowerCase()).filter(Boolean),
+  )
+  return mostFrequentName(
+    review.properties
+      .map((property) => usableOnboardingCompanyName(property.name))
+      .filter((name) => looksLikeExtractedCompanyName(name) && !blocked.has(name.toLowerCase())),
+  )
+}
+
+/** Fill blank Fast Track company/contact fields from extract payloads, profile seed, or company-like property names. */
+export function fillExtractionReviewAccount(
+  review: OnboardingExtractionReview,
+  documents: OnboardingUploadedDocument[] = [],
+  accountSeed?: Partial<OnboardingAccountSetup> | null,
+): OnboardingExtractionReview {
+  const fromDocs = collectExtractedAccount(
+    documents
+      .map((doc) => doc.extractedPayload)
+      .filter((payload): payload is PortfolioDocumentExtractPayload => Boolean(payload)),
+    review.residents.map((row) => row.fullName),
+  )
+  const account = mergeReviewManualAccount(
+    mergeReviewManualAccount(review.account, accountSeed),
+    mergeReviewManualAccount(fromDocs, {
+      ...emptyReviewManualAccount(),
+      companyName: inferredCompanyFromReviewProperties(review),
+    }),
+  )
+  if (
+    account.companyName === (review.account?.companyName ?? '') &&
+    account.contactName === (review.account?.contactName ?? '') &&
+    account.email === (review.account?.email ?? '') &&
+    account.phone === (review.account?.phone ?? '') &&
+    account.backupContactName === (review.account?.backupContactName ?? '') &&
+    account.backupContactPhone === (review.account?.backupContactPhone ?? '') &&
+    account.smsConsentAcceptedAt === (review.account?.smsConsentAcceptedAt ?? null)
+  ) {
+    return review
+  }
+  return { ...review, account }
 }
 
 function mergeExtractedDocuments(
   documents: OnboardingUploadedDocument[],
   accountSeed?: Partial<OnboardingAccountSetup> | null,
 ): OnboardingExtractionReview {
-  const account = emptyReviewManualAccount(accountSeed)
   const payloads = documents
     .map((doc) => ({ doc, payload: doc.extractedPayload }))
     .filter((row): row is { doc: OnboardingUploadedDocument; payload: PortfolioDocumentExtractPayload } =>
@@ -1150,12 +1519,14 @@ function mergeExtractedDocuments(
     })
 
     for (const [index, item] of payload.leases.entries()) {
-      const alreadyResident = residents.some(
-        (resident) =>
-          personNamesMatch(resident.fullName, item.residentName) ||
-          (item.unit.trim() &&
-            residentMatchKey(resident.unit, resident.building) ===
-              residentMatchKey(item.unit, item.building)),
+      const alreadyResident = residents.some((resident) =>
+        extractedResidentIdentityMatch(resident, {
+          fullName: cleanOnboardingExtractText(item.residentName),
+          unit: cleanOnboardingExtractText(item.unit),
+          building: cleanOnboardingExtractText(item.building),
+          phone: '',
+          email: '',
+        }),
       )
       if (!cleanOnboardingExtractText(item.residentName) || alreadyResident) continue
       residents.push({
@@ -1168,9 +1539,9 @@ function mergeExtractedDocuments(
         leaseStart: cleanOnboardingExtractText(item.leaseStart),
         leaseEnd: cleanOnboardingExtractText(item.leaseEnd),
         monthlyRent: cleanOnboardingExtractText(item.rentAmount),
-        rentDueDay: '',
+      rentDueDay: '',
         occupancyStatus: 'active',
-        maintenanceResponsibilitiesClause: '',
+      maintenanceResponsibilitiesClause: '',
         sourceDocumentName: source,
         confidence: item.confidence,
         selected: true,
@@ -1187,7 +1558,7 @@ function mergeExtractedDocuments(
         category: cleanOnboardingExtractText(item.category) || null,
         phone: cleanOnboardingExtractText(item.phone),
         email: cleanOnboardingExtractText(item.email),
-        preferredEmergency: false,
+      preferredEmergency: false,
         sourceDocumentName: source,
         confidence: item.confidence,
         selected: item.confidence >= 70,
@@ -1204,7 +1575,7 @@ function mergeExtractedDocuments(
         building: cleanOnboardingExtractText(item.building),
         category: cleanOnboardingExtractText(item.category),
         description,
-        priority: item.priority,
+      priority: item.priority,
         sourceDocumentName: source,
         confidence: item.confidence,
         selected: item.confidence >= 70,
@@ -1255,17 +1626,21 @@ function mergeExtractedDocuments(
         dataType: 'image_label',
         label: 'Photo label',
         value,
-        confidence: 80,
+      confidence: 80,
         includeInImport: true,
-        needsReview: false,
+      needsReview: false,
       })
     })
   }
 
   const finalized = finalizeExtractionReviewEntities({ properties, units, residents, leases })
+  const extractedAccount = collectExtractedAccount(
+    payloads.map((row) => row.payload),
+    finalized.residents.map((row) => row.fullName),
+  )
 
   return {
-    account,
+    account: mergeReviewManualAccount(accountSeed, extractedAccount),
     properties: finalized.properties,
     units: finalized.units,
     residents: finalized.residents,
@@ -1598,32 +1973,36 @@ export function normalizeExtractionReview(
     residents: normalizedResidents,
     leases: normalizedLeases,
   })
-  return {
-    account: normalizeReviewManualAccount(review.account ?? accountSeed),
-    properties: finalized.properties,
-    units: finalized.units,
-    residents: finalized.residents,
-    leases: finalized.leases,
-    vendors: (review.vendors ?? [])
-      .map((item) => ({
-        ...item,
-        name: cleanOnboardingExtractText(item.name),
-        preferredEmergency: Boolean(item.preferredEmergency),
-      }))
-      .filter((item) => item.name.trim()),
-    maintenanceIssues: (review.maintenanceIssues ?? []).filter(
-      (item) => !isOnboardingExtractJunkValue(item.description),
-    ),
-    financialRecords: (review.financialRecords ?? []).filter(
-      (item) => !isOnboardingExtractJunkValue(item.description),
-    ),
-    needsReview: (review.needsReview ?? []).filter(
-      (item) => !isOnboardingExtractJunkValue(item.value),
-    ),
-    imageLabels: (review.imageLabels ?? []).filter(
-      (item) => !isOnboardingExtractJunkValue(item.value),
-    ),
-  }
+  return fillExtractionReviewAccount(
+    {
+      account: mergeReviewManualAccount(review.account, accountSeed),
+      properties: finalized.properties,
+      units: finalized.units,
+      residents: finalized.residents,
+      leases: finalized.leases,
+      vendors: (review.vendors ?? [])
+        .map((item) => ({
+      ...item,
+          name: cleanOnboardingExtractText(item.name),
+      preferredEmergency: Boolean(item.preferredEmergency),
+        }))
+        .filter((item) => item.name.trim()),
+      maintenanceIssues: (review.maintenanceIssues ?? []).filter(
+        (item) => !isOnboardingExtractJunkValue(item.description),
+      ),
+      financialRecords: (review.financialRecords ?? []).filter(
+        (item) => !isOnboardingExtractJunkValue(item.description),
+      ),
+      needsReview: (review.needsReview ?? []).filter(
+        (item) => !isOnboardingExtractJunkValue(item.value),
+      ),
+      imageLabels: (review.imageLabels ?? []).filter(
+        (item) => !isOnboardingExtractJunkValue(item.value),
+      ),
+    },
+    [],
+    accountSeed,
+  )
 }
 
 export function toMockExtractionReview(review: OnboardingExtractionReview): MockExtractionReview {

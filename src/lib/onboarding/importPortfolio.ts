@@ -3,7 +3,6 @@
  */
 import { getActiveLandlordId } from '@/lib/activeLandlord'
 import type {
-  ExtractedLease,
   ExtractedMaintenanceIssue,
   MockExtractionReview,
 } from '@/lib/onboardingMockExtraction'
@@ -112,14 +111,6 @@ function findImportUnit(
         normalizeBuildingKey(unit.building ?? '') === buildingKey,
     )
   )
-}
-
-function parseFlexibleDate(value: string): string | null {
-  const trimmed = value.trim()
-  if (!trimmed) return null
-  const parsed = Date.parse(trimmed)
-  if (!Number.isNaN(parsed)) return new Date(parsed).toISOString()
-  return null
 }
 
 async function fetchImportUnits(landlordId: string): Promise<ImportUnitRow[]> {
@@ -322,92 +313,6 @@ async function importExtractedMaintenanceIssues(
   return { tickets, workflowRuns }
 }
 
-async function importExtractedLeases(
-  leases: ExtractedLease[],
-  params: {
-    landlordId: string
-    units: ImportUnitRow[]
-    residents: ImportResidentRow[]
-  },
-): Promise<{ leases: number; workflowRuns: number }> {
-  if (!supabase || leases.length === 0) {
-    return { leases: 0, workflowRuns: 0 }
-  }
-
-  let importedLeases = 0
-  let workflowRuns = 0
-
-  for (let index = 0; index < leases.length; index++) {
-    const lease = leases[index]!
-    const resident =
-      params.residents.find(
-        (row) => row.fullName.trim().toLowerCase() === lease.residentName.trim().toLowerCase(),
-      ) ?? findImportResident(params.residents, lease.unit, lease.building)
-    const resolvedUnit = resolveImportUnitLabel(lease.unit, params.units)
-    const unit = findImportUnit(params.units, lease.unit, lease.building, resolvedUnit)
-    const leaseEndIso = parseFlexibleDate(lease.leaseEnd)
-    const startedAt = new Date(Date.now() - (index + 1) * 3 * 24 * 60 * 60 * 1000).toISOString()
-    const runStatus = index === 0 ? 'active' : 'escalated'
-
-    const { data: runRow, error: runError } = await supabase
-      .from('workflow_runs')
-      .insert({
-        template_id: 'lease_renewal',
-        status: runStatus,
-        entity_type: resident ? 'user' : 'lease_document',
-        entity_id: resident?.id ?? null,
-        property_id: null,
-        unit_id: unit?.id ?? null,
-        resident_id: resident?.id ?? null,
-        landlord_id: params.landlordId,
-        trigger_type: 'dashboard',
-        workflow_type: 'leasing',
-        current_stage: runStatus === 'escalated' ? 'escalated' : 'acted',
-        current_step: runStatus === 'escalated' ? 'no_response' : 'renewal_offer_sent',
-        started_at: startedAt,
-        metadata: {
-          landlord_id: params.landlordId,
-          unit_label: resolvedUnit,
-          building: lease.building,
-          resident_name: lease.residentName,
-          lease_start: lease.leaseStart,
-          lease_end_date: lease.leaseEnd,
-          lease_end_iso: leaseEndIso,
-          rent_amount: lease.rentAmount ?? null,
-          source: 'onboarding_import',
-          document_type: 'lease_agreement',
-        },
-      })
-      .select('id')
-      .single()
-
-    if (runError || !runRow?.id) {
-      console.warn('[landlordOnboarding] lease workflow import', runError?.message)
-      continue
-    }
-
-    importedLeases += 1
-    workflowRuns += 1
-    const runId = String(runRow.id)
-    await logImportWorkflowEvent(runId, {
-      eventType: 'lease.document_imported',
-      step: 'document_import',
-      message: `Lease document imported for ${lease.residentName}`,
-      metadata: { source: 'onboarding_import', lease_end: lease.leaseEnd },
-    })
-    await logImportWorkflowEvent(runId, {
-      eventType: runStatus === 'escalated' ? 'workflow.escalate' : 'lease.renewal_started',
-      step: runStatus === 'escalated' ? 'no_response' : 'renewal_offer_sent',
-      message:
-        runStatus === 'escalated'
-          ? 'Lease renewal awaiting landlord decision'
-          : 'Lease renewal offer sent from imported documents',
-    })
-  }
-
-  return { leases: importedLeases, workflowRuns }
-}
-
 export async function importMockExtraction(
   review: MockExtractionReview,
   landlordId: string = getActiveLandlordId(),
@@ -558,15 +463,9 @@ export async function importMockExtraction(
     imported.workflowRuns += maintenanceImport.workflowRuns
   }
 
-  if (selectedLeases.length > 0) {
-    const leaseImport = await importExtractedLeases(selectedLeases, {
-      landlordId,
-      units: importUnits,
-      residents: importResidents,
-    })
-    imported.leases = leaseImport.leases
-    imported.workflowRuns += leaseImport.workflowRuns
-  }
+  // Lease dates persist on residents above. Real lease_renewal runs start from
+  // check-lease-renewals when the notice window opens — do not insert dummy WOs.
+  imported.leases = selectedLeases.length
 
   // Tenant + unit + lease dates from document import activates those units.
   await activateUnitsFromResidentAssignments({

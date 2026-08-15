@@ -1,6 +1,10 @@
 import { getActiveLandlordId } from '@/lib/activeLandlord'
 import { supabase } from '@/lib/supabase'
 import { getErrorMessage } from '@/lib/errorMessage'
+import {
+  isOnboardingImportLeaseRenewalRun,
+  retireOnboardingImportLeaseRenewals,
+} from '@/lib/onboardingImportLeaseRenewal'
 
 export type WorkflowRunStatus = 'active' | 'completed' | 'escalated' | 'cancelled'
 
@@ -739,6 +743,9 @@ export async function fetchAdminWorkflowDashboard(): Promise<AdminWorkflowDashbo
     return emptyAdminWorkflowDashboardData()
   }
 
+  const landlordId = getActiveLandlordId()
+  await retireOnboardingImportLeaseRenewals(landlordId)
+
   const { data: runsRaw, error: runsError } = await supabase
     .from('workflow_runs')
     .select(
@@ -758,7 +765,7 @@ export async function fetchAdminWorkflowDashboard(): Promise<AdminWorkflowDashbo
       workflow_templates ( id, name, type )
     `,
     )
-    .eq('landlord_id', getActiveLandlordId())
+    .eq('landlord_id', landlordId)
     .order('started_at', { ascending: false })
     .limit(250)
 
@@ -767,7 +774,10 @@ export async function fetchAdminWorkflowDashboard(): Promise<AdminWorkflowDashbo
     throw new Error(getErrorMessage(runsError, 'Something went wrong. Please try again.'))
   }
 
-  const runs = (runsRaw ?? []) as WorkflowRunRecord[]
+  const runs = ((runsRaw ?? []) as WorkflowRunRecord[]).filter(
+    (run) =>
+      !isOnboardingImportLeaseRenewalRun(run.template_id, run.metadata, run.entity_type),
+  )
   const runIds = runs.map((run) => run.id)
 
   const residentIds = [

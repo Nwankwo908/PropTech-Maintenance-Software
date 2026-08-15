@@ -5,6 +5,7 @@ import { getActiveLandlordId } from '@/lib/activeLandlord'
 import { getErrorMessage, isUniqueViolation } from '@/lib/errorMessage'
 import { phoneForDbOrError } from '@/lib/phoneFormat'
 import { normalizeOnboardingApprovalRules } from '@/lib/onboardingApprovalRules'
+import { countDistinctPortfolioUnits } from '@/lib/propertyHealth'
 import { supabase } from '@/lib/supabase'
 import { requireOnboardingLandlord } from '../scope'
 import type { AccountSetupCounts, OnboardingAccountSetup } from '../types'
@@ -173,7 +174,7 @@ export async function fetchAccountSetupCounts(
   }
 
   const [unitsRes, residentsRes, vendorsRes, runsRes] = await Promise.all([
-    supabase.from('units').select('id, building', { count: 'exact', head: false }).eq('landlord_id', landlordId),
+    supabase.from('units').select('id, unit_label, building', { count: 'exact', head: false }).eq('landlord_id', landlordId),
     supabase.from('users').select('id', { count: 'exact', head: true }).eq('landlord_id', landlordId),
     supabase.from('vendors').select('id', { count: 'exact', head: true }).eq('landlord_id', landlordId),
     supabase.from('workflow_runs').select('id', { count: 'exact', head: true }).eq('landlord_id', landlordId),
@@ -187,7 +188,12 @@ export async function fetchAccountSetupCounts(
 
   return {
     properties: buildings.size,
-    units: unitsRes.count ?? (unitsRes.data ?? []).length,
+    units: countDistinctPortfolioUnits(
+      (unitsRes.data ?? []).map((row) => ({
+        unitLabel: String((row as { unit_label?: string }).unit_label ?? ''),
+        building: String((row as { building?: string | null }).building ?? ''),
+      })),
+    ) || unitsRes.count || (unitsRes.data ?? []).length,
     residents: residentsRes.count ?? 0,
     vendors: vendorsRes.count ?? 0,
     workflowRuns: runsRes.count ?? 0,

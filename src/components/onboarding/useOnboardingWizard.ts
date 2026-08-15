@@ -13,6 +13,7 @@ import {
   isAcceptedUploadFile,
   canRetryOnboardingDocumentExtract,
   normalizeExtractionReview,
+  fillExtractionReviewAccount,
   runDocumentProcessing,
   UPLOAD_STATUS_LABELS,
   type OnboardingExtractionReview,
@@ -456,15 +457,26 @@ export function useOnboardingWizard() {
   useEffect(() => {
     if (loading || step !== 'ai_review') return
     if (extractionReview) {
-      if (!extractionReview.account) {
-        setExtractionReview(normalizeExtractionReview(extractionReview, state.accountSetup))
+      const filled = fillExtractionReviewAccount(
+        extractionReview,
+        uploadDocuments,
+        state.accountSetup,
+      )
+      if (filled !== extractionReview) {
+        setExtractionReview(filled)
       }
       return
     }
     const persistedExtraction = readPersistedExtractionReview(state.formDraft)
     const hasRealExtractions = uploadDocuments.some((doc) => doc.extractedPayload)
     if (persistedExtraction && !hasRealExtractions) {
-      setExtractionReview(normalizeExtractionReview(persistedExtraction, state.accountSetup))
+      setExtractionReview(
+        fillExtractionReviewAccount(
+          normalizeExtractionReview(persistedExtraction, state.accountSetup),
+          uploadDocuments,
+          state.accountSetup,
+        ),
+      )
       return
     }
     if (uploadDocuments.length > 0) {
