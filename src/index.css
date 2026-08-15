@@ -1,6 +1,36 @@
 @import url('https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;1,9..40,400&family=Encode+Sans+Semi+Condensed:wght@400;500;600;700&family=JetBrains+Mono:wght@400;700&display=swap');
 @import 'tailwindcss';
 
+/** Compact portrait: 320×480, 346×346, 360×480, 384×640, 390×390, 432×768, and 504×504 (with a small size band around each). */
+@custom-variant landing-compact {
+  @media (min-width: 300px) and (max-width: 349px) and (min-height: 430px) and (max-height: 530px),
+    (min-width: 330px) and (max-width: 369px) and (min-height: 330px) and (max-height: 379px),
+    (min-width: 350px) and (max-width: 389px) and (min-height: 430px) and (max-height: 530px),
+    (min-width: 370px) and (max-width: 409px) and (min-height: 370px) and (max-height: 409px),
+    (min-width: 370px) and (max-width: 409px) and (min-height: 600px) and (max-height: 680px),
+    (min-width: 410px) and (max-width: 460px) and (min-height: 730px) and (max-height: 810px),
+    (min-width: 480px) and (max-width: 529px) and (min-height: 480px) and (max-height: 529px) {
+    @slot;
+  }
+}
+
+/** Larger hero type: 384×640, 390×390, 432×768, and 504×504 (and nearby). */
+@custom-variant landing-432 {
+  @media (min-width: 370px) and (max-width: 409px) and (min-height: 370px) and (max-height: 409px),
+    (min-width: 370px) and (max-width: 409px) and (min-height: 600px) and (max-height: 680px),
+    (min-width: 410px) and (max-width: 460px) and (min-height: 730px) and (max-height: 810px),
+    (min-width: 480px) and (max-width: 529px) and (min-height: 480px) and (max-height: 529px) {
+    @slot;
+  }
+}
+
+/** 390×390 square (and nearby). */
+@custom-variant landing-390 {
+  @media (min-width: 370px) and (max-width: 409px) and (min-height: 370px) and (max-height: 409px) {
+    @slot;
+  }
+}
+
 @theme {
   --font-heading: 'Google Sans', 'Product Sans', 'Inter', ui-sans-serif, system-ui,
     sans-serif, 'Apple Color Emoji', 'Segoe UI Emoji', 'Segoe UI Symbol';

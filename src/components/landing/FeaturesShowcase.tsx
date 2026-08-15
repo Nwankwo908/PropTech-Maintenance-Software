@@ -1,15 +1,15 @@
 import { useState } from 'react'
 import { IconRoadmap } from '@/components/landing/LandingIcons'
-import skyscraperIcon from '@/assets/landing/skyscraper.png'
+import trackingIcon from '@/assets/Tracking.png'
 import aiBotIcon from '@/assets/ai-bot-icon.png'
-import peopleIcon from '@/assets/landing/people.png'
+import processIcon from '@/assets/process.png'
 import chatIcon from '@/assets/chat.png'
 import tenantTextPreview from '@/assets/Tenant.png'
 import featuresAiOrganizes from '@/assets/landing/AI organizes.png'
-import featuresInstantAutomation from '@/assets/landing/features-instant-automation.png'
-import featuresPropertyHub from '@/assets/landing/features-property-hub.png'
+import featuresWorkspace from '@/assets/Workspace.png'
+import featuresActivityFeed from '@/assets/Ulo Activity Feed 14.png'
 
-type FeatureId = 'property-hub' | 'ai-organizes' | 'instant-automation' | 'tenant-text'
+type FeatureId = 'track-workflow-execution' | 'ai-organizes' | 'ulo-coordinates' | 'tenant-text'
 
 type FeatureItem = {
   id: FeatureId
@@ -33,44 +33,35 @@ const FEATURES: FeatureItem[] = [
   {
     id: 'tenant-text',
     title: 'Tenant Text',
-    titleWeightClass: 'font-medium',
-    titleSizeClass: 'text-[25px] lg:text-[21px]',
     description:
       'Maintenance starts with a simple text.',
-    descriptionSizeClass: 'text-[22px] lg:text-[18px]',
     icon: chatIcon,
-    iconSizeClass: 'size-[42px] lg:size-[35px]',
   },
   {
     id: 'ai-organizes',
     title: 'AI organizes',
-    titleWeightClass: 'font-medium',
-    titleSizeClass: 'text-[25px] lg:text-[21px]',
     description:
       'Turns requests into organized workflows',
-    descriptionSizeClass: 'text-[22px] lg:text-[18px]',
     icon: aiBotIcon,
-    iconSizeClass: 'size-[42px] lg:size-[35px]',
   },
   {
-    id: 'instant-automation',
-    title: 'Instant Automation',
+    id: 'ulo-coordinates',
+    title: 'Ulo Coordinates',
     description:
-      'Maintenance requests auto routed to vetted vendors. From intake to completion in one tap.',
-    icon: peopleIcon,
-    iconWrap: true,
+      'Keeps vendors, schedules, and repairs moving.',
+    icon: processIcon,
   },
   {
-    id: 'property-hub',
-    title: 'Property Hub',
+    id: 'track-workflow-execution',
+    title: 'Track workflow execution',
     description:
-      'All your properties in one place. Track units, tenants, and history without switching tools.',
-    icon: skyscraperIcon,
+      'Landlords can track repair history, vendor performance, repeat issues, maintenance costs, timelines, and potential future problems.',
+    icon: trackingIcon,
   },
 ]
 
 const EMPHASIZED_PREVIEW_WIDTH = 'mx-auto w-[70.55%] lg:mx-0'
-const AI_ORGANIZES_PREVIEW_WIDTH = 'mx-auto w-[104%] lg:mx-0'
+const AI_ORGANIZES_PREVIEW_WIDTH = 'mx-auto w-[83.2%] lg:mx-0'
 
 const FEATURE_PREVIEWS: Record<
   FeatureId,
@@ -86,11 +77,13 @@ const FEATURE_PREVIEWS: Record<
     offsetClass?: string
   }
 > = {
-  'property-hub': {
-    src: featuresPropertyHub,
-    alt: 'Property hub dashboard with portfolio overview, units, tenants, and activity timeline',
-    width: 1041,
-    height: 589,
+  'track-workflow-execution': {
+    src: featuresActivityFeed,
+    alt: 'Ulo activity feed showing actions completed across properties',
+    width: 966,
+    height: 810,
+    displayWidthClass: 'mx-auto w-[60%] lg:mx-0',
+    offsetClass: 'translate-x-[50px]',
   },
   'ai-organizes': {
     src: featuresAiOrganizes,
@@ -101,11 +94,12 @@ const FEATURE_PREVIEWS: Record<
     cropClass: '-mt-[30px] -ml-[25%] w-[125%] max-w-none',
     offsetClass: '-mt-[40px]',
   },
-  'instant-automation': {
-    src: featuresInstantAutomation,
-    alt: 'Instant automation dashboard showing work order routing, vendor assignment, and completion flow',
-    width: 959,
-    height: 799,
+  'ulo-coordinates': {
+    src: featuresWorkspace,
+    alt: 'Ulo workspace board with New Intake, Assigned, and In Progress work orders',
+    width: 901,
+    height: 689,
+    displayWidthClass: 'mx-auto w-[70%] lg:mx-0',
   },
   'tenant-text': {
     src: tenantTextPreview,
@@ -118,7 +112,7 @@ const FEATURE_PREVIEWS: Record<
 
 function FeatureIcon({ feature, dimmed }: { feature: FeatureItem; dimmed?: boolean }) {
   const iconClass = dimmed ? 'opacity-50 grayscale' : ''
-  const iconSizeClass = feature.iconSizeClass ?? 'size-[50px] lg:size-[42px]'
+  const iconSizeClass = feature.iconSizeClass ?? 'size-[42px] lg:size-[35px]'
 
   if (feature.iconWrap) {
     return (
@@ -149,9 +143,9 @@ function FeatureNavButton({
   onHighlight: () => void
 }) {
   const compact = feature.compactCenter === true
-  const titleWeightClass = feature.titleWeightClass ?? 'font-bold'
-  const titleSizeClass = feature.titleSizeClass ?? 'text-[19px] lg:text-base'
-  const descriptionSizeClass = feature.descriptionSizeClass ?? 'text-[17px] lg:text-sm'
+  const titleWeightClass = feature.titleWeightClass ?? 'font-medium'
+  const titleSizeClass = feature.titleSizeClass ?? 'text-[25px] lg:text-[21px]'
+  const descriptionSizeClass = feature.descriptionSizeClass ?? 'text-[22px] lg:text-[18px]'
   const showDescription = Boolean(feature.description) && isHighlighted && !compact
 
   return (
@@ -161,7 +155,7 @@ function FeatureNavButton({
       onMouseEnter={onHighlight}
       onFocus={onHighlight}
       onClick={onHighlight}
-      className={`sa-press flex cursor-pointer items-start gap-5 rounded-2xl px-[34px] py-1 text-left transition-[opacity] duration-500 ease-in-out motion-reduce:transition-none lg:gap-4 lg:pl-7 lg:pr-0 ${
+      className={`sa-press flex cursor-pointer items-start gap-5 rounded-2xl px-[34px] py-1 text-left transition-[opacity] duration-500 ease-in-out motion-reduce:transition-none lg:gap-4 lg:pl-7 lg:pr-0 landing-compact:!px-0 ${
         compact ? 'w-fit items-center justify-center' : 'w-full lg:w-auto'
       } ${isHighlighted ? '' : 'opacity-50 hover:opacity-65'}`}
     >
@@ -190,7 +184,9 @@ function FeatureNavButton({
             {feature.description ? (
               <div
                 className={`overflow-hidden transition-[max-height] duration-500 ease-in-out motion-reduce:transition-none ${
-                  showDescription ? 'max-h-40' : 'max-h-0'
+                  showDescription
+                    ? 'max-h-40 landing-compact:!max-h-[22rem]'
+                    : 'max-h-0'
                 }`}
               >
                 <p
@@ -216,13 +212,13 @@ function FeaturePreviewPanel({ activeId }: { activeId: FeatureId }) {
   const cropClass = preview.cropClass ?? 'w-full max-w-full'
 
   return (
-    <div className="relative flex min-w-0 w-full flex-1 items-center justify-center lg:min-w-[280px] lg:justify-start" aria-live="polite">
-      <div className={`overflow-hidden ${widthClass} ${preview.offsetClass ?? ''}`}>
+    <div className="relative flex min-w-0 w-full flex-1 items-center justify-center lg:min-w-[280px] lg:justify-start landing-compact:justify-center" aria-live="polite">
+      <div className={`overflow-hidden ${widthClass} ${preview.offsetClass ?? ''} landing-compact:!w-full landing-compact:!translate-x-0`}>
         <img
           key={activeId}
           src={preview.src}
           alt={preview.alt}
-          className={`block h-auto saturate-[90%] contrast-[90%] animate-[feature-preview-fade_0.6s_ease-in-out] ${cropClass}`}
+          className={`block h-auto saturate-[90%] contrast-[90%] animate-[feature-preview-fade_0.6s_ease-in-out] ${cropClass} landing-compact:!ml-0 landing-compact:!mt-0 landing-compact:!w-full`}
           width={preview.width}
           height={preview.height}
         />
@@ -235,23 +231,24 @@ export function FeaturesShowcase() {
   const [activeId, setActiveId] = useState<FeatureId>('tenant-text')
 
   return (
-    <div className="mx-auto mt-10 mb-4 w-full overflow-visible pb-8 lg:mt-12 lg:mb-6 lg:pb-10">
+    <div className="mx-auto mb-4 w-full overflow-visible pb-8 lg:mb-6 lg:pb-10">
       <header className="mb-10 lg:mb-12">
         <p className="inline-flex items-center gap-2 font-mono text-xs font-normal uppercase tracking-wide text-slate-900">
           <IconRoadmap className="size-4 shrink-0 text-[#81228A]" />
           How It Works
         </p>
-        <h3 className="mt-3 whitespace-nowrap font-[family-name:var(--font-landing-heading)] text-[clamp(2rem,4vw,3rem)] font-medium leading-[1.1] tracking-[-0.02em] text-slate-900">
-          SMS-first maintenance management.
+        <h3 className="mt-3 whitespace-nowrap font-[family-name:var(--font-landing-heading)] text-[clamp(2rem,4vw,3rem)] font-medium leading-[1.1] tracking-[-0.02em] text-slate-900 landing-compact:whitespace-normal landing-390:!text-[1.75rem]">
+          <span className="landing-390:whitespace-nowrap">SMS-first maintenance</span>{' '}
+          <span className="landing-390:whitespace-nowrap">management</span>
         </h3>
         <p className="mt-4 text-lg font-normal leading-relaxed text-slate-700">
-          Less maintenance chaos
+          Less maintenance chaos. More control.
         </p>
       </header>
 
-      <div className="flex w-full flex-col items-start gap-8 overflow-visible lg:flex-row lg:items-start lg:gap-4">
+      <div className="flex w-full flex-col items-start gap-8 overflow-visible lg:flex-row lg:items-center lg:gap-4">
           <nav
-            className="flex w-full shrink-0 flex-col gap-[38px] transition-[gap] duration-500 ease-in-out motion-reduce:transition-none lg:w-auto lg:max-w-[463px] lg:gap-10"
+            className="flex w-full shrink-0 flex-col gap-[61px] transition-[gap] duration-500 ease-in-out motion-reduce:transition-none lg:w-auto lg:max-w-[463px] lg:gap-16"
             aria-label="Product features"
           >
             {FEATURES.map((feature) => (
