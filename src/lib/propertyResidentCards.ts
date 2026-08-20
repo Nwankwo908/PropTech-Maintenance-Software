@@ -4,12 +4,14 @@ import {
   type PropertyUnitResident,
 } from '@/lib/propertyUnitRows'
 import { normalizeUnitLabel } from '@/lib/propertyHealth'
+import { residentOccupancyLabel } from '@/lib/residentOccupancy'
 
 export type PropertyResidentCard = {
   id: string
   initials: string
   name: string
   unitDisplay: string
+  occupancyLabel: string
   leaseEndLabel: string
   balanceLabel: string
   sortKey: number
@@ -48,6 +50,7 @@ export function buildPropertyResidentCards(
       initials: residentInitials(resident.fullName),
       name: resident.fullName,
       unitDisplay: formatPropertyUnitDisplay(resident.unit),
+      occupancyLabel: residentOccupancyLabel(resident.status),
       leaseEndLabel: formatPropertyLeaseEnd(resident.leaseEndDate) ?? '—',
       balanceLabel: formatBalance(resident.balanceDue),
       sortKey: unitSortKey(normalizeUnitLabel(resident.unit)),

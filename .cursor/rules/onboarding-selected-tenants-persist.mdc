@@ -1,0 +1,43 @@
+---
+description: Checked onboarding tenants must persist to Residents; unchecked tenants must not.
+globs: src/lib/onboarding/**/*.ts,src/components/onboarding/**/*.{ts,tsx}
+alwaysApply: false
+---
+
+# Onboarding tenants — checkbox is the persist gate
+
+If a tenant is **checked** on AI review, or they appear on the **final review** roster, they must be saved to `users` and show up on Residents / the resident profile.
+
+If a tenant is **unchecked** on AI review, they must not be imported.
+
+## Rule
+
+| Landlord action | Persist to Residents |
+|---|---|
+| Tenant checked on AI review | **Yes** |
+| Tenant unchecked on AI review | **No** |
+| Tenant listed on the final review page | **Yes** |
+
+Do not keep a tenant off Residents because they are missing a unit match, a unique email/phone collided, or the first import only saved a subset.
+
+## Meaning
+
+Setup-complete means the roster the landlord approved. 17 checked tenants must become 17 resident rows — not 5.
+
+Operational history, unit Occupied status, and welcome SMS are separate. Missing those must not drop the person from the roster.
+
+## Implementation
+
+- Import only `selected === true` extracted residents (`isSelectedOnboardingExtractedResident`).
+- Re-import selected residents after property/unit persist (`commitFastTrackImport`).
+- `completeOnboarding` upserts the **review roster** onto the same `users` rows (`onboardingResidentIdentityMatch`) — AI review and final review are checkpoints, not two creates.
+- Unique email/phone collisions retry (clear phone / placeholder email) — do not skip the person.
+- Do not require a unit number to save a named onboarding tenant.
+
+## Do not
+
+- Insert a second `users` row because the tenant was both checked on AI review and listed on final review
+- Treat a partial import as success and continue with a smaller roster
+- Build the final review from extracted rows, then complete using only the DB subset
+- Hide checked named tenants from Residents because occupancy extracted as vacant/past resident
+- Invent a second roster table — `users` is the resident list

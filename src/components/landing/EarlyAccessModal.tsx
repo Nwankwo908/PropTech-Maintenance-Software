@@ -68,6 +68,7 @@ export function EarlyAccessModal({
   const [referralLink, setReferralLink] = useState(initialReferralLink)
   const [copyLabel, setCopyLabel] = useState('Copy Link')
   const wasSuccessRef = useRef(false)
+  const wasOpenRef = useRef(false)
 
   useEffect(() => {
     if (open) {
@@ -87,13 +88,21 @@ export function EarlyAccessModal({
   }, [open, success])
 
   useEffect(() => {
-    if (!open) return
+    if (!open) {
+      wasOpenRef.current = false
+      return
+    }
+    const justOpened = !wasOpenRef.current
+    wasOpenRef.current = true
     setSuccess(initialSuccess)
     setReferralLink(initialReferralLink)
     setCopyLabel('Copy Link')
     if (!initialSuccess) {
       setError(null)
-      setEmail(initialEmail)
+      // Prefill whenever the modal opens or the splash email changes while open.
+      if (justOpened || initialEmail.trim()) {
+        setEmail(initialEmail.trim())
+      }
     }
   }, [open, initialSuccess, initialReferralLink, initialEmail])
 

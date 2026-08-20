@@ -1,16 +1,24 @@
 import type { AdminWorkflowRow, AdminWorkflowTimelineEvent } from '@/lib/adminWorkflows'
 import {
+  isHiddenPipelineTimelineEventType,
+  isVisibleLandlordTimelineDescription,
+} from '@/lib/landlordFacingTimeline'
+import {
   buildSlaOverdueActionReview,
   buildSuggestionLineForReview,
   formatPastSlaLabel,
   isUrgencyCritical,
+  isVisibleSlaTimelineEntry,
   pickAlternativeVendors,
+  mergeLandlordRailTimeline,
+  buildSlaRailTimeline,
   type SlaOverdueActionReview,
   type SlaOverdueTicketInput,
   type SlaOverdueTimelineEntry,
   type SlaOverdueVendorInput,
 } from '@/lib/slaOverdueActionReview'
 import { formatVendorTradeLabel } from '@/lib/vendorTrades'
+import { formatTicketRequestNumber } from '@/lib/vendorCallFlow'
 import type { PropertyHealthVendorMetrics } from '@/lib/propertyHealth'
 
 function formatCategoryLabel(slug: string | null): string {
@@ -21,12 +29,12 @@ function formatLocation(propertyLabel: string | null, unitLabel: string | null):
   const b = propertyLabel?.trim() || 'Property'
   const u = (unitLabel ?? '').trim()
   if (!u) return b
-  const unit = /^\d/.test(u) ? `Unit ${u}` : u
+  const unit = /^unit\s+/i.test(u) ? u.replace(/^unit\s+/i, 'Unit ') : `Unit ${u}`
   return `${b} · ${unit}`
 }
 
 function formatTicketRef(id: string): string {
-  return `REQ-${id.replace(/-/g, '').toUpperCase().slice(-4)}`
+  return formatTicketRequestNumber(id)
 }
 
 function formatTicketTime(iso: string, now = Date.now()): string {
@@ -55,9 +63,9 @@ function formatSlaDuration(createdAt: string, dueAt: string): string | null {
   const end = new Date(dueAt).getTime()
   if (Number.isNaN(start) || Number.isNaN(end) || end <= start) return null
   const minutes = Math.round((end - start) / 60_000)
-  if (minutes < 60) return `${minutes} Min SLA`
+  if (minutes < 60) return `${minutes} min response time`
   const hours = Math.round(minutes / 60)
-  return `${hours} Hr SLA`
+  return `${hours} hr response time`
 }
 
 function timeOnly(iso: string): string {
@@ -73,10 +81,23 @@ function timelineActor(event: AdminWorkflowTimelineEvent): string {
   return 'Ulo AI'
 }
 
+function isPipelineLogEvent(event: AdminWorkflowTimelineEvent): boolean {
+  if (isHiddenPipelineTimelineEventType(event.eventType)) return true
+  const step = (event.step ?? '').trim().toLowerCase()
+  if (step === 'log' || step === 'logged') return true
+  const label = event.label?.trim() ?? ''
+  const message = event.message?.trim() ?? ''
+  if (!isVisibleLandlordTimelineDescription(label) && (!message || !isVisibleLandlordTimelineDescription(message))) {
+    return true
+  }
+  return false
+}
+
 function timelineFromWorkflowEvents(
   events: AdminWorkflowTimelineEvent[],
 ): SlaOverdueTimelineEntry[] {
   return [...events]
+    .filter((event) => !isPipelineLogEvent(event))
     .sort(
       (a, b) =>
         new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime(),
@@ -86,7 +107,12 @@ function timelineFromWorkflowEvents(
       description: event.message?.trim() || event.label,
       actor: timelineActor(event),
     }))
-    .filter((entry) => entry.timeLabel && entry.description)
+    .filter(
+      (entry) =>
+        entry.timeLabel &&
+        entry.description &&
+        isVisibleSlaTimelineEntry(entry),
+    )
 }
 
 function vendorStatusLabel(vendorWorkStatus: string, assignedVendorName: string | null): string {
@@ -133,9 +159,10 @@ export function buildEscalatedWorkflowReview(
       now,
     )
     if (slaReview) {
-      const timeline = run.timeline?.length
-        ? timelineFromWorkflowEvents(run.timeline)
-        : slaReview.timeline
+      const timeline = mergeLandlordRailTimeline(
+        slaReview.timeline,
+        run.timeline?.length ? timelineFromWorkflowEvents(run.timeline) : [],
+      )
       return {
         ...slaReview,
         workflowRunId: run.id,
@@ -181,15 +208,20 @@ export function buildEscalatedWorkflowReview(
 
   const noVendorOnRoster =
     alternatives.length === 0 && !suggestion?.vendorId && !suggestion?.vendorName
-  const timeline = run.timeline?.length
-    ? timelineFromWorkflowEvents(run.timeline)
-    : [
-        {
-          timeLabel: run.lastEventAt ? timeOnly(run.lastEventAt) : '',
-          description: run.lastEventMessage?.trim() || `${run.templateName} escalated`,
-          actor: 'System',
-        },
-      ].filter((e) => e.timeLabel)
+  const operational = ticket ? buildSlaRailTimeline(ticket, now) : []
+  const fromWorkflow = run.timeline?.length ? timelineFromWorkflowEvents(run.timeline) : []
+  const timeline = mergeLandlordRailTimeline(
+    operational.length
+      ? operational
+      : [
+          {
+            timeLabel: run.lastEventAt ? timeOnly(run.lastEventAt) : '',
+            description: run.lastEventMessage?.trim() || `${run.templateName} escalated`,
+            actor: 'System',
+          },
+        ].filter((e) => e.timeLabel && isVisibleSlaTimelineEntry(e)),
+    fromWorkflow,
+  )
 
   const urgency = ticket?.urgency ?? 'high'
   const ticketId = ticket?.id ?? run.entityId ?? run.id
@@ -198,7 +230,7 @@ export function buildEscalatedWorkflowReview(
     ticketId,
     workflowRunId: run.id,
     badgeLabel:
-      minutesPastSla != null ? 'SLA OVERDUE · MAINTENANCE' : 'ESCALATED · MAINTENANCE',
+      minutesPastSla != null ? 'RESPONSE TIME EXCEEDED' : 'ESCALATED · MAINTENANCE',
     headerTitle: `Escalated Maintenance · ${categoryLabel}`,
     locationLabel: formatLocation(
       run.propertyLabel ?? ticket?.building ?? null,
@@ -226,6 +258,7 @@ export function buildEscalatedWorkflowReview(
       ticket?.description?.trim() ||
       run.lastEventMessage?.trim() ||
       `${categoryLabel} escalation requires your review.`,
+    issueCategory,
     currentVendorName: ticket?.assignedVendorName ?? null,
     currentVendorStatus: vendorStatusLabel(
       ticket?.vendorWorkStatus ?? 'escalated',

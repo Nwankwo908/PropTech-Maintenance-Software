@@ -12,13 +12,20 @@ import {
 import { getErrorMessage } from '@/lib/errorMessage'
 
 /**
- * Prefer in-memory guard state once loaded. Do not let a stale localStorage
- * "completed" flag override an explicit reset / in-progress server state.
+ * Prefer in-memory guard state once loaded. Exception: after Complete, localStorage
+ * (and a fresh fetch) may already be `completed` while this guard still holds a
+ * stale in-progress snapshot — prefer completed so we don't bounce off /admin.
  */
 function resolveGuardOnboardingState(
   state: LandlordOnboardingState | null,
   localState: LandlordOnboardingState | null,
 ): LandlordOnboardingState | null {
+  if (
+    localState?.onboardingStatus === 'completed' &&
+    state?.onboardingStatus !== 'completed'
+  ) {
+    return localState
+  }
   if (state) return state
   return localState
 }
@@ -35,6 +42,7 @@ export function AdminOnboardingGuard() {
   const [loading, setLoading] = useState(true)
   const [resetError, setResetError] = useState<string | null>(null)
   const hasFetchedRef = useRef(false)
+  const fetchGenerationRef = useRef(0)
 
   const isOnboardingAccount = isOnboardingLandlordAccount()
   const shouldReset = new URLSearchParams(location.search).get('reset') === '1'
@@ -85,20 +93,63 @@ export function AdminOnboardingGuard() {
     }
 
     let cancelled = false
+    const generation = ++fetchGenerationRef.current
+    // First load shows the spinner; later refreshes (e.g. after Complete) stay quiet.
     if (!hasFetchedRef.current) {
       setLoading(true)
     }
-    void fetchLandlordOnboarding().then((data) => {
-      if (!cancelled) {
+
+    const timeoutId = window.setTimeout(() => {
+      if (cancelled || hasFetchedRef.current) return
+      console.warn('[AdminOnboardingGuard] onboarding fetch timed out')
+      setState(readLocalOnboardingState() ?? defaultOnboardingState())
+      setLoading(false)
+      hasFetchedRef.current = true
+    }, 15_000)
+
+    void fetchLandlordOnboarding()
+      .then((data) => {
+        if (cancelled || generation !== fetchGenerationRef.current) return
         setState(data)
         setLoading(false)
         hasFetchedRef.current = true
-      }
-    })
+      })
+      .catch((err) => {
+        if (cancelled || generation !== fetchGenerationRef.current) return
+        console.error('[AdminOnboardingGuard] fetch threw', err)
+        setState(readLocalOnboardingState() ?? defaultOnboardingState())
+        setLoading(false)
+        hasFetchedRef.current = true
+      })
+      .finally(() => {
+        window.clearTimeout(timeoutId)
+      })
     return () => {
       cancelled = true
+      window.clearTimeout(timeoutId)
     }
-  }, [isOnboardingAccount, location.pathname, shouldReset])
+  }, [isOnboardingAccount, shouldReset, location.pathname])
+
+  useEffect(() => {
+    const onCompleted = () => {
+      const local = readLocalOnboardingState()
+      if (local?.onboardingStatus === 'completed') {
+        setState(local)
+      }
+      // Force a server refresh on next effect pass.
+      fetchGenerationRef.current += 1
+      void fetchLandlordOnboarding()
+        .then((data) => {
+          setState(data)
+          hasFetchedRef.current = true
+        })
+        .catch((err) => {
+          console.error('[AdminOnboardingGuard] post-complete refresh failed', err)
+        })
+    }
+    window.addEventListener('ulo:onboarding-completed', onCompleted)
+    return () => window.removeEventListener('ulo:onboarding-completed', onCompleted)
+  }, [])
 
   if (!isOnboardingAccount) {
     if (onOnboardingRoute) {

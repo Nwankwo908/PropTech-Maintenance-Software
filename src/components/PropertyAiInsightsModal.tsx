@@ -165,7 +165,7 @@ export function PropertyAiInsightsModal({
           </ul>
 
           <p className="mt-5 text-[12px] leading-4 text-[#9ca3af]">
-            Recommendations are based on open workflows, vendor SLAs, and lease data for this
+            Recommendations are based on open workflows, vendor response times, and lease data for this
             property.
           </p>
         </div>

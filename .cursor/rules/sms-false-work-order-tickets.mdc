@@ -1,0 +1,52 @@
+---
+description: Distinguish real repairs from false work orders (status questions) when listing or canceling requests
+alwaysApply: true
+---
+
+# SMS — real repairs vs false work-order tickets
+
+Ulo must not treat **status / assignment / scheduling questions** as cancelable maintenance requests — even if a mistaken ticket row exists in `maintenance_requests`.
+
+## Rule
+
+| Tenant message shape | Treat as |
+|---|---|
+| New problem report (“bedroom outlet sparking”, “sink leaking”) | Real work order — may create / update / cancel |
+| Status / assignment / schedule ask (“Who is coming…?”, “What’s the status…?”, “When is my electrician coming?”) | Existing-work question — **never** a new cancelable request |
+
+If a ticket’s **description** (first line) is clearly a status/assignment question, it is a **false work order**:
+
+- Do **not** list it in “which request do you want to cancel?”
+- Do **not** list it in “which repair are you asking about?”
+- Do **not** ask the tenant to confirm cancel for it as if it were a real repair
+- On cancel / “I fixed it” / “never mind”, prefer real open tickets only; close false tickets quietly in the background when cleaning up
+
+## Examples
+
+**False (do not offer as cancelable):**
+
+- Who is coming to fix my electrical issue?
+- What’s the status of my repair?
+- When is my electrician coming?
+- Did you find someone?
+
+**Real (may offer / cancel):**
+
+- Bedroom outlet sparking
+- Kitchen sink is leaking
+- AC not cooling
+
+## Where it lives
+
+| Concern | Module |
+|---|---|
+| Intent before minting a ticket | `resolveMaintenanceWorkIntent` — only `NEW_ISSUE` may create |
+| Detect false ticket titles | `looksLikeStatusInquiryTicketDescription` in `inboundContextualFollowUp.ts` |
+| Which-request / cancel lists | `isIdentifiableRequestLabel` + filters in `inboundInterpretationAct.ts` |
+| Quiet cleanup on cancel | Close spurious inquiry tickets before handling real cancel |
+
+## Do not
+
+- Offer a status-question ticket as a bullet in a cancel / which-one SMS
+- Mint a new work order from an assignment or status question when an open request already exists
+- Rely on keyword one-offs for a single phrase — use inquiry vs problem-report shape + open-ticket context

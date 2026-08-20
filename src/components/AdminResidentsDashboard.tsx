@@ -33,6 +33,7 @@ import { resolveTenantActivationChip, countUnactivatedTenants } from '@/lib/tena
 import { supabase } from '@/lib/supabase'
 import { getErrorMessage } from '@/lib/errorMessage'
 import { parseLeaseDateInput } from '@/lib/onboarding'
+import { residentOccupancyLabel } from '@/lib/residentOccupancy'
 import { activateUnitsFromResidentAssignments } from '@/lib/unitActivation'
 
 type Sentiment = 'positive' | 'at_risk' | 'neutral'
@@ -942,6 +943,7 @@ export function AdminResidentsDashboard() {
                 <th className="px-6 py-3 text-[12px] font-medium text-[#6a7282]">Contact</th>
                 <th className="px-6 py-3 text-[12px] font-medium text-[#6a7282]">Move-in</th>
                 <th className="px-6 py-3 text-[12px] font-medium text-[#6a7282]">Lease ends</th>
+                <th className="px-6 py-3 text-[12px] font-medium text-[#6a7282]">Occupancy</th>
                 <th className="px-6 py-3 text-[12px] font-medium text-[#6a7282]">Balance</th>
                 <th className="px-6 py-3 text-[12px] font-medium text-[#6a7282]">Activation</th>
                 <th className="px-6 py-3 text-[12px] font-medium text-[#6a7282]">Sentiment</th>
@@ -950,13 +952,13 @@ export function AdminResidentsDashboard() {
             <tbody>
               {loading ? (
                 <tr>
-                  <td colSpan={10} className="px-6 py-10 text-center text-[14px] text-[#6a7282]">
+                    <td colSpan={11} className="px-6 py-10 text-center text-[14px] text-[#6a7282]">
                     Loading residents…
                   </td>
                 </tr>
               ) : filteredResidents.length === 0 ? (
                 <tr>
-                  <td colSpan={10} className="px-6 py-10 text-center text-[14px] text-[#6a7282]">
+                    <td colSpan={11} className="px-6 py-10 text-center text-[14px] text-[#6a7282]">
                     {residents.length === 0 ? (
                       <>
                         No residents yet.{' '}
@@ -1027,6 +1029,9 @@ export function AdminResidentsDashboard() {
                     </td>
                     <td className="px-6 py-4 text-[14px] tabular-nums text-[#6a7282]">
                       {resident.leaseEndLabel}
+                    </td>
+                    <td className="px-6 py-4 text-[14px] text-[#6a7282]">
+                      {residentOccupancyLabel(resident.status)}
                     </td>
                     <td
                       className={[

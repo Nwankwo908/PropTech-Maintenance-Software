@@ -1,11 +1,29 @@
 import { describe, expect, it } from 'vitest'
 import {
   collectExtractedUnitLabels,
+  extractedPlacesOverlap,
   generateUnitLabels,
   listOnboardingUnitOptions,
   resolveOnboardingUnitLabels,
   uniqueOnboardingUnitLabels,
 } from './properties'
+
+describe('extractedPlacesOverlap', () => {
+  it('merges a rent-roll building name with its lease street address', () => {
+    expect(extractedPlacesOverlap('Oak Apartments', '123 Oak Street, Newark NJ 07102')).toBe(true)
+    expect(extractedPlacesOverlap('Maple Court', 'Maple Court Rent Roll')).toBe(true)
+  })
+
+  it('does not collapse different Newark streets that only share a city and zip', () => {
+    expect(
+      extractedPlacesOverlap(
+        '123 Oak Street, Newark NJ 07102',
+        '45 Pine Street, Newark NJ 07102',
+      ),
+    ).toBe(false)
+    expect(extractedPlacesOverlap('Oak Apartments', 'Pine Court')).toBe(false)
+  })
+})
 
 describe('uniqueOnboardingUnitLabels', () => {
   it('keeps first spelling and drops blank / duplicate labels', () => {
@@ -73,6 +91,18 @@ describe('collectExtractedUnitLabels', () => {
         ],
       }),
     ).toEqual(['1A'])
+  })
+
+  it('counts a lease address unit on the rent-roll property', () => {
+    expect(
+      collectExtractedUnitLabels({
+        propertyName: 'Oak Apartments',
+        residents: [
+          { unit: '4B', building: 'Oak Apartments', selected: true },
+          { unit: '4B', building: '123 Oak Street, Newark NJ', selected: true },
+        ],
+      }),
+    ).toEqual(['4B'])
   })
 
   it('still collects resident units when building text drifted from the property name', () => {

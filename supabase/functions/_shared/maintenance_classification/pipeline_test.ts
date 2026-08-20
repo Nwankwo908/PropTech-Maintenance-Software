@@ -199,3 +199,16 @@ Deno.test("typo slang path still classifies plumbing", async () => {
   const r = await classify("sink been drippin bad since lst nite")
   assertEqual(r.vendorTrade, "plumbing", "trade after sanitize")
 })
+
+Deno.test("smsContext does not change fuse-confidence trade for a leaky faucet", async () => {
+  const r = await classifyMaintenanceRequest({
+    rawDescription: "Leaky faucet",
+    skipLlm: true,
+    skipEmbeddings: true,
+    smsContext: {
+      pendingStep: "urgency",
+      pendingQuestion: "Is this an emergency?",
+    },
+  })
+  assertEqual(r.vendorTrade, "plumbing", "trade")
+})

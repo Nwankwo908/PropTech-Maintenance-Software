@@ -47,7 +47,7 @@ Deno.test("humanizeOpsLanguage translates industry jargon to actions", () => {
     false,
   )
   assertEquals(
-    humanizeOpsLanguage("Missed the vendor SLA").toLowerCase().includes("deadline"),
+    humanizeOpsLanguage("Missed the vendor SLA").toLowerCase().includes("response time"),
     true,
   )
   assertEquals(

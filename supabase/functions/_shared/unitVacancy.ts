@@ -1,4 +1,6 @@
 import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.49.1"
+import { extractedPlacesOverlap } from "./extractedPlacesOverlap.ts"
+import { recordActivityLog } from "./graph/recordActivityLog.ts"
 import { resolveLandlordId } from "./sms/landlordSmsOnboarding.ts"
 import { logGraphEvent } from "./graph/logGraphEvent.ts"
 import {
@@ -12,14 +14,19 @@ export type UnitRow = {
   building: string | null
   status: string
   skip_tenant_registration: boolean
+  property_id?: string | null
 }
 
 const OCCUPIES_UNIT_STATUSES = ["active", "pending", "suspended"] as const
 const UNIT_SELECT =
-  "id, landlord_id, unit_label, building, status, skip_tenant_registration"
+  "id, landlord_id, unit_label, building, status, skip_tenant_registration, property_id"
 
 function normalizeUnitLabelKey(label: string): string {
-  return label.toLowerCase().replace(/^unit\s+/, "").trim()
+  return label
+    .toLowerCase()
+    .replace(/^(unit|apt|apartment|suite|ste|#)\s*/i, "")
+    .replace(/[\s.#-]+/g, "")
+    .trim()
 }
 
 function normalizeBuildingKey(building: string | null | undefined): string {
@@ -603,4 +610,189 @@ export async function activateUnit(
     occupancyId,
     skippedTenantRegistration: skip,
   }
+}
+
+function unitBuildingsCompatibleForActivation(
+  unitBuilding: string | null,
+  residentBuilding: string | null | undefined,
+): boolean {
+  const resident = (residentBuilding ?? "").trim()
+  if (!resident) return true
+  const unit = (unitBuilding ?? "").trim()
+  if (!unit) return true
+  if (normalizeBuildingKey(unit) === normalizeBuildingKey(resident)) return true
+  return extractedPlacesOverlap(unit, resident)
+}
+
+function findInventoryUnitForResident(
+  units: UnitRow[],
+  resident: { unit: string; building: string | null },
+): UnitRow | undefined {
+  const unitKey = normalizeUnitLabelKey(resident.unit)
+  if (!unitKey) return undefined
+  const labelMatches = units.filter(
+    (row) => normalizeUnitLabelKey(row.unit_label) === unitKey,
+  )
+  if (labelMatches.length === 0) return undefined
+  const compatible = labelMatches.filter((row) =>
+    unitBuildingsCompatibleForActivation(row.building, resident.building),
+  )
+  if (compatible.length === 1) return compatible[0]
+  if (compatible.length > 1) {
+    const exact = compatible.find(
+      (row) => normalizeBuildingKey(row.building) === normalizeBuildingKey(resident.building),
+    )
+    return exact ?? compatible[0]
+  }
+  return undefined
+}
+
+/** Prefer occupancy / SMS identity unit id; fall back to label match. Never inserts. */
+export function pickCanonicalUnitForResident(
+  units: UnitRow[],
+  resident: {
+    unit: string
+    building: string | null
+    occupancyUnitId?: string | null
+    identityUnitId?: string | null
+  },
+): UnitRow | undefined {
+  const occupancyId = resident.occupancyUnitId?.trim()
+  if (occupancyId) {
+    const match = units.find((row) => row.id === occupancyId)
+    if (match) return match
+  }
+  const identityId = resident.identityUnitId?.trim()
+  if (identityId) {
+    const match = units.find((row) => row.id === identityId)
+    if (match) return match
+  }
+  return findInventoryUnitForResident(units, resident)
+}
+
+/**
+ * After tenant SMS onboarding (YES/START), activate the assigned unit.
+ * Does not override admin vacant / under-maintenance chips.
+ */
+export async function activateAssignedUnitForResident(
+  supabase: SupabaseClient,
+  input: { landlordId: string; residentId: string; source?: string },
+): Promise<{ activated: boolean; unitId?: string }> {
+  const landlordId = resolveLandlordId(input.landlordId)
+  const source = input.source ?? "tenant_onboarding"
+
+  const { data: resident, error: residentError } = await supabase
+    .from("users")
+    .select("id, unit, building, status, move_in_date, lease_end_date")
+    .eq("id", input.residentId)
+    .eq("landlord_id", landlordId)
+    .maybeSingle()
+
+  if (residentError) {
+    console.warn("[unitVacancy] activate assigned unit resident lookup", residentError.message)
+    return { activated: false }
+  }
+  if (!resident?.id) return { activated: false }
+
+  const status = String((resident as { status?: string | null }).status ?? "active").toLowerCase()
+  if (status === "past_resident") return { activated: false }
+
+  const [{ data: occupancy }, { data: identity }, { data: unitRows, error: unitsError }] =
+    await Promise.all([
+      supabase
+        .from("occupancy")
+        .select("unit_id")
+        .eq("landlord_id", landlordId)
+        .eq("resident_id", input.residentId)
+        .eq("status", "active")
+        .limit(1)
+        .maybeSingle(),
+      supabase
+        .from("sms_identities")
+        .select("unit_id")
+        .eq("landlord_id", landlordId)
+        .eq("resident_id", input.residentId)
+        .limit(8),
+      supabase.from("units").select(UNIT_SELECT).eq("landlord_id", landlordId),
+    ])
+
+  if (unitsError) {
+    console.warn("[unitVacancy] activate assigned unit inventory lookup", unitsError.message)
+    return { activated: false }
+  }
+
+  const identityUnitId = ((identity ?? []) as Array<{ unit_id?: string | null }>)
+    .map((row) => String(row.unit_id ?? "").trim())
+    .find(Boolean) ?? null
+
+  const unit = pickCanonicalUnitForResident((unitRows ?? []) as UnitRow[], {
+    unit: String((resident as { unit?: string | null }).unit ?? ""),
+    building: String((resident as { building?: string | null }).building ?? "") || null,
+    occupancyUnitId: String((occupancy as { unit_id?: string | null } | null)?.unit_id ?? "") || null,
+    identityUnitId,
+  })
+  if (!unit) return { activated: false }
+  if (unit.status === "vacant" || unit.status === "under_maintenance") {
+    return { activated: false, unitId: unit.id }
+  }
+
+  const moveIn =
+    String((resident as { move_in_date?: string | null }).move_in_date ?? "").trim() ||
+    new Date().toISOString().slice(0, 10)
+
+  if (unit.status !== "active") {
+    const { error: updateError } = await supabase
+      .from("units")
+      .update({
+        status: "active",
+        skip_tenant_registration: false,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", unit.id)
+      .eq("landlord_id", landlordId)
+    if (updateError) {
+      console.warn("[unitVacancy] activate assigned unit update", updateError.message)
+      return { activated: false, unitId: unit.id }
+    }
+  }
+
+  const { data: existingOccupancy } = await supabase
+    .from("occupancy")
+    .select("id")
+    .eq("unit_id", unit.id)
+    .eq("status", "active")
+    .maybeSingle()
+
+  if (!existingOccupancy?.id) {
+    const { error: occupancyError } = await supabase.from("occupancy").insert({
+      landlord_id: landlordId,
+      unit_id: unit.id,
+      resident_id: input.residentId,
+      move_in_date: moveIn,
+      status: "active",
+    })
+    if (occupancyError) {
+      console.warn("[unitVacancy] activate assigned unit occupancy", occupancyError.message)
+    }
+  }
+
+  if (unit.status !== "active") {
+    await recordActivityLog(supabase, {
+      landlordId,
+      eventType: "unit.activated",
+      source: "sms",
+      actorType: "resident",
+      actorId: input.residentId,
+      unitId: unit.id,
+      residentId: input.residentId,
+      metadata: {
+        unit_label: unit.unit_label,
+        building: unit.building,
+        activation_path: source,
+        message: `Unit ${unit.unit_label} activated after tenant onboarding`,
+      },
+    })
+  }
+
+  return { activated: unit.status !== "active", unitId: unit.id }
 }

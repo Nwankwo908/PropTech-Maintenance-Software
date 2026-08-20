@@ -29,11 +29,11 @@ Return `{ handled: true }` only when a **stored pending ask** exists (or global 
 
 | Handler | Pending gate |
 |---|---|
-| `compliance_stop_help` | **Global** STOP/HELP only (sole exception) |
+| `compliance_stop_help` | **Global** STOP/START/HELP (sole exception) |
 | `schedule_confirm` | `intake_state.awaiting_schedule_confirmation` |
 | `estimate_decision` | `awaiting_estimate_decision` or pending estimate on thread WO |
 | `invoice_payment` | Admin notify phone + recent `maintenance.invoice_payment_options_sent` |
-| `tenant_activation_reply` | `users.activation_status === waiting` |
+| `tenant_activation_reply` | YES while `users.activation_status === waiting` |
 | `vendor_reschedule` | Reschedule intent (`shouldAttemptVendorRescheduleInbound`) → **dispatch only** to `vendor_job_response` |
 | `vendor_capacity` | Vendor identity + PAUSE/RESUME/JOBS MAX command (command-style, not workflow) |
 | `vendor_feedback` | Open `vendor_feedback_requests` row (documented two-phase exception — see R4) |

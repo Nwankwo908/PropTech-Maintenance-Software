@@ -61,7 +61,7 @@ const FEATURES: FeatureItem[] = [
 ]
 
 const EMPHASIZED_PREVIEW_WIDTH = 'mx-auto w-[70.55%] lg:mx-0'
-const AI_ORGANIZES_PREVIEW_WIDTH = 'mx-auto w-[83.2%] lg:mx-0'
+const AI_ORGANIZES_PREVIEW_WIDTH = 'mx-auto w-[99.84%] lg:mx-0 lg:w-[83.2%]'
 
 const FEATURE_PREVIEWS: Record<
   FeatureId,

@@ -84,7 +84,7 @@ function whyMissingUpdate(
   overdue: boolean,
 ): string {
   if (overdue) {
-    return "The vendor response deadline has already passed with no clear progress"
+    return "The response time has already passed with no clear progress"
   }
   if (status === "unassigned") {
     return days >= 3

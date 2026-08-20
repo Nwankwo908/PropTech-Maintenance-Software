@@ -12,17 +12,21 @@
  * Missing signals use PROPERTY_HEALTH_NEUTRAL_SCORE (50) — neither rewards nor
  * penalizes until real data exists. Resident satisfaction never uses derived proxies.
  *
- * Scores stay in "Pending setup" until the scope has enough real signal:
- *   30+ days of operational history (earliest tracked unit or ticket), OR
- *   at least one completed preventive-maintenance (PM) task.
+ * Property activation (Active vs Pending setup) is separate from health scoring.
+ * A property is Active once units are tracked. 30 days of ops history or a
+ * completed PM task only unlocks the numeric health score / insights — they
+ * do not keep a set-up property in Pending setup.
  */
 import { getActiveLandlordId } from '@/lib/activeLandlord'
 
 /** Neither penalize nor reward when a signal has no underlying data yet. */
 export const PROPERTY_HEALTH_NEUTRAL_SCORE = 50
 
-/** Days of ops history required before showing a numeric health score. */
+/** Days of ops history required before showing a numeric health score / insights. */
 export const PROPERTY_HEALTH_OPS_MATURITY_DAYS = 30
+
+export const PROPERTY_HEALTH_INSIGHTS_CAPTION =
+  'More activity needed for full insights'
 
 export const PROPERTY_HEALTH_WEIGHTS = {
   openMaintenance: 0.4,
@@ -40,32 +44,53 @@ export const PROPERTY_HEALTH_KPI_CAPTION = 'Operational health score.'
 
 export type PropertyHealthPendingReason = 'inactive_units' | 'collecting_history'
 
-/** KPI helper copy while health is still pending setup. */
+/** KPI helper copy for property health — activation vs insights are separate. */
 export function resolvePropertyHealthKpiCaption(
   portfolio: PropertyHealthScopeScore | null,
 ): string {
-  if (!portfolio || portfolio.status !== 'pending_setup') {
-    return portfolio ? PROPERTY_HEALTH_KPI_CAPTION : 'Activate units to start measuring property health.'
+  if (!portfolio || portfolio.status === 'pending_setup') {
+    return 'Activate units to start measuring property health.'
   }
-  if (portfolio.pendingReason === 'collecting_history') {
-    return 'Collecting operational history — score appears after 30 days or your first PM cycle.'
+  if (!shouldShowPropertyHealthScore(portfolio.status)) {
+    return PROPERTY_HEALTH_INSIGHTS_CAPTION
   }
-  return 'Activate units to start measuring property health.'
+  return PROPERTY_HEALTH_KPI_CAPTION
 }
 
-/** Building-card copy while health is pending setup. */
+/** Building-card copy when the numeric health score is not shown yet. */
 export function resolvePropertyHealthPendingMessage(
   pendingReason: PropertyHealthPendingReason | null | undefined,
 ): string {
   if (pendingReason === 'collecting_history') {
-    return 'Collecting history — score after 30 days or first PM cycle'
+    return PROPERTY_HEALTH_INSIGHTS_CAPTION
   }
-  return 'Pending setup — activate units to score health'
+  return 'Pending setup — activate units to operate this property'
+}
+
+/** Numeric health / AI insights — not the same as property Active. */
+export function shouldShowPropertyHealthScore(
+  status: PropertyHealthStatus | null | undefined,
+): boolean {
+  return status === 'healthy' || status === 'monitor' || status === 'at_risk'
 }
 
 /** Main KPI value — omit "%" when the score is exactly 0. */
 export function formatPropertyHealthKpiValue(score: number): string {
   return score === 0 ? '0' : `${score}%`
+}
+
+/**
+ * Health KPI card value. This is a score, not property activation.
+ * Active properties without enough history show "—" plus the insights caption.
+ */
+export function resolvePropertyHealthKpiValue(
+  status: PropertyHealthStatus | null | undefined,
+  score: number | null | undefined,
+  format: 'percent' | 'over100' = 'percent',
+): string {
+  if (!status || status === 'pending_setup') return 'Pending'
+  if (!shouldShowPropertyHealthScore(status) || score == null) return '—'
+  return format === 'over100' ? `${score} / 100` : formatPropertyHealthKpiValue(score)
 }
 
 /** Trend pill — hide when there is no change (0%). */
@@ -74,7 +99,12 @@ export function propertyHealthKpiDelta(delta: number | null | undefined): number
   return delta
 }
 
-export type PropertyHealthStatus = 'healthy' | 'monitor' | 'at_risk' | 'pending_setup'
+export type PropertyHealthStatus =
+  | 'healthy'
+  | 'monitor'
+  | 'at_risk'
+  | 'active'
+  | 'pending_setup'
 
 export type PropertyHealthComponentKey =
   | 'openMaintenance'
@@ -153,6 +183,38 @@ export function isOccupyingResidentStatus(status: string): boolean {
   return !NON_OCCUPYING_RESIDENT_STATUSES.has(status.trim().toLowerCase())
 }
 
+/** Units tab Occupied chip — persisted `units.status = active`. */
+export function isOccupiedUnitStatus(status: string | null | undefined): boolean {
+  return (status ?? '').trim().toLowerCase() === 'active'
+}
+
+function uniqueUnitsForOccupancy(units: PropertyHealthUnit[]): PropertyHealthUnit[] {
+  const byKey = new Map<string, PropertyHealthUnit>()
+  for (const unit of units) {
+    const label = normalizeUnitLabel(unit.unitLabel)
+    if (!label) continue
+    const key = `${normalizeBuildingKey(unit.building)}::${label}`
+    const existing = byKey.get(key)
+    if (!existing) {
+      byKey.set(key, unit)
+      continue
+    }
+    if (isOccupiedUnitStatus(unit.status) && !isOccupiedUnitStatus(existing.status)) {
+      byKey.set(key, unit)
+    }
+  }
+  return Array.from(byKey.values())
+}
+
+function occupancyFromInventory(
+  units: PropertyHealthUnit[],
+): { occupied: number; tracked: number; occupancyPct: number } {
+  const occupied = units.filter((unit) => isOccupiedUnitStatus(unit.status)).length
+  const tracked = units.length
+  const occupancyPct = tracked ? Math.round((occupied / tracked) * 100) : 0
+  return { occupied, tracked, occupancyPct }
+}
+
 export function findResidentForUnitLabel(
   unitLabel: string,
   building: string,
@@ -193,16 +255,22 @@ export function countOccupiedUnits(
   return count
 }
 
+/**
+ * Occupancy % = occupied units / full unit inventory.
+ * Occupied follows the Units tab (`status = active`). Vacant, under-maintenance,
+ * and pending-setup (`inactive`) units stay in the denominator so empty
+ * properties pull the average down instead of disappearing.
+ */
 export function computeOccupancyStats(
   units: PropertyHealthUnit[],
-  residents: PropertyHealthResident[],
+  _residents?: PropertyHealthResident[],
   building?: string,
 ): { occupied: number; tracked: number; occupancyPct: number } {
   const scoped = building ? filterUnitsForBuilding(units, building) : units
-  const tracked = scoped.filter((unit) => unit.status !== 'inactive')
-  const occupied = countOccupiedUnits(tracked, residents, building)
-  const occupancyPct = tracked.length ? Math.round((occupied / tracked.length) * 100) : 0
-  return { occupied, tracked: tracked.length, occupancyPct }
+  const inventory = building
+    ? dedupePropertyUnitsByLabel(scoped, building)
+    : uniqueUnitsForOccupancy(scoped)
+  return occupancyFromInventory(inventory)
 }
 
 export type PropertyHealthTicket = {
@@ -259,6 +327,13 @@ export type PropertyHealthInputs = {
 }
 
 const CLOSED_WORK_STATUSES = new Set(['completed', 'cancelled'])
+/** Removed / resident-stopped work orders are not real repair history. */
+const VOIDED_WORK_STATUSES = new Set(['cancelled', 'deleted'])
+
+function isVoidedWorkOrder(ticket: Pick<PropertyHealthTicket, 'vendorWorkStatus'>): boolean {
+  return VOIDED_WORK_STATUSES.has(ticket.vendorWorkStatus.toLowerCase())
+}
+
 const FOUR_WEEKS_MS = 28 * 24 * 60 * 60 * 1000
 
 const COMPONENT_LABELS: Record<PropertyHealthComponentKey, string> = {
@@ -322,6 +397,7 @@ function resolveScopeOpsStartMs(
   const unitStart = resolveTrackedUnitOpsStartMs(trackedUnits)
   if (unitStart != null) candidates.push(unitStart)
   for (const ticket of tickets) {
+    if (isVoidedWorkOrder(ticket)) continue
     const ts = new Date(ticket.createdAt).getTime()
     if (!Number.isNaN(ts)) candidates.push(ts)
   }
@@ -441,7 +517,7 @@ export function resolvePropertyHealthStatus(
   options?: { insufficientOperationalSignal?: boolean },
 ): PropertyHealthStatus {
   if (isPendingSetupHealth(components)) return 'pending_setup'
-  if (options?.insufficientOperationalSignal) return 'pending_setup'
+  if (options?.insufficientOperationalSignal) return 'active'
   return propertyHealthStatus(score)
 }
 
@@ -923,32 +999,15 @@ function filterFeedbackForScope(
 
 export function computeGridOccupancyForBuilding(
   units: PropertyHealthUnit[],
-  residents: PropertyHealthResident[],
+  _residents: PropertyHealthResident[],
   building: string,
   scopeProperty: PropertyHealthCanonicalProperty | null,
 ): { occupied: number; tracked: number; occupancyPct: number } {
-  const buildingUnits = filterUnitsForScope(units, building, scopeProperty)
-  const scopedResidents = filterResidentsForScope(
-    residents,
-    building,
-    scopeProperty,
-    units,
+  const buildingUnits = dedupePropertyUnitsByLabel(
+    filterUnitsForScope(units, building, scopeProperty),
+    scopeProperty?.name ?? building,
   )
-  const tracked = buildingUnits.filter((unit) => unit.status !== 'inactive')
-  let occupied = 0
-  for (const unit of tracked) {
-    const resident = scopedResidents.find((row) => {
-      if (normalizeUnitLabel(row.unit) !== normalizeUnitLabel(unit.unitLabel)) return false
-      if (!isOccupyingResidentStatus(row.status)) return false
-      if (scopeProperty) {
-        return unitBelongsToCanonicalProperty(unit, scopeProperty)
-      }
-      return normalizeBuildingKey(row.building) === normalizeBuildingKey(unit.building)
-    })
-    if (resident) occupied += 1
-  }
-  const occupancyPct = tracked.length ? Math.round((occupied / tracked.length) * 100) : 0
-  return { occupied, tracked: tracked.length, occupancyPct }
+  return occupancyFromInventory(buildingUnits)
 }
 
 function scoreOpenMaintenance(
@@ -1094,6 +1153,7 @@ function scoreRepeatIssueRisk(
   const countsByUnitCategory = new Map<string, number>()
 
   for (const ticket of tickets) {
+    if (isVoidedWorkOrder(ticket)) continue
     const unitKey = normalizeUnitLabel(ticket.unit)
     if (!unitKey || !unitLabels.has(unitKey)) continue
     const ts = new Date(ticket.createdAt).getTime()
@@ -1494,17 +1554,20 @@ export async function fetchPropertyHealthSignals(): Promise<{
     supabase
       .from('pm_compliance_dashboard_view')
       .select('building, unit_label, task_status')
-      .eq('landlord_id', landlordId),
+      .eq('landlord_id', landlordId)
+      .limit(500),
     supabase
       .from('vendor_feedback')
       .select('rating, maintenance_request_id')
-      .eq('landlord_id', landlordId),
+      .eq('landlord_id', landlordId)
+      .limit(500),
     supabase
       .from('vendor_operational_metrics')
       .select(
         'vendor_id, accepted_jobs, completed_jobs, completion_rate, avg_response_time',
       )
-      .eq('landlord_id', landlordId),
+      .eq('landlord_id', landlordId)
+      .limit(200),
   ])
 
   const pmTasks: PropertyHealthPmTask[] =

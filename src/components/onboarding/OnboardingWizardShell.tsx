@@ -81,6 +81,7 @@ export function OnboardingWizardShell() {
     removeUploadDocument,
     retryDocumentExtract,
     continueFromDocumentUpload,
+    returnToDocumentUpload,
     skipDocumentUpload,
     continueFromAiReview,
     reviewData,
@@ -213,7 +214,7 @@ export function OnboardingWizardShell() {
               review={extractionReview}
               saving={saving}
               onReviewChange={setExtractionReview}
-              onBackToUploads={() => void goTo('document_upload')}
+              onBackToUploads={() => void returnToDocumentUpload()}
               onImportAll={() => void continueFromAiReview()}
             />
           ) : null}

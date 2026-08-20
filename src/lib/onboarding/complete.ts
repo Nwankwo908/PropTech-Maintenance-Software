@@ -14,6 +14,10 @@ import {
 } from './draftStorage'
 import { persistOnboardingProperties } from './persist/properties'
 import {
+  importOnboardingResidentsFromExtraction,
+  onboardingResidentsToImportRows,
+} from './persist/importResidents'
+import {
   persistLandlordAccountProfile,
   persistLandlordCommunicationStyle,
 } from './persist/account'
@@ -72,26 +76,7 @@ export async function completeOnboarding(
   // Do not purge tickets/workflow runs on complete — live SMS intake may already
   // have created real work orders. Wipe only via Reset onboarding.
 
-  // General rule: tenant assigned to a unit with lease dates activates that unit.
-  // No separate Activate Unit click is required after onboarding.
-  try {
-    await activateUnitsFromResidentAssignments({
-      landlordId: scope.landlordId,
-      residents: residents.map((r) => ({
-        id: r.id,
-        unit: r.unit,
-        building: r.building,
-        status: r.occupancyStatus,
-        leaseStart: r.leaseStart,
-        leaseEnd: r.leaseEnd,
-      })),
-      source: 'onboarding_complete',
-    })
-  } catch (err) {
-    console.warn('[landlordOnboarding] unit activation from residents failed', err)
-  }
-
-  // Ensure canonical properties rows exist for every onboarding property.
+  // Persist inventory first so activation can match saved units (new rows start inactive).
   let properties = state.properties
   if (properties.length > 0) {
     try {
@@ -104,6 +89,46 @@ export async function completeOnboarding(
     } catch (err) {
       console.warn('[landlordOnboarding] properties sync on complete failed', err)
     }
+  }
+
+  // Anyone on the final review roster must land in Residents — do not rely only on
+  // the earlier AI-review import, which can persist a subset.
+  if (residents.length > 0) {
+    try {
+      const importRows = onboardingResidentsToImportRows(residents)
+      const persisted = await importOnboardingResidentsFromExtraction(
+        importRows,
+        [],
+        scope.landlordId,
+        {
+          properties: properties.map((property) => ({
+            id: property.id,
+            name: property.name,
+          })),
+        },
+      )
+      if (persisted < importRows.length) {
+        console.warn(
+          '[landlordOnboarding] review resident persist partial',
+          persisted,
+          'of',
+          importRows.length,
+        )
+      }
+    } catch (err) {
+      console.warn('[landlordOnboarding] review resident persist failed', err)
+    }
+  }
+
+  // Tenant assigned to a unit with lease dates — or tenant SMS onboarding complete —
+  // activates that unit. No separate Activate Unit click.
+  try {
+    await activateUnitsFromResidentAssignments({
+      landlordId: scope.landlordId,
+      source: 'onboarding_complete',
+    })
+  } catch (err) {
+    console.warn('[landlordOnboarding] unit activation from residents failed', err)
   }
 
   const completed: LandlordOnboardingState = {

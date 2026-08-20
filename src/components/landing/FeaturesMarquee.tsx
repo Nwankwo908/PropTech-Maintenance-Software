@@ -1,3 +1,4 @@
+import { useCallback, useRef, useState, type TouchEvent } from 'react'
 import homeHealth from '@/assets/Home Heralth.png'
 import leaseRenewals from '@/assets/Lease Renewals.png'
 import maintenanceRequest from '@/assets/Maintenance Request.png'
@@ -16,16 +17,47 @@ const FEATURE_MARQUEE_ITEMS = [
   { src: leaseRenewals, alt: 'Lease Renewals — Ulo monitors expiry dates and launches renewal workflows' },
 ] as const
 
-/** Horizontal looping feature cards under the Features title. Pauses on hover. */
+function touchIsInside(el: HTMLElement, touch: Touch) {
+  const rect = el.getBoundingClientRect()
+  return (
+    touch.clientX >= rect.left &&
+    touch.clientX <= rect.right &&
+    touch.clientY >= rect.top &&
+    touch.clientY <= rect.bottom
+  )
+}
+
+/** Horizontal looping feature cards under the Features title. Pauses on hover (desktop) and while a finger is on the carousel (mobile). */
 export function FeaturesMarquee() {
   const loop = [...FEATURE_MARQUEE_ITEMS, ...FEATURE_MARQUEE_ITEMS]
+  const rootRef = useRef<HTMLDivElement>(null)
+  const [touchPaused, setTouchPaused] = useState(false)
+
+  const pause = useCallback(() => setTouchPaused(true), [])
+  const resume = useCallback(() => setTouchPaused(false), [])
+
+  const onTouchMove = useCallback((event: TouchEvent<HTMLDivElement>) => {
+    const el = rootRef.current
+    const touch = event.touches[0]
+    if (!el || !touch) return
+    setTouchPaused(touchIsInside(el, touch))
+  }, [])
 
   return (
     <div
-      className="relative mt-10 w-full overflow-hidden [mask-image:linear-gradient(to_right,transparent,black_10%,black_90%,transparent)] [-webkit-mask-image:linear-gradient(to_right,transparent,black_10%,black_90%,transparent)]"
+      ref={rootRef}
+      className="relative mt-10 w-full touch-pan-y overflow-hidden [mask-image:linear-gradient(to_right,transparent,black_10%,black_90%,transparent)] [-webkit-mask-image:linear-gradient(to_right,transparent,black_10%,black_90%,transparent)]"
       aria-label="Product feature highlights"
+      onTouchStart={pause}
+      onTouchEnd={resume}
+      onTouchCancel={resume}
+      onTouchMove={onTouchMove}
     >
-      <div className="flex w-max animate-[features-marquee_50s_linear_infinite] gap-4 motion-reduce:animate-none hover:[animation-play-state:paused]">
+      <div
+        className={`flex w-max animate-[features-marquee_50s_linear_infinite] gap-4 motion-reduce:animate-none [@media(hover:hover)]:hover:[animation-play-state:paused] ${
+          touchPaused ? '[animation-play-state:paused]' : ''
+        }`}
+      >
         {loop.map((item, index) => (
           <img
             key={`${item.alt}-${index}`}

@@ -54,13 +54,114 @@ export function resolveOnboardingUnitLabels(
   return generateUnitLabels(count)
 }
 
+const GENERIC_PLACE_TOKENS = new Set([
+  'street',
+  'st',
+  'avenue',
+  'ave',
+  'road',
+  'rd',
+  'drive',
+  'dr',
+  'lane',
+  'ln',
+  'blvd',
+  'boulevard',
+  'way',
+  'court',
+  'ct',
+  'place',
+  'pl',
+  'apt',
+  'apartment',
+  'apartments',
+  'unit',
+  'llc',
+  'inc',
+  'the',
+  'of',
+  'and',
+  'nj',
+  'ny',
+  'pa',
+  'property',
+  'properties',
+  'building',
+  'buildings',
+  'home',
+  'homes',
+  'rentals',
+  'portfolio',
+  'city',
+  'county',
+])
+
+function placeTokens(value: string): string[] {
+  return value
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .split(/\s+/)
+    .filter((token) => token.length >= 3 && !GENERIC_PLACE_TOKENS.has(token) && !/^\d{5}$/.test(token))
+}
+
+function hasHouseNumber(value: string): boolean {
+  return /^\d+\s+\S/.test(value.trim())
+}
+
+function streetNumber(value: string): string {
+  const match = value.trim().match(/^(\d+)/)
+  return match?.[1] ?? ''
+}
+
+function containedPlaceLabel(shorter: string, longer: string): boolean {
+  if (shorter.length < 8 || !longer.includes(shorter)) return false
+  // "maple court" inside "maple court rent roll" is the same place.
+  // A city or zip inside a street address is not.
+  if (shorter.includes(' ')) return true
+  return shorter.length >= 12 && !hasHouseNumber(longer)
+}
+
+/** True when two property/building labels likely refer to the same place. */
+export function extractedPlacesOverlap(left: string, right: string): boolean {
+  const a = left.trim()
+  const b = right.trim()
+  if (!a || !b) return false
+  const aLower = a.toLowerCase()
+  const bLower = b.toLowerCase()
+  if (aLower === bLower) return true
+
+  const shorter = aLower.length <= bLower.length ? aLower : bLower
+  const longer = aLower.length <= bLower.length ? bLower : aLower
+  if (containedPlaceLabel(shorter, longer)) return true
+
+  const aTokens = placeTokens(a)
+  const bTokens = placeTokens(b)
+  const overlap = aTokens.filter((token) => bTokens.includes(token))
+  const distinctive = overlap.filter((token) => !/^\d+$/.test(token))
+  const aIsAddress = hasHouseNumber(a)
+  const bIsAddress = hasHouseNumber(b)
+
+  if (aIsAddress && bIsAddress) {
+    const aNumber = streetNumber(a)
+    const bNumber = streetNumber(b)
+    return Boolean(aNumber && bNumber && aNumber === bNumber && distinctive.length >= 1)
+  }
+
+  if (distinctive.length >= 2) return true
+  // Rent-roll name vs lease street: "Oak Apartments" and "123 Oak Street".
+  return aIsAddress !== bIsAddress && distinctive.length >= 1
+}
+
 function extractedBuildingMatchesProperty(building: string | undefined, propertyName: string): boolean {
   const propertyKey = normalizeBuildingKey(propertyName).toLowerCase()
   const buildingKey = normalizeBuildingKey(building).toLowerCase()
   if (!propertyKey || propertyKey === 'portfolio') return false
   if (!building?.trim() || buildingKey === 'portfolio') return false
   if (buildingKey === propertyKey) return true
-  return buildingKey.startsWith(`${propertyKey} `) || propertyKey.startsWith(`${buildingKey} `)
+  if (buildingKey.startsWith(`${propertyKey} `) || propertyKey.startsWith(`${buildingKey} `)) {
+    return true
+  }
+  return extractedPlacesOverlap(building, propertyName)
 }
 
 /** Distinct unit numbers from a rent roll / extraction for one property. */

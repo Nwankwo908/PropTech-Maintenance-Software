@@ -1,4 +1,5 @@
 import { getActiveLandlordId } from '@/lib/activeLandlord'
+import { pickPrimaryWorkOrderConversationId } from '@/lib/workOrderConversationPreference'
 import { isAdminDirectedConversationType } from '@/lib/propertyConversations'
 import {
   buildVendorSetupMonitoringDetail,
@@ -698,14 +699,9 @@ function mapDbMessagesToTranscript(ctx: ConversationContext): MonitoringTranscri
 }
 
 function buildTranscript(ctx: ConversationContext): MonitoringTranscriptItem[] {
-  const combined = ctx.messages.map((m) => m.body).join(' ')
-
-  // Demo AC polish only when the thread is actually about AC — never replace
-  // short rent / payment-plan threads (those SMS bodies must stay in the transcript).
-  if (ctx.conversationType === 'resident_intake' && mentionsAc(combined)) {
-    return buildDemoAcFailureTranscript(ctx)
-  }
-
+  // Always show the real SMS thread — never replace with demo copy.
+  // (Demo AC polish used to swap AC resident_intake transcripts and made
+  // Active Tasks "See thread" diverge from Messages.)
   if (ctx.messages.length === 0) {
     return [
       {
@@ -1361,7 +1357,7 @@ function buildMoveInCoordinationTranscript(input: MoveInUloThreadInput): Monitor
       type: 'message',
       sender: 'ulo',
       senderName: 'Ulo AI',
-      body: "When you're ready, reply START here and I'll guide you room-by-room through your move-in inspection — no portal or forms needed.",
+      body: "When you're ready, reply READY here and I'll guide you room-by-room through your move-in inspection — no portal or forms needed.",
       timestampMs: moveInMs + 12 * 3_600_000 + 60_000,
     },
   ]
@@ -1417,10 +1413,10 @@ function buildConversationalInspectionTranscript(input: InspectionUloThreadInput
 
   const introBody =
     mode === 'move_in'
-      ? `Hi ${fname} — welcome to ${property}. Let's document ${unitPhrase} together for your move-in record. Reply START when you're ready (~10 min, all over text).`
+      ? `Hi ${fname} — welcome to ${property}. Let's document ${unitPhrase} together for your move-in record. Reply READY when you're ready (~10 min, all over text).`
       : mode === 'move_out'
-        ? `Hi ${fname} — let's walk through ${unitPhrase} for your move-out condition report. Reply START when you're ready. No portal or forms — just answer my prompts.`
-        : `Hi ${fname} — time for your ${unitPhrase} self-inspection at ${property}. Reply START when you're ready and I'll guide you room by room.`
+        ? `Hi ${fname} — let's walk through ${unitPhrase} for your move-out condition report. Reply READY when you're ready. No portal or forms — just answer my prompts.`
+        : `Hi ${fname} — time for your ${unitPhrase} self-inspection at ${property}. Reply READY when you're ready and I'll guide you room by room.`
 
   const kitchenIssue = input.hasMaintenanceFollowUp
     ? 'Small chip on the counter by the sink. Also a slow drip under the kitchen sink.'
@@ -1606,10 +1602,7 @@ function buildSyntheticWorkOrderThread(input: MaintenanceUloThreadInput): Conver
     pendingEstimateDecision: null,
   }
 
-  const transcript =
-    mentionsAc(input.description) || input.issueCategory.toLowerCase() === 'hvac'
-      ? buildDemoAcFailureTranscript(ctx)
-      : buildWorkOrderSyntheticTranscript(input, [])
+  const transcript = buildWorkOrderSyntheticTranscript(input, [])
 
   const risk = deriveRisk(ctx)
 
@@ -1675,10 +1668,7 @@ async function buildSyntheticWorkOrderThreadWithEvents(
     pendingEstimateDecision: null,
   }
 
-  const transcript =
-    mentionsAc(input.description) || input.issueCategory.toLowerCase() === 'hvac'
-      ? buildDemoAcFailureTranscript(ctx)
-      : buildWorkOrderSyntheticTranscript(input, workflowMessages)
+  const transcript = buildWorkOrderSyntheticTranscript(input, workflowMessages)
 
   return { ...base, transcript }
 }
@@ -1792,16 +1782,34 @@ export async function fetchConversationMonitoringByMaintenanceRequest(
 
   if (error || !convRows?.length) return null
 
-  const rows = convRows as Record<string, unknown>[]
+  const rows = (convRows as Record<string, unknown>[]).map((row) => ({
+    id: asString(row.id),
+    conversation_type: asString(row.conversation_type),
+  })).filter((row) => row.id)
 
-  // Prefer the vendor job thread whenever one is linked — estimate submit,
-  // approve/decline, and other vendor updates land there. Fall back to resident.
-  // Rows are already ordered by updated_at desc, so the first match is latest.
-  const preferred =
-    rows.find((row) => asString(row.conversation_type) === 'vendor_alert') ??
-    rows.find((row) => asString(row.conversation_type) === 'resident_intake') ??
-    rows.find((row) => !isAdminDirectedConversationType(asString(row.conversation_type))) ??
-    rows[0]
+  // Prefer resident intake so Active Tasks "See thread" matches Messages.
+  // Vendor job SMS remains a separate inbox row.
+  const preferredId = pickPrimaryWorkOrderConversationId(rows).conversationId
+  let preferred =
+    (convRows as Record<string, unknown>[]).find((row) => asString(row.id) === preferredId) ??
+    null
+
+  // When the ticket only links vendor_alert, still try the resident's intake thread.
+  if (
+    (!preferred || asString(preferred.conversation_type) === 'vendor_alert') &&
+    preferredId
+  ) {
+    // preferredId from pick may still be vendor — also try any resident_intake in set
+    preferred =
+      (convRows as Record<string, unknown>[]).find(
+        (row) => asString(row.conversation_type) === 'resident_intake',
+      ) ?? preferred
+  }
+
+  if (!preferred) {
+    preferred = (convRows as Record<string, unknown>[])[0] ?? null
+  }
+  if (!preferred) return null
 
   const ctx = await loadConversationContext(preferred, landlordId, supabase)
   if (!ctx) return null

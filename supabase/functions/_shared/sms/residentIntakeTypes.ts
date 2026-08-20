@@ -72,6 +72,50 @@ export type SmsIntakeState = {
   draft_ticket_id?: string
   /** When set (length ≥ 2), SMS contained multiple distinct asks. */
   pending_issues?: PendingIntakeIssue[]
+  /** Last intake step we asked about — used to stop looping the same question. */
+  prompt_repeat_step?: IntakeStep
+  /** How many times we have sent a question for `prompt_repeat_step` without a valid answer. */
+  prompt_repeat_count?: number
+  /** Waiting for YES/NO before appending a resident update to an existing work order. */
+  awaiting_ticket_update_confirm?: boolean
+  pending_ticket_update_id?: string
+  pending_ticket_update_text?: string
+  pending_ticket_update_kind?: "update" | "reopen" | "worse" | "no_show" | "correction" | "photo"
+  pending_ticket_update_media?: string[]
+  awaiting_ticket_cancel_confirm?: boolean
+  pending_ticket_cancel_id?: string
+  awaiting_move_out_confirm?: boolean
+  pending_move_out_date?: string
+  /** Waiting for the resident to name which of several open requests they mean. */
+  awaiting_which_request?: boolean
+  pending_which_request_ids?: string[]
+  pending_which_request_intent?: "maintenance_cancel" | "maintenance_update" | "maintenance_status"
+  /** Waiting for RELATED vs SEPARATE when a new symptom may belong to an open job. */
+  awaiting_related_confirm?: boolean
+  pending_related_ticket_id?: string
+  pending_related_text?: string
+  /** Waiting for YES/NO: "Are you asking about your rent balance?" */
+  awaiting_rent_balance_clarify?: boolean
+}
+
+/** Same clarifying question may be sent at most this many times without a valid answer. */
+export const MAX_INTAKE_CLARIFY_REPEATS = 2
+
+/** Count a clarifying prompt; `shouldHandoff` when this send would exceed the cap. */
+export function recordIntakePromptRepeat(
+  state: SmsIntakeState,
+  step: IntakeStep,
+): { state: SmsIntakeState; shouldHandoff: boolean } {
+  const same = state.prompt_repeat_step === step
+  const count = (same ? state.prompt_repeat_count ?? 0 : 0) + 1
+  return {
+    state: {
+      ...state,
+      prompt_repeat_step: step,
+      prompt_repeat_count: count,
+    },
+    shouldHandoff: count > MAX_INTAKE_CLARIFY_REPEATS,
+  }
 }
 
 export const EMERGENCY_SIGNALS = [
@@ -117,6 +161,19 @@ const KNOWN_ROOM_PATTERNS: Array<{ pattern: RegExp; room: string }> = [
 const ISSUE_DESCRIPTION_RE =
   /\b(flood|flooding|flooded|leak|leaking|drip|broken|damaged|isn't|isnt|not working|smell|sparks|overflow|clogged|overflowing)\b/i
 
+/** Time / duration answers — never a room, and valid for `first_noticed`. */
+const TIME_PHRASE_RE =
+  /^(today|tonight|yesterday|now|just now|recently|earlier(?: today)?|this morning|this afternoon|this evening|this week|last night|last week|last month|a few days ago|a couple(?: of)? days ago|a few hours ago|few hours ago|since yesterday|since last night|since this morning|for \d+\s+(?:hour|day|week|minute)s?)$/i
+
+const EMBEDDED_TIME_RE =
+  /\b(today|tonight|yesterday|this morning|this afternoon|this evening|last night|last week|just now|a few days ago|earlier today|since yesterday)\b/i
+
+const NON_ROOM_LABEL_RE =
+  /^(yes|y|no|nope|nah|ok|okay|skip|none|n\/a|start|stop|help|cancel|idk|unknown)$/i
+
+const TRAILING_TIME_RE =
+  /\s+(today|tonight|yesterday|this morning|this afternoon|this evening|last night|last week|just now)$/i
+
 function cleanRoomLabel(raw: string): string {
   return raw
     .trim()
@@ -125,6 +182,42 @@ function cleanRoomLabel(raw: string): string {
     .replace(/^(in|at)\s+(the|my|our)\s+/i, "")
     .replace(/[.!?,]+$/, "")
     .trim()
+}
+
+export function isTimeOrDurationPhrase(text: string): boolean {
+  const t = text.trim().replace(/[.!?,]+$/g, "").trim()
+  if (!t) return false
+  return TIME_PHRASE_RE.test(t)
+}
+
+/** Pull a first-noticed time phrase from free-form tenant text. */
+export function extractFirstNoticedFromText(text: string): string | null {
+  const t = text.trim().replace(/[.!?,]+$/g, "").trim()
+  if (!t) return null
+  if (TIME_PHRASE_RE.test(t)) return t.toLowerCase()
+  if (t.split(/\s+/).length <= 8 && TIME_PHRASE_RE.test(t.toLowerCase())) {
+    return t.toLowerCase()
+  }
+  const embedded = t.match(EMBEDDED_TIME_RE)
+  if (embedded?.[1] && t.split(/\s+/).length <= 12) return embedded[1].toLowerCase()
+  return null
+}
+
+function isUsableRoomLabel(label: string): boolean {
+  const cleaned = cleanRoomLabel(label)
+  if (!cleaned) return false
+  if (NON_ROOM_LABEL_RE.test(cleaned)) return false
+  if (TIME_PHRASE_RE.test(cleaned)) return false
+  if (isTimeOrDurationPhrase(cleaned)) return false
+  return true
+}
+
+function finalizeRoomCandidate(label: string | null | undefined): string | null {
+  if (!label?.trim()) return null
+  const stripped = cleanRoomLabel(label).replace(TRAILING_TIME_RE, "").trim()
+  if (!stripped || !isUsableRoomLabel(stripped)) return null
+  if (isLikelyIssueDescription(stripped)) return null
+  return stripped
 }
 
 function isLikelyIssueDescription(text: string): boolean {
@@ -144,8 +237,8 @@ export function extractRoomFromText(text: string): string | null {
     /\b(?:room|area|location)\s*[:—-]\s*([a-z0-9][a-z0-9\s-]{0,40})/i,
   )
   if (labeled?.[1]) {
-    const room = cleanRoomLabel(labeled[1])
-    if (room && !isLikelyIssueDescription(room)) return room
+    const room = finalizeRoomCandidate(labeled[1])
+    if (room) return room
   }
 
   const inThe = trimmed.match(
@@ -156,8 +249,9 @@ export function extractRoomFromText(text: string): string | null {
     for (const { pattern, room } of KNOWN_ROOM_PATTERNS) {
       if (pattern.test(candidate) || pattern.test(trimmed)) return room
     }
-    if (candidate && !isLikelyIssueDescription(candidate) && candidate.split(/\s+/).length <= 3) {
-      return candidate
+    if (candidate && candidate.split(/\s+/).length <= 3) {
+      const room = finalizeRoomCandidate(candidate)
+      if (room) return room
     }
   }
 
@@ -174,17 +268,14 @@ export function extractRoomFromText(text: string): string | null {
     const looksLikePerson =
       /\b(daughter|son|child|kid|kids|husband|wife|partner|roommate|mother|father|mom|dad|baby|guest)\b/i
         .test(candidate)
-    if (
-      candidate &&
-      !looksLikePerson &&
-      !isLikelyIssueDescription(candidate)
-    ) {
-      return candidate
+    if (candidate && !looksLikePerson) {
+      const room = finalizeRoomCandidate(candidate)
+      if (room) return room
     }
   }
 
   if (!isLikelyIssueDescription(trimmed) && trimmed.split(/\s+/).length <= 4) {
-    return cleanRoomLabel(trimmed)
+    return finalizeRoomCandidate(trimmed)
   }
 
   return null
@@ -209,7 +300,7 @@ export function normalizeRoomOrArea(
   if (extracted) return extracted
 
   if (!isLikelyIssueDescription(trimmed) && trimmed.split(/\s+/).length <= 4) {
-    return cleanRoomLabel(trimmed)
+    return finalizeRoomCandidate(trimmed)
   }
 
   return null
@@ -278,7 +369,7 @@ export function sanitizeIntakeState(state: SmsIntakeState): SmsIntakeState {
     "awaiting_confirm",
   ]
 
-  if (!room && state.room_or_area && isLikelyIssueDescription(state.room_or_area)) {
+  if (!room && state.room_or_area) {
     return {
       ...state,
       room_or_area: undefined,
@@ -337,17 +428,25 @@ export function inferIssueTypeFromText(text: string): IssueType | null {
     return "leak"
   }
   if (
-    /\b(plumb|pipe|drain|toilet|faucet|tap|sink|basin|clog|overflow|sewage|sewer)\b/.test(d)
+    /\b(plumb(?:er|ing)?|pipe|drain|toilet|faucet|tap|sink|basin|clog|overflow|sewage|sewer)\b/
+      .test(d)
   ) {
     return "plumbing"
   }
-  if (/\b(electric|outlet|breaker|wiring|light|power|spark)\b/.test(d)) {
+  if (
+    /\b(electric(?:ian|al)?|outlet|breaker|wiring|light|power|spark)\b/.test(d)
+  ) {
     return "electrical"
   }
   if (/\b(fridge|refrigerator|washer|dryer|oven|dishwasher|microwave|appliance)\b/.test(d)) {
     return "appliance"
   }
-  if (/\b(hvac|heat|heating|cool|furnace|thermostat|no heat|\bac\b)\b/.test(d)) return "HVAC"
+  if (
+    /\b(hvac|heat(?:er|ing)?|cool(?:ing)?|furnace|thermostat|no heat|air ?cond(?:ition(?:er|ing))?|\bac\b)\b/
+      .test(d)
+  ) {
+    return "HVAC"
+  }
   if (/\b(pest|roach|mouse|rat|bug|insect|termite)\b/.test(d)) return "pest"
   if (/\b(lock|key|deadbolt|door stuck|locked out)\b/.test(d)) return "lock"
   return null
@@ -388,6 +487,11 @@ export function isAffirmativeReply(input: string): boolean {
   return /^(y|yes|yeah|yep|yup|yea|correct|right|ok|okay|sure|agreed?|confirm(ed)?|sounds?\s+good|sounds?\s+right|that\s+sounds?\s+(right|good|correct|fine)|that'?s?\s+(right|correct|fine|good)|looks?\s+(right|good|correct)|works?\s+for\s+me|go\s+ahead)([.!?]|$)/.test(
     t,
   )
+}
+
+/** Bare no/nope — not “no leak” or a work-order description. */
+export function isNegativeReply(input: string): boolean {
+  return /^(n|no|nope|nah)([.!?\s]|$)/i.test(input.trim())
 }
 
 /**
@@ -805,11 +909,13 @@ export function nextCollectingStep(
 ): IntakeStep {
   switch (current) {
     case "issue_type":
-      return resolveRoomLabel(state ?? {}) ? "first_noticed" : "room_or_area"
+      return resolveRoomLabel(state ?? {})
+        ? (state?.first_noticed?.trim() ? "safety_concerns" : "first_noticed")
+        : "room_or_area"
     case "room_or_area":
-      return "first_noticed"
+      return state?.first_noticed?.trim() ? "safety_concerns" : "first_noticed"
     case "first_noticed":
-      return "safety_concerns"
+      return resolveRoomLabel(state ?? {}) ? "safety_concerns" : "room_or_area"
     case "safety_concerns":
       return "urgency"
     case "urgency":

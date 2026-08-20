@@ -4,6 +4,7 @@ import type { WorkflowKanbanCategory } from '@/lib/adminWorkflowKanban'
 import {
   countOccupiedUnits,
   normalizeUnitLabel,
+  shouldShowPropertyHealthScore,
   type PropertyHealthBuildingRow,
   type PropertyHealthComponent,
   type PropertyHealthComponentKey,
@@ -383,7 +384,7 @@ export function buildPropertyAiInsights(
     urgentItems = [],
   } = input
 
-  if (buildingHealth.status === 'pending_setup') return null
+  if (!shouldShowPropertyHealthScore(buildingHealth.status)) return null
 
   const currentScore = buildingHealth.score
   const openByCategory = groupOpenTicketsByCategory(openTickets)

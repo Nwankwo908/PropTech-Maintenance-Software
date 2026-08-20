@@ -1,6 +1,7 @@
 import type { InboundSMSMessage } from "./types.ts"
 import type { SmsIdentityRow } from "./inbound_db.ts"
 import type { IdentityResolutionSource, SelfHealingPhase } from "./resolveIdentity.ts"
+import type { InboundInterpretation } from "./inboundInterpretation.ts"
 
 export type SmsWorkflowRoute =
   | "resident_maintenance_intake"
@@ -22,6 +23,7 @@ export type WorkflowContext = {
   resolutionSource: IdentityResolutionSource
   selfHealingPhase: SelfHealingPhase
   suggestedUnit: string | null
+  interpretation?: InboundInterpretation | null
 }
 
 export type WorkflowResult = {

@@ -2,6 +2,7 @@ import { useEffect, useId, useState } from 'react'
 import { ConversationMonitoringBody } from '@/components/ConversationMonitoringModal'
 import { deleteWorkOrderPermanently } from '@/api/deleteWorkOrder'
 import {
+  fetchInboxConversationMonitoring,
   fetchWorkflowUloThreadMonitoring,
   type ConversationMonitoringDetail,
 } from '@/lib/conversationMonitoring'
@@ -312,6 +313,7 @@ export function WorkflowPipelineDetailPanel({
   const titleId = useId()
   const threadTitleId = useId()
   const [panelView, setPanelView] = useState<'work_order' | 'thread'>('work_order')
+  const [threadSource, setThreadSource] = useState<'resident' | 'vendor'>('resident')
   const [threadDetail, setThreadDetail] = useState<ConversationMonitoringDetail | null>(null)
   const [threadLoading, setThreadLoading] = useState(false)
   const [threadError, setThreadError] = useState<string | null>(null)
@@ -322,9 +324,15 @@ export function WorkflowPipelineDetailPanel({
   const [deleteSaving, setDeleteSaving] = useState(false)
   const [deleteError, setDeleteError] = useState<string | null>(null)
 
+  const openThread = (source: 'resident' | 'vendor') => {
+    setThreadSource(source)
+    setPanelView('thread')
+  }
+
   useEffect(() => {
     if (!open) {
       setPanelView('work_order')
+      setThreadSource('resident')
       setThreadDetail(null)
       setThreadError(null)
       setThreadLoading(false)
@@ -336,6 +344,7 @@ export function WorkflowPipelineDetailPanel({
 
   useEffect(() => {
     setPanelView('work_order')
+    setThreadSource('resident')
     setThreadDetail(null)
     setThreadError(null)
     setThreadLoading(false)
@@ -375,6 +384,13 @@ export function WorkflowPipelineDetailPanel({
     setThreadDetail(null)
 
     const loadThread = async () => {
+      // Same loader as Messages so the transcript matches that page.
+      if (threadSource === 'vendor' && detail.vendorConversationId) {
+        return fetchInboxConversationMonitoring(detail.vendorConversationId)
+      }
+      if (detail.conversationId) {
+        return fetchInboxConversationMonitoring(detail.conversationId)
+      }
       if (!detail.uloThread) return null
       return fetchWorkflowUloThreadMonitoring(detail.uloThread)
     }
@@ -383,7 +399,11 @@ export function WorkflowPipelineDetailPanel({
       if (cancelled) return
       setThreadLoading(false)
       if (!result) {
-        setThreadError('Could not load the Ulo conversation for this workflow.')
+        setThreadError(
+          threadSource === 'vendor'
+            ? 'Could not load the vendor conversation for this work order.'
+            : 'Could not load the Ulo conversation for this workflow.',
+        )
         return
       }
       setThreadDetail(result)
@@ -392,7 +412,7 @@ export function WorkflowPipelineDetailPanel({
     return () => {
       cancelled = true
     }
-  }, [open, panelView, detail])
+  }, [open, panelView, detail, threadSource])
 
   const handleMoveOutAction = async (action: MoveOutAdminAction) => {
     if (!detail?.runId) return
@@ -438,8 +458,13 @@ export function WorkflowPipelineDetailPanel({
   if (!open) return null
 
   const canSeeThread = Boolean(detail?.uloThread)
+  const canSeeVendorThread = Boolean(detail?.vendorConversationId)
   const showingThread = panelView === 'thread'
   const canDeleteWorkOrder = Boolean(detail?.isMaintenanceWorkflow && detail.runId)
+  const vendorFromOverview = detail?.overviewFields.find((field) => field.label === 'Vendor')?.value
+  const vendorName =
+    (vendorFromOverview && vendorFromOverview !== '—' ? vendorFromOverview : null) ??
+    (detail?.uloThread?.kind === 'maintenance' ? detail.uloThread.vendorName : null)
 
   return (
     <div className="fixed inset-0 z-50 flex justify-end">
@@ -470,14 +495,18 @@ export function WorkflowPipelineDetailPanel({
                   Back to task
                 </button>
                 <h2 id={threadTitleId} className="mt-3 text-[24px] font-semibold leading-8 tracking-[-0.3px] text-[#0a0a0a]">
-                  {detail?.uloThread?.kind === 'move_in'
+                  {threadSource === 'vendor'
+                    ? 'Vendor conversation'
+                    : detail?.uloThread?.kind === 'move_in'
                     ? 'Move-in coordination'
                     : detail?.uloThread?.kind === 'inspection'
                       ? 'Conversational inspection'
                       : 'Resident conversation'}
                 </h2>
                 <p className="mt-1 text-[13px] leading-5 text-[#6a7282]">
-                  {detail?.uloThread?.kind === 'move_in'
+                  {threadSource === 'vendor'
+                    ? `SMS thread between ${vendorName ?? 'vendor'} and Ulo`
+                    : detail?.uloThread?.kind === 'move_in'
                     ? `Scheduled SMS coordination with ${detail?.resident?.name ?? 'resident'}`
                     : detail?.uloThread?.kind === 'inspection'
                       ? 'Guided SMS inspection — room by room, no portal forms'
@@ -520,7 +549,13 @@ export function WorkflowPipelineDetailPanel({
           </button>
         </div>
 
-        <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-6 py-5">
+        <div
+          className={
+            showingThread
+              ? 'flex min-h-0 flex-1 flex-col overflow-hidden px-6 py-5'
+              : 'min-h-0 flex-1 overflow-y-auto overscroll-contain px-6 py-5'
+          }
+        >
           {showingThread ? (
             threadLoading ? (
               <div className="flex h-40 items-center justify-center">
@@ -531,16 +566,25 @@ export function WorkflowPipelineDetailPanel({
                 <p className="text-[13px] text-[#6a7282]">{threadError}</p>
               </div>
             ) : threadDetail ? (
-              <div className="flex min-h-[min(70dvh,720px)] flex-col overflow-hidden rounded-[10px] border border-[#e5e7eb] bg-white shadow-[0px_1px_2px_-1px_rgba(0,0,0,0.06)]">
+              <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-[10px] border border-[#e5e7eb] bg-white shadow-[0px_1px_2px_-1px_rgba(0,0,0,0.06)]">
                 <ConversationMonitoringBody
                   detail={threadDetail}
                   titleId={threadTitleId}
                   embedded
                   onEstimateDecided={() => {
-                    if (!detail?.uloThread) return
-                    void fetchWorkflowUloThreadMonitoring(detail.uloThread).then((result) => {
-                      if (result) setThreadDetail(result)
-                    })
+                    const reloadId =
+                      threadSource === 'vendor'
+                        ? detail?.vendorConversationId
+                        : detail?.conversationId
+                    if (reloadId) {
+                      void fetchInboxConversationMonitoring(reloadId).then((result) => {
+                        if (result) setThreadDetail(result)
+                      })
+                    } else if (detail?.uloThread) {
+                      void fetchWorkflowUloThreadMonitoring(detail.uloThread).then((result) => {
+                        if (result) setThreadDetail(result)
+                      })
+                    }
                     onWorkflowUpdated?.()
                   }}
                 />
@@ -590,6 +634,14 @@ export function WorkflowPipelineDetailPanel({
 
               <section className="rounded-[10px] border border-[#e5e7eb] bg-white p-5 shadow-[0px_1px_2px_-1px_rgba(0,0,0,0.06)]">
                 <h3 className="text-[15px] font-semibold leading-6 text-[#0a0a0a]">Overview</h3>
+                <div className="mt-3">
+                  <p className="text-[10px] font-semibold uppercase tracking-[0.08em] text-[#9ca3af]">
+                    Request number
+                  </p>
+                  <p className="mt-1 text-[14px] font-medium leading-5 text-[#0a0a0a]">
+                    {detail.ticketRequestNumber}
+                  </p>
+                </div>
                 <p className="mt-3 text-[14px] leading-6 text-[#364153]">{detail.description}</p>
                 <div className="mt-5 border-t border-[#f3f4f6] pt-5">
                   <FieldGrid fields={detail.overviewFields} />
@@ -696,14 +748,26 @@ export function WorkflowPipelineDetailPanel({
                 ) : null}
                 {canSeeThread && !detail.resident ? (
                   <div className="mt-5 border-t border-[#f3f4f6] pt-5">
-                    <button
-                      type="button"
-                      onClick={() => setPanelView('thread')}
-                      className="sa-press inline-flex w-full items-center justify-center gap-1.5 rounded-[10px] border border-[#dbeafe] bg-[#eff6ff] px-3 py-2 text-[12px] font-medium text-[#1447e6] outline-none hover:bg-[#dbeafe] focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2 sm:w-auto"
-                    >
-                      <ThreadIcon />
-                      See thread
-                    </button>
+                    <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap">
+                      <button
+                        type="button"
+                        onClick={() => openThread('resident')}
+                        className="sa-press inline-flex w-full items-center justify-center gap-1.5 rounded-[10px] border border-[#dbeafe] bg-[#eff6ff] px-3 py-2 text-[12px] font-medium text-[#1447e6] outline-none hover:bg-[#dbeafe] focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2 sm:w-auto"
+                      >
+                        <ThreadIcon />
+                        See thread
+                      </button>
+                      {canSeeVendorThread ? (
+                        <button
+                          type="button"
+                          onClick={() => openThread('vendor')}
+                          className="sa-press inline-flex w-full items-center justify-center gap-1.5 rounded-[10px] border border-[#e5e7eb] bg-white px-3 py-2 text-[12px] font-medium text-[#364153] outline-none hover:bg-[#f9fafb] focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2 sm:w-auto"
+                        >
+                          <ThreadIcon />
+                          See vendor thread
+                        </button>
+                      ) : null}
+                    </div>
                   </div>
                 ) : null}
               </section>
@@ -736,12 +800,22 @@ export function WorkflowPipelineDetailPanel({
                     <div className="mt-5 flex flex-col gap-2">
                       <button
                         type="button"
-                        onClick={() => setPanelView('thread')}
+                        onClick={() => openThread('resident')}
                         className="sa-press inline-flex w-full items-center justify-center gap-1.5 rounded-[10px] border border-[#dbeafe] bg-[#eff6ff] px-3 py-2 text-[12px] font-medium text-[#1447e6] outline-none hover:bg-[#dbeafe] focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2"
                       >
                         <ThreadIcon />
                         See thread
                       </button>
+                      {canSeeVendorThread ? (
+                        <button
+                          type="button"
+                          onClick={() => openThread('vendor')}
+                          className="sa-press inline-flex w-full items-center justify-center gap-1.5 rounded-[10px] border border-[#e5e7eb] bg-white px-3 py-2 text-[12px] font-medium text-[#364153] outline-none hover:bg-[#f9fafb] focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2"
+                        >
+                          <ThreadIcon />
+                          See vendor thread
+                        </button>
+                      ) : null}
                       <button
                         type="button"
                         className="sa-press inline-flex w-full items-center justify-center gap-1.5 rounded-[10px] border border-[#e5e7eb] bg-white px-3 py-2 text-[12px] font-medium text-[#364153] outline-none hover:bg-[#f9fafb] focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2"

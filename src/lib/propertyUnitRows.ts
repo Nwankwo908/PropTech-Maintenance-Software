@@ -4,7 +4,11 @@ import {
   isOpenWorkflowKanbanCard,
   type WorkflowKanbanCategory,
 } from '@/lib/adminWorkflowKanban'
-import type { AdminWorkflowDashboardData, AdminWorkflowRow } from '@/lib/adminWorkflows'
+import {
+  isCancelledOnActiveTasks,
+  type AdminWorkflowDashboardData,
+  type AdminWorkflowRow,
+} from '@/lib/adminWorkflows'
 import { normalizeBuildingKey, normalizeUnitLabel } from '@/lib/propertyHealth'
 import { formatVendorTradeLabel } from '@/lib/vendorTrades'
 
@@ -144,7 +148,7 @@ function pickOpenWorkflowLabel(
 
   const openWorkflows = workflowRows
     .filter((row) => workflowMatchesUnit(row, unitLabel, building))
-    .filter((row) => row.status !== 'cancelled' && row.status !== 'completed')
+    .filter((row) => !isCancelledOnActiveTasks(row) && row.status !== 'completed')
     .map((row) => ({ row, card: buildWorkflowKanbanCard(row) }))
     .filter(({ card }) => isOpenWorkflowKanbanCard(card))
     .sort((a, b) => {

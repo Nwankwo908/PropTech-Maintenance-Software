@@ -98,8 +98,14 @@ async function loadVendorEmailsForLandlord(
 }
 
 /**
- * Resolve landlord-ops recipients: env notify list + landlords.email,
- * minus every vendor email for that landlord (and any explicit excludes).
+ * Resolve landlord-ops recipients.
+ *
+ * Default: env notify list (`SMS_ADMIN_NOTIFY_EMAILS`) + `landlords.email`,
+ * minus vendor emails.
+ *
+ * `accountHolderOnly: true` — only `landlords.email` (+ optional extras).
+ * Use for Needs Your Attention and other account-facing alerts; do not CC
+ * Ulo staff env lists.
  */
 export async function resolveLandlordOpsEmails(
   supabase: SupabaseClient,
@@ -109,12 +115,20 @@ export async function resolveLandlordOpsEmails(
     excludeEmails?: string[]
     /** Override env list (tests). */
     envEmails?: string[]
+    /**
+     * When true, skip `SMS_ADMIN_NOTIFY_EMAILS` and send only to the
+     * landlord account email (+ extraEmails).
+     */
+    accountHolderOnly?: boolean
     logLabel?: string
   },
 ): Promise<{ emails: string[]; blocked: string[] }> {
-  const candidates = new Set<string>(
-    options?.envEmails ?? adminNotifyEmailsFromEnv(),
-  )
+  const candidates = new Set<string>()
+  if (!options?.accountHolderOnly) {
+    for (const e of options?.envEmails ?? adminNotifyEmailsFromEnv()) {
+      candidates.add(e)
+    }
+  }
   for (const e of options?.extraEmails ?? []) {
     const n = normalizeOpsEmail(e)
     if (n) candidates.add(n)
@@ -166,6 +180,7 @@ export type LandlordOpsEmailResult = {
 
 /**
  * Send privileged landlord/ops email. Vendor addresses are never recipients.
+ * Pass `accountHolderOnly: true` for Needs Your Attention (account email only).
  */
 export async function sendLandlordOpsEmail(
   supabase: SupabaseClient,
@@ -177,6 +192,7 @@ export async function sendLandlordOpsEmail(
     extraEmails?: string[]
     excludeEmails?: string[]
     envEmails?: string[]
+    accountHolderOnly?: boolean
     logLabel?: string
   },
 ): Promise<LandlordOpsEmailResult> {
@@ -187,6 +203,7 @@ export async function sendLandlordOpsEmail(
       extraEmails: params.extraEmails,
       excludeEmails: params.excludeEmails,
       envEmails: params.envEmails,
+      accountHolderOnly: params.accountHolderOnly,
       logLabel: params.logLabel,
     },
   )

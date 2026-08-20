@@ -204,7 +204,7 @@ function PrimaryButton({
     <button
       type="button"
       className={[
-        'sa-press inline-flex items-center justify-center gap-2 rounded-lg px-5 py-2.5',
+        'sa-press inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-lg px-7 py-2.5',
         'text-sm font-semibold text-white',
         'shadow-[0_4px_14px_rgba(14,92,68,0.4)]',
         'transition-[transform,box-shadow,filter] duration-150 ease-out',
@@ -220,32 +220,6 @@ function PrimaryButton({
       {...props}
     >
       {children}
-    </button>
-  )
-}
-
-function ExploreDemoButton({
-  className = '',
-  ...props
-}: React.ComponentProps<'button'>) {
-  return (
-    <button
-      type="button"
-      className={[
-        'sa-press inline-flex items-center justify-center gap-2 rounded-2xl border border-[#e5e7eb] bg-white',
-        'px-[25px] py-[17px] font-[family-name:var(--font-landing)] text-sm font-semibold leading-5 text-[#1f2937]',
-        'shadow-[0_4px_6px_rgba(0,0,0,0.05)]',
-        'transition-[transform,box-shadow,background-color] duration-150 ease-out',
-        'hover:-translate-y-0.5 hover:bg-[#f9fafb] hover:shadow-[0_6px_10px_rgba(0,0,0,0.07)]',
-        'active:translate-y-px active:scale-[0.98] active:shadow-[0_2px_4px_rgba(0,0,0,0.05)]',
-        'focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-slate-300/60 focus-visible:ring-offset-2 focus-visible:ring-offset-[#f0fdf4]',
-        className,
-      ]
-        .filter(Boolean)
-        .join(' ')}
-      {...props}
-    >
-      Explore Demo
     </button>
   )
 }
@@ -324,12 +298,6 @@ export function LandingPage() {
     setEarlyAccessOpen(true)
   }
 
-  function exploreDemo() {
-    playUiClickSound()
-    setMobileMenuOpen(false)
-    navigate('/demo')
-  }
-
   function closeEarlyAccess() {
     setEarlyAccessOpen(false)
     setEarlyAccessSuccess(false)
@@ -339,7 +307,14 @@ export function LandingPage() {
 
   function submitHeroWaitlistEmail(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault()
-    openEarlyAccess(heroWaitlistEmail)
+    const formData = new FormData(event.currentTarget)
+    const raw = formData.get('email') ?? formData.get('footer-email')
+    const fromField = typeof raw === 'string' ? raw.trim() : ''
+    const email = fromField || heroWaitlistEmail.trim()
+    if (email && email !== heroWaitlistEmail.trim()) {
+      setHeroWaitlistEmail(email)
+    }
+    openEarlyAccess(email)
   }
 
   const navLinks = [
@@ -468,27 +443,25 @@ export function LandingPage() {
                 <HeroHeadlineAndCopy />
 
                 <div className="mt-5 flex w-full max-w-full flex-col items-stretch sm:mt-6 sm:items-start">
-                  <div className="flex w-full flex-col items-stretch gap-3 sm:w-auto sm:flex-row sm:items-center">
-                    <form
-                      onSubmit={submitHeroWaitlistEmail}
-                      className="w-full sm:w-auto"
-                    >
-                      <input
-                        type="email"
-                        name="email"
-                        autoComplete="email"
-                        placeholder="Enter your email"
-                        value={heroWaitlistEmail}
-                        onChange={(event) => setHeroWaitlistEmail(event.target.value)}
-                        className="sa-surface h-full w-full rounded-lg border border-[#55B6A1] bg-white px-7 py-3.5 text-sm font-medium text-[#0f1623] outline-none placeholder:text-[#6b7280] transition-[border-color,box-shadow,background-color] duration-150 ease-out hover:border-[#3d9a86] hover:bg-[#f4fbf9] hover:shadow-[0_4px_14px_rgba(85,182,161,0.22)] focus:border-[#55B6A1] focus:bg-white focus:ring-2 focus:ring-[#55B6A1]/25 focus:shadow-none sm:w-[min(100%,20rem)] sm:py-4 sm:text-base"
-                        aria-label="Email for early access"
-                      />
-                    </form>
-                    <ExploreDemoButton
-                      onClick={exploreDemo}
-                      className="w-full justify-center sm:w-auto"
+                  <form
+                    onSubmit={submitHeroWaitlistEmail}
+                    className="flex w-full flex-col items-stretch gap-3 sm:w-auto sm:flex-row sm:items-center"
+                  >
+                    <input
+                      type="email"
+                      name="email"
+                      autoComplete="email"
+                      placeholder="Enter your email"
+                      value={heroWaitlistEmail}
+                      onChange={(event) => setHeroWaitlistEmail(event.target.value)}
+                      className="sa-surface box-border h-12 w-full rounded-lg border border-[#55B6A1] bg-white px-7 text-sm font-medium text-[#0f1623] outline-none placeholder:text-[#6b7280] transition-[border-color,box-shadow,background-color] duration-150 ease-out hover:border-[#3d9a86] hover:bg-[#f4fbf9] hover:shadow-[0_4px_14px_rgba(85,182,161,0.22)] focus:border-[#55B6A1] focus:bg-white focus:ring-2 focus:ring-[#55B6A1]/25 focus:shadow-none sm:h-14 sm:w-[min(100%,20rem)] sm:text-base"
+                      aria-label="Email for early access"
                     />
-                  </div>
+                    <PrimaryButton type="submit" className="box-border h-12 w-full shrink-0 justify-center !py-0 sm:h-14 sm:w-auto">
+                      Request Early Access
+                      <IconArrowRight />
+                    </PrimaryButton>
+                  </form>
                   <div className="mt-6 flex flex-nowrap items-center justify-center gap-2 sm:justify-start">
                     <button
                       type="button"
@@ -628,7 +601,7 @@ export function LandingPage() {
                   Be first on autopilot
                 </h2>
                 <p className="mt-2 text-base font-normal leading-relaxed text-slate-700 landing-compact:text-center">
-                  Join the alpha; limited spots available in Essex County, NJ
+                  Join the alpha; limited spots available.
                 </p>
                 <form onSubmit={submitHeroWaitlistEmail} className="mt-5 flex flex-col gap-3">
                   <input
@@ -638,10 +611,10 @@ export function LandingPage() {
                     placeholder="Enter your email"
                     value={heroWaitlistEmail}
                     onChange={(event) => setHeroWaitlistEmail(event.target.value)}
-                    className="sa-surface h-full w-full rounded-lg border border-[#55B6A1] bg-white px-7 py-3.5 text-sm font-medium text-[#0f1623] outline-none placeholder:text-[#6b7280] transition-[border-color,box-shadow,background-color] duration-150 ease-out hover:border-[#3d9a86] hover:bg-[#f4fbf9] hover:shadow-[0_4px_14px_rgba(85,182,161,0.22)] focus:border-[#55B6A1] focus:bg-white focus:ring-2 focus:ring-[#55B6A1]/25 focus:shadow-none sm:py-4 sm:text-base"
+                    className="sa-surface box-border h-12 w-full rounded-lg border border-[#55B6A1] bg-white px-7 text-sm font-medium text-[#0f1623] outline-none placeholder:text-[#6b7280] transition-[border-color,box-shadow,background-color] duration-150 ease-out hover:border-[#3d9a86] hover:bg-[#f4fbf9] hover:shadow-[0_4px_14px_rgba(85,182,161,0.22)] focus:border-[#55B6A1] focus:bg-white focus:ring-2 focus:ring-[#55B6A1]/25 focus:shadow-none sm:h-14 sm:text-base"
                     aria-label="Email for early access"
                   />
-                  <PrimaryButton type="submit" className="w-full">
+                  <PrimaryButton type="submit" className="box-border h-12 w-full shrink-0 justify-center !py-0 sm:h-14">
                     Request Early Access
                     <IconArrowRight />
                   </PrimaryButton>

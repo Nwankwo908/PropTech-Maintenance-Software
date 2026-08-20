@@ -14,7 +14,9 @@ import {
   type WorkflowKanbanCategory,
 } from '@/lib/adminWorkflowKanban'
 import { formatVendorTradeLabel } from '@/lib/vendorTrades'
-import { formatWorkOrderRefForWorkflowRun } from '@/lib/vendorCallFlow'
+import { formatTicketRequestNumber, formatWorkOrderRefForWorkflowRun } from '@/lib/vendorCallFlow'
+import { normalizePhoneForDb } from '@/lib/phoneFormat'
+import { pickPrimaryWorkOrderConversationId } from '@/lib/workOrderConversationPreference'
 import {
   buildMoveOutTimeline,
   formatMoveOutDateLabel,
@@ -35,6 +37,15 @@ import {
   normalizeMediaRefs,
   resolveSmsMediaForMessages,
 } from '@/lib/smsMedia'
+import { smsMessageBelongsToWorkOrder } from '@/lib/workOrderSmsPhotos'
+import {
+  formatPropertyAccessPlainText,
+  loadPropertyAccess,
+} from '@/lib/propertyAccess'
+import {
+  findPropertyByName,
+  propertyRecordToAddressLine,
+} from '@/lib/properties'
 
 export type WorkflowPipelineStepState = 'complete' | 'active' | 'upcoming'
 
@@ -94,6 +105,7 @@ export type WorkflowPipelineInvoiceSection = {
 export type WorkflowPipelineDetail = {
   runId: string
   workOrderRef: string
+  ticketRequestNumber: string
   title: string
   categoryLabel: string
   categoryClassName: string
@@ -117,6 +129,8 @@ export type WorkflowPipelineDetail = {
   vendorAttachments: WorkflowPipelineAttachment[]
   maintenanceRequestId: string | null
   conversationId: string | null
+  /** Vendor job SMS (`vendor_alert`), when separate from the resident intake thread. */
+  vendorConversationId: string | null
   uloThread: WorkflowUloThreadInput | null
   isMaintenanceWorkflow?: boolean
   isMoveOutWorkflow?: boolean
@@ -192,6 +206,19 @@ function formatWorkOrderRef(run: AdminWorkflowRow): string {
     run.entityId,
     run.entityType,
   )
+}
+
+function formatTicketRequestNumberForRun(
+  run: AdminWorkflowRow,
+  maintenanceRequestId: string | null,
+): string {
+  const ticketId = maintenanceRequestId?.trim()
+  if (ticketId) return formatTicketRequestNumber(ticketId)
+  const type = (run.entityType ?? '').trim().toLowerCase()
+  if (type === 'maintenance_request' && run.entityId?.trim()) {
+    return formatTicketRequestNumber(run.entityId)
+  }
+  return formatTicketRequestNumber(run.id)
 }
 
 function formatCreatedLine(iso: string): string {
@@ -495,11 +522,6 @@ async function buildInvoiceSection(
   }
 }
 
-/** Cost proxy shared with unit_maintenance_cost_view: estimated_minutes × $1.25/min. */
-function ticketCostEstimate(estimatedMinutes: number | null | undefined): number {
-  return (estimatedMinutes ?? 240) * 1.25
-}
-
 function resolveEstimatedCost(
   ticket: Record<string, unknown> | null,
   invoice: Record<string, unknown> | null,
@@ -519,27 +541,45 @@ function resolveEstimatedCost(
   const ticketInvoiceTotal = invoiceTotalFromRow(ticket)
   if (ticketInvoiceTotal != null && ticketInvoiceTotal > 0) return ticketInvoiceTotal
 
-  return ticketCostEstimate(asFiniteNumber(ticket.estimated_minutes))
+  return null
 }
 
-function buildPropertyBlock(row: AdminWorkflowRow, metadata: Record<string, unknown>): WorkflowPipelineProperty {
-  const property = row.propertyLabel || asString(metadata.building) || '—'
-  const unit = row.unitLabel || asString(metadata.unit_label) || '—'
+function dash(value: string | null | undefined): string {
+  const trimmed = value?.trim() ?? ''
+  return trimmed || '—'
+}
+
+async function buildPropertyBlock(
+  row: AdminWorkflowRow,
+  metadata: Record<string, unknown>,
+  ticket: Record<string, unknown> | null,
+): Promise<WorkflowPipelineProperty> {
+  const propertyLabel = row.propertyLabel || asString(metadata.building)
+  const unit = row.unitLabel || asString(metadata.unit_label) || asString(ticket?.unit)
+  const found = propertyLabel
+    ? await findPropertyByName(getActiveLandlordId(), propertyLabel)
+    : { ok: true as const, property: null }
+  const record = found.ok ? found.property : null
+  const accessProfile = propertyLabel ? await loadPropertyAccess(propertyLabel) : null
+  const ticketAccess = asString(ticket?.access_instructions)
+  const accessText =
+    ticketAccess || (accessProfile ? formatPropertyAccessPlainText(accessProfile) : '')
+  const entryCode = accessProfile?.gateCode || accessProfile?.lockboxCode || ''
+  const street = record ? propertyRecordToAddressLine(record) : null
+  const locationLine =
+    propertyLabel && unit
+      ? `${propertyLabel} · Unit ${unit}`
+      : propertyLabel || (unit ? `Unit ${unit}` : '')
+
   return {
-    property,
-    building: 'Main',
-    address: property !== '—' ? `${property} · Unit ${unit}` : '—',
-    unit,
-    manager: 'J. Hollis',
-    access: 'Use elevator to floor; park in visitor spots B2.',
-    entryCode: '#4821',
+    property: dash(record?.name || propertyLabel),
+    building: dash(propertyLabel),
+    address: dash(street || locationLine),
+    unit: dash(unit),
+    manager: dash(record?.managerName || accessProfile?.superintendentContact),
+    access: dash(accessText),
+    entryCode: dash(entryCode),
   }
-}
-
-import { mentionsHvacCooling } from '@shared/maintenance/deterministicRules.ts'
-
-function mentionsAc(text: string): boolean {
-  return mentionsHvacCooling(text)
 }
 
 function formatAttachmentTimestamp(iso: string): string {
@@ -649,6 +689,15 @@ async function loadInboundSmsPhotoAttachments(
   const extraRefs: string[] = []
   const metaByRef = new Map<string, { body: string; sentAt: string }>()
   for (const message of (messages ?? []) as Record<string, unknown>[]) {
+    if (
+      !smsMessageBelongsToWorkOrder({
+        messageCreatedAt: asString(message.created_at),
+        ticketCreatedAt: enrichment.ticketCreatedAt,
+        nextTicketCreatedAt: enrichment.nextTicketCreatedAt,
+      })
+    ) {
+      continue
+    }
     const body = asString(message.body)
     const sentAt = formatAttachmentTimestamp(asString(message.created_at))
     for (const ref of normalizeMediaRefs(message.media_urls)) {
@@ -718,8 +767,11 @@ type TicketEnrichment = {
   vendorName: string | null
   resident: Record<string, unknown> | null
   conversationId: string | null
+  vendorConversationId: string | null
   conversationIds: string[]
   maintenanceRequestId: string | null
+  ticketCreatedAt: string | null
+  nextTicketCreatedAt: string | null
 }
 
 async function loadTicketEnrichment(
@@ -734,8 +786,11 @@ async function loadTicketEnrichment(
       vendorName: null,
       resident: null,
       conversationId: null,
+      vendorConversationId: null,
       conversationIds: [],
       maintenanceRequestId: null,
+      ticketCreatedAt: null,
+      nextTicketCreatedAt: null,
     }
   }
 
@@ -747,18 +802,39 @@ async function loadTicketEnrichment(
   let vendorName: string | null = null
   let resident: Record<string, unknown> | null = null
   let conversationId = asString(metadata.conversation_id)
+  let vendorConversationId: string | null = null
   let conversationIds: string[] = []
+  let nextTicketCreatedAt: string | null = null
 
   if (ticketId) {
     const { data } = await supabase
       .from('maintenance_requests')
       .select(
-        'description, priority, urgency, issue_category, unit, due_at, vendor_work_status, assigned_vendor_id, assigned_at, resident_name, email, resident_phone, estimated_minutes, recognized_spend_amount, spend_status, photo_paths, completion_photo_paths',
+        'id, created_at, description, priority, urgency, issue_category, unit, due_at, vendor_work_status, assigned_vendor_id, assigned_at, resident_name, email, resident_phone, estimated_minutes, recognized_spend_amount, spend_status, photo_paths, completion_photo_paths, access_instructions',
       )
       .eq('landlord_id', landlordId)
       .eq('id', ticketId)
       .maybeSingle()
     ticket = (data as Record<string, unknown> | null) ?? null
+
+    const ticketCreatedAt = asString(ticket?.created_at)
+    const residentPhone = asString(ticket?.resident_phone)
+    if (ticketCreatedAt) {
+      let nextQuery = supabase
+        .from('maintenance_requests')
+        .select('created_at')
+        .eq('landlord_id', landlordId)
+        .gt('created_at', ticketCreatedAt)
+        .order('created_at', { ascending: true })
+        .limit(1)
+      nextQuery = residentPhone
+        ? nextQuery.eq('resident_phone', residentPhone)
+        : nextQuery
+      const { data: nextRow } = await nextQuery.maybeSingle()
+      nextTicketCreatedAt = asString(
+        (nextRow as Record<string, unknown> | null)?.created_at,
+      ) || null
+    }
 
     const { data: invoiceRow } = await supabase
       .from('maintenance_invoices')
@@ -779,38 +855,80 @@ async function loadTicketEnrichment(
       vendorName = asString((vendorRow as Record<string, unknown> | null)?.name) || null
     }
 
-    // Prefer vendor job SMS whenever linked — admin approve/decline updates land there.
-    // Do this even if metadata still points at the resident intake conversation.
+    // Resident intake and vendor job SMS are separate threads (same as Messages).
+    // Prefer resident for "See thread"; keep vendor id for a dedicated vendor view.
     const { data: convRows } = await supabase
       .from('sms_conversations')
-      .select('id, conversation_type, updated_at')
+      .select('id, conversation_type, updated_at, resident_id, external_phone_number')
       .eq('landlord_id', landlordId)
       .eq('maintenance_request_id', ticketId)
       .order('updated_at', { ascending: false })
 
-    const rows = (convRows ?? []) as Record<string, unknown>[]
-    const vendorThread = rows.find(
-      (entry) => asString(entry.conversation_type) === 'vendor_alert',
-    )
-    if (vendorThread) {
-      conversationId = asString(vendorThread.id)
-    } else if (!conversationId) {
-      const preferred =
-        rows.find((entry) => asString(entry.conversation_type) === 'resident_intake') ??
-        rows.find((entry) => {
-          const type = asString(entry.conversation_type)
-          return type !== 'ai_copilot' && type !== 'landlord_update'
-        }) ??
-        rows[0]
-      conversationId = asString(preferred?.id)
+    const byTicket = ((convRows ?? []) as Record<string, unknown>[]).map((entry) => ({
+      id: asString(entry.id),
+      conversation_type: asString(entry.conversation_type),
+    })).filter((entry) => entry.id)
+
+    // Resident intake often stays linked to the resident, not the ticket id
+    // (vendor_alert usually owns maintenance_request_id). Also resolve by resident.
+    const residentLookupId = asString(row.residentId)
+    let byResident: { id: string; conversation_type: string }[] = []
+    if (residentLookupId) {
+      const { data: residentConvRows } = await supabase
+        .from('sms_conversations')
+        .select('id, conversation_type, updated_at')
+        .eq('landlord_id', landlordId)
+        .eq('resident_id', residentLookupId)
+        .eq('conversation_type', 'resident_intake')
+        .order('updated_at', { ascending: false })
+        .limit(5)
+      byResident = ((residentConvRows ?? []) as Record<string, unknown>[]).map((entry) => ({
+        id: asString(entry.id),
+        conversation_type: asString(entry.conversation_type) || 'resident_intake',
+      })).filter((entry) => entry.id)
     }
+    if (byResident.length === 0 && residentPhone) {
+      const normalizedPhone = normalizePhoneForDb(residentPhone) ?? residentPhone
+      const { data: phoneConvRows } = await supabase
+        .from('sms_conversations')
+        .select('id, conversation_type, updated_at, external_phone_number')
+        .eq('landlord_id', landlordId)
+        .eq('conversation_type', 'resident_intake')
+        .order('updated_at', { ascending: false })
+        .limit(25)
+      byResident = ((phoneConvRows ?? []) as Record<string, unknown>[])
+        .filter((entry) => {
+          const phone = asString(entry.external_phone_number)
+          if (!phone) return false
+          const normalized = normalizePhoneForDb(phone) ?? phone
+          return normalized === normalizedPhone || phone === residentPhone
+        })
+        .map((entry) => ({
+          id: asString(entry.id),
+          conversation_type: asString(entry.conversation_type) || 'resident_intake',
+        }))
+        .filter((entry) => entry.id)
+        .slice(0, 5)
+    }
+
+    const seen = new Set<string>()
+    const rows: { id: string; conversation_type: string }[] = []
+    for (const entry of [...byResident, ...byTicket]) {
+      if (seen.has(entry.id)) continue
+      seen.add(entry.id)
+      rows.push(entry)
+    }
+
+    const picked = pickPrimaryWorkOrderConversationId(rows, conversationId)
+    conversationId = picked.conversationId ?? ''
+    vendorConversationId = picked.vendorConversationId
+
     conversationIds = rows
       .filter((entry) => {
-        const type = asString(entry.conversation_type)
+        const type = entry.conversation_type
         return type !== 'ai_copilot' && type !== 'landlord_update'
       })
-      .map((entry) => asString(entry.id))
-      .filter(Boolean)
+      .map((entry) => entry.id)
   }
 
   const residentId = row.residentId
@@ -848,9 +966,12 @@ async function loadTicketEnrichment(
     invoice,
     vendorName,
     resident,
-    conversationId,
+    conversationId: conversationId || null,
+    vendorConversationId,
     conversationIds,
     maintenanceRequestId: ticketId || null,
+    ticketCreatedAt: asString(ticket?.created_at) || null,
+    nextTicketCreatedAt,
   }
 }
 
@@ -1031,7 +1152,7 @@ function workflowInboxPreview(input: WorkflowUloThreadInput): string {
   if (input.kind === 'inspection') {
     const unitPhrase = input.unitLabel ? `Unit ${input.unitLabel}` : 'your unit'
     const fname = input.residentName.trim().split(/\s+/)[0] || 'there'
-    return `Hi ${fname} — reply START when you're ready and I'll guide your ${unitPhrase} inspection over text.`
+    return `Hi ${fname} — reply READY when you're ready and I'll guide your ${unitPhrase} inspection over text.`
   }
 
   const issueLine = input.description.split(/[.!?]/)[0]?.trim() || 'Maintenance request'
@@ -1153,8 +1274,8 @@ export async function fetchWorkflowPipelineDetail(
   const card = buildWorkflowKanbanCard(rowForStage, metadata)
   const category = categoryBadge(card.category)
   const stage = stageBadge(card.stage)
-  const urgency = asString(ticket?.urgency) || asString(ticket?.priority) || asString(metadata.urgency) || 'normal'
-  const priority = PRIORITY_BADGE[urgency.toLowerCase()] ?? PRIORITY_BADGE.normal
+  const urgency = asString(ticket?.urgency) || asString(ticket?.priority) || asString(metadata.urgency)
+  const priority = urgency ? PRIORITY_BADGE[urgency.toLowerCase()] ?? null : null
 
   const moveOutTimeline = isMoveOut ? buildMoveOutTimeline(row, metadata) : undefined
   const moveOutProgress = moveOutTimeline ? moveOutProgressPercent(moveOutTimeline) : undefined
@@ -1209,8 +1330,9 @@ export async function fetchWorkflowPipelineDetail(
               year: 'numeric',
             })
           : '—',
-        preferred: 'SMS',
-        emergencyContact: 'On file',
+        preferred:
+          asString(enrichment.resident?.phone) || asString(ticket?.resident_phone) ? 'SMS' : '—',
+        emergencyContact: '—',
       }
     : null
 
@@ -1256,13 +1378,14 @@ export async function fetchWorkflowPipelineDetail(
   return {
     runId: row.id,
     workOrderRef: formatWorkOrderRef(row),
+    ticketRequestNumber: formatTicketRequestNumberForRun(row, enrichment.maintenanceRequestId),
     title,
     categoryLabel: category.label.toUpperCase(),
     categoryClassName: category.className,
     stageLabel: stage.label,
     stageClassName: stage.className,
-    priorityLabel: priority.label,
-    priorityClassName: priority.className,
+    priorityLabel: priority?.label ?? null,
+    priorityClassName: priority?.className ?? null,
     createdLine: formatCreatedLine(row.startedAt),
     locationLine: [row.propertyLabel, row.unitLabel ? `Unit ${row.unitLabel}` : null, residentName || null]
       .filter(Boolean)
@@ -1291,8 +1414,15 @@ export async function fetchWorkflowPipelineDetail(
       { label: 'Unit', value: row.unitLabel || asString(ticket?.unit) || '—' },
       { label: 'Resident', value: residentName || '—' },
       { label: 'Vendor', value: enrichment.vendorName || '—' },
-      { label: 'Category', value: formatCategoryLabel(asString(ticket?.issue_category) || row.templateType) },
-      { label: 'Priority', value: priority.label === 'MEDIUM' ? 'Med' : priority.label[0] + priority.label.slice(1).toLowerCase() },
+      { label: 'Category', value: formatCategoryLabel(asString(ticket?.issue_category) || row.templateType) || '—' },
+      {
+        label: 'Priority',
+        value: priority
+          ? priority.label === 'MEDIUM'
+            ? 'Med'
+            : priority.label[0] + priority.label.slice(1).toLowerCase()
+          : '—',
+      },
       { label: 'Due Date', value: formatDueLabel(dueAt) },
       { label: 'Expected Completion', value: formatDueLabel(dueAt) },
       { label: 'Estimated Cost', value: formatCurrency(estimatedCost) },
@@ -1300,23 +1430,34 @@ export async function fetchWorkflowPipelineDetail(
     ],
     maintenanceDetails: isMaintenance
       ? [
-          { label: 'Repair Scope', value: 'Standard Diagnostic + Repair' },
+          {
+            label: 'Repair Scope',
+            value: dash(formatVendorTradeLabel(asString(ticket?.issue_category), { emptyLabel: '' })),
+          },
+          {
+            label: 'Resident access notes',
+            value: dash(asString(ticket?.access_instructions)),
+          },
           { label: 'Parts Ordered', value: '—' },
           {
             label: 'Labor Estimate',
-            value: ticket?.estimated_minutes
-              ? `${Math.max(1, Math.round(Number(ticket.estimated_minutes) / 60))} Hr`
-              : '1–2 Hrs',
+            value: (() => {
+              const minutes = asFiniteNumber(ticket?.estimated_minutes)
+              if (minutes == null || minutes <= 0) return '—'
+              const hours = Math.max(1, Math.round(minutes / 60))
+              return `${hours} Hr`
+            })(),
           },
         ]
       : [],
     invoiceSection,
     resident: residentBlock,
-    property: buildPropertyBlock(row, metadata),
+    property: await buildPropertyBlock(row, metadata, ticket),
     attachments,
     vendorAttachments,
     maintenanceRequestId: enrichment.maintenanceRequestId,
     conversationId: enrichment.conversationId,
+    vendorConversationId: enrichment.vendorConversationId,
     uloThread,
     isMaintenanceWorkflow: isMaintenance,
     isMoveOutWorkflow: isMoveOut,

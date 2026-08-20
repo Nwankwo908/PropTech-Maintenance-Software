@@ -90,7 +90,7 @@ Deno.test("buildAskUloPrompt includes supporting detail only for active specialt
         top: {
           building: "Oakwood",
           whyLines: ["Most aging work orders"],
-          recommendedActions: ["Review SLA"],
+          recommendedActions: ["Review response time"],
           openWorkOrders: 5,
           criticalWorkOrders: 1,
           agingWorkOrders: 3,

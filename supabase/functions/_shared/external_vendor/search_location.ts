@@ -1,6 +1,7 @@
 import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.49.1"
 import {
   formatPropertyAddressLine,
+  formatPropertyCityStateZip,
   loadLandlordPropertyRecords,
   matchPropertyByName,
 } from "../ask_ulo/tools/properties/propertyRecords.ts"
@@ -8,12 +9,14 @@ import {
 export type ResolvedVendorSearchContext = {
   searchLocation: string
   locationLabel: string
+  /** City, State ZIP for the rail header — never a street address. */
+  areaLabel: string | null
 }
 
-function pickAddressFromOnboardingDraft(
+function pickOnboardingDraftProperty(
   building: string,
   draftState: unknown,
-): string | null {
+): { addressLine: string | null; areaLabel: string | null } | null {
   if (!building.trim() || !draftState || typeof draftState !== "object") return null
   const props = (draftState as Record<string, unknown>).properties
   if (!Array.isArray(props)) return null
@@ -25,25 +28,32 @@ function pickAddressFromOnboardingDraft(
     const name = typeof row.name === "string" ? row.name.trim() : ""
     if (!name || name.toLowerCase() !== target) continue
 
+    const city = typeof row.city === "string" ? row.city.trim() : ""
+    const state = typeof row.state === "string" ? row.state.trim() : ""
+    const zipCode = typeof row.zipCode === "string" ? row.zipCode.trim() : ""
     const parts = [
       typeof row.streetAddress === "string" ? row.streetAddress.trim() : "",
-      [row.city, row.state].filter((v) => typeof v === "string" && v.trim()).join(", "),
-      typeof row.zipCode === "string" ? row.zipCode.trim() : "",
+      [city, state].filter(Boolean).join(", "),
+      zipCode,
     ].filter(Boolean)
-    if (parts.length > 0) return parts.join(" ")
+    return {
+      addressLine: parts.length > 0 ? parts.join(" ") : null,
+      areaLabel: formatPropertyCityStateZip({ city, state, zipCode }),
+    }
   }
   return null
 }
 
-async function propertyAddressForBuilding(
+async function propertyRecordForBuilding(
   supabase: SupabaseClient,
   landlordId: string,
   building: string,
-): Promise<string | null> {
+) {
   const records = await loadLandlordPropertyRecords(supabase, landlordId)
-  const matched = matchPropertyByName(records, building)
-  if (!matched) return null
-  return formatPropertyAddressLine(matched)
+  const byName = matchPropertyByName(records, building)
+  if (byName) return byName
+  const q = building.trim().toLowerCase()
+  return records.find((r) => (r.streetAddress ?? "").trim().toLowerCase() === q) ?? null
 }
 
 export function formatVendorSetupLocationLabel(unit: string, building: string): string {
@@ -89,6 +99,7 @@ export async function resolveExternalVendorSearchContext(
   const locationLabel = formatVendorSetupLocationLabel(unit, building)
 
   let addressLine: string | null = null
+  let areaLabel: string | null = null
 
   if (input.landlordId && building) {
     const { data } = await supabase
@@ -96,31 +107,37 @@ export async function resolveExternalVendorSearchContext(
       .select("draft_state")
       .eq("landlord_id", input.landlordId)
       .maybeSingle()
-    addressLine = pickAddressFromOnboardingDraft(building, data?.draft_state)
+    const fromDraft = pickOnboardingDraftProperty(building, data?.draft_state)
+    addressLine = fromDraft?.addressLine ?? null
+    areaLabel = fromDraft?.areaLabel ?? null
 
-    if (!addressLine) {
-      addressLine = await propertyAddressForBuilding(supabase, input.landlordId, building)
+    if (!addressLine || !areaLabel) {
+      const matched = await propertyRecordForBuilding(supabase, input.landlordId, building)
+      if (matched) {
+        addressLine = addressLine ?? formatPropertyAddressLine(matched)
+        areaLabel = areaLabel ?? formatPropertyCityStateZip(matched)
+      }
     }
   }
 
   if (addressLine) {
-    return { searchLocation: addressLine, locationLabel }
+    return { searchLocation: addressLine, locationLabel, areaLabel }
   }
 
   if (looksGeocodable(unit)) {
-    return { searchLocation: unit, locationLabel }
+    return { searchLocation: unit, locationLabel, areaLabel }
   }
 
   if (building) {
-    return { searchLocation: building, locationLabel }
+    return { searchLocation: building, locationLabel, areaLabel }
   }
 
   const envLoc = Deno.env.get("EXTERNAL_VENDOR_SEARCH_LOCATION")?.trim() || ""
   if (envLoc) {
-    return { searchLocation: envLoc, locationLabel }
+    return { searchLocation: envLoc, locationLabel, areaLabel }
   }
 
-  return { searchLocation: unit || "United States", locationLabel }
+  return { searchLocation: unit || "United States", locationLabel, areaLabel }
 }
 
 /** Portfolio-level search anchor for Ask Ulo (no ticket). Prefers named building, then first geocodable property. */
@@ -169,6 +186,11 @@ export async function resolvePortfolioExternalSearchContext(
           return {
             searchLocation: address,
             locationLabel: name || "Portfolio property",
+            areaLabel: formatPropertyCityStateZip({
+              city: typeof row.city === "string" ? row.city : null,
+              state: typeof row.state === "string" ? row.state : null,
+              zipCode: typeof row.zipCode === "string" ? row.zipCode : null,
+            }),
           }
         }
       }
@@ -180,6 +202,7 @@ export async function resolvePortfolioExternalSearchContext(
         return {
           searchLocation: address,
           locationLabel: record.name || "Portfolio property",
+          areaLabel: formatPropertyCityStateZip(record),
         }
       }
     }
@@ -199,20 +222,24 @@ export async function resolvePortfolioExternalSearchContext(
       const matched = matchPropertyByName(propertyRecords, b)
       const address = matched ? formatPropertyAddressLine(matched) : null
       if (address && looksGeocodable(address)) {
-        return { searchLocation: address, locationLabel: b }
+        return {
+          searchLocation: address,
+          locationLabel: b,
+          areaLabel: matched ? formatPropertyCityStateZip(matched) : null,
+        }
       }
     }
 
     const cityState = cityStateFromRecords(propertyRecords)
     if (cityState) {
-      return { searchLocation: cityState, locationLabel: "Portfolio area" }
+      return { searchLocation: cityState, locationLabel: "Portfolio area", areaLabel: cityState }
     }
   }
 
   const envLoc = Deno.env.get("EXTERNAL_VENDOR_SEARCH_LOCATION")?.trim() || ""
   if (envLoc) {
-    return { searchLocation: envLoc, locationLabel: "Portfolio area" }
+    return { searchLocation: envLoc, locationLabel: "Portfolio area", areaLabel: null }
   }
 
-  return { searchLocation: "United States", locationLabel: "Portfolio area" }
+  return { searchLocation: "United States", locationLabel: "Portfolio area", areaLabel: null }
 }

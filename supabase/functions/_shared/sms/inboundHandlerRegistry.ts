@@ -5,21 +5,22 @@
  *
  * 1. **Atomic** — one inbound message → one domain mutation (+ optional ack).
  * 2. **Pending context** — `{ handled: true }` only when a stored pending ask exists
- *    (global STOP/HELP is the sole exception).
+ *    (global STOP/START/HELP is the sole exception).
  * 3. **Single layer** — when handled, `inbound_processor` returns via `finishHandledInbound`;
  *    workflow engine must not run for the same message. No duplicate logic in templates.
  * 4. **Multi-turn → workflow** — reminders, escalation, and free-text conversations
  *    belong in `runWorkflowEngine()` templates, not here.
  *
- * Governing disambiguation: **STOP is global. YES is contextual.**
+ * Governing disambiguation: **STOP and START are global. YES is contextual.**
  *
  * Priority bands:
- *   1–9    Compliance (STOP / HELP)
+ *   1–9    Compliance (STOP / START / HELP)
  *  10–29   Active conversation replies (schedule, estimate, invoice, …)
- *  30–39   Tenant activation reply (YES/START only while activation_status = waiting)
+ *  30–39   Tenant activation reply (YES only while activation_status = waiting)
  *  40–59   Vendor operations (vendor_reschedule = intent detect + workflow dispatch)
  *  60–79   Special relay (vendor ↔ tenant proxy)
- *  (fallback) routeInboundSmsWorkflow() in inbound_processor.ts
+ *  (fallback) tryHandleInterpretedInbound() then routeInboundSmsWorkflow()
+ *             in inbound_processor.ts
  */
 import { tryHandleInvoicePaymentInbound } from "../invoicePaymentSms.ts"
 import { tryHandleVendorFeedbackInbound } from "../vendor_feedback.ts"
@@ -281,7 +282,7 @@ export const INBOUND_SMS_HANDLER_PENDING_GATES: Readonly<
   Record<string, string>
 > = {
   compliance_stop_help:
-    "Global STOP/HELP keyword (sole exception to pending-context rule)",
+    "Global STOP/START/HELP keyword (sole exception to pending-context rule)",
   schedule_confirm: "intake_state.awaiting_schedule_confirmation",
   estimate_decision:
     "intake_state.awaiting_estimate_decision or pending estimate on conversation WO",

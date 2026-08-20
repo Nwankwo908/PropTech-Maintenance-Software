@@ -50,7 +50,7 @@ Deno.test("generic filter fails open-maintenance shell", () => {
 Deno.test("evidence-backed emergency findings pass sufficiency", () => {
   const q = "Which maintenance requests are becoming emergencies?"
   const good = `
-Three work orders are starting to concern me because they've either exceeded their SLA or could cause additional property damage.
+Three work orders are starting to concern me because they've either exceeded their response time or could cause additional property damage.
 
 1. Unit 204 — Water leak
 Open 18 days. Vendor hasn't responded. Risk: water damage spreading. Priority: High.

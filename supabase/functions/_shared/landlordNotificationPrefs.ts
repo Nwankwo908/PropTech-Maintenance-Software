@@ -152,6 +152,7 @@ const ATTENTION_EVENT_MAP: Record<string, { categoryId: string; eventId: string 
   workflow_escalated: { categoryId: "workflows", eventId: "workflow_escalated" },
   late_rent: { categoryId: "rent", eventId: "rent_escalated" },
   lease_renewal: { categoryId: "leasing", eventId: "lease_expiring" },
+  lease_info_missing: { categoryId: "leasing", eventId: "lease_info_missing" },
   unknown_occupant: { categoryId: "workflows", eventId: "needs_your_attention" },
 }
 

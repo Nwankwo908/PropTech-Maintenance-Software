@@ -44,9 +44,7 @@ serve(async (req) => {
       ? Math.floor(body.limit)
       : 8
 
-  const forceMock =
-    body.useMock === true ||
-    (Deno.env.get("EXTERNAL_VENDOR_USE_MOCK") ?? "").trim().toLowerCase() === "true"
+  const forceMock = body.useMock === true
 
   const supabaseUrl = Deno.env.get("SUPABASE_URL")?.trim()
   const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")?.trim()
@@ -76,8 +74,9 @@ serve(async (req) => {
     configured: result.configured,
     searchLocation: result.searchLocation,
     locationLabel: result.locationLabel,
+    areaLabel: result.areaLabel,
     issueCategory: result.issueCategory,
-    notice: result.mode === "mock"
+    notice: result.mode === "mock" && result.providersUsed.includes("mock")
       ? result.providersUsed.includes("netvendor")
         ? "Using NetVendor mock (set NETVENDOR_API_KEY + NETVENDOR_API_BASE_URL for live search)."
         : "Using mock external vendor provider (set GOOGLE_PLACES_API_KEY / YELP_API_KEY / NetVendor secrets for live search)."

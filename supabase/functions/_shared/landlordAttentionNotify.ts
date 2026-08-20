@@ -22,6 +22,7 @@ export type LandlordAttentionKind =
   | "workflow_escalated"
   | "late_rent"
   | "lease_renewal"
+  | "lease_info_missing"
   | "unknown_occupant"
 
 export type NotifyLandlordAttentionParams = {
@@ -251,11 +252,13 @@ export async function notifyLandlordNeedsAttention(
   }
 
   if (allowEmail) {
+    // Account holder only — never CC Ulo staff SMS_ADMIN_NOTIFY_EMAILS.
     const mail = await sendLandlordOpsEmail(supabase, {
       landlordId,
       subject: email.subject,
       text: email.text,
       html: email.html,
+      accountHolderOnly: true,
       logLabel: `attention:${params.kind}:${key}`,
     })
     emailSent.push(...mail.sent)

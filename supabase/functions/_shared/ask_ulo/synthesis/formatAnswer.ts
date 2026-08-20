@@ -23,7 +23,7 @@ Either use the full underlying value, or rewrite the sentence in natural English
 Bad → Good:
 - "No plumbing vendor available on roste." → "No plumbing vendor is currently available on your roster."
 - "Assigned electrician declined — no other ele." → "The assigned electrician declined the job, and no other electrician is currently available."
-- "expected response time expired" / "exp resp" → "The vendor response deadline has passed."
+- "expected response time expired" / "exp resp" → "The response time has passed."
 
 ### Grammar pass (before send)
 Rewrite until the answer sounds like a human property manager wrote it:
@@ -164,7 +164,7 @@ const TRUNCATION_REWRITES: Array<[RegExp, string]> = [
   [/\bno\s+hvac\s+ven(?:dor)?\b/gi, "no HVAC vendor"],
   [/\bhvac\s+ven\b/gi, "HVAC vendor"],
   [/\bassign\s+rev\b/gi, "assignment review"],
-  [/\bexp(?:ected)?\s*resp(?:onse)?\b/gi, "vendor response deadline"],
+  [/\bexp\s+resp\b/gi, "response time"],
   [/\breq(?:uest)?\s*hist(?:ory)?\b/gi, "request history"],
   [/\bappr(?:oval)?\b(?!\w)/gi, "approval"],
   // Standalone clipped "maint" only (not inside "maintenance")
@@ -176,19 +176,19 @@ const TRUNCATION_REWRITES: Array<[RegExp, string]> = [
 const DEADLINE_REWRITES: Array<[RegExp, string]> = [
   [
     /\bexpected\s+response\s+time\s*\/\s*due\s+time\s+already\s+passed\b/gi,
-    "vendor response deadline has passed",
+    "response time has passed",
   ],
   [
     /\bexpected\s+response\s+time(?:s)?\s+(?:already\s+)?(?:expired|passed|missed)\b/gi,
-    "vendor response deadline has passed",
+    "response time has passed",
   ],
   [
     /\b(?:the\s+)?expected\s+response\s+time\s+has\s+(?:already\s+)?(?:expired|passed)\b/gi,
-    "the vendor response deadline has passed",
+    "the response time has passed",
   ],
-  [/\bSLA\s*\/\s*due\s+time\s+already\s+passed\b/gi, "vendor response deadline has passed"],
-  [/\bSLA[- ]?overdue\b/gi, "past the vendor response deadline"],
-  [/\bThe\s+SLA\s+has\s+already\s+expired\b/gi, "The vendor response deadline has passed"],
+  [/\bSLA\s*\/\s*due\s+time\s+already\s+passed\b/gi, "response time has passed"],
+  [/\bSLA[- ]?overdue\b/gi, "past the response time"],
+  [/\bThe\s+SLA\s+has\s+already\s+expired\b/gi, "The response time has passed"],
 ]
 
 /** Strip / rewrite retrieval-mechanics language into insight voice. */

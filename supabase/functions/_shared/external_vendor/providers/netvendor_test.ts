@@ -37,7 +37,7 @@ Deno.test("NetVendor mock provider returns credentialed plumbing vendors", async
     textQuery,
   })
   if (hits.length < 1) throw new Error("expected netvendor mock hits")
-  if (!hits.every((h) => h.source === "netvendor")) {
-    throw new Error("expected netvendor source on mock hits")
+  if (!hits.every((h) => h.source === "mock")) {
+    throw new Error("expected mock source on mock hits")
   }
 })

@@ -21,6 +21,7 @@ import {
   trySendAutoReply,
 } from "./inboundFinish.ts"
 import { tryInboundSmsHandlers } from "./inboundHandlerRegistry.ts"
+import { tryHandleInterpretedInbound } from "./inboundInterpretationAct.ts"
 import {
   InboundSmsError,
   type InboundSmsHandlerContext,
@@ -364,6 +365,13 @@ export async function processInboundSms(
     return finishHandledInbound(handlerContext, handlerResult)
   }
 
+  // Pending question first (intake photo, urgency, YES confirms, …), then
+  // follow-up / switch / new issue. Draft work orders must not steal the ask.
+  const interpreted = await tryHandleInterpretedInbound(handlerContext)
+  if (interpreted.handled) {
+    return finishHandledInbound(handlerContext, interpreted)
+  }
+
   let workflow
   try {
     workflow = await routeInboundSmsWorkflow(supabase, {
@@ -378,6 +386,7 @@ export async function processInboundSms(
       resolutionSource: resolution.source,
       selfHealingPhase: resolution.selfHealingPhase,
       suggestedUnit: resolution.suggestedUnit,
+      interpretation: interpreted.interpretation ?? null,
     })
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err)

@@ -5,7 +5,7 @@ alwaysApply: true
 
 # Unit activation — general rule
 
-A unit is **active** when either of these happens. Landlords should not need a separate “Activate unit” click after either path.
+A unit is **active** when any of these happens. Landlords should not need a separate “Activate unit” click after these paths.
 
 ## Paths
 
@@ -13,29 +13,36 @@ A unit is **active** when either of these happens. Landlords should not need a s
 |---|---|
 | **1. Tenant assignment with lease dates** | During onboarding (or import), a resident is saved on a unit with **lease start and lease end**. That is enough — set `units.status = 'active'` and ensure occupancy. |
 | **2. Admin status change** | An admin changes the unit from vacant/inactive to **Occupied / Active** (Units status chip or equivalent). That is enough — activate with skip-tenant registration if no new tenant form is filled. |
+| **3. Tenant SMS onboarding complete** | The manager sends the welcome text and the tenant replies **YES** / **START**. That is enough — activate their assigned unit. |
 
 ## Requirements
 
 - Path 1 requires: assigned `unit` + `move_in_date` (lease start) + `lease_end_date`.
 - Path 2 maps UI **Occupied** → `units.status = 'active'` (may use `activateUnit` with `skipTenantRegistration: true`).
+- Path 3 requires: assigned `unit` + `users.activation_status = activated`. Lease dates are not required.
+- Persist property/unit inventory **before** running assignment activation so new `inactive` rows can be flipped.
+- Prefer canonical IDs when activating from SMS: `occupancy.unit_id`, then `sms_identities.unit_id`, then unit label. Do **not** insert a new unit.
+- A later YES/START must re-evaluate the assigned unit even if the resident is already Activated (no duplicate occupancy/unit rows).
 - Marking **Vacant** uses `markUnitVacant` → `units.status = 'vacant'`.
 - **Under maintenance** persists as `units.status = 'under_maintenance'`.
 - Chip status is sticky: do not auto-flip `vacant` / `under_maintenance` / `active` on property load — only auto-activate `inactive` units that have a qualified tenant.
 - Occupied rows show the assigned resident’s name, open workflow, balance, and lease end from roster data.
-- Best-effort occupancy row + `unit.activated` graph event when activating from resident assignment.
+- Best-effort occupancy row + `unit.activated` graph event when activating from resident assignment or tenant SMS.
 
 ## Where it lives
 
 - Shared helpers: `src/lib/unitActivation.ts`
   - `activateUnitsFromResidentAssignments`
   - `applyAdminUnitOccupancyStatus`
+- Tenant YES/START: `activateAssignedUnitForResident` in `_shared/unitVacancy.ts` from `tenantMessaging.ts`
 - Status display: `resolvePropertyUnitOccupancyStatus` in `propertyUnitRows.ts` (driven by persisted `units.status`)
 - Onboarding save + complete: `AdminOnboardingDashboard`, `completeOnboarding` / document import in `landlordOnboarding.ts`
 - Admin chip: `PropertyUnitsTable` → `AdminPropertyDetailDashboard`
-- Explicit Activate modal (`ActivateUnitModal`) remains available; it is **not** required when path 1 or 2 already applied.
+- Explicit Activate modal (`ActivateUnitModal`) remains available; it is **not** required when path 1, 2, or 3 already applied.
 
 ## Do not
 
 - Treat onboarding resident+lease as incomplete until someone clicks Activate on `/admin/users`
+- Treat a successful tenant YES as SMS-only — the assigned unit must become Occupied
 - Re-derive Occupied/Vacant from tickets alone and overwrite the admin chip choice
 - Show **Pending setup** solely because the unit row was left `inactive` after a qualified tenant was added

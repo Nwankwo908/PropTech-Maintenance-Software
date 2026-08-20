@@ -1,4 +1,33 @@
-import type { IssueType, SeverityLevel, VendorTrade } from "./types.ts"
+import type {
+  ClassifyMaintenanceSmsContext,
+  IssueType,
+  SeverityLevel,
+  VendorTrade,
+} from "./types.ts"
+
+const SMS_INTENTS = [
+  "maintenance_new",
+  "maintenance_status",
+  "maintenance_update",
+  "maintenance_cancel",
+  "schedule_change",
+  "access_instruction",
+  "rent_balance",
+  "rent_late",
+  "lease_info",
+  "move_out_intent",
+  "other",
+] as const
+
+export type LlmSmsIntent = (typeof SMS_INTENTS)[number]
+
+export type LlmSmsInterpretation = {
+  addressesPending: boolean
+  pendingAnswer?: string
+  intent: LlmSmsIntent | null
+  extractedSlots: Record<string, string>
+  needsClarification: boolean
+}
 
 export type LlmClassificationDraft = {
   vendorTrade: VendorTrade | null
@@ -6,6 +35,7 @@ export type LlmClassificationDraft = {
   severity: SeverityLevel | null
   reasoning: string
   confidence: number
+  interpretation?: LlmSmsInterpretation
 }
 
 const TRADES: VendorTrade[] = [
@@ -73,9 +103,77 @@ function asSeverity(raw: unknown): SeverityLevel | null {
   return null
 }
 
+function asSmsIntent(raw: unknown): LlmSmsIntent | null {
+  if (typeof raw !== "string") return null
+  const v = raw.trim().toLowerCase()
+  if ((SMS_INTENTS as readonly string[]).includes(v)) return v as LlmSmsIntent
+  return null
+}
+
+function asSlots(raw: unknown): Record<string, string> {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {}
+  const out: Record<string, string> = {}
+  for (const [key, value] of Object.entries(raw as Record<string, unknown>)) {
+    if (typeof value === "string" && value.trim()) {
+      out[key] = value.trim().slice(0, 240)
+    }
+  }
+  return out
+}
+
+function parseInterpretation(parsed: Record<string, unknown>): LlmSmsInterpretation | undefined {
+  const nested = parsed.interpretation
+  const src = nested && typeof nested === "object" && !Array.isArray(nested)
+    ? nested as Record<string, unknown>
+    : parsed
+  const intent = asSmsIntent(src.intent ?? src.sms_intent)
+  if (intent == null && src.addresses_pending == null && src.addressesPending == null) {
+    return undefined
+  }
+  const pendingAnswer = typeof src.pending_answer === "string"
+    ? src.pending_answer
+    : typeof src.pendingAnswer === "string"
+    ? src.pendingAnswer
+    : undefined
+  return {
+    addressesPending: src.addresses_pending === true || src.addressesPending === true,
+    pendingAnswer: pendingAnswer?.trim() ? pendingAnswer.trim().slice(0, 120) : undefined,
+    intent,
+    extractedSlots: asSlots(src.extracted_slots ?? src.extractedSlots),
+    needsClarification: src.needs_clarification === true || src.needsClarification === true,
+  }
+}
+
+function smsContextPrompt(smsContext: ClassifyMaintenanceSmsContext): string {
+  const parts = [
+    `Also classify the resident SMS intent. Add JSON keys:`,
+    `- intent: one of ${SMS_INTENTS.join(", ")}`,
+    `- addresses_pending: true if this message answers the pending question`,
+    `- pending_answer: short normalized answer when addresses_pending is true`,
+    `- extracted_slots: object of short string facts (access notes, dates, amounts)`,
+    `- needs_clarification: true if the intent is unclear`,
+    `lease_info = asking for a copy of the lease, lease dates, or other leasing information (not a repair and not a renewal).`,
+    `rent_balance = asking what they currently owe / their balance / amount due / whether they are paid up — in any natural wording (word order does not matter; "rent" is optional).`,
+    `Do not use rent_balance for: when rent is due, send payment link, did my payment go through, or I'm going to be late.`,
+    `other = not a repair and not one of the other intents.`,
+    `Do not treat a lease-copy or rent-balance question as a maintenance request, even if a work order is open.`,
+  ]
+  if (smsContext.pendingStep) {
+    parts.push(`Pending step: ${smsContext.pendingStep}`)
+  }
+  if (smsContext.pendingQuestion) {
+    parts.push(`Pending context: ${smsContext.pendingQuestion.slice(0, 400)}`)
+  }
+  if (smsContext.recentTurns) {
+    parts.push(`Recent thread:\n${smsContext.recentTurns.slice(0, 1200)}`)
+  }
+  return parts.join("\n")
+}
+
 export async function llmClassifyMaintenance(
   sanitized: string,
   entitiesSummary: string,
+  smsContext?: ClassifyMaintenanceSmsContext | null,
 ): Promise<LlmClassificationDraft | null> {
   const apiKey = Deno.env.get("OPENAI_API_KEY")?.trim()
   if (!apiKey || !sanitized.trim()) return null
@@ -90,7 +188,8 @@ export async function llmClassifyMaintenance(
     `Do not invent facts. Prefer plumbing for leaks/faucets/sinks/toilets.\n` +
     `Prefer electrical for sparks/outlets/wiring.\n\n` +
     `Description: """${sanitized.slice(0, 4000)}"""\n` +
-    `Extracted: ${entitiesSummary.slice(0, 1000)}`
+    `Extracted: ${entitiesSummary.slice(0, 1000)}` +
+    (smsContext ? `\n\n${smsContextPrompt(smsContext)}` : "")
 
   try {
     const res = await fetch("https://api.openai.com/v1/chat/completions", {
@@ -114,6 +213,7 @@ export async function llmClassifyMaintenance(
     if (!content) return null
     const parsed = JSON.parse(content) as Record<string, unknown>
     const confidence = Number(parsed.confidence)
+    const interpretation = smsContext ? parseInterpretation(parsed) : undefined
     return {
       vendorTrade: asTrade(parsed.vendor_trade ?? parsed.vendorTrade),
       issueType: asIssue(parsed.issue_type ?? parsed.issueType),
@@ -125,6 +225,7 @@ export async function llmClassifyMaintenance(
       confidence: Number.isFinite(confidence)
         ? Math.max(0, Math.min(1, confidence))
         : 0.5,
+      ...(interpretation ? { interpretation } : {}),
     }
   } catch {
     return null

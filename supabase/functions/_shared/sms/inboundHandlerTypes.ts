@@ -5,6 +5,7 @@ import type {
   IdentityResolutionSource,
   SelfHealingPhase,
 } from "./resolveIdentity.ts"
+import type { InboundInterpretation } from "./inboundInterpretation.ts"
 
 export type ProcessInboundSmsResult =
   | {
@@ -50,7 +51,7 @@ export type InboundSmsHandlerContext = {
   selfHealed: boolean
   resolutionSource: IdentityResolutionSource
   selfHealingPhase: SelfHealingPhase
-  /** Skip START/YES consent hijack during active maintenance intake. */
+  /** Skip YES activation-reply hijack during active maintenance intake. */
   activeMaintenanceIntake: boolean
 }
 
@@ -64,7 +65,7 @@ export type InboundSmsHandlerReply = {
 }
 
 export type InboundSmsHandlerResult =
-  | { handled: false }
+  | { handled: false; interpretation?: InboundInterpretation | null }
   | {
       handled: true
       workflowRoute: string
@@ -76,7 +77,7 @@ export type InboundSmsHandlerResult =
 /**
  * Registry handler contract (`.cursor/rules/sms-handler-registry.mdc`):
  * - R1 atomic: one message → one domain helper
- * - R2 pending gate before `{ handled: true }` (STOP/HELP global exception)
+ * - R2 pending gate before `{ handled: true }` (STOP/START/HELP global exception)
  * - R3 handled messages must not also run `routeInboundSmsWorkflow`
  * - R4 multi-turn / cron / escalation → workflow templates only
  */

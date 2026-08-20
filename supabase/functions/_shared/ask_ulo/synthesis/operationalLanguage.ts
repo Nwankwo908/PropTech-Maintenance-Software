@@ -15,7 +15,7 @@ Examples:
 - "last assigned ~0d ago" → "assigned today"
 - "last assigned ~1d ago" → "assigned yesterday"
 - "~3d ago" → "about 3 days ago"
-- "expected response time expired" → "the vendor response deadline has passed"
+- "expected response time expired" → "the response time has passed"
 - "vendor_assigned" → "waiting for the vendor to respond"
 - "workflow escalated" → "this job needs your attention"
 - "in_progress" → "work is currently underway"
@@ -126,7 +126,7 @@ const RETRIEVAL_VOICE_REWRITES: Array<[RegExp, string]> = [
 const PHRASE_REWRITES: Array<[RegExp, string]> = [
   [
     /\bexpected\s+response\s+time\s+expired\b/gi,
-    "the vendor response deadline has passed",
+    "the response time has passed",
   ],
   [
     /\b(\d+)\s+jobs?\s+waiting\s+on\s+accept\b/gi,

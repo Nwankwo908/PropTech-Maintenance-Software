@@ -5,7 +5,6 @@ import { getActiveLandlordId } from '@/lib/activeLandlord'
 import { getErrorMessage, isUniqueViolation } from '@/lib/errorMessage'
 import { phoneForDbOrError } from '@/lib/phoneFormat'
 import { normalizeOnboardingApprovalRules } from '@/lib/onboardingApprovalRules'
-import { countDistinctPortfolioUnits } from '@/lib/propertyHealth'
 import { supabase } from '@/lib/supabase'
 import { requireOnboardingLandlord } from '../scope'
 import type { AccountSetupCounts, OnboardingAccountSetup } from '../types'
@@ -173,27 +172,17 @@ export async function fetchAccountSetupCounts(
     return { properties: 0, units: 0, residents: 0, vendors: 0, workflowRuns: 0 }
   }
 
-  const [unitsRes, residentsRes, vendorsRes, runsRes] = await Promise.all([
-    supabase.from('units').select('id, unit_label, building', { count: 'exact', head: false }).eq('landlord_id', landlordId),
+  const [propertiesRes, unitsRes, residentsRes, vendorsRes, runsRes] = await Promise.all([
+    supabase.from('properties').select('id', { count: 'exact', head: true }).eq('landlord_id', landlordId),
+    supabase.from('units').select('id', { count: 'exact', head: true }).eq('landlord_id', landlordId),
     supabase.from('users').select('id', { count: 'exact', head: true }).eq('landlord_id', landlordId),
     supabase.from('vendors').select('id', { count: 'exact', head: true }).eq('landlord_id', landlordId),
     supabase.from('workflow_runs').select('id', { count: 'exact', head: true }).eq('landlord_id', landlordId),
   ])
 
-  const buildings = new Set<string>()
-  for (const row of unitsRes.data ?? []) {
-    const b = String((row as { building?: string }).building ?? '').trim()
-    if (b) buildings.add(b)
-  }
-
   return {
-    properties: buildings.size,
-    units: countDistinctPortfolioUnits(
-      (unitsRes.data ?? []).map((row) => ({
-        unitLabel: String((row as { unit_label?: string }).unit_label ?? ''),
-        building: String((row as { building?: string | null }).building ?? ''),
-      })),
-    ) || unitsRes.count || (unitsRes.data ?? []).length,
+    properties: propertiesRes.count ?? 0,
+    units: unitsRes.count ?? 0,
     residents: residentsRes.count ?? 0,
     vendors: vendorsRes.count ?? 0,
     workflowRuns: runsRes.count ?? 0,

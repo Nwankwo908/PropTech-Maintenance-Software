@@ -90,10 +90,18 @@ export type ClassificationResult = {
   audit: Record<string, unknown>
 }
 
+/** Optional SMS thread context — widens the existing LLM call; does not change fuse order. */
+export type ClassifyMaintenanceSmsContext = {
+  pendingStep?: string | null
+  pendingQuestion?: string | null
+  recentTurns?: string | null
+}
+
 export type ClassifyMaintenanceInput = {
   rawDescription: string
   residentPriority?: string | null
   clarificationAnswers?: string[]
   skipLlm?: boolean
   skipEmbeddings?: boolean
+  smsContext?: ClassifyMaintenanceSmsContext | null
 }

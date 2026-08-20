@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { Link, useLocation, useNavigate, useParams } from 'react-router-dom'
 import { syncSmsIdentity } from '@/api/landlordSmsOnboarding'
 import {
@@ -8,6 +8,7 @@ import {
   resendTenantActivationSms,
   sendTenantWelcomeSms,
 } from '@/api/tenantActivation'
+import { ResidentOccupancySelect } from '@/components/ResidentOccupancySelect'
 import { TenantActivationStatusChip } from '@/components/TenantActivationStatusChip'
 import {
   EditResidentModal,
@@ -23,6 +24,7 @@ import {
 } from '@/lib/propertyResidentUnitOptions'
 import {
   buildResidentProfileDetail,
+  buildResidentWorkflowSummaries,
   displayResidentEmail,
   isPlaceholderResidentEmail,
   type ResidentCommunicationItem,
@@ -46,7 +48,10 @@ import {
   conversationStatusLabel,
   conversationTypeLabel,
 } from '@/lib/propertyConversations'
-import { resolveTenantActivationChip } from '@/lib/tenantActivationStatus'
+import {
+  normalizeResidentOccupancyStatus,
+  type ResidentOccupancyStatus,
+} from '@/lib/residentOccupancy'
 import {
   openOrganizationDocumentPreview,
   type OrganizationDocument,
@@ -54,7 +59,10 @@ import {
 import { loadResidentLeaseDocuments } from '@/lib/residentLeaseDocuments'
 import { getErrorMessage } from '@/lib/errorMessage'
 import { parseLeaseDateInput } from '@/lib/onboarding'
-import { activateUnitsFromResidentAssignments } from '@/lib/unitActivation'
+import {
+  syncAssignedUnitOccupancyFromResidentStatus,
+} from '@/lib/unitActivation'
+import { supabase } from '@/lib/supabase'
 
 function asString(value: unknown): string {
   if (value == null) return ''
@@ -70,7 +78,7 @@ function asFiniteNumber(value: unknown): number {
   return 0
 }
 
-type ResidentStatus = 'active' | 'pending' | 'past_resident' | 'suspended'
+type ResidentStatus = ResidentOccupancyStatus
 
 type LoadedResidentUser = {
   id: string
@@ -106,16 +114,7 @@ type PropertyResidentOption = {
 }
 
 function parseResidentStatus(value: string): ResidentStatus {
-  const normalized = value.toLowerCase()
-  if (
-    normalized === 'active' ||
-    normalized === 'pending' ||
-    normalized === 'past_resident' ||
-    normalized === 'suspended'
-  ) {
-    return normalized
-  }
-  return 'active'
+  return normalizeResidentOccupancyStatus(value)
 }
 
 function toEditResidentRow(user: LoadedResidentUser): EditResidentModalRow {
@@ -261,11 +260,15 @@ function ProfileContent({
   profile,
   leaseDocuments,
   documentPreviewError,
+  occupancySaving = false,
+  onOccupancyChange,
   onPreviewDocument,
 }: {
   profile: ResidentProfileDetail
   leaseDocuments: OrganizationDocument[]
   documentPreviewError: string | null
+  occupancySaving?: boolean
+  onOccupancyChange?: (status: ResidentOccupancyStatus) => void
   onPreviewDocument: (document: OrganizationDocument) => void
 }) {
   return (
@@ -330,7 +333,21 @@ function ProfileContent({
           <div className="grid grid-cols-2 gap-4">
             <div>
               <p className="text-[12px] leading-4 text-[#6a7282]">Status</p>
-              <p className="mt-1 text-[14px] font-semibold leading-5 text-[#0a0a0a]">{profile.leaseStatus}</p>
+              {onOccupancyChange ? (
+                <div className="mt-1">
+                  <ResidentOccupancySelect
+                    value={profile.occupancyStatus}
+                    disabled={occupancySaving}
+                    onChange={onOccupancyChange}
+                    aria-label="Occupancy status"
+                    className="sa-surface h-9 w-full cursor-pointer appearance-none rounded-[8px] border border-[#e5e7eb] bg-white py-1 pl-3 pr-9 text-[14px] font-semibold leading-5 text-[#0a0a0a] outline-none focus:border-[#155dfc] focus:ring-2 focus:ring-[#155dfc]/20 disabled:cursor-not-allowed disabled:opacity-60"
+                  />
+                </div>
+              ) : (
+                <p className="mt-1 text-[14px] font-semibold leading-5 text-[#0a0a0a]">
+                  {profile.leaseStatus}
+                </p>
+              )}
             </div>
             <div>
               <p className="text-[12px] leading-4 text-[#6a7282]">Lease starts</p>
@@ -500,11 +517,15 @@ export function AdminPropertyResidentDetailDashboard() {
   const [buildingResidents, setBuildingResidents] = useState<PropertyResidentOption[]>([])
   const [editOpen, setEditOpen] = useState(false)
   const [actionError, setActionError] = useState<string | null>(null)
+  const [occupancySaving, setOccupancySaving] = useState(false)
   const [resendingActivation, setResendingActivation] = useState(false)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [leaseDocuments, setLeaseDocuments] = useState<OrganizationDocument[]>([])
   const [documentPreviewError, setDocumentPreviewError] = useState<string | null>(null)
+  const profileIdRef = useRef<string | null>(null)
+  const navigateRef = useRef(navigate)
+  navigateRef.current = navigate
 
   const loadResident = useCallback(async () => {
     const slug = parsePropertyRouteSlug(propertySlug)
@@ -515,107 +536,38 @@ export function AdminPropertyResidentDetailDashboard() {
     }
     if (!supabase) {
       setLoading(false)
-      setError('Supabase is not configured.')
+      setError("We can't reach the server right now. Please try again in a moment.")
       return
     }
 
-    setLoading(true)
+    const switchingResident = profileIdRef.current !== residentId
+    if (switchingResident) {
+      setLoading(true)
+      setProfile(null)
+      setLoadedUser(null)
+      setLeaseDocuments([])
+    }
     setError(null)
-    setLeaseDocuments([])
     setDocumentPreviewError(null)
 
     const landlordId = getActiveLandlordId()
-    let buildingName: string
-    let resolvedPropertyId: string | null = null
-    let activeCanonicalProperty: PropertyHealthCanonicalProperty | null = null
+    const userSelect =
+      'id, resident_id, full_name, email, phone, unit, building, status, balance_due, move_in_date, lease_end_date, monthly_rent, maintenance_responsibilities_clause, activation_status, sms_consent_status, activation_attempt_count, activation_sms_sent_at'
 
-    if (slug.kind === 'id') {
-      const byId = await findPropertyById(landlordId, slug.value)
-      if (!byId.ok) {
-        setLoading(false)
-        setError(byId.error)
-        return
-      }
-      if (!byId.property) {
-        setLoading(false)
-        setError('Property not found.')
-        return
-      }
-      resolvedPropertyId = byId.property.id
-      buildingName = byId.property.name
-      activeCanonicalProperty = { id: byId.property.id, name: byId.property.name }
-    } else {
-      const byName = await findPropertyByName(landlordId, slug.value)
-      if (!byName.ok) {
-        setLoading(false)
-        setError(byName.error)
-        return
-      }
-      if (byName.property) {
-        navigate(propertyResidentDetailPath(byName.property.id, residentId), { replace: true })
-        return
-      }
-      buildingName = slug.value
-    }
-
-    if (!activeCanonicalProperty && buildingName) {
-      const propertiesResult = await listPropertiesForLandlord(landlordId)
-      const match = propertiesResult.ok
-        ? propertiesResult.properties.find(
-            (property) =>
-              normalizeBuildingKey(property.name) === normalizeBuildingKey(buildingName),
-          )
-        : null
-      if (match) {
-        activeCanonicalProperty = { id: match.id, name: match.name }
-        resolvedPropertyId = match.id
-      }
-    }
-
-    setBuilding(buildingName)
-    setPropertyId(resolvedPropertyId)
-
-    const [userResult, workflowDashboard, conversationsResult, unitsResult, residentsResult] =
-      await Promise.all([
-      supabase
+    try {
+      const userResult = await supabase
         .from('users')
-        .select(
-          'id, resident_id, full_name, email, phone, unit, building, status, balance_due, move_in_date, lease_end_date, monthly_rent, maintenance_responsibilities_clause, activation_status, sms_consent_status, activation_attempt_count, activation_sms_sent_at',
-        )
+        .select(userSelect)
         .eq('landlord_id', landlordId)
         .eq('id', residentId)
-        .maybeSingle(),
-      fetchAdminWorkflowDashboard().catch(() => null),
-      supabase
-        .from('sms_conversations')
-        .select('id, updated_at, conversation_type, status')
-        .eq('landlord_id', landlordId)
-        .eq('resident_id', residentId)
-        .order('updated_at', { ascending: false })
-        .limit(10),
-      supabase
-        .from('units')
-        .select('unit_label, building, property_id')
-        .eq('landlord_id', landlordId)
-        .limit(2000),
-      supabase
-        .from('users')
-        .select('id, unit, building, status')
-        .eq('landlord_id', landlordId)
-        .neq('status', 'past_resident')
-        .limit(2000),
-    ])
+        .maybeSingle()
 
-    let raw: Record<string, unknown> | null =
-      userResult.error || !userResult.data
-        ? null
-        : (userResult.data as Record<string, unknown>)
+      let raw: Record<string, unknown> | null =
+        userResult.error || !userResult.data
+          ? null
+          : (userResult.data as Record<string, unknown>)
 
-    if (!raw) {
-      if (
-        userResult.error &&
-        /column .* does not exist/i.test(userResult.error.message)
-      ) {
+      if (!raw && userResult.error && /column .* does not exist/i.test(userResult.error.message)) {
         const legacy = await supabase
           .from('users')
           .select(
@@ -625,190 +577,267 @@ export function AdminPropertyResidentDetailDashboard() {
           .eq('id', residentId)
           .maybeSingle()
         if (legacy.error || !legacy.data) {
-          setError(
-            getErrorMessage(legacy.error, "We couldn't find that resident."),
-          )
+          setError(getErrorMessage(legacy.error, "We couldn't find that resident."))
           setProfile(null)
           setLoadedUser(null)
           setLoading(false)
           return
         }
         raw = legacy.data as Record<string, unknown>
-      } else {
-        setError(
-          getErrorMessage(userResult.error, "We couldn't find that resident."),
-        )
+      } else if (!raw) {
+        setError(getErrorMessage(userResult.error, "We couldn't find that resident."))
         setProfile(null)
         setLoadedUser(null)
         setLoading(false)
         return
       }
-    }
 
-    const healthUnits = mapUnitsForPropertyHealth(
-      ((unitsResult.data ?? []) as Record<string, unknown>[]) ?? [],
-    )
-    const lookupName = activeCanonicalProperty?.name ?? buildingName
-    const scopedResidentIds = new Set(
-      filterResidentsForPropertyScope(
-        [
-          {
-            id: residentId,
-            fullName: asString(raw.full_name) || 'Resident',
-            unit: asString(raw.unit),
-            building: asString(raw.building) || null,
-            status: asString(raw.status).toLowerCase() || 'active',
-          },
-        ],
-        lookupName,
-        activeCanonicalProperty,
-        healthUnits,
-      ).map((row) => row.id),
-    )
+      const userId = asString(raw.id)
+      const monthlyRentRaw = asFiniteNumber(raw.monthly_rent)
+      let email = asString(raw.email)
+      if (isPlaceholderResidentEmail(email)) {
+        void supabase
+          .from('users')
+          .update({ email: '' })
+          .eq('id', userId)
+          .eq('landlord_id', landlordId)
+        email = ''
+      }
 
-    if (!scopedResidentIds.has(residentId)) {
-      setError('Resident does not belong to this property.')
-      setProfile(null)
-      setLoadedUser(null)
-      setLoading(false)
-      return
-    }
+      const loaded: LoadedResidentUser = {
+        id: userId,
+        residentId:
+          asString(raw.resident_id) ||
+          `RES-${userId.replace(/-/g, '').slice(0, 6).toUpperCase()}`,
+        fullName: asString(raw.full_name) || 'Unnamed resident',
+        email,
+        phone: asString(raw.phone) || null,
+        unit: asString(raw.unit),
+        building: asString(raw.building) || (slug.kind === 'name' ? slug.value : '') || 'Portfolio',
+        status: parseResidentStatus(asString(raw.status)),
+        balanceDue: asFiniteNumber(raw.balance_due),
+        leaseStartDate: asString(raw.move_in_date) || null,
+        leaseEndDate: asString(raw.lease_end_date) || null,
+        monthlyRent: monthlyRentRaw > 0 ? monthlyRentRaw : null,
+        maintenanceResponsibilitiesClause:
+          asString(raw.maintenance_responsibilities_clause) || null,
+        activationStatus: asString(raw.activation_status) || null,
+        smsConsentStatus: asString(raw.sms_consent_status) || null,
+        activationAttemptCount: asFiniteNumber(raw.activation_attempt_count),
+        activationSmsSentAt: asString(raw.activation_sms_sent_at) || null,
+      }
 
-    const userBuilding =
-      asString(raw.building) ||
-      activeCanonicalProperty?.name ||
-      buildingName
-
-    const userId = asString(raw.id)
-    const monthlyRentRaw = asFiniteNumber(raw.monthly_rent)
-    let email = asString(raw.email)
-    // Clear invented onboarding placeholder emails so they never linger on New Landlord.
-    if (isPlaceholderResidentEmail(email)) {
-      void supabase
-        .from('users')
-        .update({ email: '' })
-        .eq('id', userId)
-        .eq('landlord_id', landlordId)
-      email = ''
-    }
-    const loaded: LoadedResidentUser = {
-      id: userId,
-      residentId:
-        asString(raw.resident_id) ||
-        `RES-${userId.replace(/-/g, '').slice(0, 6).toUpperCase()}`,
-      fullName: asString(raw.full_name) || 'Unnamed resident',
-      email,
-      phone: asString(raw.phone) || null,
-      unit: asString(raw.unit),
-      building: userBuilding,
-      status: parseResidentStatus(asString(raw.status)),
-      balanceDue: asFiniteNumber(raw.balance_due),
-      leaseStartDate: asString(raw.move_in_date) || null,
-      leaseEndDate: asString(raw.lease_end_date) || null,
-      monthlyRent: monthlyRentRaw > 0 ? monthlyRentRaw : null,
-      maintenanceResponsibilitiesClause:
-        asString(raw.maintenance_responsibilities_clause) || null,
-      activationStatus: asString(raw.activation_status) || null,
-      smsConsentStatus: asString(raw.sms_consent_status) || null,
-      activationAttemptCount: asFiniteNumber(raw.activation_attempt_count),
-      activationSmsSentAt: asString(raw.activation_sms_sent_at) || null,
-    }
-
-    const communications: ResidentCommunicationItem[] =
-      conversationsResult.error == null
-        ? ((conversationsResult.data ?? []) as Record<string, unknown>[]).map((row) => {
-            const typeLabel = conversationTypeLabel(asString(row.conversation_type))
-            const statusLabel = conversationStatusLabel(asString(row.status) || 'open')
-            return {
-              id: asString(row.id),
-              preview: `${typeLabel} · ${statusLabel}`,
-              channel: typeLabel,
-              dateLabel: formatCommDate(asString(row.updated_at)),
-            }
-          })
-        : []
-
-    setLoadedUser(loaded)
-    const scopedUnits = activeCanonicalProperty
-      ? filterUnitsForCanonicalProperty(healthUnits, activeCanonicalProperty)
-      : healthUnits.filter(
-          (unit) => normalizeBuildingKey(unit.building) === normalizeBuildingKey(buildingName),
-        )
-
-    setBuildingUnits(
-      unitsResult.error
-        ? []
-        : scopedUnits.map((unit) => ({
-            id: unit.id,
-            unitLabel: unit.unitLabel,
-            building: unit.building || buildingName,
-          })),
-    )
-    const scopedBuildingResidents = filterResidentsForPropertyScope(
-      residentsResult.error
-        ? []
-        : ((residentsResult.data ?? []) as Record<string, unknown>[]).map((row) => ({
-            id: asString(row.id),
-            fullName: asString(row.full_name) || 'Resident',
-            unit: asString(row.unit),
-            building: asString(row.building) || null,
-            status: asString(row.status).toLowerCase() || 'active',
-          })),
-      lookupName,
-      activeCanonicalProperty,
-      healthUnits,
-    )
-    setBuildingResidents(
-      scopedBuildingResidents.map((row) => ({
-        id: row.id,
-        unit: row.unit,
-        building: row.building || buildingName,
-        status: row.status,
-      })),
-    )
-    setProfile(
-      buildResidentProfileDetail({
-        user: {
-          id: loaded.id,
-          fullName: loaded.fullName,
-          email: loaded.email,
-          phone: loaded.phone,
-          unit: loaded.unit,
-          building: loaded.building,
-          status: loaded.status,
-          balanceDue: loaded.balanceDue,
-          leaseStartDate: loaded.leaseStartDate,
-          leaseEndDate: loaded.leaseEndDate,
-          monthlyRent: loaded.monthlyRent,
-          maintenanceResponsibilitiesClause: loaded.maintenanceResponsibilitiesClause,
-        },
-        workflowData: workflowDashboard,
-        communications,
-      }),
-    )
-    try {
-      setLeaseDocuments(
-        await loadResidentLeaseDocuments(
-          {
+      setBuilding(loaded.building)
+      setPropertyId(slug.kind === 'id' ? slug.value : null)
+      setLoadedUser(loaded)
+      profileIdRef.current = loaded.id
+      setProfile(
+        buildResidentProfileDetail({
+          user: {
+            id: loaded.id,
             fullName: loaded.fullName,
+            email: loaded.email,
+            phone: loaded.phone,
             unit: loaded.unit,
             building: loaded.building,
-            phone: loaded.phone,
-            email: loaded.email,
+            status: loaded.status,
+            balanceDue: loaded.balanceDue,
+            leaseStartDate: loaded.leaseStartDate,
+            leaseEndDate: loaded.leaseEndDate,
+            monthlyRent: loaded.monthlyRent,
+            maintenanceResponsibilitiesClause: loaded.maintenanceResponsibilitiesClause,
           },
-          landlordId,
-        ),
+          workflowData: null,
+          communications: [],
+        }),
       )
-    } catch (documentError) {
-      console.warn('[resident-profile] lease documents', documentError)
-      setLeaseDocuments([])
+      setLoading(false)
+
+      void (async () => {
+      const propertyResult =
+        slug.kind === 'id'
+          ? await findPropertyById(landlordId, slug.value)
+          : await findPropertyByName(landlordId, slug.value)
+
+      let buildingName = loaded.building
+      let resolvedPropertyId: string | null = slug.kind === 'id' ? slug.value : null
+      let activeCanonicalProperty: PropertyHealthCanonicalProperty | null = null
+
+      if (propertyResult.ok && 'property' in propertyResult && propertyResult.property) {
+        resolvedPropertyId = propertyResult.property.id
+        buildingName = propertyResult.property.name || buildingName
+        activeCanonicalProperty = {
+          id: propertyResult.property.id,
+          name: propertyResult.property.name,
+        }
+        if (slug.kind === 'name') {
+          const nextPath = propertyResidentDetailPath(propertyResult.property.id, residentId)
+          const currentPath = `${propertyDetailPath(propertySlug ?? '')}/residents/${encodeURIComponent(residentId)}`
+          if (nextPath !== currentPath) {
+            navigateRef.current(nextPath, { replace: true })
+          }
+        }
+      } else if (!activeCanonicalProperty && buildingName) {
+        const propertiesResult = await listPropertiesForLandlord(landlordId)
+        const match = propertiesResult.ok
+          ? propertiesResult.properties.find(
+              (property) =>
+                normalizeBuildingKey(property.name) === normalizeBuildingKey(buildingName),
+            )
+          : null
+        if (match) {
+          activeCanonicalProperty = { id: match.id, name: match.name }
+          resolvedPropertyId = match.id
+        }
+      }
+
+      const { data: conversationRows, error: conversationsError } = await supabase
+        .from('sms_conversations')
+        .select('id, updated_at, conversation_type, status')
+        .eq('landlord_id', landlordId)
+        .eq('resident_id', residentId)
+        .order('updated_at', { ascending: false })
+        .limit(10)
+
+      const communications: ResidentCommunicationItem[] =
+        conversationsError == null
+          ? ((conversationRows ?? []) as Record<string, unknown>[]).map((row) => {
+              const typeLabel = conversationTypeLabel(asString(row.conversation_type))
+              const statusLabel = conversationStatusLabel(asString(row.status) || 'open')
+              return {
+                id: asString(row.id),
+                preview: `${typeLabel} · ${statusLabel}`,
+                channel: typeLabel,
+                dateLabel: formatCommDate(asString(row.updated_at)),
+              }
+            })
+          : []
+
+      if (profileIdRef.current !== loaded.id) return
+
+      setBuilding(buildingName)
+      setPropertyId(resolvedPropertyId)
+      setLoadedUser((current) =>
+        current && current.id === loaded.id ? { ...current, building: buildingName } : current,
+      )
+      setProfile((current) =>
+        current && current.id === loaded.id
+          ? {
+              ...current,
+              building: buildingName,
+              communications,
+            }
+          : current,
+      )
+
+      const lookupName = activeCanonicalProperty?.name ?? buildingName
+        let unitsQuery = supabase
+          .from('units')
+          .select('id, unit_label, building, property_id')
+          .eq('landlord_id', landlordId)
+        if (resolvedPropertyId) {
+          unitsQuery = unitsQuery.eq('property_id', resolvedPropertyId)
+        }
+        const [unitsResult, residentsResult, workflowDashboard] = await Promise.all([
+          unitsQuery.limit(200),
+          supabase
+            .from('users')
+            .select('id, unit, building, status')
+            .eq('landlord_id', landlordId)
+            .neq('status', 'past_resident')
+            .limit(300),
+          fetchAdminWorkflowDashboard({ residentId }).catch(() => null),
+          loadResidentLeaseDocuments(
+            {
+              fullName: loaded.fullName,
+              unit: loaded.unit,
+              building: loaded.building,
+              phone: loaded.phone,
+              email: loaded.email,
+            },
+            landlordId,
+          )
+            .then((docs) => {
+              if (profileIdRef.current === loaded.id) setLeaseDocuments(docs)
+            })
+            .catch((documentError) => {
+              console.warn('[resident-profile] lease documents', documentError)
+              if (profileIdRef.current === loaded.id) setLeaseDocuments([])
+            }),
+        ])
+
+        if (profileIdRef.current !== loaded.id) return
+
+        if (workflowDashboard) {
+          setProfile((current) =>
+            current && current.id === loaded.id
+              ? {
+                  ...current,
+                  workflows: buildResidentWorkflowSummaries(loaded.id, workflowDashboard),
+                }
+              : current,
+          )
+        }
+
+        const healthUnits = mapUnitsForPropertyHealth(
+          ((unitsResult.data ?? []) as Record<string, unknown>[]) ?? [],
+        )
+        const scopedUnits = activeCanonicalProperty
+          ? filterUnitsForCanonicalProperty(healthUnits, activeCanonicalProperty)
+          : healthUnits.filter(
+              (unit) =>
+                normalizeBuildingKey(unit.building) === normalizeBuildingKey(loaded.building),
+            )
+
+        setBuildingUnits(
+          unitsResult.error
+            ? []
+            : scopedUnits.map((unit) => ({
+                id: unit.id,
+                unitLabel: unit.unitLabel,
+                building: unit.building || loaded.building,
+              })),
+        )
+        const scopedBuildingResidents = filterResidentsForPropertyScope(
+          residentsResult.error
+            ? []
+            : ((residentsResult.data ?? []) as Record<string, unknown>[]).map((row) => ({
+                id: asString(row.id),
+                fullName: 'Resident',
+                unit: asString(row.unit),
+                building: asString(row.building) || null,
+                status: asString(row.status).toLowerCase() || 'active',
+              })),
+          lookupName,
+          activeCanonicalProperty,
+          healthUnits,
+        )
+        setBuildingResidents(
+          scopedBuildingResidents.map((row) => ({
+            id: row.id,
+            unit: row.unit,
+            building: row.building || loaded.building,
+            status: row.status,
+          })),
+        )
+      })().catch((backgroundError) => {
+        console.warn('[resident-profile] background', backgroundError)
+      })
+    } catch (loadError) {
+      console.error('[resident-profile] load', loadError)
+      setError(getErrorMessage(loadError, "We couldn't load this resident."))
+      setLoading(false)
     }
-    setLoading(false)
-  }, [propertySlug, residentId, navigate])
+  }, [propertySlug, residentId])
 
   useEffect(() => {
-    void loadResident()
+    void loadResident().catch((loadError) => {
+      console.error('[resident-profile] load', loadError)
+      setError(getErrorMessage(loadError, "We couldn't load this resident."))
+      setLoading(false)
+    })
   }, [loadResident])
+
 
   const backFallbackHref = useMemo(
     () =>
@@ -887,20 +916,19 @@ export function AdminPropertyResidentDetailDashboard() {
     }
 
     if (assigned) {
-      void activateUnitsFromResidentAssignments({
+      const occupancyResult = await syncAssignedUnitOccupancyFromResidentStatus({
         landlordId: getActiveLandlordId(),
-        residents: [
-          {
-            id: payload.id,
-            unit: assigned.unitLabel,
-            building: assigned.building,
-            status: payload.status,
-            moveInDate: parseLeaseDateInput(payload.leaseStart),
-            leaseEndDate: parseLeaseDateInput(payload.leaseEnd),
-          },
-        ],
+        residentId: payload.id,
+        unitId: assigned.unitId,
+        unitLabel: assigned.unitLabel,
+        building: assigned.building,
+        status: payload.status,
+        residentName: payload.fullName,
         source: 'edit_resident',
       })
+      if (!occupancyResult.ok) {
+        setActionError(occupancyResult.error)
+      }
     }
 
     if (payload.phone?.trim()) {
@@ -938,6 +966,45 @@ export function AdminPropertyResidentDetailDashboard() {
     await loadResident()
   }
 
+  async function handleOccupancyChange(next: ResidentOccupancyStatus) {
+    if (!loadedUser || !supabase) return
+    if (next === loadedUser.status) return
+    setActionError(null)
+    setOccupancySaving(true)
+    const landlordId = getActiveLandlordId()
+    const assigned = loadedUser.unit.trim()
+      ? resolveInventoryUnitForResidentSave(buildingUnits, {
+          unit: loadedUser.unit,
+          building: loadedUser.building,
+        })
+      : null
+    const { error: updateError } = await supabase
+      .from('users')
+      .update({ status: next })
+      .eq('id', loadedUser.id)
+      .eq('landlord_id', landlordId)
+    if (updateError) {
+      setActionError(getErrorMessage(updateError, 'Could not update occupancy. Please try again.'))
+      setOccupancySaving(false)
+      return
+    }
+    const occupancyResult = await syncAssignedUnitOccupancyFromResidentStatus({
+      landlordId,
+      residentId: loadedUser.id,
+      unitId: assigned?.unitId ?? null,
+      unitLabel: assigned?.unitLabel ?? loadedUser.unit,
+      building: assigned?.building ?? loadedUser.building,
+      status: next,
+      residentName: loadedUser.fullName,
+      source: 'resident_profile',
+    })
+    setOccupancySaving(false)
+    if (!occupancyResult.ok) {
+      setActionError(occupancyResult.error)
+    }
+    await loadResident()
+  }
+
   const activationChip = loadedUser
     ? resolveTenantActivationChip({
         activationStatus: loadedUser.activationStatus,
@@ -970,19 +1037,31 @@ export function AdminPropertyResidentDetailDashboard() {
     await loadResident()
   }
 
-  if (!building) {
-    if (loading) {
-      return (
-        <main className="flex min-h-0 flex-1 items-center justify-center px-8 py-12">
-          <p className="text-[14px] text-[#6a7282]">Loading resident…</p>
-        </main>
-      )
-    }
+  if (loading && !profile) {
+    return (
+      <main className="flex min-h-0 flex-1 items-center justify-center px-8 py-12">
+        <p className="text-[14px] text-[#6a7282]">Loading resident…</p>
+      </main>
+    )
+  }
+
+  if (error && !profile) {
     return (
       <main className="flex min-h-0 flex-1 flex-col px-8 pb-12 pt-6">
-        <p className="text-[14px] text-[#6a7282]">Property not found.</p>
-        <Link to="/admin/properties" className="sa-link mt-3 text-[14px] font-medium text-[#186179]">
-          ← All properties
+        <p className="text-[14px] text-[#6a7282]">{error}</p>
+        <Link to="/admin/residents" className="sa-link mt-3 text-[14px] font-medium text-[#186179]">
+          ← Residents
+        </Link>
+      </main>
+    )
+  }
+
+  if (!profile) {
+    return (
+      <main className="flex min-h-0 flex-1 flex-col px-8 pb-12 pt-6">
+        <p className="text-[14px] text-[#6a7282]">Resident not found.</p>
+        <Link to="/admin/residents" className="sa-link mt-3 text-[14px] font-medium text-[#186179]">
+          ← Residents
         </Link>
       </main>
     )
@@ -999,13 +1078,9 @@ export function AdminPropertyResidentDetailDashboard() {
           <span aria-hidden>←</span> Back
         </button>
 
-        {loading ? (
+        {error ? (
           <div className="mt-6">
-            <p className="text-[14px] text-[#6a7282]">Loading resident…</p>
-          </div>
-        ) : error || !profile ? (
-          <div className="mt-6">
-            <p className="text-[14px] text-[#6a7282]">{error ?? 'Resident not found.'}</p>
+            <p className="text-[14px] text-[#6a7282]">{error}</p>
           </div>
         ) : (
           <>
@@ -1055,6 +1130,8 @@ export function AdminPropertyResidentDetailDashboard() {
                 profile={profile}
                 leaseDocuments={leaseDocuments}
                 documentPreviewError={documentPreviewError}
+                occupancySaving={occupancySaving}
+                onOccupancyChange={(status) => void handleOccupancyChange(status)}
                 onPreviewDocument={(document) => {
                   setDocumentPreviewError(null)
                   void openOrganizationDocumentPreview(document).then((result) => {

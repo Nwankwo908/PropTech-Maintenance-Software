@@ -53,11 +53,11 @@ Deno.test("STOP works for onboarding and activated residents (compliance path)",
   )
 })
 
-Deno.test("activation YES/START is separate from compliance", () => {
+Deno.test("activation YES is separate from compliance START", () => {
   assertEquals(classifyTenantActivationKeyword("YES"), "start")
-  assertEquals(classifyTenantActivationKeyword("START"), "start")
   assertEquals(classifyTenantComplianceKeyword("YES"), null)
-  assertEquals(classifyTenantComplianceKeyword("START"), null)
+  assertEquals(classifyTenantComplianceKeyword("START"), "start")
+  assertEquals(classifyTenantActivationKeyword("START"), null)
 })
 
 Deno.test("1. pending activation + YES → activation reply eligible", () => {
@@ -73,7 +73,8 @@ Deno.test("1. pending activation + YES → activation reply eligible", () => {
   )
 })
 
-Deno.test("2. pending activation + START → activation reply eligible", () => {
+Deno.test("2. pending activation + START → compliance (not activation reply)", () => {
+  assertEquals(classifyTenantComplianceKeyword("START"), "start")
   assertEquals(
     canHandleTenantActivationReply({
       body: "START",
@@ -82,7 +83,7 @@ Deno.test("2. pending activation + START → activation reply eligible", () => {
       conversationType: "resident_intake",
       ...waitingActivation(),
     }),
-    true,
+    false,
   )
 })
 
@@ -99,7 +100,7 @@ Deno.test("3. fully activated tenant + YES → not eligible", () => {
   )
 })
 
-Deno.test("4. fully activated tenant + START → not eligible (no re-onboarding)", () => {
+Deno.test("4. fully activated tenant + START → not activation-reply (global compliance handles it)", () => {
   assertEquals(
     canHandleTenantActivationReply({
       body: "START",
@@ -144,6 +145,34 @@ Deno.test("8. post-onboarding generic YES is not claimed when not waiting", () =
       activationStatus: "not_started",
       smsConsentStatus: "pending",
       activationSmsSentAt: null,
+    }),
+    false,
+  )
+})
+
+Deno.test("opted-out tenant + START is compliance, not waiting-activation YES", () => {
+  assertEquals(classifyTenantComplianceKeyword("START"), "start")
+  assertEquals(
+    canHandleTenantActivationReply({
+      body: "START",
+      residentId: RESIDENT,
+      identityType: "resident",
+      conversationType: "resident_intake",
+      activationStatus: "opted_out",
+      smsConsentStatus: "opted_out",
+      activationSmsSentAt: "2026-01-01T00:00:00.000Z",
+    }),
+    false,
+  )
+  assertEquals(
+    canHandleTenantActivationReply({
+      body: "YES",
+      residentId: RESIDENT,
+      identityType: "resident",
+      conversationType: "resident_intake",
+      activationStatus: "opted_out",
+      smsConsentStatus: "opted_out",
+      activationSmsSentAt: "2026-01-01T00:00:00.000Z",
     }),
     false,
   )

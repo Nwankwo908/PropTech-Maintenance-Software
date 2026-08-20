@@ -1,0 +1,47 @@
+# SMS — active vs historical maintenance tickets
+
+Before treating an inbound tenant SMS as related to an existing work order, Ulo must check the **actual** ticket state (`maintenance_requests.vendor_work_status`).
+
+## Rule
+
+| Ticket state | Role in SMS routing |
+|---|---|
+| Active (`unassigned`, `pending_accept`, `accepted`, `in_progress`) | Current maintenance context |
+| Historical (`completed`, `cancelled`) | History only |
+
+Closed/canceled/completed tickets must **not** become the tenant’s active maintenance context merely because they share a trade or keyword.
+
+Historical tickets influence routing only when the tenant:
+
+- Asks about that previous repair / whether it was closed
+- Says the problem returned (recurrence / reopen)
+- Clearly refers to that historical issue
+
+## Closure
+
+- Detect natural close/cancel language (“It’s fixed”, “You can close it”, “Never mind”, …) via intent — not one-off phrase patches.
+- One clear active ticket → close and **confirm** (which repair, that it was updated, they can text if it returns).
+- Multiple active tickets → clarify which one first.
+- Already closed/canceled → idempotent reply; no duplicate activity event or mutation.
+- Canonical close: `closeWorkOrderCancelledByResident` + `sms.maintenance_cancelled` (reuse; do not invent a parallel status system).
+
+## Recurrence
+
+Matching historical ticket + “again / came back / not fixed” → reopen path (`kind: reopen`), not an unrelated new ticket. Prefer reopening the prior ticket (existing behavior) over minting a duplicate with no link.
+
+## Unrelated intents
+
+Rent, lease, move-out, and other non-maintenance intents must win even when historical (or junk) tickets exist. Never RELATED/SEPARATE a rent ask against a closed electrical ticket.
+
+## Where it lives
+
+- Shared predicates: `maintenanceTicketContext.ts`
+- Routing: `resolveContextualFollowUp` / `resolveMaintenanceWorkIntent`
+- Act: `inboundInterpretationAct.ts` (status, cancel, reopen)
+- Conversation pin: `resolveOpenMaintenanceRequestId` — **active statuses only**
+
+## Do not
+
+- Let `pickOpenTicket() ?? ranked[0]` select a cancelled/completed ticket for RELATED/SEPARATE
+- Pin conversations to cancelled tickets
+- Create a new work order when uncertain — clarify first

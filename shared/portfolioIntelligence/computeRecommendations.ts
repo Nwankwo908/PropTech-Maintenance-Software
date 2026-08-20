@@ -127,7 +127,7 @@ export function computePortfolioRecommendations(
       confidence: 'high',
       severity: escalated.length >= 5 ? 'critical' : 'warning',
       title: `${escalated.length} escalated workflows need review`,
-      message: `Ulo has ${escalated.length} escalated workflows waiting for your decision. Review the highest-risk items first so nothing slips past SLA.`,
+      message: `Ulo has ${escalated.length} escalated workflows waiting for your decision. Review the highest-risk items first so nothing slips past response time.`,
       actionLabel: 'Review escalations',
       signature,
       metadata: {

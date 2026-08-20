@@ -4,6 +4,7 @@ import { TableCheckbox } from '@/components/TableCheckbox'
 import {
   formatPropertyHealthTooltip,
   resolvePropertyHealthPendingMessage,
+  shouldShowPropertyHealthScore,
   type PropertyHealthBuildingRow,
   type PropertyHealthStatus,
 } from '@/lib/propertyHealth'
@@ -12,6 +13,7 @@ export const HEALTH_BADGE_STYLES: Record<PropertyHealthStatus, string> = {
   healthy: 'bg-[#dbfce7] text-[#008236]',
   monitor: 'bg-[#fef9c2] text-[#a65f00]',
   at_risk: 'bg-[#ffe2e2] text-[#c10007]',
+  active: 'bg-[#dbfce7] text-[#008236]',
   pending_setup: 'bg-[#f3f4f6] text-[#6a7282]',
 }
 
@@ -19,6 +21,7 @@ export const HEALTH_BADGE_LABELS: Record<PropertyHealthStatus, string> = {
   healthy: 'HEALTHY',
   monitor: 'MONITOR',
   at_risk: 'AT RISK',
+  active: 'ACTIVE',
   pending_setup: 'PENDING SETUP',
 }
 
@@ -26,6 +29,7 @@ export const HEALTH_BAR_STYLES: Record<PropertyHealthStatus, string> = {
   healthy: 'bg-[#00c950]',
   monitor: 'bg-[#fdc700]',
   at_risk: 'bg-[#fb2c36]',
+  active: 'bg-[#d1d5dc]',
   pending_setup: 'bg-[#d1d5dc]',
 }
 
@@ -315,17 +319,7 @@ export function PropertyHealthBuildingGrid({
                 title={formatPropertyHealthTooltip(b.components)}
                 aria-label={formatPropertyHealthTooltip(b.components)}
               >
-                {b.status === 'pending_setup' ? (
-                  <>
-                    <p className="text-[28px] font-bold leading-8 text-[#6a7282]">—</p>
-                    <p className="text-[12px] leading-4 text-[#6a7282]">
-                      {resolvePropertyHealthPendingMessage(b.pendingReason)}
-                    </p>
-                    <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-[#f3f4f6]">
-                      <div className="h-full w-0 rounded-full bg-[#d1d5dc]" />
-                    </div>
-                  </>
-                ) : (
+                {shouldShowPropertyHealthScore(b.status) ? (
                   <>
                     <p className="text-[28px] font-bold leading-8 text-[#0a0a0a] tabular-nums">
                       {b.score}
@@ -336,6 +330,16 @@ export function PropertyHealthBuildingGrid({
                         className={`sa-bar h-full rounded-full ${HEALTH_BAR_STYLES[b.status]}`}
                         style={{ width: `${b.score}%` }}
                       />
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <p className="text-[28px] font-bold leading-8 text-[#6a7282]">—</p>
+                    <p className="text-[12px] leading-4 text-[#6a7282]">
+                      {resolvePropertyHealthPendingMessage(b.pendingReason)}
+                    </p>
+                    <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-[#f3f4f6]">
+                      <div className="h-full w-0 rounded-full bg-[#d1d5dc]" />
                     </div>
                   </>
                 )}

@@ -14,6 +14,7 @@ export type NotificationEventKey =
   | 'leasing.application_submitted'
   | 'leasing.lease_signed'
   | 'leasing.lease_expiring'
+  | 'leasing.lease_info_missing'
   | 'leasing.move_in_scheduled'
   | 'inspection.inspection_scheduled'
   | 'inspection.inspection_completed'
@@ -59,6 +60,7 @@ const EVENT_TO_MATRIX: Record<
   'leasing.application_submitted': { categoryId: 'leasing', eventId: 'application_submitted' },
   'leasing.lease_signed': { categoryId: 'leasing', eventId: 'lease_signed' },
   'leasing.lease_expiring': { categoryId: 'leasing', eventId: 'lease_expiring' },
+  'leasing.lease_info_missing': { categoryId: 'leasing', eventId: 'lease_info_missing' },
   'leasing.move_in_scheduled': { categoryId: 'leasing', eventId: 'move_in_scheduled' },
   'inspection.inspection_scheduled': { categoryId: 'inspections', eventId: 'inspection_scheduled' },
   'inspection.inspection_completed': { categoryId: 'inspections', eventId: 'inspection_completed' },
@@ -208,6 +210,8 @@ export function mapAttentionKindToEvent(
       return 'rent.rent_escalated'
     case 'lease_renewal':
       return 'leasing.lease_expiring'
+    case 'lease_info_missing':
+      return 'leasing.lease_info_missing'
     default:
       return 'workflow.needs_your_attention'
   }

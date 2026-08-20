@@ -14,7 +14,7 @@ Deno.test("INBOUND_SMS_HANDLERS are sorted by ascending priority", () => {
   }
 })
 
-Deno.test("INBOUND_SMS_HANDLERS preserve canonical order (STOP is global. YES is contextual.)", () => {
+Deno.test("INBOUND_SMS_HANDLERS preserve canonical order (STOP/START global. YES is contextual.)", () => {
   assertEquals(
     INBOUND_SMS_HANDLERS.map((h) => h.id),
     Object.keys(INBOUND_SMS_HANDLER_PENDING_GATES),
@@ -25,9 +25,11 @@ function priority(id: string): number {
   return INBOUND_SMS_HANDLERS.find((h) => h.id === id)!.priority
 }
 
-Deno.test("STOP/HELP compliance runs before active conversations", () => {
+Deno.test("START/HELP/STOP compliance runs before conversations and activation reply", () => {
   assertEquals(priority("compliance_stop_help") < priority("schedule_confirm"), true)
   assertEquals(priority("compliance_stop_help") < priority("estimate_decision"), true)
+  assertEquals(priority("compliance_stop_help") < priority("invoice_payment"), true)
+  assertEquals(priority("compliance_stop_help") < priority("tenant_activation_reply"), true)
 })
 
 Deno.test("schedule_confirm runs before tenant_activation_reply (YES disambiguation)", () => {

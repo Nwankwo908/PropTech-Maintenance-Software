@@ -73,6 +73,26 @@ Deno.test("resolveExternalVendorSearchContext uses properties table address", as
   if (result.locationLabel !== "Maple Heights · Unit 207") {
     throw new Error(`unexpected location label: ${result.locationLabel}`)
   }
+  if (result.areaLabel !== "Hillsboro, OR 97124") {
+    throw new Error(`unexpected area label: ${result.areaLabel}`)
+  }
+})
+
+Deno.test("resolveExternalVendorSearchContext matches street address for city/state/ZIP", async () => {
+  const result = await resolveExternalVendorSearchContext(
+    mockSupabaseWithProperty() as never,
+    {
+      unit: "A",
+      building: "901 Maple Heights Blvd",
+      landlordId: "landlord-1",
+    },
+  )
+  if (result.areaLabel !== "Hillsboro, OR 97124") {
+    throw new Error(`expected city/state/ZIP under title, got ${result.areaLabel}`)
+  }
+  if (result.areaLabel?.includes("901")) {
+    throw new Error("area label must not include the street address")
+  }
 })
 
 Deno.test("resolveExternalVendorSearchContext falls back to building name without landlord", async () => {

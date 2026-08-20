@@ -31,7 +31,7 @@ Deno.test("polishAskUloProse rewrites deadline jargon", () => {
   const s = polishAskUloProse(
     humanizeOpsLanguage("Kitchen clog: urgent priority — expected response time / due time already passed"),
   )
-  assertStringIncludes(s.toLowerCase(), "vendor response deadline")
+  assertStringIncludes(s.toLowerCase(), "response time has passed")
   assertEquals(/expected response time\s*\//i.test(s), false)
 })
 

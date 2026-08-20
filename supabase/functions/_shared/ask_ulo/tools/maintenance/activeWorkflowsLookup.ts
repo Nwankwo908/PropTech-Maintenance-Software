@@ -79,7 +79,7 @@ function humanizeEvent(eventType: string, meta: Record<string, unknown> | null):
     return `Sent a rent reminder${where}`
   }
   if (/inspection\.scheduled/.test(et)) return `Scheduled an inspection${where}`
-  if (/sla/.test(et)) return `Handled an SLA signal${where}`
+  if (/sla/.test(et)) return `Followed up on response time${where}`
   if (/workflow\.act|maintenance\./.test(et)) return `Advanced a maintenance workflow${where}`
   return null
 }

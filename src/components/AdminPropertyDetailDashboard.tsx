@@ -17,7 +17,7 @@ import { PropertyVendorsList } from '@/components/PropertyVendorsList'
 import { PropertyWorkflowsList } from '@/components/PropertyWorkflowsList'
 import { PropertyDetailsPanel } from '@/components/PropertyDetailsPanel'
 import { getActiveLandlordId } from '@/lib/activeLandlord'
-import { fetchAdminWorkflowDashboard, type AdminWorkflowDashboardData } from '@/lib/adminWorkflows'
+import { fetchAdminWorkflowDashboard, isCancelledOnActiveTasks, type AdminWorkflowDashboardData } from '@/lib/adminWorkflows'
 import {
   collectAdminWorkflowRuns,
   isOpenWorkflowKanbanCard,
@@ -46,6 +46,9 @@ import {
   filterTicketsForBuildingScope,
   normalizeBuildingKey,
   resolveBuildingHealthRow,
+  resolvePropertyHealthKpiValue,
+  resolvePropertyHealthPendingMessage,
+  shouldShowPropertyHealthScore,
   type PropertyHealthBuildingRow,
   type PropertyHealthCanonicalProperty,
   type PropertyHealthFeedback,
@@ -878,7 +881,7 @@ export function AdminPropertyDetailDashboard() {
 
     return collectAdminWorkflowRuns(workflowData)
       .filter((row) => normalizeBuildingKey(row.propertyLabel) === normalizeBuildingKey(building))
-      .filter((row) => row.status !== 'cancelled')
+      .filter((row) => !isCancelledOnActiveTasks(row))
       .map((row) => {
         const ticket =
           row.entityType === 'maintenance_request' && row.entityId
@@ -929,11 +932,13 @@ export function AdminPropertyDetailDashboard() {
     return collectAdminWorkflowRuns(workflowData)
       .filter((row) => normalizeBuildingKey(row.propertyLabel) === normalizeBuildingKey(building))
       .filter((row) => row.templateId === 'lease_renewal')
-      .filter((row) => row.status !== 'cancelled' && row.status !== 'completed').length
+      .filter((row) => !isCancelledOnActiveTasks(row) && row.status !== 'completed').length
   }, [workflowData, building])
 
   const propertyAiInsights = useMemo(() => {
-    if (!building || !buildingHealth || buildingHealth.status === 'pending_setup') return null
+    if (!building || !buildingHealth || !shouldShowPropertyHealthScore(buildingHealth.status)) {
+      return null
+    }
     return buildPropertyAiInsights({
       building,
       buildingHealth,
@@ -1183,12 +1188,12 @@ export function AdminPropertyDetailDashboard() {
   }
 
   const subtitle = formatPropertySubtitle(meta, buildingUnits.length)
-  const healthScore =
-    buildingHealth?.status === 'pending_setup' ? '—' : String(buildingHealth?.score ?? '—')
-  const healthValue =
-    buildingHealth?.status === 'pending_setup'
-      ? 'Pending'
-      : `${healthScore}${healthScore === '—' ? '' : ' / 100'}`
+  const healthScoreReady = shouldShowPropertyHealthScore(buildingHealth?.status)
+  const healthValue = resolvePropertyHealthKpiValue(
+    buildingHealth?.status,
+    buildingHealth?.score,
+    'over100',
+  )
 
   return (
     <main className="flex min-h-0 flex-1 flex-col px-8 pb-12">
@@ -1334,15 +1339,15 @@ export function AdminPropertyDetailDashboard() {
             <div className="mt-4 flex flex-col gap-6 lg:flex-row lg:items-end lg:justify-between">
               <div className="min-w-0 flex-1">
                 <p className="text-[44px] font-bold leading-none tracking-[0.4px] text-[#0a0a0a] tabular-nums">
-                  {loading || !buildingHealth || buildingHealth.status === 'pending_setup'
+                  {loading || !buildingHealth || !healthScoreReady
                     ? '—'
                     : buildingHealth.score}
-                  {buildingHealth && buildingHealth.status !== 'pending_setup' ? (
+                  {buildingHealth && healthScoreReady ? (
                     <span className="text-[16px] font-normal text-[#6a7282]"> / 100</span>
                   ) : null}
                 </p>
                 <div className="mt-3 h-2 w-full overflow-hidden rounded-full bg-[#f3f4f6]">
-                  {buildingHealth && buildingHealth.status !== 'pending_setup' ? (
+                  {buildingHealth && healthScoreReady ? (
                     <div
                       className={`sa-bar h-full rounded-full ${HEALTH_BAR_STYLES[buildingHealth.status]}`}
                       style={{ width: `${buildingHealth.score}%` }}
@@ -1351,6 +1356,11 @@ export function AdminPropertyDetailDashboard() {
                     <div className="h-full w-0 rounded-full bg-[#d1d5dc]" />
                   )}
                 </div>
+                {buildingHealth && !healthScoreReady ? (
+                  <p className="mt-2 text-[12px] leading-4 text-[#6a7282]">
+                    {resolvePropertyHealthPendingMessage(buildingHealth.pendingReason)}
+                  </p>
+                ) : null}
               </div>
               <div className="grid shrink-0 grid-cols-2 gap-6 text-center sm:gap-10">
                 <div>

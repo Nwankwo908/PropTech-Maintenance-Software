@@ -60,7 +60,7 @@ State the investigation intent (e.g. why resolution has not occurred).
 ### Step 2 — Investigation checklist (do not stop after finding the ticket)
 For maintenance questions examine every available signal in the packets:
 locate the request(s), current status, status/workflow/vendor history, vendor responses,
-SLA / aging, escalations, notes, messages, appointments, photos, invoices,
+response time / aging, escalations, notes, messages, appointments, photos, invoices,
 completion blockers, related / duplicate tickets, previous repairs.
 
 ### Step 3 — Root cause (never report only current status)
@@ -260,7 +260,7 @@ function maintenanceChecklist(): string[] {
     "Current status",
     "Status / workflow / vendor assignment history",
     "Vendor responses and acceptance",
-    "SLA / aging timers",
+    "Response time / aging timers",
     "Escalations and internal notes",
     "Messages, appointments, photos, invoices when present",
     "Completion blockers, related / duplicate tickets, previous repairs",

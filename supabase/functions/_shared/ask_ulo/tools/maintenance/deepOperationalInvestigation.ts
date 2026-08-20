@@ -20,7 +20,7 @@ Do NOT rely only on KPI cards, portfolio totals, summary objects, or the current
 3. Workflow runs
 4. Property operations graph
 5. Vendor assignment and response history
-6. Status changes and SLA events
+6. Status changes and response-time events
 7. Unit and property records
 8. Resident messages and notes
 9. Inspection findings
@@ -172,7 +172,7 @@ const SEARCH_CHECKLIST = [
   "Workflow runs",
   "Property operations graph",
   "Vendor assignment and response history",
-  "Status changes and SLA events",
+  "Status changes and response-time events",
   "Unit and property records",
   "Resident messages and notes",
   "Inspection findings",

@@ -3,13 +3,18 @@ import {
   ADMIN_RIGHT_RAIL_OVERLAY_HOST,
   ADMIN_RIGHT_RAIL_SCRIM,
   ADMIN_RAIL_FOOTER_CLASS,
+  ADMIN_RAIL_FOOTER_DANGER_STROKE_BUTTON_CLASS,
   ADMIN_RAIL_FOOTER_DARK_PRIMARY_BUTTON_CLASS,
   ADMIN_RAIL_FOOTER_PRIMARY_BUTTON_CLASS,
   ADMIN_RAIL_FOOTER_SECONDARY_BUTTON_CLASS,
   adminRightRailPanelClass,
   type AdminRightRailStackedPosition,
 } from '@/lib/adminRightRail'
-import type { SlaOverdueActionReview } from '@/lib/slaOverdueActionReview'
+import {
+  isVisibleSlaTimelineEntry,
+  type SlaOverdueActionReview,
+} from '@/lib/slaOverdueActionReview'
+import { noRosterVendorsAvailableMessage } from '@/lib/maintenanceAdminVendor'
 
 function CloseIcon() {
   return (
@@ -83,8 +88,11 @@ type SlaOverdueActionRailProps = {
   review: SlaOverdueActionReview | null
   onClose: () => void
   onTakeAction: (review: SlaOverdueActionReview) => void
+  /** Remove this item from Needs Your Attention without assigning a vendor. */
+  onDelete?: (review: SlaOverdueActionReview) => void
   saving?: boolean
   loading?: boolean
+  error?: string | null
   /** Render only the panel (parent owns overlay, backdrop, and stacking). */
   panelOnly?: boolean
   /** When stacked beside another rail, drop outer rounding on the seam side. */
@@ -97,8 +105,10 @@ export function SlaOverdueActionRail({
   review,
   onClose,
   onTakeAction,
+  onDelete,
   saving = false,
   loading = false,
+  error = null,
   panelOnly = false,
   stackedPosition,
 }: SlaOverdueActionRailProps) {
@@ -117,15 +127,20 @@ export function SlaOverdueActionRail({
 
   const alertHeadline =
     review.pastSlaLabel ??
-    (review.minutesPastSla != null ? `${review.minutesPastSla} minutes past SLA` : 'Escalation requires review')
+    (review.minutesPastSla != null ? `${review.minutesPastSla} minutes past response time` : 'Escalation requires review')
 
   const isVendorSuggestionAction =
     review.takeActionMode === 'external_vendor' ||
     review.takeActionMode === 'assign_vendor' ||
     review.takeActionMode === 'reassign'
 
+  const showRosterIssue =
+    review.noVendorOnRoster || !review.currentVendorName?.trim()
+
   const dismissLabel =
-    review.takeActionMode === 'reassign' && review.currentVendorName
+    isVendorSuggestionAction && onDelete
+      ? 'Delete'
+      : review.takeActionMode === 'reassign' && review.currentVendorName
       ? 'Wait for Current Vendor'
       : 'Close'
 
@@ -135,7 +150,9 @@ export function SlaOverdueActionRail({
       ? 'Open workflows'
       : 'Take action'
 
-  const dismissButtonClass = ADMIN_RAIL_FOOTER_SECONDARY_BUTTON_CLASS
+  const dismissButtonClass = isVendorSuggestionAction && onDelete
+    ? ADMIN_RAIL_FOOTER_DANGER_STROKE_BUTTON_CLASS
+    : ADMIN_RAIL_FOOTER_SECONDARY_BUTTON_CLASS
 
   const actionButtonClass = isVendorSuggestionAction
     ? ADMIN_RAIL_FOOTER_PRIMARY_BUTTON_CLASS
@@ -158,11 +175,7 @@ export function SlaOverdueActionRail({
         </button>
 
         <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-6 pb-6 pt-6">
-          <span className="inline-flex rounded-full bg-[#f3f4f6] px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.08em] text-[#6a7282]">
-            {review.badgeLabel}
-          </span>
-
-          <h2 id={titleId} className="mt-4 text-[20px] font-semibold leading-7 tracking-[-0.3px] text-[#0a0a0a]">
+          <h2 id={titleId} className="text-[20px] font-semibold leading-7 tracking-[-0.3px] text-[#0a0a0a]">
             {review.headerTitle}
           </h2>
           <p className="mt-1 text-[13px] font-medium leading-5 text-[#6a7282]">{review.locationLabel}</p>
@@ -176,7 +189,7 @@ export function SlaOverdueActionRail({
               valueClassName={review.urgencyIsCritical ? 'text-[#fb2c36]' : undefined}
             />
             <MetaCard label="Reported" icon={<ClockIcon />} value={review.reportedAtLabel} />
-            <MetaCard label="SLA due" icon={<ClockIcon />} value={review.slaDueLabel} />
+            <MetaCard label="Response time" icon={<ClockIcon />} value={review.slaDueLabel} />
           </div>
 
           <div className="mt-4 rounded-[10px] border border-[#fecaca] bg-[#fff5f5] px-4 py-3">
@@ -185,17 +198,28 @@ export function SlaOverdueActionRail({
           </div>
 
           <div className="mt-5">
-            <p className="text-[10px] font-semibold uppercase tracking-[0.08em] text-[#9ca3af]">Vendor</p>
-            <p className="mt-1 text-[15px] font-semibold leading-6 text-[#0a0a0a]">
-              {review.currentVendorName ?? 'Unassigned'}
-            </p>
-            <p className="text-[13px] leading-5 text-[#6a7282]">{review.currentVendorStatus}</p>
+            {showRosterIssue ? (
+              <>
+                <p className="text-[10px] font-semibold uppercase tracking-[0.08em] text-[#9ca3af]">Issue</p>
+                <p className="mt-1 text-[15px] font-semibold leading-6 text-[#0a0a0a]">
+                  {noRosterVendorsAvailableMessage(review.issueCategory)}
+                </p>
+              </>
+            ) : (
+              <>
+                <p className="text-[10px] font-semibold uppercase tracking-[0.08em] text-[#9ca3af]">Vendor</p>
+                <p className="mt-1 text-[15px] font-semibold leading-6 text-[#0a0a0a]">
+                  {review.currentVendorName}
+                </p>
+                <p className="text-[13px] leading-5 text-[#6a7282]">{review.currentVendorStatus}</p>
+              </>
+            )}
           </div>
 
           <div className="mt-5">
             <p className="text-[10px] font-semibold uppercase tracking-[0.08em] text-[#9ca3af]">Timeline</p>
             <ul className="mt-3 space-y-3">
-              {review.timeline.map((entry) => (
+              {review.timeline.filter(isVisibleSlaTimelineEntry).map((entry) => (
                 <li
                   key={`${entry.timeLabel}-${entry.description}`}
                   className="grid grid-cols-[4.5rem_1fr_auto] gap-x-3 gap-y-0.5 text-[13px] leading-5"
@@ -210,14 +234,11 @@ export function SlaOverdueActionRail({
         </div>
 
         <footer className={ADMIN_RAIL_FOOTER_CLASS}>
-          <button
-            type="button"
-            disabled={saving}
-            onClick={onClose}
-            className={dismissButtonClass}
-          >
-            {isVendorSuggestionAction ? 'Close' : dismissLabel}
-          </button>
+          {error ? (
+            <p className="text-[13px] leading-5 text-error" role="alert">
+              {error}
+            </p>
+          ) : null}
           <button
             type="button"
             disabled={saving || loading}
@@ -230,6 +251,21 @@ export function SlaOverdueActionRail({
               : loading && isVendorSuggestionAction
                 ? 'Searching vendors…'
                 : actionLabel}
+          </button>
+          <button
+            type="button"
+            disabled={saving}
+            aria-label={isVendorSuggestionAction && onDelete ? 'Delete operation' : undefined}
+            onClick={() => {
+              if (isVendorSuggestionAction && onDelete) {
+                onDelete(review)
+                return
+              }
+              onClose()
+            }}
+            className={dismissButtonClass}
+          >
+            {dismissLabel}
           </button>
         </footer>
       </div>

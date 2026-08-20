@@ -1,5 +1,13 @@
 import { getActiveLandlordId } from '@/lib/activeLandlord'
-import { formatEventTypeLabel, formatWorkflowTimestamp } from '@/lib/adminWorkflows'
+import {
+  formatEventTypeLabel,
+  formatWorkflowTimestamp,
+  hasMappedEventTypeLabel,
+} from '@/lib/adminWorkflows'
+import {
+  isHiddenPipelineTimelineEventType,
+  isHiddenSmsTransportTimelineEventType,
+} from '@/lib/landlordFacingTimeline'
 import { supabase } from '@/lib/supabase'
 
 export type PropertyOperationsTimelineCategory =
@@ -65,6 +73,7 @@ const ADMIN_EVENT_PREFIXES = [
   'unit.',
   'tenant.',
   'sms.',
+  'attention.',
 ]
 
 type EnrichedGraphRow = {
@@ -280,6 +289,7 @@ const TENANT_ONBOARDING_EVENT_TYPES = new Set([
   'tenant.sms_opted_in',
   'tenant.sms_opted_out',
   'tenant.sms_help',
+  'tenant.activation_completed',
 ])
 
 /** Generic SMS lifecycle events count as onboarding only when not tied to a ticket. */
@@ -335,6 +345,7 @@ function mergeTenantOnboardingGroup(
   if (delivered) steps.push('delivered')
   if (replied) steps.push('resident replied')
   if (optedIn) steps.push('opted in to SMS updates')
+  if (types.has('tenant.activation_completed')) steps.push('activated')
   if (optedOut) steps.push('opted out')
   if (failed) steps.push('a delivery attempt failed')
 
@@ -344,6 +355,7 @@ function mergeTenantOnboardingGroup(
   return {
     ...latest,
     id: `tenant-onboarding:${residentId}:${day}`,
+    eventType: 'tenant.onboarding_verification',
     category: 'admin',
     label,
     message,
@@ -352,6 +364,56 @@ function mergeTenantOnboardingGroup(
     unitLabel,
     workflowRunId,
   }
+}
+
+function isMergedLandlordFacingFeedCard(event: PropertyOperationsTimelineEvent): boolean {
+  return event.id.startsWith('tenant-onboarding:') || event.id.startsWith('consolidated:')
+}
+
+/**
+ * Overview (and other landlord feeds) should show what happened — a work order
+ * opened, a vendor accepted, a welcome text sent — not engine/SMS plumbing.
+ */
+export function isLandlordFacingFeedEvent(event: PropertyOperationsTimelineEvent): boolean {
+  if (isMergedLandlordFacingFeedCard(event)) return true
+  if (isHiddenPipelineTimelineEventType(event.eventType)) return false
+  if (isHiddenSmsTransportTimelineEventType(event.eventType)) return false
+  return true
+}
+
+function looksLikeRawEventTypeLabel(eventType: string, label: string): boolean {
+  const fallback = eventType.replace(/[._]/g, ' ')
+  return label.trim().toLowerCase() === fallback.toLowerCase()
+}
+
+function landlordFacingEventLabel(event: PropertyOperationsTimelineEvent): string {
+  if (hasMappedEventTypeLabel(event.eventType) || isMergedLandlordFacingFeedCard(event)) {
+    return event.label
+  }
+  const message = event.message?.trim()
+  if (
+    message &&
+    message.length >= 12 &&
+    /[A-Za-z]/.test(message) &&
+    looksLikeRawEventTypeLabel(event.eventType, event.label)
+  ) {
+    return message.length > 90 ? `${message.slice(0, 87)}…` : message
+  }
+  return event.label
+}
+
+/** Collapse setup/onboarding noise, then keep only landlord-facing outcome lines. */
+export function selectLandlordFacingFeedEvents(
+  events: PropertyOperationsTimelineEvent[],
+  limit: number,
+): PropertyOperationsTimelineEvent[] {
+  return consolidateFeedEvents(events)
+    .filter(isLandlordFacingFeedEvent)
+    .map((event) => ({
+      ...event,
+      label: landlordFacingEventLabel(event),
+    }))
+    .slice(0, Math.max(limit, 0))
 }
 
 /** Collapse repetitive setup logs (e.g. onboarding registering many units). */
@@ -626,8 +688,8 @@ export async function fetchRecentPropertyOperationsEvents(
     }
   }
 
-  return consolidateFeedEvents([...merged.values()].sort((a, b) => b.createdAt.localeCompare(a.createdAt))).slice(
-    0,
+  return selectLandlordFacingFeedEvents(
+    [...merged.values()].sort((a, b) => b.createdAt.localeCompare(a.createdAt)),
     limit,
   )
 }

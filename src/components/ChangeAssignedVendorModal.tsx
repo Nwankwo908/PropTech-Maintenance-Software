@@ -4,7 +4,7 @@ import {
   type ExternalVendorSuggestionDto,
 } from '@/api/discoverExternalVendors'
 import { FindExternalVendorRail } from '@/components/FindExternalVendorRail'
-import { enrichExternalVendorSuggestions } from '@/lib/externalVendorDisplay'
+import { sanitizeExternalVendorDiscoveryForAccount } from '@/lib/externalVendorDisplay'
 import { getErrorMessage } from '@/lib/errorMessage'
 
 function IconWrenchHeader({ className = 'size-5 shrink-0 text-white' }: { className?: string }) {
@@ -87,8 +87,8 @@ export function ChangeAssignedVendorModal({
   const [externalLoading, setExternalLoading] = useState(false)
   const [externalError, setExternalError] = useState<string | null>(null)
   const [externalNotice, setExternalNotice] = useState<string | null>(null)
-  const [resolvedLocationLabel, setResolvedLocationLabel] = useState<string | null>(null)
   const [resolvedIssueCategory, setResolvedIssueCategory] = useState<string | null>(null)
+  const [resolvedAreaLabel, setResolvedAreaLabel] = useState<string | null>(null)
 
   useEffect(() => {
     if (!open) return
@@ -105,8 +105,8 @@ export function ChangeAssignedVendorModal({
     setExternalLoading(true)
     setExternalError(null)
     setExternalNotice(null)
-    setResolvedLocationLabel(null)
     setResolvedIssueCategory(null)
+    setResolvedAreaLabel(null)
     setExternalSuggestions([])
     setExternalProvidersUsed([])
     void (async () => {
@@ -117,17 +117,16 @@ export function ChangeAssignedVendorModal({
           ticketId: externalDiscovery.ticketId,
         })
         if (cancelled) return
-        if (res.notice) setExternalNotice(res.notice)
-        if (res.locationLabel) setResolvedLocationLabel(res.locationLabel)
+        const sanitized = sanitizeExternalVendorDiscoveryForAccount({
+          suggestions: res.suggestions ?? [],
+          providersUsed: res.providersUsed ?? [],
+          notice: res.notice,
+        })
+        if (sanitized.notice) setExternalNotice(sanitized.notice)
         if (res.issueCategory !== undefined) setResolvedIssueCategory(res.issueCategory)
-        setExternalSuggestions(
-          enrichExternalVendorSuggestions(
-            res.suggestions ?? [],
-            res.issueCategory,
-            res.locationLabel,
-          ),
-        )
-        setExternalProvidersUsed(res.providersUsed ?? [])
+        if (res.areaLabel) setResolvedAreaLabel(res.areaLabel)
+        setExternalSuggestions(sanitized.suggestions)
+        setExternalProvidersUsed(sanitized.providersUsed)
       } catch (e) {
         if (!cancelled) {
           setExternalError(getErrorMessage(e, 'Could not load suggestions'))
@@ -173,10 +172,10 @@ export function ChangeAssignedVendorModal({
         error={externalError}
         notice={externalNotice}
         locationLabel={
-          resolvedLocationLabel ??
           externalDiscovery?.locationLabel ??
           'Property · Unit'
         }
+        areaLabel={resolvedAreaLabel}
         issueCategory={
           resolvedIssueCategory ?? externalDiscovery?.issueCategory ?? null
         }

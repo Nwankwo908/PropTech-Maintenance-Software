@@ -143,6 +143,7 @@ export async function classifyMaintenanceRequest(
         safety: entities.safetyRisks,
         emergency: entities.emergencyType,
       }),
+      input.smsContext ?? null,
     )
 
   // Fuse signals

@@ -101,7 +101,7 @@ function humanizeEvent(eventType: string, meta: Record<string, unknown> | null):
     null
 
   if (/vendor.*reassign|reassign.*vendor|sla_expired|sla\.expired/.test(et)) {
-    return `Ulo reassigned a work order after a vendor missed the response deadline${
+    return `Ulo reassigned a work order after a vendor missed the response time${
       building ? ` at ${building}` : ""
     }.`
   }

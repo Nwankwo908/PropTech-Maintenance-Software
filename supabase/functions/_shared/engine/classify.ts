@@ -1,5 +1,10 @@
 import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.49.1"
 import { isLeaseRenewalInquirySms } from "../sms/leaseRenewalInquiry.ts"
+import {
+  shouldRejectMaintenanceTemplateForInterpretation,
+  shouldUnpinMaintenanceForInterpretation,
+} from "../sms/inboundInterpretation.ts"
+import { classifyTenantComplianceKeyword } from "../sms/tenantMessaging.ts"
 import { listWorkflowTemplates } from "./registry.ts"
 import { findActiveWorkflowRun } from "./workflowRuns.ts"
 import type {
@@ -14,6 +19,16 @@ export async function classifyWorkflow(
   ctx: WorkflowExecutionContext,
 ): Promise<ClassifiedIntent> {
   const sms = ctx.sms
+
+  // STOP / START / HELP are global consent commands. Handlers consume them first;
+  // if they reach the engine, do not continue maintenance, rent, or inspection.
+  if (sms && classifyTenantComplianceKeyword(sms.inbound.body)) {
+    return {
+      templateId: "landlord_command",
+      confidence: "low",
+      reason: "sms_consent_command",
+    }
+  }
 
   if (sms) {
     const byConversation = await findActiveWorkflowRun(supabase, {
@@ -31,14 +46,25 @@ export async function classifyWorkflow(
           sms.selfHealingPhase === "unresolved" ||
           !sms.continueIntake)
 
-      // Don't pin a lease/renewal ask to a maintenance_intake run — route to lease_renewal.
+      // Don't pin a lease/renewal ask — or any other non-repair intent — to
+      // a maintenance_intake run. Same thread can carry more than one outcome.
       const leaseInquiryOnMaintenance =
         byConversation.template_id === "maintenance_intake" &&
         isLeaseRenewalInquirySms(sms.inbound.body)
+      const interpretedNonMaintenance =
+        byConversation.template_id === "maintenance_intake" &&
+        shouldUnpinMaintenanceForInterpretation(
+          sms.interpretation,
+          sms.inbound.body,
+        )
 
       // Don't pin unknown / unlinked senders to a stuck maintenance_intake run —
       // that path only loops "need your unit number" without parsing unit replies.
-      if (!stuckMaintenanceWithoutResident && !leaseInquiryOnMaintenance) {
+      if (
+        !stuckMaintenanceWithoutResident &&
+        !leaseInquiryOnMaintenance &&
+        !interpretedNonMaintenance
+      ) {
         ctx.activeRun = byConversation
         ctx.runId = byConversation.id
         return {
@@ -49,10 +75,11 @@ export async function classifyWorkflow(
         }
       }
 
-      if (leaseInquiryOnMaintenance) {
-        console.info("[workflow-classify] lease inquiry overrides maintenance pin", {
+      if (leaseInquiryOnMaintenance || interpretedNonMaintenance) {
+        console.info("[workflow-classify] non-maintenance intent overrides maintenance pin", {
           runId: byConversation.id,
           conversationId: sms.conversationId,
+          intent: sms.interpretation?.intent ?? null,
         })
       }
 
@@ -111,6 +138,39 @@ export async function classifyWorkflow(
   candidates.sort((a, b) => rank[b.confidence] - rank[a.confidence])
 
   if (candidates[0]) return candidates[0]
+
+  if (sms?.identity.resident_id?.trim()) {
+    // Do not invent maintenance_intake for status / lease / other non-repair intents.
+    if (
+      shouldRejectMaintenanceTemplateForInterpretation(
+        sms.interpretation,
+        sms.inbound.body,
+      )
+    ) {
+      return {
+        templateId: "landlord_command",
+        confidence: "low",
+        reason: "non_maintenance_intent_no_template",
+      }
+    }
+    // Fresh repair only when interpretation explicitly approved a new issue
+    // (or interpretation never ran — compliance skip / legacy paths).
+    const approvedNewIssue =
+      !sms.interpretation ||
+      sms.interpretation.extractedSlots.contextual_action === "new_issue"
+    if (!approvedNewIssue) {
+      return {
+        templateId: "landlord_command",
+        confidence: "low",
+        reason: "existing_work_context_blocks_new_ticket",
+      }
+    }
+    return {
+      templateId: "maintenance_intake",
+      confidence: "low",
+      reason: "known_resident_fallback",
+    }
+  }
 
   return {
     templateId: "identity_onboarding",

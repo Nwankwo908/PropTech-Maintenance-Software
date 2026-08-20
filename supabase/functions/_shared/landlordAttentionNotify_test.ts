@@ -20,11 +20,11 @@ Deno.test("attention SMS identifies sender, reason, and dashboard link", () => {
 
 Deno.test("attention email subject and body stay plain-language", () => {
   const mail = buildLandlordAttentionEmail({
-    headline: "SLA breached — assign a vendor",
+    headline: "Response time exceeded — assign a vendor",
     detail: "WO-12AB · Unit 4A",
     dashboardUrl: "https://www.ulohome.io/admin",
   })
-  assertEquals(mail.subject, "Needs your attention: SLA breached — assign a vendor")
+  assertEquals(mail.subject, "Needs your attention: Response time exceeded — assign a vendor")
   assertStringIncludes(mail.text, "This is the property management team.")
   assertStringIncludes(mail.text, "Ulo Activity Feed")
   assertStringIncludes(mail.html, "Ulo Activity Feed")

@@ -1,10 +1,7 @@
 import type { ExternalVendorSuggestionDto } from '@/api/discoverExternalVendors'
-import { filterVendorsWithVerifiedCoi } from '@/lib/vendorCoiVerification'
-import { filterVendorsWithVerifiedLicense } from '@/lib/vendorLicenseVerification'
-import {
-  formatVendorTradeLabel,
-  issueCategoryToVendorTrade,
-} from '@/lib/vendorTrades'
+import { isDemoAccountActive } from '@/lib/activeLandlord'
+import { formatVendorTradeLabel } from '@/lib/vendorTrades'
+import { isDemoExternalVendorName } from '@shared/externalVendor/demoVendorNames'
 
 export type VendorRatingTier = {
   qualityLabel: string
@@ -41,26 +38,48 @@ function categoryTag(issueCategory: string | null | undefined): string {
   return formatVendorTradeLabel(issueCategory, { emptyLabel: 'Maintenance' })
 }
 
-export function formatExternalProviderChip(providersUsed: string[] | undefined): string {
-  const ids = (providersUsed ?? []).filter((p) => p !== 'mock')
-  if (ids.length === 0) return 'Demo search'
-  return ids
-    .map((p) => {
-      if (p === 'netvendor') return 'NetVendor'
-      if (p === 'google') return 'Google'
-      if (p === 'yelp') return 'Yelp'
-      return p.charAt(0).toUpperCase() + p.slice(1)
-    })
-    .join(' + ')
+function isMockOnlySuggestion(suggestion: ExternalVendorSuggestionDto): boolean {
+  if (isDemoExternalVendorName(suggestion.name)) return true
+  const sources = suggestion.sources ?? []
+  return sources.length === 0 || sources.every((src) => src === 'mock')
+}
+
+function isDemoProviderNotice(notice: string | null | undefined): boolean {
+  if (!notice?.trim()) return false
+  return /\b(demo|mock)\b/i.test(notice)
+}
+
+/** Alpha / real accounts never show mock vendor names. Demo account keeps them. */
+export function sanitizeExternalVendorDiscoveryForAccount<T extends ExternalVendorSuggestionDto>(input: {
+  suggestions: T[]
+  providersUsed?: string[]
+  notice?: string | null
+}): {
+  suggestions: T[]
+  providersUsed: string[]
+  notice: string | null
+} {
+  if (isDemoAccountActive()) {
+    return {
+      suggestions: input.suggestions,
+      providersUsed: input.providersUsed ?? [],
+      notice: input.notice ?? null,
+    }
+  }
+  return {
+    suggestions: input.suggestions.filter((row) => !isMockOnlySuggestion(row)),
+    providersUsed: (input.providersUsed ?? []).filter((p) => p !== 'mock'),
+    notice: isDemoProviderNotice(input.notice) ? null : input.notice ?? null,
+  }
 }
 
 export function buildExternalSearchQueryLabel(
   issueCategory: string | null | undefined,
-  locationLabel: string,
+  areaLabel: string,
 ): string {
   const trade = categoryTag(issueCategory).replace(/\s+maintenance$/i, '')
-  const loc = locationLabel.trim() || 'United States'
-  return `${trade} repair · ${loc} · within 50 mi`
+  const loc = areaLabel.trim()
+  return loc ? `${trade} repair · ${loc} · within 50 mi` : `${trade} repair · within 50 mi`
 }
 
 /** Rating + review-count recommendation tier (assign-vendor rail). */
@@ -192,16 +211,5 @@ export function enrichExternalVendorSuggestions(
     }
   })
 
-  const ranked = rows.sort(compareExternalVendorRows)
-  const licenseVerified = filterVendorsWithVerifiedLicense(ranked, issueCategory)
-  return filterVendorsWithVerifiedCoi(licenseVerified)
-}
-
-export function formatSourceBadgeLabel(
-  source: ExternalVendorDisplayRow['primarySource'],
-): string {
-  if (source === 'netvendor') return 'NetVendor'
-  if (source === 'google') return 'Google'
-  if (source === 'yelp') return 'Yelp'
-  return 'Demo'
+  return rows.sort(compareExternalVendorRows)
 }

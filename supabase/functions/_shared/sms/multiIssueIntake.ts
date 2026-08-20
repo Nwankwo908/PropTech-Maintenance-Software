@@ -11,6 +11,7 @@ import { matchDeterministicRules } from "../maintenance_classification/determini
 import type { VendorTrade } from "../maintenance_classification/types.ts"
 import { extractResidentAvailabilityText } from "./residentAvailabilityExtract.ts"
 import {
+  extractRoomFromText,
   pipelineTradeToIssueType,
   type PendingIntakeIssue,
   type SmsIntakeState,
@@ -139,7 +140,9 @@ async function pendingFromCluster(
     description: cluster.text,
     vendor_trade: trade,
     issue_type: issueType,
-    room_or_area: classified.entities.location ?? undefined,
+    room_or_area: classified.entities.location
+      ? extractRoomFromText(classified.entities.location) ?? undefined
+      : undefined,
     severity:
       classified.severity === "critical" || classified.severity === "urgent"
         ? "high"
@@ -209,7 +212,9 @@ export async function detectMultipleMaintenanceIssues(
           ? classified.vendorTrade
           : trade,
         issue_type: issueType,
-        room_or_area: classified.entities.location ?? undefined,
+        room_or_area: classified.entities.location
+          ? extractRoomFromText(classified.entities.location) ?? undefined
+          : undefined,
         severity:
           classified.severity === "critical" || classified.severity === "urgent"
             ? "high"
@@ -335,6 +340,7 @@ export function intakeStateForMultiIssueConfirm(
     step: "awaiting_multi_issue_confirm",
     initial_message: raw.trim(),
     description: raw.trim(),
+    photo_urls: [],
     pending_issues: issues,
     preferred_visit_windows: extractResidentAvailabilityText(raw) ?? undefined,
     severity: issues.some((i) => i.severity === "high") ? "high" : "normal",

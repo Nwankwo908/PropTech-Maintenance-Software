@@ -4,6 +4,7 @@ import {
   filterVendorEmailsFromOpsRecipients,
   normalizeOpsEmail,
   parseOpsEmailList,
+  resolveLandlordOpsEmails,
 } from "./landlordOpsNotify.ts"
 
 Deno.test("normalizeOpsEmail lowercases and rejects junk", () => {
@@ -40,4 +41,90 @@ Deno.test("filter never leaves a vendor on landlord approve list", () => {
   )
   assertEquals(allowed.includes("plumber@flex.com"), false)
   assertEquals(allowed, ["emeka@ulohome.io"])
+})
+
+function mockLandlordOpsSupabase(params: {
+  landlordEmail: string | null
+  vendorEmails?: string[]
+}) {
+  return {
+    from(table: string) {
+      if (table === "landlords") {
+        return {
+          select() {
+            return {
+              eq() {
+                return {
+                  async maybeSingle() {
+                    return {
+                      data: params.landlordEmail
+                        ? { email: params.landlordEmail }
+                        : null,
+                      error: null,
+                    }
+                  },
+                }
+              },
+            }
+          },
+        }
+      }
+      if (table === "vendors") {
+        return {
+          select() {
+            return {
+              eq() {
+                return {
+                  not() {
+                    return {
+                      async limit() {
+                        return {
+                          data: (params.vendorEmails ?? []).map((email) => ({
+                            email,
+                          })),
+                          error: null,
+                        }
+                      },
+                    }
+                  },
+                }
+              },
+            }
+          },
+        }
+      }
+      throw new Error(`unexpected table ${table}`)
+    },
+  }
+}
+
+Deno.test("accountHolderOnly skips staff env notify list", async () => {
+  const supabase = mockLandlordOpsSupabase({
+    landlordEmail: "owner@alpha.com",
+    vendorEmails: [],
+  })
+  const { emails } = await resolveLandlordOpsEmails(
+    supabase as never,
+    "landlord-1",
+    {
+      accountHolderOnly: true,
+      envEmails: ["osi@ulohome.io", "emeka@ulohome.io"],
+    },
+  )
+  assertEquals(emails, ["owner@alpha.com"])
+})
+
+Deno.test("default resolve still includes env notify emails", async () => {
+  const supabase = mockLandlordOpsSupabase({
+    landlordEmail: "owner@alpha.com",
+    vendorEmails: [],
+  })
+  const { emails } = await resolveLandlordOpsEmails(
+    supabase as never,
+    "landlord-1",
+    {
+      envEmails: ["osi@ulohome.io"],
+    },
+  )
+  assertEquals(emails, ["osi@ulohome.io", "owner@alpha.com"])
 })

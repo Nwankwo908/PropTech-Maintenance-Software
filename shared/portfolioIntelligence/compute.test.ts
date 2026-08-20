@@ -101,4 +101,50 @@ describe('computePortfolioIntelligence', () => {
     const insights = computePortfolioInsights(input)
     expect(insights.length).toBe(0)
   })
+
+  it('does not use cancelled or deleted work orders for pattern cards', () => {
+    const input: PortfolioIntelligenceInput = {
+      now: NOW,
+      units: [{ unitLabel: '4B', building: 'Oak Tower' }],
+      tickets: [
+        {
+          id: 'cancelled-1',
+          building: 'Oak Tower',
+          unit: '4B',
+          issueCategory: 'plumbing',
+          vendorWorkStatus: 'cancelled',
+          createdAt: daysAgo(4),
+          assignedVendorId: 'vendor-1',
+          urgency: 'normal',
+        },
+        {
+          id: 'cancelled-2',
+          building: 'Oak Tower',
+          unit: '4B',
+          issueCategory: 'plumbing',
+          vendorWorkStatus: 'cancelled',
+          createdAt: daysAgo(6),
+          assignedVendorId: 'vendor-1',
+          urgency: 'normal',
+        },
+        {
+          id: 'deleted-1',
+          building: 'Oak Tower',
+          unit: '4B',
+          issueCategory: 'plumbing',
+          vendorWorkStatus: 'deleted',
+          createdAt: daysAgo(8),
+          urgency: 'normal',
+        },
+      ],
+      vendorResponsePct: 100,
+      assignedWorkOrderCount: 2,
+    }
+
+    const insights = computePortfolioInsights(input)
+    expect(insights.some((i) => i.tag === 'RECURRING ISSUES')).toBe(false)
+    expect(insights.some((i) => i.tag === 'RISK')).toBe(false)
+    expect(insights.some((i) => i.tag === 'PREVENT FUTURE REPAIRS')).toBe(false)
+    expect(insights.some((i) => i.tag === 'VENDOR RESPONSE')).toBe(false)
+  })
 })

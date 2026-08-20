@@ -1,0 +1,39 @@
+---
+description: Landlord Timeline and activity feed show operational outcomes, not engine plumbing.
+globs: src/lib/slaOverdueActionReview.ts,src/lib/escalatedWorkflowReview.ts,src/lib/propertyOperationsGraph.ts,src/lib/landlordFacingTimeline.ts,src/components/SlaOverdueActionRail.tsx,src/components/PropertyOperationsTimeline.tsx
+alwaysApply: true
+---
+
+# Landlord Timeline — property-team outcomes only
+
+Timeline (right rails, Overview feed, operations history) is for the **property team**. Show what happened in the real world — not workflow-engine receipts.
+
+## Show
+
+Work opened, vendor accepted/declined, visit window, response time exceeded, resident text that changed the job, rent reminder sent, payment received, lease notice sent, escalation that needs a decision.
+
+## Hide
+
+| Kind | Examples |
+|---|---|
+| Pipeline stages | `workflow.trigger` / `classify` / `route` / `act` / `log` → “Workflow started”, “Classified”, “Routed”, “Action taken”, “Logged” |
+| SMS transport | `sms.delivered`, `sms.message_received` (outcomes live on domain events) |
+
+Keep `workflow.escalate` — that is a landlord-facing “needs attention” outcome.
+
+Rail Timeline must stay a **complete operational story** (reported → classified as issue → dispatched when relevant → response delayed). Hiding plumbing must not collapse 3 beats into 1 leftover engine row. Prefer the ticket story; only append extra domain facts (vendor declined, photos added).
+
+Copy stays plain language (no “workflow”, event types, IDs). Prefer `metadata.message` when it is already landlord-facing.
+
+## Where it lives
+
+- Shared filter: `isHiddenPipelineTimelineEventType` / `isVisibleLandlordTimelineDescription` in `src/lib/landlordFacingTimeline.ts`
+- Rails: `isVisibleSlaTimelineEntry` / `timelineFromWorkflowEvents`
+- Feed: `isLandlordFacingFeedEvent` in `propertyOperationsGraph.ts`
+
+## Do not
+
+- Dump `workflow_events` onto Timeline without the landlord-facing filter
+- Replace the operational story with leftover `workflow.act` / `workflow.log` / `workflow.trigger` rows
+- Add new pipeline-stage labels to Timeline to “explain the engine”
+- Treat SMS delivery receipts as Timeline rows

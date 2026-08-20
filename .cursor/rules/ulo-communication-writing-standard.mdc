@@ -10,7 +10,7 @@ Every Ulo SMS and email must read as if a thoughtful, professional property mana
 ## Voice
 - Clear, grammatically correct English at a 7th–9th grade reading level.
 - Warm, professional, and conversational. Short, easy sentences.
-- No technical or internal terminology (no "workflow", "verification record", "graph event", IDs, status enums, etc.).
+- No technical or internal terminology (no "workflow", "SLA", "verification record", "graph event", IDs, status enums, etc.).
 - No robotic or awkward phrasing. No emoji unless the user explicitly asks.
 
 ## Structure — every message should make these answerable

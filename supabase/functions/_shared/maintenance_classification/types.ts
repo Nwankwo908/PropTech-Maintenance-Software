@@ -6,6 +6,7 @@ export {
   type ClassificationEntities,
   type ClassificationResult,
   type ClassifyMaintenanceInput,
+  type ClassifyMaintenanceSmsContext,
   type ClarificationPrompt,
   type EmergencyType,
   type IssueType,

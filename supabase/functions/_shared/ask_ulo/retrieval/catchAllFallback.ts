@@ -97,7 +97,7 @@ export function formatCatchAllWorkOrdersMarkdown(
   lines.push(
     "### What I'd do next",
     "- Open the top work order and confirm vendor assignment and the latest update.",
-    "- If the vendor response deadline has passed, reassign or follow up before it becomes an emergency.",
+    "- If the response time has passed, reassign or follow up before it becomes an emergency.",
   )
 
   return polishAskUloProse(lines.join("\n").trim())

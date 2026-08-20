@@ -136,8 +136,8 @@ const TRIGGER_CONFIG: Record<VendorReassignTrigger, TriggerConfig> = {
     resumeWorkflow: true,
     logActivity: true,
     eventType: "maintenance.sla_auto_reassigned",
-    activityMessage: (name) => `SLA expired — auto-reassigned to ${name}.`,
-    workflowMessage: (name) => `Auto-reassigned to ${name} after SLA expired`,
+    activityMessage: (name) => `Response time expired — auto-reassigned to ${name}.`,
+    workflowMessage: (name) => `Auto-reassigned to ${name} after response time expired`,
     logLabel: "vendor-reassignment",
   },
   pending_accept_stale: {
@@ -271,17 +271,17 @@ const NO_VENDOR_ESCALATION: Record<
   },
   sla_expired: {
     escalationReason: "sla_expired_no_vendor",
-    eventMessage: "SLA expired — no roster vendor available for reassignment",
+    eventMessage: "Response time expired — no roster vendor available for reassignment",
     graphEventType: "maintenance.sla_expired_needs_vendor",
     graphMessage:
-      "SLA expired with no vendor in roster — admin must assign or onboard a vendor.",
+      "Response time expired with no vendor in roster — admin must assign or onboard a vendor.",
   },
   pending_accept_stale: {
     escalationReason: "sla_expired_no_vendor",
-    eventMessage: "SLA expired — no roster vendor available for reassignment",
+    eventMessage: "Response time expired — no roster vendor available for reassignment",
     graphEventType: "maintenance.sla_expired_needs_vendor",
     graphMessage:
-      "SLA expired with no vendor in roster — admin must assign or onboard a vendor.",
+      "Response time expired with no vendor in roster — admin must assign or onboard a vendor.",
   },
 }
 

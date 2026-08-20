@@ -27,6 +27,19 @@ function isMidIntake(state: SmsIntakeState): boolean {
   return Boolean(step && step !== "submitted")
 }
 
+/** This intake's photos only — never leftover URLs from a prior request. */
+function storagePhotoPaths(urls: string[] | undefined): string[] {
+  if (!Array.isArray(urls)) return []
+  const out: string[] = []
+  for (const raw of urls) {
+    const path = typeof raw === "string" ? raw.trim() : ""
+    if (!path) continue
+    if (/^https?:\/\//i.test(path)) continue
+    if (!out.includes(path)) out.push(path)
+  }
+  return out.slice(0, 24)
+}
+
 /** Enough signal to create a durable ticket (not waiting on vague clarification only). */
 export function shouldMintEarlyTicket(state: SmsIntakeState): boolean {
   if (state.step === "classification_clarification") return false
@@ -115,6 +128,7 @@ export async function ensureEarlySmsMaintenanceTicket(
         resident_phone: row.phone,
         resident_availability_text:
           params.intake.preferred_visit_windows?.trim() || null,
+        photo_paths: storagePhotoPaths(params.intake.photo_urls),
       })
       .eq("id", draftId)
 
@@ -146,7 +160,7 @@ export async function ensureEarlySmsMaintenanceTicket(
       unit,
       description,
       resident_user_id: null,
-      photo_paths: [],
+      photo_paths: storagePhotoPaths(params.intake.photo_urls),
       issue_category: issueCategory,
       severity: dbSeverity,
       estimated_minutes: estimatedMinutes,

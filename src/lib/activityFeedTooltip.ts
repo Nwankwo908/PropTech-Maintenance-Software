@@ -147,6 +147,14 @@ const EVENT_COPY: Record<string, EventCopyTemplate> = {
     status: 'Open',
     actionLabel: 'Click to view work order',
   },
+  'attention.dismissed': {
+    title: 'Removed from Needs Your Attention',
+    summary: ({ location }) =>
+      location
+        ? `This operation at **${location}** was deleted from Needs Your Attention. The work order is unchanged.`
+        : 'This operation was deleted from Needs Your Attention. The work order is unchanged.',
+    status: 'Removed',
+  },
   'rent.late_escalated': {
     title: 'Rent is still overdue',
     summary: ({ resident, location }) => {
@@ -277,6 +285,16 @@ const EVENT_COPY: Record<string, EventCopyTemplate> = {
         : 'Ulo started verifying the vendor’s insurance documents.',
     status: 'In review',
     actionLabel: 'View workflow',
+  },
+  'tenant.onboarding_verification': {
+    title: 'Tenant onboarding',
+    summary: ({ resident, message }) => {
+      if (message) return message
+      return resident
+        ? `Ulo sent **${resident}** a welcome text to confirm they can get updates by SMS.`
+        : 'Ulo sent a welcome text so the resident can get updates by SMS.'
+    },
+    status: 'Onboarding',
   },
 }
 

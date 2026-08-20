@@ -695,7 +695,7 @@ export async function processInspectionResidentReply(
   return {
     step: state.step ?? "awaiting_resident",
     replyHint:
-      "Thanks — please make sure we can access the unit for the inspection. Reply START when you're ready, or let us know if you need to reschedule.",
+      "Thanks — please make sure we can access the unit for the inspection. Reply READY when you're ready, or let us know if you need to reschedule.",
   }
 }
 

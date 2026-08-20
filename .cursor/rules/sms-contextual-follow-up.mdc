@@ -1,0 +1,61 @@
+---
+description: Before a tenant SMS starts a new workflow, continue or switch the existing request when the text is a follow-up.
+globs: supabase/functions/_shared/sms/inbound*.ts,supabase/functions/_shared/engine/classify.ts,supabase/functions/_shared/engine/templates/maintenance.ts
+alwaysApply: false
+---
+
+# Contextual follow-up — tenant inbound SMS
+
+Before routing any inbound tenant SMS into a **new** workflow, check recent conversation context and active records for a likely related request.
+
+Pipeline stays:
+
+```text
+handlers → tryHandleInterpretedInbound() → routeInboundSmsWorkflow()
+```
+
+Do **not** add a registry handler for this. Interpretation + `resolveContextualFollowUp` own the decision.
+
+## Pending question first
+
+When Ulo is waiting for a specific reply, decide whether the inbound **answers that pending question** before any other handler, workflow, or existing record (including an early/draft work order) can claim it.
+
+```text
+inbound → does it answer the pending question? → continue current workflow
+        → if not: follow-up / different intent / new request / one clarification
+```
+
+`shouldKeepActivePendingContext` + `pendingAnswerForStep` implement this. A draft ticket must **not** steal a wizard answer (photo-only MMS at the photo step, “today” at first-noticed, urgency keywords, summary YES).
+
+Pending context wins **only when the message reasonably belongs to that ask**. Lease/rent/move-out, cancel/resolution, a distinct new repair, or an appointment change still break out.
+
+## Rule
+
+| Tenant text | Action |
+|---|---|
+| Follow-up, correction, status, photo, schedule change, cancel, resolution, or escalation of an open request | Update/continue that request |
+| “Cancel”, “Cancel it”, “Never mind”, “I don’t need it”, “I fixed it” | Stop the current request (YES still required when a work order already exists). Close the ticket **and** its Active Tasks workflow run. |
+| Clearly a separate issue (e.g. “Also, my AC isn't working”) | Start the appropriate **new** workflow; do not let the previous intake trap the thread |
+| Answering an active intake question (room, when noticed, safety, urgency, **photo**, contact method, summary YES) | Stay on that wizard — do **not** treat “today”, a photo-only MMS, or short replies as a new request or a second attach to the draft ticket |
+| Different type of request (lease, rent, move-out) | Switch workflows |
+| Multiple open requests could match | Ask **one** short clarification; do not guess |
+
+STOP/HELP, payment confirms (1–4, APPROVE/DECLINE), and gas/safety stay on existing paths.
+
+Explicit YES is still required before mutating a work order, cancel, or reopen.
+
+## Where it lives
+
+- Heuristics: `inboundInterpretation.ts` (`pendingAnswerForStep`, `heuristicInterpretInbound`)
+- Keep-pending gate: `shouldKeepActivePendingContext` in `inboundContextualFollowUp.ts`
+- Decision: `resolveContextualFollowUp`
+- Act: `inboundInterpretationAct.ts` (`tryHandleInterpretedInbound`)
+- Cancel close: `closeWorkOrderCancelledByResident` (ticket + Active Tasks run)
+
+## Do not
+
+- Mint a new maintenance ticket for “it's getting worse”, “here's a better picture”, or “I fixed it” when an open request exists
+- Let an early/draft work order override an active intake question
+- Pin “also my AC…” onto an unrelated active intake
+- Use numbered replies (1/2) for which-request clarify — those collide with payment confirms
+- Add a registry handler for intake / follow-up / cancel

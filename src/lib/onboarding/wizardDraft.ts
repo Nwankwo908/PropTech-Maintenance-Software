@@ -30,6 +30,10 @@ export function buildOnboardingFormDraft(
   if (fastTrack?.extractionReview && hasExtractionReviewData(fastTrack.extractionReview)) {
     draft.extractionReview = fastTrack.extractionReview
   }
+  // Explicit null clears a previously persisted AI review (Back → Upload).
+  if (fastTrack && 'extractionReview' in fastTrack && fastTrack.extractionReview == null) {
+    delete draft.extractionReview
+  }
   return draft
 }
 

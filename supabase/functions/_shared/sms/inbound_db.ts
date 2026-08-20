@@ -850,7 +850,12 @@ export async function resolveOpenMaintenanceRequestId(
         .from("maintenance_requests")
         .select("id")
         .eq("unit", user.unit)
-        .not("vendor_work_status", "eq", "completed")
+        .in("vendor_work_status", [
+          "unassigned",
+          "pending_accept",
+          "accepted",
+          "in_progress",
+        ])
         .order("created_at", { ascending: false })
         .limit(1)
         .maybeSingle()
@@ -865,7 +870,12 @@ export async function resolveOpenMaintenanceRequestId(
     .from("maintenance_requests")
     .select("id")
     .eq("resident_phone", e164)
-    .not("vendor_work_status", "eq", "completed")
+    .in("vendor_work_status", [
+      "unassigned",
+      "pending_accept",
+      "accepted",
+      "in_progress",
+    ])
     .order("created_at", { ascending: false })
     .limit(1)
     .maybeSingle()

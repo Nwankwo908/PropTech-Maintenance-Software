@@ -6,6 +6,12 @@ import type {
   OnboardingUploadedDocument,
 } from '@/lib/onboardingDocumentUpload'
 import type { OnboardingApprovalRules } from '@/lib/onboardingApprovalRules'
+import {
+  RESIDENT_OCCUPANCY_OPTIONS,
+  normalizeResidentOccupancyStatus,
+  residentOccupancyLabel,
+  type ResidentOccupancyStatus,
+} from '@/lib/residentOccupancy'
 
 export type { OnboardingApprovalRules } from '@/lib/onboardingApprovalRules'
 
@@ -79,44 +85,20 @@ export type VendorFormRow = {
 }
 
 /** Resident occupancy / account status collected during onboarding. */
-export type OnboardingOccupancyStatus =
-  | 'active'
-  | 'pending'
-  | 'past_resident'
-  | 'suspended'
+export type OnboardingOccupancyStatus = ResidentOccupancyStatus
 
-export const ONBOARDING_OCCUPANCY_STATUS_OPTIONS: {
-  value: OnboardingOccupancyStatus
-  label: string
-}[] = [
-  { value: 'active', label: 'Occupied' },
-  { value: 'pending', label: 'Pending move-in' },
-  { value: 'past_resident', label: 'Past resident' },
-  { value: 'suspended', label: 'Suspended' },
-]
+export const ONBOARDING_OCCUPANCY_STATUS_OPTIONS = RESIDENT_OCCUPANCY_OPTIONS
 
 export function normalizeOnboardingOccupancyStatus(
   raw: unknown,
 ): OnboardingOccupancyStatus {
-  const v = String(raw ?? '').trim().toLowerCase()
-  if (v === 'pending' || v === 'pending_move_in' || v === 'pending move-in') {
-    return 'pending'
-  }
-  if (v === 'past_resident' || v === 'vacant' || v === 'moved_out') {
-    return 'past_resident'
-  }
-  if (v === 'suspended') return 'suspended'
-  if (v === 'occupied' || v === 'active') return 'active'
-  return 'active'
+  return normalizeResidentOccupancyStatus(raw)
 }
 
 export function onboardingOccupancyStatusLabel(
   status: OnboardingOccupancyStatus,
 ): string {
-  return (
-    ONBOARDING_OCCUPANCY_STATUS_OPTIONS.find((option) => option.value === status)
-      ?.label ?? 'Occupied'
-  )
+  return residentOccupancyLabel(status)
 }
 
 export type RentDueDayChoice = '' | '1' | '5' | 'custom'

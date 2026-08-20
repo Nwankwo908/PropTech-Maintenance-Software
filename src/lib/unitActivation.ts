@@ -13,22 +13,34 @@ import { getErrorMessage } from '@/lib/errorMessage'
 
 import { activateUnit, markUnitVacant } from '@/api/unitVacancy'
 import { getActiveLandlordId } from '@/lib/activeLandlord'
+import { extractedPlacesOverlap } from '@/lib/onboarding/persist/properties'
 import { normalizeBuildingKey, normalizeUnitLabel } from '@/lib/propertyHealth'
 import type { PropertyUnitOccupancyStatus } from '@/lib/propertyUnitRows'
+import {
+  normalizeResidentOccupancyStatus,
+  residentOccupancyLabel,
+  residentOccupancyOccupiesUnit,
+} from '@/lib/residentOccupancy'
 import { supabase } from '@/lib/supabase'
 
 const OCCUPYING_RESIDENT_STATUSES = new Set(['active', 'pending', 'suspended'])
+const propertySyncCompleted = new Set<string>()
 
 export type UnitActivationResident = {
   id: string
   unit: string | null | undefined
   building: string | null | undefined
   status?: string | null
+  /** Tenant SMS onboarding: `activated` after YES/START. */
+  activationStatus?: string | null
   moveInDate?: string | null
   leaseEndDate?: string | null
   /** Onboarding form aliases */
   leaseStart?: string | null
   leaseEnd?: string | null
+  /** Canonical occupancy / SMS identity unit id when known. */
+  occupancyUnitId?: string | null
+  identityUnitId?: string | null
 }
 
 export function residentHasLeaseDatesForActivation(resident: UnitActivationResident): boolean {
@@ -39,11 +51,73 @@ export function residentHasLeaseDatesForActivation(resident: UnitActivationResid
 
 export function residentQualifiesForUnitActivation(resident: UnitActivationResident): boolean {
   const unit = (resident.unit ?? '').trim()
-  if (!unit) return false
-  if (!residentHasLeaseDatesForActivation(resident)) return false
+  const hasCanonicalUnit = Boolean(
+    resident.occupancyUnitId?.trim() || resident.identityUnitId?.trim(),
+  )
+  if (!unit && !hasCanonicalUnit) return false
   const status = (resident.status ?? 'active').trim().toLowerCase()
-  if (status && !OCCUPYING_RESIDENT_STATUSES.has(status)) return false
-  return true
+  if (status === 'past_resident') return false
+  // Occupied / Suspended is an explicit occupancy choice (onboarding dropdown, edit resident).
+  if (residentOccupancyOccupiesUnit(status)) return true
+  // Tenant SMS YES/START still occupies even when the roster status is pending move-in.
+  return (resident.activationStatus ?? '').trim().toLowerCase() === 'activated'
+}
+
+export function unitBuildingsCompatibleForActivation(
+  unitBuilding: string | null | undefined,
+  residentBuilding: string | null | undefined,
+): boolean {
+  const resident = (residentBuilding ?? '').trim()
+  if (!resident) return true
+  const unit = (unitBuilding ?? '').trim()
+  if (!unit) return true
+  if (normalizeBuildingKey(unit) === normalizeBuildingKey(resident)) return true
+  return extractedPlacesOverlap(unit, resident)
+}
+
+export function findInventoryUnitForResident<
+  T extends { unitLabel: string; building: string | null },
+>(units: T[], resident: Pick<UnitActivationResident, 'unit' | 'building'>): T | undefined {
+  const unitKey = normalizeUnitLabel(resident.unit ?? '')
+  if (!unitKey) return undefined
+  const labelMatches = units.filter((row) => normalizeUnitLabel(row.unitLabel) === unitKey)
+  if (labelMatches.length === 0) return undefined
+
+  const compatible = labelMatches.filter((row) =>
+    unitBuildingsCompatibleForActivation(row.building, resident.building),
+  )
+  if (compatible.length === 1) return compatible[0]
+  if (compatible.length > 1) {
+    const exact = compatible.find(
+      (row) =>
+        normalizeBuildingKey(row.building) === normalizeBuildingKey(resident.building ?? ''),
+    )
+    return exact ?? compatible[0]
+  }
+  return undefined
+}
+
+/** Prefer occupancy / identity unit id; fall back to label match. Never inserts. */
+export function pickCanonicalUnitForResident<
+  T extends { id: string; unitLabel: string; building: string | null },
+>(
+  units: T[],
+  resident: Pick<
+    UnitActivationResident,
+    'unit' | 'building' | 'occupancyUnitId' | 'identityUnitId'
+  >,
+): T | undefined {
+  const occupancyId = resident.occupancyUnitId?.trim()
+  if (occupancyId) {
+    const match = units.find((row) => row.id === occupancyId)
+    if (match) return match
+  }
+  const identityId = resident.identityUnitId?.trim()
+  if (identityId) {
+    const match = units.find((row) => row.id === identityId)
+    if (match) return match
+  }
+  return findInventoryUnitForResident(units, resident)
 }
 
 function unitMatchesResident(
@@ -51,10 +125,12 @@ function unitMatchesResident(
   unitBuilding: string | null,
   resident: UnitActivationResident,
 ): boolean {
-  if (normalizeUnitLabel(unitLabel) !== normalizeUnitLabel(resident.unit ?? '')) return false
-  const residentBuilding = (resident.building ?? '').trim()
-  if (!residentBuilding) return true
-  return normalizeBuildingKey(unitBuilding) === normalizeBuildingKey(residentBuilding)
+  return Boolean(
+    findInventoryUnitForResident(
+      [{ unitLabel, building: unitBuilding }],
+      resident,
+    ),
+  )
 }
 
 async function ensureOccupancy(params: {
@@ -108,7 +184,56 @@ async function logUnitActivated(params: {
       building: params.building,
       move_in_date: params.moveInDate,
       activation_path: params.source,
-      message: `Unit ${params.unitLabel} activated`,
+      message: `Unit ${params.unitLabel} is occupied`,
+    },
+  })
+}
+
+async function logUnitVacated(params: {
+  landlordId: string
+  unitId: string
+  residentId: string | null
+  unitLabel: string
+  building: string | null
+  source: string
+}): Promise<void> {
+  const { recordActivityLog } = await import('@/lib/recordActivityLog')
+  await recordActivityLog({
+    landlordId: params.landlordId,
+    eventType: 'move_out.unit_vacated',
+    source: params.source,
+    actorType: 'landlord',
+    unitId: params.unitId,
+    residentId: params.residentId,
+    metadata: {
+      unit_label: params.unitLabel,
+      building: params.building,
+      activation_path: params.source,
+      message: `Unit ${params.unitLabel} marked vacant`,
+    },
+  })
+}
+
+async function logResidentOccupancyUpdated(params: {
+  landlordId: string
+  residentId: string
+  unitId: string | null
+  residentName: string | null
+  occupancyLabel: string
+  source: string
+}): Promise<void> {
+  const { recordActivityLog } = await import('@/lib/recordActivityLog')
+  const who = params.residentName?.trim() || 'Resident'
+  await recordActivityLog({
+    landlordId: params.landlordId,
+    eventType: 'resident.occupancy_updated',
+    source: params.source,
+    actorType: 'landlord',
+    unitId: params.unitId,
+    residentId: params.residentId,
+    metadata: {
+      occupancy_label: params.occupancyLabel,
+      message: `${who} occupancy set to ${params.occupancyLabel}`,
     },
   })
 }
@@ -391,35 +516,110 @@ export async function activateUnitsFromResidentAssignments(params?: {
   const source = params?.source ?? 'resident_assignment'
   const errors: string[] = []
 
+  if (source === 'property_sync' && propertySyncCompleted.has(landlordId)) {
+    return { activated: 0, errors: [] }
+  }
+
+  if (source === 'property_sync' && supabase) {
+    const { count, error: inactiveError } = await supabase
+      .from('units')
+      .select('id', { count: 'exact', head: true })
+      .eq('landlord_id', landlordId)
+      .eq('status', 'inactive')
+    if (!inactiveError && (count ?? 0) === 0) {
+      propertySyncCompleted.add(landlordId)
+      return { activated: 0, errors: [] }
+    }
+  }
+
   let residents = params?.residents
   if (!residents) {
-    const { data, error } = await supabase
+    const selectWithActivation =
+      'id, unit, building, status, move_in_date, lease_end_date, activation_status'
+    const selectLegacy = 'id, unit, building, status, move_in_date, lease_end_date'
+    let data: unknown[] | null = null
+    let error: { message: string } | null = null
+    const primary = await supabase
       .from('users')
-      .select('id, unit, building, status, move_in_date, lease_end_date')
+      .select(selectWithActivation)
       .eq('landlord_id', landlordId)
+    if (primary.error && /column .* does not exist/i.test(primary.error.message)) {
+      const legacy = await supabase
+        .from('users')
+        .select(selectLegacy)
+        .eq('landlord_id', landlordId)
+      data = (legacy.data as unknown[] | null) ?? null
+      error = legacy.error
+    } else {
+      data = (primary.data as unknown[] | null) ?? null
+      error = primary.error
+    }
     if (error) {
       return { activated: 0, errors: [error.message] }
     }
-    residents = (data ?? []).map((row) => ({
-      id: String((row as { id: string }).id),
-      unit: String((row as { unit?: string | null }).unit ?? ''),
-      building: String((row as { building?: string | null }).building ?? ''),
-      status: String((row as { status?: string | null }).status ?? ''),
-      moveInDate: String((row as { move_in_date?: string | null }).move_in_date ?? '') || null,
-      leaseEndDate: String((row as { lease_end_date?: string | null }).lease_end_date ?? '') || null,
-    }))
+    residents = (data ?? []).map((row) => {
+      const record = row as {
+        id: string
+        unit?: string | null
+        building?: string | null
+        status?: string | null
+        activation_status?: string | null
+        move_in_date?: string | null
+        lease_end_date?: string | null
+      }
+      return {
+        id: String(record.id),
+        unit: String(record.unit ?? ''),
+        building: String(record.building ?? ''),
+        status: String(record.status ?? ''),
+        activationStatus: String(record.activation_status ?? '') || null,
+        moveInDate: String(record.move_in_date ?? '') || null,
+        leaseEndDate: String(record.lease_end_date ?? '') || null,
+      }
+    })
   }
 
   const qualified = residents.filter(residentQualifiesForUnitActivation)
-  if (qualified.length === 0) return { activated: 0, errors: [] }
+  if (residents.length === 0) return { activated: 0, errors: [] }
 
   const { data: unitRows, error: unitsError } = await supabase
     .from('units')
-    .select('id, unit_label, building, status')
+    .select('id, unit_label, building, status, property_id')
     .eq('landlord_id', landlordId)
 
   if (unitsError) {
     return { activated: 0, errors: [unitsError.message] }
+  }
+
+  const occupancyByResident = new Map<string, string>()
+  const identityByResident = new Map<string, string>()
+  const lookupIds = residents.map((row) => row.id)
+  const [{ data: occupancyRows }, { data: identityRows }] = await Promise.all([
+    supabase
+      .from('occupancy')
+      .select('resident_id, unit_id')
+      .eq('landlord_id', landlordId)
+      .eq('status', 'active')
+      .in('resident_id', lookupIds),
+    supabase
+      .from('sms_identities')
+      .select('resident_id, unit_id')
+      .eq('landlord_id', landlordId)
+      .in('resident_id', lookupIds),
+  ])
+  for (const row of occupancyRows ?? []) {
+    const residentId = String((row as { resident_id?: string }).resident_id ?? '')
+    const unitId = String((row as { unit_id?: string }).unit_id ?? '')
+    if (residentId && unitId && !occupancyByResident.has(residentId)) {
+      occupancyByResident.set(residentId, unitId)
+    }
+  }
+  for (const row of identityRows ?? []) {
+    const residentId = String((row as { resident_id?: string }).resident_id ?? '')
+    const unitId = String((row as { unit_id?: string }).unit_id ?? '')
+    if (residentId && unitId && !identityByResident.has(residentId)) {
+      identityByResident.set(residentId, unitId)
+    }
   }
 
   const units = (unitRows ?? []) as Array<{
@@ -433,8 +633,18 @@ export async function activateUnitsFromResidentAssignments(params?: {
   const touchedUnitIds = new Set<string>()
 
   for (const resident of qualified) {
-    const unit = units.find((row) =>
-      unitMatchesResident(row.unit_label, row.building, resident),
+    const unit = pickCanonicalUnitForResident(
+      units.map((row) => ({
+        id: row.id,
+        unitLabel: row.unit_label,
+        building: row.building,
+        status: row.status,
+      })),
+      {
+        ...resident,
+        occupancyUnitId: resident.occupancyUnitId ?? occupancyByResident.get(resident.id) ?? null,
+        identityUnitId: resident.identityUnitId ?? identityByResident.get(resident.id) ?? null,
+      },
     )
     if (!unit || touchedUnitIds.has(unit.id)) continue
     if (unit.status === 'active') {
@@ -447,11 +657,18 @@ export async function activateUnitsFromResidentAssignments(params?: {
         residentId: resident.id,
         moveInDate: moveIn,
       })
+      touchedUnitIds.add(unit.id)
       continue
     }
 
-    // Respect admin chip choices — only auto-activate pending-setup (inactive) units.
-    if (unit.status === 'vacant' || unit.status === 'under_maintenance') continue
+    // Property sync must not overwrite an admin Vacant / Under maintenance chip.
+    // Onboarding Occupied (and edit resident) should occupy the assigned unit.
+    if (
+      source === 'property_sync' &&
+      (unit.status === 'vacant' || unit.status === 'under_maintenance')
+    ) {
+      continue
+    }
 
     const { error: updateError } = await supabase
       .from('units')
@@ -492,6 +709,48 @@ export async function activateUnitsFromResidentAssignments(params?: {
     activated += 1
   }
 
+  const occupyingUnitIds = new Set(touchedUnitIds)
+  if (source !== 'property_sync') {
+    for (const resident of residents) {
+      const occupancy = normalizeResidentOccupancyStatus(resident.status)
+      if (occupancy !== 'past_resident' && occupancy !== 'pending') continue
+      const unit = pickCanonicalUnitForResident(
+        units.map((row) => ({
+          id: row.id,
+          unitLabel: row.unit_label,
+          building: row.building,
+          status: row.status,
+        })),
+        {
+          ...resident,
+          occupancyUnitId: resident.occupancyUnitId ?? occupancyByResident.get(resident.id) ?? null,
+          identityUnitId: resident.identityUnitId ?? identityByResident.get(resident.id) ?? null,
+        },
+      )
+      if (!unit || occupyingUnitIds.has(unit.id)) continue
+      if (unit.status === 'vacant' || unit.status === 'under_maintenance') continue
+      if (unit.status === 'inactive' && occupancy === 'pending') continue
+
+      const vacated = await setUnitStatusDirect({
+        unitId: unit.id,
+        landlordId,
+        status: 'vacant',
+        source,
+        residentId: resident.id,
+      })
+      if (!vacated.ok) {
+        errors.push(`${unit.unit_label}: ${vacated.error}`)
+        continue
+      }
+      unit.status = 'vacant'
+      occupyingUnitIds.add(unit.id)
+    }
+  }
+
+  if (source === 'property_sync') {
+    propertySyncCompleted.add(landlordId)
+  }
+
   return { activated, errors }
 }
 
@@ -500,6 +759,8 @@ async function setUnitStatusDirect(params: {
   landlordId: string
   status: 'active' | 'vacant' | 'under_maintenance'
   skipTenantRegistration?: boolean
+  source?: string
+  residentId?: string | null
 }): Promise<{ ok: true } | { ok: false; error: string }> {
   if (!supabase) return { ok: false, error: 'We can\'t reach the server right now. Please try again in a moment.' }
 
@@ -518,24 +779,124 @@ async function setUnitStatusDirect(params: {
   if (error) return { ok: false, error: getErrorMessage(error, 'Something went wrong. Please try again.') }
   if (!data?.id) return { ok: false, error: 'Unit not found.' }
 
+  const unitLabel = String((data as { unit_label?: string }).unit_label ?? '')
+  const building = ((data as { building?: string | null }).building ?? null) as string | null
+  const source = params.source ?? 'admin_status_chip'
+
   if (params.status === 'active') {
     await linkAssignedResidentOnActivate({
       landlordId: params.landlordId,
       unitId: String(data.id),
-      unitLabel: String((data as { unit_label?: string }).unit_label ?? ''),
-      building: ((data as { building?: string | null }).building ?? null) as string | null,
+      unitLabel,
+      building,
     })
     await logUnitActivated({
       landlordId: params.landlordId,
       unitId: String(data.id),
-      residentId: null,
-      unitLabel: String((data as { unit_label?: string }).unit_label ?? ''),
-      building: ((data as { building?: string | null }).building ?? null) as string | null,
-      source: 'admin_status_chip',
+      residentId: params.residentId ?? null,
+      unitLabel,
+      building,
+      source,
       moveInDate: null,
     })
   }
 
+  if (params.status === 'vacant') {
+    await logUnitVacated({
+      landlordId: params.landlordId,
+      unitId: String(data.id),
+      residentId: params.residentId ?? null,
+      unitLabel,
+      building,
+      source,
+    })
+  }
+
+  return { ok: true }
+}
+
+/**
+ * Persist roster occupancy onto the assigned unit so Residents, the property
+ * Units chip, and the operations graph stay in sync.
+ */
+export async function syncAssignedUnitOccupancyFromResidentStatus(params: {
+  landlordId?: string
+  residentId: string
+  unitId?: string | null
+  unitLabel?: string | null
+  building?: string | null
+  status: string
+  residentName?: string | null
+  source?: string
+}): Promise<{ ok: true } | { ok: false; error: string }> {
+  const landlordId = params.landlordId?.trim() || getActiveLandlordId()
+  const occupancy = normalizeResidentOccupancyStatus(params.status)
+  const source = params.source ?? 'resident_occupancy'
+  const occupancyLabel = residentOccupancyLabel(occupancy)
+
+  let unitId = params.unitId?.trim() || ''
+  if (!unitId && supabase) {
+    const { data } = await supabase
+      .from('units')
+      .select('id, unit_label, building, status')
+      .eq('landlord_id', landlordId)
+    const match = pickCanonicalUnitForResident(
+      ((data ?? []) as Array<{
+        id: string
+        unit_label: string
+        building: string | null
+        status: string
+      }>).map((row) => ({
+        id: row.id,
+        unitLabel: row.unit_label,
+        building: row.building,
+        status: row.status,
+      })),
+      {
+        id: params.residentId,
+        unit: params.unitLabel,
+        building: params.building,
+        occupancyUnitId: params.unitId,
+      },
+    )
+    unitId = match?.id ?? ''
+  }
+
+  if (unitId) {
+    if (residentOccupancyOccupiesUnit(occupancy)) {
+      const result = await applyAdminUnitOccupancyStatus({
+        unitId,
+        status: 'occupied',
+        landlordId,
+      })
+      if (!result.ok) return result
+    } else if (occupancy === 'past_resident') {
+      const result = await applyAdminUnitOccupancyStatus({
+        unitId,
+        status: 'vacant',
+        landlordId,
+      })
+      if (!result.ok) return result
+    } else {
+      const result = await setUnitStatusDirect({
+        unitId,
+        landlordId,
+        status: 'vacant',
+        source,
+        residentId: params.residentId,
+      })
+      if (!result.ok) return result
+    }
+  }
+
+  await logResidentOccupancyUpdated({
+    landlordId,
+    residentId: params.residentId,
+    unitId: unitId || null,
+    residentName: params.residentName ?? null,
+    occupancyLabel,
+    source,
+  })
   return { ok: true }
 }
 

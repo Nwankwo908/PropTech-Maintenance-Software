@@ -1,6 +1,5 @@
 import { getActiveLandlordId } from '@/lib/activeLandlord'
 import { supabase } from '@/lib/supabase'
-import { getErrorMessage } from '@/lib/errorMessage'
 import {
   isOnboardingImportLeaseRenewalRun,
   retireOnboardingImportLeaseRenewals,
@@ -182,6 +181,53 @@ export const WORKFLOW_GROUP_TITLES: Record<WorkflowTemplateGroupId, string> = {
 
 const MAINTENANCE_TEMPLATE_IDS = new Set(['maintenance_request', 'maintenance_intake'])
 
+/** Ticket id on a maintenance run: entity id, or intake metadata when the run is still conversation-keyed. */
+export function maintenanceTicketIdFromWorkflowRun(run: {
+  templateId?: string | null
+  entityType?: string | null
+  entityId?: string | null
+  metadata?: Record<string, unknown> | null
+}): string | null {
+  const entityId = typeof run.entityId === 'string' ? run.entityId.trim() : ''
+  if (
+    entityId &&
+    (run.entityType === 'maintenance_request' || run.templateId === 'maintenance_request')
+  ) {
+    return entityId
+  }
+  const meta = run.metadata && typeof run.metadata === 'object' ? run.metadata : {}
+  for (const key of ['draft_ticket_id', 'maintenance_request_id'] as const) {
+    const value = meta[key]
+    if (typeof value === 'string' && value.trim()) return value.trim()
+  }
+  return null
+}
+
+/** Cancelled work orders must not appear as open Active Tasks, even if the run row is still `active`. */
+export function isCancelledOnActiveTasks(row: {
+  status?: string | null
+  vendorWorkStatus?: string | null
+}): boolean {
+  if ((row.status ?? '').trim().toLowerCase() === 'cancelled') return true
+  return (row.vendorWorkStatus ?? '').trim().toLowerCase() === 'cancelled'
+}
+
+/** Completed repairs belong in Active Tasks Completed — not Needs Your Attention. */
+export function isCompletedOnActiveTasks(row: {
+  status?: string | null
+  vendorWorkStatus?: string | null
+}): boolean {
+  if ((row.status ?? '').trim().toLowerCase() === 'completed') return true
+  return (row.vendorWorkStatus ?? '').trim().toLowerCase() === 'completed'
+}
+
+export function isSettledOnActiveTasks(row: {
+  status?: string | null
+  vendorWorkStatus?: string | null
+}): boolean {
+  return isCancelledOnActiveTasks(row) || isCompletedOnActiveTasks(row)
+}
+
 export function workflowTemplateGroupId(templateId: string): WorkflowTemplateGroupId | null {
   if (MAINTENANCE_TEMPLATE_IDS.has(templateId)) return 'maintenance'
   if (templateId === 'rent_collection') return 'rent_collection'
@@ -201,7 +247,13 @@ export function formatLocationContext(row: AdminWorkflowRow): AdminWorkflowGroup
 
 export function formatLocationContextLabel(context: AdminWorkflowGroupContext | null): string {
   if (!context) return '—'
-  const parts = [context.propertyLabel, context.unitLabel].filter(Boolean)
+  const unitRaw = String(context.unitLabel ?? '').trim()
+  const unitDisplay = !unitRaw
+    ? ''
+    : /^unit\s+/i.test(unitRaw)
+      ? unitRaw.replace(/^unit\s+/i, 'Unit ')
+      : `Unit ${unitRaw}`
+  const parts = [context.propertyLabel, unitDisplay].filter(Boolean)
   const location = parts.length ? parts.join(' · ') : null
   if (location && context.residentName) {
     return `${location} · ${context.residentName}`
@@ -327,12 +379,47 @@ const EVENT_LABELS: Record<string, string> = {
   'workflow.act': 'Action taken',
   'workflow.escalate': 'Escalated',
   'workflow.log': 'Logged',
+  'maintenance.created': 'Work order opened',
+  'maintenance.completed': 'Repair completed',
+  'vendor.accepted': 'Vendor accepted the job',
+  'vendor.declined': 'Vendor declined the job',
+  'tenant.activation_sms_sent': 'Welcome text sent',
+  'tenant.activation_sms_failed': 'Welcome text could not be sent',
+  'tenant.sms_opted_in': 'Resident opted in to texts',
+  'tenant.sms_opted_out': 'Resident opted out of texts',
+  'tenant.sms_help': 'Resident asked for help over text',
+  'tenant.activation_completed': 'Resident activated',
+  'tenant.onboarding_verification': 'Tenant onboarding verification',
+  'sms.delivery_failed': 'Text could not be delivered',
   'maintenance.sla_auto_reassigned':
     "Vendor didn't respond in time. The job was reassigned.",
   'maintenance.external_vendor_reassigned': 'External vendor assigned',
   'maintenance.sla_expired_needs_vendor': 'Vendor Needed, Response Time Expired',
   'unit.registered': 'Unit registered',
   'tenant.sms_registered': 'Resident SMS linked',
+  'sms.intake_handed_off': 'Resident text handed off to the property team',
+  'sms.routed_to_landlord': 'Resident text routed to the property team',
+  'lease.info_answered': 'Lease details shared over text',
+  'sms.lease_info_missing': 'Leasing information is missing',
+  'sms.rent_balance_answered': 'Rent balance shared over text',
+  'sms.rent_payment_status_answered': 'Rent payment status shared over text',
+  'sms.rent_late_noted': 'Resident said rent will be late',
+  'sms.maintenance_status_answered': 'Repair status shared over text',
+  'sms.maintenance_update_noted': 'Repair update noted, waiting for confirm',
+  'sms.maintenance_update_applied': 'Repair update added to the work order',
+  'sms.maintenance_followup_clarify': 'Asked which open request the resident meant',
+  'sms.maintenance_update_declined': 'Resident chose not to add a repair update',
+  'sms.maintenance_reopened': 'Repair reopened after resident said it was not fixed',
+  'sms.maintenance_cancel_noted': 'Repair cancel request noted, waiting for confirm',
+  'sms.maintenance_cancelled': 'Repair cancelled from resident text',
+  'sms.maintenance_cancel_declined': 'Resident chose not to cancel the repair',
+  'sms.maintenance_cancel_needs_review': 'Repair cancel needs the property team',
+  'sms.schedule_change_requested': 'Resident asked to change a visit time',
+  'sms.access_instruction_saved': 'Access notes saved from resident text',
+  'sms.move_out_noted': 'Move-out request noted from resident text',
+  'sms.move_out_started': 'Move-out started from resident text',
+  'sms.move_out_declined': 'Resident chose not to start a move-out',
+  'attention.dismissed': 'Removed from Needs Your Attention',
 }
 
 const RENT_CLASSIFICATION_LABELS: Record<RentCollectionClassification, string> = {
@@ -453,6 +540,10 @@ function deriveReminderSent(metadata: Record<string, unknown>): {
 
 export function formatEventTypeLabel(eventType: string): string {
   return EVENT_LABELS[eventType] ?? eventType.replace(/[._]/g, ' ')
+}
+
+export function hasMappedEventTypeLabel(eventType: string): boolean {
+  return Object.prototype.hasOwnProperty.call(EVENT_LABELS, eventType)
 }
 
 export function formatRentClassificationLabel(
@@ -666,7 +757,9 @@ function buildWorkflowGroupCard(
   metadataByRunId: Map<string, Record<string, unknown>>,
   isOverdue: (row: AdminWorkflowRow, metadata: Record<string, unknown>) => boolean,
 ): AdminWorkflowGroupCard {
-  const activeCount = runs.filter((row) => row.status === 'active').length
+  const activeCount = runs.filter(
+    (row) => row.status === 'active' && !isCancelledOnActiveTasks(row),
+  ).length
   const completedCount = runs.filter((row) => row.status === 'completed').length
   const overdueCount = runs.filter((row) =>
     isOverdue(row, metadataByRunId.get(row.id) ?? {})
@@ -738,15 +831,25 @@ export function emptyAdminWorkflowDashboardData(): AdminWorkflowDashboardData {
   }
 }
 
-export async function fetchAdminWorkflowDashboard(): Promise<AdminWorkflowDashboardData> {
+export type FetchAdminWorkflowDashboardOptions = {
+  /** When set, only this resident’s open runs are loaded (skips portfolio-wide cleanup). */
+  residentId?: string
+}
+
+export async function fetchAdminWorkflowDashboard(
+  options?: FetchAdminWorkflowDashboardOptions,
+): Promise<AdminWorkflowDashboardData> {
   if (!supabase) {
     return emptyAdminWorkflowDashboardData()
   }
 
   const landlordId = getActiveLandlordId()
-  await retireOnboardingImportLeaseRenewals(landlordId)
+  const residentId = options?.residentId?.trim() || null
+  if (!residentId) {
+    await retireOnboardingImportLeaseRenewals(landlordId)
+  }
 
-  const { data: runsRaw, error: runsError } = await supabase
+  let runsQuery = supabase
     .from('workflow_runs')
     .select(
       `
@@ -766,12 +869,20 @@ export async function fetchAdminWorkflowDashboard(): Promise<AdminWorkflowDashbo
     `,
     )
     .eq('landlord_id', landlordId)
+
+  if (residentId) {
+    runsQuery = runsQuery
+      .eq('resident_id', residentId)
+      .in('status', ['active', 'escalated'])
+  }
+
+  const { data: runsRaw, error: runsError } = await runsQuery
     .order('started_at', { ascending: false })
-    .limit(250)
+    .limit(residentId ? 40 : 250)
 
   if (runsError) {
     console.error('[admin-workflows] workflow_runs fetch', runsError.message)
-    throw new Error(getErrorMessage(runsError, 'Something went wrong. Please try again.'))
+    return emptyAdminWorkflowDashboardData()
   }
 
   const runs = ((runsRaw ?? []) as WorkflowRunRecord[]).filter(
@@ -796,13 +907,18 @@ export async function fetchAdminWorkflowDashboard(): Promise<AdminWorkflowDashbo
     ),
   ]
 
+  const eventsQuery = runIds.length
+    ? supabase
+        .from('workflow_events')
+        .select('id, workflow_run_id, event_type, message, step, stage, created_at')
+        .in('workflow_run_id', runIds)
+        .order('created_at', { ascending: true })
+        .limit(residentId ? 300 : 2000)
+    : null
+
   const [eventsResult, residentsResult, unitsResult] = await Promise.all([
-    runIds.length
-      ? supabase
-          .from('workflow_events')
-          .select('id, workflow_run_id, event_type, message, step, stage, created_at')
-          .in('workflow_run_id', runIds)
-          .order('created_at', { ascending: true })
+    eventsQuery
+      ? eventsQuery
       : Promise.resolve({ data: [], error: null }),
     residentIds.length
       ? supabase
@@ -852,15 +968,15 @@ export async function fetchAdminWorkflowDashboard(): Promise<AdminWorkflowDashbo
   const maintenanceTicketIds = [
     ...new Set(
       runs
-        .filter(
-          (run) =>
-            MAINTENANCE_TEMPLATE_IDS.has(run.template_id) &&
-            typeof run.entity_id === 'string' &&
-            run.entity_id.trim().length > 0 &&
-            (run.entity_type === 'maintenance_request' ||
-              run.template_id === 'maintenance_request'),
+        .map((run) =>
+          maintenanceTicketIdFromWorkflowRun({
+            templateId: run.template_id,
+            entityType: run.entity_type,
+            entityId: run.entity_id,
+            metadata: run.metadata,
+          }),
         )
-        .map((run) => run.entity_id!.trim()),
+        .filter((id): id is string => Boolean(id)),
     ),
   ]
 
@@ -902,10 +1018,13 @@ export async function fetchAdminWorkflowDashboard(): Promise<AdminWorkflowDashbo
     const resident = run.resident_id ? residentById.get(run.resident_id) : null
     const unit = run.unit_id ? unitById.get(run.unit_id) : null
     const latestEvent = latestEventByRun.get(run.id)
-    const ticket =
-      typeof run.entity_id === 'string' && run.entity_id.trim()
-        ? ticketById.get(run.entity_id.trim())
-        : undefined
+    const ticketId = maintenanceTicketIdFromWorkflowRun({
+      templateId: run.template_id,
+      entityType: run.entity_type,
+      entityId: run.entity_id,
+      metadata: metadata,
+    })
+    const ticket = ticketId ? ticketById.get(ticketId) : undefined
 
     const unitLabel =
       readMetaString(metadata, 'unit_label') ??
@@ -947,6 +1066,7 @@ export async function fetchAdminWorkflowDashboard(): Promise<AdminWorkflowDashbo
   const active = rows.filter(
     (row) =>
       row.status === 'active' &&
+      !isCancelledOnActiveTasks(row) &&
       row.templateId !== 'rent_collection' &&
       !isLifecycleTemplateId(row.templateId),
   )
@@ -954,6 +1074,7 @@ export async function fetchAdminWorkflowDashboard(): Promise<AdminWorkflowDashbo
     .filter(
       (row) =>
         row.status === 'escalated' &&
+        !isSettledOnActiveTasks(row) &&
         row.templateId !== 'rent_collection' &&
         !isLifecycleTemplateId(row.templateId),
     )

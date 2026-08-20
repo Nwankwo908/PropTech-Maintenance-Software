@@ -371,7 +371,7 @@ export function deriveMaintenanceKanbanStage(row: AdminWorkflowRow): WorkflowKan
   if (row.status === 'completed') return 'completed'
 
   const vendorStatus = (row.vendorWorkStatus ?? '').trim().toLowerCase()
-  if (vendorStatus === 'completed') return 'completed'
+  if (vendorStatus === 'completed' || vendorStatus === 'cancelled') return 'completed'
   if (vendorStatus === 'in_progress' || vendorStatus === 'accepted') {
     return 'in_progress'
   }

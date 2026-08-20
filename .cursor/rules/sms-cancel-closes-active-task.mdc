@@ -1,0 +1,42 @@
+---
+description: Tenant SMS cancel must close the work order and remove it from Active Tasks.
+globs: supabase/functions/_shared/sms/**/*.ts,src/lib/adminWorkflows.ts,src/lib/adminWorkflowKanban.ts,src/components/AdminWorkflowOperationsDashboard.tsx
+alwaysApply: true
+---
+
+# Tenant SMS cancel closes Active Tasks
+
+When a tenant cancels a repair over SMS (after YES, when required), Ulo must close **both** the work order and the Active Tasks card. Ticket status alone is not enough.
+
+## Rule
+
+| Layer | Required close |
+|---|---|
+| Work order | `maintenance_requests.vendor_work_status = cancelled`, unassign vendor |
+| Active Tasks | Linked `workflow_runs` (`maintenance_intake` and `maintenance_request`) → `status = cancelled` |
+| SMS thread | Release the intake pin so the next text is not stuck on that wizard |
+
+Intake runs are often keyed to the **SMS conversation**, not the ticket. Always resolve the ticket from `entity_id` **or** `metadata.draft_ticket_id` / `metadata.maintenance_request_id`.
+
+Cancelled ≠ completed vendor work. Do **not** leave cancelled jobs in New Intake, Assigned, or In Progress. Hide them from Active Tasks (and property/resident workflow lists) when `run.status === cancelled` **or** `vendor_work_status === cancelled`.
+
+Bare `Cancel` remains the carrier STOP keyword. Work-order cancel uses phrases like “Cancel it” / “Never mind”, then YES when a ticket already exists.
+
+When Ulo asks which request to cancel, naming that request **is** the confirmation — do not treat the quote as “No” and leave the work order open.
+
+If two open tickets share the **same title** (intake restart duplicates), they are one request: list it once, and quoting that title cancels it. Do not send the same “which one?” SMS again. Mid-intake “Never mind” / “Cancel it” is the **current** request — do not ask the tenant to pick among duplicate titles.
+
+## Where it lives
+
+- Close path: `closeWorkOrderCancelledByResident` in `_shared/sms/cancelResidentWorkOrder.ts`
+- SMS act: `handleCancel` in `inboundInterpretationAct.ts`
+- Board filter: `isCancelledOnActiveTasks` / `maintenanceTicketIdFromWorkflowRun` in `src/lib/adminWorkflows.ts`
+
+## Do not
+
+- Update only the ticket and leave the workflow run `active`
+- Ask “which one?” again after the resident named a request whose title appears twice
+- List the same request twice in the which-one SMS
+- List **status-question** tickets (e.g. “Who is coming to fix…?”) as cancelable repairs — see `sms-false-work-order-tickets.mdc`
+- Treat cancelled jobs as completed vendor work on the kanban
+- Add a new inbound SMS registry handler for cancel

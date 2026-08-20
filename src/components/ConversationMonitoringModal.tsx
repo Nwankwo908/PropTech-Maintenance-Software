@@ -577,7 +577,7 @@ export function ConversationMonitoringBody({
   )
 
   return (
-    <>
+    <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
       {!embedded ? (
         <header className="shrink-0 border-b border-[#e5e7eb] px-6 pb-4 pt-6">
           <div className="flex items-start gap-3 pr-10">
@@ -757,7 +757,7 @@ export function ConversationMonitoringBody({
           </div>
         ) : null}
       </footer>
-    </>
+    </div>
   )
 }
 

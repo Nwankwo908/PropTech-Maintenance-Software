@@ -108,12 +108,7 @@ export function EmergencyApprovalRail({
         </button>
 
         <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-6 pb-6 pt-6">
-          <span className="inline-flex items-center gap-1.5 rounded-full bg-[#ffe2e2] px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.06em] text-[#c10007]">
-            <span aria-hidden>⚠</span>
-            Urgent · Needs approval
-          </span>
-
-          <div className="mt-4 flex items-start gap-2">
+          <div className="flex items-start gap-2">
             <DropletIcon />
             <h2
               id={titleId}

@@ -1,0 +1,59 @@
+---
+description: Global tenant SMS START re-opt-in restores consent and Residents activation together, before any workflow.
+globs: supabase/functions/_shared/sms/tenantMessaging.ts,supabase/functions/_shared/sms/inboundHandlerRegistry.ts,supabase/functions/_shared/sms/inbound_processor.ts,src/lib/tenantActivationStatus.ts
+alwaysApply: false
+---
+
+# SMS START re-opt-in + Residents activation
+
+When a tenant previously texted **STOP** (or otherwise canceled SMS) and later texts **START**, treat START as an explicit re-opt-in and reactivate that tenant in Ulo.
+
+This is a **global tenant/SMS rule**, not a maintenance, rent, lease, inspection, or scheduling special case.
+
+## Routing
+
+```text
+Inbound SMS → STOP / START / HELP → consent + activation → next message routes normally
+```
+
+`compliance_stop_help` (priority 5) owns START. Workflows must not steal it.
+
+| Keyword | Layer |
+|---|---|
+| STOP / START / HELP / UNSTOP | Global compliance |
+| YES | Contextual — `tenant_activation_reply` only while `activation_status === waiting` |
+
+START means **permission to communicate again**. It does **not** resume stale, completed, canceled, or expired workflows. The tenant's **next** message is interpreted normally.
+
+## Known resident
+
+| Inbound | `sms_consent_status` | `activation_status` | Residents chip |
+|---|---|---|---|
+| STOP | `opted_out` | `opted_out` | Opted out |
+| START (after opt-out) | `opted_in` | `activated` | **Activated** |
+| START while already activated | unchanged | unchanged | Activated (idempotent) |
+
+Use `smsOptOutPatch` / `smsOptInActivationPatch` and `resolveTenantActivationChip`. Do not add a second activation system.
+
+After a successful START, the landlord must not see SMS opted-in with Waiting or Action Required.
+
+## Unknown numbers
+
+START may confirm permission to text. It must **not** bind the number to a resident or property. Identity matching stays on the existing unknown-contact flow.
+
+## Idempotent START
+
+Already `opted_in` + `activated`: confirmation only for consent events. Still re-evaluate the assigned unit (`shouldActivateUnit`) so a missed Occupied flip can complete. No duplicate resident, identity, workflow, activation row, or activity events.
+
+Log `tenant.sms_opted_out` / `tenant.sms_opted_in` / `tenant.activation_completed` only when state actually changes.
+
+## Inspection
+
+Bare **START** is consent, not “begin inspection.” Inspection copy asks the resident to reply **READY** (`parseInspectionResidentReply` already accepts ready/begin/go).
+
+## Do not
+
+- Add a new inbound SMS registry handler for START
+- Let maintenance, rent, lease, or inspection consume START before consent handling
+- Auto-reopen workflows on START
+- Create a parallel activation field for the Residents page

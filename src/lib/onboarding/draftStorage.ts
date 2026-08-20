@@ -28,6 +28,17 @@ export {
 } from './scope'
 
 const LOCAL_STORAGE_PREFIX = 'ulo.landlordOnboarding.'
+const ONBOARDING_FETCH_TTL_MS = 30_000
+const onboardingFetchInflight = new Map<string, Promise<LandlordOnboardingState>>()
+const onboardingFetchCache = new Map<
+  string,
+  { at: number; state: LandlordOnboardingState }
+>()
+
+function invalidateOnboardingFetchCache(landlordId: string) {
+  onboardingFetchInflight.delete(landlordId)
+  onboardingFetchCache.delete(landlordId)
+}
 
 function localKey(landlordId: string): string {
   return `${LOCAL_STORAGE_PREFIX}${landlordId}`
@@ -371,32 +382,59 @@ export async function readLandlordOnboardingDraft(
 export async function fetchLandlordOnboarding(
   landlordId: string = getActiveLandlordId(),
 ): Promise<LandlordOnboardingState> {
+  const cached = onboardingFetchCache.get(landlordId)
+  if (cached && Date.now() - cached.at < ONBOARDING_FETCH_TTL_MS) {
+    return cached.state
+  }
+  const inflight = onboardingFetchInflight.get(landlordId)
+  if (inflight) return inflight
+
+  const promise = loadLandlordOnboarding(landlordId).finally(() => {
+    if (onboardingFetchInflight.get(landlordId) === promise) {
+      onboardingFetchInflight.delete(landlordId)
+    }
+  })
+  onboardingFetchInflight.set(landlordId, promise)
+  return promise
+}
+
+async function loadLandlordOnboarding(
+  landlordId: string,
+): Promise<LandlordOnboardingState> {
   const fallback = readLocalOnboarding(landlordId) ?? defaultOnboardingState(landlordId)
 
-  if (!supabase) {
-    return reconcileNewLandlordOnboarding(fallback, {
-      properties: 0,
-      units: 0,
-      residents: 0,
-      vendors: 0,
-      workflowRuns: 0,
-    })
-  }
-
-  let state = await readLandlordOnboardingDraft(landlordId)
-  if (state.onboardingStatus === 'completed') {
-    const canonical = await loadCanonicalOnboardingProperties(landlordId)
-    if (canonical.length > 0) {
-      state = { ...state, properties: canonical }
+  try {
+    if (!supabase) {
+      return reconcileNewLandlordOnboarding(fallback, {
+        properties: 0,
+        units: 0,
+        residents: 0,
+        vendors: 0,
+        workflowRuns: 0,
+      })
     }
+
+    let state = await readLandlordOnboardingDraft(landlordId)
+    if (state.onboardingStatus === 'completed') {
+      const canonical = await loadCanonicalOnboardingProperties(landlordId)
+      if (canonical.length > 0) {
+        state = { ...state, properties: canonical }
+      }
+    }
+    const counts = await fetchAccountSetupCounts(landlordId)
+    const reconciled = await reconcileNewLandlordOnboarding(state, counts)
+    onboardingFetchCache.set(landlordId, { at: Date.now(), state: reconciled })
+    return reconciled
+  } catch (err) {
+    console.warn('[landlordOnboarding] fetch', err)
+    return fallback
   }
-  const counts = await fetchAccountSetupCounts(landlordId)
-  return reconcileNewLandlordOnboarding(state, counts)
 }
 
 export async function saveLandlordOnboarding(
   state: LandlordOnboardingState,
 ): Promise<void> {
+  invalidateOnboardingFetchCache(state.landlordId)
   // During Reset, only persist explicit welcome-hub writes from restart helpers.
   if (
     isOnboardingResetInProgress() &&

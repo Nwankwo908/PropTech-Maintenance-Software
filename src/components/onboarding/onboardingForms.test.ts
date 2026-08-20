@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   createEmptyResidentForm,
+  pickResidentFormsForStep,
   residentFormRowHasUserInput,
   residentFormsHaveData,
 } from './onboardingResidentForm'
@@ -50,6 +51,46 @@ describe('resident form cleanup / blank rows', () => {
     const toSave = forms.filter((form) => form.fullName.trim())
     expect(toSave).toHaveLength(1)
     expect(toSave[0]?.fullName).toBe('Jamie Tenant')
+  })
+
+  it('keeps the larger final-review roster instead of a partial saved form list', () => {
+    const preferred = [
+      { ...createEmptyResidentForm(), fullName: 'Jamie Tenant', unit: '101' },
+    ]
+    const reviewResidents = [
+      {
+        id: 'db-1',
+        residentId: 'ONB-001',
+        fullName: 'Jamie Tenant',
+        unit: '101',
+        building: 'Riverview',
+        email: '',
+        phone: '',
+        monthlyRent: null,
+        rentDueDay: null,
+        leaseStart: null,
+        leaseEnd: null,
+        maintenanceResponsibilitiesClause: null,
+        occupancyStatus: 'active' as const,
+      },
+      {
+        id: 'extract-2',
+        residentId: '',
+        fullName: 'Alex Renter',
+        unit: '102',
+        building: 'Riverview',
+        email: '',
+        phone: '',
+        monthlyRent: null,
+        rentDueDay: null,
+        leaseStart: null,
+        leaseEnd: null,
+        maintenanceResponsibilitiesClause: null,
+        occupancyStatus: 'active' as const,
+      },
+    ]
+    const picked = pickResidentFormsForStep(preferred, reviewResidents)
+    expect(picked.map((row) => row.fullName)).toEqual(['Jamie Tenant', 'Alex Renter'])
   })
 })
 

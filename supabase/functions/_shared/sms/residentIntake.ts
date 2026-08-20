@@ -4,6 +4,12 @@ import {
   MAINTENANCE_CLASSIFICATION_EVENTS,
 } from "../maintenance_classification/mod.ts"
 import { logGraphEvent } from "../graph/logGraphEvent.ts"
+import { recordActivityLog } from "../graph/recordActivityLog.ts"
+import { notifyLandlordNeedsAttention } from "../landlordAttentionNotify.ts"
+import {
+  findActiveWorkflowRun,
+  updateWorkflowRun,
+} from "../engine/workflowRuns.ts"
 import {
   ensureEarlySmsMaintenanceTicket,
   shouldMintEarlyTicket,
@@ -30,6 +36,7 @@ import {
   computeIntakeSeverity,
   conversationStatusForStep,
   EDIT_FIELD_OPTIONS,
+  extractFirstNoticedFromText,
   extractRoomFromText,
   intakeQuestionForStep,
   INTAKE_VALIDATION,
@@ -38,6 +45,7 @@ import {
   parseContactMethod,
   parseEditFieldChoice,
   parseIssueType,
+  recordIntakePromptRepeat,
   resolveUrgencyReply,
   pipelineTradeToIssueType,
   recommendUrgency,
@@ -48,6 +56,9 @@ import {
 } from "./residentIntakeTypes.ts"
 
 const MAX_CLASSIFICATION_CLARIFICATIONS = 2
+
+const INTAKE_LOOP_HANDOFF_SMS =
+  "I've passed your message to the property team so they can help with what you need. They'll follow up with you here.\n\nIf something in your home needs a repair, just text a short description anytime."
 
 function tradeLabelForAck(trade: string): string {
   const labels: Record<string, string> = {
@@ -184,14 +195,17 @@ async function initializeIntake(
   const extractedRoom =
     extractRoomFromText(initial) ??
     (classification.entities.location
-      ? classification.entities.location
+      ? extractRoomFromText(classification.entities.location)
       : null)
+  const extractedNoticed = extractFirstNoticedFromText(initial)
 
   const visitWindows = extractResidentAvailabilityText(initial) ?? undefined
 
   const base: SmsIntakeState = {
     initial_message: initial,
     description: initial,
+    photo_urls: [],
+    ...(extractedNoticed ? { first_noticed: extractedNoticed } : {}),
     sanitized_description: classification.sanitizedDescription,
     preferred_visit_windows: visitWindows,
     vendor_trade:
@@ -223,7 +237,7 @@ async function initializeIntake(
     if (extractedRoom) {
       return sanitizeIntakeState({
         ...base,
-        step: "first_noticed",
+        step: extractedNoticed ? "safety_concerns" : "first_noticed",
         issue_type: inferred,
         room_or_area: extractedRoom,
         vendor_trade: classification.vendorTrade,
@@ -307,6 +321,158 @@ async function persistEarlyTicket(
   return withDraftTicketId(state, ticketId)
 }
 
+/** Unpin a maintenance_intake run so the next text is not stuck on the wizard. */
+export async function releaseMaintenanceIntakePin(
+  supabase: SupabaseClient,
+  params: {
+    landlordId: string
+    conversationId: string
+    state?: SmsIntakeState | null
+    runStatus: "escalated" | "completed" | "cancelled"
+    currentStep: string
+    reason: string
+    lastResidentMessage?: string | null
+    eventMessage: string
+    /** Drop the draft ticket id so a cancelled request cannot re-pin this thread. */
+    clearDraftTicket?: boolean
+  },
+): Promise<{ runId: string | null; draftTicketId: string | null }> {
+  const draftTicketId = params.state?.draft_ticket_id ?? null
+  const run = await findActiveWorkflowRun(supabase, {
+    landlordId: params.landlordId,
+    conversationId: params.conversationId,
+    templateId: "maintenance_intake",
+  })
+
+  if (run?.id) {
+    await updateWorkflowRun(supabase, run.id, {
+      status: params.runStatus,
+      currentStep: params.currentStep,
+      completedAt: params.runStatus === "escalated"
+        ? undefined
+        : new Date().toISOString(),
+      metadata: {
+        handed_off_reason: params.reason,
+        last_resident_message: params.lastResidentMessage ?? null,
+      },
+      pipelineStage: params.runStatus === "escalated" ? "escalate" : "log",
+      eventMessage: params.eventMessage,
+      eventStep: params.currentStep,
+    })
+  }
+
+  await supabase
+    .from("sms_conversations")
+    .update({
+      workflow_run_id: null,
+      status: "open",
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", params.conversationId)
+
+  await saveIntakeState(supabase, params.conversationId, {
+    step: "submitted",
+    draft_ticket_id: params.clearDraftTicket ? undefined : draftTicketId ?? undefined,
+    photo_urls: [],
+  })
+
+  return { runId: run?.id ?? null, draftTicketId }
+}
+
+async function handOffStuckIntake(
+  supabase: SupabaseClient,
+  ctx: WorkflowContext,
+  state: SmsIntakeState,
+): Promise<WorkflowResult> {
+  const residentId = ctx.identity.resident_id?.trim() || null
+  const latest = ctx.inbound.body.trim().slice(0, 160)
+  const step = state.prompt_repeat_step ?? state.step ?? "unknown"
+
+  const { runId } = await releaseMaintenanceIntakePin(supabase, {
+    landlordId: ctx.landlordId,
+    conversationId: ctx.conversationId,
+    state,
+    runStatus: "escalated",
+    currentStep: "handed_off",
+    reason: "intake_clarify_loop",
+    lastResidentMessage: latest,
+    eventMessage:
+      "Intake handed off after the same question was repeated without a valid answer.",
+  })
+
+  void notifyLandlordNeedsAttention(supabase, {
+    landlordId: ctx.landlordId,
+    kind: "workflow_escalated",
+    headline: "Resident needs help over text",
+    detail: latest
+      ? `They said this isn't a repair we could take as a work order. Latest message: "${latest}"`
+      : "We couldn't match their replies to a maintenance request.",
+    idempotencyKey: `intake-handoff:${ctx.conversationId}:${step}`,
+    maintenanceRequestId: state.draft_ticket_id ?? ctx.maintenanceRequestId ?? null,
+    workflowRunId: runId,
+    unitId: ctx.identity.unit_id ?? null,
+    residentId,
+  })
+
+  await recordActivityLog(supabase, {
+    landlordId: ctx.landlordId,
+    eventType: "sms.intake_handed_off",
+    source: "sms",
+    actorType: "system",
+    actorId: residentId,
+    unitId: ctx.identity.unit_id ?? null,
+    residentId,
+    maintenanceRequestId: state.draft_ticket_id ?? ctx.maintenanceRequestId ?? null,
+    conversationId: ctx.conversationId,
+    messageId: ctx.messageId,
+    workflowRunId: runId,
+    workflowTemplateId: "maintenance_intake",
+    metadata: {
+      message:
+        "Passed the resident's text to the property team after the same question was asked twice without a usable answer.",
+      handed_off_step: step,
+      last_resident_message: latest,
+      draft_ticket_id: state.draft_ticket_id ?? null,
+    },
+  })
+
+  return {
+    route: "resident_maintenance_intake",
+    replyHint: INTAKE_LOOP_HANDOFF_SMS,
+    metadata: {
+      intakeStep: "handed_off",
+      handedOff: true,
+      handed_off_step: step,
+      skipGenericAutoReply: true,
+    },
+  }
+}
+
+/** Persist + send an intake question, or hand off if this step has been asked too many times. */
+async function finishIntakeQuestion(
+  supabase: SupabaseClient,
+  ctx: WorkflowContext,
+  state: SmsIntakeState,
+  replyHint: string,
+  metadata: Record<string, unknown> = {},
+): Promise<WorkflowResult> {
+  const step = (state.step ?? "issue_type") as IntakeStep
+  const repeated = recordIntakePromptRepeat(state, step)
+  if (repeated.shouldHandoff) {
+    return handOffStuckIntake(supabase, ctx, repeated.state)
+  }
+  await saveIntakeState(supabase, ctx.conversationId, repeated.state)
+  return {
+    route: "resident_maintenance_intake",
+    replyHint,
+    metadata: {
+      ...metadata,
+      intakeStep: step,
+      promptRepeatCount: repeated.state.prompt_repeat_count,
+    },
+  }
+}
+
 function applyStepAnswer(
   state: SmsIntakeState,
   step: IntakeStep,
@@ -335,6 +501,14 @@ function applyStepAnswer(
     case "room_or_area": {
       const room = normalizeRoomOrArea(answer, state.initial_message)
       if (!room) {
+        const noticed = extractFirstNoticedFromText(answer)
+        if (noticed) {
+          next.first_noticed = noticed
+          next.prompt_repeat_count = 0
+          next.prompt_repeat_step = undefined
+          next.step = "room_or_area"
+          break
+        }
         return {
           ok: false,
           retry:
@@ -347,7 +521,7 @@ function applyStepAnswer(
     }
     case "first_noticed":
       next.first_noticed = answer
-      next.step = nextCollectingStep("first_noticed")
+      next.step = nextCollectingStep("first_noticed", next)
       break
     case "safety_concerns":
       next.safety_concerns = /^none$/i.test(answer) ? "None reported" : answer
@@ -484,17 +658,18 @@ export async function processResidentMaintenanceIntake(
           issueCount: multiIssues.length,
           trades: multiIssues.map((i) => i.vendor_trade),
         })
-        return {
-          route: "resident_maintenance_intake",
-          replyHint: buildMultiIssueConfirmSms(multiIssues),
-          metadata: {
-            intakeStep: state.step,
+        return finishIntakeQuestion(
+          supabase,
+          ctx,
+          state,
+          buildMultiIssueConfirmSms(multiIssues),
+          {
             started: true,
             multiIssue: true,
             issueCount: multiIssues.length,
             trades: multiIssues.map((i) => i.vendor_trade),
           },
-        }
+        )
       }
     } catch (err) {
       console.warn("[sms-intake] multi-issue detect failed; single path", err)
@@ -527,17 +702,12 @@ export async function processResidentMaintenanceIntake(
       confidence: state.classification_confidence ?? null,
       draftTicketId: state.draft_ticket_id ?? null,
     })
-    return {
-      route: "resident_maintenance_intake",
-      replyHint,
-      metadata: {
-        intakeStep: state.step,
-        started: true,
-        vendor_trade: state.vendor_trade,
-        classification_confidence: state.classification_confidence,
-        draft_ticket_id: state.draft_ticket_id,
-      },
-    }
+    return finishIntakeQuestion(supabase, ctx, state, replyHint, {
+      started: true,
+      vendor_trade: state.vendor_trade,
+      classification_confidence: state.classification_confidence,
+      draft_ticket_id: state.draft_ticket_id,
+    })
   }
 
   if (ctx.inbound.mediaUrls.length > 0) {
@@ -584,17 +754,12 @@ export async function processResidentMaintenanceIntake(
       replyHint = `${ack}${replyHint}`
     }
 
-    return {
-      route: "resident_maintenance_intake",
-      replyHint,
-      metadata: {
-        intakeStep: state.step,
-        clarified: true,
-        vendor_trade: state.vendor_trade,
-        classification_confidence: state.classification_confidence,
-        draft_ticket_id: state.draft_ticket_id,
-      },
-    }
+    return finishIntakeQuestion(supabase, ctx, state, replyHint, {
+      clarified: true,
+      vendor_trade: state.vendor_trade,
+      classification_confidence: state.classification_confidence,
+      draft_ticket_id: state.draft_ticket_id,
+    })
   }
 
   if (step === "awaiting_multi_issue_confirm") {
@@ -617,16 +782,11 @@ export async function processResidentMaintenanceIntake(
         nextStep === "room_or_area"
           ? "Great — I'll open a separate work order for each. Which room are these mostly happening in? Kitchen, bathroom, basement, bedroom, or somewhere else?"
           : questionForStep(state, nextStep)
-      return {
-        route: "resident_maintenance_intake",
-        replyHint: followUp,
-        metadata: {
-          intakeStep: state.step,
-          multiIssue: true,
-          multiIssueConfirmed: true,
-          issueCount: issues.length,
-        },
-      }
+      return finishIntakeQuestion(supabase, ctx, state, followUp, {
+        multiIssue: true,
+        multiIssueConfirmed: true,
+        issueCount: issues.length,
+      })
     }
 
     if (isNoReply(body)) {
@@ -643,24 +803,27 @@ export async function processResidentMaintenanceIntake(
       state = sanitizeIntakeState(state)
       state = await persistEarlyTicket(supabase, ctx, state)
       await saveIntakeState(supabase, ctx.conversationId, state)
-      return {
-        route: "resident_maintenance_intake",
-        replyHint: questionForStep(state, state.step as IntakeStep),
-        metadata: {
-          intakeStep: state.step,
+      return finishIntakeQuestion(
+        supabase,
+        ctx,
+        state,
+        questionForStep(state, state.step as IntakeStep),
+        {
           multiIssueDeclined: true,
           draft_ticket_id: state.draft_ticket_id,
         },
-      }
+      )
     }
 
-    return {
-      route: "resident_maintenance_intake",
-      replyHint: issues.length >= 2
+    return finishIntakeQuestion(
+      supabase,
+      ctx,
+      state,
+      issues.length >= 2
         ? buildMultiIssueConfirmSms(issues)
         : "Reply YES to open separate work orders, or NO to treat this as one request.",
-      metadata: { intakeStep: step, multiIssue: true },
-    }
+      { multiIssue: true },
+    )
   }
 
   if (step === "awaiting_confirm") {
@@ -759,51 +922,47 @@ export async function processResidentMaintenanceIntake(
 
     if (isEditReply(body)) {
       state = { ...state, step: "awaiting_edit_selection" }
-      await saveIntakeState(supabase, ctx.conversationId, state)
-      return {
-        route: "resident_maintenance_intake",
-        replyHint: EDIT_FIELD_OPTIONS,
-        metadata: { intakeStep: state.step },
-      }
+      return finishIntakeQuestion(supabase, ctx, state, EDIT_FIELD_OPTIONS)
     }
 
-    return {
-      route: "resident_maintenance_intake",
-      replyHint: "Reply YES if that looks good, or tell me what you'd like to change.",
-      metadata: { intakeStep: step },
-    }
+    return finishIntakeQuestion(
+      supabase,
+      ctx,
+      state,
+      "Reply YES if that looks good, or tell me what you'd like to change.",
+    )
   }
 
   if (step === "awaiting_edit_selection") {
     const field = parseEditFieldChoice(body)
     if (!field) {
-      return {
-        route: "resident_maintenance_intake",
-        replyHint: EDIT_FIELD_OPTIONS,
-        metadata: { intakeStep: step, invalidEditChoice: true },
-      }
+      return finishIntakeQuestion(supabase, ctx, state, EDIT_FIELD_OPTIONS, {
+        invalidEditChoice: true,
+      })
     }
 
     if (field === "description") {
       state = { ...state, step: "awaiting_edit_selection", edit_field: "description" }
-      await saveIntakeState(supabase, ctx.conversationId, state)
-      return {
-        route: "resident_maintenance_intake",
-        replyHint: "Sure thing! Send me the updated description.",
-        metadata: { intakeStep: step, editing: "description" },
-      }
+      return finishIntakeQuestion(
+        supabase,
+        ctx,
+        state,
+        "Sure thing! Send me the updated description.",
+        { editing: "description" },
+      )
     }
 
     state = { ...state, step: field, edit_field: field }
     if (field === "urgency") {
       state.recommended_urgency = recommendUrgency(state)
     }
-    await saveIntakeState(supabase, ctx.conversationId, state)
-    return {
-      route: "resident_maintenance_intake",
-      replyHint: questionForStep(state, field),
-      metadata: { intakeStep: field, editing: field },
-    }
+    return finishIntakeQuestion(
+      supabase,
+      ctx,
+      state,
+      questionForStep(state, field),
+      { editing: field },
+    )
   }
 
   if (state.edit_field === "description" && step === "awaiting_edit_selection") {
@@ -815,11 +974,13 @@ export async function processResidentMaintenanceIntake(
       step: "awaiting_confirm",
     }
     await saveIntakeState(supabase, ctx.conversationId, state)
-    return {
-      route: "resident_maintenance_intake",
-      replyHint: buildConfirmationSummary(state),
-      metadata: { intakeStep: "awaiting_confirm", edited: "description" },
-    }
+    return finishIntakeQuestion(
+      supabase,
+      ctx,
+      state,
+      buildConfirmationSummary(state),
+      { edited: "description" },
+    )
   }
 
   if (step === "photo") {
@@ -835,24 +996,23 @@ export async function processResidentMaintenanceIntake(
       : hasPhoto
         ? "Thanks! "
         : "No problem. "
-    return {
-      route: "resident_maintenance_intake",
-      replyHint: `${ack}${buildConfirmationSummary(state)}`,
-      metadata: {
-        intakeStep: "awaiting_confirm",
+    return finishIntakeQuestion(
+      supabase,
+      ctx,
+      state,
+      `${ack}${buildConfirmationSummary(state)}`,
+      {
         photoReceived: receivedNow,
         photoCount: state.photo_urls?.length ?? 0,
       },
-    }
+    )
   }
 
   const result = applyStepAnswer(state, step, body)
   if (!result.ok) {
-    return {
-      route: "resident_maintenance_intake",
-      replyHint: result.retry,
-      metadata: { intakeStep: step, invalidAnswer: true },
-    }
+    return finishIntakeQuestion(supabase, ctx, state, result.retry, {
+      invalidAnswer: true,
+    })
   }
 
   state = result.state
@@ -867,9 +1027,6 @@ export async function processResidentMaintenanceIntake(
   }
 
   state = await persistEarlyTicket(supabase, ctx, state)
-  await saveIntakeState(supabase, ctx.conversationId, state)
-
-  const replyHint = questionForStep(state, state.step as IntakeStep)
   console.info("[sms-intake] advanced", {
     conversationId: ctx.conversationId,
     step: state.step,
@@ -879,15 +1036,16 @@ export async function processResidentMaintenanceIntake(
     draftTicketId: state.draft_ticket_id ?? null,
   })
 
-  return {
-    route: "resident_maintenance_intake",
-    replyHint,
-    metadata: {
-      intakeStep: state.step,
+  return finishIntakeQuestion(
+    supabase,
+    ctx,
+    state,
+    questionForStep(state, state.step as IntakeStep),
+    {
       issue_type: state.issue_type,
       recommended_urgency: state.recommended_urgency,
       severity: state.severity,
       draft_ticket_id: state.draft_ticket_id,
     },
-  }
+  )
 }

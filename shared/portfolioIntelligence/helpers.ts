@@ -25,6 +25,14 @@ const CLOSED_STATUSES = new Set([
   'resolved',
 ])
 
+/** Stopped / removed work orders — not real repair history for Property Insights. */
+const VOIDED_WORK_STATUSES = new Set(['cancelled', 'deleted'])
+
+export function isInsightEligibleTicket(ticket: PortfolioTicketRow): boolean {
+  const status = (ticket.vendorWorkStatus ?? '').trim().toLowerCase()
+  return !VOIDED_WORK_STATUSES.has(status)
+}
+
 const CRITICAL_URGENCIES = new Set(['urgent', 'high', 'critical', 'emergency'])
 
 export function isOpenTicket(ticket: PortfolioTicketRow): boolean {

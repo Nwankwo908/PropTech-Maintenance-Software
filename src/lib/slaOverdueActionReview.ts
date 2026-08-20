@@ -3,12 +3,19 @@ import {
   normIssueCategory,
   vendorMatchesTicketIssueCategory,
 } from '@/lib/vendorTrades'
+import { formatTicketRequestNumber } from '@/lib/vendorCallFlow'
+import { isVisibleLandlordTimelineDescription } from '@/lib/landlordFacingTimeline'
 import type { PropertyHealthVendorMetrics } from '@/lib/propertyHealth'
 
 export type SlaOverdueTimelineEntry = {
   timeLabel: string
   description: string
   actor: string
+}
+
+/** Engine plumbing stays off the landlord Timeline. */
+export function isVisibleSlaTimelineEntry(entry: SlaOverdueTimelineEntry): boolean {
+  return isVisibleLandlordTimelineDescription(entry.description)
 }
 
 export type SlaOverdueSuggestedVendor = {
@@ -33,6 +40,7 @@ export type SlaOverdueActionReview = {
   minutesPastSla: number | null
   pastSlaLabel: string | null
   issueSummary: string
+  issueCategory: string | null
   currentVendorName: string | null
   currentVendorStatus: string
   timeline: SlaOverdueTimelineEntry[]
@@ -66,20 +74,19 @@ export type SlaOverdueVendorInput = {
 }
 
 function formatTicketRef(id: string): string {
-  const compact = id.replace(/-/g, '').toUpperCase()
-  return `REQ-${compact.slice(-4)}`
+  return formatTicketRequestNumber(id)
 }
 
-/** e.g. "1 hour 20 minutes past SLA" */
+/** e.g. "1 hour 20 minutes past response time" */
 export function formatPastSlaLabel(minutes: number): string {
   if (minutes < 60) {
-    return `${minutes} minute${minutes === 1 ? '' : 's'} past SLA`
+    return `${minutes} minute${minutes === 1 ? '' : 's'} past response time`
   }
   const hours = Math.floor(minutes / 60)
   const mins = minutes % 60
   const hourPart = `${hours} hour${hours === 1 ? '' : 's'}`
-  if (mins === 0) return `${hourPart} past SLA`
-  return `${hourPart} ${mins} minute${mins === 1 ? '' : 's'} past SLA`
+  if (mins === 0) return `${hourPart} past response time`
+  return `${hourPart} ${mins} minute${mins === 1 ? '' : 's'} past response time`
 }
 
 export function isUrgencyCritical(urgency: string): boolean {
@@ -108,9 +115,9 @@ function formatSlaDuration(createdAt: string, dueAt: string): string | null {
   const end = new Date(dueAt).getTime()
   if (Number.isNaN(start) || Number.isNaN(end) || end <= start) return null
   const minutes = Math.round((end - start) / 60_000)
-  if (minutes < 60) return `${minutes} Min SLA`
+  if (minutes < 60) return `${minutes} min response time`
   const hours = Math.round(minutes / 60)
-  return `${hours} Hr SLA`
+  return `${hours} hr response time`
 }
 
 function formatUrgencyLabel(urgency: string): string {
@@ -124,7 +131,8 @@ function formatUrgencyLabel(urgency: string): string {
 function formatLocation(building: string | null, unit: string): string {
   const b = building?.trim() || 'Property'
   const u = unit.trim()
-  const unitLabel = /^\d/.test(u) ? `Unit ${u}` : u
+  if (!u) return b
+  const unitLabel = /^unit\s+/i.test(u) ? u.replace(/^unit\s+/i, 'Unit ') : `Unit ${u}`
   return `${b} · ${unitLabel}`
 }
 
@@ -221,19 +229,49 @@ function buildTimeline(
       })
       entries.push({
         timeLabel: timeOnly(ticket.dueAt),
-        description: 'SLA breached',
+        description: 'Response delayed',
         actor: 'System',
       })
     } else if (!Number.isNaN(dueTs) && dueTs < now) {
       entries.push({
         timeLabel: timeOnly(ticket.dueAt),
-        description: 'SLA breached',
+        description: 'Response delayed',
         actor: 'System',
       })
     }
   }
 
-  return entries.filter((e) => e.timeLabel)
+  return entries.filter((e) => e.timeLabel && isVisibleSlaTimelineEntry(e))
+}
+
+function timelineBeatKey(description: string): string {
+  return description.trim().toLowerCase()
+}
+
+/**
+ * Keep the operational story as the Timeline spine. Plumbing leftovers from
+ * workflow_events must not collapse a 3-beat story into a single row.
+ */
+export function mergeLandlordRailTimeline(
+  operational: SlaOverdueTimelineEntry[],
+  fromWorkflow: SlaOverdueTimelineEntry[],
+): SlaOverdueTimelineEntry[] {
+  if (operational.length === 0) return fromWorkflow
+  const seen = new Set(operational.map((entry) => timelineBeatKey(entry.description)))
+  const extras = fromWorkflow.filter((entry) => {
+    const key = timelineBeatKey(entry.description)
+    if (!key || seen.has(key)) return false
+    if (key === 'escalated' || key.startsWith('escalated ')) return false
+    return true
+  })
+  return extras.length ? [...operational, ...extras] : operational
+}
+
+export function buildSlaRailTimeline(
+  ticket: SlaOverdueTicketInput,
+  now = Date.now(),
+): SlaOverdueTimelineEntry[] {
+  return buildTimeline(ticket, now)
 }
 
 export function buildSlaOverdueActionReview(
@@ -275,7 +313,7 @@ export function buildSlaOverdueActionReview(
     alternatives.length === 0 && !suggestion?.vendorId && !suggestion?.vendorName
   return {
     ticketId: ticket.id,
-    badgeLabel: 'SLA OVERDUE · MAINTENANCE',
+    badgeLabel: 'RESPONSE TIME EXCEEDED',
     headerTitle: `Escalated Maintenance · ${formatCategoryLabel(ticket.issueCategory)}`,
     locationLabel: formatLocation(ticket.building, ticket.unit),
     ticketRef: formatTicketRef(ticket.id),
@@ -293,6 +331,7 @@ export function buildSlaOverdueActionReview(
     issueSummary:
       ticket.description?.trim() ||
       `${formatCategoryLabel(ticket.issueCategory)} maintenance request`,
+    issueCategory: ticket.issueCategory,
     currentVendorName: ticket.assignedVendorName,
     currentVendorStatus: vendorStatusLabel(ticket.vendorWorkStatus, ticket.assignedVendorName),
     timeline: buildTimeline(ticket, now),
@@ -337,6 +376,7 @@ export function buildExternalVendorFallbackReview(
     issueSummary:
       ticket.description?.trim() ||
       `${formatCategoryLabel(ticket.issueCategory)} maintenance request`,
+    issueCategory: ticket.issueCategory,
     currentVendorName: ticket.assignedVendorName,
     currentVendorStatus: vendorStatusLabel(ticket.vendorWorkStatus, ticket.assignedVendorName),
     timeline: buildTimeline(ticket),
@@ -365,7 +405,7 @@ function buildSuggestionLine(
     .filter(Boolean)
     .join(' · ')
   if (offerSlaCredit) {
-    return `Escalate to backup vendor (${suggestion.vendorName}${meta ? ` · ${meta}` : ''}) or extend SLA with tenant credit`
+    return `Escalate to backup vendor (${suggestion.vendorName}${meta ? ` · ${meta}` : ''}) or extend response time with tenant credit`
   }
   return `Reassign to ${suggestion.vendorName}${meta ? ` (${meta})` : ''}`
 }

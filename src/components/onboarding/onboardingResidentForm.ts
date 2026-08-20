@@ -162,6 +162,10 @@ export function pickResidentFormsForStep(
   preferred: ResidentFormRow[],
   reviewResidents: OnboardingResident[] | undefined,
 ): ResidentFormRow[] {
+  const preferredNamed = preferred.filter((form) => form.fullName.trim())
+  if (reviewResidents && reviewResidents.length > preferredNamed.length) {
+    return reviewResidents.map(residentToFormRow)
+  }
   if (residentFormsHaveData(preferred)) return preferred.map(normalizeResidentFormRow)
   if (reviewResidents?.length) return reviewResidents.map(residentToFormRow)
   return preferred.length > 0
@@ -334,38 +338,6 @@ export async function saveOnboardingResidentsStep(
       return
     }
     residentPhones.push({ phone: phoneResult.phone })
-  }
-
-  for (const form of residentsToSave) {
-    let building = form.building.trim() || fallbackBuilding
-    const unit = form.unit.trim()
-    if (!unit) {
-      setSaving(false)
-      setError(`${form.fullName.trim()}: Select a unit.`)
-      return
-    }
-    if (unitOptions.length > 0) {
-      const matchedOption = unitOptions.find(
-        (option) =>
-          option.unitLabel === unit &&
-          (!building || option.building === building),
-      )
-      if (matchedOption?.building) {
-        building = matchedOption.building
-      }
-      const matched = unitOptions.some(
-        (option) =>
-          option.unitLabel === unit &&
-          (!building || option.building === building),
-      )
-      if (!matched) {
-        setSaving(false)
-        setError(
-          `${form.fullName.trim()}: Choose a unit from your property inventory (e.g. ${unitOptions[0]?.unitLabel}).`,
-        )
-        return
-      }
-    }
   }
 
   for (let i = 0; i < residentsToSave.length; i++) {

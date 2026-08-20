@@ -25,7 +25,7 @@ import { SlaOverdueActionRail } from '@/components/SlaOverdueActionRail'
 import { FindExternalVendorRail } from '@/components/FindExternalVendorRail'
 import { VendorCallFlowModal } from '@/components/VendorCallFlowModal'
 import { getActiveLandlordId } from '@/lib/activeLandlord'
-import { listPropertiesForLandlord, type PropertyRecord } from '@/lib/properties'
+import { cityStateZipForBuildingName, listPropertiesForLandlord, type PropertyRecord } from '@/lib/properties'
 import {
   ensureOnboardingDashboardMatchesPortfolio,
 } from '@/lib/onboarding'
@@ -39,10 +39,14 @@ import {
   emptyAdminWorkflowDashboardData,
   fetchAdminWorkflowDashboard,
   formatLocationContextLabel,
+  maintenanceTicketIdFromWorkflowRun,
   type AdminWorkflowDashboardData,
 } from '@/lib/adminWorkflows'
 import {
-  collectAdminWorkflowRuns,
+  collectCompletedWorkOrderTicketIds,
+  shouldOmitEscalatedRunFromNeedsAttention,
+} from '@/lib/needsAttentionWorkOrder'
+import {
   snapshotActiveOperations,
   workflowOperationsPath,
 } from '@/lib/adminWorkflowKanban'
@@ -52,7 +56,7 @@ import {
   ADMIN_RIGHT_RAIL_SCRIM,
   ADMIN_RIGHT_RAIL_STACK_HOST,
 } from '@/lib/adminRightRail'
-import { buildPropertyIdByBuilding, propertyDetailPathForBuilding } from '@/lib/propertyRoutes'
+import { buildPropertyIdByBuilding, propertyDetailPathForBuilding, propertyResidentDetailPathForBuilding } from '@/lib/propertyRoutes'
 import {
   buildActivityFeedTooltipCopy,
   splitEmphasizedText,
@@ -76,10 +80,11 @@ import {
   mapTicketsForPropertyHealth,
   mapUnitsForPropertyHealth,
   countDistinctPortfolioUnits,
-  formatPropertyHealthKpiValue,
   propertyHealthFactorBreakdownLines,
   propertyHealthKpiDelta,
   resolvePropertyHealthKpiCaption,
+  resolvePropertyHealthKpiValue,
+  shouldShowPropertyHealthScore,
   type PropertyHealthCanonicalProperty,
   type PropertyHealthFeedback,
   type PropertyHealthPmTask,
@@ -122,6 +127,7 @@ import {
 } from '@/api/maintenanceInvoice'
 import { completeInvoicePaymentCheckout } from '@/api/invoicePaymentCheckout'
 import {
+  buildAttentionDeletedOutcome,
   buildAutoRemovedAttentionOutcome,
   buildLateRentActionOutcome,
   buildLeaseRenewalActionOutcome,
@@ -134,7 +140,14 @@ import {
   sendLeaseRenewalIncentiveMessage,
   type LeaseRenewalIncentiveBrief,
 } from '@/lib/leaseRenewalIncentiveMessaging'
-import { enrichExternalVendorSuggestions } from '@/lib/externalVendorDisplay'
+import { enrichExternalVendorSuggestions, sanitizeExternalVendorDiscoveryForAccount } from '@/lib/externalVendorDisplay'
+import { loadLeaseInfoMissingAttention, type LeaseInfoMissingAttention } from '@/lib/leaseInfoMissingAttention'
+import {
+  dismissNeedsAttentionItem,
+  isNeedsAttentionDismissed,
+  loadDismissedAttentionIds,
+  type DismissedAttentionIds,
+} from '@/lib/dismissNeedsAttention'
 import { supabase } from '@/lib/supabase'
 import { getErrorMessage } from '@/lib/errorMessage'
 import {
@@ -203,6 +216,8 @@ type OverviewResident = {
   building: string | null
   status: string
   moveInDate: string | null
+  leaseEndDate: string | null
+  monthlyRent: number
   balanceDue: number
   phone: string | null
 }
@@ -965,6 +980,11 @@ export function AdminOverviewDashboard() {
   const [vendorMetrics, setVendorMetrics] = useState<PropertyHealthVendorMetrics[]>([])
   const [residents, setResidents] = useState<PropertyHealthResident[]>([])
   const [overviewResidents, setOverviewResidents] = useState<OverviewResident[]>([])
+  const [leaseInfoMissing, setLeaseInfoMissing] = useState<LeaseInfoMissingAttention[]>([])
+  const [dismissedAttention, setDismissedAttention] = useState<DismissedAttentionIds>({
+    ticketIds: new Set(),
+    runIds: new Set(),
+  })
   const [canonicalProperties, setCanonicalProperties] = useState<PropertyRecord[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -988,6 +1008,7 @@ export function AdminOverviewDashboard() {
   const [externalVendorLocationLabel, setExternalVendorLocationLabel] = useState<string | null>(
     null,
   )
+  const [externalVendorAreaLabel, setExternalVendorAreaLabel] = useState<string | null>(null)
   const [findExternalVendorOpen, setFindExternalVendorOpen] = useState(false)
   const [lateRentRailRunId, setLateRentRailRunId] = useState<string | null>(null)
   const [lateRentRailSaving, setLateRentRailSaving] = useState(false)
@@ -1123,6 +1144,13 @@ export function AdminOverviewDashboard() {
 
   useEffect(() => {
     let cancelled = false
+    let timedOut = false
+    const timeoutId = window.setTimeout(() => {
+      if (cancelled) return
+      timedOut = true
+      setLoading(false)
+      setError('Overview is taking too long to load. Try refreshing the page.')
+    }, 20_000)
 
     async function load() {
       if (!supabase) {
@@ -1134,6 +1162,7 @@ export function AdminOverviewDashboard() {
       setLoading(true)
       setError(null)
 
+      try {
       const landlordId = getActiveLandlordId()
 
       // Strict rule: guided New Landlord only shows portfolio-matched ops.
@@ -1154,6 +1183,8 @@ export function AdminOverviewDashboard() {
         invoicesResult,
         feedbackResult,
         canonicalPropertiesResult,
+        leaseInfoMissingResult,
+        dismissedAttentionResult,
       ] = await Promise.all([
           allowImportedOperations
             ? supabase
@@ -1196,7 +1227,7 @@ export function AdminOverviewDashboard() {
           fetchPropertyHealthSignals(),
           supabase
             .from('users')
-            .select('id, full_name, unit, building, status, move_in_date, balance_due, phone, email')
+            .select('id, full_name, unit, building, status, move_in_date, lease_end_date, monthly_rent, balance_due, phone, email')
             .eq('landlord_id', landlordId)
             .neq('status', 'past_resident')
             .limit(2000),
@@ -1221,6 +1252,8 @@ export function AdminOverviewDashboard() {
                 .limit(200)
             : Promise.resolve({ data: [], error: null }),
           listPropertiesForLandlord(landlordId),
+          loadLeaseInfoMissingAttention(landlordId),
+          loadDismissedAttentionIds(landlordId),
         ])
 
       if (cancelled) return
@@ -1359,6 +1392,8 @@ export function AdminOverviewDashboard() {
             status: asString(raw.status).toLowerCase() || 'active',
             email: asString(raw.email) || null,
             moveInDate: asString(raw.move_in_date) || null,
+            leaseEndDate: asString(raw.lease_end_date) || null,
+            monthlyRent: asFiniteNumber(raw.monthly_rent) ?? 0,
             balanceDue: asFiniteNumber(raw.balance_due) ?? 0,
             phone: asString(raw.phone) || null,
           }))
@@ -1379,13 +1414,24 @@ export function AdminOverviewDashboard() {
         setOverviewResidents([])
       }
 
+      setLeaseInfoMissing(leaseInfoMissingResult)
+      setDismissedAttention(dismissedAttentionResult)
       setLastUpdated(new Date())
-      setLoading(false)
+      setError(null)
+    } catch (err) {
+      if (cancelled || timedOut) return
+      console.error('[admin overview] load failed', err)
+      setError(getErrorMessage(err, 'Could not load overview.'))
+    } finally {
+      window.clearTimeout(timeoutId)
+      if (!cancelled && !timedOut) setLoading(false)
+    }
     }
 
     void load()
     return () => {
       cancelled = true
+      window.clearTimeout(timeoutId)
     }
   }, [])
 
@@ -1716,10 +1762,16 @@ export function AdminOverviewDashboard() {
 
   const allAttentionItems = useMemo<AttentionItem[]>(() => {
     const items: AttentionItem[] = []
+    const completedTicketIds = collectCompletedWorkOrderTicketIds({
+      tickets,
+      workflowData,
+    })
 
     for (const ticket of slaOverdueTickets) {
+      if (completedTicketIds.has(ticket.id)) continue
       if (slaEscalatedNoVendorKeys.has(ticket.id)) continue
       if (ticketHasRosterAlternative(ticket, vendors, units)) continue
+      if (isNeedsAttentionDismissed(dismissedAttention, { ticketId: ticket.id })) continue
       const building =
         ticket.building ??
         units.find(
@@ -1729,7 +1781,7 @@ export function AdminOverviewDashboard() {
       items.push({
         key: `sla-${ticket.id}`,
         badge: isTicketCritical(ticket) ? 'critical' : 'warning',
-        title: 'SLA breached — no roster vendor',
+        title: 'No vendor available — response time exceeded',
         context: formatLocationContextLabel({
           propertyLabel: building,
           unitLabel: ticket.unit,
@@ -1737,7 +1789,7 @@ export function AdminOverviewDashboard() {
         }),
         meta: ticket.dueAt
           ? `${resolveMaintenanceTypeLabel(ticket.issueCategory, ticket)} · Past due ${formatRelativeTime(ticket.dueAt)}`
-          : `${resolveMaintenanceTypeLabel(ticket.issueCategory, ticket)} · Past SLA`,
+          : `${resolveMaintenanceTypeLabel(ticket.issueCategory, ticket)} · Past response time`,
         actionLabel: 'Assign vendor',
         actionStyle: 'alert',
         onAction: () => openEscalatedRailForTicket(ticket.id),
@@ -1751,10 +1803,32 @@ export function AdminOverviewDashboard() {
           : null
         const needsVendor = adminVendorReason != null
         const isLeaseRenewal = isLeaseRenewalEscalatedRun(run)
-        const linkedTicket =
-          run.entityType === 'maintenance_request' && run.entityId
-            ? tickets.find((row) => row.id === run.entityId) ?? null
-            : null
+        const ticketId = maintenanceTicketIdFromWorkflowRun({
+          ...run,
+          metadata: workflowData.runMetadata[run.id],
+        })
+        const linkedTicket = ticketId
+          ? tickets.find((row) => row.id === ticketId) ?? null
+          : null
+        if (
+          shouldOmitEscalatedRunFromNeedsAttention({
+            run,
+            metadata: workflowData.runMetadata[run.id],
+            linkedTicketVendorWorkStatus: linkedTicket?.vendorWorkStatus ?? null,
+            completedTicketIds,
+          })
+        ) {
+          continue
+        }
+        if (
+          needsVendor &&
+          isNeedsAttentionDismissed(dismissedAttention, {
+            ticketId: ticketId ?? run.entityId,
+            runId: run.id,
+          })
+        ) {
+          continue
+        }
         const issueCategory = run.issueCategory ?? linkedTicket?.issueCategory ?? null
         items.push({
           key: `run-${run.id}`,
@@ -1805,7 +1879,41 @@ export function AdminOverviewDashboard() {
       }
     }
 
+    for (const missing of leaseInfoMissing) {
+      const resident = missing.residentId
+        ? overviewResidents.find((entry) => entry.id === missing.residentId) ?? null
+        : null
+      if (
+        resident &&
+        (resident.moveInDate || resident.leaseEndDate || resident.monthlyRent > 0)
+      ) {
+        continue
+      }
+      const building = resident?.building ?? null
+      const path = resident
+        ? propertyResidentDetailPathForBuilding(
+            resident.building || resident.unit || 'property',
+            resident.id,
+            propertyIdByBuilding,
+          )
+        : '/admin'
+      items.push({
+        key: `lease-info-${missing.residentId ?? missing.id}`,
+        badge: 'warning',
+        title: 'Leasing information is missing',
+        context: formatLocationContextLabel({
+          propertyLabel: building,
+          unitLabel: resident?.unit ?? null,
+          residentName: resident?.fullName ?? null,
+        }),
+        meta: missing.message?.trim() || 'A resident asked about their lease over text.',
+        actionLabel: 'Review resident',
+        onAction: () => navigate(path),
+      })
+    }
+
     for (const inv of invoicePayReviews) {
+      if (completedTicketIds.has(inv.maintenanceRequestId)) continue
       const totalLabel = inv.totalCost.toLocaleString('en-US', {
         style: 'currency',
         currency: 'USD',
@@ -1829,7 +1937,7 @@ export function AdminOverviewDashboard() {
     }
 
     return items.sort((a, b) => (a.badge === b.badge ? 0 : a.badge === 'critical' ? -1 : 1))
-  }, [workflowData, slaOverdueTickets, slaEscalatedNoVendorKeys, units, vendors, tickets, lateRentReviewRuns, invoicePayReviews, openEscalatedRailForTicket, openEscalatedRailForRun, openLateRentRail, openLeaseRenewalRail])
+  }, [workflowData, slaOverdueTickets, slaEscalatedNoVendorKeys, dismissedAttention, units, vendors, tickets, lateRentReviewRuns, invoicePayReviews, leaseInfoMissing, overviewResidents, propertyIdByBuilding, navigate, openEscalatedRailForTicket, openEscalatedRailForRun, openLateRentRail, openLeaseRenewalRail])
 
   const attentionItems = useMemo(() => allAttentionItems.slice(0, 4), [allAttentionItems])
 
@@ -1880,6 +1988,7 @@ export function AdminOverviewDashboard() {
       setExternalVendorDiscoverError(null)
       setExternalVendorIssueCategory(null)
       setExternalVendorLocationLabel(null)
+      setExternalVendorAreaLabel(null)
       setFindExternalVendorOpen(false)
       return
     }
@@ -1968,6 +2077,7 @@ export function AdminOverviewDashboard() {
     setExternalVendorProvidersUsed([])
     setExternalVendorNotice(null)
     setExternalVendorDiscoverError(null)
+    setExternalVendorLocationLabel(builtReview.locationLabel)
 
     if (preferExternalVendor) {
       const linkedTicket =
@@ -2005,19 +2115,24 @@ export function AdminOverviewDashboard() {
     })
       .then((result) => {
         if (cancelled) return
-        const verifiedSuggestions = enrichExternalVendorSuggestions(
-          result.suggestions ?? [],
+        const sanitized = sanitizeExternalVendorDiscoveryForAccount({
+          suggestions: result.suggestions ?? [],
+          providersUsed: result.providersUsed ?? [],
+          notice: result.notice,
+        })
+        const rankedSuggestions = enrichExternalVendorSuggestions(
+          sanitized.suggestions,
           result.issueCategory,
           result.locationLabel,
         )
-        setExternalVendorSuggestions(verifiedSuggestions)
-        setExternalVendorProvidersUsed(result.providersUsed ?? [])
-        if (result.notice) setExternalVendorNotice(result.notice)
-        if (result.locationLabel) setExternalVendorLocationLabel(result.locationLabel)
+        setExternalVendorSuggestions(sanitized.suggestions)
+        setExternalVendorProvidersUsed(sanitized.providersUsed)
+        if (sanitized.notice) setExternalVendorNotice(sanitized.notice)
+        if (result.areaLabel) setExternalVendorAreaLabel(result.areaLabel)
         if (result.issueCategory !== undefined) {
           setExternalVendorIssueCategory(result.issueCategory)
         }
-        const pick = verifiedSuggestions[0]
+        const pick = rankedSuggestions[0]
         if (!pick) return
         setEscalatedReview((prev) => {
           if (!prev) return prev
@@ -2072,12 +2187,6 @@ export function AdminOverviewDashboard() {
           setEscalatedRailError('Vendor search is still loading.')
           return
         }
-        if (externalVendorSuggestions.length === 0) {
-          setEscalatedRailError(
-            externalVendorDiscoverError ?? 'No external vendor suggestions available yet.',
-          )
-          return
-        }
         setEscalatedRailError(null)
         setFindExternalVendorOpen(true)
         return
@@ -2085,7 +2194,7 @@ export function AdminOverviewDashboard() {
 
       setEscalatedRailError('This ticket is handled automatically when a roster vendor is available.')
     },
-    [navigate, escalatedRailLoading, externalVendorSuggestions.length, externalVendorDiscoverError],
+    [navigate, escalatedRailLoading],
   )
 
   const closeEscalatedRail = useCallback(() => {
@@ -2098,6 +2207,76 @@ export function AdminOverviewDashboard() {
   const closeEscalatedVendorFlow = useCallback(() => {
     closeEscalatedRail()
   }, [closeEscalatedRail])
+
+  const handleDeleteEscalatedAttention = useCallback(
+    async (review: SlaOverdueActionReview) => {
+      if (escalatedRailSaving) return
+      const ticketId = review.ticketId?.trim() || null
+      const workflowRunId = review.workflowRunId?.trim() || null
+      if (!ticketId && !workflowRunId) {
+        setEscalatedRailError('Nothing to remove.')
+        return
+      }
+
+      const relatedWorkflowRunIds = (workflowData?.escalated ?? [])
+        .filter(
+          (run) =>
+            isMaintenanceAdminVendorEscalationReason(run.escalationReason) &&
+            ((ticketId && run.entityId === ticketId) || run.id === workflowRunId),
+        )
+        .map((run) => run.id)
+
+      setEscalatedRailSaving(true)
+      setEscalatedRailError(null)
+      try {
+        const result = await dismissNeedsAttentionItem({
+          ticketId,
+          workflowRunId,
+          relatedWorkflowRunIds,
+          locationLabel: review.locationLabel,
+        })
+        if (!result.ok) {
+          setEscalatedRailError(result.error)
+          return
+        }
+
+        const dismissedRunIds = result.runIds
+        setDismissedAttention((prev) => {
+          const ticketIds = new Set(prev.ticketIds)
+          const runIds = new Set(prev.runIds)
+          if (ticketId) ticketIds.add(ticketId)
+          if (workflowRunId) runIds.add(workflowRunId)
+          for (const id of dismissedRunIds) runIds.add(id)
+          return { ticketIds, runIds }
+        })
+        if (ticketId) skipAutoOutcomeKeysRef.current.add(`sla-${ticketId}`)
+        if (workflowRunId) skipAutoOutcomeKeysRef.current.add(`run-${workflowRunId}`)
+        for (const id of dismissedRunIds) {
+          skipAutoOutcomeKeysRef.current.add(`run-${id}`)
+        }
+
+        setFindExternalVendorOpen(false)
+        setEscalatedRailTarget(null)
+        setEscalatedRailError(null)
+        if (allowImportedOperationsRef.current) {
+          setWorkflowData(await fetchAdminWorkflowDashboard())
+          setFeedEvents(await loadOverviewFeedEvents())
+        }
+        showAwaitingDecisionOutcome(
+          buildAttentionDeletedOutcome({
+            operationTitle: review.headerTitle,
+            context: review.locationLabel,
+          }),
+          ticketId ? `sla-${ticketId}` : workflowRunId ? `run-${workflowRunId}` : undefined,
+        )
+      } catch (err) {
+        setEscalatedRailError(getErrorMessage(err, 'Something went wrong. Please try again.'))
+      } finally {
+        setEscalatedRailSaving(false)
+      }
+    },
+    [escalatedRailSaving, workflowData, showAwaitingDecisionOutcome],
+  )
 
   const backFromFindExternalVendor = useCallback(() => {
     if (escalatedRailSaving) return
@@ -2157,7 +2336,7 @@ export function AdminOverviewDashboard() {
           'Property · Unit'
         showAwaitingDecisionOutcome(
           buildVendorAssignedOutcome({
-            operationTitle: escalatedReview?.headerTitle ?? 'SLA breached — no roster vendor',
+            operationTitle: escalatedReview?.headerTitle ?? 'No vendor available — response time exceeded',
             context: locationLabel,
             vendorName: pick.name,
             external: true,
@@ -2420,20 +2599,32 @@ export function AdminOverviewDashboard() {
     loading || !lastUpdated ? 'Updating…' : formatUpdatedAt(lastUpdated)
   const portfolioPendingSetup =
     !healthReport.portfolio || healthReport.portfolio.status === 'pending_setup'
+  const healthScoreReady = shouldShowPropertyHealthScore(healthReport.portfolio?.status)
   const healthKpiCaption = resolvePropertyHealthKpiCaption(healthReport.portfolio)
   const healthFactorBreakdown =
-    !loading && healthReport.portfolio && !portfolioPendingSetup
+    !loading && healthReport.portfolio && healthScoreReady
       ? propertyHealthFactorBreakdownLines(healthReport.portfolio.components)
       : undefined
-  const healthKpiValue =
-    loading
-      ? '—'
-      : portfolioPendingSetup
-        ? 'Pending'
-        : formatPropertyHealthKpiValue(healthReport.portfolio!.score)
+  const healthKpiValue = loading
+    ? '—'
+    : resolvePropertyHealthKpiValue(
+        healthReport.portfolio?.status,
+        healthReport.portfolio?.score,
+      )
 
   const escalatedRailOpen = escalatedRailTarget != null && escalatedReview != null
   const stackedVendorRails = escalatedRailOpen && findExternalVendorOpen
+  const findExternalAreaLabel = useMemo(() => {
+    if (externalVendorAreaLabel) return externalVendorAreaLabel
+    const loc = externalVendorLocationLabel ?? escalatedReview?.locationLabel ?? ''
+    const building = loc.split(' · ')[0]?.trim() || null
+    return cityStateZipForBuildingName(canonicalProperties, building)
+  }, [
+    externalVendorAreaLabel,
+    externalVendorLocationLabel,
+    escalatedReview?.locationLabel,
+    canonicalProperties,
+  ])
   const invoicePayReview = useMemo(
     () => invoicePayReviews.find((r) => r.invoiceId === invoicePayRailId) ?? null,
     [invoicePayReviews, invoicePayRailId],
@@ -2913,6 +3104,7 @@ export function AdminOverviewDashboard() {
                 escalatedReview?.locationLabel ??
                 'Property · Unit'
               }
+              areaLabel={findExternalAreaLabel}
               issueCategory={externalVendorIssueCategory}
               suggestions={externalVendorSuggestions}
               providersUsed={externalVendorProvidersUsed}
@@ -2924,8 +3116,10 @@ export function AdminOverviewDashboard() {
               review={escalatedReview}
               loading={escalatedRailLoading}
               saving={escalatedRailSaving}
+              error={escalatedRailError}
               onClose={closeEscalatedRail}
               onTakeAction={handleEscalatedTakeAction}
+              onDelete={handleDeleteEscalatedAttention}
             />
           </div>
         </div>
@@ -2935,8 +3129,10 @@ export function AdminOverviewDashboard() {
           review={escalatedReview}
           loading={escalatedRailLoading}
           saving={escalatedRailSaving}
+          error={escalatedRailError}
           onClose={closeEscalatedRail}
           onTakeAction={handleEscalatedTakeAction}
+          onDelete={handleDeleteEscalatedAttention}
         />
       )}
 

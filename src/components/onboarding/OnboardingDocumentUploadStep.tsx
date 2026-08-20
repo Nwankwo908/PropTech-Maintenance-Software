@@ -2,6 +2,7 @@ import { useCallback, useRef, useState } from 'react'
 import {
   ACCEPTED_UPLOAD_MIME,
   canRetryOnboardingDocumentExtract,
+  clampDocumentUploadProgress,
   formatFileSize,
   isOnboardingDocumentProcessing,
   UPLOAD_STATUS_LABELS,
@@ -117,7 +118,9 @@ function FileRow({
           <div className="h-1.5 w-full overflow-hidden rounded-full bg-[#f3f4f6]">
             <div
               className="sa-bar h-full rounded-full bg-[#187960] transition-all duration-200"
-              style={{ width: `${Math.max(doc.uploadProgress, isProcessing ? 100 : 0)}%` }}
+              style={{
+                width: `${clampDocumentUploadProgress(doc.uploadProgress)}%`,
+              }}
             />
           </div>
         </div>

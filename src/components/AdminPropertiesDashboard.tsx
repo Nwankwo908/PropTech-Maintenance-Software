@@ -16,10 +16,11 @@ import {
   mapUnitsForPropertyHealth,
   countDistinctPortfolioUnits,
   normalizeBuildingKey,
-  formatPropertyHealthKpiValue,
   propertyHealthFactorBreakdownLines,
   propertyHealthKpiDelta,
   resolvePropertyHealthKpiCaption,
+  resolvePropertyHealthKpiValue,
+  shouldShowPropertyHealthScore,
   type PropertyHealthCanonicalProperty,
   type PropertyHealthFeedback,
   type PropertyHealthPmTask,
@@ -35,6 +36,7 @@ import {
 } from '@/lib/residentUnitKeys'
 import { supabase } from '@/lib/supabase'
 import { getErrorMessage } from '@/lib/errorMessage'
+import { activateUnitsFromResidentAssignments } from '@/lib/unitActivation'
 
 type PropertyTicket = {
   id: string
@@ -381,6 +383,13 @@ export function AdminPropertiesDashboard() {
     setError(null)
 
     const landlordId = getActiveLandlordId()
+    void activateUnitsFromResidentAssignments({
+      landlordId,
+      source: 'property_sync',
+    }).catch((err) => {
+      console.warn('[admin properties] unit activation sync failed', err)
+    })
+
     let timedOut = false
     const timeoutId = window.setTimeout(() => {
       timedOut = true
@@ -589,9 +598,8 @@ export function AdminPropertiesDashboard() {
     )
     const totalUnits = countDistinctPortfolioUnits(healthUnits)
 
-    const trackedUnits = healthUnits.filter((u) => u.status !== 'inactive')
     const occupancy = computeOccupancyStats(healthUnits, residents)
-    const avgOccupancy = trackedUnits.length ? occupancy.occupancyPct : null
+    const avgOccupancy = occupancy.tracked > 0 ? occupancy.occupancyPct : null
 
     const propertyHealth = healthReport.portfolio?.score ?? null
     const propertyHealthDelta = healthReport.portfolioDelta
@@ -625,17 +633,18 @@ export function AdminPropertiesDashboard() {
     loading || !lastUpdated ? 'Updating…' : formatUpdatedAt(lastUpdated)
   const portfolioPendingSetup =
     !healthReport.portfolio || healthReport.portfolio.status === 'pending_setup'
+  const healthScoreReady = shouldShowPropertyHealthScore(healthReport.portfolio?.status)
   const healthKpiCaption = resolvePropertyHealthKpiCaption(healthReport.portfolio)
   const healthFactorBreakdown =
-    !loading && healthReport.portfolio && !portfolioPendingSetup
+    !loading && healthReport.portfolio && healthScoreReady
       ? propertyHealthFactorBreakdownLines(healthReport.portfolio.components)
       : undefined
-  const healthKpiValue =
-    loading
-      ? '—'
-      : portfolioPendingSetup
-        ? 'Pending'
-        : formatPropertyHealthKpiValue(healthReport.portfolio!.score)
+  const healthKpiValue = loading
+    ? '—'
+    : resolvePropertyHealthKpiValue(
+        healthReport.portfolio?.status,
+        healthReport.portfolio?.score,
+      )
 
   const visibleBuildings = healthReport.buildings
   const allVisibleBuildingsSelected =

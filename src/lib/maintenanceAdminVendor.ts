@@ -59,7 +59,7 @@ export function maintenanceAdminVendorAttentionMeta(
 ): string {
   switch (reason) {
     case 'sla_expired_no_vendor':
-      return 'The response deadline has passed.'
+      return 'The response time has passed.'
     case 'vendor_declined_no_vendor':
     case 'no_vendor_available':
       return noRosterVendorsAvailableMessage(issueCategory)

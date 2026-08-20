@@ -418,7 +418,7 @@ function workflowMessageForTrigger(
     case "vendor_declined":
       return `Auto-reassigned to ${vendorName} after vendor decline`
     case "sla_expired":
-      return `Auto-reassigned to ${vendorName} after SLA expired`
+      return `Auto-reassigned to ${vendorName} after response time expired`
     case "pending_accept_stale":
       return `Auto-reassigned to ${vendorName} after no response`
     case "noshow_rematch":

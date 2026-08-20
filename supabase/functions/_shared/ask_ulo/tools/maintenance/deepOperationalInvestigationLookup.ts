@@ -159,7 +159,7 @@ export function buildOperationalFindingMarkdown(
     }`,
     `- **Repair scope:** ${primary.repairScope}`,
     `- **Labor estimate:** ${primary.laborEstimate}`,
-    `- **Vendor response deadline:** ${
+    `- **Response time:** ${
       primary.slaExpired ? "Has already passed" : "Still on track"
     }`,
     `- **Approval:** ${
@@ -188,7 +188,7 @@ export function buildOperationalFindingMarkdown(
         parts.push("- No HVAC vendor is currently assigned.")
       }
       if (primary.slaExpired) {
-        parts.push("- The vendor response deadline has already passed.")
+        parts.push("- The response time has already passed.")
       }
       if (primary.approvalStatus === "review_required") {
         parts.push("- Approval is still required.")
@@ -222,7 +222,7 @@ export function buildOperationalFindingMarkdown(
       "### What I'd do next",
       primary.vendorName
         ? `Ask **${primary.vendorName}** for a diagnostic estimate before approving major work.`
-        : "Assign an HVAC vendor for a diagnostic visit before approving major work — especially once the vendor response deadline has passed.",
+        : "Assign an HVAC vendor for a diagnostic visit before approving major work — especially once the response time has passed.",
     )
   } else {
     parts.push(

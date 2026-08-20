@@ -155,6 +155,30 @@ export function propertyRecordToAddressLine(property: PropertyRecord): string | 
   return parts.length > 0 ? parts.join(' ') : null
 }
 
+/** Landlord-facing area only — no street address. */
+export function propertyRecordToCityStateZip(
+  property: Pick<PropertyRecord, 'city' | 'state' | 'zipCode'>,
+): string | null {
+  const city = property.city?.trim() ?? ''
+  const state = property.state?.trim() ?? ''
+  const zip = property.zipCode?.trim() ?? ''
+  if (city && state && zip) return `${city}, ${state} ${zip}`
+  if (city && state) return `${city}, ${state}`
+  return null
+}
+
+export function cityStateZipForBuildingName(
+  properties: readonly PropertyRecord[],
+  building: string | null | undefined,
+): string | null {
+  const q = building?.trim().toLowerCase()
+  if (!q) return null
+  const match =
+    properties.find((p) => p.name.trim().toLowerCase() === q) ??
+    properties.find((p) => (p.streetAddress ?? '').trim().toLowerCase() === q)
+  return match ? propertyRecordToCityStateZip(match) : null
+}
+
 /** Upsert a property row; returns the stable properties.id. */
 export async function ensureProperty(
   input: EnsurePropertyInput,

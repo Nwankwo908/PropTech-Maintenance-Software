@@ -119,7 +119,7 @@ function buildMarkdown(items: RepairToApproveItem[], openUrgentCount: number, aw
 
   parts.push("")
   parts.push(
-    "These are the highest-urgency open repairs and anything already escalated for a landlord decision. I'd clear emergencies and plumbing/HVAC past the vendor response deadline before routine work.",
+    "These are the highest-urgency open repairs and anything already escalated for a landlord decision. I'd clear emergencies and plumbing/HVAC past the response time before routine work.",
   )
 
   return parts.join("\n")
@@ -221,7 +221,7 @@ export async function repairsToApproveLookup(
     const hours = ageHours(t.created_at)
     const overdue =
       t.due_at && new Date(String(t.due_at)).getTime() < Date.now()
-        ? "vendor response deadline has passed"
+        ? "response time has passed"
         : null
     items.push({
       kind: "urgent_work_order",
@@ -318,7 +318,7 @@ export const REPAIRS_TO_APPROVE_GUIDE = `
 
 For “Which repairs should I approve immediately?”:
 1. Lead with urgent / emergency / high open work orders and workflows waiting on landlord decision.
-2. Name the repair, property/unit, and why it can't wait (emergency, vendor response deadline passed, escalated).
+2. Name the repair, property/unit, and why it can't wait (emergency, response time passed, escalated).
 3. Do NOT confuse this with tenant screening approve/deny.
 4. Do NOT answer with soft unavailable language when open urgent tickets exist.
 5. Do NOT expose retrieval stats or UI-clipped text — full natural English only.

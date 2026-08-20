@@ -115,9 +115,11 @@ describe('isOnboardingExtractJunkValue', () => {
       },
     ])
 
-    expect(review.residents.map((row) => row.fullName)).toEqual(['Alex Rivera'])
+    // Leases enrich — they never mint residents/properties on their own.
+    expect(review.residents).toEqual([])
     expect(review.properties).toEqual([])
-    expect(review.needsReview.map((row) => row.value)).toEqual(['Last page is cut off'])
+    expect(review.leases.map((row) => row.residentName)).toEqual(['Alex Rivera'])
+    expect(review.needsReview.map((row) => row.value)).toContain('Last page is cut off')
     expect(review.imageLabels).toEqual([])
   })
 

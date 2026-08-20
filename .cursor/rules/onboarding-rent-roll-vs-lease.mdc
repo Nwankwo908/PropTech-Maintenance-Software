@@ -1,0 +1,36 @@
+---
+description: Rent roll is portfolio source of truth; leases only enrich matched residents.
+alwaysApply: false
+---
+
+# Onboarding extraction — rent roll vs lease
+
+## Source of truth
+
+| Document | Creates Properties / Units / Residents | Lease Information Found |
+|---|---|---|
+| **Rent roll** (or resident roster) | **Yes** — portfolio SoT | No (ignore invented `leases[]`) |
+| **Lease agreement** | **Never** | Yes — enrich matched rent-roll residents |
+| **Unknown** type | **Never** — flag for review | No |
+
+## Matching
+
+Before applying lease fields, match the lease tenant to a rent-roll resident using property + unit + name (and phone/email when present). Formatting differences (`Unit 2A` / `2A`, `John Smith` / `John A. Smith`) are OK when unit/property evidence agrees.
+
+- **Match** → merge lease dates / missing rent onto the same resident (no duplicate).
+- **No match** → keep lease in Lease Information (needs review); **do not** mint a resident or unit.
+- **Rent conflict** → keep rent-roll amount; surface `rent_amount_conflict` for review.
+
+## Processing order
+
+Classify each file → extract rent rolls → build portfolio → extract leases → match/enrich → flag conflicts & unmatched.
+
+## Where it lives
+
+`src/lib/onboardingDocumentUpload.ts` — `classifyOnboardingDocumentExtractRole`, `mergeExtractedDocuments`, `fillExtractedResidentsFromLeases`
+
+## Do not
+
+- Create a resident, unit, or property from a lease alone
+- Treat the whole upload batch as one document type
+- Silently overwrite rent-roll rent with a conflicting lease amount

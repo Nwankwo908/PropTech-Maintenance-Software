@@ -28,7 +28,7 @@ Deno.test("humanizeOperationalProse rewrites status and time jargon", () => {
   assertStringIncludes(good.toLowerCase(), "hasn't responded yet")
   assertStringIncludes(good.toLowerCase(), "work is currently underway")
   assertStringIncludes(good.toLowerCase(), "waiting for your approval")
-  assertStringIncludes(good.toLowerCase(), "vendor response deadline has passed")
+  assertStringIncludes(good.toLowerCase(), "response time has passed")
 })
 
 Deno.test("humanizeOperationalProse strips retrieval voice", () => {

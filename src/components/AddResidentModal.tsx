@@ -3,9 +3,9 @@ import { optionalPhoneForDbOrError } from '@/lib/phoneFormat'
 import { getInventoryUnitOptions } from '@/lib/propertyUnitOptions'
 
 const STATUS_OPTIONS = [
-  { value: 'active', label: 'Active' },
-  { value: 'pending', label: 'Pending' },
-  { value: 'past_resident', label: 'Past Resident' },
+  { value: 'active', label: 'Occupied' },
+  { value: 'pending', label: 'Pending move-in' },
+  { value: 'past_resident', label: 'Past resident' },
   { value: 'suspended', label: 'Suspended' },
 ] as const
 
@@ -285,7 +285,7 @@ export function AddResidentModal({
             </div>
             <div className="space-y-2">
               <label htmlFor="add-resident-status" className="block text-[14px] font-medium tracking-[-0.1504px] text-neutral-variant">
-                Account Status
+                Occupancy status
               </label>
               <div className="relative">
                 <select

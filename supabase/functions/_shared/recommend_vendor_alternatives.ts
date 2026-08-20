@@ -220,7 +220,7 @@ export async function recommendAlternativeVendorsForTicket(
   if (!pendingAccept && !slaOverdue) {
     return {
       error:
-        "Ticket is not eligible for vendor alternatives (must be pending acceptance or past SLA)",
+        "Ticket is not eligible for vendor alternatives (must be pending acceptance or past response time)",
     }
   }
 

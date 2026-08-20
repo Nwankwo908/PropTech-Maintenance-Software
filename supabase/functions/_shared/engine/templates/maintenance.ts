@@ -1,5 +1,6 @@
 import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.49.1"
 import { isLeaseRenewalInquirySms } from "../../sms/leaseRenewalInquiry.ts"
+import { shouldRejectMaintenanceTemplateForInterpretation } from "../../sms/inboundInterpretation.ts"
 import { processResidentMaintenanceIntake } from "../../sms/residentIntake.ts"
 import {
   backfillPipelineStageEvents,
@@ -42,6 +43,18 @@ export const maintenanceIntakeTemplate: WorkflowTemplate = {
         reason: "continue_intake",
         runId: ctx.runId,
       }
+    }
+
+    if (shouldRejectMaintenanceTemplateForInterpretation(sms.interpretation, sms.inbound.body)) {
+      return null
+    }
+
+    // Only start intake when interpretation approved a new problem (or never ran).
+    if (
+      sms.interpretation &&
+      sms.interpretation.extractedSlots.contextual_action !== "new_issue"
+    ) {
+      return null
     }
 
     if (sms.identity.identity_type === "resident") {

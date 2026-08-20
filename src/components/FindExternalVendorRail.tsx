@@ -12,13 +12,10 @@ import {
 import {
   buildExternalSearchQueryLabel,
   enrichExternalVendorSuggestions,
-  formatExternalProviderChip,
-  formatSourceBadgeLabel,
   type ExternalVendorDisplayRow,
 } from '@/lib/externalVendorDisplay'
 import { PhoneTelLink } from '@/components/CallPhoneButton'
 import { InviteVendorModal, type InviteVendorPrefill } from '@/components/InviteVendorModal'
-import { noRosterVendorsAvailableMessage } from '@/lib/maintenanceAdminVendor'
 
 function CloseIcon() {
   return (
@@ -111,83 +108,6 @@ function StarRating({ rating }: { rating: number | null }) {
   )
 }
 
-function SourceBadge({ source }: { source: ExternalVendorDisplayRow['primarySource'] }) {
-  const label = formatSourceBadgeLabel(source)
-  const className =
-    source === 'yelp'
-      ? 'bg-[#fef2f2] text-[#fb2c36]'
-      : source === 'netvendor'
-        ? 'bg-[#ecfdf5] text-[#059669]'
-        : source === 'google'
-          ? 'bg-[#eff6ff] text-[#155dfc]'
-          : 'bg-[#f3f4f6] text-[#717182]'
-
-  return (
-    <span className={`inline-flex rounded px-1.5 py-0.5 text-[9px] font-bold leading-[13.5px] ${className}`}>
-      {label}
-    </span>
-  )
-}
-
-function RatingTierBadge({ tier }: { tier: ExternalVendorDisplayRow['ratingTier'] }) {
-  const className =
-    tier.tone === 'excellent'
-      ? 'bg-[#ecfdf5] text-[#047857]'
-      : tier.tone === 'strong'
-        ? 'bg-[#eff6ff] text-[#1d4ed8]'
-        : tier.tone === 'good'
-          ? 'bg-[#f0fdf4] text-[#15803d]'
-          : tier.tone === 'acceptable'
-            ? 'bg-[#fefce8] text-[#a16207]'
-            : 'bg-[#fef2f2] text-[#b91c1c]'
-
-  return (
-    <span className={`inline-flex rounded-full px-2 py-0.5 text-[10px] font-semibold leading-[15px] ${className}`}>
-      {tier.recommendationBadge}
-    </span>
-  )
-}
-
-function ConfidenceBadge({ tier }: { tier: ExternalVendorDisplayRow['confidenceTier'] }) {
-  const className =
-    tier.tone === 'very-high'
-      ? 'bg-[#f3f4f6] text-[#111827]'
-      : tier.tone === 'high'
-        ? 'bg-[#f3f4f6] text-[#374151]'
-        : tier.tone === 'moderate'
-          ? 'bg-[#f9fafb] text-[#4b5563]'
-          : tier.tone === 'limited'
-            ? 'bg-[#fff7ed] text-[#c2410c]'
-            : 'bg-[#fef2f2] text-[#991b1b]'
-
-  return (
-    <span className={`inline-flex rounded px-1.5 py-0.5 text-[9px] font-medium leading-[13.5px] ${className}`}>
-      {tier.label}
-    </span>
-  )
-}
-
-function DistanceTierBadge({ tier }: { tier: ExternalVendorDisplayRow['distanceTier'] }) {
-  if (!tier) return null
-  const className =
-    tier.tone === 'local' || tier.tone === 'nearby'
-      ? 'text-[#047857]'
-      : tier.tone === 'extended'
-        ? 'text-[#a16207]'
-        : tier.tone === 'long'
-          ? 'text-[#c2410c]'
-          : 'text-[#b91c1c]'
-
-  return (
-    <span className={`inline-flex items-center gap-1 text-[10px] font-medium leading-[15px] ${className}`}>
-      <span aria-hidden>{tier.dot}</span>
-      <span>
-        {tier.tierLabel} · {tier.recommendation}
-      </span>
-    </span>
-  )
-}
-
 function VendorResultRow({
   vendor,
   saving,
@@ -216,10 +136,7 @@ function VendorResultRow({
     >
       <div className="flex items-start gap-3">
         <div className="min-w-0 flex-1">
-          <div className="flex flex-wrap items-center gap-2">
-            <p className="text-[14px] font-semibold leading-5 text-[#0a0a0a]">{vendor.name}</p>
-            <SourceBadge source={vendor.primarySource} />
-          </div>
+          <p className="text-[14px] font-semibold leading-5 text-[#0a0a0a]">{vendor.name}</p>
 
           <div className="mt-0.5 flex flex-wrap items-center gap-1">
             <StarRating rating={vendor.rating} />
@@ -231,25 +148,10 @@ function VendorResultRow({
             </span>
           </div>
 
-          <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
-            <RatingTierBadge tier={vendor.ratingTier} />
-            <ConfidenceBadge tier={vendor.confidenceTier} />
-          </div>
-          <p className="mt-1 text-[10px] text-[#717182]">
-            Rating quality: {vendor.ratingTier.qualityLabel}
-          </p>
-
           {distanceLabel ? (
-            <div className="mt-1.5 flex flex-col gap-0.5">
-              <div className="flex items-center gap-1">
-                <MapPinIcon />
-                <p className="text-[11px] leading-[16.5px] text-[#717182]">{distanceLabel}</p>
-              </div>
-              <DistanceTierBadge tier={vendor.distanceTier} />
-            </div>
-          ) : vendor.distanceTier ? (
-            <div className="mt-1.5">
-              <DistanceTierBadge tier={vendor.distanceTier} />
+            <div className="mt-1.5 flex items-center gap-1">
+              <MapPinIcon />
+              <p className="text-[11px] leading-[16.5px] text-[#717182]">{distanceLabel}</p>
             </div>
           ) : null}
 
@@ -330,6 +232,8 @@ export type FindExternalVendorRailProps = {
   onClose: () => void
   onSelect: (suggestion: ExternalVendorSuggestionDto) => void | Promise<void>
   locationLabel: string
+  /** City, State ZIP under the title — no street address. */
+  areaLabel?: string | null
   issueCategory?: string | null
   suggestions: ExternalVendorSuggestionDto[]
   providersUsed?: string[]
@@ -354,9 +258,9 @@ export function FindExternalVendorRail({
   onClose,
   onSelect,
   locationLabel,
+  areaLabel = null,
   issueCategory = null,
   suggestions,
-  providersUsed,
   loading = false,
   error = null,
   notice = null,
@@ -375,8 +279,7 @@ export function FindExternalVendorRail({
     issueCategory,
     locationLabel,
   )
-  const searchQuery = buildExternalSearchQueryLabel(issueCategory, locationLabel)
-  const providerChip = formatExternalProviderChip(providersUsed)
+  const searchQuery = buildExternalSearchQueryLabel(issueCategory, areaLabel ?? '')
   const resultCount = displayRows.length
   const verificationStep = verificationVendor != null
   const handleBack = onBack ?? onClose
@@ -464,30 +367,18 @@ export function FindExternalVendorRail({
                 {cancelLabel}
               </button>
             ) : null}
-            <div className={`flex flex-wrap items-center gap-2 ${showBackNav ? 'mt-3' : ''}`}>
-              <span className="inline-flex rounded bg-[#fb2c36] px-1.5 py-0.5 text-[10px] font-bold leading-[15px] text-white">
-                URGENT
-              </span>
-              <span className="text-[11px] leading-[16.5px] text-[#717182]">
-                SLA breach · No roster backup
-              </span>
-            </div>
-            <h2 id={titleId} className="mt-2 text-[18px] font-semibold leading-7 tracking-[-0.3px] text-[#0a0a0a]">
+            <h2 id={titleId} className={`${showBackNav ? 'mt-3' : ''} text-[18px] font-semibold leading-7 tracking-[-0.3px] text-[#0a0a0a]`}>
               Find External Vendor
             </h2>
-            <p className="mt-1 text-[13px] leading-5 text-[#6a7282]">
-              {noRosterVendorsAvailableMessage(issueCategory)}
-            </p>
-            <p className="mt-0.5 text-[12px] leading-[18px] text-[#9ca3af]">{locationLabel}</p>
+            {areaLabel ? (
+              <p className="mt-1 text-[12px] leading-[18px] text-[#9ca3af]">{areaLabel}</p>
+            ) : null}
           </header>
 
           <div className="border-b border-[#e5e7eb] bg-[#f9fafb] px-6 py-4">
             <div className="flex items-center gap-2 rounded-[10px] border border-black/10 bg-white px-[13px] py-[9px]">
               <SearchIcon />
               <p className="min-w-0 flex-1 truncate text-[12px] leading-4 text-[#0a0a0a]">{searchQuery}</p>
-              <span className="shrink-0 rounded bg-[#eff6ff] px-1.5 py-0.5 text-[10px] font-semibold leading-[15px] text-[#155dfc]">
-                {providerChip}
-              </span>
             </div>
             <p className="mt-2 text-[11px] leading-[15px] text-[#717182]">
               {loading
@@ -514,8 +405,8 @@ export function FindExternalVendorRail({
 
             {!loading && !error && displayRows.length === 0 ? (
               <p className="py-6 text-[13px] leading-5 text-[#6a7282]">
-                No license- and COI-verified outside-network vendors found for this trade. Try
-                another category or configure external vendor search on Supabase Edge.
+                No outside-network vendors found nearby for this trade. Check that live vendor
+                search is configured, or invite a vendor from the roster.
               </p>
             ) : null}
 

@@ -81,8 +81,8 @@ export function humanizeOpsLanguage(raw: string): string {
   s = s.replace(/\bexecutive_briefing\b/gi, "portfolio briefing")
 
   // Industry jargon → the action they represent (unless the landlord used the term first)
-  s = s.replace(/\bvendor\s+SLAs?\b/gi, "vendor response deadlines")
-  s = s.replace(/\bSLAs?\b/gi, "vendor response deadline")
+  s = s.replace(/\bvendor\s+SLAs?\b/gi, "vendor response time")
+  s = s.replace(/\bSLAs?\b/gi, "response time")
   s = s.replace(
     /\bescalated\s+workflows?\b/gi,
     "items that require your attention",
@@ -140,8 +140,8 @@ Avoid industry jargon unless the user specifically used that term first.
 Translate operational terms into the action they represent.
 
 Never say → Say instead:
-- "SLA" / "vendor SLA" → "vendor response deadline"
-- "expected response time expired" → "the vendor response deadline has passed"
+- "SLA" / "vendor SLA" → "response time"
+- "expected response time expired" → "the response time has passed"
 - "pending accept" / "waiting on accept" → "hasn't responded yet" / "waiting for the vendor to accept the job"
 - "vendor_assigned" → "waiting for the vendor to respond"
 - "in_progress" → "work is currently underway"

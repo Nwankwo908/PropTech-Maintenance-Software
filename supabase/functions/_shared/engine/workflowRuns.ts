@@ -31,6 +31,10 @@ export function runMaintenanceRequestId(run: WorkflowRunRow): string | null {
   if (run.entity_type === "maintenance_request" && run.entity_id) {
     return run.entity_id
   }
+  const draft = run.metadata?.draft_ticket_id
+  if (typeof draft === "string" && draft.trim()) return draft.trim()
+  const linked = run.metadata?.maintenance_request_id
+  if (typeof linked === "string" && linked.trim()) return linked.trim()
   return null
 }
 

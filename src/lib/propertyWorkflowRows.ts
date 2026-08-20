@@ -1,4 +1,8 @@
-import type { AdminWorkflowDashboardData, AdminWorkflowRow } from '@/lib/adminWorkflows'
+import {
+  isCancelledOnActiveTasks,
+  type AdminWorkflowDashboardData,
+  type AdminWorkflowRow,
+} from '@/lib/adminWorkflows'
 import {
   buildWorkflowKanbanCard,
   collectAdminWorkflowRuns,
@@ -205,7 +209,7 @@ export function buildPropertyWorkflowRows(input: {
 
   return collectAdminWorkflowRuns(workflowData)
     .filter((row) => normalizeBuildingKey(row.propertyLabel) === normalizeBuildingKey(building))
-    .filter((row) => row.status !== 'cancelled')
+    .filter((row) => !isCancelledOnActiveTasks(row))
     .map((row) => {
       const card = buildWorkflowKanbanCard(row)
       const ticket = ticketForWorkflow(row, ticketsById)

@@ -13,9 +13,11 @@ import {
 } from '@/lib/onboardingReviewManual'
 import { resolveOnboardingPropertyType } from '@/lib/onboarding/propertyType'
 import { supabase } from '@/lib/supabase'
+import { activateUnitsFromResidentAssignments } from '@/lib/unitActivation'
 import { importMockExtraction } from './importPortfolio'
 import { persistLandlordAccountProfile } from './persist/account'
 import { persistOnboardingProperties, collectExtractedUnitLabels } from './persist/properties'
+import { importOnboardingResidentsFromExtraction } from './persist/importResidents'
 import { requireOnboardingLandlord } from './scope'
 import type { LandlordOnboardingState, OnboardingProperty, OnboardingStep } from './types'
 
@@ -151,6 +153,34 @@ export async function commitFastTrackImport(
       }
       properties = unitResult.properties
     }
+
+    const selectedResidents = normalized.residents.filter((row) => row.selected)
+    if (selectedResidents.length > 0) {
+      const importedResidents = await importOnboardingResidentsFromExtraction(
+        selectedResidents,
+        normalized.leases.filter((lease) => lease.selected),
+        scope.landlordId,
+        {
+          properties: properties.map((property) => ({
+            id: property.id,
+            name: property.name,
+          })),
+        },
+      )
+      if (importedResidents < selectedResidents.length) {
+        console.warn(
+          '[onboarding] fast-track resident import partial',
+          importedResidents,
+          'of',
+          selectedResidents.length,
+        )
+      }
+    }
+
+    await activateUnitsFromResidentAssignments({
+      landlordId: scope.landlordId,
+      source: 'onboarding_import',
+    })
 
     await input.refreshCounts()
   }

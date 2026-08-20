@@ -77,6 +77,7 @@ import {
   type OnboardingVendor,
 } from '@/lib/onboarding'
 import { commitFastTrackImport } from '@/lib/onboarding/fastTrackImport'
+import { mergeFastTrackReviewResidents } from '@/lib/onboarding/persist/importResidents'
 import {
   buildOnboardingFormDraft,
   readPersistedExtractionReview,
@@ -277,76 +278,83 @@ export function useOnboardingWizard() {
     let cancelled = false
     void (async () => {
       setLoading(true)
-      const onboarding = await fetchLandlordOnboarding()
-      if (cancelled) return
-      clearOnboardingResetGuard()
-
-      const onWelcome =
-        onboarding.onboardingStatus === 'not_started' ||
-        normalizeOnboardingStep(onboarding.currentStep) === 'entry'
-      const localSnapshot = readLocalOnboardingState()
-      const localInProgress =
-        localSnapshot != null &&
-        localSnapshot.onboardingStatus === 'in_progress' &&
-        normalizeOnboardingStep(localSnapshot.currentStep) !== 'entry'
-      const counts = onWelcome && !localInProgress ? await fetchAccountSetupCounts() : null
-      const hasStalePortfolio =
-        onWelcome &&
-        !localInProgress &&
-        (onboarding.properties.length > 0 ||
-          (counts != null &&
-            (counts.properties > 0 ||
-              counts.units > 0 ||
-              counts.residents > 0 ||
-              counts.vendors > 0 ||
-              counts.workflowRuns > 0)))
-
-      if (hasStalePortfolio) {
-        const cleared = await clearOnboardingPortfolioSession({ keepAccountSetup: true })
+      try {
+        const onboarding = await fetchLandlordOnboarding()
         if (cancelled) return
-        if (!cleared.ok) {
-          setError(cleared.error ?? 'Could not clear previous portfolio data.')
-          setState(onboarding)
-        } else {
-          setState(cleared.state)
-        }
-        setPropertyForms([createEmptyPropertyForm()])
-        setVendorForms([createEmptyVendorForm()])
-        setResidentForms([createEmptyResidentForm()])
-        formsHydratedRef.current = true
-        setLoading(false)
-        return
-      }
+        clearOnboardingResetGuard()
 
-      const resolvedStep = resolveOnboardingStepForPath(
-        normalizeOnboardingStep(onboarding.currentStep),
-        onboarding.setupPath,
-      )
-      const normalizedOnboarding =
-        resolvedStep === normalizeOnboardingStep(onboarding.currentStep)
-          ? onboarding
-          : { ...onboarding, currentStep: resolvedStep }
-      setState(normalizedOnboarding)
-      if (normalizedOnboarding !== onboarding) {
-        void saveLandlordOnboarding(normalizedOnboarding)
+        const onWelcome =
+          onboarding.onboardingStatus === 'not_started' ||
+          normalizeOnboardingStep(onboarding.currentStep) === 'entry'
+        const localSnapshot = readLocalOnboardingState()
+        const localInProgress =
+          localSnapshot != null &&
+          localSnapshot.onboardingStatus === 'in_progress' &&
+          normalizeOnboardingStep(localSnapshot.currentStep) !== 'entry'
+        const counts = onWelcome && !localInProgress ? await fetchAccountSetupCounts() : null
+        const hasStalePortfolio =
+          onWelcome &&
+          !localInProgress &&
+          (onboarding.properties.length > 0 ||
+            (counts != null &&
+              (counts.properties > 0 ||
+                counts.units > 0 ||
+                counts.residents > 0 ||
+                counts.vendors > 0 ||
+                counts.workflowRuns > 0)))
+
+        if (hasStalePortfolio) {
+          const cleared = await clearOnboardingPortfolioSession({ keepAccountSetup: true })
+          if (cancelled) return
+          if (!cleared.ok) {
+            setError(cleared.error ?? 'Could not clear previous portfolio data.')
+            setState(onboarding)
+          } else {
+            setState(cleared.state)
+          }
+          setPropertyForms([createEmptyPropertyForm()])
+          setVendorForms([createEmptyVendorForm()])
+          setResidentForms([createEmptyResidentForm()])
+          formsHydratedRef.current = true
+          return
+        }
+
+        const resolvedStep = resolveOnboardingStepForPath(
+          normalizeOnboardingStep(onboarding.currentStep),
+          onboarding.setupPath,
+        )
+        const normalizedOnboarding =
+          resolvedStep === normalizeOnboardingStep(onboarding.currentStep)
+            ? onboarding
+            : { ...onboarding, currentStep: resolvedStep }
+        setState(normalizedOnboarding)
+        if (normalizedOnboarding !== onboarding) {
+          void saveLandlordOnboarding(normalizedOnboarding)
+        }
+        if (normalizedOnboarding.accountSetup.smsConsentAcceptedAt) {
+          setSmsConsentAccepted(true)
+        }
+        const propertyRows = hydratePropertyFormsFromOnboarding(normalizedOnboarding)
+        if (propertyRows) {
+          setPropertyForms(propertyRows)
+        }
+        const persistedUploads = readPersistedUploadDocuments(normalizedOnboarding.formDraft)
+        if (persistedUploads?.length) {
+          setUploadDocuments(persistedUploads)
+        }
+        const persistedExtraction = readPersistedExtractionReview(normalizedOnboarding.formDraft)
+        if (persistedExtraction) {
+          setExtractionReview(persistedExtraction)
+        }
+        formsHydratedRef.current = true
+      } catch (err) {
+        if (cancelled) return
+        console.error('[onboarding wizard] load failed', err)
+        setError("Couldn't load setup. Please refresh and try again.")
+        formsHydratedRef.current = true
+      } finally {
+        if (!cancelled) setLoading(false)
       }
-      if (normalizedOnboarding.accountSetup.smsConsentAcceptedAt) {
-        setSmsConsentAccepted(true)
-      }
-      const propertyRows = hydratePropertyFormsFromOnboarding(normalizedOnboarding)
-      if (propertyRows) {
-        setPropertyForms(propertyRows)
-      }
-      const persistedUploads = readPersistedUploadDocuments(normalizedOnboarding.formDraft)
-      if (persistedUploads?.length) {
-        setUploadDocuments(persistedUploads)
-      }
-      const persistedExtraction = readPersistedExtractionReview(normalizedOnboarding.formDraft)
-      if (persistedExtraction) {
-        setExtractionReview(persistedExtraction)
-      }
-      formsHydratedRef.current = true
-      setLoading(false)
     })()
     return () => {
       cancelled = true
@@ -415,9 +423,14 @@ export function useOnboardingWizard() {
       if (residentFormsHaveData(wizardSnapshotRef.current.residentForms)) return
 
       const defaultBuilding = state.properties[0]?.name?.trim() ?? ''
-      if (dbResidents.length > 0) {
+      const extracted = extractionReview?.residents ?? []
+      const mergedResidents =
+        state.setupPath === 'fast_track' && extracted.length > 0
+          ? mergeFastTrackReviewResidents(dbResidents, extracted)
+          : dbResidents
+      if (mergedResidents.length > 0) {
         setResidentForms(
-          dbResidents.map((resident) => {
+          mergedResidents.map((resident) => {
             const row = residentToFormRow(resident)
             return row.building.trim()
               ? row
@@ -443,7 +456,7 @@ export function useOnboardingWizard() {
     return () => {
       cancelled = true
     }
-  }, [loading, step, state.formDraft, state.properties])
+  }, [loading, step, state.formDraft, state.properties, state.setupPath, extractionReview])
 
   useEffect(() => {
     if (loading || step !== 'document_upload') return
@@ -467,21 +480,25 @@ export function useOnboardingWizard() {
       }
       return
     }
-    const persistedExtraction = readPersistedExtractionReview(state.formDraft)
     const hasRealExtractions = uploadDocuments.some((doc) => doc.extractedPayload)
-    if (persistedExtraction && !hasRealExtractions) {
+    if (hasRealExtractions) {
       setExtractionReview(
         fillExtractionReviewAccount(
-          normalizeExtractionReview(persistedExtraction, state.accountSetup),
+          buildOnboardingExtractionReview(uploadDocuments, state.accountSetup),
           uploadDocuments,
           state.accountSetup,
         ),
       )
       return
     }
-    if (uploadDocuments.length > 0) {
+    const persistedExtraction = readPersistedExtractionReview(state.formDraft)
+    if (persistedExtraction) {
       setExtractionReview(
-        buildOnboardingExtractionReview(uploadDocuments, state.accountSetup),
+        fillExtractionReviewAccount(
+          normalizeExtractionReview(persistedExtraction, state.accountSetup),
+          uploadDocuments,
+          state.accountSetup,
+        ),
       )
       return
     }
@@ -708,6 +725,10 @@ export function useOnboardingWizard() {
       )
       return
     }
+    if (step === 'ai_review' && previous === 'document_upload') {
+      await returnToDocumentUpload()
+      return
+    }
     await goTo(previous)
   }
 
@@ -832,6 +853,13 @@ export function useOnboardingWizard() {
     setUploadDocuments((prev) => prev.filter((doc) => doc.id !== id))
   }
 
+  async function returnToDocumentUpload() {
+    // Drop the prior AI review so the next "Review data" rebuilds from files
+    // instead of reusing (and inflating) a stale lease list.
+    setExtractionReview(null)
+    await goTo('document_upload', {}, { extractionReview: null })
+  }
+
   async function continueFromDocumentUpload() {
     if (uploadDocuments.length === 0) {
       setError('Upload at least one document, or choose Skip for now.')
@@ -842,17 +870,21 @@ export function useOnboardingWizard() {
     }
     setSaving(true)
     setError(null)
-    setExtractionReview(
+    const review = fillExtractionReviewAccount(
       buildOnboardingExtractionReview(uploadDocuments, state.accountSetup),
+      uploadDocuments,
+      state.accountSetup,
     )
-    await goTo('ai_review')
+    setExtractionReview(review)
+    await goTo('ai_review', {}, { extractionReview: review })
     setSaving(false)
   }
 
   async function skipDocumentUpload() {
     setError(null)
-    setExtractionReview(emptyExtractionReview(state.accountSetup))
-    await goTo('ai_review')
+    const review = emptyExtractionReview(state.accountSetup)
+    setExtractionReview(review)
+    await goTo('ai_review', {}, { extractionReview: review })
   }
 
   async function continueFromAiReview() {
@@ -1000,11 +1032,13 @@ export function useOnboardingWizard() {
     }
     const ready = await isLandlordStripePayoutsReady(reviewState.landlordId)
     setPayoutsReady(ready)
-    const persistedResidents = await fetchOnboardingResidents(reviewState.landlordId)
+    const rosterResidents = data.residents.length > 0
+      ? data.residents
+      : await fetchOnboardingResidents(reviewState.landlordId)
     const check = canCompleteOnboarding(
       reviewState,
       data.vendors,
-      persistedResidents,
+      rosterResidents,
       data.metrics,
       ready,
     )
@@ -1022,7 +1056,7 @@ export function useOnboardingWizard() {
     const result = await completeOnboarding(
       reviewState,
       data.vendors,
-      persistedResidents,
+      rosterResidents,
       data.metrics,
     )
     if (!result.ok) {
@@ -1039,6 +1073,7 @@ export function useOnboardingWizard() {
     }
     setState(completedState)
     persistOnboardingWizardLocally(completedState)
+    window.dispatchEvent(new Event('ulo:onboarding-completed'))
     const remainingMs = SETUP_COMPLETE_TRANSITION_MS - (Date.now() - transitionStartedAt)
     if (remainingMs > 0) {
       await new Promise((resolve) => window.setTimeout(resolve, remainingMs))
@@ -1049,6 +1084,8 @@ export function useOnboardingWizard() {
         ? { onboardingNotice: result.activationWarning }
         : undefined,
     })
+    setCompletingSetup(false)
+    setSaving(false)
   }
 
 
@@ -1096,6 +1133,7 @@ export function useOnboardingWizard() {
     removeUploadDocument,
     retryDocumentExtract,
     continueFromDocumentUpload,
+    returnToDocumentUpload,
     skipDocumentUpload,
     continueFromAiReview,
     // review / payouts

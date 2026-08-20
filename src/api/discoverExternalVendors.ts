@@ -30,6 +30,7 @@ export type DiscoverExternalVendorsOk = {
   notice?: string
   searchLocation?: string
   locationLabel?: string
+  areaLabel?: string | null
   issueCategory?: string | null
 }
 

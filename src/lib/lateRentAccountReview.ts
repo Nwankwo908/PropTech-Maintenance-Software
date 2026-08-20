@@ -126,7 +126,7 @@ function formatLocation(propertyLabel: string | null, unitLabel: string | null):
   const building = propertyLabel?.trim() || 'Property'
   const unit = (unitLabel ?? '').trim()
   if (!unit) return building
-  const displayUnit = /^\d/.test(unit) ? `Unit ${unit}` : unit
+  const displayUnit = /^unit\s+/i.test(unit) ? unit.replace(/^unit\s+/i, 'Unit ') : `Unit ${unit}`
   return `${building} · ${displayUnit}`
 }
 

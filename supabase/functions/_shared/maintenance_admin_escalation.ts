@@ -133,7 +133,7 @@ export async function escalateMaintenanceNeedsVendor(
         ? "Vendor declined — assign a vendor"
         : opts.escalationReason === "no_vendor_available"
           ? "No vendor available — assign a vendor"
-          : "SLA breached — assign a vendor"
+          : "Response time exceeded — assign a vendor"
     await notifyLandlordNeedsAttention(supabase, {
       landlordId,
       kind: "assign_vendor",

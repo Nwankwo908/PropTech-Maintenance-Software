@@ -1,6 +1,7 @@
 import {
   buildUnitBuildingMap,
   formatCategoryName,
+  isInsightEligibleTicket,
   normalizeUnitLabel,
   resolveTicketBuilding,
 } from './helpers.ts'
@@ -23,7 +24,8 @@ export function computePortfolioInsights(
   const sinceMs = now - PORTFOLIO_INSIGHT_WINDOW_MS
   const buildingByUnit = buildUnitBuildingMap(input.units)
 
-  const recentTickets = input.tickets.filter((t) => {
+  const eligibleTickets = input.tickets.filter(isInsightEligibleTicket)
+  const recentTickets = eligibleTickets.filter((t) => {
     const ts = Date.parse(t.createdAt)
     return !Number.isNaN(ts) && ts >= sinceMs
   })
@@ -77,11 +79,14 @@ export function computePortfolioInsights(
     })
   }
 
-  const assignedCount =
-    input.assignedWorkOrderCount ??
-    input.tickets.filter((t) => t.assignedVendorId).length
-  const vendorResponse = input.vendorResponsePct
-  if (vendorResponse != null && assignedCount > 0) {
+  const assignedForInsights = eligibleTickets.filter((t) => t.assignedVendorId)
+  const assignedCount = assignedForInsights.length
+  if (assignedCount > 0) {
+    const respondedCount = assignedForInsights.filter((t) => {
+      const status = (t.vendorWorkStatus ?? '').trim().toLowerCase()
+      return status && status !== 'pending_accept'
+    }).length
+    const vendorResponse = Math.round((respondedCount / assignedCount) * 100)
     insights.push({
       tag: 'VENDOR RESPONSE',
       text: `Vendors have responded to ${vendorResponse}% of assigned work orders.`,

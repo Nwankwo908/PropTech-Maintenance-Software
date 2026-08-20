@@ -118,7 +118,7 @@ export function useSidebarAdminProfile(): SidebarAdminProfileState {
     return () => {
       cancelled = true
     }
-  }, [landlordId, location.pathname])
+  }, [landlordId])
 
   useEffect(() => {
     if (!isOnboardingLandlordAccount(landlordId)) {
@@ -141,7 +141,7 @@ export function useSidebarAdminProfile(): SidebarAdminProfileState {
     return () => {
       cancelled = true
     }
-  }, [landlordId, location.pathname])
+  }, [landlordId])
 
   return useMemo(() => {
     const hideProfile = shouldHideSidebarProfile(onOnboardingRoute, onboardingState)

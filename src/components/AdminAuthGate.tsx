@@ -38,22 +38,46 @@ export function AdminAuthGate({ children }: { children: React.ReactNode }) {
     }
 
     let cancelled = false
-
-    void supabase.auth.getSession().then(async ({ data }) => {
+    const timeoutId = window.setTimeout(() => {
       if (cancelled) return
-      setState(await gateStateForSession(data.session))
-    })
+      console.warn('[AdminAuthGate] session check timed out')
+      setState((prev) =>
+        prev === 'loading' ? (import.meta.env.DEV ? 'authed' : 'anon') : prev,
+      )
+    }, 20_000)
+
+    void supabase.auth
+      .getSession()
+      .then(async ({ data }) => {
+        if (cancelled) return
+        setState(await gateStateForSession(data.session))
+      })
+      .catch((err) => {
+        if (cancelled) return
+        console.error('[AdminAuthGate] getSession threw', err)
+        setState(import.meta.env.DEV ? 'authed' : 'anon')
+      })
+      .finally(() => {
+        window.clearTimeout(timeoutId)
+      })
 
     const {
       data: { subscription },
     } = supabase.auth.onAuthStateChange((_event, session) => {
-      void gateStateForSession(session).then((next) => {
-        if (!cancelled) setState(next)
-      })
+      void gateStateForSession(session)
+        .then((next) => {
+          if (!cancelled) setState(next)
+        })
+        .catch((err) => {
+          if (cancelled) return
+          console.error('[AdminAuthGate] auth state threw', err)
+          setState(import.meta.env.DEV ? 'authed' : 'anon')
+        })
     })
 
     return () => {
       cancelled = true
+      window.clearTimeout(timeoutId)
       subscription.unsubscribe()
     }
   }, [])

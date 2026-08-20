@@ -80,7 +80,7 @@ export const DEFAULT_NOTIFICATION_SETTINGS: NotificationSettingsState = {
         event('vendor_assigned', 'Vendor assigned', { email: true, sms: false }),
         event('vendor_delayed', 'Vendor delayed response', { email: true, sms: true }),
         event('work_completed', 'Work order completed', { email: true, sms: false }),
-        event('sla_overdue', 'SLA overdue', { email: true, sms: true, push: true }, true),
+        event('sla_overdue', 'Response time overdue', { email: true, sms: true, push: true }, true),
       ],
     },
     {
@@ -102,6 +102,7 @@ export const DEFAULT_NOTIFICATION_SETTINGS: NotificationSettingsState = {
         event('application_submitted', 'Application submitted', { email: true, sms: false }),
         event('lease_signed', 'Lease signed', { email: true, sms: false }),
         event('lease_expiring', 'Lease expiring soon', { email: true, sms: true }),
+        event('lease_info_missing', 'Leasing information is missing', { email: true, sms: true }),
         event('move_in_scheduled', 'Move-in scheduled', { email: true, sms: false }),
       ],
     },

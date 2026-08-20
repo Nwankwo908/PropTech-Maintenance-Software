@@ -160,6 +160,20 @@ export function buildInvoiceApprovedOutcome(input: {
   }
 }
 
+export function buildAttentionDeletedOutcome(input: {
+  operationTitle: string
+  context: string
+}): AwaitingDecisionOutcome {
+  return {
+    operationTitle: input.operationTitle,
+    context: input.context,
+    kind: 'resolved',
+    headline: 'Removed from Needs Your Attention',
+    detail: 'This operation was deleted from your queue. The work order is unchanged.',
+    removedFromQueue: true,
+  }
+}
+
 export function buildAutoRemovedAttentionOutcome(input: {
   title: string
   context: string

@@ -1,4 +1,7 @@
-import type { AdminWorkflowDashboardData } from '@/lib/adminWorkflows'
+import {
+  isCancelledOnActiveTasks,
+  type AdminWorkflowDashboardData,
+} from '@/lib/adminWorkflows'
 import {
   buildWorkflowKanbanCard,
   collectAdminWorkflowRuns,
@@ -6,6 +9,11 @@ import {
   WORKFLOW_STAGE_LABEL,
 } from '@/lib/adminWorkflowKanban'
 import { formatPropertyLeaseEnd, formatPropertyUnitDisplay } from '@/lib/propertyUnitRows'
+import {
+  normalizeResidentOccupancyStatus,
+  residentOccupancyLabel,
+  type ResidentOccupancyStatus,
+} from '@/lib/residentOccupancy'
 
 export type ResidentStanding = 'good_standing' | 'at_risk' | 'past_due'
 
@@ -49,6 +57,7 @@ export type ResidentProfileDetail = {
   emergencyContact: ResidentEmergencyContact | null
   pets: ResidentPet[]
   leaseStatus: string
+  occupancyStatus: ResidentOccupancyStatus
   leaseStartLabel: string
   leaseEndLabel: string
   monthlyRentLabel: string
@@ -186,7 +195,7 @@ export function buildResidentWorkflowSummaries(
 
   return collectAdminWorkflowRuns(workflowData)
     .filter((row) => row.residentId === residentId)
-    .filter((row) => row.status !== 'cancelled' && row.status !== 'completed')
+    .filter((row) => !isCancelledOnActiveTasks(row) && row.status !== 'completed')
     .map((row) => ({ row, card: buildWorkflowKanbanCard(row) }))
     .filter(({ card }) => isOpenWorkflowKanbanCard(card))
     .sort((a, b) => {
@@ -230,7 +239,8 @@ export function buildResidentProfileDetail(input: {
     email: displayResidentEmail(user.email),
     emergencyContact: null,
     pets: [],
-    leaseStatus: user.status === 'pending' ? 'Pending move-in' : 'Occupied',
+    occupancyStatus: normalizeResidentOccupancyStatus(user.status),
+    leaseStatus: residentOccupancyLabel(user.status),
     leaseStartLabel: formatPropertyLeaseEnd(user.leaseStartDate ?? null) ?? '—',
     leaseEndLabel: formatPropertyLeaseEnd(user.leaseEndDate) ?? '—',
     monthlyRentLabel: monthlyRent != null ? formatCurrency(monthlyRent) : '—',

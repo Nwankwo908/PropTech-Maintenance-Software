@@ -41,6 +41,28 @@ Use `adminRightRailPanelClass` / `adminRightRailStackRoundedClass` from `@/lib/a
 - Close: `absolute right-4 top-4`; title ~`text-[20px] font-semibold`; body scroll `min-h-0 flex-1 overflow-y-auto`
 - Escape / overlay: skip when `panelOnly` (parent handles); block dismiss while `saving`/`sending`
 
+## No Urgent chip at the top
+
+Do **not** put an Urgent / URGENT / status pill above the rail title. The title, location, and body already say why it matters.
+
+| Hide | Keep |
+|---|---|
+| `URGENT` chip on Find External Vendor | Title + location |
+| `Urgent · Needs approval` on emergency approval | “Why this is urgent” body |
+| Top badge on SLA / assign-vendor review (`RESPONSE TIME EXCEEDED`, `ASSIGN VENDOR`) | Urgency meta card in the body grid |
+| Status lines above the rail title (`Response Delayed`, roster-empty copy) | Location under the title |
+
+```tsx
+// ❌ BAD
+<span className="rounded bg-[#fb2c36] …">URGENT</span>
+<p>No available electricians were found on your roster.</p>
+<h2>Find External Vendor</h2>
+
+// ✅ GOOD
+<h2>Find External Vendor</h2>
+<p>{locationLabel}</p>
+```
+
 ## Props every stackable rail needs
 
 `panelOnly?: boolean`, `stackedPosition?: 'left' | 'right'` — when `panelOnly`, return the panel only (no overlay, no Escape listener).

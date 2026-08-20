@@ -38,9 +38,9 @@ export type EditResidentModalRow = {
 }
 
 const STATUS_OPTIONS: { value: ResidentStatus; label: string }[] = [
-  { value: 'active', label: 'Active' },
-  { value: 'pending', label: 'Pending' },
-  { value: 'past_resident', label: 'Past Resident' },
+  { value: 'active', label: 'Occupied' },
+  { value: 'pending', label: 'Pending move-in' },
+  { value: 'past_resident', label: 'Past resident' },
   { value: 'suspended', label: 'Suspended' },
 ]
 
@@ -121,7 +121,10 @@ export function EditResidentModal({
   const [restartOnboarding, setRestartOnboarding] = useState(true)
 
   const formValid = useMemo(() => {
-    return fullName.trim().length > 0 && email.trim().length > 0
+    const trimmedEmail = email.trim()
+    if (fullName.trim().length === 0) return false
+    if (!trimmedEmail) return true
+    return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmedEmail)
   }, [fullName, email])
 
   const offerRestartOnboarding = Boolean(row) && shouldOfferRestartTenantOnboarding(row?.phone, phone)
@@ -211,7 +214,7 @@ export function EditResidentModal({
                 Edit Resident
               </h2>
               <p className="text-[14px] font-normal leading-5 tracking-[-0.1504px] text-neutral">
-                {row.residentId}
+                Resident ID: {row.residentId}
               </p>
             </div>
           </div>
@@ -251,7 +254,7 @@ export function EditResidentModal({
             </div>
             <div className="space-y-2">
               <label className="block text-[14px] font-medium leading-5 tracking-[-0.1504px] text-neutral-variant">
-                Email Address <span className="text-error">*</span>
+                Email Address
               </label>
               <input
                 type="email"
@@ -362,7 +365,7 @@ export function EditResidentModal({
                 htmlFor="edit-resident-status"
                 className="block text-[14px] font-medium leading-5 tracking-[-0.1504px] text-neutral-variant"
               >
-                Account Status
+                Occupancy status
               </label>
               <div className="relative">
                 <select

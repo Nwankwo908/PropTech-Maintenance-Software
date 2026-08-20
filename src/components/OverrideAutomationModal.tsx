@@ -3334,7 +3334,7 @@ export function OverrideAutomationModal({
 
                 <div className="flex flex-col gap-2">
                   <p className="text-[14px] font-medium tracking-[-0.1504px] text-[#364153]">
-                    Service Level Agreement (SLA) Override
+                    Response time override
                   </p>
                   <div className="rounded-[10px] border border-[#e5e7eb] bg-white px-[17px] py-4">
                     <label className="flex cursor-pointer gap-3">
@@ -3346,10 +3346,10 @@ export function OverrideAutomationModal({
                       />
                       <span className="min-w-0">
                         <span className="block text-[14px] font-medium leading-5 tracking-[-0.1504px] text-[#101828]">
-                          Bypass Standard SLA Requirements
+                          Bypass standard response time
                         </span>
                         <span className="mt-0.5 block text-[12px] font-medium leading-4 text-[#6a7282]">
-                          Override normal service level agreements for special circumstances
+                          Override the usual response time for special circumstances
                         </span>
                       </span>
                     </label>

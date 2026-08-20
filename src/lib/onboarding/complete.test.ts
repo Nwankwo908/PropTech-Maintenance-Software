@@ -16,6 +16,7 @@ const {
   persistLandlordCommunicationStyle,
   persistOnboardingProperties,
   sendLandlordOnboardingWelcome,
+  importOnboardingResidentsFromExtraction,
   supabaseFrom,
 } = vi.hoisted(() => {
   const supabaseFrom = vi.fn()
@@ -28,6 +29,7 @@ const {
     persistLandlordCommunicationStyle: vi.fn(),
     persistOnboardingProperties: vi.fn(),
     sendLandlordOnboardingWelcome: vi.fn(),
+    importOnboardingResidentsFromExtraction: vi.fn(),
     supabaseFrom,
   }
 })
@@ -53,6 +55,16 @@ vi.mock('./persist/account', () => ({
 vi.mock('./persist/properties', () => ({
   persistOnboardingProperties,
 }))
+
+vi.mock('./persist/importResidents', async () => {
+  const actual = await vi.importActual<typeof import('./persist/importResidents')>(
+    './persist/importResidents',
+  )
+  return {
+    ...actual,
+    importOnboardingResidentsFromExtraction,
+  }
+})
 
 vi.mock('@/lib/supabase', () => ({
   supabase: {
@@ -127,6 +139,7 @@ describe('completeOnboarding', () => {
       ok: true,
       properties,
     }))
+    importOnboardingResidentsFromExtraction.mockResolvedValue(2)
     recordActivityLog.mockResolvedValue(undefined)
     sendLandlordOnboardingWelcome.mockResolvedValue({
       ok: true,
@@ -170,6 +183,20 @@ describe('completeOnboarding', () => {
     expect(saved.currentStep).toBe('review')
     expect(saved.completedAt).toBeTruthy()
     expect(saved.landlordId).toBe(TEST_LANDLORD_ID)
+
+    expect(persistOnboardingProperties).toHaveBeenCalled()
+    expect(importOnboardingResidentsFromExtraction).toHaveBeenCalled()
+    expect(activateUnitsFromResidentAssignments).toHaveBeenCalledWith(
+      expect.objectContaining({
+        landlordId: TEST_LANDLORD_ID,
+        source: 'onboarding_complete',
+      }),
+    )
+    const persistOrder = persistOnboardingProperties.mock.invocationCallOrder[0] ?? 0
+    const residentOrder = importOnboardingResidentsFromExtraction.mock.invocationCallOrder[0] ?? 0
+    const activateOrder = activateUnitsFromResidentAssignments.mock.invocationCallOrder[0] ?? 0
+    expect(persistOrder).toBeLessThan(residentOrder)
+    expect(residentOrder).toBeLessThan(activateOrder)
 
     expect(sendLandlordOnboardingWelcome).toHaveBeenCalledWith(
       expect.objectContaining({

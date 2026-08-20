@@ -25,6 +25,12 @@ export function formatWorkOrderRefFromTicketId(ticketId: string): string {
   return `WO-${compact || '0000'}`
 }
 
+/** Landlord-facing request number (e.g. REQ-A92B) — last 4 hex of the ticket id. */
+export function formatTicketRequestNumber(ticketId: string): string {
+  const compact = ticketId.replace(/-/g, '').toUpperCase()
+  return `REQ-${compact.slice(-4) || '0000'}`
+}
+
 const LIFECYCLE_WORK_ORDER_REF_TEMPLATES = new Set([
   'move_out',
   'move_in',

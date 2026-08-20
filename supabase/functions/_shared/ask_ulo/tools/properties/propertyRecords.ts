@@ -51,6 +51,20 @@ export function formatPropertyAddressLine(record: AskUloPropertyRecord): string 
   return parts.length > 0 ? parts.join(" ") : null
 }
 
+/** City, State ZIP — never include street. */
+export function formatPropertyCityStateZip(record: {
+  city?: string | null
+  state?: string | null
+  zipCode?: string | null
+}): string | null {
+  const city = record.city?.trim() ?? ""
+  const state = record.state?.trim() ?? ""
+  const zip = record.zipCode?.trim() ?? ""
+  if (city && state && zip) return `${city}, ${state} ${zip}`
+  if (city && state) return `${city}, ${state}`
+  return null
+}
+
 export function propertyRecordToPlace(record: AskUloPropertyRecord): PropertyPlace | null {
   if (!record.name || !record.city || !record.state || record.state.length !== 2) {
     return null

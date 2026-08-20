@@ -593,7 +593,7 @@ export function AdminOrganizationSettings() {
                     />
                   </div>
                 </FormField>
-                <FormField label="Default response SLA" htmlFor="org-sla">
+                <FormField label="Default response time" htmlFor="org-sla">
                   <SettingsSelect
                     id="org-sla"
                     value={draft.defaultResponseSla}

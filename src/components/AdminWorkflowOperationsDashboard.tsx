@@ -11,6 +11,7 @@ import {
 } from '@/api/lifecycleWorkflow'
 import {
   fetchAdminWorkflowDashboard,
+  isCancelledOnActiveTasks,
   type AdminWorkflowDashboardData,
   type AdminWorkflowRow,
 } from '@/lib/adminWorkflows'
@@ -445,7 +446,7 @@ export function AdminWorkflowOperationsDashboard() {
   const cards = useMemo<KanbanCard[]>(() => {
     const runMetadata = data?.runMetadata ?? {}
     const all = allRuns
-      .filter((row) => row.status !== 'cancelled')
+      .filter((row) => !isCancelledOnActiveTasks(row))
       .map((row) => buildWorkflowKanbanCard(row, runMetadata[row.id]))
     return all.filter((card) => cardMatchesWorkflowFilters(card, activeFilters))
   }, [allRuns, activeFilters, data?.runMetadata])

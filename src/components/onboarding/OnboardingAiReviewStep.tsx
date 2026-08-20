@@ -2,10 +2,8 @@ import { useId, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { TableCheckbox, checkboxInputClassName } from '@/components/TableCheckbox'
 import { PRIVACY_POLICY_PATH } from '@/lib/legal/privacyPolicyContent'
-import {
-  ONBOARDING_OCCUPANCY_STATUS_OPTIONS,
-  normalizeOnboardingOccupancyStatus,
-} from '@/lib/onboarding'
+import { ResidentOccupancySelect } from '@/components/ResidentOccupancySelect'
+import { normalizeOnboardingOccupancyStatus } from '@/lib/onboarding'
 import {
   countSelectedInReview,
   formatExtractedUnitPlacement,
@@ -105,24 +103,12 @@ function residentsForProperty(
   })
 }
 
-function ConfidenceBadge({ value }: { value: number }) {
-  const tone =
-    value >= 90 ? 'text-[#187930] bg-[#ecfdf3]' : value >= 80 ? 'text-[#186179] bg-[#eef6fa]' : 'text-[#a65f00] bg-[#fef9c2]'
-  return (
-    <span className={`inline-flex rounded-[4px] px-1.5 py-0.5 text-[10px] font-semibold ${tone}`}>
-      {value}% confidence
-    </span>
-  )
-}
-
 function ReviewItemRow({
   checked,
   onToggle,
   label,
   value,
   sourceDocumentName,
-  confidence,
-  needsReview,
   editing,
   editValue,
   editMode = 'value',
@@ -133,32 +119,36 @@ function ReviewItemRow({
   onEditChange,
   children,
   as = 'li',
+  sourceBesideTitle = false,
+  showCheckbox = true,
 }: {
   checked: boolean
   onToggle: () => void
   label: string
   value?: string
   sourceDocumentName: string
-  confidence: number
-  needsReview?: boolean
   editing: boolean
   editValue: string
   editMode?: 'label' | 'value'
   editFieldLabel?: string
-  onEdit: () => void
+  onEdit?: () => void
   onSaveEdit: () => void
   onCancelEdit: () => void
   onEditChange: (value: string) => void
   children?: React.ReactNode
   as?: 'li' | 'div'
+  sourceBesideTitle?: boolean
+  showCheckbox?: boolean
 }) {
   const Wrapper = as
   return (
     <Wrapper className="sa-row rounded-[8px] border border-[#eef0f3] px-3 py-3">
       <div className="flex items-start gap-3">
-        <div className="pt-0.5">
-          <TableCheckbox aria-label={`Include ${label}`} checked={checked} onChange={onToggle} />
-        </div>
+        {showCheckbox ? (
+          <div className="pt-0.5">
+            <TableCheckbox aria-label={`Include ${label}`} checked={checked} onChange={onToggle} />
+          </div>
+        ) : null}
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
             {editing && editMode === 'label' ? (
@@ -176,11 +166,8 @@ function ReviewItemRow({
             ) : (
               <p className="text-[13px] font-medium text-[#101828]">{label}</p>
             )}
-            {!editing || editMode !== 'label' ? <ConfidenceBadge value={confidence} /> : null}
-            {needsReview && (!editing || editMode !== 'label') ? (
-              <span className="rounded-[4px] bg-[#fef9c2] px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-[0.04em] text-[#a65f00]">
-                Needs review
-              </span>
+            {sourceBesideTitle && (!editing || editMode !== 'label') ? (
+              <p className="text-[11px] text-[#9ca3af]">Source: {sourceDocumentName}</p>
             ) : null}
           </div>
           {editing && editMode === 'label' ? (
@@ -208,10 +195,12 @@ function ReviewItemRow({
           ) : value?.trim() ? (
             <p className="mt-1 text-[13px] leading-relaxed text-[#364153]">{value}</p>
           ) : null}
-          <p className="mt-1 text-[11px] text-[#9ca3af]">Source: {sourceDocumentName}</p>
+          {sourceBesideTitle ? null : (
+            <p className="mt-1 text-[11px] text-[#9ca3af]">Source: {sourceDocumentName}</p>
+          )}
           {children}
         </div>
-        {!editing ? (
+        {!editing && onEdit ? (
           <button
             type="button"
             onClick={onEdit}
@@ -336,24 +325,6 @@ export function OnboardingAiReviewStep({
     return (
       <div className="mt-3 grid gap-3 border-t border-[#f3f4f6] pt-3 sm:grid-cols-2">
         <label className="block">
-          <span className={fieldLabelClass}>Building</span>
-          <input
-            className={inputClass}
-            value={item.building}
-            onChange={(e) => patchResident(item.id, { building: e.target.value })}
-            placeholder="Property or building name"
-          />
-        </label>
-        <label className="block">
-          <span className={fieldLabelClass}>Unit</span>
-          <input
-            className={inputClass}
-            value={item.unit}
-            onChange={(e) => patchResident(item.id, { unit: e.target.value })}
-            placeholder="101"
-          />
-        </label>
-        <label className="block">
           <span className={fieldLabelClass}>Email</span>
           <input
             className={inputClass}
@@ -375,21 +346,12 @@ export function OnboardingAiReviewStep({
         </label>
         <label className="block">
           <span className={fieldLabelClass}>Occupancy status</span>
-          <select
+          <ResidentOccupancySelect
             className={selectClass}
-            value={item.occupancyStatus}
-            onChange={(e) =>
-              patchResident(item.id, {
-                occupancyStatus: normalizeOnboardingOccupancyStatus(e.target.value),
-              })
-            }
-          >
-            {ONBOARDING_OCCUPANCY_STATUS_OPTIONS.map((option) => (
-              <option key={option.value} value={option.value}>
-                {option.label}
-              </option>
-            ))}
-          </select>
+            value={normalizeOnboardingOccupancyStatus(item.occupancyStatus)}
+            onChange={(occupancyStatus) => patchResident(item.id, { occupancyStatus })}
+            aria-label={`Occupancy status for ${item.fullName || 'resident'}`}
+          />
         </label>
         <label className="block">
           <span className={fieldLabelClass}>Monthly rent</span>
@@ -451,8 +413,6 @@ export function OnboardingAiReviewStep({
                 onToggle={() => patchProperty(item.id, { selected: !item.selected })}
                 label={item.name}
                 sourceDocumentName={item.sourceDocumentName}
-                confidence={item.confidence}
-                needsReview={item.needsReview}
                 editing={editingId === item.id}
                 editValue={editDraft}
                 editMode="label"
@@ -579,7 +539,6 @@ export function OnboardingAiReviewStep({
                                 onToggle={() => patchUnit(unit.id, { selected: !unit.selected })}
                                 label={`Unit ${unit.label}`}
                                 sourceDocumentName={unit.sourceDocumentName}
-                                confidence={unit.confidence}
                                 editing={editingId === unit.id}
                                 editValue={editDraft}
                                 editMode="label"
@@ -588,17 +547,7 @@ export function OnboardingAiReviewStep({
                                 onSaveEdit={() => saveEdit('units', 'label', review.units)}
                                 onCancelEdit={() => setEditingId(null)}
                                 onEditChange={setEditDraft}
-                              >
-                                <label className="mt-3 block border-t border-[#f3f4f6] pt-3">
-                                  <span className={fieldLabelClass}>Building</span>
-                                  <input
-                                    className={inputClass}
-                                    value={unit.building}
-                                    onChange={(e) => patchUnit(unit.id, { building: e.target.value })}
-                                    placeholder="Property or building name"
-                                  />
-                                </label>
-                              </ReviewItemRow>
+                              />
                               {resident ? (
                                 <ReviewItemRow
                                   as="div"
@@ -608,8 +557,6 @@ export function OnboardingAiReviewStep({
                                   }
                                   label={resident.fullName}
                                   sourceDocumentName={resident.sourceDocumentName}
-                                  confidence={resident.confidence}
-                                  needsReview={resident.needsReview}
                                   editing={editingId === resident.id}
                                   editValue={editDraft}
                                   editMode="label"
@@ -655,8 +602,6 @@ export function OnboardingAiReviewStep({
                                 }
                                 label={resident.fullName}
                                 sourceDocumentName={resident.sourceDocumentName}
-                                confidence={resident.confidence}
-                                needsReview={resident.needsReview}
                                 editing={editingId === resident.id}
                                 editValue={editDraft}
                                 editMode="label"
@@ -706,7 +651,6 @@ export function OnboardingAiReviewStep({
                       onToggle={() => patchUnit(unit.id, { selected: !unit.selected })}
                       label={`Unit ${unit.label}`}
                       sourceDocumentName={unit.sourceDocumentName}
-                      confidence={unit.confidence}
                       editing={editingId === unit.id}
                       editValue={editDraft}
                       editMode="label"
@@ -715,17 +659,7 @@ export function OnboardingAiReviewStep({
                       onSaveEdit={() => saveEdit('units', 'label', review.units)}
                       onCancelEdit={() => setEditingId(null)}
                       onEditChange={setEditDraft}
-                    >
-                      <label className="mt-3 block border-t border-[#f3f4f6] pt-3">
-                        <span className={fieldLabelClass}>Building</span>
-                        <input
-                          className={inputClass}
-                          value={unit.building}
-                          onChange={(e) => patchUnit(unit.id, { building: e.target.value })}
-                          placeholder="Property or building name"
-                        />
-                      </label>
-                    </ReviewItemRow>
+                    />
                     {resident ? (
                       <ReviewItemRow
                         as="div"
@@ -733,8 +667,6 @@ export function OnboardingAiReviewStep({
                         onToggle={() => patchResident(resident.id, { selected: !resident.selected })}
                         label={resident.fullName}
                         sourceDocumentName={resident.sourceDocumentName}
-                        confidence={resident.confidence}
-                        needsReview={resident.needsReview}
                         editing={editingId === resident.id}
                         editValue={editDraft}
                         editMode="label"
@@ -765,8 +697,6 @@ export function OnboardingAiReviewStep({
                     onToggle={() => patchResident(resident.id, { selected: !resident.selected })}
                     label={resident.fullName}
                     sourceDocumentName={resident.sourceDocumentName}
-                    confidence={resident.confidence}
-                    needsReview={resident.needsReview}
                     editing={editingId === resident.id}
                     editValue={editDraft}
                     editMode="label"
@@ -801,8 +731,6 @@ export function OnboardingAiReviewStep({
             label={item.name}
             value={[item.category, item.phone, item.email].filter(Boolean).join(' · ')}
             sourceDocumentName={item.sourceDocumentName}
-            confidence={item.confidence}
-            needsReview={item.needsReview}
             editing={editingId === item.id}
             editValue={editDraft}
             onEdit={() => startEdit(item.id, item.email)}
@@ -834,8 +762,6 @@ export function OnboardingAiReviewStep({
       id: string
       selected: boolean
       sourceDocumentName: string
-      confidence: number
-      needsReview?: boolean
     },
   >(
     items: T[],
@@ -864,8 +790,6 @@ export function OnboardingAiReviewStep({
             label={labelFor(item)}
             value={valueFor(item)}
             sourceDocumentName={item.sourceDocumentName}
-            confidence={item.confidence}
-            needsReview={item.needsReview}
             editing={editingId === item.id}
             editValue={editDraft}
             onEdit={() => startEdit(item.id, getEditValue(item))}
@@ -895,25 +819,13 @@ export function OnboardingAiReviewStep({
               item.imageTags?.length ? `${item.value} · Tags: ${item.imageTags.join(', ')}` : item.value
             }
             sourceDocumentName={item.sourceDocumentName}
-            confidence={item.confidence}
-            needsReview={item.needsReview}
-            editing={editingId === item.id}
-            editValue={editDraft}
-            onEdit={() => startEdit(item.id, item.value)}
-            onSaveEdit={() => {
-              onReviewChange({
-                ...review,
-                needsReview: review.needsReview.map((row) =>
-                  row.id === item.id ? { ...row, value: editDraft } : row,
-                ),
-                imageLabels: review.imageLabels.map((row) =>
-                  row.id === item.id ? { ...row, value: editDraft } : row,
-                ),
-              })
-              setEditingId(null)
-            }}
-            onCancelEdit={() => setEditingId(null)}
-            onEditChange={setEditDraft}
+            sourceBesideTitle
+            showCheckbox={false}
+            editing={false}
+            editValue=""
+            onSaveEdit={() => undefined}
+            onCancelEdit={() => undefined}
+            onEditChange={() => undefined}
           />
         ))}
       </ul>
