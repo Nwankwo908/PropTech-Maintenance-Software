@@ -49,7 +49,7 @@ const LANDING_LOGO_COLUMN_DIVIDER = `pointer-events-none absolute w-px bg-gray-2
 
 /** Section content inset — right of logo-column divider + 56px gap; keeps right viewport gutter. */
 const LANDING_BEYOND_LOGO_COLUMN_INSET =
-  'w-full pl-[calc(1.5rem+121px+1.5rem+3.5rem)] pr-6 lg:pl-[calc(3.5rem+108px+1.5rem+3.5rem)] lg:pr-14 landing-compact:!pl-6 landing-compact:!pr-6'
+  'w-full pl-[calc(1.5rem+121px+1.5rem+3.5rem)] pr-6 lg:pl-[calc(3.5rem+108px+1.5rem+3.5rem)] lg:pr-14 max-[399px]:!pl-6 max-[399px]:!pr-6 landing-compact:!pl-6 landing-compact:!pr-6 landing-tablet-portrait:!pl-6 landing-tablet-portrait:!pr-6'
 
 /** Full-page vertical divider — wide desktop only. */
 const LANDING_NAV_DIVIDER = `${LANDING_LOGO_COLUMN_DIVIDER} inset-y-0 z-[51] hidden 2xl:block`
@@ -163,23 +163,40 @@ function HeroHeadlineAndCopy() {
     <>
       <h1
         ref={headlineRef}
-        className="mt-4 w-fit max-w-full font-[family-name:var(--font-landing-heading)] leading-[75px] landing-compact:leading-[48px] landing-432:!text-[13.8vw] landing-432:!leading-[1.08] text-[clamp(2.25rem,6vw+1.2rem,9rem)] font-bold tracking-[-0.03em] text-[#0f1623] sm:mt-6 max-[1019px]:!w-full [@media(min-width:451px)_and_(max-width:1019px)_and_(min-height:1400px)_and_(max-height:1500px)]:text-[clamp(3.375rem,9vw+1.8rem,13.5rem)] [@media(min-width:300px)_and_(max-width:349px)_and_(min-height:850px)_and_(max-height:920px)]:text-[clamp(2.475rem,6.6vw+1.32rem,9.9rem)] [@media(min-width:350px)_and_(max-width:399px)_and_(min-height:850px)_and_(max-height:920px)]:text-[clamp(2.7rem,7.2vw+1.44rem,10.8rem)] [@media(min-width:350px)_and_(max-width:399px)_and_(min-height:1400px)_and_(max-height:1500px)]:text-[clamp(2.5875rem,6.9vw+1.38rem,10.35rem)] [@media(min-width:400px)_and_(max-width:500px)_and_(min-height:850px)_and_(max-height:920px)]:text-[clamp(2.8125rem,7.5vw+1.5rem,11.25rem)] [@media(min-width:400px)_and_(max-width:450px)_and_(min-height:1400px)_and_(max-height:1500px)]:text-[clamp(2.5875rem,6.9vw+1.38rem,10.35rem)] [@media(min-width:768px)_and_(max-width:850px)_and_(min-height:850px)_and_(max-height:920px)]:text-[clamp(3.6rem,9.6vw+1.92rem,14.4rem)] [@media(min-width:768px)_and_(max-width:850px)_and_(min-height:1400px)_and_(max-height:1500px)]:text-[clamp(3.375rem,9vw+1.8rem,13.5rem)] [@media(min-width:851px)_and_(max-width:1019px)_and_(min-height:1400px)_and_(max-height:1500px)]:text-[clamp(3.375rem,8.5vw+1.6rem,13.5rem)] [@media(min-width:1024px)_and_(max-width:1100px)_and_(min-height:850px)_and_(max-height:920px)]:text-[clamp(2.625rem,5.25vw,4.125rem)] [@media(min-width:1021px)_and_(max-width:1440px)_and_(min-height:1400px)_and_(max-height:1500px)]:text-[clamp(2.625rem,6.144vw,9.6rem)] min-[1440px]:text-[clamp(2.25rem,3.84vw,6rem)] [@media(min-width:1440px)_and_(max-width:1535px)_and_(min-height:850px)_and_(max-height:920px)]:text-[clamp(3.825rem,6.528vw,10.2rem)] [@media(min-width:1440px)_and_(max-width:1535px)_and_(min-height:1400px)_and_(max-height:1500px)]:text-[clamp(3.6rem,6.144vw,9.6rem)] lg:tracking-[-0.025em]"
+        className="mt-4 w-fit max-w-full font-[family-name:var(--font-landing-heading)] leading-[75px] landing-compact:leading-[48px] landing-432:!text-[13.8vw] landing-432:!leading-[1.08] text-[clamp(2.25rem,6vw+1.2rem,9rem)] font-bold tracking-[-0.03em] text-[#0f1623] sm:mt-6 max-[1019px]:!w-full landing-tablet-portrait:!leading-[58px] [@media(min-width:451px)_and_(max-width:1019px)_and_(min-height:1400px)_and_(max-height:1500px)]:text-[clamp(3.375rem,9vw+1.8rem,13.5rem)] [@media(min-width:300px)_and_(max-width:349px)_and_(min-height:850px)_and_(max-height:920px)]:text-[clamp(2.475rem,6.6vw+1.32rem,9.9rem)] [@media(min-width:350px)_and_(max-width:399px)_and_(min-height:850px)_and_(max-height:920px)]:text-[clamp(2.7rem,7.2vw+1.44rem,10.8rem)] [@media(min-width:350px)_and_(max-width:399px)_and_(min-height:1400px)_and_(max-height:1500px)]:text-[clamp(2.5875rem,6.9vw+1.38rem,10.35rem)] [@media(min-width:400px)_and_(max-width:500px)_and_(min-height:850px)_and_(max-height:920px)]:text-[clamp(2.8125rem,7.5vw+1.5rem,11.25rem)] [@media(min-width:400px)_and_(max-width:450px)_and_(min-height:1400px)_and_(max-height:1500px)]:text-[clamp(2.5875rem,6.9vw+1.38rem,10.35rem)] [@media(min-width:768px)_and_(max-width:850px)_and_(min-height:850px)_and_(max-height:920px)]:text-[clamp(3.6rem,9.6vw+1.92rem,14.4rem)] [@media(min-width:768px)_and_(max-width:850px)_and_(min-height:1400px)_and_(max-height:1500px)]:text-[clamp(3.375rem,9vw+1.8rem,13.5rem)] [@media(min-width:851px)_and_(max-width:1019px)_and_(min-height:1400px)_and_(max-height:1500px)]:text-[clamp(3.375rem,8.5vw+1.6rem,13.5rem)] [@media(min-width:1024px)_and_(max-width:1100px)_and_(min-height:850px)_and_(max-height:920px)]:text-[clamp(2.625rem,5.25vw,4.125rem)] [@media(min-width:1021px)_and_(max-width:1440px)_and_(min-height:1400px)_and_(max-height:1500px)]:text-[clamp(2.625rem,6.144vw,9.6rem)] min-[1440px]:text-[clamp(2.25rem,3.84vw,6rem)] [@media(min-width:1440px)_and_(max-width:1535px)_and_(min-height:850px)_and_(max-height:920px)]:text-[clamp(3.825rem,6.528vw,10.2rem)] [@media(min-width:1440px)_and_(max-width:1535px)_and_(min-height:1400px)_and_(max-height:1500px)]:text-[clamp(3.6rem,6.144vw,9.6rem)] lg:tracking-[-0.025em]"
       >
-        <span className="block whitespace-nowrap">Your tenants</span>
-        <span className="block whitespace-nowrap">
-          text.{' '}
-          <span
-            className="bg-clip-text text-transparent"
-            style={{
-              backgroundImage:
-                'linear-gradient(174deg, rgb(24, 121, 96) 0%, rgb(174, 225, 239) 100%)',
-            }}
-          >
-            Ulo
-          </span>{' '}
-          does
+        <span className="contents landing-tablet-portrait:hidden">
+          <span className="block whitespace-nowrap">Your tenants</span>
+          <span className="block whitespace-nowrap">
+            text.{' '}
+            <span
+              className="bg-clip-text text-transparent"
+              style={{
+                backgroundImage:
+                  'linear-gradient(174deg, rgb(24, 121, 96) 0%, rgb(174, 225, 239) 100%)',
+              }}
+            >
+              Ulo
+            </span>{' '}
+            does
+          </span>
+          <span className="block">the rest.</span>
         </span>
-        <span className="block">the rest.</span>
+        <span className="hidden landing-tablet-portrait:contents">
+          <span className="block whitespace-nowrap">
+            Your tenants text.{' '}
+            <span
+              className="bg-clip-text text-transparent"
+              style={{
+                backgroundImage:
+                  'linear-gradient(174deg, rgb(24, 121, 96) 0%, rgb(174, 225, 239) 100%)',
+              }}
+            >
+              Ulo
+            </span>
+          </span>
+          <span className="block whitespace-nowrap">does the rest.</span>
+        </span>
       </h1>
 
       <p
@@ -442,10 +459,10 @@ export function LandingPage() {
 
                 <HeroHeadlineAndCopy />
 
-                <div className="mt-5 flex w-full max-w-full flex-col items-stretch sm:mt-6 sm:items-start">
+                <div className="mt-5 flex w-full max-w-full flex-col items-stretch sm:mt-6 sm:items-start landing-tablet-portrait:items-stretch">
                   <form
                     onSubmit={submitHeroWaitlistEmail}
-                    className="flex w-full flex-col items-stretch gap-3 sm:w-auto sm:flex-row sm:items-center"
+                    className="flex w-full flex-col items-stretch gap-3 sm:w-auto sm:flex-row sm:items-center landing-tablet-portrait:!w-full landing-tablet-portrait:flex-row"
                   >
                     <input
                       type="email"
@@ -454,15 +471,15 @@ export function LandingPage() {
                       placeholder="Enter your email"
                       value={heroWaitlistEmail}
                       onChange={(event) => setHeroWaitlistEmail(event.target.value)}
-                      className="sa-surface box-border h-12 w-full rounded-lg border border-[#55B6A1] bg-white px-7 text-sm font-medium text-[#0f1623] outline-none placeholder:text-[#6b7280] transition-[border-color,box-shadow,background-color] duration-150 ease-out hover:border-[#3d9a86] hover:bg-[#f4fbf9] hover:shadow-[0_4px_14px_rgba(85,182,161,0.22)] focus:border-[#55B6A1] focus:bg-white focus:ring-2 focus:ring-[#55B6A1]/25 focus:shadow-none sm:h-14 sm:w-[min(100%,20rem)] sm:text-base"
+                      className="sa-surface box-border h-12 w-full rounded-lg border border-[#55B6A1] bg-white px-7 text-sm font-medium text-[#0f1623] outline-none placeholder:text-[#6b7280] transition-[border-color,box-shadow,background-color] duration-150 ease-out hover:border-[#3d9a86] hover:bg-[#f4fbf9] hover:shadow-[0_4px_14px_rgba(85,182,161,0.22)] focus:border-[#55B6A1] focus:bg-white focus:ring-2 focus:ring-[#55B6A1]/25 focus:shadow-none sm:h-14 sm:w-[min(100%,20rem)] sm:text-base landing-tablet-portrait:!min-w-0 landing-tablet-portrait:!flex-1 landing-tablet-portrait:!w-auto"
                       aria-label="Email for early access"
                     />
-                    <PrimaryButton type="submit" className="box-border h-12 w-full shrink-0 justify-center !py-0 sm:h-14 sm:w-auto">
+                    <PrimaryButton type="submit" className="box-border h-12 w-full shrink-0 justify-center !py-0 sm:h-14 sm:w-auto landing-tablet-portrait:!w-auto">
                       Request Early Access
                       <IconArrowRight />
                     </PrimaryButton>
                   </form>
-                  <div className="mt-6 flex flex-nowrap items-center justify-center gap-2 sm:justify-start">
+                  <div className="mt-6 flex flex-nowrap items-center justify-center gap-2 landing-compact:flex-col landing-compact:items-center landing-504:flex-row landing-504:items-center sm:justify-start">
                     <button
                       type="button"
                       className="sa-link shrink-0 whitespace-nowrap text-sm font-medium text-[#6b7280] underline decoration-solid underline-offset-2"
@@ -513,7 +530,7 @@ export function LandingPage() {
             </div>
 
             <div className="mt-4 flex flex-col items-center gap-4 text-center">
-              <p className="font-[family-name:var(--font-landing-heading)] text-[48px] font-medium leading-[1.1] tracking-[-0.02em] text-slate-900">
+              <p className="font-[family-name:var(--font-landing-heading)] text-[48px] font-medium leading-[1.1] tracking-[-0.02em] text-slate-900 max-[349px]:text-[1.75rem] landing-compact:text-[1.75rem]">
               Maintenance OS for independent landlords
               </p>
               <p className="max-w-2xl text-lg font-normal leading-relaxed text-slate-700">
@@ -540,7 +557,7 @@ export function LandingPage() {
         {/* Features */}
         <section id="features" className={`relative scroll-mt-20 overflow-visible ${LANDING_SECTION_GAP}`}>
           <div className={`border-t ${LANDING_FULL_WIDTH_RULE}`} aria-hidden />
-          <div className={`${LANDING_LOGO_COLUMN_DIVIDER} top-0 bottom-0 landing-compact:hidden`} aria-hidden />
+          <div className={`${LANDING_LOGO_COLUMN_DIVIDER} top-0 bottom-0 max-[399px]:hidden landing-compact:hidden landing-tablet-portrait:hidden`} aria-hidden />
           <div className={`${LANDING_BEYOND_LOGO_COLUMN_INSET} overflow-visible pb-[83px] pt-[calc(4rem*1.3)]`}>
           <div className="flex flex-col items-center text-center">
             <h2 className="sa-pill inline-flex items-center gap-2 font-mono text-xs font-normal uppercase tracking-wide text-slate-900">
@@ -548,7 +565,7 @@ export function LandingPage() {
               Features
             </h2>
             <div className="mt-4">
-              <p className="font-[family-name:var(--font-landing-heading)] text-[48px] font-medium leading-[1.1] tracking-[-0.02em] text-[#111827]">
+              <p className="font-[family-name:var(--font-landing-heading)] text-[48px] font-medium leading-[1.1] tracking-[-0.02em] text-[#111827] max-[349px]:text-[1.75rem] landing-compact:text-[1.75rem]">
               Run your property on autopilot
               </p>
             </div>
@@ -566,15 +583,15 @@ export function LandingPage() {
       <div className={`w-full border-t ${LANDING_FULL_WIDTH_RULE}`} aria-hidden />
       <footer className="py-12 sm:py-16">
         <div className={LANDING_BEYOND_LOGO_COLUMN_INSET}>
-          <div className="flex flex-col gap-10 lg:flex-row lg:items-end lg:justify-between lg:gap-16">
-            <div className="flex w-fit max-w-full flex-col items-start text-left landing-compact:contents">
+          <div className="flex flex-col gap-10 lg:flex-row lg:items-end lg:justify-between lg:gap-16 landing-tablet-portrait:grid landing-tablet-portrait:grid-cols-[1fr_auto] landing-tablet-portrait:items-center landing-tablet-portrait:gap-x-4 landing-tablet-portrait:gap-y-10">
+            <div className="flex w-fit max-w-full flex-col items-start text-left landing-compact:contents landing-tablet-portrait:contents">
               <img
                 src={uloLogo}
                 alt="ülo home"
-                className="h-auto w-[min(85vw,42.9rem)] max-w-full object-contain object-left sm:w-[46.8rem] md:w-[54.6rem] lg:w-[62.4rem] landing-compact:order-1"
+                className="h-auto w-[min(85vw,42.9rem)] max-w-full object-contain object-left sm:w-[46.8rem] md:w-[54.6rem] lg:w-[62.4rem] landing-compact:order-1 landing-tablet-portrait:col-span-2"
               />
               <nav
-                className="mt-8 flex w-full flex-wrap items-center justify-start gap-x-4 gap-y-2 pl-[7.09%] text-left text-sm landing-compact:order-3 landing-compact:mt-0 landing-compact:!pl-0"
+                className="mt-8 flex w-full flex-wrap items-center justify-start gap-x-4 gap-y-2 pl-[7.09%] text-left text-sm landing-compact:order-3 landing-compact:mt-0 landing-compact:!pl-0 landing-tablet-portrait:col-start-1 landing-tablet-portrait:row-start-3 landing-tablet-portrait:mt-0 landing-tablet-portrait:!w-auto landing-tablet-portrait:!pl-0"
                 aria-label="Legal"
               >
                 <Link
@@ -595,15 +612,18 @@ export function LandingPage() {
               </nav>
             </div>
 
-            <div className="flex w-full min-w-0 max-w-md shrink-0 flex-col text-left lg:max-w-[22rem] landing-compact:contents">
-              <div className="landing-compact:order-2 landing-compact:w-full">
+            <div className="flex w-full min-w-0 max-w-md shrink-0 flex-col text-left lg:max-w-[22rem] landing-compact:contents landing-tablet-portrait:contents">
+              <div className="landing-compact:order-2 landing-compact:w-full landing-tablet-portrait:col-span-2 landing-tablet-portrait:w-full">
                 <h2 className="font-[family-name:var(--font-landing-heading)] text-[clamp(1.75rem,3vw,2.25rem)] font-medium leading-[1.15] tracking-[-0.02em] text-slate-900 landing-compact:text-center">
                   Be first on autopilot
                 </h2>
                 <p className="mt-2 text-base font-normal leading-relaxed text-slate-700 landing-compact:text-center">
                   Join the alpha; limited spots available.
                 </p>
-                <form onSubmit={submitHeroWaitlistEmail} className="mt-5 flex flex-col gap-3">
+                <form
+                  onSubmit={submitHeroWaitlistEmail}
+                  className="mt-5 flex flex-col gap-3 landing-tablet-portrait:flex-row landing-tablet-portrait:items-center"
+                >
                   <input
                     type="email"
                     name="footer-email"
@@ -611,16 +631,19 @@ export function LandingPage() {
                     placeholder="Enter your email"
                     value={heroWaitlistEmail}
                     onChange={(event) => setHeroWaitlistEmail(event.target.value)}
-                    className="sa-surface box-border h-12 w-full rounded-lg border border-[#55B6A1] bg-white px-7 text-sm font-medium text-[#0f1623] outline-none placeholder:text-[#6b7280] transition-[border-color,box-shadow,background-color] duration-150 ease-out hover:border-[#3d9a86] hover:bg-[#f4fbf9] hover:shadow-[0_4px_14px_rgba(85,182,161,0.22)] focus:border-[#55B6A1] focus:bg-white focus:ring-2 focus:ring-[#55B6A1]/25 focus:shadow-none sm:h-14 sm:text-base"
+                    className="sa-surface box-border h-12 w-full rounded-lg border border-[#55B6A1] bg-white px-7 text-sm font-medium text-[#0f1623] outline-none placeholder:text-[#6b7280] transition-[border-color,box-shadow,background-color] duration-150 ease-out hover:border-[#3d9a86] hover:bg-[#f4fbf9] hover:shadow-[0_4px_14px_rgba(85,182,161,0.22)] focus:border-[#55B6A1] focus:bg-white focus:ring-2 focus:ring-[#55B6A1]/25 focus:shadow-none sm:h-14 sm:text-base landing-tablet-portrait:!min-w-0 landing-tablet-portrait:!flex-1 landing-tablet-portrait:!w-auto"
                     aria-label="Email for early access"
                   />
-                  <PrimaryButton type="submit" className="box-border h-12 w-full shrink-0 justify-center !py-0 sm:h-14">
+                  <PrimaryButton
+                    type="submit"
+                    className="box-border h-12 w-full shrink-0 justify-center !py-0 sm:h-14 landing-tablet-portrait:!w-auto"
+                  >
                     Request Early Access
                     <IconArrowRight />
                   </PrimaryButton>
                 </form>
               </div>
-              <p className="mt-8 text-left text-sm text-[#6b7280] lg:text-right landing-compact:order-4 landing-compact:mt-0">
+              <p className="mt-8 text-left text-sm text-[#6b7280] lg:text-right landing-compact:order-4 landing-compact:mt-0 landing-tablet-portrait:col-start-2 landing-tablet-portrait:row-start-3 landing-tablet-portrait:mt-0 landing-tablet-portrait:text-left">
                 © {new Date().getFullYear()} ülo home. All rights reserved.
               </p>
             </div>

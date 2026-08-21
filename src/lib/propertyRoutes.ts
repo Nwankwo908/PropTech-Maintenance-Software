@@ -49,7 +49,6 @@ export function propertyDetailPathForBuilding(
     | 'overview'
     | 'details'
     | 'units'
-    | 'residents'
     | 'workflows'
     | 'conversations'
     | 'vendors'
@@ -75,7 +74,6 @@ export function propertyDetailPath(
     | 'overview'
     | 'details'
     | 'units'
-    | 'residents'
     | 'workflows'
     | 'conversations'
     | 'vendors'
@@ -93,7 +91,6 @@ export function buildingDetailPath(
     | 'overview'
     | 'details'
     | 'units'
-    | 'residents'
     | 'workflows'
     | 'conversations'
     | 'vendors'
@@ -104,6 +101,11 @@ export function buildingDetailPath(
 
 export function propertyResidentDetailPath(propertyId: string, residentId: string): string {
   return `${propertyDetailPath(propertyId)}/residents/${encodeURIComponent(residentId)}`
+}
+
+/** Global resident profile URL (Residents list / search when property context is unknown). */
+export function residentDetailPath(residentId: string): string {
+  return `${adminNavPath('residents')}/${encodeURIComponent(residentId)}`
 }
 
 /** @deprecated Prefer parsePropertyRouteSlug */

@@ -22,6 +22,7 @@ const APP_ADMIN_ROUTE_SEGMENTS = [
   'vendors/:vendorId',
   'workflows',
   'residents',
+  'residents/:residentId',
   'analytics',
   'settings/*',
   'settings/organization',

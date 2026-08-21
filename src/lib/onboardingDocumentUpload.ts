@@ -559,8 +559,8 @@ export async function runDocumentProcessing(
 
   if (doc.hasHandwriting) {
     if (signal?.aborted) return current
-    current = {
-      ...current,
+  current = {
+    ...current,
       uploadStatus: 'handwriting',
       extractionStatus: 'handwriting',
       processingLabel: UPLOAD_STATUS_LABELS.handwriting,
@@ -608,11 +608,11 @@ export async function runDocumentProcessing(
       imageLabels: result.extracted.imageLabels.filter(
         (label) => !isOnboardingExtractJunkValue(label),
       ),
-      uploadStatus: needsAttention ? 'needs_attention' : 'ready_for_review',
-      extractionStatus: needsAttention ? 'needs_attention' : 'ready_for_review',
+    uploadStatus: needsAttention ? 'needs_attention' : 'ready_for_review',
+    extractionStatus: needsAttention ? 'needs_attention' : 'ready_for_review',
       processingLabel:
         UPLOAD_STATUS_LABELS[needsAttention ? 'needs_attention' : 'ready_for_review'],
-      uploadProgress: 100,
+    uploadProgress: 100,
       errorMessage: needsAttention
         ? warning ||
           'We couldn’t find property, tenant, or lease details in this file.'
@@ -1249,7 +1249,7 @@ function enrichExtractedResidentPlacement(
     building = canonicalExtractedBuilding(building, properties)
 
     const missingPlacement = Boolean(resident.fullName.trim() && !unit.trim())
-    return {
+      return {
       ...resident,
       unit,
       building,
@@ -1665,8 +1665,8 @@ export function enrichExtractedProperties(
       propertyType: inferOnboardingPropertyTypeFromUnitCount(unitCount),
       unitCount,
       unitLabels: '',
-      propertyManagerName: '',
-      propertyManagerPhone: '',
+        propertyManagerName: '',
+        propertyManagerPhone: '',
       sourceDocumentName: meta.sourceDocumentName,
       confidence: meta.confidence,
       selected: true,
@@ -2015,9 +2015,9 @@ function mergeExtractedDocuments(
           leaseStart: cleanOnboardingExtractText(item.leaseStart),
           leaseEnd: cleanOnboardingExtractText(item.leaseEnd),
           monthlyRent: cleanOnboardingExtractText(item.monthlyRent),
-          rentDueDay: '',
+      rentDueDay: '',
           occupancyStatus: 'active',
-          maintenanceResponsibilitiesClause: '',
+      maintenanceResponsibilitiesClause: '',
           sourceDocumentName: source,
           confidence: item.confidence,
           selected: Boolean(fullName.trim()),

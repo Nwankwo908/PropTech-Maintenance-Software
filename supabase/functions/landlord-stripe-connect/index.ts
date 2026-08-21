@@ -20,6 +20,7 @@ import {
   isStripeConfigured,
   isStripeConnectReady,
   listConnectPayoutMethods,
+  assertConnectReturnOriginForStripe,
   resolveConnectAppBaseUrl,
   retrieveConnectAccount,
   type StripeConnectPayoutMethod,
@@ -142,14 +143,9 @@ serve(async (req) => {
         typeof body.returnOrigin === "string" ? body.returnOrigin : undefined,
       requestOrigin: req.headers.get("origin"),
     })
-    if (!base) {
-      return jsonResponse(
-        {
-          error:
-            "Could not determine Connect return URL. Open payout setup from the app, or set the APP_URL Edge secret.",
-        },
-        500,
-      )
+    const originCheck = assertConnectReturnOriginForStripe(base)
+    if (!originCheck.ok) {
+      return jsonResponse({ error: originCheck.error }, 400)
     }
 
     let accountId =

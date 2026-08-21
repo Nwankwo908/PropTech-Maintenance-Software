@@ -17,6 +17,7 @@ import {
 } from '@/components/EditResidentModal'
 import { getActiveLandlordId } from '@/lib/activeLandlord'
 import { fetchAdminWorkflowDashboard } from '@/lib/adminWorkflows'
+import { resolveTenantActivationChip } from '@/lib/tenantActivationStatus'
 import {
   buildPropertyResidentUnitOptions,
   initialUnitOptionKeyForResident,
@@ -326,11 +327,55 @@ function ProfileContent({
                 ) : null}
               </>
             )}
+
+            <div className="border-t border-[#f3f4f6] pt-4">
+              <p className="text-[12px] leading-4 text-[#6a7282]">Documents</p>
+              {documentPreviewError ? (
+                <p className="mt-2 text-[13px] leading-5 text-[#b91c1c]">{documentPreviewError}</p>
+              ) : null}
+              {leaseDocuments.length === 0 ? (
+                <p className="mt-2 text-[13px] leading-5 text-[#6a7282]">No lease documents on file.</p>
+              ) : (
+                <ul className="mt-2 flex flex-col">
+                  {leaseDocuments.map((document) => {
+                    const canPreview = Boolean(
+                      document.previewUrl || (document.storageBucket && document.storagePath),
+                    )
+                    return (
+                      <li key={document.id} className="flex items-start gap-2 py-2">
+                        <span className="mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-[8px] bg-[#f3f4f6] text-[#364153]">
+                          <FileGlyph />
+                        </span>
+                        <div className="min-w-0">
+                          {canPreview ? (
+                            <button
+                              type="button"
+                              className="sa-link block truncate text-left text-[14px] font-medium leading-5 text-[#155dfc] underline-offset-2 hover:underline"
+                              onClick={() => onPreviewDocument(document)}
+                            >
+                              {document.name}
+                            </button>
+                          ) : (
+                            <p className="truncate text-[14px] font-medium leading-5 text-[#0a0a0a]">
+                              {document.name}
+                            </p>
+                          )}
+                          <p className="text-[12px] leading-4 text-[#6a7282]">
+                            {document.meta}
+                            {canPreview ? '' : ' · Preview unavailable'}
+                          </p>
+                        </div>
+                      </li>
+                    )
+                  })}
+                </ul>
+              )}
+            </div>
           </div>
         </ProfileCard>
 
         <ProfileCard title="Lease" icon={<DocumentIcon />}>
-          <div className="grid grid-cols-2 gap-4">
+          <div className="flex flex-col gap-4">
             <div>
               <p className="text-[12px] leading-4 text-[#6a7282]">Status</p>
               {onOccupancyChange ? (
@@ -349,66 +394,32 @@ function ProfileContent({
                 </p>
               )}
             </div>
-            <div>
-              <p className="text-[12px] leading-4 text-[#6a7282]">Lease starts</p>
-              <p className="mt-1 text-[14px] font-semibold leading-5 text-[#0a0a0a]">{profile.leaseStartLabel}</p>
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <p className="text-[12px] leading-4 text-[#6a7282]">Lease starts</p>
+                <p className="mt-1 text-[14px] font-semibold leading-5 text-[#0a0a0a]">
+                  {profile.leaseStartLabel}
+                </p>
+              </div>
+              <div>
+                <p className="text-[12px] leading-4 text-[#6a7282]">Lease ends</p>
+                <p className="mt-1 text-[14px] font-semibold leading-5 text-[#0a0a0a]">
+                  {profile.leaseEndLabel}
+                </p>
+              </div>
+              <div>
+                <p className="text-[12px] leading-4 text-[#6a7282]">Monthly rent</p>
+                <p className="mt-1 text-[14px] font-semibold leading-5 text-[#0a0a0a]">
+                  {profile.monthlyRentLabel}
+                </p>
+              </div>
+              <div>
+                <p className="text-[12px] leading-4 text-[#6a7282]">Deposit</p>
+                <p className="mt-1 text-[14px] font-semibold leading-5 text-[#0a0a0a]">
+                  {profile.depositLabel}
+                </p>
+              </div>
             </div>
-            <div>
-              <p className="text-[12px] leading-4 text-[#6a7282]">Lease ends</p>
-              <p className="mt-1 text-[14px] font-semibold leading-5 text-[#0a0a0a]">{profile.leaseEndLabel}</p>
-            </div>
-            <div>
-              <p className="text-[12px] leading-4 text-[#6a7282]">Monthly rent</p>
-              <p className="mt-1 text-[14px] font-semibold leading-5 text-[#0a0a0a]">{profile.monthlyRentLabel}</p>
-            </div>
-            <div>
-              <p className="text-[12px] leading-4 text-[#6a7282]">Deposit</p>
-              <p className="mt-1 text-[14px] font-semibold leading-5 text-[#0a0a0a]">{profile.depositLabel}</p>
-            </div>
-          </div>
-
-          <div className="mt-5 border-t border-[#f3f4f6] pt-4">
-            <p className="text-[12px] leading-4 text-[#6a7282]">Documents</p>
-            {documentPreviewError ? (
-              <p className="mt-2 text-[13px] leading-5 text-[#b91c1c]">{documentPreviewError}</p>
-            ) : null}
-            {leaseDocuments.length === 0 ? (
-              <p className="mt-2 text-[13px] leading-5 text-[#6a7282]">No lease documents on file.</p>
-            ) : (
-              <ul className="mt-2 flex flex-col">
-                {leaseDocuments.map((document) => {
-                  const canPreview = Boolean(
-                    document.previewUrl || (document.storageBucket && document.storagePath),
-                  )
-                  return (
-                    <li key={document.id} className="flex items-start gap-2 py-2">
-                      <span className="mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-[8px] bg-[#f3f4f6] text-[#364153]">
-                        <FileGlyph />
-                      </span>
-                      <div className="min-w-0">
-                        {canPreview ? (
-                          <button
-                            type="button"
-                            className="sa-link block truncate text-left text-[14px] font-medium leading-5 text-[#155dfc] underline-offset-2 hover:underline"
-                            onClick={() => onPreviewDocument(document)}
-                          >
-                            {document.name}
-                          </button>
-                        ) : (
-                          <p className="truncate text-[14px] font-medium leading-5 text-[#0a0a0a]">
-                            {document.name}
-                          </p>
-                        )}
-                        <p className="text-[12px] leading-4 text-[#6a7282]">
-                          {document.meta}
-                          {canPreview ? '' : ' · Preview unavailable'}
-                        </p>
-                      </div>
-                    </li>
-                  )
-                })}
-              </ul>
-            )}
           </div>
 
           {profile.maintenanceResponsibilitiesClause ||
@@ -505,7 +516,7 @@ function ProfileContent({
 }
 
 export function AdminPropertyResidentDetailDashboard() {
-  const { propertySlug, residentId } = useParams<{ propertySlug: string; residentId: string }>()
+  const { propertySlug, residentId } = useParams<{ propertySlug?: string; residentId: string }>()
   const navigate = useNavigate()
   const location = useLocation()
   const [building, setBuilding] = useState<string | null>(null)
@@ -526,10 +537,26 @@ export function AdminPropertyResidentDetailDashboard() {
   const profileIdRef = useRef<string | null>(null)
   const navigateRef = useRef(navigate)
   navigateRef.current = navigate
+  const locationStateRef = useRef(location.state)
+  locationStateRef.current = location.state
 
   const loadResident = useCallback(async () => {
-    const slug = parsePropertyRouteSlug(propertySlug)
-    if (!slug || !residentId) {
+    const resolvedResidentId = (() => {
+      if (!residentId?.trim()) return ''
+      try {
+        return decodeURIComponent(residentId.trim())
+      } catch {
+        return residentId.trim()
+      }
+    })()
+    if (!resolvedResidentId) {
+      setLoading(false)
+      setError('Resident not found.')
+      return
+    }
+    const slug = propertySlug ? parsePropertyRouteSlug(propertySlug) : null
+    // Property-scoped URLs must have a valid slug; global /admin/residents/:id is allowed.
+    if (propertySlug && !slug) {
       setLoading(false)
       setError('Resident not found.')
       return
@@ -540,7 +567,7 @@ export function AdminPropertyResidentDetailDashboard() {
       return
     }
 
-    const switchingResident = profileIdRef.current !== residentId
+    const switchingResident = profileIdRef.current !== resolvedResidentId
     if (switchingResident) {
       setLoading(true)
       setProfile(null)
@@ -555,12 +582,25 @@ export function AdminPropertyResidentDetailDashboard() {
       'id, resident_id, full_name, email, phone, unit, building, status, balance_due, move_in_date, lease_end_date, monthly_rent, maintenance_responsibilities_clause, activation_status, sms_consent_status, activation_attempt_count, activation_sms_sent_at'
 
     try {
-      const userResult = await supabase
+      let userResult = await supabase
         .from('users')
         .select(userSelect)
         .eq('landlord_id', landlordId)
-        .eq('id', residentId)
+        .eq('id', resolvedResidentId)
         .maybeSingle()
+
+      // Also accept human-readable resident_id (RES-XXXX) in the URL.
+      if ((userResult.error || !userResult.data) && resolvedResidentId !== '') {
+        const byCode = await supabase
+          .from('users')
+          .select(userSelect)
+          .eq('landlord_id', landlordId)
+          .eq('resident_id', resolvedResidentId)
+          .maybeSingle()
+        if (!byCode.error && byCode.data) {
+          userResult = byCode
+        }
+      }
 
       let raw: Record<string, unknown> | null =
         userResult.error || !userResult.data
@@ -574,7 +614,7 @@ export function AdminPropertyResidentDetailDashboard() {
             'id, resident_id, full_name, email, phone, unit, building, status, balance_due, move_in_date, lease_end_date, monthly_rent',
           )
           .eq('landlord_id', landlordId)
-          .eq('id', residentId)
+          .eq('id', resolvedResidentId)
           .maybeSingle()
         if (legacy.error || !legacy.data) {
           setError(getErrorMessage(legacy.error, "We couldn't find that resident."))
@@ -613,7 +653,7 @@ export function AdminPropertyResidentDetailDashboard() {
         email,
         phone: asString(raw.phone) || null,
         unit: asString(raw.unit),
-        building: asString(raw.building) || (slug.kind === 'name' ? slug.value : '') || 'Portfolio',
+        building: asString(raw.building) || (slug?.kind === 'name' ? slug.value : '') || 'Portfolio',
         status: parseResidentStatus(asString(raw.status)),
         balanceDue: asFiniteNumber(raw.balance_due),
         leaseStartDate: asString(raw.move_in_date) || null,
@@ -628,7 +668,7 @@ export function AdminPropertyResidentDetailDashboard() {
       }
 
       setBuilding(loaded.building)
-      setPropertyId(slug.kind === 'id' ? slug.value : null)
+      setPropertyId(slug?.kind === 'id' ? slug.value : null)
       setLoadedUser(loaded)
       profileIdRef.current = loaded.id
       setProfile(
@@ -654,30 +694,37 @@ export function AdminPropertyResidentDetailDashboard() {
       setLoading(false)
 
       void (async () => {
-      const propertyResult =
-        slug.kind === 'id'
-          ? await findPropertyById(landlordId, slug.value)
-          : await findPropertyByName(landlordId, slug.value)
-
       let buildingName = loaded.building
-      let resolvedPropertyId: string | null = slug.kind === 'id' ? slug.value : null
+      let resolvedPropertyId: string | null = slug?.kind === 'id' ? slug.value : null
       let activeCanonicalProperty: PropertyHealthCanonicalProperty | null = null
 
-      if (propertyResult.ok && 'property' in propertyResult && propertyResult.property) {
-        resolvedPropertyId = propertyResult.property.id
-        buildingName = propertyResult.property.name || buildingName
-        activeCanonicalProperty = {
-          id: propertyResult.property.id,
-          name: propertyResult.property.name,
-        }
-        if (slug.kind === 'name') {
-          const nextPath = propertyResidentDetailPath(propertyResult.property.id, residentId)
-          const currentPath = `${propertyDetailPath(propertySlug ?? '')}/residents/${encodeURIComponent(residentId)}`
-          if (nextPath !== currentPath) {
-            navigateRef.current(nextPath, { replace: true })
+      if (slug) {
+        const propertyResult =
+          slug.kind === 'id'
+            ? await findPropertyById(landlordId, slug.value)
+            : await findPropertyByName(landlordId, slug.value)
+
+        if (propertyResult.ok && 'property' in propertyResult && propertyResult.property) {
+          resolvedPropertyId = propertyResult.property.id
+          buildingName = propertyResult.property.name || buildingName
+          activeCanonicalProperty = {
+            id: propertyResult.property.id,
+            name: propertyResult.property.name,
+          }
+          if (slug.kind === 'name') {
+            const nextPath = propertyResidentDetailPath(propertyResult.property.id, loaded.id)
+            const currentPath = `${propertyDetailPath(propertySlug ?? '')}/residents/${encodeURIComponent(resolvedResidentId)}`
+            if (nextPath !== currentPath) {
+              navigateRef.current(nextPath, {
+                replace: true,
+                state: locationStateRef.current,
+              })
+            }
           }
         }
-      } else if (!activeCanonicalProperty && buildingName) {
+      }
+
+      if (!activeCanonicalProperty && buildingName) {
         const propertiesResult = await listPropertiesForLandlord(landlordId)
         const match = propertiesResult.ok
           ? propertiesResult.properties.find(
@@ -695,7 +742,7 @@ export function AdminPropertyResidentDetailDashboard() {
         .from('sms_conversations')
         .select('id, updated_at, conversation_type, status')
         .eq('landlord_id', landlordId)
-        .eq('resident_id', residentId)
+        .eq('resident_id', loaded.id)
         .order('updated_at', { ascending: false })
         .limit(10)
 
@@ -746,7 +793,7 @@ export function AdminPropertyResidentDetailDashboard() {
             .eq('landlord_id', landlordId)
             .neq('status', 'past_resident')
             .limit(300),
-          fetchAdminWorkflowDashboard({ residentId }).catch(() => null),
+          fetchAdminWorkflowDashboard({ residentId: loaded.id }).catch(() => null),
           loadResidentLeaseDocuments(
             {
               fullName: loaded.fullName,
@@ -839,23 +886,15 @@ export function AdminPropertyResidentDetailDashboard() {
   }, [loadResident])
 
 
-  const backFallbackHref = useMemo(
-    () =>
-      propertyId
-        ? propertyDetailPath(propertyId, 'residents')
-        : '/admin/residents',
-    [propertyId],
-  )
+  const backFallbackHref = useMemo(() => {
+    if (propertyId) return propertyDetailPath(propertyId, 'units')
+    return '/admin/residents'
+  }, [propertyId])
 
   function handleBack() {
     const from = (location.state as { from?: string } | null)?.from
-    if (typeof from === 'string' && from.startsWith('/')) {
+    if (typeof from === 'string' && from.startsWith('/') && from !== location.pathname) {
       navigate(from)
-      return
-    }
-    const historyIdx = (window.history.state as { idx?: number } | null)?.idx
-    if (typeof historyIdx === 'number' && historyIdx > 0) {
-      navigate(-1)
       return
     }
     navigate(backFallbackHref)

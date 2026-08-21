@@ -24,6 +24,7 @@ import { findLandlordVendorByContact } from "../_shared/vendor_verification/find
 import { finalizeVendorVerificationSubmit } from "../_shared/vendor_verification/finalizeVendorVerificationSubmit.ts"
 import { runVendorOnboardingViaEngine } from "../_shared/engine/vendorOnboardingEngine.ts"
 import {
+  assertConnectReturnOriginForStripe,
   createConnectAccountLink,
   createExpressConnectAccount,
   isStripeConfigured,
@@ -773,14 +774,9 @@ serve(async (req) => {
           req,
           typeof body.returnOrigin === "string" ? body.returnOrigin : undefined,
         )
-        if (!base) {
-          return jsonResponse(
-            {
-              error:
-                "Could not determine Connect return URL. Open this link from the app, or ask the property manager to check setup.",
-            },
-            500,
-          )
+        const originCheck = assertConnectReturnOriginForStripe(base)
+        if (!originCheck.ok) {
+          return jsonResponse({ error: originCheck.error }, 400)
         }
 
         const vendorId = await ensureVendorRow(supabase, row, landlordId)

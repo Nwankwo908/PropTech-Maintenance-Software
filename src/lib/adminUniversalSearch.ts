@@ -3,6 +3,7 @@ import {
   propertyDetailPath,
   propertyDetailPathForBuilding,
   propertyResidentDetailPathForBuilding,
+  residentDetailPath,
 } from '@/lib/propertyRoutes'
 import { normalizeBuildingKey } from '@/lib/propertyHealth'
 import { getAdminNavSearchItems } from '@/lib/adminNavigation'
@@ -456,7 +457,7 @@ function mapResidentsToSearchItems(
     const subtitle = [building, unit ? formatUnitLabel(unit) : null].filter(Boolean).join(' · ') || 'Resident'
     const href = building
       ? propertyResidentDetailPathForBuilding(building, id, propertyIdByBuilding)
-      : '/admin/residents'
+      : residentDetailPath(id)
 
     return [
       {

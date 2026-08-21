@@ -1,24 +1,38 @@
 @import url('https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;1,9..40,400&family=Encode+Sans+Semi+Condensed:wght@400;500;600;700&family=JetBrains+Mono:wght@400;700&display=swap');
 @import 'tailwindcss';
 
-/** Compact portrait: 320×480, 346×346, 360×480, 384×640, 390×390, 432×768, and 504×504 (with a small size band around each). */
+/** Compact portrait: 320×480, 346×346, 360×480, 360×640, 384×640, 390×390, 393×786, 412×690, 432×768, 480×853, and 504×504 (with a small size band around each). */
 @custom-variant landing-compact {
   @media (min-width: 300px) and (max-width: 349px) and (min-height: 430px) and (max-height: 530px),
     (min-width: 330px) and (max-width: 369px) and (min-height: 330px) and (max-height: 379px),
     (min-width: 350px) and (max-width: 389px) and (min-height: 430px) and (max-height: 530px),
+    (min-width: 350px) and (max-width: 369px) and (min-height: 600px) and (max-height: 700px),
     (min-width: 370px) and (max-width: 409px) and (min-height: 370px) and (max-height: 409px),
     (min-width: 370px) and (max-width: 409px) and (min-height: 600px) and (max-height: 680px),
+    (min-width: 380px) and (max-width: 410px) and (min-height: 750px) and (max-height: 820px),
+    (min-width: 400px) and (max-width: 430px) and (min-height: 660px) and (max-height: 720px),
     (min-width: 410px) and (max-width: 460px) and (min-height: 730px) and (max-height: 810px),
+    (min-width: 460px) and (max-width: 510px) and (min-height: 820px) and (max-height: 900px),
     (min-width: 480px) and (max-width: 529px) and (min-height: 480px) and (max-height: 529px) {
     @slot;
   }
 }
 
-/** Larger hero type: 384×640, 390×390, 432×768, and 504×504 (and nearby). */
+/** Larger hero type: 384×640, 390×390, 412×690, 432×768, 480×853, and 504×504 (and nearby). */
 @custom-variant landing-432 {
   @media (min-width: 370px) and (max-width: 409px) and (min-height: 370px) and (max-height: 409px),
     (min-width: 370px) and (max-width: 409px) and (min-height: 600px) and (max-height: 680px),
+    (min-width: 400px) and (max-width: 430px) and (min-height: 660px) and (max-height: 720px),
     (min-width: 410px) and (max-width: 460px) and (min-height: 730px) and (max-height: 810px),
+    (min-width: 460px) and (max-width: 510px) and (min-height: 820px) and (max-height: 900px),
+    (min-width: 480px) and (max-width: 529px) and (min-height: 480px) and (max-height: 529px) {
+    @slot;
+  }
+}
+
+/** 504×504 square and 480×853 — keep “Bring Your Existing Data” on one line with icons. */
+@custom-variant landing-504 {
+  @media (min-width: 460px) and (max-width: 510px) and (min-height: 820px) and (max-height: 900px),
     (min-width: 480px) and (max-width: 529px) and (min-height: 480px) and (max-height: 529px) {
     @slot;
   }
@@ -27,6 +41,14 @@
 /** 390×390 square (and nearby). */
 @custom-variant landing-390 {
   @media (min-width: 370px) and (max-width: 409px) and (min-height: 370px) and (max-height: 409px) {
+    @slot;
+  }
+}
+
+/** Tablet portrait: 600×960 and 768×1024 (and nearby). */
+@custom-variant landing-tablet-portrait {
+  @media (min-width: 580px) and (max-width: 640px) and (min-height: 920px) and (max-height: 1000px),
+    (min-width: 740px) and (max-width: 820px) and (min-height: 980px) and (max-height: 1080px) {
     @slot;
   }
 }
@@ -669,6 +691,11 @@ h6 {
   animation: onb-setup-ring 700ms linear infinite;
 }
 
+.onb-review-progress-ring {
+  transform-origin: 50% 50%;
+  animation: onb-setup-ring 900ms linear infinite;
+}
+
 .onb-setup-copy {
   animation: onb-welcome-in 360ms var(--sa-ease);
 }
@@ -1168,7 +1195,8 @@ h6 {
   .onb-stepper-marker-active,
   .onb-stepper-active-dot,
   .onb-setup-spinner,
-  .onb-setup-copy {
+  .onb-setup-copy,
+  .onb-review-progress-ring {
     animation: none;
   }
 

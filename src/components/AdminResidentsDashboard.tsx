@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { Link } from 'react-router-dom'
+import { useNavigate } from 'react-router-dom'
 import magnifyingGlassIcon from '@/assets/Magnifying glass.svg'
 import { TableCheckbox } from '@/components/TableCheckbox'
 import { loadUnitsFromDb } from '@/api/unitVacancy'
@@ -19,7 +19,7 @@ import { getActiveLandlordId } from '@/lib/activeLandlord'
 import { customUnitPickKey, unitOptionKeyToCell } from '@/lib/residentUnitKeys'
 import {
   buildPropertyIdByBuilding,
-  propertyResidentDetailPath,
+  residentDetailPath,
 } from '@/lib/propertyRoutes'
 import { listPropertiesForLandlord } from '@/lib/properties'
 import {
@@ -292,6 +292,7 @@ function ActivationReminderAlertIcon() {
 }
 
 export function AdminResidentsDashboard() {
+  const navigate = useNavigate()
   const [residents, setResidents] = useState<ResidentRow[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -994,16 +995,17 @@ export function AdminResidentsDashboard() {
                       />
                     </td>
                     <td className="px-6 py-4 text-[14px] font-medium text-[#0a0a0a]">
-                      {resident.propertyLinkId ? (
-                        <Link
-                          to={propertyResidentDetailPath(resident.propertyLinkId, resident.id)}
-                          className="sa-link rounded-[4px] text-[#0a0a0a] hover:text-[#186179] hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2"
-                        >
-                          {resident.name}
-                        </Link>
-                      ) : (
-                        resident.name
-                      )}
+                      <button
+                        type="button"
+                        onClick={() =>
+                          navigate(residentDetailPath(resident.id), {
+                            state: { from: '/admin/residents' },
+                          })
+                        }
+                        className="sa-link rounded-[4px] text-left text-[#0a0a0a] hover:text-[#186179] hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2"
+                      >
+                        {resident.name}
+                      </button>
                     </td>
                     <td className="px-6 py-4 text-[14px] text-[#6a7282]">{resident.unitLabel}</td>
                     <td className="px-6 py-4 text-[14px] tabular-nums text-[#0a0a0a]">
@@ -1043,7 +1045,7 @@ export function AdminResidentsDashboard() {
                     >
                       {formatBalance(resident.balanceDue)}
                     </td>
-                    <td className="px-6 py-4 align-top">
+                    <td className="px-6 py-4 align-middle">
                       {(() => {
                         const chip = resolveTenantActivationChip({
                           activationStatus: resident.activationStatus,

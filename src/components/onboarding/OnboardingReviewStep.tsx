@@ -60,11 +60,21 @@ function formatResidentReviewValue(resident: OnboardingResident): string {
   return parts.join(' · ')
 }
 
-function ReviewProgressIcon() {
+function ReviewProgressIcon({ completing = false }: { completing?: boolean }) {
   return (
-    <div className="relative mx-auto flex size-14 items-center justify-center" aria-hidden>
+    <div
+      className="relative mx-auto flex size-14 items-center justify-center"
+      aria-hidden
+      aria-busy={completing || undefined}
+    >
       <svg viewBox="0 0 56 56" fill="none" className="size-14">
         <circle cx="28" cy="28" r="24" stroke="#E5E7EB" strokeWidth="3" />
+      </svg>
+      <svg
+        viewBox="0 0 56 56"
+        fill="none"
+        className={`absolute inset-0 size-14 ${completing ? 'onb-review-progress-ring' : ''}`}
+      >
         <path
           d="M28 4a24 24 0 0 1 24 24"
           stroke="#186179"
@@ -202,7 +212,7 @@ export function OnboardingReviewStep({
     <div className="mx-auto w-full max-w-[680px]">
       <div className="text-center">
         <div className="onb-review-hero-icon">
-          <ReviewProgressIcon />
+          <ReviewProgressIcon completing={saving} />
         </div>
         <h2 className="onb-review-hero-title mt-5 text-[28px] font-semibold leading-tight tracking-[-0.5px] text-[#111827] sm:text-[32px]">
           {headline}

@@ -11,7 +11,6 @@ import { MessageVendorRail } from '@/components/MessageVendorRail'
 import { PropertyAiInsightsModal } from '@/components/PropertyAiInsightsModal'
 import { PropertyAnalyticsPanel } from '@/components/PropertyAnalyticsPanel'
 import { PropertyConversationsList } from '@/components/PropertyConversationsList'
-import { PropertyResidentsGrid } from '@/components/PropertyResidentsGrid'
 import { PropertyUnitsTable } from '@/components/PropertyUnitsTable'
 import { PropertyVendorsList } from '@/components/PropertyVendorsList'
 import { PropertyWorkflowsList } from '@/components/PropertyWorkflowsList'
@@ -68,7 +67,6 @@ import {
   type PropertyUnitResident,
 } from '@/lib/propertyUnitRows'
 import { buildPropertyAnalytics } from '@/lib/propertyAnalytics'
-import { buildPropertyResidentCards } from '@/lib/propertyResidentCards'
 import { buildPropertyWorkflowRows, evaluatePropertyWorkflow } from '@/lib/propertyWorkflowRows'
 import { fetchPropertyConversations, type PropertyConversationRow } from '@/lib/propertyConversations'
 import {
@@ -84,7 +82,6 @@ type PropertyTab =
   | 'overview'
   | 'details'
   | 'units'
-  | 'residents'
   | 'workflows'
   | 'conversations'
   | 'vendors'
@@ -133,7 +130,6 @@ const TABS: { id: PropertyTab; label: string; href?: string }[] = [
   { id: 'overview', label: 'Overview' },
   { id: 'details', label: 'Property Details' },
   { id: 'units', label: 'Units' },
-  { id: 'residents', label: 'Residents' },
   { id: 'workflows', label: 'Active Tasks' },
   { id: 'conversations', label: 'Conversations' },
   { id: 'vendors', label: 'Vendors' },
@@ -291,7 +287,6 @@ export function AdminPropertyDetailDashboard() {
     if (
       tab === 'details' ||
       tab === 'units' ||
-      tab === 'residents' ||
       tab === 'workflows' ||
       tab === 'conversations' ||
       tab === 'vendors' ||
@@ -423,7 +418,6 @@ export function AdminPropertyDetailDashboard() {
         const tabParam =
           tab === 'details' ||
           tab === 'units' ||
-          tab === 'residents' ||
           tab === 'workflows' ||
           tab === 'conversations' ||
           tab === 'vendors' ||
@@ -701,7 +695,6 @@ export function AdminPropertyDetailDashboard() {
     if (
       tab === 'details' ||
       tab === 'units' ||
-      tab === 'residents' ||
       tab === 'workflows' ||
       tab === 'conversations' ||
       tab === 'vendors' ||
@@ -972,11 +965,6 @@ export function AdminPropertyDetailDashboard() {
       workflowData,
     })
   }, [building, buildingUnits, buildingResidents, buildingTickets, workflowData])
-
-  const propertyResidentCards = useMemo(() => {
-    if (!building) return []
-    return buildPropertyResidentCards(building, buildingResidents)
-  }, [building, buildingResidents])
 
   const propertyWorkflowRows = useMemo(() => {
     if (!building) return []
@@ -1467,13 +1455,6 @@ export function AdminPropertyDetailDashboard() {
             onOccupancyStatusChange={(unitId, status) => handleOccupancyStatusChange(unitId, status)}
           />
         </>
-      ) : activeTab === 'residents' ? (
-        <PropertyResidentsGrid
-          building={building ?? ''}
-          propertyId={canonicalProperty?.id}
-          residents={propertyResidentCards}
-          loading={loading}
-        />
       ) : activeTab === 'workflows' ? (
         <PropertyWorkflowsList rows={propertyWorkflowRows} loading={loading} />
       ) : activeTab === 'conversations' ? (

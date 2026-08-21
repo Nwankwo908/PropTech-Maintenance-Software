@@ -1,4 +1,4 @@
-import { BrowserRouter, Navigate, Routes, Route } from 'react-router-dom'
+import { BrowserRouter, Navigate, Outlet, Routes, Route } from 'react-router-dom'
 import { useSessionAutoRefresh } from './hooks/useSessionAutoRefresh'
 import { supabase } from './lib/supabase'
 import { ReferralLandingRedirect } from './components/ReferralLandingRedirect'
@@ -88,7 +88,10 @@ export default function App() {
             <Route path="vendors" element={<AdminVendorsDashboard />} />
             <Route path="vendors/:vendorId" element={<AdminVendorDetailDashboard />} />
             <Route path="workflows" element={<AdminWorkflowOperationsDashboard />} />
-            <Route path="residents" element={<AdminResidentsDashboard />} />
+            <Route path="residents" element={<Outlet />}>
+              <Route index element={<AdminResidentsDashboard />} />
+              <Route path=":residentId" element={<AdminPropertyResidentDetailDashboard />} />
+            </Route>
             <Route path="analytics" element={<AdminAnalyticsDashboard />} />
             <Route path="settings/*" element={<AdminSettingsDashboard />} />
           </Route>

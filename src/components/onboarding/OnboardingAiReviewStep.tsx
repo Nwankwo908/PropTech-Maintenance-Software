@@ -7,9 +7,6 @@ import { normalizeOnboardingOccupancyStatus } from '@/lib/onboarding'
 import {
   countSelectedInReview,
   formatExtractedUnitPlacement,
-  listNeedsReviewSectionItems,
-  setAllReviewSelections,
-  toggleExtractionReviewItem,
   type ExtractedFinancialRecord,
   type ExtractedLeaseInfo,
   type OnboardingExtractionReview,
@@ -119,8 +116,6 @@ function ReviewItemRow({
   onEditChange,
   children,
   as = 'li',
-  sourceBesideTitle = false,
-  showCheckbox = true,
 }: {
   checked: boolean
   onToggle: () => void
@@ -137,18 +132,14 @@ function ReviewItemRow({
   onEditChange: (value: string) => void
   children?: React.ReactNode
   as?: 'li' | 'div'
-  sourceBesideTitle?: boolean
-  showCheckbox?: boolean
 }) {
   const Wrapper = as
   return (
     <Wrapper className="sa-row rounded-[8px] border border-[#eef0f3] px-3 py-3">
       <div className="flex items-start gap-3">
-        {showCheckbox ? (
-          <div className="pt-0.5">
-            <TableCheckbox aria-label={`Include ${label}`} checked={checked} onChange={onToggle} />
-          </div>
-        ) : null}
+        <div className="pt-0.5">
+          <TableCheckbox aria-label={`Include ${label}`} checked={checked} onChange={onToggle} />
+        </div>
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
             {editing && editMode === 'label' ? (
@@ -166,15 +157,9 @@ function ReviewItemRow({
             ) : (
               <p className="text-[13px] font-medium text-[#101828]">{label}</p>
             )}
-            {sourceBesideTitle && (!editing || editMode !== 'label') ? (
-              <p className="text-[11px] text-[#9ca3af]">Source: {sourceDocumentName}</p>
-            ) : null}
           </div>
           {editing && editMode === 'label' ? (
-            <div className="mt-2 flex gap-2">
-              <button type="button" onClick={onSaveEdit} className="text-[12px] font-medium text-[#187960]">
-                Save
-              </button>
+            <div className="mt-2">
               <button type="button" onClick={onCancelEdit} className="text-[12px] font-medium text-[#6a7282]">
                 Cancel
               </button>
@@ -183,10 +168,7 @@ function ReviewItemRow({
             <div className="mt-2">
               {editFieldLabel ? <span className={fieldLabelClass}>{editFieldLabel}</span> : null}
               <input className={inputClass} value={editValue} onChange={(e) => onEditChange(e.target.value)} />
-              <div className="mt-2 flex gap-2">
-                <button type="button" onClick={onSaveEdit} className="text-[12px] font-medium text-[#187960]">
-                  Save
-                </button>
+              <div className="mt-2">
                 <button type="button" onClick={onCancelEdit} className="text-[12px] font-medium text-[#6a7282]">
                   Cancel
                 </button>
@@ -195,19 +177,27 @@ function ReviewItemRow({
           ) : value?.trim() ? (
             <p className="mt-1 text-[13px] leading-relaxed text-[#364153]">{value}</p>
           ) : null}
-          {sourceBesideTitle ? null : (
-            <p className="mt-1 text-[11px] text-[#9ca3af]">Source: {sourceDocumentName}</p>
-          )}
+          <p className="mt-1 text-[11px] text-[#9ca3af]">Source: {sourceDocumentName}</p>
           {children}
         </div>
-        {!editing && onEdit ? (
-          <button
-            type="button"
-            onClick={onEdit}
-            className="shrink-0 text-[12px] font-medium text-[#9E439F] hover:text-[#863786]"
-          >
-            Edit
-          </button>
+        {onEdit ? (
+          editing ? (
+            <button
+              type="button"
+              onClick={onSaveEdit}
+              className="shrink-0 text-[12px] font-medium text-[#187960] hover:text-[#14634f]"
+            >
+              Save
+            </button>
+          ) : (
+            <button
+              type="button"
+              onClick={onEdit}
+              className="shrink-0 text-[12px] font-medium text-[#9E439F] hover:text-[#863786]"
+            >
+              Edit
+            </button>
+          )
         ) : null}
       </div>
     </Wrapper>
@@ -218,18 +208,23 @@ function ReviewSection({
   title,
   count,
   emptyLabel,
+  headerActions,
   children,
 }: {
   title: string
   count?: number
   emptyLabel?: string
+  headerActions?: React.ReactNode
   children: React.ReactNode
 }) {
   return (
     <section className={onboardingNestedCardClass}>
-      <h3 className="text-[15px] font-semibold text-[#101828]">
-        {count != null ? `${title} (${count})` : title}
-      </h3>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <h3 className="text-[15px] font-semibold text-[#101828]">
+          {count != null ? `${title} (${count})` : title}
+        </h3>
+        {headerActions ? <div className="flex flex-wrap items-center gap-2">{headerActions}</div> : null}
+      </div>
       {children ?? (
         emptyLabel ? <p className="mt-2 text-[13px] text-[#6a7282]">{emptyLabel}</p> : null
       )}
@@ -299,6 +294,48 @@ export function OnboardingAiReviewStep({
       ...review,
       vendors: review.vendors.map((row) => (row.id === id ? { ...row, ...patch } : row)),
     })
+  }
+
+  function setPropertySectionSelected(selected: boolean) {
+    onReviewChange({
+      ...review,
+      properties: review.properties.map((row) => ({ ...row, selected })),
+      units: review.units.map((row) => ({ ...row, selected })),
+      residents: review.residents.map((row) => ({ ...row, selected })),
+    })
+  }
+
+  function setLeaseSectionSelected(selected: boolean) {
+    onReviewChange({
+      ...review,
+      leases: review.leases.map((row) => ({ ...row, selected })),
+    })
+  }
+
+  function sectionSelectActions(
+    onSelect: () => void,
+    onDeselect: () => void,
+  ) {
+    return (
+      <>
+        <button
+          type="button"
+          disabled={saving}
+          onClick={onSelect}
+          className="text-[12px] font-medium text-[#186179] hover:text-[#0f4d61] disabled:opacity-50"
+        >
+          Select
+        </button>
+        <button
+          type="button"
+          disabled={saving}
+          onClick={onDeselect}
+          className="text-[12px] font-medium text-[#6a7282] hover:text-[#101828] disabled:opacity-50"
+        >
+          Deselect
+        </button>
+      </>
+    )
   }
 
   function startEdit(id: string, value: string) {
@@ -802,36 +839,6 @@ export function OnboardingAiReviewStep({
     )
   }
 
-  function renderNeedsReviewRows() {
-    const combined = listNeedsReviewSectionItems(review)
-    if (combined.length === 0) {
-      return <p className="mt-2 text-[13px] text-[#6a7282]">No items flagged for manual review.</p>
-    }
-    return (
-      <ul className="mt-3 space-y-2">
-        {combined.map((item) => (
-          <ReviewItemRow
-            key={item.id}
-            checked={item.includeInImport}
-            onToggle={() => onReviewChange(toggleExtractionReviewItem(review, item.id))}
-            label={item.label}
-            value={
-              item.imageTags?.length ? `${item.value} · Tags: ${item.imageTags.join(', ')}` : item.value
-            }
-            sourceDocumentName={item.sourceDocumentName}
-            sourceBesideTitle
-            showCheckbox={false}
-            editing={false}
-            editValue=""
-            onSaveEdit={() => undefined}
-            onCancelEdit={() => undefined}
-            onEditChange={() => undefined}
-          />
-        ))}
-      </ul>
-    )
-  }
-
   const account = review.account
   const smsChecked = Boolean(account.smsConsentAcceptedAt)
 
@@ -967,10 +974,25 @@ export function OnboardingAiReviewStep({
                 review.properties.length ||
                 (review.units.length > 0 || review.residents.length > 0 ? 1 : 0)
               }
+              headerActions={sectionSelectActions(
+                () => setPropertySectionSelected(true),
+                () => setPropertySectionSelected(false),
+              )}
             >
               {renderPropertyRows()}
             </ReviewSection>
-            <ReviewSection title="Lease Information Found" count={review.leases.length}>
+            <ReviewSection
+              title="Lease Information Found"
+              count={review.leases.length}
+              headerActions={
+                review.leases.length > 0
+                  ? sectionSelectActions(
+                      () => setLeaseSectionSelected(true),
+                      () => setLeaseSectionSelected(false),
+                    )
+                  : undefined
+              }
+            >
               {renderSimpleRows<ExtractedLeaseInfo>(
                 review.leases,
                 'leases',
@@ -1015,44 +1037,16 @@ export function OnboardingAiReviewStep({
                 'No financial records detected.',
               )}
             </ReviewSection>
-            <ReviewSection
-              title="Items Needing Review"
-              count={listNeedsReviewSectionItems(review).length}
-            >
-              {renderNeedsReviewRows()}
-            </ReviewSection>
           </>
         )}
       </div>
 
       <div className="mt-6 flex flex-col gap-4 border-t border-[#eef0f3] pt-4">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <p className="text-[13px] text-[#6a7282]">
-            {selectedCount} item{selectedCount === 1 ? '' : 's'} selected for import
-          </p>
-          {!isEmpty ? (
-            <div className="flex flex-wrap gap-2">
-              <button
-                type="button"
-                disabled={saving}
-                onClick={() => onReviewChange(setAllReviewSelections(review, true))}
-                className="text-[12px] font-medium text-[#186179] hover:text-[#0f4d61]"
-              >
-                Select all
-              </button>
-              <button
-                type="button"
-                disabled={saving}
-                onClick={() => onReviewChange(setAllReviewSelections(review, false))}
-                className="text-[12px] font-medium text-[#6a7282] hover:text-[#101828]"
-              >
-                Deselect all
-              </button>
-            </div>
-          ) : null}
-        </div>
+        <p className="text-[13px] text-[#6a7282]">
+          {selectedCount} item{selectedCount === 1 ? '' : 's'} selected for import
+        </p>
 
-        <div className="flex flex-wrap items-center justify-end gap-3">
+        <div className="flex flex-wrap items-center justify-between gap-3">
           <button type="button" disabled={saving} onClick={onBackToUploads} className={btnGhost}>
             Back
           </button>

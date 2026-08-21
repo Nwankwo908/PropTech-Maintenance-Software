@@ -222,8 +222,10 @@ export function buildPropertyUnitRows(input: {
       return {
         id: unit.id,
         unitDisplay: formatPropertyUnitDisplay(unit.unitLabel),
-        residentId: showOccupiedDetails && resident ? resident.id : null,
-        residentName: showOccupiedDetails && resident ? resident.fullName : null,
+        // Always link a matched resident so profile is reachable even if the unit
+        // chip has not flipped to Occupied yet.
+        residentId: resident?.id ?? null,
+        residentName: resident?.fullName ?? null,
         occupancyStatus,
         openWorkflowLabel,
         balanceDue: showOccupiedDetails && resident ? resident.balanceDue : 0,

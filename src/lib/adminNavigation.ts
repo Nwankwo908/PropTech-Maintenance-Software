@@ -43,6 +43,7 @@ export type AdminNavId =
   | 'vendor_detail'
   | 'workflows'
   | 'residents'
+  | 'resident_detail'
   | 'analytics'
   | 'settings'
   | 'settings_organization'
@@ -195,12 +196,22 @@ export const ADMIN_NAV_TREE: AdminNavNode[] = [
     label: 'Residents',
     path: `${ADMIN_BASE}/residents`,
     routeSegment: 'residents',
+    navEnd: true,
     surfaces: { sidebar: true, search: true },
     search: {
       category: 'resident',
       subtitle: 'Tenant roster, leases, and activation',
       keywords: ['residents', 'tenants', 'users', 'leases'],
     },
+    children: [
+      {
+        id: 'resident_detail',
+        label: 'Resident',
+        path: `${ADMIN_BASE}/residents/:residentId`,
+        routeSegment: 'residents/:residentId',
+        surfaces: { sidebar: false, search: false },
+      },
+    ],
   },
   {
     id: 'requests',

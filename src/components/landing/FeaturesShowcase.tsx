@@ -60,8 +60,8 @@ const FEATURES: FeatureItem[] = [
   },
 ]
 
-const EMPHASIZED_PREVIEW_WIDTH = 'mx-auto w-[70.55%] lg:mx-0'
-const AI_ORGANIZES_PREVIEW_WIDTH = 'mx-auto w-[99.84%] lg:mx-0 lg:w-[83.2%]'
+const EMPHASIZED_PREVIEW_WIDTH = 'w-full lg:mx-0 lg:w-[70.55%]'
+const AI_ORGANIZES_PREVIEW_WIDTH = 'w-full lg:mx-0 lg:w-[83.2%]'
 
 const FEATURE_PREVIEWS: Record<
   FeatureId,
@@ -82,8 +82,8 @@ const FEATURE_PREVIEWS: Record<
     alt: 'Ulo activity feed showing actions completed across properties',
     width: 966,
     height: 810,
-    displayWidthClass: 'mx-auto w-[60%] lg:mx-0',
-    offsetClass: 'translate-x-[50px]',
+    displayWidthClass: 'w-full lg:mx-0 lg:w-[60%]',
+    offsetClass: 'lg:translate-x-[50px]',
   },
   'ai-organizes': {
     src: featuresAiOrganizes,
@@ -91,15 +91,15 @@ const FEATURE_PREVIEWS: Record<
     width: 1452,
     height: 1095,
     displayWidthClass: AI_ORGANIZES_PREVIEW_WIDTH,
-    cropClass: '-mt-[30px] -ml-[25%] w-[125%] max-w-none',
-    offsetClass: '-mt-[40px]',
+    cropClass: 'w-full max-w-full lg:-mt-[30px] lg:-ml-[25%] lg:w-[125%] lg:max-w-none',
+    offsetClass: 'lg:-mt-[40px]',
   },
   'ulo-coordinates': {
     src: featuresWorkspace,
     alt: 'Ulo workspace board with New Intake, Assigned, and In Progress work orders',
     width: 901,
     height: 689,
-    displayWidthClass: 'mx-auto w-[70%] lg:mx-0',
+    displayWidthClass: 'w-full lg:mx-0 lg:w-[70%]',
   },
   'tenant-text': {
     src: tenantTextPreview,
@@ -212,13 +212,18 @@ function FeaturePreviewPanel({ activeId }: { activeId: FeatureId }) {
   const cropClass = preview.cropClass ?? 'w-full max-w-full'
 
   return (
-    <div className="relative flex min-w-0 w-full flex-1 items-center justify-center lg:min-w-[280px] lg:justify-start landing-compact:justify-center" aria-live="polite">
-      <div className={`overflow-hidden ${widthClass} ${preview.offsetClass ?? ''} landing-compact:!w-full landing-compact:!translate-x-0`}>
+    <div
+      className="relative flex min-w-0 w-full flex-1 items-center justify-center max-[410px]:w-[calc(100vw-3rem)] max-[410px]:max-w-none landing-compact:w-[calc(100vw-3rem)] landing-compact:max-w-none lg:min-w-[280px] lg:justify-start"
+      aria-live="polite"
+    >
+      <div
+        className={`w-full max-w-full overflow-hidden max-[410px]:!w-full max-[410px]:!max-w-none landing-compact:!w-full landing-compact:!max-w-none ${widthClass} ${preview.offsetClass ?? ''}`}
+      >
         <img
           key={activeId}
           src={preview.src}
           alt={preview.alt}
-          className={`block h-auto saturate-[90%] contrast-[90%] animate-[feature-preview-fade_0.6s_ease-in-out] ${cropClass} landing-compact:!ml-0 landing-compact:!mt-0 landing-compact:!w-full`}
+          className={`block h-auto w-full max-w-full saturate-[90%] contrast-[90%] animate-[feature-preview-fade_0.6s_ease-in-out] max-[410px]:!w-full max-[410px]:!min-w-full max-[410px]:!max-w-none landing-compact:!w-full landing-compact:!min-w-full landing-compact:!max-w-none ${cropClass}`}
           width={preview.width}
           height={preview.height}
         />
@@ -237,16 +242,19 @@ export function FeaturesShowcase() {
           <IconRoadmap className="size-4 shrink-0 text-[#81228A]" />
           How It Works
         </p>
-        <h3 className="mt-3 whitespace-nowrap font-[family-name:var(--font-landing-heading)] text-[clamp(2rem,4vw,3rem)] font-medium leading-[1.1] tracking-[-0.02em] text-slate-900 landing-compact:whitespace-normal landing-390:!text-[1.75rem]">
-          <span className="landing-390:whitespace-nowrap">SMS-first maintenance</span>{' '}
-          <span className="landing-390:whitespace-nowrap">management</span>
+        <h3 className="mt-3 font-[family-name:var(--font-landing-heading)] text-[48px] font-medium leading-[1.1] tracking-[-0.02em] text-slate-900 max-[349px]:flex max-[349px]:flex-col max-[349px]:text-[1.75rem] landing-compact:flex landing-compact:flex-col landing-compact:text-[1.75rem]">
+          <span>SMS-first maintenance</span>
+          <span>
+            <span className="max-[349px]:hidden landing-compact:hidden"> </span>
+            management
+          </span>
         </h3>
         <p className="mt-4 text-lg font-normal leading-relaxed text-slate-700">
           Less maintenance chaos. More control.
         </p>
       </header>
 
-      <div className="flex w-full flex-col items-start gap-8 overflow-visible lg:flex-row lg:items-center lg:gap-4">
+      <div className="flex w-full flex-col items-start gap-8 overflow-visible max-[410px]:items-stretch landing-compact:items-stretch lg:flex-row lg:items-center lg:gap-4">
           <nav
             className="flex w-full shrink-0 flex-col gap-[61px] transition-[gap] duration-500 ease-in-out motion-reduce:transition-none lg:w-auto lg:max-w-[463px] lg:gap-16"
             aria-label="Product features"

@@ -6,6 +6,7 @@ import {
   propertyDetailPath,
   propertyDetailPathForBuilding,
   propertyResidentDetailPathForBuilding,
+  residentDetailPath,
 } from './propertyRoutes'
 import { normalizeBuildingKey } from './propertyHealth'
 
@@ -43,5 +44,9 @@ describe('propertyRoutes', () => {
     expect(propertyResidentDetailPathForBuilding('Maple Heights', 'res-1', map)).toBe(
       `/admin/properties/${id}/residents/res-1`,
     )
+  })
+
+  it('builds global resident profile paths', () => {
+    expect(residentDetailPath('res-1')).toBe('/admin/residents/res-1')
   })
 })

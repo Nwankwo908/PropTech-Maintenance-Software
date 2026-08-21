@@ -840,7 +840,7 @@ export function AdminVendorsDashboard() {
                     <td className="px-6 py-4">
                       <VerificationPill status={verificationByVendor.get(vendor.id)} />
                     </td>
-                    <td className="px-6 py-4">
+                    <td className="px-6 py-4 align-middle">
                       {(() => {
                         const chip = resolveVendorCapacityChip({
                           verificationStatus: verificationByVendor.get(vendor.id),

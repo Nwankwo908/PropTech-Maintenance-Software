@@ -63,7 +63,7 @@ export function FeaturesMarquee() {
             key={`${item.alt}-${index}`}
             src={item.src}
             alt={item.alt}
-            className="h-[min(476px,70vw)] w-auto shrink-0 select-none rounded-2xl border border-[#e5e7eb]"
+            className="h-auto w-[calc(100vw-3rem)] shrink-0 select-none rounded-2xl border border-[#e5e7eb] max-[410px]:!w-[calc(100vw-3rem)] landing-compact:!w-[calc(100vw-3rem)] landing-compact:!h-auto [@media(min-width:580px)_and_(max-width:640px)_and_(min-height:920px)_and_(max-height:1000px)]:!w-[calc((100vw-3rem)*0.8)] sm:h-[min(476px,70vw)] sm:w-auto [@media(min-width:580px)_and_(max-width:640px)_and_(min-height:920px)_and_(max-height:1000px)]:!h-auto"
             draggable={false}
             loading={index < FEATURE_MARQUEE_ITEMS.length ? 'eager' : 'lazy'}
           />

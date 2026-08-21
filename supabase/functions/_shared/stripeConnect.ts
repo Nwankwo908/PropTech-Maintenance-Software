@@ -6,7 +6,7 @@
  * checkout flows. Shared readiness / destination loading lives here.
  */
 import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.49.1"
-import { uloAppOrigin } from "./uloAppUrl.ts"
+import { normalizeAppOrigin, uloAppOrigin } from "./uloAppUrl.ts"
 
 export type StripeConnectAccountSnapshot = {
   id: string
@@ -104,23 +104,78 @@ export function stripeErrorMessage(json: Record<string, unknown>): string {
       "then try Set up payouts again."
     )
   }
+  if (/Livemode requests must always be redirected via HTTPS/i.test(message)) {
+    return connectHttpsRequiredMessage()
+  }
   return message
+}
+
+/** True when STRIPE_SECRET_KEY is a live key (`sk_live_…`). */
+export function isStripeLiveMode(): boolean {
+  return stripeSecret().startsWith("sk_live_")
+}
+
+export function connectHttpsRequiredMessage(): string {
+  return (
+    "Stripe live mode requires HTTPS return URLs. " +
+    "Local http://localhost cannot complete live payout setup. " +
+    "Use a sk_test_ Stripe key for local development, or set the APP_URL Edge secret " +
+    "to your https:// production site and open payout setup from that site."
+  )
 }
 
 /**
  * Resolve Connect return/refresh base URL.
  * Prefer the browser origin the user started from (local vs production).
  * Delegates to shared `uloAppOrigin` (empty if unresolved — caller must error).
+ *
+ * Live Stripe keys cannot use http:// return URLs — when the browser origin is
+ * http (e.g. localhost), fall back to https APP_URL / RENT_PAYMENT_BASE_URL.
  */
 export function resolveConnectAppBaseUrl(options?: {
   returnOrigin?: string | null
   requestOrigin?: string | null
 }): string {
-  return uloAppOrigin({
+  const preferred = uloAppOrigin({
     returnOrigin: options?.returnOrigin,
     requestOrigin: options?.requestOrigin,
     fallback: "",
   })
+
+  if (!isStripeLiveMode()) return preferred
+  if (preferred.startsWith("https://")) return preferred
+
+  const envHttps = normalizeHttpsEnvOrigin()
+  if (envHttps) return envHttps
+
+  return preferred
+}
+
+function normalizeHttpsEnvOrigin(): string {
+  for (const key of ["APP_URL", "RENT_PAYMENT_BASE_URL"] as const) {
+    const raw = Deno.env.get(key)?.trim() ?? ""
+    const origin = normalizeAppOrigin(raw)
+    if (origin.startsWith("https://")) return origin
+  }
+  return ""
+}
+
+/** Validate Connect return base before calling Stripe Account Links. */
+export function assertConnectReturnOriginForStripe(
+  base: string,
+): { ok: true } | { ok: false; error: string } {
+  const origin = base.trim().replace(/\/$/, "")
+  if (!origin) {
+    return {
+      ok: false,
+      error:
+        "Could not determine Connect return URL. Open payout setup from the app, or set the APP_URL Edge secret.",
+    }
+  }
+  if (isStripeLiveMode() && !origin.startsWith("https://")) {
+    return { ok: false, error: connectHttpsRequiredMessage() }
+  }
+  return { ok: true }
 }
 
 function snapshotFromAccount(json: Record<string, unknown>): StripeConnectAccountSnapshot | null {

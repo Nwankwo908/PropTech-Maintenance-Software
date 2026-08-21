@@ -1,11 +1,11 @@
 import { useEffect, useState } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useLocation } from 'react-router-dom'
 import {
   UnitOccupancyStatusMenu,
   type UnitOccupancyStatus,
 } from '@/components/UnitOccupancyStatusMenu'
 import type { PropertyUnitRow } from '@/lib/propertyUnitRows'
-import { propertyResidentDetailPath, propertyResidentDetailPathForBuilding } from '@/lib/propertyRoutes'
+import { propertyDetailPath, residentDetailPath } from '@/lib/propertyRoutes'
 
 function formatBalance(amount: number): string {
   return amount.toLocaleString(undefined, {
@@ -34,6 +34,7 @@ export function PropertyUnitsTable({
   loading = false,
   onOccupancyStatusChange,
 }: PropertyUnitsTableProps) {
+  const location = useLocation()
   const [statusOverrides, setStatusOverrides] = useState<
     Partial<Record<string, UnitOccupancyStatus>>
   >({})
@@ -69,6 +70,11 @@ export function PropertyUnitsTable({
     )
   }
 
+  const backToUnits =
+    propertyId != null && propertyId.trim()
+      ? propertyDetailPath(propertyId, 'units')
+      : propertyDetailPath(building, 'units')
+
   return (
     <div className="mt-6 overflow-hidden rounded-[10px] border border-[#e5e7eb] bg-white shadow-[0px_1px_2px_-1px_rgba(0,0,0,0.06)]">
       <div className="overflow-x-auto">
@@ -79,8 +85,7 @@ export function PropertyUnitsTable({
                 (heading) => (
                   <th
                     key={heading}
-                    scope="col"
-                    className="px-5 py-3 text-left text-[12px] font-medium leading-4 text-[#6a7282]"
+                    className="whitespace-nowrap px-5 py-3 text-left text-[12px] font-medium leading-4 tracking-[0.02em] text-[#6a7282]"
                   >
                     {heading}
                   </th>
@@ -99,17 +104,10 @@ export function PropertyUnitsTable({
                     {row.unitDisplay}
                   </td>
                   <td className="whitespace-nowrap px-5 py-4 text-[14px] leading-5 text-[#364153]">
-                    {showOccupiedFields && row.residentId && row.residentName ? (
+                    {row.residentId && row.residentName ? (
                       <Link
-                        to={
-                          propertyId
-                            ? propertyResidentDetailPath(propertyId, row.residentId)
-                            : propertyResidentDetailPathForBuilding(
-                                building,
-                                row.residentId,
-                                new Map(),
-                              )
-                        }
+                        to={residentDetailPath(row.residentId)}
+                        state={{ from: `${location.pathname}${location.search}` || backToUnits }}
                         className="sa-link font-medium text-[#186179] hover:text-[#0f4d5f] hover:underline"
                       >
                         {row.residentName}

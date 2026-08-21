@@ -119,6 +119,7 @@ const ADMIN_NAV_ICONS: Record<AdminNavId, ReactNode> = {
   properties: <PropertiesIcon />,
   property_detail: <PropertiesIcon />,
   property_resident_detail: <PropertiesIcon />,
+  resident_detail: <img src={residentsIcon} alt="" className="size-5" />,
   communication: <MessagesIcon />,
   requests: <OperationsIcon />,
   vendors: <VendorsIcon />,
