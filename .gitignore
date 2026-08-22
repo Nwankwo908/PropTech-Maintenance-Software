@@ -28,6 +28,9 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Supabase Edge — ask-ulo lockfile v5 breaks Supabase CLI bundler; resolve deps at deploy time.
+supabase/functions/ask-ulo/deno.lock
 .vercel
 
 # Supabase CLI local state
