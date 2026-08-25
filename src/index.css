@@ -56,7 +56,7 @@
   }
 }
 
-/** Tablet portrait/landscape: 600×960–1024, 640×480, 720×576, 720×1280, 768×360, 768×1024–1366, 884×1104, 912×1368, 991×568, 991×1280 (and nearby). */
+/** Tablet portrait/landscape: 600×960–1024, 640×480, 720×576, 720×1280, 768×360, 768×1024–1366, 884×1104, 912×1368, 991×568, 991×1280, and 1024×1366 (and nearby). */
 @custom-variant landing-tablet-portrait {
   @media (min-width: 580px) and (max-width: 640px) and (min-height: 920px) and (max-height: 1080px),
     (min-width: 610px) and (max-width: 670px) and (min-height: 450px) and (max-height: 510px),
@@ -66,19 +66,21 @@
     (min-width: 804px) and (max-width: 864px) and (min-height: 1164px) and (max-height: 1224px),
     (min-width: 850px) and (max-width: 930px) and (min-height: 1050px) and (max-height: 1450px),
     (min-width: 960px) and (max-width: 1020px) and (min-height: 530px) and (max-height: 600px),
-    (min-width: 960px) and (max-width: 1020px) and (min-height: 1200px) and (max-height: 1450px) {
+    (min-width: 960px) and (max-width: 1020px) and (min-height: 1200px) and (max-height: 1450px),
+    (min-width: 994px) and (max-width: 1054px) and (min-height: 1336px) and (max-height: 1396px) {
     @slot;
   }
 }
 
-/** 884×1104, 912×1368, 720×1280, 768×360, 768×1024–1366, 991×568, and 991×1280 (and nearby). */
+/** 884×1104, 912×1368, 720×1280, 768×360, 768×1024–1366, 991×568, 991×1280, and 1024×1366 (and nearby). */
 @custom-variant landing-884 {
   @media (min-width: 850px) and (max-width: 930px) and (min-height: 1050px) and (max-height: 1450px),
     (min-width: 740px) and (max-width: 820px) and (min-height: 330px) and (max-height: 390px),
     (min-width: 700px) and (max-width: 820px) and (min-height: 980px) and (max-height: 1450px),
     (min-width: 804px) and (max-width: 864px) and (min-height: 1164px) and (max-height: 1224px),
     (min-width: 960px) and (max-width: 1020px) and (min-height: 530px) and (max-height: 600px),
-    (min-width: 960px) and (max-width: 1020px) and (min-height: 1200px) and (max-height: 1450px) {
+    (min-width: 960px) and (max-width: 1020px) and (min-height: 1200px) and (max-height: 1450px),
+    (min-width: 994px) and (max-width: 1054px) and (min-height: 1336px) and (max-height: 1396px) {
     @slot;
   }
 }
@@ -168,9 +170,10 @@
   }
 }
 
-/** 991×1280 tablet portrait (and nearby). */
+/** 991×1280 and 1024×1366 tablet portrait (and nearby). */
 @custom-variant landing-991-1280 {
-  @media (min-width: 961px) and (max-width: 1021px) and (min-height: 1250px) and (max-height: 1310px) {
+  @media (min-width: 961px) and (max-width: 1021px) and (min-height: 1250px) and (max-height: 1310px),
+    (min-width: 994px) and (max-width: 1054px) and (min-height: 1336px) and (max-height: 1396px) {
     @slot;
   }
 }
@@ -196,7 +199,7 @@
   }
 }
 
-/** Desktop screens (≥1280), excluding 1280×800, 1366×768, 1440×900, 1512×982, 1680×1050, and 1728×1117 (use 1024×600 approach). */
+/** Desktop screens (≥1280), excluding 1280×720–832, 1366×768, 1440×900, 1512×982, 1680×1050, and 1728×1117 (use 1024×600 approach). */
 @custom-variant landing-desktop {
   @media (min-width: 1759px),
     (min-width: 1711px) and (max-width: 1758px) and (max-height: 1086px),
@@ -213,7 +216,7 @@
     (min-width: 1410px) and (max-width: 1470px) and (min-height: 951px),
     (min-width: 1311px) and (max-width: 1396px) and (min-height: 799px),
     (min-width: 1311px) and (max-width: 1396px) and (max-height: 737px),
-    (min-width: 1280px) and (max-width: 1310px) and (min-height: 831px) {
+    (min-width: 1280px) and (max-width: 1310px) and (min-height: 863px) {
     @slot;
   }
 }
@@ -274,10 +277,10 @@
   }
 }
 
-/** 1024×600–920 / 1280×800 landscape and 1024×1366–1440 tablet portrait (and nearby). */
+/** 1024×600–920 / 1280×720–832 landscape and 1024×1440 tablet portrait (and nearby). */
 @custom-variant landing-1024-1440 {
   @media (min-width: 1000px) and (max-width: 1439px) and (min-height: 550px) and (max-height: 920px),
-    (min-width: 1000px) and (max-width: 1100px) and (min-height: 1320px) and (max-height: 1500px) {
+    (min-width: 1000px) and (max-width: 1100px) and (min-height: 1397px) and (max-height: 1500px) {
     @slot;
   }
 }
@@ -296,10 +299,10 @@
   }
 }
 
-/** 1024×600–768, 1280×800, 1366×768, 1440×900, 1512×982, 1680×1050, and 1728×1117 landscape (and nearby) — Property Dashboard + feature preview. */
+/** 1024×600–768, 1280×720–832, 1366×768, 1440×900, 1512×982, 1680×1050, and 1728×1117 landscape (and nearby) — Property Dashboard + feature preview. */
 @custom-variant landing-1024-600 {
   @media (min-width: 994px) and (max-width: 1054px) and (min-height: 550px) and (max-height: 920px),
-    (min-width: 1250px) and (max-width: 1310px) and (min-height: 770px) and (max-height: 830px),
+    (min-width: 1250px) and (max-width: 1310px) and (min-height: 690px) and (max-height: 862px),
     (min-width: 1336px) and (max-width: 1396px) and (min-height: 738px) and (max-height: 798px),
     (min-width: 1410px) and (max-width: 1470px) and (min-height: 850px) and (max-height: 950px),
     (min-width: 1482px) and (max-width: 1542px) and (min-height: 952px) and (max-height: 1012px),
@@ -309,9 +312,9 @@
   }
 }
 
-/** 1280×800 landscape only (and nearby) — waitlist row layout. */
+/** 1280×720, 1280×800, and 1280×832 landscape (and nearby) — waitlist row layout. */
 @custom-variant landing-1280-800 {
-  @media (min-width: 1250px) and (max-width: 1310px) and (min-height: 770px) and (max-height: 830px) {
+  @media (min-width: 1250px) and (max-width: 1310px) and (min-height: 690px) and (max-height: 862px) {
     @slot;
   }
 }
@@ -348,7 +351,8 @@
 
   @media (min-width: 850px) and (max-width: 930px) and (min-height: 1050px) and (max-height: 1450px),
     (min-width: 960px) and (max-width: 1020px) and (min-height: 530px) and (max-height: 600px),
-    (min-width: 960px) and (max-width: 1020px) and (min-height: 1200px) and (max-height: 1450px) {
+    (min-width: 960px) and (max-width: 1020px) and (min-height: 1200px) and (max-height: 1450px),
+    (min-width: 994px) and (max-width: 1054px) and (min-height: 1336px) and (max-height: 1396px) {
     .landing-884-hero-leading {
       line-height: 66px !important;
     }
@@ -620,8 +624,8 @@
     }
   }
 
-  /* 1280×800 / 1512×982 landscape — 25% larger than the 26.88rem 1024×600 preview, no crop. */
-  @media (min-width: 1250px) and (max-width: 1310px) and (min-height: 770px) and (max-height: 830px),
+  /* 1280×720–832 / 1512×982 landscape — 25% larger than the 26.88rem 1024×600 preview, no crop. */
+  @media (min-width: 1250px) and (max-width: 1310px) and (min-height: 690px) and (max-height: 862px),
     (min-width: 1482px) and (max-width: 1542px) and (min-height: 952px) and (max-height: 1012px) {
     .landing-1024-600-preview-frame {
       box-sizing: border-box !important;
@@ -835,8 +839,10 @@
     }
   }
 
-  @media (min-width: 961px) and (max-width: 1021px) and (min-height: 1250px) and (max-height: 1310px) {
-    .landing-991-1280-preview-frame {
+  @media (min-width: 961px) and (max-width: 1021px) and (min-height: 1250px) and (max-height: 1310px),
+    (min-width: 994px) and (max-width: 1054px) and (min-height: 1336px) and (max-height: 1396px) {
+    .landing-991-1280-preview-frame,
+    .landing-1024-1366-preview-frame {
       box-sizing: border-box !important;
       width: 26.88rem !important;
       height: 21.12rem !important;
@@ -849,7 +855,8 @@
       overflow: hidden !important;
     }
 
-    .landing-991-1280-preview-img {
+    .landing-991-1280-preview-img,
+    .landing-1024-1366-preview-img {
       width: 100% !important;
       height: 100% !important;
       min-width: 0 !important;
@@ -889,7 +896,7 @@
     }
   }
 
-  /* Desktop (≥1280, excluding 1280×800, 1366×768, 1440×900, 1512×982, 1680×1050, and 1728×1117): match 3440×1440 feature preview frame + hero leading. */
+  /* Desktop (≥1280, excluding 1280×720–832, 1366×768, 1440×900, 1512×982, 1680×1050, and 1728×1117): match 3440×1440 feature preview frame + hero leading. */
   @media (min-width: 1759px),
     (min-width: 1711px) and (max-width: 1758px) and (max-height: 1086px),
     (min-width: 1711px) and (max-width: 1758px) and (min-height: 1148px),
@@ -905,7 +912,7 @@
     (min-width: 1410px) and (max-width: 1470px) and (min-height: 951px),
     (min-width: 1311px) and (max-width: 1396px) and (min-height: 799px),
     (min-width: 1311px) and (max-width: 1396px) and (max-height: 737px),
-    (min-width: 1280px) and (max-width: 1310px) and (min-height: 831px) {
+    (min-width: 1280px) and (max-width: 1310px) and (min-height: 863px) {
     .landing-desktop-hero-leading {
       line-height: 76px !important;
     }
@@ -1026,6 +1033,10 @@
       width: 100% !important;
       box-sizing: border-box !important;
     }
+
+    .landing-how-it-works-inset {
+      padding-left: calc(3.5rem + 172.8px + 1.5rem + 3.5rem) !important;
+    }
   }
 
   @media (min-width: 5070px) and (max-width: 5170px) and (min-height: 2830px) and (max-height: 2930px) {
@@ -1049,6 +1060,10 @@
       max-width: none !important;
       width: 100% !important;
       box-sizing: border-box !important;
+    }
+
+    .landing-how-it-works-inset {
+      padding-left: calc(3.5rem + 172.8px + 1.5rem + 3.5rem) !important;
     }
 
     .landing-5120-2880-preview-frame {
@@ -1107,10 +1122,113 @@
       padding-left: 4.375rem !important;
       padding-right: 4.375rem !important;
     }
+
+    .landing-how-it-works-inset {
+      padding-left: calc(3.5rem + 270px + 3.75rem + 3.5rem) !important;
+    }
+
+    .landing-how-it-works-feature-nav {
+      gap: 10.9609375rem !important;
+    }
+  }
+
+  /*
+   * How It Works feature rows: descriptions are in-flow, so gap is real space
+   * between items. 15% more than the original lg:gap-16 (4rem) title-to-title
+   * rhythm, including the ~2.2rem icon/title row.
+   */
+  @media (min-width: 1024px) {
+    .landing-how-it-works-feature-nav {
+      gap: calc(4rem + (4rem + 2.1875rem) * 0.15) !important;
+    }
+
+    .landing-how-it-works-feature-item {
+      padding-top: calc(0.25rem * 1.15);
+      padding-bottom: calc(0.25rem * 1.15);
+    }
+  }
+
+  @media (min-width: 4046px) and (max-width: 4146px) and (min-height: 2254px) and (max-height: 2354px),
+    (min-width: 5070px) and (max-width: 5170px) and (min-height: 2830px) and (max-height: 2930px) {
+    .landing-how-it-works-feature-nav {
+      gap: 5.52rem !important;
+    }
+  }
+
+  @media (min-width: 7630px) and (max-width: 7730px) and (min-height: 4270px) and (max-height: 4370px) {
+    .landing-how-it-works-feature-nav {
+      gap: 10.9609375rem !important;
+    }
+  }
+
+  /* Keep How It Works list + previews inside the mint card (override 96rem / 100vw frames). */
+  .landing-how-it-works-stage {
+    box-sizing: border-box;
+    width: fit-content;
+    max-width: 100%;
+    min-width: 0;
+    margin-inline: auto;
+    overflow: hidden;
+  }
+
+  .landing-how-it-works-stage .landing-how-it-works-preview {
+    box-sizing: border-box !important;
+    width: auto !important;
+    max-width: min(42rem, 100%) !important;
+    min-width: 0 !important;
+    height: auto !important;
+    min-height: 0 !important;
+    flex: 0 1 auto !important;
+    overflow: hidden !important;
+  }
+
+  .landing-how-it-works-stage .landing-how-it-works-preview-frame {
+    box-sizing: border-box !important;
+    position: relative !important;
+    width: auto !important;
+    max-width: 100% !important;
+    min-width: 0 !important;
+    height: auto !important;
+    overflow: hidden !important;
+    transform: none !important;
+    translate: none !important;
+    margin: 0 !important;
+  }
+
+  .landing-how-it-works-stage .landing-how-it-works-preview-inner {
+    position: relative !important;
+    inset: auto !important;
+    display: flex !important;
+    width: auto !important;
+    max-width: 100% !important;
+    height: auto !important;
+    align-items: center !important;
+    justify-content: center !important;
+    transform: none !important;
+    margin: 0 !important;
+  }
+
+  .landing-how-it-works-stage .landing-how-it-works-preview-img {
+    display: block !important;
+    width: auto !important;
+    max-width: 100% !important;
+    min-width: 0 !important;
+    height: auto !important;
+    max-height: min(36rem, 62vh) !important;
+    object-fit: contain !important;
+    object-position: center center !important;
+    margin: 0 !important;
+  }
+
+  .landing-property-dashboard-shot {
+    width: min(64rem, calc(100vw - 6rem)) !important;
+    max-width: min(64rem, calc(100vw - 6rem)) !important;
+    -webkit-mask-image: linear-gradient(to bottom, #000 52%, transparent 100%);
+    mask-image: linear-gradient(to bottom, #000 52%, transparent 100%);
   }
 
   /* Hero waitlist row — wins over landing-1024-600:!flex-col when both match. */
-  @media (min-width: 1250px) and (max-width: 1310px) and (min-height: 770px) and (max-height: 830px),
+  @media (min-width: 1250px) and (max-width: 1310px) and (min-height: 690px) and (max-height: 862px),
     (min-width: 1336px) and (max-width: 1396px) and (min-height: 738px) and (max-height: 798px),
     (min-width: 1410px) and (max-width: 1470px) and (min-height: 850px) and (max-height: 950px),
     (min-width: 1482px) and (max-width: 1542px) and (min-height: 952px) and (max-height: 1012px),
@@ -1137,8 +1255,8 @@
     }
   }
 
-  /* 1280×800 / 1512×982 footer — stacked waitlist; right gutter matches lg:pr-14. */
-  @media (min-width: 1250px) and (max-width: 1310px) and (min-height: 770px) and (max-height: 830px),
+  /* 1280×720–832 / 1512×982 footer — stacked waitlist; right gutter matches lg:pr-14. */
+  @media (min-width: 1250px) and (max-width: 1310px) and (min-height: 690px) and (max-height: 862px),
     (min-width: 1482px) and (max-width: 1542px) and (min-height: 952px) and (max-height: 1012px),
     (min-width: 1698px) and (max-width: 1758px) and (min-height: 1087px) and (max-height: 1147px) {
     .landing-1280-800-footer-inset {
@@ -1213,9 +1331,9 @@
     }
   }
 
-  /* 1024×1366 / 1024×1440 portrait and 1024×600–768 landscape — full-width email field.
-     1280×800 and 1366×768 hero keep side-by-side waitlist (excluded here). */
-  @media (min-width: 1000px) and (max-width: 1100px) and (min-height: 1320px) and (max-height: 1500px),
+  /* 1024×1440 portrait and 1024×600–768 landscape — full-width email field.
+     1024×1366 matches 991×1280 (side-by-side hero waitlist). 1280×720–832 and 1366×768 also excluded. */
+  @media (min-width: 1000px) and (max-width: 1100px) and (min-height: 1397px) and (max-height: 1500px),
     (min-width: 994px) and (max-width: 1054px) and (min-height: 550px) and (max-height: 920px) {
     input.landing-waitlist-field {
       width: 100% !important;
