@@ -1,6 +1,6 @@
 type IconProps = { className?: string }
 
-export function IconArrowRight({ className = 'size-4' }: IconProps) {
+export function IconArrowRight({ className = 'size-4 shrink-0' }: IconProps) {
   return (
     <svg className={className} viewBox="0 0 16 16" fill="none" aria-hidden>
       <path

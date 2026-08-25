@@ -267,7 +267,7 @@ export function EarlyAccessModal({
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
                   disabled={submitting}
-                  className="sa-surface mt-2 h-[50px] w-full rounded-2xl border border-[#e5e7eb] bg-white px-[17px] text-base text-[#1f2937] outline-none placeholder:text-[rgba(31,41,55,0.5)] focus:border-emerald-500/35 focus:ring-2 focus:ring-emerald-500/20 disabled:opacity-60"
+                  className="sa-surface mt-2 h-[50px] w-full rounded-2xl border border-[#e5e7eb] bg-white px-[17px] text-base text-[#1f2937] outline-none placeholder:text-[#4b5563] placeholder:opacity-100 focus:border-emerald-500/35 focus:ring-2 focus:ring-emerald-500/20 disabled:opacity-60"
                 />
 
                 <div className="mt-3 min-h-4" aria-live="polite">
