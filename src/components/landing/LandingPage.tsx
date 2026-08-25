@@ -534,7 +534,7 @@ export function LandingPage() {
 
         {/* How It Works */}
         <section id="how-it-works" className="relative scroll-mt-20 overflow-visible">
-          <div className={LANDING_SECTION_COLUMN_RULE} aria-hidden />
+          <div className={`${LANDING_SECTION_COLUMN_RULE} landing-how-it-works-column-rule`} aria-hidden />
           <div className="flex w-full flex-col items-center overflow-visible px-6 pb-[calc(6rem*1.3)] pt-[calc(4rem*1.3)] lg:px-14 landing-4096-2304:px-14 landing-5120-2880:px-14">
             <div className="landing-3840-2160-features-scale flex w-full flex-col items-center">
               <FeaturesShowcase />
@@ -579,8 +579,12 @@ export function LandingPage() {
               </div>
 
               <div className="mt-4 flex flex-col items-center gap-4 text-center landing-4096-2304:mt-[1.3rem] landing-5120-2880:mt-[1.3rem] landing-4096-2304:gap-5 landing-5120-2880:gap-5 landing-7680-4320:mt-10 landing-7680-4320:gap-10">
-                <p className="max-w-[min(64rem,calc(100vw-6rem))] font-[family-name:var(--font-landing-heading)] text-[48px] font-medium leading-[1.1] tracking-[-0.02em] text-slate-900 max-[349px]:text-[1.75rem] landing-compact:text-[1.75rem] landing-phone-tall:text-[1.75rem] landing-4096-2304:text-[62.4px] landing-5120-2880:text-[62.4px] landing-7680-4320:text-[120px]">
-                Maintenance OS for independent landlords
+                <p className="max-w-[min(64rem,calc(100vw-6rem))] font-[family-name:var(--font-landing-heading)] text-[48px] font-medium leading-[1.1] tracking-[-0.02em] text-slate-900 max-[349px]:text-[1.75rem] landing-compact:text-[1.75rem] landing-phone-tall:text-[1.75rem] landing-1024-1440-preview:flex landing-1024-1440-preview:flex-col [@media(min-width:1000px)_and_(max-width:1100px)_and_(min-height:1397px)_and_(max-height:1500px)]:flex [@media(min-width:1000px)_and_(max-width:1100px)_and_(min-height:1397px)_and_(max-height:1500px)]:flex-col landing-4096-2304:text-[62.4px] landing-5120-2880:text-[62.4px] landing-7680-4320:text-[120px]">
+                <span>Maintenance OS for</span>
+                <span>
+                  <span className="landing-1024-1440-preview:hidden [@media(min-width:1000px)_and_(max-width:1100px)_and_(min-height:1397px)_and_(max-height:1500px)]:hidden"> </span>
+                  independent landlords
+                </span>
                 </p>
                 <p className="max-w-2xl text-lg font-normal leading-relaxed text-slate-700 landing-4096-2304:max-w-[calc(42rem*1.3)] landing-5120-2880:max-w-[calc(42rem*1.3)] landing-4096-2304:text-[1.4625rem] landing-5120-2880:text-[1.4625rem] landing-7680-4320:max-w-[calc(42rem*2.5)] landing-7680-4320:text-[2.8125rem]">
                   One view across all your properties; built from every job, text, and vendor interaction.
