@@ -4,6 +4,7 @@
  */
 import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.49.1"
 import { recordActivityLog } from "../graph/recordActivityLog.ts"
+import { loadLandlordDisplayName } from "../landlordDisplayName.ts"
 import { sendInboundAutoReply } from "../sms/inboundReply.ts"
 import {
   findOrCreateConversation,
@@ -50,19 +51,6 @@ function firstName(fullName: string | null | undefined): string {
   const trimmed = fullName?.trim() || ""
   if (!trimmed) return "there"
   return trimmed.split(/\s+/)[0] || "there"
-}
-
-async function loadLandlordName(
-  supabase: SupabaseClient,
-  landlordId: string,
-): Promise<string | null> {
-  const { data } = await supabase
-    .from("landlords")
-    .select("name")
-    .eq("id", landlordId)
-    .maybeSingle()
-  const name = typeof data?.name === "string" ? data.name.trim() : ""
-  return name || null
 }
 
 async function loadResident(
@@ -309,7 +297,7 @@ export async function executeMoveInOutreach(
     message: "Classified as new move-in occupancy.",
   })
 
-  const companyName = await loadLandlordName(supabase, params.landlordId)
+  const companyName = await loadLandlordDisplayName(supabase, params.landlordId)
   const residentId = run.resident_id ??
     (typeof run.metadata?.resident_id === "string" ? run.metadata.resident_id : null)
   const resident = await loadResident(supabase, residentId)

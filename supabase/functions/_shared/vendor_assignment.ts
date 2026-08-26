@@ -1,4 +1,5 @@
 import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.49.1"
+import type { MarketplacePreferenceId } from "./landlordNotificationPrefs.ts"
 import {
   isGeneralistTrade,
   normalizeVendorTrade,
@@ -33,6 +34,8 @@ export type VendorAssignmentRow = {
   weekly_job_cap?: number | null
   /** Preferred for emergency / after-hours dispatch (onboarding flag). */
   preferred_emergency?: boolean | null
+  /** True when roster row came from external vendor discovery. */
+  onboarded_from_external?: boolean | null
 }
 
 /**
@@ -55,6 +58,17 @@ export function isVendorMatchableForDispatch(input: {
   if (availability === "paused") return false
   if (input.vendorActive === false) return false
 
+  return true
+}
+
+/** Ulo-vetted-only pools exclude externally discovered roster vendors. */
+export function vendorAllowedForMarketplace(
+  vendor: Pick<VendorAssignmentRow, "onboarded_from_external">,
+  preference: MarketplacePreferenceId,
+): boolean {
+  if (preference === "ulo_vetted_only" && vendor.onboarded_from_external === true) {
+    return false
+  }
   return true
 }
 
@@ -190,6 +204,8 @@ export type PickVendorForAssignmentOptions = {
    * `preferred_emergency` within each matching tier before falling back.
    */
   preferPreferredEmergency?: boolean
+  /** Landlord vendor pool preference from organization settings. */
+  marketplacePreference?: MarketplacePreferenceId
 }
 
 /**
@@ -209,11 +225,12 @@ export async function pickVendorForAssignment(
   const issueCat = options.issueCategory ?? null
   const avoid = options.preferNotVendorId?.trim() ?? null
   const preferEmergency = options.preferPreferredEmergency === true
+  const marketplacePreference = options.marketplacePreference ?? "include_imported"
 
   let query = supabase
     .from("vendors")
     .select(
-      "id,name,email,phone,notification_channel,active,category,portal_api_key,last_assigned_at,created_at,roster_status,weekly_job_cap,preferred_emergency",
+      "id,name,email,phone,notification_channel,active,category,portal_api_key,last_assigned_at,created_at,roster_status,weekly_job_cap,preferred_emergency,onboarded_from_external",
     )
     .eq("active", true)
 
@@ -267,6 +284,7 @@ export async function pickVendorForAssignment(
   }
 
   const matchable = candidates.filter((v) => {
+    if (!vendorAllowedForMarketplace(v, marketplacePreference)) return false
     const verif = verificationByVendor.get(v.id)
     return isVendorMatchableForDispatch({
       verificationStatus: verif?.status ?? null,

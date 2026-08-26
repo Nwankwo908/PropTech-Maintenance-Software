@@ -19,6 +19,11 @@ import { respondToEstimate } from '@/api/maintenanceEstimate'
 import sendIcon from '@/assets/noun-send.png'
 import confirmHourlyRateIcon from '@/assets/noun-checkmark-invoice.png'
 import { getErrorMessage } from '@/lib/errorMessage'
+import {
+  releaseConversationTakeover,
+  sendConversationSms,
+  takeOverConversation,
+} from '@/api/adminConversationSms'
 
 function CloseIcon() {
   return (
@@ -442,6 +447,14 @@ export function ConversationMonitoringBody({
   detail,
   titleId,
   onTakeOver,
+  onReleaseTakeover,
+  takingOver = false,
+  releasingTakeover = false,
+  composeDraft = '',
+  onComposeDraftChange,
+  onSendCompose,
+  sendingCompose = false,
+  composeError = null,
   onEstimateDecided,
   embedded = false,
   showLogQuotedPrice = false,
@@ -458,6 +471,14 @@ export function ConversationMonitoringBody({
   detail: ConversationMonitoringDetail
   titleId: string
   onTakeOver?: (conversationId: string) => void
+  onReleaseTakeover?: () => void
+  takingOver?: boolean
+  releasingTakeover?: boolean
+  composeDraft?: string
+  onComposeDraftChange?: (value: string) => void
+  onSendCompose?: () => void
+  sendingCompose?: boolean
+  composeError?: string | null
   onEstimateDecided?: () => void
   embedded?: boolean
   showLogQuotedPrice?: boolean
@@ -744,16 +765,63 @@ export function ConversationMonitoringBody({
             {readOnlyNote}
           </p>
         ) : null}
-        {detail.canTakeOver ? (
+        {detail.adminTakeoverActive ? (
+          <div className="space-y-3">
+            <div className="flex h-9 min-w-[200px] items-center gap-1 rounded-[10px] border border-[#e5e7eb] bg-white pl-3 pr-1.5">
+              <input
+                type="text"
+                value={composeDraft}
+                onChange={(event) => onComposeDraftChange?.(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter' && composeDraft.trim()) {
+                    onSendCompose?.()
+                  }
+                }}
+                placeholder="Text the resident or vendor…"
+                className="h-full min-w-0 flex-1 bg-transparent text-[12px] text-[#0a0a0a] outline-none placeholder:text-[#9ca3af]"
+              />
+              <button
+                type="button"
+                disabled={sendingCompose || !composeDraft.trim()}
+                onClick={() => onSendCompose?.()}
+                aria-label={sendingCompose ? 'Sending message' : 'Send message'}
+                className="sa-press inline-flex size-7 shrink-0 items-center justify-center rounded-[8px] bg-transparent outline-none hover:bg-[#f3f4f6] focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50"
+              >
+                {sendingCompose ? (
+                  <span className="text-[11px] font-semibold text-[#101828]">…</span>
+                ) : (
+                  <img src={sendIcon} alt="" aria-hidden className="size-4" />
+                )}
+              </button>
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                disabled={releasingTakeover}
+                onClick={() => onReleaseTakeover?.()}
+                className="sa-press inline-flex items-center gap-2 rounded-full border border-[#e5e7eb] bg-white px-4 py-2 text-[13px] font-medium text-[#101828] outline-none hover:bg-[#f3f4f6] focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2 disabled:opacity-50"
+              >
+                {releasingTakeover ? 'Returning…' : 'Return to Ulo'}
+              </button>
+            </div>
+            {composeError ? (
+              <p className="text-[12px] leading-4 text-[#c10007]">{composeError}</p>
+            ) : null}
+          </div>
+        ) : detail.canTakeOver ? (
           <div className="flex flex-wrap items-center gap-2">
             <button
               type="button"
+              disabled={takingOver}
               onClick={() => onTakeOver?.(detail.conversationId)}
-              className="sa-press inline-flex items-center gap-2 rounded-full border border-[#1447e6] bg-white px-4 py-2 text-[13px] font-medium text-[#1447e6] outline-none hover:bg-[#eff6ff] focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2"
+              className="sa-press inline-flex items-center gap-2 rounded-full border border-[#1447e6] bg-white px-4 py-2 text-[13px] font-medium text-[#1447e6] outline-none hover:bg-[#eff6ff] focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2 disabled:opacity-50"
             >
               <WrenchIcon />
-              Take over
+              {takingOver ? 'Taking over…' : 'Take over'}
             </button>
+            {composeError ? (
+              <p className="w-full text-[12px] leading-4 text-[#c10007]">{composeError}</p>
+            ) : null}
           </div>
         ) : null}
       </footer>
@@ -787,6 +855,11 @@ export function ConversationMonitoringPanel({
   const [loggingQuote, setLoggingQuote] = useState(false)
   const [confirmingHourlyRate, setConfirmingHourlyRate] = useState(false)
   const [adminPricingConfirmed, setAdminPricingConfirmed] = useState(false)
+  const [composeDraft, setComposeDraft] = useState('')
+  const [sendingCompose, setSendingCompose] = useState(false)
+  const [takingOver, setTakingOver] = useState(false)
+  const [releasingTakeover, setReleasingTakeover] = useState(false)
+  const [composeError, setComposeError] = useState<string | null>(null)
 
   const isVendorSetupThread = parseVendorSetupConversationId(conversationId)
   const [vendorOutreachChannel, setVendorOutreachChannel] = useState<VendorOutreachChannel>('sms')
@@ -797,8 +870,21 @@ export function ConversationMonitoringPanel({
       setLoggingQuote(false)
       setConfirmingHourlyRate(false)
       setVendorOutreachChannel('sms')
+      setComposeDraft('')
+      setSendingCompose(false)
+      setTakingOver(false)
+      setReleasingTakeover(false)
+      setComposeError(null)
     }
   }, [active])
+
+  useEffect(() => {
+    setComposeDraft('')
+    setComposeError(null)
+    setTakingOver(false)
+    setReleasingTakeover(false)
+    setSendingCompose(false)
+  }, [conversationId])
 
   useEffect(() => {
     if (!active || !conversationId) {
@@ -858,14 +944,23 @@ export function ConversationMonitoringPanel({
   }, [active, conversationId, refreshKey, loadConversation])
 
   useEffect(() => {
-    if (!active || !conversationId || !isVendorSetupThread) return
+    if (!active || !conversationId) return
+    const shouldPoll =
+      Boolean(isVendorSetupThread) || Boolean(detail?.adminTakeoverActive)
+    if (!shouldPoll) return
 
     const interval = window.setInterval(() => {
       void loadConversation({ showLoading: false })
     }, 3000)
 
     return () => window.clearInterval(interval)
-  }, [active, conversationId, isVendorSetupThread, loadConversation])
+  }, [
+    active,
+    conversationId,
+    isVendorSetupThread,
+    detail?.adminTakeoverActive,
+    loadConversation,
+  ])
 
   function handleLogQuotedPrice() {
     const trimmed = quotedPriceInput.trim()
@@ -909,6 +1004,52 @@ export function ConversationMonitoringPanel({
     void loadConversation({ showLoading: false })
   }
 
+  async function handleTakeOverClick(targetConversationId: string) {
+    if (takingOver) return
+    setComposeError(null)
+    setTakingOver(true)
+    try {
+      await takeOverConversation(targetConversationId)
+      onTakeOver?.(targetConversationId)
+      await loadConversation({ showLoading: false })
+    } catch (err) {
+      setComposeError(getErrorMessage(err, 'Could not take over this conversation.'))
+    } finally {
+      setTakingOver(false)
+    }
+  }
+
+  async function handleReleaseTakeover() {
+    if (releasingTakeover || !conversationId) return
+    setComposeError(null)
+    setReleasingTakeover(true)
+    try {
+      await releaseConversationTakeover(conversationId)
+      await loadConversation({ showLoading: false })
+    } catch (err) {
+      setComposeError(getErrorMessage(err, 'Could not return this conversation to Ulo.'))
+    } finally {
+      setReleasingTakeover(false)
+    }
+  }
+
+  async function handleSendCompose() {
+    const trimmed = composeDraft.trim()
+    if (!trimmed || sendingCompose || !conversationId) return
+    setComposeError(null)
+    setSendingCompose(true)
+    try {
+      await sendConversationSms(conversationId, trimmed)
+      setComposeDraft('')
+      await loadConversation({ showLoading: false })
+    } catch (err) {
+      setComposeError(getErrorMessage(err, 'Could not send this message.'))
+    } finally {
+      setSendingCompose(false)
+    }
+  }
+
+
   if (loading && !detail) {
     return (
       <div className="flex flex-1 items-center justify-center px-6 py-16">
@@ -932,7 +1073,15 @@ export function ConversationMonitoringPanel({
       <ConversationMonitoringBody
         detail={detail}
         titleId={titleId}
-        onTakeOver={onTakeOver}
+        onTakeOver={(id) => void handleTakeOverClick(id)}
+        onReleaseTakeover={() => void handleReleaseTakeover()}
+        takingOver={takingOver}
+        releasingTakeover={releasingTakeover}
+        composeDraft={composeDraft}
+        onComposeDraftChange={setComposeDraft}
+        onSendCompose={() => void handleSendCompose()}
+        sendingCompose={sendingCompose}
+        composeError={composeError}
         onEstimateDecided={() => void loadConversation({ showLoading: false })}
         embedded={embedded}
         showLogQuotedPrice={isVendorSetupThread}

@@ -1,5 +1,5 @@
 import { getActiveLandlordId } from '@/lib/activeLandlord'
-import { pickPrimaryWorkOrderConversationId } from '@/lib/workOrderConversationPreference'
+import { pickPrimaryWorkOrderConversationId, pickVendorWorkOrderConversationId } from '@/lib/workOrderConversationPreference'
 import { isAdminDirectedConversationType } from '@/lib/propertyConversations'
 import {
   buildVendorSetupMonitoringDetail,
@@ -65,6 +65,8 @@ export type ConversationMonitoringDetail = {
   transcript: MonitoringTranscriptItem[]
   readOnlyNote: string
   canTakeOver: boolean
+  /** True when the property team has taken over this live SMS thread. */
+  adminTakeoverActive?: boolean
   /** Pending vendor estimate the admin can approve/decline from this thread. */
   pendingEstimateDecision?: PendingEstimateDecision | null
   /** Per-channel copy when vendor setup threads split SMS vs email. */
@@ -203,6 +205,8 @@ type ConversationContext = {
   residentFeedbackRating: number | null
   /** True when an open resident rating request exists and no rating yet. */
   awaitingResidentFeedback: boolean
+  /** Property team owns this SMS thread (intake_state.admin_takeover). */
+  adminTakeoverActive: boolean
 }
 
 function asString(value: unknown): string {
@@ -744,6 +748,16 @@ function buildAdminNotification(ctx: ConversationContext): AdminUloNotification 
   }
 }
 
+
+function isAdminTakeoverFromIntake(intakeState: unknown): boolean {
+  if (!intakeState || typeof intakeState !== 'object' || Array.isArray(intakeState)) {
+    return false
+  }
+  const raw = (intakeState as Record<string, unknown>).admin_takeover
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return false
+  return (raw as Record<string, unknown>).active === true
+}
+
 function buildMonitoringDetail(ctx: ConversationContext): ConversationMonitoringDetail {
   const risk = deriveRisk(ctx)
   const closed = ['resolved', 'completed', 'closed'].includes(ctx.status.toLowerCase())
@@ -765,10 +779,17 @@ function buildMonitoringDetail(ctx: ConversationContext): ConversationMonitoring
     transcript: buildTranscript(ctx),
     readOnlyNote: ctx.pendingEstimateDecision
       ? 'Approve or decline this estimate here, or reply APPROVE / DECLINE by text on the ops notify thread.'
-      : isAiCopilot
-        ? 'Read-only · Ulo sends tenant and vendor messages automatically.'
-        : 'Read-only · Ulo continues handling unless you take over.',
-    canTakeOver: !closed && !isAiCopilot && !ctx.pendingEstimateDecision,
+      : ctx.adminTakeoverActive
+        ? 'You are handling this thread. Ulo will not auto-reply until you return control.'
+        : isAiCopilot
+          ? 'Read-only · Ulo sends tenant and vendor messages automatically.'
+          : 'Read-only · Ulo continues handling unless you take over.',
+    canTakeOver:
+      !closed &&
+      !isAiCopilot &&
+      !ctx.pendingEstimateDecision &&
+      !ctx.adminTakeoverActive,
+    adminTakeoverActive: ctx.adminTakeoverActive,
     pendingEstimateDecision: ctx.pendingEstimateDecision,
   }
 }
@@ -929,6 +950,7 @@ async function loadConversationContext(
     pendingEstimateDecision,
     residentFeedbackRating,
     awaitingResidentFeedback,
+    adminTakeoverActive: isAdminTakeoverFromIntake(row.intake_state),
   }
 }
 
@@ -1094,7 +1116,7 @@ export async function fetchAdminUloNotifications(limit = 15): Promise<AdminUloNo
   const { data: convRows, error: convError } = await supabase
     .from('sms_conversations')
     .select(
-      'id, conversation_type, status, resident_id, vendor_id, unit_id, maintenance_request_id, created_at, updated_at',
+      'id, conversation_type, status, resident_id, vendor_id, unit_id, maintenance_request_id, intake_state, created_at, updated_at',
     )
     .eq('landlord_id', landlordId)
     .in('conversation_type', ['ai_copilot', 'landlord_update'])
@@ -1133,7 +1155,7 @@ export async function fetchConversationMonitoring(
   const { data: convRow, error: convError } = await supabase
     .from('sms_conversations')
     .select(
-      'id, conversation_type, status, resident_id, vendor_id, unit_id, maintenance_request_id, created_at, updated_at',
+      'id, conversation_type, status, resident_id, vendor_id, unit_id, maintenance_request_id, intake_state, created_at, updated_at',
     )
     .eq('landlord_id', landlordId)
     .eq('id', conversationId)
@@ -1275,8 +1297,8 @@ function buildSyntheticMoveOutThread(input: MoveOutUloThreadInput): Conversation
     tenantName: tenant,
     tenantInitials: monitoringInitials(tenant),
     transcript,
-    readOnlyNote: 'Residents can reply naturally; admin can take over or use suggested replies.',
-    canTakeOver: true,
+    readOnlyNote: 'Read-only · Coordination SMS is automated on this thread until a live inbox conversation is linked.',
+    canTakeOver: false,
   }
 }
 
@@ -1763,52 +1785,101 @@ export async function fetchInboxConversationMonitoring(
 }
 
 /** Resident ↔ Ulo SMS thread linked to a maintenance request. */
-export async function fetchConversationMonitoringByMaintenanceRequest(
+async function loadMaintenanceRequestConversations(
   maintenanceRequestId: string,
-): Promise<ConversationMonitoringDetail | null> {
+): Promise<{
+  landlordId: string
+  convRows: Record<string, unknown>[]
+} | null> {
   const { supabase } = await import('@/lib/supabase')
   if (!supabase || !maintenanceRequestId.trim()) return null
 
   const landlordId = getActiveLandlordId()
-
   const { data: convRows, error } = await supabase
     .from('sms_conversations')
     .select(
-      'id, conversation_type, status, resident_id, vendor_id, unit_id, maintenance_request_id, created_at, updated_at',
+      'id, conversation_type, status, resident_id, vendor_id, unit_id, maintenance_request_id, intake_state, created_at, updated_at',
     )
     .eq('landlord_id', landlordId)
-    .eq('maintenance_request_id', maintenanceRequestId)
+    .eq('maintenance_request_id', maintenanceRequestId.trim())
     .order('updated_at', { ascending: false })
 
   if (error || !convRows?.length) return null
+  return { landlordId, convRows: convRows as Record<string, unknown>[] }
+}
 
-  const rows = (convRows as Record<string, unknown>[]).map((row) => ({
-    id: asString(row.id),
-    conversation_type: asString(row.conversation_type),
-  })).filter((row) => row.id)
+export async function fetchConversationMonitoringByMaintenanceRequest(
+  maintenanceRequestId: string,
+): Promise<ConversationMonitoringDetail | null> {
+  const loaded = await loadMaintenanceRequestConversations(maintenanceRequestId)
+  if (!loaded) return null
+
+  const { landlordId, convRows } = loaded
+  const { supabase } = await import('@/lib/supabase')
+  if (!supabase) return null
+
+  const rows = convRows
+    .map((row) => ({
+      id: asString(row.id),
+      conversation_type: asString(row.conversation_type),
+    }))
+    .filter((row) => row.id)
 
   // Prefer resident intake so Active Tasks "See thread" matches Messages.
   // Vendor job SMS remains a separate inbox row.
   const preferredId = pickPrimaryWorkOrderConversationId(rows).conversationId
   let preferred =
-    (convRows as Record<string, unknown>[]).find((row) => asString(row.id) === preferredId) ??
-    null
+    convRows.find((row) => asString(row.id) === preferredId) ?? null
 
   // When the ticket only links vendor_alert, still try the resident's intake thread.
   if (
     (!preferred || asString(preferred.conversation_type) === 'vendor_alert') &&
     preferredId
   ) {
-    // preferredId from pick may still be vendor — also try any resident_intake in set
     preferred =
-      (convRows as Record<string, unknown>[]).find(
-        (row) => asString(row.conversation_type) === 'resident_intake',
-      ) ?? preferred
+      convRows.find((row) => asString(row.conversation_type) === 'resident_intake') ??
+      preferred
   }
 
   if (!preferred) {
-    preferred = (convRows as Record<string, unknown>[])[0] ?? null
+    preferred = convRows[0] ?? null
   }
+  if (!preferred) return null
+
+  const ctx = await loadConversationContext(preferred, landlordId, supabase)
+  if (!ctx) return null
+
+  return buildMonitoringDetail(ctx)
+}
+
+/**
+ * Property Message Vendor rail — vendor job SMS thread only (`vendor_alert`).
+ * Falls back to any linked conversation when no vendor_alert row exists yet.
+ */
+export async function fetchVendorJobConversationMonitoringByMaintenanceRequest(
+  maintenanceRequestId: string,
+): Promise<ConversationMonitoringDetail | null> {
+  const loaded = await loadMaintenanceRequestConversations(maintenanceRequestId)
+  if (!loaded) return null
+
+  const { landlordId, convRows } = loaded
+  const { supabase } = await import('@/lib/supabase')
+  if (!supabase) return null
+
+  const rows = convRows
+    .map((row) => ({
+      id: asString(row.id),
+      conversation_type: asString(row.conversation_type),
+    }))
+    .filter((row) => row.id)
+
+  const vendorId = pickVendorWorkOrderConversationId(rows)
+  const preferred =
+    (vendorId ? convRows.find((row) => asString(row.id) === vendorId) : null) ??
+    convRows.find((row) => asString(row.conversation_type) === 'vendor_alert') ??
+    convRows[0] ??
+    null
+
   if (!preferred) return null
 
   const ctx = await loadConversationContext(preferred, landlordId, supabase)

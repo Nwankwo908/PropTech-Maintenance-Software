@@ -1,3 +1,10 @@
+import {
+  attestExternalVendorCoi,
+  lookupExternalVendorComplianceChecks,
+  type ExternalCoiCheckDto,
+} from '@/api/verifyExternalVendorCompliance'
+import { getAdminEdgeSecret } from '@/lib/adminEdgeAuth'
+
 export type VendorCoiLookupStatus =
   | 'checking'
   | 'verified'
@@ -9,6 +16,8 @@ export type VendorCoiLookupSubject = {
   name: string
   phone?: string | null
   website?: string | null
+  priceLabel?: string | null
+  sources?: string[] | null
 }
 
 export type VendorCoiLookupResult = {
@@ -18,6 +27,8 @@ export type VendorCoiLookupResult = {
   detail: string
   expirationDate: string | null
   monitoringActive: boolean
+  simulated: boolean
+  checkSource: 'netvendor' | 'state_board' | 'certificial' | 'admin_attestation' | 'local'
 }
 
 export type VendorCoiVerificationState = {
@@ -27,6 +38,8 @@ export type VendorCoiVerificationState = {
   detail: string
   expirationDate: string | null
   monitoringActive: boolean
+  simulated: boolean
+  checkSource: VendorCoiLookupResult['checkSource']
 }
 
 function stableBucket(input: string): number {
@@ -47,11 +60,38 @@ function mockCarrier(vendorName: string): string {
   return carriers[stableBucket(`carrier|${vendorName}`) % carriers.length] ?? 'Travelers'
 }
 
+function isProviderCredentialed(vendor: VendorCoiLookupSubject): boolean {
+  const sources = (vendor.sources ?? []).map((s) => s.trim().toLowerCase())
+  if (!sources.includes('netvendor')) return false
+  const label = (vendor.priceLabel ?? '').trim()
+  if (!label) return true
+  return /compliant|credential|coi\b|insurance\s*verif|preferred\s*vendor/i.test(label)
+}
+
+function futureDateIso(daysFromNow: number): string {
+  const d = new Date()
+  d.setUTCDate(d.getUTCDate() + daysFromNow)
+  return d.toISOString().slice(0, 10)
+}
+
 /**
- * Certificial-style insurance tracking lookup.
- * Resolves whether COI paperwork can be pulled, checked, and put on continuous monitoring.
+ * Certificial-style insurance tracking lookup (local fallback).
  */
 export function resolveVendorCoiLookup(vendor: VendorCoiLookupSubject): VendorCoiLookupResult {
+  if (isProviderCredentialed(vendor)) {
+    const label = (vendor.priceLabel ?? '').trim() || 'Compliant'
+    return {
+      status: 'verified',
+      policyNumber: null,
+      carrier: null,
+      detail: `${label} · Active COI tracked by NetVendor`,
+      expirationDate: futureDateIso(365),
+      monitoringActive: true,
+      simulated: false,
+      checkSource: 'netvendor',
+    }
+  }
+
   const key = `certificial|${vendor.name}|${vendor.phone ?? ''}|${vendor.website ?? ''}`
   const bucket = stableBucket(key)
   const policyNumber = mockPolicyNumber(vendor.name)
@@ -63,8 +103,10 @@ export function resolveVendorCoiLookup(vendor: VendorCoiLookupSubject): VendorCo
       policyNumber,
       carrier,
       detail: `${carrier} · ${policyNumber} · Active · Tracking via Certificial`,
-      expirationDate: '2027-06-30',
+      expirationDate: futureDateIso(400),
       monitoringActive: true,
+      simulated: true,
+      checkSource: 'local',
     }
   }
 
@@ -73,9 +115,11 @@ export function resolveVendorCoiLookup(vendor: VendorCoiLookupSubject): VendorCo
       status: 'not_found',
       policyNumber: null,
       carrier: null,
-      detail: 'No COI on file in Certificial — insurance paperwork could not be pulled',
+      detail: 'No COI on file in Certificial — confirm insurance paperwork manually',
       expirationDate: null,
       monitoringActive: false,
+      simulated: true,
+      checkSource: 'local',
     }
   }
 
@@ -84,26 +128,53 @@ export function resolveVendorCoiLookup(vendor: VendorCoiLookupSubject): VendorCo
     policyNumber,
     carrier,
     detail: `${carrier} · ${policyNumber} · Expired — renew COI to restore monitoring`,
-    expirationDate: '2025-01-15',
+    expirationDate: futureDateIso(-90),
     monitoringActive: false,
+    simulated: true,
+    checkSource: 'local',
   }
 }
 
-/** True when Certificial can pull an active COI for suggestion listing. */
 export function hasPullableVerifiedCoi(vendor: VendorCoiLookupSubject): boolean {
   return resolveVendorCoiLookup(vendor).status === 'verified'
 }
 
-/** Drop vendors whose insurance paperwork cannot be pulled (or is expired). */
 export function filterVendorsWithVerifiedCoi<T extends VendorCoiLookupSubject>(vendors: T[]): T[] {
   return vendors.filter((vendor) => hasPullableVerifiedCoi(vendor))
 }
 
-/** Async Certificial lookup used on the verification screen. */
+function fromDto(dto: ExternalCoiCheckDto): VendorCoiLookupResult {
+  return {
+    status: dto.status === 'monitoring' ? 'verified' : dto.status,
+    policyNumber: dto.policyNumber,
+    carrier: dto.carrier,
+    detail: dto.detail,
+    expirationDate: dto.expirationDate,
+    monitoringActive: dto.monitoringActive,
+    simulated: dto.simulated,
+    checkSource: dto.checkSource,
+  }
+}
+
+/** Async Certificial / NetVendor lookup used on the verification screen. */
 export async function lookupVendorCoi(
   vendor: VendorCoiLookupSubject,
 ): Promise<VendorCoiLookupResult> {
-  await new Promise((resolve) => setTimeout(resolve, 750))
+  if (getAdminEdgeSecret()) {
+    try {
+      const { coi } = await lookupExternalVendorComplianceChecks({
+        name: vendor.name,
+        phone: vendor.phone,
+        website: vendor.website,
+        priceLabel: vendor.priceLabel,
+        sources: vendor.sources,
+      })
+      return fromDto(coi)
+    } catch (err) {
+      console.warn('[lookupVendorCoi] edge fallback', err)
+    }
+  }
+  await new Promise((resolve) => setTimeout(resolve, 350))
   return resolveVendorCoiLookup(vendor)
 }
 
@@ -112,9 +183,11 @@ export function initialCoiVerificationState(): VendorCoiVerificationState {
     status: 'checking',
     policyNumber: null,
     carrier: null,
-    detail: 'Querying Certificial insurance tracking (simulated)…',
+    detail: 'Checking insurance certificate…',
     expirationDate: null,
     monitoringActive: false,
+    simulated: true,
+    checkSource: 'local',
   }
 }
 
@@ -124,10 +197,12 @@ export function coiStateFromLookup(result: VendorCoiLookupResult): VendorCoiVeri
     policyNumber: result.policyNumber,
     carrier: result.carrier,
     detail: result.monitoringActive
-      ? `${result.detail} · Continuous monitoring on`
+      ? `${result.detail}${result.detail.includes('monitoring') ? '' : ' · Continuous monitoring on'}`
       : result.detail,
     expirationDate: result.expirationDate,
     monitoringActive: result.monitoringActive,
+    simulated: result.simulated,
+    checkSource: result.checkSource,
   }
 }
 
@@ -137,4 +212,49 @@ export function isCoiVerificationComplete(state: VendorCoiVerificationState): bo
 
 export function coiRequiresManualCollect(state: VendorCoiVerificationState): boolean {
   return state.status === 'not_found' || state.status === 'expired'
+}
+
+/** Admin confirms COI paperwork is on file when the automated pull fails. */
+export async function attestVendorCoiOnFile(
+  vendor: VendorCoiLookupSubject,
+  options?: { approverName?: string | null },
+): Promise<VendorCoiVerificationState> {
+  if (getAdminEdgeSecret()) {
+    try {
+      const coi = await attestExternalVendorCoi({
+        subject: {
+          name: vendor.name,
+          phone: vendor.phone,
+          website: vendor.website,
+          priceLabel: vendor.priceLabel,
+          sources: vendor.sources,
+        },
+        approverName: options?.approverName,
+      })
+      return {
+        status: coi.monitoringActive ? 'monitoring' : coi.status,
+        policyNumber: coi.policyNumber,
+        carrier: coi.carrier,
+        detail: coi.detail,
+        expirationDate: coi.expirationDate,
+        monitoringActive: coi.monitoringActive,
+        simulated: coi.simulated,
+        checkSource: coi.checkSource,
+      }
+    } catch (err) {
+      console.warn('[attestVendorCoiOnFile] edge fallback', err)
+    }
+  }
+
+  const approver = options?.approverName?.trim() || 'Admin'
+  return {
+    status: 'monitoring',
+    policyNumber: null,
+    carrier: null,
+    detail: `COI on file · Confirmed by ${approver}`,
+    expirationDate: futureDateIso(365),
+    monitoringActive: true,
+    simulated: false,
+    checkSource: 'admin_attestation',
+  }
 }

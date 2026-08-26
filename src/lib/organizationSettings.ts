@@ -18,6 +18,7 @@ import {
   type OnboardingUploadedDocument,
   type UploadFileStatus,
 } from '@/lib/onboardingDocumentUpload'
+import { formatLandlordDate } from '@/lib/landlordWorkspace'
 import { supabase } from '@/lib/supabase'
 
 export type OrganizationDocumentStatus = 'valid' | 'expiring' | 'expired'
@@ -57,6 +58,10 @@ export type OrganizationSettingsForm = {
   currency: string
   dateFormat: string
   brandAccent: string
+  /** Durable storage ref written to landlords.logo_url (not a signed URL). */
+  logoStorageRef: string
+  /** Short-lived signed URL for UI preview. */
+  logoUrl: string
   autoApprovalLimit: string
   escalationThreshold: string
   defaultResponseSla: string
@@ -69,10 +74,29 @@ export type OrganizationSettingsForm = {
   activityFeedAlerts: boolean
   pushNotifications: boolean
   quietHours: boolean
+  quietHoursStart: string
+  quietHoursEnd: string
   rentReminderCadence: string
   preferredLanguage: string
   /** Tone for Ulo-generated operational SMS and email. */
   communicationStyle: CommunicationStyle
+}
+
+export const RENT_REMINDER_CADENCE_OPTIONS = [
+  { value: '5, 3, 1 days before', label: 'Standard: 5, 3, 1 days before' },
+  { value: '3, 1 days before', label: 'Light: 3, 1 days before' },
+  { value: '1 day before', label: 'Minimal: 1 day before' },
+] as const
+
+export const DEFAULT_RENT_REMINDER_CADENCE = RENT_REMINDER_CADENCE_OPTIONS[0].value
+
+/** Map legacy saved cadence strings to current option values. */
+export function normalizeRentReminderCadence(value: string | null | undefined): string {
+  const trimmed = typeof value === 'string' ? value.trim() : ''
+  if (trimmed === '2, 5, 1 day before') return DEFAULT_RENT_REMINDER_CADENCE
+  if (trimmed === '3, 1 day before') return '3, 1 days before'
+  if (RENT_REMINDER_CADENCE_OPTIONS.some((option) => option.value === trimmed)) return trimmed
+  return trimmed || DEFAULT_RENT_REMINDER_CADENCE
 }
 
 export type OrganizationWorkspaceSummary = {
@@ -103,6 +127,8 @@ export const DEFAULT_ORGANIZATION_SETTINGS: OrganizationSettingsForm = {
   currency: 'USD',
   dateFormat: 'MM/DD/YYYY',
   brandAccent: '#101828',
+  logoStorageRef: '',
+  logoUrl: '',
   autoApprovalLimit: '250',
   escalationThreshold: '2500',
   defaultResponseSla: '4 hours',
@@ -114,7 +140,9 @@ export const DEFAULT_ORGANIZATION_SETTINGS: OrganizationSettingsForm = {
   activityFeedAlerts: true,
   pushNotifications: false,
   quietHours: true,
-  rentReminderCadence: '2, 5, 1 day before',
+  quietHoursStart: '10:00 PM',
+  quietHoursEnd: '8:00 AM',
+  rentReminderCadence: DEFAULT_RENT_REMINDER_CADENCE,
   preferredLanguage: 'English (US)',
   communicationStyle: DEFAULT_COMMUNICATION_STYLE,
 }
@@ -163,13 +191,9 @@ export function writeStoredOrganizationSettings(
 
 function formatUpdatedLabel(iso: string | null | undefined): string {
   if (!iso?.trim()) return 'On file'
-  const date = new Date(iso)
-  if (Number.isNaN(date.getTime())) return 'On file'
-  return `Updated ${date.toLocaleDateString('en-US', {
-    month: 'short',
-    day: 'numeric',
-    year: 'numeric',
-  })}`
+  const formatted = formatLandlordDate(iso)
+  if (formatted === '—') return 'On file'
+  return `Updated ${formatted}`
 }
 
 function onboardingUploadStatus(

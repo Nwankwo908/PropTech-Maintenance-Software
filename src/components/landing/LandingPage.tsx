@@ -340,7 +340,6 @@ export function LandingPage() {
   const navLinks = [
     { label: 'How It Works', target: 'how-it-works' },
     { label: 'Features', target: 'features' },
-    { label: 'Property Dashboard', target: 'property-dashboard' },
   ] as const
 
   function scrollTo(id: string) {
@@ -569,8 +568,8 @@ export function LandingPage() {
         <section id="property-dashboard" className="relative scroll-mt-20">
           <div className={`border-t ${LANDING_FULL_WIDTH_RULE}`} aria-hidden />
           <div className={LANDING_SECTION_COLUMN_RULE} aria-hidden />
-          <div className={`${LANDING_BEYOND_LOGO_COLUMN_INSET} landing-4096-2304-section-inset landing-5120-2880-section-inset flex justify-center pb-[83px] pt-[calc(4rem*1.3)] landing-desktop:!pl-6 landing-desktop:!pr-6 landing-1024-600:!pl-6 landing-1024-600:!pr-6 landing-1920-1080-dashboard-full landing-1920-1200-dashboard-full landing-1920-1080:!pl-6 landing-1920-1080:!pr-6 landing-1920-1200:!pl-6 landing-1920-1200:!pr-6 landing-4096-2304:!pl-14 landing-5120-2880:!pl-14 landing-4096-2304:!pr-14 landing-5120-2880:!pr-14`}>
-            <div className="landing-3840-2160-dashboard-scale flex flex-col items-center">
+          <div className={`landing-property-dashboard-inset ${LANDING_BEYOND_LOGO_COLUMN_INSET} landing-4096-2304-section-inset landing-5120-2880-section-inset flex justify-center pb-[83px] pt-[calc(4rem*1.3)] landing-desktop:!pl-6 landing-desktop:!pr-6 landing-1024-600:!pl-6 landing-1024-600:!pr-6 landing-1920-1080-dashboard-full landing-1920-1200-dashboard-full landing-1920-1080:!pl-6 landing-1920-1080:!pr-6 landing-1920-1200:!pl-6 landing-1920-1200:!pr-6 landing-4096-2304:!pl-14 landing-5120-2880:!pl-14 landing-4096-2304:!pr-14 landing-5120-2880:!pr-14`}>
+            <div className="landing-3840-2160-dashboard-scale landing-property-dashboard-inner flex w-full min-w-0 flex-col items-center">
               <div className="flex justify-center">
                 <h2 className="sa-pill inline-flex items-center gap-2 rounded-full bg-transparent px-4 py-2 font-mono text-xs font-normal uppercase tracking-wide text-[#611879] landing-4096-2304:text-[0.975rem] landing-5120-2880:text-[0.975rem] landing-4096-2304:gap-[0.65rem] landing-5120-2880:gap-[0.65rem] landing-4096-2304:px-5 landing-5120-2880:px-5 landing-4096-2304:py-2.5 landing-5120-2880:py-2.5 landing-7680-4320:text-[1.875rem] landing-7680-4320:gap-5 landing-7680-4320:px-10 landing-7680-4320:py-5">
                   <IconGraph className="size-4 shrink-0 text-[#81228A] landing-4096-2304:size-[1.3rem] landing-5120-2880:size-[1.3rem] landing-7680-4320:size-10" />
@@ -579,7 +578,7 @@ export function LandingPage() {
               </div>
 
               <div className="mt-4 flex flex-col items-center gap-4 text-center landing-4096-2304:mt-[1.3rem] landing-5120-2880:mt-[1.3rem] landing-4096-2304:gap-5 landing-5120-2880:gap-5 landing-7680-4320:mt-10 landing-7680-4320:gap-10">
-                <p className="max-w-[min(64rem,calc(100vw-6rem))] font-[family-name:var(--font-landing-heading)] text-[48px] font-medium leading-[1.1] tracking-[-0.02em] text-slate-900 max-[349px]:text-[1.75rem] landing-compact:text-[1.75rem] landing-phone-tall:text-[1.75rem] landing-1024-1440-preview:flex landing-1024-1440-preview:flex-col [@media(min-width:1000px)_and_(max-width:1100px)_and_(min-height:1397px)_and_(max-height:1500px)]:flex [@media(min-width:1000px)_and_(max-width:1100px)_and_(min-height:1397px)_and_(max-height:1500px)]:flex-col landing-4096-2304:text-[62.4px] landing-5120-2880:text-[62.4px] landing-7680-4320:text-[120px]">
+                <p className="landing-property-dashboard-title max-w-[min(64rem,calc(100vw-6rem))] font-[family-name:var(--font-landing-heading)] text-[48px] font-medium leading-[1.1] tracking-[-0.02em] text-slate-900 max-[349px]:text-[1.75rem] landing-compact:text-[1.75rem] landing-phone-tall:text-[1.75rem] landing-1024-1440-preview:flex landing-1024-1440-preview:flex-col [@media(min-width:1000px)_and_(max-width:1100px)_and_(min-height:1397px)_and_(max-height:1500px)]:flex [@media(min-width:1000px)_and_(max-width:1100px)_and_(min-height:1397px)_and_(max-height:1500px)]:flex-col landing-4096-2304:text-[62.4px] landing-5120-2880:text-[62.4px] landing-7680-4320:text-[120px]">
                 <span>Maintenance OS for</span>
                 <span>
                   <span className="landing-1024-1440-preview:hidden [@media(min-width:1000px)_and_(max-width:1100px)_and_(min-height:1397px)_and_(max-height:1500px)]:hidden"> </span>

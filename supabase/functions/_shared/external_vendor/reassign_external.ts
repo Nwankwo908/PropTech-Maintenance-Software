@@ -13,6 +13,7 @@ export type ReassignExternalVendorInput = {
   reviewCount?: number | null
   priceLabel?: string | null
   rankScore?: number | null
+  compliance?: Record<string, unknown> | null
 }
 
 export type ReassignExternalVendorOk = {
@@ -71,6 +72,7 @@ export async function reassignExternalVendorToTicket(
       reviewCount: input.reviewCount,
       priceLabel: input.priceLabel,
       rankScore: input.rankScore,
+      compliance: input.compliance ?? null,
     },
     category,
   )

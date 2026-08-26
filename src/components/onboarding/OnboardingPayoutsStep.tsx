@@ -1,13 +1,16 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import {
   createLandlordConnectAccountLink,
+  createLandlordConnectAccountSession,
   fetchLandlordStripeConnectStatus,
   primaryPayoutMethodLabel,
   refreshLandlordConnectStatus,
   type LandlordStripeConnectStatus,
   type LandlordStripePayoutMethod,
 } from '@/api/landlordStripeConnect'
+import { StripeConnectEmbeddedOnboarding } from '@/components/StripeConnectEmbeddedOnboarding'
 import { getErrorMessage } from '@/lib/errorMessage'
+import { hasStripeConnectEmbedded } from '@/lib/stripePublishableKey'
 import {
   onboardingBtnGhostClass,
   onboardingBtnPrimaryClass,
@@ -80,6 +83,7 @@ export function OnboardingPayoutsStep({
   const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [showConnectOnboarding, setShowConnectOnboarding] = useState(false)
 
   function applyStatus(next: LandlordStripeConnectStatus) {
     setStatus(next)
@@ -124,15 +128,38 @@ export function OnboardingPayoutsStep({
     // eslint-disable-next-line react-hooks/exhaustive-deps -- boot once per landlord
   }, [landlordId])
 
+  const fetchLandlordConnectClientSecret = useCallback(async () => {
+    const result = await createLandlordConnectAccountSession(landlordId)
+    return result.clientSecret
+  }, [landlordId])
+
   async function handleSetUpPayouts() {
-    setBusy(true)
     setError(null)
+    if (hasStripeConnectEmbedded()) {
+      setShowConnectOnboarding(true)
+      return
+    }
+    setBusy(true)
     try {
       const result = await createLandlordConnectAccountLink(landlordId)
       applyStatus(result)
       window.location.assign(result.url)
     } catch (err) {
       setError(getErrorMessage(err, 'Could not open payout setup.'))
+      setBusy(false)
+    }
+  }
+
+  async function handleConnectExit() {
+    setBusy(true)
+    setError(null)
+    try {
+      const next = await refreshLandlordConnectStatus(landlordId)
+      applyStatus(next)
+      if (next.ready) setShowConnectOnboarding(false)
+    } catch (err) {
+      setError(getErrorMessage(err, 'Could not refresh payout status.'))
+    } finally {
       setBusy(false)
     }
   }
@@ -255,6 +282,22 @@ export function OnboardingPayoutsStep({
             ) : null}
           </>
         )}
+        {showConnectOnboarding && hasStripeConnectEmbedded() ? (
+          <>
+            <StripeConnectEmbeddedOnboarding
+              fetchClientSecret={fetchLandlordConnectClientSecret}
+              onExit={() => void handleConnectExit()}
+            />
+            <button
+              type="button"
+              disabled={busy || saving}
+              onClick={() => setShowConnectOnboarding(false)}
+              className="sa-link mt-3 w-full text-center text-[13px] font-medium text-[#186179] hover:underline disabled:opacity-50"
+            >
+              Close payout setup
+            </button>
+          </>
+        ) : null}
       </div>
 
       {error ? (

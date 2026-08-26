@@ -355,6 +355,43 @@ export async function listConnectPayoutMethods(
   return { ok: true, methods }
 }
 
+/** Form body for Stripe Account Sessions (embedded Connect onboarding). */
+export function connectAccountSessionParams(accountId: string): URLSearchParams {
+  const body = new URLSearchParams()
+  body.set("account", accountId)
+  body.set("components[account_onboarding][enabled]", "true")
+  body.set(
+    "components[account_onboarding][features][external_account_collection]",
+    "true",
+  )
+  return body
+}
+
+/**
+ * Create an Account Session for the embedded account_onboarding component.
+ * The connected account is resolved server-side — do not take account ids from the client.
+ */
+export async function createConnectAccountSession(params: {
+  accountId: string
+}): Promise<{ ok: true; clientSecret: string } | { ok: false; error: string }> {
+  const accountId = params.accountId.trim()
+  if (!accountId.startsWith("acct_")) {
+    return { ok: false, error: "Invalid Connect account id" }
+  }
+  const created = await stripeForm("account_sessions", connectAccountSessionParams(accountId))
+  if (!created.ok) {
+    return { ok: false, error: stripeErrorMessage(created.json) }
+  }
+  const clientSecret =
+    typeof created.json.client_secret === "string"
+      ? created.json.client_secret.trim()
+      : ""
+  if (!clientSecret) {
+    return { ok: false, error: "Stripe did not return an Account Session secret" }
+  }
+  return { ok: true, clientSecret }
+}
+
 export async function createConnectAccountLink(params: {
   accountId: string
   refreshUrl: string

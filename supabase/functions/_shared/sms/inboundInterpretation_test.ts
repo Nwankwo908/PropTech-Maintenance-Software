@@ -102,6 +102,18 @@ Deno.test("repair text still routes to maintenance_new", () => {
   assertEquals(shouldHandleInterpretedIntent(interp, "My kitchen sink is leaking"), false)
 })
 
+Deno.test("Osi: door damaged starts maintenance_new (not other handoff)", () => {
+  const interp = heuristicInterpretInbound("My door is damaged")
+  assertEquals(interp.intent, "maintenance_new")
+  assertEquals(shouldHandleInterpretedIntent(interp, "My door is damaged"), false)
+})
+
+Deno.test("Osi: I need a repair starts maintenance_new (not other handoff)", () => {
+  const interp = heuristicInterpretInbound("I need a repair")
+  assertEquals(interp.intent, "maintenance_new")
+  assertEquals(shouldHandleInterpretedIntent(interp, "I need a repair"), false)
+})
+
 Deno.test("gas smell stays a maintenance/safety path (interpreter does not steal it)", () => {
   const interp = heuristicInterpretInbound("I smell gas in the kitchen")
   assertEquals(interp.intent, "maintenance_new")

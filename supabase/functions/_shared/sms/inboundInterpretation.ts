@@ -28,6 +28,7 @@ import { looksLikeClosedRepairStatusAsk } from "./maintenanceTicketContext.ts"
 import {
   classifyRentSmsIntent,
 } from "./rentIntent.ts"
+import { looksLikeBareRepairRequest } from "./resolveMaintenanceWorkIntent.ts"
 
 export { looksLikeRentBalanceAsk } from "./rentIntent.ts"
 
@@ -588,7 +589,7 @@ function heuristicIntent(
   const emergencyHit = EMERGENCY_SIGNALS.some((signal) =>
     text.toLowerCase().includes(signal)
   ) || /\b(smell gas|gas in the|on fire|smoke alarm)\b/i.test(text)
-  if (emergencyHit || inferIssueTypeFromText(text)) {
+  if (emergencyHit || inferIssueTypeFromText(text) || looksLikeBareRepairRequest(text)) {
     return { intent: "maintenance_new", extractedSlots: {}, confident: true }
   }
 
@@ -796,7 +797,7 @@ export async function interpretInboundSms(params: {
 
   const classification = await classifyMaintenanceRequest({
     rawDescription: params.body,
-    skipEmbeddings: true,
+    skipEmbeddings: !Deno.env.get("OPENAI_API_KEY")?.trim(),
     smsContext: {
       pendingStep: pending.awaitingTicketUpdateConfirm
         ? "awaiting_ticket_update_confirm"

@@ -27,6 +27,7 @@ import {
 import { sendVendorJobAlert } from "./sms/vendorSmsRouting.ts"
 import { formatWorkOrderRef } from "./vendor_outreach_copy.ts"
 import { uloAppUrl } from "./uloAppUrl.ts"
+import { loadLandlordApprovalLimits } from "./landlordNotificationPrefs.ts"
 
 export type EstimateMoneyInput = {
   partsCost: number
@@ -187,6 +188,7 @@ async function notifyLandlordEstimatePending(
     laborCost: number
     totalCost: number
     notes: string | null
+    exceedsEscalationThreshold?: boolean
   },
 ): Promise<void> {
   const wo = formatWorkOrderRef(params.ticketId)
@@ -203,9 +205,12 @@ async function notifyLandlordEstimatePending(
     "",
     `Estimate for ${wo}${params.unit ? ` (${params.unit})` : ""}.`,
     `${params.vendorName} submitted ${money(params.totalCost)} (parts ${money(params.partsCost)} · labor ${money(params.laborCost)}).`,
+    params.exceedsEscalationThreshold
+      ? `This amount is above your escalation threshold — review promptly.`
+      : null,
     "",
     "Reply APPROVE or DECLINE.",
-  ]
+  ].filter(Boolean)
   if (approveUrl) {
     smsLines.push("", `Or tap Approve: ${approveUrl}`)
     if (rejectUrl) smsLines.push(`Decline: ${rejectUrl}`)
@@ -475,13 +480,9 @@ export async function submitMaintenanceEstimate(
 
   const estimateId = inserted.id as string
 
-  const { data: onboardingRow } = await supabase
-    .from("landlord_onboarding")
-    .select("auto_approval_threshold")
-    .eq("landlord_id", landlordId)
-    .maybeSingle()
-  const threshold = Number(onboardingRow?.auto_approval_threshold)
-  if (Number.isFinite(threshold) && moneyNorm.totalCost <= threshold) {
+  const { autoApprovalThreshold, escalationThreshold } =
+    await loadLandlordApprovalLimits(supabase, landlordId)
+  if (Number.isFinite(autoApprovalThreshold) && moneyNorm.totalCost <= autoApprovalThreshold) {
     const auto = await decideMaintenanceEstimate(supabase, {
       estimateId,
       actionToken,
@@ -535,6 +536,9 @@ export async function submitMaintenanceEstimate(
       laborCost: moneyNorm.laborCost,
       totalCost: moneyNorm.totalCost,
       notes,
+      exceedsEscalationThreshold:
+        Number.isFinite(escalationThreshold) &&
+        moneyNorm.totalCost > escalationThreshold,
     })
   } catch (e) {
     console.error("[maintenance-estimates] landlord notify", e)

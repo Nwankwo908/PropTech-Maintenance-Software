@@ -1,5 +1,9 @@
 import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.49.1"
 import { getEstimatedMinutes } from "../sla_rules.ts"
+import {
+  loadLandlordOperationalSettings,
+  resolveTicketSlaMinutes,
+} from "../landlordNotificationPrefs.ts"
 import { logGraphEvent } from "../graph/logGraphEvent.ts"
 import { updateWorkflowRun } from "../engine/workflowRuns.ts"
 import { startMaintenanceRequestWorkflow } from "../engine/startMaintenanceRequestWorkflow.ts"
@@ -121,7 +125,13 @@ export async function submitSmsMaintenanceRequest(
     resolveIntakeIssueCategory(params.intake),
   )
   const dbSeverity = severityToDb(params.intake.severity)
-  const estimatedMinutes = getEstimatedMinutes(issueCategory, dbSeverity)
+  const operational = await loadLandlordOperationalSettings(supabase, params.landlordId)
+  const estimatedMinutes = resolveTicketSlaMinutes({
+    category: issueCategory,
+    severity: dbSeverity,
+    defaultResponseSla: operational.defaultResponseSla,
+    fallbackMinutes: getEstimatedMinutes,
+  })
   const dueAt = new Date(Date.now() + estimatedMinutes * 60_000)
   const description = buildIntakeDescription(params.intake)
   const notificationChannel = notificationChannelFromPreference(
@@ -341,6 +351,9 @@ export async function submitSmsMaintenanceRequest(
       ? "maintenance_request"
       : "maintenance_intake",
     metadata: {
+      message: `Maintenance request submitted by text${
+        unit ? ` for ${unit}` : ""
+      }${issueCategory ? ` (${issueCategory})` : ""}.`,
       unit,
       priority,
       issue_category: issueCategory,
@@ -350,8 +363,8 @@ export async function submitSmsMaintenanceRequest(
       preferred_contact_method: params.intake.preferred_contact_method,
       photo_count: photoPaths.length,
       source: "sms_intake",
-        early_ticket_finalized: !created,
-      },
+      early_ticket_finalized: !created,
+    },
     })
   } catch (e) {
     console.error("[sms-intake] graph event", e)

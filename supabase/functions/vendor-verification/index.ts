@@ -26,6 +26,7 @@ import { runVendorOnboardingViaEngine } from "../_shared/engine/vendorOnboarding
 import {
   assertConnectReturnOriginForStripe,
   createConnectAccountLink,
+  createConnectAccountSession,
   createExpressConnectAccount,
   isStripeConfigured,
   isStripeConnectReady,
@@ -309,6 +310,110 @@ async function persistConnectSnapshot(
     return false
   }
   return ready
+}
+
+async function ensureVendorExpressConnectAccount(
+  supabase: SupabaseClient,
+  row: VerificationRow,
+  landlordId: string,
+): Promise<
+  | { ok: true; vendorId: string; accountId: string }
+  | { ok: false; status: number; error: string }
+> {
+  if (!isStripeConfigured()) {
+    return {
+      ok: false,
+      status: 503,
+      error: "Payout setup is temporarily unavailable. Please try again later.",
+    }
+  }
+
+  const vendorId = await ensureVendorRow(supabase, row, landlordId)
+  if (!vendorId) {
+    return {
+      ok: false,
+      status: 500,
+      error: "Could not prepare your profile for payouts.",
+    }
+  }
+
+  const { data: vendorRow } = await supabase
+    .from("vendors")
+    .select("stripe_connect_account_id")
+    .eq("id", vendorId)
+    .maybeSingle()
+
+  let accountId =
+    typeof vendorRow?.stripe_connect_account_id === "string"
+      ? vendorRow.stripe_connect_account_id.trim()
+      : ""
+
+  if (!accountId) {
+    const created = await createExpressConnectAccount({
+      vendorId,
+      landlordId,
+      email: row.email,
+      businessName: row.business_name || row.contact_name,
+    })
+    if (!created.ok) {
+      return { ok: false, status: 502, error: created.error }
+    }
+    accountId = created.account.id
+    await persistConnectSnapshot(supabase, {
+      vendorId,
+      verificationId: row.id,
+      landlordId,
+      accountId,
+      chargesEnabled: created.account.chargesEnabled,
+      payoutsEnabled: created.account.payoutsEnabled,
+      detailsSubmitted: created.account.detailsSubmitted,
+    })
+    await logGraphEvent(supabase, {
+      landlord_id: landlordId,
+      event_type: "vendor.stripe_connect_started",
+      source: "vendor_portal",
+      actor_type: "vendor",
+      vendor_id: vendorId,
+      workflow_run_id: row.workflow_run_id,
+      workflow_template_id: row.workflow_run_id
+        ? "vendor_onboarding"
+        : null,
+      metadata: {
+        message: "Vendor started payout account setup.",
+        verification_id: row.id,
+        stripe_connect_account_id: accountId,
+      },
+    })
+  }
+
+  if (row.status === "invited") {
+    await supabase
+      .from("vendor_verifications")
+      .update({ status: "in_progress" })
+      .eq("id", row.id)
+  }
+
+  return { ok: true, vendorId, accountId }
+}
+
+async function vendorConnectSessionPayload(
+  supabase: SupabaseClient,
+  row: VerificationRow,
+  accountId: string,
+) {
+  const { data: fresh } = await supabase
+    .from("vendor_verifications")
+    .select(ROW_SELECT)
+    .eq("id", row.id)
+    .maybeSingle()
+  const current = (fresh as unknown as VerificationRow) ?? row
+  const documents = await loadDocuments(supabase, row.id)
+  const payoutMethods = await loadPayoutMethods(accountId)
+  return {
+    current,
+    documents,
+    payoutMethods,
+  }
 }
 
 async function loadDocuments(supabase: SupabaseClient, verificationId: string) {
@@ -760,16 +865,38 @@ serve(async (req) => {
         return await reloadAndRespond()
       }
 
-      case "create_connect_account_link": {
-        if (!isStripeConfigured()) {
-          return jsonResponse(
-            {
-              error:
-                "Payout setup is temporarily unavailable. Please try again later.",
-            },
-            503,
-          )
+      case "create_account_session": {
+        const ensured = await ensureVendorExpressConnectAccount(
+          supabase,
+          row,
+          landlordId,
+        )
+        if (!ensured.ok) {
+          return jsonResponse({ error: ensured.error }, ensured.status)
         }
+        const sessionCreated = await createConnectAccountSession({
+          accountId: ensured.accountId,
+        })
+        if (!sessionCreated.ok) {
+          return jsonResponse({ error: sessionCreated.error }, 502)
+        }
+        const payload = await vendorConnectSessionPayload(
+          supabase,
+          row,
+          ensured.accountId,
+        )
+        return jsonResponse({
+          ok: true,
+          clientSecret: sessionCreated.clientSecret,
+          session: sessionView(
+            payload.current,
+            payload.documents,
+            payload.payoutMethods,
+          ),
+        })
+      }
+
+      case "create_connect_account_link": {
         const base = appBaseUrl(
           req,
           typeof body.returnOrigin === "string" ? body.returnOrigin : undefined,
@@ -779,61 +906,13 @@ serve(async (req) => {
           return jsonResponse({ error: originCheck.error }, 400)
         }
 
-        const vendorId = await ensureVendorRow(supabase, row, landlordId)
-        if (!vendorId) {
-          return jsonResponse(
-            { error: "Could not prepare your profile for payouts." },
-            500,
-          )
-        }
-
-        const { data: vendorRow } = await supabase
-          .from("vendors")
-          .select("stripe_connect_account_id")
-          .eq("id", vendorId)
-          .maybeSingle()
-
-        let accountId =
-          typeof vendorRow?.stripe_connect_account_id === "string"
-            ? vendorRow.stripe_connect_account_id.trim()
-            : ""
-
-        if (!accountId) {
-          const created = await createExpressConnectAccount({
-            vendorId,
-            landlordId,
-            email: row.email,
-            businessName: row.business_name || row.contact_name,
-          })
-          if (!created.ok) {
-            return jsonResponse({ error: created.error }, 502)
-          }
-          accountId = created.account.id
-          await persistConnectSnapshot(supabase, {
-            vendorId,
-            verificationId: row.id,
-            landlordId,
-            accountId,
-            chargesEnabled: created.account.chargesEnabled,
-            payoutsEnabled: created.account.payoutsEnabled,
-            detailsSubmitted: created.account.detailsSubmitted,
-          })
-          await logGraphEvent(supabase, {
-            landlord_id: landlordId,
-            event_type: "vendor.stripe_connect_started",
-            source: "vendor_portal",
-            actor_type: "vendor",
-            vendor_id: vendorId,
-            workflow_run_id: row.workflow_run_id,
-            workflow_template_id: row.workflow_run_id
-              ? "vendor_onboarding"
-              : null,
-            metadata: {
-              message: "Vendor started payout account setup.",
-              verification_id: row.id,
-              stripe_connect_account_id: accountId,
-            },
-          })
+        const ensured = await ensureVendorExpressConnectAccount(
+          supabase,
+          row,
+          landlordId,
+        )
+        if (!ensured.ok) {
+          return jsonResponse({ error: ensured.error }, ensured.status)
         }
 
         const returnUrl = uloAppUrl.vendorVerification(token, {
@@ -845,7 +924,7 @@ serve(async (req) => {
           connect: "refresh",
         })
         const link = await createConnectAccountLink({
-          accountId,
+          accountId: ensured.accountId,
           refreshUrl,
           returnUrl,
         })
@@ -853,25 +932,19 @@ serve(async (req) => {
           return jsonResponse({ error: link.error }, 502)
         }
 
-        if (row.status === "invited") {
-          await supabase
-            .from("vendor_verifications")
-            .update({ status: "in_progress" })
-            .eq("id", row.id)
-        }
-
-        const { data: fresh } = await supabase
-          .from("vendor_verifications")
-          .select(ROW_SELECT)
-          .eq("id", row.id)
-          .maybeSingle()
-        const current = (fresh as unknown as VerificationRow) ?? row
-        const documents = await loadDocuments(supabase, row.id)
-        const payoutMethods = await loadPayoutMethods(accountId)
+        const payload = await vendorConnectSessionPayload(
+          supabase,
+          row,
+          ensured.accountId,
+        )
         return jsonResponse({
           ok: true,
           url: link.url,
-          session: sessionView(current, documents, payoutMethods),
+          session: sessionView(
+            payload.current,
+            payload.documents,
+            payload.payoutMethods,
+          ),
         })
       }
 

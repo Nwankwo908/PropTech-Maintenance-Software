@@ -17,6 +17,7 @@ import { resolveVendorVerificationConversationId } from "./vendorVerificationInb
 import type { SmsProviderName } from "./types.ts"
 
 import { uloAppUrl } from "../uloAppUrl.ts"
+import { loadLandlordDisplayName } from "../landlordDisplayName.ts"
 
 function firstNameOrVendor(vendorLabel: string): string {
   const trimmed = vendorLabel.trim()
@@ -93,19 +94,6 @@ export function buildVendorVerificationIncompleteSms(input: {
     "Please open your form to finish (about 5 minutes):",
     input.formLink,
   ].join("\n")
-}
-
-async function loadCompanyName(
-  supabase: SupabaseClient,
-  landlordId: string,
-): Promise<string | null> {
-  const { data } = await supabase
-    .from("landlords")
-    .select("name")
-    .eq("id", landlordId)
-    .maybeSingle()
-  const name = typeof data?.name === "string" ? data.name.trim() : ""
-  return name || null
 }
 
 async function ensureConversation(
@@ -219,7 +207,7 @@ export async function sendVendorVerificationFollowUpSms(
 
   try {
     const companyName = params.companyName ??
-      (await loadCompanyName(supabase, params.landlordId))
+      (await loadLandlordDisplayName(supabase, params.landlordId))
 
     const channel = await ensureConversation(supabase, params)
     if (

@@ -230,7 +230,10 @@ function VendorResultRow({
 export type FindExternalVendorRailProps = {
   open: boolean
   onClose: () => void
-  onSelect: (suggestion: ExternalVendorSuggestionDto) => void | Promise<void>
+  onSelect: (
+    suggestion: ExternalVendorSuggestionDto,
+    compliance?: import('@/components/ExternalVendorVerificationView').ExternalVendorComplianceSnapshot,
+  ) => void | Promise<void>
   locationLabel: string
   /** City, State ZIP under the title — no street address. */
   areaLabel?: string | null
@@ -345,8 +348,8 @@ export function FindExternalVendorRail({
             saving={saving}
             saveError={saveError}
             onBack={() => setVerificationVendor(null)}
-            onAssign={() => {
-              void onSelect(verificationVendor)
+            onAssign={(compliance) => {
+              void onSelect(verificationVendor, compliance)
             }}
             onReject={() => {
               setVerificationVendor(null)

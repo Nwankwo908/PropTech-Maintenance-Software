@@ -20,6 +20,7 @@ import {
   loadMostRecentlyAssignedVendorId,
   pickVendorForAssignment,
 } from "./vendor_assignment.ts"
+import { loadLandlordMarketplacePreference } from "./landlordNotificationPrefs.ts"
 import { reassignVendorByIdAndNotify } from "../submit-maintenance-request/vendor_notify.ts"
 
 export type ReplacementVendor = AlternativeVendor
@@ -100,6 +101,9 @@ export async function findReplacementVendorForTicket(
     excludeVendorIds: [...exclude],
     preferNotVendorId: preferNot,
     landlordId,
+    marketplacePreference: landlordId
+      ? await loadLandlordMarketplacePreference(supabase, landlordId)
+      : "include_imported",
   })
   if (!picked) return { ok: true, vendor: null }
   return { ok: true, vendor: { id: picked.id, name: picked.name } }

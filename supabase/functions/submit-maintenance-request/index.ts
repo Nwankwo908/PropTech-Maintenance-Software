@@ -6,6 +6,10 @@ import {
 } from "../_shared/classify_issue_sla.ts"
 import { MAINTENANCE_CLASSIFICATION_EVENTS } from "../_shared/maintenance_classification/mod.ts"
 import { getEstimatedMinutes } from "../_shared/sla_rules.ts"
+import {
+  loadLandlordOperationalSettings,
+  resolveTicketSlaMinutes,
+} from "../_shared/landlordNotificationPrefs.ts"
 import { notifyResidentSubmitted } from "./resident_notify.ts"
 import { assignVendorAndNotify } from "./vendor_notify.ts"
 import { logGraphEvent } from "../_shared/graph/logGraphEvent.ts"
@@ -285,10 +289,16 @@ serve(async (req) => {
     })
   }
 
-  const estimatedMinutes = getEstimatedMinutes(
-    slaClassification.issue_category,
-    slaClassification.severity,
-  )
+  const scopedLandlordId = resolveLandlordId()
+  const operational = scopedLandlordId
+    ? await loadLandlordOperationalSettings(supabase, scopedLandlordId)
+    : null
+  const estimatedMinutes = resolveTicketSlaMinutes({
+    category: slaClassification.issue_category,
+    severity: slaClassification.severity,
+    defaultResponseSla: operational?.defaultResponseSla ?? null,
+    fallbackMinutes: getEstimatedMinutes,
+  })
   const dueAt = new Date(Date.now() + estimatedMinutes * 60_000)
 
   const { data: row, error: insertError } = await supabase

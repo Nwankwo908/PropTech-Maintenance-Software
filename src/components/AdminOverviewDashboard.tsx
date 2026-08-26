@@ -2285,7 +2285,10 @@ export function AdminOverviewDashboard() {
   }, [escalatedRailSaving])
 
   const handleExternalVendorSelect = useCallback(
-    async (pick: ExternalVendorSuggestionDto) => {
+    async (
+      pick: ExternalVendorSuggestionDto,
+      compliance?: import('@/components/ExternalVendorVerificationView').ExternalVendorComplianceSnapshot,
+    ) => {
       const ticketId =
         escalatedReview?.ticketId ??
         (escalatedRailTarget?.kind === 'ticket' ? escalatedRailTarget.ticketId : null)
@@ -2312,6 +2315,18 @@ export function AdminOverviewDashboard() {
           reviewCount: pick.reviewCount,
           priceLabel: pick.priceLabel,
           sources: pick.sources,
+          compliance: compliance
+            ? {
+                license_status: compliance.licenseStatus,
+                license_number: compliance.licenseNumber,
+                license_simulated: compliance.licenseSimulated,
+                license_source: compliance.licenseSource,
+                coi_status: compliance.coiStatus,
+                coi_simulated: compliance.coiSimulated,
+                coi_source: compliance.coiSource,
+                monitoring_active: compliance.monitoringActive,
+              }
+            : null,
         })
         setTickets((prev) =>
           prev.map((t) =>

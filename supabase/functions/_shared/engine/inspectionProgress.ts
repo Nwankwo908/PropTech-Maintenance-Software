@@ -3,6 +3,7 @@
  */
 import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.49.1"
 import { recordActivityLog } from "../graph/recordActivityLog.ts"
+import { loadLandlordDisplayName } from "../landlordDisplayName.ts"
 import { sendInboundAutoReply } from "../sms/inboundReply.ts"
 import {
   findOrCreateConversation,
@@ -54,18 +55,6 @@ function readString(value: unknown): string | null {
   if (typeof value !== "string") return null
   const trimmed = value.trim()
   return trimmed || null
-}
-
-async function loadLandlordName(
-  supabase: SupabaseClient,
-  landlordId: string,
-): Promise<string | null> {
-  const { data } = await supabase
-    .from("landlords")
-    .select("name")
-    .eq("id", landlordId)
-    .maybeSingle()
-  return readString(data?.name)
 }
 
 async function loadResident(
@@ -346,7 +335,7 @@ export async function executeInspectionOutreach(
   }
 
   const resident = await loadResident(supabase, freshRun.resident_id)
-  const companyName = await loadLandlordName(supabase, params.landlordId)
+  const companyName = await loadLandlordDisplayName(supabase, params.landlordId)
   const scheduledAt = state.scheduled_at ??
     readString(freshRun.metadata?.scheduled_at)
   const inspectionType = state.inspection_type ??
@@ -768,7 +757,7 @@ export async function executeInspectionAdminAction(
       const resident = await loadResident(supabase, run.resident_id)
       const phone = resident?.phone?.trim()
       if (resident && phone) {
-        const companyName = await loadLandlordName(supabase, params.landlordId)
+        const companyName = await loadLandlordDisplayName(supabase, params.landlordId)
         const state = readLifecycleStepState(run)
         const body = buildInspectionReminderSms({
           residentName: firstName(resident.full_name),

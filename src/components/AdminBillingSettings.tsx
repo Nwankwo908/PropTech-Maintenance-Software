@@ -11,6 +11,14 @@ import {
   FUTURE_BILLING_PREVIEW,
   FUTURE_SUBSCRIPTION_FEATURES,
 } from '@/lib/billingBeta'
+import {
+  formatPaymentMethodExpiry,
+  formatPaymentMethodLabel,
+  loadBillingPaymentMethod,
+  paymentMethodFromCardInput,
+  saveBillingPaymentMethod,
+} from '@/lib/billingPaymentMethod'
+import type { BillingPaymentMethod } from '@/lib/landlordSettings/types'
 import { loadLandlordSettings } from '@/lib/landlordSettings'
 import { getErrorMessage } from '@/lib/errorMessage'
 
@@ -48,15 +56,6 @@ function SectionCard({
   )
 }
 
-function StatusChip({ label }: { label: string }) {
-  return (
-    <span className="inline-flex items-center gap-1.5 rounded-full border border-[#abefc6] bg-[#ecfdf3] px-2.5 py-0.5 text-[11px] font-semibold uppercase tracking-[0.04em] text-[#067647]">
-      <span className="size-1.5 rounded-full bg-[#12b76a]" aria-hidden />
-      {label}
-    </span>
-  )
-}
-
 function InvoiceStatusChip({ status }: { status: 'approved' | 'rejected' }) {
   if (status === 'approved') {
     return (
@@ -91,17 +90,20 @@ function PrimaryButton({
   className = '',
   disabled,
   title,
+  onClick,
 }: {
   children: React.ReactNode
   className?: string
   disabled?: boolean
   title?: string
+  onClick?: () => void
 }) {
   return (
     <button
       type="button"
       disabled={disabled}
       title={title}
+      onClick={onClick}
       className={[
         'sa-press inline-flex items-center justify-center rounded-[10px] bg-[#101828] px-4 py-2.5 text-[14px] font-medium tracking-[-0.1504px] text-white hover:bg-[#1f2937] disabled:cursor-not-allowed disabled:opacity-50',
         className,
@@ -117,17 +119,20 @@ function OutlineButton({
   className = '',
   disabled,
   title,
+  onClick,
 }: {
   children: React.ReactNode
   className?: string
   disabled?: boolean
   title?: string
+  onClick?: () => void
 }) {
   return (
     <button
       type="button"
       disabled={disabled}
       title={title}
+      onClick={onClick}
       className={[
         'sa-press inline-flex items-center justify-center rounded-[10px] border border-[#186179] bg-white px-4 py-2.5 text-[14px] font-medium tracking-[-0.1504px] text-[#186179] hover:bg-[#e8f2f5] disabled:cursor-not-allowed disabled:opacity-50',
         className,
@@ -213,6 +218,14 @@ export function AdminBillingSettings() {
   const [historyError, setHistoryError] = useState<string | null>(null)
   const [memberSince, setMemberSince] = useState<string>(BETA_PROGRAM.memberSince)
   const [planLabel, setPlanLabel] = useState('Ulo Alpha')
+  const [paymentMethod, setPaymentMethod] = useState<BillingPaymentMethod | null>(null)
+  const [paymentLoading, setPaymentLoading] = useState(true)
+  const [editingPayment, setEditingPayment] = useState(false)
+  const [cardNumber, setCardNumber] = useState('')
+  const [expiration, setExpiration] = useState('')
+  const [paymentBusy, setPaymentBusy] = useState(false)
+  const [paymentError, setPaymentError] = useState<string | null>(null)
+  const [paymentMessage, setPaymentMessage] = useState<string | null>(null)
 
   useEffect(() => {
     void loadLandlordSettings().then((snapshot) => {
@@ -226,6 +239,19 @@ export function AdminBillingSettings() {
         )
       }
     })
+  }, [])
+
+  useEffect(() => {
+    let cancelled = false
+    setPaymentLoading(true)
+    void loadBillingPaymentMethod().then((method) => {
+      if (cancelled) return
+      setPaymentMethod(method)
+      setPaymentLoading(false)
+    })
+    return () => {
+      cancelled = true
+    }
   }, [])
 
   useEffect(() => {
@@ -251,6 +277,47 @@ export function AdminBillingSettings() {
     }
   }, [])
 
+  function openPaymentEditor() {
+    setEditingPayment(true)
+    setPaymentError(null)
+    setPaymentMessage(null)
+    setCardNumber('')
+    setExpiration('')
+  }
+
+  async function handleSavePaymentMethod() {
+    const parsed = paymentMethodFromCardInput({ cardNumber, expiration })
+    if (!parsed.ok) {
+      setPaymentError(parsed.error)
+      return
+    }
+    setPaymentBusy(true)
+    setPaymentError(null)
+    const result = await saveBillingPaymentMethod(parsed.method)
+    setPaymentBusy(false)
+    if (!result.ok) {
+      setPaymentError(result.error ?? 'Could not save payment method.')
+      return
+    }
+    setPaymentMethod(parsed.method)
+    setEditingPayment(false)
+    setPaymentMessage('Payment method saved. You will not be charged during Alpha.')
+  }
+
+  async function handleRemovePaymentMethod() {
+    setPaymentBusy(true)
+    setPaymentError(null)
+    const result = await saveBillingPaymentMethod(null)
+    setPaymentBusy(false)
+    if (!result.ok) {
+      setPaymentError(result.error ?? 'Could not remove payment method.')
+      return
+    }
+    setPaymentMethod(null)
+    setEditingPayment(false)
+    setPaymentMessage('Payment method removed.')
+  }
+
   return (
     <>
       <div className="py-6">
@@ -271,7 +338,13 @@ export function AdminBillingSettings() {
               Manage your Ulo subscription and vendor payment activity on {planLabel}.
             </p>
           </div>
-          <OutlineButton className="self-start" disabled title="Coming soon">
+          <OutlineButton
+            className="self-start"
+            onClick={() => {
+              window.location.href =
+                'mailto:support@ulo.app?subject=Ulo%20Alpha%20feedback'
+            }}
+          >
             Share feedback
           </OutlineButton>
         </div>
@@ -282,11 +355,7 @@ export function AdminBillingSettings() {
           <section className="sa-surface overflow-hidden rounded-[10px] border border-[#dbeafe] bg-gradient-to-br from-[#eff6ff] via-white to-[#f9fafb] p-6 shadow-[0px_1px_2px_-1px_rgba(0,0,0,0.06)]">
             <div className="flex flex-wrap items-start justify-between gap-4">
               <div className="min-w-0 flex-1">
-                <div className="flex flex-wrap items-center gap-2">
-                  <StatusChip label={`${planLabel} access`} />
-                  <StatusChip label="Active" />
-                </div>
-                <h2 className="mt-4 text-[20px] font-semibold tracking-[-0.02em] text-[#101828]">
+                <h2 className="text-[20px] font-semibold tracking-[-0.02em] text-[#101828]">
                   {BETA_PROGRAM.name}
                 </h2>
                 <p className="mt-2 max-w-2xl text-[14px] leading-6 tracking-[-0.1504px] text-[#4b5563]">
@@ -329,18 +398,102 @@ export function AdminBillingSettings() {
             </p>
           </SectionCard>
 
-          <SectionCard title="Payment method">
-            <EmptyState
-              icon={
-                <svg className="size-5" viewBox="0 0 20 20" fill="none" aria-hidden>
-                  <rect x="2" y="5" width="16" height="10" rx="2" stroke="currentColor" strokeWidth="1.5" />
-                  <path d="M2 8H18" stroke="currentColor" strokeWidth="1.5" />
-                </svg>
-              }
-              title="No payment method required"
-              description={`Ulo is currently free on ${planLabel}. You won't be charged while participating.`}
-              action={<OutlineButton disabled title="Coming soon">Learn about future plans</OutlineButton>}
-            />
+          <SectionCard
+            title="Payment method"
+            description={`${planLabel} is free. Add a card now so you are ready when paid plans launch — you will not be charged during Alpha.`}
+          >
+            {paymentLoading ? (
+              <p className="py-4 text-[14px] text-[#6a7282]">Loading payment method…</p>
+            ) : editingPayment ? (
+              <div className="max-w-md space-y-4">
+                <div>
+                  <label htmlFor="billing-card-number" className="mb-1.5 block text-[13px] font-medium text-[#364153]">
+                    Card number
+                  </label>
+                  <input
+                    id="billing-card-number"
+                    inputMode="numeric"
+                    autoComplete="cc-number"
+                    className="sa-surface h-10 w-full rounded-[8px] border border-[#e5e7eb] bg-white px-3 text-[14px] tracking-[-0.1504px] text-[#101828] outline-none focus:border-[#155dfc] focus:ring-2 focus:ring-[#155dfc]/20"
+                    value={cardNumber}
+                    onChange={(e) => setCardNumber(e.target.value)}
+                    placeholder="ACCT-000015"
+                  />
+                </div>
+                <div>
+                  <label htmlFor="billing-card-exp" className="mb-1.5 block text-[13px] font-medium text-[#364153]">
+                    Expiration
+                  </label>
+                  <input
+                    id="billing-card-exp"
+                    inputMode="numeric"
+                    autoComplete="cc-exp"
+                    className="sa-surface h-10 w-full rounded-[8px] border border-[#e5e7eb] bg-white px-3 text-[14px] tracking-[-0.1504px] text-[#101828] outline-none focus:border-[#155dfc] focus:ring-2 focus:ring-[#155dfc]/20"
+                    value={expiration}
+                    onChange={(e) => setExpiration(e.target.value)}
+                    placeholder="MM / YY"
+                  />
+                </div>
+                <p className="text-[12px] leading-5 tracking-[-0.1504px] text-[#6a7282]">
+                  Card details are stored on your account for future billing setup. Ulo does not charge
+                  this card during Alpha.
+                </p>
+                {paymentError ? (
+                  <p className="text-[13px] font-medium tracking-[-0.1504px] text-[#b42318]">{paymentError}</p>
+                ) : null}
+                <div className="flex flex-wrap gap-2">
+                  <PrimaryButton disabled={paymentBusy} onClick={() => void handleSavePaymentMethod()}>
+                    {paymentBusy ? 'Saving…' : 'Save payment method'}
+                  </PrimaryButton>
+                  <OutlineButton
+                    disabled={paymentBusy}
+                    onClick={() => {
+                      setEditingPayment(false)
+                      setPaymentError(null)
+                    }}
+                  >
+                    Cancel
+                  </OutlineButton>
+                </div>
+              </div>
+            ) : paymentMethod ? (
+              <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+                <div>
+                  <p className="text-[15px] font-semibold tracking-[-0.1504px] text-[#101828]">
+                    {formatPaymentMethodLabel(paymentMethod)}
+                  </p>
+                  <p className="mt-1 text-[13px] tracking-[-0.1504px] text-[#6a7282]">
+                    {formatPaymentMethodExpiry(paymentMethod)} · Not charged during Alpha
+                  </p>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <OutlineButton disabled={paymentBusy} onClick={openPaymentEditor}>
+                    Change
+                  </OutlineButton>
+                  <OutlineButton disabled={paymentBusy} onClick={() => void handleRemovePaymentMethod()}>
+                    Remove
+                  </OutlineButton>
+                </div>
+              </div>
+            ) : (
+              <EmptyState
+                icon={
+                  <svg className="size-5" viewBox="0 0 20 20" fill="none" aria-hidden>
+                    <rect x="2" y="5" width="16" height="10" rx="2" stroke="currentColor" strokeWidth="1.5" />
+                    <path d="M2 8H18" stroke="currentColor" strokeWidth="1.5" />
+                  </svg>
+                }
+                title="No payment method on file"
+                description={`Ulo is free on ${planLabel}. Add a card when you want to be ready for paid plans later.`}
+                action={<OutlineButton onClick={openPaymentEditor}>Add payment method</OutlineButton>}
+              />
+            )}
+            {paymentMessage ? (
+              <p className="mt-4 text-[13px] font-medium tracking-[-0.1504px] text-[#067647]">{paymentMessage}</p>
+            ) : null}
+            {!editingPayment && paymentError ? (
+              <p className="mt-4 text-[13px] font-medium tracking-[-0.1504px] text-[#b42318]">{paymentError}</p>
+            ) : null}
           </SectionCard>
 
           <SectionCard
@@ -470,7 +623,7 @@ export function AdminBillingSettings() {
                   </span>
                   <p className="mt-3 text-[12px] font-medium tracking-[-0.1504px] text-[#364153]">{item.label}</p>
                   <p className="mt-1 text-[10px] font-semibold uppercase tracking-[0.06em] text-[#9ca3af]">
-                    Coming soon
+                    {'ready' in item && item.ready ? 'Available' : 'Coming soon'}
                   </p>
                 </div>
               ))}
@@ -482,12 +635,18 @@ export function AdminBillingSettings() {
             description="Questions about Alpha access? We're here for early customers."
           >
             <div className="space-y-2">
-              <PrimaryButton className="w-full" disabled title="Coming soon">
+              <a
+                href="mailto:support@ulo.app?subject=Ulo%20Alpha%20support"
+                className="sa-press inline-flex w-full items-center justify-center rounded-[10px] bg-[#101828] px-4 py-2.5 text-[14px] font-medium tracking-[-0.1504px] text-white hover:bg-[#1f2937]"
+              >
                 Contact support
-              </PrimaryButton>
-              <OutlineButton className="w-full" disabled title="Coming soon">
+              </a>
+              <a
+                href="mailto:support@ulo.app?subject=Ulo%20help%20center"
+                className="sa-press inline-flex w-full items-center justify-center rounded-[10px] border border-[#186179] bg-white px-4 py-2.5 text-[14px] font-medium tracking-[-0.1504px] text-[#186179] hover:bg-[#e8f2f5]"
+              >
                 Visit help center
-              </OutlineButton>
+              </a>
             </div>
           </SectionCard>
         </aside>

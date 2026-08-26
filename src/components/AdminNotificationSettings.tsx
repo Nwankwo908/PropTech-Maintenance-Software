@@ -13,6 +13,11 @@ import {
   type NotificationSettingsState,
 } from '@/lib/notificationSettings'
 import { fetchNotificationDeliveryHealth, type NotificationDeliveryHealth } from '@/lib/notificationDeliveryHealth'
+import {
+  getBrowserPushPermission,
+  maybeShowBrowserPushNotification,
+  requestBrowserPushPermission,
+} from '@/lib/notificationDelivery'
 import { sendSettingsTestNotification } from '@/api/settingsTestNotification'
 import { fetchLandlordAccountProfile } from '@/lib/landlordAccountProfile'
 
@@ -29,7 +34,7 @@ const CHANNEL_LABELS: Record<NotificationChannel, string> = {
   push: 'Push',
 }
 
-const EVENT_CHANNELS: NotificationChannel[] = ['email', 'sms', 'activity_feed']
+const EVENT_CHANNELS: NotificationChannel[] = ['email', 'sms', 'activity_feed', 'push']
 
 function SelectChevron() {
   return (
@@ -148,10 +153,14 @@ function DeliveryChannelCard({
   label,
   connected,
   actionLabel,
+  onAction,
+  detail,
 }: {
   label: string
   connected: boolean
   actionLabel?: string
+  onAction?: () => void
+  detail?: string
 }) {
   return (
     <div className="rounded-[10px] border border-[#eef0f3] bg-[#f9fafb] p-4">
@@ -159,7 +168,7 @@ function DeliveryChannelCard({
         <div>
           <p className="text-[14px] font-semibold tracking-[-0.1504px] text-[#101828]">{label}</p>
           <p className="mt-1 text-[12px] tracking-[-0.1504px] text-[#6a7282]">
-            {connected ? 'Connected' : 'Not connected'}
+            {detail ?? (connected ? 'Connected' : 'Not connected')}
           </p>
         </div>
         <span
@@ -176,6 +185,7 @@ function DeliveryChannelCard({
       {!connected && actionLabel ? (
         <button
           type="button"
+          onClick={onAction}
           className="sa-link mt-3 text-[13px] font-medium tracking-[-0.1504px] text-[#155dfc] hover:text-[#0030b5]"
         >
           {actionLabel}
@@ -222,6 +232,7 @@ function EventCategorySection({
               <th className="px-4 py-3 text-center font-semibold">Email</th>
               <th className="px-4 py-3 text-center font-semibold">SMS</th>
               <th className="px-4 py-3 text-center font-semibold">Activity feed</th>
+              <th className="px-4 py-3 text-center font-semibold">Push</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-[#eef0f3] bg-white">
@@ -283,8 +294,13 @@ export function AdminNotificationSettings() {
   const [testState, setTestState] = useState<Record<string, 'idle' | 'sending' | 'sent' | 'failed'>>({
     email: 'idle',
     sms: 'idle',
+    push: 'idle',
   })
   const [testMessage, setTestMessage] = useState<string | null>(null)
+  const [pushPermission, setPushPermission] = useState<NotificationPermission | 'unsupported'>(() =>
+    getBrowserPushPermission(),
+  )
+  const [pushError, setPushError] = useState<string | null>(null)
 
   useEffect(() => {
     let cancelled = false
@@ -347,8 +363,10 @@ export function AdminNotificationSettings() {
   function handleSave() {
     setSaveError(null)
     void saveNotificationSettingsForAccount(draft)
-      .then(() => {
-        setSaved(draft)
+      .then(() => loadNotificationSettingsForAccount())
+      .then((refreshed) => {
+        setSaved(refreshed)
+        setDraft(refreshed)
         setSaveMessage('Notification settings saved.')
       })
       .catch((err: unknown) => {
@@ -356,9 +374,28 @@ export function AdminNotificationSettings() {
       })
   }
 
-  function handleSendTest(channel: 'email' | 'sms') {
+  function handleSendTest(channel: 'email' | 'sms' | 'push') {
     setTestMessage(null)
     setTestState((current) => ({ ...current, [channel]: 'sending' }))
+    if (channel === 'push') {
+      const shown = maybeShowBrowserPushNotification({
+        channels: ['push'],
+        title: 'Ulo test notification',
+        body: 'Push is enabled for this browser. Critical alerts can appear here while the dashboard is open.',
+      })
+      setTestState((current) => ({
+        ...current,
+        push: shown ? 'sent' : 'failed',
+      }))
+      setTestMessage(
+        shown
+          ? 'Browser notification sent.'
+          : pushPermission === 'granted'
+            ? 'Could not show a browser notification.'
+            : 'Enable browser notifications first.',
+      )
+      return
+    }
     void sendSettingsTestNotification({ channel }).then((result) => {
       setTestState((current) => ({
         ...current,
@@ -366,6 +403,30 @@ export function AdminNotificationSettings() {
       }))
       setTestMessage(result.ok ? (result.message ?? 'Sent.') : (result.error ?? 'Failed to send.'))
     })
+  }
+
+  async function handleEnablePush() {
+    setPushError(null)
+    const permission = await requestBrowserPushPermission()
+    setPushPermission(permission)
+    if (permission === 'granted') {
+      updateDelivery({ pushEnabled: true })
+      maybeShowBrowserPushNotification({
+        channels: ['push'],
+        title: 'Push notifications enabled',
+        body: 'Ulo can show alerts in this browser while you are signed in.',
+      })
+      return
+    }
+    if (permission === 'denied') {
+      setPushError('Browser notifications are blocked. Allow them in your browser settings, then try again.')
+      return
+    }
+    if (permission === 'unsupported') {
+      setPushError('This browser does not support notifications.')
+      return
+    }
+    setPushError('Notification permission was not granted.')
   }
 
   if (loading) {
@@ -432,10 +493,39 @@ export function AdminNotificationSettings() {
               <DeliveryChannelCard label="Activity feed" connected />
               <DeliveryChannelCard
                 label="Push"
-                connected={false}
-                actionLabel="Coming soon"
+                connected={pushPermission === 'granted' && draft.delivery.pushEnabled}
+                detail={
+                  pushPermission === 'granted'
+                    ? draft.delivery.pushEnabled
+                      ? 'Browser notifications on'
+                      : 'Permission granted — enable in settings'
+                    : pushPermission === 'denied'
+                      ? 'Blocked by browser'
+                      : pushPermission === 'unsupported'
+                        ? 'Not supported in this browser'
+                        : 'Not enabled'
+                }
+                actionLabel={
+                  pushPermission === 'granted'
+                    ? draft.delivery.pushEnabled
+                      ? undefined
+                      : 'Turn on'
+                    : pushPermission === 'denied' || pushPermission === 'unsupported'
+                      ? undefined
+                      : 'Enable'
+                }
+                onAction={() => {
+                  if (pushPermission === 'granted') {
+                    updateDelivery({ pushEnabled: true })
+                    return
+                  }
+                  void handleEnablePush()
+                }}
               />
             </div>
+            {pushError ? (
+              <p className="mt-3 text-[13px] font-medium tracking-[-0.1504px] text-[#b42318]">{pushError}</p>
+            ) : null}
 
             <div className="mt-5 grid gap-4 lg:grid-cols-2">
               <div>
@@ -454,6 +544,7 @@ export function AdminNotificationSettings() {
                     <option value="email">Email</option>
                     <option value="sms">SMS</option>
                     <option value="activity_feed">Activity feed</option>
+                    <option value="push">Push</option>
                   </select>
                   <SelectChevron />
                 </div>
@@ -474,10 +565,34 @@ export function AdminNotificationSettings() {
                     <option value="email">Email</option>
                     <option value="sms">SMS</option>
                     <option value="activity_feed">Activity feed</option>
+                    <option value="push">Push</option>
                   </select>
                   <SelectChevron />
                 </div>
               </div>
+            </div>
+
+            <div className="mt-5 flex items-center justify-between gap-4 rounded-[10px] border border-[#eef0f3] bg-[#f9fafb] px-4 py-3">
+              <div>
+                <p className="text-[14px] font-medium tracking-[-0.1504px] text-[#101828]">
+                  Push notifications
+                </p>
+                <p className="mt-0.5 text-[13px] tracking-[-0.1504px] text-[#6a7282]">
+                  Show browser alerts for events that include Push in the matrix below.
+                </p>
+              </div>
+              <ToggleSwitch
+                id="push-enabled"
+                checked={draft.delivery.pushEnabled}
+                onChange={(pushEnabled) => {
+                  if (pushEnabled && pushPermission !== 'granted') {
+                    void handleEnablePush()
+                    return
+                  }
+                  updateDelivery({ pushEnabled })
+                }}
+                label="Push notifications"
+              />
             </div>
 
             <div className="mt-5 flex items-center justify-between gap-4 rounded-[10px] border border-[#eef0f3] bg-[#f9fafb] px-4 py-3">
@@ -556,9 +671,9 @@ export function AdminNotificationSettings() {
             <p className="mt-1 text-[14px] leading-5 tracking-[-0.1504px] text-[#6a7282]">
               Send a sample alert to confirm your channels are working.
             </p>
-            <div className="mt-5 grid gap-3 sm:grid-cols-2">
-              {(['Email', 'SMS'] as const).map((label) => {
-                const channel = label.toLowerCase() as 'email' | 'sms'
+            <div className="mt-5 grid gap-3 sm:grid-cols-3">
+              {(['Email', 'SMS', 'Push'] as const).map((label) => {
+                const channel = label.toLowerCase() as 'email' | 'sms' | 'push'
                 const state = testState[channel]
                 return (
                   <div

@@ -2,6 +2,7 @@
 import { assertEquals, assertStringIncludes } from "https://deno.land/std@0.224.0/assert/mod.ts"
 import {
   assertConnectReturnOriginForStripe,
+  connectAccountSessionParams,
   connectHttpsRequiredMessage,
   resolveConnectAppBaseUrl,
   stripeErrorMessage,
@@ -45,6 +46,16 @@ Deno.test("resolveConnectAppBaseUrl falls back to https APP_URL in live mode", (
     if (prevApp == null) Deno.env.delete("APP_URL")
     else Deno.env.set("APP_URL", prevApp)
   }
+})
+
+Deno.test("connectAccountSessionParams enables embedded account onboarding", () => {
+  const body = connectAccountSessionParams("acct_test_123")
+  assertEquals(body.get("account"), "acct_test_123")
+  assertEquals(body.get("components[account_onboarding][enabled]"), "true")
+  assertEquals(
+    body.get("components[account_onboarding][features][external_account_collection]"),
+    "true",
+  )
 })
 
 Deno.test("assertConnectReturnOriginForStripe blocks live http origins", () => {

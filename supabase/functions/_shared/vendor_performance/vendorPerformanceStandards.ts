@@ -26,6 +26,7 @@ import { sendInboundAutoReply } from "../sms/inboundReply.ts"
 import { resolveOutboundLandlordSmsLine } from "../sms/landlordSmsOnboarding.ts"
 import { resolveVendorVerificationConversationId } from "../sms/vendorVerificationInbox.ts"
 import type { SmsProviderName } from "../sms/types.ts"
+import { loadLandlordDisplayName } from "../landlordDisplayName.ts"
 
 export type PerformanceNotices = {
   rating_coaching?: string
@@ -215,19 +216,6 @@ export function buildMisconductSuspendedSms(input: {
 function adminNotifyPhones(): string[] {
   const raw = Deno.env.get("SMS_ADMIN_NOTIFY_PHONES")?.trim() ?? ""
   return raw.split(",").map((p: string) => p.trim()).filter(Boolean)
-}
-
-async function loadCompanyName(
-  supabase: SupabaseClient,
-  landlordId: string,
-): Promise<string | null> {
-  const { data } = await supabase
-    .from("landlords")
-    .select("name")
-    .eq("id", landlordId)
-    .maybeSingle()
-  const name = typeof data?.name === "string" ? data.name.trim() : ""
-  return name || null
 }
 
 async function ensureVendorSmsChannel(
@@ -849,7 +837,7 @@ export async function checkVendorPerformanceStandards(
 
     summary.scanned += 1
     if (!companyCache.has(lid)) {
-      companyCache.set(lid, await loadCompanyName(supabase, lid))
+      companyCache.set(lid, await loadLandlordDisplayName(supabase, lid))
     }
 
     await processVendorPerformance(
@@ -942,7 +930,7 @@ export async function reportVendorMisconduct(
 
   const vendorName =
     (typeof vendor.name === "string" && vendor.name.trim()) || "Vendor"
-  const companyName = await loadCompanyName(supabase, params.landlordId)
+  const companyName = await loadLandlordDisplayName(supabase, params.landlordId)
   const phone = typeof vendor.phone === "string" ? vendor.phone : null
 
   const messageId = await sendVendorSms(supabase, {

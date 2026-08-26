@@ -448,7 +448,16 @@ export function inferIssueTypeFromText(text: string): IssueType | null {
     return "HVAC"
   }
   if (/\b(pest|roach|mouse|rat|bug|insect|termite)\b/.test(d)) return "pest"
-  if (/\b(lock|key|deadbolt|door stuck|locked out)\b/.test(d)) return "lock"
+  if (
+    /\b(lock|key|deadbolt|door stuck|locked out|door (?:is |was )?(?:damaged|broken|jammed|won'?t (?:close|open|lock|shut)|off (?:the )?hinges?))\b/
+      .test(d)
+  ) {
+    return "lock"
+  }
+  // Bare "door" + damage/broken language (order-flexible).
+  if (/\bdoors?\b/.test(d) && /\b(damaged|broken|jammed|won'?t (?:close|open|lock|shut))\b/.test(d)) {
+    return "lock"
+  }
   return null
 }
 

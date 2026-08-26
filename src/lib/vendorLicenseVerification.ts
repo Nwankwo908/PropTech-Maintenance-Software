@@ -1,8 +1,23 @@
-export type VendorLicenseLookupStatus = 'checking' | 'auto_verified' | 'not_found' | 'expired' | 'manual_verified'
+import {
+  attestExternalVendorLicense,
+  lookupExternalVendorComplianceChecks,
+  type ExternalLicenseCheckDto,
+} from '@/api/verifyExternalVendorCompliance'
+import { getAdminEdgeSecret } from '@/lib/adminEdgeAuth'
+
+export type VendorLicenseLookupStatus =
+  | 'checking'
+  | 'auto_verified'
+  | 'not_found'
+  | 'expired'
+  | 'manual_verified'
 
 export type VendorLicenseLookupSubject = {
   name: string
   phone?: string | null
+  website?: string | null
+  priceLabel?: string | null
+  sources?: string[] | null
 }
 
 export type VendorLicenseLookupResult = {
@@ -11,6 +26,8 @@ export type VendorLicenseLookupResult = {
   detail: string
   boardLabel: string
   expirationDate?: string | null
+  simulated: boolean
+  checkSource: 'netvendor' | 'state_board' | 'certificial' | 'admin_attestation' | 'local'
 }
 
 export type VendorLicenseVerificationState = {
@@ -20,6 +37,8 @@ export type VendorLicenseVerificationState = {
   boardLabel: string
   approverName: string | null
   expirationDate?: string | null
+  simulated: boolean
+  checkSource: VendorLicenseLookupResult['checkSource']
 }
 
 function stableBucket(input: string): number {
@@ -50,12 +69,32 @@ function tradeLabelOrDefault(tradeLabel: string | null | undefined): string {
   return tradeLabel?.trim() || 'Maintenance'
 }
 
-/** Synchronous state-board license resolution (same rules as the async lookup). */
+function isProviderCredentialed(vendor: VendorLicenseLookupSubject): boolean {
+  const sources = (vendor.sources ?? []).map((s) => s.trim().toLowerCase())
+  if (!sources.includes('netvendor')) return false
+  const label = (vendor.priceLabel ?? '').trim()
+  if (!label) return true
+  return /compliant|credential|coi\b|insurance\s*verif|preferred\s*vendor/i.test(label)
+}
+
+/** Local fallback when Edge is not configured (demo / offline). */
 export function resolveVendorLicenseLookup(
   vendor: VendorLicenseLookupSubject,
   tradeLabel: string,
 ): VendorLicenseLookupResult {
   const trade = tradeLabelOrDefault(tradeLabel)
+  if (isProviderCredentialed(vendor)) {
+    return {
+      status: 'auto_verified',
+      licenseNumber: null,
+      boardLabel: 'NetVendor credential network',
+      detail: 'Active license on file · Verified via NetVendor',
+      expirationDate: null,
+      simulated: false,
+      checkSource: 'netvendor',
+    }
+  }
+
   const bucket = stableBucket(`${vendor.name}|${vendor.phone ?? ''}|${trade}`)
   const boardLabel = boardLabelForTrade(trade)
   const licenseNumber = mockLicenseNumber(vendor.name)
@@ -67,6 +106,8 @@ export function resolveVendorLicenseLookup(
       boardLabel,
       detail: `${licenseNumber} · Active · ${boardLabel}`,
       expirationDate: null,
+      simulated: true,
+      checkSource: 'local',
     }
   }
 
@@ -77,6 +118,8 @@ export function resolveVendorLicenseLookup(
       boardLabel,
       detail: 'No match in state licensing database',
       expirationDate: null,
+      simulated: true,
+      checkSource: 'local',
     }
   }
 
@@ -84,20 +127,21 @@ export function resolveVendorLicenseLookup(
     status: 'expired',
     licenseNumber,
     boardLabel,
-    detail: `${licenseNumber} · Expired · Confirm status in IDFPR`,
+    detail: `${licenseNumber} · Expired · Confirm status with the state board`,
     expirationDate: '2023-11-30',
+    simulated: true,
+    checkSource: 'local',
   }
 }
 
-/** True when the state API already returns an active verified license. */
 export function hasAutoVerifiedLicense(
   vendor: VendorLicenseLookupSubject,
   tradeLabel: string | null | undefined,
 ): boolean {
-  return resolveVendorLicenseLookup(vendor, tradeLabelOrDefault(tradeLabel)).status === 'auto_verified'
+  return resolveVendorLicenseLookup(vendor, tradeLabelOrDefault(tradeLabel)).status ===
+    'auto_verified'
 }
 
-/** Keep only vendors whose license already comes back verified (drop not-found / expired). */
 export function filterVendorsWithVerifiedLicense<T extends VendorLicenseLookupSubject>(
   vendors: T[],
   tradeLabel: string | null | undefined,
@@ -105,12 +149,43 @@ export function filterVendorsWithVerifiedLicense<T extends VendorLicenseLookupSu
   return vendors.filter((vendor) => hasAutoVerifiedLicense(vendor, tradeLabel))
 }
 
-/** Simulates state licensing board API lookup when a vendor is selected. */
+function fromDto(dto: ExternalLicenseCheckDto): VendorLicenseLookupResult {
+  const status =
+    dto.status === 'manual_verified'
+      ? 'auto_verified'
+      : dto.status
+  return {
+    status,
+    licenseNumber: dto.licenseNumber,
+    detail: dto.detail,
+    boardLabel: dto.boardLabel,
+    expirationDate: dto.expirationDate,
+    simulated: dto.simulated,
+    checkSource: dto.checkSource,
+  }
+}
+
+/** State licensing / NetVendor lookup when a vendor is selected. */
 export async function lookupVendorLicense(
   vendor: VendorLicenseLookupSubject,
   tradeLabel: string,
 ): Promise<VendorLicenseLookupResult> {
-  await new Promise((resolve) => setTimeout(resolve, 900))
+  if (getAdminEdgeSecret()) {
+    try {
+      const { license } = await lookupExternalVendorComplianceChecks({
+        name: vendor.name,
+        phone: vendor.phone,
+        website: vendor.website,
+        priceLabel: vendor.priceLabel,
+        sources: vendor.sources,
+        tradeLabel,
+      })
+      return fromDto(license)
+    } catch (err) {
+      console.warn('[lookupVendorLicense] edge fallback', err)
+    }
+  }
+  await new Promise((resolve) => setTimeout(resolve, 400))
   return resolveVendorLicenseLookup(vendor, tradeLabel)
 }
 
@@ -118,13 +193,17 @@ export function initialLicenseVerificationState(): VendorLicenseVerificationStat
   return {
     status: 'checking',
     licenseNumber: null,
-    detail: 'Querying state licensing API (simulated)…',
+    detail: 'Checking license status…',
     boardLabel: 'State licensing board',
     approverName: null,
+    simulated: true,
+    checkSource: 'local',
   }
 }
 
-export function licenseStateFromLookup(result: VendorLicenseLookupResult): VendorLicenseVerificationState {
+export function licenseStateFromLookup(
+  result: VendorLicenseLookupResult,
+): VendorLicenseVerificationState {
   return {
     status: result.status,
     licenseNumber: result.licenseNumber,
@@ -132,36 +211,76 @@ export function licenseStateFromLookup(result: VendorLicenseLookupResult): Vendo
     boardLabel: result.boardLabel,
     approverName: null,
     expirationDate: result.expirationDate,
+    simulated: result.simulated,
+    checkSource: result.checkSource,
   }
 }
 
-function normalizeLicenseNumber(value: string): string {
-  return value.trim().replace(/[\s-]/g, '').toLowerCase()
-}
-
-/** Expected license on file for this vendor (state licensing records). */
 export function expectedLicenseNumberForVendor(vendor: VendorLicenseLookupSubject): string {
   return mockLicenseNumber(vendor.name)
 }
 
-/** Validates a manually entered license number against state licensing records. */
+/** Admin attestation — any plausible license number (Edge when configured). */
 export async function verifyManualLicenseNumber(
   vendor: VendorLicenseLookupSubject,
   licenseNumber: string,
-): Promise<{ ok: true } | { ok: false; message: string }> {
-  await new Promise((resolve) => setTimeout(resolve, 400))
-
-  const entered = normalizeLicenseNumber(licenseNumber)
-  if (!entered) {
-    return { ok: false, message: 'That number does not match our records' }
+  options?: { tradeLabel?: string | null; approverName?: string | null },
+): Promise<{ ok: true; state: VendorLicenseVerificationState } | { ok: false; message: string }> {
+  const entered = licenseNumber.trim()
+  if (entered.length < 4) {
+    return { ok: false, message: 'Enter a license number with at least 4 characters.' }
   }
 
-  const expected = normalizeLicenseNumber(expectedLicenseNumberForVendor(vendor))
-  if (entered !== expected) {
-    return { ok: false, message: 'That number does not match our records' }
+  if (getAdminEdgeSecret()) {
+    try {
+      const license = await attestExternalVendorLicense({
+        subject: {
+          name: vendor.name,
+          phone: vendor.phone,
+          website: vendor.website,
+          priceLabel: vendor.priceLabel,
+          sources: vendor.sources,
+          tradeLabel: options?.tradeLabel,
+        },
+        licenseNumber: entered,
+        approverName: options?.approverName,
+      })
+      return {
+        ok: true,
+        state: {
+          status: 'manual_verified',
+          licenseNumber: license.licenseNumber,
+          detail: license.detail,
+          boardLabel: license.boardLabel,
+          approverName: options?.approverName?.trim() || 'Admin',
+          expirationDate: license.expirationDate,
+          simulated: license.simulated,
+          checkSource: license.checkSource,
+        },
+      }
+    } catch (err) {
+      const message =
+        err instanceof Error && err.message.trim()
+          ? err.message
+          : 'Could not verify that license number.'
+      return { ok: false, message }
+    }
   }
 
-  return { ok: true }
+  const approver = options?.approverName?.trim() || 'Admin'
+  return {
+    ok: true,
+    state: {
+      status: 'manual_verified',
+      licenseNumber: entered,
+      detail: `${entered} · Verified by ${approver}`,
+      boardLabel: boardLabelForTrade(tradeLabelOrDefault(options?.tradeLabel)),
+      approverName: approver,
+      expirationDate: null,
+      simulated: false,
+      checkSource: 'admin_attestation',
+    },
+  }
 }
 
 export function manualLicenseVerification(
@@ -177,6 +296,8 @@ export function manualLicenseVerification(
     licenseNumber: number,
     approverName: approverName.trim() || 'Admin',
     detail: `${number} · Verified by ${approverName.trim() || 'Admin'}`,
+    simulated: false,
+    checkSource: 'admin_attestation',
   }
 }
 

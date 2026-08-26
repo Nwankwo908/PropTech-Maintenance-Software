@@ -1,5 +1,9 @@
 import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.49.1"
 import {
+  mergeNotificationMatrixCategories,
+  type MatrixCategory,
+} from "./notificationMatrixDefaults.ts"
+import {
   normalizeOpsAlertChannelPreference,
   opsAlertChannelsEnabled,
 } from "./sms/tenantActivationFailure.ts"
@@ -14,22 +18,126 @@ export type EdgeNotificationSettings = {
     quietHoursStart: string
     quietHoursEnd: string
   }
-  categories: Array<{
-    id: string
-    events: Array<{
-      id: string
-      critical?: boolean
-      channels: Record<EdgeNotificationChannel, boolean>
-    }>
-  }>
+  categories: MatrixCategory[]
 }
+
+export type MarketplacePreferenceId = "ulo_vetted_only" | "include_imported"
 
 export type EdgeOperationalSettings = {
   allowAiDispatch: boolean
   requirePhotoEvidence: boolean
   defaultResponseSla: string
+  escalationThreshold: string
+  rentReminderCadence: string
+  preferredLanguage: string
   quietHoursEnabled: boolean
+  quietHoursStart: string
+  quietHoursEnd: string
   timeZone: string
+}
+
+export type LandlordApprovalLimits = {
+  autoApprovalThreshold: number
+  escalationThreshold: number
+}
+
+export function parseMoneyThreshold(value: unknown): number | null {
+  if (typeof value === "number" && Number.isFinite(value) && value > 0) {
+    return Math.round(value * 100) / 100
+  }
+  if (typeof value !== "string") return null
+  const parsed = Number.parseFloat(value.replace(/[^\d.]/g, ""))
+  if (!Number.isFinite(parsed) || parsed <= 0) return null
+  return Math.round(parsed * 100) / 100
+}
+
+export function requiresCompletionPhotoEvidence(
+  settings: Pick<EdgeOperationalSettings, "requirePhotoEvidence">,
+): boolean {
+  return settings.requirePhotoEvidence !== false
+}
+
+export function resolveTicketSlaMinutes(input: {
+  category?: string | null
+  severity?: string | null
+  defaultResponseSla?: string | null
+  overrideMinutes?: number | null
+  /** Category/severity table from shared/maintenance/slaRules.ts */
+  fallbackMinutes?: (category?: string, severity?: string) => number
+}): number {
+  if (
+    input.overrideMinutes != null &&
+    Number.isFinite(input.overrideMinutes) &&
+    input.overrideMinutes > 0
+  ) {
+    return Math.round(input.overrideMinutes)
+  }
+  const fromSettings = defaultResponseSlaMinutes(input.defaultResponseSla)
+  if (fromSettings) return fromSettings
+  if (input.fallbackMinutes) {
+    return input.fallbackMinutes(
+      input.category ?? undefined,
+      input.severity ?? undefined,
+    )
+  }
+  return 240
+}
+
+export async function loadLandlordMarketplacePreference(
+  supabase: SupabaseClient,
+  landlordId: string,
+): Promise<MarketplacePreferenceId> {
+  const { data: onboarding } = await supabase
+    .from("landlord_onboarding")
+    .select("marketplace_preference, account_settings")
+    .eq("landlord_id", landlordId)
+    .maybeSingle()
+
+  const fromColumn = typeof onboarding?.marketplace_preference === "string"
+    ? onboarding.marketplace_preference.trim()
+    : ""
+  if (fromColumn === "ulo_vetted_only" || fromColumn === "include_imported") {
+    return fromColumn
+  }
+
+  const account = (onboarding?.account_settings ?? {}) as Record<string, unknown>
+  const organization = (account.organization ?? {}) as Record<string, unknown>
+  const label = typeof organization.preferredVendorPool === "string"
+    ? organization.preferredVendorPool.trim()
+    : ""
+  if (label === "Ulo-vetted vendors only") return "ulo_vetted_only"
+  return "include_imported"
+}
+
+export async function loadLandlordApprovalLimits(
+  supabase: SupabaseClient,
+  landlordId: string,
+): Promise<LandlordApprovalLimits> {
+  const [{ data: onboarding }, operational] = await Promise.all([
+    supabase
+      .from("landlord_onboarding")
+      .select("auto_approval_threshold, account_settings")
+      .eq("landlord_id", landlordId)
+      .maybeSingle(),
+    loadLandlordOperationalSettings(supabase, landlordId),
+  ])
+
+  const account = (onboarding?.account_settings ?? {}) as Record<string, unknown>
+  const organization = (account.organization ?? {}) as Record<string, unknown>
+
+  const autoFromRow = Number(onboarding?.auto_approval_threshold)
+  const autoFromOrg = parseMoneyThreshold(organization.autoApprovalLimit)
+  const autoApprovalThreshold =
+    (Number.isFinite(autoFromRow) && autoFromRow > 0 ? autoFromRow : null) ??
+    autoFromOrg ??
+    250
+
+  const escalationFromOperational = parseMoneyThreshold(operational.escalationThreshold)
+  const escalationFromOrg = parseMoneyThreshold(organization.escalationThreshold)
+  const escalationThreshold =
+    escalationFromOperational ?? escalationFromOrg ?? 2500
+
+  return { autoApprovalThreshold, escalationThreshold }
 }
 
 const DEFAULT_SETTINGS: EdgeNotificationSettings = {
@@ -40,7 +148,7 @@ const DEFAULT_SETTINGS: EdgeNotificationSettings = {
     quietHoursStart: "10:00 PM",
     quietHoursEnd: "8:00 AM",
   },
-  categories: [],
+  categories: mergeNotificationMatrixCategories(undefined),
 }
 
 export async function loadLandlordOperationalSettings(
@@ -58,15 +166,75 @@ export async function loadLandlordOperationalSettings(
 
   const account = (onboarding?.account_settings ?? {}) as Record<string, unknown>
   const operational = (account.operational ?? {}) as Record<string, unknown>
+  const organization = (account.organization ?? {}) as Record<string, unknown>
+
+  const defaultResponseSla =
+    (typeof operational.defaultResponseSla === "string" &&
+        operational.defaultResponseSla.trim()) ||
+    (typeof organization.defaultResponseSla === "string" &&
+        organization.defaultResponseSla.trim()) ||
+    "4 hours"
+
+  const escalationThreshold =
+    (typeof operational.escalationThreshold === "string" &&
+        operational.escalationThreshold.trim()) ||
+    (typeof organization.escalationThreshold === "string" &&
+        organization.escalationThreshold.trim()) ||
+    "2500"
+
+  const rentReminderCadence =
+    (typeof operational.rentReminderCadence === "string" &&
+        operational.rentReminderCadence.trim()) ||
+    (typeof organization.rentReminderCadence === "string" &&
+        organization.rentReminderCadence.trim()) ||
+    "5, 3, 1 days before"
+
+  const preferredLanguage =
+    (typeof operational.preferredLanguage === "string" &&
+        operational.preferredLanguage.trim()) ||
+    (typeof organization.preferredLanguage === "string" &&
+        organization.preferredLanguage.trim()) ||
+    "English (US)"
+
+  const notifications = account.notifications as EdgeNotificationSettings | undefined
+  const delivery = notifications?.delivery
+
+  const quietHoursStart =
+    (typeof operational.quietHoursStart === "string" &&
+        operational.quietHoursStart.trim()) ||
+    (typeof organization.quietHoursStart === "string" &&
+        organization.quietHoursStart.trim()) ||
+    (typeof delivery?.quietHoursStart === "string" && delivery.quietHoursStart.trim()) ||
+    "10:00 PM"
+
+  const quietHoursEnd =
+    (typeof operational.quietHoursEnd === "string" &&
+        operational.quietHoursEnd.trim()) ||
+    (typeof organization.quietHoursEnd === "string" &&
+        organization.quietHoursEnd.trim()) ||
+    (typeof delivery?.quietHoursEnd === "string" && delivery.quietHoursEnd.trim()) ||
+    "8:00 AM"
 
   return {
-    allowAiDispatch: operational.allowAiDispatch !== false,
-    requirePhotoEvidence: operational.requirePhotoEvidence !== false,
-    defaultResponseSla:
-      typeof operational.defaultResponseSla === "string"
-        ? operational.defaultResponseSla
-        : "4 hours",
-    quietHoursEnabled: operational.quietHoursEnabled !== false,
+    allowAiDispatch: typeof operational.allowAiDispatch === "boolean"
+      ? operational.allowAiDispatch
+      : typeof organization.allowAiDispatch === "boolean"
+        ? organization.allowAiDispatch
+        : true,
+    requirePhotoEvidence: typeof operational.requirePhotoEvidence === "boolean"
+      ? operational.requirePhotoEvidence
+      : typeof organization.requirePhotoEvidence === "boolean"
+        ? organization.requirePhotoEvidence
+        : true,
+    defaultResponseSla,
+    escalationThreshold,
+    rentReminderCadence,
+    preferredLanguage,
+    quietHoursEnabled: typeof operational.quietHoursEnabled === "boolean"
+      ? operational.quietHoursEnabled
+      : organization.quietHours !== false,
+    quietHoursStart,
+    quietHoursEnd,
     timeZone:
       typeof landlord?.time_zone === "string" && landlord.time_zone.trim()
         ? landlord.time_zone.trim()
@@ -85,10 +253,23 @@ export async function loadLandlordNotificationSettings(
     .maybeSingle()
 
   const account = (onboarding?.account_settings ?? {}) as Record<string, unknown>
+  const operational = (account.operational ?? {}) as Record<string, unknown>
   const stored = account.notifications as EdgeNotificationSettings | undefined
   const base = stored?.delivery
-    ? { ...DEFAULT_SETTINGS, ...stored, delivery: { ...DEFAULT_SETTINGS.delivery, ...stored.delivery } }
+    ? {
+      ...DEFAULT_SETTINGS,
+      ...stored,
+      delivery: { ...DEFAULT_SETTINGS.delivery, ...stored.delivery },
+      categories: mergeNotificationMatrixCategories(stored.categories as MatrixCategory[] | undefined),
+    }
     : DEFAULT_SETTINGS
+
+  const quietHoursStart =
+    (typeof operational.quietHoursStart === "string" && operational.quietHoursStart.trim()) ||
+    base.delivery.quietHoursStart
+  const quietHoursEnd =
+    (typeof operational.quietHoursEnd === "string" && operational.quietHoursEnd.trim()) ||
+    base.delivery.quietHoursEnd
 
   const channel = normalizeOpsAlertChannelPreference(onboarding?.notification_channel)
   const enabled = opsAlertChannelsEnabled(channel)
@@ -106,6 +287,8 @@ export async function loadLandlordNotificationSettings(
       ...base.delivery,
       primaryChannel: primary,
       fallbackChannel: primary === "sms" ? "email" : "sms",
+      quietHoursStart,
+      quietHoursEnd,
     },
   }
 }
@@ -181,13 +364,22 @@ export function resolveLandlordNotificationDelivery(input: {
     if (event && event.channels[channel] === false) return
     if (!channels.includes(channel)) channels.push(channel)
   }
-  add(delivery.primaryChannel)
-  if (delivery.autoFallback && delivery.fallbackChannel !== delivery.primaryChannel) {
-    add(delivery.fallbackChannel)
+
+  if (event) {
+    if (event.channels.email) add("email")
+    if (event.channels.sms) add("sms")
+    if (event.channels.activity_feed) add("activity_feed")
+  } else {
+    add(delivery.primaryChannel)
+    if (delivery.autoFallback && delivery.fallbackChannel !== delivery.primaryChannel) {
+      add(delivery.fallbackChannel)
+    }
   }
+
   if (channels.length === 0 && critical) {
     if (!event || event.channels.email !== false) channels.push("email")
     if (!event || event.channels.sms !== false) channels.push("sms")
+    if (!event || event.channels.activity_feed !== false) channels.push("activity_feed")
   }
   if (channels.length === 0) return { allowed: false, channels: [], reason: "no_channels" }
 

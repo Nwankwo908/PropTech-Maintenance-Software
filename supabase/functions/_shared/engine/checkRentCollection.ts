@@ -1,8 +1,8 @@
 import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.49.1"
 import { logGraphEvent } from "../graph/logGraphEvent.ts"
+import { loadLandlordOperationalSettings } from "../landlordNotificationPrefs.ts"
 import {
   currentBillingPeriod,
-  isRentDueDateReached,
   rentDueDateIso,
 } from "./templates/rentCollection.ts"
 import type { RentCollectionClassification } from "./rentCollectionClassify.ts"
@@ -10,6 +10,10 @@ import {
   fetchWorkflowTemplateConfig,
   rentCollectionTimingFromConfig,
 } from "./templateConfig.ts"
+import {
+  parseRentReminderCadenceDays,
+  shouldRunRentCollectionCron,
+} from "./rentCollectionPolicy.ts"
 import { runRentCollectionCronViaEngine } from "./rentCollectionEngine.ts"
 
 export type RentDueResidentRow = {
@@ -116,10 +120,15 @@ export async function checkRentCollection(
     rentDueDay: params.rentDueDay,
     latePaymentGraceDays: params.latePaymentGraceDays,
   })
+  const operational = await loadLandlordOperationalSettings(supabase, params.landlordId)
+  const cadenceDays = parseRentReminderCadenceDays(operational.rentReminderCadence)
 
   const billingPeriod = currentBillingPeriod()
   const rentDueDate = rentDueDateIso(timing.rentDueDay)
-  const rentDueWindow = isRentDueDateReached(timing.rentDueDay)
+  const rentDueWindow = shouldRunRentCollectionCron(
+    timing.rentDueDay,
+    cadenceDays,
+  )
 
   await logGraphEvent(supabase, {
     landlord_id: params.landlordId,
@@ -133,6 +142,9 @@ export async function checkRentCollection(
       rent_due_date: rentDueDate,
       rent_due_window: rentDueWindow,
       late_payment_grace_days: timing.latePaymentGraceDays,
+      rent_reminder_cadence: operational.rentReminderCadence,
+      rent_reminder_days: cadenceDays,
+      preferred_language: operational.preferredLanguage,
       source: "check-rent-collection",
     },
   })

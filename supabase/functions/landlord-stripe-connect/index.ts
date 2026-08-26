@@ -2,7 +2,8 @@
  * Landlord Stripe Express Connect for rent payouts (onboarding).
  *
  * Actions:
- * - create_connect_account_link
+ * - create_account_session (embedded Connect onboarding)
+ * - create_connect_account_link (hosted fallback)
  * - refresh_connect_status
  * - status (read flags only)
  *
@@ -16,6 +17,7 @@ import { logGraphEvent } from "../_shared/graph/logGraphEvent.ts"
 import { recordLandlordStripeConnectReadyIfTransition } from "../_shared/paymentActivityEvents.ts"
 import {
   createConnectAccountLink,
+  createConnectAccountSession,
   createExpressConnectAccount,
   isStripeConfigured,
   isStripeConnectReady,
@@ -137,15 +139,17 @@ serve(async (req) => {
     )
   }
 
-  if (action === "create_connect_account_link") {
-    const base = resolveConnectAppBaseUrl({
-      returnOrigin:
-        typeof body.returnOrigin === "string" ? body.returnOrigin : undefined,
-      requestOrigin: req.headers.get("origin"),
-    })
-    const originCheck = assertConnectReturnOriginForStripe(base)
-    if (!originCheck.ok) {
-      return jsonResponse({ error: originCheck.error }, 400)
+  if (action === "create_account_session" || action === "create_connect_account_link") {
+    if (action === "create_connect_account_link") {
+      const base = resolveConnectAppBaseUrl({
+        returnOrigin:
+          typeof body.returnOrigin === "string" ? body.returnOrigin : undefined,
+        requestOrigin: req.headers.get("origin"),
+      })
+      const originCheck = assertConnectReturnOriginForStripe(base)
+      if (!originCheck.ok) {
+        return jsonResponse({ error: originCheck.error }, 400)
+      }
     }
 
     let accountId =
@@ -190,17 +194,6 @@ serve(async (req) => {
       })
     }
 
-    const returnUrl = `${base}/admin/onboarding?connect=return`
-    const refreshUrl = `${base}/admin/onboarding?connect=refresh`
-    const link = await createConnectAccountLink({
-      accountId,
-      refreshUrl,
-      returnUrl,
-    })
-    if (!link.ok) {
-      return jsonResponse({ error: link.error }, 502)
-    }
-
     const { data: fresh } = await supabase
       .from("landlords")
       .select(
@@ -212,10 +205,39 @@ serve(async (req) => {
     const methods = await loadPayoutMethods(
       fresh?.stripe_connect_account_id ?? accountId,
     )
+    const snapshot = payoutSnapshot(fresh ?? landlord, methods)
+
+    if (action === "create_account_session") {
+      const sessionCreated = await createConnectAccountSession({ accountId })
+      if (!sessionCreated.ok) {
+        return jsonResponse({ error: sessionCreated.error }, 502)
+      }
+      return jsonResponse({
+        ok: true,
+        clientSecret: sessionCreated.clientSecret,
+        ...snapshot,
+      })
+    }
+
+    const base = resolveConnectAppBaseUrl({
+      returnOrigin:
+        typeof body.returnOrigin === "string" ? body.returnOrigin : undefined,
+      requestOrigin: req.headers.get("origin"),
+    })
+    const returnUrl = `${base}/admin/onboarding?connect=return`
+    const refreshUrl = `${base}/admin/onboarding?connect=refresh`
+    const link = await createConnectAccountLink({
+      accountId,
+      refreshUrl,
+      returnUrl,
+    })
+    if (!link.ok) {
+      return jsonResponse({ error: link.error }, 502)
+    }
     return jsonResponse({
       ok: true,
       url: link.url,
-      ...payoutSnapshot(fresh ?? landlord, methods),
+      ...snapshot,
     })
   }
 

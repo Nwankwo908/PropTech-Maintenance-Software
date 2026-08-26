@@ -4,6 +4,7 @@
 import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.49.1"
 import { sendResendEmail } from "../delivery.ts"
 import { notifyLandlordNeedsAttention } from "../landlordAttentionNotify.ts"
+import { loadLandlordDisplayName } from "../landlordDisplayName.ts"
 import { logGraphEvent } from "../graph/logGraphEvent.ts"
 import {
   findOrCreateConversation,
@@ -84,19 +85,6 @@ function vendorLabel(row: VerificationContactRow): string {
 
 
 
-
-async function loadLandlordName(
-  supabase: SupabaseClient,
-  landlordId: string,
-): Promise<string | null> {
-  const { data } = await supabase
-    .from("landlords")
-    .select("name")
-    .eq("id", landlordId)
-    .maybeSingle()
-  const name = typeof data?.name === "string" ? data.name.trim() : ""
-  return name || null
-}
 
 async function loadVerificationForRun(
   supabase: SupabaseClient,
@@ -240,7 +228,7 @@ export async function escalateVendorOnboardingRun(
   }
 
   const verification = await loadVerificationForRun(supabase, run, state)
-  const companyName = await loadLandlordName(supabase, landlordId)
+  const companyName = await loadLandlordDisplayName(supabase, landlordId)
   const needsReview = state.step === "needs_review" ||
     verification?.status === "needs_review"
   const noResponseDays = positiveInt(config.no_response_days, 5)

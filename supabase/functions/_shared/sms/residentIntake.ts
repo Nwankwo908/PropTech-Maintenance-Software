@@ -184,8 +184,8 @@ async function initializeIntake(
   const classification = await classifyMaintenanceRequest({
     rawDescription: initial,
     clarificationAnswers,
-    // Embeddings optional; deterministic + semantic Jaccard keep SMS/web parity in tests.
-    skipEmbeddings: true,
+    // Use embeddings in production when OpenAI is configured; Jaccard still runs offline/tests.
+    skipEmbeddings: !Deno.env.get("OPENAI_API_KEY")?.trim(),
   })
 
   const inferred = pipelineTradeToIssueType(

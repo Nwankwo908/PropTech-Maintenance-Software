@@ -54,4 +54,6 @@ export type ExternalDiscoverySnapshot = {
   review_count: number | null
   price_label: string | null
   rank_score: number | null
+  /** License/COI check snapshot from Find External Vendor (optional). */
+  compliance?: Record<string, unknown>
 }

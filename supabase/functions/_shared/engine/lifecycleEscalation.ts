@@ -3,6 +3,7 @@
  */
 import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.49.1"
 import { notifyLandlordNeedsAttention } from "../landlordAttentionNotify.ts"
+import { loadLandlordDisplayName } from "../landlordDisplayName.ts"
 import { logGraphEvent } from "../graph/logGraphEvent.ts"
 import { sendInboundAutoReply } from "../sms/inboundReply.ts"
 import {
@@ -61,19 +62,6 @@ function daysSince(iso: string, now = new Date()): number {
   const start = new Date(iso)
   if (Number.isNaN(start.getTime())) return 0
   return (now.getTime() - start.getTime()) / (24 * 60 * 60 * 1000)
-}
-
-async function loadLandlordName(
-  supabase: SupabaseClient,
-  landlordId: string,
-): Promise<string | null> {
-  const { data } = await supabase
-    .from("landlords")
-    .select("name")
-    .eq("id", landlordId)
-    .maybeSingle()
-  const name = typeof data?.name === "string" ? data.name.trim() : ""
-  return name || null
 }
 
 async function loadResident(
@@ -167,7 +155,7 @@ export async function escalateLifecycleRun(
   const startedDays = daysSince(anchor)
   const alreadyReminded = Boolean(state.reminder_sent_at)
 
-  const companyName = await loadLandlordName(supabase, landlordId)
+  const companyName = await loadLandlordDisplayName(supabase, landlordId)
   const resident = await loadResident(supabase, run.resident_id)
   const phone = resident?.phone?.trim()
 

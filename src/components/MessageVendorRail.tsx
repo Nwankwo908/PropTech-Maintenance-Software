@@ -1,4 +1,4 @@
-import { useEffect, useId, useState } from 'react'
+import { useEffect, useId, useRef, useState } from 'react'
 import {
   ADMIN_RIGHT_RAIL_OVERLAY_HOST,
   ADMIN_RIGHT_RAIL_SCRIM,
@@ -47,8 +47,10 @@ type MessageVendorRailProps = {
   open: boolean
   brief: VendorNegotiationBrief | null
   onClose: () => void
-  onSend?: (ticketId: string, message: string) => void
+  onSend?: (ticketId: string, message: string) => void | Promise<void>
   sending?: boolean
+  error?: string | null
+  threadLoading?: boolean
 }
 
 /** Vendor negotiation chat rail (Figma property detail — Message Vendor). */
@@ -58,10 +60,14 @@ export function MessageVendorRail({
   onClose,
   onSend,
   sending = false,
+  error = null,
+  threadLoading = false,
 }: MessageVendorRailProps) {
   const titleId = useId()
   const [selectedReplyIndex, setSelectedReplyIndex] = useState(0)
   const [draft, setDraft] = useState('')
+  const seededForTicketRef = useRef<string | null>(null)
+  const transcriptEndRef = useRef<HTMLDivElement | null>(null)
 
   useEffect(() => {
     if (!open) return
@@ -73,10 +79,20 @@ export function MessageVendorRail({
   }, [open, onClose])
 
   useEffect(() => {
-    if (!open || !brief) return
+    if (!open || !brief) {
+      seededForTicketRef.current = null
+      return
+    }
+    if (seededForTicketRef.current === brief.ticketId) return
+    seededForTicketRef.current = brief.ticketId
     setSelectedReplyIndex(0)
     setDraft(brief.suggestedReplies[0] ?? '')
   }, [open, brief])
+
+  useEffect(() => {
+    if (!open) return
+    transcriptEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' })
+  }, [open, brief?.messages.length, brief?.ticketId])
 
   if (!open || !brief) return null
 
@@ -85,11 +101,18 @@ export function MessageVendorRail({
     setDraft(brief!.suggestedReplies[index] ?? '')
   }
 
-  function handleSend() {
+  async function handleSend() {
     const message = draft.trim()
-    if (!message || !brief) return
-    onSend?.(brief.ticketId, message)
+    if (!message || !brief || !brief.canSend || sending) return
+    try {
+      await onSend?.(brief.ticketId, message)
+      setDraft('')
+    } catch {
+      // Parent surfaces the error; keep the draft for retry.
+    }
   }
+
+  const sendDisabled = sending || !draft.trim() || !brief.canSend
 
   return (
     <div className={ADMIN_RIGHT_RAIL_OVERLAY_HOST}>
@@ -110,9 +133,11 @@ export function MessageVendorRail({
                 <h2 id={titleId} className="text-[16px] font-semibold leading-6 text-[#0a0a0a]">
                   {brief.vendorName}
                 </h2>
-                <span className="rounded-full bg-[#fff4f0] px-2.5 py-0.5 text-[10px] font-semibold uppercase tracking-[0.06em] text-[#b52a00]">
-                  Quote {formatQuoteBadge(brief.quoteAmount)}
-                </span>
+                {brief.quoteAmount > 0 ? (
+                  <span className="rounded-full bg-[#fff4f0] px-2.5 py-0.5 text-[10px] font-semibold uppercase tracking-[0.06em] text-[#b52a00]">
+                    Quote {formatQuoteBadge(brief.quoteAmount)}
+                  </span>
+                ) : null}
               </div>
               <p className="mt-0.5 text-[12px] leading-4 text-[#6a7282]">{brief.contextLine}</p>
             </div>
@@ -135,67 +160,111 @@ export function MessageVendorRail({
             </p>
           </div>
 
-          <div className="mt-3 grid grid-cols-3 gap-2">
-            <div className="rounded-[8px] border border-[#e5e7eb] bg-white px-3 py-2.5">
-              <p className="text-[10px] leading-4 text-[#9ca3af]">Market median</p>
-              <p className="mt-1 text-[15px] font-semibold tabular-nums text-[#0a0a0a]">
-                {formatEmergencyCurrency(brief.marketMedian)}
-              </p>
-            </div>
-            <div className="rounded-[8px] border border-[#e5e7eb] bg-white px-3 py-2.5">
-              <p className="text-[10px] leading-4 text-[#9ca3af]">Your target</p>
-              <p className="mt-1 text-[15px] font-semibold tabular-nums text-[#008236]">
-                {formatEmergencyCurrency(brief.targetPrice)}
-              </p>
-            </div>
-            <div className="rounded-[8px] border border-[#e5e7eb] bg-white px-3 py-2.5">
-              <p className="text-[10px] leading-4 text-[#9ca3af]">Walk-away</p>
-              <p className="mt-1 text-[15px] font-semibold tabular-nums text-[#0a0a0a]">
-                {formatEmergencyCurrency(brief.walkAwayPrice)}
-              </p>
-            </div>
-          </div>
-
-          <p className="mt-3 flex items-start gap-1.5 text-[12px] leading-4 text-[#6a7282]">
-            <TrendDownIcon />
-            <span>{brief.leverageSummary}</span>
-          </p>
-
-          <div className="mt-5 space-y-4">
-            {brief.messages.map((message) =>
-              message.sender === 'vendor' ? (
-                <div key={message.id} className="flex items-start gap-2">
-                  <div className="flex size-7 shrink-0 items-center justify-center rounded-full bg-[#101828] text-[10px] font-semibold text-white">
-                    {brief.vendorInitials}
-                  </div>
-                  <div className="min-w-0 max-w-[85%]">
-                    <div className="rounded-[10px] rounded-tl-sm bg-[#f3f4f6] px-3 py-2.5 text-[13px] leading-5 text-[#364153]">
-                      {message.body}
-                    </div>
-                    <p className="mt-1 text-[11px] text-[#9ca3af]">{message.timeLabel}</p>
-                  </div>
+          {brief.quoteAmount > 0 ? (
+            <>
+              <div className="mt-3 grid grid-cols-3 gap-2">
+                <div className="rounded-[8px] border border-[#e5e7eb] bg-white px-3 py-2.5">
+                  <p className="text-[10px] leading-4 text-[#9ca3af]">Market median</p>
+                  <p className="mt-1 text-[15px] font-semibold tabular-nums text-[#0a0a0a]">
+                    {formatEmergencyCurrency(brief.marketMedian)}
+                  </p>
                 </div>
-              ) : (
-                <div key={message.id} className="flex items-start gap-2">
-                  <SparkleIcon className="mt-1 size-4 shrink-0 text-[#7c3aed]" />
-                  <div className="min-w-0 max-w-[90%]">
-                    <div className="rounded-[10px] border border-[#ddd6fe] bg-[#f5f3ff] px-3 py-2.5">
-                      {message.aiLabel ? (
-                        <p className="text-[10px] font-semibold uppercase tracking-[0.06em] text-[#7c3aed]">
-                          {message.aiLabel}
-                        </p>
+                <div className="rounded-[8px] border border-[#e5e7eb] bg-white px-3 py-2.5">
+                  <p className="text-[10px] leading-4 text-[#9ca3af]">Your target</p>
+                  <p className="mt-1 text-[15px] font-semibold tabular-nums text-[#008236]">
+                    {formatEmergencyCurrency(brief.targetPrice)}
+                  </p>
+                </div>
+                <div className="rounded-[8px] border border-[#e5e7eb] bg-white px-3 py-2.5">
+                  <p className="text-[10px] leading-4 text-[#9ca3af]">Walk-away</p>
+                  <p className="mt-1 text-[15px] font-semibold tabular-nums text-[#0a0a0a]">
+                    {formatEmergencyCurrency(brief.walkAwayPrice)}
+                  </p>
+                </div>
+              </div>
+              <p className="mt-3 flex items-start gap-1.5 text-[12px] leading-4 text-[#6a7282]">
+                <TrendDownIcon />
+                <span>{brief.leverageSummary}</span>
+              </p>
+            </>
+          ) : (
+            <p className="mt-3 text-[12px] leading-4 text-[#6a7282]">{brief.leverageSummary}</p>
+          )}
+
+          {threadLoading ? (
+            <p className="mt-5 text-[13px] leading-5 text-[#6a7282]">Loading vendor thread…</p>
+          ) : (
+            <div className="mt-5 space-y-4">
+              {brief.messages.map((message) => {
+                if (message.sender === 'vendor') {
+                  return (
+                    <div key={message.id} className="flex items-start gap-2">
+                      <div className="flex size-7 shrink-0 items-center justify-center rounded-full bg-[#101828] text-[10px] font-semibold text-white">
+                        {brief.vendorInitials}
+                      </div>
+                      <div className="min-w-0 max-w-[85%]">
+                        <div className="rounded-[10px] rounded-tl-sm bg-[#f3f4f6] px-3 py-2.5 text-[13px] leading-5 text-[#364153]">
+                          {message.body}
+                        </div>
+                        {message.timeLabel ? (
+                          <p className="mt-1 text-[11px] text-[#9ca3af]">{message.timeLabel}</p>
+                        ) : null}
+                      </div>
+                    </div>
+                  )
+                }
+
+                if (message.sender === 'landlord') {
+                  return (
+                    <div key={message.id} className="flex justify-end">
+                      <div className="min-w-0 max-w-[85%]">
+                        <div className="rounded-[10px] rounded-tr-sm bg-[#101828] px-3 py-2.5 text-[13px] leading-5 text-white">
+                          {message.body}
+                        </div>
+                        {message.timeLabel ? (
+                          <p className="mt-1 text-right text-[11px] text-[#9ca3af]">
+                            {message.timeLabel}
+                          </p>
+                        ) : null}
+                      </div>
+                    </div>
+                  )
+                }
+
+                return (
+                  <div key={message.id} className="flex items-start gap-2">
+                    <SparkleIcon className="mt-1 size-4 shrink-0 text-[#7c3aed]" />
+                    <div className="min-w-0 max-w-[90%]">
+                      <div className="rounded-[10px] border border-[#ddd6fe] bg-[#f5f3ff] px-3 py-2.5">
+                        {message.aiLabel ? (
+                          <p className="text-[10px] font-semibold uppercase tracking-[0.06em] text-[#7c3aed]">
+                            {message.aiLabel}
+                          </p>
+                        ) : null}
+                        <p className="mt-1 text-[13px] leading-5 text-[#4c1d95]">{message.body}</p>
+                      </div>
+                      {message.timeLabel ? (
+                        <p className="mt-1 text-[11px] text-[#9ca3af]">{message.timeLabel}</p>
                       ) : null}
-                      <p className="mt-1 text-[13px] leading-5 text-[#4c1d95]">{message.body}</p>
                     </div>
-                    <p className="mt-1 text-[11px] text-[#9ca3af]">{message.timeLabel}</p>
                   </div>
-                </div>
-              ),
-            )}
-          </div>
+                )
+              })}
+              <div ref={transcriptEndRef} />
+            </div>
+          )}
         </div>
 
         <footer className="shrink-0 border-t border-[#e5e7eb] px-5 py-4">
+          {error ? (
+            <p className="mb-3 rounded-[8px] border border-[#fecaca] bg-[#fef2f2] px-3 py-2 text-[12px] leading-4 text-[#991b1b]">
+              {error}
+            </p>
+          ) : null}
+          {brief.sendBlockedReason ? (
+            <p className="mb-3 text-[12px] leading-4 text-[#9a3412]">{brief.sendBlockedReason}</p>
+          ) : null}
+
           <div className="flex items-center gap-1.5">
             <SparkleIcon className="size-3 text-[#7c3aed]" />
             <p className="text-[10px] font-semibold uppercase tracking-[0.08em] text-[#9ca3af]">
@@ -207,9 +276,10 @@ export function MessageVendorRail({
               <button
                 key={reply}
                 type="button"
+                disabled={!brief.canSend}
                 onClick={() => handleSelectReply(index)}
                 className={[
-                  'rounded-full border px-3 py-2 text-left text-[12px] leading-4 transition-colors',
+                  'rounded-full border px-3 py-2 text-left text-[12px] leading-4 transition-colors disabled:opacity-50',
                   selectedReplyIndex === index
                     ? 'border-[#d1d5dc] bg-[#f9fafb] text-[#364153]'
                     : 'border-[#e9d5ff] bg-white text-[#6b21a8] hover:bg-[#faf5ff]',
@@ -225,13 +295,16 @@ export function MessageVendorRail({
               value={draft}
               onChange={(event) => setDraft(event.target.value)}
               rows={2}
-              placeholder="Type your counter-offer…"
-              className="min-h-[44px] flex-1 resize-none rounded-[10px] border border-[#e5e7eb] bg-white px-3 py-2.5 text-[13px] leading-5 text-[#0a0a0a] outline-none placeholder:text-[#9ca3af] focus:border-[#d1d5dc] focus:ring-1 focus:ring-[#d1d5dc]"
+              disabled={!brief.canSend}
+              placeholder={
+                brief.canSend ? 'Type a message to the vendor…' : 'Assign a vendor to message…'
+              }
+              className="min-h-[44px] flex-1 resize-none rounded-[10px] border border-[#e5e7eb] bg-white px-3 py-2.5 text-[13px] leading-5 text-[#0a0a0a] outline-none placeholder:text-[#9ca3af] focus:border-[#d1d5dc] focus:ring-1 focus:ring-[#d1d5dc] disabled:bg-[#f9fafb]"
             />
             <button
               type="button"
-              disabled={sending || !draft.trim()}
-              onClick={handleSend}
+              disabled={sendDisabled}
+              onClick={() => void handleSend()}
               className="inline-flex h-[44px] shrink-0 items-center gap-1.5 rounded-[10px] bg-[#101828] px-4 text-[13px] font-medium text-white outline-none hover:bg-[#1e2939] focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50"
             >
               <SendIcon />

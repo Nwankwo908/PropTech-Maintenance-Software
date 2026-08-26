@@ -129,7 +129,7 @@ async function pendingFromCluster(
   const classified = await classifyMaintenanceRequest({
     rawDescription: cluster.text,
     skipLlm: true,
-    skipEmbeddings: true,
+    skipEmbeddings: !Deno.env.get("OPENAI_API_KEY")?.trim(),
   })
   const trade =
     classified.vendorTrade !== "other" ? classified.vendorTrade : cluster.trade
@@ -200,7 +200,7 @@ export async function detectMultipleMaintenanceIssues(
       const classified = await classifyMaintenanceRequest({
         rawDescription: slice,
         skipLlm: true,
-        skipEmbeddings: true,
+        skipEmbeddings: !Deno.env.get("OPENAI_API_KEY")?.trim(),
       })
       const issueType =
         pipelineTradeToIssueType(classified.issueType, classified.vendorTrade) ||

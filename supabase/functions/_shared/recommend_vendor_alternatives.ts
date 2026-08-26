@@ -4,7 +4,14 @@
  */
 import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.49.1"
 import { vendorTradeMatchesFlexible } from "./vendor_trades.ts"
-import { isVendorMatchableForDispatch } from "./vendor_assignment.ts"
+import {
+  isVendorMatchableForDispatch,
+  vendorAllowedForMarketplace,
+} from "./vendor_assignment.ts"
+import {
+  loadLandlordMarketplacePreference,
+  type MarketplacePreferenceId,
+} from "./landlordNotificationPrefs.ts"
 
 export type AlternativeVendor = { id: string; name: string }
 
@@ -29,13 +36,19 @@ export async function loadAlternativeVendorCandidates(
     issue_category: string | null
     landlord_id?: string | null
   },
+  opts?: { marketplacePreference?: MarketplacePreferenceId },
 ): Promise<AlternativeVendor[]> {
+  const landlordId = ticket.landlord_id?.trim() || null
+  const marketplacePreference =
+    opts?.marketplacePreference ??
+    (landlordId
+      ? await loadLandlordMarketplacePreference(supabase, landlordId)
+      : "include_imported")
+
   let query = supabase
     .from("vendors")
-    .select("id, name, category, active, roster_status, landlord_id")
+    .select("id, name, category, active, roster_status, landlord_id, onboarded_from_external")
     .eq("active", true)
-
-  const landlordId = ticket.landlord_id?.trim() || null
   if (landlordId) {
     query = query.eq("landlord_id", landlordId)
   }
@@ -97,6 +110,16 @@ export async function loadAlternativeVendorCandidates(
         availability: verif?.availability ?? null,
         rosterStatus: typeof v.roster_status === "string" ? v.roster_status : null,
       })
+    ) {
+      continue
+    }
+    if (
+      !vendorAllowedForMarketplace(
+        {
+          onboarded_from_external: v.onboarded_from_external === true,
+        },
+        marketplacePreference,
+      )
     ) {
       continue
     }

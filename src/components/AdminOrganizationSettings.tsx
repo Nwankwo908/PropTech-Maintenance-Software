@@ -1,9 +1,12 @@
-import { useEffect, useId, useMemo, useState, type ReactNode } from 'react'
+import { useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react'
 import { Link } from 'react-router-dom'
 import {
   COMMUNICATION_STYLE_OPTIONS,
   type CommunicationStyle,
 } from '@/lib/communicationStyle'
+import { QUIET_HOURS_TIME_OPTIONS } from '@/lib/onboardingApprovalRules'
+import { useLandlordWorkspace } from '@/context/LandlordWorkspaceContext'
+import { getActiveLandlordId } from '@/lib/activeLandlord'
 import {
   DEFAULT_ORGANIZATION_SETTINGS,
   loadOrganizationComplianceDocuments,
@@ -11,12 +14,20 @@ import {
   loadOrganizationWorkspaceSummary,
   openOrganizationDocumentPreview,
   ORGANIZATION_BRAND_ACCENTS,
+  RENT_REMINDER_CADENCE_OPTIONS,
   saveOrganizationSettings,
   type OrganizationDocument,
   type OrganizationDocumentStatus,
   type OrganizationSettingsForm,
   type OrganizationWorkspaceSummary,
 } from '@/lib/organizationSettings'
+import { recordActivityLog } from '@/lib/recordActivityLog'
+import { resolveLandlordDisplayName } from '@/lib/landlordWorkspace'
+import {
+  removeLandlordLogoObject,
+  uploadLandlordLogo,
+} from '@/lib/landlordLogoUpload'
+import { getErrorMessage } from '@/lib/errorMessage'
 
 const inputClass =
   'sa-surface h-10 w-full rounded-[8px] border border-[#e5e7eb] bg-white px-3 text-[14px] tracking-[-0.1504px] text-[#101828] outline-none placeholder:text-[#9ca3af] focus:border-[#155dfc] focus:ring-2 focus:ring-[#155dfc]/20'
@@ -254,6 +265,7 @@ function patchSettings(
 }
 
 export function AdminOrganizationSettings() {
+  const { refresh: refreshWorkspace } = useLandlordWorkspace()
   const [savedSettings, setSavedSettings] = useState<OrganizationSettingsForm>(DEFAULT_ORGANIZATION_SETTINGS)
   const [draft, setDraft] = useState<OrganizationSettingsForm>(DEFAULT_ORGANIZATION_SETTINGS)
   const [workspace, setWorkspace] = useState<OrganizationWorkspaceSummary | null>(null)
@@ -262,6 +274,9 @@ export function AdminOrganizationSettings() {
   const [saving, setSaving] = useState(false)
   const [saveMessage, setSaveMessage] = useState<string | null>(null)
   const [previewError, setPreviewError] = useState<string | null>(null)
+  const [logoBusy, setLogoBusy] = useState(false)
+  const [logoError, setLogoError] = useState<string | null>(null)
+  const logoInputRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
     let cancelled = false
@@ -310,7 +325,19 @@ export function AdminOrganizationSettings() {
     setSaveMessage(null)
     try {
       await saveOrganizationSettings(draft)
-      setSavedSettings(draft)
+      const refreshed = await loadOrganizationSettings()
+      setSavedSettings(refreshed)
+      setDraft(refreshed)
+      await refreshWorkspace()
+      void recordActivityLog({
+        landlordId: getActiveLandlordId(),
+        eventType: 'landlord.organization_settings_updated',
+        source: 'dashboard',
+        actorType: 'landlord',
+        metadata: {
+          message: 'Organization settings updated.',
+        },
+      })
       setSaveMessage('Changes saved.')
     } catch {
       setSaveMessage('Could not save changes. Try again.')
@@ -319,11 +346,42 @@ export function AdminOrganizationSettings() {
     }
   }
 
+  async function handleLogoSelected(file: File | null) {
+    if (!file) return
+    setLogoBusy(true)
+    setLogoError(null)
+    const result = await uploadLandlordLogo(file)
+    setLogoBusy(false)
+    if (!result.ok) {
+      setLogoError(result.error)
+      return
+    }
+    updateDraft({
+      logoStorageRef: result.logoRef,
+      logoUrl: result.displayUrl,
+    })
+  }
+
+  async function handleRemoveLogo() {
+    setLogoBusy(true)
+    setLogoError(null)
+    const previousRef = draft.logoStorageRef
+    updateDraft({ logoStorageRef: '', logoUrl: '' })
+    try {
+      await removeLandlordLogoObject(previousRef)
+    } catch (err) {
+      setLogoError(getErrorMessage(err, 'Could not remove logo file.'))
+    } finally {
+      setLogoBusy(false)
+    }
+  }
+
   const logoInitial =
     draft.displayName.trim().charAt(0).toUpperCase() ||
     draft.contactName.trim().charAt(0).toUpperCase() ||
     draft.legalName.trim().charAt(0).toUpperCase() ||
     'U'
+  const previewDisplayName = resolveLandlordDisplayName(draft) || 'Your company'
 
   return (
     <>
@@ -353,21 +411,59 @@ export function AdminOrganizationSettings() {
               description="Basic details shown to residents and vendors."
             >
               <div className="flex flex-wrap items-center gap-4">
-                <div
-                  className="flex size-16 shrink-0 items-center justify-center rounded-full bg-[#101828] text-[24px] font-semibold text-white"
-                  aria-hidden
-                >
-                  {logoInitial}
-                </div>
-                <div className="flex flex-wrap gap-2">
-                  <button
-                    type="button"
-                    disabled
-                    title="Logo upload coming soon"
-                    className="cursor-not-allowed rounded-[8px] bg-transparent px-3.5 py-2 text-[13px] font-medium tracking-[-0.1504px] text-[#9ca3af]"
+                {draft.logoUrl ? (
+                  <img
+                    src={draft.logoUrl}
+                    alt=""
+                    className="size-16 shrink-0 rounded-full object-cover ring-1 ring-[#e5e7eb]"
+                  />
+                ) : (
+                  <div
+                    className="flex size-16 shrink-0 items-center justify-center rounded-full text-[24px] font-semibold text-white"
+                    style={{ backgroundColor: draft.brandAccent }}
+                    aria-hidden
                   >
-                    Upload logo (coming soon)
-                  </button>
+                    {logoInitial}
+                  </div>
+                )}
+                <div className="flex flex-col gap-2">
+                  <div className="flex flex-wrap gap-2">
+                    <input
+                      ref={logoInputRef}
+                      type="file"
+                      accept="image/png,image/jpeg,image/webp,image/svg+xml"
+                      className="hidden"
+                      onChange={(e) => {
+                        const file = e.target.files?.[0] ?? null
+                        e.target.value = ''
+                        void handleLogoSelected(file)
+                      }}
+                    />
+                    <button
+                      type="button"
+                      disabled={logoBusy}
+                      onClick={() => logoInputRef.current?.click()}
+                      className="sa-press rounded-[8px] border border-[#e5e7eb] bg-white px-3.5 py-2 text-[13px] font-medium tracking-[-0.1504px] text-[#101828] hover:bg-[#f9fafb] disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      {logoBusy ? 'Uploading…' : draft.logoUrl ? 'Replace logo' : 'Upload logo'}
+                    </button>
+                    {draft.logoStorageRef || draft.logoUrl ? (
+                      <button
+                        type="button"
+                        disabled={logoBusy}
+                        onClick={() => void handleRemoveLogo()}
+                        className="sa-press rounded-[8px] bg-transparent px-3.5 py-2 text-[13px] font-medium tracking-[-0.1504px] text-[#b42318] hover:bg-[#fef3f2] disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        Remove
+                      </button>
+                    ) : null}
+                  </div>
+                  <p className="text-[12px] tracking-[-0.1504px] text-[#6a7282]">
+                    PNG, JPG, WebP, or SVG up to 2 MB. Save changes to keep the logo on your account.
+                  </p>
+                  {logoError ? (
+                    <p className="text-[12px] font-medium tracking-[-0.1504px] text-[#b42318]">{logoError}</p>
+                  ) : null}
                 </div>
               </div>
 
@@ -761,17 +857,46 @@ export function AdminOrganizationSettings() {
                 />
               </div>
 
+              {draft.quietHours ? (
+                <div className="mt-4 grid gap-4 sm:grid-cols-2">
+                  <FormField label="Quiet hours start" htmlFor="org-quiet-start">
+                    <SettingsSelect
+                      id="org-quiet-start"
+                      value={draft.quietHoursStart}
+                      onChange={(quietHoursStart) => updateDraft({ quietHoursStart })}
+                      options={QUIET_HOURS_TIME_OPTIONS.map((time) => ({
+                        value: time,
+                        label: time,
+                      }))}
+                    />
+                  </FormField>
+                  <FormField label="Quiet hours end" htmlFor="org-quiet-end">
+                    <SettingsSelect
+                      id="org-quiet-end"
+                      value={draft.quietHoursEnd}
+                      onChange={(quietHoursEnd) => updateDraft({ quietHoursEnd })}
+                      options={QUIET_HOURS_TIME_OPTIONS.map((time) => ({
+                        value: time,
+                        label: time,
+                      }))}
+                    />
+                  </FormField>
+                  <p className="sm:col-span-2 text-[13px] leading-5 tracking-[-0.1504px] text-[#6a7282]">
+                    Non-emergency alerts pause during this window. Emergencies still come through.
+                  </p>
+                </div>
+              ) : null}
+
               <div className="mt-5 grid gap-4 sm:grid-cols-2">
                 <FormField label="Rent reminder cadence" htmlFor="org-rent-cadence">
                   <SettingsSelect
                     id="org-rent-cadence"
                     value={draft.rentReminderCadence}
                     onChange={(rentReminderCadence) => updateDraft({ rentReminderCadence })}
-                    options={[
-                      { value: '2, 5, 1 day before', label: '2, 5, 1 day before' },
-                      { value: '3, 1 day before', label: '3, 1 day before' },
-                      { value: '1 day before', label: '1 day before' },
-                    ]}
+                    options={RENT_REMINDER_CADENCE_OPTIONS.map((option) => ({
+                      value: option.value,
+                      label: option.label,
+                    }))}
                   />
                 </FormField>
                 <FormField label="Preferred language" htmlFor="org-language">
@@ -911,13 +1036,19 @@ export function AdminOrganizationSettings() {
           <aside className="w-full shrink-0 xl:sticky xl:top-6 xl:w-[280px]">
             <div className={sectionCardClass}>
               <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-[#6a7282]">Workspace</p>
-              <div className="mt-3 flex items-center gap-2">
-                <span className="inline-flex rounded-full bg-[#101828] px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.04em] text-white">
-                  {workspace?.planLabel ?? 'Ulo Alpha'}
-                </span>
-              </div>
+
+              <p className="mt-3 text-[15px] font-semibold tracking-[-0.1504px] text-[#101828]">
+                {previewDisplayName}
+              </p>
+              {draft.about.trim() ? (
+                <p className="mt-1 text-[13px] leading-5 tracking-[-0.1504px] text-[#6a7282]">
+                  {draft.about.trim()}
+                </p>
+              ) : null}
 
               <div className="mt-4 divide-y divide-[#eef0f3]">
+                <WorkspaceStat label="Currency" value={draft.currency} />
+                <WorkspaceStat label="Date format" value={draft.dateFormat} />
                 <WorkspaceStat label="Properties" value={workspace?.propertyCount ?? '—'} />
                 <WorkspaceStat label="Active units" value={workspace?.activeUnitCount ?? '—'} />
                 <WorkspaceStat label="Team members" value={workspace?.teamMemberCount ?? '—'} />
@@ -930,7 +1061,8 @@ export function AdminOrganizationSettings() {
                   type="button"
                   disabled={!isDirty || saving}
                   onClick={() => void handleSave()}
-                  className="sa-press h-10 w-full rounded-[10px] bg-[#101828] text-[14px] font-medium tracking-[-0.1504px] text-white hover:bg-[#1f2937] disabled:cursor-not-allowed disabled:opacity-50"
+                  className="sa-press h-10 w-full rounded-[10px] text-[14px] font-medium tracking-[-0.1504px] text-white hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
+                  style={{ backgroundColor: draft.brandAccent }}
                 >
                   {saving ? 'Saving…' : 'Save changes'}
                 </button>

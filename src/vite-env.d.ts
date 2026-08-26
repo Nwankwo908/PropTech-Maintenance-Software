@@ -27,6 +27,11 @@ interface ImportMetaEnv {
   /** Same value as Edge secret ADMIN_REASSIGN_SECRET — do not ship to public clients in production. */
   readonly VITE_ADMIN_REASSIGN_SECRET?: string
   /**
+   * POST send-proxied-message (full URL); uses `VITE_ADMIN_REASSIGN_SECRET`.
+   * If omitted, defaults to `${VITE_SUPABASE_URL}/functions/v1/send-proxied-message`.
+   */
+  readonly VITE_SEND_PROXIED_MESSAGE_URL?: string
+  /**
    * POST recommend-vendor-alternatives (full URL); uses `VITE_ADMIN_REASSIGN_SECRET`.
    * If omitted, URL defaults to `${VITE_SUPABASE_URL}/functions/v1/recommend-vendor-alternatives`.
    */
@@ -36,6 +41,11 @@ interface ImportMetaEnv {
    * If omitted, URL defaults to `${VITE_SUPABASE_URL}/functions/v1/discover-external-vendors`.
    */
   readonly VITE_DISCOVER_EXTERNAL_VENDORS_URL?: string
+  /**
+   * POST verify-external-vendor-compliance (full URL); uses `VITE_ADMIN_REASSIGN_SECRET`.
+   * If omitted, defaults to `${VITE_SUPABASE_URL}/functions/v1/verify-external-vendor-compliance`.
+   */
+  readonly VITE_VERIFY_EXTERNAL_VENDOR_COMPLIANCE_URL?: string
   /**
    * POST reassign-external-vendor (full URL); uses `VITE_ADMIN_REASSIGN_SECRET`.
    * If omitted, defaults to `${VITE_SUPABASE_URL}/functions/v1/reassign-external-vendor`.
@@ -81,6 +91,8 @@ interface ImportMetaEnv {
    * If omitted, defaults to `${VITE_SUPABASE_URL}/functions/v1/invoice-payment-checkout`.
    */
   readonly VITE_INVOICE_PAYMENT_CHECKOUT_URL?: string
+  /** Stripe publishable key (`pk_test_…` / `pk_live_…`) for Connect embedded onboarding. */
+  readonly VITE_STRIPE_PUBLISHABLE_KEY?: string
   /** UUID tenant scope for SMS onboarding (matches Edge secret DEFAULT_LANDLORD_ID). */
   readonly VITE_DEFAULT_LANDLORD_ID?: string
   /**

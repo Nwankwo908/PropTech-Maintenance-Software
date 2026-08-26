@@ -271,6 +271,7 @@ type VendorVerificationBody = {
     | 'startBackgroundCheck'
     | 'backgroundStatus'
     | 'create_connect_account_link'
+    | 'create_account_session'
     | 'refresh_connect_status'
     | 'submit'
   patch?: VendorVerificationPatch
@@ -320,6 +321,7 @@ async function invokeVendorVerification(
   session: VendorVerificationSession
   overall?: 'verified' | 'needs_review'
   url?: string
+  clientSecret?: string
 }> {
   if (!supabase) {
     throw new Error("We can't reach the server right now. Please try again in a moment.")
@@ -347,6 +349,7 @@ async function invokeVendorVerification(
     session?: VendorVerificationSession
     overall?: 'verified' | 'needs_review'
     url?: string
+    clientSecret?: string
     error?: string
   }
   if (!payload?.session) {
@@ -361,6 +364,10 @@ async function invokeVendorVerification(
     session: normalizeSession(payload.session),
     overall: payload.overall,
     url: typeof payload.url === 'string' ? payload.url : undefined,
+    clientSecret:
+      typeof payload.clientSecret === 'string' && payload.clientSecret.trim()
+        ? payload.clientSecret.trim()
+        : undefined,
   }
 }
 
@@ -412,6 +419,19 @@ export function createVendorConnectAccountLink(token: string) {
     action: 'create_connect_account_link',
     ...(returnOrigin ? { returnOrigin } : {}),
   })
+}
+
+/** Account Session client_secret for embedded Connect onboarding. */
+export async function createVendorConnectAccountSession(token: string) {
+  const result = await invokeVendorVerification({
+    token,
+    action: 'create_account_session',
+  })
+  const clientSecret = result.clientSecret?.trim() ?? ''
+  if (!clientSecret) {
+    throw new Error('Could not start payout setup. Please try again.')
+  }
+  return { session: result.session, clientSecret }
 }
 
 /** Sync Connect charges/payouts flags after Stripe return or refresh. */

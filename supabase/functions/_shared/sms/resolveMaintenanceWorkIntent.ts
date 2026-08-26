@@ -66,10 +66,18 @@ const EXISTING_WORK_REF =
 
 /** Declarative problem report — tenant describing something newly broken. */
 const PROBLEM_REPORT =
-  /\b(is|are|was|were|just|still)?\s*(broken|leaking|overflowing|clogged|sparking|sparks|not\s+working|isn'?t\s+working|won'?t\s+(turn|start|cool|heat)|stopped\s+working|flooding|on\s+fire)\b|\b(there'?s|there is|i have|we have|my .+ (is|are|just))\b/i
+  /\b(is|are|was|were|just|still)?\s*(broken|damaged|leaking|overflowing|clogged|sparking|sparks|not\s+working|isn'?t\s+working|won'?t\s+(turn|start|cool|heat|close|open|lock|shut)|stopped\s+working|flooding|on\s+fire)\b|\b(there'?s|there is|i have|we have|my .+ (is|are|just))\b/i
+
+/** Vague “I need a repair” with no object yet — still start intake, don’t hand off. */
+const BARE_REPAIR_REQUEST =
+  /\b((i |we )?(need|want|requesting) (a |some )?(repair|maintenance|fix)|need (it |something )?(fixed|repaired)|something (needs?|is) (a )?fix|please (help|fix|send).{0,40}\brepair)\b/i
 
 const NEW_LOCATION_HINT =
   /\b(now|also|another|kitchen|bathroom|bedroom|living\s*room|basement|hallway|closet)\b/i
+
+export function looksLikeBareRepairRequest(body: string): boolean {
+  return BARE_REPAIR_REQUEST.test(body.trim())
+}
 
 function ticketIssueType(ticket: OpenRequestSummary): IssueType | null {
   return inferIssueTypeFromText(
@@ -92,6 +100,14 @@ function looksLikeProblemReport(body: string): boolean {
   if (looksLikeInquiry(text) && !PROBLEM_REPORT.test(text)) return false
   if (inferIssueTypeFromText(text) && PROBLEM_REPORT.test(text)) return true
   if (inferIssueTypeFromText(text) && !looksLikeInquiry(text) && text.length > 12) {
+    return true
+  }
+  // Damage language without a mapped trade still counts as a problem report.
+  if (
+    !looksLikeInquiry(text) &&
+    /\b(broken|damaged|leaking|sparking|not working|isn'?t working|won'?t (?:turn|start|cool|heat|close|open|lock|shut)|stopped working)\b/i
+      .test(text)
+  ) {
     return true
   }
   return false
@@ -235,7 +251,11 @@ export function resolveMaintenanceWorkIntent(input: {
   // No active work — problem report is new (or recurrence handled upstream via reopen).
   if (open.length === 0) {
     if (looksLikeProblemReturned(body)) return "UPDATE"
-    if (looksLikeProblemReport(body) || inferIssueTypeFromText(body)) {
+    if (
+      looksLikeProblemReport(body) ||
+      inferIssueTypeFromText(body) ||
+      looksLikeBareRepairRequest(body)
+    ) {
       return "NEW_ISSUE"
     }
     if (hasMedia) return "PHOTO_UPDATE"
@@ -291,6 +311,10 @@ export function resolveMaintenanceWorkIntent(input: {
   }
 
   if (looksLikeProblemReport(body) || inferIssueTypeFromText(body)) {
+    return "NEW_ISSUE"
+  }
+
+  if (looksLikeBareRepairRequest(body)) {
     return "NEW_ISSUE"
   }
 

@@ -75,7 +75,6 @@ export const BETA_ACCOMPLISHMENTS = [
 
 export const FUTURE_SUBSCRIPTION_FEATURES = [
   'Choose a subscription plan',
-  'Add payment methods',
   'Download invoices',
   'Manage billing contacts',
   'View billing history',
@@ -84,7 +83,7 @@ export const FUTURE_SUBSCRIPTION_FEATURES = [
 
 export const FUTURE_BILLING_PREVIEW = [
   { id: 'subscriptions', label: 'Subscriptions' },
-  { id: 'payment', label: 'Payment method' },
+  { id: 'payment', label: 'Payment method', ready: true },
   { id: 'invoices', label: 'Invoices' },
   { id: 'history', label: 'Billing history' },
   { id: 'usage', label: 'Usage' },

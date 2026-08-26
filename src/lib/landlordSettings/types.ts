@@ -26,6 +26,29 @@ export type LandlordWorkspaceSettings = {
   currency: string
   dateFormat: string
   brandAccent: string
+  logoUrl?: string
+}
+
+export type ConnectedEmailProvider = 'gmail' | 'outlook' | 'microsoft365'
+
+export type ConnectedEmailSettings = {
+  connected: boolean
+  provider: ConnectedEmailProvider | null
+  email: string
+  connectedAt: string | null
+  paused: boolean
+  automation: Record<string, boolean>
+}
+
+export type BillingPaymentMethod = {
+  brand: string
+  last4: string
+  expMonth: string
+  expYear: string
+}
+
+export type LandlordBillingSettings = {
+  paymentMethod: BillingPaymentMethod | null
 }
 
 export type LandlordSettingsSnapshot = {
@@ -41,6 +64,8 @@ export type LandlordAccountSettingsPayload = {
   notifications?: NotificationSettingsState
   operational?: Partial<LandlordOperationalSettings>
   workspace?: Partial<LandlordWorkspaceSettings>
+  connectedEmail?: ConnectedEmailSettings
+  billing?: LandlordBillingSettings
   version?: number
 }
 
@@ -49,7 +74,7 @@ export const DEFAULT_OPERATIONAL_SETTINGS: LandlordOperationalSettings = {
   defaultResponseSla: '4 hours',
   requirePhotoEvidence: true,
   allowAiDispatch: true,
-  rentReminderCadence: '2, 5, 1 day before',
+  rentReminderCadence: '5, 3, 1 days before',
   preferredLanguage: 'English (US)',
   quietHoursEnabled: true,
   quietHoursStart: '10:00 PM',
@@ -61,6 +86,7 @@ export const DEFAULT_WORKSPACE_SETTINGS: LandlordWorkspaceSettings = {
   currency: 'USD',
   dateFormat: 'MM/DD/YYYY',
   brandAccent: '#101828',
+  logoUrl: '',
 }
 
 export type PersistedProfileFields = {

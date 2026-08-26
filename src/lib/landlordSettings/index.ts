@@ -12,7 +12,7 @@ import {
   notificationTogglesFromChannel,
   persistLandlordAccountProfileFields,
 } from '@/lib/landlordAccountProfile'
-import { normalizeOnboardingApprovalRules } from '@/lib/onboardingApprovalRules'
+import { normalizeOnboardingApprovalRules, normalizeQuietHoursTime } from '@/lib/onboardingApprovalRules'
 import {
   DEFAULT_NOTIFICATION_SETTINGS,
   normalizeNotificationSettings,
@@ -20,10 +20,13 @@ import {
 } from '@/lib/notificationSettings'
 import {
   DEFAULT_ORGANIZATION_SETTINGS,
+  normalizeRentReminderCadence,
   type OrganizationSettingsForm,
   type OrganizationWorkspaceSummary,
 } from '@/lib/organizationSettings'
 import { supabase } from '@/lib/supabase'
+import { formatLandlordDate } from '@/lib/landlordWorkspace'
+import { resolveLogoDisplayUrl } from '@/lib/landlordLogoUpload'
 import {
   DEFAULT_OPERATIONAL_SETTINGS,
   DEFAULT_WORKSPACE_SETTINGS,
@@ -43,9 +46,7 @@ function asTrimmed(value: unknown): string {
 
 function formatCreatedLabel(value: string | null | undefined): string {
   if (!value) return '—'
-  const date = new Date(value)
-  if (Number.isNaN(date.getTime())) return '—'
-  return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+  return formatLandlordDate(value)
 }
 
 function workspaceIdFromLandlord(landlordId: string): string {
@@ -90,7 +91,7 @@ function readLegacyNotificationLocal(): Partial<NotificationSettingsState> | nul
   }
 }
 
-function mergeOrganizationForm(input: {
+export function mergeOrganizationForm(input: {
   persisted?: Partial<OrganizationSettingsForm>
   legacyLocal?: Partial<OrganizationSettingsForm> | null
   landlordRow: Record<string, unknown> | null
@@ -109,14 +110,8 @@ function mergeOrganizationForm(input: {
     notification_channel: input.onboardingRow?.notification_channel,
   })
 
-  const operational = {
-    ...DEFAULT_OPERATIONAL_SETTINGS,
-    ...(input.accountSettings.operational ?? {}),
-  }
-  const workspace = {
-    ...DEFAULT_WORKSPACE_SETTINGS,
-    ...(input.accountSettings.workspace ?? {}),
-  }
+  const savedOperational = input.accountSettings.operational ?? {}
+  const savedWorkspace = input.accountSettings.workspace ?? {}
   const address = parseRegisteredAddress(input.landlordRow?.registered_address)
 
   let next: OrganizationSettingsForm = {
@@ -128,9 +123,14 @@ function mergeOrganizationForm(input: {
 
   const legalName = asTrimmed(input.landlordRow?.name) || asTrimmed(account.companyName)
   if (legalName) next.legalName = legalName
-  const displayName = asTrimmed(input.landlordRow?.display_name) || next.displayName
-  if (displayName) next.displayName = displayName
-  else if (legalName && !next.displayName.trim()) next.displayName = legalName
+
+  if (input.landlordRow) {
+    const displayFromDb = asTrimmed(input.landlordRow.display_name)
+    next.displayName = displayFromDb || legalName || next.displayName
+    next.about = asTrimmed(input.landlordRow.about)
+  } else if (legalName && !next.displayName.trim()) {
+    next.displayName = legalName
+  }
 
   const contactName = asTrimmed(input.landlordRow?.contact_name) || asTrimmed(account.contactName)
   if (contactName) next.contactName = contactName
@@ -142,17 +142,30 @@ function mergeOrganizationForm(input: {
   if (backupContactName) next.backupContactName = backupContactName
   const backupContactPhone = asTrimmed(account.backupContactPhone)
   if (backupContactPhone) next.backupContactPhone = backupContactPhone
-  const about = asTrimmed(input.landlordRow?.about)
-  if (about) next.about = about
 
   next.street = address.street || next.street
   next.city = address.city || next.city
   next.state = address.state || next.state
   next.zip = address.zip || next.zip
-  next.timeZone = asTrimmed(input.landlordRow?.time_zone) || workspace.timeZone || next.timeZone
-  next.currency = workspace.currency || next.currency
-  next.dateFormat = workspace.dateFormat || next.dateFormat
-  next.brandAccent = workspace.brandAccent || next.brandAccent
+  next.timeZone =
+    asTrimmed(input.landlordRow?.time_zone) ||
+    asTrimmed(savedWorkspace.timeZone) ||
+    next.timeZone
+
+  if (asTrimmed(savedWorkspace.currency)) next.currency = asTrimmed(savedWorkspace.currency)
+  if (asTrimmed(savedWorkspace.dateFormat)) next.dateFormat = asTrimmed(savedWorkspace.dateFormat)
+  if (asTrimmed(savedWorkspace.brandAccent)) next.brandAccent = asTrimmed(savedWorkspace.brandAccent)
+
+  const logoFromDb = asTrimmed(input.landlordRow?.logo_url)
+  if (logoFromDb) {
+    next.logoStorageRef = logoFromDb
+  } else if (asTrimmed(next.logoStorageRef)) {
+    // keep persisted org ref
+  } else {
+    next.logoStorageRef = ''
+  }
+  // Display URL resolved asynchronously in loadLandlordSettings
+  next.logoUrl = asTrimmed(next.logoUrl)
 
   next.communicationStyle = normalizeCommunicationStyle(
     asTrimmed(input.landlordRow?.communication_style) ||
@@ -179,14 +192,55 @@ function mergeOrganizationForm(input: {
     ),
   )
 
-  next.escalationThreshold = operational.escalationThreshold || next.escalationThreshold
-  next.defaultResponseSla = operational.defaultResponseSla || next.defaultResponseSla
-  next.requirePhotoEvidence = operational.requirePhotoEvidence ?? next.requirePhotoEvidence
-  next.allowAiDispatch = operational.allowAiDispatch ?? next.allowAiDispatch
-  next.rentReminderCadence = operational.rentReminderCadence || next.rentReminderCadence
-  next.preferredLanguage = operational.preferredLanguage || next.preferredLanguage
-  next.quietHours = operational.quietHoursEnabled ?? next.quietHours
-  next.pushNotifications = false
+  if (asTrimmed(savedOperational.escalationThreshold)) {
+    next.escalationThreshold = asTrimmed(savedOperational.escalationThreshold)
+  }
+  if (asTrimmed(savedOperational.defaultResponseSla)) {
+    next.defaultResponseSla = asTrimmed(savedOperational.defaultResponseSla)
+  }
+  if (typeof savedOperational.requirePhotoEvidence === 'boolean') {
+    next.requirePhotoEvidence = savedOperational.requirePhotoEvidence
+  }
+  if (typeof savedOperational.allowAiDispatch === 'boolean') {
+    next.allowAiDispatch = savedOperational.allowAiDispatch
+  }
+  if (asTrimmed(savedOperational.rentReminderCadence)) {
+    next.rentReminderCadence = normalizeRentReminderCadence(savedOperational.rentReminderCadence)
+  }
+  if (asTrimmed(savedOperational.preferredLanguage)) {
+    next.preferredLanguage = asTrimmed(savedOperational.preferredLanguage)
+  }
+  if (typeof savedOperational.quietHoursEnabled === 'boolean') {
+    next.quietHours = savedOperational.quietHoursEnabled
+  } else if (typeof draft.approvalRules === 'object' && draft.approvalRules != null) {
+    const quiet = (draft.approvalRules as Record<string, unknown>).quietHoursEnabled
+    if (typeof quiet === 'boolean') next.quietHours = quiet
+  }
+
+  const notifDelivery = input.accountSettings.notifications?.delivery
+  const quietStart =
+    asTrimmed(savedOperational.quietHoursStart) ||
+    asTrimmed(notifDelivery?.quietHoursStart) ||
+    asTrimmed(approvalRules.quietHoursStart)
+  if (quietStart) {
+    next.quietHoursStart = normalizeQuietHoursTime(quietStart)
+  }
+  const quietEnd =
+    asTrimmed(savedOperational.quietHoursEnd) ||
+    asTrimmed(notifDelivery?.quietHoursEnd) ||
+    asTrimmed(approvalRules.quietHoursEnd)
+  if (quietEnd) {
+    next.quietHoursEnd = normalizeQuietHoursTime(quietEnd, '8:00 AM')
+  }
+
+  const pushFromNotifications = input.accountSettings.notifications?.delivery?.pushEnabled
+  if (typeof pushFromNotifications === 'boolean') {
+    next.pushNotifications = pushFromNotifications
+  } else if (typeof input.accountSettings.organization?.pushNotifications === 'boolean') {
+    next.pushNotifications = input.accountSettings.organization.pushNotifications
+  } else if (typeof input.persisted?.pushNotifications === 'boolean') {
+    next.pushNotifications = input.persisted.pushNotifications
+  }
 
   return normalizeOrganizationSettings(next)
 }
@@ -194,6 +248,9 @@ function mergeOrganizationForm(input: {
 export function normalizeOrganizationSettings(settings: OrganizationSettingsForm): OrganizationSettingsForm {
   return {
     ...settings,
+    rentReminderCadence: normalizeRentReminderCadence(settings.rentReminderCadence),
+    quietHoursStart: normalizeQuietHoursTime(settings.quietHoursStart),
+    quietHoursEnd: normalizeQuietHoursTime(settings.quietHoursEnd, '8:00 AM'),
     communicationStyle: normalizeCommunicationStyle(settings.communicationStyle),
   }
 }
@@ -202,6 +259,7 @@ function mergeNotificationSettings(input: {
   accountSettings: LandlordAccountSettingsPayload
   legacyLocal?: Partial<NotificationSettingsState> | null
   notificationChannel: string | null
+  pushNotifications?: boolean
 }): NotificationSettingsState {
   const base = normalizeNotificationSettings({
     ...DEFAULT_NOTIFICATION_SETTINGS,
@@ -209,8 +267,25 @@ function mergeNotificationSettings(input: {
     ...(input.accountSettings.notifications ?? {}),
   })
 
+  const pushEnabled =
+    typeof input.accountSettings.notifications?.delivery?.pushEnabled === 'boolean'
+      ? input.accountSettings.notifications.delivery.pushEnabled
+      : typeof input.pushNotifications === 'boolean'
+        ? input.pushNotifications
+        : base.delivery.pushEnabled
+
   const channel = asTrimmed(input.notificationChannel).toLowerCase()
-  if (!channel) return base
+  if (!channel) {
+    return {
+      ...base,
+      delivery: {
+        ...base.delivery,
+        pushEnabled,
+        quietHoursStart: input.accountSettings.operational?.quietHoursStart ?? base.delivery.quietHoursStart,
+        quietHoursEnd: input.accountSettings.operational?.quietHoursEnd ?? base.delivery.quietHoursEnd,
+      },
+    }
+  }
 
   const primary =
     channel === 'both'
@@ -219,7 +294,9 @@ function mergeNotificationSettings(input: {
         ? 'activity_feed'
         : channel === 'sms'
           ? 'sms'
-          : 'email'
+          : channel === 'push'
+            ? 'push'
+            : 'email'
 
   return {
     ...base,
@@ -228,7 +305,7 @@ function mergeNotificationSettings(input: {
       primaryChannel: primary as NotificationSettingsState['delivery']['primaryChannel'],
       fallbackChannel:
         primary === 'sms' ? 'email' : primary === 'email' ? 'sms' : base.delivery.fallbackChannel,
-      pushEnabled: false,
+      pushEnabled,
       quietHoursStart: input.accountSettings.operational?.quietHoursStart ?? base.delivery.quietHoursStart,
       quietHoursEnd: input.accountSettings.operational?.quietHoursEnd ?? base.delivery.quietHoursEnd,
     },
@@ -267,10 +344,10 @@ export async function loadLandlordSettings(
 
   const draftState = (onboarding?.draft_state ?? {}) as Record<string, unknown>
   const accountSettings = (onboarding?.account_settings ?? {}) as LandlordAccountSettingsPayload
-  const persistedOrg =
-    (draftState.organizationSettings as Partial<OrganizationSettingsForm> | undefined) ??
-    accountSettings.organization ??
-    {}
+  const persistedOrg = {
+    ...(draftState.organizationSettings as Partial<OrganizationSettingsForm> | undefined),
+    ...(accountSettings.organization ?? {}),
+  }
 
   const organization = mergeOrganizationForm({
     persisted: persistedOrg,
@@ -281,11 +358,21 @@ export async function loadLandlordSettings(
     draftState,
   })
 
+  if (organization.logoStorageRef) {
+    organization.logoUrl = await resolveLogoDisplayUrl(organization.logoStorageRef)
+  } else {
+    organization.logoUrl = ''
+  }
+
   const notifications = mergeNotificationSettings({
     accountSettings,
     legacyLocal: readLegacyNotificationLocal(),
     notificationChannel: asTrimmed(onboarding?.notification_channel),
+    pushNotifications: organization.pushNotifications,
   })
+
+  // Keep org toggle and notification delivery in sync after merge
+  organization.pushNotifications = notifications.delivery.pushEnabled
 
   return {
     landlordId,
@@ -319,8 +406,8 @@ export async function saveLandlordOrganizationSettings(
     rentReminderCadence: settings.rentReminderCadence,
     preferredLanguage: settings.preferredLanguage,
     quietHoursEnabled: settings.quietHours,
-    quietHoursStart: DEFAULT_OPERATIONAL_SETTINGS.quietHoursStart,
-    quietHoursEnd: DEFAULT_OPERATIONAL_SETTINGS.quietHoursEnd,
+    quietHoursStart: normalizeQuietHoursTime(settings.quietHoursStart),
+    quietHoursEnd: normalizeQuietHoursTime(settings.quietHoursEnd, '8:00 AM'),
   }
 
   const workspace = {
@@ -346,6 +433,10 @@ export async function saveLandlordOrganizationSettings(
   const draft = (existing?.draft_state ?? {}) as Record<string, unknown>
   const priorAccount = (existing?.account_settings ?? {}) as LandlordAccountSettingsPayload
   const accountSetup = (draft.accountSetup ?? {}) as Record<string, unknown>
+  const priorNotifications = normalizeNotificationSettings({
+    ...DEFAULT_NOTIFICATION_SETTINGS,
+    ...(priorAccount.notifications ?? {}),
+  })
 
   const accountSettings: LandlordAccountSettingsPayload = {
     ...priorAccount,
@@ -356,6 +447,15 @@ export async function saveLandlordOrganizationSettings(
       ...operational,
     },
     workspace,
+    notifications: {
+      ...priorNotifications,
+      delivery: {
+        ...priorNotifications.delivery,
+        quietHoursStart: operational.quietHoursStart,
+        quietHoursEnd: operational.quietHoursEnd,
+        pushEnabled: settings.pushNotifications,
+      },
+    },
   }
 
   const upsertRow: Record<string, unknown> = {
@@ -383,6 +483,8 @@ export async function saveLandlordOrganizationSettings(
         notificationChannel,
         communicationStyle,
         quietHoursEnabled: settings.quietHours,
+        quietHoursStart: operational.quietHoursStart,
+        quietHoursEnd: operational.quietHoursEnd,
       },
     },
     updated_at: new Date().toISOString(),
@@ -413,16 +515,18 @@ export async function saveLandlordOrganizationSettings(
     registered_address: registeredAddress,
     time_zone: settings.timeZone.trim() || DEFAULT_WORKSPACE_SETTINGS.timeZone,
     communication_style: communicationStyle,
+    logo_url: settings.logoStorageRef.trim() || null,
   }
 
   let { error: landlordError } = await supabase.from('landlords').update(landlordUpdate).eq('id', landlordId)
 
-  if (landlordError && /display_name|registered_address|about|time_zone|column .* does not exist/i.test(landlordError.message)) {
+  if (landlordError && /display_name|registered_address|about|time_zone|logo_url|column .* does not exist/i.test(landlordError.message)) {
     const {
       display_name: _d,
       about: _a,
       registered_address: _r,
       time_zone: _t,
+      logo_url: _l,
       ...legacyLandlord
     } = landlordUpdate
     const retry = await supabase.from('landlords').update(legacyLandlord).eq('id', landlordId)
@@ -466,6 +570,8 @@ export async function saveLandlordNotificationSettings(
 ): Promise<{ ok: boolean; error?: string }> {
   if (!supabase) return { ok: false, error: 'Database unavailable.' }
 
+  const normalized = normalizeNotificationSettings(state)
+
   const { data: existing } = await supabase
     .from('landlord_onboarding')
     .select('draft_state, account_settings')
@@ -474,16 +580,20 @@ export async function saveLandlordNotificationSettings(
 
   const draft = (existing?.draft_state ?? {}) as Record<string, unknown>
   const priorAccount = (existing?.account_settings ?? {}) as LandlordAccountSettingsPayload
-  const notificationChannel = state.delivery.primaryChannel
+  const notificationChannel = normalized.delivery.primaryChannel
 
   const accountSettings: LandlordAccountSettingsPayload = {
     ...priorAccount,
     version: 1,
-    notifications: state,
+    notifications: normalized,
     operational: {
       ...(priorAccount.operational ?? DEFAULT_OPERATIONAL_SETTINGS),
-      quietHoursStart: state.delivery.quietHoursStart,
-      quietHoursEnd: state.delivery.quietHoursEnd,
+      quietHoursStart: normalized.delivery.quietHoursStart,
+      quietHoursEnd: normalized.delivery.quietHoursEnd,
+    },
+    organization: {
+      ...(priorAccount.organization ?? {}),
+      pushNotifications: normalized.delivery.pushEnabled,
     },
   }
 

@@ -133,7 +133,6 @@ export const NOTIFICATION_CHANNEL_OPTIONS: {
   },
 ]
 
-/** Quiet-hours window options shown during account setup. */
 export const QUIET_HOURS_TIME_OPTIONS = [
   '12:00 AM',
   '1:00 AM',
@@ -160,6 +159,21 @@ export const QUIET_HOURS_TIME_OPTIONS = [
   '10:00 PM',
   '11:00 PM',
 ] as const
+
+export function normalizeQuietHoursTime(
+  value: string | null | undefined,
+  fallback: (typeof QUIET_HOURS_TIME_OPTIONS)[number] = '10:00 PM',
+): (typeof QUIET_HOURS_TIME_OPTIONS)[number] {
+  const trimmed = typeof value === 'string' ? value.trim() : ''
+  if (!trimmed) return fallback
+  if ((QUIET_HOURS_TIME_OPTIONS as readonly string[]).includes(trimmed)) {
+    return trimmed as (typeof QUIET_HOURS_TIME_OPTIONS)[number]
+  }
+  const match = QUIET_HOURS_TIME_OPTIONS.find(
+    (option) => option.toLowerCase() === trimmed.toLowerCase(),
+  )
+  return match ?? fallback
+}
 
 export function defaultOnboardingApprovalRules(): OnboardingApprovalRules {
   return {

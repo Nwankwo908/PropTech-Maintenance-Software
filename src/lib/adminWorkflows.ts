@@ -1,4 +1,5 @@
 import { getActiveLandlordId } from '@/lib/activeLandlord'
+import { formatLandlordCurrency, formatLandlordDate } from '@/lib/landlordWorkspace'
 import { supabase } from '@/lib/supabase'
 import {
   isOnboardingImportLeaseRenewalRun,
@@ -554,23 +555,11 @@ export function formatRentClassificationLabel(
 }
 
 export function formatCurrency(amount: number | null | undefined): string {
-  if (amount == null || !Number.isFinite(amount)) return '—'
-  return new Intl.NumberFormat(undefined, {
-    style: 'currency',
-    currency: 'USD',
-    maximumFractionDigits: 2,
-  }).format(amount)
+  return formatLandlordCurrency(amount)
 }
 
 export function formatRentDueDate(iso: string | null | undefined): string {
-  if (!iso?.trim()) return '—'
-  const date = new Date(`${iso.trim().slice(0, 10)}T12:00:00`)
-  if (Number.isNaN(date.getTime())) return iso
-  return new Intl.DateTimeFormat(undefined, {
-    month: 'short',
-    day: 'numeric',
-    year: 'numeric',
-  }).format(date)
+  return formatLandlordDate(iso)
 }
 
 function buildTimelineEvent(event: WorkflowEventRecord): AdminWorkflowTimelineEvent {

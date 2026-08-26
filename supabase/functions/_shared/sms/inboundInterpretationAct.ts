@@ -51,7 +51,9 @@ import {
   isActiveMaintenanceTicketStatus,
   isClosedOrCancelledStatus,
   isHistoricalMaintenanceTicketStatus,
+  looksLikeMaintenanceRelatedMessage,
 } from "./maintenanceTicketContext.ts"
+import { looksLikeBareRepairRequest } from "./resolveMaintenanceWorkIntent.ts"
 
 const TICKET_LOOKUP_STATUSES = [
   "unassigned",
@@ -2125,6 +2127,19 @@ export async function tryHandleInterpretedInbound(
         interpretation.intent === "maintenance_new" ||
         interpretation.intent == null
       ) {
+        // Don't hand off clear repair asks to landlord — start/continue intake.
+        if (
+          looksLikeBareRepairRequest(ctx.inbound.body) ||
+          looksLikeMaintenanceRelatedMessage(ctx.inbound.body)
+        ) {
+          interpretation.intent = "maintenance_new"
+          interpretation.extractedSlots = {
+            ...interpretation.extractedSlots,
+            contextual_action: "new_issue",
+          }
+          interpretation.needsClarification = false
+          return { handled: false, interpretation }
+        }
         interpretation.intent = "other"
       }
       interpretation.needsClarification = false

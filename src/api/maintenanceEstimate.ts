@@ -9,6 +9,16 @@ export type EstimatePending = {
   status: string
 }
 
+/** Pending landlord decision (Communication / emergency Review rail). */
+export type PendingEstimateDecision = {
+  estimateId: string
+  actionToken: string
+  partsCost: number
+  laborCost: number
+  totalCost: number
+  notes: string | null
+}
+
 export type EstimateJobContext = {
   ticketId: string
   workOrderRef: string
@@ -87,6 +97,38 @@ export async function submitEstimate(
       typeof data.message === 'string'
         ? data.message
         : 'Estimate sent for approval.',
+  }
+}
+
+/** Load the open estimate awaiting landlord approval for a work order. */
+export async function fetchPendingEstimateForTicket(
+  ticketId: string,
+): Promise<PendingEstimateDecision | null> {
+  if (!supabase || !ticketId.trim()) return null
+
+  const { data, error } = await supabase
+    .from('maintenance_estimates')
+    .select(
+      'id, landlord_action_token, parts_cost, labor_cost, total_cost, notes, status',
+    )
+    .eq('maintenance_request_id', ticketId.trim())
+    .eq('status', 'pending_approval')
+    .maybeSingle()
+
+  if (error || !data) return null
+
+  const estimateId = typeof data.id === 'string' ? data.id : ''
+  const actionToken =
+    typeof data.landlord_action_token === 'string' ? data.landlord_action_token : ''
+  if (!estimateId || !actionToken) return null
+
+  return {
+    estimateId,
+    actionToken,
+    partsCost: Number(data.parts_cost) || 0,
+    laborCost: Number(data.labor_cost) || 0,
+    totalCost: Number(data.total_cost) || 0,
+    notes: typeof data.notes === 'string' ? data.notes : null,
   }
 }
 

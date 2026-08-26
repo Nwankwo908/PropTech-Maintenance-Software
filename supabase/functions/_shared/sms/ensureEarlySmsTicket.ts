@@ -201,6 +201,9 @@ export async function ensureEarlySmsMaintenanceTicket(
       workflow_run_id: runId,
       workflow_template_id: "maintenance_intake",
       metadata: {
+        message: `Draft maintenance request started from text${
+          unit ? ` for ${unit}` : ""
+        }${issueCategory ? ` (${issueCategory})` : ""}.`,
         unit,
         issue_category: issueCategory,
         intake_step: params.intake.step,

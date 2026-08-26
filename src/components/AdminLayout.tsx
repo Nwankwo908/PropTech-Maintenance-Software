@@ -4,6 +4,7 @@ import { AdminUloNotificationsBell } from '@/components/AdminUloNotificationsBel
 import { AdminUniversalSearch } from '@/components/AdminUniversalSearch'
 import { AskUloProvider, useAskUlo } from '@/components/AskUloContext'
 import { AskUloPanel } from '@/components/AskUloPanel'
+import { LandlordWorkspaceProvider, useLandlordWorkspace } from '@/context/LandlordWorkspaceContext'
 import uloLogo from '@/assets/landing/ulo-logo.png'
 import { AdminSidebarContent } from '@/components/AdminSidebar'
 import { IconClose, IconMenu } from '@/components/landing/LandingIcons'
@@ -128,7 +129,9 @@ function AdminHeaderActions({
 
 function AdminTopBar() {
   const { open, openAskUlo } = useAskUlo()
+  const { displayName: workspaceDisplayName } = useLandlordWorkspace()
   const [resettingOnboarding, setResettingOnboarding] = useState(false)
+  const workspaceLabel = workspaceDisplayName.trim() || getActiveLandlordLabel()
 
   async function handleResetOnboarding() {
     if (resettingOnboarding) return
@@ -200,7 +203,7 @@ function AdminTopBar() {
           </>
         ) : (
           <span className="shrink-0 rounded-full bg-[#f3f4f6] px-3 py-1 text-[12px] font-semibold uppercase tracking-[0.06em] text-[#4b5563]">
-            {getActiveLandlordLabel()}
+            {workspaceLabel}
           </span>
         )}
         {getSessionLandlordId() === null ? (
@@ -282,7 +285,8 @@ export function AdminLayout() {
 
   return (
     <AskUloProvider>
-      <div className="flex h-dvh max-h-dvh w-full overflow-hidden bg-[#f9fafb] font-[family-name:var(--font-admin)]">
+      <LandlordWorkspaceProvider>
+        <div className="flex h-dvh max-h-dvh w-full overflow-hidden bg-[#f9fafb] font-[family-name:var(--font-admin)]">
         <aside
           className={[
             'relative z-20 hidden h-dvh max-h-dvh shrink-0 border-r border-[#e5e7eb] bg-white transition-[width] duration-200 ease-out lg:flex lg:flex-col',
@@ -349,6 +353,7 @@ export function AdminLayout() {
           <AdminMainContent />
         </div>
       </div>
+      </LandlordWorkspaceProvider>
     </AskUloProvider>
   )
 }

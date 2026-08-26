@@ -3,6 +3,7 @@ import { useParams } from 'react-router-dom'
 import { VENDOR_TRADE_OPTIONS } from '@/lib/vendorTrades'
 import {
   createVendorConnectAccountLink,
+  createVendorConnectAccountSession,
   fileToBase64,
   refreshVendorBackgroundStatus,
   refreshVendorConnectStatus,
@@ -32,6 +33,8 @@ import {
   type TaxEntityType,
 } from '@/lib/vendorW9Tax'
 import { getErrorMessage } from '@/lib/errorMessage'
+import { hasStripeConnectEmbedded } from '@/lib/stripePublishableKey'
+import { StripeConnectEmbeddedOnboarding } from '@/components/StripeConnectEmbeddedOnboarding'
 
 const STEPS = [
   { id: 'business', label: 'Business Info' },
@@ -244,6 +247,7 @@ export function VendorIntakePortal() {
   const [taxEntityType, setTaxEntityType] = useState<TaxEntityType | ''>('')
   const [tin, setTin] = useState('')
   const [tinSavedLast4, setTinSavedLast4] = useState<string | null>(null)
+  const [showConnectOnboarding, setShowConnectOnboarding] = useState(false)
 
   const initializedRef = useRef(false)
   // Documents already on the record when the vendor opened the link. We only
@@ -291,6 +295,50 @@ export function VendorIntakePortal() {
       setCompleted(true)
     }
   }, [])
+
+  const fetchVendorConnectClientSecret = useCallback(async () => {
+    const { session: s, clientSecret } = await createVendorConnectAccountSession(token)
+    hydrate(s)
+    return clientSecret
+  }, [hydrate, token])
+
+  async function handleVendorConnectExit() {
+    setBusy(true)
+    setActionError(null)
+    try {
+      const { session: s } = await refreshVendorConnectStatus(token)
+      hydrate(s)
+      if (s.stripeConnectReady) {
+        setShowConnectOnboarding(false)
+      }
+    } catch (err) {
+      setActionError(getErrorMessage(err, 'Could not refresh payout status.'))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function handleOpenVendorConnect() {
+    setActionError(null)
+    if (hasStripeConnectEmbedded()) {
+      setShowConnectOnboarding(true)
+      return
+    }
+    setBusy(true)
+    try {
+      const { session: s, url } = await createVendorConnectAccountLink(token)
+      hydrate(s)
+      if (url) {
+        window.location.assign(url)
+        return
+      }
+      setActionError('Could not open payout setup. Try again.')
+    } catch (err) {
+      setActionError(getErrorMessage(err, 'Could not open payout setup. Try again.'))
+    } finally {
+      setBusy(false)
+    }
+  }
 
   useEffect(() => {
     let active = true
@@ -811,25 +859,7 @@ export function VendorIntakePortal() {
                     <button
                       type="button"
                       disabled={busy}
-                      onClick={async () => {
-                        setBusy(true)
-                        setActionError(null)
-                        try {
-                          const { session: s, url } = await createVendorConnectAccountLink(token)
-                          hydrate(s)
-                          if (url) {
-                            window.location.assign(url)
-                            return
-                          }
-                          setActionError('Could not open payout setup. Try again.')
-                        } catch (err) {
-                          setActionError(
-                            getErrorMessage(err, 'Could not open payout setup. Try again.'),
-                          )
-                        } finally {
-                          setBusy(false)
-                        }
-                      }}
+                      onClick={() => void handleOpenVendorConnect()}
                       className="rounded-[10px] border border-[#e5e7eb] bg-white px-4 py-2.5 text-[14px] font-medium text-[#101828] transition-colors hover:bg-[#f3f4f6] disabled:opacity-50"
                     >
                       Update payout account
@@ -840,30 +870,28 @@ export function VendorIntakePortal() {
                 <button
                   type="button"
                   disabled={busy}
-                  onClick={async () => {
-                    setBusy(true)
-                    setActionError(null)
-                    try {
-                      const { session: s, url } = await createVendorConnectAccountLink(token)
-                      hydrate(s)
-                      if (url) {
-                        window.location.assign(url)
-                        return
-                      }
-                      setActionError('Could not open payout setup. Try again.')
-                    } catch (err) {
-                      setActionError(
-                        getErrorMessage(err, 'Could not open payout setup. Try again.'),
-                      )
-                    } finally {
-                      setBusy(false)
-                    }
-                  }}
+                  onClick={() => void handleOpenVendorConnect()}
                   className="mt-3 w-full rounded-[10px] bg-[#186179] px-4 py-2.5 text-[14px] font-semibold text-white transition-colors hover:bg-[#145066] disabled:opacity-50"
                 >
                   Set up payouts
                 </button>
               )}
+              {showConnectOnboarding && hasStripeConnectEmbedded() ? (
+                <>
+                  <StripeConnectEmbeddedOnboarding
+                    fetchClientSecret={fetchVendorConnectClientSecret}
+                    onExit={() => void handleVendorConnectExit()}
+                  />
+                  <button
+                    type="button"
+                    disabled={busy}
+                    onClick={() => setShowConnectOnboarding(false)}
+                    className="mt-2 w-full text-center text-[13px] font-medium text-[#186179] hover:underline disabled:opacity-50"
+                  >
+                    Close payout setup
+                  </button>
+                </>
+              ) : null}
             </div>
 
             <div>

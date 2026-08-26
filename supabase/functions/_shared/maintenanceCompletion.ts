@@ -13,6 +13,10 @@ import { formatWorkOrderRef } from "./vendor_outreach_copy.ts"
 import { requestVendorFeedback } from "./vendor_feedback.ts"
 import { ensureInvoiceFromApprovedEstimate } from "./maintenanceSpend.ts"
 import { uloAppOrigin, uloAppUrl } from "./uloAppUrl.ts"
+import {
+  loadLandlordOperationalSettings,
+  requiresCompletionPhotoEvidence,
+} from "./landlordNotificationPrefs.ts"
 
 const MAX_PHOTOS = 12
 const MAX_IMAGE_BYTES = 12 * 1024 * 1024
@@ -94,7 +98,7 @@ export async function loadCompletionContextForJobToken(
   const { data: ticket, error } = await supabase
     .from("maintenance_requests")
     .select(
-      "id, unit, description, assigned_vendor_id, vendor_work_status, completion_photo_paths, vendor_action_token",
+      "id, unit, description, assigned_vendor_id, vendor_work_status, completion_photo_paths, vendor_action_token, landlord_id",
     )
     .eq("vendor_action_token", jobToken)
     .maybeSingle()
@@ -122,10 +126,18 @@ export async function loadCompletionContextForJobToken(
 
   const status = String(ticket.vendor_work_status ?? "")
   const alreadyCompleted = status === "completed"
+  const landlordId =
+    typeof ticket.landlord_id === "string" ? ticket.landlord_id.trim() : ""
+  const operational = landlordId
+    ? await loadLandlordOperationalSettings(supabase, landlordId)
+    : null
+  const photoRequired = operational
+    ? requiresCompletionPhotoEvidence(operational)
+    : true
   const canComplete =
     !alreadyCompleted &&
     (status === "accepted" || status === "in_progress") &&
-    paths.length >= 1
+    (!photoRequired || paths.length >= 1)
 
   return {
     ok: true,
@@ -450,7 +462,16 @@ export async function completeJobWithPhotos(
       )
     : []
 
-  if (paths.length < 1) {
+  const landlordId =
+    typeof ticket.landlord_id === "string" ? ticket.landlord_id.trim() : ""
+  const operational = landlordId
+    ? await loadLandlordOperationalSettings(supabase, landlordId)
+    : null
+  const photoRequired = operational
+    ? requiresCompletionPhotoEvidence(operational)
+    : true
+
+  if (photoRequired && paths.length < 1) {
     return {
       ok: false,
       error: "Upload at least one before/after photo or video before closing the job",

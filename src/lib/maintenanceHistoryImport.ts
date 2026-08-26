@@ -337,7 +337,73 @@ export function createMaintenanceHistoryDocument(file: File): MaintenanceHistory
   }
 }
 
-/** Deterministic mock AI extract — stand-in until document AI is wired. */
+
+export type MaintenanceHistoryPlainJob = {
+  vendorName?: string
+  vendorPhone?: string
+  vendorEmail?: string
+  tradeCategory?: string
+  serviceDate?: string
+  invoiceNumber?: string
+  totalAmount?: string
+  laborCost?: string
+  partsCost?: string
+  issueType?: string
+  workPerformed?: string
+  unitLabel?: string
+  assetInvolved?: string
+  paymentStatus?: string
+  warrantyInfo?: string
+  notes?: string
+  confidence?: number
+}
+
+/** Build review records from real CSV / Edge extract jobs (no sample filler). */
+export function recordsFromPlainJobs(
+  doc: MaintenanceHistoryDocument,
+  building: string,
+  jobs: MaintenanceHistoryPlainJob[],
+): MaintenanceHistoryRecord[] {
+  const property = building.trim() || 'Property'
+  return jobs.map((job, i) => {
+    const confidence = Math.min(
+      1,
+      Math.max(0, typeof job.confidence === 'number' ? job.confidence : 0.85),
+    )
+    const f = (value: string, floor = confidence) =>
+      field((value ?? '').trim(), value?.trim() ? floor : 0, value?.trim() || null)
+    return {
+      id: `mhr-${doc.id}-${i}`,
+      sourceDocumentId: doc.id,
+      sourceFileName: doc.fileName,
+      vendorName: f(job.vendorName ?? ''),
+      vendorPhone: f(job.vendorPhone ?? '', Math.min(confidence, 0.9)),
+      vendorEmail: f(job.vendorEmail ?? '', Math.min(confidence, 0.88)),
+      tradeCategory: field(
+        normalizeTradeCategory(job.tradeCategory ?? 'Other'),
+        job.tradeCategory?.trim() ? confidence : 0.4,
+        job.tradeCategory ?? null,
+      ),
+      serviceDate: f(job.serviceDate ?? ''),
+      invoiceNumber: f(job.invoiceNumber ?? '', Math.min(confidence, 0.9)),
+      totalAmount: f(job.totalAmount ?? ''),
+      laborCost: f(job.laborCost ?? '', Math.min(confidence, 0.85)),
+      partsCost: f(job.partsCost ?? '', Math.min(confidence, 0.85)),
+      issueType: f(job.issueType ?? ''),
+      workPerformed: f(job.workPerformed ?? ''),
+      propertyName: f(property, 0.7),
+      buildingName: f(building.trim(), 0.72),
+      unitLabel: f(job.unitLabel ?? ''),
+      assetInvolved: f(job.assetInvolved ?? ''),
+      paymentStatus: f(job.paymentStatus ?? ''),
+      warrantyInfo: f(job.warrantyInfo ?? ''),
+      notes: f(job.notes ?? '', Math.min(confidence, 0.8)),
+      approved: false,
+    }
+  })
+}
+
+/** @deprecated Demo-only mock extract. Prefer recordsFromPlainJobs + real file extract. */
 export function simulateMaintenanceHistoryExtract(
   doc: MaintenanceHistoryDocument,
   building: string,

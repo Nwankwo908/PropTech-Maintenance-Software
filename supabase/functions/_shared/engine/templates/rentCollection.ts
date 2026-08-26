@@ -48,6 +48,17 @@ import type {
   WorkflowExecutionContext,
   WorkflowTemplate,
 } from "../types.ts"
+import { loadLandlordOperationalSettings } from "../../landlordNotificationPrefs.ts"
+import {
+  buildRentCollectionEmailBody,
+  buildRentCollectionPrompt,
+} from "../rentCollectionOutreachCopy.ts"
+import {
+  parseRentReminderCadenceDays,
+  rentReminderSlotForToday,
+  resolvePreferredLanguage,
+  type PreferredLanguageId,
+} from "../rentCollectionPolicy.ts"
 
 export type RentCollectionStep =
   | "initiated"
@@ -78,6 +89,8 @@ export type RentCollectionState = {
   rent_classification?: RentCollectionClassification
   classified_at?: string
   classification_source?: string
+  /** Days-before-due cadence slots already reminded (0 = due date). */
+  reminder_days_sent?: number[]
 }
 
 export function currentBillingPeriod(date = new Date()): string {
@@ -113,14 +126,6 @@ export function shouldStartRentCollection(
   return isRentDueDateReached(rentDueDay, date)
 }
 
-function formatCurrency(amount: number): string {
-  return new Intl.NumberFormat("en-US", {
-    style: "currency",
-    currency: "USD",
-    maximumFractionDigits: 2,
-  }).format(amount)
-}
-
 function parsePaymentIntent(body: string): PaymentIntent | null {
   const t = body.trim().toLowerCase()
   if (/^(paid|sent|yes|y|payment sent|i paid)\b/.test(t)) return "paid"
@@ -132,66 +137,37 @@ function parsePaymentIntent(body: string): PaymentIntent | null {
 export function rentCollectionPrompt(
   state: RentCollectionState,
   paymentLink?: string | null,
+  language: PreferredLanguageId = "en_us",
+  daysBeforeDue?: number | null,
 ): string {
-  const amount = state.amount_due != null
-    ? formatCurrency(state.amount_due)
-    : "your balance"
-  const due = state.rent_due_date
-    ? new Date(`${state.rent_due_date}T12:00:00`).toLocaleDateString("en-US", {
-      month: "long",
-      day: "numeric",
-    })
-    : "today"
-
-  const payLine = paymentLink
-    ? ` You can pay online here: ${paymentLink}.`
-    : ""
-
-  return (
-    `Hi, this is a friendly reminder from your property management team. ` +
-    `Your rent of ${amount} is due ${due}.${payLine} ` +
-    `Once you've paid, reply PAID. If you paid part of it, reply PARTIAL. ` +
-    `Have a question? Reply QUESTIONS and we'll help.`
-  )
+  return buildRentCollectionPrompt({
+    amountDue: state.amount_due,
+    rentDueDate: state.rent_due_date,
+    paymentLink,
+    daysBeforeDue,
+    language,
+  })
 }
 
 function rentCollectionEmailBody(
   state: RentCollectionState,
   residentName: string,
   paymentLink?: string | null,
+  language: PreferredLanguageId = "en_us",
+  daysBeforeDue?: number | null,
 ): {
   subject: string
   text: string
   html: string
 } {
-  const amount = state.amount_due != null
-    ? formatCurrency(state.amount_due)
-    : "your balance"
-  const due = state.rent_due_date
-    ? new Date(`${state.rent_due_date}T12:00:00`).toLocaleDateString("en-US", {
-      month: "long",
-      day: "numeric",
-    })
-    : "this month"
-  const subject = `Friendly reminder: rent is due ${due}`
-  const payText = paymentLink
-    ? `\n\nYou can pay online here: ${paymentLink}`
-    : ""
-  const payHtml = paymentLink
-    ? `<p><a href="${paymentLink}">Pay your rent online</a></p>`
-    : ""
-  const text =
-    `Hi ${residentName},\n\nThis is a friendly reminder from your property management team. ` +
-    `Your rent of ${amount} is due ${due}. Please submit your payment when you can.${payText}\n\n` +
-    `If you've already paid, reply PAID to your property text line — or reach out anytime and we're happy to help.\n\n` +
-    `Thank you,\nYour property management team`
-  const html =
-    `<p>Hi ${residentName},</p>` +
-    `<p>This is a friendly reminder from your property management team. Your rent of <strong>${amount}</strong> is due ${due}. Please submit your payment when you can.</p>` +
-    `${payHtml}` +
-    `<p>If you've already paid, reply <strong>PAID</strong> to your property text line — or reach out anytime and we're happy to help.</p>` +
-    `<p>Thank you,<br/>Your property management team</p>`
-  return { subject, text, html }
+  return buildRentCollectionEmailBody({
+    amountDue: state.amount_due,
+    rentDueDate: state.rent_due_date,
+    paymentLink,
+    residentName,
+    daysBeforeDue,
+    language,
+  })
 }
 
 async function logRentCollectionOutcome(
@@ -313,7 +289,7 @@ type ResidentRow = {
 
 export type RentCollectionResident = ResidentRow
 
-/** Trigger + classify + route + act (start runs) on rent due date. */
+/** Trigger + classify + route + act on cadence days and rent due date. */
 async function processRentDueTrigger(
   supabase: SupabaseClient,
   ctx: WorkflowExecutionContext,
@@ -328,10 +304,14 @@ async function processRentDueTrigger(
     },
   )
   const landlordId = ctx.landlordId
+  const operational = await loadLandlordOperationalSettings(supabase, landlordId)
+  const cadenceDays = parseRentReminderCadenceDays(operational.rentReminderCadence)
+  const preferredLanguage = resolvePreferredLanguage(operational.preferredLanguage)
   const billingPeriod = currentBillingPeriod()
   const rentDueDate = rentDueDateIso(rentDueDay)
+  const reminderSlot = rentReminderSlotForToday(rentDueDay, cadenceDays)
 
-  if (!isRentDueDateReached(rentDueDay)) {
+  if (reminderSlot == null) {
     return {
       templateId: "rent_collection",
       route: workflowRouteForTemplate("rent_collection"),
@@ -340,7 +320,10 @@ async function processRentDueTrigger(
         billing_period: billingPeriod,
         rent_due_day: rentDueDay,
         rent_due_date: rentDueDate,
-        skipped: "rent_due_date_not_reached",
+        rent_reminder_cadence: operational.rentReminderCadence,
+        rent_reminder_days: cadenceDays,
+        preferred_language: operational.preferredLanguage,
+        skipped: "no_cadence_slot_today",
         candidates: 0,
         started: 0,
       },
@@ -350,6 +333,7 @@ async function processRentDueTrigger(
   const { data: residents, error } = await supabase
     .from("users")
     .select("id, full_name, email, phone, unit, building, balance_due, status")
+    .eq("landlord_id", landlordId)
     .eq("status", "active")
     .gt("balance_due", 0)
 
@@ -401,7 +385,75 @@ async function processRentDueTrigger(
     })
 
     if (existing && runBillingPeriod(existing) === billingPeriod) {
-      skipped++
+      const priorState = runStepState(existing) as RentCollectionState
+      const sentDays = priorState.reminder_days_sent ?? []
+      if (sentDays.includes(reminderSlot)) {
+        skipped++
+        continue
+      }
+
+      try {
+        const state: RentCollectionState = {
+          ...priorState,
+          amount_due: amountDue,
+          billing_period: billingPeriod,
+          rent_due_date: rentDueDate,
+          unit_label: resident.unit ?? priorState.unit_label,
+        }
+        const routed = await executeRentCollectionRouteAndAct(supabase, {
+          landlordId,
+          resident,
+          runId: existing.id,
+          state,
+          preferredLanguage,
+          daysBeforeDue: reminderSlot,
+        })
+        const nextSentDays = [...new Set([...sentDays, reminderSlot])]
+        const nextStep = routed.smsSent || routed.emailSent
+          ? "payment_reminder_sent"
+          : priorState.step ?? "awaiting_payment"
+
+        await updateWorkflowRun(supabase, existing.id, {
+          currentStep: nextStep,
+          currentStage: routed.smsSent || routed.emailSent ? "routed" : "awaiting_payment",
+          metadata: {
+            amount_due: amountDue,
+            step_state: {
+              ...state,
+              step: nextStep,
+              reminder_days_sent: nextSentDays,
+              outreach_sent_at: new Date().toISOString(),
+              sms_sent: routed.smsSent || priorState.sms_sent,
+              email_sent: routed.emailSent || priorState.email_sent,
+              route_channels: routed.channels,
+              payment_link: routed.paymentLink ?? priorState.payment_link,
+              payment_requested: routed.paymentRequested,
+              payment_provider: routed.provider,
+            },
+            route_channels: routed.channels,
+            payment_link: routed.paymentLink,
+            payment_requested: routed.paymentRequested,
+            payment_provider: routed.provider,
+          },
+          pipelineStage: "act",
+          eventMessage: "Cadence rent reminder sent",
+          eventStep: nextStep,
+        })
+
+        if (routed.smsSent || routed.emailSent) remindersSent++
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err)
+        console.error("[rent-collection] cadence reminder failed", {
+          residentId,
+          billingPeriod,
+          error: message,
+        })
+        startErrors.push({
+          resident_id: residentId,
+          billing_period: billingPeriod,
+          error: message,
+        })
+      }
       continue
     }
 
@@ -422,6 +474,7 @@ async function processRentDueTrigger(
       billing_period: billingPeriod,
       rent_due_date: rentDueDate,
       unit_label: resident.unit,
+      reminder_days_sent: [],
       ...classificationMeta,
     }
 
@@ -441,6 +494,8 @@ async function processRentDueTrigger(
         unit_label: resident.unit,
         building: resident.building,
         classified_intent: "payment_reminder",
+        preferred_language: operational.preferredLanguage,
+        rent_reminder_cadence: operational.rentReminderCadence,
         ...classificationMeta,
         step_state: initialState,
       },
@@ -482,6 +537,7 @@ async function processRentDueTrigger(
         classified_intent: "payment_reminder",
         unit: resident.unit,
         building: resident.building,
+        reminder_days_before: reminderSlot,
       },
     })
 
@@ -493,11 +549,14 @@ async function processRentDueTrigger(
         ...initialState,
         step: "awaiting_payment",
       },
+      preferredLanguage,
+      daysBeforeDue: reminderSlot,
     })
 
     const nextStep = routed.smsSent || routed.emailSent
       ? "payment_reminder_sent"
       : "awaiting_payment"
+    const reminderDaysSent = routed.smsSent || routed.emailSent ? [reminderSlot] : []
 
     await updateWorkflowRun(supabase, run.id, {
       currentStep: nextStep,
@@ -506,6 +565,7 @@ async function processRentDueTrigger(
         step_state: {
           ...initialState,
           step: nextStep,
+          reminder_days_sent: reminderDaysSent,
           outreach_sent_at: routed.smsSent || routed.emailSent
             ? new Date().toISOString()
             : undefined,
@@ -575,6 +635,10 @@ async function processRentDueTrigger(
       rent_due_day: rentDueDay,
       rent_due_date: rentDueDate,
       late_payment_grace_days: latePaymentGraceDays,
+      rent_reminder_cadence: operational.rentReminderCadence,
+      rent_reminder_days: cadenceDays,
+      preferred_language: operational.preferredLanguage,
+      reminder_slot_today: reminderSlot,
       template_active: templateConfig?.active ?? true,
       candidates: residents?.length ?? 0,
       started,
@@ -622,6 +686,8 @@ export async function executeRentCollectionRouteAndAct(
     resident: ResidentRow
     runId: string
     state: RentCollectionState
+    preferredLanguage?: PreferredLanguageId
+    daysBeforeDue?: number | null
   },
 ): Promise<RentCollectionRouteActResult> {
   const paymentProvider = await resolveRentPaymentLink(supabase, {
@@ -675,6 +741,8 @@ async function routeRentCollectionOutreach(
     state: RentCollectionState
     paymentLink?: string | null
     graphScope: RentCollectionGraphScope
+    preferredLanguage?: PreferredLanguageId
+    daysBeforeDue?: number | null
   },
 ): Promise<{ smsSent: boolean; emailSent: boolean; channels: string[] }> {
   const phone = String(params.resident.phone ?? "").trim()
@@ -706,7 +774,13 @@ async function routeRentCollectionOutreach(
     : null
 
   if (phone && mainLine) {
-    const prompt = rentCollectionPrompt(params.state, params.paymentLink)
+    const language = params.preferredLanguage ?? "en_us"
+    const prompt = rentCollectionPrompt(
+      params.state,
+      params.paymentLink,
+      language,
+      params.daysBeforeDue,
+    )
     smsSent = await sendRentCollectionSms(supabase, {
       landlordId: params.landlordId,
       residentId: String(params.resident.id),
@@ -721,10 +795,13 @@ async function routeRentCollectionOutreach(
 
   if (email) {
     const name = params.resident.full_name?.trim() || "Resident"
+    const language = params.preferredLanguage ?? "en_us"
     const { subject, text, html } = rentCollectionEmailBody(
       params.state,
       name,
       params.paymentLink,
+      language,
+      params.daysBeforeDue,
     )
     const result = await sendResendEmail(email, subject, text, html)
     emailSent = !("error" in result)
@@ -744,6 +821,8 @@ async function routeRentCollectionOutreach(
         billing_period: params.state.billing_period,
         payment_link: params.paymentLink ?? null,
         notice_type: "payment_reminder",
+        days_before_due: params.daysBeforeDue ?? null,
+        preferred_language: params.preferredLanguage ?? "en_us",
       },
     })
   }

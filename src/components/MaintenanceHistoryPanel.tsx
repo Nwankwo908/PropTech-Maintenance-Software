@@ -5,6 +5,8 @@
 import { useId, useRef, useState } from 'react'
 import maintenanceHistoryUploadCloudIcon from '@/assets/maintenance-history-upload-cloud.svg'
 import uloFoundSparkleIcon from '@/assets/ulo-found-sparkle.svg'
+import { getActiveLandlordId } from '@/lib/activeLandlord'
+import { extractMaintenanceHistoryForDocument } from '@/lib/maintenanceHistoryExtract'
 import {
   buildMaintenanceHistoryFindings,
   createMaintenanceHistoryDocument,
@@ -19,14 +21,13 @@ import {
   MAINTENANCE_HISTORY_MAX_BYTES,
   MAINTENANCE_TRADE_CATEGORIES,
   recordToTimelineRow,
-  shouldMarkNeedsAttention,
-  simulateMaintenanceHistoryExtract,
   statusLabel,
   updateRecordField,
   type MaintenanceHistoryDocument,
   type MaintenanceHistoryFinding,
   type MaintenanceHistoryRecord,
 } from '@/lib/maintenanceHistoryImport'
+import { recordActivityLog } from '@/lib/recordActivityLog'
 
 function MaintenanceWrenchIcon() {
   return (
@@ -94,6 +95,7 @@ export function MaintenanceHistoryPanel({
   const [editingFindings, setEditingFindings] = useState(false)
   const [findingsDraft, setFindingsDraft] = useState<MaintenanceHistoryFinding[] | null>(null)
   const [expandedRecordId, setExpandedRecordId] = useState<string | null>(null)
+  const fileHandlesRef = useRef<Map<string, File>>(new Map())
 
   const pending = listPendingReviewRecords(docs)
   const step = deriveImportStep(docs, approved)
@@ -102,10 +104,11 @@ export function MaintenanceHistoryPanel({
     buildMaintenanceHistoryFindings(pending.length > 0 ? pending : approved)
   const isBusy = docs.some((d) => d.status === 'uploading' || d.status === 'processing')
 
-  function processFiles(files: FileList | null, csvOnly = false) {
+  async function processFiles(files: FileList | null, csvOnly = false) {
     if (!files?.length) return
     onError(null)
     const additions: MaintenanceHistoryDocument[] = []
+    const filesById = new Map<string, File>()
     for (const file of Array.from(files)) {
       if (csvOnly && !isCsvMaintenanceHistoryFile(file)) {
         onError('Import CSV accepts .csv files only.')
@@ -119,7 +122,10 @@ export function MaintenanceHistoryPanel({
         onError('Each file must be 10MB or smaller.')
         continue
       }
-      additions.push(createMaintenanceHistoryDocument(file))
+      const doc = createMaintenanceHistoryDocument(file)
+      additions.push(doc)
+      filesById.set(doc.id, file)
+      fileHandlesRef.current.set(doc.id, file)
     }
     if (additions.length === 0) return
 
@@ -128,45 +134,68 @@ export function MaintenanceHistoryPanel({
     setFindingsDraft(null)
     setEditingFindings(false)
 
-    window.setTimeout(() => {
-      const processing = withUploading.map((doc) =>
-        additions.some((a) => a.id === doc.id) ? { ...doc, status: 'processing' as const } : doc,
-      )
-      onDocsChange(processing)
+    const processing = withUploading.map((doc) =>
+      additions.some((a) => a.id === doc.id) ? { ...doc, status: 'processing' as const } : doc,
+    )
+    onDocsChange(processing)
 
-      window.setTimeout(() => {
-        const finished = processing.map((doc) => {
-          if (!additions.some((a) => a.id === doc.id)) return doc
-          // Deterministic “failure” for clearly broken names in demos
-          if (/corrupt|fail/i.test(doc.fileName)) {
-            return {
-              ...doc,
-              status: 'failed' as const,
-              error: 'Could not read this file. Try another copy or format.',
-              records: [],
-            }
-          }
-          const records = simulateMaintenanceHistoryExtract(doc, building)
-          const needsAttention = shouldMarkNeedsAttention(records)
-          return {
-            ...doc,
-            status: (needsAttention ? 'needs_attention' : 'ready_for_review') as const,
-            records,
-            error: needsAttention
-              ? 'Some fields need a closer look before you confirm.'
-              : undefined,
-          }
+    const finished: MaintenanceHistoryDocument[] = []
+    for (const doc of processing) {
+      if (!additions.some((a) => a.id === doc.id)) {
+        finished.push(doc)
+        continue
+      }
+      const file = filesById.get(doc.id)
+      if (!file) {
+        finished.push({
+          ...doc,
+          status: 'failed',
+          error: 'Could not read this file. Try uploading it again.',
+          records: [],
         })
-        onDocsChange(finished)
-        const firstPending = listPendingReviewRecords(finished)[0]
-        if (firstPending) setExpandedRecordId(firstPending.id)
-      }, 900)
-    }, 450)
+        continue
+      }
+      try {
+        const outcome = await extractMaintenanceHistoryForDocument({
+          file,
+          document: doc,
+          building,
+        })
+        finished.push({
+          ...doc,
+          status: outcome.needsAttention ? 'needs_attention' : 'ready_for_review',
+          records: outcome.records,
+          error: outcome.needsAttention
+            ? outcome.warnings[0] ||
+              'Some fields need a closer look before you confirm.'
+            : undefined,
+        })
+      } catch (err) {
+        const message =
+          err instanceof Error && err.message.trim()
+            ? err.message.trim()
+            : 'Could not extract maintenance history from this file.'
+        finished.push({
+          ...doc,
+          status: 'failed',
+          error: message,
+          records: [],
+        })
+      }
+    }
+    onDocsChange(finished)
+    const firstPending = listPendingReviewRecords(finished)[0]
+    if (firstPending) setExpandedRecordId(firstPending.id)
   }
 
-  function retryDocument(id: string) {
+  async function retryDocument(id: string) {
     const target = docs.find((d) => d.id === id)
     if (!target) return
+    const file = fileHandlesRef.current.get(id)
+    if (!file) {
+      onError('Re-upload this file to try extraction again.')
+      return
+    }
     onError(null)
     const resetting = docs.map((d) =>
       d.id === id
@@ -174,25 +203,42 @@ export function MaintenanceHistoryPanel({
         : d,
     )
     onDocsChange(resetting)
-    window.setTimeout(() => {
+    try {
+      const outcome = await extractMaintenanceHistoryForDocument({
+        file,
+        document: { ...target, status: 'processing', error: undefined, records: [] },
+        building,
+      })
       const finished = resetting.map((doc) => {
         if (doc.id !== id) return doc
-        const records = simulateMaintenanceHistoryExtract(doc, building)
-        const needsAttention = shouldMarkNeedsAttention(records)
         return {
           ...doc,
-          status: (needsAttention ? 'needs_attention' : 'ready_for_review') as const,
-          records,
-          error: needsAttention
-            ? 'Some fields need a closer look before you confirm.'
+          status: (outcome.needsAttention ? 'needs_attention' : 'ready_for_review') as const,
+          records: outcome.records,
+          error: outcome.needsAttention
+            ? outcome.warnings[0] ||
+              'Some fields need a closer look before you confirm.'
             : undefined,
         }
       })
       onDocsChange(finished)
-    }, 900)
+    } catch (err) {
+      const message =
+        err instanceof Error && err.message.trim()
+          ? err.message.trim()
+          : 'Could not extract maintenance history from this file.'
+      onDocsChange(
+        resetting.map((doc) =>
+          doc.id === id
+            ? { ...doc, status: 'failed' as const, error: message, records: [] }
+            : doc,
+        ),
+      )
+    }
   }
 
   function removeDocument(id: string) {
+    fileHandlesRef.current.delete(id)
     onDocsChange(docs.filter((d) => d.id !== id))
   }
 
@@ -205,7 +251,7 @@ export function MaintenanceHistoryPanel({
     )
   }
 
-  function confirmAndSave() {
+  async function confirmAndSave() {
     if (pending.length === 0) return
     const stamped = pending.map((r) => ({ ...r, approved: true }))
     const merged = [...approved]
@@ -217,10 +263,30 @@ export function MaintenanceHistoryPanel({
     onApprovedChange(merged)
     // Drop reviewed source docs (records live in approved store)
     const pendingDocIds = new Set(pending.map((r) => r.sourceDocumentId))
+    for (const docId of pendingDocIds) {
+      fileHandlesRef.current.delete(docId)
+    }
     onDocsChange(docs.filter((d) => !pendingDocIds.has(d.id)))
     setFindingsDraft(null)
     setEditingFindings(false)
     setExpandedRecordId(null)
+
+    const landlordId = getActiveLandlordId()
+    const count = stamped.length
+    void recordActivityLog({
+      landlordId,
+      eventType: 'maintenance.history_imported',
+      source: 'dashboard',
+      actorType: 'landlord',
+      metadata: {
+        building: building.trim(),
+        record_count: count,
+        message:
+          count === 1
+            ? `Imported 1 maintenance history record for ${building.trim() || 'this property'}`
+            : `Imported ${count} maintenance history records for ${building.trim() || 'this property'}`,
+      },
+    })
   }
 
   function discardPending() {

@@ -162,3 +162,23 @@ Deno.test("no open tickets + problem report → NEW_ISSUE", () => {
     "NEW_ISSUE",
   )
 })
+
+Deno.test("Osi: door damaged → NEW_ISSUE (not landlord handoff)", () => {
+  assertEquals(
+    resolveMaintenanceWorkIntent({
+      body: "My door is damaged",
+      openTickets: [],
+    }),
+    "NEW_ISSUE",
+  )
+})
+
+Deno.test("Osi: I need a repair → NEW_ISSUE (not landlord handoff)", () => {
+  assertEquals(
+    resolveMaintenanceWorkIntent({
+      body: "I need a repair",
+      openTickets: [],
+    }),
+    "NEW_ISSUE",
+  )
+})

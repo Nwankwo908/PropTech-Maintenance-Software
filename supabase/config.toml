@@ -114,6 +114,12 @@ verify_jwt = false
 import_map = "./functions/discover-external-vendors/deno.json"
 entrypoint = "./functions/discover-external-vendors/index.ts"
 
+[functions.verify-external-vendor-compliance]
+enabled = true
+verify_jwt = false
+import_map = "./functions/verify-external-vendor-compliance/deno.json"
+entrypoint = "./functions/verify-external-vendor-compliance/index.ts"
+
 [functions.reassign-external-vendor]
 enabled = true
 verify_jwt = false
@@ -279,6 +285,20 @@ entrypoint = "./functions/send-proxied-message/index.ts"
 
 # Landlord "Invite Vendor" — creates a vendor_verifications row + tokenized /v/:token
 # link and sends it via SMS/email (ADMIN_REASSIGN_SECRET in handler).
+
+[functions.admin-conversation-sms]
+enabled = true
+verify_jwt = false
+import_map = "./functions/admin-conversation-sms/deno.json"
+entrypoint = "./functions/admin-conversation-sms/index.ts"
+
+
+[functions.extract-maintenance-history]
+enabled = true
+verify_jwt = false
+import_map = "./functions/extract-maintenance-history/deno.json"
+entrypoint = "./functions/extract-maintenance-history/index.ts"
+
 [functions.send-vendor-invite]
 enabled = true
 verify_jwt = false

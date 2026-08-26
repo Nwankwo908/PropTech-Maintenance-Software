@@ -13,6 +13,8 @@
     "test:watch": "vitest"
   },
   "dependencies": {
+    "@stripe/connect-js": "^3.4.6",
+    "@stripe/react-connect-js": "^3.4.4",
     "@supabase/supabase-js": "^2.106.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",

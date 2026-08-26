@@ -192,9 +192,45 @@ function normalizeEventChannels(raw: unknown): NotificationEventChannels {
   }
 }
 
+function mergeEventChannels(
+  saved: NotificationEventChannels | undefined,
+  defaults: NotificationEventChannels,
+): NotificationEventChannels {
+  if (!saved) return { ...defaults }
+  return {
+    email: typeof saved.email === 'boolean' ? saved.email : defaults.email,
+    sms: typeof saved.sms === 'boolean' ? saved.sms : defaults.sms,
+    activity_feed:
+      typeof saved.activity_feed === 'boolean' ? saved.activity_feed : defaults.activity_feed,
+    push: typeof saved.push === 'boolean' ? saved.push : defaults.push,
+  }
+}
+
+/** Merge saved category toggles onto canonical defaults (stable labels + new events). */
+export function mergeNotificationCategories(
+  saved: NotificationEventCategory[] | undefined,
+  defaults: NotificationEventCategory[],
+): NotificationEventCategory[] {
+  return defaults.map((defaultCategory) => {
+    const savedCategory = saved?.find((row) => row.id === defaultCategory.id)
+    return {
+      ...defaultCategory,
+      events: defaultCategory.events.map((defaultEvent) => {
+        const savedEvent = savedCategory?.events.find((row) => row.id === defaultEvent.id)
+        return {
+          ...defaultEvent,
+          critical: savedEvent?.critical ?? defaultEvent.critical,
+          channels: mergeEventChannels(savedEvent?.channels, defaultEvent.channels),
+        }
+      }),
+    }
+  })
+}
+
 function normalizeCategories(raw: unknown): NotificationEventCategory[] {
-  if (!Array.isArray(raw) || raw.length === 0) return cloneDefaults().categories
-  return raw.map((category) => {
+  const defaults = cloneDefaults().categories
+  if (!Array.isArray(raw) || raw.length === 0) return defaults
+  const parsed = raw.map((category) => {
     const cat = category as Partial<NotificationEventCategory>
     return {
       id: typeof cat.id === 'string' ? cat.id : 'unknown',
@@ -213,6 +249,7 @@ function normalizeCategories(raw: unknown): NotificationEventCategory[] {
         : [],
     }
   })
+  return mergeNotificationCategories(parsed, defaults)
 }
 
 export function loadNotificationSettings(): NotificationSettingsState {

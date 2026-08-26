@@ -13,6 +13,10 @@ import {
   type MaintenanceInvoiceInput,
 } from "../_shared/maintenanceSpend.ts"
 import { sendCompletionUploadNudge } from "../_shared/maintenanceCompletion.ts"
+import {
+  loadLandlordOperationalSettings,
+  requiresCompletionPhotoEvidence,
+} from "../_shared/landlordNotificationPrefs.ts"
 
 const corsHeaders: Record<string, string> = {
   "Access-Control-Allow-Origin": "*",
@@ -274,7 +278,15 @@ serve(async (req) => {
           (p): p is string => typeof p === "string" && p.trim().length > 0,
         )
       : []
-    if (paths.length < 1) {
+    const ticketLandlordId =
+      typeof row.landlord_id === "string" ? row.landlord_id.trim() : ""
+    const operational = ticketLandlordId
+      ? await loadLandlordOperationalSettings(supabase, ticketLandlordId)
+      : null
+    const photoRequired = operational
+      ? requiresCompletionPhotoEvidence(operational)
+      : true
+    if (photoRequired && paths.length < 1) {
       const tokenEnc =
         typeof row.vendor_action_token === "string" && row.vendor_action_token
           ? encodeURIComponent(row.vendor_action_token)

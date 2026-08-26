@@ -15,6 +15,11 @@ import {
 } from "../_shared/vendor_outreach_copy.ts"
 import { notifyResidentVendorAssigned } from "./resident_notify.ts"
 import { getEstimatedMinutes } from "../_shared/sla_rules.ts"
+import {
+  loadLandlordMarketplacePreference,
+  loadLandlordOperationalSettings,
+  resolveTicketSlaMinutes,
+} from "../_shared/landlordNotificationPrefs.ts"
 import { uloAppOrigin, uloAppUrl } from "../_shared/uloAppUrl.ts"
 
 export type TicketNotifyPayload = {
@@ -307,12 +312,16 @@ async function resolveVendorForNewTicket(
   }
 
   const preferNot = await loadMostRecentlyAssignedVendorId(supabase)
+  const marketplacePreference = landlordId?.trim()
+    ? await loadLandlordMarketplacePreference(supabase, landlordId.trim())
+    : "include_imported"
   const picked = await pickVendorForAssignment(supabase, {
     issueCategory,
     excludeVendorIds: [],
     preferNotVendorId: preferNot,
     landlordId,
     preferPreferredEmergency: isEmergencyPriority(priority),
+    marketplacePreference,
   })
   return picked ? (picked as VendorRow) : null
 }
@@ -745,16 +754,26 @@ export async function reassignVendorByIdAndNotify(
       ? ticket.urgency
       : ticket.priority) as string
 
-  const estRaw = ticket.estimated_minutes as number | null | undefined
   const severityRaw = ticket.severity as string | null | undefined
   const sevForSla =
     typeof severityRaw === "string" && severityRaw.trim()
       ? severityRaw.trim()
       : urgencyOrPriority
+  const reassignLandlordIdEarly =
+    typeof ticket.landlord_id === "string" ? ticket.landlord_id.trim() : null
+  const operational = reassignLandlordIdEarly
+    ? await loadLandlordOperationalSettings(supabase, reassignLandlordIdEarly)
+    : null
+  const estRaw = ticket.estimated_minutes as number | null | undefined
   const estMin =
     typeof estRaw === "number" && Number.isFinite(estRaw) && estRaw > 0
       ? estRaw
-      : getEstimatedMinutes(existingIssueCat ?? undefined, sevForSla)
+      : resolveTicketSlaMinutes({
+        category: existingIssueCat,
+        severity: sevForSla,
+        defaultResponseSla: operational?.defaultResponseSla ?? null,
+        fallbackMinutes: getEstimatedMinutes,
+      })
   const newDueAtIso = new Date(Date.now() + estMin * 60_000).toISOString()
 
   const assignedAt = new Date().toISOString()

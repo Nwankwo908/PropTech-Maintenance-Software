@@ -51,6 +51,11 @@ Deno.test("infers electrical from electrician / outlet wording", () => {
   assertEqual(inferIssueTypeFromText("outlet sparking"), "electrical", "outlet")
 })
 
+Deno.test("infers lock from door damage / won't close", () => {
+  assertEqual(inferIssueTypeFromText("My door is damaged"), "lock", "door damaged")
+  assertEqual(inferIssueTypeFromText("The door won't close"), "lock", "door won't close")
+})
+
 Deno.test("first_noticed prompt uses clean room and flooding wording", () => {
   const state = sanitizeIntakeState({
     step: "first_noticed",

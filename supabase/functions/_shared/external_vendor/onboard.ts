@@ -9,6 +9,8 @@ export type ExternalVendorOnboardInput = {
   reviewCount?: number | null
   priceLabel?: string | null
   rankScore?: number | null
+  /** Snapshot from Find External Vendor license/COI checks. */
+  compliance?: Record<string, unknown> | null
 }
 
 export type ResolveExternalVendorResult =
@@ -20,13 +22,17 @@ function normName(name: string): string {
 }
 
 function discoverySnapshot(input: ExternalVendorOnboardInput): ExternalDiscoverySnapshot {
-  return {
+  const base: ExternalDiscoverySnapshot = {
     sources: input.sources ?? [],
     rating: input.rating ?? null,
     review_count: input.reviewCount ?? null,
     price_label: input.priceLabel ?? null,
     rank_score: input.rankScore ?? null,
   }
+  if (input.compliance && typeof input.compliance === "object") {
+    return { ...base, compliance: input.compliance }
+  }
+  return base
 }
 
 async function findActiveVendorByName(
@@ -100,6 +106,23 @@ export async function resolveVendorIdForExternalReassign(
 
   const existing = await findActiveVendorByName(supabase, landlordId, vendorName)
   if (existing) {
+    if (input.compliance && typeof input.compliance === "object") {
+      const { data: row } = await supabase
+        .from("vendors")
+        .select("external_discovery")
+        .eq("id", existing.id)
+        .maybeSingle()
+      const prev =
+        row?.external_discovery && typeof row.external_discovery === "object"
+          ? (row.external_discovery as Record<string, unknown>)
+          : {}
+      await supabase
+        .from("vendors")
+        .update({
+          external_discovery: { ...prev, compliance: input.compliance },
+        })
+        .eq("id", existing.id)
+    }
     return { vendorId: existing.id, createdVendor: false }
   }
 

@@ -153,27 +153,33 @@ export function resolveNotificationDelivery(
   }
 
   const delivery = input.settings.delivery
-  const primary = delivery.primaryChannel
-  const fallback = delivery.fallbackChannel
   const channels: NotificationChannel[] = []
 
-  const pushAllowed = false
-
-  const tryChannel = (channel: NotificationChannel) => {
-    if (channel === 'push' && !pushAllowed) return
-    if (channel === 'push') return
+  const addChannel = (channel: NotificationChannel) => {
     if (eventChannels && eventChannels[channel] === false) return
+    if (channel === 'push' && !delivery.pushEnabled) return
     if (!channels.includes(channel)) channels.push(channel)
   }
 
-  tryChannel(primary)
-  if (delivery.autoFallback && fallback !== primary) {
-    tryChannel(fallback)
+  if (eventChannels) {
+    if (eventChannels.email) addChannel('email')
+    if (eventChannels.sms) addChannel('sms')
+    if (eventChannels.activity_feed) addChannel('activity_feed')
+    if (eventChannels.push) addChannel('push')
+  } else {
+    addChannel(delivery.primaryChannel)
+    if (delivery.autoFallback && delivery.fallbackChannel !== delivery.primaryChannel) {
+      addChannel(delivery.fallbackChannel)
+    }
   }
 
   if (channels.length === 0 && critical) {
-    if (eventChannels?.email !== false) channels.push('email')
-    if (eventChannels?.sms !== false) channels.push('sms')
+    if (!eventChannels || eventChannels.email !== false) channels.push('email')
+    if (!eventChannels || eventChannels.sms !== false) channels.push('sms')
+    if (!eventChannels || eventChannels.activity_feed !== false) channels.push('activity_feed')
+    if (delivery.pushEnabled && (!eventChannels || eventChannels.push !== false)) {
+      channels.push('push')
+    }
   }
 
   if (channels.length === 0) {
@@ -194,6 +200,40 @@ export function resolveNotificationDelivery(
   }
 
   return { allowed: true, channels }
+}
+
+/** Best-effort browser Notification for dashboard-originated alerts (no service worker). */
+export function maybeShowBrowserPushNotification(input: {
+  channels: NotificationChannel[]
+  title: string
+  body?: string
+}): boolean {
+  if (!input.channels.includes('push')) return false
+  if (typeof window === 'undefined' || typeof Notification === 'undefined') return false
+  if (Notification.permission !== 'granted') return false
+  try {
+    new Notification(input.title, {
+      body: input.body?.trim() || undefined,
+      icon: '/favicon.ico',
+    })
+    return true
+  } catch {
+    return false
+  }
+}
+
+export function getBrowserPushPermission(): NotificationPermission | 'unsupported' {
+  if (typeof window === 'undefined' || typeof Notification === 'undefined') return 'unsupported'
+  return Notification.permission
+}
+
+export async function requestBrowserPushPermission(): Promise<NotificationPermission | 'unsupported'> {
+  if (typeof window === 'undefined' || typeof Notification === 'undefined') return 'unsupported'
+  try {
+    return await Notification.requestPermission()
+  } catch {
+    return Notification.permission
+  }
 }
 
 export function mapAttentionKindToEvent(

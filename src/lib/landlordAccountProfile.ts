@@ -135,6 +135,7 @@ export function marketplaceLabelFromPreference(
 export function marketplacePreferenceFromLabel(label: string): string | null {
   if (label === 'Ulo-vetted vendors only') return 'ulo_vetted_only'
   if (label === 'Include imported vendors') return 'include_imported'
+  if (label === 'All active vendors') return 'include_imported'
   return null
 }
 

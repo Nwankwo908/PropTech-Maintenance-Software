@@ -141,6 +141,20 @@ export async function createLandlordConnectAccountLink(
   return { ...parseStatus(json), url }
 }
 
+/** Account Session client_secret for embedded Connect onboarding. */
+export async function createLandlordConnectAccountSession(
+  landlordId?: string,
+): Promise<LandlordStripeConnectStatus & { clientSecret: string }> {
+  const json = await invokeLandlordStripeConnect({
+    action: 'create_account_session',
+    landlordId,
+  })
+  const clientSecret =
+    typeof json.clientSecret === 'string' ? json.clientSecret.trim() : ''
+  if (!clientSecret) throw new Error('Could not start payout setup.')
+  return { ...parseStatus(json), clientSecret }
+}
+
 export async function refreshLandlordConnectStatus(
   landlordId?: string,
 ): Promise<LandlordStripeConnectStatus> {

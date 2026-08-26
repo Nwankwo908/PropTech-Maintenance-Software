@@ -49,6 +49,7 @@ serve(async (req) => {
     reviewCount?: number
     priceLabel?: string
     rankScore?: number
+    compliance?: unknown
   }
   try {
     body = await req.json()
@@ -75,6 +76,11 @@ serve(async (req) => {
     )
   }
 
+  const compliance =
+    body.compliance && typeof body.compliance === "object" && !Array.isArray(body.compliance)
+      ? (body.compliance as Record<string, unknown>)
+      : null
+
   const supabase = createClient(supabaseUrl, serviceKey)
   const result = await reassignExternalVendorToTicket(supabase, {
     ticketId,
@@ -94,6 +100,7 @@ serve(async (req) => {
     rankScore: typeof body.rankScore === "number" && Number.isFinite(body.rankScore)
       ? body.rankScore
       : null,
+    compliance,
   })
 
   if ("error" in result) {

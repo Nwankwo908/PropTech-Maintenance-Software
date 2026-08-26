@@ -20,7 +20,11 @@ import {
   recordInboundSmsGraphEvent,
   trySendAutoReply,
 } from "./inboundFinish.ts"
-import { tryInboundSmsHandlers } from "./inboundHandlerRegistry.ts"
+import {
+  INBOUND_SMS_HANDLERS,
+  tryInboundSmsHandlers,
+} from "./inboundHandlerRegistry.ts"
+import { loadAdminTakeoverActive } from "./adminConversationControl.ts"
 import { tryHandleInterpretedInbound } from "./inboundInterpretationAct.ts"
 import {
   InboundSmsError,
@@ -358,6 +362,22 @@ export async function processInboundSms(
       supabase,
       conversationId,
     ),
+  }
+
+  if (await loadAdminTakeoverActive(supabase, conversationId)) {
+    const compliance = INBOUND_SMS_HANDLERS.find(
+      (handler) => handler.id === "compliance_stop_help",
+    )
+    if (compliance) {
+      const complianceResult = await compliance.try(handlerContext)
+      if (complianceResult.handled) {
+        return finishHandledInbound(handlerContext, complianceResult)
+      }
+    }
+    return finishHandledInbound(handlerContext, {
+      handled: true,
+      workflowRoute: "admin_takeover",
+    })
   }
 
   const handlerResult = await tryInboundSmsHandlers(handlerContext)

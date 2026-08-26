@@ -9,6 +9,8 @@ import {
 } from '@/lib/externalVendorVerification'
 import { supabase } from '@/lib/supabase'
 import {
+  attestVendorCoiOnFile,
+  coiRequiresManualCollect,
   coiStateFromLookup,
   initialCoiVerificationState,
   isCoiVerificationComplete,
@@ -21,10 +23,11 @@ import {
   licenseRequiresManualVerify,
   licenseStateFromLookup,
   lookupVendorLicense,
-  manualLicenseVerification,
   verifyManualLicenseNumber,
   type VendorLicenseVerificationState,
 } from '@/lib/vendorLicenseVerification'
+import { lookupExternalVendorComplianceChecks } from '@/api/verifyExternalVendorCompliance'
+import { getAdminEdgeSecret } from '@/lib/adminEdgeAuth'
 
 function ChevronLeftIcon() {
   return (
@@ -122,9 +125,20 @@ function SimulatedBadge() {
   return (
     <span
       className="inline-flex shrink-0 items-center rounded-full bg-[#f3f4f6] px-2 py-0.5 text-[9px] font-bold uppercase tracking-[0.08em] text-[#6a7282]"
-      title="Demo data — not a live external check"
+      title="Uses the verification seam until a live board/Certificial key is configured"
     >
       Simulated
+    </span>
+  )
+}
+
+function ProviderVerifiedBadge() {
+  return (
+    <span
+      className="inline-flex shrink-0 items-center rounded-full bg-[#ecfdf5] px-2 py-0.5 text-[9px] font-bold uppercase tracking-[0.08em] text-[#007a55]"
+      title="Credentialed via NetVendor or admin confirmation"
+    >
+      Verified source
     </span>
   )
 }
@@ -197,6 +211,17 @@ function useAdminApproverName(): string {
   return name
 }
 
+export type ExternalVendorComplianceSnapshot = {
+  licenseStatus: string
+  licenseNumber: string | null
+  licenseSimulated: boolean
+  licenseSource: string
+  coiStatus: string
+  coiSimulated: boolean
+  coiSource: string
+  monitoringActive: boolean
+}
+
 export type ExternalVendorVerificationViewProps = {
   vendor: ExternalVendorDisplayRow
   locationLabel: string
@@ -204,7 +229,7 @@ export type ExternalVendorVerificationViewProps = {
   saving?: boolean
   saveError?: string | null
   onBack: () => void
-  onAssign: () => void
+  onAssign: (compliance: ExternalVendorComplianceSnapshot) => void
   onReject: () => void
 }
 
@@ -227,6 +252,8 @@ export function ExternalVendorVerificationView({
   const [manualLicenseInput, setManualLicenseInput] = useState('')
   const [licenseVerifyError, setLicenseVerifyError] = useState<string | null>(null)
   const [licenseVerifying, setLicenseVerifying] = useState(false)
+  const [coiAttesting, setCoiAttesting] = useState(false)
+  const [coiAttestError, setCoiAttestError] = useState<string | null>(null)
 
   const profile = useMemo(
     () => buildExternalVendorVerificationProfile(vendor, { issueCategory, locationLabel }),
@@ -251,6 +278,10 @@ export function ExternalVendorVerificationView({
     !coiVerified ||
     coiState.status === 'checking'
 
+  const checksStillSimulated =
+    (licenseState.status !== 'checking' && licenseState.simulated) ||
+    (coiState.status !== 'checking' && coiState.simulated)
+
   useEffect(() => {
     let cancelled = false
     setLicenseState(initialLicenseVerificationState())
@@ -258,16 +289,63 @@ export function ExternalVendorVerificationView({
     setManualLicenseInput('')
     setLicenseVerifyError(null)
     setLicenseVerifying(false)
+    setCoiAttesting(false)
+    setCoiAttestError(null)
 
-    void lookupVendorLicense(vendor, profile.tradeLabel).then((result) => {
-      if (cancelled) return
-      setLicenseState(licenseStateFromLookup(result))
-    })
+    async function runChecks() {
+      const subject = {
+        name: vendor.name,
+        phone: vendor.phone,
+        website: vendor.website,
+        priceLabel: vendor.priceLabel,
+        sources: vendor.sources,
+        tradeLabel: profile.tradeLabel,
+      }
 
-    void lookupVendorCoi(vendor).then((result) => {
+      if (getAdminEdgeSecret()) {
+        try {
+          const { license, coi } = await lookupExternalVendorComplianceChecks(subject)
+          if (cancelled) return
+          setLicenseState(
+            licenseStateFromLookup({
+              status:
+                license.status === 'manual_verified' ? 'auto_verified' : license.status,
+              licenseNumber: license.licenseNumber,
+              detail: license.detail,
+              boardLabel: license.boardLabel,
+              expirationDate: license.expirationDate,
+              simulated: license.simulated,
+              checkSource: license.checkSource,
+            }),
+          )
+          setCoiState(
+            coiStateFromLookup({
+              status: coi.status === 'monitoring' ? 'verified' : coi.status,
+              policyNumber: coi.policyNumber,
+              carrier: coi.carrier,
+              detail: coi.detail,
+              expirationDate: coi.expirationDate,
+              monitoringActive: coi.monitoringActive,
+              simulated: coi.simulated,
+              checkSource: coi.checkSource,
+            }),
+          )
+          return
+        } catch (err) {
+          console.warn('[ExternalVendorVerification] compliance edge', err)
+        }
+      }
+
+      const [licenseResult, coiResult] = await Promise.all([
+        lookupVendorLicense(vendor, profile.tradeLabel),
+        lookupVendorCoi(vendor),
+      ])
       if (cancelled) return
-      setCoiState(coiStateFromLookup(result))
-    })
+      setLicenseState(licenseStateFromLookup(licenseResult))
+      setCoiState(coiStateFromLookup(coiResult))
+    }
+
+    void runChecks()
 
     return () => {
       cancelled = true
@@ -278,17 +356,35 @@ export function ExternalVendorVerificationView({
     setLicenseVerifyError(null)
     setLicenseVerifying(true)
     try {
-      const result = await verifyManualLicenseNumber(vendor, manualLicenseInput)
+      const result = await verifyManualLicenseNumber(vendor, manualLicenseInput, {
+        tradeLabel: profile.tradeLabel,
+        approverName,
+      })
       if (!result.ok) {
         setLicenseVerifyError(result.message)
         return
       }
-      setLicenseState((current) =>
-        manualLicenseVerification(current, manualLicenseInput.trim(), approverName),
-      )
+      setLicenseState(result.state)
       setManualLicenseInput('')
     } finally {
       setLicenseVerifying(false)
+    }
+  }
+
+  async function handleAttestCoi() {
+    setCoiAttestError(null)
+    setCoiAttesting(true)
+    try {
+      const next = await attestVendorCoiOnFile(vendor, { approverName })
+      setCoiState(next)
+    } catch (err) {
+      setCoiAttestError(
+        err instanceof Error && err.message.trim()
+          ? err.message
+          : 'Could not confirm COI on file.',
+      )
+    } finally {
+      setCoiAttesting(false)
     }
   }
 
@@ -361,17 +457,29 @@ export function ExternalVendorVerificationView({
               </div>
             </div>
 
-            <SectionCard title="Verification Checklist" badge={<SimulatedBadge />}>
-              <p className="mb-3 rounded-lg border border-[#fde68a] bg-[#fffbeb] px-3 py-2 text-[10px] leading-[15px] text-[#92400e]">
-                Demo only: license and insurance results are simulated, not live checks against the
-                state licensing board or insurance carrier.
-              </p>
+            <SectionCard
+              title="Verification Checklist"
+              badge={checksStillSimulated ? <SimulatedBadge /> : <ProviderVerifiedBadge />}
+            >
+              {checksStillSimulated ? (
+                <p className="mb-3 rounded-lg border border-[#fde68a] bg-[#fffbeb] px-3 py-2 text-[10px] leading-[15px] text-[#92400e]">
+                  License and insurance are checked through Ulo’s verification service. NetVendor
+                  credentialed vendors and admin confirmations count as verified sources. Live
+                  state-board / Certificial API keys can replace the simulated seam later.
+                </p>
+              ) : (
+                <p className="mb-3 rounded-lg border border-[#a4f4cf] bg-[#fafffd] px-3 py-2 text-[10px] leading-[15px] text-[#007a55]">
+                  Compliance checks used a verified source (NetVendor credentials or admin
+                  confirmation).
+                </p>
+              )}
               <ul className="space-y-3">
                 {checklist.map((item) => (
                   <li
                     key={item.id}
                     className={`flex items-start justify-between gap-3 rounded-xl border px-3 py-2.5 ${
-                      item.id === 'license' && licenseRequiresManualVerify(licenseState)
+                      (item.id === 'license' && licenseRequiresManualVerify(licenseState)) ||
+                      (item.id === 'coi' && coiRequiresManualCollect(coiState))
                         ? 'border-[#fde68a] bg-[#fffbeb]'
                         : 'border-[#a4f4cf] bg-[#fafffd]'
                     }`}
@@ -384,7 +492,14 @@ export function ExternalVendorVerificationView({
                             Required
                           </span>
                         ) : null}
-                        {item.id === 'license' || item.id === 'coi' ? <SimulatedBadge /> : null}
+                        {item.id === 'license' && licenseState.simulated ? <SimulatedBadge /> : null}
+                        {item.id === 'coi' && coiState.simulated ? <SimulatedBadge /> : null}
+                        {item.id === 'license' && !licenseState.simulated && licenseState.status !== 'checking' ? (
+                          <ProviderVerifiedBadge />
+                        ) : null}
+                        {item.id === 'coi' && !coiState.simulated && coiState.status !== 'checking' ? (
+                          <ProviderVerifiedBadge />
+                        ) : null}
                       </div>
                       <p className="mt-0.5 text-[10px] leading-[15px] text-[#717182]">
                         {item.id === 'license' && licenseState.status === 'checking' ? (
@@ -402,7 +517,7 @@ export function ExternalVendorVerificationView({
                             {item.detail}
                             {item.id === 'coi' && coiState.monitoringActive ? (
                               <span className="mt-0.5 block text-[#6a7282]">
-                                Certificial continuous monitoring enrolled
+                                Continuous monitoring enrolled
                                 {coiState.expirationDate
                                   ? ` · Exp ${coiState.expirationDate}`
                                   : ''}
@@ -433,6 +548,23 @@ export function ExternalVendorVerificationView({
                           {licenseVerifyError ? (
                             <p className="mt-1.5 text-[10px] leading-[14px] text-[#fb2c36]" role="alert">
                               {licenseVerifyError}
+                            </p>
+                          ) : null}
+                        </div>
+                      ) : null}
+                      {item.id === 'coi' && coiRequiresManualCollect(coiState) ? (
+                        <div className="mt-2">
+                          <button
+                            type="button"
+                            disabled={coiAttesting}
+                            onClick={() => void handleAttestCoi()}
+                            className="sa-press inline-flex min-h-[36px] items-center justify-center rounded-[10px] border border-[#e5e7eb] bg-white px-3 py-2 text-[12px] font-semibold text-[#101828] outline-none hover:bg-[#f9fafb] focus-visible:ring-2 focus-visible:ring-[#0030b5] disabled:pointer-events-none disabled:opacity-50"
+                          >
+                            {coiAttesting ? 'Saving…' : 'Confirm COI on file'}
+                          </button>
+                          {coiAttestError ? (
+                            <p className="mt-1.5 text-[10px] leading-[14px] text-[#fb2c36]" role="alert">
+                              {coiAttestError}
                             </p>
                           ) : null}
                         </div>
@@ -487,9 +619,9 @@ export function ExternalVendorVerificationView({
         {assignBlocked && !saving ? (
           <p className="mb-3 text-[12px] leading-[18px] text-[#a16207]">
             {licenseState.status === 'checking'
-              ? 'Waiting for state licensing API (simulated)…'
+              ? 'Checking license status…'
               : coiState.status === 'checking'
-                ? 'Waiting for Certificial COI verification (simulated)…'
+                ? 'Checking insurance certificate…'
                 : !licenseVerified
                   ? 'License verification is required before assigning this vendor.'
                   : !coiVerified
@@ -501,7 +633,18 @@ export function ExternalVendorVerificationView({
           <button
             type="button"
             disabled={saving || assignBlocked}
-            onClick={onAssign}
+            onClick={() =>
+              onAssign({
+                licenseStatus: licenseState.status,
+                licenseNumber: licenseState.licenseNumber,
+                licenseSimulated: licenseState.simulated,
+                licenseSource: licenseState.checkSource,
+                coiStatus: coiState.status,
+                coiSimulated: coiState.simulated,
+                coiSource: coiState.checkSource,
+                monitoringActive: coiState.monitoringActive,
+              })
+            }
             className="sa-press inline-flex min-h-[44px] w-full items-center justify-center gap-2 rounded-[10px] bg-[#0a4d38] px-4 py-2.5 text-[13px] font-medium text-white outline-none hover:bg-[#083828] focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-60"
           >
             <ShieldCheckIcon />

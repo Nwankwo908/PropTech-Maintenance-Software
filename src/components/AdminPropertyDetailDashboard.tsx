@@ -29,11 +29,27 @@ import {
   deriveVendorSmsReviewState,
   type VendorSmsReviewState,
 } from '@/lib/emergencyApprovalReview'
-import { fetchConversationMonitoringByMaintenanceRequest } from '@/lib/conversationMonitoring'
+import {
+  fetchConversationMonitoringByMaintenanceRequest,
+  fetchVendorJobConversationMonitoringByMaintenanceRequest,
+} from '@/lib/conversationMonitoring'
 import { buildPropertyAiInsights } from '@/lib/propertyAiInsights'
+import {
+  acknowledgeEmergencyWorkProceed,
+  cancelEmergencyWorkOrder,
+} from '@/api/emergencyWorkOrderDecision'
+import {
+  fetchPendingEstimateForTicket,
+  respondToEstimate,
+} from '@/api/maintenanceEstimate'
 import { fetchRecognizedMaintenanceSpend, type RecognizedMaintenanceSpend } from '@/api/maintenanceInvoice'
+import { sendLandlordProxiedMessage } from '@/api/sendProxiedMessage'
 import { fetchPmCompliance, type PmComplianceTask } from '@/lib/pmCompliance'
-import { buildVendorNegotiationBrief } from '@/lib/vendorNegotiationBrief'
+import {
+  buildVendorNegotiationBrief,
+  type VendorThreadMessageInput,
+} from '@/lib/vendorNegotiationBrief'
+import { recordActivityLog } from '@/lib/recordActivityLog'
 import {
   buildPropertyHealthReport,
   enrichFeedbackFromTickets,
@@ -319,6 +335,12 @@ export function AdminPropertyDetailDashboard() {
   const [dismissedWorkflowIds, setDismissedWorkflowIds] = useState<Set<string>>(() => new Set())
   const [approvalSaving, setApprovalSaving] = useState(false)
   const [messageSending, setMessageSending] = useState(false)
+  const [railActionError, setRailActionError] = useState<string | null>(null)
+  const [messageVendorThreadMessages, setMessageVendorThreadMessages] = useState<
+    VendorThreadMessageInput[]
+  >([])
+  const [messageVendorPendingQuote, setMessageVendorPendingQuote] = useState<number | null>(null)
+  const [messageVendorThreadLoading, setMessageVendorThreadLoading] = useState(false)
   const [pmComplianceTasks, setPmComplianceTasks] = useState<PmComplianceTask[]>([])
   const [aiInsightsOpen, setAiInsightsOpen] = useState(false)
   const [monitoringConversationId, setMonitoringConversationId] = useState<string | null>(null)
@@ -1108,12 +1130,96 @@ export function AdminPropertyDetailDashboard() {
     if (!messageVendorTicketId) return null
     const ticket = buildingTickets.find((t) => t.id === messageVendorTicketId)
     if (!ticket) return null
-    return buildVendorNegotiationBrief(ticket, building)
-  }, [messageVendorTicketId, buildingTickets, building])
+    const vendorName = ticket.assignedVendorId
+      ? (vendors.find((vendor) => vendor.id === ticket.assignedVendorId)?.name ?? null)
+      : null
+    return buildVendorNegotiationBrief(ticket, building, {
+      vendorName,
+      threadMessages: messageVendorThreadMessages,
+      pendingQuoteAmount: messageVendorPendingQuote,
+    })
+  }, [
+    messageVendorTicketId,
+    buildingTickets,
+    building,
+    vendors,
+    messageVendorThreadMessages,
+    messageVendorPendingQuote,
+  ])
+
+  useEffect(() => {
+    if (!messageVendorTicketId) {
+      setMessageVendorThreadMessages([])
+      setMessageVendorPendingQuote(null)
+      setMessageVendorThreadLoading(false)
+      return
+    }
+
+    let cancelled = false
+    const ticketId = messageVendorTicketId
+    let firstLoad = true
+    setMessageVendorThreadLoading(true)
+
+    async function refreshVendorJobThread() {
+      try {
+        const [detail, pending] = await Promise.all([
+          fetchVendorJobConversationMonitoringByMaintenanceRequest(ticketId),
+          fetchPendingEstimateForTicket(ticketId),
+        ])
+        if (cancelled) return
+
+        const transcript = detail?.transcript ?? []
+        const threadMessages: VendorThreadMessageInput[] = []
+        for (let index = 0; index < transcript.length; index += 1) {
+          const item = transcript[index]
+          if (item.type !== 'message' || !item.body.trim()) continue
+          threadMessages.push({
+            id: `msg-${index}-${item.timestampMs}`,
+            sender: item.sender,
+            body: item.body,
+            timestampMs: item.timestampMs,
+          })
+        }
+
+        setMessageVendorThreadMessages(threadMessages)
+        setMessageVendorPendingQuote(pending?.totalCost ?? null)
+      } catch {
+        if (!cancelled && firstLoad) {
+          setMessageVendorThreadMessages([])
+          setMessageVendorPendingQuote(null)
+        }
+      } finally {
+        if (!cancelled && firstLoad) {
+          setMessageVendorThreadLoading(false)
+          firstLoad = false
+        }
+      }
+    }
+
+    void refreshVendorJobThread()
+
+    const pollId = window.setInterval(() => {
+      if (!cancelled) void refreshVendorJobThread()
+    }, 4000)
+
+    const onVisibility = () => {
+      if (document.visibilityState === 'visible' && !cancelled) {
+        void refreshVendorJobThread()
+      }
+    }
+    document.addEventListener('visibilitychange', onVisibility)
+
+    return () => {
+      cancelled = true
+      window.clearInterval(pollId)
+      document.removeEventListener('visibilitychange', onVisibility)
+    }
+  }, [messageVendorTicketId])
 
   function openReview(ticketId: string) {
     setMessageVendorTicketId(null)
     setReviewVendorSmsState(null)
+    setRailActionError(null)
     setReviewTicketId(ticketId)
   }
 
@@ -1124,37 +1230,154 @@ export function AdminPropertyDetailDashboard() {
 
   function openMessageVendor(ticketId: string) {
     setReviewTicketId(null)
+    setRailActionError(null)
     setMessageVendorTicketId(ticketId)
   }
 
   function closeMessageVendor() {
     setMessageVendorTicketId(null)
+    setMessageVendorThreadMessages([])
+    setMessageVendorPendingQuote(null)
+    setMessageVendorThreadLoading(false)
+  }
+
+  function dismissUrgentWorkflow(ticketId: string) {
+    const workflowId = urgentItems.find((item) => item.ticketId === ticketId)?.workflowRunId
+    if (workflowId) {
+      setDismissedWorkflowIds((prev) => new Set(prev).add(workflowId))
+    }
   }
 
   async function handleApprove(ticketId: string) {
     setApprovalSaving(true)
-    const workflowId = urgentItems.find((item) => item.ticketId === ticketId)?.workflowRunId
-    if (workflowId) {
-      setDismissedWorkflowIds((prev) => new Set(prev).add(workflowId))
+    setRailActionError(null)
+    const workflowId = urgentItems.find((item) => item.ticketId === ticketId)?.workflowRunId ?? null
+    const ticket = buildingTickets.find((item) => item.id === ticketId) ?? null
+    try {
+      const pending = await fetchPendingEstimateForTicket(ticketId)
+      if (pending) {
+        await respondToEstimate({
+          estimateId: pending.estimateId,
+          actionToken: pending.actionToken,
+          action: 'approve',
+        })
+      } else {
+        await acknowledgeEmergencyWorkProceed({
+          ticketId,
+          workflowRunId: workflowId,
+          propertyId: canonicalProperty?.id ?? null,
+          vendorId: ticket?.assignedVendorId ?? null,
+        })
+      }
+      dismissUrgentWorkflow(ticketId)
+      closeReview()
+      void loadProperty()
+    } catch (err) {
+      setRailActionError(getErrorMessage(err, 'Could not approve this work order.'))
+    } finally {
+      setApprovalSaving(false)
     }
-    setApprovalSaving(false)
-    closeReview()
   }
 
   async function handleDecline(ticketId: string) {
     setApprovalSaving(true)
-    const workflowId = urgentItems.find((item) => item.ticketId === ticketId)?.workflowRunId
-    if (workflowId) {
-      setDismissedWorkflowIds((prev) => new Set(prev).add(workflowId))
+    setRailActionError(null)
+    const workflowId = urgentItems.find((item) => item.ticketId === ticketId)?.workflowRunId ?? null
+    const ticket = buildingTickets.find((item) => item.id === ticketId) ?? null
+    try {
+      const pending = await fetchPendingEstimateForTicket(ticketId)
+      if (pending) {
+        await respondToEstimate({
+          estimateId: pending.estimateId,
+          actionToken: pending.actionToken,
+          action: 'reject',
+        })
+      } else {
+        await cancelEmergencyWorkOrder({
+          ticketId,
+          workflowRunId: workflowId,
+          propertyId: canonicalProperty?.id ?? null,
+          vendorId: ticket?.assignedVendorId ?? null,
+        })
+      }
+      dismissUrgentWorkflow(ticketId)
+      closeReview()
+      void loadProperty()
+    } catch (err) {
+      setRailActionError(getErrorMessage(err, 'Could not decline this work order.'))
+    } finally {
+      setApprovalSaving(false)
     }
-    setApprovalSaving(false)
-    closeReview()
   }
 
-  async function handleSendVendorMessage(_ticketId: string, _message: string) {
+  async function handleSendVendorMessage(ticketId: string, message: string) {
     setMessageSending(true)
-    setMessageSending(false)
-    closeMessageVendor()
+    setRailActionError(null)
+    const ticket = buildingTickets.find((item) => item.id === ticketId) ?? null
+    if (!ticket?.assignedVendorId) {
+      setMessageSending(false)
+      setRailActionError('Assign a vendor to this work order before sending a text.')
+      throw new Error('Assign a vendor to this work order before sending a text.')
+    }
+    try {
+      const result = await sendLandlordProxiedMessage({
+        maintenanceRequestId: ticketId,
+        body: message,
+        recipientType: 'vendor',
+      })
+      void recordActivityLog({
+        landlordId: getActiveLandlordId(),
+        eventType: 'maintenance.vendor_message_sent',
+        source: 'dashboard',
+        actorType: 'landlord',
+        maintenanceRequestId: ticketId,
+        propertyId: canonicalProperty?.id ?? null,
+        vendorId: ticket.assignedVendorId,
+        conversationId: result.conversationId || null,
+        messageId: result.messageId || null,
+        metadata: { message: 'Property team messaged the assigned vendor.' },
+      })
+
+      // Optimistic append so the rail updates before the poll returns.
+      const nowMs = Date.now()
+      setMessageVendorThreadMessages((prev) => [
+        ...prev,
+        {
+          id: result.messageId || `local-${nowMs}`,
+          sender: 'landlord',
+          body: message,
+          timestampMs: nowMs,
+        },
+      ])
+
+      // Refresh from vendor job thread (creates conversation on first send).
+      try {
+        const detail = await fetchVendorJobConversationMonitoringByMaintenanceRequest(ticketId)
+        const transcript = detail?.transcript ?? []
+        const threadMessages: VendorThreadMessageInput[] = []
+        for (let index = 0; index < transcript.length; index += 1) {
+          const item = transcript[index]
+          if (item.type !== 'message' || !item.body.trim()) continue
+          threadMessages.push({
+            id: `msg-${index}-${item.timestampMs}`,
+            sender: item.sender,
+            body: item.body,
+            timestampMs: item.timestampMs,
+          })
+        }
+        if (threadMessages.length > 0) {
+          setMessageVendorThreadMessages(threadMessages)
+        }
+      } catch {
+        /* keep optimistic message */
+      }
+    } catch (err) {
+      const friendly = getErrorMessage(err, 'Could not send message to the vendor.')
+      setRailActionError(friendly)
+      throw err instanceof Error ? err : new Error(friendly)
+    } finally {
+      setMessageSending(false)
+    }
   }
 
   if (!building) {
@@ -1497,9 +1720,16 @@ export function AdminPropertyDetailDashboard() {
         open={messageVendorTicketId != null}
         brief={activeVendorBrief}
         onClose={closeMessageVendor}
-        onSend={(ticketId, message) => void handleSendVendorMessage(ticketId, message)}
+        onSend={(ticketId, message) => handleSendVendorMessage(ticketId, message)}
         sending={messageSending}
+        error={messageVendorTicketId != null ? railActionError : null}
+        threadLoading={messageVendorThreadLoading}
       />
+      {railActionError && reviewTicketId != null ? (
+        <div className="pointer-events-none fixed bottom-6 left-1/2 z-[80] max-w-md -translate-x-1/2 rounded-[10px] border border-[#fecaca] bg-[#fef2f2] px-4 py-3 text-[13px] text-[#991b1b] shadow-lg">
+          <p className="pointer-events-auto">{railActionError}</p>
+        </div>
+      ) : null}
       <PropertyAiInsightsModal
         open={aiInsightsOpen}
         insights={propertyAiInsights}

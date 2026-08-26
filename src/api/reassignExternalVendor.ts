@@ -32,6 +32,7 @@ export async function postReassignExternalVendor(input: {
   reviewCount?: number | null
   priceLabel?: string | null
   sources?: ('google' | 'yelp' | 'netvendor' | 'mock')[]
+  compliance?: Record<string, unknown> | null
 }): Promise<ReassignExternalVendorOk> {
   const url = input.url.trim()
   const secret = input.secret.trim()
@@ -49,6 +50,7 @@ export async function postReassignExternalVendor(input: {
       reviewCount: input.reviewCount ?? undefined,
       priceLabel: input.priceLabel ?? undefined,
       sources: input.sources ?? undefined,
+      compliance: input.compliance ?? undefined,
     }),
   })
   const text = await res.text()
