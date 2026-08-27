@@ -304,8 +304,41 @@ export async function createWorkflowRun(
   const { data, error } = await writeQuery.select(runSelect).single()
 
   if (error) {
-    console.error("[workflow-runs] create", error.message)
-    return null
+    console.error("[workflow-runs] create", error.message, error.code, error.details)
+    const { data: retry, error: retryErr } = await supabase
+      .from("workflow_runs")
+      .insert({
+        template_id: params.templateId,
+        landlord_id: params.landlordId,
+        trigger_type: params.triggerType,
+        status: "active",
+        metadata,
+      })
+      .select(runSelect)
+      .single()
+    if (retryErr || !retry) {
+      console.error(
+        "[workflow-runs] create retry",
+        retryErr?.message,
+        retryErr?.code,
+        retryErr?.details,
+      )
+      return null
+    }
+    const retried = normalizeRunRow(retry)
+    if (retried && params.logTriggerEvent !== false) {
+      await logPipelineStageEvent(supabase, {
+        runId: retried.id,
+        stage: "trigger",
+        step: params.currentStep ?? undefined,
+        message: "Workflow run started",
+        metadata: {
+          trigger_type: params.triggerType,
+          template_id: params.templateId,
+        },
+      })
+    }
+    return retried
   }
 
   const run = normalizeRunRow(data)

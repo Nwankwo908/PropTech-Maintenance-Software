@@ -95,8 +95,8 @@ function licenseItem(record: VerificationRecord): VerificationChecklistItem {
       status: "complete",
       required: true,
       detail: record.license_number
-        ? `${record.license_number} · Active (simulated)`
-        : "Active (simulated)",
+        ? `${record.license_number} · Active`
+        : "Active",
     }
   }
   const licenseExp = record.license_expiration ?? null
@@ -109,7 +109,7 @@ function licenseItem(record: VerificationRecord): VerificationChecklistItem {
       required: true,
       detail: licenseDateExpired || status === "expired"
         ? `License expired${licenseExp ? ` (${licenseExp})` : ""} — needs renewal`
-        : "No match in state licensing database (simulated)",
+        : "No match in the state licensing database.",
     }
   }
   return {
@@ -145,7 +145,7 @@ function coiCoverageItem(record: VerificationRecord): VerificationChecklistItem 
       status: "complete",
       required: true,
       detail: `$${gl.toLocaleString()} GL · Ulo Additional Insured` +
-        `${exp ? ` · valid through ${exp}` : ""} (simulated)`,
+        `${exp ? ` · valid through ${exp}` : ""}`,
     }
   }
   return {
@@ -154,48 +154,10 @@ function coiCoverageItem(record: VerificationRecord): VerificationChecklistItem 
     status: "action_needed",
     required: true,
     detail: !meetsCoverage
-      ? `$${gl.toLocaleString()} is below the $1M minimum (simulated)`
+      ? `$${gl.toLocaleString()} is below the $1M minimum`
       : !notExpired
-      ? "Insurance certificate is expired (simulated)"
+      ? "Insurance certificate is expired"
       : "Ulo must be listed as Additional Insured on the COI",
-  }
-}
-
-function backgroundItem(record: VerificationRecord): VerificationChecklistItem {
-  const status = (record.background_check_status ?? "").toLowerCase()
-  if (status === "clear") {
-    return {
-      id: "background_check",
-      label: "Background Check Passed",
-      status: "complete",
-      required: true,
-      detail: "Background check clear (simulated Checkr)",
-    }
-  }
-  if (status === "consider") {
-    return {
-      id: "background_check",
-      label: "Background Check Passed",
-      status: "action_needed",
-      required: true,
-      detail: "Background check needs review (simulated Checkr)",
-    }
-  }
-  if (status === "pending") {
-    return {
-      id: "background_check",
-      label: "Background Check Passed",
-      status: "pending",
-      required: true,
-      detail: "Background check in progress (simulated Checkr)",
-    }
-  }
-  return {
-    id: "background_check",
-    label: "Background Check Passed",
-    status: "missing",
-    required: true,
-    detail: "Not started yet",
   }
 }
 
@@ -215,28 +177,28 @@ function w9Item(record: VerificationRecord): VerificationChecklistItem {
       : "1099-NEC"
     return {
       id: "w9",
-      label: "W-9 Received",
+      label: "W-9 on file",
       status: "complete",
-      required: true,
+      required: false,
       detail: `W-9 on file · ${entity} · ${tin} · ${treatment}`,
     }
   }
   if (uploaded && (!entityOk || !tinOk)) {
     return {
       id: "w9",
-      label: "W-9 Received",
+      label: "W-9 on file",
       status: "action_needed",
-      required: true,
+      required: false,
       detail:
         "W-9 uploaded — choose entity type and enter SSN (sole prop) or EIN (LLC/corp)",
     }
   }
   return {
     id: "w9",
-    label: "W-9 Received",
+    label: "W-9 on file",
     status: "missing",
-    required: true,
-    detail: "W-9 not uploaded yet",
+    required: false,
+    detail: "Optional — not required to verify",
   }
 }
 
@@ -318,7 +280,6 @@ export function computeVerificationChecklist(
   const items: VerificationChecklistItem[] = [
     licenseItem(record),
     coiCoverageItem(record),
-    backgroundItem(record),
     w9Item(record),
     stripeConnectItem(record),
     tradeItem(record),

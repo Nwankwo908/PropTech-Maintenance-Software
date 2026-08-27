@@ -83,6 +83,14 @@ export async function runVendorOnboardingViaEngine(
     return runWorkflowEngine(
       supabase,
       buildEngineContext(params),
+      {
+        classified: {
+          templateId: "vendor_onboarding",
+          confidence: "high",
+          reason: "dashboard_vendor_invite",
+          runId: null,
+        },
+      },
     )
   }
 

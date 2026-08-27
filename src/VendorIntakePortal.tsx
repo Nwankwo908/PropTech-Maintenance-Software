@@ -5,11 +5,9 @@ import {
   createVendorConnectAccountLink,
   createVendorConnectAccountSession,
   fileToBase64,
-  refreshVendorBackgroundStatus,
   refreshVendorConnectStatus,
   resolveVendorVerification,
   saveVendorVerification,
-  startVendorBackgroundCheck,
   submitVendorVerification,
   uploadVendorDocument,
   verifyVendorLicense,
@@ -26,7 +24,6 @@ import {
   maskTin,
   normalizeTinDigits,
   TAX_ENTITY_OPTIONS,
-  taxProfileComplete,
   taxProfileForEntity,
   tinFieldHint,
   tinFieldLabel,
@@ -35,12 +32,17 @@ import {
 import { getErrorMessage } from '@/lib/errorMessage'
 import { hasStripeConnectEmbedded } from '@/lib/stripePublishableKey'
 import { StripeConnectEmbeddedOnboarding } from '@/components/StripeConnectEmbeddedOnboarding'
+import { checkboxInputClassName } from '@/components/TableCheckbox'
+import {
+  VENDOR_COI_COVERAGE_ACK_TEXT,
+  vendorCoiCoverageAckFromProgress,
+  vendorCoiCoverageAckProgressPatch,
+} from '@/lib/vendorCoiCoverageAck'
 
 const STEPS = [
   { id: 'business', label: 'Business Info' },
   { id: 'license', label: 'License' },
   { id: 'insurance', label: 'Insurance' },
-  { id: 'background', label: 'Background' },
   { id: 'service', label: 'Tax & Service' },
 ] as const
 
@@ -78,6 +80,25 @@ function InvalidLinkView({ message }: { message: string }) {
         <p className="mt-2 text-[14px] leading-6 text-[#6a7282]">{message}</p>
       </Card>
     </Shell>
+  )
+}
+
+function PayoutAccordionChevron({ expanded }: { expanded: boolean }) {
+  return (
+    <svg
+      viewBox="0 0 20 20"
+      fill="none"
+      aria-hidden
+      className={`size-5 shrink-0 transition-transform duration-200 ${expanded ? 'rotate-180' : ''}`}
+    >
+      <path
+        d="M5 7.5 10 12.5 15 7.5"
+        stroke="currentColor"
+        strokeWidth="1.8"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
   )
 }
 
@@ -220,9 +241,20 @@ function StepHeader({ current }: { current: number }) {
   )
 }
 
+function inviteTokenFromPath(raw: string | undefined): string {
+  let token = (raw ?? '').trim()
+  if (!token) return ''
+  try {
+    token = decodeURIComponent(token).trim()
+  } catch {
+    /* already decoded */
+  }
+  return token.replace(/[.,;:)\]]+$/g, '')
+}
+
 export function VendorIntakePortal() {
   const { token: rawToken } = useParams<{ token: string }>()
-  const token = (rawToken ?? '').trim()
+  const token = inviteTokenFromPath(rawToken)
 
   const [session, setSession] = useState<VendorVerificationSession | null>(null)
   const [loading, setLoading] = useState(true)
@@ -248,6 +280,7 @@ export function VendorIntakePortal() {
   const [tin, setTin] = useState('')
   const [tinSavedLast4, setTinSavedLast4] = useState<string | null>(null)
   const [showConnectOnboarding, setShowConnectOnboarding] = useState(false)
+  const [coiCoverageAck, setCoiCoverageAck] = useState(false)
 
   const initializedRef = useRef(false)
   // Documents already on the record when the vendor opened the link. We only
@@ -278,6 +311,7 @@ export function VendorIntakePortal() {
       setTaxEntityType(isTaxEntityType(s.taxEntityType) ? s.taxEntityType : '')
       setTin('')
       setTinSavedLast4(s.tinLast4)
+      setCoiCoverageAck(vendorCoiCoverageAckFromProgress(s.progress))
     } else {
       // Later refreshes (after an upload/verify): only fold in server-computed
       // license fields (e.g. the scanned number) and never clobber what the
@@ -289,6 +323,7 @@ export function VendorIntakePortal() {
       }
       if (isTaxEntityType(s.taxEntityType)) setTaxEntityType(s.taxEntityType)
       if (s.tinLast4) setTinSavedLast4(s.tinLast4)
+      if (vendorCoiCoverageAckFromProgress(s.progress)) setCoiCoverageAck(true)
     }
 
     if (s.status === 'verified' || s.status === 'needs_review' || s.status === 'submitted') {
@@ -355,7 +390,7 @@ export function VendorIntakePortal() {
     const boot = async () => {
       try {
         if (returningFromConnect) {
-          setStep(4)
+          setStep(STEPS.findIndex((s) => s.id === 'service'))
           const { session: s } = await refreshVendorConnectStatus(token)
           if (!active) return
           hydrate(s)
@@ -416,12 +451,6 @@ export function VendorIntakePortal() {
   )
 
   const taxProfile = taxEntityType ? taxProfileForEntity(taxEntityType) : null
-  const w9TaxReady = taxProfileComplete({
-    w9Received: session?.w9Received ?? false,
-    taxEntityType: taxEntityType || session?.taxEntityType,
-    tinType: taxProfile?.tinType ?? session?.tinType,
-    tinLast4: tinSavedLast4 ?? session?.tinLast4,
-  })
 
   if (loading) return <LoadingView />
   if (invalid) return <InvalidLinkView message={invalid} />
@@ -496,9 +525,6 @@ export function VendorIntakePortal() {
               <ChecklistRow key={item.id} item={item} />
             ))}
           </ul>
-          <p className="mt-6 rounded-lg border border-[#fde68a] bg-[#fffbeb] px-3 py-2 text-[11px] leading-4 text-[#92400e]">
-            Demo note: license, insurance, and background results are simulated, not live checks.
-          </p>
         </Card>
       </Shell>
     )
@@ -565,10 +591,9 @@ export function VendorIntakePortal() {
             </p>
             <Field label="License state (e.g. IL)" value={licenseState} onChange={setLicenseState} />
             <Field
-              label="License number (optional)"
+              label="License number"
               value={licenseNumber}
               onChange={setLicenseNumber}
-              placeholder="If you have it handy"
             />
             {session.license.status ? (
               <div
@@ -579,10 +604,10 @@ export function VendorIntakePortal() {
                 }`}
               >
                 {['verified', 'active', 'manual_verified'].includes(session.license.status)
-                  ? `License active (simulated)${session.license.number ? ` · ${session.license.number}` : ''}`
+                  ? `License active${session.license.number ? ` · ${session.license.number}` : ''}`
                   : session.license.status === 'expired'
-                    ? 'License shows expired (simulated). Upload your license below and we can still proceed.'
-                    : 'No match found (simulated). Upload your license below and we can still proceed.'}
+                    ? 'License shows expired. Upload your license below and we can still proceed.'
+                    : 'No match found. Upload your license below and we can still proceed.'}
               </div>
             ) : null}
             <button
@@ -630,7 +655,7 @@ export function VendorIntakePortal() {
               <div className="rounded-lg border border-[#e5e7eb] bg-[#f9fafb] px-3 py-3 text-[13px] text-[#364153]">
                 <p>
                   <strong>${session.insurance.generalLiability.toLocaleString()}</strong> general
-                  liability (simulated read)
+                  liability
                 </p>
                 {session.insurance.expiration ? (
                   <p className="mt-0.5">Valid through {session.insurance.expiration}</p>
@@ -660,9 +685,37 @@ export function VendorIntakePortal() {
               }}
             />
             <UploadedDocs docs={docsOfKind('coi')} />
+            <label className="flex cursor-pointer items-start gap-3">
+              <input
+                type="checkbox"
+                className={`mt-0.5 ${checkboxInputClassName}`}
+                checked={coiCoverageAck}
+                disabled={busy}
+                onChange={(event) => setCoiCoverageAck(event.target.checked)}
+              />
+              <span className="text-[14px] leading-5 text-[#364153]">{VENDOR_COI_COVERAGE_ACK_TEXT}</span>
+            </label>
             <div className="flex gap-3 pt-2">
               <BackButton onClick={goBack} />
-              <PrimaryButton loading={busy} onClick={goNext}>
+              <PrimaryButton
+                loading={busy}
+                disabled={!coiCoverageAck}
+                onClick={async () => {
+                  if (!coiCoverageAck) {
+                    setActionError('Confirm your general liability coverage to continue.')
+                    return
+                  }
+                  const saved = await runAction(() =>
+                    saveVendorVerification(token, {
+                      progress: {
+                        ...(session?.progress ?? {}),
+                        coi_coverage_attestation: vendorCoiCoverageAckProgressPatch(),
+                      },
+                    }),
+                  )
+                  if (saved) goNext()
+                }}
+              >
                 Continue
               </PrimaryButton>
             </div>
@@ -671,59 +724,13 @@ export function VendorIntakePortal() {
 
         {step === 3 ? (
           <div className="space-y-4">
-            <p className="text-[14px] leading-6 text-[#364153]">
-              A quick background check keeps residents safe. Select Check Status to complete.
-            </p>
-            {!session.backgroundCheck.status ? (
-              <PrimaryButton
-                loading={busy}
-                onClick={() => runAction(() => startVendorBackgroundCheck(token))}
-              >
-                Start background check
-              </PrimaryButton>
-            ) : (
-              <div
-                className={`rounded-lg px-3 py-3 text-[13px] ${
-                  session.backgroundCheck.status === 'clear'
-                    ? 'bg-[#dbfce7] text-[#008236]'
-                    : session.backgroundCheck.status === 'consider'
-                      ? 'bg-[#fee2e2] text-[#b91c1c]'
-                      : 'bg-[#fef9c3] text-[#92400e]'
-                }`}
-              >
-                {session.backgroundCheck.status === 'clear'
-                  ? 'Background check clear (simulated Checkr).'
-                  : session.backgroundCheck.status === 'consider'
-                    ? 'Background check needs review (simulated Checkr).'
-                    : 'Background check is processing (simulated Checkr).'}
-              </div>
-            )}
-            {session.backgroundCheck.status === 'pending' ? (
-              <button
-                type="button"
-                disabled={busy}
-                onClick={() => runAction(() => refreshVendorBackgroundStatus(token))}
-                className="w-full rounded-[10px] border border-[#186179] px-4 py-2.5 text-[14px] font-semibold text-[#186179] transition-colors hover:bg-[#186179]/5 disabled:opacity-50"
-              >
-                Check status
-              </button>
-            ) : null}
-            <div className="flex gap-3 pt-2">
-              <BackButton onClick={goBack} />
-              <PrimaryButton loading={busy} onClick={goNext}>
-                Continue
-              </PrimaryButton>
-            </div>
-          </div>
-        ) : null}
-
-        {step === 4 ? (
-          <div className="space-y-4">
             <div className="rounded-[12px] border border-[#e5e7eb] bg-[#f9fafb] p-4">
-              <p className="text-[13px] font-semibold text-[#0a0a0a]">Tax entity (W-9)</p>
+              <p className="text-[13px] font-semibold text-[#0a0a0a]">
+                Tax entity (W-9){' '}
+                <span className="font-medium text-[#6a7282]">Optional</span>
+              </p>
               <p className="mt-1 text-[12px] leading-5 text-[#6a7282]">
-                Sole proprietors: SSN. LLCs/corps: EIN. Entity type determines W-9 variant and
-                1099 treatment — must be captured correctly.
+                Add this if you need it for 1099 reporting. Sole proprietors: SSN. LLCs/corps: EIN.
               </p>
               <label className="mt-3 block">
                 <span className="text-[13px] font-medium text-[#364153]">Entity type</span>
@@ -807,7 +814,7 @@ export function VendorIntakePortal() {
             </div>
 
             <FileUpload
-              label="Upload your W-9"
+              label="Upload your W-9 (optional)"
               accept="image/*,application/pdf"
               busy={busy}
               done={docsOfKind('w9').length > 0}
@@ -825,15 +832,13 @@ export function VendorIntakePortal() {
             />
             <UploadedDocs docs={docsOfKind('w9')} />
 
-            <div className="rounded-[12px] border border-[#e5e7eb] bg-[#f9fafb] p-4">
-              <p className="text-[13px] font-semibold text-[#0a0a0a]">Payout account</p>
-              <p className="mt-1 text-[13px] leading-5 text-[#6a7282]">
-                {session.stripeConnectReady
-                  ? 'Confirm this is the account where you want invoice payments deposited.'
-                  : 'Set up payouts so you can get paid when invoices are approved. Takes a few minutes with Stripe.'}
-              </p>
+            <div className="overflow-hidden rounded-[12px] border border-[#e5e7eb] bg-[#f9fafb]">
               {session.stripeConnectReady ? (
-                <>
+                <div className="p-4">
+                  <p className="text-[13px] font-semibold text-[#0a0a0a]">Payout account</p>
+                  <p className="mt-1 text-[13px] leading-5 text-[#6a7282]">
+                    Confirm this is the account where you want invoice payments deposited.
+                  </p>
                   <p className="mt-3 text-[13px] font-medium text-[#15803d]">
                     Payout account connected
                   </p>
@@ -861,37 +866,71 @@ export function VendorIntakePortal() {
                       disabled={busy}
                       onClick={() => void handleOpenVendorConnect()}
                       className="rounded-[10px] border border-[#e5e7eb] bg-white px-4 py-2.5 text-[14px] font-medium text-[#101828] transition-colors hover:bg-[#f3f4f6] disabled:opacity-50"
+                      aria-expanded={showConnectOnboarding}
                     >
                       Update payout account
                     </button>
                   </div>
-                </>
+                  {showConnectOnboarding && hasStripeConnectEmbedded() ? (
+                    <div className="mt-4 border-t border-[#e5e7eb] pt-4">
+                      <StripeConnectEmbeddedOnboarding
+                        fetchClientSecret={fetchVendorConnectClientSecret}
+                        onExit={() => void handleVendorConnectExit()}
+                      />
+                      <button
+                        type="button"
+                        disabled={busy}
+                        onClick={() => setShowConnectOnboarding(false)}
+                        className="mt-2 w-full text-center text-[13px] font-medium text-[#186179] hover:underline disabled:opacity-50"
+                      >
+                        Close payout setup
+                      </button>
+                    </div>
+                  ) : null}
+                </div>
               ) : (
-                <button
-                  type="button"
-                  disabled={busy}
-                  onClick={() => void handleOpenVendorConnect()}
-                  className="mt-3 w-full rounded-[10px] bg-[#186179] px-4 py-2.5 text-[14px] font-semibold text-white transition-colors hover:bg-[#145066] disabled:opacity-50"
-                >
-                  Set up payouts
-                </button>
-              )}
-              {showConnectOnboarding && hasStripeConnectEmbedded() ? (
                 <>
-                  <StripeConnectEmbeddedOnboarding
-                    fetchClientSecret={fetchVendorConnectClientSecret}
-                    onExit={() => void handleVendorConnectExit()}
-                  />
                   <button
                     type="button"
                     disabled={busy}
-                    onClick={() => setShowConnectOnboarding(false)}
-                    className="mt-2 w-full text-center text-[13px] font-medium text-[#186179] hover:underline disabled:opacity-50"
+                    aria-expanded={showConnectOnboarding}
+                    onClick={() => {
+                      if (showConnectOnboarding) {
+                        setShowConnectOnboarding(false)
+                        return
+                      }
+                      void handleOpenVendorConnect()
+                    }}
+                    className="flex w-full items-center justify-between gap-3 bg-[#186179] px-4 py-2.5 text-left text-[14px] font-semibold text-white transition-colors hover:bg-[#145066] disabled:opacity-50"
                   >
-                    Close payout setup
+                    <span>Set up payouts</span>
+                    <PayoutAccordionChevron expanded={showConnectOnboarding} />
                   </button>
+                  {showConnectOnboarding ? (
+                    <div className="border-t border-[#d1d5dc] bg-white p-4">
+                      <p className="text-[13px] leading-5 text-[#6a7282]">
+                        Set up payouts so you can get paid when invoices are approved. Takes a few
+                        minutes with Stripe.
+                      </p>
+                      {hasStripeConnectEmbedded() ? (
+                        <StripeConnectEmbeddedOnboarding
+                          fetchClientSecret={fetchVendorConnectClientSecret}
+                          onExit={() => void handleVendorConnectExit()}
+                        />
+                      ) : (
+                        <button
+                          type="button"
+                          disabled={busy}
+                          onClick={() => void handleOpenVendorConnect()}
+                          className="mt-3 w-full rounded-[10px] border border-[#186179] px-4 py-2.5 text-[14px] font-semibold text-[#186179] transition-colors hover:bg-[#186179]/5 disabled:opacity-50"
+                        >
+                          Continue with Stripe
+                        </button>
+                      )}
+                    </div>
+                  ) : null}
                 </>
-              ) : null}
+              )}
             </div>
 
             <div>
@@ -956,28 +995,40 @@ export function VendorIntakePortal() {
               <BackButton onClick={goBack} />
               <PrimaryButton
                 loading={busy}
-                disabled={trades.length === 0 || !w9TaxReady}
+                disabled={trades.length === 0}
                 onClick={async () => {
-                  if (!taxEntityType) {
-                    setActionError('Choose your business entity type for the W-9.')
-                    return
+                  const startedW9 =
+                    Boolean(taxEntityType) ||
+                    Boolean(tin.trim()) ||
+                    docsOfKind('w9').length > 0 ||
+                    session.w9Received
+                  if (startedW9) {
+                    if (!taxEntityType) {
+                      setActionError('Choose your business entity type for the W-9.')
+                      return
+                    }
+                    const digits = normalizeTinDigits(tin)
+                    if (!tinSavedLast4 && digits.length === 0) {
+                      setActionError(
+                        taxProfile?.tinType === 'ssn'
+                          ? 'Enter your Social Security number.'
+                          : 'Enter your Employer Identification Number (EIN).',
+                      )
+                      return
+                    }
                   }
                   const digits = normalizeTinDigits(tin)
-                  if (!tinSavedLast4 && digits.length === 0) {
-                    setActionError(
-                      taxProfile?.tinType === 'ssn'
-                        ? 'Enter your Social Security number.'
-                        : 'Enter your Employer Identification Number (EIN).',
-                    )
-                    return
-                  }
                   const s = await runAction(() =>
                     submitVendorVerification(token, {
                       tradeCategories: trades,
                       serviceArea: serviceAreaPatch,
                       availability,
-                      taxEntityType,
-                      ...(digits.length > 0 ? { tin: digits } : {}),
+                      ...(taxEntityType
+                        ? {
+                            taxEntityType,
+                            ...(digits.length > 0 ? { tin: digits } : {}),
+                          }
+                        : {}),
                     }),
                   )
                   if (s) setCompleted(true)
@@ -986,10 +1037,9 @@ export function VendorIntakePortal() {
                 Submit
               </PrimaryButton>
             </div>
-            {!w9TaxReady ? (
+            {trades.length === 0 ? (
               <p className="text-[12px] leading-5 text-[#9a3412]">
-                Finish tax entity, {taxProfile ? taxProfile.tinType.toUpperCase() : 'SSN/EIN'}, and
-                W-9 upload before submitting.
+                Select at least one trade before submitting.
               </p>
             ) : null}
           </div>
@@ -1043,7 +1093,7 @@ function UploadedDocs({ docs }: { docs: VendorVerificationDocument[] }) {
               {scannedNumber ? (
                 <p className="mt-0.5 text-[12px] text-[#6a7282]">
                   We read license #{scannedNumber} from this document and filled in your license
-                  number above (simulated scan).
+                  number above.
                 </p>
               ) : null}
             </div>

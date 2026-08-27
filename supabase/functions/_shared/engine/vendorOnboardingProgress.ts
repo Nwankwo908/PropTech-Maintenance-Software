@@ -57,6 +57,24 @@ export async function startVendorOnboardingRun(
   due.setDate(due.getDate() + noResponseDays)
   const now = new Date().toISOString()
 
+  const { error: templateErr } = await supabase.from("workflow_templates").upsert(
+    {
+      id: "vendor_onboarding",
+      name: "Vendor Onboarding",
+      type: "vendor",
+      description:
+        "Vendor verification onboarding: invite, collect documents, and add to the roster.",
+      trigger_config: { primary_trigger: "dashboard" },
+      route_config: { handler: "vendor_onboarding", domain: "vendor" },
+      escalation_config: { no_response_days: 5 },
+      active: true,
+    },
+    { onConflict: "id" },
+  )
+  if (templateErr) {
+    console.warn("[vendor-onboarding] ensure template", templateErr.message)
+  }
+
   return await createWorkflowRun(supabase, {
     templateId: "vendor_onboarding",
     landlordId: params.landlordId,
@@ -112,25 +130,29 @@ export async function abortFailedVendorOnboardingInvite(
     },
   })
 
-  await recordActivityLog(supabase, {
-    landlordId: params.landlordId,
-    eventType: "vendor.invite_failed",
-    source: "dashboard",
-    actorType: "landlord",
-    vendorId: params.vendorId,
-    workflowRunId: params.runId,
-    workflowTemplateId: "vendor_onboarding",
-    metadata: {
-      message: `Verification invite could not be sent to ${params.vendorLabel}.`,
-      delivery: params.delivery ?? null,
-    },
-  })
+  try {
+    await recordActivityLog(supabase, {
+      landlordId: params.landlordId,
+      eventType: "vendor.invite_failed",
+      source: "dashboard",
+      actorType: "landlord",
+      vendorId: params.vendorId,
+      workflowRunId: params.runId,
+      workflowTemplateId: "vendor_onboarding",
+      metadata: {
+        message: `Verification invite could not be sent to ${params.vendorLabel}.`,
+        delivery: params.delivery ?? null,
+      },
+    })
+  } catch (err) {
+    console.error("[abortFailedVendorOnboardingInvite] activity log failed", err)
+  }
 }
 
 export async function markVendorOnboardingInviteDelivered(
   supabase: SupabaseClient,
   params: {
-    runId: string
+    runId: string | null
     verificationId: string
     vendorLabel: string
     channel: string
@@ -140,19 +162,21 @@ export async function markVendorOnboardingInviteDelivered(
     conversationId?: string | null
   },
 ): Promise<void> {
-  const run = await getWorkflowRunById(supabase, params.runId)
+  const runId = params.runId?.trim() || ""
+  if (!runId) return
+  const run = await getWorkflowRunById(supabase, runId)
   if (!run) return
 
   if (params.conversationId) {
     await linkConversationToWorkflowRun(supabase, {
       conversationId: params.conversationId,
-      runId: params.runId,
+      runId,
       templateId: "vendor_onboarding",
     })
   }
 
   await logPipelineStageEvent(supabase, {
-    runId: params.runId,
+    runId,
     stage: "route",
     step: "classify_channel",
     actorType: "landlord",
@@ -161,7 +185,7 @@ export async function markVendorOnboardingInviteDelivered(
   })
 
   await logPipelineStageEvent(supabase, {
-    runId: params.runId,
+    runId,
     stage: "act",
     step: "deliver_invite",
     actorType: "landlord",
@@ -178,7 +202,7 @@ export async function markVendorOnboardingInviteDelivered(
   })
 
   await logPipelineStageEvent(supabase, {
-    runId: params.runId,
+    runId,
     stage: "log",
     step: "append_graph_events",
     message: "Vendor invite logged to operations graph.",
@@ -192,7 +216,7 @@ export async function markVendorOnboardingInviteDelivered(
     invite_conversation_id: params.conversationId ?? null,
   })
 
-  await updateWorkflowRun(supabase, params.runId, {
+  await updateWorkflowRun(supabase, runId, {
     currentStep: "invited",
     metadata: {
       verification_id: params.verificationId,

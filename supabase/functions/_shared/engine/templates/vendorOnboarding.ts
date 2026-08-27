@@ -55,6 +55,17 @@ export const vendorOnboardingTemplate: WorkflowTemplate = {
   supportedTriggers: ["dashboard", "vendor_portal", "cron", "automation", "sms_inbound"],
 
   classify(ctx): ClassifiedIntent | null {
+    const vendorOnboarding = (ctx as WorkflowExecutionContext & {
+      vendorOnboarding?: { action?: string }
+    }).vendorOnboarding
+    if (vendorOnboarding?.action) {
+      return {
+        templateId: "vendor_onboarding",
+        confidence: "high",
+        reason: `vendor_onboarding_${vendorOnboarding.action}`,
+        runId: ctx.runId ?? ctx.activeRun?.id ?? null,
+      }
+    }
     if (ctx.cron?.templateId === "vendor_onboarding") {
       return {
         templateId: "vendor_onboarding",
@@ -146,7 +157,7 @@ export const vendorOnboardingTemplate: WorkflowTemplate = {
       })
       const newRunId = run?.id ?? null
 
-      if (newRunId && meta.inviteRequest) {
+      if (meta.inviteRequest) {
         const delivered = await deliverVendorInvite(supabase, {
           landlordId: ctx.landlordId,
           workflowRunId: newRunId,

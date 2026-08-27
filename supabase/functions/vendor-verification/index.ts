@@ -27,7 +27,7 @@ import {
   assertConnectReturnOriginForStripe,
   createConnectAccountLink,
   createConnectAccountSession,
-  createExpressConnectAccount,
+  ensureEmbeddedConnectAccount,
   isStripeConfigured,
   isStripeConnectReady,
   listConnectPayoutMethods,
@@ -348,25 +348,27 @@ async function ensureVendorExpressConnectAccount(
       ? vendorRow.stripe_connect_account_id.trim()
       : ""
 
-  if (!accountId) {
-    const created = await createExpressConnectAccount({
-      vendorId,
-      landlordId,
-      email: row.email,
-      businessName: row.business_name || row.contact_name,
-    })
-    if (!created.ok) {
-      return { ok: false, status: 502, error: created.error }
-    }
-    accountId = created.account.id
+  const ensured = await ensureEmbeddedConnectAccount({
+    existingAccountId: accountId || null,
+    vendorId,
+    landlordId,
+    email: row.email,
+    businessName: row.business_name || row.contact_name,
+  })
+  if (!ensured.ok) {
+    return { ok: false, status: 502, error: ensured.error }
+  }
+  const createdNew = !accountId || ensured.replaced || ensured.account.id !== accountId
+  accountId = ensured.account.id
+  if (createdNew) {
     await persistConnectSnapshot(supabase, {
       vendorId,
       verificationId: row.id,
       landlordId,
       accountId,
-      chargesEnabled: created.account.chargesEnabled,
-      payoutsEnabled: created.account.payoutsEnabled,
-      detailsSubmitted: created.account.detailsSubmitted,
+      chargesEnabled: ensured.account.chargesEnabled,
+      payoutsEnabled: ensured.account.payoutsEnabled,
+      detailsSubmitted: ensured.account.detailsSubmitted,
     })
     await logGraphEvent(supabase, {
       landlord_id: landlordId,
@@ -524,23 +526,31 @@ serve(async (req) => {
     switch (action) {
       case "resolve": {
         // First open flips invited -> in_progress (engine advances the run).
+        // Never fail the form load if the status update or engine hiccups.
         if (row.status === "invited") {
-          await supabase
+          const { error: progressErr } = await supabase
             .from("vendor_verifications")
             .update({ status: "in_progress" })
             .eq("id", row.id)
+          if (progressErr) {
+            console.warn("[vendor-verification] invited→in_progress", progressErr)
+          }
           if (row.workflow_run_id) {
-            await runVendorOnboardingViaEngine(supabase, {
-              landlordId,
-              runId: row.workflow_run_id,
-              trigger: "vendor_portal",
-              vendorOnboarding: {
-                action: "portal_in_progress",
-                verificationId: row.id,
-                vendorId: row.vendor_id,
-                vendorLabel: row.business_name || row.contact_name || "Vendor",
-              },
-            })
+            try {
+              await runVendorOnboardingViaEngine(supabase, {
+                landlordId,
+                runId: row.workflow_run_id,
+                trigger: "vendor_portal",
+                vendorOnboarding: {
+                  action: "portal_in_progress",
+                  verificationId: row.id,
+                  vendorId: row.vendor_id,
+                  vendorLabel: row.business_name || row.contact_name || "Vendor",
+                },
+              })
+            } catch (err) {
+              console.error("[vendor-verification] portal_in_progress engine", err)
+            }
           }
         }
         return await reloadAndRespond()
@@ -642,7 +652,7 @@ serve(async (req) => {
         const licenseNumber = typeof body.licenseNumber === "string"
           ? body.licenseNumber.trim()
           : null
-        const result = verifyLicense({
+        const result = await verifyLicense({
           businessName: row.business_name,
           contactName: row.contact_name,
           licenseState,
@@ -727,17 +737,16 @@ serve(async (req) => {
           return jsonResponse({ error: "Upload failed" }, 500)
         }
 
-        let parsed: Record<string, unknown> = { simulated: true }
+        let parsed: Record<string, unknown> = {}
         const verificationUpdate: Record<string, unknown> = {
           status: row.status === "invited" ? "in_progress" : row.status,
         }
 
         if (kind === "license") {
-          // Scan the uploaded license and read the number off the document so the
-          // vendor's form auto-fills (document scanner / OCR seam).
-          const scan = scanLicenseDocument({
+          const scan = await scanLicenseDocument({
             fileName,
             contentType,
+            bytes,
             businessName: row.business_name,
             contactName: row.contact_name,
             licenseState: row.license_state,
@@ -750,9 +759,10 @@ serve(async (req) => {
           verificationUpdate.license_expiration = scan.expirationDate
           if (scan.licenseState) verificationUpdate.license_state = scan.licenseState
         } else if (kind === "coi") {
-          const coi = parseCoi({
+          const coi = await parseCoi({
             fileName,
             contentType,
+            bytes,
             businessName: row.business_name,
           })
           parsed = coi as unknown as Record<string, unknown>

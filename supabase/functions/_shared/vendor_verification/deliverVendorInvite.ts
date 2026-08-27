@@ -33,7 +33,7 @@ export type VendorInviteDeliveryResult = {
 
 export type VendorInviteRequest = {
   landlordId: string
-  workflowRunId: string
+  workflowRunId: string | null
   vendorId: string | null
   businessName: string | null
   contactName: string | null
@@ -85,8 +85,7 @@ export function inviteEmailCopy(input: {
   const steps = [
     "Verifying your professional license",
     "Uploading your insurance certificate",
-    "Completing a background check",
-    "Providing a W-9",
+    "Providing a W-9 (optional)",
     "Setting up your payout account",
     "Confirming the services you offer and the areas you serve",
   ]
@@ -143,13 +142,79 @@ export function vendorInviteFailureUserMessage(delivery?: {
   smsError?: string
   emailError?: string
 } | null): string {
+  const emailSent = delivery?.email === "sent"
+  const smsError = (delivery?.smsError ?? "").trim()
+  const emailError = (delivery?.emailError ?? "").trim().toLowerCase()
+
+  if (smsError.startsWith("persist_failed")) {
+    if (smsError.toLowerCase().includes("schema cache") || smsError.toLowerCase().includes("could not find")) {
+      return "We couldn't start vendor onboarding because the database is still updating. Wait a few seconds and try again."
+    }
+    if (smsError.toLowerCase().includes("foreign key") || smsError.toLowerCase().includes("violates")) {
+      return "We couldn't start vendor onboarding. Refresh the vendor profile and try again."
+    }
+    return "We couldn't start vendor onboarding. Please try again in a moment."
+  }
   if (
-    delivery?.smsError === "no_active_landlord_sms_line" &&
-    delivery.email !== "sent"
+    smsError === "no_active_landlord_sms_line" &&
+    !emailSent
   ) {
+    if (emailError.includes("resend")) {
+      return "We couldn't send the verification invite. This account doesn't have an SMS line set up yet, and email delivery isn't configured."
+    }
+    if (delivery?.email === "failed") {
+      return "We couldn't send the verification invite. This account doesn't have an SMS line set up yet, and the email could not be delivered."
+    }
     return "We couldn't send the verification invite because this account doesn't have an SMS line set up yet."
   }
+  if (smsError === "invalid_phone" && !emailSent) {
+    return "We couldn't send the verification invite. Check that the vendor's phone number is valid and try again."
+  }
+  if (emailError.includes("resend") && delivery?.sms !== "sent") {
+    return "We couldn't send the verification invite by email because email delivery isn't configured yet."
+  }
+  if (delivery?.sms === "failed" && !emailSent) {
+    return "We couldn't send the verification invite by text. Check the vendor's phone number and try again."
+  }
+  if (delivery?.email === "failed" && delivery?.sms !== "sent") {
+    return "We couldn't send the verification invite by email. Check the vendor's email address and try again."
+  }
   return "We couldn't send the verification invite. Check the vendor's contact info and try again."
+}
+
+/** Live DBs may omit `invited` from vendor_verifications_status_check. */
+const INVITE_STATUS_FALLBACKS = ["invited", "in_progress", "pending"] as const
+
+function isVerificationStatusCheckError(error: {
+  code?: string
+  message?: string
+} | null): boolean {
+  if (!error) return false
+  const message = (error.message ?? "").toLowerCase()
+  return error.code === "23514" && message.includes("vendor_verifications_status_check")
+}
+
+async function insertVendorVerificationInvite(
+  supabase: SupabaseClient,
+  payload: Record<string, unknown>,
+): Promise<{ data: { id: string } | null; error: { code?: string; message?: string } | null }> {
+  let lastError: { code?: string; message?: string } | null = null
+  for (const status of INVITE_STATUS_FALLBACKS) {
+    const { data, error } = await supabase
+      .from("vendor_verifications")
+      .insert({ ...payload, status })
+      .select("id")
+      .single()
+    if (!error && data?.id) {
+      return { data: { id: data.id as string }, error: null }
+    }
+    lastError = error
+    console.error("[deliverVendorInvite] insert failed", { status, error })
+    if (!isVerificationStatusCheckError(error)) {
+      return { data: data?.id ? { id: data.id as string } : null, error }
+    }
+  }
+  return { data: null, error: lastError }
 }
 
 /**
@@ -178,30 +243,61 @@ export async function deliverVendorInvite(
   const vendorLabel = businessName || contactName || "vendor"
   const token = generateVendorVerificationToken()
   const link = uloAppUrl.vendorVerification(token)
+  const runId = workflowRunId?.trim() || null
 
-  const { data: inserted, error: insertErr } = await supabase
-    .from("vendor_verifications")
-    .insert({
+  const insertPayload: Record<string, unknown> = {
+    landlord_id: landlordId,
+    vendor_id: vendorId,
+    token,
+    business_name: businessName || null,
+    contact_name: contactName || null,
+    vendor_first_name: vendorFirstName || null,
+    email: email || null,
+    phone: phone || null,
+    property_name: propertyName || null,
+    trade_categories: tradeCategories,
+    invited_channel: channel,
+  }
+  if (runId) insertPayload.workflow_run_id = runId
+
+  let { data: inserted, error: insertErr } = await insertVendorVerificationInvite(
+    supabase,
+    insertPayload,
+  )
+
+  if (insertErr) {
+    console.error("[deliverVendorInvite] insert failed", insertErr)
+    const retry = await insertVendorVerificationInvite(supabase, {
       landlord_id: landlordId,
       vendor_id: vendorId,
       token,
-      status: "invited",
       business_name: businessName || null,
-      contact_name: contactName || null,
-      vendor_first_name: vendorFirstName || null,
       email: email || null,
       phone: phone || null,
-      property_name: propertyName || null,
-      trade_categories: tradeCategories,
-      invited_channel: channel,
-      workflow_run_id: workflowRunId,
     })
-    .select("id")
-    .single()
+    inserted = retry.data
+    insertErr = retry.error
+    if (insertErr) {
+      console.error("[deliverVendorInvite] insert retry failed", insertErr)
+    }
+  }
 
   if (insertErr || !inserted?.id) {
     console.error("[deliverVendorInvite] insert failed", insertErr)
-    return null
+    return {
+      verificationId: "",
+      token,
+      link,
+      delivery: {
+        sms: null,
+        email: null,
+        smsError: insertErr?.message ? `persist_failed:${insertErr.message}` : "persist_failed",
+      },
+      anyDelivered: false,
+      deliveredVia: "",
+      inviteConversationId: null,
+      inviteMessageId: null,
+    }
   }
 
   const verificationId = inserted.id as string
@@ -287,6 +383,22 @@ export async function deliverVendorInvite(
     delivery.sms = "skipped"
   }
 
+  if (delivery.email == null && email && delivery.sms !== "sent") {
+    const { subject, text, html } = inviteEmailCopy({
+      vendorName,
+      companyName,
+      link,
+    })
+    const res = await sendResendEmail(email, subject, text, html)
+    if ("error" in res) {
+      delivery.email = "failed"
+      delivery.emailError = res.error
+      console.error("[deliverVendorInvite] email fallback failed", res.error)
+    } else {
+      delivery.email = "sent"
+    }
+  }
+
   const anyDelivered = delivery.sms === "sent" || delivery.email === "sent"
   const deliveredVia = [
     delivery.sms === "sent" ? "SMS" : null,
@@ -320,7 +432,7 @@ export async function deliverVendorInvite(
   }
 
   await markVendorOnboardingInviteDelivered(supabase, {
-    runId: workflowRunId,
+    runId,
     verificationId,
     vendorLabel,
     channel,

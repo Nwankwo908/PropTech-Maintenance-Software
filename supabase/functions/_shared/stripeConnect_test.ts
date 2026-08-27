@@ -4,6 +4,7 @@ import {
   assertConnectReturnOriginForStripe,
   connectAccountSessionParams,
   connectHttpsRequiredMessage,
+  isEmbeddedNoDashboardConnectAccount,
   resolveConnectAppBaseUrl,
   stripeErrorMessage,
 } from "./stripeConnect.ts"
@@ -55,6 +56,32 @@ Deno.test("connectAccountSessionParams enables embedded account onboarding", () 
   assertEquals(
     body.get("components[account_onboarding][features][external_account_collection]"),
     "true",
+  )
+  assertEquals(
+    body.get("components[account_onboarding][features][disable_stripe_user_authentication]"),
+    "true",
+  )
+})
+
+Deno.test("isEmbeddedNoDashboardConnectAccount requires dashboard none", () => {
+  assertEquals(
+    isEmbeddedNoDashboardConnectAccount({
+      controller: {
+        requirement_collection: "application",
+        stripe_dashboard: { type: "none" },
+      },
+    }),
+    true,
+  )
+  assertEquals(
+    isEmbeddedNoDashboardConnectAccount({
+      type: "express",
+      controller: {
+        requirement_collection: "stripe",
+        stripe_dashboard: { type: "express" },
+      },
+    }),
+    false,
   )
 })
 

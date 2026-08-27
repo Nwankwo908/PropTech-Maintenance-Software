@@ -69,6 +69,10 @@ export function StripeConnectEmbeddedOnboarding({
       <ConnectComponentsProvider connectInstance={connectInstance}>
         <ConnectAccountOnboarding
           onExit={onExit}
+          collectionOptions={{
+            fields: 'eventually_due',
+            futureRequirements: 'include',
+          }}
           onLoaderStart={() => {
             setReady(true)
             setLoadError(null)

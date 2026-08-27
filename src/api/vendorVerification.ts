@@ -7,7 +7,7 @@
  *   Edge Function, invoked through the shared Supabase client.
  */
 import { adminEdgeInvokeHeaders, fetchAdminEdgeFunction } from '@/api/adminReassignVendor'
-import { getAdminEdgeSecret } from '@/lib/adminEdgeAuth'
+import { formatAdminEdgeUnauthorizedError, getAdminEdgeSecret } from '@/lib/adminEdgeAuth'
 import { getActiveLandlordId } from '@/lib/activeLandlord'
 import { getErrorMessage } from '@/lib/errorMessage'
 import { supabase } from '@/lib/supabase'
@@ -56,6 +56,9 @@ export async function sendVendorInvite(
   input: SendVendorInviteInput,
 ): Promise<SendVendorInviteResult> {
   const secret = getAdminEdgeSecret()
+  if (!secret) {
+    throw new Error("This feature isn't available right now. Please try again later.")
+  }
   const url = resolveEdgeUrl('send-vendor-invite')
   const res = await fetchAdminEdgeFunction(url, {
     method: 'POST',
@@ -69,21 +72,51 @@ export async function sendVendorInvite(
   } catch {
     throw new Error(`Vendor invite: invalid JSON (${res.status})`)
   }
+  if (res.status === 401) {
+    throw new Error(formatAdminEdgeUnauthorizedError("We couldn't start vendor onboarding."))
+  }
   if (!res.ok) {
-    const err = parsed as { error?: string }
-    throw new Error(
-      err.error ?? "We couldn't send the verification invite. Check the vendor's contact info and try again.",
-    )
+    throw new Error(inviteFailureMessageFromResponse(parsed))
   }
   const result = parsed as SendVendorInviteResult
   const anySent =
     result.delivery?.sms === 'sent' || result.delivery?.email === 'sent'
   if (!result.ok || !anySent) {
-    throw new Error(
-      "We couldn't send the verification invite. Check the vendor's contact info and try again.",
-    )
+    throw new Error(inviteFailureMessageFromResponse(parsed))
   }
   return result
+}
+
+function inviteFailureMessageFromResponse(parsed: unknown): string {
+  if (Array.isArray(parsed)) {
+    const first = parsed[0] as { event_type?: string; event_message?: string } | undefined
+    const boot = first?.event_type === 'BootFailure' ||
+      (typeof first?.event_message === 'string' &&
+        /boot (error|failure)|already been declared/i.test(first.event_message))
+    if (boot) {
+      return "We couldn't start onboarding just now. Please try again in a moment."
+    }
+  }
+  const body = parsed as {
+    error?: string
+    delivery?: {
+      sms?: string | null
+      email?: string | null
+      smsError?: string
+      emailError?: string
+    }
+  }
+  if (typeof body?.error === 'string' && body.error.trim()) {
+    return body.error.trim()
+  }
+  const d = body?.delivery
+  if (d?.smsError === 'no_active_landlord_sms_line' && d.email !== 'sent') {
+    return "We couldn't send the verification invite because this account doesn't have an SMS line set up yet."
+  }
+  if (d?.smsError === 'invalid_phone' && d.email !== 'sent') {
+    return "We couldn't send the verification invite. Check that the vendor's phone number is valid and try again."
+  }
+  return "We couldn't send the verification invite. Check the vendor's contact info and try again."
 }
 
 export type InviteVendorAfterAddResult = {

@@ -136,10 +136,9 @@ export function resolveVendorLicenseLookup(
 
 export function hasAutoVerifiedLicense(
   vendor: VendorLicenseLookupSubject,
-  tradeLabel: string | null | undefined,
+  _tradeLabel: string | null | undefined,
 ): boolean {
-  return resolveVendorLicenseLookup(vendor, tradeLabelOrDefault(tradeLabel)).status ===
-    'auto_verified'
+  return isProviderCredentialed(vendor)
 }
 
 export function filterVendorsWithVerifiedLicense<T extends VendorLicenseLookupSubject>(
@@ -186,7 +185,15 @@ export async function lookupVendorLicense(
     }
   }
   await new Promise((resolve) => setTimeout(resolve, 400))
-  return resolveVendorLicenseLookup(vendor, tradeLabel)
+  return {
+    status: 'not_found',
+    licenseNumber: null,
+    boardLabel: boardLabelForTrade(tradeLabelOrDefault(tradeLabel)),
+    detail: "We couldn't reach the licensing board. Try again in a moment.",
+    expirationDate: null,
+    simulated: false,
+    checkSource: 'state_board',
+  }
 }
 
 export function initialLicenseVerificationState(): VendorLicenseVerificationState {
@@ -196,8 +203,8 @@ export function initialLicenseVerificationState(): VendorLicenseVerificationStat
     detail: 'Checking license status…',
     boardLabel: 'State licensing board',
     approverName: null,
-    simulated: true,
-    checkSource: 'local',
+    simulated: false,
+    checkSource: 'state_board',
   }
 }
 

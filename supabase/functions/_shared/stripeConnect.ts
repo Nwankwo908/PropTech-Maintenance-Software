@@ -1,5 +1,5 @@
 /**
- * Stripe Express Connect helpers for vendor and landlord payouts.
+ * Stripe Connect helpers for vendor and landlord payouts (embedded onboarding).
  * Uses the platform STRIPE_SECRET_KEY (same as invoice / rent Checkout).
  *
  * Rent (tenant → landlord) and invoice (landlord → vendor) stay separate
@@ -82,6 +82,19 @@ export async function stripeGet(path: string): Promise<StripeApiResult> {
   }
   const res = await fetch(`https://api.stripe.com/v1/${path}`, {
     method: "GET",
+    headers: { Authorization: `Bearer ${key}` },
+  })
+  const json = (await res.json().catch(() => ({}))) as Record<string, unknown>
+  return { ok: res.ok, status: res.status, json }
+}
+
+export async function stripeDelete(path: string): Promise<StripeApiResult> {
+  const key = stripeSecret()
+  if (!key) {
+    return { ok: false, status: 503, json: { error: { message: "Stripe is not configured" } } }
+  }
+  const res = await fetch(`https://api.stripe.com/v1/${path}`, {
+    method: "DELETE",
     headers: { Authorization: `Bearer ${key}` },
   })
   const json = (await res.json().catch(() => ({}))) as Record<string, unknown>
@@ -189,6 +202,21 @@ function snapshotFromAccount(json: Record<string, unknown>): StripeConnectAccoun
   }
 }
 
+/** True when the account can use fully in-app onboarding (no Stripe OTP / Express Dashboard). */
+export function isEmbeddedNoDashboardConnectAccount(
+  json: Record<string, unknown>,
+): boolean {
+  const controller = json.controller
+  if (!controller || typeof controller !== "object") return false
+  const row = controller as Record<string, unknown>
+  const dashboard = row.stripe_dashboard
+  const dashboardType =
+    dashboard && typeof dashboard === "object"
+      ? (dashboard as Record<string, unknown>).type
+      : null
+  return dashboardType === "none" && row.requirement_collection === "application"
+}
+
 export async function createExpressConnectAccount(params: {
   landlordId: string
   /** When set, stored as metadata.vendor_id (vendor onboarding). */
@@ -200,7 +228,11 @@ export async function createExpressConnectAccount(params: {
   | { ok: false; error: string }
 > {
   const body = new URLSearchParams()
-  body.set("type", "express")
+  // No Stripe Dashboard — required so Account Onboarding stays in Ulo (no OTP on connect.stripe.com).
+  body.set("controller[fees][payer]", "application")
+  body.set("controller[losses][payments]", "application")
+  body.set("controller[requirement_collection]", "application")
+  body.set("controller[stripe_dashboard][type]", "none")
   body.set("country", "US")
   body.set("capabilities[card_payments][requested]", "true")
   body.set("capabilities[transfers][requested]", "true")
@@ -226,6 +258,34 @@ export async function createExpressConnectAccount(params: {
   return { ok: true, account }
 }
 
+/**
+ * Reuse an in-app Connect account, or replace an Express account that would
+ * send the user to Stripe for OTP ("Add information").
+ */
+export async function ensureEmbeddedConnectAccount(params: {
+  existingAccountId?: string | null
+  landlordId: string
+  vendorId?: string | null
+  email?: string | null
+  businessName?: string | null
+}): Promise<
+  | { ok: true; account: StripeConnectAccountSnapshot; replaced: boolean }
+  | { ok: false; error: string }
+> {
+  const existing = params.existingAccountId?.trim() ?? ""
+  if (existing.startsWith("acct_")) {
+    const got = await stripeGet(`accounts/${encodeURIComponent(existing)}`)
+    if (got.ok && isEmbeddedNoDashboardConnectAccount(got.json)) {
+      const account = snapshotFromAccount(got.json)
+      if (account) return { ok: true, account, replaced: false }
+    }
+    await deleteExpressConnectAccount(existing)
+  }
+  const created = await createExpressConnectAccount(params)
+  if (!created.ok) return created
+  return { ok: true, account: created.account, replaced: existing.startsWith("acct_") }
+}
+
 export async function retrieveConnectAccount(
   accountId: string,
 ): Promise<
@@ -241,6 +301,17 @@ export async function retrieveConnectAccount(
   const account = snapshotFromAccount(got.json)
   if (!account) return { ok: false, error: "Stripe account response missing id" }
   return { ok: true, account }
+}
+
+/** Best-effort delete of an Express connected account (onboarding reset). */
+export async function deleteExpressConnectAccount(
+  accountId: string,
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  const id = accountId.trim()
+  if (!id.startsWith("acct_")) return { ok: true }
+  const deleted = await stripeDelete(`accounts/${encodeURIComponent(id)}`)
+  if (deleted.ok || deleted.status === 404) return { ok: true }
+  return { ok: false, error: stripeErrorMessage(deleted.json) }
 }
 
 function titleCase(raw: string): string {
@@ -362,6 +433,10 @@ export function connectAccountSessionParams(accountId: string): URLSearchParams 
   body.set("components[account_onboarding][enabled]", "true")
   body.set(
     "components[account_onboarding][features][external_account_collection]",
+    "true",
+  )
+  body.set(
+    "components[account_onboarding][features][disable_stripe_user_authentication]",
     "true",
   )
   return body

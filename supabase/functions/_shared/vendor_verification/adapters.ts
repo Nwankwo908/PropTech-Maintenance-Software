@@ -1,11 +1,18 @@
 /**
- * Simulated-but-swappable vendor verification adapters.
+ * Vendor verification adapters.
  *
- * Each exported function is the SINGLE seam to later swap for a real provider
- * (StateLicense.io, an insurance OCR / Certificial, Checkr). Results are
- * deterministic so the demo is stable, and every payload is clearly branded
- * as `simulated: true` so nothing is mistaken for a live check.
+ * License → StateLicense.io
+ * Insurance → uploaded COI parse (OpenAI) + optional Certificial tracking
+ * Background → simulated Checkr seam until a live Checkr key is wired
  */
+import { lookupCertificialCoverage } from "./certificialApi.ts"
+import {
+  mapBoardStatus,
+  normalizeLicenseState,
+  searchStateLicense,
+  verifyStateLicense,
+  type StateLicenseLookup,
+} from "./stateLicenseApi.ts"
 
 export type LicenseVerifyInput = {
   businessName?: string | null
@@ -16,7 +23,7 @@ export type LicenseVerifyInput = {
 }
 
 export type LicenseVerifyResult = {
-  simulated: true
+  simulated: boolean
   status: "verified" | "active" | "not_found" | "expired"
   licenseNumber: string | null
   licenseType: string | null
@@ -28,11 +35,12 @@ export type LicenseVerifyResult = {
 export type CoiParseInput = {
   fileName?: string | null
   contentType?: string | null
+  bytes?: Uint8Array | null
   businessName?: string | null
 }
 
 export type CoiParseResult = {
-  simulated: true
+  simulated: boolean
   status: "verified" | "review"
   carrier: string | null
   policyNumber: string | null
@@ -61,18 +69,7 @@ export type BackgroundStatusResult = {
   detail: string
 }
 
-function stableBucket(input: string): number {
-  let hash = 0
-  for (let i = 0; i < input.length; i += 1) {
-    hash = (hash + input.charCodeAt(i) * (i + 7)) % 100
-  }
-  return hash
-}
-
-function mockLicenseNumber(seed: string): string {
-  const bucket = stableBucket(seed)
-  return `055-${String(100000 + bucket * 137).slice(0, 6)}`
-}
+const MIN_GENERAL_LIABILITY = 1_000_000
 
 function boardLabelForTrade(trades: string[] | null | undefined): string {
   const trade = (trades ?? []).join(" ").toLowerCase()
@@ -84,77 +81,112 @@ function boardLabelForTrade(trades: string[] | null | undefined): string {
   return "State Professional Licensing Board"
 }
 
-function futureDateIso(daysFromNow: number): string {
-  const d = new Date()
-  d.setUTCDate(d.getUTCDate() + daysFromNow)
-  return d.toISOString().slice(0, 10)
+function fallbackBoardLabel(authority: string | null, trades: string[] | null | undefined): string {
+  return authority?.trim() || boardLabelForTrade(trades)
 }
 
-/**
- * Simulated state-licensing lookup (StateLicense.io seam).
- * A manually entered license number is treated as verified; otherwise a
- * deterministic bucket decides active / not-found / expired.
- */
-export function verifyLicense(input: LicenseVerifyInput): LicenseVerifyResult {
-  const boardLabel = boardLabelForTrade(input.tradeCategories)
-  const seed = `${input.businessName ?? ""}|${input.contactName ?? ""}|${
-    input.licenseState ?? ""
-  }`
-  const manual = (input.licenseNumber ?? "").trim()
-
-  if (manual) {
+function resultFromLookup(
+  lookup: StateLicenseLookup,
+  trades: string[] | null | undefined,
+): LicenseVerifyResult {
+  if (!lookup.ok) {
     return {
-      simulated: true,
-      status: "verified",
-      licenseNumber: manual,
-      licenseType: "Contractor",
-      boardLabel,
-      detail: `${manual} · Active (simulated) · ${boardLabel}`,
-      expirationDate: futureDateIso(365),
+      simulated: false,
+      status: lookup.reason === "not_found" ? "not_found" : "not_found",
+      licenseNumber: null,
+      licenseType: null,
+      boardLabel: boardLabelForTrade(trades),
+      detail: lookup.detail,
+      expirationDate: null,
     }
   }
-
-  const bucket = stableBucket(seed)
-  const licenseNumber = mockLicenseNumber(seed)
-
-  if (bucket < 60) {
+  const status = mapBoardStatus(
+    lookup.record.status,
+    lookup.record.expirationDate,
+    lookup.valid,
+  )
+  const boardLabel = fallbackBoardLabel(lookup.record.authority, trades)
+  const number = lookup.record.licenseNumber
+  const exp = lookup.record.expirationDate
+  if (status === "expired") {
     return {
-      simulated: true,
-      status: "active",
-      licenseNumber,
-      licenseType: "Contractor",
+      simulated: false,
+      status,
+      licenseNumber: number,
+      licenseType: lookup.record.licenseType,
       boardLabel,
-      detail: `${licenseNumber} · Active (simulated) · ${boardLabel}`,
-      expirationDate: futureDateIso(300),
+      detail: number
+        ? `${number} · Expired · ${boardLabel}`
+        : `License expired · ${boardLabel}`,
+      expirationDate: exp,
     }
   }
-
-  if (bucket < 85) {
+  if (status === "not_found") {
     return {
-      simulated: true,
+      simulated: false,
+      status: "not_found",
+      licenseNumber: number,
+      licenseType: lookup.record.licenseType,
+      boardLabel,
+      detail: "No match in the state licensing database.",
+      expirationDate: exp,
+    }
+  }
+  return {
+    simulated: false,
+    status,
+    licenseNumber: number,
+    licenseType: lookup.record.licenseType,
+    boardLabel,
+    detail: number
+      ? `${number} · Active · ${boardLabel}`
+      : `Active · ${boardLabel}`,
+    expirationDate: exp,
+  }
+}
+
+/** State licensing board lookup (StateLicense.io). */
+export async function verifyLicense(input: LicenseVerifyInput): Promise<LicenseVerifyResult> {
+  const state = normalizeLicenseState(input.licenseState)
+  const licenseNumber = (input.licenseNumber ?? "").trim()
+  const businessName = (input.businessName ?? "").trim() || (input.contactName ?? "").trim()
+
+  if (licenseNumber) {
+    if (!state) {
+      return {
+        simulated: false,
+        status: "not_found",
+        licenseNumber,
+        licenseType: null,
+        boardLabel: boardLabelForTrade(input.tradeCategories),
+        detail: "Enter a two-letter license state so we can check the licensing board.",
+        expirationDate: null,
+      }
+    }
+    const lookup = await verifyStateLicense({ state, licenseNumber })
+    return resultFromLookup(lookup, input.tradeCategories)
+  }
+
+  if (!businessName) {
+    return {
+      simulated: false,
       status: "not_found",
       licenseNumber: null,
       licenseType: null,
-      boardLabel,
-      detail: "No match in state licensing database (simulated)",
+      boardLabel: boardLabelForTrade(input.tradeCategories),
+      detail: "Enter a license number or business name to check the licensing board.",
       expirationDate: null,
     }
   }
 
-  return {
-    simulated: true,
-    status: "expired",
-    licenseNumber,
-    licenseType: "Contractor",
-    boardLabel,
-    detail: `${licenseNumber} · Expired (simulated) · confirm renewal`,
-    expirationDate: futureDateIso(-120),
-  }
+  const lookup = await searchStateLicense({ state, businessName })
+  return resultFromLookup(lookup, input.tradeCategories)
 }
 
 export type LicenseScanInput = {
   fileName?: string | null
   contentType?: string | null
+  bytes?: Uint8Array | null
   businessName?: string | null
   contactName?: string | null
   licenseState?: string | null
@@ -162,83 +194,160 @@ export type LicenseScanInput = {
 }
 
 export type LicenseScanResult = {
-  simulated: true
-  status: "active" | "expired"
-  licenseNumber: string
-  licenseType: string
+  simulated: boolean
+  status: "active" | "expired" | "not_found"
+  licenseNumber: string | null
+  licenseType: string | null
   licenseState: string | null
   boardLabel: string
-  expirationDate: string
+  expirationDate: string | null
   detail: string
 }
 
-/**
- * Simulated license document scanner (OCR seam).
- * Unlike `verifyLicense` (a database lookup that can come back empty), a scan of
- * an uploaded license image/PDF always yields a readable number — so this seam
- * deterministically "reads" a license number off the document and returns it for
- * auto-filling the form. Swap this for a real OCR/IDP provider later.
- */
-export function scanLicenseDocument(input: LicenseScanInput): LicenseScanResult {
-  const boardLabel = boardLabelForTrade(input.tradeCategories)
-  const seed = `${input.businessName ?? ""}|${input.contactName ?? ""}|${
-    input.fileName ?? "license"
-  }|${input.licenseState ?? ""}`
-  const licenseNumber = mockLicenseNumber(seed)
-  const bucket = stableBucket(seed)
-  const expired = bucket >= 92
+/** Read a license document, then confirm the number against the state board. */
+export async function scanLicenseDocument(input: LicenseScanInput): Promise<LicenseScanResult> {
+  const bytes = input.bytes
+  if (!bytes || bytes.byteLength === 0) {
+    return {
+      simulated: false,
+      status: "not_found",
+      licenseNumber: null,
+      licenseType: null,
+      licenseState: normalizeLicenseState(input.licenseState),
+      boardLabel: boardLabelForTrade(input.tradeCategories),
+      expirationDate: null,
+      detail: "Upload a license photo or PDF so we can read the number.",
+    }
+  }
+
+  const { extractLicenseFieldsFromDocument } = await import("./documentExtract.ts")
+  const extracted = await extractLicenseFieldsFromDocument({
+    fileName: input.fileName ?? "license",
+    contentType: input.contentType ?? "application/octet-stream",
+    bytes,
+  })
+  const state = normalizeLicenseState(extracted.licenseState ?? input.licenseState)
+  const number = extracted.licenseNumber?.trim() || ""
+
+  if (number && state) {
+    const verified = await verifyLicense({
+      businessName: input.businessName,
+      contactName: input.contactName,
+      licenseState: state,
+      licenseNumber: number,
+      tradeCategories: input.tradeCategories,
+    })
+    return {
+      simulated: false,
+      status: verified.status === "expired"
+        ? "expired"
+        : verified.status === "not_found"
+        ? "not_found"
+        : "active",
+      licenseNumber: verified.licenseNumber ?? number,
+      licenseType: verified.licenseType ?? extracted.licenseType,
+      licenseState: state,
+      boardLabel: verified.boardLabel,
+      expirationDate: verified.expirationDate ?? extracted.expirationDate,
+      detail: verified.detail,
+    }
+  }
+
+  if (number) {
+    return {
+      simulated: false,
+      status: "not_found",
+      licenseNumber: number,
+      licenseType: extracted.licenseType,
+      licenseState: state,
+      boardLabel: boardLabelForTrade(input.tradeCategories),
+      expirationDate: extracted.expirationDate,
+      detail:
+        "We read a license number from the document. Add the two-letter state so we can confirm it with the licensing board.",
+    }
+  }
 
   return {
-    simulated: true,
-    status: expired ? "expired" : "active",
-    licenseNumber,
-    licenseType: "Contractor",
-    licenseState: input.licenseState?.trim() || null,
-    boardLabel,
-    expirationDate: expired ? futureDateIso(-90) : futureDateIso(330),
-    detail: expired
-      ? `${licenseNumber} · read from uploaded license (simulated scan) · shows expired, confirm renewal`
-      : `${licenseNumber} · read from uploaded license (simulated scan) · ${boardLabel}`,
+    simulated: false,
+    status: "not_found",
+    licenseNumber: null,
+    licenseType: extracted.licenseType,
+    licenseState: state,
+    boardLabel: boardLabelForTrade(input.tradeCategories),
+    expirationDate: extracted.expirationDate,
+    detail: "We couldn't read a license number from that document. Try a clearer photo or PDF.",
   }
 }
 
-/**
- * Simulated COI OCR (insurance tracking seam).
- * Extracts coverage / expiration / additional-insured from an uploaded doc.
- */
-export function parseCoi(input: CoiParseInput): CoiParseResult {
-  const seed = `${input.businessName ?? ""}|${input.fileName ?? "coi"}`
-  const bucket = stableBucket(seed)
-  const carriers = [
-    "Hartford",
-    "Travelers",
-    "Nationwide",
-    "Liberty Mutual",
-    "State Farm",
-    "Chubb",
-  ]
-  const carrier = carriers[bucket % carriers.length]
-  const generalLiability = bucket < 78 ? 1_000_000 : 500_000
-  // Protocol 2: every preferred vendor lists Ulo as Additional Insured.
-  const additionalInsured = generalLiability >= 1_000_000
-  const policyNumber = `GL-${String(200000 + bucket * 91).slice(0, 6)}`
-  const expirationDate = bucket < 88 ? futureDateIso(240) : futureDateIso(-30)
-  const meetsCoverage = generalLiability >= 1_000_000 &&
-    additionalInsured &&
-    expirationDate >= new Date().toISOString().slice(0, 10)
-
+function coiResultFromFields(input: {
+  carrier: string | null
+  policyNumber: string | null
+  generalLiability: number | null
+  expirationDate: string | null
+  additionalInsured: boolean
+  sourceLabel: string
+}): CoiParseResult {
+  const today = new Date().toISOString().slice(0, 10)
+  const meetsCoverage = (input.generalLiability ?? 0) >= MIN_GENERAL_LIABILITY &&
+    input.additionalInsured &&
+    (!input.expirationDate || input.expirationDate >= today)
+  const glLabel = input.generalLiability != null
+    ? `$${input.generalLiability.toLocaleString()} GL`
+    : "coverage amount not listed"
+  const carrier = input.carrier ?? "Carrier"
   return {
-    simulated: true,
+    simulated: false,
     status: meetsCoverage ? "verified" : "review",
-    carrier,
-    policyNumber,
-    generalLiability,
-    expirationDate,
-    additionalInsured,
+    carrier: input.carrier,
+    policyNumber: input.policyNumber,
+    generalLiability: input.generalLiability,
+    expirationDate: input.expirationDate,
+    additionalInsured: input.additionalInsured,
     detail: meetsCoverage
-      ? `${carrier} · $${generalLiability.toLocaleString()} GL · Ulo Additional Insured (simulated OCR)`
-      : `${carrier} · needs review — coverage, Additional Insured, or expiration below requirement (simulated OCR)`,
+      ? `${carrier} · ${glLabel} · Additional Insured · ${input.sourceLabel}`
+      : `${carrier} · needs review — ${glLabel} · ${input.sourceLabel}`,
   }
+}
+
+/** Parse an uploaded COI (and optionally merge Certificial tracking). */
+export async function parseCoi(input: CoiParseInput): Promise<CoiParseResult> {
+  const bytes = input.bytes
+  if (bytes && bytes.byteLength > 0) {
+    const { extractCoiFieldsFromDocument } = await import("./documentExtract.ts")
+    const extracted = await extractCoiFieldsFromDocument({
+      fileName: input.fileName ?? "coi",
+      contentType: input.contentType ?? "application/octet-stream",
+      bytes,
+    })
+    return coiResultFromFields({
+      ...extracted,
+      sourceLabel: "read from certificate",
+    })
+  }
+
+  const tracked = await lookupCertificialCoverage({
+    businessName: input.businessName ?? "",
+  })
+  if (!tracked.found) {
+    return {
+      simulated: false,
+      status: "review",
+      carrier: null,
+      policyNumber: null,
+      generalLiability: null,
+      expirationDate: null,
+      additionalInsured: false,
+      detail: tracked.detail,
+    }
+  }
+  return coiResultFromFields({
+    carrier: tracked.carrier,
+    policyNumber: tracked.policyNumber,
+    generalLiability: tracked.generalLiability,
+    expirationDate: tracked.expirationDate,
+    additionalInsured: tracked.additionalInsured,
+    sourceLabel: "Certificial",
+  })
 }
 
 /** Simulated Checkr candidate creation — resolves clear immediately for demos. */
@@ -246,9 +355,11 @@ export function startBackgroundCheck(
   input: BackgroundStartInput,
 ): BackgroundStartResult {
   const seed = `${input.contactName ?? ""}|${input.email ?? ""}`
-  const ref = `chk_${stableBucket(seed).toString(16)}${
-    crypto.randomUUID().slice(0, 8)
-  }`
+  let hash = 0
+  for (let i = 0; i < seed.length; i += 1) {
+    hash = (hash + seed.charCodeAt(i) * (i + 7)) % 100
+  }
+  const ref = `chk_${hash.toString(16)}${crypto.randomUUID().slice(0, 8)}`
   return {
     simulated: true,
     ref,

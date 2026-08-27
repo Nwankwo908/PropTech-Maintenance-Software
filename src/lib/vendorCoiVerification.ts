@@ -136,7 +136,7 @@ export function resolveVendorCoiLookup(vendor: VendorCoiLookupSubject): VendorCo
 }
 
 export function hasPullableVerifiedCoi(vendor: VendorCoiLookupSubject): boolean {
-  return resolveVendorCoiLookup(vendor).status === 'verified'
+  return isProviderCredentialed(vendor)
 }
 
 export function filterVendorsWithVerifiedCoi<T extends VendorCoiLookupSubject>(vendors: T[]): T[] {
@@ -175,7 +175,16 @@ export async function lookupVendorCoi(
     }
   }
   await new Promise((resolve) => setTimeout(resolve, 350))
-  return resolveVendorCoiLookup(vendor)
+  return {
+    status: 'not_found',
+    policyNumber: null,
+    carrier: null,
+    detail: "We couldn't reach insurance tracking. Try again in a moment.",
+    expirationDate: null,
+    monitoringActive: false,
+    simulated: false,
+    checkSource: 'certificial',
+  }
 }
 
 export function initialCoiVerificationState(): VendorCoiVerificationState {
@@ -186,8 +195,8 @@ export function initialCoiVerificationState(): VendorCoiVerificationState {
     detail: 'Checking insurance certificate…',
     expirationDate: null,
     monitoringActive: false,
-    simulated: true,
-    checkSource: 'local',
+    simulated: false,
+    checkSource: 'certificial',
   }
 }
 
