@@ -45,10 +45,22 @@ function asString(value: unknown): string | null {
   return null
 }
 
-function asMoney(value: unknown): number | null {
-  if (typeof value === "number" && Number.isFinite(value)) return value
+export function asMoney(value: unknown): number | null {
+  if (typeof value === "number" && Number.isFinite(value) && value >= 0) return value
   if (typeof value !== "string") return null
-  const digits = value.replace(/[^0-9.]/g, "")
+  const raw = value.trim().toLowerCase().replace(/\$/g, "").replace(/,/g, "")
+  if (!raw) return null
+  const million = raw.match(/^([\d.]+)\s*(m|mm|million)\b/)
+  if (million) {
+    const n = Number(million[1])
+    return Number.isFinite(n) ? n * 1_000_000 : null
+  }
+  const thousand = raw.match(/^([\d.]+)\s*(k|thousand)\b/)
+  if (thousand) {
+    const n = Number(thousand[1])
+    return Number.isFinite(n) ? n * 1_000 : null
+  }
+  const digits = raw.replace(/[^0-9.]/g, "")
   if (!digits) return null
   const n = Number(digits)
   return Number.isFinite(n) ? n : null
@@ -78,9 +90,17 @@ export function parseExtractedCoiFields(raw: unknown): ExtractedCoiFields {
       row.generalLiability ?? row.general_liability ?? row.glLimit,
     ),
     expirationDate: asString(row.expirationDate ?? row.expiration_date),
-    additionalInsured: row.additionalInsured === true ||
-      row.additional_insured === true,
+    additionalInsured: asTruthyFlag(row.additionalInsured ?? row.additional_insured),
   }
+}
+
+function asTruthyFlag(value: unknown): boolean {
+  if (value === true) return true
+  if (typeof value === "string") {
+    const t = value.trim().toLowerCase()
+    return t === "true" || t === "yes" || t === "y"
+  }
+  return false
 }
 
 function throwExtractHttpError(status: number, text: string): never {
@@ -173,10 +193,34 @@ async function completeJsonFromPdf(input: {
     throwExtractHttpError(response.status, await response.text().catch(() => ""))
   }
   const json = (await response.json()) as Record<string, unknown>
-  if (typeof json.output_text === "string" && json.output_text.trim()) {
-    return JSON.parse(stripJsonFence(json.output_text)) as unknown
+  const text = outputTextFromResponses(json)
+  if (text) {
+    return JSON.parse(stripJsonFence(text)) as unknown
   }
   throw new Error("We couldn't read that document. Try a clearer photo or PDF.")
+}
+
+/** OpenAI Responses API: top-level output_text, or nested output[].content[].text */
+export function outputTextFromResponses(json: Record<string, unknown>): string {
+  if (typeof json.output_text === "string" && json.output_text.trim()) {
+    return json.output_text.trim()
+  }
+  const output = Array.isArray(json.output) ? json.output : []
+  const chunks: string[] = []
+  for (const item of output) {
+    if (!item || typeof item !== "object") continue
+    const content = (item as { content?: unknown }).content
+    if (!Array.isArray(content)) continue
+    for (const part of content) {
+      if (!part || typeof part !== "object") continue
+      const row = part as { type?: string; text?: string }
+      if (typeof row.text !== "string" || !row.text.trim()) continue
+      if (!row.type || row.type === "output_text" || row.type === "text") {
+        chunks.push(row.text.trim())
+      }
+    }
+  }
+  return chunks.join("\n")
 }
 
 function isPdfFile(fileName: string, contentType: string): boolean {

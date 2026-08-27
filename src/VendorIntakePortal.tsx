@@ -731,12 +731,23 @@ export function VendorIntakePortal() {
               Upload your Certificate of Insurance (COI). We look for at least $1M general liability
               and that the property owner is listed as additional insured.
             </p>
-            {session.insurance.generalLiability != null ? (
+            {session.insurance.generalLiability != null ||
+            session.insurance.status ||
+            hasDocKind('coi') ? (
               <div className="rounded-lg border border-[#e5e7eb] bg-[#f9fafb] px-3 py-3 text-[13px] text-[#364153]">
-                <p>
-                  <strong>${session.insurance.generalLiability.toLocaleString()}</strong> general
-                  liability
-                </p>
+                {session.insurance.generalLiability != null ? (
+                  <p>
+                    <strong>
+                      ${Number(session.insurance.generalLiability).toLocaleString()}
+                    </strong>{' '}
+                    general liability
+                  </p>
+                ) : (
+                  <p>
+                    We saved your certificate. We couldn&apos;t read the coverage amount
+                    automatically — we&apos;ll review it.
+                  </p>
+                )}
                 {session.insurance.expiration ? (
                   <p className="mt-0.5">Valid through {session.insurance.expiration}</p>
                 ) : null}
@@ -751,7 +762,7 @@ export function VendorIntakePortal() {
               label="Upload COI (PDF/photo)"
               accept="image/*,application/pdf"
               busy={busy}
-              done={docsOfKind('coi').length > 0}
+              done={hasDocKind('coi')}
               onFile={async (file) => {
                 const b64 = await fileToBase64(file)
                 await runAction(() =>
@@ -1213,6 +1224,9 @@ function UploadedDocs({ docs }: { docs: VendorVerificationDocument[] }) {
                   We read license #{scannedNumber} from this document and filled in your license
                   number above.
                 </p>
+              ) : null}
+              {typeof parsed.detail === 'string' && parsed.detail.trim() ? (
+                <p className="mt-0.5 text-[12px] text-[#6a7282]">{parsed.detail}</p>
               ) : null}
             </div>
           </li>

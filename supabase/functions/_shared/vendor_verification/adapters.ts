@@ -313,16 +313,30 @@ function coiResultFromFields(input: {
 export async function parseCoi(input: CoiParseInput): Promise<CoiParseResult> {
   const bytes = input.bytes
   if (bytes && bytes.byteLength > 0) {
-    const { extractCoiFieldsFromDocument } = await import("./documentExtract.ts")
-    const extracted = await extractCoiFieldsFromDocument({
-      fileName: input.fileName ?? "coi",
-      contentType: input.contentType ?? "application/octet-stream",
-      bytes,
-    })
-    return coiResultFromFields({
-      ...extracted,
-      sourceLabel: "read from certificate",
-    })
+    try {
+      const { extractCoiFieldsFromDocument } = await import("./documentExtract.ts")
+      const extracted = await extractCoiFieldsFromDocument({
+        fileName: input.fileName ?? "coi",
+        contentType: input.contentType ?? "application/octet-stream",
+        bytes,
+      })
+      return coiResultFromFields({
+        ...extracted,
+        sourceLabel: "read from certificate",
+      })
+    } catch (err) {
+      const detail = err instanceof Error ? err.message : String(err)
+      return {
+        simulated: false,
+        status: "review",
+        carrier: null,
+        policyNumber: null,
+        generalLiability: null,
+        expirationDate: null,
+        additionalInsured: false,
+        detail,
+      }
+    }
   }
 
   const tracked = await lookupCertificialCoverage({
