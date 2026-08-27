@@ -3,6 +3,7 @@ import { fileURLToPath } from 'node:url'
 import { defineConfig } from 'vitest/config'
 import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
+import { prerenderPublicPagesPlugin } from './src/prerender/prerenderPublicPagesPlugin.ts'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const root = path.resolve(__dirname)
@@ -11,7 +12,7 @@ const root = path.resolve(__dirname)
 export default defineConfig({
   root,
   envDir: root,
-  plugins: [react(), tailwindcss()],
+  plugins: [react(), tailwindcss(), prerenderPublicPagesPlugin()],
   resolve: {
     alias: {
       '@': path.resolve(root, 'src'),

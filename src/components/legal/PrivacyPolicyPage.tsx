@@ -17,6 +17,7 @@ export function PrivacyPolicyPage() {
       subtitle={PRIVACY_POLICY_META.subtitle}
       effectiveDate={PRIVACY_POLICY_META.effectiveDate}
       version={PRIVACY_POLICY_META.version}
+      canonicalPath="/privacy"
     >
       {PRIVACY_POLICY_SECTIONS.map((section) => (
         <section key={section.id} aria-labelledby={`privacy-${section.id}`}>

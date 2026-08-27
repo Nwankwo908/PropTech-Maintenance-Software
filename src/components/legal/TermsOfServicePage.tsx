@@ -26,6 +26,7 @@ export function TermsOfServicePage() {
       subtitle={TERMS_OF_SERVICE_META.subtitle}
       effectiveDate={TERMS_OF_SERVICE_META.effectiveDate}
       version={TERMS_OF_SERVICE_META.version}
+      canonicalPath="/terms"
     >
       <section aria-labelledby="terms-preamble">
         <h2 id="terms-preamble" className="sr-only">

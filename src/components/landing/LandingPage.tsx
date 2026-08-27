@@ -26,6 +26,7 @@ import {
 } from '@/components/landing/LandingIcons'
 import { FeaturesMarquee } from '@/components/landing/FeaturesMarquee'
 import { FeaturesShowcase } from '@/components/landing/FeaturesShowcase'
+import { LANDING_DOCUMENT_DESCRIPTION, LANDING_DOCUMENT_TITLE, useDocumentMeta } from '@/lib/documentMeta'
 import howItWorksIpad from '@/assets/iPad Pro (portrait).png'
 
 const TEAL_GRADIENT =
@@ -52,7 +53,7 @@ const LANDING_SECTION_COLUMN_RULE = `${LANDING_LOGO_COLUMN_DIVIDER} top-0 bottom
 
 /** Section content inset — right of logo-column divider + 56px gap; keeps right viewport gutter. */
 const LANDING_BEYOND_LOGO_COLUMN_INSET =
-  'w-full pl-[calc(1.5rem+121px+1.5rem+3.5rem)] pr-6 lg:pl-[calc(3.5rem+108px+1.5rem+3.5rem)] lg:pr-14 landing-3840-2160:!pl-[calc(3.5rem+162px+1.5rem+3.5rem)] landing-4096-2304:!pl-14 landing-5120-2880:!pl-14 landing-4096-2304:!pr-14 landing-5120-2880:!pr-14 max-[399px]:!pl-6 max-[399px]:!pr-6 landing-compact:!pl-6 landing-compact:!pr-6 landing-phone-tall:!pl-6 landing-phone-tall:!pr-6 landing-tablet-portrait:!pl-6 landing-tablet-portrait:!pr-6'
+  'w-full pl-[calc(1.5rem+121px+1.5rem+3.5rem)] pr-6 lg:pl-[calc(3.5rem+108px+1.5rem+3.5rem)] lg:pr-14 landing-3840-2160:!pl-[calc(3.5rem+162px+1.5rem+3.5rem)] landing-4096-2304:!pl-[calc(3.5rem+172.8px+1.5rem+3.5rem)] landing-5120-2880:!pl-[calc(3.5rem+172.8px+1.5rem+3.5rem)] landing-4096-2304:!pr-14 landing-5120-2880:!pr-14 max-[399px]:!pl-6 max-[399px]:!pr-6 landing-compact:!pl-6 landing-compact:!pr-6 landing-phone-tall:!pl-6 landing-phone-tall:!pr-6 landing-tablet-portrait:!pl-6 landing-tablet-portrait:!pr-6'
 
 /** Full-page vertical divider — wide desktop only. */
 const LANDING_NAV_DIVIDER = `${LANDING_LOGO_COLUMN_DIVIDER} inset-y-0 z-[51] hidden 2xl:block landing-desktop:!hidden landing-1680-1050:!hidden landing-1512-982:!hidden landing-1728-1117:!hidden`
@@ -245,6 +246,11 @@ function PrimaryButton({
 }
 
 export function LandingPage() {
+  useDocumentMeta({
+    title: LANDING_DOCUMENT_TITLE,
+    description: LANDING_DOCUMENT_DESCRIPTION,
+    canonicalPath: '/',
+  })
   const navigate = useNavigate()
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
   const [earlyAccessOpen, setEarlyAccessOpen] = useState(false)
@@ -342,9 +348,20 @@ export function LandingPage() {
     { label: 'Features', target: 'features' },
   ] as const
 
+  const navItemClass =
+    'sa-press rounded-xl px-3 py-2 text-sm font-medium text-[#6b7280] hover:bg-gray-50 hover:text-[#111827] landing-3840-2160:px-[1.125rem] landing-3840-2160:py-3 landing-3840-2160:text-[1.3125rem] landing-4096-2304:rounded-[1.2rem] landing-5120-2880:rounded-[1.2rem] landing-4096-2304:px-[1.2rem] landing-5120-2880:px-[1.2rem] landing-4096-2304:py-[0.8rem] landing-5120-2880:py-[0.8rem] landing-4096-2304:text-[1.4rem] landing-5120-2880:text-[1.4rem] landing-7680-4320:rounded-[1.875rem] landing-7680-4320:px-[1.875rem] landing-7680-4320:py-5 landing-7680-4320:text-[2.1875rem]'
+
   function scrollTo(id: string) {
     setMobileMenuOpen(false)
     document.getElementById(id)?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    if (window.location.hash !== `#${id}`) {
+      window.history.pushState(null, '', `#${id}`)
+    }
+  }
+
+  function onSectionNav(event: React.MouseEvent<HTMLAnchorElement>, id: string) {
+    event.preventDefault()
+    scrollTo(id)
   }
 
   return (
@@ -358,21 +375,21 @@ export function LandingPage() {
               to="/"
               className="sa-press block h-11 w-[121px] rounded-lg lg:h-11 lg:w-[108px] landing-3840-2160:!h-[4.125rem] landing-3840-2160:!w-[162px] landing-4096-2304:!h-[4.4rem] landing-5120-2880:!h-[4.4rem] landing-4096-2304:!w-[172.8px] landing-5120-2880:!w-[172.8px] landing-7680-4320:!h-[6.875rem] landing-7680-4320:!w-[270px] landing-7680-4320:rounded-[1.25rem]"
             >
-              <img src={uloLogo} alt="ülo home" className="h-full w-full object-contain object-left" />
+              <img src={uloLogo} alt="Ulo" width={121} height={44} className="h-full w-full object-contain object-left" />
             </Link>
           </div>
           <div className="flex min-w-0 flex-1 items-center justify-end">
             <div className="hidden items-center gap-1 lg:flex landing-3840-2160:gap-1.5 landing-4096-2304:gap-[0.4rem] landing-5120-2880:gap-[0.4rem] landing-7680-4320:gap-[0.625rem]">
               <nav className="flex items-center gap-1 landing-3840-2160:gap-1.5 landing-4096-2304:gap-[0.4rem] landing-5120-2880:gap-[0.4rem] landing-7680-4320:gap-[0.625rem]" aria-label="Primary">
                 {navLinks.map(({ label, target }) => (
-                  <button
+                  <a
                     key={label}
-                    type="button"
-                    onClick={() => scrollTo(target)}
-                    className="sa-press rounded-xl px-3 py-2 text-sm font-medium text-[#6b7280] hover:bg-gray-50 hover:text-[#111827] landing-3840-2160:px-[1.125rem] landing-3840-2160:py-3 landing-3840-2160:text-[1.3125rem] landing-4096-2304:rounded-[1.2rem] landing-5120-2880:rounded-[1.2rem] landing-4096-2304:px-[1.2rem] landing-5120-2880:px-[1.2rem] landing-4096-2304:py-[0.8rem] landing-5120-2880:py-[0.8rem] landing-4096-2304:text-[1.4rem] landing-5120-2880:text-[1.4rem] landing-7680-4320:rounded-[1.875rem] landing-7680-4320:px-[1.875rem] landing-7680-4320:py-5 landing-7680-4320:text-[2.1875rem]"
+                    href={`#${target}`}
+                    onClick={(event) => onSectionNav(event, target)}
+                    className={navItemClass}
                   >
                     {label}
-                  </button>
+                  </a>
                 ))}
               </nav>
               <Link
@@ -401,35 +418,33 @@ export function LandingPage() {
           </div>
         </div>
         {mobileMenuOpen ? (
-          <div className="sa-enter border-t border-gray-200/80 bg-white px-6 py-4 lg:hidden">
+          <div className="sa-enter absolute inset-x-0 top-full z-50 border-t border-white/40 bg-white/55 px-6 py-4 shadow-[inset_0_1px_0_rgba(255,255,255,0.6)] backdrop-blur-xl backdrop-saturate-150 lg:hidden supports-[not(backdrop-filter)]:bg-white/90">
             <nav className="flex flex-col gap-1" aria-label="Mobile">
               {navLinks.map(({ label, target }) => (
-                <button
+                <a
                   key={label}
-                  type="button"
-                  onClick={() => scrollTo(target)}
+                  href={`#${target}`}
+                  onClick={(event) => onSectionNav(event, target)}
                   className="sa-press rounded-xl px-3 py-3 text-left text-sm font-medium text-[#6b7280] hover:bg-gray-50 hover:text-[#111827]"
                 >
                   {label}
-                </button>
+                </a>
               ))}
-            </nav>
-            <div className="mt-4 flex flex-col gap-3 border-t border-gray-100 pt-4">
               <Link
                 to="/admin/login"
-                className="sa-press rounded-xl px-3 py-2 text-sm font-medium text-[#6b7280] hover:bg-gray-50 hover:text-[#111827]"
+                className="sa-press rounded-xl px-3 py-3 text-left text-sm font-medium text-[#6b7280] hover:bg-gray-50 hover:text-[#111827]"
                 onClick={() => setMobileMenuOpen(false)}
               >
                 Login
               </Link>
-              <PrimaryButton
+              <button
+                type="button"
                 onClick={() => openEarlyAccess()}
-                className="w-full justify-center py-3.5"
+                className="sa-press rounded-xl px-3 py-3 text-left text-sm font-medium text-[#6b7280] hover:bg-gray-50 hover:text-[#111827]"
               >
                 Request Early Access
-                <IconArrowRight />
-              </PrimaryButton>
-            </div>
+              </button>
+            </nav>
           </div>
         ) : null}
       </header>
@@ -534,7 +549,7 @@ export function LandingPage() {
         {/* How It Works */}
         <section id="how-it-works" className="relative scroll-mt-20 overflow-visible">
           <div className={`${LANDING_SECTION_COLUMN_RULE} landing-how-it-works-column-rule`} aria-hidden />
-          <div className="flex w-full flex-col items-center overflow-visible px-6 pb-[calc(6rem*1.3)] pt-[calc(4rem*1.3)] lg:px-14 landing-4096-2304:px-14 landing-5120-2880:px-14">
+          <div className="landing-how-it-works-inset flex w-full flex-col items-center overflow-visible px-6 pb-[calc(6rem*1.3)] pt-[calc(4rem*1.3)] lg:px-14 landing-4096-2304:px-14 landing-5120-2880:px-14">
             <div className="landing-3840-2160-features-scale flex w-full flex-col items-center">
               <FeaturesShowcase />
             </div>
@@ -545,17 +560,17 @@ export function LandingPage() {
         <section id="features" className={`relative scroll-mt-20 overflow-visible ${LANDING_SECTION_GAP}`}>
           <div className={`border-t ${LANDING_FULL_WIDTH_RULE}`} aria-hidden />
           <div className={LANDING_SECTION_COLUMN_RULE} aria-hidden />
-          <div className={`${LANDING_BEYOND_LOGO_COLUMN_INSET} landing-4096-2304-section-inset landing-5120-2880-section-inset overflow-visible pt-[calc(4rem*1.3)]`}>
+          <div className={`landing-features-inset ${LANDING_BEYOND_LOGO_COLUMN_INSET} overflow-visible pt-[calc(4rem*1.3)]`}>
             <div className="landing-3840-2160-features-scale flex flex-col">
               <div className="flex flex-col items-start text-left">
-                <h2 className="sa-pill inline-flex items-center gap-2 rounded-full bg-transparent px-4 py-2 font-mono text-xs font-normal uppercase tracking-wide text-[#611879] landing-4096-2304:text-[0.975rem] landing-5120-2880:text-[0.975rem] landing-4096-2304:gap-[0.65rem] landing-5120-2880:gap-[0.65rem] landing-4096-2304:px-5 landing-5120-2880:px-5 landing-4096-2304:py-2.5 landing-5120-2880:py-2.5 landing-7680-4320:text-[1.875rem] landing-7680-4320:gap-5 landing-7680-4320:px-10 landing-7680-4320:py-5">
+                <p className="sa-pill inline-flex items-center gap-2 rounded-full bg-transparent px-4 py-2 font-mono text-xs font-normal uppercase tracking-wide text-[#611879] landing-4096-2304:text-[0.975rem] landing-5120-2880:text-[0.975rem] landing-4096-2304:gap-[0.65rem] landing-5120-2880:gap-[0.65rem] landing-4096-2304:px-5 landing-5120-2880:px-5 landing-4096-2304:py-2.5 landing-5120-2880:py-2.5 landing-7680-4320:text-[1.875rem] landing-7680-4320:gap-5 landing-7680-4320:px-10 landing-7680-4320:py-5">
                   <IconFocusFeature className="size-4 shrink-0 text-[#81228A] landing-4096-2304:size-[1.3rem] landing-5120-2880:size-[1.3rem] landing-7680-4320:size-10" />
                   Features
-                </h2>
+                </p>
                 <div className="mt-4 flex flex-col items-start gap-4 text-left landing-4096-2304:mt-[1.3rem] landing-5120-2880:mt-[1.3rem] landing-7680-4320:mt-10">
-                  <p className="font-[family-name:var(--font-landing-heading)] text-[48px] font-medium leading-[1.1] tracking-[-0.02em] text-slate-900 max-[349px]:text-[1.75rem] landing-compact:text-[1.75rem] landing-phone-tall:text-[1.75rem] landing-4096-2304:text-[62.4px] landing-5120-2880:text-[62.4px] landing-7680-4320:text-[120px]">
+                  <h2 className="font-[family-name:var(--font-landing-heading)] text-[48px] font-medium leading-[1.1] tracking-[-0.02em] text-slate-900 max-[349px]:text-[1.75rem] landing-compact:text-[1.75rem] landing-phone-tall:text-[1.75rem] landing-4096-2304:text-[62.4px] landing-5120-2880:text-[62.4px] landing-7680-4320:text-[120px]">
                   Run your property on autopilot
-                  </p>
+                  </h2>
                 </div>
               </div>
 
@@ -568,23 +583,23 @@ export function LandingPage() {
         <section id="property-dashboard" className="relative scroll-mt-20">
           <div className={`border-t ${LANDING_FULL_WIDTH_RULE}`} aria-hidden />
           <div className={LANDING_SECTION_COLUMN_RULE} aria-hidden />
-          <div className={`landing-property-dashboard-inset ${LANDING_BEYOND_LOGO_COLUMN_INSET} landing-4096-2304-section-inset landing-5120-2880-section-inset flex justify-center pb-[83px] pt-[calc(4rem*1.3)] landing-desktop:!pl-6 landing-desktop:!pr-6 landing-1024-600:!pl-6 landing-1024-600:!pr-6 landing-1920-1080-dashboard-full landing-1920-1200-dashboard-full landing-1920-1080:!pl-6 landing-1920-1080:!pr-6 landing-1920-1200:!pl-6 landing-1920-1200:!pr-6 landing-4096-2304:!pl-14 landing-5120-2880:!pl-14 landing-4096-2304:!pr-14 landing-5120-2880:!pr-14`}>
+          <div className={`landing-property-dashboard-inset ${LANDING_BEYOND_LOGO_COLUMN_INSET} flex justify-center pb-[83px] pt-[calc(4rem*1.3)] landing-desktop:!pl-6 landing-desktop:!pr-6 landing-1024-600:!pl-6 landing-1024-600:!pr-6 landing-1920-1080-dashboard-full landing-1920-1200-dashboard-full landing-1920-1080:!pl-6 landing-1920-1080:!pr-6 landing-1920-1200:!pl-6 landing-1920-1200:!pr-6`}>
             <div className="landing-3840-2160-dashboard-scale landing-property-dashboard-inner flex w-full min-w-0 flex-col items-center">
               <div className="flex justify-center">
-                <h2 className="sa-pill inline-flex items-center gap-2 rounded-full bg-transparent px-4 py-2 font-mono text-xs font-normal uppercase tracking-wide text-[#611879] landing-4096-2304:text-[0.975rem] landing-5120-2880:text-[0.975rem] landing-4096-2304:gap-[0.65rem] landing-5120-2880:gap-[0.65rem] landing-4096-2304:px-5 landing-5120-2880:px-5 landing-4096-2304:py-2.5 landing-5120-2880:py-2.5 landing-7680-4320:text-[1.875rem] landing-7680-4320:gap-5 landing-7680-4320:px-10 landing-7680-4320:py-5">
+                <p className="sa-pill inline-flex items-center gap-2 rounded-full bg-transparent px-4 py-2 font-mono text-xs font-normal uppercase tracking-wide text-[#611879] landing-4096-2304:text-[0.975rem] landing-5120-2880:text-[0.975rem] landing-4096-2304:gap-[0.65rem] landing-5120-2880:gap-[0.65rem] landing-4096-2304:px-5 landing-5120-2880:px-5 landing-4096-2304:py-2.5 landing-5120-2880:py-2.5 landing-7680-4320:text-[1.875rem] landing-7680-4320:gap-5 landing-7680-4320:px-10 landing-7680-4320:py-5">
                   <IconGraph className="size-4 shrink-0 text-[#81228A] landing-4096-2304:size-[1.3rem] landing-5120-2880:size-[1.3rem] landing-7680-4320:size-10" />
                   Property Dashboard
-                </h2>
+                </p>
               </div>
 
               <div className="mt-4 flex flex-col items-center gap-4 text-center landing-4096-2304:mt-[1.3rem] landing-5120-2880:mt-[1.3rem] landing-4096-2304:gap-5 landing-5120-2880:gap-5 landing-7680-4320:mt-10 landing-7680-4320:gap-10">
-                <p className="landing-property-dashboard-title max-w-[min(64rem,calc(100vw-6rem))] font-[family-name:var(--font-landing-heading)] text-[48px] font-medium leading-[1.1] tracking-[-0.02em] text-slate-900 max-[349px]:text-[1.75rem] landing-compact:text-[1.75rem] landing-phone-tall:text-[1.75rem] landing-1024-1440-preview:flex landing-1024-1440-preview:flex-col [@media(min-width:1000px)_and_(max-width:1100px)_and_(min-height:1397px)_and_(max-height:1500px)]:flex [@media(min-width:1000px)_and_(max-width:1100px)_and_(min-height:1397px)_and_(max-height:1500px)]:flex-col landing-4096-2304:text-[62.4px] landing-5120-2880:text-[62.4px] landing-7680-4320:text-[120px]">
+                <h2 className="landing-property-dashboard-title max-w-[min(64rem,calc(100vw-6rem))] font-[family-name:var(--font-landing-heading)] text-[48px] font-medium leading-[1.1] tracking-[-0.02em] text-slate-900 max-[349px]:text-[1.75rem] landing-compact:text-[1.75rem] landing-phone-tall:text-[1.75rem] landing-1024-1440-preview:flex landing-1024-1440-preview:flex-col [@media(min-width:1000px)_and_(max-width:1100px)_and_(min-height:1397px)_and_(max-height:1500px)]:flex [@media(min-width:1000px)_and_(max-width:1100px)_and_(min-height:1397px)_and_(max-height:1500px)]:flex-col landing-3840-2160:max-w-none landing-3840-2160:whitespace-nowrap landing-4096-2304:max-w-none landing-4096-2304:whitespace-nowrap landing-4096-2304:text-[62.4px] landing-5120-2880:max-w-none landing-5120-2880:whitespace-nowrap landing-5120-2880:text-[62.4px] landing-7680-4320:max-w-none landing-7680-4320:whitespace-nowrap landing-7680-4320:text-[120px]">
                 <span>Maintenance OS for</span>
                 <span>
                   <span className="landing-1024-1440-preview:hidden [@media(min-width:1000px)_and_(max-width:1100px)_and_(min-height:1397px)_and_(max-height:1500px)]:hidden"> </span>
                   independent landlords
                 </span>
-                </p>
+                </h2>
                 <p className="max-w-2xl text-lg font-normal leading-relaxed text-slate-700 landing-4096-2304:max-w-[calc(42rem*1.3)] landing-5120-2880:max-w-[calc(42rem*1.3)] landing-4096-2304:text-[1.4625rem] landing-5120-2880:text-[1.4625rem] landing-7680-4320:max-w-[calc(42rem*2.5)] landing-7680-4320:text-[2.8125rem]">
                   One view across all your properties; built from every job, text, and vendor interaction.
                 </p>
@@ -597,6 +612,8 @@ export function LandingPage() {
                 <img
                   src={howItWorksIpad}
                   alt="Ulo property operations dashboard on iPad"
+                  width={1233}
+                  height={823}
                   className="block h-full w-full object-cover object-top"
                   loading="lazy"
                   decoding="async"
@@ -610,15 +627,15 @@ export function LandingPage() {
       <div className={`relative w-full border-t ${LANDING_FULL_WIDTH_RULE}`}>
         <div className={LANDING_SECTION_COLUMN_RULE} aria-hidden />
       </div>
-      <footer className="relative py-12 sm:py-16">
+      <footer className="relative overflow-x-clip py-12 sm:py-16">
         <div className={LANDING_SECTION_COLUMN_RULE} aria-hidden />
-        <div className={`landing-1280-800-footer-inset ${LANDING_BEYOND_LOGO_COLUMN_INSET} landing-4096-2304-section-inset landing-5120-2880-section-inset landing-1280-800:!pr-14 landing-1512-982:!pr-14 landing-1728-1117:!pr-14`}>
-          <div className="flex flex-col gap-10 lg:flex-row lg:items-end lg:justify-between lg:gap-16 landing-tablet-portrait:grid landing-tablet-portrait:grid-cols-[1fr_auto] landing-tablet-portrait:items-center landing-tablet-portrait:gap-x-4 landing-tablet-portrait:gap-y-10 landing-1280-800:!gap-10 landing-1512-982:!gap-10 landing-1728-1117:!gap-10">
-            <div className="flex w-fit max-w-full flex-col items-start text-left landing-compact:contents landing-tablet-portrait:contents">
+        <div className={`landing-footer-inset landing-1280-800-footer-inset ${LANDING_BEYOND_LOGO_COLUMN_INSET} landing-1280-800:!pr-14 landing-1512-982:!pr-14 landing-1728-1117:!pr-14`}>
+          <div className="flex min-w-0 flex-col gap-10 lg:flex-row lg:items-end lg:justify-between lg:gap-16 landing-tablet-portrait:grid landing-tablet-portrait:grid-cols-[1fr_auto] landing-tablet-portrait:items-center landing-tablet-portrait:gap-x-4 landing-tablet-portrait:gap-y-10 landing-1280-800:!gap-10 landing-1512-982:!gap-10 landing-1728-1117:!gap-10">
+            <div className="flex min-w-0 w-full max-w-full flex-col items-start text-left lg:flex-1 landing-compact:contents landing-tablet-portrait:contents">
               <img
                 src={uloLogo}
-                alt="ülo home"
-                className="h-auto w-[min(calc(85vw*1.4),60.1rem)] max-w-full object-contain object-left sm:w-[65.5rem] md:w-[76.4rem] lg:w-[87.4rem] landing-compact:order-1 landing-tablet-portrait:col-span-2"
+                alt="Ulo"
+                className="landing-footer-logo h-auto w-full max-w-[min(calc(85vw*1.4),60.1rem)] object-contain object-left sm:max-w-[65.5rem] md:max-w-[76.4rem] lg:max-w-[87.4rem] landing-compact:order-1 landing-tablet-portrait:col-span-2"
               />
               <nav
                 className="mt-8 hidden w-full flex-wrap items-center justify-start gap-x-4 gap-y-2 pl-[7.09%] text-left text-sm lg:flex landing-tablet-portrait:!hidden"
@@ -648,7 +665,7 @@ export function LandingPage() {
                   Be first on autopilot
                 </h2>
                 <p className="mt-2 text-base font-normal leading-relaxed text-slate-700 landing-compact:text-center landing-3840-2160:mt-[0.8rem] landing-3840-2160:text-[1.6rem] landing-3840-2160:leading-relaxed landing-4096-2304:mt-[0.7rem] landing-5120-2880:mt-[0.7rem] landing-4096-2304:text-[1.4rem] landing-5120-2880:text-[1.4rem] landing-4096-2304:leading-relaxed landing-5120-2880:leading-relaxed landing-7680-4320:mt-5 landing-7680-4320:text-[2.5rem] landing-7680-4320:leading-relaxed">
-                  Join the alpha; limited spots available.
+                  Join the alpha pilot program; limited spots available.
                 </p>
                 <form
                   onSubmit={submitHeroWaitlistEmail}

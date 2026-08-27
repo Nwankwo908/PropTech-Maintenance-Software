@@ -1,0 +1,18 @@
+User-agent: *
+Allow: /
+Allow: /terms
+Allow: /privacy
+
+Disallow: /admin
+Disallow: /vendor
+Disallow: /v/
+Disallow: /w/
+Disallow: /estimate/
+Disallow: /invoice/
+Disallow: /upload/
+Disallow: /pay/
+Disallow: /request
+Disallow: /auth/
+Disallow: /demo
+
+Sitemap: https://app.ulohome.io/sitemap.xml

@@ -5,8 +5,10 @@
   "outputDirectory": "dist",
   "installCommand": "npm ci",
   "rewrites": [
+    { "source": "/terms", "destination": "/terms/index.html" },
+    { "source": "/privacy", "destination": "/privacy/index.html" },
     {
-      "source": "/((?!assets/|favicon\\.png|icons\\.svg|figma-assets/).*)",
+      "source": "/((?!assets/|favicon\\.png|og-image\\.png|robots\\.txt|sitemap\\.xml|icons\\.svg|figma-assets/|terms(?:/index\\.html)?|privacy(?:/index\\.html)?).*)",
       "destination": "/index.html"
     }
   ],

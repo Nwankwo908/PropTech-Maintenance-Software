@@ -1,12 +1,14 @@
 import { Link } from 'react-router-dom'
 import type { ReactNode } from 'react'
 import uloLogo from '@/assets/landing/ulo-logo.png'
+import { useDocumentMeta } from '@/lib/documentMeta'
 
 type LegalDocumentLayoutProps = {
   title: string
   subtitle: string
   effectiveDate: string
   version: string
+  canonicalPath: string
   children: ReactNode
 }
 
@@ -15,8 +17,15 @@ export function LegalDocumentLayout({
   subtitle,
   effectiveDate,
   version,
+  canonicalPath,
   children,
 }: LegalDocumentLayoutProps) {
+  useDocumentMeta({
+    title: `${title} | Ulo`,
+    description: subtitle,
+    canonicalPath,
+  })
+
   return (
     <div className="min-h-dvh bg-[#f9fafb] font-[family-name:var(--font-admin)] text-[#101828]">
       <header className="border-b border-[#e5e7eb] bg-white">
