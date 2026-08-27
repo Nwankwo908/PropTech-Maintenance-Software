@@ -2,7 +2,6 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useParams } from 'react-router-dom'
 import { VENDOR_TRADE_OPTIONS } from '@/lib/vendorTrades'
 import {
-  createVendorConnectAccountLink,
   createVendorConnectAccountSession,
   fileToBase64,
   refreshVendorConnectStatus,
@@ -30,7 +29,6 @@ import {
   type TaxEntityType,
 } from '@/lib/vendorW9Tax'
 import { getErrorMessage } from '@/lib/errorMessage'
-import { hasStripeConnectEmbedded } from '@/lib/stripePublishableKey'
 import { StripeConnectEmbeddedOnboarding } from '@/components/StripeConnectEmbeddedOnboarding'
 import { checkboxInputClassName } from '@/components/TableCheckbox'
 import {
@@ -80,6 +78,20 @@ function InvalidLinkView({ message }: { message: string }) {
         <p className="mt-2 text-[14px] leading-6 text-[#6a7282]">{message}</p>
       </Card>
     </Shell>
+  )
+}
+
+function EditDetailsIcon() {
+  return (
+    <svg viewBox="0 0 20 20" fill="none" className="size-5" aria-hidden>
+      <path
+        d="M14.167 2.5a1.886 1.886 0 0 1 2.666 2.667l-9.5 9.5-3.5.833.833-3.5 9.5-9.5Z"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
   )
 }
 
@@ -283,6 +295,7 @@ export function VendorIntakePortal() {
   const [coiCoverageAck, setCoiCoverageAck] = useState(false)
 
   const initializedRef = useRef(false)
+  const editingAfterSubmitRef = useRef(false)
   // Documents already on the record when the vendor opened the link. We only
   // acknowledge files uploaded during THIS session, so prior uploads don't look
   // like something the vendor just added.
@@ -326,15 +339,52 @@ export function VendorIntakePortal() {
       if (vendorCoiCoverageAckFromProgress(s.progress)) setCoiCoverageAck(true)
     }
 
-    if (s.status === 'verified' || s.status === 'needs_review' || s.status === 'submitted') {
+    if (
+      !editingAfterSubmitRef.current &&
+      (s.status === 'verified' || s.status === 'needs_review' || s.status === 'submitted')
+    ) {
       setCompleted(true)
     }
   }, [])
 
+  const fillFormFromSession = useCallback((s: VendorVerificationSession) => {
+    preexistingDocIdsRef.current = new Set()
+    setBusinessName(s.businessName ?? '')
+    setContactName(s.contactName ?? '')
+    setEmail(s.email ?? '')
+    setPhone(s.phone ?? '')
+    setLicenseState(s.license.state ?? '')
+    setLicenseNumber(s.license.number ?? '')
+    setTrades(s.tradeCategories ?? [])
+    setZips((s.serviceArea.zips ?? []).join(', '))
+    setCities((s.serviceArea.cities ?? []).join(', '))
+    setRadiusMiles(
+      typeof s.serviceArea.radiusMiles === 'number' && Number.isFinite(s.serviceArea.radiusMiles)
+        ? String(s.serviceArea.radiusMiles)
+        : '',
+    )
+    setAvailability(s.availability === 'paused' ? 'paused' : 'active')
+    setTaxEntityType(isTaxEntityType(s.taxEntityType) ? s.taxEntityType : '')
+    setTin('')
+    setTinSavedLast4(s.tinLast4)
+    setCoiCoverageAck(vendorCoiCoverageAckFromProgress(s.progress))
+  }, [])
+
+  function startEditSubmittedForm() {
+    if (!session) return
+    editingAfterSubmitRef.current = true
+    fillFormFromSession(session)
+    setActionError(null)
+    setStep(0)
+    setCompleted(false)
+  }
+
   const fetchVendorConnectClientSecret = useCallback(async () => {
-    const { session: s, clientSecret } = await createVendorConnectAccountSession(token)
+    const { session: s, clientSecret, publishableKey } = await createVendorConnectAccountSession(
+      token,
+    )
     hydrate(s)
-    return clientSecret
+    return { clientSecret, publishableKey }
   }, [hydrate, token])
 
   async function handleVendorConnectExit() {
@@ -353,26 +403,9 @@ export function VendorIntakePortal() {
     }
   }
 
-  async function handleOpenVendorConnect() {
+  function openEmbeddedPayouts() {
     setActionError(null)
-    if (hasStripeConnectEmbedded()) {
-      setShowConnectOnboarding(true)
-      return
-    }
-    setBusy(true)
-    try {
-      const { session: s, url } = await createVendorConnectAccountLink(token)
-      hydrate(s)
-      if (url) {
-        window.location.assign(url)
-        return
-      }
-      setActionError('Could not open payout setup. Try again.')
-    } catch (err) {
-      setActionError(getErrorMessage(err, 'Could not open payout setup. Try again.'))
-    } finally {
-      setBusy(false)
-    }
+    setShowConnectOnboarding(true)
   }
 
   useEffect(() => {
@@ -435,20 +468,22 @@ export function VendorIntakePortal() {
     [hydrate],
   )
 
-  const serviceAreaPatch = useMemo(
-    () => ({
-      zips: zips
-        .split(',')
-        .map((z) => z.trim())
-        .filter(Boolean),
-      cities: cities
-        .split(',')
-        .map((c) => c.trim())
-        .filter(Boolean),
+  const serviceAreaPatch = useMemo(() => {
+    const zipsList = zips
+      .split(',')
+      .map((z) => z.trim())
+      .filter(Boolean)
+    const citiesList = cities
+      .split(',')
+      .map((c) => c.trim())
+      .filter(Boolean)
+    return {
+      zips: zipsList,
+      cities: citiesList,
       radiusMiles: radiusMiles.trim() ? Number(radiusMiles.trim()) || null : null,
-    }),
-    [zips, cities, radiusMiles],
-  )
+      centerAddress: citiesList[0] ?? zipsList[0] ?? null,
+    }
+  }, [zips, cities, radiusMiles])
 
   const taxProfile = taxEntityType ? taxProfileForEntity(taxEntityType) : null
 
@@ -463,7 +498,16 @@ export function VendorIntakePortal() {
     return (
       <Shell>
         <Card>
-          <div className="text-center">
+          <div className="relative">
+            <button
+              type="button"
+              onClick={startEditSubmittedForm}
+              className="absolute right-0 top-0 inline-flex size-9 items-center justify-center rounded-[10px] text-[#6a7282] transition-colors hover:bg-[#f3f4f6] hover:text-[#186179]"
+              aria-label="Edit your information"
+            >
+              <EditDetailsIcon />
+            </button>
+            <div className="text-center">
             <div
               className={`mx-auto flex size-14 items-center justify-center rounded-full ${verified ? 'bg-[#dbfce7]' : 'bg-[#fef9c3]'}`}
             >
@@ -478,7 +522,8 @@ export function VendorIntakePortal() {
               {verified
                 ? 'Your account is active. Use the toggle below when you need to pause or resume new job offers.'
                 : 'We received your information. A few items still need review before you can be assigned work.'}
-            </p>
+              </p>
+            </div>
           </div>
           {verified ? (
             <div className="mt-6 rounded-[12px] border border-[#e5e7eb] bg-[#f9fafb] p-4">
@@ -537,6 +582,22 @@ export function VendorIntakePortal() {
   const sessionDocs = session.documents.filter((d) => !preexistingDocIdsRef.current.has(d.id))
   const docsOfKind = (kind: VendorVerificationDocument['kind']) =>
     sessionDocs.filter((d) => d.kind === kind)
+  const hasDocKind = (kind: VendorVerificationDocument['kind']) =>
+    session.documents.some((d) => d.kind === kind)
+
+  const licenseStatus = (session.license.status ?? '').toLowerCase()
+  const hasLicense =
+    (licenseState.trim().length > 0 && licenseNumber.trim().length > 0) ||
+    hasDocKind('license') ||
+    Boolean(session.license.number?.trim()) ||
+    ['verified', 'active', 'manual_verified'].includes(licenseStatus)
+  const hasCoi = hasDocKind('coi') || session.insurance.generalLiability != null
+  const hasServiceArea =
+    serviceAreaPatch.zips.length > 0 ||
+    serviceAreaPatch.cities.length > 0 ||
+    (serviceAreaPatch.radiusMiles != null && serviceAreaPatch.radiusMiles > 0)
+  const canSubmit =
+    session.stripeConnectReady && trades.length > 0 && hasServiceArea
 
   return (
     <Shell>
@@ -638,10 +699,29 @@ export function VendorIntakePortal() {
             <UploadedDocs docs={docsOfKind('license')} />
             <div className="flex gap-3 pt-2">
               <BackButton onClick={goBack} />
-              <PrimaryButton loading={busy} onClick={goNext}>
+              <PrimaryButton
+                loading={busy}
+                disabled={!hasLicense}
+                onClick={async () => {
+                  if (!hasLicense) return
+                  if (licenseState.trim() && licenseNumber.trim()) {
+                    const s = await runAction(() =>
+                      verifyVendorLicense(token, { licenseState, licenseNumber }),
+                    )
+                    if (s) goNext()
+                    return
+                  }
+                  goNext()
+                }}
+              >
                 Continue
               </PrimaryButton>
             </div>
+            {!hasLicense ? (
+              <p className="text-[12px] leading-5 text-[#9a3412]">
+                Enter your license state and number, or upload your license, to continue.
+              </p>
+            ) : null}
           </div>
         ) : null}
 
@@ -699,8 +779,12 @@ export function VendorIntakePortal() {
               <BackButton onClick={goBack} />
               <PrimaryButton
                 loading={busy}
-                disabled={!coiCoverageAck}
+                disabled={!hasCoi || !coiCoverageAck}
                 onClick={async () => {
+                  if (!hasCoi) {
+                    setActionError('Upload your insurance certificate to continue.')
+                    return
+                  }
                   if (!coiCoverageAck) {
                     setActionError('Confirm your general liability coverage to continue.')
                     return
@@ -719,6 +803,15 @@ export function VendorIntakePortal() {
                 Continue
               </PrimaryButton>
             </div>
+            {!hasCoi ? (
+              <p className="text-[12px] leading-5 text-[#9a3412]">
+                Upload your Certificate of Insurance to continue.
+              </p>
+            ) : !coiCoverageAck ? (
+              <p className="text-[12px] leading-5 text-[#9a3412]">
+                Confirm your general liability coverage to continue.
+              </p>
+            ) : null}
           </div>
         ) : null}
 
@@ -864,14 +957,14 @@ export function VendorIntakePortal() {
                     <button
                       type="button"
                       disabled={busy}
-                      onClick={() => void handleOpenVendorConnect()}
+                      onClick={openEmbeddedPayouts}
                       className="rounded-[10px] border border-[#e5e7eb] bg-white px-4 py-2.5 text-[14px] font-medium text-[#101828] transition-colors hover:bg-[#f3f4f6] disabled:opacity-50"
                       aria-expanded={showConnectOnboarding}
                     >
                       Update payout account
                     </button>
                   </div>
-                  {showConnectOnboarding && hasStripeConnectEmbedded() ? (
+                  {showConnectOnboarding ? (
                     <div className="mt-4 border-t border-[#e5e7eb] pt-4">
                       <StripeConnectEmbeddedOnboarding
                         fetchClientSecret={fetchVendorConnectClientSecret}
@@ -899,7 +992,7 @@ export function VendorIntakePortal() {
                         setShowConnectOnboarding(false)
                         return
                       }
-                      void handleOpenVendorConnect()
+                      openEmbeddedPayouts()
                     }}
                     className="flex w-full items-center justify-between gap-3 bg-[#186179] px-4 py-2.5 text-left text-[14px] font-semibold text-white transition-colors hover:bg-[#145066] disabled:opacity-50"
                   >
@@ -910,23 +1003,12 @@ export function VendorIntakePortal() {
                     <div className="border-t border-[#d1d5dc] bg-white p-4">
                       <p className="text-[13px] leading-5 text-[#6a7282]">
                         Set up payouts so you can get paid when invoices are approved. Takes a few
-                        minutes with Stripe.
+                        minutes — you stay on this page.
                       </p>
-                      {hasStripeConnectEmbedded() ? (
-                        <StripeConnectEmbeddedOnboarding
-                          fetchClientSecret={fetchVendorConnectClientSecret}
-                          onExit={() => void handleVendorConnectExit()}
-                        />
-                      ) : (
-                        <button
-                          type="button"
-                          disabled={busy}
-                          onClick={() => void handleOpenVendorConnect()}
-                          className="mt-3 w-full rounded-[10px] border border-[#186179] px-4 py-2.5 text-[14px] font-semibold text-[#186179] transition-colors hover:bg-[#186179]/5 disabled:opacity-50"
-                        >
-                          Continue with Stripe
-                        </button>
-                      )}
+                      <StripeConnectEmbeddedOnboarding
+                        fetchClientSecret={fetchVendorConnectClientSecret}
+                        onExit={() => void handleVendorConnectExit()}
+                      />
                     </div>
                   ) : null}
                 </>
@@ -995,8 +1077,20 @@ export function VendorIntakePortal() {
               <BackButton onClick={goBack} />
               <PrimaryButton
                 loading={busy}
-                disabled={trades.length === 0}
+                disabled={!canSubmit}
                 onClick={async () => {
+                  if (!session.stripeConnectReady) {
+                    setActionError('Set up your payout account to finish.')
+                    return
+                  }
+                  if (trades.length === 0) {
+                    setActionError('Select at least one trade to finish.')
+                    return
+                  }
+                  if (!hasServiceArea) {
+                    setActionError('Add the ZIP codes or cities you serve to finish.')
+                    return
+                  }
                   const startedW9 =
                     Boolean(taxEntityType) ||
                     Boolean(tin.trim()) ||
@@ -1031,15 +1125,18 @@ export function VendorIntakePortal() {
                         : {}),
                     }),
                   )
-                  if (s) setCompleted(true)
+                  if (s) {
+                    editingAfterSubmitRef.current = false
+                    setCompleted(true)
+                  }
                 }}
               >
                 Submit
               </PrimaryButton>
             </div>
-            {trades.length === 0 ? (
+            {!canSubmit ? (
               <p className="text-[12px] leading-5 text-[#9a3412]">
-                Select at least one trade before submitting.
+                {submitHint(session.stripeConnectReady, trades.length > 0, hasServiceArea)}
               </p>
             ) : null}
           </div>
@@ -1047,6 +1144,27 @@ export function VendorIntakePortal() {
       </Card>
     </Shell>
   )
+}
+
+function submitHint(
+  payoutReady: boolean,
+  hasTrades: boolean,
+  hasServiceArea: boolean,
+): string {
+  const missing: string[] = []
+  if (!payoutReady) missing.push('set up your payout account')
+  if (!hasTrades) missing.push('select at least one trade')
+  if (!hasServiceArea) missing.push('add ZIP codes or cities you serve')
+  if (missing.length === 0) return ''
+  const first = missing[0] ?? ''
+  const rest = missing.slice(1)
+  const list =
+    rest.length === 0
+      ? first
+      : rest.length === 1
+        ? `${first} and ${rest[0]}`
+        : `${first}, ${rest[0]}, and ${rest[1]}`
+  return `${list.charAt(0).toUpperCase()}${list.slice(1)} to submit.`
 }
 
 function BackButton({ onClick }: { onClick: () => void }) {

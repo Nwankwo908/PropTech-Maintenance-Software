@@ -33,6 +33,7 @@ import {
   listConnectPayoutMethods,
   resolveConnectAppBaseUrl,
   retrieveConnectAccount,
+  stripePublishableKeyFromEnv,
   type StripeConnectPayoutMethod,
 } from "../_shared/stripeConnect.ts"
 import { uloAppUrl } from "../_shared/uloAppUrl.ts"
@@ -898,6 +899,7 @@ serve(async (req) => {
         return jsonResponse({
           ok: true,
           clientSecret: sessionCreated.clientSecret,
+          publishableKey: stripePublishableKeyFromEnv() || undefined,
           session: sessionView(
             payload.current,
             payload.documents,

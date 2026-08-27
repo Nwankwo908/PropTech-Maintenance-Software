@@ -33,6 +33,31 @@ export class VendorVerificationSubmitError extends Error {
   }
 }
 
+function locationFieldsFromServiceArea(
+  area: unknown,
+): { city?: string; state?: string } {
+  if (!area || typeof area !== "object") return {}
+  const row = area as {
+    cities?: unknown
+    centerAddress?: unknown
+  }
+  const cities = Array.isArray(row.cities)
+    ? row.cities.filter((item): item is string =>
+      typeof item === "string" && item.trim().length > 0
+    )
+    : []
+  const first = (
+    cities[0] ??
+    (typeof row.centerAddress === "string" ? row.centerAddress : "")
+  ).trim()
+  if (!first) return {}
+  const parts = first.split(",").map((part) => part.trim()).filter(Boolean)
+  if (parts.length >= 2) {
+    return { city: parts[0], state: parts[1] }
+  }
+  return { city: first }
+}
+
 /**
  * Upsert roster row, update verification status, mirror inbox, send follow-up SMS,
  * and log activity events. Returns facts for the engine to advance the run.
@@ -84,6 +109,7 @@ export async function finalizeVendorVerificationSubmit(
     || (typeof fresh.contact_name === "string" && fresh.contact_name.trim())
     || "Vendor"
 
+  const locationFromArea = locationFieldsFromServiceArea(fresh.service_area)
   const vendorPayload: Record<string, unknown> = {
     name: vendorLabel,
     email,
@@ -91,6 +117,7 @@ export async function finalizeVendorVerificationSubmit(
     category: primaryTrade,
     active: overall === "verified",
     notification_channel: notificationChannel,
+    ...locationFromArea,
   }
 
   if (vendorId) {

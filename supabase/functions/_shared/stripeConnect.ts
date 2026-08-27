@@ -40,6 +40,15 @@ function stripeSecret(): string {
   return Deno.env.get("STRIPE_SECRET_KEY")?.trim() ?? ""
 }
 
+/** Publishable key for Connect.js (`pk_test_…` / `pk_live_…`). Not secret. */
+export function stripePublishableKeyFromEnv(): string {
+  for (const key of ["STRIPE_PUBLISHABLE_KEY", "VITE_STRIPE_PUBLISHABLE_KEY"] as const) {
+    const value = Deno.env.get(key)?.trim() ?? ""
+    if (value.startsWith("pk_")) return value
+  }
+  return ""
+}
+
 export function applicationFeeCents(amountCents: number): number {
   const raw = Deno.env.get("STRIPE_CONNECT_APPLICATION_FEE_BPS")?.trim() ?? ""
   const bps = Number.parseInt(raw, 10)

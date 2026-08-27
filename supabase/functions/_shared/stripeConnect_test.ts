@@ -7,6 +7,7 @@ import {
   isEmbeddedNoDashboardConnectAccount,
   resolveConnectAppBaseUrl,
   stripeErrorMessage,
+  stripePublishableKeyFromEnv,
 } from "./stripeConnect.ts"
 
 Deno.test("stripeErrorMessage explains live HTTPS redirect requirement", () => {
@@ -97,5 +98,20 @@ Deno.test("assertConnectReturnOriginForStripe blocks live http origins", () => {
   } finally {
     if (prev == null) Deno.env.delete("STRIPE_SECRET_KEY")
     else Deno.env.set("STRIPE_SECRET_KEY", prev)
+  }
+})
+
+Deno.test("stripePublishableKeyFromEnv prefers STRIPE_PUBLISHABLE_KEY", () => {
+  const prev = Deno.env.get("STRIPE_PUBLISHABLE_KEY")
+  const prevVite = Deno.env.get("VITE_STRIPE_PUBLISHABLE_KEY")
+  Deno.env.set("STRIPE_PUBLISHABLE_KEY", "pk_test_edge")
+  Deno.env.set("VITE_STRIPE_PUBLISHABLE_KEY", "pk_test_vite")
+  try {
+    assertEquals(stripePublishableKeyFromEnv(), "pk_test_edge")
+  } finally {
+    if (prev == null) Deno.env.delete("STRIPE_PUBLISHABLE_KEY")
+    else Deno.env.set("STRIPE_PUBLISHABLE_KEY", prev)
+    if (prevVite == null) Deno.env.delete("VITE_STRIPE_PUBLISHABLE_KEY")
+    else Deno.env.set("VITE_STRIPE_PUBLISHABLE_KEY", prevVite)
   }
 })

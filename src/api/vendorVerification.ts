@@ -355,6 +355,7 @@ async function invokeVendorVerification(
   overall?: 'verified' | 'needs_review'
   url?: string
   clientSecret?: string
+  publishableKey?: string
 }> {
   if (!supabase) {
     throw new Error("We can't reach the server right now. Please try again in a moment.")
@@ -383,6 +384,7 @@ async function invokeVendorVerification(
     overall?: 'verified' | 'needs_review'
     url?: string
     clientSecret?: string
+    publishableKey?: string
     error?: string
   }
   if (!payload?.session) {
@@ -400,6 +402,10 @@ async function invokeVendorVerification(
     clientSecret:
       typeof payload.clientSecret === 'string' && payload.clientSecret.trim()
         ? payload.clientSecret.trim()
+        : undefined,
+    publishableKey:
+      typeof payload.publishableKey === 'string' && payload.publishableKey.startsWith('pk_')
+        ? payload.publishableKey.trim()
         : undefined,
   }
 }
@@ -464,7 +470,11 @@ export async function createVendorConnectAccountSession(token: string) {
   if (!clientSecret) {
     throw new Error('Could not start payout setup. Please try again.')
   }
-  return { session: result.session, clientSecret }
+  return {
+    session: result.session,
+    clientSecret,
+    publishableKey: result.publishableKey,
+  }
 }
 
 /** Sync Connect charges/payouts flags after Stripe return or refresh. */
