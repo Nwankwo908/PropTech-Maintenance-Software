@@ -2,13 +2,8 @@ import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { StaticRouter } from 'react-router'
-import { LandingPrerenderMarkup } from '@/components/landing/LandingPrerenderMarkup'
 import { PrivacyPolicyPage } from '@/components/legal/PrivacyPolicyPage'
 import { TermsOfServicePage } from '@/components/legal/TermsOfServicePage'
-import {
-  LANDING_DOCUMENT_DESCRIPTION,
-  LANDING_DOCUMENT_TITLE,
-} from '@/lib/documentMeta'
 import { PRIVACY_POLICY_META } from '@/lib/legal/privacyPolicyContent'
 import { TERMS_OF_SERVICE_META } from '@/lib/legal/termsOfServiceContent'
 import { DEFAULT_ULO_APP_ORIGIN, uloAppUrl } from '@/lib/uloAppUrl'
@@ -16,13 +11,6 @@ import { applyDocumentHead, applyRootMarkup } from '@/prerender/htmlShell'
 
 export function writePrerenderedPages(outDir: string): void {
   const shell = readFileSync(path.join(outDir, 'index.html'), 'utf8')
-
-  writePage(outDir, 'index.html', shell, {
-    title: LANDING_DOCUMENT_TITLE,
-    description: LANDING_DOCUMENT_DESCRIPTION,
-    canonicalPath: '/',
-    markup: renderToStaticMarkup(<LandingPrerenderMarkup />),
-  })
 
   writePage(outDir, path.join('terms', 'index.html'), shell, {
     title: `${TERMS_OF_SERVICE_META.title} | Ulo`,
