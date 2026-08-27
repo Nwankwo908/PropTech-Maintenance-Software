@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { PRIVACY_POLICY_PATH } from '@/lib/legal/privacyPolicyContent'
 import { EarlyAccessModal } from '@/components/landing/EarlyAccessModal'
@@ -26,6 +26,8 @@ import {
 } from '@/components/landing/LandingIcons'
 import { FeaturesMarquee } from '@/components/landing/FeaturesMarquee'
 import { FeaturesShowcase } from '@/components/landing/FeaturesShowcase'
+import { useLandingSmoothScroll } from '@/components/landing/useLandingSmoothScroll'
+import { bindHideOverlappingLogoColumnRules } from '@/components/landing/hideOverlappingLogoColumnRule'
 import { LANDING_DOCUMENT_DESCRIPTION, LANDING_DOCUMENT_TITLE, useDocumentMeta } from '@/lib/documentMeta'
 import howItWorksIpad from '@/assets/iPad Pro (portrait).png'
 
@@ -56,7 +58,7 @@ const LANDING_BEYOND_LOGO_COLUMN_INSET =
   'w-full pl-[calc(1.5rem+121px+1.5rem+3.5rem)] pr-6 lg:pl-[calc(3.5rem+108px+1.5rem+3.5rem)] lg:pr-14 landing-3840-2160:!pl-[calc(3.5rem+162px+1.5rem+3.5rem)] landing-4096-2304:!pl-[calc(3.5rem+172.8px+1.5rem+3.5rem)] landing-5120-2880:!pl-[calc(3.5rem+172.8px+1.5rem+3.5rem)] landing-4096-2304:!pr-14 landing-5120-2880:!pr-14 max-[399px]:!pl-6 max-[399px]:!pr-6 landing-compact:!pl-6 landing-compact:!pr-6 landing-phone-tall:!pl-6 landing-phone-tall:!pr-6 landing-tablet-portrait:!pl-6 landing-tablet-portrait:!pr-6'
 
 /** Full-page vertical divider — wide desktop only. */
-const LANDING_NAV_DIVIDER = `${LANDING_LOGO_COLUMN_DIVIDER} inset-y-0 z-[51] hidden 2xl:block landing-desktop:!hidden landing-1680-1050:!hidden landing-1512-982:!hidden landing-1728-1117:!hidden`
+const LANDING_NAV_DIVIDER = `${LANDING_LOGO_COLUMN_DIVIDER} landing-hide-if-overlaps-how-it-works inset-y-0 z-[51] hidden 2xl:block landing-desktop:!hidden landing-1680-1050:!hidden landing-1512-982:!hidden landing-1728-1117:!hidden`
 
 /** Full-bleed horizontal rule — spans viewport edge to edge. */
 const LANDING_FULL_WIDTH_RULE = 'border-gray-200/80'
@@ -258,6 +260,14 @@ export function LandingPage() {
   const [earlyAccessReferralLink, setEarlyAccessReferralLink] = useState('')
   const [earlyAccessInitialEmail, setEarlyAccessInitialEmail] = useState('')
   const [heroWaitlistEmail, setHeroWaitlistEmail] = useState('')
+  const { scrollToId } = useLandingSmoothScroll()
+  const landingRootRef = useRef<HTMLDivElement>(null)
+
+  useLayoutEffect(() => {
+    const root = landingRootRef.current
+    if (!root) return
+    return bindHideOverlappingLogoColumnRules(root)
+  }, [])
   useEffect(() => {
     primeUiClickSound()
   }, [])
@@ -353,7 +363,7 @@ export function LandingPage() {
 
   function scrollTo(id: string) {
     setMobileMenuOpen(false)
-    document.getElementById(id)?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    scrollToId(id)
     if (window.location.hash !== `#${id}`) {
       window.history.pushState(null, '', `#${id}`)
     }
@@ -365,7 +375,10 @@ export function LandingPage() {
   }
 
   return (
-    <div className="relative flex min-h-dvh flex-col overflow-x-hidden bg-gradient-to-b from-white to-[#f0fdf4] font-[family-name:var(--font-landing)] text-[#111827]">
+    <div
+      ref={landingRootRef}
+      className="relative flex min-h-dvh flex-col overflow-x-hidden bg-gradient-to-b from-white to-[#f0fdf4] font-[family-name:var(--font-landing)] text-[#111827]"
+    >
       <div aria-hidden className={LANDING_NAV_DIVIDER} />
       {/* Nav */}
       <header className="sticky top-0 z-50 border-b border-emerald-500/10 bg-white/80 shadow-[0_1px_3px_rgba(0,0,0,0.02)] backdrop-blur-sm">
