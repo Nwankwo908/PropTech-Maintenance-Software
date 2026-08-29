@@ -14,12 +14,12 @@ export const TERMS_OF_SERVICE_META = {
   title: 'Terms of Service',
   subtitle: 'Technology Platform & Marketplace Facilitator Agreement — National',
   effectiveDate: 'July 3, 2026',
-  version: '1.2',
+  version: '1.3',
   company: 'Ulo Home, Inc.',
 } as const
 
-/** Anchor id for Privacy Policy references within the Terms page (Section 12.1). */
-export const TERMS_PRIVACY_SECTION_ID = '12-1'
+/** Anchor id for Privacy Policy references within the Terms page (Section 13.1). */
+export const TERMS_PRIVACY_SECTION_ID = '13-1'
 /** @deprecated Prefer PRIVACY_POLICY_PATH from privacyPolicyContent — kept for legacy imports. */
 export { PRIVACY_POLICY_PATH as TERMS_PRIVACY_SECTION_PATH } from '@/lib/legal/privacyPolicyContent'
 
@@ -30,7 +30,7 @@ export const TERMS_OF_SERVICE_PREAMBLE: LegalBlock[] = [
   },
   {
     type: 'paragraph',
-    text: 'By accessing the Platform, creating an account, or submitting or responding to any service request, you agree to be bound by these Terms and our Privacy Policy. If you do not agree, do not use the Platform.',
+    text: 'By accessing the Platform, creating an account, or submitting or responding to any service request, you agree to be bound by these Terms and our /privacy. If you do not agree, do not use the Platform.',
   },
   {
     type: 'paragraph',
@@ -70,7 +70,17 @@ export const TERMS_OF_SERVICE_SECTIONS: LegalSection[] = [
       },
       {
         id: '1-3',
-        title: '1.3 No Employment or Agency Relationship',
+        title: '1.3 Two-Tier Vendor Structure & Disclaimer',
+        blocks: [
+          {
+            type: 'paragraph',
+            text: 'The Platform supports two distinct categories of service providers: (a) Ulo Verified Vendors (sourced, vetted, and background-checked directly by Ulo); and (b) Landlord Preferred Vendors (nominated, authorized, and independently vetted directly by a Landlord). Ulo does not independently screen, background-check, or verify credentials for Landlord Preferred Vendors, and expressly disclaims all liability related to their selection, authorization, and performance.',
+          },
+        ],
+      },
+      {
+        id: '1-4',
+        title: '1.4 No Employment or Agency Relationship',
         blocks: [
           {
             type: 'paragraph',
@@ -79,8 +89,8 @@ export const TERMS_OF_SERVICE_SECTIONS: LegalSection[] = [
         ],
       },
       {
-        id: '1-4',
-        title: '1.4 Automated Communications',
+        id: '1-5',
+        title: '1.5 Automated Communications',
         blocks: [
           {
             type: 'paragraph',
@@ -101,8 +111,8 @@ export const TERMS_OF_SERVICE_SECTIONS: LegalSection[] = [
           '"Landlord" — Any property owner, property manager, or authorized agent registered to use the Platform.',
           '"Tenant" — Any individual submitting a maintenance request via the Platform on behalf of or at the direction of a Landlord.',
           '"Vendor" — Any independent service professional registered on the Platform to fulfill service requests.',
-          '"Ulo Verified Vendor" — A Vendor who has completed full vetting: license verification, COI confirmation, and background screening.',
-          '"Landlord Preferred Vendor" — A Vendor nominated by a Landlord who has completed Ulo\'s lighter vetting process.',
+          '"Ulo Verified Vendor" — A Vendor who has completed full vetting directly with Ulo: license verification, COI confirmation, and background screening.',
+          '"Landlord Preferred Vendor" — A Vendor nominated by a Landlord who completes Ulo\'s lightweight self-representation process without full Ulo vetting.',
           '"Job" — A discrete service request submitted, matched, and tracked through the Platform.',
           '"COI" — Certificate of Insurance evidencing commercial general liability coverage.',
           '"Home Data Graph" — Ulo\'s proprietary property maintenance data system.',
@@ -212,18 +222,13 @@ export const TERMS_OF_SERVICE_SECTIONS: LegalSection[] = [
       },
       {
         id: '5-2',
-        title: '5.2 Mandatory Insurance',
+        title: '5.2 Mandatory Insurance Requirements',
         blocks: [
-          {
-            type: 'paragraph',
-            text: 'All Vendors must maintain commercial general liability insurance: $1,000,000 per occurrence / $2,000,000 aggregate minimum. Prior to any Job assignment, Vendors must:',
-          },
           {
             type: 'list',
             items: [
-              'Upload a valid, current COI to the Platform.',
-              'List Ulo Home, Inc. as Additional Insured on their policy.',
-              'Maintain continuous coverage and notify Ulo immediately of any lapse or cancellation.',
+              'Ulo Verified Vendors: Must maintain commercial general liability insurance ($1,000,000 per occurrence / $2,000,000 aggregate minimum), upload a valid COI listing Ulo Home, Inc. as Additional Insured, and maintain continuous coverage.',
+              'Landlord Preferred Vendors: Must confirm and warrant prior to Job acceptance that they maintain active general liability insurance and required credentials as mandated by Applicable Law and their authorizing Landlord.',
             ],
           },
         ],
@@ -244,7 +249,7 @@ export const TERMS_OF_SERVICE_SECTIONS: LegalSection[] = [
         blocks: [
           {
             type: 'paragraph',
-            text: 'Ulo Verified Vendors must consent to background screening via Ulo\'s designated third-party provider, conducted in compliance with the Fair Credit Reporting Act (FCRA) and applicable state laws.',
+            text: 'Ulo Verified Vendors must consent to background screening via Ulo\'s designated third-party provider, conducted in compliance with the Fair Credit Reporting Act (FCRA) and applicable state laws. Landlord Preferred Vendors are exempt from Ulo background screening, but may be screened independently by the nominating Landlord.',
           },
         ],
       },
@@ -254,7 +259,7 @@ export const TERMS_OF_SERVICE_SECTIONS: LegalSection[] = [
         blocks: [
           {
             type: 'paragraph',
-            text: 'Upon accepting a Job, Vendors agree to: (a) perform work professionally per applicable trade standards; (b) honor scheduled appointment times or provide reasonable advance notice of changes; (c) document completion with photographs as required by the Platform; (d) obtain all required permits for regulated work.',
+            text: 'Upon accepting a Job, Vendors agree to: (a) perform work professionally per applicable trade standards; (b) honor scheduled appointment times or provide reasonable advance notice of changes; (c) document completion with photographs as required by the Platform; and (d) obtain all required permits for regulated work.',
           },
         ],
       },
@@ -271,13 +276,78 @@ export const TERMS_OF_SERVICE_SECTIONS: LegalSection[] = [
     ],
   },
   {
-    id: 'tenant-terms',
-    title: '6. Tenant Terms',
+    id: 'landlord-supplied-vendors',
+    title: '6. Landlord-Supplied Vendors & Two-Tier Verification',
     blocks: [],
     subsections: [
       {
         id: '6-1',
-        title: '6.1 Limited Platform Access',
+        title: '6.1 Nomination of Landlord Preferred Vendors',
+        blocks: [
+          {
+            type: 'paragraph',
+            text: 'Landlords may nominate and supply their own third-party Vendors ("Landlord Preferred Vendors") to receive automated job routing through the Platform. When nominating a Vendor, the Landlord must supply initial contact details, including Business Name, Phone Number, Email, Trade, and known licensing/insurance details.',
+          },
+        ],
+      },
+      {
+        id: '6-2',
+        title: '6.2 Landlord Representation & Authorization',
+        blocks: [
+          {
+            type: 'paragraph',
+            text: 'When adding a Landlord Preferred Vendor, the Landlord expressly acknowledges, authorizes, and agrees that:',
+          },
+          {
+            type: 'list',
+            items: [
+              'The Landlord has independently selected, evaluated, and vetted the Vendor.',
+              'Ulo is authorized strictly to act as a communication routing mechanism to coordinate work orders with said Vendor.',
+              'Ulo does not independently verify, endorse, background-check, or audit credentials for Landlord Preferred Vendors.',
+              'The Landlord assumes sole responsibility for confirming that the nominated Vendor is properly licensed, bonded, insured, and qualified under Applicable Law to perform the requested services.',
+            ],
+          },
+        ],
+      },
+      {
+        id: '6-3',
+        title: '6.3 Vendor Self-Representation & SMS Acknowledgment',
+        blocks: [
+          {
+            type: 'paragraph',
+            text: 'Prior to receiving or accepting any Job dispatched via Ulo, a Landlord Preferred Vendor must complete an automated SMS intake flow agreeing that:',
+          },
+          {
+            type: 'list',
+            items: [
+              'All business information, trade credentials, and contact details provided to Ulo are accurate and current.',
+              'The Vendor holds and will maintain all required licenses, permits, registrations, workers\' compensation coverage, and commercial general liability insurance required by Applicable Law.',
+              'The Vendor will immediately notify Ulo and the authorizing Landlord if any required credential expires, lapses, is suspended, or becomes invalid.',
+              'The Vendor acts solely as an independent contractor to the Landlord and acknowledges that Ulo is a software coordination platform—not their employer, general contractor, or contracting party.',
+            ],
+          },
+        ],
+      },
+      {
+        id: '6-4',
+        title: '6.4 Allocation of Risk',
+        blocks: [
+          {
+            type: 'paragraph',
+            text: 'Landlords and Vendors acknowledge that Ulo\'s two-tier onboarding process relies on mutual representations from the Landlord and Vendor. Ulo disclaims all liability stemming from unverified, inaccurate, or fraudulent representations made by Landlords or Landlord Preferred Vendors.',
+          },
+        ],
+      },
+    ],
+  },
+  {
+    id: 'tenant-terms',
+    title: '7. Tenant Terms',
+    blocks: [],
+    subsections: [
+      {
+        id: '7-1',
+        title: '7.1 Limited Platform Access',
         blocks: [
           {
             type: 'paragraph',
@@ -286,18 +356,18 @@ export const TERMS_OF_SERVICE_SECTIONS: LegalSection[] = [
         ],
       },
       {
-        id: '6-2',
-        title: '6.2 Tenant Data and Consent',
+        id: '7-2',
+        title: '7.2 Tenant Data and Consent',
         blocks: [
           {
             type: 'paragraph',
-            text: 'By submitting a request via the Platform, Tenants consent to collection and processing of contact information, request content, and communication history as described in Ulo\'s Privacy Policy.',
+            text: 'By submitting a request via the Platform, Tenants consent to collection and processing of contact information, request content, and communication history as described in Ulo\'s /privacy.',
           },
         ],
       },
       {
-        id: '6-3',
-        title: '6.3 No Direct Service Contract',
+        id: '7-3',
+        title: '7.3 No Direct Service Contract',
         blocks: [
           {
             type: 'paragraph',
@@ -309,46 +379,46 @@ export const TERMS_OF_SERVICE_SECTIONS: LegalSection[] = [
   },
   {
     id: 'disclaimer',
-    title: '7. Disclaimer of Warranties',
+    title: '8. Disclaimer of Warranties',
     blocks: [
       {
         type: 'caps',
-        text: 'THE PLATFORM IS PROVIDED "AS IS" AND "AS AVAILABLE" WITHOUT WARRANTY OF ANY KIND. ULO EXPRESSLY DISCLAIMS ALL WARRANTIES INCLUDING IMPLIED WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, AND NON-INFRINGEMENT. ULO DOES NOT WARRANT THE QUALITY, SAFETY, TIMELINESS, OR WORKMANSHIP OF VENDOR SERVICES OR UNINTERRUPTED PLATFORM AVAILABILITY.',
+        text: 'THE PLATFORM IS PROVIDED "AS IS" AND "AS AVAILABLE" WITHOUT WARRANTY OF ANY KIND. ULO EXPRESSLY DISCLAIMS ALL WARRANTIES INCLUDING IMPLIED WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, AND NON-INFRINGEMENT. ULO DOES NOT WARRANT THE QUALITY, SAFETY, TIMELINESS, OR WORKMANSHIP OF VENDOR SERVICES (WHETHER ULO VERIFIED OR LANDLORD PREFERRED) OR UNINTERRUPTED PLATFORM AVAILABILITY.',
       },
     ],
   },
   {
     id: 'limitation-of-liability',
-    title: '8. Limitation of Liability',
+    title: '9. Limitation of Liability',
     blocks: [],
     subsections: [
       {
-        id: '8-1',
-        title: '8.1 Liability Cap',
+        id: '9-1',
+        title: '9.1 Liability Cap',
         blocks: [
           {
             type: 'caps',
-            text: 'TO THE MAXIMUM EXTENT PERMITTED BY APPLICABLE LAW, ULO\'S TOTAL LIABILITY SHALL NOT EXCEED THE LESSER OF: (A) TOTAL FEES PAID BY THAT USER TO ULO IN THE THREE MONTHS PRECEDING THE CLAIM; OR (B) ONE HUNDRED DOLLARS ($100.00).',
+            text: 'TO THE MAXIMUM EXTENT PERMITTED BY APPLICABLE LAW, ULO\'S TOTAL AGGREGATE LIABILITY SHALL NOT EXCEED THE LESSER OF: (A) TOTAL FEES PAID BY THAT USER TO ULO IN THE THREE MONTHS PRECEDING THE CLAIM; OR (B) ONE HUNDRED DOLLARS ($100.00 USD).',
           },
         ],
       },
       {
-        id: '8-2',
-        title: '8.2 Exclusion of Consequential Damages',
+        id: '9-2',
+        title: '9.2 Exclusion of Consequential Damages',
         blocks: [
           {
             type: 'caps',
-            text: 'IN NO EVENT SHALL ULO BE LIABLE FOR INDIRECT, INCIDENTAL, SPECIAL, PUNITIVE, EXEMPLARY, OR CONSEQUENTIAL DAMAGES, INCLUDING LOST PROFITS, LOSS OF DATA, OR PROPERTY DAMAGE.',
+            text: 'IN NO EVENT SHALL ULO, ITS OFFICERS, DIRECTORS, EMPLOYEES, OR AGENTS BE LIABLE FOR ANY INDIRECT, INCIDENTAL, SPECIAL, PUNITIVE, EXEMPLARY, OR CONSEQUENTIAL DAMAGES, INCLUDING LOST PROFITS, LOSS OF DATA, LOSS OF GOODWILL, OR PROPERTY DAMAGE.',
           },
         ],
       },
       {
-        id: '8-3',
-        title: '8.3 No Liability for Vendor Acts',
+        id: '9-3',
+        title: '9.3 No Liability for Vendor Acts or Landlord Selections',
         blocks: [
           {
-            type: 'paragraph',
-            text: 'Ulo is not liable for any act, omission, negligence, or breach by any Vendor, including property damage, personal injury, theft, or service failure.',
+            type: 'caps',
+            text: 'ULO IS NOT LIABLE FOR ANY ACT, OMISSION, NEGLIGENCE, MISCONDUCT, OR BREACH BY ANY VENDOR (WHETHER ULO VERIFIED OR LANDLORD PREFERRED), INCLUDING BUT NOT LIMITED TO PROPERTY DAMAGE, BODILY INJURY, PERSONAL INJURY, THEFT, POOR WORKMANSHIP, OR SERVICE FAILURE. ULO IS SPECIFICALLY NOT LIABLE FOR ANY CLAIMS ARISING FROM A LANDLORD\'S ELECTION TO ENGAGE OR AUTHORIZE A LANDLORD PREFERRED VENDOR.',
           },
         ],
       },
@@ -356,50 +426,55 @@ export const TERMS_OF_SERVICE_SECTIONS: LegalSection[] = [
   },
   {
     id: 'indemnification',
-    title: '9. Indemnification',
+    title: '10. Indemnification',
     blocks: [
       {
         type: 'paragraph',
-        text: 'You agree to defend, indemnify, and hold harmless Ulo Home, Inc. and its officers, directors, employees, agents, successors, and assigns from all claims, damages, losses, liabilities, costs, and expenses (including reasonable attorneys\' fees) arising from:',
+        text: 'You agree to defend, indemnify, and hold harmless Ulo Home, Inc. and its officers, directors, employees, agents, successors, and assigns from and against all claims, damages, losses, liabilities, costs, and expenses (including reasonable attorneys\' fees) arising from or relating to:',
       },
       {
         type: 'list',
         items: [
           'Your use of the Platform or services arranged through it.',
-          'Property damage, personal injury, or harm attributable to any Vendor you engage.',
+          'Your selection, authorization, or engagement of any third-party Vendor (including Landlord Preferred Vendors).',
+          'Property damage, personal injury, bodily harm, or death attributable to any Vendor you engage or work performed by you.',
+          'Any misrepresentation regarding licensing, credentials, insurance, or independent contractor status.',
           'Your violation of these Terms or any Applicable Law.',
           'Your negligence or willful misconduct.',
-          'Any dispute between you and another Platform user.',
+          'Any dispute between you and another Platform user (including Landlord-Tenant, Landlord-Vendor, or Tenant-Vendor disputes).',
         ],
       },
     ],
   },
   {
     id: 'insurance',
-    title: '10. Insurance and Property Damage',
+    title: '11. Insurance and Property Damage',
     blocks: [],
     subsections: [
       {
-        id: '10-1',
-        title: '10.1 COI as Condition Precedent',
+        id: '11-1',
+        title: '11.1 Verification Standards',
         blocks: [
           {
-            type: 'paragraph',
-            text: 'No Vendor receives any Job assignment without a valid COI on file naming Ulo Home, Inc. as Additional Insured. This applies to all Jobs regardless of value or market.',
+            type: 'list',
+            items: [
+              'Ulo Verified Jobs: No Ulo Verified Vendor receives any Job assignment without a valid COI on file naming Ulo Home, Inc. as Additional Insured.',
+              'Landlord Preferred Jobs: Job dispatch proceeds based on the Landlord\'s authorization and the Vendor\'s self-representation pursuant to Section 6.',
+            ],
           },
         ],
       },
       {
-        id: '10-2',
-        title: '10.2 Property Damage Claims Process',
+        id: '11-2',
+        title: '11.2 Property Damage Claims Process',
         blocks: [
           {
             type: 'paragraph',
-            text: 'Landlords must report suspected Vendor-caused property damage within 48 hours of discovery. Upon report, Ulo will: (a) suspend the Vendor from new Jobs pending review; (b) provide the Landlord with the Vendor\'s COI information; and (c) cooperate with the Landlord\'s reasonable requests in connection with an insurance claim.',
+            text: 'Landlords must report suspected Vendor-caused property damage within 48 hours of discovery. Upon report, Ulo will: (a) suspend the Vendor from new Platform-matched Jobs pending review; (b) provide the Landlord with any COI or credential information on file; and (c) cooperate with reasonable requests in connection with an insurance claim.',
           },
           {
             type: 'caps',
-            text: 'ULO DOES NOT PAY PROPERTY DAMAGE CLAIMS.',
+            text: 'ULO DOES NOT PAY OR COVER PROPERTY DAMAGE CLAIMS.',
           },
         ],
       },
@@ -407,12 +482,12 @@ export const TERMS_OF_SERVICE_SECTIONS: LegalSection[] = [
   },
   {
     id: 'safety',
-    title: '11. Safety and Misconduct Protocol',
+    title: '12. Safety and Misconduct Protocol',
     blocks: [],
     subsections: [
       {
-        id: '11-1',
-        title: '11.1 Reporting',
+        id: '12-1',
+        title: '12.1 Reporting',
         blocks: [
           {
             type: 'paragraph',
@@ -421,8 +496,8 @@ export const TERMS_OF_SERVICE_SECTIONS: LegalSection[] = [
         ],
       },
       {
-        id: '11-2',
-        title: '11.2 Response Standards',
+        id: '12-2',
+        title: '12.2 Response Standards',
         blocks: [
           {
             type: 'paragraph',
@@ -431,12 +506,12 @@ export const TERMS_OF_SERVICE_SECTIONS: LegalSection[] = [
         ],
       },
       {
-        id: '11-3',
-        title: '11.3 No Guarantee of Safety',
+        id: '12-3',
+        title: '12.3 No Guarantee of Safety',
         blocks: [
           {
             type: 'paragraph',
-            text: 'Ulo\'s vetting procedures are risk-reduction measures, not guarantees of safety or Vendor conduct.',
+            text: 'Ulo\'s vetting procedures and verification steps are risk-reduction measures, not guarantees of safety or Vendor conduct.',
           },
         ],
       },
@@ -444,22 +519,22 @@ export const TERMS_OF_SERVICE_SECTIONS: LegalSection[] = [
   },
   {
     id: 'data-privacy-sms',
-    title: '12. Data, Privacy, and SMS Communications',
+    title: '13. Data, Privacy, and SMS Communications',
     blocks: [],
     subsections: [
       {
-        id: '12-1',
-        title: '12.1 Privacy Policy',
+        id: '13-1',
+        title: '13.1 Privacy Policy',
         blocks: [
           {
             type: 'paragraph',
-            text: 'Data practices are governed by Ulo\'s Privacy Policy available at /privacy, incorporated by reference.',
+            text: 'Data practices are governed by Ulo\'s /privacy incorporated by reference.',
           },
         ],
       },
       {
-        id: '12-2',
-        title: '12.2 SMS/TCPA Consent',
+        id: '13-2',
+        title: '13.2 SMS/TCPA Consent',
         blocks: [
           {
             type: 'paragraph',
@@ -468,8 +543,8 @@ export const TERMS_OF_SERVICE_SECTIONS: LegalSection[] = [
         ],
       },
       {
-        id: '12-3',
-        title: '12.3 Home Data Graph',
+        id: '13-3',
+        title: '13.3 Home Data Graph',
         blocks: [
           {
             type: 'paragraph',
@@ -481,7 +556,7 @@ export const TERMS_OF_SERVICE_SECTIONS: LegalSection[] = [
   },
   {
     id: 'prohibited-conduct',
-    title: '13. Prohibited Conduct',
+    title: '14. Prohibited Conduct',
     blocks: [
       {
         type: 'paragraph',
@@ -490,7 +565,7 @@ export const TERMS_OF_SERVICE_SECTIONS: LegalSection[] = [
       {
         type: 'list',
         items: [
-          'Circumvent the Platform to transact directly with Platform-introduced Vendors for 12 months post-introduction.',
+          'Circumvent the Platform to transact directly with Platform-introduced Ulo Verified Vendors for 12 months post-introduction.',
           'Submit false, misleading, or fraudulent requests, credentials, or reviews.',
           'Harass, threaten, or abuse any user or Ulo representative.',
           'Use the Platform to violate fair housing laws, tenant protection statutes, or any Applicable Law.',
@@ -502,12 +577,12 @@ export const TERMS_OF_SERVICE_SECTIONS: LegalSection[] = [
   },
   {
     id: 'termination',
-    title: '14. Termination',
+    title: '15. Termination',
     blocks: [],
     subsections: [
       {
-        id: '14-1',
-        title: '14.1 By User',
+        id: '15-1',
+        title: '15.1 By User',
         blocks: [
           {
             type: 'paragraph',
@@ -516,8 +591,8 @@ export const TERMS_OF_SERVICE_SECTIONS: LegalSection[] = [
         ],
       },
       {
-        id: '14-2',
-        title: '14.2 By Ulo',
+        id: '15-2',
+        title: '15.2 By Ulo',
         blocks: [
           {
             type: 'paragraph',
@@ -526,12 +601,12 @@ export const TERMS_OF_SERVICE_SECTIONS: LegalSection[] = [
         ],
       },
       {
-        id: '14-3',
-        title: '14.3 Survival',
+        id: '15-3',
+        title: '15.3 Survival',
         blocks: [
           {
             type: 'paragraph',
-            text: 'Sections 7, 8, 9, 12, 15, and 16 survive termination.',
+            text: 'Sections 8, 9, 10, 13, 16, and 17 survive termination.',
           },
         ],
       },
@@ -539,12 +614,12 @@ export const TERMS_OF_SERVICE_SECTIONS: LegalSection[] = [
   },
   {
     id: 'dispute-resolution',
-    title: '15. Dispute Resolution',
+    title: '16. Dispute Resolution',
     blocks: [],
     subsections: [
       {
-        id: '15-1',
-        title: '15.1 Informal Resolution (Required)',
+        id: '16-1',
+        title: '16.1 Informal Resolution (Required)',
         blocks: [
           {
             type: 'paragraph',
@@ -553,8 +628,8 @@ export const TERMS_OF_SERVICE_SECTIONS: LegalSection[] = [
         ],
       },
       {
-        id: '15-2',
-        title: '15.2 Binding Arbitration',
+        id: '16-2',
+        title: '16.2 Binding Arbitration',
         blocks: [
           {
             type: 'paragraph',
@@ -567,18 +642,18 @@ export const TERMS_OF_SERVICE_SECTIONS: LegalSection[] = [
         ],
       },
       {
-        id: '15-3',
-        title: '15.3 California Users',
+        id: '16-3',
+        title: '16.3 California Users',
         blocks: [
           {
             type: 'paragraph',
-            text: 'Notwithstanding Section 15.2, California residents may bring individual claims in California small claims court or seek public injunctive relief in court to the extent such claims cannot be waived under California law.',
+            text: 'Notwithstanding Section 16.2, California residents may bring individual claims in California small claims court or seek public injunctive relief in court to the extent such claims cannot be waived under California law.',
           },
         ],
       },
       {
-        id: '15-4',
-        title: '15.4 Small Claims Exception',
+        id: '16-4',
+        title: '16.4 Small Claims Exception',
         blocks: [
           {
             type: 'paragraph',
@@ -587,8 +662,8 @@ export const TERMS_OF_SERVICE_SECTIONS: LegalSection[] = [
         ],
       },
       {
-        id: '15-5',
-        title: '15.5 Jury Trial Waiver',
+        id: '16-5',
+        title: '16.5 Jury Trial Waiver',
         blocks: [
           {
             type: 'caps',
@@ -600,7 +675,7 @@ export const TERMS_OF_SERVICE_SECTIONS: LegalSection[] = [
   },
   {
     id: 'governing-law',
-    title: '16. Governing Law',
+    title: '17. Governing Law',
     blocks: [
       {
         type: 'paragraph',
@@ -610,12 +685,12 @@ export const TERMS_OF_SERVICE_SECTIONS: LegalSection[] = [
   },
   {
     id: 'general-provisions',
-    title: '17. General Provisions',
+    title: '18. General Provisions',
     blocks: [],
     subsections: [
       {
-        id: '17-1',
-        title: '17.1 Modifications',
+        id: '18-1',
+        title: '18.1 Modifications',
         blocks: [
           {
             type: 'paragraph',
@@ -624,18 +699,18 @@ export const TERMS_OF_SERVICE_SECTIONS: LegalSection[] = [
         ],
       },
       {
-        id: '17-2',
-        title: '17.2 Entire Agreement',
+        id: '18-2',
+        title: '18.2 Entire Agreement',
         blocks: [
           {
             type: 'paragraph',
-            text: 'These Terms, Privacy Policy, and any applicable Vendor Agreement constitute the entire agreement and supersede all prior understandings.',
+            text: 'These Terms, /privacy, and any applicable Vendor Agreement constitute the entire agreement and supersede all prior understandings.',
           },
         ],
       },
       {
-        id: '17-3',
-        title: '17.3 Severability',
+        id: '18-3',
+        title: '18.3 Severability',
         blocks: [
           {
             type: 'paragraph',
@@ -644,8 +719,8 @@ export const TERMS_OF_SERVICE_SECTIONS: LegalSection[] = [
         ],
       },
       {
-        id: '17-4',
-        title: '17.4 Assignment',
+        id: '18-4',
+        title: '18.4 Assignment',
         blocks: [
           {
             type: 'paragraph',
@@ -654,12 +729,12 @@ export const TERMS_OF_SERVICE_SECTIONS: LegalSection[] = [
         ],
       },
       {
-        id: '17-5',
-        title: '17.5 Contact',
+        id: '18-5',
+        title: '18.5 Contact',
         blocks: [
           {
             type: 'paragraph',
-            text: 'Ulo Home, Inc. · hello@ulohome.com · legal@ulohome.com · safety@ulohome.com',
+            text: 'Ulo Home, Inc. · info@ulohome.io',
           },
         ],
       },

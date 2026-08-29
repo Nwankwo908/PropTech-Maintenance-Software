@@ -119,6 +119,72 @@ function inviteFailureMessageFromResponse(parsed: unknown): string {
   return "We couldn't send the verification invite. Check the vendor's contact info and try again."
 }
 
+export async function notifyVendorOnboardingOverrideActivated(input: {
+  landlordId: string
+  vendorId: string
+}): Promise<{ sms: 'sent' | 'skipped' | 'failed'; assignedCount: number }> {
+  const secret = getAdminEdgeSecret()
+  if (!secret) {
+    return { sms: 'failed', assignedCount: 0 }
+  }
+  const url = resolveEdgeUrl('send-vendor-invite')
+  try {
+    const res = await fetchAdminEdgeFunction(url, {
+      method: 'POST',
+      headers: adminEdgeInvokeHeaders(secret),
+      body: JSON.stringify({
+        action: 'notify_override_activated',
+        landlordId: input.landlordId,
+        vendorId: input.vendorId,
+      }),
+    })
+    const parsed = (await res.json().catch(() => ({}))) as {
+      sms?: string
+      assignedCount?: number
+    }
+    const assignedCount =
+      typeof parsed.assignedCount === 'number' && parsed.assignedCount > 0
+        ? Math.floor(parsed.assignedCount)
+        : 0
+    if (parsed.sms === 'sent' || parsed.sms === 'skipped' || parsed.sms === 'failed') {
+      return { sms: parsed.sms, assignedCount }
+    }
+    return { sms: res.ok ? 'skipped' : 'failed', assignedCount }
+  } catch {
+    return { sms: 'failed', assignedCount: 0 }
+  }
+}
+
+/** Assign waiting work orders after Override, without sending the activation text again. */
+export async function dispatchUnassignedJobsAfterVendorOverride(input: {
+  landlordId: string
+  vendorId: string
+}): Promise<{ assignedCount: number }> {
+  const secret = getAdminEdgeSecret()
+  if (!secret) return { assignedCount: 0 }
+  const url = resolveEdgeUrl('send-vendor-invite')
+  try {
+    const res = await fetchAdminEdgeFunction(url, {
+      method: 'POST',
+      headers: adminEdgeInvokeHeaders(secret),
+      body: JSON.stringify({
+        action: 'dispatch_override_jobs',
+        landlordId: input.landlordId,
+        vendorId: input.vendorId,
+      }),
+    })
+    const parsed = (await res.json().catch(() => ({}))) as { assignedCount?: number }
+    return {
+      assignedCount:
+        typeof parsed.assignedCount === 'number' && parsed.assignedCount > 0
+          ? Math.floor(parsed.assignedCount)
+          : 0,
+    }
+  } catch {
+    return { assignedCount: 0 }
+  }
+}
+
 export type InviteVendorAfterAddResult = {
   ok: boolean
   /** False when invite was skipped (no contact) or not attempted. */
@@ -257,6 +323,7 @@ export type VendorVerificationSession = {
   w9Variant: 'individual' | 'business' | null
   tax1099Treatment: 'nec' | 'none' | null
   stripeConnectReady: boolean
+  paymentsEnabled?: boolean
   payoutMethods: VendorStripePayoutMethod[]
   tradeCategories: string[]
   serviceArea: {
@@ -283,6 +350,9 @@ export type VendorVerificationPatch = {
   serviceArea?: VendorVerificationSession['serviceArea']
   availability?: 'active' | 'paused'
   progress?: Record<string, unknown>
+  licenseNumber?: string
+  /** Optional self-reported general liability amount. */
+  coiGeneralLiability?: number | null
   /** Legal entity — drives SSN vs EIN, W-9 variant, and 1099 treatment. */
   taxEntityType?:
     | 'sole_proprietor'

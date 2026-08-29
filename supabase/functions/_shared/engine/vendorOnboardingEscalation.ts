@@ -19,6 +19,7 @@ import {
   readVendorOnboardingState,
   vendorOnboardingActionDue,
   VENDOR_ONBOARDING_TERMINAL_STEPS,
+  vendorOnboardingFormWasSubmitted,
   type VendorOnboardingState,
 } from "./vendorOnboardingPolicy.ts"
 import { recordVendorOnboardingReminder } from "./vendorOnboardingProgress.ts"
@@ -228,9 +229,43 @@ export async function escalateVendorOnboardingRun(
   }
 
   const verification = await loadVerificationForRun(supabase, run, state)
+  const vendorIdForHold =
+    verification?.vendor_id?.trim() || state.vendor_id?.trim() || ""
+  if (vendorIdForHold) {
+    const { data: vendorRow } = await supabase
+      .from("vendors")
+      .select("onboarding_overridden_at")
+      .eq("id", vendorIdForHold)
+      .eq("landlord_id", landlordId)
+      .maybeSingle()
+    const overridden = Boolean(
+      typeof vendorRow?.onboarding_overridden_at === "string" &&
+        vendorRow.onboarding_overridden_at.trim(),
+    )
+    if (overridden) {
+      return {
+        workflow_run_id: run.id,
+        action: "skipped",
+        reason: "onboarding_overridden",
+        sms_sent: false,
+        email_sent: false,
+        admin_notified: [],
+        admin_notify_errors: [],
+      }
+    }
+  }
+  if (vendorOnboardingFormWasSubmitted(state.step, verification?.status)) {
+    return {
+      workflow_run_id: run.id,
+      action: "skipped",
+      reason: "form_already_submitted",
+      sms_sent: false,
+      email_sent: false,
+      admin_notified: [],
+      admin_notify_errors: [],
+    }
+  }
   const companyName = await loadLandlordDisplayName(supabase, landlordId)
-  const needsReview = state.step === "needs_review" ||
-    verification?.status === "needs_review"
   const noResponseDays = positiveInt(config.no_response_days, 5)
   const startedDays = daysSince(run.started_at)
   const alreadyReminded = Boolean(state.reminder_sent_at)
@@ -241,7 +276,7 @@ export async function escalateVendorOnboardingRun(
       landlordId,
       row: verification,
       companyName,
-      needsReview,
+      needsReview: false,
     })
     const channel = sent.sms && sent.email
       ? "both"

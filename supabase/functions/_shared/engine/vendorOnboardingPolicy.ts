@@ -42,6 +42,21 @@ export const VENDOR_ONBOARDING_TERMINAL_STEPS = new Set<string>([
   "escalated",
 ])
 
+const VENDOR_ONBOARDING_FORM_SUBMITTED = new Set<string>([
+  "submitted",
+  "needs_review",
+  "verified",
+])
+
+/** True after the vendor has submitted the verification form (complete or not). */
+export function vendorOnboardingFormWasSubmitted(
+  step?: string | null,
+  verificationStatus?: string | null,
+): boolean {
+  return VENDOR_ONBOARDING_FORM_SUBMITTED.has(step ?? "") ||
+    VENDOR_ONBOARDING_FORM_SUBMITTED.has(verificationStatus ?? "")
+}
+
 /** Invite must actually reach SMS or email before the run stays on Active Tasks. */
 export function vendorOnboardingInviteWasDelivered(
   delivered: { anyDelivered?: boolean } | null | undefined,

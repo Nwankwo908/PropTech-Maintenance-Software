@@ -68,7 +68,7 @@ export function inviteSmsCopy(input: {
     team,
     "",
     "We'd like to invite you to join our preferred vendor network on Ulo. " +
-    "Complete a quick verification (about 5 minutes) so we can begin sending you work orders.",
+    "Before receiving job requests, please confirm your business details and credentials: (2 min)",
     "",
     input.link,
   ].join("\n")

@@ -7,6 +7,7 @@ import {
   readVendorOnboardingState,
   vendorOnboardingActionDue,
   vendorOnboardingInviteWasDelivered,
+  vendorOnboardingFormWasSubmitted,
   VENDOR_ONBOARDING_WAITING_STEPS,
 } from "./vendorOnboardingPolicy.ts"
 import type { WorkflowRunRow } from "./types.ts"
@@ -41,6 +42,12 @@ Deno.test("failed invite delivery must not stay on Active Tasks", () => {
   assertEquals(vendorOnboardingInviteWasDelivered(null), false)
   assertEquals(vendorOnboardingInviteWasDelivered({ anyDelivered: false }), false)
   assertEquals(vendorOnboardingInviteWasDelivered({ anyDelivered: true }), true)
+})
+
+Deno.test("vendorOnboardingFormWasSubmitted is true after form submit", () => {
+  assertEquals(vendorOnboardingFormWasSubmitted("needs_review", null), true)
+  assertEquals(vendorOnboardingFormWasSubmitted("invited", "submitted"), true)
+  assertEquals(vendorOnboardingFormWasSubmitted("invited", "invited"), false)
 })
 
 Deno.test("vendor onboarding waiting steps include invited and reminder_sent", () => {

@@ -130,7 +130,7 @@ export function InviteVendorModal({
           <div>
             <h2 className="text-[18px] font-semibold text-[#0a0a0a]">Invite a vendor</h2>
             <p className="mt-1 text-[13px] leading-5 text-[#6a7282]">
-              We&apos;ll text or email a secure link to a quick verification (about 5 minutes).
+              We&apos;ll text or email a secure link so they can confirm business details (about 2 minutes).
             </p>
           </div>
           <button

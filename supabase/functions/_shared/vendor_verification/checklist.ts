@@ -67,7 +67,7 @@ export type VerificationChecklist = {
   missingReasons: string[]
 }
 
-const MIN_GENERAL_LIABILITY = 1_000_000
+const MIN_GENERAL_LIABILITY = 500_000
 
 function todayIso(): string {
   return new Date().toISOString().slice(0, 10)
@@ -87,37 +87,33 @@ function serviceAreaHasCoverage(
 }
 
 function licenseItem(record: VerificationRecord): VerificationChecklistItem {
-  const status = (record.license_status ?? "").toLowerCase()
-  if (["verified", "active", "manual_verified"].includes(status)) {
+  const number = (record.license_number ?? "").trim()
+  const licenseExp = record.license_expiration ?? null
+  const licenseDateExpired = Boolean(licenseExp && licenseExp < todayIso())
+  if (number && !licenseDateExpired) {
     return {
       id: "license",
       label: "State License",
       status: "complete",
-      required: true,
-      detail: record.license_number
-        ? `${record.license_number} · Active`
-        : "Active",
+      required: false,
+      detail: licenseExp ? `${number} · through ${licenseExp}` : number,
     }
   }
-  const licenseExp = record.license_expiration ?? null
-  const licenseDateExpired = Boolean(licenseExp && licenseExp < todayIso())
-  if (["expired", "not_found"].includes(status) || licenseDateExpired) {
+  if (number && licenseDateExpired) {
     return {
       id: "license",
       label: "State License",
       status: "action_needed",
-      required: true,
-      detail: licenseDateExpired || status === "expired"
-        ? `License expired${licenseExp ? ` (${licenseExp})` : ""} — needs renewal`
-        : "No match in the state licensing database.",
+      required: false,
+      detail: `License expired${licenseExp ? ` (${licenseExp})` : ""} — needs renewal`,
     }
   }
   return {
     id: "license",
     label: "State License",
     status: "missing",
-    required: true,
-    detail: "Not submitted yet",
+    required: false,
+    detail: "Optional — recommended for licensed trades",
   }
 }
 
@@ -126,38 +122,25 @@ function coiCoverageItem(record: VerificationRecord): VerificationChecklistItem 
     ? record.coi_general_liability
     : null
   const exp = record.coi_expiration ?? null
-  const additionalInsured = record.coi_additional_insured === true
   if (gl == null) {
     return {
       id: "coi_coverage",
-      label: "General Liability ≥ $1M",
+      label: "General Liability (recommended $500K)",
       status: "missing",
-      required: true,
-      detail: "Insurance certificate not uploaded yet",
+      required: false,
+      detail: "Optional — recommended $500K minimum GL",
     }
   }
-  const meetsCoverage = gl >= MIN_GENERAL_LIABILITY
   const notExpired = !exp || exp >= todayIso()
-  if (meetsCoverage && notExpired && additionalInsured) {
-    return {
-      id: "coi_coverage",
-      label: "General Liability ≥ $1M",
-      status: "complete",
-      required: true,
-      detail: `$${gl.toLocaleString()} GL · Ulo Additional Insured` +
-        `${exp ? ` · valid through ${exp}` : ""}`,
-    }
-  }
+  const meetsRecommended = gl >= MIN_GENERAL_LIABILITY
   return {
     id: "coi_coverage",
-    label: "General Liability ≥ $1M",
-    status: "action_needed",
-    required: true,
-    detail: !meetsCoverage
-      ? `$${gl.toLocaleString()} is below the $1M minimum`
-      : !notExpired
-      ? "Insurance certificate is expired"
-      : "Ulo must be listed as Additional Insured on the COI",
+    label: "General Liability (recommended $500K)",
+    status: !notExpired ? "action_needed" : "complete",
+    required: false,
+    detail: !notExpired
+      ? "Insurance is expired"
+      : `$${gl.toLocaleString()} GL${meetsRecommended ? "" : " · below $500K recommended"}`,
   }
 }
 
@@ -208,15 +191,15 @@ function stripeConnectItem(record: VerificationRecord): VerificationChecklistIte
       id: "stripe_connect",
       label: "Payout account",
       status: "complete",
-      required: true,
+      required: false,
       detail: "Payout account connected",
     }
     : {
       id: "stripe_connect",
       label: "Set up your payout account",
       status: "missing",
-      required: true,
-      detail: "Set up your payout account",
+      required: false,
+      detail: "Optional — not required to confirm details",
     }
 }
 
@@ -247,14 +230,14 @@ function serviceAreaItem(record: VerificationRecord): VerificationChecklistItem 
       id: "service_area",
       label: "Service Area",
       status: "complete",
-      required: true,
+      required: false,
       detail: "Coverage area provided",
     }
     : {
       id: "service_area",
       label: "Service Area",
       status: "missing",
-      required: true,
+      required: false,
       detail: "No service area provided yet",
     }
 }
@@ -276,12 +259,14 @@ function availabilityItem(
 
 export function computeVerificationChecklist(
   record: VerificationRecord,
+  options?: { requirePayouts?: boolean },
 ): VerificationChecklist {
+  const requirePayouts = options?.requirePayouts !== false
   const items: VerificationChecklistItem[] = [
     licenseItem(record),
     coiCoverageItem(record),
     w9Item(record),
-    stripeConnectItem(record),
+    ...(requirePayouts ? [stripeConnectItem(record)] : []),
     tradeItem(record),
     serviceAreaItem(record),
     availabilityItem(record),

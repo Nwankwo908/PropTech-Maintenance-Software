@@ -12,6 +12,8 @@ import {
   verifyLicense,
 } from "../_shared/vendor_verification/adapters.ts"
 import { computeVerificationChecklist } from "../_shared/vendor_verification/checklist.ts"
+import { applyVerificationPortalPatch } from "../_shared/vendor_verification/applyPortalPatch.ts"
+import { landlordHasPayments } from "../../../shared/landlordCapabilities.ts"
 import {
   normalizeTinDigits,
   parseTaxEntityFromPatch,
@@ -179,7 +181,8 @@ function sessionView(
   documents: unknown[],
   payoutMethods: StripeConnectPayoutMethod[] = [],
 ) {
-  const checklist = computeVerificationChecklist(row)
+  const paymentsEnabled = landlordHasPayments(row.landlord_id)
+  const checklist = computeVerificationChecklist(row, { requirePayouts: paymentsEnabled })
   return {
     status: row.status,
     businessName: row.business_name,
@@ -211,6 +214,7 @@ function sessionView(
     w9Variant: row.w9_variant ?? null,
     tax1099Treatment: row.tax_1099_treatment ?? null,
     stripeConnectReady: row.stripe_connect_ready === true,
+    paymentsEnabled,
     payoutMethods,
     tradeCategories: row.trade_categories ?? [],
     serviceArea: row.service_area ?? {},
@@ -559,36 +563,7 @@ serve(async (req) => {
 
       case "save": {
         const patch = (body.patch ?? {}) as Record<string, unknown>
-        const update: Record<string, unknown> = {}
-        if (typeof patch.businessName === "string") {
-          update.business_name = patch.businessName.trim() || null
-        }
-        if (typeof patch.contactName === "string") {
-          update.contact_name = patch.contactName.trim() || null
-        }
-        if (typeof patch.vendorFirstName === "string") {
-          update.vendor_first_name = patch.vendorFirstName.trim() || null
-        }
-        if (typeof patch.email === "string") {
-          update.email = patch.email.trim() || null
-        }
-        if (typeof patch.phone === "string") {
-          update.phone = patch.phone.trim() || null
-        }
-        if (typeof patch.propertyName === "string") {
-          update.property_name = patch.propertyName.trim() || null
-        }
-        if (Array.isArray(patch.tradeCategories)) {
-          update.trade_categories = patch.tradeCategories.filter(
-            (t): t is string => typeof t === "string",
-          )
-        }
-        if (patch.serviceArea && typeof patch.serviceArea === "object") {
-          update.service_area = patch.serviceArea
-        }
-        if (patch.progress && typeof patch.progress === "object") {
-          update.progress = patch.progress
-        }
+        const update = applyVerificationPortalPatch(patch, row.progress)
         const taxResult = await applyTaxProfilePatch(patch, update, {
           tin_type: row.tin_type,
         })
@@ -877,6 +852,9 @@ serve(async (req) => {
       }
 
       case "create_account_session": {
+        if (!landlordHasPayments(landlordId)) {
+          return jsonResponse({ error: "Payouts are not available on this account." }, 403)
+        }
         const ensured = await ensureVendorExpressConnectAccount(
           supabase,
           row,
@@ -909,6 +887,9 @@ serve(async (req) => {
       }
 
       case "create_connect_account_link": {
+        if (!landlordHasPayments(landlordId)) {
+          return jsonResponse({ error: "Payouts are not available on this account." }, 403)
+        }
         const base = appBaseUrl(
           req,
           typeof body.returnOrigin === "string" ? body.returnOrigin : undefined,
@@ -1035,18 +1016,7 @@ serve(async (req) => {
       case "submit": {
         // Persist any final patch first.
         const patch = (body.patch ?? {}) as Record<string, unknown>
-        const finalUpdate: Record<string, unknown> = {}
-        if (Array.isArray(patch.tradeCategories)) {
-          finalUpdate.trade_categories = patch.tradeCategories.filter(
-            (t): t is string => typeof t === "string",
-          )
-        }
-        if (patch.serviceArea && typeof patch.serviceArea === "object") {
-          finalUpdate.service_area = patch.serviceArea
-        }
-        if (patch.availability === "active" || patch.availability === "paused") {
-          finalUpdate.availability = patch.availability
-        }
+        const finalUpdate = applyVerificationPortalPatch(patch, row.progress)
         const taxResult = await applyTaxProfilePatch(patch, finalUpdate, {
           tin_type: row.tin_type,
         })
@@ -1097,7 +1067,9 @@ serve(async (req) => {
           .eq("id", row.id)
           .maybeSingle()
         const fresh = (freshRaw as unknown as VerificationRow) ?? row
-        const checklist = computeVerificationChecklist(fresh)
+        const checklist = computeVerificationChecklist(fresh, {
+          requirePayouts: landlordHasPayments(landlordId),
+        })
         const overall = checklist.overall
         const vendorId = fresh.vendor_id
 

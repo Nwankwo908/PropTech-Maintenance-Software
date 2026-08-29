@@ -347,14 +347,24 @@ export const vendorOnboardingTemplate: WorkflowTemplate = {
           "Thanks for your message. Please finish your verification here (about 5 minutes):\n\n" +
           link
       }
-      if (step === "verified") {
+      const vendorId = run ? readVendorOnboardingState(run).vendor_id : null
+      let overridden = false
+      if (vendorId) {
+        const { data: vendorRow } = await supabase
+          .from("vendors")
+          .select("onboarding_overridden_at")
+          .eq("id", vendorId)
+          .maybeSingle()
+        overridden = Boolean(
+          typeof vendorRow?.onboarding_overridden_at === "string" &&
+            vendorRow.onboarding_overridden_at.trim(),
+        )
+      }
+      if (step === "verified" || overridden) {
         replyHint =
-          "You're all set — your verification is complete and you're eligible for work orders."
-      } else if (step === "needs_review") {
-        replyHint = link
-          ? "Thanks — a few verification items still need attention. Please open your form to finish:\n\n" +
-            link
-          : "Thanks — a few verification items still need attention. Please open the form link we sent earlier."
+          "You're all set — your profile is active and you're eligible for work orders."
+      } else if (step === "needs_review" || step === "submitted") {
+        replyHint = "Thanks — we received your form."
       }
 
       return {

@@ -11,6 +11,7 @@ import {
   computeVerificationChecklist,
   type VerificationChecklist,
 } from "./checklist.ts"
+import { landlordHasPayments } from "../../../../shared/landlordCapabilities.ts"
 import { findLandlordVendorByContact } from "./findVendor.ts"
 
 const VERIFICATION_SELECT =
@@ -81,7 +82,9 @@ export async function finalizeVendorVerificationSubmit(
   }
 
   const fresh = freshRaw as Record<string, unknown>
-  const checklist = computeVerificationChecklist(fresh)
+  const checklist = computeVerificationChecklist(fresh, {
+    requirePayouts: landlordHasPayments(params.landlordId),
+  })
   const overall = checklist.overall
   const workflowRunId = typeof fresh.workflow_run_id === "string"
     ? fresh.workflow_run_id
@@ -152,7 +155,6 @@ export async function finalizeVendorVerificationSubmit(
   }
 
   const nowIso = new Date().toISOString()
-  const token = typeof fresh.token === "string" ? fresh.token : ""
 
   await supabase
     .from("vendor_verifications")
@@ -201,10 +203,7 @@ export async function finalizeVendorVerificationSubmit(
   await sendVendorVerificationFollowUpSms(supabase, {
     landlordId: params.landlordId,
     verificationId: params.verificationId,
-    token,
     vendorLabel,
-    overall,
-    checklist,
     inviteConversationId: inbox.conversationId ?? inviteConversationId,
     workflowRunId,
     vendorId,

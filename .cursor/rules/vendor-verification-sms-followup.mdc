@@ -1,5 +1,5 @@
 ---
-description: After vendor verification form submit, SMS acknowledge under review, then status — incomplete forms get outstanding items + document request with form link.
+description: After vendor verification form submit, SMS acknowledge receipt only — do not text approval, incomplete items, or a request to finish.
 alwaysApply: true
 ---
 
@@ -7,32 +7,32 @@ alwaysApply: true
 
 ## Rule
 
-When a vendor **submits the verification form**, Ulo always texts them on the invite SMS thread:
+When a vendor **submits the verification form**, Ulo texts them once on the invite SMS thread:
 
-1. **Acknowledgement** — form received, under review.
-2. **Status follow-up**
-   - **Complete / verified** → approved; eligible for work orders.
-   - **Incomplete / needs review** → list outstanding required items in plain language and ask them to finish / upload missing documents via the same `/v/:token` form link.
+1. **Acknowledgement** — form received. Thank you.
+
+Do **not** send a second SMS about approved vs incomplete, outstanding items, or a request to finish the form. Completing remaining verification details is **optional** for the vendor.
+
+Admin-facing inbox and dashboard may still show needs-review vs verified. Do not put that outcome on the vendor SMS.
 
 ## Copy standards
 
 - Follow `.cursor/rules/ulo-communication-writing-standard.mdc`.
 - No internal jargon (no “checklist”, “needs_review”, IDs).
-- Incomplete SMS: short bullets of outstanding item labels + form link on its own line.
+- Do not promise a later status text about approval or missing items.
 
 ## Implementation
 
 - Helper: `supabase/functions/_shared/sms/vendorVerificationFollowUp.ts`
   - `buildVendorVerificationReceivedSms`
-  - `buildVendorVerificationApprovedSms`
-  - `buildVendorVerificationIncompleteSms` + `outstandingVerificationLabels`
-  - `sendVendorVerificationFollowUpSms` (best-effort after submit)
+  - `sendVendorVerificationFollowUpSms` (best-effort after submit; acknowledgement only)
 - Triggered from `vendor-verification` Edge Function on successful form finalize/submit, after the inbox inbound mirror.
-- Messages are real outbound SMS on the invite conversation (also visible in Communication).
-- Graph events: `vendor.verification_ack_sent`, `vendor.verification_status_sent`, `vendor.verification_incomplete_followup_sent`.
+- Message is a real outbound SMS on the invite conversation (also visible in Communication).
+- Graph event: `vendor.verification_ack_sent`.
+- After submit, do not reminder-SMS the vendor to finish missing items (`vendor_onboarding` escalation / inbound nudge).
 
 ## Do not
 
-- Skip the acknowledgement when the form is already verified.
-- Send incomplete follow-ups without naming what’s missing or without the form link.
-- Rely only on in-app/admin UI — the vendor must hear status over SMS.
+- Skip the acknowledgement.
+- Text what’s missing, whether the form is approved, or that they must complete verification.
+- Rely on an incomplete follow-up SMS to collect remaining documents.
