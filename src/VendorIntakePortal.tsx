@@ -1,13 +1,15 @@
 import { useCallback, useEffect, useId, useRef, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import {
+  fileToBase64,
   resolveVendorVerification,
   submitVendorVerification,
+  uploadVendorDocument,
+  type VendorVerificationDocument,
   type VendorVerificationSession,
 } from '@/api/vendorVerification'
 import { checkboxInputClassName } from '@/components/TableCheckbox'
 import { getErrorMessage } from '@/lib/errorMessage'
-import { parseOptionalUsdAmount } from '@/lib/parseOptionalUsdAmount'
 import {
   TERMS_SECTION_6_3_HREF,
   VENDOR_SELF_REPRESENTATION_ACK_BODY,
@@ -108,12 +110,6 @@ function inviteTokenFromPath(raw: string | undefined): string {
   return token.replace(/[.,;:)\]]+$/g, '')
 }
 
-function insuranceFieldFromSession(session: VendorVerificationSession): string {
-  const gl = session.insurance.generalLiability
-  if (typeof gl !== 'number' || !Number.isFinite(gl)) return ''
-  return String(Math.round(gl))
-}
-
 function firstTrade(session: VendorVerificationSession): string {
   const first = session.tradeCategories.find((t) => typeof t === 'string' && t.trim())
   return first?.trim() ?? ''
@@ -136,7 +132,6 @@ export function VendorIntakePortal() {
   const [phone, setPhone] = useState('')
   const [email, setEmail] = useState('')
   const [licenseNumber, setLicenseNumber] = useState('')
-  const [insurance, setInsurance] = useState('')
   const [attested, setAttested] = useState(false)
 
   const initializedRef = useRef(false)
@@ -151,13 +146,9 @@ export function VendorIntakePortal() {
       setEmail(s.email ?? '')
       setPhone(s.phone ?? '')
       setLicenseNumber('')
-      setInsurance('')
       setAttested(vendorSelfRepresentationAckFromProgress(s.progress))
     } else {
       setLicenseNumber((prev) => s.license.number ?? prev)
-      if (typeof s.insurance.generalLiability === 'number') {
-        setInsurance((prev) => prev || insuranceFieldFromSession(s))
-      }
       if (vendorSelfRepresentationAckFromProgress(s.progress)) setAttested(true)
     }
 
@@ -175,7 +166,6 @@ export function VendorIntakePortal() {
     setEmail(s.email ?? '')
     setPhone(s.phone ?? '')
     setLicenseNumber(s.license.number ?? '')
-    setInsurance(insuranceFieldFromSession(s))
     setAttested(vendorSelfRepresentationAckFromProgress(s.progress))
   }, [])
 
@@ -314,17 +304,43 @@ export function VendorIntakePortal() {
           />
           <Field
             label="License number"
-            hint="Optional · Recommended for licensed trades"
+            hint="Recommended for licensed trades"
             value={licenseNumber}
             onChange={setLicenseNumber}
           />
-          <Field
-            label="Insurance"
-            hint="Optional · Recommended — $500K minimum GL"
-            placeholder="Coverage amount"
-            value={insurance}
-            onChange={setInsurance}
-          />
+          <div>
+            <span className="text-[13px] font-medium text-[#364153]">Insurance</span>
+            <p className="mt-0.5 text-[12px] leading-4 text-[#6a7282]">
+              Recommended — At least $500,000 in General Liability insurance coverage.
+            </p>
+            <div className="mt-1.5 space-y-2">
+              <FileUpload
+                label="Upload certificate of insurance (PDF or photo)"
+                accept="image/*,application/pdf"
+                busy={busy}
+                done={session.documents.some((d) => d.kind === 'coi')}
+                onFile={async (file) => {
+                  setBusy(true)
+                  setActionError(null)
+                  try {
+                    const b64 = await fileToBase64(file)
+                    const { session: s } = await uploadVendorDocument(token, {
+                      kind: 'coi',
+                      fileName: file.name,
+                      contentType: file.type || 'application/octet-stream',
+                      dataBase64: b64,
+                    })
+                    setSession(s)
+                  } catch (err) {
+                    setActionError(getErrorMessage(err, 'Could not upload that file. Try again.'))
+                  } finally {
+                    setBusy(false)
+                  }
+                }}
+              />
+              <UploadedDocs docs={session.documents.filter((d) => d.kind === 'coi')} />
+            </div>
+          </div>
 
           <label htmlFor={ackId} className="flex cursor-pointer items-start gap-3 pt-1">
             <input
@@ -359,14 +375,12 @@ export function VendorIntakePortal() {
               setBusy(true)
               setActionError(null)
               try {
-                const gl = parseOptionalUsdAmount(insurance)
                 const { session: s } = await submitVendorVerification(token, {
                   businessName,
                   email,
                   phone,
                   tradeCategories: [trade],
                   licenseNumber,
-                  coiGeneralLiability: gl,
                   progress: {
                     self_representation_attestation: vendorSelfRepresentationAckProgressPatch(),
                   },
@@ -387,6 +401,76 @@ export function VendorIntakePortal() {
         </div>
       </Card>
     </Shell>
+  )
+}
+
+function UploadedDocs({ docs }: { docs: VendorVerificationDocument[] }) {
+  if (docs.length === 0) return null
+  return (
+    <ul className="space-y-2">
+      {docs.map((doc) => {
+        const uploadedOn = doc.uploadedAt
+          ? new Date(doc.uploadedAt).toLocaleDateString()
+          : null
+        return (
+          <li
+            key={doc.id}
+            className="flex items-start gap-3 rounded-[10px] border border-[#e5e7eb] bg-[#f9fafb] px-3 py-2.5"
+          >
+            <span
+              aria-hidden
+              className="mt-0.5 inline-flex size-5 shrink-0 items-center justify-center rounded-full bg-[#dbfce7] text-[12px] font-bold text-[#008236]"
+            >
+              ✓
+            </span>
+            <div className="min-w-0">
+              <p className="truncate text-[13px] font-medium text-[#0a0a0a]">
+                {doc.fileName ?? 'Uploaded document'}
+              </p>
+              <p className="mt-0.5 text-[12px] text-[#008236]">
+                Uploaded{uploadedOn ? ` · ${uploadedOn}` : ''}
+              </p>
+            </div>
+          </li>
+        )
+      })}
+    </ul>
+  )
+}
+
+function FileUpload({
+  label,
+  accept,
+  onFile,
+  busy,
+  done,
+}: {
+  label: string
+  accept: string
+  onFile: (file: File) => void | Promise<void>
+  busy?: boolean
+  done?: boolean
+}) {
+  return (
+    <label
+      className={`flex cursor-pointer flex-col items-center justify-center rounded-[10px] border-2 border-dashed px-4 py-6 text-center transition-colors ${
+        done ? 'border-[#00a63e] bg-[#f0fdf4]' : 'border-[#d1d5dc] bg-[#f9fafb] hover:border-[#186179]'
+      } ${busy ? 'pointer-events-none opacity-60' : ''}`}
+    >
+      <span className="text-[13px] font-medium text-[#364153]">
+        {done ? '✓ Uploaded — tap to replace' : label}
+      </span>
+      <input
+        type="file"
+        accept={accept}
+        className="hidden"
+        onChange={(e) => {
+          const file = e.target.files?.[0]
+          if (file) void onFile(file)
+          e.target.value = ''
+        }}
+      />
+    </label>
   )
 }
 
