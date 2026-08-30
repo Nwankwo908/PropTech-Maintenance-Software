@@ -18,24 +18,30 @@ import {
   VENDOR_TOKEN_STORAGE_KEY,
 } from '@/lib/vendorToken'
 import { getErrorMessage } from '@/lib/errorMessage'
+import {
+  formatJobUnitLine,
+  jobHeaderBadge,
+  jobPageCopy,
+  jobPageDateLocale,
+  jobStatusLabel,
+  persistJobPageLang,
+  readJobPageLang,
+  translateAccessLabel,
+  translateTradeLabel,
+  type JobPageCopyBundle,
+  type JobPageLang,
+} from '@/lib/workOrderPublicPageCopy'
 
-function statusLabel(status: string | null | undefined): string {
-  if (status == null) return 'Open'
-  const s = String(status).toLowerCase()
-  if (s === 'pending_accept') return 'Awaiting accept'
-  if (s === 'accepted') return 'Accepted'
-  if (s === 'in_progress') return 'In progress'
-  if (s === 'completed') return 'Completed'
-  if (s === 'declined') return 'Declined'
-  if (s === 'unassigned') return 'Unassigned'
-  return String(status).replace(/_/g, ' ')
-}
-
-function formatWhen(iso: string | null, windowText: string | null): string {
+function formatWhen(
+  iso: string | null,
+  windowText: string | null,
+  lang: JobPageLang,
+  notScheduled: string,
+): string {
   if (windowText?.trim()) return windowText.trim()
-  if (!iso) return 'Not scheduled yet'
+  if (!iso) return notScheduled
   try {
-    return new Date(iso).toLocaleString(undefined, {
+    return new Date(iso).toLocaleString(jobPageDateLocale(lang), {
       weekday: 'short',
       month: 'short',
       day: 'numeric',
@@ -47,29 +53,15 @@ function formatWhen(iso: string | null, windowText: string | null): string {
   }
 }
 
-function headerBadge(
-  priority: string | null | undefined,
-  status: string | null | undefined,
-): { label: string; className: string } {
-  const p = (priority ?? '').trim().toLowerCase()
-  if (p === 'emergency' || p === 'urgent' || p === 'critical') {
-    return { label: 'Emergency', className: 'bg-[#fbe3e5] text-[#da4951]' }
-  }
-  return {
-    label: statusLabel(status),
-    className: 'bg-[#eef6f8] text-[#186179]',
-  }
-}
-
 const CARD =
   'rounded-[12px] border border-[#e5e7eb] bg-white p-5'
 const CARD_TITLE = 'text-[16px] font-semibold leading-normal text-[#121212]'
 const BTN =
   'sa-press inline-flex h-11 w-full items-center justify-center rounded-[8px] px-4 text-[15px] font-semibold'
 
-function formatHistoryDate(iso: string): string {
+function formatHistoryDate(iso: string, lang: JobPageLang): string {
   try {
-    return new Date(iso).toLocaleDateString(undefined, {
+    return new Date(iso).toLocaleDateString(jobPageDateLocale(lang), {
       month: 'short',
       day: 'numeric',
       year: 'numeric',
@@ -144,12 +136,21 @@ function WorkOrderPublicPageInner() {
   const [data, setData] = useState<ResolveWorkOrderTokenResult | null>(null)
   const [startingWork, setStartingWork] = useState(false)
   const [startWorkError, setStartWorkError] = useState<string | null>(null)
+  const [lang, setLang] = useState<JobPageLang>(() =>
+    typeof window === 'undefined' ? 'en' : readJobPageLang(),
+  )
+  const copy = jobPageCopy(lang)
+
+  function changeLang(next: JobPageLang) {
+    setLang(next)
+    persistJobPageLang(next)
+  }
 
   useEffect(() => {
     let cancelled = false
     const t = token?.trim() ?? ''
     if (!t) {
-      setError('This job link is missing a token.')
+      setError('missing_token')
       return
     }
 
@@ -183,19 +184,21 @@ function WorkOrderPublicPageInner() {
       <div className="flex min-h-dvh items-center justify-center bg-[#f9fafb] px-4 font-[family-name:var(--font-admin)]">
         <div className="w-full max-w-md text-center">
           <h1 className="text-[24px] font-semibold leading-8 tracking-[0.0703px] text-[#0a0a0a]">
-            Couldn’t open this job
+            {copy.couldntOpen}
           </h1>
-          <p className="mt-2 text-[14px] leading-5 text-[#6a7282]">{error}</p>
+          <p className="mt-2 text-[14px] leading-5 text-[#6a7282]">
+            {error === 'missing_token' ? copy.missingToken : error}
+          </p>
           {token?.trim() ? (
             <Link
               to={`/w/${encodeURIComponent(token.trim())}`}
               className="sa-link mt-6 inline-flex text-[14px] font-medium text-[#186179]"
             >
-              Try this job link again
+              {copy.tryAgain}
             </Link>
           ) : (
             <p className="mt-6 text-[14px] leading-5 text-[#6a7282]">
-              Open the unique job link from your text message to continue.
+              {copy.openFromText}
             </p>
           )}
         </div>
@@ -206,22 +209,27 @@ function WorkOrderPublicPageInner() {
   if (!data) {
     return (
       <div className="flex min-h-dvh items-center justify-center bg-[#f9fafb] px-4 font-[family-name:var(--font-admin)]">
-        <p className="text-[14px] text-[#6a7282]">Loading job…</p>
+        <p className="text-[14px] text-[#6a7282]">{copy.loading}</p>
       </div>
     )
   }
 
   const { job, workOrderRef, ticketId, portalApiKey } = data
   const issueLabel = job.issueCategory
-    ? formatVendorTradeLabel(job.issueCategory)
-    : 'Maintenance'
+    ? translateTradeLabel(formatVendorTradeLabel(job.issueCategory), lang)
+    : copy.maintenance
   const accessRows = job.propertyAccess
-    ? propertyAccessDisplayRows(normalizePropertyAccess(job.propertyAccess))
+    ? propertyAccessDisplayRows(normalizePropertyAccess(job.propertyAccess)).map((row) => ({
+        ...row,
+        label: translateAccessLabel(row.label, lang),
+      }))
     : []
   const ticketAccessNotes = job.accessInstructions?.trim() || ''
   const appointmentText = formatWhen(
     job.appointment.scheduledAt,
     job.appointment.windowText,
+    lang,
+    copy.notScheduled,
   )
   const descriptionBlocks = job.description
     ? descriptionParagraphs(job.description)
@@ -238,9 +246,9 @@ function WorkOrderPublicPageInner() {
   const buildingLooksLikeUnit = /^(unit\s*)?[\w-]{1,6}$/i.test(buildingRaw)
   const unitPart =
     unitRaw && !unitLooksLikeAddress
-      ? /^unit\b/i.test(unitRaw)
+      ? /^unit\b/i.test(unitRaw) || /^unidad\b/i.test(unitRaw)
         ? unitRaw
-        : `Unit ${unitRaw}`
+        : formatJobUnitLine(unitRaw, lang)
       : ''
   const tenantUnitLine = unitPart
   const cityState = [job.city?.trim(), job.state?.trim()].filter(Boolean).join(', ')
@@ -260,7 +268,7 @@ function WorkOrderPublicPageInner() {
     const updateUrl = vendorPortalUpdateUrl()
     const vendorToken = portalApiKey?.trim() || token?.trim() || ''
     if (!updateUrl || !vendorToken) {
-      setStartWorkError('Unable to start work from this link. Try again shortly.')
+      setStartWorkError(copy.couldNotStartWork)
       return
     }
     setStartingWork(true)
@@ -278,15 +286,16 @@ function WorkOrderPublicPageInner() {
       })
     } catch (err) {
       setStartWorkError(
-        getErrorMessage(err, 'Could not start work. Try again.'),
+        getErrorMessage(err, copy.couldNotStartWork),
       )
       setStartingWork(false)
     }
   }
 
-  const badge = headerBadge(job.priority, job.status)
+  const badge = jobHeaderBadge(job.priority, job.status, copy)
 
   const nextStepsProps = {
+    copy,
     estimateHref: job.links.estimate,
     estimateSubmitted: job.estimateSubmitted,
     workStarted,
@@ -302,24 +311,30 @@ function WorkOrderPublicPageInner() {
   }
 
   return (
-    <div className="min-h-dvh bg-[#f9fafb] font-[family-name:var(--font-admin)] text-[#111827]">
+    <div
+      className="min-h-dvh bg-[#f9fafb] font-[family-name:var(--font-admin)] text-[#111827]"
+      lang={lang}
+    >
       <div className="mx-auto w-full max-w-[1360px] pb-12">
-        <header className="flex items-center justify-between px-4 py-4 lg:px-24">
+        <header className="flex items-center justify-between gap-3 px-4 py-4 lg:px-24">
           <div className="flex min-w-0 flex-col gap-1">
-            <p className="text-[12px] font-medium leading-normal text-[#4b5563]">Job detail</p>
+            <p className="text-[12px] font-medium leading-normal text-[#4b5563]">{copy.jobDetail}</p>
             <h1 className="text-[28px] font-extrabold leading-normal text-[#111827]">{workOrderRef}</h1>
           </div>
-          <span
-            className={`inline-flex shrink-0 items-center justify-center rounded-[6px] px-3 py-1.5 text-[13px] font-medium ${badge.className}`}
-          >
-            {badge.label}
-          </span>
+          <div className="flex shrink-0 items-center gap-2">
+            <LanguageSelect lang={lang} copy={copy} onChange={changeLang} />
+            <span
+              className={`inline-flex shrink-0 items-center justify-center rounded-[6px] px-3 py-1.5 text-[13px] font-medium ${badge.className}`}
+            >
+              {badge.label}
+            </span>
+          </div>
         </header>
 
         <main className="flex flex-col gap-4 px-4 lg:flex-row lg:items-start lg:px-24">
           <div className="flex min-w-0 w-full flex-col gap-4 lg:max-w-[950px] lg:flex-1">
             <section className={`${CARD} flex flex-col gap-3`}>
-              <h2 className={CARD_TITLE}>Description</h2>
+              <h2 className={CARD_TITLE}>{copy.description}</h2>
               <p className="text-[13px] font-normal leading-normal text-[#666]">{issueLabel}</p>
               {descriptionBlocks.length > 0 ? (
                 <ul className="flex flex-col gap-1">
@@ -336,7 +351,7 @@ function WorkOrderPublicPageInner() {
                   ))}
                 </ul>
               ) : (
-                <p className="text-[14px] leading-normal text-[#666]">No description provided.</p>
+                <p className="text-[14px] leading-normal text-[#666]">{copy.noDescription}</p>
               )}
               {job.photoUrls.length > 0 ? (
                 <div className="flex flex-wrap gap-2">
@@ -350,7 +365,7 @@ function WorkOrderPublicPageInner() {
                     >
                       <img
                         src={url}
-                        alt="Tenant photo for this work order"
+                        alt={copy.tenantPhotoAlt}
                         className="absolute inset-0 size-full object-cover"
                       />
                     </a>
@@ -360,7 +375,7 @@ function WorkOrderPublicPageInner() {
             </section>
 
             <section className={`${CARD} flex flex-col gap-3`}>
-              <h2 className={CARD_TITLE}>Property access</h2>
+              <h2 className={CARD_TITLE}>{copy.propertyAccess}</h2>
               {accessRows.length > 0 ? (
                 <dl className="space-y-3">
                   {accessRows.map((row) => (
@@ -374,12 +389,12 @@ function WorkOrderPublicPageInner() {
                 </dl>
               ) : (
                 <p className="whitespace-pre-wrap text-[14px] font-normal leading-normal text-[#666]">
-                  {ticketAccessNotes || 'No access notes provided.'}
+                  {ticketAccessNotes || copy.noAccessNotes}
                 </p>
               )}
               {accessRows.length > 0 && ticketAccessNotes ? (
                 <div className="border-t border-[#f3f4f6] pt-3">
-                  <p className="text-[12px] leading-4 text-[#666]">Job-specific notes</p>
+                  <p className="text-[12px] leading-4 text-[#666]">{copy.jobSpecificNotes}</p>
                   <p className="mt-1 whitespace-pre-wrap text-[14px] leading-normal text-[#333]">
                     {ticketAccessNotes}
                   </p>
@@ -388,7 +403,7 @@ function WorkOrderPublicPageInner() {
             </section>
 
             <section className={`${CARD} flex flex-col gap-3`}>
-              <h2 className={CARD_TITLE}>Tenant contact</h2>
+              <h2 className={CARD_TITLE}>{copy.tenantContact}</h2>
               <div className="flex flex-col gap-1 text-[14px] leading-normal">
                 <p className="font-semibold text-[#333]">{job.tenant.name}</p>
                 {tenantUnitLine ? <p className="font-normal text-[#333]">{tenantUnitLine}</p> : null}
@@ -404,26 +419,28 @@ function WorkOrderPublicPageInner() {
                     {job.tenant.phone}
                   </a>
                 ) : (
-                  <p className="text-[#666]">No phone on file</p>
+                  <p className="text-[#666]">{copy.noPhone}</p>
                 )}
               </div>
             </section>
 
             <section className={`${CARD} flex flex-col gap-3`}>
-              <h2 className={CARD_TITLE}>Appointment</h2>
+              <h2 className={CARD_TITLE}>{copy.appointment}</h2>
               <div className="flex flex-col gap-1 text-[14px] leading-normal text-[#333]">
                 <p className="font-semibold">{appointmentText}</p>
                 {job.vendorName ? (
-                  <p className="font-normal">Vendor: {job.vendorName}</p>
+                  <p className="font-normal">
+                    {copy.vendorPrefix} {job.vendorName}
+                  </p>
                 ) : null}
               </div>
             </section>
 
             <section className={`${CARD} flex flex-col gap-3`}>
-              <h2 className={CARD_TITLE}>Property job history</h2>
+              <h2 className={CARD_TITLE}>{copy.jobHistory}</h2>
               {job.propertyHistory.length === 0 ? (
                 <p className="text-[14px] font-normal leading-normal text-[#666]">
-                  No previous jobs at this property.
+                  {copy.noPreviousJobs}
                 </p>
               ) : (
                 <ul className="divide-y divide-[#f3f4f6]">
@@ -431,10 +448,10 @@ function WorkOrderPublicPageInner() {
                     <li key={item.ticketId} className="py-3 first:pt-0 last:pb-0">
                       <div className="flex items-baseline justify-between gap-3">
                         <p className="text-[14px] font-semibold text-[#333]">{item.workOrderRef}</p>
-                        <p className="text-[12px] text-[#666]">{formatHistoryDate(item.createdAt)}</p>
+                        <p className="text-[12px] text-[#666]">{formatHistoryDate(item.createdAt, lang)}</p>
                       </div>
                       <p className="mt-0.5 text-[13px] text-[#666]">
-                        {item.unit || 'Unit'} · {statusLabel(item.status)}
+                        {item.unit || copy.unitFallback} · {jobStatusLabel(item.status, copy)}
                       </p>
                       {item.description ? (
                         <p className="mt-1 line-clamp-2 text-[13px] leading-5 text-[#333]">
@@ -461,7 +478,32 @@ function WorkOrderPublicPageInner() {
   )
 }
 
+function LanguageSelect({
+  lang,
+  copy,
+  onChange,
+}: {
+  lang: JobPageLang
+  copy: JobPageCopyBundle
+  onChange: (lang: JobPageLang) => void
+}) {
+  return (
+    <label className="inline-flex items-center">
+      <span className="sr-only">{copy.language}</span>
+      <select
+        value={lang}
+        onChange={(event) => onChange(event.target.value === 'es' ? 'es' : 'en')}
+        className="h-[34px] max-w-[9.5rem] cursor-pointer rounded-[6px] border border-[#e5e7eb] bg-white px-2 text-[13px] font-medium text-[#111827] outline-none focus:border-[#187960] focus:ring-2 focus:ring-[#187960]/20"
+      >
+        <option value="en">{copy.english}</option>
+        <option value="es">{copy.spanish}</option>
+      </select>
+    </label>
+  )
+}
+
 function NextStepsCard({
+  copy,
   estimateHref,
   estimateSubmitted,
   workStarted,
@@ -475,6 +517,7 @@ function NextStepsCard({
   completionPhotosUploaded,
   startWorkError,
 }: {
+  copy: JobPageCopyBundle
   estimateHref: string
   estimateSubmitted: boolean
   workStarted: boolean
@@ -490,56 +533,57 @@ function NextStepsCard({
 }) {
   return (
     <section className={`${CARD} flex flex-col gap-6`}>
-      <h2 className={CARD_TITLE}>Next Steps</h2>
+      <h2 className={CARD_TITLE}>{copy.nextSteps}</h2>
       <div className="flex w-full flex-col gap-3">
         <ActionLink
           href={estimateHref}
-          label={estimateSubmitted ? 'Estimate submitted' : 'Submit estimate'}
+          label={estimateSubmitted ? copy.estimateSubmitted : copy.submitEstimate}
           variant={estimateSubmitted ? 'submitted' : 'primary'}
         />
         {workStarted ? (
           <Link
             to={`/vendor/ticket/${encodeURIComponent(ticketId)}`}
-            title="Open this work order in the vendor portal"
+            title={copy.workStartedTitle}
             className={`${BTN} border border-[rgba(24,97,121,0.57)] bg-white text-[#1a1a1a] hover:bg-[#f9fafb]`}
           >
-            Work started
+            {copy.workStarted}
           </Link>
         ) : (
           <button
             type="button"
             onClick={onStartWork}
             disabled={!canStartWork || startingWork}
-            title={
-              canStartWork
-                ? 'Mark this job as in progress'
-                : 'Available after you accept this job'
-            }
+            title={canStartWork ? copy.startWorkTitle : copy.startWorkLockedTitle}
             className={
               !canStartWork || startingWork
                 ? `${BTN} cursor-not-allowed bg-[#f3f4f6] text-[#333]`
                 : `${BTN} border border-[rgba(24,97,121,0.57)] bg-white text-[#1a1a1a] hover:bg-[#f9fafb]`
             }
           >
-            {startingWork ? 'Starting…' : 'Start work'}
+            {startingWork ? copy.starting : copy.startWork}
           </button>
         )}
         <UploadPhotosAction
           href={uploadHref}
+          label={copy.uploadPhotos}
           disabled={!estimateApproved}
-          disabledHint="Available after your estimate is approved"
+          disabledHint={copy.afterEstimateApproved}
         />
         <ActionLink
           href={invoiceHref}
-          label="Submit invoice"
+          label={copy.submitInvoice}
           disabled={!estimateApproved || !completionPhotosUploaded}
           disabledHint={
-            !estimateApproved
-              ? 'Available after your estimate is approved'
-              : 'Available after you upload completion photos'
+            !estimateApproved ? copy.afterEstimateApproved : copy.afterUploadPhotos
           }
         />
       </div>
+      {startWorkError ? (
+        <p className="text-[13px] leading-5 text-[#c10007]">{startWorkError}</p>
+      ) : null}
+    </section>
+  )
+}
       {startWorkError ? (
         <p className="text-[13px] leading-5 text-[#c10007]">{startWorkError}</p>
       ) : null}
@@ -567,10 +611,12 @@ function PlusIcon() {
 
 function UploadPhotosAction({
   href,
+  label,
   disabled = false,
   disabledHint,
 }: {
   href: string
+  label: string
   disabled?: boolean
   disabledHint?: string
 }) {
@@ -581,7 +627,7 @@ function UploadPhotosAction({
   const inner = (
     <>
       <PlusIcon />
-      <span>Upload photos or videos</span>
+      <span>{label}</span>
     </>
   )
 

@@ -3,6 +3,7 @@ import {
   buildMonthGrid,
   buildResidentCalendarEvents,
   calendarEventsFromOperationsGraph,
+  calendarEventsFromScheduledTickets,
   datesInWeek,
   mergeResidentCalendarEvents,
   nearestCalendarFocusDate,
@@ -118,7 +119,7 @@ describe('calendarEventsFromOperationsGraph', () => {
     ])
     expect(events).toEqual([
       expect.objectContaining({
-        id: 'visit',
+        id: 'visit:ticket-1',
         date: '2026-08-21',
         kind: 'maintenance',
         label: 'Visit confirmed',
@@ -163,6 +164,40 @@ describe('calendarEventsFromOperationsGraph', () => {
       }),
     ])
     expect(events).toEqual([])
+  })
+})
+
+describe('calendarEventsFromScheduledTickets', () => {
+  it('plots confirmed visits from the work order scheduled_at', () => {
+    const events = calendarEventsFromScheduledTickets([
+      {
+        id: 'wo-1',
+        scheduledAt: '2026-08-21T14:00:00.000Z',
+        scheduleConfirmedAt: '2026-08-18T20:00:00.000Z',
+        vendorWorkStatus: 'accepted',
+      },
+    ])
+    expect(events).toEqual([
+      expect.objectContaining({
+        id: 'visit:wo-1',
+        date: '2026-08-21',
+        kind: 'maintenance',
+        label: 'Visit confirmed',
+      }),
+    ])
+  })
+
+  it('skips cancelled work orders', () => {
+    expect(
+      calendarEventsFromScheduledTickets([
+        {
+          id: 'wo-2',
+          scheduledAt: '2026-08-21T14:00:00.000Z',
+          scheduleConfirmedAt: '2026-08-18T20:00:00.000Z',
+          vendorWorkStatus: 'cancelled',
+        },
+      ]),
+    ).toEqual([])
   })
 })
 

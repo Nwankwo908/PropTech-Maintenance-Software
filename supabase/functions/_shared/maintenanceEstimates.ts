@@ -3,7 +3,7 @@
  */
 import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.49.1"
 import { sendLandlordOpsEmail } from "./landlordOpsNotify.ts"
-import { logGraphEvent } from "./graph/logGraphEvent.ts"
+import { recordActivityLog } from "./graph/recordActivityLog.ts"
 import {
   findActiveLandlordMainNumber,
   resolveLandlordId,
@@ -14,7 +14,6 @@ import {
   upsertSmsIdentityForPhone,
 } from "./sms/inbound_db.ts"
 import { getSMSProviderForSend } from "./sms/providerFactory.ts"
-import { normalizePhoneFlexible } from "./resident_notify.ts"
 import {
   appendEstimateDecisionStatusToVendorThread,
   appendMaintenanceEstimateSubmittedToInbox,
@@ -28,6 +27,8 @@ import { sendVendorJobAlert } from "./sms/vendorSmsRouting.ts"
 import { formatWorkOrderRef } from "./vendor_outreach_copy.ts"
 import { uloAppUrl } from "./uloAppUrl.ts"
 import { loadLandlordApprovalLimits } from "./landlordNotificationPrefs.ts"
+import { resolveLandlordOpsPhones } from "./sms/tenantActivationAdminAlert.ts"
+import { buildLandlordEstimateApprovalSms } from "./sms/estimateApprovalSms.ts"
 
 export type EstimateMoneyInput = {
   partsCost: number
@@ -49,18 +50,6 @@ function respondFnBase(): string {
   const supabaseUrl = Deno.env.get("SUPABASE_URL")?.trim()?.replace(/\/$/, "") ?? ""
   if (!supabaseUrl) return ""
   return `${supabaseUrl}/functions/v1/landlord-respond-estimate`
-}
-
-function adminNotifyPhones(): string[] {
-  const raw =
-    Deno.env.get("SMS_ADMIN_NOTIFY_PHONES")?.trim() ||
-    Deno.env.get("LANDLORD_OPS_PHONE")?.trim() ||
-    ""
-  if (!raw) return []
-  return raw
-    .split(/[,;\s]+/)
-    .map((p: string) => normalizePhoneFlexible(p))
-    .filter((p): p is string => Boolean(p))
 }
 
 export function normalizeEstimateMoney(
@@ -200,31 +189,43 @@ async function notifyLandlordEstimatePending(
     ? `${respondBase}?action=reject&estimateId=${encodeURIComponent(params.estimateId)}&token=${encodeURIComponent(params.actionToken)}`
     : null
 
-  const smsLines = [
-    `This is the property management team.`,
-    "",
-    `Estimate for ${wo}${params.unit ? ` (${params.unit})` : ""}.`,
-    `${params.vendorName} submitted ${money(params.totalCost)} (parts ${money(params.partsCost)} · labor ${money(params.laborCost)}).`,
-    params.exceedsEscalationThreshold
-      ? `This amount is above your escalation threshold — review promptly.`
-      : null,
-    "",
-    "Reply APPROVE or DECLINE.",
-  ].filter(Boolean)
-  if (approveUrl) {
-    smsLines.push("", `Or tap Approve: ${approveUrl}`)
-    if (rejectUrl) smsLines.push(`Decline: ${rejectUrl}`)
-  } else {
-    smsLines.push("", "Or open the admin dashboard to review this estimate.")
-  }
-  const smsBody = smsLines.join("\n")
+  const { data: landlord } = await supabase
+    .from("landlords")
+    .select("name")
+    .eq("id", params.landlordId)
+    .maybeSingle()
+  const landlordFirstName = (() => {
+    const raw = typeof landlord?.name === "string" ? landlord.name.trim() : ""
+    if (!raw) return null
+    return raw.split(/\s+/)[0] ?? null
+  })()
+
+  const smsBody = buildLandlordEstimateApprovalSms({
+    vendorName: params.vendorName,
+    workOrderRef: wo,
+    unit: params.unit,
+    totalCost: params.totalCost,
+    partsCost: params.partsCost,
+    laborCost: params.laborCost,
+    exceedsEscalationThreshold: params.exceedsEscalationThreshold,
+    approveUrl,
+    rejectUrl,
+    landlordFirstName,
+  })
 
   const main = await findActiveLandlordMainNumber(supabase, params.landlordId)
   const provider = getSMSProviderForSend({
     landlordId: params.landlordId,
     lineProvider: main?.provider,
   })
-  for (const phone of adminNotifyPhones()) {
+  const { phones } = await resolveLandlordOpsPhones(supabase, params.landlordId)
+  if (phones.length === 0) {
+    console.error(
+      "[maintenance-estimates] no landlord phone for estimate approval SMS",
+      { landlordId: params.landlordId, estimateId: params.estimateId },
+    )
+  }
+  for (const phone of phones) {
     const sendResult = await provider.sendMessage({
       to: phone,
       body: smsBody,
@@ -346,6 +347,9 @@ async function notifyVendorEstimateDecision(
   const jobLink = token
     ? uloAppUrl.workOrder(token, { fallback: "" })
     : null
+  const estimateLink = token
+    ? uloAppUrl.estimate(token, { fallback: "" })
+    : null
 
   const vendorName =
     typeof vendor?.name === "string" && vendor.name.trim()
@@ -358,6 +362,7 @@ async function notifyVendorEstimateDecision(
     approved: params.approved,
     totalCost: params.totalCost,
     jobLink,
+    estimateLink,
     vendorDecision,
   })
   if (!body) return
@@ -548,19 +553,20 @@ export async function submitMaintenanceEstimate(
   }
 
   try {
-    await logGraphEvent(supabase, {
-      landlord_id: landlordId,
-      event_type: "maintenance.estimate_submitted",
+    await recordActivityLog(supabase, {
+      landlordId,
+      eventType: "maintenance.estimate_submitted",
       source: "vendor_portal",
-      actor_type: "vendor",
-      actor_id: params.vendorId,
-      vendor_id: params.vendorId,
-      maintenance_request_id: params.ticketId,
+      actorType: "vendor",
+      actorId: params.vendorId,
+      vendorId: params.vendorId,
+      maintenanceRequestId: params.ticketId,
       metadata: {
         estimate_id: estimateId,
         parts_cost: moneyNorm.partsCost,
         labor_cost: moneyNorm.laborCost,
         total_cost: moneyNorm.totalCost,
+        message: `${vendorName} submitted an estimate of ${money(moneyNorm.totalCost)} for ${formatWorkOrderRef(params.ticketId)}. Waiting for your approval.`,
       },
     })
   } catch (e) {
@@ -655,20 +661,24 @@ export async function decideMaintenanceEstimate(
         : "sms"
 
   try {
-    await logGraphEvent(supabase, {
-      landlord_id: row.landlord_id as string,
-      event_type:
+    await recordActivityLog(supabase, {
+      landlordId: row.landlord_id as string,
+      eventType:
         next === "approved"
           ? "maintenance.estimate_approved"
           : "maintenance.estimate_rejected",
       source: graphSource,
-      actor_type: "landlord",
-      vendor_id: vendorId,
-      maintenance_request_id: ticketId,
+      actorType: "landlord",
+      vendorId,
+      maintenanceRequestId: ticketId,
       metadata: {
         estimate_id: params.estimateId,
         total_cost: Number(row.total_cost) || 0,
         decision_channel: params.source ?? "sms",
+        message:
+          next === "approved"
+            ? `Estimate of ${money(Number(row.total_cost) || 0)} approved for ${wo}. The vendor can continue with the repair.`
+            : `Estimate of ${money(Number(row.total_cost) || 0)} was not approved for ${wo}. The vendor was asked to submit an updated estimate.`,
       },
     })
   } catch (e) {

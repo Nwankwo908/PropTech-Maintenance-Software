@@ -64,6 +64,17 @@ function eventClockParts(event: ResidentCalendarEvent): { time: string; meridiem
   return { time: '11:00', meridiem: 'AM' }
 }
 
+function eventStartHourMinute(event: ResidentCalendarEvent): { hour: number; minute: number } {
+  const clock = eventClockParts(event)
+  const [hourRaw, minuteRaw] = clock.time.split(':')
+  let hour = Number(hourRaw)
+  const minute = Number(minuteRaw) || 0
+  if (!Number.isFinite(hour)) hour = START_HOUR
+  if (clock.meridiem === 'PM' && hour !== 12) hour += 12
+  if (clock.meridiem === 'AM' && hour === 12) hour = 0
+  return { hour, minute: Number.isFinite(minute) ? minute : 0 }
+}
+
 function eventKey(event: ResidentCalendarEvent): string {
   return `${event.id ?? ''}-${event.date}-${event.kind}-${event.label}-${event.daysBeforeDue ?? ''}`
 }
@@ -177,30 +188,6 @@ function HourGrid({
           <div className="w-9 shrink-0 pt-1 text-[10px] font-medium leading-3 text-[#71717a]">{tz}</div>
         </div>
 
-        <div className="flex items-start gap-3 pl-12">
-          <div className="flex min-w-0 flex-1">
-            {days.map((iso) => {
-              const weekend = weekdayIndex(iso) === 0 || weekdayIndex(iso) === 6
-              const today = iso === todayIso
-              const dayEvents = eventsByDate.get(iso) ?? []
-              return (
-                <div
-                  key={`allday-${iso}`}
-                  className={[
-                    'flex min-h-[76px] min-w-0 flex-1 flex-col gap-1 px-0.5 py-1 shadow-[inset_-1px_-1px_0_0_#e0e0e0]',
-                    today ? 'bg-[#eff6ff]' : weekend ? 'bg-[#fafafa]' : 'bg-white',
-                  ].join(' ')}
-                >
-                  {dayEvents.map((event) => (
-                    <EventCard key={eventKey(event)} event={event} />
-                  ))}
-                </div>
-              )
-            })}
-          </div>
-          <div className="w-9 shrink-0" />
-        </div>
-
         <div className="relative">
           {HOURS.map((hour) => (
             <div key={hour} className="flex items-start gap-3">
@@ -211,15 +198,32 @@ function HourGrid({
                 {days.map((iso) => {
                   const weekend = weekdayIndex(iso) === 0 || weekdayIndex(iso) === 6
                   const today = iso === todayIso
+                  const hourEvents = (eventsByDate.get(iso) ?? []).filter((event) => {
+                    const start = eventStartHourMinute(event)
+                    const slotHour = Math.min(END_HOUR, Math.max(START_HOUR, start.hour))
+                    return slotHour === hour
+                  })
                   return (
                     <div
                       key={`${iso}-${hour}`}
                       className={[
-                        'relative h-[72px] min-w-0 flex-1 shadow-[inset_-1px_-1px_0_0_#e0e0e0]',
+                        'relative h-[72px] min-w-0 flex-1 overflow-visible shadow-[inset_-1px_-1px_0_0_#e0e0e0]',
                         today ? 'bg-[#eff6ff]' : weekend ? 'bg-[#fafafa]' : 'bg-white',
                       ].join(' ')}
                     >
                       <div className="h-9 shadow-[inset_0_-1px_0_0_#f7f7f7]" />
+                      {hourEvents.map((event) => {
+                        const { minute } = eventStartHourMinute(event)
+                        return (
+                          <div
+                            key={eventKey(event)}
+                            className="absolute inset-x-0.5 z-10"
+                            style={{ top: `${Math.round((minute / 60) * 72)}px` }}
+                          >
+                            <EventCard event={event} />
+                          </div>
+                        )
+                      })}
                     </div>
                   )
                 })}
@@ -240,11 +244,13 @@ export function ResidentLeaseCalendar({
   leaseEndDate,
   rentDueDay,
   operationsEvents = [],
+  visitEvents = [],
 }: {
   leaseStartDate: string | null
   leaseEndDate: string | null
   rentDueDay: number | null
   operationsEvents?: PropertyOperationsTimelineEvent[]
+  visitEvents?: ResidentCalendarEvent[]
 }) {
   const { organization } = useLandlordWorkspace()
   const today = todayIsoDate()
@@ -262,9 +268,12 @@ export function ResidentLeaseCalendar({
           rentDueDay,
           rentReminderCadence,
         }),
-        calendarEventsFromOperationsGraph(operationsEvents),
+        mergeResidentCalendarEvents(
+          calendarEventsFromOperationsGraph(operationsEvents),
+          visitEvents,
+        ),
       ),
-    [leaseStartDate, leaseEndDate, rentDueDay, rentReminderCadence, operationsEvents],
+    [leaseStartDate, leaseEndDate, rentDueDay, rentReminderCadence, operationsEvents, visitEvents],
   )
 
   const events = useMemo(() => {

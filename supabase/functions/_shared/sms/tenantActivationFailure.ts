@@ -181,6 +181,38 @@ export function filterVendorPhonesFromOpsRecipients(
   return { allowed, blocked }
 }
 
+/**
+ * Landlord account / onboarding phones are identity numbers.
+ * Never drop them just because the same number also appears on a vendor row.
+ */
+export function keepLandlordIdentityPhones(
+  identityPhones: Iterable<string>,
+  filtered: { allowed: string[]; blocked: string[] },
+): { allowed: string[]; blocked: string[] } {
+  const identity = new Set<string>()
+  for (const raw of identityPhones) {
+    const n = normalizeOpsPhoneDigits(typeof raw === "string" ? raw : "")
+    if (n) identity.add(n)
+  }
+  const allowed: string[] = []
+  const seen = new Set<string>()
+  for (const p of identity) {
+    allowed.push(p)
+    seen.add(p)
+  }
+  for (const p of filtered.allowed) {
+    const n = normalizeOpsPhoneDigits(p)
+    if (!n || seen.has(n)) continue
+    seen.add(n)
+    allowed.push(n)
+  }
+  const blocked = filtered.blocked.filter((p) => {
+    const n = normalizeOpsPhoneDigits(p)
+    return Boolean(n && !identity.has(n))
+  })
+  return { allowed, blocked }
+}
+
 export function buildActivationAdminSms(input: {
   residentName?: string | null
   unitLabel: string

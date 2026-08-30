@@ -164,7 +164,9 @@ export function calendarEventsFromOperationsGraph(
     const clock =
       localClockFromInstant(event.scheduledAt) ?? localClockFromInstant(event.createdAt) ?? undefined
     cards.push({
-      id: event.id,
+      id: event.maintenanceRequestId
+        ? `visit:${event.maintenanceRequestId}`
+        : event.id,
       date,
       kind: 'maintenance',
       label: 'Visit confirmed',
@@ -176,11 +178,52 @@ export function calendarEventsFromOperationsGraph(
   return cards
 }
 
+export type ResidentScheduledTicket = {
+  id: string
+  scheduledAt: string | null
+  scheduleConfirmedAt?: string | null
+  vendorWorkStatus?: string | null
+}
+
+/** Confirmed (or scheduled) visits from work orders — source of truth on the ticket. */
+export function calendarEventsFromScheduledTickets(
+  tickets: ResidentScheduledTicket[],
+): ResidentCalendarEvent[] {
+  const cards: ResidentCalendarEvent[] = []
+  for (const ticket of tickets) {
+    const status = (ticket.vendorWorkStatus ?? '').trim().toLowerCase()
+    if (status === 'cancelled' || status === 'declined') continue
+    const instant = ticket.scheduledAt?.trim() || ''
+    if (!instant) continue
+    const date = calendarDateFromInstant(instant)
+    if (!date) continue
+    const confirmed = Boolean(ticket.scheduleConfirmedAt?.trim())
+    cards.push({
+      id: `visit:${ticket.id}`,
+      date,
+      kind: 'maintenance',
+      label: confirmed ? 'Visit confirmed' : 'Scheduled visit',
+      clock: localClockFromInstant(instant) ?? undefined,
+    })
+  }
+  cards.sort((a, b) => a.date.localeCompare(b.date) || a.label.localeCompare(b.label))
+  return cards
+}
+
 export function mergeResidentCalendarEvents(
   leaseEvents: ResidentCalendarEvent[],
   operationsEvents: ResidentCalendarEvent[],
 ): ResidentCalendarEvent[] {
-  const merged = [...leaseEvents, ...operationsEvents]
+  const merged: ResidentCalendarEvent[] = []
+  const seen = new Set<string>()
+  for (const event of [...leaseEvents, ...operationsEvents]) {
+    const key =
+      event.id?.trim() ||
+      `${event.date}|${event.kind}|${event.label}|${event.daysBeforeDue ?? ''}`
+    if (seen.has(key)) continue
+    seen.add(key)
+    merged.push(event)
+  }
   merged.sort((a, b) => a.date.localeCompare(b.date) || a.kind.localeCompare(b.kind) || a.label.localeCompare(b.label))
   return merged
 }

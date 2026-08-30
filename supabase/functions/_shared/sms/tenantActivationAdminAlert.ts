@@ -22,6 +22,7 @@ import {
   buildActivationInAppCopy,
   filterVendorPhonesFromOpsRecipients,
   friendlyActivationFailureReason,
+  keepLandlordIdentityPhones,
   maskPhoneLast4,
   normalizeOpsAlertChannelPreference,
   opsAlertChannelsEnabled,
@@ -32,6 +33,7 @@ import { uloAppUrl } from "../uloAppUrl.ts"
 export type { OpsAlertChannelPreference }
 export {
   filterVendorPhonesFromOpsRecipients,
+  keepLandlordIdentityPhones,
   normalizeOpsAlertChannelPreference,
   opsAlertChannelsEnabled,
 }
@@ -126,13 +128,14 @@ async function loadVendorEmailsForLandlord(
 /**
  * Resolve landlord/property-team phones for operational activation alerts.
  * Sources: env ops phones, landlords.phone, onboarding account/backup/PM phones.
- * Excludes vendor phones.
+ * Vendor phones are excluded except the landlord's own onboarding/account number.
  */
 export async function resolveLandlordOpsPhones(
   supabase: SupabaseClient,
   landlordId: string,
 ): Promise<{ phones: string[]; blocked: string[] }> {
   const candidates = new Set<string>(adminNotifyPhonesFromEnv())
+  const identityPhones = new Set<string>()
 
   const { data: landlord } = await supabase
     .from("landlords")
@@ -141,7 +144,10 @@ export async function resolveLandlordOpsPhones(
     .maybeSingle()
   if (typeof landlord?.phone === "string") {
     const n = normalizePhoneFlexible(landlord.phone)
-    if (n) candidates.add(n)
+    if (n) {
+      candidates.add(n)
+      identityPhones.add(n)
+    }
   }
 
   const { data: onboarding } = await supabase
@@ -156,7 +162,10 @@ export async function resolveLandlordOpsPhones(
     const n = normalizePhoneFlexible(
       typeof account[key] === "string" ? (account[key] as string) : "",
     )
-    if (n) candidates.add(n)
+    if (n) {
+      candidates.add(n)
+      identityPhones.add(n)
+    }
   }
 
   const { data: propertyRows } = await supabase
@@ -195,10 +204,11 @@ export async function resolveLandlordOpsPhones(
   }
 
   const vendorPhones = await loadVendorPhonesForLandlord(supabase, landlordId)
-  const { allowed, blocked } = filterVendorPhonesFromOpsRecipients(
+  const filtered = filterVendorPhonesFromOpsRecipients(
     candidates,
     vendorPhones,
   )
+  const { allowed, blocked } = keepLandlordIdentityPhones(identityPhones, filtered)
   return { phones: allowed, blocked }
 }
 

@@ -56,11 +56,33 @@ View details:
 {link}
 ```
 
+**Accepted — estimate not approved:**
+```
+Hi {vendor},
+
+Update for work order {WO}.
+
+The property team did not approve your estimate of {$amount}.
+
+Please submit an updated estimate when you're ready.
+
+{estimateLink}
+```
+
 Initial assignment copy remains in `buildVendorJobAssignmentSms` (always asks YES/NO).
+
+## Estimate submit → landlord approval
+
+When a vendor submits an estimate, SMS the landlord (account / ops phones via `resolveLandlordOpsPhones`) asking them to **APPROVE** or **DECLINE**. Do not rely only on `SMS_ADMIN_NOTIFY_PHONES`.
+
+If they approve, text the vendor they can continue (acceptance-aware copy above).
+
+If they do not approve, text the vendor with the **estimate form link** (`uloAppUrl.estimate`), not only the job-detail page.
 
 ## Implementation
 
 - Decision mapping: `vendorJobDecisionFromWorkStatus` in `workOrderAdminStatusSms.ts`
+- Landlord approval ask: `notifyLandlordEstimatePending` + `resolveLandlordOpsPhones` + `buildLandlordEstimateApprovalSms`
 - Estimate SMS builders: `buildEstimateDecisionStatusSms`
 - Notify path: `notifyVendorEstimateDecision` in `maintenanceEstimates.ts`
 - Delivery: `sendVendorJobAlert` (+ inbox mirror when needed)
@@ -70,3 +92,4 @@ Initial assignment copy remains in `buildVendorJobAssignmentSms` (always asks YE
 - Assume the vendor accepted because the workflow or estimate progressed
 - Suppress the YES/NO ask while `vendor_work_status` is still `pending_accept`
 - Text approval/continuation SMS to vendors who already declined the job
+- Skip the landlord approval text when a vendor submits an estimate (unless auto-approved by the landlord's threshold)

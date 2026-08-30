@@ -34,8 +34,10 @@ export function buildEstimateDecisionStatusSms(input: {
   workOrderRef: string
   approved: boolean
   totalCost: number
-  /** Optional job page URL (`/w/{token}`). */
+  /** Optional job page URL (`/w/{token}`). Used after an approved estimate. */
   jobLink?: string | null
+  /** Optional estimate form URL (`/estimate/{token}`). Used after a declined estimate. */
+  estimateLink?: string | null
   /**
    * Whether the vendor has explicitly accepted the work order.
    * Defaults to pending (keep asking) when omitted.
@@ -49,7 +51,8 @@ export function buildEstimateDecisionStatusSms(input: {
 
   const name = vendorCompanyName(input.vendorName)
   const wo = input.workOrderRef.trim() || "this work order"
-  const link = input.jobLink?.trim() || ""
+  const jobLink = input.jobLink?.trim() || ""
+  const estimateLink = input.estimateLink?.trim() || jobLink
   const amount = money(input.totalCost)
 
   if (input.approved) {
@@ -63,8 +66,8 @@ export function buildEstimateDecisionStatusSms(input: {
         "",
         "You can now continue with the repair.",
       ]
-      if (link) {
-        lines.push("", "View details:", link)
+      if (jobLink) {
+        lines.push("", "View details:", jobLink)
       }
       return lines.join("\n")
     }
@@ -80,25 +83,8 @@ export function buildEstimateDecisionStatusSms(input: {
       "",
       "Reply YES to accept the work order or NO if you're unable to take it.",
     ]
-    if (link) {
-      lines.push("", "View details:", link)
-    }
-    return lines.join("\n")
-  }
-
-  // Landlord declined the estimate
-  if (decision === "accepted") {
-    const lines = [
-      `Hi ${name},`,
-      "",
-      `Update for work order ${wo}.`,
-      "",
-      "The property team declined your estimate.",
-      "",
-      "Please submit a revised estimate when ready.",
-    ]
-    if (link) {
-      lines.push("", "View details:", link)
+    if (jobLink) {
+      lines.push("", "View details:", jobLink)
     }
     return lines.join("\n")
   }
@@ -108,14 +94,12 @@ export function buildEstimateDecisionStatusSms(input: {
     "",
     `Update for work order ${wo}.`,
     "",
-    "The property team declined your estimate.",
+    `The property team did not approve your estimate of ${amount}.`,
     "",
-    "Would you like to continue with this job?",
-    "",
-    "Reply YES to accept the work order or NO if you're unable to take it.",
+    "Please submit an updated estimate when you're ready.",
   ]
-  if (link) {
-    lines.push("", "View details:", link)
+  if (estimateLink) {
+    lines.push("", estimateLink)
   }
   return lines.join("\n")
 }

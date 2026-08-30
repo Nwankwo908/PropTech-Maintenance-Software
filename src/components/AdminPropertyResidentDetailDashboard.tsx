@@ -65,9 +65,10 @@ import {
   type OrganizationDocument,
 } from '@/lib/organizationSettings'
 import { loadResidentLeaseDocuments } from '@/lib/residentLeaseDocuments'
+import { fetchResidentMaintenanceCalendarEvents } from '@/lib/residentScheduledVisits'
 import { getErrorMessage } from '@/lib/errorMessage'
 import { parseLeaseDateInput, parseRentDueDayInput } from '@/lib/onboarding'
-import { parseIsoDateOnly } from '@/lib/residentLeaseCalendar'
+import { parseIsoDateOnly, type ResidentCalendarEvent } from '@/lib/residentLeaseCalendar'
 import {
   syncAssignedUnitOccupancyFromResidentStatus,
 } from '@/lib/unitActivation'
@@ -289,6 +290,7 @@ function ProfileContent({
   occupancySaving = false,
   limitedAlpha1 = false,
   operationsEvents = [],
+  visitEvents = [],
   onOccupancyChange,
   onPreviewDocument,
 }: {
@@ -298,6 +300,7 @@ function ProfileContent({
   occupancySaving?: boolean
   limitedAlpha1?: boolean
   operationsEvents?: PropertyOperationsTimelineEvent[]
+  visitEvents?: ResidentCalendarEvent[]
   onOccupancyChange?: (status: ResidentOccupancyStatus) => void
   onPreviewDocument: (document: OrganizationDocument) => void
 }) {
@@ -518,6 +521,7 @@ function ProfileContent({
           leaseEndDate={profile.leaseEndDate}
           rentDueDay={profile.rentDueDay}
           operationsEvents={operationsEvents}
+          visitEvents={visitEvents}
         />
       ) : (
       <section className="mt-4 rounded-[10px] border border-[#e5e7eb] bg-white p-5 shadow-[0px_1px_2px_-1px_rgba(0,0,0,0.06)]">
@@ -574,6 +578,7 @@ export function AdminPropertyResidentDetailDashboard() {
   const [error, setError] = useState<string | null>(null)
   const [leaseDocuments, setLeaseDocuments] = useState<OrganizationDocument[]>([])
   const [operationsEvents, setOperationsEvents] = useState<PropertyOperationsTimelineEvent[]>([])
+  const [visitEvents, setVisitEvents] = useState<ResidentCalendarEvent[]>([])
   const [documentPreviewError, setDocumentPreviewError] = useState<string | null>(null)
   const profileIdRef = useRef<string | null>(null)
   const navigateRef = useRef(navigate)
@@ -615,6 +620,7 @@ export function AdminPropertyResidentDetailDashboard() {
       setLoadedUser(null)
       setLeaseDocuments([])
       setOperationsEvents([])
+      setVisitEvents([])
     }
     setError(null)
     setDocumentPreviewError(null)
@@ -912,6 +918,19 @@ export function AdminPropertyResidentDetailDashboard() {
             .catch((timelineError) => {
               console.warn('[resident-profile] operations calendar', timelineError)
               if (profileIdRef.current === loaded.id) setOperationsEvents([])
+            })
+          void fetchResidentMaintenanceCalendarEvents({
+            landlordId,
+            residentId: loaded.id,
+            residentName: loaded.fullName,
+            unitLabel: loaded.unit,
+          })
+            .then((rows) => {
+              if (profileIdRef.current === loaded.id) setVisitEvents(rows)
+            })
+            .catch((visitError) => {
+              console.warn('[resident-profile] visit calendar', visitError)
+              if (profileIdRef.current === loaded.id) setVisitEvents([])
             })
         }
         const scopedBuildingResidents = filterResidentsForPropertyScope(
@@ -1281,6 +1300,7 @@ export function AdminPropertyResidentDetailDashboard() {
                 occupancySaving={occupancySaving}
                 limitedAlpha1={isLimitedAlpha1Landlord(getActiveLandlordId())}
                 operationsEvents={operationsEvents}
+                visitEvents={visitEvents}
                 onOccupancyChange={(status) => void handleOccupancyChange(status)}
                 onPreviewDocument={(document) => {
                   setDocumentPreviewError(null)

@@ -4,6 +4,7 @@ import {
   activationAdminAlertDedupKey,
   filterVendorPhonesFromOpsRecipients,
   isPermanentDeliveryFailure,
+  keepLandlordIdentityPhones,
   normalizeOpsAlertChannelPreference,
   opsAlertChannelsEnabled,
 } from "./tenantActivationFailure.ts"
@@ -49,6 +50,20 @@ Deno.test("vendor phones are excluded from landlord ops recipients", () => {
   assertEquals(allowed, ["+15551110001"])
   assertEquals(blocked.includes("+15551110002"), true)
   assertEquals(blocked.includes("+15553334444"), true)
+})
+
+Deno.test("onboarding landlord phone is kept even if it matches a vendor row", () => {
+  const filtered = filterVendorPhonesFromOpsRecipients(
+    ["+15551110001", "+15552220002"],
+    ["+15551110001"],
+  )
+  const { allowed, blocked } = keepLandlordIdentityPhones(
+    ["+15551110001"],
+    filtered,
+  )
+  assertEquals(allowed[0], "+15551110001")
+  assertEquals(allowed.includes("+15552220002"), true)
+  assertEquals(blocked.includes("+15551110001"), false)
 })
 
 Deno.test("dedup key uniqueness prevents repeated attempt alerts", () => {

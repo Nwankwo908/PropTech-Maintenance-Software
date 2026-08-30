@@ -61,17 +61,34 @@ Deno.test("declined vendor gets no estimate decision SMS", () => {
   assertEquals(body, null)
 })
 
-Deno.test("estimate decline for accepted vendor asks for revised estimate", () => {
+Deno.test("estimate decline asks for an updated estimate with the estimate link", () => {
   const body = buildEstimateDecisionStatusSms({
     vendorName: "Flex Plumbing",
     workOrderRef: "WO-F23A",
     approved: false,
     totalCost: 450,
     jobLink: "https://www.ulohome.io/w/token",
+    estimateLink: "https://www.ulohome.io/estimate/token",
     vendorDecision: "accepted",
   })
   assertEquals(body != null, true)
-  assertStringIncludes(body!, "declined your estimate")
-  assertStringIncludes(body!, "revised estimate")
+  assertStringIncludes(body!, "did not approve your estimate of $450.00")
+  assertStringIncludes(body!, "updated estimate")
+  assertStringIncludes(body!, "https://www.ulohome.io/estimate/token")
   assertEquals(body!.includes("Reply YES"), false)
+  assertEquals(body!.includes("/w/token"), false)
+})
+
+Deno.test("estimate decline for a pending vendor still asks for an updated estimate", () => {
+  const body = buildEstimateDecisionStatusSms({
+    vendorName: "Flex Plumbing",
+    workOrderRef: "WO-F23A",
+    approved: false,
+    totalCost: 450,
+    estimateLink: "https://www.ulohome.io/estimate/token",
+    vendorDecision: "pending",
+  })
+  assertEquals(body != null, true)
+  assertStringIncludes(body!, "updated estimate")
+  assertEquals(body!.includes("Would you like to continue"), false)
 })
