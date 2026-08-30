@@ -112,6 +112,32 @@ Deno.test("clearly separate bathroom faucet → NEW_ISSUE", () => {
   assertEquals(allowsNewMaintenanceTicket("NEW_ISSUE"), true)
 })
 
+Deno.test("different trade is a new work order even if the message sounds like a follow-up", () => {
+  assertEquals(
+    resolveMaintenanceWorkIntent({
+      body: "The AC is not working",
+      heuristicIntent: "maintenance_new",
+      openTickets: [plumbing],
+    }),
+    "NEW_ISSUE",
+  )
+})
+
+Deno.test("different trade is a new work order when the open ticket has no category", () => {
+  assertEquals(
+    resolveMaintenanceWorkIntent({
+      body: "My toilet is overflowing",
+      openTickets: [{
+        id: "t-vague",
+        description: "Need help",
+        vendor_work_status: "unassigned",
+        issue_category: null,
+      }],
+    }),
+    "NEW_ISSUE",
+  )
+})
+
 Deno.test("possibly related kitchen lights → AMBIGUOUS", () => {
   assertEquals(
     resolveMaintenanceWorkIntent({

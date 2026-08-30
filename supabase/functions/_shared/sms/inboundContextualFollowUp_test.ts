@@ -150,6 +150,16 @@ Deno.test("AC follow-up with a plumbing ticket is a new issue", () => {
     }).action,
     "new_issue",
   )
+  assertEquals(
+    resolveContextualFollowUp({
+      body: "The AC is not working",
+      hasMedia: false,
+      intent: "maintenance_update",
+      openTickets: [leak],
+      activeIntake: false,
+    }).action,
+    "new_issue",
+  )
 })
 
 Deno.test("photo on an open request continues that request", () => {

@@ -188,6 +188,44 @@ function ticketIssueType(ticket: OpenRequestSummary): IssueType | null {
   )
 }
 
+/** Collapse leak/plumbing (and similar aliases) so same-trade updates stay on one ticket. */
+export function tradeFamilyFromIssue(
+  kind: IssueType | string | null | undefined,
+): string | null {
+  if (kind == null) return null
+  const k = String(kind).trim().toLowerCase()
+  if (!k) return null
+  if (k === "leak" || k.includes("plumb") || k.includes("leak") || k.includes("pipe")) {
+    return "plumbing"
+  }
+  if (k === "hvac" || k.includes("hvac") || k.includes("heat") || k.includes("cool") || k === "ac") {
+    return "hvac"
+  }
+  if (k === "electrical" || k.includes("electric")) return "electrical"
+  if (k === "appliance" || k.includes("appliance")) return "appliance"
+  if (k === "pest" || k.includes("pest")) return "pest"
+  if (k === "lock" || k.includes("lock")) return "lock"
+  return k
+}
+
+export function isDistinctNewIssue(
+  body: string,
+  tickets: OpenRequestSummary[],
+): boolean {
+  if (looksLikeAdditionalIssue(body) && inferIssueTypeFromText(body)) return true
+  const next = inferIssueTypeFromText(body)
+  if (!next) return looksLikeAdditionalIssue(body)
+  const nextFamily = tradeFamilyFromIssue(next)
+  const open = tickets.filter((row) => isOpenStatus(row.vendor_work_status))
+  if (open.length === 0) return true
+  // Different trade than every open ticket → new work order, even if an open
+  // ticket has no inferrable category.
+  return !open.some((row) => {
+    const existing = tradeFamilyFromIssue(ticketIssueType(row) ?? row.issue_category)
+    return existing != null && existing === nextFamily
+  })
+}
+
 export function ticketFirstLine(ticket: OpenRequestSummary): string {
   const raw = (ticket.description ?? ticket.issue_category ?? "").trim()
   return (raw.split(/[.!\n]/)[0]?.trim() || raw).toLowerCase()
@@ -321,21 +359,6 @@ function slotsForKind(kind: FollowUpKind, body: string): Record<string, string> 
   return { update: body.trim().slice(0, 240), kind }
 }
 
-export function isDistinctNewIssue(
-  body: string,
-  tickets: OpenRequestSummary[],
-): boolean {
-  if (looksLikeAdditionalIssue(body) && inferIssueTypeFromText(body)) return true
-  const next = inferIssueTypeFromText(body)
-  if (!next) return looksLikeAdditionalIssue(body)
-  const open = tickets.filter((row) => isOpenStatus(row.vendor_work_status))
-  if (open.length === 0) return true
-  return open.every((row) => {
-    const existing = ticketIssueType(row)
-    return existing != null && existing !== next
-  })
-}
-
 export function resolveContextualFollowUp(input: {
   body: string
   hasMedia: boolean
@@ -410,6 +433,15 @@ export function resolveContextualFollowUp(input: {
     return { action: "continue_intake" }
   }
 
+  if (
+    intent !== "maintenance_cancel" &&
+    open.length > 0 &&
+    inferIssueTypeFromText(body) &&
+    isDistinctNewIssue(body, open)
+  ) {
+    return { action: "new_issue" }
+  }
+
   if (intent && FOLLOW_UP_INTENTS.has(intent)) {
     const followKind = classifyFollowUpKind(body, input.hasMedia)
     // Mid-wizard cancel is this request. Don't list duplicate titles.
@@ -465,7 +497,9 @@ export function resolveContextualFollowUp(input: {
   }
 
   const kind = classifyFollowUpKind(body, input.hasMedia)
-  if (kind) {
+  const distinctNewTrade =
+    Boolean(inferIssueTypeFromText(body)) && isDistinctNewIssue(body, open)
+  if (kind && !distinctNewTrade) {
     const pool = kind === "reopen" ? related : open
     if (pool.length === 0 && input.activeIntake) {
       return { action: "continue_intake" }

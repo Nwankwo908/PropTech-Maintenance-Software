@@ -227,6 +227,13 @@ export function resolveMaintenanceWorkIntent(input: {
 
   const followKind = classifyFollowUpKind(body, hasMedia)
   if (followKind) {
+    if (
+      (followKind === "update" || followKind === "worse" || followKind === "photo") &&
+      inferIssueTypeFromText(body) &&
+      isDistinctNewIssue(body, open)
+    ) {
+      return "NEW_ISSUE"
+    }
     return mapFollowUpKind(followKind)
   }
 

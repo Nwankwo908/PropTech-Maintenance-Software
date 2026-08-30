@@ -49,4 +49,5 @@ If a ticket’s **description** (first line) is clearly a status/assignment ques
 
 - Offer a status-question ticket as a bullet in a cancel / which-one SMS
 - Mint a new work order from an assignment or status question when an open request already exists
+- Fold a **different trade** into an open ticket (plumbing open + HVAC/electrical report → new work order)
 - Rely on keyword one-offs for a single phrase — use inquiry vs problem-report shape + open-ticket context
