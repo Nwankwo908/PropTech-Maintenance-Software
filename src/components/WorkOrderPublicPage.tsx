@@ -47,6 +47,26 @@ function formatWhen(iso: string | null, windowText: string | null): string {
   }
 }
 
+function headerBadge(
+  priority: string | null | undefined,
+  status: string | null | undefined,
+): { label: string; className: string } {
+  const p = (priority ?? '').trim().toLowerCase()
+  if (p === 'emergency' || p === 'urgent' || p === 'critical') {
+    return { label: 'Emergency', className: 'bg-[#fbe3e5] text-[#da4951]' }
+  }
+  return {
+    label: statusLabel(status),
+    className: 'bg-[#eef6f8] text-[#186179]',
+  }
+}
+
+const CARD =
+  'rounded-[12px] border border-[#e5e7eb] bg-white p-5'
+const CARD_TITLE = 'text-[16px] font-semibold leading-normal text-[#121212]'
+const BTN =
+  'sa-press inline-flex h-11 w-full items-center justify-center rounded-[8px] px-4 text-[15px] font-semibold'
+
 function formatHistoryDate(iso: string): string {
   try {
     return new Date(iso).toLocaleDateString(undefined, {
@@ -199,7 +219,6 @@ function WorkOrderPublicPageInner() {
     ? propertyAccessDisplayRows(normalizePropertyAccess(job.propertyAccess))
     : []
   const ticketAccessNotes = job.accessInstructions?.trim() || ''
-  const accessFallback = job.accessInstructionsFallback
   const appointmentText = formatWhen(
     job.appointment.scheduledAt,
     job.appointment.windowText,
@@ -265,219 +284,267 @@ function WorkOrderPublicPageInner() {
     }
   }
 
+  const badge = headerBadge(job.priority, job.status)
+
+  const nextStepsProps = {
+    estimateHref: job.links.estimate,
+    estimateSubmitted: job.estimateSubmitted,
+    workStarted,
+    ticketId,
+    canStartWork,
+    startingWork,
+    onStartWork: () => void handleStartWork(),
+    uploadHref: job.links.upload,
+    invoiceHref: job.links.invoice,
+    estimateApproved: job.estimateApproved,
+    completionPhotosUploaded: job.completionPhotosUploaded,
+    startWorkError,
+  }
+
   return (
-    <div className="min-h-dvh bg-[#f9fafb] font-[family-name:var(--font-admin)] text-[#0a0a0a]">
-      <header className="border-b border-[#e5e7eb] bg-white">
-        <div className="mx-auto flex max-w-lg items-start justify-between gap-3 px-4 py-4">
-          <div className="min-w-0">
-            <p className="text-[13px] font-medium leading-5 text-[#6a7282]">Job detail</p>
-            <h1 className="text-[24px] font-semibold leading-8 tracking-[0.0703px] text-[#0a0a0a]">
-              {workOrderRef}
-            </h1>
+    <div className="min-h-dvh bg-[#f9fafb] font-[family-name:var(--font-admin)] text-[#111827]">
+      <div className="mx-auto w-full max-w-[1360px] pb-12">
+        <header className="flex items-center justify-between px-4 py-4 lg:px-24">
+          <div className="flex min-w-0 flex-col gap-1">
+            <p className="text-[12px] font-medium leading-normal text-[#4b5563]">Job detail</p>
+            <h1 className="text-[28px] font-extrabold leading-normal text-[#111827]">{workOrderRef}</h1>
           </div>
-          <span className="inline-flex shrink-0 rounded-[4px] bg-[#e0f2fe] px-2 py-0.5 text-[10px] font-semibold tracking-[0.06em] text-[#0369a1]">
-            {statusLabel(job.status)}
+          <span
+            className={`inline-flex shrink-0 items-center justify-center rounded-[6px] px-3 py-1.5 text-[13px] font-medium ${badge.className}`}
+          >
+            {badge.label}
           </span>
-        </div>
-      </header>
+        </header>
 
-      <main className="mx-auto max-w-lg space-y-4 px-4 py-6 pb-16">
-        <section className="rounded-[10px] border border-[#e5e7eb] bg-white p-5 shadow-[0px_1px_2px_-1px_rgba(0,0,0,0.06)]">
-          <h2 className="text-[15px] font-semibold leading-5 text-[#0a0a0a]">Description</h2>
-          <p className="mt-1 text-[13px] leading-5 text-[#6a7282]">{issueLabel}</p>
-          {descriptionBlocks.length > 0 ? (
-            <ul className="mt-2 list-disc space-y-2 pl-5 text-[14px] leading-5 text-[#364153]">
-              {descriptionBlocks.map((paragraph, index) => (
-                <li key={`${index}-${paragraph.slice(0, 24)}`}>{paragraph}</li>
-              ))}
-            </ul>
-          ) : (
-            <p className="mt-2 text-[14px] leading-5 text-[#6a7282]">No description provided.</p>
-          )}
-          {job.priority ? (
-            <p className="mt-3 text-[13px] leading-5 text-[#6a7282]">
-              Priority:{' '}
-              <span className="font-medium capitalize text-[#0a0a0a]">{job.priority}</span>
-            </p>
-          ) : null}
-          {job.photoUrls.length > 0 ? (
-            <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-3">
-              {job.photoUrls.map((url) => (
-                <a
-                  key={url}
-                  href={url}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="block overflow-hidden rounded-[10px] bg-[#f3f4f6]"
-                >
-                  <img
-                    src={url}
-                    alt="Tenant photo for this work order"
-                    className="aspect-square w-full object-cover"
-                  />
-                </a>
-              ))}
-            </div>
-          ) : (
-            <p className="mt-3 text-[13px] leading-5 text-[#6a7282]">No tenant photos attached.</p>
-          )}
-        </section>
-
-        <section className="rounded-[10px] border border-[#e5e7eb] bg-white p-5 shadow-[0px_1px_2px_-1px_rgba(0,0,0,0.06)]">
-          <h2 className="text-[15px] font-semibold leading-5 text-[#0a0a0a]">Property access</h2>
-          {accessRows.length > 0 ? (
-            <dl className="mt-3 space-y-3">
-              {accessRows.map((row) => (
-                <div key={row.label}>
-                  <dt className="text-[12px] leading-4 text-[#6a7282]">{row.label}</dt>
-                  <dd className="mt-0.5 text-[14px] font-medium leading-5 text-[#0a0a0a]">
-                    {row.value}
-                  </dd>
+        <main className="flex flex-col gap-4 px-4 lg:flex-row lg:items-start lg:px-24">
+          <div className="flex min-w-0 w-full flex-col gap-4 lg:max-w-[950px] lg:flex-1">
+            <section className={`${CARD} flex flex-col gap-3`}>
+              <h2 className={CARD_TITLE}>Description</h2>
+              <p className="text-[13px] font-normal leading-normal text-[#666]">{issueLabel}</p>
+              {descriptionBlocks.length > 0 ? (
+                <ul className="flex flex-col gap-1">
+                  {descriptionBlocks.map((paragraph, index) => (
+                    <li
+                      key={`${index}-${paragraph.slice(0, 24)}`}
+                      className="flex items-start gap-2 text-[14px] leading-normal"
+                    >
+                      <span className="shrink-0 text-[#666]" aria-hidden>
+                        •
+                      </span>
+                      <span className="min-w-0 text-[#333]">{paragraph}</span>
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <p className="text-[14px] leading-normal text-[#666]">No description provided.</p>
+              )}
+              {job.photoUrls.length > 0 ? (
+                <div className="flex flex-wrap gap-2">
+                  {job.photoUrls.map((url) => (
+                    <a
+                      key={url}
+                      href={url}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="relative block size-[120px] shrink-0 overflow-hidden rounded-[8px] bg-[#f3f4f6]"
+                    >
+                      <img
+                        src={url}
+                        alt="Tenant photo for this work order"
+                        className="absolute inset-0 size-full object-cover"
+                      />
+                    </a>
+                  ))}
                 </div>
-              ))}
-            </dl>
-          ) : (
-            <p className="mt-2 whitespace-pre-wrap text-[14px] leading-5 text-[#364153]">
-              {ticketAccessNotes || accessFallback}
-            </p>
-          )}
-          {accessRows.length > 0 && ticketAccessNotes ? (
-            <div className="mt-4 border-t border-[#f3f4f6] pt-3">
-              <p className="text-[12px] leading-4 text-[#6a7282]">Job-specific notes</p>
-              <p className="mt-1 whitespace-pre-wrap text-[14px] leading-5 text-[#364153]">
-                {ticketAccessNotes}
-              </p>
-            </div>
-          ) : null}
-        </section>
+              ) : null}
+            </section>
 
-        <section className="rounded-[10px] border border-[#e5e7eb] bg-white p-5 shadow-[0px_1px_2px_-1px_rgba(0,0,0,0.06)]">
-          <h2 className="text-[15px] font-semibold leading-5 text-[#0a0a0a]">Tenant contact</h2>
-          <p className="mt-1 text-[14px] font-semibold leading-5 text-[#0a0a0a]">{job.tenant.name}</p>
-          {tenantUnitLine ? (
-            <p className="mt-1 text-[14px] leading-5 text-[#364153]">{tenantUnitLine}</p>
-          ) : null}
-          {tenantStreetLine ? (
-            <p className="mt-0.5 text-[14px] leading-5 text-[#364153]">{tenantStreetLine}</p>
-          ) : null}
-          {tenantCityLine ? (
-            <p className="mt-0.5 text-[14px] leading-5 text-[#364153]">{tenantCityLine}</p>
-          ) : null}
-          {tenantLocationFallback ? (
-            <p className="mt-1 text-[14px] leading-5 text-[#364153]">{tenantLocationFallback}</p>
-          ) : null}
-          {job.tenant.phone ? (
-            <a
-              href={`tel:${job.tenant.phone}`}
-              className="sa-link mt-1 inline-block text-[14px] font-medium text-[#186179]"
-            >
-              {job.tenant.phone}
-            </a>
-          ) : (
-            <p className="mt-1 text-[13px] leading-5 text-[#6a7282]">No phone on file</p>
-          )}
-        </section>
-
-        <section className="rounded-[10px] border border-[#e5e7eb] bg-white p-5 shadow-[0px_1px_2px_-1px_rgba(0,0,0,0.06)]">
-          <h2 className="text-[15px] font-semibold leading-5 text-[#0a0a0a]">Appointment</h2>
-          <p className="mt-1 text-[14px] font-semibold leading-5 text-[#0a0a0a]">{appointmentText}</p>
-          {job.vendorName ? (
-            <p className="mt-1 text-[13px] leading-5 text-[#6a7282]">Vendor: {job.vendorName}</p>
-          ) : null}
-        </section>
-
-        <section className="rounded-[10px] border border-[#e5e7eb] bg-white p-5 shadow-[0px_1px_2px_-1px_rgba(0,0,0,0.06)]">
-          <h2 className="text-[15px] font-semibold leading-5 text-[#0a0a0a]">
-            Property job history
-          </h2>
-          {job.propertyHistory.length === 0 ? (
-            <p className="mt-2 text-[13px] leading-5 text-[#6a7282]">
-              No other recent jobs at this property.
-            </p>
-          ) : (
-            <ul className="mt-3 divide-y divide-[#f3f4f6]">
-              {job.propertyHistory.map((item) => (
-                <li key={item.ticketId} className="py-3 first:pt-0 last:pb-0">
-                  <div className="flex items-baseline justify-between gap-3">
-                    <p className="text-[14px] font-semibold leading-5 text-[#0a0a0a]">
-                      {item.workOrderRef}
-                    </p>
-                    <p className="text-[12px] leading-4 text-[#6a7282]">
-                      {formatHistoryDate(item.createdAt)}
-                    </p>
-                  </div>
-                  <p className="mt-0.5 text-[13px] leading-5 text-[#6a7282]">
-                    {item.unit || 'Unit'} · {statusLabel(item.status)}
+            <section className={`${CARD} flex flex-col gap-3`}>
+              <h2 className={CARD_TITLE}>Property access</h2>
+              {accessRows.length > 0 ? (
+                <dl className="space-y-3">
+                  {accessRows.map((row) => (
+                    <div key={row.label}>
+                      <dt className="text-[12px] leading-4 text-[#666]">{row.label}</dt>
+                      <dd className="mt-0.5 text-[14px] font-medium leading-5 text-[#333]">
+                        {row.value}
+                      </dd>
+                    </div>
+                  ))}
+                </dl>
+              ) : (
+                <p className="whitespace-pre-wrap text-[14px] font-normal leading-normal text-[#666]">
+                  {ticketAccessNotes || 'No access notes provided.'}
+                </p>
+              )}
+              {accessRows.length > 0 && ticketAccessNotes ? (
+                <div className="border-t border-[#f3f4f6] pt-3">
+                  <p className="text-[12px] leading-4 text-[#666]">Job-specific notes</p>
+                  <p className="mt-1 whitespace-pre-wrap text-[14px] leading-normal text-[#333]">
+                    {ticketAccessNotes}
                   </p>
-                  {item.description ? (
-                    <p className="mt-1 line-clamp-2 text-[13px] leading-5 text-[#364153]">
-                      {item.description}
-                    </p>
-                  ) : null}
-                </li>
-              ))}
-            </ul>
-          )}
-        </section>
+                </div>
+              ) : null}
+            </section>
 
-        <section className="rounded-[10px] border border-[#e5e7eb] bg-white p-5 shadow-[0px_1px_2px_-1px_rgba(0,0,0,0.06)]">
-          <h2 className="text-[15px] font-semibold leading-5 text-[#0a0a0a]">Next Steps</h2>
-          <div className="mt-3 grid gap-2">
-            <ActionLink
-              href={job.links.estimate}
-              label={job.estimateSubmitted ? 'Estimate submitted' : 'Submit estimate'}
-              variant={job.estimateSubmitted ? 'submitted' : 'primary'}
-            />
-            {workStarted ? (
-              <Link
-                to={`/vendor/ticket/${encodeURIComponent(ticketId)}`}
-                title="Open this work order in the vendor portal"
-                className="sa-press inline-flex h-9 items-center justify-center rounded-[10px] border border-[#a7f3d0] bg-[#ecfdf5] px-4 text-[13px] font-medium leading-5 text-[#065f46] hover:bg-[#d1fae5]"
-              >
-                Work started
-              </Link>
-            ) : (
-              <button
-                type="button"
-                onClick={() => void handleStartWork()}
-                disabled={!canStartWork || startingWork}
-                title={
-                  canStartWork
-                    ? 'Mark this job as in progress'
-                    : 'Available after you accept this job'
-                }
-                className={
-                  !canStartWork || startingWork
-                    ? 'sa-press inline-flex h-9 cursor-not-allowed items-center justify-center rounded-[10px] border border-[#e5e7eb] bg-[#f9fafb] px-4 text-[13px] font-medium leading-5 text-[#6a7282]'
-                    : 'sa-press inline-flex h-9 items-center justify-center rounded-[10px] border border-[#e5e7eb] bg-white px-4 text-[13px] font-medium leading-5 text-[#0a0a0a] hover:bg-[#f3f4f6]'
-                }
-              >
-                {startingWork ? 'Starting…' : 'Start work'}
-              </button>
-            )}
-            <ActionLink
-              href={job.links.upload}
-              label="Upload completion photos & videos"
-              disabled={!job.estimateApproved}
-              disabledHint="Available after your estimate is approved"
-            />
-            <ActionLink
-              href={job.links.invoice}
-              label="Submit invoice"
-              disabled={!job.estimateApproved || !job.completionPhotosUploaded}
-              disabledHint={
-                !job.estimateApproved
-                  ? 'Available after your estimate is approved'
-                  : 'Available after you upload completion photos'
-              }
-            />
+            <section className={`${CARD} flex flex-col gap-3`}>
+              <h2 className={CARD_TITLE}>Tenant contact</h2>
+              <div className="flex flex-col gap-1 text-[14px] leading-normal">
+                <p className="font-semibold text-[#333]">{job.tenant.name}</p>
+                {tenantUnitLine ? <p className="font-normal text-[#333]">{tenantUnitLine}</p> : null}
+                {tenantStreetLine ? (
+                  <p className="font-normal text-[#333]">{tenantStreetLine}</p>
+                ) : null}
+                {tenantCityLine ? <p className="font-normal text-[#333]">{tenantCityLine}</p> : null}
+                {tenantLocationFallback ? (
+                  <p className="font-normal text-[#333]">{tenantLocationFallback}</p>
+                ) : null}
+                {job.tenant.phone ? (
+                  <a href={`tel:${job.tenant.phone}`} className="font-normal text-[#1a5f7a] hover:underline">
+                    {job.tenant.phone}
+                  </a>
+                ) : (
+                  <p className="text-[#666]">No phone on file</p>
+                )}
+              </div>
+            </section>
+
+            <section className={`${CARD} flex flex-col gap-3`}>
+              <h2 className={CARD_TITLE}>Appointment</h2>
+              <div className="flex flex-col gap-1 text-[14px] leading-normal text-[#333]">
+                <p className="font-semibold">{appointmentText}</p>
+                {job.vendorName ? (
+                  <p className="font-normal">Vendor: {job.vendorName}</p>
+                ) : null}
+              </div>
+            </section>
+
+            <section className={`${CARD} flex flex-col gap-3`}>
+              <h2 className={CARD_TITLE}>Property job history</h2>
+              {job.propertyHistory.length === 0 ? (
+                <p className="text-[14px] font-normal leading-normal text-[#666]">
+                  No previous jobs at this property.
+                </p>
+              ) : (
+                <ul className="divide-y divide-[#f3f4f6]">
+                  {job.propertyHistory.map((item) => (
+                    <li key={item.ticketId} className="py-3 first:pt-0 last:pb-0">
+                      <div className="flex items-baseline justify-between gap-3">
+                        <p className="text-[14px] font-semibold text-[#333]">{item.workOrderRef}</p>
+                        <p className="text-[12px] text-[#666]">{formatHistoryDate(item.createdAt)}</p>
+                      </div>
+                      <p className="mt-0.5 text-[13px] text-[#666]">
+                        {item.unit || 'Unit'} · {statusLabel(item.status)}
+                      </p>
+                      {item.description ? (
+                        <p className="mt-1 line-clamp-2 text-[13px] leading-5 text-[#333]">
+                          {item.description}
+                        </p>
+                      ) : null}
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </section>
+
+            <div className="lg:hidden">
+              <NextStepsCard {...nextStepsProps} />
+            </div>
           </div>
-          {startWorkError ? (
-            <p className="mt-2 text-[13px] leading-5 text-[#c10007]">{startWorkError}</p>
-          ) : null}
-        </section>
-      </main>
+
+          <aside className="hidden w-full shrink-0 lg:sticky lg:top-4 lg:block lg:w-[340px]">
+            <NextStepsCard {...nextStepsProps} />
+          </aside>
+        </main>
+      </div>
     </div>
+  )
+}
+
+function NextStepsCard({
+  estimateHref,
+  estimateSubmitted,
+  workStarted,
+  ticketId,
+  canStartWork,
+  startingWork,
+  onStartWork,
+  uploadHref,
+  invoiceHref,
+  estimateApproved,
+  completionPhotosUploaded,
+  startWorkError,
+}: {
+  estimateHref: string
+  estimateSubmitted: boolean
+  workStarted: boolean
+  ticketId: string
+  canStartWork: boolean
+  startingWork: boolean
+  onStartWork: () => void
+  uploadHref: string
+  invoiceHref: string
+  estimateApproved: boolean
+  completionPhotosUploaded: boolean
+  startWorkError: string | null
+}) {
+  return (
+    <section className={`${CARD} flex flex-col gap-6`}>
+      <h2 className={CARD_TITLE}>Next Steps</h2>
+      <div className="flex w-full flex-col gap-3">
+        <ActionLink
+          href={estimateHref}
+          label={estimateSubmitted ? 'Estimate submitted' : 'Submit estimate'}
+          variant={estimateSubmitted ? 'submitted' : 'primary'}
+        />
+        {workStarted ? (
+          <Link
+            to={`/vendor/ticket/${encodeURIComponent(ticketId)}`}
+            title="Open this work order in the vendor portal"
+            className={`${BTN} border border-[rgba(24,97,121,0.57)] bg-white text-[#1a1a1a] hover:bg-[#f9fafb]`}
+          >
+            Work started
+          </Link>
+        ) : (
+          <button
+            type="button"
+            onClick={onStartWork}
+            disabled={!canStartWork || startingWork}
+            title={
+              canStartWork
+                ? 'Mark this job as in progress'
+                : 'Available after you accept this job'
+            }
+            className={
+              !canStartWork || startingWork
+                ? `${BTN} cursor-not-allowed bg-[#f3f4f6] text-[#333]`
+                : `${BTN} border border-[rgba(24,97,121,0.57)] bg-white text-[#1a1a1a] hover:bg-[#f9fafb]`
+            }
+          >
+            {startingWork ? 'Starting…' : 'Start work'}
+          </button>
+        )}
+        <ActionLink
+          href={uploadHref}
+          label="Upload completion photos & videos"
+          disabled={!estimateApproved}
+          disabledHint="Available after your estimate is approved"
+        />
+        <ActionLink
+          href={invoiceHref}
+          label="Submit invoice"
+          disabled={!estimateApproved || !completionPhotosUploaded}
+          disabledHint={
+            !estimateApproved
+              ? 'Available after your estimate is approved'
+              : 'Available after you upload completion photos'
+          }
+        />
+      </div>
+      {startWorkError ? (
+        <p className="text-[13px] leading-5 text-[#c10007]">{startWorkError}</p>
+      ) : null}
+    </section>
   )
 }
 
@@ -496,12 +563,12 @@ function ActionLink({
 }) {
   const className =
     variant === 'submitted'
-      ? 'sa-press inline-flex h-9 items-center justify-center rounded-[10px] border border-[#a7f3d0] bg-[#ecfdf5] px-4 text-[13px] font-medium leading-5 text-[#065f46] hover:bg-[#d1fae5]'
+      ? `${BTN} bg-[#187960] text-white opacity-90`
       : disabled
-        ? 'inline-flex h-9 cursor-not-allowed items-center justify-center rounded-[10px] bg-[#f3f4f6] px-4 text-[13px] font-medium leading-5 text-[#6a7282]'
+        ? `${BTN} cursor-not-allowed bg-[#f3f4f6] text-[#333]`
         : variant === 'secondary'
-          ? 'sa-press inline-flex h-9 items-center justify-center rounded-[10px] border border-[#e5e7eb] bg-white px-4 text-[13px] font-medium leading-5 text-[#0a0a0a] hover:bg-[#f3f4f6]'
-          : 'sa-press inline-flex h-9 items-center justify-center rounded-[10px] bg-[#186179] px-4 text-[13px] font-medium leading-5 text-white hover:bg-[#145066]'
+          ? `${BTN} border border-[rgba(24,97,121,0.57)] bg-white text-[#1a1a1a] hover:bg-[#f9fafb]`
+          : `${BTN} bg-[#187960] text-white hover:bg-[#146b52]`
 
   if (disabled) {
     return (
