@@ -488,16 +488,24 @@ function LanguageSelect({
   onChange: (lang: JobPageLang) => void
 }) {
   return (
-    <label className="inline-flex items-center">
+    <label className="relative inline-flex items-center">
       <span className="sr-only">{copy.language}</span>
       <select
         value={lang}
         onChange={(event) => onChange(event.target.value === 'es' ? 'es' : 'en')}
-        className="h-[34px] max-w-[9.5rem] cursor-pointer rounded-[6px] border border-[#e5e7eb] bg-white px-2 text-[13px] font-medium text-[#111827] outline-none focus:border-[#187960] focus:ring-2 focus:ring-[#187960]/20"
+        className="h-[34px] max-w-[11rem] cursor-pointer appearance-none rounded-[6px] border border-[#e5e7eb] bg-white py-0 pl-2 pr-7 text-[13px] font-medium text-[#111827] outline-none focus:border-[#187960] focus:ring-2 focus:ring-[#187960]/20"
       >
-        <option value="en">{copy.english}</option>
-        <option value="es">{copy.spanish}</option>
+        <option value="en">🇺🇸 {copy.english}</option>
+        <option value="es">🇪🇸 {copy.spanish}</option>
       </select>
+      <span
+        className="pointer-events-none absolute inset-y-0 right-0 flex items-center pr-[4px] text-[#111827]"
+        aria-hidden
+      >
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} className="size-4">
+          <path d="M6 9l6 6 6-6" />
+        </svg>
+      </span>
     </label>
   )
 }
