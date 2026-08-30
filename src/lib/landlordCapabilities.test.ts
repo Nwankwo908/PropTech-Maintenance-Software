@@ -9,9 +9,9 @@ import {
 } from '@shared/landlordCapabilities'
 
 describe('Limited Alpha 1 capabilities', () => {
-  it('turns off payments and marketplace', () => {
+  it('turns off payments but keeps Find External Vendor', () => {
     expect(landlordHasPayments(LIMITED_ALPHA_1_LANDLORD_ID)).toBe(false)
-    expect(landlordHasVendorMarketplace(LIMITED_ALPHA_1_LANDLORD_ID)).toBe(false)
+    expect(landlordHasVendorMarketplace(LIMITED_ALPHA_1_LANDLORD_ID)).toBe(true)
     expect(landlordHasPayments('068daf53-07e4-4493-bd7f-6106e3c8c62f')).toBe(true)
     expect(landlordUsesTwilioSms(LIMITED_ALPHA_1_LANDLORD_ID)).toBe(true)
     expect(landlordUsesTwilioSms('068daf53-07e4-4493-bd7f-6106e3c8c62f')).toBe(false)

@@ -16,8 +16,6 @@ import {
 } from '@/lib/externalVendorDisplay'
 import { PhoneTelLink } from '@/components/CallPhoneButton'
 import { InviteVendorModal, type InviteVendorPrefill } from '@/components/InviteVendorModal'
-import { getActiveLandlordId } from '@/lib/activeLandlord'
-import { landlordHasVendorMarketplace } from '@shared/landlordCapabilities'
 
 function CloseIcon() {
   return (
@@ -279,7 +277,6 @@ export function FindExternalVendorRail({
   const titleId = useId()
   const [verificationVendor, setVerificationVendor] = useState<ExternalVendorDisplayRow | null>(null)
   const [invitePrefill, setInvitePrefill] = useState<InviteVendorPrefill | null>(null)
-  const marketplaceEnabled = landlordHasVendorMarketplace(getActiveLandlordId())
   const displayRows = enrichExternalVendorSuggestions(
     suggestions,
     issueCategory,
@@ -320,7 +317,7 @@ export function FindExternalVendorRail({
     handleDismiss()
   }
 
-  if (!open || !marketplaceEnabled) return null
+  if (!open) return null
 
   const panelWidthClass = verificationStep
     ? 'max-w-[min(100vw,960px)]'

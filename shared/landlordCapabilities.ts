@@ -2,7 +2,8 @@
  * Per-account product capabilities.
  *
  * Limited Alpha 1 is an empty new-user account without payments, bank linking,
- * vendor marketplace, or native-app channels.
+ * or native-app channels. Find External Vendor is on — there is often no
+ * matching in-network trade.
  */
 
 export const LIMITED_ALPHA_1_LANDLORD_ID = 'de300000-0000-4000-8000-000000000003'
@@ -39,8 +40,8 @@ export function landlordHasPayments(landlordId: string | null | undefined): bool
 }
 
 /** Find External Vendor / Ulo-vetted marketplace dispatch. */
-export function landlordHasVendorMarketplace(landlordId: string | null | undefined): boolean {
-  return !isLimitedAlpha1Landlord(landlordId)
+export function landlordHasVendorMarketplace(_landlordId: string | null | undefined): boolean {
+  return true
 }
 
 /** Push / native-app notification channels. */
