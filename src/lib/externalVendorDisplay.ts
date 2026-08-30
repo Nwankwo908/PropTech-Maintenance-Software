@@ -188,8 +188,8 @@ export function enrichExternalVendorSuggestions(
     const tags =
       s.tags && s.tags.length > 0
         ? s.tags
-        : primarySource === 'netvendor' && s.priceLabel
-          ? [fallbackTag, 'Compliant']
+        : primarySource === 'thumbtack' && s.priceLabel
+          ? [fallbackTag, /licensed/i.test(s.priceLabel) ? 'Licensed' : 'Thumbtack']
           : [fallbackTag]
 
     const distanceMiles =

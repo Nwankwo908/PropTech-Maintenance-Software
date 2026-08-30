@@ -40,7 +40,7 @@ export type ChangeAssignedVendorModalProps = {
   /** Inline error from the last failed save (e.g. API message). */
   saveError?: string | null
   /**
-   * When `vendorOptions` is empty and this is set, loads Google Places + Yelp suggestions
+   * When `vendorOptions` is empty and this is set, loads Thumbtack suggestions
    * via Edge (Figma “outside your network” flow).
    */
   externalDiscovery?: {
@@ -54,7 +54,7 @@ export type ChangeAssignedVendorModalProps = {
 
 /**
  * Admin flow to override AI/auto-assigned vendor (Figma 150:634 in-network;
- * Figma 306:1224 when no in-network specialty match — Google + Yelp discovery).
+ * Figma 306:1224 when no in-network specialty match — Thumbtack discovery).
  */
 export function ChangeAssignedVendorModal({
   open,

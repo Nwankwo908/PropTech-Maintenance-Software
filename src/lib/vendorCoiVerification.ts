@@ -28,7 +28,7 @@ export type VendorCoiLookupResult = {
   expirationDate: string | null
   monitoringActive: boolean
   simulated: boolean
-  checkSource: 'netvendor' | 'state_board' | 'certificial' | 'admin_attestation' | 'local'
+  checkSource: 'thumbtack' | 'state_board' | 'certificial' | 'admin_attestation' | 'local'
 }
 
 export type VendorCoiVerificationState = {
@@ -62,10 +62,9 @@ function mockCarrier(vendorName: string): string {
 
 function isProviderCredentialed(vendor: VendorCoiLookupSubject): boolean {
   const sources = (vendor.sources ?? []).map((s) => s.trim().toLowerCase())
-  if (!sources.includes('netvendor')) return false
+  if (!sources.includes('thumbtack')) return false
   const label = (vendor.priceLabel ?? '').trim()
-  if (!label) return true
-  return /compliant|credential|coi\b|insurance\s*verif|preferred\s*vendor/i.test(label)
+  return /licensed/i.test(label)
 }
 
 function futureDateIso(daysFromNow: number): string {
@@ -79,16 +78,16 @@ function futureDateIso(daysFromNow: number): string {
  */
 export function resolveVendorCoiLookup(vendor: VendorCoiLookupSubject): VendorCoiLookupResult {
   if (isProviderCredentialed(vendor)) {
-    const label = (vendor.priceLabel ?? '').trim() || 'Compliant'
+    const label = (vendor.priceLabel ?? '').trim() || 'Licensed'
     return {
       status: 'verified',
       policyNumber: null,
       carrier: null,
-      detail: `${label} · Active COI tracked by NetVendor`,
+      detail: `${label} · Background and license checks from Thumbtack`,
       expirationDate: futureDateIso(365),
       monitoringActive: true,
       simulated: false,
-      checkSource: 'netvendor',
+      checkSource: 'thumbtack',
     }
   }
 
@@ -156,7 +155,7 @@ function fromDto(dto: ExternalCoiCheckDto): VendorCoiLookupResult {
   }
 }
 
-/** Async Certificial / NetVendor lookup used on the verification screen. */
+/** Async Certificial / Thumbtack lookup used on the verification screen. */
 export async function lookupVendorCoi(
   vendor: VendorCoiLookupSubject,
 ): Promise<VendorCoiLookupResult> {

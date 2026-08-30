@@ -1,6 +1,6 @@
 /**
  * Local / out-of-network vendor discovery for Ask Ulo.
- * Reuses the maintenance external-vendor search stack (Google / Yelp / NetVendor / mock).
+ * Reuses the maintenance external-vendor search stack (Thumbtack / mock).
  */
 
 import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.49.1"
@@ -53,7 +53,7 @@ function formatRating(s: ExternalVendorSuggestion): string | null {
 function formatSource(s: ExternalVendorSuggestion): string | null {
   if (!s.sources.length) return null
   const labels = s.sources.map((src) =>
-    src === "google" ? "Google" : src === "yelp" ? "Yelp" : src === "netvendor" ? "NetVendor" : "mock",
+    src === "thumbtack" ? "Thumbtack" : "mock",
   )
   return labels.join(", ")
 }
@@ -90,16 +90,14 @@ export function formatPhoneMarkdown(phone: string | null | undefined): string | 
   return `[${display}](tel:${tel})`
 }
 
-/** Prefer business website, then provider listing, then Google Maps search. */
+/** Prefer business website, then Thumbtack listing, then Maps search. */
 export function pageLinkForSuggestion(s: ExternalVendorSuggestion): { label: string; href: string } | null {
   const website = absoluteHttpUrl(s.website)
   if (website) return { label: "Website", href: website }
 
   const listing = absoluteHttpUrl(s.listingUrl)
   if (listing) {
-    const fromGoogle = s.sources.includes("google")
-    const fromYelp = s.sources.includes("yelp")
-    const label = fromGoogle ? "Google" : fromYelp ? "Yelp" : "Listing"
+    const label = s.sources.includes("thumbtack") ? "Thumbtack" : "Listing"
     return { label, href: listing }
   }
 
@@ -145,7 +143,7 @@ export function buildExternalDiscoveryMarkdown(input: {
       "### What's missing",
       input.configured
         ? "A clearer trade match or a property anchor so the search can narrow to your portfolio area."
-        : "Live external search isn't configured on Edge yet (set GOOGLE_PLACES_API_KEY / YELP_API_KEY).",
+        : "Live external search isn't configured on Edge yet (set THUMBTACK_CLIENT_ID and THUMBTACK_CLIENT_SECRET).",
       "",
       "### What I'd do",
       "Open a work order and use **Find external vendor** to run a ticket-scoped search, or add the trade to your roster in Vendors.",
@@ -162,7 +160,7 @@ export function buildExternalDiscoveryMarkdown(input: {
     lead,
     "",
     input.mode === "mock" && !input.configured
-      ? "_Using demo external vendor data — configure GOOGLE_PLACES_API_KEY or YELP_API_KEY on Edge for live local search._"
+      ? "_Using demo external vendor data — configure THUMBTACK_CLIENT_ID and THUMBTACK_CLIENT_SECRET on Edge for live local search._"
       : "These are **outside your network** — ratings and distance come from public listings, not your job history.",
     "",
     `### Local ${input.tradeLabel ? input.tradeLabel + "s" : "options"} outside your roster`,

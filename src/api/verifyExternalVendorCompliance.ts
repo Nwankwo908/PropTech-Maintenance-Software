@@ -8,7 +8,7 @@ import {
 import { formatAdminEdgeUnauthorizedError, getAdminEdgeSecret } from '@/lib/adminEdgeAuth'
 
 export type ExternalComplianceCheckSource =
-  | 'netvendor'
+  | 'thumbtack'
   | 'state_board'
   | 'certificial'
   | 'admin_attestation'

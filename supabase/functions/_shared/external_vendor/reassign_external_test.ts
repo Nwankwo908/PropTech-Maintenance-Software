@@ -110,7 +110,7 @@ Deno.test("resolveVendorIdForExternalReassign reuses existing roster match", asy
   const result = await resolveVendorIdForExternalReassign(
     supabase as unknown as Parameters<typeof resolveVendorIdForExternalReassign>[0],
     landlordId,
-    { vendorName: "Metro Plumbing", sources: ["google"] },
+    { vendorName: "Metro Plumbing", sources: ["thumbtack"] },
     "plumbing",
   )
 

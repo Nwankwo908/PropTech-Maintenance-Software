@@ -177,3 +177,40 @@ export async function resumeMaintenanceWorkflowAfterAutoReassign(
     eventStep: "vendor_reassigned",
   })
 }
+
+/** After the assigned vendor accepts, drop the "needs a vendor" escalation. */
+export async function resumeMaintenanceWorkflowAfterVendorAccepted(
+  supabase: SupabaseClient,
+  ticketId: string,
+): Promise<void> {
+  const { data: run } = await supabase
+    .from("workflow_runs")
+    .select("id, status, metadata")
+    .eq("entity_type", "maintenance_request")
+    .eq("entity_id", ticketId)
+    .eq("status", "escalated")
+    .order("started_at", { ascending: false })
+    .limit(1)
+    .maybeSingle()
+
+  if (!run?.id) return
+
+  const metadata = (run.metadata ?? {}) as Record<string, unknown>
+  const reason =
+    typeof metadata.escalation_reason === "string"
+      ? metadata.escalation_reason
+      : null
+  if (reason && !isMaintenanceAdminVendorEscalationReason(reason)) return
+
+  await updateWorkflowRun(supabase, run.id, {
+    status: "active",
+    currentStep: "accepted",
+    metadata: {
+      vendor_accepted_at: new Date().toISOString(),
+      escalation_reason: null,
+    },
+    pipelineStage: "act",
+    eventMessage: "Vendor accepted the job",
+    eventStep: "vendor_accepted",
+  })
+}

@@ -1,4 +1,5 @@
 import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.49.1"
+import { resumeMaintenanceWorkflowAfterVendorAccepted } from "./maintenance_admin_escalation.ts"
 import { tryAutoReassignAfterDecline } from "./vendor_auto_reassign.ts"
 import { beginVendorAvailabilityAsk } from "./vendor_job_schedule.ts"
 import { normalizePhoneFlexible } from "./resident_notify.ts"
@@ -172,6 +173,14 @@ export async function applyVendorStatusTransition(
     vendor_id: params.vendorId,
   })
   if (logErr) console.error("[vendor-workflow] audit", logErr.message)
+
+  if (next === "accepted") {
+    try {
+      await resumeMaintenanceWorkflowAfterVendorAccepted(supabase, params.ticketId)
+    } catch (e) {
+      console.error("[vendor-workflow] resume after accept", e)
+    }
+  }
 
   let availabilityAskSent: boolean | undefined
   if (next === "accepted" && params.askAvailability !== false) {

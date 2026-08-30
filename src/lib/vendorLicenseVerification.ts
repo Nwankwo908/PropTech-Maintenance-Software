@@ -27,7 +27,7 @@ export type VendorLicenseLookupResult = {
   boardLabel: string
   expirationDate?: string | null
   simulated: boolean
-  checkSource: 'netvendor' | 'state_board' | 'certificial' | 'admin_attestation' | 'local'
+  checkSource: 'thumbtack' | 'state_board' | 'certificial' | 'admin_attestation' | 'local'
 }
 
 export type VendorLicenseVerificationState = {
@@ -71,10 +71,9 @@ function tradeLabelOrDefault(tradeLabel: string | null | undefined): string {
 
 function isProviderCredentialed(vendor: VendorLicenseLookupSubject): boolean {
   const sources = (vendor.sources ?? []).map((s) => s.trim().toLowerCase())
-  if (!sources.includes('netvendor')) return false
+  if (!sources.includes('thumbtack')) return false
   const label = (vendor.priceLabel ?? '').trim()
-  if (!label) return true
-  return /compliant|credential|coi\b|insurance\s*verif|preferred\s*vendor/i.test(label)
+  return /licensed/i.test(label)
 }
 
 /** Local fallback when Edge is not configured (demo / offline). */
@@ -87,11 +86,11 @@ export function resolveVendorLicenseLookup(
     return {
       status: 'auto_verified',
       licenseNumber: null,
-      boardLabel: 'NetVendor credential network',
-      detail: 'Active license on file · Verified via NetVendor',
+      boardLabel: 'Thumbtack license verification',
+      detail: 'Active license on file · Verified via Thumbtack',
       expirationDate: null,
       simulated: false,
-      checkSource: 'netvendor',
+      checkSource: 'thumbtack',
     }
   }
 
@@ -164,7 +163,7 @@ function fromDto(dto: ExternalLicenseCheckDto): VendorLicenseLookupResult {
   }
 }
 
-/** State licensing / NetVendor lookup when a vendor is selected. */
+/** State licensing / Thumbtack lookup when a vendor is selected. */
 export async function lookupVendorLicense(
   vendor: VendorLicenseLookupSubject,
   tradeLabel: string,

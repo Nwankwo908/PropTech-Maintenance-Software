@@ -86,6 +86,19 @@ describe('shouldOmitEscalatedRunFromNeedsAttention', () => {
     ).toBe(true)
   })
 
+  it('omits escalated repairs once a vendor has accepted the job', () => {
+    expect(
+      shouldOmitEscalatedRunFromNeedsAttention({
+        run: run({
+          id: 'run-accepted',
+          vendorWorkStatus: 'accepted',
+          assignedVendorId: 'mecus-1',
+        }),
+        completedTicketIds: new Set(),
+      }),
+    ).toBe(true)
+  })
+
   it('keeps open escalated repairs that still need a vendor', () => {
     expect(
       shouldOmitEscalatedRunFromNeedsAttention({

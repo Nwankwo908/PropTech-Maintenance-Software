@@ -423,5 +423,5 @@ For “Who is my best electrician?” / “best plumber” / “Compare my HVAC 
 
 For “Recommend another [trade]” or thin roster / outside-network asks:
 6. After roster ranking, run local external discovery near the portfolio when roster is empty, has fewer than two matches, or they asked for someone outside the network.
-7. Merge roster + external sections; external hits come from discoverExternalVendors (Google/Yelp/mock).
+7. Merge roster + external sections; external hits come from discoverExternalVendors (Thumbtack/mock).
 `.trim()

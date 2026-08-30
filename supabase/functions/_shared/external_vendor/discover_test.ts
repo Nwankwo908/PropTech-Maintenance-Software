@@ -7,8 +7,6 @@ Deno.test("discoverExternalVendorsMerged falls back to mock without API keys", a
   const suggestions = await discoverExternalVendorsMerged({
     issueCategory: "plumbing",
     searchLocation: "Oakwood Apartments",
-    googleApiKey: null,
-    yelpApiKey: null,
   })
   if (suggestions.length === 0) {
     throw new Error("expected mock suggestions")
@@ -22,8 +20,6 @@ Deno.test("discoverExternalVendorsMerged ranks mock plumbing vendors", async () 
   const suggestions = await discoverExternalVendorsMerged({
     issueCategory: "plumbing",
     searchLocation: "90210",
-    googleApiKey: null,
-    yelpApiKey: null,
   })
   const names = suggestions.map((s) => s.name)
   if (!names.includes("Rapid Plumb Co.")) {
@@ -35,8 +31,6 @@ Deno.test("discoverExternalVendorsMerged returns electrical mocks", async () => 
   const suggestions = await discoverExternalVendorsMerged({
     issueCategory: "electrical",
     searchLocation: "Chicago, IL",
-    googleApiKey: null,
-    yelpApiKey: null,
   })
   const names = suggestions.map((s) => s.name)
   if (!names.includes("BrightWire Electric")) {

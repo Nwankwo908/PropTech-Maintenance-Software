@@ -422,12 +422,20 @@ export function buildSuggestionLineForReview(
   )
 }
 
+/** Statuses where Ulo is still waiting for a vendor to take the job. */
+const WAITING_FOR_VENDOR_WORK_STATUSES = new Set([
+  '',
+  'unassigned',
+  'pending_accept',
+  'declined',
+])
+
 export function isSlaOverdueOpenTicket(ticket: {
   dueAt: string | null
   vendorWorkStatus: string
 }): boolean {
-  const closed = new Set(['completed', 'cancelled'])
-  if (closed.has(ticket.vendorWorkStatus.trim().toLowerCase())) return false
+  const status = ticket.vendorWorkStatus.trim().toLowerCase()
+  if (!WAITING_FOR_VENDOR_WORK_STATUSES.has(status)) return false
   if (!ticket.dueAt) return false
   const dueTs = new Date(ticket.dueAt).getTime()
   return !Number.isNaN(dueTs) && dueTs < Date.now()

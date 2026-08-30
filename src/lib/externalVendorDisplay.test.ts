@@ -58,36 +58,36 @@ describe('sanitizeExternalVendorDiscoveryForAccount', () => {
       rating: 4.8,
       reviewCount: 40,
       priceLabel: null,
-      sources: ['google' as const],
+      sources: ['thumbtack' as const],
     }
     const sanitized = sanitizeExternalVendorDiscoveryForAccount({
       suggestions: [...electricalMocks, live],
-      providersUsed: ['google', 'mock'],
+      providersUsed: ['thumbtack', 'mock'],
       notice: 'No live matches nearby. Showing demo suggestions.',
     })
     expect(sanitized.suggestions.map((row) => row.name)).toEqual(['Real Electric Co'])
-    expect(sanitized.providersUsed).toEqual(['google'])
+    expect(sanitized.providersUsed).toEqual(['thumbtack'])
     expect(sanitized.notice).toBeNull()
   })
 
-  it('drops NetVendor-shaped demo names such as Compliant Spark Electric', () => {
+  it('drops demo names such as Compliant Spark Electric', () => {
     const live = {
       name: 'Grove Street Electric',
       rating: 4.6,
       reviewCount: 80,
       priceLabel: null,
-      sources: ['google' as const],
+      sources: ['thumbtack' as const],
     }
     const fake = {
       name: 'Compliant Spark Electric',
       rating: 4.8,
       reviewCount: 142,
       priceLabel: 'Compliant · COI on file',
-      sources: ['netvendor' as const],
+      sources: ['mock' as const],
     }
     const sanitized = sanitizeExternalVendorDiscoveryForAccount({
       suggestions: [fake, live],
-      providersUsed: ['google', 'netvendor'],
+      providersUsed: ['thumbtack', 'mock'],
     })
     expect(sanitized.suggestions.map((row) => row.name)).toEqual(['Grove Street Electric'])
   })

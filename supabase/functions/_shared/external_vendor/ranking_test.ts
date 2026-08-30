@@ -36,21 +36,21 @@ Deno.test("scoreExternalVendorSuggestion prefers higher rating and reviews", () 
   }
 })
 
-Deno.test("mergeAndRankExternalHits dedupes cross-provider names", () => {
+Deno.test("mergeAndRankExternalHits dedupes matching names", () => {
   const hits: ExternalVendorHit[] = [
     {
       name: "Metro Plumbing",
       rating: 4.5,
       reviewCount: 80,
       priceLabel: "$$ · Moderate",
-      source: "google",
+      source: "thumbtack",
     },
     {
       name: "metro plumbing",
       rating: 4.7,
       reviewCount: 120,
-      priceLabel: "$$ on Yelp",
-      source: "yelp",
+      priceLabel: "Licensed · Thumbtack",
+      source: "thumbtack",
     },
     {
       name: "Other Co",
@@ -68,8 +68,8 @@ Deno.test("mergeAndRankExternalHits dedupes cross-provider names", () => {
   if (ranked[0].name !== "metro plumbing" && ranked[0].name !== "Metro Plumbing") {
     throw new Error("expected merged metro plumbing first")
   }
-  if (!ranked[0].sources.includes("google") || !ranked[0].sources.includes("yelp")) {
-    throw new Error("expected both sources on merged row")
+  if (!ranked[0].sources.includes("thumbtack")) {
+    throw new Error("expected thumbtack source on merged row")
   }
 })
 

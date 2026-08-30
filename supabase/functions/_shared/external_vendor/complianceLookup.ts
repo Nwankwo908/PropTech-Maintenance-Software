@@ -2,7 +2,7 @@
  * External vendor license + COI checks for Find External Vendor.
  *
  * Priority:
- * 1. NetVendor / credentialed discovery signals → provider-verified
+ * 1. Thumbtack licensed / background-checked discovery signals → provider-verified
  * 2. StateLicense.io board lookup + Certificial tracking API
  * 3. Admin manual attestation (license number entry or COI-on-file confirm)
  */
@@ -10,7 +10,7 @@ import { lookupCertificialCoverage } from "../vendor_verification/certificialApi
 import { verifyLicense } from "../vendor_verification/adapters.ts"
 
 export type ExternalComplianceSource =
-  | "netvendor"
+  | "thumbtack"
   | "state_board"
   | "certificial"
   | "admin_attestation"
@@ -71,39 +71,37 @@ function tradeCategoriesFromLabel(tradeLabel: string | null | undefined): string
   return t ? [t.toLowerCase()] : []
 }
 
-/** True when discovery already marks the vendor as credentialed/compliant. */
+/** True when Thumbtack already marks the vendor as licensed. */
 export function isProviderCredentialed(subject: ExternalVendorComplianceSubject): boolean {
   const sources = (subject.sources ?? []).map((s) => s.trim().toLowerCase())
-  if (!sources.includes("netvendor")) return false
+  if (!sources.includes("thumbtack")) return false
   const label = (subject.priceLabel ?? "").trim()
-  if (!label) return true
-  return /compliant|credential|coi\b|insurance\s*verif|preferred\s*vendor/i.test(label)
+  return /licensed/i.test(label)
 }
 
-function netvendorLicense(_subject: ExternalVendorComplianceSubject): ExternalLicenseCheckResult {
-  const boardLabel = "NetVendor credential network"
+function thumbtackLicense(_subject: ExternalVendorComplianceSubject): ExternalLicenseCheckResult {
   return {
     status: "auto_verified",
     licenseNumber: null,
-    detail: `Active license on file · Verified via NetVendor`,
-    boardLabel,
+    detail: "Active license on file · Verified via Thumbtack",
+    boardLabel: "Thumbtack license verification",
     expirationDate: null,
     simulated: false,
-    checkSource: "netvendor",
+    checkSource: "thumbtack",
   }
 }
 
-function netvendorCoi(subject: ExternalVendorComplianceSubject): ExternalCoiCheckResult {
-  const label = (subject.priceLabel ?? "").trim() || "Compliant"
+function thumbtackCoi(subject: ExternalVendorComplianceSubject): ExternalCoiCheckResult {
+  const label = (subject.priceLabel ?? "").trim() || "Licensed"
   return {
     status: "monitoring",
     policyNumber: null,
     carrier: null,
-    detail: `${label} · Active COI tracked by NetVendor`,
+    detail: `${label} · Background and license checks from Thumbtack`,
     expirationDate: futureDateIso(365),
     monitoringActive: true,
     simulated: false,
-    checkSource: "netvendor",
+    checkSource: "thumbtack",
   }
 }
 
@@ -206,8 +204,8 @@ export async function lookupExternalVendorCompliance(
 ): Promise<ExternalComplianceLookupResult> {
   if (isProviderCredentialed(subject)) {
     return {
-      license: netvendorLicense(subject),
-      coi: netvendorCoi(subject),
+      license: thumbtackLicense(subject),
+      coi: thumbtackCoi(subject),
     }
   }
 

@@ -8,7 +8,7 @@ import { isUuidShape } from "../_shared/uuid_shape.ts"
 
 const corsHeaders = adminEdgeCorsHeaders
 
-const SOURCE_SET = new Set<ExternalVendorSource>(["google", "yelp", "netvendor", "mock"])
+const SOURCE_SET = new Set<ExternalVendorSource>(["thumbtack", "mock"])
 
 function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {

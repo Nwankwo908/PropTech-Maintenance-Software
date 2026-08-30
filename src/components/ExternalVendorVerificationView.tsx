@@ -136,7 +136,7 @@ function ProviderVerifiedBadge() {
   return (
     <span
       className="inline-flex shrink-0 items-center rounded-full bg-[#ecfdf5] px-2 py-0.5 text-[9px] font-bold uppercase tracking-[0.08em] text-[#007a55]"
-      title="Credentialed via NetVendor or admin confirmation"
+      title="Credentialed via Thumbtack or admin confirmation"
     >
       Verified source
     </span>
@@ -464,12 +464,12 @@ export function ExternalVendorVerificationView({
               {checksStillSimulated ? (
                 <p className="mb-3 rounded-lg border border-[#fde68a] bg-[#fffbeb] px-3 py-2 text-[10px] leading-[15px] text-[#92400e]">
                   License and insurance are checked through Ulo’s verification service (state
-                  licensing board and insurance certificate). NetVendor credentialed vendors and
+                  licensing board and insurance certificate). Thumbtack-licensed vendors and
                   admin confirmations also count as verified sources.
                 </p>
               ) : (
                 <p className="mb-3 rounded-lg border border-[#a4f4cf] bg-[#fafffd] px-3 py-2 text-[10px] leading-[15px] text-[#007a55]">
-                  Compliance checks used a verified source (NetVendor credentials or admin
+                  Compliance checks used a verified source (Thumbtack license checks or admin
                   confirmation).
                 </p>
               )}

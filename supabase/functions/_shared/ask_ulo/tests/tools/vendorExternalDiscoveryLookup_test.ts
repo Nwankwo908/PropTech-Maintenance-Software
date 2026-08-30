@@ -105,17 +105,17 @@ Deno.test("buildExternalDiscoveryMarkdown falls back to listing / Maps page link
         rating: 4.9,
         reviewCount: 856,
         priceLabel: null,
-        sources: ["google"],
+        sources: ["thumbtack"],
         rankScore: 10,
         etaMinutes: null,
         address: "14430 SE 98th Ct, Clackamas, OR 97015",
         phone: "(503) 555-0199",
-        listingUrl: "https://maps.google.com/?cid=123",
+        listingUrl: "https://thumbtack.com/or/clackamas/roofing/bliss/service/123",
       },
     ],
   })
   assertStringIncludes(withListing, "[(503) 555-0199](tel:5035550199)")
-  assertStringIncludes(withListing, "[Google](https://maps.google.com/?cid=123)")
+  assertStringIncludes(withListing, "[Thumbtack](https://thumbtack.com/or/clackamas/roofing/bliss/service/123)")
 
   const mapsFallback = buildExternalDiscoveryMarkdown({
     tradeLabel: "roofer",
@@ -129,7 +129,7 @@ Deno.test("buildExternalDiscoveryMarkdown falls back to listing / Maps page link
         rating: 4.9,
         reviewCount: 427,
         priceLabel: null,
-        sources: ["google"],
+        sources: ["thumbtack"],
         rankScore: 9,
         etaMinutes: null,
         address: "555 SE MLK Blvd, Portland, OR",

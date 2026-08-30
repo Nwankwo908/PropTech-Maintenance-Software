@@ -39,6 +39,10 @@ export function shouldOmitEscalatedRunFromNeedsAttention(input: {
 }): boolean {
   const vendorWorkStatus =
     input.linkedTicketVendorWorkStatus ?? input.run.vendorWorkStatus
+  const workStatus = (vendorWorkStatus ?? '').trim().toLowerCase()
+  if (workStatus === 'accepted' || workStatus === 'in_progress') {
+    return true
+  }
   if (isSettledOnActiveTasks({ status: input.run.status, vendorWorkStatus })) {
     return true
   }

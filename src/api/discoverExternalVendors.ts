@@ -13,7 +13,7 @@ export type ExternalVendorSuggestionDto = {
   rating: number | null
   reviewCount: number | null
   priceLabel: string | null
-  sources: ('google' | 'yelp' | 'netvendor' | 'mock')[]
+  sources: ('thumbtack' | 'mock')[]
   etaMinutes?: number | null
   address?: string | null
   phone?: string | null
@@ -24,7 +24,7 @@ export type ExternalVendorSuggestionDto = {
 export type DiscoverExternalVendorsOk = {
   ticketId: string
   suggestions: ExternalVendorSuggestionDto[]
-  providersUsed?: ('google' | 'yelp' | 'netvendor' | 'mock')[]
+  providersUsed?: ('thumbtack' | 'mock')[]
   mode?: 'live' | 'mock'
   configured: boolean
   notice?: string

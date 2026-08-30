@@ -1,6 +1,7 @@
 import { serve } from "https://deno.land/std/http/server.ts"
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1"
 import { notifyResidentInProgress } from "../submit-maintenance-request/resident_notify.ts"
+import { resumeMaintenanceWorkflowAfterVendorAccepted } from "../_shared/maintenance_admin_escalation.ts"
 import { tryAutoReassignAfterDecline } from "../_shared/vendor_auto_reassign.ts"
 import { beginVendorAvailabilityAsk } from "../_shared/vendor_job_schedule.ts"
 import { bearerLooksLikeJwt } from "../_shared/vendor_portal_bearer.ts"
@@ -466,6 +467,11 @@ serve(async (req) => {
   }
 
   if (step.next === "accepted" && vendorIdMatched) {
+    try {
+      await resumeMaintenanceWorkflowAfterVendorAccepted(supabase, ticketId)
+    } catch (e) {
+      console.error("[vendor-update-job-status] resume after accept", e)
+    }
     try {
       await beginVendorAvailabilityAsk(supabase, {
         ticketId,

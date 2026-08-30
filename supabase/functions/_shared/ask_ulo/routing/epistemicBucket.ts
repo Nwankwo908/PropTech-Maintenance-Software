@@ -1,7 +1,7 @@
 /**
  * Epistemic bucket for Ask Ulo "external" asks — auditable classification.
  *
- * 1 external_vendor — open-web-adjacent vendor discovery (Google/Yelp/…)
+ * 1 external_vendor — Thumbtack marketplace vendor discovery
  * 2 allowlisted_facts — market / legal / weather / incentives APIs & RAG
  * 3 internal_unmatched — portfolio ask that missed specialty tools
  * 4 policy_boundary — refuse / constrain (action, fair housing, etc.)

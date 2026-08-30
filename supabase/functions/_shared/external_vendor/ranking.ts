@@ -107,14 +107,6 @@ export function mergeAndRankExternalHits(
     prev.listingUrl = pickString(prev.listingUrl, hit.listingUrl)
     prev.tags = mergeTags(prev.tags, hit.tags)
     if (!prev.priceLabel && hit.priceLabel) prev.priceLabel = hit.priceLabel
-    else if (
-      prev.priceLabel &&
-      hit.priceLabel &&
-      !prev.priceLabel.includes("Yelp") &&
-      hit.priceLabel.includes("Yelp")
-    ) {
-      prev.priceLabel = `${prev.priceLabel}; ${hit.priceLabel}`
-    }
   }
 
   const list: ExternalVendorSuggestion[] = [...byKey.values()].map((m) => {

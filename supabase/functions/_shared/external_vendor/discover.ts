@@ -7,10 +7,8 @@ import {
   isDemoExternalVendorName,
   isDemoExternalVendorProviderRef,
 } from "../../../../shared/externalVendor/demoVendorNames.ts"
-import { GooglePlacesExternalVendorProvider } from "./providers/google.ts"
 import { MockExternalVendorProvider } from "./providers/mock.ts"
-import { netVendorProviderFromEnv } from "./providers/netvendor.ts"
-import { YelpExternalVendorProvider } from "./providers/yelp.ts"
+import { thumbtackProviderFromEnv } from "./providers/thumbtack.ts"
 import { mergeAndRankExternalHits, rosterNameKeys } from "./ranking.ts"
 import { buildExternalSearchQuery, normalizeIssueCategoryForSearch } from "./trade_terms.ts"
 import { resolveExternalVendorSearchContext } from "./search_location.ts"
@@ -62,24 +60,11 @@ export function resolveExternalVendorProviders(opts?: {
     return [mock]
   }
 
-  const googleKey = Deno.env.get("GOOGLE_PLACES_API_KEY")?.trim() ?? ""
-  const yelpKey = Deno.env.get("YELP_API_KEY")?.trim() ?? ""
-  const netvendor = netVendorProviderFromEnv({
-    forceMock: allowMock && (
-      opts?.forceMock === true ||
-      (Deno.env.get("NETVENDOR_USE_MOCK") ?? "").trim().toLowerCase() === "true"
-    ),
-  })
+  const thumbtack = thumbtackProviderFromEnv()
   const providers: ExternalVendorProvider[] = []
 
-  if (mode === "auto" || mode.includes("google")) {
-    providers.push(new GooglePlacesExternalVendorProvider(googleKey))
-  }
-  if (mode === "auto" || mode.includes("yelp")) {
-    providers.push(new YelpExternalVendorProvider(yelpKey))
-  }
-  if (mode === "auto" || mode.includes("netvendor")) {
-    providers.push(netvendor)
+  if (mode === "auto" || mode.includes("thumbtack")) {
+    providers.push(thumbtack)
   }
 
   const live = providers.filter((p) => p.isConfigured() && p.id !== "mock")
@@ -164,20 +149,11 @@ export async function discoverExternalVendors(
   const providersUsed = allowMock
     ? providers.map((p) => p.id)
     : providers.map((p) => p.id).filter((id) => id !== "mock")
-  const netvendorMockActive =
-    allowMock &&
-    providersUsed.includes("netvendor") &&
-    (options.forceMock ||
-      (Deno.env.get("NETVENDOR_USE_MOCK") ?? "").trim().toLowerCase() === "true" ||
-      !Deno.env.get("NETVENDOR_API_KEY")?.trim() ||
-      !Deno.env.get("NETVENDOR_API_BASE_URL")?.trim())
-  const googleLive =
-    Boolean(Deno.env.get("GOOGLE_PLACES_API_KEY")?.trim()) &&
-    providersUsed.includes("google")
-  const yelpLive =
-    Boolean(Deno.env.get("YELP_API_KEY")?.trim()) && providersUsed.includes("yelp")
-  const netvendorLive = providersUsed.includes("netvendor") && !netvendorMockActive
-  const mode = googleLive || yelpLive || netvendorLive ? "live" : "mock"
+  const thumbtackLive =
+    Boolean(Deno.env.get("THUMBTACK_CLIENT_ID")?.trim()) &&
+    Boolean(Deno.env.get("THUMBTACK_CLIENT_SECRET")?.trim()) &&
+    providersUsed.includes("thumbtack")
+  const mode = thumbtackLive ? "live" : "mock"
   const configured = mode === "live"
 
   const hitGroups = await Promise.all(providers.map((p) => p.search(searchInput)))
@@ -215,8 +191,6 @@ export async function discoverExternalVendors(
 export type DiscoverExternalVendorsInput = {
   issueCategory: string | null
   searchLocation: string
-  googleApiKey: string | null
-  yelpApiKey: string | null
 }
 
 export async function discoverExternalVendorsMerged(
@@ -233,12 +207,7 @@ export async function discoverExternalVendorsMerged(
     textQuery,
   }
 
-  const providers: ExternalVendorProvider[] = []
-  const googleKey = input.googleApiKey?.trim() ?? ""
-  const yelpKey = input.yelpApiKey?.trim() ?? ""
-  if (googleKey) providers.push(new GooglePlacesExternalVendorProvider(googleKey))
-  if (yelpKey) providers.push(new YelpExternalVendorProvider(yelpKey))
-  if (providers.length === 0) providers.push(new MockExternalVendorProvider())
+  const providers: ExternalVendorProvider[] = [new MockExternalVendorProvider()]
 
   const hitGroups = await Promise.all(providers.map((p) => p.search(searchInput)))
   return mergeAndRankExternalHits(hitGroups.flat(), { limit: 8 })

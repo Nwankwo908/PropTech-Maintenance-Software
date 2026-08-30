@@ -7,10 +7,8 @@ When no in-network roster vendor is available (or SLA escalation needs outside h
 ```
 discover-external-vendors (Edge)
   └─ external_vendor/discover.ts
-       ├─ providers/google.ts
-       ├─ providers/yelp.ts
-       ├─ providers/netvendor.ts  ← NetVendor credentialed vendor search (partner API)
-       └─ providers/mock.ts   ← used when live API keys are absent
+       ├─ providers/thumbtack.ts  ← Thumbtack Partner Platform businesses search
+       └─ providers/mock.ts   ← used when Thumbtack credentials are absent
        └─ ranking.ts          ← dedupe + rankScore
 
 reassign-external-vendor (Edge)
@@ -36,39 +34,26 @@ In-network roster suggestions remain on **`recommend-vendor-alternatives`** (Ope
 | Secret | Purpose |
 |--------|---------|
 | `ADMIN_REASSIGN_SECRET` | Auth for both functions (`x-admin-reassign-secret`) |
-| `GOOGLE_PLACES_API_KEY` | Google Places Text Search (optional) |
-| `YELP_API_KEY` | Yelp Fusion search (optional) |
-| `NETVENDOR_API_KEY` | NetVendor partner API bearer token (optional) |
-| `NETVENDOR_API_BASE_URL` | NetVendor API host, e.g. `https://api.netvendor.com` (required with key) |
-| `NETVENDOR_SEARCH_PATH` | Search path (default `/v1/vendors/search`) |
-| `NETVENDOR_ACCOUNT_ID` | Optional portfolio / account scope on search requests |
-| `NETVENDOR_USE_MOCK` | `true` uses NetVendor-shaped mock credentialed vendors (no HTTP) |
+| `THUMBTACK_CLIENT_ID` | Thumbtack Partner Platform OAuth client ID |
+| `THUMBTACK_CLIENT_SECRET` | Thumbtack Partner Platform OAuth client secret |
+| `THUMBTACK_API_BASE_URL` | Optional API host (default `https://api.thumbtack.com/api`) |
+| `THUMBTACK_TOKEN_URL` | Optional token URL (default `https://auth.thumbtack.com/oauth2/token`) |
+| `THUMBTACK_OAUTH_SCOPE` | Optional scopes (default businesses search + categories) |
+| `THUMBTACK_UTM_SOURCE` | Optional `utm_source` on search (default `ulo`) |
 | `EXTERNAL_VENDOR_SEARCH_LOCATION` | Fallback geocode anchor when property address cannot be resolved |
-| `EXTERNAL_VENDOR_PROVIDER` | `auto` (default), `mock`, or comma list e.g. `google,yelp,netvendor` |
+| `EXTERNAL_VENDOR_PROVIDER` | `auto` (default), `mock`, or `thumbtack` |
 | `EXTERNAL_VENDOR_USE_MOCK` | `true` forces mock provider in discover API |
 
-When no live keys are configured, **`mock`** provider returns deterministic suggestions (safe for dev/demo). With **`NETVENDOR_USE_MOCK=true`** (and no Google/Yelp keys), NetVendor-shaped credentialed mock vendors are used instead.
+When no live Thumbtack credentials are configured, **`mock`** provider returns deterministic suggestions (safe for demo accounts). Alpha production never receives mock vendors.
 
-### NetVendor partner API contract
+### Thumbtack Partner Platform
 
-NetVendor does not publish a public developer portal; configure secrets from your NetVendor integration contact. The adapter sends:
+Demand-side **client credentials** OAuth against `urn:partner-api`, then:
 
-```http
-POST {NETVENDOR_API_BASE_URL}{NETVENDOR_SEARCH_PATH}
-Authorization: Bearer {NETVENDOR_API_KEY}
-Content-Type: application/json
+1. `GET /v4/categories/search?searchQuery={trade}` → `categoryID`
+2. `POST /v4/businesses/search` with `{ categoryID, zipCode, limit }`
 
-{
-  "trade": "plumbing contractor",
-  "location": "Oakwood Apartments · Unit 304",
-  "issueCategory": "plumbing",
-  "complianceStatus": "compliant",
-  "limit": 6,
-  "accountId": "<optional NETVENDOR_ACCOUNT_ID>"
-}
-```
-
-Responses may return vendors under `vendors`, `results`, `data`, `items`, or `matches`. Each record is mapped from common field names (`name`, `vendorName`, `company_name`, `rating`, `review_count`, `compliance_status`, etc.).
+ZIP is taken from the resolved property search location. Pros with Thumbtack license verification are treated as provider-verified for Find External Vendor compliance; others still go through the state board + Certificial path.
 
 ## APIs
 
@@ -144,7 +129,7 @@ Graph event: `maintenance.external_vendor_reassigned`.
 deno test supabase/functions/_shared/external_vendor/
 ```
 
-Covers ranking, mock provider, discover fallback, and external vendor resolve/onboard logic.
+Covers ranking, mock provider, Thumbtack payload mapping, discover fallback, and external vendor resolve/onboard logic.
 
 ## Deploy
 

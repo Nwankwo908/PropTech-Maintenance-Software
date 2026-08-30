@@ -77,9 +77,7 @@ serve(async (req) => {
     areaLabel: result.areaLabel,
     issueCategory: result.issueCategory,
     notice: result.mode === "mock" && result.providersUsed.includes("mock")
-      ? result.providersUsed.includes("netvendor")
-        ? "Using NetVendor mock (set NETVENDOR_API_KEY + NETVENDOR_API_BASE_URL for live search)."
-        : "Using mock external vendor provider (set GOOGLE_PLACES_API_KEY / YELP_API_KEY / NetVendor secrets for live search)."
+      ? "Using demo external vendor data (set THUMBTACK_CLIENT_ID and THUMBTACK_CLIENT_SECRET for live Thumbtack search)."
       : undefined,
   })
 })

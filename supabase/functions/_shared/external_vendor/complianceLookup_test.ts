@@ -5,35 +5,35 @@ import {
   lookupExternalVendorCompliance,
 } from "./complianceLookup.ts"
 
-Deno.test("NetVendor credentialed vendors skip board/Certificial", async () => {
+Deno.test("Thumbtack licensed vendors skip board/Certificial", async () => {
   const result = await lookupExternalVendorCompliance({
-    name: "Credentialed Flow Plumbing",
-    sources: ["netvendor"],
-    priceLabel: "Compliant · COI on file",
+    name: "Igreen Builders Inc",
+    sources: ["thumbtack"],
+    priceLabel: "Licensed · From $85",
     tradeLabel: "Plumbing",
   })
   if (!isProviderCredentialed({
-    name: "Credentialed Flow Plumbing",
-    sources: ["netvendor"],
-    priceLabel: "Compliant · COI on file",
+    name: "Igreen Builders Inc",
+    sources: ["thumbtack"],
+    priceLabel: "Licensed · From $85",
   })) {
     throw new Error("expected credentialed")
   }
   if (result.license.simulated || result.coi.simulated) {
-    throw new Error("NetVendor results should not be simulated")
+    throw new Error("Thumbtack licensed results should not be simulated")
   }
-  if (result.license.checkSource !== "netvendor" || result.coi.checkSource !== "netvendor") {
-    throw new Error("expected netvendor check source")
+  if (result.license.checkSource !== "thumbtack" || result.coi.checkSource !== "thumbtack") {
+    throw new Error("expected thumbtack check source")
   }
   if (result.license.status !== "auto_verified") throw new Error("license")
   if (result.coi.status !== "monitoring") throw new Error("coi")
 })
 
-Deno.test("Google/Yelp vendors use live board/Certificial results", async () => {
+Deno.test("Unlicensed Thumbtack vendors use live board/Certificial results", async () => {
   const result = await lookupExternalVendorCompliance(
     {
       name: "BrightWire Electric",
-      sources: ["google"],
+      sources: ["thumbtack"],
       phone: "(312) 555-0144",
       tradeLabel: "Electrical",
     },
@@ -68,7 +68,7 @@ Deno.test("Google/Yelp vendors use live board/Certificial results", async () => 
 
 Deno.test("manual license attestation accepts any valid number", () => {
   const ok = attestExternalLicenseNumber({
-    subject: { name: "BrightWire Electric", sources: ["google"] },
+    subject: { name: "BrightWire Electric", sources: ["thumbtack"] },
     licenseNumber: "IL-998877",
     approverName: "Alex",
   })

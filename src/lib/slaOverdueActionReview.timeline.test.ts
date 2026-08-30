@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   buildSlaRailTimeline,
+  isSlaOverdueOpenTicket,
   mergeLandlordRailTimeline,
   type SlaOverdueTicketInput,
   type SlaOverdueTimelineEntry,
@@ -54,5 +55,24 @@ describe('rail Timeline operational story', () => {
     const merged = mergeLandlordRailTimeline(operational, fromWorkflow)
     expect(merged.map((entry) => entry.description)).toContain('Resident sent additional photos')
     expect(merged.length).toBe(4)
+  })
+})
+
+describe('isSlaOverdueOpenTicket', () => {
+  const pastDue = '2020-01-01T00:00:00.000Z'
+
+  it('is true while still waiting for a vendor after the response window', () => {
+    expect(
+      isSlaOverdueOpenTicket({ dueAt: pastDue, vendorWorkStatus: 'pending_accept' }),
+    ).toBe(true)
+  })
+
+  it('is false after a vendor accepts the job', () => {
+    expect(isSlaOverdueOpenTicket({ dueAt: pastDue, vendorWorkStatus: 'accepted' })).toBe(
+      false,
+    )
+    expect(
+      isSlaOverdueOpenTicket({ dueAt: pastDue, vendorWorkStatus: 'in_progress' }),
+    ).toBe(false)
   })
 })

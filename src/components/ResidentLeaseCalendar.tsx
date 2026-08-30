@@ -363,7 +363,7 @@ export function ResidentLeaseCalendar({
                 type="button"
                 className={[
                   'sa-press rounded-[8px] px-4 py-1 text-[14px] font-medium leading-5',
-                  active ? 'bg-[#dc2626] text-white' : 'text-[#71717a]',
+                  active ? 'bg-[#70ABC5] text-white' : 'text-[#71717a]',
                 ].join(' ')}
                 onClick={() => setView(item)}
               >

@@ -31,7 +31,7 @@ export async function postReassignExternalVendor(input: {
   rating?: number | null
   reviewCount?: number | null
   priceLabel?: string | null
-  sources?: ('google' | 'yelp' | 'netvendor' | 'mock')[]
+  sources?: ('thumbtack' | 'mock')[]
   compliance?: Record<string, unknown> | null
 }): Promise<ReassignExternalVendorOk> {
   const url = input.url.trim()

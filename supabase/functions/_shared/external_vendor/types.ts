@@ -5,18 +5,18 @@ export type ExternalVendorHit = {
   reviewCount: number | null
   priceLabel: string | null
   source: ExternalVendorSource
-  /** Optional stable id from the provider (Yelp business id, etc.). */
+  /** Optional stable id from the provider (Thumbtack businessID, etc.). */
   providerRef?: string | null
   etaMinutes?: number | null
   address?: string | null
   phone?: string | null
   website?: string | null
-  /** Provider listing page (Google Maps URI, Yelp business URL, etc.). */
+  /** Provider listing page (Thumbtack service page, etc.). */
   listingUrl?: string | null
   tags?: string[]
 }
 
-export type ExternalVendorSource = "google" | "yelp" | "netvendor" | "mock"
+export type ExternalVendorSource = "thumbtack" | "mock"
 
 /** Merged, ranked suggestion returned to admin APIs. */
 export type ExternalVendorSuggestion = {
@@ -30,7 +30,7 @@ export type ExternalVendorSuggestion = {
   address?: string | null
   phone?: string | null
   website?: string | null
-  /** Provider listing page (Google Maps URI, Yelp business URL, etc.). */
+  /** Provider listing page (Thumbtack service page, etc.). */
   listingUrl?: string | null
   tags?: string[]
 }
