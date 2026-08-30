@@ -524,9 +524,8 @@ function NextStepsCard({
             {startingWork ? 'Starting…' : 'Start work'}
           </button>
         )}
-        <ActionLink
+        <UploadPhotosAction
           href={uploadHref}
-          label="Upload component"
           disabled={!estimateApproved}
           disabledHint="Available after your estimate is approved"
         />
@@ -545,6 +544,86 @@ function NextStepsCard({
         <p className="text-[13px] leading-5 text-[#c10007]">{startWorkError}</p>
       ) : null}
     </section>
+  )
+}
+
+function PlusIcon() {
+  return (
+    <svg
+      viewBox="0 0 20 20"
+      fill="none"
+      className="size-5 shrink-0"
+      aria-hidden
+    >
+      <path
+        d="M10 4v12M4 10h12"
+        stroke="currentColor"
+        strokeWidth="1.75"
+        strokeLinecap="round"
+      />
+    </svg>
+  )
+}
+
+function UploadPhotosAction({
+  href,
+  disabled = false,
+  disabledHint,
+}: {
+  href: string
+  disabled?: boolean
+  disabledHint?: string
+}) {
+  const className = disabled
+    ? 'inline-flex min-h-[72px] w-full cursor-not-allowed flex-col items-center justify-center gap-2 rounded-[8px] border-2 border-dashed border-[#d1d5dc] bg-[#f9fafb] px-4 py-4 text-[15px] font-semibold text-[#9ca3af]'
+    : 'sa-press inline-flex min-h-[72px] w-full flex-col items-center justify-center gap-2 rounded-[8px] border-2 border-dashed border-[#d1d5dc] bg-white px-4 py-4 text-[15px] font-semibold text-[#333] hover:border-[#187960]/55 hover:bg-[#f8faf9]'
+
+  const inner = (
+    <>
+      <PlusIcon />
+      <span>Upload photos or videos</span>
+    </>
+  )
+
+  if (disabled) {
+    return (
+      <button
+        type="button"
+        disabled
+        title={disabledHint}
+        aria-disabled="true"
+        className={className}
+      >
+        {inner}
+      </button>
+    )
+  }
+
+  const isExternal = /^https?:\/\//i.test(href)
+  if (isExternal) {
+    try {
+      const u = new URL(href)
+      if (u.origin === window.location.origin) {
+        return (
+          <Link to={`${u.pathname}${u.search}`} className={className}>
+            {inner}
+          </Link>
+        )
+      }
+    } catch {
+      /* fall through */
+    }
+    return (
+      <a href={href} className={className}>
+        {inner}
+      </a>
+    )
+  }
+
+  return (
+    <Link to={href} className={className}>
+      {inner}
+    </Link>
   )
 }
 
