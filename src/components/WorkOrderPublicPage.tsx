@@ -526,7 +526,7 @@ function NextStepsCard({
         )}
         <ActionLink
           href={uploadHref}
-          label="Upload completion photos & videos"
+          label="Upload component"
           disabled={!estimateApproved}
           disabledHint="Available after your estimate is approved"
         />
