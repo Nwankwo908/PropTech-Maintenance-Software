@@ -5,6 +5,7 @@ import {
   touchVendorLastAssignedAt,
   isVendorMatchableForDispatch,
 } from "../_shared/vendor_assignment.ts"
+import { vendorTradeMatchesForDispatch } from "../_shared/vendor_trades.ts"
 import { sendResendEmail } from "../_shared/delivery.ts"
 import { sendVendorJobAlert } from "../_shared/sms/vendorSmsRouting.ts"
 import { signVendorEmailAction } from "../_shared/vendor_action_token.ts"
@@ -236,7 +237,8 @@ function buildSmsBody(
 }
 
 /**
- * Picks vendor by strict issue_category match → generalists → any active (see `pickVendorForAssignment`).
+ * Picks an Active vendor in the same trade. No match → skip assignment
+ * (Find External Vendor / admin assign). Does not last-resort a different trade.
  */
 function isEmergencyPriority(priority: string | null | undefined): boolean {
   const p = (priority ?? "").trim().toLowerCase()
@@ -247,6 +249,7 @@ async function loadPreferredVendorIfMatchable(
   supabase: SupabaseClient,
   vendorId: string,
   landlordId?: string | null,
+  issueCategory?: string | null,
 ): Promise<VendorRow | null> {
   const id = vendorId.trim()
   if (!id) return null
@@ -296,6 +299,12 @@ async function loadPreferredVendorIfMatchable(
     return null
   }
 
+  const vendorCategory =
+    typeof vendor.category === "string" ? vendor.category : null
+  if (!vendorTradeMatchesForDispatch(vendorCategory, issueCategory ?? null)) {
+    return null
+  }
+
   return {
     id: vendor.id,
     name: vendor.name,
@@ -320,6 +329,7 @@ async function resolveVendorForNewTicket(
       supabase,
       preferVendorId,
       landlordId,
+      issueCategory,
     )
     if (preferred) return preferred
   }

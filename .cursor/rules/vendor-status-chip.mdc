@@ -44,7 +44,7 @@ Cron: `check-vendor-performance-standards` (daily). No-shows from confirmed appo
 
 ## Incident protocols (pre-launch gates)
 
-Matching requires **ACTIVE**. Nothing enters the queue without it (`isVendorMatchableForDispatch` / `pickVendorForAssignment`).
+Matching requires **ACTIVE** *and* the **same trade**. Nothing enters the queue without both (`isVendorMatchableForDispatch` / `pickVendorForAssignment`). If there is no matching Active vendor, leave the job unassigned and use **Find External Vendor**.
 
 | Protocol | Key rule | Implementation |
 |---|---|---|
@@ -80,7 +80,7 @@ Matching requires **ACTIVE**. Nothing enters the queue without it (`isVendorMatc
 
 - Resolver: `src/lib/vendorStatusChip.ts` → `resolveVendorCapacityChip` / `isVendorMatchable`
 - UI chips: `AdminVendorsDashboard`, `AdminVendorDetailDashboard`, `vendorComplianceProfile`
-- Matching: `pickVendorForAssignment` must only consider matchable (ACTIVE) vendors
+- Matching: `pickVendorForAssignment` must only consider matchable (ACTIVE) vendors **in the same trade**. If no matching trade is Active, leave the job unassigned and use **Find External Vendor** — never last-resort a different trade.
 - Never show **Active** while verification is incomplete, unless the landlord used **Override onboarding**
 - Hide **Start onboarding** once the vendor is no longer Not activated (invite sent, form submitted, verified, or **Override onboarding**)
 - Override does **not** mark `vendor_verifications.status = verified` and does **not** send an invite

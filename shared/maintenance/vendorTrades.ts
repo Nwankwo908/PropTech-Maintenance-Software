@@ -228,6 +228,19 @@ export function vendorTradeMatchesFlexible(
   return vendorTrade === issueTrade
 }
 
+/**
+ * Auto-dispatch match: same specific trade only.
+ * Unknown / general tickets, or a plumber vs an oven, must not assign — Find External Vendor.
+ */
+export function vendorTradeMatchesForDispatch(
+  vendorCategory: string | null | undefined,
+  issueCategory: string | null | undefined,
+): boolean {
+  const issueTrade = normalizeVendorTrade(issueCategory, { fallbackOther: false })
+  if (!issueTrade || issueTrade === 'other' || issueTrade === 'general') return false
+  return vendorTradeMatchesFlexible(vendorCategory, issueCategory)
+}
+
 export function vendorTradeToDbCategory(
   trade: string | null | undefined,
 ): VendorTradeSlug | null {

@@ -1,22 +1,12 @@
 import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.49.1"
 import type { MarketplacePreferenceId } from "./landlordNotificationPrefs.ts"
-import {
-  isGeneralistTrade,
-  normalizeVendorTrade,
-  vendorTradeMatchesFlexible,
-} from "./vendor_trades.ts"
+import { vendorTradeMatchesForDispatch } from "./vendor_trades.ts"
 import {
   countVendorWeeklyAssignments,
   maybeAutoPauseVendorAtWeeklyCap,
 } from "./vendor_capacity.ts"
 import { landlordHasVendorMarketplace } from "../../../shared/landlordCapabilities.ts"
 
-function normalizeIssueCategory(issueCat: string | null | undefined): string {
-  return normalizeVendorTrade(issueCat, { fallbackOther: false }) ??
-    (issueCat ?? "").trim().toLowerCase().replace(/[\s-]+/g, "_")
-}
-
-/** Row shape for vendor pick + notify (matches `vendors` select used by vendor_notify). */
 export type VendorAssignmentRow = {
   id: string
   name: string
@@ -75,21 +65,6 @@ export function vendorAllowedForMarketplace(
     return false
   }
   return true
-}
-
-/**
- * Specialist match via centralized trade taxonomy.
- * Empty vendor category is treated as non-matching here (generalists use `isGeneralist` in tier 2).
- */
-function categoryMatches(
-  vendorCategory: string | null,
-  issueCategory: string | null,
-): boolean {
-  return vendorTradeMatchesFlexible(vendorCategory, issueCategory)
-}
-
-function isGeneralist(v: { category: string | null }): boolean {
-  return isGeneralistTrade(v.category)
 }
 
 export async function loadDeclinedVendorIdsForTicket(
@@ -214,13 +189,13 @@ export type PickVendorForAssignmentOptions = {
 }
 
 /**
- * Tiered vendor selection:
- * 1) Vendors whose `category` flexibly matches the ticket `issue_category` (substring, case-insensitive)
- * 2) Generalists (`category` null or empty)
- * 3) Any remaining active vendor (last resort)
+ * Pick only Active vendors whose trade matches the ticket.
+ * No matching trade (or none Active) → null so the job stays unassigned
+ * and Find External Vendor / admin assign can run. Do not last-resort a
+ * different trade (e.g. plumber for an oven).
  *
- * Within each tier: preferred-emergency first (when requested), then lowest
- * active job count, then fairness on `last_assigned_at` / `created_at`.
+ * Within the matching pool: preferred-emergency first (when requested), then
+ * lowest active job count, then fairness on `last_assigned_at` / `created_at`.
  */
 export async function pickVendorForAssignment(
   supabase: SupabaseClient,
@@ -319,7 +294,6 @@ export async function pickVendorForAssignment(
   if (base.length === 0) return null
 
   const counts = await loadActiveJobCounts(supabase)
-  const issueKey = normalizeIssueCategory(issueCat)
 
   function pickFromTier(tier: VendorAssignmentRow[]): VendorAssignmentRow | null {
     if (tier.length === 0) return null
@@ -331,18 +305,10 @@ export async function pickVendorForAssignment(
     return rankVendorCandidates(tier, counts, avoid)
   }
 
-  const strict = base.filter((v) => {
-    if (!issueKey) return false
-    return categoryMatches(v.category, issueCat)
-  })
-  const tier1 = pickFromTier(strict)
-  if (tier1) return tier1
-
-  const generalists = base.filter(isGeneralist)
-  const tier2 = pickFromTier(generalists)
-  if (tier2) return tier2
-
-  return pickFromTier(base)
+  const matchingTrade = base.filter((v) =>
+    vendorTradeMatchesForDispatch(v.category, issueCat)
+  )
+  return pickFromTier(matchingTrade)
 }
 
 export async function touchVendorLastAssignedAt(
