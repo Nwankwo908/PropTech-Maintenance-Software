@@ -584,12 +584,6 @@ function NextStepsCard({
     </section>
   )
 }
-      {startWorkError ? (
-        <p className="text-[13px] leading-5 text-[#c10007]">{startWorkError}</p>
-      ) : null}
-    </section>
-  )
-}
 
 function PlusIcon() {
   return (
