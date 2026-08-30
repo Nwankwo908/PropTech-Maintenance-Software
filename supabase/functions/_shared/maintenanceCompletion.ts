@@ -325,7 +325,7 @@ export async function notifyLandlordJobCompleted(
 
   for (const phone of adminNotifyPhones()) {
     try {
-      await sendOutboundSms(phone, smsBody)
+      await sendOutboundSms(phone, smsBody, { landlordId: params.landlordId })
     } catch (e) {
       console.error("[maintenance-completion] landlord SMS", e)
     }

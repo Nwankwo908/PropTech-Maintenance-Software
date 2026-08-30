@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { ConversationMonitoringModal } from '@/components/ConversationMonitoringModal'
 import { AdminFilterToolbar } from '@/components/AdminFilterToolbar'
+import { isLimitedAlpha1Landlord } from '@shared/landlordCapabilities'
 import { getActiveLandlordId } from '@/lib/activeLandlord'
 import {
   isCommunicationConversationUnread,
@@ -10,8 +11,15 @@ import {
 import {
   formatResidentFeedbackPreview,
   isResidentFeedbackAskBody,
+  isTenantOnboardingInvite,
+  isVendorOnboardingInvite,
   parseResidentFeedbackRatingBody,
 } from '@/lib/conversationMonitoring'
+import {
+  classifyLimitedAlphaMessageLane,
+  looksLikeNonOnboardingInboundSms,
+  type LimitedAlphaMessageLane,
+} from '@/lib/limitedAlphaMessageLanes'
 import { ensureOnboardingDashboardMatchesPortfolio } from '@/lib/onboarding'
 import {
   vendorSetupInboxContext,
@@ -34,6 +42,7 @@ type Conversation = {
   status: string
   unread: boolean
   lastActivity: number
+  threadLane: LimitedAlphaMessageLane
 }
 
 type CommMetrics = {
@@ -420,6 +429,113 @@ function conversationMatchesParticipantFilters(
   return false
 }
 
+function ConversationListRow({
+  conversation: c,
+  index,
+  onOpen,
+}: {
+  conversation: Conversation
+  index: number
+  onOpen: (id: string) => void
+}) {
+  return (
+    <button
+      type="button"
+      onClick={() => onOpen(c.id)}
+      style={{ animationDelay: `${Math.min(index, 10) * 35}ms` }}
+      className="sa-enter sa-row flex w-full items-start gap-3 px-6 py-4 text-left hover:bg-[#f9fafb]"
+    >
+      <span className="relative flex shrink-0 items-center pt-0.5">
+        {c.unread ? (
+          <span className="absolute -left-3 top-1/2 size-2 -translate-y-1/2 rounded-full bg-[#1447e6]" />
+        ) : null}
+        {c.kind === 'ai' ? (
+          <AiSparkleAvatar />
+        ) : (
+          <span
+            className={`flex size-9 items-center justify-center rounded-full text-[12px] font-semibold ${avatarColor(c.name)}`}
+          >
+            {initials(c.name)}
+          </span>
+        )}
+      </span>
+
+      <div className="min-w-0 flex-1">
+        <div className="flex items-center gap-2">
+          <span
+            className={`truncate text-[14px] leading-5 ${
+              c.unread ? 'font-semibold text-[#0a0a0a]' : 'font-medium text-[#101828]'
+            }`}
+          >
+            {c.name}
+          </span>
+          <span
+            className={`shrink-0 rounded-[4px] px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-[0.04em] ${KIND_BADGE[c.kind].className}`}
+          >
+            {KIND_BADGE[c.kind].label}
+          </span>
+          {c.context ? (
+            <span className="truncate text-[12px] leading-4 text-[#6a7282]">
+              · {c.context}
+            </span>
+          ) : null}
+        </div>
+        <p
+          className={`mt-0.5 truncate text-[13px] leading-5 ${c.unread ? 'font-medium text-[#364153]' : 'text-[#6a7282]'}`}
+        >
+          {c.preview}
+        </p>
+      </div>
+
+      <div className="flex shrink-0 flex-col items-end gap-1 pl-2">
+        <span className="text-[12px] leading-4 text-[#6a7282]">
+          {formatRelativeTime(c.lastActivity)}
+        </span>
+        {c.status ? (
+          <span className="text-[12px] leading-4 text-[#6a7282]">{c.status}</span>
+        ) : null}
+      </div>
+    </button>
+  )
+}
+
+function MessageLaneSection({
+  title,
+  description,
+  rows,
+  empty,
+  indexOffset,
+  onOpen,
+}: {
+  title: string
+  description: string
+  rows: Conversation[]
+  empty: string
+  indexOffset: number
+  onOpen: (id: string) => void
+}) {
+  return (
+    <>
+      <div className="bg-[#f9fafb] px-6 py-3">
+        <h2 className="text-[13px] font-semibold tracking-[0.02em] text-[#0a0a0a]">{title}</h2>
+        <p className="mt-0.5 text-[12px] leading-4 text-[#6a7282]">{description}</p>
+      </div>
+      {rows.length === 0 ? (
+        <p className="px-6 py-8 text-center text-[13px] text-[#6a7282]">{empty}</p>
+      ) : (
+        rows.map((c, index) => (
+          <ConversationListRow
+            key={c.id}
+            conversation={c}
+            index={indexOffset + index}
+            onOpen={onOpen}
+          />
+        ))
+      )}
+    </>
+  )
+}
+
 export function AdminCommunicationDashboard() {
   const [searchParams, setSearchParams] = useSearchParams()
   const [conversations, setConversations] = useState<Conversation[]>([])
@@ -701,13 +817,24 @@ export function AdminCommunicationDashboard() {
         string,
         { body: string; direction: string; createdAt: number; mediaUrls: unknown }
       >()
+      const onboardingCopyConversationIds = new Set<string>()
+      const nonOnboardingInboundConversationIds = new Set<string>()
       if (messagesResult.status === 'fulfilled' && !messagesResult.value.error) {
         for (const m of (messagesResult.value.data ?? []) as Record<string, unknown>[]) {
           const convId = asString(m.conversation_id)
-          if (!convId || latestMessageByConversation.has(convId)) continue
+          if (!convId) continue
+          const body = asString(m.body)
+          const direction = asString(m.direction)
+          if (isTenantOnboardingInvite(body) || isVendorOnboardingInvite(body)) {
+            onboardingCopyConversationIds.add(convId)
+          }
+          if (direction === 'inbound' && looksLikeNonOnboardingInboundSms(body)) {
+            nonOnboardingInboundConversationIds.add(convId)
+          }
+          if (latestMessageByConversation.has(convId)) continue
           latestMessageByConversation.set(convId, {
-            body: asString(m.body),
-            direction: asString(m.direction),
+            body,
+            direction,
             createdAt: new Date(asString(m.created_at)).getTime(),
             mediaUrls: m.media_urls,
           })
@@ -831,6 +958,11 @@ export function AdminCommunicationDashboard() {
             activityLooksUnread,
           }),
           lastActivity,
+          threadLane: classifyLimitedAlphaMessageLane({
+            hasMaintenanceRequest: Boolean(ticketId),
+            hasOnboardingCopy: onboardingCopyConversationIds.has(id),
+            hasNonOnboardingInbound: nonOnboardingInboundConversationIds.has(id),
+          }),
         }
       })
 
@@ -856,6 +988,12 @@ export function AdminCommunicationDashboard() {
           status: workOrder.status,
           unread: false,
           lastActivity: workOrder.lastActivity,
+          threadLane: classifyLimitedAlphaMessageLane({
+            hasMaintenanceRequest: false,
+            isWorkOrderInboxRow: true,
+            hasOnboardingCopy: false,
+            hasNonOnboardingInbound: false,
+          }),
         })
         existingIds.add(workOrder.id)
       }
@@ -877,6 +1015,12 @@ export function AdminCommunicationDashboard() {
               /submitted|finished the vendor verification|form submitted/i.test(setup.preview),
           }),
           lastActivity: setup.lastActivityMs,
+          threadLane: classifyLimitedAlphaMessageLane({
+            hasMaintenanceRequest: false,
+            isVendorSetupInbox: true,
+            hasOnboardingCopy: true,
+            hasNonOnboardingInbound: false,
+          }),
         })
         existingIds.add(setup.conversationId)
       }
@@ -923,12 +1067,23 @@ export function AdminCommunicationDashboard() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchParams])
 
+  const splitOnboardingFromRequests = isLimitedAlpha1Landlord(getActiveLandlordId())
+
   const filtered = useMemo(() => {
     const sorted = [...conversations].sort((a, b) => b.lastActivity - a.lastActivity)
     return sorted.filter((conversation) =>
       conversationMatchesParticipantFilters(conversation, participantFilters),
     )
   }, [conversations, participantFilters])
+
+  const onboardingThreads = useMemo(
+    () => filtered.filter((c) => c.threadLane === 'onboarding'),
+    [filtered],
+  )
+  const requestThreads = useMemo(
+    () => filtered.filter((c) => c.threadLane === 'request'),
+    [filtered],
+  )
 
   function toggleParticipantFilter(key: ParticipantFilterKey) {
     setParticipantFilters((current) => {
@@ -948,7 +1103,9 @@ export function AdminCommunicationDashboard() {
           Messages
         </h1>
         <p className="text-[14px] leading-5 tracking-[-0.1504px] text-[#6a7282]">
-          See all resident and vendor conversations in one place.
+          {splitOnboardingFromRequests
+            ? 'Onboarding texts are listed separately from maintenance request threads.'
+            : 'See all resident and vendor conversations in one place.'}
         </p>
       </div>
 
@@ -1021,72 +1178,39 @@ export function AdminCommunicationDashboard() {
               </p>
               <p className="mt-1 text-[13px] text-[#6a7282]">
                 {conversations.length === 0
-                  ? 'Tenant and vendor messages will appear here as they come in.'
+                  ? splitOnboardingFromRequests
+                    ? 'Tenant onboarding and maintenance request threads will appear in separate sections.'
+                    : 'Tenant and vendor messages will appear here as they come in.'
                   : 'Try a different filter to see more conversations.'}
               </p>
             </div>
+          ) : splitOnboardingFromRequests ? (
+            <>
+              <MessageLaneSection
+                title="Onboarding"
+                description="Welcome texts and verification invites."
+                rows={onboardingThreads}
+                empty="No onboarding threads."
+                indexOffset={0}
+                onOpen={openConversation}
+              />
+              <MessageLaneSection
+                title="Requests"
+                description="Maintenance and work-order SMS."
+                rows={requestThreads}
+                empty="No maintenance request threads."
+                indexOffset={onboardingThreads.length}
+                onOpen={openConversation}
+              />
+            </>
           ) : (
             filtered.map((c, index) => (
-              <button
+              <ConversationListRow
                 key={c.id}
-                type="button"
-                onClick={() => openConversation(c.id)}
-                style={{ animationDelay: `${Math.min(index, 10) * 35}ms` }}
-                className="sa-enter sa-row flex w-full items-start gap-3 px-6 py-4 text-left hover:bg-[#f9fafb]"
-              >
-                <span className="relative flex shrink-0 items-center pt-0.5">
-                  {c.unread ? (
-                    <span className="absolute -left-3 top-1/2 size-2 -translate-y-1/2 rounded-full bg-[#1447e6]" />
-                  ) : null}
-                  {c.kind === 'ai' ? (
-                    <AiSparkleAvatar />
-                  ) : (
-                    <span
-                      className={`flex size-9 items-center justify-center rounded-full text-[12px] font-semibold ${avatarColor(c.name)}`}
-                    >
-                      {initials(c.name)}
-                    </span>
-                  )}
-                </span>
-
-                <div className="min-w-0 flex-1">
-                  <div className="flex items-center gap-2">
-                    <span
-                      className={`truncate text-[14px] leading-5 ${
-                        c.unread
-                          ? 'font-semibold text-[#0a0a0a]'
-                          : 'font-medium text-[#101828]'
-                      }`}
-                    >
-                      {c.name}
-                    </span>
-                    <span
-                      className={`shrink-0 rounded-[4px] px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-[0.04em] ${KIND_BADGE[c.kind].className}`}
-                    >
-                      {KIND_BADGE[c.kind].label}
-                    </span>
-                    {c.context ? (
-                      <span className="truncate text-[12px] leading-4 text-[#6a7282]">
-                        · {c.context}
-                      </span>
-                    ) : null}
-                  </div>
-                  <p
-                    className={`mt-0.5 truncate text-[13px] leading-5 ${c.unread ? 'font-medium text-[#364153]' : 'text-[#6a7282]'}`}
-                  >
-                    {c.preview}
-                  </p>
-                </div>
-
-                <div className="flex shrink-0 flex-col items-end gap-1 pl-2">
-                  <span className="text-[12px] leading-4 text-[#6a7282]">
-                    {formatRelativeTime(c.lastActivity)}
-                  </span>
-                  {c.status ? (
-                    <span className="text-[12px] leading-4 text-[#6a7282]">{c.status}</span>
-                  ) : null}
-                </div>
-              </button>
+                conversation={c}
+                index={index}
+                onOpen={openConversation}
+              />
             ))
           )}
         </div>

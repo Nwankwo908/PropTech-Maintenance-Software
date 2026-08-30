@@ -4,6 +4,7 @@ import { notifyResidentInProgress } from "../submit-maintenance-request/resident
 import { tryAutoReassignAfterDecline } from "../_shared/vendor_auto_reassign.ts"
 import { beginVendorAvailabilityAsk } from "../_shared/vendor_job_schedule.ts"
 import { bearerLooksLikeJwt } from "../_shared/vendor_portal_bearer.ts"
+import { getVendorFromJobActionToken } from "../_shared/vendorJobActionToken.ts"
 import { getVendorFromPortalApiKey } from "../_shared/vendor_portal_api_key.ts"
 import { logGraphEvent } from "../_shared/graph/logGraphEvent.ts"
 import { resolveLandlordId } from "../_shared/sms/landlordSmsOnboarding.ts"
@@ -238,15 +239,21 @@ serve(async (req) => {
 
       vendorIdMatched = vendorRow.id
     } else {
-      const portalVendor = await getVendorFromPortalApiKey(supabase, accessToken)
-      if (portalVendor && portalVendor.id === row.assigned_vendor_id) {
-        vendorIdMatched = portalVendor.id
-        source = "portal"
-      } else if (row.vendor_action_token === accessToken) {
-        vendorIdMatched = row.assigned_vendor_id
+      const fromJob = await getVendorFromJobActionToken(supabase, accessToken)
+      if (fromJob && fromJob.id === row.assigned_vendor_id) {
+        vendorIdMatched = fromJob.id
         source = "email_link"
       } else {
-        return jsonResponse({ error: "Invalid Authorization token" }, 401)
+        const portalVendor = await getVendorFromPortalApiKey(supabase, accessToken)
+        if (portalVendor && portalVendor.id === row.assigned_vendor_id) {
+          vendorIdMatched = portalVendor.id
+          source = "portal"
+        } else if (row.vendor_action_token === accessToken) {
+          vendorIdMatched = row.assigned_vendor_id
+          source = "email_link"
+        } else {
+          return jsonResponse({ error: "Invalid Authorization token" }, 401)
+        }
       }
     }
   } else if (token && row.vendor_action_token === token) {

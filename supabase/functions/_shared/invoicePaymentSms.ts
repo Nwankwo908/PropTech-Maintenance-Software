@@ -4,7 +4,7 @@
  */
 import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.49.1"
 import { logGraphEvent } from "./graph/logGraphEvent.ts"
-import { getSMSProvider } from "./sms/providerFactory.ts"
+import { getSMSProviderForSend } from "./sms/providerFactory.ts"
 import { findActiveLandlordMain } from "./sms/smsNumberPool.ts"
 import { formatWorkOrderRef } from "./vendor_outreach_copy.ts"
 import { uloAppUrl } from "./uloAppUrl.ts"
@@ -77,7 +77,10 @@ export async function notifyLandlordInvoicePaymentOptions(
     unit: params.unit,
   })
 
-  const provider = getSMSProvider()
+  const provider = getSMSProviderForSend({
+    landlordId: params.landlordId,
+    lineProvider: sender.provider,
+  })
   for (const to of phones) {
     const send = await provider.sendMessage({
       to,

@@ -32,7 +32,7 @@ export const VENDOR_STATUS_MEANINGS: Record<
   { label: string; detail: string; className: string }
 > = {
   not_started: {
-    label: 'Not started',
+    label: 'Not activated',
     detail: 'Verification invite has not been sent yet.',
     className: 'bg-[#f3f4f6] text-[#6a7282]',
   },
@@ -112,27 +112,51 @@ function chipFor(status: VendorCapacityChipStatus): VendorCapacityChip {
   }
 }
 
-/**
- * Resolve the landlord-facing capacity chip for a vendor roster row.
- *
- * Precedence:
- * 1. Platform holds (banned → suspended)
- * 2. Docs submitted / under review
- * 3. Not started (roster only) vs Waiting for vendor (invite sent)
- * 4. Verified → Active, or Paused if vendor hold
- */
-export function resolveVendorCapacityChip(input: {
+export type VendorCapacityChipInput = {
   verificationStatus?: string | null
-  /** `vendors.active` — only honored after verification is complete. */
+  /** `vendors.active` — honored after verification is complete, or after onboarding override. */
   vendorActive?: boolean | null
   /** `vendor_verifications.availability` — paused is a vendor-initiated hold. */
   availability?: string | null
   /** Platform hold on `vendors.roster_status` (`suspended` | `banned`). */
   rosterStatus?: string | null
-}): VendorCapacityChip {
+  /** `vendors.onboarding_overridden_at` — landlord activated without verification docs. */
+  onboardingOverriddenAt?: string | boolean | null
+}
+
+export function isVendorOnboardingOverridden(
+  value: string | boolean | null | undefined,
+): boolean {
+  if (value === true) return true
+  return typeof value === 'string' && value.trim() !== ''
+}
+
+/**
+ * Resolve the landlord-facing capacity chip for a vendor roster row.
+ *
+ * Precedence:
+ * 1. Platform holds (banned → suspended)
+ * 2. Landlord onboarding override → Active (or Paused if vendor hold)
+ * 3. Docs submitted / under review
+ * 4. Not activated (roster only) vs Waiting for vendor (invite sent)
+ * 5. Verified → Active, or Paused if vendor hold
+ */
+export function resolveVendorCapacityChip(input: VendorCapacityChipInput): VendorCapacityChip {
   const roster = normalizeVerificationStatus(input.rosterStatus)
   if (roster === 'banned') return chipFor('banned')
   if (roster === 'suspended') return chipFor('suspended')
+
+  if (isVendorOnboardingOverridden(input.onboardingOverriddenAt)) {
+    const availability = normalizeVerificationStatus(input.availability)
+    if (availability === 'paused' || input.vendorActive === false) {
+      return chipFor('paused')
+    }
+    const chip = chipFor('active')
+    return {
+      ...chip,
+      detail: 'Activated by the property team without verification documents.',
+    }
+  }
 
   const verification = normalizeVerificationStatus(input.verificationStatus)
 
@@ -157,25 +181,23 @@ export function resolveVendorCapacityChip(input: {
 }
 
 /** Matching / dispatch eligibility — only ACTIVE. */
-export function isVendorMatchable(input: {
-  verificationStatus?: string | null
-  vendorActive?: boolean | null
-  availability?: string | null
-  rosterStatus?: string | null
-}): boolean {
+export function isVendorMatchable(input: VendorCapacityChipInput): boolean {
   return resolveVendorCapacityChip(input).matchable
 }
 
-export type VendorActivationFields = {
-  verificationStatus?: string | null
-  vendorActive?: boolean | null
-  availability?: string | null
-  rosterStatus?: string | null
-}
+export type VendorActivationFields = VendorCapacityChipInput
 
-/** True when the vendor is verified and eligible for job dispatch (Active). */
+/** True when the vendor is eligible for job dispatch (Active). */
 export function isVendorActivated(input: VendorActivationFields): boolean {
   return resolveVendorCapacityChip(input).status === 'active'
+}
+
+/** Start onboarding only while the vendor is still Not activated. */
+export function canShowStartVendorOnboarding(
+  input: VendorCapacityChipInput & { hasContact: boolean },
+): boolean {
+  if (!input.hasContact) return false
+  return resolveVendorCapacityChip(input).status === 'not_started'
 }
 
 /** Count roster vendors still in verification / activation (not yet Active for dispatch). */

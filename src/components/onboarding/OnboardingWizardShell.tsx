@@ -1,5 +1,6 @@
 import { Link } from 'react-router-dom'
 import { getActiveLandlordId } from '@/lib/activeLandlord'
+import { landlordHasPayments, landlordHasVendorMarketplace } from '@shared/landlordCapabilities'
 import { primaryPayoutMethodLabel } from '@/api/landlordStripeConnect'
 import { OnboardingWelcomeHub } from '@/components/onboarding/OnboardingWelcomeHub'
 import { OnboardingStepIndicator } from '@/components/onboarding/OnboardingStepIndicator'
@@ -274,14 +275,17 @@ export function OnboardingWizardShell() {
               saving={saving}
               showBack={showBackButton}
               showNotificationPreferences={state.setupPath === 'fast_track'}
-              showMarketplacePreference={state.setupPath !== 'fast_track'}
+              showMarketplacePreference={
+                state.setupPath !== 'fast_track' &&
+                landlordHasVendorMarketplace(getActiveLandlordId())
+              }
               continueLabel={editContinueLabel ?? 'Continue'}
               onBack={() => void handleBack()}
               onContinue={(rules) => void saveApprovalRulesAndContinue(rules)}
             />
           ) : null}
 
-          {step === 'payouts' ? (
+          {step === 'payouts' && landlordHasPayments(getActiveLandlordId()) ? (
             <OnboardingPayoutsStep
               landlordId={getActiveLandlordId()}
               saving={saving}

@@ -1,6 +1,7 @@
 import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.49.1"
 import { tryAutoReassignAfterDecline } from "./vendor_auto_reassign.ts"
 import { beginVendorAvailabilityAsk } from "./vendor_job_schedule.ts"
+import { normalizePhoneFlexible } from "./resident_notify.ts"
 
 export type VendorSmsReplyAction = "accept" | "decline"
 
@@ -41,6 +42,41 @@ export function parseVendorSmsReply(body: string): VendorSmsReplyAction | null {
   return null
 }
 
+async function vendorIdsSharePhone(
+  supabase: SupabaseClient,
+  vendorIdA: string,
+  vendorIdB: string,
+): Promise<boolean> {
+  if (vendorIdA === vendorIdB) return true
+  const { data, error } = await supabase
+    .from("vendors")
+    .select("id, phone")
+    .in("id", [vendorIdA, vendorIdB])
+  if (error || !data || data.length < 2) return false
+  const phones = data
+    .map((row) => {
+      const raw = typeof row.phone === "string" ? row.phone.trim() : ""
+      return normalizePhoneFlexible(raw) ?? raw.replace(/\D/g, "")
+    })
+    .filter(Boolean)
+  return phones.length === 2 && phones[0] === phones[1]
+}
+
+/** Assigned-but-unassigned is a broken offer row — treat as waiting for YES. */
+export function canVendorSmsAcceptStatus(status: string): boolean {
+  const current = status.trim().toLowerCase()
+  return current === "pending_accept" || current === "unassigned"
+}
+
+export function canVendorSmsDeclineStatus(status: string): boolean {
+  const current = status.trim().toLowerCase()
+  return (
+    current === "pending_accept" ||
+    current === "accepted" ||
+    current === "unassigned"
+  )
+}
+
 /**
  * Apply accept/decline to an assigned ticket (shared by email links and SMS replies).
  * On accept: does NOT notify resident — next step is earliest-availability SMS.
@@ -70,8 +106,22 @@ export async function applyVendorStatusTransition(
   if (!row) {
     return { ok: false, reason: "not_found" }
   }
-  if (row.assigned_vendor_id !== params.vendorId) {
+  const assignedVendorId =
+    typeof row.assigned_vendor_id === "string"
+      ? row.assigned_vendor_id.trim()
+      : ""
+  if (!assignedVendorId) {
     return { ok: false, reason: "not_assigned_to_vendor" }
+  }
+  if (assignedVendorId !== params.vendorId) {
+    const shared = await vendorIdsSharePhone(
+      supabase,
+      assignedVendorId,
+      params.vendorId,
+    )
+    if (!shared) {
+      return { ok: false, reason: "not_assigned_to_vendor" }
+    }
   }
 
   const current = String(row.vendor_work_status ?? "")
@@ -85,12 +135,12 @@ export async function applyVendorStatusTransition(
 
   let next: string
   if (params.action === "accept") {
-    if (current !== "pending_accept") {
+    if (!canVendorSmsAcceptStatus(current)) {
       return { ok: false, reason: "cannot_accept", currentStatus: current }
     }
     next = "accepted"
   } else {
-    if (current !== "pending_accept" && current !== "accepted") {
+    if (!canVendorSmsDeclineStatus(current)) {
       return { ok: false, reason: "cannot_decline", currentStatus: current }
     }
     next = "declined"
@@ -100,7 +150,7 @@ export async function applyVendorStatusTransition(
     .from("maintenance_requests")
     .update({ vendor_work_status: next })
     .eq("id", params.ticketId)
-    .eq("assigned_vendor_id", params.vendorId)
+    .eq("assigned_vendor_id", assignedVendorId)
 
   if (upErr) {
     console.error("[vendor-workflow] update status", upErr.message)

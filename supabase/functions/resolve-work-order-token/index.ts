@@ -70,7 +70,15 @@ serve(async (req) => {
     return jsonResponse({ error: "Expected JSON body" }, 400)
   }
 
-  const token = typeof body.token === "string" ? body.token.trim() : ""
+  const tokenRaw = typeof body.token === "string" ? body.token.trim() : ""
+  let token = tokenRaw
+  try {
+    token = decodeURIComponent(tokenRaw).trim()
+  } catch {
+    token = tokenRaw
+  }
+  const fromPath = token.match(/\/w\/([0-9a-f-]{36})/i)?.[1]
+  if (fromPath) token = fromPath
   if (!token || !uuidRe.test(token)) {
     return jsonResponse({ error: "Invalid token" }, 400)
   }
@@ -85,6 +93,7 @@ serve(async (req) => {
     auth: { persistSession: false, autoRefreshToken: false },
   })
 
+  try {
   const { data: row, error } = await supabase
     .from("maintenance_requests")
     .select(
@@ -203,18 +212,16 @@ serve(async (req) => {
     || (building ? `${building}, ${unitLabel}` : unitLabel)
 
   let vendorName: string | null = null
-  let portalApiKey: string | null = null
+  /** Unique job link token — this vendor only; not a shared access code. */
+  const portalApiKey = token
   if (typeof row.assigned_vendor_id === "string" && row.assigned_vendor_id) {
     const { data: vendor } = await supabase
       .from("vendors")
-      .select("name, portal_api_key")
+      .select("name")
       .eq("id", row.assigned_vendor_id)
       .maybeSingle()
     if (typeof vendor?.name === "string" && vendor.name.trim()) {
       vendorName = vendor.name.trim()
-    }
-    if (typeof vendor?.portal_api_key === "string" && vendor.portal_api_key.trim()) {
-      portalApiKey = vendor.portal_api_key.trim()
     }
   }
 
@@ -229,8 +236,6 @@ serve(async (req) => {
     createdAt: string
   }
   const propertyHistory: HistoryItem[] = []
-  const propertyId =
-    typeof enriched?.property_id === "string" ? enriched.property_id : null
 
   if (landlordId && propertyId) {
     const { data: siblings } = await supabase
@@ -489,4 +494,8 @@ serve(async (req) => {
       completionPhotosUploaded,
     },
   })
+  } catch (err) {
+    console.error("[resolve-work-order-token] unhandled", err)
+    return jsonResponse({ error: "Could not open this job" }, 500)
+  }
 })

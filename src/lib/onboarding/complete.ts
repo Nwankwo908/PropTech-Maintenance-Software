@@ -30,6 +30,8 @@ import type { AccountSetupCounts, LandlordOnboardingState } from './types'
 export async function isLandlordStripePayoutsReady(
   landlordId: string = getActiveLandlordId(),
 ): Promise<boolean> {
+  const { landlordHasPayments } = await import('@shared/landlordCapabilities')
+  if (!landlordHasPayments(landlordId)) return false
   const { canLandlordReceivePayments } = await import('@/lib/paymentReadiness')
   return canLandlordReceivePayments(landlordId)
 }

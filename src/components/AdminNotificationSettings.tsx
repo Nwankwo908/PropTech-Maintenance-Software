@@ -20,6 +20,8 @@ import {
 } from '@/lib/notificationDelivery'
 import { sendSettingsTestNotification } from '@/api/settingsTestNotification'
 import { fetchLandlordAccountProfile } from '@/lib/landlordAccountProfile'
+import { getActiveLandlordId } from '@/lib/activeLandlord'
+import { landlordHasNativeMobileApp } from '@shared/landlordCapabilities'
 
 const sectionCardClass =
   'sa-surface rounded-[10px] border border-[#e5e7eb] bg-white p-6 shadow-[0px_1px_2px_-1px_rgba(0,0,0,0.06)]'
@@ -35,6 +37,11 @@ const CHANNEL_LABELS: Record<NotificationChannel, string> = {
 }
 
 const EVENT_CHANNELS: NotificationChannel[] = ['email', 'sms', 'activity_feed', 'push']
+
+function eventChannelsForAccount(): NotificationChannel[] {
+  if (landlordHasNativeMobileApp(getActiveLandlordId())) return EVENT_CHANNELS
+  return EVENT_CHANNELS.filter((channel) => channel !== 'push')
+}
 
 function SelectChevron() {
   return (
@@ -244,7 +251,7 @@ function EventCategorySection({
                   </span>
                   {item.critical ? <CriticalChip /> : null}
                 </td>
-                {EVENT_CHANNELS.map((channel) => (
+                {eventChannelsForAccount().map((channel) => (
                   <td key={channel} className="px-4 py-3 text-center">
                     <ToggleSwitch
                       id={`${category.id}-${item.id}-${channel}`}
@@ -491,6 +498,7 @@ export function AdminNotificationSettings() {
               <DeliveryChannelCard label="Email" connected={Boolean(profileEmail.trim())} />
               <DeliveryChannelCard label="SMS" connected={Boolean(profilePhone.trim())} />
               <DeliveryChannelCard label="Activity feed" connected />
+              {landlordHasNativeMobileApp(getActiveLandlordId()) ? (
               <DeliveryChannelCard
                 label="Push"
                 connected={pushPermission === 'granted' && draft.delivery.pushEnabled}
@@ -522,6 +530,7 @@ export function AdminNotificationSettings() {
                   void handleEnablePush()
                 }}
               />
+              ) : null}
             </div>
             {pushError ? (
               <p className="mt-3 text-[13px] font-medium tracking-[-0.1504px] text-[#b42318]">{pushError}</p>

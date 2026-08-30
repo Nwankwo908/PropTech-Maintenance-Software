@@ -5,6 +5,7 @@ import { getActiveLandlordId } from '@/lib/activeLandlord'
 import { getErrorMessage } from '@/lib/errorMessage'
 import { phoneForDbOrError } from '@/lib/phoneFormat'
 import { supabase } from '@/lib/supabase'
+import { emptyToNull } from '@/lib/vendorLocation'
 import {
   dbCategoryToVendorTrade,
   isVendorTradeSlug,
@@ -19,8 +20,12 @@ export type VendorManagementRow = {
   id: string
   name: string
   category: string | null
+  contactName: string | null
   email: string | null
   phone: string | null
+  city: string | null
+  state: string | null
+  country: string | null
   notification_channel: VendorNotificationChannel
   active: boolean
   portal_api_key: string | null
@@ -103,6 +108,9 @@ export function VendorFormModal({
   const [name, setName] = useState('')
   const [email, setEmail] = useState('')
   const [phone, setPhone] = useState('')
+  const [city, setCity] = useState('')
+  const [state, setState] = useState('')
+  const [country, setCountry] = useState('United States')
   const [notificationChannel, setNotificationChannel] =
     useState<VendorNotificationChannel>('email')
   const [category, setCategory] = useState('')
@@ -114,24 +122,34 @@ export function VendorFormModal({
   useEffect(() => {
     if (!open) return
     if (initial) {
+      const channel = initial.notification_channel
       setName(initial.name)
       setCategory(normalizeVendorCategoryForForm(initial.category))
       setEmail(initial.email ?? '')
       setPhone(initial.phone ?? '')
-      setNotificationChannel(mode === 'edit' && initial.notification_channel === 'both' ? 'email' : initial.notification_channel)
+      setCity(initial.city ?? '')
+      setState(initial.state ?? '')
+      setCountry(initial.country ?? '')
+      setNotificationChannel(
+        channel === 'sms' || channel === 'both' || channel === 'email' ? channel : 'email',
+      )
       setActive(initial.active)
-      setContactName('')
+      setContactName(initial.contactName ?? '')
     } else {
       setName('')
       setCategory('')
       setEmail('')
       setPhone('')
+      setCity('')
+      setState('')
+      setCountry('United States')
       setNotificationChannel('email')
       setActive(true)
       setContactName('')
     }
     setSaveError(null)
-  }, [open, initial])
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- hydrate only when the rail opens
+  }, [open])
 
   useEffect(() => {
     if (!open) return
@@ -160,6 +178,7 @@ export function VendorFormModal({
       return
     }
     const categoryPayload = categoryResolved.payload
+    const contactNamePayload = contactName.trim()
     const emailPayload = email.trim() || null
     const phoneResult = phoneForDbOrError(phone)
     if (phoneResult.error) {
@@ -167,6 +186,9 @@ export function VendorFormModal({
       return
     }
     const phonePayload = phoneResult.phone
+    const cityPayload = emptyToNull(city)
+    const statePayload = emptyToNull(state)
+    const countryPayload = emptyToNull(country)
 
     if (emailSelected && !emailPayload) {
       setSaveError('Email is required when Email delivery is selected.')
@@ -201,9 +223,13 @@ export function VendorFormModal({
           .from('vendors')
           .insert({
             name: n,
+            contact_name: contactNamePayload,
             category: categoryPayload,
             email: emailPayload,
             phone: phonePayload,
+            city: cityPayload,
+            state: statePayload,
+            country: countryPayload,
             notification_channel: notificationChannel,
             active,
             landlord_id: getActiveLandlordId(),
@@ -234,9 +260,13 @@ export function VendorFormModal({
           .from('vendors')
           .update({
             name: n,
+            contact_name: contactNamePayload,
             category: categoryPayload,
             email: emailPayload,
             phone: phonePayload,
+            city: cityPayload,
+            state: statePayload,
+            country: countryPayload,
             notification_channel: notificationChannel,
             active,
           })
@@ -383,6 +413,50 @@ export function VendorFormModal({
                   onChange={(e) => setPhone(e.target.value)}
                   className={vendorFormInputClass}
                   placeholder="e.g., (555) 123-4567"
+                />
+              </div>
+            </div>
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+              <div className="space-y-2">
+                <label htmlFor="vendor-form-city" className="block text-[14px] font-medium tracking-[-0.1504px] text-[#364153]">
+                  City
+                </label>
+                <input
+                  id="vendor-form-city"
+                  type="text"
+                  value={city}
+                  onChange={(e) => setCity(e.target.value)}
+                  className={vendorFormInputClass}
+                  autoComplete="address-level2"
+                  placeholder="e.g., Atlanta"
+                />
+              </div>
+              <div className="space-y-2">
+                <label htmlFor="vendor-form-state" className="block text-[14px] font-medium tracking-[-0.1504px] text-[#364153]">
+                  State
+                </label>
+                <input
+                  id="vendor-form-state"
+                  type="text"
+                  value={state}
+                  onChange={(e) => setState(e.target.value)}
+                  className={vendorFormInputClass}
+                  autoComplete="address-level1"
+                  placeholder="e.g., GA"
+                />
+              </div>
+              <div className="space-y-2">
+                <label htmlFor="vendor-form-country" className="block text-[14px] font-medium tracking-[-0.1504px] text-[#364153]">
+                  Country
+                </label>
+                <input
+                  id="vendor-form-country"
+                  type="text"
+                  value={country}
+                  onChange={(e) => setCountry(e.target.value)}
+                  className={vendorFormInputClass}
+                  autoComplete="country-name"
+                  placeholder="e.g., United States"
                 />
               </div>
             </div>

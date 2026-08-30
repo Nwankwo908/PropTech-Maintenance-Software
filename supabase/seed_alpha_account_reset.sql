@@ -23,7 +23,7 @@ begin
 
   update public.landlords
   set
-    name = 'Alpha',
+    name = 'Full Alpha',
     email = 'ceorentalsnj@gmail.com',
     is_demo = false
   where id = alpha_id;

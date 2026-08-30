@@ -149,6 +149,27 @@ export function OnboardingVendorsStep({
                     placeholder="Email"
                     aria-label={`Vendor ${index + 1} email`}
                   />
+                  <input
+                    className={onboardingInputClass}
+                    value={form.city}
+                    onChange={(e) => updateVendorForm(form.id, { city: e.target.value })}
+                    placeholder="City"
+                    aria-label={`Vendor ${index + 1} city`}
+                  />
+                  <input
+                    className={onboardingInputClass}
+                    value={form.state}
+                    onChange={(e) => updateVendorForm(form.id, { state: e.target.value })}
+                    placeholder="State"
+                    aria-label={`Vendor ${index + 1} state`}
+                  />
+                  <input
+                    className={`${onboardingInputClass} sm:col-span-2`}
+                    value={form.country}
+                    onChange={(e) => updateVendorForm(form.id, { country: e.target.value })}
+                    placeholder="Country"
+                    aria-label={`Vendor ${index + 1} country`}
+                  />
                   <label className="flex cursor-pointer items-center gap-3 sm:col-span-2">
                     <input
                       type="checkbox"

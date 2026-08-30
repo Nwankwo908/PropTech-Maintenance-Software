@@ -83,4 +83,15 @@ describe('getPreviousOnboardingStep', () => {
     expect(getPreviousOnboardingStep('completion', 'guided')).toBe('payouts')
     expect(getPreviousOnboardingStep('property_setup', 'guided')).toBe('entry')
   })
+
+  it('skips payouts when payments are not on the account', () => {
+    expect(getOnboardingStepOrder('fast_track', { includePayouts: false })).toEqual([
+      'entry',
+      'document_upload',
+      'ai_review',
+      'approval',
+      'review',
+    ])
+    expect(getPreviousOnboardingStep('review', 'guided', { includePayouts: false })).toBe('approval')
+  })
 })

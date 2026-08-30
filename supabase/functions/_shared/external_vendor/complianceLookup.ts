@@ -2,10 +2,11 @@
  * External vendor license + COI checks for Find External Vendor.
  *
  * Priority:
- * 1. NetVendor / credentialed discovery signals → provider-verified (not simulated)
- * 2. Shared state-board / Certificial seams (simulated until live keys are wired)
+ * 1. NetVendor / credentialed discovery signals → provider-verified
+ * 2. StateLicense.io board lookup + Certificial tracking API
  * 3. Admin manual attestation (license number entry or COI-on-file confirm)
  */
+import { lookupCertificialCoverage } from "../vendor_verification/certificialApi.ts"
 import { verifyLicense } from "../vendor_verification/adapters.ts"
 
 export type ExternalComplianceSource =
@@ -21,6 +22,7 @@ export type ExternalVendorComplianceSubject = {
   tradeLabel?: string | null
   priceLabel?: string | null
   sources?: string[] | null
+  licenseState?: string | null
 }
 
 export type ExternalLicenseCheckResult = {
@@ -49,28 +51,19 @@ export type ExternalComplianceLookupResult = {
   coi: ExternalCoiCheckResult
 }
 
+export type ExternalComplianceLookupDeps = {
+  lookupLicense?: (
+    subject: ExternalVendorComplianceSubject,
+  ) => Promise<ExternalLicenseCheckResult>
+  lookupCoi?: (
+    subject: ExternalVendorComplianceSubject,
+  ) => Promise<ExternalCoiCheckResult>
+}
+
 function futureDateIso(daysFromNow: number): string {
   const d = new Date()
   d.setUTCDate(d.getUTCDate() + daysFromNow)
   return d.toISOString().slice(0, 10)
-}
-
-function stableBucket(input: string): number {
-  let hash = 0
-  for (let i = 0; i < input.length; i += 1) {
-    hash = (hash + input.charCodeAt(i) * (i + 11)) % 100
-  }
-  return hash
-}
-
-function mockPolicyNumber(vendorName: string): string {
-  const bucket = stableBucket(vendorName)
-  return `CGI-${String(400000 + bucket * 211).slice(0, 6)}`
-}
-
-function mockCarrier(vendorName: string): string {
-  const carriers = ["Travelers", "Hartford", "Liberty Mutual", "Nationwide", "CNA"]
-  return carriers[stableBucket(`carrier|${vendorName}`) % carriers.length] ?? "Travelers"
 }
 
 function tradeCategoriesFromLabel(tradeLabel: string | null | undefined): string[] {
@@ -87,7 +80,7 @@ export function isProviderCredentialed(subject: ExternalVendorComplianceSubject)
   return /compliant|credential|coi\b|insurance\s*verif|preferred\s*vendor/i.test(label)
 }
 
-function netvendorLicense(subject: ExternalVendorComplianceSubject): ExternalLicenseCheckResult {
+function netvendorLicense(_subject: ExternalVendorComplianceSubject): ExternalLicenseCheckResult {
   const boardLabel = "NetVendor credential network"
   return {
     status: "auto_verified",
@@ -114,11 +107,13 @@ function netvendorCoi(subject: ExternalVendorComplianceSubject): ExternalCoiChec
   }
 }
 
-function boardLicenseLookup(subject: ExternalVendorComplianceSubject): ExternalLicenseCheckResult {
-  const result = verifyLicense({
+async function boardLicenseLookup(
+  subject: ExternalVendorComplianceSubject,
+): Promise<ExternalLicenseCheckResult> {
+  const result = await verifyLicense({
     businessName: subject.name,
     contactName: subject.name,
-    licenseState: null,
+    licenseState: subject.licenseState ?? null,
     licenseNumber: null,
     tradeCategories: tradeCategoriesFromLabel(subject.tradeLabel),
   })
@@ -127,10 +122,10 @@ function boardLicenseLookup(subject: ExternalVendorComplianceSubject): ExternalL
     return {
       status: "auto_verified",
       licenseNumber: result.licenseNumber,
-      detail: result.detail.replace(/\s*\(simulated\)/gi, ""),
+      detail: result.detail,
       boardLabel: result.boardLabel,
       expirationDate: result.expirationDate,
-      simulated: true,
+      simulated: false,
       checkSource: "state_board",
     }
   }
@@ -139,10 +134,10 @@ function boardLicenseLookup(subject: ExternalVendorComplianceSubject): ExternalL
     return {
       status: "expired",
       licenseNumber: result.licenseNumber,
-      detail: result.detail.replace(/\s*\(simulated\)/gi, ""),
+      detail: result.detail,
       boardLabel: result.boardLabel,
       expirationDate: result.expirationDate,
-      simulated: true,
+      simulated: false,
       checkSource: "state_board",
     }
   }
@@ -150,64 +145,65 @@ function boardLicenseLookup(subject: ExternalVendorComplianceSubject): ExternalL
   return {
     status: "not_found",
     licenseNumber: null,
-    detail: "No match in state licensing database",
+    detail: result.detail || "No match in the state licensing database.",
     boardLabel: result.boardLabel,
     expirationDate: null,
-    simulated: true,
+    simulated: false,
     checkSource: "state_board",
   }
 }
 
-/** Certificial-style insurance tracking seam (swap for live API later). */
-export function certificialCoiLookup(
+export async function certificialCoiLookup(
   subject: ExternalVendorComplianceSubject,
-): ExternalCoiCheckResult {
-  const key = `certificial|${subject.name}|${subject.phone ?? ""}|${subject.website ?? ""}`
-  const bucket = stableBucket(key)
-  const policyNumber = mockPolicyNumber(subject.name)
-  const carrier = mockCarrier(subject.name)
-
-  if (bucket < 60) {
-    return {
-      status: "monitoring",
-      policyNumber,
-      carrier,
-      detail: `${carrier} · ${policyNumber} · Active · Tracking via Certificial`,
-      expirationDate: futureDateIso(400),
-      monitoringActive: true,
-      simulated: true,
-      checkSource: "certificial",
-    }
-  }
-
-  if (bucket < 85) {
+): Promise<ExternalCoiCheckResult> {
+  const tracked = await lookupCertificialCoverage({
+    businessName: subject.name,
+    phone: subject.phone,
+  })
+  if (!tracked.found) {
     return {
       status: "not_found",
       policyNumber: null,
       carrier: null,
-      detail: "No COI on file in Certificial — confirm insurance paperwork manually",
+      detail: tracked.detail,
       expirationDate: null,
       monitoringActive: false,
-      simulated: true,
+      simulated: false,
+      checkSource: "certificial",
+    }
+  }
+
+  const today = new Date().toISOString().slice(0, 10)
+  const expired = Boolean(tracked.expirationDate && tracked.expirationDate < today)
+  if (expired) {
+    return {
+      status: "expired",
+      policyNumber: tracked.policyNumber,
+      carrier: tracked.carrier,
+      detail: tracked.detail,
+      expirationDate: tracked.expirationDate,
+      monitoringActive: false,
+      simulated: false,
       checkSource: "certificial",
     }
   }
 
   return {
-    status: "expired",
-    policyNumber,
-    carrier,
-    detail: `${carrier} · ${policyNumber} · Expired — renew COI to restore monitoring`,
-    expirationDate: futureDateIso(-90),
-    monitoringActive: false,
-    simulated: true,
+    status: "monitoring",
+    policyNumber: tracked.policyNumber,
+    carrier: tracked.carrier,
+    detail: tracked.detail,
+    expirationDate: tracked.expirationDate,
+    monitoringActive: true,
+    simulated: false,
     checkSource: "certificial",
   }
 }
 
-export function lookupExternalVendorCompliance(
+export async function lookupExternalVendorCompliance(
   subject: ExternalVendorComplianceSubject,
-): ExternalComplianceLookupResult {
+  deps?: ExternalComplianceLookupDeps,
+): Promise<ExternalComplianceLookupResult> {
   if (isProviderCredentialed(subject)) {
     return {
       license: netvendorLicense(subject),
@@ -215,10 +211,11 @@ export function lookupExternalVendorCompliance(
     }
   }
 
-  return {
-    license: boardLicenseLookup(subject),
-    coi: certificialCoiLookup(subject),
-  }
+  const [license, coi] = await Promise.all([
+    (deps?.lookupLicense ?? boardLicenseLookup)(subject),
+    (deps?.lookupCoi ?? certificialCoiLookup)(subject),
+  ])
+  return { license, coi }
 }
 
 export function attestExternalLicenseNumber(input: {
@@ -231,7 +228,10 @@ export function attestExternalLicenseNumber(input: {
     return { error: "Enter a license number with at least 4 characters." }
   }
   const approver = input.approverName?.trim() || "Admin"
-  const board = boardLicenseLookup(input.subject).boardLabel
+  const trade = (input.subject.tradeLabel ?? "").toLowerCase()
+  const board = trade.includes("plumb")
+    ? "State Plumbing Contractor Board"
+    : "State Professional Licensing Board"
   return {
     status: "manual_verified",
     licenseNumber: number,

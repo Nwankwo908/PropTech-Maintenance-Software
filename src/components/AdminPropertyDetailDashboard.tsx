@@ -15,6 +15,8 @@ import { PropertyUnitsTable } from '@/components/PropertyUnitsTable'
 import { PropertyVendorsList } from '@/components/PropertyVendorsList'
 import { PropertyWorkflowsList } from '@/components/PropertyWorkflowsList'
 import { PropertyDetailsPanel } from '@/components/PropertyDetailsPanel'
+import { PropertyZillowMap } from '@/components/PropertyZillowMap'
+import { isLimitedAlpha1Landlord } from '@shared/landlordCapabilities'
 import { getActiveLandlordId } from '@/lib/activeLandlord'
 import { fetchAdminWorkflowDashboard, isCancelledOnActiveTasks, type AdminWorkflowDashboardData } from '@/lib/adminWorkflows'
 import {
@@ -77,7 +79,7 @@ import {
   propertyDetailPath,
   resolvePropertyBuildingMeta,
 } from '@/lib/propertyRoutes'
-import { findPropertyById, findPropertyByName, listPropertiesForLandlord, type PropertyRecord } from '@/lib/properties'
+import { findPropertyById, findPropertyByName, listPropertiesForLandlord, propertyRecordToAddressLine, type PropertyRecord } from '@/lib/properties'
 import {
   buildPropertyUnitRows,
   type PropertyUnitResident,
@@ -650,6 +652,14 @@ export function AdminPropertyDetailDashboard() {
       setError(null)
 
       // Conversations are secondary — don't block the property overview on them.
+      const listedProperty = canonicalPropertiesResult.ok
+        ? canonicalPropertiesResult.properties.find(
+            (property) =>
+              normalizeBuildingKey(property.name) === normalizeBuildingKey(buildingName),
+          ) ?? null
+        : null
+      const conversationProperty = propertyRecord ?? listedProperty
+
       void fetchPropertyConversations(
         buildingName,
         ticketsWithBuilding.map((ticket) => ({
@@ -662,6 +672,15 @@ export function AdminPropertyDetailDashboard() {
           email: resident.email ?? null,
           building: resident.building,
         })),
+        conversationProperty
+          ? {
+              zipCode: conversationProperty.zipCode,
+              city: conversationProperty.city,
+              state: conversationProperty.state,
+              streetAddress: conversationProperty.streetAddress,
+              addressLine: propertyRecordToAddressLine(conversationProperty),
+            }
+          : null,
       )
         .then((rows) => {
           if (!timedOut && loadSeq === loadSeqRef.current) setPropertyConversations(rows)
@@ -887,10 +906,6 @@ export function AdminPropertyDetailDashboard() {
     return resolvePropertyBuildingMeta(building, [], record, false)
   }, [building, canonicalProperty, canonicalProperties])
 
-  const occupiedCount = useMemo(() => {
-    return buildingUnits.filter((unit) => unit.status === 'active').length
-  }, [buildingUnits])
-
   const urgentItems: UrgentItem[] = useMemo(() => {
     if (!workflowData || !building) return []
 
@@ -987,6 +1002,15 @@ export function AdminPropertyDetailDashboard() {
       workflowData,
     })
   }, [building, buildingUnits, buildingResidents, buildingTickets, workflowData])
+
+  const occupancyPct = useMemo(() => {
+    const total = propertyUnitRows.length || buildingUnits.length
+    if (total === 0) return null
+    const occupied = propertyUnitRows.length
+      ? propertyUnitRows.filter((row) => row.occupancyStatus === 'occupied').length
+      : buildingUnits.filter((unit) => unit.status === 'active').length
+    return Math.round((occupied / total) * 100)
+  }, [propertyUnitRows, buildingUnits])
 
   const propertyWorkflowRows = useMemo(() => {
     if (!building) return []
@@ -1399,6 +1423,7 @@ export function AdminPropertyDetailDashboard() {
   }
 
   const subtitle = formatPropertySubtitle(meta, buildingUnits.length)
+  const limitedAlpha1 = isLimitedAlpha1Landlord(getActiveLandlordId())
   const healthScoreReady = shouldShowPropertyHealthScore(buildingHealth?.status)
   const healthValue = resolvePropertyHealthKpiValue(
     buildingHealth?.status,
@@ -1425,7 +1450,7 @@ export function AdminPropertyDetailDashboard() {
               {subtitle}
             </p>
           </div>
-          {buildingHealth ? (
+          {!limitedAlpha1 && buildingHealth ? (
             <span
               className={`rounded-[4px] px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.06em] ${HEALTH_BADGE_STYLES[buildingHealth.status]}`}
             >
@@ -1441,13 +1466,17 @@ export function AdminPropertyDetailDashboard() {
         </div>
       ) : null}
 
-      <div className="grid grid-cols-2 gap-4 lg:grid-cols-5">
+      <div className={`grid grid-cols-2 gap-4 ${limitedAlpha1 ? 'lg:grid-cols-4' : 'lg:grid-cols-5'}`}>
         <StatTile
           label="Units"
           value={loading ? '—' : String(propertyUnitRows.length || buildingUnits.length)}
           icon={<BuildingStatIcon />}
         />
-        <StatTile label="Occupied" value={loading ? '—' : String(occupiedCount)} icon={<UsersStatIcon />} />
+        <StatTile
+          label="Occupied"
+          value={loading || occupancyPct == null ? '—' : `${occupancyPct}%`}
+          icon={<UsersStatIcon />}
+        />
         <StatTile
           label="Open work orders"
           value={loading ? '—' : String(buildingHealth?.openTickets ?? 0)}
@@ -1458,13 +1487,59 @@ export function AdminPropertyDetailDashboard() {
           value={loading ? '—' : formatSpend(propertyAnalytics?.mtdTotal ?? 0)}
           icon={<DollarStatIcon />}
         />
-        <StatTile label="Health" value={loading ? '—' : healthValue} icon={<StarStatIcon />} />
+        {limitedAlpha1 ? null : (
+          <StatTile label="Health" value={loading ? '—' : healthValue} icon={<StarStatIcon />} />
+        )}
       </div>
 
       <nav
         className="mt-6 shrink-0 -mx-8 overflow-x-auto overscroll-x-contain px-8 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden sm:mx-0 sm:px-0"
         aria-label="Property sections"
       >
+        {limitedAlpha1 ? (
+          <div
+            className="flex w-max min-w-full items-end justify-start gap-5 border-b border-[#f3f4f6]"
+            role="tablist"
+            aria-label="Property sections"
+          >
+            {TABS.map((tab) => {
+              const isActive = activeTab === tab.id
+              const className = [
+                'sa-press -mb-px shrink-0 whitespace-nowrap border-b-2 px-0 pb-2.5 pt-3 text-[13px] font-medium leading-5 outline-none focus-visible:ring-2 focus-visible:ring-[#186179] focus-visible:ring-offset-2',
+                isActive
+                  ? 'border-[#186179] text-[#186179]'
+                  : 'border-transparent text-[#6a7282] hover:text-[#186179]',
+              ].join(' ')
+
+              if (tab.href && tab.id !== 'overview') {
+                return (
+                  <Link
+                    key={tab.id}
+                    to={tab.href}
+                    role="tab"
+                    aria-selected={isActive}
+                    className={className}
+                  >
+                    {tab.label}
+                  </Link>
+                )
+              }
+
+              return (
+                <button
+                  key={tab.id}
+                  type="button"
+                  role="tab"
+                  aria-selected={isActive}
+                  onClick={() => selectPropertyTab(tab.id)}
+                  className={className}
+                >
+                  {tab.label}
+                </button>
+              )
+            })}
+          </div>
+        ) : (
         <div
           ref={tabListRef}
           className="property-tab-list relative inline-flex w-max max-w-none flex-nowrap gap-1 rounded-full bg-[#f3f4f6] p-1"
@@ -1518,11 +1593,16 @@ export function AdminPropertyDetailDashboard() {
             )
           })}
         </div>
+        )}
       </nav>
 
       <div key={activeTab} className="property-tab-panel min-w-0">
       {activeTab === 'overview' ? (
         <div className="mt-6 flex flex-col gap-4">
+          {limitedAlpha1 ? (
+            <PropertyZillowMap address={meta.addressLine} buildingName={building} />
+          ) : (
+            <>
           <section
             role={propertyAiInsights ? 'button' : undefined}
             tabIndex={propertyAiInsights ? 0 : undefined}
@@ -1656,6 +1736,8 @@ export function AdminPropertyDetailDashboard() {
               </ul>
             )}
           </section>
+            </>
+          )}
         </div>
       ) : activeTab === 'details' ? (
         <PropertyDetailsPanel

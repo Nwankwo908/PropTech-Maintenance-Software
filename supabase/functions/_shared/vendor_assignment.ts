@@ -9,6 +9,7 @@ import {
   countVendorWeeklyAssignments,
   maybeAutoPauseVendorAtWeeklyCap,
 } from "./vendor_capacity.ts"
+import { landlordHasVendorMarketplace } from "../../../shared/landlordCapabilities.ts"
 
 function normalizeIssueCategory(issueCat: string | null | undefined): string {
   return normalizeVendorTrade(issueCat, { fallbackOther: false }) ??
@@ -36,27 +37,31 @@ export type VendorAssignmentRow = {
   preferred_emergency?: boolean | null
   /** True when roster row came from external vendor discovery. */
   onboarded_from_external?: boolean | null
+  /** Landlord activated without verification documents. */
+  onboarding_overridden_at?: string | null
 }
 
 /**
  * Matching eligibility — only ACTIVE vendors may receive dispatch.
- * ACTIVE = verified + accepting work + not platform-held.
+ * ACTIVE = verified (or landlord onboarding override) + accepting work + not platform-held.
  */
 export function isVendorMatchableForDispatch(input: {
   verificationStatus?: string | null
   vendorActive?: boolean | null
   availability?: string | null
   rosterStatus?: string | null
+  onboardingOverriddenAt?: string | null
 }): boolean {
   const roster = (input.rosterStatus ?? "").trim().toLowerCase()
   if (roster === "banned" || roster === "suspended") return false
 
-  const verification = (input.verificationStatus ?? "").trim().toLowerCase()
-  if (verification !== "verified") return false
-
   const availability = (input.availability ?? "").trim().toLowerCase()
   if (availability === "paused") return false
   if (input.vendorActive === false) return false
+
+  const verification = (input.verificationStatus ?? "").trim().toLowerCase()
+  const overridden = Boolean((input.onboardingOverriddenAt ?? "").trim())
+  if (verification !== "verified" && !overridden) return false
 
   return true
 }
@@ -225,12 +230,14 @@ export async function pickVendorForAssignment(
   const issueCat = options.issueCategory ?? null
   const avoid = options.preferNotVendorId?.trim() ?? null
   const preferEmergency = options.preferPreferredEmergency === true
-  const marketplacePreference = options.marketplacePreference ?? "include_imported"
+  const marketplacePreference = landlordHasVendorMarketplace(options.landlordId)
+    ? (options.marketplacePreference ?? "include_imported")
+    : "include_imported"
 
   let query = supabase
     .from("vendors")
     .select(
-      "id,name,email,phone,notification_channel,active,category,portal_api_key,last_assigned_at,created_at,roster_status,weekly_job_cap,preferred_emergency,onboarded_from_external",
+      "id,name,email,phone,notification_channel,active,category,portal_api_key,last_assigned_at,created_at,roster_status,weekly_job_cap,preferred_emergency,onboarded_from_external,onboarding_overridden_at",
     )
     .eq("active", true)
 
@@ -292,6 +299,7 @@ export async function pickVendorForAssignment(
       vendorActive: v.active,
       availability: verif?.availability ?? null,
       rosterStatus: v.roster_status ?? null,
+      onboardingOverriddenAt: v.onboarding_overridden_at ?? null,
     })
   })
 

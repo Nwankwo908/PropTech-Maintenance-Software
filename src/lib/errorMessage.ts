@@ -70,6 +70,14 @@ export function toUserFriendlyMessage(raw: string, fallback: string): string {
   }
 
   if (
+    lower.includes('issued at future') ||
+    lower.includes('token used before') ||
+    lower.includes('iat is in the future')
+  ) {
+    return 'Could not load some details. Check that this computer’s clock is correct, then refresh the page.'
+  }
+
+  if (
     lower.includes('jwt') ||
     lower.includes('invalid claim') ||
     lower.includes('not authenticated') ||

@@ -9,6 +9,7 @@ import {
   workOrderRefMatchesTicket,
 } from "../vendor_outreach_copy.ts"
 import { parseVendorSmsReply } from "../vendor_workflow.ts"
+import { phoneLookupVariants } from "./inbound_db.ts"
 
 export const VENDOR_WO_CLARIFICATION_KEY = "vendor_work_order_clarification"
 export const VENDOR_WO_CLARIFICATION_TTL_MS = 30 * 60 * 1000
@@ -39,7 +40,95 @@ export type JobMatchResult =
   | { kind: "ambiguous"; jobs: VendorActiveJob[] }
   | { kind: "none" }
 
-const OPEN_STATUSES = ["pending_accept", "accepted", "in_progress"] as const
+/** Open for vendor SMS binding. `unassigned` is included only with assigned_vendor_id set (broken offer row). */
+const OPEN_STATUSES = [
+  "pending_accept",
+  "accepted",
+  "in_progress",
+  "unassigned",
+] as const
+
+export const VENDOR_PENDING_JOB_OFFER_KEY = "pending_vendor_job_offer"
+export const VENDOR_PENDING_JOB_OFFER_TTL_MS = 14 * 24 * 60 * 60 * 1000
+
+export type PendingVendorJobOffer = {
+  ticketId: string
+  vendorId: string
+  sentAt: string
+}
+
+export function readPendingVendorJobOffer(
+  intakeState: Record<string, unknown> | null | undefined,
+  now = Date.now(),
+): PendingVendorJobOffer | null {
+  if (!intakeState || typeof intakeState !== "object") return null
+  const raw = intakeState[VENDOR_PENDING_JOB_OFFER_KEY]
+  if (!raw || typeof raw !== "object") return null
+  const row = raw as Record<string, unknown>
+  const ticketId = typeof row.ticketId === "string" ? row.ticketId.trim() : ""
+  const vendorId = typeof row.vendorId === "string" ? row.vendorId.trim() : ""
+  const sentAt = typeof row.sentAt === "string" ? row.sentAt : ""
+  if (!ticketId) return null
+  if (sentAt) {
+    const sentMs = Date.parse(sentAt)
+    if (
+      Number.isFinite(sentMs) &&
+      now - sentMs > VENDOR_PENDING_JOB_OFFER_TTL_MS
+    ) {
+      return null
+    }
+  }
+  return { ticketId, vendorId, sentAt }
+}
+
+export function withPendingVendorJobOffer(
+  intakeState: Record<string, unknown> | null | undefined,
+  offer: PendingVendorJobOffer | null,
+): Record<string, unknown> {
+  const base =
+    intakeState && typeof intakeState === "object" ? { ...intakeState } : {}
+  if (!offer) {
+    delete base[VENDOR_PENDING_JOB_OFFER_KEY]
+    return base
+  }
+  base[VENDOR_PENDING_JOB_OFFER_KEY] = offer
+  return base
+}
+
+/** Same phone, duplicate roster rows — inbound identity may not match assigned_vendor_id. */
+export async function resolveVendorSmsRosterIds(
+  supabase: SupabaseClient,
+  vendorId: string,
+): Promise<string[]> {
+  const ids = new Set<string>([vendorId])
+  const { data: vendor, error } = await supabase
+    .from("vendors")
+    .select("id, phone, landlord_id")
+    .eq("id", vendorId)
+    .maybeSingle()
+  if (error || !vendor) return [...ids]
+
+  const phone = typeof vendor.phone === "string" ? vendor.phone.trim() : ""
+  if (!phone) return [...ids]
+  const variants = phoneLookupVariants(phone)
+  if (variants.length === 0) return [...ids]
+
+  let query = supabase.from("vendors").select("id").in("phone", variants)
+  const landlordId =
+    typeof vendor.landlord_id === "string" ? vendor.landlord_id.trim() : ""
+  if (landlordId) query = query.eq("landlord_id", landlordId)
+
+  const { data: siblings, error: sibErr } = await query
+  if (sibErr) {
+    console.warn("[vendor-wo-clarify] sibling vendor lookup", sibErr.message)
+    return [...ids]
+  }
+  for (const row of siblings ?? []) {
+    const id = typeof row.id === "string" ? row.id.trim() : ""
+    if (id) ids.add(id)
+  }
+  return [...ids]
+}
 
 function iso(ms = Date.now()): string {
   return new Date(ms).toISOString()
@@ -383,10 +472,11 @@ export async function listVendorActiveJobs(
   supabase: SupabaseClient,
   vendorId: string,
 ): Promise<VendorActiveJob[]> {
+  const rosterIds = await resolveVendorSmsRosterIds(supabase, vendorId)
   const { data, error } = await supabase
     .from("maintenance_requests")
     .select("id, unit, building, issue_category, description, created_at")
-    .eq("assigned_vendor_id", vendorId)
+    .in("assigned_vendor_id", rosterIds)
     .in("vendor_work_status", [...OPEN_STATUSES])
     .order("created_at", { ascending: false })
     .limit(20)

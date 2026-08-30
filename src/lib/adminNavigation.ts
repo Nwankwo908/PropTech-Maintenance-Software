@@ -6,6 +6,9 @@
  * Entity deep links (property detail, vendor detail) compose paths via `adminNavPath`.
  */
 
+import { getActiveLandlordId } from '@/lib/activeLandlord'
+import { landlordHasPayments } from '@shared/landlordCapabilities'
+
 /** Mirrors `UniversalSearchCategory` — kept local to avoid circular imports. */
 export type AdminNavSearchCategory =
   | 'property'
@@ -376,13 +379,16 @@ export function getAdminSidebarNavItems(): AdminSidebarNavItem[] {
 /** Settings hub cards derived from settings children. */
 export function getAdminSettingsNavCategories(): AdminSettingsNavCategory[] {
   const settings = getAdminNavNode('settings')
-  return (settings.children ?? []).map((child) => ({
-    id: child.id,
-    title: child.label,
-    description: child.description ?? '',
-    href: child.path,
-    activeOnExactPath: child.activeOnExactPath,
-  }))
+  const payments = landlordHasPayments(getActiveLandlordId())
+  return (settings.children ?? [])
+    .filter((child) => payments || child.id !== 'settings_billing')
+    .map((child) => ({
+      id: child.id,
+      title: child.label,
+      description: child.description ?? '',
+      href: child.path,
+      activeOnExactPath: child.activeOnExactPath,
+    }))
 }
 
 function buildSearchKeywords(node: AdminNavNode): string {
@@ -400,7 +406,12 @@ function buildSearchKeywords(node: AdminNavNode): string {
 
 /** Static universal-search shortcuts derived from the master list. */
 export function getAdminNavSearchItems(): AdminNavSearchItem[] {
-  return ADMIN_NAV_FLAT.filter((node) => node.surfaces.search && node.search).map((node) => ({
+  const payments = landlordHasPayments(getActiveLandlordId())
+  return ADMIN_NAV_FLAT.filter((node) => {
+    if (!node.surfaces.search || !node.search) return false
+    if (!payments && node.id === 'settings_billing') return false
+    return true
+  }).map((node) => ({
     id: `nav-${node.id}`,
     category: node.search!.category,
     title: node.search!.title ?? node.label,

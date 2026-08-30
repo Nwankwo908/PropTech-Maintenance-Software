@@ -66,7 +66,7 @@ serve(async (req) => {
     typeof body.approverName === "string" ? body.approverName.trim() : null
 
   if (actionRaw === "lookup") {
-    const result = lookupExternalVendorCompliance(subject)
+    const result = await lookupExternalVendorCompliance(subject)
     return jsonResponse({ ok: true, action: "lookup", ...result })
   }
 

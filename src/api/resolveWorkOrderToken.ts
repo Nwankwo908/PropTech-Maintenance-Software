@@ -1,5 +1,5 @@
-import { supabase } from '@/lib/supabase'
 import { uloAppUrl } from '@/lib/uloAppUrl'
+import { normalizeVendorJobToken } from '@/lib/vendorJobToken'
 
 export type WorkOrderPublicHistoryItem = {
   ticketId: string
@@ -78,32 +78,26 @@ export type ResolveWorkOrderTokenResult = {
 export async function resolveWorkOrderToken(
   token: string,
 ): Promise<ResolveWorkOrderTokenResult> {
-  if (!supabase) {
+  const trimmed = normalizeVendorJobToken(token)
+  if (!trimmed) throw new Error('This job link is invalid or incomplete.')
+
+  const supabaseUrl = import.meta.env.VITE_SUPABASE_URL?.trim()
+  const anon = import.meta.env.VITE_SUPABASE_ANON_KEY?.trim()
+  if (!supabaseUrl || !anon) {
     throw new Error("We can't reach the server right now. Please try again in a moment.")
   }
-  const trimmed = token.trim()
-  if (!trimmed) throw new Error('Missing job link token')
 
-  const { data, error } = await supabase.functions.invoke('resolve-work-order-token', {
-    body: { token: trimmed },
+  const res = await fetch(`${supabaseUrl.replace(/\/$/, '')}/functions/v1/resolve-work-order-token`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      apikey: anon,
+      Authorization: `Bearer ${anon}`,
+    },
+    body: JSON.stringify({ token: trimmed }),
   })
 
-  if (error) {
-    let message = error.message
-    const ctx = (error as { context?: Response }).context
-    if (ctx && typeof ctx.text === 'function') {
-      try {
-        const t = await ctx.text()
-        const j = t ? (JSON.parse(t) as { error?: string }) : null
-        if (j?.error) message = j.error
-      } catch {
-        /* ignore */
-      }
-    }
-    throw new Error(message)
-  }
-
-  const payload = data as {
+  let payload: {
     ok?: boolean
     ticketId?: string
     workOrderRef?: string
@@ -111,6 +105,26 @@ export async function resolveWorkOrderToken(
     portalApiKey?: string | null
     job?: WorkOrderPublicJob
     error?: string
+  } | null = null
+  try {
+    payload = (await res.json()) as typeof payload
+  } catch {
+    payload = null
+  }
+
+  if (!res.ok) {
+    const message = payload?.error?.trim()
+    if (res.status === 404 || message?.toLowerCase().includes('not found')) {
+      throw new Error('This job link is no longer valid. Ask the property team to send a new one.')
+    }
+    if (res.status === 400 || message?.toLowerCase().includes('invalid token')) {
+      throw new Error('This job link is invalid or incomplete.')
+    }
+    throw new Error(
+      message && message.length < 160
+        ? message
+        : 'Could not open this job. Please try the link from your text again.',
+    )
   }
 
   if (!payload?.ticketId || !payload.portalPath || !payload.job) {
@@ -143,7 +157,7 @@ export async function resolveWorkOrderToken(
     portalApiKey:
       typeof payload.portalApiKey === 'string' && payload.portalApiKey.trim()
         ? payload.portalApiKey.trim()
-        : null,
+        : trimmed,
     job: {
       ...job,
       address: typeof job.address === 'string' ? job.address : '',

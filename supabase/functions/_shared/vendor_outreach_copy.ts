@@ -110,14 +110,6 @@ export function buildVendorJobAssignmentEmailText(input: {
   if (input.viewJobUrl) lines.push(`View details: ${input.viewJobUrl}`)
   else if (input.portalHomeUrl) lines.push(`Vendor portal: ${input.portalHomeUrl}`)
 
-  if (input.accessCode?.trim()) {
-    lines.push(
-      "",
-      `Your sign-in code: ${input.accessCode.trim()}`,
-      "Use this on the vendor portal if you're asked to log in.",
-    )
-  }
-
   lines.push("", `Job ref: ${input.ticketId}`, "", "Thanks!")
   return lines.join("\n")
 }
@@ -140,7 +132,6 @@ export function buildVendorJobAssignmentSms(input: {
   const wo = formatWorkOrderRef(input.ticketId)
   const avail = input.residentAvailabilityText?.trim()
 
-  // Job detail link is SMS 3 after accept + scheduling ask (`buildVendorJobDetailLinkSms`).
   const lines = [
     `Hi ${company},`,
     "",
@@ -156,6 +147,12 @@ export function buildVendorJobAssignmentSms(input: {
   lines.push(
     `Would you like to take this job? Reply YES ${wo} to accept or NO ${wo} to decline.`,
   )
+  const jobUrl = (input.jobDetailUrl ?? input.viewJobUrl)?.trim()
+  if (jobUrl) {
+    lines.push("")
+    lines.push("View this job:")
+    lines.push(jobUrl)
+  }
   return lines.join("\n")
 }
 

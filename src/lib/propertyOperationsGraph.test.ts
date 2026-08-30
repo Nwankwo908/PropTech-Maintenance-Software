@@ -14,6 +14,7 @@ function feedEvent(
     message: null,
     eventSource: 'sms',
     createdAt: '2026-08-15T12:00:00.000Z',
+    scheduledAt: null,
     unitLabel: null,
     building: null,
     residentId: null,

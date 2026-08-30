@@ -263,6 +263,7 @@ export type DeliverBroadcastMessagesParams =
       /** Defaults to `false` when omitted (fresh send). */
       resume?: boolean
       recipients: BroadcastRecipientRow[]
+      landlordId?: string | null
     }
   | {
       subject: string
@@ -273,6 +274,7 @@ export type DeliverBroadcastMessagesParams =
       audience: BroadcastAudience
       building: string
       units: string[]
+      landlordId?: string | null
     }
 
 export async function deliverBroadcastMessages(
@@ -341,7 +343,9 @@ export async function deliverBroadcastMessages(
             throw new Error("skipped: no valid phone for SMS")
           }
           const sms = broadcastSmsBody(params.subject, params.message, params.payload)
-          const result = await sendOutboundSms(phoneE164, sms)
+          const result = await sendOutboundSms(phoneE164, sms, {
+            landlordId: params.landlordId,
+          })
           if ("error" in result) {
             throw new Error(result.error)
           }

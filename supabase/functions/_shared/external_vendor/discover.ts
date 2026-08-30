@@ -20,6 +20,7 @@ import type {
   ExternalVendorSource,
   ExternalVendorSuggestion,
 } from "./types.ts"
+import { landlordHasVendorMarketplace } from "../../../../shared/landlordCapabilities.ts"
 
 export type DiscoverExternalVendorsOptions = {
   issueCategory: string | null
@@ -304,6 +305,19 @@ export async function discoverExternalVendorsForTicket(
   )
 
   const allowMock = await landlordAllowsMockExternalVendors(supabase, landlordId)
+  if (!landlordHasVendorMarketplace(landlordId)) {
+    return {
+      ticketId,
+      suggestions: [],
+      providersUsed: [],
+      mode: "live" as const,
+      configured: true,
+      searchLocation,
+      locationLabel,
+      areaLabel,
+      issueCategory: normalizedCategory,
+    }
+  }
   const result = await discoverExternalVendors(supabase, {
     issueCategory: normalizedCategory,
     searchLocation,

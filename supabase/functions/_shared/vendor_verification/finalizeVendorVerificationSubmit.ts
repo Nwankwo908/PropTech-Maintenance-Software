@@ -40,6 +40,7 @@ function locationFieldsFromServiceArea(
   if (!area || typeof area !== "object") return {}
   const row = area as {
     cities?: unknown
+    counties?: unknown
     centerAddress?: unknown
   }
   const cities = Array.isArray(row.cities)
@@ -47,16 +48,28 @@ function locationFieldsFromServiceArea(
       typeof item === "string" && item.trim().length > 0
     )
     : []
-  const first = (
-    cities[0] ??
-    (typeof row.centerAddress === "string" ? row.centerAddress : "")
-  ).trim()
-  if (!first) return {}
-  const parts = first.split(",").map((part) => part.trim()).filter(Boolean)
-  if (parts.length >= 2) {
-    return { city: parts[0], state: parts[1] }
+  const counties = Array.isArray(row.counties)
+    ? row.counties.filter((item): item is string =>
+      typeof item === "string" && item.trim().length > 0
+    )
+    : []
+  const center = typeof row.centerAddress === "string" ? row.centerAddress.trim() : ""
+  const centerParts = center.split(",").map((part) => part.trim()).filter(Boolean)
+
+  const city = (cities[0] ?? centerParts[0] ?? "").trim()
+  const countyState = counties.find((county) => /^[A-Za-z]{2}$/.test(county.trim()))
+  let state = countyState ? countyState.trim().toUpperCase() : ""
+  if (!state) {
+    for (const part of centerParts.slice(1)) {
+      const token = (part.split(/\s+/)[0] ?? "")
+      if (/^[A-Za-z]{2}$/.test(token)) {
+        state = token.toUpperCase()
+        break
+      }
+    }
   }
-  return { city: first }
+  if (!city) return {}
+  return state ? { city, state } : { city }
 }
 
 /**

@@ -26,7 +26,7 @@ import {
   formatRescheduleTimeLabel,
 } from "./vendorRescheduleSms.ts"
 import { findActiveLandlordMainNumber } from "./landlordSmsOnboarding.ts"
-import { getSMSProvider } from "./providerFactory.ts"
+import { getSMSProviderForSend } from "./providerFactory.ts"
 
 export const AWAITING_SCHEDULE_CONFIRM_KEY = "awaiting_schedule_confirmation"
 
@@ -413,7 +413,10 @@ async function notifyLandlordOpsSms(
   const sender = await findActiveLandlordMainNumber(supabase, landlordId)
   const from = sender?.phone_number?.trim()
   if (!from) return
-  const provider = getSMSProvider()
+  const provider = getSMSProviderForSend({
+    landlordId,
+    lineProvider: sender.provider,
+  })
   for (const to of phones) {
     await provider.sendMessage({ to, body, from })
   }

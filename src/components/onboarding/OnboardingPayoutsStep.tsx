@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
 import {
-  createLandlordConnectAccountLink,
   createLandlordConnectAccountSession,
   fetchLandlordStripeConnectStatus,
   primaryPayoutMethodLabel,
@@ -10,7 +9,6 @@ import {
 } from '@/api/landlordStripeConnect'
 import { StripeConnectEmbeddedOnboarding } from '@/components/StripeConnectEmbeddedOnboarding'
 import { getErrorMessage } from '@/lib/errorMessage'
-import { hasStripeConnectEmbedded } from '@/lib/stripePublishableKey'
 import {
   onboardingBtnGhostClass,
   onboardingBtnPrimaryClass,
@@ -27,6 +25,25 @@ const btnSecondary = onboardingBtnSecondaryClass
 const btnContinue = onboardingBtnPrimaryClass
 
 const btnGhost = onboardingBtnGhostClass
+
+function PayoutAccordionChevron({ expanded }: { expanded: boolean }) {
+  return (
+    <svg
+      viewBox="0 0 20 20"
+      fill="none"
+      aria-hidden
+      className={`size-5 shrink-0 transition-transform duration-200 ${expanded ? 'rotate-180' : ''}`}
+    >
+      <path
+        d="M5 7.5 10 12.5 15 7.5"
+        stroke="currentColor"
+        strokeWidth="1.8"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  )
+}
 
 export type OnboardingPayoutsStepProps = {
   landlordId: string
@@ -133,21 +150,9 @@ export function OnboardingPayoutsStep({
     return result.clientSecret
   }, [landlordId])
 
-  async function handleSetUpPayouts() {
+  function togglePayoutAccordion() {
     setError(null)
-    if (hasStripeConnectEmbedded()) {
-      setShowConnectOnboarding(true)
-      return
-    }
-    setBusy(true)
-    try {
-      const result = await createLandlordConnectAccountLink(landlordId)
-      applyStatus(result)
-      window.location.assign(result.url)
-    } catch (err) {
-      setError(getErrorMessage(err, 'Could not open payout setup.'))
-      setBusy(false)
-    }
+    setShowConnectOnboarding((open) => !open)
   }
 
   async function handleConnectExit() {
@@ -238,12 +243,29 @@ export function OnboardingPayoutsStep({
               <button
                 type="button"
                 disabled={busy || saving}
-                onClick={() => void handleSetUpPayouts()}
+                aria-expanded={showConnectOnboarding}
+                onClick={togglePayoutAccordion}
                 className={`${btnSecondary} w-full sm:flex-1`}
               >
                 Update payout method
               </button>
             </div>
+            {showConnectOnboarding ? (
+              <div className="mt-4 overflow-hidden rounded-[10px] border border-[#e5e7eb] bg-white p-4">
+                <StripeConnectEmbeddedOnboarding
+                  fetchClientSecret={fetchLandlordConnectClientSecret}
+                  onExit={() => void handleConnectExit()}
+                />
+                <button
+                  type="button"
+                  disabled={busy || saving}
+                  onClick={() => setShowConnectOnboarding(false)}
+                  className="sa-link mt-3 w-full text-center text-[13px] font-medium text-[#186179] hover:underline disabled:opacity-50"
+                >
+                  Close payout setup
+                </button>
+              </div>
+            ) : null}
             {primaryLabel ? (
               <p className="mt-3 text-[12px] leading-5 text-[#6b7280]">
                 Only the last four digits are shown so you can verify the right account without
@@ -262,42 +284,42 @@ export function OnboardingPayoutsStep({
                 : 'Verify your business and add the account where you want rent deposited. We’ll show a masked summary afterward so you can confirm it’s correct.'}
             </p>
             {methods.length > 0 ? <PayoutMethodsList methods={methods} /> : null}
-            <button
-              type="button"
-              disabled={busy || saving}
-              onClick={() => void handleSetUpPayouts()}
-              className={`${btnPrimary} mt-4`}
-            >
-              {started ? 'Continue payout setup' : 'Set up payouts'}
-            </button>
-            {started ? (
+            <div className="mt-4 overflow-hidden rounded-[10px] border border-[#d1d5dc]">
+              <button
+                type="button"
+                disabled={busy || saving}
+                aria-expanded={showConnectOnboarding}
+                onClick={togglePayoutAccordion}
+                className={`${btnPrimary} flex items-center justify-between gap-3 rounded-none`}
+              >
+                <span>{started ? 'Continue payout setup' : 'Set up payouts'}</span>
+                <PayoutAccordionChevron expanded={showConnectOnboarding} />
+              </button>
+              {showConnectOnboarding ? (
+                <div className="border-t border-[#d1d5dc] bg-white p-4">
+                  <p className="text-[13px] leading-5 text-[#6a7282]">
+                    Set up payouts so rent can be deposited to your account. Takes a few minutes —
+                    you stay on this page.
+                  </p>
+                  <StripeConnectEmbeddedOnboarding
+                    fetchClientSecret={fetchLandlordConnectClientSecret}
+                    onExit={() => void handleConnectExit()}
+                  />
+                </div>
+              ) : null}
+            </div>
+            {started && !showConnectOnboarding ? (
               <button
                 type="button"
                 disabled={busy || saving}
                 onClick={() => void handleRefresh()}
                 className="sa-link mt-3 w-full text-center text-[13px] font-medium text-[#186179] hover:underline disabled:opacity-50"
               >
-                I finished on Stripe — refresh status
+                Refresh payout status
               </button>
             ) : null}
           </>
         )}
-        {showConnectOnboarding && hasStripeConnectEmbedded() ? (
-          <>
-            <StripeConnectEmbeddedOnboarding
-              fetchClientSecret={fetchLandlordConnectClientSecret}
-              onExit={() => void handleConnectExit()}
-            />
-            <button
-              type="button"
-              disabled={busy || saving}
-              onClick={() => setShowConnectOnboarding(false)}
-              className="sa-link mt-3 w-full text-center text-[13px] font-medium text-[#186179] hover:underline disabled:opacity-50"
-            >
-              Close payout setup
-            </button>
-          </>
-        ) : null}
       </div>
 
       {error ? (

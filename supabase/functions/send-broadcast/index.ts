@@ -28,6 +28,7 @@ type Audience = "all" | "building" | "units"
 
 type SendBroadcastBody = {
   action?: string
+  landlordId?: string
   subject?: string
   message?: string
   audience?: Audience
@@ -226,6 +227,7 @@ serve(async (req) => {
       message,
       payload: payloadFromBody,
       channels,
+      landlordId: resolveLandlordId(body.landlordId),
     })
 
     const updateRes = await supabase
@@ -241,7 +243,7 @@ serve(async (req) => {
 
     try {
       await logGraphEvent(supabase, {
-        landlord_id: resolveLandlordId(),
+        landlord_id: resolveLandlordId(body.landlordId),
         event_type: "broadcast.sent",
         source: "dashboard",
         actor_type: "landlord",

@@ -31,6 +31,10 @@ export type NotificationSettingsState = {
 }
 
 import { getActiveLandlordId } from '@/lib/activeLandlord'
+import {
+  landlordHasNativeMobileApp,
+  landlordHasPayments,
+} from '@shared/landlordCapabilities'
 
 const STORAGE_KEY = 'ulo.notificationSettings'
 
@@ -289,7 +293,42 @@ export async function loadNotificationSettingsForAccount(
 ): Promise<NotificationSettingsState> {
   const { loadLandlordSettings } = await import('@/lib/landlordSettings')
   const snapshot = await loadLandlordSettings(landlordId)
-  return snapshot.notifications
+  return applyLimitedAlphaNotificationFilter(snapshot.notifications, landlordId)
+}
+
+function applyLimitedAlphaNotificationFilter(
+  state: NotificationSettingsState,
+  landlordId: string,
+): NotificationSettingsState {
+  let next = state
+  if (!landlordHasPayments(landlordId)) {
+    next = {
+      ...next,
+      categories: next.categories.map((category) => ({
+        ...category,
+        events: category.events.filter((item) => item.id !== 'payment_received'),
+      })),
+    }
+  }
+  if (!landlordHasNativeMobileApp(landlordId)) {
+    next = {
+      ...next,
+      delivery: {
+        ...next.delivery,
+        pushEnabled: false,
+        primaryChannel: next.delivery.primaryChannel === 'push' ? 'email' : next.delivery.primaryChannel,
+        fallbackChannel: next.delivery.fallbackChannel === 'push' ? 'sms' : next.delivery.fallbackChannel,
+      },
+      categories: next.categories.map((category) => ({
+        ...category,
+        events: category.events.map((item) => ({
+          ...item,
+          channels: { ...item.channels, push: false },
+        })),
+      })),
+    }
+  }
+  return next
 }
 
 export function saveNotificationSettings(state: NotificationSettingsState): void {

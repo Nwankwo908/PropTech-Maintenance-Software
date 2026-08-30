@@ -3,7 +3,7 @@
  * All outbound SMS should flow through getSMSProvider() — never Twilio directly.
  */
 
-import { getSMSProvider } from "./providerFactory.ts"
+import { getSMSProviderForSend } from "./providerFactory.ts"
 import type { SendMessageInput, SendMessageResult } from "./types.ts"
 
 export type LegacySmsSendResult = { sid: string } | { error: string }
@@ -29,9 +29,15 @@ export function toLegacySmsSendResult(
 export async function sendOutboundSms(
   to: string,
   body: string,
-  options?: Pick<SendMessageInput, "from" | "mediaUrls">,
+  options?: Pick<SendMessageInput, "from" | "mediaUrls"> & {
+    landlordId?: string | null
+    provider?: string | null
+  },
 ): Promise<LegacySmsSendResult> {
-  const result = await getSMSProvider().sendMessage({
+  const result = await getSMSProviderForSend({
+    landlordId: options?.landlordId,
+    lineProvider: options?.provider,
+  }).sendMessage({
     to,
     body,
     from: options?.from,
@@ -42,7 +48,10 @@ export async function sendOutboundSms(
 
 /** Full provider result when callers need status or providerMessageSid explicitly. */
 export async function sendOutboundSmsDetailed(
-  input: SendMessageInput,
+  input: SendMessageInput & { landlordId?: string | null },
 ): Promise<SendMessageResult> {
-  return getSMSProvider().sendMessage(input)
+  return getSMSProviderForSend({
+    landlordId: input.landlordId,
+    lineProvider: undefined,
+  }).sendMessage(input)
 }

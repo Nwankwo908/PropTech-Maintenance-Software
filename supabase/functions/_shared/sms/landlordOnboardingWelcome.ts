@@ -7,7 +7,7 @@ import { normalizeOpsEmail } from "../landlordOpsNotify.ts"
 import { recordActivityLog } from "../graph/recordActivityLog.ts"
 import { normalizePhoneFlexible } from "../resident_notify.ts"
 import { findActiveLandlordMainNumber } from "./landlordSmsOnboarding.ts"
-import { getSMSProvider } from "./providerFactory.ts"
+import { getSMSProviderForSend } from "./providerFactory.ts"
 import { uloAppUrl } from "../uloAppUrl.ts"
 
 export type LandlordOnboardingWelcomeParams = {
@@ -341,7 +341,10 @@ export async function sendLandlordOnboardingWelcome(
     if (!from) {
       errors.push("no_landlord_main_sms")
     } else {
-      const provider = getSMSProvider()
+      const provider = getSMSProviderForSend({
+        landlordId,
+        lineProvider: sender.provider,
+      })
       for (const to of phones) {
         const send = await provider.sendMessage({ to, body: smsBody, from })
         if (send.error) {

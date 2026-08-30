@@ -14,6 +14,7 @@ import {
 } from '@/lib/onboarding'
 import { phoneForDbOrError } from '@/lib/phoneFormat'
 import { supabase } from '@/lib/supabase'
+import { emptyToNull } from '@/lib/vendorLocation'
 import {
   dbCategoryToVendorTrade,
   vendorTradeToDbCategory,
@@ -29,6 +30,9 @@ export function createEmptyVendorForm(): VendorFormRow {
     category: '',
     email: '',
     phone: '',
+    city: '',
+    state: '',
+    country: '',
     preferredEmergency: false,
   }
 }
@@ -40,6 +44,9 @@ export function vendorToFormRow(vendor: OnboardingVendor): VendorFormRow {
     category: dbCategoryToVendorTrade(vendor.category),
     email: vendor.email,
     phone: vendor.phone,
+    city: vendor.city,
+    state: vendor.state,
+    country: vendor.country,
     preferredEmergency: Boolean(vendor.preferredEmergency),
   }
 }
@@ -53,6 +60,9 @@ export function normalizeVendorFormRow(
     category: form.category ?? '',
     email: form.email ?? '',
     phone: form.phone ?? '',
+    city: form.city ?? '',
+    state: form.state ?? '',
+    country: form.country ?? '',
     preferredEmergency: Boolean(form.preferredEmergency),
   }
 }
@@ -175,7 +185,10 @@ export async function saveOnboardingVendorsStep(
       form.name.trim() ||
       form.category.trim() ||
       form.email.trim() ||
-      form.phone.trim()
+      form.phone.trim() ||
+      form.city.trim() ||
+      form.state.trim() ||
+      form.country.trim()
     if (hasPartialData && !form.name.trim()) {
       setError('Each vendor needs a name, or clear empty vendor rows.')
       return
@@ -208,6 +221,9 @@ export async function saveOnboardingVendorsStep(
       category: vendorTradeToDbCategory(form.category),
       email: form.email.trim() || null,
       phone: vendorPhones[i]!.phone,
+      city: emptyToNull(form.city),
+      state: emptyToNull(form.state),
+      country: emptyToNull(form.country),
       notification_channel: 'both' as const,
       active: true,
       preferred_emergency: form.preferredEmergency === true,

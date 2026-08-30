@@ -6,6 +6,7 @@ import {
   type EstimateJobContext,
 } from '@/api/maintenanceEstimate'
 import { getErrorMessage } from '@/lib/errorMessage'
+import { normalizeVendorJobToken } from '@/lib/vendorJobToken'
 
 function parseMoney(raw: string): number | null {
   const n = Number(raw.replace(/[^0-9.-]/g, ''))
@@ -85,7 +86,7 @@ export function WorkOrderEstimatePage() {
   const [busy, setBusy] = useState(false)
   const [success, setSuccess] = useState<string | null>(null)
 
-  const t = token?.trim() ?? ''
+  const t = normalizeVendorJobToken(token)
   const back = t ? `/w/${encodeURIComponent(t)}` : '/vendor'
 
   useEffect(() => {
@@ -179,11 +180,10 @@ export function WorkOrderEstimatePage() {
           <p className="text-[12px] font-medium uppercase tracking-[0.06em] text-[#667085]">
             Job detail
           </p>
-          <h1 className="font-[family-name:var(--font-heading)] text-[22px] font-semibold">
-            {ctx.workOrderRef}
-          </h1>
-          <p className="mt-1 text-[14px] text-[#667085]">{ctx.unit || 'Unit'}</p>
-        </div>
+            <h1 className="text-[24px] font-semibold leading-8 tracking-[0.0703px] text-[#0a0a0a]">
+              {ctx.workOrderRef}
+            </h1>
+          </div>
       </header>
 
       <main className="mx-auto max-w-lg space-y-4 px-4 py-6 pb-16">

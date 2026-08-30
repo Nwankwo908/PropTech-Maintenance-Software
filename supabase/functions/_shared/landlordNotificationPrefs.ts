@@ -7,6 +7,7 @@ import {
   normalizeOpsAlertChannelPreference,
   opsAlertChannelsEnabled,
 } from "./sms/tenantActivationFailure.ts"
+import { landlordHasVendorMarketplace } from "../../../shared/landlordCapabilities.ts"
 
 export type EdgeNotificationChannel = "email" | "sms" | "activity_feed" | "push"
 
@@ -87,6 +88,7 @@ export async function loadLandlordMarketplacePreference(
   supabase: SupabaseClient,
   landlordId: string,
 ): Promise<MarketplacePreferenceId> {
+  if (!landlordHasVendorMarketplace(landlordId)) return "include_imported"
   const { data: onboarding } = await supabase
     .from("landlord_onboarding")
     .select("marketplace_preference, account_settings")

@@ -98,6 +98,13 @@ Deno.test("urgency parse accepts natural phrases", () => {
     "affirm recommended",
   )
   assertEqual(isAffirmativeReply("That sounds right"), true, "affirm")
+  assertEqual(isAffirmativeReply("Yes that's right"), true, "yes thats right")
+  assertEqual(isAffirmativeReply("Yes, that's correct"), true, "yes comma thats correct")
+  assertEqual(
+    resolveUrgencyReply("Yes that's right", "emergency"),
+    "emergency",
+    "yes thats right accepts recommended urgency",
+  )
   assertEqual(isNegativeReply("No"), true, "bare no")
   assertEqual(isNegativeReply("The leak is getting worse"), false, "description is not no")
   assertEqual(resolveUrgencyReply("maybe later", "emergency"), null, "non-match")

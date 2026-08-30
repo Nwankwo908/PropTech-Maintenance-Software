@@ -1,5 +1,5 @@
 import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.49.1"
-import { getSMSProvider } from "./providerFactory.ts"
+import { getSMSProviderFor } from "./providerFactory.ts"
 import { normalizeSmsPhone } from "./inbound_db.ts"
 import type { SmsProviderName } from "./types.ts"
 
@@ -40,7 +40,7 @@ export function resolveInboundAutoReplyBody(
 }
 
 /**
- * Send an inbound auto-reply via getSMSProvider().sendMessage() and persist to sms_messages.
+ * Send an outbound SMS via the landlord line's provider and persist to sms_messages.
  * Always writes an outbound sms_messages row (sent or failed) for resident-intake auditing.
  */
 export async function sendInboundAutoReply(
@@ -64,9 +64,9 @@ export async function sendInboundAutoReply(
     bodyPreview: body.slice(0, 160),
   })
 
-  let sendResult: Awaited<ReturnType<ReturnType<typeof getSMSProvider>["sendMessage"]>>
+  let sendResult: Awaited<ReturnType<ReturnType<typeof getSMSProviderFor>["sendMessage"]>>
   try {
-    sendResult = await getSMSProvider().sendMessage({
+    sendResult = await getSMSProviderFor(params.provider).sendMessage({
       to: params.toNumber,
       body,
       from: params.fromNumber,

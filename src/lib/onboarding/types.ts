@@ -81,6 +81,9 @@ export type VendorFormRow = {
   category: string
   email: string
   phone: string
+  city: string
+  state: string
+  country: string
   preferredEmergency: boolean
 }
 

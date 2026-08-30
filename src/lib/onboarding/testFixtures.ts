@@ -70,6 +70,9 @@ export function sampleVendor(patch?: Partial<OnboardingVendor>): OnboardingVendo
     category: 'plumbing',
     email: 'jobs@flex.test',
     phone: '+12025550122',
+    city: 'Atlanta',
+    state: 'GA',
+    country: 'United States',
     preferredEmergency: true,
     ...patch,
   }

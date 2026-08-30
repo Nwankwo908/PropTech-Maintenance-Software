@@ -37,10 +37,10 @@ export function OnboardingWelcomeHub({ onStartScratch, onStartFastTrack }: Onboa
             <img src={startScratchIcon} alt="" className="size-5 object-contain" aria-hidden />
           </span>
           <span className="mt-4 text-[18px] font-semibold leading-7 tracking-[-0.2px] text-[#101828]">
-            Add your property information yourself
+            Set up manually
           </span>
           <span className="mt-2 flex-1 text-[14px] leading-5 tracking-[-0.1504px] text-[#6a7282]">
-            We'll guide you through a few quick steps to get your account ready.
+            We’ll guide you through a few quick steps.
           </span>
           <span className="mt-6 text-[12px] font-medium text-[#6a7282]">~5 minutes · 5 steps</span>
         </button>
@@ -58,12 +58,12 @@ export function OnboardingWelcomeHub({ onStartScratch, onStartFastTrack }: Onboa
             <img src={fastTrackIcon} alt="" className="size-5 object-contain" aria-hidden />
           </span>
           <span className="mt-4 text-[18px] font-semibold leading-7 tracking-[-0.2px] text-[#101828]">
-            Already have property records? Start here.
+            Upload your property records
           </span>
           <span className="mt-2 flex-1 text-[14px] leading-5 tracking-[-0.1504px] text-[#6a7282]">
-            Upload leases, tenant list, spreadsheets, or photos of documents and Ulo will help fill in your account information automatically.
+            Add leases, tenant lists, spreadsheets, or photos. Ulo handles the setup.
           </span>
-          <span className="mt-6 text-[12px] font-medium text-[#6a7282]">~2 minutes · PDF, Word, Excel, CSV</span>
+          <span className="mt-6 text-[12px] font-medium text-[#6a7282]">~1 minutes · PDF, Word, Excel, CSV</span>
         </button>
       </div>
     </div>

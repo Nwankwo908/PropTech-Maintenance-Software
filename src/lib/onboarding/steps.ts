@@ -2,6 +2,24 @@
  * Onboarding wizard step order and navigation helpers.
  */
 import type { OnboardingSetupPath, OnboardingStep } from './types'
+import { getActiveLandlordId } from '@/lib/activeLandlord'
+import { landlordHasPayments } from '@shared/landlordCapabilities'
+
+type OnboardingStepOptions = {
+  includePayouts?: boolean
+}
+
+function includePayoutsForAccount(options?: OnboardingStepOptions): boolean {
+  return options?.includePayouts ?? landlordHasPayments(getActiveLandlordId())
+}
+
+function withoutPayouts<T extends { id: OnboardingStep } | OnboardingStep>(
+  steps: T[],
+  includePayouts: boolean,
+): T[] {
+  if (includePayouts) return steps
+  return steps.filter((step) => (typeof step === 'string' ? step : step.id) !== 'payouts')
+}
 
 export const GUIDED_ONBOARDING_STEPS: { id: OnboardingStep; label: string }[] = [
   { id: 'entry', label: 'Welcome' },
@@ -60,23 +78,33 @@ const LEGACY_STEP_MAP: Record<string, OnboardingStep> = {
 
 export function getOnboardingStepsForPath(
   setupPath: OnboardingSetupPath,
+  options?: OnboardingStepOptions,
 ): { id: OnboardingStep; label: string }[] {
-  return setupPath === 'fast_track' ? FAST_TRACK_ONBOARDING_STEPS : GUIDED_ONBOARDING_STEPS
+  const steps = setupPath === 'fast_track' ? FAST_TRACK_ONBOARDING_STEPS : GUIDED_ONBOARDING_STEPS
+  return withoutPayouts(steps, includePayoutsForAccount(options))
 }
 
-export function getOnboardingStepOrder(setupPath: OnboardingSetupPath = null): OnboardingStep[] {
-  return setupPath === 'fast_track' ? FAST_TRACK_STEP_ORDER : GUIDED_STEP_ORDER
+export function getOnboardingStepOrder(
+  setupPath: OnboardingSetupPath = null,
+  options?: OnboardingStepOptions,
+): OnboardingStep[] {
+  const order = setupPath === 'fast_track' ? FAST_TRACK_STEP_ORDER : GUIDED_STEP_ORDER
+  return withoutPayouts(order, includePayoutsForAccount(options))
 }
 
 /** Map legacy fast-track step ids to the current flow. */
 export function resolveOnboardingStepForPath(
   step: OnboardingStep,
   setupPath: OnboardingSetupPath,
+  options?: OnboardingStepOptions,
 ): OnboardingStep {
-  if (setupPath !== 'fast_track') return step
-  if (step === 'property') return 'document_upload'
-  if (step === 'vendors' || step === 'residents') return 'ai_review'
-  return step
+  let next = step
+  if (setupPath === 'fast_track') {
+    if (step === 'property') next = 'document_upload'
+    else if (step === 'vendors' || step === 'residents') next = 'ai_review'
+  }
+  if (!includePayoutsForAccount(options) && next === 'payouts') return 'review'
+  return next
 }
 
 export function normalizeOnboardingStep(step: unknown): OnboardingStep {
@@ -92,9 +120,10 @@ export function normalizeOnboardingStep(step: unknown): OnboardingStep {
 export function getPreviousOnboardingStep(
   current: OnboardingStep | string,
   setupPath: OnboardingSetupPath = null,
+  options?: OnboardingStepOptions,
 ): OnboardingStep | null {
-  const step = resolveOnboardingStepForPath(normalizeOnboardingStep(current), setupPath)
-  const order = getOnboardingStepOrder(setupPath)
+  const step = resolveOnboardingStepForPath(normalizeOnboardingStep(current), setupPath, options)
+  const order = getOnboardingStepOrder(setupPath, options)
   const idx = order.indexOf(step)
   if (idx <= 0) return null
   return order[idx - 1]!
@@ -103,7 +132,8 @@ export function getPreviousOnboardingStep(
 export function getActiveOnboardingStepIndex(
   step: OnboardingStep,
   setupPath: OnboardingSetupPath = null,
+  options?: OnboardingStepOptions,
 ): number {
-  const resolved = resolveOnboardingStepForPath(normalizeOnboardingStep(step), setupPath)
-  return getOnboardingStepOrder(setupPath).indexOf(resolved)
+  const resolved = resolveOnboardingStepForPath(normalizeOnboardingStep(step), setupPath, options)
+  return getOnboardingStepOrder(setupPath, options).indexOf(resolved)
 }

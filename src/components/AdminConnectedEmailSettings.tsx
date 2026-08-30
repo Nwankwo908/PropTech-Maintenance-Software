@@ -14,6 +14,8 @@ import {
   providerLabel,
   saveConnectedEmailSettings,
 } from '@/lib/connectedEmailIntegration'
+import { getActiveLandlordId } from '@/lib/activeLandlord'
+import { landlordHasAccounting } from '@shared/landlordCapabilities'
 
 const sectionCardClass =
   'sa-surface rounded-[10px] border border-[#e5e7eb] bg-white p-6 shadow-[0px_1px_2px_-1px_rgba(0,0,0,0.06)]'
@@ -352,7 +354,9 @@ export function AdminConnectedEmailSettings() {
             Document discovery stays empty until inbox sync launches.
           </p>
           <div className="mt-5 grid gap-4 sm:grid-cols-2">
-            {EMAIL_DISCOVERY_CATEGORIES.map((category) => (
+            {EMAIL_DISCOVERY_CATEGORIES.filter((category) =>
+              landlordHasAccounting(getActiveLandlordId()) ? true : category.id !== 'financial',
+            ).map((category) => (
               <div key={category.id} className="rounded-[10px] border border-[#eef0f3] bg-[#f9fafb] p-4">
                 <p className="text-[14px] font-semibold tracking-[-0.1504px] text-[#101828]">
                   {category.title}

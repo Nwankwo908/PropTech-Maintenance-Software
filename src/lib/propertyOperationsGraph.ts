@@ -5,6 +5,10 @@ import {
   hasMappedEventTypeLabel,
 } from '@/lib/adminWorkflows'
 import {
+  isPaymentGraphEventType,
+  landlordHasPayments,
+} from '@shared/landlordCapabilities'
+import {
   isHiddenPipelineTimelineEventType,
   isHiddenSmsTransportTimelineEventType,
 } from '@/lib/landlordFacingTimeline'
@@ -27,6 +31,8 @@ export type PropertyOperationsTimelineEvent = {
   message: string | null
   eventSource: string
   createdAt: string
+  /** Visit / appointment instant from metadata when the event is about a scheduled window. */
+  scheduledAt: string | null
   unitLabel: string | null
   building: string | null
   residentId?: string | null
@@ -160,6 +166,46 @@ function readPayloadMessage(payload: Record<string, unknown> | null | undefined)
   return null
 }
 
+function readScheduledAt(payload: Record<string, unknown> | null | undefined): string | null {
+  if (!payload) return null
+  for (const key of ['scheduled_at', 'visit_at', 'appointment_at']) {
+    const value = payload[key]
+    if (typeof value === 'string' && value.trim()) return value.trim()
+  }
+  return null
+}
+
+function upsertTimelineEvent(
+  merged: Map<string, PropertyOperationsTimelineEvent>,
+  event: PropertyOperationsTimelineEvent,
+): void {
+  const key = eventDedupeKey(event)
+  const existing = merged.get(key)
+  if (!existing) {
+    merged.set(key, event)
+    return
+  }
+  if (!existing.scheduledAt && event.scheduledAt) {
+    merged.set(key, { ...existing, scheduledAt: event.scheduledAt })
+  }
+}
+
+const SUPPLEMENTAL_GRAPH_DOMAINS = new Set([
+  'vendor',
+  'maintenance',
+  'rent',
+  'move_in',
+  'move_out',
+  'inspection',
+])
+
+function isSupplementalOperationsRow(row: OperationsGraphRow): boolean {
+  const domain = row.event_type.split('.')[0]
+  if (SUPPLEMENTAL_GRAPH_DOMAINS.has(domain)) return true
+  if (row.source === 'dashboard') return true
+  return ADMIN_EVENT_PREFIXES.some((prefix) => row.event_type.startsWith(prefix))
+}
+
 function eventDedupeKey(event: Pick<
   PropertyOperationsTimelineEvent,
   'eventType' | 'createdAt' | 'workflowRunId' | 'maintenanceRequestId'
@@ -183,6 +229,7 @@ function mapEnrichedGraphRow(row: EnrichedGraphRow): PropertyOperationsTimelineE
     message: readPayloadMessage(payload),
     eventSource: row.event_source,
     createdAt: row.created_at,
+    scheduledAt: readScheduledAt(payload),
     unitLabel: row.unit_label,
     building: row.building,
     residentId: row.resident_id,
@@ -207,6 +254,7 @@ function mapLegacyBridgeRow(row: LegacyGraphRow): PropertyOperationsTimelineEven
     message: readPayloadMessage(payload),
     eventSource: row.event_source,
     createdAt: row.created_at,
+    scheduledAt: readScheduledAt(payload),
     unitLabel: null,
     building: null,
     residentId: row.resident_id,
@@ -378,6 +426,9 @@ export function isLandlordFacingFeedEvent(event: PropertyOperationsTimelineEvent
   if (isMergedLandlordFacingFeedCard(event)) return true
   if (isHiddenPipelineTimelineEventType(event.eventType)) return false
   if (isHiddenSmsTransportTimelineEventType(event.eventType)) return false
+  if (!landlordHasPayments(getActiveLandlordId()) && isPaymentGraphEventType(event.eventType)) {
+    return false
+  }
   return true
 }
 
@@ -474,6 +525,7 @@ function mapOperationsGraphRow(row: OperationsGraphRow): PropertyOperationsTimel
     message: readPayloadMessage(metadata),
     eventSource: row.source,
     createdAt: row.created_at,
+    scheduledAt: readScheduledAt(metadata),
     unitLabel: readMetadataString(metadata, 'unit_label'),
     building: readMetadataString(metadata, 'building'),
     residentId: row.resident_id,
@@ -592,32 +644,16 @@ export async function fetchPropertyOperationsTimeline(
   const merged = new Map<string, PropertyOperationsTimelineEvent>()
 
   for (const row of (canonicalResult.data ?? []) as EnrichedGraphRow[]) {
-    const event = mapEnrichedGraphRow(row)
-    merged.set(eventDedupeKey(event), event)
+    upsertTimelineEvent(merged, mapEnrichedGraphRow(row))
   }
 
   for (const row of (legacyResult.data ?? []) as LegacyGraphRow[]) {
-    const event = mapLegacyBridgeRow(row)
-    const key = eventDedupeKey(event)
-    if (!merged.has(key)) {
-      merged.set(key, event)
-    }
+    upsertTimelineEvent(merged, mapLegacyBridgeRow(row))
   }
 
   for (const row of (supplementalResult.data ?? []) as OperationsGraphRow[]) {
-    const domain = row.event_type.split('.')[0]
-    const isSupplemental =
-      domain === 'vendor' ||
-      row.source === 'dashboard' ||
-      ADMIN_EVENT_PREFIXES.some((prefix) => row.event_type.startsWith(prefix))
-
-    if (!isSupplemental) continue
-
-    const event = mapOperationsGraphRow(row)
-    const key = eventDedupeKey(event)
-    if (!merged.has(key)) {
-      merged.set(key, event)
-    }
+    if (!isSupplementalOperationsRow(row)) continue
+    upsertTimelineEvent(merged, mapOperationsGraphRow(row))
   }
 
   return [...merged.values()].sort((a, b) => b.createdAt.localeCompare(a.createdAt))
@@ -676,16 +712,11 @@ export async function fetchRecentPropertyOperationsEvents(
   const merged = new Map<string, PropertyOperationsTimelineEvent>()
 
   for (const row of (canonicalResult.data ?? []) as EnrichedGraphRow[]) {
-    const event = mapEnrichedGraphRow(row)
-    merged.set(eventDedupeKey(event), event)
+    upsertTimelineEvent(merged, mapEnrichedGraphRow(row))
   }
 
   for (const row of (supplementalResult.data ?? []) as OperationsGraphRow[]) {
-    const event = mapOperationsGraphRow(row)
-    const key = eventDedupeKey(event)
-    if (!merged.has(key)) {
-      merged.set(key, event)
-    }
+    upsertTimelineEvent(merged, mapOperationsGraphRow(row))
   }
 
   return selectLandlordFacingFeedEvents(

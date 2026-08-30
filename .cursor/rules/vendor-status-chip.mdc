@@ -56,10 +56,10 @@ Matching requires **ACTIVE**. Nothing enters the queue without it (`isVendorMatc
 
 | Status | Meaning |
 |---|---|
-| **NOT STARTED** | On roster only. Verification invite not sent yet. Not matchable. |
+| **NOT ACTIVATED** | On roster only. Verification invite not sent yet. Not matchable. |
 | **WAITING FOR VENDOR** | Invite sent (`invited` / `in_progress`). Not matchable until verified. |
 | **DOCS SUBMITTED** | Docs under review. Not matchable. Target: 48hrs (manual), 24hrs post-Checkr. |
-| **ACTIVE** | All requirements met. Enters matching queue. Only matchable state. |
+| **ACTIVE** | Requirements met, **or** landlord **Override onboarding**. Enters matching queue. Only matchable state. |
 | **PAUSED** | Vendor-initiated hold. No new jobs. Self-reactivate via SMS or portal. |
 | **SUSPENDED** | Platform hold: incident, performance breach, or expired COI/license. Review in 1–2hrs. |
 | **BANNED** | Permanent removal. No reinstatement. Data retained for audit. |
@@ -68,11 +68,11 @@ Matching requires **ACTIVE**. Nothing enters the queue without it (`isVendorMatc
 
 | Chip | Source |
 |---|---|
-| Not started | No `vendor_verifications` row yet (manual outreach not sent) |
+| Not activated | No `vendor_verifications` row yet (manual outreach not sent) |
 | Waiting for vendor | `vendor_verifications.status` in `invited` / `in_progress` |
 | Docs submitted | `vendor_verifications.status` in `submitted` / `needs_review` |
-| Active | `status = verified` and accepting work (`availability != paused`, `vendors.active != false`) |
-| Paused | Verified, but `availability = paused` or `vendors.active = false` |
+| Active | `status = verified` **or** `vendors.onboarding_overridden_at` set, and accepting work (`availability != paused`, `vendors.active != false`) |
+| Paused | Verified or overridden, but `availability = paused` or `vendors.active = false` |
 | Suspended | `vendors.roster_status = suspended` (overrides verification) |
 | Banned | `vendors.roster_status = banned` (overrides verification) |
 
@@ -81,7 +81,12 @@ Matching requires **ACTIVE**. Nothing enters the queue without it (`isVendorMatc
 - Resolver: `src/lib/vendorStatusChip.ts` → `resolveVendorCapacityChip` / `isVendorMatchable`
 - UI chips: `AdminVendorsDashboard`, `AdminVendorDetailDashboard`, `vendorComplianceProfile`
 - Matching: `pickVendorForAssignment` must only consider matchable (ACTIVE) vendors
-- Never show **Active** while verification is incomplete
+- Never show **Active** while verification is incomplete, unless the landlord used **Override onboarding**
+- Hide **Start onboarding** once the vendor is no longer Not activated (invite sent, form submitted, verified, or **Override onboarding**)
+- Override does **not** mark `vendor_verifications.status = verified` and does **not** send an invite
+- Override makes the vendor matchable immediately (`onboarding_overridden_at`), closes the vendor onboarding workflow so Ulo does not keep asking for the verification form, and dispatches open unassigned work orders through the same assignment path as a new ticket
+- Override texts the vendor that their profile is active (best-effort SMS; skip if no phone)
+- Override requires a checkbox acknowledgement (v2 copy, with Terms §6.2 and §10 links). Activate writes `vendor_onboarding_override_acks` (timestamps, landlord id, session token, exact disclaimer text + version) before setting `onboarding_overridden_at`
 - Onboarding auto-invite starts vendors in **Pending** until they finish the verification form
 
 ## Related

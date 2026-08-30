@@ -31,7 +31,7 @@ function resolveGuardOnboardingState(
 }
 
 /**
- * Redirects Alpha + New Landlord accounts to onboarding until setup is complete.
+ * Redirects Full Alpha, Limited Alpha 1, and New Landlord to onboarding until setup is complete.
  * Demo showcase data is never affected.
  */
 export function AdminOnboardingGuard() {

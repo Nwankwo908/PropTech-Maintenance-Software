@@ -16,7 +16,7 @@
 import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.49.1"
 import { logGraphEvent } from "../graph/logGraphEvent.ts"
 import { sendLandlordOpsEmail } from "../landlordOpsNotify.ts"
-import { getSMSProvider } from "../sms/providerFactory.ts"
+import { getSMSProviderForSend } from "../sms/providerFactory.ts"
 import {
   findOrCreateConversation,
   normalizeSmsPhone,
@@ -307,7 +307,10 @@ async function notifyOpsSms(body: string, landlordId: string, supabase: Supabase
   if (phones.length === 0) return
   const line = await resolveOutboundLandlordSmsLine(supabase, landlordId)
   if (!line?.phone) return
-  const provider = getSMSProvider()
+  const provider = getSMSProviderForSend({
+    landlordId,
+    lineProvider: line.provider,
+  })
   for (const to of phones) {
     const send = await provider.sendMessage({
       to,

@@ -1,5 +1,7 @@
 import { useEffect, useState } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, Navigate } from 'react-router-dom'
+import { getActiveLandlordId } from '@/lib/activeLandlord'
+import { landlordHasPayments } from '@shared/landlordCapabilities'
 import {
   fetchMaintenanceBillingHistory,
   type MaintenanceBillingHistoryItem,
@@ -212,6 +214,13 @@ function billingHistoryDetail(item: MaintenanceBillingHistoryItem): string {
 }
 
 export function AdminBillingSettings() {
+  if (!landlordHasPayments(getActiveLandlordId())) {
+    return <Navigate to="/admin/settings" replace />
+  }
+  return <AdminBillingSettingsBody />
+}
+
+function AdminBillingSettingsBody() {
   const activityMonth = currentActivityMonthLabel()
   const [history, setHistory] = useState<MaintenanceBillingHistoryItem[]>([])
   const [historyLoading, setHistoryLoading] = useState(true)

@@ -25,6 +25,7 @@ import { SlaOverdueActionRail } from '@/components/SlaOverdueActionRail'
 import { FindExternalVendorRail } from '@/components/FindExternalVendorRail'
 import { VendorCallFlowModal } from '@/components/VendorCallFlowModal'
 import { getActiveLandlordId } from '@/lib/activeLandlord'
+import { landlordHasPayments } from '@shared/landlordCapabilities'
 import { cityStateZipForBuildingName, listPropertiesForLandlord, type PropertyRecord } from '@/lib/properties'
 import {
   ensureOnboardingDashboardMatchesPortfolio,
@@ -1322,7 +1323,7 @@ export function AdminOverviewDashboard() {
       const ticketById = new Map(ticketRowsForInvoice.map((t) => [t.id, t]))
 
       const payReviews: InvoicePaymentReview[] = []
-      if (!invoicesResult.error) {
+      if (landlordHasPayments(getActiveLandlordId()) && !invoicesResult.error) {
         for (const row of (invoicesResult.data ?? []) as Record<string, unknown>[]) {
           const invoiceId = asString(row.id)
           const ticketId = asString(row.maintenance_request_id)
@@ -3159,7 +3160,7 @@ export function AdminOverviewDashboard() {
         onItemAction={handleAwaitingDecisionItemAction}
       />
 
-      {invoicePaySuccess || invoicePayReview ? (
+      {landlordHasPayments(getActiveLandlordId()) && (invoicePaySuccess || invoicePayReview) ? (
         <InvoicePaymentRail
           open
           review={invoicePayReview}

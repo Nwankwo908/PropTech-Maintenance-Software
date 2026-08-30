@@ -1,6 +1,14 @@
 import { getActiveLandlordId } from '@/lib/activeLandlord'
 import { normalizeBuildingKey } from '@/lib/propertyHealth'
 import { inboxPreviewForSmsMessage } from '@/lib/smsMedia'
+import {
+  buildVendorComplianceProfile,
+  vendorServiceAreaCoversProperty,
+  type PropertyLocationForVendorCoverage,
+} from '@/lib/vendorComplianceProfile'
+import { formatVendorLocationLabel } from '@/lib/vendorLocation'
+
+export type { PropertyLocationForVendorCoverage }
 
 export type PropertyConversationRow = {
   id: string
@@ -169,6 +177,7 @@ export async function fetchPropertyConversations(
   building: string,
   tickets: Array<{ id: string; unit: string; building: string | null; email?: string | null }> = [],
   residents: Array<{ email?: string | null; building?: string | null }> = [],
+  propertyLocation: PropertyLocationForVendorCoverage | null = null,
 ): Promise<PropertyConversationRow[]> {
   const { supabase } = await import('@/lib/supabase')
   if (!supabase) return []
@@ -210,7 +219,8 @@ export async function fetchPropertyConversations(
   const vendorIds = [...new Set(rows.map((row) => asString(row.vendor_id)).filter(Boolean))]
   const unitIds = [...new Set(rows.map((row) => asString(row.unit_id)).filter(Boolean))]
 
-  const [messagesResult, residentsResult, vendorsResult, unitsResult] = await Promise.allSettled([
+  const [messagesResult, residentsResult, vendorsResult, unitsResult, verificationsResult] =
+    await Promise.allSettled([
     conversationIds.length
       ? supabase
           .from('sms_messages')
@@ -224,10 +234,18 @@ export async function fetchPropertyConversations(
       ? supabase.from('users').select('id, full_name, unit, building').in('id', residentIds)
       : Promise.resolve({ data: [], error: null }),
     vendorIds.length
-      ? supabase.from('vendors').select('id, name').in('id', vendorIds)
+      ? supabase.from('vendors').select('id, name, city, state, country').in('id', vendorIds)
       : Promise.resolve({ data: [], error: null }),
     unitIds.length
       ? supabase.from('units').select('id, unit_label, building').in('id', unitIds)
+      : Promise.resolve({ data: [], error: null }),
+    vendorIds.length
+      ? supabase
+          .from('vendor_verifications')
+          .select('vendor_id, service_area, updated_at')
+          .eq('landlord_id', landlordId)
+          .in('vendor_id', vendorIds)
+          .order('updated_at', { ascending: false })
       : Promise.resolve({ data: [], error: null }),
   ])
 
@@ -258,10 +276,38 @@ export async function fetchPropertyConversations(
     }
   }
 
-  const vendorById = new Map<string, string>()
+  const vendorById = new Map<
+    string,
+    { name: string; coversProperty: boolean }
+  >()
+  const verificationByVendorId = new Map<string, { service_area?: unknown }>()
+  if (verificationsResult.status === 'fulfilled' && !verificationsResult.value.error) {
+    for (const row of (verificationsResult.value.data ?? []) as Record<string, unknown>[]) {
+      const vendorId = asString(row.vendor_id)
+      if (!vendorId || verificationByVendorId.has(vendorId)) continue
+      verificationByVendorId.set(vendorId, { service_area: row.service_area })
+    }
+  }
   if (vendorsResult.status === 'fulfilled' && !vendorsResult.value.error) {
     for (const vendor of (vendorsResult.value.data ?? []) as Record<string, unknown>[]) {
-      vendorById.set(asString(vendor.id), asString(vendor.name))
+      const id = asString(vendor.id)
+      if (!id) continue
+      const name = asString(vendor.name)
+      const hq = formatVendorLocationLabel({
+        city: asString(vendor.city) || null,
+        state: asString(vendor.state) || null,
+        country: asString(vendor.country) || null,
+      })
+      const profile = buildVendorComplianceProfile(
+        { name: name || 'Vendor' },
+        verificationByVendorId.get(id) ?? null,
+      )
+      vendorById.set(id, {
+        name,
+        coversProperty: propertyLocation
+          ? vendorServiceAreaCoversProperty(profile.serviceArea, propertyLocation, hq)
+          : false,
+      })
     }
   }
 
@@ -281,31 +327,34 @@ export async function fetchPropertyConversations(
   for (const row of rows) {
     const id = asString(row.id)
     const resident = residentById.get(asString(row.resident_id))
-    const vendorName = vendorById.get(asString(row.vendor_id)) ?? ''
+    const vendorId = asString(row.vendor_id)
+    const vendor = vendorById.get(vendorId)
+    const vendorName = vendor?.name ?? ''
     const unit = unitById.get(asString(row.unit_id))
     const ticket = ticketsById.get(asString(row.maintenance_request_id))
     const conversationType = asString(row.conversation_type)
     if (!isCommunicationInboxConversationType(conversationType)) continue
-    const kind = conversationKind(conversationType, Boolean(asString(row.vendor_id)))
+    const kind = conversationKind(conversationType, Boolean(vendorId))
     const status = asString(row.status) || 'open'
     const hasMaintenanceRequest = Boolean(asString(row.maintenance_request_id))
-
-    const resolvedBuilding =
-      unit?.building || resident?.building || ticket?.building || building
-    const resolvedUnit = unit?.label || resident?.unit || ticket?.unit || null
 
     const ticketEmail = ticket?.email?.trim().toLowerCase()
     const ticketBuildingFromEmail =
       ticketEmail && emailBuildingMap.has(ticketEmail) ? emailBuildingMap.get(ticketEmail)! : null
 
     const matchesBuilding =
-      normalizeBuildingKey(resolvedBuilding) === buildingKey ||
+      (unit?.building && normalizeBuildingKey(unit.building) === buildingKey) ||
       (ticket?.building && normalizeBuildingKey(ticket.building) === buildingKey) ||
-      (ticketBuildingFromEmail === buildingKey) ||
-      (resident?.building && normalizeBuildingKey(resident.building) === buildingKey) ||
-      (unit?.building && normalizeBuildingKey(unit.building) === buildingKey)
+      ticketBuildingFromEmail === buildingKey ||
+      (resident?.building && normalizeBuildingKey(resident.building) === buildingKey)
 
-    if (!matchesBuilding) continue
+    if (kind === 'vendor') {
+      if (!matchesBuilding && !vendor?.coversProperty) continue
+    } else if (!matchesBuilding) {
+      continue
+    }
+
+    const resolvedUnit = unit?.label || resident?.unit || ticket?.unit || null
 
     const latest = latestMessageByConversation.get(id)
     const name = displayName(

@@ -13,7 +13,7 @@ import {
   normalizeSmsPhone,
   upsertSmsIdentityForPhone,
 } from "./sms/inbound_db.ts"
-import { getSMSProvider } from "./sms/providerFactory.ts"
+import { getSMSProviderForSend } from "./sms/providerFactory.ts"
 import { normalizePhoneFlexible } from "./resident_notify.ts"
 import {
   appendEstimateDecisionStatusToVendorThread,
@@ -220,7 +220,10 @@ async function notifyLandlordEstimatePending(
   const smsBody = smsLines.join("\n")
 
   const main = await findActiveLandlordMainNumber(supabase, params.landlordId)
-  const provider = getSMSProvider()
+  const provider = getSMSProviderForSend({
+    landlordId: params.landlordId,
+    lineProvider: main?.provider,
+  })
   for (const phone of adminNotifyPhones()) {
     const sendResult = await provider.sendMessage({
       to: phone,

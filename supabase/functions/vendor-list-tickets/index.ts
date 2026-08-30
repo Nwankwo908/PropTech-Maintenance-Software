@@ -5,6 +5,7 @@ import {
 } from "https://esm.sh/@supabase/supabase-js@2.49.1"
 import { bearerLooksLikeJwt } from "../_shared/vendor_portal_bearer.ts"
 import { getVendorFromPortalApiKey } from "../_shared/vendor_portal_api_key.ts"
+import { getVendorFromJobActionToken } from "../_shared/vendorJobActionToken.ts"
 
 const corsHeaders: Record<string, string> = {
   "Access-Control-Allow-Origin": "*",
@@ -152,11 +153,16 @@ serve(async (req) => {
     }
     vendor = { id: jwtVendor.id, name: jwtVendor.name }
   } else {
-    const portalVendor = await getVendorFromPortalApiKey(supabase, accessToken)
-    if (!portalVendor) {
-      return jsonResponse({ error: "Invalid or unknown vendor portal token" }, 401)
+    const fromJob = await getVendorFromJobActionToken(supabase, accessToken)
+    if (fromJob) {
+      vendor = fromJob
+    } else {
+      const portalVendor = await getVendorFromPortalApiKey(supabase, accessToken)
+      if (!portalVendor) {
+        return jsonResponse({ error: "Invalid or unknown vendor job link" }, 401)
+      }
+      vendor = portalVendor
     }
-    vendor = portalVendor
   }
 
   if (!vendor) {

@@ -9,6 +9,8 @@ import {
   sendTenantWelcomeSms,
 } from '@/api/tenantActivation'
 import { ResidentOccupancySelect } from '@/components/ResidentOccupancySelect'
+import { ResidentLeaseCalendar } from '@/components/ResidentLeaseCalendar'
+import { isLimitedAlpha1Landlord } from '@shared/landlordCapabilities'
 import { TenantActivationStatusChip } from '@/components/TenantActivationStatusChip'
 import {
   EditResidentModal,
@@ -17,6 +19,10 @@ import {
 } from '@/components/EditResidentModal'
 import { getActiveLandlordId } from '@/lib/activeLandlord'
 import { fetchAdminWorkflowDashboard } from '@/lib/adminWorkflows'
+import {
+  fetchPropertyOperationsTimeline,
+  type PropertyOperationsTimelineEvent,
+} from '@/lib/propertyOperationsGraph'
 import { resolveTenantActivationChip } from '@/lib/tenantActivationStatus'
 import {
   buildPropertyResidentUnitOptions,
@@ -43,6 +49,7 @@ import {
   filterUnitsForCanonicalProperty,
   mapUnitsForPropertyHealth,
   normalizeBuildingKey,
+  normalizeUnitLabel,
   type PropertyHealthCanonicalProperty,
 } from '@/lib/propertyHealth'
 import {
@@ -59,7 +66,8 @@ import {
 } from '@/lib/organizationSettings'
 import { loadResidentLeaseDocuments } from '@/lib/residentLeaseDocuments'
 import { getErrorMessage } from '@/lib/errorMessage'
-import { parseLeaseDateInput } from '@/lib/onboarding'
+import { parseLeaseDateInput, parseRentDueDayInput } from '@/lib/onboarding'
+import { parseIsoDateOnly } from '@/lib/residentLeaseCalendar'
 import {
   syncAssignedUnitOccupancyFromResidentStatus,
 } from '@/lib/unitActivation'
@@ -68,6 +76,22 @@ import { supabase } from '@/lib/supabase'
 function asString(value: unknown): string {
   if (value == null) return ''
   return String(value).trim()
+}
+
+function asLeaseDate(value: unknown): string | null {
+  if (value instanceof Date && Number.isFinite(value.getTime())) {
+    const iso = `${value.getFullYear()}-${String(value.getMonth() + 1).padStart(2, '0')}-${String(value.getDate()).padStart(2, '0')}`
+    return parseIsoDateOnly(iso)
+  }
+  return parseIsoDateOnly(asString(value))
+}
+
+function asRentDueDay(value: unknown): number | null {
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    const day = Math.trunc(value)
+    return day >= 1 && day <= 31 ? day : null
+  }
+  return parseRentDueDayInput(asString(value))
 }
 
 function asFiniteNumber(value: unknown): number {
@@ -93,6 +117,7 @@ type LoadedResidentUser = {
   balanceDue: number
   leaseStartDate: string | null
   leaseEndDate: string | null
+  rentDueDay: number | null
   monthlyRent: number | null
   maintenanceResponsibilitiesClause: string | null
   activationStatus: string | null
@@ -262,6 +287,8 @@ function ProfileContent({
   leaseDocuments,
   documentPreviewError,
   occupancySaving = false,
+  limitedAlpha1 = false,
+  operationsEvents = [],
   onOccupancyChange,
   onPreviewDocument,
 }: {
@@ -269,6 +296,8 @@ function ProfileContent({
   leaseDocuments: OrganizationDocument[]
   documentPreviewError: string | null
   occupancySaving?: boolean
+  limitedAlpha1?: boolean
+  operationsEvents?: PropertyOperationsTimelineEvent[]
   onOccupancyChange?: (status: ResidentOccupancyStatus) => void
   onPreviewDocument: (document: OrganizationDocument) => void
 }) {
@@ -483,6 +512,14 @@ function ProfileContent({
         </ProfileCard>
       </div>
 
+      {limitedAlpha1 ? (
+        <ResidentLeaseCalendar
+          leaseStartDate={profile.leaseStartDate}
+          leaseEndDate={profile.leaseEndDate}
+          rentDueDay={profile.rentDueDay}
+          operationsEvents={operationsEvents}
+        />
+      ) : (
       <section className="mt-4 rounded-[10px] border border-[#e5e7eb] bg-white p-5 shadow-[0px_1px_2px_-1px_rgba(0,0,0,0.06)]">
         <div className="flex items-center gap-2">
           <ChatIcon />
@@ -511,6 +548,7 @@ function ProfileContent({
           </ul>
         )}
       </section>
+      )}
     </>
   )
 }
@@ -527,12 +565,15 @@ export function AdminPropertyResidentDetailDashboard() {
   const [buildingUnits, setBuildingUnits] = useState<PropertyUnitOption[]>([])
   const [buildingResidents, setBuildingResidents] = useState<PropertyResidentOption[]>([])
   const [editOpen, setEditOpen] = useState(false)
+  const [actionsOpen, setActionsOpen] = useState(false)
+  const actionsMenuRef = useRef<HTMLDivElement>(null)
   const [actionError, setActionError] = useState<string | null>(null)
   const [occupancySaving, setOccupancySaving] = useState(false)
   const [resendingActivation, setResendingActivation] = useState(false)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [leaseDocuments, setLeaseDocuments] = useState<OrganizationDocument[]>([])
+  const [operationsEvents, setOperationsEvents] = useState<PropertyOperationsTimelineEvent[]>([])
   const [documentPreviewError, setDocumentPreviewError] = useState<string | null>(null)
   const profileIdRef = useRef<string | null>(null)
   const navigateRef = useRef(navigate)
@@ -573,13 +614,14 @@ export function AdminPropertyResidentDetailDashboard() {
       setProfile(null)
       setLoadedUser(null)
       setLeaseDocuments([])
+      setOperationsEvents([])
     }
     setError(null)
     setDocumentPreviewError(null)
 
     const landlordId = getActiveLandlordId()
     const userSelect =
-      'id, resident_id, full_name, email, phone, unit, building, status, balance_due, move_in_date, lease_end_date, monthly_rent, maintenance_responsibilities_clause, activation_status, sms_consent_status, activation_attempt_count, activation_sms_sent_at'
+      'id, resident_id, full_name, email, phone, unit, building, status, balance_due, move_in_date, lease_end_date, monthly_rent, rent_due_day, maintenance_responsibilities_clause, activation_status, sms_consent_status, activation_attempt_count, activation_sms_sent_at'
 
     try {
       let userResult = await supabase
@@ -656,8 +698,9 @@ export function AdminPropertyResidentDetailDashboard() {
         building: asString(raw.building) || (slug?.kind === 'name' ? slug.value : '') || 'Portfolio',
         status: parseResidentStatus(asString(raw.status)),
         balanceDue: asFiniteNumber(raw.balance_due),
-        leaseStartDate: asString(raw.move_in_date) || null,
-        leaseEndDate: asString(raw.lease_end_date) || null,
+        leaseStartDate: asLeaseDate(raw.move_in_date),
+        leaseEndDate: asLeaseDate(raw.lease_end_date),
+        rentDueDay: asRentDueDay(raw.rent_due_day),
         monthlyRent: monthlyRentRaw > 0 ? monthlyRentRaw : null,
         maintenanceResponsibilitiesClause:
           asString(raw.maintenance_responsibilities_clause) || null,
@@ -684,6 +727,7 @@ export function AdminPropertyResidentDetailDashboard() {
             balanceDue: loaded.balanceDue,
             leaseStartDate: loaded.leaseStartDate,
             leaseEndDate: loaded.leaseEndDate,
+            rentDueDay: loaded.rentDueDay,
             monthlyRent: loaded.monthlyRent,
             maintenanceResponsibilitiesClause: loaded.maintenanceResponsibilitiesClause,
           },
@@ -738,17 +782,20 @@ export function AdminPropertyResidentDetailDashboard() {
         }
       }
 
-      const { data: conversationRows, error: conversationsError } = await supabase
-        .from('sms_conversations')
-        .select('id, updated_at, conversation_type, status')
-        .eq('landlord_id', landlordId)
-        .eq('resident_id', loaded.id)
-        .order('updated_at', { ascending: false })
-        .limit(10)
+      const skipCommunicationHistory = isLimitedAlpha1Landlord(landlordId)
+      const communications: ResidentCommunicationItem[] = skipCommunicationHistory
+        ? []
+        : await (async () => {
+            const { data: conversationRows, error: conversationsError } = await supabase
+              .from('sms_conversations')
+              .select('id, updated_at, conversation_type, status')
+              .eq('landlord_id', landlordId)
+              .eq('resident_id', loaded.id)
+              .order('updated_at', { ascending: false })
+              .limit(10)
 
-      const communications: ResidentCommunicationItem[] =
-        conversationsError == null
-          ? ((conversationRows ?? []) as Record<string, unknown>[]).map((row) => {
+            if (conversationsError != null) return []
+            return ((conversationRows ?? []) as Record<string, unknown>[]).map((row) => {
               const typeLabel = conversationTypeLabel(asString(row.conversation_type))
               const statusLabel = conversationStatusLabel(asString(row.status) || 'open')
               return {
@@ -758,7 +805,7 @@ export function AdminPropertyResidentDetailDashboard() {
                 dateLabel: formatCommDate(asString(row.updated_at)),
               }
             })
-          : []
+          })()
 
       if (profileIdRef.current !== loaded.id) return
 
@@ -845,6 +892,28 @@ export function AdminPropertyResidentDetailDashboard() {
                 building: unit.building || loaded.building,
               })),
         )
+
+        if (isLimitedAlpha1Landlord(landlordId)) {
+          const residentUnitId =
+            scopedUnits.find(
+              (unit) =>
+                normalizeUnitLabel(unit.unitLabel) === normalizeUnitLabel(loaded.unit),
+            )?.id ?? null
+          void fetchPropertyOperationsTimeline({
+            scope: residentUnitId
+              ? { unitId: residentUnitId, residentId: loaded.id }
+              : { residentId: loaded.id },
+            landlordId,
+            limit: 500,
+          })
+            .then((rows) => {
+              if (profileIdRef.current === loaded.id) setOperationsEvents(rows)
+            })
+            .catch((timelineError) => {
+              console.warn('[resident-profile] operations calendar', timelineError)
+              if (profileIdRef.current === loaded.id) setOperationsEvents([])
+            })
+        }
         const scopedBuildingResidents = filterResidentsForPropertyScope(
           residentsResult.error
             ? []
@@ -885,6 +954,21 @@ export function AdminPropertyResidentDetailDashboard() {
     })
   }, [loadResident])
 
+  useEffect(() => {
+    if (!actionsOpen) return
+    function handlePointerDown(event: MouseEvent) {
+      if (!actionsMenuRef.current?.contains(event.target as Node)) setActionsOpen(false)
+    }
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === 'Escape') setActionsOpen(false)
+    }
+    document.addEventListener('mousedown', handlePointerDown)
+    document.addEventListener('keydown', handleKeyDown)
+    return () => {
+      document.removeEventListener('mousedown', handlePointerDown)
+      document.removeEventListener('keydown', handleKeyDown)
+    }
+  }, [actionsOpen])
 
   const backFallbackHref = useMemo(() => {
     if (propertyId) return propertyDetailPath(propertyId, 'units')
@@ -1067,7 +1151,7 @@ export function AdminPropertyResidentDetailDashboard() {
       ? await resendTenantActivationSms({ residentId: loadedUser.id })
       : await sendTenantWelcomeSms({ residentId: loadedUser.id })
     setResendingActivation(false)
-    if (!result.ok || (result.failed ?? 0) > 0) {
+    if (!result.ok || (result.failed ?? 0) > 0 || (result.sent ?? 0) === 0) {
       setActionError(
         result.error ||
           'Welcome text could not be delivered. Check the phone number and try again.',
@@ -1131,30 +1215,55 @@ export function AdminPropertyResidentDetailDashboard() {
                 <p className="mt-1 text-[14px] leading-5 text-[#6a7282]">
                   {profile.buildingShort} · {profile.unitDisplay}
                 </p>
-                {activationChip ? (
-                  <div className="mt-3 flex flex-col gap-2">
-                    <TenantActivationStatusChip chip={activationChip} />
-                    {showStartOnboarding ? (
-                      <button
-                        type="button"
-                        disabled={resendingActivation}
-                        onClick={() => void handleStartOnboarding()}
-                        className="sa-press inline-flex h-9 w-fit items-center rounded-[10px] bg-[#187960] px-4 text-[13px] font-medium leading-5 text-white hover:bg-[#146b52] disabled:opacity-50"
-                      >
-                        {resendingActivation ? 'Sending…' : 'Start onboarding'}
-                      </button>
-                    ) : null}
+                {showStartOnboarding ? (
+                  <div className="mt-3">
+                    <button
+                      type="button"
+                      disabled={resendingActivation}
+                      onClick={() => void handleStartOnboarding()}
+                      className="sa-press inline-flex h-9 w-fit items-center rounded-[10px] bg-[#187960] px-4 text-[13px] font-medium leading-5 text-white hover:bg-[#146b52] disabled:opacity-50"
+                    >
+                      {resendingActivation ? 'Sending…' : 'Start onboarding'}
+                    </button>
                   </div>
                 ) : null}
               </div>
-              <div className="flex flex-wrap items-center gap-2">
-                <button
-                  type="button"
-                  onClick={() => setEditOpen(true)}
-                  className="sa-press inline-flex h-9 items-center rounded-[10px] border border-[#e5e7eb] bg-white px-4 text-[13px] font-medium leading-5 text-[#101828] hover:bg-[#f9fafb]"
-                >
-                  Edit profile
-                </button>
+              <div className="flex shrink-0 items-center gap-2">
+                {activationChip ? <TenantActivationStatusChip chip={activationChip} /> : null}
+                <div ref={actionsMenuRef} className="relative">
+                  <button
+                    type="button"
+                    aria-label="Resident actions"
+                    aria-haspopup="menu"
+                    aria-expanded={actionsOpen}
+                    onClick={() => setActionsOpen((open) => !open)}
+                    className="sa-press inline-flex size-9 items-center justify-center rounded-[10px] border border-[#e5e7eb] bg-white text-[#364153] hover:bg-[#f9fafb]"
+                  >
+                    <svg className="size-4" viewBox="0 0 24 24" fill="currentColor" aria-hidden>
+                      <circle cx="12" cy="5" r="1.75" />
+                      <circle cx="12" cy="12" r="1.75" />
+                      <circle cx="12" cy="19" r="1.75" />
+                    </svg>
+                  </button>
+                  {actionsOpen ? (
+                    <div
+                      role="menu"
+                      className="sa-enter absolute right-0 z-20 mt-1.5 min-w-[160px] overflow-hidden rounded-[10px] border border-[#e5e7eb] bg-white py-1 shadow-[0_8px_24px_rgba(16,24,40,0.12)]"
+                    >
+                      <button
+                        type="button"
+                        role="menuitem"
+                        className="sa-press block w-full cursor-pointer px-3 py-2 text-left text-[13px] font-medium text-[#0a0a0a] hover:bg-[#f3f4f6]"
+                        onClick={() => {
+                          setActionsOpen(false)
+                          setEditOpen(true)
+                        }}
+                      >
+                        Edit profile
+                      </button>
+                    </div>
+                  ) : null}
+                </div>
               </div>
             </div>
 
@@ -1170,6 +1279,8 @@ export function AdminPropertyResidentDetailDashboard() {
                 leaseDocuments={leaseDocuments}
                 documentPreviewError={documentPreviewError}
                 occupancySaving={occupancySaving}
+                limitedAlpha1={isLimitedAlpha1Landlord(getActiveLandlordId())}
+                operationsEvents={operationsEvents}
                 onOccupancyChange={(status) => void handleOccupancyChange(status)}
                 onPreviewDocument={(document) => {
                   setDocumentPreviewError(null)

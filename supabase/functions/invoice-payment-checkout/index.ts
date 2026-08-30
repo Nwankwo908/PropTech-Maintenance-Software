@@ -21,6 +21,7 @@ import {
   isStripeCheckoutSessionPaymentFailed,
   recordInvoicePaymentFailedActivity,
 } from "../_shared/paymentActivityEvents.ts"
+import { landlordHasPayments } from "../../../shared/landlordCapabilities.ts"
 import {
   applicationFeeCents,
   isStripeConfigured,
@@ -194,6 +195,9 @@ serve(async (req) => {
     }
     if (!landlordId || !uuidRe.test(landlordId)) {
       return jsonResponse({ error: "Missing or invalid landlordId" }, 400)
+    }
+    if (!landlordHasPayments(landlordId)) {
+      return jsonResponse({ error: "Payments are not available on this account." }, 403)
     }
 
     const retrieved = await stripeGet(
@@ -440,6 +444,9 @@ serve(async (req) => {
   }
   if (!landlordId || !uuidRe.test(landlordId)) {
     return jsonResponse({ error: "Missing or invalid landlordId" }, 400)
+  }
+  if (!landlordHasPayments(landlordId)) {
+    return jsonResponse({ error: "Payments are not available on this account." }, 403)
   }
   if (!paymentMethod) {
     return jsonResponse({ error: "Unsupported payment method" }, 400)

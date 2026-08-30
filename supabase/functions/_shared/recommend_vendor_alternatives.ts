@@ -47,7 +47,7 @@ export async function loadAlternativeVendorCandidates(
 
   let query = supabase
     .from("vendors")
-    .select("id, name, category, active, roster_status, landlord_id, onboarded_from_external")
+    .select("id, name, category, active, roster_status, landlord_id, onboarded_from_external, onboarding_overridden_at")
     .eq("active", true)
   if (landlordId) {
     query = query.eq("landlord_id", landlordId)
@@ -109,6 +109,9 @@ export async function loadAlternativeVendorCandidates(
         vendorActive: v.active,
         availability: verif?.availability ?? null,
         rosterStatus: typeof v.roster_status === "string" ? v.roster_status : null,
+        onboardingOverriddenAt: typeof v.onboarding_overridden_at === "string"
+          ? v.onboarding_overridden_at
+          : null,
       })
     ) {
       continue

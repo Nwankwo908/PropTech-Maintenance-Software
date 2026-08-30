@@ -13,7 +13,7 @@
 import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.49.1"
 import { logGraphEvent } from "../graph/logGraphEvent.ts"
 import { sendLandlordOpsEmail } from "../landlordOpsNotify.ts"
-import { getSMSProvider } from "../sms/providerFactory.ts"
+import { getSMSProviderForSend } from "../sms/providerFactory.ts"
 import {
   findOrCreateConversation,
   normalizeSmsPhone,
@@ -272,7 +272,10 @@ async function notifyOpsExpiry(
   if (phones.length === 0) return
   const line = await resolveOutboundLandlordSmsLine(supabase, params.landlordId)
   if (!line?.phone) return
-  const provider = getSMSProvider()
+  const provider = getSMSProviderForSend({
+    landlordId: params.landlordId,
+    lineProvider: line.provider,
+  })
   const body =
     `Ulo ops: ${params.vendorName} — ${docLabel(params.kind)} expires in ${params.daysLeft}d ` +
     `(${params.expirationDate}). Renewal SMS sent.`

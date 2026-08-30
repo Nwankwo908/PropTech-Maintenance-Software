@@ -1,11 +1,17 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1"
-import { getSMSProvider, resolveProviderName } from "../_shared/sms/providerFactory.ts"
-import { resolveTwilioWebhookValidationUrl } from "../_shared/sms/TwilioProvider.ts"
+import { getSMSProviderFor, resolveProviderName } from "../_shared/sms/providerFactory.ts"
+import { ensureTwilioMessagingWebhooks, resolveTwilioWebhookValidationUrl } from "../_shared/sms/TwilioProvider.ts"
 import {
   InboundSmsError,
   processInboundSms,
   twilioEmptyTwiMLResponse,
 } from "../_shared/sms/inbound_processor.ts"
+import { processSmsStatusUpdate } from "../_shared/sms/processSmsStatusUpdate.ts"
+import {
+  isTelnyxInboundEventType,
+  isTelnyxStatusEventType,
+  peekTelnyxEventType,
+} from "../_shared/sms/TelnyxProvider.ts"
 
 const corsHeaders: Record<string, string> = {
   "Access-Control-Allow-Origin": "*",
@@ -58,9 +64,33 @@ Deno.serve(async (req) => {
 
   const supabase = createClient(supabaseUrl, serviceKey)
 
+  await ensureTwilioMessagingWebhooks().catch((err) => {
+    console.warn("[sms-inbound] twilio webhook ensure", err)
+  })
+
   try {
-    const provider = getSMSProvider()
-    const inbound = await provider.normalizeInboundWebhook(req, {
+    const telnyxEvent = peekTelnyxEventType(rawBody)
+    if (isTelnyxStatusEventType(telnyxEvent)) {
+      const statusUpdate = await getSMSProviderFor("telnyx").normalizeStatusWebhook(
+        new Request(req.url, { method: req.method, headers: req.headers, body: rawBody }),
+      )
+      const result = await processSmsStatusUpdate(supabase, statusUpdate)
+      console.info("[sms-inbound] status event", {
+        providerMessageSid: statusUpdate.providerMessageSid,
+        status: statusUpdate.status,
+        messageId: result.messageId ?? null,
+      })
+      return webhookAckResponse()
+    }
+    if (telnyxEvent && !isTelnyxInboundEventType(telnyxEvent)) {
+      console.info("[sms-inbound] ignoring Telnyx event", { eventType: telnyxEvent })
+      return webhookAckResponse()
+    }
+
+    const inboundProvider = isTelnyxInboundEventType(telnyxEvent)
+      ? getSMSProviderFor("telnyx")
+      : getSMSProviderFor("twilio")
+    const inbound = await inboundProvider.normalizeInboundWebhook(req, {
       rawBody,
       signature,
       url,

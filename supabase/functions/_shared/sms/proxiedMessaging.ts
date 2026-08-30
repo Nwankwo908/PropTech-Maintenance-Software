@@ -5,7 +5,7 @@ import {
   type LandlordSmsNumberRow,
 } from "./landlordSmsOnboarding.ts"
 import { normalizeSmsPhone, phoneLookupVariants } from "./inbound_db.ts"
-import { getSMSProvider } from "./providerFactory.ts"
+import { getSMSProviderForSend } from "./providerFactory.ts"
 import { logGraphEvent } from "../graph/logGraphEvent.ts"
 
 export type ProxiedSenderType = "vendor" | "resident" | "landlord" | "system"
@@ -549,7 +549,10 @@ export async function sendProxiedMessage(
     recipientPhone,
   })
 
-  const provider = getSMSProvider()
+  const provider = getSMSProviderForSend({
+    landlordId: ctx.landlordId,
+    lineProvider: senderNumber.provider,
+  })
   const sendResult = await provider.sendMessage({
     to: recipientPhone,
     body: smsBody || "(media)",

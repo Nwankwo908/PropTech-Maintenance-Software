@@ -23,6 +23,7 @@ export type VendorVerificationStatusRow = {
   verificationLabel: string
   /** Capacity chip: Pending | Active | Paused — matches UI chips. */
   capacityLabel: "Pending" | "Active" | "Paused"
+  overridden: boolean
   checklistComplete: number
   checklistRequired: number
   missingReasons: string[]
@@ -72,9 +73,13 @@ export function isVendorVerificationStatusQuestion(question: string): boolean {
   return VENDOR_SUBJECT_RE.test(q) && hasVerifLang
 }
 
-function verificationPillLabel(status: string | null | undefined): string {
+function verificationPillLabel(
+  status: string | null | undefined,
+  overridden?: boolean,
+): string {
+  if (overridden) return "Activated by your team"
   const s = (status ?? "").trim().toLowerCase()
-  if (!s) return "Not started"
+  if (!s) return "Not activated"
   const map: Record<string, string> = {
     verified: "Verified",
     needs_review: "Needs review",
@@ -89,8 +94,11 @@ function capacityChipLabel(input: {
   verificationStatus: string | null | undefined
   vendorActive: boolean | null | undefined
   availability: string | null | undefined
+  onboardingOverriddenAt?: string | null
 }): "Pending" | "Active" | "Paused" {
-  const verified = (input.verificationStatus ?? "").trim().toLowerCase() === "verified"
+  const overridden = Boolean((input.onboardingOverriddenAt ?? "").trim())
+  const verified =
+    (input.verificationStatus ?? "").trim().toLowerCase() === "verified" || overridden
   if (!verified) return "Pending"
   if (input.vendorActive === false) return "Paused"
   if ((input.availability ?? "").trim().toLowerCase() === "paused") return "Paused"
@@ -118,27 +126,33 @@ function buildMarkdown(ranked: VendorVerificationStatusRow[]): string {
     ].join("\n")
   }
 
-  const verified = ranked.filter((r) => r.verificationStatus === "verified")
-  const pending = ranked.filter((r) => r.verificationStatus !== "verified")
-  const needsReview = ranked.filter((r) => r.verificationStatus === "needs_review")
+  const verified = ranked.filter((r) =>
+    r.verificationStatus === "verified" || r.overridden
+  )
+  const pending = ranked.filter((r) =>
+    r.verificationStatus !== "verified" && !r.overridden
+  )
+  const needsReview = ranked.filter((r) =>
+    r.verificationStatus === "needs_review" && !r.overridden
+  )
 
   const leadParts: string[] = []
   if (verified.length === ranked.length) {
     leadParts.push(
-      `All **${ranked.length}** vendor${ranked.length === 1 ? "" : "s"} on the roster are **Verified** and ready for assignments.`,
+      `All **${ranked.length}** vendor${ranked.length === 1 ? "" : "s"} on the roster are ready for work orders.`,
     )
   } else if (verified.length === 0) {
     leadParts.push(
-      `None of your **${ranked.length}** vendor${ranked.length === 1 ? "" : "s"} are fully verified yet — capacity chips stay **Pending** until verification is complete.`,
+      `None of your **${ranked.length}** vendor${ranked.length === 1 ? "" : "s"} are Active yet — they need verification or Override onboarding.`,
     )
   } else {
     leadParts.push(
-      `**${verified.length}** of **${ranked.length}** vendors are **Verified**. **${pending.length}** still show **Pending** (or need review) on the verification chip.`,
+      `**${verified.length}** of **${ranked.length}** vendors are ready for work orders. **${pending.length}** still need verification.`,
     )
   }
   if (needsReview.length > 0) {
     leadParts.push(
-      `**${needsReview.length}** need${needsReview.length === 1 ? "s" : ""} a compliance review before you treat them as Active.`,
+      `**${needsReview.length}** still have documents in review (not Active until you verify or Override).`,
     )
   }
 
@@ -150,7 +164,9 @@ function buildMarkdown(ranked: VendorVerificationStatusRow[]): string {
         ? ` · checklist ${row.checklistComplete}/${row.checklistRequired}`
         : ""
     const missing =
-      row.missingReasons.length > 0
+      row.overridden
+        ? ""
+        : row.missingReasons.length > 0
         ? ` — missing: ${row.missingReasons.slice(0, 3).join("; ")}`
         : ""
     out.push(
@@ -162,15 +178,15 @@ function buildMarkdown(ranked: VendorVerificationStatusRow[]): string {
   out.push("### What I'd do")
   if (needsReview.length > 0) {
     out.push(
-      `Open **${needsReview[0]!.name}** first — review the Compliance & verification checklist, then mark them verified when documents check out.`,
+      `Open **${needsReview[0]!.name}** first — review remaining documents, or use Override onboarding if you want them Active now.`,
     )
   } else if (pending.length > 0) {
     out.push(
-      `Follow up with **${pending[0]!.name}** (and others still Pending) to finish license, insurance, background, and W-9 so their capacity chip can move to Active.`,
+      `Follow up with **${pending[0]!.name}** to finish verification, or Override onboarding on their profile to make them Active.`,
     )
   } else {
     out.push(
-      "Roster verification looks complete. Use the Active vendors for new work orders; pause anyone who shouldn't take jobs.",
+      "These vendors are ready for work orders. Pause anyone who shouldn't take jobs.",
     )
   }
 
@@ -198,7 +214,7 @@ export async function vendorVerificationStatusLookup(
   ] = await Promise.all([
     supabase
       .from("vendors")
-      .select("id, name, active, category")
+      .select("id, name, active, category, onboarding_overridden_at")
       .eq("landlord_id", landlordId),
     supabase
       .from("vendor_verifications")
@@ -256,19 +272,24 @@ export async function vendorVerificationStatusLookup(
     const checklist = computeVerificationChecklist(
       (verif ?? {}) as VerificationRecord,
     )
+    const onboardingOverriddenAt =
+      typeof v.onboarding_overridden_at === "string" ? v.onboarding_overridden_at : null
+    const overridden = Boolean(onboardingOverriddenAt?.trim())
     ranked.push({
       vendorId: v.id,
       name,
       verificationStatus,
-      verificationLabel: verificationPillLabel(verificationStatus),
+      verificationLabel: verificationPillLabel(verificationStatus, overridden),
       capacityLabel: capacityChipLabel({
         verificationStatus,
         vendorActive: typeof v.active === "boolean" ? v.active : null,
         availability,
+        onboardingOverriddenAt,
       }),
+      overridden,
       checklistComplete: checklist.completeCount,
       checklistRequired: checklist.requiredCount,
-      missingReasons: checklist.missingReasons,
+      missingReasons: overridden ? [] : checklist.missingReasons,
     })
   }
 
@@ -293,6 +314,7 @@ export async function vendorVerificationStatusLookup(
         vendorActive: null,
         availability,
       }),
+      overridden: false,
       checklistComplete: checklist.completeCount,
       checklistRequired: checklist.requiredCount,
       missingReasons: checklist.missingReasons,

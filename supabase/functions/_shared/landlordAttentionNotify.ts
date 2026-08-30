@@ -7,7 +7,7 @@ import { sendLandlordOpsEmail } from "./landlordOpsNotify.ts"
 import { logGraphEvent } from "./graph/logGraphEvent.ts"
 import { normalizePhoneFlexible } from "./resident_notify.ts"
 import { findActiveLandlordMainNumber } from "./sms/landlordSmsOnboarding.ts"
-import { getSMSProvider } from "./sms/providerFactory.ts"
+import { getSMSProviderForSend } from "./sms/providerFactory.ts"
 import { uloAppUrl } from "./uloAppUrl.ts"
 import {
   loadLandlordNotificationSettings,
@@ -238,7 +238,10 @@ export async function notifyLandlordNeedsAttention(
       errors.push("no_landlord_main_sms")
       console.warn("[landlord-attention] no landlord_main SMS number", landlordId)
     } else {
-      const provider = getSMSProvider()
+      const provider = getSMSProviderForSend({
+        landlordId,
+        lineProvider: sender.provider,
+      })
       for (const to of phones) {
         const send = await provider.sendMessage({ to, body: smsBody, from })
         if (send.error) {

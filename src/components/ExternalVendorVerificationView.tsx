@@ -463,9 +463,9 @@ export function ExternalVendorVerificationView({
             >
               {checksStillSimulated ? (
                 <p className="mb-3 rounded-lg border border-[#fde68a] bg-[#fffbeb] px-3 py-2 text-[10px] leading-[15px] text-[#92400e]">
-                  License and insurance are checked through Ulo’s verification service. NetVendor
-                  credentialed vendors and admin confirmations count as verified sources. Live
-                  state-board / Certificial API keys can replace the simulated seam later.
+                  License and insurance are checked through Ulo’s verification service (state
+                  licensing board and insurance certificate). NetVendor credentialed vendors and
+                  admin confirmations also count as verified sources.
                 </p>
               ) : (
                 <p className="mb-3 rounded-lg border border-[#a4f4cf] bg-[#fafffd] px-3 py-2 text-[10px] leading-[15px] text-[#007a55]">

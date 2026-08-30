@@ -1,17 +1,11 @@
 import {
   readVendorAccessToken,
-  VENDOR_INVALID_ACCESS_CODE_FLAG,
   VENDOR_TOKEN_STORAGE_KEY,
 } from "@/lib/vendorToken"
 
-function clearVendorTokenAndShowInvalidCode() {
+function clearVendorTokenAndReloadPortal() {
   try {
     localStorage.removeItem(VENDOR_TOKEN_STORAGE_KEY)
-  } catch {
-    /* ignore */
-  }
-  try {
-    sessionStorage.setItem(VENDOR_INVALID_ACCESS_CODE_FLAG, "1")
   } catch {
     /* ignore */
   }
@@ -95,8 +89,8 @@ async function executeVendorListFetch(
   })
 
   if (res.status === 401) {
-    clearVendorTokenAndShowInvalidCode()
-    throw new Error("Invalid access code")
+    clearVendorTokenAndReloadPortal()
+    throw new Error("This job link is no longer valid. Open the latest link from your text.")
   }
 
   let data: VendorListResponse | null = null
@@ -209,8 +203,8 @@ export async function postVendorJobStatus(
   })
 
   if (res.status === 401) {
-    clearVendorTokenAndShowInvalidCode()
-    throw new Error("Invalid access code")
+    clearVendorTokenAndReloadPortal()
+    throw new Error("This job link is no longer valid. Open the latest link from your text.")
   }
 
   const text = await res.text()
@@ -263,8 +257,8 @@ export async function postVendorMaintenanceInvoice(
   })
 
   if (res.status === 401) {
-    clearVendorTokenAndShowInvalidCode()
-    throw new Error("Invalid access code")
+    clearVendorTokenAndReloadPortal()
+    throw new Error("This job link is no longer valid. Open the latest link from your text.")
   }
 
   const text = await res.text()

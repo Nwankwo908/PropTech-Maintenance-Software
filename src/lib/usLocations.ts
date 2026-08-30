@@ -168,3 +168,13 @@ export function isUsStateCode(value: string | null | undefined): boolean {
   const code = (value ?? '').trim().toUpperCase()
   return US_STATE_OPTIONS.some((s) => s.code === code)
 }
+
+/** Accepts IL, Illinois, or empty. */
+export function usStateCodeFromLabel(value: string | null | undefined): string {
+  const raw = (value ?? '').trim()
+  if (!raw) return ''
+  if (isUsStateCode(raw)) return raw.toUpperCase()
+  const lower = raw.toLowerCase()
+  const byName = US_STATE_OPTIONS.find((s) => s.name.toLowerCase() === lower)
+  return byName?.code ?? ''
+}

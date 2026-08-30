@@ -1,11 +1,14 @@
 /**
  * Reset / purge onboarding portfolio for the New Landlord account.
  */
-import { DEFAULT_LANDLORD_ID, getActiveLandlordId } from '@/lib/activeLandlord'
+import { EMPTY_LANDLORD_ID, getActiveLandlordId } from '@/lib/activeLandlord'
+import { landlordHasPayments } from '@shared/landlordCapabilities'
 import { getErrorMessage } from '@/lib/errorMessage'
+import { recordActivityLog } from '@/lib/recordActivityLog'
 import { deleteResidentsForLandlord } from '@/lib/residentDeletion'
 import { clearVendorSetupInboxForLandlord } from '@/lib/vendorSetupConversation'
 import { supabase } from '@/lib/supabase'
+import { clearLandlordStripeConnect } from '@/api/landlordStripeConnect'
 import {
   clearLocalOnboardingStorage,
   defaultOnboardingState,
@@ -154,11 +157,11 @@ export async function purgeOnboardingImportedOperations(
     return { ok: false, error: 'We can\'t reach the server right now. Please try again in a moment.' }
   }
 
-  const isAlphaLandlord = scope.landlordId === DEFAULT_LANDLORD_ID
+  const useEmptyLandlordPurgeRpc = scope.landlordId === EMPTY_LANDLORD_ID
 
-  // Alpha (production): full portfolio purge via staff RPC when not preserving.
-  // Never call purge_empty_landlord_operations for Alpha — that RPC is scoped to New Landlord only.
-  if (isAlphaLandlord && !preservePortfolioSms) {
+  // Full Alpha + Limited Alpha 1: full portfolio purge via staff RPC when not preserving.
+  // Never call purge_empty_landlord_operations for those ids — that RPC is scoped to New Landlord only.
+  if (!useEmptyLandlordPurgeRpc && !preservePortfolioSms) {
     const { error: alphaPurgeError } = await supabase.rpc('purge_landlord_portfolio', {
       p_landlord_id: scope.landlordId,
     })
@@ -175,8 +178,8 @@ export async function purgeOnboardingImportedOperations(
     if (!/Could not find the function|PGRST202|404/i.test(alphaPurgeError.message)) {
       console.warn('[landlordOnboarding] purge_landlord_portfolio', alphaPurgeError.message)
     }
-    // RPC missing or failed — fall through to Alpha-scoped client deletes below.
-  } else if (!isAlphaLandlord) {
+    // RPC missing or failed — fall through to scoped client deletes below.
+  } else if (useEmptyLandlordPurgeRpc) {
     // New Landlord (empty): prefer fail-closed SECURITY DEFINER RPC (bypasses missing DELETE RLS on runs).
     // preservePortfolioSms keeps SMS threads + graph events tied to current portfolio
     // residents/vendors (e.g. tenant activation welcome texts) while stripping import junk.
@@ -328,11 +331,51 @@ async function countLandlordOps(
       .eq('landlord_id', landlordId)
       .in('status', ['active', 'escalated']),
   ])
-  return {
-    tickets: tickets.count ?? 0,
-    workflowRuns: runs.count ?? 0,
-    activeWorkflowRuns: activeRuns.count ?? 0,
+  return { tickets: tickets.count ?? 0, workflowRuns: runs.count ?? 0, activeWorkflowRuns: activeRuns.count ?? 0 }
+}
+
+const CLEARED_LANDLORD_PAYOUTS = {
+  stripe_connect_account_id: null,
+  stripe_connect_charges_enabled: false,
+  stripe_connect_payouts_enabled: false,
+  stripe_connect_details_submitted: false,
+}
+
+async function clearLandlordPayoutsOnOnboardingReset(
+  landlordId: string,
+): Promise<{ ok: boolean; error?: string }> {
+  try {
+    await clearLandlordStripeConnect(landlordId)
+    return { ok: true }
+  } catch (err) {
+    console.warn('[landlordOnboarding] clear payouts via Stripe', err)
   }
+  if (!supabase) {
+    return { ok: false, error: "We can't reach the server right now. Please try again in a moment." }
+  }
+  const { error } = await supabase
+    .from('landlords')
+    .update({
+      ...CLEARED_LANDLORD_PAYOUTS,
+      stripe_connect_updated_at: new Date().toISOString(),
+    })
+    .eq('id', landlordId)
+  if (error) {
+    return {
+      ok: false,
+      error: getErrorMessage(error, 'Could not clear the rent payout account.'),
+    }
+  }
+  void recordActivityLog({
+    landlordId,
+    eventType: 'landlord.stripe_connect_cleared',
+    source: 'dashboard',
+    actorType: 'landlord',
+    metadata: {
+      message: 'Rent payout account was removed so onboarding can start over.',
+    },
+  })
+  return { ok: true }
 }
 
 /**
@@ -369,6 +412,11 @@ export async function resetOnboardingPortfolio(
   }
   if (!supabase) {
     return { ok: false, error: 'We can\'t reach the server right now. Please try again in a moment.' }
+  }
+
+  if (landlordHasPayments(scope.landlordId)) {
+    const payoutsCleared = await clearLandlordPayoutsOnOnboardingReset(scope.landlordId)
+    if (!payoutsCleared.ok) return payoutsCleared
   }
 
   const { data: vendorRows, error: vendorLoadError } = await supabase

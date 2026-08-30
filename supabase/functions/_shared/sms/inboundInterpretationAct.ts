@@ -1819,6 +1819,9 @@ async function handleOther(
   activeIntake: boolean,
   residentName: string | null,
 ): Promise<InboundSmsHandlerResult> {
+  if (activeIntake && isAffirmativeReply(ctx.inbound.body)) {
+    return { handled: false }
+  }
   const who = firstName(residentName)
   const latest = ctx.inbound.body.trim().slice(0, 160)
   const runId = await maybeReleaseIntake(
@@ -1945,7 +1948,8 @@ export async function tryHandleInterpretedInbound(
       pending.awaitingTicketCancelConfirm ||
       pending.awaitingMoveOutConfirm ||
       intake.awaiting_which_request === true ||
-      intake.awaiting_related_confirm === true,
+      intake.awaiting_related_confirm === true ||
+      (pending.activeIntake === true && isAffirmativeReply(ctx.inbound.body)),
   })
 
   const residentId = ctx.identity.resident_id

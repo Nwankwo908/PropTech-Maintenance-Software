@@ -24,7 +24,7 @@ Deno.test("formatWorkOrderRef uses first 4 hex of ticket id", () => {
   )
 })
 
-Deno.test("dispatch SMS includes WO + YES/NO; link is post-schedule", () => {
+Deno.test("dispatch SMS includes WO + YES/NO and unique job link", () => {
   const body = buildVendorJobAssignmentSms({
     vendorName: "Flex Plumbing",
     priority: "high",
@@ -42,8 +42,11 @@ Deno.test("dispatch SMS includes WO + YES/NO; link is post-schedule", () => {
     ),
     true,
   )
-  assertEquals(body.includes("View the work order:"), false)
-  assertEquals(body.includes("/w/"), false)
+  assertEquals(body.includes("View this job:"), true)
+  assertEquals(
+    body.includes("https://www.ulohome.io/w/aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"),
+    true,
+  )
   assertEquals(body.includes("Accept:"), false)
 
   const linkSms = buildVendorJobDetailLinkSms(

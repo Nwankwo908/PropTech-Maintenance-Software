@@ -149,7 +149,13 @@ Deno.test("clarification state round-trip + expiry", () => {
   )
 })
 
-function mockOpenJobsSupabase(jobs: VendorActiveJob[]) {
+function mockOpenJobsSupabase(
+  jobs: VendorActiveJob[],
+  ticketsById?: Record<
+    string,
+    { assigned_vendor_id: string; vendor_work_status: string }
+  >,
+) {
   const rows = jobs.map((j) => ({
     id: j.ticketId,
     unit: j.unit,
@@ -159,14 +165,43 @@ function mockOpenJobsSupabase(jobs: VendorActiveJob[]) {
   }))
   return {
     from(table: string) {
+      if (table === "vendors") {
+        const api = {
+          select() {
+            return api
+          },
+          eq() {
+            return api
+          },
+          in() {
+            return api
+          },
+          maybeSingle() {
+            return Promise.resolve({
+              data: { id: "vendor-1", phone: null, landlord_id: null },
+              error: null,
+            })
+          },
+          then(
+            resolve: (value: { data: Array<{ id: string }>; error: null }) =>
+              unknown,
+          ) {
+            return Promise.resolve({ data: [{ id: "vendor-1" }], error: null })
+              .then(resolve)
+          },
+        }
+        return api
+      }
       if (table !== "maintenance_requests") {
         throw new Error(`unexpected table ${table}`)
       }
+      let eqId: string | null = null
       const api = {
         select() {
           return api
         },
-        eq() {
+        eq(col: string, val: string) {
+          if (col === "id") eqId = val
           return api
         },
         in() {
@@ -179,6 +214,12 @@ function mockOpenJobsSupabase(jobs: VendorActiveJob[]) {
           return api
         },
         maybeSingle() {
+          if (eqId && ticketsById?.[eqId]) {
+            return Promise.resolve({
+              data: { id: eqId, ...ticketsById[eqId] },
+              error: null,
+            })
+          }
           return Promise.resolve({ data: rows[0] ?? null, error: null })
         },
         then(resolve: (value: { data: typeof rows; error: null }) => unknown) {
@@ -237,5 +278,55 @@ Deno.test("resolveVendorTicketForInbound allows single open job without WO", asy
   if (resolved.ok) {
     assertEquals(resolved.ticketId, JOB_A.ticketId)
     assertEquals(resolved.boundBy, "single_open_job")
+  }
+})
+
+Deno.test("resolveVendorTicketForInbound binds conversation pin when roster query is empty", async () => {
+  const supabase = mockOpenJobsSupabase([], {
+    [JOB_A.ticketId]: {
+      assigned_vendor_id: "vendor-mecus",
+      vendor_work_status: "pending_accept",
+    },
+  }) as never
+  const resolved = await resolveVendorTicketForInbound(supabase, {
+    vendorId: "vendor-identity",
+    inboundBody: "Yes",
+    conversationTicketId: JOB_A.ticketId,
+    openJobs: [],
+  })
+  assertEquals(resolved.ok, true)
+  if (resolved.ok) {
+    assertEquals(resolved.ticketId, JOB_A.ticketId)
+    assertEquals(resolved.boundBy, "conversation_pin")
+  }
+})
+
+Deno.test("resolveVendorTicketForInbound binds thread pin for bare YES among multiple jobs", async () => {
+  const supabase = mockOpenJobsSupabase([JOB_A, JOB_B]) as never
+  const resolved = await resolveVendorTicketForInbound(supabase, {
+    vendorId: "vendor-1",
+    inboundBody: "YES",
+    conversationTicketId: JOB_B.ticketId,
+    openJobs: [JOB_A, JOB_B],
+  })
+  assertEquals(resolved.ok, true)
+  if (resolved.ok) {
+    assertEquals(resolved.ticketId, JOB_B.ticketId)
+    assertEquals(resolved.boundBy, "conversation_pin")
+  }
+})
+
+Deno.test("resolveVendorTicketForInbound prefers unit match over conversation pin", async () => {
+  const supabase = mockOpenJobsSupabase([JOB_A, JOB_B]) as never
+  const resolved = await resolveVendorTicketForInbound(supabase, {
+    vendorId: "vendor-1",
+    inboundBody: "I can visit Unit 205 tomorrow.",
+    conversationTicketId: JOB_A.ticketId,
+    openJobs: [JOB_A, JOB_B],
+  })
+  assertEquals(resolved.ok, true)
+  if (resolved.ok) {
+    assertEquals(resolved.ticketId, JOB_B.ticketId)
+    assertEquals(resolved.boundBy, "unit")
   }
 })

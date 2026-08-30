@@ -11,6 +11,9 @@ export type OnboardingVendor = {
   category: string
   email: string
   phone: string
+  city: string
+  state: string
+  country: string
   preferredEmergency: boolean
 }
 
@@ -21,7 +24,7 @@ export async function fetchOnboardingVendors(
 
   const { data, error } = await supabase
     .from('vendors')
-    .select('id, name, category, email, phone, preferred_emergency')
+    .select('id, name, category, email, phone, city, state, country, preferred_emergency')
     .eq('landlord_id', landlordId)
     .eq('active', true)
     .order('created_at', { ascending: true })
@@ -37,6 +40,9 @@ export async function fetchOnboardingVendors(
     category: String((row as { category?: string | null }).category ?? ''),
     email: String((row as { email?: string | null }).email ?? ''),
     phone: String((row as { phone?: string | null }).phone ?? ''),
+    city: String((row as { city?: string | null }).city ?? ''),
+    state: String((row as { state?: string | null }).state ?? ''),
+    country: String((row as { country?: string | null }).country ?? ''),
     preferredEmergency: Boolean(
       (row as { preferred_emergency?: boolean | null }).preferred_emergency,
     ),
@@ -44,12 +50,15 @@ export async function fetchOnboardingVendors(
   }))
 
   return dedupeVendorsByName(rows).map(
-    ({ id, name, category, email, phone, preferredEmergency }) => ({
+    ({ id, name, category, email, phone, city, state, country, preferredEmergency }) => ({
       id,
       name,
       category,
       email,
       phone,
+      city,
+      state,
+      country,
       preferredEmergency,
     }),
   )

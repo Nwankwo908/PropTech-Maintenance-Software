@@ -25,6 +25,8 @@ export type VendorComplianceItem = {
   meta?: string | null
   /** Shown when nothing has been collected yet. */
   emptyHint: string
+  /** When true, missing this item does not block verification. */
+  optional?: boolean
 }
 
 export type VendorServiceArea = {
@@ -32,6 +34,10 @@ export type VendorServiceArea = {
   primaryMetro: string | null
   radiusMiles: number | null
   zipCodes: string[]
+  cities: string[]
+  /** Two-letter US state from the verification form (stored in `counties`). */
+  stateCode: string | null
+  centerAddress: string | null
   emptyHint: string
 }
 
@@ -53,7 +59,6 @@ export type VendorComplianceProfile = {
   documents: VendorComplianceItem[]
   stateLicense: VendorComplianceItem
   generalLiabilityCoi: VendorComplianceItem
-  backgroundCheck: VendorComplianceItem
   w9: VendorComplianceItem
   tradeCategories: VendorTradeCategories
   serviceArea: VendorServiceArea
@@ -70,10 +75,17 @@ export type VendorComplianceSubject = {
   active?: boolean | null
   /** Platform hold: suspended | banned */
   rosterStatus?: string | null
+  /** Landlord activated without verification documents. */
+  onboardingOverriddenAt?: string | null
 }
 
 /** Empty compliance requirement — nothing retrieved during onboarding. */
-function emptyDocument(id: string, label: string, emptyHint: string): VendorComplianceItem {
+function emptyDocument(
+  id: string,
+  label: string,
+  emptyHint: string,
+  optional = false,
+): VendorComplianceItem {
   return {
     id,
     label,
@@ -82,6 +94,7 @@ function emptyDocument(id: string, label: string, emptyHint: string): VendorComp
     detail: null,
     meta: null,
     emptyHint,
+    optional,
   }
 }
 
@@ -151,21 +164,59 @@ function buildTradeCategories(
   return { set: true, primaryLabel, labels, emptyHint: '' }
 }
 
+function stringList(raw: unknown): string[] {
+  if (!Array.isArray(raw)) return []
+  return raw
+    .map((item) => (typeof item === 'string' ? item.trim() : ''))
+    .filter(Boolean)
+}
+
+function stateCodeFromCounties(counties: string[]): string | null {
+  const match = counties.find((county) => /^[A-Za-z]{2}$/.test(county))
+  return match ? match.toUpperCase() : null
+}
+
+function stateCodeFromCenterAddress(centerAddress: string | null): string | null {
+  if (!centerAddress) return null
+  const parts = centerAddress.split(',').map((part) => part.trim()).filter(Boolean)
+  for (const part of parts.slice(1)) {
+    const token = part.split(/\s+/)[0] ?? ''
+    if (/^[A-Za-z]{2}$/.test(token)) return token.toUpperCase()
+  }
+  return null
+}
+
 function buildServiceArea(verification?: VerificationRecord | null): VendorServiceArea {
-  const area = (verification?.service_area ?? {}) as VerificationServiceArea
-  const zips = Array.isArray(area.zips) ? area.zips.filter(Boolean) : []
-  const cities = Array.isArray(area.cities) ? area.cities.filter(Boolean) : []
+  const area = (verification?.service_area ?? {}) as VerificationServiceArea & {
+    zipCodes?: string[]
+  }
+  const zips = [...stringList(area.zips), ...stringList(area.zipCodes)].filter(
+    (zip, index, all) => all.indexOf(zip) === index,
+  )
+  const cities = stringList(area.cities)
+  const counties = stringList(area.counties)
   const radiusMiles =
     typeof area.radiusMiles === 'number' && Number.isFinite(area.radiusMiles)
       ? area.radiusMiles
       : null
+  const centerAddress = typeof area.centerAddress === 'string' ? area.centerAddress.trim() || null : null
+  const stateCode = stateCodeFromCounties(counties) ?? stateCodeFromCenterAddress(centerAddress)
 
-  if (zips.length === 0 && cities.length === 0 && radiusMiles == null) {
+  if (
+    zips.length === 0 &&
+    cities.length === 0 &&
+    radiusMiles == null &&
+    !centerAddress &&
+    !stateCode
+  ) {
     return {
       set: false,
       primaryMetro: null,
       radiusMiles: null,
       zipCodes: [],
+      cities: [],
+      stateCode: null,
+      centerAddress: null,
       emptyHint: 'No service area set yet — add coverage to route nearby work.',
     }
   }
@@ -176,8 +227,104 @@ function buildServiceArea(verification?: VerificationRecord | null): VendorServi
     primaryMetro: primaryMetro ?? 'Service area on file',
     radiusMiles,
     zipCodes: zips,
+    cities,
+    stateCode,
+    centerAddress,
     emptyHint: '',
   }
+}
+
+/** Single geocode pin: city + state + ZIP from the verification form. */
+export function composeVendorServiceAreaMapPin(serviceArea: VendorServiceArea): string | null {
+  const center = serviceArea.centerAddress?.trim() ?? ''
+  if (center) return center
+  const composed = [serviceArea.cities[0], serviceArea.stateCode, serviceArea.zipCodes[0]]
+    .map((part) => part?.trim() ?? '')
+    .filter(Boolean)
+    .join(', ')
+  return composed || null
+}
+
+/** Map queries from the verification form service area; HQ location is fallback only. */
+export function mapQueriesForVendorServiceArea(
+  serviceArea: VendorServiceArea,
+  fallbackLocation?: string | null,
+): string[] {
+  const pin = composeVendorServiceAreaMapPin(serviceArea)
+  const pinNorm = pin ? normalizePlace(pin) : ''
+  const pinZip = pin ? zip5(pin) : null
+  const extraCities = serviceArea.cities.filter((city) => {
+    const n = normalizePlace(city)
+    return n && (!pinNorm || (n !== pinNorm && !pinNorm.includes(n)))
+  })
+  const extraZips = serviceArea.zipCodes.filter((zip) => {
+    const z = zip5(zip) ?? zip.trim()
+    return z && z !== pinZip && !(pin ?? '').includes(z)
+  })
+  const fromArea = [pin, ...extraCities, ...extraZips]
+    .map((query) => query?.trim() ?? '')
+    .filter(Boolean)
+  if (fromArea.length > 0) return [...new Set(fromArea)]
+  const fallback = fallbackLocation?.trim() ?? ''
+  return fallback ? [fallback] : []
+}
+
+function normalizePlace(value: string): string {
+  return value.trim().toLowerCase().replace(/[.,]/g, ' ').replace(/\s+/g, ' ')
+}
+
+function zip5(value: string): string | null {
+  const digits = value.replace(/\D/g, '')
+  return digits.length >= 5 ? digits.slice(0, 5) : null
+}
+
+export type PropertyLocationForVendorCoverage = {
+  zipCode?: string | null
+  city?: string | null
+  state?: string | null
+  streetAddress?: string | null
+  addressLine?: string | null
+}
+
+/** True when the vendor's coverage (or HQ fallback) includes this property. */
+export function vendorServiceAreaCoversProperty(
+  serviceArea: VendorServiceArea,
+  property: PropertyLocationForVendorCoverage,
+  hqLocation?: string | null,
+): boolean {
+  const queries = mapQueriesForVendorServiceArea(serviceArea, hqLocation)
+  if (queries.length === 0) return false
+
+  const propZip = property.zipCode ? zip5(property.zipCode) : null
+  const propCity = property.city ? normalizePlace(property.city) : ''
+  const addressBlob = normalizePlace(
+    [
+      property.addressLine,
+      property.streetAddress,
+      property.city,
+      property.state,
+      property.zipCode,
+    ]
+      .filter(Boolean)
+      .join(' '),
+  )
+
+  for (const raw of queries) {
+    const queryZip = zip5(raw)
+    if (queryZip && propZip && queryZip === propZip) return true
+    if (queryZip && addressBlob.includes(queryZip)) return true
+
+    const n = normalizePlace(raw)
+    if (!n) continue
+    if (
+      propCity &&
+      (n === propCity || n.startsWith(`${propCity} `) || n.startsWith(`${propCity},`))
+    ) {
+      return true
+    }
+    if (n.length >= 4 && addressBlob.includes(n)) return true
+  }
+  return false
 }
 
 function buildCapacity(
@@ -189,6 +336,7 @@ function buildCapacity(
     vendorActive: subject.active,
     availability: verification?.availability,
     rosterStatus: subject.rosterStatus,
+    onboardingOverriddenAt: subject.onboardingOverriddenAt,
   })
   return {
     status: chip.status,
@@ -212,20 +360,15 @@ export function buildVendorComplianceProfile(
     'General liability COI',
     'Not collected yet — request a certificate of insurance from the vendor.',
   )
-  const emptyBackground = emptyDocument(
-    'background_check',
-    'Background check',
-    'Not run yet — order a Checkr screening before assigning work.',
-  )
   const emptyW9 = emptyDocument(
     'w9',
     'W-9 on file',
-    'Not collected yet — entity type + SSN/EIN + W-9 required for 1099 reporting.',
+    'Optional — add a W-9 when you need it for 1099 reporting.',
+    true,
   )
 
   let stateLicense = emptyLicense
   let generalLiabilityCoi = emptyCoi
-  let backgroundCheck = emptyBackground
   let w9 = emptyW9
 
   if (verification) {
@@ -238,27 +381,22 @@ export function buildVendorComplianceProfile(
       byId.get('coi_coverage'),
       'General liability COI on file',
     )
-    backgroundCheck = documentFromChecklist(
-      emptyBackground,
-      byId.get('background_check'),
-      'Background check on file',
-    )
     w9 = documentFromChecklist(emptyW9, byId.get('w9'), 'W-9 on file')
   }
 
-  const documents = [stateLicense, generalLiabilityCoi, backgroundCheck, w9]
-  const collectedCount = documents.filter((item) => item.collected).length
+  const documents = [stateLicense, generalLiabilityCoi, w9]
+  const requiredDocuments = documents.filter((item) => !item.optional)
+  const collectedCount = requiredDocuments.filter((item) => item.collected).length
 
   return {
     documents,
     stateLicense,
     generalLiabilityCoi,
-    backgroundCheck,
     w9,
     tradeCategories: buildTradeCategories(subject, verification),
     serviceArea: buildServiceArea(verification),
     capacity: buildCapacity(subject, verification),
     collectedCount,
-    totalRequirements: documents.length,
+    totalRequirements: requiredDocuments.length,
   }
 }

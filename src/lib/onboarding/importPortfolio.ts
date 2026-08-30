@@ -436,6 +436,9 @@ export async function importMockExtraction(
           category: vendor.category ?? '',
           email: vendor.email,
           phone: vendor.phone,
+          city: '',
+          state: '',
+          country: '',
           preferredEmergency: false,
         })
       }

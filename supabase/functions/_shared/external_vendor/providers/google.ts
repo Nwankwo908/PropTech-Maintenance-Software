@@ -49,7 +49,7 @@ export class GooglePlacesExternalVendorProvider implements ExternalVendorProvide
         "Content-Type": "application/json",
         "X-Goog-Api-Key": this.apiKey.trim(),
         "X-Goog-FieldMask":
-          "places.displayName,places.rating,places.userRatingCount,places.priceLevel,places.formattedAddress,places.nationalPhoneNumber,places.websiteUri,places.googleMapsUri,places.types",
+          "places.displayName,places.rating,places.userRatingCount,places.priceLevel,places.formattedAddress,places.nationalPhoneNumber,places.websiteUri,places.googleMapsUri,places.types,places.businessStatus",
       },
       body: JSON.stringify({
         textQuery: input.textQuery,
@@ -75,11 +75,14 @@ export class GooglePlacesExternalVendorProvider implements ExternalVendorProvide
         websiteUri?: string
         googleMapsUri?: string
         types?: string[]
+        businessStatus?: string
       }>
     }
 
     const out: ExternalVendorHit[] = []
     for (const p of data.places ?? []) {
+      const status = String(p.businessStatus ?? "OPERATIONAL").toUpperCase()
+      if (status !== "OPERATIONAL") continue
       const name = String(p.displayName?.text ?? "").trim()
       if (!name) continue
       const tags = googlePlaceTags(p.types)

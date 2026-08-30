@@ -1,4 +1,5 @@
 import { supabase } from '@/lib/supabase'
+import { normalizeVendorJobToken } from '@/lib/vendorJobToken'
 
 export type EstimatePending = {
   id: string
@@ -28,28 +29,54 @@ export type EstimateJobContext = {
 }
 
 async function invokeEstimate(body: Record<string, unknown>) {
-  if (!supabase) {
+  const supabaseUrl = import.meta.env.VITE_SUPABASE_URL?.trim()
+  const anon = import.meta.env.VITE_SUPABASE_ANON_KEY?.trim()
+  if (!supabaseUrl || !anon) {
     throw new Error("We can't reach the server right now. Please try again in a moment.")
   }
-  const { data, error } = await supabase.functions.invoke(
-    'vendor-submit-maintenance-estimate',
-    { body },
-  )
-  if (error) {
-    let message = error.message
-    const ctx = (error as { context?: Response }).context
-    if (ctx && typeof ctx.text === 'function') {
-      try {
-        const t = await ctx.text()
-        const j = t ? (JSON.parse(t) as { error?: string }) : null
-        if (j?.error) message = j.error
-      } catch {
-        /* ignore */
-      }
-    }
-    throw new Error(message)
+
+  const token =
+    typeof body.token === 'string' ? normalizeVendorJobToken(body.token) : ''
+  if (!token) {
+    throw new Error('This estimate link is invalid or incomplete.')
   }
-  return data as Record<string, unknown>
+
+  const res = await fetch(
+    `${supabaseUrl.replace(/\/$/, '')}/functions/v1/vendor-submit-maintenance-estimate`,
+    {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        apikey: anon,
+        Authorization: `Bearer ${anon}`,
+      },
+      body: JSON.stringify({ ...body, token }),
+    },
+  )
+
+  let data: Record<string, unknown> | null = null
+  try {
+    data = (await res.json()) as Record<string, unknown>
+  } catch {
+    data = null
+  }
+
+  if (!res.ok) {
+    const message = typeof data?.error === 'string' ? data.error.trim() : ''
+    if (res.status === 404 || message.toLowerCase().includes('not found')) {
+      throw new Error('This job link is no longer valid. Ask the property team to send a new one.')
+    }
+    if (res.status === 400 || message.toLowerCase().includes('invalid')) {
+      throw new Error(message || 'This estimate link is invalid or incomplete.')
+    }
+    throw new Error(
+      message && message.length < 160
+        ? message
+        : "We couldn't open this estimate. Please try the link from your job again.",
+    )
+  }
+
+  return data ?? {}
 }
 
 export async function resolveEstimateJob(token: string): Promise<EstimateJobContext> {

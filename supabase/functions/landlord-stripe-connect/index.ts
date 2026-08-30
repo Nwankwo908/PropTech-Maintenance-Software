@@ -6,6 +6,7 @@
  * - create_connect_account_link (hosted fallback)
  * - refresh_connect_status
  * - status (read flags only)
+ * - clear_connect (onboarding reset — unlink + delete Express account)
  *
  * Auth: ADMIN_REASSIGN_SECRET (same as other admin edges).
  */
@@ -13,12 +14,13 @@ import { serve } from "https://deno.land/std/http/server.ts"
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1"
 import { adminEdgeCorsHeaders } from "../_shared/admin_edge_cors.ts"
 import { requireAdminReassignAuth } from "../_shared/admin_edge_auth.ts"
-import { logGraphEvent } from "../_shared/graph/logGraphEvent.ts"
+import { recordActivityLog } from "../_shared/graph/recordActivityLog.ts"
 import { recordLandlordStripeConnectReadyIfTransition } from "../_shared/paymentActivityEvents.ts"
 import {
   createConnectAccountLink,
   createConnectAccountSession,
-  createExpressConnectAccount,
+  deleteExpressConnectAccount,
+  ensureEmbeddedConnectAccount,
   isStripeConfigured,
   isStripeConnectReady,
   listConnectPayoutMethods,
@@ -28,6 +30,7 @@ import {
   type StripeConnectPayoutMethod,
 } from "../_shared/stripeConnect.ts"
 import { isUuidShape } from "../_shared/uuid_shape.ts"
+import { landlordHasPayments } from "../../../shared/landlordCapabilities.ts"
 
 const corsHeaders = adminEdgeCorsHeaders
 
@@ -97,6 +100,9 @@ serve(async (req) => {
   if (!landlordId || !isUuidShape(landlordId)) {
     return jsonResponse({ error: "Missing or invalid landlordId" }, 400)
   }
+  if (!landlordHasPayments(landlordId)) {
+    return jsonResponse({ error: "Payments are not available on this account." }, 403)
+  }
 
   const supabaseUrl = Deno.env.get("SUPABASE_URL")?.trim()
   const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")?.trim()
@@ -129,6 +135,54 @@ serve(async (req) => {
     return jsonResponse({ ok: true, ...payoutSnapshot(landlord, methods) })
   }
 
+  if (action === "clear_connect") {
+    const accountId =
+      typeof landlord.stripe_connect_account_id === "string"
+        ? landlord.stripe_connect_account_id.trim()
+        : ""
+    if (accountId && isStripeConfigured()) {
+      const deleted = await deleteExpressConnectAccount(accountId)
+      if (!deleted.ok) {
+        console.warn("[landlord-stripe-connect] delete account", deleted.error)
+      }
+    }
+    const nowIso = new Date().toISOString()
+    const { error: updErr } = await supabase
+      .from("landlords")
+      .update({
+        stripe_connect_account_id: null,
+        stripe_connect_charges_enabled: false,
+        stripe_connect_payouts_enabled: false,
+        stripe_connect_details_submitted: false,
+        stripe_connect_updated_at: nowIso,
+      })
+      .eq("id", landlordId)
+    if (updErr) {
+      console.error("[landlord-stripe-connect] clear_connect", updErr)
+      return jsonResponse({ error: "Could not clear payout account" }, 500)
+    }
+    if (accountId) {
+      await recordActivityLog(supabase, {
+        landlordId,
+        eventType: "landlord.stripe_connect_cleared",
+        source: "dashboard",
+        actorType: "landlord",
+        metadata: {
+          message: "Rent payout account was removed so onboarding can start over.",
+        },
+      })
+    }
+    return jsonResponse({
+      ok: true,
+      ...payoutSnapshot({
+        stripe_connect_account_id: null,
+        stripe_connect_charges_enabled: false,
+        stripe_connect_payouts_enabled: false,
+        stripe_connect_details_submitted: false,
+      }),
+    })
+  }
+
   if (!isStripeConfigured()) {
     return jsonResponse(
       {
@@ -157,24 +211,26 @@ serve(async (req) => {
         ? landlord.stripe_connect_account_id.trim()
         : ""
 
-    if (!accountId) {
-      const created = await createExpressConnectAccount({
-        landlordId,
-        email: landlord.email,
-        businessName: landlord.name,
-      })
-      if (!created.ok) {
-        return jsonResponse({ error: created.error }, 502)
-      }
-      accountId = created.account.id
+    const ensured = await ensureEmbeddedConnectAccount({
+      existingAccountId: accountId || null,
+      landlordId,
+      email: landlord.email,
+      businessName: landlord.name,
+    })
+    if (!ensured.ok) {
+      return jsonResponse({ error: ensured.error }, 502)
+    }
+    const createdNew = !accountId || ensured.replaced || ensured.account.id !== accountId
+    accountId = ensured.account.id
+    if (createdNew) {
       const nowIso = new Date().toISOString()
       const { error: updErr } = await supabase
         .from("landlords")
         .update({
           stripe_connect_account_id: accountId,
-          stripe_connect_charges_enabled: created.account.chargesEnabled,
-          stripe_connect_payouts_enabled: created.account.payoutsEnabled,
-          stripe_connect_details_submitted: created.account.detailsSubmitted,
+          stripe_connect_charges_enabled: ensured.account.chargesEnabled,
+          stripe_connect_payouts_enabled: ensured.account.payoutsEnabled,
+          stripe_connect_details_submitted: ensured.account.detailsSubmitted,
           stripe_connect_updated_at: nowIso,
         })
         .eq("id", landlordId)
@@ -182,11 +238,11 @@ serve(async (req) => {
         console.error("[landlord-stripe-connect] persist account", updErr)
         return jsonResponse({ error: "Could not save payout account" }, 500)
       }
-      await logGraphEvent(supabase, {
-        landlord_id: landlordId,
-        event_type: "landlord.stripe_connect_started",
+      await recordActivityLog(supabase, {
+        landlordId,
+        eventType: "landlord.stripe_connect_started",
         source: "dashboard",
-        actor_type: "landlord",
+        actorType: "landlord",
         metadata: {
           message: "Landlord started rent payout account setup.",
           stripe_connect_account_id: accountId,

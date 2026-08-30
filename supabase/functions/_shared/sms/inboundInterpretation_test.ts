@@ -429,10 +429,19 @@ Deno.test("summary YES stays on intake so the request can submit", () => {
 })
 
 Deno.test("urgency answer continues intake; lease question does not", () => {
-  const pending = { intakeStep: "urgency" as const, activeIntake: true }
+  const pending = {
+    intakeStep: "urgency" as const,
+    activeIntake: true,
+    recommendedUrgency: "emergency",
+  }
   const urgency = heuristicInterpretInbound("emergency", pending)
   assertEquals(urgency.addressesPending, true)
   assertEquals(shouldHandleInterpretedIntent(urgency, "emergency", pending), false)
+
+  const yesRight = heuristicInterpretInbound("Yes that's right", pending)
+  assertEquals(yesRight.addressesPending, true)
+  assertEquals(yesRight.pendingAnswer, "emergency")
+  assertEquals(shouldHandleInterpretedIntent(yesRight, "Yes that's right", pending), false)
 
   const lease = heuristicInterpretInbound("When does my lease expire?", pending)
   assertEquals(lease.intent, "lease_info")

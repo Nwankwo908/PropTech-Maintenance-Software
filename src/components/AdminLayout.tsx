@@ -216,7 +216,7 @@ function AdminTopBar() {
               aria-label="Switch landlord account"
             >
               {LANDLORD_ACCOUNT_OPTIONS.map((opt) => (
-                <option key={opt.kind} value={opt.id}>
+                <option key={opt.id} value={opt.id}>
                   {opt.label}
                 </option>
               ))}

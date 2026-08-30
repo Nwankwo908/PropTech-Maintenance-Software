@@ -58,6 +58,9 @@ export type ResidentProfileDetail = {
   pets: ResidentPet[]
   leaseStatus: string
   occupancyStatus: ResidentOccupancyStatus
+  leaseStartDate: string | null
+  leaseEndDate: string | null
+  rentDueDay: number | null
   leaseStartLabel: string
   leaseEndLabel: string
   monthlyRentLabel: string
@@ -83,6 +86,7 @@ export type ResidentProfileUserRow = {
   balanceDue: number
   leaseStartDate?: string | null
   leaseEndDate: string | null
+  rentDueDay?: number | null
   /** Contract rent from users.monthly_rent when set during onboarding/edit. */
   monthlyRent?: number | null
   maintenanceResponsibilitiesClause?: string | null
@@ -241,6 +245,15 @@ export function buildResidentProfileDetail(input: {
     pets: [],
     occupancyStatus: normalizeResidentOccupancyStatus(user.status),
     leaseStatus: residentOccupancyLabel(user.status),
+    leaseStartDate: user.leaseStartDate?.trim() || null,
+    leaseEndDate: user.leaseEndDate?.trim() || null,
+    rentDueDay:
+      typeof user.rentDueDay === 'number' &&
+      Number.isFinite(user.rentDueDay) &&
+      user.rentDueDay >= 1 &&
+      user.rentDueDay <= 31
+        ? Math.trunc(user.rentDueDay)
+        : null,
     leaseStartLabel: formatPropertyLeaseEnd(user.leaseStartDate ?? null) ?? '—',
     leaseEndLabel: formatPropertyLeaseEnd(user.leaseEndDate) ?? '—',
     monthlyRentLabel: monthlyRent != null ? formatCurrency(monthlyRent) : '—',

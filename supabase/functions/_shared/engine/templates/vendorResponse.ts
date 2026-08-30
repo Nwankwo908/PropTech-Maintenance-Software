@@ -19,6 +19,7 @@ import {
   persistVendorWorkOrderClarification,
   readVendorWorkOrderClarification,
   resolveClarificationSelection,
+  readPendingVendorJobOffer,
   VENDOR_WO_CLARIFICATION_KEY,
 } from "../../sms/vendorWorkOrderClarification.ts"
 import { resolveVendorAvailability } from "../../vendor_availability_parse.ts"
@@ -298,7 +299,7 @@ export const vendorJobResponseTemplate: WorkflowTemplate = {
 
     const { data: convo } = await supabase
       .from("sms_conversations")
-      .select("intake_state")
+      .select("intake_state, maintenance_request_id")
       .eq("id", sms.conversationId)
       .maybeSingle()
 
@@ -398,6 +399,12 @@ export const vendorJobResponseTemplate: WorkflowTemplate = {
           vendorId,
           inboundBody: effectiveBody,
           scheduleTicketId: prevInScheduleSteps ? prev?.ticketId : null,
+          conversationTicketId:
+            typeof convo?.maintenance_request_id === "string"
+              ? convo.maintenance_request_id
+              : null,
+          pendingOfferTicketId: readPendingVendorJobOffer(intake)?.ticketId ??
+            null,
           openJobs,
         })
 

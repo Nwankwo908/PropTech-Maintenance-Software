@@ -398,6 +398,81 @@ export async function advanceVendorOnboardingAdminApprove(
   })
 }
 
+/**
+ * Landlord Override onboarding — close the verification workflow so Ulo
+ * stops asking the vendor to finish the form. Does not mark documents verified.
+ */
+export async function completeVendorOnboardingAfterOverride(
+  supabase: SupabaseClient,
+  params: {
+    landlordId: string
+    vendorId: string
+    vendorLabel?: string
+  },
+): Promise<number> {
+  const { data: runs, error } = await supabase
+    .from("workflow_runs")
+    .select("id, metadata, current_step, status")
+    .eq("landlord_id", params.landlordId)
+    .eq("template_id", "vendor_onboarding")
+    .in("status", ["active", "escalated"])
+
+  if (error) {
+    console.error("[vendor-onboarding] list runs for override", error.message)
+    return 0
+  }
+
+  const vendorId = params.vendorId.trim()
+  const matching = (runs ?? []).filter((row) => {
+    const rec = row as Record<string, unknown>
+    const metadata = rec.metadata && typeof rec.metadata === "object"
+      ? rec.metadata as Record<string, unknown>
+      : {}
+    const stepState = metadata.step_state && typeof metadata.step_state === "object"
+      ? metadata.step_state as Record<string, unknown>
+      : {}
+    const ids = [
+      metadata.vendor_id,
+      stepState.vendor_id,
+      rec.entity_id,
+    ]
+    return ids.some((id) => typeof id === "string" && id.trim() === vendorId)
+  })
+
+  const label = params.vendorLabel?.trim() || "Vendor"
+  let completed = 0
+  for (const row of matching) {
+    const runId = typeof row.id === "string" ? row.id : ""
+    if (!runId) continue
+    const run = await getWorkflowRunById(supabase, runId)
+    if (!run) continue
+    const nowIso = new Date().toISOString()
+    await logPipelineStageEvent(supabase, {
+      runId,
+      stage: "act",
+      step: "override_activated",
+      actorType: "landlord",
+      message: `${label} was activated without finishing the verification form.`,
+      metadata: { vendor_id: vendorId, onboarding_overridden: true },
+    })
+    await updateWorkflowRun(supabase, runId, {
+      status: "completed",
+      currentStep: "verified",
+      completedAt: nowIso,
+      metadata: {
+        vendor_id: vendorId,
+        onboarding_overridden: true,
+        step_state: mergeStepState(run, {
+          step: "verified",
+          vendor_id: vendorId,
+        }),
+      },
+    })
+    completed += 1
+  }
+  return completed
+}
+
 export async function recordVendorOnboardingReminder(
   supabase: SupabaseClient,
   params: {

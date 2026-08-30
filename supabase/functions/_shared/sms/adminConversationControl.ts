@@ -4,7 +4,7 @@
  */
 import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.49.1"
 import { normalizeSmsPhone } from "./inbound_db.ts"
-import { getSMSProvider } from "./providerFactory.ts"
+import { getSMSProviderForSend } from "./providerFactory.ts"
 import { recordActivityLog } from "../graph/recordActivityLog.ts"
 
 export const ADMIN_TAKEOVER_KEY = "admin_takeover"
@@ -244,7 +244,7 @@ export async function sendAdminConversationSms(
 
   const { data: smsNumber, error: numberErr } = await supabase
     .from("sms_numbers")
-    .select("id, phone_number")
+    .select("id, phone_number, provider")
     .eq("id", conversation.sms_number_id)
     .maybeSingle()
 
@@ -264,7 +264,10 @@ export async function sendAdminConversationSms(
 
   const smsBody = `[Property manager]
 ${body}`
-  const provider = getSMSProvider()
+  const provider = getSMSProviderForSend({
+    landlordId: conversation.landlord_id,
+    lineProvider: typeof smsNumber.provider === "string" ? smsNumber.provider : null,
+  })
 
   let sendResult: Awaited<ReturnType<typeof provider.sendMessage>>
   try {

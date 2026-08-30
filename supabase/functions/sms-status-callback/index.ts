@@ -1,193 +1,30 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1"
-import { logGraphEvent } from "../_shared/graph/logGraphEvent.ts"
-import { handleActivationSmsDeliveryFailure } from "../_shared/sms/tenantActivation.ts"
-import { getSMSProvider } from "../_shared/sms/providerFactory.ts"
-import type { SMSStatusUpdate } from "../_shared/sms/types.ts"
+import { getSMSProviderFor } from "../_shared/sms/providerFactory.ts"
+import { processInboundSms, InboundSmsError } from "../_shared/sms/inbound_processor.ts"
+import { processSmsStatusUpdate } from "../_shared/sms/processSmsStatusUpdate.ts"
+import {
+  isTelnyxInboundEventType,
+  isTelnyxStatusEventType,
+  peekTelnyxEventType,
+} from "../_shared/sms/TelnyxProvider.ts"
 
 const corsHeaders: Record<string, string> = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers":
-    "authorization, x-client-info, apikey, content-type, x-twilio-signature",
+    "authorization, x-client-info, apikey, content-type, x-twilio-signature, telnyx-signature-ed25519, telnyx-timestamp",
   "Access-Control-Allow-Methods": "POST, OPTIONS",
-}
-
-type SmsMessageRow = {
-  id: string
-  conversation_id: string
-  landlord_id: string
-  provider_status: string | null
-  direction: string
-}
-
-type ConversationRow = {
-  unit_id: string | null
-  resident_id: string | null
-  vendor_id: string | null
-  maintenance_request_id: string | null
 }
 
 function emptyOk(): Response {
   return new Response("", { status: 200, headers: corsHeaders })
 }
 
-function isFailedDeliveryStatus(status: string): boolean {
-  const normalized = status.trim().toLowerCase()
-  return normalized === "failed" || normalized === "undelivered"
-}
-
-function isDeliveredStatus(status: string): boolean {
-  return status.trim().toLowerCase() === "delivered"
-}
-
-async function loadConversationContext(
-  supabase: ReturnType<typeof createClient>,
-  conversationId: string,
-): Promise<ConversationRow | null> {
-  const { data, error } = await supabase
-    .from("sms_conversations")
-    .select("unit_id, resident_id, vendor_id, maintenance_request_id")
-    .eq("id", conversationId)
-    .maybeSingle()
-
-  if (error) {
-    console.error("[sms-status-callback] conversation lookup", error.message)
-    return null
-  }
-
-  return (data as ConversationRow | null) ?? null
-}
-
-async function recordDeliveryGraphEvent(
-  supabase: ReturnType<typeof createClient>,
-  params: {
-    message: SmsMessageRow
-    statusUpdate: SMSStatusUpdate
-    conversation: ConversationRow | null
-    eventType: "sms.delivery_failed" | "sms.delivered"
-  },
-): Promise<void> {
-  await logGraphEvent(supabase, {
-    landlord_id: params.message.landlord_id,
-    event_type: params.eventType,
-    source: "sms",
-    actor_type: "system",
-    unit_id: params.conversation?.unit_id ?? null,
-    resident_id: params.conversation?.resident_id ?? null,
-    vendor_id: params.conversation?.vendor_id ?? null,
-    maintenance_request_id: params.conversation?.maintenance_request_id ?? null,
-    conversation_id: params.message.conversation_id,
-    message_id: params.message.id,
-    metadata: {
-      provider: params.statusUpdate.provider,
-      provider_message_sid: params.statusUpdate.providerMessageSid,
-      provider_status: params.statusUpdate.status,
-      previous_provider_status: params.message.provider_status,
-      direction: params.message.direction,
-      error_code: params.statusUpdate.errorCode ?? null,
-      from: params.statusUpdate.from ?? null,
-      to: params.statusUpdate.to ?? null,
-    },
+function requestWithBody(req: Request, rawBody: string): Request {
+  return new Request(req.url, {
+    method: req.method,
+    headers: req.headers,
+    body: rawBody,
   })
-}
-
-async function processStatusUpdate(
-  supabase: ReturnType<typeof createClient>,
-  statusUpdate: SMSStatusUpdate,
-): Promise<{ ok: true; messageId?: string; graphEvent?: string }> {
-  const { data: message, error: lookupErr } = await supabase
-    .from("sms_messages")
-    .select("id, conversation_id, landlord_id, provider_status, direction")
-    .eq("provider", statusUpdate.provider)
-    .eq("provider_message_sid", statusUpdate.providerMessageSid)
-    .maybeSingle()
-
-  if (lookupErr) {
-    console.error("[sms-status-callback] sms_messages lookup", lookupErr.message)
-    throw new Error("Message lookup failed")
-  }
-
-  if (!message?.id) {
-    console.warn("[sms-status-callback] unknown provider_message_sid", {
-      provider: statusUpdate.provider,
-      providerMessageSid: statusUpdate.providerMessageSid,
-      status: statusUpdate.status,
-    })
-    return { ok: true }
-  }
-
-  const row = message as SmsMessageRow
-  const previousStatus = row.provider_status
-
-  const { error: updateErr } = await supabase
-    .from("sms_messages")
-    .update({ provider_status: statusUpdate.status })
-    .eq("id", row.id)
-
-  if (updateErr) {
-    console.error("[sms-status-callback] sms_messages update", updateErr.message)
-    throw new Error("Message update failed")
-  }
-
-  const failedNow = isFailedDeliveryStatus(statusUpdate.status)
-  const deliveredNow = isDeliveredStatus(statusUpdate.status)
-  const failedBefore = previousStatus
-    ? isFailedDeliveryStatus(previousStatus)
-    : false
-  const deliveredBefore = previousStatus
-    ? isDeliveredStatus(previousStatus)
-    : false
-
-  if (!failedNow && !deliveredNow) {
-    return { ok: true, messageId: row.id }
-  }
-
-  const conversation = await loadConversationContext(supabase, row.conversation_id)
-
-  if (failedNow && !failedBefore) {
-    await recordDeliveryGraphEvent(supabase, {
-      message: row,
-      statusUpdate,
-      conversation,
-      eventType: "sms.delivery_failed",
-    })
-
-    // Welcome/activation SMS: update activation state + landlord ops alert when final.
-    if (row.direction === "outbound") {
-      try {
-        const activation = await handleActivationSmsDeliveryFailure(supabase, {
-          landlordId: row.landlord_id,
-          messageId: row.id,
-          conversationId: row.conversation_id,
-          residentId: conversation?.resident_id ?? null,
-          providerStatus: statusUpdate.status,
-          errorCode: statusUpdate.errorCode ?? null,
-        })
-        if (activation.handled) {
-          console.info("[sms-status-callback] activation undeliverable handled", {
-            messageId: row.id,
-            actionRequired: activation.actionRequired ?? false,
-            reason: activation.reason ?? null,
-          })
-        }
-      } catch (e) {
-        console.error("[sms-status-callback] activation undeliverable handler", e)
-      }
-    }
-
-    return { ok: true, messageId: row.id, graphEvent: "sms.delivery_failed" }
-  }
-
-  if (deliveredNow && !deliveredBefore) {
-    await recordDeliveryGraphEvent(supabase, {
-      message: row,
-      statusUpdate,
-      conversation,
-      eventType: "sms.delivered",
-    })
-    return { ok: true, messageId: row.id, graphEvent: "sms.delivered" }
-  }
-
-  return { ok: true, messageId: row.id }
 }
 
 Deno.serve(async (req) => {
@@ -207,12 +44,37 @@ Deno.serve(async (req) => {
   }
 
   const supabase = createClient(supabaseUrl, serviceKey)
+  const rawBody = await req.text()
 
   try {
-    const provider = getSMSProvider()
-    const statusUpdate = await provider.normalizeStatusWebhook(req)
+    const telnyxEvent = peekTelnyxEventType(rawBody)
+    if (isTelnyxInboundEventType(telnyxEvent)) {
+      const inbound = await getSMSProviderFor("telnyx").normalizeInboundWebhook(req, {
+        rawBody,
+        signature: req.headers.get("telnyx-signature-ed25519") ?? "",
+        url: req.url,
+      })
+      const result = await processInboundSms(supabase, inbound)
+      console.info("[sms-status-callback] inbound message.received", {
+        providerMessageSid: inbound.providerMessageSid,
+        conversationId: result.conversationId,
+        messageId: result.messageId,
+      })
+      return emptyOk()
+    }
+    if (telnyxEvent && !isTelnyxStatusEventType(telnyxEvent)) {
+      console.info("[sms-status-callback] ignoring Telnyx event", { eventType: telnyxEvent })
+      return emptyOk()
+    }
 
-    const result = await processStatusUpdate(supabase, statusUpdate)
+    const statusProvider = isTelnyxStatusEventType(telnyxEvent)
+      ? getSMSProviderFor("telnyx")
+      : getSMSProviderFor("twilio")
+    const statusUpdate = await statusProvider.normalizeStatusWebhook(
+      requestWithBody(req, rawBody),
+    )
+
+    const result = await processSmsStatusUpdate(supabase, statusUpdate)
 
     console.info("[sms-status-callback] processed", {
       provider: statusUpdate.provider,
@@ -224,8 +86,19 @@ Deno.serve(async (req) => {
 
     return emptyOk()
   } catch (err) {
+    if (err instanceof InboundSmsError) {
+      console.error("[sms-status-callback] inbound", err.message)
+      if (err.status >= 500) {
+        return new Response(err.message, { status: err.status, headers: corsHeaders })
+      }
+      return emptyOk()
+    }
     const message = err instanceof Error ? err.message : String(err)
-    if (/Invalid Twilio webhook signature/i.test(message)) {
+    if (
+      /Invalid Twilio webhook signature/i.test(message) ||
+      /Invalid Telnyx webhook signature/i.test(message) ||
+      /Missing Telnyx webhook signature headers/i.test(message)
+    ) {
       return new Response("Unauthorized", { status: 401, headers: corsHeaders })
     }
 

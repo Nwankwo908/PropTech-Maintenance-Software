@@ -7,6 +7,7 @@ import {
 import { QUIET_HOURS_TIME_OPTIONS } from '@/lib/onboardingApprovalRules'
 import { useLandlordWorkspace } from '@/context/LandlordWorkspaceContext'
 import { getActiveLandlordId } from '@/lib/activeLandlord'
+import { landlordHasVendorMarketplace } from '@shared/landlordCapabilities'
 import {
   DEFAULT_ORGANIZATION_SETTINGS,
   loadOrganizationComplianceDocuments,
@@ -702,6 +703,7 @@ export function AdminOrganizationSettings() {
                     ]}
                   />
                 </FormField>
+                {landlordHasVendorMarketplace(getActiveLandlordId()) ? (
                 <FormField label="Preferred vendor pool" htmlFor="org-vendor-pool">
                   <SettingsSelect
                     id="org-vendor-pool"
@@ -714,6 +716,7 @@ export function AdminOrganizationSettings() {
                     ]}
                   />
                 </FormField>
+                ) : null}
               </div>
 
               <div className="mt-5 space-y-4 border-t border-[#eef0f3] pt-5">

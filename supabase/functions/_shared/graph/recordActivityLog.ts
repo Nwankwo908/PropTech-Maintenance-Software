@@ -10,6 +10,7 @@
  * 2. property_operations_graph (best-effort dual-write for Overview)
  */
 import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.49.1"
+import { shouldRecordGraphEvent } from "../../../../shared/landlordCapabilities.ts"
 
 export type ActivityLogSource =
   | "sms"
@@ -85,6 +86,9 @@ export async function recordActivityLog(
   supabase: SupabaseClient,
   params: RecordActivityLogInput,
 ): Promise<string | null> {
+  if (!shouldRecordGraphEvent({ landlordId: params.landlordId, eventType: params.eventType })) {
+    return null
+  }
   const source = normalizeActivityLogSource(params.source)
   const metadata = params.metadata ?? {}
 

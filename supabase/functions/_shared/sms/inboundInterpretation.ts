@@ -720,6 +720,14 @@ export function shouldHandleInterpretedIntent(
     return true
   }
   if (interpretation.addressesPending) return false
+  if (
+    pending?.activeIntake &&
+    pending.intakeStep &&
+    pending.intakeStep !== "submitted" &&
+    isAffirmativeReply(body)
+  ) {
+    return false
+  }
   const intent = interpretation.intent
   if (!intent || intent === "maintenance_new") return false
   if (intent === "other" && interpretation.needsClarification) return false

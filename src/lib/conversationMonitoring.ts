@@ -301,7 +301,7 @@ export function formatResidentFeedbackPreview(rating: number): string {
 }
 
 /** Vendor verification invite SMS/email (not a maintenance work-order thread). */
-function isVendorOnboardingInvite(text: string): boolean {
+export function isVendorOnboardingInvite(text: string): boolean {
   return (
     /preferred vendor network|vendor network on ulo|quick verification|start verification|eligible to receive work orders/i.test(
       text,
@@ -319,7 +319,7 @@ function isVendorVerificationSubmitted(text: string): boolean {
 }
 
 /** Tenant activation / welcome + consent SMS (not a maintenance report thread). */
-function isTenantOnboardingInvite(text: string): boolean {
+export function isTenantOnboardingInvite(text: string): boolean {
   return (
     /reply yes to get updates about your maintenance requests/i.test(text) ||
     /reach us by text anytime you need a repair/i.test(text) ||

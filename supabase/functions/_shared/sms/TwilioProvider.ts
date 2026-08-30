@@ -25,11 +25,6 @@ export type TwilioConfig = {
 }
 
 export function readTwilioConfig(): TwilioConfig | { error: string } {
-  const smsProvider = Deno.env.get("SMS_PROVIDER")?.trim().toLowerCase()
-  if (smsProvider && smsProvider !== "twilio") {
-    return { error: `SMS_PROVIDER must be twilio (got ${smsProvider})` }
-  }
-
   const accountSid = Deno.env.get("TWILIO_ACCOUNT_SID")?.trim()
   const authToken = Deno.env.get("TWILIO_AUTH_TOKEN")?.trim()
   if (!accountSid || !authToken) {
@@ -322,6 +317,92 @@ function successSendResult(
   }
 }
 
+let twilioWebhookEnsure: Promise<void> | null = null
+
+/** Point the Twilio From number at Ulo inbound + status webhooks. */
+export function ensureTwilioMessagingWebhooks(): Promise<void> {
+  if (!twilioWebhookEnsure) {
+    twilioWebhookEnsure = ensureTwilioMessagingWebhooksOnce().catch((err) => {
+      twilioWebhookEnsure = null
+      throw err
+    })
+  }
+  return twilioWebhookEnsure
+}
+
+async function ensureTwilioMessagingWebhooksOnce(): Promise<void> {
+  const cfg = readTwilioConfig()
+  if ("error" in cfg) {
+    console.warn("[TwilioProvider] skip webhook ensure", cfg.error)
+    return
+  }
+  const from = cfg.fromNumber?.trim()
+  if (!from) {
+    console.warn("[TwilioProvider] skip webhook ensure — no TWILIO_FROM_NUMBER")
+    return
+  }
+  const supabaseBase = Deno.env.get("SUPABASE_URL")?.trim()?.replace(/\/$/, "") ?? ""
+  const inbound = (
+    Deno.env.get("TWILIO_INBOUND_WEBHOOK_URL")?.trim() ||
+    (supabaseBase ? `${supabaseBase}/functions/v1/sms-inbound` : "")
+  ).replace(/\/$/, "")
+  const statusCb = (
+    Deno.env.get("TWILIO_STATUS_CALLBACK_URL")?.trim() ||
+    (supabaseBase ? `${supabaseBase}/functions/v1/sms-status-callback` : "")
+  ).replace(/\/$/, "")
+  if (!inbound) {
+    console.warn("[TwilioProvider] skip webhook ensure — no inbound URL")
+    return
+  }
+
+  const auth = basicAuthHeader(cfg.accountSid, cfg.authToken)
+  const listUrl =
+    `https://api.twilio.com/2010-04-01/Accounts/${cfg.accountSid}/IncomingPhoneNumbers.json` +
+    `?PhoneNumber=${encodeURIComponent(from)}`
+  const listRes = await fetch(listUrl, { headers: { Authorization: auth } })
+  const listRaw = await listRes.text()
+  if (!listRes.ok) {
+    console.error("[TwilioProvider] list IncomingPhoneNumbers", listRes.status, listRaw.slice(0, 300))
+    return
+  }
+  let parsed: { incoming_phone_numbers?: Array<{ sid?: string; sms_url?: string; status_callback?: string }> }
+  try {
+    parsed = JSON.parse(listRaw) as typeof parsed
+  } catch {
+    console.error("[TwilioProvider] list IncomingPhoneNumbers: invalid JSON")
+    return
+  }
+  const row = parsed.incoming_phone_numbers?.[0]
+  const sid = row?.sid?.trim()
+  if (!sid) {
+    console.warn("[TwilioProvider] TWILIO_FROM_NUMBER is not on this Twilio account", { from })
+    return
+  }
+  if (row.sms_url === inbound && (!statusCb || row.status_callback === statusCb)) {
+    console.info("[TwilioProvider] inbound webhook already set", { from, inbound })
+    return
+  }
+  const form = new URLSearchParams({ SmsUrl: inbound, SmsMethod: "POST" })
+  if (statusCb) form.set("StatusCallback", statusCb)
+  const updRes = await fetch(
+    `https://api.twilio.com/2010-04-01/Accounts/${cfg.accountSid}/IncomingPhoneNumbers/${sid}.json`,
+    {
+      method: "POST",
+      headers: {
+        Authorization: auth,
+        "Content-Type": "application/x-www-form-urlencoded",
+      },
+      body: form.toString(),
+    },
+  )
+  const updRaw = await updRes.text()
+  if (!updRes.ok) {
+    console.error("[TwilioProvider] update IncomingPhoneNumbers", updRes.status, updRaw.slice(0, 300))
+    return
+  }
+  console.info("[TwilioProvider] set inbound webhook", { from, inbound })
+}
+
 export class TwilioProvider implements SMSProvider {
   readonly name = "twilio" as const
 
@@ -329,6 +410,12 @@ export class TwilioProvider implements SMSProvider {
     const cfg = readTwilioConfig()
     if ("error" in cfg) {
       return { provider: "twilio", error: cfg.error }
+    }
+
+    try {
+      await ensureTwilioMessagingWebhooks()
+    } catch (err) {
+      console.warn("[TwilioProvider] webhook ensure failed", err)
     }
 
     const form = new URLSearchParams({

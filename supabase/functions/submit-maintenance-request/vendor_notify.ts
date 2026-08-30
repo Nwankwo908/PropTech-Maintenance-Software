@@ -41,6 +41,11 @@ export type TicketNotifyPayload = {
   preferVendorId?: string | null
   /** Resident-offered visit windows from intake (shown on assignment SMS). */
   residentAvailabilityText?: string | null
+  /**
+   * Retry assignment when the ticket was already marked notified but still has
+   * no vendor (e.g. landlord Override after a no-vendor submit).
+   */
+  retryIfUnassigned?: boolean
 }
 
 type VendorRow = {
@@ -77,11 +82,16 @@ function resolveVendorRespondBaseUrl(): string | null {
 async function buildVendorEmailLinks(
   ticketId: string,
   _vendorId: string,
+  actionToken: string | null,
 ): Promise<VendorEmailLinks | null> {
   const appBase = resolveAppBaseUrl()
   if (!appBase) return null
-  const portalHome = `${appBase}/vendor`
-  const viewJob = `${appBase}/vendor/ticket/${ticketId}`
+  const portalHome = actionToken?.trim()
+    ? uloAppUrl.workOrder(actionToken.trim())
+    : `${appBase}/vendor`
+  const viewJob = actionToken?.trim()
+    ? uloAppUrl.workOrder(actionToken.trim())
+    : `${appBase}/vendor/ticket/${ticketId}`
   const signingSecret = Deno.env.get("VENDOR_EMAIL_ACTION_SECRET")?.trim() ?? null
   const respondBase = resolveVendorRespondBaseUrl()
   let acceptUrl: string | null = null
@@ -244,7 +254,7 @@ async function loadPreferredVendorIfMatchable(
   let query = supabase
     .from("vendors")
     .select(
-      "id,name,email,phone,notification_channel,active,category,portal_api_key,roster_status",
+      "id,name,email,phone,notification_channel,active,category,portal_api_key,roster_status,onboarding_overridden_at",
     )
     .eq("id", id)
     .eq("active", true)
@@ -277,6 +287,9 @@ async function loadPreferredVendorIfMatchable(
         : null,
       rosterStatus: typeof vendor.roster_status === "string"
         ? vendor.roster_status
+        : null,
+      onboardingOverriddenAt: typeof vendor.onboarding_overridden_at === "string"
+        ? vendor.onboarding_overridden_at
         : null,
     })
   ) {
@@ -367,7 +380,7 @@ async function notifyChannelsForAssignment(
   const wantEmail = ch === "email" || ch === "both"
   const wantSms = ch === "sms" || ch === "both"
 
-  const emailLinks = await buildVendorEmailLinks(ticketId, vendor.id)
+  const emailLinks = await buildVendorEmailLinks(ticketId, vendor.id, actionToken)
   const legacyManage = portalManageUrl(ticketId)
   const jobDetailUrl = buildJobDetailUrl(actionToken) ?? emailLinks?.viewJob ?? legacyManage
 
@@ -381,7 +394,7 @@ async function notifyChannelsForAssignment(
         vendor.name,
         emailLinks,
         legacyManage,
-        vendor.portal_api_key,
+        null,
       )
       const subject = buildVendorJobAssignmentSubject(payload.unit)
       const r = await sendResendEmail(vendor.email.trim(), subject, text, html)
@@ -469,7 +482,9 @@ export async function assignVendorAndNotify(
 ): Promise<AssignVendorResult> {
   const { data: ticket } = await supabase
     .from("maintenance_requests")
-    .select("id, vendor_notified_at, issue_category, resident_availability_text")
+    .select(
+      "id, vendor_notified_at, issue_category, resident_availability_text, assigned_vendor_id",
+    )
     .eq("id", payload.ticketId)
     .maybeSingle()
 
@@ -477,21 +492,19 @@ export async function assignVendorAndNotify(
     console.error("[vendor-notify] ticket not found", payload.ticketId)
     return { assigned: false, vendorId: null, skipReason: "ticket_missing" }
   }
-  if (ticket.vendor_notified_at) {
+  const existingVendorId =
+    typeof ticket.assigned_vendor_id === "string" && ticket.assigned_vendor_id.trim()
+      ? ticket.assigned_vendor_id.trim()
+      : null
+  if (existingVendorId) {
+    return { assigned: true, vendorId: existingVendorId }
+  }
+  if (ticket.vendor_notified_at && !payload.retryIfUnassigned) {
     console.log("[vendor-notify] skip, already notified", payload.ticketId)
-    const { data: existing } = await supabase
-      .from("maintenance_requests")
-      .select("assigned_vendor_id")
-      .eq("id", payload.ticketId)
-      .maybeSingle()
-    const vendorId =
-      typeof existing?.assigned_vendor_id === "string"
-        ? existing.assigned_vendor_id
-        : null
     return {
-      assigned: Boolean(vendorId),
-      vendorId,
-      skipReason: vendorId ? undefined : "no_vendor",
+      assigned: false,
+      vendorId: null,
+      skipReason: "no_vendor",
     }
   }
 
@@ -691,7 +704,7 @@ export async function reassignVendorByIdAndNotify(
   const { data: vendor, error: vErr } = await supabase
     .from("vendors")
     .select(
-      "id,name,email,phone,notification_channel,active,category,portal_api_key,roster_status",
+      "id,name,email,phone,notification_channel,active,category,portal_api_key,roster_status,onboarding_overridden_at",
     )
     .eq("id", _vendorId)
     .eq("active", true)
@@ -734,6 +747,9 @@ export async function reassignVendorByIdAndNotify(
       rosterStatus: typeof vendor.roster_status === "string"
         ? vendor.roster_status
         : null,
+      onboardingOverriddenAt: typeof vendor.onboarding_overridden_at === "string"
+        ? vendor.onboarding_overridden_at
+        : null,
     })
   ) {
     return { error: "Vendor is not ACTIVE for matching" }
@@ -759,8 +775,6 @@ export async function reassignVendorByIdAndNotify(
     typeof severityRaw === "string" && severityRaw.trim()
       ? severityRaw.trim()
       : urgencyOrPriority
-  const reassignLandlordIdEarly =
-    typeof ticket.landlord_id === "string" ? ticket.landlord_id.trim() : null
   const operational = reassignLandlordIdEarly
     ? await loadLandlordOperationalSettings(supabase, reassignLandlordIdEarly)
     : null

@@ -7,6 +7,7 @@ import magnifyingGlassIcon from '@/assets/Magnifying glass.svg'
 import { getActiveLandlordId } from '@/lib/activeLandlord'
 import { getErrorMessage } from '@/lib/errorMessage'
 import { vendorDetailPath } from '@/lib/vendorRoutes'
+import { fetchVendorScoresForLandlord, isAuthClockSkewMessage } from '@/lib/vendorScores'
 import { dedupeVendorsByName, duplicateVendorIdsToRemove } from '@/lib/vendorDedup'
 import { supabase } from '@/lib/supabase'
 import {
@@ -31,6 +32,7 @@ type VendorRow = {
   active: boolean
   rosterStatus: string | null
   createdAt: string | null
+  onboardingOverriddenAt: string | null
 }
 
 type RatingSort = 'desc' | 'asc'
@@ -66,29 +68,12 @@ function formatRating(score: number | null, reviewCount: number): string {
   return `${score.toFixed(1)} (${reviewCount.toLocaleString()})`
 }
 
-function VerificationPill({ status }: { status: string | undefined }) {
-  if (!status) {
-    return (
-      <span className="inline-flex items-center rounded-full bg-[#f3f4f6] px-2.5 py-0.5 text-[12px] font-medium text-[#6a7282]">
-        Not started
-      </span>
-    )
-  }
-  const config: Record<string, { label: string; className: string }> = {
-    verified: { label: 'Verified', className: 'bg-[#dbfce7] text-[#008236]' },
-    needs_review: { label: 'Needs review', className: 'bg-[#fef9c3] text-[#92400e]' },
-    submitted: { label: 'In review', className: 'bg-[#fef9c3] text-[#92400e]' },
-    in_progress: { label: 'In progress', className: 'bg-[#e0e7ff] text-[#3730a3]' },
-    invited: { label: 'Invited', className: 'bg-[#f3f4f6] text-[#6a7282]' },
-  }
-  const entry = config[status] ?? { label: status, className: 'bg-[#f3f4f6] text-[#6a7282]' }
-  return (
-    <span
-      className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-[12px] font-medium ${entry.className}`}
-    >
-      {entry.label}
-    </span>
-  )
+function formatAvgResponse(minutes: number | null): string {
+  if (minutes == null) return '—'
+  if (minutes < 60) return `${Math.round(minutes)} min`
+  const hours = minutes / 60
+  if (hours < 24) return `${hours.toFixed(hours < 10 ? 1 : 0)} hr`
+  return `${Math.round(hours / 24)} d`
 }
 
 function StarIcon() {
@@ -232,23 +217,17 @@ export function AdminVendorsDashboard() {
     setScoresError(null)
 
     const landlordId = getActiveLandlordId()
-    const [vendorsResult, scoresResult] = await Promise.allSettled([
+    const [vendorsResult, scores] = await Promise.all([
       supabase
         .from('vendors')
-        .select('id, name, category, active, roster_status, email, phone, created_at')
+        .select('id, name, category, active, roster_status, email, phone, created_at, onboarding_overridden_at')
         .eq('landlord_id', landlordId)
         .order('created_at', { ascending: true }),
-      supabase.rpc('get_vendor_scores_for_landlord', {
-        p_landlord_id: landlordId,
-      }),
+      fetchVendorScoresForLandlord(landlordId),
     ])
 
-    if (vendorsResult.status !== 'fulfilled' || vendorsResult.value.error) {
-      const message =
-        vendorsResult.status === 'fulfilled'
-          ? vendorsResult.value.error?.message
-          : String(vendorsResult.reason)
-      setError(message ?? 'Failed to load vendors.')
+    if (vendorsResult.error) {
+      setError(vendorsResult.error.message ?? 'Failed to load vendors.')
       setLoading(false)
       return
     }
@@ -264,32 +243,29 @@ export function AdminVendorsDashboard() {
     >()
 
     let scoresWarning: string | null = null
-    if (scoresResult.status === 'fulfilled') {
-      if (scoresResult.value.error) {
-        scoresWarning = scoresResult.value.error.message
-      } else {
-        for (const raw of (scoresResult.value.data ?? []) as Record<string, unknown>[]) {
-          const vendorId = asString(raw.vendor_id)
-          if (!vendorId) continue
-          scoreByVendor.set(vendorId, {
-            rating: asFiniteNumber(raw.vendor_score),
-            reviewCount: asFiniteNumber(raw.review_count) ?? 0,
-            completedJobs: asFiniteNumber(raw.completed_jobs) ?? 0,
-            avgResponseMinutes: asFiniteNumber(raw.avg_response_time),
-          })
-        }
+    if (scores.errorMessage) {
+      if (!isAuthClockSkewMessage(scores.errorMessage)) {
+        scoresWarning = getErrorMessage(scores.errorMessage, 'Ratings may be incomplete.')
       }
     } else {
-      scoresWarning = String(scoresResult.reason)
+      for (const raw of scores.data) {
+        const vendorId = asString(raw.vendor_id)
+        if (!vendorId) continue
+        scoreByVendor.set(vendorId, {
+          rating: asFiniteNumber(raw.vendor_score),
+          reviewCount: asFiniteNumber(raw.review_count) ?? 0,
+          completedJobs: asFiniteNumber(raw.completed_jobs) ?? 0,
+          avgResponseMinutes: asFiniteNumber(raw.avg_response_time),
+        })
+      }
     }
 
     if (scoresWarning) {
-      console.warn('[AdminVendorsDashboard] get_vendor_scores_for_landlord', scoresWarning)
       setScoresError(scoresWarning)
     }
 
     const rows: VendorRow[] = (
-      (vendorsResult.value.data ?? []) as Record<string, unknown>[]
+      (vendorsResult.data ?? []) as Record<string, unknown>[]
     ).map((raw) => {
       const id = asString(raw.id)
       const category = asString(raw.category) || null
@@ -308,6 +284,7 @@ export function AdminVendorsDashboard() {
         active: raw.active !== false,
         rosterStatus: asString(raw.roster_status) || null,
         createdAt: asString(raw.created_at) || null,
+        onboardingOverriddenAt: asString(raw.onboarding_overridden_at) || null,
       }
     })
 
@@ -412,6 +389,7 @@ export function AdminVendorsDashboard() {
           vendorActive: vendor.active,
           availability: availabilityByVendor.get(vendor.id),
           rosterStatus: vendor.rosterStatus,
+          onboardingOverriddenAt: vendor.onboardingOverriddenAt,
         })),
       ),
     [vendors, verificationByVendor, availabilityByVendor],
@@ -510,6 +488,7 @@ export function AdminVendorsDashboard() {
         vendorActive: vendor.active,
         availability: availabilityByVendor.get(vendor.id),
         rosterStatus: vendor.rosterStatus,
+        onboardingOverriddenAt: vendor.onboardingOverriddenAt,
       })
 
       if (
@@ -652,8 +631,7 @@ export function AdminVendorsDashboard() {
 
       {scoresError ? (
         <div className="mb-4 rounded-[10px] border border-[#fde68a] bg-[#fffbeb] px-4 py-3 text-[13px] text-[#92400e]">
-          Vendor scores could not be loaded ({scoresError}). Ratings and response times may be
-          incomplete.
+          Ratings and response times could not be loaded. The vendor list is still up to date.
         </div>
       ) : null}
 
@@ -778,7 +756,7 @@ export function AdminVendorsDashboard() {
                 <th className="px-6 py-3 text-[12px] font-medium text-[#6a7282]">Trade</th>
                 <th className="px-6 py-3 text-[12px] font-medium text-[#6a7282]">Rating</th>
                 <th className="px-6 py-3 text-[12px] font-medium text-[#6a7282]">Completed jobs</th>
-                <th className="px-6 py-3 text-[12px] font-medium text-[#6a7282]">Verification</th>
+                <th className="px-6 py-3 text-[12px] font-medium text-[#6a7282]">Avg. response</th>
                 <th className="px-6 py-3 text-[12px] font-medium text-[#6a7282]">Activation</th>
               </tr>
             </thead>
@@ -837,8 +815,13 @@ export function AdminVendorsDashboard() {
                     <td className="px-6 py-4 text-[14px] tabular-nums text-[#0a0a0a]">
                       {vendor.completedJobs}
                     </td>
-                    <td className="px-6 py-4">
-                      <VerificationPill status={verificationByVendor.get(vendor.id)} />
+                    <td
+                      className={[
+                        'px-6 py-4 text-[14px] tabular-nums',
+                        vendor.avgResponseMinutes == null ? 'text-[#6a7282]' : 'text-[#0a0a0a]',
+                      ].join(' ')}
+                    >
+                      {formatAvgResponse(vendor.avgResponseMinutes)}
                     </td>
                     <td className="px-6 py-4 align-middle">
                       {(() => {
@@ -847,6 +830,7 @@ export function AdminVendorsDashboard() {
                           vendorActive: vendor.active,
                           availability: availabilityByVendor.get(vendor.id),
                           rosterStatus: vendor.rosterStatus,
+                          onboardingOverriddenAt: vendor.onboardingOverriddenAt,
                         })
                         const styles = vendorCapacityChipVisualClasses(chip.status)
                         return (

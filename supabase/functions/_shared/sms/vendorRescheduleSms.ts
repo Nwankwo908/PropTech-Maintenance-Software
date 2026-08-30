@@ -25,7 +25,7 @@ import {
 } from "./inbound_db.ts"
 import { sendInboundAutoReply } from "./inboundReply.ts"
 import { findActiveLandlordMainNumber } from "./landlordSmsOnboarding.ts"
-import { getSMSProvider } from "./providerFactory.ts"
+import { getSMSProviderForSend } from "./providerFactory.ts"
 import { findActiveLandlordMain } from "./smsNumberPool.ts"
 import type { SmsProviderName } from "./types.ts"
 
@@ -490,7 +490,10 @@ async function notifyLandlordReschedule(
     const sender = await findActiveLandlordMainNumber(supabase, params.landlordId)
     const from = sender?.phone_number?.trim()
     if (from) {
-      const provider = getSMSProvider()
+      const provider = getSMSProviderForSend({
+        landlordId: params.landlordId,
+        lineProvider: sender.provider,
+      })
       for (const to of phones) {
         const send = await provider.sendMessage({ to, body: smsBody, from })
         if (!send.error) smsOk = true

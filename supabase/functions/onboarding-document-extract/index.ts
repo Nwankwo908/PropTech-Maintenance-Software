@@ -13,6 +13,7 @@
  */
 import { serve } from "https://deno.land/std/http/server.ts"
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1"
+import { isOnboardingLandlordId } from "../../../shared/landlordCapabilities.ts"
 import { isPortalAdminEmailAllowed } from "../../../shared/admin/staffAllowlist.ts"
 import {
   extractPortfolioDocument,
@@ -29,11 +30,6 @@ const corsHeaders: Record<string, string> = {
 
 const uuidRe =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
-
-const ONBOARDING_LANDLORD_IDS = new Set([
-  "068daf53-07e4-4493-bd7f-6106e3c8c62f",
-  "de300000-0000-4000-8000-000000000002",
-])
 
 function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
@@ -124,7 +120,7 @@ serve(async (req) => {
   if (!landlordId || !uuidRe.test(landlordId)) {
     return jsonResponse({ error: "landlordId is required" }, 400)
   }
-  if (!ONBOARDING_LANDLORD_IDS.has(landlordId)) {
+  if (!isOnboardingLandlordId(landlordId)) {
     return jsonResponse({ error: "Landlord not eligible for onboarding extract" }, 403)
   }
   if (!docId || !fileName) {

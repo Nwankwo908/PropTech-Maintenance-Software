@@ -478,7 +478,16 @@ export async function notifyResident(
     scheduleWindow: input.scheduleWindow,
     completionPhotoCount: input.completionPhotoCount,
   })
-  const rSms = await sendOutboundSms(phoneE164, smsBody)
+  const { data: ticketRow } = await supabase
+    .from("maintenance_requests")
+    .select("landlord_id")
+    .eq("id", input.ticketId)
+    .maybeSingle()
+  const ticketLandlordId =
+    typeof ticketRow?.landlord_id === "string" ? ticketRow.landlord_id : null
+  const rSms = await sendOutboundSms(phoneE164, smsBody, {
+    landlordId: ticketLandlordId,
+  })
   if ("error" in rSms) {
     console.error("[resident-notify] sms failed", input.ticketId, rSms.error)
     await insertResidentLog(

@@ -4,10 +4,11 @@ export const ADMIN_CORE_ALLOWED_EMAILS = [
   'osi@ulohome.io',
 ] as const
 
-/** Demo landlord portal accounts (client admin login only). */
+/** Demo / empty-onboarding landlord portal accounts (client admin login only). */
 export const ADMIN_DEMO_ALLOWED_EMAILS = [
   'demo@ulohome.io',
   'newlandlord@ulohome.io',
+  'limitedalpha1@ulohome.io',
 ] as const
 
 /** Production landlord portal accounts (client admin login only). */

@@ -2,6 +2,7 @@ import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.49.1
 import {
   findActiveLandlordMainNumber,
   resolveLandlordId,
+  resolveOutboundLandlordSmsLine,
   type LandlordSmsNumberRow,
 } from "./landlordSmsOnboarding.ts"
 import {
@@ -10,12 +11,17 @@ import {
   upsertSmsIdentityForPhone,
   type SmsIdentityRow,
 } from "./inbound_db.ts"
-import { getSMSProvider } from "./providerFactory.ts"
+import { getSMSProviderForSend } from "./providerFactory.ts"
 import { logGraphEvent } from "../graph/logGraphEvent.ts"
-import type { VendorOpenJobSmsLine } from "../vendor_outreach_copy.ts"
+import {
+  extractWorkOrderRefFromSms,
+  workOrderRefMatchesTicket,
+  type VendorOpenJobSmsLine,
+} from "../vendor_outreach_copy.ts"
 import {
   listVendorActiveJobs,
   matchActiveJobsFromReply,
+  withPendingVendorJobOffer,
   type VendorActiveJob,
 } from "./vendorWorkOrderClarification.ts"
 
@@ -35,7 +41,7 @@ export type VendorAlertSendResult =
  */
 export async function clearStaleVendorThreadStateForTicket(
   supabase: SupabaseClient,
-  params: { conversationId: string; ticketId: string },
+  params: { conversationId: string; ticketId: string; vendorId: string },
 ): Promise<void> {
   const { data: convo } = await supabase
     .from("sms_conversations")
@@ -43,7 +49,7 @@ export async function clearStaleVendorThreadStateForTicket(
     .eq("id", params.conversationId)
     .maybeSingle()
 
-  const intake =
+  let intake =
     convo?.intake_state && typeof convo.intake_state === "object"
       ? { ...(convo.intake_state as Record<string, unknown>) }
       : {}
@@ -73,6 +79,13 @@ export async function clearStaleVendorThreadStateForTicket(
     }
   }
 
+  intake = withPendingVendorJobOffer(intake, {
+    ticketId: params.ticketId,
+    vendorId: params.vendorId,
+    sentAt: new Date().toISOString(),
+  })
+  changed = true
+
   const patch: Record<string, unknown> = {
     maintenance_request_id: params.ticketId,
     updated_at: new Date().toISOString(),
@@ -94,6 +107,19 @@ export async function resolveVendorAlertSenderNumber(
   landlordId?: string | null,
 ): Promise<LandlordSmsNumberRow | null> {
   const scopedLandlordId = landlordId?.trim() || resolveLandlordId()
+  const line = await resolveOutboundLandlordSmsLine(supabase, scopedLandlordId)
+  if (line) {
+    return {
+      id: line.id,
+      landlord_id: scopedLandlordId,
+      phone_number: line.phone,
+      provider: line.provider,
+      provider_number_sid: null,
+      provider_messaging_service_sid: null,
+      status: "active",
+      purpose: "landlord_main",
+    }
+  }
   return findActiveLandlordMainNumber(supabase, scopedLandlordId)
 }
 
@@ -276,12 +302,44 @@ export async function sendVendorJobAlert(
     await clearStaleVendorThreadStateForTicket(supabase, {
       conversationId,
       ticketId: params.ticketId,
+      vendorId: params.vendorId,
     })
   } catch (e) {
     console.error("[vendorSms] clear stale thread state", e)
   }
 
-  const provider = getSMSProvider()
+  if (
+    identity.identity_type !== "resident" &&
+    identity.identity_type !== "landlord" &&
+    identity.vendor_id !== params.vendorId
+  ) {
+    const { error: identityErr } = await supabase
+      .from("sms_identities")
+      .update({
+        vendor_id: params.vendorId,
+        identity_type: "vendor",
+        last_seen_at: new Date().toISOString(),
+      })
+      .eq("id", identity.id)
+    if (identityErr) {
+      console.warn(
+        "[vendorSms] could not align SMS identity with assigned vendor",
+        identityErr.message,
+      )
+    } else {
+      identity.vendor_id = params.vendorId
+    }
+  }
+
+  await ensureAssignedOfferRow(supabase, {
+    ticketId: params.ticketId,
+    vendorId: params.vendorId,
+  })
+
+  const provider = getSMSProviderForSend({
+    landlordId,
+    lineProvider: senderNumber.provider,
+  })
   const sendResult = await provider.sendMessage({
     to: vendorPhone,
     body: params.body,
@@ -383,6 +441,87 @@ async function ticketStillExists(
   return !!data?.id
 }
 
+const BINDABLE_OFFER_STATUSES = new Set([
+  "pending_accept",
+  "accepted",
+  "in_progress",
+  "unassigned",
+])
+
+async function loadBindableOfferTicket(
+  supabase: SupabaseClient,
+  ticketId: string,
+): Promise<{ ticketId: string; status: string } | null> {
+  const { data } = await supabase
+    .from("maintenance_requests")
+    .select("id, assigned_vendor_id, vendor_work_status")
+    .eq("id", ticketId)
+    .maybeSingle()
+  if (!data?.id) return null
+  const assigned =
+    typeof data.assigned_vendor_id === "string"
+      ? data.assigned_vendor_id.trim()
+      : ""
+  const status = String(data.vendor_work_status ?? "").trim().toLowerCase()
+  if (!assigned || !BINDABLE_OFFER_STATUSES.has(status)) return null
+  return { ticketId: String(data.id), status }
+}
+
+/** Persist assigned_vendor_id + pending_accept together when the offer SMS goes out. */
+async function ensureAssignedOfferRow(
+  supabase: SupabaseClient,
+  params: { ticketId: string; vendorId: string },
+): Promise<void> {
+  const { data: ticket, error } = await supabase
+    .from("maintenance_requests")
+    .select("id, assigned_vendor_id, vendor_work_status, vendor_action_token")
+    .eq("id", params.ticketId)
+    .maybeSingle()
+  if (error || !ticket) {
+    console.warn("[vendorSms] offer-row lookup failed", error?.message)
+    return
+  }
+
+  const assigned =
+    typeof ticket.assigned_vendor_id === "string"
+      ? ticket.assigned_vendor_id.trim()
+      : ""
+  const status = String(ticket.vendor_work_status ?? "").trim().toLowerCase()
+  const patch: Record<string, unknown> = {}
+  const now = new Date().toISOString()
+
+  if (!assigned) {
+    patch.assigned_vendor_id = params.vendorId
+    patch.assigned_at = now
+    if (status === "unassigned" || status === "") {
+      patch.vendor_work_status = "pending_accept"
+    }
+  } else if (
+    assigned === params.vendorId &&
+    (status === "unassigned" || status === "")
+  ) {
+    patch.vendor_work_status = "pending_accept"
+  }
+
+  const existingToken =
+    typeof ticket.vendor_action_token === "string"
+      ? ticket.vendor_action_token.trim()
+      : ""
+  if (!existingToken) {
+    patch.vendor_action_token = crypto.randomUUID()
+  }
+
+  if (Object.keys(patch).length === 0) return
+
+  const { error: upErr } = await supabase
+    .from("maintenance_requests")
+    .update(patch)
+    .eq("id", params.ticketId)
+  if (upErr) {
+    console.error("[vendorSms] ensure assigned offer row", upErr.message)
+  }
+}
+
 function toOpenJobSmsLines(jobs: VendorActiveJob[]): VendorOpenJobSmsLine[] {
   return jobs.map((j) => ({
     ticketId: j.ticketId,
@@ -425,6 +564,10 @@ export async function resolveVendorTicketForInbound(
     inboundBody: string
     /** Mid-flow schedule FSM already tied to a ticket. */
     scheduleTicketId?: string | null
+    /** Ticket pinned on this SMS thread (assignment offer). */
+    conversationTicketId?: string | null
+    /** Last job-offer written on the thread intake_state. */
+    pendingOfferTicketId?: string | null
     /** Optional preloaded jobs (avoids a second query). */
     openJobs?: VendorActiveJob[]
   },
@@ -445,20 +588,15 @@ export async function resolveVendorTicketForInbound(
     }
   }
 
-  if (openJobs.length === 0) {
-    return { ok: false, reason: "no_open_jobs", openJobs }
-  }
+  const threadTicketId =
+    params.conversationTicketId?.trim() ||
+    params.pendingOfferTicketId?.trim() ||
+    null
 
-  if (openJobs.length === 1) {
-    return {
-      ok: true,
-      ticketId: openJobs[0].ticketId,
-      boundBy: "single_open_job",
-      openJobs,
-    }
-  }
+  const match = openJobs.length > 0
+    ? matchActiveJobsFromReply(params.inboundBody, openJobs)
+    : { kind: "none" as const }
 
-  const match = matchActiveJobsFromReply(params.inboundBody, openJobs)
   if (match.kind === "unique") {
     return {
       ok: true,
@@ -472,9 +610,50 @@ export async function resolveVendorTicketForInbound(
     return { ok: false, reason: "need_work_order", openJobs: match.jobs }
   }
 
-  // Explicit WO that didn't match any open job
-  const hasWo = /\bWO[- ]?[0-9A-Fa-f]{4}\b/i.test(params.inboundBody)
-  if (hasWo) {
+  if (openJobs.length === 1) {
+    return {
+      ok: true,
+      ticketId: openJobs[0].ticketId,
+      boundBy: "single_open_job",
+      openJobs,
+    }
+  }
+
+  if (threadTicketId) {
+    const inOpen = openJobs.some((j) => j.ticketId === threadTicketId)
+    const loaded = inOpen
+      ? { ticketId: threadTicketId }
+      : await loadBindableOfferTicket(supabase, threadTicketId)
+    if (loaded) {
+      return {
+        ok: true,
+        ticketId: loaded.ticketId,
+        boundBy: "conversation_pin",
+        openJobs,
+      }
+    }
+  }
+
+  if (openJobs.length === 0) {
+    return { ok: false, reason: "no_open_jobs", openJobs }
+  }
+
+  const wo = extractWorkOrderRefFromSms(params.inboundBody)
+  if (wo) {
+    if (
+      threadTicketId &&
+      workOrderRefMatchesTicket(wo, threadTicketId)
+    ) {
+      const loaded = await loadBindableOfferTicket(supabase, threadTicketId)
+      if (loaded) {
+        return {
+          ok: true,
+          ticketId: loaded.ticketId,
+          boundBy: "conversation_pin",
+          openJobs,
+        }
+      }
+    }
     return { ok: false, reason: "unknown_work_order", openJobs }
   }
 
@@ -499,6 +678,7 @@ export async function resolveVendorMaintenanceRequestId(
     vendorId: params.vendorId,
     inboundBody: params.inboundBody ?? "",
     scheduleTicketId: params.scheduleTicketId,
+    conversationTicketId: params.conversationMaintenanceRequestId,
   })
   return resolved.ok ? resolved.ticketId : null
 }

@@ -164,3 +164,14 @@ export async function refreshLandlordConnectStatus(
   })
   return parseStatus(json)
 }
+
+/** Unlink and delete the landlord Express payout account (onboarding reset). */
+export async function clearLandlordStripeConnect(
+  landlordId?: string,
+): Promise<LandlordStripeConnectStatus> {
+  const json = await invokeLandlordStripeConnect({
+    action: 'clear_connect',
+    landlordId,
+  })
+  return parseStatus(json)
+}

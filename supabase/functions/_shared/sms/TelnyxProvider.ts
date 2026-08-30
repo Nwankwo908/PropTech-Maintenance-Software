@@ -47,11 +47,6 @@ type TelnyxMessagePayload = {
 }
 
 export function readTelnyxConfig(): TelnyxConfig | { error: string } {
-  const smsProvider = Deno.env.get("SMS_PROVIDER")?.trim().toLowerCase()
-  if (smsProvider && smsProvider !== "telnyx") {
-    return { error: `SMS_PROVIDER must be telnyx (got ${smsProvider})` }
-  }
-
   const apiKey = Deno.env.get("TELNYX_API_KEY")?.trim()
   if (!apiKey) {
     return { error: "Telnyx not configured: TELNYX_API_KEY required" }
@@ -158,6 +153,25 @@ function parseTelnyxEvent(rawBody: string): TelnyxWebhookEvent {
   } catch {
     throw new Error("Invalid Telnyx webhook JSON payload")
   }
+}
+
+/** Telnyx `data.event_type` from a webhook body, or empty if not JSON. */
+export function peekTelnyxEventType(rawBody: string): string {
+  try {
+    const event = JSON.parse(rawBody) as TelnyxWebhookEvent
+    return event.data?.event_type?.trim() ?? ""
+  } catch {
+    return ""
+  }
+}
+
+export function isTelnyxInboundEventType(eventType: string): boolean {
+  return eventType.trim() === "message.received"
+}
+
+export function isTelnyxStatusEventType(eventType: string): boolean {
+  const t = eventType.trim()
+  return t === "message.sent" || t === "message.finalized"
 }
 
 function telnyxHeaders(rawRequest: Request): {

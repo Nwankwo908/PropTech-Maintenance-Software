@@ -44,6 +44,7 @@ import {
   primaryPayoutMethodLabel,
 } from '@/api/landlordStripeConnect'
 import { getActiveLandlordId } from '@/lib/activeLandlord'
+import { landlordHasPayments } from '@shared/landlordCapabilities'
 import {
   buildOnboardingReviewData,
   canCompleteOnboarding,
@@ -556,6 +557,7 @@ export function useOnboardingWizard() {
   // Stripe Connect return/refresh lands on /admin/onboarding?connect=…
   useEffect(() => {
     if (loading) return
+    if (!landlordHasPayments(getActiveLandlordId())) return
     const connectParam = new URLSearchParams(window.location.search).get('connect')
     if (connectParam !== 'return' && connectParam !== 'refresh') return
     if (step === 'payouts') return
@@ -610,11 +612,13 @@ export function useOnboardingWizard() {
     }
 
     const snap = wizardSnapshotRef.current
+    const targetStep =
+      nextStep === 'payouts' && !landlordHasPayments(getActiveLandlordId()) ? 'review' : nextStep
     const draftPropertyForms = forms?.propertyForms ?? snap.propertyForms
     const draftVendorForms = forms?.vendorForms ?? snap.vendorForms
     const draftResidentForms = pickResidentFormsForStep(
       forms?.residentForms ?? snap.residentForms,
-      step === 'review' && nextStep === 'residents' ? reviewData?.residents : undefined,
+      step === 'review' && targetStep === 'residents' ? reviewData?.residents : undefined,
     )
     const draftSnap = {
       ...snap,
@@ -624,7 +628,7 @@ export function useOnboardingWizard() {
 
     let next!: LandlordOnboardingState
     setState((prev) => {
-      next = mergeOnboardingStep(prev, nextStep, {
+      next = mergeOnboardingStep(prev, targetStep, {
         ...patch,
         formDraft: buildWizardFormDraft(
           draftPropertyForms,
@@ -636,7 +640,7 @@ export function useOnboardingWizard() {
       return next
     })
 
-    if (nextStep === 'residents') {
+    if (targetStep === 'residents') {
       setResidentForms(draftResidentForms)
     }
 
@@ -917,7 +921,10 @@ export function useOnboardingWizard() {
       return
     }
     clearReviewEditMode()
-    await goTo('payouts', { approvalRules: rules })
+    await goTo(
+      landlordHasPayments(getActiveLandlordId()) ? 'payouts' : 'review',
+      { approvalRules: rules },
+    )
   }
 
   async function continueToReview(cached?: {

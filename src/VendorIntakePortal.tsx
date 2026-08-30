@@ -17,6 +17,7 @@ import {
   vendorSelfRepresentationAckProgressPatch,
 } from '@/lib/vendorSelfRepresentationAck'
 import { VENDOR_TRADE_OPTIONS } from '@/lib/vendorTrades'
+import { US_STATE_OPTIONS, citiesForState, usStateCodeFromLabel } from '@/lib/usLocations'
 
 function Shell({ children }: { children: React.ReactNode }) {
   return (
@@ -76,6 +77,7 @@ function Field({
   onChange,
   placeholder,
   type = 'text',
+  className,
 }: {
   label: string
   hint?: string
@@ -83,9 +85,10 @@ function Field({
   onChange: (v: string) => void
   placeholder?: string
   type?: string
+  className?: string
 }) {
   return (
-    <label className="block">
+    <label className={['block min-w-0', className].filter(Boolean).join(' ')}>
       <span className="text-[13px] font-medium text-[#364153]">{label}</span>
       {hint ? <span className="mt-0.5 block text-[12px] leading-4 text-[#6a7282]">{hint}</span> : null}
       <input
@@ -110,6 +113,127 @@ function inviteTokenFromPath(raw: string | undefined): string {
   return token.replace(/[.,;:)\]]+$/g, '')
 }
 
+function firstListValue(list?: string[]): string {
+  return list?.find((item) => typeof item === 'string' && item.trim())?.trim() ?? ''
+}
+
+function parseCenterAddress(center?: string | null): {
+  city: string
+  state: string
+  zip: string
+} {
+  const raw = (center ?? '').trim()
+  if (!raw) return { city: '', state: '', zip: '' }
+  const zipMatch = raw.match(/\b(\d{5})(?:-\d{4})?\b/)
+  const zip = zipMatch?.[1] ?? ''
+  const withoutZip = raw.replace(/\b\d{5}(?:-\d{4})?\b/g, '').replace(/,\s*$/, '').trim()
+  const parts = withoutZip.split(',').map((part) => part.trim()).filter(Boolean)
+  if (parts.length >= 2) {
+    const state = usStateCodeFromLabel(parts[parts.length - 1])
+    if (state) {
+      return { city: parts.slice(0, -1).join(', '), state, zip }
+    }
+    return { city: parts[0]!, state: '', zip }
+  }
+  return { city: withoutZip, state: usStateCodeFromLabel(withoutZip), zip }
+}
+
+const TRAVEL_RADIUS_MIN = 5
+const TRAVEL_RADIUS_MAX = 100
+const TRAVEL_RADIUS_DEFAULT = 25
+
+function clampTravelRadius(value: unknown): number {
+  const n = typeof value === 'number' ? value : Number(value)
+  if (!Number.isFinite(n)) return TRAVEL_RADIUS_DEFAULT
+  return Math.min(TRAVEL_RADIUS_MAX, Math.max(TRAVEL_RADIUS_MIN, Math.round(n)))
+}
+
+function serviceAreaFieldsFromSession(session: VendorVerificationSession): {
+  city: string
+  state: string
+  zip: string
+  radiusMiles: number
+} {
+  const parsed = parseCenterAddress(session.serviceArea.centerAddress)
+  return {
+    city: firstListValue(session.serviceArea.cities) || parsed.city,
+    state:
+      usStateCodeFromLabel(firstListValue(session.serviceArea.counties)) || parsed.state,
+    zip: firstListValue(session.serviceArea.zips) || parsed.zip,
+    radiusMiles: clampTravelRadius(session.serviceArea.radiusMiles),
+  }
+}
+
+function buildServiceAreaPatch(input: {
+  city: string
+  state: string
+  zip: string
+  radiusMiles: number
+}): VendorVerificationSession['serviceArea'] {
+  const city = input.city.trim()
+  const state = usStateCodeFromLabel(input.state)
+  const zip = input.zip.trim()
+  const centerAddress = [city, state, zip].filter(Boolean).join(', ') || null
+  return {
+    cities: city ? [city] : [],
+    counties: state ? [state] : [],
+    zips: zip ? [zip] : [],
+    radiusMiles: clampTravelRadius(input.radiusMiles),
+    centerAddress,
+  }
+}
+
+const portalSelectClass =
+  'mt-1.5 w-full cursor-pointer appearance-none rounded-[10px] border border-[#d1d5dc] bg-white py-2.5 pl-3 pr-10 text-[15px] outline-none transition-colors focus:border-[#186179] focus:ring-2 focus:ring-[#186179]/20'
+
+function SelectChevron() {
+  return (
+    <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-[#6a7282]" aria-hidden>
+      <svg viewBox="0 0 24 24" fill="none" className="size-4">
+        <path d="M6 9l6 6 6-6" stroke="currentColor" strokeWidth={2} strokeLinecap="round" />
+      </svg>
+    </span>
+  )
+}
+
+function TravelRadiusSlider({
+  miles,
+  onChange,
+}: {
+  miles: number
+  onChange: (value: number) => void
+}) {
+  const pct =
+    ((clampTravelRadius(miles) - TRAVEL_RADIUS_MIN) /
+      (TRAVEL_RADIUS_MAX - TRAVEL_RADIUS_MIN)) *
+    100
+  return (
+    <div>
+      <div className="flex items-baseline justify-between gap-3">
+        <span className="text-[13px] font-medium text-[#364153]">How far will you travel?</span>
+        <span className="text-[15px] font-semibold tabular-nums text-[#186179]">
+          {clampTravelRadius(miles)} mi
+        </span>
+      </div>
+      <input
+        type="range"
+        min={TRAVEL_RADIUS_MIN}
+        max={TRAVEL_RADIUS_MAX}
+        step={5}
+        value={clampTravelRadius(miles)}
+        onChange={(event) => onChange(clampTravelRadius(event.target.value))}
+        aria-label="Travel radius in miles"
+        className="ulo-travel-radius mt-3 w-full cursor-pointer"
+        style={{ ['--ulo-radius-pct' as string]: `${pct}%` }}
+      />
+      <div className="mt-1 flex justify-between text-[11px] leading-4 text-[#6a7282]">
+        <span>{TRAVEL_RADIUS_MIN} mi</span>
+        <span>{TRAVEL_RADIUS_MAX} mi</span>
+      </div>
+    </div>
+  )
+}
+
 function firstTrade(session: VendorVerificationSession): string {
   const first = session.tradeCategories.find((t) => typeof t === 'string' && t.trim())
   return first?.trim() ?? ''
@@ -132,6 +256,10 @@ export function VendorIntakePortal() {
   const [phone, setPhone] = useState('')
   const [email, setEmail] = useState('')
   const [licenseNumber, setLicenseNumber] = useState('')
+  const [serviceCity, setServiceCity] = useState('')
+  const [serviceState, setServiceState] = useState('')
+  const [serviceZip, setServiceZip] = useState('')
+  const [travelRadiusMiles, setTravelRadiusMiles] = useState(TRAVEL_RADIUS_DEFAULT)
   const [attested, setAttested] = useState(false)
 
   const initializedRef = useRef(false)
@@ -146,6 +274,11 @@ export function VendorIntakePortal() {
       setEmail(s.email ?? '')
       setPhone(s.phone ?? '')
       setLicenseNumber('')
+      const area = serviceAreaFieldsFromSession(s)
+      setServiceCity(area.city)
+      setServiceState(area.state)
+      setServiceZip(area.zip)
+      setTravelRadiusMiles(area.radiusMiles)
       setAttested(vendorSelfRepresentationAckFromProgress(s.progress))
     } else {
       setLicenseNumber((prev) => s.license.number ?? prev)
@@ -166,6 +299,11 @@ export function VendorIntakePortal() {
     setEmail(s.email ?? '')
     setPhone(s.phone ?? '')
     setLicenseNumber(s.license.number ?? '')
+    const area = serviceAreaFieldsFromSession(s)
+    setServiceCity(area.city)
+    setServiceState(area.state)
+    setServiceZip(area.zip)
+    setTravelRadiusMiles(area.radiusMiles)
     setAttested(vendorSelfRepresentationAckFromProgress(s.progress))
   }, [])
 
@@ -244,6 +382,9 @@ export function VendorIntakePortal() {
     Boolean(trade.trim()) &&
     Boolean(phone.trim()) &&
     Boolean(email.trim()) &&
+    Boolean(serviceState.trim()) &&
+    Boolean(serviceCity.trim()) &&
+    Boolean(/^\d{5}(?:-\d{4})?$/.test(serviceZip.trim())) &&
     attested
 
   return (
@@ -342,6 +483,73 @@ export function VendorIntakePortal() {
             </div>
           </div>
 
+          <div className="border-t border-[#f3f4f6] pt-4">
+            <h2 className="text-[15px] font-semibold text-[#0a0a0a]">Where do you provide service?</h2>
+            <p className="mt-0.5 text-[12px] leading-4 text-[#6a7282]">
+              We’ll use this to send jobs near you.
+            </p>
+            <div className="mt-3 space-y-4">
+              <div className="grid grid-cols-[minmax(0,1.1fr)_minmax(0,1.3fr)_minmax(4.75rem,0.7fr)] gap-2">
+                <label className="block min-w-0">
+                  <span className="text-[13px] font-medium text-[#364153]">State</span>
+                  <div className="relative">
+                    <select
+                      value={serviceState}
+                      onChange={(event) => {
+                        const next = event.target.value
+                        setServiceState(next)
+                        const allowed = citiesForState(next)
+                        if (serviceCity && !allowed.includes(serviceCity)) setServiceCity('')
+                      }}
+                      className={`${portalSelectClass} ${!serviceState ? 'text-[#9ca3af]' : 'text-[#0a0a0a]'}`}
+                      aria-label="Service state"
+                    >
+                      <option value="">State</option>
+                      {US_STATE_OPTIONS.map((state) => (
+                        <option key={state.code} value={state.code}>
+                          {state.name}
+                        </option>
+                      ))}
+                    </select>
+                    <SelectChevron />
+                  </div>
+                </label>
+                <label className="block min-w-0">
+                  <span className="text-[13px] font-medium text-[#364153]">City</span>
+                  <div className="relative">
+                    <select
+                      value={serviceCity}
+                      onChange={(event) => setServiceCity(event.target.value)}
+                      disabled={!serviceState}
+                      className={`${portalSelectClass} ${!serviceCity ? 'text-[#9ca3af]' : 'text-[#0a0a0a]'} disabled:cursor-not-allowed disabled:bg-[#f9fafb] disabled:text-[#9ca3af]`}
+                      aria-label="Service city"
+                    >
+                      <option value="">
+                        {serviceState ? 'Select city' : 'Select state first'}
+                      </option>
+                      {(serviceCity && !citiesForState(serviceState).includes(serviceCity)
+                        ? [serviceCity, ...citiesForState(serviceState)]
+                        : citiesForState(serviceState)
+                      ).map((city) => (
+                        <option key={city} value={city}>
+                          {city}
+                        </option>
+                      ))}
+                    </select>
+                    <SelectChevron />
+                  </div>
+                </label>
+                <Field
+                  label="ZIP"
+                  placeholder="60614"
+                  value={serviceZip}
+                  onChange={setServiceZip}
+                />
+              </div>
+              <TravelRadiusSlider miles={travelRadiusMiles} onChange={setTravelRadiusMiles} />
+            </div>
+          </div>
+
           <label htmlFor={ackId} className="flex cursor-pointer items-start gap-3 pt-1">
             <input
               id={ackId}
@@ -381,6 +589,12 @@ export function VendorIntakePortal() {
                   phone,
                   tradeCategories: [trade],
                   licenseNumber,
+                  serviceArea: buildServiceAreaPatch({
+                    city: serviceCity,
+                    state: serviceState,
+                    zip: serviceZip,
+                    radiusMiles: travelRadiusMiles,
+                  }),
                   progress: {
                     self_representation_attestation: vendorSelfRepresentationAckProgressPatch(),
                   },

@@ -15,6 +15,8 @@ import {
   notificationPreferenceLabel,
   quietHoursLabel,
 } from '@/lib/onboardingApprovalRules'
+import { getActiveLandlordId } from '@/lib/activeLandlord'
+import { landlordHasPayments, landlordHasVendorMarketplace } from '@shared/landlordCapabilities'
 import {
   onboardingBtnPrimaryClass,
   onboardingBtnSecondaryClass,
@@ -317,6 +319,7 @@ export function OnboardingReviewStep({
                     vendor.name,
                     formatVendorCategory(vendor.category),
                     vendor.preferredEmergency ? 'Preferred emergency' : null,
+                    [vendor.city, vendor.state, vendor.country].filter(Boolean).join(', ') || null,
                   ]
                     .filter((part) => part && part !== '—')
                     .join(' · ')}
@@ -362,7 +365,7 @@ export function OnboardingReviewStep({
               label="After hours"
               value={afterHoursRuleLabel(reviewData.approvalRules.afterHoursRule)}
             />
-            {setupPath !== 'fast_track' ? (
+            {setupPath !== 'fast_track' && landlordHasVendorMarketplace(getActiveLandlordId()) ? (
               <ReviewSummaryRow
                 label="Marketplace"
                 value={marketplacePreferenceLabel(reviewData.approvalRules.marketplacePreference)}
@@ -390,6 +393,7 @@ export function OnboardingReviewStep({
             ) : null}
           </ReviewSummaryCard>
 
+          {landlordHasPayments(getActiveLandlordId()) ? (
           <ReviewSummaryCard title="Payouts" onEdit={() => onEditStep('payouts')}>
             <ReviewSummaryRow
               label="Rent payouts"
@@ -402,6 +406,7 @@ export function OnboardingReviewStep({
               }
             />
           </ReviewSummaryCard>
+          ) : null}
         </div>
       )}
 

@@ -3,6 +3,7 @@ import { isStaffAdminEmail } from "../../../shared/admin/staffAllowlist.ts"
 import { adminReassignSecretAuthorized } from "./admin_reassign_auth.ts"
 import { bearerLooksLikeJwt } from "./vendor_portal_bearer.ts"
 import { getVendorFromPortalApiKey } from "./vendor_portal_api_key.ts"
+import { getVendorFromJobActionToken } from "./vendorJobActionToken.ts"
 import type { ProxiedSenderType } from "./sms/proxiedMessaging.ts"
 
 const uuidRe =
@@ -98,7 +99,8 @@ export async function authorizeProxiedMessageSender(
       return { ok: false, status: 403, error: "Forbidden" }
     }
 
-    const vendor = await getVendorFromPortalApiKey(supabase, token)
+    const fromJob = await getVendorFromJobActionToken(supabase, token)
+    const vendor = fromJob ?? (await getVendorFromPortalApiKey(supabase, token))
     if (!vendor || vendor.id !== params.senderId) {
       return { ok: false, status: 403, error: "Forbidden" }
     }

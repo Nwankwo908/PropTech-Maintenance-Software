@@ -66,6 +66,7 @@ export type SendTenantActivationSummary = {
   skipped: number
   failed: number
   results: TenantActivationSendResult[]
+  error?: string
 }
 
 type ResidentRow = {
@@ -356,14 +357,15 @@ export async function sendTenantActivation(
       landlordId,
       residents: rows.length,
     })
+    summary.error =
+      "Welcome text could not be sent. This account does not have an SMS number yet."
     await logGraphEvent(supabase, {
       landlord_id: landlordId,
       event_type: "tenant.activation_sms_failed",
       source: "edge_function",
       actor_type: "system",
       metadata: {
-        message:
-          "Welcome text could not be sent: no active SMS line is set up for this account.",
+        message: summary.error,
         reason: "no_active_landlord_sms_line",
         residents: rows.length,
       },

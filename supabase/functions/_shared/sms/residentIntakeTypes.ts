@@ -491,11 +491,22 @@ export function recommendUrgency(state: SmsIntakeState): string {
 
 /** Affirmations for “does that sound right?” style prompts. */
 export function isAffirmativeReply(input: string): boolean {
-  const t = input.trim().toLowerCase().replace(/\s+/g, " ")
+  const t = input.trim().toLowerCase().replace(/\s+/g, " ").replace(/[.!?]+$/g, "")
   if (!t) return false
-  return /^(y|yes|yeah|yep|yup|yea|correct|right|ok|okay|sure|agreed?|confirm(ed)?|sounds?\s+good|sounds?\s+right|that\s+sounds?\s+(right|good|correct|fine)|that'?s?\s+(right|correct|fine|good)|looks?\s+(right|good|correct)|works?\s+for\s+me|go\s+ahead)([.!?]|$)/.test(
-    t,
-  )
+  if (
+    /^(y|yes|yeah|yep|yup|yea|correct|right|ok|okay|sure|agreed?|confirm(ed)?)$/.test(t)
+  ) {
+    return true
+  }
+  if (
+    /^(sounds?\s+(good|right|correct|fine)|that\s+sounds?\s+(right|good|correct|fine)|that'?s?\s+(right|correct|fine|good)|looks?\s+(right|good|correct)|works?\s+for\s+me|go\s+ahead)$/
+      .test(t)
+  ) {
+    return true
+  }
+  // "Yes that's right", "yes, that's correct"
+  return /^(y|yes|yeah|yep|yup|yea)[,.]?\s+(that'?s?\s+)?(right|correct|fine|good|ok|okay)$/
+    .test(t)
 }
 
 /** Bare no/nope — not “no leak” or a work-order description. */

@@ -4,6 +4,7 @@
  * Every dashboard / onboarding feature must record activity through this helper.
  * Do not insert into `operations_graph_events` directly.
  */
+import { shouldRecordGraphEvent } from '@shared/landlordCapabilities'
 import { supabase } from '@/lib/supabase'
 
 export type ActivityLogSource =
@@ -71,6 +72,9 @@ export async function recordActivityLog(
   params: RecordActivityLogInput,
 ): Promise<string | null> {
   if (!supabase) return null
+  if (!shouldRecordGraphEvent({ landlordId: params.landlordId, eventType: params.eventType })) {
+    return null
+  }
 
   const source = normalizeActivityLogSource(params.source)
   const metadata = params.metadata ?? {}

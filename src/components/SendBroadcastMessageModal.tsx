@@ -132,6 +132,7 @@ type BroadcastPayload = {
   audience: Audience
   building: string
   units: string[]
+  landlordId: string
   channels: Array<'email' | 'sms'>
   automation: {
     category?: string
@@ -478,6 +479,7 @@ export function SendBroadcastMessageModal({
       message: message.trim(),
       audience,
       building: building.trim(),
+      landlordId: getActiveLandlordId(),
       units:
         audience === 'units'
           ? units

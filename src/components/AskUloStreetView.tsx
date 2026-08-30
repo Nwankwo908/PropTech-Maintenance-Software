@@ -6,159 +6,209 @@ type AskUloStreetViewProps = {
   lat?: number | null
   lng?: number | null
   label?: string | null
+  /** Skip the Ask Ulo heading; fill a parent card instead. */
+  embedded?: boolean
+  frameClassName?: string
 }
 
-type ViewMode = 'street-js' | 'street-embed' | 'map' | 'satellite' | 'unavailable'
+type LatLng = { lat: number; lng: number }
 
 function streetViewEmbedUrl(lat: number, lng: number): string {
-  // Classic interactive Street View embed (works without Maps JS key).
   return (
     `https://www.google.com/maps?layer=c&cbll=${lat},${lng}` +
     `&cbp=11,0,0,0,0&output=svembed`
   )
 }
 
-function mapEmbedUrl(query: string, satellite: boolean): string {
-  return satellite
-    ? `https://www.google.com/maps?q=${encodeURIComponent(query)}&output=embed&t=k`
-    : `https://www.google.com/maps?q=${encodeURIComponent(query)}&output=embed`
+function streetViewAddressEmbedUrl(query: string): string {
+  return (
+    `https://www.google.com/maps?q=${encodeURIComponent(query)}` +
+    `&layer=c&cbp=11,0,0,0,0&output=svembed`
+  )
+}
+
+function geocodeQueries(address: string, label: string | null | undefined): string[] {
+  const primary = address.trim()
+  const name = label?.trim() ?? ''
+  const queries = [primary]
+  if (name && !primary.toLowerCase().includes(name.toLowerCase())) {
+    queries.push(`${name}, ${primary}`)
+  }
+  if (!/united states|, usa\b/i.test(primary)) {
+    queries.push(`${primary}, USA`)
+  }
+  return [...new Set(queries.filter(Boolean))]
+}
+
+async function geocodeGoogleJs(
+  g: typeof google,
+  address: string,
+  timeoutMs: number,
+): Promise<LatLng | null> {
+  return new Promise((resolve) => {
+    const timer = window.setTimeout(() => resolve(null), timeoutMs)
+    try {
+      const geocoder = new g.maps.Geocoder()
+      geocoder.geocode({ address, region: 'us' }, (results, status) => {
+        window.clearTimeout(timer)
+        const loc = status === 'OK' ? results?.[0]?.geometry?.location : null
+        resolve(loc ? { lat: loc.lat(), lng: loc.lng() } : null)
+      })
+    } catch {
+      window.clearTimeout(timer)
+      resolve(null)
+    }
+  })
+}
+
+async function geocodeGoogleHttp(address: string, apiKey: string): Promise<LatLng | null> {
+  try {
+    const url =
+      `https://maps.googleapis.com/maps/api/geocode/json?address=${encodeURIComponent(address)}` +
+      `&region=us&key=${encodeURIComponent(apiKey)}`
+    const res = await fetch(url)
+    if (!res.ok) return null
+    const data = (await res.json()) as {
+      results?: Array<{ geometry?: { location?: { lat: number; lng: number } } }>
+    }
+    const loc = data.results?.[0]?.geometry?.location
+    const lat = Number(loc?.lat)
+    const lng = Number(loc?.lng)
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null
+    return { lat, lng }
+  } catch {
+    return null
+  }
+}
+
+async function geocodeNominatim(address: string): Promise<LatLng | null> {
+  try {
+    const url =
+      `https://nominatim.openstreetmap.org/search?format=jsonv2&limit=1&countrycodes=us&q=` +
+      encodeURIComponent(address)
+    const res = await fetch(url, { headers: { Accept: 'application/json' } })
+    if (!res.ok) return null
+    const data = (await res.json()) as Array<{ lat?: string; lon?: string }>
+    const first = data[0]
+    const lat = Number(first?.lat)
+    const lng = Number(first?.lon)
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null
+    return { lat, lng }
+  } catch {
+    return null
+  }
+}
+
+async function resolveLatLng(input: {
+  g: typeof google | null
+  apiKey: string | null
+  address: string
+  label?: string | null
+}): Promise<LatLng | null> {
+  for (const query of geocodeQueries(input.address, input.label)) {
+    if (input.g) {
+      const fromJs = await geocodeGoogleJs(input.g, query, 6000)
+      if (fromJs) return fromJs
+    }
+    if (input.apiKey) {
+      const fromHttp = await geocodeGoogleHttp(query, input.apiKey)
+      if (fromHttp) return fromHttp
+    }
+    const fromOsm = await geocodeNominatim(query)
+    if (fromOsm) return fromOsm
+  }
+  return null
+}
+
+function lookupPanorama(
+  g: typeof google,
+  location: LatLng,
+  timeoutMs: number,
+): Promise<google.maps.StreetViewPanoramaData | null> {
+  return new Promise((resolve) => {
+    const timer = window.setTimeout(() => resolve(null), timeoutMs)
+    try {
+      const sv = new g.maps.StreetViewService()
+      sv.getPanorama({ location, radius: 250 }, (data, panoStatus) => {
+        window.clearTimeout(timer)
+        if (panoStatus === g.maps.StreetViewStatus.OK && data) resolve(data)
+        else resolve(null)
+      })
+    } catch {
+      window.clearTimeout(timer)
+      resolve(null)
+    }
+  })
 }
 
 /**
- * Interactive Google Street View for market analysis (Zillow-style neighborhood peek).
- * Prefers Maps JS StreetViewPanorama when VITE_GOOGLE_MAPS_API_KEY is set;
- * otherwise uses an interactive Street View embed when coordinates are known.
+ * Street View for a property address. Prefers the official embed (works with an address
+ * or lat/lng). Upgrades to Maps JS StreetViewPanorama when that loads.
  */
-export function AskUloStreetView({ address, lat, lng, label }: AskUloStreetViewProps) {
+export function AskUloStreetView({
+  address,
+  lat,
+  lng,
+  label,
+  embedded = false,
+  frameClassName,
+}: AskUloStreetViewProps) {
   const titleId = useId()
   const containerRef = useRef<HTMLDivElement>(null)
-  const [mode, setMode] = useState<ViewMode>(() => {
-    if (lat != null && lng != null) return 'street-embed'
-    return 'street-js'
-  })
-  const [status, setStatus] = useState<'loading' | 'ready' | 'fallback' | 'error'>('loading')
-  const [message, setMessage] = useState<string | null>(null)
+  const [jsReady, setJsReady] = useState(false)
+  const [resolved, setResolved] = useState<LatLng | null>(null)
 
   const query = address?.trim() || (lat != null && lng != null ? `${lat},${lng}` : null)
   const hasCoords = lat != null && lng != null && Number.isFinite(lat) && Number.isFinite(lng)
+  const apiKey = resolveGoogleMapsApiKey()
+  const viewLat = hasCoords ? lat! : resolved?.lat
+  const viewLng = hasCoords ? lng! : resolved?.lng
 
   useEffect(() => {
     let cancelled = false
     let panorama: google.maps.StreetViewPanorama | null = null
+    setJsReady(false)
+    setResolved(hasCoords ? { lat: lat!, lng: lng! } : null)
 
     async function mount() {
-      if (!query) {
-        setStatus('error')
-        setMode('unavailable')
-        setMessage('No property address available for Street View.')
-        return
+      if (!query) return
+
+      let g: typeof google | null = null
+      if (apiKey) {
+        try {
+          g = await loadGoogleMapsApi(apiKey)
+        } catch {
+          g = null
+        }
       }
+      if (cancelled) return
 
-      const apiKey = resolveGoogleMapsApiKey()
-
-      // No Maps JS key: interactive embed when we have coordinates.
-      if (!apiKey) {
-        if (hasCoords) {
-          setMode('street-embed')
-          setStatus('ready')
-          setMessage(null)
-          return
-        }
-        setMode('map')
-        setStatus('fallback')
-        setMessage('Showing map view. Add VITE_GOOGLE_MAPS_API_KEY for full Street View controls.')
-        return
+      let location: LatLng | null = hasCoords ? { lat: lat!, lng: lng! } : null
+      if (!location && address) {
+        location = await resolveLatLng({ g, apiKey, address, label })
       }
+      if (cancelled) return
+      if (location) setResolved(location)
 
-      // Need a mount node for the JS panorama.
-      if (!containerRef.current) {
-        if (hasCoords) {
-          setMode('street-embed')
-          setStatus('ready')
-          return
-        }
-        setMode('map')
-        setStatus('fallback')
-        return
-      }
+      if (!g || !location || !containerRef.current) return
 
-      try {
-        setMode('street-js')
-        const g = await loadGoogleMapsApi(apiKey)
-        if (cancelled || !containerRef.current) return
+      const panoData = await lookupPanorama(g, location, 8000)
+      if (cancelled || !containerRef.current) return
+      const position = panoData?.location?.latLng
+      if (!position) return
 
-        let location: google.maps.LatLngLiteral | null =
-          hasCoords ? { lat: lat!, lng: lng! } : null
-
-        if (!location && address) {
-          const geocoder = new g.maps.Geocoder()
-          const geo = await geocoder.geocode({ address })
-          const first = geo.results[0]?.geometry?.location
-          if (first) location = { lat: first.lat(), lng: first.lng() }
-        }
-
-        if (!location) {
-          setMode('map')
-          setStatus('fallback')
-          setMessage('Could not locate this address for Street View. Showing map view.')
-          return
-        }
-
-        const sv = new g.maps.StreetViewService()
-        const panoData = await new Promise<google.maps.StreetViewPanoramaData | null>(
-          (resolve) => {
-            sv.getPanorama(
-              { location, radius: 100, sourcePreference: g.maps.StreetViewPreference.NEAREST },
-              (data, panoStatus) => {
-                if (panoStatus === g.maps.StreetViewStatus.OK && data) resolve(data)
-                else resolve(null)
-              },
-            )
-          },
-        )
-
-        if (cancelled || !containerRef.current) return
-
-        if (!panoData?.location?.latLng) {
-          if (hasCoords) {
-            setMode('street-embed')
-            setStatus('fallback')
-            setMessage('Native Street View panorama unavailable — using embedded Street View.')
-            return
-          }
-          setMode('satellite')
-          setStatus('fallback')
-          setMessage('Street View is not available for this location. Showing satellite view.')
-          return
-        }
-
-        panorama = new g.maps.StreetViewPanorama(containerRef.current, {
-          position: panoData.location.latLng,
-          pov: { heading: 0, pitch: 0 },
-          zoom: 1,
-          addressControl: true,
-          linksControl: true,
-          panControl: true,
-          enableCloseButton: false,
-          fullscreenControl: true,
-          motionTracking: false,
-        })
-        setMode('street-js')
-        setStatus('ready')
-        setMessage(null)
-      } catch (err) {
-        console.error('[AskUloStreetView]', err)
-        if (cancelled) return
-        if (hasCoords) {
-          setMode('street-embed')
-          setStatus('fallback')
-          setMessage(null)
-          return
-        }
-        setMode('map')
-        setStatus('fallback')
-        setMessage('Street View failed to load. Showing map view instead.')
-      }
+      panorama = new g.maps.StreetViewPanorama(containerRef.current, {
+        position,
+        pov: { heading: 0, pitch: 0 },
+        zoom: 1,
+        addressControl: true,
+        linksControl: true,
+        panControl: true,
+        enableCloseButton: false,
+        fullscreenControl: true,
+        motionTracking: false,
+      })
+      setJsReady(true)
     }
 
     void mount()
@@ -167,18 +217,43 @@ export function AskUloStreetView({ address, lat, lng, label }: AskUloStreetViewP
       panorama = null
       if (containerRef.current) containerRef.current.innerHTML = ''
     }
-  }, [address, lat, lng, query, hasCoords])
+  }, [address, apiKey, hasCoords, label, lat, lng, query])
 
   if (!query) return null
 
   const iframeSrc =
-    mode === 'street-embed' && hasCoords
-      ? streetViewEmbedUrl(lat!, lng!)
-      : mode === 'satellite'
-        ? mapEmbedUrl(query, true)
-        : mode === 'map'
-          ? mapEmbedUrl(query, false)
-          : null
+    viewLat != null && viewLng != null
+      ? streetViewEmbedUrl(viewLat, viewLng)
+      : streetViewAddressEmbedUrl(query)
+
+  const defaultFrameClass =
+    'h-[280px] w-full overflow-hidden rounded-[12px] border border-[#e5e7eb] bg-[#f3f4f6] sm:h-[320px]'
+  const frameClass = frameClassName ?? defaultFrameClass
+
+  const viewer = (
+    <div className={`relative w-full overflow-hidden bg-[#f3f4f6] ${frameClass}`}>
+      <div
+        ref={containerRef}
+        className={jsReady ? 'h-full w-full' : 'pointer-events-none absolute inset-0 opacity-0'}
+        role="application"
+        aria-label="Interactive Street View"
+      />
+      {!jsReady ? (
+        <iframe
+          title="Street View"
+          src={iframeSrc}
+          className="h-full w-full border-0"
+          loading="eager"
+          referrerPolicy="no-referrer-when-downgrade"
+          allowFullScreen
+        />
+      ) : null}
+    </div>
+  )
+
+  if (embedded) {
+    return <div className="min-w-0">{viewer}</div>
+  }
 
   return (
     <section aria-labelledby={titleId} className="mt-4">
@@ -194,41 +269,7 @@ export function AskUloStreetView({ address, lat, lng, label }: AskUloStreetViewP
           {address ?? query}
         </p>
       ) : null}
-      {message ? (
-        <p className="mb-2 text-[12px] leading-4 text-[#6a7282]">{message}</p>
-      ) : null}
-
-      {mode === 'street-js' ? (
-        <div
-          ref={containerRef}
-          className="h-[280px] w-full overflow-hidden rounded-[12px] border border-[#e5e7eb] bg-[#f3f4f6] sm:h-[320px]"
-          role="application"
-          aria-label="Interactive Street View"
-        />
-      ) : mode === 'unavailable' ? (
-        <div className="rounded-[12px] border border-dashed border-[#e5e7eb] bg-[#f9fafb] px-4 py-6 text-center text-[13px] text-[#6a7282]">
-          Street View is not available for this location.
-        </div>
-      ) : iframeSrc ? (
-        <iframe
-          title={
-            mode === 'street-embed'
-              ? 'Interactive Street View'
-              : mode === 'satellite'
-                ? 'Satellite map'
-                : 'Map view'
-          }
-          src={iframeSrc}
-          className="h-[280px] w-full rounded-[12px] border border-[#e5e7eb] sm:h-[320px]"
-          loading="lazy"
-          referrerPolicy="no-referrer-when-downgrade"
-          allowFullScreen
-        />
-      ) : null}
-
-      {status === 'loading' && mode === 'street-js' ? (
-        <p className="mt-2 text-[12px] text-[#9ca3af]">Loading Street View…</p>
-      ) : null}
+      {viewer}
     </section>
   )
 }

@@ -3,7 +3,7 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1"
 import { adminEdgeCorsHeaders } from "../_shared/admin_edge_cors.ts"
 import { requireAdminReassignAuth } from "../_shared/admin_edge_auth.ts"
 import { sendResendEmail } from "../_shared/delivery.ts"
-import { getSMSProvider } from "../_shared/sms/providerFactory.ts"
+import { getSMSProviderForSend } from "../_shared/sms/providerFactory.ts"
 import { findActiveLandlordMainNumber } from "../_shared/sms/landlordSmsOnboarding.ts"
 import { resolveLandlordOpsPhones } from "../_shared/sms/tenantActivationAdminAlert.ts"
 
@@ -71,7 +71,10 @@ serve(async (req) => {
     return jsonResponse({ error: "No SMS phone on file for this account." }, 400)
   }
   const main = await findActiveLandlordMainNumber(supabase, landlordId)
-  const provider = getSMSProvider()
+  const provider = getSMSProviderForSend({
+    landlordId,
+    lineProvider: main?.provider,
+  })
   const bodyText =
     "This is a test notification from Ulo. If you received this, SMS delivery is working for your account."
   const send = await provider.sendMessage({

@@ -68,7 +68,16 @@ serve(async (req) => {
       companyName,
       resend: body.resend === true,
     })
-    return jsonResponse({ ok: true, ...summary })
+    const ok = !summary.error && summary.failed === 0 && summary.sent > 0
+    return jsonResponse({
+      ...summary,
+      ok,
+      error:
+        summary.error ??
+        (ok
+          ? undefined
+          : "Welcome text could not be sent. Check the phone number and try again."),
+    })
   } catch (err) {
     console.error("[send-tenant-activation] error", err)
     const message = err instanceof Error ? err.message : String(err)

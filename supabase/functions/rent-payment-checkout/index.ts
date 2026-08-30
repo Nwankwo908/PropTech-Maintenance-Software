@@ -16,6 +16,7 @@ import {
   stampRentCheckoutOnRun,
 } from "../_shared/engine/rentStripeCheckout.ts"
 import { runAmountDue, runBillingPeriod } from "../_shared/engine/workflowRuns.ts"
+import { landlordHasPayments } from "../../../shared/landlordCapabilities.ts"
 
 const corsHeaders: Record<string, string> = {
   "Access-Control-Allow-Origin": "*",
@@ -112,6 +113,9 @@ serve(async (req) => {
 
   if (runErr || !run) {
     return jsonResponse({ error: "Rent payment link is not valid." }, 404)
+  }
+  if (!landlordHasPayments(String(run.landlord_id ?? ""))) {
+    return jsonResponse({ error: "Payments are not available on this account." }, 403)
   }
   if (String(run.resident_id ?? "") !== residentId) {
     return jsonResponse({ error: "Rent payment link is not valid." }, 403)
