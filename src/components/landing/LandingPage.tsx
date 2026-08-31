@@ -451,7 +451,7 @@ export function LandingPage() {
         <section className="relative overflow-hidden min-[2560px]:flex min-[2560px]:min-h-[calc(100dvh-4rem)] min-[2560px]:items-center landing-3840-2160:min-h-[calc(100dvh-6rem)] landing-4096-2304:min-h-[calc(100dvh-6.4rem)] landing-5120-2880:min-h-[calc(100dvh-6.4rem)] landing-7680-4320:min-h-[calc(100dvh-10rem)]">
           <div
             aria-hidden
-            className="pointer-events-none absolute inset-0 bg-cover bg-center bg-no-repeat opacity-[0.14]"
+            className="pointer-events-none absolute inset-0 bg-cover bg-center bg-no-repeat opacity-[0.3]"
             style={{ backgroundImage: `url(${heroBlueprint})` }}
           />
           <div
