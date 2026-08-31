@@ -2,6 +2,7 @@
  * Vendor trade helpers — shared client + edge.
  * Taxonomy: vendorTradeDefinitions.ts · phrase rules: deterministicRules.ts
  */
+import { resolveAmbiguousMaintenance } from './ambiguityResolution.ts'
 import { inferTradeFromText } from './deterministicRules.ts'
 import {
   VENDOR_TRADE_DEFINITIONS,
@@ -55,6 +56,18 @@ export function normalizeVendorTrade(
 
   if (VENDOR_TRADE_SLUG_SET.has(v)) return v as VendorTradeSlug
 
+  const rawText = String(raw).trim()
+  const looksLikeFreeText = /[\s,]/.test(rawText) || rawText.length > 32
+  if (looksLikeFreeText) {
+    const inferred = inferTradeFromText(rawText)
+    if (inferred) return inferred
+    const resolved = resolveAmbiguousMaintenance(rawText)
+    if (resolved.handled && resolved.needsClarification) {
+      return fallbackOther ? 'other' : null
+    }
+    return fallbackOther ? 'other' : null
+  }
+
   const exact: Record<string, VendorTradeSlug> = {
     appliance: 'appliance_repair',
     appliances: 'appliance_repair',
@@ -63,6 +76,13 @@ export function normalizeVendorTrade(
     generalist: 'general',
     general_maintenance: 'general',
     household: 'general',
+    structural: 'general',
+    structure: 'general',
+    general_contractor: 'general',
+    foundation: 'masonry',
+    boiler: 'plumbing',
+    radiator: 'plumbing',
+    hydronic: 'plumbing',
     pest: 'pest_control',
     exterior: 'landscaping',
     outside: 'landscaping',
@@ -270,7 +290,7 @@ export function getIssueCategorySlugForTicket(row: {
 export function tradeTermsFromVendorTrade(
   issueCategory: string | null | undefined,
 ): string {
-  const slug = issueCategoryToVendorTrade(issueCategory)
+  const slug = matchingTradeForVendorSearch(issueCategory)
   switch (slug) {
     case 'plumbing':
       return 'plumbing contractor'
@@ -335,10 +355,18 @@ export type ExternalVendorTradeBucket =
   | 'roofing'
   | 'default'
 
+export function matchingTradeForVendorSearch(
+  issueCategory: string | null | undefined,
+): VendorTradeSlug {
+  const raw = String(issueCategory ?? '').trim().toLowerCase()
+  if (raw === 'structural' || raw === 'structure') return 'general'
+  return issueCategoryToVendorTrade(issueCategory)
+}
+
 export function tradeBucketFromVendorTrade(
   issueCategory: string | null | undefined,
 ): ExternalVendorTradeBucket {
-  const slug = issueCategoryToVendorTrade(issueCategory)
+  const slug = matchingTradeForVendorSearch(issueCategory)
   if (slug === 'plumbing') return 'plumbing'
   if (slug === 'electrical') return 'electrical'
   if (slug === 'hvac') return 'hvac'

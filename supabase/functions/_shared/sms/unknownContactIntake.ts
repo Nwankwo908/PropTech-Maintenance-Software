@@ -4,6 +4,9 @@
  * (or while) creating a maintenance request — especially when urgent.
  */
 import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.49.1"
+import { parseDurationHours } from "../../../../shared/maintenance/urgencyPolicy.ts"
+import { lookupOutdoorTempForProperty } from "../weather/propertyOutdoorTemp.ts"
+import { detectEmergencySignals } from "./residentIntakeTypes.ts"
 import { getEstimatedMinutes } from "../sla_rules.ts"
 import { logGraphEvent } from "../graph/logGraphEvent.ts"
 import {
@@ -12,6 +15,8 @@ import {
 import { issueCategoryToVendorTrade } from "../vendor_trades.ts"
 import {
   classifyMaintenanceRequest,
+  insertAiClassificationLog,
+  attachAiClassificationLogToTicket,
 } from "../maintenance_classification/mod.ts"
 import {
   attachPhoneToUnitResident,
@@ -79,8 +84,9 @@ export type UnknownContactTurnResult = {
   metadata: Record<string, unknown>
 }
 
-const URGENT_RE =
-  /\b(leak(?:ing|ed)?|flood(?:ing|ed)?|gushing|pouring|no\s*heat|no\s*hot\s*water|gas\s*smell|smoke|fire|spark(?:ing|s)?|sewage|sewer|burst\s*pipe|ceiling\s*(?:leak|collaps)|water\s*everywhere|emergency|urgent|really\s*bad(?:ly)?)\b/i
+export function detectUrgentIssue(text: string): boolean {
+  return detectEmergencySignals(text)
+}
 
 const CONSENT_YES =
   /^(yes|y|yeah|yep|sure|ok|okay|please|go ahead|sounds good|that'?s fine|save it|save my number)\b/i
@@ -109,10 +115,6 @@ const RELATIONSHIP_PATTERNS: Array<{
 
 function iso(): string {
   return new Date().toISOString()
-}
-
-export function detectUrgentIssue(text: string): boolean {
-  return URGENT_RE.test(text)
 }
 
 const NAME_STOPWORDS = new Set([
@@ -472,25 +474,53 @@ async function matchLocationFromText(
 }
 
 async function classifyIssueSummary(
+  supabase: SupabaseClient,
   text: string,
-): Promise<{ trade: string | null; severity: string }> {
+  location?: {
+    landlordId?: string | null
+    unitId?: string | null
+    building?: string | null
+    conversationId?: string | null
+    residentId?: string | null
+  },
+): Promise<{ trade: string | null; severity: string; outdoorTempF: number | null }> {
+  const outdoorTempF = await lookupOutdoorTempForProperty(supabase, {
+    landlordId: location?.landlordId,
+    unitId: location?.unitId,
+    building: location?.building,
+    description: text,
+  })
   try {
     const result = await classifyMaintenanceRequest({
       rawDescription: text,
       skipLlm: true,
+      durationHours: parseDurationHours(text),
+      outdoorTempF,
     })
+    if (location?.landlordId && location.conversationId) {
+      void insertAiClassificationLog(supabase, {
+        landlordId: location.landlordId,
+        unitId: location.unitId,
+        residentId: location.residentId,
+        conversationId: location.conversationId,
+        result,
+      })
+    }
     const trade = result.vendorTrade ?? result.issueType ?? null
     const severity =
-      result.severity === "critical" || result.severity === "urgent"
+      result.urgencyBand === "emergency" ||
+        result.severity === "critical" ||
+        result.severity === "urgent"
         ? "urgent"
-        : detectUrgentIssue(text)
-        ? "urgent"
+        : result.urgencyBand === "low"
+        ? "low"
         : "normal"
-    return { trade: typeof trade === "string" ? trade : null, severity }
+    return { trade: typeof trade === "string" ? trade : null, severity, outdoorTempF }
   } catch {
     return {
       trade: detectUrgentIssue(text) ? "plumbing" : null,
       severity: detectUrgentIssue(text) ? "urgent" : "normal",
+      outdoorTempF,
     }
   }
 }
@@ -521,12 +551,16 @@ async function createUnknownMaintenanceTicket(
     trade: string | null
     relationship: UnknownContactRelationship | null
     residentUserId: string | null
+    outdoorTempF?: number | null
   },
 ): Promise<string | null> {
   const issueCategory = issueCategoryToVendorTrade(params.trade ?? "general")
   const dbSeverity = params.severity === "urgent" ? "urgent" : "normal"
   const priority = params.severity === "urgent" ? "urgent" : "normal"
-  const estimatedMinutes = getEstimatedMinutes(issueCategory, dbSeverity)
+  const estimatedMinutes = getEstimatedMinutes(issueCategory, dbSeverity, null, {
+    description: params.issueSummary,
+    outdoorTempF: params.outdoorTempF,
+  })
   const dueAt = new Date(Date.now() + estimatedMinutes * 60_000)
   const name = params.senderName?.trim() || "Unknown contact"
   const emailDigits = params.phone.replace(/\D/g, "") || "unknown"
@@ -561,6 +595,11 @@ async function createUnknownMaintenanceTicket(
   }
 
   const ticketId = String(ticket.id)
+  await attachAiClassificationLogToTicket(supabase, {
+    landlordId: params.landlordId,
+    conversationId: params.conversationId,
+    maintenanceRequestId: ticketId,
+  })
   await supabase
     .from("sms_conversations")
     .update({
@@ -736,7 +775,12 @@ export async function processUnknownContactIntakeTurn(
       state.unitLabel = null
     }
 
-    const classified = await classifyIssueSummary(state.originalMessage)
+    const classified = await classifyIssueSummary(supabase, state.originalMessage, {
+      landlordId: params.landlordId,
+      unitId: state.unitId,
+      building: state.buildingLabel,
+      conversationId: params.conversationId,
+    })
     state.severity = classified.severity
     state.detectedIntent = classified.trade ?? "maintenance"
 
@@ -772,7 +816,12 @@ export async function processUnknownContactIntakeTurn(
     // First message already included unit/property — ask consent next.
     if (state.status === "awaiting_contact_consent" && state.unitLabel) {
       if (state.severity === "urgent" && !state.ticketId) {
-        const classified = await classifyIssueSummary(state.originalMessage)
+        const classified = await classifyIssueSummary(supabase, state.originalMessage, {
+          landlordId: params.landlordId,
+          unitId: state.unitId,
+          building: state.buildingLabel,
+          conversationId: params.conversationId,
+        })
         state.ticketId = await createUnknownMaintenanceTicket(supabase, {
           landlordId: params.landlordId,
           conversationId: params.conversationId,
@@ -785,6 +834,7 @@ export async function processUnknownContactIntakeTurn(
           trade: classified.trade,
           relationship: state.relationshipToUnit,
           residentUserId: null,
+          outdoorTempF: classified.outdoorTempF,
         })
       }
       await persistUnknownContactIntake(supabase, {
@@ -872,7 +922,14 @@ export async function processUnknownContactIntakeTurn(
     // Urgent: mint ticket before consent so ops isn't blocked
     if (state.severity === "urgent" && !state.ticketId) {
       const classified = await classifyIssueSummary(
+        supabase,
         state.originalMessage || body,
+        {
+          landlordId: params.landlordId,
+          unitId: state.unitId,
+          building: state.buildingLabel,
+          conversationId: params.conversationId,
+        },
       )
       state.ticketId = await createUnknownMaintenanceTicket(supabase, {
         landlordId: params.landlordId,
@@ -886,6 +943,7 @@ export async function processUnknownContactIntakeTurn(
         trade: classified.trade,
         relationship: state.relationshipToUnit,
         residentUserId: null,
+        outdoorTempF: classified.outdoorTempF,
       })
     }
 
@@ -1028,7 +1086,15 @@ export async function processUnknownContactIntakeTurn(
     }
 
     const classified = await classifyIssueSummary(
+      supabase,
       state.originalMessage || body,
+      {
+        landlordId: params.landlordId,
+        unitId: state.unitId,
+        building: state.buildingLabel,
+        conversationId: params.conversationId,
+        residentId,
+      },
     )
     if (!state.ticketId) {
       state.ticketId = await createUnknownMaintenanceTicket(supabase, {
@@ -1043,6 +1109,7 @@ export async function processUnknownContactIntakeTurn(
         trade: classified.trade,
         relationship: state.relationshipToUnit,
         residentUserId: residentId,
+        outdoorTempF: classified.outdoorTempF,
       })
     } else if (residentId && state.ticketId) {
       await supabase

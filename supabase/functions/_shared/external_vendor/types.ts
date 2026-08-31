@@ -14,6 +14,10 @@ export type ExternalVendorHit = {
   /** Provider listing page (Thumbtack service page, etc.). */
   listingUrl?: string | null
   tags?: string[]
+  searchId?: string | null
+  categoryId?: string | null
+  /** Thumbtack `businessImageURL` (or similar) for the pro’s profile photo. */
+  imageUrl?: string | null
 }
 
 export type ExternalVendorSource = "thumbtack" | "mock"
@@ -33,6 +37,15 @@ export type ExternalVendorSuggestion = {
   /** Provider listing page (Thumbtack service page, etc.). */
   listingUrl?: string | null
   tags?: string[]
+  searchId?: string | null
+  categoryId?: string | null
+  providerRef?: string | null
+  contactStatus?: "awaiting_response" | "vendor_replied" | "closed" | null
+  contactedAt?: string | null
+  lastInboundAt?: string | null
+  lastInboundPreview?: string | null
+  /** Thumbtack `businessImageURL` (or similar) for the pro’s profile photo. */
+  imageUrl?: string | null
 }
 
 export type ExternalVendorSearchInput = {
@@ -40,6 +53,9 @@ export type ExternalVendorSearchInput = {
   searchLocation: string
   tradeTerms: string
   textQuery: string
+  /** Tenant / ticket wording for Thumbtack search-filtered. */
+  jobDescription?: string | null
+  limit?: number
 }
 
 export interface ExternalVendorProvider {

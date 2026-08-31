@@ -118,7 +118,7 @@ function EventCard({ event }: { event: ResidentCalendarEvent }) {
   const clock = eventClockParts(event)
   const showCamera = event.kind === 'rent' || event.kind === 'rent_reminder'
   return (
-    <div className={`flex h-[68px] items-start overflow-hidden rounded-[4px] ${style.fill}`}>
+    <div className={`sa-enter-scale sa-card flex h-[68px] items-start overflow-hidden rounded-[4px] ${style.fill}`}>
       <div className={`h-full w-[3px] shrink-0 ${style.bar}`} />
       <div className="flex h-[68px] min-w-px flex-1 flex-col items-start p-1.5">
         <div className={`flex items-center gap-1 ${style.text}`}>
@@ -362,7 +362,7 @@ export function ResidentLeaseCalendar({
                 key={item}
                 type="button"
                 className={[
-                  'sa-press rounded-[8px] px-4 py-1 text-[14px] font-medium leading-5',
+                  'sa-pill sa-press rounded-[8px] px-4 py-1 text-[14px] font-medium leading-5',
                   active ? 'bg-[#70ABC5] text-white' : 'text-[#71717a]',
                 ].join(' ')}
                 onClick={() => setView(item)}
@@ -373,7 +373,7 @@ export function ResidentLeaseCalendar({
           })}
         </div>
 
-        <label className="flex w-[184px] items-center gap-2 rounded-[4px] bg-[#f4f4f5] p-1">
+        <label className="sa-surface flex w-[184px] items-center gap-2 rounded-[4px] bg-[#f4f4f5] p-1">
           <span className="relative block size-5 shrink-0">
             <img alt="" src={searchIcon} className="absolute inset-0 block size-5 max-w-none" />
           </span>
@@ -390,15 +390,19 @@ export function ResidentLeaseCalendar({
 
       <div className="mt-4 min-w-0">
         {view === 'week' ? (
-          <HourGrid days={weekDays} todayIso={today} eventsByDate={eventsByDate} />
+          <div className="sa-enter">
+            <HourGrid days={weekDays} todayIso={today} eventsByDate={eventsByDate} />
+          </div>
         ) : null}
 
         {view === 'day' ? (
-          <HourGrid days={[focusDate]} todayIso={today} eventsByDate={eventsByDate} />
+          <div className="sa-enter">
+            <HourGrid days={[focusDate]} todayIso={today} eventsByDate={eventsByDate} />
+          </div>
         ) : null}
 
         {view === 'month' ? (
-          <div>
+          <div className="sa-enter">
             <p className="mb-3 text-[14px] font-medium leading-5 text-[#18181b]">
               {monthTitle(focusYear, focusMonth)}
             </p>
@@ -439,7 +443,7 @@ export function ResidentLeaseCalendar({
                       {dayEvents.slice(0, 3).map((event) => (
                         <span
                           key={eventKey(event)}
-                          className={`truncate rounded-[2px] px-1 text-[10px] font-medium leading-4 ${EVENT_STYLE[event.kind].fill} ${EVENT_STYLE[event.kind].text}`}
+                          className={`sa-enter truncate rounded-[2px] px-1 text-[10px] font-medium leading-4 ${EVENT_STYLE[event.kind].fill} ${EVENT_STYLE[event.kind].text}`}
                         >
                           {event.label}
                         </span>
@@ -453,7 +457,7 @@ export function ResidentLeaseCalendar({
         ) : null}
 
         {view === 'year' ? (
-          <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
+          <div className="sa-enter grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
             {Array.from({ length: 12 }, (_, index) => index + 1).map((month) => {
               const cells = buildMonthGrid(focusYear, month, today)
               return (

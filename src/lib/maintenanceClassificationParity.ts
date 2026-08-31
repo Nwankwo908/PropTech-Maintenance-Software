@@ -3,6 +3,7 @@
  * Full LLM/embedding pipeline runs on the edge.
  */
 import { inferTradeFromText } from '@shared/maintenance/deterministicRules.ts'
+import { resolveAmbiguousMaintenance } from '@shared/maintenance/ambiguityResolution.ts'
 import {
   issueCategoryToVendorTrade,
   type VendorTradeSlug,
@@ -10,7 +11,11 @@ import {
 
 /** Deterministic trade inference for free-text descriptions (shared rules). */
 export function inferTradeFromDescription(text: string): VendorTradeSlug {
-  return inferTradeFromText(text) ?? issueCategoryToVendorTrade(text)
+  const inferred = inferTradeFromText(text)
+  if (inferred) return inferred
+  const resolved = resolveAmbiguousMaintenance(text)
+  if (resolved.handled && resolved.needsClarification) return 'other'
+  return issueCategoryToVendorTrade(text)
 }
 
 /** Examples that must classify the same on client and edge. */

@@ -4,7 +4,7 @@ import {
   classifyIssueForSla,
   severityFromResidentPriority,
 } from "../_shared/classify_issue_sla.ts"
-import { MAINTENANCE_CLASSIFICATION_EVENTS } from "../_shared/maintenance_classification/mod.ts"
+import { MAINTENANCE_CLASSIFICATION_EVENTS, insertAiClassificationLog } from "../_shared/maintenance_classification/mod.ts"
 import { getEstimatedMinutes } from "../_shared/sla_rules.ts"
 import {
   loadLandlordOperationalSettings,
@@ -19,6 +19,7 @@ import {
   SUBMITTED_NO_VENDOR_ESCALATION,
 } from "../_shared/maintenance_admin_escalation.ts"
 import { resolveLandlordId } from "../_shared/sms/landlordSmsOnboarding.ts"
+import { lookupOutdoorTempForProperty } from "../_shared/weather/propertyOutdoorTemp.ts"
 import { issueCategoryToVendorTrade, VENDOR_TRADE_SLUGS } from "../_shared/vendor_trades.ts"
 
 const corsHeaders: Record<string, string> = {
@@ -267,12 +268,18 @@ serve(async (req) => {
   const overrideCategory = normalizeFormIssueCategory(
     textField(form, "issueCategory"),
   )
+  const scopedLandlordId = resolveLandlordId()
+  const outdoorTempF = await lookupOutdoorTempForProperty(supabase, {
+    landlordId: scopedLandlordId,
+    unitLabel: unit,
+    description,
+  })
   const slaClassification = overrideCategory
     ? {
       issue_category: overrideCategory,
       severity: severityFromResidentPriority(priority),
     }
-    : await classifyIssueForSla(description, priority)
+    : await classifyIssueForSla(description, priority, { outdoorTempF })
 
   if (!overrideCategory && slaClassification.classification) {
     const c = slaClassification.classification
@@ -286,10 +293,10 @@ serve(async (req) => {
       pipeline: c.pipelineVersion,
       signals: c.signals.slice(0, 8),
       sanitized: c.sanitizedDescription.slice(0, 160),
+      outdoor_temp_f: c.audit?.outdoor_temp_f ?? outdoorTempF,
     })
   }
 
-  const scopedLandlordId = resolveLandlordId()
   const operational = scopedLandlordId
     ? await loadLandlordOperationalSettings(supabase, scopedLandlordId)
     : null
@@ -297,7 +304,13 @@ serve(async (req) => {
     category: slaClassification.issue_category,
     severity: slaClassification.severity,
     defaultResponseSla: operational?.defaultResponseSla ?? null,
-    fallbackMinutes: getEstimatedMinutes,
+    fallbackMinutes: (category, severity) =>
+      getEstimatedMinutes(category, severity, null, {
+        description,
+        emergencyType: slaClassification.classification?.emergencyType,
+        urgencyBand: slaClassification.classification?.urgencyBand,
+        outdoorTempF,
+      }),
   })
   const dueAt = new Date(Date.now() + estimatedMinutes * 60_000)
 
@@ -346,6 +359,16 @@ serve(async (req) => {
 
   const ticketId = row.id as string
   const landlordId = resolveLandlordId()
+
+  if (landlordId && slaClassification.classification) {
+    await insertAiClassificationLog(supabase, {
+      landlordId,
+      residentId: residentRow.id,
+      maintenanceRequestId: ticketId,
+      result: slaClassification.classification,
+      rawMessage: description,
+    })
+  }
 
   const paths: string[] = []
   const photoParts = form.getAll("photo")

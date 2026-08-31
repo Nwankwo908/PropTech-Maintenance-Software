@@ -4,6 +4,10 @@ import { adminEdgeCorsHeaders } from "../_shared/admin_edge_cors.ts"
 import { requireAdminReassignAuth } from "../_shared/admin_edge_auth.ts"
 import { discoverExternalVendorsForTicket } from "../_shared/external_vendor/discover.ts"
 import { isUuidShape } from "../_shared/uuid_shape.ts"
+import {
+  clampExternalVendorSearchLimit,
+  EXTERNAL_VENDOR_SEARCH_LIMIT,
+} from "../../../shared/externalVendor/searchLimit.ts"
 
 const corsHeaders = adminEdgeCorsHeaders
 
@@ -38,11 +42,9 @@ serve(async (req) => {
     return jsonResponse({ error: "Missing or invalid ticketId" }, 400)
   }
 
-  const limit =
-    typeof body.limit === "number" && Number.isFinite(body.limit) &&
-      body.limit >= 1 && body.limit <= 10
-      ? Math.floor(body.limit)
-      : 8
+  const limit = clampExternalVendorSearchLimit(
+    typeof body.limit === "number" ? body.limit : EXTERNAL_VENDOR_SEARCH_LIMIT,
+  )
 
   const forceMock = body.useMock === true
 
@@ -76,8 +78,35 @@ serve(async (req) => {
     locationLabel: result.locationLabel,
     areaLabel: result.areaLabel,
     issueCategory: result.issueCategory,
-    notice: result.mode === "mock" && result.providersUsed.includes("mock")
-      ? "Using demo external vendor data (set THUMBTACK_CLIENT_ID and THUMBTACK_CLIENT_SECRET for live Thumbtack search)."
-      : undefined,
+    notice: thumbtackDiscoverNotice(result),
+    providerError: result.providerError ?? undefined,
+    jobContext: result.jobContext,
   })
 })
+
+function thumbtackDiscoverNotice(result: {
+  mode: string
+  providersUsed: string[]
+  suggestions: unknown[]
+  configured: boolean
+  areaLabel: string | null
+  searchLocation: string
+  providerError?: string | null
+}): string | undefined {
+  if (result.mode === "mock" && result.providersUsed.includes("mock")) {
+    return "Using demo external vendor data (set THUMBTACK_CLIENT_ID and THUMBTACK_CLIENT_SECRET for live Thumbtack search)."
+  }
+  if (result.suggestions.length > 0 || !result.configured) return undefined
+  const err = result.providerError ?? ""
+  const area = result.areaLabel || result.searchLocation
+  if (err === "oauth_token_failed" || err.startsWith("oauth_http_")) {
+    return "Thumbtack did not accept our login. Confirm the partner client ID and secret match production (or set staging API/token URLs if these are staging keys)."
+  }
+  if (err.startsWith("search_http_403") || err.startsWith("search_filtered_http_403")) {
+    return "Thumbtack blocked this search (forbidden). The partner account may need the assigned cma- utm source, or Edge traffic may be blocked."
+  }
+  if (err.startsWith("search_http_") || err.startsWith("search_filtered_http_")) {
+    return `Thumbtack search failed (${err.replace(/_/g, " ")}). Check the partner utm source and API environment.`
+  }
+  return `No Thumbtack pros found for this trade near ${area}.`
+}

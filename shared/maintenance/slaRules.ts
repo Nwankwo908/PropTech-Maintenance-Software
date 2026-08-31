@@ -1,59 +1,79 @@
 /**
  * Deterministic SLA windows (minutes from ticket creation to due_at).
- * AI must not set minutes — only category + severity feed into this table.
+ * Urgency policy (emergency / 48h / 7-day) is the source of minutes.
+ * AI must not set minutes.
  */
+import {
+  resolveUrgencyPolicy,
+  urgencyBandFromSeverity,
+  URGENCY_SLA_MINUTES,
+  type UrgencyBand,
+} from './urgencyPolicy.ts'
+import type { EmergencyType } from './classificationTypes.ts'
+
 export const SLA_RULES = {
   plumbing: {
-    urgent: 120,
-    normal: 240,
-    low: 1440,
+    urgent: URGENCY_SLA_MINUTES.emergencyWater,
+    normal: URGENCY_SLA_MINUTES.medium,
+    low: URGENCY_SLA_MINUTES.low,
   },
   electrical: {
-    urgent: 60,
-    normal: 180,
-    low: 720,
+    urgent: URGENCY_SLA_MINUTES.emergencyLifeSafety,
+    normal: URGENCY_SLA_MINUTES.medium,
+    low: URGENCY_SLA_MINUTES.low,
   },
   appliance: {
-    urgent: 240,
-    normal: 720,
-    low: 2880,
+    urgent: URGENCY_SLA_MINUTES.emergencySameDay,
+    normal: URGENCY_SLA_MINUTES.medium,
+    low: URGENCY_SLA_MINUTES.low,
   },
 } as const
 
-type SlaCategory = keyof typeof SLA_RULES
-type SlaSeverity = keyof (typeof SLA_RULES)['plumbing']
+export { URGENCY_SLA_MINUTES }
 
-function normalizeCategory(raw: string | undefined): SlaCategory | 'other' {
-  const cat = (raw || '').trim().toLowerCase().replace(/[\s-]+/g, '_')
-  if (cat === 'plumbing') return 'plumbing'
-  if (cat === 'electrical') return 'electrical'
-  if (
-    cat === 'appliance' ||
-    cat === 'appliances' ||
-    cat === 'appliance_repair'
-  ) {
-    return 'appliance'
-  }
-  return 'other'
-}
-
-function normalizeSeverity(raw: string | undefined): SlaSeverity {
-  const sev = (raw || 'normal').trim().toLowerCase()
-  if (sev === 'low') return 'low'
-  if (sev === 'urgent' || sev === 'emergency' || sev === 'high') return 'urgent'
-  return 'normal'
+export type SlaMinutesOptions = {
+  emergencyType?: EmergencyType | string | null
+  urgencyBand?: UrgencyBand | null
+  description?: string | null
+  outdoorTempF?: number | null
+  durationHours?: number | null
 }
 
 export function getEstimatedMinutes(
   category?: string,
   severity?: string,
   overrideMinutes?: number | null,
+  options?: SlaMinutesOptions,
 ): number {
   if (overrideMinutes != null && Number.isFinite(overrideMinutes) && overrideMinutes > 0) {
     return Math.round(overrideMinutes)
   }
-  const cat = normalizeCategory(category)
-  const sev = normalizeSeverity(severity)
-  if (cat === 'other') return 240
-  return SLA_RULES[cat][sev] ?? 240
+
+  if (options?.description?.trim()) {
+    return resolveUrgencyPolicy({
+      text: options.description,
+      emergencyType: (options.emergencyType as EmergencyType | undefined) ?? undefined,
+      outdoorTempF: options.outdoorTempF,
+      durationHours: options.durationHours,
+    }).slaMinutes
+  }
+
+  const band = options?.urgencyBand ?? urgencyBandFromSeverity(severity)
+  if (band === 'low') return URGENCY_SLA_MINUTES.low
+  if (band === 'medium') return URGENCY_SLA_MINUTES.medium
+
+  const emergencyType = String(options?.emergencyType ?? '').toLowerCase()
+  const cat = (category || '').trim().toLowerCase().replace(/[\s-]+/g, '_')
+  if (
+    emergencyType === 'gas' ||
+    emergencyType === 'fire' ||
+    emergencyType === 'electrical' ||
+    cat === 'electrical'
+  ) {
+    return URGENCY_SLA_MINUTES.emergencyLifeSafety
+  }
+  if (emergencyType === 'flood' || cat === 'plumbing') {
+    return URGENCY_SLA_MINUTES.emergencyWater
+  }
+  return URGENCY_SLA_MINUTES.emergencySameDay
 }

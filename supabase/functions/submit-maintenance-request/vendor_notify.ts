@@ -796,7 +796,10 @@ export async function reassignVendorByIdAndNotify(
         category: existingIssueCat,
         severity: sevForSla,
         defaultResponseSla: operational?.defaultResponseSla ?? null,
-        fallbackMinutes: getEstimatedMinutes,
+        fallbackMinutes: (category, severity) =>
+          getEstimatedMinutes(category, severity, null, {
+            description: typeof ticket.description === "string" ? ticket.description : null,
+          }),
       })
   const newDueAtIso = new Date(Date.now() + estMin * 60_000).toISOString()
 

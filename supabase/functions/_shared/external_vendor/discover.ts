@@ -8,7 +8,11 @@ import {
   isDemoExternalVendorProviderRef,
 } from "../../../../shared/externalVendor/demoVendorNames.ts"
 import { MockExternalVendorProvider } from "./providers/mock.ts"
-import { thumbtackProviderFromEnv } from "./providers/thumbtack.ts"
+import {
+  ThumbtackExternalVendorProvider,
+  extractZipFromLocation,
+  thumbtackProviderFromEnv,
+} from "./providers/thumbtack.ts"
 import { mergeAndRankExternalHits, rosterNameKeys } from "./ranking.ts"
 import { buildExternalSearchQuery, normalizeIssueCategoryForSearch } from "./trade_terms.ts"
 import { resolveExternalVendorSearchContext } from "./search_location.ts"
@@ -18,7 +22,13 @@ import type {
   ExternalVendorSource,
   ExternalVendorSuggestion,
 } from "./types.ts"
+import { listThumbtackThreadsForTicket } from "./thumbtackThreads.ts"
+import { formatThumbtackJobCategoryLabel } from "../../../../shared/externalVendor/thumbtackOutreachCopy.ts"
 import { landlordHasVendorMarketplace } from "../../../../shared/landlordCapabilities.ts"
+import {
+  clampExternalVendorSearchLimit,
+  EXTERNAL_VENDOR_SEARCH_LIMIT,
+} from "../../../../shared/externalVendor/searchLimit.ts"
 
 export type DiscoverExternalVendorsOptions = {
   issueCategory: string | null
@@ -28,6 +38,8 @@ export type DiscoverExternalVendorsOptions = {
   areaLabel?: string | null
   /** When set, exclude in-network roster names for this landlord. */
   landlordId?: string | null
+  /** Tenant-facing ticket text for Thumbtack filtered search. */
+  jobDescription?: string | null
   limit?: number
   /** Force mock provider even when live API keys exist. Ignored unless allowMock. */
   forceMock?: boolean
@@ -44,6 +56,15 @@ export type DiscoverExternalVendorsResult = {
   locationLabel: string
   areaLabel: string | null
   issueCategory: string | null
+  /** Safe Thumbtack diagnostic (http code / oauth), never secrets. */
+  providerError?: string | null
+  jobContext?: {
+    propertyAddress: string
+    jobCategory: string
+    issueSummary: string | null
+    urgency: string | null
+    timeframe: string | null
+  }
 }
 
 /** Resolve providers from Edge secrets / EXTERNAL_VENDOR_PROVIDER. */
@@ -125,15 +146,25 @@ export async function discoverExternalVendors(
   supabase: SupabaseClient | null,
   options: DiscoverExternalVendorsOptions,
 ): Promise<DiscoverExternalVendorsResult> {
+  const zip =
+    extractZipFromLocation(options.searchLocation) ??
+    extractZipFromLocation(options.areaLabel ?? "")
+  const searchLocationWithZip =
+    zip && !extractZipFromLocation(options.searchLocation)
+      ? `${options.searchLocation.trim()} ${zip}`.trim()
+      : options.searchLocation
   const { tradeTerms, textQuery, searchLocation } = buildExternalSearchQuery(
     options.issueCategory,
-    options.searchLocation,
+    searchLocationWithZip,
   )
+  const jobDescription = options.jobDescription?.trim() || null
   const searchInput: ExternalVendorSearchInput = {
     issueCategory: options.issueCategory,
     searchLocation,
     tradeTerms,
-    textQuery,
+    textQuery: jobDescription ? `${jobDescription}. ${textQuery}` : textQuery,
+    jobDescription,
+    limit: clampExternalVendorSearchLimit(options.limit ?? EXTERNAL_VENDOR_SEARCH_LIMIT),
   }
 
   const landlordAllows = await landlordAllowsMockExternalVendors(
@@ -146,6 +177,18 @@ export async function discoverExternalVendors(
     forceMock: allowMock && options.forceMock === true,
     allowMock,
   })
+  if (providers.length === 0) {
+    return {
+      suggestions: [],
+      providersUsed: [],
+      mode: "live",
+      configured: false,
+      searchLocation,
+      locationLabel: options.locationLabel ?? searchLocation,
+      areaLabel: options.areaLabel ?? null,
+      issueCategory: options.issueCategory,
+    }
+  }
   const providersUsed = allowMock
     ? providers.map((p) => p.id)
     : providers.map((p) => p.id).filter((id) => id !== "mock")
@@ -156,7 +199,14 @@ export async function discoverExternalVendors(
   const mode = thumbtackLive ? "live" : "mock"
   const configured = mode === "live"
 
-  const hitGroups = await Promise.all(providers.map((p) => p.search(searchInput)))
+  let providerError: string | null = null
+  const hitGroups = await Promise.all(providers.map(async (p) => {
+    const group = await p.search(searchInput)
+    if (p instanceof ThumbtackExternalVendorProvider && p.lastSearchError) {
+      providerError = p.lastSearchError
+    }
+    return group
+  }))
   const hits = allowMock
     ? hitGroups.flat()
     : hitGroups.flat().filter(isLiveExternalVendorHit)
@@ -171,7 +221,7 @@ export async function discoverExternalVendors(
   }
 
   const suggestions = mergeAndRankExternalHits(hits, {
-    limit: options.limit ?? 8,
+    limit: options.limit ?? EXTERNAL_VENDOR_SEARCH_LIMIT,
     excludeNameKeys,
   }).filter((row) => allowMock || isLiveExternalVendorSuggestion(row))
 
@@ -184,6 +234,7 @@ export async function discoverExternalVendors(
     locationLabel: options.locationLabel ?? searchLocation,
     areaLabel: options.areaLabel ?? null,
     issueCategory: options.issueCategory,
+    providerError,
   }
 }
 
@@ -210,7 +261,7 @@ export async function discoverExternalVendorsMerged(
   const providers: ExternalVendorProvider[] = [new MockExternalVendorProvider()]
 
   const hitGroups = await Promise.all(providers.map((p) => p.search(searchInput)))
-  return mergeAndRankExternalHits(hitGroups.flat(), { limit: 8 })
+  return mergeAndRankExternalHits(hitGroups.flat(), { limit: EXTERNAL_VENDOR_SEARCH_LIMIT })
 }
 
 export async function discoverExternalVendorsForTicket(
@@ -222,13 +273,14 @@ export async function discoverExternalVendorsForTicket(
   | { error: string }
 > {
   let issueCategory: string | null = null
+  let jobDescription: string | null = null
   let unit = ""
   let building: string | null = null
   let landlordId: string | null = null
 
   const enriched = await supabase
     .from("maintenance_request_enriched")
-    .select("id, issue_category, unit, landlord_id, building")
+    .select("id, issue_category, description, unit, landlord_id, building")
     .eq("id", ticketId)
     .maybeSingle()
 
@@ -240,13 +292,16 @@ export async function discoverExternalVendorsForTicket(
     issueCategory = enriched.data.issue_category == null
       ? null
       : String(enriched.data.issue_category)
+    jobDescription = enriched.data.description == null
+      ? null
+      : String(enriched.data.description)
     unit = enriched.data.unit == null ? "" : String(enriched.data.unit).trim()
     building = enriched.data.building == null ? null : String(enriched.data.building).trim()
     landlordId = enriched.data.landlord_id == null ? null : String(enriched.data.landlord_id)
   } else {
     const { data: ticket, error } = await supabase
       .from("maintenance_requests")
-      .select("id, issue_category, unit, landlord_id")
+      .select("id, issue_category, description, unit, landlord_id")
       .eq("id", ticketId)
       .maybeSingle()
 
@@ -259,6 +314,9 @@ export async function discoverExternalVendorsForTicket(
     issueCategory = ticket.issue_category == null
       ? null
       : String(ticket.issue_category)
+    jobDescription = ticket.description == null
+      ? null
+      : String(ticket.description)
     unit = ticket.unit == null ? "" : String(ticket.unit).trim()
     landlordId = ticket.landlord_id == null ? null : String(ticket.landlord_id)
   }
@@ -293,12 +351,58 @@ export async function discoverExternalVendorsForTicket(
     locationLabel,
     areaLabel,
     landlordId,
+    jobDescription,
     limit: opts?.limit,
     forceMock: allowMock && opts?.forceMock === true,
     allowMock,
   })
 
-  return { ticketId, ...result }
+  const extra = await supabase
+    .from("maintenance_requests")
+    .select("urgency, priority, due_at, description")
+    .eq("id", ticketId)
+    .maybeSingle()
+  const urgency =
+    extra.data && typeof extra.data.urgency === "string" && extra.data.urgency.trim()
+      ? extra.data.urgency.trim()
+      : extra.data && typeof extra.data.priority === "string" && extra.data.priority.trim()
+        ? extra.data.priority.trim()
+        : null
+  const dueRaw = extra.data?.due_at
+  const timeframe =
+    typeof dueRaw === "string" && dueRaw.trim()
+      ? `by ${new Date(dueRaw).toLocaleDateString("en-US", { month: "short", day: "numeric" })}`
+      : null
+  const issueSummary = jobDescription?.trim() ||
+    (typeof extra.data?.description === "string" ? extra.data.description.trim() : "") ||
+    null
+
+  const threads = await listThumbtackThreadsForTicket(supabase, ticketId)
+  const byBusiness = new Map(threads.map((t) => [t.business_id, t]))
+  const suggestions = result.suggestions.map((row) => {
+    const thread = row.providerRef ? byBusiness.get(row.providerRef) : undefined
+    if (!thread) return row
+    return {
+      ...row,
+      contactStatus: thread.status,
+      contactedAt: thread.last_outbound_at,
+      lastInboundAt: thread.last_inbound_at,
+      lastInboundPreview: thread.last_inbound_text,
+    }
+  })
+
+  return {
+    ticketId,
+    ...result,
+    suggestions,
+    jobContext: {
+      propertyAddress: locationLabel || searchLocation,
+      jobCategory: formatThumbtackJobCategoryLabel(normalizedCategory),
+      issueSummary,
+      urgency,
+      timeframe,
+    },
+  }
 }
 
 function metaTrimmedString(meta: unknown, key: string): string | null {

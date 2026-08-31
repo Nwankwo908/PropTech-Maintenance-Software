@@ -4,6 +4,11 @@ import type {
   SeverityLevel,
   VendorTrade,
 } from "./types.ts"
+import {
+  fetchLlmClassificationJson,
+  type LlmClassifyFetch,
+  type LlmDraftProvider,
+} from "./llmClassifyProvider.ts"
 
 const SMS_INTENTS = [
   "maintenance_new",
@@ -36,6 +41,8 @@ export type LlmClassificationDraft = {
   reasoning: string
   confidence: number
   interpretation?: LlmSmsInterpretation
+  /** Transport that produced this draft. Not used for matching or SLA. */
+  provider?: LlmDraftProvider
 }
 
 const TRADES: VendorTrade[] = [
@@ -170,64 +177,100 @@ function smsContextPrompt(smsContext: ClassifyMaintenanceSmsContext): string {
   return parts.join("\n")
 }
 
+export function parseLlmClassificationDraft(
+  content: string,
+  smsContext?: ClassifyMaintenanceSmsContext | null,
+): LlmClassificationDraft | null {
+  const clean = content.replace(/```json|```/g, "").trim()
+  if (!clean) return null
+  let parsed: Record<string, unknown>
+  try {
+    parsed = JSON.parse(clean) as Record<string, unknown>
+  } catch {
+    return null
+  }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null
+  const confidence = Number(parsed.confidence)
+  const interpretation = smsContext ? parseInterpretation(parsed) : undefined
+  return {
+    vendorTrade: asTrade(parsed.vendor_trade ?? parsed.vendorTrade),
+    issueType: asIssue(parsed.issue_type ?? parsed.issueType),
+    severity: asSeverity(parsed.severity),
+    reasoning:
+      typeof parsed.reasoning === "string" ? parsed.reasoning.slice(0, 240) : "",
+    confidence: Number.isFinite(confidence)
+      ? Math.max(0, Math.min(1, confidence))
+      : 0.5,
+    ...(interpretation ? { interpretation } : {}),
+  }
+}
+
+const CLASSIFY_SYSTEM_PROMPT =
+  `Classify this property maintenance request. Return ONLY JSON with keys:\n` +
+  `- vendor_trade: one of ${TRADES.join(", ")}\n` +
+  `- issue_type: one of ${ISSUES.join(", ")}\n` +
+  `- severity: one of low, normal, urgent, critical\n` +
+  `- confidence: number 0-1\n` +
+  `- reasoning: short phrase\n` +
+  `Do not invent facts.\n` +
+  `Do not force a ceiling leak to plumbing — rain vs upstairs fixture is ambiguous until clarified.\n` +
+  `Radiators and boilers are plumbing/boiler trades, not forced-air HVAC.\n` +
+  `Prefer plumbing for fixture leaks (faucet, sink, toilet, pipe, water heater).\n` +
+  `Prefer electrical for sparks/outlets/wiring.\n` +
+  `Never use a generic "structural" trade; pick roofing, carpentry, masonry, windows, or general.`
+
+function envTrim(name: string): string {
+  try {
+    return Deno.env.get(name)?.trim() ?? ""
+  } catch {
+    return ""
+  }
+}
+
 export async function llmClassifyMaintenance(
   sanitized: string,
   entitiesSummary: string,
   smsContext?: ClassifyMaintenanceSmsContext | null,
+  opts?: {
+    fetchImpl?: LlmClassifyFetch
+    openaiKey?: string | null
+    anthropicKey?: string | null
+  },
 ): Promise<LlmClassificationDraft | null> {
-  const apiKey = Deno.env.get("OPENAI_API_KEY")?.trim()
-  if (!apiKey || !sanitized.trim()) return null
+  const openaiKey = (opts?.openaiKey ?? envTrim("OPENAI_API_KEY")).trim()
+  if (!openaiKey || !sanitized.trim()) return null
 
-  const prompt =
-    `Classify this property maintenance request. Return ONLY JSON with keys:\n` +
-    `- vendor_trade: one of ${TRADES.join(", ")}\n` +
-    `- issue_type: one of ${ISSUES.join(", ")}\n` +
-    `- severity: one of low, normal, urgent, critical\n` +
-    `- confidence: number 0-1\n` +
-    `- reasoning: short phrase\n` +
-    `Do not invent facts. Prefer plumbing for leaks/faucets/sinks/toilets.\n` +
-    `Prefer electrical for sparks/outlets/wiring.\n\n` +
+  const userPrompt =
     `Description: """${sanitized.slice(0, 4000)}"""\n` +
     `Extracted: ${entitiesSummary.slice(0, 1000)}` +
     (smsContext ? `\n\n${smsContextPrompt(smsContext)}` : "")
 
   try {
-    const res = await fetch("https://api.openai.com/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        model: "gpt-4o-mini",
-        temperature: 0.1,
-        response_format: { type: "json_object" },
-        messages: [{ role: "user", content: prompt }],
-      }),
+    const fetched = await fetchLlmClassificationJson({
+      systemPrompt: CLASSIFY_SYSTEM_PROMPT,
+      userPrompt,
+      fetchImpl: opts?.fetchImpl,
+      openaiKey,
+      anthropicKey: opts?.anthropicKey ?? envTrim("ANTHROPIC_API_KEY"),
     })
-    if (!res.ok) return null
-    const data = (await res.json()) as {
-      choices?: Array<{ message?: { content?: string } }>
+    if (!fetched) return null
+    const draft = parseLlmClassificationDraft(fetched.content, smsContext)
+    if (!draft) {
+      console.error("[maintenance-classify] draft JSON did not parse", {
+        provider: fetched.provider,
+      })
+      return null
     }
-    const content = data.choices?.[0]?.message?.content?.trim()
-    if (!content) return null
-    const parsed = JSON.parse(content) as Record<string, unknown>
-    const confidence = Number(parsed.confidence)
-    const interpretation = smsContext ? parseInterpretation(parsed) : undefined
-    return {
-      vendorTrade: asTrade(parsed.vendor_trade ?? parsed.vendorTrade),
-      issueType: asIssue(parsed.issue_type ?? parsed.issueType),
-      severity: asSeverity(parsed.severity),
-      reasoning:
-        typeof parsed.reasoning === "string"
-          ? parsed.reasoning.slice(0, 240)
-          : "",
-      confidence: Number.isFinite(confidence)
-        ? Math.max(0, Math.min(1, confidence))
-        : 0.5,
-      ...(interpretation ? { interpretation } : {}),
-    }
-  } catch {
+    const withProvider = { ...draft, provider: fetched.provider }
+    console.info("[maintenance-classify] llm draft (interpretation only)", {
+      provider: fetched.provider,
+      vendorTrade: withProvider.vendorTrade,
+      issueType: withProvider.issueType,
+      confidence: withProvider.confidence,
+    })
+    return withProvider
+  } catch (err) {
+    console.error("[maintenance-classify] llm draft failed", err)
     return null
   }
 }

@@ -107,6 +107,7 @@ export class MockExternalVendorProvider implements ExternalVendorProvider {
   async search(input: ExternalVendorSearchInput): Promise<ExternalVendorHit[]> {
     const bucket = tradeBucketFromCategory(input.issueCategory)
     const rows = MOCK_BY_TRADE[bucket] ?? MOCK_BY_TRADE.default
-    return rows.map((row) => ({ ...row }))
+    const limit = typeof input.limit === "number" && input.limit > 0 ? input.limit : rows.length
+    return rows.slice(0, limit).map((row) => ({ ...row }))
   }
 }

@@ -39,7 +39,7 @@ In-network roster suggestions remain on **`recommend-vendor-alternatives`** (Ope
 | `THUMBTACK_API_BASE_URL` | Optional API host (default `https://api.thumbtack.com/api`) |
 | `THUMBTACK_TOKEN_URL` | Optional token URL (default `https://auth.thumbtack.com/oauth2/token`) |
 | `THUMBTACK_OAUTH_SCOPE` | Optional scopes (default businesses search + categories) |
-| `THUMBTACK_UTM_SOURCE` | Optional `utm_source` on search (default `ulo`) |
+| `THUMBTACK_UTM_SOURCE` | Optional `utm_source` on search (must be `cma-…`; default `cma-ulo`) |
 | `EXTERNAL_VENDOR_SEARCH_LOCATION` | Fallback geocode anchor when property address cannot be resolved |
 | `EXTERNAL_VENDOR_PROVIDER` | `auto` (default), `mock`, or `thumbtack` |
 | `EXTERNAL_VENDOR_USE_MOCK` | `true` forces mock provider in discover API |
@@ -50,8 +50,9 @@ When no live Thumbtack credentials are configured, **`mock`** provider returns d
 
 Demand-side **client credentials** OAuth against `urn:partner-api`, then:
 
-1. `GET /v4/categories/search?searchQuery={trade}` → `categoryID`
-2. `POST /v4/businesses/search` with `{ categoryID, zipCode, limit }`
+1. `POST /v4/businesses/search-filtered` with ticket wording, trade, ZIP, and `projectMetadata.radiusMiles` (50)
+2. Fill remaining slots with `POST /v4/businesses/search` (`searchQuery` + ZIP), up to 10 unique businesses
+3. Optional matched `categoryID` only — never an unmatched first category
 
 ZIP is taken from the resolved property search location. Pros with Thumbtack license verification are treated as provider-verified for Find External Vendor compliance; others still go through the state board + Certificial path.
 
@@ -123,6 +124,20 @@ Response:
 
 Graph event: `maintenance.external_vendor_reassigned`.
 
+### POST / GET `message-thumbtack-vendor`
+
+Opens or reuses the Thumbtack **negotiation** for a search hit, then:
+
+`POST /api/v4/negotiations/{negotiationID}/messages` with `{ "text": "..." }`.
+
+Uses the stored OAuth access token on the Edge Function (never in the browser). First send may `POST /v4/requests` with `searchID` + `businessIDs` to mint the lead.
+
+Auth: same as discover (`ADMIN_REASSIGN_SECRET`).
+
+### POST `thumbtack-webhook`
+
+Demand-side `MessageCreatedV4` ingest. Set `THUMBTACK_WEBHOOK_SECRET` (Bearer or `x-thumbtack-webhook-secret`) or Basic `THUMBTACK_WEBHOOK_USER` / `THUMBTACK_WEBHOOK_PASSWORD`. Attaches the reply to `thumbtack_vendor_threads`, logs `vendor.thumbtack_replied`, and notifies the landlord.
+
 ## Tests
 
 ```bash
@@ -136,7 +151,11 @@ Covers ranking, mock provider, Thumbtack payload mapping, discover fallback, and
 ```bash
 supabase db push   # migration
 supabase functions deploy discover-external-vendors
+supabase functions deploy message-thumbtack-vendor
+supabase functions deploy thumbtack-webhook
 supabase functions deploy reassign-external-vendor
 ```
+
+Also `supabase db push` for `thumbtack_vendor_threads`.
 
 Existing **`admin-reassign-vendor`** remains unchanged for in-network reassigns; vendor create path now scopes by ticket `landlord_id`.

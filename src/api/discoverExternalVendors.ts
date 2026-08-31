@@ -7,6 +7,17 @@ import {
   fetchAdminEdgeFunction,
 } from '@/api/adminReassignVendor'
 import { formatAdminEdgeUnauthorizedError } from '@/lib/adminEdgeAuth'
+import { EXTERNAL_VENDOR_SEARCH_LIMIT } from '@shared/externalVendor/searchLimit'
+
+export type ExternalVendorContactStatus = 'awaiting_response' | 'vendor_replied' | 'closed'
+
+export type ExternalVendorJobContextDto = {
+  propertyAddress: string
+  jobCategory: string
+  issueSummary: string | null
+  urgency: string | null
+  timeframe: string | null
+}
 
 export type ExternalVendorSuggestionDto = {
   name: string
@@ -19,6 +30,15 @@ export type ExternalVendorSuggestionDto = {
   phone?: string | null
   website?: string | null
   tags?: string[]
+  listingUrl?: string | null
+  searchId?: string | null
+  categoryId?: string | null
+  providerRef?: string | null
+  contactStatus?: ExternalVendorContactStatus | null
+  contactedAt?: string | null
+  lastInboundAt?: string | null
+  lastInboundPreview?: string | null
+  imageUrl?: string | null
 }
 
 export type DiscoverExternalVendorsOk = {
@@ -32,6 +52,7 @@ export type DiscoverExternalVendorsOk = {
   locationLabel?: string
   areaLabel?: string | null
   issueCategory?: string | null
+  jobContext?: ExternalVendorJobContextDto
 }
 
 export function resolveDiscoverExternalVendorsUrl(): string | null {
@@ -55,7 +76,10 @@ export async function postDiscoverExternalVendors(input: {
   const res = await fetchAdminEdgeFunction(url, {
     method: 'POST',
     headers: adminEdgeInvokeHeaders(secret),
-    body: JSON.stringify({ ticketId: input.ticketId.trim() }),
+    body: JSON.stringify({
+      ticketId: input.ticketId.trim(),
+      limit: EXTERNAL_VENDOR_SEARCH_LIMIT,
+    }),
   })
   const text = await res.text()
   let body: unknown

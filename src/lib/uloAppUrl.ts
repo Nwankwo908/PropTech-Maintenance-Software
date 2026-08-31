@@ -107,4 +107,25 @@ export const uloAppUrl = {
         : `/admin/${trimmed.replace(/^\//, '')}`
     return absolute ? joinOriginPath(uloAppOrigin(), suffix) : suffix
   },
+
+  /** Overview → Find External Vendor for a work order. */
+  findExternalVendor(ticketId: string, absolute = true): string {
+    const id = encodeURIComponent(ticketId.trim())
+    const path = `/admin?findVendor=1&ticket=${id}`
+    return absolute ? joinOriginPath(uloAppOrigin(), path) : path
+  },
+}
+
+export const FIND_EXTERNAL_VENDOR_QUERY = {
+  flag: 'findVendor',
+  ticket: 'ticket',
+} as const
+
+/** Ticket id from an Overview Find External Vendor deep link, or null. */
+export function findExternalVendorTicketFromSearch(search: string): string | null {
+  const raw = search.startsWith('?') ? search.slice(1) : search
+  const params = new URLSearchParams(raw)
+  if (params.get(FIND_EXTERNAL_VENDOR_QUERY.flag) !== '1') return null
+  const ticketId = params.get(FIND_EXTERNAL_VENDOR_QUERY.ticket)?.trim() ?? ''
+  return ticketId || null
 }

@@ -71,7 +71,7 @@ function MetaCard({
   valueClassName?: string
 }) {
   return (
-    <div className="rounded-[10px] border border-[#e5e7eb] bg-[#fafafa] px-4 py-3">
+    <div className="sa-enter-scale sa-surface rounded-[10px] border border-[#e5e7eb] bg-[#fafafa] px-4 py-3">
       <div className="flex items-center gap-1.5">
         {icon}
         <p className="text-[10px] font-semibold uppercase tracking-[0.08em] text-[#9ca3af]">{label}</p>
@@ -174,7 +174,7 @@ export function SlaOverdueActionRail({
           <CloseIcon />
         </button>
 
-        <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-6 pb-6 pt-6">
+        <div className="sa-enter min-h-0 flex-1 overflow-y-auto overscroll-contain px-6 pb-6 pt-6">
           <h2 id={titleId} className="text-[20px] font-semibold leading-7 tracking-[-0.3px] text-[#0a0a0a]">
             {review.headerTitle}
           </h2>
@@ -192,12 +192,12 @@ export function SlaOverdueActionRail({
             <MetaCard label="Response time" icon={<ClockIcon />} value={review.slaDueLabel} />
           </div>
 
-          <div className="mt-4 rounded-[10px] border border-[#fecaca] bg-[#fff5f5] px-4 py-3">
+          <div className="sa-enter mt-4 rounded-[10px] border border-[#fecaca] bg-[#fff5f5] px-4 py-3">
             <p className="text-[14px] font-semibold leading-5 text-[#c10007]">{alertHeadline}</p>
             <p className="mt-1 text-[13px] leading-5 text-[#364153]">{review.issueSummary}</p>
           </div>
 
-          <div className="mt-5">
+          <div className="sa-enter mt-5">
             {showRosterIssue ? (
               <>
                 <p className="text-[10px] font-semibold uppercase tracking-[0.08em] text-[#9ca3af]">Issue</p>
@@ -216,13 +216,13 @@ export function SlaOverdueActionRail({
             )}
           </div>
 
-          <div className="mt-5">
+          <div className="sa-enter mt-5">
             <p className="text-[10px] font-semibold uppercase tracking-[0.08em] text-[#9ca3af]">Timeline</p>
             <ul className="mt-3 space-y-3">
               {review.timeline.filter(isVisibleSlaTimelineEntry).map((entry) => (
                 <li
                   key={`${entry.timeLabel}-${entry.description}`}
-                  className="grid grid-cols-[4.5rem_1fr_auto] gap-x-3 gap-y-0.5 text-[13px] leading-5"
+                  className="sa-enter grid grid-cols-[4.5rem_1fr_auto] gap-x-3 gap-y-0.5 text-[13px] leading-5"
                 >
                   <span className="tabular-nums text-[#6a7282]">{entry.timeLabel}</span>
                   <span className="text-[#364153]">{entry.description}</span>
@@ -235,7 +235,7 @@ export function SlaOverdueActionRail({
 
         <footer className={ADMIN_RAIL_FOOTER_CLASS}>
           {error ? (
-            <p className="text-[13px] leading-5 text-error" role="alert">
+            <p className="sa-enter text-[13px] leading-5 text-error" role="alert">
               {error}
             </p>
           ) : null}

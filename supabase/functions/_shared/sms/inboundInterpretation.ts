@@ -12,7 +12,7 @@ import {
   classifyTenantComplianceKeyword,
 } from "./tenantMessaging.ts"
 import {
-  EMERGENCY_SIGNALS,
+  detectEmergencySignals,
   extractFirstNoticedFromText,
   inferIssueTypeFromText,
   isAffirmativeReply,
@@ -586,9 +586,8 @@ function heuristicIntent(
     return { intent: "other", extractedSlots: {}, confident: true }
   }
 
-  const emergencyHit = EMERGENCY_SIGNALS.some((signal) =>
-    text.toLowerCase().includes(signal)
-  ) || /\b(smell gas|gas in the|on fire|smoke alarm)\b/i.test(text)
+  const emergencyHit = detectEmergencySignals(text) ||
+    /\b(smell gas|gas in the|on fire|smoke alarm)\b/i.test(text)
   if (emergencyHit || inferIssueTypeFromText(text) || looksLikeBareRepairRequest(text)) {
     return { intent: "maintenance_new", extractedSlots: {}, confident: true }
   }

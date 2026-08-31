@@ -3,6 +3,7 @@ import type {
   ExternalVendorSource,
   ExternalVendorSuggestion,
 } from "./types.ts"
+import { EXTERNAL_VENDOR_SEARCH_LIMIT } from "../../../../shared/externalVendor/searchLimit.ts"
 
 /** Normalize vendor name for deduplication across providers. */
 export function compactVendorNameKey(name: string): string {
@@ -34,6 +35,10 @@ type MutableAgg = {
   website: string | null
   listingUrl: string | null
   tags: string[]
+  searchId: string | null
+  categoryId: string | null
+  providerRef: string | null
+  imageUrl: string | null
 }
 
 function pickString(prev: string | null, next: string | null | undefined): string | null {
@@ -70,7 +75,7 @@ export function mergeAndRankExternalHits(
   opts?: { limit?: number; excludeNameKeys?: Set<string> },
 ): ExternalVendorSuggestion[] {
   const byKey = new Map<string, MutableAgg>()
-  const limit = opts?.limit ?? 8
+  const limit = opts?.limit ?? EXTERNAL_VENDOR_SEARCH_LIMIT
   const exclude = opts?.excludeNameKeys ?? new Set<string>()
 
   for (const hit of hits) {
@@ -93,6 +98,10 @@ export function mergeAndRankExternalHits(
         website: hit.website?.trim() || null,
         listingUrl: hit.listingUrl?.trim() || null,
         tags: hit.tags ?? [],
+        searchId: hit.searchId?.trim() || null,
+        categoryId: hit.categoryId?.trim() || null,
+        providerRef: hit.providerRef?.trim() || null,
+        imageUrl: hit.imageUrl?.trim() || null,
       })
       continue
     }
@@ -105,6 +114,10 @@ export function mergeAndRankExternalHits(
     prev.phone = pickString(prev.phone, hit.phone)
     prev.website = pickString(prev.website, hit.website)
     prev.listingUrl = pickString(prev.listingUrl, hit.listingUrl)
+    prev.searchId = pickString(prev.searchId, hit.searchId)
+    prev.categoryId = pickString(prev.categoryId, hit.categoryId)
+    prev.providerRef = pickString(prev.providerRef, hit.providerRef)
+    prev.imageUrl = pickString(prev.imageUrl, hit.imageUrl)
     prev.tags = mergeTags(prev.tags, hit.tags)
     if (!prev.priceLabel && hit.priceLabel) prev.priceLabel = hit.priceLabel
   }
@@ -129,6 +142,10 @@ export function mergeAndRankExternalHits(
       website: m.website,
       listingUrl: m.listingUrl,
       tags: m.tags.length > 0 ? m.tags : undefined,
+      searchId: m.searchId,
+      categoryId: m.categoryId,
+      providerRef: m.providerRef,
+      imageUrl: m.imageUrl,
     }
   })
 

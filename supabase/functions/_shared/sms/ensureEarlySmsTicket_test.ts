@@ -47,6 +47,18 @@ Deno.test("does not mint after submitted", () => {
   )
 })
 
+Deno.test("does not mint while confidence is low", () => {
+  assertEqual(
+    shouldMintEarlyTicket({
+      step: "issue_type",
+      initial_message: "something is broken",
+      confidence_band: "low",
+    }),
+    false,
+    "low confidence",
+  )
+})
+
 Deno.test("requires a description plus trade or issue type", () => {
   assertEqual(
     shouldMintEarlyTicket({

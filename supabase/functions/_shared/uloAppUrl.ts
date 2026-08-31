@@ -161,6 +161,18 @@ export const uloAppUrl = {
       : `/admin/${trimmed.replace(/^\//, "")}`
     return joinOriginPath(uloAppOrigin(options), suffix)
   },
+
+  /** Overview → Find External Vendor for a work order. */
+  findExternalVendor(
+    ticketId: string,
+    options?: UloAppOriginOptions,
+  ): string {
+    const id = encodeURIComponent(ticketId.trim())
+    return joinOriginPath(
+      uloAppOrigin(options),
+      `/admin?findVendor=1&ticket=${id}`,
+    )
+  },
 }
 
 /** @deprecated Prefer uloAppOrigin / uloAppUrl — kept for gradual migration. */

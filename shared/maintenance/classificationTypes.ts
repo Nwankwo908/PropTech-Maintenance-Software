@@ -2,6 +2,9 @@
  * Maintenance classification contracts — shared client + edge.
  */
 import type { VendorTrade } from './vendorTradeDefinitions.ts'
+import type { PrimaryCategory } from './primaryCategories.ts'
+import type { UrgencyBand } from './urgencyPolicy.ts'
+import type { ConfidenceBand } from './confidencePolicy.ts'
 
 export type { VendorTrade, VendorTradeSlug } from './vendorTradeDefinitions.ts'
 
@@ -62,7 +65,7 @@ export type ClarificationPrompt = {
   field: string
 }
 
-export const PIPELINE_VERSION = 'maintenance_classification_v1'
+export const PIPELINE_VERSION = 'maintenance_classification_v5'
 
 export type ClassificationResult = {
   pipelineVersion: string
@@ -72,7 +75,17 @@ export type ClassificationResult = {
   ticketCategory: VendorTrade
   issueType: IssueType
   vendorTrade: VendorTrade
+  /** User-facing bucket (7). Matching uses vendorTrade, not this. */
+  primaryCategory: PrimaryCategory
+  secondaryTrade: VendorTrade | null
+  classificationReason: string
   severity: SeverityLevel
+  urgencyBand: UrgencyBand
+  urgencyReason: string
+  slaMinutes: number
+  photoRequested: boolean
+  photoRequestReason: string
+  confidenceBand: ConfidenceBand
   emergencyType: EmergencyType
   classificationConfidence: number
   categoryConfidence: number
@@ -104,4 +117,8 @@ export type ClassifyMaintenanceInput = {
   skipLlm?: boolean
   skipEmbeddings?: boolean
   smsContext?: ClassifyMaintenanceSmsContext | null
+  /** Outdoor temperature at the property (°F), when known. */
+  outdoorTempF?: number | null
+  /** How long the issue has been going on, when known. */
+  durationHours?: number | null
 }

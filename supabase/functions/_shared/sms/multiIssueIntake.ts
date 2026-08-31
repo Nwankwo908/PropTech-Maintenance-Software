@@ -8,9 +8,10 @@
  */
 import { classifyMaintenanceRequest } from "../maintenance_classification/mod.ts"
 import { matchDeterministicRules } from "../maintenance_classification/deterministicRules.ts"
-import type { VendorTrade } from "../maintenance_classification/types.ts"
+import type { ClassificationResult, VendorTrade } from "../maintenance_classification/types.ts"
 import { extractResidentAvailabilityText } from "./residentAvailabilityExtract.ts"
 import {
+  applyPhotoRequestPolicy,
   extractRoomFromText,
   pipelineTradeToIssueType,
   type PendingIntakeIssue,
@@ -125,12 +126,16 @@ export function clusterIssueSegments(
 
 async function pendingFromCluster(
   cluster: ScoredSegment,
+  outdoorTempF: number | null = null,
+  onClassified?: (result: ClassificationResult) => void,
 ): Promise<PendingIntakeIssue> {
   const classified = await classifyMaintenanceRequest({
     rawDescription: cluster.text,
     skipLlm: true,
     skipEmbeddings: !Deno.env.get("OPENAI_API_KEY")?.trim(),
+    outdoorTempF,
   })
+  onClassified?.(classified)
   const trade =
     classified.vendorTrade !== "other" ? classified.vendorTrade : cluster.trade
   const issueType =
@@ -159,17 +164,28 @@ async function pendingFromCluster(
  */
 export async function detectMultipleMaintenanceIssues(
   raw: string,
+  opts?: {
+    outdoorTempF?: number | null
+    onClassified?: (result: ClassificationResult) => void
+  },
 ): Promise<PendingIntakeIssue[]> {
   const { segments, mode } = splitMaintenanceIssueSegmentsWithMode(raw)
   const clustered = clusterIssueSegments(segments, {
     keepSameTrade: mode === "markers",
   })
+  const onClassified = opts?.onClassified
 
   // Marker path: 2+ scored segments → multi-issue (same trade OK).
   if (mode === "markers" && clustered.length >= 2) {
     const pending: PendingIntakeIssue[] = []
     for (const cluster of clustered.slice(0, MULTI_ISSUE_MAX)) {
-      pending.push(await pendingFromCluster(cluster))
+      pending.push(
+        await pendingFromCluster(
+          cluster,
+          opts?.outdoorTempF ?? null,
+          onClassified,
+        ),
+      )
     }
     return pending.length >= 2 ? pending : []
   }
@@ -201,7 +217,9 @@ export async function detectMultipleMaintenanceIssues(
         rawDescription: slice,
         skipLlm: true,
         skipEmbeddings: !Deno.env.get("OPENAI_API_KEY")?.trim(),
+        outdoorTempF: opts?.outdoorTempF,
       })
+      onClassified?.(classified)
       const issueType =
         pipelineTradeToIssueType(classified.issueType, classified.vendorTrade) ||
         "general"
@@ -234,7 +252,13 @@ export async function detectMultipleMaintenanceIssues(
   // Sentence path: require distinct trades so one leak isn't double-ticketed.
   const pending: PendingIntakeIssue[] = []
   for (const cluster of clustered.slice(0, MULTI_ISSUE_MAX)) {
-    pending.push(await pendingFromCluster(cluster))
+    pending.push(
+      await pendingFromCluster(
+        cluster,
+        opts?.outdoorTempF ?? null,
+        onClassified,
+      ),
+    )
   }
 
   const trades = new Set(pending.map((p) => p.vendor_trade))
@@ -335,8 +359,9 @@ export const INTAKE_MULTI_SUBMIT_FAILED_SMS =
 export function intakeStateForMultiIssueConfirm(
   raw: string,
   issues: PendingIntakeIssue[],
+  outdoorTempF?: number | null,
 ): SmsIntakeState {
-  return {
+  const base: SmsIntakeState = {
     step: "awaiting_multi_issue_confirm",
     initial_message: raw.trim(),
     description: raw.trim(),
@@ -344,7 +369,9 @@ export function intakeStateForMultiIssueConfirm(
     pending_issues: issues,
     preferred_visit_windows: extractResidentAvailabilityText(raw) ?? undefined,
     severity: issues.some((i) => i.severity === "high") ? "high" : "normal",
+    outdoor_temp_f: outdoorTempF ?? undefined,
   }
+  return applyPhotoRequestPolicy(base)
 }
 
 /** Slice shared intake fields into a single-issue state for submit. */

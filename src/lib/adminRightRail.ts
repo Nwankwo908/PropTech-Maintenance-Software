@@ -35,7 +35,7 @@ export const ADMIN_ATTENTION_ACTION_CLASS =
 
 /** Right-rail footer shell — stacked full-width actions. */
 export const ADMIN_RAIL_FOOTER_CLASS =
-  'flex shrink-0 flex-col gap-2 border-t border-[#e5e7eb] px-6 py-4'
+  'sa-enter flex shrink-0 flex-col gap-2 border-t border-[#e5e7eb] px-6 py-4'
 
 export const ADMIN_RAIL_FOOTER_SECONDARY_BUTTON_CLASS =
   'sa-press inline-flex min-h-[44px] w-full items-center justify-center rounded-[10px] border border-[#e5e7eb] bg-white px-4 py-2.5 text-[13px] font-medium text-[#364153] outline-none hover:bg-[#f9fafb] focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2 disabled:opacity-50'

@@ -71,6 +71,10 @@ Deno.test("uloAppUrl named paths", () => {
     uloAppUrl.admin("analytics", origin),
     "https://app.example/admin/analytics",
   )
+  assertEquals(
+    uloAppUrl.findExternalVendor("ticket-1", origin),
+    "https://app.example/admin?findVendor=1&ticket=ticket-1",
+  )
 
   const rent = uloAppUrl.rentPayment(
     {

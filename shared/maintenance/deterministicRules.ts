@@ -1,6 +1,7 @@
 /**
  * Deterministic trade / issue / safety rules — shared source of truth for keyword signals.
  */
+import { resolveAmbiguousMaintenance } from './ambiguityResolution.ts'
 import type {
   EmergencyType,
   IssueType,
@@ -18,22 +19,22 @@ export type RuleHit = {
 }
 
 const PLUMBING_RE =
-  /\b(leak|leaking|leaky|drip|dripping|faucet|tap|sink|basin|toilet|pipe|pipes|drain|clog|clogged|overflow|overflowing|flood|flooding|flooded|water\s*damage|sewage|sewer|plumber|plumbing|hose\s*bib|water\s*heater|supply\s*line)\b/i
+  /\b(leak|leaking|leaky|drip|dripping|faucet|tap|sink|basin|toilet|running\s+toilet|pipe|pipes|drain|clog|clogged|overflow|overflowing|flood|flooding|flooded|water\s*damage|sewage|sewer|plumber|plumbing|hose\s*bib|water\s*heater|supply\s*line|no\s*hot\s*water|low\s*(?:water\s*)?pressure|(?:water\s+)?pressure\s+(?:is\s+)?low)\b/i
 
 const ELECTRICAL_RE =
-  /\b(electric|electrical|outlet|outlets|breaker|wiring|wire|wires|spark|sparks|sparking|power|no\s*power|light(?:s)?|gfci|panel|short\s*circuit|burning\s*smell)\b/i
+  /\b(electric|electrical|outlet|outlets|breaker|wiring|wire|wires|exposed\s*wire|spark|sparks|sparking|power|no\s*power|no\s*electricity|power\s*out|light(?:s)?|gfci|panel|short\s*circuit|circuit|fuse|burning\s*smell|electrical\s*smell)\b/i
 
 const HVAC_RE =
-  /\b(hvac|heat|heating|no\s*heat|furnace|thermostat|air\s*condition(?:ing|er)?|\bac\b|cool(?:ing)?|blowing\s*warm|won'?t\s*cool|too\s*hot|too\s*cold)\b/i
+  /\b(hvac|heat|heating|no\s*heat|no\s*cooling|furnace|thermostat|air\s*condition(?:ing|er)?|\bac\b|cool(?:ing)?|blowing\s*warm|won'?t\s*cool|too\s*hot|too\s*cold|no\s*airflow|no\s*air\s*flow|temperature\s+won'?t\s+change)\b/i
 
 const APPLIANCE_RE =
-  /\b(fridge|refrigerator|freezer|washer|dryer|oven|stove|dishwasher|microwave|appliance|not\s*cold|warm\s*inside)\b/i
+  /\b(fridge|refrigerator|freezer|washer|dryer|oven|stove|dishwasher|microwave|washing\s*machine|appliance|not\s*cold|warm\s*inside)\b/i
 
 const LOCK_RE =
   /\b(lock(?:ed|smith)?|key|keys|deadbolt|locked\s*out|can'?t\s*get\s*in|cannot\s*get\s*in|door\s*stuck|lockout)\b/i
 
 const PEST_RE =
-  /\b(pest|roach(?:es)?|mouse|mice|rat|rats|rodent(?:s)?|vermin|bug|bugs|insect|termite|infestation|bee|bees|wasp|hornet|hive|exterminator|extermination|creatures?\s+in\s+(?:my\s+)?(?:apartment|unit|home|kitchen))\b/i
+  /\b(pest|roach(?:es)?|cockroach(?:es)?|mouse|mice|rat|rats|rodent(?:s)?|vermin|bug|bugs|insect|ant(?:s)?|spider(?:s)?|termite|infestation|droppings|bee|bees|wasp|hornet|hive|exterminator|extermination|(?:bug|insect|flea|bed\s*bug|spider)s?\s+bites|creatures?\s+in\s+(?:my\s+)?(?:apartment|unit|home|kitchen))\b/i
 
 const APPLIANCE_AS_LOCATION_RE =
   /\b(?:behind|under|near|from\s+(?:behind|under)|around)\s+(?:the\s+)?(?:stove|oven|fridge|refrigerator|dishwasher|washer|dryer|freezer)\b/i
@@ -53,8 +54,10 @@ const MASONRY_RE =
 const CONCRETE_RE =
   /\b(concrete|cement|sidewalk|driveway\s*(?:crack|slab)|concrete\s*(?:step|stairs?|pad|slab|contractor))\b/i
 
-const ROOF_RE =
-  /\b(roof|roofing|shingle|ceiling\s*leak|water\s*from\s*(?:the\s*)?ceiling|pouring\s*(?:from|through)\s*(?:the\s*)?ceiling)\b/i
+const ROOF_RE = /\b(roof|roofing|shingle)\b/i
+
+const HYDRONIC_RE =
+  /\b(radiator|radiators|boiler|hydronic|steam\s*heat|hot[- ]water\s*heat(?:ing)?)\b/i
 
 const CLEANING_RE = /\b(clean(?:ing)?|deep\s*clean|janitor|carpet\s*clean)\b/i
 const PAINT_RE = /\b(paint(?:ing)?|peeling\s*paint)\b/i
@@ -65,7 +68,8 @@ const CARPENTRY_RE = /\b(cabinets?|carpenter|carpentry|shelf|shelves|trim)\b/i
 const HANDYMAN_RE =
   /\b(handyman|handy\s*man|general\s*maintenance|odd\s*job)\b/i
 
-const GAS_RE = /\b(gas\s*smell|smell\s*(?:of\s*)?gas|gas\s*leak|natural\s*gas)\b/i
+const GAS_RE =
+  /\b(gas\s*smell|smell\s*(?:of\s*)?gas|gas\s*leak|natural\s*gas|rotten\s+eggs?|smells?\s+like\s+(?:rotten\s+)?(?:eggs?|sulfur)|sulfur\s+smell)\b/i
 const FIRE_RE = /\b(fire|smoke|flames?|burning)\b/i
 const FLOOD_ACTIVE_RE =
   /\b(pouring|gushing|flooding|water\s*everywhere|burst|active\s*leak|soaking)\b/i
@@ -191,6 +195,7 @@ export function matchDeterministicRules(text: string): RuleHit[] {
     })
   }
 
+  push(HYDRONIC_RE, 'plumbing', 'hvac', 0.9)
   push(ROOF_RE, 'roofing', 'roofing', 0.85)
   push(CLEANING_RE, 'cleaning', 'general', 0.7)
   push(PAINT_RE, 'painting', 'general', 0.7)
@@ -200,7 +205,10 @@ export function matchDeterministicRules(text: string): RuleHit[] {
   push(CARPENTRY_RE, 'carpentry', 'general', 0.7)
   push(HANDYMAN_RE, 'general', 'general', 0.75)
 
-  if (FLOOD_ACTIVE_RE.test(hay) && PLUMBING_RE.test(hay)) {
+  const ceilingWater =
+    /\b(ceiling|ceilings)\b/i.test(hay) &&
+    /\b(water|leak|leaking|drip|pour)/i.test(hay)
+  if (FLOOD_ACTIVE_RE.test(hay) && PLUMBING_RE.test(hay) && !ceilingWater) {
     hits.push({
       trade: 'plumbing',
       issueType: 'leak',
@@ -209,17 +217,48 @@ export function matchDeterministicRules(text: string): RuleHit[] {
       emergency: 'flood',
       weight: 1.05,
     })
+  } else if (FLOOD_ACTIVE_RE.test(hay) && ceilingWater) {
+    hits.push({
+      trade: 'other',
+      issueType: 'leak',
+      keywords: ['active ceiling water'],
+      severityBoost: 'urgent',
+      emergency: 'flood',
+      weight: 0.55,
+    })
   }
 
   if (/\bno\s*heat\b/i.test(hay) || /\bfreezing\b/i.test(hay)) {
-    hits.push({
-      trade: 'hvac',
-      issueType: 'hvac',
-      keywords: ['no heat / freezing'],
-      severityBoost: 'urgent',
-      emergency: 'habitability',
-      weight: 1.0,
-    })
+    if (HYDRONIC_RE.test(hay)) {
+      hits.push({
+        trade: 'plumbing',
+        issueType: 'hvac',
+        keywords: ['no heat / hydronic'],
+        severityBoost: 'urgent',
+        emergency: 'habitability',
+        weight: 1.0,
+      })
+    } else if (
+      /\b(furnace|heat\s*pump|forced\s*air|air\s*handler|thermostat)\b/i.test(hay)
+    ) {
+      hits.push({
+        trade: 'hvac',
+        issueType: 'hvac',
+        keywords: ['no heat / forced air'],
+        severityBoost: 'urgent',
+        emergency: 'habitability',
+        weight: 1.0,
+      })
+    } else {
+      hits.push({
+        trade: 'hvac',
+        issueType: 'hvac',
+        keywords: ['no heat / freezing'],
+        severityBoost: 'urgent',
+        emergency: 'habitability',
+        weight: 0.55,
+      })
+    }
   }
 
   hits.sort((a, b) => b.weight - a.weight)
@@ -227,6 +266,11 @@ export function matchDeterministicRules(text: string): RuleHit[] {
 }
 
 export function inferTradeFromText(text: string): VendorTrade | null {
+  const resolved = resolveAmbiguousMaintenance(text)
+  if (resolved.handled) {
+    if (resolved.needsClarification) return null
+    return resolved.primaryTrade
+  }
   const hits = matchDeterministicRules(text)
   const top = hits[0]
   if (!top || top.weight < 0.7) return null

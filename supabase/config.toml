@@ -114,6 +114,18 @@ verify_jwt = false
 import_map = "./functions/discover-external-vendors/deno.json"
 entrypoint = "./functions/discover-external-vendors/index.ts"
 
+[functions.message-thumbtack-vendor]
+enabled = true
+verify_jwt = false
+import_map = "./functions/message-thumbtack-vendor/deno.json"
+entrypoint = "./functions/message-thumbtack-vendor/index.ts"
+
+[functions.thumbtack-webhook]
+enabled = true
+verify_jwt = false
+import_map = "./functions/thumbtack-webhook/deno.json"
+entrypoint = "./functions/thumbtack-webhook/index.ts"
+
 [functions.verify-external-vendor-compliance]
 enabled = true
 verify_jwt = false

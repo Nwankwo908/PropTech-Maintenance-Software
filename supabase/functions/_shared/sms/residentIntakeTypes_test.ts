@@ -190,3 +190,32 @@ Deno.test("bogus time room with no recoverable location asks which room", () => 
   assertEqual(state.step, "room_or_area", "ask room")
   assertEqual(nextCollectingStep("first_noticed", { first_noticed: "today" }), "room_or_area", "need room")
 })
+
+Deno.test("photo step is skipped for HVAC and dripping faucets", () => {
+  assertEqual(
+    nextCollectingStep("preferred_contact_method", {
+      description: "No heat",
+      vendor_trade: "hvac",
+      primary_category: "hvac",
+    }),
+    "awaiting_confirm",
+    "hvac skip",
+  )
+  assertEqual(
+    nextCollectingStep("preferred_contact_method", {
+      description: "Leaky faucet",
+      vendor_trade: "plumbing",
+    }),
+    "awaiting_confirm",
+    "faucet skip",
+  )
+  assertEqual(
+    nextCollectingStep("preferred_contact_method", {
+      description: "I saw a mouse",
+      vendor_trade: "pest_control",
+      primary_category: "pest",
+    }),
+    "photo",
+    "pest asks",
+  )
+})

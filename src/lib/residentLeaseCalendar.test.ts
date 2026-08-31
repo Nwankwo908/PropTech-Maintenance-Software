@@ -112,7 +112,7 @@ describe('calendarEventsFromOperationsGraph', () => {
       graphEvent({
         id: 'visit',
         eventType: 'maintenance.schedule_confirmed',
-        label: 'Visit confirmed',
+        label: 'Maintenance scheduled',
         createdAt: '2026-08-18T20:00:00.000Z',
         scheduledAt: '2026-08-21',
       }),
@@ -122,7 +122,7 @@ describe('calendarEventsFromOperationsGraph', () => {
         id: 'visit:ticket-1',
         date: '2026-08-21',
         kind: 'maintenance',
-        label: 'Visit confirmed',
+        label: 'Maintenance scheduled',
       }),
     ])
   })
@@ -182,7 +182,7 @@ describe('calendarEventsFromScheduledTickets', () => {
         id: 'visit:wo-1',
         date: '2026-08-21',
         kind: 'maintenance',
-        label: 'Visit confirmed',
+        label: 'Maintenance scheduled',
       }),
     ])
   })
@@ -220,7 +220,7 @@ describe('nearestCalendarFocusDate', () => {
         rentDueDay: 1,
         rentReminderCadence: '1 day before',
       }),
-      [{ date: '2026-08-25', kind: 'maintenance', label: 'Visit confirmed' }],
+      [{ date: '2026-08-25', kind: 'maintenance', label: 'Maintenance scheduled' }],
     )
     expect(nearestCalendarFocusDate(events, '2026-08-29')).toBe('2026-08-25')
   })

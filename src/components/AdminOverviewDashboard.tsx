@@ -4,6 +4,8 @@ import { Link, useLocation, useNavigate } from 'react-router-dom'
 import {
   postDiscoverExternalVendors,
   resolveDiscoverExternalVendorsUrl,
+  type DiscoverExternalVendorsOk,
+  type ExternalVendorJobContextDto,
   type ExternalVendorSuggestionDto,
 } from '@/api/discoverExternalVendors'
 import {
@@ -24,6 +26,8 @@ import { InvoicePaymentRail, type InvoicePaymentReview, type InvoicePaymentSucce
 import { SlaOverdueActionRail } from '@/components/SlaOverdueActionRail'
 import { FindExternalVendorRail } from '@/components/FindExternalVendorRail'
 import { VendorCallFlowModal } from '@/components/VendorCallFlowModal'
+import { useAdminDesktopLayout } from '@/hooks/useAdminDesktopLayout'
+import { findExternalVendorTicketFromSearch, FIND_EXTERNAL_VENDOR_QUERY } from '@/lib/uloAppUrl'
 import { getActiveLandlordId } from '@/lib/activeLandlord'
 import { landlordHasPayments } from '@shared/landlordCapabilities'
 import { cityStateZipForBuildingName, listPropertiesForLandlord, type PropertyRecord } from '@/lib/properties'
@@ -950,6 +954,7 @@ function overviewGreetingFirstName(fullName: string | null | undefined): string 
 export function AdminOverviewDashboard() {
   const navigate = useNavigate()
   const location = useLocation()
+  const isDesktopAdmin = useAdminDesktopLayout()
   const initialOnboardingNotice =
     typeof (location.state as { onboardingNotice?: unknown } | null)?.onboardingNotice ===
     'string'
@@ -1010,6 +1015,9 @@ export function AdminOverviewDashboard() {
     null,
   )
   const [externalVendorAreaLabel, setExternalVendorAreaLabel] = useState<string | null>(null)
+  const [externalVendorTicketId, setExternalVendorTicketId] = useState<string | null>(null)
+  const [externalVendorJobContext, setExternalVendorJobContext] =
+    useState<ExternalVendorJobContextDto | null>(null)
   const [findExternalVendorOpen, setFindExternalVendorOpen] = useState(false)
   const [lateRentRailRunId, setLateRentRailRunId] = useState<string | null>(null)
   const [lateRentRailSaving, setLateRentRailSaving] = useState(false)
@@ -1042,6 +1050,7 @@ export function AdminOverviewDashboard() {
     useState<AwaitingDecisionOutcome | null>(null)
   const prevAttentionItemsRef = useRef<AttentionItem[]>([])
   const skipAutoOutcomeKeysRef = useRef<Set<string>>(new Set())
+  const findVendorDeepLinkHandledRef = useRef<string | null>(null)
   const attentionTrackingReadyRef = useRef(false)
   const allowImportedOperationsRef = useRef(true)
   const invoicePaymentReturnHandledRef = useRef<string | null>(null)
@@ -1651,19 +1660,37 @@ export function AdminOverviewDashboard() {
     }
   }, [loading, slaOverdueTickets, slaEscalatedNoVendorKeys, vendors, units])
 
-  const openEscalatedRailForTicket = useCallback((ticketId: string) => {
+  const openEscalatedRailForTicket = useCallback((ticketId: string, opts?: { openFindVendor?: boolean }) => {
     setExternalVendorSuggestions([])
     setExternalVendorDiscoverError(null)
     setExternalVendorNotice(null)
-    setFindExternalVendorOpen(false)
+    setExternalVendorTicketId(null)
+    setExternalVendorJobContext(null)
+    setFindExternalVendorOpen(opts?.openFindVendor === true)
     setEscalatedRailTarget({ kind: 'ticket', ticketId, preferExternalVendor: true })
     setEscalatedRailError(null)
   }, [])
+
+  useEffect(() => {
+    if (loading) return
+    const ticketId = findExternalVendorTicketFromSearch(location.search)
+    if (!ticketId) return
+    if (findVendorDeepLinkHandledRef.current === ticketId) return
+    findVendorDeepLinkHandledRef.current = ticketId
+    openEscalatedRailForTicket(ticketId, { openFindVendor: true })
+    const next = new URLSearchParams(location.search)
+    next.delete(FIND_EXTERNAL_VENDOR_QUERY.flag)
+    next.delete(FIND_EXTERNAL_VENDOR_QUERY.ticket)
+    const qs = next.toString()
+    navigate({ pathname: location.pathname, search: qs ? `?${qs}` : '' }, { replace: true })
+  }, [loading, location.pathname, location.search, navigate, openEscalatedRailForTicket])
 
   const openEscalatedRailForRun = useCallback((runId: string, preferExternalVendor = false) => {
     setExternalVendorSuggestions([])
     setExternalVendorDiscoverError(null)
     setExternalVendorNotice(null)
+    setExternalVendorTicketId(null)
+    setExternalVendorJobContext(null)
     setFindExternalVendorOpen(false)
     setEscalatedRailTarget({ kind: 'workflow', runId, preferExternalVendor })
     setEscalatedRailError(null)
@@ -1990,6 +2017,8 @@ export function AdminOverviewDashboard() {
       setExternalVendorIssueCategory(null)
       setExternalVendorLocationLabel(null)
       setExternalVendorAreaLabel(null)
+      setExternalVendorTicketId(null)
+      setExternalVendorJobContext(null)
       setFindExternalVendorOpen(false)
       return
     }
@@ -2000,15 +2029,29 @@ export function AdminOverviewDashboard() {
 
     if (escalatedRailTarget.kind === 'ticket') {
       const ticket = tickets.find((t) => t.id === escalatedRailTarget.ticketId)
+      ticketIdForAction = escalatedRailTarget.ticketId
       if (!ticket) {
-        setEscalatedReview(null)
-        return
+        builtReview = buildExternalVendorFallbackReview({
+          id: escalatedRailTarget.ticketId,
+          createdAt: new Date().toISOString(),
+          dueAt: null,
+          urgency: 'medium',
+          unit: '',
+          building: null,
+          description: null,
+          issueCategory: null,
+          assignedVendorId: null,
+          assignedVendorName: null,
+          vendorWorkStatus: '',
+          residentName: null,
+          assignedAt: null,
+        })
+      } else {
+        const ticketInput = overviewTicketToInput(ticket, units)
+        builtReview =
+          buildSlaOverdueActionReview(ticketInput, vendors, vendorMetrics) ??
+          buildExternalVendorFallbackReview(ticketInput)
       }
-      ticketIdForAction = ticket.id
-      const ticketInput = overviewTicketToInput(ticket, units)
-      builtReview =
-        buildSlaOverdueActionReview(ticketInput, vendors, vendorMetrics) ??
-        buildExternalVendorFallbackReview(ticketInput)
     } else {
       const run = workflowData?.escalated.find((r) => r.id === escalatedRailTarget.runId)
       if (!run) {
@@ -2079,6 +2122,7 @@ export function AdminOverviewDashboard() {
     setExternalVendorNotice(null)
     setExternalVendorDiscoverError(null)
     setExternalVendorLocationLabel(builtReview.locationLabel)
+    if (ticketIdForAction) setExternalVendorTicketId(ticketIdForAction)
 
     if (preferExternalVendor) {
       const linkedTicket =
@@ -2133,6 +2177,7 @@ export function AdminOverviewDashboard() {
         if (result.issueCategory !== undefined) {
           setExternalVendorIssueCategory(result.issueCategory)
         }
+        if (result.jobContext) setExternalVendorJobContext(result.jobContext)
         const pick = rankedSuggestions[0]
         if (!pick) return
         setEscalatedReview((prev) => {
@@ -2171,6 +2216,79 @@ export function AdminOverviewDashboard() {
     }
   }, [escalatedRailTarget, tickets, units, vendors, vendorMetrics, workflowData])
 
+  const applyExternalVendorDiscovery = useCallback((result: DiscoverExternalVendorsOk) => {
+    const sanitized = sanitizeExternalVendorDiscoveryForAccount({
+      suggestions: result.suggestions ?? [],
+      providersUsed: result.providersUsed ?? [],
+      notice: result.notice,
+    })
+    const rankedSuggestions = enrichExternalVendorSuggestions(
+      sanitized.suggestions,
+      result.issueCategory,
+      result.locationLabel,
+    )
+    setExternalVendorSuggestions(sanitized.suggestions)
+    setExternalVendorProvidersUsed(sanitized.providersUsed)
+    setExternalVendorNotice(sanitized.notice)
+    if (result.areaLabel) setExternalVendorAreaLabel(result.areaLabel)
+    if (result.locationLabel) setExternalVendorLocationLabel(result.locationLabel)
+    if (result.issueCategory !== undefined) {
+      setExternalVendorIssueCategory(result.issueCategory)
+    }
+    if (result.ticketId) setExternalVendorTicketId(result.ticketId)
+    if (result.jobContext) setExternalVendorJobContext(result.jobContext)
+    const pick = rankedSuggestions[0]
+    if (!pick) return
+    setEscalatedReview((prev) => {
+      if (!prev) return prev
+      const meta = [
+        pick.rating != null ? `${pick.rating.toFixed(1)}★` : null,
+        pick.priceLabel,
+      ]
+        .filter(Boolean)
+        .join(' · ')
+      return {
+        ...prev,
+        suggestion: {
+          vendorId: '',
+          vendorName: pick.name,
+          rating: pick.rating,
+          etaMinutes: pick.etaMinutes ?? null,
+        },
+        suggestionLine: `Assign external vendor ${pick.name}${meta ? ` (${meta})` : ''}`,
+      }
+    })
+  }, [])
+
+  const runExternalVendorDiscovery = useCallback(async (ticketId: string) => {
+    const discoverUrl = resolveDiscoverExternalVendorsUrl()
+    const secret = getAdminEdgeSecret()
+    if (!discoverUrl || !secret) {
+      setExternalVendorDiscoverError(
+        'External vendor search is not configured (check VITE_ADMIN_REASSIGN_SECRET).',
+      )
+      return
+    }
+    setEscalatedRailLoading(true)
+    setExternalVendorDiscoverError(null)
+    setExternalVendorTicketId(ticketId)
+    try {
+      const result = await postDiscoverExternalVendors({
+        url: discoverUrl,
+        secret,
+        ticketId,
+      })
+      applyExternalVendorDiscovery(result)
+    } catch (err) {
+      console.warn('[admin overview] discover external vendors', err)
+      const message = getErrorMessage(err, "Couldn't find vendors nearby. Please try again.")
+      setEscalatedRailError(message)
+      setExternalVendorDiscoverError(message)
+    } finally {
+      setEscalatedRailLoading(false)
+    }
+  }, [applyExternalVendorDiscovery])
+
   const handleEscalatedTakeAction = useCallback(
     async (review: SlaOverdueActionReview) => {
       if (review.takeActionMode === 'workflows') {
@@ -2184,18 +2302,21 @@ export function AdminOverviewDashboard() {
         review.takeActionMode === 'external_vendor' ||
         review.takeActionMode === 'reassign'
       ) {
-        if (escalatedRailLoading) {
-          setEscalatedRailError('Vendor search is still loading.')
-          return
-        }
         setEscalatedRailError(null)
         setFindExternalVendorOpen(true)
+        const ticketId = review.ticketId?.trim()
+        if (ticketId) void runExternalVendorDiscovery(ticketId)
+        else {
+          setExternalVendorDiscoverError(
+            'Could not link this escalation to a maintenance ticket.',
+          )
+        }
         return
       }
 
       setEscalatedRailError('This ticket is handled automatically when a roster vendor is available.')
     },
-    [navigate, escalatedRailLoading],
+    [navigate, runExternalVendorDiscovery],
   )
 
   const closeEscalatedRail = useCallback(() => {
@@ -2312,6 +2433,7 @@ export function AdminOverviewDashboard() {
           secret,
           ticketId,
           vendorName: pick.name,
+          vendorCategory: externalVendorIssueCategory,
           rating: pick.rating,
           reviewCount: pick.reviewCount,
           priceLabel: pick.priceLabel,
@@ -2369,6 +2491,7 @@ export function AdminOverviewDashboard() {
       escalatedReview,
       escalatedRailTarget,
       externalVendorLocationLabel,
+      externalVendorIssueCategory,
       tickets,
       showAwaitingDecisionOutcome,
     ],
@@ -2629,7 +2752,7 @@ export function AdminOverviewDashboard() {
       )
 
   const escalatedRailOpen = escalatedRailTarget != null && escalatedReview != null
-  const stackedVendorRails = escalatedRailOpen && findExternalVendorOpen
+  const stackedVendorRails = isDesktopAdmin && escalatedRailOpen && findExternalVendorOpen
   const findExternalAreaLabel = useMemo(() => {
     if (externalVendorAreaLabel) return externalVendorAreaLabel
     const loc = externalVendorLocationLabel ?? escalatedReview?.locationLabel ?? ''
@@ -3122,6 +3245,8 @@ export function AdminOverviewDashboard() {
               }
               areaLabel={findExternalAreaLabel}
               issueCategory={externalVendorIssueCategory}
+              ticketId={externalVendorTicketId}
+              jobContext={externalVendorJobContext}
               suggestions={externalVendorSuggestions}
               providersUsed={externalVendorProvidersUsed}
             />
@@ -3140,16 +3265,43 @@ export function AdminOverviewDashboard() {
           </div>
         </div>
       ) : (
-        <SlaOverdueActionRail
-          open={escalatedRailOpen}
-          review={escalatedReview}
-          loading={escalatedRailLoading}
-          saving={escalatedRailSaving}
-          error={escalatedRailError}
-          onClose={closeEscalatedRail}
-          onTakeAction={handleEscalatedTakeAction}
-          onDelete={handleDeleteEscalatedAttention}
-        />
+        <>
+          {findExternalVendorOpen ? (
+            <FindExternalVendorRail
+              open
+              presentation={isDesktopAdmin ? 'rail' : 'sheet'}
+              onClose={closeEscalatedVendorFlow}
+              onBack={escalatedRailOpen ? backFromFindExternalVendor : undefined}
+              onSelect={handleExternalVendorSelect}
+              saving={escalatedRailSaving}
+              saveError={escalatedRailError}
+              loading={escalatedRailLoading}
+              error={externalVendorDiscoverError}
+              notice={externalVendorNotice}
+              locationLabel={
+                externalVendorLocationLabel ??
+                escalatedReview?.locationLabel ??
+                'Property · Unit'
+              }
+              areaLabel={findExternalAreaLabel}
+              issueCategory={externalVendorIssueCategory}
+              ticketId={externalVendorTicketId}
+              jobContext={externalVendorJobContext}
+              suggestions={externalVendorSuggestions}
+              providersUsed={externalVendorProvidersUsed}
+            />
+          ) : null}
+          <SlaOverdueActionRail
+            open={escalatedRailOpen && !(isDesktopAdmin && findExternalVendorOpen)}
+            review={escalatedReview}
+            loading={escalatedRailLoading}
+            saving={escalatedRailSaving}
+            error={escalatedRailError}
+            onClose={closeEscalatedRail}
+            onTakeAction={handleEscalatedTakeAction}
+            onDelete={handleDeleteEscalatedAttention}
+          />
+        </>
       )}
 
       <AwaitingDecisionListRail

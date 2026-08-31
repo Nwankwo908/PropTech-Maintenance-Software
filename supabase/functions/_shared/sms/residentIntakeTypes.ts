@@ -1,3 +1,10 @@
+import { resolvePhotoRequest } from "../../../../shared/maintenance/photoRequestPolicy.ts"
+import type { PrimaryCategory } from "../../../../shared/maintenance/primaryCategories.ts"
+import {
+  parseDurationHours,
+  resolveUrgencyPolicy,
+} from "../../../../shared/maintenance/urgencyPolicy.ts"
+
 export const ISSUE_TYPES = [
   "plumbing",
   "electrical",
@@ -41,6 +48,10 @@ export type SmsIntakeState = {
   issue_type?: string
   /** Canonical vendor trade from unified classification pipeline. */
   vendor_trade?: string
+  /** User-facing 7-bucket category. Matching uses vendor_trade. */
+  primary_category?: string
+  secondary_trade?: string
+  classification_reason?: string
   room_or_area?: string
   first_noticed?: string
   /**
@@ -51,6 +62,12 @@ export type SmsIntakeState = {
   safety_concerns?: string
   urgency?: string
   recommended_urgency?: string
+  /** Outdoor °F at the property when looked up for heat/cooling urgency. */
+  outdoor_temp_f?: number | null
+  /** Whether intake should ask for a photo. */
+  photo_requested?: boolean
+  photo_request_reason?: string
+  confidence_band?: "high" | "medium" | "low"
   preferred_contact_method?: string
   severity?: "low" | "normal" | "high"
   description?: string
@@ -117,25 +134,6 @@ export function recordIntakePromptRepeat(
     shouldHandoff: count > MAX_INTAKE_CLARIFY_REPEATS,
   }
 }
-
-export const EMERGENCY_SIGNALS = [
-  "flooding",
-  "flood",
-  "fire",
-  "gas smell",
-  "gas leak",
-  "sparks",
-  "spark",
-  "no heat",
-  "exposed wire",
-  "exposed wires",
-  "electrical hazard",
-  "lock broken",
-  "active leak",
-  "carbon monoxide",
-  "smoke",
-  "water damage",
-]
 
 const KNOWN_ROOM_PATTERNS: Array<{ pattern: RegExp; room: string }> = [
   { pattern: /\b(basement|cellar)\b/i, room: "basement" },
@@ -462,31 +460,28 @@ export function inferIssueTypeFromText(text: string): IssueType | null {
 }
 
 export function detectEmergencySignals(text: string): boolean {
-  const haystack = text.toLowerCase()
-  return EMERGENCY_SIGNALS.some((signal) => haystack.includes(signal))
+  return resolveUrgencyPolicy({ text }).band === "emergency"
 }
 
-export function recommendUrgency(state: SmsIntakeState): string {
-  const combined = [
+function intakeUrgencyText(state: SmsIntakeState): string {
+  return [
     state.initial_message,
     state.description,
     state.safety_concerns,
     state.issue_type,
+    state.first_noticed,
   ]
     .filter(Boolean)
     .join(" ")
+}
 
-  if (detectEmergencySignals(combined)) return "emergency"
-
-  const issue = (state.issue_type ?? "").toLowerCase()
-  if (issue === "leak" || issue === "electrical") {
-    const safety = (state.safety_concerns ?? "").toLowerCase()
-    if (safety && !/^(no|none|n\/a|nothing)/.test(safety.trim())) {
-      return "urgent"
-    }
-  }
-
-  return "normal"
+export function recommendUrgency(state: SmsIntakeState): string {
+  const text = intakeUrgencyText(state)
+  return resolveUrgencyPolicy({
+    text,
+    durationHours: parseDurationHours(state.first_noticed ?? "") ?? parseDurationHours(text),
+    outdoorTempF: state.outdoor_temp_f,
+  }).smsUrgency
 }
 
 /** Affirmations for “does that sound right?” style prompts. */
@@ -565,29 +560,17 @@ export function parseContactMethod(input: string): string | null {
 
 /** System-generated severity from issue type, safety, and urgency (not tenant wording alone). */
 export function computeIntakeSeverity(state: SmsIntakeState): "low" | "normal" | "high" {
+  const text = intakeUrgencyText(state)
+  const policy = resolveUrgencyPolicy({
+    text,
+    durationHours: parseDurationHours(state.first_noticed ?? "") ?? parseDurationHours(text),
+    outdoorTempF: state.outdoor_temp_f,
+  })
+  if (policy.band === "emergency") return "high"
+  if (policy.band === "low") return "low"
+
   const urgency = (state.urgency ?? state.recommended_urgency ?? "").toLowerCase()
   if (urgency.includes("emergency") || urgency.includes("urgent")) return "high"
-
-  const combined = [
-    state.safety_concerns,
-    state.initial_message,
-    state.description,
-    state.issue_type,
-  ]
-    .filter(Boolean)
-    .join(" ")
-
-  if (detectEmergencySignals(combined)) return "high"
-
-  const issue = (state.issue_type ?? "").toLowerCase()
-  const safety = (state.safety_concerns ?? "").trim().toLowerCase()
-  const hasSafety =
-    safety.length > 0 && !/^(no|none|n\/a|nothing)/.test(safety)
-
-  if ((issue === "leak" || issue === "electrical" || issue === "lock") && hasSafety) {
-    return "high"
-  }
-
   if (urgency.includes("low")) return "low"
   return "normal"
 }
@@ -721,27 +704,20 @@ function urgencyRecommendationReason(state: SmsIntakeState): string {
     state.initial_message,
     state.description,
     state.safety_concerns,
+    state.first_noticed,
   ]
     .filter(Boolean)
     .join(" ")
-    .toLowerCase()
 
-  if (/\b(active leak|actively leak|leaking under|water under|water damage)\b/.test(combined)) {
-    return "there's active water leaking"
+  const policy = resolveUrgencyPolicy({
+    text: combined,
+    outdoorTempF: state.outdoor_temp_f,
+  })
+  if (policy.leaveImmediately) {
+    return "of the gas smell — please leave the unit and call the gas utility from outside if you have not already"
   }
-  if (/\b(flood|flooding)\b/.test(combined)) return "you mentioned flooding"
-  if (/\b(gas smell|gas leak)\b/.test(combined)) return "of the gas smell"
-  if (/\b(spark|sparks|exposed wire)\b/.test(combined)) {
-    return "of the electrical safety concern"
-  }
-  if (/\bno heat\b/.test(combined)) return "you don't have heat"
-  if (/\b(fire|smoke|carbon monoxide)\b/.test(combined)) {
-    return "this sounds like an immediate safety situation"
-  }
-
-  const issue = (state.issue_type ?? "").toLowerCase()
-  if (issue === "leak") return "there's a leak involved"
-  if (issue === "electrical") return "this involves electrical work"
+  const trimmed = policy.reason.replace(/\s*—\s*respond within.*$/i, "").trim()
+  if (trimmed) return trimmed.charAt(0).toLowerCase() + trimmed.slice(1)
 
   return "of what you've shared so far"
 }
@@ -922,6 +898,34 @@ export function parseEditFieldChoice(input: string): IntakeStep | "description" 
   return null
 }
 
+export function applyPhotoRequestPolicy(state: SmsIntakeState): SmsIntakeState {
+  const text = [
+    state.initial_message,
+    state.description,
+    state.issue_type,
+    ...(state.pending_issues ?? []).map((issue) => issue.description),
+  ]
+    .filter(Boolean)
+    .join(" ")
+  const photo = resolvePhotoRequest({
+    text,
+    primaryCategory: state.primary_category as PrimaryCategory | undefined,
+    vendorTrade: state.vendor_trade,
+    issueType: state.issue_type,
+    hasPhotoAlready: (state.photo_urls?.length ?? 0) > 0,
+  })
+  return {
+    ...state,
+    photo_requested: photo.requested,
+    photo_request_reason: photo.reason,
+  }
+}
+
+export function shouldRequestIntakePhoto(state: SmsIntakeState): boolean {
+  if ((state.photo_urls?.length ?? 0) > 0) return false
+  return applyPhotoRequestPolicy(state).photo_requested === true
+}
+
 /** Next step after collecting a field — skips room when location is already known. */
 export function nextCollectingStep(
   current: IntakeStep | undefined,
@@ -941,7 +945,7 @@ export function nextCollectingStep(
     case "urgency":
       return "preferred_contact_method"
     case "preferred_contact_method":
-      return "photo"
+      return shouldRequestIntakePhoto(state ?? {}) ? "photo" : "awaiting_confirm"
     case "photo":
       return "awaiting_confirm"
     default:

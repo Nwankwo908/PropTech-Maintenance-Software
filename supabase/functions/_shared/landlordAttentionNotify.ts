@@ -24,6 +24,7 @@ export type LandlordAttentionKind =
   | "lease_renewal"
   | "lease_info_missing"
   | "unknown_occupant"
+  | "external_vendor_replied"
 
 export type NotifyLandlordAttentionParams = {
   landlordId: string
@@ -49,8 +50,29 @@ export type NotifyLandlordAttentionResult = {
   errors: string[]
 }
 
-function attentionDashboardUrl(): string {
+function attentionDashboardUrl(params: NotifyLandlordAttentionParams): string {
+  const ticketId = params.maintenanceRequestId?.trim() ?? ""
+  if (
+    ticketId &&
+    (params.kind === "assign_vendor" || params.kind === "external_vendor_replied")
+  ) {
+    return uloAppUrl.findExternalVendor(ticketId)
+  }
   return uloAppUrl.admin()
+}
+
+function attentionLinkPrompt(kind: LandlordAttentionKind): string {
+  if (kind === "assign_vendor" || kind === "external_vendor_replied") {
+    return "Find a vendor for this job in Ulo:"
+  }
+  return "Review it in Needs Your Attention or your Ulo Activity Feed:"
+}
+
+function attentionEmailActionLabel(kind: LandlordAttentionKind): string {
+  if (kind === "assign_vendor" || kind === "external_vendor_replied") {
+    return "Open Find External Vendor"
+  }
+  return "Open Needs Your Attention"
 }
 
 function adminNotifyPhones(): string[] {
@@ -69,15 +91,19 @@ export function buildLandlordAttentionSms(input: {
   headline: string
   detail: string
   dashboardUrl: string
+  linkPrompt?: string
 }): string {
   const detail = input.detail.trim()
+  const linkPrompt =
+    input.linkPrompt?.trim() ||
+    "Review it in Needs Your Attention or your Ulo Activity Feed:"
   return [
     "This is the property management team.",
     "",
     `Something needs your attention in Ulo: ${input.headline.trim()}.`,
     detail ? detail : null,
     "",
-    "Review it in Needs Your Attention or your Ulo Activity Feed:",
+    linkPrompt,
     input.dashboardUrl,
   ]
     .filter((line): line is string => line != null)
@@ -88,17 +114,23 @@ export function buildLandlordAttentionEmail(input: {
   headline: string
   detail: string
   dashboardUrl: string
+  linkPrompt?: string
+  actionLabel?: string
 }): { subject: string; text: string; html: string } {
   const headline = input.headline.trim()
   const detail = input.detail.trim()
   const subject = `Needs your attention: ${headline}`
+  const linkPrompt =
+    input.linkPrompt?.trim() ||
+    "Review it in Needs Your Attention or your Ulo Activity Feed on Overview:"
+  const actionLabel = input.actionLabel?.trim() || "Open Needs Your Attention"
   const text = [
     "This is the property management team.",
     "",
     `Something needs your attention in Ulo: ${headline}.`,
     detail ? detail : null,
     "",
-    "Review it in Needs Your Attention or your Ulo Activity Feed on Overview:",
+    linkPrompt,
     input.dashboardUrl,
   ]
     .filter((line): line is string => line != null)
@@ -108,7 +140,7 @@ export function buildLandlordAttentionEmail(input: {
 <p>Something needs your attention in Ulo: <strong>${escapeHtml(headline)}</strong>.</p>
 ${detail ? `<p>${escapeHtml(detail)}</p>` : ""}
 <p>This alert also appears in your <strong>Ulo Activity Feed</strong> on Overview.</p>
-<p><a href="${escapeHtml(input.dashboardUrl)}" style="display:inline-block;padding:10px 16px;background:#186179;color:#fff;text-decoration:none;border-radius:8px;font-weight:600;">Open Needs Your Attention</a></p>
+<p><a href="${escapeHtml(input.dashboardUrl)}" style="display:inline-block;padding:10px 16px;background:#186179;color:#fff;text-decoration:none;border-radius:8px;font-weight:600;">${escapeHtml(actionLabel)}</a></p>
 <p style="color:#6a7282;font-size:13px;">If the button doesn't work, copy and paste this link into your browser:<br>${escapeHtml(input.dashboardUrl)}</p>`
 
   return { subject, text, html }
@@ -212,16 +244,19 @@ export async function notifyLandlordNeedsAttention(
   const allowSms = deliveryPlan.channels.includes("sms")
   const allowEmail = deliveryPlan.channels.includes("email")
 
-  const dashboardUrl = attentionDashboardUrl()
+  const dashboardUrl = attentionDashboardUrl(params)
   const smsBody = buildLandlordAttentionSms({
     headline: params.headline,
     detail: params.detail,
     dashboardUrl,
+    linkPrompt: attentionLinkPrompt(params.kind),
   })
   const email = buildLandlordAttentionEmail({
     headline: params.headline,
     detail: params.detail,
     dashboardUrl,
+    linkPrompt: attentionLinkPrompt(params.kind),
+    actionLabel: attentionEmailActionLabel(params.kind),
   })
 
   const errors: string[] = []

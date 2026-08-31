@@ -126,14 +126,18 @@ export async function submitSmsMaintenanceRequest(
   )
   const dbSeverity = severityToDb(params.intake.severity)
   const operational = await loadLandlordOperationalSettings(supabase, params.landlordId)
+  const description = buildIntakeDescription(params.intake)
   const estimatedMinutes = resolveTicketSlaMinutes({
     category: issueCategory,
     severity: dbSeverity,
     defaultResponseSla: operational.defaultResponseSla,
-    fallbackMinutes: getEstimatedMinutes,
+    fallbackMinutes: (category, severity) =>
+      getEstimatedMinutes(category, severity, null, {
+        description,
+        outdoorTempF: params.intake.outdoor_temp_f,
+      }),
   })
   const dueAt = new Date(Date.now() + estimatedMinutes * 60_000)
-  const description = buildIntakeDescription(params.intake)
   const notificationChannel = notificationChannelFromPreference(
     params.intake.preferred_contact_method,
   )

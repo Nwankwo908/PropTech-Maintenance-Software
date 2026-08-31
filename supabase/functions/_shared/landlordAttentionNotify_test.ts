@@ -18,6 +18,17 @@ Deno.test("attention SMS identifies sender, reason, and dashboard link", () => {
   assertStringIncludes(body, "https://www.ulohome.io/admin")
 })
 
+Deno.test("assign-vendor SMS links to Find External Vendor", () => {
+  const body = buildLandlordAttentionSms({
+    headline: "No vendor available — assign a vendor",
+    detail: "WO-12AB · Unit 4A",
+    dashboardUrl: "https://app.ulohome.io/admin?findVendor=1&ticket=abc-123",
+    linkPrompt: "Find a vendor for this job in Ulo:",
+  })
+  assertStringIncludes(body, "Find a vendor for this job in Ulo:")
+  assertStringIncludes(body, "https://app.ulohome.io/admin?findVendor=1&ticket=abc-123")
+})
+
 Deno.test("attention email subject and body stay plain-language", () => {
   const mail = buildLandlordAttentionEmail({
     headline: "Response time exceeded — assign a vendor",

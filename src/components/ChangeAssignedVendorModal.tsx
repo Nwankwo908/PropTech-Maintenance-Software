@@ -1,6 +1,7 @@
 import { useEffect, useId, useMemo, useState } from 'react'
 import {
   postDiscoverExternalVendors,
+  type ExternalVendorJobContextDto,
   type ExternalVendorSuggestionDto,
 } from '@/api/discoverExternalVendors'
 import { FindExternalVendorRail } from '@/components/FindExternalVendorRail'
@@ -89,6 +90,7 @@ export function ChangeAssignedVendorModal({
   const [externalNotice, setExternalNotice] = useState<string | null>(null)
   const [resolvedIssueCategory, setResolvedIssueCategory] = useState<string | null>(null)
   const [resolvedAreaLabel, setResolvedAreaLabel] = useState<string | null>(null)
+  const [jobContext, setJobContext] = useState<ExternalVendorJobContextDto | null>(null)
 
   useEffect(() => {
     if (!open) return
@@ -107,6 +109,7 @@ export function ChangeAssignedVendorModal({
     setExternalNotice(null)
     setResolvedIssueCategory(null)
     setResolvedAreaLabel(null)
+    setJobContext(null)
     setExternalSuggestions([])
     setExternalProvidersUsed([])
     void (async () => {
@@ -125,6 +128,7 @@ export function ChangeAssignedVendorModal({
         if (sanitized.notice) setExternalNotice(sanitized.notice)
         if (res.issueCategory !== undefined) setResolvedIssueCategory(res.issueCategory)
         if (res.areaLabel) setResolvedAreaLabel(res.areaLabel)
+        if (res.jobContext) setJobContext(res.jobContext)
         setExternalSuggestions(sanitized.suggestions)
         setExternalProvidersUsed(sanitized.providersUsed)
       } catch (e) {
@@ -181,6 +185,8 @@ export function ChangeAssignedVendorModal({
         }
         suggestions={externalSuggestions}
         providersUsed={externalProvidersUsed}
+        ticketId={externalDiscovery?.ticketId ?? null}
+        jobContext={jobContext}
         onSelect={async (pick) => {
           await Promise.resolve(onSave(pick.name.trim(), { createVendorIfMissing: true }))
         }}
@@ -227,7 +233,7 @@ export function ChangeAssignedVendorModal({
           </button>
         </div>
 
-        <div className="flex flex-col gap-4 px-6 pb-6 pt-6">
+        <div className="sa-enter flex flex-col gap-4 px-6 pb-6 pt-6">
           <div className="flex flex-col gap-2">
             <label htmlFor={selectId} className="text-[14px] font-medium leading-5 tracking-[-0.1504px] text-neutral-variant">
               Select Vendor

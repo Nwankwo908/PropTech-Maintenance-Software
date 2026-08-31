@@ -4,7 +4,7 @@
  */
 export {
   buildExternalSearchQueryFromTrade as buildExternalSearchQuery,
-  issueCategoryToVendorTrade as normalizeIssueCategoryForSearch,
+  matchingTradeForVendorSearch as normalizeIssueCategoryForSearch,
   tradeBucketFromVendorTrade as tradeBucketFromCategory,
   tradeTermsFromVendorTrade as tradeTermsFromCategory,
   type ExternalVendorTradeBucket,

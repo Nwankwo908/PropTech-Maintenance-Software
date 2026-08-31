@@ -169,7 +169,7 @@ export function calendarEventsFromOperationsGraph(
         : event.id,
       date,
       kind: 'maintenance',
-      label: 'Visit confirmed',
+      label: 'Maintenance scheduled',
       clock,
     })
   }
@@ -202,7 +202,7 @@ export function calendarEventsFromScheduledTickets(
       id: `visit:${ticket.id}`,
       date,
       kind: 'maintenance',
-      label: confirmed ? 'Visit confirmed' : 'Scheduled visit',
+      label: confirmed ? 'Maintenance scheduled' : 'Scheduled visit',
       clock: localClockFromInstant(instant) ?? undefined,
     })
   }

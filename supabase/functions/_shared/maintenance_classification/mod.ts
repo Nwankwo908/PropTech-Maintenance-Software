@@ -12,6 +12,9 @@ export type {
   VendorTrade,
 } from "./types.ts"
 
+export { toLandlordTriage, parseLandlordTriageJson, validateLandlordTriage } from "../../../../shared/maintenance/landlordTriage.ts"
+export type { LandlordTriage } from "../../../../shared/maintenance/landlordTriage.ts"
+
 export { sanitizeDescriptionDeterministic, sanitizeMaintenanceDescription } from "./sanitizer.ts"
 export { extractEntities } from "./entities.ts"
 export {
@@ -19,12 +22,26 @@ export {
   inferTradeFromText,
   matchDeterministicRules,
 } from "./deterministicRules.ts"
-export { semanticMatchDescription, SEMANTIC_PHRASE_LIBRARY } from "./semanticMap.ts"
+export { llmClassifyMaintenance, parseLlmClassificationDraft } from "./llmClassify.ts"
 export { buildClarificationPrompt, buildClassificationAck } from "./clarification.ts"
 export {
   classifyIssueForSlaUnified,
   classifyMaintenanceRequest,
 } from "./pipeline.ts"
+export {
+  insertAiClassificationLog,
+  attachAiClassificationLogToTicket,
+} from "./logAiClassification.ts"
+export { resolveAmbiguousMaintenance } from "../../../../shared/maintenance/ambiguityResolution.ts"
+export { resolveConfidenceBand, isLowConfidenceDescription } from "../../../../shared/maintenance/confidencePolicy.ts"
+export type { ConfidenceBand } from "../../../../shared/maintenance/confidencePolicy.ts"
+export { resolveUrgencyPolicy, parseDurationHours, descriptionNeedsOutdoorTemp } from "../../../../shared/maintenance/urgencyPolicy.ts"
+export type { UrgencyBand } from "../../../../shared/maintenance/urgencyPolicy.ts"
+export {
+  PRIMARY_CATEGORIES,
+  primaryCategoryFromTrade,
+  type PrimaryCategory,
+} from "../../../../shared/maintenance/primaryCategories.ts"
 
 /** Graph / audit event names */
 export const MAINTENANCE_CLASSIFICATION_EVENTS = {

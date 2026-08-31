@@ -44,6 +44,7 @@ function storagePhotoPaths(urls: string[] | undefined): string[] {
 /** Enough signal to create a durable ticket (not waiting on vague clarification only). */
 export function shouldMintEarlyTicket(state: SmsIntakeState): boolean {
   if (state.step === "classification_clarification") return false
+  if (state.confidence_band === "low") return false
   if (state.step === "submitted") return false
   const hasTrade =
     Boolean(state.vendor_trade?.trim()) && state.vendor_trade !== "other"
@@ -110,9 +111,12 @@ export async function ensureEarlySmsMaintenanceTicket(
   )
   const priority = params.intake.urgency?.trim() || "normal"
   const dbSeverity = severityToDb(params.intake.severity)
-  const estimatedMinutes = getEstimatedMinutes(issueCategory, dbSeverity)
-  const dueAt = new Date(Date.now() + estimatedMinutes * 60_000)
   const description = buildIntakeDescription(params.intake)
+  const estimatedMinutes = getEstimatedMinutes(issueCategory, dbSeverity, null, {
+    description,
+    outdoorTempF: params.intake.outdoor_temp_f,
+  })
+  const dueAt = new Date(Date.now() + estimatedMinutes * 60_000)
 
   // Only reuse the ticket minted for *this* intake (never a prior conversation ticket).
   if (draftId && isMidIntake(params.intake)) {

@@ -1,3 +1,4 @@
+import { resolveAmbiguousMaintenance } from "../../../../shared/maintenance/ambiguityResolution.ts"
 import type {
   ClassificationEntities,
   ClarificationPrompt,
@@ -23,9 +24,12 @@ export function buildClarificationPrompt(params: {
   textHint?: string
 }): ClarificationPrompt | null {
   const { entities, confidence, ruleHits } = params
-  if (confidence >= 0.65) return null
-
   const hay = (params.textHint ?? "").toLowerCase()
+  const resolved = resolveAmbiguousMaintenance(params.textHint ?? "")
+  if (resolved.needsClarification && resolved.clarification) {
+    return resolved.clarification
+  }
+  if (confidence >= 0.65) return null
   const hasCeilingWater =
     /\bceiling\b/.test(hay) ||
     /ceiling/i.test(entities.affectedObject ?? "") ||

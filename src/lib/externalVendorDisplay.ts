@@ -2,6 +2,7 @@ import type { ExternalVendorSuggestionDto } from '@/api/discoverExternalVendors'
 import { isDemoAccountActive } from '@/lib/activeLandlord'
 import { formatVendorTradeLabel } from '@/lib/vendorTrades'
 import { isDemoExternalVendorName } from '@shared/externalVendor/demoVendorNames'
+import { EXTERNAL_VENDOR_SEARCH_RADIUS_MILES } from '@shared/externalVendor/searchLimit'
 
 export type VendorRatingTier = {
   qualityLabel: string
@@ -79,7 +80,9 @@ export function buildExternalSearchQueryLabel(
 ): string {
   const trade = categoryTag(issueCategory).replace(/\s+maintenance$/i, '')
   const loc = areaLabel.trim()
-  return loc ? `${trade} repair · ${loc} · within 50 mi` : `${trade} repair · within 50 mi`
+  return loc
+    ? `${trade} repair · ${loc} · within ${EXTERNAL_VENDOR_SEARCH_RADIUS_MILES} mi`
+    : `${trade} repair · within ${EXTERNAL_VENDOR_SEARCH_RADIUS_MILES} mi`
 }
 
 /** Rating + review-count recommendation tier (assign-vendor rail). */

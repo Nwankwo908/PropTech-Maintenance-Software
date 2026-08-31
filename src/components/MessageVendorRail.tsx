@@ -4,6 +4,7 @@ import {
   ADMIN_RIGHT_RAIL_SCRIM,
   adminRightRailPanelClass,
 } from '@/lib/adminRightRail'
+import { ChatComposerBar } from '@/components/ChatComposerBar'
 import {
   formatQuoteBadge,
   type VendorNegotiationBrief,
@@ -35,14 +36,6 @@ function TrendDownIcon() {
   )
 }
 
-function SendIcon() {
-  return (
-    <svg className="size-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} aria-hidden>
-      <path d="M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z" strokeLinecap="round" strokeLinejoin="round" />
-    </svg>
-  )
-}
-
 type MessageVendorRailProps = {
   open: boolean
   brief: VendorNegotiationBrief | null
@@ -64,6 +57,8 @@ export function MessageVendorRail({
   threadLoading = false,
 }: MessageVendorRailProps) {
   const titleId = useId()
+  const composerId = useId()
+  const inputRef = useRef<HTMLTextAreaElement>(null)
   const [selectedReplyIndex, setSelectedReplyIndex] = useState(0)
   const [draft, setDraft] = useState('')
   const seededForTicketRef = useRef<string | null>(null)
@@ -122,8 +117,13 @@ export function MessageVendorRail({
         aria-modal="true"
         aria-labelledby={titleId}
         className={adminRightRailPanelClass(undefined)}
+        style={{
+          backgroundColor: '#ffffff',
+          backgroundImage:
+            'conic-gradient(from 45deg at 50% 50%, #ffffff, #f0fdf4, #ffffff, #f0fdf4, #ffffff)',
+        }}
       >
-        <header className="shrink-0 border-b border-[#e5e7eb] px-5 py-4">
+        <header className="sa-enter shrink-0 border-b border-[#e5e7eb] px-5 py-4">
           <div className="flex items-start gap-3 pr-8">
             <div className="flex size-10 shrink-0 items-center justify-center rounded-full bg-[#101828] text-[13px] font-semibold text-white">
               {brief.vendorInitials}
@@ -146,13 +146,13 @@ export function MessageVendorRail({
             type="button"
             onClick={onClose}
             aria-label="Close"
-            className="absolute right-4 top-4 rounded-lg p-1 text-[#9ca3af] outline-none hover:bg-black/5 hover:text-[#364153] focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2"
+            className="sa-press absolute right-4 top-4 rounded-lg p-1 text-[#9ca3af] outline-none hover:bg-black/5 hover:text-[#364153] focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2"
           >
             <CloseIcon />
           </button>
         </header>
 
-        <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-5 py-4">
+        <div className="ask-ulo-section-enter min-h-0 flex-1 overflow-y-auto overscroll-contain px-5 py-4">
           <div className="flex items-center gap-1.5">
             <SparkleIcon />
             <p className="text-[10px] font-semibold uppercase tracking-[0.08em] text-[#7c3aed]">
@@ -163,19 +163,19 @@ export function MessageVendorRail({
           {brief.quoteAmount > 0 ? (
             <>
               <div className="mt-3 grid grid-cols-3 gap-2">
-                <div className="rounded-[8px] border border-[#e5e7eb] bg-white px-3 py-2.5">
+                <div className="sa-enter-scale sa-surface rounded-[8px] border border-[#e5e7eb] bg-white px-3 py-2.5">
                   <p className="text-[10px] leading-4 text-[#9ca3af]">Market median</p>
                   <p className="mt-1 text-[15px] font-semibold tabular-nums text-[#0a0a0a]">
                     {formatEmergencyCurrency(brief.marketMedian)}
                   </p>
                 </div>
-                <div className="rounded-[8px] border border-[#e5e7eb] bg-white px-3 py-2.5">
+                <div className="sa-enter-scale sa-surface rounded-[8px] border border-[#e5e7eb] bg-white px-3 py-2.5">
                   <p className="text-[10px] leading-4 text-[#9ca3af]">Your target</p>
                   <p className="mt-1 text-[15px] font-semibold tabular-nums text-[#008236]">
                     {formatEmergencyCurrency(brief.targetPrice)}
                   </p>
                 </div>
-                <div className="rounded-[8px] border border-[#e5e7eb] bg-white px-3 py-2.5">
+                <div className="sa-enter-scale sa-surface rounded-[8px] border border-[#e5e7eb] bg-white px-3 py-2.5">
                   <p className="text-[10px] leading-4 text-[#9ca3af]">Walk-away</p>
                   <p className="mt-1 text-[15px] font-semibold tabular-nums text-[#0a0a0a]">
                     {formatEmergencyCurrency(brief.walkAwayPrice)}
@@ -198,14 +198,11 @@ export function MessageVendorRail({
               {brief.messages.map((message) => {
                 if (message.sender === 'vendor') {
                   return (
-                    <div key={message.id} className="flex items-start gap-2">
-                      <div className="flex size-7 shrink-0 items-center justify-center rounded-full bg-[#101828] text-[10px] font-semibold text-white">
-                        {brief.vendorInitials}
-                      </div>
-                      <div className="min-w-0 max-w-[85%]">
-                        <div className="rounded-[10px] rounded-tl-sm bg-[#f3f4f6] px-3 py-2.5 text-[13px] leading-5 text-[#364153]">
+                    <div key={message.id} className="ask-ulo-msg-enter flex justify-start">
+                      <div className="min-w-0 w-full max-w-[100%] px-1 py-1">
+                        <p className="whitespace-pre-wrap text-[14px] leading-5 text-[#0a0a0a]">
                           {message.body}
-                        </div>
+                        </p>
                         {message.timeLabel ? (
                           <p className="mt-1 text-[11px] text-[#9ca3af]">{message.timeLabel}</p>
                         ) : null}
@@ -216,11 +213,11 @@ export function MessageVendorRail({
 
                 if (message.sender === 'landlord') {
                   return (
-                    <div key={message.id} className="flex justify-end">
+                    <div key={message.id} className="ask-ulo-msg-enter flex justify-end">
                       <div className="min-w-0 max-w-[85%]">
-                        <div className="rounded-[10px] rounded-tr-sm bg-[#101828] px-3 py-2.5 text-[13px] leading-5 text-white">
+                        <p className="whitespace-pre-wrap rounded-[16px] bg-[#B4DFD6] px-4 py-3 text-[14px] leading-5 text-[#0a0a0a]">
                           {message.body}
-                        </div>
+                        </p>
                         {message.timeLabel ? (
                           <p className="mt-1 text-right text-[11px] text-[#9ca3af]">
                             {message.timeLabel}
@@ -232,7 +229,7 @@ export function MessageVendorRail({
                 }
 
                 return (
-                  <div key={message.id} className="flex items-start gap-2">
+                  <div key={message.id} className="ask-ulo-msg-enter flex items-start gap-2">
                     <SparkleIcon className="mt-1 size-4 shrink-0 text-[#7c3aed]" />
                     <div className="min-w-0 max-w-[90%]">
                       <div className="rounded-[10px] border border-[#ddd6fe] bg-[#f5f3ff] px-3 py-2.5">
@@ -255,9 +252,9 @@ export function MessageVendorRail({
           )}
         </div>
 
-        <footer className="shrink-0 border-t border-[#e5e7eb] px-5 py-4">
+        <footer className="ask-ulo-actions-enter mt-auto shrink-0 px-4 pb-4 pt-2">
           {error ? (
-            <p className="mb-3 rounded-[8px] border border-[#fecaca] bg-[#fef2f2] px-3 py-2 text-[12px] leading-4 text-[#991b1b]">
+            <p className="sa-enter mb-3 rounded-[8px] border border-[#fecaca] bg-[#fef2f2] px-3 py-2 text-[12px] leading-4 text-[#991b1b]">
               {error}
             </p>
           ) : null}
@@ -265,13 +262,13 @@ export function MessageVendorRail({
             <p className="mb-3 text-[12px] leading-4 text-[#9a3412]">{brief.sendBlockedReason}</p>
           ) : null}
 
-          <div className="flex items-center gap-1.5">
+          <div className="mb-3 flex items-center gap-1.5 px-1">
             <SparkleIcon className="size-3 text-[#7c3aed]" />
             <p className="text-[10px] font-semibold uppercase tracking-[0.08em] text-[#9ca3af]">
               Suggested replies
             </p>
           </div>
-          <div className="mt-2 flex flex-col gap-2">
+          <div className="mb-3 flex flex-col gap-2">
             {brief.suggestedReplies.map((reply, index) => (
               <button
                 key={reply}
@@ -279,10 +276,10 @@ export function MessageVendorRail({
                 disabled={!brief.canSend}
                 onClick={() => handleSelectReply(index)}
                 className={[
-                  'rounded-full border px-3 py-2 text-left text-[12px] leading-4 transition-colors disabled:opacity-50',
+                  'sa-card rounded-[14px] border px-4 py-3 text-left text-[13px] font-medium leading-5 transition-colors disabled:opacity-50',
                   selectedReplyIndex === index
-                    ? 'border-[#d1d5dc] bg-[#f9fafb] text-[#364153]'
-                    : 'border-[#e9d5ff] bg-white text-[#6b21a8] hover:bg-[#faf5ff]',
+                    ? 'border-[#d1d5dc] bg-[#f9fafb] text-[#0a0a0a]'
+                    : 'border-[#e5e7eb] bg-white text-[#0a0a0a] hover:border-[#d1d5dc] hover:bg-[#fafafa]',
                 ].join(' ')}
               >
                 {reply}
@@ -290,27 +287,26 @@ export function MessageVendorRail({
             ))}
           </div>
 
-          <div className="mt-3 flex items-end gap-2">
-            <textarea
-              value={draft}
-              onChange={(event) => setDraft(event.target.value)}
-              rows={2}
-              disabled={!brief.canSend}
-              placeholder={
-                brief.canSend ? 'Type a message to the vendor…' : 'Assign a vendor to message…'
-              }
-              className="min-h-[44px] flex-1 resize-none rounded-[10px] border border-[#e5e7eb] bg-white px-3 py-2.5 text-[13px] leading-5 text-[#0a0a0a] outline-none placeholder:text-[#9ca3af] focus:border-[#d1d5dc] focus:ring-1 focus:ring-[#d1d5dc] disabled:bg-[#f9fafb]"
-            />
-            <button
-              type="button"
-              disabled={sendDisabled}
-              onClick={() => void handleSend()}
-              className="inline-flex h-[44px] shrink-0 items-center gap-1.5 rounded-[10px] bg-[#101828] px-4 text-[13px] font-medium text-white outline-none hover:bg-[#1e2939] focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50"
-            >
-              <SendIcon />
-              {sending ? 'Sending…' : 'Send'}
-            </button>
-          </div>
+          <ChatComposerBar
+            id={composerId}
+            label={`Message for ${brief.vendorName}`}
+            draft={draft}
+            onDraftChange={setDraft}
+            onSend={() => void handleSend()}
+            canSend={!sendDisabled}
+            sending={sending}
+            disabled={!brief.canSend}
+            placeholder={
+              brief.canSend ? 'Write your message...' : 'Assign a vendor to message…'
+            }
+            inputRef={inputRef}
+            animateEnter={false}
+            leftSlot={
+              <span className="sa-pill inline-flex h-8 max-w-full items-center truncate rounded-full bg-[#f3f4f6] px-2.5 text-[12px] font-medium text-[#374151]">
+                Vendor
+              </span>
+            }
+          />
         </footer>
       </div>
     </div>

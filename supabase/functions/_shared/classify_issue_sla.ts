@@ -39,8 +39,9 @@ export function severityFromResidentPriority(
 export async function classifyIssueForSla(
   description: string,
   residentPriority: string,
+  opts?: { outdoorTempF?: number | null; durationHours?: number | null },
 ): Promise<IssueSlaClassification> {
-  const unified = await classifyIssueForSlaUnified(description, residentPriority)
+  const unified = await classifyIssueForSlaUnified(description, residentPriority, opts)
   return {
     issue_category: issueCategoryToVendorTrade(unified.issue_category),
     severity: unified.severity,

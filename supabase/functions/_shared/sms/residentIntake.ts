@@ -1,8 +1,13 @@
+import { parseDurationHours } from "../../../../shared/maintenance/urgencyPolicy.ts"
+import { lookupOutdoorTempForProperty } from "../weather/propertyOutdoorTemp.ts"
 import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.49.1"
 import {
   classifyMaintenanceRequest,
+  insertAiClassificationLog,
+  attachAiClassificationLogToTicket,
   MAINTENANCE_CLASSIFICATION_EVENTS,
 } from "../maintenance_classification/mod.ts"
+import type { ClassificationResult } from "../maintenance_classification/types.ts"
 import { logGraphEvent } from "../graph/logGraphEvent.ts"
 import { recordActivityLog } from "../graph/recordActivityLog.ts"
 import { notifyLandlordNeedsAttention } from "../landlordAttentionNotify.ts"
@@ -46,6 +51,8 @@ import {
   parseEditFieldChoice,
   parseIssueType,
   recordIntakePromptRepeat,
+  applyPhotoRequestPolicy,
+  shouldRequestIntakePhoto,
   resolveUrgencyReply,
   pipelineTradeToIssueType,
   recommendUrgency,
@@ -173,7 +180,8 @@ async function initializeIntake(
   body: string,
   mediaCount: number,
   clarificationAnswers: string[] = [],
-): Promise<SmsIntakeState> {
+  outdoorTempF: number | null = null,
+): Promise<{ state: SmsIntakeState; classification: ClassificationResult }> {
   let initial = body.trim()
   if (mediaCount > 0) {
     initial = initial
@@ -181,11 +189,17 @@ async function initializeIntake(
       : "Maintenance issue (photo attached)"
   }
 
+  const extractedNoticed = extractFirstNoticedFromText(initial)
+
   const classification = await classifyMaintenanceRequest({
     rawDescription: initial,
     clarificationAnswers,
     // Use embeddings in production when OpenAI is configured; Jaccard still runs offline/tests.
     skipEmbeddings: !Deno.env.get("OPENAI_API_KEY")?.trim(),
+    durationHours: parseDurationHours(
+      [initial, extractedNoticed ?? ""].filter(Boolean).join(" "),
+    ),
+    outdoorTempF,
   })
 
   const inferred = pipelineTradeToIssueType(
@@ -197,7 +211,6 @@ async function initializeIntake(
     (classification.entities.location
       ? extractRoomFromText(classification.entities.location)
       : null)
-  const extractedNoticed = extractFirstNoticedFromText(initial)
 
   const visitWindows = extractResidentAvailabilityText(initial) ?? undefined
 
@@ -208,12 +221,20 @@ async function initializeIntake(
     ...(extractedNoticed ? { first_noticed: extractedNoticed } : {}),
     sanitized_description: classification.sanitizedDescription,
     preferred_visit_windows: visitWindows,
-    vendor_trade:
-      classification.vendorTrade !== "other" || !classification.clarificationRequired
+    vendor_trade: classification.clarificationRequired
+      ? undefined
+      : classification.vendorTrade !== "other" || !classification.clarificationRequired
         ? classification.vendorTrade
         : undefined,
+    primary_category: classification.primaryCategory,
+    secondary_trade: classification.secondaryTrade ?? undefined,
+    classification_reason: classification.classificationReason,
     classification_confidence: classification.classificationConfidence,
     classification_pipeline_version: classification.pipelineVersion,
+    outdoor_temp_f: outdoorTempF ?? undefined,
+    photo_requested: classification.photoRequested,
+    photo_request_reason: classification.photoRequestReason,
+    confidence_band: classification.confidenceBand,
     clarification_answers: clarificationAnswers.length
       ? clarificationAnswers
       : undefined,
@@ -222,46 +243,88 @@ async function initializeIntake(
 
   if (classification.clarificationRequired && classification.clarification) {
     if (clarificationAnswers.length < MAX_CLASSIFICATION_CLARIFICATIONS) {
-      return sanitizeIntakeState({
-        ...base,
-        step: "classification_clarification",
-        issue_type: inferred ?? undefined,
-        room_or_area: extractedRoom ?? undefined,
-        clarification_question: classification.clarification.question,
-      })
+      return {
+        classification,
+        state: sanitizeIntakeState({
+          ...base,
+          step: "classification_clarification",
+          vendor_trade: undefined,
+          issue_type: undefined,
+          room_or_area: extractedRoom ?? undefined,
+          clarification_question: classification.clarification.question,
+        }),
+      }
     }
-    // After max clarifications: continue with best signal; never invent a trade.
+    // Still too vague: ask which kind of problem it is. Do not invent a trade or mint a ticket.
+    return {
+      classification,
+      state: sanitizeIntakeState({
+        ...base,
+        step: "issue_type",
+        vendor_trade: undefined,
+        issue_type: undefined,
+        room_or_area: extractedRoom ?? undefined,
+      }),
+    }
   }
 
   if (inferred) {
     if (extractedRoom) {
-      return sanitizeIntakeState({
-        ...base,
-        step: extractedNoticed ? "safety_concerns" : "first_noticed",
-        issue_type: inferred,
-        room_or_area: extractedRoom,
-        vendor_trade: classification.vendorTrade,
-      })
+      return {
+        classification,
+        state: sanitizeIntakeState({
+          ...base,
+          step: extractedNoticed ? "safety_concerns" : "first_noticed",
+          issue_type: inferred,
+          room_or_area: extractedRoom,
+          vendor_trade: classification.vendorTrade,
+        }),
+      }
     }
-    return sanitizeIntakeState({
-      ...base,
-      step: "room_or_area",
-      issue_type: inferred,
-      vendor_trade: classification.vendorTrade,
-    })
+    return {
+      classification,
+      state: sanitizeIntakeState({
+        ...base,
+        step: "room_or_area",
+        issue_type: inferred,
+        vendor_trade: classification.vendorTrade,
+      }),
+    }
   }
 
   if (extractedRoom) {
-    return sanitizeIntakeState({
-      ...base,
-      step: "issue_type",
-      room_or_area: extractedRoom,
-    })
+    return {
+      classification,
+      state: sanitizeIntakeState({
+        ...base,
+        step: "issue_type",
+        room_or_area: extractedRoom,
+      }),
+    }
   }
 
-  return sanitizeIntakeState({
-    ...base,
-    step: "issue_type",
+  return {
+    classification,
+    state: sanitizeIntakeState({
+      ...base,
+      step: "issue_type",
+    }),
+  }
+}
+
+async function logIntakeClassification(
+  supabase: SupabaseClient,
+  ctx: WorkflowContext,
+  classification: ClassificationResult,
+  maintenanceRequestId: string | null,
+): Promise<void> {
+  await insertAiClassificationLog(supabase, {
+    landlordId: ctx.landlordId,
+    unitId: ctx.identity.unit_id,
+    residentId: ctx.identity.resident_id,
+    conversationId: ctx.conversationId,
+    maintenanceRequestId,
+    result: classification,
   })
 }
 
@@ -495,6 +558,7 @@ function applyStepAnswer(
         }
       }
       next.issue_type = parsed
+      Object.assign(next, applyPhotoRequestPolicy(next))
       next.step = nextCollectingStep("issue_type", next)
       break
     }
@@ -550,7 +614,7 @@ function applyStepAnswer(
       }
       next.preferred_contact_method = parsed
       next.severity = computeIntakeSeverity(next)
-      next.step = (next.photo_urls?.length ?? 0) > 0 ? "awaiting_confirm" : "photo"
+      next.step = shouldRequestIntakePhoto(next) ? "photo" : "awaiting_confirm"
       break
     }
     default:
@@ -642,11 +706,27 @@ export async function processResidentMaintenanceIntake(
   const isFresh = !state.step || state.step === "submitted"
 
   if (isFresh) {
+    const outdoorTempF = await lookupOutdoorTempForProperty(supabase, {
+      landlordId: ctx.landlordId,
+      unitId: ctx.identity.unit_id,
+      description: body,
+    })
     // Multi-ask path: confirm split before the single-issue wizard.
     try {
-      const multiIssues = await detectMultipleMaintenanceIssues(body)
+      const multiIssues = await detectMultipleMaintenanceIssues(body, {
+        outdoorTempF,
+        onClassified: (result) => {
+          void insertAiClassificationLog(supabase, {
+            landlordId: ctx.landlordId,
+            unitId: ctx.identity.unit_id,
+            residentId: ctx.identity.resident_id,
+            conversationId: ctx.conversationId,
+            result,
+          })
+        },
+      })
       if (multiIssues.length >= 2) {
-        state = intakeStateForMultiIssueConfirm(body, multiIssues)
+        state = intakeStateForMultiIssueConfirm(body, multiIssues, outdoorTempF)
         state = captureInboundMedia(
           state,
           ctx.inbound.mediaUrls,
@@ -675,10 +755,22 @@ export async function processResidentMaintenanceIntake(
       console.warn("[sms-intake] multi-issue detect failed; single path", err)
     }
 
-    state = await initializeIntake(body, ctx.inbound.mediaUrls.length)
+    const started = await initializeIntake(
+      body,
+      ctx.inbound.mediaUrls.length,
+      [],
+      outdoorTempF,
+    )
+    state = started.state
     state = captureInboundMedia(state, ctx.inbound.mediaUrls, ctx.inbound.provider)
     state = sanitizeIntakeState(state)
     state = await persistEarlyTicket(supabase, ctx, state)
+    await logIntakeClassification(
+      supabase,
+      ctx,
+      started.classification,
+      state.draft_ticket_id ?? null,
+    )
     await saveIntakeState(supabase, ctx.conversationId, state)
     await logClassificationAudit(supabase, {
       landlordId: ctx.landlordId,
@@ -723,11 +815,24 @@ export async function processResidentMaintenanceIntake(
     const answers = [...(state.clarification_answers ?? []), body]
     const seed = state.initial_message || state.description || body
     const priorDraft = state.draft_ticket_id
-    state = await initializeIntake(seed, 0, answers)
+    const outdoorTempF = state.outdoor_temp_f ??
+      await lookupOutdoorTempForProperty(supabase, {
+        landlordId: ctx.landlordId,
+        unitId: ctx.identity.unit_id,
+        description: seed,
+      })
+    const clarified = await initializeIntake(seed, 0, answers, outdoorTempF)
+    state = clarified.state
     if (priorDraft) state = { ...state, draft_ticket_id: priorDraft }
     state = captureInboundMedia(state, ctx.inbound.mediaUrls, ctx.inbound.provider)
     state = sanitizeIntakeState(state)
     state = await persistEarlyTicket(supabase, ctx, state)
+    await logIntakeClassification(
+      supabase,
+      ctx,
+      clarified.classification,
+      state.draft_ticket_id ?? null,
+    )
     await saveIntakeState(supabase, ctx.conversationId, state)
     await logClassificationAudit(supabase, {
       landlordId: ctx.landlordId,
@@ -791,10 +896,18 @@ export async function processResidentMaintenanceIntake(
 
     if (isNoReply(body)) {
       // Fall back to normal single-issue wizard on the full message.
-      state = await initializeIntake(
+      const declined = await initializeIntake(
         state.initial_message || state.description || body,
         0,
+        [],
+        state.outdoor_temp_f ??
+          await lookupOutdoorTempForProperty(supabase, {
+            landlordId: ctx.landlordId,
+            unitId: ctx.identity.unit_id,
+            description: state.initial_message || state.description || body,
+          }),
       )
+      state = declined.state
       state = captureInboundMedia(
         state,
         ctx.inbound.mediaUrls,
@@ -802,6 +915,12 @@ export async function processResidentMaintenanceIntake(
       )
       state = sanitizeIntakeState(state)
       state = await persistEarlyTicket(supabase, ctx, state)
+      await logIntakeClassification(
+        supabase,
+        ctx,
+        declined.classification,
+        state.draft_ticket_id ?? null,
+      )
       await saveIntakeState(supabase, ctx.conversationId, state)
       return finishIntakeQuestion(
         supabase,
@@ -856,6 +975,12 @@ export async function processResidentMaintenanceIntake(
                 preferVendorId,
               })
             ticketIds.push(ticketId)
+            await attachAiClassificationLogToTicket(supabase, {
+              landlordId: ctx.landlordId,
+              conversationId: ctx.conversationId,
+              maintenanceRequestId: ticketId,
+              rawMessage: issue.description,
+            })
             if (!vendorAssigned) allVendorsAssigned = false
             if (tradeKey && vendorId) {
               vendorByTrade.set(tradeKey, vendorId)

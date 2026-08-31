@@ -2,12 +2,23 @@
  * Unified maintenance classification pipeline:
  * raw → sanitize → entities → deterministic → semantic → LLM → confidence → other postcheck → result
  */
-import { buildClarificationPrompt } from "./clarification.ts"
 import { matchDeterministicRules } from "./deterministicRules.ts"
 import { extractEntities } from "./entities.ts"
 import { llmClassifyMaintenance } from "./llmClassify.ts"
 import { sanitizeMaintenanceDescription } from "./sanitizer.ts"
 import { semanticMatchDescription } from "./semanticMap.ts"
+import {
+  resolveAmbiguousMaintenance,
+} from "../../../../shared/maintenance/ambiguityResolution.ts"
+import { primaryCategoryFromTrade } from "../../../../shared/maintenance/primaryCategories.ts"
+import { resolveUrgencyPolicy } from "../../../../shared/maintenance/urgencyPolicy.ts"
+import { resolvePhotoRequest } from "../../../../shared/maintenance/photoRequestPolicy.ts"
+import {
+  LOW_CONFIDENCE_CLARIFICATION,
+  resolveConfidenceBand,
+} from "../../../../shared/maintenance/confidencePolicy.ts"
+import { toLandlordTriage } from "../../../../shared/maintenance/landlordTriage.ts"
+import type { LandlordTriage } from "../../../../shared/maintenance/landlordTriage.ts"
 import {
   PIPELINE_VERSION,
   type ClassificationResult,
@@ -111,7 +122,7 @@ function runOtherPostcheck(params: {
 /** Main entry — used by SMS, web, SLA, and trade assignment. */
 export async function classifyMaintenanceRequest(
   input: ClassifyMaintenanceInput,
-): Promise<ClassificationResult> {
+): Promise<ClassificationResult & { landlordTriage: LandlordTriage }> {
   const rawDescription = String(input.rawDescription ?? "").trim()
   const clarifiedExtra = (input.clarificationAnswers ?? [])
     .map((a) => a.trim())
@@ -146,6 +157,8 @@ export async function classifyMaintenanceRequest(
       input.smsContext ?? null,
     )
 
+  const resolved = resolveAmbiguousMaintenance(sanitized || rawForPipeline)
+
   // Fuse signals
   let trade: VendorTrade =
     topRule && topRule.weight >= 0.85
@@ -166,6 +179,14 @@ export async function classifyMaintenanceRequest(
     topSemantic?.issueType ??
     "other"
 
+  if (resolved.handled && resolved.needsClarification) {
+    trade = resolved.primaryTrade ?? "other"
+    if (resolved.issueType) issueType = resolved.issueType
+  } else if (resolved.handled && resolved.primaryTrade) {
+    trade = resolved.primaryTrade
+    if (resolved.issueType) issueType = resolved.issueType
+  }
+
   // Safety overrides
   if (entities.emergencyType === "gas") {
     trade = "other"
@@ -176,16 +197,35 @@ export async function classifyMaintenanceRequest(
   } else if (entities.emergencyType === "lockout") {
     trade = "locksmith"
     issueType = "lock"
-  } else if (entities.emergencyType === "flood") {
-    trade = trade === "roofing" ? "roofing" : "plumbing"
+  } else if (entities.emergencyType === "flood" && !(resolved.handled && resolved.needsClarification)) {
+    trade = trade === "roofing" ? "roofing" : resolved.primaryTrade ?? "plumbing"
     issueType = "leak"
   }
 
-  let severity: SeverityLevel = severityFromPriority(input.residentPriority)
-  if (topRule?.severityBoost) severity = maxSeverity(severity, topRule.severityBoost)
-  if (llm?.severity) severity = maxSeverity(severity, llm.severity)
-  if (entities.emergencyType !== "none") {
-    severity = maxSeverity(severity, entities.emergencyType === "gas" || entities.emergencyType === "fire" ? "critical" : "urgent")
+  let emergencyType = entities.emergencyType
+  if (resolved.handled && resolved.emergency !== "none") {
+    emergencyType = resolved.emergency
+  }
+
+  const urgency = resolveUrgencyPolicy({
+    text: sanitized || rawForPipeline,
+    outdoorTempF: input.outdoorTempF,
+    durationHours: input.durationHours,
+    emergencyType,
+  })
+
+  let severity: SeverityLevel = urgency.severity
+  const fromResident = severityFromPriority(input.residentPriority)
+  if (urgency.band === "emergency") {
+    severity = maxSeverity(severity, fromResident === "low" || fromResident === "normal" ? severity : fromResident)
+  } else {
+    severity = maxSeverity(severity, fromResident)
+  }
+  if (emergencyType === "gas" || emergencyType === "fire") {
+    severity = maxSeverity(severity, "critical")
+  }
+  if (topRule?.severityBoost) {
+    severity = maxSeverity(severity, topRule.severityBoost)
   }
 
   // Confidence
@@ -203,22 +243,27 @@ export async function classifyMaintenanceRequest(
     Math.max(ruleScore, semScore * 0.95, llmScore * 0.9) + agreementBonus,
   )
   let categoryConfidence = tradeConfidence
-  let severityConfidence = topRule?.severityBoost || entities.emergencyType !== "none"
+  let severityConfidence = topRule?.severityBoost || emergencyType !== "none" || urgency.band === "emergency"
     ? 0.9
     : llm?.severity
     ? clamp01(llm.confidence)
     : 0.55
 
-  // Other postcheck
-  const otherCheck = runOtherPostcheck({
-    sanitized: sanitized || rawForPipeline,
-    candidate: trade,
-    ruleTrade: topRule?.trade ?? null,
-    semanticTrade: topSemantic?.trade ?? null,
-    semanticScore: topSemantic?.score ?? 0,
-    llmTrade: llm?.vendorTrade ?? null,
-  })
-  trade = otherCheck.trade
+  // Other postcheck — do not "rescue" ambiguous cases into a guessed trade
+  const otherCheck =
+    resolved.handled && resolved.needsClarification
+      ? { trade, passed: true, signals: ["ambiguity_skip_other_postcheck"] }
+      : runOtherPostcheck({
+          sanitized: sanitized || rawForPipeline,
+          candidate: trade,
+          ruleTrade: topRule?.trade ?? null,
+          semanticTrade: topSemantic?.trade ?? null,
+          semanticScore: topSemantic?.score ?? 0,
+          llmTrade: llm?.vendorTrade ?? null,
+        })
+  if (!(resolved.handled && resolved.needsClarification)) {
+    trade = otherCheck.trade
+  }
   if (!otherCheck.passed && trade !== "other") {
     tradeConfidence = Math.max(tradeConfidence, 0.8)
     categoryConfidence = tradeConfidence
@@ -231,37 +276,34 @@ export async function classifyMaintenanceRequest(
     (tradeConfidence + categoryConfidence + severityConfidence) / 3,
   )
 
-  // Vague-only text demotion
-  const vagueHay = (sanitized || rawDescription).trim()
-  if (
-    /^(something is broken|there is a weird problem(?:\s+in my room)?|help|broken|issue|problem)[.!]?$/i
-      .test(vagueHay) ||
-    /\b(weird problem|something(?:'s| is) (?:wrong|broken)|not sure what)\b/i.test(vagueHay) &&
-      !topRule &&
-      !topSemantic
-  ) {
-    classificationConfidence = Math.min(classificationConfidence, 0.35)
-    tradeConfidence = Math.min(tradeConfidence, 0.35)
+  if (resolved.handled && resolved.primaryTrade) {
+    tradeConfidence = Math.max(tradeConfidence, resolved.confidence)
+    categoryConfidence = tradeConfidence
+    classificationConfidence = clamp01(
+      (tradeConfidence + categoryConfidence + severityConfidence) / 3,
+    )
   }
 
-  const clarificationRequired =
-    classificationConfidence < 0.65 ||
-    (trade === "other" && classificationConfidence < 0.85)
+  const confidence = resolveConfidenceBand({
+    text: sanitized || rawForPipeline,
+    vendorTrade: trade,
+    urgencyBand: urgency.band,
+    urgencyReason: urgency.reason,
+    emergencyType,
+    ruleWeight: topRule?.weight ?? 0,
+    ambiguityConfidence: resolved.handled ? resolved.confidence : 0,
+  })
 
+  if (confidence.band === "low") {
+    trade = "other"
+    issueType = "other"
+  }
+
+  classificationConfidence = confidence.classificationConfidence
+  const clarificationRequired = confidence.clarificationNeeded
   const clarification = clarificationRequired
-    ? buildClarificationPrompt({
-        entities,
-        ruleHits,
-        semanticMatches,
-        confidence: classificationConfidence,
-        textHint: sanitized || rawForPipeline,
-      })
+    ? LOW_CONFIDENCE_CLARIFICATION
     : null
-
-  // If still "other" with clarification, do not pretend high confidence
-  if (trade === "other" && clarification) {
-    classificationConfidence = Math.min(classificationConfidence, 0.55)
-  }
 
   const matchedKeywords = [
     ...new Set(ruleHits.flatMap((h) => h.keywords)),
@@ -281,27 +323,69 @@ export async function classifyMaintenanceRequest(
       ? `semantic:${topSemantic.trade}:${topSemantic.score.toFixed(2)}`
       : "semantic:none",
     llm ? `llm:${llm.vendorTrade}:${llm.confidence.toFixed(2)}` : "llm:none",
+    llm?.provider ? `llm_provider:${llm.provider}` : "llm_provider:none",
+    resolved.handled
+      ? `ambiguity:${resolved.reason || "handled"}:${resolved.needsClarification ? "clarify" : resolved.primaryTrade}`
+      : "ambiguity:none",
+    `urgency:${urgency.band}:${urgency.slaMinutes}`,
+    `confidence:${confidence.band}`,
     ...otherCheck.signals,
   ]
 
   const modelReasoningSummary =
-    llm?.reasoning ||
-    (topRule
-      ? `Matched deterministic ${topRule.trade} signals (${matchedKeywords.slice(0, 4).join(", ")})`
-      : topSemantic
-      ? `Closest phrase match: ${topSemantic.label}`
-      : "Insufficient signals")
+    resolved.handled && resolved.reason
+      ? resolved.reason
+      : llm?.reasoning ||
+        (topRule
+          ? `Matched deterministic ${topRule.trade} signals (${matchedKeywords.slice(0, 4).join(", ")})`
+          : topSemantic
+          ? `Closest phrase match: ${topSemantic.label}`
+          : "Insufficient signals")
 
-  return {
+  const primaryCategory = confidence.band === "low"
+    ? "general"
+    : resolved.handled
+    ? resolved.primaryCategory
+    : primaryCategoryFromTrade(trade)
+  const secondaryTrade = confidence.band === "low"
+    ? null
+    : resolved.handled
+    ? resolved.secondaryTrade
+    : null
+  const photo = resolvePhotoRequest({
+    text: sanitized || rawForPipeline,
+    primaryCategory,
+    vendorTrade: trade,
+    emergencyType,
+    issueType,
+  })
+
+  const classificationReason = resolved.handled && resolved.reason
+    ? resolved.reason
+    : modelReasoningSummary
+
+  const result: ClassificationResult = {
     pipelineVersion: PIPELINE_VERSION,
     rawDescription,
     sanitizedDescription: sanitized || rawDescription,
-    entities,
+    entities: {
+      ...entities,
+      emergencyType,
+    },
     ticketCategory: trade,
     issueType,
     vendorTrade: trade,
+    primaryCategory,
+    secondaryTrade,
+    classificationReason,
     severity,
-    emergencyType: entities.emergencyType,
+    urgencyBand: urgency.band,
+    urgencyReason: urgency.reason,
+    slaMinutes: urgency.slaMinutes,
+    photoRequested: photo.requested,
+    photoRequestReason: photo.reason,
+    confidenceBand: confidence.band,
+    emergencyType,
     classificationConfidence,
     categoryConfidence,
     tradeConfidence,
@@ -319,16 +403,25 @@ export async function classifyMaintenanceRequest(
       trade_label: tradeLabel(trade),
       rule_hits: ruleHits.slice(0, 3),
       llm,
+      llm_provider: llm?.provider ?? null,
       sanitize_method: sanitizeMethod,
+      primary_category: primaryCategory,
+      secondary_trade: secondaryTrade,
+      urgency_band: urgency.band,
+      sla_minutes: urgency.slaMinutes,
+      outdoor_temp_f: input.outdoorTempF ?? null,
+      photo_requested: photo.requested,
+      confidence_band: confidence.band,
     },
   }
+  return { ...result, landlordTriage: toLandlordTriage(result) }
 }
 
 /** Sync helper for SLA / ticket create — maps to legacy IssueSlaClassification shape. */
 export async function classifyIssueForSlaUnified(
   description: string,
   residentPriority: string,
-  opts?: { skipLlm?: boolean },
+  opts?: { skipLlm?: boolean; outdoorTempF?: number | null; durationHours?: number | null },
 ): Promise<{
   issue_category: string
   severity: "low" | "normal" | "urgent"
@@ -338,12 +431,14 @@ export async function classifyIssueForSlaUnified(
     rawDescription: description,
     residentPriority,
     skipLlm: opts?.skipLlm,
+    outdoorTempF: opts?.outdoorTempF,
+    durationHours: opts?.durationHours,
   })
 
   let severity: "low" | "normal" | "urgent" = "normal"
-  if (result.severity === "critical" || result.severity === "urgent") {
+  if (result.urgencyBand === "emergency" || result.severity === "critical" || result.severity === "urgent") {
     severity = "urgent"
-  } else if (result.severity === "low") {
+  } else if (result.urgencyBand === "low" || result.severity === "low") {
     severity = "low"
   }
 
