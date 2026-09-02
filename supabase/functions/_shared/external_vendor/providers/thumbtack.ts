@@ -369,7 +369,7 @@ export class ThumbtackExternalVendorProvider implements ExternalVendorProvider {
       return []
     }
 
-    const token = await this.accessToken({ allowUnscopedFallback: true })
+    const token = await this.getAccessToken()
     if (!token) {
       if (!this.lastSearchError) this.lastSearchError = "oauth_token_failed"
       console.warn("[external-vendor/thumbtack] OAuth token failed")
