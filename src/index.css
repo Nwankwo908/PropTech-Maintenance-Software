@@ -2261,6 +2261,39 @@ h6 {
   animation: onb-welcome-in 360ms var(--sa-ease);
 }
 
+@keyframes onb-setup-fade-out {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0;
+  }
+}
+
+.onb-setup-fade-out {
+  animation: onb-setup-fade-out 320ms var(--sa-ease) forwards;
+}
+
+.onb-all-set {
+  animation: onb-step-in 420ms var(--sa-ease);
+}
+
+.onb-all-set-title {
+  animation: onb-welcome-in 420ms var(--sa-ease) 80ms backwards;
+}
+
+.onb-all-set-subtitle {
+  animation: onb-welcome-in 420ms var(--sa-ease) 140ms backwards;
+}
+
+.onb-all-set-art {
+  animation: onb-card-in 560ms var(--sa-ease) 180ms backwards;
+}
+
+.onb-all-set-cta {
+  animation: onb-welcome-in 400ms var(--sa-ease) 280ms backwards;
+}
+
 .sa-press {
   transition:
     background-color var(--sa-fast) ease,
@@ -2768,6 +2801,12 @@ h6 {
   .onb-stepper-active-dot,
   .onb-setup-spinner,
   .onb-setup-copy,
+  .onb-setup-fade-out,
+  .onb-all-set,
+  .onb-all-set-title,
+  .onb-all-set-subtitle,
+  .onb-all-set-art,
+  .onb-all-set-cta,
   .onb-review-progress-ring {
     animation: none;
   }

@@ -15,6 +15,7 @@ import {
 import { postSlaAutoReassign, resolveSlaAutoReassignUrl } from '@/api/slaAutoReassign'
 import insightWarningIcon from '@/assets/noun-warning-recurring.png'
 import feedInfoIcon from '@/assets/noun-information.png'
+import { GetSetUpForSuccessCard } from '@/components/GetSetUpForSuccessCard'
 import { PropertyHealthBuildingGrid } from '@/components/PropertyHealthBuildingGrid'
 import { AwaitingDecisionListRail } from '@/components/AwaitingDecisionListRail'
 import { AwaitingDecisionOutcomeModal } from '@/components/AwaitingDecisionOutcomeModal'
@@ -29,10 +30,20 @@ import { VendorCallFlowModal } from '@/components/VendorCallFlowModal'
 import { useAdminDesktopLayout } from '@/hooks/useAdminDesktopLayout'
 import { findExternalVendorTicketFromSearch, FIND_EXTERNAL_VENDOR_QUERY } from '@/lib/uloAppUrl'
 import { getActiveLandlordId } from '@/lib/activeLandlord'
+import {
+  dismissSetupSuccessCard,
+  isSetupSuccessCardDismissed,
+  resolveSetupSuccessProgress,
+  SETUP_SUCCESS_COLLAPSED_EVENT,
+  shouldShowSetupSuccessCard,
+} from '@/lib/setupSuccessChecklist'
+import { areAllPropertiesDetailsComplete } from '@/lib/propertyDetailsCompleteness'
+import { ASSET_REGISTRY_CHANGED_EVENT } from '@/lib/assetRegistry'
 import { landlordHasPayments } from '@shared/landlordCapabilities'
 import { cityStateZipForBuildingName, listPropertiesForLandlord, type PropertyRecord } from '@/lib/properties'
 import {
   ensureOnboardingDashboardMatchesPortfolio,
+  readLocalOnboardingState,
 } from '@/lib/onboarding'
 import { useSidebarAdminProfile } from '@/hooks/useSidebarAdminProfile'
 import {
@@ -187,6 +198,7 @@ type OverviewVendor = {
   name: string
   category: string | null
   active: boolean
+  verified: boolean
 }
 
 type OverviewUnit = {
@@ -225,6 +237,7 @@ type OverviewResident = {
   monthlyRent: number
   balanceDue: number
   phone: string | null
+  activationStatus: string | null
 }
 
 function overviewTicketToInput(
@@ -992,6 +1005,8 @@ export function AdminOverviewDashboard() {
     runIds: new Set(),
   })
   const [canonicalProperties, setCanonicalProperties] = useState<PropertyRecord[]>([])
+  const [propertyDetailsComplete, setPropertyDetailsComplete] = useState(false)
+  const [setupSuccessDismissed, setSetupSuccessDismissed] = useState(isSetupSuccessCardDismissed)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null)
@@ -1218,7 +1233,7 @@ export function AdminOverviewDashboard() {
             : Promise.resolve({ data: [], error: null }),
           supabase
             .from('vendors')
-            .select('id, name, category, active')
+            .select('id, name, category, active, onboarding_overridden_at')
             .eq('landlord_id', landlordId)
             .eq('active', true)
             .limit(500),
@@ -1237,7 +1252,7 @@ export function AdminOverviewDashboard() {
           fetchPropertyHealthSignals(),
           supabase
             .from('users')
-            .select('id, full_name, unit, building, status, move_in_date, lease_end_date, monthly_rent, balance_due, phone, email')
+            .select('id, full_name, unit, building, status, move_in_date, lease_end_date, monthly_rent, balance_due, phone, email, activation_status')
             .eq('landlord_id', landlordId)
             .neq('status', 'past_resident')
             .limit(2000),
@@ -1276,10 +1291,32 @@ export function AdminOverviewDashboard() {
             name: asString(r.name),
             category: asString(r.category) || null,
             active: r.active !== false,
+            overridden: Boolean(r.onboarding_overridden_at),
           }))
           .filter((v) => v.id && v.name)
-        setVendors(vendorRows)
-        for (const v of vendorRows) vendorNameById[v.id] = v.name
+        const vendorIds = vendorRows.map((v) => v.id)
+        const verifiedIds = new Set<string>()
+        if (vendorIds.length > 0) {
+          const { data: verificationRows } = await supabase
+            .from('vendor_verifications')
+            .select('vendor_id, status')
+            .in('vendor_id', vendorIds)
+          for (const row of (verificationRows ?? []) as Record<string, unknown>[]) {
+            if (asString(row.status) === 'verified') {
+              const id = asString(row.vendor_id)
+              if (id) verifiedIds.add(id)
+            }
+          }
+        }
+        const mappedVendors = vendorRows.map((v) => ({
+          id: v.id,
+          name: v.name,
+          category: v.category,
+          active: v.active,
+          verified: v.overridden || verifiedIds.has(v.id),
+        }))
+        setVendors(mappedVendors)
+        for (const v of mappedVendors) vendorNameById[v.id] = v.name
       } else {
         setVendors([])
       }
@@ -1406,6 +1443,7 @@ export function AdminOverviewDashboard() {
             monthlyRent: asFiniteNumber(raw.monthly_rent) ?? 0,
             balanceDue: asFiniteNumber(raw.balance_due) ?? 0,
             phone: asString(raw.phone) || null,
+            activationStatus: asString(raw.activation_status) || null,
           }))
           .filter((row) => row.id)
         setResidents(
@@ -1445,8 +1483,50 @@ export function AdminOverviewDashboard() {
     }
   }, [])
 
+  useEffect(() => {
+    let cancelled = false
+    const refresh = () => {
+      void areAllPropertiesDetailsComplete(canonicalProperties).then((complete) => {
+        if (!cancelled) setPropertyDetailsComplete(complete)
+      })
+    }
+    refresh()
+    window.addEventListener(ASSET_REGISTRY_CHANGED_EVENT, refresh)
+    window.addEventListener('storage', refresh)
+    return () => {
+      cancelled = true
+      window.removeEventListener(ASSET_REGISTRY_CHANGED_EVENT, refresh)
+      window.removeEventListener('storage', refresh)
+    }
+  }, [canonicalProperties, location.pathname])
+
+  useEffect(() => {
+    const syncCollapsed = () => setSetupSuccessDismissed(isSetupSuccessCardDismissed())
+    window.addEventListener(SETUP_SUCCESS_COLLAPSED_EVENT, syncCollapsed)
+    window.addEventListener('storage', syncCollapsed)
+    return () => {
+      window.removeEventListener(SETUP_SUCCESS_COLLAPSED_EVENT, syncCollapsed)
+      window.removeEventListener('storage', syncCollapsed)
+    }
+  }, [])
+
   const now = Date.now()
   const fourWeeksMs = 28 * 24 * 60 * 60 * 1000
+
+  const setupSuccessProgress = useMemo(() => {
+    const rules = readLocalOnboardingState()?.approvalRules
+    return resolveSetupSuccessProgress({
+      residents: overviewResidents,
+      vendorCount: vendors.length,
+      verifiedVendorCount: vendors.filter((vendor) => vendor.verified).length,
+      propertyDetailsComplete,
+      hasMaintenancePreferences: Number.isFinite(rules?.autoApprovalThreshold),
+      maintenanceRequestCount: tickets.length,
+    })
+  }, [overviewResidents, vendors, propertyDetailsComplete, tickets.length])
+
+  const showSetupSuccess =
+    shouldShowSetupSuccessCard(setupSuccessProgress) && !setupSuccessDismissed
 
   const openTickets = useMemo(() => tickets.filter(isTicketOpen), [tickets])
 
@@ -2882,6 +2962,16 @@ export function AdminOverviewDashboard() {
         <div className="mb-4 rounded-[10px] border border-[#fde68a] bg-[#fffbeb] px-4 py-3 text-[13px] text-[#92400e]">
           {error}
         </div>
+      ) : null}
+
+      {!loading && showSetupSuccess ? (
+        <GetSetUpForSuccessCard
+          progress={setupSuccessProgress}
+          onClose={() => {
+            dismissSetupSuccessCard()
+            setSetupSuccessDismissed(true)
+          }}
+        />
       ) : null}
 
       {!loading && units.length === 0 && tickets.length === 0 ? (

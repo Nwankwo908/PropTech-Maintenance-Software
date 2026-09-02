@@ -7,7 +7,9 @@ function seenKey(landlordId: string): string {
   return `${SEEN_KEY_PREFIX}${landlordId}`
 }
 
-function hasSeenWelcome(landlordId: string): boolean {
+export function hasSeenLimitedAlphaPostOnboardingWelcome(
+  landlordId: string = getActiveLandlordId(),
+): boolean {
   try {
     return window.localStorage.getItem(seenKey(landlordId)) === '1'
   } catch {
@@ -23,7 +25,7 @@ export function shouldShowLimitedAlphaPostOnboardingWelcome(
   return (
     onboardingCompleted &&
     isLimitedAlpha1Landlord(landlordId) &&
-    !hasSeenWelcome(landlordId)
+    !hasSeenLimitedAlphaPostOnboardingWelcome(landlordId)
   )
 }
 

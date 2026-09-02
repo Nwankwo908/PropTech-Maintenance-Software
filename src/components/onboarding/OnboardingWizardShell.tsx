@@ -1,4 +1,5 @@
 import { Link, useNavigate } from 'react-router-dom'
+import { useLayoutEffect, useRef, useState } from 'react'
 import { getActiveLandlordId } from '@/lib/activeLandlord'
 import { landlordHasPayments, landlordHasVendorMarketplace } from '@shared/landlordCapabilities'
 import { primaryPayoutMethodLabel } from '@/api/landlordStripeConnect'
@@ -25,6 +26,33 @@ const btnSecondary =
 export function OnboardingWizardShell() {
   const wizard = useOnboardingWizard()
   const navigate = useNavigate()
+  const showAllSet = shouldShowLimitedAlphaPostOnboardingWelcome(
+    wizard.isComplete,
+    wizard.state.landlordId,
+  )
+  const handleGetStarted = () => {
+    markLimitedAlphaPostOnboardingWelcomeSeen(wizard.state.landlordId)
+    navigate('/admin', { replace: true })
+  }
+  const wasCompletingRef = useRef(false)
+  const [setupFadeOut, setSetupFadeOut] = useState(false)
+
+  useLayoutEffect(() => {
+    if (wizard.completingSetup) {
+      wasCompletingRef.current = true
+      setSetupFadeOut(false)
+      return
+    }
+    if (wasCompletingRef.current && showAllSet) {
+      setSetupFadeOut(true)
+      const id = window.setTimeout(() => {
+        setSetupFadeOut(false)
+        wasCompletingRef.current = false
+      }, 320)
+      return () => window.clearTimeout(id)
+    }
+    wasCompletingRef.current = false
+  }, [wizard.completingSetup, showAllSet])
 
   if (wizard.loading) {
     return (
@@ -35,23 +63,24 @@ export function OnboardingWizardShell() {
     )
   }
 
-  if (wizard.completingSetup) {
-    return <OnboardingSetupTransition />
+  if (wizard.completingSetup || setupFadeOut) {
+    return (
+      <div className="relative flex min-h-0 flex-1 flex-col">
+        {showAllSet && setupFadeOut ? (
+          <OnboardingAllSetWelcome onGetStarted={handleGetStarted} />
+        ) : null}
+        <div
+          className={`absolute inset-0 z-10 flex flex-col bg-white ${setupFadeOut ? 'onb-setup-fade-out' : ''}`}
+        >
+          <OnboardingSetupTransition />
+        </div>
+      </div>
+    )
   }
 
-  if (
-    shouldShowLimitedAlphaPostOnboardingWelcome(
-      wizard.isComplete,
-      wizard.state.landlordId,
-    )
-  ) {
+  if (showAllSet) {
     return (
-      <OnboardingAllSetWelcome
-        onGetStarted={() => {
-          markLimitedAlphaPostOnboardingWelcomeSeen(wizard.state.landlordId)
-          navigate('/admin', { replace: true })
-        }}
-      />
+      <OnboardingAllSetWelcome onGetStarted={handleGetStarted} />
     )
   }
 

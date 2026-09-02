@@ -88,6 +88,7 @@ import { hydratePropertyFormsFromOnboarding } from '@/lib/onboarding/wizardHydra
 import {
   mergeOnboardingStep,
   resolveWizardDisplayStep,
+  ALL_SET_REVEAL_MS,
   SETUP_COMPLETE_TRANSITION_MS,
 } from '@/lib/onboarding/wizardNavigation'
 import { type OnboardingApprovalRules } from '@/lib/onboardingApprovalRules'
@@ -1083,6 +1084,10 @@ export function useOnboardingWizard() {
     persistOnboardingWizardLocally(completedState)
     window.dispatchEvent(new Event('ulo:onboarding-completed'))
     if (isLimitedAlpha1Landlord(reviewState.landlordId)) {
+      const remainingMs = ALL_SET_REVEAL_MS - (Date.now() - transitionStartedAt)
+      if (remainingMs > 0) {
+        await new Promise((resolve) => window.setTimeout(resolve, remainingMs))
+      }
       setCompletingSetup(false)
       setSaving(false)
       return

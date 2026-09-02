@@ -4,13 +4,17 @@
 export function OnboardingSetupTransition({
   title = 'Setting up your dashboard',
   subtitle = 'This will only take a moment…',
+  className = '',
 }: {
   title?: string
   subtitle?: string
+  className?: string
 }) {
   return (
     <main
-      className="flex flex-1 flex-col items-center justify-center gap-4 px-8 py-16"
+      className={['flex flex-1 flex-col items-center justify-center gap-4 px-8 py-16', className]
+        .filter(Boolean)
+        .join(' ')}
       aria-busy="true"
       aria-live="polite"
     >

@@ -136,6 +136,7 @@ export {
 } from './wizardDraft'
 export { hydratePropertyFormsFromOnboarding } from './wizardHydrate'
 export {
+  ALL_SET_REVEAL_MS,
   mergeOnboardingStep,
   resolveWizardDisplayStep,
   SETUP_COMPLETE_TRANSITION_MS,

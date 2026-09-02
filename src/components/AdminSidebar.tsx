@@ -1,8 +1,9 @@
-import { NavLink, useSearchParams } from 'react-router-dom'
-import type { ReactNode } from 'react'
+import { Link, NavLink, useSearchParams } from 'react-router-dom'
+import { Fragment, type ReactNode } from 'react'
 import residentsIcon from '@/assets/Residents.svg'
 import graphIcon from '@/assets/graph.svg'
 import settingIcon from '@/assets/Setting.svg'
+import getSetupIcon from '@/assets/noun_complete_6211701_@700.svg'
 import uloLogo from '@/assets/landing/ulo-logo.png'
 import uloLogoSmall from '@/assets/Ulo_Logo_small.png'
 import webSectionIcon from '@/assets/noun-web-section.png'
@@ -14,9 +15,10 @@ import {
   getAdminSidebarNavItems,
   type AdminNavId,
 } from '@/lib/adminNavigation'
+import { useSetupSuccessNavHint } from '@/hooks/useSetupSuccessNavHint'
 
 const navBase =
-  'flex min-h-[44px] w-full cursor-pointer items-center gap-3 whitespace-nowrap rounded-[10px] px-4 text-left text-[14px] font-medium tracking-[-0.1504px] outline-none transition-colors duration-150 focus-visible:ring-2 focus-visible:ring-[#101828] focus-visible:ring-offset-2 focus-visible:ring-offset-white'
+  'flex min-h-[44px] w-full cursor-pointer items-center justify-start gap-3 whitespace-nowrap rounded-[10px] px-4 text-left text-[14px] font-medium tracking-[-0.1504px] outline-none transition-colors duration-150 focus-visible:ring-2 focus-visible:ring-[#101828] focus-visible:ring-offset-2 focus-visible:ring-offset-white'
 
 const navBaseCollapsed =
   'flex size-11 cursor-pointer items-center justify-center rounded-[10px] outline-none transition-colors duration-150 focus-visible:ring-2 focus-visible:ring-[#101828] focus-visible:ring-offset-2 focus-visible:ring-offset-white'
@@ -166,6 +168,7 @@ export function AdminSidebarContent({
   } = useAskUlo()
   const [searchParams] = useSearchParams()
   const isCollapsedRail = Boolean(forRail && collapsed)
+  const setupNavHint = useSetupSuccessNavHint()
 
   // Desktop rail brand height must match AdminTopBar so the shared grey rule lines up.
   const gutter = forRail
@@ -279,29 +282,62 @@ export function AdminSidebarContent({
         aria-label="Admin"
       >
         {items.map((item) => (
-          <NavLink
-            key={item.to}
-            to={
-              askUloOpen
-                ? withAskUloSearch(item.to, searchParams, { forceDock: true })
-                : item.to
-            }
-            end={item.end}
-            title={isCollapsedRail ? item.label : undefined}
-            aria-label={isCollapsedRail ? item.label : undefined}
-            onClick={item.onClick}
-            className={({ isActive }) =>
-              navClassName({
-                isActive,
-                collapsed: isCollapsedRail,
-              })
-            }
-          >
-            <span className="size-5 shrink-0 text-current" aria-hidden>
-              {item.icon}
-            </span>
-            {!isCollapsedRail ? item.label : null}
-          </NavLink>
+          <Fragment key={item.to}>
+            <NavLink
+              to={
+                askUloOpen
+                  ? withAskUloSearch(item.to, searchParams, { forceDock: true })
+                  : item.to
+              }
+              end={item.end}
+              title={isCollapsedRail ? item.label : undefined}
+              aria-label={isCollapsedRail ? item.label : undefined}
+              onClick={item.onClick}
+              className={({ isActive }) =>
+                navClassName({
+                  isActive,
+                  collapsed: isCollapsedRail,
+                })
+              }
+            >
+              <span className="size-5 shrink-0 text-current" aria-hidden>
+                {item.icon}
+              </span>
+              {!isCollapsedRail ? <span className="min-w-0 text-left">{item.label}</span> : null}
+            </NavLink>
+            {item.id === 'settings' && setupNavHint.show ? (
+              <Link
+                to="/admin"
+                title={isCollapsedRail ? `Get started · ${setupNavHint.percent}%` : undefined}
+                aria-label={`Get started, ${setupNavHint.percent}% complete`}
+                onClick={() => {
+                  setupNavHint.expandCard()
+                  item.onClick?.()
+                }}
+                className={
+                  isCollapsedRail
+                    ? `${navBaseCollapsed} text-[11px] font-semibold tracking-[-0.02em] text-[#364153] opacity-60 hover:bg-[#f3f4f6] hover:opacity-100`
+                    : `${navBase} text-[13px] font-medium text-[#364153] opacity-60 hover:bg-[#f3f4f6] hover:opacity-100`
+                }
+              >
+                {isCollapsedRail ? (
+                  <span className="tabular-nums">{setupNavHint.percent}%</span>
+                ) : (
+                  <>
+                    <span className="flex size-5 shrink-0 items-center justify-center" aria-hidden>
+                      <img
+                        src={getSetupIcon}
+                        alt=""
+                        className="size-5 max-w-none object-contain object-top"
+                      />
+                    </span>
+                    <span className="min-w-0 text-left">Get setup</span>
+                    <span className="ml-auto tabular-nums text-[#6a7282]">{setupNavHint.percent}%</span>
+                  </>
+                )}
+              </Link>
+            ) : null}
+          </Fragment>
         ))}
 
         {askUloOpen ? (
