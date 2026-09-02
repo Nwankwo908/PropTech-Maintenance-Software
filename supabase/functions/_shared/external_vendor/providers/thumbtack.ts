@@ -11,12 +11,18 @@ import {
 
 const DEFAULT_API_BASE = "https://api.thumbtack.com/api"
 const DEFAULT_TOKEN_URL = "https://auth.thumbtack.com/oauth2/token"
-const DEFAULT_SCOPE =
+/** Search + category lookup — enough to list pros. */
+export const THUMBTACK_SEARCH_OAUTH_SCOPE =
   "demand::businesses/search.read demand::categories/request-form.read"
+/** Opening a conversation and sending messages. */
+export const THUMBTACK_MESSAGING_OAUTH_SCOPE =
+  "demand::requests.write demand::negotiations.read demand::negotiations/messages.write"
+const DEFAULT_SCOPE = `${THUMBTACK_SEARCH_OAUTH_SCOPE} ${THUMBTACK_MESSAGING_OAUTH_SCOPE}`
 
 type TokenCache = {
   accessToken: string
   expiresAtMs: number
+  scope: string
 }
 
 let tokenCache: TokenCache | null = null
@@ -28,6 +34,27 @@ export type ThumbtackProviderOptions = {
   tokenUrl?: string
   oauthScope?: string
   utmSource?: string
+}
+
+export function mergeThumbtackOauthScopes(...chunks: string[]): string {
+  const parts = new Set<string>()
+  for (const chunk of chunks) {
+    for (const token of chunk.split(/\s+/)) {
+      if (token) parts.add(token)
+    }
+  }
+  return [...parts].join(" ")
+}
+
+export function thumbtackScopeAllowsMessaging(scope: string): boolean {
+  return /\bdemand::requests\.write\b/.test(scope)
+}
+
+export function thumbtackOpenConversationError(status: number, bodyText?: string): string {
+  if (bodyText === "oauth_token_failed" || status === 401) {
+    return "Thumbtack did not allow this conversation. Listing pros still works — messaging has to be enabled on the Thumbtack partner account."
+  }
+  return `Thumbtack could not open this conversation (${status}).`
 }
 
 export function extractZipFromLocation(location: string): string | null {
@@ -314,7 +341,18 @@ export class ThumbtackExternalVendorProvider implements ExternalVendorProvider {
   }
 
   async getAccessToken(): Promise<string | null> {
-    return await this.accessToken()
+    return await this.accessToken({
+      scope: THUMBTACK_SEARCH_OAUTH_SCOPE,
+      allowUnscopedFallback: true,
+    })
+  }
+
+  /** Token that can POST /v4/requests — do not fall back to a search-only grant. */
+  async getMessagingAccessToken(): Promise<string | null> {
+    return await this.accessToken({
+      scope: this.messagingScope(),
+      allowUnscopedFallback: false,
+    })
   }
 
   async search(input: ExternalVendorSearchInput): Promise<ExternalVendorHit[]> {
@@ -331,7 +369,7 @@ export class ThumbtackExternalVendorProvider implements ExternalVendorProvider {
       return []
     }
 
-    const token = await this.accessToken()
+    const token = await this.accessToken({ allowUnscopedFallback: true })
     if (!token) {
       if (!this.lastSearchError) this.lastSearchError = "oauth_token_failed"
       console.warn("[external-vendor/thumbtack] OAuth token failed")
@@ -537,9 +575,26 @@ export class ThumbtackExternalVendorProvider implements ExternalVendorProvider {
 
   private resolvedApiBase: string | null = null
 
-  private async accessToken(): Promise<string | null> {
+  private messagingScope(): string {
+    return mergeThumbtackOauthScopes(
+      this.opts.oauthScope?.trim() || DEFAULT_SCOPE,
+      THUMBTACK_MESSAGING_OAUTH_SCOPE,
+    )
+  }
+
+  private async accessToken(opts?: {
+    scope?: string
+    allowUnscopedFallback?: boolean
+  }): Promise<string | null> {
     const now = Date.now()
-    if (tokenCache && tokenCache.expiresAtMs > now + 15_000) {
+    const scope = opts?.scope?.trim() || this.opts.oauthScope?.trim() || DEFAULT_SCOPE
+    const allowUnscopedFallback = opts?.allowUnscopedFallback !== false
+    const needsMessaging = thumbtackScopeAllowsMessaging(scope)
+    if (
+      tokenCache &&
+      tokenCache.expiresAtMs > now + 15_000 &&
+      (!needsMessaging || thumbtackScopeAllowsMessaging(tokenCache.scope))
+    ) {
       return tokenCache.accessToken
     }
 
@@ -555,7 +610,6 @@ export class ThumbtackExternalVendorProvider implements ExternalVendorProvider {
 
     const clientId = this.opts.clientId.trim()
     const clientSecret = this.opts.clientSecret.trim()
-    const scope = this.opts.oauthScope?.trim() || DEFAULT_SCOPE
     const formWithScope = new URLSearchParams({
       grant_type: "client_credentials",
       audience: "urn:partner-api",
@@ -569,7 +623,11 @@ export class ThumbtackExternalVendorProvider implements ExternalVendorProvider {
 
     let lastStatus = 0
     for (const attempt of attempts) {
-      const variants: Array<{ headers: Record<string, string>; body: URLSearchParams }> = [
+      const variants: Array<{
+        headers: Record<string, string>
+        body: URLSearchParams
+        grantedScope: string
+      }> = [
         {
           headers: {
             Authorization: `Basic ${basic}`,
@@ -577,14 +635,7 @@ export class ThumbtackExternalVendorProvider implements ExternalVendorProvider {
             Accept: "application/json",
           },
           body: formWithScope,
-        },
-        {
-          headers: {
-            Authorization: `Basic ${basic}`,
-            "Content-Type": "application/x-www-form-urlencoded",
-            Accept: "application/json",
-          },
-          body: formNoScope,
+          grantedScope: scope,
         },
         {
           headers: {
@@ -598,8 +649,20 @@ export class ThumbtackExternalVendorProvider implements ExternalVendorProvider {
             client_id: clientId,
             client_secret: clientSecret,
           }),
+          grantedScope: scope,
         },
       ]
+      if (allowUnscopedFallback && !needsMessaging) {
+        variants.splice(1, 0, {
+          headers: {
+            Authorization: `Basic ${basic}`,
+            "Content-Type": "application/x-www-form-urlencoded",
+            Accept: "application/json",
+          },
+          body: formNoScope,
+          grantedScope: "",
+        })
+      }
       for (const variant of variants) {
         const res = await fetch(attempt.tokenUrl, {
           method: "POST",
@@ -615,15 +678,24 @@ export class ThumbtackExternalVendorProvider implements ExternalVendorProvider {
         const data = (await res.json().catch(() => null)) as {
           access_token?: string
           expires_in?: number
+          scope?: string
         } | null
         const accessToken = typeof data?.access_token === "string" ? data.access_token.trim() : ""
         if (!accessToken) continue
+        const granted = typeof data?.scope === "string" && data.scope.trim()
+          ? data.scope.trim()
+          : variant.grantedScope
+        if (needsMessaging && !thumbtackScopeAllowsMessaging(granted)) {
+          console.warn("[external-vendor/thumbtack] token missing requests.write")
+          continue
+        }
         const ttlSec = typeof data?.expires_in === "number" && data.expires_in > 60
           ? data.expires_in
           : 3600
         tokenCache = {
           accessToken,
           expiresAtMs: now + ttlSec * 1000,
+          scope: granted,
         }
         this.resolvedApiBase = attempt.apiBase
         return accessToken

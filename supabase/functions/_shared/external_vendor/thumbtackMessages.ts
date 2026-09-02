@@ -5,6 +5,7 @@ import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.49.1
 import { recordActivityLog } from "../graph/recordActivityLog.ts"
 import { notifyLandlordNeedsAttention } from "../landlordAttentionNotify.ts"
 import {
+  thumbtackOpenConversationError,
   thumbtackProviderFromEnv,
   type ThumbtackExternalVendorProvider,
 } from "./providers/thumbtack.ts"
@@ -54,7 +55,7 @@ async function thumbtackFetch(
   path: string,
   init: { method: string; body?: unknown },
 ): Promise<{ ok: boolean; status: number; json: unknown; text: string }> {
-  const token = await provider.getAccessToken()
+  const token = await provider.getMessagingAccessToken()
   if (!token) {
     return { ok: false, status: 401, json: null, text: "oauth_token_failed" }
   }
@@ -99,7 +100,7 @@ async function createThumbtackRequest(input: {
     return {
       requestId: null,
       negotiationId: null,
-      error: `Thumbtack could not open this conversation (${res.status}).`,
+      error: thumbtackOpenConversationError(res.status, res.text),
       status: res.status,
     }
   }
@@ -139,7 +140,7 @@ async function postNegotiationMessage(input: {
     console.warn("[thumbtack-messages] send message HTTP", res.status, res.text.slice(0, 240))
     return {
       ok: false,
-      error: `Thumbtack could not send this message (${res.status}). Try again in a moment.`,
+      error: thumbtackOpenConversationError(res.status, res.text),
       status: res.status,
     }
   }

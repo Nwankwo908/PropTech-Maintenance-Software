@@ -8,6 +8,9 @@ import {
   parseThumbtackSearchContext,
   thumbtackIdsFromListingUrl,
   buildThumbtackFilteredUserQuery,
+  mergeThumbtackOauthScopes,
+  thumbtackOpenConversationError,
+  thumbtackScopeAllowsMessaging,
 } from "./thumbtack.ts"
 
 Deno.test("extractZipFromLocation reads a 5-digit ZIP", () => {
@@ -110,4 +113,24 @@ Deno.test("parseThumbtackSearchContext and listing URL ids", () => {
   )
   if (fromUrl.searchId !== "s1") throw new Error(String(fromUrl.searchId))
   if (fromUrl.categoryId !== "c2") throw new Error(String(fromUrl.categoryId))
+})
+
+Deno.test("messaging scopes always include requests.write", () => {
+  const merged = mergeThumbtackOauthScopes(
+    "demand::businesses/search.read",
+    "demand::requests.write demand::negotiations.read",
+  )
+  if (!thumbtackScopeAllowsMessaging(merged)) throw new Error(merged)
+  if (!thumbtackScopeAllowsMessaging("demand::requests.write")) {
+    throw new Error("bare write scope")
+  }
+  if (thumbtackScopeAllowsMessaging("demand::businesses/search.read")) {
+    throw new Error("search-only should not allow messaging")
+  }
+})
+
+Deno.test("thumbtackOpenConversationError explains 401 without a raw status code", () => {
+  const msg = thumbtackOpenConversationError(401, "oauth_token_failed")
+  if (!/did not allow this conversation/i.test(msg)) throw new Error(msg)
+  if (/\(401\)/.test(msg)) throw new Error("should not echo 401")
 })

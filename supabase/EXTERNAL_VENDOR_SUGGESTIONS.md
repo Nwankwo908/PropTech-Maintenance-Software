@@ -38,7 +38,7 @@ In-network roster suggestions remain on **`recommend-vendor-alternatives`** (Ope
 | `THUMBTACK_CLIENT_SECRET` | Thumbtack Partner Platform OAuth client secret |
 | `THUMBTACK_API_BASE_URL` | Optional API host (default `https://api.thumbtack.com/api`) |
 | `THUMBTACK_TOKEN_URL` | Optional token URL (default `https://auth.thumbtack.com/oauth2/token`) |
-| `THUMBTACK_OAUTH_SCOPE` | Optional scopes (default businesses search + categories) |
+| `THUMBTACK_OAUTH_SCOPE` | Optional. Default includes search **and** messaging (`requests.write`, negotiations). Search-only tokens return 401 when opening a conversation. |
 | `THUMBTACK_UTM_SOURCE` | Optional `utm_source` on search (must be `cma-…`; default `cma-ulo`) |
 | `EXTERNAL_VENDOR_SEARCH_LOCATION` | Fallback geocode anchor when property address cannot be resolved |
 | `EXTERNAL_VENDOR_PROVIDER` | `auto` (default), `mock`, or `thumbtack` |
