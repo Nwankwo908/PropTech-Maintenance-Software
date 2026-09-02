@@ -5,7 +5,7 @@
  *  - demo@ulohome.io           → Demo Property Management (seeded showcase data)
  *  - newlandlord@ulohome.io    → New Landlord (empty state / onboarding)
  *  - limitedalpha1@ulohome.io  → Limited Alpha 1 (empty new-user onboarding)
- *  - ceorentalsnj@gmail.com    → Full Alpha (real production account)
+ *  - ceorentalsnj@gmail.com    → Limited Alpha 1
  *  - staff logins              → default landlord (Full Alpha),
  *                                with a dev account switcher override for testing.
  *
@@ -51,7 +51,7 @@ export const LANDLORD_ACCOUNT_OPTIONS: LandlordAccountOption[] = [
 ]
 
 const EMAIL_TO_LANDLORD_ID: Record<string, string> = {
-  'ceorentalsnj@gmail.com': DEFAULT_LANDLORD_ID,
+  'ceorentalsnj@gmail.com': LIMITED_ALPHA_1_LANDLORD_ID,
   [LIMITED_ALPHA_1_LOGIN_EMAIL]: LIMITED_ALPHA_1_LANDLORD_ID,
   'demo@ulohome.io': DEMO_LANDLORD_ID,
   'newlandlord@ulohome.io': EMPTY_LANDLORD_ID,

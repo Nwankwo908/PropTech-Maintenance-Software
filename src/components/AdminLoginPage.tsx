@@ -207,8 +207,8 @@ export function AdminLoginPage() {
               {oauthDenied ? (
                 <p className="mt-6 rounded-lg border border-[#fecaca] bg-[#fef2f2] px-3 py-2 text-[13px] leading-5 text-[#991b1b]" role="alert">
                   That Google account is not authorized for the admin portal. Sign in with an
-                  allowlisted email (for Full Alpha, use ceorentalsnj@gmail.com; for Limited Alpha 1,
-                  use limitedalpha1@ulohome.io).
+                  allowlisted email (for Limited Alpha 1, use ceorentalsnj@gmail.com or
+                  limitedalpha1@ulohome.io).
                 </p>
               ) : null}
 
