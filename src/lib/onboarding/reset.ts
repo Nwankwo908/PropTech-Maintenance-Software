@@ -9,6 +9,7 @@ import { deleteResidentsForLandlord } from '@/lib/residentDeletion'
 import { clearVendorSetupInboxForLandlord } from '@/lib/vendorSetupConversation'
 import { supabase } from '@/lib/supabase'
 import { clearLandlordStripeConnect } from '@/api/landlordStripeConnect'
+import { clearLimitedAlphaPostOnboardingWelcomeSeen } from '@/lib/postOnboardingWelcome'
 import {
   clearLocalOnboardingStorage,
   defaultOnboardingState,
@@ -523,6 +524,7 @@ export async function restartNewLandlordOnboarding(
   // even if portfolio deletes partially fail.
   clearLocalOnboardingStorage(scope.landlordId)
   clearVendorSetupInboxForLandlord(scope.landlordId)
+  clearLimitedAlphaPostOnboardingWelcomeSeen(scope.landlordId)
 
   const cleared: LandlordOnboardingState = {
     ...defaultOnboardingState(scope.landlordId),

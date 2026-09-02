@@ -9,7 +9,9 @@ import {
   shouldBlockDashboard,
   type LandlordOnboardingState,
 } from '@/lib/onboarding'
+import { EMPTY_LANDLORD_ID, getActiveLandlordId } from '@/lib/activeLandlord'
 import { getErrorMessage } from '@/lib/errorMessage'
+import { shouldShowLimitedAlphaPostOnboardingWelcome } from '@/lib/postOnboardingWelcome'
 
 /**
  * Prefer in-memory guard state once loaded. Exception: after Complete, localStorage
@@ -45,7 +47,15 @@ export function AdminOnboardingGuard() {
   const fetchGenerationRef = useRef(0)
 
   const isOnboardingAccount = isOnboardingLandlordAccount()
-  const shouldReset = new URLSearchParams(location.search).get('reset') === '1'
+  const wantsUrlReset = new URLSearchParams(location.search).get('reset') === '1'
+  // Only New Landlord auto-wipes on ?reset=1 (account switcher). Limited Alpha 1
+  // and Full Alpha wipe only from the Reset onboarding button.
+  const shouldReset = wantsUrlReset && getActiveLandlordId() === EMPTY_LANDLORD_ID
+
+  useEffect(() => {
+    if (!wantsUrlReset || shouldReset) return
+    navigate({ pathname: location.pathname, search: '', hash: location.hash }, { replace: true })
+  }, [wantsUrlReset, shouldReset, location.pathname, location.hash, navigate])
 
   useEffect(() => {
     if (!isOnboardingAccount || !shouldReset) {
@@ -170,12 +180,25 @@ export function AdminOnboardingGuard() {
 
   const resolvedState = resolveGuardOnboardingState(state, readLocalOnboardingState())
   const blockDashboard = resolvedState ? shouldBlockDashboard(resolvedState) : true
+  const showPostOnboardingWelcome = shouldShowLimitedAlphaPostOnboardingWelcome(
+    resolvedState?.onboardingStatus === 'completed',
+    getActiveLandlordId(),
+  )
 
   if (blockDashboard && !onOnboardingRoute) {
     return <Navigate to="/admin/onboarding" replace />
   }
 
-  if (!blockDashboard && onOnboardingRoute && resolvedState?.onboardingStatus === 'completed') {
+  if (showPostOnboardingWelcome && !onOnboardingRoute) {
+    return <Navigate to="/admin/onboarding" replace />
+  }
+
+  if (
+    !blockDashboard &&
+    onOnboardingRoute &&
+    resolvedState?.onboardingStatus === 'completed' &&
+    !showPostOnboardingWelcome
+  ) {
     return <Navigate to="/admin" replace />
   }
 

@@ -134,14 +134,34 @@ function HeroInteractionVideo() {
   )
 }
 
+function HeroUloMark() {
+  return (
+    <span
+      className="bg-clip-text text-transparent"
+      style={{
+        backgroundImage: 'linear-gradient(174deg, rgb(24, 121, 96) 0%, rgb(174, 225, 239) 100%)',
+      }}
+    >
+      Ulo
+    </span>
+  )
+}
+
 function HeroHeadlineAndCopy() {
   const headlineRef = useRef<HTMLHeadingElement>(null)
+  const copyRef = useRef<HTMLParagraphElement>(null)
   const [copyWidth, setCopyWidth] = useState<number>()
   const [fullWidthCopy, setFullWidthCopy] = useState(false)
+  const [heroLines432, setHeroLines432] = useState(false)
+  const [heroLines504, setHeroLines504] = useState(false)
+  const [heroLines768, setHeroLines768] = useState(false)
+  const [heroLines600, setHeroLines600] = useState(false)
+  const [heroLines720, setHeroLines720] = useState(false)
+  const [heroLines991, setHeroLines991] = useState(false)
 
   useEffect(() => {
     const mq = window.matchMedia(
-      '(max-width: 1019px)',
+      '(max-width: 1070px)',
     )
     const syncLayoutMode = () => setFullWidthCopy(mq.matches)
     syncLayoutMode()
@@ -150,13 +170,151 @@ function HeroHeadlineAndCopy() {
   }, [])
 
   useEffect(() => {
+    const mq = window.matchMedia('(min-width: 370px) and (max-width: 450px)')
+    const sync = () => setHeroLines432(mq.matches)
+    sync()
+    mq.addEventListener('change', sync)
+    return () => mq.removeEventListener('change', sync)
+  }, [])
+
+  useEffect(() => {
+    const mq = window.matchMedia('(min-width: 480px) and (max-width: 529px)')
+    const sync = () => setHeroLines504(mq.matches)
+    sync()
+    mq.addEventListener('change', sync)
+    return () => mq.removeEventListener('change', sync)
+  }, [])
+
+  useEffect(() => {
+    const mq = window.matchMedia('(min-width: 580px) and (max-width: 640px)')
+    const sync = () => setHeroLines600(mq.matches)
+    sync()
+    mq.addEventListener('change', sync)
+    return () => mq.removeEventListener('change', sync)
+  }, [])
+
+  useEffect(() => {
+    const mq = window.matchMedia('(min-width: 690px) and (max-width: 767px)')
+    const sync = () => setHeroLines720(mq.matches)
+    sync()
+    mq.addEventListener('change', sync)
+    return () => mq.removeEventListener('change', sync)
+  }, [])
+
+  useEffect(() => {
+    const mq = window.matchMedia('(min-width: 768px) and (max-width: 819px)')
+    const sync = () => setHeroLines768(mq.matches)
+    sync()
+    mq.addEventListener('change', sync)
+    return () => mq.removeEventListener('change', sync)
+  }, [])
+
+  useEffect(() => {
+    const mq = window.matchMedia('(min-width: 820px) and (max-width: 1070px)')
+    const sync = () => setHeroLines991(mq.matches)
+    sync()
+    mq.addEventListener('change', sync)
+    return () => mq.removeEventListener('change', sync)
+  }, [])
+
+  useLayoutEffect(() => {
+    const node = headlineRef.current
+    if (!node) return
+    const parent = node.parentElement
+    let skipObserver = false
+
+    const fitTitle = () => {
+      if (skipObserver) return
+
+      const lines = Array.from(node.children) as HTMLElement[]
+      if (!lines.length) return
+
+      for (const line of lines) {
+        line.style.setProperty('white-space', 'nowrap', 'important')
+        line.style.setProperty('word-break', 'keep-all', 'important')
+        line.style.setProperty('overflow-wrap', 'normal', 'important')
+      }
+
+      const narrow = window.matchMedia('(max-width: 1070px)').matches
+      if (narrow) {
+        node.style.setProperty('width', '100%', 'important')
+      } else {
+        node.style.removeProperty('width')
+      }
+
+      skipObserver = true
+      node.style.removeProperty('font-size')
+      node.style.removeProperty('line-height')
+
+      const target = parseFloat(getComputedStyle(node).fontSize) || 34
+      const at320to1024 = window.matchMedia('(min-width: 320px) and (max-width: 1024px)').matches
+      const at991 = window.matchMedia('(min-width: 820px) and (max-width: 1070px)').matches
+      const at768 = window.matchMedia('(min-width: 768px) and (max-width: 819px)').matches
+      const lineHeightFor = (fontPx: number) => {
+        if (at991 || at768) return (40 / 34) * fontPx
+        return fontPx * 1.15
+      }
+
+      if (at320to1024) {
+        const baseSize = 34
+        const baseLeading = at991 || at768 ? 40 : 39
+        node.style.setProperty('font-size', `${baseSize}px`, 'important')
+        node.style.setProperty('line-height', `${baseLeading}px`, 'important')
+
+        const available = node.clientWidth
+        const maxLine = Math.max(1, ...lines.map((line) => line.scrollWidth))
+        if (available > 0 && maxLine > available) {
+          const size = baseSize * (available / maxLine)
+          node.style.setProperty('font-size', `${size}px`, 'important')
+          node.style.setProperty('line-height', `${lineHeightFor(size)}px`, 'important')
+        }
+      } else if (narrow) {
+        const measure = copyRef.current ?? parent ?? node
+        const available = measure.clientWidth
+        const maxLine = Math.max(1, ...lines.map((line) => line.scrollWidth))
+        const size = available > 0 ? target * (available / maxLine) : target
+        node.style.setProperty('font-size', `${size}px`, 'important')
+        node.style.setProperty('line-height', `${lineHeightFor(size)}px`, 'important')
+      } else if (at768) {
+        node.style.setProperty('line-height', `${lineHeightFor(target)}px`, 'important')
+      }
+
+      requestAnimationFrame(() => {
+        skipObserver = false
+      })
+    }
+
+    fitTitle()
+    const observer = new ResizeObserver(fitTitle)
+    observer.observe(node)
+    if (parent) observer.observe(parent)
+    if (copyRef.current) observer.observe(copyRef.current)
+    window.addEventListener('resize', fitTitle)
+    const refitFromTarget = () => {
+      fitTitle()
+    }
+    void document.fonts?.ready.then(refitFromTarget)
+    document.fonts?.addEventListener('loadingdone', refitFromTarget)
+    return () => {
+      observer.disconnect()
+      window.removeEventListener('resize', fitTitle)
+      document.fonts?.removeEventListener('loadingdone', refitFromTarget)
+      node.style.removeProperty('font-size')
+      node.style.removeProperty('line-height')
+      node.style.removeProperty('width')
+    }
+  }, [heroLines432, heroLines504, heroLines600, heroLines720, heroLines768, heroLines991])
+
+  useEffect(() => {
     if (fullWidthCopy) return
 
     const node = headlineRef.current
     if (!node) return
 
     const syncWidth = () => {
-      setCopyWidth(node.getBoundingClientRect().width)
+      const lines = Array.from(node.children) as HTMLElement[]
+      const lineWidth = Math.max(0, ...lines.map((line) => line.offsetWidth))
+      setCopyWidth(Math.max(node.offsetWidth, lineWidth) || undefined)
     }
 
     syncWidth()
@@ -169,28 +327,63 @@ function HeroHeadlineAndCopy() {
     <>
       <h1
         ref={headlineRef}
-        className="mt-4 w-fit max-w-full font-[family-name:var(--font-landing-heading)] leading-[56px] landing-compact:leading-[48px] landing-432:!text-[13.8vw] landing-432:!leading-[1.08] text-[clamp(2.25rem,6vw+1.2rem,9rem)] font-bold tracking-[-0.03em] text-[#0f1623] sm:mt-6 max-[1019px]:!w-full landing-tablet-portrait:!leading-[58px] [@media(min-width:451px)_and_(max-width:1019px)_and_(min-height:1400px)_and_(max-height:1500px)]:text-[clamp(3.375rem,9vw+1.8rem,13.5rem)] [@media(min-width:300px)_and_(max-width:349px)_and_(min-height:850px)_and_(max-height:920px)]:text-[clamp(2.475rem,6.6vw+1.32rem,9.9rem)] [@media(min-width:350px)_and_(max-width:399px)_and_(min-height:850px)_and_(max-height:920px)]:text-[clamp(2.7rem,7.2vw+1.44rem,10.8rem)] landing-phone-tall:!leading-[56px] landing-phone-tall-hero-leading landing-884-hero-leading landing-1440-900-hero-leading landing-1920-1080-hero-leading landing-1920-1200-hero-leading landing-2560-1440-hero-leading landing-desktop-hero-leading landing-3440-1440-hero-leading landing-3840-2160-hero-leading landing-4096-2304-hero-leading landing-5120-2880-hero-leading [@media(min-width:350px)_and_(max-width:399px)_and_(min-height:1400px)_and_(max-height:1500px)]:text-[clamp(2.5875rem,6.9vw+1.38rem,10.35rem)] [@media(min-width:400px)_and_(max-width:500px)_and_(min-height:850px)_and_(max-height:920px)]:text-[clamp(2.8125rem,7.5vw+1.5rem,11.25rem)] [@media(min-width:400px)_and_(max-width:450px)_and_(min-height:1400px)_and_(max-height:1500px)]:text-[clamp(2.5875rem,6.9vw+1.38rem,10.35rem)] [@media(min-width:768px)_and_(max-width:850px)_and_(min-height:850px)_and_(max-height:920px)]:text-[clamp(3.6rem,9.6vw+1.92rem,14.4rem)] [@media(min-width:768px)_and_(max-width:850px)_and_(min-height:1400px)_and_(max-height:1500px)]:text-[clamp(3.375rem,9vw+1.8rem,13.5rem)] [@media(min-width:851px)_and_(max-width:1019px)_and_(min-height:1400px)_and_(max-height:1500px)]:text-[clamp(3.375rem,8.5vw+1.6rem,13.5rem)] [@media(min-width:1024px)_and_(max-width:1439px)_and_(min-height:550px)_and_(max-height:920px)]:text-[clamp(2.625rem,5.25vw,4.125rem)] [@media(min-width:1021px)_and_(max-width:1440px)_and_(min-height:1397px)_and_(max-height:1500px)]:text-[clamp(2.625rem,6.144vw,9.6rem)] min-[1440px]:text-[clamp(2.25rem,3.84vw,6rem)] [@media(min-width:1440px)_and_(max-width:1535px)_and_(min-height:850px)_and_(max-height:920px)]:text-[clamp(3.825rem,6.528vw,10.2rem)] [@media(min-width:1440px)_and_(max-width:1535px)_and_(min-height:1400px)_and_(max-height:1500px)]:text-[clamp(3.6rem,6.144vw,9.6rem)] lg:tracking-[-0.025em]"
+        className="landing-hero-title mt-4 w-fit max-w-full font-[family-name:var(--font-landing-heading)] leading-[56px] landing-compact:leading-[48px] landing-432:!leading-[39px] [@media(min-width:320px)_and_(max-width:1024px)]:!text-[34px] [@media(min-width:320px)_and_(max-width:991px)]:!leading-[39px] [@media(min-width:768px)_and_(max-width:960px)]:!leading-[40px] [@media(min-width:961px)_and_(max-width:1070px)]:!leading-[40px] text-[clamp(2.25rem,6vw+1.2rem,9rem)] font-bold tracking-[-0.03em] text-[#0f1623] sm:mt-6 max-[1070px]:!w-full landing-tablet-portrait:!leading-[58px] landing-1280-800:!leading-[66px] landing-1366-768:!leading-[66px] landing-1440-900:!leading-[66px] landing-1680-1050:!leading-[66px] landing-2560-1440:!leading-[96px] landing-3440-1440:!leading-[96px] landing-3840-2160:!leading-[96px] [@media(min-width:451px)_and_(max-width:1019px)_and_(min-height:1400px)_and_(max-height:1500px)]:text-[clamp(3.375rem,9vw+1.8rem,13.5rem)] [@media(min-width:300px)_and_(max-width:349px)_and_(min-height:850px)_and_(max-height:920px)]:text-[clamp(2.475rem,6.6vw+1.32rem,9.9rem)] [@media(min-width:350px)_and_(max-width:399px)_and_(min-height:850px)_and_(max-height:920px)]:text-[clamp(2.7rem,7.2vw+1.44rem,10.8rem)] landing-phone-tall:!leading-[56px] landing-phone-tall-hero-leading landing-884-hero-leading landing-1440-900-hero-leading landing-1680-1050-hero-leading landing-1920-1080-hero-leading landing-1920-1200-hero-leading landing-2560-1440-hero-leading landing-desktop-hero-leading landing-3440-1440-hero-leading landing-3840-2160-hero-leading landing-4096-2304-hero-leading landing-5120-2880-hero-leading [@media(min-width:350px)_and_(max-width:399px)_and_(min-height:1400px)_and_(max-height:1500px)]:text-[clamp(2.5875rem,6.9vw+1.38rem,10.35rem)] [@media(min-width:400px)_and_(max-width:500px)_and_(min-height:850px)_and_(max-height:920px)]:text-[clamp(2.8125rem,7.5vw+1.5rem,11.25rem)] [@media(min-width:400px)_and_(max-width:450px)_and_(min-height:1400px)_and_(max-height:1500px)]:text-[clamp(2.5875rem,6.9vw+1.38rem,10.35rem)] [@media(min-width:768px)_and_(max-width:850px)_and_(min-height:850px)_and_(max-height:920px)]:text-[clamp(3.6rem,9.6vw+1.92rem,14.4rem)] [@media(min-width:768px)_and_(max-width:850px)_and_(min-height:1400px)_and_(max-height:1500px)]:text-[clamp(3.375rem,9vw+1.8rem,13.5rem)] [@media(min-width:851px)_and_(max-width:1019px)_and_(min-height:1400px)_and_(max-height:1500px)]:text-[clamp(3.375rem,8.5vw+1.6rem,13.5rem)] [@media(min-width:1024px)_and_(max-width:1439px)_and_(min-height:550px)_and_(max-height:920px)]:text-[clamp(2.625rem,5.25vw,4.125rem)] [@media(min-width:1021px)_and_(max-width:1440px)_and_(min-height:1397px)_and_(max-height:1500px)]:text-[clamp(2.625rem,6.144vw,9.6rem)] min-[1440px]:text-[clamp(2.25rem,3.84vw,6rem)] [@media(min-width:1440px)_and_(max-width:1535px)_and_(min-height:850px)_and_(max-height:920px)]:text-[clamp(3.825rem,6.528vw,10.2rem)] [@media(min-width:1440px)_and_(max-width:1535px)_and_(min-height:1400px)_and_(max-height:1500px)]:text-[clamp(3.6rem,6.144vw,9.6rem)] lg:tracking-[-0.025em]"
       >
-        <span className="block whitespace-nowrap">They say real estate</span>
-        <span className="block whitespace-nowrap">should be passive.</span>
-        <span className="block whitespace-nowrap">
-          {' '}
-          <span
-            className="bg-clip-text text-transparent"
-            style={{
-              backgroundImage:
-                'linear-gradient(174deg, rgb(24, 121, 96) 0%, rgb(174, 225, 239) 100%)',
-            }}
-          >
-            Ulo
-          </span>{' '}
-           actually makes
-        </span>
-        <span className="block whitespace-nowrap">it feel that way.</span>
+        {heroLines991 ? (
+          <>
+            <span className="block whitespace-nowrap">They say real estate should be</span>
+            <span className="block whitespace-nowrap">
+              passive. <HeroUloMark /> actually makes
+            </span>
+            <span className="block whitespace-nowrap">it feel that way.</span>
+          </>
+        ) : heroLines768 ? (
+          <>
+            <span className="block whitespace-nowrap">
+              They say real estate should be passive. <HeroUloMark /> actually
+            </span>
+            <span className="block whitespace-nowrap">makes it feel that way.</span>
+          </>
+        ) : heroLines720 || heroLines600 ? (
+          <>
+            <span className="block whitespace-nowrap">
+              They say real estate should be passive. <HeroUloMark />
+            </span>
+            <span className="block whitespace-nowrap">actually makes it feel that way.</span>
+          </>
+        ) : heroLines504 ? (
+          <>
+            <span className="block whitespace-nowrap">They say real estate should be</span>
+            <span className="block whitespace-nowrap">
+              passive. <HeroUloMark /> actually makes it
+            </span>
+            <span className="block whitespace-nowrap">feel that way.</span>
+          </>
+        ) : heroLines432 ? (
+          <>
+            <span className="block whitespace-nowrap">They say real estate</span>
+            <span className="block whitespace-nowrap">
+              should be passive. <HeroUloMark />
+            </span>
+            <span className="block whitespace-nowrap">actually makes it feel</span>
+            <span className="block whitespace-nowrap">that way.</span>
+          </>
+        ) : (
+          <>
+            <span className="block whitespace-nowrap">They say real estate</span>
+            <span className="block whitespace-nowrap">should be passive.</span>
+            <span className="block whitespace-nowrap">
+              {' '}
+              <HeroUloMark /> actually makes
+            </span>
+            <span className="block whitespace-nowrap">it feel that way.</span>
+          </>
+        )}
       </h1>
 
       <p
-        className="mt-4 box-border max-w-full border-l-[3px] border-[#187960] pl-4 text-base font-normal text-[#4b5563] sm:mt-6 sm:pl-5 sm:text-lg max-[1019px]:!w-full"
+        ref={copyRef}
+        className="mt-4 box-border max-w-full border-l-[3px] border-[#187960] pl-4 text-base font-normal text-[#4b5563] sm:mt-6 sm:pl-5 sm:text-lg max-[1070px]:!w-full"
         style={{
           lineHeight: '28px',
           width: fullWidthCopy ? undefined : copyWidth,
@@ -343,7 +536,7 @@ export function LandingPage() {
   ] as const
 
   const navItemClass =
-    'sa-press rounded-xl px-3 py-2 text-sm font-medium text-[#6b7280] hover:bg-gray-50 hover:text-[#111827] landing-3840-2160:px-[1.125rem] landing-3840-2160:py-3 landing-3840-2160:text-[1.3125rem] landing-4096-2304:rounded-[1.2rem] landing-5120-2880:rounded-[1.2rem] landing-4096-2304:px-[1.2rem] landing-5120-2880:px-[1.2rem] landing-4096-2304:py-[0.8rem] landing-5120-2880:py-[0.8rem] landing-4096-2304:text-[1.4rem] landing-5120-2880:text-[1.4rem] landing-7680-4320:rounded-[1.875rem] landing-7680-4320:px-[1.875rem] landing-7680-4320:py-5 landing-7680-4320:text-[2.1875rem]'
+    'sa-press rounded-xl px-3 py-2 text-sm font-medium text-[#6b7280] hover:bg-[#f3f4f6] hover:text-[#111827] landing-3840-2160:px-[1.125rem] landing-3840-2160:py-3 landing-3840-2160:text-[1.3125rem] landing-4096-2304:rounded-[1.2rem] landing-5120-2880:rounded-[1.2rem] landing-4096-2304:px-[1.2rem] landing-5120-2880:px-[1.2rem] landing-4096-2304:py-[0.8rem] landing-5120-2880:py-[0.8rem] landing-4096-2304:text-[1.4rem] landing-5120-2880:text-[1.4rem] landing-7680-4320:rounded-[1.875rem] landing-7680-4320:px-[1.875rem] landing-7680-4320:py-5 landing-7680-4320:text-[2.1875rem]'
 
   function scrollTo(id: string) {
     setMobileMenuOpen(false)
@@ -391,7 +584,7 @@ export function LandingPage() {
               </nav>
               <Link
                 to="/admin/login"
-                className="sa-press ml-2 rounded-xl px-3 py-2 text-sm font-medium text-[#6b7280] hover:bg-gray-50 hover:text-[#111827] landing-3840-2160:ml-3 landing-3840-2160:px-[1.125rem] landing-3840-2160:py-3 landing-3840-2160:text-[1.3125rem] landing-4096-2304:ml-[0.8rem] landing-5120-2880:ml-[0.8rem] landing-4096-2304:rounded-[1.2rem] landing-5120-2880:rounded-[1.2rem] landing-4096-2304:px-[1.2rem] landing-5120-2880:px-[1.2rem] landing-4096-2304:py-[0.8rem] landing-5120-2880:py-[0.8rem] landing-4096-2304:text-[1.4rem] landing-5120-2880:text-[1.4rem] landing-7680-4320:ml-5 landing-7680-4320:rounded-[1.875rem] landing-7680-4320:px-[1.875rem] landing-7680-4320:py-5 landing-7680-4320:text-[2.1875rem]"
+                className="sa-press ml-2 rounded-xl px-3 py-2 text-sm font-medium text-[#6b7280] hover:bg-[#f3f4f6] hover:text-[#111827] landing-3840-2160:ml-3 landing-3840-2160:px-[1.125rem] landing-3840-2160:py-3 landing-3840-2160:text-[1.3125rem] landing-4096-2304:ml-[0.8rem] landing-5120-2880:ml-[0.8rem] landing-4096-2304:rounded-[1.2rem] landing-5120-2880:rounded-[1.2rem] landing-4096-2304:px-[1.2rem] landing-5120-2880:px-[1.2rem] landing-4096-2304:py-[0.8rem] landing-5120-2880:py-[0.8rem] landing-4096-2304:text-[1.4rem] landing-5120-2880:text-[1.4rem] landing-7680-4320:ml-5 landing-7680-4320:rounded-[1.875rem] landing-7680-4320:px-[1.875rem] landing-7680-4320:py-5 landing-7680-4320:text-[2.1875rem]"
               >
                 Login
               </Link>
@@ -405,7 +598,7 @@ export function LandingPage() {
             </div>
             <button
               type="button"
-              className="sa-press rounded-xl p-2 text-[#6b7280] hover:bg-gray-50 lg:hidden"
+              className="sa-press rounded-xl p-2 text-[#6b7280] hover:bg-[#f3f4f6] lg:hidden"
               aria-expanded={mobileMenuOpen}
               aria-label={mobileMenuOpen ? 'Close menu' : 'Open menu'}
               onClick={() => setMobileMenuOpen((open) => !open)}
@@ -422,14 +615,14 @@ export function LandingPage() {
                   key={label}
                   href={`#${target}`}
                   onClick={(event) => onSectionNav(event, target)}
-                  className="sa-press rounded-xl px-3 py-3 text-left text-sm font-medium text-[#6b7280] hover:bg-gray-50 hover:text-[#111827]"
+                  className="sa-press rounded-xl px-3 py-3 text-left text-sm font-medium text-[#6b7280] hover:bg-[#f3f4f6] hover:text-[#111827]"
                 >
                   {label}
                 </a>
               ))}
               <Link
                 to="/admin/login"
-                className="sa-press rounded-xl px-3 py-3 text-left text-sm font-medium text-[#6b7280] hover:bg-gray-50 hover:text-[#111827]"
+                className="sa-press rounded-xl px-3 py-3 text-left text-sm font-medium text-[#6b7280] hover:bg-[#f3f4f6] hover:text-[#111827]"
                 onClick={() => setMobileMenuOpen(false)}
               >
                 Login
@@ -437,7 +630,7 @@ export function LandingPage() {
               <button
                 type="button"
                 onClick={() => openEarlyAccess()}
-                className="sa-press rounded-xl px-3 py-3 text-left text-sm font-medium text-[#6b7280] hover:bg-gray-50 hover:text-[#111827]"
+                className="sa-press rounded-xl px-3 py-3 text-left text-sm font-medium text-[#6b7280] hover:bg-[#f3f4f6] hover:text-[#111827]"
               >
                 Request Early Access
               </button>
@@ -463,7 +656,7 @@ export function LandingPage() {
             contentClassName="w-full max-w-none [@media(min-width:1024px)_and_(max-width:1439px)_and_(min-height:550px)_and_(max-height:920px)]:!ml-0 [@media(min-width:1024px)_and_(max-width:1439px)_and_(min-height:550px)_and_(max-height:920px)]:flex [@media(min-width:1024px)_and_(max-width:1439px)_and_(min-height:550px)_and_(max-height:920px)]:justify-center [@media(min-width:1021px)_and_(max-width:1440px)_and_(min-height:1397px)_and_(max-height:1500px)]:!ml-0 [@media(min-width:1021px)_and_(max-width:1440px)_and_(min-height:1397px)_and_(max-height:1500px)]:flex [@media(min-width:1021px)_and_(max-width:1440px)_and_(min-height:1397px)_and_(max-height:1500px)]:justify-center min-[1440px]:!ml-0 min-[1440px]:flex min-[1440px]:justify-center "
      >
       <div
-       className="grid w-full grid-cols-1 items-start gap-12 [@media(min-width:1024px)_and_(max-width:1439px)_and_(min-height:550px)_and_(max-height:920px)]:mx-auto [@media(min-width:1024px)_and_(max-width:1439px)_and_(min-height:550px)_and_(max-height:920px)]:flex [@media(min-width:1024px)_and_(max-width:1439px)_and_(min-height:550px)_and_(max-height:920px)]:w-auto [@media(min-width:1024px)_and_(max-width:1439px)_and_(min-height:550px)_and_(max-height:920px)]:max-w-full [@media(min-width:1024px)_and_(max-width:1439px)_and_(min-height:550px)_and_(max-height:920px)]:flex-row [@media(min-width:1024px)_and_(max-width:1439px)_and_(min-height:550px)_and_(max-height:920px)]:flex-nowrap [@media(min-width:1024px)_and_(max-width:1439px)_and_(min-height:550px)_and_(max-height:920px)]:items-center [@media(min-width:1024px)_and_(max-width:1439px)_and_(min-height:550px)_and_(max-height:920px)]:gap-8 [@media(min-width:1021px)_and_(max-width:1440px)_and_(min-height:1397px)_and_(max-height:1500px)]:mx-auto [@media(min-width:1021px)_and_(max-width:1440px)_and_(min-height:1397px)_and_(max-height:1500px)]:flex [@media(min-width:1021px)_and_(max-width:1440px)_and_(min-height:1397px)_and_(max-height:1500px)]:w-auto [@media(min-width:1021px)_and_(max-width:1440px)_and_(min-height:1397px)_and_(max-height:1500px)]:max-w-full [@media(min-width:1021px)_and_(max-width:1440px)_and_(min-height:1397px)_and_(max-height:1500px)]:flex-row [@media(min-width:1021px)_and_(max-width:1440px)_and_(min-height:1397px)_and_(max-height:1500px)]:flex-nowrap [@media(min-width:1021px)_and_(max-width:1440px)_and_(min-height:1397px)_and_(max-height:1500px)]:items-center [@media(min-width:1021px)_and_(max-width:1440px)_and_(min-height:1397px)_and_(max-height:1500px)]:gap-[clamp(2rem,4vw,3.5rem)] min-[1440px]:mx-auto min-[1440px]:flex min-[1440px]:w-auto min-[1440px]:max-w-full min-[1440px]:flex-row min-[1440px]:flex-nowrap min-[1440px]:items-center min-[1440px]:gap-14 min-[1440px]:gap-y-0 min-[2560px]:gap-16 landing-3840-2160:origin-center landing-3840-2160:scale-[1.6] landing-4096-2304:origin-center landing-5120-2880:origin-center landing-4096-2304:scale-[1.4] landing-5120-2880:scale-[1.4] landing-7680-4320:origin-center landing-7680-4320:scale-[1.9]"
+       className="landing-hero-991-row grid w-full grid-cols-1 items-start gap-12 [@media(min-width:1024px)_and_(max-width:1439px)_and_(min-height:550px)_and_(max-height:920px)]:mx-auto [@media(min-width:1024px)_and_(max-width:1439px)_and_(min-height:550px)_and_(max-height:920px)]:flex [@media(min-width:1024px)_and_(max-width:1439px)_and_(min-height:550px)_and_(max-height:920px)]:w-auto [@media(min-width:1024px)_and_(max-width:1439px)_and_(min-height:550px)_and_(max-height:920px)]:max-w-full [@media(min-width:1024px)_and_(max-width:1439px)_and_(min-height:550px)_and_(max-height:920px)]:flex-row [@media(min-width:1024px)_and_(max-width:1439px)_and_(min-height:550px)_and_(max-height:920px)]:flex-nowrap [@media(min-width:1024px)_and_(max-width:1439px)_and_(min-height:550px)_and_(max-height:920px)]:items-center [@media(min-width:1024px)_and_(max-width:1439px)_and_(min-height:550px)_and_(max-height:920px)]:gap-8 [@media(min-width:1021px)_and_(max-width:1440px)_and_(min-height:1397px)_and_(max-height:1500px)]:mx-auto [@media(min-width:1021px)_and_(max-width:1440px)_and_(min-height:1397px)_and_(max-height:1500px)]:flex [@media(min-width:1021px)_and_(max-width:1440px)_and_(min-height:1397px)_and_(max-height:1500px)]:w-auto [@media(min-width:1021px)_and_(max-width:1440px)_and_(min-height:1397px)_and_(max-height:1500px)]:max-w-full [@media(min-width:1021px)_and_(max-width:1440px)_and_(min-height:1397px)_and_(max-height:1500px)]:flex-row [@media(min-width:1021px)_and_(max-width:1440px)_and_(min-height:1397px)_and_(max-height:1500px)]:flex-nowrap [@media(min-width:1021px)_and_(max-width:1440px)_and_(min-height:1397px)_and_(max-height:1500px)]:items-center [@media(min-width:1021px)_and_(max-width:1440px)_and_(min-height:1397px)_and_(max-height:1500px)]:gap-[clamp(2rem,4vw,3.5rem)] min-[1440px]:mx-auto min-[1440px]:flex min-[1440px]:w-auto min-[1440px]:max-w-full min-[1440px]:flex-row min-[1440px]:flex-nowrap min-[1440px]:items-center min-[1440px]:gap-14 min-[1440px]:gap-y-0 min-[2560px]:gap-16 landing-3840-2160:origin-center landing-3840-2160:scale-[1.6] landing-4096-2304:origin-center landing-5120-2880:origin-center landing-4096-2304:scale-[1.4] landing-5120-2880:scale-[1.4] landing-7680-4320:origin-center landing-7680-4320:scale-[1.9]"
               style={
                 {
                   '--hero-copy-max-w': HERO_COPY_MAX_WIDTH,
@@ -471,7 +664,7 @@ export function LandingPage() {
                 } as React.CSSProperties
               }
             >
-              <div className="relative z-10 w-full max-w-full min-w-0 pb-10 [@media(min-width:1024px)_and_(max-width:1439px)_and_(min-height:550px)_and_(max-height:920px)]:min-w-max [@media(min-width:1024px)_and_(max-width:1439px)_and_(min-height:550px)_and_(max-height:920px)]:w-max [@media(min-width:1024px)_and_(max-width:1439px)_and_(min-height:550px)_and_(max-height:920px)]:max-w-none [@media(min-width:1024px)_and_(max-width:1439px)_and_(min-height:550px)_and_(max-height:920px)]:shrink-0 [@media(min-width:1024px)_and_(max-width:1439px)_and_(min-height:550px)_and_(max-height:920px)]:pb-0 [@media(min-width:1021px)_and_(max-width:1440px)_and_(min-height:1397px)_and_(max-height:1500px)]:ml-0 [@media(min-width:1021px)_and_(max-width:1440px)_and_(min-height:1397px)_and_(max-height:1500px)]:min-w-max [@media(min-width:1021px)_and_(max-width:1440px)_and_(min-height:1397px)_and_(max-height:1500px)]:w-max [@media(min-width:1021px)_and_(max-width:1440px)_and_(min-height:1397px)_and_(max-height:1500px)]:max-w-none [@media(min-width:1021px)_and_(max-width:1440px)_and_(min-height:1397px)_and_(max-height:1500px)]:shrink-0 [@media(min-width:1021px)_and_(max-width:1440px)_and_(min-height:1397px)_and_(max-height:1500px)]:pb-0 min-[1440px]:ml-0 min-[1440px]:min-w-max min-[1440px]:w-max min-[1440px]:max-w-none min-[1440px]:shrink-0 min-[1440px]:pb-0">
+              <div className="landing-hero-991-copy relative z-10 w-full max-w-full min-w-0 pb-10 [@media(min-width:1024px)_and_(max-width:1439px)_and_(min-height:550px)_and_(max-height:920px)]:min-w-max [@media(min-width:1024px)_and_(max-width:1439px)_and_(min-height:550px)_and_(max-height:920px)]:w-max [@media(min-width:1024px)_and_(max-width:1439px)_and_(min-height:550px)_and_(max-height:920px)]:max-w-none [@media(min-width:1024px)_and_(max-width:1439px)_and_(min-height:550px)_and_(max-height:920px)]:shrink-0 [@media(min-width:1024px)_and_(max-width:1439px)_and_(min-height:550px)_and_(max-height:920px)]:pb-0 [@media(min-width:1021px)_and_(max-width:1440px)_and_(min-height:1397px)_and_(max-height:1500px)]:ml-0 [@media(min-width:1021px)_and_(max-width:1440px)_and_(min-height:1397px)_and_(max-height:1500px)]:min-w-max [@media(min-width:1021px)_and_(max-width:1440px)_and_(min-height:1397px)_and_(max-height:1500px)]:w-max [@media(min-width:1021px)_and_(max-width:1440px)_and_(min-height:1397px)_and_(max-height:1500px)]:max-w-none [@media(min-width:1021px)_and_(max-width:1440px)_and_(min-height:1397px)_and_(max-height:1500px)]:shrink-0 [@media(min-width:1021px)_and_(max-width:1440px)_and_(min-height:1397px)_and_(max-height:1500px)]:pb-0 min-[1440px]:ml-0 min-[1440px]:min-w-max min-[1440px]:w-max min-[1440px]:max-w-none min-[1440px]:shrink-0 min-[1440px]:pb-0">
                 <span className="inline-flex max-w-full flex-wrap items-center gap-2 rounded-full border border-black/[0.04] bg-black/[0.06] px-[17px] py-[9px] shadow-[0px_2px_8px_0px_rgba(16,185,129,0.1)]">
                   <span className="landing-alpha-status-dot" aria-hidden />
                   <span className="font-mono text-[12px] font-normal leading-4 text-[#059669]">
@@ -527,7 +720,7 @@ export function LandingPage() {
 
               <div
                 aria-hidden
-                className="relative z-0 mx-auto box-content flex h-[4.2rem] w-[4.2rem] shrink-0 items-center justify-center self-center px-10 py-10 sm:h-[4.8rem] sm:w-[4.8rem] [@media(min-width:1024px)_and_(max-width:1439px)_and_(min-height:550px)_and_(max-height:920px)]:h-[3.6rem] [@media(min-width:1024px)_and_(max-width:1439px)_and_(min-height:550px)_and_(max-height:920px)]:w-[3.6rem] [@media(min-width:1024px)_and_(max-width:1439px)_and_(min-height:550px)_and_(max-height:920px)]:px-8 [@media(min-width:1024px)_and_(max-width:1439px)_and_(min-height:550px)_and_(max-height:920px)]:py-0 [@media(min-width:1021px)_and_(max-width:1440px)_and_(min-height:1397px)_and_(max-height:1500px)]:h-[clamp(3rem,4.5vw,6rem)] [@media(min-width:1021px)_and_(max-width:1440px)_and_(min-height:1397px)_and_(max-height:1500px)]:w-[clamp(3rem,4.5vw,6rem)] [@media(min-width:1021px)_and_(max-width:1440px)_and_(min-height:1397px)_and_(max-height:1500px)]:px-10 [@media(min-width:1021px)_and_(max-width:1440px)_and_(min-height:1397px)_and_(max-height:1500px)]:py-0 min-[1440px]:h-24 min-[1440px]:w-24 min-[1440px]:px-12 min-[1440px]:py-0 min-[2560px]:h-[7.2rem] min-[2560px]:w-[7.2rem]"
+                className="landing-hero-991-arrow relative z-0 mx-auto box-content flex h-[4.2rem] w-[4.2rem] shrink-0 items-center justify-center self-center px-10 py-10 sm:h-[4.8rem] sm:w-[4.8rem] [@media(min-width:1024px)_and_(max-width:1439px)_and_(min-height:550px)_and_(max-height:920px)]:h-[3.6rem] [@media(min-width:1024px)_and_(max-width:1439px)_and_(min-height:550px)_and_(max-height:920px)]:w-[3.6rem] [@media(min-width:1024px)_and_(max-width:1439px)_and_(min-height:550px)_and_(max-height:920px)]:px-8 [@media(min-width:1024px)_and_(max-width:1439px)_and_(min-height:550px)_and_(max-height:920px)]:py-0 [@media(min-width:1021px)_and_(max-width:1440px)_and_(min-height:1397px)_and_(max-height:1500px)]:h-[clamp(3rem,4.5vw,6rem)] [@media(min-width:1021px)_and_(max-width:1440px)_and_(min-height:1397px)_and_(max-height:1500px)]:w-[clamp(3rem,4.5vw,6rem)] [@media(min-width:1021px)_and_(max-width:1440px)_and_(min-height:1397px)_and_(max-height:1500px)]:px-10 [@media(min-width:1021px)_and_(max-width:1440px)_and_(min-height:1397px)_and_(max-height:1500px)]:py-0 min-[1440px]:h-24 min-[1440px]:w-24 min-[1440px]:px-12 min-[1440px]:py-0 min-[2560px]:h-[7.2rem] min-[2560px]:w-[7.2rem]"
               >
                 <img
                   src={heroArrow}
@@ -536,7 +729,7 @@ export function LandingPage() {
                 />
               </div>
 
-              <div className="relative z-0 mx-auto flex shrink-0 justify-center [@media(min-width:768px)_and_(max-width:850px)_and_(min-height:850px)_and_(max-height:920px)]:w-[291px] [@media(min-width:1024px)_and_(max-width:1439px)_and_(min-height:550px)_and_(max-height:920px)]:ml-3 [@media(min-width:1024px)_and_(max-width:1439px)_and_(min-height:550px)_and_(max-height:920px)]:mr-0 [@media(min-width:1024px)_and_(max-width:1439px)_and_(min-height:550px)_and_(max-height:920px)]:w-[280px] [@media(min-width:1021px)_and_(max-width:1440px)_and_(min-height:1397px)_and_(max-height:1500px)]:ml-0 [@media(min-width:1021px)_and_(max-width:1440px)_and_(min-height:1397px)_and_(max-height:1500px)]:mr-0 [@media(min-width:1021px)_and_(max-width:1440px)_and_(min-height:1397px)_and_(max-height:1500px)]:w-[clamp(280px,26vw,364px)] [@media(min-width:1021px)_and_(max-width:1440px)_and_(min-height:1397px)_and_(max-height:1500px)]:shrink-0 min-[1440px]:ml-8 min-[1440px]:mr-0 min-[1440px]:w-[var(--hero-video-col-w)] min-[2560px]:ml-12">
+              <div className="landing-hero-991-visual relative z-0 mx-auto flex shrink-0 justify-center [@media(min-width:768px)_and_(max-width:850px)_and_(min-height:850px)_and_(max-height:920px)]:w-[291px] [@media(min-width:1024px)_and_(max-width:1439px)_and_(min-height:550px)_and_(max-height:920px)]:ml-3 [@media(min-width:1024px)_and_(max-width:1439px)_and_(min-height:550px)_and_(max-height:920px)]:mr-0 [@media(min-width:1024px)_and_(max-width:1439px)_and_(min-height:550px)_and_(max-height:920px)]:w-[280px] [@media(min-width:1021px)_and_(max-width:1440px)_and_(min-height:1397px)_and_(max-height:1500px)]:ml-0 [@media(min-width:1021px)_and_(max-width:1440px)_and_(min-height:1397px)_and_(max-height:1500px)]:mr-0 [@media(min-width:1021px)_and_(max-width:1440px)_and_(min-height:1397px)_and_(max-height:1500px)]:w-[clamp(280px,26vw,364px)] [@media(min-width:1021px)_and_(max-width:1440px)_and_(min-height:1397px)_and_(max-height:1500px)]:shrink-0 min-[1440px]:ml-8 min-[1440px]:mr-0 min-[1440px]:w-[var(--hero-video-col-w)] min-[2560px]:ml-12">
                 <HeroInteractionVideo />
               </div>
             </div>

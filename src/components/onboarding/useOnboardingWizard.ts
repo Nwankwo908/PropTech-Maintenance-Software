@@ -44,7 +44,7 @@ import {
   primaryPayoutMethodLabel,
 } from '@/api/landlordStripeConnect'
 import { getActiveLandlordId } from '@/lib/activeLandlord'
-import { landlordHasPayments } from '@shared/landlordCapabilities'
+import { isLimitedAlpha1Landlord, landlordHasPayments } from '@shared/landlordCapabilities'
 import {
   buildOnboardingReviewData,
   canCompleteOnboarding,
@@ -296,6 +296,7 @@ export function useOnboardingWizard() {
         const hasStalePortfolio =
           onWelcome &&
           !localInProgress &&
+          !isLimitedAlpha1Landlord(getActiveLandlordId()) &&
           (onboarding.properties.length > 0 ||
             (counts != null &&
               (counts.properties > 0 ||
@@ -1081,6 +1082,11 @@ export function useOnboardingWizard() {
     setState(completedState)
     persistOnboardingWizardLocally(completedState)
     window.dispatchEvent(new Event('ulo:onboarding-completed'))
+    if (isLimitedAlpha1Landlord(reviewState.landlordId)) {
+      setCompletingSetup(false)
+      setSaving(false)
+      return
+    }
     const remainingMs = SETUP_COMPLETE_TRANSITION_MS - (Date.now() - transitionStartedAt)
     if (remainingMs > 0) {
       await new Promise((resolve) => window.setTimeout(resolve, remainingMs))

@@ -13,9 +13,10 @@
  * can never leak into a real customer account or vice versa.
  *
  * Onboarding writes are fail-closed to Full Alpha, Limited Alpha 1, and New
- * Landlord ids (see requireOnboardingLandlord). Switching to an empty onboarding
- * account always resets via /admin/onboarding?reset=1 so prior fast-track
- * imports cannot linger.
+ * Landlord ids (see requireOnboardingLandlord). Switching to New Landlord
+ * always resets via /admin/onboarding?reset=1 so prior fast-track imports
+ * cannot linger. Limited Alpha 1 is a live account — wipe only from
+ * Reset onboarding.
  */
 
 import { LIMITED_ALPHA_1_LANDLORD_ID } from '@shared/landlordCapabilities'
@@ -81,10 +82,11 @@ function readOverride(): string | null {
 }
 
 /**
- * Empty onboarding accounts (no portfolio until setup). Distinct from Full Alpha.
+ * New Landlord sandbox (no portfolio until setup). Limited Alpha 1 is a live
+ * account and is not treated as empty.
  */
 export function isEmptyOnboardingLandlordId(landlordId: string): boolean {
-  return landlordId === EMPTY_LANDLORD_ID || landlordId === LIMITED_ALPHA_1_LANDLORD_ID
+  return landlordId === EMPTY_LANDLORD_ID
 }
 
 /**
@@ -137,7 +139,7 @@ export function setActiveLandlordOverride(landlordId: string | null): void {
     }
 
     window.localStorage.setItem(OVERRIDE_STORAGE_KEY, landlordId)
-    if (isEmptyOnboardingLandlordId(landlordId)) {
+    if (landlordId === EMPTY_LANDLORD_ID) {
       window.localStorage.removeItem(`ulo.landlordOnboarding.${landlordId}`)
       window.location.assign('/admin/onboarding?reset=1')
       return
