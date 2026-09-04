@@ -31,6 +31,7 @@ export type ExternalVendorSuggestionDto = {
   website?: string | null
   tags?: string[]
   listingUrl?: string | null
+  requestFlowUrl?: string | null
   searchId?: string | null
   categoryId?: string | null
   providerRef?: string | null

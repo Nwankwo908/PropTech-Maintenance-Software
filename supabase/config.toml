@@ -114,6 +114,18 @@ verify_jwt = false
 import_map = "./functions/discover-external-vendors/deno.json"
 entrypoint = "./functions/discover-external-vendors/index.ts"
 
+[functions.zillow-property-photos]
+enabled = true
+verify_jwt = false
+import_map = "./functions/zillow-property-photos/deno.json"
+entrypoint = "./functions/zillow-property-photos/index.ts"
+
+[functions.property-insights]
+enabled = true
+verify_jwt = false
+import_map = "./functions/property-insights/deno.json"
+entrypoint = "./functions/property-insights/index.ts"
+
 [functions.message-thumbtack-vendor]
 enabled = true
 verify_jwt = false

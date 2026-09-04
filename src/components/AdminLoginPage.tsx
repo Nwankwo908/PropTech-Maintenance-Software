@@ -3,6 +3,7 @@ import { Navigate, Link, useNavigate, useSearchParams } from 'react-router-dom'
 import bgLogin from '@/assets/BG_Login.png'
 import uloLogo from '@/assets/Ulo_Logo_small.png'
 import {
+  getAdminSession,
   isAdminSessionAllowed,
   sendAdminEmailOtp,
   signInAdminWithOAuth,
@@ -81,7 +82,7 @@ export function AdminLoginPage() {
       if (!cancelled) setAlreadyAuthed(isAdminSessionAllowed(session))
     }
 
-    void client.auth.getSession().then(({ data }) => evaluate(data.session))
+    void getAdminSession().then((session) => evaluate(session))
 
     // A session can arrive slightly after mount (e.g. OAuth detectSessionInUrl),
     // so react to it instead of requiring the user to click Login again.
@@ -156,6 +157,7 @@ export function AdminLoginPage() {
     setSubmitting(true)
     try {
       await signInAdminWithOAuth('google')
+      window.setTimeout(() => setSubmitting(false), 12_000)
     } catch (err) {
       setError(getErrorMessage(err, 'Sign in failed'))
       setSubmitting(false)

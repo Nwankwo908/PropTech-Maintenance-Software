@@ -34,6 +34,7 @@ type MutableAgg = {
   phone: string | null
   website: string | null
   listingUrl: string | null
+  requestFlowUrl: string | null
   tags: string[]
   searchId: string | null
   categoryId: string | null
@@ -97,6 +98,7 @@ export function mergeAndRankExternalHits(
         phone: hit.phone?.trim() || null,
         website: hit.website?.trim() || null,
         listingUrl: hit.listingUrl?.trim() || null,
+        requestFlowUrl: hit.requestFlowUrl?.trim() || null,
         tags: hit.tags ?? [],
         searchId: hit.searchId?.trim() || null,
         categoryId: hit.categoryId?.trim() || null,
@@ -114,6 +116,7 @@ export function mergeAndRankExternalHits(
     prev.phone = pickString(prev.phone, hit.phone)
     prev.website = pickString(prev.website, hit.website)
     prev.listingUrl = pickString(prev.listingUrl, hit.listingUrl)
+    prev.requestFlowUrl = pickString(prev.requestFlowUrl, hit.requestFlowUrl)
     prev.searchId = pickString(prev.searchId, hit.searchId)
     prev.categoryId = pickString(prev.categoryId, hit.categoryId)
     prev.providerRef = pickString(prev.providerRef, hit.providerRef)
@@ -141,6 +144,7 @@ export function mergeAndRankExternalHits(
       phone: m.phone,
       website: m.website,
       listingUrl: m.listingUrl,
+      requestFlowUrl: m.requestFlowUrl,
       tags: m.tags.length > 0 ? m.tags : undefined,
       searchId: m.searchId,
       categoryId: m.categoryId,

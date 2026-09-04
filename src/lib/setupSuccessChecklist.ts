@@ -48,9 +48,7 @@ export type SetupSuccessProgress = {
 export function welcomeTextsComplete(
   residents: { phone?: string | null; activationStatus?: string | null }[],
 ): boolean {
-  const withPhone = residents.filter((row) => Boolean(row.phone?.trim()))
-  if (withPhone.length === 0) return false
-  return withPhone.every((row) => {
+  return residents.some((row) => {
     const status = (row.activationStatus ?? '').trim().toLowerCase()
     return status !== '' && status !== 'not_started'
   })
@@ -66,7 +64,7 @@ export function resolveSetupSuccessProgress(input: {
 }): SetupSuccessProgress {
   const doneById: Record<SetupSuccessItemId, boolean> = {
     welcome_texts: welcomeTextsComplete(input.residents),
-    verify_vendors: input.vendorCount > 0 && input.verifiedVendorCount > 0,
+    verify_vendors: input.vendorCount > 0,
     property_details: input.propertyDetailsComplete,
     maintenance_prefs: input.hasMaintenancePreferences,
     test_request: input.maintenanceRequestCount > 0,

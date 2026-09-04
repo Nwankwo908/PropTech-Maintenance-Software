@@ -871,13 +871,13 @@ export function OnboardingAiReviewStep({
               />
             </label>
             <label className="block">
-              <span className={fieldLabelClass}>Email</span>
+              <span className={fieldLabelClass}>Support email</span>
               <input
                 className={inputClass}
                 type="email"
                 value={account.email}
                 onChange={(e) => patchAccount({ email: e.target.value })}
-                placeholder="Email"
+                placeholder="Support email"
               />
             </label>
             <label className="block sm:col-span-2">

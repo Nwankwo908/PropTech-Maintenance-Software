@@ -83,7 +83,7 @@ export type AskUloToolPackets = {
   } | null
   market?: {
     available: boolean
-    provider: "rentcast" | "zillow_rapidapi" | "zillow_research" | null
+    provider: "rentcast" | "zillow_rapidapi" | null
     bullets: string[]
     citations: AskUloCitation[]
     gapNote: string | null

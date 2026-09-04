@@ -3,6 +3,7 @@ import {
   buildSlaRailTimeline,
   isSlaOverdueOpenTicket,
   mergeLandlordRailTimeline,
+  splitMaintenanceNotes,
   type SlaOverdueTicketInput,
   type SlaOverdueTimelineEntry,
 } from './slaOverdueActionReview'
@@ -74,5 +75,19 @@ describe('isSlaOverdueOpenTicket', () => {
     expect(
       isSlaOverdueOpenTicket({ dueAt: pastDue, vendorWorkStatus: 'in_progress' }),
     ).toBe(false)
+  })
+})
+
+describe('splitMaintenanceNotes', () => {
+  it('splits intake description into notes, affected area, and safety concerns', () => {
+    expect(
+      splitMaintenanceNotes(
+        'Outlet is sparking.\n\nAffected area: bedroom.\n\nSafety concerns: kids in the room.\n\nFirst noticed: today.',
+      ),
+    ).toEqual({
+      notes: 'Outlet is sparking.',
+      affectedArea: 'bedroom',
+      safetyConcerns: 'kids in the room',
+    })
   })
 })

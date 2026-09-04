@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import {
-  countCriticalPushEvents,
   CRITICAL_SAFETY_ALERTS,
   DEFAULT_NOTIFICATION_SETTINGS,
   loadNotificationSettingsForAccount,
@@ -12,16 +11,9 @@ import {
   type NotificationEventCategory,
   type NotificationSettingsState,
 } from '@/lib/notificationSettings'
-import { fetchNotificationDeliveryHealth, type NotificationDeliveryHealth } from '@/lib/notificationDeliveryHealth'
-import {
-  getBrowserPushPermission,
-  maybeShowBrowserPushNotification,
-  requestBrowserPushPermission,
-} from '@/lib/notificationDelivery'
 import { sendSettingsTestNotification } from '@/api/settingsTestNotification'
 import { fetchLandlordAccountProfile } from '@/lib/landlordAccountProfile'
-import { getActiveLandlordId } from '@/lib/activeLandlord'
-import { landlordHasNativeMobileApp } from '@shared/landlordCapabilities'
+import { loadOrganizationSettings } from '@/lib/organizationSettings'
 
 const sectionCardClass =
   'sa-surface rounded-[10px] border border-[#e5e7eb] bg-white p-6 shadow-[0px_1px_2px_-1px_rgba(0,0,0,0.06)]'
@@ -36,11 +28,10 @@ const CHANNEL_LABELS: Record<NotificationChannel, string> = {
   push: 'Push',
 }
 
-const EVENT_CHANNELS: NotificationChannel[] = ['email', 'sms', 'activity_feed', 'push']
+const EVENT_CHANNELS: NotificationChannel[] = ['email', 'sms', 'activity_feed']
 
-function eventChannelsForAccount(): NotificationChannel[] {
-  if (landlordHasNativeMobileApp(getActiveLandlordId())) return EVENT_CHANNELS
-  return EVENT_CHANNELS.filter((channel) => channel !== 'push')
+function visibleDeliveryChannel(channel: NotificationChannel): NotificationChannel {
+  return channel === 'push' ? 'email' : channel
 }
 
 function SelectChevron() {
@@ -239,7 +230,6 @@ function EventCategorySection({
               <th className="px-4 py-3 text-center font-semibold">Email</th>
               <th className="px-4 py-3 text-center font-semibold">SMS</th>
               <th className="px-4 py-3 text-center font-semibold">Activity feed</th>
-              <th className="px-4 py-3 text-center font-semibold">Push</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-[#eef0f3] bg-white">
@@ -251,7 +241,7 @@ function EventCategorySection({
                   </span>
                   {item.critical ? <CriticalChip /> : null}
                 </td>
-                {eventChannelsForAccount().map((channel) => (
+                {EVENT_CHANNELS.map((channel) => (
                   <td key={channel} className="px-4 py-3 text-center">
                     <ToggleSwitch
                       id={`${category.id}-${item.id}-${channel}`}
@@ -267,15 +257,6 @@ function EventCategorySection({
         </table>
       </div>
     </section>
-  )
-}
-
-function SidebarStat({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="flex items-center justify-between gap-3 py-2.5">
-      <span className="text-[13px] tracking-[-0.1504px] text-[#6a7282]">{label}</span>
-      <span className="text-[13px] font-semibold tracking-[-0.1504px] text-[#101828]">{value}</span>
-    </div>
   )
 }
 
@@ -295,30 +276,28 @@ export function AdminNotificationSettings() {
   const [loading, setLoading] = useState(true)
   const [profileEmail, setProfileEmail] = useState('')
   const [profilePhone, setProfilePhone] = useState('')
+  const [supportEmail, setSupportEmail] = useState('')
   const [saveMessage, setSaveMessage] = useState<string | null>(null)
   const [saveError, setSaveError] = useState<string | null>(null)
-  const [deliveryHealth, setDeliveryHealth] = useState<NotificationDeliveryHealth | null>(null)
   const [testState, setTestState] = useState<Record<string, 'idle' | 'sending' | 'sent' | 'failed'>>({
     email: 'idle',
     sms: 'idle',
-    push: 'idle',
   })
   const [testMessage, setTestMessage] = useState<string | null>(null)
-  const [pushPermission, setPushPermission] = useState<NotificationPermission | 'unsupported'>(() =>
-    getBrowserPushPermission(),
-  )
-  const [pushError, setPushError] = useState<string | null>(null)
 
   useEffect(() => {
     let cancelled = false
-    void Promise.all([loadNotificationSettingsForAccount(), fetchLandlordAccountProfile(), fetchNotificationDeliveryHealth()]).then(
-      ([settings, profile, health]) => {
+    void Promise.all([
+      loadNotificationSettingsForAccount(),
+      fetchLandlordAccountProfile(),
+      loadOrganizationSettings(),
+    ]).then(([settings, profile, organization]) => {
         if (cancelled) return
         setSaved(settings)
         setDraft(settings)
         setProfileEmail(profile.email)
         setProfilePhone(profile.phone)
-        setDeliveryHealth(health)
+        setSupportEmail(organization.supportEmail)
         setLoading(false)
       },
     )
@@ -328,7 +307,6 @@ export function AdminNotificationSettings() {
   }, [])
 
   const isDirty = useMemo(() => JSON.stringify(saved) !== JSON.stringify(draft), [draft, saved])
-  const criticalPushCount = useMemo(() => countCriticalPushEvents(draft.categories), [draft.categories])
 
   function updateDelivery(patch: Partial<NotificationSettingsState['delivery']>) {
     setDraft((current) => ({ ...current, delivery: { ...current.delivery, ...patch } }))
@@ -381,59 +359,19 @@ export function AdminNotificationSettings() {
       })
   }
 
-  function handleSendTest(channel: 'email' | 'sms' | 'push') {
+  function handleSendTest(channel: 'email' | 'sms') {
     setTestMessage(null)
     setTestState((current) => ({ ...current, [channel]: 'sending' }))
-    if (channel === 'push') {
-      const shown = maybeShowBrowserPushNotification({
-        channels: ['push'],
-        title: 'Ulo test notification',
-        body: 'Push is enabled for this browser. Critical alerts can appear here while the dashboard is open.',
-      })
-      setTestState((current) => ({
-        ...current,
-        push: shown ? 'sent' : 'failed',
-      }))
-      setTestMessage(
-        shown
-          ? 'Browser notification sent.'
-          : pushPermission === 'granted'
-            ? 'Could not show a browser notification.'
-            : 'Enable browser notifications first.',
-      )
-      return
-    }
-    void sendSettingsTestNotification({ channel }).then((result) => {
+    void sendSettingsTestNotification({
+      channel,
+      toEmail: channel === 'email' ? supportEmail.trim() || profileEmail.trim() : undefined,
+    }).then((result) => {
       setTestState((current) => ({
         ...current,
         [channel]: result.ok ? 'sent' : 'failed',
       }))
       setTestMessage(result.ok ? (result.message ?? 'Sent.') : (result.error ?? 'Failed to send.'))
     })
-  }
-
-  async function handleEnablePush() {
-    setPushError(null)
-    const permission = await requestBrowserPushPermission()
-    setPushPermission(permission)
-    if (permission === 'granted') {
-      updateDelivery({ pushEnabled: true })
-      maybeShowBrowserPushNotification({
-        channels: ['push'],
-        title: 'Push notifications enabled',
-        body: 'Ulo can show alerts in this browser while you are signed in.',
-      })
-      return
-    }
-    if (permission === 'denied') {
-      setPushError('Browser notifications are blocked. Allow them in your browser settings, then try again.')
-      return
-    }
-    if (permission === 'unsupported') {
-      setPushError('This browser does not support notifications.')
-      return
-    }
-    setPushError('Notification permission was not granted.')
   }
 
   if (loading) {
@@ -484,8 +422,7 @@ export function AdminNotificationSettings() {
         ) : null}
       </div>
 
-      <div className="flex flex-col gap-8 xl:flex-row xl:items-start">
-        <div className="flex min-w-0 flex-1 flex-col gap-6">
+      <div className="flex flex-col gap-6">
           <section className={sectionCardClass}>
             <h2 className="text-[16px] font-semibold leading-6 tracking-[-0.1504px] text-[#101828]">
               Delivery preferences
@@ -494,47 +431,18 @@ export function AdminNotificationSettings() {
               Set default channels for operational alerts. Event-level settings below can override these.
             </p>
 
-            <div className="mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-              <DeliveryChannelCard label="Email" connected={Boolean(profileEmail.trim())} />
+            <div className="mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+              <DeliveryChannelCard
+                label="Email"
+                connected={Boolean((supportEmail || profileEmail).trim())}
+                detail={
+                  (supportEmail || profileEmail).trim() ||
+                  'Add a support email in Organization'
+                }
+              />
               <DeliveryChannelCard label="SMS" connected={Boolean(profilePhone.trim())} />
               <DeliveryChannelCard label="Activity feed" connected />
-              {landlordHasNativeMobileApp(getActiveLandlordId()) ? (
-              <DeliveryChannelCard
-                label="Push"
-                connected={pushPermission === 'granted' && draft.delivery.pushEnabled}
-                detail={
-                  pushPermission === 'granted'
-                    ? draft.delivery.pushEnabled
-                      ? 'Browser notifications on'
-                      : 'Permission granted — enable in settings'
-                    : pushPermission === 'denied'
-                      ? 'Blocked by browser'
-                      : pushPermission === 'unsupported'
-                        ? 'Not supported in this browser'
-                        : 'Not enabled'
-                }
-                actionLabel={
-                  pushPermission === 'granted'
-                    ? draft.delivery.pushEnabled
-                      ? undefined
-                      : 'Turn on'
-                    : pushPermission === 'denied' || pushPermission === 'unsupported'
-                      ? undefined
-                      : 'Enable'
-                }
-                onAction={() => {
-                  if (pushPermission === 'granted') {
-                    updateDelivery({ pushEnabled: true })
-                    return
-                  }
-                  void handleEnablePush()
-                }}
-              />
-              ) : null}
             </div>
-            {pushError ? (
-              <p className="mt-3 text-[13px] font-medium tracking-[-0.1504px] text-[#b42318]">{pushError}</p>
-            ) : null}
 
             <div className="mt-5 grid gap-4 lg:grid-cols-2">
               <div>
@@ -545,7 +453,7 @@ export function AdminNotificationSettings() {
                   <select
                     id="primary-channel"
                     className={selectClass}
-                    value={draft.delivery.primaryChannel}
+                    value={visibleDeliveryChannel(draft.delivery.primaryChannel)}
                     onChange={(e) =>
                       updateDelivery({ primaryChannel: e.target.value as NotificationChannel })
                     }
@@ -553,7 +461,6 @@ export function AdminNotificationSettings() {
                     <option value="email">Email</option>
                     <option value="sms">SMS</option>
                     <option value="activity_feed">Activity feed</option>
-                    <option value="push">Push</option>
                   </select>
                   <SelectChevron />
                 </div>
@@ -566,7 +473,7 @@ export function AdminNotificationSettings() {
                   <select
                     id="fallback-channel"
                     className={selectClass}
-                    value={draft.delivery.fallbackChannel}
+                    value={visibleDeliveryChannel(draft.delivery.fallbackChannel)}
                     onChange={(e) =>
                       updateDelivery({ fallbackChannel: e.target.value as NotificationChannel })
                     }
@@ -574,34 +481,10 @@ export function AdminNotificationSettings() {
                     <option value="email">Email</option>
                     <option value="sms">SMS</option>
                     <option value="activity_feed">Activity feed</option>
-                    <option value="push">Push</option>
                   </select>
                   <SelectChevron />
                 </div>
               </div>
-            </div>
-
-            <div className="mt-5 flex items-center justify-between gap-4 rounded-[10px] border border-[#eef0f3] bg-[#f9fafb] px-4 py-3">
-              <div>
-                <p className="text-[14px] font-medium tracking-[-0.1504px] text-[#101828]">
-                  Push notifications
-                </p>
-                <p className="mt-0.5 text-[13px] tracking-[-0.1504px] text-[#6a7282]">
-                  Show browser alerts for events that include Push in the matrix below.
-                </p>
-              </div>
-              <ToggleSwitch
-                id="push-enabled"
-                checked={draft.delivery.pushEnabled}
-                onChange={(pushEnabled) => {
-                  if (pushEnabled && pushPermission !== 'granted') {
-                    void handleEnablePush()
-                    return
-                  }
-                  updateDelivery({ pushEnabled })
-                }}
-                label="Push notifications"
-              />
             </div>
 
             <div className="mt-5 flex items-center justify-between gap-4 rounded-[10px] border border-[#eef0f3] bg-[#f9fafb] px-4 py-3">
@@ -680,9 +563,9 @@ export function AdminNotificationSettings() {
             <p className="mt-1 text-[14px] leading-5 tracking-[-0.1504px] text-[#6a7282]">
               Send a sample alert to confirm your channels are working.
             </p>
-            <div className="mt-5 grid gap-3 sm:grid-cols-3">
-              {(['Email', 'SMS', 'Push'] as const).map((label) => {
-                const channel = label.toLowerCase() as 'email' | 'sms' | 'push'
+            <div className="mt-5 grid gap-3 sm:grid-cols-2">
+              {(['Email', 'SMS'] as const).map((label) => {
+                const channel = label.toLowerCase() as 'email' | 'sms'
                 const state = testState[channel]
                 return (
                   <div
@@ -707,65 +590,6 @@ export function AdminNotificationSettings() {
               <p className="mt-3 text-[13px] tracking-[-0.1504px] text-[#6a7282]">{testMessage}</p>
             ) : null}
           </section>
-        </div>
-
-        <aside className="flex w-full shrink-0 flex-col gap-6 xl:sticky xl:top-6 xl:w-[300px]">
-          <section className={sectionCardClass}>
-            <h2 className="text-[16px] font-semibold leading-6 tracking-[-0.1504px] text-[#101828]">
-              Delivery health
-            </h2>
-            <div className="mt-4 divide-y divide-[#eef0f3]">
-              <SidebarStat label="Primary channel" value={CHANNEL_LABELS[draft.delivery.primaryChannel]} />
-              <SidebarStat label="Fallback" value={CHANNEL_LABELS[draft.delivery.fallbackChannel]} />
-              <SidebarStat
-                label="Quiet hours"
-                value={`${draft.delivery.quietHoursStart} — ${draft.delivery.quietHoursEnd}`}
-              />
-              <SidebarStat
-                label="Sent (7 days)"
-                value={deliveryHealth?.hasData ? String(deliveryHealth.sent7Days) : '—'}
-              />
-              <SidebarStat
-                label="Delivery rate"
-                value={deliveryHealth?.hasData ? deliveryHealth.deliveryRateLabel : '—'}
-              />
-              <SidebarStat
-                label="Failed (7 days)"
-                value={deliveryHealth?.hasData ? String(deliveryHealth.failed7Days) : '—'}
-              />
-            </div>
-            {!deliveryHealth?.hasData ? (
-              <p className="mt-3 text-[13px] leading-5 tracking-[-0.1504px] text-[#6a7282]">
-                Delivery health will appear after you start sending notifications.
-              </p>
-            ) : null}
-          </section>
-
-          <section className={sectionCardClass}>
-            <h2 className="text-[16px] font-semibold leading-6 tracking-[-0.1504px] text-[#101828]">
-              Critical events
-            </h2>
-            <p className="mt-2 text-[14px] leading-6 tracking-[-0.1504px] text-[#6a7282]">
-              {criticalPushCount} critical events are currently set to push notifications.
-            </p>
-            <div className="mt-4 space-y-2">
-              <OutlineButton className="w-full">Review critical list</OutlineButton>
-              <OutlineButton className="w-full" onClick={handleRestoreDefaults}>
-                Restore defaults
-              </OutlineButton>
-            </div>
-          </section>
-
-          <section className="sa-surface rounded-[10px] border border-[#dbeafe] bg-[#eff6ff] p-5">
-            <p className="text-[13px] font-semibold tracking-[-0.1504px] text-[#101828]">
-              Reduce notification noise
-            </p>
-            <p className="mt-2 text-[13px] leading-5 tracking-[-0.1504px] text-[#4b5563]">
-              Mute non-critical categories, rely on push only for escalations, and use quiet hours for
-              routine updates.
-            </p>
-          </section>
-        </aside>
       </div>
     </>
   )

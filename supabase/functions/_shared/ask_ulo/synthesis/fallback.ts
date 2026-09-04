@@ -455,9 +455,7 @@ export function buildFallbackAskUloAnswer(packets: AskUloToolPackets): string {
 
     if (packets.market?.available && packets.market.estimatedRent != null) {
       const src =
-        packets.market.provider === "zillow_research"
-          ? "Zillow Research (ZORI)"
-          : packets.market.provider === "zillow_rapidapi"
+        packets.market.provider === "zillow_rapidapi"
             ? "Zillow listings"
             : packets.market.provider === "rentcast"
               ? "RentCast"

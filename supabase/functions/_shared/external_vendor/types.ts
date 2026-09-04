@@ -13,6 +13,8 @@ export type ExternalVendorHit = {
   website?: string | null
   /** Provider listing page (Thumbtack service page, etc.). */
   listingUrl?: string | null
+  /** Thumbtack Request Flow widget URL (`widgets.requestFlowURL`). */
+  requestFlowUrl?: string | null
   tags?: string[]
   searchId?: string | null
   categoryId?: string | null
@@ -36,6 +38,8 @@ export type ExternalVendorSuggestion = {
   website?: string | null
   /** Provider listing page (Thumbtack service page, etc.). */
   listingUrl?: string | null
+  /** Thumbtack Request Flow widget URL (`widgets.requestFlowURL`). */
+  requestFlowUrl?: string | null
   tags?: string[]
   searchId?: string | null
   categoryId?: string | null

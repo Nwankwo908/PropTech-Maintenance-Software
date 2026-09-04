@@ -1,9 +1,11 @@
 /// <reference lib="deno.ns" />
 import { assertEquals } from "https://deno.land/std@0.224.0/assert/mod.ts"
 import {
+  collectLandlordSupportEmails,
   filterVendorEmailsFromOpsRecipients,
   normalizeOpsEmail,
   parseOpsEmailList,
+  primaryLandlordSupportEmail,
   resolveLandlordOpsEmails,
 } from "./landlordOpsNotify.ts"
 
@@ -43,9 +45,35 @@ Deno.test("filter never leaves a vendor on landlord approve list", () => {
   assertEquals(allowed, ["emeka@ulohome.io"])
 })
 
+Deno.test("primary support email prefers onboarding over login mailbox", () => {
+  assertEquals(
+    primaryLandlordSupportEmail({
+      accountSetupEmail: "ceorentalsnj@gmail.com",
+      organizationSupportEmail: "old@saved.com",
+      landlordEmail: "limitedalpha1@ulohome.io",
+    }),
+    "ceorentalsnj@gmail.com",
+  )
+  assertEquals(
+    collectLandlordSupportEmails({
+      accountSetupEmail: "ceorentalsnj@gmail.com",
+      landlordEmail: "limitedalpha1@ulohome.io",
+    }),
+    ["ceorentalsnj@gmail.com", "limitedalpha1@ulohome.io"],
+  )
+  assertEquals(
+    primaryLandlordSupportEmail({
+      landlordEmail: "limitedalpha1@ulohome.io",
+      organizationSupportEmail: "nwankwo908@gmail.com",
+    }),
+    "nwankwo908@gmail.com",
+  )
+})
+
 function mockLandlordOpsSupabase(params: {
   landlordEmail: string | null
   vendorEmails?: string[]
+  accountSetupEmail?: string | null
 }) {
   return {
     from(table: string) {
@@ -60,6 +88,31 @@ function mockLandlordOpsSupabase(params: {
                       data: params.landlordEmail
                         ? { email: params.landlordEmail }
                         : null,
+                      error: null,
+                    }
+                  },
+                }
+              },
+            }
+          },
+        }
+      }
+      if (table === "landlord_onboarding") {
+        return {
+          select() {
+            return {
+              eq() {
+                return {
+                  async maybeSingle() {
+                    return {
+                      data: {
+                        draft_state: {
+                          accountSetup: {
+                            email: params.accountSetupEmail ?? null,
+                          },
+                        },
+                        account_settings: {},
+                      },
                       error: null,
                     }
                   },
@@ -98,9 +151,10 @@ function mockLandlordOpsSupabase(params: {
   }
 }
 
-Deno.test("accountHolderOnly skips staff env notify list", async () => {
+Deno.test("accountHolderOnly includes onboarding support email over login mailbox", async () => {
   const supabase = mockLandlordOpsSupabase({
-    landlordEmail: "owner@alpha.com",
+    landlordEmail: "limitedalpha1@ulohome.io",
+    accountSetupEmail: "ceorentalsnj@gmail.com",
     vendorEmails: [],
   })
   const { emails } = await resolveLandlordOpsEmails(
@@ -111,7 +165,7 @@ Deno.test("accountHolderOnly skips staff env notify list", async () => {
       envEmails: ["osi@ulohome.io", "emeka@ulohome.io"],
     },
   )
-  assertEquals(emails, ["owner@alpha.com"])
+  assertEquals(emails, ["ceorentalsnj@gmail.com"])
 })
 
 Deno.test("default resolve still includes env notify emails", async () => {

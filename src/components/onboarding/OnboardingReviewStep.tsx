@@ -235,7 +235,7 @@ export function OnboardingReviewStep({
           <ReviewSummaryCard title="Account" onEdit={() => onEditStep('account_setup')}>
             <ReviewSummaryRow label="Company" value={reviewData.accountSetup.companyName} />
             <ReviewSummaryRow label="Contact" value={reviewData.accountSetup.contactName} />
-            <ReviewSummaryRow label="Email" value={reviewData.accountSetup.email} />
+            <ReviewSummaryRow label="Support email" value={reviewData.accountSetup.email} />
             <ReviewSummaryRow label="Phone" value={reviewData.accountSetup.phone} />
             <ReviewSummaryRow
               label="Backup contact"

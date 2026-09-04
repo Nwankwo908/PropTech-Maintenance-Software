@@ -31,20 +31,45 @@ describe('setupSuccessChecklist', () => {
   beforeEach(() => {
     memory.clear()
   })
-  it('marks welcome texts complete only after every phone has left not started', () => {
+  it('marks welcome texts complete after at least one tenant onboarding starts', () => {
     expect(welcomeTextsComplete([])).toBe(false)
-    expect(welcomeTextsComplete([{ phone: null, activationStatus: 'activated' }])).toBe(false)
+    expect(
+      welcomeTextsComplete([
+        { phone: '2015550100', activationStatus: 'not_started' },
+        { phone: '2015550101', activationStatus: 'not_started' },
+      ]),
+    ).toBe(false)
     expect(
       welcomeTextsComplete([
         { phone: '2015550100', activationStatus: 'not_started' },
         { phone: '2015550101', activationStatus: 'waiting' },
       ]),
+    ).toBe(true)
+    expect(
+      welcomeTextsComplete([{ phone: '2015550100', activationStatus: 'activated' }]),
+    ).toBe(true)
+  })
+
+  it('marks invite vendors complete after at least one vendor is added', () => {
+    expect(
+      resolveSetupSuccessProgress({
+        residents: [],
+        vendorCount: 0,
+        verifiedVendorCount: 0,
+        propertyDetailsComplete: false,
+        hasMaintenancePreferences: false,
+        maintenanceRequestCount: 0,
+      }).items.find((item) => item.id === 'verify_vendors')?.done,
     ).toBe(false)
     expect(
-      welcomeTextsComplete([
-        { phone: '2015550100', activationStatus: 'waiting' },
-        { phone: '2015550101', activationStatus: 'activated' },
-      ]),
+      resolveSetupSuccessProgress({
+        residents: [],
+        vendorCount: 1,
+        verifiedVendorCount: 0,
+        propertyDetailsComplete: false,
+        hasMaintenancePreferences: false,
+        maintenanceRequestCount: 0,
+      }).items.find((item) => item.id === 'verify_vendors')?.done,
     ).toBe(true)
   })
 
@@ -58,10 +83,10 @@ describe('setupSuccessChecklist', () => {
       maintenanceRequestCount: 0,
     })
     expect(progress.total).toBe(5)
-    expect(progress.doneCount).toBe(3)
+    expect(progress.doneCount).toBe(4)
     expect(progress.items.map((item) => [item.id, item.done])).toEqual([
       ['welcome_texts', true],
-      ['verify_vendors', false],
+      ['verify_vendors', true],
       ['property_details', true],
       ['maintenance_prefs', true],
       ['test_request', false],

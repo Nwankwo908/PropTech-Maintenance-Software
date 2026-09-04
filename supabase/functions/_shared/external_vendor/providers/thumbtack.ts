@@ -8,6 +8,12 @@ import {
   EXTERNAL_VENDOR_SEARCH_LIMIT,
   EXTERNAL_VENDOR_SEARCH_RADIUS_MILES,
 } from "../../../../../shared/externalVendor/searchLimit.ts"
+import {
+  normalizeThumbtackUtmSource,
+  resolveThumbtackRequestFlowUrl,
+} from "../../../../../shared/externalVendor/thumbtackRequestFlow.ts"
+
+export { normalizeThumbtackUtmSource } from "../../../../../shared/externalVendor/thumbtackRequestFlow.ts"
 
 const DEFAULT_API_BASE = "https://api.thumbtack.com/api"
 const DEFAULT_TOKEN_URL = "https://auth.thumbtack.com/oauth2/token"
@@ -62,13 +68,6 @@ export function extractZipFromLocation(location: string): string | null {
   return match?.[1] ?? null
 }
 
-/** Partner widgets require utm_source to start with `cma-`. */
-export function normalizeThumbtackUtmSource(raw: string | null | undefined): string {
-  const v = (raw ?? "").trim() || "ulo"
-  if (v.toLowerCase().startsWith("cma-")) return v
-  return `cma-${v}`
-}
-
 export function parseThumbtackCategoryId(parsed: unknown, query: string): string | null {
   const rows = extractList(parsed)
   const needle = query.trim().toLowerCase()
@@ -102,7 +101,7 @@ type ThumbtackBusinessRaw = {
   isTopPro?: boolean
   isBusinessLicenseVerified?: boolean
   isBackgroundChecked?: boolean
-  widgets?: { servicePageURL?: string }
+  widgets?: { servicePageURL?: string; requestFlowURL?: string }
 }
 
 export function thumbtackIdsFromListingUrl(listingUrl: string | null | undefined): {
@@ -156,6 +155,16 @@ export function parseThumbtackBusinesses(parsed: unknown): ExternalVendorHit[] {
       (typeof b.servicePageURL === "string" && b.servicePageURL.trim()) ||
       (typeof b.widgets?.servicePageURL === "string" && b.widgets.servicePageURL.trim()) ||
       null
+    const widgets = b.widgets && typeof b.widgets === "object"
+      ? b.widgets as Record<string, unknown>
+      : null
+    const requestFlowUrl = widgets
+      ? pickHttpUrl(widgets, ["requestFlowURL", "requestFlowUrl", "request_flow_url"])
+      : pickHttpUrl(b as Record<string, unknown>, [
+        "requestFlowURL",
+        "requestFlowUrl",
+        "request_flow_url",
+      ])
     const tags = thumbtackTags(b)
     const licensed = Boolean(b.isBusinessLicenseVerified) ||
       tags.some((t) => t.toLowerCase() === "licensed")
@@ -177,6 +186,7 @@ export function parseThumbtackBusinesses(parsed: unknown): ExternalVendorHit[] {
         ? b.businessLocation.trim()
         : null,
       listingUrl,
+      requestFlowUrl,
       tags: tags.length > 0 ? tags : undefined,
       searchId: fromUrl.searchId,
       categoryId: fromUrl.categoryId,
@@ -246,13 +256,25 @@ function extractList(parsed: unknown): unknown[] {
 function annotateThumbtackHits(
   hits: ExternalVendorHit[],
   parsed: unknown,
+  utmSource: string,
 ): ExternalVendorHit[] {
   const ctx = parseThumbtackSearchContext(parsed)
-  return hits.map((hit) => ({
-    ...hit,
-    searchId: hit.searchId || ctx.searchId,
-    categoryId: hit.categoryId || ctx.categoryId,
-  }))
+  return hits.map((hit) => {
+    const searchId = hit.searchId || ctx.searchId
+    const categoryId = hit.categoryId || ctx.categoryId
+    return {
+      ...hit,
+      searchId,
+      categoryId,
+      requestFlowUrl: resolveThumbtackRequestFlowUrl({
+        requestFlowUrl: hit.requestFlowUrl,
+        listingUrl: hit.listingUrl,
+        searchId,
+        categoryId,
+        utmSource,
+      }),
+    }
+  })
 }
 
 function mergeHits(limit: number, groups: ExternalVendorHit[][]): ExternalVendorHit[] {
@@ -475,7 +497,11 @@ export class ThumbtackExternalVendorProvider implements ExternalVendorProvider {
       console.warn("[external-vendor/thumbtack] invalid JSON")
       return []
     }
-    const hits = annotateThumbtackHits(parseThumbtackBusinesses(parsed), parsed)
+    const hits = annotateThumbtackHits(
+      parseThumbtackBusinesses(parsed),
+      parsed,
+      params.utmSource,
+    )
     const meta = parsed && typeof parsed === "object"
       ? (parsed as Record<string, unknown>)["metadata"]
       : null
@@ -533,7 +559,11 @@ export class ThumbtackExternalVendorProvider implements ExternalVendorProvider {
     }
     const parsed = await res.json().catch(() => null)
     if (parsed == null) return []
-    const hits = annotateThumbtackHits(parseThumbtackBusinesses(parsed), parsed)
+    const hits = annotateThumbtackHits(
+      parseThumbtackBusinesses(parsed),
+      parsed,
+      params.utmSource,
+    )
     console.log("[external-vendor/thumbtack] search-filtered ok", {
       zip: params.zipCode,
       count: hits.length,

@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Navigate } from 'react-router-dom'
 import type { Session } from '@supabase/supabase-js'
-import { isAdminSessionAllowed, signOutAdmin } from '@/lib/adminAuth'
+import { getAdminSession, isAdminSessionAllowed, signOutAdmin } from '@/lib/adminAuth'
 import { supabase } from '@/lib/supabase'
 
 type Phase = 'working' | 'admin' | 'denied'
@@ -42,7 +42,9 @@ export function AuthCallback() {
       }
     }
 
-    void client.auth.getSession().then(({ data }) => resolve(data.session))
+    void getAdminSession(5000).then((session) => {
+      if (session) void resolve(session)
+    })
 
     const {
       data: { subscription },

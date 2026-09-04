@@ -12,6 +12,7 @@ import {
   pickAlternativeVendors,
   mergeLandlordRailTimeline,
   buildSlaRailTimeline,
+  splitMaintenanceNotes,
   type SlaOverdueActionReview,
   type SlaOverdueTicketInput,
   type SlaOverdueTimelineEntry,
@@ -225,6 +226,7 @@ export function buildEscalatedWorkflowReview(
 
   const urgency = ticket?.urgency ?? 'high'
   const ticketId = ticket?.id ?? run.entityId ?? run.id
+  const parsedNotes = splitMaintenanceNotes(ticket?.description ?? run.lastEventMessage)
 
   return {
     ticketId,
@@ -255,9 +257,9 @@ export function buildEscalatedWorkflowReview(
     pastSlaLabel:
       minutesPastSla != null ? formatPastSlaLabel(minutesPastSla) : run.lastEventMessage,
     issueSummary:
-      ticket?.description?.trim() ||
-      run.lastEventMessage?.trim() ||
-      `${categoryLabel} escalation requires your review.`,
+      parsedNotes.notes || `${categoryLabel} escalation requires your review.`,
+    affectedArea: parsedNotes.affectedArea,
+    safetyConcerns: parsedNotes.safetyConcerns,
     issueCategory,
     currentVendorName: ticket?.assignedVendorName ?? null,
     currentVendorStatus: vendorStatusLabel(

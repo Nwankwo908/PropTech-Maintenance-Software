@@ -1,6 +1,5 @@
 import type { Session } from '@supabase/supabase-js'
 import {
-  ADMIN_LOGIN_EMAIL_DOMAIN,
   isPortalAdminEmailAllowed,
   loginIdToAdminEmail,
 } from '@shared/admin/staffAllowlist'
@@ -24,6 +23,21 @@ export function isAdminSessionAllowed(session: Session | null): boolean {
   const email = session?.user?.email?.trim()
   if (!email) return false
   return isAdminEmailAllowed(email)
+}
+
+export async function getAdminSession(timeoutMs = 4000): Promise<Session | null> {
+  if (!supabase) return null
+  try {
+    const result = await Promise.race([
+      supabase.auth.getSession(),
+      new Promise<{ data: { session: null } }>((resolve) => {
+        window.setTimeout(() => resolve({ data: { session: null } }), timeoutMs)
+      }),
+    ])
+    return result.data.session
+  } catch {
+    return null
+  }
 }
 
 function assertAdminEmailAllowed(loginId: string): void {
@@ -88,5 +102,14 @@ export async function signInAdminWithOAuth(provider: 'google' | 'apple'): Promis
 
 export async function signOutAdmin(): Promise<void> {
   if (!supabase) return
-  await supabase.auth.signOut()
+  try {
+    await Promise.race([
+      supabase.auth.signOut(),
+      new Promise<void>((resolve) => {
+        window.setTimeout(resolve, 3000)
+      }),
+    ])
+  } catch {
+    // Ignore so a hung auth lock cannot trap the login screen.
+  }
 }

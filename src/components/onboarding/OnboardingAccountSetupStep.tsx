@@ -101,8 +101,8 @@ export function OnboardingAccountSetupStep({
               type="email"
               value={accountSetup.email}
               onChange={(e) => updateAccountSetup({ email: e.target.value })}
-              placeholder="Email"
-              aria-label="Email"
+              placeholder="Support email"
+              aria-label="Support email"
             />
             <div className="flex flex-col gap-2 sm:col-span-2">
               <input

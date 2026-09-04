@@ -24,6 +24,8 @@ import {
   type OrganizationSettingsForm,
   type OrganizationWorkspaceSummary,
 } from '@/lib/organizationSettings'
+import { isUniqueViolation } from '@/lib/errorMessage'
+import { resolveLandlordSupportEmail } from '@/lib/landlordSupportEmail'
 import { supabase } from '@/lib/supabase'
 import { formatLandlordDate } from '@/lib/landlordWorkspace'
 import { resolveLogoDisplayUrl } from '@/lib/landlordLogoUpload'
@@ -134,8 +136,12 @@ export function mergeOrganizationForm(input: {
 
   const contactName = asTrimmed(input.landlordRow?.contact_name) || asTrimmed(account.contactName)
   if (contactName) next.contactName = contactName
-  const email = asTrimmed(input.landlordRow?.email) || asTrimmed(account.email)
-  if (email) next.supportEmail = email
+  const email = resolveLandlordSupportEmail({
+    accountSetupEmail: asTrimmed(account.email),
+    organizationSupportEmail: asTrimmed(next.supportEmail),
+    landlordEmail: asTrimmed(input.landlordRow?.email),
+  })
+  next.supportEmail = email
   const phone = asTrimmed(input.landlordRow?.phone) || asTrimmed(account.phone)
   if (phone) next.phone = phone
   const backupContactName = asTrimmed(account.backupContactName)
@@ -530,6 +536,16 @@ export async function saveLandlordOrganizationSettings(
       ...legacyLandlord
     } = landlordUpdate
     const retry = await supabase.from('landlords').update(legacyLandlord).eq('id', landlordId)
+    landlordError = retry.error
+  }
+
+  if (
+    landlordError &&
+    isUniqueViolation(landlordError) &&
+    /email/i.test(landlordError.message)
+  ) {
+    const { email: _dropEmail, ...withoutEmail } = landlordUpdate
+    const retry = await supabase.from('landlords').update(withoutEmail).eq('id', landlordId)
     landlordError = retry.error
   }
 

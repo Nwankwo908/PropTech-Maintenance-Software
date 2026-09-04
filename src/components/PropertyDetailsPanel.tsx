@@ -748,9 +748,10 @@ function HomeInspectionExpandedPanel({
         )}
       </div>
 
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2 lg:items-start">
       <div
         className={[
-          'sa-dropzone rounded-[10px] border border-dashed bg-[#f8fafc] p-px',
+          'sa-dropzone flex min-h-[220px] flex-col rounded-[10px] border border-dashed bg-[#f8fafc] p-px',
           dragging ? 'is-dragging border-[#0d0f11] bg-[#f1f5f9]' : 'border-[#cbd5e1]',
         ].join(' ')}
         data-dragging={dragging ? 'true' : 'false'}
@@ -772,7 +773,7 @@ function HomeInspectionExpandedPanel({
           handleFiles(e.dataTransfer.files)
         }}
       >
-        <div className="flex flex-col items-center justify-center gap-3 px-4 py-8 text-center">
+        <div className="flex flex-1 flex-col items-center justify-center gap-3 px-4 py-8 text-center">
           <UploadDocIcon />
           <p className="text-[14px] font-semibold leading-[21px] text-[#0d0f11]">
             Upload PDF, images, or inspection documents
@@ -792,14 +793,23 @@ function HomeInspectionExpandedPanel({
           <button
             type="button"
             onClick={() => inputRef.current?.click()}
-            className="pd-btn pd-btn-primary rounded-[10px] px-4 py-2 text-[13px] font-semibold leading-[19.5px]"
+            className="mt-1 flex size-10 items-center justify-center rounded-[10px] bg-transparent text-[#186179] outline-none hover:text-[#0f4a5c] focus-visible:ring-2 focus-visible:ring-[#186179] disabled:text-[#94a3b8]"
+            aria-label="Upload document"
           >
-            Upload Document
+            <svg viewBox="0 0 24 24" fill="none" className="size-5" aria-hidden>
+              <path
+                d="M12 5v14M5 12h14"
+                stroke="currentColor"
+                strokeWidth={2}
+                strokeLinecap="round"
+              />
+            </svg>
           </button>
         </div>
       </div>
 
       {building ? <ApplianceInspectionUploader building={building} /> : null}
+      </div>
     </div>
   )
 }

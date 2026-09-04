@@ -155,6 +155,18 @@ export function propertyRecordToAddressLine(property: PropertyRecord): string | 
   return parts.length > 0 ? parts.join(' ') : null
 }
 
+/** Street, city, state, ZIP in the form Zillow search expects. */
+export function zillowLookupAddressFromProperty(property: PropertyRecord): string | null {
+  const street = property.streetAddress?.trim() ?? ''
+  const city = property.city?.trim() ?? ''
+  const state = property.state?.trim() ?? ''
+  const zip = property.zipCode?.trim() ?? ''
+  const cityState = city && state ? `${city}, ${state}` : city || state
+  const tail = [cityState, zip].filter(Boolean).join(' ')
+  if (street && tail) return `${street}, ${tail}`
+  return propertyRecordToAddressLine(property)
+}
+
 /** Landlord-facing area only — no street address. */
 export function propertyRecordToCityStateZip(
   property: Pick<PropertyRecord, 'city' | 'state' | 'zipCode'>,

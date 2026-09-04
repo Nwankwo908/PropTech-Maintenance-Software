@@ -3,6 +3,11 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1"
 import { adminEdgeCorsHeaders } from "../_shared/admin_edge_cors.ts"
 import { requireAdminReassignAuth } from "../_shared/admin_edge_auth.ts"
 import { sendResendEmail } from "../_shared/delivery.ts"
+import {
+  loadLandlordSupportContact,
+  normalizeOpsEmail,
+  primaryLandlordSupportEmail,
+} from "../_shared/landlordOpsNotify.ts"
 import { getSMSProviderForSend } from "../_shared/sms/providerFactory.ts"
 import { findActiveLandlordMainNumber } from "../_shared/sms/landlordSmsOnboarding.ts"
 import { resolveLandlordOpsPhones } from "../_shared/sms/tenantActivationAdminAlert.ts"
@@ -31,7 +36,7 @@ serve(async (req) => {
   const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? ""
   const supabase = createClient(supabaseUrl, serviceKey)
 
-  let body: { landlordId?: string; channel?: "email" | "sms" } = {}
+  let body: { landlordId?: string; channel?: "email" | "sms"; toEmail?: string } = {}
   try {
     body = await req.json()
   } catch {
@@ -44,14 +49,17 @@ serve(async (req) => {
     return jsonResponse({ error: "landlordId and channel are required" }, 400)
   }
 
-  const { data: landlord } = await supabase
-    .from("landlords")
-    .select("email, name")
-    .eq("id", landlordId)
-    .maybeSingle()
-
   if (channel === "email") {
-    const to = typeof landlord?.email === "string" ? landlord.email.trim() : ""
+    const contact = await loadLandlordSupportContact(supabase, landlordId)
+    const requested = normalizeOpsEmail(String(body.toEmail ?? ""))
+    const to =
+      primaryLandlordSupportEmail({
+        accountSetupEmail: requested,
+        organizationSupportEmail: contact.organizationSupportEmail,
+        landlordEmail: contact.landlordEmail,
+      }) ??
+      requested ??
+      ""
     if (!to) {
       return jsonResponse({ error: "No email on file for this account." }, 400)
     }

@@ -9,6 +9,7 @@ import {
   type CommunicationStyle,
 } from '@/lib/communicationStyle'
 import type { OnboardingAccountSetup } from '@/lib/onboarding/types'
+import { resolveLandlordSupportEmail } from '@/lib/landlordSupportEmail'
 import { supabase } from '@/lib/supabase'
 
 export type LandlordAccountProfile = {
@@ -154,7 +155,7 @@ export async function fetchLandlordAccountProfile(
     supabase
       .from('landlord_onboarding')
       .select(
-        'auto_approval_threshold, marketplace_preference, draft_state, communication_style, notification_channel',
+        'auto_approval_threshold, marketplace_preference, draft_state, account_settings, communication_style, notification_channel',
       )
       .eq('landlord_id', landlordId)
       .maybeSingle(),
@@ -162,11 +163,23 @@ export async function fetchLandlordAccountProfile(
 
   const draft = ((onboarding?.draft_state ?? {}) as Record<string, unknown>) ?? {}
   const account = accountSetupFromDraft(draft)
+  const accountSettings =
+    onboarding?.account_settings && typeof onboarding.account_settings === 'object'
+      ? (onboarding.account_settings as Record<string, unknown>)
+      : {}
+  const org = {
+    ...((draft.organizationSettings ?? {}) as Record<string, unknown>),
+    ...((accountSettings.organization ?? {}) as Record<string, unknown>),
+  }
 
   const profile: LandlordAccountProfile = {
     companyName: asTrimmed(landlord?.name) || account.companyName,
     contactName: asTrimmed(landlord?.contact_name) || account.contactName,
-    email: asTrimmed(landlord?.email) || account.email,
+    email: resolveLandlordSupportEmail({
+      accountSetupEmail: account.email,
+      organizationSupportEmail: asTrimmed(org.supportEmail),
+      landlordEmail: asTrimmed(landlord?.email),
+    }),
     phone: asTrimmed(landlord?.phone) || account.phone,
     backupContactName: account.backupContactName,
     backupContactPhone: account.backupContactPhone,

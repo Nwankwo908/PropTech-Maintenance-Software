@@ -567,8 +567,6 @@ export function buildOrganizedEvidencePacket(
       ? 15
       : input.market?.provider === "zillow_rapidapi"
       ? 10
-      : input.market?.provider === "zillow_research"
-      ? 5
       : 0
   if (input.market?.citations?.length) {
     market = input.market.citations.map((c, i) => {

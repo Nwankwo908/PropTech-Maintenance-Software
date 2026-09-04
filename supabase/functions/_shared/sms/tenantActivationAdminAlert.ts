@@ -4,9 +4,10 @@
 import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.49.1"
 import { logGraphEvent } from "../graph/logGraphEvent.ts"
 import {
+  collectLandlordSupportEmails,
   filterVendorEmailsFromOpsRecipients,
+  loadLandlordSupportContact,
   normalizeOpsEmail,
-  parseOpsEmailList,
   sendLandlordOpsEmail,
 } from "../landlordOpsNotify.ts"
 import { normalizePhoneFlexible } from "../resident_notify.ts"
@@ -241,23 +242,11 @@ export async function resolveOnboardingOpsEmails(
   supabase: SupabaseClient,
   landlordId: string,
 ): Promise<string[]> {
-  const out: string[] = []
-  const { data: onboarding } = await supabase
-    .from("landlord_onboarding")
-    .select("draft_state")
-    .eq("landlord_id", landlordId)
-    .maybeSingle()
-  const draft = (onboarding?.draft_state ?? {}) as Record<string, unknown>
-  const account = (draft.accountSetup ?? {}) as Record<string, unknown>
-  for (const key of ["email"]) {
-    const n = normalizeOpsEmail(
-      typeof account[key] === "string" ? (account[key] as string) : "",
-    )
-    if (n) out.push(n)
-  }
-  // Env list already handled by sendLandlordOpsEmail; return onboarding extras only.
-  void parseOpsEmailList
-  return out
+  const contact = await loadLandlordSupportContact(supabase, landlordId)
+  return collectLandlordSupportEmails({
+    accountSetupEmail: contact.accountSetupEmail,
+    organizationSupportEmail: contact.organizationSupportEmail,
+  })
 }
 
 async function alreadyAlerted(

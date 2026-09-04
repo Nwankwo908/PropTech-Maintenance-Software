@@ -1,14 +1,13 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react'
-import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
+import { Link, useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import {
   HEALTH_BADGE_LABELS,
   HEALTH_BADGE_STYLES,
-  HEALTH_BAR_STYLES,
 } from '@/components/PropertyHealthBuildingGrid'
 import { ConversationMonitoringModal } from '@/components/ConversationMonitoringModal'
+import { SetupSuccessCheckboxGuide } from '@/components/SetupSuccessCheckboxGuide'
 import { EmergencyApprovalRail } from '@/components/EmergencyApprovalRail'
 import { MessageVendorRail } from '@/components/MessageVendorRail'
-import { PropertyAiInsightsModal } from '@/components/PropertyAiInsightsModal'
 import { PropertyAnalyticsPanel } from '@/components/PropertyAnalyticsPanel'
 import { PropertyConversationsList } from '@/components/PropertyConversationsList'
 import { PropertyUnitsTable } from '@/components/PropertyUnitsTable'
@@ -22,7 +21,6 @@ import { fetchAdminWorkflowDashboard, isCancelledOnActiveTasks, type AdminWorkfl
 import {
   collectAdminWorkflowRuns,
   isOpenWorkflowKanbanCard,
-  workflowOperationsPath,
   WORKFLOW_STAGE_LABEL,
   type WorkflowKanbanCategory,
 } from '@/lib/adminWorkflowKanban'
@@ -35,7 +33,6 @@ import {
   fetchConversationMonitoringByMaintenanceRequest,
   fetchVendorJobConversationMonitoringByMaintenanceRequest,
 } from '@/lib/conversationMonitoring'
-import { buildPropertyAiInsights } from '@/lib/propertyAiInsights'
 import {
   acknowledgeEmergencyWorkProceed,
   cancelEmergencyWorkOrder,
@@ -64,8 +61,6 @@ import {
   normalizeBuildingKey,
   resolveBuildingHealthRow,
   resolvePropertyHealthKpiValue,
-  resolvePropertyHealthPendingMessage,
-  shouldShowPropertyHealthScore,
   type PropertyHealthBuildingRow,
   type PropertyHealthCanonicalProperty,
   type PropertyHealthFeedback,
@@ -79,7 +74,7 @@ import {
   propertyDetailPath,
   resolvePropertyBuildingMeta,
 } from '@/lib/propertyRoutes'
-import { findPropertyById, findPropertyByName, listPropertiesForLandlord, propertyRecordToAddressLine, type PropertyRecord } from '@/lib/properties'
+import { findPropertyById, findPropertyByName, listPropertiesForLandlord, propertyRecordToAddressLine, zillowLookupAddressFromProperty, type PropertyRecord } from '@/lib/properties'
 import {
   buildPropertyUnitRows,
   type PropertyUnitResident,
@@ -95,6 +90,11 @@ import { applyAdminUnitOccupancyStatus, activateUnitsFromResidentAssignments, re
 import { supabase } from '@/lib/supabase'
 import type { UnitOccupancyStatus } from '@/components/UnitOccupancyStatusMenu'
 import { getErrorMessage } from '@/lib/errorMessage'
+import {
+  dismissSetupSuccessCheckboxGuide,
+  isSetupSuccessCheckboxGuideNavigation,
+  SETUP_SUCCESS_PROPERTY_TAB_GUIDE_MESSAGE,
+} from '@/lib/setupSuccessGuide'
 
 type PropertyTab =
   | 'overview'
@@ -259,46 +259,17 @@ function StarStatIcon() {
   )
 }
 
-function AlertIcon() {
-  return (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} className="size-4 text-[#fb2c36]">
-      <circle cx="12" cy="12" r="9" />
-      <path d="M12 8v4M12 16h.01" strokeLinecap="round" />
-    </svg>
-  )
-}
-
-function EyeIcon() {
-  return (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} className="size-3.5">
-      <path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7z" />
-      <circle cx="12" cy="12" r="3" />
-    </svg>
-  )
-}
-
-function MessageIcon() {
-  return (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} className="size-3.5">
-      <path d="M21 15a4 4 0 0 1-4 4H8l-5 3V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4z" strokeLinejoin="round" />
-    </svg>
-  )
-}
-
-function LinkIcon() {
-  return (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} className="size-3.5">
-      <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" strokeLinecap="round" />
-      <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" strokeLinecap="round" />
-    </svg>
-  )
-}
-
 export function AdminPropertyDetailDashboard() {
   const { propertySlug } = useParams<{ propertySlug: string }>()
   const [searchParams] = useSearchParams()
   const navigate = useNavigate()
+  const location = useLocation()
   const [building, setBuilding] = useState<string | null>(null)
+  const [showPropertyTabGuide, setShowPropertyTabGuide] = useState(() =>
+    isSetupSuccessCheckboxGuideNavigation(location.state, 'property_tab'),
+  )
+  const [propertyTabGuideRunId, setPropertyTabGuideRunId] = useState(0)
+  const propertyDetailsTabRef = useRef<HTMLElement | null>(null)
 
   const [activeTab, setActiveTab] = useState<PropertyTab>(() => {
     const tab = searchParams.get('tab')
@@ -344,7 +315,6 @@ export function AdminPropertyDetailDashboard() {
   const [messageVendorPendingQuote, setMessageVendorPendingQuote] = useState<number | null>(null)
   const [messageVendorThreadLoading, setMessageVendorThreadLoading] = useState(false)
   const [pmComplianceTasks, setPmComplianceTasks] = useState<PmComplianceTask[]>([])
-  const [aiInsightsOpen, setAiInsightsOpen] = useState(false)
   const [monitoringConversationId, setMonitoringConversationId] = useState<string | null>(null)
   const [residents, setResidents] = useState<PropertyUnitResident[]>([])
   const [propertyConversations, setPropertyConversations] = useState<PropertyConversationRow[]>([])
@@ -352,6 +322,22 @@ export function AdminPropertyDetailDashboard() {
   const [recognizedSpend, setRecognizedSpend] = useState<RecognizedMaintenanceSpend[]>([])
   const [unitStatusError, setUnitStatusError] = useState<string | null>(null)
   const loadSeqRef = useRef(0)
+
+  useEffect(() => {
+    if (!isSetupSuccessCheckboxGuideNavigation(location.state, 'property_tab')) return
+    setShowPropertyTabGuide(true)
+    setPropertyTabGuideRunId((value) => value + 1)
+    navigate(`${location.pathname}${location.search}`, { replace: true, state: {} })
+  }, [location.pathname, location.search, location.state, navigate])
+
+  useEffect(() => {
+    if (!showPropertyTabGuide) return
+    propertyDetailsTabRef.current?.scrollIntoView({
+      block: 'nearest',
+      inline: 'center',
+      behavior: 'smooth',
+    })
+  }, [showPropertyTabGuide, building, loading])
 
   const refreshResidents = useCallback(async () => {
     if (!supabase) return
@@ -763,6 +749,10 @@ export function AdminPropertyDetailDashboard() {
   }, [activeTab, building])
 
   function selectPropertyTab(tab: PropertyTab) {
+    if (tab === 'details') {
+      dismissSetupSuccessCheckboxGuide('property_tab')
+      setShowPropertyTabGuide(false)
+    }
     if (tab === activeTab) return
     setActiveTab(tab)
   }
@@ -770,6 +760,9 @@ export function AdminPropertyDetailDashboard() {
   function setTabItemRef(tab: PropertyTab, node: HTMLElement | null) {
     if (node) tabItemRefs.current.set(tab, node)
     else tabItemRefs.current.delete(tab)
+    if (tab === 'details') {
+      propertyDetailsTabRef.current = node
+    }
   }
 
   const canonicalPropertiesForHealth = useMemo(
@@ -956,41 +949,6 @@ export function AdminPropertyDetailDashboard() {
     () => (building ? pmComplianceTasks.filter((task) => pmTaskMatchesBuilding(task, building)) : []),
     [pmComplianceTasks, building],
   )
-
-  const leaseRenewalCount = useMemo(() => {
-    if (!workflowData || !building) return 0
-    return collectAdminWorkflowRuns(workflowData)
-      .filter((row) => normalizeBuildingKey(row.propertyLabel) === normalizeBuildingKey(building))
-      .filter((row) => row.templateId === 'lease_renewal')
-      .filter((row) => !isCancelledOnActiveTasks(row) && row.status !== 'completed').length
-  }, [workflowData, building])
-
-  const propertyAiInsights = useMemo(() => {
-    if (!building || !buildingHealth || !shouldShowPropertyHealthScore(buildingHealth.status)) {
-      return null
-    }
-    return buildPropertyAiInsights({
-      building,
-      buildingHealth,
-      openTickets: buildingTickets.filter(
-        (ticket) => !['completed', 'cancelled'].includes(ticket.vendorWorkStatus),
-      ),
-      trackedUnits: buildingUnits.filter((unit) => unit.status !== 'inactive'),
-      pmTasks: buildingPmTasks,
-      leaseRenewalCount,
-      urgentItems,
-      residents: buildingResidents,
-    })
-  }, [
-    building,
-    buildingHealth,
-    buildingTickets,
-    buildingUnits,
-    buildingPmTasks,
-    leaseRenewalCount,
-    urgentItems,
-    buildingResidents,
-  ])
 
   const propertyUnitRows = useMemo(() => {
     if (!building) return []
@@ -1424,7 +1382,6 @@ export function AdminPropertyDetailDashboard() {
 
   const subtitle = formatPropertySubtitle(meta, buildingUnits.length)
   const limitedAlpha1 = isLimitedAlpha1Landlord(getActiveLandlordId())
-  const healthScoreReady = shouldShowPropertyHealthScore(buildingHealth?.status)
   const healthValue = resolvePropertyHealthKpiValue(
     buildingHealth?.status,
     buildingHealth?.score,
@@ -1433,6 +1390,12 @@ export function AdminPropertyDetailDashboard() {
 
   return (
     <main className="flex min-h-0 flex-1 flex-col px-8 pb-12">
+      <SetupSuccessCheckboxGuide
+        key={propertyTabGuideRunId}
+        active={showPropertyTabGuide && !loading}
+        targetRef={propertyDetailsTabRef}
+        message={SETUP_SUCCESS_PROPERTY_TAB_GUIDE_MESSAGE}
+      />
       <div className="py-6">
         <Link
           to="/admin/properties"
@@ -1515,6 +1478,7 @@ export function AdminPropertyDetailDashboard() {
                 return (
                   <Link
                     key={tab.id}
+                    ref={(node) => setTabItemRef(tab.id, node)}
                     to={tab.href}
                     role="tab"
                     aria-selected={isActive}
@@ -1528,6 +1492,7 @@ export function AdminPropertyDetailDashboard() {
               return (
                 <button
                   key={tab.id}
+                  ref={(node) => setTabItemRef(tab.id, node)}
                   type="button"
                   role="tab"
                   aria-selected={isActive}
@@ -1599,145 +1564,14 @@ export function AdminPropertyDetailDashboard() {
       <div key={activeTab} className="property-tab-panel min-w-0">
       {activeTab === 'overview' ? (
         <div className="mt-6 flex flex-col gap-4">
-          {limitedAlpha1 ? (
-            <PropertyZillowMap address={meta.addressLine} buildingName={building} />
-          ) : (
-            <>
-          <section
-            role={propertyAiInsights ? 'button' : undefined}
-            tabIndex={propertyAiInsights ? 0 : undefined}
-            onClick={() => propertyAiInsights && setAiInsightsOpen(true)}
-            onKeyDown={(event) => {
-              if (!propertyAiInsights) return
-              if (event.key === 'Enter' || event.key === ' ') {
-                event.preventDefault()
-                setAiInsightsOpen(true)
-              }
-            }}
-            className={[
-              'sa-surface rounded-[10px] border border-[#e5e7eb] bg-white p-6 shadow-[0px_1px_2px_-1px_rgba(0,0,0,0.06)]',
-              propertyAiInsights
-                ? 'sa-card cursor-pointer hover:border-[#d1d5dc] hover:bg-[#fafafa] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2'
-                : '',
-            ].join(' ')}
-          >
-            <div className="flex items-center justify-between gap-3">
-              <h2 className="text-[16px] font-semibold leading-6 text-[#0a0a0a]">Building health</h2>
-              {propertyAiInsights ? (
-                <span className="text-[12px] font-medium text-[#9E439F]">View AI insights</span>
-              ) : null}
-            </div>
-            <div className="mt-4 flex flex-col gap-6 lg:flex-row lg:items-end lg:justify-between">
-              <div className="min-w-0 flex-1">
-                <p className="text-[44px] font-bold leading-none tracking-[0.4px] text-[#0a0a0a] tabular-nums">
-                  {loading || !buildingHealth || !healthScoreReady
-                    ? '—'
-                    : buildingHealth.score}
-                  {buildingHealth && healthScoreReady ? (
-                    <span className="text-[16px] font-normal text-[#6a7282]"> / 100</span>
-                  ) : null}
-                </p>
-                <div className="mt-3 h-2 w-full overflow-hidden rounded-full bg-[#f3f4f6]">
-                  {buildingHealth && healthScoreReady ? (
-                    <div
-                      className={`sa-bar h-full rounded-full ${HEALTH_BAR_STYLES[buildingHealth.status]}`}
-                      style={{ width: `${buildingHealth.score}%` }}
-                    />
-                  ) : (
-                    <div className="h-full w-0 rounded-full bg-[#d1d5dc]" />
-                  )}
-                </div>
-                {buildingHealth && !healthScoreReady ? (
-                  <p className="mt-2 text-[12px] leading-4 text-[#6a7282]">
-                    {resolvePropertyHealthPendingMessage(buildingHealth.pendingReason)}
-                  </p>
-                ) : null}
-              </div>
-              <div className="grid shrink-0 grid-cols-2 gap-6 text-center sm:gap-10">
-                <div>
-                  <p className="text-[12px] leading-4 text-[#6a7282]">Occupancy</p>
-                  <p className="mt-1 text-[18px] font-semibold tabular-nums text-[#0a0a0a]">
-                    {loading ? '—' : `${buildingHealth?.occupancyPct ?? 0}%`}
-                  </p>
-                </div>
-                <div>
-                  <p className="text-[12px] leading-4 text-[#6a7282]">Satisfaction</p>
-                  <p className="mt-1 text-[18px] font-semibold tabular-nums text-[#0a0a0a]">
-                    {loading || buildingHealth?.residentRating == null
-                      ? '—'
-                      : `${buildingHealth.residentRating.toFixed(1)}/5.0`}
-                  </p>
-                </div>
-              </div>
-            </div>
-          </section>
-
-          <section className="rounded-[10px] border border-[#e5e7eb] bg-white p-6 shadow-[0px_1px_2px_-1px_rgba(0,0,0,0.06)]">
-            <div className="flex items-start gap-2">
-              <AlertIcon />
-              <div className="min-w-0 flex-1">
-                <h2 className="text-[16px] font-semibold leading-6 text-[#0a0a0a]">Urgent items</h2>
-                <p className="mt-1 text-[13px] leading-5 text-[#6a7282]">
-                  Open maintenance and overdue inspections Ulo could not fully resolve automatically.
-                </p>
-              </div>
-            </div>
-
-            {loading ? (
-              <p className="mt-4 text-[13px] text-[#6a7282]">Loading…</p>
-            ) : urgentItems.length === 0 ? (
-              <p className="mt-4 text-[13px] text-[#6a7282]">No urgent items for this property.</p>
-            ) : (
-              <ul className="mt-4 flex flex-col gap-3">
-                {urgentItems.map((item, index) => (
-                  <li
-                    key={item.id}
-                    style={{ animationDelay: `${Math.min(index, 6) * 40}ms` }}
-                    className="sa-enter sa-surface flex flex-col gap-3 rounded-[10px] border border-[#f3f4f6] bg-[#fafafa] px-4 py-3 sm:flex-row sm:items-center sm:justify-between"
-                  >
-                    <div className="min-w-0">
-                      <p className="text-[14px] font-semibold leading-5 text-[#0a0a0a]">
-                        {item.title}
-                      </p>
-                      <p className="text-[12px] leading-4 text-[#6a7282]">
-                        {item.context} · {item.statusLabel}
-                      </p>
-                    </div>
-                    <div className="flex shrink-0 flex-wrap items-center gap-2">
-                      <button
-                        type="button"
-                        onClick={() => item.ticketId && openReview(item.ticketId)}
-                        disabled={!item.ticketId}
-                        className="sa-pill inline-flex items-center gap-1.5 rounded-full border border-[#e5e7eb] bg-white px-3 py-1.5 text-[12px] font-medium text-[#364153] hover:bg-[#f9fafb] disabled:pointer-events-none disabled:opacity-40"
-                      >
-                        <EyeIcon />
-                        Review
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => item.ticketId && openMessageVendor(item.ticketId)}
-                        disabled={!item.ticketId}
-                        className="sa-pill inline-flex items-center gap-1.5 rounded-full border border-[#e5e7eb] bg-white px-3 py-1.5 text-[12px] font-medium text-[#364153] hover:bg-[#f9fafb] disabled:pointer-events-none disabled:opacity-40"
-                      >
-                        <MessageIcon />
-                        Message Vendor
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => navigate(workflowOperationsPath(item.workflowRunId))}
-                        className="sa-pill inline-flex items-center gap-1.5 rounded-full border border-[#e5e7eb] bg-white px-3 py-1.5 text-[12px] font-medium text-[#364153] hover:bg-[#f9fafb]"
-                      >
-                        <LinkIcon />
-                        View Workflow
-                      </button>
-                    </div>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </section>
-            </>
-          )}
+          <PropertyZillowMap
+            address={
+              (canonicalProperty
+                ? zillowLookupAddressFromProperty(canonicalProperty)
+                : null) ?? meta.addressLine
+            }
+            buildingName={building}
+          />
         </div>
       ) : activeTab === 'details' ? (
         <PropertyDetailsPanel
@@ -1812,11 +1646,6 @@ export function AdminPropertyDetailDashboard() {
           <p className="pointer-events-auto">{railActionError}</p>
         </div>
       ) : null}
-      <PropertyAiInsightsModal
-        open={aiInsightsOpen}
-        insights={propertyAiInsights}
-        onClose={() => setAiInsightsOpen(false)}
-      />
       <ConversationMonitoringModal
         open={monitoringConversationId != null}
         conversationId={monitoringConversationId}

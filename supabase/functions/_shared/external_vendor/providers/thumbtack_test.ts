@@ -2,7 +2,6 @@
 
 import {
   extractZipFromLocation,
-  normalizeThumbtackUtmSource,
   parseThumbtackBusinesses,
   parseThumbtackCategoryId,
   parseThumbtackSearchContext,
@@ -12,6 +11,10 @@ import {
   thumbtackOpenConversationError,
   thumbtackScopeAllowsMessaging,
 } from "./thumbtack.ts"
+import {
+  normalizeThumbtackUtmSource,
+  resolveThumbtackRequestFlowUrl,
+} from "../../../../../shared/externalVendor/thumbtackRequestFlow.ts"
 
 Deno.test("extractZipFromLocation reads a 5-digit ZIP", () => {
   const zip = extractZipFromLocation("109 S Grove St, Newark, NJ 07112")
@@ -78,6 +81,10 @@ Deno.test("parseThumbtackBusinesses maps partner search payload", () => {
         businessLocation: "Milpitas, CA",
         responseTimeHours: 1,
         servicePageURL: "https://thumbtack.com/example",
+        widgets: {
+          requestFlowURL:
+            "https://thumbtack.com/embed/request-flow?category_pk=c1&project_pk=s1&utm_source=cma-ulo",
+        },
         businessImageURL: "https://production-next-images-cdn.thumbtack.com/i/example/profile",
         pills: ["licensed"],
         isTopPro: true,
@@ -91,6 +98,12 @@ Deno.test("parseThumbtackBusinesses maps partner search payload", () => {
   if (hit.source !== "thumbtack") throw new Error("source")
   if (hit.providerRef !== "468046965846925323") throw new Error("providerRef")
   if (hit.listingUrl !== "https://thumbtack.com/example") throw new Error("listingUrl")
+  if (
+    hit.requestFlowUrl !==
+      "https://thumbtack.com/embed/request-flow?category_pk=c1&project_pk=s1&utm_source=cma-ulo"
+  ) {
+    throw new Error(`requestFlowUrl ${hit.requestFlowUrl}`)
+  }
   if (hit.imageUrl !== "https://production-next-images-cdn.thumbtack.com/i/example/profile") {
     throw new Error(`imageUrl ${hit.imageUrl}`)
   }
@@ -133,4 +146,29 @@ Deno.test("thumbtackOpenConversationError explains 401 without a raw status code
   const msg = thumbtackOpenConversationError(401, "oauth_token_failed")
   if (!/did not allow this conversation/i.test(msg)) throw new Error(msg)
   if (/\(401\)/.test(msg)) throw new Error("should not echo 401")
+})
+
+Deno.test("resolveThumbtackRequestFlowUrl prefers the widget URL", () => {
+  const url = resolveThumbtackRequestFlowUrl({
+    requestFlowUrl: "https://thumbtack.com/embed/request-flow?x=1",
+    listingUrl: "https://thumbtack.com/example",
+    searchId: "s1",
+    categoryId: "c1",
+    utmSource: "ulo",
+  })
+  if (url !== "https://thumbtack.com/embed/request-flow?x=1") throw new Error(String(url))
+})
+
+Deno.test("resolveThumbtackRequestFlowUrl builds embed URL from search ids", () => {
+  const url = resolveThumbtackRequestFlowUrl({
+    searchId: "s1",
+    categoryId: "c1",
+    utmSource: "ulo",
+  })
+  if (
+    url !==
+      "https://www.thumbtack.com/embed/request-flow?category_pk=c1&project_pk=s1&utm_source=cma-ulo"
+  ) {
+    throw new Error(String(url))
+  }
 })

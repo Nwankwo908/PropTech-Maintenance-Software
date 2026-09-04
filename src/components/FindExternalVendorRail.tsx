@@ -9,6 +9,7 @@ import { ChatComposerBar } from '@/components/ChatComposerBar'
 import { AdminBottomSheet } from '@/components/AdminBottomSheet'
 import { getAdminEdgeSecret } from '@/lib/adminEdgeAuth'
 import { getErrorMessage } from '@/lib/errorMessage'
+import { resolveThumbtackRequestFlowUrl } from '@shared/externalVendor/thumbtackRequestFlow'
 import { buildThumbtackVendorOutreachMessage } from '@shared/externalVendor/thumbtackOutreachCopy'
 import {
   ADMIN_RAIL_FOOTER_CLASS,
@@ -458,6 +459,38 @@ export function FindExternalVendorRail({
 
   async function sendThumbtackMessage() {
     if (!messageVendor) return
+    const draft = messageDraft.trim()
+    if (!draft) return
+
+    const contactUrl = resolveThumbtackRequestFlowUrl({
+      requestFlowUrl: messageVendor.requestFlowUrl,
+      listingUrl: messageVendor.listingUrl,
+      searchId: messageVendor.searchId,
+      categoryId: messageVendor.categoryId,
+      utmSource: 'ulo',
+    })
+    if (contactUrl) {
+      const opened = window.open(contactUrl, '_blank', 'noopener,noreferrer')
+      if (!opened) {
+        setMessageError(
+          'Allow pop-ups for this site, then send again. Thumbtack opens their request form so you can message this pro.',
+        )
+        return
+      }
+      void navigator.clipboard.writeText(draft).catch(() => {})
+      setComposerThread((prev) => [
+        ...prev,
+        {
+          id: `tt-${Date.now()}`,
+          direction: 'outbound',
+          body: draft,
+        },
+      ])
+      setMessageDraft('')
+      setMessageError(null)
+      return
+    }
+
     const url = resolveMessageThumbtackVendorUrl()
     const secret = getAdminEdgeSecret()
     const businessId = messageVendor.providerRef?.trim() ?? ''
@@ -511,24 +544,29 @@ export function FindExternalVendorRail({
   function vendorComposer() {
     if (!messageVendor) return null
     return (
-      <ChatComposerBar
-        id={messageInputId}
-        label={`Message for ${messageVendor.name}`}
-        draft={messageDraft}
-        onDraftChange={setMessageDraft}
-        onSend={() => void sendThumbtackMessage()}
-        canSend={canSendVendorMessage}
-        sending={messageSending}
-        disabled={saving}
-        placeholder="Write your message..."
-        inputRef={messageInputRef}
-        animateEnter={false}
-        leftSlot={
-          <span className="sa-pill inline-flex h-8 max-w-full items-center truncate rounded-full bg-[#f3f4f6] px-2.5 text-[12px] font-medium text-[#374151]">
-            Vendor
-          </span>
-        }
-      />
+      <div>
+        <ChatComposerBar
+          id={messageInputId}
+          label={`Message for ${messageVendor.name}`}
+          draft={messageDraft}
+          onDraftChange={setMessageDraft}
+          onSend={() => void sendThumbtackMessage()}
+          canSend={canSendVendorMessage}
+          sending={messageSending}
+          disabled={saving}
+          placeholder="Write your message..."
+          inputRef={messageInputRef}
+          animateEnter={false}
+          leftSlot={
+            <span className="sa-pill inline-flex h-8 max-w-full items-center truncate rounded-full bg-[#f3f4f6] px-2.5 text-[12px] font-medium text-[#374151]">
+              Vendor
+            </span>
+          }
+        />
+        <p className="mt-1.5 text-[11px] leading-[15px] text-[#717182]">
+          Send opens Thumbtack so you can message this pro. Your message is copied if you need to paste it.
+        </p>
+      </div>
     )
   }
 

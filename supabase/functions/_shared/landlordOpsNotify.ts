@@ -14,6 +14,111 @@ export function normalizeOpsEmail(raw: string): string | null {
   return e
 }
 
+/** Alpha / demo login mailboxes — never prefer these over a real support email. */
+export const PLATFORM_LOGIN_EMAILS = new Set([
+  "limitedalpha1@ulohome.io",
+  "demo@ulohome.io",
+  "newlandlord@ulohome.io",
+])
+
+/** Organization / onboarding support email takes priority over the login mailbox. */
+export function collectLandlordSupportEmails(input: {
+  accountSetupEmail?: string | null
+  organizationSupportEmail?: string | null
+  landlordEmail?: string | null
+}): string[] {
+  const out: string[] = []
+  const seen = new Set<string>()
+  for (const raw of [
+    input.accountSetupEmail,
+    input.organizationSupportEmail,
+    input.landlordEmail,
+  ]) {
+    const n = normalizeOpsEmail(typeof raw === "string" ? raw : "")
+    if (!n || seen.has(n)) continue
+    seen.add(n)
+    out.push(n)
+  }
+  return out
+}
+
+export function primaryLandlordSupportEmail(input: {
+  accountSetupEmail?: string | null
+  organizationSupportEmail?: string | null
+  landlordEmail?: string | null
+}): string | null {
+  const all = collectLandlordSupportEmails(input)
+  const operational = all.filter((email) => !PLATFORM_LOGIN_EMAILS.has(email))
+  return operational[0] ?? all[0] ?? null
+}
+
+export function supportContactFromOnboardingRow(onboarding: {
+  draft_state?: unknown
+  account_settings?: unknown
+} | null | undefined): {
+  accountSetupEmail: string | null
+  organizationSupportEmail: string | null
+} {
+  const draft =
+    onboarding?.draft_state && typeof onboarding.draft_state === "object"
+      ? (onboarding.draft_state as Record<string, unknown>)
+      : {}
+  const account = (draft.accountSetup ?? {}) as Record<string, unknown>
+  const settings =
+    onboarding?.account_settings && typeof onboarding.account_settings === "object"
+      ? (onboarding.account_settings as Record<string, unknown>)
+      : {}
+  const org = {
+    ...((draft.organizationSettings ?? {}) as Record<string, unknown>),
+    ...((settings.organization ?? {}) as Record<string, unknown>),
+  }
+  return {
+    accountSetupEmail: typeof account.email === "string" ? account.email : null,
+    organizationSupportEmail:
+      typeof org.supportEmail === "string" ? org.supportEmail : null,
+  }
+}
+
+export async function loadLandlordSupportContact(
+  supabase: SupabaseClient,
+  landlordId: string,
+): Promise<{
+  accountSetupEmail: string | null
+  organizationSupportEmail: string | null
+  landlordEmail: string | null
+}> {
+  const id = landlordId.trim()
+  const { data: landlord } = await supabase
+    .from("landlords")
+    .select("email")
+    .eq("id", id)
+    .maybeSingle()
+
+  let onboarding: { draft_state?: unknown; account_settings?: unknown } | null =
+    null
+  const withSettings = await supabase
+    .from("landlord_onboarding")
+    .select("draft_state, account_settings")
+    .eq("landlord_id", id)
+    .maybeSingle()
+  if (withSettings.error) {
+    const draftOnly = await supabase
+      .from("landlord_onboarding")
+      .select("draft_state")
+      .eq("landlord_id", id)
+      .maybeSingle()
+    onboarding = draftOnly.data
+  } else {
+    onboarding = withSettings.data
+  }
+
+  const fromOnboarding = supportContactFromOnboardingRow(onboarding)
+  return {
+    ...fromOnboarding,
+    landlordEmail: typeof landlord?.email === "string" ? landlord.email : null,
+  }
+}
+
 /** Parse comma/space/semicolon-separated env email lists. */
 export function parseOpsEmailList(raw: string | null | undefined): string[] {
   if (!raw?.trim()) return []
@@ -100,12 +205,12 @@ async function loadVendorEmailsForLandlord(
 /**
  * Resolve landlord-ops recipients.
  *
- * Default: env notify list (`SMS_ADMIN_NOTIFY_EMAILS`) + `landlords.email`,
- * minus vendor emails.
+ * Default: env notify list (`SMS_ADMIN_NOTIFY_EMAILS`) + organization
+ * support email (onboarding / Settings) + `landlords.email`, minus vendor emails.
  *
- * `accountHolderOnly: true` — only `landlords.email` (+ optional extras).
- * Use for Needs Your Attention and other account-facing alerts; do not CC
- * Ulo staff env lists.
+ * `accountHolderOnly: true` — only the landlord support / account emails
+ * (+ optional extras). Use for Needs Your Attention and other account-facing
+ * alerts; do not CC Ulo staff env lists.
  */
 export async function resolveLandlordOpsEmails(
   supabase: SupabaseClient,
@@ -134,15 +239,9 @@ export async function resolveLandlordOpsEmails(
     if (n) candidates.add(n)
   }
 
-  const { data: landlord } = await supabase
-    .from("landlords")
-    .select("email")
-    .eq("id", landlordId.trim())
-    .maybeSingle()
-  if (typeof landlord?.email === "string") {
-    const n = normalizeOpsEmail(landlord.email)
-    if (n) candidates.add(n)
-  }
+  const contact = await loadLandlordSupportContact(supabase, landlordId)
+  const supportEmail = primaryLandlordSupportEmail(contact)
+  if (supportEmail) candidates.add(supportEmail)
 
   const vendorEmails = await loadVendorEmailsForLandlord(supabase, landlordId)
   for (const e of options?.excludeEmails ?? []) {

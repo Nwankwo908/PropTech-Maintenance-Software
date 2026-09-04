@@ -331,7 +331,7 @@ export function AdminSidebarContent({
                         className="size-5 max-w-none object-contain object-top"
                       />
                     </span>
-                    <span className="min-w-0 text-left">Get setup</span>
+                    <span className="min-w-0 text-left">Profile setup</span>
                     <span className="ml-auto tabular-nums text-[#6a7282]">{setupNavHint.percent}%</span>
                   </>
                 )}

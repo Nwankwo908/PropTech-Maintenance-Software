@@ -100,6 +100,11 @@ interface ImportMetaEnv {
    * If omitted, defaults to `${VITE_SUPABASE_URL}/functions/v1/send-tenant-activation`.
    */
   readonly VITE_SEND_TENANT_ACTIVATION_URL?: string
+  /**
+   * POST property-insights (full URL); uses `VITE_ADMIN_REASSIGN_SECRET`.
+   * If omitted, defaults to `${VITE_SUPABASE_URL}/functions/v1/property-insights`.
+   */
+  readonly VITE_PROPERTY_INSIGHTS_URL?: string
 }
 
 interface ImportMeta {

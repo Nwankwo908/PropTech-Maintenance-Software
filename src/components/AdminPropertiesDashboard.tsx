@@ -1,7 +1,8 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
-import { useNavigate, useSearchParams } from 'react-router-dom'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useLocation, useNavigate, useSearchParams } from 'react-router-dom'
 import { AddPropertyModal, type AddPropertyFormPayload } from '@/components/AddPropertyModal'
 import { PropertyHealthBuildingGrid } from '@/components/PropertyHealthBuildingGrid'
+import { SetupSuccessCheckboxGuide } from '@/components/SetupSuccessCheckboxGuide'
 import { registerPropertyUnitsSms } from '@/api/landlordSmsOnboarding'
 import { getActiveLandlordId } from '@/lib/activeLandlord'
 import { deleteLandlordBuildings } from '@/lib/onboarding'
@@ -37,6 +38,11 @@ import {
 import { supabase } from '@/lib/supabase'
 import { getErrorMessage } from '@/lib/errorMessage'
 import { activateUnitsFromResidentAssignments } from '@/lib/unitActivation'
+import {
+  dismissSetupSuccessCheckboxGuide,
+  isSetupSuccessCheckboxGuideNavigation,
+  setupCheckboxGuidePropertyTabState,
+} from '@/lib/setupSuccessGuide'
 
 type PropertyTicket = {
   id: string
@@ -337,6 +343,7 @@ function KpiCard({
 
 export function AdminPropertiesDashboard() {
   const navigate = useNavigate()
+  const location = useLocation()
   const [searchParams, setSearchParams] = useSearchParams()
   const [tickets, setTickets] = useState<PropertyTicket[]>([])
   const [units, setUnits] = useState<PropertyUnit[]>([])
@@ -357,6 +364,25 @@ export function AdminPropertiesDashboard() {
     () => new Map(),
   )
   const [canonicalProperties, setCanonicalProperties] = useState<PropertyRecord[]>([])
+  const [showPropertyCardGuide, setShowPropertyCardGuide] = useState(() =>
+    isSetupSuccessCheckboxGuideNavigation(location.state, 'properties'),
+  )
+  const [propertyCardGuideRunId, setPropertyCardGuideRunId] = useState(0)
+  const propertyCardGuideTargetRef = useRef<HTMLElement | null>(null)
+
+  useEffect(() => {
+    if (!isSetupSuccessCheckboxGuideNavigation(location.state, 'properties')) return
+    setShowPropertyCardGuide(true)
+    setPropertyCardGuideRunId((value) => value + 1)
+    navigate(location.pathname, { replace: true, state: {} })
+  }, [location.pathname, location.state, navigate])
+
+  useEffect(() => {
+    if (!showPropertyCardGuide) return
+    const target = propertyCardGuideTargetRef.current
+    if (!target) return
+    target.scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'smooth' })
+  }, [showPropertyCardGuide, loading])
 
   const canonicalPropertiesForHealth = useMemo(
     (): PropertyHealthCanonicalProperty[] =>
@@ -785,6 +811,16 @@ export function AdminPropertiesDashboard() {
 
   return (
     <main className="flex min-h-0 flex-1 flex-col px-8 pb-12">
+      <SetupSuccessCheckboxGuide
+        key={propertyCardGuideRunId}
+        active={showPropertyCardGuide && !loading}
+        targetRef={propertyCardGuideTargetRef}
+        message={
+          healthReport.buildings.length > 0
+            ? 'Select a property to add property details'
+            : 'Select Add Properties to add a property'
+        }
+      />
       <div className="flex items-center justify-between py-6">
         <div>
           <h1 className="text-[24px] font-semibold leading-8 tracking-[0.0703px] text-[#0a0a0a]">
@@ -878,12 +914,23 @@ export function AdminPropertiesDashboard() {
           onDeleteSelected: () => void deleteSelectedBuildings(),
           deleteSelectedSaving: deleteBuildingsSaving,
         }}
+        firstCardRef={propertyCardGuideTargetRef}
         onBuildingOpen={(buildingName) => {
-          navigate(propertyDetailPathForBuilding(buildingName, propertyIdByBuilding))
+          const continueToPropertyTab = showPropertyCardGuide
+          dismissSetupSuccessCheckboxGuide('properties')
+          setShowPropertyCardGuide(false)
+          navigate(propertyDetailPathForBuilding(buildingName, propertyIdByBuilding), {
+            state: continueToPropertyTab ? setupCheckboxGuidePropertyTabState() : undefined,
+          })
         }}
         headerAction={
           <button
             type="button"
+            ref={(node) => {
+              if (healthReport.buildings.length === 0) {
+                propertyCardGuideTargetRef.current = node
+              }
+            }}
             onClick={() => {
               setPropertyRegisterNotice(null)
               setAddPropertyOpen(true)

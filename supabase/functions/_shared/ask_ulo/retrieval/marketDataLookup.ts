@@ -3,10 +3,9 @@
  *
  * Priority:
  * 1. RentCast (RENTCAST_API_KEY) — address AVM + listing comps
- * 2. RapidAPI Zillow (ZILLOW_RAPIDAPI_KEY) — for-rent listings
- * 3. Zillow Research ZORI (no key) — public Observed Rent Index by ZIP/city/metro
+ * 2. RapidAPI Zillow zillow-com1 (ZILLOW_RAPIDAPI_KEY) — for-rent listings
  *
- * Secrets (Edge, optional for #1/#2):
+ * Secrets (Edge, optional):
  *   RENTCAST_API_KEY — preferred for listing-level comps
  *   ZILLOW_RAPIDAPI_KEY + optional ZILLOW_RAPIDAPI_HOST (default zillow-com1.p.rapidapi.com)
  */
@@ -29,7 +28,7 @@ export type MarketComp = {
 
 export type MarketDataLookupResult = {
   available: boolean
-  provider: "rentcast" | "zillow_rapidapi" | "zillow_research" | null
+  provider: "rentcast" | "zillow_rapidapi" | null
   bullets: string[]
   citations: AskUloCitation[]
   comps: MarketComp[]
@@ -37,21 +36,6 @@ export type MarketDataLookupResult = {
   rentRangeLow: number | null
   rentRangeHigh: number | null
   gapNote: string | null
-}
-
-const ZORI_ZIP_CSV =
-  "https://files.zillowstatic.com/research/public_csvs/zori/Zip_zori_uc_sfrcondomfr_sm_month.csv"
-const ZORI_CITY_CSV =
-  "https://files.zillowstatic.com/research/public_csvs/zori/City_zori_uc_sfrcondomfr_sm_month.csv"
-const ZORI_METRO_CSV =
-  "https://files.zillowstatic.com/research/public_csvs/zori/Metro_zori_uc_sfrcondomfr_sm_month.csv"
-
-const ZORI_CACHE_MS = 6 * 60 * 60 * 1000
-const zoriTextCache = new Map<string, { at: number; text: string }>()
-
-/** Nearby demo ZIPs used as rent-index peers when listing comps aren't available. */
-const AREA_PEER_ZIPS: Record<string, string[]> = {
-  "97": ["97124", "97005", "97214", "97217", "97209", "97030"],
 }
 
 function asNum(v: unknown): number | null {
@@ -289,243 +273,6 @@ async function fetchZillowRapidApi(
   return { rent: avg, comps: comps.map((c) => withListingLink(c, "Zillow")) }
 }
 
-function extractZip(address: string | null | undefined): string | null {
-  if (!address) return null
-  const m = address.match(/\b(\d{5})(?:-\d{4})?\b/)
-  return m?.[1] ?? null
-}
-
-function splitCsvLine(line: string): string[] {
-  const out: string[] = []
-  let cur = ""
-  let inQuotes = false
-  for (let i = 0; i < line.length; i++) {
-    const ch = line[i]
-    if (ch === '"') {
-      if (inQuotes && line[i + 1] === '"') {
-        cur += '"'
-        i++
-      } else {
-        inQuotes = !inQuotes
-      }
-      continue
-    }
-    if (ch === "," && !inQuotes) {
-      out.push(cur)
-      cur = ""
-      continue
-    }
-    cur += ch
-  }
-  out.push(cur)
-  return out
-}
-
-async function fetchZoriCsv(url: string): Promise<string | null> {
-  const cached = zoriTextCache.get(url)
-  if (cached && Date.now() - cached.at < ZORI_CACHE_MS) return cached.text
-  try {
-    const res = await fetch(url)
-    if (!res.ok) {
-      console.error("[ask_ulo/marketData] ZORI CSV", res.status, url)
-      return null
-    }
-    const text = await res.text()
-    zoriTextCache.set(url, { at: Date.now(), text })
-    return text
-  } catch (err) {
-    console.error("[ask_ulo/marketData] ZORI CSV fetch", err)
-    return null
-  }
-}
-
-function latestSeriesValue(cells: string[], header: string[]): {
-  rent: number | null
-  asOf: string | null
-  priorYear: number | null
-} {
-  let rent: number | null = null
-  let asOf: string | null = null
-  let rentIdx = -1
-  for (let i = cells.length - 1; i >= 0; i--) {
-    const n = asNum(cells[i])
-    if (n != null) {
-      rent = Math.round(n)
-      asOf = header[i] ?? null
-      rentIdx = i
-      break
-    }
-  }
-  let priorYear: number | null = null
-  if (rentIdx >= 12) {
-    priorYear = asNum(cells[rentIdx - 12])
-    if (priorYear != null) priorYear = Math.round(priorYear)
-  }
-  return { rent, asOf, priorYear }
-}
-
-async function lookupZoriZip(zip: string): Promise<{
-  rent: number | null
-  asOf: string | null
-  priorYear: number | null
-  city: string | null
-  state: string | null
-} | null> {
-  const text = await fetchZoriCsv(ZORI_ZIP_CSV)
-  if (!text) return null
-  const lines = text.split(/\r?\n/)
-  if (lines.length < 2) return null
-  const header = splitCsvLine(lines[0])
-  for (let i = 1; i < lines.length; i++) {
-    const line = lines[i]
-    if (!line) continue
-    const cells = splitCsvLine(line)
-    if (cells[2] !== zip) continue
-    const series = latestSeriesValue(cells, header)
-    return {
-      ...series,
-      city: asStr(cells[6]),
-      state: asStr(cells[5]) ?? asStr(cells[4]),
-    }
-  }
-  return null
-}
-
-async function lookupZoriCity(
-  city: string,
-  state: string,
-): Promise<{ rent: number | null; asOf: string | null; priorYear: number | null } | null> {
-  const text = await fetchZoriCsv(ZORI_CITY_CSV)
-  if (!text) return null
-  const lines = text.split(/\r?\n/)
-  if (lines.length < 2) return null
-  const header = splitCsvLine(lines[0])
-  const cityLc = city.trim().toLowerCase()
-  const stateUc = state.trim().toUpperCase()
-  for (let i = 1; i < lines.length; i++) {
-    const line = lines[i]
-    if (!line) continue
-    const cells = splitCsvLine(line)
-    if ((cells[2] ?? "").trim().toLowerCase() !== cityLc) continue
-    const st = (cells[5] ?? cells[4] ?? "").trim().toUpperCase()
-    if (st !== stateUc) continue
-    return latestSeriesValue(cells, header)
-  }
-  return null
-}
-
-async function lookupZoriMetro(
-  city: string,
-  state: string,
-): Promise<{ rent: number | null; asOf: string | null; priorYear: number | null; name: string | null } | null> {
-  const text = await fetchZoriCsv(ZORI_METRO_CSV)
-  if (!text) return null
-  const lines = text.split(/\r?\n/)
-  if (lines.length < 2) return null
-  const header = splitCsvLine(lines[0])
-  const cityLc = city.trim().toLowerCase()
-  const stateUc = state.trim().toUpperCase()
-  // Prefer metro whose name includes the city or matching state.
-  let fallback: { rent: number | null; asOf: string | null; priorYear: number | null; name: string | null } | null =
-    null
-  for (let i = 1; i < lines.length; i++) {
-    const line = lines[i]
-    if (!line) continue
-    const cells = splitCsvLine(line)
-    const name = (cells[2] ?? "").trim()
-    const st = (cells[4] ?? "").trim().toUpperCase()
-    const nameLc = name.toLowerCase()
-    if (!nameLc.includes(cityLc) && st !== stateUc) continue
-    const series = latestSeriesValue(cells, header)
-    const row = { ...series, name }
-    if (nameLc.includes(cityLc)) return row
-    if (!fallback && st === stateUc) fallback = row
-  }
-  return fallback
-}
-
-async function peerZipComps(anchorZip: string, limit = 5): Promise<MarketComp[]> {
-  const prefix = anchorZip.slice(0, 2)
-  const peers = (AREA_PEER_ZIPS[prefix] ?? []).filter((z) => z !== anchorZip).slice(0, limit)
-  const comps: MarketComp[] = []
-  for (const zip of peers) {
-    const row = await lookupZoriZip(zip)
-    if (!row?.rent) continue
-    const cityState = [row.city, row.state].filter(Boolean).join(", ")
-    const label = cityState ? `${cityState} ${zip}` : `ZIP ${zip}`
-    comps.push(
-      withListingLink(
-        {
-          address: label,
-          price: row.rent,
-          bedrooms: null,
-          bathrooms: null,
-          squareFootage: null,
-          distanceMiles: null,
-          status: "ZORI",
-          url: `https://www.zillow.com/${encodeURIComponent(
-            (row.city ?? "homes").toLowerCase().replace(/\s+/g, "-"),
-          )}-${(row.state ?? "or").toLowerCase()}-${zip}/rentals/`,
-          source: "Zillow",
-        },
-        "Zillow",
-      ),
-    )
-  }
-  return comps
-}
-
-async function fetchZillowResearchZori(input: {
-  address: string | null
-  city: string | null
-  state: string | null
-}): Promise<{
-  rent: number | null
-  asOf: string | null
-  priorYear: number | null
-  scope: string
-  comps: MarketComp[]
-} | null> {
-  const zip = extractZip(input.address)
-  if (zip) {
-    const row = await lookupZoriZip(zip)
-    if (row?.rent != null) {
-      const comps = await peerZipComps(zip)
-      return {
-        rent: row.rent,
-        asOf: row.asOf,
-        priorYear: row.priorYear,
-        scope: `ZIP ${zip}` + (row.city ? ` (${row.city}, ${row.state ?? ""})`.trim() : ""),
-        comps,
-      }
-    }
-  }
-
-  if (input.city && input.state) {
-    const cityRow = await lookupZoriCity(input.city, input.state)
-    if (cityRow?.rent != null) {
-      return {
-        rent: cityRow.rent,
-        asOf: cityRow.asOf,
-        priorYear: cityRow.priorYear,
-        scope: `${input.city}, ${input.state}`,
-        comps: [],
-      }
-    }
-    const metro = await lookupZoriMetro(input.city, input.state)
-    if (metro?.rent != null) {
-      return {
-        rent: metro.rent,
-        asOf: metro.asOf,
-        priorYear: metro.priorYear,
-        scope: metro.name ?? `${input.city}, ${input.state} metro`,
-        comps: [],
-      }
-    }
-  }
-
-  return null
-}
 
 function formatCompLine(c: MarketComp): string {
   const bits: string[] = [c.address]
@@ -551,8 +298,11 @@ export async function marketDataLookup(input: {
 }): Promise<MarketDataLookupResult> {
   const rentcastKey = Deno.env.get("RENTCAST_API_KEY")?.trim()
   const zillowKey = Deno.env.get("ZILLOW_RAPIDAPI_KEY")?.trim()
+  const rawHost = Deno.env.get("ZILLOW_RAPIDAPI_HOST")?.trim() || ""
   const zillowHost =
-    Deno.env.get("ZILLOW_RAPIDAPI_HOST")?.trim() || "zillow-com1.p.rapidapi.com"
+    rawHost && !rawHost.includes("zillow-property-data")
+      ? rawHost.replace(/^https?:\/\//, "").replace(/\/$/, "")
+      : "zillow-com1.p.rapidapi.com"
 
   const loc = resolveMarketSearchAddress(input)
   if (!loc.address && !(loc.city && loc.state)) {
@@ -701,61 +451,6 @@ export async function marketDataLookup(input: {
       }
     }
 
-    // Public Zillow Research ZORI (no API key)
-    const zori = await fetchZillowResearchZori({
-      address: loc.address,
-      city: loc.city,
-      state: loc.state,
-    })
-    if (zori?.rent != null) {
-      const bullets: string[] = [
-        `Market data provider: Zillow Research Observed Rent Index (ZORI) for ${zori.scope}.`,
-      ]
-      if (zori.asOf) {
-        bullets.push(`Index as of ${zori.asOf}: typical rent ~${money(zori.rent)}/mo.`)
-      } else {
-        bullets.push(`Typical rent (ZORI): ~${money(zori.rent)}/mo.`)
-      }
-      if (zori.priorYear != null) {
-        const yoy = Math.round(((zori.rent - zori.priorYear) / zori.priorYear) * 100)
-        bullets.push(
-          `YoY change: ${yoy >= 0 ? "+" : ""}${yoy}% vs ~${money(zori.priorYear)}/mo a year earlier.`,
-        )
-      }
-      if (input.portfolioMonthlyRent != null) {
-        const delta = input.portfolioMonthlyRent - zori.rent
-        const pct = Math.round((delta / zori.rent) * 100)
-        bullets.push(
-          `Portfolio rent position: current ~${money(input.portfolioMonthlyRent)}/mo vs ZORI ~${money(zori.rent)}/mo ` +
-            `(${pct >= 0 ? "+" : ""}${pct}%).`,
-        )
-      }
-      if (zori.comps.length) {
-        bullets.push("Comparable rentals:")
-        for (const c of zori.comps.slice(0, 6)) bullets.push(formatCompLine(c))
-      }
-
-      return {
-        available: true,
-        provider: "zillow_research",
-        bullets,
-        citations: [
-          {
-            tool: "market_data",
-            title: "Zillow Research ZORI",
-            citation: zori.scope,
-            url: "https://www.zillow.com/research/data/",
-            excerpt: `ZORI ~${money(zori.rent)}/mo`,
-          },
-        ],
-        comps: zori.comps,
-        estimatedRent: zori.rent,
-        rentRangeLow: null,
-        rentRangeHigh: null,
-        gapNote: null,
-      }
-    }
-
     return {
       available: false,
       provider: null,
@@ -765,7 +460,7 @@ export async function marketDataLookup(input: {
       estimatedRent: null,
       rentRangeLow: null,
       rentRangeHigh: null,
-      gapNote: `No live rent index found for ${loc.address ?? `${loc.city}, ${loc.state}`}.`,
+      gapNote: `No live rental comps found for ${loc.address ?? `${loc.city}, ${loc.state}`}.`,
     }
   } catch (err) {
     console.error("[ask_ulo/marketData] threw", err)

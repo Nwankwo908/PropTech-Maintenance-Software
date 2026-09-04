@@ -23,6 +23,8 @@ function functionUrl(): string | undefined {
 export async function sendSettingsTestNotification(params: {
   channel: 'email' | 'sms'
   landlordId?: string
+  /** Address shown in Settings — used for test email instead of the login mailbox. */
+  toEmail?: string
 }): Promise<SettingsTestNotificationResult> {
   const url = functionUrl()
   const secret = getAdminEdgeSecret()
@@ -39,7 +41,11 @@ export async function sendSettingsTestNotification(params: {
     const res = await fetchAdminEdgeFunction(url, {
       method: 'POST',
       headers: adminEdgeInvokeHeaders(secret),
-      body: JSON.stringify({ landlordId, channel: params.channel }),
+      body: JSON.stringify({
+        landlordId,
+        channel: params.channel,
+        toEmail: params.toEmail?.trim() || undefined,
+      }),
     })
     const payload = (await res.json()) as { ok?: boolean; message?: string; error?: string }
     if (!res.ok || payload.ok === false) {

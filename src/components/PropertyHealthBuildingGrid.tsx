@@ -1,8 +1,7 @@
-import type { ReactNode } from 'react'
 import { Link } from 'react-router-dom'
+import type { ReactNode, Ref } from 'react'
 import { TableCheckbox } from '@/components/TableCheckbox'
 import {
-  formatPropertyHealthTooltip,
   resolvePropertyHealthPendingMessage,
   shouldShowPropertyHealthScore,
   type PropertyHealthBuildingRow,
@@ -111,6 +110,8 @@ type PropertyHealthBuildingGridProps = {
     deleteSelectedSaving?: boolean
   }
   onBuildingOpen?: (building: string) => void
+  /** Highlight the first property card (Get set up for success coachmark). */
+  firstCardRef?: Ref<HTMLElement | null>
 }
 
 const HEADER_BTN =
@@ -150,6 +151,7 @@ export function PropertyHealthBuildingGrid({
   monthlySpendByBuilding,
   selection,
   onBuildingOpen,
+  firstCardRef,
 }: PropertyHealthBuildingGridProps) {
   const selectedCount = selection?.selectedBuildings.size ?? 0
   const propertyCount = buildingCount ?? buildings.length
@@ -247,6 +249,14 @@ export function PropertyHealthBuildingGrid({
             return (
             <div
               key={b.building}
+              ref={
+                index === 0
+                  ? (node) => {
+                      if (typeof firstCardRef === 'function') firstCardRef(node)
+                      else if (firstCardRef) firstCardRef.current = node
+                    }
+                  : undefined
+              }
               role={onBuildingOpen ? 'button' : undefined}
               tabIndex={onBuildingOpen ? 0 : undefined}
               onClick={
@@ -316,8 +326,11 @@ export function PropertyHealthBuildingGrid({
                 </div>
               </div>
               <div
-                title={formatPropertyHealthTooltip(b.components)}
-                aria-label={formatPropertyHealthTooltip(b.components)}
+                aria-label={
+                  shouldShowPropertyHealthScore(b.status)
+                    ? `${b.score} of 100 health`
+                    : resolvePropertyHealthPendingMessage(b.pendingReason)
+                }
               >
                 {shouldShowPropertyHealthScore(b.status) ? (
                   <>

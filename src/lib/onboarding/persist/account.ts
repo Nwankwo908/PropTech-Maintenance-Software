@@ -8,6 +8,68 @@ import { normalizeOnboardingApprovalRules } from '@/lib/onboardingApprovalRules'
 import { supabase } from '@/lib/supabase'
 import { requireOnboardingLandlord } from '../scope'
 import type { AccountSetupCounts, OnboardingAccountSetup } from '../types'
+import { resolveLandlordSupportEmail } from '@/lib/landlordSupportEmail'
+
+async function persistSupportEmailOnOnboarding(
+  landlordId: string,
+  email: string,
+): Promise<void> {
+  if (!supabase) return
+  const supportEmail = resolveLandlordSupportEmail({ accountSetupEmail: email })
+  if (!supportEmail) return
+
+  const { data } = await supabase
+    .from('landlord_onboarding')
+    .select('draft_state, account_settings')
+    .eq('landlord_id', landlordId)
+    .maybeSingle()
+
+  const draft =
+    data?.draft_state && typeof data.draft_state === 'object'
+      ? (data.draft_state as Record<string, unknown>)
+      : {}
+  const priorAccount =
+    data?.account_settings && typeof data.account_settings === 'object'
+      ? (data.account_settings as Record<string, unknown>)
+      : {}
+  const priorOrg =
+    priorAccount.organization && typeof priorAccount.organization === 'object'
+      ? (priorAccount.organization as Record<string, unknown>)
+      : {}
+  const accountSetup = {
+    ...((draft.accountSetup ?? {}) as Record<string, unknown>),
+    email: supportEmail,
+  }
+
+  const payload: Record<string, unknown> = {
+    draft_state: { ...draft, accountSetup },
+    account_settings: {
+      ...priorAccount,
+      organization: { ...priorOrg, supportEmail },
+    },
+    updated_at: new Date().toISOString(),
+  }
+
+  const { error } = await supabase
+    .from('landlord_onboarding')
+    .update(payload)
+    .eq('landlord_id', landlordId)
+  if (error && /account_settings|column .* does not exist/i.test(error.message)) {
+    const { account_settings: _drop, ...withoutSettings } = payload
+    await supabase
+      .from('landlord_onboarding')
+      .update(withoutSettings)
+      .eq('landlord_id', landlordId)
+  }
+}
+
+async function finishAccountPersistOk(
+  landlordId: string,
+  email: string | null,
+): Promise<{ ok: true }> {
+  await persistSupportEmailOnOnboarding(landlordId, email ?? '')
+  return { ok: true }
+}
 
 export async function persistLandlordAccountProfile(
   landlordId: string,
@@ -51,14 +113,14 @@ export async function persistLandlordAccountProfile(
           '[landlordOnboarding] account email already in use; saved profile without changing email',
           email,
         )
-        return { ok: true }
+        return finishAccountPersistOk(scope.landlordId, email)
       }
       if (/contact_name|phone|column .* does not exist/i.test(retryWithoutEmail.message)) {
         const { error: nameOnly } = await supabase
           .from('landlords')
           .update({ name: companyName || 'New Landlord' })
           .eq('id', scope.landlordId)
-        if (!nameOnly) return { ok: true }
+        if (!nameOnly) return finishAccountPersistOk(scope.landlordId, email)
         return {
           ok: false,
           error: getErrorMessage(
@@ -87,7 +149,7 @@ export async function persistLandlordAccountProfile(
             .from('landlords')
             .update({ name: companyName || 'New Landlord' })
             .eq('id', scope.landlordId)
-          if (!nameOnly) return { ok: true }
+          if (!nameOnly) return finishAccountPersistOk(scope.landlordId, email)
           return {
             ok: false,
             error:
@@ -100,7 +162,7 @@ export async function persistLandlordAccountProfile(
           error: getErrorMessage(retryError, 'Couldn’t save account details. Please try again.'),
         }
       }
-      return { ok: true }
+      return finishAccountPersistOk(scope.landlordId, email)
     }
     console.warn('[landlordOnboarding] persist account profile', error.message)
     return {
@@ -125,7 +187,7 @@ export async function persistLandlordAccountProfile(
     },
   })
 
-  return { ok: true }
+  return finishAccountPersistOk(scope.landlordId, email)
 }
 
 /** Persist communication style on the landlord account (source of truth for outbound tone). */

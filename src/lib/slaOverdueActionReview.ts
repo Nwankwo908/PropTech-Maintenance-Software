@@ -40,6 +40,8 @@ export type SlaOverdueActionReview = {
   minutesPastSla: number | null
   pastSlaLabel: string | null
   issueSummary: string
+  affectedArea: string | null
+  safetyConcerns: string | null
   issueCategory: string | null
   currentVendorName: string | null
   currentVendorStatus: string
@@ -138,6 +140,47 @@ function formatLocation(building: string | null, unit: string): string {
 
 function formatCategoryLabel(slug: string | null): string {
   return formatVendorTradeLabel(slug, { emptyLabel: 'Maintenance' })
+}
+
+/** Split SMS intake description into Notes / Affected area / Safety concerns. */
+export function splitMaintenanceNotes(description: string | null): {
+  notes: string
+  affectedArea: string | null
+  safetyConcerns: string | null
+} {
+  let rest = (description ?? '').trim()
+  if (!rest) return { notes: '', affectedArea: null, safetyConcerns: null }
+
+  const takeLabeled = (label: string): string | null => {
+    const re = new RegExp(`(?:^|\\n+)\\s*${label}:\\s*([^\\n]+)`, 'i')
+    const match = rest.match(re)
+    if (!match) return null
+    rest = rest.replace(re, '\n').trim()
+    return match[1].replace(/[.]+$/, '').trim() || null
+  }
+
+  const affectedArea = takeLabeled('Affected area')
+  const safetyConcerns = takeLabeled('Safety concerns')
+  const notes = rest
+    .replace(/(?:^|\n+)\s*First noticed:\s*[^\n]+/gi, '')
+    .replace(/(?:^|\n+)\s*Resident availability:\s*[^\n]+/gi, '')
+    .replace(/\n+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+
+  return { notes, affectedArea, safetyConcerns }
+}
+
+function notesFromTicketDescription(
+  description: string | null,
+  fallback: string,
+): Pick<SlaOverdueActionReview, 'issueSummary' | 'affectedArea' | 'safetyConcerns'> {
+  const parsed = splitMaintenanceNotes(description)
+  return {
+    issueSummary: parsed.notes || fallback,
+    affectedArea: parsed.affectedArea,
+    safetyConcerns: parsed.safetyConcerns,
+  }
 }
 
 function vendorStatusLabel(vendorWorkStatus: string, assignedVendorName: string | null): string {
@@ -328,9 +371,10 @@ export function buildSlaOverdueActionReview(
     slaDurationLabel: formatSlaDuration(ticket.createdAt, ticket.dueAt),
     minutesPastSla,
     pastSlaLabel: formatPastSlaLabel(minutesPastSla),
-    issueSummary:
-      ticket.description?.trim() ||
+    ...notesFromTicketDescription(
+      ticket.description,
       `${formatCategoryLabel(ticket.issueCategory)} maintenance request`,
+    ),
     issueCategory: ticket.issueCategory,
     currentVendorName: ticket.assignedVendorName,
     currentVendorStatus: vendorStatusLabel(ticket.vendorWorkStatus, ticket.assignedVendorName),
@@ -373,9 +417,10 @@ export function buildExternalVendorFallbackReview(
       dueAt && ticket.createdAt ? formatSlaDuration(ticket.createdAt, dueAt) : null,
     minutesPastSla,
     pastSlaLabel: minutesPastSla != null ? formatPastSlaLabel(minutesPastSla) : null,
-    issueSummary:
-      ticket.description?.trim() ||
+    ...notesFromTicketDescription(
+      ticket.description,
       `${formatCategoryLabel(ticket.issueCategory)} maintenance request`,
+    ),
     issueCategory: ticket.issueCategory,
     currentVendorName: ticket.assignedVendorName,
     currentVendorStatus: vendorStatusLabel(ticket.vendorWorkStatus, ticket.assignedVendorName),

@@ -80,4 +80,44 @@ describe('mergeOrganizationForm operational settings', () => {
 
     expect(merged.rentReminderCadence).toBe('5, 3, 1 days before')
   })
+
+  it('uses onboarding support email instead of the login mailbox on landlords.email', () => {
+    const merged = mergeOrganizationForm({
+      persisted: {
+        ...DEFAULT_ORGANIZATION_SETTINGS,
+        supportEmail: 'limitedalpha1@ulohome.io',
+      },
+      legacyLocal: null,
+      landlordRow: {
+        email: 'limitedalpha1@ulohome.io',
+        name: 'Alpha Property Co',
+      },
+      onboardingRow: null,
+      accountSettings: {},
+      draftState: {
+        accountSetup: {
+          email: 'ceorentalsnj@gmail.com',
+          companyName: 'Alpha Property Co',
+        },
+      },
+    })
+
+    expect(merged.supportEmail).toBe('ceorentalsnj@gmail.com')
+  })
+
+  it('does not copy the Alpha login mailbox into Support email', () => {
+    const merged = mergeOrganizationForm({
+      persisted: {
+        ...DEFAULT_ORGANIZATION_SETTINGS,
+        supportEmail: 'limitedalpha1@ulohome.io',
+      },
+      legacyLocal: null,
+      landlordRow: { email: 'limitedalpha1@ulohome.io' },
+      onboardingRow: null,
+      accountSettings: {},
+      draftState: { accountSetup: { email: '' } },
+    })
+
+    expect(merged.supportEmail).toBe('')
+  })
 })

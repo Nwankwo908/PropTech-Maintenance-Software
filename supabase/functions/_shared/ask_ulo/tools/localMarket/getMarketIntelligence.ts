@@ -1,5 +1,5 @@
 /**
- * getMarketIntelligence — domain tool wrapping marketDataLookup (AVM / comps / ZORI).
+ * getMarketIntelligence — domain tool wrapping marketDataLookup (AVM / comps).
  */
 
 import {

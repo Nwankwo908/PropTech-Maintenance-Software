@@ -7,6 +7,7 @@ import {
   defaultOnboardingApprovalRules,
   normalizeOnboardingApprovalRules,
 } from '@/lib/onboardingApprovalRules'
+import { resolveLandlordSupportEmail } from '@/lib/landlordSupportEmail'
 import { supabase } from '@/lib/supabase'
 import { fetchAccountSetupCounts } from './persist/account'
 import { isOnboardingLandlordAccount } from './scope'
@@ -209,13 +210,26 @@ function rowToState(row: Record<string, unknown>, landlordId: string): LandlordO
   const properties = normalizeOnboardingProperties(row.properties)
   const accountDraft = (draft.accountSetup ?? {}) as Record<string, unknown>
   const formDraft = draft.formDraft as OnboardingFormDraft | undefined
+  const accountSettings =
+    row.account_settings && typeof row.account_settings === 'object'
+      ? (row.account_settings as Record<string, unknown>)
+      : {}
+  const org = {
+    ...((draft.organizationSettings ?? {}) as Record<string, unknown>),
+    ...((accountSettings.organization ?? {}) as Record<string, unknown>),
+  }
+  const accountSetup = normalizeAccountSetup(accountDraft)
+  accountSetup.email = resolveLandlordSupportEmail({
+    accountSetupEmail: accountSetup.email,
+    organizationSupportEmail: typeof org.supportEmail === 'string' ? org.supportEmail : '',
+  })
 
   return {
     landlordId,
     onboardingStatus: (row.onboarding_status as OnboardingStatus) ?? 'not_started',
     currentStep: normalizeOnboardingStep(row.current_step),
     setupPath: (draft.setupPath as OnboardingSetupPath) ?? null,
-    accountSetup: normalizeAccountSetup(accountDraft),
+    accountSetup,
     properties,
     approvalRules: normalizeOnboardingApprovalRules({
       auto_approval_threshold: row.auto_approval_threshold,

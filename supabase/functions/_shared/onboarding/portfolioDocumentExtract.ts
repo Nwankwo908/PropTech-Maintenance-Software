@@ -101,10 +101,10 @@ export type PortfolioDocumentExtractPayload = {
 
 export const PORTFOLIO_EXTRACT_JSON_SCHEMA = {
   account: {
-    companyName: "landlord, lessor, or management company as printed — not the tenant, not a street address",
-    contactName: "landlord or property manager person name if labeled, else empty",
-    email: "landlord/management email if shown, else empty",
-    phone: "landlord/management phone if shown, else empty",
+    companyName: "landlord, lessor, owner, or management company as printed — not the tenant, not a street address",
+    contactName: "business owner, landlord, or property manager person name — look in signature blocks, letterhead, 'Owner:', 'Landlord:', 'Lessor:', or party sections; empty only if truly absent",
+    email: "landlord/owner/management email if shown, else empty",
+    phone: "landlord/owner/management phone or contact number if shown anywhere in the document (header, footer, signature, contact section), else empty",
   },
   properties: [
     {
@@ -193,7 +193,8 @@ Rules:
 - On rent rolls and unit rosters, also populate the units array with one entry per distinct unit number, each with its building/property when shown.
 - On rent rolls, populate the properties array with one entry per distinct property or building name/address shown in the document header, Property column, or Building column.
 - account.companyName: the landlord / lessor / management company / property management firm as printed (letterhead, "Landlord:", "Lessor:", "Managed by:", LLC/Inc legal name). Never use a tenant name, unit number, or street address. Leave empty if the document does not show a company.
-- account.contactName, email, and phone: only the landlord or property manager when clearly labeled. Never copy tenant contact fields into account.
+- account.contactName: the business owner, landlord, lessor, or property manager. Look in signature blocks, party definitions ("Landlord:", "Lessor:", "Owner:"), letterhead, and contact sections. Return the person's full name. Never copy tenant/lessee names into account.
+- account.phone: the owner/landlord/management phone number. Look in headers, footers, letterhead, signature blocks, and contact sections. Never copy tenant phone numbers into account.
 - Each real tenant belongs in residents[] once. If the same person appears on multiple pages, a rent roll, and a lease, return one resident row (and one leases[] row) and fill missing fields from all sources. Never duplicate a tenant because they showed up in more than one place.
 - Dates: YYYY-MM-DD when unambiguous; otherwise empty string.
 - Phone numbers: include country code when shown; otherwise as printed.
@@ -443,13 +444,41 @@ export function normalizeExtractedAccount(root: Record<string, unknown>): Portfo
     contactName: readField(nested, [
       "contactName",
       "contact_name",
+      "ownerName",
+      "owner_name",
+      "businessOwnerName",
+      "business_owner_name",
+      "landlordName",
+      "landlord_name",
+      "lessorName",
+      "lessor_name",
       "propertyManager",
       "property_manager",
       "managerName",
       "manager_name",
+      "signatoryName",
+      "signatory_name",
     ]),
-    email: readField(nested, ["email", "contactEmail", "contact_email"]),
-    phone: readField(nested, ["phone", "contactPhone", "contact_phone"]),
+    email: readField(nested, [
+      "email",
+      "contactEmail",
+      "contact_email",
+      "ownerEmail",
+      "owner_email",
+    ]),
+    phone: readField(nested, [
+      "phone",
+      "contactPhone",
+      "contact_phone",
+      "ownerPhone",
+      "owner_phone",
+      "contactNumber",
+      "contact_number",
+      "phoneNumber",
+      "phone_number",
+      "telephone",
+      "tel",
+    ]),
   }
 }
 

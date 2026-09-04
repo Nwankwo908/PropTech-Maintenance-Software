@@ -1,7 +1,8 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
-import { Link } from 'react-router-dom'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { sendVendorInvite, type VendorInviteChannel } from '@/api/vendorVerification'
 import { VendorFormModal } from '@/components/VendorFormModal'
+import { SetupSuccessCheckboxGuide } from '@/components/SetupSuccessCheckboxGuide'
 import { TableCheckbox } from '@/components/TableCheckbox'
 import magnifyingGlassIcon from '@/assets/Magnifying glass.svg'
 import { getActiveLandlordId } from '@/lib/activeLandlord'
@@ -16,7 +17,11 @@ import {
   isGeneralistTrade,
   VENDOR_TRADE_OPTIONS,
 } from '@/lib/vendorTrades'
-import { resolveVendorCapacityChip, countUnactivatedVendors, vendorCapacityChipVisualClasses } from '@/lib/vendorStatusChip'
+import { resolveVendorCapacityChip, vendorCapacityChipVisualClasses } from '@/lib/vendorStatusChip'
+import {
+  dismissSetupSuccessCheckboxGuide,
+  isSetupSuccessCheckboxGuideNavigation,
+} from '@/lib/setupSuccessGuide'
 
 type VendorRow = {
   id: string
@@ -186,11 +191,22 @@ function ActivationReminderAlertIcon() {
 }
 
 export function AdminVendorsDashboard() {
+  const navigate = useNavigate()
+  const location = useLocation()
   const [vendors, setVendors] = useState<VendorRow[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [scoresError, setScoresError] = useState<string | null>(null)
   const [addVendorOpen, setAddVendorOpen] = useState(false)
+  const [showAddVendorGuide, setShowAddVendorGuide] = useState(() =>
+    isSetupSuccessCheckboxGuideNavigation(location.state, 'vendors'),
+  )
+  const [showCheckboxGuide, setShowCheckboxGuide] = useState(false)
+  const [addVendorGuideRunId, setAddVendorGuideRunId] = useState(0)
+  const [checkboxGuideRunId, setCheckboxGuideRunId] = useState(0)
+  const addVendorGuideTargetRef = useRef<HTMLButtonElement | null>(null)
+  const checkboxGuideTargetRef = useRef<HTMLDivElement | null>(null)
+  const awaitingCheckboxGuideAfterAddRef = useRef(false)
   const [verificationByVendor, setVerificationByVendor] = useState<Map<string, string>>(
     () => new Map(),
   )
@@ -205,6 +221,21 @@ export function AdminVendorsDashboard() {
   const [deleteVendorsError, setDeleteVendorsError] = useState<string | null>(null)
   const [onboardingSaving, setOnboardingSaving] = useState(false)
   const [onboardingNotice, setOnboardingNotice] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (!isSetupSuccessCheckboxGuideNavigation(location.state, 'vendors')) return
+    setShowAddVendorGuide(true)
+    setAddVendorGuideRunId((value) => value + 1)
+    navigate(location.pathname, { replace: true, state: {} })
+  }, [location.pathname, location.state, navigate])
+
+  useEffect(() => {
+    if (!showAddVendorGuide || !addVendorOpen) return
+    awaitingCheckboxGuideAfterAddRef.current = true
+    dismissSetupSuccessCheckboxGuide('vendors')
+    setShowAddVendorGuide(false)
+  }, [showAddVendorGuide, addVendorOpen])
+
   const loadVendors = useCallback(async () => {
     if (!supabase) {
       setLoading(false)
@@ -381,17 +412,18 @@ export function AdminVendorsDashboard() {
     })
   }, [vendors, searchQuery, tradeFilter, ratingSort])
 
-  const unactivatedVendorCount = useMemo(
+  const notStartedVendorCount = useMemo(
     () =>
-      countUnactivatedVendors(
-        vendors.map((vendor) => ({
+      vendors.filter((vendor) => {
+        const chip = resolveVendorCapacityChip({
           verificationStatus: verificationByVendor.get(vendor.id),
           vendorActive: vendor.active,
           availability: availabilityByVendor.get(vendor.id),
           rosterStatus: vendor.rosterStatus,
           onboardingOverriddenAt: vendor.onboardingOverriddenAt,
-        })),
-      ),
+        })
+        return chip.status === 'not_started'
+      }).length,
     [vendors, verificationByVendor, availabilityByVendor],
   )
 
@@ -400,6 +432,41 @@ export function AdminVendorsDashboard() {
     filteredVendors.length > 0 && filteredVendors.every((vendor) => selectedVendorIds.has(vendor.id))
   const someFilteredVendorsSelected =
     filteredVendors.some((vendor) => selectedVendorIds.has(vendor.id)) && !allFilteredVendorsSelected
+
+  const checkboxGuideVendorId = useMemo(() => {
+    const newestUnactivated = [...filteredVendors].reverse().find((vendor) => {
+      const chip = resolveVendorCapacityChip({
+        verificationStatus: verificationByVendor.get(vendor.id),
+        vendorActive: vendor.active,
+        availability: availabilityByVendor.get(vendor.id),
+        rosterStatus: vendor.rosterStatus,
+        onboardingOverriddenAt: vendor.onboardingOverriddenAt,
+      })
+      return chip.status === 'not_started'
+    })
+    return newestUnactivated?.id ?? filteredVendors[filteredVendors.length - 1]?.id ?? null
+  }, [filteredVendors, verificationByVendor, availabilityByVendor])
+
+  useEffect(() => {
+    if (!showCheckboxGuide || selectedVendorCount === 0) return
+    setShowCheckboxGuide(false)
+  }, [showCheckboxGuide, selectedVendorCount])
+
+  const selectedCanStartOnboarding = useMemo(
+    () =>
+      vendors.some((vendor) => {
+        if (!selectedVendorIds.has(vendor.id)) return false
+        const chip = resolveVendorCapacityChip({
+          verificationStatus: verificationByVendor.get(vendor.id),
+          vendorActive: vendor.active,
+          availability: availabilityByVendor.get(vendor.id),
+          rosterStatus: vendor.rosterStatus,
+          onboardingOverriddenAt: vendor.onboardingOverriddenAt,
+        })
+        return chip.status === 'not_started'
+      }),
+    [vendors, selectedVendorIds, verificationByVendor, availabilityByVendor],
+  )
 
   function toggleVendorSelected(id: string) {
     setSelectedVendorIds((prev) => {
@@ -593,6 +660,17 @@ export function AdminVendorsDashboard() {
 
   return (
     <main className="flex min-h-0 flex-1 flex-col px-8 pb-12">
+      <SetupSuccessCheckboxGuide
+        key={`add-${addVendorGuideRunId}`}
+        active={showAddVendorGuide}
+        targetRef={addVendorGuideTargetRef}
+        message="Select Add vendor to invite a vendor"
+      />
+      <SetupSuccessCheckboxGuide
+        key={`checkbox-${checkboxGuideRunId}`}
+        active={showCheckboxGuide}
+        targetRef={checkboxGuideTargetRef}
+      />
       <div className="flex items-start justify-between gap-3 py-6">
         <div>
           <h1 className="text-[24px] font-semibold leading-8 tracking-[0.0703px] text-[#0a0a0a]">
@@ -604,6 +682,7 @@ export function AdminVendorsDashboard() {
         </div>
         <div className="flex shrink-0 items-center gap-2">
           <button
+            ref={addVendorGuideTargetRef}
             type="button"
             onClick={() => setAddVendorOpen(true)}
             className="sa-press inline-flex h-9 cursor-pointer items-center justify-center gap-2 rounded-[10px] bg-transparent px-4 text-[14px] font-medium leading-5 text-[#186179] outline-none focus-visible:ring-2 focus-visible:ring-[#186179] focus-visible:ring-offset-2"
@@ -635,16 +714,16 @@ export function AdminVendorsDashboard() {
         </div>
       ) : null}
 
-      {!loading && unactivatedVendorCount > 0 ? (
+      {!loading && notStartedVendorCount > 0 ? (
         <div
           className="mb-4 flex items-start gap-2.5 rounded-[10px] border border-[#E8A5AA] bg-[#F6B9BE] px-4 py-3 text-[13px] leading-5 text-[#364153]"
           role="status"
         >
           <ActivationReminderAlertIcon />
           <p className="text-[#101828]">
-            {unactivatedVendorCount === 1
+            {notStartedVendorCount === 1
               ? '1 vendor has not been activated yet.'
-              : `${unactivatedVendorCount} vendors have not been activated yet.`}{' '}
+              : `${notStartedVendorCount} vendors have not been activated yet.`}{' '}
             Select the checkbox to start onboarding when you&apos;re ready.
           </p>
         </div>
@@ -718,14 +797,16 @@ export function AdminVendorsDashboard() {
             >
               Clear selection
             </button>
-            <button
-              type="button"
-              disabled={onboardingSaving || deleteVendorsSaving}
-              onClick={() => void startOnboardingForSelected()}
-              className="sa-press inline-flex h-9 items-center justify-center rounded-lg bg-[#187960] px-3 text-[14px] font-medium text-white outline-none hover:bg-[#146b52] focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50"
-            >
-              {onboardingSaving ? 'Starting…' : 'Start onboarding'}
-            </button>
+            {selectedCanStartOnboarding ? (
+              <button
+                type="button"
+                disabled={onboardingSaving || deleteVendorsSaving}
+                onClick={() => void startOnboardingForSelected()}
+                className="sa-press inline-flex h-9 items-center justify-center rounded-lg bg-[#187960] px-3 text-[14px] font-medium text-white outline-none hover:bg-[#146b52] focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50"
+              >
+                {onboardingSaving ? 'Starting…' : 'Start onboarding'}
+              </button>
+            ) : null}
             <button
               type="button"
               disabled={deleteVendorsSaving || onboardingSaving}
@@ -783,11 +864,20 @@ export function AdminVendorsDashboard() {
                     className="sa-enter border-b border-[#f3f4f6] last:border-b-0"
                   >
                     <td className="w-12 px-4 py-4">
-                      <TableCheckbox
-                        aria-label={`Select ${vendor.name}`}
-                        checked={selectedVendorIds.has(vendor.id)}
-                        onChange={() => toggleVendorSelected(vendor.id)}
-                      />
+                      <div
+                        ref={
+                          showCheckboxGuide && vendor.id === checkboxGuideVendorId
+                            ? checkboxGuideTargetRef
+                            : undefined
+                        }
+                        className="inline-flex"
+                      >
+                        <TableCheckbox
+                          aria-label={`Select ${vendor.name}`}
+                          checked={selectedVendorIds.has(vendor.id)}
+                          onChange={() => toggleVendorSelected(vendor.id)}
+                        />
+                      </div>
                     </td>
                     <td className="px-6 py-4 text-[14px] font-medium text-[#0a0a0a]">
                       <Link
@@ -862,7 +952,13 @@ export function AdminVendorsDashboard() {
         onClose={() => setAddVendorOpen(false)}
         onSaved={() => {
           setAddVendorOpen(false)
-          void loadVendors()
+          const showCheckboxNext = awaitingCheckboxGuideAfterAddRef.current
+          void loadVendors().then(() => {
+            if (!showCheckboxNext) return
+            awaitingCheckboxGuideAfterAddRef.current = false
+            setShowCheckboxGuide(true)
+            setCheckboxGuideRunId((value) => value + 1)
+          })
         }}
       />
     </main>

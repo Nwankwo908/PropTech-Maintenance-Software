@@ -1929,6 +1929,86 @@ h6 {
   animation: sa-enter-scale 300ms var(--sa-ease);
 }
 
+@keyframes setup-checkbox-guide-cursor-draw {
+  0% {
+    transform: translate3d(var(--guide-cursor-start-x, 0), var(--guide-cursor-start-y, 0), 0);
+    opacity: 0;
+  }
+  4% {
+    opacity: 1;
+  }
+  16% {
+    transform: translate3d(var(--guide-cursor-tl-x, 0), var(--guide-cursor-tl-y, 0), 0);
+  }
+  32% {
+    transform: translate3d(var(--guide-cursor-tr-x, 0), var(--guide-cursor-tr-y, 0), 0);
+  }
+  48% {
+    transform: translate3d(var(--guide-cursor-br-x, 0), var(--guide-cursor-br-y, 0), 0);
+  }
+  64% {
+    transform: translate3d(var(--guide-cursor-bl-x, 0), var(--guide-cursor-bl-y, 0), 0);
+  }
+  80% {
+    transform: translate3d(var(--guide-cursor-tl-x, 0), var(--guide-cursor-tl-y, 0), 0);
+  }
+  92%,
+  100% {
+    transform: translate3d(var(--guide-cursor-end-x, 0), var(--guide-cursor-end-y, 0), 0);
+    opacity: 1;
+  }
+}
+
+.setup-checkbox-guide-cursor {
+  will-change: transform, opacity;
+  animation: setup-checkbox-guide-cursor-draw 2.6s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+}
+
+@keyframes setup-checkbox-guide-square-draw {
+  0%,
+  16% {
+    opacity: 0;
+  }
+  28%,
+  100% {
+    opacity: 1;
+  }
+}
+
+.setup-checkbox-guide-square-stroke {
+  animation: setup-checkbox-guide-square-draw 2.6s linear forwards;
+}
+
+@keyframes setup-checkbox-guide-bubble-in {
+  0%,
+  82% {
+    opacity: 0;
+    transform: translateY(calc(-50% + 10px));
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(-50%);
+  }
+}
+
+.setup-checkbox-guide-bubble {
+  opacity: 0;
+  animation: setup-checkbox-guide-bubble-in 2.6s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+}
+
+@keyframes setup-checkbox-guide-helpers-dissolve {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0;
+  }
+}
+
+.setup-checkbox-guide-helpers-dissolve {
+  animation: setup-checkbox-guide-helpers-dissolve 500ms ease forwards;
+}
+
 /*
  * Onboarding Smart Animate — step morphing, welcome stagger, progress.
  * Avoid animation-fill-mode: both (can leave content invisible if interrupted).

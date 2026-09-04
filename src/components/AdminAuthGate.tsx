@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Navigate, useLocation } from 'react-router-dom'
 import type { Session } from '@supabase/supabase-js'
-import { isAdminSessionAllowed, signOutAdmin } from '@/lib/adminAuth'
+import { getAdminSession, isAdminSessionAllowed, signOutAdmin } from '@/lib/adminAuth'
 import { setSessionLandlordFromEmail } from '@/lib/activeLandlord'
 import { supabase } from '@/lib/supabase'
 
@@ -44,13 +44,12 @@ export function AdminAuthGate({ children }: { children: React.ReactNode }) {
       setState((prev) =>
         prev === 'loading' ? (import.meta.env.DEV ? 'authed' : 'anon') : prev,
       )
-    }, 20_000)
+    }, 5_000)
 
-    void supabase.auth
-      .getSession()
-      .then(async ({ data }) => {
+    void getAdminSession(4_000)
+      .then(async (session) => {
         if (cancelled) return
-        setState(await gateStateForSession(data.session))
+        setState(await gateStateForSession(session))
       })
       .catch((err) => {
         if (cancelled) return

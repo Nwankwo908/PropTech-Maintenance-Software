@@ -125,10 +125,6 @@ export function SlaOverdueActionRail({
 
   if (!open || !review) return null
 
-  const alertHeadline =
-    review.pastSlaLabel ??
-    (review.minutesPastSla != null ? `${review.minutesPastSla} minutes past response time` : 'Escalation requires review')
-
   const isVendorSuggestionAction =
     review.takeActionMode === 'external_vendor' ||
     review.takeActionMode === 'assign_vendor' ||
@@ -193,8 +189,16 @@ export function SlaOverdueActionRail({
           </div>
 
           <div className="sa-enter mt-4 rounded-[10px] border border-[#fecaca] bg-[#fff5f5] px-4 py-3">
-            <p className="text-[14px] font-semibold leading-5 text-[#c10007]">{alertHeadline}</p>
-            <p className="mt-1 text-[13px] leading-5 text-[#364153]">{review.issueSummary}</p>
+            <p className="text-[14px] font-semibold leading-5 text-[#c10007]">Notes</p>
+            <div className="mt-1 text-[13px] leading-5 text-[#364153]">
+              <p className="truncate">{review.issueSummary}</p>
+              <p className="truncate">
+                Affected area: {review.affectedArea?.trim() || '—'}
+              </p>
+              <p className="truncate">
+                Safety concerns: {review.safetyConcerns?.trim() || '—'}
+              </p>
+            </div>
           </div>
 
           <div className="sa-enter mt-5">

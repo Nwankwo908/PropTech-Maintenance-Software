@@ -189,10 +189,6 @@ export function AdminOnboardingGuard() {
     return <Navigate to="/admin/onboarding" replace />
   }
 
-  if (showPostOnboardingWelcome && !onOnboardingRoute) {
-    return <Navigate to="/admin/onboarding" replace />
-  }
-
   if (
     !blockDashboard &&
     onOnboardingRoute &&

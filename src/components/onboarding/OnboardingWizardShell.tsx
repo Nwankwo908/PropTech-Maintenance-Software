@@ -1,6 +1,8 @@
 import { Link, useNavigate } from 'react-router-dom'
 import { useLayoutEffect, useRef, useState } from 'react'
 import { getActiveLandlordId } from '@/lib/activeLandlord'
+import { LIMITED_ALPHA_1_LANDLORD_ID } from '@shared/landlordCapabilities'
+import { markLimitedAlphaPostOnboardingWelcomeSeen, shouldShowLimitedAlphaPostOnboardingWelcome } from '@/lib/postOnboardingWelcome'
 import { landlordHasPayments, landlordHasVendorMarketplace } from '@shared/landlordCapabilities'
 import { primaryPayoutMethodLabel } from '@/api/landlordStripeConnect'
 import { OnboardingWelcomeHub } from '@/components/onboarding/OnboardingWelcomeHub'
@@ -17,7 +19,6 @@ import { OnboardingVendorsStep } from '@/components/onboarding/OnboardingVendors
 import { OnboardingResidentsStep } from '@/components/onboarding/OnboardingResidentsStep'
 import { OnboardingSetupTransition } from '@/components/onboarding/OnboardingSetupTransition'
 import { useOnboardingWizard } from '@/components/onboarding/useOnboardingWizard'
-import { markLimitedAlphaPostOnboardingWelcomeSeen, shouldShowLimitedAlphaPostOnboardingWelcome } from '@/lib/postOnboardingWelcome'
 
 const btnSecondary =
   'sa-press inline-flex cursor-pointer items-center justify-center rounded-[10px] border border-[#e5e7eb] bg-white px-4 py-2.5 text-[14px] font-medium text-[#101828] transition-colors hover:bg-[#f9fafb] disabled:cursor-not-allowed disabled:opacity-50'
@@ -31,7 +32,9 @@ export function OnboardingWizardShell() {
     wizard.state.landlordId,
   )
   const handleGetStarted = () => {
+    markLimitedAlphaPostOnboardingWelcomeSeen(LIMITED_ALPHA_1_LANDLORD_ID)
     markLimitedAlphaPostOnboardingWelcomeSeen(wizard.state.landlordId)
+    markLimitedAlphaPostOnboardingWelcomeSeen(getActiveLandlordId())
     navigate('/admin', { replace: true })
   }
   const wasCompletingRef = useRef(false)

@@ -124,7 +124,7 @@ export const DOMAIN_TOOL_REGISTRY: DomainToolMeta[] = [
     id: "get_market_intelligence",
     label: "Market intelligence",
     subject: "market_intelligence",
-    description: "Rent AVM, comps, ZORI / market packets.",
+    description: "Rent AVM, comps / market packets.",
     status: "live",
   },
   {

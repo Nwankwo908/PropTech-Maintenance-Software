@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useLocation, useNavigate } from 'react-router-dom'
 import magnifyingGlassIcon from '@/assets/Magnifying glass.svg'
+import { SetupSuccessCheckboxGuide } from '@/components/SetupSuccessCheckboxGuide'
 import { TableCheckbox } from '@/components/TableCheckbox'
 import { loadUnitsFromDb } from '@/api/unitVacancy'
 import { registerUnitSms, syncSmsIdentity } from '@/api/landlordSmsOnboarding'
@@ -29,6 +30,10 @@ import {
 } from '@/lib/propertyHealth'
 import { displayResidentEmail } from '@/lib/residentProfileDetail'
 import { deleteResidentsForLandlord } from '@/lib/residentDeletion'
+import {
+  dismissSetupSuccessCheckboxGuide,
+  isSetupSuccessCheckboxGuideNavigation,
+} from '@/lib/setupSuccessGuide'
 import { resolveTenantActivationChip, countUnactivatedTenants } from '@/lib/tenantActivationStatus'
 import { supabase } from '@/lib/supabase'
 import { getErrorMessage } from '@/lib/errorMessage'
@@ -36,8 +41,6 @@ import { parseLeaseDateInput } from '@/lib/onboarding'
 import { residentOccupancyLabel } from '@/lib/residentOccupancy'
 import { activateUnitsFromResidentAssignments } from '@/lib/unitActivation'
 
-type Sentiment = 'positive' | 'at_risk' | 'neutral'
-type SentimentFilter = 'all' | Sentiment
 type BalanceSort = 'desc' | 'asc'
 
 type ResidentRow = {
@@ -52,7 +55,6 @@ type ResidentRow = {
   contactEmail: string | null
   leaseEndLabel: string
   balanceDue: number
-  sentiment: Sentiment
   status: string
   activationStatus: string | null
   smsConsentStatus: string | null
@@ -63,14 +65,6 @@ type ResidentRow = {
 function asString(value: unknown): string {
   if (value == null) return ''
   return String(value).trim()
-}
-
-function asStringArray(value: unknown): string[] {
-  if (Array.isArray(value)) {
-    return value.map((item) => asString(item)).filter(Boolean)
-  }
-  if (typeof value === 'string' && value.trim()) return [value.trim()]
-  return []
 }
 
 function asFiniteNumber(value: unknown): number {
@@ -114,108 +108,6 @@ function formatBalance(amount: number): string {
 function formatMonthlyRent(amount: number | null): string {
   if (amount == null || !Number.isFinite(amount) || amount <= 0) return '—'
   return formatBalance(amount)
-}
-
-/** Infer sentiment from lease, balance, and account signals (proxy until AI sentiment pipeline ships). */
-function inferSentiment(params: {
-  status: string
-  balanceDue: number
-  leaseEndDate: string | null
-  issues: string[]
-}): Sentiment {
-  const status = params.status.toLowerCase()
-  if (params.balanceDue > 0 || status === 'suspended') return 'at_risk'
-
-  const issuesText = params.issues.join(' ').toLowerCase()
-  if (issuesText.includes('late') || issuesText.includes('overdue') || issuesText.includes('complaint')) {
-    return 'at_risk'
-  }
-
-  if (status === 'active' && params.balanceDue <= 0) {
-    if (params.leaseEndDate) {
-      const end = new Date(`${params.leaseEndDate.trim()}T12:00:00`)
-      const days = (end.getTime() - Date.now()) / (1000 * 60 * 60 * 24)
-      if (Number.isFinite(days) && days >= 0 && days <= 21) return 'neutral'
-    }
-    return 'positive'
-  }
-
-  return 'neutral'
-}
-
-function SentimentBadge({ sentiment }: { sentiment: Sentiment }) {
-  const config = {
-    positive: {
-      label: 'Positive',
-      className: 'bg-[#dbfce7] text-[#008236]',
-    },
-    at_risk: {
-      label: 'At risk',
-      className: 'bg-[#ffedd5] text-[#c2410c]',
-    },
-    neutral: {
-      label: 'Neutral',
-      className: 'bg-[#f3f4f6] text-[#6a7282]',
-    },
-  }[sentiment]
-
-  return (
-    <span
-      className={[
-        'inline-flex items-center rounded-full px-2.5 py-0.5 text-[12px] font-medium',
-        config.className,
-      ].join(' ')}
-    >
-      {config.label}
-    </span>
-  )
-}
-
-const SENTIMENT_FILTER_OPTIONS: { value: Sentiment; label: string }[] = [
-  { value: 'positive', label: 'Positive' },
-  { value: 'at_risk', label: 'At risk' },
-  { value: 'neutral', label: 'Neutral' },
-]
-
-function FilterChevronDown() {
-  return (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} className="size-4">
-      <path d="M6 9l6 6 6-6" />
-    </svg>
-  )
-}
-
-function FilterSelect({
-  label,
-  options,
-  value,
-  onChange,
-}: {
-  label: string
-  options: readonly { value: string; label: string }[]
-  value: string
-  onChange: (value: string) => void
-}) {
-  return (
-    <div className="relative">
-      <select
-        aria-label={label}
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        className="sa-surface peer h-9 min-w-[140px] cursor-pointer appearance-none rounded-lg border border-transparent bg-[#f3f3f5] py-1 pl-3 pr-9 text-[14px] font-medium tracking-[-0.1504px] text-[#0a0a0a] shadow-none outline-none hover:border-black/10 hover:bg-[#e8eaee] focus:border-[#0030b5]/45 focus:bg-white focus:ring-2 focus:ring-[#0030b5]/30"
-      >
-        <option value="">{label}</option>
-        {options.map((option) => (
-          <option key={option.value} value={option.value}>
-            {option.label}
-          </option>
-        ))}
-      </select>
-      <span className="pointer-events-none absolute right-2.5 top-1/2 size-4 -translate-y-1/2 text-[#6a7282]">
-        <FilterChevronDown />
-      </span>
-    </div>
-  )
 }
 
 function FilterToggleGroup<T extends string>({
@@ -293,11 +185,11 @@ function ActivationReminderAlertIcon() {
 
 export function AdminResidentsDashboard() {
   const navigate = useNavigate()
+  const location = useLocation()
   const [residents, setResidents] = useState<ResidentRow[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [searchQuery, setSearchQuery] = useState('')
-  const [sentimentFilter, setSentimentFilter] = useState<SentimentFilter>('all')
   const [balanceSort, setBalanceSort] = useState<BalanceSort>('desc')
   const [addResidentOpen, setAddResidentOpen] = useState(false)
   const [addResidentError, setAddResidentError] = useState<string | null>(null)
@@ -307,6 +199,18 @@ export function AdminResidentsDashboard() {
   const [deleteResidentsError, setDeleteResidentsError] = useState<string | null>(null)
   const [onboardingSaving, setOnboardingSaving] = useState(false)
   const [residentsBanner, setResidentsBanner] = useState<ResidentsBannerState>(null)
+  const [showCheckboxGuide, setShowCheckboxGuide] = useState(() =>
+    isSetupSuccessCheckboxGuideNavigation(location.state, 'residents'),
+  )
+  const [checkboxGuideRunId, setCheckboxGuideRunId] = useState(0)
+  const checkboxGuideTargetRef = useRef<HTMLDivElement | null>(null)
+
+  useEffect(() => {
+    if (!isSetupSuccessCheckboxGuideNavigation(location.state, 'residents')) return
+    setShowCheckboxGuide(true)
+    setCheckboxGuideRunId((value) => value + 1)
+    navigate(location.pathname, { replace: true, state: {} })
+  }, [location.pathname, location.state, navigate])
 
   useEffect(() => {
     if (residentsBanner?.kind !== 'onboarding_started') return
@@ -330,9 +234,9 @@ export function AdminResidentsDashboard() {
     setError(null)
 
     const selectWithActivation =
-      'id, full_name, unit, building, status, balance_due, lease_end_date, move_in_date, phone, email, issues, monthly_rent, activation_status, sms_consent_status, activation_attempt_count, activation_sms_sent_at'
+      'id, full_name, unit, building, status, balance_due, lease_end_date, move_in_date, phone, email, monthly_rent, activation_status, sms_consent_status, activation_attempt_count, activation_sms_sent_at'
     const selectLegacy =
-      'id, full_name, unit, building, status, balance_due, lease_end_date, move_in_date, phone, email, issues, monthly_rent'
+      'id, full_name, unit, building, status, balance_due, lease_end_date, move_in_date, phone, email, monthly_rent'
 
     let data: Record<string, unknown>[] | null = null
     let fetchError: { message: string } | null = null
@@ -415,12 +319,6 @@ export function AdminResidentsDashboard() {
           contactEmail: email,
           leaseEndLabel: formatLeaseEnd(leaseEndDate),
           balanceDue,
-          sentiment: inferSentiment({
-            status,
-            balanceDue,
-            leaseEndDate,
-            issues: asStringArray(raw.issues),
-          }),
           status,
           activationStatus: asString(raw.activation_status) || null,
           smsConsentStatus: asString(raw.sms_consent_status) || null,
@@ -561,7 +459,6 @@ export function AdminResidentsDashboard() {
         (resident.contactPhone ?? '').toLowerCase().includes(q) ||
         (resident.contactEmail ?? '').toLowerCase().includes(q)
       if (!matchesSearch) return false
-      if (sentimentFilter !== 'all' && resident.sentiment !== sentimentFilter) return false
       return true
     })
 
@@ -571,7 +468,7 @@ export function AdminResidentsDashboard() {
       if (balanceDelta !== 0) return balanceDelta
       return a.name.localeCompare(b.name)
     })
-  }, [residents, searchQuery, sentimentFilter, balanceSort])
+  }, [residents, searchQuery, balanceSort])
 
   const unactivatedResidentCount = useMemo(
     () =>
@@ -593,6 +490,25 @@ export function AdminResidentsDashboard() {
   const someFilteredResidentsSelected =
     filteredResidents.some((resident) => selectedResidentIds.has(resident.id)) &&
     !allFilteredResidentsSelected
+
+  const checkboxGuideResidentId = useMemo(() => {
+    const match = filteredResidents.find((resident) => {
+      const chip = resolveTenantActivationChip({
+        activationStatus: resident.activationStatus,
+        smsConsentStatus: resident.smsConsentStatus,
+        activationAttemptCount: resident.activationAttemptCount,
+        activationSmsSentAt: resident.activationSmsSentAt,
+      })
+      return chip.status === 'not_started' && Boolean(resident.contactPhone?.trim())
+    })
+    return match?.id ?? filteredResidents[0]?.id ?? null
+  }, [filteredResidents])
+
+  useEffect(() => {
+    if (!showCheckboxGuide || selectedResidentCount === 0) return
+    dismissSetupSuccessCheckboxGuide('residents')
+    setShowCheckboxGuide(false)
+  }, [showCheckboxGuide, selectedResidentCount])
 
   function toggleResidentSelected(id: string) {
     setSelectedResidentIds((prev) => {
@@ -768,6 +684,11 @@ export function AdminResidentsDashboard() {
   return (
     // Natural height so AdminLayout's scroll region owns vertical scrolling.
     <main className="px-8 pb-12">
+      <SetupSuccessCheckboxGuide
+        key={checkboxGuideRunId}
+        active={showCheckboxGuide}
+        targetRef={checkboxGuideTargetRef}
+      />
       <div className="flex items-start justify-between gap-3 py-6">
         <div>
           <h1 className="text-[24px] font-semibold leading-8 tracking-[0.0703px] text-[#0a0a0a]">
@@ -864,14 +785,6 @@ export function AdminResidentsDashboard() {
             />
           </div>
           <div className="flex flex-wrap items-center gap-3">
-            <FilterSelect
-              label="All sentiments"
-              options={SENTIMENT_FILTER_OPTIONS}
-              value={sentimentFilter === 'all' ? '' : sentimentFilter}
-              onChange={(value) =>
-                setSentimentFilter(value === '' ? 'all' : (value as Sentiment))
-              }
-            />
             <FilterToggleGroup
               label="Sort by balance"
               value={balanceSort}
@@ -947,19 +860,18 @@ export function AdminResidentsDashboard() {
                 <th className="px-6 py-3 text-[12px] font-medium text-[#6a7282]">Occupancy</th>
                 <th className="px-6 py-3 text-[12px] font-medium text-[#6a7282]">Balance</th>
                 <th className="px-6 py-3 text-[12px] font-medium text-[#6a7282]">Activation</th>
-                <th className="px-6 py-3 text-[12px] font-medium text-[#6a7282]">Sentiment</th>
               </tr>
             </thead>
             <tbody>
               {loading ? (
                 <tr>
-                    <td colSpan={11} className="px-6 py-10 text-center text-[14px] text-[#6a7282]">
+                    <td colSpan={10} className="px-6 py-10 text-center text-[14px] text-[#6a7282]">
                     Loading residents…
                   </td>
                 </tr>
               ) : filteredResidents.length === 0 ? (
                 <tr>
-                    <td colSpan={11} className="px-6 py-10 text-center text-[14px] text-[#6a7282]">
+                    <td colSpan={10} className="px-6 py-10 text-center text-[14px] text-[#6a7282]">
                     {residents.length === 0 ? (
                       <>
                         No residents yet.{' '}
@@ -976,7 +888,7 @@ export function AdminResidentsDashboard() {
                         so Ulo can reach them.
                       </>
                     ) : (
-                      'No residents match your search or filters.'
+                      'No residents match your search.'
                     )}
                   </td>
                 </tr>
@@ -988,11 +900,20 @@ export function AdminResidentsDashboard() {
                     className="sa-enter border-b border-[#f3f4f6] last:border-b-0"
                   >
                     <td className="w-12 px-4 py-4">
-                      <TableCheckbox
-                        aria-label={`Select ${resident.name}`}
-                        checked={selectedResidentIds.has(resident.id)}
-                        onChange={() => toggleResidentSelected(resident.id)}
-                      />
+                      <div
+                        ref={
+                          showCheckboxGuide && resident.id === checkboxGuideResidentId
+                            ? checkboxGuideTargetRef
+                            : undefined
+                        }
+                        className="inline-flex"
+                      >
+                        <TableCheckbox
+                          aria-label={`Select ${resident.name}`}
+                          checked={selectedResidentIds.has(resident.id)}
+                          onChange={() => toggleResidentSelected(resident.id)}
+                        />
+                      </div>
                     </td>
                     <td className="px-6 py-4 text-[14px] font-medium text-[#0a0a0a]">
                       <button
@@ -1055,9 +976,6 @@ export function AdminResidentsDashboard() {
                         })
                         return <TenantActivationStatusChip chip={chip} />
                       })()}
-                    </td>
-                    <td className="px-6 py-4">
-                      <SentimentBadge sentiment={resident.sentiment} />
                     </td>
                   </tr>
                 ))
