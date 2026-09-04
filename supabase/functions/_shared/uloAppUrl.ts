@@ -173,6 +173,20 @@ export const uloAppUrl = {
       `/admin?findVendor=1&ticket=${id}`,
     )
   },
+
+  /** Lightweight phone capture page for AI Equipment Scan. */
+  inspectionCapture(
+    sessionId: string,
+    token: string,
+    options?: UloAppOriginOptions,
+  ): string {
+    const origin = uloAppOrigin(options)
+    const url = new URL(
+      joinOriginPath(origin || DEFAULT_ULO_APP_ORIGIN, `/inspection/capture/${encodeURIComponent(sessionId.trim())}`),
+    )
+    url.searchParams.set("token", token.trim())
+    return url.toString()
+  },
 }
 
 /** @deprecated Prefer uloAppOrigin / uloAppUrl — kept for gradual migration. */

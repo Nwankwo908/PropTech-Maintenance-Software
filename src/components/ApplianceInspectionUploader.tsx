@@ -9,30 +9,24 @@ import {
   type InspectionAssetSummary,
 } from '@/api/inspectionAssetAssess'
 import { ApplianceAssessmentReviewCard } from '@/components/ApplianceAssessmentReviewCard'
+import { InspectionCaptureChooser } from '@/components/InspectionCaptureChooser'
+import { InspectionPhoneCaptureModal } from '@/components/InspectionPhoneCaptureModal'
+import type { InspectionCapturePhoto } from '@/api/inspectionCapture'
 import { notifyAssetRegistryChanged } from '@/lib/assetRegistry'
 import { compressImageForVision } from '@/lib/imageCompress'
+import { getErrorMessage } from '@/lib/errorMessage'
 import type {
   ApplianceVisionResult,
   InspectionPhotoRow,
   InspectionPhotoStatus,
   VisionHintCategory,
 } from '@/lib/vision/types'
-import { getErrorMessage } from '@/lib/errorMessage'
 
 const ACCEPT = 'image/jpeg,image/png,image/webp,image/heic,image/heif,.jpg,.jpeg,.png,.webp,.heic,.pdf'
+const CAMERA_ACCEPT = 'image/*'
 const MAX_FILES = 20
 const MAX_BYTES = 10 * 1024 * 1024
 const CONCURRENCY = 3
-
-const HINT_OPTIONS: { value: VisionHintCategory | ''; label: string }[] = [
-  { value: '', label: 'Auto-detect' },
-  { value: 'appliance', label: 'Appliance' },
-  { value: 'hvac', label: 'HVAC' },
-  { value: 'water_heater', label: 'Water heater' },
-  { value: 'boiler', label: 'Boiler' },
-  { value: 'roof', label: 'Roof' },
-  { value: 'other', label: 'Other' },
-]
 
 function statusLabel(status: InspectionPhotoStatus): string {
   switch (status) {
@@ -83,15 +77,18 @@ type ApplianceInspectionUploaderProps = {
 export function ApplianceInspectionUploader({ building }: ApplianceInspectionUploaderProps) {
   const inputId = useId()
   const inputRef = useRef<HTMLInputElement>(null)
+  const cameraInputRef = useRef<HTMLInputElement>(null)
   const [assessmentId, setAssessmentId] = useState<string | null>(null)
   const [photos, setPhotos] = useState<InspectionPhotoRow[]>([])
   const [assets, setAssets] = useState<InspectionAssetSummary[]>([])
-  const [defaultHint, setDefaultHint] = useState<VisionHintCategory | ''>('')
   const [dragging, setDragging] = useState(false)
   const [busy, setBusy] = useState(false)
   const [confirmingId, setConfirmingId] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [reviewId, setReviewId] = useState<string | null>(null)
+  const [chooserOpen, setChooserOpen] = useState(false)
+  const [phoneCaptureOpen, setPhoneCaptureOpen] = useState(false)
+  const previewByIdRef = useRef<Record<string, string>>({})
 
   const refreshAssets = useCallback(async () => {
     if (!building) return
@@ -175,6 +172,7 @@ export function ApplianceInspectionUploader({ building }: ApplianceInspectionUpl
           setPhotos((prev) =>
             prev.map((p) => (p.id === optimisticId ? { ...uploaded, previewUrl: job.previewUrl } : p)),
           )
+          if (uploaded.id) previewByIdRef.current[uploaded.id] = job.previewUrl
           if (uploaded.status === 'needs_review') {
             setReviewId((prev) => prev ?? uploaded.id)
           }
@@ -227,13 +225,52 @@ export function ApplianceInspectionUploader({ building }: ApplianceInspectionUpl
         localId: `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
         file,
         previewUrl: mode === 'photo' ? URL.createObjectURL(file) : '',
-        hintCategory: defaultHint || null,
+        hintCategory: null,
         mode,
       })
     }
     if (jobs.length === 0) return
     await processQueue(jobs, assessmentId)
     if (inputRef.current) inputRef.current.value = ''
+    if (cameraInputRef.current) cameraInputRef.current.value = ''
+  }
+
+  function openInspectionChooser() {
+    setChooserOpen(true)
+  }
+
+  function onUseThisComputer() {
+    setChooserOpen(false)
+    cameraInputRef.current?.click()
+  }
+
+  async function mergeCapturePhotos(capturePhotos: InspectionCapturePhoto[]) {
+    if (!assessmentId) return
+    for (const photo of capturePhotos) {
+      if (photo.inspectionPhotoId && photo.previewUrl) {
+        previewByIdRef.current[photo.inspectionPhotoId] = photo.previewUrl
+      }
+    }
+    try {
+      const listed = await listInspectionPhotos(assessmentId)
+      setPhotos((prev) => {
+        for (const p of prev) {
+          if (p.previewUrl && !p.id.startsWith('local-')) {
+            previewByIdRef.current[p.id] = p.previewUrl
+          }
+        }
+        const localOnly = prev.filter((p) => p.id.startsWith('local-'))
+        const merged = listed.map((p) => ({
+          ...p,
+          previewUrl: previewByIdRef.current[p.id] ?? p.previewUrl ?? null,
+        }))
+        return [...merged, ...localOnly]
+      })
+      const needsReview = listed.find((p) => p.status === 'needs_review')
+      if (needsReview) setReviewId((prev) => prev ?? needsReview.id)
+    } catch {
+      // polling / realtime retry
+    }
   }
 
   async function onRetry(photo: InspectionPhotoRow) {
@@ -302,38 +339,12 @@ export function ApplianceInspectionUploader({ building }: ApplianceInspectionUpl
   })
 
   return (
-    <div className="mt-6 border-t border-[#e2e8f0] pt-5">
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div>
-          <h4 className="text-[15px] font-medium text-[#0f172a]">
-            AI Appliance &amp; Systems Assessment
-          </h4>
-          <p className="mt-1 text-[13px] text-[#64748b]">
-            Upload photos of appliances, HVAC, water heaters, or roof — or a report page. Review AI
-            findings before they become property assets and preventive tasks.
-          </p>
-        </div>
-        <label className="flex items-center gap-2 text-[12px] text-[#64748b]">
-          Pre-tag
-          <select
-            value={defaultHint}
-            onChange={(e) => setDefaultHint(e.target.value as VisionHintCategory | '')}
-            className="rounded-[8px] border border-[#e2e8f0] bg-white px-2 py-1.5 text-[12px] text-[#0f172a] outline-none"
-          >
-            {HINT_OPTIONS.map((opt) => (
-              <option key={opt.label} value={opt.value}>
-                {opt.label}
-              </option>
-            ))}
-          </select>
-        </label>
-      </div>
-
-      {error ? <p className="mt-3 text-[12px] text-[#b91c1c]">{error}</p> : null}
+    <div className="flex min-h-[220px] min-w-0 flex-col">
+      {error ? <p className="mb-2 text-[12px] text-[#b91c1c]">{error}</p> : null}
 
       <div
         className={[
-          'mt-4 rounded-[10px] border border-dashed bg-[#f8fafc] p-px',
+          'flex min-h-[160px] flex-1 flex-col rounded-[10px] border border-dashed bg-[#f8fafc] p-px',
           dragging ? 'border-[#0d0f11]' : 'border-[#cbd5e1]',
         ].join(' ')}
         onDragEnter={(e) => {
@@ -354,12 +365,12 @@ export function ApplianceInspectionUploader({ building }: ApplianceInspectionUpl
           void onFilesSelected(e.dataTransfer.files)
         }}
       >
-        <div className="flex flex-col items-center gap-2 px-4 py-7 text-center">
+        <div className="flex flex-1 flex-col items-center justify-center gap-2 px-4 py-7 text-center">
           <p className="text-[14px] font-semibold text-[#0d0f11]">
-            Drop inspection photos or a report page
+            Take photos of appliances or systems
           </p>
           <p className="text-[12px] text-[#64748b]">
-            JPG, PNG, WEBP, HEIC, or PDF · max 10MB each · up to 20 files
+            Opens the camera to take a photo · JPG, PNG, WEBP, or HEIC · max 10MB
           </p>
           <input
             ref={inputRef}
@@ -370,16 +381,53 @@ export function ApplianceInspectionUploader({ building }: ApplianceInspectionUpl
             className="sr-only"
             onChange={(e) => void onFilesSelected(e.target.files)}
           />
+          <input
+            ref={cameraInputRef}
+            type="file"
+            accept={CAMERA_ACCEPT}
+            capture="environment"
+            className="sr-only"
+            onChange={(e) => void onFilesSelected(e.target.files)}
+          />
           <button
             type="button"
             disabled={!assessmentId || busy}
-            onClick={() => inputRef.current?.click()}
-            className="pd-btn pd-btn-primary mt-1 rounded-[10px] px-4 py-2 text-[13px] font-semibold"
+            onClick={openInspectionChooser}
+            className="mt-1 flex size-10 items-center justify-center rounded-[10px] bg-transparent text-[#186179] outline-none hover:text-[#0f4a5c] focus-visible:ring-2 focus-visible:ring-[#186179] disabled:text-[#94a3b8]"
+            aria-label={busy ? 'Analyzing photos' : 'Take photos'}
           >
-            {busy ? 'Analyzing…' : 'Upload photos'}
+            <svg viewBox="0 0 24 24" fill="none" className="size-5" aria-hidden>
+              <path
+                d="M12 5v14M5 12h14"
+                stroke="currentColor"
+                strokeWidth={2}
+                strokeLinecap="round"
+              />
+            </svg>
           </button>
         </div>
       </div>
+
+      {chooserOpen ? (
+        <InspectionCaptureChooser
+          onClose={() => setChooserOpen(false)}
+          onUseComputer={onUseThisComputer}
+          onUsePhone={() => {
+            setChooserOpen(false)
+            setPhoneCaptureOpen(true)
+          }}
+        />
+      ) : null}
+
+      {phoneCaptureOpen && assessmentId ? (
+        <InspectionPhoneCaptureModal
+          assessmentId={assessmentId}
+          onClose={() => setPhoneCaptureOpen(false)}
+          onPhotosSynced={(photos) => {
+            void mergeCapturePhotos(photos)
+          }}
+        />
+      ) : null}
 
       {photos.length > 0 ? (
         <ul className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">

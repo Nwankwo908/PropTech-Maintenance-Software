@@ -99,6 +99,10 @@ const WorkOrderInvoicePage = lazyNamed(
   'WorkOrderInvoicePage',
 )
 const RentPaymentPage = lazyNamed(() => import('./components/RentPaymentPage'), 'RentPaymentPage')
+const InspectionCapturePage = lazyNamed(
+  () => import('./components/InspectionCapturePage'),
+  'InspectionCapturePage',
+)
 
 export default function App() {
   useSessionAutoRefresh(supabase)
@@ -120,6 +124,7 @@ export default function App() {
           <Route path="/upload/:token" element={<WorkOrderUploadPage />} />
           <Route path="/invoice/:token" element={<WorkOrderInvoicePage />} />
           <Route path="/pay/rent" element={<RentPaymentPage />} />
+          <Route path="/inspection/capture/:sessionId" element={<InspectionCapturePage />} />
 
           <Route
             path="/vendor/*"

@@ -75,6 +75,10 @@ Deno.test("uloAppUrl named paths", () => {
     uloAppUrl.findExternalVendor("ticket-1", origin),
     "https://app.example/admin?findVendor=1&ticket=ticket-1",
   )
+  assertEquals(
+    uloAppUrl.inspectionCapture("sess-1", "tok-hex", origin),
+    "https://app.example/inspection/capture/sess-1?token=tok-hex",
+  )
 
   const rent = uloAppUrl.rentPayment(
     {

@@ -13,21 +13,7 @@
 import { serve } from "https://deno.land/std/http/server.ts"
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1"
 import { confirmInspectionAssessment } from "../_shared/vision/confirmAssessment.ts"
-import {
-  createInspectionUploadSignedUrl,
-  identifyWithDibSmartAdd,
-  isDibSmartAddEnabled,
-} from "../_shared/vision/dibSmartAdd.ts"
-import {
-  buildHybridVisionProviderLabel,
-  mergeDibIdentificationWithVisionAssessment,
-} from "../_shared/vision/dibHybrid.ts"
-import { getVisionProvider, getVisionProviderName } from "../_shared/vision/getProvider.ts"
-import {
-  mergeHintCategory,
-  preclassifyWithRoboflow,
-  type RoboflowPreclassifyResult,
-} from "../_shared/vision/roboflowPreclassify.ts"
+import { analyzeInspectionPhotoRow } from "../_shared/vision/analyzeInspectionPhoto.ts"
 import { normalizeApplianceVisionResult } from "../_shared/vision/normalize.ts"
 import type { VisionHintCategory } from "../_shared/vision/types.ts"
 import { resolveOperationsGraphScope } from "../_shared/graph/operationsGraph.ts"
@@ -85,163 +71,6 @@ function mapPhotoRow(row: Record<string, unknown>) {
     latencyMs: typeof row.latency_ms === "number" ? row.latency_ms : null,
     fileName: row.file_name != null ? String(row.file_name) : null,
     unitAssetId: row.unit_asset_id != null ? String(row.unit_asset_id) : null,
-  }
-}
-
-async function analyzePhotoRow(
-  supabase: ReturnType<typeof createClient>,
-  photoId: string,
-  imageBase64: string,
-  contentType: string,
-  hintCategory: string | null,
-  mode: "photo" | "document",
-  storagePath: string | null = null,
-): Promise<Record<string, unknown>> {
-  const started = Date.now()
-  await supabase
-    .from("property_inspection_photos")
-    .update({ status: "analyzing", error_message: null, updated_at: new Date().toISOString() })
-    .eq("id", photoId)
-
-  try {
-    const provider = getVisionProvider()
-    const providerName = provider.name
-
-    // Optional Roboflow pre-pass (photo mode). Never blocks LLM analysis.
-    let roboflow: RoboflowPreclassifyResult | null = null
-    if (mode === "photo") {
-      roboflow = await preclassifyWithRoboflow(imageBase64)
-    }
-    const effectiveHint = mergeHintCategory(hintCategory, roboflow)
-
-    if (mode === "document" && provider.analyzeDocument) {
-      const items = await provider.analyzeDocument(imageBase64, contentType)
-      const primary = items[0] ?? normalizeApplianceVisionResult({
-        category: "unknown",
-        identifiedItem: { type: "Inspection report findings" },
-        estimatedAge: { value: null, confidence: "low", basis: "No items extracted" },
-        condition: { rating: "fair", summary: "No discrete assets extracted from document." },
-        deficiencies: [],
-        maintenanceRecommendations: [],
-        rawConfidenceNotes: "Document extract returned no items.",
-      })
-      // Store full list under ai_result.items for multi-item review
-      const packed = {
-        ...primary,
-        rawConfidenceNotes: [
-          primary.rawConfidenceNotes,
-          items.length > 1 ? `${items.length} items extracted; confirming the primary finding first.` : null,
-        ]
-          .filter(Boolean)
-          .join(" "),
-        _extractedItems: items,
-      }
-      const latencyMs = Date.now() - started
-      const { data, error } = await supabase
-        .from("property_inspection_photos")
-        .update({
-          status: "needs_review",
-          ai_result: packed,
-          provider: providerName,
-          latency_ms: latencyMs,
-          estimated_cost_usd: 0.01,
-          updated_at: new Date().toISOString(),
-        })
-        .eq("id", photoId)
-        .select("*")
-        .single()
-      if (error) throw new Error(error.message)
-      return data as Record<string, unknown>
-    }
-
-    let dibPass: Awaited<ReturnType<typeof identifyWithDibSmartAdd>> = null
-    if (mode === "photo" && storagePath && isDibSmartAddEnabled()) {
-      const signedUrl = await createInspectionUploadSignedUrl(supabase, storagePath)
-      if (signedUrl) {
-        dibPass = await identifyWithDibSmartAdd(signedUrl)
-      }
-    }
-
-    const result = await provider.analyzeImage(
-      imageBase64,
-      effectiveHint ?? undefined,
-      contentType,
-    )
-    const merged = mergeDibIdentificationWithVisionAssessment(
-      dibPass?.identification ?? null,
-      result,
-    )
-    const enriched = {
-      ...merged,
-      rawConfidenceNotes: [merged.rawConfidenceNotes, roboflow?.note]
-        .filter(Boolean)
-        .join(" "),
-      ...(roboflow
-        ? {
-          _roboflow: {
-            modelId: roboflow.modelId,
-            hintCategory: roboflow.hintCategory,
-            confidence: roboflow.confidence,
-            topClass: roboflow.topClass,
-            predictions: roboflow.predictions.slice(0, 8),
-            latencyMs: roboflow.latencyMs,
-            userHint: hintCategory,
-            effectiveHint,
-          },
-        }
-        : {}),
-      ...(dibPass
-        ? {
-          _dib: {
-            confidence: dibPass.identification.confidence,
-            confidenceThreshold: dibPass.confidenceThreshold,
-            latencyMs: dibPass.latencyMs,
-            rawCandidateCount: dibPass.rawCandidateCount,
-            category: dibPass.identification.dibCategory,
-            subCategory: dibPass.identification.dibSubCategory,
-            itemId: dibPass.identification.dibItemId,
-            identifiedItem: dibPass.identification,
-          },
-        }
-        : {}),
-    }
-    const latencyMs = Date.now() - started
-    const providerLabel = dibPass
-      ? buildHybridVisionProviderLabel(providerName)
-      : providerName
-    const { data, error } = await supabase
-      .from("property_inspection_photos")
-      .update({
-        status: "needs_review",
-        ai_result: enriched,
-        // Persist resolved hint when Roboflow filled a gap (keeps retry consistent)
-        ...(effectiveHint && !hintCategory ? { hint_category: effectiveHint } : {}),
-        provider: providerLabel,
-        latency_ms: latencyMs,
-        estimated_cost_usd: dibPass ? 0.012 : 0.008,
-        updated_at: new Date().toISOString(),
-      })
-      .eq("id", photoId)
-      .select("*")
-      .single()
-    if (error) throw new Error(error.message)
-    return data as Record<string, unknown>
-  } catch (err) {
-    const message = err instanceof Error ? err.message : "Vision analysis failed"
-    console.error("[inspection-asset-assess] analyze", photoId, message)
-    const { data } = await supabase
-      .from("property_inspection_photos")
-      .update({
-        status: "error",
-        error_message: message.slice(0, 500),
-        provider: getVisionProviderName(),
-        latency_ms: Date.now() - started,
-        updated_at: new Date().toISOString(),
-      })
-      .eq("id", photoId)
-      .select("*")
-      .single()
-    return (data as Record<string, unknown>) ?? { id: photoId, status: "error", error_message: message }
   }
 }
 
@@ -417,7 +246,7 @@ serve(async (req) => {
         .update({ storage_path: storagePath, updated_at: new Date().toISOString() })
         .eq("id", photoId)
 
-      const analyzed = await analyzePhotoRow(
+      const analyzed = await analyzeInspectionPhotoRow(
         supabase,
         photoId,
         imageBase64,
@@ -457,7 +286,7 @@ serve(async (req) => {
       const imageBase64 = btoa(binary)
       const contentType = asString(photo.content_type) || "image/jpeg"
       const mode = contentType.includes("pdf") ? "document" : "photo"
-      const analyzed = await analyzePhotoRow(
+      const analyzed = await analyzeInspectionPhotoRow(
         supabase,
         photoId,
         imageBase64,

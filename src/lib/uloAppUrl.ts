@@ -114,6 +114,19 @@ export const uloAppUrl = {
     const path = `/admin?findVendor=1&ticket=${id}`
     return absolute ? joinOriginPath(uloAppOrigin(), path) : path
   },
+
+  /** Lightweight phone capture page for AI Equipment Scan. */
+  inspectionCapture(sessionId: string, token: string, absolute = true): string {
+    const url = new URL(
+      joinOriginPath(
+        absolute ? uloAppOrigin() : 'https://placeholder.local',
+        `/inspection/capture/${encodeURIComponent(sessionId.trim())}`,
+      ),
+    )
+    url.searchParams.set('token', token.trim())
+    if (!absolute) return `${url.pathname}${url.search}`
+    return url.toString()
+  },
 }
 
 export const FIND_EXTERNAL_VENDOR_QUERY = {

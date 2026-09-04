@@ -449,6 +449,11 @@ enabled = true
 verify_jwt = false
 entrypoint = "./functions/inspection-asset-assess/index.ts"
 
+[functions.inspection-capture]
+enabled = true
+verify_jwt = false
+entrypoint = "./functions/inspection-capture/index.ts"
+
 [functions.onboarding-document-extract]
 enabled = true
 verify_jwt = false
