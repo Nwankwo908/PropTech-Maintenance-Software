@@ -9,11 +9,11 @@ import { SetupSuccessCheckboxGuide } from '@/components/SetupSuccessCheckboxGuid
 import { EmergencyApprovalRail } from '@/components/EmergencyApprovalRail'
 import { MessageVendorRail } from '@/components/MessageVendorRail'
 import { PropertyAnalyticsPanel } from '@/components/PropertyAnalyticsPanel'
-import { PropertyConversationsList } from '@/components/PropertyConversationsList'
 import { PropertyUnitsTable } from '@/components/PropertyUnitsTable'
 import { PropertyVendorsList } from '@/components/PropertyVendorsList'
 import { PropertyWorkflowsList } from '@/components/PropertyWorkflowsList'
 import { PropertyDetailsPanel } from '@/components/PropertyDetailsPanel'
+import { PropertyHistoryPanel } from '@/components/PropertyHistoryPanel'
 import { PropertyZillowMap } from '@/components/PropertyZillowMap'
 import { isLimitedAlpha1Landlord } from '@shared/landlordCapabilities'
 import { getActiveLandlordId } from '@/lib/activeLandlord'
@@ -70,18 +70,19 @@ import {
 } from '@/lib/propertyHealth'
 import {
   formatPropertySubtitle,
+  parsePropertyDetailTab,
   parsePropertyRouteSlug,
   propertyDetailPath,
   resolvePropertyBuildingMeta,
 } from '@/lib/propertyRoutes'
-import { findPropertyById, findPropertyByName, listPropertiesForLandlord, propertyRecordToAddressLine, zillowLookupAddressFromProperty, type PropertyRecord } from '@/lib/properties'
+import { findPropertyById, findPropertyByName, listPropertiesForLandlord, zillowLookupAddressFromProperty, type PropertyRecord } from '@/lib/properties'
 import {
   buildPropertyUnitRows,
   type PropertyUnitResident,
 } from '@/lib/propertyUnitRows'
 import { buildPropertyAnalytics } from '@/lib/propertyAnalytics'
 import { buildPropertyWorkflowRows, evaluatePropertyWorkflow } from '@/lib/propertyWorkflowRows'
-import { fetchPropertyConversations, type PropertyConversationRow } from '@/lib/propertyConversations'
+import { fetchPropertyHistory, type PropertyHistoryRow } from '@/lib/propertyHistory'
 import {
   buildPropertyActiveVendorRows,
   type PropertyVendorRecord,
@@ -101,7 +102,7 @@ type PropertyTab =
   | 'details'
   | 'units'
   | 'workflows'
-  | 'conversations'
+  | 'history'
   | 'vendors'
   | 'analytics'
 
@@ -149,7 +150,7 @@ const TABS: { id: PropertyTab; label: string; href?: string }[] = [
   { id: 'details', label: 'Property Details' },
   { id: 'units', label: 'Units' },
   { id: 'workflows', label: 'Active Tasks' },
-  { id: 'conversations', label: 'Conversations' },
+  { id: 'history', label: 'Property History' },
   { id: 'vendors', label: 'Vendors' },
   { id: 'analytics', label: 'Analytics' },
 ]
@@ -271,21 +272,9 @@ export function AdminPropertyDetailDashboard() {
   const [propertyTabGuideRunId, setPropertyTabGuideRunId] = useState(0)
   const propertyDetailsTabRef = useRef<HTMLElement | null>(null)
 
-  const [activeTab, setActiveTab] = useState<PropertyTab>(() => {
-    const tab = searchParams.get('tab')
-    if (
-      tab === 'details' ||
-      tab === 'units' ||
-      tab === 'workflows' ||
-      tab === 'conversations' ||
-      tab === 'vendors' ||
-      tab === 'analytics' ||
-      tab === 'overview'
-    ) {
-      return tab
-    }
-    return 'overview'
-  })
+  const [activeTab, setActiveTab] = useState<PropertyTab>(() =>
+    parsePropertyDetailTab(searchParams.get('tab')),
+  )
   const tabListRef = useRef<HTMLDivElement>(null)
   const tabItemRefs = useRef<Map<PropertyTab, HTMLElement>>(new Map())
   const [tabIndicator, setTabIndicator] = useState({ left: 0, width: 0, ready: false })
@@ -317,7 +306,9 @@ export function AdminPropertyDetailDashboard() {
   const [pmComplianceTasks, setPmComplianceTasks] = useState<PmComplianceTask[]>([])
   const [monitoringConversationId, setMonitoringConversationId] = useState<string | null>(null)
   const [residents, setResidents] = useState<PropertyUnitResident[]>([])
-  const [propertyConversations, setPropertyConversations] = useState<PropertyConversationRow[]>([])
+  const [propertyHistory, setPropertyHistory] = useState<PropertyHistoryRow[]>([])
+  const [propertyHistoryError, setPropertyHistoryError] = useState<string | null>(null)
+  const [historyUnitFilter, setHistoryUnitFilter] = useState<string | null>(null)
   const [vendors, setVendors] = useState<PropertyVendorRecord[]>([])
   const [recognizedSpend, setRecognizedSpend] = useState<RecognizedMaintenanceSpend[]>([])
   const [unitStatusError, setUnitStatusError] = useState<string | null>(null)
@@ -424,17 +415,10 @@ export function AdminPropertyDetailDashboard() {
         return
       }
       if (byName.property) {
-        const tab = searchParams.get('tab')
-        const tabParam =
-          tab === 'details' ||
-          tab === 'units' ||
-          tab === 'workflows' ||
-          tab === 'conversations' ||
-          tab === 'vendors' ||
-          tab === 'analytics'
-            ? tab
-            : undefined
-        navigate(propertyDetailPath(byName.property.id, tabParam), { replace: true })
+        const tab = parsePropertyDetailTab(searchParams.get('tab'))
+        navigate(propertyDetailPath(byName.property.id, tab === 'overview' ? undefined : tab), {
+          replace: true,
+        })
         return
       }
       buildingName = slug.value
@@ -442,6 +426,7 @@ export function AdminPropertyDetailDashboard() {
 
     setBuilding(buildingName)
     setCanonicalProperty(propertyRecord)
+    setHistoryUnitFilter(null)
 
     let timedOut = false
     const timeoutId = window.setTimeout(() => {
@@ -637,42 +622,28 @@ export function AdminPropertyDetailDashboard() {
       setRecognizedSpend(recognizedSpendResult ?? [])
       setError(null)
 
-      // Conversations are secondary — don't block the property overview on them.
       const listedProperty = canonicalPropertiesResult.ok
         ? canonicalPropertiesResult.properties.find(
             (property) =>
               normalizeBuildingKey(property.name) === normalizeBuildingKey(buildingName),
           ) ?? null
         : null
-      const conversationProperty = propertyRecord ?? listedProperty
+      const historyPropertyId = propertyRecord?.id ?? listedProperty?.id ?? null
 
-      void fetchPropertyConversations(
-        buildingName,
-        ticketsWithBuilding.map((ticket) => ({
-          id: ticket.id,
-          unit: ticket.unit,
-          building: ticket.building,
-          email: ticket.email,
-        })),
-        parsedResidents.map((resident) => ({
-          email: resident.email ?? null,
-          building: resident.building,
-        })),
-        conversationProperty
-          ? {
-              zipCode: conversationProperty.zipCode,
-              city: conversationProperty.city,
-              state: conversationProperty.state,
-              streetAddress: conversationProperty.streetAddress,
-              addressLine: propertyRecordToAddressLine(conversationProperty),
-            }
-          : null,
-      )
-        .then((rows) => {
-          if (!timedOut && loadSeq === loadSeqRef.current) setPropertyConversations(rows)
+      void fetchPropertyHistory({
+        building: buildingName,
+        propertyId: historyPropertyId,
+        unitIds: parsedUnits.map((unit) => unit.id),
+      })
+        .then((result) => {
+          if (timedOut || loadSeq !== loadSeqRef.current) return
+          setPropertyHistory(result.rows)
+          setPropertyHistoryError(result.error)
         })
         .catch(() => {
-          if (!timedOut && loadSeq === loadSeqRef.current) setPropertyConversations([])
+          if (timedOut || loadSeq !== loadSeqRef.current) return
+          setPropertyHistory([])
+          setPropertyHistoryError('Could not load property history.')
         })
     } catch (err) {
       if (timedOut || loadSeq !== loadSeqRef.current) return
@@ -718,18 +689,7 @@ export function AdminPropertyDetailDashboard() {
   }, [loadProperty])
 
   useEffect(() => {
-    const tab = searchParams.get('tab')
-    if (
-      tab === 'details' ||
-      tab === 'units' ||
-      tab === 'workflows' ||
-      tab === 'conversations' ||
-      tab === 'vendors' ||
-      tab === 'analytics' ||
-      tab === 'overview'
-    ) {
-      setActiveTab(tab)
-    }
+    setActiveTab(parsePropertyDetailTab(searchParams.get('tab')))
   }, [searchParams])
 
   useLayoutEffect(() => {
@@ -1596,12 +1556,18 @@ export function AdminPropertyDetailDashboard() {
         </>
       ) : activeTab === 'workflows' ? (
         <PropertyWorkflowsList rows={propertyWorkflowRows} loading={loading} />
-      ) : activeTab === 'conversations' ? (
-        <PropertyConversationsList
-          rows={propertyConversations}
+      ) : activeTab === 'history' ? (
+        <PropertyHistoryPanel
+          rows={
+            historyUnitFilter
+              ? propertyHistory.filter((row) => row.unitLabel === historyUnitFilter)
+              : propertyHistory
+          }
           loading={loading}
-          selectedConversationId={monitoringConversationId}
-          onSelectConversation={setMonitoringConversationId}
+          error={propertyHistoryError}
+          units={buildingUnits.map((unit) => ({ id: unit.id, unitLabel: unit.unitLabel }))}
+          unitFilter={historyUnitFilter}
+          onUnitFilterChange={setHistoryUnitFilter}
         />
       ) : activeTab === 'vendors' ? (
         <PropertyVendorsList

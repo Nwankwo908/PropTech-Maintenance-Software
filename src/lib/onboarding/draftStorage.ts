@@ -10,6 +10,7 @@ import {
 import { resolveLandlordSupportEmail } from '@/lib/landlordSupportEmail'
 import { supabase } from '@/lib/supabase'
 import { fetchAccountSetupCounts } from './persist/account'
+import { clearImportedOpsRecords } from './persist/importedOpsRecords'
 import { isOnboardingLandlordAccount } from './scope'
 import type {
   AccountSetupCounts,
@@ -83,6 +84,7 @@ export function isOnboardingResetInProgress(): boolean {
 export function clearLocalOnboardingStorage(landlordId: string = getActiveLandlordId()): void {
   try {
     window.localStorage.removeItem(localKey(landlordId))
+    clearImportedOpsRecords(landlordId)
   } catch {
     // private mode
   }

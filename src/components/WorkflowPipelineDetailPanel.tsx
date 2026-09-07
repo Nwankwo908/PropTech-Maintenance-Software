@@ -174,7 +174,7 @@ function FieldGrid({ fields, columns = 4 }: { fields: WorkflowPipelineField[]; c
       {fields.map((field) => (
         <div key={field.label} className="min-w-0">
           <p className="text-[10px] font-semibold uppercase tracking-[0.08em] text-[#9ca3af]">{field.label}</p>
-          <p className="mt-1 text-[14px] font-medium leading-5 text-[#0a0a0a]">{field.value}</p>
+          <p className="mt-1 whitespace-pre-wrap text-[14px] font-medium leading-5 text-[#0a0a0a]">{field.value}</p>
         </div>
       ))}
     </div>
@@ -657,7 +657,7 @@ export function WorkflowPipelineDetailPanel({
                           <p className="text-[10px] font-semibold uppercase tracking-[0.08em] text-[#9ca3af]">
                             {field.label}
                           </p>
-                          <p className="mt-1 text-[14px] font-medium leading-5 text-[#0a0a0a]">{field.value}</p>
+                          <p className="mt-1 whitespace-pre-wrap text-[14px] font-medium leading-5 text-[#0a0a0a]">{field.value}</p>
                         </div>
                       ))}
                     </div>
@@ -838,10 +838,33 @@ export function WorkflowPipelineDetailPanel({
                         { label: 'Address', value: detail.property.address },
                         { label: 'Unit', value: detail.property.unit },
                         { label: 'Manager', value: detail.property.manager },
-                        { label: 'Access', value: detail.property.access },
-                        { label: 'Entry Code', value: detail.property.entryCode },
+                        ...(detail.property.accessRows.length === 0
+                          ? [
+                              { label: 'Access', value: detail.property.access },
+                              { label: 'Entry Code', value: detail.property.entryCode },
+                            ]
+                          : []),
                       ]}
                     />
+                    {detail.property.accessRows.length > 0 ? (
+                      <div className="mt-5 border-t border-[#f3f4f6] pt-5">
+                        <p className="mb-4 text-[12px] font-semibold uppercase tracking-[0.06em] text-[#6a7282]">
+                          Property access
+                        </p>
+                        <dl className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                          {detail.property.accessRows.map((row) => (
+                            <div key={row.label} className="min-w-0">
+                              <dt className="text-[10px] font-semibold uppercase tracking-[0.08em] text-[#9ca3af]">
+                                {row.label}
+                              </dt>
+                              <dd className="mt-1 whitespace-pre-wrap text-[14px] font-medium leading-5 text-[#0a0a0a]">
+                                {row.value}
+                              </dd>
+                            </div>
+                          ))}
+                        </dl>
+                      </div>
+                    ) : null}
                   </div>
                 </section>
               </div>

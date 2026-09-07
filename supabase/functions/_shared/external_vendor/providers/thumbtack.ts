@@ -19,10 +19,10 @@ const DEFAULT_API_BASE = "https://api.thumbtack.com/api"
 const DEFAULT_TOKEN_URL = "https://auth.thumbtack.com/oauth2/token"
 /** Search + category lookup — enough to list pros. */
 export const THUMBTACK_SEARCH_OAUTH_SCOPE =
-  "demand::businesses/search.read demand::categories/request-form.read"
+  "demand::businesses/search.read demand::categories.read"
 /** Opening a conversation and sending messages. */
 export const THUMBTACK_MESSAGING_OAUTH_SCOPE =
-  "demand::requests.write demand::negotiations.read demand::negotiations/messages.write"
+  "demand::requests.write demand::negotiations.read demand::negotiations/messages.write demand::messages.write demand::messages.read"
 const DEFAULT_SCOPE = `${THUMBTACK_SEARCH_OAUTH_SCOPE} ${THUMBTACK_MESSAGING_OAUTH_SCOPE}`
 
 type TokenCache = {
@@ -31,14 +31,23 @@ type TokenCache = {
   scope: string
 }
 
-let tokenCache: TokenCache | null = null
+let searchTokenCache: TokenCache | null = null
+let messagingTokenCache: TokenCache | null = null
 
 export type ThumbtackProviderOptions = {
   clientId: string
   clientSecret: string
+  /** Separate Thumbtack Message API OAuth app. Falls back to search credentials. */
+  messagingClientId?: string
+  messagingClientSecret?: string
   apiBaseUrl?: string
   tokenUrl?: string
+  /** Token URL for the Message API app when it lives in a different Thumbtack environment. */
+  messagingTokenUrl?: string
+  messagingApiBaseUrl?: string
   oauthScope?: string
+  messagingOauthScope?: string
+  messagingRefreshToken?: string
   utmSource?: string
 }
 
@@ -53,14 +62,18 @@ export function mergeThumbtackOauthScopes(...chunks: string[]): string {
 }
 
 export function thumbtackScopeAllowsMessaging(scope: string): boolean {
-  return /\bdemand::requests\.write\b/.test(scope)
+  return (
+    /\bdemand::requests\.write\b/.test(scope) ||
+    /\bdemand::messages\.write\b/.test(scope) ||
+    /\bdemand::negotiations\/messages\.write\b/.test(scope)
+  )
 }
 
 export function thumbtackOpenConversationError(status: number, bodyText?: string): string {
   if (bodyText === "oauth_token_failed" || status === 401) {
-    return "Thumbtack did not allow this conversation. Listing pros still works — messaging has to be enabled on the Thumbtack partner account."
+    return "Could not send this in Ulo. Thumbtack did not accept the Message API login. Ask Thumbtack to enable production messaging for this app."
   }
-  return `Thumbtack could not open this conversation (${status}).`
+  return `Could not send this message in Ulo (${status}).`
 }
 
 export function extractZipFromLocation(location: string): string | null {
@@ -369,12 +382,36 @@ export class ThumbtackExternalVendorProvider implements ExternalVendorProvider {
     })
   }
 
-  /** Token that can POST /v4/requests — do not fall back to a search-only grant. */
+  /** Token that can open a request or send a negotiation message. */
   async getMessagingAccessToken(): Promise<string | null> {
-    return await this.accessToken({
-      scope: this.messagingScope(),
-      allowUnscopedFallback: false,
-    })
+    const refreshed = await this.accessTokenFromRefresh()
+    if (refreshed) return refreshed
+    const scopes = [
+      this.messagingScope(),
+      THUMBTACK_MESSAGING_OAUTH_SCOPE,
+      "demand::messages.write demand::messages.read",
+      "demand::requests.write",
+    ]
+    const sources: Array<"messaging" | "search"> = this.hasDedicatedMessagingCredentials()
+      ? ["messaging", "search"]
+      : ["search"]
+    const tried = new Set<string>()
+    for (const credentialSource of sources) {
+      for (const scope of scopes) {
+        const next = scope.trim()
+        if (!next) continue
+        const key = `${credentialSource}:${next}`
+        if (tried.has(key)) continue
+        tried.add(key)
+        const token = await this.accessToken({
+          scope: next,
+          allowUnscopedFallback: false,
+          credentialSource,
+        })
+        if (token) return token
+      }
+    }
+    return null
   }
 
   async search(input: ExternalVendorSearchInput): Promise<ExternalVendorHit[]> {
@@ -605,21 +642,118 @@ export class ThumbtackExternalVendorProvider implements ExternalVendorProvider {
 
   private resolvedApiBase: string | null = null
 
+  private hasDedicatedMessagingCredentials(): boolean {
+    return Boolean(
+      this.opts.messagingClientId?.trim() && this.opts.messagingClientSecret?.trim(),
+    )
+  }
+
+  private credentialsFor(source: "search" | "messaging"): { clientId: string; clientSecret: string } {
+    if (source === "messaging" && this.hasDedicatedMessagingCredentials()) {
+      return {
+        clientId: this.opts.messagingClientId!.trim(),
+        clientSecret: this.opts.messagingClientSecret!.trim(),
+      }
+    }
+    return {
+      clientId: this.opts.clientId.trim(),
+      clientSecret: this.opts.clientSecret.trim(),
+    }
+  }
+
   private messagingScope(): string {
+    const dedicated = this.opts.messagingOauthScope?.trim()
+    if (dedicated) return dedicated
+    if (this.hasDedicatedMessagingCredentials()) {
+      return THUMBTACK_MESSAGING_OAUTH_SCOPE
+    }
     return mergeThumbtackOauthScopes(
       this.opts.oauthScope?.trim() || DEFAULT_SCOPE,
       THUMBTACK_MESSAGING_OAUTH_SCOPE,
     )
   }
 
+  private async accessTokenFromRefresh(): Promise<string | null> {
+    const refresh = this.opts.messagingRefreshToken?.trim()
+    if (!refresh) return null
+    const now = Date.now()
+    if (
+      messagingTokenCache &&
+      messagingTokenCache.expiresAtMs > now + 15_000 &&
+      thumbtackScopeAllowsMessaging(messagingTokenCache.scope)
+    ) {
+      return messagingTokenCache.accessToken
+    }
+    const { clientId, clientSecret } = this.credentialsFor(
+      this.hasDedicatedMessagingCredentials() ? "messaging" : "search",
+    )
+    if (!clientId || !clientSecret) return null
+    const tokenUrls = [
+      this.opts.messagingTokenUrl?.trim() || this.opts.tokenUrl?.trim() || DEFAULT_TOKEN_URL,
+      "https://auth.thumbtack.com/oauth2/token",
+    ]
+    const basic = btoa(`${clientId}:${clientSecret}`)
+    const body = new URLSearchParams({
+      grant_type: "refresh_token",
+      refresh_token: refresh,
+      audience: "urn:partner-api",
+    })
+    for (const tokenUrl of [...new Set(tokenUrls.filter(Boolean))]) {
+      const res = await fetch(tokenUrl, {
+        method: "POST",
+        headers: {
+          Authorization: `Basic ${basic}`,
+          "Content-Type": "application/x-www-form-urlencoded",
+          Accept: "application/json",
+        },
+        body,
+      })
+      if (!res.ok) {
+        const t = await res.text().catch(() => "")
+        console.warn("[external-vendor/thumbtack] refresh HTTP", res.status, t.slice(0, 200))
+        continue
+      }
+      const data = (await res.json().catch(() => null)) as {
+        access_token?: string
+        expires_in?: number
+        scope?: string
+        refresh_token?: string
+      } | null
+      const accessToken = typeof data?.access_token === "string" ? data.access_token.trim() : ""
+      if (!accessToken) continue
+      const granted = typeof data?.scope === "string" && data.scope.trim()
+        ? data.scope.trim()
+        : THUMBTACK_MESSAGING_OAUTH_SCOPE
+      if (!thumbtackScopeAllowsMessaging(granted)) continue
+      const ttlSec = typeof data?.expires_in === "number" && data.expires_in > 60
+        ? data.expires_in
+        : 3600
+      messagingTokenCache = {
+        accessToken,
+        expiresAtMs: now + ttlSec * 1000,
+        scope: granted,
+      }
+      if (tokenUrl.includes("staging-auth")) {
+        this.resolvedApiBase = this.opts.messagingApiBaseUrl?.trim() ||
+          "https://staging-api.thumbtack.com/api"
+      }
+      return accessToken
+    }
+    return null
+  }
+
   private async accessToken(opts?: {
     scope?: string
     allowUnscopedFallback?: boolean
+    credentialSource?: "search" | "messaging"
   }): Promise<string | null> {
     const now = Date.now()
     const scope = opts?.scope?.trim() || this.opts.oauthScope?.trim() || DEFAULT_SCOPE
     const allowUnscopedFallback = opts?.allowUnscopedFallback !== false
     const needsMessaging = thumbtackScopeAllowsMessaging(scope)
+    const credentialSource = opts?.credentialSource ??
+      (needsMessaging && this.hasDedicatedMessagingCredentials() ? "messaging" : "search")
+    const tokenCache = needsMessaging ? messagingTokenCache : searchTokenCache
     if (
       tokenCache &&
       tokenCache.expiresAtMs > now + 15_000 &&
@@ -628,18 +762,29 @@ export class ThumbtackExternalVendorProvider implements ExternalVendorProvider {
       return tokenCache.accessToken
     }
 
-    const configuredToken = this.opts.tokenUrl?.trim() || DEFAULT_TOKEN_URL
-    const configuredApi = (this.opts.apiBaseUrl?.trim() || DEFAULT_API_BASE).replace(/\/$/, "")
-    const attempts = [
-      { tokenUrl: configuredToken, apiBase: configuredApi },
-      {
-        tokenUrl: "https://staging-auth.thumbtack.com/oauth2/token",
-        apiBase: "https://staging-api.thumbtack.com/api",
-      },
-    ]
+    const searchTokenUrl = this.opts.tokenUrl?.trim() || DEFAULT_TOKEN_URL
+    const searchApi = (this.opts.apiBaseUrl?.trim() || DEFAULT_API_BASE).replace(/\/$/, "")
+    const messagingTokenUrl = this.opts.messagingTokenUrl?.trim() || searchTokenUrl
+    const messagingApi = (this.opts.messagingApiBaseUrl?.trim() || searchApi).replace(/\/$/, "")
 
-    const clientId = this.opts.clientId.trim()
-    const clientSecret = this.opts.clientSecret.trim()
+    const attempts = credentialSource === "messaging"
+      ? [
+        { tokenUrl: messagingTokenUrl, apiBase: messagingApi },
+        {
+          tokenUrl: "https://auth.thumbtack.com/oauth2/token",
+          apiBase: DEFAULT_API_BASE,
+        },
+      ]
+      : [
+        { tokenUrl: searchTokenUrl, apiBase: searchApi },
+        {
+          tokenUrl: "https://staging-auth.thumbtack.com/oauth2/token",
+          apiBase: "https://staging-api.thumbtack.com/api",
+        },
+      ]
+
+    const { clientId, clientSecret } = this.credentialsFor(credentialSource)
+    if (!clientId || !clientSecret) return null
     const formWithScope = new URLSearchParams({
       grant_type: "client_credentials",
       audience: "urn:partner-api",
@@ -722,11 +867,13 @@ export class ThumbtackExternalVendorProvider implements ExternalVendorProvider {
         const ttlSec = typeof data?.expires_in === "number" && data.expires_in > 60
           ? data.expires_in
           : 3600
-        tokenCache = {
+        const nextCache: TokenCache = {
           accessToken,
           expiresAtMs: now + ttlSec * 1000,
           scope: granted,
         }
+        if (needsMessaging) messagingTokenCache = nextCache
+        else searchTokenCache = nextCache
         this.resolvedApiBase = attempt.apiBase
         return accessToken
       }
@@ -740,9 +887,15 @@ export function thumbtackProviderFromEnv(): ThumbtackExternalVendorProvider {
   return new ThumbtackExternalVendorProvider({
     clientId: Deno.env.get("THUMBTACK_CLIENT_ID")?.trim() ?? "",
     clientSecret: Deno.env.get("THUMBTACK_CLIENT_SECRET")?.trim() ?? "",
+    messagingClientId: Deno.env.get("THUMBTACK_MESSAGING_CLIENT_ID")?.trim() || undefined,
+    messagingClientSecret: Deno.env.get("THUMBTACK_MESSAGING_CLIENT_SECRET")?.trim() || undefined,
     apiBaseUrl: Deno.env.get("THUMBTACK_API_BASE_URL")?.trim() || undefined,
     tokenUrl: Deno.env.get("THUMBTACK_TOKEN_URL")?.trim() || undefined,
+    messagingApiBaseUrl: Deno.env.get("THUMBTACK_MESSAGING_API_BASE_URL")?.trim() || undefined,
+    messagingTokenUrl: Deno.env.get("THUMBTACK_MESSAGING_TOKEN_URL")?.trim() || undefined,
     oauthScope: Deno.env.get("THUMBTACK_OAUTH_SCOPE")?.trim() || undefined,
+    messagingOauthScope: Deno.env.get("THUMBTACK_MESSAGING_OAUTH_SCOPE")?.trim() || undefined,
+    messagingRefreshToken: Deno.env.get("THUMBTACK_MESSAGING_REFRESH_TOKEN")?.trim() || undefined,
     utmSource: normalizeThumbtackUtmSource(Deno.env.get("THUMBTACK_UTM_SOURCE")),
   })
 }

@@ -43,6 +43,7 @@ import {
   fetchLandlordStripeConnectStatus,
   primaryPayoutMethodLabel,
 } from '@/api/landlordStripeConnect'
+import { loadImportedOpsRecords } from '@/lib/onboarding/persist/importedOpsRecords'
 import { getActiveLandlordId } from '@/lib/activeLandlord'
 import { isLimitedAlpha1Landlord, landlordHasPayments } from '@shared/landlordCapabilities'
 import {
@@ -547,6 +548,10 @@ export function useOnboardingWizard() {
           supplement.dbCounts,
           supplement.smsIntakeNumber,
           reviewExtractedResidents(),
+          {
+            financialRecords: supplement.financialRecords,
+            maintenanceIssues: supplement.maintenanceIssues,
+          },
         ),
       )
     })()
@@ -960,6 +965,7 @@ export function useOnboardingWizard() {
         undefined,
         smsIntakeNumber,
         reviewExtractedResidents(),
+        loadImportedOpsRecords(snapshot.landlordId),
       ),
     )
     await goTo('review')
@@ -990,6 +996,7 @@ export function useOnboardingWizard() {
         undefined,
         smsIntakeNumber,
         reviewExtractedResidents(),
+        loadImportedOpsRecords(nextState.landlordId),
       ),
     )
     await goTo('review', patch)

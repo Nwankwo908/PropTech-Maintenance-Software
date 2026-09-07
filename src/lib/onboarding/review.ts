@@ -13,6 +13,11 @@ import {
   type ImportExtractedResidentRow,
 } from './persist/importResidents'
 import { fetchOnboardingVendors, type OnboardingVendor } from './persist/vendors'
+import {
+  loadImportedOpsRecords,
+  type ImportedOnboardingFinancialRecord,
+  type ImportedOnboardingMaintenanceIssue,
+} from './persist/importedOpsRecords'
 import { readLandlordOnboardingDraft } from './draftStorage'
 import type {
   AccountSetupCounts,
@@ -31,6 +36,8 @@ export type OnboardingReviewData = {
   /** Landlord main SMS line residents text for maintenance intake. */
   smsIntakeNumber: string | null
   smsIntakeNumberDisplay: string | null
+  maintenanceIssues: ImportedOnboardingMaintenanceIssue[]
+  financialRecords: ImportedOnboardingFinancialRecord[]
 }
 
 export function buildOnboardingReviewMetrics(
@@ -60,6 +67,10 @@ export function buildOnboardingReviewData(
   dbCounts?: AccountSetupCounts,
   smsIntakeNumber: string | null = null,
   extractedResidents?: ImportExtractedResidentRow[],
+  importedOps?: {
+    financialRecords?: ImportedOnboardingFinancialRecord[]
+    maintenanceIssues?: ImportedOnboardingMaintenanceIssue[]
+  },
 ): OnboardingReviewData {
   const normalized = smsIntakeNumber?.trim() || null
   const mergedResidents =
@@ -75,6 +86,8 @@ export function buildOnboardingReviewData(
     metrics: buildOnboardingReviewMetrics(state, vendors, mergedResidents, dbCounts),
     smsIntakeNumber: normalized,
     smsIntakeNumberDisplay: normalized ? formatPhoneNational(normalized) : null,
+    maintenanceIssues: importedOps?.maintenanceIssues ?? [],
+    financialRecords: importedOps?.financialRecords ?? [],
   }
 }
 
@@ -134,19 +147,35 @@ export async function fetchOnboardingReviewSupplement(
   residents: OnboardingResident[]
   dbCounts?: AccountSetupCounts
   smsIntakeNumber: string | null
+  financialRecords: ImportedOnboardingFinancialRecord[]
+  maintenanceIssues: ImportedOnboardingMaintenanceIssue[]
 }> {
   const [vendors, residents, smsIntakeNumber] = await Promise.all([
     fetchOnboardingVendors(landlordId),
     fetchOnboardingResidents(landlordId),
     fetchLandlordSmsIntakeNumber(landlordId),
   ])
+  const importedOps = loadImportedOpsRecords(landlordId)
 
   if (state.properties.length > 0) {
-    return { vendors, residents, smsIntakeNumber }
+    return {
+      vendors,
+      residents,
+      smsIntakeNumber,
+      financialRecords: importedOps.financialRecords,
+      maintenanceIssues: importedOps.maintenanceIssues,
+    }
   }
 
   const dbCounts = await fetchAccountSetupCounts(landlordId)
-  return { vendors, residents, dbCounts, smsIntakeNumber }
+  return {
+    vendors,
+    residents,
+    dbCounts,
+    smsIntakeNumber,
+    financialRecords: importedOps.financialRecords,
+    maintenanceIssues: importedOps.maintenanceIssues,
+  }
 }
 
 export async function fetchOnboardingReviewData(
@@ -162,5 +191,9 @@ export async function fetchOnboardingReviewData(
     supplement.dbCounts,
     supplement.smsIntakeNumber,
     extractedResidents,
+    {
+      financialRecords: supplement.financialRecords,
+      maintenanceIssues: supplement.maintenanceIssues,
+    },
   )
 }

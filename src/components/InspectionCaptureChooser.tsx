@@ -36,7 +36,9 @@ export function InspectionCaptureChooser({
             className="rounded-[10px] border border-[#e2e8f0] px-4 py-3 text-left hover:border-[#186179]"
           >
             <p className="text-[14px] font-semibold text-[#0d0f11]">Use this computer</p>
-            <p className="mt-0.5 text-[12px] text-[#64748b]">Take photos with a connected camera.</p>
+            <p className="mt-0.5 text-[12px] text-[#64748b]">
+              Upload one or more photos from this computer.
+            </p>
           </button>
           <button
             type="button"

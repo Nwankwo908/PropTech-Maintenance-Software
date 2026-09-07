@@ -5,12 +5,7 @@ export function canMessageThumbtackVendor(vendor: ExternalVendorSuggestionDto): 
   if (isDemoExternalVendorName(vendor.name)) return false
   const sources = vendor.sources ?? []
   if (sources.length === 0 || sources.every((src) => src === 'mock')) return false
-  return Boolean(
-    vendor.providerRef?.trim() ||
-      vendor.requestFlowUrl?.trim() ||
-      vendor.listingUrl?.trim() ||
-      (vendor.searchId?.trim() && vendor.categoryId?.trim()),
-  )
+  return Boolean(vendor.providerRef?.trim())
 }
 
 export function formatThumbtackContactedAt(iso: string | null | undefined): string | null {

@@ -187,8 +187,8 @@ export function OnboardingDocumentUploadStep({
         <div className="min-w-0">
           <h2 className="text-[18px] font-semibold text-[#101828]">Upload your documents</h2>
           <p className="mt-1 text-[14px] leading-relaxed text-[#6a7282]">
-            Upload leases, spreadsheets, photos, or property documents and Ulo will pull out the
-            important details for you to review before importing.
+            Upload leases, spreadsheets, photos, vendor information, or property documents, and Ulo
+            will pull out the important details for you to review before importing.
           </p>
         </div>
         <button

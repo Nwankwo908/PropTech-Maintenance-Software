@@ -34,11 +34,14 @@ In-network roster suggestions remain on **`recommend-vendor-alternatives`** (Ope
 | Secret | Purpose |
 |--------|---------|
 | `ADMIN_REASSIGN_SECRET` | Auth for both functions (`x-admin-reassign-secret`) |
-| `THUMBTACK_CLIENT_ID` | Thumbtack Partner Platform OAuth client ID |
-| `THUMBTACK_CLIENT_SECRET` | Thumbtack Partner Platform OAuth client secret |
+| `THUMBTACK_CLIENT_ID` | Thumbtack Search / businesses API OAuth client ID |
+| `THUMBTACK_CLIENT_SECRET` | Thumbtack Search / businesses API OAuth client secret |
+| `THUMBTACK_MESSAGING_CLIENT_ID` | Thumbtack Message API OAuth client ID (separate app) |
+| `THUMBTACK_MESSAGING_CLIENT_SECRET` | Thumbtack Message API OAuth client secret |
 | `THUMBTACK_API_BASE_URL` | Optional API host (default `https://api.thumbtack.com/api`) |
 | `THUMBTACK_TOKEN_URL` | Optional token URL (default `https://auth.thumbtack.com/oauth2/token`) |
-| `THUMBTACK_OAUTH_SCOPE` | Optional. Default includes search **and** messaging (`requests.write`, negotiations). Search-only tokens return 401 when opening a conversation. |
+| `THUMBTACK_OAUTH_SCOPE` | Optional search-app scopes. Default is `businesses/search.read` + `categories.read`. |
+| `THUMBTACK_MESSAGING_OAUTH_SCOPE` | Optional message-app scopes. Default is `requests.write` + negotiations. |
 | `THUMBTACK_UTM_SOURCE` | Optional `utm_source` on search (must be `cma-…`; default `cma-ulo`) |
 | `EXTERNAL_VENDOR_SEARCH_LOCATION` | Fallback geocode anchor when property address cannot be resolved |
 | `EXTERNAL_VENDOR_PROVIDER` | `auto` (default), `mock`, or `thumbtack` |

@@ -78,7 +78,10 @@ export function RentPaymentPage() {
           if (!active) return
           setStatus('error')
           setMessage(
-            getErrorMessage(err, 'Could not open rent payment. Contact your property manager.'),
+            getErrorMessage(
+              err,
+              'Online rent payment is not available. Contact your property manager.',
+            ),
           )
         }
         return

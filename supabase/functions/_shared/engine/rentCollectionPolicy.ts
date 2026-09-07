@@ -51,6 +51,49 @@ export function shouldRunRentCollectionCron(
   return rentReminderSlotForToday(rentDueDay, cadenceDays, date) != null
 }
 
+/** Payments-off: ask the landlord on due day and each overdue day until answered. */
+export function shouldAskLandlordRentReceiptToday(
+  rentDueDay: number,
+  date = new Date(),
+): boolean {
+  return daysUntilRentDue(rentDueDay, date) <= 0
+}
+
+function todayIsoFromDate(date: Date): string {
+  const y = date.getFullYear()
+  const m = String(date.getMonth() + 1).padStart(2, "0")
+  const d = String(date.getDate()).padStart(2, "0")
+  return `${y}-${m}-${d}`
+}
+
+/**
+ * Payments-off: text the tenant only after the landlord marks unpaid/partial,
+ * only while the grace window is still open, and at most once per calendar day.
+ */
+export function shouldSendOfflineTenantGraceReminder(params: {
+  rentStatus: string | null | undefined
+  runStatus: string | null | undefined
+  amountDue: number
+  dueAt: string | null | undefined
+  reminderDates: string[] | null | undefined
+  remindersStopped?: boolean
+  now?: Date
+}): boolean {
+  const status = (params.rentStatus ?? "").trim().toLowerCase()
+  if (status === "paid") return false
+  if (status !== "unpaid" && status !== "partial") return false
+  if (params.remindersStopped) return false
+  if ((params.runStatus ?? "").trim() !== "active") return false
+  if (!(params.amountDue > 0)) return false
+  const dueAt = params.dueAt?.trim()
+  if (!dueAt) return false
+  const now = params.now ?? new Date()
+  if (new Date(dueAt).getTime() < now.getTime()) return false
+  const today = todayIsoFromDate(now)
+  const sent = params.reminderDates ?? []
+  return !sent.includes(today)
+}
+
 export type PreferredLanguageId = "en_us" | "es_us"
 
 export function resolvePreferredLanguage(

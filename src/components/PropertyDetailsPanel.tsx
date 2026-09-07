@@ -1,19 +1,28 @@
 import { useCallback, useEffect, useId, useRef, useState, type ReactNode } from 'react'
 import { ApplianceInspectionUploader } from '@/components/ApplianceInspectionUploader'
-import { AssetRegistryPanel } from '@/components/AssetRegistryPanel'
+import { PropertyRecordHierarchy } from '@/components/PropertyRecordHierarchy'
 import { MaintenanceHistoryPanel } from '@/components/MaintenanceHistoryPanel'
-import assetRegistryIcon from '@/assets/asset-registry.png'
 import insuranceUploadCloudIcon from '@/assets/insurance-upload-cloud.svg'
 import maintenanceHistoryIcon from '@/assets/maintenance-history.png'
 import propertyAccessIcon from '@/assets/property-access.png'
 import propertyInsuranceIcon from '@/assets/property-insurance.png'
 import smartInspectionReportIcon from '@/assets/smart-inspection-report.png'
-import { getActiveLandlordId } from '@/lib/activeLandlord'
 import {
-  ASSET_REGISTRY_CHANGED_EVENT,
-  assetRegistryHasContent,
-  loadAssetRegistryAsync,
-} from '@/lib/assetRegistry'
+  listInspectionAssets,
+  loadBuildingInspectionSession,
+  removeInspectionPhoto,
+  uploadAndAnalyzeInspectionPhoto,
+} from '@/api/inspectionAssetAssess'
+import { getActiveLandlordId } from '@/lib/activeLandlord'
+import { isLimitedAlpha1Landlord } from '@shared/landlordCapabilities'
+import { compressImageForVision } from '@/lib/imageCompress'
+import {
+  INSPECTION_SESSION_CHANGED_EVENT,
+  hasPersistedInspectionData,
+  isInspectionReportPhoto,
+  notifyInspectionSessionChanged,
+} from '@/lib/inspectionSession'
+import { notifyAssetRegistryChanged } from '@/lib/assetRegistry'
 import {
   loadApprovedMaintenanceRecords,
   loadMaintenanceHistoryDocuments,
@@ -24,11 +33,12 @@ import {
 } from '@/lib/maintenanceHistoryImport'
 import {
   EMPTY_PROPERTY_ACCESS,
+  clearPropertyAccess,
   loadPropertyAccess,
+  propertyAccessHasContent,
   savePropertyAccess,
   type PropertyAccessProfile,
 } from '@/lib/propertyAccess'
-import { loadPropertyBuildingProfile } from '@/lib/propertyBuildingProfile'
 import {
   extractInsuranceBinder,
   isInsuranceBinderScanProcessing,
@@ -36,11 +46,10 @@ import {
 } from '@/lib/propertyInsuranceBinderExtract'
 import { getErrorMessage } from '@/lib/errorMessage'
 
-const INSPECTION_ACCEPT =
-  '.pdf,.png,.jpg,.jpeg,.webp,.zip,.doc,.docx,application/pdf,application/zip,image/*,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+const INSPECTION_ACCEPT = '.pdf,.png,.jpg,.jpeg,.webp,application/pdf,image/*'
 const INSPECTION_MAX_BYTES = 25 * 1024 * 1024
 
-type SectionId = 'inspection' | 'access' | 'assets' | 'insurance' | 'history'
+type SectionId = 'inspection' | 'access' | 'insurance' | 'history'
 
 type InspectionStatus = 'ready' | 'processing'
 
@@ -62,6 +71,7 @@ type InsuranceProfile = {
   claimsPhone: string
   additionalInsured: boolean
   binderFileName: string | null
+  binderFileUrl: string | null
   binderUploadedAt: string | null
   updatedAt: string | null
 }
@@ -76,8 +86,23 @@ const EMPTY_INSURANCE: InsuranceProfile = {
   claimsPhone: '',
   additionalInsured: false,
   binderFileName: null,
+  binderFileUrl: null,
   binderUploadedAt: null,
   updatedAt: null,
+}
+
+function insuranceFormHasInput(profile: InsuranceProfile): boolean {
+  return Boolean(
+    profile.carrier.trim() ||
+      profile.policyNumber.trim() ||
+      profile.coverageStartDate.trim() ||
+      profile.coverageEndDate.trim() ||
+      profile.renewalDate.trim() ||
+      profile.claimsContactName.trim() ||
+      profile.claimsPhone.trim() ||
+      profile.binderFileName?.trim() ||
+      profile.additionalInsured,
+  )
 }
 
 function normalizeInsuranceProfile(raw: unknown): InsuranceProfile {
@@ -93,24 +118,10 @@ function normalizeInsuranceProfile(raw: unknown): InsuranceProfile {
     claimsPhone: str('claimsPhone'),
     additionalInsured: o.additionalInsured === true,
     binderFileName: typeof o.binderFileName === 'string' ? o.binderFileName : null,
+    binderFileUrl: typeof o.binderFileUrl === 'string' ? o.binderFileUrl : null,
     binderUploadedAt: typeof o.binderUploadedAt === 'string' ? o.binderUploadedAt : null,
     updatedAt: typeof o.updatedAt === 'string' ? o.updatedAt : null,
   }
-}
-
-function insuranceHasContent(profile: InsuranceProfile): boolean {
-  return Boolean(
-    profile.carrier.trim() ||
-      profile.policyNumber.trim() ||
-      profile.coverageStartDate.trim() ||
-      profile.coverageEndDate.trim() ||
-      profile.renewalDate.trim() ||
-      profile.claimsContactName.trim() ||
-      profile.claimsPhone.trim() ||
-      profile.additionalInsured ||
-      profile.binderFileName ||
-      profile.updatedAt,
-  )
 }
 
 function buildingKey(building: string): string {
@@ -139,24 +150,29 @@ function writeJson(key: string, value: unknown): void {
   }
 }
 
-function loadInspectionDocs(building: string): InspectionDoc[] {
-  const parsed = readJson<unknown>(landlordScopedKey('ulo.propertyInspection', building), [])
-  if (!Array.isArray(parsed)) return []
-  return parsed
-    .filter(
-      (row): row is Record<string, unknown> =>
-        row != null &&
-        typeof row === 'object' &&
-        typeof (row as InspectionDoc).id === 'string' &&
-        typeof (row as InspectionDoc).fileName === 'string',
-    )
-    .map((row) => ({
-      id: String(row.id),
-      fileName: String(row.fileName),
-      fileSize: typeof row.fileSize === 'number' ? row.fileSize : 0,
-      uploadedAt: typeof row.uploadedAt === 'string' ? row.uploadedAt : new Date().toISOString(),
-      status: row.status === 'processing' ? 'processing' : 'ready',
-    }))
+function fileSizeFromAiResult(result: unknown): number {
+  if (!result || typeof result !== 'object') return 0
+  const size = (result as { _fileSize?: unknown })._fileSize
+  return typeof size === 'number' && Number.isFinite(size) ? size : 0
+}
+
+function inspectionDocsFromSessionPhotos(
+  photos: Array<{
+    id: string
+    fileName: string | null
+    contentType?: string | null
+    createdAt?: string | null
+    status: string
+    aiResult: unknown
+  }>,
+): InspectionDoc[] {
+  return photos.filter(isInspectionReportPhoto).map((photo) => ({
+    id: photo.id,
+    fileName: photo.fileName?.trim() || 'Inspection report',
+    fileSize: fileSizeFromAiResult(photo.aiResult),
+    uploadedAt: photo.createdAt || new Date().toISOString(),
+    status: photo.status === 'queued' || photo.status === 'analyzing' ? 'processing' : 'ready',
+  }))
 }
 
 function formatBytes(bytes: number): string {
@@ -181,24 +197,9 @@ function formatUploadDate(iso: string): string {
 }
 
 function isAcceptedInspectionFile(file: File): boolean {
-  if (/\.(pdf|png|jpe?g|webp|zip|docx?)$/i.test(file.name)) return true
+  if (/\.(pdf|png|jpe?g|webp)$/i.test(file.name)) return true
   const type = file.type.toLowerCase()
-  return (
-    type.startsWith('image/') ||
-    type === 'application/pdf' ||
-    type === 'application/zip' ||
-    type.includes('word') ||
-    type.includes('document')
-  )
-}
-
-function SearchIcon() {
-  return (
-    <svg viewBox="0 0 24 24" fill="none" className="size-[13px] text-[#94a3b8]" aria-hidden>
-      <circle cx="11" cy="11" r="7" stroke="currentColor" strokeWidth="2" />
-      <path d="M20 20l-3.5-3.5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
-    </svg>
-  )
+  return type.startsWith('image/') || type === 'application/pdf'
 }
 
 function FileDocIcon() {
@@ -292,10 +293,10 @@ function DetailCard({
   return (
     <div
       className={[
-        'property-details-card sa-surface group overflow-hidden rounded-[12px] border border-solid bg-white',
+        'property-details-card sa-surface group min-w-0 rounded-[12px] border border-solid bg-white',
         expanded
-          ? 'border-[#cbd5e1] shadow-[0px_2px_10px_0px_rgba(15,23,42,0.06)]'
-          : 'border-[#e2e8f0] shadow-none hover:border-[#cbd5e1] hover:bg-[#f8fafc] hover:shadow-[0px_2px_10px_0px_rgba(15,23,42,0.06)]',
+          ? 'overflow-x-hidden overflow-y-visible border-[#cbd5e1] shadow-[0px_2px_10px_0px_rgba(15,23,42,0.06)]'
+          : 'overflow-hidden border-[#e2e8f0] shadow-none hover:border-[#cbd5e1] hover:bg-[#f8fafc] hover:shadow-[0px_2px_10px_0px_rgba(15,23,42,0.06)]',
       ].join(' ')}
     >
       <button
@@ -350,13 +351,13 @@ function DetailCard({
         <div
           className={[
             'grid transition-[grid-template-rows] duration-[380ms] ease-[cubic-bezier(0.22,1,0.36,1)] motion-reduce:transition-none',
-            expanded ? 'grid-rows-[1fr]' : 'grid-rows-[0fr]',
+            expanded ? 'grid-rows-[auto]' : 'grid-rows-[0fr]',
           ].join(' ')}
         >
-          <div className="min-h-0 overflow-hidden">
+          <div className={expanded ? 'min-h-0 min-w-0 overflow-x-hidden overflow-y-visible' : 'min-h-0 overflow-hidden'}>
             <div
               className={[
-                'border-t border-[#e2e8f0] bg-white px-[18px] py-4 transition-[opacity,transform] duration-300 ease-out motion-reduce:transition-none',
+                'min-w-0 border-t border-[#e2e8f0] bg-white px-[18px] py-4 transition-[opacity,transform] duration-300 ease-out motion-reduce:transition-none',
                 expanded
                   ? 'translate-y-0 opacity-100 delay-[40ms]'
                   : 'pointer-events-none -translate-y-2 opacity-0',
@@ -371,6 +372,20 @@ function DetailCard({
     </div>
   )
 }
+
+const PROPERTY_ACCESS_TABLE_FIELDS: Array<{
+  key: keyof Omit<PropertyAccessProfile, 'updatedAt'>
+  label: string
+}> = [
+  { key: 'buildingEntry', label: 'Building Entry Instructions' },
+  { key: 'gateCode', label: 'Gate Code' },
+  { key: 'lockboxLocation', label: 'Lockbox Location' },
+  { key: 'lockboxCode', label: 'Lockbox Code' },
+  { key: 'utilityRoomAccess', label: 'Utility Room Access' },
+  { key: 'visitorParking', label: 'Visitor Parking Instructions' },
+  { key: 'superintendentContact', label: 'Superintendent Contact' },
+  { key: 'emergencyAccessNotes', label: 'Emergency Access Notes' },
+]
 
 function AccessField({
   label,
@@ -397,13 +412,195 @@ function AccessField({
         onChange={(e) => onChange(e.target.value)}
         placeholder={placeholder}
         className={[
-          'w-full rounded-[8px] border px-3 py-3 text-[13px] leading-normal text-[#0d0f11] outline-none placeholder:text-[#94a3b8] focus:border-[#94a3b8]',
+          'w-full min-w-0 rounded-[8px] border px-3 py-3 text-[13px] leading-normal text-[#0d0f11] outline-none placeholder:text-[#94a3b8] focus:border-[#94a3b8]',
           empty
             ? 'border-dashed border-[#e2e8f0] bg-transparent'
             : 'border-solid border-[#e2e8f0] bg-[#f8fafc]',
         ].join(' ')}
       />
     </label>
+  )
+}
+
+function PropertyAccessSavedTable({
+  access,
+  checked,
+  onChecked,
+}: {
+  access: PropertyAccessProfile
+  checked: boolean
+  onChecked: (checked: boolean) => void
+}) {
+  return (
+    <div className="w-full min-w-0 overflow-hidden rounded-[10px] border border-[#e2e8f0] bg-white">
+      <table className="w-full table-fixed border-collapse">
+        <thead>
+          <tr className="border-b border-[#e2e8f0] bg-[#f8fafc]">
+            <th className="w-8 px-2 py-2" aria-hidden />
+            {PROPERTY_ACCESS_TABLE_FIELDS.map((field) => (
+              <th
+                key={field.key}
+                className="break-words px-1.5 py-2 text-left text-[10px] font-semibold uppercase leading-3 tracking-[0.2px] text-[#64748b] sm:px-2 sm:text-[11px] sm:leading-4"
+              >
+                {field.label}
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td className="w-8 px-2 py-3 align-top">
+              <label className="flex cursor-pointer items-center justify-center">
+                <input
+                  type="checkbox"
+                  checked={checked}
+                  onChange={(e) => onChecked(e.target.checked)}
+                  aria-label="Select saved property access"
+                  className="size-4 cursor-pointer rounded border-[#cbd5e1] accent-[#186179]"
+                />
+              </label>
+            </td>
+            {PROPERTY_ACCESS_TABLE_FIELDS.map((field) => (
+              <td
+                key={field.key}
+                className="break-words px-1.5 py-3 align-top text-[12px] leading-[18px] text-[#0d0f11] sm:px-2 sm:text-[13px] sm:leading-[19.5px]"
+              >
+                {access[field.key].trim() || '—'}
+              </td>
+            ))}
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  )
+}
+
+function fileToDataUrl(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => resolve(String(reader.result ?? ''))
+    reader.onerror = () => reject(new Error('Could not read the insurance document.'))
+    reader.readAsDataURL(file)
+  })
+}
+
+function formatInsuranceDate(value: string): string {
+  const t = Date.parse(value)
+  if (!Number.isFinite(t)) return value.trim() || '—'
+  return new Date(t).toLocaleDateString('en-US', {
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+  })
+}
+
+const INSURANCE_TABLE_COLUMNS: Array<{
+  key: string
+  titles: string[]
+  render: (profile: InsuranceProfile) => ReactNode
+}> = [
+  { key: 'carrier', titles: ['Insurance Company'], render: (p) => insuranceText(p.carrier) },
+  { key: 'policyNumber', titles: ['Policy Number'], render: (p) => insuranceText(p.policyNumber) },
+  {
+    key: 'coverageStartDate',
+    titles: ['Coverage Start'],
+    render: (p) => formatInsuranceDate(p.coverageStartDate),
+  },
+  {
+    key: 'coverageEndDate',
+    titles: ['Coverage End'],
+    render: (p) => formatInsuranceDate(p.coverageEndDate),
+  },
+  { key: 'renewalDate', titles: ['Renewal Date'], render: (p) => formatInsuranceDate(p.renewalDate) },
+  {
+    key: 'claims',
+    titles: ['Claims Contact'],
+    render: (p) => (
+      <span className="flex flex-col gap-1">
+        <span>{insuranceText(p.claimsContactName)}</span>
+        <span>{insuranceText(p.claimsPhone)}</span>
+      </span>
+    ),
+  },
+  { key: 'binderFileName', titles: ['Insurance Document'], render: (p) => insuranceDocumentCell(p) },
+]
+
+function insuranceText(value: string): string {
+  return value.trim() || '—'
+}
+
+function insuranceDocumentCell(profile: InsuranceProfile): ReactNode {
+  const name = profile.binderFileName?.trim()
+  if (!name) return '—'
+  if (profile.binderFileUrl) {
+    return (
+      <a
+        href={profile.binderFileUrl}
+        target="_blank"
+        rel="noreferrer"
+        className="font-semibold text-[#186179] underline-offset-2 hover:underline"
+      >
+        {name}
+      </a>
+    )
+  }
+  return name
+}
+
+function InsuranceSavedTable({
+  insurance,
+  checked,
+  onChecked,
+}: {
+  insurance: InsuranceProfile
+  checked: boolean
+  onChecked: (checked: boolean) => void
+}) {
+  return (
+    <div className="w-full min-w-0 overflow-hidden rounded-[10px] border border-[#e2e8f0] bg-white">
+      <table className="w-full table-fixed border-collapse">
+        <thead>
+          <tr className="border-b border-[#e2e8f0] bg-[#f8fafc]">
+            <th className="w-8 px-2 py-2" aria-hidden />
+            {INSURANCE_TABLE_COLUMNS.map((column) => (
+              <th
+                key={column.key}
+                className="break-words px-1.5 py-2 text-left text-[10px] font-semibold uppercase leading-3 tracking-[0.2px] text-[#64748b] sm:px-2 sm:text-[11px] sm:leading-4"
+              >
+                <span className="flex flex-col gap-1">
+                  {column.titles.map((title) => (
+                    <span key={title}>{title}</span>
+                  ))}
+                </span>
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td className="w-8 px-2 py-3 align-top">
+              <label className="flex cursor-pointer items-center justify-center">
+                <input
+                  type="checkbox"
+                  checked={checked}
+                  onChange={(e) => onChecked(e.target.checked)}
+                  aria-label="Select saved insurance"
+                  className="size-4 cursor-pointer rounded border-[#cbd5e1] accent-[#186179]"
+                />
+              </label>
+            </td>
+            {INSURANCE_TABLE_COLUMNS.map((column) => (
+              <td
+                key={column.key}
+                className="break-words px-1.5 py-3 align-top text-[12px] leading-[18px] text-[#0d0f11] sm:px-2 sm:text-[13px] sm:leading-[19.5px]"
+              >
+                {column.render(insurance)}
+              </td>
+            ))}
+          </tr>
+        </tbody>
+      </table>
+    </div>
   )
 }
 
@@ -429,7 +626,7 @@ function InsuranceField({
         onChange={(e) => onChange(e.target.value)}
         placeholder={placeholder}
         className={[
-          'w-full rounded-[6px] border border-solid border-[#e2e8f0] bg-white px-3 py-2.5 text-[13px] leading-normal text-[#0d0f11] outline-none placeholder:text-[#64748b] focus:border-[#94a3b8]',
+          'w-full min-w-0 rounded-[6px] border border-solid border-[#e2e8f0] bg-white px-3 py-2.5 text-[13px] leading-normal text-[#0d0f11] outline-none placeholder:text-[#64748b] focus:border-[#94a3b8]',
           type === 'date' && !value ? 'text-[#64748b]' : '',
         ].join(' ')}
       />
@@ -440,22 +637,30 @@ function InsuranceField({
 /** Expanded Insurance — Figma node 1140:1927. */
 function InsuranceExpandedPanel({
   insurance,
+  savedInsurance,
+  insuranceRowChecked,
+  onInsuranceRowChecked,
   onChange,
   onSave,
+  onEditSaved,
+  onDeleteSaved,
   onBinderFiles,
   extracting = false,
   extractLabel = null,
   extractProgress = 0,
-  isSaved = false,
 }: {
   insurance: InsuranceProfile
+  savedInsurance: InsuranceProfile | null
+  insuranceRowChecked: boolean
+  onInsuranceRowChecked: (checked: boolean) => void
   onChange: (next: InsuranceProfile) => void
   onSave: () => void
+  onEditSaved: () => void
+  onDeleteSaved: () => void
   onBinderFiles: (files: FileList | null) => void
   extracting?: boolean
   extractLabel?: string | null
   extractProgress?: number
-  isSaved?: boolean
 }) {
   const binderInputId = useId()
   const binderInputRef = useRef<HTMLInputElement>(null)
@@ -465,6 +670,8 @@ function InsuranceExpandedPanel({
     onChange({ ...insurance, ...partial })
   }
 
+  const showSaveDetails = extracting || !savedInsurance || insuranceFormHasInput(insurance)
+
   return (
     <div className="flex flex-col gap-5">
       <p className="text-[14px] leading-normal text-[#475569]">
@@ -472,7 +679,7 @@ function InsuranceExpandedPanel({
       </p>
 
       <div className="flex flex-col gap-4">
-        <div className="flex flex-col gap-4 sm:flex-row sm:gap-4">
+        <div className="flex min-w-0 flex-col gap-4 sm:flex-row sm:gap-4">
           <InsuranceField
             label="Insurance Company"
             value={insurance.carrier}
@@ -487,7 +694,7 @@ function InsuranceExpandedPanel({
           />
         </div>
 
-        <div className="flex flex-col gap-4 sm:flex-row sm:gap-4">
+        <div className="flex min-w-0 flex-col gap-4 sm:flex-row sm:gap-4">
           <InsuranceField
             label="Coverage Start Date"
             value={insurance.coverageStartDate}
@@ -511,7 +718,7 @@ function InsuranceExpandedPanel({
           />
         </div>
 
-        <div className="flex flex-col gap-4 sm:flex-row sm:gap-4">
+        <div className="flex min-w-0 flex-col gap-4 sm:flex-row sm:gap-4">
           <InsuranceField
             label="Claims Contact Name"
             value={insurance.claimsContactName}
@@ -594,9 +801,7 @@ function InsuranceExpandedPanel({
           <p className="text-[12px] text-[#64748b]">
             {extracting && extractLabel
               ? extractLabel
-              : insurance.binderFileName
-                ? insurance.binderFileName
-                : 'PDF or scanned documents'}
+              : 'PDF or scanned documents'}
           </p>
         </div>
         {extracting ? (
@@ -610,23 +815,61 @@ function InsuranceExpandedPanel({
           <button
             type="button"
             onClick={() => binderInputRef.current?.click()}
-            className="pd-btn pd-btn-primary rounded-[6px] px-4 py-2 text-[13px] font-semibold"
+            className="mt-1 flex size-10 items-center justify-center rounded-[10px] bg-transparent text-[#186179] outline-none hover:text-[#0f4a5c] focus-visible:ring-2 focus-visible:ring-[#186179] disabled:text-[#94a3b8]"
+            aria-label="Upload insurance binder"
           >
-            Browse Files
+            <svg viewBox="0 0 24 24" fill="none" className="size-6" aria-hidden>
+              <path
+                d="M12 5v14M5 12h14"
+                stroke="currentColor"
+                strokeWidth={2}
+                strokeLinecap="round"
+              />
+            </svg>
           </button>
         )}
       </div>
 
-      <div className="pt-2">
-        <button
-          type="button"
-          onClick={onSave}
-          disabled={isSaved || extracting}
-          className="pd-btn pd-btn-primary rounded-[8px] px-5 py-2.5 text-[13px] font-semibold"
-        >
-          {isSaved ? 'Saved' : extracting ? 'Extracting…' : 'Save Details'}
-        </button>
-      </div>
+      {showSaveDetails ? (
+        <div className="pt-2">
+          <button
+            type="button"
+            onClick={onSave}
+            disabled={extracting}
+            className="pd-btn pd-btn-primary rounded-[8px] px-5 py-2.5 text-[13px] font-semibold"
+          >
+            {extracting ? 'Extracting…' : 'Save Details'}
+          </button>
+        </div>
+      ) : null}
+
+      {savedInsurance ? (
+        <div className="flex flex-col gap-3">
+          {insuranceRowChecked ? (
+            <div className="flex flex-wrap items-center justify-end gap-2">
+              <button
+                type="button"
+                onClick={onEditSaved}
+                className="pd-btn pd-btn-ghost rounded-[10px] px-4 py-2.5 text-[13px] font-semibold text-[#186179] hover:bg-[#eff6ff]"
+              >
+                Edit selected
+              </button>
+              <button
+                type="button"
+                onClick={onDeleteSaved}
+                className="pd-btn pd-btn-ghost rounded-[10px] px-4 py-2.5 text-[13px] font-semibold text-[#a03e3e] hover:bg-[#fef2f2] hover:text-[#991b1b]"
+              >
+                Delete selected
+              </button>
+            </div>
+          ) : null}
+          <InsuranceSavedTable
+            insurance={savedInsurance}
+            checked={insuranceRowChecked}
+            onChecked={onInsuranceRowChecked}
+          />
+        </div>
+      ) : null}
     </div>
   )
 }
@@ -634,6 +877,7 @@ function InsuranceExpandedPanel({
 type HomeInspectionExpandedPanelProps = {
   building: string
   docs: InspectionDoc[]
+  hasPersistedInspection: boolean
   onFiles: (files: FileList | null) => void
   onRemove: (id: string) => void
 }
@@ -642,37 +886,86 @@ type HomeInspectionExpandedPanelProps = {
 function HomeInspectionExpandedPanel({
   building,
   docs,
+  hasPersistedInspection,
   onFiles,
   onRemove,
 }: HomeInspectionExpandedPanelProps) {
   const inputId = useId()
   const inputRef = useRef<HTMLInputElement>(null)
-  const [query, setQuery] = useState('')
   const [dragging, setDragging] = useState(false)
-
-  const filtered = docs.filter((doc) =>
-    doc.fileName.toLowerCase().includes(query.trim().toLowerCase()),
-  )
 
   function handleFiles(files: FileList | null) {
     onFiles(files)
     if (inputRef.current) inputRef.current.value = ''
   }
 
-  return (
-    <div className="flex flex-col gap-4">
-      <div className="overflow-hidden rounded-[10px] border border-[#e2e8f0] bg-white">
-        <div className="flex items-center gap-2 border-b border-[#e2e8f0] px-4 py-3">
-          <SearchIcon />
+  const uploadCard = (
+      <div
+        className={[
+          'sa-dropzone flex h-full min-h-[220px] flex-col rounded-[10px] border border-dashed bg-[#f8fafc] p-px',
+          dragging ? 'is-dragging' : 'border-[#cbd5e1]',
+        ].join(' ')}
+        data-dragging={dragging ? 'true' : 'false'}
+        onDragEnter={(e) => {
+          e.preventDefault()
+          setDragging(true)
+        }}
+        onDragOver={(e) => {
+          e.preventDefault()
+          setDragging(true)
+        }}
+        onDragLeave={(e) => {
+          e.preventDefault()
+          setDragging(false)
+        }}
+        onDrop={(e) => {
+          e.preventDefault()
+          setDragging(false)
+          handleFiles(e.dataTransfer.files)
+        }}
+      >
+        <div className="flex flex-1 flex-col items-center justify-center gap-3 px-4 py-8 text-center">
+          <UploadDocIcon />
+          <p className="text-[14px] font-semibold leading-[21px] text-[#0d0f11]">
+            Upload inspection report
+          </p>
+          <p className="text-[12px] leading-[18px] text-[#64748b]">
+            Save an existing inspection report to this property. The address on
+            the report must match this property.
+          </p>
+          <p className="text-[12px] leading-[18px] text-[#64748b]">
+            PDF or image · Max 25 MB
+          </p>
           <input
-            type="search"
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            placeholder="Search documents..."
-            className="min-w-0 flex-1 bg-transparent text-[13px] text-[#0d0f11] outline-none placeholder:text-[#94a3b8]"
+            ref={inputRef}
+            id={inputId}
+            type="file"
+            accept={INSPECTION_ACCEPT}
+            multiple
+            className="sr-only"
+            onChange={(e) => handleFiles(e.target.files)}
           />
+          <button
+            type="button"
+            onClick={() => inputRef.current?.click()}
+            className="mt-1 flex size-10 items-center justify-center rounded-[10px] bg-transparent text-[#186179] outline-none hover:text-[#0f4a5c] focus-visible:ring-2 focus-visible:ring-[#186179] disabled:text-[#94a3b8]"
+            aria-label="Upload inspection report"
+          >
+            <svg viewBox="0 0 24 24" fill="none" className="size-6" aria-hidden>
+              <path
+                d="M12 5v14M5 12h14"
+                stroke="currentColor"
+                strokeWidth={2}
+                strokeLinecap="round"
+              />
+            </svg>
+          </button>
         </div>
+      </div>
+  )
 
+  const documentList = (
+      <div className="overflow-hidden rounded-[10px] border border-[#e2e8f0] bg-white">
         <div className="hidden border-b border-[#e2e8f0] bg-[#f8fafc] px-4 py-2 sm:grid sm:grid-cols-[minmax(0,1fr)_80px_80px_110px_32px] sm:gap-2">
           <p className="text-[11px] font-semibold uppercase tracking-[0.275px] text-[#64748b]">
             Document
@@ -689,20 +982,20 @@ function HomeInspectionExpandedPanel({
           <span />
         </div>
 
-        {filtered.length === 0 ? (
+        {docs.length === 0 ? (
+          hasPersistedInspection ? null : (
           <div className="px-4 py-6 text-center text-[13px] text-[#94a3b8]">
-            {docs.length === 0
-              ? 'No documents uploaded yet.'
-              : 'No documents match your search.'}
+            No documents uploaded yet.
           </div>
+          )
         ) : (
           <ul>
-            {filtered.map((doc, index) => (
+            {docs.map((doc, index) => (
               <li
                 key={doc.id}
                 className={[
                   'grid grid-cols-1 gap-2 px-4 py-3 sm:grid-cols-[minmax(0,1fr)_80px_80px_110px_32px] sm:items-center sm:gap-2',
-                  index < filtered.length - 1 ? 'border-b border-[#e2e8f0]' : '',
+                  index < docs.length - 1 ? 'border-b border-[#e2e8f0]' : '',
                 ].join(' ')}
               >
                 <div className="flex min-w-0 items-center gap-2.5">
@@ -747,70 +1040,23 @@ function HomeInspectionExpandedPanel({
           </ul>
         )}
       </div>
+  )
 
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2 lg:items-start">
-      <div
-        className={[
-          'sa-dropzone flex min-h-[220px] flex-col rounded-[10px] border border-dashed bg-[#f8fafc] p-px',
-          dragging ? 'is-dragging border-[#0d0f11] bg-[#f1f5f9]' : 'border-[#cbd5e1]',
-        ].join(' ')}
-        data-dragging={dragging ? 'true' : 'false'}
-        onDragEnter={(e) => {
-          e.preventDefault()
-          setDragging(true)
-        }}
-        onDragOver={(e) => {
-          e.preventDefault()
-          setDragging(true)
-        }}
-        onDragLeave={(e) => {
-          e.preventDefault()
-          setDragging(false)
-        }}
-        onDrop={(e) => {
-          e.preventDefault()
-          setDragging(false)
-          handleFiles(e.dataTransfer.files)
-        }}
-      >
-        <div className="flex flex-1 flex-col items-center justify-center gap-3 px-4 py-8 text-center">
-          <UploadDocIcon />
-          <p className="text-[14px] font-semibold leading-[21px] text-[#0d0f11]">
-            Upload PDF, images, or inspection documents
-          </p>
-          <p className="text-[12px] leading-[18px] text-[#64748b]">
-            PDF, DOCX up to 25MB — or drag and drop here
-          </p>
-          <input
-            ref={inputRef}
-            id={inputId}
-            type="file"
-            accept={INSPECTION_ACCEPT}
-            multiple
-            className="sr-only"
-            onChange={(e) => handleFiles(e.target.files)}
-          />
-          <button
-            type="button"
-            onClick={() => inputRef.current?.click()}
-            className="mt-1 flex size-10 items-center justify-center rounded-[10px] bg-transparent text-[#186179] outline-none hover:text-[#0f4a5c] focus-visible:ring-2 focus-visible:ring-[#186179] disabled:text-[#94a3b8]"
-            aria-label="Upload document"
-          >
-            <svg viewBox="0 0 24 24" fill="none" className="size-5" aria-hidden>
-              <path
-                d="M12 5v14M5 12h14"
-                stroke="currentColor"
-                strokeWidth={2}
-                strokeLinecap="round"
-              />
-            </svg>
-          </button>
-        </div>
+  if (!building) {
+    return (
+      <div className="flex flex-col gap-4">
+        {uploadCard}
+        {documentList}
       </div>
+    )
+  }
 
-      {building ? <ApplianceInspectionUploader building={building} /> : null}
-      </div>
-    </div>
+  return (
+    <ApplianceInspectionUploader
+      building={building}
+      leading={uploadCard}
+      trailing={documentList}
+    />
   )
 }
 
@@ -829,12 +1075,16 @@ export function PropertyDetailsPanel({
 }: PropertyDetailsPanelProps) {
   const [expanded, setExpanded] = useState<SectionId | null>(null)
   const [inspectionDocs, setInspectionDocs] = useState<InspectionDoc[]>([])
+  const [inspectionHasPersistedWork, setInspectionHasPersistedWork] = useState(false)
+  const [inspectionSaveMessage, setInspectionSaveMessage] = useState<string | null>(null)
   const [historyDocs, setHistoryDocs] = useState<MaintenanceHistoryDocument[]>([])
   const [historyApproved, setHistoryApproved] = useState<MaintenanceHistoryRecord[]>([])
   const [access, setAccess] = useState<PropertyAccessProfile>(EMPTY_PROPERTY_ACCESS)
-  const [assetsHasContent, setAssetsHasContent] = useState(false)
+  const [savedAccess, setSavedAccess] = useState<PropertyAccessProfile | null>(null)
+  const [accessRowChecked, setAccessRowChecked] = useState(false)
   const [insurance, setInsurance] = useState<InsuranceProfile>(EMPTY_INSURANCE)
-  const [insuranceSaved, setInsuranceSaved] = useState(false)
+  const [savedInsurance, setSavedInsurance] = useState<InsuranceProfile | null>(null)
+  const [insuranceRowChecked, setInsuranceRowChecked] = useState(false)
   const [insuranceExtractStage, setInsuranceExtractStage] =
     useState<InsuranceBinderScanStage>('idle')
   const [insuranceExtractLabel, setInsuranceExtractLabel] = useState<string | null>(null)
@@ -843,53 +1093,90 @@ export function PropertyDetailsPanel({
 
   useEffect(() => {
     if (!building) return
-    setInspectionDocs(loadInspectionDocs(building))
+    let cancelled = false
+    async function loadDocs() {
+      try {
+        const [session, assets] = await Promise.all([
+          loadBuildingInspectionSession(building),
+          listInspectionAssets(building).catch(() => []),
+        ])
+        if (cancelled) return
+        setInspectionDocs(inspectionDocsFromSessionPhotos(session.photos))
+        setInspectionHasPersistedWork(
+          hasPersistedInspectionData({
+            photoCount: session.photos.length,
+            assetCount: assets.length,
+          }),
+        )
+      } catch {
+        if (!cancelled) {
+          setInspectionDocs([])
+          setInspectionHasPersistedWork(false)
+        }
+      }
+    }
+    void loadDocs()
     const loadedHistory = loadMaintenanceHistoryDocuments({ building })
     setHistoryDocs(loadedHistory)
     setHistoryApproved(loadApprovedMaintenanceRecords({ building }))
-    void loadPropertyAccess(building).then(setAccess)
-    void Promise.all([
-      loadAssetRegistryAsync(building),
-      loadPropertyBuildingProfile(building),
-    ]).then(([state, profile]) => {
-      setAssetsHasContent(
-        assetRegistryHasContent(state) ||
-          profile.yearBuilt != null ||
-          (initialYearBuilt != null && Number.isFinite(initialYearBuilt)),
-      )
+    void loadPropertyAccess(building).then((loaded) => {
+      if (cancelled) return
+      setAccessRowChecked(false)
+      if (loaded.updatedAt) {
+        setSavedAccess(loaded)
+        setAccess({ ...EMPTY_PROPERTY_ACCESS })
+      } else {
+        setSavedAccess(null)
+        setAccess(loaded)
+      }
     })
     const loadedInsurance = normalizeInsuranceProfile(
       readJson(landlordScopedKey('ulo.propertyInsurance', building), EMPTY_INSURANCE),
     )
-    setInsurance(loadedInsurance)
-    setInsuranceSaved(Boolean(loadedInsurance.updatedAt))
+    if (loadedInsurance.updatedAt) {
+      setSavedInsurance(loadedInsurance)
+      setInsurance({ ...EMPTY_INSURANCE })
+    } else {
+      setSavedInsurance(null)
+      setInsurance(loadedInsurance)
+    }
+    setInsuranceRowChecked(false)
     setInsuranceExtractStage('idle')
     setInsuranceExtractLabel(null)
     setInsuranceExtractProgress(0)
     setExpanded(null)
     setError(null)
-
-    function onRegistryEvent(ev: Event) {
-      const detail = (ev as CustomEvent<{ building?: string }>).detail
-      if (detail?.building && detail.building.trim() !== building.trim()) return
-      void Promise.all([
-        loadAssetRegistryAsync(building),
-        loadPropertyBuildingProfile(building),
-      ]).then(([state, profile]) => {
-        setAssetsHasContent(assetRegistryHasContent(state) || profile.yearBuilt != null)
-      })
+    setInspectionSaveMessage(null)
+    return () => {
+      cancelled = true
     }
-    window.addEventListener(ASSET_REGISTRY_CHANGED_EVENT, onRegistryEvent)
-    return () => window.removeEventListener(ASSET_REGISTRY_CHANGED_EVENT, onRegistryEvent)
   }, [building, initialYearBuilt])
 
-  const persistInspection = useCallback(
-    (next: InspectionDoc[]) => {
-      setInspectionDocs(next)
-      writeJson(landlordScopedKey('ulo.propertyInspection', building), next)
-    },
-    [building],
-  )
+  useEffect(() => {
+    if (!building) return
+    function onSessionChanged(event: Event) {
+      const detail = (event as CustomEvent<{ building?: string }>).detail
+      if (detail?.building && detail.building !== building) return
+      void Promise.all([
+        loadBuildingInspectionSession(building),
+        listInspectionAssets(building).catch(() => []),
+      ])
+        .then(([session, assets]) => {
+          setInspectionDocs(inspectionDocsFromSessionPhotos(session.photos))
+          setInspectionHasPersistedWork(
+            hasPersistedInspectionData({
+              photoCount: session.photos.length,
+              assetCount: assets.length,
+            }),
+          )
+        })
+        .catch(() => {
+          /* keep current list */
+        })
+    }
+    window.addEventListener(INSPECTION_SESSION_CHANGED_EVENT, onSessionChanged)
+    return () => window.removeEventListener(INSPECTION_SESSION_CHANGED_EVENT, onSessionChanged)
+  }, [building])
 
   const persistHistory = useCallback(
     (next: MaintenanceHistoryDocument[]) => {
@@ -912,47 +1199,108 @@ export function PropertyDetailsPanel({
     setError(null)
   }
 
-  function onInspectionFiles(files: FileList | null) {
-    if (!files?.length) return
+  async function onInspectionFiles(files: FileList | null) {
+    if (!files?.length || !building) return
     setError(null)
-    const additions: InspectionDoc[] = []
+    setInspectionSaveMessage(null)
+    const accepted: File[] = []
     for (const file of Array.from(files)) {
       if (!isAcceptedInspectionFile(file)) {
-        setError('Upload a PDF, DOCX, image, or ZIP inspection document.')
+        setError('Upload a PDF or image of the inspection report. ZIP and Word files are not supported.')
         continue
       }
       if (file.size > INSPECTION_MAX_BYTES) {
         setError('Each file must be 25MB or smaller.')
         continue
       }
-      additions.push({
-        id: `insp-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
-        fileName: file.name,
-        fileSize: file.size,
-        uploadedAt: new Date().toISOString(),
-        status: 'processing',
-      })
+      accepted.push(file)
     }
-    if (additions.length === 0) return
-    const next = [...inspectionDocs, ...additions]
-    persistInspection(next)
-    const additionIds = new Set(additions.map((a) => a.id))
-    window.setTimeout(() => {
-      setInspectionDocs((current) => {
-        const updated = current.map((doc) =>
-          additionIds.has(doc.id) ? { ...doc, status: 'ready' as const } : doc,
+    if (accepted.length === 0) return
+
+    const pending = accepted.map((file) => ({
+      id: `pending-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+      fileName: file.name,
+      fileSize: file.size,
+      uploadedAt: new Date().toISOString(),
+      status: 'processing' as const,
+    }))
+    setInspectionDocs((current) => [...current, ...pending])
+
+    try {
+      const session = await loadBuildingInspectionSession(building)
+      for (const file of accepted) {
+        const compressed = await compressImageForVision(file)
+        await uploadAndAnalyzeInspectionPhoto({
+          assessmentId: session.id,
+          blob: compressed.blob,
+          imageBase64: compressed.base64 || undefined,
+          contentType: compressed.contentType,
+          fileName: compressed.fileName,
+          mode: 'document',
+          autoConfirm: true,
+        })
+      }
+      const [refreshed, assets] = await Promise.all([
+        loadBuildingInspectionSession(building),
+        listInspectionAssets(building).catch(() => []),
+      ])
+      setInspectionDocs(inspectionDocsFromSessionPhotos(refreshed.photos))
+      setInspectionHasPersistedWork(
+        hasPersistedInspectionData({
+          photoCount: refreshed.photos.length,
+          assetCount: assets.length,
+        }),
+      )
+      notifyInspectionSessionChanged(building)
+      notifyAssetRegistryChanged(building)
+      setInspectionSaveMessage(
+        accepted.length === 1 ? 'Inspection report saved' : `${accepted.length} inspection reports saved`,
+      )
+    } catch (err) {
+      try {
+        const [refreshed, assets] = await Promise.all([
+          loadBuildingInspectionSession(building),
+          listInspectionAssets(building).catch(() => []),
+        ])
+        setInspectionDocs(inspectionDocsFromSessionPhotos(refreshed.photos))
+        setInspectionHasPersistedWork(
+          hasPersistedInspectionData({
+            photoCount: refreshed.photos.length,
+            assetCount: assets.length,
+          }),
         )
-        writeJson(landlordScopedKey('ulo.propertyInspection', building), updated)
-        return updated
-      })
-    }, 1400)
+      } catch {
+        setInspectionDocs((current) => current.filter((doc) => !pending.some((row) => row.id === doc.id)))
+      }
+      setError(
+        getErrorMessage(
+          err,
+          'This report could not be saved. Check that the address matches this property and try again.',
+        ),
+      )
+    }
   }
 
-  const inspectionEmpty = inspectionDocs.length === 0
-  const accessEmpty = !access.updatedAt
-  const assetsEmpty = !assetsHasContent
-  const insuranceEmpty = !insuranceHasContent(insurance)
+  async function onRemoveInspectionDoc(id: string) {
+    setError(null)
+    const previous = inspectionDocs
+    setInspectionDocs((current) => current.filter((doc) => doc.id !== id))
+    if (id.startsWith('pending-')) return
+    try {
+      await removeInspectionPhoto(id)
+      notifyInspectionSessionChanged(building)
+      notifyAssetRegistryChanged(building)
+    } catch (err) {
+      setInspectionDocs(previous)
+      setError(getErrorMessage(err, 'Could not remove that report.'))
+    }
+  }
+
+  const inspectionEmpty = !inspectionHasPersistedWork
+  const accessEmpty = !savedAccess
+  const insuranceEmpty = !savedInsurance
   const historyEmpty = historyDocs.length === 0 && historyApproved.length === 0
+  const limitedAlpha1 = isLimitedAlpha1Landlord(getActiveLandlordId())
 
   if (loading) {
     return (
@@ -963,8 +1311,13 @@ export function PropertyDetailsPanel({
   }
 
   return (
-    <div className="mt-6 flex w-full flex-col gap-3">
+    <div className="mt-6 flex w-full min-w-0 flex-col gap-3 overflow-x-hidden">
       {error ? <p className="text-[12px] text-[#b91c1c]">{error}</p> : null}
+      {inspectionSaveMessage ? (
+        <p className="text-[12px] text-[#059669]">{inspectionSaveMessage}</p>
+      ) : null}
+
+      {limitedAlpha1 ? null : <PropertyRecordHierarchy />}
 
       <DetailCard
         icon={
@@ -987,8 +1340,9 @@ export function PropertyDetailsPanel({
         <HomeInspectionExpandedPanel
           building={building}
           docs={inspectionDocs}
-          onFiles={onInspectionFiles}
-          onRemove={(id) => persistInspection(inspectionDocs.filter((d) => d.id !== id))}
+          hasPersistedInspection={inspectionHasPersistedWork}
+          onFiles={(files) => void onInspectionFiles(files)}
+          onRemove={(id) => void onRemoveInspectionDoc(id)}
         />
       </DetailCard>
 
@@ -1007,7 +1361,7 @@ export function PropertyDetailsPanel({
         onToggle={() => toggle('access')}
       >
         <div className="flex flex-col gap-4">
-          <div className="flex flex-col gap-4 sm:flex-row sm:gap-4">
+          <div className="flex min-w-0 flex-col gap-4 sm:flex-row sm:gap-4">
             <AccessField
               label="Building Entry Instructions"
               value={access.buildingEntry}
@@ -1021,7 +1375,7 @@ export function PropertyDetailsPanel({
               placeholder="e.g. 4521#"
             />
           </div>
-          <div className="flex flex-col gap-4 sm:flex-row sm:gap-4">
+          <div className="flex min-w-0 flex-col gap-4 sm:flex-row sm:gap-4">
             <AccessField
               label="Lockbox Location"
               value={access.lockboxLocation}
@@ -1038,7 +1392,7 @@ export function PropertyDetailsPanel({
               required
             />
           </div>
-          <div className="flex flex-col gap-4 sm:flex-row sm:gap-4">
+          <div className="flex min-w-0 flex-col gap-4 sm:flex-row sm:gap-4">
             <AccessField
               label="Utility Room Access"
               value={access.utilityRoomAccess}
@@ -1056,7 +1410,7 @@ export function PropertyDetailsPanel({
               placeholder="e.g. Visitor lot B"
             />
           </div>
-          <div className="flex flex-col gap-4 sm:flex-row sm:gap-4">
+          <div className="flex min-w-0 flex-col gap-4 sm:flex-row sm:gap-4">
             <AccessField
               label="Superintendent Contact"
               value={access.superintendentContact}
@@ -1074,54 +1428,83 @@ export function PropertyDetailsPanel({
               placeholder="e.g. Fire escape instructions..."
             />
           </div>
-          <button
-            type="button"
-            onClick={() => {
-              if (!access.lockboxCode.trim()) {
-                setError('Lockbox code is required.')
-                return
-              }
-              void (async () => {
-                try {
-                  await savePropertyAccess(building, access)
-                  setAccess((prev) => ({
-                    ...prev,
-                    updatedAt: new Date().toISOString(),
-                  }))
-                  setError(null)
-                } catch (err) {
-                  setError(
-                    getErrorMessage(err, 'Could not save property access.'),
-                  )
+          {propertyAccessHasContent(access) || !savedAccess ? (
+            <button
+              type="button"
+              onClick={() => {
+                if (!access.lockboxCode.trim()) {
+                  setError('Lockbox code is required.')
+                  return
                 }
-              })()
-            }}
-            className="pd-btn pd-btn-primary self-start rounded-[8px] px-4 py-2 text-[12px] font-semibold"
-          >
-            Save 
-          </button>
+                void (async () => {
+                  try {
+                    const next = {
+                      ...access,
+                      updatedAt: new Date().toISOString(),
+                    }
+                    await savePropertyAccess(building, next)
+                    setSavedAccess(next)
+                    setAccess({ ...EMPTY_PROPERTY_ACCESS })
+                    setAccessRowChecked(false)
+                    setError(null)
+                  } catch (err) {
+                    setError(
+                      getErrorMessage(err, 'Could not save property access.'),
+                    )
+                  }
+                })()
+              }}
+              className="pd-btn pd-btn-primary self-start rounded-[8px] px-4 py-2 text-[12px] font-semibold"
+            >
+              Save
+            </button>
+          ) : null}
+          {savedAccess ? (
+            <div className="flex flex-col gap-3">
+              {accessRowChecked ? (
+                <div className="flex flex-wrap items-center justify-end gap-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setAccess({ ...savedAccess, updatedAt: null })
+                      setAccessRowChecked(false)
+                      setError(null)
+                    }}
+                    className="pd-btn pd-btn-ghost rounded-[10px] px-4 py-2.5 text-[13px] font-semibold text-[#186179] hover:bg-[#eff6ff]"
+                  >
+                    Edit selected
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      void (async () => {
+                        try {
+                          await clearPropertyAccess(building)
+                          setSavedAccess(null)
+                          setAccess({ ...EMPTY_PROPERTY_ACCESS })
+                          setAccessRowChecked(false)
+                          setError(null)
+                        } catch (err) {
+                          setError(
+                            getErrorMessage(err, 'Could not remove property access.'),
+                          )
+                        }
+                      })()
+                    }}
+                    className="pd-btn pd-btn-ghost rounded-[10px] px-4 py-2.5 text-[13px] font-semibold text-[#a03e3e] hover:bg-[#fef2f2] hover:text-[#991b1b]"
+                  >
+                    Delete selected
+                  </button>
+                </div>
+              ) : null}
+              <PropertyAccessSavedTable
+                access={savedAccess}
+                checked={accessRowChecked}
+                onChecked={setAccessRowChecked}
+              />
+            </div>
+          ) : null}
         </div>
-      </DetailCard>
-
-      <DetailCard
-        icon={
-          <img
-            src={assetRegistryIcon}
-            alt=""
-            className="size-[32px] object-contain"
-          />
-        }
-        title="Asset Registry"
-        description="Help Ulo predict repairs before things break"
-        empty={assetsEmpty}
-        expanded={expanded === 'assets'}
-        onToggle={() => toggle('assets')}
-      >
-        <AssetRegistryPanel
-          building={building}
-          initialYearBuilt={initialYearBuilt}
-          onChanged={setAssetsHasContent}
-        />
       </DetailCard>
 
       <DetailCard
@@ -1140,19 +1523,35 @@ export function PropertyDetailsPanel({
       >
         <InsuranceExpandedPanel
           insurance={insurance}
+          savedInsurance={savedInsurance}
+          insuranceRowChecked={insuranceRowChecked}
+          onInsuranceRowChecked={setInsuranceRowChecked}
           extracting={isInsuranceBinderScanProcessing(insuranceExtractStage)}
           extractLabel={insuranceExtractLabel}
           extractProgress={insuranceExtractProgress}
-          isSaved={insuranceSaved}
           onChange={(next) => {
             setInsurance(next)
-            setInsuranceSaved(false)
           }}
           onSave={() => {
             const next = { ...insurance, updatedAt: new Date().toISOString() }
-            setInsurance(next)
             writeJson(landlordScopedKey('ulo.propertyInsurance', building), next)
-            setInsuranceSaved(true)
+            setSavedInsurance(next)
+            setInsurance({ ...EMPTY_INSURANCE })
+            setInsuranceRowChecked(false)
+            setError(null)
+          }}
+          onEditSaved={() => {
+            if (!savedInsurance) return
+            setInsurance({ ...savedInsurance, updatedAt: null })
+            setInsuranceRowChecked(false)
+            setError(null)
+          }}
+          onDeleteSaved={() => {
+            writeJson(landlordScopedKey('ulo.propertyInsurance', building), EMPTY_INSURANCE)
+            setSavedInsurance(null)
+            setInsurance({ ...EMPTY_INSURANCE })
+            setInsuranceRowChecked(false)
+            setError(null)
           }}
           onBinderFiles={(files) => {
             const file = files?.[0]
@@ -1162,20 +1561,21 @@ export function PropertyDetailsPanel({
                 setInsuranceExtractStage('uploading')
                 setInsuranceExtractLabel('Uploading insurance binder…')
                 setInsuranceExtractProgress(10)
-                setInsuranceSaved(false)
                 const result = await extractInsuranceBinder(file, (progress) => {
                   setInsuranceExtractStage(progress.stage)
                   setInsuranceExtractLabel(progress.label)
                   setInsuranceExtractProgress(progress.progress)
                 })
+                const binderFileUrl =
+                  file.size <= 3.5 * 1024 * 1024 ? await fileToDataUrl(file) : URL.createObjectURL(file)
                 setInsurance((prev) => ({
                   ...prev,
                   ...result.extracted,
                   binderFileName: result.fileName,
+                  binderFileUrl,
                   binderUploadedAt: new Date().toISOString(),
                   updatedAt: null,
                 }))
-                setInsuranceSaved(false)
                 setInsuranceExtractStage('complete')
                 setInsuranceExtractLabel('Details filled from binder — review and save')
                 setInsuranceExtractProgress(100)

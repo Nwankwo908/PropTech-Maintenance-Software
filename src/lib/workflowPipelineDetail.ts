@@ -40,7 +40,9 @@ import {
 import { smsMessageBelongsToWorkOrder } from '@/lib/workOrderSmsPhotos'
 import {
   formatPropertyAccessPlainText,
-  loadPropertyAccess,
+  loadPropertyAccessCandidates,
+  propertyAccessDisplayRows,
+  type PropertyAccessDisplayRow,
 } from '@/lib/propertyAccess'
 import {
   findPropertyByName,
@@ -86,6 +88,7 @@ export type WorkflowPipelineProperty = {
   manager: string
   access: string
   entryCode: string
+  accessRows: PropertyAccessDisplayRow[]
 }
 
 export type WorkflowPipelineInvoiceSection = {
@@ -140,13 +143,17 @@ export type WorkflowPipelineDetail = {
 }
 
 const MAINTENANCE_PIPELINE_LABELS = [
-  'Reported',
-  'AI Intake',
-  'Work Order',
-  'Vendor Assigned',
-  'Vendor Accepted',
-  'In Progress',
-  'Completed',
+  'Issue',
+  'Work',
+  'Evidence',
+  'Invoice',
+  'Property History',
+] as const
+
+const RENT_PIPELINE_LABELS = [
+  'Rent Due',
+  'Landlord Confirmation',
+  'Payment History',
 ] as const
 
 const GENERIC_PIPELINE_LABELS = ['Triggered', 'Classified', 'Routed', 'In Progress', 'Completed'] as const
@@ -261,36 +268,55 @@ function progressCaptionFromSteps(steps: WorkflowPipelineStep[]): string {
   return `Stage ${progressIndex + 1} of ${steps.length}`
 }
 
+function ticketMediaPaths(ticket: Record<string, unknown> | null): string[] {
+  const photos = ticket?.photo_paths
+  const completion = ticket?.completion_photo_paths
+  const fromPhotos = Array.isArray(photos)
+    ? photos.map((entry) => asString(entry)).filter(Boolean)
+    : []
+  const fromCompletion = Array.isArray(completion)
+    ? completion.map((entry) => asString(entry)).filter(Boolean)
+    : []
+  return [...fromPhotos, ...fromCompletion]
+}
+
 function deriveMaintenancePipelineIndex(
   row: AdminWorkflowRow,
   ticket: Record<string, unknown> | null,
+  invoice: Record<string, unknown> | null,
 ): number {
   const vendorStatus = asString(ticket?.vendor_work_status).toLowerCase()
-  const assignedVendorId = asString(ticket?.assigned_vendor_id)
+  const assignedVendorId = asString(ticket?.assigned_vendor_id) || asString(row.assignedVendorId)
   const hasVendor = Boolean(assignedVendorId)
+  const hasInvoice = Boolean(
+    asString(invoice?.invoice_number) ||
+      asString(invoice?.status) ||
+      (asFiniteNumber(invoice?.total_cost) ?? 0) > 0,
+  )
+  const hasEvidence = ticketMediaPaths(ticket).length > 0 || vendorStatus === 'completed'
 
-  if (row.status === 'completed' || vendorStatus === 'completed') return 7
-  if (hasVendor && vendorStatus === 'in_progress') return 6
-  if (hasVendor && vendorStatus === 'accepted') return 5
-  // Vendor Assigned only when a vendor is actually on the ticket.
-  if (hasVendor) return 4
+  if (row.status === 'completed' || vendorStatus === 'completed') return 5
+  if (hasInvoice) return 4
+  if (hasEvidence) return 3
+  if (hasVendor || vendorStatus === 'in_progress' || vendorStatus === 'accepted') return 2
+  return 1
+}
 
-  const step = asString(row.currentStep).toLowerCase()
-  // Exact workflow steps only — do not regex-match "accept"/"await" inside intake
-  // steps like pending_accept (without vendor) or awaiting_confirm.
-  if (step === 'completed' || step === 'closed' || step === 'done') return 7
-  if (step === 'in_progress') return 6
-  if (step === 'pending_accept' && hasVendor) return 4
-  if (
-    step === 'unassigned' ||
-    step === 'submitted' ||
-    /work.?order|ticket/.test(step) ||
-    row.entityType === 'maintenance_request'
-  ) {
-    return 3
-  }
-  if (/intake|classif|collect|confirm|clarif|photo|trigger/.test(step)) return 2
-  return 2
+function deriveRentPipelineIndex(
+  row: AdminWorkflowRow,
+  metadata: Record<string, unknown>,
+): number {
+  const stepState =
+    metadata.step_state && typeof metadata.step_state === 'object' && !Array.isArray(metadata.step_state)
+      ? (metadata.step_state as Record<string, unknown>)
+      : {}
+  const rentStatus = asString(metadata.rent_status || stepState.rent_status).toLowerCase()
+  const paymentMethod = asString(stepState.payment_method || metadata.payment_method)
+  if (row.status === 'completed' || rentStatus === 'paid' || paymentMethod) return 3
+  if (rentStatus === 'unpaid' || rentStatus === 'partial') return 2
+  const ask = asString(metadata.landlord_receipt_ask_status || stepState.landlord_receipt_ask_status)
+  if (ask && ask !== 'pending' && ask !== 'asked') return 2
+  return 1
 }
 
 function deriveMoveInPipelineIndex(row: AdminWorkflowRow): number {
@@ -328,7 +354,11 @@ function deriveInspectionPipelineIndex(row: AdminWorkflowRow): number {
 
 function deriveLifecyclePipeline(
   row: AdminWorkflowRow,
+  metadata: Record<string, unknown> = {},
 ): { labels: readonly string[]; index: number } {
+  if (row.templateId === 'rent_collection') {
+    return { labels: RENT_PIPELINE_LABELS, index: deriveRentPipelineIndex(row, metadata) }
+  }
   if (row.templateId === 'move_in') {
     return { labels: MOVE_IN_PIPELINE_LABELS, index: deriveMoveInPipelineIndex(row) }
   }
@@ -560,11 +590,15 @@ async function buildPropertyBlock(
     ? await findPropertyByName(getActiveLandlordId(), propertyLabel)
     : { ok: true as const, property: null }
   const record = found.ok ? found.property : null
-  const accessProfile = propertyLabel ? await loadPropertyAccess(propertyLabel) : null
+  const accessProfile = await loadPropertyAccessCandidates([
+    propertyLabel,
+    record?.name ?? null,
+  ])
   const ticketAccess = asString(ticket?.access_instructions)
-  const accessText =
-    ticketAccess || (accessProfile ? formatPropertyAccessPlainText(accessProfile) : '')
+  const profileText = accessProfile ? formatPropertyAccessPlainText(accessProfile) : ''
+  const accessText = profileText || ticketAccess
   const entryCode = accessProfile?.gateCode || accessProfile?.lockboxCode || ''
+  const accessRows = accessProfile ? propertyAccessDisplayRows(accessProfile) : []
   const street = record ? propertyRecordToAddressLine(record) : null
   const locationLine =
     propertyLabel && unit
@@ -579,6 +613,7 @@ async function buildPropertyBlock(
     manager: dash(record?.managerName || accessProfile?.superintendentContact),
     access: dash(accessText),
     entryCode: dash(entryCode),
+    accessRows,
   }
 }
 
@@ -1300,12 +1335,13 @@ export async function fetchWorkflowPipelineDetail(
       row.escalationReason ||
       'Ulo is coordinating this task in the workflow pipeline. Details will update as steps complete.'
 
+  const lifecyclePipeline = deriveLifecyclePipeline(row, metadata)
   const pipelineIndex = isMaintenance
-    ? deriveMaintenancePipelineIndex(row, ticket)
-    : deriveLifecyclePipeline(row).index
+    ? deriveMaintenancePipelineIndex(row, ticket, invoice)
+    : lifecyclePipeline.index
   const pipelineLabels = isMaintenance
     ? MAINTENANCE_PIPELINE_LABELS
-    : deriveLifecyclePipeline(row).labels
+    : lifecyclePipeline.labels
 
   const residentName =
     asString(enrichment.resident?.full_name) || asString(ticket?.resident_name) || row.residentName || ''

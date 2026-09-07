@@ -9,6 +9,32 @@ export type PropertyRouteSlug =
   | { kind: 'id'; value: string }
   | { kind: 'name'; value: string }
 
+export type PropertyDetailTab =
+  | 'overview'
+  | 'details'
+  | 'units'
+  | 'workflows'
+  | 'history'
+  | 'vendors'
+  | 'analytics'
+
+/** `?tab=conversations` still opens Property History. */
+export function parsePropertyDetailTab(raw: string | null | undefined): PropertyDetailTab {
+  const tab = raw?.trim() ?? ''
+  if (tab === 'conversations' || tab === 'history') return 'history'
+  if (
+    tab === 'details' ||
+    tab === 'units' ||
+    tab === 'workflows' ||
+    tab === 'vendors' ||
+    tab === 'analytics' ||
+    tab === 'overview'
+  ) {
+    return tab
+  }
+  return 'overview'
+}
+
 /** True when the URL segment is a canonical properties.id UUID. */
 export function isPropertyIdSlug(slug: string): boolean {
   return PROPERTY_ID_SLUG_RE.test(slug.trim())
@@ -45,14 +71,7 @@ export function buildPropertyIdByBuilding(
 export function propertyDetailPathForBuilding(
   buildingName: string,
   propertyIdByBuilding: ReadonlyMap<string, string>,
-  tab?:
-    | 'overview'
-    | 'details'
-    | 'units'
-    | 'workflows'
-    | 'conversations'
-    | 'vendors'
-    | 'analytics',
+  tab?: PropertyDetailTab,
 ): string {
   const propertyId = propertyIdByBuilding.get(normalizeBuildingKey(buildingName))
   return propertyDetailPath(propertyId ?? buildingName, tab)
@@ -70,14 +89,7 @@ export function propertyResidentDetailPathForBuilding(
 /** Canonical admin property detail URL — uses stable properties.id. */
 export function propertyDetailPath(
   propertyId: string,
-  tab?:
-    | 'overview'
-    | 'details'
-    | 'units'
-    | 'workflows'
-    | 'conversations'
-    | 'vendors'
-    | 'analytics',
+  tab?: PropertyDetailTab,
 ): string {
   const base = `${adminNavPath('properties')}/${encodeURIComponent(propertyId)}`
   if (tab && tab !== 'overview') return `${base}?tab=${tab}`
@@ -87,14 +99,7 @@ export function propertyDetailPath(
 /** @deprecated Prefer propertyDetailPath(propertyId). Accepts id or legacy building name. */
 export function buildingDetailPath(
   buildingOrPropertyId: string,
-  tab?:
-    | 'overview'
-    | 'details'
-    | 'units'
-    | 'workflows'
-    | 'conversations'
-    | 'vendors'
-    | 'analytics',
+  tab?: PropertyDetailTab,
 ): string {
   return propertyDetailPath(buildingOrPropertyId, tab)
 }

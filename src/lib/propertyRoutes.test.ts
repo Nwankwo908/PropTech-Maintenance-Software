@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   buildPropertyIdByBuilding,
   isPropertyIdSlug,
+  parsePropertyDetailTab,
   parsePropertyRouteSlug,
   propertyDetailPath,
   propertyDetailPathForBuilding,
@@ -24,6 +25,14 @@ describe('propertyRoutes', () => {
       kind: 'name',
       value: 'Maple Heights',
     })
+  })
+
+  it('maps conversations tab to Property History', () => {
+    expect(parsePropertyDetailTab('conversations')).toBe('history')
+    expect(parsePropertyDetailTab('history')).toBe('history')
+    expect(propertyDetailPath('6ba7b810-9dad-11d1-80b4-00c04fd430c8', 'history')).toBe(
+      '/admin/properties/6ba7b810-9dad-11d1-80b4-00c04fd430c8?tab=history',
+    )
   })
 
   it('builds property detail paths from stable ids', () => {

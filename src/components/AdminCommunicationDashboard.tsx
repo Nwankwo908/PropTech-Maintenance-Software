@@ -9,6 +9,10 @@ import {
   markCommunicationConversationRead,
 } from '@/lib/communicationInboxRead'
 import {
+  inboxParticipantKind,
+  inboxPhoneDigits,
+} from '@/lib/communicationInboxKind'
+import {
   formatResidentFeedbackPreview,
   isResidentFeedbackAskBody,
   isTenantOnboardingInvite,
@@ -169,25 +173,6 @@ function formatRelativeTime(ms: number): string {
   const days = Math.round(hours / 24)
   if (days < 7) return `${days}d`
   return new Date(ms).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
-}
-
-function conversationKind(
-  conversationType: string,
-  hasVendor: boolean,
-): ParticipantKind {
-  switch (conversationType) {
-    case 'ai_copilot':
-      return 'ai'
-    case 'vendor_alert':
-      return 'vendor'
-    case 'landlord_update':
-      return 'landlord'
-    case 'vendor_tenant_proxy':
-      return hasVendor ? 'vendor' : 'tenant'
-    case 'resident_intake':
-    default:
-      return 'tenant'
-  }
 }
 
 // Statuses that count as needing attention (unread dot), and ones that are done.
@@ -752,9 +737,6 @@ export function AdminCommunicationDashboard() {
       const residentIds = [
         ...new Set(scopedRows.map((r) => asString(r.resident_id)).filter(Boolean)),
       ]
-      const vendorIds = [
-        ...new Set(scopedRows.map((r) => asString(r.vendor_id)).filter(Boolean)),
-      ]
       const unitIds = [...new Set(scopedRows.map((r) => asString(r.unit_id)).filter(Boolean))]
       const ticketIds = [
         ...new Set(scopedRows.map((r) => asString(r.maintenance_request_id)).filter(Boolean)),
@@ -778,13 +760,11 @@ export function AdminCommunicationDashboard() {
                 .eq('landlord_id', landlordId)
                 .in('id', residentIds)
             : Promise.resolve({ data: [], error: null }),
-          vendorIds.length
-            ? supabase
-                .from('vendors')
-                .select('id, name')
-                .eq('landlord_id', landlordId)
-                .in('id', vendorIds)
-            : Promise.resolve({ data: [], error: null }),
+          supabase
+            .from('vendors')
+            .select('id, name, phone')
+            .eq('landlord_id', landlordId)
+            .limit(500),
           unitIds.length
             ? supabase
                 .from('units')
@@ -817,6 +797,7 @@ export function AdminCommunicationDashboard() {
         string,
         { body: string; direction: string; createdAt: number; mediaUrls: unknown }
       >()
+      const vendorOnboardingCopyConversationIds = new Set<string>()
       const onboardingCopyConversationIds = new Set<string>()
       const nonOnboardingInboundConversationIds = new Set<string>()
       if (messagesResult.status === 'fulfilled' && !messagesResult.value.error) {
@@ -825,7 +806,10 @@ export function AdminCommunicationDashboard() {
           if (!convId) continue
           const body = asString(m.body)
           const direction = asString(m.direction)
-          if (isTenantOnboardingInvite(body) || isVendorOnboardingInvite(body)) {
+          if (isVendorOnboardingInvite(body)) {
+            vendorOnboardingCopyConversationIds.add(convId)
+            onboardingCopyConversationIds.add(convId)
+          } else if (isTenantOnboardingInvite(body)) {
             onboardingCopyConversationIds.add(convId)
           }
           if (direction === 'inbound' && looksLikeNonOnboardingInboundSms(body)) {
@@ -853,9 +837,16 @@ export function AdminCommunicationDashboard() {
       }
 
       const vendorById = new Map<string, string>()
+      const vendorByPhone = new Map<string, string>()
+      const vendorByName = new Map<string, string>()
       if (vendorsResult.status === 'fulfilled' && !vendorsResult.value.error) {
         for (const v of (vendorsResult.value.data ?? []) as Record<string, unknown>[]) {
-          vendorById.set(asString(v.id), asString(v.name))
+          const name = asString(v.name)
+          const id = asString(v.id)
+          if (id && name) vendorById.set(id, name)
+          const digits = inboxPhoneDigits(asString(v.phone))
+          if (digits && name) vendorByPhone.set(digits, name)
+          if (name) vendorByName.set(name.toLowerCase(), name)
         }
       }
 
@@ -892,19 +883,30 @@ export function AdminCommunicationDashboard() {
       const mapped: Conversation[] = scopedRows.map((r) => {
         const id = asString(r.id)
         const resident = residentById.get(asString(r.resident_id))
-        const vendorName = vendorById.get(asString(r.vendor_id))
         const unit = unitById.get(asString(r.unit_id))
         const ticketId = asString(r.maintenance_request_id)
-        const kind = conversationKind(
-          asString(r.conversation_type),
-          Boolean(asString(r.vendor_id)),
-        )
+        const vendorId = asString(r.vendor_id)
+        const phoneDigits = inboxPhoneDigits(asString(r.external_phone_number))
+        const rosterNameFromId = vendorById.get(vendorId)
+        const rosterNameFromPhone = phoneDigits ? vendorByPhone.get(phoneDigits) : undefined
+        const residentName = resident?.name || ''
+        const rosterNameFromResident =
+          residentName ? vendorByName.get(residentName.toLowerCase()) : undefined
+        const vendorName =
+          rosterNameFromId || rosterNameFromPhone || rosterNameFromResident || ''
+        const kind = inboxParticipantKind({
+          conversationType: asString(r.conversation_type),
+          hasVendorId: Boolean(vendorId),
+          matchedVendorByPhone: Boolean(rosterNameFromPhone),
+          matchedVendorByName: Boolean(rosterNameFromResident),
+          hasVendorOnboardingCopy: vendorOnboardingCopyConversationIds.has(id),
+        })
         const name =
           kind === 'ai'
             ? 'Ulo AI'
             : kind === 'vendor'
               ? vendorName || 'Vendor'
-              : resident?.name || asString(r.external_phone_number) || 'Unknown'
+              : residentName || asString(r.external_phone_number) || 'Unknown'
 
         const building = unit?.building || resident?.building || ''
         const unitLabel = unit?.label || resident?.unit || ''

@@ -1,6 +1,7 @@
 import { useEffect, useId, useMemo, useRef, useState } from 'react'
 import type { ExternalVendorJobContextDto, ExternalVendorSuggestionDto } from '@/api/discoverExternalVendors'
 import {
+  getThumbtackVendorThreads,
   postMessageThumbtackVendor,
   resolveMessageThumbtackVendorUrl,
   type ThumbtackVendorThreadDto,
@@ -9,7 +10,6 @@ import { ChatComposerBar } from '@/components/ChatComposerBar'
 import { AdminBottomSheet } from '@/components/AdminBottomSheet'
 import { getAdminEdgeSecret } from '@/lib/adminEdgeAuth'
 import { getErrorMessage } from '@/lib/errorMessage'
-import { resolveThumbtackRequestFlowUrl } from '@shared/externalVendor/thumbtackRequestFlow'
 import { buildThumbtackVendorOutreachMessage } from '@shared/externalVendor/thumbtackOutreachCopy'
 import {
   ADMIN_RAIL_FOOTER_CLASS,
@@ -401,6 +401,30 @@ export function FindExternalVendorRail({
     setListReentered(false)
   }, [open])
 
+  useEffect(() => {
+    if (!open || !ticketId?.trim()) return
+    const url = resolveMessageThumbtackVendorUrl()
+    const secret = getAdminEdgeSecret()
+    if (!url || !secret) return
+    let cancelled = false
+    void getThumbtackVendorThreads({ url, secret, ticketId: ticketId.trim() })
+      .then((result) => {
+        if (cancelled) return
+        const next: Record<string, ThumbtackVendorThreadDto> = {}
+        for (const thread of result.threads) {
+          const id = thread.business_id?.trim()
+          if (id) next[id] = thread
+        }
+        setThreadsByBusiness(next)
+      })
+      .catch(() => {
+        /* Keep the composer usable if thread history cannot load. */
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [open, ticketId])
+
   const hasThread = composerThread.length > 0
   const canSendVendorMessage =
     Boolean(messageDraft.trim()) && !messageSending && !saving
@@ -462,35 +486,6 @@ export function FindExternalVendorRail({
     const draft = messageDraft.trim()
     if (!draft) return
 
-    const contactUrl = resolveThumbtackRequestFlowUrl({
-      requestFlowUrl: messageVendor.requestFlowUrl,
-      listingUrl: messageVendor.listingUrl,
-      searchId: messageVendor.searchId,
-      categoryId: messageVendor.categoryId,
-      utmSource: 'ulo',
-    })
-    if (contactUrl) {
-      const opened = window.open(contactUrl, '_blank', 'noopener,noreferrer')
-      if (!opened) {
-        setMessageError(
-          'Allow pop-ups for this site, then send again. Thumbtack opens their request form so you can message this pro.',
-        )
-        return
-      }
-      void navigator.clipboard.writeText(draft).catch(() => {})
-      setComposerThread((prev) => [
-        ...prev,
-        {
-          id: `tt-${Date.now()}`,
-          direction: 'outbound',
-          body: draft,
-        },
-      ])
-      setMessageDraft('')
-      setMessageError(null)
-      return
-    }
-
     const url = resolveMessageThumbtackVendorUrl()
     const secret = getAdminEdgeSecret()
     const businessId = messageVendor.providerRef?.trim() ?? ''
@@ -517,7 +512,7 @@ export function FindExternalVendorRail({
         vendorName: messageVendor.name,
         searchId: messageVendor.searchId,
         categoryId: messageVendor.categoryId,
-        text: messageDraft,
+        text: draft,
       })
       setThreadsByBusiness((prev) => ({ ...prev, [businessId]: result.thread }))
       setComposerThread((prev) => [
@@ -525,7 +520,7 @@ export function FindExternalVendorRail({
         {
           id: `sent-${result.thread.last_outbound_at ?? Date.now()}`,
           direction: 'outbound',
-          body: messageDraft.trim(),
+          body: draft,
         },
       ])
       setMessageDraft('')
@@ -564,7 +559,7 @@ export function FindExternalVendorRail({
           }
         />
         <p className="mt-1.5 text-[11px] leading-[15px] text-[#717182]">
-          Send opens Thumbtack so you can message this pro. Your message is copied if you need to paste it.
+          The vendor receives this in their Thumbtack inbox. You stay in Ulo — replies show up here.
         </p>
       </div>
     )

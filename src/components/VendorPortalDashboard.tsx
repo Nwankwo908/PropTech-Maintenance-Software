@@ -29,6 +29,11 @@ import {
   type VendorDbWorkStatus,
 } from '@/lib/statusColumns'
 import { getErrorMessage } from '@/lib/errorMessage'
+import {
+  normalizePropertyAccess,
+  propertyAccessDisplayRows,
+  propertyAccessHasContent,
+} from '@/lib/propertyAccess'
 
 export type { VendorDbWorkStatus }
 
@@ -77,6 +82,16 @@ export type VendorWorkOrder = {
   completionPhotoCount?: number
   completionPhotoUrls?: string[]
   awaitingResidentFeedback?: boolean
+  propertyAccess?: {
+    buildingEntry: string
+    gateCode: string
+    lockboxLocation: string
+    lockboxCode: string
+    utilityRoomAccess: string
+    visitorParking: string
+    superintendentContact: string
+    emergencyAccessNotes: string
+  } | null
 }
 
 /** Maps stored `priority` strings to vendor badges (`low` | `normal` | `urgent`). Handles casing and common variants. */
@@ -251,6 +266,7 @@ function mapApiTicketToWorkOrder(t: VendorApiTicket): VendorWorkOrder {
     completionPhotoCount: completionCount,
     completionPhotoUrls: completionUrls,
     awaitingResidentFeedback: Boolean(t.awaiting_resident_feedback),
+    propertyAccess: t.property_access ?? null,
     ...(dueDisplay ? { dueDisplay } : {}),
     ...(dueRangeDisplay ? { dueRangeDisplay } : {}),
     ...(dueAtIso ? { dueAtIso } : {}),
@@ -698,6 +714,30 @@ function VendorWorkOrderWideScrollBody({ order }: { order: VendorWorkOrder }) {
           <p className="m-0 text-[16px] font-normal leading-6 tracking-[-0.3125px] text-[#364153]">{issueText}</p>
         </div>
       </div>
+
+      {order.propertyAccess &&
+      propertyAccessHasContent(normalizePropertyAccess(order.propertyAccess)) ? (
+        <div>
+          <div className="flex items-center gap-2">
+            <IconDocumentSection />
+            <h3 className="m-0 text-[18px] font-semibold leading-[27px] tracking-[-0.4395px] text-[#101828]">
+              Property access
+            </h3>
+          </div>
+          <div className="mt-2 rounded-[10px] bg-[#f9fafb] px-4 py-4">
+            <dl className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              {propertyAccessDisplayRows(normalizePropertyAccess(order.propertyAccess)).map((row) => (
+                <div key={row.label} className="min-w-0">
+                  <dt className="text-[12px] font-normal leading-5 text-[#6a7282]">{row.label}</dt>
+                  <dd className="mt-0.5 whitespace-pre-wrap text-[16px] font-medium leading-6 text-[#101828]">
+                    {row.value}
+                  </dd>
+                </div>
+              ))}
+            </dl>
+          </div>
+        </div>
+      ) : null}
 
       {previews.length > 0 ? (
         <div>

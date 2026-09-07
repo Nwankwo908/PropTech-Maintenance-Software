@@ -72,6 +72,8 @@ export type ApplianceVisionResult = {
     suggestedIntervalMonths?: number
   }>
   rawConfidenceNotes?: string
+  /** Overall identification confidence, 0–100. */
+  overallConfidence?: number
 }
 
 export type InspectionPhotoRow = {
@@ -86,6 +88,8 @@ export type InspectionPhotoRow = {
   errorMessage: string | null
   latencyMs: number | null
   fileName: string | null
+  contentType?: string | null
+  createdAt?: string | null
   previewUrl?: string | null
   unitAssetId?: string | null
 }

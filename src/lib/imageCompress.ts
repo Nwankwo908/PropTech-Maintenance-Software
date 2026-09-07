@@ -26,13 +26,9 @@ export async function compressImageForVision(file: File): Promise<{
 }> {
   const isPdf = file.type === 'application/pdf' || /\.pdf$/i.test(file.name)
   if (isPdf) {
-    const buf = await file.arrayBuffer()
-    const bytes = new Uint8Array(buf)
-    let binary = ''
-    for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]!)
     return {
       blob: file,
-      base64: btoa(binary),
+      base64: '',
       contentType: 'application/pdf',
       fileName: file.name,
     }
@@ -69,7 +65,13 @@ export async function compressImageForVision(file: File): Promise<{
       fileName: `${baseName}.jpg`,
     }
   } catch {
-    // HEIC / unsupported decode — send original bytes
+    const heic = /heic|heif/i.test(file.type) || /\.(heic|heif)$/i.test(file.name)
+    if (heic) {
+      throw new Error(
+        'This photo is in HEIC format, which AI scan cannot read. Save or export it as JPG or PNG and try again.',
+      )
+    }
+    // Unsupported decode — send original bytes
     const buf = await file.arrayBuffer()
     const bytes = new Uint8Array(buf)
     let binary = ''

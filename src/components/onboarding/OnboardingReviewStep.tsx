@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react'
+import { useEffect, useId, useState, type ReactNode } from 'react'
 import type {
   OnboardingResident,
   OnboardingReviewData,
@@ -201,6 +201,8 @@ export function OnboardingReviewStep({
   onBack,
   onComplete,
 }: OnboardingReviewStepProps) {
+  const [confirmNoVendorsOpen, setConfirmNoVendorsOpen] = useState(false)
+  const noVendorsTitleId = useId()
   const companyName = reviewData?.accountSetup.companyName.trim()
   const contactName = reviewData?.accountSetup.contactName.trim()
   const headline = companyName
@@ -209,6 +211,15 @@ export function OnboardingReviewStep({
       ? `Ready to launch Ulo, ${contactName}?`
       : 'Ready to complete your setup?'
   const notificationPrefsOnApproval = setupPath === 'fast_track'
+  const hasVendors = (reviewData?.vendors.length ?? 0) > 0
+
+  function requestComplete() {
+    if (setupPath === 'fast_track' && !hasVendors) {
+      setConfirmNoVendorsOpen(true)
+      return
+    }
+    onComplete()
+  }
 
   return (
     <div className="mx-auto w-full max-w-[680px]">
@@ -350,6 +361,68 @@ export function OnboardingReviewStep({
             )}
           </ReviewSummaryCard>
 
+          <ReviewSummaryCard
+            title="Maintenance issues"
+            onEdit={() => onEditStep(setupPath === 'fast_track' ? 'ai_review' : 'property')}
+          >
+            {reviewData.maintenanceIssues.length > 0 ? (
+              reviewData.maintenanceIssues.map((issue, index) => (
+                <ReviewSummaryRow
+                  key={issue.id}
+                  label={
+                    reviewData.maintenanceIssues.length > 1
+                      ? `Issue ${index + 1}`
+                      : 'Issue'
+                  }
+                  value={[
+                    issue.description,
+                    issue.building ? issue.building : null,
+                    issue.unit ? `Unit ${issue.unit}` : null,
+                    issue.category || null,
+                  ]
+                    .filter(Boolean)
+                    .join(' · ')}
+                />
+              ))
+            ) : (
+              <ReviewSummaryRow
+                label="Maintenance issues"
+                value="No open issues imported. You can add work orders anytime."
+              />
+            )}
+          </ReviewSummaryCard>
+
+          <ReviewSummaryCard
+            title="Financial records"
+            onEdit={() => onEditStep(setupPath === 'fast_track' ? 'ai_review' : 'property')}
+          >
+            {reviewData.financialRecords.length > 0 ? (
+              reviewData.financialRecords.map((record, index) => (
+                <ReviewSummaryRow
+                  key={record.id}
+                  label={
+                    reviewData.financialRecords.length > 1
+                      ? `Record ${index + 1}`
+                      : 'Record'
+                  }
+                  value={[
+                    record.recordType || null,
+                    record.description,
+                    record.amount || null,
+                    record.period || null,
+                  ]
+                    .filter(Boolean)
+                    .join(' · ')}
+                />
+              ))
+            ) : (
+              <ReviewSummaryRow
+                label="Financial records"
+                value="No financial records imported."
+              />
+            )}
+          </ReviewSummaryCard>
+
           <ReviewSummaryCard title="Maintenance approval rules" onEdit={() => onEditStep('approval')}>
             <ReviewSummaryRow
               label="Auto-approval threshold"
@@ -423,7 +496,7 @@ export function OnboardingReviewStep({
           <button
             type="button"
             disabled={saving || loading || completionDisabled}
-            onClick={onComplete}
+            onClick={requestComplete}
             className={btnReviewPrimary}
           >
             Complete
@@ -435,6 +508,70 @@ export function OnboardingReviewStep({
             fill in missing details.
           </p>
         ) : null}
+      </div>
+
+      {confirmNoVendorsOpen ? (
+        <NoVendorsContinueModal
+          titleId={noVendorsTitleId}
+          saving={saving}
+          onClose={() => setConfirmNoVendorsOpen(false)}
+          onConfirm={() => {
+            setConfirmNoVendorsOpen(false)
+            onComplete()
+          }}
+        />
+      ) : null}
+    </div>
+  )
+}
+
+function NoVendorsContinueModal({
+  titleId,
+  saving,
+  onClose,
+  onConfirm,
+}: {
+  titleId: string
+  saving: boolean
+  onClose: () => void
+  onConfirm: () => void
+}) {
+  useEffect(() => {
+    function onKey(event: KeyboardEvent) {
+      if (event.key === 'Escape') onClose()
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [onClose])
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+      <div
+        role="presentation"
+        className="absolute inset-0"
+        aria-hidden
+        onClick={onClose}
+      />
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={titleId}
+        className="relative w-full max-w-[420px] rounded-[12px] bg-white p-6 shadow-[0px_20px_25px_-5px_rgba(0,0,0,0.1),0px_8px_10px_-6px_rgba(0,0,0,0.1)]"
+      >
+        <h2 id={titleId} className="text-[18px] font-semibold tracking-[-0.2px] text-[#111827]">
+          Continue without vendors?
+        </h2>
+        <p className="mt-2 text-[14px] leading-relaxed text-[#4b5563]">
+          Are you sure you want to continue without adding any vendors?
+        </p>
+        <div className="mt-6 flex flex-wrap items-center justify-end gap-3">
+          <button type="button" disabled={saving} onClick={onClose} className={btnReviewSecondary}>
+            Go back
+          </button>
+          <button type="button" disabled={saving} onClick={onConfirm} className={btnReviewPrimary}>
+            Continue
+          </button>
+        </div>
       </div>
     </div>
   )

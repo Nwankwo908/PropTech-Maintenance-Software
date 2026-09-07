@@ -1,6 +1,6 @@
 import { getActiveLandlordId } from '@/lib/activeLandlord'
 import { readLocalOnboardingState } from '@/lib/onboarding'
-import { areAllPropertiesDetailsComplete } from '@/lib/propertyDetailsCompleteness'
+import { isAnyPropertyDetailsComplete } from '@/lib/propertyDetailsCompleteness'
 import { listPropertiesForLandlord } from '@/lib/properties'
 import {
   resolveSetupSuccessProgress,
@@ -63,7 +63,7 @@ export async function loadSetupSuccessProgress(
   }
 
   const properties = propertiesResult.ok ? propertiesResult.properties : []
-  const propertyDetailsComplete = await areAllPropertiesDetailsComplete(properties)
+  const propertyDetailsComplete = await isAnyPropertyDetailsComplete(properties)
   const rules = readLocalOnboardingState()?.approvalRules
 
   return resolveSetupSuccessProgress({

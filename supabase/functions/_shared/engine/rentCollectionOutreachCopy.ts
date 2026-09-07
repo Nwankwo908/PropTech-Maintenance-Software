@@ -145,3 +145,57 @@ export function buildRentCollectionEmailBody(input: RentOutreachCopyInput): {
     `<p>Thank you,<br/>Your property management team</p>`
   return { subject, text, html }
 }
+
+/** Payments-off grace reminders: remaining balance, no pay link, no PAID keyword. */
+export function buildOfflineTenantGraceReminderSms(input: {
+  amountDue: number
+  rentDueDate?: string | null
+  remaining?: boolean
+}): string {
+  const amount = formatCurrency(input.amountDue, "en-US")
+  const due = input.rentDueDate?.trim()
+    ? new Date(`${input.rentDueDate.trim().slice(0, 10)}T12:00:00`).toLocaleDateString(
+      "en-US",
+      { month: "long", day: "numeric" },
+    )
+    : "the due date"
+  const what = input.remaining ? `Your remaining rent of ${amount}` : `Your rent of ${amount}`
+  return (
+    `Hi, this is the property management team.\n\n` +
+    `${what} was due ${due}. Please pay the way you usually do as soon as you can.\n\n` +
+    `If you've already paid, you don't need to reply — your property team will confirm it.`
+  )
+}
+
+export function buildOfflineTenantGraceReminderEmail(input: {
+  amountDue: number
+  rentDueDate?: string | null
+  residentName?: string | null
+  remaining?: boolean
+}): { subject: string; text: string; html: string } {
+  const name = input.residentName?.trim() || "Resident"
+  const amount = formatCurrency(input.amountDue, "en-US")
+  const due = input.rentDueDate?.trim()
+    ? new Date(`${input.rentDueDate.trim().slice(0, 10)}T12:00:00`).toLocaleDateString(
+      "en-US",
+      { month: "long", day: "numeric" },
+    )
+    : "the due date"
+  const what = input.remaining ? `your remaining rent of ${amount}` : `your rent of ${amount}`
+  const subject = input.remaining
+    ? "Reminder: remaining rent is due"
+    : "Reminder: rent is due"
+  const lead = what[0]!.toUpperCase() + what.slice(1)
+  const text =
+    `Hi ${name},\n\nThis is the property management team.\n\n` +
+    `${lead} was due ${due}. Please pay the way you usually do as soon as you can.\n\n` +
+    `If you've already paid, you don't need to reply — your property team will confirm it.\n\n` +
+    `Thank you,\nYour property management team`
+  const html =
+    `<p>Hi ${name},</p>` +
+    `<p>This is the property management team.</p>` +
+    `<p>${lead} was due ${due}. Please pay the way you usually do as soon as you can.</p>` +
+    `<p>If you've already paid, you don't need to reply — your property team will confirm it.</p>` +
+    `<p>Thank you,<br/>Your property management team</p>`
+  return { subject, text, html }
+}

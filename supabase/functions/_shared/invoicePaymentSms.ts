@@ -8,6 +8,7 @@ import { getSMSProviderForSend } from "./sms/providerFactory.ts"
 import { findActiveLandlordMain } from "./sms/smsNumberPool.ts"
 import { formatWorkOrderRef } from "./vendor_outreach_copy.ts"
 import { uloAppUrl } from "./uloAppUrl.ts"
+import { landlordHasPayments } from "../../../shared/landlordCapabilities.ts"
 
 function money(n: number): string {
   return n.toLocaleString("en-US", {
@@ -58,6 +59,9 @@ export async function notifyLandlordInvoicePaymentOptions(
     invoiceId?: string | null
   },
 ): Promise<void> {
+  if (!landlordHasPayments(params.landlordId)) {
+    return
+  }
   const phones = adminNotifyPhones()
   if (phones.length === 0) {
     console.warn("[invoice-payment-sms] no SMS_ADMIN_NOTIFY_PHONES configured")

@@ -1,15 +1,12 @@
 import { getActiveLandlordId } from '@/lib/activeLandlord'
-import {
-  ASSET_REGISTRY_CHANGED_EVENT,
-  assetRegistryHasContent,
-  loadAssetRegistryAsync,
-} from '@/lib/assetRegistry'
+import { ASSET_REGISTRY_CHANGED_EVENT } from '@/lib/assetRegistry'
+import { INSPECTION_SESSION_CHANGED_EVENT } from '@/lib/inspectionSession'
 import {
   loadApprovedMaintenanceRecords,
   loadMaintenanceHistoryDocuments,
 } from '@/lib/maintenanceHistoryImport'
 import { loadPropertyAccess } from '@/lib/propertyAccess'
-import { loadPropertyBuildingProfile } from '@/lib/propertyBuildingProfile'
+import { supabase } from '@/lib/supabase'
 
 function buildingKey(building: string): string {
   return building.trim().toLowerCase().replace(/\s+/g, '-')
@@ -29,16 +26,32 @@ function readJson<T>(key: string, fallback: T): T {
   }
 }
 
-function loadInspectionDocCount(building: string): number {
-  const parsed = readJson<unknown>(landlordScopedKey('ulo.propertyInspection', building), [])
-  if (!Array.isArray(parsed)) return 0
-  return parsed.filter(
-    (row) =>
-      row != null &&
-      typeof row === 'object' &&
-      typeof (row as { id?: unknown }).id === 'string' &&
-      typeof (row as { fileName?: unknown }).fileName === 'string',
-  ).length
+async function hasStoredInspectionWork(building: string): Promise<boolean> {
+  const landlordId = getActiveLandlordId()
+  if (!landlordId || !supabase) return false
+
+  const { count: assetCount } = await supabase
+    .from('unit_assets')
+    .select('id', { count: 'exact', head: true })
+    .eq('landlord_id', landlordId)
+    .eq('building', building)
+  if ((assetCount ?? 0) > 0) return true
+
+  const { data: sessions } = await supabase
+    .from('property_inspection_assessments')
+    .select('id')
+    .eq('landlord_id', landlordId)
+    .eq('building', building)
+    .limit(40)
+  const ids = (sessions ?? []).map((row) => String(row.id)).filter(Boolean)
+  if (ids.length === 0) return false
+
+  const { count: photoCount } = await supabase
+    .from('property_inspection_photos')
+    .select('id', { count: 'exact', head: true })
+    .in('assessment_id', ids)
+    .not('storage_path', 'is', null)
+  return (photoCount ?? 0) > 0
 }
 
 type InsuranceProfileLite = {
@@ -92,14 +105,12 @@ function loadInsuranceHasContent(building: string): boolean {
 export function propertyDetailsSectionsComplete(sections: {
   inspection: boolean
   access: boolean
-  assets: boolean
   insurance: boolean
   history: boolean
 }): boolean {
   return (
     sections.inspection &&
     sections.access &&
-    sections.assets &&
     sections.insurance &&
     sections.history
   )
@@ -107,38 +118,46 @@ export function propertyDetailsSectionsComplete(sections: {
 
 export async function isPropertyDetailsComplete(
   building: string,
-  initialYearBuilt?: number | null,
+  _initialYearBuilt?: number | null,
 ): Promise<boolean> {
   const name = building.trim()
   if (!name) return false
 
-  const inspection = loadInspectionDocCount(name) > 0
+  const inspection = await hasStoredInspectionWork(name)
   const history =
     loadMaintenanceHistoryDocuments({ building: name }).length > 0 ||
     loadApprovedMaintenanceRecords({ building: name }).length > 0
   const insurance = loadInsuranceHasContent(name)
 
-  const [access, registry, profile] = await Promise.all([
-    loadPropertyAccess(name),
-    loadAssetRegistryAsync(name),
-    loadPropertyBuildingProfile(name),
-  ])
+  const access = await loadPropertyAccess(name)
   const accessFilled = Boolean(access.updatedAt)
-  const assets =
-    assetRegistryHasContent(registry) ||
-    profile.yearBuilt != null ||
-    (initialYearBuilt != null && Number.isFinite(initialYearBuilt))
 
   return propertyDetailsSectionsComplete({
     inspection,
     access: accessFilled,
-    assets,
     insurance,
     history,
   })
 }
 
-/** True only when every named property has all five Property Details sections filled. */
+/** True when at least one named property has all Property Details sections filled. */
+export async function isAnyPropertyDetailsComplete(
+  properties: { name: string; yearBuilt?: number | null }[],
+): Promise<boolean> {
+  const unique = new Map<string, number | null | undefined>()
+  for (const property of properties) {
+    const name = property.name.trim()
+    if (!name) continue
+    if (!unique.has(name)) unique.set(name, property.yearBuilt)
+  }
+  if (unique.size === 0) return false
+  for (const [name, yearBuilt] of unique) {
+    if (await isPropertyDetailsComplete(name, yearBuilt)) return true
+  }
+  return false
+}
+
+/** True only when every named property has all Property Details sections filled. */
 export async function areAllPropertiesDetailsComplete(
   properties: { name: string; yearBuilt?: number | null }[],
 ): Promise<boolean> {
@@ -157,5 +176,6 @@ export async function areAllPropertiesDetailsComplete(
 
 export const PROPERTY_DETAILS_CHANGED_EVENTS = [
   ASSET_REGISTRY_CHANGED_EVENT,
+  INSPECTION_SESSION_CHANGED_EVENT,
   'storage',
 ] as const

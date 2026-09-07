@@ -38,6 +38,7 @@ Deno.test("schedule_confirm runs before tenant_activation_reply (YES disambiguat
 
 Deno.test("active conversations run before tenant_activation_reply", () => {
   assertEquals(priority("estimate_decision") < priority("tenant_activation_reply"), true)
+  assertEquals(priority("landlord_rent_receipt") < priority("tenant_activation_reply"), true)
   assertEquals(priority("invoice_payment") < priority("tenant_activation_reply"), true)
 })
 

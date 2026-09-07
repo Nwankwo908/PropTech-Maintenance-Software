@@ -26,6 +26,7 @@ import { tryHandleInvoicePaymentInbound } from "../invoicePaymentSms.ts"
 import { tryHandleVendorFeedbackInbound } from "../vendor_feedback.ts"
 import { tryHandleVendorCapacityInbound } from "../vendor_capacity.ts"
 import { tryHandleEstimateDecisionInbound } from "./estimateDecisionInbound.ts"
+import { tryHandleLandlordRentReceiptInbound } from "./landlordRentReceiptInbound.ts"
 import { tryHandleTenantScheduleConfirmInbound } from "./tenantScheduleConfirm.ts"
 import {
   tryHandleTenantActivationReply,
@@ -116,6 +117,28 @@ async function tryEstimateDecisionHandler(
     reply: {
       body: result.replyBody,
       source: `estimate_decision_${result.action}`,
+    },
+  }
+}
+
+async function tryLandlordRentReceiptHandler(
+  ctx: InboundSmsHandlerContext,
+): Promise<InboundSmsHandlerResult> {
+  const result = await tryHandleLandlordRentReceiptInbound(ctx.supabase, {
+    landlordId: ctx.landlordId,
+    conversationId: ctx.conversationId,
+    body: ctx.inbound.body,
+    identityType: ctx.identity.identity_type,
+    messageId: ctx.messageId,
+  })
+  if (!result.handled) return { handled: false }
+
+  return {
+    handled: true,
+    workflowRoute: "landlord_rent_receipt",
+    reply: {
+      body: result.replyBody,
+      source: "landlord_rent_receipt",
     },
   }
 }
@@ -286,6 +309,8 @@ export const INBOUND_SMS_HANDLER_PENDING_GATES: Readonly<
   schedule_confirm: "intake_state.awaiting_schedule_confirmation",
   estimate_decision:
     "intake_state.awaiting_estimate_decision or pending estimate on conversation WO",
+  landlord_rent_receipt:
+    "intake_state.awaiting_landlord_rent_receipt, awaiting_landlord_rent_amount, or awaiting_landlord_rent_method (YES/NO/PARTIAL then amount/method)",
   invoice_payment:
     "SMS_ADMIN_NOTIFY phone + recent maintenance.invoice_payment_options_sent event",
   tenant_activation_reply: "users.activation_status === waiting",
@@ -301,6 +326,7 @@ export const INBOUND_SMS_HANDLERS: readonly InboundSmsHandler[] = [
   { id: "compliance_stop_help", priority: 5, try: tryComplianceStopHelpHandler },
   { id: "schedule_confirm", priority: 10, try: tryScheduleConfirmHandler },
   { id: "estimate_decision", priority: 20, try: tryEstimateDecisionHandler },
+  { id: "landlord_rent_receipt", priority: 22, try: tryLandlordRentReceiptHandler },
   { id: "invoice_payment", priority: 25, try: tryInvoicePaymentHandler },
   {
     id: "tenant_activation_reply",

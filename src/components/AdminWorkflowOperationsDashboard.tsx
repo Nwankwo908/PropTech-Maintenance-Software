@@ -403,11 +403,18 @@ function KanbanCardItem({
         <p className="truncate text-[12px] leading-4 text-[#6a7282]">{card.context}</p>
       ) : null}
       <div className="flex items-center justify-between gap-2">
-        <span
-          className={`inline-flex rounded-[6px] px-2 py-0.5 text-[11px] font-medium ${badge.className}`}
-        >
-          {badge.label}
-        </span>
+        <div className="flex min-w-0 flex-wrap items-center gap-1.5">
+          {card.issueCategoryLabel ? (
+            <span className="inline-flex rounded-[6px] bg-[#e8f4f2] px-2 py-0.5 text-[11px] font-medium text-[#146b52]">
+              {card.issueCategoryLabel}
+            </span>
+          ) : null}
+          <span
+            className={`inline-flex rounded-[6px] px-2 py-0.5 text-[11px] font-medium ${badge.className}`}
+          >
+            {badge.label}
+          </span>
+        </div>
         {card.initials ? (
           <span
             className="flex size-6 shrink-0 items-center justify-center rounded-full bg-[#6366f1] text-[10px] font-semibold text-white"

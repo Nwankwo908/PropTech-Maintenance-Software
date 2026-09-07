@@ -207,6 +207,23 @@ export function toUserFriendlyMessage(raw: string, fallback: string): string {
     return "We couldn't finish the import. Please review your documents and try again."
   }
 
+  if (
+    lower.includes('does not match this property') ||
+    lower.includes('was not saved') ||
+    lower.includes('no street address on file') ||
+    lower.includes('could not find a property address')
+  ) {
+    return trimmed
+  }
+
+  if (lower.includes('could not send this in ulo') || lower.includes('thumbtack did not issue a messaging token')) {
+    return trimmed
+  }
+
+  if (lower.includes('payments are not available on this account')) {
+    return 'Online rent payment is not available. Contact your property manager.'
+  }
+
   if (looksTechnical(trimmed)) {
     return fallback
   }

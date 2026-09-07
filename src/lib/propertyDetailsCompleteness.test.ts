@@ -1,13 +1,16 @@
 import { describe, expect, it } from 'vitest'
-import { propertyDetailsSectionsComplete } from './propertyDetailsCompleteness'
+import {
+  areAllPropertiesDetailsComplete,
+  isAnyPropertyDetailsComplete,
+  propertyDetailsSectionsComplete,
+} from './propertyDetailsCompleteness'
 
 describe('propertyDetailsSectionsComplete', () => {
-  it('requires inspection, access, assets, insurance, and history', () => {
+  it('requires inspection, access, insurance, and history', () => {
     expect(
       propertyDetailsSectionsComplete({
         inspection: true,
         access: true,
-        assets: true,
         insurance: true,
         history: true,
       }),
@@ -16,7 +19,6 @@ describe('propertyDetailsSectionsComplete', () => {
       propertyDetailsSectionsComplete({
         inspection: true,
         access: true,
-        assets: true,
         insurance: true,
         history: false,
       }),
@@ -25,10 +27,16 @@ describe('propertyDetailsSectionsComplete', () => {
       propertyDetailsSectionsComplete({
         inspection: false,
         access: true,
-        assets: true,
         insurance: true,
         history: true,
       }),
     ).toBe(false)
+  })
+})
+
+describe('portfolio property details completeness', () => {
+  it('does not count an empty portfolio as complete', async () => {
+    expect(await isAnyPropertyDetailsComplete([])).toBe(false)
+    expect(await areAllPropertiesDetailsComplete([])).toBe(false)
   })
 })

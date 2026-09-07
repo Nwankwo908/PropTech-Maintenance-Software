@@ -34,7 +34,8 @@ export function landlordUsesTwilioSms(landlordId: string | null | undefined): bo
   return isLimitedAlpha1Landlord(landlordId)
 }
 
-/** Stripe, ACH, Plaid, rent/invoice checkout, vendor payouts. */
+/** Stripe, ACH, Plaid, rent/invoice checkout, vendor payouts, and “pay online” links.
+ *  Limited Alpha 1 still records rent by landlord SMS (received / unpaid) without moving money. */
 export function landlordHasPayments(landlordId: string | null | undefined): boolean {
   return !isLimitedAlpha1Landlord(landlordId)
 }

@@ -1,3 +1,4 @@
+import type { PortfolioDocumentExtractPayload } from '@/api/onboardingDocumentExtract'
 import { describe, expect, it } from 'vitest'
 import {
   inferDocumentCategory,
@@ -25,6 +26,180 @@ describe('inferDocumentCategory', () => {
   it('still classifies rent rolls separately', () => {
     expect(inferDocumentCategory('April rent roll.xlsx')).toBe('rent_roll')
     expect(inferDocumentCategory('tenant roster.csv')).toBe('rent_roll')
+  })
+
+  it('classifies vendor lists before rent-roll spreadsheet defaults', () => {
+    expect(inferDocumentCategory('Vendor Information.xlsx')).toBe('vendor_contract')
+    expect(inferDocumentCategory('preferred vendors.csv')).toBe('vendor_contract')
+    expect(inferDocumentCategory('vendor roster.pdf')).toBe('vendor_contract')
+    expect(inferDocumentCategory('contractor list.xlsx')).toBe('vendor_contract')
+  })
+
+  it('classifies maintenance history and financial files before rent-roll defaults', () => {
+    expect(inferDocumentCategory('maintenance history.xlsx')).toBe('inspection_report')
+    expect(inferDocumentCategory('repair history.csv')).toBe('inspection_report')
+    expect(inferDocumentCategory('Financial Records.xlsx')).toBe('property_statement')
+    expect(inferDocumentCategory('April P&L.pdf')).toBe('property_statement')
+    expect(inferDocumentCategory('expense report.csv')).toBe('expense_report')
+  })
+})
+
+describe('Fast Track vendor extraction review', () => {
+  function vendorDoc(
+    fileName: string,
+    payload: Partial<PortfolioDocumentExtractPayload>,
+  ) {
+    return {
+      id: 'doc-vendor',
+      fileName,
+      fileType: fileName.split('.').pop() ?? 'xlsx',
+      fileSize: 12,
+      documentCategory: inferDocumentCategory(fileName),
+      categoryGroup: 'vendor' as const,
+      uploadStatus: 'ready_for_review' as const,
+      uploadProgress: 100,
+      extractionStatus: 'ready_for_review' as const,
+      processingLabel: 'Ready for review',
+      errorMessage: null,
+      imageLabels: [],
+      hasHandwriting: false,
+      extractedPayload: {
+        properties: [],
+        units: [],
+        residents: [],
+        vendors: [],
+        leases: [],
+        maintenanceIssues: [],
+        financialRecords: [],
+        imageLabels: [],
+        warnings: [],
+        ...payload,
+      },
+    }
+  }
+
+  it('shows extracted vendors on AI review even when confidence is low', () => {
+    const review = buildOnboardingExtractionReview([
+      vendorDoc('Vendor Information.xlsx', {
+        vendors: [
+          {
+            name: 'Flex Plumbing',
+            category: 'Plumbing',
+            phone: '555-0100',
+            email: 'jobs@flex.example',
+            confidence: 40,
+          },
+        ],
+      }),
+    ])
+    expect(review.vendors).toHaveLength(1)
+    expect(review.vendors[0]?.name).toBe('Flex Plumbing')
+    expect(review.vendors[0]?.selected).toBe(true)
+    expect(review.needsReview.some((row) => row.dataType === 'unknown_document_type')).toBe(false)
+  })
+
+  it('promotes vendor-file residents into vendors when GPT filled the wrong array', () => {
+    const review = buildOnboardingExtractionReview([
+      vendorDoc('preferred vendors.csv', {
+        residents: [
+          {
+            fullName: 'Apex HVAC',
+            unit: '',
+            building: '',
+            phone: '555-0199',
+            email: 'dispatch@apex.example',
+            leaseStart: '',
+            leaseEnd: '',
+            monthlyRent: '',
+            confidence: 80,
+          },
+        ],
+      }),
+    ])
+    expect(review.residents).toEqual([])
+    expect(review.vendors.map((row) => row.name)).toEqual(['Apex HVAC'])
+    expect(review.vendors[0]?.phone).toBe('555-0199')
+    expect(review.vendors[0]?.selected).toBe(true)
+  })
+})
+
+describe('Fast Track maintenance and financial extraction review', () => {
+  function reviewDoc(
+    fileName: string,
+    documentCategory: 'inspection_report' | 'property_statement' | 'expense_report',
+    payload: Partial<PortfolioDocumentExtractPayload>,
+  ) {
+    return {
+      id: 'doc-ops',
+      fileName,
+      fileType: fileName.split('.').pop() ?? 'xlsx',
+      fileSize: 12,
+      documentCategory,
+      categoryGroup: documentCategory === 'inspection_report' ? ('property' as const) : ('financial' as const),
+      uploadStatus: 'ready_for_review' as const,
+      uploadProgress: 100,
+      extractionStatus: 'ready_for_review' as const,
+      processingLabel: 'Ready for review',
+      errorMessage: null,
+      imageLabels: [],
+      hasHandwriting: false,
+      extractedPayload: {
+        properties: [],
+        units: [],
+        residents: [],
+        vendors: [],
+        leases: [],
+        maintenanceIssues: [],
+        financialRecords: [],
+        imageLabels: [],
+        warnings: [],
+        ...payload,
+      },
+    }
+  }
+
+  it('shows low-confidence maintenance issues selected on AI review', () => {
+    const review = buildOnboardingExtractionReview([
+      reviewDoc('maintenance history.xlsx', 'inspection_report', {
+        maintenanceIssues: [
+          {
+            unit: '4B',
+            building: 'Maple',
+            category: 'Plumbing',
+            description: 'Kitchen sink drip',
+            priority: 'normal',
+            confidence: 40,
+          },
+        ],
+      }),
+    ])
+    expect(review.maintenanceIssues).toHaveLength(1)
+    expect(review.maintenanceIssues[0]?.selected).toBe(true)
+    expect(review.needsReview.some((row) => row.dataType === 'unknown_document_type')).toBe(
+      false,
+    )
+  })
+
+  it('shows low-confidence financial records selected on AI review', () => {
+    const review = buildOnboardingExtractionReview([
+      reviewDoc('Financial Records.xlsx', 'property_statement', {
+        financialRecords: [
+          {
+            recordType: 'Expense',
+            description: 'Roof repair',
+            amount: '4200',
+            period: '2024-08',
+            confidence: 45,
+          },
+        ],
+      }),
+    ])
+    expect(review.financialRecords).toHaveLength(1)
+    expect(review.financialRecords[0]?.selected).toBe(true)
+    expect(review.financialRecords[0]?.amount).toBe('4200')
+    expect(review.needsReview.some((row) => row.dataType === 'unknown_document_type')).toBe(
+      false,
+    )
   })
 })
 

@@ -14,6 +14,7 @@ import {
   stampRentCheckoutOnRun,
 } from "./rentStripeCheckout.ts"
 import { normalizeAppOrigin, uloAppUrl } from "../uloAppUrl.ts"
+import { landlordHasPayments } from "../../../../shared/landlordCapabilities.ts"
 
 export type RentPaymentProvider = {
   provider: string
@@ -105,6 +106,9 @@ export async function resolveRentPaymentLink(
     unitLabel?: string | null
   },
 ): Promise<RentPaymentProvider | null> {
+  if (!landlordHasPayments(params.landlordId)) {
+    return null
+  }
   if (!rentPaymentProviderEnabled()) {
     return null
   }

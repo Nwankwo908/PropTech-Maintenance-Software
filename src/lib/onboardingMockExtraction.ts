@@ -66,6 +66,17 @@ export type ExtractedMaintenanceIssue = {
   description: string
   priority: string
   selected: boolean
+  sourceDocumentName?: string
+}
+
+export type ExtractedFinancialLine = {
+  id: string
+  recordType: string
+  description: string
+  amount: string
+  period: string
+  selected: boolean
+  sourceDocumentName?: string
 }
 
 export type ExtractedLease = {
@@ -85,6 +96,7 @@ export type MockExtractionReview = {
   residents: ExtractedResident[]
   vendors: ExtractedVendor[]
   maintenanceIssues: ExtractedMaintenanceIssue[]
+  financialRecords: ExtractedFinancialLine[]
   leases: ExtractedLease[]
 }
 
@@ -286,6 +298,7 @@ export function buildMockExtractionReview(
     residents,
     vendors,
     maintenanceIssues,
+    financialRecords: [],
     leases: [],
   }
 }

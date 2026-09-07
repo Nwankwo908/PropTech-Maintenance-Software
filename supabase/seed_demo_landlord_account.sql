@@ -140,6 +140,7 @@ declare
   wr_rent2 uuid := md5('ulo-demo-run-rent-2')::uuid;          -- overdue (Chen)
   wr_rent3 uuid := md5('ulo-demo-run-rent-3')::uuid;          -- escalated overdue (Alvarez)
   wr_rent4 uuid := md5('ulo-demo-run-rent-4')::uuid;          -- completed / paid (Ito)
+  wr_rent5 uuid := md5('ulo-demo-run-rent-5')::uuid;          -- completed / paid (Rossi, Oakwood)
   wr_lease1 uuid := md5('ulo-demo-run-lease-1')::uuid;        -- active (Johnson, 14 days)
   wr_lease2 uuid := md5('ulo-demo-run-lease-2')::uuid;        -- completed (Freeman, signed)
   wr_lease3 uuid := md5('ulo-demo-run-lease-3')::uuid;        -- escalated no response (O'Connor)
@@ -568,10 +569,26 @@ begin
      p_birch, u_birch_410, r_ito, demo_landlord, 'cron', 'rent', 'logged',
      'paid', now_ts - interval '9 days', now_ts - interval '8 days',
      jsonb_build_object('landlord_id', demo_landlord, 'unit_label', '410', 'building', 'Birch Tower',
-       'amount_due', 1950, 'billing_period', to_char(current_date, 'YYYY-MM'),
+       'amount_due', 0, 'original_amount_due', 1950, 'paid_amount', 1950,
+       'billing_period', to_char(current_date, 'YYYY-MM'),
        'rent_due_date', (current_date - 9)::text, 'rent_classification', 'paid',
-       'sms_sent', true, 'payment_intent', 'paid',
-       'step_state', jsonb_build_object('rent_classification', 'paid', 'payment_intent', 'paid'))),
+       'rent_status', 'paid', 'payment_intent', 'paid', 'payment_method', 'zelle',
+       'paid_date', (current_date - 8)::text,
+       'admin_payment_received_at', (now_ts - interval '8 days')::text,
+       'sms_sent', true,
+       'step_state', jsonb_build_object('rent_classification', 'paid', 'payment_intent', 'paid', 'payment_method', 'zelle'))),
+    (wr_rent5, 'rent_collection', 'completed', 'user', r_rossi,
+     p_oakwood, u_oak_205, r_rossi, demo_landlord, 'cron', 'rent', 'logged',
+     'paid', now_ts - interval '6 days', now_ts - interval '5 days',
+     jsonb_build_object('landlord_id', demo_landlord, 'unit_label', '205', 'building', 'Oakwood Apartments',
+       'amount_due', 0, 'original_amount_due', 2100, 'paid_amount', 2100,
+       'billing_period', to_char(current_date, 'YYYY-MM'),
+       'rent_due_date', (current_date - 6)::text, 'rent_classification', 'paid',
+       'rent_status', 'paid', 'payment_intent', 'paid', 'payment_method', 'zelle',
+       'paid_date', (current_date - 5)::text,
+       'admin_payment_received_at', (now_ts - interval '5 days')::text,
+       'sms_sent', true,
+       'step_state', jsonb_build_object('rent_classification', 'paid', 'payment_intent', 'paid', 'payment_method', 'zelle'))),
     -- Lease renewals ---------------------------------------------------------------
     (wr_lease1, 'lease_renewal', 'active', 'user', r_johnson,
      p_cedar, u_cedar_102, r_johnson, demo_landlord, 'cron', 'leasing', 'acted',

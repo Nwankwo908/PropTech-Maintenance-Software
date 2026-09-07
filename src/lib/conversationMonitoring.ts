@@ -345,6 +345,10 @@ function deriveRisk(ctx: ConversationContext): { level: MonitoringRiskLevel | nu
     return { level: 'low', label: 'NO RISK' }
   }
 
+  if (isLandlordRentReceiptAsk(combinedText)) {
+    return { level: 'low', label: 'RENT CONFIRMATION' }
+  }
+
   if (ctx.conversationType === 'ai_copilot') {
     return { level: 'low', label: 'AUTO-HANDLED' }
   }
@@ -387,6 +391,9 @@ function buildSubtitle(conversationType: string, combinedText = ''): string {
   if (isVendorOnboardingInvite(combinedText)) {
     return 'Admin monitoring view · SMS · vendor onboarding'
   }
+  if (isLandlordRentReceiptAsk(combinedText)) {
+    return 'Admin monitoring view · SMS · rent confirmation'
+  }
   if (conversationType === 'ai_copilot') {
     return 'Admin monitoring view · Internal · auto-routed to Ulo AI'
   }
@@ -414,6 +421,10 @@ function buildTitle(ctx: ConversationContext): string {
   }
   if (isTenantOnboardingInvite(combinedText)) {
     return 'Tenant onboarding'
+  }
+
+  if (isLandlordRentReceiptAsk(combinedText)) {
+    return location ? `Rent confirmation · ${location}` : 'Rent confirmation'
   }
 
   if (ctx.residentFeedbackRating != null) {
@@ -470,7 +481,12 @@ function isPaymentPlanOfferBody(body: string): boolean {
   return /payment plan|installment|split (?:your |the )?balance/i.test(body)
 }
 
+function isLandlordRentReceiptAsk(text: string): boolean {
+  return /did you receive it/i.test(text) && /rent/i.test(text)
+}
+
 function isLateRentReminderBody(body: string): boolean {
+  if (isLandlordRentReceiptAsk(body)) return false
   return /rent (?:for |was )?due|late[- ]?rent|friendly reminder your rent/i.test(body)
 }
 
@@ -496,6 +512,10 @@ function buildSummary(ctx: ConversationContext): string {
   // never dump them into the admin summary chrome.
   if (isPaymentPlanOfferBody(latest) || isPaymentPlanOfferBody(combined)) {
     return `Ulo sent ${tenant} a payment plan offer for ${place}. Monitor the SMS thread below for their reply — no further action needed unless they escalate.`
+  }
+
+  if (isLandlordRentReceiptAsk(combined) || isLandlordRentReceiptAsk(latest)) {
+    return `Ulo asked whether rent was received. Reply YES, NO, or PARTIAL on this thread — Ulo records the result and does not collect payment.`
   }
 
   if (isLateRentReminderBody(latest) || isLateRentReminderBody(combined)) {

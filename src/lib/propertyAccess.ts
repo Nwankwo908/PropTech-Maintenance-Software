@@ -3,6 +3,7 @@ import { getErrorMessage } from '@/lib/errorMessage'
  * Building-level property access — Property Details + vendor job page.
  */
 import { getActiveLandlordId } from '@/lib/activeLandlord'
+import { recordActivityLog } from '@/lib/recordActivityLog'
 import { supabase } from '@/lib/supabase'
 
 export type PropertyAccessProfile = {
@@ -147,10 +148,43 @@ export async function loadPropertyAccess(building: string): Promise<PropertyAcce
     .eq('building', building.trim())
     .maybeSingle()
 
-  if (error || !data) return local
-  const fromDb = normalizePropertyAccess(data)
-  savePropertyAccessLocal(building, fromDb)
-  return fromDb
+  if (!error && data) {
+    const fromDb = normalizePropertyAccess(data)
+    savePropertyAccessLocal(building, fromDb)
+    return fromDb
+  }
+
+  const { data: rows } = await supabase
+    .from('property_access_profiles')
+    .select('*')
+    .eq('landlord_id', landlordId)
+  const want = building.trim().toLowerCase()
+  const match = (rows ?? []).find(
+    (row) => String((row as { building?: unknown }).building ?? '').trim().toLowerCase() === want,
+  )
+  if (match) {
+    const fromDb = normalizePropertyAccess(match)
+    savePropertyAccessLocal(building, fromDb)
+    return fromDb
+  }
+
+  return local
+}
+
+export async function loadPropertyAccessCandidates(
+  names: Array<string | null | undefined>,
+): Promise<PropertyAccessProfile | null> {
+  const seen = new Set<string>()
+  for (const name of names) {
+    const trimmed = name?.trim()
+    if (!trimmed) continue
+    const key = trimmed.toLowerCase()
+    if (seen.has(key)) continue
+    seen.add(key)
+    const loaded = await loadPropertyAccess(trimmed)
+    if (propertyAccessHasContent(loaded)) return loaded
+  }
+  return null
 }
 
 /** Upsert to DB and mirror to localStorage. */
@@ -185,4 +219,33 @@ export async function savePropertyAccess(
     console.error('[property-access] save', error.message)
     throw new Error(getErrorMessage(error, 'Something went wrong. Please try again.'))
   }
+}
+
+export async function clearPropertyAccess(building: string): Promise<void> {
+  const landlordId = getActiveLandlordId()
+  savePropertyAccessLocal(building, { ...EMPTY_PROPERTY_ACCESS })
+
+  if (!supabase || !landlordId || !building.trim()) return
+
+  const { error } = await supabase
+    .from('property_access_profiles')
+    .delete()
+    .eq('landlord_id', landlordId)
+    .eq('building', building.trim())
+
+  if (error) {
+    console.error('[property-access] clear', error.message)
+    throw new Error(getErrorMessage(error, 'Something went wrong. Please try again.'))
+  }
+
+  await recordActivityLog({
+    landlordId,
+    eventType: 'property.access_cleared',
+    source: 'dashboard',
+    actorType: 'landlord',
+    metadata: {
+      message: 'Property access details were removed.',
+      building: building.trim(),
+    },
+  })
 }

@@ -10,7 +10,8 @@ import {
 } from "./dibHybrid.ts"
 import { getVisionProvider, getVisionProviderName } from "./getProvider.ts"
 import { mergeHintCategory, preclassifyWithRoboflow } from "./roboflowPreclassify.ts"
-import { normalizeApplianceVisionResult } from "./normalize.ts"
+import { extractInspectionReport } from "./extractInspectionReport.ts"
+import { persistInspectionDocumentAnalysis } from "./persistInspectionDocument.ts"
 
 /** Run vision on an existing property_inspection_photos row. Does not mint unit_assets. */
 export async function analyzeInspectionPhotoRow(
@@ -38,45 +39,15 @@ export async function analyzeInspectionPhotoRow(
     }
     const effectiveHint = mergeHintCategory(hintCategory, roboflow)
 
-    if (mode === "document" && provider.analyzeDocument) {
-      const items = await provider.analyzeDocument(imageBase64, contentType)
-      const primary = items[0] ?? normalizeApplianceVisionResult({
-        category: "unknown",
-        identifiedItem: { type: "Inspection report findings" },
-        estimatedAge: { value: null, confidence: "low", basis: "No items extracted" },
-        condition: { rating: "fair", summary: "No discrete assets extracted from document." },
-        deficiencies: [],
-        maintenanceRecommendations: [],
-        rawConfidenceNotes: "Document extract returned no items.",
+    if (mode === "document") {
+      const extract = await extractInspectionReport({ imageBase64, contentType })
+      return await persistInspectionDocumentAnalysis({
+        supabase,
+        photoId,
+        extract,
+        provider: providerName,
+        latencyMs: Date.now() - started,
       })
-      const packed = {
-        ...primary,
-        rawConfidenceNotes: [
-          primary.rawConfidenceNotes,
-          items.length > 1
-            ? `${items.length} items extracted; confirming the primary finding first.`
-            : null,
-        ]
-          .filter(Boolean)
-          .join(" "),
-        _extractedItems: items,
-      }
-      const latencyMs = Date.now() - started
-      const { data, error } = await supabase
-        .from("property_inspection_photos")
-        .update({
-          status: "needs_review",
-          ai_result: packed,
-          provider: providerName,
-          latency_ms: latencyMs,
-          estimated_cost_usd: 0.01,
-          updated_at: new Date().toISOString(),
-        })
-        .eq("id", photoId)
-        .select("*")
-        .single()
-      if (error) throw new Error(error.message)
-      return data as Record<string, unknown>
     }
 
     let dibPass: Awaited<ReturnType<typeof identifyWithDibSmartAdd>> = null

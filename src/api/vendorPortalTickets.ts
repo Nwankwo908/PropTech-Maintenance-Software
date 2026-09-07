@@ -48,6 +48,16 @@ export type VendorApiTicket = {
   estimated_minutes?: number | null
   severity?: string | null
   issue_category?: string | null
+  property_access?: {
+    buildingEntry: string
+    gateCode: string
+    lockboxLocation: string
+    lockboxCode: string
+    utilityRoomAccess: string
+    visitorParking: string
+    superintendentContact: string
+    emergencyAccessNotes: string
+  } | null
 }
 
 export type VendorListResponse = {

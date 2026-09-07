@@ -30,10 +30,19 @@ describe('toUserFriendlyMessage', () => {
     ).not.toMatch(/Reset setup/i)
   })
 
-  it('keeps plain English messages', () => {
-    expect(toUserFriendlyMessage('Enter your company and contact name.', 'fallback')).toBe(
-      'Enter your company and contact name.',
-    )
+  it('keeps Thumbtack in-app send errors', () => {
+    const msg =
+      'Could not send this in Ulo. Thumbtack did not issue a messaging token. The Message API app cannot use application login, and it is not on the same environment as vendor search. Ask Thumbtack for production Message API credentials with permission to send requests.'
+    expect(toUserFriendlyMessage(msg, 'Could not send this message. The vendor is still available.')).toBe(msg)
+  })
+
+  it('maps Limited Alpha payments-off checkout errors', () => {
+    expect(
+      toUserFriendlyMessage(
+        'Payments are not available on this account.',
+        'Could not open rent payment.',
+      ),
+    ).toMatch(/not available/i)
   })
 
   it('uses fallback for snake_case codes', () => {

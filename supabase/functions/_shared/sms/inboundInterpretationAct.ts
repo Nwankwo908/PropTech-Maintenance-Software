@@ -9,6 +9,7 @@ import { findActiveWorkflowRun } from "../engine/workflowRuns.ts"
 import { resolveRentPaymentLink } from "../engine/rentCollectionPayment.ts"
 import { startMoveOutWorkflow } from "../engine/startWorkflow.ts"
 import { isRentChargePaidFromRun } from "../paymentSettlement.ts"
+import { landlordHasPayments } from "../../../../shared/landlordCapabilities.ts"
 import { resolveUnitByIdOrLabel } from "../unitVacancy.ts"
 import { formatWorkOrderRef } from "../vendor_outreach_copy.ts"
 import { sendVendorJobAlert } from "./vendorSmsRouting.ts"
@@ -648,7 +649,8 @@ async function handleRentBalance(
   const billingPeriod = typeof rentRun?.metadata?.billing_period === "string"
     ? rentRun.metadata.billing_period
     : ""
-  const wantsLink = topic !== "monthly_rent" && topic !== "due_date"
+  const wantsLink = topic !== "monthly_rent" && topic !== "due_date" &&
+    landlordHasPayments(ctx.landlordId)
   if (wantsLink && rentRun?.id && billingPeriod && amountDue > 0) {
     const provider = await resolveRentPaymentLink(ctx.supabase, {
       landlordId: ctx.landlordId,
@@ -707,7 +709,9 @@ async function handleRentBalance(
       lines.push(payLink)
     } else if (balance > 0) {
       lines.push(
-        `Your current balance is ${formatMoney(balance)}. I don't have an online pay link ready, so the property team can help you pay.`,
+        landlordHasPayments(ctx.landlordId)
+          ? `Your current balance is ${formatMoney(balance)}. I don't have an online pay link ready, so the property team can help you pay.`
+          : `Your current balance is ${formatMoney(balance)}. Please pay rent the way you usually do, or reply here if you need help.`,
       )
     } else {
       lines.push("I don't see a balance due, so there's no payment link to send right now.")

@@ -35,6 +35,9 @@ import {
   actRentCollectionPaymentRequest,
   resolveRentPaymentLink,
 } from "../rentCollectionPayment.ts"
+import { offerLandlordRentReceiptAsk } from "../rentReceiptConfirmation.ts"
+import { maybeSendOfflineTenantGraceReminder } from "../offlineTenantRentReminder.ts"
+import { landlordHasPayments } from "../../../../../shared/landlordCapabilities.ts"
 import {
   buildRentClassificationMetadata,
   classifyRentCollection,
@@ -54,6 +57,7 @@ import {
   buildRentCollectionPrompt,
 } from "../rentCollectionOutreachCopy.ts"
 import {
+  daysUntilRentDue,
   parseRentReminderCadenceDays,
   rentReminderSlotForToday,
   resolvePreferredLanguage,
@@ -91,6 +95,8 @@ export type RentCollectionState = {
   classification_source?: string
   /** Days-before-due cadence slots already reminded (0 = due date). */
   reminder_days_sent?: number[]
+  landlord_receipt_ask_status?: "asked" | "queued" | "answered"
+  tenant_grace_reminder_dates?: string[]
 }
 
 export function currentBillingPeriod(date = new Date()): string {
@@ -309,7 +315,13 @@ async function processRentDueTrigger(
   const preferredLanguage = resolvePreferredLanguage(operational.preferredLanguage)
   const billingPeriod = currentBillingPeriod()
   const rentDueDate = rentDueDateIso(rentDueDay)
-  const reminderSlot = rentReminderSlotForToday(rentDueDay, cadenceDays)
+  const paymentsOn = landlordHasPayments(landlordId)
+  const daysUntil = daysUntilRentDue(rentDueDay)
+  const reminderSlot = paymentsOn
+    ? rentReminderSlotForToday(rentDueDay, cadenceDays)
+    : daysUntil <= 0
+    ? 0
+    : null
 
   if (reminderSlot == null) {
     return {
@@ -385,6 +397,80 @@ async function processRentDueTrigger(
     })
 
     if (existing && runBillingPeriod(existing) === billingPeriod) {
+      if (!paymentsOn) {
+        if (existing.status !== "active") {
+          skipped++
+          continue
+        }
+        try {
+          const priorState = runStepState(existing) as RentCollectionState
+          const state: RentCollectionState = {
+            ...priorState,
+            amount_due: amountDue,
+            billing_period: billingPeriod,
+            rent_due_date: rentDueDate,
+            unit_label: resident.unit ?? priorState.unit_label,
+          }
+          const routed = await executeRentCollectionRouteAndAct(supabase, {
+            landlordId,
+            resident,
+            runId: existing.id,
+            state,
+            preferredLanguage,
+            daysBeforeDue: reminderSlot,
+            dueToday: daysUntil === 0,
+          })
+          const tenant = await maybeSendOfflineTenantGraceReminder(supabase, {
+            landlordId,
+            runId: existing.id,
+            resident,
+          })
+          const nextStep = routed.smsSent || tenant.smsSent || tenant.emailSent
+            ? "payment_reminder_sent"
+            : priorState.step ?? "awaiting_payment"
+          await updateWorkflowRun(supabase, existing.id, {
+            currentStep: nextStep,
+            currentStage: routed.smsSent || tenant.smsSent || tenant.emailSent
+              ? "routed"
+              : "awaiting_payment",
+            metadata: {
+              amount_due: amountDue,
+              step_state: {
+                ...state,
+                step: nextStep,
+                sms_sent: routed.smsSent || tenant.smsSent || priorState.sms_sent,
+                email_sent: tenant.emailSent || priorState.email_sent,
+                landlord_receipt_ask_status: routed.landlordReceiptAskStatus ??
+                  priorState.landlord_receipt_ask_status,
+              },
+              landlord_receipt_ask_status: routed.landlordReceiptAskStatus ??
+                existing.metadata?.landlord_receipt_ask_status,
+            },
+            pipelineStage: "act",
+            eventMessage: tenant.smsSent || tenant.emailSent
+              ? "Tenant grace reminder sent"
+              : routed.smsSent
+              ? "Asked the property team whether rent was received"
+              : "Rent collection checked",
+            eventStep: nextStep,
+          })
+          if (routed.smsSent || tenant.smsSent || tenant.emailSent) remindersSent++
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err)
+          console.error("[rent-collection] offline cadence failed", {
+            residentId,
+            billingPeriod,
+            error: message,
+          })
+          startErrors.push({
+            resident_id: residentId,
+            billing_period: billingPeriod,
+            error: message,
+          })
+        }
+        continue
+      }
+
       const priorState = runStepState(existing) as RentCollectionState
       const sentDays = priorState.reminder_days_sent ?? []
       if (sentDays.includes(reminderSlot)) {
@@ -407,6 +493,7 @@ async function processRentDueTrigger(
           state,
           preferredLanguage,
           daysBeforeDue: reminderSlot,
+          dueToday: daysUntil === 0,
         })
         const nextSentDays = [...new Set([...sentDays, reminderSlot])]
         const nextStep = routed.smsSent || routed.emailSent
@@ -429,7 +516,11 @@ async function processRentDueTrigger(
               payment_link: routed.paymentLink ?? priorState.payment_link,
               payment_requested: routed.paymentRequested,
               payment_provider: routed.provider,
+              landlord_receipt_ask_status: routed.landlordReceiptAskStatus ??
+                priorState.landlord_receipt_ask_status,
             },
+            landlord_receipt_ask_status: routed.landlordReceiptAskStatus ??
+              existing.metadata?.landlord_receipt_ask_status,
             route_channels: routed.channels,
             payment_link: routed.paymentLink,
             payment_requested: routed.paymentRequested,
@@ -455,6 +546,28 @@ async function processRentDueTrigger(
         })
       }
       continue
+    }
+
+    if (!paymentsOn) {
+      const { data: openRuns } = await supabase
+        .from("workflow_runs")
+        .select("id, status, metadata")
+        .eq("landlord_id", landlordId)
+        .eq("resident_id", residentId)
+        .eq("template_id", "rent_collection")
+        .in("status", ["escalated"])
+        .order("started_at", { ascending: false })
+        .limit(8)
+      const alreadyOpen = (openRuns ?? []).some((row) => {
+        const meta = row.metadata && typeof row.metadata === "object"
+          ? row.metadata as Record<string, unknown>
+          : {}
+        return meta.billing_period === billingPeriod
+      })
+      if (alreadyOpen) {
+        skipped++
+        continue
+      }
     }
 
     try {
@@ -551,6 +664,7 @@ async function processRentDueTrigger(
       },
       preferredLanguage,
       daysBeforeDue: reminderSlot,
+      dueToday: daysUntil === 0,
     })
 
     const nextStep = routed.smsSent || routed.emailSent
@@ -575,7 +689,9 @@ async function processRentDueTrigger(
           payment_link: routed.paymentLink,
           payment_requested: routed.paymentRequested,
           payment_provider: routed.provider,
+          landlord_receipt_ask_status: routed.landlordReceiptAskStatus,
         },
+        landlord_receipt_ask_status: routed.landlordReceiptAskStatus,
         route_channels: routed.channels,
         payment_link: routed.paymentLink,
         payment_requested: routed.paymentRequested,
@@ -658,6 +774,7 @@ export type RentCollectionRouteActResult = {
   paymentLink: string | null
   paymentRequested: boolean
   provider: string | null
+  landlordReceiptAskStatus?: "asked" | "queued" | null
 }
 
 function graphScopeForRouteAct(params: {
@@ -688,8 +805,71 @@ export async function executeRentCollectionRouteAndAct(
     state: RentCollectionState
     preferredLanguage?: PreferredLanguageId
     daysBeforeDue?: number | null
+    dueToday?: boolean
   },
 ): Promise<RentCollectionRouteActResult> {
+  if (!landlordHasPayments(params.landlordId)) {
+    if (params.daysBeforeDue !== 0) {
+      return {
+        smsSent: false,
+        emailSent: false,
+        channels: [],
+        paymentLink: null,
+        paymentRequested: false,
+        provider: null,
+        landlordReceiptAskStatus: null,
+      }
+    }
+
+    const run = await getWorkflowRunById(supabase, params.runId)
+    if (!run) {
+      return {
+        smsSent: false,
+        emailSent: false,
+        channels: [],
+        paymentLink: null,
+        paymentRequested: false,
+        provider: null,
+        landlordReceiptAskStatus: null,
+      }
+    }
+
+    const asked = await offerLandlordRentReceiptAsk(supabase, {
+      landlordId: params.landlordId,
+      run,
+      resident: {
+        id: String(params.resident.id),
+        unit: params.resident.unit,
+      },
+      dueToday: params.dueToday !== false,
+    })
+
+    await logPipelineStageEvent(supabase, {
+      runId: params.runId,
+      stage: "route",
+      step: asked.sent ? "landlord_receipt_ask" : asked.queued ? "landlord_receipt_queued" : "landlord_receipt_skipped",
+      message: asked.sent
+        ? "Asked the property team whether rent was received"
+        : asked.queued
+        ? "Queued rent receipt confirmation behind another unit"
+        : "Rent receipt ask not sent",
+      metadata: {
+        channels: asked.sent ? ["sms"] : [],
+        landlord_receipt: true,
+      },
+    })
+
+    return {
+      smsSent: asked.sent,
+      emailSent: false,
+      channels: asked.sent ? ["sms"] : [],
+      paymentLink: null,
+      paymentRequested: false,
+      provider: null,
+      landlordReceiptAskStatus: asked.sent ? "asked" : asked.queued ? "queued" : null,
+    }
+  }
+
   const paymentProvider = await resolveRentPaymentLink(supabase, {
     landlordId: params.landlordId,
     residentId: String(params.resident.id),
@@ -867,6 +1047,16 @@ async function processPaymentIntentReply(
       replyHint:
         "Happy to help with rent — I'll just need your unit number first so I can pull up the right account.",
       metadata: { blocked: "missing_resident_id" },
+    }
+  }
+
+  if (!landlordHasPayments(ctx.landlordId)) {
+    return {
+      templateId: "rent_collection",
+      route: workflowRouteForTemplate("rent_collection"),
+      replyHint:
+        "Thanks — your property team confirms rent payments. You don't need to reply here.",
+      metadata: { ignored_tenant_payment_intent: true },
     }
   }
 

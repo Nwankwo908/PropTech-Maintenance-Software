@@ -1,5 +1,6 @@
 import { getActiveLandlordId } from '@/lib/activeLandlord'
 import { normalizeBuildingKey } from '@/lib/propertyHealth'
+import { inboxParticipantKind } from '@/lib/communicationInboxKind'
 import { inboxPreviewForSmsMessage } from '@/lib/smsMedia'
 import {
   buildVendorComplianceProfile,
@@ -111,19 +112,10 @@ function formatRelativeTime(ms: number): string {
 }
 
 function conversationKind(conversationType: string, hasVendor: boolean): ParticipantKind {
-  switch (conversationType) {
-    case 'ai_copilot':
-      return 'ai'
-    case 'vendor_alert':
-      return 'vendor'
-    case 'landlord_update':
-      return 'landlord'
-    case 'vendor_tenant_proxy':
-      return hasVendor ? 'vendor' : 'tenant'
-    case 'resident_intake':
-    default:
-      return 'tenant'
-  }
+  return inboxParticipantKind({
+    conversationType,
+    hasVendorId: hasVendor,
+  })
 }
 
 function participantLabel(kind: ParticipantKind): string {

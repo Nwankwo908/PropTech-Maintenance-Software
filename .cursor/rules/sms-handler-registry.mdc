@@ -32,6 +32,7 @@ Return `{ handled: true }` only when a **stored pending ask** exists (or global 
 | `compliance_stop_help` | **Global** STOP/START/HELP (sole exception) |
 | `schedule_confirm` | `intake_state.awaiting_schedule_confirmation` |
 | `estimate_decision` | `awaiting_estimate_decision` or pending estimate on thread WO |
+| `landlord_rent_receipt` | `awaiting_landlord_rent_receipt` / amount / method (YES, NO, or PARTIAL) |
 | `invoice_payment` | Admin notify phone + recent `maintenance.invoice_payment_options_sent` |
 | `tenant_activation_reply` | YES while `users.activation_status === waiting` |
 | `vendor_reschedule` | Reschedule intent (`shouldAttemptVendorRescheduleInbound`) → **dispatch only** to `vendor_job_response` |
@@ -66,6 +67,7 @@ These belong in workflow templates (`maintenance_intake`, `rent_collection`, `le
 | Handler | Why it stays in registry |
 |---|---|
 | `vendor_feedback` | Two SMS phases (rating → low-score comment) on one `vendor_feedback_requests` row; no cron. Prefer new multi-step product flows as workflow templates. |
+| `landlord_rent_receipt` | YES / NO / PARTIAL (then amount and payment method) on conversation `intake_state`; cron still lives in `rent_collection`. |
 
 **Vendor rescheduling is not a registry exception.** Registry = intent detection + workflow dispatch. Conversation = `vendor_job_response` + `vendorRescheduleWorkflowAct.ts`.
 

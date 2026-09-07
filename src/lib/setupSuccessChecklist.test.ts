@@ -93,7 +93,7 @@ describe('setupSuccessChecklist', () => {
     ])
   })
 
-  it('does not check property details until every property section is filled', () => {
+  it('does not check property details until they are marked complete', () => {
     const progress = resolveSetupSuccessProgress({
       residents: [],
       vendorCount: 0,

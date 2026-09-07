@@ -81,6 +81,73 @@ Deno.test("placeholder status values are stripped from extracted fields", () => 
   assertEquals(payload.imageLabels, ["Kitchen leak"])
 })
 
+Deno.test("vendor company aliases land in vendors[]", () => {
+  const payload = normalizePortfolioDocumentExtract({
+    contractors: [
+      {
+        vendorName: "Flex Plumbing",
+        trade: "Plumbing",
+        phoneNumber: "555-0100",
+        email: "jobs@flex.example",
+        confidence: 90,
+      },
+    ],
+  })
+  assertEquals(payload.vendors.length, 1)
+  assertEquals(payload.vendors[0]?.name, "Flex Plumbing")
+  assertEquals(payload.vendors[0]?.category, "Plumbing")
+  assertEquals(payload.vendors[0]?.phone, "555-0100")
+})
+
+Deno.test("vendor documents get a vendors[] extract hint", () => {
+  const parts = buildUserContent(
+    "Vendor Information.xlsx",
+    "vendor_contract",
+    "text/csv",
+    new TextEncoder().encode("Vendor,Trade,Phone\nFlex Plumbing,Plumbing,555-0100\n"),
+  )
+  const text = String(parts[0]?.text ?? "")
+  assertEquals(/populate vendors\[\]/i.test(text), true)
+  assertEquals(/do not treat vendor companies as residents/i.test(text), true)
+})
+
+Deno.test("maintenance and financial documents get extract hints", () => {
+  const maintenance = buildUserContent(
+    "maintenance history.xlsx",
+    "inspection_report",
+    "text/csv",
+    new TextEncoder().encode("Unit,Issue\n4B,Kitchen leak\n"),
+  )
+  const maintenanceText = String(maintenance[0]?.text ?? "")
+  assertEquals(/populate maintenanceIssues\[\]/i.test(maintenanceText), true)
+
+  const financial = buildUserContent(
+    "Financial Records.xlsx",
+    "property_statement",
+    "text/csv",
+    new TextEncoder().encode("Type,Description,Amount\nExpense,Roof,4200\n"),
+  )
+  const financialText = String(financial[0]?.text ?? "")
+  assertEquals(/populate financialRecords\[\]/i.test(financialText), true)
+})
+
+Deno.test("financial aliases land in financialRecords[]", () => {
+  const payload = normalizePortfolioDocumentExtract({
+    expenses: [
+      {
+        lineItem: "Roof repair",
+        total: "4200",
+        type: "Expense",
+        period: "2024-08",
+        confidence: 90,
+      },
+    ],
+  })
+  assertEquals(payload.financialRecords.length, 1)
+  assertEquals(payload.financialRecords[0]?.description, "Roof repair")
+  assertEquals(payload.financialRecords[0]?.amount, "4200")
+})
+
 Deno.test("landlord / management company is read into account.companyName", () => {
   const nested = normalizePortfolioDocumentExtract({
     account: { companyName: "CEO Rentals NJ LLC", contactName: "Alex Manager" },

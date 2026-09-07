@@ -2,7 +2,7 @@
  * Guided Maintenance History import under Property Details.
  * Upload → AI process → landlord review → confirm → insights / timeline.
  */
-import { useId, useRef, useState } from 'react'
+import { useEffect, useId, useRef, useState } from 'react'
 import maintenanceHistoryUploadCloudIcon from '@/assets/maintenance-history-upload-cloud.svg'
 import uloFoundSparkleIcon from '@/assets/ulo-found-sparkle.svg'
 import { getActiveLandlordId } from '@/lib/activeLandlord'
@@ -95,6 +95,9 @@ export function MaintenanceHistoryPanel({
   const [editingFindings, setEditingFindings] = useState(false)
   const [findingsDraft, setFindingsDraft] = useState<MaintenanceHistoryFinding[] | null>(null)
   const [expandedRecordId, setExpandedRecordId] = useState<string | null>(null)
+  const [checkedIds, setCheckedIds] = useState<string[]>([])
+  const [editingRecordId, setEditingRecordId] = useState<string | null>(null)
+  const [findingsDismissed, setFindingsDismissed] = useState(false)
   const fileHandlesRef = useRef<Map<string, File>>(new Map())
 
   const pending = listPendingReviewRecords(docs)
@@ -133,6 +136,7 @@ export function MaintenanceHistoryPanel({
     onDocsChange(withUploading)
     setFindingsDraft(null)
     setEditingFindings(false)
+    setFindingsDismissed(false)
 
     const processing = withUploading.map((doc) =>
       additions.some((a) => a.id === doc.id) ? { ...doc, status: 'processing' as const } : doc,
@@ -270,6 +274,8 @@ export function MaintenanceHistoryPanel({
     setFindingsDraft(null)
     setEditingFindings(false)
     setExpandedRecordId(null)
+    setCheckedIds([])
+    setEditingRecordId(null)
 
     const landlordId = getActiveLandlordId()
     const count = stamped.length
@@ -296,9 +302,70 @@ export function MaintenanceHistoryPanel({
     setEditingFindings(false)
   }
 
+  const checked = new Set(checkedIds)
+  const selectedApproved = approved.filter((record) => checked.has(record.id))
+  const editingRecord =
+    editingRecordId ? approved.find((record) => record.id === editingRecordId) ?? null : null
+
+  function onEditSelected() {
+    if (selectedApproved.length !== 1) return
+    setEditingRecordId(selectedApproved[0].id)
+  }
+
+  function onSaveEditedRecord() {
+    setEditingRecordId(null)
+    setCheckedIds([])
+  }
+
+  function onDeleteSelected() {
+    if (selectedApproved.length === 0) return
+    const remove = new Set(selectedApproved.map((r) => r.id))
+    onApprovedChange(approved.filter((r) => !remove.has(r.id)))
+    setCheckedIds([])
+    if (editingRecordId && remove.has(editingRecordId)) setEditingRecordId(null)
+    const landlordId = getActiveLandlordId()
+    const count = selectedApproved.length
+    void recordActivityLog({
+      landlordId,
+      eventType: 'maintenance.history_removed',
+      source: 'dashboard',
+      actorType: 'landlord',
+      metadata: {
+        building: building.trim(),
+        record_count: count,
+        message:
+          count === 1
+            ? `Removed 1 maintenance history record from ${building.trim() || 'this property'}`
+            : `Removed ${count} maintenance history records from ${building.trim() || 'this property'}`,
+      },
+    })
+  }
+
+  function patchApprovedRecord(recordId: string, next: MaintenanceHistoryRecord) {
+    onApprovedChange(approved.map((r) => (r.id === recordId ? next : r)))
+  }
+
   const showEmpty = step === 'empty'
   const showInsights = approved.length > 0 && pending.length === 0
-  const showFindingsCard = pending.length > 0 || (showInsights && findings.length > 0)
+  const findingsKey = findings.map((f) => f.id).join('|')
+  const findingsVisible =
+    (pending.length > 0 || (showInsights && findings.length > 0)) &&
+    findings.length > 0 &&
+    !findingsDismissed
+
+  useEffect(() => {
+    if (findings.length === 0) {
+      setFindingsDismissed(false)
+      return
+    }
+    if (editingFindings) return
+    setFindingsDismissed(false)
+    const timer = window.setTimeout(() => {
+      setFindingsDismissed(true)
+      setEditingFindings(false)
+    }, 10_000)
+    return () => window.clearTimeout(timer)
+  }, [findingsKey, findings.length, editingFindings])
 
   return (
     <div className="flex flex-col gap-5">
@@ -560,7 +627,7 @@ export function MaintenanceHistoryPanel({
         </div>
       ) : null}
 
-      {showFindingsCard && findings.length > 0 ? (
+      {findingsVisible ? (
         <div className="flex flex-col gap-4 rounded-[12px] border border-solid border-[#e2e8f0] bg-[#f8fafc] p-5">
           <div className="flex items-center gap-2">
             <img
@@ -626,32 +693,184 @@ export function MaintenanceHistoryPanel({
       ) : null}
 
       {approved.length > 0 ? (
-        <div className="flex flex-col gap-4">
-          <p className="text-[15px] font-bold text-[#0d0f11]">Property Maintenance Timeline</p>
-          <ul className="flex flex-col gap-3">
-            {approved.map((record) => {
-              const row = recordToTimelineRow(record)
-              return (
-                <li
-                  key={record.id}
-                  className="flex items-center gap-4 rounded-[8px] border border-solid border-[#e2e8f0] bg-white p-4"
+        <div className="flex flex-col gap-3">
+          {selectedApproved.length > 0 ? (
+            <div className="flex flex-wrap items-center justify-end gap-2">
+              {selectedApproved.length === 1 ? (
+                <button
+                  type="button"
+                  onClick={onEditSelected}
+                  className="pd-btn pd-btn-ghost rounded-[10px] px-4 py-2.5 text-[13px] font-semibold text-[#186179] hover:bg-[#eff6ff]"
                 >
-                  <div className="flex size-8 shrink-0 items-center justify-center rounded-[6px] bg-[#f1f5f9]">
-                    <MaintenanceWrenchIcon />
-                  </div>
-                  <div className="min-w-0 flex-1">
-                    <p className="truncate text-[14px] font-bold text-[#0d0f11]">{row.issueType}</p>
-                    <p className="truncate text-[12px] text-[#64748b]">
-                      {row.vendorName} • {row.dateLabel}
-                    </p>
-                  </div>
-                  <p className="shrink-0 text-[14px] font-bold text-[#0d0f11]">{row.amountLabel}</p>
-                </li>
-              )
-            })}
-          </ul>
+                  Edit selected
+                </button>
+              ) : null}
+              <button
+                type="button"
+                onClick={onDeleteSelected}
+                className="pd-btn pd-btn-ghost rounded-[10px] px-4 py-2.5 text-[13px] font-semibold text-[#a03e3e] hover:bg-[#fef2f2] hover:text-[#991b1b]"
+              >
+                Delete selected
+              </button>
+            </div>
+          ) : null}
+          {editingRecord ? (
+            <div className="flex flex-col gap-3 rounded-[10px] border border-[#e2e8f0] bg-[#f8fafc] p-4">
+              <RecordReviewForm
+                record={editingRecord}
+                onChange={(next) => patchApprovedRecord(editingRecord.id, next)}
+              />
+              <button
+                type="button"
+                onClick={onSaveEditedRecord}
+                className="pd-btn pd-btn-primary self-start rounded-[8px] px-4 py-2 text-[12px] font-semibold"
+              >
+                Save
+              </button>
+            </div>
+          ) : null}
+          <MaintenanceHistorySavedTable
+            records={approved}
+            checkedIds={checkedIds}
+            onCheckedIdsChange={setCheckedIds}
+          />
         </div>
       ) : null}
+    </div>
+  )
+}
+
+const HISTORY_TABLE_COLUMNS: Array<{
+  key: string
+  titles: string[]
+  render: (record: MaintenanceHistoryRecord) => string
+}> = [
+  {
+    key: 'vendor',
+    titles: ['Vendor', 'Phone'],
+    render: (record) => {
+      const name = record.vendorName.value.trim() || '—'
+      const phone = record.vendorPhone.value.trim() || '—'
+      return `${name}\n${phone}`
+    },
+  },
+  {
+    key: 'trade',
+    titles: ['Trade'],
+    render: (record) => record.tradeCategory.value.trim() || '—',
+  },
+  {
+    key: 'serviceDate',
+    titles: ['Service Date'],
+    render: (record) => recordToTimelineRow(record).dateLabel || '—',
+  },
+  {
+    key: 'issue',
+    titles: ['Issue'],
+    render: (record) =>
+      record.issueType.value.trim() || record.workPerformed.value.trim() || '—',
+  },
+  {
+    key: 'amount',
+    titles: ['Amount'],
+    render: (record) => record.totalAmount.value.trim() || '—',
+  },
+  {
+    key: 'invoice',
+    titles: ['Invoice #'],
+    render: (record) => record.invoiceNumber.value.trim() || '—',
+  },
+  {
+    key: 'unit',
+    titles: ['Unit'],
+    render: (record) => record.unitLabel.value.trim() || '—',
+  },
+  {
+    key: 'document',
+    titles: ['Document'],
+    render: (record) => record.sourceFileName.trim() || '—',
+  },
+]
+
+function MaintenanceHistorySavedTable({
+  records,
+  checkedIds,
+  onCheckedIdsChange,
+}: {
+  records: MaintenanceHistoryRecord[]
+  checkedIds: string[]
+  onCheckedIdsChange: (ids: string[]) => void
+}) {
+  const checked = new Set(checkedIds)
+  const allChecked = records.length > 0 && records.every((row) => checked.has(row.id))
+  const someChecked = records.some((row) => checked.has(row.id))
+
+  return (
+    <div className="w-full min-w-0 overflow-hidden rounded-[10px] border border-[#e2e8f0] bg-white">
+      <table className="w-full table-fixed border-collapse">
+        <thead>
+          <tr className="border-b border-[#e2e8f0] bg-[#f8fafc]">
+            <th className="w-8 px-2 py-2">
+              <label className="flex cursor-pointer items-center justify-center">
+                <input
+                  type="checkbox"
+                  checked={allChecked}
+                  ref={(el) => {
+                    if (el) el.indeterminate = someChecked && !allChecked
+                  }}
+                  onChange={(e) => {
+                    onCheckedIdsChange(e.target.checked ? records.map((row) => row.id) : [])
+                  }}
+                  aria-label="Select all maintenance history records"
+                  className="size-4 cursor-pointer rounded border-[#cbd5e1] accent-[#186179]"
+                />
+              </label>
+            </th>
+            {HISTORY_TABLE_COLUMNS.map((column) => (
+              <th
+                key={column.key}
+                className="break-words px-1.5 py-2 text-left text-[10px] font-semibold uppercase leading-3 tracking-[0.2px] text-[#64748b] sm:px-2 sm:text-[11px] sm:leading-4"
+              >
+                <span className="flex flex-col gap-1">
+                  {column.titles.map((title) => (
+                    <span key={title}>{title}</span>
+                  ))}
+                </span>
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {records.map((record) => (
+            <tr key={record.id} className="border-t border-[#e2e8f0]">
+              <td className="w-8 px-2 py-3 align-top">
+                <label className="flex cursor-pointer items-center justify-center">
+                  <input
+                    type="checkbox"
+                    checked={checked.has(record.id)}
+                    onChange={(e) => {
+                      const next = new Set(checked)
+                      if (e.target.checked) next.add(record.id)
+                      else next.delete(record.id)
+                      onCheckedIdsChange([...next])
+                    }}
+                    aria-label={`Select ${record.issueType.value || record.sourceFileName}`}
+                    className="size-4 cursor-pointer rounded border-[#cbd5e1] accent-[#186179]"
+                  />
+                </label>
+              </td>
+              {HISTORY_TABLE_COLUMNS.map((column) => (
+                <td
+                  key={column.key}
+                  className="whitespace-pre-wrap break-words px-1.5 py-3 align-top text-[12px] leading-[18px] text-[#0d0f11] sm:px-2 sm:text-[13px] sm:leading-[19.5px]"
+                >
+                  {column.render(record)}
+                </td>
+              ))}
+            </tr>
+          ))}
+        </tbody>
+      </table>
     </div>
   )
 }

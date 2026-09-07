@@ -94,7 +94,8 @@ export async function commitFastTrackImport(
     normalized.residents.some((item) => item.selected) ||
     normalized.vendors.some((item) => item.selected) ||
     normalized.leases.some((item) => item.selected) ||
-    normalized.maintenanceIssues.some((item) => item.selected)
+    normalized.maintenanceIssues.some((item) => item.selected) ||
+    normalized.financialRecords.some((item) => item.selected)
 
   let properties: OnboardingProperty[] = []
 

@@ -6,6 +6,11 @@ import {
 import { bearerLooksLikeJwt } from "../_shared/vendor_portal_bearer.ts"
 import { getVendorFromPortalApiKey } from "../_shared/vendor_portal_api_key.ts"
 import { getVendorFromJobActionToken } from "../_shared/vendorJobActionToken.ts"
+import {
+  mapPropertyAccessRow,
+  propertyAccessMappedHasContent,
+  type PropertyAccessMapped,
+} from "../_shared/propertyAccessProfile.ts"
 
 const corsHeaders: Record<string, string> = {
   "Access-Control-Allow-Origin": "*",
@@ -173,7 +178,7 @@ serve(async (req) => {
   const { data: rows, error: qErr } = await supabase
     .from("maintenance_requests")
     .select(
-      "id, created_at, priority, urgency, resident_name, unit, description, photo_paths, completion_photo_paths, vendor_work_status, assigned_vendor_id, due_at, estimated_minutes, severity, issue_category, vendor_action_token",
+      "id, created_at, landlord_id, priority, urgency, resident_name, unit, description, photo_paths, completion_photo_paths, vendor_work_status, assigned_vendor_id, due_at, estimated_minutes, severity, issue_category, vendor_action_token",
     )
     .eq("assigned_vendor_id", vendor.id)
     .order("created_at", { ascending: false })
@@ -254,6 +259,32 @@ serve(async (req) => {
     }
   }
 
+  const accessByLandlordBuilding = new Map<string, PropertyAccessMapped>()
+  const landlordIds = [
+    ...new Set(
+      (rows ?? [])
+        .map((r) => (typeof r.landlord_id === "string" ? r.landlord_id : ""))
+        .filter(Boolean),
+    ),
+  ]
+  if (landlordIds.length > 0) {
+    const { data: accessRows } = await supabase
+      .from("property_access_profiles")
+      .select(
+        "landlord_id, building, building_entry, gate_code, lockbox_location, lockbox_code, utility_room_access, visitor_parking, superintendent_contact, emergency_access_notes",
+      )
+      .in("landlord_id", landlordIds)
+    for (const raw of accessRows ?? []) {
+      const rec = raw as Record<string, unknown>
+      const lid = typeof rec.landlord_id === "string" ? rec.landlord_id : ""
+      const bldg = typeof rec.building === "string" ? rec.building.trim() : ""
+      if (!lid || !bldg) continue
+      const mapped = mapPropertyAccessRow(rec)
+      if (!propertyAccessMappedHasContent(mapped)) continue
+      accessByLandlordBuilding.set(`${lid}::${bldg.toLowerCase()}`, mapped)
+    }
+  }
+
   const tickets = await Promise.all(
     (rows ?? []).map(async (row) => {
       const id = row.id as string
@@ -268,6 +299,13 @@ serve(async (req) => {
         )
         : []
       const building = buildingById.get(id) ?? null
+      const landlordId =
+        typeof row.landlord_id === "string" ? row.landlord_id : ""
+      const property_access =
+        landlordId && building
+          ? accessByLandlordBuilding.get(`${landlordId}::${building.toLowerCase()}`) ??
+            null
+          : null
       const unitLabel =
         typeof row.unit === "string" && row.unit.trim() ? row.unit.trim() : ""
       const building_address = building
@@ -279,6 +317,7 @@ serve(async (req) => {
         ...row,
         building: building,
         building_address,
+        property_access,
         photo_urls,
         completion_photo_urls,
         completion_photo_count: Math.max(

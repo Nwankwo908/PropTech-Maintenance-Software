@@ -3,6 +3,8 @@ import {
   parseRentReminderCadenceDays,
   rentReminderSlotForToday,
   resolvePreferredLanguage,
+  shouldAskLandlordRentReceiptToday,
+  shouldSendOfflineTenantGraceReminder,
   shouldRunRentCollectionCron,
 } from "./rentCollectionPolicy.ts"
 import { buildRentCollectionPrompt } from "./rentCollectionOutreachCopy.ts"
@@ -38,13 +40,96 @@ Deno.test("rentReminderSlotForToday matches cadence and due date", () => {
   )
 })
 
-Deno.test("shouldRunRentCollectionCron is true on cadence days", () => {
+Deno.test("shouldSendOfflineTenantGraceReminder waits for landlord unpaid/partial", () => {
+  const dueAt = new Date(Date.now() + 86400000).toISOString()
   assertEquals(
-    shouldRunRentCollectionCron(10, [5, 2, 1], new Date(2026, 7, 5)),
+    shouldSendOfflineTenantGraceReminder({
+      rentStatus: null,
+      runStatus: "active",
+      amountDue: 2400,
+      dueAt,
+      reminderDates: [],
+    }),
+    false,
+  )
+  assertEquals(
+    shouldSendOfflineTenantGraceReminder({
+      rentStatus: "unpaid",
+      runStatus: "active",
+      amountDue: 2400,
+      dueAt,
+      reminderDates: [],
+    }),
     true,
   )
   assertEquals(
-    shouldRunRentCollectionCron(10, [5, 2, 1], new Date(2026, 7, 6)),
+    shouldSendOfflineTenantGraceReminder({
+      rentStatus: "partial",
+      runStatus: "active",
+      amountDue: 1200,
+      dueAt,
+      reminderDates: [],
+    }),
+    true,
+  )
+  assertEquals(
+    shouldSendOfflineTenantGraceReminder({
+      rentStatus: "paid",
+      runStatus: "active",
+      amountDue: 2400,
+      dueAt,
+      reminderDates: [],
+    }),
+    false,
+  )
+  assertEquals(
+    shouldSendOfflineTenantGraceReminder({
+      rentStatus: "unpaid",
+      runStatus: "active",
+      amountDue: 2400,
+      dueAt,
+      reminderDates: [],
+      remindersStopped: true,
+    }),
+    false,
+  )
+  const today = new Date()
+  const y = today.getFullYear()
+  const m = String(today.getMonth() + 1).padStart(2, "0")
+  const d = String(today.getDate()).padStart(2, "0")
+  assertEquals(
+    shouldSendOfflineTenantGraceReminder({
+      rentStatus: "unpaid",
+      runStatus: "active",
+      amountDue: 2400,
+      dueAt,
+      reminderDates: [`${y}-${m}-${d}`],
+    }),
+    false,
+  )
+  assertEquals(
+    shouldSendOfflineTenantGraceReminder({
+      rentStatus: "unpaid",
+      runStatus: "active",
+      amountDue: 2400,
+      dueAt: new Date(Date.now() - 1000).toISOString(),
+      reminderDates: [],
+    }),
+    false,
+  )
+})
+
+Deno.test("shouldAskLandlordRentReceiptToday is true on/after due date", () => {
+  assertEquals(
+    shouldAskLandlordRentReceiptToday(10, new Date(2026, 7, 10)),
+    true,
+  )
+  assertEquals(
+    shouldAskLandlordRentReceiptToday(10, new Date(2026, 7, 12)),
+    true,
+  )
+  assertEquals(
+    shouldAskLandlordRentReceiptToday(10, new Date(2026, 7, 5)),
     false,
   )
 })

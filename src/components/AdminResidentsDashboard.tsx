@@ -15,6 +15,7 @@ import {
 import {
   TenantActivationStatusChip,
 } from '@/components/TenantActivationStatusChip'
+import { PaymentStatusChip } from '@/components/PaymentStatusChip'
 import { optionalPhoneForDbOrError } from '@/lib/phoneFormat'
 import { getActiveLandlordId } from '@/lib/activeLandlord'
 import { customUnitPickKey, unitOptionKeyToCell } from '@/lib/residentUnitKeys'
@@ -29,6 +30,7 @@ import {
   normalizeBuildingKey,
 } from '@/lib/propertyHealth'
 import { displayResidentEmail } from '@/lib/residentProfileDetail'
+import { isRentChargePaidFromRun } from '@/lib/paymentSettlement'
 import { deleteResidentsForLandlord } from '@/lib/residentDeletion'
 import {
   dismissSetupSuccessCheckboxGuide,
@@ -40,8 +42,7 @@ import { getErrorMessage } from '@/lib/errorMessage'
 import { parseLeaseDateInput } from '@/lib/onboarding'
 import { residentOccupancyLabel } from '@/lib/residentOccupancy'
 import { activateUnitsFromResidentAssignments } from '@/lib/unitActivation'
-
-type BalanceSort = 'desc' | 'asc'
+import type { PropertyHistoryPaymentStatus } from '@/lib/propertyHistory'
 
 type ResidentRow = {
   id: string
@@ -50,11 +51,9 @@ type ResidentRow = {
   propertyLinkId: string | null
   unitLabel: string
   rentLabel: string
-  moveInLabel: string
+  paymentStatus: PropertyHistoryPaymentStatus
   contactPhone: string | null
   contactEmail: string | null
-  leaseEndLabel: string
-  balanceDue: number
   status: string
   activationStatus: string | null
   smsConsentStatus: string | null
@@ -83,20 +82,6 @@ function formatUnit(building: string | null, unit: string | null): string {
   return u || b || '—'
 }
 
-function formatLeaseEnd(value: string | null): string {
-  if (!value?.trim()) return '—'
-  const date = new Date(`${value.trim()}T12:00:00`)
-  if (Number.isNaN(date.getTime())) return '—'
-  return date.toLocaleDateString(undefined, { month: 'short', year: 'numeric' })
-}
-
-function formatMoveIn(value: string | null): string {
-  if (!value?.trim()) return '—'
-  const date = new Date(`${value.trim()}T12:00:00`)
-  if (Number.isNaN(date.getTime())) return '—'
-  return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })
-}
-
 function formatBalance(amount: number): string {
   return amount.toLocaleString(undefined, {
     style: 'currency',
@@ -110,44 +95,31 @@ function formatMonthlyRent(amount: number | null): string {
   return formatBalance(amount)
 }
 
-function FilterToggleGroup<T extends string>({
-  label,
-  value,
-  options,
-  onChange,
-}: {
-  label: string
-  value: T
-  options: readonly { value: T; label: string }[]
-  onChange: (value: T) => void
-}) {
-  return (
-    <div
-      className="inline-flex rounded-lg border border-[#e5e7eb] bg-[#f3f3f5] p-0.5"
-      role="group"
-      aria-label={label}
-    >
-      {options.map((option) => {
-        const isActive = value === option.value
-        return (
-          <button
-            key={option.value}
-            type="button"
-            aria-pressed={isActive}
-            onClick={() => onChange(option.value)}
-            className={[
-              'sa-pill inline-flex h-8 cursor-pointer items-center rounded-md px-3 text-[13px] font-medium tracking-[-0.1504px] outline-none focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-1',
-              isActive
-                ? 'bg-white text-[#0a0a0a] shadow-sm'
-                : 'text-[#6a7282] hover:text-[#364153]',
-            ].join(' ')}
-          >
-            {option.label}
-          </button>
-        )
-      })}
-    </div>
-  )
+function asRecord(value: unknown): Record<string, unknown> {
+  if (value && typeof value === 'object' && !Array.isArray(value)) {
+    return value as Record<string, unknown>
+  }
+  return {}
+}
+
+function rentPaymentStatusFromRun(run: {
+  id: string
+  status: string
+  metadata: Record<string, unknown>
+}): PropertyHistoryPaymentStatus {
+  const rentStatus = asString(run.metadata.rent_status).toLowerCase()
+  if (rentStatus === 'paid') return 'paid'
+  if (
+    isRentChargePaidFromRun({
+      id: run.id,
+      template_id: 'rent_collection',
+      status: run.status,
+      metadata: run.metadata,
+    }).paid
+  ) {
+    return 'paid'
+  }
+  return 'not_paid'
 }
 
 const ONBOARDING_STARTED_BANNER_MS = 30_000
@@ -190,7 +162,6 @@ export function AdminResidentsDashboard() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [searchQuery, setSearchQuery] = useState('')
-  const [balanceSort, setBalanceSort] = useState<BalanceSort>('desc')
   const [addResidentOpen, setAddResidentOpen] = useState(false)
   const [addResidentError, setAddResidentError] = useState<string | null>(null)
   const [unitOptions, setUnitOptions] = useState<{ value: string; label: string }[]>([])
@@ -234,9 +205,9 @@ export function AdminResidentsDashboard() {
     setError(null)
 
     const selectWithActivation =
-      'id, full_name, unit, building, status, balance_due, lease_end_date, move_in_date, phone, email, monthly_rent, activation_status, sms_consent_status, activation_attempt_count, activation_sms_sent_at'
+      'id, full_name, unit, building, status, phone, email, monthly_rent, activation_status, sms_consent_status, activation_attempt_count, activation_sms_sent_at'
     const selectLegacy =
-      'id, full_name, unit, building, status, balance_due, lease_end_date, move_in_date, phone, email, monthly_rent'
+      'id, full_name, unit, building, status, phone, email, monthly_rent'
 
     let data: Record<string, unknown>[] | null = null
     let fetchError: { message: string } | null = null
@@ -268,13 +239,20 @@ export function AdminResidentsDashboard() {
     }
 
     const landlordId = getActiveLandlordId()
-    const [propertiesResult, unitsResult] = await Promise.all([
+    const [propertiesResult, unitsResult, rentRunsResult] = await Promise.all([
       listPropertiesForLandlord(landlordId),
       supabase
         .from('units')
         .select('id, unit_label, building, status, property_id')
         .eq('landlord_id', landlordId)
         .limit(2000),
+      supabase
+        .from('workflow_runs')
+        .select('id, resident_id, status, started_at, metadata')
+        .eq('landlord_id', landlordId)
+        .eq('template_id', 'rent_collection')
+        .order('started_at', { ascending: false })
+        .limit(1000),
     ])
 
     const canonicalProperties =
@@ -288,12 +266,23 @@ export function AdminResidentsDashboard() {
     const healthUnits = mapUnitsForPropertyHealth(
       (unitsResult.data ?? []) as Record<string, unknown>[],
     )
+    const paymentStatusByResident = new Map<string, PropertyHistoryPaymentStatus>()
+    for (const raw of (rentRunsResult.data ?? []) as Record<string, unknown>[]) {
+      const residentId = asString(raw.resident_id)
+      if (!residentId || paymentStatusByResident.has(residentId)) continue
+      paymentStatusByResident.set(
+        residentId,
+        rentPaymentStatusFromRun({
+          id: asString(raw.id),
+          status: asString(raw.status),
+          metadata: asRecord(raw.metadata),
+        }),
+      )
+    }
 
     const rows: ResidentRow[] = ((data ?? []) as Record<string, unknown>[])
       .map((raw) => {
-        const balanceDue = asFiniteNumber(raw.balance_due)
         const status = asString(raw.status) || 'active'
-        const leaseEndDate = asString(raw.lease_end_date) || null
         const unit = asString(raw.unit) || null
         const building = asString(raw.building) || null
         const phone = asString(raw.phone) || null
@@ -314,11 +303,9 @@ export function AdminResidentsDashboard() {
           propertyLinkId,
           unitLabel: formatUnit(building, unit),
           rentLabel: formatMonthlyRent(monthlyRent > 0 ? monthlyRent : null),
-          moveInLabel: formatMoveIn(asString(raw.move_in_date) || null),
+          paymentStatus: paymentStatusByResident.get(asString(raw.id)) ?? 'not_paid',
           contactPhone: phone,
           contactEmail: email,
-          leaseEndLabel: formatLeaseEnd(leaseEndDate),
-          balanceDue,
           status,
           activationStatus: asString(raw.activation_status) || null,
           smsConsentStatus: asString(raw.sms_consent_status) || null,
@@ -454,21 +441,14 @@ export function AdminResidentsDashboard() {
         !q ||
         resident.name.toLowerCase().includes(q) ||
         resident.unitLabel.toLowerCase().includes(q) ||
-        resident.leaseEndLabel.toLowerCase().includes(q) ||
-        resident.moveInLabel.toLowerCase().includes(q) ||
         (resident.contactPhone ?? '').toLowerCase().includes(q) ||
         (resident.contactEmail ?? '').toLowerCase().includes(q)
       if (!matchesSearch) return false
       return true
     })
 
-    return filtered.sort((a, b) => {
-      const balanceDelta =
-        balanceSort === 'desc' ? b.balanceDue - a.balanceDue : a.balanceDue - b.balanceDue
-      if (balanceDelta !== 0) return balanceDelta
-      return a.name.localeCompare(b.name)
-    })
-  }, [residents, searchQuery, balanceSort])
+    return filtered.sort((a, b) => a.name.localeCompare(b.name))
+  }, [residents, searchQuery])
 
   const unactivatedResidentCount = useMemo(
     () =>
@@ -784,17 +764,6 @@ export function AdminResidentsDashboard() {
               aria-label="Search residents"
             />
           </div>
-          <div className="flex flex-wrap items-center gap-3">
-            <FilterToggleGroup
-              label="Sort by balance"
-              value={balanceSort}
-              options={[
-                { value: 'desc', label: 'Highest balance' },
-                { value: 'asc', label: 'Lowest balance' },
-              ]}
-              onChange={setBalanceSort}
-            />
-          </div>
         </div>
       </div>
 
@@ -854,24 +823,22 @@ export function AdminResidentsDashboard() {
                 <th className="px-6 py-3 text-[12px] font-medium text-[#6a7282]">Resident</th>
                 <th className="px-6 py-3 text-[12px] font-medium text-[#6a7282]">Unit</th>
                 <th className="px-6 py-3 text-[12px] font-medium text-[#6a7282]">Rent</th>
+                <th className="px-6 py-3 text-[12px] font-medium text-[#6a7282]">Payment status</th>
                 <th className="px-6 py-3 text-[12px] font-medium text-[#6a7282]">Contact</th>
-                <th className="px-6 py-3 text-[12px] font-medium text-[#6a7282]">Move-in</th>
-                <th className="px-6 py-3 text-[12px] font-medium text-[#6a7282]">Lease ends</th>
                 <th className="px-6 py-3 text-[12px] font-medium text-[#6a7282]">Occupancy</th>
-                <th className="px-6 py-3 text-[12px] font-medium text-[#6a7282]">Balance</th>
                 <th className="px-6 py-3 text-[12px] font-medium text-[#6a7282]">Activation</th>
               </tr>
             </thead>
             <tbody>
               {loading ? (
                 <tr>
-                    <td colSpan={10} className="px-6 py-10 text-center text-[14px] text-[#6a7282]">
+                    <td colSpan={8} className="px-6 py-10 text-center text-[14px] text-[#6a7282]">
                     Loading residents…
                   </td>
                 </tr>
               ) : filteredResidents.length === 0 ? (
                 <tr>
-                    <td colSpan={10} className="px-6 py-10 text-center text-[14px] text-[#6a7282]">
+                    <td colSpan={8} className="px-6 py-10 text-center text-[14px] text-[#6a7282]">
                     {residents.length === 0 ? (
                       <>
                         No residents yet.{' '}
@@ -933,6 +900,9 @@ export function AdminResidentsDashboard() {
                       {resident.rentLabel}
                     </td>
                     <td className="px-6 py-4">
+                      <PaymentStatusChip status={resident.paymentStatus} />
+                    </td>
+                    <td className="px-6 py-4">
                       <div className="flex flex-col gap-0.5">
                         {resident.contactPhone ? (
                           <span className="text-[13px] leading-5 text-[#0a0a0a]">{resident.contactPhone}</span>
@@ -947,24 +917,8 @@ export function AdminResidentsDashboard() {
                         ) : null}
                       </div>
                     </td>
-                    <td className="px-6 py-4 text-[14px] tabular-nums text-[#6a7282]">
-                      {resident.moveInLabel}
-                    </td>
-                    <td className="px-6 py-4 text-[14px] tabular-nums text-[#6a7282]">
-                      {resident.leaseEndLabel}
-                    </td>
                     <td className="px-6 py-4 text-[14px] text-[#6a7282]">
                       {residentOccupancyLabel(resident.status)}
-                    </td>
-                    <td
-                      className={[
-                        'px-6 py-4 text-[14px] tabular-nums',
-                        resident.balanceDue > 0
-                          ? 'font-semibold text-[#0a0a0a]'
-                          : 'text-[#6a7282]',
-                      ].join(' ')}
-                    >
-                      {formatBalance(resident.balanceDue)}
                     </td>
                     <td className="px-6 py-4 align-middle">
                       {(() => {

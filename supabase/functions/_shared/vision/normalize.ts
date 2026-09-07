@@ -57,6 +57,19 @@ function asConfidence(value: unknown): AgeConfidence {
   return "low"
 }
 
+function percentFromAgeBand(confidence: AgeConfidence): number {
+  if (confidence === "high") return 90
+  if (confidence === "medium") return 65
+  return 40
+}
+
+function asOverallConfidence(value: unknown, ageBand: AgeConfidence): number {
+  const n = asNumberOrNull(value)
+  if (n == null) return percentFromAgeBand(ageBand)
+  if (n >= 0 && n <= 1) return Math.round(n * 100)
+  return Math.min(100, Math.max(0, Math.round(n)))
+}
+
 function asCondition(value: unknown): ConditionRating {
   const v = asString(value)
   if (v === "good" || v === "fair" || v === "poor" || v === "unsafe") return v
@@ -130,6 +143,8 @@ export function normalizeApplianceVisionResult(raw: unknown): ApplianceVisionRes
   const btuOutput = asNumberOrNull(item.btuOutput)
   const notes = asString(o.rawConfidenceNotes)
   const category = asCategory(o.category)
+  const ageConfidence = asConfidence(age.confidence)
+  const overallConfidence = asOverallConfidence(o.overallConfidence, ageConfidence)
 
   return {
     category,
@@ -143,7 +158,7 @@ export function normalizeApplianceVisionResult(raw: unknown): ApplianceVisionRes
     },
     estimatedAge: {
       value: asNumberOrNull(age.value),
-      confidence: asConfidence(age.confidence),
+      confidence: ageConfidence,
       basis: asString(age.basis) || "Not specified",
     },
     condition: {
@@ -152,7 +167,37 @@ export function normalizeApplianceVisionResult(raw: unknown): ApplianceVisionRes
     },
     deficiencies,
     maintenanceRecommendations,
+    overallConfidence,
     ...(notes ? { rawConfidenceNotes: notes } : {}),
+  }
+}
+
+export function normalizeInspectionPropertyAddress(raw: unknown): {
+  street: string
+  city: string
+  state: string
+  zip: string
+  raw: string
+} {
+  const o = raw && typeof raw === "object" ? (raw as Record<string, unknown>) : {}
+  const str = (key: string) => (typeof o[key] === "string" ? o[key].trim() : "")
+  return {
+    street: str("street"),
+    city: str("city"),
+    state: str("state"),
+    zip: str("zip"),
+    raw: str("raw") || [str("street"), str("city"), str("state"), str("zip")].filter(Boolean).join(", "),
+  }
+}
+
+export function normalizeInspectionReportExtract(raw: unknown): {
+  propertyAddress: ReturnType<typeof normalizeInspectionPropertyAddress>
+  items: ApplianceVisionResult[]
+} {
+  const o = raw && typeof raw === "object" ? (raw as Record<string, unknown>) : {}
+  return {
+    propertyAddress: normalizeInspectionPropertyAddress(o.propertyAddress),
+    items: normalizeApplianceVisionResultList(o.items ?? o),
   }
 }
 

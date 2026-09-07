@@ -183,6 +183,9 @@ export const PORTFOLIO_EXTRACT_JSON_SCHEMA = {
 const SYSTEM_PROMPT = `You extract structured property-management portfolio data from uploaded documents for landlord onboarding.
 
 Rules:
+- If the document is a vendor roster, preferred vendor list, contractor list, W-9, certificate of insurance, or vendor invoice, populate vendors[] with each company: name, trade/category, phone, and email. Do not put those companies in residents[] or properties[].
+- If the document is an inspection report, walkthrough, or maintenance history, populate maintenanceIssues[] with each finding: description, unit, building, trade/category, and priority. Do not put those findings in residents[] or properties[].
+- If the document is a P&L, operating statement, expense report, tax bill, or similar financial file, populate financialRecords[] with each line: recordType, description, amount, and period. Do not invent tenants from those rows.
 - Extract ONLY information explicitly visible in the document. Never invent names, addresses, units, rents, or vendors.
 - If nothing portfolio-related is present, return empty arrays and explain in warnings.
 - Prefer exact text from the document over inference.
@@ -270,6 +273,22 @@ export function resolveExtractedBuilding(row: Record<string, unknown>): string {
     "community",
     "address",
     "location",
+  ])
+}
+
+export function resolveExtractedVendorName(row: Record<string, unknown>): string {
+  return readField(row, [
+    "name",
+    "vendorName",
+    "vendor_name",
+    "companyName",
+    "company_name",
+    "company",
+    "businessName",
+    "business_name",
+    "contractorName",
+    "contractor_name",
+    "vendor",
   ])
 }
 
@@ -512,13 +531,15 @@ export function normalizePortfolioDocumentExtract(raw: unknown): PortfolioDocume
         confidence: clampConfidence(row.confidence),
       }
     }),
-    vendors: normalizeArray(root.vendors, (row) => {
-      const name = cleanExtractedText(row.name)
+    vendors: normalizeArray(
+      root.vendors ?? root.contractors ?? root.preferredVendors ?? root.preferred_vendors,
+      (row) => {
+      const name = resolveExtractedVendorName(row)
       if (!name) return null
       return {
         name,
-        category: cleanExtractedText(row.category),
-        phone: cleanExtractedText(row.phone),
+        category: cleanExtractedText(row.category ?? row.trade ?? row.service),
+        phone: cleanExtractedText(row.phone ?? row.phoneNumber ?? row.phone_number),
         email: cleanExtractedText(row.email),
         confidence: clampConfidence(row.confidence),
       }
@@ -538,25 +559,31 @@ export function normalizePortfolioDocumentExtract(raw: unknown): PortfolioDocume
       }
     }),
     maintenanceIssues: normalizeArray(root.maintenanceIssues ?? root.maintenance_issues, (row) => {
-      const description = cleanExtractedText(row.description)
+      const description = cleanExtractedText(
+        row.description ?? row.issue ?? row.finding ?? row.notes ?? row.problem ?? row.workPerformed,
+      )
       if (!description) return null
       return {
         unit: resolveExtractedUnit(row),
         building: resolveExtractedBuilding(row),
-        category: cleanExtractedText(row.category),
+        category: cleanExtractedText(row.category ?? row.trade ?? row.issueType),
         description,
         priority: cleanExtractedText(row.priority) || "normal",
         confidence: clampConfidence(row.confidence),
       }
     }),
-    financialRecords: normalizeArray(root.financialRecords ?? root.financial_records, (row) => {
-      const description = cleanExtractedText(row.description)
-      if (!description) return null
+    financialRecords: normalizeArray(root.financialRecords ?? root.financial_records ?? root.expenses, (row) => {
+      const recordType = cleanExtractedText(row.recordType ?? row.record_type ?? row.type ?? row.category)
+      const amount = cleanExtractedText(row.amount ?? row.total ?? row.value)
+      const description = cleanExtractedText(
+        row.description ?? row.lineItem ?? row.line_item ?? row.item ?? row.memo ?? row.category,
+      ) || recordType
+      if (!description && !amount) return null
       return {
-        recordType: cleanExtractedText(row.recordType ?? row.record_type),
-        description,
-        amount: cleanExtractedText(row.amount),
-        period: cleanExtractedText(row.period),
+        recordType,
+        description: description || amount,
+        amount,
+        period: cleanExtractedText(row.period ?? row.date ?? row.month),
         confidence: clampConfidence(row.confidence),
       }
     }),
@@ -906,6 +933,43 @@ function leaseDocumentHint(fileName: string, documentCategory: string): string {
   return ""
 }
 
+function vendorDocumentHint(fileName: string, documentCategory: string): string {
+  if (
+    documentCategory === "vendor_contract" ||
+    documentCategory === "vendor_invoice" ||
+    documentCategory === "w9_form" ||
+    documentCategory === "insurance_certificate" ||
+    /\b(vendor|contractor|preferred.?vendor|w-?9|certificate of insurance|\bcoi\b)\b/i.test(
+      fileName,
+    )
+  ) {
+    return "This file is vendor information (roster, preferred vendor list, W-9, insurance certificate, or vendor invoice). Populate vendors[] with every company listed: name, trade/category, phone, and email. If this is an invoice, also add billed line items to financialRecords[] (description, amount, period). Do not treat vendor companies as residents, tenants, or properties."
+  }
+  return ""
+}
+
+function maintenanceDocumentHint(fileName: string, documentCategory: string): string {
+  if (
+    documentCategory === "inspection_report" ||
+    /inspection|walkthrough|maintenance.?history|repair.?history|service.?history/i.test(fileName)
+  ) {
+    return "This file is an inspection report or maintenance history. Populate maintenanceIssues[] with every finding or past job: description, unit, building, trade/category, and priority. Do not treat those rows as residents or properties."
+  }
+  return ""
+}
+
+function financialDocumentHint(fileName: string, documentCategory: string): string {
+  if (
+    documentCategory === "property_statement" ||
+    documentCategory === "expense_report" ||
+    documentCategory === "property_tax" ||
+    /financial|p&l|profit|expense|receipt|statement|t-?12/i.test(fileName)
+  ) {
+    return "This file is a financial statement, expense report, or tax record. Populate financialRecords[] with every line: recordType, description, amount, and period. Do not treat those rows as residents or vendors."
+  }
+  return ""
+}
+
 export function buildUserContent(
   fileName: string,
   documentCategory: string,
@@ -922,7 +986,12 @@ export function buildUserContent(
       ? "Rent rolls often split tenant names into First Name and Last Name columns — combine both into fullName/residentName for each row. Also add one properties entry per distinct property/building name or address, plus one units entry per distinct unit number."
       : ""
   const leaseHint = leaseDocumentHint(fileName, documentCategory)
-  const extraHints = [rentRollNameHint, leaseHint].filter(Boolean).join("\n")
+  const vendorHint = vendorDocumentHint(fileName, documentCategory)
+  const maintenanceHint = maintenanceDocumentHint(fileName, documentCategory)
+  const financialHint = financialDocumentHint(fileName, documentCategory)
+  const extraHints = [rentRollNameHint, leaseHint, vendorHint, maintenanceHint, financialHint]
+    .filter(Boolean)
+    .join("\n")
   const intro = `File: ${fileName}\n${categoryHint}${extraHints ? `\n${extraHints}` : ""}\nExtract portfolio data from this document.`
 
   if (contentType === "text/csv" || fileName.toLowerCase().endsWith(".csv")) {

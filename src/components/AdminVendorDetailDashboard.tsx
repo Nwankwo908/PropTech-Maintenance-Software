@@ -13,7 +13,6 @@ import {
 } from '@/lib/vendorStatusChip'
 import {
   buildVendorComplianceProfile,
-  mapQueriesForVendorServiceArea,
   type VendorComplianceItem,
   type VendorComplianceProfile,
 } from '@/lib/vendorComplianceProfile'
@@ -33,7 +32,6 @@ import {
   sendVendorInvite,
   type VendorInviteChannel,
 } from '@/api/vendorVerification'
-import { VendorServiceAreaMap } from '@/components/VendorServiceAreaMap'
 import { OverrideOnboardingModal } from '@/components/OverrideOnboardingModal'
 import {
   VENDOR_ONBOARDING_OVERRIDE_DISCLAIMER_VERSION,
@@ -521,8 +519,6 @@ function ChecklistRow({ item }: { item: VerificationChecklistItem }) {
   )
 }
 
-type VendorProfilePanel = 'service_area' | 'jobs'
-
 export function AdminVendorDetailDashboard() {
   const { vendorId: vendorSlug } = useParams<{ vendorId: string }>()
   const vendorId = parseVendorId(vendorSlug)
@@ -542,7 +538,6 @@ export function AdminVendorDetailDashboard() {
   const [overrideActivationSmsSent, setOverrideActivationSmsSent] = useState(false)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
-  const [profilePanel, setProfilePanel] = useState<VendorProfilePanel>('service_area')
   const [completedJobs, setCompletedJobs] = useState<VendorJobRow[]>([])
   const [jobsError, setJobsError] = useState<string | null>(null)
 
@@ -1214,91 +1209,10 @@ export function AdminVendorDetailDashboard() {
         <div className="grid gap-8 lg:grid-cols-[minmax(0,1fr)_minmax(20rem,26rem)] lg:items-stretch">
           <div className="flex min-h-0 min-w-0 h-full flex-col">
           <section className="flex h-full min-h-0 flex-col overflow-hidden rounded-[10px] border border-[#e5e7eb] bg-white shadow-[0px_1px_2px_-1px_rgba(0,0,0,0.06)]">
-            <div
-              className="flex items-end justify-start gap-5 border-b border-[#f3f4f6] px-5"
-              role="tablist"
-              aria-label="Vendor profile sections"
-            >
-              {(
-                [
-                  { id: 'service_area' as const, label: 'Service area' },
-                  { id: 'jobs' as const, label: 'Jobs' },
-                ] as const
-              ).map((tab) => {
-                const selected = profilePanel === tab.id
-                return (
-                  <button
-                    key={tab.id}
-                    type="button"
-                    role="tab"
-                    aria-selected={selected}
-                    onClick={() => setProfilePanel(tab.id)}
-                    className={[
-                      'sa-press -mb-px border-b-2 px-0 pb-2.5 pt-3 text-[13px] font-medium leading-5 outline-none focus-visible:ring-2 focus-visible:ring-[#186179] focus-visible:ring-offset-2',
-                      selected
-                        ? 'border-[#186179] text-[#186179]'
-                        : 'border-transparent text-[#6a7282] hover:text-[#186179]',
-                    ].join(' ')}
-                  >
-                    {tab.label}
-                  </button>
-                )
-              })}
+            <div className="flex items-start justify-between gap-3 border-b border-[#f3f4f6] px-5 py-4">
+              <h2 className="text-[16px] font-semibold leading-6 text-[#0a0a0a]">Jobs</h2>
             </div>
-
-            {profilePanel === 'service_area' ? (
-            <div role="tabpanel" className="flex min-h-0 flex-1 flex-col">
-              {compliance.serviceArea.radiusMiles != null ? (
-                <p className="shrink-0 px-4 pt-4 text-[13px] leading-5 text-[#6a7282]">
-                  {compliance.serviceArea.radiusMiles} mi service radius
-                </p>
-              ) : null}
-              <div
-                className={[
-                  'min-h-0 flex-1 px-4 pb-4',
-                  compliance.serviceArea.radiusMiles != null ? 'pt-3' : 'pt-4',
-                ].join(' ')}
-              >
-                <VendorServiceAreaMap
-                  className="h-full min-h-[280px] overflow-hidden rounded-[10px]"
-                  queries={mapQueriesForVendorServiceArea(
-                    compliance.serviceArea,
-                    locationLabel,
-                  )}
-                  radiusMiles={compliance.serviceArea.radiusMiles}
-                  emptyHint={compliance.serviceArea.emptyHint}
-                />
-              </div>
-              {(compliance.serviceArea.cities ?? []).length > 0 ||
-              Boolean(compliance.serviceArea.stateCode) ||
-              (compliance.serviceArea.zipCodes ?? []).length > 0 ? (
-                <div className="flex shrink-0 flex-wrap gap-1.5 px-4 pb-4">
-                  {(compliance.serviceArea.cities ?? []).map((city) => (
-                    <span
-                      key={`city-${city}`}
-                      className="inline-flex rounded-[4px] bg-[#f3f4f6] px-2 py-0.5 text-[12px] font-medium text-[#364153]"
-                    >
-                      {city}
-                    </span>
-                  ))}
-                  {compliance.serviceArea.stateCode ? (
-                    <span className="inline-flex rounded-[4px] bg-[#f3f4f6] px-2 py-0.5 text-[12px] font-medium text-[#364153]">
-                      {compliance.serviceArea.stateCode}
-                    </span>
-                  ) : null}
-                  {(compliance.serviceArea.zipCodes ?? []).map((zip) => (
-                    <span
-                      key={zip}
-                      className="inline-flex rounded-[4px] bg-[#f3f4f6] px-2 py-0.5 text-[12px] font-medium tabular-nums text-[#364153]"
-                    >
-                      {zip}
-                    </span>
-                  ))}
-                </div>
-              ) : null}
-            </div>
-            ) : (
-            <div role="tabpanel" className="flex min-h-[16rem] flex-1 flex-col">
+            <div className="flex min-h-[16rem] flex-1 flex-col">
               <div className="flex shrink-0 flex-wrap items-center gap-x-4 gap-y-1 border-b border-[#f3f4f6] px-5 py-3 text-[13px] leading-5 text-[#6a7282]">
                 <span>
                   <span className="font-medium tabular-nums text-[#0a0a0a]">
@@ -1374,7 +1288,6 @@ export function AdminVendorDetailDashboard() {
                 </table>
               </div>
             </div>
-            )}
           </section>
           </div>
 

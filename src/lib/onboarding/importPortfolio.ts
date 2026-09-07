@@ -3,6 +3,7 @@
  */
 import { getActiveLandlordId } from '@/lib/activeLandlord'
 import type {
+  ExtractedFinancialLine,
   ExtractedMaintenanceIssue,
   MockExtractionReview,
 } from '@/lib/onboardingMockExtraction'
@@ -15,8 +16,19 @@ import {
   issueCategoryToVendorTrade,
   isGeneralistTrade,
   normalizeVendorTrade,
+  vendorTradeToDbCategory,
 } from '@/lib/vendorTrades'
+import { recordActivityLog } from '@/lib/recordActivityLog'
+import {
+  loadApprovedMaintenanceRecords,
+  loadMaintenanceHistoryDocuments,
+  recordsFromPlainJobs,
+  saveApprovedMaintenanceRecords,
+  saveMaintenanceHistoryDocuments,
+  type MaintenanceHistoryDocument,
+} from '@/lib/maintenanceHistoryImport'
 import { requireOnboardingLandlord } from './draftStorage'
+import { saveImportedOpsRecords } from './persist/importedOpsRecords'
 import { importOnboardingResidentsFromExtraction } from './persist/importResidents'
 import { persistOnboardingProperties, collectExtractedUnitLabels } from './persist/properties'
 import { fetchOnboardingResidents } from './persist/residents'
@@ -243,7 +255,9 @@ async function importExtractedMaintenanceIssues(
         assigned_vendor_id: matchedVendor?.id ?? null,
         assigned_at: matchedVendor ? createdAt : null,
         vendor_work_status: vendorWorkStatus,
-        issue_category: issue.category.trim() || 'general',
+        issue_category: issue.category.trim()
+          ? issueCategoryToVendorTrade(issue.category)
+          : 'general',
         estimated_minutes: sla.severity === 'urgent' ? 240 : 480,
         due_at: dueAt,
       })
@@ -295,6 +309,19 @@ async function importExtractedMaintenanceIssues(
 
     workflowRuns += 1
     const runId = String(runRow.id)
+    await recordActivityLog({
+      landlordId: params.landlordId,
+      eventType: 'maintenance.imported',
+      source: 'onboarding',
+      actorType: 'landlord',
+      maintenanceRequestId: ticketId,
+      workflowRunId: runId,
+      unitId: unit?.id ?? null,
+      metadata: {
+        message: `Imported maintenance issue: ${issue.description.trim()}`,
+        source: 'onboarding_import',
+      },
+    })
     await logImportWorkflowEvent(runId, {
       eventType: 'workflow.trigger',
       step: 'document_import',
@@ -311,6 +338,87 @@ async function importExtractedMaintenanceIssues(
   }
 
   return { tickets, workflowRuns }
+}
+
+function fallbackImportBuilding(
+  properties: { name: string }[],
+  building: string,
+): string {
+  const trimmed = building.trim()
+  if (trimmed) return trimmed
+  return properties[0]?.name.trim() || 'Portfolio'
+}
+
+function importIssuesIntoMaintenanceHistory(
+  issues: ExtractedMaintenanceIssue[],
+  properties: { name: string }[],
+  landlordId: string,
+): void {
+  if (typeof window === 'undefined' || issues.length === 0) return
+
+  const grouped = new Map<string, ExtractedMaintenanceIssue[]>()
+  for (const issue of issues) {
+    const building = fallbackImportBuilding(properties, issue.building)
+    const list = grouped.get(building) ?? []
+    list.push(issue)
+    grouped.set(building, list)
+  }
+
+  for (const [building, group] of grouped) {
+    const scope = { landlordId, building }
+    const stamp = Date.now()
+    const doc: MaintenanceHistoryDocument = {
+      id: `onb-mh-${stamp}-${building.replace(/\s+/g, '-').slice(0, 24)}`,
+      fileName: group[0]?.sourceDocumentName?.trim() || 'Fast Track import',
+      fileSize: 0,
+      fileType: 'TXT',
+      status: 'ready_for_review',
+      uploadedAt: new Date().toISOString(),
+      records: [],
+    }
+    const records = recordsFromPlainJobs(
+      doc,
+      building,
+      group.map((issue) => ({
+        tradeCategory: issue.category,
+        issueType: issue.description,
+        workPerformed: issue.description,
+        unitLabel: issue.unit,
+        notes: issue.sourceDocumentName ?? '',
+        confidence: 0.85,
+      })),
+    ).map((record) => ({ ...record, approved: true }))
+
+    const existingApproved = loadApprovedMaintenanceRecords(scope)
+    saveApprovedMaintenanceRecords([...existingApproved, ...records], scope)
+    const existingDocs = loadMaintenanceHistoryDocuments(scope)
+    saveMaintenanceHistoryDocuments(
+      [...existingDocs, { ...doc, records }],
+      scope,
+    )
+  }
+}
+
+async function importExtractedFinancialRecords(
+  records: ExtractedFinancialLine[],
+  landlordId: string,
+): Promise<number> {
+  if (records.length === 0) return 0
+  await recordActivityLog({
+    landlordId,
+    eventType: 'financial.imported',
+    source: 'onboarding',
+    actorType: 'landlord',
+    metadata: {
+      message:
+        records.length === 1
+          ? `Imported financial record: ${records[0]?.description.trim() || records[0]?.amount || 'line item'}`
+          : `Imported ${records.length} financial records from onboarding documents.`,
+      count: records.length,
+      source: 'onboarding_import',
+    },
+  })
+  return records.length
 }
 
 export async function importMockExtraction(
@@ -334,6 +442,7 @@ export async function importMockExtraction(
     tickets: 0,
     leases: 0,
     workflowRuns: 0,
+    financialRecords: 0,
   }
 
   const selectedProperties = review.properties.filter((p) => p.selected)
@@ -404,7 +513,7 @@ export async function importMockExtraction(
       const nameKey = vendor.name.trim().toLowerCase()
       const payload = {
         name: vendor.name,
-        category: vendor.category,
+        category: vendorTradeToDbCategory(vendor.category) ?? 'general',
         email: vendor.email,
         phone: normalizePhoneForDb(vendor.phone) ?? null,
         notification_channel: 'both' as const,
@@ -420,7 +529,11 @@ export async function importMockExtraction(
           .update(payload)
           .eq('id', existing.id)
           .eq('landlord_id', landlordId)
-        if (!error) imported.vendors += 1
+        if (error) {
+          console.warn('[fastTrackImport] update vendor', vendor.name, error.message)
+          continue
+        }
+        imported.vendors += 1
         continue
       }
 
@@ -428,20 +541,22 @@ export async function importMockExtraction(
         ...payload,
         landlord_id: landlordId,
       })
-      if (!error) {
-        imported.vendors += 1
-        existingByName.set(nameKey, {
-          id: `imported-${nameKey}`,
-          name: vendor.name,
-          category: vendor.category ?? '',
-          email: vendor.email,
-          phone: vendor.phone,
-          city: '',
-          state: '',
-          country: '',
-          preferredEmergency: false,
-        })
+      if (error) {
+        console.warn('[fastTrackImport] insert vendor', vendor.name, error.message)
+        continue
       }
+      imported.vendors += 1
+      existingByName.set(nameKey, {
+        id: `imported-${nameKey}`,
+        name: vendor.name,
+        category: payload.category ?? '',
+        email: vendor.email,
+        phone: vendor.phone,
+        city: '',
+        state: '',
+        country: '',
+        preferredEmergency: false,
+      })
     }
   }
 
@@ -451,7 +566,7 @@ export async function importMockExtraction(
     fetchOnboardingVendors(landlordId),
   ])
 
-  const maintenanceIssues = review.maintenanceIssues.filter((issue) => issue.selected)
+  const maintenanceIssues = (review.maintenanceIssues ?? []).filter((issue) => issue.selected)
   if (maintenanceIssues.length > 0) {
     const maintenanceImport = await importExtractedMaintenanceIssues(maintenanceIssues, {
       landlordId,
@@ -464,7 +579,33 @@ export async function importMockExtraction(
     })
     imported.tickets = maintenanceImport.tickets
     imported.workflowRuns += maintenanceImport.workflowRuns
+    importIssuesIntoMaintenanceHistory(maintenanceIssues, persistedProperties, landlordId)
   }
+
+  const financialRecords = (review.financialRecords ?? []).filter((row) => row.selected)
+  imported.financialRecords = await importExtractedFinancialRecords(financialRecords, landlordId)
+
+  saveImportedOpsRecords(
+    {
+      maintenanceIssues: maintenanceIssues.map((issue) => ({
+        id: issue.id,
+        description: issue.description,
+        unit: issue.unit,
+        building: issue.building,
+        category: issue.category,
+        priority: issue.priority,
+      })),
+      financialRecords: financialRecords.map((row) => ({
+        id: row.id,
+        recordType: row.recordType,
+        description: row.description,
+        amount: row.amount,
+        period: row.period,
+        sourceDocumentName: row.sourceDocumentName ?? '',
+      })),
+    },
+    landlordId,
+  )
 
   // Lease dates persist on residents above. Real lease_renewal runs start from
   // check-lease-renewals when the notice window opens — do not insert dummy WOs.

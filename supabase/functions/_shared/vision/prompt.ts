@@ -32,16 +32,24 @@ valve and expansion tank as part of the condition assessment.
    "safety_hazard" deficiency, not just a routine maintenance note.
 6. If you are uncertain about anything, say so explicitly rather than guessing
    confidently. Never fabricate a model or serial number you cannot actually read.
+7. Set overallConfidence to a 0–100 integer for how clearly the item, brand, model,
+   serial, age, and condition can be read from this photo. Put a short plain-language
+   reason in rawConfidenceNotes when anything is not identifiable (for example:
+   "The faucet's age and brand are not identifiable from the image.").
 
 Return ONLY valid JSON matching the provided schema. No prose outside the JSON.`
 
 export const INSPECTION_DOCUMENT_SYSTEM_PROMPT = `You are assisting a licensed home inspector reviewing a home inspection report
-(PDF page or photo of a report). Extract every distinct appliance, HVAC system,
-water heater, boiler, and roof finding you can identify.
+(PDF page or photo of a report). Extract the property address printed on the report
+and every distinct appliance, HVAC system, water heater, boiler, and roof finding.
 
-For each item, return the same structured fields as a photo assessment:
+The propertyAddress object is required. Use the address on the cover page, header,
+or first mention of the inspected property. Never invent an address. If no address
+is printed, return empty strings.
+
+For each equipment item, return the same structured fields as a photo assessment:
 category, identifiedItem, estimatedAge, condition, deficiencies,
-maintenanceRecommendations, and rawConfidenceNotes when uncertain.
+maintenanceRecommendations, overallConfidence (0-100), and rawConfidenceNotes when uncertain.
 
 Classify boilers as category "boiler" (not HVAC or water_heater). Include fuelType
 and btuOutput on identifiedItem when available for boilers. Flag missing, corroded,
@@ -49,4 +57,5 @@ or overdue pressure relief valves / expansion tanks as repair_recommended or
 safety_hazard deficiencies.
 
 Never fabricate model or serial numbers. Prefer explicit report text over inference.
-Return ONLY valid JSON: { "items": ApplianceVisionResult[] }.`
+Return ONLY valid JSON:
+{ "propertyAddress": { "street": string, "city": string, "state": string, "zip": string, "raw": string }, "items": ApplianceVisionResult[] }.`

@@ -1,7 +1,8 @@
 import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.49.1"
-import { logGraphEvent } from "../graph/logGraphEvent.ts"
+import { recordActivityLog } from "../graph/recordActivityLog.ts"
 import { resolveOperationsGraphScope } from "../graph/operationsGraph.ts"
 import type { ApplianceVisionResult, ConditionRating } from "./types.ts"
+import { findReusableInspectionUnitAsset } from "./matchInspectionUnitAsset.ts"
 
 type RegistryAssetType =
   | "hvac"
@@ -197,36 +198,13 @@ export async function confirmInspectionAssessment(
     .limit(100)
 
   if (buildingAssets?.length) {
-    const bySlot = buildingAssets.find((row) => {
-      const meta =
-        row.metadata && typeof row.metadata === "object"
-          ? (row.metadata as Record<string, unknown>)
-          : {}
-      if (meta.registryAssetType === slot.registryAssetType) {
-        if (slot.registryAssetType !== "appliance") return true
-        return meta.applianceSubtype === slot.applianceSubtype
-      }
-      return false
+    const match = findReusableInspectionUnitAsset(buildingAssets, {
+      photoId,
+      itemType,
+      brand,
+      model,
+      serial,
     })
-    const byModel =
-      model
-        ? buildingAssets.find(
-          (row) =>
-            row.model &&
-            String(row.model).toLowerCase() === model.toLowerCase() &&
-            String(row.appliance_type || "").toLowerCase().includes(
-              itemType.toLowerCase().slice(0, 12),
-            ),
-        )
-        : null
-    const byTypeBrand = buildingAssets.find((row) => {
-      const typeOk = String(row.appliance_type || "").toLowerCase() === itemType.toLowerCase()
-      if (!typeOk) return false
-      if (model && row.model) return String(row.model).toLowerCase() === model.toLowerCase()
-      if (brand && row.brand) return String(row.brand).toLowerCase() === brand.toLowerCase()
-      return !model && !brand
-    })
-    const match = bySlot || byModel || byTypeBrand
     if (match) {
       existingId = String(match.id)
       existingRow = {
@@ -509,15 +487,20 @@ export async function confirmInspectionAssessment(
     })
     .eq("id", photoId)
 
-  await logGraphEvent(supabase, {
-    landlord_id: landlordId,
-    event_type: "inspection.asset_assessment_confirmed",
+  await recordActivityLog(supabase, {
+    landlordId,
+    eventType: "inspection.asset_assessment_confirmed",
     source: "dashboard",
-    actor_type: "landlord",
-    actor_id: input.actorId ?? null,
-    property_id: scope.propertyId,
-    unit_id: scope.unitId,
+    actorType: "landlord",
+    actorId: input.actorId ?? null,
+    propertyId: scope.propertyId,
+    unitId: scope.unitId,
+    taskId: taskIds[0] ?? null,
     metadata: {
+      message:
+        slot.registryAssetType === "appliance"
+          ? `${itemType} saved to the asset registry and preventive maintenance.`
+          : `${itemType} saved to the asset registry.`,
       building,
       unit_asset_id: unitAssetId,
       photo_id: photoId,

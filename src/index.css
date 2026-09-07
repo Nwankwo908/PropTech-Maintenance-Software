@@ -2469,9 +2469,16 @@ h6 {
     transform var(--sa-duration) var(--sa-ease);
 }
 
+.sa-dropzone:hover {
+  border-color: #94a3b8;
+  background-color: #f1f5f9;
+}
+
 .sa-dropzone[data-dragging='true'],
 .sa-dropzone.is-dragging {
   transform: scale(1.01);
+  border-color: #0d0f11;
+  background-color: #f1f5f9;
 }
 
 .sa-expand {

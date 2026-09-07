@@ -270,6 +270,33 @@ function cleanOnboardingExtractText(value: string | null | undefined): string {
   return isOnboardingExtractJunkValue(text) ? '' : text
 }
 
+function resolveOnboardingExtractedVendorName(item: {
+  name?: string
+  [key: string]: unknown
+}): string {
+  const keys = [
+    'name',
+    'vendorName',
+    'vendor_name',
+    'companyName',
+    'company_name',
+    'company',
+    'businessName',
+    'business_name',
+    'contractorName',
+    'contractor_name',
+    'vendor',
+  ]
+  for (const key of keys) {
+    const value = item[key]
+    if (typeof value === 'string') {
+      const cleaned = cleanOnboardingExtractText(value)
+      if (cleaned) return cleaned
+    }
+  }
+  return ''
+}
+
 export const DOCUMENT_CATEGORY_GROUPS: {
   group: DocumentCategoryGroup
   label: string
@@ -369,8 +396,23 @@ export function inferDocumentCategory(fileName: string): OnboardingDocumentCateg
   if (/lease|rental|tenancy|occupancy.?agreement|housing.?agreement/.test(lower)) {
     return 'lease_agreement'
   }
-  if (/rent.?roll|roster|tenant/.test(lower)) return 'rent_roll'
-  if (/inspection|walkthrough/.test(lower)) return 'inspection_report'
+  if (
+    /vendor|contractor|subcontractor|preferred.?trade|trade.?partner|vendor.?list|vendor.?info|vendor.?roster/.test(
+      lower,
+    )
+  ) {
+    return 'vendor_contract'
+  }
+  if (/rent.?roll|tenant.?roster|resident.?roster|tenant.?list|resident.?list/.test(lower)) {
+    return 'rent_roll'
+  }
+  if (
+    /inspection|walkthrough|maintenance.?history|repair.?history|service.?history|work.?order.?history|past.?repair/.test(
+      lower,
+    )
+  ) {
+    return 'inspection_report'
+  }
   if (/invoice|bill/.test(lower)) return 'vendor_invoice'
   if (/w-?9|w9/.test(lower)) return 'w9_form'
   if (/insurance|certificate|coi/.test(lower)) return 'insurance_certificate'
@@ -378,8 +420,14 @@ export function inferDocumentCategory(fileName: string): OnboardingDocumentCateg
   if (/tax/.test(lower)) return 'property_tax'
   if (/purchase|closing/.test(lower)) return 'purchase_agreement'
   if (/move.?in|checklist/.test(lower)) return 'move_in_document'
-  if (/vendor|contract/.test(lower)) return 'vendor_contract'
-  if (/statement|p&l|profit/.test(lower)) return 'property_statement'
+  if (/contract/.test(lower)) return 'vendor_contract'
+  if (
+    /statement|p&l|profit|financial|income.?statement|operating.?statement|t-?12|trailing.?12/.test(
+      lower,
+    )
+  ) {
+    return 'property_statement'
+  }
   if (/expense|receipt/.test(lower)) return 'expense_report'
   if (/\.(jpg|jpeg|png|heic|webp|tif|tiff)$/.test(lower)) return 'inspection_report'
   if (/\.(xls|xlsx|csv)$/.test(lower)) return 'rent_roll'
@@ -387,12 +435,35 @@ export function inferDocumentCategory(fileName: string): OnboardingDocumentCateg
 }
 
 /** Portfolio extraction role for a single uploaded file (classified before merge). */
-export type OnboardingDocumentExtractRole = 'rent_roll' | 'lease_agreement' | 'unknown'
+export type OnboardingDocumentExtractRole =
+  | 'rent_roll'
+  | 'lease_agreement'
+  | 'vendor'
+  | 'maintenance'
+  | 'financial'
+  | 'unknown'
 
 export function resolvedDocumentCategory(doc: OnboardingUploadedDocument): OnboardingDocumentCategory {
   if (doc.documentCategory !== 'unknown') return doc.documentCategory
   return inferDocumentCategory(doc.fileName)
 }
+
+const VENDOR_DOCUMENT_CATEGORIES = new Set<OnboardingDocumentCategory>([
+  'vendor_contract',
+  'vendor_invoice',
+  'w9_form',
+  'insurance_certificate',
+])
+
+const MAINTENANCE_DOCUMENT_CATEGORIES = new Set<OnboardingDocumentCategory>([
+  'inspection_report',
+])
+
+const FINANCIAL_DOCUMENT_CATEGORIES = new Set<OnboardingDocumentCategory>([
+  'property_statement',
+  'expense_report',
+  'property_tax',
+])
 
 /** Classify each upload before extracting/merging portfolio records. */
 export function classifyOnboardingDocumentExtractRole(
@@ -403,6 +474,9 @@ export function classifyOnboardingDocumentExtractRole(
   if (category === 'lease_agreement' || category === 'move_in_document') {
     return 'lease_agreement'
   }
+  if (VENDOR_DOCUMENT_CATEGORIES.has(category)) return 'vendor'
+  if (MAINTENANCE_DOCUMENT_CATEGORIES.has(category)) return 'maintenance'
+  if (FINANCIAL_DOCUMENT_CATEGORIES.has(category)) return 'financial'
   return 'unknown'
 }
 
@@ -615,7 +689,7 @@ export async function runDocumentProcessing(
     uploadProgress: 100,
       errorMessage: needsAttention
         ? warning ||
-          'We couldn’t find property, tenant, or lease details in this file.'
+          'We couldn’t find property, tenant, vendor, or lease details in this file.'
         : null,
     }
   } catch (err) {
@@ -1925,6 +1999,8 @@ function mergeExtractedDocuments(
     const extractRole = classifyOnboardingDocumentExtractRole(doc)
     const isRentRoll = extractRole === 'rent_roll'
     const isLease = extractRole === 'lease_agreement'
+    const isVendorDoc = extractRole === 'vendor'
+    const isMaintenanceDoc = extractRole === 'maintenance'
 
     if (extractRole === 'unknown') {
       needsReview.push({
@@ -2074,8 +2150,21 @@ function mergeExtractedDocuments(
       leases.push(...collapseLeasesFromSingleAgreement(leaseRowsFromDoc))
     }
 
-    payload.vendors.forEach((item, index) => {
-      const name = cleanOnboardingExtractText(item.name)
+    const vendorItems =
+      payload.vendors.length > 0
+        ? payload.vendors
+        : isVendorDoc
+          ? payload.residents.map((item) => ({
+              name: item.fullName,
+              category: '',
+              phone: item.phone,
+              email: item.email,
+              confidence: item.confidence,
+            }))
+          : []
+
+    vendorItems.forEach((item, index) => {
+      const name = resolveOnboardingExtractedVendorName(item)
       if (!name) return
       vendors.push({
         id: `ext-vendor-${doc.id}-${index}`,
@@ -2086,13 +2175,36 @@ function mergeExtractedDocuments(
       preferredEmergency: false,
         sourceDocumentName: source,
         confidence: item.confidence,
-        selected: item.confidence >= 70,
+        selected: Boolean(name),
         needsReview: item.confidence < 75,
       })
     })
 
-    payload.maintenanceIssues.forEach((item, index) => {
-      const description = cleanOnboardingExtractText(item.description)
+    const maintenanceItems =
+      payload.maintenanceIssues.length > 0
+        ? payload.maintenanceIssues
+        : isMaintenanceDoc
+          ? payload.imageLabels
+              .map((label) => cleanOnboardingExtractText(label))
+              .filter(Boolean)
+              .map((description) => ({
+                unit: '',
+                building: '',
+                category: '',
+                description,
+                priority: 'normal',
+                confidence: 60,
+              }))
+          : []
+
+    maintenanceItems.forEach((item, index) => {
+      const description =
+        cleanOnboardingExtractText(item.description) ||
+        cleanOnboardingExtractText(
+          typeof (item as { issue?: string }).issue === 'string'
+            ? (item as { issue?: string }).issue
+            : '',
+        )
       if (!description) return
       maintenanceIssues.push({
         id: `ext-maint-${doc.id}-${index}`,
@@ -2103,24 +2215,26 @@ function mergeExtractedDocuments(
       priority: item.priority,
         sourceDocumentName: source,
         confidence: item.confidence,
-        selected: item.confidence >= 70,
+        selected: Boolean(description),
         needsReview: item.confidence < 75,
         imageTags: doc.imageLabels,
       })
     })
 
     payload.financialRecords.forEach((item, index) => {
-      const description = cleanOnboardingExtractText(item.description)
-      if (!description) return
+      const recordType = cleanOnboardingExtractText(item.recordType)
+      const amount = cleanOnboardingExtractText(item.amount)
+      const description = cleanOnboardingExtractText(item.description) || recordType
+      if (!description && !amount) return
       financialRecords.push({
         id: `ext-fin-${doc.id}-${index}`,
-        recordType: cleanOnboardingExtractText(item.recordType),
-        description,
-        amount: cleanOnboardingExtractText(item.amount),
+        recordType,
+        description: description || amount,
+        amount,
         period: cleanOnboardingExtractText(item.period),
         sourceDocumentName: source,
         confidence: item.confidence,
-        selected: item.confidence >= 70,
+        selected: Boolean(description || amount),
         needsReview: item.confidence < 75,
       })
     })
@@ -2588,6 +2702,18 @@ export function toMockExtractionReview(review: OnboardingExtractionReview): Mock
         description: item.description,
         priority: item.priority,
         selected: true,
+        sourceDocumentName: item.sourceDocumentName,
+      })),
+    financialRecords: review.financialRecords
+      .filter((item) => item.selected)
+      .map((item) => ({
+        id: item.id,
+        recordType: item.recordType,
+        description: item.description,
+        amount: item.amount,
+        period: item.period,
+        selected: true,
+        sourceDocumentName: item.sourceDocumentName,
       })),
     leases: review.leases
       .filter((item) => item.selected)

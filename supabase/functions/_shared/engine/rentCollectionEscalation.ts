@@ -1,5 +1,6 @@
 import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.49.1"
 import { isRentChargePaidFromRun } from "../paymentSettlement.ts"
+import { landlordHasPayments } from "../../../../shared/landlordCapabilities.ts"
 import { notifyLandlordNeedsAttention } from "../landlordAttentionNotify.ts"
 import {
   logRentCollectionGraphEvent,
@@ -263,6 +264,10 @@ export async function escalateRentCollectionRun(
   },
 ): Promise<RentCollectionEscalationResult | null> {
   if (isRentChargePaidFromRun(params.run).paid) return null
+  const rentStatus = typeof params.run.metadata?.rent_status === "string"
+    ? params.run.metadata.rent_status.trim().toLowerCase()
+    : ""
+  if (rentStatus === "paid") return null
   const state = runStepState<RentCollectionState>(params.run)
   if (params.run.status !== "active") return null
 
@@ -275,11 +280,14 @@ export async function escalateRentCollectionRun(
   const amountDue = runAmountDue(params.run)
   const billingPeriod = runBillingPeriod(params.run)
 
+  const originalAmountDue = Number(
+    params.run.metadata?.original_amount_due ?? state.amount_due ?? amountDue,
+  )
   const classification = classifyRentCollection({
     balanceDue: amountDue ?? 0,
     rentDueDate,
     priorClassification: readRentClassification(params.run.metadata),
-    originalAmountDue: state.amount_due ?? amountDue,
+    originalAmountDue: Number.isFinite(originalAmountDue) ? originalAmountDue : amountDue,
   })
   const classificationMeta = buildRentClassificationMetadata(
     classification,
@@ -370,7 +378,7 @@ export async function escalateRentCollectionRun(
     })
     : null
 
-  const notice = resident
+  const notice = resident && landlordHasPayments(params.landlordId)
     ? await sendLatePaymentNotice(supabase, {
       landlordId: params.landlordId,
       runId: params.run.id,

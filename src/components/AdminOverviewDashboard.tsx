@@ -37,7 +37,7 @@ import {
   SETUP_SUCCESS_COLLAPSED_EVENT,
   shouldShowSetupSuccessCard,
 } from '@/lib/setupSuccessChecklist'
-import { areAllPropertiesDetailsComplete } from '@/lib/propertyDetailsCompleteness'
+import { isAnyPropertyDetailsComplete } from '@/lib/propertyDetailsCompleteness'
 import { ASSET_REGISTRY_CHANGED_EVENT } from '@/lib/assetRegistry'
 import { landlordHasPayments } from '@shared/landlordCapabilities'
 import { cityStateZipForBuildingName, listPropertiesForLandlord, type PropertyRecord } from '@/lib/properties'
@@ -1486,7 +1486,7 @@ export function AdminOverviewDashboard() {
   useEffect(() => {
     let cancelled = false
     const refresh = () => {
-      void areAllPropertiesDetailsComplete(canonicalProperties).then((complete) => {
+      void isAnyPropertyDetailsComplete(canonicalProperties).then((complete) => {
         if (!cancelled) setPropertyDetailsComplete(complete)
       })
     }

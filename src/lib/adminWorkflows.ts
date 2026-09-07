@@ -45,7 +45,7 @@ export type AdminWorkflowRow = {
   lastEventAt: string | null
   /** From workflow_runs.metadata.escalation_reason when escalated. */
   escalationReason: string | null
-  /** From workflow_runs.metadata.issue_category when present. */
+  /** From linked ticket `issue_category`, else workflow_runs.metadata.issue_category. */
   issueCategory: string | null
   /**
    * From linked `maintenance_requests.vendor_work_status` when the run targets a ticket.
@@ -976,12 +976,16 @@ export async function fetchAdminWorkflowDashboard(
 
   const ticketById = new Map<
     string,
-    { vendor_work_status: string | null; assigned_vendor_id: string | null }
+    {
+      vendor_work_status: string | null
+      assigned_vendor_id: string | null
+      issue_category: string | null
+    }
   >()
   if (maintenanceTicketIds.length) {
     const { data: tickets, error: ticketsError } = await supabase
       .from('maintenance_requests')
-      .select('id, vendor_work_status, assigned_vendor_id')
+      .select('id, vendor_work_status, assigned_vendor_id, issue_category')
       .in('id', maintenanceTicketIds)
     if (ticketsError) {
       console.error(
@@ -1000,6 +1004,10 @@ export async function fetchAdminWorkflowDashboard(
           assigned_vendor_id:
             typeof ticket.assigned_vendor_id === 'string'
               ? ticket.assigned_vendor_id
+              : null,
+          issue_category:
+            typeof ticket.issue_category === 'string' && ticket.issue_category.trim()
+              ? ticket.issue_category.trim()
               : null,
         })
       }
@@ -1051,7 +1059,8 @@ export async function fetchAdminWorkflowDashboard(
       lastEventMessage: latestEvent?.message ?? null,
       lastEventAt: latestEvent?.created_at ?? null,
       escalationReason: readMetaString(metadata, 'escalation_reason'),
-      issueCategory: readMetaString(metadata, 'issue_category'),
+      issueCategory:
+        ticket?.issue_category ?? readMetaString(metadata, 'issue_category'),
       vendorWorkStatus: ticket?.vendor_work_status ?? null,
       assignedVendorId: ticket?.assigned_vendor_id ?? null,
     }

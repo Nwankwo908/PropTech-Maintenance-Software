@@ -46,6 +46,7 @@ export type ApplianceVisionResult = {
     suggestedIntervalMonths?: number
   }>
   rawConfidenceNotes?: string
+  overallConfidence?: number
 }
 
 export type DibIdentification = {

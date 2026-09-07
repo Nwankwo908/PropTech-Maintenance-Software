@@ -137,6 +137,9 @@ Deno.test("messaging scopes always include requests.write", () => {
   if (!thumbtackScopeAllowsMessaging("demand::requests.write")) {
     throw new Error("bare write scope")
   }
+  if (!thumbtackScopeAllowsMessaging("demand::messages.write")) {
+    throw new Error("messages.write should allow messaging")
+  }
   if (thumbtackScopeAllowsMessaging("demand::businesses/search.read")) {
     throw new Error("search-only should not allow messaging")
   }
@@ -144,7 +147,8 @@ Deno.test("messaging scopes always include requests.write", () => {
 
 Deno.test("thumbtackOpenConversationError explains 401 without a raw status code", () => {
   const msg = thumbtackOpenConversationError(401, "oauth_token_failed")
-  if (!/did not allow this conversation/i.test(msg)) throw new Error(msg)
+  if (!/could not send this in ulo/i.test(msg)) throw new Error(msg)
+  if (!/message api login/i.test(msg)) throw new Error(msg)
   if (/\(401\)/.test(msg)) throw new Error("should not echo 401")
 })
 

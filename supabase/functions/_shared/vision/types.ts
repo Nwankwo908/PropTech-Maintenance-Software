@@ -59,6 +59,8 @@ export type ApplianceVisionResult = {
     suggestedIntervalMonths?: number
   }>
   rawConfidenceNotes?: string
+  /** Overall identification confidence, 0–100. */
+  overallConfidence?: number
 }
 
 export interface VisionProvider {
@@ -158,5 +160,6 @@ export const APPLIANCE_VISION_JSON_SCHEMA = {
       },
     },
     rawConfidenceNotes: { type: "string" },
+    overallConfidence: { type: "number" },
   },
 } as const
