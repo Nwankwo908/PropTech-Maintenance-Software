@@ -61,9 +61,12 @@ import {
   normalizeBuildingKey,
   resolveBuildingHealthRow,
   resolvePropertyHealthKpiValue,
+  type PropertyHealthAsset,
   type PropertyHealthBuildingRow,
   type PropertyHealthCanonicalProperty,
+  type PropertyHealthDamageReport,
   type PropertyHealthFeedback,
+  type PropertyHealthInspection,
   type PropertyHealthPmTask,
   type PropertyHealthResident,
   type PropertyHealthVendorMetrics,
@@ -123,6 +126,7 @@ type PropertyTicket = {
   laborCost: number | null
   materialCost: number | null
   completedAt: string | null
+  dueAt: string | null
 }
 
 type PropertyUnit = {
@@ -283,6 +287,9 @@ export function AdminPropertyDetailDashboard() {
   const [pmTasks, setPmTasks] = useState<PropertyHealthPmTask[]>([])
   const [feedback, setFeedback] = useState<PropertyHealthFeedback[]>([])
   const [vendorMetrics, setVendorMetrics] = useState<PropertyHealthVendorMetrics[]>([])
+  const [healthAssets, setHealthAssets] = useState<PropertyHealthAsset[]>([])
+  const [healthInspections, setHealthInspections] = useState<PropertyHealthInspection[]>([])
+  const [healthDamageReports, setHealthDamageReports] = useState<PropertyHealthDamageReport[]>([])
   const [canonicalProperty, setCanonicalProperty] = useState<PropertyRecord | null>(null)
   const [canonicalProperties, setCanonicalProperties] = useState<PropertyRecord[]>([])
   const [autoApprovalCap, setAutoApprovalCap] = useState(1000)
@@ -441,7 +448,7 @@ export function AdminPropertyDetailDashboard() {
           supabase
             .from('maintenance_request_enriched')
             .select(
-              'id, created_at, unit, unit_id, building, email, issue_category, description, assigned_vendor_id, vendor_work_status, urgency, severity, priority, estimated_minutes',
+              'id, created_at, unit, unit_id, building, email, issue_category, description, assigned_vendor_id, vendor_work_status, urgency, severity, priority, estimated_minutes, due_at',
             )
             .eq('landlord_id', landlordId)
             .order('created_at', { ascending: false })
@@ -449,7 +456,7 @@ export function AdminPropertyDetailDashboard() {
           supabase
             .from('maintenance_requests')
             .select(
-              'id, created_at, unit, email, issue_category, description, assigned_vendor_id, vendor_work_status, urgency, severity, priority, estimated_minutes, completed_at, recognized_spend_amount',
+              'id, created_at, unit, email, issue_category, description, assigned_vendor_id, vendor_work_status, urgency, severity, priority, estimated_minutes, completed_at, recognized_spend_amount, due_at',
             )
             .eq('landlord_id', landlordId)
             .order('created_at', { ascending: false })
@@ -536,6 +543,7 @@ export function AdminPropertyDetailDashboard() {
             asString(merged.resolved_at) ||
             asString(merged.closed_at) ||
             null,
+          dueAt: asString(merged.due_at) || null,
         }
       })
 
@@ -581,6 +589,9 @@ export function AdminPropertyDetailDashboard() {
       setPmTasks(healthSignals.pmTasks)
       setFeedback(healthSignals.feedback)
       setVendorMetrics(healthSignals.vendorMetrics)
+      setHealthAssets(healthSignals.assets)
+      setHealthInspections(healthSignals.inspections)
+      setHealthDamageReports(healthSignals.damageReports)
 
       if (canonicalPropertiesResult.ok) {
         setCanonicalProperties(canonicalPropertiesResult.properties)
@@ -830,6 +841,9 @@ export function AdminPropertyDetailDashboard() {
       pmTasks,
       feedback: enrichFeedbackFromTickets(feedback, healthTickets),
       vendorMetrics,
+      assets: healthAssets,
+      inspections: healthInspections,
+      damageReports: healthDamageReports,
       residents: residents.map((resident) => ({
         id: resident.id,
         fullName: resident.fullName,
@@ -840,7 +854,7 @@ export function AdminPropertyDetailDashboard() {
       })),
       canonicalProperties: canonicalPropertiesForHealth,
     })
-  }, [units, tickets, pmTasks, feedback, vendorMetrics, residents, canonicalPropertiesForHealth])
+  }, [units, tickets, pmTasks, feedback, vendorMetrics, healthAssets, healthInspections, healthDamageReports, residents, canonicalPropertiesForHealth])
 
   const buildingHealth: PropertyHealthBuildingRow | null = useMemo(() => {
     const lookupName = activeCanonicalProperty?.name ?? building

@@ -1,44 +1,38 @@
 /**
- * Unified Property Health — single product metric for portfolio and per-building views.
+ * Unified Property Health — portfolio and per-building views.
  *
- * Score (0–100) = weighted sum of six operational signals:
- *   40% open maintenance issues
- *   20% PM compliance
- *   15% vacancy / occupancy
- *   10% resident satisfaction (vendor_feedback ratings when present)
- *   10% repeat issue risk
- *    5% vendor performance
- *
- * Missing signals use PROPERTY_HEALTH_NEUTRAL_SCORE (50) — neither rewards nor
- * penalizes until real data exists. Resident satisfaction never uses derived proxies.
+ * Score (0–100) comes from calculatePropertyHealth():
+ *   40% Condition · 35% Maintenance · 25% Risk
+ * Missing factors are unknown (not scored as 50).
  *
  * Property activation (Active vs Pending setup) is separate from health scoring.
- * A property is Active once units are tracked. 30 days of ops history or a
- * completed PM task only unlocks the numeric health score / insights — they
- * do not keep a set-up property in Pending setup.
  */
 import { getActiveLandlordId } from '@/lib/activeLandlord'
+import {
+  REPEAT_ISSUE_WINDOW_DAYS,
+  calculatePropertyHealth,
+  propertyHealthRatingFromScore,
+  type PropertyHealthRating,
+} from '@/lib/propertyHealth/calculatePropertyHealth'
 
-/** Neither penalize nor reward when a signal has no underlying data yet. */
-export const PROPERTY_HEALTH_NEUTRAL_SCORE = 50
+export {
+  REPEAT_ISSUE_WINDOW_DAYS,
+  calculatePropertyHealth,
+  propertyHealthRatingFromScore,
+}
+export type { PropertyHealthRating }
 
-/** Days of ops history required before showing a numeric health score / insights. */
+/** Days of ops history used by older insights gates (not a score penalty). */
 export const PROPERTY_HEALTH_OPS_MATURITY_DAYS = 30
 
 export const PROPERTY_HEALTH_INSIGHTS_CAPTION =
   'More activity needed for full insights'
 
 export const PROPERTY_HEALTH_WEIGHTS = {
-  openMaintenance: 0.4,
-  pmCompliance: 0.2,
-  vacancy: 0.15,
-  residentSatisfaction: 0.1,
-  repeatIssueRisk: 0.1,
-  vendorPerformance: 0.05,
+  condition: 0.4,
+  maintenance: 0.35,
+  risk: 0.25,
 } as const
-
-/** Same unit + category repeated within this window counts as repeat risk. */
-export const REPEAT_ISSUE_WINDOW_DAYS = 45
 
 export const PROPERTY_HEALTH_KPI_CAPTION = 'Operational health score.'
 
@@ -54,7 +48,7 @@ export function resolvePropertyHealthKpiCaption(
   if (!shouldShowPropertyHealthScore(portfolio.status)) {
     return PROPERTY_HEALTH_INSIGHTS_CAPTION
   }
-  return PROPERTY_HEALTH_KPI_CAPTION
+  return portfolio.rating ?? PROPERTY_HEALTH_KPI_CAPTION
 }
 
 /** Building-card copy when the numeric health score is not shown yet. */
@@ -71,7 +65,16 @@ export function resolvePropertyHealthPendingMessage(
 export function shouldShowPropertyHealthScore(
   status: PropertyHealthStatus | null | undefined,
 ): boolean {
-  return status === 'healthy' || status === 'monitor' || status === 'at_risk'
+  return (
+    status === 'excellent' ||
+    status === 'good' ||
+    status === 'fair' ||
+    status === 'needs_attention' ||
+    status === 'high_risk' ||
+    status === 'healthy' ||
+    status === 'monitor' ||
+    status === 'at_risk'
+  )
 }
 
 /** Main KPI value — omit "%" when the score is exactly 0. */
@@ -100,26 +103,25 @@ export function propertyHealthKpiDelta(delta: number | null | undefined): number
 }
 
 export type PropertyHealthStatus =
+  | 'excellent'
+  | 'good'
+  | 'fair'
+  | 'needs_attention'
+  | 'high_risk'
   | 'healthy'
   | 'monitor'
   | 'at_risk'
   | 'active'
   | 'pending_setup'
 
-export type PropertyHealthComponentKey =
-  | 'openMaintenance'
-  | 'pmCompliance'
-  | 'vacancy'
-  | 'residentSatisfaction'
-  | 'repeatIssueRisk'
-  | 'vendorPerformance'
+export type PropertyHealthComponentKey = 'condition' | 'maintenance' | 'risk'
 
 export type PropertyHealthComponent = {
   key: PropertyHealthComponentKey
   label: string
   score: number
   weight: number
-  /** True when PROPERTY_HEALTH_NEUTRAL_SCORE was used (no signal data). */
+  /** True when this category had no known factors. */
   isFallback: boolean
   detail: string
 }
@@ -127,10 +129,13 @@ export type PropertyHealthComponent = {
 export type PropertyHealthScopeScore = {
   score: number
   status: PropertyHealthStatus
+  rating: PropertyHealthRating | null
   components: PropertyHealthComponent[]
   /** Tracked units (status !== inactive) in this scope. */
   trackedUnitCount: number
   pendingReason?: PropertyHealthPendingReason | null
+  dataCompleteness?: number
+  topIssues?: string[]
 }
 
 export type PropertyHealthBuildingRow = PropertyHealthScopeScore & {
@@ -279,16 +284,46 @@ export type PropertyHealthTicket = {
   unit: string
   unitId: string | null
   building: string | null
-  issueCategory: string | null
+  issueCategory?: string | null
   vendorWorkStatus: string
-  assignedVendorId: string | null
+  assignedVendorId?: string | null
   email?: string | null
+  description?: string | null
+  urgency?: string | null
+  severity?: string | null
+  priority?: string | null
+  dueAt?: string | null
 }
 
 export type PropertyHealthPmTask = {
   building: string | null
   unitLabel: string | null
   taskStatus: string
+  dueAt?: string | null
+}
+
+export type PropertyHealthAsset = {
+  building: string | null
+  propertyId: string | null
+  applianceType: string
+  estimatedAgeYears: number | null
+  usefulLifeYears: number | null
+  replacementUrgency: string | null
+  condition: string | null
+  deficiencies: Array<{ severity?: string | null; description?: string | null }>
+}
+
+export type PropertyHealthInspection = {
+  building: string | null
+  propertyId: string | null
+  category: string | null
+  conditionRating: string | null
+  deficiencies: Array<{ severity?: string | null; description?: string | null }>
+}
+
+export type PropertyHealthDamageReport = {
+  createdAt: string
+  maintenanceRequestId: string | null
 }
 
 export type PropertyHealthFeedback = {
@@ -312,6 +347,9 @@ export type PropertyHealthInputs = {
   pmTasks: PropertyHealthPmTask[]
   feedback: PropertyHealthFeedback[]
   vendorMetrics: PropertyHealthVendorMetrics[]
+  assets?: PropertyHealthAsset[]
+  inspections?: PropertyHealthInspection[]
+  damageReports?: PropertyHealthDamageReport[]
   /** Saved properties — merged into the grid even without units or active residents. */
   canonicalProperties?: PropertyHealthCanonicalProperty[]
   /** Roster rows used for occupancy (units with an assigned active resident). */
@@ -337,44 +375,33 @@ function isVoidedWorkOrder(ticket: Pick<PropertyHealthTicket, 'vendorWorkStatus'
 const FOUR_WEEKS_MS = 28 * 24 * 60 * 60 * 1000
 
 const COMPONENT_LABELS: Record<PropertyHealthComponentKey, string> = {
-  openMaintenance: 'Open maintenance',
-  pmCompliance: 'PM compliance',
-  vacancy: 'Occupancy',
-  residentSatisfaction: 'Resident satisfaction',
-  repeatIssueRisk: 'Repeat issue risk',
-  vendorPerformance: 'Vendor performance',
+  condition: 'Condition',
+  maintenance: 'Maintenance',
+  risk: 'Risk',
 }
 
 function buildNeutralComponents(): PropertyHealthComponent[] {
-  const details: Record<PropertyHealthComponentKey, string> = {
-    openMaintenance: 'No active units to measure',
-    pmCompliance: 'No preventive tasks on record yet',
-    vacancy: 'No active units to measure',
-    residentSatisfaction: 'No resident feedback yet — neutral default',
-    repeatIssueRisk: 'No active units to measure',
-    vendorPerformance: 'No vendor assignments yet — neutral default',
-  }
-  return (Object.keys(PROPERTY_HEALTH_WEIGHTS) as PropertyHealthComponentKey[]).map(
-    (key) => ({
-      key,
-      label: COMPONENT_LABELS[key],
-      score: PROPERTY_HEALTH_NEUTRAL_SCORE,
-      weight: PROPERTY_HEALTH_WEIGHTS[key],
-      isFallback: true,
-      detail: details[key],
-    }),
-  )
+  return (Object.keys(PROPERTY_HEALTH_WEIGHTS) as PropertyHealthComponentKey[]).map((key) => ({
+    key,
+    label: COMPONENT_LABELS[key],
+    score: 0,
+    weight: PROPERTY_HEALTH_WEIGHTS[key],
+    isFallback: true,
+    detail: 'No active units to measure',
+  }))
 }
 
 function buildNeutralScopeScore(): PropertyHealthScopeScore {
   const components = buildNeutralComponents()
-  const score = aggregateWeightedScore(components)
   return {
-    score,
-    status: resolvePropertyHealthStatus(score, components),
+    score: 0,
+    status: 'pending_setup',
+    rating: null,
     components,
     trackedUnitCount: 0,
     pendingReason: 'inactive_units',
+    dataCompleteness: 0,
+    topIssues: [],
   }
 }
 
@@ -424,7 +451,7 @@ export function collectPortfolioBuildingKeys(
   units: PropertyHealthUnit[],
   pmTasks: PropertyHealthPmTask[],
   tickets: PropertyHealthTicket[],
-  landlordId: string = getActiveLandlordId(),
+  _landlordId: string = getActiveLandlordId(),
   residents: PropertyHealthResident[] = [],
 ): string[] {
   const ticketBuildingCtx = buildTicketBuildingContext(units)
@@ -506,9 +533,12 @@ export function isPendingSetupHealth(components: PropertyHealthComponent[]): boo
 }
 
 export function propertyHealthStatus(score: number): PropertyHealthStatus {
-  if (score >= 85) return 'healthy'
-  if (score >= 70) return 'monitor'
-  return 'at_risk'
+  const rating = propertyHealthRatingFromScore(score)
+  if (rating === 'Excellent') return 'excellent'
+  if (rating === 'Good') return 'good'
+  if (rating === 'Fair') return 'fair'
+  if (rating === 'Needs Attention') return 'needs_attention'
+  return 'high_risk'
 }
 
 export function resolvePropertyHealthStatus(
@@ -517,7 +547,7 @@ export function resolvePropertyHealthStatus(
   options?: { insufficientOperationalSignal?: boolean },
 ): PropertyHealthStatus {
   if (isPendingSetupHealth(components)) return 'pending_setup'
-  if (options?.insufficientOperationalSignal) return 'active'
+  if (options?.insufficientOperationalSignal) return propertyHealthStatus(score)
   return propertyHealthStatus(score)
 }
 
@@ -669,23 +699,6 @@ function buildingScopeAliasKeys(
 
 function isTicketOpen(ticket: PropertyHealthTicket): boolean {
   return !CLOSED_WORK_STATUSES.has(ticket.vendorWorkStatus.toLowerCase())
-}
-
-function clampScore(value: number): number {
-  return Math.max(0, Math.min(100, Math.round(value)))
-}
-
-function responseTimeToScore(minutes: number | null): number {
-  if (minutes == null || !Number.isFinite(minutes)) return PROPERTY_HEALTH_NEUTRAL_SCORE
-  if (minutes <= 15) return 100
-  if (minutes <= 60) return 85
-  if (minutes <= 240) return 65
-  if (minutes <= 1440) return 40
-  return 20
-}
-
-function ratingToScore(rating: number): number {
-  return clampScore((rating / 5) * 100)
 }
 
 type TicketBuildingContext = {
@@ -935,15 +948,6 @@ export function findCanonicalPropertyForResident(
   return null
 }
 
-function filterResidentsForScope(
-  residents: PropertyHealthResident[],
-  building: string,
-  property: PropertyHealthCanonicalProperty | null,
-  units: PropertyHealthUnit[],
-): PropertyHealthResident[] {
-  return filterResidentsForPropertyScope(residents, building, property, units)
-}
-
 function filterPmForScope(
   tasks: PropertyHealthPmTask[],
   building: string,
@@ -952,6 +956,32 @@ function filterPmForScope(
 ): PropertyHealthPmTask[] {
   const aliases = buildingScopeAliasKeys(building, property, units)
   return tasks.filter((task) => aliases.has(normalizeBuildingKey(task.building)))
+}
+
+function filterAssetsForScope(
+  assets: PropertyHealthAsset[],
+  building: string,
+  property: PropertyHealthCanonicalProperty | null,
+  units: PropertyHealthUnit[],
+): PropertyHealthAsset[] {
+  const aliases = buildingScopeAliasKeys(building, property, units)
+  return assets.filter((asset) => {
+    if (property?.id && asset.propertyId && asset.propertyId === property.id) return true
+    return aliases.has(normalizeBuildingKey(asset.building))
+  })
+}
+
+function filterInspectionsForScope(
+  inspections: PropertyHealthInspection[],
+  building: string,
+  property: PropertyHealthCanonicalProperty | null,
+  units: PropertyHealthUnit[],
+): PropertyHealthInspection[] {
+  const aliases = buildingScopeAliasKeys(building, property, units)
+  return inspections.filter((row) => {
+    if (property?.id && row.propertyId && row.propertyId === property.id) return true
+    return aliases.has(normalizeBuildingKey(row.building))
+  })
 }
 
 function filterTicketsForScope(
@@ -1010,275 +1040,38 @@ export function computeGridOccupancyForBuilding(
   return occupancyFromInventory(buildingUnits)
 }
 
-function scoreOpenMaintenance(
-  trackedUnits: PropertyHealthUnit[],
-  openTickets: PropertyHealthTicket[],
-  openIssuesCreatedBeforeMs?: number,
-): PropertyHealthComponent {
-  if (trackedUnits.length === 0) {
-    return {
-      key: 'openMaintenance',
-      label: COMPONENT_LABELS.openMaintenance,
-      score: PROPERTY_HEALTH_NEUTRAL_SCORE,
-      weight: PROPERTY_HEALTH_WEIGHTS.openMaintenance,
-      isFallback: true,
-      detail: 'No active units to measure',
-    }
+function categoryDetail(
+  result: ReturnType<typeof calculatePropertyHealth>,
+  key: PropertyHealthComponentKey,
+): { score: number; isFallback: boolean; detail: string } {
+  const category = result[key]
+  const notes = category.factors
+    .filter((factor) => factor.status === 'known' && factor.explanation)
+    .map((factor) => factor.explanation!)
+  if (category.score == null) {
+    return { score: 0, isFallback: true, detail: 'Not enough information yet' }
   }
-
-  const unitLabels = new Set(
-    trackedUnits.map((u) => normalizeUnitLabel(u.unitLabel)).filter(Boolean),
-  )
-  const qualifyingOpen = openIssuesCreatedBeforeMs
-    ? openTickets.filter((t) => {
-        const ts = new Date(t.createdAt).getTime()
-        return !Number.isNaN(ts) && ts < openIssuesCreatedBeforeMs
-      })
-    : openTickets
-
-  const unitsWithOpen = new Set<string>()
-  for (const ticket of qualifyingOpen) {
-    const key = normalizeUnitLabel(ticket.unit)
-    if (key && unitLabels.has(key)) unitsWithOpen.add(key)
-  }
-
-  const openRate = unitsWithOpen.size / trackedUnits.length
-  const score = clampScore(100 * (1 - openRate))
   return {
-    key: 'openMaintenance',
-    label: COMPONENT_LABELS.openMaintenance,
-    score,
-    weight: PROPERTY_HEALTH_WEIGHTS.openMaintenance,
+    score: category.score,
     isFallback: false,
-    detail: `${unitsWithOpen.size} of ${trackedUnits.length} units with open requests`,
+    detail: notes.length ? notes.slice(0, 2).join(' · ') : 'No deductions',
   }
 }
 
-function scorePmCompliance(tasks: PropertyHealthPmTask[]): PropertyHealthComponent {
-  if (tasks.length === 0) {
+function componentsFromHealthResult(
+  result: ReturnType<typeof calculatePropertyHealth>,
+): PropertyHealthComponent[] {
+  return (Object.keys(PROPERTY_HEALTH_WEIGHTS) as PropertyHealthComponentKey[]).map((key) => {
+    const mapped = categoryDetail(result, key)
     return {
-      key: 'pmCompliance',
-      label: COMPONENT_LABELS.pmCompliance,
-      score: PROPERTY_HEALTH_NEUTRAL_SCORE,
-      weight: PROPERTY_HEALTH_WEIGHTS.pmCompliance,
-      isFallback: true,
-      detail: 'No preventive tasks on record yet',
+      key,
+      label: COMPONENT_LABELS[key],
+      score: mapped.score,
+      weight: PROPERTY_HEALTH_WEIGHTS[key],
+      isFallback: mapped.isFallback,
+      detail: mapped.detail,
     }
-  }
-  const completed = tasks.filter((t) => t.taskStatus === 'completed').length
-  const score = clampScore((completed / tasks.length) * 100)
-  return {
-    key: 'pmCompliance',
-    label: COMPONENT_LABELS.pmCompliance,
-    score,
-    weight: PROPERTY_HEALTH_WEIGHTS.pmCompliance,
-    isFallback: false,
-    detail: `${completed} of ${tasks.length} PM tasks complete`,
-  }
-}
-
-function scoreVacancy(
-  trackedUnits: PropertyHealthUnit[],
-  residents: PropertyHealthResident[],
-  building?: string,
-): PropertyHealthComponent {
-  if (trackedUnits.length === 0) {
-    return {
-      key: 'vacancy',
-      label: COMPONENT_LABELS.vacancy,
-      score: PROPERTY_HEALTH_NEUTRAL_SCORE,
-      weight: PROPERTY_HEALTH_WEIGHTS.vacancy,
-      isFallback: true,
-      detail: 'No active units to measure',
-    }
-  }
-  const occupied = countOccupiedUnits(trackedUnits, residents, building)
-  const score = clampScore((occupied / trackedUnits.length) * 100)
-  return {
-    key: 'vacancy',
-    label: COMPONENT_LABELS.vacancy,
-    score,
-    weight: PROPERTY_HEALTH_WEIGHTS.vacancy,
-    isFallback: false,
-    detail: `${occupied} of ${trackedUnits.length} units occupied`,
-  }
-}
-
-function scoreResidentSatisfaction(feedback: PropertyHealthFeedback[]): PropertyHealthComponent {
-  const ratings = feedback
-    .map((f) => f.rating)
-    .filter((r) => Number.isFinite(r) && r >= 1 && r <= 5)
-  if (ratings.length === 0) {
-    return {
-      key: 'residentSatisfaction',
-      label: COMPONENT_LABELS.residentSatisfaction,
-      score: PROPERTY_HEALTH_NEUTRAL_SCORE,
-      weight: PROPERTY_HEALTH_WEIGHTS.residentSatisfaction,
-      isFallback: true,
-      detail: 'No resident feedback yet — neutral default',
-    }
-  }
-  const avg = ratings.reduce((sum, r) => sum + r, 0) / ratings.length
-  return {
-    key: 'residentSatisfaction',
-    label: COMPONENT_LABELS.residentSatisfaction,
-    score: ratingToScore(avg),
-    weight: PROPERTY_HEALTH_WEIGHTS.residentSatisfaction,
-    isFallback: false,
-    detail: `${ratings.length} rating${ratings.length === 1 ? '' : 's'} · avg ${avg.toFixed(1)}/5`,
-  }
-}
-
-function scoreRepeatIssueRisk(
-  trackedUnits: PropertyHealthUnit[],
-  tickets: PropertyHealthTicket[],
-  now: number,
-  repeatWindowMs: number,
-): PropertyHealthComponent {
-  if (trackedUnits.length === 0) {
-    return {
-      key: 'repeatIssueRisk',
-      label: COMPONENT_LABELS.repeatIssueRisk,
-      score: PROPERTY_HEALTH_NEUTRAL_SCORE,
-      weight: PROPERTY_HEALTH_WEIGHTS.repeatIssueRisk,
-      isFallback: true,
-      detail: 'No active units to measure',
-    }
-  }
-
-  const windowStart = now - repeatWindowMs
-  const unitLabels = new Set(
-    trackedUnits.map((u) => normalizeUnitLabel(u.unitLabel)).filter(Boolean),
-  )
-  const countsByUnitCategory = new Map<string, number>()
-
-  for (const ticket of tickets) {
-    if (isVoidedWorkOrder(ticket)) continue
-    const unitKey = normalizeUnitLabel(ticket.unit)
-    if (!unitKey || !unitLabels.has(unitKey)) continue
-    const ts = new Date(ticket.createdAt).getTime()
-    if (Number.isNaN(ts) || ts < windowStart || ts > now) continue
-    const category = (ticket.issueCategory ?? 'general').toLowerCase()
-    const key = `${unitKey}|${category}`
-    countsByUnitCategory.set(key, (countsByUnitCategory.get(key) ?? 0) + 1)
-  }
-
-  const unitsWithRepeat = new Set<string>()
-  for (const [key, count] of countsByUnitCategory) {
-    if (count >= 2) unitsWithRepeat.add(key.split('|')[0]!)
-  }
-
-  const repeatRate = unitsWithRepeat.size / trackedUnits.length
-  const score = clampScore(100 * (1 - repeatRate))
-  return {
-    key: 'repeatIssueRisk',
-    label: COMPONENT_LABELS.repeatIssueRisk,
-    score,
-    weight: PROPERTY_HEALTH_WEIGHTS.repeatIssueRisk,
-    isFallback: false,
-    detail: `${unitsWithRepeat.size} unit${unitsWithRepeat.size === 1 ? '' : 's'} with repeat issues (${REPEAT_ISSUE_WINDOW_DAYS}d)`,
-  }
-}
-
-function scoreVendorPerformance(
-  tickets: PropertyHealthTicket[],
-  vendorMetrics: PropertyHealthVendorMetrics[],
-): PropertyHealthComponent {
-  const assigned = tickets.filter((t) => t.assignedVendorId)
-  if (assigned.length === 0 && vendorMetrics.length === 0) {
-    return {
-      key: 'vendorPerformance',
-      label: COMPONENT_LABELS.vendorPerformance,
-      score: PROPERTY_HEALTH_NEUTRAL_SCORE,
-      weight: PROPERTY_HEALTH_WEIGHTS.vendorPerformance,
-      isFallback: true,
-      detail: 'No vendor assignments yet — neutral default',
-    }
-  }
-
-  const responseRate =
-    assigned.length === 0
-      ? null
-      : (assigned.filter((t) => t.vendorWorkStatus !== 'pending_accept').length /
-          assigned.length) *
-        100
-
-  const vendorIdsInScope = new Set(
-    assigned.map((t) => t.assignedVendorId).filter(Boolean) as string[],
-  )
-  const metricsInScope =
-    vendorIdsInScope.size > 0
-      ? vendorMetrics.filter((m) => vendorIdsInScope.has(m.vendorId))
-      : vendorMetrics
-
-  const completionRates = metricsInScope
-    .map((m) => m.completionRate)
-    .filter((r): r is number => r != null && Number.isFinite(r))
-  const avgCompletion =
-    completionRates.length > 0
-      ? (completionRates.reduce((s, r) => s + r, 0) / completionRates.length) * 100
-      : null
-
-  const responseTimes = metricsInScope
-    .map((m) => m.avgResponseTime)
-    .filter((t): t is number => t != null && Number.isFinite(t))
-  const avgResponseTime =
-    responseTimes.length > 0
-      ? responseTimes.reduce((s, t) => s + t, 0) / responseTimes.length
-      : null
-
-  const parts: number[] = []
-  const weights: number[] = []
-  if (responseRate != null) {
-    parts.push(responseRate)
-    weights.push(0.4)
-  }
-  if (avgCompletion != null) {
-    parts.push(avgCompletion)
-    weights.push(0.35)
-  }
-  const timeScore = responseTimeToScore(avgResponseTime)
-  if (avgResponseTime != null) {
-    parts.push(timeScore)
-    weights.push(0.25)
-  }
-
-  if (parts.length === 0) {
-    return {
-      key: 'vendorPerformance',
-      label: COMPONENT_LABELS.vendorPerformance,
-      score: PROPERTY_HEALTH_NEUTRAL_SCORE,
-      weight: PROPERTY_HEALTH_WEIGHTS.vendorPerformance,
-      isFallback: true,
-      detail: 'Insufficient vendor metrics — neutral default',
-    }
-  }
-
-  const weightSum = weights.reduce((s, w) => s + w, 0)
-  const blended = parts.reduce((s, p, i) => s + p * weights[i]!, 0) / weightSum
-
-  return {
-    key: 'vendorPerformance',
-    label: COMPONENT_LABELS.vendorPerformance,
-    score: clampScore(blended),
-    weight: PROPERTY_HEALTH_WEIGHTS.vendorPerformance,
-    isFallback: false,
-    detail: [
-      responseRate != null ? `${Math.round(responseRate)}% response` : null,
-      avgCompletion != null ? `${Math.round(avgCompletion)}% completion` : null,
-      avgResponseTime != null ? `${Math.round(avgResponseTime)}m avg response` : null,
-    ]
-      .filter(Boolean)
-      .join(' · '),
-  }
-}
-
-function aggregateWeightedScore(components: PropertyHealthComponent[]): number {
-  let sum = 0
-  for (const c of components) {
-    sum += c.score * c.weight
-  }
-  return clampScore(sum)
+  })
 }
 
 export function computePropertyHealthScope(
@@ -1288,7 +1081,6 @@ export function computePropertyHealthScope(
   const now = inputs.now ?? Date.now()
   const repeatWindowMs =
     inputs.repeatWindowMs ?? REPEAT_ISSUE_WINDOW_DAYS * 24 * 60 * 60 * 1000
-  const ticketBuildingCtx = buildTicketBuildingContext(inputs.units)
   const scopeBuilding = scope.building?.trim()
   const scopeProperty = scope.property ?? null
 
@@ -1302,11 +1094,6 @@ export function computePropertyHealthScope(
     return buildNeutralScopeScore()
   }
 
-  const scopedResidents =
-    scopeBuilding != null
-      ? filterResidentsForScope(inputs.residents ?? [], scopeBuilding, scopeProperty, inputs.units)
-      : (inputs.residents ?? [])
-
   const scopedTickets =
     scopeBuilding != null
       ? filterTicketsForScope(
@@ -1317,50 +1104,62 @@ export function computePropertyHealthScope(
           scopeProperty,
         )
       : inputs.tickets
-  const openTickets = scopedTickets.filter(isTicketOpen)
   const scopedPm =
     scopeBuilding != null
       ? filterPmForScope(inputs.pmTasks, scopeBuilding, scopeProperty, inputs.units)
       : inputs.pmTasks
-  const scopedFeedback =
+  const scopedAssets =
     scopeBuilding != null
-      ? filterFeedbackForScope(
-          inputs.feedback,
+      ? filterAssetsForScope(inputs.assets ?? [], scopeBuilding, scopeProperty, inputs.units)
+      : (inputs.assets ?? [])
+  const scopedInspections =
+    scopeBuilding != null
+      ? filterInspectionsForScope(
+          inputs.inspections ?? [],
           scopeBuilding,
-          ticketBuildingCtx,
           scopeProperty,
           inputs.units,
         )
-      : inputs.feedback
+      : (inputs.inspections ?? [])
 
-  const components: PropertyHealthComponent[] = [
-    scoreOpenMaintenance(trackedUnits, openTickets, inputs.openIssuesCreatedBeforeMs),
-    scorePmCompliance(scopedPm),
-    scoreVacancy(trackedUnits, scopedResidents, scopeBuilding),
-    scoreResidentSatisfaction(scopedFeedback),
-    scoreRepeatIssueRisk(trackedUnits, scopedTickets, now, repeatWindowMs),
-    scoreVendorPerformance(scopedTickets, inputs.vendorMetrics),
-  ]
+  const scopedTicketIds = new Set(scopedTickets.map((ticket) => ticket.id))
+  const scopedDamage =
+    scopeBuilding != null
+      ? (inputs.damageReports ?? []).filter((row) => {
+          const id = row.maintenanceRequestId?.trim()
+          if (!id) return false
+          return scopedTicketIds.has(id)
+        })
+      : (inputs.damageReports ?? [])
 
-  const score = aggregateWeightedScore(components)
-  const insufficientOperationalSignal = !hasPropertyHealthOperationalSignal(
-    trackedUnits,
-    scopedPm,
-    scopedTickets,
+  const result = calculatePropertyHealth({
+    trackedUnits: trackedUnits.map((unit) => ({
+      unitLabel: unit.unitLabel,
+      status: unit.status,
+    })),
+    tickets: scopedTickets,
+    pmTasks: scopedPm,
+    assets: scopedAssets,
+    inspections: scopedInspections,
+    damageReports: scopedDamage,
     now,
-  )
-  const pendingReason: PropertyHealthPendingReason | null = isPendingSetupHealth(components)
-    ? 'inactive_units'
-    : insufficientOperationalSignal
-      ? 'collecting_history'
-      : null
+    repeatWindowMs,
+    openIssuesCreatedBeforeMs: inputs.openIssuesCreatedBeforeMs,
+  })
+
+  const components = componentsFromHealthResult(result)
+  const score = result.score ?? 0
+  const pendingReason: PropertyHealthPendingReason | null = null
 
   return {
     score,
-    status: resolvePropertyHealthStatus(score, components, { insufficientOperationalSignal }),
+    status: propertyHealthStatus(score),
+    rating: result.rating,
     components,
     trackedUnitCount: trackedUnits.length,
     pendingReason,
+    dataCompleteness: result.dataCompleteness,
+    topIssues: result.topIssues.map((issue) => issue.explanation),
   }
 }
 
@@ -1464,26 +1263,43 @@ export function formatPropertyHealthTooltip(components: PropertyHealthComponent[
   return components
     .map((c) => {
       const pct = Math.round(c.weight * 100)
-      const suffix = c.isFallback ? ' (neutral)' : ''
-      return `${c.label} ${pct}%: ${c.score}${suffix} — ${c.detail}`
+      const suffix = c.isFallback ? ' (unknown)' : ''
+      return `${c.label} ${pct}%: ${c.isFallback ? '—' : c.score}${suffix} — ${c.detail}`
     })
     .join('\n')
 }
 
-/** KPI popover rows for the six weighted health factors (weakest first). */
+const CATEGORY_ORDER: PropertyHealthComponentKey[] = ['condition', 'maintenance', 'risk']
+
+/** KPI popover rows for Condition / Maintenance / Risk. */
 export function propertyHealthFactorBreakdownLines(
   components: PropertyHealthComponent[],
+  extras?: { dataCompleteness?: number; topIssues?: string[] },
 ): Array<{ label: string; value: string; detail: string }> {
-  return [...components]
-    .sort((a, b) => a.score - b.score || b.weight - a.weight)
-    .map((component) => {
-      const weightPct = Math.round(component.weight * 100)
-      return {
-        label: `${component.label} (${weightPct}%)`,
-        value: component.isFallback ? `${component.score} · neutral` : String(component.score),
-        detail: component.detail,
-      }
+  const byKey = new Map(components.map((component) => [component.key, component]))
+  const lines = CATEGORY_ORDER.map((key) => {
+    const component = byKey.get(key)
+    if (!component) {
+      return { label: `${COMPONENT_LABELS[key]} (${Math.round(PROPERTY_HEALTH_WEIGHTS[key] * 100)}%)`, value: '—', detail: '' }
+    }
+    const weightPct = Math.round(component.weight * 100)
+    return {
+      label: `${component.label} (${weightPct}%)`,
+      value: component.isFallback ? 'Unknown' : String(component.score),
+      detail: component.detail,
+    }
+  })
+  for (const issue of extras?.topIssues ?? []) {
+    lines.push({ label: 'Needs attention', value: '', detail: issue })
+  }
+  if (extras?.dataCompleteness != null) {
+    lines.push({
+      label: 'Data completeness',
+      value: `${Math.round(extras.dataCompleteness * 100)}%`,
+      detail: 'Missing items are unknown, not scored as poor.',
     })
+  }
+  return lines
 }
 
 function asString(value: unknown): string {
@@ -1521,6 +1337,11 @@ export function mapTicketsForPropertyHealth(
     issueCategory: asString(raw.issue_category ?? raw.issueCategory) || null,
     vendorWorkStatus: asString(raw.vendor_work_status ?? raw.vendorWorkStatus).toLowerCase(),
     assignedVendorId: asString(raw.assigned_vendor_id ?? raw.assignedVendorId) || null,
+    description: asString(raw.description) || null,
+    urgency: asString(raw.urgency) || null,
+    severity: asString(raw.severity) || null,
+    priority: asString(raw.priority) || null,
+    dueAt: asString(raw.due_at ?? raw.dueAt) || null,
   }))
 }
 
@@ -1537,38 +1358,99 @@ export function mapUnitsForPropertyHealth(
   }))
 }
 
-/** Fetch PM tasks, resident feedback, and vendor metrics for property health. */
+function parseDeficiencyList(value: unknown): Array<{ severity?: string | null; description?: string | null }> {
+  if (!Array.isArray(value)) return []
+  const list: Array<{ severity?: string | null; description?: string | null }> = []
+  for (const raw of value) {
+    if (!raw || typeof raw !== 'object') continue
+    const row = raw as { severity?: unknown; description?: unknown }
+    list.push({
+      severity: typeof row.severity === 'string' ? row.severity : null,
+      description: typeof row.description === 'string' ? row.description : null,
+    })
+  }
+  return list
+}
+
+function parseInspectionResult(value: unknown): {
+  category: string | null
+  conditionRating: string | null
+  deficiencies: Array<{ severity?: string | null; description?: string | null }>
+} | null {
+  if (!value || typeof value !== 'object') return null
+  const row = value as Record<string, unknown>
+  const identified = row.identifiedItem && typeof row.identifiedItem === 'object'
+    ? (row.identifiedItem as Record<string, unknown>)
+    : null
+  const condition = row.condition && typeof row.condition === 'object'
+    ? (row.condition as Record<string, unknown>)
+    : null
+  return {
+    category: asString(row.category) || asString(identified?.type) || null,
+    conditionRating: asString(condition?.rating) || null,
+    deficiencies: parseDeficiencyList(row.deficiencies),
+  }
+}
+
+/** Fetch PM, assets, inspections, and damage reports for property health. */
 export async function fetchPropertyHealthSignals(): Promise<{
   pmTasks: PropertyHealthPmTask[]
   feedback: PropertyHealthFeedback[]
   vendorMetrics: PropertyHealthVendorMetrics[]
+  assets: PropertyHealthAsset[]
+  inspections: PropertyHealthInspection[]
+  damageReports: PropertyHealthDamageReport[]
 }> {
-  const { supabase } = await import('@/lib/supabase')
-  if (!supabase) {
-    return { pmTasks: [], feedback: [], vendorMetrics: [] }
+  const empty = {
+    pmTasks: [] as PropertyHealthPmTask[],
+    feedback: [] as PropertyHealthFeedback[],
+    vendorMetrics: [] as PropertyHealthVendorMetrics[],
+    assets: [] as PropertyHealthAsset[],
+    inspections: [] as PropertyHealthInspection[],
+    damageReports: [] as PropertyHealthDamageReport[],
   }
+  const { supabase } = await import('@/lib/supabase')
+  if (!supabase) return empty
 
   const landlordId = getActiveLandlordId()
 
-  const [pmResult, feedbackResult, vendorResult] = await Promise.allSettled([
-    supabase
-      .from('pm_compliance_dashboard_view')
-      .select('building, unit_label, task_status')
-      .eq('landlord_id', landlordId)
-      .limit(500),
-    supabase
-      .from('vendor_feedback')
-      .select('rating, maintenance_request_id')
-      .eq('landlord_id', landlordId)
-      .limit(500),
-    supabase
-      .from('vendor_operational_metrics')
-      .select(
-        'vendor_id, accepted_jobs, completed_jobs, completion_rate, avg_response_time',
-      )
-      .eq('landlord_id', landlordId)
-      .limit(200),
-  ])
+  const [pmResult, feedbackResult, vendorResult, assetResult, assessmentResult, damageResult] =
+    await Promise.allSettled([
+      supabase
+        .from('pm_compliance_dashboard_view')
+        .select('building, unit_label, task_status, due_at')
+        .eq('landlord_id', landlordId)
+        .limit(500),
+      supabase
+        .from('vendor_feedback')
+        .select('rating, maintenance_request_id')
+        .eq('landlord_id', landlordId)
+        .limit(500),
+      supabase
+        .from('vendor_operational_metrics')
+        .select(
+          'vendor_id, accepted_jobs, completed_jobs, completion_rate, avg_response_time',
+        )
+        .eq('landlord_id', landlordId)
+        .limit(200),
+      supabase
+        .from('unit_assets')
+        .select(
+          'building, property_id, appliance_type, estimated_age_years, useful_life_years, replacement_urgency, metadata',
+        )
+        .eq('landlord_id', landlordId)
+        .limit(1000),
+      supabase
+        .from('property_inspection_assessments')
+        .select('id, building, property_id')
+        .eq('landlord_id', landlordId)
+        .limit(200),
+      supabase
+        .from('vendor_property_damage_reports')
+        .select('created_at, maintenance_request_id')
+        .eq('landlord_id', landlordId)
+        .limit(200),
+    ])
 
   const pmTasks: PropertyHealthPmTask[] =
     pmResult.status === 'fulfilled' && !pmResult.value.error
@@ -1576,6 +1458,7 @@ export async function fetchPropertyHealthSignals(): Promise<{
           building: asString(row.building) || null,
           unitLabel: asString(row.unit_label) || null,
           taskStatus: asString(row.task_status).toLowerCase(),
+          dueAt: asString(row.due_at) || null,
         }))
       : []
 
@@ -1604,7 +1487,73 @@ export async function fetchPropertyHealthSignals(): Promise<{
         }))
       : []
 
-  return { pmTasks, feedback, vendorMetrics }
+  const assets: PropertyHealthAsset[] = []
+  if (assetResult.status === 'fulfilled' && !assetResult.value.error) {
+    for (const row of (assetResult.value.data ?? []) as Record<string, unknown>[]) {
+      const meta =
+        row.metadata && typeof row.metadata === 'object'
+          ? (row.metadata as Record<string, unknown>)
+          : {}
+      assets.push({
+        building: asString(row.building) || null,
+        propertyId: asString(row.property_id) || null,
+        applianceType: asString(row.appliance_type),
+        estimatedAgeYears: asFiniteNumber(row.estimated_age_years),
+        usefulLifeYears: asFiniteNumber(row.useful_life_years),
+        replacementUrgency: asString(row.replacement_urgency) || null,
+        condition: asString(meta.condition) || asString(meta.conditionRating) || null,
+        deficiencies: parseDeficiencyList(meta.deficiencies),
+      })
+    }
+  }
+
+  const assessments: Array<{ id: string; building: string | null; propertyId: string | null }> = []
+  if (assessmentResult.status === 'fulfilled' && !assessmentResult.value.error) {
+    for (const row of (assessmentResult.value.data ?? []) as Record<string, unknown>[]) {
+      assessments.push({
+        id: asString(row.id),
+        building: asString(row.building) || null,
+        propertyId: asString(row.property_id) || null,
+      })
+    }
+  }
+
+  const inspections: PropertyHealthInspection[] = []
+  if (assessments.length > 0 && supabase) {
+    const assessmentIds = assessments.map((row) => row.id)
+    const { data: photos, error: photoError } = await supabase
+      .from('property_inspection_photos')
+      .select('assessment_id, status, confirmed_result, hint_category')
+      .eq('landlord_id', landlordId)
+      .eq('status', 'confirmed')
+      .in('assessment_id', assessmentIds)
+      .limit(1000)
+    if (!photoError && photos) {
+      const byId = new Map(assessments.map((row) => [row.id, row]))
+      for (const photo of photos as Record<string, unknown>[]) {
+        const parsed = parseInspectionResult(photo.confirmed_result)
+        if (!parsed) continue
+        const parent = byId.get(asString(photo.assessment_id))
+        inspections.push({
+          building: parent?.building ?? null,
+          propertyId: parent?.propertyId ?? null,
+          category: parsed.category || asString(photo.hint_category) || null,
+          conditionRating: parsed.conditionRating,
+          deficiencies: parsed.deficiencies,
+        })
+      }
+    }
+  }
+
+  const damageReports: PropertyHealthDamageReport[] =
+    damageResult.status === 'fulfilled' && !damageResult.value.error
+      ? ((damageResult.value.data ?? []) as Record<string, unknown>[]).map((row) => ({
+          createdAt: asString(row.created_at),
+          maintenanceRequestId: asString(row.maintenance_request_id) || null,
+        }))
+      : []
+
+  return { pmTasks, feedback, vendorMetrics, assets, inspections, damageReports }
 }
 
 /** Attach unit/building from maintenance tickets to resident feedback rows. */

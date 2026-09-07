@@ -75,6 +75,8 @@ export type VendorWorkOrder = {
   attachmentPreviews?: string[]
   /** Present when row comes from Supabase vendor API. */
   vendorDbStatus?: VendorDbWorkStatus
+  /** Allowlisted `issue_category` slug when loaded from the vendor API. */
+  issueCategory?: string | null
   /** From `assigned_vendor_id`; required before accept / start work when using live API. */
   assignedVendorId?: string | null
   vendorActionToken?: string | null
@@ -259,6 +261,7 @@ function mapApiTicketToWorkOrder(t: VendorApiTicket): VendorWorkOrder {
     buildingAddress: buildingAddress || undefined,
     createdDisplay: formatCreatedDisplay(t.created_at ?? ''),
     vendorDbStatus: st,
+    issueCategory: t.issue_category ?? null,
     assignedVendorId: t.assigned_vendor_id ?? null,
     vendorActionToken:
       typeof t.vendor_action_token === 'string' ? t.vendor_action_token : null,
@@ -1746,6 +1749,7 @@ export function VendorPortalDashboard({
         updateUrl,
         vendorToken,
         invoice,
+        jobType: orders.find((o) => o.id === ticketId)?.issueCategory,
       })
       if (res.ok) {
         if (action === 'completed' && res.awaiting_feedback) {
@@ -1818,6 +1822,7 @@ export function VendorPortalDashboard({
         action,
         updateUrl,
         vendorToken,
+        jobType: snapshot.find((o) => o.id === orderId)?.issueCategory,
       })
       if (res?.ok) applyVendorStatusToOrder(orderId, res.vendor_work_status)
     } catch {

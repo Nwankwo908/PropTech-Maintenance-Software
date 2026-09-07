@@ -12,6 +12,7 @@ import {
 } from "./maintenanceSpend.ts"
 import { notifyResidentCompleted } from "../submit-maintenance-request/resident_notify.ts"
 import { formatWorkOrderRef } from "./vendor_outreach_copy.ts"
+import { emitServerProductEvent } from "./ga4MeasurementProtocol.ts"
 
 const POSITIVE_RATING_MIN = 4
 
@@ -50,6 +51,13 @@ export async function finalizeJobAfterResidentFeedback(
       console.error("[finalize-feedback] set completed", upErr.message)
       return
     }
+    const landlordId =
+      params.landlordId ||
+      (typeof ticket.landlord_id === "string" ? ticket.landlord_id : "")
+    void emitServerProductEvent(supabase, {
+      eventName: "job_completed",
+      landlordId,
+    })
     try {
       await markMaintenanceJobCompleted(supabase, params.ticketId)
     } catch (e) {

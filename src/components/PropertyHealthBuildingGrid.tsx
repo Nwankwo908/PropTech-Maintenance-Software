@@ -9,6 +9,11 @@ import {
 } from '@/lib/propertyHealth'
 
 export const HEALTH_BADGE_STYLES: Record<PropertyHealthStatus, string> = {
+  excellent: 'bg-[#dbfce7] text-[#008236]',
+  good: 'bg-[#dbfce7] text-[#008236]',
+  fair: 'bg-[#fef9c2] text-[#a65f00]',
+  needs_attention: 'bg-[#ffedd4] text-[#9f2d00]',
+  high_risk: 'bg-[#ffe2e2] text-[#c10007]',
   healthy: 'bg-[#dbfce7] text-[#008236]',
   monitor: 'bg-[#fef9c2] text-[#a65f00]',
   at_risk: 'bg-[#ffe2e2] text-[#c10007]',
@@ -17,6 +22,11 @@ export const HEALTH_BADGE_STYLES: Record<PropertyHealthStatus, string> = {
 }
 
 export const HEALTH_BADGE_LABELS: Record<PropertyHealthStatus, string> = {
+  excellent: 'EXCELLENT',
+  good: 'GOOD',
+  fair: 'FAIR',
+  needs_attention: 'NEEDS ATTENTION',
+  high_risk: 'HIGH RISK',
   healthy: 'HEALTHY',
   monitor: 'MONITOR',
   at_risk: 'AT RISK',
@@ -25,6 +35,11 @@ export const HEALTH_BADGE_LABELS: Record<PropertyHealthStatus, string> = {
 }
 
 export const HEALTH_BAR_STYLES: Record<PropertyHealthStatus, string> = {
+  excellent: 'bg-[#00c950]',
+  good: 'bg-[#00c950]',
+  fair: 'bg-[#fdc700]',
+  needs_attention: 'bg-[#ff8904]',
+  high_risk: 'bg-[#fb2c36]',
   healthy: 'bg-[#00c950]',
   monitor: 'bg-[#fdc700]',
   at_risk: 'bg-[#fb2c36]',

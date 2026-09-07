@@ -1,4 +1,5 @@
 import { snapshotForAccountPersist } from '@/lib/analytics/attribution'
+import { trackProductEventOnce } from '@/lib/analytics/productEvents'
 import { supabase } from '@/lib/supabase'
 import { getErrorMessage } from '@/lib/errorMessage'
 
@@ -116,6 +117,19 @@ async function callJoinWaitlist(
     throw new Error('Waitlist is not configured.')
   }
 
+  const attribution = snapshotForAccountPersist()
+  if (import.meta.env.DEV) {
+    const first = attribution.firstTouch
+    console.info('[analytics] waitlist attribution', {
+      attribution_object_exists: Boolean(attribution),
+      first_touch_source: first.source ?? null,
+      first_touch_medium: first.medium ?? null,
+      first_touch_campaign: first.campaign ?? null,
+    })
+  }
+
+  trackProductEventOnce('waitlist_started', 'waitlist')
+
   const res = await fetch(url, {
     method: 'POST',
     headers,
@@ -124,7 +138,7 @@ async function callJoinWaitlist(
       source,
       origin: window.location.origin,
       ref: getWaitlistReferral(),
-      attribution: snapshotForAccountPersist(),
+      attribution,
     }),
   })
 
@@ -145,6 +159,7 @@ async function callJoinWaitlist(
     )
   }
 
+  trackProductEventOnce('waitlist_joined', 'waitlist')
   clearWaitlistReferral()
 
   const referralCode =

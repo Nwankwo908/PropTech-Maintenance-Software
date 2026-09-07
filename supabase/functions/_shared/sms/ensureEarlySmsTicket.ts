@@ -9,6 +9,10 @@ import { updateWorkflowRun } from "../engine/workflowRuns.ts"
 import { issueCategoryToVendorTrade } from "../vendor_trades.ts"
 import { assignVendorAndNotify } from "../../submit-maintenance-request/vendor_notify.ts"
 import {
+  emitJobCreatedBundle,
+  emitServerProductEvent,
+} from "../ga4MeasurementProtocol.ts"
+import {
   buildIntakeDescription,
   resolveIntakeIssueCategory,
   severityToDb,
@@ -109,6 +113,13 @@ export async function ensureEarlySmsMaintenanceTicket(
   const issueCategory = issueCategoryToVendorTrade(
     resolveIntakeIssueCategory(params.intake),
   )
+  if (!draftId) {
+    void emitServerProductEvent(supabase, {
+      eventName: "maintenance_request_started",
+      landlordId: params.landlordId,
+      properties: { job_type: issueCategory },
+    })
+  }
   const priority = params.intake.urgency?.trim() || "normal"
   const dbSeverity = severityToDb(params.intake.severity)
   const description = buildIntakeDescription(params.intake)
@@ -194,6 +205,10 @@ export async function ensureEarlySmsMaintenanceTicket(
   }
 
   const ticketId = ticket.id as string
+  void emitJobCreatedBundle(supabase, {
+    landlordId: params.landlordId,
+    jobType: issueCategory,
+  })
 
   await supabase
     .from("sms_conversations")

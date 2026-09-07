@@ -12,6 +12,7 @@ import {
   requireOnboardingLandlord,
   saveLandlordOnboarding,
 } from './draftStorage'
+import { trackProductEventOnce } from '@/lib/analytics/productEvents'
 import { persistOnboardingProperties } from './persist/properties'
 import {
   importOnboardingResidentsFromExtraction,
@@ -142,6 +143,12 @@ export async function completeOnboarding(
     completedAt: new Date().toISOString(),
   }
   await saveLandlordOnboarding(completed)
+
+  const metrics = buildOnboardingReviewMetrics(completed, vendors, residents, dbCounts)
+  trackProductEventOnce('signup_completed', 'onboarding', {
+    property_count: metrics.properties,
+    unit_count: metrics.units,
+  })
 
   try {
     const profile = await persistLandlordAccountProfile(scope.landlordId, state.accountSetup)

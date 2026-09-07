@@ -1,9 +1,16 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { getActiveLandlordId } from '@/lib/activeLandlord'
+import { adminNavPath } from '@/lib/adminNavigation'
+import { fetchLandlordAccountProfile } from '@/lib/landlordAccountProfile'
 import { supabase } from '@/lib/supabase'
 import { formatVendorTradeLabel } from '@/lib/vendorTrades'
 import { formatVendorLocationLabel } from '@/lib/vendorLocation'
+import {
+  VENDOR_SOURCE_SETTINGS_HINT,
+  vendorBlockedFromAutoAssignBySettings,
+  vendorSourceLabel,
+} from '@/lib/vendorSource'
 import { parseVendorId } from '@/lib/vendorRoutes'
 import { formatWorkOrderRefFromTicketId } from '@/lib/vendorCallFlow'
 import {
@@ -61,6 +68,7 @@ type VendorRecord = {
   portalApiKey: string | null
   createdAt: string | null
   onboardingOverriddenAt: string | null
+  onboardedFromExternal: boolean
 }
 
 function performanceReviewLabel(value: string | null): string | null {
@@ -540,6 +548,7 @@ export function AdminVendorDetailDashboard() {
   const [error, setError] = useState<string | null>(null)
   const [completedJobs, setCompletedJobs] = useState<VendorJobRow[]>([])
   const [jobsError, setJobsError] = useState<string | null>(null)
+  const [marketplacePreference, setMarketplacePreference] = useState<string | null>(null)
 
   const loadVendor = useCallback(async () => {
     if (!supabase || !vendorId) {
@@ -551,11 +560,12 @@ export function AdminVendorDetailDashboard() {
     setError(null)
 
     const landlordId = getActiveLandlordId()
-    const [vendorResult, scores, verificationResult, overrideSmsResult] = await Promise.allSettled([
+    const [vendorResult, scores, verificationResult, overrideSmsResult, accountProfile] =
+      await Promise.allSettled([
       supabase
         .from('vendors')
         .select(
-          'id, name, category, active, roster_status, roster_status_reason, performance_review, email, phone, city, state, country, contact_name, notification_channel, portal_api_key, created_at, onboarding_overridden_at',
+          'id, name, category, active, roster_status, roster_status_reason, performance_review, email, phone, city, state, country, contact_name, notification_channel, portal_api_key, created_at, onboarding_overridden_at, onboarded_from_external',
         )
         .eq('landlord_id', landlordId)
         .eq('id', vendorId)
@@ -579,6 +589,7 @@ export function AdminVendorDetailDashboard() {
         .eq('event_type', 'vendor.onboarding_override_sms_sent')
         .limit(1)
         .maybeSingle(),
+      fetchLandlordAccountProfile(landlordId),
     ])
 
     if (vendorResult.status !== 'fulfilled' || vendorResult.value.error) {
@@ -627,7 +638,12 @@ export function AdminVendorDetailDashboard() {
       portalApiKey: asString(raw.portal_api_key) || null,
       createdAt: asString(raw.created_at) || null,
       onboardingOverriddenAt: asString(raw.onboarding_overridden_at) || null,
+      onboardedFromExternal: raw.onboarded_from_external === true,
     })
+
+    setMarketplacePreference(
+      accountProfile.status === 'fulfilled' ? accountProfile.value.marketplacePreference : null,
+    )
 
     setOverrideActivationSmsSent(
       overrideSmsResult.status === 'fulfilled' &&
@@ -1025,6 +1041,27 @@ export function AdminVendorDetailDashboard() {
             <p className="mt-1 text-[14px] leading-5 tracking-[-0.1504px] text-[#6a7282]">
               {loading ? ' ' : categoryLine}
             </p>
+            {!loading && vendor ? (
+              <p className="mt-1 text-[13px] leading-5 text-[#6a7282]">
+                Source: {vendorSourceLabel(vendor.onboardedFromExternal)}
+                {vendorBlockedFromAutoAssignBySettings({
+                  onboardedFromExternal: vendor.onboardedFromExternal,
+                  marketplacePreference,
+                }) ? (
+                  <>
+                    {' '}
+                    · Cannot assign.{' '}
+                    <Link
+                      to={adminNavPath('settings_organization')}
+                      className="sa-link font-medium text-[#186179] hover:underline"
+                      title={VENDOR_SOURCE_SETTINGS_HINT}
+                    >
+                      Change vendor pool in Settings
+                    </Link>
+                  </>
+                ) : null}
+              </p>
+            ) : null}
             {!loading && (vendor?.phone || vendor?.email || vendor?.contactName || locationLabel) ? (
               <div className="mt-2 flex flex-wrap items-center gap-2">
                 {vendor?.contactName ? (

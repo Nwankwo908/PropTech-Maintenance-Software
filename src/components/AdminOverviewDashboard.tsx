@@ -101,8 +101,11 @@ import {
   resolvePropertyHealthKpiCaption,
   resolvePropertyHealthKpiValue,
   shouldShowPropertyHealthScore,
+  type PropertyHealthAsset,
   type PropertyHealthCanonicalProperty,
+  type PropertyHealthDamageReport,
   type PropertyHealthFeedback,
+  type PropertyHealthInspection,
   type PropertyHealthPmTask,
   type PropertyHealthResident,
   type PropertyHealthVendorMetrics,
@@ -997,6 +1000,9 @@ export function AdminOverviewDashboard() {
   const [pmTasks, setPmTasks] = useState<PropertyHealthPmTask[]>([])
   const [feedback, setFeedback] = useState<PropertyHealthFeedback[]>([])
   const [vendorMetrics, setVendorMetrics] = useState<PropertyHealthVendorMetrics[]>([])
+  const [healthAssets, setHealthAssets] = useState<PropertyHealthAsset[]>([])
+  const [healthInspections, setHealthInspections] = useState<PropertyHealthInspection[]>([])
+  const [healthDamageReports, setHealthDamageReports] = useState<PropertyHealthDamageReport[]>([])
   const [residents, setResidents] = useState<PropertyHealthResident[]>([])
   const [overviewResidents, setOverviewResidents] = useState<OverviewResident[]>([])
   const [leaseInfoMissing, setLeaseInfoMissing] = useState<LeaseInfoMissingAttention[]>([])
@@ -1422,6 +1428,9 @@ export function AdminOverviewDashboard() {
       setPmTasks(healthSignals.pmTasks)
       setFeedback(healthSignals.feedback)
       setVendorMetrics(healthSignals.vendorMetrics)
+      setHealthAssets(healthSignals.assets)
+      setHealthInspections(healthSignals.inspections)
+      setHealthDamageReports(healthSignals.damageReports)
 
       if (canonicalPropertiesResult.ok) {
         setCanonicalProperties(canonicalPropertiesResult.properties)
@@ -1551,11 +1560,14 @@ export function AdminOverviewDashboard() {
       pmTasks,
       feedback: enrichFeedbackFromTickets(feedback, healthTickets),
       vendorMetrics,
+      assets: healthAssets,
+      inspections: healthInspections,
+      damageReports: healthDamageReports,
       residents,
       canonicalProperties: canonicalPropertiesForHealth,
       now,
     })
-  }, [units, tickets, pmTasks, feedback, vendorMetrics, residents, canonicalPropertiesForHealth, now])
+  }, [units, tickets, pmTasks, feedback, vendorMetrics, healthAssets, healthInspections, healthDamageReports, residents, canonicalPropertiesForHealth, now])
 
   const kpis = useMemo(() => {
     const criticalOpen = openTickets.filter(isTicketCritical).length
@@ -2822,13 +2834,17 @@ export function AdminOverviewDashboard() {
   const healthKpiCaption = resolvePropertyHealthKpiCaption(healthReport.portfolio)
   const healthFactorBreakdown =
     !loading && healthReport.portfolio && healthScoreReady
-      ? propertyHealthFactorBreakdownLines(healthReport.portfolio.components)
+      ? propertyHealthFactorBreakdownLines(healthReport.portfolio.components, {
+          dataCompleteness: healthReport.portfolio.dataCompleteness,
+          topIssues: healthReport.portfolio.topIssues,
+        })
       : undefined
   const healthKpiValue = loading
     ? '—'
     : resolvePropertyHealthKpiValue(
         healthReport.portfolio?.status,
         healthReport.portfolio?.score,
+        'over100',
       )
 
   const escalatedRailOpen = escalatedRailTarget != null && escalatedReview != null
@@ -3065,7 +3081,7 @@ export function AdminOverviewDashboard() {
           goodWhenUp
           caption={healthKpiCaption}
           infoTitle="Property health factors"
-          infoDescription="See the six factors that make up your Property Health score. The areas that need the most attention are shown first so you know where to focus."
+          infoDescription="Condition, maintenance, and risk. Missing information is unknown — it does not lower the score."
           infoLines={healthFactorBreakdown}
         />
         <KpiCard

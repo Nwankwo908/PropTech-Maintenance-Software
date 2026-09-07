@@ -1,6 +1,7 @@
 import { serve } from "https://deno.land/std/http/server.ts"
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1"
 import { sendResendEmail } from "../_shared/delivery.ts"
+import { landlordIdForPortalLoginEmail } from "../_shared/landlordLoginMap.ts"
 import {
   hasTouch,
   parseWaitlistAttribution,
@@ -102,45 +103,61 @@ async function applyWaitlistAttributionToLandlord(
   attributionRaw: unknown,
 ): Promise<void> {
   const parsed = parseWaitlistAttribution(attributionRaw)
-  if (!parsed) {
-    console.info("[join-waitlist] attribution skipped", { reason: "no_utm" })
-    return
-  }
+  console.info("[join-waitlist]", {
+    attribution_present: Boolean(parsed),
+    first_touch_present: Boolean(parsed && hasTouch(parsed.firstTouch)),
+    latest_touch_present: Boolean(parsed && hasTouch(parsed.latestTouch)),
+  })
+  if (!parsed) return
+
   const patch = landlordAttributionPatch(parsed.firstTouch, parsed.latestTouch)
   if (Object.keys(patch).length === 0) {
-    console.info("[join-waitlist] attribution skipped", { reason: "empty_patch" })
+    console.info("[join-waitlist]", { landlord_update_attempted: false })
     return
   }
 
-  const { data: landlord, error: lookupError } = await admin
-    .from("landlords")
-    .select("id")
-    .eq("email", email)
-    .maybeSingle()
+  const mappedId = landlordIdForPortalLoginEmail(email)
+  let landlordId = mappedId
+  if (!landlordId) {
+    const { data: landlord, error: lookupError } = await admin
+      .from("landlords")
+      .select("id")
+      .eq("email", email)
+      .maybeSingle()
+    if (lookupError) {
+      console.info("[join-waitlist]", { landlord_update_error: true, stage: "lookup" })
+      console.error("[join-waitlist] landlord lookup error", lookupError.message)
+      return
+    }
+    landlordId = landlord?.id ?? null
+  }
 
-  if (lookupError) {
-    console.error("[join-waitlist] landlord lookup error", lookupError.message)
-    return
-  }
-  if (!landlord?.id) {
-    console.info("[join-waitlist] attribution skipped", { reason: "no_matching_landlord" })
-    return
-  }
+  console.info("[join-waitlist]", {
+    landlord_lookup_found: Boolean(landlordId),
+    landlord_id: landlordId,
+    lookup_count: landlordId ? 1 : 0,
+    via: mappedId ? "login_map" : "landlords_email",
+  })
+  if (!landlordId) return
+
+  console.info("[join-waitlist]", { landlord_update_attempted: true })
 
   const { data: updated, error: updateError } = await admin
     .from("landlords")
     .update(patch)
-    .eq("id", landlord.id)
+    .eq("id", landlordId)
     .select("id")
 
   if (updateError) {
+    console.info("[join-waitlist]", { landlord_update_error: true, stage: "update" })
     console.error("[join-waitlist] attribution update error", updateError.message)
     return
   }
-  console.info("[join-waitlist] attribution wrote", {
-    wrote: Boolean(updated?.length),
-    landlord_id: landlord.id,
-  })
+  if (!updated?.length) {
+    console.info("[join-waitlist]", { landlord_update_zero_rows: true })
+    return
+  }
+  console.info("[join-waitlist]", { landlord_update_succeeded: true, id_count: updated.length })
 }
 
 async function resolveReferrerId(

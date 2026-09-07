@@ -2,6 +2,7 @@
  * Canonical properties table helpers.
  * Property id is stable across renames; display name lives in `properties.name`.
  */
+import { trackProductEventOnce } from '@/lib/analytics/productEvents'
 import { getActiveLandlordId } from '@/lib/activeLandlord'
 import { getErrorMessage } from '@/lib/errorMessage'
 import { supabase } from '@/lib/supabase'
@@ -205,6 +206,9 @@ export async function ensureProperty(
   }
 
   const landlordId = input.landlordId?.trim() || getActiveLandlordId()
+  const existing = await findPropertyByName(landlordId, name)
+  const isNewProperty = existing.ok && existing.property == null
+
   const { data, error } = await supabase.rpc('ensure_property', {
     p_landlord_id: landlordId,
     p_name: name,
@@ -226,7 +230,14 @@ export async function ensureProperty(
     }
   }
 
-  return { ok: true, propertyId: String(data) }
+  const propertyId = String(data)
+  if (isNewProperty) {
+    trackProductEventOnce('property_added', propertyId, {
+      unit_count: input.unitCount ?? undefined,
+    })
+  }
+
+  return { ok: true, propertyId }
 }
 
 /** Rename display name only — properties.id stays the same. */

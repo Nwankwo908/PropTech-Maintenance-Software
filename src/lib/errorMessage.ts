@@ -104,7 +104,12 @@ export function toUserFriendlyMessage(raw: string, fallback: string): string {
     lower.includes('unique constraint') ||
     lower.includes('already exists')
   ) {
-    if (lower.includes('email') || lower.includes('(email)')) {
+    if (
+      lower.includes('email_key') ||
+      lower.includes('nonempty_email') ||
+      lower.includes('key (email)') ||
+      lower.includes('(email)=')
+    ) {
       return 'That email is already used by another account. Use a different email.'
     }
     if (lower.includes('resident_id') || lower.includes('users_resident_id')) {

@@ -16,21 +16,23 @@ import {
   mapTicketsForPropertyHealth,
   mapUnitsForPropertyHealth,
   countDistinctPortfolioUnits,
-  normalizeBuildingKey,
   propertyHealthFactorBreakdownLines,
   propertyHealthKpiDelta,
   resolvePropertyHealthKpiCaption,
   resolvePropertyHealthKpiValue,
   shouldShowPropertyHealthScore,
+  type PropertyHealthAsset,
   type PropertyHealthCanonicalProperty,
+  type PropertyHealthDamageReport,
   type PropertyHealthFeedback,
+  type PropertyHealthInspection,
   type PropertyHealthPmTask,
   type PropertyHealthResident,
   type PropertyHealthVendorMetrics,
 } from '@/lib/propertyHealth'
 import { fetchRecognizedMaintenanceSpend, type RecognizedMaintenanceSpend } from '@/api/maintenanceInvoice'
 import { buildMonthlySpendByBuilding, type PropertyAnalyticsTicket } from '@/lib/propertyAnalytics'
-import { propertyDetailPathForBuilding, propertyResidentDetailPathForBuilding, buildPropertyIdByBuilding } from '@/lib/propertyRoutes'
+import { propertyDetailPathForBuilding, buildPropertyIdByBuilding } from '@/lib/propertyRoutes'
 import {
   buildUnitOptionsFromPropertyPayload,
   unitOptionKeyToCell,
@@ -58,6 +60,8 @@ type PropertyTicket = {
   estimatedMinutes: number | null
   totalCost: number | null
   completedAt: string | null
+  description: string | null
+  dueAt: string | null
 }
 
 type PropertyUnit = {
@@ -111,6 +115,8 @@ function normalizeTicketRow(raw: Record<string, unknown>): PropertyTicket {
     email: asString(raw.email) || null,
     issueCategory: asString(raw.issue_category) || null,
     assignedVendorId: asString(raw.assigned_vendor_id) || null,
+    description: asString(raw.description) || null,
+    dueAt: asString(raw.due_at) || null,
     estimatedMinutes:
       typeof raw.estimated_minutes === 'number' && Number.isFinite(raw.estimated_minutes)
         ? raw.estimated_minutes
@@ -350,6 +356,9 @@ export function AdminPropertiesDashboard() {
   const [pmTasks, setPmTasks] = useState<PropertyHealthPmTask[]>([])
   const [feedback, setFeedback] = useState<PropertyHealthFeedback[]>([])
   const [vendorMetrics, setVendorMetrics] = useState<PropertyHealthVendorMetrics[]>([])
+  const [healthAssets, setHealthAssets] = useState<PropertyHealthAsset[]>([])
+  const [healthInspections, setHealthInspections] = useState<PropertyHealthInspection[]>([])
+  const [healthDamageReports, setHealthDamageReports] = useState<PropertyHealthDamageReport[]>([])
   const [residents, setResidents] = useState<PropertyHealthResident[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -431,7 +440,7 @@ export function AdminPropertiesDashboard() {
           supabase
             .from('maintenance_request_enriched')
             .select(
-              'id, created_at, unit, unit_id, building, email, issue_category, assigned_vendor_id, vendor_work_status, estimated_minutes, urgency, severity, priority',
+              'id, created_at, unit, unit_id, building, email, issue_category, assigned_vendor_id, vendor_work_status, estimated_minutes, urgency, severity, priority, description, due_at',
             )
             .eq('landlord_id', landlordId)
             .order('created_at', { ascending: false })
@@ -439,7 +448,7 @@ export function AdminPropertiesDashboard() {
           supabase
             .from('maintenance_requests')
             .select(
-              'id, created_at, unit, email, issue_category, assigned_vendor_id, vendor_work_status, estimated_minutes, urgency, severity, priority, completed_at, recognized_spend_amount',
+              'id, created_at, unit, email, issue_category, assigned_vendor_id, vendor_work_status, estimated_minutes, urgency, severity, priority, completed_at, recognized_spend_amount, description, due_at',
             )
             .eq('landlord_id', landlordId)
             .order('created_at', { ascending: false })
@@ -516,6 +525,9 @@ export function AdminPropertiesDashboard() {
       setPmTasks(healthSignals.pmTasks)
       setFeedback(healthSignals.feedback)
       setVendorMetrics(healthSignals.vendorMetrics)
+      setHealthAssets(healthSignals.assets)
+      setHealthInspections(healthSignals.inspections)
+      setHealthDamageReports(healthSignals.damageReports)
       setRecognizedSpend(recognizedSpendResult ?? [])
 
       if (!residentsResult.error) {
@@ -572,11 +584,14 @@ export function AdminPropertiesDashboard() {
       pmTasks,
       feedback: enrichFeedbackFromTickets(feedback, healthTickets),
       vendorMetrics,
+      assets: healthAssets,
+      inspections: healthInspections,
+      damageReports: healthDamageReports,
       residents,
       canonicalProperties: canonicalPropertiesForHealth,
       now,
     })
-  }, [units, tickets, pmTasks, feedback, vendorMetrics, residents, canonicalPropertiesForHealth, now])
+  }, [units, tickets, pmTasks, feedback, vendorMetrics, healthAssets, healthInspections, healthDamageReports, residents, canonicalPropertiesForHealth, now])
 
   const monthlySpendByBuilding = useMemo(() => {
     const healthUnits = mapUnitsForPropertyHealth(units as unknown as Record<string, unknown>[])
@@ -663,13 +678,17 @@ export function AdminPropertiesDashboard() {
   const healthKpiCaption = resolvePropertyHealthKpiCaption(healthReport.portfolio)
   const healthFactorBreakdown =
     !loading && healthReport.portfolio && healthScoreReady
-      ? propertyHealthFactorBreakdownLines(healthReport.portfolio.components)
+      ? propertyHealthFactorBreakdownLines(healthReport.portfolio.components, {
+          dataCompleteness: healthReport.portfolio.dataCompleteness,
+          topIssues: healthReport.portfolio.topIssues,
+        })
       : undefined
   const healthKpiValue = loading
     ? '—'
     : resolvePropertyHealthKpiValue(
         healthReport.portfolio?.status,
         healthReport.portfolio?.score,
+        'over100',
       )
 
   const visibleBuildings = healthReport.buildings
@@ -871,7 +890,7 @@ export function AdminPropertiesDashboard() {
           goodWhenUp
           caption={healthKpiCaption}
           infoTitle="Property health factors"
-          infoDescription="Breakdown of the six factors that contribute to this portfolio score. Weaker factors appear first so you can see what affected it most."
+          infoDescription="Condition, maintenance, and risk. Missing information is unknown — it does not lower the score."
           infoLines={healthFactorBreakdown}
         />
         <KpiCard

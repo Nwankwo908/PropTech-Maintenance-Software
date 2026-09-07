@@ -105,6 +105,20 @@ export function displayResidentEmail(email: string | null | undefined): string |
   return value
 }
 
+/**
+ * Email column to send on resident edit. `undefined` means leave the stored
+ * value alone so a blank/shared address is not rewritten onto a unique index.
+ */
+export function residentEmailPatchForSave(
+  submitted: string,
+  stored: string | null | undefined,
+): string | undefined {
+  const next = submitted.trim()
+  const current = displayResidentEmail(stored) ?? ''
+  if (next === current) return undefined
+  return next
+}
+
 function formatPhone(value: string | null): string | null {
   if (!value?.trim()) return null
   const digits = value.replace(/\D/g, '')

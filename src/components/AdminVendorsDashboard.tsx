@@ -6,8 +6,16 @@ import { SetupSuccessCheckboxGuide } from '@/components/SetupSuccessCheckboxGuid
 import { TableCheckbox } from '@/components/TableCheckbox'
 import magnifyingGlassIcon from '@/assets/Magnifying glass.svg'
 import { getActiveLandlordId } from '@/lib/activeLandlord'
+import { adminNavPath } from '@/lib/adminNavigation'
+import { fetchLandlordAccountProfile } from '@/lib/landlordAccountProfile'
 import { getErrorMessage } from '@/lib/errorMessage'
 import { vendorDetailPath } from '@/lib/vendorRoutes'
+import {
+  VENDOR_SOURCE_INFO,
+  VENDOR_SOURCE_SETTINGS_HINT,
+  vendorBlockedFromAutoAssignBySettings,
+  vendorSourceLabel,
+} from '@/lib/vendorSource'
 import { fetchVendorScoresForLandlord, isAuthClockSkewMessage } from '@/lib/vendorScores'
 import { dedupeVendorsByName, duplicateVendorIdsToRemove } from '@/lib/vendorDedup'
 import { supabase } from '@/lib/supabase'
@@ -38,6 +46,7 @@ type VendorRow = {
   rosterStatus: string | null
   createdAt: string | null
   onboardingOverriddenAt: string | null
+  onboardedFromExternal: boolean
 }
 
 type RatingSort = 'desc' | 'asc'
@@ -79,6 +88,36 @@ function formatAvgResponse(minutes: number | null): string {
   const hours = minutes / 60
   if (hours < 24) return `${hours.toFixed(hours < 10 ? 1 : 0)} hr`
   return `${Math.round(hours / 24)} d`
+}
+
+function SourceInfoIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} className="size-3.5" aria-hidden>
+      <circle cx="12" cy="12" r="9" />
+      <path d="M12 10v5M12 8h.01" strokeLinecap="round" />
+    </svg>
+  )
+}
+
+function SourceInfoTip() {
+  return (
+    <span className="group/source-info relative inline-flex shrink-0">
+      <button
+        type="button"
+        tabIndex={0}
+        className="inline-flex rounded-full p-0.5 text-[#9ca3af] outline-none hover:text-[#6a7282] focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-1"
+        aria-label={VENDOR_SOURCE_INFO}
+      >
+        <SourceInfoIcon />
+      </button>
+      <span
+        role="tooltip"
+        className="pointer-events-none absolute left-0 top-full z-30 mt-1.5 w-[min(240px,calc(100vw-3rem))] rounded-[10px] border border-[#e5e7eb] bg-white px-3 py-2 text-left text-[12px] font-medium leading-4 text-[#475569] opacity-0 shadow-[0px_8px_24px_rgba(0,0,0,0.12)] transition-opacity duration-150 group-hover/source-info:opacity-100 group-focus-within/source-info:opacity-100"
+      >
+        {VENDOR_SOURCE_INFO}
+      </span>
+    </span>
+  )
 }
 
 function StarIcon() {
@@ -221,6 +260,7 @@ export function AdminVendorsDashboard() {
   const [deleteVendorsError, setDeleteVendorsError] = useState<string | null>(null)
   const [onboardingSaving, setOnboardingSaving] = useState(false)
   const [onboardingNotice, setOnboardingNotice] = useState<string | null>(null)
+  const [marketplacePreference, setMarketplacePreference] = useState<string | null>(null)
 
   useEffect(() => {
     if (!isSetupSuccessCheckboxGuideNavigation(location.state, 'vendors')) return
@@ -248,14 +288,18 @@ export function AdminVendorsDashboard() {
     setScoresError(null)
 
     const landlordId = getActiveLandlordId()
-    const [vendorsResult, scores] = await Promise.all([
+    const [vendorsResult, scores, accountProfile] = await Promise.all([
       supabase
         .from('vendors')
-        .select('id, name, category, active, roster_status, email, phone, created_at, onboarding_overridden_at')
+        .select(
+          'id, name, category, active, roster_status, email, phone, created_at, onboarding_overridden_at, onboarded_from_external',
+        )
         .eq('landlord_id', landlordId)
         .order('created_at', { ascending: true }),
       fetchVendorScoresForLandlord(landlordId),
+      fetchLandlordAccountProfile(landlordId),
     ])
+    setMarketplacePreference(accountProfile.marketplacePreference)
 
     if (vendorsResult.error) {
       setError(vendorsResult.error.message ?? 'Failed to load vendors.')
@@ -316,6 +360,7 @@ export function AdminVendorsDashboard() {
         rosterStatus: asString(raw.roster_status) || null,
         createdAt: asString(raw.created_at) || null,
         onboardingOverriddenAt: asString(raw.onboarding_overridden_at) || null,
+        onboardedFromExternal: raw.onboarded_from_external === true,
       }
     })
 
@@ -394,6 +439,7 @@ export function AdminVendorsDashboard() {
         !q ||
         vendor.name.toLowerCase().includes(q) ||
         vendor.trade.toLowerCase().includes(q) ||
+        vendorSourceLabel(vendor.onboardedFromExternal).toLowerCase().includes(q) ||
         (vendor.email?.toLowerCase().includes(q) ?? false) ||
         (vendor.phone?.toLowerCase().includes(q) ?? false)
       if (!matchesSearch) return false
@@ -835,6 +881,12 @@ export function AdminVendorsDashboard() {
                 </th>
                 <th className="px-6 py-3 text-[12px] font-medium text-[#6a7282]">Vendor</th>
                 <th className="px-6 py-3 text-[12px] font-medium text-[#6a7282]">Trade</th>
+                <th className="px-6 py-3 text-[12px] font-medium text-[#6a7282]">
+                  <span className="inline-flex items-center gap-1">
+                    Source
+                    <SourceInfoTip />
+                  </span>
+                </th>
                 <th className="px-6 py-3 text-[12px] font-medium text-[#6a7282]">Rating</th>
                 <th className="px-6 py-3 text-[12px] font-medium text-[#6a7282]">Completed jobs</th>
                 <th className="px-6 py-3 text-[12px] font-medium text-[#6a7282]">Avg. response</th>
@@ -844,13 +896,13 @@ export function AdminVendorsDashboard() {
             <tbody>
               {loading ? (
                 <tr>
-                  <td colSpan={7} className="px-6 py-10 text-center text-[14px] text-[#6a7282]">
+                  <td colSpan={8} className="px-6 py-10 text-center text-[14px] text-[#6a7282]">
                     Loading vendors…
                   </td>
                 </tr>
               ) : filteredVendors.length === 0 ? (
                 <tr>
-                  <td colSpan={7} className="px-6 py-10 text-center text-[14px] text-[#6a7282]">
+                  <td colSpan={8} className="px-6 py-10 text-center text-[14px] text-[#6a7282]">
                     {vendors.length === 0
                       ? 'No vendors yet. Add vendors so Ulo can route work to them.'
                       : 'No vendors match your search or filters.'}
@@ -888,6 +940,35 @@ export function AdminVendorsDashboard() {
                       </Link>
                     </td>
                     <td className="px-6 py-4 text-[14px] text-[#6a7282]">{vendor.trade}</td>
+                    <td className="px-6 py-4 align-top">
+                      {(() => {
+                        const blocked = vendorBlockedFromAutoAssignBySettings({
+                          onboardedFromExternal: vendor.onboardedFromExternal,
+                          marketplacePreference,
+                        })
+                        return (
+                          <div>
+                            <p className="text-[14px] text-[#0a0a0a]">
+                              {vendorSourceLabel(vendor.onboardedFromExternal)}
+                            </p>
+                            {blocked ? (
+                              <p
+                                className="mt-0.5 text-[12px] leading-4 text-[#6a7282]"
+                                title={VENDOR_SOURCE_SETTINGS_HINT}
+                              >
+                                Cannot assign.{' '}
+                                <Link
+                                  to={adminNavPath('settings_organization')}
+                                  className="sa-link font-medium text-[#186179] hover:underline"
+                                >
+                                  Settings
+                                </Link>
+                              </p>
+                            ) : null}
+                          </div>
+                        )
+                      })()}
+                    </td>
                     <td className="px-6 py-4">
                       {vendor.rating != null ? (
                         <span className="inline-flex items-center gap-1.5 text-[14px] text-[#0a0a0a]">

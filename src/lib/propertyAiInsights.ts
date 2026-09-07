@@ -88,29 +88,25 @@ function scoreOpenMaintenanceFromTickets(
   trackedUnits: TrackedUnit[],
   openTickets: OpenTicket[],
 ): number {
-  if (trackedUnits.length === 0) return 50
+  if (trackedUnits.length === 0) return 100
 
-  const unitLabels = new Set(
-    trackedUnits.map((unit) => normalizeUnitLabel(unit.unitLabel)).filter(Boolean),
-  )
-  const unitsWithOpen = new Set<string>()
-  for (const ticket of openTickets.filter(isTicketOpen)) {
-    const key = normalizeUnitLabel(ticket.unit)
-    if (key && unitLabels.has(key)) unitsWithOpen.add(key)
-  }
-
-  return clampScore(100 * (1 - unitsWithOpen.size / trackedUnits.length))
+  const remaining = openTickets.filter(isTicketOpen).length
+  return clampScore(100 - Math.min(56, remaining * 6))
 }
 
 function scorePmComplianceFromTasks(tasks: PmComplianceTask[]): number {
-  if (tasks.length === 0) return 50
-  const completed = tasks.filter((task) => task.status === 'completed').length
-  return clampScore((completed / tasks.length) * 100)
+  const overdue = tasks.filter((task) => {
+    if (task.status === 'completed' || task.status === 'cancelled') return false
+    const due = new Date(task.dueAt).getTime()
+    return Number.isFinite(due) && due < Date.now()
+  }).length
+  return clampScore(100 - Math.min(15, overdue * 5))
 }
 
 function scoreVacancyFromOccupancy(occupied: number, total: number): number {
-  if (total === 0) return 50
-  return clampScore((occupied / total) * 100)
+  if (total === 0) return 100
+  const vacant = Math.max(0, total - occupied)
+  return clampScore(100 - Math.min(12, vacant * 3))
 }
 
 function toHealthUnits(trackedUnits: TrackedUnit[], building: string): PropertyHealthUnit[] {
@@ -217,17 +213,17 @@ function componentKeyForUrgentCategory(
 ): PropertyHealthComponentKey {
   switch (category) {
     case 'maintenance':
-      return 'openMaintenance'
+      return 'maintenance'
     case 'inspection':
-      return 'pmCompliance'
+      return 'condition'
     case 'lease':
     case 'move_in':
     case 'move_out':
-      return 'vacancy'
+      return 'risk'
     case 'payment':
-      return 'residentSatisfaction'
+      return 'risk'
     default:
-      return 'openMaintenance'
+      return 'maintenance'
   }
 }
 
@@ -252,18 +248,18 @@ function buildUrgentCandidate(
           (ticket) => isTicketOpen(ticket) && !resolvedTicketIds.has(ticket.id),
         )
         const nextScore = scoreOpenMaintenanceFromTickets(trackedUnits, remainingOpen)
-        return updateComponentScore(components, 'openMaintenance', nextScore)
+        return updateComponentScore(components, 'maintenance', nextScore)
       }
 
       const key = componentKeyForUrgentCategory(item.category)
-      if (key === 'pmCompliance' && pmTasks.length > 0) {
+      if (key === 'condition' && pmTasks.length > 0) {
         const incomplete = pmTasks.find((task) => task.status !== 'completed')
         if (incomplete) {
           return buildPmCandidate(incomplete, pmTasks).apply(components)
         }
       }
 
-      if (key === 'vacancy') {
+      if (key === 'risk') {
         const vacancyCandidate = buildVacancyCandidate(1, 0, trackedUnits, building, residents)
         if (vacancyCandidate) return vacancyCandidate.apply(components)
       }
@@ -314,7 +310,7 @@ function buildMaintenanceCandidate(
         (ticket) => isTicketOpen(ticket) && !resolveIds.has(ticket.id),
       )
       const nextScore = scoreOpenMaintenanceFromTickets(trackedUnits, remainingOpen)
-      return updateComponentScore(components, 'openMaintenance', nextScore)
+      return updateComponentScore(components, 'maintenance', nextScore)
     },
   }
 }
@@ -332,7 +328,7 @@ function buildPmCandidate(task: PmComplianceTask, buildingTasks: PmComplianceTas
         row.id === task.id ? { ...row, status: 'completed' as const } : row,
       )
       const nextScore = scorePmComplianceFromTasks(completedTasks)
-      return updateComponentScore(components, 'pmCompliance', nextScore)
+      return updateComponentScore(components, 'maintenance', nextScore)
     },
   }
 }
@@ -364,7 +360,7 @@ function buildVacancyCandidate(
         Math.min(total, currentOccupied + count),
         total,
       )
-      return updateComponentScore(components, 'vacancy', nextScore)
+      return updateComponentScore(components, 'risk', nextScore)
     },
   }
 }

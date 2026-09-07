@@ -1,5 +1,6 @@
 import type { IssueParsed } from './issueAnalysis'
 import type { MaintenanceFormValues } from '../lib/maintenanceRequestValidation'
+import { trackProductEvent } from '../lib/analytics/productEvents'
 import { getValidResidentSubmitAuth } from '../lib/residentAuth'
 import { supabase } from '../lib/supabase'
 import {
@@ -177,6 +178,9 @@ export async function submitMaintenanceRequest(
     }
 
     const supabaseHeaders = maintenanceSubmitHeaders(apiUrl, authForRequest)
+    trackProductEvent('maintenance_request_started', {
+      job_type: safeIssueCategory ?? undefined,
+    })
     const res = await fetch(apiUrl, {
       method: 'POST',
       headers: supabaseHeaders,
@@ -195,7 +199,8 @@ export async function submitMaintenanceRequest(
       id = data.id ?? data.requestId ?? id
     }
 
-    return { id, ticketId: id, mode: 'api' }
+    const ticketId = id
+    return { id, ticketId, mode: 'api' }
   }
 
   await new Promise((r) => setTimeout(r, 550))

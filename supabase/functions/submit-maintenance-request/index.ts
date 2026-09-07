@@ -14,6 +14,7 @@ import { notifyResidentSubmitted } from "./resident_notify.ts"
 import { assignVendorAndNotify } from "./vendor_notify.ts"
 import { logGraphEvent } from "../_shared/graph/logGraphEvent.ts"
 import { startMaintenanceRequestWorkflow } from "../_shared/engine/startMaintenanceRequestWorkflow.ts"
+import { emitJobCreatedBundle } from "../_shared/ga4MeasurementProtocol.ts"
 import {
   escalateMaintenanceNeedsVendor,
   SUBMITTED_NO_VENDOR_ESCALATION,
@@ -359,6 +360,10 @@ serve(async (req) => {
 
   const ticketId = row.id as string
   const landlordId = resolveLandlordId()
+  void emitJobCreatedBundle(supabase, {
+    landlordId,
+    jobType: slaClassification.issue_category,
+  })
 
   if (landlordId && slaClassification.classification) {
     await insertAiClassificationLog(supabase, {

@@ -2,7 +2,6 @@ import { describe, expect, it } from 'vitest'
 import {
   buildPropertyHealthReport,
   hasPropertyHealthOperationalSignal,
-  PROPERTY_HEALTH_INSIGHTS_CAPTION,
   PROPERTY_HEALTH_OPS_MATURITY_DAYS,
   resolvePropertyHealthKpiCaption,
   resolvePropertyHealthKpiValue,
@@ -60,7 +59,7 @@ describe('hasPropertyHealthOperationalSignal', () => {
 })
 
 describe('property activation vs health insights', () => {
-  it('marks a newly onboarded property Active without 30 days of history', () => {
+  it('shows a numeric Property Health score as soon as units are tracked', () => {
     const report = buildPropertyHealthReport({
       units: [activeUnit],
       tickets: [],
@@ -72,12 +71,13 @@ describe('property activation vs health insights', () => {
       now,
     })
 
-    expect(report.portfolio?.status).toBe('active')
-    expect(report.portfolio?.pendingReason).toBe('collecting_history')
-    expect(shouldShowPropertyHealthScore(report.portfolio?.status)).toBe(false)
-    expect(report.buildings[0]?.status).toBe('active')
-    expect(resolvePropertyHealthKpiCaption(report.portfolio)).toBe(PROPERTY_HEALTH_INSIGHTS_CAPTION)
-    expect(resolvePropertyHealthKpiValue(report.portfolio?.status, report.portfolio?.score)).toBe('—')
+    expect(report.portfolio?.status).not.toBe('pending_setup')
+    expect(shouldShowPropertyHealthScore(report.portfolio?.status)).toBe(true)
+    expect(resolvePropertyHealthKpiValue(report.portfolio?.status, report.portfolio?.score, 'over100')).toMatch(
+      /\/ 100$/,
+    )
+    expect(resolvePropertyHealthKpiCaption(report.portfolio)).toBe(report.portfolio?.rating)
+    expect(report.buildings[0]?.components.some((c) => c.key === 'maintenance' && !c.isFallback)).toBe(true)
   })
 
   it('does not require a preventive-maintenance task to become Active', () => {
@@ -91,11 +91,10 @@ describe('property activation vs health insights', () => {
       now,
     })
 
-    expect(report.portfolio?.status).toBe('active')
     expect(report.portfolio?.status).not.toBe('pending_setup')
   })
 
-  it('keeps 30-day / PM history as an insights gate, not activation', () => {
+  it('keeps 30-day / PM history as a separate ops-maturity helper, not a KPI hide', () => {
     const report = buildPropertyHealthReport({
       units: [activeUnit],
       tickets: [],
@@ -107,8 +106,7 @@ describe('property activation vs health insights', () => {
     })
 
     expect(hasPropertyHealthOperationalSignal([activeUnit], [], [], now)).toBe(false)
-    expect(report.portfolio?.pendingReason).toBe('collecting_history')
-    expect(shouldShowPropertyHealthScore(report.portfolio?.status)).toBe(false)
+    expect(shouldShowPropertyHealthScore(report.portfolio?.status)).toBe(true)
   })
 
   it('shows a numeric score once a completed PM task exists', () => {
@@ -123,13 +121,11 @@ describe('property activation vs health insights', () => {
     })
 
     expect(report.portfolio?.status).not.toBe('pending_setup')
-    expect(report.portfolio?.status).not.toBe('active')
     expect(shouldShowPropertyHealthScore(report.portfolio?.status)).toBe(true)
-    expect(report.portfolio?.pendingReason).toBeNull()
     expect(report.portfolio?.score).toBeGreaterThan(0)
   })
 
-  it('leaves existing scored properties healthy/monitor/at_risk', () => {
+  it('rates an occupied property with no open issues as Excellent', () => {
     const matureUnit = { ...activeUnit, trackedSinceMs: now - 40 * DAY_MS }
     const report = buildPropertyHealthReport({
       units: [matureUnit],
@@ -141,11 +137,11 @@ describe('property activation vs health insights', () => {
       now,
     })
 
-    expect(report.portfolio?.status).toBe('healthy')
+    expect(report.portfolio?.status).toBe('excellent')
     expect(shouldShowPropertyHealthScore(report.portfolio?.status)).toBe(true)
   })
 
-  it('does not treat cancelled work orders as ops history for insights', () => {
+  it('does not treat cancelled work orders as ops history for the maturity helper', () => {
     const cancelledTicket = {
       id: 'cancelled-wo',
       createdAt: new Date(now - 40 * DAY_MS).toISOString(),
@@ -169,8 +165,8 @@ describe('property activation vs health insights', () => {
     expect(hasPropertyHealthOperationalSignal([activeUnit], [], [cancelledTicket], now)).toBe(
       false,
     )
-    expect(shouldShowPropertyHealthScore(report.portfolio?.status)).toBe(false)
-    expect(report.portfolio?.pendingReason).toBe('collecting_history')
+    expect(shouldShowPropertyHealthScore(report.portfolio?.status)).toBe(true)
+    expect(report.portfolio?.components.find((c) => c.key === 'maintenance')?.score).toBe(100)
   })
 
   it('keeps incomplete properties in Pending setup when units are still inactive', () => {

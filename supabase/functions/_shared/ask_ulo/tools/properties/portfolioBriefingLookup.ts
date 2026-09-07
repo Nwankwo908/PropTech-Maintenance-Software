@@ -47,7 +47,6 @@ const CRITICAL_RE = /\b(critical|emergency|urgent|high)\b/i
 const AGING_MS = 72 * 60 * 60 * 1000
 const REPEAT_WINDOW_MS = 45 * 24 * 60 * 60 * 1000
 const FOUR_WEEKS_MS = 28 * 24 * 60 * 60 * 1000
-const NEUTRAL = 50
 
 const ULO_ACTION_RE =
   /\b(reassign|reassigned|vendor\..*sla|sla_expired|late[-_ ]?rent|reminder_sent|inspection\.scheduled|workflow\.(?:escalat|act)|maintenance\.(?:reassign|escalat)|rent\.reminder)\b/i
@@ -63,9 +62,10 @@ function clampScore(n: number): number {
 
 function assessmentFromScore(score: number | null): PortfolioBriefingAssessment {
   if (score == null) return "Unknown"
-  if (score >= 85) return "Healthy"
-  if (score >= 70) return "Stable"
-  if (score >= 55) return "Needs Attention"
+  if (score >= 90) return "Healthy"
+  if (score >= 80) return "Stable"
+  if (score >= 70) return "Needs Attention"
+  if (score >= 60) return "Needs Attention"
   return "At Risk"
 }
 
@@ -221,6 +221,9 @@ export async function portfolioBriefingLookup(
   const residents = residentsRes.data ?? []
   const events = eventsRes.data ?? []
   const feedback = feedbackRes.error ? [] : feedbackRes.data ?? []
+  const ratings = feedback
+    .map((f) => Number(f.rating))
+    .filter((r) => Number.isFinite(r) && r >= 1 && r <= 5)
 
   const critical = openTickets.filter((t) => {
     const pri = `${t.priority ?? ""} ${t.urgency ?? ""}`
@@ -294,51 +297,16 @@ export async function portfolioBriefingLookup(
     if (recentUloActions.length >= 3) break
   }
 
-  // Simplified property health (same weights as product; missing signals = neutral 50)
-  const openRate =
-    units.length > 0
-      ? new Set(
-          openTickets
-            .map((t) => String(t.unit ?? "").toLowerCase().replace(/^unit\s+/, "").trim())
-            .filter(Boolean),
-        ).size / units.length
-      : 0
-  const openMaintScore = units.length > 0 ? clampScore(100 * (1 - openRate)) : NEUTRAL
-  const vacancyScore = occupancyPct != null ? clampScore(occupancyPct) : NEUTRAL
-  const unitsWithRepeat = new Set<string>()
-  const unitCatCounts = new Map<string, number>()
-  for (const t of recentTickets) {
-    const unitKey = String(t.unit ?? "").toLowerCase().replace(/^unit\s+/, "").trim()
-    if (!unitKey) continue
-    const cat = String(t.issue_category ?? "general").toLowerCase()
-    const key = `${unitKey}|${cat}`
-    unitCatCounts.set(key, (unitCatCounts.get(key) ?? 0) + 1)
-  }
-  for (const [key, count] of unitCatCounts) {
-    if (count >= 2) unitsWithRepeat.add(key.split("|")[0]!)
-  }
-  const repeatScore =
-    units.length > 0
-      ? clampScore(100 * (1 - unitsWithRepeat.size / units.length))
-      : NEUTRAL
-  const ratings = feedback
-    .map((f) => Number(f.rating))
-    .filter((r) => Number.isFinite(r) && r >= 1 && r <= 5)
-  const satisfactionScore =
-    ratings.length > 0
-      ? clampScore((ratings.reduce((a, b) => a + b, 0) / ratings.length / 5) * 100)
-      : NEUTRAL
-
+  // Property Health: Condition omitted without asset data; Maintenance + Risk renormalized.
+  const openCount = openTickets.length
+  const maintenanceScore =
+    units.length > 0 ? clampScore(100 - Math.min(56, openCount * 6)) : null
+  const vacantCount = units.length > 0 ? Math.max(0, units.length - occupied) : 0
+  const riskScore =
+    units.length > 0 ? clampScore(100 - Math.min(12, vacantCount * 3)) : null
   const healthScore =
-    units.length > 0
-      ? clampScore(
-          openMaintScore * 0.4 +
-            NEUTRAL * 0.2 + // PM unknown
-            vacancyScore * 0.15 +
-            satisfactionScore * 0.1 +
-            repeatScore * 0.1 +
-            NEUTRAL * 0.05, // vendor unknown → neutral
-        )
+    maintenanceScore != null && riskScore != null
+      ? clampScore((maintenanceScore * 0.35 + riskScore * 0.25) / 0.6)
       : null
 
   // 4-week delta approximation: recompute open-maint as if only tickets older than 4w counted as "then open"
@@ -348,21 +316,8 @@ export async function portfolioBriefingLookup(
       const created = new Date(String(t.created_at)).getTime()
       return !Number.isNaN(created) && created < now - FOUR_WEEKS_MS
     })
-    const thenRate =
-      new Set(
-        thenOpen
-          .map((t) => String(t.unit ?? "").toLowerCase().replace(/^unit\s+/, "").trim())
-          .filter(Boolean),
-      ).size / units.length
-    const thenOpenScore = clampScore(100 * (1 - thenRate))
-    const thenHealth = clampScore(
-      thenOpenScore * 0.4 +
-        NEUTRAL * 0.2 +
-        vacancyScore * 0.15 +
-        satisfactionScore * 0.1 +
-        repeatScore * 0.1 +
-        NEUTRAL * 0.05,
-    )
+    const thenMaint = clampScore(100 - Math.min(56, thenOpen.length * 6))
+    const thenHealth = clampScore((thenMaint * 0.35 + (riskScore ?? 100) * 0.25) / 0.6)
     healthDelta4w = healthScore - thenHealth
   }
 
@@ -378,9 +333,7 @@ export async function portfolioBriefingLookup(
           : "."),
     )
     bullets.push(
-      `Health components used: open maintenance ${openMaintScore}, occupancy ${vacancyScore}, repeat-issue risk ${repeatScore}, resident satisfaction ${
-        ratings.length ? satisfactionScore : "neutral (no recent ratings)"
-      }; PM compliance and vendor performance defaulted to neutral (no signal).`,
+      `Health components used: condition unknown (no asset/inspection signals in this briefing), maintenance ${maintenanceScore}, risk ${riskScore}. Missing condition is omitted, not scored as 50.`,
     )
   } else {
     bullets.push("Property Health score: unavailable (no tracked units).")

@@ -34,6 +34,7 @@ import {
   buildResidentWorkflowSummaries,
   displayResidentEmail,
   isPlaceholderResidentEmail,
+  residentEmailPatchForSave,
   type ResidentCommunicationItem,
   type ResidentProfileDetail,
 } from '@/lib/residentProfileDetail'
@@ -66,7 +67,7 @@ import {
 } from '@/lib/organizationSettings'
 import { loadResidentLeaseDocuments } from '@/lib/residentLeaseDocuments'
 import { fetchResidentMaintenanceCalendarEvents } from '@/lib/residentScheduledVisits'
-import { getErrorMessage } from '@/lib/errorMessage'
+import { getErrorMessage, isUniqueViolation } from '@/lib/errorMessage'
 import { parseLeaseDateInput, parseRentDueDayInput } from '@/lib/onboarding'
 import { parseIsoDateOnly, type ResidentCalendarEvent } from '@/lib/residentLeaseCalendar'
 import {
@@ -1037,20 +1038,46 @@ export function AdminPropertyResidentDetailDashboard() {
           })
         : null
     const previousPhone = loadedUser?.phone ?? null
-    const { error: updateError } = await supabase
+    const emailPatch = residentEmailPatchForSave(payload.email, loadedUser?.email)
+    const updatePayload: Record<string, unknown> = {
+      full_name: payload.fullName,
+      phone: payload.phone ?? null,
+      status: payload.status,
+      unit: assigned?.unitLabel ?? null,
+      building: assigned?.building ?? null,
+      move_in_date: parseLeaseDateInput(payload.leaseStart),
+      lease_end_date: parseLeaseDateInput(payload.leaseEnd),
+    }
+    if (emailPatch !== undefined) {
+      updatePayload.email = emailPatch
+    }
+
+    let { error: updateError } = await supabase
       .from('users')
-      .update({
-        full_name: payload.fullName,
-        email: payload.email,
-        phone: payload.phone ?? null,
-        status: payload.status,
-        unit: assigned?.unitLabel ?? null,
-        building: assigned?.building ?? null,
-        move_in_date: parseLeaseDateInput(payload.leaseStart),
-        lease_end_date: parseLeaseDateInput(payload.leaseEnd),
-      })
+      .update(updatePayload)
       .eq('id', payload.id)
       .eq('landlord_id', getActiveLandlordId())
+
+    // Blank emails are often shared. If a leftover unique index still fires, save
+    // the rest of the profile instead of blocking the edit.
+    if (
+      updateError &&
+      emailPatch !== undefined &&
+      isUniqueViolation(updateError) &&
+      /email/i.test(updateError.message ?? '')
+    ) {
+      const submitted = payload.email.trim()
+      const current = displayResidentEmail(loadedUser?.email) ?? ''
+      if (!submitted || submitted === current) {
+        const { email: _ignored, ...withoutEmail } = updatePayload
+        const retry = await supabase
+          .from('users')
+          .update(withoutEmail)
+          .eq('id', payload.id)
+          .eq('landlord_id', getActiveLandlordId())
+        updateError = retry.error
+      }
+    }
 
     if (updateError) {
       setActionError(getErrorMessage(updateError, 'Something went wrong. Please try again.'))

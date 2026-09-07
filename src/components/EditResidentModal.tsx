@@ -1,4 +1,5 @@
 import { useEffect, useId, useMemo, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { getErrorMessage } from '@/lib/errorMessage'
 import { formatPhoneNational, optionalPhoneForDbOrError } from '@/lib/phoneFormat'
 import { shouldOfferRestartTenantOnboarding } from '@/api/tenantActivation'
@@ -160,6 +161,19 @@ export function EditResidentModal({
     return () => window.removeEventListener('keydown', onKey)
   }, [row, onClose])
 
+  useEffect(() => {
+    if (!row) return
+    const html = document.documentElement
+    const prevHtmlOverflow = html.style.overflow
+    const prevBodyOverflow = document.body.style.overflow
+    html.style.overflow = 'hidden'
+    document.body.style.overflow = 'hidden'
+    return () => {
+      html.style.overflow = prevHtmlOverflow
+      document.body.style.overflow = prevBodyOverflow
+    }
+  }, [row])
+
   if (!row) return null
 
   async function save() {
@@ -192,14 +206,17 @@ export function EditResidentModal({
     }
   }
 
-  return (
-    <div className="fixed inset-0 z-50 flex justify-end">
+  return createPortal(
+    <div
+      className="fixed inset-0 z-50 flex justify-end overflow-hidden overscroll-none"
+      onWheel={(e) => e.stopPropagation()}
+    >
       <div role="presentation" className="sa-scrim absolute inset-0 bg-black/40" aria-hidden onClick={onClose} />
       <div
         role="dialog"
         aria-modal="true"
         aria-labelledby={titleId}
-        className="sa-rail relative flex h-full max-h-dvh w-full max-w-[min(100vw,560px)] flex-col overflow-hidden border-l border-secondary bg-white shadow-[inset_1px_0_0_0_#A788964D]"
+        className="sa-rail relative flex h-full max-h-dvh min-w-0 w-full max-w-[min(100vw,560px)] flex-col overflow-hidden border-l border-secondary bg-white shadow-[inset_1px_0_0_0_#A788964D]"
       >
         <header className="flex h-[81px] shrink-0 items-center justify-between border-b border-secondary px-6">
           <div className="flex min-w-0 items-center gap-3">
@@ -230,7 +247,7 @@ export function EditResidentModal({
           </button>
         </header>
 
-        <div className="min-h-0 flex-1 overflow-y-auto px-6 pb-6 pt-6">
+        <div className="min-h-0 min-w-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-y-contain overscroll-x-none touch-pan-y px-6 pb-6 pt-6">
           {saveError ? (
             <p
               className="mb-4 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-[13px] font-medium text-red-800"
@@ -239,7 +256,7 @@ export function EditResidentModal({
               {saveError}
             </p>
           ) : null}
-          <div className="flex flex-col gap-4">
+          <div className="flex min-w-0 flex-col gap-4">
             <div className="space-y-2">
               <label className="block text-[14px] font-medium leading-5 tracking-[-0.1504px] text-neutral-variant">
                 Full Name <span className="text-error">*</span>
@@ -341,7 +358,7 @@ export function EditResidentModal({
                   type="date"
                   value={leaseStart}
                   onChange={(e) => setLeaseStart(e.target.value)}
-                  className={`${inputClass} min-h-9`}
+                  className={`${inputClass} min-h-9 min-w-0`}
                 />
               </div>
               <div className="space-y-2">
@@ -356,7 +373,7 @@ export function EditResidentModal({
                   type="date"
                   value={leaseEnd}
                   onChange={(e) => setLeaseEnd(e.target.value)}
-                  className={`${inputClass} min-h-9`}
+                  className={`${inputClass} min-h-9 min-w-0`}
                 />
               </div>
             </div>
@@ -408,6 +425,7 @@ export function EditResidentModal({
           </button>
         </footer>
       </div>
-    </div>
+    </div>,
+    document.body,
   )
 }

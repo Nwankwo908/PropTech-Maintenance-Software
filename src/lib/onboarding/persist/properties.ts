@@ -16,6 +16,7 @@ import {
 import { normalizeBuildingKey, normalizeUnitLabel } from '@/lib/propertyHealth'
 import { deleteResidentsForLandlord } from '@/lib/residentDeletion'
 import { supabase } from '@/lib/supabase'
+import { trackProductEventOnce } from '@/lib/analytics/productEvents'
 import { requireOnboardingLandlord } from '../scope'
 import type { OnboardingProperty } from '../types'
 
@@ -516,6 +517,12 @@ async function syncOnboardingPropertyUnits(
           'Couldn’t register units. Please try again.',
         ),
       }
+    }
+    if (!insertError) {
+      trackProductEventOnce(
+        'unit_added',
+        `${landlordId}:${unit.propertyId ?? ''}:${unit.unitLabel.trim()}:${unit.building ?? ''}`,
+      )
     }
   }
 

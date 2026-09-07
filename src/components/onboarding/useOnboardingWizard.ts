@@ -78,6 +78,7 @@ import {
   type OnboardingStep,
   type OnboardingVendor,
 } from '@/lib/onboarding'
+import { trackProductEventOnce } from '@/lib/analytics/productEvents'
 import { commitFastTrackImport } from '@/lib/onboarding/fastTrackImport'
 import { mergeFastTrackReviewResidents } from '@/lib/onboarding/persist/importResidents'
 import {
@@ -697,6 +698,7 @@ export function useOnboardingWizard() {
       properties: [],
     })
     setSaving(false)
+    trackProductEventOnce('signup_started', 'onboarding')
   }
 
   async function handleStartScratch() {

@@ -295,6 +295,8 @@ export type UpdateJobStatusInput = {
   updateUrl: string
   vendorToken: string
   invoice?: VendorInvoiceInput
+  /** Allowlisted trade slug only; never ticket text. */
+  jobType?: string | null
 }
 
 export async function updateJobStatus(

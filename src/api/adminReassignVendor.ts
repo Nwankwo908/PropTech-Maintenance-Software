@@ -7,7 +7,12 @@
  * `x-admin-reassign-secret` when `VITE_SUPABASE_ANON_KEY` is set.
  */
 
-import { requireAdminEdgeSecret, formatAdminEdgeUnauthorizedError } from '@/lib/adminEdgeAuth'
+import {
+  adminEdgeInvokeHeaders,
+  fetchAdminEdgeFunction,
+  formatAdminEdgeUnauthorizedError,
+  requireAdminEdgeSecret,
+} from '@/lib/adminEdgeAuth'
 
 export {
   adminEdgeInvokeHeaders,
@@ -96,5 +101,6 @@ export async function postAdminReassignVendor(input: {
     }
     throw new Error(base)
   }
-  return parsed as AdminReassignVendorOk
+  const result = parsed as AdminReassignVendorOk
+  return result
 }

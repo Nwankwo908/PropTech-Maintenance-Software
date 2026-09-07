@@ -1505,7 +1505,7 @@ export function AdminRequestManagementDashboard() {
           vendorName: nextVendor,
           vendorId: choice.vendorId?.trim() || undefined,
           createVendorIfMissing: choice.createVendorIfMissing,
-          vendorCategory: choice.vendorCategory,
+          vendorCategory: choice.vendorCategory ?? targetRow.issueCategoryRaw,
         })
 
         let dueAtIso: string | undefined

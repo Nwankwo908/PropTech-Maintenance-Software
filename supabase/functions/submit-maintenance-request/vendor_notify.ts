@@ -22,6 +22,7 @@ import {
   resolveTicketSlaMinutes,
 } from "../_shared/landlordNotificationPrefs.ts"
 import { uloAppOrigin, uloAppUrl } from "../_shared/uloAppUrl.ts"
+import { emitServerProductEvent } from "../_shared/ga4MeasurementProtocol.ts"
 
 export type TicketNotifyPayload = {
   ticketId: string
@@ -619,6 +620,11 @@ export async function assignVendorAndNotify(
     ticketId: payload.ticketId,
     _vendorId: vendor.id,
   })
+  void emitServerProductEvent(supabase, {
+    eventName: "vendor_matched",
+    landlordId,
+    properties: { job_type: issueCategory ?? undefined },
+  })
 
   await touchVendorLastAssignedAt(supabase, vendor.id, landlordId)
 
@@ -698,7 +704,7 @@ export async function reassignVendorByIdAndNotify(
   const { data: ticket, error: tErr } = await supabase
     .from("maintenance_requests")
     .select(
-      "id, landlord_id, priority, urgency, unit, description, vendor_work_status, issue_category, due_at, estimated_minutes, severity",
+      "id, landlord_id, priority, urgency, unit, description, vendor_work_status, issue_category, due_at, estimated_minutes, severity, assigned_vendor_id",
     )
     .eq("id", ticketId)
     .maybeSingle()
@@ -822,6 +828,18 @@ export async function reassignVendorByIdAndNotify(
   if (upAssign) {
     console.error("[vendor-notify] reassign update failed", upAssign)
     return { error: upAssign.message ?? "Update failed" }
+  }
+
+  const previousVendorId =
+    typeof ticket.assigned_vendor_id === "string" && ticket.assigned_vendor_id.trim()
+      ? ticket.assigned_vendor_id.trim()
+      : ""
+  if (previousVendorId !== vendor.id) {
+    void emitServerProductEvent(supabase, {
+      eventName: "vendor_matched",
+      landlordId: reassignLandlordIdEarly,
+      properties: { job_type: existingIssueCat ?? undefined },
+    })
   }
 
   const reassignLandlordId =
