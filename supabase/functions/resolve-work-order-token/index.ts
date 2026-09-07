@@ -13,6 +13,7 @@ import {
   formatPropertyAccessPlainText,
   loadPropertyAccessForBuilding,
 } from "../_shared/propertyAccessProfile.ts"
+import { selectVendorPropertyUnitJobHistory } from "../_shared/vendorJobPropertyHistory.ts"
 
 const corsHeaders: Record<string, string> = {
   "Access-Control-Allow-Origin": "*",
@@ -240,46 +241,38 @@ serve(async (req) => {
     createdAt: string
   }
   const propertyHistory: HistoryItem[] = []
+  const assignedVendorId =
+    typeof row.assigned_vendor_id === "string" && row.assigned_vendor_id.trim()
+      ? row.assigned_vendor_id.trim()
+      : null
+  const currentUnitId =
+    typeof enriched?.unit_id === "string" && enriched.unit_id.trim()
+      ? enriched.unit_id.trim()
+      : null
 
-  if (landlordId && propertyId) {
+  if (landlordId && assignedVendorId) {
     const { data: siblings } = await supabase
       .from("maintenance_request_enriched")
-      .select("id, unit, description, vendor_work_status, created_at, property_id")
+      .select(
+        "id, unit, unit_id, description, vendor_work_status, created_at, property_id, assigned_vendor_id",
+      )
       .eq("landlord_id", landlordId)
-      .eq("property_id", propertyId)
+      .eq("assigned_vendor_id", assignedVendorId)
       .neq("id", ticketId)
       .order("created_at", { ascending: false })
-      .limit(8)
+      .limit(40)
+    const scoped = selectVendorPropertyUnitJobHistory(
+      {
+        ticketId,
+        vendorId: assignedVendorId,
+        propertyId,
+        unitId: currentUnitId,
+        unitLabel,
+      },
+      siblings ?? [],
+    )
 
-    for (const s of siblings ?? []) {
-      if (typeof s.id !== "string") continue
-      propertyHistory.push({
-        ticketId: s.id,
-        workOrderRef: formatWorkOrderRef(s.id),
-        unit: typeof s.unit === "string" ? s.unit : "",
-        description:
-          typeof s.description === "string"
-            ? s.description.replace(/\s+/g, " ").slice(0, 120)
-            : "",
-        status:
-          typeof s.vendor_work_status === "string"
-            ? s.vendor_work_status
-            : "unknown",
-        createdAt:
-          typeof s.created_at === "string" ? s.created_at : new Date().toISOString(),
-      })
-    }
-  } else if (landlordId && typeof row.unit === "string" && row.unit.trim()) {
-    const { data: siblings } = await supabase
-      .from("maintenance_requests")
-      .select("id, unit, description, vendor_work_status, created_at")
-      .eq("landlord_id", landlordId)
-      .ilike("unit", row.unit.trim())
-      .neq("id", ticketId)
-      .order("created_at", { ascending: false })
-      .limit(8)
-
-    for (const s of siblings ?? []) {
+    for (const s of scoped) {
       if (typeof s.id !== "string") continue
       propertyHistory.push({
         ticketId: s.id,
