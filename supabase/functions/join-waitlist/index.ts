@@ -1,6 +1,11 @@
 import { serve } from "https://deno.land/std/http/server.ts"
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1"
 import { sendResendEmail } from "../_shared/delivery.ts"
+import {
+  hasTouch,
+  parseWaitlistAttribution,
+  type WaitlistAttributionTouch,
+} from "../_shared/waitlistAttribution.ts"
 
 const corsHeaders: Record<string, string> = {
   "Access-Control-Allow-Origin": "*",
@@ -64,6 +69,78 @@ function buildReferralLink(referralCode: string, origin?: string): string {
   const base = resolveReferralBase(origin)
   if (!base) return `/?ref=${referralCode}`
   return `${base}/?ref=${referralCode}`
+}
+
+function landlordAttributionPatch(
+  firstTouch: WaitlistAttributionTouch,
+  latestTouch: WaitlistAttributionTouch,
+): Record<string, string | null> {
+  const latest = hasTouch(latestTouch) ? latestTouch : firstTouch
+  const patch: Record<string, string | null> = {}
+  if (hasTouch(firstTouch)) {
+    if (firstTouch.source) patch.acquisition_source = firstTouch.source
+    if (firstTouch.medium) patch.acquisition_medium = firstTouch.medium
+    if (firstTouch.campaign) patch.acquisition_campaign = firstTouch.campaign
+    if (firstTouch.content) patch.acquisition_content = firstTouch.content
+    if (firstTouch.term) patch.acquisition_term = firstTouch.term
+    if (firstTouch.capturedAt) patch.acquisition_first_touch_at = firstTouch.capturedAt
+  }
+  if (hasTouch(latest)) {
+    patch.latest_acquisition_source = latest.source ?? null
+    patch.latest_acquisition_medium = latest.medium ?? null
+    patch.latest_acquisition_campaign = latest.campaign ?? null
+    patch.latest_acquisition_content = latest.content ?? null
+    patch.latest_acquisition_term = latest.term ?? null
+    patch.acquisition_latest_touch_at = latest.capturedAt ?? new Date().toISOString()
+  }
+  return patch
+}
+
+async function applyWaitlistAttributionToLandlord(
+  admin: ReturnType<typeof createClient>,
+  email: string,
+  attributionRaw: unknown,
+): Promise<void> {
+  const parsed = parseWaitlistAttribution(attributionRaw)
+  if (!parsed) {
+    console.info("[join-waitlist] attribution skipped", { reason: "no_utm" })
+    return
+  }
+  const patch = landlordAttributionPatch(parsed.firstTouch, parsed.latestTouch)
+  if (Object.keys(patch).length === 0) {
+    console.info("[join-waitlist] attribution skipped", { reason: "empty_patch" })
+    return
+  }
+
+  const { data: landlord, error: lookupError } = await admin
+    .from("landlords")
+    .select("id")
+    .eq("email", email)
+    .maybeSingle()
+
+  if (lookupError) {
+    console.error("[join-waitlist] landlord lookup error", lookupError.message)
+    return
+  }
+  if (!landlord?.id) {
+    console.info("[join-waitlist] attribution skipped", { reason: "no_matching_landlord" })
+    return
+  }
+
+  const { data: updated, error: updateError } = await admin
+    .from("landlords")
+    .update(patch)
+    .eq("id", landlord.id)
+    .select("id")
+
+  if (updateError) {
+    console.error("[join-waitlist] attribution update error", updateError.message)
+    return
+  }
+  console.info("[join-waitlist] attribution wrote", {
+    wrote: Boolean(updated?.length),
+    landlord_id: landlord.id,
+  })
 }
 
 async function resolveReferrerId(
@@ -197,6 +274,8 @@ serve(async (req) => {
         return jsonResponse({ error: insertError.message }, 500)
       }
     }
+
+    await applyWaitlistAttributionToLandlord(admin, email, body?.attribution)
 
     const { subject, text, html } = buildWaitlistConfirmationEmail(
       email,

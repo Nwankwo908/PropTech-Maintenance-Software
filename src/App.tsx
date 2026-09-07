@@ -2,6 +2,7 @@ import { lazy, Suspense, type ComponentType } from 'react'
 import { BrowserRouter, Navigate, Outlet, Routes, Route } from 'react-router-dom'
 import { useSessionAutoRefresh } from './hooks/useSessionAutoRefresh'
 import { supabase } from './lib/supabase'
+import { AnalyticsRoot } from './components/AnalyticsRoot'
 import { ReferralLandingRedirect } from './components/ReferralLandingRedirect'
 import { LandingPage } from './components/landing/LandingPage'
 import { DemoPageRedirect } from './components/DemoPageRedirect'
@@ -109,6 +110,7 @@ export default function App() {
 
   return (
     <BrowserRouter>
+      <AnalyticsRoot />
       <ReferralLandingRedirect />
       <Suspense fallback={null}>
         <Routes>

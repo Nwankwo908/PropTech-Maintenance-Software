@@ -3,6 +3,7 @@ import { Navigate, useLocation } from 'react-router-dom'
 import type { Session } from '@supabase/supabase-js'
 import { getAdminSession, isAdminSessionAllowed, signOutAdmin } from '@/lib/adminAuth'
 import { setSessionLandlordFromEmail } from '@/lib/activeLandlord'
+import { persistAnonymousAttributionForSessionLandlord } from '@/lib/analytics/persistLandlordAttribution'
 import { supabase } from '@/lib/supabase'
 
 type GateState = 'loading' | 'authed' | 'anon'
@@ -19,6 +20,7 @@ async function gateStateForSession(session: Session | null): Promise<GateState> 
   }
   // Bind the landlord scope before any dashboard renders/fetches.
   setSessionLandlordFromEmail(session.user.email)
+  void persistAnonymousAttributionForSessionLandlord()
   return 'authed'
 }
 

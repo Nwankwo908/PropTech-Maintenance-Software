@@ -11,6 +11,10 @@ interface ImportMetaEnv {
   readonly VITE_ISSUE_CLARIFY_API_URL?: string
   readonly VITE_SUPABASE_URL?: string
   readonly VITE_SUPABASE_ANON_KEY?: string
+  /** GA4 measurement ID. Scripts load only on production ulohome.io / www / app hosts. */
+  readonly VITE_GA4_MEASUREMENT_ID?: string
+  /** Microsoft Clarity project ID. Scripts load only on production ulohome.io / www / app hosts. */
+  readonly VITE_CLARITY_PROJECT_ID?: string
   /** POST JSON after ticket created — recurring / duplicate issue detection (optional). */
   readonly VITE_RECURRING_ISSUE_API_URL?: string
   /** POST JSON after ticket created — route or assign vendor (optional). */

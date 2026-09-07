@@ -79,6 +79,11 @@ export async function persistLandlordAccountProfile(
   if (!scope.ok) return scope
   if (!supabase) return { ok: false, error: 'We can\'t reach the server right now. Please try again in a moment.' }
 
+  const { persistAnonymousAttributionToLandlord } = await import(
+    '@/lib/analytics/persistLandlordAttribution'
+  )
+  await persistAnonymousAttributionToLandlord(scope.landlordId)
+
   const companyName = account.companyName.trim()
   const contactName = account.contactName.trim()
   const email = account.email.trim() || null

@@ -1,3 +1,4 @@
+import { snapshotForAccountPersist } from '@/lib/analytics/attribution'
 import { supabase } from '@/lib/supabase'
 import { getErrorMessage } from '@/lib/errorMessage'
 
@@ -123,6 +124,7 @@ async function callJoinWaitlist(
       source,
       origin: window.location.origin,
       ref: getWaitlistReferral(),
+      attribution: snapshotForAccountPersist(),
     }),
   })
 
