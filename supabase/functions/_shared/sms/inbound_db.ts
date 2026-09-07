@@ -1,6 +1,7 @@
 import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.49.1"
 import { normalizePhoneFlexible } from "../resident_notify.ts"
 import { claimPoolNumberByPhone } from "./smsNumberPool.ts"
+import { smsIdentityAllowsTypePatch } from "./smsIdentityUpgrade.ts"
 
 /** Normalize to E.164 when possible; fall back to trimmed raw for lookup. */
 export function normalizeSmsPhone(input: string): string {
@@ -281,9 +282,7 @@ export async function upsertSmsIdentityForPhone(
   let result: SmsIdentityRow
 
   if (existing) {
-    const canApplyType =
-      existing.identity_type === "unknown" ||
-      existing.identity_type === params.identityType
+    const canApplyType = smsIdentityAllowsTypePatch(existing, params.identityType)
 
     const updatePayload = canApplyType
       ? { ...identityPatch, phone_number: e164, last_seen_at: now }
@@ -453,23 +452,35 @@ export async function createUnknownIdentity(
   return data as SmsIdentityRow
 }
 
-/** Self-heal unknown identities by matching resident/vendor phone records. */
+/** Self-heal unknown or blank-tenant identities by matching resident/vendor phone records. */
 export async function trySelfHealIdentity(
   supabase: SupabaseClient,
   identity: SmsIdentityRow,
   fromNumber: string,
 ): Promise<SmsIdentityRow> {
-  if (identity.identity_type !== "unknown") return identity
+  if (identity.identity_type === "vendor" && identity.vendor_id?.trim()) {
+    return identity
+  }
+  if (identity.identity_type === "resident" && identity.resident_id?.trim()) {
+    return identity
+  }
+  if (
+    identity.identity_type !== "unknown" &&
+    identity.identity_type !== "resident"
+  ) {
+    return identity
+  }
 
   const variants = phoneLookupVariants(fromNumber)
+  const landlordId = identity.landlord_id?.trim() || ""
 
-  const { data: vendorHit } = await supabase
+  let vendorQuery = supabase
     .from("vendors")
     .select("id, phone")
     .in("phone", variants)
-    .eq("active", true)
-    .limit(1)
-    .maybeSingle()
+  if (landlordId) vendorQuery = vendorQuery.eq("landlord_id", landlordId)
+
+  const { data: vendorHit } = await vendorQuery.limit(1).maybeSingle()
 
   if (vendorHit?.id) {
     const { data: updated, error } = await supabase
@@ -477,6 +488,7 @@ export async function trySelfHealIdentity(
       .update({
         identity_type: "vendor",
         vendor_id: vendorHit.id,
+        resident_id: null,
         last_seen_at: new Date().toISOString(),
       })
       .eq("id", identity.id)
@@ -490,11 +502,12 @@ export async function trySelfHealIdentity(
     }
   }
 
-  const { data: users } = await supabase
+  let usersQuery = supabase
     .from("users")
     .select("id, phone, unit")
     .in("phone", variants)
-    .limit(1)
+  if (landlordId) usersQuery = usersQuery.eq("landlord_id", landlordId)
+  const { data: users } = await usersQuery.limit(1)
 
   const resident = users?.[0] as { id: string; phone: string; unit: string | null } | undefined
   if (resident?.id) {
@@ -795,7 +808,10 @@ export async function findOrCreateConversation(
       .from("sms_conversations")
       .update({
         updated_at: new Date().toISOString(),
-        status: params.conversationStatus ?? existing.status ?? "open",
+        status:
+          preservedType === "vendor_alert"
+            ? (params.conversationStatus ?? "open")
+            : (params.conversationStatus ?? existing.status ?? "open"),
         conversation_type: preservedType,
         resident_id: params.identity.resident_id,
         vendor_id: params.identity.vendor_id,

@@ -10,6 +10,7 @@ import {
   upsertSmsIdentity,
   type SmsIdentityRow,
 } from "./inbound_db.ts"
+import { smsIdentityIsFullyResolved } from "./smsIdentityUpgrade.ts"
 import { logGraphEvent } from "../graph/logGraphEvent.ts"
 
 export type IdentityResolutionSource =
@@ -103,6 +104,7 @@ export function extractUnitFromMessage(body: string): string | null {
 async function findActiveResidentByPhone(
   supabase: SupabaseClient,
   fromNumber: string,
+  landlordId: string,
 ): Promise<ResidentRow | null> {
   const variants = phoneLookupVariants(fromNumber)
   if (variants.length === 0) return null
@@ -111,6 +113,7 @@ async function findActiveResidentByPhone(
     .from("users")
     .select("id, resident_id, full_name, email, phone, unit, building, status")
     .in("phone", variants)
+    .eq("landlord_id", landlordId)
     .eq("status", "active")
     .limit(1)
     .maybeSingle()
@@ -126,6 +129,7 @@ async function findActiveResidentByPhone(
 async function findVendorByPhone(
   supabase: SupabaseClient,
   fromNumber: string,
+  landlordId: string,
 ): Promise<{ id: string; phone: string | null } | null> {
   const variants = phoneLookupVariants(fromNumber)
   if (variants.length === 0) return null
@@ -134,7 +138,8 @@ async function findVendorByPhone(
     .from("vendors")
     .select("id, phone")
     .in("phone", variants)
-    .eq("active", true)
+    .eq("landlord_id", landlordId)
+    .order("created_at", { ascending: false })
     .limit(1)
     .maybeSingle()
 
@@ -322,17 +327,57 @@ export async function notifyLandlordUnresolvedTenant(
   })
 }
 
+async function applyVendorIdentity(
+  supabase: SupabaseClient,
+  input: ResolveIdentityInput,
+  existing: SmsIdentityRow | null,
+  vendor: { id: string; phone: string | null },
+): Promise<ResolveIdentityResult> {
+  const identity = await upsertSmsIdentity(supabase, {
+    fromNumber: input.fromNumber,
+    landlordId: input.landlordId,
+    existing,
+    patch: {
+      identity_type: "vendor",
+      vendor_id: vendor.id,
+      resident_id: null,
+      unit_id: null,
+      verified: false,
+    },
+  })
+  return {
+    identity,
+    source: "vendor",
+    suggestedUnit: null,
+    selfHealingPhase: "none",
+    notifyLandlord: false,
+    continueIntake: false,
+    createdOrUpdated: true,
+    conversationStatus: "open",
+  }
+}
+
 /**
  * While a conversation is in unit/onboarding healing, keep the identity unknown
  * and let `identity_onboarding` / unknownContactIntake drive consent-gated attach.
- * (Legacy auto-attach on unit reply is intentionally disabled.)
+ * Roster vendor phones skip this path — they are not unknown tenants.
  */
 async function processUnitNumberSelfHealing(
   supabase: SupabaseClient,
   input: ResolveIdentityInput,
 ): Promise<ResolveIdentityResult> {
+  const vendor = await findVendorByPhone(supabase, input.fromNumber, input.landlordId)
+  const existingIdentity = await lookupSmsIdentity(
+    supabase,
+    input.fromNumber,
+    input.landlordId,
+  )
+  if (vendor) {
+    return applyVendorIdentity(supabase, input, existingIdentity, vendor)
+  }
+
   const identity =
-    (await lookupSmsIdentity(supabase, input.fromNumber, input.landlordId)) ??
+    existingIdentity ??
     (await createUnknownIdentity(supabase, input.fromNumber, input.landlordId))
 
   // If already linked (e.g. consent just completed mid-turn), allow intake.
@@ -370,9 +415,9 @@ async function processUnitNumberSelfHealing(
  * Phone-to-unit resolver for inbound SMS.
  *
  * Resolution order:
- * 1. Active resident roster match (phone + landlord scope via sms_identities)
- * 2. Existing sms_identities row
- * 3. Vendor phone match
+ * 1. Landlord-scoped vendor roster match (wins over blank tenant identities)
+ * 2. Active resident roster match (this landlord only)
+ * 3. Existing fully resolved sms_identities row
  * 4. Likely unit from recent invite/onboarding activity
  * 5. Unknown identity + self-healing onboarding fallback
  */
@@ -380,20 +425,41 @@ export async function resolvePhoneIdentity(
   supabase: SupabaseClient,
   input: ResolveIdentityInput,
 ): Promise<ResolveIdentityResult> {
+  const existingIdentity = await lookupSmsIdentity(
+    supabase,
+    input.fromNumber,
+    input.landlordId,
+  )
+  const vendor = await findVendorByPhone(
+    supabase,
+    input.fromNumber,
+    input.landlordId,
+  )
+
   if (input.conversationStatus === AWAITING_UNIT_STATUS) {
+    if (vendor) {
+      return applyVendorIdentity(supabase, input, existingIdentity, vendor)
+    }
     return processUnitNumberSelfHealing(supabase, input)
+  }
+
+  // Roster vendor on this landlord — never treat as an unknown/blank tenant.
+  if (vendor) {
+    return applyVendorIdentity(supabase, input, existingIdentity, vendor)
   }
 
   let createdOrUpdated = false
 
-  // 1. Exact match active resident by phone_number (+ landlord-scoped identity)
-  const activeResident = await findActiveResidentByPhone(supabase, input.fromNumber)
+  const activeResident = await findActiveResidentByPhone(
+    supabase,
+    input.fromNumber,
+    input.landlordId,
+  )
   if (activeResident) {
-    const existing = await lookupSmsIdentity(supabase, input.fromNumber, input.landlordId)
     const identity = await upsertSmsIdentity(supabase, {
       fromNumber: input.fromNumber,
       landlordId: input.landlordId,
-      existing,
+      existing: existingIdentity,
       patch: {
         identity_type: "resident",
         resident_id: activeResident.id,
@@ -401,7 +467,7 @@ export async function resolvePhoneIdentity(
         verified: false,
       },
     })
-    createdOrUpdated = !existing || existing.identity_type === "unknown"
+    createdOrUpdated = !existingIdentity || existingIdentity.identity_type === "unknown"
 
     return {
       identity,
@@ -417,40 +483,11 @@ export async function resolvePhoneIdentity(
     }
   }
 
-  // 2. Match sms_identities by phone_number + landlord_id
-  const existingIdentity = await lookupSmsIdentity(
-    supabase,
-    input.fromNumber,
-    input.landlordId,
-  )
-  if (existingIdentity && existingIdentity.identity_type !== "unknown") {
+  if (existingIdentity && smsIdentityIsFullyResolved(existingIdentity)) {
     if (
       existingIdentity.identity_type === "vendor" &&
       !existingIdentity.vendor_id?.trim()
     ) {
-      const relinkVendor = await findVendorByPhone(supabase, input.fromNumber)
-      if (relinkVendor) {
-        const identity = await upsertSmsIdentity(supabase, {
-          fromNumber: input.fromNumber,
-          landlordId: input.landlordId,
-          existing: existingIdentity,
-          patch: {
-            identity_type: "vendor",
-            vendor_id: relinkVendor.id,
-            verified: false,
-          },
-        })
-        return {
-          identity,
-          source: "vendor",
-          suggestedUnit: null,
-          selfHealingPhase: "none",
-          notifyLandlord: false,
-          continueIntake: false,
-          createdOrUpdated: true,
-          conversationStatus: "open",
-        }
-      }
       console.warn("[resolveIdentity] stale vendor identity without vendor_id; demoting to unknown", {
         identityId: existingIdentity.id,
         phone: normalizeSmsPhone(input.fromNumber),
@@ -483,34 +520,7 @@ export async function resolvePhoneIdentity(
     }
   }
 
-  // 3. Match vendor by phone_number (+ landlord scope via sms identity write)
-  const vendor = await findVendorByPhone(supabase, input.fromNumber)
-  if (vendor) {
-    const identity = await upsertSmsIdentity(supabase, {
-      fromNumber: input.fromNumber,
-      landlordId: input.landlordId,
-      existing: existingIdentity,
-      patch: {
-        identity_type: "vendor",
-        vendor_id: vendor.id,
-        verified: false,
-      },
-    })
-    createdOrUpdated = true
-
-    return {
-      identity,
-      source: "vendor",
-      suggestedUnit: null,
-      selfHealingPhase: "none",
-      notifyLandlord: false,
-      continueIntake: false,
-      createdOrUpdated,
-      conversationStatus: "open",
-    }
-  }
-
-  // 4. Suggest likely unit from recent invite/onboarding activity
+  // Suggest likely unit from recent invite/onboarding activity
   const suggestedUnit = await suggestUnitFromRecentInvite(
     supabase,
     input.fromNumber,

@@ -309,15 +309,15 @@ export async function sendVendorJobAlert(
   }
 
   if (
-    identity.identity_type !== "resident" &&
-    identity.identity_type !== "landlord" &&
-    identity.vendor_id !== params.vendorId
+    identity.vendor_id !== params.vendorId ||
+    identity.identity_type !== "vendor"
   ) {
     const { error: identityErr } = await supabase
       .from("sms_identities")
       .update({
         vendor_id: params.vendorId,
         identity_type: "vendor",
+        resident_id: null,
         last_seen_at: new Date().toISOString(),
       })
       .eq("id", identity.id)

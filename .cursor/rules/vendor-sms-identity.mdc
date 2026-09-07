@@ -1,0 +1,35 @@
+---
+description: Roster vendor phones must resolve as vendors on SMS — never as blank tenants. Apply when changing sms_identities, resolvePhoneIdentity, vendor job alerts, or unknown-contact intake.
+globs: supabase/functions/_shared/sms/**/*.ts
+alwaysApply: false
+---
+
+# Vendor SMS identity
+
+A phone on `vendors` for this landlord is a **vendor**, not an unknown tenant.
+
+## Rules
+
+| Situation | Required behavior |
+|---|---|
+| Inbound from a roster vendor phone | `identity_type = vendor` + `vendor_id` set; conversation `vendor_alert` |
+| Existing `sms_identities` row is `resident` with **no** `resident_id` | Treat as unresolved; match vendors on this landlord and **upgrade** |
+| Existing row is `unknown` | Same — vendor match wins |
+| Outbound vendor invite / job SMS | `upsertSmsIdentityForPhone(..., identityType: "vendor")` **must** apply even if the row was a blank tenant |
+| Vendor replies YES/NO on a job thread | Vendor accept/decline — **never** “I don't recognize this phone number” |
+
+## Do not
+
+- Return early from `resolvePhoneIdentity` for `resident` with a null `resident_id`
+- Skip vendor matching because conversation status is `awaiting_unit_number`
+- Refuse to upgrade blank-tenant identities to vendor (`smsIdentityAllowsTypePatch`)
+- Skip `vendor_id` alignment in `sendVendorJobAlert` because `identity_type === "resident"`
+- Look up vendors/residents **without** `landlord_id` (shared phones across portfolios)
+- Self-heal **only** `unknown` — also heal unlinked resident rows
+
+## Where it lives
+
+- Upgrade predicates: `smsIdentityUpgrade.ts`
+- Inbound resolve: `resolveIdentity.ts` (`resolvePhoneIdentity`)
+- Outbound identity: `upsertSmsIdentityForPhone` in `inbound_db.ts`
+- Job SMS: `sendVendorJobAlert` in `vendorSmsRouting.ts`
