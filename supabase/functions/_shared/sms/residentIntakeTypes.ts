@@ -28,6 +28,7 @@ export type IntakeStep =
   | "urgency"
   | "preferred_contact_method"
   | "photo"
+  | "diagnostic"
   | "awaiting_confirm"
   | "awaiting_multi_issue_confirm"
   | "awaiting_edit_selection"
@@ -85,6 +86,11 @@ export type SmsIntakeState = {
   clarification_question?: string
   classification_confidence?: number
   classification_pipeline_version?: string
+  /** Current dynamic follow-up (not a generic questionnaire step). */
+  diagnostic_question_type?: string
+  diagnostic_question?: string
+  asked_question_types?: string[]
+  diagnostic_facts?: Record<string, string>
   /** Durable maintenance_requests id minted mid-intake (before final confirm). */
   draft_ticket_id?: string
   /** When set (length ≥ 2), SMS contained multiple distinct asks. */
@@ -139,6 +145,7 @@ const KNOWN_ROOM_PATTERNS: Array<{ pattern: RegExp; room: string }> = [
   { pattern: /\b(basement|cellar)\b/i, room: "basement" },
   { pattern: /\b(kitchen)\b/i, room: "kitchen" },
   { pattern: /\b(bathroom|restroom|powder room)\b/i, room: "bathroom" },
+  { pattern: /\bbath\b/i, room: "bathroom" },
   { pattern: /\b(bedroom|bed room)\b/i, room: "bedroom" },
   { pattern: /\b(living room|livingroom)\b/i, room: "living room" },
   { pattern: /\b(dining room|diningroom)\b/i, room: "dining room" },
@@ -150,11 +157,22 @@ const KNOWN_ROOM_PATTERNS: Array<{ pattern: RegExp; room: string }> = [
   { pattern: /\b(office)\b/i, room: "office" },
   { pattern: /\b(patio|balcony)\b/i, room: "patio" },
   { pattern: /\b(deck)\b/i, room: "deck" },
+  { pattern: /\b(porch)\b/i, room: "porch" },
+  { pattern: /\b(utility room|utility)\b/i, room: "utility room" },
+  { pattern: /\b(ceiling)\b/i, room: "ceiling" },
   {
     pattern: /\b(front\s*(?:entrance|entry|steps?|stairs?)|entrance|entryway|stairs?|stairway|stairwell)\b/i,
     room: "front entrance",
   },
 ]
+
+/** Whole-home / unit labels — not a room; still ask where in the house. */
+const VAGUE_PLACE_RE =
+  /^(house|home|apartment|apt|flat|unit|building|property|inside|here|everywhere|the house|the apartment)$/i
+
+/** Fixtures and appliances — not a room. */
+const FIXTURE_LABEL_RE =
+  /^(sink|faucet|tap|toilet|pipe|drain|outlet|breaker|fridge|refrigerator|washer|dryer|oven|stove|dishwasher|thermostat|furnace|ac|window|door|lock|roof|tub|bathtub|shower)$/i
 
 const ISSUE_DESCRIPTION_RE =
   /\b(flood|flooding|flooded|leak|leaking|drip|broken|damaged|isn't|isnt|not working|smell|sparks|overflow|clogged|overflowing)\b/i
@@ -205,9 +223,20 @@ function isUsableRoomLabel(label: string): boolean {
   const cleaned = cleanRoomLabel(label)
   if (!cleaned) return false
   if (NON_ROOM_LABEL_RE.test(cleaned)) return false
+  if (VAGUE_PLACE_RE.test(cleaned)) return false
+  if (FIXTURE_LABEL_RE.test(cleaned)) return false
   if (TIME_PHRASE_RE.test(cleaned)) return false
   if (isTimeOrDurationPhrase(cleaned)) return false
   return true
+}
+
+function matchKnownRoom(text: string): string | null {
+  const cleaned = cleanRoomLabel(text).replace(TRAILING_TIME_RE, "").trim()
+  if (!cleaned || !isUsableRoomLabel(cleaned)) return null
+  for (const { pattern, room } of KNOWN_ROOM_PATTERNS) {
+    if (pattern.test(cleaned) || pattern.test(text)) return room
+  }
+  return null
 }
 
 function finalizeRoomCandidate(label: string | null | undefined): string | null {
@@ -226,7 +255,7 @@ function isLikelyIssueDescription(text: string): boolean {
   return ISSUE_DESCRIPTION_RE.test(t) || words.length > 5
 }
 
-/** Extract a clean room/area label from free-form tenant text (not the full issue sentence). */
+/** Extract a known room/area from issue text. Fixtures and “in the house” do not count. */
 export function extractRoomFromText(text: string): string | null {
   const trimmed = text.trim()
   if (!trimmed) return null
@@ -235,7 +264,7 @@ export function extractRoomFromText(text: string): string | null {
     /\b(?:room|area|location)\s*[:—-]\s*([a-z0-9][a-z0-9\s-]{0,40})/i,
   )
   if (labeled?.[1]) {
-    const room = finalizeRoomCandidate(labeled[1])
+    const room = matchKnownRoom(labeled[1]) ?? matchKnownRoom(trimmed)
     if (room) return room
   }
 
@@ -243,37 +272,25 @@ export function extractRoomFromText(text: string): string | null {
     /\b(?:in|at)\s+(?:the|my|our)\s+([a-z][a-z0-9\s-]{1,30}?)(?:\s+(?:is|are|was|has|have|got|flooded|leaking|broken)\b|[.!?,]|$)/i,
   )
   if (inThe?.[1]) {
-    const candidate = cleanRoomLabel(inThe[1])
-    for (const { pattern, room } of KNOWN_ROOM_PATTERNS) {
-      if (pattern.test(candidate) || pattern.test(trimmed)) return room
-    }
-    if (candidate && candidate.split(/\s+/).length <= 3) {
-      const room = finalizeRoomCandidate(candidate)
-      if (room) return room
-    }
+    const room = matchKnownRoom(inThe[1]) ?? matchKnownRoom(trimmed)
+    if (room) return room
   }
 
-  for (const { pattern, room } of KNOWN_ROOM_PATTERNS) {
-    if (pattern.test(trimmed)) return room
-  }
+  const fromKnown = matchKnownRoom(trimmed)
+  if (fromKnown) return fromKnown
 
   const myRoom = trimmed.match(
     /\bmy\s+([a-z][a-z0-9\s-]{1,24}?)(?:\s+(?:is|are|was|has|have|got|flooded|leaking|broken)\b|[.!?,]|$)/i,
   )
   if (myRoom?.[1]) {
     const candidate = cleanRoomLabel(myRoom[1])
-    // Avoid kinship / people phrases ("my daughter while she was…").
     const looksLikePerson =
       /\b(daughter|son|child|kid|kids|husband|wife|partner|roommate|mother|father|mom|dad|baby|guest)\b/i
         .test(candidate)
     if (candidate && !looksLikePerson) {
-      const room = finalizeRoomCandidate(candidate)
+      const room = matchKnownRoom(candidate) ?? matchKnownRoom(trimmed)
       if (room) return room
     }
-  }
-
-  if (!isLikelyIssueDescription(trimmed) && trimmed.split(/\s+/).length <= 4) {
-    return finalizeRoomCandidate(trimmed)
   }
 
   return null
@@ -358,27 +375,11 @@ export function sanitizeIntakeState(state: SmsIntakeState): SmsIntakeState {
     return { ...state, room_or_area: room }
   }
 
-  const stepsAfterRoom: IntakeStep[] = [
-    "first_noticed",
-    "safety_concerns",
-    "urgency",
-    "preferred_contact_method",
-    "photo",
-    "awaiting_confirm",
-  ]
-
   if (!room && state.room_or_area) {
     return {
       ...state,
       room_or_area: undefined,
-      step: stepsAfterRoom.includes(state.step as IntakeStep)
-        ? "room_or_area"
-        : state.step,
     }
-  }
-
-  if (!room && state.step && stepsAfterRoom.includes(state.step as IntakeStep)) {
-    return { ...state, step: "room_or_area" }
   }
 
   return state
@@ -470,6 +471,7 @@ function intakeUrgencyText(state: SmsIntakeState): string {
     state.safety_concerns,
     state.issue_type,
     state.first_noticed,
+    ...Object.values(state.diagnostic_facts ?? {}),
   ]
     .filter(Boolean)
     .join(" ")
@@ -677,24 +679,42 @@ export function issueContextPhrase(state: SmsIntakeState): string {
   return symptom
 }
 
-/** One-line bullet for confirmation, e.g. "Kitchen sink leak". */
+/** One-line headline for confirmation, e.g. "Kitchen sink is clogged". */
 export function issueSummaryBullet(state: SmsIntakeState): string {
   const room = resolveRoomLabel(state)
   const issue = (state.issue_type ?? "").toLowerCase()
   const desc = (state.description ?? state.initial_message ?? "").toLowerCase()
+  const facts = Object.values(state.diagnostic_facts ?? {}).join(" ").toLowerCase()
+  const all = `${desc} ${facts}`
+  const place = room ? `${room.charAt(0).toUpperCase()}${room.slice(1)} ` : ""
 
-  if (room && /\b(flood|flooding|flooded)\b/.test(desc)) return `${room} flooding`
-  if (room && /\bsink\b/.test(desc) && (issue === "leak" || issue === "plumbing")) {
-    return `${room} sink leak`
+  if (/\bsink\b/.test(all) && /\bclog/.test(all)) return `${place}sink is clogged`.replace(/^./, (c) => c.toUpperCase())
+  if (/\btoilet\b/.test(all) && /\bclog/.test(all)) {
+    return `${place}toilet is clogged`.replace(/^./, (c) => c.toUpperCase())
   }
-  if (room && issue === "leak") return `${room} leak`
-  if (room && issue === "plumbing") return `${room} plumbing issue`
-  if (room && issue === "electrical") return `${room} electrical issue`
-  if (room && issue === "appliance") return `${room} appliance issue`
-  if (room && issue === "hvac") return `${room} HVAC issue`
-  if (room && issue === "pest") return `${room} pest issue`
-  if (room && issue === "lock") return `${room} lock issue`
-  if (room) return `${room} maintenance issue`
+  if (/\bno hot water/.test(all)) return "No hot water"
+  if (/\b(ac|air condition)/.test(all) && /\bwarm|not cooling|running/.test(all)) {
+    return "Air conditioning is running but not cooling"
+  }
+  if (/\b(ac|air condition|no cooling)/.test(all)) return "Air conditioning is not working"
+  if (/\bno heat/.test(all)) return "No heat"
+  if (room && /\b(flood|flooding|flooded)\b/.test(all)) return `${room} flooding`
+  if (/\bsink\b/.test(all) && (issue === "leak" || /\bleak/.test(all))) {
+    return `${place}sink leak`.trim()
+  }
+  if (/\bfront door\b/.test(all) && /\block/.test(all)) return "Front door won't lock"
+  if (/\broach/.test(all)) return room ? `${place}roach sighting`.trim() : "Roach sighting"
+
+  const first = (state.initial_message ?? state.description ?? "")
+    .trim()
+    .split(/[.!\n]/)[0]
+    ?.trim()
+  if (first && first.length <= 80 && !/^maintenance issue/i.test(first)) {
+    return first.replace(/\.$/, "")
+  }
+  const fallback = narrativeSummary(state).replace(/\.$/, "")
+  if (fallback && fallback !== "Maintenance issue reported via SMS") return fallback
+  if (room && issue) return `${place}${formatIssueTypeLabel(state.issue_type).toLowerCase()} issue`.trim()
   if (issue) return `${formatIssueTypeLabel(state.issue_type)} issue`
   return "Maintenance issue"
 }
@@ -771,15 +791,32 @@ function narrativeSummary(state: SmsIntakeState): string {
 export function buildConfirmationSummary(state: SmsIntakeState): string {
   const bullets: string[] = []
   const pending = Array.isArray(state.pending_issues) ? state.pending_issues : []
+  const facts = state.diagnostic_facts ?? {}
 
   if (pending.length >= 2) {
-    bullets.push(`• ${pending.length} separate work orders:`)
+    bullets.push(`${pending.length} separate work orders:`)
     for (let i = 0; i < pending.length; i++) {
-      const trade = (pending[i].vendor_trade || "maintenance").replace(/_/g, " ")
-      bullets.push(`  ${i + 1}. ${trade} — ${pending[i].summary}`)
+      bullets.push(`• ${pending[i].summary}`)
     }
-  } else {
-    bullets.push(`• ${issueSummaryBullet(state)}`)
+  }
+
+  const safety = state.safety_concerns?.trim()
+  if (safety) bullets.push(`• ${safety}`)
+
+  if (facts.hvac_behavior?.trim()) {
+    bullets.push(`• ${facts.hvac_behavior.trim()}`)
+  }
+  if (facts.plumbing_hot_water_scope?.trim()) {
+    bullets.push(`• ${facts.plumbing_hot_water_scope.trim()}`)
+  }
+  if (facts.electrical_scope?.trim()) {
+    bullets.push(`• ${facts.electrical_scope.trim()}`)
+  }
+  if (facts.appliance_symptom?.trim()) {
+    bullets.push(`• ${facts.appliance_symptom.trim()}`)
+  }
+  if (facts.pest_frequency?.trim()) {
+    bullets.push(`• ${facts.pest_frequency.trim()}`)
   }
 
   if (state.preferred_visit_windows?.trim()) {
@@ -790,37 +827,26 @@ export function buildConfirmationSummary(state: SmsIntakeState): string {
     const noticed = state.first_noticed.trim()
     const line = /^(today|yesterday|this morning|this afternoon|last night|last week)/i.test(noticed)
       ? `Started ${noticed.charAt(0).toLowerCase()}${noticed.slice(1)}`
-      : `First noticed: ${noticed}`
+      : `Started ${noticed}`
     bullets.push(`• ${line}`)
-  }
-
-  const safety = state.safety_concerns?.trim()
-  if (safety && !/^(no|none|n\/a|nothing)/i.test(safety)) {
-    bullets.push(`• ${safety}`)
-  }
-
-  bullets.push(`• Priority: ${formatUrgencyLabel(state.urgency ?? state.recommended_urgency)}`)
-
-  if (state.preferred_contact_method?.trim()) {
-    bullets.push(`• Updates via: ${state.preferred_contact_method.trim()}`)
   }
 
   const photoCount = state.photo_urls?.length ?? 0
   if (photoCount > 0) {
-    bullets.push(`• Photos attached: ${photoCount}`)
+    bullets.push(photoCount === 1 ? "• Photo attached" : `• ${photoCount} photos attached`)
   }
 
+  const headline = pending.length >= 2
+    ? `I'll open ${pending.length} work orders.`
+    : issueSummaryBullet(state)
+
   return [
-    "Thanks. Here's what I have:",
+    "Just to confirm:",
     "",
+    headline,
     ...bullets,
     "",
-    "Summary:",
-    pending.length >= 2
-      ? `I'll open ${pending.length} work orders with the details above and assign the right vendor to each.`
-      : narrativeSummary(state),
-    "",
-    "Reply YES if everything looks right, or tell me what you'd like to change.",
+    "Reply YES to submit, or tell me what needs to be changed.",
   ].join("\n")
 }
 
@@ -855,7 +881,11 @@ export function intakeQuestionForStep(
     case "preferred_contact_method":
       return "How would you like us to keep you updated? You can pick text or email."
     case "photo":
-      return "One last thing that really helps: if you're able to, snap a quick photo of the issue and text it right here so the vendor knows what to expect. If you'd rather not, just reply SKIP."
+      return state.diagnostic_question?.trim() ||
+        "If it's safe to do so, send a photo of the area. If you'd rather not, reply SKIP."
+    case "diagnostic":
+      return state.diagnostic_question?.trim() ||
+        "Thanks — could you tell me a bit more about what's happening?"
     default:
       return intakeQuestionForStep(state, "issue_type")
   }
@@ -874,7 +904,7 @@ export function urgencyQuestion(state: SmsIntakeState, recommended?: string): st
 }
 
 export const EDIT_FIELD_OPTIONS =
-  "No problem! What would you like to update? You can say issue type, room/area, urgency, safety, when you noticed, contact method, photo, or description."
+  "No problem! What would you like to update? You can say the room, add a photo, or describe the issue differently."
 
 export const INTAKE_VALIDATION = {
   issue_type:
@@ -889,8 +919,8 @@ export function parseEditFieldChoice(input: string): IntakeStep | "description" 
   const t = input.trim().toLowerCase()
   if (/issue\s*type|^type$/.test(t)) return "issue_type"
   if (/area|room/.test(t)) return "room_or_area"
-  if (/urgency|priority/.test(t)) return "urgency"
-  if (/safety/.test(t)) return "safety_concerns"
+  if (/urgency|priority/.test(t)) return "description"
+  if (/safety/.test(t)) return "description"
   if (/when|noticed|first/.test(t)) return "first_noticed"
   if (/contact|updates/.test(t)) return "preferred_contact_method"
   if (/photo|picture|pic|image/.test(t)) return "photo"
@@ -926,28 +956,22 @@ export function shouldRequestIntakePhoto(state: SmsIntakeState): boolean {
   return applyPhotoRequestPolicy(state).photo_requested === true
 }
 
-/** Next step after collecting a field — skips room when location is already known. */
+/** Next step after collecting a field — skip generic questionnaire steps. */
 export function nextCollectingStep(
   current: IntakeStep | undefined,
   state?: SmsIntakeState,
 ): IntakeStep {
   switch (current) {
-    case "issue_type":
-      return resolveRoomLabel(state ?? {})
-        ? (state?.first_noticed?.trim() ? "safety_concerns" : "first_noticed")
-        : "room_or_area"
-    case "room_or_area":
-      return state?.first_noticed?.trim() ? "safety_concerns" : "first_noticed"
-    case "first_noticed":
-      return resolveRoomLabel(state ?? {}) ? "safety_concerns" : "room_or_area"
-    case "safety_concerns":
-      return "urgency"
-    case "urgency":
-      return "preferred_contact_method"
-    case "preferred_contact_method":
-      return shouldRequestIntakePhoto(state ?? {}) ? "photo" : "awaiting_confirm"
     case "photo":
       return "awaiting_confirm"
+    case "diagnostic":
+    case "issue_type":
+    case "room_or_area":
+    case "first_noticed":
+    case "safety_concerns":
+    case "urgency":
+    case "preferred_contact_method":
+      return shouldRequestIntakePhoto(state ?? {}) ? "photo" : "awaiting_confirm"
     default:
       return "issue_type"
   }

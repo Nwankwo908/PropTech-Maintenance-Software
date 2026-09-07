@@ -88,6 +88,34 @@ Deno.test("asks for room when location unknown", () => {
   )
 })
 
+Deno.test("does not treat fixtures or the whole house as the room", () => {
+  assertEqual(extractRoomFromText("My sink is leaking"), null, "sink")
+  assertEqual(extractRoomFromText("The toilet is overflowing"), null, "toilet")
+  assertEqual(extractRoomFromText("There's a leak in the house"), null, "house")
+  assertEqual(extractRoomFromText("Leak in my apartment"), null, "apartment")
+  assertEqual(extractRoomFromText("Problem in the unit"), null, "unit")
+  assertEqual(extractRoomFromText("Kitchen sink is leaking"), "kitchen", "kitchen fixture")
+  assertEqual(extractRoomFromText("bath"), "bathroom", "bath alias")
+  assertEqual(normalizeRoomOrArea("the sink"), null, "answer sink")
+  assertEqual(normalizeRoomOrArea("upstairs"), "upstairs", "custom area")
+  assertEqual(
+    nextCollectingStep("issue_type", {
+      issue_type: "plumbing",
+      initial_message: "My sink is leaking",
+    }),
+    "awaiting_confirm",
+    "skip questionnaire after issue type",
+  )
+  const recovered = sanitizeIntakeState({
+    step: "first_noticed",
+    issue_type: "plumbing",
+    initial_message: "My sink is leaking",
+    room_or_area: "sink",
+  })
+  assertEqual(recovered.room_or_area, undefined, "cleared fixture room")
+  assertEqual(recovered.step, "first_noticed", "does not force room questionnaire")
+})
+
 Deno.test("urgency parse accepts natural phrases", () => {
   assertEqual(parseUrgency("It's an emergency"), "emergency", "phrase emergency")
   assertEqual(parseUrgency("call it urgent please"), "urgent", "phrase urgent")
@@ -187,8 +215,8 @@ Deno.test("bogus time room with no recoverable location asks which room", () => 
     room_or_area: "today",
   })
   assertEqual(state.room_or_area, undefined, "cleared")
-  assertEqual(state.step, "room_or_area", "ask room")
-  assertEqual(nextCollectingStep("first_noticed", { first_noticed: "today" }), "room_or_area", "need room")
+  assertEqual(state.step, "first_noticed", "does not rewrite the step")
+  assertEqual(nextCollectingStep("first_noticed", { first_noticed: "today" }), "awaiting_confirm", "skip questionnaire")
 })
 
 Deno.test("photo step is skipped for HVAC and dripping faucets", () => {

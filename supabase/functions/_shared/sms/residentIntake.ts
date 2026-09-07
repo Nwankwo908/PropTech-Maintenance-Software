@@ -8,7 +8,7 @@ import {
   MAINTENANCE_CLASSIFICATION_EVENTS,
 } from "../maintenance_classification/mod.ts"
 import type { ClassificationResult } from "../maintenance_classification/types.ts"
-import { logGraphEvent } from "../graph/logGraphEvent.ts"
+import { loadLandlordDisplayName } from "../landlordDisplayName.ts"
 import { recordActivityLog } from "../graph/recordActivityLog.ts"
 import { notifyLandlordNeedsAttention } from "../landlordAttentionNotify.ts"
 import {
@@ -37,6 +37,11 @@ import type { WorkflowContext, WorkflowResult } from "./workflow_types.ts"
 import { extractResidentAvailabilityText } from "./residentAvailabilityExtract.ts"
 import { submitSmsMaintenanceRequest } from "./submitSmsMaintenanceRequest.ts"
 import {
+  applyDiagnosticAnswer,
+  applyQuestionPlan,
+  markQuestionAsked,
+} from "./determineNextMaintenanceQuestion.ts"
+import {
   buildConfirmationSummary,
   computeIntakeSeverity,
   conversationStatusForStep,
@@ -45,24 +50,45 @@ import {
   extractRoomFromText,
   intakeQuestionForStep,
   INTAKE_VALIDATION,
-  nextCollectingStep,
   normalizeRoomOrArea,
   parseContactMethod,
   parseEditFieldChoice,
+  inferIssueTypeFromText,
   parseIssueType,
+  parseUrgency,
   recordIntakePromptRepeat,
   applyPhotoRequestPolicy,
-  shouldRequestIntakePhoto,
-  resolveUrgencyReply,
   pipelineTradeToIssueType,
   recommendUrgency,
   sanitizeIntakeState,
   type IntakeStep,
   type SmsIntakeState,
-  urgencyQuestion,
 } from "./residentIntakeTypes.ts"
+import { looksLikeBareRepairRequest } from "./resolveMaintenanceWorkIntent.ts"
 
 const MAX_CLASSIFICATION_CLARIFICATIONS = 2
+
+const LEGACY_QUESTIONNAIRE_STEPS = new Set<IntakeStep>([
+  "first_noticed",
+  "safety_concerns",
+  "urgency",
+  "preferred_contact_method",
+])
+
+/** Stuck old questionnaire + a new problem report should start the dynamic intake, not store the report as “when noticed”. */
+function shouldRestartLegacyQuestionnaire(
+  step: IntakeStep | undefined,
+  body: string,
+): boolean {
+  if (!step || !LEGACY_QUESTIONNAIRE_STEPS.has(step)) return false
+  const t = body.trim()
+  if (t.length < 8) return false
+  if (isYesReply(t) || isNoReply(t) || /^none$/i.test(t)) return false
+  if (step === "first_noticed" && extractFirstNoticedFromText(t)) return false
+  if (step === "urgency" && parseUrgency(t)) return false
+  if (step === "preferred_contact_method" && parseContactMethod(t)) return false
+  return Boolean(inferIssueTypeFromText(t) || looksLikeBareRepairRequest(t))
+}
 
 const INTAKE_LOOP_HANDOFF_SMS =
   "I've passed your message to the property team so they can help with what you need. They'll follow up with you here.\n\nIf something in your home needs a repair, just text a short description anytime."
@@ -114,8 +140,9 @@ function questionForStep(state: SmsIntakeState, step: IntakeStep): string {
       "Thanks for the update. Could you tell me which fixture or appliance is having the problem, and which room it's in?"
     )
   }
-  if (step === "urgency") {
-    return urgencyQuestion(state)
+  if (step === "diagnostic") {
+    return state.diagnostic_question?.trim() ||
+      "Thanks — could you tell me a bit more about what's happening?"
   }
   if (step === "awaiting_edit_selection") return EDIT_FIELD_OPTIONS
   if (step === "awaiting_confirm") return buildConfirmationSummary(state)
@@ -127,6 +154,7 @@ function questionForStep(state: SmsIntakeState, step: IntakeStep): string {
       | "awaiting_edit_selection"
       | "submitted"
       | "classification_clarification"
+      | "diagnostic"
     >,
   )
 }
@@ -221,6 +249,7 @@ async function initializeIntake(
     ...(extractedNoticed ? { first_noticed: extractedNoticed } : {}),
     sanitized_description: classification.sanitizedDescription,
     preferred_visit_windows: visitWindows,
+    preferred_contact_method: "text",
     vendor_trade: classification.clarificationRequired
       ? undefined
       : classification.vendorTrade !== "other" || !classification.clarificationRequired
@@ -239,6 +268,8 @@ async function initializeIntake(
       ? clarificationAnswers
       : undefined,
     clarification_attempts: clarificationAnswers.length,
+    issue_type: inferred ?? undefined,
+    room_or_area: extractedRoom ?? undefined,
   }
 
   if (classification.clarificationRequired && classification.clarification) {
@@ -250,65 +281,25 @@ async function initializeIntake(
           step: "classification_clarification",
           vendor_trade: undefined,
           issue_type: undefined,
-          room_or_area: extractedRoom ?? undefined,
           clarification_question: classification.clarification.question,
         }),
       }
     }
-    // Still too vague: ask which kind of problem it is. Do not invent a trade or mint a ticket.
     return {
       classification,
-      state: sanitizeIntakeState({
-        ...base,
-        step: "issue_type",
-        vendor_trade: undefined,
-        issue_type: undefined,
-        room_or_area: extractedRoom ?? undefined,
-      }),
-    }
-  }
-
-  if (inferred) {
-    if (extractedRoom) {
-      return {
-        classification,
-        state: sanitizeIntakeState({
+      state: applyQuestionPlan(
+        sanitizeIntakeState({
           ...base,
-          step: extractedNoticed ? "safety_concerns" : "first_noticed",
-          issue_type: inferred,
-          room_or_area: extractedRoom,
-          vendor_trade: classification.vendorTrade,
+          vendor_trade: undefined,
+          issue_type: undefined,
         }),
-      }
-    }
-    return {
-      classification,
-      state: sanitizeIntakeState({
-        ...base,
-        step: "room_or_area",
-        issue_type: inferred,
-        vendor_trade: classification.vendorTrade,
-      }),
-    }
-  }
-
-  if (extractedRoom) {
-    return {
-      classification,
-      state: sanitizeIntakeState({
-        ...base,
-        step: "issue_type",
-        room_or_area: extractedRoom,
-      }),
+      ),
     }
   }
 
   return {
     classification,
-    state: sanitizeIntakeState({
-      ...base,
-      step: "issue_type",
-    }),
+    state: applyQuestionPlan(sanitizeIntakeState(base)),
   }
 }
 
@@ -536,6 +527,42 @@ async function finishIntakeQuestion(
   }
 }
 
+async function refreshClassificationFromFollowUp(
+  state: SmsIntakeState,
+): Promise<SmsIntakeState> {
+  const raw = (state.description ?? state.initial_message ?? "").trim()
+  if (!raw) return state
+  try {
+    const classification = await classifyMaintenanceRequest({
+      rawDescription: raw,
+      skipEmbeddings: !Deno.env.get("OPENAI_API_KEY")?.trim(),
+      durationHours: parseDurationHours(raw),
+      outdoorTempF: state.outdoor_temp_f ?? null,
+    })
+    const inferred = pipelineTradeToIssueType(
+      classification.issueType,
+      classification.vendorTrade,
+    )
+    return {
+      ...state,
+      vendor_trade: classification.clarificationRequired
+        ? state.vendor_trade
+        : classification.vendorTrade || state.vendor_trade,
+      primary_category: classification.primaryCategory ?? state.primary_category,
+      issue_type: inferred ?? state.issue_type,
+      photo_requested: classification.photoRequested,
+      photo_request_reason: classification.photoRequestReason,
+      classification_confidence: classification.classificationConfidence,
+      confidence_band: classification.confidenceBand,
+      sanitized_description: classification.sanitizedDescription,
+      classification_reason: classification.classificationReason,
+    }
+  } catch (err) {
+    console.warn("[sms-intake] follow-up reclassify failed", err)
+    return state
+  }
+}
+
 function applyStepAnswer(
   state: SmsIntakeState,
   step: IntakeStep,
@@ -559,8 +586,7 @@ function applyStepAnswer(
       }
       next.issue_type = parsed
       Object.assign(next, applyPhotoRequestPolicy(next))
-      next.step = nextCollectingStep("issue_type", next)
-      break
+      return { ok: true, state: applyQuestionPlan(next) }
     }
     case "room_or_area": {
       const room = normalizeRoomOrArea(answer, state.initial_message)
@@ -570,52 +596,35 @@ function applyStepAnswer(
           next.first_noticed = noticed
           next.prompt_repeat_count = 0
           next.prompt_repeat_step = undefined
-          next.step = "room_or_area"
-          break
+          return { ok: true, state: applyQuestionPlan(next) }
         }
         return {
           ok: false,
           retry:
-            "Sorry you're dealing with that. Which room is this happening in? Kitchen, bathroom, basement, bedroom, or somewhere else?",
+            "Which room is this happening in? Kitchen, bathroom, basement, bedroom, or somewhere else?",
         }
       }
       next.room_or_area = room
-      next.step = nextCollectingStep("room_or_area", next)
-      break
+      const asked = [...(next.asked_question_types ?? [])]
+      if (!asked.includes("room_or_area")) asked.push("room_or_area")
+      next.asked_question_types = asked
+      return { ok: true, state: applyQuestionPlan(next) }
     }
+    case "diagnostic":
+      return { ok: true, state: applyDiagnosticAnswer(next, answer) }
     case "first_noticed":
       next.first_noticed = answer
-      next.step = nextCollectingStep("first_noticed", next)
-      break
+      return { ok: true, state: applyQuestionPlan(next) }
     case "safety_concerns":
       next.safety_concerns = /^none$/i.test(answer) ? "None reported" : answer
-      next.recommended_urgency = recommendUrgency(next)
-      next.step = "urgency"
-      break
-    case "urgency": {
-      const parsed = resolveUrgencyReply(answer, next.recommended_urgency)
-      if (!parsed) {
-        return {
-          ok: false,
-          retry: INTAKE_VALIDATION.urgency,
-        }
-      }
-      next.urgency = parsed
-      next.step = nextCollectingStep("urgency")
-      break
-    }
+      return { ok: true, state: applyQuestionPlan(next) }
+    case "urgency":
+      next.description = [next.description, `Tenant update: ${answer}`].filter(Boolean).join("\n")
+      return { ok: true, state: applyQuestionPlan(next) }
     case "preferred_contact_method": {
       const parsed = parseContactMethod(answer)
-      if (!parsed) {
-        return {
-          ok: false,
-          retry: INTAKE_VALIDATION.contact_method,
-        }
-      }
-      next.preferred_contact_method = parsed
-      next.severity = computeIntakeSeverity(next)
-      next.step = shouldRequestIntakePhoto(next) ? "photo" : "awaiting_confirm"
-      break
+      next.preferred_contact_method = parsed || "text"
+      return { ok: true, state: applyQuestionPlan(next) }
     }
     default:
       break
@@ -703,7 +712,8 @@ export async function processResidentMaintenanceIntake(
   }
 
   let state = await loadIntakeState(supabase, ctx.conversationId)
-  const isFresh = !state.step || state.step === "submitted"
+  const isFresh = !state.step || state.step === "submitted" ||
+    shouldRestartLegacyQuestionnaire(state.step as IntakeStep | undefined, body)
 
   if (isFresh) {
     const outdoorTempF = await lookupOutdoorTempForProperty(supabase, {
@@ -993,11 +1003,13 @@ export async function processResidentMaintenanceIntake(
             draft_ticket_id: ticketIds[0],
           }
           await saveIntakeState(supabase, ctx.conversationId, submitted)
+          const companyName = await loadLandlordDisplayName(supabase, ctx.landlordId)
           return {
             route: "resident_maintenance_intake",
             replyHint: buildMultiIssueSubmittedSms(
               ticketIds,
               allVendorsAssigned,
+              companyName,
             ),
             metadata: {
               submitted: true,
@@ -1029,9 +1041,10 @@ export async function processResidentMaintenanceIntake(
         )
         const submitted: SmsIntakeState = { ...state, step: "submitted" }
         await saveIntakeState(supabase, ctx.conversationId, submitted)
+        const companyName = await loadLandlordDisplayName(supabase, ctx.landlordId)
         return {
           route: "resident_maintenance_intake",
-          replyHint: buildRequestSubmittedSms(ticketId, vendorAssigned),
+          replyHint: buildRequestSubmittedSms(ticketId, vendorAssigned, companyName),
           metadata: { submitted: true, ticketId, intakeStep: "submitted" },
         }
       } catch (err) {
@@ -1109,23 +1122,24 @@ export async function processResidentMaintenanceIntake(
   }
 
   if (step === "photo") {
-    // Media (if any) was already captured above. This step never traps the
-    // resident: a photo, "skip", or any other reply moves us to confirmation.
     const hasPhoto = (state.photo_urls?.length ?? 0) > 0
     const receivedNow = ctx.inbound.mediaUrls.length > 0
-    state = { ...state, edit_field: undefined, step: "awaiting_confirm" }
-    state.severity = computeIntakeSeverity(state)
+    state = markQuestionAsked(
+      { ...state, edit_field: undefined },
+      "photo",
+    )
+    state = applyQuestionPlan(state)
     await saveIntakeState(supabase, ctx.conversationId, state)
     const ack = receivedNow
-      ? "Got the photo, thank you! "
+      ? "Thanks — I've got it.\n\n"
       : hasPhoto
-        ? "Thanks! "
-        : "No problem. "
+        ? "Thanks — I've got it.\n\n"
+        : "No problem.\n\n"
     return finishIntakeQuestion(
       supabase,
       ctx,
       state,
-      `${ack}${buildConfirmationSummary(state)}`,
+      `${ack}${questionForStep(state, state.step as IntakeStep)}`,
       {
         photoReceived: receivedNow,
         photoCount: state.photo_urls?.length ?? 0,
@@ -1141,6 +1155,10 @@ export async function processResidentMaintenanceIntake(
   }
 
   state = result.state
+  if (step === "diagnostic") {
+    state = await refreshClassificationFromFollowUp(state)
+    state = applyQuestionPlan(state)
+  }
   state = sanitizeIntakeState(state)
 
   if (state.edit_field && step === state.edit_field) {

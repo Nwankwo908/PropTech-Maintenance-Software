@@ -284,6 +284,11 @@ function pendingAnswerForStep(
     return { addressesPending: false }
   }
 
+  if (step === "diagnostic") {
+    if (body.trim()) return { addressesPending: true, pendingAnswer: body.trim() }
+    return { addressesPending: false }
+  }
+
   if (step === "safety_concerns") {
     if (body.trim()) return { addressesPending: true, pendingAnswer: body.trim() }
     return { addressesPending: false }

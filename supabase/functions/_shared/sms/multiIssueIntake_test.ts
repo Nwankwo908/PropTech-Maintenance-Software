@@ -107,8 +107,8 @@ Deno.test("buildMultiIssueConfirmSms asks YES/NO", () => {
     },
   ])
   assertMatch(body, /more than one request/i)
-  assertMatch(body, /1\. door \/ carpentry/i)
-  assertMatch(body, /2\. pest control/i)
+  assertMatch(body, /1\. carpentry — piece for the door/i)
+  assertMatch(body, /2\. pest control — bees in the window/i)
   assertMatch(body, /Reply YES/)
   assertMatch(body, /follow-ups/i)
 })
@@ -133,26 +133,27 @@ Deno.test("beginMultiIssueSharedIntake enters wizard, keeps pending issues", () 
       },
     ],
   })
-  assertEquals(next.step, "first_noticed")
+  assertEquals(next.step === "photo" || next.step === "awaiting_confirm", true)
   assertEquals(next.pending_issues?.length, 2)
-  assertEquals(next.preferred_contact_method, undefined)
+  assertEquals(next.preferred_contact_method, "text")
   assertEquals(next.room_or_area, "kitchen")
 })
 
 Deno.test("buildRequestSubmittedSms does not ask the tenant to call the manager", () => {
   const noVendor = buildRequestSubmittedSms("abc12345-uuid", false)
-  assertMatch(noVendor, /property team has it/i)
+  assertMatch(noVendor, /I'll keep you updated here by text/i)
   assertEquals(/property manager/i.test(noVendor), false)
-  assertEquals(/line up a vendor/i.test(noVendor), false)
+  assertEquals(/You're all set/i.test(noVendor), false)
 
-  const assigned = buildRequestSubmittedSms("abc12345-uuid", true)
-  assertMatch(assigned, /keep you posted/i)
+  const named = buildRequestSubmittedSms("abc12345-uuid", true, "Kendo Properties")
+  assertMatch(named, /Kendo Properties/)
+  assertMatch(named, /Request ABC12345/)
 
   assertEquals(/property manager/i.test(INTAKE_SUBMIT_FAILED_SMS), false)
 })
 
 Deno.test("buildMultiIssueSubmittedSms follows up with the team when no vendor", () => {
   const body = buildMultiIssueSubmittedSms(["aaaaaaaa", "bbbbbbbb"], false)
-  assertMatch(body, /property team has them/i)
-  assertEquals(/line up the right vendor/i.test(body), false)
+  assertMatch(body, /I'll keep you updated here by text/i)
+  assertEquals(/You're all set/i.test(body), false)
 })

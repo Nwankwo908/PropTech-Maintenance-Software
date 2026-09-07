@@ -75,6 +75,17 @@ describe('resolveUrgencyPolicy', () => {
     expect(drain.slaMinutes).toBe(URGENCY_SLA_MINUTES.low)
   })
 
+  it('does not treat a denied overflow as an overflowing-sink emergency', () => {
+    expect(
+      resolveUrgencyPolicy({
+        text: 'My sink is clogged. No overflow or standing water',
+      }).band,
+    ).toBe('medium')
+    expect(resolveUrgencyPolicy({ text: 'The toilet is overflowing' }).band).toBe(
+      'emergency',
+    )
+  })
+
   it('schedules a single pest sighting in 7 days', () => {
     expect(resolveUrgencyPolicy({ text: 'I saw a mouse in the kitchen' }).band).toBe(
       'low',

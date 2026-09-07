@@ -9,6 +9,7 @@
 import { classifyMaintenanceRequest } from "../maintenance_classification/mod.ts"
 import { matchDeterministicRules } from "../maintenance_classification/deterministicRules.ts"
 import type { ClassificationResult, VendorTrade } from "../maintenance_classification/types.ts"
+import { applyQuestionPlan } from "./determineNextMaintenanceQuestion.ts"
 import { extractResidentAvailabilityText } from "./residentAvailabilityExtract.ts"
 import {
   applyPhotoRequestPolicy,
@@ -289,8 +290,8 @@ export function buildMultiIssueConfirmSms(issues: PendingIntakeIssue[]): string 
 }
 
 /**
- * After the resident confirms the split, continue the shared intake wizard
- * (room → timing → safety → urgency → contact → photo → final confirm).
+ * After the resident confirms the split, continue with targeted follow-ups
+ * (not a generic questionnaire), then final confirm.
  */
 export function beginMultiIssueSharedIntake(
   state: SmsIntakeState,
@@ -304,49 +305,40 @@ export function beginMultiIssueSharedIntake(
     extractResidentAvailabilityText(state.initial_message || state.description || "") ||
     undefined
 
-  return {
+  return applyQuestionPlan({
     ...state,
     pending_issues: issues,
-    // Skip issue_type — each pending issue already has a trade.
-    issue_type: undefined,
+    issue_type: issues[0]?.issue_type,
     vendor_trade: issues[0]?.vendor_trade,
     room_or_area: state.room_or_area ?? roomFromIssues,
     preferred_visit_windows: visitWindows,
-    // Clear premature defaults so the wizard collects real answers.
-    preferred_contact_method: undefined,
-    urgency: undefined,
-    recommended_urgency: undefined,
-    step: roomFromIssues || state.room_or_area?.trim()
-      ? "first_noticed"
-      : "room_or_area",
-  }
+    preferred_contact_method: state.preferred_contact_method?.trim() || "text",
+  })
 }
 
 export function buildRequestSubmittedSms(
   ticketId: string,
-  vendorAssigned: boolean,
+  _vendorAssigned = true,
+  companyName?: string | null,
 ): string {
   const ref = ticketId.slice(0, 8).toUpperCase()
-  const followUp = vendorAssigned
-    ? "We'll keep you posted right here."
-    : "The property team has it and will follow up with you here."
-  return `You're all set. I've submitted your request (ref ${ref}). ${followUp}`
+  const who = companyName?.trim() || "the property team"
+  return `Done. Your maintenance request has been sent to ${who}. I'll keep you updated here by text.\n\nRequest ${ref}`
 }
 
 export function buildMultiIssueSubmittedSms(
   ticketIds: string[],
-  vendorAssigned = true,
+  _vendorAssigned = true,
+  companyName?: string | null,
 ): string {
   const refs = ticketIds
     .map((id) => id.slice(0, 8).toUpperCase())
     .join(", ")
   const n = ticketIds.length
-  const followUp = vendorAssigned
-    ? "We'll line up the right vendor for each and keep you posted right here."
-    : "The property team has them and will follow up with you here."
+  const who = companyName?.trim() || "the property team"
   return (
-    `You're all set. I've opened ${n} work order${n === 1 ? "" : "s"} (${refs}). ` +
-    followUp
+    `Done. I've sent ${n} maintenance request${n === 1 ? "" : "s"} to ${who}. I'll keep you updated here by text.\n\n` +
+    `Request ${refs}`
   )
 }
 

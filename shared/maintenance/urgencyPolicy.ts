@@ -149,11 +149,25 @@ export function resolveUrgencyPolicy(input: UrgencyPolicyInput): UrgencyPolicyRe
     return result('emergency', 'Sparking or smoking electrical equipment needs same-day response.', hay, 'electrical')
   }
 
-  if (emergencyType === 'flood' || /\b(flooding|flooded|gushing|pouring|water\s+everywhere|burst(?:ing)?(?:\s+pipe)?)\b/.test(hay)) {
+  const deniedOverflow =
+    /\b(?:no|not|without)\s+(?:an?\s+)?(?:active\s+)?overflow(?:ing)?\b/.test(hay) ||
+    /\bnot overflowing\b/.test(hay)
+  const deniedFlood =
+    /\b(?:no|not|without)\s+(?:active\s+)?(?:flooding|flooded|gushing|pouring)\b/.test(hay)
+
+  if (
+    !deniedFlood &&
+    (emergencyType === 'flood' ||
+      /\b(flooding|flooded|gushing|pouring|water\s+everywhere|burst(?:ing)?(?:\s+pipe)?)\b/.test(hay))
+  ) {
     return result('emergency', 'Flooding or an active uncontrolled leak needs same-day response.', hay, 'flood')
   }
 
-  if (/\boverflow(?:ing)?\b/.test(hay) && /\b(toilet|tub|bathtub|sink)\b/.test(hay)) {
+  if (
+    !deniedOverflow &&
+    /\boverflow(?:ing)?\b/.test(hay) &&
+    /\b(toilet|tub|bathtub|sink)\b/.test(hay)
+  ) {
     return result('emergency', 'An overflowing fixture needs same-day response.', hay, 'flood')
   }
 
@@ -240,7 +254,10 @@ export function resolveUrgencyPolicy(input: UrgencyPolicyInput): UrgencyPolicyRe
     return result('medium', 'Dripping faucet or similar minor plumbing — respond within 48 hours.', hay, 'none')
   }
 
-  if (/\b(fully\s+clogged|won'?t\s+drain|not\s+draining|clogged\s+drain)\b/.test(hay)) {
+  if (
+    /\b(fully\s+clogged|won'?t\s+drain|not\s+draining|clogged\s+drain|clogged\s+sink|sink\s+is\s+clogged|clogged\s+toilet|toilet\s+is\s+clogged)\b/
+      .test(hay)
+  ) {
     return result('medium', 'A clogged drain needs a response within 48 hours.', hay, 'none')
   }
 
