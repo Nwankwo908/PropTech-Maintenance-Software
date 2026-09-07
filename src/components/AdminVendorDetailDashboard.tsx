@@ -1007,7 +1007,7 @@ export function AdminVendorDetailDashboard() {
 
   if (!loading && !vendor) {
     return (
-      <main className="flex min-h-0 flex-1 flex-col px-8 pb-12 pt-6">
+      <main className="px-8 pb-12 pt-6">
         <p className="text-[14px] text-[#6a7282]">
           {error ? `Could not load vendor: ${error}` : 'Vendor not found.'}
         </p>
@@ -1024,7 +1024,7 @@ export function AdminVendorDetailDashboard() {
   const locationLabel = vendor ? formatVendorLocationLabel(vendor) : null
 
   return (
-    <main className="flex min-h-0 flex-1 flex-col px-8 pb-12">
+    <main className="px-8 pb-12">
       <div className="py-6">
         <Link
           to="/admin/vendors"
@@ -1243,14 +1243,14 @@ export function AdminVendorDetailDashboard() {
           <p className="text-center text-[13px] text-[#6a7282]">Loading vendor profile…</p>
         </div>
       ) : compliance && vendor ? (
-        <div className="grid gap-8 lg:grid-cols-[minmax(0,1fr)_minmax(20rem,26rem)] lg:items-stretch">
-          <div className="flex min-h-0 min-w-0 h-full flex-col">
-          <section className="flex h-full min-h-0 flex-col overflow-hidden rounded-[10px] border border-[#e5e7eb] bg-white shadow-[0px_1px_2px_-1px_rgba(0,0,0,0.06)]">
+        <div className="grid gap-8 lg:grid-cols-[minmax(0,1fr)_minmax(20rem,26rem)] lg:items-start">
+          <div className="min-w-0">
+          <section className="flex flex-col rounded-[10px] border border-[#e5e7eb] bg-white shadow-[0px_1px_2px_-1px_rgba(0,0,0,0.06)]">
             <div className="flex items-start justify-between gap-3 border-b border-[#f3f4f6] px-5 py-4">
               <h2 className="text-[16px] font-semibold leading-6 text-[#0a0a0a]">Jobs</h2>
             </div>
-            <div className="flex min-h-[16rem] flex-1 flex-col">
-              <div className="flex shrink-0 flex-wrap items-center gap-x-4 gap-y-1 border-b border-[#f3f4f6] px-5 py-3 text-[13px] leading-5 text-[#6a7282]">
+            <div className="flex min-h-[16rem] flex-col">
+              <div className="flex flex-wrap items-center gap-x-4 gap-y-1 border-b border-[#f3f4f6] px-5 py-3 text-[13px] leading-5 text-[#6a7282]">
                 <span>
                   <span className="font-medium tabular-nums text-[#0a0a0a]">
                     {completedJobs.length}
@@ -1267,7 +1267,7 @@ export function AdminVendorDetailDashboard() {
               {jobsError ? (
                 <p className="px-5 py-3 text-[13px] leading-5 text-[#991b1b]">{jobsError}</p>
               ) : null}
-              <div className="min-h-0 flex-1 overflow-auto">
+              <div className="overflow-x-auto overflow-y-clip">
                 <table className="min-w-full border-collapse text-left">
                   <thead className="sticky top-0 bg-white">
                     <tr className="border-b border-[#e5e7eb]">
@@ -1328,8 +1328,8 @@ export function AdminVendorDetailDashboard() {
           </section>
           </div>
 
-          <aside className="h-full lg:sticky lg:top-6">
-            <section className="flex h-full flex-col overflow-hidden rounded-[10px] border border-[#e5e7eb] bg-white shadow-[0px_1px_2px_-1px_rgba(0,0,0,0.06)]">
+          <aside>
+            <section className="flex flex-col rounded-[10px] border border-[#e5e7eb] bg-white shadow-[0px_1px_2px_-1px_rgba(0,0,0,0.06)]">
               <div className="flex items-start justify-between gap-3 border-b border-[#f3f4f6] px-5 py-4">
                 <div className="min-w-0">
                   <h2 className="text-[16px] font-semibold leading-6 text-[#0a0a0a]">

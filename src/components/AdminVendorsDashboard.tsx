@@ -705,7 +705,7 @@ export function AdminVendorsDashboard() {
   }
 
   return (
-    <main className="flex min-h-0 flex-1 flex-col px-8 pb-12">
+    <main className="px-8 pb-12">
       <SetupSuccessCheckboxGuide
         key={`add-${addVendorGuideRunId}`}
         active={showAddVendorGuide}
@@ -865,8 +865,8 @@ export function AdminVendorsDashboard() {
         </div>
       ) : null}
 
-      <section className="sa-surface overflow-hidden rounded-[10px] border border-[#e5e7eb] bg-white shadow-[0px_1px_2px_-1px_rgba(0,0,0,0.06)]">
-        <div className="overflow-x-auto">
+      <section className="sa-surface rounded-[10px] border border-[#e5e7eb] bg-white shadow-[0px_1px_2px_-1px_rgba(0,0,0,0.06)]">
+        <div className="overflow-x-auto overflow-y-clip">
           <table className="min-w-full border-collapse text-left">
             <thead>
               <tr className="border-b border-[#e5e7eb]">
