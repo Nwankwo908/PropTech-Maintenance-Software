@@ -2,6 +2,7 @@
  * Deterministic Property Health engine (0–100).
  * Condition 40% · Maintenance 35% · Risk 25%.
  * Missing factors are unknown — never filled with a placeholder penalty.
+ * Overall score is withheld until Condition has real data (inspections, systems, asset ages).
  */
 
 export const PROPERTY_HEALTH_CATEGORY_WEIGHTS = {
@@ -244,9 +245,8 @@ function scoreCondition(input: CalculatePropertyHealthInput): PropertyHealthCate
   const systems = new Map<MajorSystemId, number[]>()
 
   const addSystemDeduction = (id: MajorSystemId, amount: number) => {
-    if (amount <= 0) return
     const list = systems.get(id) ?? []
-    list.push(amount)
+    list.push(Math.max(0, amount))
     systems.set(id, list)
   }
 
@@ -672,7 +672,10 @@ export function calculatePropertyHealth(
           factors: [],
         }
 
-  const score = combineCategoryScores([condition, maintenance, risk])
+  const score =
+    condition.score == null
+      ? null
+      : combineCategoryScores([condition, maintenance, risk])
   const knownIds = new Set(
     [...condition.factors, ...maintenance.factors, ...risk.factors]
       .filter((factor) => factor.status === 'known')

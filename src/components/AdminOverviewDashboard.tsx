@@ -33,11 +33,14 @@ import { getActiveLandlordId } from '@/lib/activeLandlord'
 import {
   dismissSetupSuccessCard,
   isSetupSuccessCardDismissed,
+  isSetupSuccessTestDeliveryComplete,
   resolveSetupSuccessProgress,
   SETUP_SUCCESS_COLLAPSED_EVENT,
+  SETUP_SUCCESS_ITEMS,
   shouldShowSetupSuccessCard,
 } from '@/lib/setupSuccessChecklist'
 import { isAnyPropertyDetailsComplete } from '@/lib/propertyDetailsCompleteness'
+import { setupCheckboxGuideLinkState } from '@/lib/setupSuccessGuide'
 import { ASSET_REGISTRY_CHANGED_EVENT } from '@/lib/assetRegistry'
 import { landlordHasPayments } from '@shared/landlordCapabilities'
 import { cityStateZipForBuildingName, listPropertiesForLandlord, type PropertyRecord } from '@/lib/properties'
@@ -1531,6 +1534,7 @@ export function AdminOverviewDashboard() {
       propertyDetailsComplete,
       hasMaintenancePreferences: Number.isFinite(rules?.autoApprovalThreshold),
       maintenanceRequestCount: tickets.length,
+      hasTestDelivery: isSetupSuccessTestDeliveryComplete(),
     })
   }, [overviewResidents, vendors, propertyDetailsComplete, tickets.length])
 
@@ -2828,12 +2832,10 @@ export function AdminOverviewDashboard() {
 
   const updatedCaption =
     loading || !lastUpdated ? 'Updating…' : formatUpdatedAt(lastUpdated)
-  const portfolioPendingSetup =
-    !healthReport.portfolio || healthReport.portfolio.status === 'pending_setup'
   const healthScoreReady = shouldShowPropertyHealthScore(healthReport.portfolio?.status)
   const healthKpiCaption = resolvePropertyHealthKpiCaption(healthReport.portfolio)
   const healthFactorBreakdown =
-    !loading && healthReport.portfolio && healthScoreReady
+    !loading && healthReport.portfolio && healthReport.portfolio.status !== 'pending_setup'
       ? propertyHealthFactorBreakdownLines(healthReport.portfolio.components, {
           dataCompleteness: healthReport.portfolio.dataCompleteness,
           topIssues: healthReport.portfolio.topIssues,
@@ -3029,12 +3031,14 @@ export function AdminOverviewDashboard() {
                 step: '5',
                 title: 'First request',
                 desc: 'Submit a test maintenance request.',
-                to: '/request',
+                to: SETUP_SUCCESS_ITEMS.find((item) => item.id === 'test_request')!.to,
+                state: setupCheckboxGuideLinkState('test_request'),
               },
             ].map((item) => (
               <li key={item.step}>
                 <Link
                   to={item.to}
+                  state={'state' in item ? item.state : undefined}
                   className="sa-card flex h-full flex-col gap-1 rounded-[10px] border border-[#e5e7eb] bg-[#f9fafb] p-4 hover:border-[#101828]/30 hover:bg-white"
                 >
                   <span className="flex size-6 items-center justify-center rounded-full bg-[#101828] text-[12px] font-semibold text-white">
@@ -3073,7 +3077,7 @@ export function AdminOverviewDashboard() {
           label="Property Health"
           value={healthKpiValue}
           delta={
-            loading || portfolioPendingSetup
+            loading || !healthScoreReady
               ? null
               : propertyHealthKpiDelta(kpis.propertyHealthDelta)
           }

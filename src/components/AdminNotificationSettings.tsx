@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState } from 'react'
-import { Link } from 'react-router-dom'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { Link, useLocation, useNavigate } from 'react-router-dom'
 import {
   CRITICAL_SAFETY_ALERTS,
   DEFAULT_NOTIFICATION_SETTINGS,
@@ -12,8 +12,18 @@ import {
   type NotificationSettingsState,
 } from '@/lib/notificationSettings'
 import { sendSettingsTestNotification } from '@/api/settingsTestNotification'
+import { SetupSuccessCheckboxGuide } from '@/components/SetupSuccessCheckboxGuide'
 import { fetchLandlordAccountProfile } from '@/lib/landlordAccountProfile'
 import { loadOrganizationSettings } from '@/lib/organizationSettings'
+import {
+  markSetupSuccessTestDeliveryComplete,
+  SETUP_SUCCESS_TEST_DELIVERY_HASH,
+} from '@/lib/setupSuccessChecklist'
+import {
+  dismissSetupSuccessCheckboxGuide,
+  isSetupSuccessCheckboxGuideNavigation,
+  SETUP_SUCCESS_TEST_DELIVERY_GUIDE_MESSAGE,
+} from '@/lib/setupSuccessGuide'
 
 const sectionCardClass =
   'sa-surface rounded-[10px] border border-[#e5e7eb] bg-white p-6 shadow-[0px_1px_2px_-1px_rgba(0,0,0,0.06)]'
@@ -261,6 +271,13 @@ function EventCategorySection({
 }
 
 export function AdminNotificationSettings() {
+  const location = useLocation()
+  const navigate = useNavigate()
+  const testDeliveryGuideTargetRef = useRef<HTMLDivElement | null>(null)
+  const [showTestDeliveryGuide, setShowTestDeliveryGuide] = useState(() =>
+    isSetupSuccessCheckboxGuideNavigation(location.state, 'test_delivery'),
+  )
+  const [testDeliveryGuideRunId, setTestDeliveryGuideRunId] = useState(0)
   const [saved, setSaved] = useState<NotificationSettingsState>(() => ({
     delivery: { ...DEFAULT_NOTIFICATION_SETTINGS.delivery },
     categories: JSON.parse(
@@ -305,6 +322,21 @@ export function AdminNotificationSettings() {
       cancelled = true
     }
   }, [])
+
+  useEffect(() => {
+    if (loading) return
+    if (location.hash !== `#${SETUP_SUCCESS_TEST_DELIVERY_HASH}`) return
+    const section = document.getElementById(SETUP_SUCCESS_TEST_DELIVERY_HASH)
+    section?.scrollIntoView({ behavior: 'smooth', block: 'end' })
+  }, [loading, location.hash])
+
+  useEffect(() => {
+    if (loading) return
+    if (!isSetupSuccessCheckboxGuideNavigation(location.state, 'test_delivery')) return
+    setShowTestDeliveryGuide(true)
+    setTestDeliveryGuideRunId((value) => value + 1)
+    navigate(`${location.pathname}${location.hash}`, { replace: true, state: {} })
+  }, [loading, location.hash, location.pathname, location.state, navigate])
 
   const isDirty = useMemo(() => JSON.stringify(saved) !== JSON.stringify(draft), [draft, saved])
 
@@ -360,6 +392,9 @@ export function AdminNotificationSettings() {
   }
 
   function handleSendTest(channel: 'email' | 'sms') {
+    markSetupSuccessTestDeliveryComplete()
+    dismissSetupSuccessCheckboxGuide('test_delivery')
+    setShowTestDeliveryGuide(false)
     setTestMessage(null)
     setTestState((current) => ({ ...current, [channel]: 'sending' }))
     void sendSettingsTestNotification({
@@ -384,6 +419,12 @@ export function AdminNotificationSettings() {
 
   return (
     <>
+      <SetupSuccessCheckboxGuide
+        key={testDeliveryGuideRunId}
+        active={!loading && showTestDeliveryGuide}
+        targetRef={testDeliveryGuideTargetRef}
+        message={SETUP_SUCCESS_TEST_DELIVERY_GUIDE_MESSAGE}
+      />
       <div className="py-6">
         <nav
           className="flex flex-wrap items-center gap-2 text-[14px] tracking-[-0.1504px] text-[#6a7282]"
@@ -556,14 +597,17 @@ export function AdminNotificationSettings() {
             </div>
           </section>
 
-          <section className={sectionCardClass}>
+          <section
+            id={SETUP_SUCCESS_TEST_DELIVERY_HASH}
+            className={sectionCardClass}
+          >
             <h2 className="text-[16px] font-semibold leading-6 tracking-[-0.1504px] text-[#101828]">
               Test delivery
             </h2>
             <p className="mt-1 text-[14px] leading-5 tracking-[-0.1504px] text-[#6a7282]">
               Send a sample alert to confirm your channels are working.
             </p>
-            <div className="mt-5 grid gap-3 sm:grid-cols-2">
+            <div ref={testDeliveryGuideTargetRef} className="mt-5 grid gap-3 sm:grid-cols-2">
               {(['Email', 'SMS'] as const).map((label) => {
                 const channel = label.toLowerCase() as 'email' | 'sms'
                 const state = testState[channel]

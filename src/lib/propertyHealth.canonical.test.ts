@@ -222,7 +222,9 @@ describe('buildPropertyHealthReport', () => {
     const row = resolveBuildingHealthRow(report, 'Sunset')
     expect(row?.building).toBe('Sunset')
     expect(row?.unitCount).toBe(1)
-    expect(row?.score).toBeGreaterThan(0)
+    expect(row?.status).toBe('unknown')
+    expect(row?.score).toBeNull()
+    expect(row?.pendingReason).toBe('unknown_condition')
   })
 })
 

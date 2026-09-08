@@ -2,8 +2,11 @@ import { beforeEach, describe, expect, it } from 'vitest'
 import { LIMITED_ALPHA_1_LANDLORD_ID } from '@shared/landlordCapabilities'
 import {
   clearSetupSuccessCardDismissed,
+  clearSetupSuccessTestDelivery,
   dismissSetupSuccessCard,
   isSetupSuccessCardDismissed,
+  isSetupSuccessTestDeliveryComplete,
+  markSetupSuccessTestDeliveryComplete,
   resolveSetupSuccessProgress,
   setupSuccessPercent,
   welcomeTextsComplete,
@@ -91,6 +94,37 @@ describe('setupSuccessChecklist', () => {
       ['maintenance_prefs', true],
       ['test_request', false],
     ])
+  })
+
+  it('sends the test request step to Notifications Test delivery', () => {
+    const item = resolveSetupSuccessProgress({
+      residents: [],
+      vendorCount: 0,
+      verifiedVendorCount: 0,
+      propertyDetailsComplete: false,
+      hasMaintenancePreferences: false,
+      maintenanceRequestCount: 0,
+    }).items.find((row) => row.id === 'test_request')
+    expect(item?.to).toBe('/admin/settings/operations/notifications#test-delivery')
+    expect(item?.to.includes('/request')).toBe(false)
+  })
+
+  it('checks off the test request after Test delivery is used', () => {
+    expect(
+      resolveSetupSuccessProgress({
+        residents: [],
+        vendorCount: 0,
+        verifiedVendorCount: 0,
+        propertyDetailsComplete: false,
+        hasMaintenancePreferences: false,
+        maintenanceRequestCount: 0,
+        hasTestDelivery: true,
+      }).items.find((item) => item.id === 'test_request')?.done,
+    ).toBe(true)
+    markSetupSuccessTestDeliveryComplete(LIMITED_ALPHA_1_LANDLORD_ID)
+    expect(isSetupSuccessTestDeliveryComplete(LIMITED_ALPHA_1_LANDLORD_ID)).toBe(true)
+    clearSetupSuccessTestDelivery(LIMITED_ALPHA_1_LANDLORD_ID)
+    expect(isSetupSuccessTestDeliveryComplete(LIMITED_ALPHA_1_LANDLORD_ID)).toBe(false)
   })
 
   it('does not check property details until they are marked complete', () => {

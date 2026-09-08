@@ -672,12 +672,10 @@ export function AdminPropertiesDashboard() {
 
   const updatedCaption =
     loading || !lastUpdated ? 'Updating…' : formatUpdatedAt(lastUpdated)
-  const portfolioPendingSetup =
-    !healthReport.portfolio || healthReport.portfolio.status === 'pending_setup'
   const healthScoreReady = shouldShowPropertyHealthScore(healthReport.portfolio?.status)
   const healthKpiCaption = resolvePropertyHealthKpiCaption(healthReport.portfolio)
   const healthFactorBreakdown =
-    !loading && healthReport.portfolio && healthScoreReady
+    !loading && healthReport.portfolio && healthReport.portfolio.status !== 'pending_setup'
       ? propertyHealthFactorBreakdownLines(healthReport.portfolio.components, {
           dataCompleteness: healthReport.portfolio.dataCompleteness,
           topIssues: healthReport.portfolio.topIssues,
@@ -882,7 +880,7 @@ export function AdminPropertiesDashboard() {
           label="Property Health"
           value={healthKpiValue}
           delta={
-            loading || portfolioPendingSetup
+            loading || !healthScoreReady
               ? null
               : propertyHealthKpiDelta(kpis.propertyHealthDelta)
           }

@@ -3,6 +3,7 @@ import { readLocalOnboardingState } from '@/lib/onboarding'
 import { isAnyPropertyDetailsComplete } from '@/lib/propertyDetailsCompleteness'
 import { listPropertiesForLandlord } from '@/lib/properties'
 import {
+  isSetupSuccessTestDeliveryComplete,
   resolveSetupSuccessProgress,
   type SetupSuccessProgress,
 } from '@/lib/setupSuccessChecklist'
@@ -74,5 +75,6 @@ export async function loadSetupSuccessProgress(
     propertyDetailsComplete,
     hasMaintenancePreferences: Number.isFinite(rules?.autoApprovalThreshold),
     maintenanceRequestCount: ticketsResult.count ?? 0,
+    hasTestDelivery: isSetupSuccessTestDeliveryComplete(landlordId),
   })
 }

@@ -297,35 +297,22 @@ export async function portfolioBriefingLookup(
     if (recentUloActions.length >= 3) break
   }
 
-  // Property Health: Condition omitted without asset data; Maintenance + Risk renormalized.
+  // This briefing does not load inspection/system assets, so overall health is withheld.
   const openCount = openTickets.length
   const maintenanceScore =
     units.length > 0 ? clampScore(100 - Math.min(56, openCount * 6)) : null
   const vacantCount = units.length > 0 ? Math.max(0, units.length - occupied) : 0
   const riskScore =
     units.length > 0 ? clampScore(100 - Math.min(12, vacantCount * 3)) : null
-  const healthScore =
-    maintenanceScore != null && riskScore != null
-      ? clampScore((maintenanceScore * 0.35 + riskScore * 0.25) / 0.6)
-      : null
-
-  // 4-week delta approximation: recompute open-maint as if only tickets older than 4w counted as "then open"
-  let healthDelta4w: number | null = null
-  if (healthScore != null && units.length > 0) {
-    const thenOpen = openTickets.filter((t) => {
-      const created = new Date(String(t.created_at)).getTime()
-      return !Number.isNaN(created) && created < now - FOUR_WEEKS_MS
-    })
-    const thenMaint = clampScore(100 - Math.min(56, thenOpen.length * 6))
-    const thenHealth = clampScore((thenMaint * 0.35 + (riskScore ?? 100) * 0.25) / 0.6)
-    healthDelta4w = healthScore - thenHealth
-  }
-
+  const healthScore: number | null = null
+  const healthDelta4w: number | null = null
   const assessment = assessmentFromScore(healthScore)
 
   // Build bullets (grounded facts only)
   bullets.push(`Assessment label: ${assessment}.`)
-  if (healthScore != null) {
+  if (units.length === 0) {
+    bullets.push("Property Health score: unavailable (no tracked units).")
+  } else if (healthScore != null) {
     bullets.push(
       `Property Health score (computed from live portfolio signals): ${healthScore}/100` +
         (healthDelta4w != null
@@ -333,10 +320,15 @@ export async function portfolioBriefingLookup(
           : "."),
     )
     bullets.push(
-      `Health components used: condition unknown (no asset/inspection signals in this briefing), maintenance ${maintenanceScore}, risk ${riskScore}. Missing condition is omitted, not scored as 50.`,
+      `Health components used: condition, maintenance ${maintenanceScore}, risk ${riskScore}.`,
     )
   } else {
-    bullets.push("Property Health score: unavailable (no tracked units).")
+    bullets.push(
+      "Property Health score: not displayed yet (waiting on inspection or building-system details). Show as — / 100, status Unknown.",
+    )
+    bullets.push(
+      `Health components (internal): condition unknown, maintenance ${maintenanceScore}, risk ${riskScore}. Missing condition is not filled in as 0 or 50.`,
+    )
   }
 
   if (occupancyPct != null) {
@@ -436,7 +428,11 @@ export async function portfolioBriefingLookup(
   const mdParts = [
     `## Portfolio briefing packet`,
     `Assessment: **${assessment}**` +
-      (healthScore != null ? ` · Health **${healthScore}/100**` : " · Health score unavailable"),
+      (healthScore != null
+        ? ` · Health **${healthScore}/100**`
+        : units.length > 0
+          ? " · Health **— / 100** (Unknown)"
+          : " · Health score unavailable"),
     "",
     ...bullets.map((b) => `- ${b}`),
   ]

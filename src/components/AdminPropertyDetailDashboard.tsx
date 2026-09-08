@@ -1387,7 +1387,7 @@ export function AdminPropertyDetailDashboard() {
               {subtitle}
             </p>
           </div>
-          {!limitedAlpha1 && buildingHealth ? (
+          {buildingHealth ? (
             <span
               className={`rounded-[4px] px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.06em] ${HEALTH_BADGE_STYLES[buildingHealth.status]}`}
             >
@@ -1403,7 +1403,7 @@ export function AdminPropertyDetailDashboard() {
         </div>
       ) : null}
 
-      <div className={`grid grid-cols-2 gap-4 ${limitedAlpha1 ? 'lg:grid-cols-4' : 'lg:grid-cols-5'}`}>
+      <div className="grid grid-cols-2 gap-4 lg:grid-cols-5">
         <StatTile
           label="Units"
           value={loading ? '—' : String(propertyUnitRows.length || buildingUnits.length)}
@@ -1424,9 +1424,7 @@ export function AdminPropertyDetailDashboard() {
           value={loading ? '—' : formatSpend(propertyAnalytics?.mtdTotal ?? 0)}
           icon={<DollarStatIcon />}
         />
-        {limitedAlpha1 ? null : (
-          <StatTile label="Health" value={loading ? '—' : healthValue} icon={<StarStatIcon />} />
-        )}
+        <StatTile label="Health" value={loading ? '—' : healthValue} icon={<StarStatIcon />} />
       </div>
 
       <nav

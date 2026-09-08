@@ -52,6 +52,9 @@ describe('setupSuccessGuide', () => {
     expect(setupCheckboxGuideLinkState('property_details')).toEqual({
       setupCheckboxGuide: 'properties',
     })
+    expect(setupCheckboxGuideLinkState('test_request')).toEqual({
+      setupCheckboxGuide: 'test_delivery',
+    })
     expect(isSetupSuccessCheckboxGuideNavigation({ setupCheckboxGuide: 'residents' }, 'residents')).toBe(
       true,
     )
@@ -86,6 +89,12 @@ describe('setupSuccessGuide', () => {
     markSetupSuccessCheckboxGuidePending('maintenance_prefs', LIMITED_ALPHA_1_LANDLORD_ID)
     expect(shouldShowSetupSuccessCheckboxGuide('vendors', LIMITED_ALPHA_1_LANDLORD_ID)).toBe(false)
     expect(shouldShowSetupSuccessCheckboxGuide('residents', LIMITED_ALPHA_1_LANDLORD_ID)).toBe(false)
+    expect(shouldShowSetupSuccessCheckboxGuide('properties', LIMITED_ALPHA_1_LANDLORD_ID)).toBe(false)
+  })
+
+  it('arms the test-delivery guide after submit a test maintenance request', () => {
+    markSetupSuccessCheckboxGuidePending('test_request', LIMITED_ALPHA_1_LANDLORD_ID)
+    expect(shouldShowSetupSuccessCheckboxGuide('test_delivery', LIMITED_ALPHA_1_LANDLORD_ID)).toBe(true)
     expect(shouldShowSetupSuccessCheckboxGuide('properties', LIMITED_ALPHA_1_LANDLORD_ID)).toBe(false)
   })
 

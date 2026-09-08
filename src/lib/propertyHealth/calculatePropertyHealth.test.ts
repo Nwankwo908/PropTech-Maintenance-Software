@@ -36,9 +36,35 @@ describe('calculatePropertyHealth', () => {
     expect(result.condition.score).toBeNull()
     expect(result.maintenance.score).toBe(100)
     expect(result.risk.score).toBe(100)
+    expect(result.score).toBeNull()
+    expect(result.rating).toBeNull()
+    expect(result.condition.factors.every((factor) => factor.status === 'unknown')).toBe(true)
+  })
+
+  it('scores overall health once a major system age is on file, even with no deductions', () => {
+    const result = calculatePropertyHealth({
+      trackedUnits: [{ unitLabel: '101', status: 'active' }],
+      tickets: [],
+      pmTasks: [],
+      assets: [
+        {
+          applianceType: 'roof',
+          estimatedAgeYears: 5,
+          usefulLifeYears: 25,
+          replacementUrgency: null,
+          condition: 'good',
+        },
+      ],
+      inspections: [],
+      damageReports: [],
+      now,
+    })
+
+    expect(result.condition.score).toBe(100)
+    expect(result.maintenance.score).toBe(100)
+    expect(result.risk.score).toBe(100)
     expect(result.score).toBe(100)
     expect(result.rating).toBe('Excellent')
-    expect(result.condition.factors.every((factor) => factor.status === 'unknown')).toBe(true)
   })
 
   it('does not keep penalizing completed maintenance', () => {
@@ -127,6 +153,7 @@ describe('calculatePropertyHealth', () => {
 
     expect(occupied.risk.score).toBe(100)
     expect(vacant.risk.score).toBe(97)
-    expect(vacant.score).toBeLessThan(occupied.score!)
+    expect(occupied.score).toBeNull()
+    expect(vacant.score).toBeNull()
   })
 })

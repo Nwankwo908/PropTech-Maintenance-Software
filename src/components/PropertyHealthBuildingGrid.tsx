@@ -19,6 +19,7 @@ export const HEALTH_BADGE_STYLES: Record<PropertyHealthStatus, string> = {
   at_risk: 'bg-[#ffe2e2] text-[#c10007]',
   active: 'bg-[#dbfce7] text-[#008236]',
   pending_setup: 'bg-[#f3f4f6] text-[#6a7282]',
+  unknown: 'bg-[#f3f4f6] text-[#6a7282]',
 }
 
 export const HEALTH_BADGE_LABELS: Record<PropertyHealthStatus, string> = {
@@ -32,6 +33,7 @@ export const HEALTH_BADGE_LABELS: Record<PropertyHealthStatus, string> = {
   at_risk: 'AT RISK',
   active: 'ACTIVE',
   pending_setup: 'PENDING SETUP',
+  unknown: 'UNKNOWN',
 }
 
 export const HEALTH_BAR_STYLES: Record<PropertyHealthStatus, string> = {
@@ -45,6 +47,7 @@ export const HEALTH_BAR_STYLES: Record<PropertyHealthStatus, string> = {
   at_risk: 'bg-[#fb2c36]',
   active: 'bg-[#d1d5dc]',
   pending_setup: 'bg-[#d1d5dc]',
+  unknown: 'bg-[#d1d5dc]',
 }
 
 function BuildingIcon() {
@@ -344,7 +347,9 @@ export function PropertyHealthBuildingGrid({
                 aria-label={
                   shouldShowPropertyHealthScore(b.status)
                     ? `${b.score} of 100 health`
-                    : resolvePropertyHealthPendingMessage(b.pendingReason)
+                    : b.status === 'unknown'
+                      ? 'Unknown property health'
+                      : resolvePropertyHealthPendingMessage(b.pendingReason)
                 }
               >
                 {shouldShowPropertyHealthScore(b.status) ? (
@@ -362,7 +367,12 @@ export function PropertyHealthBuildingGrid({
                   </>
                 ) : (
                   <>
-                    <p className="text-[28px] font-bold leading-8 text-[#6a7282]">—</p>
+                    <p className="text-[28px] font-bold leading-8 text-[#6a7282] tabular-nums">
+                      —
+                      {b.status === 'unknown' ? (
+                        <span className="text-[12px] font-normal text-[#6a7282]"> / 100 health</span>
+                      ) : null}
+                    </p>
                     <p className="text-[12px] leading-4 text-[#6a7282]">
                       {resolvePropertyHealthPendingMessage(b.pendingReason)}
                     </p>

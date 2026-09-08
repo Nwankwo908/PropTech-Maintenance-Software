@@ -28,6 +28,9 @@ export const PROPERTY_HEALTH_OPS_MATURITY_DAYS = 30
 export const PROPERTY_HEALTH_INSIGHTS_CAPTION =
   'More activity needed for full insights'
 
+export const PROPERTY_HEALTH_UNKNOWN_CONDITION_CAPTION =
+  'Add inspection or appliance details to calculate property health'
+
 export const PROPERTY_HEALTH_WEIGHTS = {
   condition: 0.4,
   maintenance: 0.35,
@@ -36,7 +39,7 @@ export const PROPERTY_HEALTH_WEIGHTS = {
 
 export const PROPERTY_HEALTH_KPI_CAPTION = 'Operational health score.'
 
-export type PropertyHealthPendingReason = 'inactive_units' | 'collecting_history'
+export type PropertyHealthPendingReason = 'inactive_units' | 'collecting_history' | 'unknown_condition'
 
 /** KPI helper copy for property health — activation vs insights are separate. */
 export function resolvePropertyHealthKpiCaption(
@@ -44,6 +47,9 @@ export function resolvePropertyHealthKpiCaption(
 ): string {
   if (!portfolio || portfolio.status === 'pending_setup') {
     return 'Activate units to start measuring property health.'
+  }
+  if (portfolio.status === 'unknown') {
+    return PROPERTY_HEALTH_UNKNOWN_CONDITION_CAPTION
   }
   if (!shouldShowPropertyHealthScore(portfolio.status)) {
     return PROPERTY_HEALTH_INSIGHTS_CAPTION
@@ -57,6 +63,9 @@ export function resolvePropertyHealthPendingMessage(
 ): string {
   if (pendingReason === 'collecting_history') {
     return PROPERTY_HEALTH_INSIGHTS_CAPTION
+  }
+  if (pendingReason === 'unknown_condition') {
+    return PROPERTY_HEALTH_UNKNOWN_CONDITION_CAPTION
   }
   return 'Pending setup — activate units to operate this property'
 }
@@ -92,7 +101,9 @@ export function resolvePropertyHealthKpiValue(
   format: 'percent' | 'over100' = 'percent',
 ): string {
   if (!status || status === 'pending_setup') return 'Pending'
-  if (!shouldShowPropertyHealthScore(status) || score == null) return '—'
+  if (status === 'unknown' || !shouldShowPropertyHealthScore(status) || score == null) {
+    return format === 'over100' ? '— / 100' : '—'
+  }
   return format === 'over100' ? `${score} / 100` : formatPropertyHealthKpiValue(score)
 }
 
@@ -113,6 +124,7 @@ export type PropertyHealthStatus =
   | 'at_risk'
   | 'active'
   | 'pending_setup'
+  | 'unknown'
 
 export type PropertyHealthComponentKey = 'condition' | 'maintenance' | 'risk'
 
@@ -127,7 +139,8 @@ export type PropertyHealthComponent = {
 }
 
 export type PropertyHealthScopeScore = {
-  score: number
+  /** Overall 0–100 when Condition is known; otherwise withheld. */
+  score: number | null
   status: PropertyHealthStatus
   rating: PropertyHealthRating | null
   components: PropertyHealthComponent[]
@@ -547,6 +560,8 @@ export function resolvePropertyHealthStatus(
   options?: { insufficientOperationalSignal?: boolean },
 ): PropertyHealthStatus {
   if (isPendingSetupHealth(components)) return 'pending_setup'
+  const condition = components.find((component) => component.key === 'condition')
+  if (!condition || condition.isFallback) return 'unknown'
   if (options?.insufficientOperationalSignal) return propertyHealthStatus(score)
   return propertyHealthStatus(score)
 }
@@ -1245,12 +1260,14 @@ export function computePropertyHealthScope(
   })
 
   const components = componentsFromHealthResult(result)
-  const score = result.score ?? 0
-  const pendingReason: PropertyHealthPendingReason | null = null
+  const score = result.score
+  const status = resolvePropertyHealthStatus(score ?? 0, components)
+  const pendingReason: PropertyHealthPendingReason | null =
+    status === 'unknown' ? 'unknown_condition' : null
 
   return {
     score,
-    status: propertyHealthStatus(score),
+    status,
     rating: result.rating,
     components,
     trackedUnitCount: trackedUnits.length,
@@ -1276,7 +1293,8 @@ export function buildPropertyHealthReport(
       repeatWindowMs: REPEAT_ISSUE_WINDOW_DAYS * 24 * 60 * 60 * 1000,
       openIssuesCreatedBeforeMs: now - FOUR_WEEKS_MS,
     })
-    return previous ? portfolio.score - previous.score : null
+    if (!previous || portfolio.score == null || previous.score == null) return null
+    return portfolio.score - previous.score
   })()
 
   const buildingKeys = collectPropertyGridBuildingKeys(
@@ -1352,7 +1370,7 @@ export function buildPropertyHealthReport(
     })
   }
 
-  buildings.sort((a, b) => a.score - b.score)
+  buildings.sort((a, b) => (a.score ?? 101) - (b.score ?? 101))
   return { portfolio, portfolioDelta, buildings }
 }
 

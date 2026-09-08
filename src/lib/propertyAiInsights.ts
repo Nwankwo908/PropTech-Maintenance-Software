@@ -380,7 +380,9 @@ export function buildPropertyAiInsights(
     urgentItems = [],
   } = input
 
-  if (!shouldShowPropertyHealthScore(buildingHealth.status)) return null
+  if (!shouldShowPropertyHealthScore(buildingHealth.status) || buildingHealth.score == null) {
+    return null
+  }
 
   const currentScore = buildingHealth.score
   const openByCategory = groupOpenTicketsByCategory(openTickets)

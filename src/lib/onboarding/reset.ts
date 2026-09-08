@@ -10,7 +10,10 @@ import { clearVendorSetupInboxForLandlord } from '@/lib/vendorSetupConversation'
 import { supabase } from '@/lib/supabase'
 import { clearLandlordStripeConnect } from '@/api/landlordStripeConnect'
 import { clearLimitedAlphaPostOnboardingWelcomeSeen } from '@/lib/postOnboardingWelcome'
-import { clearSetupSuccessCardDismissed } from '@/lib/setupSuccessChecklist'
+import {
+  clearSetupSuccessCardDismissed,
+  clearSetupSuccessTestDelivery,
+} from '@/lib/setupSuccessChecklist'
 import {
   clearLocalOnboardingStorage,
   defaultOnboardingState,
@@ -527,6 +530,7 @@ export async function restartNewLandlordOnboarding(
   clearVendorSetupInboxForLandlord(scope.landlordId)
   clearLimitedAlphaPostOnboardingWelcomeSeen(scope.landlordId)
   clearSetupSuccessCardDismissed(scope.landlordId)
+  clearSetupSuccessTestDelivery(scope.landlordId)
 
   const cleared: LandlordOnboardingState = {
     ...defaultOnboardingState(scope.landlordId),

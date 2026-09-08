@@ -2,6 +2,8 @@ import { getActiveLandlordId } from '@/lib/activeLandlord'
 import { isLimitedAlpha1Landlord } from '@shared/landlordCapabilities'
 import { hasSeenLimitedAlphaPostOnboardingWelcome } from '@/lib/postOnboardingWelcome'
 
+export const SETUP_SUCCESS_TEST_DELIVERY_HASH = 'test-delivery'
+
 export const SETUP_SUCCESS_ITEMS = [
   {
     id: 'welcome_texts',
@@ -26,7 +28,7 @@ export const SETUP_SUCCESS_ITEMS = [
   {
     id: 'test_request',
     label: 'Submit a test maintenance request',
-    to: '/request',
+    to: `/admin/settings/operations/notifications#${SETUP_SUCCESS_TEST_DELIVERY_HASH}`,
   },
 ] as const
 
@@ -61,13 +63,14 @@ export function resolveSetupSuccessProgress(input: {
   propertyDetailsComplete: boolean
   hasMaintenancePreferences: boolean
   maintenanceRequestCount: number
+  hasTestDelivery?: boolean
 }): SetupSuccessProgress {
   const doneById: Record<SetupSuccessItemId, boolean> = {
     welcome_texts: welcomeTextsComplete(input.residents),
     verify_vendors: input.vendorCount > 0,
     property_details: input.propertyDetailsComplete,
     maintenance_prefs: input.hasMaintenancePreferences,
-    test_request: input.maintenanceRequestCount > 0,
+    test_request: Boolean(input.hasTestDelivery) || input.maintenanceRequestCount > 0,
   }
   const items = SETUP_SUCCESS_ITEMS.map((item) => ({
     ...item,
@@ -133,6 +136,43 @@ export function clearSetupSuccessCardDismissed(
     // private mode
   }
   emitSetupSuccessCollapsedChange()
+}
+
+const TEST_DELIVERY_KEY_PREFIX = 'ulo.setupSuccess.testDelivery.'
+
+function testDeliveryKey(landlordId: string): string {
+  return `${TEST_DELIVERY_KEY_PREFIX}${landlordId}`
+}
+
+export function isSetupSuccessTestDeliveryComplete(
+  landlordId: string = getActiveLandlordId(),
+): boolean {
+  try {
+    return window.localStorage.getItem(testDeliveryKey(landlordId)) === '1'
+  } catch {
+    return false
+  }
+}
+
+/** Email or SMS Test delivery on Notifications — completes the setup-success test step. */
+export function markSetupSuccessTestDeliveryComplete(
+  landlordId: string = getActiveLandlordId(),
+): void {
+  try {
+    window.localStorage.setItem(testDeliveryKey(landlordId), '1')
+  } catch {
+    // private mode
+  }
+}
+
+export function clearSetupSuccessTestDelivery(
+  landlordId: string = getActiveLandlordId(),
+): void {
+  try {
+    window.localStorage.removeItem(testDeliveryKey(landlordId))
+  } catch {
+    // private mode
+  }
 }
 
 /** Limited Alpha 1 overlay after Get Started, until every step is done or the card is closed. */

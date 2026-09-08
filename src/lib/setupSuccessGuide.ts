@@ -2,10 +2,18 @@ import { getActiveLandlordId } from '@/lib/activeLandlord'
 import { isLimitedAlpha1Landlord } from '@shared/landlordCapabilities'
 import type { SetupSuccessItemId } from '@/lib/setupSuccessChecklist'
 
-export type SetupSuccessCheckboxGuidePage = 'vendors' | 'residents' | 'properties' | 'property_tab'
+export type SetupSuccessCheckboxGuidePage =
+  | 'vendors'
+  | 'residents'
+  | 'properties'
+  | 'property_tab'
+  | 'test_delivery'
 
 export const SETUP_SUCCESS_PROPERTY_TAB_GUIDE_MESSAGE =
   'Complete your property details to shift maintenance from reactive to proactive.'
+
+export const SETUP_SUCCESS_TEST_DELIVERY_GUIDE_MESSAGE =
+  'Select button to confirm your number is working'
 
 export function setupCheckboxGuidePropertyTabState(): { setupCheckboxGuide: 'property_tab' } {
   return { setupCheckboxGuide: 'property_tab' }
@@ -26,6 +34,7 @@ function pageForSetupItem(itemId: SetupSuccessItemId): SetupSuccessCheckboxGuide
   if (itemId === 'welcome_texts') return 'residents'
   if (itemId === 'verify_vendors') return 'vendors'
   if (itemId === 'property_details') return 'properties'
+  if (itemId === 'test_request') return 'test_delivery'
   return null
 }
 
@@ -91,7 +100,7 @@ export function clearSetupSuccessCheckboxGuide(
 ): void {
   try {
     window.localStorage.removeItem(pendingKey(landlordId))
-    for (const page of ['vendors', 'residents', 'properties', 'property_tab'] as const) {
+    for (const page of ['vendors', 'residents', 'properties', 'property_tab', 'test_delivery'] as const) {
       window.localStorage.removeItem(seenKey(page, landlordId))
     }
   } catch {
