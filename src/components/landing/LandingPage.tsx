@@ -465,9 +465,10 @@ export function LandingPage() {
       data: { subscription },
     } = client.auth.onAuthStateChange((event, session) => {
       if (cancelled || event !== 'SIGNED_IN' || !session) return
-      if (isAdminSessionAllowed(session)) {
+      void isAdminSessionAllowed(session).then((allowed) => {
+        if (cancelled || !allowed) return
         navigate('/admin', { replace: true })
-      }
+      })
     })
 
     return () => {

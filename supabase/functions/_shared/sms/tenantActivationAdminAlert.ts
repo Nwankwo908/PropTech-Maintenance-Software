@@ -10,7 +10,7 @@ import {
   normalizeOpsEmail,
   sendLandlordOpsEmail,
 } from "../landlordOpsNotify.ts"
-import { normalizePhoneFlexible } from "../resident_notify.ts"
+import { teamMemberContactFromOnboarding } from "../../../../shared/landlordTeamContact.ts"
 import { findActiveLandlordMainNumber } from "./landlordSmsOnboarding.ts"
 import { getSMSProviderForSend } from "./providerFactory.ts"
 import {
@@ -153,7 +153,7 @@ export async function resolveLandlordOpsPhones(
 
   const { data: onboarding } = await supabase
     .from("landlord_onboarding")
-    .select("draft_state, properties, onboarding_status")
+    .select("draft_state, account_settings, properties, onboarding_status")
     .eq("landlord_id", landlordId)
     .maybeSingle()
 
@@ -167,6 +167,12 @@ export async function resolveLandlordOpsPhones(
       candidates.add(n)
       identityPhones.add(n)
     }
+  }
+  const team = teamMemberContactFromOnboarding(onboarding)
+  const teamPhone = normalizePhoneFlexible(team.phone)
+  if (teamPhone) {
+    candidates.add(teamPhone)
+    identityPhones.add(teamPhone)
   }
 
   const { data: propertyRows } = await supabase

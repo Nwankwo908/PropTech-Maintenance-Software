@@ -6,6 +6,7 @@
  * through `sendLandlordOpsEmail` or `resolveLandlordOpsEmails`.
  */
 import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.49.1"
+import { teamMemberContactFromOnboarding } from "../../../shared/landlordTeamContact.ts"
 import { sendResendEmail } from "./delivery.ts"
 
 export function normalizeOpsEmail(raw: string): string | null {
@@ -17,6 +18,7 @@ export function normalizeOpsEmail(raw: string): string | null {
 /** Alpha / demo login mailboxes — never prefer these over a real support email. */
 export const PLATFORM_LOGIN_EMAILS = new Set([
   "limitedalpha1@ulohome.io",
+  "limitedalpha2@ulohome.io",
   "demo@ulohome.io",
   "newlandlord@ulohome.io",
 ])
@@ -58,6 +60,8 @@ export function supportContactFromOnboardingRow(onboarding: {
 } | null | undefined): {
   accountSetupEmail: string | null
   organizationSupportEmail: string | null
+  teamMemberEmail: string | null
+  teamMemberPhone: string | null
 } {
   const draft =
     onboarding?.draft_state && typeof onboarding.draft_state === "object"
@@ -72,10 +76,13 @@ export function supportContactFromOnboardingRow(onboarding: {
     ...((draft.organizationSettings ?? {}) as Record<string, unknown>),
     ...((settings.organization ?? {}) as Record<string, unknown>),
   }
+  const team = teamMemberContactFromOnboarding(onboarding)
   return {
     accountSetupEmail: typeof account.email === "string" ? account.email : null,
     organizationSupportEmail:
       typeof org.supportEmail === "string" ? org.supportEmail : null,
+    teamMemberEmail: team.email || null,
+    teamMemberPhone: team.phone || null,
   }
 }
 
@@ -86,6 +93,8 @@ export async function loadLandlordSupportContact(
   accountSetupEmail: string | null
   organizationSupportEmail: string | null
   landlordEmail: string | null
+  teamMemberEmail: string | null
+  teamMemberPhone: string | null
 }> {
   const id = landlordId.trim()
   const { data: landlord } = await supabase
@@ -242,6 +251,8 @@ export async function resolveLandlordOpsEmails(
   const contact = await loadLandlordSupportContact(supabase, landlordId)
   const supportEmail = primaryLandlordSupportEmail(contact)
   if (supportEmail) candidates.add(supportEmail)
+  const teamEmail = normalizeOpsEmail(contact.teamMemberEmail ?? "")
+  if (teamEmail) candidates.add(teamEmail)
 
   const vendorEmails = await loadVendorEmailsForLandlord(supabase, landlordId)
   for (const e of options?.excludeEmails ?? []) {

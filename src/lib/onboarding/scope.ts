@@ -1,27 +1,20 @@
 /**
- * Onboarding landlord scope guards — New Landlord, Limited Alpha 1, Full Alpha.
+ * Onboarding landlord scope guards — Limited Alpha accounts.
  */
-import { LIMITED_ALPHA_1_LANDLORD_ID } from '@shared/landlordCapabilities'
 import {
-  DEFAULT_LANDLORD_ID,
-  DEMO_LANDLORD_ID,
-  EMPTY_LANDLORD_ID,
-  getActiveLandlordId,
-} from '@/lib/activeLandlord'
+  isOnboardingLandlordId,
+  ONBOARDING_LANDLORD_IDS,
+} from '@shared/landlordCapabilities'
+import { DEMO_LANDLORD_ID, getActiveLandlordId } from '@/lib/activeLandlord'
 
-/** Landlord ids that run the setup wizard until onboarding_status = completed. */
-export const ONBOARDING_LANDLORD_IDS = [
-  EMPTY_LANDLORD_ID,
-  LIMITED_ALPHA_1_LANDLORD_ID,
-  DEFAULT_LANDLORD_ID,
-] as const
+export { ONBOARDING_LANDLORD_IDS }
 
 export type OnboardingLandlordId = (typeof ONBOARDING_LANDLORD_IDS)[number]
 
 export function isOnboardingLandlordAccount(
   landlordId: string = getActiveLandlordId(),
 ): boolean {
-  return (ONBOARDING_LANDLORD_IDS as readonly string[]).includes(landlordId)
+  return isOnboardingLandlordId(landlordId)
 }
 
 /** Fail closed: onboarding mutations must never write to demo/showcase landlords. */
@@ -32,14 +25,13 @@ export function requireOnboardingLandlord(
     return {
       ok: false,
       error:
-        'Wrong landlord scope — demo data is read-only. Switch to Full Alpha, Limited Alpha 1, or New Landlord before onboarding.',
+        'Wrong landlord scope — demo data is read-only. Switch to a Limited Alpha account before onboarding.',
     }
   }
   if (!isOnboardingLandlordAccount(landlordId)) {
     return {
       ok: false,
-      error:
-        'Wrong landlord scope — onboarding only runs on Full Alpha, Limited Alpha 1, or New Landlord accounts.',
+      error: 'Wrong landlord scope — onboarding only runs on Limited Alpha accounts.',
     }
   }
   return { ok: true, landlordId }

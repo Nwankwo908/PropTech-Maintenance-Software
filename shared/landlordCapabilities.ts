@@ -1,43 +1,57 @@
 /**
  * Per-account product capabilities.
  *
- * Limited Alpha 1 is an empty new-user account without payments, bank linking,
- * or native-app channels. Find External Vendor is on — there is often no
- * matching in-network trade.
+ * Limited Alpha accounts are empty new-user landlords without payments, bank
+ * linking, or native-app channels. Find External Vendor is on — there is often
+ * no matching in-network trade.
  */
 
 export const LIMITED_ALPHA_1_LANDLORD_ID = 'de300000-0000-4000-8000-000000000003'
+export const LIMITED_ALPHA_2_LANDLORD_ID = 'de300000-0000-4000-8000-000000000004'
 export const FULL_ALPHA_LANDLORD_ID = '068daf53-07e4-4493-bd7f-6106e3c8c62f'
 export const EMPTY_LANDLORD_ID = 'de300000-0000-4000-8000-000000000002'
 
-/** Landlord ids allowed to run setup + fast-track document extract. */
-export const ONBOARDING_LANDLORD_IDS = [
-  EMPTY_LANDLORD_ID,
+export const LIMITED_ALPHA_LANDLORD_IDS = [
   LIMITED_ALPHA_1_LANDLORD_ID,
-  FULL_ALPHA_LANDLORD_ID,
+  LIMITED_ALPHA_2_LANDLORD_ID,
 ] as const
+
+/** Retired portal accounts — not selectable and not used as the default scope. */
+export function isRetiredLandlordAccountId(landlordId: string | null | undefined): boolean {
+  const id = (landlordId ?? '').trim()
+  return id === FULL_ALPHA_LANDLORD_ID || id === EMPTY_LANDLORD_ID
+}
+
+/** Landlord ids allowed to run setup + fast-track document extract. */
+export const ONBOARDING_LANDLORD_IDS = LIMITED_ALPHA_LANDLORD_IDS
 
 export function isOnboardingLandlordId(landlordId: string | null | undefined): boolean {
   const id = (landlordId ?? '').trim()
   return (ONBOARDING_LANDLORD_IDS as readonly string[]).includes(id)
 }
 
+export function isLimitedAlphaLandlord(landlordId: string | null | undefined): boolean {
+  const id = (landlordId ?? '').trim()
+  return (LIMITED_ALPHA_LANDLORD_IDS as readonly string[]).includes(id)
+}
+
+/** @deprecated Prefer isLimitedAlphaLandlord — kept for existing call sites. */
 export function isLimitedAlpha1Landlord(landlordId: string | null | undefined): boolean {
-  return (landlordId ?? '').trim() === LIMITED_ALPHA_1_LANDLORD_ID
+  return isLimitedAlphaLandlord(landlordId)
 }
 
 /** Production Twilio DID used as Limited Alpha 1's landlord_main line. */
 export const LIMITED_ALPHA_1_TWILIO_SMS_NUMBER = '+18775803356'
 
-/** Limited Alpha 1 sends and receives on Twilio; Full Alpha stays on Telnyx. */
+/** Limited Alpha 1 sends and receives on Twilio; other Limited Alpha accounts use the number pool. */
 export function landlordUsesTwilioSms(landlordId: string | null | undefined): boolean {
-  return isLimitedAlpha1Landlord(landlordId)
+  return (landlordId ?? '').trim() === LIMITED_ALPHA_1_LANDLORD_ID
 }
 
 /** Stripe, ACH, Plaid, rent/invoice checkout, vendor payouts, and “pay online” links.
- *  Limited Alpha 1 still records rent by landlord SMS (received / unpaid) without moving money. */
+ *  Limited Alpha still records rent by landlord SMS (received / unpaid) without moving money. */
 export function landlordHasPayments(landlordId: string | null | undefined): boolean {
-  return !isLimitedAlpha1Landlord(landlordId)
+  return !isLimitedAlphaLandlord(landlordId)
 }
 
 /** Find External Vendor / Ulo-vetted marketplace dispatch. */
@@ -47,12 +61,12 @@ export function landlordHasVendorMarketplace(_landlordId: string | null | undefi
 
 /** Push / native-app notification channels. */
 export function landlordHasNativeMobileApp(landlordId: string | null | undefined): boolean {
-  return !isLimitedAlpha1Landlord(landlordId)
+  return !isLimitedAlphaLandlord(landlordId)
 }
 
 /** Accounting, bank reconciliation, and related document discovery. */
 export function landlordHasAccounting(landlordId: string | null | undefined): boolean {
-  return !isLimitedAlpha1Landlord(landlordId)
+  return !isLimitedAlphaLandlord(landlordId)
 }
 
 /**

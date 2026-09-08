@@ -32,4 +32,17 @@ describe('mergeReviewManualAccount', () => {
       emptyReviewManualAccount({ companyName: 'New Landlord', contactName: 'Alex' }).companyName,
     ).toBe('')
   })
+
+  it('fills team member email from the seed when the review field is blank', () => {
+    expect(
+      mergeReviewManualAccount(
+        { backupContactName: 'Sam', backupContactPhone: '', backupContactEmail: '' },
+        { backupContactPhone: '555-0100', backupContactEmail: 'sam@acme.test' },
+      ),
+    ).toMatchObject({
+      backupContactName: 'Sam',
+      backupContactPhone: '555-0100',
+      backupContactEmail: 'sam@acme.test',
+    })
+  })
 })

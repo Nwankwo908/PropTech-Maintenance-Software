@@ -1,0 +1,21 @@
+---
+description: Team member on a landlord account is optional.
+globs: src/components/onboarding/**,src/lib/onboarding/**,src/lib/landlordPortalMembers.ts,src/lib/landlordAccountProfile.ts,src/components/AdminOrganizationSettings.tsx
+alwaysApply: false
+---
+
+# Landlord team member is optional
+
+Name, phone, and email for a **team member** (stored as `backupContact*`) are optional.
+
+## Do
+
+- Allow finishing setup, Fast Track import, and Organization Settings save with all team member fields blank
+- Sync portal login / ops SMS only when email or phone is present
+- Keep “(optional)” in landlord-facing labels
+
+## Do not
+
+- Block onboarding complete or continue-import on missing team member
+- Auto-send welcome SMS or email when a team member is added
+- Treat team member email as required for account access

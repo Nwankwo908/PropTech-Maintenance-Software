@@ -21,6 +21,7 @@ describe('canCompleteOnboarding', () => {
         phone: '',
         backupContactName: '',
         backupContactPhone: '',
+        backupContactEmail: '',
       },
     })
     const check = canCompleteOnboarding(state, [], [], undefined, true)

@@ -74,12 +74,12 @@ export function AdminLoginPage() {
 
     const evaluate = async (session: Parameters<typeof isAdminSessionAllowed>[0]) => {
       if (cancelled) return
-      if (session && !isAdminSessionAllowed(session)) {
+      if (session && !(await isAdminSessionAllowed(session))) {
         await signOutAdmin()
         if (!cancelled) setAlreadyAuthed(false)
         return
       }
-      if (!cancelled) setAlreadyAuthed(isAdminSessionAllowed(session))
+      if (!cancelled) setAlreadyAuthed(Boolean(session) && (await isAdminSessionAllowed(session)))
     }
 
     void getAdminSession().then((session) => evaluate(session))
@@ -210,7 +210,7 @@ export function AdminLoginPage() {
                 <p className="mt-6 rounded-lg border border-[#fecaca] bg-[#fef2f2] px-3 py-2 text-[13px] leading-5 text-[#991b1b]" role="alert">
                   That Google account is not authorized for the admin portal. Sign in with an
                   allowlisted email (for Limited Alpha 1, use ceorentalsnj@gmail.com or
-                  limitedalpha1@ulohome.io).
+                  limitedalpha1@ulohome.io or limitedalpha2@ulohome.io).
                 </p>
               ) : null}
 

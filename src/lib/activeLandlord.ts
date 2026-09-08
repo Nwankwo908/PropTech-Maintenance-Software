@@ -2,35 +2,43 @@
  * Active landlord account resolution.
  *
  * Every admin dashboard query is scoped to one landlord account:
- *  - demo@ulohome.io           → Demo Property Management (seeded showcase data)
- *  - newlandlord@ulohome.io    → New Landlord (empty state / onboarding)
- *  - limitedalpha1@ulohome.io  → Limited Alpha 1 (empty new-user onboarding)
+ *  - limitedalpha1@ulohome.io  → Limited Alpha 1
+ *  - limitedalpha2@ulohome.io  → Limited Alpha 2 (empty new-user onboarding)
  *  - ceorentalsnj@gmail.com    → Limited Alpha 1
- *  - staff logins              → default landlord (Full Alpha),
- *                                with a dev account switcher override for testing.
+ *  - demo@ulohome.io           → Demo Property Management (seeded showcase)
+ *  - staff logins              → Limited Alpha 1, with a switcher for Demo and Limited Alpha 2
+ *
+ * Full Alpha and New Landlord are retired. Stale overrides and those ids
+ * resolve to Limited Alpha 1.
  *
  * The login email mapping always wins over the switcher override, so demo data
  * can never leak into a real customer account or vice versa.
  *
- * Onboarding writes are fail-closed to Full Alpha, Limited Alpha 1, and New
- * Landlord ids (see requireOnboardingLandlord). Switching to New Landlord
- * always resets via /admin/onboarding?reset=1 so prior fast-track imports
- * cannot linger. Limited Alpha 1 is a live account — wipe only from
- * Reset onboarding.
+ * Onboarding writes are fail-closed to Limited Alpha accounts
+ * (see requireOnboardingLandlord). Wipe only from Reset onboarding.
  */
 
-import { LIMITED_ALPHA_1_LANDLORD_ID } from '@shared/landlordCapabilities'
+import {
+  EMPTY_LANDLORD_ID,
+  FULL_ALPHA_LANDLORD_ID,
+  isRetiredLandlordAccountId,
+  LIMITED_ALPHA_1_LANDLORD_ID,
+  LIMITED_ALPHA_2_LANDLORD_ID,
+} from '@shared/landlordCapabilities'
 
-export { LIMITED_ALPHA_1_LANDLORD_ID }
+export {
+  EMPTY_LANDLORD_ID,
+  FULL_ALPHA_LANDLORD_ID,
+  LIMITED_ALPHA_1_LANDLORD_ID,
+  LIMITED_ALPHA_2_LANDLORD_ID,
+}
 
-export const DEFAULT_LANDLORD_ID =
-  import.meta.env.VITE_DEFAULT_LANDLORD_ID?.trim() ||
-  '068daf53-07e4-4493-bd7f-6106e3c8c62f'
+export const DEFAULT_LANDLORD_ID = LIMITED_ALPHA_1_LANDLORD_ID
 
 export const DEMO_LANDLORD_ID = 'de300000-0000-4000-8000-000000000001'
-export const EMPTY_LANDLORD_ID = 'de300000-0000-4000-8000-000000000002'
 
 export const LIMITED_ALPHA_1_LOGIN_EMAIL = 'limitedalpha1@ulohome.io'
+export const LIMITED_ALPHA_2_LOGIN_EMAIL = 'limitedalpha2@ulohome.io'
 
 /** Showcase move-out WO-D777 — stable id for lease-renewal kickoff demos. */
 export const DEMO_MOVE_OUT_WO_D777_RUN_ID = 'd7770000-0000-4000-8000-000000000001'
@@ -44,17 +52,16 @@ export type LandlordAccountOption = {
 }
 
 export const LANDLORD_ACCOUNT_OPTIONS: LandlordAccountOption[] = [
-  { kind: 'default', id: DEFAULT_LANDLORD_ID, label: 'Full Alpha' },
   { kind: 'limited_alpha', id: LIMITED_ALPHA_1_LANDLORD_ID, label: 'Limited Alpha 1' },
+  { kind: 'limited_alpha', id: LIMITED_ALPHA_2_LANDLORD_ID, label: 'Limited Alpha 2' },
   { kind: 'demo', id: DEMO_LANDLORD_ID, label: 'Demo Property Management' },
-  { kind: 'empty', id: EMPTY_LANDLORD_ID, label: 'New Landlord (empty)' },
 ]
 
 const EMAIL_TO_LANDLORD_ID: Record<string, string> = {
   'ceorentalsnj@gmail.com': LIMITED_ALPHA_1_LANDLORD_ID,
   [LIMITED_ALPHA_1_LOGIN_EMAIL]: LIMITED_ALPHA_1_LANDLORD_ID,
+  [LIMITED_ALPHA_2_LOGIN_EMAIL]: LIMITED_ALPHA_2_LANDLORD_ID,
   'demo@ulohome.io': DEMO_LANDLORD_ID,
-  'newlandlord@ulohome.io': EMPTY_LANDLORD_ID,
 }
 
 const OVERRIDE_STORAGE_KEY = 'ulo.adminActiveLandlord'
@@ -62,9 +69,33 @@ const OVERRIDE_STORAGE_KEY = 'ulo.adminActiveLandlord'
 /** Landlord bound to the signed-in account email (null for staff logins). */
 let sessionLandlordId: string | null = null
 
+function canonicalizeLandlordId(landlordId: string): string {
+  if (isRetiredLandlordAccountId(landlordId)) return LIMITED_ALPHA_1_LANDLORD_ID
+  return landlordId
+}
+
 export function setSessionLandlordFromEmail(email: string | null | undefined): void {
   const normalized = email?.trim().toLowerCase() ?? ''
   sessionLandlordId = EMAIL_TO_LANDLORD_ID[normalized] ?? null
+}
+
+/** Bind dashboard scope for seeded logins or saved team-member emails. */
+export async function bindSessionLandlordFromEmail(
+  email: string | null | undefined,
+): Promise<void> {
+  const normalized = email?.trim().toLowerCase() ?? ''
+  if (!normalized) {
+    sessionLandlordId = null
+    return
+  }
+  const seeded = EMAIL_TO_LANDLORD_ID[normalized]
+  if (seeded) {
+    sessionLandlordId = seeded
+    return
+  }
+  const { landlordIdForPortalMemberEmail } = await import('@/lib/landlordPortalMembers')
+  const memberLandlordId = await landlordIdForPortalMemberEmail(normalized)
+  sessionLandlordId = memberLandlordId ? canonicalizeLandlordId(memberLandlordId) : null
 }
 
 export function getSessionLandlordId(): string | null {
@@ -75,15 +106,15 @@ function readOverride(): string | null {
   try {
     const value = window.localStorage.getItem(OVERRIDE_STORAGE_KEY)?.trim()
     if (!value) return null
-    return LANDLORD_ACCOUNT_OPTIONS.some((opt) => opt.id === value) ? value : null
+    const canonical = canonicalizeLandlordId(value)
+    return LANDLORD_ACCOUNT_OPTIONS.some((opt) => opt.id === canonical) ? canonical : null
   } catch {
     return null
   }
 }
 
 /**
- * New Landlord sandbox (no portfolio until setup). Limited Alpha 1 is a live
- * account and is not treated as empty.
+ * Retired New Landlord sandbox id. Limited Alpha 1 is the live account.
  */
 export function isEmptyOnboardingLandlordId(landlordId: string): boolean {
   return landlordId === EMPTY_LANDLORD_ID
@@ -94,20 +125,22 @@ export function isEmptyOnboardingLandlordId(landlordId: string): boolean {
  * Precedence: account-bound landlord (login email) → testing override → default.
  */
 export function getActiveLandlordId(): string {
-  return sessionLandlordId ?? readOverride() ?? DEFAULT_LANDLORD_ID
+  return canonicalizeLandlordId(sessionLandlordId ?? readOverride() ?? DEFAULT_LANDLORD_ID)
 }
 
 export function getActiveLandlordKind(): LandlordAccountKind {
   const id = getActiveLandlordId()
   if (id === DEMO_LANDLORD_ID) return 'demo'
   if (id === EMPTY_LANDLORD_ID) return 'empty'
-  if (id === LIMITED_ALPHA_1_LANDLORD_ID) return 'limited_alpha'
+  if (id === LIMITED_ALPHA_1_LANDLORD_ID || id === LIMITED_ALPHA_2_LANDLORD_ID) {
+    return 'limited_alpha'
+  }
   return 'default'
 }
 
 export function getActiveLandlordLabel(): string {
   const id = getActiveLandlordId()
-  return LANDLORD_ACCOUNT_OPTIONS.find((opt) => opt.id === id)?.label ?? 'Full Alpha'
+  return LANDLORD_ACCOUNT_OPTIONS.find((opt) => opt.id === id)?.label ?? 'Limited Alpha 1'
 }
 
 export function isDemoAccountActive(): boolean {
@@ -132,18 +165,14 @@ export function prepareDemoLandlordScope(): void {
  */
 export function setActiveLandlordOverride(landlordId: string | null): void {
   try {
-    if (!landlordId || landlordId === DEFAULT_LANDLORD_ID) {
+    const next = landlordId ? canonicalizeLandlordId(landlordId) : DEFAULT_LANDLORD_ID
+    if (!next || next === DEFAULT_LANDLORD_ID) {
       window.localStorage.removeItem(OVERRIDE_STORAGE_KEY)
       window.location.reload()
       return
     }
 
-    window.localStorage.setItem(OVERRIDE_STORAGE_KEY, landlordId)
-    if (landlordId === EMPTY_LANDLORD_ID) {
-      window.localStorage.removeItem(`ulo.landlordOnboarding.${landlordId}`)
-      window.location.assign('/admin/onboarding?reset=1')
-      return
-    }
+    window.localStorage.setItem(OVERRIDE_STORAGE_KEY, next)
   } catch {
     // localStorage unavailable (private mode) — switching silently unsupported
   }

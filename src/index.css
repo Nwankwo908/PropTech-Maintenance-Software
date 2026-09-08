@@ -2474,6 +2474,17 @@ h6 {
   background-color: #f1f5f9;
 }
 
+.sa-dropzone:focus-visible {
+  border-color: #187960;
+  background-color: #f8fafc;
+  box-shadow: 0 0 0 2px rgba(24, 121, 96, 0.28);
+}
+
+.sa-dropzone:active:not([data-dragging='true']):not(.is-dragging) {
+  transform: scale(0.99);
+  background-color: #f3f4f6;
+}
+
 .sa-dropzone[data-dragging='true'],
 .sa-dropzone.is-dragging {
   transform: scale(1.01);
@@ -2932,6 +2943,7 @@ h6 {
   .sa-card:active,
   .sa-row:active:not(:disabled),
   .sa-link:active,
+  .sa-dropzone:active:not([data-dragging='true']):not(.is-dragging),
   .sa-dropzone[data-dragging='true'],
   .sa-dropzone.is-dragging {
     transform: none;

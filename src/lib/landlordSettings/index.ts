@@ -148,6 +148,8 @@ export function mergeOrganizationForm(input: {
   if (backupContactName) next.backupContactName = backupContactName
   const backupContactPhone = asTrimmed(account.backupContactPhone)
   if (backupContactPhone) next.backupContactPhone = backupContactPhone
+  const backupContactEmail = asTrimmed(account.backupContactEmail)
+  if (backupContactEmail) next.backupContactEmail = backupContactEmail
 
   next.street = address.street || next.street
   next.city = address.city || next.city
@@ -480,6 +482,7 @@ export async function saveLandlordOrganizationSettings(
         phone: settings.phone,
         backupContactName: settings.backupContactName,
         backupContactPhone: settings.backupContactPhone,
+        backupContactEmail: settings.backupContactEmail,
       },
       organizationSettings: settings,
       approvalRules: {
@@ -560,6 +563,7 @@ export async function saveLandlordOrganizationSettings(
     phone: settings.phone.trim(),
     backupContactName: settings.backupContactName.trim(),
     backupContactPhone: settings.backupContactPhone.trim(),
+    backupContactEmail: settings.backupContactEmail.trim(),
   })
   if (!profileResult.ok) return profileResult
 

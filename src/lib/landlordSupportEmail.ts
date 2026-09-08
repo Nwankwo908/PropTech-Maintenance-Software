@@ -1,8 +1,9 @@
-import { LIMITED_ALPHA_1_LOGIN_EMAIL } from '@/lib/activeLandlord'
+import { LIMITED_ALPHA_1_LOGIN_EMAIL, LIMITED_ALPHA_2_LOGIN_EMAIL } from '@/lib/activeLandlord'
 
 /** Login mailboxes that must not populate Support email. */
 export const PLATFORM_LOGIN_EMAILS = new Set([
   LIMITED_ALPHA_1_LOGIN_EMAIL.toLowerCase(),
+  LIMITED_ALPHA_2_LOGIN_EMAIL.toLowerCase(),
   'demo@ulohome.io',
   'newlandlord@ulohome.io',
 ])

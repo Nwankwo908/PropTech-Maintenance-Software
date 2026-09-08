@@ -249,11 +249,12 @@ export function OnboardingReviewStep({
             <ReviewSummaryRow label="Support email" value={reviewData.accountSetup.email} />
             <ReviewSummaryRow label="Phone" value={reviewData.accountSetup.phone} />
             <ReviewSummaryRow
-              label="Backup contact"
+              label="Team member"
               value={
                 [
                   reviewData.accountSetup.backupContactName?.trim(),
                   reviewData.accountSetup.backupContactPhone?.trim(),
+                  reviewData.accountSetup.backupContactEmail?.trim(),
                 ]
                   .filter(Boolean)
                   .join(' · ') || 'Not added'

@@ -49,6 +49,7 @@ export type OrganizationSettingsForm = {
   phone: string
   backupContactName: string
   backupContactPhone: string
+  backupContactEmail: string
   about: string
   street: string
   city: string
@@ -118,6 +119,7 @@ export const DEFAULT_ORGANIZATION_SETTINGS: OrganizationSettingsForm = {
   phone: '',
   backupContactName: '',
   backupContactPhone: '',
+  backupContactEmail: '',
   about: '',
   street: '',
   city: '',

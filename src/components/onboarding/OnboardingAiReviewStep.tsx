@@ -937,23 +937,36 @@ export function OnboardingAiReviewStep({
               </label>
             </label>
             <label className="block">
-              <span className={fieldLabelClass}>Backup contact name (optional)</span>
+              <span className={fieldLabelClass}>Team member name (optional)</span>
               <input
                 className={inputClass}
                 value={account.backupContactName}
                 onChange={(e) => patchAccount({ backupContactName: e.target.value })}
-                placeholder="Backup contact name"
+                placeholder="Team member name"
               />
             </label>
             <label className="block">
-              <span className={fieldLabelClass}>Backup contact phone (optional)</span>
+              <span className={fieldLabelClass}>Team member phone number (optional)</span>
               <input
                 className={inputClass}
                 type="tel"
                 value={account.backupContactPhone}
                 onChange={(e) => patchAccount({ backupContactPhone: e.target.value })}
-                placeholder="Backup contact number"
+                placeholder="(555) 123-4567"
               />
+            </label>
+            <label className="block sm:col-span-2">
+              <span className={fieldLabelClass}>Team member email (optional)</span>
+              <input
+                className={inputClass}
+                type="email"
+                value={account.backupContactEmail}
+                onChange={(e) => patchAccount({ backupContactEmail: e.target.value })}
+                placeholder="name@company.com"
+              />
+              <p className="mt-1.5 text-[12px] leading-[18px] text-[#6a7282]">
+                They can sign in to this account and receive the same operational texts you do.
+              </p>
             </label>
           </div>
         </ReviewSection>

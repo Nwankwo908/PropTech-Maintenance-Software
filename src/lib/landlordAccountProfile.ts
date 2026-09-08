@@ -19,6 +19,7 @@ export type LandlordAccountProfile = {
   phone: string
   backupContactName: string
   backupContactPhone: string
+  backupContactEmail: string
   communicationStyle: CommunicationStyle
   autoApprovalThreshold: number | null
   marketplacePreference: string | null
@@ -33,6 +34,7 @@ export const EMPTY_LANDLORD_ACCOUNT_PROFILE: LandlordAccountProfile = {
   phone: '',
   backupContactName: '',
   backupContactPhone: '',
+  backupContactEmail: '',
   communicationStyle: DEFAULT_COMMUNICATION_STYLE,
   autoApprovalThreshold: null,
   marketplacePreference: null,
@@ -53,6 +55,7 @@ function accountSetupFromDraft(draft: Record<string, unknown>): OnboardingAccoun
     phone: asTrimmed(row.phone),
     backupContactName: asTrimmed(row.backupContactName),
     backupContactPhone: asTrimmed(row.backupContactPhone),
+    backupContactEmail: asTrimmed(row.backupContactEmail),
     smsConsentAcceptedAt:
       typeof row.smsConsentAcceptedAt === 'string' ? row.smsConsentAcceptedAt : null,
   }
@@ -67,6 +70,7 @@ export function profileFromAccountSetupFields(
     | 'phone'
     | 'backupContactName'
     | 'backupContactPhone'
+    | 'backupContactEmail'
     | 'smsConsentAcceptedAt'
   >,
 ): LandlordAccountProfile {
@@ -77,6 +81,7 @@ export function profileFromAccountSetupFields(
     phone: account.phone.trim(),
     backupContactName: account.backupContactName.trim(),
     backupContactPhone: account.backupContactPhone.trim(),
+    backupContactEmail: account.backupContactEmail.trim(),
     communicationStyle: DEFAULT_COMMUNICATION_STYLE,
     autoApprovalThreshold: null,
     marketplacePreference: null,
@@ -181,8 +186,9 @@ export async function fetchLandlordAccountProfile(
       landlordEmail: asTrimmed(landlord?.email),
     }),
     phone: asTrimmed(landlord?.phone) || account.phone,
-    backupContactName: account.backupContactName,
-    backupContactPhone: account.backupContactPhone,
+    backupContactName: account.backupContactName || asTrimmed(org.backupContactName),
+    backupContactPhone: account.backupContactPhone || asTrimmed(org.backupContactPhone),
+    backupContactEmail: account.backupContactEmail || asTrimmed(org.backupContactEmail),
     communicationStyle: normalizeCommunicationStyle(
       asTrimmed(landlord?.communication_style) ||
         asTrimmed(onboarding?.communication_style) ||
@@ -217,6 +223,7 @@ export async function persistLandlordAccountProfileFields(
     | 'phone'
     | 'backupContactName'
     | 'backupContactPhone'
+    | 'backupContactEmail'
   >,
 ): Promise<{ ok: boolean; error?: string }> {
   const { persistLandlordAccountProfile } = await import('@/lib/onboarding/persist/account')
@@ -227,6 +234,7 @@ export async function persistLandlordAccountProfileFields(
     phone: fields.phone,
     backupContactName: fields.backupContactName,
     backupContactPhone: fields.backupContactPhone,
+    backupContactEmail: fields.backupContactEmail,
     smsConsentAcceptedAt: null,
   })
 }

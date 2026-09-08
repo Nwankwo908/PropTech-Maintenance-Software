@@ -1913,6 +1913,7 @@ export function collectExtractedAccount(
     phone: mostFrequentName(phones),
     backupContactName: '',
     backupContactPhone: '',
+    backupContactEmail: '',
     smsConsentAcceptedAt: null,
   }
 }
@@ -1956,6 +1957,7 @@ export function fillExtractionReviewAccount(
     account.phone === (review.account?.phone ?? '') &&
     account.backupContactName === (review.account?.backupContactName ?? '') &&
     account.backupContactPhone === (review.account?.backupContactPhone ?? '') &&
+    account.backupContactEmail === (review.account?.backupContactEmail ?? '') &&
     account.smsConsentAcceptedAt === (review.account?.smsConsentAcceptedAt ?? null)
   ) {
     return review

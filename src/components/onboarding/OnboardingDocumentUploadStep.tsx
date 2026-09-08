@@ -101,9 +101,12 @@ function FileRow({
           ) : null}
           <button
             type="button"
-            disabled={isProcessing}
-            onClick={() => onRemove(doc.id)}
-            className="rounded-[6px] px-2 py-1 text-[12px] font-medium text-[#64748b] transition-colors hover:bg-[#fef2f2] hover:text-[#b91c1c] disabled:cursor-not-allowed disabled:opacity-40"
+            onClick={(event) => {
+              event.preventDefault()
+              event.stopPropagation()
+              onRemove(doc.id)
+            }}
+            className="sa-press rounded-[6px] px-2 py-1 text-[12px] font-medium text-[#64748b] outline-none transition-colors hover:bg-[#fef2f2] hover:text-[#b91c1c] focus-visible:ring-2 focus-visible:ring-[#101828]/20 active:bg-[#fee2e2]"
           >
             Remove
           </button>
@@ -203,10 +206,10 @@ export function OnboardingDocumentUploadStep({
 
       <div
         className={[
-          'sa-dropzone mt-4 flex cursor-pointer flex-col items-center justify-center rounded-[10px] border-2 border-dashed px-6 py-14 text-center',
+          'sa-dropzone sa-press mt-4 flex cursor-pointer flex-col items-center justify-center rounded-[10px] border-2 border-dashed px-6 py-14 text-center outline-none',
           dragActive
             ? 'is-dragging border-[#187960] bg-[#f0fdf8]'
-            : 'border-[#e5e7eb] bg-white hover:border-[#d1d5dc] hover:bg-[#fafafa]',
+            : 'border-[#e5e7eb] bg-white hover:border-[#d1d5dc] hover:bg-[#fafafa] active:border-[#c5cbd3] active:bg-[#f3f4f6] focus-visible:border-[#187960] focus-visible:bg-[#f8fafc] focus-visible:ring-2 focus-visible:ring-[#187960]/30 focus-visible:ring-offset-2',
         ].join(' ')}
         data-dragging={dragActive ? 'true' : 'false'}
         onDragEnter={(event) => {

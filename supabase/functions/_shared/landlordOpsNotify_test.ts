@@ -74,6 +74,7 @@ function mockLandlordOpsSupabase(params: {
   landlordEmail: string | null
   vendorEmails?: string[]
   accountSetupEmail?: string | null
+  teamMemberEmail?: string | null
 }) {
   return {
     from(table: string) {
@@ -109,6 +110,7 @@ function mockLandlordOpsSupabase(params: {
                         draft_state: {
                           accountSetup: {
                             email: params.accountSetupEmail ?? null,
+                            backupContactEmail: params.teamMemberEmail ?? null,
                           },
                         },
                         account_settings: {},
@@ -166,6 +168,24 @@ Deno.test("accountHolderOnly includes onboarding support email over login mailbo
     },
   )
   assertEquals(emails, ["ceorentalsnj@gmail.com"])
+})
+
+Deno.test("accountHolderOnly includes the team member email with the account holder", async () => {
+  const supabase = mockLandlordOpsSupabase({
+    landlordEmail: "limitedalpha1@ulohome.io",
+    accountSetupEmail: "ceorentalsnj@gmail.com",
+    teamMemberEmail: "sam@acme.test",
+    vendorEmails: [],
+  })
+  const { emails } = await resolveLandlordOpsEmails(
+    supabase as never,
+    "landlord-1",
+    {
+      accountHolderOnly: true,
+      envEmails: ["osi@ulohome.io", "emeka@ulohome.io"],
+    },
+  )
+  assertEquals(emails, ["ceorentalsnj@gmail.com", "sam@acme.test"])
 })
 
 Deno.test("default resolve still includes env notify emails", async () => {

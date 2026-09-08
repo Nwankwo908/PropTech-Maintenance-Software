@@ -12,6 +12,7 @@ export type OnboardingReviewManualAccount = {
   phone: string
   backupContactName: string
   backupContactPhone: string
+  backupContactEmail: string
   smsConsentAcceptedAt: string | null
 }
 
@@ -42,6 +43,7 @@ export function emptyReviewManualAccount(
     phone: seed?.phone?.trim() ?? '',
     backupContactName: seed?.backupContactName?.trim() ?? '',
     backupContactPhone: seed?.backupContactPhone?.trim() ?? '',
+    backupContactEmail: seed?.backupContactEmail?.trim() ?? '',
     smsConsentAcceptedAt: seed?.smsConsentAcceptedAt?.trim() || null,
   }
 }
@@ -57,6 +59,7 @@ export function normalizeReviewManualAccount(raw: unknown): OnboardingReviewManu
     phone: String(row.phone ?? '').trim(),
     backupContactName: String(row.backupContactName ?? row.backup_contact_name ?? '').trim(),
     backupContactPhone: String(row.backupContactPhone ?? row.backup_contact_phone ?? '').trim(),
+    backupContactEmail: String(row.backupContactEmail ?? row.backup_contact_email ?? '').trim(),
     smsConsentAcceptedAt:
       typeof consent === 'string' && consent.trim() ? consent.trim() : null,
   }
@@ -76,6 +79,7 @@ export function mergeReviewManualAccount(
     phone: a.phone || b.phone,
     backupContactName: a.backupContactName || b.backupContactName,
     backupContactPhone: a.backupContactPhone || b.backupContactPhone,
+    backupContactEmail: a.backupContactEmail || b.backupContactEmail,
     smsConsentAcceptedAt: a.smsConsentAcceptedAt || b.smsConsentAcceptedAt,
   }
 }
@@ -90,6 +94,7 @@ export function accountSetupFromReviewManual(
     phone: account.phone.trim(),
     backupContactName: account.backupContactName.trim(),
     backupContactPhone: account.backupContactPhone.trim(),
+    backupContactEmail: account.backupContactEmail.trim(),
     smsConsentAcceptedAt: account.smsConsentAcceptedAt,
   }
 }

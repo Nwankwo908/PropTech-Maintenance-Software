@@ -53,9 +53,10 @@ export type OnboardingAccountSetup = {
   contactName: string
   email: string
   phone: string
-  /** Optional secondary contact for escalations when the primary contact is unavailable. */
+  /** Optional team member for escalations when the primary contact is unavailable. */
   backupContactName: string
   backupContactPhone: string
+  backupContactEmail: string
   /** ISO timestamp when SMS consent was accepted (Account setup). */
   smsConsentAcceptedAt?: string | null
 }

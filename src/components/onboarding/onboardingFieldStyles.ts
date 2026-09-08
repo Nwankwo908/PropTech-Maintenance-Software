@@ -20,13 +20,13 @@ export const onboardingNestedCardClass =
 export const onboardingSectionStackClass = 'onb-section-stack space-y-3'
 
 export const onboardingBtnPrimaryClass =
-  'sa-press inline-flex cursor-pointer items-center justify-center rounded-[10px] bg-[#187960] px-6 py-2.5 text-[14px] font-semibold text-white transition-colors hover:bg-[#146b52] disabled:cursor-not-allowed disabled:opacity-50'
+  'sa-press inline-flex cursor-pointer items-center justify-center rounded-[10px] bg-[#187960] px-6 py-2.5 text-[14px] font-semibold text-white outline-none transition-colors hover:bg-[#146b52] active:bg-[#125c48] focus-visible:ring-2 focus-visible:ring-[#187960]/40 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50'
 
 export const onboardingBtnSecondaryClass =
-  'sa-press inline-flex cursor-pointer items-center justify-center rounded-[10px] border border-[#e5e7eb] bg-white px-6 py-2.5 text-[14px] font-medium text-[#101828] transition-colors hover:bg-[#f9fafb] disabled:cursor-not-allowed disabled:opacity-50'
+  'sa-press inline-flex cursor-pointer items-center justify-center rounded-[10px] border border-[#e5e7eb] bg-white px-6 py-2.5 text-[14px] font-medium text-[#101828] outline-none transition-colors hover:bg-[#f9fafb] active:bg-[#f3f4f6] focus-visible:ring-2 focus-visible:ring-[#101828]/20 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50'
 
 export const onboardingBtnGhostClass =
-  'sa-press inline-flex cursor-pointer items-center justify-center rounded-[10px] px-4 py-2.5 text-[14px] font-medium text-[#6a7282] transition-colors hover:bg-[#f3f4f6] hover:text-[#101828] disabled:cursor-not-allowed disabled:opacity-50'
+  'sa-press inline-flex cursor-pointer items-center justify-center rounded-[10px] px-4 py-2.5 text-[14px] font-medium text-[#6a7282] outline-none transition-colors hover:bg-[#f3f4f6] hover:text-[#101828] active:bg-[#e5e7eb] active:text-[#101828] focus-visible:ring-2 focus-visible:ring-[#101828]/20 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50'
 
 export const onboardingNavBtnClass =
   'sa-press inline-flex items-center gap-1.5 rounded-[8px] px-2 py-1.5 text-[14px] font-medium tracking-[-0.1504px] text-[#364153] outline-none transition-[color,background-color,transform] duration-150 hover:bg-[#f3f4f6] hover:text-[#101828] active:bg-[#e5e7eb] focus-visible:ring-2 focus-visible:ring-[#101828]/20 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-transparent disabled:hover:text-[#364153]'

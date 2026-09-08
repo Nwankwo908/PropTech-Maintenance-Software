@@ -249,7 +249,7 @@ async function importExtractedMaintenanceIssues(
         urgency: sla.urgency,
         severity: sla.severity,
         resident_name: resident?.fullName ?? 'Property Manager',
-        email: resident?.email?.trim() || 'newlandlord@ulohome.io',
+        email: resident?.email?.trim() || '',
         unit: resolvedUnit,
         description: issue.description.trim() || 'Imported maintenance issue',
         assigned_vendor_id: matchedVendor?.id ?? null,

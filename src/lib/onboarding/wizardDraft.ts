@@ -24,8 +24,8 @@ export function buildOnboardingFormDraft(
   },
 ): OnboardingFormDraft {
   const draft: OnboardingFormDraft = { propertyForms, vendorForms, residentForms }
-  if (fastTrack?.uploadDocuments?.length) {
-    draft.uploadDocuments = fastTrack.uploadDocuments
+  if (fastTrack) {
+    draft.uploadDocuments = fastTrack.uploadDocuments ?? []
   }
   if (fastTrack?.extractionReview && hasExtractionReviewData(fastTrack.extractionReview)) {
     draft.extractionReview = fastTrack.extractionReview
@@ -53,11 +53,11 @@ export function readPersistedExtractionReview(
 export function readPersistedUploadDocuments(
   stateDraft: OnboardingFormDraft | undefined,
 ): OnboardingUploadedDocument[] | undefined {
-  if (stateDraft?.uploadDocuments?.length) {
+  if (Array.isArray(stateDraft?.uploadDocuments)) {
     return stateDraft.uploadDocuments
   }
   const localDraft = readLocalOnboardingState()?.formDraft
-  if (localDraft?.uploadDocuments?.length) {
+  if (Array.isArray(localDraft?.uploadDocuments)) {
     return localDraft.uploadDocuments
   }
   return undefined

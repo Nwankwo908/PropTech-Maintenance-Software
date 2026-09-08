@@ -174,19 +174,19 @@ export function OnboardingAccountSetupStep({
 
             <div className="sm:col-span-2">
               <div className="mb-3 flex items-baseline justify-between gap-3">
-                <h3 className="text-[15px] font-semibold text-[#101828]">Backup contact</h3>
+                <h3 className="text-[15px] font-semibold text-[#101828]">Team member</h3>
                 <span className="text-[12px] font-medium text-[#9ca3af]">Optional</span>
               </div>
               <p className="mb-3 text-[13px] leading-5 text-[#6a7282]">
-                Someone we can reach if we can’t get ahold of you for urgent issues.
+                They can sign in to this account and receive the same operational texts you do.
               </p>
               <div className="grid gap-4 sm:grid-cols-2">
                 <input
                   className={onboardingInputClass}
                   value={accountSetup.backupContactName}
                   onChange={(e) => updateAccountSetup({ backupContactName: e.target.value })}
-                  placeholder="Backup contact name"
-                  aria-label="Backup contact name"
+                  placeholder="Team member name"
+                  aria-label="Team member name"
                   autoComplete="off"
                 />
                 <input
@@ -195,8 +195,17 @@ export function OnboardingAccountSetupStep({
                   autoComplete="tel"
                   value={accountSetup.backupContactPhone}
                   onChange={(e) => updateAccountSetup({ backupContactPhone: e.target.value })}
-                  placeholder="Backup contact number"
-                  aria-label="Backup contact number"
+                  placeholder="Team member phone number"
+                  aria-label="Team member phone number"
+                />
+                <input
+                  className={`${onboardingInputClass} sm:col-span-2`}
+                  type="email"
+                  autoComplete="email"
+                  value={accountSetup.backupContactEmail}
+                  onChange={(e) => updateAccountSetup({ backupContactEmail: e.target.value })}
+                  placeholder="Team member email"
+                  aria-label="Team member email"
                 />
               </div>
             </div>

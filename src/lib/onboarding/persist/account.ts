@@ -9,14 +9,14 @@ import { supabase } from '@/lib/supabase'
 import { requireOnboardingLandlord } from '../scope'
 import type { AccountSetupCounts, OnboardingAccountSetup } from '../types'
 import { resolveLandlordSupportEmail } from '@/lib/landlordSupportEmail'
+import { syncLandlordPortalTeamMember } from '@/lib/landlordPortalMembers'
 
-async function persistSupportEmailOnOnboarding(
+async function persistAccountProfileOnOnboarding(
   landlordId: string,
-  email: string,
+  account: OnboardingAccountSetup,
 ): Promise<void> {
   if (!supabase) return
-  const supportEmail = resolveLandlordSupportEmail({ accountSetupEmail: email })
-  if (!supportEmail) return
+  const supportEmail = resolveLandlordSupportEmail({ accountSetupEmail: account.email })
 
   const { data } = await supabase
     .from('landlord_onboarding')
@@ -38,14 +38,27 @@ async function persistSupportEmailOnOnboarding(
       : {}
   const accountSetup = {
     ...((draft.accountSetup ?? {}) as Record<string, unknown>),
-    email: supportEmail,
+    companyName: account.companyName.trim(),
+    contactName: account.contactName.trim(),
+    email: supportEmail || account.email.trim(),
+    phone: account.phone.trim(),
+    backupContactName: account.backupContactName.trim(),
+    backupContactPhone: account.backupContactPhone.trim(),
+    backupContactEmail: account.backupContactEmail.trim(),
+    smsConsentAcceptedAt: account.smsConsentAcceptedAt ?? null,
   }
 
   const payload: Record<string, unknown> = {
     draft_state: { ...draft, accountSetup },
     account_settings: {
       ...priorAccount,
-      organization: { ...priorOrg, supportEmail },
+      organization: {
+        ...priorOrg,
+        ...(supportEmail ? { supportEmail } : {}),
+        backupContactName: account.backupContactName.trim(),
+        backupContactPhone: account.backupContactPhone.trim(),
+        backupContactEmail: account.backupContactEmail.trim(),
+      },
     },
     updated_at: new Date().toISOString(),
   }
@@ -61,13 +74,19 @@ async function persistSupportEmailOnOnboarding(
       .update(withoutSettings)
       .eq('landlord_id', landlordId)
   }
+
+  await syncLandlordPortalTeamMember(landlordId, {
+    email: account.backupContactEmail,
+    name: account.backupContactName,
+    phone: account.backupContactPhone,
+  })
 }
 
 async function finishAccountPersistOk(
   landlordId: string,
-  email: string | null,
+  account: OnboardingAccountSetup,
 ): Promise<{ ok: true }> {
-  await persistSupportEmailOnOnboarding(landlordId, email ?? '')
+  await persistAccountProfileOnOnboarding(landlordId, account)
   return { ok: true }
 }
 
@@ -118,14 +137,14 @@ export async function persistLandlordAccountProfile(
           '[landlordOnboarding] account email already in use; saved profile without changing email',
           email,
         )
-        return finishAccountPersistOk(scope.landlordId, email)
+        return finishAccountPersistOk(scope.landlordId, account)
       }
       if (/contact_name|phone|column .* does not exist/i.test(retryWithoutEmail.message)) {
         const { error: nameOnly } = await supabase
           .from('landlords')
           .update({ name: companyName || 'New Landlord' })
           .eq('id', scope.landlordId)
-        if (!nameOnly) return finishAccountPersistOk(scope.landlordId, email)
+        if (!nameOnly) return finishAccountPersistOk(scope.landlordId, account)
         return {
           ok: false,
           error: getErrorMessage(
@@ -154,7 +173,7 @@ export async function persistLandlordAccountProfile(
             .from('landlords')
             .update({ name: companyName || 'New Landlord' })
             .eq('id', scope.landlordId)
-          if (!nameOnly) return finishAccountPersistOk(scope.landlordId, email)
+          if (!nameOnly) return finishAccountPersistOk(scope.landlordId, account)
           return {
             ok: false,
             error:
@@ -167,7 +186,7 @@ export async function persistLandlordAccountProfile(
           error: getErrorMessage(retryError, 'Couldn’t save account details. Please try again.'),
         }
       }
-      return finishAccountPersistOk(scope.landlordId, email)
+      return finishAccountPersistOk(scope.landlordId, account)
     }
     console.warn('[landlordOnboarding] persist account profile', error.message)
     return {
@@ -192,7 +211,7 @@ export async function persistLandlordAccountProfile(
     },
   })
 
-  return finishAccountPersistOk(scope.landlordId, email)
+  return finishAccountPersistOk(scope.landlordId, account)
 }
 
 /** Persist communication style on the landlord account (source of truth for outbound tone). */

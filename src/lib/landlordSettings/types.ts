@@ -97,6 +97,7 @@ export type PersistedProfileFields = {
   phone: string
   backupContactName: string
   backupContactPhone: string
+  backupContactEmail: string
   about: string
   registeredAddress: RegisteredAddress
   communicationStyle: CommunicationStyle

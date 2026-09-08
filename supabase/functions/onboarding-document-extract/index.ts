@@ -61,7 +61,12 @@ function decodeBase64(raw: string): Uint8Array | null {
   }
 }
 
-async function authorizeStaff(req: Request, supabaseUrl: string, anonKey: string) {
+async function authorizeStaff(
+  req: Request,
+  supabaseUrl: string,
+  anonKey: string,
+  serviceKey: string,
+) {
   const token = bearerToken(req)
   if (!token) {
     return { ok: false as const, response: jsonResponse({ error: "Authorization required" }, 401) }
@@ -73,10 +78,22 @@ async function authorizeStaff(req: Request, supabaseUrl: string, anonKey: string
   if (error || !data.user?.email) {
     return { ok: false as const, response: jsonResponse({ error: "Invalid session" }, 401) }
   }
-  if (!isPortalAdminEmailAllowed(data.user.email)) {
-    return { ok: false as const, response: jsonResponse({ error: "Unauthorized" }, 403) }
+  const email = data.user.email.trim().toLowerCase()
+  if (isPortalAdminEmailAllowed(email)) {
+    return { ok: true as const }
   }
-  return { ok: true as const }
+  const admin = createClient(supabaseUrl, serviceKey, {
+    auth: { persistSession: false, autoRefreshToken: false },
+  })
+  const { data: member } = await admin
+    .from("landlord_portal_members")
+    .select("landlord_id")
+    .eq("email", email)
+    .maybeSingle()
+  if (member?.landlord_id) {
+    return { ok: true as const }
+  }
+  return { ok: false as const, response: jsonResponse({ error: "Unauthorized" }, 403) }
 }
 
 serve(async (req) => {
@@ -99,7 +116,7 @@ serve(async (req) => {
     return jsonResponse({ error: "OPENAI_API_KEY is not configured" }, 500)
   }
 
-  const auth = await authorizeStaff(req, supabaseUrl, anonKey)
+  const auth = await authorizeStaff(req, supabaseUrl, anonKey, serviceKey)
   if (!auth.ok) return auth.response
 
   let body: Record<string, unknown>

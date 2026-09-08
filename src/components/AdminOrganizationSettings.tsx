@@ -510,7 +510,7 @@ export function AdminOrganizationSettings() {
                     onChange={(e) => updateDraft({ phone: e.target.value })}
                   />
                 </FormField>
-                <FormField label="Backup contact" htmlFor="org-backup-contact-name">
+                <FormField label="Team member name (optional)" htmlFor="org-backup-contact-name">
                   <input
                     id="org-backup-contact-name"
                     className={inputClass}
@@ -518,12 +518,21 @@ export function AdminOrganizationSettings() {
                     onChange={(e) => updateDraft({ backupContactName: e.target.value })}
                   />
                 </FormField>
-                <FormField label="Backup phone" htmlFor="org-backup-contact-phone">
+                <FormField label="Team member phone number (optional)" htmlFor="org-backup-contact-phone">
                   <input
                     id="org-backup-contact-phone"
                     className={inputClass}
                     value={draft.backupContactPhone}
                     onChange={(e) => updateDraft({ backupContactPhone: e.target.value })}
+                  />
+                </FormField>
+                <FormField label="Team member email (optional)" htmlFor="org-backup-contact-email">
+                  <input
+                    id="org-backup-contact-email"
+                    type="email"
+                    className={inputClass}
+                    value={draft.backupContactEmail}
+                    onChange={(e) => updateDraft({ backupContactEmail: e.target.value })}
                   />
                 </FormField>
                 <FormField label="About" htmlFor="org-about" className="sm:col-span-2">

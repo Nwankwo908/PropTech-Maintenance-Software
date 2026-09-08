@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react'
 import { Navigate } from 'react-router-dom'
 import type { Session } from '@supabase/supabase-js'
-import { getAdminSession, isAdminSessionAllowed, signOutAdmin } from '@/lib/adminAuth'
+import { getAdminSession, isAdminSessionAllowed, signOutAdmin, completeGoogleIdTokenSignInFromUrl } from '@/lib/adminAuth'
+import { readGoogleOAuthErrorFromHash } from '@/lib/googleIdentitySignIn'
 import { supabase } from '@/lib/supabase'
 
 type Phase = 'working' | 'admin' | 'denied'
@@ -30,17 +31,31 @@ export function AuthCallback() {
 
     const client = supabase
     let settled = false
+    let cancelled = false
 
     const resolve = async (session: Session | null) => {
-      if (settled || !session) return
+      if (cancelled || settled || !session) return
       settled = true
-      if (isAdminSessionAllowed(session)) {
+      if (await isAdminSessionAllowed(session)) {
         setPhase('admin')
       } else {
         await signOutAdmin()
         setPhase('denied')
       }
     }
+
+    if (readGoogleOAuthErrorFromHash(window.location.hash)) {
+      setPhase('denied')
+      return
+    }
+
+    void (async () => {
+      try {
+        await completeGoogleIdTokenSignInFromUrl()
+      } catch {
+        if (!cancelled) setPhase('denied')
+      }
+    })()
 
     void getAdminSession(5000).then((session) => {
       if (session) void resolve(session)
@@ -61,6 +76,7 @@ export function AuthCallback() {
     }, 5000)
 
     return () => {
+      cancelled = true
       subscription.unsubscribe()
       window.clearTimeout(timer)
     }

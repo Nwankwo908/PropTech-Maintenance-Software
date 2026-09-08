@@ -2,7 +2,7 @@ import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.49.1
 import { getSMSProvider } from "./providerFactory.ts"
 import { logGraphEvent } from "../graph/logGraphEvent.ts"
 import { normalizePhoneFlexible } from "../resident_notify.ts"
-import { isLimitedAlpha1Landlord, LIMITED_ALPHA_1_TWILIO_SMS_NUMBER } from "../../../../shared/landlordCapabilities.ts"
+import { LIMITED_ALPHA_1_LANDLORD_ID, LIMITED_ALPHA_1_TWILIO_SMS_NUMBER } from "../../../../shared/landlordCapabilities.ts"
 
 export type LandlordSmsNumberRow = {
   id: string
@@ -349,7 +349,7 @@ export async function provisionLandlordMainNumber(
     }
   }
 
-  if (isLimitedAlpha1Landlord(landlordId)) {
+  if (landlordId === LIMITED_ALPHA_1_LANDLORD_ID) {
     const twilioPhone =
       params.phoneNumber?.trim() ||
       Deno.env.get("TWILIO_FROM_NUMBER")?.trim() ||

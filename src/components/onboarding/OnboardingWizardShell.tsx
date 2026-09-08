@@ -1,7 +1,6 @@
 import { Link, useNavigate } from 'react-router-dom'
 import { useLayoutEffect, useRef, useState } from 'react'
 import { getActiveLandlordId } from '@/lib/activeLandlord'
-import { LIMITED_ALPHA_1_LANDLORD_ID } from '@shared/landlordCapabilities'
 import { markLimitedAlphaPostOnboardingWelcomeSeen, shouldShowLimitedAlphaPostOnboardingWelcome } from '@/lib/postOnboardingWelcome'
 import { landlordHasPayments, landlordHasVendorMarketplace } from '@shared/landlordCapabilities'
 import { primaryPayoutMethodLabel } from '@/api/landlordStripeConnect'
@@ -32,7 +31,6 @@ export function OnboardingWizardShell() {
     wizard.state.landlordId,
   )
   const handleGetStarted = () => {
-    markLimitedAlphaPostOnboardingWelcomeSeen(LIMITED_ALPHA_1_LANDLORD_ID)
     markLimitedAlphaPostOnboardingWelcomeSeen(wizard.state.landlordId)
     markLimitedAlphaPostOnboardingWelcomeSeen(getActiveLandlordId())
     navigate('/admin', { replace: true })

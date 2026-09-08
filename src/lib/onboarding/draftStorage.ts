@@ -103,6 +103,7 @@ export function defaultOnboardingState(landlordId: string = getActiveLandlordId(
       phone: '',
       backupContactName: '',
       backupContactPhone: '',
+      backupContactEmail: '',
       smsConsentAcceptedAt: null,
     },
     properties: [],
@@ -125,6 +126,7 @@ function normalizeAccountSetup(raw: unknown): OnboardingAccountSetup {
     phone: String(row.phone ?? ''),
     backupContactName: String(row.backupContactName ?? row.backup_contact_name ?? ''),
     backupContactPhone: String(row.backupContactPhone ?? row.backup_contact_phone ?? ''),
+    backupContactEmail: String(row.backupContactEmail ?? row.backup_contact_email ?? ''),
     smsConsentAcceptedAt,
   }
 }
@@ -253,10 +255,12 @@ function rowToState(row: Record<string, unknown>, landlordId: string): LandlordO
 function emergencyContactFromAccount(account: OnboardingAccountSetup): Record<string, string> {
   const name = account.backupContactName.trim()
   const phone = account.backupContactPhone.trim()
-  if (!name && !phone) return {}
+  const email = account.backupContactEmail.trim()
+  if (!name && !phone && !email) return {}
   return {
     name,
     phone,
+    ...(email ? { email } : {}),
     role: 'backup',
   }
 }
@@ -311,6 +315,7 @@ function mergeAccountSetup(
     phone: primary.phone.trim() || fallback.phone,
     backupContactName: primary.backupContactName.trim() || fallback.backupContactName,
     backupContactPhone: primary.backupContactPhone.trim() || fallback.backupContactPhone,
+    backupContactEmail: primary.backupContactEmail.trim() || fallback.backupContactEmail,
     smsConsentAcceptedAt:
       primary.smsConsentAcceptedAt?.trim() ||
       fallback.smsConsentAcceptedAt?.trim() ||

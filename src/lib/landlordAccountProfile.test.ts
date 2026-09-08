@@ -38,6 +38,7 @@ describe('landlordAccountProfile', () => {
         phone: '+15551234567',
         backupContactName: 'Sam Lee',
         backupContactPhone: '+15559876543',
+        backupContactEmail: 'sam@acme.test',
         smsConsentAcceptedAt: null,
       }),
     ).toMatchObject({
@@ -47,6 +48,7 @@ describe('landlordAccountProfile', () => {
       phone: '+15551234567',
       backupContactName: 'Sam Lee',
       backupContactPhone: '+15559876543',
+      backupContactEmail: 'sam@acme.test',
     })
   })
 })

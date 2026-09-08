@@ -127,6 +127,7 @@ export function useOnboardingWizard() {
   const processingControllersRef = useRef<Map<string, AbortController>>(new Map())
   const uploadFilesRef = useRef<Map<string, File>>(new Map())
   const formsHydratedRef = useRef(false)
+  const uploadDocumentsReadyRef = useRef(false)
   const wizardSnapshotRef = useRef({
     state: defaultOnboardingState(),
     propertyForms: [] as PropertyFormRow[],
@@ -347,6 +348,7 @@ export function useOnboardingWizard() {
         if (persistedUploads?.length) {
           setUploadDocuments(persistedUploads)
         }
+        uploadDocumentsReadyRef.current = Boolean(persistedUploads)
         const persistedExtraction = readPersistedExtractionReview(normalizedOnboarding.formDraft)
         if (persistedExtraction) {
           setExtractionReview(persistedExtraction)
@@ -465,6 +467,8 @@ export function useOnboardingWizard() {
 
   useEffect(() => {
     if (loading || step !== 'document_upload') return
+    if (uploadDocumentsReadyRef.current) return
+    uploadDocumentsReadyRef.current = true
     if (uploadDocuments.length > 0) return
     const persistedUploads = readPersistedUploadDocuments(state.formDraft)
     if (persistedUploads?.length) {
@@ -667,6 +671,7 @@ export function useOnboardingWizard() {
     setResidentForms([createEmptyResidentForm()])
     setReviewData(null)
     setUploadDocuments([])
+    uploadDocumentsReadyRef.current = false
     setUploadError(null)
     setExtractionReview(null)
     setSmsConsentAccepted(false)
@@ -746,8 +751,9 @@ export function useOnboardingWizard() {
   }
 
   function applyDocumentUpdate(updated: OnboardingUploadedDocument) {
-    setUploadDocuments((prev) =>
-      prev.map((row) =>
+    setUploadDocuments((prev) => {
+      if (!prev.some((row) => row.id === updated.id)) return prev
+      return prev.map((row) =>
         row.id === updated.id
           ? {
               ...updated,
@@ -756,8 +762,8 @@ export function useOnboardingWizard() {
               contentType: row.contentType ?? updated.contentType,
             }
           : row,
-      ),
-    )
+      )
+    })
   }
 
   function startDocumentProcessing(doc: OnboardingUploadedDocument, file: File | null) {
@@ -863,7 +869,9 @@ export function useOnboardingWizard() {
     processingControllersRef.current.get(id)?.abort()
     processingControllersRef.current.delete(id)
     uploadFilesRef.current.delete(id)
+    uploadDocumentsReadyRef.current = true
     setUploadDocuments((prev) => prev.filter((doc) => doc.id !== id))
+    setUploadError(null)
   }
 
   async function returnToDocumentUpload() {
