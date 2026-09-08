@@ -86,6 +86,28 @@ describe('isLandlordFacingFeedEvent', () => {
     ).toBe(true)
   })
 
+  it('hides activation-alert bookkeeping and keeps action required', () => {
+    expect(
+      isLandlordFacingFeedEvent(
+        feedEvent({
+          id: '10',
+          eventType: 'tenant.activation_failure_resolved',
+          label: 'tenant activation failure resolved',
+          message: 'Activation failure resolved (activated).',
+        }),
+      ),
+    ).toBe(false)
+    expect(
+      isLandlordFacingFeedEvent(
+        feedEvent({
+          id: '11',
+          eventType: 'tenant.activation_action_required',
+          label: 'Welcome text could not be delivered',
+        }),
+      ),
+    ).toBe(true)
+  })
+
   it('keeps collapsed tenant onboarding cards even when the latest type was a receipt', () => {
     expect(
       isLandlordFacingFeedEvent(
@@ -200,6 +222,50 @@ describe('selectLandlordFacingFeedEvents', () => {
       8,
     )
     expect(loneReceipt).toEqual([])
+  })
+
+  it('hides activation-alert bookkeeping so internal reason codes stay off Overview', () => {
+    const selected = selectLandlordFacingFeedEvents(
+      [
+        feedEvent({
+          id: 'onboard-sent',
+          eventType: 'tenant.activation_sms_sent',
+          label: 'Welcome text sent',
+          createdAt: '2026-08-15T10:00:00.000Z',
+          residentId: 'res-1',
+          residentName: 'Saad Iqbal',
+        }),
+        feedEvent({
+          id: 'onboard-done',
+          eventType: 'tenant.activation_completed',
+          label: 'Resident activated',
+          createdAt: '2026-08-15T10:03:00.000Z',
+          residentId: 'res-1',
+          residentName: 'Saad Iqbal',
+        }),
+        feedEvent({
+          id: 'resolve-1',
+          eventType: 'tenant.activation_failure_resolved',
+          label: 'tenant activation failure resolved',
+          message: 'Activation failure resolved (activated).',
+          createdAt: '2026-08-15T10:03:01.000Z',
+          residentId: 'res-1',
+          residentName: 'Saad Iqbal',
+        }),
+        feedEvent({
+          id: 'resolve-2',
+          eventType: 'tenant.activation_failure_resolved',
+          label: 'tenant activation failure resolved',
+          message: 'Activation failure resolved (activated).',
+          createdAt: '2026-08-15T10:03:02.000Z',
+        }),
+      ],
+      8,
+    )
+
+    expect(selected).toHaveLength(1)
+    expect(selected[0]?.eventType).toBe('tenant.onboarding_verification')
+    expect(selected.map((event) => event.label).join(' ')).not.toMatch(/\(activated\)/)
   })
 
   it('uses a stored message when the type label is just the raw event name', () => {

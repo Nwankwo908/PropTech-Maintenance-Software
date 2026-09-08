@@ -368,12 +368,6 @@ export function AdminPropertyDetailDashboard() {
 
   useEffect(() => {
     const landlordId = getActiveLandlordId()
-    void activateUnitsFromResidentAssignments({
-      landlordId,
-      source: 'property_sync',
-    }).catch((err) => {
-      console.warn('[admin property detail] unit activation sync failed', err)
-    })
     void reconcileOccupiedUnitResidents({ landlordId }).catch((err) => {
       console.warn('[admin property detail] occupancy rematch failed', err)
     })
@@ -397,6 +391,12 @@ export function AdminPropertyDetailDashboard() {
     setError(null)
 
     const landlordId = getActiveLandlordId()
+    await activateUnitsFromResidentAssignments({
+      landlordId,
+      source: 'property_sync',
+    }).catch((err) => {
+      console.warn('[admin property detail] unit activation sync failed', err)
+    })
     let buildingName: string
     let propertyRecord: PropertyRecord | null = null
 
@@ -1381,7 +1381,7 @@ export function AdminPropertyDetailDashboard() {
         <div className="mt-4 flex flex-wrap items-start justify-between gap-4">
           <div className="min-w-0">
             <h1 className="text-[24px] font-semibold leading-8 tracking-[0.0703px] text-[#0a0a0a]">
-              {building} Overview
+              {limitedAlpha1 ? 'Overview' : `${building} Overview`}
             </h1>
             <p className="mt-1 text-[14px] leading-5 tracking-[-0.1504px] text-[#6a7282]">
               {subtitle}

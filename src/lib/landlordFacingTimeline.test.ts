@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  isHiddenActivationAlertTimelineEventType,
   isHiddenPipelineTimelineEventType,
   isHiddenSmsTransportTimelineEventType,
   isVisibleLandlordTimelineDescription,
@@ -20,6 +21,14 @@ describe('landlordFacingTimeline', () => {
     expect(isHiddenSmsTransportTimelineEventType('sms.delivered')).toBe(true)
     expect(isHiddenSmsTransportTimelineEventType('sms.message_received')).toBe(true)
     expect(isHiddenSmsTransportTimelineEventType('sms.maintenance_cancelled')).toBe(false)
+  })
+
+  it('hides tenant-activation alert bookkeeping and keeps action required', () => {
+    expect(isHiddenActivationAlertTimelineEventType('tenant.activation_failure_resolved')).toBe(true)
+    expect(isHiddenActivationAlertTimelineEventType('tenant.activation_admin_alert_sent')).toBe(true)
+    expect(isHiddenActivationAlertTimelineEventType('tenant.activation_admin_alert_failed')).toBe(true)
+    expect(isHiddenActivationAlertTimelineEventType('tenant.activation_action_required')).toBe(false)
+    expect(isHiddenActivationAlertTimelineEventType('tenant.activation_completed')).toBe(false)
   })
 
   it('hides plumbing labels on Timeline copy', () => {

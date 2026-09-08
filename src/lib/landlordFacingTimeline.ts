@@ -18,6 +18,16 @@ export const HIDDEN_SMS_TRANSPORT_TIMELINE_EVENT_TYPES = new Set([
   'sms.message_received',
 ])
 
+/**
+ * Tenant-activation ops alerts. Closing those alerts is bookkeeping — the
+ * landlord-facing story is the onboarding card (or action required).
+ */
+export const HIDDEN_ACTIVATION_ALERT_TIMELINE_EVENT_TYPES = new Set([
+  'tenant.activation_failure_resolved',
+  'tenant.activation_admin_alert_sent',
+  'tenant.activation_admin_alert_failed',
+])
+
 const HIDDEN_PIPELINE_TIMELINE_LABELS = new Set([
   'logged',
   'action taken',
@@ -34,6 +44,12 @@ export function isHiddenSmsTransportTimelineEventType(
   eventType: string | null | undefined,
 ): boolean {
   return HIDDEN_SMS_TRANSPORT_TIMELINE_EVENT_TYPES.has((eventType ?? '').trim().toLowerCase())
+}
+
+export function isHiddenActivationAlertTimelineEventType(
+  eventType: string | null | undefined,
+): boolean {
+  return HIDDEN_ACTIVATION_ALERT_TIMELINE_EVENT_TYPES.has((eventType ?? '').trim().toLowerCase())
 }
 
 /** Hide engine-stage labels when a timeline row only has the plumbing copy. */

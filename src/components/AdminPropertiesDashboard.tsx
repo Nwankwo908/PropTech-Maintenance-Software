@@ -418,7 +418,7 @@ export function AdminPropertiesDashboard() {
     setError(null)
 
     const landlordId = getActiveLandlordId()
-    void activateUnitsFromResidentAssignments({
+    await activateUnitsFromResidentAssignments({
       landlordId,
       source: 'property_sync',
     }).catch((err) => {

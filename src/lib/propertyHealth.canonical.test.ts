@@ -64,6 +64,19 @@ describe('unitBelongsToCanonicalProperty', () => {
     }
     expect(unitBelongsToCanonicalProperty(unit, sunsetProperty)).toBe(true)
   })
+
+  it('matches street-suffix aliases to the saved property name', () => {
+    const unit: PropertyHealthUnit = {
+      id: 'u-maple',
+      unitLabel: '1',
+      building: '81 Maple Street',
+      status: 'inactive',
+      propertyId: null,
+    }
+    expect(
+      unitBelongsToCanonicalProperty(unit, { id: 'prop-maple', name: '81 Maple St' }),
+    ).toBe(true)
+  })
 })
 
 describe('filterResidentsForPropertyScope', () => {

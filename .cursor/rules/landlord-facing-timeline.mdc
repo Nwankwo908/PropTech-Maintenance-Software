@@ -18,6 +18,7 @@ Work opened, vendor accepted/declined, visit window, response time exceeded, res
 |---|---|
 | Pipeline stages | `workflow.trigger` / `classify` / `route` / `act` / `log` → “Workflow started”, “Classified”, “Routed”, “Action taken”, “Logged” |
 | SMS transport | `sms.delivered`, `sms.message_received` (outcomes live on domain events) |
+| Activation alert bookkeeping | `tenant.activation_failure_resolved`, `tenant.activation_admin_alert_sent` / `_failed` (reason codes like `(activated)`). Keep `tenant.activation_action_required`. |
 
 Keep `workflow.escalate` — that is a landlord-facing “needs attention” outcome.
 
@@ -27,7 +28,7 @@ Copy stays plain language (no “workflow”, event types, IDs). Prefer `metadat
 
 ## Where it lives
 
-- Shared filter: `isHiddenPipelineTimelineEventType` / `isVisibleLandlordTimelineDescription` in `src/lib/landlordFacingTimeline.ts`
+- Shared filter: `isHiddenPipelineTimelineEventType` / `isHiddenActivationAlertTimelineEventType` / `isVisibleLandlordTimelineDescription` in `src/lib/landlordFacingTimeline.ts`
 - Rails: `isVisibleSlaTimelineEntry` / `timelineFromWorkflowEvents`
 - Feed: `isLandlordFacingFeedEvent` in `propertyOperationsGraph.ts`
 

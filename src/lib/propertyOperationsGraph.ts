@@ -9,6 +9,7 @@ import {
   landlordHasPayments,
 } from '@shared/landlordCapabilities'
 import {
+  isHiddenActivationAlertTimelineEventType,
   isHiddenPipelineTimelineEventType,
   isHiddenSmsTransportTimelineEventType,
 } from '@/lib/landlordFacingTimeline'
@@ -426,6 +427,7 @@ export function isLandlordFacingFeedEvent(event: PropertyOperationsTimelineEvent
   if (isMergedLandlordFacingFeedCard(event)) return true
   if (isHiddenPipelineTimelineEventType(event.eventType)) return false
   if (isHiddenSmsTransportTimelineEventType(event.eventType)) return false
+  if (isHiddenActivationAlertTimelineEventType(event.eventType)) return false
   if (!landlordHasPayments(getActiveLandlordId()) && isPaymentGraphEventType(event.eventType)) {
     return false
   }

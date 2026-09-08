@@ -564,6 +564,47 @@ export function normalizeBuildingKey(building: string | null | undefined): strin
   return trimmed || 'Portfolio'
 }
 
+const STREET_TYPE_ALIASES: Array<[RegExp, string]> = [
+  [/\bstreets?\b/g, 'st'],
+  [/\bavenues?\b/g, 'ave'],
+  [/\broads?\b/g, 'rd'],
+  [/\bdrives?\b/g, 'dr'],
+  [/\blanes?\b/g, 'ln'],
+  [/\bboulevards?\b/g, 'blvd'],
+  [/\bcourts?\b/g, 'ct'],
+  [/\bplaces?\b/g, 'pl'],
+]
+
+function normalizePlaceCompareKey(value: string): string {
+  let normalized = value
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+  for (const [pattern, alias] of STREET_TYPE_ALIASES) {
+    normalized = normalized.replace(pattern, alias)
+  }
+  return normalized.replace(/\s+/g, ' ').trim()
+}
+
+/** True when two building labels are the same place (81 Maple St vs 81 Maple Street). */
+export function buildingsLikelySamePlace(
+  left: string | null | undefined,
+  right: string | null | undefined,
+): boolean {
+  const a = (left ?? '').trim()
+  const b = (right ?? '').trim()
+  if (!a || !b) return false
+  if (normalizeBuildingKey(a) === normalizeBuildingKey(b)) return true
+  const aKey = normalizePlaceCompareKey(a)
+  const bKey = normalizePlaceCompareKey(b)
+  if (!aKey || !bKey || aKey === 'portfolio' || bKey === 'portfolio') return false
+  if (aKey === bKey) return true
+  const shorter = aKey.length <= bKey.length ? aKey : bKey
+  const longer = aKey.length <= bKey.length ? bKey : aKey
+  return shorter.length >= 8 && (longer.startsWith(`${shorter} `) || longer.includes(` ${shorter} `))
+}
+
 /** True when a unit row belongs to a saved property (by id or building alias). */
 export function unitBelongsToCanonicalProperty(
   unit: PropertyHealthUnit,
@@ -575,6 +616,7 @@ export function unitBelongsToCanonicalProperty(
   if (unitBuilding === canonical) return true
   // Legacy Add Property units used `"Name (City, State)"` as building.
   if (unitBuilding.startsWith(`${canonical} (`)) return true
+  if (unit.building?.trim() && buildingsLikelySamePlace(unit.building, property.name)) return true
   return false
 }
 
@@ -659,6 +701,7 @@ export function buildingKeyMatchesCanonicalProperty(
   const canonical = normalizeBuildingKey(property.name)
   if (key === canonical) return true
   if (key.startsWith(`${canonical} (`)) return true
+  if (buildingsLikelySamePlace(buildingKey, property.name)) return true
   return units.some(
     (unit) =>
       unitBelongsToCanonicalProperty(unit, property) &&
@@ -695,6 +738,17 @@ function buildingScopeAliasKeys(
     }
   }
   return aliases
+}
+
+function buildingMatchesScopeAliases(building: string | null | undefined, aliases: Set<string>): boolean {
+  const raw = building?.trim()
+  if (!raw) return false
+  const key = normalizeBuildingKey(raw)
+  if (aliases.has(key)) return true
+  for (const alias of aliases) {
+    if (alias !== 'Portfolio' && buildingsLikelySamePlace(raw, alias)) return true
+  }
+  return false
 }
 
 function isTicketOpen(ticket: PropertyHealthTicket): boolean {
@@ -870,7 +924,7 @@ export function filterResidentsForPropertyScope(
   const scopedUnits = filterUnitsForScope(units, building, property)
 
   return residents.filter((resident) => {
-    if (aliases.has(normalizeBuildingKey(resident.building))) return true
+    if (buildingMatchesScopeAliases(resident.building, aliases)) return true
 
     const unitKey = normalizeUnitLabel(resident.unit)
     if (!unitKey) return false
@@ -884,7 +938,7 @@ export function filterResidentsForPropertyScope(
     if (!residentBuilding) return true
 
     const residentBuildingKey = normalizeBuildingKey(residentBuilding)
-    if (aliases.has(residentBuildingKey)) return true
+    if (buildingMatchesScopeAliases(residentBuilding, aliases)) return true
     if (
       matchingUnits.some(
         (unit) => normalizeBuildingKey(unit.building) === residentBuildingKey,
@@ -1074,6 +1128,42 @@ function componentsFromHealthResult(
   })
 }
 
+function occupyingResidentsForHealthScope(
+  residents: PropertyHealthResident[],
+  scopedUnits: PropertyHealthUnit[],
+  scopeBuilding: string | null,
+  scopeProperty: PropertyHealthCanonicalProperty | null,
+  allUnits: PropertyHealthUnit[],
+): PropertyHealthResident[] {
+  const occupying = residents.filter((resident) => isOccupyingResidentStatus(resident.status))
+  if (scopeBuilding == null) return occupying
+  return filterResidentsForPropertyScope(occupying, scopeBuilding, scopeProperty, allUnits)
+}
+
+/**
+ * Inactive inventory is still operational when residents are already assigned.
+ * Do not leave those properties in Pending setup.
+ */
+function resolveTrackedHealthUnits(
+  scopedUnits: PropertyHealthUnit[],
+  occupyingResidents: PropertyHealthResident[],
+): PropertyHealthUnit[] {
+  const tracked = scopedUnits.filter((unit) => unit.status !== 'inactive')
+  if (tracked.length > 0) return tracked
+  if (occupyingResidents.length === 0) return []
+  if (scopedUnits.length > 0) {
+    return scopedUnits.map((unit) =>
+      unit.status === 'inactive' ? { ...unit, status: 'active' } : unit,
+    )
+  }
+  return occupyingResidents.map((resident, index) => ({
+    id: `assigned:${resident.id}`,
+    unitLabel: resident.unit.trim() || `assigned-${index + 1}`,
+    building: resident.building,
+    status: 'active',
+  }))
+}
+
 export function computePropertyHealthScope(
   inputs: PropertyHealthInputs,
   scope: { building?: string; property?: PropertyHealthCanonicalProperty } = {},
@@ -1088,7 +1178,14 @@ export function computePropertyHealthScope(
     scopeBuilding != null
       ? filterUnitsForScope(inputs.units, scopeBuilding, scopeProperty)
       : inputs.units
-  const trackedUnits = scopedUnits.filter((u) => u.status !== 'inactive')
+  const occupyingResidents = occupyingResidentsForHealthScope(
+    inputs.residents ?? [],
+    scopedUnits,
+    scopeBuilding ?? null,
+    scopeProperty,
+    inputs.units,
+  )
+  const trackedUnits = resolveTrackedHealthUnits(scopedUnits, occupyingResidents)
   if (trackedUnits.length === 0) {
     if (scopeBuilding == null) return null
     return buildNeutralScopeScore()

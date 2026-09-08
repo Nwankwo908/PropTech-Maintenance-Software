@@ -169,7 +169,7 @@ describe('property activation vs health insights', () => {
     expect(report.portfolio?.components.find((c) => c.key === 'maintenance')?.score).toBe(100)
   })
 
-  it('keeps incomplete properties in Pending setup when units are still inactive', () => {
+  it('does not show Pending setup when a qualified tenant is already assigned', () => {
     const report = buildPropertyHealthReport({
       units: [{ ...activeUnit, status: 'inactive' }],
       tickets: [],
@@ -181,7 +181,46 @@ describe('property activation vs health insights', () => {
       now,
     })
 
-    expect(report.buildings[0]?.status).toBe('pending_setup')
-    expect(report.buildings[0]?.pendingReason).toBe('inactive_units')
+    expect(report.buildings[0]?.status).not.toBe('pending_setup')
+    expect(shouldShowPropertyHealthScore(report.buildings[0]?.status)).toBe(true)
+  })
+
+  it('does not show Pending setup when residents are on the property without matching unit labels', () => {
+    const report = buildPropertyHealthReport({
+      units: [
+        {
+          id: 'u-maple-1',
+          unitLabel: '101',
+          building: '81 Maple St',
+          status: 'inactive',
+          propertyId: 'prop-maple',
+        },
+      ],
+      tickets: [],
+      pmTasks: [],
+      feedback: [],
+      vendorMetrics: [],
+      residents: [
+        {
+          id: 'marie',
+          fullName: 'Marie Y Jean-Baptiste',
+          unit: '1',
+          building: '81 Maple St',
+          status: 'active',
+        },
+        {
+          id: 'jean',
+          fullName: 'Jean J. Pierre',
+          unit: '2',
+          building: '81 Maple Street',
+          status: 'active',
+        },
+      ],
+      canonicalProperties: [{ id: 'prop-maple', name: '81 Maple St' }],
+      now,
+    })
+
+    expect(report.buildings[0]?.building).toBe('81 Maple St')
+    expect(report.buildings[0]?.status).not.toBe('pending_setup')
   })
 })
