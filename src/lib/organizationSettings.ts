@@ -131,7 +131,7 @@ export const DEFAULT_ORGANIZATION_SETTINGS: OrganizationSettingsForm = {
   brandAccent: '#101828',
   logoStorageRef: '',
   logoUrl: '',
-  autoApprovalLimit: '250',
+  autoApprovalLimit: '100',
   escalationThreshold: '2500',
   defaultResponseSla: '4 hours',
   preferredVendorPool: 'Include imported vendors',

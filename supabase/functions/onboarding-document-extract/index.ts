@@ -15,6 +15,7 @@ import { serve } from "https://deno.land/std/http/server.ts"
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1"
 import { isOnboardingLandlordId } from "../../../shared/landlordCapabilities.ts"
 import { isPortalAdminEmailAllowed } from "../../../shared/admin/staffAllowlist.ts"
+import { emailFromAuthUser } from "../../../shared/authUserEmail.ts"
 import {
   extractPortfolioDocument,
   portfolioExtractHasData,
@@ -24,7 +25,7 @@ import {
 const corsHeaders: Record<string, string> = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers":
-    "authorization, x-client-info, apikey, content-type",
+    "authorization, x-client-info, apikey, content-type, x-ulo-access-token",
   "Access-Control-Allow-Methods": "POST, OPTIONS",
 }
 
@@ -49,6 +50,55 @@ function bearerToken(req: Request): string | null {
   return t || null
 }
 
+function jwtPayloadRole(token: string): string {
+  const parts = token.split(".")
+  if (parts.length !== 3) return ""
+  try {
+    const json = atob(parts[1].replace(/-/g, "+").replace(/_/g, "/"))
+    const payload = JSON.parse(json) as { role?: unknown }
+    return typeof payload.role === "string" ? payload.role.trim().toLowerCase() : ""
+  } catch {
+    return ""
+  }
+}
+
+/** User access JWT only — skip anon/publishable keys that supabase-js puts on Authorization. */
+function userAccessToken(req: Request, anonKey: string): string | null {
+  const candidates = [
+    req.headers.get("x-ulo-access-token")?.trim() ?? "",
+    bearerToken(req) ?? "",
+  ]
+  for (const token of candidates) {
+    if (!token || token === anonKey) continue
+    if (token.startsWith("sb_")) continue
+    if (jwtPayloadRole(token) === "anon") continue
+    return token
+  }
+  return null
+}
+
+async function authUserFromAccessToken(
+  supabaseUrl: string,
+  anonKey: string,
+  token: string,
+): Promise<{ user: Record<string, unknown> | null; error: string | null }> {
+  const res = await fetch(`${supabaseUrl.replace(/\/$/, "")}/auth/v1/user`, {
+    headers: {
+      Authorization: `Bearer ${token}`,
+      apikey: anonKey,
+    },
+  })
+  if (!res.ok) {
+    const detail = (await res.text()).slice(0, 240)
+    return { user: null, error: detail || `auth ${res.status}` }
+  }
+  const user = (await res.json()) as Record<string, unknown>
+  if (!user || typeof user !== "object" || typeof user.id !== "string") {
+    return { user: null, error: "malformed auth user" }
+  }
+  return { user, error: null }
+}
+
 function decodeBase64(raw: string): Uint8Array | null {
   try {
     const cleaned = raw.replace(/^data:[^;]+;base64,/, "").replace(/\s/g, "")
@@ -67,18 +117,20 @@ async function authorizeStaff(
   anonKey: string,
   serviceKey: string,
 ) {
-  const token = bearerToken(req)
+  const token = userAccessToken(req, anonKey)
   if (!token) {
     return { ok: false as const, response: jsonResponse({ error: "Authorization required" }, 401) }
   }
-  const authClient = createClient(supabaseUrl, anonKey, {
-    auth: { persistSession: false, autoRefreshToken: false },
-  })
-  const { data, error } = await authClient.auth.getUser(token)
-  if (error || !data.user?.email) {
+  const { user, error } = await authUserFromAccessToken(supabaseUrl, anonKey, token)
+  if (error || !user) {
+    console.warn("[onboarding-document-extract] auth user lookup failed", error ?? "no user")
     return { ok: false as const, response: jsonResponse({ error: "Invalid session" }, 401) }
   }
-  const email = data.user.email.trim().toLowerCase()
+  const email = emailFromAuthUser(user).toLowerCase()
+  if (!email) {
+    console.warn("[onboarding-document-extract] auth user has no email")
+    return { ok: false as const, response: jsonResponse({ error: "Invalid session" }, 401) }
+  }
   if (isPortalAdminEmailAllowed(email)) {
     return { ok: true as const }
   }

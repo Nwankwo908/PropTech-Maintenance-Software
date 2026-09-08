@@ -12,7 +12,12 @@ import {
   notificationTogglesFromChannel,
   persistLandlordAccountProfileFields,
 } from '@/lib/landlordAccountProfile'
-import { normalizeOnboardingApprovalRules, normalizeQuietHoursTime } from '@/lib/onboardingApprovalRules'
+import {
+  applyCurrentAutoApprovalDefault,
+  DEFAULT_AUTO_APPROVAL_THRESHOLD,
+  normalizeOnboardingApprovalRules,
+  normalizeQuietHoursTime,
+} from '@/lib/onboardingApprovalRules'
 import {
   DEFAULT_NOTIFICATION_SETTINGS,
   normalizeNotificationSettings,
@@ -183,9 +188,14 @@ export function mergeOrganizationForm(input: {
   )
 
   if (input.onboardingRow?.auto_approval_threshold != null) {
-    next.autoApprovalLimit = String(Math.round(Number(input.onboardingRow.auto_approval_threshold)))
+    const threshold = applyCurrentAutoApprovalDefault(
+      Math.round(Number(input.onboardingRow.auto_approval_threshold)),
+    )
+    next.autoApprovalLimit = String(threshold)
   } else if (Number.isFinite(approvalRules.autoApprovalThreshold)) {
-    next.autoApprovalLimit = String(approvalRules.autoApprovalThreshold)
+    next.autoApprovalLimit = String(
+      applyCurrentAutoApprovalDefault(approvalRules.autoApprovalThreshold),
+    )
   }
 
   const marketplaceLabel = marketplaceLabelFromPreference(
@@ -468,7 +478,9 @@ export async function saveLandlordOrganizationSettings(
 
   const upsertRow: Record<string, unknown> = {
     landlord_id: landlordId,
-    auto_approval_threshold: Number.isFinite(autoApproval) ? autoApproval : 250,
+    auto_approval_threshold: Number.isFinite(autoApproval)
+      ? autoApproval
+      : DEFAULT_AUTO_APPROVAL_THRESHOLD,
     communication_style: communicationStyle,
     notification_channel: notificationChannel,
     account_settings: accountSettings,
@@ -487,7 +499,9 @@ export async function saveLandlordOrganizationSettings(
       organizationSettings: settings,
       approvalRules: {
         ...(typeof draft.approvalRules === 'object' ? draft.approvalRules : {}),
-        autoApprovalThreshold: Number.isFinite(autoApproval) ? autoApproval : 250,
+        autoApprovalThreshold: Number.isFinite(autoApproval)
+          ? autoApproval
+          : DEFAULT_AUTO_APPROVAL_THRESHOLD,
         marketplacePreference: marketplacePreference ?? 'include_imported',
         notificationChannel,
         communicationStyle,

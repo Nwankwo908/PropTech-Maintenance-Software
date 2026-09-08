@@ -160,8 +160,9 @@ async function resolveSharedTelnyxOutboundLine(
 
 /**
  * Landlord_main line for outbound SMS.
- * Limited Alpha 1 always uses its Twilio DID. Full Alpha / others use Telnyx
- * when the platform provider is Telnyx, including a shared-line fallback.
+ * Limited Alpha 1 always uses its Twilio DID. Limited Alpha 2 uses its Telnyx DID.
+ * Other landlords use Telnyx when the platform provider is Telnyx, including a
+ * shared-line fallback.
  */
 export async function resolveOutboundLandlordSmsLine(
   supabase: SupabaseClient,

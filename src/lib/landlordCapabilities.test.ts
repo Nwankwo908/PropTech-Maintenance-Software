@@ -4,6 +4,7 @@ import {
   FULL_ALPHA_LANDLORD_ID,
   LIMITED_ALPHA_1_LANDLORD_ID,
   LIMITED_ALPHA_2_LANDLORD_ID,
+  LIMITED_ALPHA_2_TELNYX_SMS_NUMBER,
   isOnboardingLandlordId,
   isPaymentGraphEventType,
   isRetiredLandlordAccountId,
@@ -20,6 +21,7 @@ describe('Limited Alpha 1 capabilities', () => {
     expect(landlordHasPayments(FULL_ALPHA_LANDLORD_ID)).toBe(true)
     expect(landlordUsesTwilioSms(LIMITED_ALPHA_1_LANDLORD_ID)).toBe(true)
     expect(landlordUsesTwilioSms(LIMITED_ALPHA_2_LANDLORD_ID)).toBe(false)
+    expect(LIMITED_ALPHA_2_TELNYX_SMS_NUMBER).toBe('+19734005760')
     expect(landlordHasPayments(LIMITED_ALPHA_2_LANDLORD_ID)).toBe(false)
     expect(isOnboardingLandlordId(LIMITED_ALPHA_2_LANDLORD_ID)).toBe(true)
     expect(isRetiredLandlordAccountId(LIMITED_ALPHA_2_LANDLORD_ID)).toBe(false)

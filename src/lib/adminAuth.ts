@@ -3,10 +3,10 @@ import {
   isPortalAdminEmailAllowed,
   loginIdToAdminEmail,
 } from '@shared/admin/staffAllowlist'
+import { emailFromAuthUser } from '@shared/authUserEmail'
 import { supabase } from '@/lib/supabase'
 import { getErrorMessage } from '@/lib/errorMessage'
 import { landlordIdForPortalMemberEmail } from '@/lib/landlordPortalMembers'
-import { beginGoogleIdTokenSignIn, readGoogleIdTokenFromHash, takeStoredGoogleOAuthNonce } from '@/lib/googleIdentitySignIn'
 
 export { ADMIN_LOGIN_EMAIL_DOMAIN, normalizeAdminEmail } from '@shared/admin/staffAllowlist'
 
@@ -27,9 +27,14 @@ export async function isAdminEmailAllowedAsync(loginIdOrEmail: string): Promise<
 }
 
 export async function isAdminSessionAllowed(session: Session | null): Promise<boolean> {
-  const email = session?.user?.email?.trim()
+  const email = emailFromAuthSession(session)
   if (!email) return false
   return isAdminEmailAllowedAsync(email)
+}
+
+/** Email on the Auth user: `email`, then Google identity / metadata (id-token sign-in). */
+export function emailFromAuthSession(session: Session | null): string {
+  return emailFromAuthUser(session?.user ?? null)
 }
 
 export async function getAdminSession(timeoutMs = 4000): Promise<Session | null> {
@@ -98,7 +103,6 @@ export async function verifyAdminEmailOtp(loginId: string, token: string): Promi
 
 export async function signInAdminWithOAuth(provider: 'google' | 'apple'): Promise<void> {
   if (!supabase) throw new Error(SERVICE_UNAVAILABLE)
-  if (provider === 'google' && beginGoogleIdTokenSignIn()) return
   const { error } = await supabase.auth.signInWithOAuth({
     provider,
     options: { redirectTo: `${window.location.origin}/auth/callback` },
@@ -106,30 +110,6 @@ export async function signInAdminWithOAuth(provider: 'google' | 'apple'): Promis
   if (error) {
     throw new Error(getErrorMessage(error, 'Could not continue with that sign-in option.'))
   }
-}
-
-/** Completes Google sign-in when Google redirected back with an id token on this origin. */
-export async function completeGoogleIdTokenSignInFromUrl(
-  hash: string = typeof window === 'undefined' ? '' : window.location.hash,
-): Promise<boolean> {
-  if (!supabase) return false
-  const token = readGoogleIdTokenFromHash(hash)
-  if (!token) return false
-  const nonce = takeStoredGoogleOAuthNonce()
-  const { error } = await supabase.auth.signInWithIdToken({
-    provider: 'google',
-    token,
-    nonce: nonce ?? undefined,
-  })
-  if (error) {
-    throw new Error(getErrorMessage(error, 'Could not continue with that sign-in option.'))
-  }
-  if (typeof window !== 'undefined') {
-    const url = new URL(window.location.href)
-    url.hash = ''
-    window.history.replaceState({}, document.title, `${url.pathname}${url.search}`)
-  }
-  return true
 }
 
 export async function signOutAdmin(): Promise<void> {

@@ -93,7 +93,12 @@ import {
   ALL_SET_REVEAL_MS,
   SETUP_COMPLETE_TRANSITION_MS,
 } from '@/lib/onboarding/wizardNavigation'
-import { type OnboardingApprovalRules } from '@/lib/onboardingApprovalRules'
+import {
+  applyCurrentAutoApprovalDefault,
+  DEFAULT_AUTO_APPROVAL_THRESHOLD,
+  LEGACY_DEFAULT_AUTO_APPROVAL_THRESHOLD,
+  type OnboardingApprovalRules,
+} from '@/lib/onboardingApprovalRules'
 
 export function useOnboardingWizard() {
   const navigate = useNavigate()
@@ -101,6 +106,7 @@ export function useOnboardingWizard() {
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [state, setState] = useState<LandlordOnboardingState>(() => defaultOnboardingState())
+  const upgradedLegacyAutoApprovalRef = useRef(false)
 
   const [propertyForms, setPropertyForms] = useState<PropertyFormRow[]>(() => [createEmptyPropertyForm()])
 
@@ -112,6 +118,8 @@ export function useOnboardingWizard() {
   const [uploadProcessing, setUploadProcessing] = useState(false)
   const [uploadError, setUploadError] = useState<string | null>(null)
   const [extractionReview, setExtractionReview] = useState<OnboardingExtractionReview | null>(null)
+  /** Fill blank org fields from extract once per visit — not after the user clears a field. */
+  const aiReviewAccountFilledRef = useRef(false)
   const [reviewData, setReviewData] = useState<OnboardingReviewData | null>(null)
   const [reviewLoading, setReviewLoading] = useState(false)
   const [completingSetup, setCompletingSetup] = useState(false)
@@ -369,6 +377,26 @@ export function useOnboardingWizard() {
   }, [])
 
   useEffect(() => {
+    if (loading || upgradedLegacyAutoApprovalRef.current) return
+    if (state.onboardingStatus === 'completed') {
+      upgradedLegacyAutoApprovalRef.current = true
+      return
+    }
+    if (state.approvalRules.autoApprovalThreshold !== LEGACY_DEFAULT_AUTO_APPROVAL_THRESHOLD) {
+      upgradedLegacyAutoApprovalRef.current = true
+      return
+    }
+    upgradedLegacyAutoApprovalRef.current = true
+    setState((prev) => ({
+      ...prev,
+      approvalRules: {
+        ...prev.approvalRules,
+        autoApprovalThreshold: DEFAULT_AUTO_APPROVAL_THRESHOLD,
+      },
+    }))
+  }, [loading, state.onboardingStatus, state.approvalRules.autoApprovalThreshold])
+
+  useEffect(() => {
     if (loading || step !== 'property') return
     if (state.formDraft?.propertyForms?.length) {
       setPropertyForms(state.formDraft.propertyForms.map(normalizePropertyFormRow))
@@ -477,13 +505,21 @@ export function useOnboardingWizard() {
   }, [loading, step, uploadDocuments.length, state.formDraft])
 
   useEffect(() => {
+    if (step !== 'ai_review') {
+      aiReviewAccountFilledRef.current = false
+    }
+  }, [step])
+
+  useEffect(() => {
     if (loading || step !== 'ai_review') return
     if (extractionReview) {
+      if (aiReviewAccountFilledRef.current) return
       const filled = fillExtractionReviewAccount(
         extractionReview,
         uploadDocuments,
         state.accountSetup,
       )
+      aiReviewAccountFilledRef.current = true
       if (filled !== extractionReview) {
         setExtractionReview(filled)
       }

@@ -2,7 +2,7 @@ import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.49.1
 import { getSMSProvider } from "./providerFactory.ts"
 import { logGraphEvent } from "../graph/logGraphEvent.ts"
 import { normalizePhoneFlexible } from "../resident_notify.ts"
-import { LIMITED_ALPHA_1_LANDLORD_ID, LIMITED_ALPHA_1_TWILIO_SMS_NUMBER } from "../../../../shared/landlordCapabilities.ts"
+import { LIMITED_ALPHA_1_LANDLORD_ID, LIMITED_ALPHA_1_TWILIO_SMS_NUMBER, LIMITED_ALPHA_2_LANDLORD_ID, LIMITED_ALPHA_2_TELNYX_SMS_NUMBER } from "../../../../shared/landlordCapabilities.ts"
 
 export type LandlordSmsNumberRow = {
   id: string
@@ -358,6 +358,39 @@ export async function provisionLandlordMainNumber(
       landlordId,
       phoneNumber: twilioPhone,
       provider: "twilio",
+    })
+    if (attached) {
+      await recordNumberGraphEvent(supabase, {
+        landlordId,
+        eventType: "sms.number_provisioned",
+        smsNumberId: attached.id,
+        metadata: {
+          phone_number: attached.phone_number,
+          provider: attached.provider,
+          provider_number_sid: attached.provider_number_sid,
+          source: "existing",
+        },
+      })
+      return {
+        smsNumberId: attached.id,
+        phoneNumber: attached.phone_number,
+        provider: attached.provider,
+        providerNumberSid: attached.provider_number_sid,
+        source: "existing",
+        created: false,
+      }
+    }
+  }
+
+  if (landlordId === LIMITED_ALPHA_2_LANDLORD_ID) {
+    const telnyxPhone =
+      params.phoneNumber?.trim() ||
+      Deno.env.get("TELNYX_FROM_NUMBER")?.trim() ||
+      LIMITED_ALPHA_2_TELNYX_SMS_NUMBER
+    const attached = await attachExistingNumberAsLandlordMain(supabase, {
+      landlordId,
+      phoneNumber: telnyxPhone,
+      provider: "telnyx",
     })
     if (attached) {
       await recordNumberGraphEvent(supabase, {

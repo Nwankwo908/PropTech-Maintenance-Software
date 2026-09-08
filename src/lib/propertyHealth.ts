@@ -1,5 +1,6 @@
 /**
- * Unified Property Health — portfolio and per-building views.
+ * Unified Property Health — per-building scores; Overview is a unit-weighted
+ * average of buildings that have a real Condition-backed score.
  *
  * Score (0–100) comes from calculatePropertyHealth():
  *   40% Condition · 35% Maintenance · 25% Risk
@@ -11,6 +12,7 @@ import { getActiveLandlordId } from '@/lib/activeLandlord'
 import {
   REPEAT_ISSUE_WINDOW_DAYS,
   calculatePropertyHealth,
+  clampHealthScore,
   propertyHealthRatingFromScore,
   type PropertyHealthRating,
 } from '@/lib/propertyHealth/calculatePropertyHealth'
@@ -54,7 +56,18 @@ export function resolvePropertyHealthKpiCaption(
   if (!shouldShowPropertyHealthScore(portfolio.status)) {
     return PROPERTY_HEALTH_INSIGHTS_CAPTION
   }
-  return portfolio.rating ?? PROPERTY_HEALTH_KPI_CAPTION
+  const rating = portfolio.rating ?? PROPERTY_HEALTH_KPI_CAPTION
+  const scored = portfolio.scoredPropertyCount
+  const total = portfolio.propertyCount
+  if (
+    scored != null &&
+    total != null &&
+    total > 1 &&
+    scored < total
+  ) {
+    return `${rating} · ${scored} of ${total} properties scored`
+  }
+  return rating
 }
 
 /** Building-card copy when the numeric health score is not shown yet. */
@@ -149,6 +162,10 @@ export type PropertyHealthScopeScore = {
   pendingReason?: PropertyHealthPendingReason | null
   dataCompleteness?: number
   topIssues?: string[]
+  /** Buildings included in the Overview rollup (have a Condition-backed score). */
+  scoredPropertyCount?: number
+  /** Buildings on the Properties grid. */
+  propertyCount?: number
 }
 
 export type PropertyHealthBuildingRow = PropertyHealthScopeScore & {
@@ -1277,26 +1294,124 @@ export function computePropertyHealthScope(
   }
 }
 
-export function buildPropertyHealthReport(
+function buildingHealthRollupWeight(row: {
+  unitCount: number
+  trackedUnitCount: number
+}): number {
+  if (row.unitCount > 0) return row.unitCount
+  return Math.max(row.trackedUnitCount, 0)
+}
+
+function rollupCategoryFromBuildings(
+  buildings: PropertyHealthBuildingRow[],
+  key: PropertyHealthComponentKey,
+): PropertyHealthComponent {
+  let weightSum = 0
+  let scoreSum = 0
+  let detail: string | null = null
+  for (const building of buildings) {
+    const component = building.components.find((row) => row.key === key)
+    if (!component || component.isFallback) continue
+    const weight = buildingHealthRollupWeight(building) || 1
+    weightSum += weight
+    scoreSum += component.score * weight
+    if (!detail && component.detail && component.detail !== 'No deductions') {
+      detail = component.detail
+    }
+  }
+  if (weightSum === 0) {
+    return {
+      key,
+      label: COMPONENT_LABELS[key],
+      score: 0,
+      weight: PROPERTY_HEALTH_WEIGHTS[key],
+      isFallback: true,
+      detail: 'Not enough information yet',
+    }
+  }
+  return {
+    key,
+    label: COMPONENT_LABELS[key],
+    score: clampHealthScore(scoreSum / weightSum),
+    weight: PROPERTY_HEALTH_WEIGHTS[key],
+    isFallback: false,
+    detail: detail ?? 'Weighted by unit count across properties',
+  }
+}
+
+/** Overview KPI: unit-weighted mean of buildings that have a Condition-backed score. */
+export function rollupPortfolioHealthFromBuildings(
+  buildings: PropertyHealthBuildingRow[],
+): PropertyHealthScopeScore | null {
+  if (buildings.length === 0) return null
+
+  const trackedUnitCount = buildings.reduce((sum, row) => sum + row.trackedUnitCount, 0)
+  const components = (Object.keys(PROPERTY_HEALTH_WEIGHTS) as PropertyHealthComponentKey[]).map(
+    (key) => rollupCategoryFromBuildings(buildings, key),
+  )
+  const scored = buildings.filter(
+    (row) => row.score != null && shouldShowPropertyHealthScore(row.status),
+  )
+
+  if (scored.length === 0) {
+    const allPending = buildings.every((row) => row.status === 'pending_setup')
+    return {
+      score: null,
+      status: allPending ? 'pending_setup' : 'unknown',
+      rating: null,
+      components,
+      trackedUnitCount,
+      pendingReason: allPending ? 'inactive_units' : 'unknown_condition',
+      dataCompleteness: 0,
+      topIssues: [],
+      scoredPropertyCount: 0,
+      propertyCount: buildings.length,
+    }
+  }
+
+  let weightSum = 0
+  let scoreSum = 0
+  let completenessWeight = 0
+  let completenessSum = 0
+  for (const row of scored) {
+    const weight = buildingHealthRollupWeight(row) || 1
+    weightSum += weight
+    scoreSum += row.score! * weight
+    if (row.dataCompleteness != null) {
+      completenessWeight += weight
+      completenessSum += row.dataCompleteness * weight
+    }
+  }
+  const score = clampHealthScore(scoreSum / weightSum)
+  const status = resolvePropertyHealthStatus(score, components)
+  const topIssues = [
+    ...new Set(
+      scored
+        .slice()
+        .sort((a, b) => (a.score ?? 101) - (b.score ?? 101))
+        .flatMap((row) => row.topIssues ?? []),
+    ),
+  ].slice(0, 3)
+
+  return {
+    score,
+    status,
+    rating: propertyHealthRatingFromScore(score),
+    components,
+    trackedUnitCount,
+    pendingReason: null,
+    dataCompleteness: completenessWeight > 0 ? completenessSum / completenessWeight : undefined,
+    topIssues,
+    scoredPropertyCount: scored.length,
+    propertyCount: buildings.length,
+  }
+}
+
+function collectBuildingHealthRows(
   inputs: PropertyHealthInputs,
-  landlordId: string = getActiveLandlordId(),
-): PropertyHealthReport {
-  const now = inputs.now ?? Date.now()
+  landlordId: string,
+): PropertyHealthBuildingRow[] {
   const ticketBuildingCtx = buildTicketBuildingContext(inputs.units)
-
-  const portfolio = computePropertyHealthScope(inputs)
-  const portfolioDelta = (() => {
-    if (!portfolio || portfolio.trackedUnitCount === 0) return null
-    const previous = computePropertyHealthScope({
-      ...inputs,
-      now: now - FOUR_WEEKS_MS,
-      repeatWindowMs: REPEAT_ISSUE_WINDOW_DAYS * 24 * 60 * 60 * 1000,
-      openIssuesCreatedBeforeMs: now - FOUR_WEEKS_MS,
-    })
-    if (!previous || portfolio.score == null || previous.score == null) return null
-    return portfolio.score - previous.score
-  })()
-
   const buildingKeys = collectPropertyGridBuildingKeys(
     inputs.units,
     inputs.pmTasks,
@@ -1305,10 +1420,9 @@ export function buildPropertyHealthReport(
     inputs.residents ?? [],
     inputs.canonicalProperties ?? [],
   )
-
   const openTickets = inputs.tickets.filter(isTicketOpen)
-
   const buildings: PropertyHealthBuildingRow[] = []
+
   for (const building of buildingKeys) {
     const scopeProperty = findCanonicalPropertyByGridKey(
       building,
@@ -1335,7 +1449,6 @@ export function buildPropertyHealthReport(
       building,
       scopeProperty,
     )
-
     const scopedOpenTickets = filterTicketsForScope(
       openTickets,
       building,
@@ -1343,7 +1456,6 @@ export function buildPropertyHealthReport(
       inputs.residents ?? [],
       scopeProperty,
     )
-
     const scopedFeedback = filterFeedbackForScope(
       inputs.feedback,
       building,
@@ -1371,6 +1483,32 @@ export function buildPropertyHealthReport(
   }
 
   buildings.sort((a, b) => (a.score ?? 101) - (b.score ?? 101))
+  return buildings
+}
+
+export function buildPropertyHealthReport(
+  inputs: PropertyHealthInputs,
+  landlordId: string = getActiveLandlordId(),
+): PropertyHealthReport {
+  const now = inputs.now ?? Date.now()
+  const buildings = collectBuildingHealthRows(inputs, landlordId)
+  const portfolio = rollupPortfolioHealthFromBuildings(buildings)
+  const portfolioDelta = (() => {
+    if (!portfolio || portfolio.score == null) return null
+    const previousBuildings = collectBuildingHealthRows(
+      {
+        ...inputs,
+        now: now - FOUR_WEEKS_MS,
+        repeatWindowMs: REPEAT_ISSUE_WINDOW_DAYS * 24 * 60 * 60 * 1000,
+        openIssuesCreatedBeforeMs: now - FOUR_WEEKS_MS,
+      },
+      landlordId,
+    )
+    const previous = rollupPortfolioHealthFromBuildings(previousBuildings)
+    if (!previous || previous.score == null) return null
+    return portfolio.score - previous.score
+  })()
+
   return { portfolio, portfolioDelta, buildings }
 }
 

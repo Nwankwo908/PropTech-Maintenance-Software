@@ -8,6 +8,7 @@ import {
 import {
   AFTER_HOURS_RULE_OPTIONS,
   DEFAULT_AUTO_APPROVAL_THRESHOLD,
+  applyCurrentAutoApprovalDefault,
   EMERGENCY_TYPE_OPTIONS,
   MARKETPLACE_PREFERENCE_OPTIONS,
   NOTIFICATION_CHANNEL_OPTIONS,
@@ -84,9 +85,13 @@ export function OnboardingApprovalRulesStep({
   onBack,
   onContinue,
 }: OnboardingApprovalRulesStepProps) {
-  const [rules, setRules] = useState<OnboardingApprovalRules>(() =>
-    normalizeOnboardingApprovalRules(initialRules),
-  )
+  const [rules, setRules] = useState<OnboardingApprovalRules>(() => {
+    const normalized = normalizeOnboardingApprovalRules(initialRules)
+    return {
+      ...normalized,
+      autoApprovalThreshold: applyCurrentAutoApprovalDefault(normalized.autoApprovalThreshold),
+    }
+  })
   const [error, setError] = useState<string | null>(null)
   const [previewTab, setPreviewTab] = useState<'sms' | 'email'>('sms')
   const stylePreview = useMemo(
@@ -141,7 +146,7 @@ export function OnboardingApprovalRulesStep({
 
       <div className="mt-8 space-y-8">
         <div>
-          <h3 className="text-[15px] font-semibold text-[#111827]">Auto-approval threshold</h3>
+          <h3 className="text-[15px] font-semibold text-[#111827]">Automatic Approval Limit</h3>
           <p className="mt-1 text-[13px] leading-5 text-[#6b7280]">
             Repairs under this amount can be scheduled automatically without waiting on you.
           </p>
@@ -163,7 +168,7 @@ export function OnboardingApprovalRulesStep({
               className="h-11 w-full rounded-[10px] border border-[#e5e7eb] bg-white pl-7 pr-3 text-[15px] text-[#111827] outline-none focus:border-[#186179] focus:ring-2 focus:ring-[#186179]/20"
             />
           </div>
-          <p className="mt-2 text-[12px] text-[#9ca3af]">Suggested default: $250</p>
+          <p className="mt-2 text-[12px] text-[#9ca3af]">Suggested default: $100</p>
         </div>
 
         <div>

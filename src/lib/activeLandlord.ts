@@ -5,6 +5,7 @@
  *  - limitedalpha1@ulohome.io  → Limited Alpha 1
  *  - limitedalpha2@ulohome.io  → Limited Alpha 2 (empty new-user onboarding)
  *  - ceorentalsnj@gmail.com    → Limited Alpha 1
+ *  - iokafor0@gmail.com        → Limited Alpha 2
  *  - demo@ulohome.io           → Demo Property Management (seeded showcase)
  *  - staff logins              → Limited Alpha 1, with a switcher for Demo and Limited Alpha 2
  *
@@ -59,6 +60,7 @@ export const LANDLORD_ACCOUNT_OPTIONS: LandlordAccountOption[] = [
 
 const EMAIL_TO_LANDLORD_ID: Record<string, string> = {
   'ceorentalsnj@gmail.com': LIMITED_ALPHA_1_LANDLORD_ID,
+  'iokafor0@gmail.com': LIMITED_ALPHA_2_LANDLORD_ID,
   [LIMITED_ALPHA_1_LOGIN_EMAIL]: LIMITED_ALPHA_1_LANDLORD_ID,
   [LIMITED_ALPHA_2_LOGIN_EMAIL]: LIMITED_ALPHA_2_LANDLORD_ID,
   'demo@ulohome.io': DEMO_LANDLORD_ID,

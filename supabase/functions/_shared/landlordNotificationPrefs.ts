@@ -129,10 +129,11 @@ export async function loadLandlordApprovalLimits(
 
   const autoFromRow = Number(onboarding?.auto_approval_threshold)
   const autoFromOrg = parseMoneyThreshold(organization.autoApprovalLimit)
-  const autoApprovalThreshold =
+  const resolved =
     (Number.isFinite(autoFromRow) && autoFromRow > 0 ? autoFromRow : null) ??
     autoFromOrg ??
-    250
+    100
+  const autoApprovalThreshold = resolved === 250 ? 100 : resolved
 
   const escalationFromOperational = parseMoneyThreshold(operational.escalationThreshold)
   const escalationFromOrg = parseMoneyThreshold(organization.escalationThreshold)

@@ -27,6 +27,14 @@ import {
   type SaveOnboardingAccountSetupStepInput,
 } from './onboardingAccountForm'
 
+const ACCOUNT_SETUP_CHANNEL_OPTIONS = NOTIFICATION_CHANNEL_OPTIONS.filter(
+  (option) => option.id !== 'activity_feed',
+).map((option) =>
+  option.id === 'both'
+    ? { ...option, description: 'SMS and email.' }
+    : option,
+)
+
 export type OnboardingAccountSetupStepSaveDeps = Omit<
   SaveOnboardingAccountSetupStepInput,
   'accountSetup' | 'approvalRules' | 'smsConsentAccepted' | 'landlordId'
@@ -93,16 +101,16 @@ export function OnboardingAccountSetupStep({
               className={onboardingInputClass}
               value={accountSetup.contactName}
               onChange={(e) => updateAccountSetup({ contactName: e.target.value })}
-              placeholder="Your name"
-              aria-label="Your name"
+              placeholder="Full name"
+              aria-label="Full name"
             />
             <input
               className={onboardingInputClass}
               type="email"
               value={accountSetup.email}
               onChange={(e) => updateAccountSetup({ email: e.target.value })}
-              placeholder="Support email"
-              aria-label="Support email"
+              placeholder="Email"
+              aria-label="Email"
             />
             <div className="flex flex-col gap-2 sm:col-span-2">
               <input
@@ -252,11 +260,15 @@ export function OnboardingAccountSetupStep({
             <div>
               <h3 className="text-[15px] font-semibold text-[#101828]">Channel preference</h3>
               <p className="mt-1 text-[13px] leading-5 text-[#6a7282]">
-                Where should we send those alerts? SMS, email, and the Ulo Activity Feed are available.
+                Where should we send those alerts? SMS and email are available.
               </p>
-              <div className="mt-3 grid gap-2 sm:grid-cols-2">
-                {NOTIFICATION_CHANNEL_OPTIONS.map((option) => {
-                  const selected = approvalRules.notificationChannel === option.id
+              <div className="mt-3 grid gap-2 sm:grid-cols-3">
+                {ACCOUNT_SETUP_CHANNEL_OPTIONS.map((option) => {
+                  const channel =
+                    approvalRules.notificationChannel === 'activity_feed'
+                      ? 'both'
+                      : approvalRules.notificationChannel
+                  const selected = channel === option.id
                   return (
                     <button
                       key={option.id}

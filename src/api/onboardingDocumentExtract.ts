@@ -1,4 +1,3 @@
-import { FunctionsFetchError, FunctionsHttpError, FunctionsRelayError } from '@supabase/supabase-js'
 import { getActiveLandlordId } from '@/lib/activeLandlord'
 import { getErrorMessage } from '@/lib/errorMessage'
 import { supabase } from '@/lib/supabase'
@@ -94,23 +93,6 @@ function readInvokeErrorBody(data: unknown): string | null {
   return null
 }
 
-async function readHttpErrorMessage(error: FunctionsHttpError): Promise<string | null> {
-  const ctx = error.context as Response | undefined
-  if (!ctx) return null
-  try {
-    const json = (await ctx.clone().json()) as { error?: unknown }
-    if (typeof json.error === 'string' && json.error.trim()) return json.error.trim()
-  } catch {
-    try {
-      const text = (await ctx.clone().text()).trim()
-      return text || null
-    } catch {
-      return null
-    }
-  }
-  return null
-}
-
 export async function extractOnboardingDocument(
   input: ExtractOnboardingDocumentInput,
 ): Promise<ExtractOnboardingDocumentResult> {
@@ -119,48 +101,66 @@ export async function extractOnboardingDocument(
   }
 
   const landlordId = input.landlordId?.trim() || getActiveLandlordId()
-  const { data, error } = await supabase.functions.invoke('onboarding-document-extract', {
-    body: {
-      landlordId,
-      docId: input.docId,
-      fileName: input.fileName,
-      documentCategory: input.documentCategory,
-      storageBucket: input.storageBucket ?? undefined,
-      storagePath: input.storagePath ?? undefined,
-      contentType: input.contentType ?? undefined,
-      fileBase64: input.fileBase64 ?? undefined,
-    },
-  })
+  let session = (await supabase.auth.getSession()).data.session
+  const expiresAtMs = typeof session?.expires_at === 'number' ? session.expires_at * 1000 : 0
+  if (!session?.access_token || expiresAtMs < Date.now() + 60_000) {
+    session = (await supabase.auth.refreshSession()).data.session
+  }
+  if (!session?.access_token) {
+    throw new Error('Your sign-in expired. Sign in again, then retry document scanning.')
+  }
 
-  if (error) {
-    if (error instanceof FunctionsFetchError) {
-      throw new Error(
-        getErrorMessage(
-          error.message,
-          'Could not reach document scanning. Check your connection and try again.',
-        ),
-      )
-    }
+  const { error: userError } = await supabase.auth.getUser(session.access_token)
+  if (userError) {
+    throw new Error('Your sign-in expired. Sign in again, then retry document scanning.')
+  }
 
+  const functionsUrl = `${String(import.meta.env.VITE_SUPABASE_URL ?? '').replace(/\/$/, '')}/functions/v1/onboarding-document-extract`
+  const anonKey = String(import.meta.env.VITE_SUPABASE_ANON_KEY ?? '').trim()
+  if (!functionsUrl.startsWith('http') || !anonKey) {
+    throw new Error('Supabase is not configured')
+  }
+
+  let response: Response
+  try {
+    response = await fetch(functionsUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        apikey: anonKey,
+        Authorization: `Bearer ${session.access_token}`,
+        'x-ulo-access-token': session.access_token,
+      },
+      body: JSON.stringify({
+        landlordId,
+        docId: input.docId,
+        fileName: input.fileName,
+        documentCategory: input.documentCategory,
+        storageBucket: input.storageBucket ?? undefined,
+        storagePath: input.storagePath ?? undefined,
+        contentType: input.contentType ?? undefined,
+        fileBase64: input.fileBase64 ?? undefined,
+      }),
+    })
+  } catch (err) {
+    throw new Error(
+      getErrorMessage(
+        err,
+        'Could not reach document scanning. Check your connection and try again.',
+      ),
+    )
+  }
+
+  let data: unknown = null
+  try {
+    data = await response.json()
+  } catch {
+    data = null
+  }
+
+  if (!response.ok) {
     const fromData = readInvokeErrorBody(data)
-    if (fromData) {
-      throw new Error(getErrorMessage(fromData, 'Document extraction failed'))
-    }
-
-    if (error instanceof FunctionsHttpError) {
-      const fromHttp = await readHttpErrorMessage(error)
-      throw new Error(
-        getErrorMessage(fromHttp ?? error.message, 'Document extraction failed'),
-      )
-    }
-
-    if (error instanceof FunctionsRelayError) {
-      throw new Error(
-        getErrorMessage(error.message, 'Document extraction failed. Please try again.'),
-      )
-    }
-
-    throw new Error(getErrorMessage(error.message, 'Document extraction failed'))
+    throw new Error(getErrorMessage(fromData ?? `Document extraction failed`, 'Document extraction failed'))
   }
 
   const bodyError = readInvokeErrorBody(data)

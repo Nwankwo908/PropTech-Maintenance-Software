@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  applyCurrentAutoApprovalDefault,
   defaultOnboardingApprovalRules,
   validateOnboardingApprovalRules,
 } from '@/lib/onboardingApprovalRules'
@@ -61,6 +62,14 @@ describe('validateOnboardingApprovalRules', () => {
     ).toContain('At least one emergency type')
     expect(
       validateOnboardingApprovalRules({ ...rules, autoApprovalThreshold: -1 }).missing,
-    ).toContain('Auto-approval threshold')
+    ).toContain('Automatic Approval Limit')
+  })
+})
+
+describe('applyCurrentAutoApprovalDefault', () => {
+  it('replaces the legacy $250 default with $100', () => {
+    expect(applyCurrentAutoApprovalDefault(250)).toBe(100)
+    expect(applyCurrentAutoApprovalDefault(100)).toBe(100)
+    expect(applyCurrentAutoApprovalDefault(500)).toBe(500)
   })
 })

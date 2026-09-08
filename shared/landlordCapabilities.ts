@@ -43,7 +43,10 @@ export function isLimitedAlpha1Landlord(landlordId: string | null | undefined): 
 /** Production Twilio DID used as Limited Alpha 1's landlord_main line. */
 export const LIMITED_ALPHA_1_TWILIO_SMS_NUMBER = '+18775803356'
 
-/** Limited Alpha 1 sends and receives on Twilio; other Limited Alpha accounts use the number pool. */
+/** Production Telnyx DID used as Limited Alpha 2's landlord_main line. */
+export const LIMITED_ALPHA_2_TELNYX_SMS_NUMBER = '+19734005760'
+
+/** Limited Alpha 1 sends and receives on Twilio; Limited Alpha 2 uses Telnyx. */
 export function landlordUsesTwilioSms(landlordId: string | null | undefined): boolean {
   return (landlordId ?? '').trim() === LIMITED_ALPHA_1_LANDLORD_ID
 }

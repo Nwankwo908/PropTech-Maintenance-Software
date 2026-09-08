@@ -56,6 +56,7 @@ export function AdminLoginPage() {
   const [searchParams] = useSearchParams()
   const afterLoginPath = safeAdminNextPath(searchParams.get('next'))
   const oauthDenied = searchParams.get('error') === 'not_authorized'
+  const googleSignInFailed = searchParams.get('error') === 'google_signin'
   const [step, setStep] = useState<'email' | 'otp'>('email')
   const [email, setEmail] = useState('')
   const [otp, setOtp] = useState('')
@@ -208,9 +209,13 @@ export function AdminLoginPage() {
 
               {oauthDenied ? (
                 <p className="mt-6 rounded-lg border border-[#fecaca] bg-[#fef2f2] px-3 py-2 text-[13px] leading-5 text-[#991b1b]" role="alert">
-                  That Google account is not authorized for the admin portal. Sign in with an
-                  allowlisted email (for Limited Alpha 1, use ceorentalsnj@gmail.com or
-                  limitedalpha1@ulohome.io or limitedalpha2@ulohome.io).
+                  That Google account is not on the portal allowlist. Staff can use osi@ulohome.io
+                  or emeka@ulohome.io. For Limited Alpha, use the email you were invited with.
+                </p>
+              ) : null}
+              {googleSignInFailed ? (
+                <p className="mt-6 rounded-lg border border-[#fecaca] bg-[#fef2f2] px-3 py-2 text-[13px] leading-5 text-[#991b1b]" role="alert">
+                  Google sign-in did not finish. Try again, or use email and a verification code.
                 </p>
               ) : null}
 

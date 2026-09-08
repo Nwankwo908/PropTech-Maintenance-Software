@@ -1,24 +1,18 @@
 import { useEffect, useState } from 'react'
 import { Navigate } from 'react-router-dom'
 import type { Session } from '@supabase/supabase-js'
-import { getAdminSession, isAdminSessionAllowed, signOutAdmin, completeGoogleIdTokenSignInFromUrl } from '@/lib/adminAuth'
-import { readGoogleOAuthErrorFromHash } from '@/lib/googleIdentitySignIn'
+import { getAdminSession, isAdminSessionAllowed, signOutAdmin } from '@/lib/adminAuth'
 import { supabase } from '@/lib/supabase'
 
-type Phase = 'working' | 'admin' | 'denied'
+type Phase = 'working' | 'admin' | 'denied' | 'retry'
 
 /**
  * OAuth landing route (`/auth/callback`).
  *
- * Google redirects here after sign-in. The session is established asynchronously
- * by the Supabase client (`detectSessionInUrl`), so we wait for it via
- * getSession() + onAuthStateChange before deciding where to send the user:
- *  - valid admin session  → /admin
- *  - signed in, not admin → sign out → /admin/login
- *  - no session settles   → /admin/login
- *
- * This avoids the "land on splash, click Login again" flow: the redirect target
- * itself resolves the session instead of relying on a later page load.
+ * Google redirects here after Supabase OAuth. The session is established
+ * asynchronously (`detectSessionInUrl`), so we wait for getSession +
+ * onAuthStateChange. Staff emails (osi@ / emeka@) are allowlisted — do not
+ * treat a missing session yet as an unauthorized account.
  */
 export function AuthCallback() {
   const [phase, setPhase] = useState<Phase>('working')
@@ -38,27 +32,14 @@ export function AuthCallback() {
       settled = true
       if (await isAdminSessionAllowed(session)) {
         setPhase('admin')
-      } else {
-        await signOutAdmin()
-        setPhase('denied')
+        return
       }
-    }
-
-    if (readGoogleOAuthErrorFromHash(window.location.hash)) {
+      await signOutAdmin()
       setPhase('denied')
-      return
     }
 
-    void (async () => {
-      try {
-        await completeGoogleIdTokenSignInFromUrl()
-      } catch {
-        if (!cancelled) setPhase('denied')
-      }
-    })()
-
-    void getAdminSession(5000).then((session) => {
-      if (session) void resolve(session)
+    void getAdminSession(8_000).then((session) => {
+      void resolve(session)
     })
 
     const {
@@ -67,13 +48,11 @@ export function AuthCallback() {
       void resolve(session)
     })
 
-    // If no session materializes from the URL, fall back to the login page.
     const timer = window.setTimeout(() => {
-      if (!settled) {
-        settled = true
-        setPhase('denied')
-      }
-    }, 5000)
+      if (cancelled || settled) return
+      settled = true
+      setPhase('retry')
+    }, 20_000)
 
     return () => {
       cancelled = true
@@ -85,6 +64,9 @@ export function AuthCallback() {
   if (phase === 'admin') return <Navigate to="/admin" replace />
   if (phase === 'denied') {
     return <Navigate to="/admin/login?error=not_authorized" replace />
+  }
+  if (phase === 'retry') {
+    return <Navigate to="/admin/login" replace />
   }
 
   return (

@@ -45,7 +45,17 @@ export type OnboardingApprovalRules = {
   communicationStyle: CommunicationStyle
 }
 
-export const DEFAULT_AUTO_APPROVAL_THRESHOLD = 250
+export const DEFAULT_AUTO_APPROVAL_THRESHOLD = 100
+
+/** Persisted drafts / DB rows created before the $100 default. */
+export const LEGACY_DEFAULT_AUTO_APPROVAL_THRESHOLD = 250
+
+export function applyCurrentAutoApprovalDefault(threshold: number): number {
+  if (threshold === LEGACY_DEFAULT_AUTO_APPROVAL_THRESHOLD) {
+    return DEFAULT_AUTO_APPROVAL_THRESHOLD
+  }
+  return threshold
+}
 
 export const ALL_EMERGENCY_TYPE_IDS: EmergencyTypeId[] = [
   'no_heat',
@@ -315,7 +325,7 @@ export function validateOnboardingApprovalRules(
 ): { ok: boolean; missing: string[] } {
   const missing: string[] = []
   if (!Number.isFinite(rules.autoApprovalThreshold) || rules.autoApprovalThreshold < 0) {
-    missing.push('Auto-approval threshold')
+    missing.push('Automatic Approval Limit')
   }
   if (rules.emergencyTypes.length === 0) {
     missing.push('At least one emergency type')

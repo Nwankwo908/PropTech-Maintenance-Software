@@ -4,6 +4,7 @@
 import { getActiveLandlordId } from '@/lib/activeLandlord'
 import { loadCanonicalOnboardingProperties } from './hydrateProperties'
 import {
+  applyCurrentAutoApprovalDefault,
   defaultOnboardingApprovalRules,
   normalizeOnboardingApprovalRules,
 } from '@/lib/onboardingApprovalRules'
@@ -132,12 +133,21 @@ function normalizeAccountSetup(raw: unknown): OnboardingAccountSetup {
 }
 
 function normalizeOnboardingState(state: LandlordOnboardingState): LandlordOnboardingState {
+  const approvalRules = normalizeOnboardingApprovalRules(state.approvalRules)
   return {
     ...state,
     currentStep: normalizeOnboardingStep(state.currentStep),
     accountSetup: normalizeAccountSetup(state.accountSetup),
     properties: normalizeOnboardingProperties(state.properties),
-    approvalRules: normalizeOnboardingApprovalRules(state.approvalRules),
+    approvalRules:
+      state.onboardingStatus === 'completed'
+        ? approvalRules
+        : {
+            ...approvalRules,
+            autoApprovalThreshold: applyCurrentAutoApprovalDefault(
+              approvalRules.autoApprovalThreshold,
+            ),
+          },
     formDraft: state.formDraft,
   }
 }
@@ -397,7 +407,7 @@ export async function readLandlordOnboardingDraft(
   const state = normalizeOnboardingState(
     !data ? fallback : rowToState(data as Record<string, unknown>, landlordId),
   )
-  return mergeOnboardingDraft(state, landlordId)
+  return normalizeOnboardingState(mergeOnboardingDraft(state, landlordId))
 }
 
 export async function fetchLandlordOnboarding(
