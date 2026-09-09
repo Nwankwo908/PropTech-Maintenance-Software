@@ -127,7 +127,7 @@ describe('setupSuccessChecklist', () => {
     expect(isSetupSuccessTestDeliveryComplete(LIMITED_ALPHA_1_LANDLORD_ID)).toBe(false)
   })
 
-  it('does not check property details until they are marked complete', () => {
+  it('does not check property details until at least one property has details filled', () => {
     const progress = resolveSetupSuccessProgress({
       residents: [],
       vendorCount: 0,

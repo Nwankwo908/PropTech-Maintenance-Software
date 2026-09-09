@@ -7,6 +7,8 @@ export type SendMessageInput = {
   /** E.164 sender; used when not sending via Messaging Service. */
   from?: string
   mediaUrls?: string[]
+  /** Poll provider until delivered/failed (settings test SMS). */
+  waitForDelivery?: boolean
 }
 
 export type SendMessageResult = {

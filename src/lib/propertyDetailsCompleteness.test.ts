@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   areAllPropertiesDetailsComplete,
   isAnyPropertyDetailsComplete,
+  propertyDetailsHasAnySection,
   propertyDetailsSectionsComplete,
 } from './propertyDetailsCompleteness'
 
@@ -29,6 +30,27 @@ describe('propertyDetailsSectionsComplete', () => {
         access: true,
         insurance: true,
         history: true,
+      }),
+    ).toBe(false)
+  })
+})
+
+describe('propertyDetailsHasAnySection', () => {
+  it('is true when one Property Details module has content', () => {
+    expect(
+      propertyDetailsHasAnySection({
+        inspection: false,
+        access: true,
+        insurance: false,
+        history: false,
+      }),
+    ).toBe(true)
+    expect(
+      propertyDetailsHasAnySection({
+        inspection: false,
+        access: false,
+        insurance: false,
+        history: false,
       }),
     ).toBe(false)
   })

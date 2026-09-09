@@ -12,6 +12,17 @@
       content="Tenants text a repair. Ulo classifies the issue, coordinates vendors, and gives independent landlords one dashboard across every property."
     />
     <link rel="canonical" href="https://app.ulohome.io/" />
+    <script>
+      (function () {
+        var host = location.hostname
+        if (host !== 'localhost' && host !== '127.0.0.1') return
+        var href = location.origin + '/'
+        var canonical = document.querySelector('link[rel="canonical"]')
+        if (canonical) canonical.setAttribute('href', href)
+        var ogUrl = document.querySelector('meta[property="og:url"]')
+        if (ogUrl) ogUrl.setAttribute('content', href)
+      })()
+    </script>
     <meta property="og:type" content="website" />
     <meta property="og:locale" content="en_US" />
     <meta property="og:url" content="https://app.ulohome.io/" />

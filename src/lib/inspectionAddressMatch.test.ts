@@ -67,6 +67,44 @@ describe('inspectionReportAddressMatches', () => {
     ).toBe(false)
   })
 
+  it('matches Palm Springs FL when the report spells out Florida', () => {
+    expect(
+      inspectionReportAddressMatches({
+        expectedStreet: '123 Main St',
+        expectedCity: 'Palm Springs',
+        expectedState: 'FL',
+        expectedZip: '33461',
+        expectedBuilding: 'Palm Springs',
+        extracted: {
+          street: '123 Main Street',
+          city: 'Palm Springs',
+          state: 'Florida',
+          zip: '33461',
+          raw: '123 Main Street, Palm Springs, Florida 33461',
+        },
+      }),
+    ).toBe(true)
+  })
+
+  it('rejects Palm Springs CA against a Florida property', () => {
+    expect(
+      inspectionReportAddressMatches({
+        expectedStreet: '123 Main St',
+        expectedCity: 'Palm Springs',
+        expectedState: 'FL',
+        expectedZip: '33461',
+        expectedBuilding: 'Palm Springs',
+        extracted: {
+          street: '123 Main Street',
+          city: 'Palm Springs',
+          state: 'CA',
+          zip: '92262',
+          raw: '123 Main Street, Palm Springs, CA 92262',
+        },
+      }),
+    ).toBe(false)
+  })
+
   it('formats the expected property line for error copy', () => {
     expect(
       formatExpectedInspectionAddress({

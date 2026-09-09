@@ -185,7 +185,7 @@ export async function fetchLandlordAccountProfile(
       organizationSupportEmail: asTrimmed(org.supportEmail),
       landlordEmail: asTrimmed(landlord?.email),
     }),
-    phone: asTrimmed(landlord?.phone) || account.phone,
+    phone: asTrimmed(landlord?.phone) || account.phone || asTrimmed(org.phone),
     backupContactName: account.backupContactName || asTrimmed(org.backupContactName),
     backupContactPhone: account.backupContactPhone || asTrimmed(org.backupContactPhone),
     backupContactEmail: account.backupContactEmail || asTrimmed(org.backupContactEmail),

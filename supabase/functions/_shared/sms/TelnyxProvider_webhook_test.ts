@@ -4,6 +4,7 @@ import {
   isTelnyxInboundEventType,
   isTelnyxStatusEventType,
   peekTelnyxEventType,
+  pickTelnyxSendFromNumber,
 } from "./TelnyxProvider.ts"
 
 Deno.test("peekTelnyxEventType reads message.received", () => {
@@ -13,6 +14,15 @@ Deno.test("peekTelnyxEventType reads message.received", () => {
     ),
     "message.received",
   )
+})
+
+Deno.test("pickTelnyxSendFromNumber prefers the landlord From number", () => {
+  assertEquals(
+    pickTelnyxSendFromNumber("+19734005760", "+15551212"),
+    "+15551212",
+  )
+  assertEquals(pickTelnyxSendFromNumber("+19734005760", "  "), "+19734005760")
+  assertEquals(pickTelnyxSendFromNumber("+19734005760"), "+19734005760")
 })
 
 Deno.test("Telnyx inbound vs status event gates", () => {

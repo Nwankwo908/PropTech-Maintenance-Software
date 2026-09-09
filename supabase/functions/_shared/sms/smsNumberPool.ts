@@ -2,7 +2,7 @@ import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.49.1
 import { getSMSProvider } from "./providerFactory.ts"
 import { logGraphEvent } from "../graph/logGraphEvent.ts"
 import { normalizePhoneFlexible } from "../resident_notify.ts"
-import { LIMITED_ALPHA_1_LANDLORD_ID, LIMITED_ALPHA_1_TWILIO_SMS_NUMBER, LIMITED_ALPHA_2_LANDLORD_ID, LIMITED_ALPHA_2_TELNYX_SMS_NUMBER } from "../../../../shared/landlordCapabilities.ts"
+import { LIMITED_ALPHA_1_LANDLORD_ID, LIMITED_ALPHA_1_TWILIO_SMS_NUMBER, LIMITED_ALPHA_2_LANDLORD_ID } from "../../../../shared/landlordCapabilities.ts"
 
 export type LandlordSmsNumberRow = {
   id: string
@@ -320,6 +320,33 @@ async function attachExistingNumberAsLandlordMain(
   return (data as LandlordSmsNumberRow | null) ?? null
 }
 
+/** Shared Twilio DID lookup — do not transfer ownership (phone_number is unique). */
+async function findActiveSharedTwilioLandlordMain(
+  supabase: SupabaseClient,
+  phoneNumber: string,
+): Promise<LandlordSmsNumberRow | null> {
+  const variants = phoneLookupVariants(phoneNumber)
+  if (variants.length === 0) return null
+
+  const { data, error } = await supabase
+    .from("sms_numbers")
+    .select(SMS_NUMBER_FIELDS)
+    .in("phone_number", variants)
+    .eq("provider", "twilio")
+    .eq("status", "active")
+    .eq("purpose", "landlord_main")
+    .order("created_at", { ascending: true })
+    .limit(1)
+    .maybeSingle()
+
+  if (error) {
+    console.error("[smsNumberPool] shared Twilio lookup", error.message)
+    return null
+  }
+
+  return (data as LandlordSmsNumberRow | null) ?? null
+}
+
 /**
  * Provision a landlord_main SMS number:
  * 1. Return existing active landlord_main
@@ -338,7 +365,37 @@ export async function provisionLandlordMainNumber(
   const landlordId = resolveLandlordId(params.landlordId)
 
   const existing = await findActiveLandlordMain(supabase, landlordId)
-  if (existing) {
+
+  if (landlordId === LIMITED_ALPHA_2_LANDLORD_ID) {
+    const twilioPhone =
+      params.phoneNumber?.trim() ||
+      Deno.env.get("TWILIO_FROM_NUMBER")?.trim() ||
+      LIMITED_ALPHA_1_TWILIO_SMS_NUMBER
+    const twilioVariants = new Set(phoneLookupVariants(twilioPhone))
+    const existingIsSharedTwilio =
+      Boolean(existing) &&
+      existing!.provider === "twilio" &&
+      twilioVariants.has(existing!.phone_number)
+    if (existing && !existingIsSharedTwilio) {
+      await supabase
+        .from("sms_numbers")
+        .update({ status: "released" })
+        .eq("id", existing.id)
+    }
+    const shared = await findActiveSharedTwilioLandlordMain(supabase, twilioPhone)
+    if (shared) {
+      return {
+        smsNumberId: shared.id,
+        phoneNumber: shared.phone_number,
+        provider: shared.provider,
+        providerNumberSid: shared.provider_number_sid,
+        source: "existing",
+        created: false,
+      }
+    }
+  }
+
+  if (existing && landlordId !== LIMITED_ALPHA_2_LANDLORD_ID) {
     return {
       smsNumberId: existing.id,
       phoneNumber: existing.phone_number,
@@ -358,39 +415,6 @@ export async function provisionLandlordMainNumber(
       landlordId,
       phoneNumber: twilioPhone,
       provider: "twilio",
-    })
-    if (attached) {
-      await recordNumberGraphEvent(supabase, {
-        landlordId,
-        eventType: "sms.number_provisioned",
-        smsNumberId: attached.id,
-        metadata: {
-          phone_number: attached.phone_number,
-          provider: attached.provider,
-          provider_number_sid: attached.provider_number_sid,
-          source: "existing",
-        },
-      })
-      return {
-        smsNumberId: attached.id,
-        phoneNumber: attached.phone_number,
-        provider: attached.provider,
-        providerNumberSid: attached.provider_number_sid,
-        source: "existing",
-        created: false,
-      }
-    }
-  }
-
-  if (landlordId === LIMITED_ALPHA_2_LANDLORD_ID) {
-    const telnyxPhone =
-      params.phoneNumber?.trim() ||
-      Deno.env.get("TELNYX_FROM_NUMBER")?.trim() ||
-      LIMITED_ALPHA_2_TELNYX_SMS_NUMBER
-    const attached = await attachExistingNumberAsLandlordMain(supabase, {
-      landlordId,
-      phoneNumber: telnyxPhone,
-      provider: "telnyx",
     })
     if (attached) {
       await recordNumberGraphEvent(supabase, {

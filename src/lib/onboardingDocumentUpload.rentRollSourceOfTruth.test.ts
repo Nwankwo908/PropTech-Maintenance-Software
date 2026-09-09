@@ -98,7 +98,7 @@ describe('rent roll vs lease agreement source of truth', () => {
     expect(review.residents[0]?.fullName).toMatch(/Saad/i)
   })
 
-  it('2–3. lease only does not independently create residents, units, or properties', () => {
+  it('2–3. lease only creates properties, units, and residents', () => {
     const review = buildOnboardingExtractionReview([
       uploadedDoc(
         'lease',
@@ -147,14 +147,50 @@ describe('rent roll vs lease agreement source of truth', () => {
       ),
     ])
 
-    expect(review.residents).toHaveLength(0)
-    expect(review.properties).toHaveLength(0)
-    expect(review.units).toHaveLength(0)
+    expect(review.leaseOnlyPortfolio).toBe(true)
+    expect(review.residents).toHaveLength(1)
+    expect(review.residents[0]?.fullName).toMatch(/John/i)
+    expect(review.properties).toHaveLength(1)
+    expect(review.properties[0]?.name).toMatch(/Grove/i)
+    expect(review.properties[0]?.city).toBe('East Orange')
+    expect(review.properties[0]?.state).toBe('NJ')
+    expect(review.properties[0]?.zipCode).toBe('07018')
+    expect(review.units.some((row) => /B/i.test(row.label))).toBe(true)
     expect(review.leases).toHaveLength(1)
     expect(review.leases[0]?.residentName).toMatch(/John/i)
     expect(
       review.needsReview.some((row) => row.dataType === 'unmatched_lease'),
-    ).toBe(true)
+    ).toBe(false)
+  })
+
+  it('lease-only still fills a property when GPT only returns leases[]', () => {
+    const review = buildOnboardingExtractionReview([
+      uploadedDoc(
+        'lease',
+        'Grove-Lease.pdf',
+        emptyPayload({
+          leases: [
+            {
+              residentName: 'John Smith',
+              unit: 'B',
+              building: '109 S Grove St',
+              leaseStart: '2026-01-01',
+              leaseEnd: '2026-12-31',
+              rentAmount: '1700',
+              securityDeposit: '1700',
+              confidence: 90,
+            },
+          ],
+        }),
+        'lease_agreement',
+      ),
+    ])
+
+    expect(review.properties.some((row) => /Grove/i.test(row.name) || /Grove/i.test(row.address))).toBe(
+      true,
+    )
+    expect(review.residents).toHaveLength(1)
+    expect(review.units.some((row) => /B/i.test(row.label))).toBe(true)
   })
 
   it('4 + 7. same tenant on rent roll + lease merges into one enriched resident', () => {

@@ -36,19 +36,35 @@ describe('toUserFriendlyMessage', () => {
     expect(toUserFriendlyMessage(msg, 'Could not send this message. The vendor is still available.')).toBe(msg)
   })
 
-  it('maps Limited Alpha payments-off checkout errors', () => {
+  it('maps unauthorized and missing SMS phone for settings test delivery', () => {
+    expect(toUserFriendlyMessage('Unauthorized', 'fallback')).toMatch(/permission/i)
+    expect(
+      toUserFriendlyMessage('No SMS phone on file for this account.', 'fallback'),
+    ).toMatch(/phone number in Organization/i)
+  })
+
+  it('maps Telnyx 10DLC carrier blocks', () => {
     expect(
       toUserFriendlyMessage(
-        'Payments are not available on this account.',
-        'Could not open rent payment.',
+        'Not 10DLC registered: The sending number is not 10DLC-registered but is required to be by the carrier.',
+        'fallback',
       ),
-    ).toMatch(/not available/i)
+    ).toMatch(/not registered for business SMS/i)
   })
 
   it('uses fallback for snake_case codes', () => {
     expect(toUserFriendlyMessage('no_landlord_main_sms', 'Try again later.')).toBe(
       'Try again later.',
     )
+  })
+
+  it('maps GPT-4o PDF vision failures instead of the address-mismatch fallback', () => {
+    expect(
+      toUserFriendlyMessage(
+        'GPT-4o vision failed (400)',
+        'This report could not be saved. Check that the address matches this property and try again.',
+      ),
+    ).toMatch(/couldn’t read this inspection report/i)
   })
 })
 

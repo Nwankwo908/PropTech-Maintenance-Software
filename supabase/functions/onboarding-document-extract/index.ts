@@ -185,11 +185,19 @@ serve(async (req) => {
   const storageBucket = asString(body.storageBucket) || "landlord-onboarding-documents"
   const storagePath = asString(body.storagePath)
   const fileBase64 = asString(body.fileBase64)
+  const insuranceIntent =
+    asString(body.insuranceIntent) === "property_policy" ? "property_policy" : "auto"
+  const propertyInsuranceExtract = insuranceIntent === "property_policy"
+  const pageImages = Array.isArray(body.pageImages)
+    ? body.pageImages
+        .filter((item): item is string => typeof item === "string" && item.trim().startsWith("data:image/"))
+        .slice(0, propertyInsuranceExtract ? 5 : 3)
+    : []
 
   if (!landlordId || !uuidRe.test(landlordId)) {
     return jsonResponse({ error: "landlordId is required" }, 400)
   }
-  if (!isOnboardingLandlordId(landlordId)) {
+  if (!propertyInsuranceExtract && !isOnboardingLandlordId(landlordId)) {
     return jsonResponse({ error: "Landlord not eligible for onboarding extract" }, 403)
   }
   if (!docId || !fileName) {
@@ -217,10 +225,10 @@ serve(async (req) => {
     }
   }
 
-  if (!bytes || bytes.length === 0) {
+  if ((!bytes || bytes.length === 0) && pageImages.length === 0) {
     return jsonResponse({ error: "Document bytes are required" }, 400)
   }
-  if (bytes.length > 20 * 1024 * 1024) {
+  if (bytes && bytes.length > 20 * 1024 * 1024) {
     return jsonResponse({ error: "Document exceeds 20MB limit" }, 400)
   }
 
@@ -228,9 +236,11 @@ serve(async (req) => {
     const extracted: PortfolioDocumentExtractPayload = await extractPortfolioDocument({
       apiKey: openAiKey,
       fileName,
-      documentCategory,
+      documentCategory: propertyInsuranceExtract ? "property_insurance" : documentCategory,
       contentType,
-      bytes,
+      bytes: bytes ?? new Uint8Array(),
+      pageImages,
+      insuranceIntent,
     })
 
     const hasData = portfolioExtractHasData(extracted)

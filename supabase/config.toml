@@ -126,6 +126,12 @@ verify_jwt = false
 import_map = "./functions/property-insights/deno.json"
 entrypoint = "./functions/property-insights/index.ts"
 
+[functions.sync-home-data-graph]
+enabled = true
+verify_jwt = false
+import_map = "./functions/sync-home-data-graph/deno.json"
+entrypoint = "./functions/sync-home-data-graph/index.ts"
+
 [functions.message-thumbtack-vendor]
 enabled = true
 verify_jwt = false

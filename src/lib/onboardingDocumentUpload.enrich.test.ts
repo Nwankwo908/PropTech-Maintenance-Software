@@ -127,6 +127,34 @@ describe('enrichExtractedProperties', () => {
     expect(properties[0]?.unitCount).toBe(1)
   })
 
+  it('derives a property from lease premises when lease-only inventory is enabled', () => {
+    const properties = enrichExtractedProperties(
+      [],
+      [],
+      [
+        {
+          id: 'lease-1',
+          residentName: 'John Smith',
+          unit: 'B',
+          building: '109 S Grove St',
+          leaseStart: '2026-01-01',
+          leaseEnd: '2026-12-31',
+          rentAmount: '1700',
+          securityDeposit: '1700',
+          sourceDocumentName: 'Unit-B-Lease.pdf',
+          confidence: 90,
+          selected: true,
+          needsReview: false,
+        },
+      ],
+      [],
+      { includeLeaseBuildings: true },
+    )
+
+    expect(properties).toHaveLength(1)
+    expect(properties[0]?.name).toMatch(/Grove/i)
+  })
+
   it('merges GPT property rows with derived building inventory', () => {
     const properties = enrichExtractedProperties(
       [

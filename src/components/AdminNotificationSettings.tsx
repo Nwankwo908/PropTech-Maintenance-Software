@@ -13,8 +13,16 @@ import {
 } from '@/lib/notificationSettings'
 import { sendSettingsTestNotification } from '@/api/settingsTestNotification'
 import { SetupSuccessCheckboxGuide } from '@/components/SetupSuccessCheckboxGuide'
+import { getActiveLandlordId } from '@/lib/activeLandlord'
+import { getErrorMessage } from '@/lib/errorMessage'
 import { fetchLandlordAccountProfile } from '@/lib/landlordAccountProfile'
+import { formatPhoneNational } from '@/lib/phoneFormat'
 import { loadOrganizationSettings } from '@/lib/organizationSettings'
+import {
+  landlordUsesTwilioSms,
+  LIMITED_ALPHA_1_TWILIO_SMS_NUMBER,
+  ULO_TELNYX_SMS_NUMBER,
+} from '@shared/landlordCapabilities'
 import {
   markSetupSuccessTestDeliveryComplete,
   SETUP_SUCCESS_TEST_DELIVERY_HASH,
@@ -294,6 +302,7 @@ export function AdminNotificationSettings() {
   const [profileEmail, setProfileEmail] = useState('')
   const [profilePhone, setProfilePhone] = useState('')
   const [supportEmail, setSupportEmail] = useState('')
+  const [organizationPhone, setOrganizationPhone] = useState('')
   const [saveMessage, setSaveMessage] = useState<string | null>(null)
   const [saveError, setSaveError] = useState<string | null>(null)
   const [testState, setTestState] = useState<Record<string, 'idle' | 'sending' | 'sent' | 'failed'>>({
@@ -313,8 +322,9 @@ export function AdminNotificationSettings() {
         setSaved(settings)
         setDraft(settings)
         setProfileEmail(profile.email)
-        setProfilePhone(profile.phone)
+        setProfilePhone(profile.phone || profile.backupContactPhone)
         setSupportEmail(organization.supportEmail)
+        setOrganizationPhone(organization.phone)
         setLoading(false)
       },
     )
@@ -391,21 +401,34 @@ export function AdminNotificationSettings() {
       })
   }
 
+  const smsDestination = (profilePhone || organizationPhone).trim()
+  const smsFromNumber = landlordUsesTwilioSms(getActiveLandlordId())
+    ? LIMITED_ALPHA_1_TWILIO_SMS_NUMBER
+    : ULO_TELNYX_SMS_NUMBER
+
   function handleSendTest(channel: 'email' | 'sms') {
-    markSetupSuccessTestDeliveryComplete()
     dismissSetupSuccessCheckboxGuide('test_delivery')
     setShowTestDeliveryGuide(false)
     setTestMessage(null)
     setTestState((current) => ({ ...current, [channel]: 'sending' }))
     void sendSettingsTestNotification({
       channel,
+      landlordId: getActiveLandlordId(),
       toEmail: channel === 'email' ? supportEmail.trim() || profileEmail.trim() : undefined,
+      toPhone: channel === 'sms' ? smsDestination || undefined : undefined,
     }).then((result) => {
       setTestState((current) => ({
         ...current,
         [channel]: result.ok ? 'sent' : 'failed',
       }))
-      setTestMessage(result.ok ? (result.message ?? 'Sent.') : (result.error ?? 'Failed to send.'))
+      if (result.ok) {
+        markSetupSuccessTestDeliveryComplete()
+        setTestMessage(result.message ?? 'Sent.')
+        return
+      }
+      setTestMessage(
+        getErrorMessage(result.error, 'Could not send the test notification.'),
+      )
     })
   }
 
@@ -481,7 +504,11 @@ export function AdminNotificationSettings() {
                   'Add a support email in Organization'
                 }
               />
-              <DeliveryChannelCard label="SMS" connected={Boolean(profilePhone.trim())} />
+              <DeliveryChannelCard
+                label="SMS"
+                connected={Boolean(smsDestination)}
+                detail={smsDestination || 'Add a phone number in Organization'}
+              />
               <DeliveryChannelCard label="Activity feed" connected />
             </div>
 
@@ -619,6 +646,13 @@ export function AdminNotificationSettings() {
                     <p className="text-[14px] font-medium tracking-[-0.1504px] text-[#101828]">
                       Send test {label}
                     </p>
+                    {channel === 'sms' ? (
+                      <p className="mt-1 text-[12px] tracking-[-0.1504px] text-[#6a7282]">
+                        {smsDestination
+                          ? `Sends to ${formatPhoneNational(smsDestination)} from ${formatPhoneNational(smsFromNumber)}`
+                          : 'Add your phone in Organization first.'}
+                      </p>
+                    ) : null}
                     <OutlineButton
                       className="mt-3 w-full"
                       disabled={state === 'sending'}
@@ -631,7 +665,16 @@ export function AdminNotificationSettings() {
               })}
             </div>
             {testMessage ? (
-              <p className="mt-3 text-[13px] tracking-[-0.1504px] text-[#6a7282]">{testMessage}</p>
+              <p
+                className={[
+                  'mt-3 text-[13px] tracking-[-0.1504px]',
+                  Object.values(testState).includes('failed')
+                    ? 'font-medium text-[#b42318]'
+                    : 'text-[#067647]',
+                ].join(' ')}
+              >
+                {testMessage}
+              </p>
             ) : null}
           </section>
       </div>

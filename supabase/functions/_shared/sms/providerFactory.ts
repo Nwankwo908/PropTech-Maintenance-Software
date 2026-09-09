@@ -23,7 +23,7 @@ export function getSMSProviderFor(name: SmsProviderName): SMSProvider {
   return created
 }
 
-/** Provider that should send this landlord's outbound SMS (Limited Alpha 1 = Twilio). */
+/** Provider that should send this landlord's outbound SMS (Limited Alpha = Twilio). */
 export function smsProviderNameForSend(params: {
   landlordId?: string | null
   lineProvider?: string | null

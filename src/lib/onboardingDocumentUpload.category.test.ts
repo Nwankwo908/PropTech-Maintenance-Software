@@ -290,8 +290,8 @@ describe('isOnboardingExtractJunkValue', () => {
       },
     ])
 
-    // Leases enrich — they never mint residents/properties on their own.
-    expect(review.residents).toEqual([])
+    // Junk names are dropped. A lease-only upload may mint the real tenant.
+    expect(review.residents.map((row) => row.fullName)).toEqual(['Alex Rivera'])
     expect(review.properties).toEqual([])
     expect(review.leases.map((row) => row.residentName)).toEqual(['Alex Rivera'])
     expect(review.needsReview.map((row) => row.value)).toContain('Last page is cut off')

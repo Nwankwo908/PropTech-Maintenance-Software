@@ -1,9 +1,11 @@
 import { assertEquals } from "https://deno.land/std@0.224.0/assert/mod.ts"
 import {
   buildUserContent,
+  classifyOpenAiExtractError,
   extractLooksUnread,
   isExtractedPlaceholderValue,
   normalizePortfolioDocumentExtract,
+  openAiExtractErrorMessage,
   pdfNeedsNativeFileRead,
 } from "./portfolioDocumentExtract.ts"
 
@@ -161,4 +163,19 @@ Deno.test("landlord / management company is read into account.companyName", () =
     leases: [{ residentName: "Jamie Tenant", unit: "1A" }],
   })
   assertEquals(fromLandlordLine.account.companyName, "Acme Property Management")
+})
+
+Deno.test("OpenAI extract errors distinguish quota from retryable busy", () => {
+  assertEquals(
+    classifyOpenAiExtractError(429, '{"error":{"type":"insufficient_quota"}}'),
+    "quota",
+  )
+  assertEquals(classifyOpenAiExtractError(429, "Rate limit reached"), "busy")
+  assertEquals(classifyOpenAiExtractError(413, "Payload too large"), "too_large")
+  assertEquals(classifyOpenAiExtractError(400, "context_length_exceeded"), "too_large")
+  assertEquals(classifyOpenAiExtractError(529, "The engine is currently overloaded"), "busy")
+  assertEquals(
+    openAiExtractErrorMessage(401, "Incorrect API key provided"),
+    "Document scanning is not configured. Set a valid OPENAI_API_KEY on Supabase Edge secrets.",
+  )
 })

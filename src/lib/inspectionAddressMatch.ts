@@ -30,6 +30,67 @@ const STREET_ABBREV: Record<string, string> = {
   pkwy: 'parkway',
 }
 
+const STATE_NAME_TO_CODE: Record<string, string> = {
+  alabama: 'al',
+  alaska: 'ak',
+  arizona: 'az',
+  arkansas: 'ar',
+  california: 'ca',
+  colorado: 'co',
+  connecticut: 'ct',
+  delaware: 'de',
+  florida: 'fl',
+  georgia: 'ga',
+  hawaii: 'hi',
+  idaho: 'id',
+  illinois: 'il',
+  indiana: 'in',
+  iowa: 'ia',
+  kansas: 'ks',
+  kentucky: 'ky',
+  louisiana: 'la',
+  maine: 'me',
+  maryland: 'md',
+  massachusetts: 'ma',
+  michigan: 'mi',
+  minnesota: 'mn',
+  mississippi: 'ms',
+  missouri: 'mo',
+  montana: 'mt',
+  nebraska: 'ne',
+  nevada: 'nv',
+  newhampshire: 'nh',
+  newjersey: 'nj',
+  newmexico: 'nm',
+  newyork: 'ny',
+  northcarolina: 'nc',
+  northdakota: 'nd',
+  ohio: 'oh',
+  oklahoma: 'ok',
+  oregon: 'or',
+  pennsylvania: 'pa',
+  rhodeisland: 'ri',
+  southcarolina: 'sc',
+  southdakota: 'sd',
+  tennessee: 'tn',
+  texas: 'tx',
+  utah: 'ut',
+  vermont: 'vt',
+  virginia: 'va',
+  washington: 'wa',
+  westvirginia: 'wv',
+  wisconsin: 'wi',
+  wyoming: 'wy',
+  districtofcolumbia: 'dc',
+}
+
+export function stateCode(value: string): string {
+  const t = value.toLowerCase().replace(/[^a-z]/g, '')
+  if (!t) return ''
+  if (t.length === 2) return t
+  return STATE_NAME_TO_CODE[t] ?? t
+}
+
 export function normalizeAddressText(value: string): string {
   return value
     .toLowerCase()
@@ -101,6 +162,22 @@ export function inspectionReportAddressMatches(input: InspectionAddressMatchInpu
   const expectedNumber = streetNumber(expectedStreet)
   const extractedNumber = streetNumber(input.extracted.street) || streetNumber(extractedRaw)
   if (expectedNumber && extractedNumber && expectedNumber !== extractedNumber) return false
+
+  const expectedStateKey = stateCode(input.expectedState)
+  const extractedStateKey = stateCode(input.extracted.state)
+  if (expectedStateKey && extractedStateKey && expectedStateKey !== extractedStateKey) return false
+
+  const expectedCity = normalizeAddressText(input.expectedCity)
+  if (
+    expectedCity.length >= 4 &&
+    extractedNorm.includes(expectedCity) &&
+    (!expectedStateKey ||
+      extractedStateKey === expectedStateKey ||
+      extractedNorm.includes(expectedStateKey)) &&
+    (!expectedNumber || extractedNorm.includes(expectedNumber))
+  ) {
+    return true
+  }
 
   const building = normalizeAddressText(input.expectedBuilding)
   if (building && building.length >= 4 && extractedNorm.includes(building)) return true

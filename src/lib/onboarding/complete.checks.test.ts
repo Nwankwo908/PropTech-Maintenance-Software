@@ -13,7 +13,7 @@ describe('canCompleteOnboarding', () => {
     expect(check).toEqual({ ok: true, missing: [] })
   })
 
-  it('lists missing company and contact', () => {
+  it('lists missing contact name', () => {
     const state = validOnboardingState({
       accountSetup: {
         companyName: '  ',
@@ -27,8 +27,26 @@ describe('canCompleteOnboarding', () => {
     })
     const check = canCompleteOnboarding(state, [], [], undefined, true)
     expect(check.ok).toBe(false)
-    expect(check.missing).toContain('Company name')
+    expect(check.missing).not.toContain('Company name')
     expect(check.missing).toContain('Contact name')
+  })
+
+  it('allows completion without a company name', () => {
+    const base = validOnboardingState()
+    const check = canCompleteOnboarding(
+      validOnboardingState({
+        accountSetup: {
+          ...base.accountSetup,
+          companyName: '',
+        },
+      }),
+      [],
+      [],
+      undefined,
+      true,
+    )
+    expect(check.ok).toBe(true)
+    expect(check.missing).toEqual([])
   })
 
   it('requires at least one property and unit', () => {

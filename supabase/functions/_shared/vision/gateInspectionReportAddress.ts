@@ -77,7 +77,9 @@ export async function assertInspectionReportMatchesProperty(input: {
 
   const expectedStreet = (location.streetAddress ?? "").trim()
   const expectedZip = (location.zipCode ?? "").trim()
-  if (!expectedStreet && !expectedZip) {
+  const expectedCity = (location.city ?? "").trim()
+  const expectedState = (location.state ?? "").trim()
+  if (!expectedStreet && !expectedZip && !(expectedCity && expectedState)) {
     throw new InspectionAddressGateError({
       code: "property_address_missing",
       message:

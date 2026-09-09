@@ -15,7 +15,7 @@ import {
 } from '@/api/inspectionAssetAssess'
 import { getActiveLandlordId } from '@/lib/activeLandlord'
 import { isLimitedAlpha1Landlord } from '@shared/landlordCapabilities'
-import { compressImageForVision } from '@/lib/imageCompress'
+import { prepareInspectionDocumentUpload } from '@/lib/prepareInspectionDocumentUpload'
 import {
   INSPECTION_SESSION_CHANGED_EVENT,
   hasPersistedInspectionData,
@@ -44,6 +44,7 @@ import {
   isInsuranceBinderScanProcessing,
   type InsuranceBinderScanStage,
 } from '@/lib/propertyInsuranceBinderExtract'
+import { notifyPropertyDetailsChanged } from '@/lib/propertyDetailsCompleteness'
 import { getErrorMessage } from '@/lib/errorMessage'
 
 const INSPECTION_ACCEPT = '.pdf,.png,.jpg,.jpeg,.webp,application/pdf,image/*'
@@ -1182,6 +1183,7 @@ export function PropertyDetailsPanel({
     (next: MaintenanceHistoryDocument[]) => {
       setHistoryDocs(next)
       saveMaintenanceHistoryDocuments(next, { building })
+      notifyPropertyDetailsChanged(building)
     },
     [building],
   )
@@ -1190,6 +1192,7 @@ export function PropertyDetailsPanel({
     (next: MaintenanceHistoryRecord[]) => {
       setHistoryApproved(next)
       saveApprovedMaintenanceRecords(next, { building })
+      notifyPropertyDetailsChanged(building)
     },
     [building],
   )
@@ -1229,7 +1232,7 @@ export function PropertyDetailsPanel({
     try {
       const session = await loadBuildingInspectionSession(building)
       for (const file of accepted) {
-        const compressed = await compressImageForVision(file)
+        const compressed = await prepareInspectionDocumentUpload(file)
         await uploadAndAnalyzeInspectionPhoto({
           assessmentId: session.id,
           blob: compressed.blob,
@@ -1253,6 +1256,7 @@ export function PropertyDetailsPanel({
       )
       notifyInspectionSessionChanged(building)
       notifyAssetRegistryChanged(building)
+      notifyPropertyDetailsChanged(building)
       setInspectionSaveMessage(
         accepted.length === 1 ? 'Inspection report saved' : `${accepted.length} inspection reports saved`,
       )
@@ -1290,6 +1294,7 @@ export function PropertyDetailsPanel({
       await removeInspectionPhoto(id)
       notifyInspectionSessionChanged(building)
       notifyAssetRegistryChanged(building)
+      notifyPropertyDetailsChanged(building)
     } catch (err) {
       setInspectionDocs(previous)
       setError(getErrorMessage(err, 'Could not remove that report.'))
@@ -1447,6 +1452,7 @@ export function PropertyDetailsPanel({
                     setAccess({ ...EMPTY_PROPERTY_ACCESS })
                     setAccessRowChecked(false)
                     setError(null)
+                    notifyPropertyDetailsChanged(building)
                   } catch (err) {
                     setError(
                       getErrorMessage(err, 'Could not save property access.'),
@@ -1484,6 +1490,7 @@ export function PropertyDetailsPanel({
                           setAccess({ ...EMPTY_PROPERTY_ACCESS })
                           setAccessRowChecked(false)
                           setError(null)
+                          notifyPropertyDetailsChanged(building)
                         } catch (err) {
                           setError(
                             getErrorMessage(err, 'Could not remove property access.'),
@@ -1539,6 +1546,7 @@ export function PropertyDetailsPanel({
             setInsurance({ ...EMPTY_INSURANCE })
             setInsuranceRowChecked(false)
             setError(null)
+            notifyPropertyDetailsChanged(building)
           }}
           onEditSaved={() => {
             if (!savedInsurance) return
@@ -1552,6 +1560,7 @@ export function PropertyDetailsPanel({
             setInsurance({ ...EMPTY_INSURANCE })
             setInsuranceRowChecked(false)
             setError(null)
+            notifyPropertyDetailsChanged(building)
           }}
           onBinderFiles={(files) => {
             const file = files?.[0]

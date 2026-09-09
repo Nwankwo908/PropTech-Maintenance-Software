@@ -12,7 +12,26 @@ const root = path.resolve(__dirname)
 export default defineConfig({
   root,
   envDir: root,
-  plugins: [react(), tailwindcss(), prerenderPublicPagesPlugin()],
+  plugins: [
+    react(),
+    tailwindcss(),
+    prerenderPublicPagesPlugin(),
+    {
+      name: 'dev-local-canonical',
+      transformIndexHtml(html, ctx) {
+        if (!ctx.server) return html
+        return html
+          .replace(
+            '<link rel="canonical" href="https://app.ulohome.io/" />',
+            '<link rel="canonical" href="/" />',
+          )
+          .replace(
+            '<meta property="og:url" content="https://app.ulohome.io/" />',
+            '<meta property="og:url" content="/" />',
+          )
+      },
+    },
+  ],
   resolve: {
     alias: {
       '@': path.resolve(root, 'src'),
@@ -25,6 +44,7 @@ export default defineConfig({
     host: true,
     allowedHosts: true,
     port: 5173,
+    strictPort: true,
   },
   preview: {
     host: true,

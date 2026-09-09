@@ -13,22 +13,26 @@ export function isPdfFile(fileName: string, contentType: string): boolean {
   return type === "application/pdf" || type === "application/x-pdf"
 }
 
-export async function pdfBytesToPlainText(bytes: Uint8Array): Promise<string> {
+export async function pdfBytesToPageTexts(bytes: Uint8Array): Promise<string[]> {
   try {
-    // Copy so PDF.js cannot detach the original ArrayBuffer (storage/retry downloads).
     const pdf = await getDocumentProxy(bytes.slice())
-    const extracted = await extractText(pdf, { mergePages: true })
-    const text = typeof extracted.text === "string"
+    const extracted = await extractText(pdf, { mergePages: false })
+    const pages = Array.isArray(extracted.text)
       ? extracted.text
-      : Array.isArray(extracted.text)
-        ? extracted.text.join("\n\n")
-        : ""
-    return text.replace(/\r\n/g, "\n").trim().slice(0, PDF_TEXT_LIMIT)
+      : typeof extracted.text === "string"
+        ? [extracted.text]
+        : []
+    return pages.map((page) => String(page ?? "").replace(/\r\n/g, "\n").trim())
   } catch (error) {
     console.warn(
-      "[onboarding-extract] pdf text",
+      "[onboarding-extract] pdf page text",
       error instanceof Error ? error.message : error,
     )
-    return ""
+    return []
   }
+}
+
+export async function pdfBytesToPlainText(bytes: Uint8Array): Promise<string> {
+  const pages = await pdfBytesToPageTexts(bytes)
+  return pages.join("\n\n").slice(0, PDF_TEXT_LIMIT)
 }

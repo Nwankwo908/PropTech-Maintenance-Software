@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { Link, useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom'
+import { AddPropertyModal, type AddPropertyFormPayload } from '@/components/AddPropertyModal'
+import { ThreeDotMenu } from '@/components/ThreeDotMenu'
 import {
   HEALTH_BADGE_LABELS,
   HEALTH_BADGE_STYLES,
@@ -14,7 +16,7 @@ import { PropertyVendorsList } from '@/components/PropertyVendorsList'
 import { PropertyWorkflowsList } from '@/components/PropertyWorkflowsList'
 import { PropertyDetailsPanel } from '@/components/PropertyDetailsPanel'
 import { PropertyHistoryPanel } from '@/components/PropertyHistoryPanel'
-import { PropertyZillowMap } from '@/components/PropertyZillowMap'
+import { PropertyHomeDataPanel } from '@/components/PropertyHomeDataPanel'
 import { isLimitedAlpha1Landlord } from '@shared/landlordCapabilities'
 import { getActiveLandlordId } from '@/lib/activeLandlord'
 import { fetchAdminWorkflowDashboard, isCancelledOnActiveTasks, type AdminWorkflowDashboardData } from '@/lib/adminWorkflows'
@@ -78,7 +80,7 @@ import {
   propertyDetailPath,
   resolvePropertyBuildingMeta,
 } from '@/lib/propertyRoutes'
-import { findPropertyById, findPropertyByName, listPropertiesForLandlord, zillowLookupAddressFromProperty, type PropertyRecord } from '@/lib/properties'
+import { findPropertyById, findPropertyByName, listPropertiesForLandlord, linkUnitsToProperty, updatePropertyDetails, zillowLookupAddressFromProperty, type PropertyRecord } from '@/lib/properties'
 import {
   buildPropertyUnitRows,
   type PropertyUnitResident,
@@ -319,6 +321,8 @@ export function AdminPropertyDetailDashboard() {
   const [vendors, setVendors] = useState<PropertyVendorRecord[]>([])
   const [recognizedSpend, setRecognizedSpend] = useState<RecognizedMaintenanceSpend[]>([])
   const [unitStatusError, setUnitStatusError] = useState<string | null>(null)
+  const [editPropertyOpen, setEditPropertyOpen] = useState(false)
+  const [editPropertyNotice, setEditPropertyNotice] = useState<string | null>(null)
   const loadSeqRef = useRef(0)
 
   useEffect(() => {
@@ -766,6 +770,73 @@ export function AdminPropertyDetailDashboard() {
       status: unit.status,
     }))
   }, [units, building, activeCanonicalProperty])
+
+  const editPropertyFormValues: AddPropertyFormPayload = useMemo(() => {
+    const unitCount = canonicalProperty?.unitCount ?? buildingUnits.length
+    return {
+      propertyName: canonicalProperty?.name ?? building ?? '',
+      propertyType: canonicalProperty?.propertyType ?? '',
+      streetAddress: canonicalProperty?.streetAddress ?? '',
+      city: canonicalProperty?.city ?? '',
+      state: canonicalProperty?.state ?? '',
+      zipCode: canonicalProperty?.zipCode ?? '',
+      totalUnits: unitCount > 0 ? String(unitCount) : '',
+      yearBuilt: canonicalProperty?.yearBuilt != null ? String(canonicalProperty.yearBuilt) : null,
+      amenities: [],
+    }
+  }, [canonicalProperty, building, buildingUnits.length])
+
+  async function saveEditedProperty(payload: AddPropertyFormPayload) {
+    if (!canonicalProperty) {
+      setEditPropertyNotice('This property cannot be edited yet.')
+      return
+    }
+    setEditPropertyNotice(null)
+    const yearRaw = payload.yearBuilt?.trim()
+    const yearBuilt =
+      yearRaw && Number.isFinite(Number(yearRaw)) && Number(yearRaw) >= 1800 && Number(yearRaw) <= 2100
+        ? Number(yearRaw)
+        : null
+    const unitCountRaw = Number.parseInt(payload.totalUnits.trim(), 10)
+    const unitCount = Number.isFinite(unitCountRaw) && unitCountRaw > 0 ? unitCountRaw : null
+
+    const updated = await updatePropertyDetails({
+      propertyId: canonicalProperty.id,
+      previousName: canonicalProperty.name,
+      name: payload.propertyName,
+      streetAddress: payload.streetAddress,
+      city: payload.city,
+      state: payload.state,
+      zipCode: payload.zipCode,
+      propertyType: payload.propertyType,
+      unitCount,
+      yearBuilt,
+    })
+    if (!updated.ok) {
+      setEditPropertyNotice(updated.error)
+      return
+    }
+
+    if (payload.propertyName.trim().toLowerCase() !== canonicalProperty.name.trim().toLowerCase()) {
+      await linkUnitsToProperty({
+        landlordId: getActiveLandlordId(),
+        propertyId: canonicalProperty.id,
+        buildingName: payload.propertyName,
+      })
+    }
+
+    if (yearBuilt != null) {
+      const { savePropertyBuildingProfile } = await import('@/lib/propertyBuildingProfile')
+      await savePropertyBuildingProfile(payload.propertyName, yearBuilt).catch(() => {
+        // best-effort; Property Details can set it later
+      })
+    }
+
+    setEditPropertyOpen(false)
+    const tab = activeTab === 'overview' ? undefined : activeTab
+    navigate(propertyDetailPath(updated.propertyId, tab), { replace: true })
+    await loadProperty()
+  }
 
   const buildingResidents = useMemo((): PropertyUnitResident[] => {
     if (!building) return []
@@ -1381,18 +1452,37 @@ export function AdminPropertyDetailDashboard() {
         <div className="mt-4 flex flex-wrap items-start justify-between gap-4">
           <div className="min-w-0">
             <h1 className="text-[24px] font-semibold leading-8 tracking-[0.0703px] text-[#0a0a0a]">
-              {limitedAlpha1 ? 'Overview' : `${building} Overview`}
+              Property Overview
             </h1>
             <p className="mt-1 text-[14px] leading-5 tracking-[-0.1504px] text-[#6a7282]">
               {subtitle}
             </p>
           </div>
-          {buildingHealth ? (
-            <span
-              className={`rounded-[4px] px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.06em] ${HEALTH_BADGE_STYLES[buildingHealth.status]}`}
-            >
-              {HEALTH_BADGE_LABELS[buildingHealth.status]}
-            </span>
+          {(buildingHealth && buildingHealth.status !== 'unknown') || canonicalProperty ? (
+            <div className="flex shrink-0 items-center gap-1.5">
+              {buildingHealth && buildingHealth.status !== 'unknown' ? (
+                <span
+                  className={`rounded-[4px] px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.06em] ${HEALTH_BADGE_STYLES[buildingHealth.status]}`}
+                >
+                  {HEALTH_BADGE_LABELS[buildingHealth.status]}
+                </span>
+              ) : null}
+              {canonicalProperty ? (
+                <ThreeDotMenu
+                  ariaLabel={`Actions for ${building}`}
+                  items={[
+                    {
+                      id: 'edit',
+                      label: 'Edit',
+                      onSelect: () => {
+                        setEditPropertyNotice(null)
+                        setEditPropertyOpen(true)
+                      },
+                    },
+                  ]}
+                />
+              ) : null}
+            </div>
           ) : null}
         </div>
       </div>
@@ -1536,7 +1626,9 @@ export function AdminPropertyDetailDashboard() {
       <div key={activeTab} className="property-tab-panel min-w-0">
       {activeTab === 'overview' ? (
         <div className="mt-6 flex flex-col gap-4">
-          <PropertyZillowMap
+          <PropertyHomeDataPanel
+            propertyId={canonicalProperty?.id ?? null}
+            landlordId={getActiveLandlordId()}
             address={
               (canonicalProperty
                 ? zillowLookupAddressFromProperty(canonicalProperty)
@@ -1624,6 +1716,19 @@ export function AdminPropertyDetailDashboard() {
           <p className="pointer-events-auto">{railActionError}</p>
         </div>
       ) : null}
+      <AddPropertyModal
+        open={editPropertyOpen}
+        mode="edit"
+        initialValues={editPropertyFormValues}
+        error={editPropertyNotice}
+        onClose={() => {
+          setEditPropertyOpen(false)
+          setEditPropertyNotice(null)
+        }}
+        onSubmit={(payload) => {
+          void saveEditedProperty(payload)
+        }}
+      />
       <ConversationMonitoringModal
         open={monitoringConversationId != null}
         conversationId={monitoringConversationId}

@@ -47,7 +47,6 @@ export function canCompleteOnboarding(
 ): { ok: boolean; missing: string[] } {
   const metrics = buildOnboardingReviewMetrics(state, vendors, residents, dbCounts)
   const missing: string[] = []
-  if (!state.accountSetup.companyName.trim()) missing.push('Company name')
   if (!state.accountSetup.contactName.trim()) missing.push('Contact name')
   if (metrics.properties === 0) missing.push('At least one property')
   if (metrics.units === 0) missing.push('At least one unit')

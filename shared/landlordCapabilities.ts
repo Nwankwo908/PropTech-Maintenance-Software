@@ -40,15 +40,67 @@ export function isLimitedAlpha1Landlord(landlordId: string | null | undefined): 
   return isLimitedAlphaLandlord(landlordId)
 }
 
-/** Production Twilio DID used as Limited Alpha 1's landlord_main line. */
+/** Production Twilio DID used as Limited Alpha 1 and 2's shared landlord_main line. */
 export const LIMITED_ALPHA_1_TWILIO_SMS_NUMBER = '+18775803356'
 
-/** Production Telnyx DID used as Limited Alpha 2's landlord_main line. */
-export const LIMITED_ALPHA_2_TELNYX_SMS_NUMBER = '+19734005760'
+/** Production Telnyx DID (Full Alpha / platform). Not used for Limited Alpha. */
+export const ULO_TELNYX_SMS_NUMBER = '+19734005760'
 
-/** Limited Alpha 1 sends and receives on Twilio; Limited Alpha 2 uses Telnyx. */
+function smsDigits(phone: string | null | undefined): string {
+  return (phone ?? '').replace(/\D/g, '')
+}
+
+/** E.164 for US 10/11 digit numbers. */
+export function normalizeUsSmsPhone(input: string | null | undefined): string | null {
+  const digits = smsDigits(input)
+  if (digits.length === 10) return `+1${digits}`
+  if (digits.length === 11 && digits.startsWith('1')) return `+${digits}`
+  if (digits.length > 11) return `+${digits}`
+  return null
+}
+
+/** Ulo landlord lines — never use these as a test-SMS destination. */
+export function isUloPlatformSmsNumber(phone: string | null | undefined): boolean {
+  const digits = smsDigits(phone)
+  if (!digits) return false
+  const platform = [LIMITED_ALPHA_1_TWILIO_SMS_NUMBER, ULO_TELNYX_SMS_NUMBER].map(smsDigits)
+  return platform.some((n) => digits === n || digits === n.slice(-10))
+}
+
+/** Shared Limited Alpha Twilio DID (+18775803356). */
+export function isLimitedAlphaTwilioSmsNumber(phone: string | null | undefined): boolean {
+  const digits = smsDigits(phone)
+  if (!digits) return false
+  const twilio = smsDigits(LIMITED_ALPHA_1_TWILIO_SMS_NUMBER)
+  return digits === twilio || digits === twilio.slice(-10)
+}
+
+/** First usable personal/account phone — never a Ulo platform DID. */
+export function pickSettingsTestSmsDestination(
+  phones: Array<string | null | undefined>,
+  options?: { exclude?: Array<string | null | undefined> },
+): string | null {
+  const excluded = new Set<string>()
+  for (const raw of options?.exclude ?? []) {
+    const normalized = normalizeUsSmsPhone(raw)
+    if (normalized) excluded.add(normalized)
+  }
+  for (const raw of phones) {
+    const normalized = normalizeUsSmsPhone(raw)
+    if (
+      normalized &&
+      !isUloPlatformSmsNumber(normalized) &&
+      !excluded.has(normalized)
+    ) {
+      return normalized
+    }
+  }
+  return null
+}
+
+/** Limited Alpha 1 and 2 send and receive on the shared Twilio DID. */
 export function landlordUsesTwilioSms(landlordId: string | null | undefined): boolean {
-  return (landlordId ?? '').trim() === LIMITED_ALPHA_1_LANDLORD_ID
+  return isLimitedAlphaLandlord(landlordId)
 }
 
 /** Stripe, ACH, Plaid, rent/invoice checkout, vendor payouts, and “pay online” links.

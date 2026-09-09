@@ -75,6 +75,9 @@ type AddPropertyModalProps = {
   open: boolean
   onClose: () => void
   onSubmit: (payload: AddPropertyFormPayload) => void
+  mode?: 'add' | 'edit'
+  initialValues?: AddPropertyFormPayload | null
+  error?: string | null
 }
 
 const sectionTitleClass =
@@ -83,7 +86,31 @@ const labelClass =
   'text-[14px] font-medium leading-5 tracking-[-0.1504px] text-neutral-variant'
 
 /** Add New Property rail — Figma 197:1233 (Property Tech Prototypes). */
-export function AddPropertyModal({ open, onClose, onSubmit }: AddPropertyModalProps) {
+function hydrateFromInitial(values: AddPropertyFormPayload | null | undefined) {
+  return {
+    propertyName: values?.propertyName ?? '',
+    propertyType: values?.propertyType ?? '',
+    streetAddress: values?.streetAddress ?? '',
+    city: values?.city ?? '',
+    state: values?.state ?? '',
+    zipCode: values?.zipCode ?? '',
+    totalUnits: values?.totalUnits ?? '',
+    yearBuilt: values?.yearBuilt?.trim() || '',
+    amenities: Object.fromEntries((values?.amenities ?? []).map((id) => [id, true])) as Record<
+      string,
+      boolean
+    >,
+  }
+}
+
+export function AddPropertyModal({
+  open,
+  onClose,
+  onSubmit,
+  mode = 'add',
+  initialValues = null,
+  error = null,
+}: AddPropertyModalProps) {
   const titleId = useId()
   const [propertyName, setPropertyName] = useState('')
   const [propertyType, setPropertyType] = useState('')
@@ -121,6 +148,17 @@ export function AddPropertyModal({ open, onClose, onSubmit }: AddPropertyModalPr
       setTotalUnits('')
       setYearBuilt('')
       setAmenities({})
+    } else {
+      const next = hydrateFromInitial(initialValues)
+      setPropertyName(next.propertyName)
+      setPropertyType(next.propertyType)
+      setStreetAddress(next.streetAddress)
+      setCity(next.city)
+      setState(next.state)
+      setZipCode(next.zipCode)
+      setTotalUnits(next.totalUnits)
+      setYearBuilt(next.yearBuilt)
+      setAmenities(next.amenities)
     }
   }
 
@@ -151,7 +189,7 @@ export function AddPropertyModal({ open, onClose, onSubmit }: AddPropertyModalPr
       yearBuilt: yearBuilt.trim() || null,
       amenities: selected,
     })
-    onClose()
+    if (mode !== 'edit') onClose()
   }
 
   if (!open) return null
@@ -175,10 +213,12 @@ export function AddPropertyModal({ open, onClose, onSubmit }: AddPropertyModalPr
                 id={titleId}
                 className="text-[18px] font-semibold leading-7 tracking-[-0.4395px] text-extended-3"
               >
-                Add New Property
+                {mode === 'edit' ? 'Edit Property' : 'Add New Property'}
               </h2>
               <p className="text-[14px] leading-5 tracking-[-0.1504px] text-neutral">
-                Register a new property to the system
+                {mode === 'edit'
+                  ? 'Update this property’s details'
+                  : 'Register a new property to the system'}
               </p>
             </div>
           </div>
@@ -336,6 +376,7 @@ export function AddPropertyModal({ open, onClose, onSubmit }: AddPropertyModalPr
               </div>
             </section>
 
+            {mode === 'edit' ? null : (
             <section className="flex flex-col gap-3">
               <h3 className={sectionTitleClass}>Amenities</h3>
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
@@ -357,10 +398,16 @@ export function AddPropertyModal({ open, onClose, onSubmit }: AddPropertyModalPr
                 ))}
               </div>
             </section>
+            )}
           </div>
         </div>
 
-        <footer className="flex shrink-0 flex-wrap items-stretch gap-3 border-t border-secondary bg-secondary px-6 py-[17px] sm:flex-nowrap">
+        <footer className="flex shrink-0 flex-col gap-2 border-t border-secondary bg-secondary px-6 py-[17px]">
+          {error ? (
+            <p className="text-[13px] text-[#b91c1c]" role="alert">
+              {error}
+            </p>
+          ) : null}
           <button
             type="button"
             disabled={!formValid}
@@ -368,7 +415,7 @@ export function AddPropertyModal({ open, onClose, onSubmit }: AddPropertyModalPr
             className="inline-flex h-9 min-w-0 flex-1 items-center justify-center gap-2 rounded-lg bg-transparent px-4 text-[14px] font-medium leading-5 tracking-[-0.1504px] text-[#186179] outline-none focus-visible:ring-2 focus-visible:ring-[#186179] focus-visible:ring-offset-2 focus-visible:ring-offset-secondary disabled:cursor-not-allowed disabled:opacity-50"
           >
          
-            Add Property
+            {mode === 'edit' ? 'Save' : 'Add Property'}
           </button>
          
         </footer>

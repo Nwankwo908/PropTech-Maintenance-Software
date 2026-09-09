@@ -94,9 +94,35 @@ export function toUserFriendlyMessage(raw: string, fallback: string): string {
     lower.includes('row-level security') ||
     lower.includes('rls') ||
     lower.includes('not authorized') ||
-    lower.includes('forbidden')
+    lower.includes('forbidden') ||
+    lower === 'unauthorized'
   ) {
     return "You don't have permission to do that."
+  }
+
+  if (
+    lower.includes('no sms phone') ||
+    lower.includes('no phone on file')
+  ) {
+    return 'Add a phone number in Organization, then send the test again.'
+  }
+
+  if (
+    lower.includes('10dlc') ||
+    lower.includes('10 dlc') ||
+    lower.includes('not 10dlc-registered')
+  ) {
+    return 'US carriers blocked this text because (973) 400-5760 is not registered for business SMS yet. Finish 10DLC registration for that Telnyx number, then send the test again.'
+  }
+
+  if (
+    lower.includes('telnyx') ||
+    lower.includes('10004') ||
+    lower.includes('invalid source') ||
+    (lower.includes('twilio') && lower.includes('send')) ||
+    lower.includes('has not delivered')
+  ) {
+    return "We sent the test, but the carrier has not delivered it yet. Check that the property team phone in Organization is the account holder’s number, then try again."
   }
 
   if (
@@ -173,12 +199,11 @@ export function toUserFriendlyMessage(raw: string, fallback: string): string {
   }
 
   if (
-    lower.includes('openai_api_key') ||
-    lower.includes('incorrect api key') ||
-    lower.includes('invalid_api_key') ||
-    (lower.includes('document scanning') && lower.includes('not configured'))
+    lower.includes('gpt-4o vision failed') ||
+    lower.includes('gpt-4o document extract') ||
+    (lower.includes('inspection report') && (lower.includes('couldn’t read') || lower.includes("couldn't read")))
   ) {
-    return "Document scanning isn't set up yet. Add a valid OpenAI key to Supabase Edge secrets, then try again."
+    return 'We couldn’t read this inspection report. Export the first page as a JPG and try again.'
   }
 
   if (

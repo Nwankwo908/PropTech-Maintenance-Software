@@ -17,7 +17,7 @@ import { InspectionCaptureChooser } from '@/components/InspectionCaptureChooser'
 import { InspectionPhoneCaptureModal } from '@/components/InspectionPhoneCaptureModal'
 import type { InspectionCapturePhoto } from '@/api/inspectionCapture'
 import { notifyAssetRegistryChanged } from '@/lib/assetRegistry'
-import { compressImageForVision } from '@/lib/imageCompress'
+import { prepareInspectionDocumentUpload } from '@/lib/prepareInspectionDocumentUpload'
 import { getErrorMessage } from '@/lib/errorMessage'
 import { visionResultFromSavedInspectionAsset } from '@/lib/inspectionAssessmentTable'
 import {
@@ -242,7 +242,7 @@ export function ApplianceInspectionUploader({
               p.id === optimisticId ? { ...p, status: 'analyzing' as const } : p,
             ),
           )
-          const compressed = await compressImageForVision(job.file)
+          const compressed = await prepareInspectionDocumentUpload(job.file)
           const uploaded = await uploadAndAnalyzeInspectionPhoto({
             assessmentId: sessionId,
             blob: compressed.blob,

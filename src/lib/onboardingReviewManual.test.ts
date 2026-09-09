@@ -3,7 +3,40 @@ import {
   emptyReviewManualAccount,
   mergeReviewManualAccount,
   usableOnboardingCompanyName,
+  validateReviewManualAccount,
 } from './onboardingReviewManual'
+
+describe('validateReviewManualAccount', () => {
+  it('allows a blank company name when contact name and SMS consent are set', () => {
+    expect(
+      validateReviewManualAccount({
+        companyName: '',
+        contactName: 'Alex Rivera',
+        email: '',
+        phone: '',
+        backupContactName: '',
+        backupContactPhone: '',
+        backupContactEmail: '',
+        smsConsentAcceptedAt: '2026-09-09T12:00:00.000Z',
+      }),
+    ).toEqual({ ok: true })
+  })
+
+  it('still requires a contact name', () => {
+    expect(
+      validateReviewManualAccount({
+        companyName: 'Acme',
+        contactName: '',
+        email: '',
+        phone: '',
+        backupContactName: '',
+        backupContactPhone: '',
+        backupContactEmail: '',
+        smsConsentAcceptedAt: '2026-09-09T12:00:00.000Z',
+      }),
+    ).toEqual({ ok: false, error: 'Enter your name.' })
+  })
+})
 
 describe('usableOnboardingCompanyName', () => {
   it('drops system placeholders so extraction can fill company name', () => {

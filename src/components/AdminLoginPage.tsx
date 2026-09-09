@@ -12,6 +12,16 @@ import {
 } from '@/lib/adminAuth'
 import { supabase } from '@/lib/supabase'
 import { getErrorMessage } from '@/lib/errorMessage'
+import {
+  beginGoogleIdTokenSignIn,
+  googleIdTokenAuthErrorMessage,
+  googleOAuthClientId,
+  requestGoogleIdTokenViaGsi,
+  shouldUseBrandedGoogleIdToken,
+  supabaseGoogleOAuthCallbackUri,
+  takeStoredGoogleOAuthNonce,
+  waitForGoogleOAuthPopupResult,
+} from '@/lib/googleIdentitySignIn'
 
 /** Only allow same-app admin paths (blocks open redirects). */
 function safeAdminNextPath(raw: string | null): string {
@@ -157,10 +167,53 @@ export function AdminLoginPage() {
     }
     setSubmitting(true)
     try {
+      const branded =
+        !import.meta.env.DEV &&
+        Boolean(googleOAuthClientId()) &&
+        shouldUseBrandedGoogleIdToken(window.location.origin)
+      if (branded) {
+        let idToken: string | null = null
+        let gsiNonce: string | null = null
+        try {
+          idToken = await requestGoogleIdTokenViaGsi()
+          gsiNonce = takeStoredGoogleOAuthNonce()
+        } catch {
+          takeStoredGoogleOAuthNonce()
+          idToken = null
+        }
+        if (!idToken) {
+          const started = beginGoogleIdTokenSignIn()
+          if (started && started.mode === 'redirect') return
+          if (started && started.mode === 'popup') {
+            const result = await waitForGoogleOAuthPopupResult(started.popup)
+            if (result.error || !result.idToken) {
+              throw new Error('Google sign-in did not finish.')
+            }
+            idToken = result.idToken
+          }
+        }
+        if (idToken) {
+          const { data, error: tokenError } = await supabase.auth.signInWithIdToken({
+            provider: 'google',
+            token: idToken,
+            ...(gsiNonce ? { nonce: gsiNonce } : {}),
+          })
+          if (tokenError || !data.session) {
+            throw tokenError ?? new Error('Google sign-in did not finish.')
+          }
+          if (!(await isAdminSessionAllowed(data.session))) {
+            await signOutAdmin()
+            navigate('/admin/login?error=not_authorized', { replace: true })
+            return
+          }
+          navigate(afterLoginPath, { replace: true })
+          return
+        }
+      }
       await signInAdminWithOAuth('google')
       window.setTimeout(() => setSubmitting(false), 12_000)
     } catch (err) {
-      setError(getErrorMessage(err, 'Sign in failed'))
+      setError(googleIdTokenAuthErrorMessage(err) ?? getErrorMessage(err, 'Sign in failed'))
       setSubmitting(false)
     }
   }
@@ -269,6 +322,15 @@ export function AdminLoginPage() {
                     <IconGoogle />
                     Continue with Google
                   </button>
+                  {import.meta.env.DEV && supabaseGoogleOAuthCallbackUri() ? (
+                    <p className="text-[12px] leading-4 text-[#6a7282]">
+                      If Google says this app’s request is invalid, add this exact Authorized
+                      redirect URI on the Google Cloud client used in Supabase Auth → Google:{' '}
+                      <span className="break-all font-mono text-[11px] text-[#364153]">
+                        {supabaseGoogleOAuthCallbackUri()}
+                      </span>
+                    </p>
+                  ) : null}
                 </form>
               ) : (
                 <form className="mt-8 flex flex-col gap-4" onSubmit={onVerifyOtp} noValidate>

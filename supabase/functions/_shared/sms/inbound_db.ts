@@ -191,6 +191,60 @@ export async function findSmsIdentitiesByPhone(
   return (data as SmsIdentityRow[] | null) ?? []
 }
 
+/** When Limited Alpha 1 and 2 share a Twilio DID, route inbound by sender, not To-number owner. */
+export async function resolveLandlordIdForSharedTwilioInbound(
+  supabase: SupabaseClient,
+  fromNumber: string,
+  fallbackLandlordId: string,
+): Promise<string> {
+  const variants = phoneLookupVariants(fromNumber)
+  if (variants.length === 0) return fallbackLandlordId
+
+  const { data: identities, error } = await supabase
+    .from("sms_identities")
+    .select("landlord_id")
+    .in("phone_number", variants)
+    .not("landlord_id", "is", null)
+    .limit(8)
+
+  if (error) {
+    console.error("[sms-inbound] shared Twilio identity lookup", error.message)
+    return fallbackLandlordId
+  }
+
+  const unique = [
+    ...new Set(
+      (identities ?? [])
+        .map((row) => String(row.landlord_id ?? "").trim())
+        .filter(Boolean),
+    ),
+  ]
+  if (unique.length === 1) return unique[0]
+
+  const { data: users, error: usersErr } = await supabase
+    .from("users")
+    .select("landlord_id")
+    .in("phone", variants)
+    .not("landlord_id", "is", null)
+    .limit(8)
+
+  if (usersErr) {
+    console.error("[sms-inbound] shared Twilio user lookup", usersErr.message)
+    return fallbackLandlordId
+  }
+
+  const userIds = [
+    ...new Set(
+      (users ?? [])
+        .map((row) => String(row.landlord_id ?? "").trim())
+        .filter(Boolean),
+    ),
+  ]
+  if (userIds.length === 1) return userIds[0]
+
+  return fallbackLandlordId
+}
+
 function pickCanonicalSmsIdentity(
   rows: SmsIdentityRow[],
   e164: string,

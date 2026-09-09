@@ -4,6 +4,7 @@ import { useSessionAutoRefresh } from './hooks/useSessionAutoRefresh'
 import { supabase } from './lib/supabase'
 import { AnalyticsRoot } from './components/AnalyticsRoot'
 import { ReferralLandingRedirect } from './components/ReferralLandingRedirect'
+import { StayOnDevOrigin } from './components/StayOnDevOrigin'
 import { LandingPage } from './components/landing/LandingPage'
 import { DemoPageRedirect } from './components/DemoPageRedirect'
 import { TermsOfServicePage } from './components/legal/TermsOfServicePage'
@@ -110,6 +111,7 @@ export default function App() {
 
   return (
     <BrowserRouter>
+      <StayOnDevOrigin />
       <AnalyticsRoot />
       <ReferralLandingRedirect />
       <Suspense fallback={null}>

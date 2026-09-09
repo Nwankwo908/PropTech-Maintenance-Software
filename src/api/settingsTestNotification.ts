@@ -25,6 +25,8 @@ export async function sendSettingsTestNotification(params: {
   landlordId?: string
   /** Address shown in Settings — used for test email instead of the login mailbox. */
   toEmail?: string
+  /** Phone shown in Settings — used for test SMS instead of ops-only lookup. */
+  toPhone?: string
 }): Promise<SettingsTestNotificationResult> {
   const url = functionUrl()
   const secret = getAdminEdgeSecret()
@@ -45,14 +47,24 @@ export async function sendSettingsTestNotification(params: {
         landlordId,
         channel: params.channel,
         toEmail: params.toEmail?.trim() || undefined,
+        toPhone: params.toPhone?.trim() || undefined,
       }),
     })
-    const payload = (await res.json()) as { ok?: boolean; message?: string; error?: string }
+    const raw = await res.text()
+    let payload: { ok?: boolean; message?: string; error?: string } = {}
+    try {
+      payload = raw ? (JSON.parse(raw) as { ok?: boolean; message?: string; error?: string }) : {}
+    } catch {
+      payload = { error: raw || `Request failed (${res.status})` }
+    }
     if (!res.ok || payload.ok === false) {
       return {
         ok: false,
         channel: params.channel,
-        error: payload.error ?? `Request failed (${res.status})`,
+        error: getErrorMessage(
+          payload.error ?? `Request failed (${res.status})`,
+          'Could not send the test notification.',
+        ),
       }
     }
     return {

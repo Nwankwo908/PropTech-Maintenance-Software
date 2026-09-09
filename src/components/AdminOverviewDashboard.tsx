@@ -39,9 +39,8 @@ import {
   SETUP_SUCCESS_ITEMS,
   shouldShowSetupSuccessCard,
 } from '@/lib/setupSuccessChecklist'
-import { isAnyPropertyDetailsComplete } from '@/lib/propertyDetailsCompleteness'
+import { isAnyPropertyDetailsComplete, PROPERTY_DETAILS_CHANGED_EVENTS } from '@/lib/propertyDetailsCompleteness'
 import { setupCheckboxGuideLinkState } from '@/lib/setupSuccessGuide'
-import { ASSET_REGISTRY_CHANGED_EVENT } from '@/lib/assetRegistry'
 import { landlordHasPayments } from '@shared/landlordCapabilities'
 import { cityStateZipForBuildingName, listPropertiesForLandlord, type PropertyRecord } from '@/lib/properties'
 import {
@@ -1503,12 +1502,14 @@ export function AdminOverviewDashboard() {
       })
     }
     refresh()
-    window.addEventListener(ASSET_REGISTRY_CHANGED_EVENT, refresh)
-    window.addEventListener('storage', refresh)
+    for (const eventName of PROPERTY_DETAILS_CHANGED_EVENTS) {
+      window.addEventListener(eventName, refresh)
+    }
     return () => {
       cancelled = true
-      window.removeEventListener(ASSET_REGISTRY_CHANGED_EVENT, refresh)
-      window.removeEventListener('storage', refresh)
+      for (const eventName of PROPERTY_DETAILS_CHANGED_EVENTS) {
+        window.removeEventListener(eventName, refresh)
+      }
     }
   }, [canonicalProperties, location.pathname])
 
@@ -3296,8 +3297,8 @@ export function AdminOverviewDashboard() {
           buildings={overviewBuildingHealth}
           buildingCount={healthReport.buildings.length}
           totalUnits={countDistinctPortfolioUnits(units)}
-          onBuildingOpen={(building) =>
-            navigate(propertyDetailPathForBuilding(building, propertyIdByBuilding))
+          buildingHref={(building) =>
+            propertyDetailPathForBuilding(building, propertyIdByBuilding)
           }
           headerAction={
             <Link to="/admin/properties" className="admin-quiet-text-action sa-link">

@@ -1,5 +1,6 @@
-import { Link } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import type { ReactNode, Ref } from 'react'
+import { inAppRouterPath } from '@/lib/inAppRouterPath'
 import { TableCheckbox } from '@/components/TableCheckbox'
 import {
   resolvePropertyHealthPendingMessage,
@@ -59,11 +60,18 @@ function BuildingIcon() {
   )
 }
 
-function ClockIcon() {
+function WorkOrderIcon() {
   return (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} className="size-3.5">
-      <circle cx="12" cy="12" r="9" />
-      <path d="M12 7v5l3 2" strokeLinecap="round" strokeLinejoin="round" />
+    <svg
+      viewBox="3 2 14 17"
+      fill="currentColor"
+      className="size-3.5 shrink-0"
+      aria-hidden
+    >
+      <path
+        fillRule="evenodd"
+        d="M14,3H11.97748a2,2,0,0,0-4,0H6A2.002,2.002,0,0,0,4,5V16a2.002,2.002,0,0,0,2,2h8a2.002,2.002,0,0,0,2-2V5A2.002,2.002,0,0,0,14,3Zm1,13a1.0013,1.0013,0,0,1-1,1H6a1.0013,1.0013,0,0,1-1-1V5A1.0013,1.0013,0,0,1,6,4,1.00036,1.00036,0,0,0,7,5h6a1.00036,1.00036,0,0,0,1-1,1.0013,1.0013,0,0,1,1,1Zm-1.5-4v-.5a3.5,3.5,0,0,0-7,0V12a.5.5,0,0,0,0,1h7a.5.5,0,0,0,0-1Zm-6,0v-.5a2.48947,2.48947,0,0,1,1-1.98724V10a.5.5,0,0,0,1,0V9.0506a2.49566,2.49566,0,0,1,1,0V10a.5.5,0,0,0,1,0V9.51276A2.48947,2.48947,0,0,1,12.5,11.5V12Z"
+      />
     </svg>
   )
 }
@@ -73,14 +81,6 @@ function UsersIcon() {
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} className="size-3.5">
       <circle cx="9" cy="8" r="3" />
       <path d="M3.5 20a5.5 5.5 0 0 1 11 0M16 6.5a3 3 0 0 1 0 5.8M18 20a5 5 0 0 0-3-4.6" strokeLinecap="round" strokeLinejoin="round" />
-    </svg>
-  )
-}
-
-function StarIcon() {
-  return (
-    <svg viewBox="0 0 24 24" fill="currentColor" className="size-3.5">
-      <path d="M12 17.3l-6.18 3.7 1.64-7.03L2 9.24l7.19-.61L12 2l2.81 6.63 7.19.61-5.46 4.73L18.18 21z" />
     </svg>
   )
 }
@@ -128,6 +128,10 @@ type PropertyHealthBuildingGridProps = {
     deleteSelectedSaving?: boolean
   }
   onBuildingOpen?: (building: string) => void
+  /** Same-origin property detail path (React Router). Prefer this over navigating in onBuildingOpen. */
+  buildingHref?: (building: string) => string
+  /** Optional React Router location state (e.g. setup-success coachmark). */
+  buildingLinkState?: (building: string) => unknown
   /** Highlight the first property card (Get set up for success coachmark). */
   firstCardRef?: Ref<HTMLElement | null>
 }
@@ -169,8 +173,11 @@ export function PropertyHealthBuildingGrid({
   monthlySpendByBuilding,
   selection,
   onBuildingOpen,
+  buildingHref,
+  buildingLinkState,
   firstCardRef,
 }: PropertyHealthBuildingGridProps) {
+  const navigate = useNavigate()
   const selectedCount = selection?.selectedBuildings.size ?? 0
   const propertyCount = buildingCount ?? buildings.length
 
@@ -181,7 +188,7 @@ export function PropertyHealthBuildingGrid({
       <div className="flex flex-nowrap items-center justify-between gap-4 border-b border-[#e5e7eb] px-6 py-4">
         <div className="min-w-0 shrink">
           <h2 className="text-[16px] font-semibold leading-6 text-[#0a0a0a]">
-            Property Health
+            My Properties
           </h2>
           <p className="text-[12px] leading-4 text-[#6a7282]">
             {selectedCount > 0 ? (
@@ -254,7 +261,7 @@ export function PropertyHealthBuildingGrid({
               </button>
             ) : (
               <Link
-                to={emptyCtaHref}
+                to={inAppRouterPath(emptyCtaHref)}
                 className="sa-press mt-3 inline-block rounded-[10px] bg-[#101828] px-4 py-2 text-[13px] font-medium text-white hover:bg-[#1e2939]"
               >
                 {emptyCtaLabel}
@@ -264,45 +271,23 @@ export function PropertyHealthBuildingGrid({
         ) : (
           buildings.map((b, index) => {
             const selected = selection?.selectedBuildings.has(b.building) ?? false
-            return (
-            <div
-              key={b.building}
-              ref={
-                index === 0
-                  ? (node) => {
-                      if (typeof firstCardRef === 'function') firstCardRef(node)
-                      else if (firstCardRef) firstCardRef.current = node
-                    }
-                  : undefined
-              }
-              role={onBuildingOpen ? 'button' : undefined}
-              tabIndex={onBuildingOpen ? 0 : undefined}
-              onClick={
-                onBuildingOpen
-                  ? () => {
-                      onBuildingOpen(b.building)
-                    }
-                  : undefined
-              }
-              onKeyDown={
-                onBuildingOpen
-                  ? (event) => {
-                      if (event.key === 'Enter' || event.key === ' ') {
-                        event.preventDefault()
-                        onBuildingOpen(b.building)
-                      }
-                    }
-                  : undefined
-              }
-              style={{ animationDelay: `${Math.min(index, 8) * 40}ms` }}
-              className={[
-                'sa-enter-scale sa-card group flex flex-col gap-3 rounded-[10px] border bg-white p-4',
-                onBuildingOpen ? 'cursor-pointer' : '',
-                selected
-                  ? 'border-[#0030b5]/35 ring-1 ring-[#0030b5]/15 hover:border-[#0030b5]/50 hover:shadow-[0px_4px_12px_rgba(0,48,181,0.08)]'
-                  : 'border-[#e5e7eb] hover:border-[#101828]/20 hover:bg-[#fafafa] hover:shadow-[0px_4px_12px_rgba(0,0,0,0.06)]',
-              ].join(' ')}
-            >
+            const href = buildingHref ? inAppRouterPath(buildingHref(b.building)) : null
+            const cardClassName = [
+              'sa-enter-scale sa-card group flex flex-col gap-3 rounded-[10px] border bg-white p-4 text-inherit no-underline',
+              href || onBuildingOpen ? 'cursor-pointer' : '',
+              selected
+                ? 'border-[#0030b5]/35 ring-1 ring-[#0030b5]/15 hover:border-[#0030b5]/50 hover:shadow-[0px_4px_12px_rgba(0,48,181,0.08)]'
+                : 'border-[#e5e7eb] hover:border-[#101828]/20 hover:bg-[#fafafa] hover:shadow-[0px_4px_12px_rgba(0,0,0,0.06)]',
+            ].join(' ')
+            const cardRef =
+              index === 0
+                ? (node: HTMLElement | null) => {
+                    if (typeof firstCardRef === 'function') firstCardRef(node)
+                    else if (firstCardRef) firstCardRef.current = node
+                  }
+                : undefined
+            const cardBody = (
+              <>
               <div className="flex items-start justify-between gap-2">
                 <div className="flex min-w-0 items-center gap-2.5">
                   <span className="flex size-9 shrink-0 items-center justify-center rounded-[8px] border border-[#e5e7eb] text-[#364153] transition-[border-color,background-color] duration-150 group-hover:border-[#101828]/15 group-hover:bg-[#f9fafb]">
@@ -320,6 +305,11 @@ export function PropertyHealthBuildingGrid({
                 <div className="flex shrink-0 items-start gap-2">
                   <span
                     className={`rounded-[4px] px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-[0.06em] ${HEALTH_BADGE_STYLES[b.status]}`}
+                    title={
+                      b.status === 'unknown'
+                        ? resolvePropertyHealthPendingMessage(b.pendingReason)
+                        : undefined
+                    }
                   >
                     {HEALTH_BADGE_LABELS[b.status]}
                   </span>
@@ -373,9 +363,11 @@ export function PropertyHealthBuildingGrid({
                         <span className="text-[12px] font-normal text-[#6a7282]"> / 100 health</span>
                       ) : null}
                     </p>
-                    <p className="text-[12px] leading-4 text-[#6a7282]">
-                      {resolvePropertyHealthPendingMessage(b.pendingReason)}
-                    </p>
+                    {b.status !== 'unknown' ? (
+                      <p className="text-[12px] leading-4 text-[#6a7282]">
+                        {resolvePropertyHealthPendingMessage(b.pendingReason)}
+                      </p>
+                    ) : null}
                     <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-[#f3f4f6]">
                       <div className="h-full w-0 rounded-full bg-[#d1d5dc]" />
                     </div>
@@ -384,7 +376,7 @@ export function PropertyHealthBuildingGrid({
               </div>
               <div className="flex flex-wrap gap-2 border-t border-[#f3f4f6] pt-3">
                 <span className={METRIC_CHIP}>
-                  <ClockIcon />
+                  <WorkOrderIcon />
                   <span className="font-semibold text-[#0a0a0a]">{b.openTickets}</span> work orders
                 </span>
                 <span className={METRIC_CHIP}>
@@ -394,30 +386,61 @@ export function PropertyHealthBuildingGrid({
                   </span>{' '}
                   occ.
                 </span>
-                <span className={METRIC_CHIP}>
-                  <span className={b.residentRating != null ? 'text-[#f59e0b]' : 'text-[#d1d5db]'}>
-                    <StarIcon />
-                  </span>
-                  {b.residentRating != null ? (
-                    <>
-                      <span className="font-semibold text-[#0a0a0a] tabular-nums">
-                        {b.residentRating.toFixed(1)}
-                      </span>
-                      /5.0 · {b.feedbackCount} review{b.feedbackCount === 1 ? '' : 's'}
-                    </>
-                  ) : (
-                    <span>No resident feedback yet</span>
-                  )}
-                </span>
                 {showMonthlySpend && formatSpend && monthlySpendByBuilding ? (
                   <span className={METRIC_CHIP}>
-                    <span>MTD maintenance</span>
+                    <span>Monthly Cost</span>
                     <span className="font-semibold text-[#0a0a0a] tabular-nums">
                       {formatSpend(monthlySpendByBuilding.get(b.building) ?? 0)}
                     </span>
                   </span>
                 ) : null}
               </div>
+            </>
+            )
+            if (href) {
+              return (
+                <button
+                  key={b.building}
+                  type="button"
+                  ref={cardRef}
+                  onClick={() => {
+                    onBuildingOpen?.(b.building)
+                    navigate(inAppRouterPath(href), { state: buildingLinkState?.(b.building) })
+                  }}
+                  style={{ animationDelay: `${Math.min(index, 8) * 40}ms` }}
+                  className={`${cardClassName} w-full text-left appearance-none`}
+                >
+                  {cardBody}
+                </button>
+              )
+            }
+            return (
+            <div
+              key={b.building}
+              ref={cardRef}
+              role={onBuildingOpen ? 'button' : undefined}
+              tabIndex={onBuildingOpen ? 0 : undefined}
+              onClick={
+                onBuildingOpen
+                  ? () => {
+                      onBuildingOpen(b.building)
+                    }
+                  : undefined
+              }
+              onKeyDown={
+                onBuildingOpen
+                  ? (event) => {
+                      if (event.key === 'Enter' || event.key === ' ') {
+                        event.preventDefault()
+                        onBuildingOpen(b.building)
+                      }
+                    }
+                  : undefined
+              }
+              style={{ animationDelay: `${Math.min(index, 8) * 40}ms` }}
+              className={cardClassName}
+            >
+              {cardBody}
             </div>
             )
           })

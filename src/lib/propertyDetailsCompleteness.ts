@@ -5,7 +5,7 @@ import {
   loadApprovedMaintenanceRecords,
   loadMaintenanceHistoryDocuments,
 } from '@/lib/maintenanceHistoryImport'
-import { loadPropertyAccess } from '@/lib/propertyAccess'
+import { loadPropertyAccess, propertyAccessHasContent } from '@/lib/propertyAccess'
 import { supabase } from '@/lib/supabase'
 
 function buildingKey(building: string): string {
@@ -50,7 +50,6 @@ async function hasStoredInspectionWork(building: string): Promise<boolean> {
     .from('property_inspection_photos')
     .select('id', { count: 'exact', head: true })
     .in('assessment_id', ids)
-    .not('storage_path', 'is', null)
   return (photoCount ?? 0) > 0
 }
 
@@ -116,6 +115,30 @@ export function propertyDetailsSectionsComplete(sections: {
   )
 }
 
+/** Setup-success: any saved Property Details module on that building counts. */
+export function propertyDetailsHasAnySection(sections: {
+  inspection: boolean
+  access: boolean
+  insurance: boolean
+  history: boolean
+}): boolean {
+  return sections.inspection || sections.access || sections.insurance || sections.history
+}
+
+export const PROPERTY_DETAILS_CHANGED_EVENT = 'ulo:property-details-changed'
+
+export function notifyPropertyDetailsChanged(building?: string): void {
+  try {
+    window.dispatchEvent(
+      new CustomEvent(PROPERTY_DETAILS_CHANGED_EVENT, {
+        detail: { building: building?.trim() || '' },
+      }),
+    )
+  } catch {
+    // non-browser
+  }
+}
+
 export async function isPropertyDetailsComplete(
   building: string,
   _initialYearBuilt?: number | null,
@@ -130,9 +153,9 @@ export async function isPropertyDetailsComplete(
   const insurance = loadInsuranceHasContent(name)
 
   const access = await loadPropertyAccess(name)
-  const accessFilled = Boolean(access.updatedAt)
+  const accessFilled = Boolean(access.updatedAt) || propertyAccessHasContent(access)
 
-  return propertyDetailsSectionsComplete({
+  return propertyDetailsHasAnySection({
     inspection,
     access: accessFilled,
     insurance,
@@ -140,7 +163,7 @@ export async function isPropertyDetailsComplete(
   })
 }
 
-/** True when at least one named property has all Property Details sections filled. */
+/** True when at least one named property has any Property Details section filled. */
 export async function isAnyPropertyDetailsComplete(
   properties: { name: string; yearBuilt?: number | null }[],
 ): Promise<boolean> {
@@ -175,6 +198,7 @@ export async function areAllPropertiesDetailsComplete(
 }
 
 export const PROPERTY_DETAILS_CHANGED_EVENTS = [
+  PROPERTY_DETAILS_CHANGED_EVENT,
   ASSET_REGISTRY_CHANGED_EVENT,
   INSPECTION_SESSION_CHANGED_EVENT,
   'storage',

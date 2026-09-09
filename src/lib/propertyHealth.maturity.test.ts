@@ -3,7 +3,7 @@ import {
   buildPropertyHealthReport,
   hasPropertyHealthOperationalSignal,
   PROPERTY_HEALTH_OPS_MATURITY_DAYS,
-  PROPERTY_HEALTH_UNKNOWN_CONDITION_CAPTION,
+  PROPERTY_HEALTH_KPI_CAPTION,
   resolvePropertyHealthKpiCaption,
   resolvePropertyHealthKpiValue,
   shouldShowPropertyHealthScore,
@@ -90,7 +90,7 @@ describe('property activation vs health insights', () => {
       '— / 100',
     )
     expect(resolvePropertyHealthKpiCaption(report.portfolio)).toBe(
-      PROPERTY_HEALTH_UNKNOWN_CONDITION_CAPTION,
+      PROPERTY_HEALTH_KPI_CAPTION,
     )
     expect(report.buildings[0]?.components.find((c) => c.key === 'maintenance')?.score).toBe(100)
     expect(report.buildings[0]?.components.find((c) => c.key === 'risk')?.score).toBe(100)

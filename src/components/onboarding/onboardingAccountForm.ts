@@ -41,8 +41,8 @@ export async function saveOnboardingAccountSetupStep(
     goTo,
   } = input
 
-  if (!accountSetupInput.companyName.trim() || !accountSetupInput.contactName.trim()) {
-    setError('Enter your company and contact name.')
+  if (!accountSetupInput.contactName.trim()) {
+    setError('Enter your name.')
     return
   }
   if (!smsConsentAccepted && !accountSetupInput.smsConsentAcceptedAt) {

@@ -7,6 +7,7 @@ declare global {
     google?: typeof google
     __uloGoogleMapsPromise?: Promise<typeof google>
     __uloGoogleMapsReady?: () => void
+    gm_authFailure?: () => void
   }
 }
 
@@ -74,6 +75,12 @@ export function loadGoogleMapsApi(apiKey: string): Promise<typeof google> {
       cleanup()
       window.__uloGoogleMapsPromise = undefined
       reject(new Error(message))
+    }
+
+    const previousAuth = window.gm_authFailure
+    window.gm_authFailure = () => {
+      finishErr('Google Maps authentication failed')
+      if (typeof previousAuth === 'function') previousAuth()
     }
 
     window.__uloGoogleMapsReady = () => finishOk()

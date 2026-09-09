@@ -1,7 +1,11 @@
 /**
- * Property insurance binder extract — fills Insurance form fields after upload.
- * Deterministic mock until real document AI is wired (same pattern as COI scanner).
+ * Property Details insurance upload — classify then extract via the same
+ * onboarding insurance pipeline (COI vs dwelling / homeowners / commercial).
  */
+import { extractOnboardingDocument } from '@/api/onboardingDocumentExtract'
+import type { PortfolioDocumentExtractPayload } from '@/api/onboardingDocumentExtract'
+import { extractPdfPageTexts, renderPdfFileToJpegDataUrls } from '@/lib/pdfPageImagesBrowser'
+import { findRelevantInsurancePages } from '@shared/onboarding/typedDocumentExtract/insuranceClassify'
 
 export type InsuranceBinderScanStage =
   | 'idle'
@@ -34,87 +38,119 @@ export type InsuranceBinderScanResult = {
   confidence: number
 }
 
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => {
-    window.setTimeout(resolve, ms)
-  })
+const INLINE_BYTES_LIMIT = 4 * 1024 * 1024
+
+function asText(value: unknown): string {
+  return typeof value === 'string' ? value.trim() : ''
 }
 
-function hashFileSeed(fileName: string, fileSize: number): number {
-  let hash = fileSize
-  for (let i = 0; i < fileName.length; i += 1) {
-    hash = (hash + fileName.charCodeAt(i) * (i + 7)) | 0
-  }
-  return Math.abs(hash)
-}
-
-function isoDaysFromNow(days: number): string {
-  const d = new Date()
-  d.setHours(12, 0, 0, 0)
-  d.setDate(d.getDate() + days)
-  return d.toISOString().slice(0, 10)
-}
-
-const CARRIERS = [
-  'State Farm',
-  'Travelers',
-  'Liberty Mutual',
-  'Nationwide',
-  'Allstate',
-  'Hartford',
-  'Chubb',
-]
-
-const CONTACTS = [
-  'Jordan Lee',
-  'Sam Rivera',
-  'Alex Morgan',
-  'Casey Nguyen',
-  'Taylor Brooks',
-]
-
-/** Deterministic mock extraction from binder file name / size. */
-export function mockExtractPropertyInsurance(
-  fileName: string,
-  fileSize: number,
-): PropertyInsuranceExtracted {
-  const seed = hashFileSeed(fileName, fileSize)
-  const carrierMatch = fileName.match(
-    /(state\s*farm|travelers|liberty|nationwide|allstate|hartford|chubb|farmers|geico)/i,
+function coiHasPolicyFields(coi: NonNullable<PortfolioDocumentExtractPayload['insuranceCertificate']>): boolean {
+  return Boolean(
+    asText(coi.insurers?.[0]?.name) ||
+      asText(coi.policy_number) ||
+      asText(coi.effective_date) ||
+      asText(coi.expiration_date),
   )
-  const carrier = carrierMatch
-    ? carrierMatch[1].replace(/\s+/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase())
-    : CARRIERS[seed % CARRIERS.length]
+}
 
-  const policyFromName = fileName.match(/\b([A-Z]{2,4}-?\d{5,10})\b/)
-  const policyNumber =
-    policyFromName?.[1] ??
-    `POL-${(100000 + (seed % 900000)).toString()}-${(seed % 99).toString().padStart(2, '0')}`
+function dwellingHasPolicyFields(
+  dwelling: NonNullable<PortfolioDocumentExtractPayload['dwellingPolicy']>,
+): boolean {
+  return Boolean(
+    asText(dwelling.insurer_name) ||
+      asText(dwelling.policy_number) ||
+      asText(dwelling.policy_effective_date) ||
+      asText(dwelling.policy_expiration_date),
+  )
+}
 
-  const startOffset = -365 - (seed % 200)
-  const termMonths = 12
-  const coverageStartDate = isoDaysFromNow(startOffset)
-  const end = new Date(coverageStartDate + 'T12:00:00')
-  end.setMonth(end.getMonth() + termMonths)
-  const coverageEndDate = end.toISOString().slice(0, 10)
-  const renewal = new Date(coverageEndDate + 'T12:00:00')
-  renewal.setDate(renewal.getDate() - 30)
-  const renewalDate = renewal.toISOString().slice(0, 10)
+function fromRoleFacts(
+  payload: PortfolioDocumentExtractPayload,
+  role: string,
+): string {
+  const facts = payload.roleFacts ?? []
+  const match = facts.find((fact) => fact.role === role && asText(fact.value))
+  return asText(match?.value)
+}
 
-  const contact = CONTACTS[seed % CONTACTS.length]
-  const area = 200 + (seed % 700)
-  const claimsPhone = `(${area}) ${200 + (seed % 700)}-${1000 + (seed % 9000)}`
-
-  return {
-    carrier,
-    policyNumber,
-    coverageStartDate,
-    coverageEndDate,
-    renewalDate,
-    claimsContactName: contact,
-    claimsPhone,
-    additionalInsured: seed % 3 !== 0,
+export function mapPortfolioInsuranceToPropertyFields(
+  payload: PortfolioDocumentExtractPayload | null | undefined,
+): PropertyInsuranceExtracted {
+  const empty: PropertyInsuranceExtracted = {
+    carrier: '',
+    policyNumber: '',
+    coverageStartDate: '',
+    coverageEndDate: '',
+    renewalDate: '',
+    claimsContactName: '',
+    claimsPhone: '',
+    additionalInsured: false,
   }
+  if (!payload) return empty
+
+  const kind = payload.extractKind
+  const dwelling = payload.dwellingPolicy
+  const coi = payload.insuranceCertificate
+
+  const fromDwelling = dwelling
+    ? {
+        ...empty,
+        carrier: asText(dwelling.insurer_name) || fromRoleFacts(payload, 'insurance_carrier'),
+        policyNumber: asText(dwelling.policy_number),
+        coverageStartDate: asText(dwelling.policy_effective_date),
+        coverageEndDate: asText(dwelling.policy_expiration_date),
+        additionalInsured: false,
+      }
+    : null
+
+  const fromCoi = coi
+    ? {
+        ...empty,
+        carrier: asText(coi.insurers?.[0]?.name) || fromRoleFacts(payload, 'insurance_carrier'),
+        policyNumber: asText(coi.policy_number) || asText(coi.insurers?.[0]?.policy_number),
+        coverageStartDate: asText(coi.effective_date),
+        coverageEndDate: asText(coi.expiration_date),
+        additionalInsured: (coi.additional_insured ?? []).some((name) => name.trim()),
+      }
+    : null
+
+  if (fromDwelling && dwellingHasPolicyFields(dwelling)) return fromDwelling
+  if (kind === 'insurance_certificate' && fromCoi && coi && coiHasPolicyFields(coi)) return fromCoi
+  if (fromDwelling && (fromDwelling.carrier || fromDwelling.policyNumber || fromDwelling.coverageStartDate)) {
+    return fromDwelling
+  }
+  if (fromCoi && coiHasPolicyFields(coi!)) return fromCoi
+
+  const carrier = fromRoleFacts(payload, 'insurance_carrier')
+  if (carrier) {
+    return {
+      ...empty,
+      carrier,
+      additionalInsured: false,
+    }
+  }
+
+  return empty
+}
+
+function insuranceExtractHasFields(extracted: PropertyInsuranceExtracted): boolean {
+  return Boolean(
+    extracted.carrier ||
+      extracted.policyNumber ||
+      extracted.coverageStartDate ||
+      extracted.coverageEndDate,
+  )
+}
+
+async function fileToBase64(file: File): Promise<string> {
+  const buffer = await file.arrayBuffer()
+  const bytes = new Uint8Array(buffer)
+  let binary = ''
+  const chunk = 0x8000
+  for (let i = 0; i < bytes.length; i += chunk) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + chunk))
+  }
+  return btoa(binary)
 }
 
 export async function extractInsuranceBinder(
@@ -122,30 +158,66 @@ export async function extractInsuranceBinder(
   onProgress: (progress: InsuranceBinderScanProgress) => void,
   signal?: AbortSignal,
 ): Promise<InsuranceBinderScanResult> {
-  const stages: Array<{
-    stage: InsuranceBinderScanStage
-    label: string
-    ms: number
-    progress: number
-  }> = [
-    { stage: 'uploading', label: 'Uploading insurance binder…', ms: 320, progress: 18 },
-    { stage: 'scanning', label: 'Reading policy details…', ms: 780, progress: 52 },
-    { stage: 'extracting', label: 'Filling form fields…', ms: 620, progress: 88 },
-  ]
-
-  for (const stage of stages) {
+  const throwIfAborted = () => {
     if (signal?.aborted) throw new Error('Insurance binder scan cancelled')
-    onProgress({ stage: stage.stage, label: stage.label, progress: stage.progress })
-    await sleep(stage.ms)
   }
 
-  const extracted = mockExtractPropertyInsurance(file.name, file.size)
-  onProgress({ stage: 'complete', label: 'Details extracted from binder', progress: 100 })
+  onProgress({ stage: 'uploading', label: 'Uploading insurance document…', progress: 18 })
+  throwIfAborted()
+
+  onProgress({ stage: 'scanning', label: 'Finding declarations or certificate pages…', progress: 42 })
+  let pageImages: string[] = []
+  try {
+    const pageTexts = await extractPdfPageTexts(file)
+    const relevant = findRelevantInsurancePages(pageTexts)
+    pageImages = await renderPdfFileToJpegDataUrls(file, {
+      pageNumbers: relevant.length > 0 ? relevant : [1, 2, 3, 4, 5],
+      maxPages: 5,
+    })
+  } catch {
+    pageImages = []
+  }
+  throwIfAborted()
+
+  onProgress({ stage: 'extracting', label: 'Reading policy details…', progress: 72 })
+  const fileBase64 = file.size <= INLINE_BYTES_LIMIT ? await fileToBase64(file) : undefined
+  if (!fileBase64 && pageImages.length === 0) {
+    throw new Error(
+      'This insurance file is too large to scan here. Upload a shorter PDF or a photo of the declarations page.',
+    )
+  }
+
+  const result = await extractOnboardingDocument({
+    docId: crypto.randomUUID(),
+    fileName: file.name,
+    documentCategory: 'property_insurance',
+    contentType: file.type || 'application/pdf',
+    fileBase64,
+    pageImages: pageImages.length ? pageImages : undefined,
+    insuranceIntent: 'property_policy',
+  })
+  throwIfAborted()
+
+  const extracted = mapPortfolioInsuranceToPropertyFields(result.extracted)
+  if (!insuranceExtractHasFields(extracted)) {
+    const warning = (result.extracted?.warnings ?? []).map((row) => row.trim()).find(Boolean)
+    throw new Error(
+      warning ||
+        'We couldn’t read insurance company, policy number, or coverage dates from this file. Try the declarations page or a certificate of insurance.',
+    )
+  }
+
+  onProgress({ stage: 'complete', label: 'Details filled from the document — review and save', progress: 100 })
+
+  const confidence =
+    (result.extracted.dwellingPolicy as { confidence?: number } | null)?.confidence ??
+    result.extracted.insuranceCertificate?.confidence ??
+    80
 
   return {
     fileName: file.name,
     extracted,
-    confidence: 0.88 + (hashFileSeed(file.name, file.size) % 10) / 100,
+    confidence: confidence > 1 ? confidence / 100 : confidence,
   }
 }
 

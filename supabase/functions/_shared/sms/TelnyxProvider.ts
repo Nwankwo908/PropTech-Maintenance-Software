@@ -251,6 +251,64 @@ function successSendResult(
   }
 }
 
+const TELNYX_FAILED_STATUS = new Set([
+  "failed",
+  "delivery_failed",
+  "sending_failed",
+  "undelivered",
+])
+
+const TELNYX_DELIVERED_STATUS = new Set(["delivered", "sent"])
+
+async function waitForTelnyxDelivery(
+  apiKey: string,
+  messageId: string,
+): Promise<{ status?: string; error?: string }> {
+  let lastStatus = "queued"
+  for (let attempt = 0; attempt < 8; attempt++) {
+    await new Promise((resolve) => setTimeout(resolve, 1500))
+    const res = await fetch(`https://api.telnyx.com/v2/messages/${messageId}`, {
+      headers: { Authorization: `Bearer ${apiKey}` },
+    })
+    const raw = await res.text()
+    if (!res.ok) {
+      return { status: lastStatus, error: raw.slice(0, 300) || `Telnyx HTTP ${res.status}` }
+    }
+    try {
+      const parsed = JSON.parse(raw) as {
+        data?: {
+          to?: Array<{ status?: string }>
+          errors?: Array<{ title?: string; detail?: string }>
+        }
+      }
+      lastStatus = parsed.data?.to?.[0]?.status?.trim().toLowerCase() || lastStatus
+      const errors = parsed.data?.errors ?? []
+      const errorDetail = errors
+        .map((e) => [e.title, e.detail].filter(Boolean).join(": "))
+        .filter(Boolean)
+        .join("; ")
+      if (TELNYX_FAILED_STATUS.has(lastStatus) || errors.length > 0) {
+        return {
+          status: lastStatus,
+          error: errorDetail || `Telnyx did not deliver the text (${lastStatus}).`,
+        }
+      }
+      if (lastStatus === "delivered") {
+        return { status: lastStatus }
+      }
+    } catch {
+      return { status: lastStatus }
+    }
+  }
+  if (TELNYX_DELIVERED_STATUS.has(lastStatus)) {
+    return { status: lastStatus }
+  }
+  return {
+    status: lastStatus,
+    error: `Telnyx has not delivered the text yet (${lastStatus}).`,
+  }
+}
+
 function inboundFromPayload(
   payload: TelnyxMessagePayload,
   rawPayload: Record<string, unknown>,
@@ -303,6 +361,16 @@ function statusFromPayload(
   }
 }
 
+/** Landlord DID first (same as Twilio); env number is only the fallback. */
+export function pickTelnyxSendFromNumber(
+  cfgFrom: string | undefined,
+  explicitFrom?: string,
+): string | undefined {
+  const explicit = explicitFrom?.trim()
+  if (explicit) return explicit
+  return cfgFrom?.trim() || undefined
+}
+
 export class TelnyxProvider implements SMSProvider {
   readonly name = "telnyx" as const
 
@@ -317,9 +385,7 @@ export class TelnyxProvider implements SMSProvider {
       text: input.body,
     }
 
-    const explicitFrom = input.from?.trim()
-    // Prefer the configured Telnyx line over DB/demo placeholders (avoids 10004 invalid source).
-    const fromNumber = cfg.fromNumber?.trim() || explicitFrom
+    const fromNumber = pickTelnyxSendFromNumber(cfg.fromNumber, input.from)
 
     if (cfg.messagingProfileId) {
       body.messaging_profile_id = cfg.messagingProfileId
@@ -396,6 +462,19 @@ export class TelnyxProvider implements SMSProvider {
           providerMessageSid: sid,
           error: errorDetail || `Telnyx send status: ${status ?? "failed"}`,
         }
+      }
+
+      if (input.waitForDelivery && sid && sid !== "sent") {
+        const settled = await waitForTelnyxDelivery(cfg.apiKey, sid)
+        if (settled.error) {
+          return {
+            provider: "telnyx",
+            providerMessageSid: sid,
+            status: settled.status,
+            error: settled.error,
+          }
+        }
+        return successSendResult(sid, settled.status)
       }
 
       return successSendResult(sid, status)

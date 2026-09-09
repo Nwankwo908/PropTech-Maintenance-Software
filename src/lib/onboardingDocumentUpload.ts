@@ -1,4 +1,9 @@
 import { extractOnboardingDocument, type PortfolioDocumentExtractPayload } from '@/api/onboardingDocumentExtract'
+import { extractPdfPageTexts, renderPdfFileToJpegDataUrls } from '@/lib/pdfPageImagesBrowser'
+import {
+  findRelevantInsurancePages,
+  isInsuranceUploadHint,
+} from '@shared/onboarding/typedDocumentExtract/insuranceClassify'
 import { getErrorMessage } from '@/lib/errorMessage'
 /**
  * Onboarding fast-track — document upload, GPT-4o extraction, and review import.
@@ -205,6 +210,11 @@ export type OnboardingExtractionReview = {
   financialRecords: ExtractedFinancialRecord[]
   needsReview: ExtractedReviewItem[]
   imageLabels: ExtractedReviewItem[]
+  /**
+   * True when this review has no rent roll / roster. Lease agreements then
+   * create properties, units, and residents.
+   */
+  leaseOnlyPortfolio?: boolean
 }
 
 export const MAX_UPLOAD_BYTES = 20 * 1024 * 1024
@@ -439,6 +449,7 @@ export type OnboardingDocumentExtractRole =
   | 'rent_roll'
   | 'lease_agreement'
   | 'vendor'
+  | 'insurance'
   | 'maintenance'
   | 'financial'
   | 'unknown'
@@ -452,7 +463,6 @@ const VENDOR_DOCUMENT_CATEGORIES = new Set<OnboardingDocumentCategory>([
   'vendor_contract',
   'vendor_invoice',
   'w9_form',
-  'insurance_certificate',
 ])
 
 const MAINTENANCE_DOCUMENT_CATEGORIES = new Set<OnboardingDocumentCategory>([
@@ -474,6 +484,7 @@ export function classifyOnboardingDocumentExtractRole(
   if (category === 'lease_agreement' || category === 'move_in_document') {
     return 'lease_agreement'
   }
+  if (category === 'insurance_certificate') return 'insurance'
   if (VENDOR_DOCUMENT_CATEGORIES.has(category)) return 'vendor'
   if (MAINTENANCE_DOCUMENT_CATEGORIES.has(category)) return 'maintenance'
   if (FINANCIAL_DOCUMENT_CATEGORIES.has(category)) return 'financial'
@@ -562,6 +573,21 @@ async function fileToBase64(file: File): Promise<string> {
   }
   return btoa(binary)
 }
+
+/** Run async work one-at-a-time so GPT extract calls do not stampede into 429s. */
+export function createSerialAsyncQueue() {
+  let tail: Promise<void> = Promise.resolve()
+  return function enqueue<T>(work: () => Promise<T>): Promise<T> {
+    const run = tail.then(work, work)
+    tail = run.then(
+      () => undefined,
+      () => undefined,
+    )
+    return run
+  }
+}
+
+const enqueueOnboardingExtract = createSerialAsyncQueue()
 
 /** Clamp per-file progress; stay below 100 until the document finishes. */
 export function clampDocumentUploadProgress(progress: number): number {
@@ -659,16 +685,40 @@ export async function runDocumentProcessing(
       file && (file.size <= 4 * 1024 * 1024 || !doc.storagePath)
         ? await fileToBase64(file)
         : undefined
+    let pageImages: string[] = []
+    if (file) {
+      try {
+        const insuranceHint = isInsuranceUploadHint(file.name, doc.documentCategory)
+        let pageNumbers: number[] | undefined
+        if (insuranceHint) {
+          const pageTexts = await extractPdfPageTexts(file)
+          const relevant = findRelevantInsurancePages(pageTexts)
+          if (relevant.length > 0) pageNumbers = relevant
+        }
+        pageImages = await renderPdfFileToJpegDataUrls(file, {
+          pageNumbers,
+          maxPages: insuranceHint ? 3 : undefined,
+        })
+      } catch (error) {
+        console.warn(
+          '[onboarding] pdf page render failed',
+          error instanceof Error ? error.message : error,
+        )
+      }
+    }
 
-    const result = await extractOnboardingDocument({
-      docId: doc.id,
-      fileName: doc.fileName,
-      documentCategory: doc.documentCategory,
-      storageBucket: doc.storageBucket,
-      storagePath: doc.storagePath,
-      contentType: doc.contentType,
-      fileBase64,
-    })
+    const result = await enqueueOnboardingExtract(() =>
+      extractOnboardingDocument({
+        docId: doc.id,
+        fileName: doc.fileName,
+        documentCategory: doc.documentCategory,
+        storageBucket: doc.storageBucket,
+        storagePath: doc.storagePath,
+        contentType: doc.contentType,
+        fileBase64,
+        pageImages,
+      }),
+    )
 
     const warning =
       result.extracted.warnings
@@ -1154,6 +1204,7 @@ function rentAmountsConflict(left: string, right: string): boolean {
 function fillExtractedResidentsFromLeases(
   residents: OnboardingExtractedResident[],
   leases: ExtractedLeaseInfo[],
+  options?: { mintUnmatchedLeases?: boolean },
 ): {
   residents: OnboardingExtractedResident[]
   conflicts: ExtractedReviewItem[]
@@ -1218,13 +1269,41 @@ function fillExtractedResidentsFromLeases(
     }
   })
 
-  const unmatchedLeases = leases
-    .filter((lease) => !matchedLeaseIds.has(lease.id))
-    .map((lease) => ({
-      ...lease,
-      needsReview: true,
-      selected: false,
-    }))
+  const leftoverLeases = leases.filter((lease) => !matchedLeaseIds.has(lease.id))
+
+  if (options?.mintUnmatchedLeases) {
+    const minted = leftoverLeases
+      .filter((lease) => lease.residentName.trim())
+      .map((lease) => ({
+        id: `ext-res-from-lease-${lease.id}`,
+        fullName: lease.residentName.trim(),
+        unit: lease.unit.trim(),
+        building: lease.building.trim(),
+        phone: '',
+        email: '',
+        leaseStart: lease.leaseStart.trim(),
+        leaseEnd: lease.leaseEnd.trim(),
+        monthlyRent: lease.rentAmount.trim(),
+        rentDueDay: '',
+        occupancyStatus: 'active' as const,
+        maintenanceResponsibilitiesClause: '',
+        sourceDocumentName: lease.sourceDocumentName,
+        confidence: lease.confidence,
+        selected: true,
+        needsReview: lease.confidence < 75 || !lease.unit.trim(),
+      }))
+    return {
+      residents: [...nextResidents, ...minted],
+      conflicts,
+      unmatchedLeases: [],
+    }
+  }
+
+  const unmatchedLeases = leftoverLeases.map((lease) => ({
+    ...lease,
+    needsReview: true,
+    selected: false,
+  }))
 
   return {
     residents: nextResidents,
@@ -1647,6 +1726,7 @@ export function enrichExtractedProperties(
   residents: OnboardingExtractedResident[],
   leases: ExtractedLeaseInfo[],
   units: OnboardingExtractedUnit[],
+  options?: { includeLeaseBuildings?: boolean },
 ): OnboardingExtractedProperty[] {
   const merged = new Map<string, OnboardingExtractedProperty>()
 
@@ -1686,7 +1766,11 @@ export function enrichExtractedProperties(
   for (const resident of residents) {
     noteBuilding(resident.building, resident.sourceDocumentName, resident.confidence)
   }
-  // Lease buildings enrich matched residents — do not invent portfolio properties from leases alone.
+  if (options?.includeLeaseBuildings) {
+    for (const lease of leases) {
+      noteBuilding(lease.building, lease.sourceDocumentName, lease.confidence)
+    }
+  }
   for (const unit of units) {
     noteBuilding(unit.building, unit.sourceDocumentName, unit.confidence)
   }
@@ -1758,6 +1842,7 @@ function finalizeExtractionReviewEntities(input: {
   units: OnboardingExtractedUnit[]
   residents: OnboardingExtractedResident[]
   leases: ExtractedLeaseInfo[]
+  leaseOnlyPortfolio?: boolean
 }): {
   properties: OnboardingExtractedProperty[]
   units: OnboardingExtractedUnit[]
@@ -1773,20 +1858,26 @@ function finalizeExtractionReviewEntities(input: {
   )
   let residents = enrichExtractedPersonNames(placement.residents, placement.leases)
   let leases = enrichExtractedLeaseNames(residents, placement.leases)
-  let properties = enrichExtractedProperties(input.properties, residents, leases, input.units)
+  const leaseOnlyPortfolio = Boolean(input.leaseOnlyPortfolio)
+  let properties = enrichExtractedProperties(input.properties, residents, leases, input.units, {
+    includeLeaseBuildings: leaseOnlyPortfolio,
+  })
 
   placement = enrichExtractedResidentPlacement(residents, leases, input.units, properties)
   residents = placement.residents
   leases = placement.leases
 
   const units = enrichExtractedUnits(input.units, residents, leases, properties, {
-    includeLeaseDerivedUnits: false,
+    includeLeaseDerivedUnits: leaseOnlyPortfolio,
   })
-  properties = enrichExtractedProperties(properties, residents, leases, units)
+  properties = enrichExtractedProperties(properties, residents, leases, units, {
+    includeLeaseBuildings: leaseOnlyPortfolio,
+  })
   leases = dedupeOnboardingExtractedLeases(leases)
   const filled = fillExtractedResidentsFromLeases(
     dedupeOnboardingExtractedResidents(residents),
     leases,
+    { mintUnmatchedLeases: leaseOnlyPortfolio },
   )
   residents = filled.residents
   leases = leases.map((lease) => {
@@ -1988,6 +2079,7 @@ function mergeExtractedDocuments(
   const financialRecords: ExtractedFinancialRecord[] = []
   const needsReview: ExtractedReviewItem[] = []
   const imageLabels: ExtractedReviewItem[] = []
+  const leaseOnlyPortfolio = !payloads.some(({ doc }) => documentIsRentRoll(doc))
 
   // Process rent rolls first so the portfolio exists before lease enrichment.
   const orderedPayloads = [
@@ -2020,9 +2112,9 @@ function mergeExtractedDocuments(
       // Unknown docs may still contribute vendors / maintenance / financial notes below.
     }
 
-    // Rent roll = source of truth for Properties, Units, and Residents.
-    // Lease agreements never independently create those entities.
-    if (isRentRoll) {
+    // Rent roll is portfolio SoT when present. Lease-only uploads may create
+    // properties, units, and residents from the agreement.
+    if (isRentRoll || (isLease && leaseOnlyPortfolio)) {
       payload.properties.forEach((item, index) => {
         const name = cleanOnboardingExtractText(item.name)
         const address = cleanOnboardingExtractText(item.streetAddress)
@@ -2104,7 +2196,7 @@ function mergeExtractedDocuments(
       })
     }
 
-    // Lease Information Found = lease agreements only (enrichment, never roster minting).
+    // Lease Information Found — always ingest leases; match/enrich later.
     if (isLease) {
       const leaseRowsFromDoc: ExtractedLeaseInfo[] = []
       payload.leases.forEach((item, index) => {
@@ -2152,8 +2244,32 @@ function mergeExtractedDocuments(
       leases.push(...collapseLeasesFromSingleAgreement(leaseRowsFromDoc))
     }
 
-    const vendorItems =
-      payload.vendors.length > 0
+    const isInsurance =
+      extractRole === 'insurance' ||
+      payload.extractKind === 'insurance_certificate' ||
+      payload.extractKind === 'dwelling_policy_declarations' ||
+      payload.extractKind === 'homeowners_policy_declarations' ||
+      payload.extractKind === 'commercial_property_policy'
+
+    ;(payload.roleFacts ?? []).forEach((fact, index) => {
+      const value = cleanOnboardingExtractText(fact.value)
+      if (!value) return
+      needsReview.push({
+        id: `ext-role-${doc.id}-${index}`,
+        uploadedDocumentId: doc.id,
+        sourceDocumentName: source,
+        dataType: fact.role,
+        label: fact.label || fact.role,
+        value,
+        confidence: fact.confidence,
+        includeInImport: false,
+        needsReview: fact.needsReview,
+      })
+    })
+
+    const vendorItems = isInsurance
+      ? []
+      : payload.vendors.length > 0
         ? payload.vendors
         : isVendorDoc
           ? payload.residents.map((item) => ({
@@ -2274,7 +2390,13 @@ function mergeExtractedDocuments(
     })
   }
 
-  const finalized = finalizeExtractionReviewEntities({ properties, units, residents, leases })
+  const finalized = finalizeExtractionReviewEntities({
+    properties,
+    units,
+    residents,
+    leases,
+    leaseOnlyPortfolio,
+  })
   const extractedAccount = collectExtractedAccount(
     payloads.map((row) => row.payload),
     finalized.residents.map((row) => row.fullName),
@@ -2291,6 +2413,7 @@ function mergeExtractedDocuments(
     financialRecords,
     needsReview: [...needsReview, ...finalized.conflicts],
     imageLabels,
+    leaseOnlyPortfolio,
   }
 }
 
@@ -2555,6 +2678,7 @@ export function emptyExtractionReview(
     financialRecords: [],
     needsReview: [],
     imageLabels: [],
+    leaseOnlyPortfolio: false,
   }
 }
 
@@ -2606,11 +2730,17 @@ export function normalizeExtractionReview(
       maintenanceResponsibilitiesClause: item.maintenanceResponsibilitiesClause ?? '',
     }))
     .filter((item) => item.fullName.trim())
+  const leaseOnlyPortfolio =
+    review.leaseOnlyPortfolio === true ||
+    (normalizedLeases.length > 0 &&
+      normalizedProperties.length === 0 &&
+      normalizedResidents.length === 0)
   const finalized = finalizeExtractionReviewEntities({
     properties: normalizedProperties,
     units: normalizedUnits,
     residents: normalizedResidents,
     leases: normalizedLeases,
+    leaseOnlyPortfolio,
   })
   return fillExtractionReviewAccount(
     {
@@ -2634,13 +2764,16 @@ export function normalizeExtractionReview(
       ),
       needsReview: [
         ...(review.needsReview ?? []).filter(
-          (item) => !isOnboardingExtractJunkValue(item.value),
+          (item) =>
+            !isOnboardingExtractJunkValue(item.value) &&
+            !(leaseOnlyPortfolio && item.dataType === 'unmatched_lease'),
         ),
         ...finalized.conflicts,
       ],
       imageLabels: (review.imageLabels ?? []).filter(
         (item) => !isOnboardingExtractJunkValue(item.value),
       ),
+      leaseOnlyPortfolio,
     },
     [],
     accountSeed,

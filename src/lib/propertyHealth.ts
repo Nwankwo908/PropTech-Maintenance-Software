@@ -51,7 +51,7 @@ export function resolvePropertyHealthKpiCaption(
     return 'Activate units to start measuring property health.'
   }
   if (portfolio.status === 'unknown') {
-    return PROPERTY_HEALTH_UNKNOWN_CONDITION_CAPTION
+    return PROPERTY_HEALTH_KPI_CAPTION
   }
   if (!shouldShowPropertyHealthScore(portfolio.status)) {
     return PROPERTY_HEALTH_INSIGHTS_CAPTION

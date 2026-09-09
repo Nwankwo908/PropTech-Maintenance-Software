@@ -841,7 +841,7 @@ export function AdminPropertiesDashboard() {
       <div className="flex items-center justify-between py-6">
         <div>
           <h1 className="text-[24px] font-semibold leading-8 tracking-[0.0703px] text-[#0a0a0a]">
-            Properties
+            Property Portfolio
           </h1>
           <p className="text-[14px] leading-5 tracking-[-0.1504px] text-[#6a7282]">
             Monitor the health, performance, and activity of every property in one place.
@@ -932,13 +932,15 @@ export function AdminPropertiesDashboard() {
           deleteSelectedSaving: deleteBuildingsSaving,
         }}
         firstCardRef={propertyCardGuideTargetRef}
-        onBuildingOpen={(buildingName) => {
-          const continueToPropertyTab = showPropertyCardGuide
+        buildingHref={(buildingName) =>
+          propertyDetailPathForBuilding(buildingName, propertyIdByBuilding)
+        }
+        buildingLinkState={() =>
+          showPropertyCardGuide ? setupCheckboxGuidePropertyTabState() : undefined
+        }
+        onBuildingOpen={() => {
           dismissSetupSuccessCheckboxGuide('properties')
           setShowPropertyCardGuide(false)
-          navigate(propertyDetailPathForBuilding(buildingName, propertyIdByBuilding), {
-            state: continueToPropertyTab ? setupCheckboxGuidePropertyTabState() : undefined,
-          })
         }}
         headerAction={
           <button

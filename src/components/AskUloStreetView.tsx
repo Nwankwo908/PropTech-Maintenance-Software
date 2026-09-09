@@ -1,5 +1,9 @@
 import { useEffect, useId, useRef, useState } from 'react'
 import { loadGoogleMapsApi, resolveGoogleMapsApiKey } from '@/lib/googleMapsLoader'
+import {
+  googleMapsSearchUrl,
+  googleStreetViewStaticUrl,
+} from '@/lib/streetViewUrls'
 
 type AskUloStreetViewProps = {
   address: string | null
@@ -12,20 +16,6 @@ type AskUloStreetViewProps = {
 }
 
 type LatLng = { lat: number; lng: number }
-
-function streetViewEmbedUrl(lat: number, lng: number): string {
-  return (
-    `https://www.google.com/maps?layer=c&cbll=${lat},${lng}` +
-    `&cbp=11,0,0,0,0&output=svembed`
-  )
-}
-
-function streetViewAddressEmbedUrl(query: string): string {
-  return (
-    `https://www.google.com/maps?q=${encodeURIComponent(query)}` +
-    `&layer=c&cbp=11,0,0,0,0&output=svembed`
-  )
-}
 
 function geocodeQueries(address: string, label: string | null | undefined): string[] {
   const primary = address.trim()
@@ -61,26 +51,6 @@ async function geocodeGoogleJs(
   })
 }
 
-async function geocodeGoogleHttp(address: string, apiKey: string): Promise<LatLng | null> {
-  try {
-    const url =
-      `https://maps.googleapis.com/maps/api/geocode/json?address=${encodeURIComponent(address)}` +
-      `&region=us&key=${encodeURIComponent(apiKey)}`
-    const res = await fetch(url)
-    if (!res.ok) return null
-    const data = (await res.json()) as {
-      results?: Array<{ geometry?: { location?: { lat: number; lng: number } } }>
-    }
-    const loc = data.results?.[0]?.geometry?.location
-    const lat = Number(loc?.lat)
-    const lng = Number(loc?.lng)
-    if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null
-    return { lat, lng }
-  } catch {
-    return null
-  }
-}
-
 async function geocodeNominatim(address: string): Promise<LatLng | null> {
   try {
     const url =
@@ -101,7 +71,6 @@ async function geocodeNominatim(address: string): Promise<LatLng | null> {
 
 async function resolveLatLng(input: {
   g: typeof google | null
-  apiKey: string | null
   address: string
   label?: string | null
 }): Promise<LatLng | null> {
@@ -109,10 +78,6 @@ async function resolveLatLng(input: {
     if (input.g) {
       const fromJs = await geocodeGoogleJs(input.g, query, 6000)
       if (fromJs) return fromJs
-    }
-    if (input.apiKey) {
-      const fromHttp = await geocodeGoogleHttp(query, input.apiKey)
-      if (fromHttp) return fromHttp
     }
     const fromOsm = await geocodeNominatim(query)
     if (fromOsm) return fromOsm
@@ -141,9 +106,15 @@ function lookupPanorama(
   })
 }
 
+function mapsJsAuthErrorIn(el: HTMLElement | null): boolean {
+  if (!el) return false
+  return Boolean(el.querySelector('.gm-err-container'))
+}
+
 /**
- * Street View for a property address. Prefers the official embed (works with an address
- * or lat/lng). Upgrades to Maps JS StreetViewPanorama when that loads.
+ * Street View for a property address.
+ * Uses Maps JS only when it authenticates. Otherwise a static Street View image
+ * (never the unofficial maps embed that shows “didn’t load Google Maps correctly”).
  */
 export function AskUloStreetView({
   address,
@@ -157,6 +128,7 @@ export function AskUloStreetView({
   const containerRef = useRef<HTMLDivElement>(null)
   const [jsReady, setJsReady] = useState(false)
   const [resolved, setResolved] = useState<LatLng | null>(null)
+  const [staticFailed, setStaticFailed] = useState(false)
 
   const query = address?.trim() || (lat != null && lng != null ? `${lat},${lng}` : null)
   const hasCoords = lat != null && lng != null && Number.isFinite(lat) && Number.isFinite(lng)
@@ -167,8 +139,17 @@ export function AskUloStreetView({
   useEffect(() => {
     let cancelled = false
     let panorama: google.maps.StreetViewPanorama | null = null
+    let authFailed = false
     setJsReady(false)
+    setStaticFailed(false)
     setResolved(hasCoords ? { lat: lat!, lng: lng! } : null)
+
+    const previousAuth = window.gm_authFailure
+    window.gm_authFailure = () => {
+      authFailed = true
+      setJsReady(false)
+      if (typeof previousAuth === 'function') previousAuth()
+    }
 
     async function mount() {
       if (!query) return
@@ -181,19 +162,19 @@ export function AskUloStreetView({
           g = null
         }
       }
-      if (cancelled) return
+      if (cancelled || authFailed) return
 
       let location: LatLng | null = hasCoords ? { lat: lat!, lng: lng! } : null
       if (!location && address) {
-        location = await resolveLatLng({ g, apiKey, address, label })
+        location = await resolveLatLng({ g, address, label })
       }
-      if (cancelled) return
+      if (cancelled || authFailed) return
       if (location) setResolved(location)
 
-      if (!g || !location || !containerRef.current) return
+      if (!g || !location || !containerRef.current || authFailed) return
 
       const panoData = await lookupPanorama(g, location, 8000)
-      if (cancelled || !containerRef.current) return
+      if (cancelled || !containerRef.current || authFailed) return
       const position = panoData?.location?.latLng
       if (!position) return
 
@@ -208,46 +189,74 @@ export function AskUloStreetView({
         fullscreenControl: true,
         motionTracking: false,
       })
-      setJsReady(true)
+      window.setTimeout(() => {
+        if (cancelled || authFailed) return
+        if (mapsJsAuthErrorIn(containerRef.current)) {
+          containerRef.current?.replaceChildren()
+          setJsReady(false)
+          return
+        }
+        setJsReady(true)
+      }, 400)
     }
 
     void mount()
     return () => {
       cancelled = true
       panorama = null
+      window.gm_authFailure = previousAuth
       if (containerRef.current) containerRef.current.innerHTML = ''
     }
   }, [address, apiKey, hasCoords, label, lat, lng, query])
 
   if (!query) return null
 
-  const iframeSrc =
+  const staticSrc =
+    apiKey && viewLat != null && viewLng != null && !staticFailed
+      ? googleStreetViewStaticUrl({
+          apiKey,
+          lat: viewLat,
+          lng: viewLng,
+          query: typeof address === 'string' ? address : query,
+        })
+      : null
+  const mapsHref =
     viewLat != null && viewLng != null
-      ? streetViewEmbedUrl(viewLat, viewLng)
-      : streetViewAddressEmbedUrl(query)
+      ? `https://www.google.com/maps/@?api=1&map_action=pano&viewpoint=${viewLat},${viewLng}`
+      : googleMapsSearchUrl(query)
 
   const defaultFrameClass =
     'h-[280px] w-full overflow-hidden rounded-[12px] border border-[#e5e7eb] bg-[#f3f4f6] sm:h-[320px]'
   const frameClass = frameClassName ?? defaultFrameClass
+
+  const fallback = staticSrc ? (
+    <img
+      src={staticSrc}
+      alt=""
+      className="h-full w-full object-cover"
+      onError={() => setStaticFailed(true)}
+    />
+  ) : (
+    <div className="flex h-full flex-col items-center justify-center gap-2 px-4 text-center">
+      <p className="text-[13px] leading-5 text-[#6a7282]">Street View isn’t available here.</p>
+      <a
+        href={mapsHref}
+        target="_blank"
+        rel="noopener noreferrer"
+        className="sa-link text-[13px] font-medium text-[#186179] hover:text-[#0f4a5c]"
+      >
+        Open in Google Maps
+      </a>
+    </div>
+  )
 
   const viewer = (
     <div className={`relative w-full overflow-hidden bg-[#f3f4f6] ${frameClass}`}>
       <div
         ref={containerRef}
         className={jsReady ? 'h-full w-full' : 'pointer-events-none absolute inset-0 opacity-0'}
-        role="application"
-        aria-label="Interactive Street View"
       />
-      {!jsReady ? (
-        <iframe
-          title="Street View"
-          src={iframeSrc}
-          className="h-full w-full border-0"
-          loading="eager"
-          referrerPolicy="no-referrer-when-downgrade"
-          allowFullScreen
-        />
-      ) : null}
+      {!jsReady ? fallback : null}
     </div>
   )
 

@@ -102,8 +102,8 @@ export function accountSetupFromReviewManual(
 export function validateReviewManualAccount(
   account: OnboardingReviewManualAccount,
 ): { ok: true } | { ok: false; error: string } {
-  if (!account.companyName.trim() || !account.contactName.trim()) {
-    return { ok: false, error: 'Enter your company name and contact name.' }
+  if (!account.contactName.trim()) {
+    return { ok: false, error: 'Enter your name.' }
   }
   if (!account.smsConsentAcceptedAt) {
     return { ok: false, error: 'Please agree to the SMS terms to continue.' }

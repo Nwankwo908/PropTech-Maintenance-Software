@@ -1,6 +1,7 @@
 import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.49.1"
 import {
   normalizeSmsPhone,
+  phoneLookupVariants,
   upsertSmsIdentityForPhone,
   type SmsIdentityRow,
 } from "./inbound_db.ts"
@@ -85,14 +86,15 @@ async function findActiveNumberByPhoneAndProvider(
   provider: SmsProviderName,
   landlordId?: string | null,
 ): Promise<LandlordSmsNumberRow | null> {
-  const normalized = normalizeSmsPhone(phone)
+  const variants = phoneLookupVariants(phone)
+  if (variants.length === 0) return null
 
   if (landlordId?.trim()) {
     const { data: scoped } = await supabase
       .from("sms_numbers")
       .select(selectSmsNumberFields())
       .eq("landlord_id", landlordId.trim())
-      .eq("phone_number", normalized)
+      .in("phone_number", variants)
       .eq("provider", provider)
       .eq("status", "active")
       .limit(1)
@@ -104,7 +106,7 @@ async function findActiveNumberByPhoneAndProvider(
   const { data: shared } = await supabase
     .from("sms_numbers")
     .select(selectSmsNumberFields())
-    .eq("phone_number", normalized)
+    .in("phone_number", variants)
     .eq("provider", provider)
     .eq("status", "active")
     .eq("purpose", "landlord_main")
@@ -115,8 +117,8 @@ async function findActiveNumberByPhoneAndProvider(
   return (shared as LandlordSmsNumberRow | null) ?? null
 }
 
-/** Twilio DID for Limited Alpha 1 when that account has no row yet. */
-async function resolveLimitedAlpha1TwilioOutboundLine(
+/** Twilio DID for Limited Alpha when that account has no owned row yet. */
+async function resolveLimitedAlphaTwilioOutboundLine(
   supabase: SupabaseClient,
   landlordId: string,
 ): Promise<OutboundLandlordSmsLine | null> {
@@ -124,7 +126,7 @@ async function resolveLimitedAlpha1TwilioOutboundLine(
     Deno.env.get("TWILIO_FROM_NUMBER")?.trim() || LIMITED_ALPHA_1_TWILIO_SMS_NUMBER
   const row =
     (await findActiveNumberByPhoneAndProvider(supabase, envFrom, "twilio", landlordId)) ??
-    (await findActiveNumberByPhoneAndProvider(supabase, LIMITED_ALPHA_1_TWILIO_SMS_NUMBER, "twilio", landlordId))
+    (await findActiveNumberByPhoneAndProvider(supabase, LIMITED_ALPHA_1_TWILIO_SMS_NUMBER, "twilio"))
   if (!row) return null
   return {
     id: String(row.id),
@@ -160,7 +162,7 @@ async function resolveSharedTelnyxOutboundLine(
 
 /**
  * Landlord_main line for outbound SMS.
- * Limited Alpha 1 always uses its Twilio DID. Limited Alpha 2 uses its Telnyx DID.
+ * Limited Alpha 1 and 2 always use the shared Twilio DID.
  * Other landlords use Telnyx when the platform provider is Telnyx, including a
  * shared-line fallback.
  */
@@ -177,7 +179,7 @@ export async function resolveOutboundLandlordSmsLine(
         provider: "twilio",
       }
     }
-    return await resolveLimitedAlpha1TwilioOutboundLine(supabase, landlordId)
+    return await resolveLimitedAlphaTwilioOutboundLine(supabase, landlordId)
   }
 
   const row = await findActiveLandlordMainNumber(supabase, landlordId)

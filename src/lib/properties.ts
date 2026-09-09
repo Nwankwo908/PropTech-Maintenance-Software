@@ -264,6 +264,66 @@ export async function renameProperty(
   return { ok: true, propertyId: String(data) }
 }
 
+/** Update an existing property row (stable id). Renames through rename_property. */
+export async function updatePropertyDetails(input: {
+  propertyId: string
+  previousName: string
+  name: string
+  streetAddress?: string | null
+  city?: string | null
+  state?: string | null
+  zipCode?: string | null
+  propertyType?: string | null
+  unitCount?: number | null
+  yearBuilt?: number | null
+}): Promise<{ ok: true; propertyId: string } | { ok: false; error: string }> {
+  if (!supabase) {
+    return { ok: false, error: "We can't reach the server right now. Please try again in a moment." }
+  }
+
+  const propertyId = input.propertyId.trim()
+  const name = input.name.trim()
+  if (!propertyId) return { ok: false, error: 'Property is required.' }
+  if (!name) return { ok: false, error: 'Property name is required.' }
+
+  if (name.toLowerCase() !== input.previousName.trim().toLowerCase()) {
+    const renamed = await renameProperty(propertyId, name)
+    if (!renamed.ok) return renamed
+  }
+
+  const { error } = await supabase
+    .from('properties')
+    .update({
+      street_address: input.streetAddress?.trim() || null,
+      city: input.city?.trim() || null,
+      state: input.state?.trim() || null,
+      zip_code: input.zipCode?.trim() || null,
+      property_type: input.propertyType?.trim() || null,
+      unit_count: input.unitCount ?? null,
+      year_built: input.yearBuilt ?? null,
+    })
+    .eq('id', propertyId)
+
+  if (error) {
+    return {
+      ok: false,
+      error: getErrorMessage(error, "Couldn't save the property. Please try again."),
+    }
+  }
+
+  const { recordActivityLog } = await import('@/lib/recordActivityLog')
+  await recordActivityLog({
+    landlordId: getActiveLandlordId(),
+    eventType: 'property.updated',
+    source: 'dashboard',
+    actorType: 'landlord',
+    propertyId,
+    metadata: { message: `Updated ${name}.` },
+  })
+
+  return { ok: true, propertyId }
+}
+
 export async function listPropertiesForLandlord(
   landlordId: string = getActiveLandlordId(),
 ): Promise<{ ok: true; properties: PropertyRecord[] } | { ok: false; error: string }> {

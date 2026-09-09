@@ -7,6 +7,7 @@ import {
   useState,
 } from 'react'
 import { useNavigate } from 'react-router-dom'
+import { inAppRouterPath } from '@/lib/inAppRouterPath'
 import { useAskUlo } from '@/components/AskUloContext'
 import { getActiveLandlordId } from '@/lib/activeLandlord'
 import {
@@ -198,7 +199,7 @@ export function AdminUniversalSearch({ className }: AdminUniversalSearchProps) {
       refreshRecent()
       setOpen(false)
       setQuery('')
-      navigate(item.href)
+      navigate(inAppRouterPath(item.href))
     },
     [landlordId, navigate, refreshRecent],
   )
@@ -214,7 +215,7 @@ export function AdminUniversalSearch({ className }: AdminUniversalSearchProps) {
           refreshRecent()
           setOpen(false)
           setQuery('')
-          navigate(row.item.href)
+          navigate(inAppRouterPath(row.item.href))
         } else {
           setQuery(row.item.query)
         }

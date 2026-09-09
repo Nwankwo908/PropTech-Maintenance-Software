@@ -66,6 +66,56 @@ export type PortfolioDocumentExtractPayload = {
   }>
   imageLabels: string[]
   warnings: string[]
+  extractKind?:
+    | 'rent_roll'
+    | 'lease'
+    | 'insurance_certificate'
+    | 'dwelling_policy_declarations'
+    | 'homeowners_policy_declarations'
+    | 'commercial_property_policy'
+    | 'insurance'
+    | 'generic'
+  roleFacts?: Array<{
+    role: string
+    label: string
+    value: string
+    confidence: number
+    needsReview: boolean
+  }>
+  insuranceCertificate?: {
+    document_type?: 'certificate_of_liability_insurance'
+    named_insured: string | null
+    certificate_holder: string | null
+    additional_insured: string[]
+    producer_agency: string | null
+    insurers: Array<{ name: string; policy_number: string | null }>
+    policy_number: string | null
+    effective_date: string | null
+    expiration_date: string | null
+    certificate_date: string | null
+    general_liability?: string | null
+    automobile_liability?: string | null
+    workers_compensation?: string | null
+    confidence: number
+    warnings: string[]
+  } | null
+  dwellingPolicy?: {
+    document_type:
+      | 'dwelling_policy_declarations'
+      | 'homeowners_policy_declarations'
+      | 'commercial_property_policy'
+    insurer_name?: string | null
+    policy_number?: string | null
+    producer_agency_name?: string | null
+    named_insured_primary: string | null
+    occupancy_type: string | null
+    mortgagee_name: string | null
+    insured_property_address: string | null
+    date_issued: string | null
+    policy_effective_date: string | null
+    policy_expiration_date: string | null
+    coverage_c_personal_property_limit: number | null
+  } | null
 }
 
 export type ExtractOnboardingDocumentInput = {
@@ -77,6 +127,8 @@ export type ExtractOnboardingDocumentInput = {
   storagePath?: string | null
   contentType?: string | null
   fileBase64?: string
+  pageImages?: string[]
+  insuranceIntent?: 'property_policy' | 'auto'
 }
 
 export type ExtractOnboardingDocumentResult = {
@@ -140,6 +192,8 @@ export async function extractOnboardingDocument(
         storagePath: input.storagePath ?? undefined,
         contentType: input.contentType ?? undefined,
         fileBase64: input.fileBase64 ?? undefined,
+        pageImages: input.pageImages?.length ? input.pageImages : undefined,
+        insuranceIntent: input.insuranceIntent ?? undefined,
       }),
     })
   } catch (err) {

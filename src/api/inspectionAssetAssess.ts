@@ -114,7 +114,34 @@ function inspectionInvokeError(data: unknown, fallback: string): Error {
       return new Error(payload.error.trim())
     }
   }
+  if (typeof data === 'string' && data.trim()) {
+    try {
+      const parsed = JSON.parse(data) as { error?: unknown }
+      if (typeof parsed.error === 'string' && parsed.error.trim()) {
+        return new Error(parsed.error.trim())
+      }
+    } catch {
+      /* not JSON */
+    }
+  }
   return new Error(fallback)
+}
+
+async function readFunctionErrorPayload(error: unknown): Promise<unknown> {
+  const context = (error as { context?: Response })?.context
+  if (!context) return null
+  try {
+    const response = typeof context.clone === 'function' ? context.clone() : context
+    const text = await response.text()
+    if (!text.trim()) return null
+    try {
+      return JSON.parse(text) as unknown
+    } catch {
+      return { error: text.trim() }
+    }
+  } catch {
+    return null
+  }
 }
 
 async function invoke<T>(body: Record<string, unknown>): Promise<T> {
@@ -126,17 +153,9 @@ async function invoke<T>(body: Record<string, unknown>): Promise<T> {
     body: { ...body, landlordId },
   })
   let payload: unknown = data
-  if (error && (payload == null || typeof payload !== 'object')) {
-    const context = (error as { context?: { json?: () => Promise<unknown> } }).context
-    if (typeof context?.json === 'function') {
-      try {
-        payload = await context.json()
-      } catch {
-        payload = data
-      }
-    }
-  }
   if (error) {
+    const fromBody = await readFunctionErrorPayload(error)
+    if (fromBody != null) payload = fromBody
     throw inspectionInvokeError(
       payload,
       typeof error.message === 'string' && error.message.trim()

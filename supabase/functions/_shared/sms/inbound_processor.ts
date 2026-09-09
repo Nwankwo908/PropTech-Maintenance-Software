@@ -7,6 +7,7 @@ import {
   lookupReleasedPendingSmsNumber,
   normalizeSmsPhone,
   resolveInboundSmsNumber,
+  resolveLandlordIdForSharedTwilioInbound,
   resolveOpenMaintenanceRequestId,
 } from "./inbound_db.ts"
 import { resolvePhoneIdentity } from "./resolveIdentity.ts"
@@ -35,6 +36,7 @@ import {
   inboundMediaWasRehosted,
   rehostInboundSmsMedia,
 } from "./rehostInboundMedia.ts"
+import { isLimitedAlphaTwilioSmsNumber } from "../../../../shared/landlordCapabilities.ts"
 
 export {
   InboundSmsError,
@@ -244,7 +246,14 @@ export async function processInboundSms(
     )
   }
 
-  const landlordId = smsNumber.landlord_id
+  let landlordId = smsNumber.landlord_id
+  if (isLimitedAlphaTwilioSmsNumber(inbound.to)) {
+    landlordId = await resolveLandlordIdForSharedTwilioInbound(
+      supabase,
+      inbound.from,
+      landlordId,
+    )
+  }
 
   const existingConversation = await findOpenConversation(supabase, {
     landlordId,

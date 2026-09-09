@@ -16,6 +16,7 @@ import {
   resolveOpenAiVisionMediaType,
   stripVisionDataUrl,
 } from "../openaiVisionMedia.ts"
+import { pdfPagesToJpegDataUrls } from "../../onboarding/pdfPageImages.ts"
 
 type ChatCompletionResponse = {
   choices?: Array<{
@@ -158,7 +159,26 @@ export async function analyzeInspectionReportWithGpt4o(
   imageBase64: string,
   mediaType?: string,
 ): Promise<ReturnType<typeof normalizeInspectionReportExtract>> {
-  const resolved = resolveOpenAiVisionMediaType(imageBase64, mediaType)
+  let payloadBase64 = imageBase64
+  let payloadMedia = mediaType
+  const claimed = (mediaType ?? "").toLowerCase()
+  if (claimed.includes("pdf")) {
+    const raw = stripVisionDataUrl(imageBase64)
+    const binary = atob(raw)
+    const bytes = new Uint8Array(binary.length)
+    for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i)
+    const urls = await pdfPagesToJpegDataUrls(bytes, { maxPages: 2, maxEdge: 1400, quality: 0.7 })
+    const first = urls[0]
+    if (!first) {
+      throw new Error(
+        "We couldn’t read this PDF inspection report. Export the first page as a JPG and try again.",
+      )
+    }
+    payloadBase64 = first.replace(/^data:image\/jpeg;base64,/, "")
+    payloadMedia = "image/jpeg"
+  }
+
+  const resolved = resolveOpenAiVisionMediaType(payloadBase64, payloadMedia)
   if ("error" in resolved) throw new Error(resolved.error)
 
   const json = await callGpt4oVision({
@@ -166,7 +186,7 @@ export async function analyzeInspectionReportWithGpt4o(
     system: INSPECTION_DOCUMENT_SYSTEM_PROMPT,
     userText:
       "Read the property address printed on this inspection report, then extract all appliance and systems findings. Return JSON with propertyAddress and items.",
-    imageBase64,
+    imageBase64: payloadBase64,
     mediaType: resolved.mediaType,
     jsonObject: true,
   })

@@ -30,6 +30,7 @@ import {
   type OpsAlertChannelPreference,
 } from "./tenantActivationFailure.ts"
 import { uloAppUrl } from "../uloAppUrl.ts"
+import { normalizePhoneFlexible } from "../resident_notify.ts"
 
 export type { OpsAlertChannelPreference }
 export {

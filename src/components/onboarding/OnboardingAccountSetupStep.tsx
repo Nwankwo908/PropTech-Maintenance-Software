@@ -94,8 +94,8 @@ export function OnboardingAccountSetupStep({
               className={`${onboardingInputClass} sm:col-span-2`}
               value={accountSetup.companyName}
               onChange={(e) => updateAccountSetup({ companyName: e.target.value })}
-              placeholder="Company name"
-              aria-label="Company name"
+              placeholder="Company name (optional)"
+              aria-label="Company name (optional)"
             />
             <input
               className={onboardingInputClass}

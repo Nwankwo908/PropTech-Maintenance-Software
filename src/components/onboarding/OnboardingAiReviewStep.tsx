@@ -849,11 +849,11 @@ export function OnboardingAiReviewStep({
       <div className={`${onboardingSectionStackClass} mt-4`}>
         <ReviewSection title="Your organization">
           <p className="mt-1 text-[13px] text-[#6a7282]">
-            Required for Fast Track — same details as the manual Account setup step.
+            Your name is required. Company name is optional.
           </p>
           <div className="mt-3 grid gap-3 sm:grid-cols-2">
             <label className="block sm:col-span-2">
-              <span className={fieldLabelClass}>Company name</span>
+              <span className={fieldLabelClass}>Company name (optional)</span>
               <input
                 className={inputClass}
                 value={account.companyName}
@@ -1023,6 +1023,63 @@ export function OnboardingAiReviewStep({
                 (item) => item.rentAmount,
                 'No lease information detected.',
               )}
+            </ReviewSection>
+            <ReviewSection
+              title="Roles found on documents"
+              count={review.needsReview.filter((item) =>
+                [
+                  'landlord_lessor',
+                  'tenant_lessee',
+                  'guarantor',
+                  'property_manager',
+                  'named_insured',
+                  'certificate_holder',
+                  'additional_insured',
+                  'insurance_producer',
+                  'insurance_carrier',
+                  'unit_row_needs_review',
+                ].includes(item.dataType),
+              ).length}
+            >
+              {(() => {
+                const roleRows = review.needsReview.filter((item) =>
+                  [
+                    'landlord_lessor',
+                    'tenant_lessee',
+                    'guarantor',
+                    'property_manager',
+                    'named_insured',
+                    'certificate_holder',
+                    'additional_insured',
+                    'insurance_producer',
+                    'insurance_carrier',
+                    'unit_row_needs_review',
+                  ].includes(item.dataType),
+                )
+                if (roleRows.length === 0) {
+                  return (
+                    <p className="mt-2 text-[13px] text-[#6a7282]">
+                      No labeled landlord, tenant, guarantor, or insurance roles detected.
+                    </p>
+                  )
+                }
+                return (
+                  <ul className="mt-3 space-y-2">
+                    {roleRows.map((item) => (
+                      <li
+                        key={item.id}
+                        className="rounded-[8px] border border-[#eef0f3] px-3 py-2"
+                      >
+                        <p className="text-[12px] font-medium text-[#364153]">{item.label}</p>
+                        <p className="mt-0.5 text-[13px] text-[#101828]">{item.value}</p>
+                        {item.needsReview ? (
+                          <p className="mt-1 text-[12px] text-[#b54708]">Needs review</p>
+                        ) : null}
+                      </li>
+                    ))}
+                  </ul>
+                )
+              })()}
             </ReviewSection>
             <ReviewSection title="Vendors Found" count={review.vendors.length}>
               {renderVendorRows()}
