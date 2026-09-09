@@ -78,9 +78,10 @@ export async function sendAdminEmailOtp(loginId: string): Promise<void> {
   if (!supabase) throw new Error(SERVICE_UNAVAILABLE)
   await assertAdminEmailAllowed(loginId)
   const email = loginIdToEmail(loginId)
+  // First-time allowlisted testers have no auth.users row yet. OTP must create it.
   const { error } = await supabase.auth.signInWithOtp({
     email,
-    options: { shouldCreateUser: !isPortalAdminEmailAllowed(email) },
+    options: { shouldCreateUser: true },
   })
   if (error) {
     throw new Error(getErrorMessage(error, 'Could not send a sign-in code. Please try again.'))

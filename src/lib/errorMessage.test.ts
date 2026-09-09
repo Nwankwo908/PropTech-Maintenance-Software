@@ -36,6 +36,12 @@ describe('toUserFriendlyMessage', () => {
     expect(toUserFriendlyMessage(msg, 'Could not send this message. The vendor is still available.')).toBe(msg)
   })
 
+  it('maps OTP signup-disabled for first-time admin emails', () => {
+    expect(
+      toUserFriendlyMessage('Signups not allowed for otp', 'fallback'),
+    ).toMatch(/does not have a login yet/i)
+  })
+
   it('maps unauthorized and missing SMS phone for settings test delivery', () => {
     expect(toUserFriendlyMessage('Unauthorized', 'fallback')).toMatch(/permission/i)
     expect(

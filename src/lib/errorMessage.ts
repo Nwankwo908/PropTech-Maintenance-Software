@@ -101,6 +101,13 @@ export function toUserFriendlyMessage(raw: string, fallback: string): string {
   }
 
   if (
+    lower.includes('signups not allowed') ||
+    lower.includes('sign up is disabled')
+  ) {
+    return 'This email does not have a login yet. Try Continue with Google, or request a new code after this update is live.'
+  }
+
+  if (
     lower.includes('no sms phone') ||
     lower.includes('no phone on file')
   ) {
