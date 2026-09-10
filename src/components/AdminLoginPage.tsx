@@ -6,23 +6,13 @@ import {
   getAdminSession,
   isAdminSessionAllowed,
   sendAdminEmailOtp,
-  signInAdminWithOAuth,
   startAdminGoogleOAuthRedirect,
   signOutAdmin,
   verifyAdminEmailOtp,
 } from '@/lib/adminAuth'
 import { supabase } from '@/lib/supabase'
 import { getErrorMessage, isAuthEmailRateLimited } from '@/lib/errorMessage'
-import {
-  beginGoogleIdTokenSignIn,
-  googleIdTokenAuthErrorMessage,
-  googleOAuthClientId,
-  isAllowedLocalReturnOrigin,
-  shouldUseBrandedGoogleIdToken,
-  supabaseGoogleOAuthCallbackUri,
-  takeStoredGoogleOAuthNonce,
-  waitForGoogleOAuthPopupResult,
-} from '@/lib/googleIdentitySignIn'
+import { googleIdTokenAuthErrorMessage } from '@/lib/googleIdentitySignIn'
 
 /** Only allow same-app admin paths (blocks open redirects). */
 function safeAdminNextPath(raw: string | null): string {
@@ -182,62 +172,11 @@ export function AdminLoginPage() {
       setError('Supabase is not configured.')
       return
     }
-    const client = supabase
     setSubmitting(true)
     try {
-      const origin = window.location.origin
-      const clientId = googleOAuthClientId()
-      const onLocal = isAllowedLocalReturnOrigin(origin)
-      const localPopup = Boolean(clientId) && onLocal
-      const branded = Boolean(clientId) && shouldUseBrandedGoogleIdToken(origin)
-
-      if (onLocal && !clientId) {
-        throw new Error(
-          'Google sign-in is not configured for this local app. Add VITE_GOOGLE_OAUTH_CLIENT_ID, or use email and a verification code.',
-        )
-      }
-
-      async function completeWithIdToken(idToken: string, nonce: string | null) {
-        const { data, error: tokenError } = await client.auth.signInWithIdToken({
-          provider: 'google',
-          token: idToken,
-          ...(nonce ? { nonce } : {}),
-        })
-        if (tokenError || !data.session) {
-          throw tokenError ?? new Error('Google sign-in did not finish.')
-        }
-        if (!(await isAdminSessionAllowed(data.session))) {
-          await signOutAdmin()
-          navigate('/admin/login?error=not_authorized', { replace: true })
-          return
-        }
-        navigate(afterLoginPath, { replace: true })
-      }
-
-      if (localPopup) {
-        const started = beginGoogleIdTokenSignIn()
-        if (!started || started.mode !== 'popup') {
-          throw new Error('Allow popups for this site, then try Google sign-in again.')
-        }
-        const result = await waitForGoogleOAuthPopupResult(started.popup)
-        if (result.error || !result.idToken) {
-          throw new Error('Google sign-in did not finish.')
-        }
-        await completeWithIdToken(
-          result.idToken,
-          result.nonce ?? takeStoredGoogleOAuthNonce(),
-        )
-        return
-      }
-
-      // Production: authorization-code via Supabase. Chrome drops or rejects
-      // implicit / GSI id_tokens (400 on grant_type=id_token).
-      if (branded) {
-        await startAdminGoogleOAuthRedirect()
-        return
-      }
-      await signInAdminWithOAuth('google')
-      window.setTimeout(() => setSubmitting(false), 12_000)
+      // Local and production: PKCE via Supabase. Chrome localhost implicit
+      // id_tokens fail nonce checks ("Google sign-in could not be verified").
+      await startAdminGoogleOAuthRedirect()
     } catch (err) {
       setError(googleIdTokenAuthErrorMessage(err) ?? getErrorMessage(err, 'Sign in failed'))
       setSubmitting(false)
@@ -348,15 +287,6 @@ export function AdminLoginPage() {
                     <IconGoogle />
                     Continue with Google
                   </button>
-                  {import.meta.env.DEV && supabaseGoogleOAuthCallbackUri() ? (
-                    <p className="text-[12px] leading-4 text-[#6a7282]">
-                      If Google says this app’s request is invalid, add this exact Authorized
-                      redirect URI on the Google Cloud client used in Supabase Auth → Google:{' '}
-                      <span className="break-all font-mono text-[11px] text-[#364153]">
-                        {supabaseGoogleOAuthCallbackUri()}
-                      </span>
-                    </p>
-                  ) : null}
                 </form>
               ) : (
                 <form className="mt-8 flex flex-col gap-4" onSubmit={onVerifyOtp} noValidate>
