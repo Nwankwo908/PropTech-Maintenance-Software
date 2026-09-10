@@ -592,7 +592,7 @@ export async function validateFinalAnswer(input: {
             bathrooms: c.bathrooms,
             squareFootage: c.squareFootage,
             distanceMiles: c.distanceMiles,
-            source: c.source ?? (market?.provider === "rentcast" ? "RentCast" : "Zillow"),
+            source: c.source ?? "Zillow",
             listingUrl: c.url,
           })),
           showStreetView: plan.visualMode === "market_analysis",

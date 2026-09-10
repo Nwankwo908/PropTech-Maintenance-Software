@@ -73,6 +73,7 @@ describe('homeDataGraph', () => {
   it('treats unknown provider ids as the default adapter without leaking vendor columns', () => {
     expect(parseHomeDataProviderId('ATTOM')).toBe('attom')
     expect(parseHomeDataProviderId('manual')).toBe('manual')
-    expect(parseHomeDataProviderId('nope')).toBe('rentcast')
+    expect(parseHomeDataProviderId('rentcast')).toBe('rentcast')
+    expect(parseHomeDataProviderId('nope')).toBe('attom')
   })
 })

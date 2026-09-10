@@ -1,4 +1,3 @@
-import { loadRentCastFill } from "./rentcastFill.ts"
 import { loadZillowInsightFill } from "../zillow/insightFill.ts"
 
 export type PropertyChartPoint = { date: string; value: number }
@@ -50,18 +49,16 @@ const insightCache = new Map<string, { at: number; insights: PropertyInsights }>
 
 export async function loadPropertyInsights(input: {
   address: string
-  rentcastKey?: string | null
   zillowKey?: string | null
   zillowHost?: string | null
 }): Promise<{ insights: PropertyInsights; configured: boolean; lookupError: string | null }> {
-  const rentcastKey = input.rentcastKey?.trim() ?? ""
   const zillowKey = input.zillowKey?.trim() ?? ""
-  const configured = Boolean(rentcastKey || zillowKey)
+  const configured = Boolean(zillowKey)
   if (!configured) {
     return {
       insights: emptyPropertyInsights(),
       configured: false,
-      lookupError: "Property data isn’t connected (set ZILLOW_RAPIDAPI_KEY or RENTCAST_API_KEY).",
+      lookupError: "Property data isn’t connected (set ZILLOW_RAPIDAPI_KEY).",
     }
   }
 
@@ -71,41 +68,23 @@ export async function loadPropertyInsights(input: {
     return { insights: cached.insights, configured: true, lookupError: null }
   }
 
-  const [rentcastFill, zillowFill] = await Promise.all([
-    rentcastKey ? loadRentCastFill({ address: input.address, apiKey: rentcastKey }) : Promise.resolve(null),
-    zillowKey
-      ? loadZillowInsightFill({
-          address: input.address,
-          apiKey: zillowKey,
-          host: input.zillowHost,
-        })
-      : Promise.resolve(null),
-  ])
+  const zillowFill = await loadZillowInsightFill({
+    address: input.address,
+    apiKey: zillowKey,
+    host: input.zillowHost,
+  })
 
   let insights = emptyPropertyInsights()
-
-  if (rentcastFill) {
-    insights = {
-      ...insights,
-      yearBuilt: rentcastFill.yearBuilt,
-      homeValue: rentcastFill.homeValue,
-      rentEstimate: rentcastFill.rentEstimate,
-      rentLow: rentcastFill.rentLow,
-      rentHigh: rentcastFill.rentHigh,
-      latitude: rentcastFill.latitude,
-      longitude: rentcastFill.longitude,
-    }
-  }
 
   if (zillowFill) {
     insights = {
       ...insights,
       photos: zillowFill.photos,
-      yearBuilt: insights.yearBuilt ?? zillowFill.yearBuilt,
-      homeValue: insights.homeValue ?? zillowFill.homeValue,
-      rentEstimate: insights.rentEstimate ?? zillowFill.rentEstimate,
-      latitude: insights.latitude ?? zillowFill.latitude,
-      longitude: insights.longitude ?? zillowFill.longitude,
+      yearBuilt: zillowFill.yearBuilt,
+      homeValue: zillowFill.homeValue,
+      rentEstimate: zillowFill.rentEstimate,
+      latitude: zillowFill.latitude,
+      longitude: zillowFill.longitude,
     }
   }
 

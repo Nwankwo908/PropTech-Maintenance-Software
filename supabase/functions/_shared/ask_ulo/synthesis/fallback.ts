@@ -456,10 +456,8 @@ export function buildFallbackAskUloAnswer(packets: AskUloToolPackets): string {
     if (packets.market?.available && packets.market.estimatedRent != null) {
       const src =
         packets.market.provider === "zillow_rapidapi"
-            ? "Zillow listings"
-            : packets.market.provider === "rentcast"
-              ? "RentCast"
-              : "live market data"
+          ? "Zillow listings"
+          : "live market data"
       parts.push(
         `I'd price around **${money(packets.market.estimatedRent)}/mo` +
           (packets.market.rentRangeLow != null && packets.market.rentRangeHigh != null
@@ -521,7 +519,7 @@ export function buildFallbackAskUloAnswer(packets: AskUloToolPackets): string {
       parts.push("- Review the comps below for unit mix and amenity gaps.")
     } else {
       parts.push(
-        "- Retry with a full street address, or set `RENTCAST_API_KEY` for listing-level comps.",
+        "- Retry with a full street address so I can pull nearby listings.",
       )
     }
     parts.push("- Ask for price history if you want sale/valuation over time.")

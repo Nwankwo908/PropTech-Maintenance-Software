@@ -1,13 +1,13 @@
 /**
  * Home Data Graph ingest: adapters map a vendor payload into HomeDataFacts.
  * persistHomeDataGraph is the only writer. Swap HOME_DATA_PROVIDER without changing graph columns.
+ * Live ingest is ATTOM (not wired) or manual. Historical `rentcast` rows stay readable; they are not fetched.
  */
 import {
   parseHomeDataProviderId,
   type HomeDataIngestResult,
   type HomeDataProviderId,
 } from "../../../../shared/homeDataGraph.ts"
-import { fetchRentCastHomeData } from "./rentcastAdapter.ts"
 
 export type HomeDataProviderFetch =
   | { status: "ok"; ingest: HomeDataIngestResult }
@@ -34,15 +34,15 @@ export async function fetchHomeDataFromProvider(input: {
       error: "That property data source isn’t connected yet.",
     }
   }
-
-  const apiKey = Deno.env.get("RENTCAST_API_KEY")?.trim() ?? ""
-  if (!apiKey) {
+  if (input.provider === "rentcast") {
     return {
       status: "not_configured",
       error: "Property data isn’t connected yet.",
     }
   }
 
-  const ingest = await fetchRentCastHomeData({ address: input.address, apiKey })
-  return { status: "ok", ingest }
+  return {
+    status: "unsupported",
+    error: "That property data source isn’t connected yet.",
+  }
 }

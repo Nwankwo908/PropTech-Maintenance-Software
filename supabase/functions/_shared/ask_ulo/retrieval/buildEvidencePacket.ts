@@ -562,12 +562,7 @@ export function buildOrganizedEvidencePacket(
     )
   }
 
-  const marketBoost =
-    input.market?.provider === "rentcast"
-      ? 15
-      : input.market?.provider === "zillow_rapidapi"
-      ? 10
-      : 0
+  const marketBoost = input.market?.provider === "zillow_rapidapi" ? 10 : 0
   if (input.market?.citations?.length) {
     market = input.market.citations.map((c, i) => {
       const fact = fromCitation(c, "market", i, now, MARKET_STALENESS_DAYS)

@@ -183,11 +183,10 @@ On `failClosed`, the draft is replaced with landlord-facing refuse/clarify copy.
 | `ADMIN_REASSIGN_SECRET` | Yes | Same value as `VITE_ADMIN_REASSIGN_SECRET`; send as `x-admin-reassign-secret` |
 | `OPENAI_API_KEY` | Optional | Enables `gpt-4o` answers, `text-embedding-3-small` for legal RAG, and bounded tool select (`gpt-4o-mini`). Without it, returns a deterministic summary of tool packets (`mode: "fallback"`). |
 | `ASK_ULO_OPENAI_TOOL_SELECT` | Optional | Default: on when `OPENAI_API_KEY` is set. Set `false` to force capability-route rule planning only. |
-| `RENTCAST_API_KEY` | Optional | Listing-level rent AVM + comps for market analysis (preferred when available). |
-| `ZILLOW_RAPIDAPI_KEY` | Optional | Alternate listing search via RapidAPI Zillow (`zillow-com1`). |
+| `ZILLOW_RAPIDAPI_KEY` | Optional | Listing search via RapidAPI Zillow (`zillow-com1`). |
 | `SUPABASE_URL` / `SUPABASE_SERVICE_ROLE_KEY` | Auto | Provided by Supabase runtime |
 
-Without RentCast/RapidAPI keys, market analysis reports that live comps are unavailable.
+Without a RapidAPI key, market analysis reports that live comps are unavailable.
 
 ### Frontend (Vite)
 

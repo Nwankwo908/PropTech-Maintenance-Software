@@ -54,13 +54,13 @@ Deno.test("buildOrganizedEvidencePacket splits internal / legal / market / missi
       ],
     },
     market: {
-      provider: "rentcast",
+      provider: "zillow_rapidapi",
       bullets: ["Estimated rent $2,100 as of 2026-06-01"],
       citations: [
         {
           tool: "market_data",
-          title: "RentCast AVM",
-          citation: "rentcast",
+          title: "Zillow for-rent listings",
+          citation: "zillow_rapidapi",
           excerpt: "$2100",
         },
       ],

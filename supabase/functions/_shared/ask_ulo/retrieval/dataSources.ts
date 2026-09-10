@@ -153,7 +153,7 @@ export const ASK_ULO_DATA_SOURCE_NOTES = {
   finance:
     "HUD FMR demo facts in compliance_structured_facts; FRED / ACS / FHFA later as structured indexes",
   market:
-    "live comps / rent AVM → RentCast or Zillow RapidAPI (zillow-com1) when keyed; " +
+    "live comps → Zillow RapidAPI (zillow-com1) when keyed; " +
     "portfolio snapshot personalizes location/occupancy",
   ops: "executive briefing for broad portfolio prompts (health, workflows, occupancy, Ulo actions); " +
     "narrow factual ops stay Quick Answer; operations_graph + tickets/workflows via ops_graph_lookup",

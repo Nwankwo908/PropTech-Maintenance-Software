@@ -1,6 +1,7 @@
 /**
  * Canonical Home Data Graph facts.
- * Provider adapters (RentCast, ATTOM, …) map into this shape.
+ * Provider adapters (ATTOM, manual, …) map into this shape.
+ * `rentcast` remains a stored source_provider id for historical rows; it is not ingested.
  * Do not put vendor-specific field names on the snapshot.
  */
 
@@ -10,7 +11,7 @@ export type HomeDataProviderId = (typeof HOME_DATA_PROVIDERS)[number]
 export function parseHomeDataProviderId(value: string | null | undefined): HomeDataProviderId {
   const raw = (value ?? '').trim().toLowerCase()
   if (raw === 'attom' || raw === 'manual' || raw === 'rentcast') return raw
-  return 'rentcast'
+  return 'attom'
 }
 
 export type HomeDataFacts = {

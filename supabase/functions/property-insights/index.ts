@@ -43,14 +43,13 @@ serve(async (req) => {
     return jsonResponse({ error: "Missing address" }, 400)
   }
 
-  const rentcastKey = Deno.env.get("RENTCAST_API_KEY")?.trim() ?? ""
   const zillowKey = Deno.env.get("ZILLOW_RAPIDAPI_KEY")?.trim() ?? ""
   const key = cacheKey(address)
   const cached = cache.get(key)
   if (cached && Date.now() - cached.at < CACHE_TTL_MS) {
     return jsonResponse({
       ...cached.insights,
-      configured: Boolean(rentcastKey || zillowKey),
+      configured: Boolean(zillowKey),
       lookupError: null,
     })
   }
@@ -58,7 +57,6 @@ serve(async (req) => {
   try {
     const result = await loadPropertyInsights({
       address,
-      rentcastKey: rentcastKey || null,
       zillowKey: zillowKey || null,
       zillowHost: Deno.env.get("ZILLOW_RAPIDAPI_HOST")?.trim() || null,
     })
