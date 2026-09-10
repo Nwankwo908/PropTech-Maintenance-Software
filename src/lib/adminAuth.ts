@@ -98,19 +98,14 @@ export async function verifyAdminEmailOtp(loginId: string, token: string): Promi
     token: token.replace(/\s/g, '').trim(),
     type: 'email',
   })
-  if (!error) return
-  const magicLink = await supabase.auth.verifyOtp({
-    email,
-    token: token.replace(/\s/g, '').trim(),
-    type: 'magiclink',
-  })
-  if (!magicLink.error) return
-  const mapped = getErrorMessage(error, "That code didn’t work. Please try again.")
-  throw new Error(
-    mapped === "You don't have permission to do that."
-      ? "That code didn’t work. Please try again."
-      : mapped,
-  )
+  if (error) {
+    const mapped = getErrorMessage(error, "That code didn’t work. Please try again.")
+    throw new Error(
+      mapped === "You don't have permission to do that."
+        ? "That code didn’t work. Please try again."
+        : mapped,
+    )
+  }
 }
 
 export async function signInAdminWithOAuth(provider: 'google' | 'apple'): Promise<void> {

@@ -11,7 +11,7 @@ import {
   verifyAdminEmailOtp,
 } from '@/lib/adminAuth'
 import { supabase } from '@/lib/supabase'
-import { getErrorMessage } from '@/lib/errorMessage'
+import { getErrorMessage, isAuthEmailRateLimited } from '@/lib/errorMessage'
 import {
   beginGoogleIdTokenSignIn,
   googleIdTokenAuthErrorMessage,
@@ -135,6 +135,11 @@ export function AdminLoginPage() {
       await sendAdminEmailOtp(email)
       setStep('otp')
     } catch (err) {
+      if (isAuthEmailRateLimited(err)) {
+        setStep('otp')
+        setError(getErrorMessage(err, 'A sign-in code was already sent. Check your email.'))
+        return
+      }
       setError(getErrorMessage(err, 'Could not send verification code'))
     } finally {
       setSubmitting(false)

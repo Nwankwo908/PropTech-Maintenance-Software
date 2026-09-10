@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { getErrorMessage, getOnboardingErrorMessage, toUserFriendlyMessage } from './errorMessage'
+import { getErrorMessage, getOnboardingErrorMessage, isAuthEmailRateLimited, toUserFriendlyMessage } from './errorMessage'
 
 describe('toUserFriendlyMessage', () => {
   it('maps network failures', () => {
@@ -34,6 +34,13 @@ describe('toUserFriendlyMessage', () => {
     const msg =
       'Could not send this in Ulo. Thumbtack did not issue a messaging token. The Message API app cannot use application login, and it is not on the same environment as vendor search. Ask Thumbtack for production Message API credentials with permission to send requests.'
     expect(toUserFriendlyMessage(msg, 'Could not send this message. The vendor is still available.')).toBe(msg)
+  })
+
+  it('maps email OTP rate limits without blocking the code step', () => {
+    expect(
+      toUserFriendlyMessage('email rate limit exceeded', 'fallback'),
+    ).toMatch(/already sent recently/i)
+    expect(isAuthEmailRateLimited(new Error('over_email_send_rate_limit'))).toBe(true)
   })
 
   it('maps OTP signup-disabled for first-time admin emails', () => {

@@ -66,7 +66,7 @@ export function toUserFriendlyMessage(raw: string, fallback: string): string {
     lower.includes('over_email_send_rate_limit') ||
     lower.includes('email rate')
   ) {
-    return 'Too many attempts. Please wait a few minutes and try again.'
+    return 'A sign-in code was already sent recently. Check that email for the code, wait a few minutes to send a new one, or use Continue with Google.'
   }
 
   if (
@@ -284,6 +284,20 @@ export function getErrorMessage(error: unknown, fallback: string): string {
   const raw = extractRawMessage(error)
   if (!raw) return fallback
   return toUserFriendlyMessage(raw, fallback)
+}
+
+/** True when Auth refused another email OTP because one was just sent. */
+export function isAuthEmailRateLimited(error: unknown): boolean {
+  const raw = (extractRawMessage(error) ?? '').toLowerCase()
+  const mapped = getErrorMessage(error, '').toLowerCase()
+  return (
+    raw.includes('rate limit') ||
+    raw.includes('too many requests') ||
+    raw.includes('too many') ||
+    raw.includes('over_email_send_rate_limit') ||
+    raw.includes('email rate') ||
+    mapped.includes('already sent recently')
+  )
 }
 
 /** True when Postgres / PostgREST reports a unique-constraint collision. */
