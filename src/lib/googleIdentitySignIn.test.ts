@@ -58,6 +58,8 @@ describe('googleIdentitySignIn', () => {
     expect(googleSignInRedirectUri('https://www.ulohome.io')).toBe(
       'https://www.ulohome.io/auth/callback',
     )
+    expect(googleSignInRedirectUri('https://ulohome.io')).toBe(PRODUCTION_GOOGLE_AUTH_CALLBACK)
+    expect(googleSignInRedirectUri('https://app.ulohome.io')).toBe(PRODUCTION_GOOGLE_AUTH_CALLBACK)
   })
 
   it('encodes a local return origin in OAuth state', () => {

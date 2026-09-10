@@ -2,17 +2,18 @@
  * Google sign-in so the account picker shows the OAuth client name / ulohome.io
  * instead of *.supabase.co.
  *
- * Production uses a same-origin redirect to /auth/callback.
- * Localhost cannot rely on Google Cloud redirect URIs (Vite hops ports, and
- * Console changes often never match). Local sign-in opens a popup that returns
- * through the already-registered https://www.ulohome.io/auth/callback, which
- * posts the id_token back to the dev tab.
+ * Production always returns to https://www.ulohome.io/auth/callback (the URI
+ * registered in Google Cloud). Apex / app hosts and Chrome FedCM otherwise
+ * drop the id_token or nonce and show "Google sign-in did not finish."
+ * Localhost opens a popup that returns through that same production callback.
  */
 
 export const GOOGLE_OAUTH_NONCE_KEY = 'ulo.googleOAuthNonce'
 export const GOOGLE_OAUTH_CSRF_KEY = 'ulo.googleOAuthCsrf'
 export const GOOGLE_OAUTH_RESULT_TYPE = 'ulo.googleOAuthResult'
 export const PRODUCTION_GOOGLE_AUTH_CALLBACK = 'https://www.ulohome.io/auth/callback'
+
+const ULO_PRODUCTION_HOSTS = new Set(['ulohome.io', 'www.ulohome.io', 'app.ulohome.io'])
 
 export const GOOGLE_OAUTH_BRIDGE_ORIGINS = [
   'https://www.ulohome.io',
@@ -97,13 +98,48 @@ function storeGoogleOAuthNonce(nonce: string): void {
   } catch {
     /* ignore */
   }
+  try {
+    const host = window.location.hostname.replace(/^\[|\]$/g, '')
+    const domain = ULO_PRODUCTION_HOSTS.has(host) ? '; Domain=.ulohome.io' : ''
+    document.cookie = `${GOOGLE_OAUTH_NONCE_KEY}=${encodeURIComponent(nonce)}; Max-Age=600; Path=/${domain}; Secure; SameSite=Lax`
+  } catch {
+    /* ignore */
+  }
 }
 
-/** Redirect URI sent to Google. Local always uses production so Console localhost URIs are not required. */
+function readGoogleOAuthNonceCookie(): string | null {
+  if (typeof document === 'undefined') return null
+  const parts = document.cookie.split(';')
+  const prefix = `${GOOGLE_OAUTH_NONCE_KEY}=`
+  for (const part of parts) {
+    const trimmed = part.trim()
+    if (!trimmed.startsWith(prefix)) continue
+    try {
+      return decodeURIComponent(trimmed.slice(prefix.length)).trim() || null
+    } catch {
+      return null
+    }
+  }
+  return null
+}
+
+function clearGoogleOAuthNonceCookie(): void {
+  try {
+    document.cookie = `${GOOGLE_OAUTH_NONCE_KEY}=; Max-Age=0; Path=/`
+    document.cookie = `${GOOGLE_OAUTH_NONCE_KEY}=; Max-Age=0; Path=/; Domain=.ulohome.io`
+  } catch {
+    /* ignore */
+  }
+}
+
+/** Redirect URI sent to Google. Production always uses www so Console + Chrome agree. */
 export function googleSignInRedirectUri(origin: string = window.location.origin): string {
   try {
     const url = new URL(origin.includes('://') ? origin : `http://${origin}`)
     if (isLocalGoogleHost(url.hostname) || isPrivateLanHostname(url.hostname)) {
+      return PRODUCTION_GOOGLE_AUTH_CALLBACK
+    }
+    if (ULO_PRODUCTION_HOSTS.has(url.hostname)) {
       return PRODUCTION_GOOGLE_AUTH_CALLBACK
     }
   } catch {
@@ -208,7 +244,6 @@ export async function requestGoogleIdTokenViaGsi(): Promise<string> {
       nonce: hashedNonce,
       auto_select: false,
       cancel_on_tap_outside: true,
-      use_fedcm_for_prompt: true,
       callback: (response) => {
         const token = response.credential?.trim()
         if (token) finish(() => resolve(token))
@@ -357,11 +392,14 @@ export function googleIdTokenAuthErrorMessage(error: unknown): string | null {
 
 export function takeStoredGoogleOAuthNonce(): string | null {
   if (typeof window === 'undefined') return null
+  let fromSession: string | null = null
   try {
-    const nonce = window.sessionStorage.getItem(GOOGLE_OAUTH_NONCE_KEY)
+    fromSession = window.sessionStorage.getItem(GOOGLE_OAUTH_NONCE_KEY)
     window.sessionStorage.removeItem(GOOGLE_OAUTH_NONCE_KEY)
-    return nonce?.trim() || null
   } catch {
-    return null
+    fromSession = null
   }
+  const fromCookie = readGoogleOAuthNonceCookie()
+  clearGoogleOAuthNonceCookie()
+  return fromSession?.trim() || fromCookie?.trim() || null
 }
