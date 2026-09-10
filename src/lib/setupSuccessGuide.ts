@@ -30,6 +30,46 @@ function seenKey(page: SetupSuccessCheckboxGuidePage, landlordId: string): strin
   return `${SEEN_KEY_PREFIX}${page}.${landlordId}`
 }
 
+function storageGet(key: string): string | null {
+  try {
+    const sessionValue = window.sessionStorage?.getItem(key)
+    if (sessionValue) return sessionValue
+  } catch {
+    // private mode
+  }
+  try {
+    return window.localStorage.getItem(key)
+  } catch {
+    return null
+  }
+}
+
+function storageSet(key: string, value: string): void {
+  try {
+    window.sessionStorage?.setItem(key, value)
+  } catch {
+    // private mode
+  }
+  try {
+    window.localStorage.setItem(key, value)
+  } catch {
+    // private mode
+  }
+}
+
+function storageRemove(key: string): void {
+  try {
+    window.sessionStorage?.removeItem(key)
+  } catch {
+    // private mode
+  }
+  try {
+    window.localStorage.removeItem(key)
+  } catch {
+    // private mode
+  }
+}
+
 function pageForSetupItem(itemId: SetupSuccessItemId): SetupSuccessCheckboxGuidePage | null {
   if (itemId === 'welcome_texts') return 'residents'
   if (itemId === 'verify_vendors') return 'vendors'
@@ -55,19 +95,22 @@ export function isSetupSuccessCheckboxGuideNavigation(
   return (state as { setupCheckboxGuide?: string }).setupCheckboxGuide === page
 }
 
-/** After welcome texts or vendor verify, show the checkbox coachmark on that list. */
+export function markSetupSuccessCheckboxGuidePagePending(
+  page: SetupSuccessCheckboxGuidePage,
+  landlordId: string = getActiveLandlordId(),
+): void {
+  if (!isLimitedAlpha1Landlord(landlordId)) return
+  storageSet(pendingKey(landlordId), page)
+}
+
+/** After a Get set up row is tapped, show the coachmark on the destination page. */
 export function markSetupSuccessCheckboxGuidePending(
   itemId: SetupSuccessItemId,
   landlordId: string = getActiveLandlordId(),
 ): void {
-  if (!isLimitedAlpha1Landlord(landlordId)) return
   const page = pageForSetupItem(itemId)
   if (!page) return
-  try {
-    window.localStorage.setItem(pendingKey(landlordId), page)
-  } catch {
-    // private mode
-  }
+  markSetupSuccessCheckboxGuidePagePending(page, landlordId)
 }
 
 export function shouldShowSetupSuccessCheckboxGuide(
@@ -75,35 +118,31 @@ export function shouldShowSetupSuccessCheckboxGuide(
   landlordId: string = getActiveLandlordId(),
 ): boolean {
   if (!isLimitedAlpha1Landlord(landlordId)) return false
-  try {
-    if (window.localStorage.getItem(seenKey(page, landlordId)) === '1') return false
-    return window.localStorage.getItem(pendingKey(landlordId)) === page
-  } catch {
-    return false
-  }
+  if (storageGet(seenKey(page, landlordId)) === '1') return false
+  return storageGet(pendingKey(landlordId)) === page
+}
+
+/** Router state is dropped on some mobile navigations (portal sheet, iOS history). */
+export function isSetupSuccessCheckboxGuideActive(
+  state: unknown,
+  page: SetupSuccessCheckboxGuidePage,
+): boolean {
+  return isSetupSuccessCheckboxGuideNavigation(state, page) || shouldShowSetupSuccessCheckboxGuide(page)
 }
 
 export function dismissSetupSuccessCheckboxGuide(
   page: SetupSuccessCheckboxGuidePage,
   landlordId: string = getActiveLandlordId(),
 ): void {
-  try {
-    window.localStorage.setItem(seenKey(page, landlordId), '1')
-    window.localStorage.removeItem(pendingKey(landlordId))
-  } catch {
-    // private mode
-  }
+  storageSet(seenKey(page, landlordId), '1')
+  storageRemove(pendingKey(landlordId))
 }
 
 export function clearSetupSuccessCheckboxGuide(
   landlordId: string = getActiveLandlordId(),
 ): void {
-  try {
-    window.localStorage.removeItem(pendingKey(landlordId))
-    for (const page of ['vendors', 'residents', 'properties', 'property_tab', 'test_delivery'] as const) {
-      window.localStorage.removeItem(seenKey(page, landlordId))
-    }
-  } catch {
-    // private mode
+  storageRemove(pendingKey(landlordId))
+  for (const page of ['vendors', 'residents', 'properties', 'property_tab', 'test_delivery'] as const) {
+    storageRemove(seenKey(page, landlordId))
   }
 }

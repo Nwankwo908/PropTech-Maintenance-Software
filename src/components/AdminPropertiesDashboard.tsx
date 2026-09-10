@@ -42,7 +42,9 @@ import { getErrorMessage } from '@/lib/errorMessage'
 import { activateUnitsFromResidentAssignments } from '@/lib/unitActivation'
 import {
   dismissSetupSuccessCheckboxGuide,
+  isSetupSuccessCheckboxGuideActive,
   isSetupSuccessCheckboxGuideNavigation,
+  markSetupSuccessCheckboxGuidePagePending,
   setupCheckboxGuidePropertyTabState,
 } from '@/lib/setupSuccessGuide'
 
@@ -374,16 +376,18 @@ export function AdminPropertiesDashboard() {
   )
   const [canonicalProperties, setCanonicalProperties] = useState<PropertyRecord[]>([])
   const [showPropertyCardGuide, setShowPropertyCardGuide] = useState(() =>
-    isSetupSuccessCheckboxGuideNavigation(location.state, 'properties'),
+    isSetupSuccessCheckboxGuideActive(location.state, 'properties'),
   )
   const [propertyCardGuideRunId, setPropertyCardGuideRunId] = useState(0)
   const propertyCardGuideTargetRef = useRef<HTMLElement | null>(null)
 
   useEffect(() => {
-    if (!isSetupSuccessCheckboxGuideNavigation(location.state, 'properties')) return
+    if (!isSetupSuccessCheckboxGuideActive(location.state, 'properties')) return
     setShowPropertyCardGuide(true)
     setPropertyCardGuideRunId((value) => value + 1)
-    navigate(location.pathname, { replace: true, state: {} })
+    if (isSetupSuccessCheckboxGuideNavigation(location.state, 'properties')) {
+      navigate(location.pathname, { replace: true, state: {} })
+    }
   }, [location.pathname, location.state, navigate])
 
   useEffect(() => {
@@ -940,6 +944,7 @@ export function AdminPropertiesDashboard() {
         }
         onBuildingOpen={() => {
           dismissSetupSuccessCheckboxGuide('properties')
+          markSetupSuccessCheckboxGuidePagePending('property_tab')
           setShowPropertyCardGuide(false)
         }}
         headerAction={

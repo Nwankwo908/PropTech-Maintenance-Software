@@ -34,6 +34,7 @@ import { isRentChargePaidFromRun } from '@/lib/paymentSettlement'
 import { deleteResidentsForLandlord } from '@/lib/residentDeletion'
 import {
   dismissSetupSuccessCheckboxGuide,
+  isSetupSuccessCheckboxGuideActive,
   isSetupSuccessCheckboxGuideNavigation,
 } from '@/lib/setupSuccessGuide'
 import { resolveTenantActivationChip, countUnactivatedTenants } from '@/lib/tenantActivationStatus'
@@ -171,16 +172,18 @@ export function AdminResidentsDashboard() {
   const [onboardingSaving, setOnboardingSaving] = useState(false)
   const [residentsBanner, setResidentsBanner] = useState<ResidentsBannerState>(null)
   const [showCheckboxGuide, setShowCheckboxGuide] = useState(() =>
-    isSetupSuccessCheckboxGuideNavigation(location.state, 'residents'),
+    isSetupSuccessCheckboxGuideActive(location.state, 'residents'),
   )
   const [checkboxGuideRunId, setCheckboxGuideRunId] = useState(0)
   const checkboxGuideTargetRef = useRef<HTMLDivElement | null>(null)
 
   useEffect(() => {
-    if (!isSetupSuccessCheckboxGuideNavigation(location.state, 'residents')) return
+    if (!isSetupSuccessCheckboxGuideActive(location.state, 'residents')) return
     setShowCheckboxGuide(true)
     setCheckboxGuideRunId((value) => value + 1)
-    navigate(location.pathname, { replace: true, state: {} })
+    if (isSetupSuccessCheckboxGuideNavigation(location.state, 'residents')) {
+      navigate(location.pathname, { replace: true, state: {} })
+    }
   }, [location.pathname, location.state, navigate])
 
   useEffect(() => {

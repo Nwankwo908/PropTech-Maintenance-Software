@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useId, useMemo, useState } from 'react'
+import { useCallback, useEffect, useId, useMemo, useState, type CSSProperties } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import {
   startLifecycleWorkflow,
@@ -372,10 +372,12 @@ function StartWorkflowChooser({
 function KanbanCardItem({
   card,
   highlighted,
+  stagger = 0,
   onSelect,
 }: {
   card: KanbanCard
   highlighted?: boolean
+  stagger?: number
   onSelect: (runId: string) => void
 }) {
   const badge = CATEGORY_BADGE[card.category]
@@ -384,8 +386,9 @@ function KanbanCardItem({
       type="button"
       id={`workflow-card-${card.id}`}
       onClick={() => onSelect(card.id)}
+      style={{ '--sa-stagger': stagger } as CSSProperties}
       className={[
-        'sa-card flex w-full flex-col gap-2 rounded-[10px] border bg-white p-3 text-left shadow-[0px_1px_2px_-1px_rgba(0,0,0,0.06)] outline-none hover:border-[#d1d5dc] focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2',
+        'sa-stagger sa-card flex w-full flex-col gap-2 rounded-[10px] border bg-white p-3 text-left shadow-[0px_1px_2px_-1px_rgba(0,0,0,0.06)] outline-none hover:border-[#d1d5dc] focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2',
         highlighted
           ? 'border-[#101828] ring-2 ring-[#101828]/20'
           : 'border-[#e5e7eb]',
@@ -562,12 +565,12 @@ export function AdminWorkflowOperationsDashboard() {
   }
 
   return (
-    <main className="w-full min-w-0 px-8 pb-12">
+    <main className="w-full min-w-0 overflow-x-hidden px-4 pb-12 sm:px-6 lg:px-8">
       <div className="py-6">
-        <h1 className="text-[24px] font-semibold leading-8 tracking-[0.0703px] text-[#0a0a0a]">
+        <h1 className="sa-enter text-[24px] font-semibold leading-8 tracking-[0.0703px] text-[#0a0a0a]">
           Active Tasks
         </h1>
-        <p className="mt-1 max-w-3xl text-[14px] leading-5 tracking-[-0.1504px] text-[#6a7282]">
+        <p className="sa-enter mt-1 max-w-3xl text-[14px] leading-5 tracking-[-0.1504px] text-[#6a7282]">
           {WORKFLOW_PIPELINE_PAGE_SUBTITLE}
         </p>
       </div>
@@ -619,14 +622,15 @@ export function AdminWorkflowOperationsDashboard() {
         />
 
         <div
-          className="overflow-x-auto overscroll-x-contain touch-pan-x [-ms-overflow-style:none] [-webkit-overflow-scrolling:touch] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden lg:overflow-visible"
+          className="min-w-0 overflow-x-auto overscroll-x-contain touch-pan-x [-ms-overflow-style:none] [-webkit-overflow-scrolling:touch] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden xl:overflow-visible"
           aria-label="Workflow stages"
         >
-          <div className="flex w-max snap-x snap-mandatory gap-4 p-4 lg:grid lg:w-full lg:snap-none lg:grid-cols-2 xl:grid-cols-4">
-            {columns.map((column) => (
+          <div className="flex w-max snap-x snap-mandatory gap-3 p-4 sm:gap-4 xl:grid xl:w-full xl:snap-none xl:grid-cols-4">
+            {columns.map((column, columnIndex) => (
               <div
                 key={column.id}
-                className="flex w-[min(85vw,320px)] shrink-0 snap-start flex-col rounded-[10px] border border-[#e5e7eb] bg-[#f9fafb] min-h-[min(40vh,320px)] lg:w-auto lg:min-w-0"
+                style={{ '--sa-stagger': columnIndex } as CSSProperties}
+                className="sa-stagger-scale flex w-[min(85vw,20rem)] shrink-0 snap-start flex-col rounded-[10px] border border-[#e5e7eb] bg-[#f9fafb] min-h-[min(40vh,320px)] sm:w-[min(70vw,22rem)] xl:w-auto xl:min-w-0"
               >
                 <div className="flex items-center justify-between gap-2 px-3 py-2.5">
                   <div className="flex items-center gap-2">
@@ -656,10 +660,11 @@ export function AdminWorkflowOperationsDashboard() {
                       No tasks in this stage
                     </p>
                   ) : (
-                    column.cards.map((card) => (
+                    column.cards.map((card, cardIndex) => (
                       <KanbanCardItem
                         key={card.id}
                         card={card}
+                        stagger={Math.min(cardIndex, 6)}
                         highlighted={highlightRunId === card.id}
                         onSelect={setSelectedRunId}
                       />

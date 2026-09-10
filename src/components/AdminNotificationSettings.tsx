@@ -29,6 +29,7 @@ import {
 } from '@/lib/setupSuccessChecklist'
 import {
   dismissSetupSuccessCheckboxGuide,
+  isSetupSuccessCheckboxGuideActive,
   isSetupSuccessCheckboxGuideNavigation,
   SETUP_SUCCESS_TEST_DELIVERY_GUIDE_MESSAGE,
 } from '@/lib/setupSuccessGuide'
@@ -283,7 +284,7 @@ export function AdminNotificationSettings() {
   const navigate = useNavigate()
   const testDeliveryGuideTargetRef = useRef<HTMLDivElement | null>(null)
   const [showTestDeliveryGuide, setShowTestDeliveryGuide] = useState(() =>
-    isSetupSuccessCheckboxGuideNavigation(location.state, 'test_delivery'),
+    isSetupSuccessCheckboxGuideActive(location.state, 'test_delivery'),
   )
   const [testDeliveryGuideRunId, setTestDeliveryGuideRunId] = useState(0)
   const [saved, setSaved] = useState<NotificationSettingsState>(() => ({
@@ -342,10 +343,12 @@ export function AdminNotificationSettings() {
 
   useEffect(() => {
     if (loading) return
-    if (!isSetupSuccessCheckboxGuideNavigation(location.state, 'test_delivery')) return
+    if (!isSetupSuccessCheckboxGuideActive(location.state, 'test_delivery')) return
     setShowTestDeliveryGuide(true)
     setTestDeliveryGuideRunId((value) => value + 1)
-    navigate(`${location.pathname}${location.hash}`, { replace: true, state: {} })
+    if (isSetupSuccessCheckboxGuideNavigation(location.state, 'test_delivery')) {
+      navigate(`${location.pathname}${location.hash}`, { replace: true, state: {} })
+    }
   }, [loading, location.hash, location.pathname, location.state, navigate])
 
   const isDirty = useMemo(() => JSON.stringify(saved) !== JSON.stringify(draft), [draft, saved])

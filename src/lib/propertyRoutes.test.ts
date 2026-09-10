@@ -30,6 +30,7 @@ describe('propertyRoutes', () => {
   it('maps conversations tab to Property History', () => {
     expect(parsePropertyDetailTab('conversations')).toBe('history')
     expect(parsePropertyDetailTab('history')).toBe('history')
+    expect(parsePropertyDetailTab('vendors')).toBe('overview')
     expect(propertyDetailPath('6ba7b810-9dad-11d1-80b4-00c04fd430c8', 'history')).toBe(
       '/admin/properties/6ba7b810-9dad-11d1-80b4-00c04fd430c8?tab=history',
     )

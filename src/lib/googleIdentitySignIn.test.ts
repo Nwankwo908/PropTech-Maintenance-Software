@@ -7,6 +7,7 @@ import {
   googleOAuthStateCsrf,
   googleSignInRedirectUri,
   handoffGoogleOAuthHashToOpener,
+  redirectGoogleOAuthHashToLocalReturn,
   isAllowedLocalReturnOrigin,
   isTrustedGoogleBridgeOrigin,
   PRODUCTION_GOOGLE_AUTH_CALLBACK,
@@ -41,6 +42,7 @@ describe('googleIdentitySignIn', () => {
   it('keeps branded Google id-token sign-in off localhost', () => {
     expect(shouldUseBrandedGoogleIdToken('http://localhost:5175')).toBe(false)
     expect(shouldUseBrandedGoogleIdToken('https://www.ulohome.io')).toBe(true)
+    expect(isAllowedLocalReturnOrigin('http://localhost:5175')).toBe(true)
   })
 
   it('uses /auth/callback on the current origin', () => {
@@ -96,6 +98,24 @@ describe('googleIdentitySignIn', () => {
     )
     expect(ok).toBe(true)
     expect(posted[0]?.origin).toBe('http://localhost:5175')
+  })
+
+  it('bounces a local Google return from production to localhost', () => {
+    const state = buildGoogleOAuthState('csrf', 'http://localhost:5175')
+    expect(
+      redirectGoogleOAuthHashToLocalReturn(
+        `#id_token=abc.def&state=${encodeURIComponent(state)}`,
+        'https://www.ulohome.io',
+      ),
+    ).toBe(
+      `http://localhost:5175/auth/callback#id_token=abc.def&state=${encodeURIComponent(state)}`,
+    )
+    expect(
+      redirectGoogleOAuthHashToLocalReturn(
+        `#id_token=abc.def&state=${encodeURIComponent(state)}`,
+        'http://localhost:5175',
+      ),
+    ).toBe(null)
   })
 
   it('hashes GSI nonces as SHA-256 hex', async () => {

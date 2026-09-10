@@ -3,9 +3,14 @@ import { Navigate } from 'react-router-dom'
 import type { Session } from '@supabase/supabase-js'
 import { getAdminSession, isAdminSessionAllowed, signOutAdmin } from '@/lib/adminAuth'
 import {
+  GOOGLE_SIGN_IN_POPUP_NAME,
+  decodeGoogleOAuthReturnOrigin,
+  googleOAuthPayloadFromHash,
   handoffGoogleOAuthHashToOpener,
+  publishGoogleOAuthBridgePayload,
   readGoogleIdTokenFromHash,
   readGoogleOAuthErrorFromHash,
+  redirectGoogleOAuthHashToLocalReturn,
   takeStoredGoogleOAuthNonce,
 } from '@/lib/googleIdentitySignIn'
 import { supabase } from '@/lib/supabase'
@@ -43,18 +48,38 @@ export function AuthCallback() {
       setPhase('denied')
     }
 
+    const closeGooglePopup = () => {
+      window.history.replaceState(null, '', `${window.location.pathname}${window.location.search}`)
+      setPhase('handed_off')
+      window.setTimeout(() => {
+        try {
+          window.close()
+        } catch {
+          /* ignore */
+        }
+      }, 50)
+    }
+
     const completeGoogleIdToken = async (): Promise<boolean> => {
       const hash = window.location.hash
       if (handoffGoogleOAuthHashToOpener(window.opener, hash)) {
-        window.history.replaceState(null, '', `${window.location.pathname}${window.location.search}`)
-        setPhase('handed_off')
-        window.setTimeout(() => {
-          try {
-            window.close()
-          } catch {
-            /* ignore */
-          }
-        }, 50)
+        closeGooglePopup()
+        return true
+      }
+      const bounceTo = redirectGoogleOAuthHashToLocalReturn(hash, window.location.origin)
+      if (bounceTo) {
+        window.location.replace(bounceTo)
+        return true
+      }
+      const payload = googleOAuthPayloadFromHash(hash)
+      const returnOrigin = decodeGoogleOAuthReturnOrigin(payload?.state)
+      if (
+        payload &&
+        returnOrigin === window.location.origin &&
+        window.name === GOOGLE_SIGN_IN_POPUP_NAME
+      ) {
+        publishGoogleOAuthBridgePayload(payload)
+        closeGooglePopup()
         return true
       }
       if (readGoogleOAuthErrorFromHash(hash)) {

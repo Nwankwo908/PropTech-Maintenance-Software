@@ -28,6 +28,7 @@ import {
 import { resolveVendorCapacityChip, vendorCapacityChipVisualClasses } from '@/lib/vendorStatusChip'
 import {
   dismissSetupSuccessCheckboxGuide,
+  isSetupSuccessCheckboxGuideActive,
   isSetupSuccessCheckboxGuideNavigation,
 } from '@/lib/setupSuccessGuide'
 
@@ -238,7 +239,7 @@ export function AdminVendorsDashboard() {
   const [scoresError, setScoresError] = useState<string | null>(null)
   const [addVendorOpen, setAddVendorOpen] = useState(false)
   const [showAddVendorGuide, setShowAddVendorGuide] = useState(() =>
-    isSetupSuccessCheckboxGuideNavigation(location.state, 'vendors'),
+    isSetupSuccessCheckboxGuideActive(location.state, 'vendors'),
   )
   const [showCheckboxGuide, setShowCheckboxGuide] = useState(false)
   const [addVendorGuideRunId, setAddVendorGuideRunId] = useState(0)
@@ -263,10 +264,12 @@ export function AdminVendorsDashboard() {
   const [marketplacePreference, setMarketplacePreference] = useState<string | null>(null)
 
   useEffect(() => {
-    if (!isSetupSuccessCheckboxGuideNavigation(location.state, 'vendors')) return
+    if (!isSetupSuccessCheckboxGuideActive(location.state, 'vendors')) return
     setShowAddVendorGuide(true)
     setAddVendorGuideRunId((value) => value + 1)
-    navigate(location.pathname, { replace: true, state: {} })
+    if (isSetupSuccessCheckboxGuideNavigation(location.state, 'vendors')) {
+      navigate(location.pathname, { replace: true, state: {} })
+    }
   }, [location.pathname, location.state, navigate])
 
   useEffect(() => {

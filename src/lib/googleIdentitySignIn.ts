@@ -11,6 +11,7 @@
 export const GOOGLE_OAUTH_NONCE_KEY = 'ulo.googleOAuthNonce'
 export const GOOGLE_OAUTH_CSRF_KEY = 'ulo.googleOAuthCsrf'
 export const GOOGLE_OAUTH_RESULT_TYPE = 'ulo.googleOAuthResult'
+export const GOOGLE_SIGN_IN_POPUP_NAME = 'uloGoogleSignIn'
 export const PRODUCTION_GOOGLE_AUTH_CALLBACK = 'https://www.ulohome.io/auth/callback'
 
 const ULO_PRODUCTION_HOSTS = new Set(['ulohome.io', 'www.ulohome.io', 'app.ulohome.io'])
@@ -283,7 +284,11 @@ export function beginGoogleIdTokenSignIn(): GoogleIdTokenSignInStart {
     state: usePopup ? storeGoogleOAuthState(origin) : undefined,
   })
   if (usePopup) {
-    const popup = window.open(url, 'uloGoogleSignIn', 'width=500,height=740,menubar=no,toolbar=no')
+    const popup = window.open(
+      url,
+      GOOGLE_SIGN_IN_POPUP_NAME,
+      'width=500,height=740,menubar=no,toolbar=no',
+    )
     if (!popup) return false
     return { mode: 'popup', popup }
   }
@@ -319,25 +324,68 @@ export type GoogleOAuthBridgePayload = {
   state: string | null
 }
 
+export function googleOAuthPayloadFromHash(hash: string): GoogleOAuthBridgePayload | null {
+  const error = readGoogleOAuthErrorFromHash(hash)
+  const idToken = readGoogleIdTokenFromHash(hash)
+  if (!error && !idToken) return null
+  return {
+    type: GOOGLE_OAUTH_RESULT_TYPE,
+    idToken,
+    error,
+    state: readGoogleOAuthStateFromHash(hash),
+  }
+}
+
+/** When Chrome severs window.opener, bounce the Google hash to the local tab. */
+export function redirectGoogleOAuthHashToLocalReturn(
+  hash: string,
+  currentOrigin: string,
+): string | null {
+  const payload = googleOAuthPayloadFromHash(hash)
+  if (!payload) return null
+  const returnOrigin = decodeGoogleOAuthReturnOrigin(payload.state)
+  if (!returnOrigin || returnOrigin === currentOrigin) return null
+  const fragment = hash.startsWith('#') ? hash : `#${hash}`
+  return `${returnOrigin}/auth/callback${fragment}`
+}
+
+export function publishGoogleOAuthBridgePayload(payload: GoogleOAuthBridgePayload): void {
+  try {
+    const channel = new BroadcastChannel(GOOGLE_OAUTH_RESULT_TYPE)
+    channel.postMessage(payload)
+    channel.close()
+  } catch {
+    /* ignore */
+  }
+}
+
+function isAcceptedGoogleOAuthBridgeMessage(eventOrigin: string, listenerOrigin: string): boolean {
+  return isTrustedGoogleBridgeOrigin(eventOrigin) || eventOrigin === listenerOrigin
+}
+
+function isGoogleOAuthBridgePayload(
+  data: unknown,
+  csrf: string | null,
+): data is GoogleOAuthBridgePayload {
+  if (!data || typeof data !== 'object') return false
+  const payload = data as GoogleOAuthBridgePayload
+  if (payload.type !== GOOGLE_OAUTH_RESULT_TYPE) return false
+  return googleOAuthStateCsrf(payload.state) === csrf
+}
+
 export function handoffGoogleOAuthHashToOpener(
   opener: Window | null,
   hash: string,
 ): boolean {
-  if (!opener || opener.closed) return false
-  const error = readGoogleOAuthErrorFromHash(hash)
-  const idToken = readGoogleIdTokenFromHash(hash)
-  if (!error && !idToken) return false
-  const state = readGoogleOAuthStateFromHash(hash)
-  const returnOrigin = decodeGoogleOAuthReturnOrigin(state)
+  const payload = googleOAuthPayloadFromHash(hash)
+  if (!payload) return false
+  const returnOrigin = decodeGoogleOAuthReturnOrigin(payload.state)
   if (!returnOrigin) return false
-  const payload: GoogleOAuthBridgePayload = {
-    type: GOOGLE_OAUTH_RESULT_TYPE,
-    idToken,
-    error,
-    state,
+  if (opener && !opener.closed) {
+    opener.postMessage(payload, returnOrigin)
+    return true
   }
-  opener.postMessage(payload, returnOrigin)
-  return true
+  return false
 }
 
 export function waitForGoogleOAuthPopupResult(
@@ -345,28 +393,49 @@ export function waitForGoogleOAuthPopupResult(
   timeoutMs = 120_000,
 ): Promise<{ idToken: string | null; error: string | null }> {
   return new Promise((resolve, reject) => {
+    let settled = false
     const csrf = window.sessionStorage.getItem(GOOGLE_OAUTH_CSRF_KEY)
-    const onMessage = (event: MessageEvent) => {
-      if (!isTrustedGoogleBridgeOrigin(event.origin)) return
-      const data = event.data as GoogleOAuthBridgePayload | null
-      if (!data || data.type !== GOOGLE_OAUTH_RESULT_TYPE) return
-      if (googleOAuthStateCsrf(data.state) !== csrf) return
+    const listenerOrigin = window.location.origin
+    const accept = (data: unknown) => {
+      if (settled || !isGoogleOAuthBridgePayload(data, csrf)) return
       cleanup()
       resolve({ idToken: data.idToken, error: data.error })
     }
+    const onMessage = (event: MessageEvent) => {
+      if (!isAcceptedGoogleOAuthBridgeMessage(event.origin, listenerOrigin)) return
+      accept(event.data)
+    }
+    let channel: BroadcastChannel | null = null
+    try {
+      channel = new BroadcastChannel(GOOGLE_OAUTH_RESULT_TYPE)
+      channel.onmessage = (event) => accept(event.data)
+    } catch {
+      channel = null
+    }
     const poll = window.setInterval(() => {
-      if (!popup.closed) return
-      cleanup()
-      reject(new Error('Google sign-in was closed before it finished.'))
+      if (!popup.closed || settled) return
+      window.clearInterval(poll)
+      window.setTimeout(() => {
+        if (settled) return
+        cleanup()
+        reject(new Error('Google sign-in was closed before it finished.'))
+      }, 500)
     }, 400)
     const timer = window.setTimeout(() => {
+      if (settled) return
       cleanup()
       reject(new Error('Google sign-in timed out. Try again.'))
     }, timeoutMs)
     function cleanup() {
+      settled = true
       window.removeEventListener('message', onMessage)
       window.clearInterval(poll)
       window.clearTimeout(timer)
+      try {
+        channel?.close()
+      } catch {
+        /* ignore */
+      }
     }
     window.addEventListener('message', onMessage)
   })

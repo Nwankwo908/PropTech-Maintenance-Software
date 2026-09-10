@@ -185,8 +185,8 @@ export function PropertyHealthBuildingGrid({
     <section
       className={`flex min-w-0 flex-col rounded-[10px] border border-[#e5e7eb] bg-white shadow-[0px_1px_2px_-1px_rgba(0,0,0,0.06)] ${className}`.trim()}
     >
-      <div className="flex flex-nowrap items-center justify-between gap-4 border-b border-[#e5e7eb] px-6 py-4">
-        <div className="min-w-0 shrink">
+      <div className="flex flex-wrap items-start justify-between gap-3 border-b border-[#e5e7eb] px-4 py-4 sm:px-6">
+        <div className="min-w-0">
           <h2 className="text-[16px] font-semibold leading-6 text-[#0a0a0a]">
             My Properties
           </h2>
@@ -203,7 +203,7 @@ export function PropertyHealthBuildingGrid({
             )}
           </p>
         </div>
-        <div className="flex shrink-0 flex-nowrap items-center gap-2">
+        <div className="flex min-w-0 flex-wrap items-center justify-end gap-2">
           {selection ? (
             <>
               {!selection.allSelected ? (
@@ -288,7 +288,7 @@ export function PropertyHealthBuildingGrid({
                 : undefined
             const cardBody = (
               <>
-              <div className="flex items-start justify-between gap-2">
+              <div className="flex min-w-0 flex-wrap items-start justify-between gap-2">
                 <div className="flex min-w-0 items-center gap-2.5">
                   <span className="flex size-9 shrink-0 items-center justify-center rounded-[8px] border border-[#e5e7eb] text-[#364153] transition-[border-color,background-color] duration-150 group-hover:border-[#101828]/15 group-hover:bg-[#f9fafb]">
                     <BuildingIcon />

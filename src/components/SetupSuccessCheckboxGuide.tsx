@@ -1,7 +1,10 @@
 import { useId, useLayoutEffect, useRef, useState, type CSSProperties, type RefObject } from 'react'
+import { createPortal } from 'react-dom'
 import imessageBubbleTail from '@/assets/setup-success/imessage-bubble-tail.svg'
 
-type GuideLayout = {
+export type GuideBubblePlacement = 'left' | 'right' | 'below' | 'above'
+
+export type GuideLayout = {
   frameTop: number
   frameLeft: number
   frameWidth: number
@@ -21,6 +24,8 @@ type GuideLayout = {
   cursorEndY: number
   bubbleTop: number
   bubbleLeft: number
+  bubbleWidth: number
+  bubblePlacement: GuideBubblePlacement
 }
 
 const GUIDE_MESSAGE = 'Select checkbox to initiate onboarding button'
@@ -28,8 +33,10 @@ const CURSOR_TIP = 6
 const FRAME_PADDING = 10
 /** Half of the previous 3.5px coachmark stroke. */
 const STROKE_WIDTH = 1.75
-const BUBBLE_WIDTH = 287
+const BUBBLE_MAX_WIDTH = 287
 const BUBBLE_GAP_PX = 28
+const VIEWPORT_INSET = 16
+const ESTIMATED_BUBBLE_HEIGHT = 72
 const GUIDE_SEQUENCE_MS = 2600
 const GUIDE_HOLD_MS = 10_000
 const GUIDE_DISSOLVE_MS = 500
@@ -39,7 +46,19 @@ function squarePerimeter(width: number, height: number, radius: number): number 
   return Math.max(1, 2 * (width + height) - 8 * r + 2 * Math.PI * r)
 }
 
-function layoutFromFrame(frameTop: number, frameLeft: number, frameWidth: number, frameHeight: number): GuideLayout {
+function clamp(value: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, value))
+}
+
+/** Place the dashed square and iMessage bubble so both stay on-screen on phones and tablets. */
+export function layoutFromFrame(
+  frameTop: number,
+  frameLeft: number,
+  frameWidth: number,
+  frameHeight: number,
+  viewportWidth = typeof window !== 'undefined' ? window.innerWidth : 1280,
+  viewportHeight = typeof window !== 'undefined' ? window.innerHeight : 800,
+): GuideLayout {
   const cursorTopLeftX = frameLeft - CURSOR_TIP
   const cursorTopLeftY = frameTop - CURSOR_TIP
   const cursorTopRightX = frameLeft + frameWidth - CURSOR_TIP
@@ -50,10 +69,39 @@ function layoutFromFrame(frameTop: number, frameLeft: number, frameWidth: number
   const cursorBottomLeftY = frameTop + frameHeight - CURSOR_TIP
   const cursorEndX = frameLeft + frameWidth / 2 - CURSOR_TIP
   const cursorEndY = frameTop + frameHeight / 2 - CURSOR_TIP
-  const cursorStartX = Math.round(window.innerWidth * 0.5)
-  const cursorStartY = 56
-  const bubbleLeft = Math.max(16, frameLeft - BUBBLE_WIDTH - BUBBLE_GAP_PX)
-  const bubbleTop = frameTop + frameHeight / 2
+  const cursorStartX = Math.round(viewportWidth * 0.5)
+  const cursorStartY = Math.min(56, Math.max(12, frameTop - 48))
+
+  const bubbleWidth = Math.min(BUBBLE_MAX_WIDTH, Math.max(180, viewportWidth - VIEWPORT_INSET * 2))
+  const maxLeft = Math.max(VIEWPORT_INSET, viewportWidth - VIEWPORT_INSET - bubbleWidth)
+  const leftCandidate = frameLeft - bubbleWidth - BUBBLE_GAP_PX
+  const rightCandidate = frameLeft + frameWidth + BUBBLE_GAP_PX
+  const sideTop = frameTop + frameHeight / 2
+
+  let bubblePlacement: GuideBubblePlacement = 'left'
+  let bubbleLeft = leftCandidate
+  let bubbleTop = sideTop
+
+  if (leftCandidate >= VIEWPORT_INSET) {
+    bubblePlacement = 'left'
+    bubbleLeft = leftCandidate
+  } else if (rightCandidate + bubbleWidth <= viewportWidth - VIEWPORT_INSET) {
+    bubblePlacement = 'right'
+    bubbleLeft = rightCandidate
+  } else {
+    bubbleLeft = clamp(frameLeft + frameWidth / 2 - bubbleWidth / 2, VIEWPORT_INSET, maxLeft)
+    const belowTop = frameTop + frameHeight + 12
+    const aboveTop = frameTop - ESTIMATED_BUBBLE_HEIGHT - 12
+    if (belowTop + ESTIMATED_BUBBLE_HEIGHT <= viewportHeight - VIEWPORT_INSET) {
+      bubblePlacement = 'below'
+      bubbleTop = belowTop
+    } else {
+      bubblePlacement = 'above'
+      bubbleTop = Math.max(VIEWPORT_INSET, aboveTop)
+    }
+  }
+
+  bubbleLeft = clamp(bubbleLeft, VIEWPORT_INSET, maxLeft)
 
   return {
     frameTop,
@@ -75,20 +123,22 @@ function layoutFromFrame(frameTop: number, frameLeft: number, frameWidth: number
     cursorEndY,
     bubbleTop,
     bubbleLeft,
+    bubbleWidth,
+    bubblePlacement,
   }
-}
-
-function fallbackGuideLayout(): GuideLayout {
-  return layoutFromFrame(288, 304, 36, 36)
 }
 
 function measureGuideLayout(target: HTMLElement): GuideLayout {
   const rect = target.getBoundingClientRect()
+  const viewportWidth = window.visualViewport?.width ?? window.innerWidth
+  const viewportHeight = window.visualViewport?.height ?? window.innerHeight
   return layoutFromFrame(
     rect.top - FRAME_PADDING,
     rect.left - FRAME_PADDING,
     rect.width + FRAME_PADDING * 2,
     rect.height + FRAME_PADDING * 2,
+    viewportWidth,
+    viewportHeight,
   )
 }
 
@@ -116,13 +166,19 @@ function GuideIMessageBubble({
   layout: GuideLayout
   message: string
 }) {
+  const below = layout.bubblePlacement === 'below'
+  const above = layout.bubblePlacement === 'above'
+  const right = layout.bubblePlacement === 'right'
   return (
     <div
-      className="setup-checkbox-guide-bubble absolute z-[71] -translate-y-1/2"
+      className={[
+        'setup-checkbox-guide-bubble absolute z-[221]',
+        below || above ? 'setup-checkbox-guide-bubble-below' : '-translate-y-1/2',
+      ].join(' ')}
       style={{
         top: layout.bubbleTop,
         left: layout.bubbleLeft,
-        width: BUBBLE_WIDTH,
+        width: layout.bubbleWidth,
       }}
     >
       <div
@@ -150,7 +206,16 @@ function GuideIMessageBubble({
           alt=""
           width={12}
           height={15}
-          className="absolute bottom-[-1px] right-[-6px] z-[1] max-w-none"
+          className={[
+            'absolute z-[1] max-w-none',
+            below
+              ? 'left-1/2 top-[-8px] -translate-x-1/2 rotate-180'
+              : above
+                ? 'bottom-[-8px] left-1/2 -translate-x-1/2'
+                : right
+                  ? 'bottom-[-1px] left-[-6px] scale-x-[-1]'
+                  : 'bottom-[-1px] right-[-6px]',
+          ].join(' ')}
           aria-hidden
         />
       </div>
@@ -162,7 +227,7 @@ function GuideCursor({ layout }: { layout: GuideLayout }) {
   const shadowFilterId = useId().replace(/:/g, '')
   return (
     <div
-      className="setup-checkbox-guide-cursor pointer-events-none absolute left-0 top-0 z-[72] size-8 overflow-visible"
+      className="setup-checkbox-guide-cursor pointer-events-none absolute left-0 top-0 z-[222] size-8 overflow-visible"
       style={guideCursorVars(layout)}
       aria-hidden
     >
@@ -223,12 +288,17 @@ export function SetupSuccessCheckboxGuide({
 
     if (!startedRef.current) {
       startedRef.current = true
-      setLayout(fallbackGuideLayout())
+      setLayout(null)
     }
 
     const update = (lockIfFound: boolean) => {
       if (lockIfFound && !lockedTargetRef.current && targetRef.current) {
         lockedTargetRef.current = targetRef.current
+        lockedTargetRef.current.scrollIntoView({
+          block: 'center',
+          inline: 'nearest',
+          behavior: 'smooth',
+        })
       }
       const target = lockedTargetRef.current ?? targetRef.current
       if (!target) return
@@ -273,13 +343,13 @@ export function SetupSuccessCheckboxGuide({
     }
   }, [active])
 
-  if (!active || !layout || phase === 'gone') return null
+  if (!active || !layout || phase === 'gone' || typeof document === 'undefined') return null
 
   const inset = STROKE_WIDTH / 2
 
-  return (
+  return createPortal(
     <div
-      className={`pointer-events-none fixed inset-0 z-[70]${
+      className={`pointer-events-none fixed inset-0 z-[220] overflow-visible${
         phase === 'dissolve' ? ' setup-checkbox-guide-helpers-dissolve' : ''
       }`}
       role="presentation"
@@ -313,6 +383,7 @@ export function SetupSuccessCheckboxGuide({
       </svg>
       <GuideCursor layout={layout} />
       <GuideIMessageBubble layout={layout} message={message} />
-    </div>
+    </div>,
+    document.body,
   )
 }

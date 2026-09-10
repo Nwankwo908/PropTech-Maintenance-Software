@@ -1929,6 +1929,16 @@ h6 {
   animation: sa-enter-scale 300ms var(--sa-ease);
 }
 
+.sa-stagger {
+  animation: sa-enter var(--sa-duration) var(--sa-ease) backwards;
+  animation-delay: calc(50ms + var(--sa-stagger, 0) * 45ms);
+}
+
+.sa-stagger-scale {
+  animation: sa-enter-scale 320ms var(--sa-ease) backwards;
+  animation-delay: calc(40ms + var(--sa-stagger, 0) * 50ms);
+}
+
 @keyframes setup-checkbox-guide-cursor-draw {
   0% {
     transform: translate3d(var(--guide-cursor-start-x, 0), var(--guide-cursor-start-y, 0), 0);
@@ -1996,6 +2006,62 @@ h6 {
   animation: setup-checkbox-guide-bubble-in 2.6s cubic-bezier(0.22, 1, 0.36, 1) forwards;
 }
 
+@keyframes setup-checkbox-guide-bubble-in-below {
+  0%,
+  82% {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.setup-checkbox-guide-bubble-below {
+  animation-name: setup-checkbox-guide-bubble-in-below;
+}
+
+@media (max-width: 1279px) {
+  .setup-checkbox-guide-cursor {
+    animation-duration: 1.45s;
+  }
+
+  .setup-checkbox-guide-square-stroke {
+    animation: setup-checkbox-guide-square-draw 1.1s var(--sa-ease) forwards;
+  }
+
+  .setup-checkbox-guide-bubble:not(.setup-checkbox-guide-bubble-below) {
+    animation: setup-checkbox-guide-bubble-in-compact-side 420ms var(--sa-ease) 160ms both;
+  }
+
+  .setup-checkbox-guide-bubble-below {
+    animation: setup-checkbox-guide-bubble-in-compact-below 420ms var(--sa-ease) 160ms both;
+  }
+}
+
+@keyframes setup-checkbox-guide-bubble-in-compact-side {
+  from {
+    opacity: 0;
+    transform: translateY(calc(-50% + 8px)) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(-50%) scale(1);
+  }
+}
+
+@keyframes setup-checkbox-guide-bubble-in-compact-below {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
 @keyframes setup-checkbox-guide-helpers-dissolve {
   from {
     opacity: 1;
@@ -2007,6 +2073,21 @@ h6 {
 
 .setup-checkbox-guide-helpers-dissolve {
   animation: setup-checkbox-guide-helpers-dissolve 500ms ease forwards;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .setup-checkbox-guide-cursor,
+  .setup-checkbox-guide-square-stroke,
+  .setup-checkbox-guide-bubble,
+  .setup-checkbox-guide-bubble-below,
+  .setup-checkbox-guide-helpers-dissolve {
+    animation: none;
+  }
+
+  .setup-checkbox-guide-bubble,
+  .setup-checkbox-guide-bubble-below {
+    opacity: 1;
+  }
 }
 
 /*
@@ -2554,6 +2635,17 @@ h6 {
   }
 }
 
+@keyframes sa-drawer-in {
+  from {
+    opacity: 0;
+    transform: translateX(-18px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
 .sa-modal-backdrop {
   animation: none;
   transition: opacity 220ms ease;
@@ -2576,6 +2668,10 @@ h6 {
 
 .sa-sheet {
   animation: sa-sheet-in 320ms var(--sa-ease);
+}
+
+.sa-drawer {
+  animation: sa-drawer-in 320ms var(--sa-ease);
 }
 
 .sa-scrim {
@@ -2880,7 +2976,9 @@ h6 {
   }
 
   .sa-enter,
-  .sa-enter-scale {
+  .sa-enter-scale,
+  .sa-stagger,
+  .sa-stagger-scale {
     animation: none;
   }
 
@@ -2917,6 +3015,7 @@ h6 {
 
   .sa-modal,
   .sa-rail,
+  .sa-drawer,
   .sa-sheet {
     animation: none;
   }

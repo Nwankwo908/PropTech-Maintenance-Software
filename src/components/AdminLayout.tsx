@@ -1,4 +1,5 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { Outlet, useLocation, useNavigate } from 'react-router-dom'
 import { AdminUloNotificationsBell } from '@/components/AdminUloNotificationsBell'
 import { AdminUniversalSearch } from '@/components/AdminUniversalSearch'
@@ -246,7 +247,7 @@ function AdminMainContent() {
 
   if (!open) {
     return (
-      <div className="flex min-h-0 flex-1 flex-col overflow-y-auto overscroll-y-contain bg-white">
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-x-hidden overflow-y-auto overscroll-y-contain bg-white">
         <Outlet />
       </div>
     )
@@ -256,7 +257,7 @@ function AdminMainContent() {
     <div className="relative flex min-h-0 flex-1 overflow-hidden bg-white">
       <div
         className={[
-          'min-h-0 min-w-0 flex-1 overflow-y-auto overscroll-y-contain',
+          'min-h-0 min-w-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-y-contain',
           docked ? '' : 'pointer-events-none',
         ].join(' ')}
         aria-hidden={!docked}
@@ -279,9 +280,75 @@ function AdminMainContent() {
   )
 }
 
+function AdminMobileNavDrawer({
+  open,
+  onClose,
+}: {
+  open: boolean
+  onClose: () => void
+}) {
+  useEffect(() => {
+    if (!open) return
+    function onKey(event: KeyboardEvent) {
+      if (event.key === 'Escape') onClose()
+    }
+    const prevOverflow = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    window.addEventListener('keydown', onKey)
+    return () => {
+      document.body.style.overflow = prevOverflow
+      window.removeEventListener('keydown', onKey)
+    }
+  }, [open, onClose])
+
+  if (!open || typeof document === 'undefined') return null
+
+  return createPortal(
+    <div className="fixed inset-0 z-[50] lg:hidden">
+      <div
+        role="presentation"
+        className="sa-scrim absolute inset-0 bg-black/40"
+        aria-hidden
+        onClick={onClose}
+      />
+      <nav
+        id="admin-mobile-nav"
+        aria-label="Navigation"
+        className="sa-drawer relative flex h-full max-h-dvh min-h-0 w-[min(18rem,calc(100vw-3.5rem))] flex-col overflow-hidden bg-white pb-[env(safe-area-inset-bottom,0px)] shadow-[8px_0_24px_rgba(0,0,0,0.12)]"
+      >
+        <div className="flex shrink-0 items-center justify-between gap-3 border-b border-[#e5e7eb] py-4 pl-[1.4rem] pr-4">
+          <img src={uloLogo} alt="Ulo Home" className="h-[2.4rem] w-auto object-contain" />
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="Close navigation menu"
+            className="sa-press flex size-8 items-center justify-center rounded-[8px] border border-[#e5e7eb] bg-white text-[#364153] outline-none hover:bg-[#f3f4f6] focus-visible:ring-2 focus-visible:ring-[#101828] focus-visible:ring-offset-2"
+          >
+            <IconClose className="size-4" />
+          </button>
+        </div>
+        <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
+          <AdminSidebarContent hideBrand onNavigate={onClose} />
+        </div>
+        <div className="shrink-0 border-t border-[#e5e7eb] p-4">
+          <AdminSignOutButton
+            className="sa-press flex h-11 w-full cursor-pointer items-center justify-center rounded-[10px] border border-[#e5e7eb] bg-white px-4 text-[14px] font-medium text-[#364153] outline-none hover:bg-[#f3f4f6] focus-visible:ring-2 focus-visible:ring-[#101828] focus-visible:ring-offset-2"
+            onNavigate={onClose}
+          />
+        </div>
+      </nav>
+    </div>,
+    document.body,
+  )
+}
+
 export function AdminLayout() {
-  const mobileNavRef = useRef<HTMLDetailsElement>(null)
+  const [mobileNavOpen, setMobileNavOpen] = useState(false)
   const [railCollapsed, setRailCollapsed] = useState(false)
+
+  const closeMobileNav = useCallback(() => {
+    setMobileNavOpen(false)
+  }, [])
 
   return (
     <AskUloProvider>
@@ -302,52 +369,35 @@ export function AdminLayout() {
         </aside>
 
         <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
-          <details
-            ref={mobileNavRef}
-            className="group shrink-0 border-b border-[#e5e7eb] bg-white lg:hidden"
-          >
-            <summary
-              className="flex cursor-pointer list-none items-center justify-between gap-1.5 pl-[1.4rem] pr-4 py-[1.4rem] [&::-webkit-details-marker]:hidden"
-              aria-label="Open navigation menu"
-            >
-              <div className="flex min-w-0 items-center gap-2">
-                <img
-                  src={uloLogo}
-                  alt="Ulo Home"
-                  className="h-[2.4rem] w-auto shrink-0 object-contain"
-                />
-              </div>
-              <div className="flex shrink-0 items-center gap-4">
-                <AdminHeaderActions
-                  compact
-                  showProfileAvatar
-                  showSignOut={false}
-                  onNavigate={() => mobileNavRef.current?.removeAttribute('open')}
-                />
-                <span
-                  className="flex size-8 shrink-0 items-center justify-center rounded-[8px] border border-[#e5e7eb] bg-white text-[#364153]"
-                  aria-hidden
-                >
-                  <IconMenu className="size-4 group-open:hidden" />
-                  <IconClose className="hidden size-4 group-open:block" />
-                </span>
-              </div>
-            </summary>
-            <div className="flex max-h-[min(70dvh,520px)] flex-col overflow-hidden border-t border-[#e5e7eb]">
-              <div className="min-h-0 flex-1 overflow-y-auto">
-                <AdminSidebarContent
-                  hideBrand
-                  onNavigate={() => mobileNavRef.current?.removeAttribute('open')}
-                />
-              </div>
-              <div className="shrink-0 border-t border-[#e5e7eb] p-4">
-                <AdminSignOutButton
-                  className="flex h-11 w-full cursor-pointer items-center justify-center rounded-[10px] border border-[#e5e7eb] bg-white px-4 text-[14px] font-medium text-[#364153] outline-none transition-colors duration-150 hover:bg-[#f3f4f6] active:bg-[#e5e7eb] focus-visible:ring-2 focus-visible:ring-[#101828] focus-visible:ring-offset-2"
-                  onNavigate={() => mobileNavRef.current?.removeAttribute('open')}
-                />
-              </div>
+          <header className="flex shrink-0 items-center justify-between gap-1.5 border-b border-[#e5e7eb] bg-white py-[1.4rem] pl-[1.4rem] pr-4 lg:hidden">
+            <div className="flex min-w-0 items-center gap-2">
+              <img
+                src={uloLogo}
+                alt="Ulo Home"
+                className="h-[2.4rem] w-auto shrink-0 object-contain"
+              />
             </div>
-          </details>
+            <div className="flex shrink-0 items-center gap-4">
+              <AdminHeaderActions
+                compact
+                showProfileAvatar
+                showSignOut={false}
+                onNavigate={closeMobileNav}
+              />
+              <button
+                type="button"
+                aria-label={mobileNavOpen ? 'Close navigation menu' : 'Open navigation menu'}
+                aria-expanded={mobileNavOpen}
+                aria-controls="admin-mobile-nav"
+                onClick={() => setMobileNavOpen((open) => !open)}
+                className="sa-press flex size-8 shrink-0 items-center justify-center rounded-[8px] border border-[#e5e7eb] bg-white text-[#364153] outline-none hover:bg-[#f3f4f6] focus-visible:ring-2 focus-visible:ring-[#101828] focus-visible:ring-offset-2"
+              >
+                {mobileNavOpen ? <IconClose className="size-4" /> : <IconMenu className="size-4" />}
+              </button>
+            </div>
+          </header>
+
+          <AdminMobileNavDrawer open={mobileNavOpen} onClose={closeMobileNav} />
 
           <AdminTopBar />
           <AdminMainContent />

@@ -15,7 +15,6 @@ export type PropertyDetailTab =
   | 'units'
   | 'workflows'
   | 'history'
-  | 'vendors'
   | 'analytics'
 
 /** `?tab=conversations` still opens Property History. */
@@ -26,7 +25,6 @@ export function parsePropertyDetailTab(raw: string | null | undefined): Property
     tab === 'details' ||
     tab === 'units' ||
     tab === 'workflows' ||
-    tab === 'vendors' ||
     tab === 'analytics' ||
     tab === 'overview'
   ) {

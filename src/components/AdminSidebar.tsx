@@ -181,7 +181,7 @@ export function AdminSidebarContent({
       ? 'items-center px-2 pt-6 pb-4'
       : 'px-4 pt-6 pb-4'
     : hideBrand
-      ? 'px-8 pt-4 pb-8'
+      ? 'px-4 pt-4 pb-4'
       : 'px-8 py-8'
   const footerPad = forRail ? (isCollapsedRail ? 'p-2' : 'p-4') : 'px-8 py-8'
 
@@ -316,8 +316,8 @@ export function AdminSidebarContent({
                 }}
                 className={
                   isCollapsedRail
-                    ? `${navBaseCollapsed} text-[11px] font-semibold tracking-[-0.02em] text-[#364153] opacity-60 hover:bg-[#f3f4f6] hover:opacity-100`
-                    : `${navBase} text-[13px] font-medium text-[#364153] opacity-60 hover:bg-[#f3f4f6] hover:opacity-100`
+                    ? `sa-press ${navBaseCollapsed} text-[11px] font-semibold tracking-[-0.02em] text-[#364153] opacity-60 hover:bg-[#f3f4f6] hover:opacity-100`
+                    : `sa-press ${navBase} text-[13px] font-medium text-[#364153] opacity-60 hover:bg-[#f3f4f6] hover:opacity-100`
                 }
               >
                 {isCollapsedRail ? (

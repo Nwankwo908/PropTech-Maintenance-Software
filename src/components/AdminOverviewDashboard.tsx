@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import { getAdminEdgeSecret } from '@/lib/adminEdgeAuth'
 import { Link, useLocation, useNavigate } from 'react-router-dom'
 import {
@@ -40,7 +40,7 @@ import {
   shouldShowSetupSuccessCard,
 } from '@/lib/setupSuccessChecklist'
 import { isAnyPropertyDetailsComplete, PROPERTY_DETAILS_CHANGED_EVENTS } from '@/lib/propertyDetailsCompleteness'
-import { setupCheckboxGuideLinkState } from '@/lib/setupSuccessGuide'
+import { setupCheckboxGuideLinkState, markSetupSuccessCheckboxGuidePending } from '@/lib/setupSuccessGuide'
 import { landlordHasPayments } from '@shared/landlordCapabilities'
 import { cityStateZipForBuildingName, listPropertiesForLandlord, type PropertyRecord } from '@/lib/properties'
 import {
@@ -588,7 +588,7 @@ function FeedEventInfo({
       <div
         role="tooltip"
         className={[
-          'absolute right-0 top-full z-50 mt-1.5 w-[min(280px,calc(100vw-2rem))] rounded-[10px] border border-[#e5e7eb] bg-white p-3 opacity-0 shadow-[0px_8px_24px_rgba(0,0,0,0.12)] transition-opacity duration-150 group-hover/feed-info:opacity-100 group-focus-within/feed-info:opacity-100',
+          'absolute right-0 top-full z-50 mt-1.5 w-[min(280px,calc(100vw-2.5rem))] max-w-[calc(100vw-2.5rem)] rounded-[10px] border border-[#e5e7eb] bg-white p-3 opacity-0 shadow-[0px_8px_24px_rgba(0,0,0,0.12)] transition-opacity duration-150 group-hover/feed-info:opacity-100 group-focus-within/feed-info:opacity-100',
           target ? 'cursor-pointer' : 'pointer-events-none',
         ].join(' ')}
         onClick={(e) => {
@@ -668,7 +668,7 @@ function KpiBreakdownInfo({
       </button>
       <div
         role="tooltip"
-        className="pointer-events-none absolute left-0 top-full z-50 mt-1.5 w-[min(280px,calc(100vw-2rem))] rounded-[10px] border border-[#e5e7eb] bg-white p-3 opacity-0 shadow-[0px_8px_24px_rgba(0,0,0,0.12)] transition-opacity duration-150 group-hover/kpi-info:opacity-100 group-focus-within/kpi-info:opacity-100"
+        className="pointer-events-none absolute right-0 top-full z-50 mt-1.5 w-[min(280px,calc(100vw-2.5rem))] max-w-[calc(100vw-2.5rem)] rounded-[10px] border border-[#e5e7eb] bg-white p-3 opacity-0 shadow-[0px_8px_24px_rgba(0,0,0,0.12)] transition-opacity duration-150 group-hover/kpi-info:opacity-100 group-focus-within/kpi-info:opacity-100"
       >
         <p className="text-[11px] font-semibold leading-4 text-[#0a0a0a]">{title}</p>
         {description ? (
@@ -711,6 +711,7 @@ function KpiCard({
   infoTitle,
   infoDescription,
   infoLines,
+  stagger = 0,
 }: {
   label: string
   value: string
@@ -725,14 +726,18 @@ function KpiCard({
   infoTitle?: string
   infoDescription?: string
   infoLines?: Array<{ label: string; count?: number; value?: string; detail?: string }>
+  stagger?: number
 }) {
   const positive = (delta ?? 0) > 0
   const neutral = delta === 0
   const good = neutral ? false : positive === goodWhenUp
   return (
-    <div className="sa-enter-scale flex min-w-0 flex-1 flex-col gap-4 rounded-[10px] border border-[#e5e7eb] bg-white p-6 shadow-[0px_1px_2px_-1px_rgba(0,0,0,0.06)]">
+    <div
+      className="sa-stagger-scale sa-card flex min-w-0 flex-1 flex-col gap-4 overflow-hidden rounded-[10px] border border-[#e5e7eb] bg-white p-4 shadow-[0px_1px_2px_-1px_rgba(0,0,0,0.06)] sm:p-6"
+      style={{ '--sa-stagger': stagger } as CSSProperties}
+    >
       <div className="flex min-w-0 items-center gap-1.5">
-        <p className="truncate text-[14px] leading-5 tracking-[-0.1504px] text-[#6a7282]">
+        <p className="min-w-0 truncate text-[14px] leading-5 tracking-[-0.1504px] text-[#6a7282]">
           {label}
         </p>
         {infoLines?.length ? (
@@ -743,14 +748,14 @@ function KpiCard({
           />
         ) : null}
       </div>
-      <div className="flex items-end justify-between gap-2">
-        <p className="text-[44px] font-bold leading-none tracking-[0.4px] text-[#0a0a0a] tabular-nums xl:text-[52px]">
+      <div className="flex min-w-0 flex-wrap items-end justify-between gap-2">
+        <p className="min-w-0 break-words text-[28px] font-bold leading-none tracking-[0.4px] text-[#0a0a0a] tabular-nums sm:text-[44px] xl:text-[52px]">
           {value}
         </p>
         {delta != null ? (
           <span
             className={[
-              'flex shrink-0 items-center gap-1.5 rounded-full px-3 py-1.5 text-[14px] leading-5 tracking-[-0.1504px]',
+              'flex shrink-0 items-center gap-1 rounded-full px-2 py-1 text-[12px] leading-4 tracking-[-0.1504px] sm:gap-1.5 sm:px-3 sm:py-1.5 sm:text-[14px] sm:leading-5',
               // Icon carries a brighter shade than the label text.
               neutral
                 ? 'bg-[#f3f4f6] text-[#6a7282]'
@@ -831,14 +836,14 @@ function RecurringIssuesInsightCard({ insight }: { insight: SmartInsight }) {
   const requestWord = requestCount === 1 ? 'Request' : 'Requests'
 
   return (
-    <div className="sa-enter-scale sa-surface flex flex-col gap-2 rounded-[12px] border border-[#eef2ff] bg-white p-4 shadow-[0px_1px_3px_rgba(0,0,0,0.08)]">
+    <div className="sa-enter-scale sa-surface flex min-w-0 flex-col gap-2 rounded-[12px] border border-[#eef2ff] bg-white p-4 shadow-[0px_1px_3px_rgba(0,0,0,0.08)]">
       <div className="flex items-start justify-between gap-2">
         <p className="text-[12px] font-extrabold uppercase leading-normal tracking-[0.04em] text-[#9E439F]">
           Recurring Issues
         </p>
         <InsightAlertIcon score={insight.score} when="high" />
       </div>
-      <div className="flex items-center gap-5">
+      <div className="flex min-w-0 flex-wrap items-start gap-3 sm:items-center sm:gap-5">
         <p className="min-w-0 flex-1 text-[16px] font-normal leading-[1.4] text-[#0f172a]">
           {insight.text}
         </p>
@@ -860,14 +865,14 @@ function RiskInsightCard({ insight }: { insight: SmartInsight }) {
   const requestWord = requestCount === 1 ? 'Request' : 'Requests'
 
   return (
-    <div className="sa-enter-scale sa-surface flex flex-col gap-2 rounded-[12px] border border-[#eef2ff] bg-white p-4 shadow-[0px_1px_3px_rgba(0,0,0,0.08)]">
+    <div className="sa-enter-scale sa-surface flex min-w-0 flex-col gap-2 rounded-[12px] border border-[#eef2ff] bg-white p-4 shadow-[0px_1px_3px_rgba(0,0,0,0.08)]">
       <div className="flex items-start justify-between gap-2">
         <p className="text-[12px] font-extrabold uppercase leading-normal tracking-[0.04em] text-[#9E439F]">
           Needs Attention
         </p>
         <InsightAlertIcon score={insight.score} when="high" />
       </div>
-      <div className="flex items-center gap-5">
+      <div className="flex min-w-0 flex-wrap items-start gap-3 sm:items-center sm:gap-5">
         <p className="min-w-0 flex-1 text-[16px] font-normal leading-[1.4] text-[#0f172a]">
           {insight.text}
         </p>
@@ -889,14 +894,14 @@ function VendorResponseInsightCard({ insight }: { insight: SmartInsight }) {
   const assignedWord = assignedCount === 1 ? 'Work Order' : 'Work Orders'
 
   return (
-    <div className="sa-enter-scale sa-surface flex flex-col gap-2 rounded-[12px] border border-[#eef2ff] bg-white p-4 shadow-[0px_1px_3px_rgba(0,0,0,0.08)]">
+    <div className="sa-enter-scale sa-surface flex min-w-0 flex-col gap-2 rounded-[12px] border border-[#eef2ff] bg-white p-4 shadow-[0px_1px_3px_rgba(0,0,0,0.08)]">
       <div className="flex items-start justify-between gap-2">
         <p className="text-[12px] font-extrabold uppercase leading-normal tracking-[0.04em] text-[#9E439F]">
           Vendor Response
         </p>
         <InsightAlertIcon score={insight.score} when="low" />
       </div>
-      <div className="flex items-center gap-5">
+      <div className="flex min-w-0 flex-wrap items-start gap-3 sm:items-center sm:gap-5">
         <p className="min-w-0 flex-1 text-[16px] font-normal leading-[1.4] text-[#0f172a]">
           {insight.text}
         </p>
@@ -919,14 +924,14 @@ function PreventFutureRepairsInsightCard({ insight }: { insight: SmartInsight })
   const requestWord = requestCount === 1 ? 'Request' : 'Requests'
 
   return (
-    <div className="sa-enter-scale sa-surface flex flex-col gap-2 rounded-[12px] border border-[#eef2ff] bg-white p-4 shadow-[0px_1px_3px_rgba(0,0,0,0.08)]">
+    <div className="sa-enter-scale sa-surface flex min-w-0 flex-col gap-2 rounded-[12px] border border-[#eef2ff] bg-white p-4 shadow-[0px_1px_3px_rgba(0,0,0,0.08)]">
       <div className="flex items-start justify-between gap-2">
         <p className="text-[12px] font-extrabold uppercase leading-normal tracking-[0.04em] text-[#9E439F]">
           Prevent Future Repairs
         </p>
         <InsightAlertIcon score={insight.score} when="high" />
       </div>
-      <div className="flex items-center gap-5">
+      <div className="flex min-w-0 flex-wrap items-start gap-3 sm:items-center sm:gap-5">
         <p className="min-w-0 flex-1 text-[16px] font-normal leading-[1.4] text-[#0f172a]">
           {insight.text}
         </p>
@@ -2949,7 +2954,7 @@ export function AdminOverviewDashboard() {
   const stackedLeaseRenewalRails = leaseRenewalRailOpen && leaseRenewalIncentiveBrief != null
 
   return (
-    <div className="flex flex-col px-8 pb-8">
+    <div className="flex w-full min-w-0 max-w-full flex-col overflow-x-hidden px-4 pb-8 sm:px-6 lg:px-8">
       <div className="flex items-center justify-between py-6">
         <div>
           <h1 className="text-[24px] font-semibold leading-8 tracking-[0.0703px] text-[#0a0a0a]">
@@ -3040,6 +3045,9 @@ export function AdminOverviewDashboard() {
                 <Link
                   to={item.to}
                   state={'state' in item ? item.state : undefined}
+                  onClick={() => {
+                    if (item.step === '5') markSetupSuccessCheckboxGuidePending('test_request')
+                  }}
                   className="sa-card flex h-full flex-col gap-1 rounded-[10px] border border-[#e5e7eb] bg-[#f9fafb] p-4 hover:border-[#101828]/30 hover:bg-white"
                 >
                   <span className="flex size-6 items-center justify-center rounded-full bg-[#101828] text-[12px] font-semibold text-white">
@@ -3058,14 +3066,16 @@ export function AdminOverviewDashboard() {
         </section>
       ) : null}
 
-      <div className="grid grid-cols-2 gap-4 xl:grid-cols-4">
+      <div className="grid min-w-0 grid-cols-2 gap-3 sm:gap-4 xl:grid-cols-4">
         <KpiCard
+          stagger={0}
           label="Critical Issues"
           value={loading ? '—' : String(kpis.criticalOpen)}
           delta={loading ? null : kpis.criticalDelta}
           caption="More reported than 4 weeks ago"
         />
         <KpiCard
+          stagger={1}
           label="Active Tasks"
           value={loading ? '—' : String(kpis.activeOps)}
           delta={loading ? null : kpis.activeOpsDelta}
@@ -3075,6 +3085,7 @@ export function AdminOverviewDashboard() {
           infoLines={loading ? undefined : kpis.activeOpsBreakdown}
         />
         <KpiCard
+          stagger={2}
           label="Property Health"
           value={healthKpiValue}
           delta={
@@ -3090,6 +3101,7 @@ export function AdminOverviewDashboard() {
           infoLines={healthFactorBreakdown}
         />
         <KpiCard
+          stagger={3}
           label="YTD Maintenance Cost"
           value={loading ? '—' : formatSpendCompact(kpis.ytdMaintenanceCost)}
           delta={loading ? null : kpis.ytdMaintenanceCostDelta}
@@ -3098,10 +3110,10 @@ export function AdminOverviewDashboard() {
         />
       </div>
 
-      <div className="mt-4 grid items-start gap-4 xl:grid-cols-[2fr_3fr]">
+      <div className="mt-4 grid min-w-0 items-start gap-4 xl:grid-cols-[2fr_3fr]">
         {/* Smart Insights */}
         <section className="flex min-w-0 flex-col rounded-[10px] border border-[#e5e7eb] bg-white shadow-[0px_1px_2px_-1px_rgba(0,0,0,0.06)]">
-          <div className="border-b border-[#e5e7eb] px-6 py-4">
+          <div className="border-b border-[#e5e7eb] px-4 py-4 sm:px-6">
             <h2 className="text-[16px] font-semibold leading-6 text-[#0a0a0a]">
               Property Insights
             </h2>
@@ -3134,8 +3146,8 @@ export function AdminOverviewDashboard() {
 
         {/* Needs Attention */}
         <section className="flex min-w-0 flex-col rounded-[10px] border border-[#e5e7eb] bg-white shadow-[0px_1px_2px_-1px_rgba(0,0,0,0.06)]">
-          <div className="flex items-center justify-between border-b border-[#e5e7eb] px-6 py-4">
-            <div>
+          <div className="flex flex-wrap items-start justify-between gap-2 border-b border-[#e5e7eb] px-4 py-4 sm:px-6">
+            <div className="min-w-0">
               <h2 className="text-[16px] font-semibold leading-6 text-[#0a0a0a]">
                 Needs Your Attention
               </h2>
@@ -3168,7 +3180,7 @@ export function AdminOverviewDashboard() {
                 <div
                   key={item.key}
                   style={{ animationDelay: `${Math.min(index, 4) * 40}ms` }}
-                  className="sa-enter flex items-center gap-4 px-6 py-4"
+                  className="sa-enter flex flex-col items-stretch gap-3 px-4 py-4 sm:flex-row sm:items-center sm:gap-4 sm:px-6"
                 >
                   <div className="min-w-0 flex-1">
                     <div className="flex flex-wrap items-center gap-2">
@@ -3199,14 +3211,14 @@ export function AdminOverviewDashboard() {
                     <button
                       type="button"
                       onClick={item.onAction}
-                      className={ADMIN_ATTENTION_ACTION_CLASS}
+                      className={`${ADMIN_ATTENTION_ACTION_CLASS} self-start`}
                     >
                       {item.actionLabel} →
                     </button>
                   ) : (
                     <Link
                       to={item.actionTo ?? '/admin/workflows'}
-                      className={ADMIN_ATTENTION_ACTION_CLASS}
+                      className={`${ADMIN_ATTENTION_ACTION_CLASS} self-start`}
                     >
                       {item.actionLabel} →
                     </Link>
@@ -3219,8 +3231,8 @@ export function AdminOverviewDashboard() {
 
         {/* AI Operations Feed */}
         <section className="flex min-w-0 flex-col rounded-[10px] border border-[#e5e7eb] bg-white shadow-[0px_1px_2px_-1px_rgba(0,0,0,0.06)]">
-          <div className="flex items-center justify-between border-b border-[#e5e7eb] px-6 py-4">
-            <div>
+          <div className="flex items-center justify-between gap-3 border-b border-[#e5e7eb] px-4 py-4 sm:px-6">
+            <div className="min-w-0">
               <h2 className="text-[16px] font-semibold leading-6 text-[#0a0a0a]">
                 Ulo Activity Feed
               </h2>
@@ -3244,7 +3256,7 @@ export function AdminOverviewDashboard() {
                   <div
                     key={event.id}
                     style={{ animationDelay: `${Math.min(index, 8) * 35}ms` }}
-                    className="sa-enter flex gap-3 px-6"
+                    className="sa-enter flex min-w-0 gap-3 px-4 sm:px-6"
                   >
                     <div className="flex w-[4.75rem] shrink-0 flex-col items-center self-stretch">
                       <span

@@ -3,6 +3,7 @@ import { LIMITED_ALPHA_1_LANDLORD_ID } from '@shared/landlordCapabilities'
 import {
   clearSetupSuccessCheckboxGuide,
   dismissSetupSuccessCheckboxGuide,
+  isSetupSuccessCheckboxGuideActive,
   isSetupSuccessCheckboxGuideNavigation,
   markSetupSuccessCheckboxGuidePending,
   setupCheckboxGuideLinkState,
@@ -96,6 +97,12 @@ describe('setupSuccessGuide', () => {
     markSetupSuccessCheckboxGuidePending('test_request', LIMITED_ALPHA_1_LANDLORD_ID)
     expect(shouldShowSetupSuccessCheckboxGuide('test_delivery', LIMITED_ALPHA_1_LANDLORD_ID)).toBe(true)
     expect(shouldShowSetupSuccessCheckboxGuide('properties', LIMITED_ALPHA_1_LANDLORD_ID)).toBe(false)
+  })
+
+  it('treats a pending storage flag as an active coachmark even without router state', () => {
+    markSetupSuccessCheckboxGuidePending('welcome_texts', LIMITED_ALPHA_1_LANDLORD_ID)
+    expect(isSetupSuccessCheckboxGuideActive(null, 'residents')).toBe(true)
+    expect(isSetupSuccessCheckboxGuideActive(null, 'vendors')).toBe(false)
   })
 
   it('dismisses the residents guide after checkbox interaction', () => {

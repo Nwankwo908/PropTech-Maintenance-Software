@@ -16,6 +16,7 @@ import {
   beginGoogleIdTokenSignIn,
   googleIdTokenAuthErrorMessage,
   googleOAuthClientId,
+  isAllowedLocalReturnOrigin,
   requestGoogleIdTokenViaGsi,
   shouldUseBrandedGoogleIdToken,
   supabaseGoogleOAuthCallbackUri,
@@ -170,12 +171,51 @@ export function AdminLoginPage() {
       setError('Supabase is not configured.')
       return
     }
+    const client = supabase
     setSubmitting(true)
     try {
-      const branded =
-        !import.meta.env.DEV &&
-        Boolean(googleOAuthClientId()) &&
-        shouldUseBrandedGoogleIdToken(window.location.origin)
+      const origin = window.location.origin
+      const clientId = googleOAuthClientId()
+      const onLocal = isAllowedLocalReturnOrigin(origin)
+      const localPopup = Boolean(clientId) && onLocal
+      const branded = Boolean(clientId) && shouldUseBrandedGoogleIdToken(origin)
+
+      if (onLocal && !clientId) {
+        throw new Error(
+          'Google sign-in is not configured for this local app. Add VITE_GOOGLE_OAUTH_CLIENT_ID, or use email and a verification code.',
+        )
+      }
+
+      async function completeWithIdToken(idToken: string, nonce: string | null) {
+        const { data, error: tokenError } = await client.auth.signInWithIdToken({
+          provider: 'google',
+          token: idToken,
+          ...(nonce ? { nonce } : {}),
+        })
+        if (tokenError || !data.session) {
+          throw tokenError ?? new Error('Google sign-in did not finish.')
+        }
+        if (!(await isAdminSessionAllowed(data.session))) {
+          await signOutAdmin()
+          navigate('/admin/login?error=not_authorized', { replace: true })
+          return
+        }
+        navigate(afterLoginPath, { replace: true })
+      }
+
+      if (localPopup) {
+        const started = beginGoogleIdTokenSignIn()
+        if (!started || started.mode !== 'popup') {
+          throw new Error('Allow popups for this site, then try Google sign-in again.')
+        }
+        const result = await waitForGoogleOAuthPopupResult(started.popup)
+        if (result.error || !result.idToken) {
+          throw new Error('Google sign-in did not finish.')
+        }
+        await completeWithIdToken(result.idToken, takeStoredGoogleOAuthNonce())
+        return
+      }
+
       if (branded) {
         let idToken: string | null = null
         let gsiNonce: string | null = null
@@ -198,21 +238,7 @@ export function AdminLoginPage() {
           }
         }
         if (idToken) {
-          const nonce = gsiNonce ?? takeStoredGoogleOAuthNonce()
-          const { data, error: tokenError } = await supabase.auth.signInWithIdToken({
-            provider: 'google',
-            token: idToken,
-            ...(nonce ? { nonce } : {}),
-          })
-          if (tokenError || !data.session) {
-            throw tokenError ?? new Error('Google sign-in did not finish.')
-          }
-          if (!(await isAdminSessionAllowed(data.session))) {
-            await signOutAdmin()
-            navigate('/admin/login?error=not_authorized', { replace: true })
-            return
-          }
-          navigate(afterLoginPath, { replace: true })
+          await completeWithIdToken(idToken, gsiNonce ?? takeStoredGoogleOAuthNonce())
           return
         }
       }
