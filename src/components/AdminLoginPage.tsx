@@ -18,9 +18,7 @@ import {
   googleIdTokenAuthErrorMessage,
   googleOAuthClientId,
   isAllowedLocalReturnOrigin,
-  requestGoogleIdTokenViaGsi,
   shouldUseBrandedGoogleIdToken,
-  shouldUseImmediateGoogleRedirect,
   supabaseGoogleOAuthCallbackUri,
   takeStoredGoogleOAuthNonce,
   waitForGoogleOAuthPopupResult,
@@ -221,37 +219,11 @@ export function AdminLoginPage() {
         return
       }
 
-      if (branded && shouldUseImmediateGoogleRedirect()) {
+      // Production: authorization-code via Supabase. Chrome drops or rejects
+      // implicit / GSI id_tokens (400 on grant_type=id_token).
+      if (branded) {
         await startAdminGoogleOAuthRedirect()
         return
-      }
-
-      if (branded) {
-        let idToken: string | null = null
-        let gsiNonce: string | null = null
-        try {
-          idToken = await requestGoogleIdTokenViaGsi()
-          gsiNonce = takeStoredGoogleOAuthNonce()
-        } catch {
-          takeStoredGoogleOAuthNonce()
-          idToken = null
-        }
-        if (!idToken) {
-          const started = beginGoogleIdTokenSignIn()
-          if (started && started.mode === 'redirect') return
-          if (started && started.mode === 'popup') {
-            const result = await waitForGoogleOAuthPopupResult(started.popup)
-            if (result.error || !result.idToken) {
-              throw new Error('Google sign-in did not finish.')
-            }
-            idToken = result.idToken
-            gsiNonce = result.nonce ?? gsiNonce
-          }
-        }
-        if (idToken) {
-          await completeWithIdToken(idToken, gsiNonce ?? takeStoredGoogleOAuthNonce())
-          return
-        }
       }
       await signInAdminWithOAuth('google')
       window.setTimeout(() => setSubmitting(false), 12_000)

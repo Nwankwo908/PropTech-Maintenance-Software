@@ -2,10 +2,10 @@
  * Google sign-in so the account picker shows the OAuth client name / ulohome.io
  * instead of *.supabase.co.
  *
- * Production always returns to https://www.ulohome.io/auth/callback (the URI
- * registered in Google Cloud). Apex / app hosts and Chrome FedCM otherwise
- * drop the id_token or nonce and show "Google sign-in did not finish."
- * Localhost opens a popup that returns through that same production callback.
+ * Production Google sign-in uses Supabase authorization-code OAuth (not
+ * implicit id_token / GSI). Chrome otherwise posts grant_type=id_token and
+ * gets 400 ("Google sign-in did not finish.").
+ * Localhost still opens a popup that returns through www /auth/callback.
  */
 
 export const GOOGLE_OAUTH_NONCE_KEY = 'ulo.googleOAuthNonce'
