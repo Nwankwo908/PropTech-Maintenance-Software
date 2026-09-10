@@ -1,12 +1,13 @@
 import { useEffect } from 'react'
 import { useLocation } from 'react-router-dom'
+import { Analytics } from '@vercel/analytics/react'
 import { analytics } from '@/lib/analytics'
 import { applyClarityRootMask } from '@/lib/analytics/clarityMasking'
 import { isAnalyticsEnabled } from '@/lib/analytics/isAnalyticsEnabled'
 import { persistAnonymousAttributionForSessionLandlord } from '@/lib/analytics/persistLandlordAttribution'
 
 /**
- * Production GA4 + Clarity bootstrap.
+ * Production GA4 + Clarity bootstrap, plus Vercel Web Analytics.
  *
  * Clarity loads once from analytics.initialize(). Attribution is captured on
  * pathname + search so UTMs survive SPA navigation and auth redirects.
@@ -34,5 +35,5 @@ export function AnalyticsRoot() {
     applyClarityRootMask(pathname)
   }, [pathname])
 
-  return null
+  return <Analytics />
 }
