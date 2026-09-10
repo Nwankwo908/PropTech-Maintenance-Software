@@ -5,6 +5,7 @@ import { getAdminSession, isAdminSessionAllowed, signOutAdmin } from '@/lib/admi
 import {
   GOOGLE_OAUTH_RESULT_TYPE,
   GOOGLE_SIGN_IN_POPUP_NAME,
+  consumeAdminGoogleOAuthIntent,
   decodeGoogleOAuthReturnOrigin,
   decodeGoogleOAuthNonce,
   googleOAuthPayloadFromHash,
@@ -41,6 +42,7 @@ export function AuthCallback() {
     const resolve = async (session: Session | null) => {
       if (cancelled || settled || !session) return
       settled = true
+      consumeAdminGoogleOAuthIntent()
       if (await isAdminSessionAllowed(session)) {
         setPhase('admin')
         return

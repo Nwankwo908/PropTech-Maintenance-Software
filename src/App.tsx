@@ -7,6 +7,8 @@ import { ReferralLandingRedirect } from './components/ReferralLandingRedirect'
 import { StayOnDevOrigin } from './components/StayOnDevOrigin'
 import { LandingPage } from './components/landing/LandingPage'
 import { DemoPageRedirect } from './components/DemoPageRedirect'
+import { hasWaitlistOAuthIntent } from './lib/landingWaitlist'
+import { hasAdminGoogleOAuthIntent, isOAuthReturnUrl } from './lib/googleIdentitySignIn'
 import { TermsOfServicePage } from './components/legal/TermsOfServicePage'
 import { PrivacyPolicyPage } from './components/legal/PrivacyPolicyPage'
 
@@ -106,6 +108,15 @@ const InspectionCapturePage = lazyNamed(
   'InspectionCapturePage',
 )
 
+function LandingOrAdminOAuthReturn() {
+  const treatAsAdminCallback =
+    typeof window !== 'undefined' &&
+    isOAuthReturnUrl(window.location.search, window.location.hash) &&
+    (hasAdminGoogleOAuthIntent() || !hasWaitlistOAuthIntent())
+  if (treatAsAdminCallback) return <AuthCallback />
+  return <LandingPage />
+}
+
 export default function App() {
   useSessionAutoRefresh(supabase)
 
@@ -116,7 +127,7 @@ export default function App() {
       <ReferralLandingRedirect />
       <Suspense fallback={null}>
         <Routes>
-          <Route path="/" element={<LandingPage />} />
+          <Route path="/" element={<LandingOrAdminOAuthReturn />} />
           <Route path="/demo" element={<DemoPageRedirect />} />
           <Route path="/terms" element={<TermsOfServicePage />} />
           <Route path="/privacy" element={<PrivacyPolicyPage />} />

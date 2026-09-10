@@ -11,6 +11,7 @@
 export const GOOGLE_OAUTH_NONCE_KEY = 'ulo.googleOAuthNonce'
 export const GOOGLE_OAUTH_CSRF_KEY = 'ulo.googleOAuthCsrf'
 export const GOOGLE_OAUTH_RESULT_TYPE = 'ulo.googleOAuthResult'
+export const ADMIN_GOOGLE_OAUTH_KEY = 'ulo.adminGoogleOAuth'
 export const GOOGLE_SIGN_IN_POPUP_NAME = 'uloGoogleSignIn'
 export const PRODUCTION_GOOGLE_AUTH_CALLBACK = 'https://www.ulohome.io/auth/callback'
 
@@ -24,6 +25,41 @@ export const GOOGLE_OAUTH_BRIDGE_ORIGINS = [
 
 export function googleOAuthClientId(): string {
   return (import.meta.env.VITE_GOOGLE_OAUTH_CLIENT_ID as string | undefined)?.trim() ?? ''
+}
+
+export function markAdminGoogleOAuthIntent(): void {
+  if (typeof window === 'undefined') return
+  try {
+    window.sessionStorage.setItem(ADMIN_GOOGLE_OAUTH_KEY, '1')
+  } catch {
+    /* ignore */
+  }
+}
+
+export function hasAdminGoogleOAuthIntent(): boolean {
+  if (typeof window === 'undefined') return false
+  try {
+    return window.sessionStorage.getItem(ADMIN_GOOGLE_OAUTH_KEY) === '1'
+  } catch {
+    return false
+  }
+}
+
+export function consumeAdminGoogleOAuthIntent(): boolean {
+  const pending = hasAdminGoogleOAuthIntent()
+  if (!pending) return false
+  try {
+    window.sessionStorage.removeItem(ADMIN_GOOGLE_OAUTH_KEY)
+  } catch {
+    /* ignore */
+  }
+  return true
+}
+
+/** True when Google/Supabase returned an auth code or id_token on this URL. */
+export function isOAuthReturnUrl(search: string, hash: string): boolean {
+  const returned = readGoogleOAuthReturnParams(search, hash)
+  return Boolean(returned.code || returned.idToken)
 }
 
 export function buildGoogleIdTokenAuthUrl(params: {

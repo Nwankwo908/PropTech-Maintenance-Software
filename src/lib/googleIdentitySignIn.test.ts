@@ -20,6 +20,7 @@ import {
   shouldUseBrandedGoogleIdToken,
   shouldUseImmediateGoogleRedirect,
   supabaseGoogleOAuthCallbackUri,
+  isOAuthReturnUrl,
 } from './googleIdentitySignIn'
 
 describe('googleIdentitySignIn', () => {
@@ -185,8 +186,16 @@ describe('googleIdentitySignIn', () => {
       state: null,
       code: 'pkce-code',
     })
-    expect(
-      readGoogleOAuthReturnParams('?error=access_denied', '#id_token=from-hash'),
-    ).toMatchObject({ idToken: 'from-hash', error: 'access_denied', code: null })
+    expect(readGoogleOAuthReturnParams('?error=access_denied', '#id_token=from-hash')).toMatchObject({
+      idToken: 'from-hash',
+      error: 'access_denied',
+      code: null,
+    })
+  })
+
+  it('treats auth-code and id-token URLs as OAuth returns', () => {
+    expect(isOAuthReturnUrl('?code=pkce-code', '')).toBe(true)
+    expect(isOAuthReturnUrl('', '#id_token=tok.en')).toBe(true)
+    expect(isOAuthReturnUrl('', '')).toBe(false)
   })
 })

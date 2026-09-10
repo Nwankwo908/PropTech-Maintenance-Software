@@ -14,8 +14,12 @@ import {
   hasWaitlistOAuthIntent,
   joinWaitlistFromSessionEmail,
 } from '@/lib/landingWaitlist'
-import { isAdminSessionAllowed } from '@/lib/adminAuth'
+import { getAdminSession, isAdminSessionAllowed } from '@/lib/adminAuth'
 import { supabase } from '@/lib/supabase'
+import {
+  consumeAdminGoogleOAuthIntent,
+  hasAdminGoogleOAuthIntent,
+} from '@/lib/googleIdentitySignIn'
 import {
   IconArrowRight,
   IconClose,
@@ -449,26 +453,34 @@ export function LandingPage() {
     primeUiClickSound()
   }, [])
 
-  // Safety net for admin Google sign-in: if Supabase's redirect-URL allowlist
-  // sends an OAuth return to the Site URL ("/") instead of /auth/callback, catch
-  // the fresh SIGNED_IN here and forward authorized admins straight to /admin
-  // (no second Login click). Waitlist Google returns are handled separately and
-  // are skipped via the intent flag captured at mount.
+  // Supabase Site URL is often "/" so Google returns here instead of /auth/callback.
+  // Also catch INITIAL_SESSION after detectSessionInUrl consumes the code.
   useEffect(() => {
     if (!supabase) return
-    const client = supabase
-    const waitlistReturn = hasWaitlistOAuthIntent()
-    if (waitlistReturn) return
+    if (hasWaitlistOAuthIntent() && !hasAdminGoogleOAuthIntent()) return
 
     let cancelled = false
+    const client = supabase
+
+    const enterAdminIfAllowed = async (session: Parameters<typeof isAdminSessionAllowed>[0]) => {
+      if (cancelled || !session) return
+      if (!(await isAdminSessionAllowed(session))) return
+      consumeAdminGoogleOAuthIntent()
+      navigate('/admin', { replace: true })
+    }
+
+    void getAdminSession().then((session) => {
+      void enterAdminIfAllowed(session)
+    })
+
     const {
       data: { subscription },
     } = client.auth.onAuthStateChange((event, session) => {
-      if (cancelled || event !== 'SIGNED_IN' || !session) return
-      void isAdminSessionAllowed(session).then((allowed) => {
-        if (cancelled || !allowed) return
-        navigate('/admin', { replace: true })
-      })
+      if (cancelled) return
+      if (event !== 'SIGNED_IN' && event !== 'INITIAL_SESSION' && event !== 'TOKEN_REFRESHED') {
+        return
+      }
+      void enterAdminIfAllowed(session)
     })
 
     return () => {
@@ -485,6 +497,7 @@ export function LandingPage() {
   }, [])
 
   useEffect(() => {
+    if (hasAdminGoogleOAuthIntent()) return
     if (!consumeWaitlistOAuthIntent() || !supabase) return
     void (async () => {
       const { data } = await supabase.auth.getSession()

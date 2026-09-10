@@ -8,6 +8,7 @@ import { emailFromAuthUser } from '@shared/authUserEmail'
 import { supabase } from '@/lib/supabase'
 import { getErrorMessage } from '@/lib/errorMessage'
 import { landlordIdForPortalMemberEmail } from '@/lib/landlordPortalMembers'
+import { markAdminGoogleOAuthIntent } from '@/lib/googleIdentitySignIn'
 
 export { ADMIN_LOGIN_EMAIL_DOMAIN, normalizeAdminEmail } from '@shared/admin/staffAllowlist'
 
@@ -110,6 +111,7 @@ export async function verifyAdminEmailOtp(loginId: string, token: string): Promi
 
 export async function startAdminGoogleOAuthRedirect(): Promise<void> {
   if (!supabase) throw new Error(SERVICE_UNAVAILABLE)
+  markAdminGoogleOAuthIntent()
   const { data, error } = await supabase.auth.signInWithOAuth({
     provider: 'google',
     options: {
@@ -126,6 +128,7 @@ export async function startAdminGoogleOAuthRedirect(): Promise<void> {
 
 export async function signInAdminWithOAuth(provider: 'google' | 'apple'): Promise<void> {
   if (!supabase) throw new Error(SERVICE_UNAVAILABLE)
+  if (provider === 'google') markAdminGoogleOAuthIntent()
   const { error } = await supabase.auth.signInWithOAuth({
     provider,
     options: { redirectTo: `${window.location.origin}/auth/callback` },
