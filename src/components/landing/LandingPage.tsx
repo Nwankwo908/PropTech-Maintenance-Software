@@ -453,23 +453,26 @@ export function LandingPage() {
     primeUiClickSound()
   }, [])
 
-  // Supabase Site URL is often "/" so Google returns here instead of /auth/callback.
-  // Also catch INITIAL_SESSION after detectSessionInUrl consumes the code.
+  // Google login often returns to "/" (Site URL). Never let waitlist Google
+  // sign the tester out, and don't wait only on SIGNED_IN.
   useEffect(() => {
     if (!supabase) return
-    if (hasWaitlistOAuthIntent() && !hasAdminGoogleOAuthIntent()) return
 
     let cancelled = false
     const client = supabase
 
     const enterAdminIfAllowed = async (session: Parameters<typeof isAdminSessionAllowed>[0]) => {
       if (cancelled || !session) return
-      if (!(await isAdminSessionAllowed(session))) return
+      const intent = hasAdminGoogleOAuthIntent()
+      const allowed = await isAdminSessionAllowed(session)
+      if (cancelled) return
+      if (!allowed && !intent) return
       consumeAdminGoogleOAuthIntent()
+      consumeWaitlistOAuthIntent()
       navigate('/admin', { replace: true })
     }
 
-    void getAdminSession().then((session) => {
+    void getAdminSession(12_000).then((session) => {
       void enterAdminIfAllowed(session)
     })
 
@@ -497,24 +500,41 @@ export function LandingPage() {
   }, [])
 
   useEffect(() => {
-    if (hasAdminGoogleOAuthIntent()) return
-    if (!consumeWaitlistOAuthIntent() || !supabase) return
+    if (!supabase) return
+    let cancelled = false
     void (async () => {
+      if (hasAdminGoogleOAuthIntent()) return
+      const waitlistPending = hasWaitlistOAuthIntent()
       const { data } = await supabase.auth.getSession()
+      if (cancelled) return
+      if (data.session && (await isAdminSessionAllowed(data.session))) {
+        consumeWaitlistOAuthIntent()
+        consumeAdminGoogleOAuthIntent()
+        navigate('/admin', { replace: true })
+        return
+      }
+      if (!waitlistPending) return
+      if (!consumeWaitlistOAuthIntent()) return
       const email = data.session?.user.email
       if (!email) return
       try {
         const result = await joinWaitlistFromSessionEmail(email)
+        if (cancelled) return
         setEarlyAccessReferralLink(result.referralLink)
         setEarlyAccessSuccess(true)
         setEarlyAccessOpen(true)
       } catch {
-        setEarlyAccessOpen(true)
+        if (!cancelled) setEarlyAccessOpen(true)
       } finally {
-        await supabase.auth.signOut()
+        if (!hasAdminGoogleOAuthIntent()) {
+          await supabase.auth.signOut()
+        }
       }
     })()
-  }, [])
+    return () => {
+      cancelled = true
+    }
+  }, [navigate])
 
   function openEarlyAccess(prefillEmail?: string) {
     playUiClickSound()

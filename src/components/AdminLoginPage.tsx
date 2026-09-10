@@ -1,4 +1,4 @@
-import { useEffect, useState, type FormEvent } from 'react'
+import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { Navigate, Link, useNavigate, useSearchParams } from 'react-router-dom'
 import bgLogin from '@/assets/BG_Login.png'
 import uloLogo from '@/assets/Ulo_Logo_small.png'
@@ -74,6 +74,7 @@ export function AdminLoginPage() {
   const [error, setError] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
   const [alreadyAuthed, setAlreadyAuthed] = useState<boolean | null>(null)
+  const startedApexGoogleRef = useRef(false)
 
   useEffect(() => {
     if (!supabase) {
@@ -109,6 +110,16 @@ export function AdminLoginPage() {
       subscription.unsubscribe()
     }
   }, [])
+
+  useEffect(() => {
+    if (searchParams.get('google') !== '1') return
+    if (alreadyAuthed !== false) return
+    if (startedApexGoogleRef.current) return
+    startedApexGoogleRef.current = true
+    void startAdminGoogleOAuthRedirect().catch((err) => {
+      setError(googleIdTokenAuthErrorMessage(err) ?? getErrorMessage(err, 'Sign in failed'))
+    })
+  }, [alreadyAuthed, searchParams])
 
   if (alreadyAuthed === true) {
     return <Navigate to={afterLoginPath} replace />

@@ -27,10 +27,52 @@ export function googleOAuthClientId(): string {
   return (import.meta.env.VITE_GOOGLE_OAUTH_CLIENT_ID as string | undefined)?.trim() ?? ''
 }
 
+function writeUloAuthCookie(name: string, value: string): void {
+  try {
+    const host = window.location.hostname.replace(/^\[|\]$/g, '')
+    const domain = ULO_PRODUCTION_HOSTS.has(host) ? '; Domain=.ulohome.io' : ''
+    const secure = window.location.protocol === 'https:' ? '; Secure' : ''
+    document.cookie = `${name}=${encodeURIComponent(value)}; Max-Age=600; Path=/${domain}${secure}; SameSite=Lax`
+  } catch {
+    /* ignore */
+  }
+}
+
+function readUloAuthCookie(name: string): string | null {
+  if (typeof document === 'undefined') return null
+  const parts = document.cookie.split(';')
+  const prefix = `${name}=`
+  for (const part of parts) {
+    const trimmed = part.trim()
+    if (!trimmed.startsWith(prefix)) continue
+    try {
+      return decodeURIComponent(trimmed.slice(prefix.length)).trim() || null
+    } catch {
+      return null
+    }
+  }
+  return null
+}
+
+function clearUloAuthCookie(name: string): void {
+  try {
+    document.cookie = `${name}=; Max-Age=0; Path=/`
+    document.cookie = `${name}=; Max-Age=0; Path=/; Domain=.ulohome.io`
+  } catch {
+    /* ignore */
+  }
+}
+
 export function markAdminGoogleOAuthIntent(): void {
   if (typeof window === 'undefined') return
   try {
     window.sessionStorage.setItem(ADMIN_GOOGLE_OAUTH_KEY, '1')
+  } catch {
+    /* ignore */
+  }
+  writeUloAuthCookie(ADMIN_GOOGLE_OAUTH_KEY, '1')
+  try {
+    window.sessionStorage.removeItem('ulo_waitlist_oauth')
   } catch {
     /* ignore */
   }
@@ -39,21 +81,33 @@ export function markAdminGoogleOAuthIntent(): void {
 export function hasAdminGoogleOAuthIntent(): boolean {
   if (typeof window === 'undefined') return false
   try {
-    return window.sessionStorage.getItem(ADMIN_GOOGLE_OAUTH_KEY) === '1'
+    if (window.sessionStorage.getItem(ADMIN_GOOGLE_OAUTH_KEY) === '1') return true
   } catch {
-    return false
+    /* ignore */
   }
+  return readUloAuthCookie(ADMIN_GOOGLE_OAUTH_KEY) === '1'
 }
 
 export function consumeAdminGoogleOAuthIntent(): boolean {
   const pending = hasAdminGoogleOAuthIntent()
-  if (!pending) return false
   try {
     window.sessionStorage.removeItem(ADMIN_GOOGLE_OAUTH_KEY)
   } catch {
     /* ignore */
   }
-  return true
+  clearUloAuthCookie(ADMIN_GOOGLE_OAUTH_KEY)
+  return pending
+}
+
+/** Production Google always returns to www so PKCE and cookies stay on one host. */
+export function adminGoogleOAuthRedirectTo(origin: string = typeof window !== 'undefined' ? window.location.origin : ''): string {
+  try {
+    const url = new URL(origin.includes('://') ? origin : `https://${origin}`)
+    if (ULO_PRODUCTION_HOSTS.has(url.hostname)) return PRODUCTION_GOOGLE_AUTH_CALLBACK
+    return `${url.origin}/auth/callback`
+  } catch {
+    return PRODUCTION_GOOGLE_AUTH_CALLBACK
+  }
 }
 
 /** True when Google/Supabase returned an auth code or id_token on this URL. */
@@ -135,38 +189,15 @@ function storeGoogleOAuthNonce(nonce: string): void {
   } catch {
     /* ignore */
   }
-  try {
-    const host = window.location.hostname.replace(/^\[|\]$/g, '')
-    const domain = ULO_PRODUCTION_HOSTS.has(host) ? '; Domain=.ulohome.io' : ''
-    document.cookie = `${GOOGLE_OAUTH_NONCE_KEY}=${encodeURIComponent(nonce)}; Max-Age=600; Path=/${domain}; Secure; SameSite=Lax`
-  } catch {
-    /* ignore */
-  }
+  writeUloAuthCookie(GOOGLE_OAUTH_NONCE_KEY, nonce)
 }
 
 function readGoogleOAuthNonceCookie(): string | null {
-  if (typeof document === 'undefined') return null
-  const parts = document.cookie.split(';')
-  const prefix = `${GOOGLE_OAUTH_NONCE_KEY}=`
-  for (const part of parts) {
-    const trimmed = part.trim()
-    if (!trimmed.startsWith(prefix)) continue
-    try {
-      return decodeURIComponent(trimmed.slice(prefix.length)).trim() || null
-    } catch {
-      return null
-    }
-  }
-  return null
+  return readUloAuthCookie(GOOGLE_OAUTH_NONCE_KEY)
 }
 
 function clearGoogleOAuthNonceCookie(): void {
-  try {
-    document.cookie = `${GOOGLE_OAUTH_NONCE_KEY}=; Max-Age=0; Path=/`
-    document.cookie = `${GOOGLE_OAUTH_NONCE_KEY}=; Max-Age=0; Path=/; Domain=.ulohome.io`
-  } catch {
-    /* ignore */
-  }
+  clearUloAuthCookie(GOOGLE_OAUTH_NONCE_KEY)
 }
 
 /** Redirect URI sent to Google. Production always uses www so Console + Chrome agree. */

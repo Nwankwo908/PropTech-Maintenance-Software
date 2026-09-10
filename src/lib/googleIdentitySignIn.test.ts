@@ -7,6 +7,7 @@ import {
   googleAuthCallbackUri,
   googleOAuthStateCsrf,
   googleSignInRedirectUri,
+  adminGoogleOAuthRedirectTo,
   handoffGoogleOAuthHashToOpener,
   redirectGoogleOAuthHashToLocalReturn,
   isAllowedLocalReturnOrigin,
@@ -66,6 +67,14 @@ describe('googleIdentitySignIn', () => {
     )
     expect(googleSignInRedirectUri('https://ulohome.io')).toBe(PRODUCTION_GOOGLE_AUTH_CALLBACK)
     expect(googleSignInRedirectUri('https://app.ulohome.io')).toBe(PRODUCTION_GOOGLE_AUTH_CALLBACK)
+  })
+
+  it('sends production Google OAuth back to www /auth/callback', () => {
+    expect(adminGoogleOAuthRedirectTo('https://www.ulohome.io')).toBe(PRODUCTION_GOOGLE_AUTH_CALLBACK)
+    expect(adminGoogleOAuthRedirectTo('https://ulohome.io')).toBe(PRODUCTION_GOOGLE_AUTH_CALLBACK)
+    expect(adminGoogleOAuthRedirectTo('http://localhost:5175')).toBe(
+      'http://localhost:5175/auth/callback',
+    )
   })
 
   it('encodes a local return origin in OAuth state', () => {

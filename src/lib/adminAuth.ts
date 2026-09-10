@@ -8,7 +8,7 @@ import { emailFromAuthUser } from '@shared/authUserEmail'
 import { supabase } from '@/lib/supabase'
 import { getErrorMessage } from '@/lib/errorMessage'
 import { landlordIdForPortalMemberEmail } from '@/lib/landlordPortalMembers'
-import { markAdminGoogleOAuthIntent } from '@/lib/googleIdentitySignIn'
+import { markAdminGoogleOAuthIntent, adminGoogleOAuthRedirectTo } from '@/lib/googleIdentitySignIn'
 
 export { ADMIN_LOGIN_EMAIL_DOMAIN, normalizeAdminEmail } from '@shared/admin/staffAllowlist'
 
@@ -111,11 +111,17 @@ export async function verifyAdminEmailOtp(loginId: string, token: string): Promi
 
 export async function startAdminGoogleOAuthRedirect(): Promise<void> {
   if (!supabase) throw new Error(SERVICE_UNAVAILABLE)
+  const host = window.location.hostname.replace(/^\[|\]$/g, '').toLowerCase()
+  if (host === 'ulohome.io' || host === 'app.ulohome.io') {
+    markAdminGoogleOAuthIntent()
+    window.location.assign('https://www.ulohome.io/admin/login?google=1')
+    return
+  }
   markAdminGoogleOAuthIntent()
   const { data, error } = await supabase.auth.signInWithOAuth({
     provider: 'google',
     options: {
-      redirectTo: `${window.location.origin}/auth/callback`,
+      redirectTo: adminGoogleOAuthRedirectTo(window.location.origin),
       skipBrowserRedirect: true,
       queryParams: { prompt: 'select_account' },
     },
@@ -131,7 +137,7 @@ export async function signInAdminWithOAuth(provider: 'google' | 'apple'): Promis
   if (provider === 'google') markAdminGoogleOAuthIntent()
   const { error } = await supabase.auth.signInWithOAuth({
     provider,
-    options: { redirectTo: `${window.location.origin}/auth/callback` },
+    options: { redirectTo: adminGoogleOAuthRedirectTo(window.location.origin) },
   })
   if (error) {
     throw new Error(getErrorMessage(error, 'Could not continue with that sign-in option.'))
