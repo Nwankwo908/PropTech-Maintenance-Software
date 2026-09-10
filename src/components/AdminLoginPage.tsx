@@ -193,10 +193,11 @@ export function AdminLoginPage() {
           }
         }
         if (idToken) {
+          const nonce = gsiNonce ?? takeStoredGoogleOAuthNonce()
           const { data, error: tokenError } = await supabase.auth.signInWithIdToken({
             provider: 'google',
             token: idToken,
-            ...(gsiNonce ? { nonce: gsiNonce } : {}),
+            ...(nonce ? { nonce } : {}),
           })
           if (tokenError || !data.session) {
             throw tokenError ?? new Error('Google sign-in did not finish.')

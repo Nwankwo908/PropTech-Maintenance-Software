@@ -13,6 +13,7 @@ import {
   readGoogleIdTokenFromHash,
   readGoogleOAuthErrorFromHash,
   readGoogleOAuthStateFromHash,
+  sha256Hex,
   shouldUseBrandedGoogleIdToken,
   supabaseGoogleOAuthCallbackUri,
 } from './googleIdentitySignIn'
@@ -93,6 +94,12 @@ describe('googleIdentitySignIn', () => {
     )
     expect(ok).toBe(true)
     expect(posted[0]?.origin).toBe('http://localhost:5175')
+  })
+
+  it('hashes GSI nonces as SHA-256 hex', async () => {
+    const hex = await sha256Hex('ulo-nonce')
+    expect(hex).toMatch(/^[a-f0-9]{64}$/)
+    expect(hex).not.toBe(await sha256Hex('other'))
   })
 
   it('explains an audience mismatch from Supabase Auth', async () => {

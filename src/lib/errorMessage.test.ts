@@ -42,6 +42,15 @@ describe('toUserFriendlyMessage', () => {
     ).toMatch(/does not have a login yet/i)
   })
 
+  it('maps failed email codes without calling it a permission error', () => {
+    expect(toUserFriendlyMessage('Forbidden', 'That code didn’t work. Please try again.')).toBe(
+      "You don't have permission to do that.",
+    )
+    expect(toUserFriendlyMessage('Token has expired or is invalid', 'fallback')).toMatch(
+      /code didn’t work/i,
+    )
+  })
+
   it('maps unauthorized and missing SMS phone for settings test delivery', () => {
     expect(toUserFriendlyMessage('Unauthorized', 'fallback')).toMatch(/permission/i)
     expect(

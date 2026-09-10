@@ -90,6 +90,22 @@ export function toUserFriendlyMessage(raw: string, fallback: string): string {
   }
 
   if (
+    lower.includes('signups not allowed') ||
+    lower.includes('sign up is disabled')
+  ) {
+    return 'This email does not have a login yet. Try Continue with Google, or request a new code after this update is live.'
+  }
+
+  if (
+    lower.includes('otp') ||
+    lower.includes('token has expired') ||
+    lower.includes('invalid token') ||
+    lower.includes('invalid login credentials')
+  ) {
+    return 'That code didn’t work. Please try again.'
+  }
+
+  if (
     lower.includes('permission denied') ||
     lower.includes('row-level security') ||
     lower.includes('rls') ||
@@ -98,13 +114,6 @@ export function toUserFriendlyMessage(raw: string, fallback: string): string {
     lower === 'unauthorized'
   ) {
     return "You don't have permission to do that."
-  }
-
-  if (
-    lower.includes('signups not allowed') ||
-    lower.includes('sign up is disabled')
-  ) {
-    return 'This email does not have a login yet. Try Continue with Google, or request a new code after this update is live.'
   }
 
   if (

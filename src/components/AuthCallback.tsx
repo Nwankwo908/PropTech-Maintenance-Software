@@ -6,6 +6,7 @@ import {
   handoffGoogleOAuthHashToOpener,
   readGoogleIdTokenFromHash,
   readGoogleOAuthErrorFromHash,
+  takeStoredGoogleOAuthNonce,
 } from '@/lib/googleIdentitySignIn'
 import { supabase } from '@/lib/supabase'
 
@@ -63,9 +64,11 @@ export function AuthCallback() {
       }
       const idToken = readGoogleIdTokenFromHash(hash)
       if (!idToken) return false
+      const nonce = takeStoredGoogleOAuthNonce()
       const { data, error } = await client.auth.signInWithIdToken({
         provider: 'google',
         token: idToken,
+        ...(nonce ? { nonce } : {}),
       })
       window.history.replaceState(null, '', `${window.location.pathname}${window.location.search}`)
       if (error || !data.session) {

@@ -1,6 +1,7 @@
 import type { Session } from '@supabase/supabase-js'
 import {
   isPortalAdminEmailAllowed,
+  isStaffAdminEmail,
   loginIdToAdminEmail,
 } from '@shared/admin/staffAllowlist'
 import { emailFromAuthUser } from '@shared/authUserEmail'
@@ -18,11 +19,11 @@ export function loginIdToEmail(loginId: string): string {
 }
 
 export function isAdminEmailAllowed(loginIdOrEmail: string): boolean {
-  return isPortalAdminEmailAllowed(loginIdOrEmail)
+  return isPortalAdminEmailAllowed(loginIdOrEmail) || isStaffAdminEmail(loginIdOrEmail)
 }
 
 export async function isAdminEmailAllowedAsync(loginIdOrEmail: string): Promise<boolean> {
-  if (isPortalAdminEmailAllowed(loginIdOrEmail)) return true
+  if (isAdminEmailAllowed(loginIdOrEmail)) return true
   return Boolean(await landlordIdForPortalMemberEmail(loginIdToEmail(loginIdOrEmail)))
 }
 
@@ -97,9 +98,19 @@ export async function verifyAdminEmailOtp(loginId: string, token: string): Promi
     token: token.replace(/\s/g, '').trim(),
     type: 'email',
   })
-  if (error) {
-    throw new Error(getErrorMessage(error, 'That code didn’t work. Please try again.'))
-  }
+  if (!error) return
+  const magicLink = await supabase.auth.verifyOtp({
+    email,
+    token: token.replace(/\s/g, '').trim(),
+    type: 'magiclink',
+  })
+  if (!magicLink.error) return
+  const mapped = getErrorMessage(error, "That code didn’t work. Please try again.")
+  throw new Error(
+    mapped === "You don't have permission to do that."
+      ? "That code didn’t work. Please try again."
+      : mapped,
+  )
 }
 
 export async function signInAdminWithOAuth(provider: 'google' | 'apple'): Promise<void> {

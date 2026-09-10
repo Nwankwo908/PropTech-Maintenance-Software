@@ -85,6 +85,20 @@ export function googleAuthCallbackUri(origin: string = window.location.origin): 
   return `${origin.replace(/\/$/, '')}/auth/callback`
 }
 
+/** Original nonce for Supabase; GSI puts the SHA-256 of this value in the ID token. */
+export async function sha256Hex(value: string): Promise<string> {
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(value))
+  return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, '0')).join('')
+}
+
+function storeGoogleOAuthNonce(nonce: string): void {
+  try {
+    window.sessionStorage.setItem(GOOGLE_OAUTH_NONCE_KEY, nonce)
+  } catch {
+    /* ignore */
+  }
+}
+
 /** Redirect URI sent to Google. Local always uses production so Console localhost URIs are not required. */
 export function googleSignInRedirectUri(origin: string = window.location.origin): string {
   try {
@@ -179,7 +193,8 @@ export async function requestGoogleIdTokenViaGsi(): Promise<string> {
     throw new Error('gsi_unavailable')
   }
   const nonce = crypto.randomUUID()
-  window.sessionStorage.setItem(GOOGLE_OAUTH_NONCE_KEY, nonce)
+  storeGoogleOAuthNonce(nonce)
+  const hashedNonce = await sha256Hex(nonce)
   const gsi = await loadGoogleGsiClient()
   return new Promise((resolve, reject) => {
     let settled = false
@@ -190,7 +205,7 @@ export async function requestGoogleIdTokenViaGsi(): Promise<string> {
     }
     gsi.initialize({
       client_id: clientId,
-      nonce,
+      nonce: hashedNonce,
       auto_select: false,
       cancel_on_tap_outside: true,
       use_fedcm_for_prompt: true,
@@ -222,17 +237,14 @@ export type GoogleIdTokenSignInStart =
 export function beginGoogleIdTokenSignIn(): GoogleIdTokenSignInStart {
   const clientId = googleOAuthClientId()
   if (!clientId || typeof window === 'undefined') return false
-  try {
-    window.sessionStorage.removeItem(GOOGLE_OAUTH_NONCE_KEY)
-  } catch {
-    /* ignore */
-  }
   const origin = window.location.origin
   const usePopup = isAllowedLocalReturnOrigin(origin)
+  const nonce = crypto.randomUUID()
+  storeGoogleOAuthNonce(nonce)
   const url = buildGoogleIdTokenAuthUrl({
     clientId,
     redirectUri: googleSignInRedirectUri(origin),
-    nonce: crypto.randomUUID(),
+    nonce,
     state: usePopup ? storeGoogleOAuthState(origin) : undefined,
   })
   if (usePopup) {
