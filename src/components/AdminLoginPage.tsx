@@ -7,6 +7,7 @@ import {
   isAdminSessionAllowed,
   sendAdminEmailOtp,
   signInAdminWithOAuth,
+  startAdminGoogleOAuthRedirect,
   signOutAdmin,
   verifyAdminEmailOtp,
 } from '@/lib/adminAuth'
@@ -220,18 +221,20 @@ export function AdminLoginPage() {
         return
       }
 
+      if (branded && shouldUseImmediateGoogleRedirect()) {
+        await startAdminGoogleOAuthRedirect()
+        return
+      }
+
       if (branded) {
         let idToken: string | null = null
         let gsiNonce: string | null = null
-        const redirectNow = shouldUseImmediateGoogleRedirect()
-        if (!redirectNow) {
-          try {
-            idToken = await requestGoogleIdTokenViaGsi()
-            gsiNonce = takeStoredGoogleOAuthNonce()
-          } catch {
-            takeStoredGoogleOAuthNonce()
-            idToken = null
-          }
+        try {
+          idToken = await requestGoogleIdTokenViaGsi()
+          gsiNonce = takeStoredGoogleOAuthNonce()
+        } catch {
+          takeStoredGoogleOAuthNonce()
+          idToken = null
         }
         if (!idToken) {
           const started = beginGoogleIdTokenSignIn()

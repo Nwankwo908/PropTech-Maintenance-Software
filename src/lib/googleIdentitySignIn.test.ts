@@ -14,6 +14,7 @@ import {
   PRODUCTION_GOOGLE_AUTH_CALLBACK,
   readGoogleIdTokenFromHash,
   readGoogleOAuthErrorFromHash,
+  readGoogleOAuthReturnParams,
   readGoogleOAuthStateFromHash,
   sha256Hex,
   shouldUseBrandedGoogleIdToken,
@@ -167,5 +168,25 @@ describe('googleIdentitySignIn', () => {
       'redirect_uri_mismatch',
     )
     expect(readGoogleOAuthStateFromHash('#id_token=t&state=abc.def')).toBe('abc.def')
+  })
+
+  it('reads Google return params from the query string used on some phones', () => {
+    expect(
+      readGoogleOAuthReturnParams('?id_token=tok.en&state=csrf.abc', ''),
+    ).toEqual({
+      idToken: 'tok.en',
+      error: null,
+      state: 'csrf.abc',
+      code: null,
+    })
+    expect(readGoogleOAuthReturnParams('?code=pkce-code', '')).toEqual({
+      idToken: null,
+      error: null,
+      state: null,
+      code: 'pkce-code',
+    })
+    expect(
+      readGoogleOAuthReturnParams('?error=access_denied', '#id_token=from-hash'),
+    ).toMatchObject({ idToken: 'from-hash', error: 'access_denied', code: null })
   })
 })

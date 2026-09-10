@@ -3,14 +3,14 @@ import { Navigate } from 'react-router-dom'
 import type { Session } from '@supabase/supabase-js'
 import { getAdminSession, isAdminSessionAllowed, signOutAdmin } from '@/lib/adminAuth'
 import {
+  GOOGLE_OAUTH_RESULT_TYPE,
   GOOGLE_SIGN_IN_POPUP_NAME,
   decodeGoogleOAuthReturnOrigin,
   decodeGoogleOAuthNonce,
   googleOAuthPayloadFromHash,
   handoffGoogleOAuthHashToOpener,
   publishGoogleOAuthBridgePayload,
-  readGoogleIdTokenFromHash,
-  readGoogleOAuthErrorFromHash,
+  readGoogleOAuthReturnParams,
   redirectGoogleOAuthHashToLocalReturn,
   takeStoredGoogleOAuthNonce,
 } from '@/lib/googleIdentitySignIn'
@@ -63,6 +63,12 @@ export function AuthCallback() {
 
     const completeGoogleIdToken = async (): Promise<boolean> => {
       const hash = window.location.hash
+      const search = window.location.search
+      const returned = readGoogleOAuthReturnParams(search, hash)
+      const clearAuthUrl = () => {
+        window.history.replaceState(null, '', window.location.pathname)
+      }
+
       if (handoffGoogleOAuthHashToOpener(window.opener, hash)) {
         closeGooglePopup()
         return true
@@ -73,30 +79,56 @@ export function AuthCallback() {
         return true
       }
       const payload = googleOAuthPayloadFromHash(hash)
-      const returnOrigin = decodeGoogleOAuthReturnOrigin(payload?.state)
+      const returnOrigin = decodeGoogleOAuthReturnOrigin(payload?.state ?? returned.state)
       if (
-        payload &&
+        (payload || returned.idToken) &&
         returnOrigin === window.location.origin &&
         window.name === GOOGLE_SIGN_IN_POPUP_NAME
       ) {
-        publishGoogleOAuthBridgePayload(payload)
+        publishGoogleOAuthBridgePayload(
+          payload ?? {
+            type: GOOGLE_OAUTH_RESULT_TYPE,
+            idToken: returned.idToken,
+            error: returned.error,
+            state: returned.state,
+          },
+        )
         closeGooglePopup()
         return true
       }
-      if (readGoogleOAuthErrorFromHash(hash) || new URLSearchParams(window.location.search).get('error')) {
-        window.history.replaceState(null, '', `${window.location.pathname}${window.location.search}`)
+
+      if (returned.code) {
+        const existing = await client.auth.getSession()
+        if (existing.data.session) {
+          clearAuthUrl()
+          await resolve(existing.data.session)
+          return true
+        }
+        const { data, error } = await client.auth.exchangeCodeForSession(returned.code)
+        clearAuthUrl()
+        if (error || !data.session) {
+          setPhase('google_failed')
+          return true
+        }
+        await resolve(data.session)
+        return true
+      }
+
+      if (returned.error && !returned.idToken) {
+        clearAuthUrl()
         setPhase('google_failed')
         return true
       }
-      const idToken = readGoogleIdTokenFromHash(hash)
+
+      const idToken = returned.idToken
       if (!idToken) return false
-      const nonce = decodeGoogleOAuthNonce(payload?.state) ?? takeStoredGoogleOAuthNonce()
+      const nonce = decodeGoogleOAuthNonce(returned.state) ?? takeStoredGoogleOAuthNonce()
       const { data, error } = await client.auth.signInWithIdToken({
         provider: 'google',
         token: idToken,
         ...(nonce ? { nonce } : {}),
       })
-      window.history.replaceState(null, '', `${window.location.pathname}${window.location.search}`)
+      clearAuthUrl()
       if (error || !data.session) {
         setPhase('google_failed')
         return true
@@ -107,7 +139,7 @@ export function AuthCallback() {
 
     void completeGoogleIdToken().then((handled) => {
       if (handled || cancelled) return
-      void getAdminSession(8_000).then((session) => {
+      void getAdminSession(12_000).then((session) => {
         void resolve(session)
       })
     })

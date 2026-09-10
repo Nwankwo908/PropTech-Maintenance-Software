@@ -347,6 +347,17 @@ export function beginGoogleIdTokenSignIn(): GoogleIdTokenSignInStart {
   return { mode: 'redirect' }
 }
 
+function paramsFromSearchAndHash(search: string, hash: string): URLSearchParams {
+  const merged = new URLSearchParams(
+    search.startsWith('?') ? search.slice(1) : search,
+  )
+  const hashParams = new URLSearchParams(hash.startsWith('#') ? hash.slice(1) : hash)
+  for (const [key, value] of hashParams.entries()) {
+    merged.set(key, value)
+  }
+  return merged
+}
+
 export function readGoogleOAuthStateFromHash(hash: string): string | null {
   const params = new URLSearchParams(hash.startsWith('#') ? hash.slice(1) : hash)
   return params.get('state')?.trim() || null
@@ -362,6 +373,20 @@ export function readGoogleOAuthErrorFromHash(hash: string): string | null {
   const params = new URLSearchParams(hash.startsWith('#') ? hash.slice(1) : hash)
   const error = params.get('error')?.trim()
   return error || null
+}
+
+/** iOS sometimes returns Google's fragment params on the query string instead. */
+export function readGoogleOAuthReturnParams(
+  search: string,
+  hash: string,
+): { idToken: string | null; error: string | null; state: string | null; code: string | null } {
+  const params = paramsFromSearchAndHash(search, hash)
+  return {
+    idToken: params.get('id_token')?.trim() || null,
+    error: params.get('error')?.trim() || null,
+    state: params.get('state')?.trim() || null,
+    code: params.get('code')?.trim() || null,
+  }
 }
 
 export function isTrustedGoogleBridgeOrigin(origin: string): boolean {
