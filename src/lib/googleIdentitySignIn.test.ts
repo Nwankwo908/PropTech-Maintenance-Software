@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   buildGoogleIdTokenAuthUrl,
   buildGoogleOAuthState,
+  decodeGoogleOAuthNonce,
   decodeGoogleOAuthReturnOrigin,
   googleAuthCallbackUri,
   googleOAuthStateCsrf,
@@ -16,6 +17,7 @@ import {
   readGoogleOAuthStateFromHash,
   sha256Hex,
   shouldUseBrandedGoogleIdToken,
+  shouldUseImmediateGoogleRedirect,
   supabaseGoogleOAuthCallbackUri,
 } from './googleIdentitySignIn'
 
@@ -71,6 +73,30 @@ describe('googleIdentitySignIn', () => {
     expect(decodeGoogleOAuthReturnOrigin(buildGoogleOAuthState('x', 'https://evil.example'))).toBe(
       null,
     )
+  })
+
+  it('carries the nonce in OAuth state so a phone return does not need sessionStorage', () => {
+    const state = buildGoogleOAuthState('csrf', null, 'nonce-abc')
+    expect(decodeGoogleOAuthNonce(state)).toBe('nonce-abc')
+    expect(decodeGoogleOAuthReturnOrigin(state)).toBe(null)
+  })
+
+  it('still reads a legacy state that was only a return origin', () => {
+    const state = `csrf.${btoa('http://localhost:5175')}`
+    expect(decodeGoogleOAuthReturnOrigin(state)).toBe('http://localhost:5175')
+  })
+
+  it('redirects Google immediately on phones instead of waiting on One Tap', () => {
+    expect(
+      shouldUseImmediateGoogleRedirect(
+        'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15',
+        5,
+        true,
+      ),
+    ).toBe(true)
+    expect(
+      shouldUseImmediateGoogleRedirect('Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)', 0, false),
+    ).toBe(false)
   })
 
   it('allows only local return origins', () => {

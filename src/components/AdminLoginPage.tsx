@@ -19,6 +19,7 @@ import {
   isAllowedLocalReturnOrigin,
   requestGoogleIdTokenViaGsi,
   shouldUseBrandedGoogleIdToken,
+  shouldUseImmediateGoogleRedirect,
   supabaseGoogleOAuthCallbackUri,
   takeStoredGoogleOAuthNonce,
   waitForGoogleOAuthPopupResult,
@@ -212,19 +213,25 @@ export function AdminLoginPage() {
         if (result.error || !result.idToken) {
           throw new Error('Google sign-in did not finish.')
         }
-        await completeWithIdToken(result.idToken, takeStoredGoogleOAuthNonce())
+        await completeWithIdToken(
+          result.idToken,
+          result.nonce ?? takeStoredGoogleOAuthNonce(),
+        )
         return
       }
 
       if (branded) {
         let idToken: string | null = null
         let gsiNonce: string | null = null
-        try {
-          idToken = await requestGoogleIdTokenViaGsi()
-          gsiNonce = takeStoredGoogleOAuthNonce()
-        } catch {
-          takeStoredGoogleOAuthNonce()
-          idToken = null
+        const redirectNow = shouldUseImmediateGoogleRedirect()
+        if (!redirectNow) {
+          try {
+            idToken = await requestGoogleIdTokenViaGsi()
+            gsiNonce = takeStoredGoogleOAuthNonce()
+          } catch {
+            takeStoredGoogleOAuthNonce()
+            idToken = null
+          }
         }
         if (!idToken) {
           const started = beginGoogleIdTokenSignIn()
@@ -235,6 +242,7 @@ export function AdminLoginPage() {
               throw new Error('Google sign-in did not finish.')
             }
             idToken = result.idToken
+            gsiNonce = result.nonce ?? gsiNonce
           }
         }
         if (idToken) {

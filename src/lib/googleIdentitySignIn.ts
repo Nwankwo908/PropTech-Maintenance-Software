@@ -149,27 +149,78 @@ export function googleSignInRedirectUri(origin: string = window.location.origin)
   return googleAuthCallbackUri(origin)
 }
 
-export function buildGoogleOAuthState(csrf: string, returnOrigin: string): string {
-  return `${csrf}.${btoa(returnOrigin)}`
+type GoogleOAuthStatePayload = {
+  o?: string
+  n?: string
+}
+
+function parseGoogleOAuthStatePayload(
+  state: string | null | undefined,
+): { csrf: string; o?: string; n?: string } | null {
+  if (!state) return null
+  const dot = state.indexOf('.')
+  if (dot <= 0) return null
+  const csrf = state.slice(0, dot)
+  const raw = state.slice(dot + 1)
+  try {
+    const parsed = JSON.parse(atob(raw)) as GoogleOAuthStatePayload
+    if (parsed && typeof parsed === 'object') {
+      return {
+        csrf,
+        o: typeof parsed.o === 'string' ? parsed.o : undefined,
+        n: typeof parsed.n === 'string' ? parsed.n : undefined,
+      }
+    }
+  } catch {
+    try {
+      return { csrf, o: atob(raw) }
+    } catch {
+      return { csrf }
+    }
+  }
+  return { csrf }
+}
+
+export function buildGoogleOAuthState(
+  csrf: string,
+  returnOrigin?: string | null,
+  nonce?: string,
+): string {
+  const payload: GoogleOAuthStatePayload = {}
+  if (returnOrigin) payload.o = returnOrigin
+  if (nonce) payload.n = nonce
+  return `${csrf}.${btoa(JSON.stringify(payload))}`
 }
 
 export function googleOAuthStateCsrf(state: string | null | undefined): string | null {
-  if (!state) return null
-  const dot = state.indexOf('.')
-  if (dot <= 0) return null
-  return state.slice(0, dot)
+  return parseGoogleOAuthStatePayload(state)?.csrf ?? null
 }
 
 export function decodeGoogleOAuthReturnOrigin(state: string | null | undefined): string | null {
-  if (!state) return null
-  const dot = state.indexOf('.')
-  if (dot <= 0) return null
-  try {
-    const origin = atob(state.slice(dot + 1))
-    return isAllowedLocalReturnOrigin(origin) ? origin : null
-  } catch {
-    return null
-  }
+  const origin = parseGoogleOAuthStatePayload(state)?.o
+  return origin && isAllowedLocalReturnOrigin(origin) ? origin : null
+}
+
+export function decodeGoogleOAuthNonce(state: string | null | undefined): string | null {
+  const nonce = parseGoogleOAuthStatePayload(state)?.n?.trim()
+  return nonce || null
+}
+
+/**
+ * GSI One Tap / FedCM is unreliable on phones and consumes the tap gesture,
+ * so a later redirect is blocked. Redirect in the same click instead.
+ */
+export function shouldUseImmediateGoogleRedirect(
+  userAgent = typeof navigator !== 'undefined' ? navigator.userAgent : '',
+  maxTouchPoints = typeof navigator !== 'undefined' ? navigator.maxTouchPoints : 0,
+  coarsePointer =
+    typeof window !== 'undefined' &&
+    typeof window.matchMedia === 'function' &&
+    window.matchMedia('(pointer: coarse)').matches,
+): boolean {
+  if (/iPhone|iPad|iPod|Android|Mobile|webOS|Silk/i.test(userAgent)) return true
+  if (maxTouchPoints > 1 && /Mac/i.test(userAgent)) return true
+  return Boolean(coarsePointer)
 }
 
 type GoogleGsiNotification = {
@@ -259,10 +310,10 @@ export async function requestGoogleIdTokenViaGsi(): Promise<string> {
   })
 }
 
-export function storeGoogleOAuthState(returnOrigin: string): string {
+export function storeGoogleOAuthState(returnOrigin: string | undefined, nonce: string): string {
   const csrf = crypto.randomUUID()
   window.sessionStorage.setItem(GOOGLE_OAUTH_CSRF_KEY, csrf)
-  return buildGoogleOAuthState(csrf, returnOrigin)
+  return buildGoogleOAuthState(csrf, returnOrigin, nonce)
 }
 
 export type GoogleIdTokenSignInStart =
@@ -281,7 +332,7 @@ export function beginGoogleIdTokenSignIn(): GoogleIdTokenSignInStart {
     clientId,
     redirectUri: googleSignInRedirectUri(origin),
     nonce,
-    state: usePopup ? storeGoogleOAuthState(origin) : undefined,
+    state: storeGoogleOAuthState(usePopup ? origin : undefined, nonce),
   })
   if (usePopup) {
     const popup = window.open(
@@ -391,7 +442,7 @@ export function handoffGoogleOAuthHashToOpener(
 export function waitForGoogleOAuthPopupResult(
   popup: Window,
   timeoutMs = 120_000,
-): Promise<{ idToken: string | null; error: string | null }> {
+): Promise<{ idToken: string | null; error: string | null; nonce: string | null }> {
   return new Promise((resolve, reject) => {
     let settled = false
     const csrf = window.sessionStorage.getItem(GOOGLE_OAUTH_CSRF_KEY)
@@ -399,7 +450,11 @@ export function waitForGoogleOAuthPopupResult(
     const accept = (data: unknown) => {
       if (settled || !isGoogleOAuthBridgePayload(data, csrf)) return
       cleanup()
-      resolve({ idToken: data.idToken, error: data.error })
+      resolve({
+        idToken: data.idToken,
+        error: data.error,
+        nonce: decodeGoogleOAuthNonce(data.state),
+      })
     }
     const onMessage = (event: MessageEvent) => {
       if (!isAcceptedGoogleOAuthBridgeMessage(event.origin, listenerOrigin)) return

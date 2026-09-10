@@ -5,6 +5,7 @@ import { getAdminSession, isAdminSessionAllowed, signOutAdmin } from '@/lib/admi
 import {
   GOOGLE_SIGN_IN_POPUP_NAME,
   decodeGoogleOAuthReturnOrigin,
+  decodeGoogleOAuthNonce,
   googleOAuthPayloadFromHash,
   handoffGoogleOAuthHashToOpener,
   publishGoogleOAuthBridgePayload,
@@ -82,14 +83,14 @@ export function AuthCallback() {
         closeGooglePopup()
         return true
       }
-      if (readGoogleOAuthErrorFromHash(hash)) {
+      if (readGoogleOAuthErrorFromHash(hash) || new URLSearchParams(window.location.search).get('error')) {
         window.history.replaceState(null, '', `${window.location.pathname}${window.location.search}`)
         setPhase('google_failed')
         return true
       }
       const idToken = readGoogleIdTokenFromHash(hash)
       if (!idToken) return false
-      const nonce = takeStoredGoogleOAuthNonce()
+      const nonce = decodeGoogleOAuthNonce(payload?.state) ?? takeStoredGoogleOAuthNonce()
       const { data, error } = await client.auth.signInWithIdToken({
         provider: 'google',
         token: idToken,
