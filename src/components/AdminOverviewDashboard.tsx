@@ -2958,7 +2958,7 @@ export function AdminOverviewDashboard() {
       <div className="flex items-center justify-between py-6">
         <div>
           <h1 className="text-[24px] font-semibold leading-8 tracking-[0.0703px] text-[#0a0a0a]">
-            Operations Overview
+            Dashboard Overview
           </h1>
           <p className="text-[14px] leading-5 tracking-[-0.1504px] text-[#6a7282]">
             {greetingLine}

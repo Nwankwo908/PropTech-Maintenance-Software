@@ -165,7 +165,8 @@ describe('lease extraction', () => {
       unit: '4B',
       confidence: 90,
     })
-    expect(mapped.account.companyName).toBe('Maria Chen')
+    expect(mapped.account.companyName).toBe('')
+    expect(mapped.account.contactName).toBe('Maria Chen')
     expect(mapped.roleFacts.some((row) => row.role === 'landlord_lessor' && row.value === 'Maria Chen')).toBe(
       true,
     )
@@ -178,6 +179,16 @@ describe('lease extraction', () => {
       confidence: 90,
     })
     expect(mapped.account.companyName).toBe('Grove Holdings LLC')
+  })
+
+  it('swaps tenant and landlord when the model reversed an LLC and a person', () => {
+    const mapped = parseAndMapTypedExtract('lease', {
+      landlord_name: 'Jane Smith',
+      tenant_names: ['Grove Holdings LLC'],
+      confidence: 90,
+    })
+    expect(mapped.account.companyName).toBe('Grove Holdings LLC')
+    expect(mapped.residents.map((row) => row.fullName)).toEqual(['Jane Smith'])
   })
 
   it('3. two tenants', () => {

@@ -30,6 +30,14 @@ export type PropertyInsuranceExtracted = {
   claimsContactName: string
   claimsPhone: string
   additionalInsured: boolean
+  policyType: string
+  premium: string
+  coverageAmount: string
+  deductible: string
+  dwellingCoverage: string
+  otherStructures: string
+  liability: string
+  lossOfRentalIncome: string
 }
 
 export type InsuranceBinderScanResult = {
@@ -73,6 +81,19 @@ function fromRoleFacts(
   return asText(match?.value)
 }
 
+function amountToInput(value: unknown): string {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) return ''
+  return String(value)
+}
+
+function policyTypeFromDocumentType(value: string | null | undefined): string {
+  const key = (value ?? '').trim().toLowerCase()
+  if (key.includes('commercial')) return 'Commercial'
+  if (key.includes('dwelling')) return 'Dwelling'
+  if (key.includes('homeowners') || key.includes('homeowner')) return 'Homeowners'
+  return ''
+}
+
 export function mapPortfolioInsuranceToPropertyFields(
   payload: PortfolioDocumentExtractPayload | null | undefined,
 ): PropertyInsuranceExtracted {
@@ -85,6 +106,14 @@ export function mapPortfolioInsuranceToPropertyFields(
     claimsContactName: '',
     claimsPhone: '',
     additionalInsured: false,
+    policyType: '',
+    premium: '',
+    coverageAmount: '',
+    deductible: '',
+    dwellingCoverage: '',
+    otherStructures: '',
+    liability: '',
+    lossOfRentalIncome: '',
   }
   if (!payload) return empty
 
@@ -99,7 +128,15 @@ export function mapPortfolioInsuranceToPropertyFields(
         policyNumber: asText(dwelling.policy_number),
         coverageStartDate: asText(dwelling.policy_effective_date),
         coverageEndDate: asText(dwelling.policy_expiration_date),
+        claimsContactName: asText(dwelling.producer_agency_name),
         additionalInsured: false,
+        policyType: policyTypeFromDocumentType(dwelling.document_type),
+        premium: amountToInput(dwelling.total_annual_premium),
+        coverageAmount: amountToInput(dwelling.coverage_a_dwelling_limit),
+        deductible: amountToInput(dwelling.deductible_all_other_perils),
+        dwellingCoverage: amountToInput(dwelling.coverage_a_dwelling_limit),
+        liability: amountToInput(dwelling.coverage_l_liability_limit),
+        lossOfRentalIncome: amountToInput(dwelling.coverage_d_fair_rental_value_limit),
       }
     : null
 
@@ -110,6 +147,7 @@ export function mapPortfolioInsuranceToPropertyFields(
         policyNumber: asText(coi.policy_number) || asText(coi.insurers?.[0]?.policy_number),
         coverageStartDate: asText(coi.effective_date),
         coverageEndDate: asText(coi.expiration_date),
+        claimsContactName: asText(coi.producer_agency),
         additionalInsured: (coi.additional_insured ?? []).some((name) => name.trim()),
       }
     : null

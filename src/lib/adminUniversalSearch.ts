@@ -435,7 +435,7 @@ function mapUnitsToSearchItems(
       category: 'unit',
       title: formatUnitLabel(unitLabel),
       subtitle: building,
-      href: `${propertyDetailPathForBuilding(building, propertyIdByBuilding)}?tab=units&unit=${encodeURIComponent(unitLabel || unitId)}`,
+      href: `${propertyDetailPathForBuilding(building, propertyIdByBuilding)}?unit=${encodeURIComponent(unitLabel || unitId)}`,
       keywords: buildKeywords([unitLabel, building, 'unit']),
     })
   }

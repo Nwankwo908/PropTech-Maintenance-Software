@@ -70,9 +70,10 @@ Deno.test("collectZillowPhotoUrlsFromHtml reads listing CDN urls", () => {
   }
 })
 
-Deno.test("zillowRapidApiHosts only uses zillow-com1", () => {
+Deno.test("zillowRapidApiHosts prefers the configured host then zillow-com1", () => {
   const hosts = zillowRapidApiHosts("zillow-property-data1.p.rapidapi.com")
-  if (hosts.join(",") !== "zillow-com1.p.rapidapi.com") throw new Error(hosts.join(","))
+  if (hosts[0] !== "zillow-property-data1.p.rapidapi.com") throw new Error(hosts.join(","))
+  if (hosts[1] !== "zillow-com1.p.rapidapi.com") throw new Error(hosts.join(","))
 })
 
 Deno.test("collectZillowPhotoUrls reads image_urls from listing payloads", () => {

@@ -1,4 +1,5 @@
 import { formatMoney } from './parse.ts'
+import { placeAccountFields, placeLandlordAndTenants, placePropertyAddressFields, orderLeaseDates } from './placeFields.ts'
 import {
   ROLE_LABELS,
   type DwellingPolicyDeclarations,
@@ -59,26 +60,16 @@ export type MappedPortfolioExtract = {
   dwellingPolicy: DwellingPolicyDeclarations | null
 }
 
-function splitAddress(address: string | null): { street: string; city: string; state: string; zip: string } {
-  const raw = (address ?? '').trim()
-  if (!raw) return { street: '', city: '', state: '', zip: '' }
-  const match = raw.match(/^(.*?)(?:,\s*)?([A-Za-z .]+)?(?:,\s*)?([A-Z]{2})?\s*(\d{5}(?:-\d{4})?)?$/)
-  if (!match) return { street: raw, city: '', state: '', zip: '' }
-  return {
-    street: (match[1] ?? '').trim(),
-    city: (match[2] ?? '').trim(),
-    state: (match[3] ?? '').trim(),
-    zip: (match[4] ?? '').trim(),
-  }
-}
-
 function emptyAccount() {
   return { companyName: '', contactName: '', email: '', phone: '' }
 }
 
 export function mapRentRollToPortfolio(extract: RentRollExtract): MappedPortfolioExtract {
-  const building = extract.property_name || extract.property_address || ''
-  const address = splitAddress(extract.property_address)
+  const placed = placePropertyAddressFields({
+    name: extract.property_name,
+    streetAddress: extract.property_address,
+  })
+  const building = extract.property_name || placed.streetAddress || extract.property_address || ''
   const units: MappedPortfolioExtract['units'] = []
   const residents: MappedPortfolioExtract['residents'] = []
   const roleFacts: ExtractRoleFact[] = []
@@ -119,14 +110,14 @@ export function mapRentRollToPortfolio(extract: RentRollExtract): MappedPortfoli
   }
 
   const properties =
-    building || address.street
+    building || placed.streetAddress
       ? [
           {
-            name: extract.property_name || address.street || building,
-            streetAddress: address.street || extract.property_address || '',
-            city: address.city,
-            state: address.state,
-            zipCode: address.zip,
+            name: placed.name || building,
+            streetAddress: placed.streetAddress,
+            city: placed.city,
+            state: placed.state,
+            zipCode: placed.zipCode,
             propertyType: units.length > 1 ? 'multifamily' : 'single_family_home',
             unitCount: units.length,
             confidence: 85,
@@ -153,21 +144,28 @@ export function mapRentRollToPortfolio(extract: RentRollExtract): MappedPortfoli
 }
 
 export function mapLeaseToPortfolio(extract: LeaseExtract): MappedPortfolioExtract {
-  const building = extract.property_address || ''
-  const address = splitAddress(extract.property_address)
+  const parties = placeLandlordAndTenants({
+    landlordName: extract.landlord_name,
+    tenantNames: extract.tenant_names,
+  })
+  const placed = placePropertyAddressFields({
+    name: extract.property_address,
+    streetAddress: extract.property_address,
+  })
+  const building = placed.streetAddress || extract.property_address || ''
   const roleFacts: ExtractRoleFact[] = []
   const low = extract.confidence < 75
 
-  if (extract.landlord_name) {
+  if (parties.landlordName) {
     roleFacts.push({
       role: 'landlord_lessor',
       label: ROLE_LABELS.landlord_lessor,
-      value: extract.landlord_name,
+      value: parties.landlordName,
       confidence: extract.confidence,
       needsReview: low,
     })
   }
-  for (const name of extract.tenant_names) {
+  for (const name of parties.tenantNames) {
     roleFacts.push({
       role: 'tenant_lessee',
       label: ROLE_LABELS.tenant_lessee,
@@ -195,23 +193,24 @@ export function mapLeaseToPortfolio(extract: LeaseExtract): MappedPortfolioExtra
     })
   }
 
-  const residents = extract.tenant_names.map((name) => ({
+  const dates = orderLeaseDates(extract.lease_start, extract.lease_end)
+  const residents = parties.tenantNames.map((name) => ({
     fullName: name,
     unit: extract.unit ?? '',
     building,
     phone: '',
     email: '',
-    leaseStart: extract.lease_start ?? '',
-    leaseEnd: extract.lease_end ?? '',
+    leaseStart: dates.start,
+    leaseEnd: dates.end,
     monthlyRent: formatMoney(extract.monthly_rent),
     confidence: extract.confidence,
   }))
-  const leases = extract.tenant_names.map((name) => ({
+  const leases = parties.tenantNames.map((name) => ({
     residentName: name,
     unit: extract.unit ?? '',
     building,
-    leaseStart: extract.lease_start ?? '',
-    leaseEnd: extract.lease_end ?? '',
+    leaseStart: dates.start,
+    leaseEnd: dates.end,
     rentAmount: formatMoney(extract.monthly_rent),
     securityDeposit: formatMoney(extract.security_deposit),
     confidence: extract.confidence,
@@ -219,21 +218,21 @@ export function mapLeaseToPortfolio(extract: LeaseExtract): MappedPortfolioExtra
 
   return {
     extractKind: 'lease',
-    account: {
-      companyName: extract.landlord_name ?? '',
+    account: placeAccountFields({
+      companyName: parties.landlordName,
       contactName: '',
       email: '',
       phone: '',
-    },
+    }),
     properties:
-      building || address.street
+      building || placed.streetAddress
         ? [
             {
-              name: address.street || building,
-              streetAddress: address.street || extract.property_address || '',
-              city: address.city,
-              state: address.state,
-              zipCode: address.zip,
+              name: placed.name || building,
+              streetAddress: placed.streetAddress,
+              city: placed.city,
+              state: placed.state,
+              zipCode: placed.zipCode,
               propertyType: 'single_family_home',
               unitCount: extract.unit ? 1 : 1,
               confidence: extract.confidence,
@@ -321,21 +320,24 @@ export function mapPropertyPolicyToPortfolio(
   push('insurance_carrier', extract.insurer_name)
   push('mortgagee', extract.mortgagee_name)
 
-  const address = splitAddress(extract.insured_property_address)
-  const building = extract.insured_property_address || ''
+  const placed = placePropertyAddressFields({
+    name: extract.insured_property_address,
+    streetAddress: extract.insured_property_address,
+  })
+  const building = placed.streetAddress || extract.insured_property_address || ''
 
   return {
     extractKind: extract.document_type,
     account: emptyAccount(),
     properties:
-      building || address.street
+      building || placed.streetAddress
         ? [
             {
-              name: address.street || building,
-              streetAddress: address.street || extract.insured_property_address || '',
-              city: address.city,
-              state: address.state,
-              zipCode: address.zip,
+              name: placed.name || building,
+              streetAddress: placed.streetAddress,
+              city: placed.city,
+              state: placed.state,
+              zipCode: placed.zipCode,
               propertyType: 'single_family_home',
               unitCount: 1,
               confidence: extract.confidence,

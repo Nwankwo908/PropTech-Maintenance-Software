@@ -5,6 +5,14 @@ import {
   isInsuranceUploadHint,
 } from '@shared/onboarding/typedDocumentExtract/insuranceClassify'
 import { getErrorMessage } from '@/lib/errorMessage'
+import {
+  orderLeaseDates,
+  placeAccountAndTenantNames,
+  placeAccountFields,
+  placePhoneEmail,
+  placePropertyAddressFields,
+  streetLineFromAddress,
+} from '@shared/onboarding/typedDocumentExtract/placeFields'
 /**
  * Onboarding fast-track — document upload, GPT-4o extraction, and review import.
  * File bytes are stored in the landlord-onboarding-documents bucket for preview.
@@ -278,6 +286,11 @@ export function isOnboardingExtractJunkValue(value: string): boolean {
 function cleanOnboardingExtractText(value: string | null | undefined): string {
   const text = (value ?? '').trim()
   return isOnboardingExtractJunkValue(text) ? '' : text
+}
+
+function cleanExtractedBuilding(value: string | null | undefined): string {
+  const cleaned = cleanOnboardingExtractText(value)
+  return streetLineFromAddress(cleaned) || cleaned
 }
 
 function resolveOnboardingExtractedVendorName(item: {
@@ -1934,6 +1947,57 @@ export function looksLikeExtractedCompanyName(name: string): boolean {
   return MANAGEMENT_COMPANY_HINT.test(usable)
 }
 
+function applyLandlordTenantReviewPlacement(
+  account: OnboardingReviewManualAccount,
+  residents: OnboardingExtractedResident[],
+  leases: ExtractedLeaseInfo[],
+): {
+  account: OnboardingReviewManualAccount
+  residents: OnboardingExtractedResident[]
+  leases: ExtractedLeaseInfo[]
+} {
+  const placed = placeAccountAndTenantNames({
+    companyName: account.companyName,
+    contactName: account.contactName,
+    tenantNames: [
+      ...residents.map((row) => row.fullName),
+      ...leases.map((row) => row.residentName),
+    ],
+  })
+  const wanted = placed.tenantNames
+  const wantedKeys = new Set(wanted.map((name) => name.toLowerCase()))
+  let nextPerson = 0
+  const takePerson = (): string => wanted[nextPerson++] ?? wanted[0] ?? ''
+
+  const nextResidents = residents
+    .map((row) => {
+      if (looksLikeExtractedCompanyName(row.fullName) && !wantedKeys.has(row.fullName.toLowerCase())) {
+        const person = takePerson()
+        return person ? { ...row, fullName: person } : row
+      }
+      return row
+    })
+    .filter((row) => row.fullName.trim())
+
+  const nextLeases = leases.map((row) => {
+    if (looksLikeExtractedCompanyName(row.residentName) && !wantedKeys.has(row.residentName.toLowerCase())) {
+      const person = wanted[0]
+      return person ? { ...row, residentName: person } : row
+    }
+    return row
+  })
+
+  return {
+    account: {
+      ...account,
+      companyName: placed.companyName,
+      contactName: placed.contactName,
+    },
+    residents: dedupeOnboardingExtractedResidents(nextResidents),
+    leases: dedupeOnboardingExtractedLeases(nextLeases),
+  }
+}
+
 function mostFrequentName(names: string[]): string {
   const counts = new Map<string, { value: string; count: number }>()
   for (const raw of names) {
@@ -1997,11 +2061,14 @@ export function collectExtractedAccount(
     }
   }
 
-  return {
+  const placed = placeAccountFields({
     companyName: mostFrequentName(companyFromAccount) || mostFrequentName(companyFromProperties),
     contactName: mostFrequentName(contacts),
     email: mostFrequentName(emails),
     phone: mostFrequentName(phones),
+  })
+  return {
+    ...placed,
     backupContactName: '',
     backupContactPhone: '',
     backupContactEmail: '',
@@ -2041,19 +2108,28 @@ export function fillExtractionReviewAccount(
       companyName: inferredCompanyFromReviewProperties(review),
     }),
   )
+  const placed = placeAccountFields(account)
+  const nextAccount = { ...account, ...placed }
+  const parties = applyLandlordTenantReviewPlacement(
+    nextAccount,
+    review.residents,
+    review.leases,
+  )
   if (
-    account.companyName === (review.account?.companyName ?? '') &&
-    account.contactName === (review.account?.contactName ?? '') &&
-    account.email === (review.account?.email ?? '') &&
-    account.phone === (review.account?.phone ?? '') &&
+    parties.account.companyName === (review.account?.companyName ?? '') &&
+    parties.account.contactName === (review.account?.contactName ?? '') &&
+    parties.account.email === (review.account?.email ?? '') &&
+    parties.account.phone === (review.account?.phone ?? '') &&
     account.backupContactName === (review.account?.backupContactName ?? '') &&
     account.backupContactPhone === (review.account?.backupContactPhone ?? '') &&
     account.backupContactEmail === (review.account?.backupContactEmail ?? '') &&
-    account.smsConsentAcceptedAt === (review.account?.smsConsentAcceptedAt ?? null)
+    account.smsConsentAcceptedAt === (review.account?.smsConsentAcceptedAt ?? null) &&
+    parties.residents === review.residents &&
+    parties.leases === review.leases
   ) {
     return review
   }
-  return { ...review, account }
+  return { ...review, account: parties.account, residents: parties.residents, leases: parties.leases }
 }
 
 function mergeExtractedDocuments(
@@ -2116,17 +2192,24 @@ function mergeExtractedDocuments(
     // properties, units, and residents from the agreement.
     if (isRentRoll || (isLease && leaseOnlyPortfolio)) {
       payload.properties.forEach((item, index) => {
-        const name = cleanOnboardingExtractText(item.name)
-        const address = cleanOnboardingExtractText(item.streetAddress)
+        const placed = placePropertyAddressFields({
+          name: cleanOnboardingExtractText(item.name),
+          streetAddress: cleanOnboardingExtractText(item.streetAddress),
+          city: cleanOnboardingExtractText(item.city),
+          state: cleanOnboardingExtractText(item.state),
+          zipCode: cleanOnboardingExtractText(item.zipCode),
+        })
+        const name = placed.name
+        const address = placed.streetAddress
         if (!name && !address) return
-        const needsReviewRow = item.confidence < 75 || !item.city || !item.state
+        const needsReviewRow = item.confidence < 75 || !placed.city || !placed.state
         properties.push({
           id: `ext-prop-${doc.id}-${index}`,
           name: name || address,
           address,
-          city: cleanOnboardingExtractText(item.city),
-          state: cleanOnboardingExtractText(item.state),
-          zipCode: cleanOnboardingExtractText(item.zipCode),
+          city: placed.city,
+          state: placed.state,
+          zipCode: placed.zipCode,
           propertyType: resolveOnboardingPropertyType(item.propertyType),
           unitCount: item.unitCount,
           unitLabels: '',
@@ -2141,7 +2224,7 @@ function mergeExtractedDocuments(
 
       payload.units.forEach((item, index) => {
         const label = cleanOnboardingExtractText(item.label)
-        const building = cleanOnboardingExtractText(item.building)
+        const building = cleanExtractedBuilding(item.building)
         if (!label && !building) return
         units.push({
           id: `ext-unit-${doc.id}-${index}`,
@@ -2175,15 +2258,17 @@ function mergeExtractedDocuments(
             : item.fullName,
         )
         if (!fullName) return
+        const dates = orderLeaseDates(item.leaseStart, item.leaseEnd)
+        const channels = placePhoneEmail(item.phone, item.email)
         residents.push({
           id: `ext-res-${doc.id}-${index}`,
           fullName,
           unit: cleanOnboardingExtractText(item.unit),
-          building: cleanOnboardingExtractText(item.building),
-          phone: cleanOnboardingExtractText(item.phone),
-          email: cleanOnboardingExtractText(item.email),
-          leaseStart: cleanOnboardingExtractText(item.leaseStart),
-          leaseEnd: cleanOnboardingExtractText(item.leaseEnd),
+          building: cleanExtractedBuilding(item.building),
+          phone: channels.phone,
+          email: channels.email,
+          leaseStart: dates.start,
+          leaseEnd: dates.end,
           monthlyRent: cleanOnboardingExtractText(item.monthlyRent),
       rentDueDay: '',
           occupancyStatus: 'active',
@@ -2230,9 +2315,9 @@ function mergeExtractedDocuments(
           id: `ext-lease-${doc.id}-${index}`,
           residentName,
           unit: cleanOnboardingExtractText(item.unit),
-          building: cleanOnboardingExtractText(item.building),
-          leaseStart: cleanOnboardingExtractText(item.leaseStart),
-          leaseEnd: cleanOnboardingExtractText(item.leaseEnd),
+          building: cleanExtractedBuilding(item.building),
+          leaseStart: orderLeaseDates(item.leaseStart, item.leaseEnd).start,
+          leaseEnd: orderLeaseDates(item.leaseStart, item.leaseEnd).end,
           rentAmount: cleanOnboardingExtractText(item.rentAmount),
           securityDeposit: cleanOnboardingExtractText(item.securityDeposit),
           sourceDocumentName: source,
@@ -2275,8 +2360,8 @@ function mergeExtractedDocuments(
           ? payload.residents.map((item) => ({
               name: item.fullName,
               category: '',
-              phone: item.phone,
-              email: item.email,
+      phone: item.phone,
+      email: item.email,
               confidence: item.confidence,
             }))
           : []
@@ -2401,13 +2486,18 @@ function mergeExtractedDocuments(
     payloads.map((row) => row.payload),
     finalized.residents.map((row) => row.fullName),
   )
+  const placedParties = applyLandlordTenantReviewPlacement(
+    mergeReviewManualAccount(accountSeed, extractedAccount),
+    finalized.residents,
+    finalized.leases,
+  )
 
   return {
-    account: mergeReviewManualAccount(accountSeed, extractedAccount),
+    account: placedParties.account,
     properties: finalized.properties,
     units: finalized.units,
-    residents: finalized.residents,
-    leases: finalized.leases,
+    residents: placedParties.residents,
+    leases: placedParties.leases,
     vendors,
     maintenanceIssues,
     financialRecords,
@@ -2689,46 +2779,68 @@ export function normalizeExtractionReview(
 ): OnboardingExtractionReview {
   if (!review) return emptyExtractionReview(accountSeed)
   const normalizedLeases = (review.leases ?? [])
-    .map((item) => ({
+    .map((item) => {
+      const dates = orderLeaseDates(item.leaseStart, item.leaseEnd)
+  return {
       ...item,
-      residentName: cleanOnboardingExtractText(item.residentName),
-      unit: cleanOnboardingExtractText(item.unit),
-      building: cleanOnboardingExtractText(item.building),
-      rentAmount: cleanOnboardingExtractText(item.rentAmount),
-      securityDeposit: cleanOnboardingExtractText(item.securityDeposit),
-    }))
+        residentName: cleanOnboardingExtractText(item.residentName),
+        unit: cleanOnboardingExtractText(item.unit),
+        building: cleanExtractedBuilding(item.building),
+        leaseStart: dates.start,
+        leaseEnd: dates.end,
+        rentAmount: cleanOnboardingExtractText(item.rentAmount),
+        securityDeposit: cleanOnboardingExtractText(item.securityDeposit),
+      }
+    })
     .filter((item) => item.residentName.trim())
   const normalizedUnits = (review.units ?? [])
     .map((item) => ({
       ...item,
       label: cleanOnboardingExtractText(item.label),
-      building: cleanOnboardingExtractText(item.building),
+      building: cleanExtractedBuilding(item.building),
     }))
     .filter((item) => item.label.trim() || item.building.trim())
   const normalizedProperties = (review.properties ?? [])
-    .map((item) => ({
-      ...item,
-      name: cleanOnboardingExtractText(item.name),
-      address: cleanOnboardingExtractText(item.address),
-      city: cleanOnboardingExtractText(item.city ?? ''),
-      state: cleanOnboardingExtractText(item.state ?? ''),
-      zipCode: cleanOnboardingExtractText(item.zipCode ?? ''),
-      propertyType: resolveOnboardingPropertyType(item.propertyType),
+    .map((item) => {
+      const placed = placePropertyAddressFields({
+        name: cleanOnboardingExtractText(item.name),
+        streetAddress: cleanOnboardingExtractText(item.address),
+        city: cleanOnboardingExtractText(item.city ?? ''),
+        state: cleanOnboardingExtractText(item.state ?? ''),
+        zipCode: cleanOnboardingExtractText(item.zipCode ?? ''),
+      })
+      return {
+        ...item,
+        name: placed.name || placed.streetAddress,
+        address: placed.streetAddress,
+        city: placed.city,
+        state: placed.state,
+        zipCode: placed.zipCode,
+        propertyType: resolveOnboardingPropertyType(item.propertyType),
       propertyManagerName: item.propertyManagerName ?? '',
       propertyManagerPhone: item.propertyManagerPhone ?? '',
-    }))
+      }
+    })
     .filter((item) => item.name.trim() || item.address.trim())
   const normalizedResidents = (review.residents ?? [])
-    .map((item) => ({
+    .map((item) => {
+      const channels = placePhoneEmail(item.phone, item.email)
+      const dates = orderLeaseDates(item.leaseStart, item.leaseEnd)
+      return {
       ...item,
-      fullName: cleanOnboardingExtractText(item.fullName),
-      unit: cleanOnboardingExtractText(item.unit),
-      building: cleanOnboardingExtractText(item.building),
-      monthlyRent: cleanOnboardingExtractText(item.monthlyRent ?? ''),
+        fullName: cleanOnboardingExtractText(item.fullName),
+        unit: cleanOnboardingExtractText(item.unit),
+        building: cleanExtractedBuilding(item.building),
+        phone: channels.phone,
+        email: channels.email,
+        leaseStart: dates.start,
+        leaseEnd: dates.end,
+        monthlyRent: cleanOnboardingExtractText(item.monthlyRent ?? ''),
       rentDueDay: item.rentDueDay ?? '',
       occupancyStatus: item.occupancyStatus ?? 'active',
       maintenanceResponsibilitiesClause: item.maintenanceResponsibilitiesClause ?? '',
-    }))
+      }
+    })
     .filter((item) => item.fullName.trim())
   const leaseOnlyPortfolio =
     review.leaseOnlyPortfolio === true ||

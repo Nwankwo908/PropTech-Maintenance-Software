@@ -177,8 +177,15 @@ export function collectZillowPhotoUrlsFromHtml(html: string): string[] {
   return out
 }
 
-export function zillowRapidApiHosts(_preferred?: string | null): string[] {
-  return ["zillow-com1.p.rapidapi.com"]
+export function zillowRapidApiHosts(preferred?: string | null): string[] {
+  const fallback = "zillow-com1.p.rapidapi.com"
+  const extra = (preferred ?? "")
+    .trim()
+    .replace(/^https?:\/\//i, "")
+    .replace(/\/$/, "")
+    .toLowerCase()
+  if (extra && extra !== fallback) return [extra, fallback]
+  return [fallback]
 }
 
 export function zillowRapidApiHeaders(apiKey: string, host: string): HeadersInit {

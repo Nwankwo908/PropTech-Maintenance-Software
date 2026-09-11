@@ -31,6 +31,9 @@ describe('propertyRoutes', () => {
     expect(parsePropertyDetailTab('conversations')).toBe('history')
     expect(parsePropertyDetailTab('history')).toBe('history')
     expect(parsePropertyDetailTab('vendors')).toBe('overview')
+    expect(parsePropertyDetailTab('workflows')).toBe('overview')
+    expect(parsePropertyDetailTab('units')).toBe('overview')
+    expect(parsePropertyDetailTab('insurance')).toBe('insurance')
     expect(propertyDetailPath('6ba7b810-9dad-11d1-80b4-00c04fd430c8', 'history')).toBe(
       '/admin/properties/6ba7b810-9dad-11d1-80b4-00c04fd430c8?tab=history',
     )
@@ -39,7 +42,7 @@ describe('propertyRoutes', () => {
   it('builds property detail paths from stable ids', () => {
     const id = '6ba7b810-9dad-11d1-80b4-00c04fd430c8'
     expect(propertyDetailPath(id)).toBe(`/admin/properties/${id}`)
-    expect(propertyDetailPath(id, 'units')).toBe(`/admin/properties/${id}?tab=units`)
+    expect(propertyDetailPath(id, 'history')).toBe(`/admin/properties/${id}?tab=history`)
   })
 
   it('prefers canonical property id in building-based paths', () => {

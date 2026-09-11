@@ -165,6 +165,48 @@ Deno.test("landlord / management company is read into account.companyName", () =
   assertEquals(fromLandlordLine.account.companyName, "Acme Property Management")
 })
 
+Deno.test("extract fields land in the review slots they belong to", () => {
+  const payload = normalizePortfolioDocumentExtract({
+    account: {
+      companyName: "CEO Rentals NJ LLC",
+      contactName: "CEO Rentals NJ LLC",
+      email: "973-555-0199",
+      phone: "ops@ceorentals.com",
+    },
+    properties: [
+      {
+        name: "Oak Apartments",
+        streetAddress: "123 Oak Street, Newark, NJ 07102",
+        city: "",
+        state: "New Jersey",
+        zipCode: "",
+      },
+    ],
+    residents: [
+      {
+        fullName: "Jane Smith",
+        unit: "4B",
+        email: "201-555-0100",
+        phone: "jane@example.com",
+        leaseStart: "2026-12-31",
+        leaseEnd: "2026-01-01",
+      },
+    ],
+  })
+  assertEquals(payload.account.companyName, "CEO Rentals NJ LLC")
+  assertEquals(payload.account.contactName, "")
+  assertEquals(payload.account.email, "ops@ceorentals.com")
+  assertEquals(payload.account.phone, "973-555-0199")
+  assertEquals(payload.properties[0]?.streetAddress, "123 Oak Street")
+  assertEquals(payload.properties[0]?.city, "Newark")
+  assertEquals(payload.properties[0]?.state, "NJ")
+  assertEquals(payload.properties[0]?.zipCode, "07102")
+  assertEquals(payload.residents[0]?.email, "jane@example.com")
+  assertEquals(payload.residents[0]?.phone, "201-555-0100")
+  assertEquals(payload.residents[0]?.leaseStart, "2026-01-01")
+  assertEquals(payload.residents[0]?.leaseEnd, "2026-12-31")
+})
+
 Deno.test("OpenAI extract errors distinguish quota from retryable busy", () => {
   assertEquals(
     classifyOpenAiExtractError(429, '{"error":{"type":"insufficient_quota"}}'),

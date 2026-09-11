@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useId, useRef, useState, type ReactNode } from 'react'
-import { ApplianceInspectionUploader } from '@/components/ApplianceInspectionUploader'
+import { createPortal } from 'react-dom'
+import { PropertyInsurancePolicyCard } from '@/components/PropertyInsurancePolicyCard'
 import { PropertyRecordHierarchy } from '@/components/PropertyRecordHierarchy'
 import { MaintenanceHistoryPanel } from '@/components/MaintenanceHistoryPanel'
 import insuranceUploadCloudIcon from '@/assets/insurance-upload-cloud.svg'
@@ -46,6 +47,14 @@ import {
 } from '@/lib/propertyInsuranceBinderExtract'
 import { notifyPropertyDetailsChanged } from '@/lib/propertyDetailsCompleteness'
 import { getErrorMessage } from '@/lib/errorMessage'
+import {
+  ADMIN_RAIL_FOOTER_CLASS,
+  ADMIN_RAIL_FOOTER_PRIMARY_BUTTON_CLASS,
+  ADMIN_RAIL_FOOTER_SECONDARY_BUTTON_CLASS,
+  ADMIN_RIGHT_RAIL_OVERLAY_HOST,
+  ADMIN_RIGHT_RAIL_SCRIM,
+  adminRightRailPanelClass,
+} from '@/lib/adminRightRail'
 
 const INSPECTION_ACCEPT = '.pdf,.png,.jpg,.jpeg,.webp,application/pdf,image/*'
 const INSPECTION_MAX_BYTES = 25 * 1024 * 1024
@@ -71,8 +80,17 @@ type InsuranceProfile = {
   claimsContactName: string
   claimsPhone: string
   additionalInsured: boolean
+  policyType: string
+  premium: string
+  coverageAmount: string
+  deductible: string
+  dwellingCoverage: string
+  otherStructures: string
+  liability: string
+  lossOfRentalIncome: string
   binderFileName: string | null
   binderFileUrl: string | null
+  binderFileSize: number | null
   binderUploadedAt: string | null
   updatedAt: string | null
 }
@@ -86,8 +104,17 @@ const EMPTY_INSURANCE: InsuranceProfile = {
   claimsContactName: '',
   claimsPhone: '',
   additionalInsured: false,
+  policyType: '',
+  premium: '',
+  coverageAmount: '',
+  deductible: '',
+  dwellingCoverage: '',
+  otherStructures: '',
+  liability: '',
+  lossOfRentalIncome: '',
   binderFileName: null,
   binderFileUrl: null,
+  binderFileSize: null,
   binderUploadedAt: null,
   updatedAt: null,
 }
@@ -101,6 +128,14 @@ function insuranceFormHasInput(profile: InsuranceProfile): boolean {
       profile.renewalDate.trim() ||
       profile.claimsContactName.trim() ||
       profile.claimsPhone.trim() ||
+      profile.policyType.trim() ||
+      profile.premium.trim() ||
+      profile.coverageAmount.trim() ||
+      profile.deductible.trim() ||
+      profile.dwellingCoverage.trim() ||
+      profile.otherStructures.trim() ||
+      profile.liability.trim() ||
+      profile.lossOfRentalIncome.trim() ||
       profile.binderFileName?.trim() ||
       profile.additionalInsured,
   )
@@ -118,8 +153,20 @@ function normalizeInsuranceProfile(raw: unknown): InsuranceProfile {
     claimsContactName: str('claimsContactName'),
     claimsPhone: str('claimsPhone'),
     additionalInsured: o.additionalInsured === true,
+    policyType: str('policyType'),
+    premium: str('premium'),
+    coverageAmount: str('coverageAmount'),
+    deductible: str('deductible'),
+    dwellingCoverage: str('dwellingCoverage'),
+    otherStructures: str('otherStructures'),
+    liability: str('liability'),
+    lossOfRentalIncome: str('lossOfRentalIncome'),
     binderFileName: typeof o.binderFileName === 'string' ? o.binderFileName : null,
     binderFileUrl: typeof o.binderFileUrl === 'string' ? o.binderFileUrl : null,
+    binderFileSize:
+      typeof o.binderFileSize === 'number' && Number.isFinite(o.binderFileSize)
+        ? o.binderFileSize
+        : null,
     binderUploadedAt: typeof o.binderUploadedAt === 'string' ? o.binderUploadedAt : null,
     updatedAt: typeof o.updatedAt === 'string' ? o.updatedAt : null,
   }
@@ -278,6 +325,8 @@ type DetailCardProps = {
   empty: boolean
   expanded: boolean
   onToggle: () => void
+  /** When false, the card stays open with no chevron accordion. */
+  collapsible?: boolean
   children?: ReactNode
 }
 
@@ -289,52 +338,46 @@ function DetailCard({
   empty: _empty,
   expanded,
   onToggle,
+  collapsible = true,
   children,
 }: DetailCardProps) {
-  return (
-    <div
-      className={[
-        'property-details-card sa-surface group min-w-0 rounded-[12px] border border-solid bg-white',
-        expanded
-          ? 'overflow-x-hidden overflow-y-visible border-[#cbd5e1] shadow-[0px_2px_10px_0px_rgba(15,23,42,0.06)]'
-          : 'overflow-hidden border-[#e2e8f0] shadow-none hover:border-[#cbd5e1] hover:bg-[#f8fafc] hover:shadow-[0px_2px_10px_0px_rgba(15,23,42,0.06)]',
-      ].join(' ')}
-    >
-      <button
-        type="button"
-        onClick={onToggle}
-        className={[
-          'flex w-full cursor-pointer flex-col gap-4 border border-transparent bg-transparent p-[18px] text-left outline-none transition-[background-color,box-shadow] duration-150 sm:flex-row sm:items-center sm:justify-between sm:gap-6',
+  const open = !collapsible || expanded
+  const headerClass = [
+    'flex w-full flex-col gap-4 border border-transparent bg-transparent p-[18px] text-left outline-none sm:flex-row sm:items-center sm:justify-between sm:gap-6',
+    collapsible
+      ? [
+          'cursor-pointer transition-[background-color,box-shadow] duration-150',
           'hover:bg-[#f8fafc] focus-visible:bg-[#f8fafc] focus-visible:shadow-[0_0_0_2px_#ffffff,0_0_0_4px_#187960] active:bg-[#eef2f7]',
           expanded ? 'bg-[#f8fafc]/60' : '',
-        ].join(' ')}
-        aria-label={expanded ? `Collapse ${title}` : `Expand ${title}`}
-        aria-expanded={expanded}
-      >
-        <div className="flex min-w-0 flex-1 items-start gap-3 sm:items-center sm:gap-4">
-          <div
-            className={[
-              'flex size-9 shrink-0 items-center justify-center text-[18px] transition-transform duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] sm:size-10 sm:text-[20px]',
-              expanded ? 'scale-105' : 'scale-100 group-hover:scale-105',
-            ].join(' ')}
-            aria-hidden
-          >
-            {icon ?? emoji}
-          </div>
-          <div className="min-w-0 flex-1">
-            <h3 className="text-[15px] font-medium leading-none text-[#0d0f11] transition-colors duration-150 group-hover:text-[#020617]">
-              {title}
-            </h3>
-            <p className="mt-1 text-[13px] leading-normal text-[#64748b] transition-colors duration-150 group-hover:text-[#475569]">
-              {description}
-            </p>
-          </div>
-        </div>
+        ].join(' ')
+      : '',
+  ].join(' ')
 
-        <span
+  const headerBody = (
+    <>
+      <div className="flex min-w-0 flex-1 items-start gap-3 sm:items-center sm:gap-4">
+        <div
           className={[
-            'inline-flex shrink-0 self-start rounded p-1 text-[#64748b] transition-colors duration-150 group-hover:bg-[#e2e8f0] group-hover:text-[#0f172a] sm:self-center',
+            'flex size-9 shrink-0 items-center justify-center text-[18px] transition-transform duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] sm:size-10 sm:text-[20px]',
+            open ? 'scale-105' : 'scale-100 group-hover:scale-105',
           ].join(' ')}
+          aria-hidden
+        >
+          {icon ?? emoji}
+        </div>
+        <div className="min-w-0 flex-1">
+          <h3 className="text-[15px] font-medium leading-none text-[#0d0f11] transition-colors duration-150 group-hover:text-[#020617]">
+            {title}
+          </h3>
+          <p className="mt-1 text-[13px] leading-normal text-[#64748b] transition-colors duration-150 group-hover:text-[#475569]">
+            {description}
+          </p>
+        </div>
+      </div>
+
+      {collapsible ? (
+        <span
+          className="inline-flex shrink-0 self-start rounded p-1 text-[#64748b] transition-colors duration-150 group-hover:bg-[#e2e8f0] group-hover:text-[#0f172a] sm:self-center"
           aria-hidden
         >
           <span
@@ -346,24 +389,55 @@ function DetailCard({
             <ChevronDownIcon />
           </span>
         </span>
-      </button>
+      ) : null}
+    </>
+  )
+
+  return (
+    <div
+      className={[
+        'property-details-card sa-surface group min-w-0 rounded-[12px] border border-solid bg-white',
+        open
+          ? 'overflow-x-hidden overflow-y-visible border-[#cbd5e1] shadow-[0px_2px_10px_0px_rgba(15,23,42,0.06)]'
+          : 'overflow-hidden border-[#e2e8f0] shadow-none hover:border-[#cbd5e1] hover:bg-[#f8fafc] hover:shadow-[0px_2px_10px_0px_rgba(15,23,42,0.06)]',
+      ].join(' ')}
+    >
+      {collapsible ? (
+        <button
+          type="button"
+          onClick={onToggle}
+          className={headerClass}
+          aria-label={expanded ? `Collapse ${title}` : `Expand ${title}`}
+          aria-expanded={expanded}
+        >
+          {headerBody}
+        </button>
+      ) : (
+        <div className={headerClass}>{headerBody}</div>
+      )}
 
       {children ? (
         <div
           className={[
-            'grid transition-[grid-template-rows] duration-[380ms] ease-[cubic-bezier(0.22,1,0.36,1)] motion-reduce:transition-none',
-            expanded ? 'grid-rows-[auto]' : 'grid-rows-[0fr]',
+            'grid',
+            collapsible
+              ? 'transition-[grid-template-rows] duration-[380ms] ease-[cubic-bezier(0.22,1,0.36,1)] motion-reduce:transition-none'
+              : '',
+            open ? 'grid-rows-[auto]' : 'grid-rows-[0fr]',
           ].join(' ')}
         >
-          <div className={expanded ? 'min-h-0 min-w-0 overflow-x-hidden overflow-y-visible' : 'min-h-0 overflow-hidden'}>
+          <div className={open ? 'min-h-0 min-w-0 overflow-x-hidden overflow-y-visible' : 'min-h-0 overflow-hidden'}>
             <div
               className={[
-                'min-w-0 border-t border-[#e2e8f0] bg-white px-[18px] py-4 transition-[opacity,transform] duration-300 ease-out motion-reduce:transition-none',
-                expanded
+                'min-w-0 border-t border-[#e2e8f0] bg-white px-[18px] py-4',
+                collapsible
+                  ? 'transition-[opacity,transform] duration-300 ease-out motion-reduce:transition-none'
+                  : '',
+                open
                   ? 'translate-y-0 opacity-100 delay-[40ms]'
                   : 'pointer-events-none -translate-y-2 opacity-0',
               ].join(' ')}
-              inert={!expanded ? true : undefined}
+              inert={!open ? true : undefined}
             >
               {children}
             </div>
@@ -485,126 +559,6 @@ function fileToDataUrl(file: File): Promise<string> {
   })
 }
 
-function formatInsuranceDate(value: string): string {
-  const t = Date.parse(value)
-  if (!Number.isFinite(t)) return value.trim() || '—'
-  return new Date(t).toLocaleDateString('en-US', {
-    month: 'short',
-    day: 'numeric',
-    year: 'numeric',
-  })
-}
-
-const INSURANCE_TABLE_COLUMNS: Array<{
-  key: string
-  titles: string[]
-  render: (profile: InsuranceProfile) => ReactNode
-}> = [
-  { key: 'carrier', titles: ['Insurance Company'], render: (p) => insuranceText(p.carrier) },
-  { key: 'policyNumber', titles: ['Policy Number'], render: (p) => insuranceText(p.policyNumber) },
-  {
-    key: 'coverageStartDate',
-    titles: ['Coverage Start'],
-    render: (p) => formatInsuranceDate(p.coverageStartDate),
-  },
-  {
-    key: 'coverageEndDate',
-    titles: ['Coverage End'],
-    render: (p) => formatInsuranceDate(p.coverageEndDate),
-  },
-  { key: 'renewalDate', titles: ['Renewal Date'], render: (p) => formatInsuranceDate(p.renewalDate) },
-  {
-    key: 'claims',
-    titles: ['Claims Contact'],
-    render: (p) => (
-      <span className="flex flex-col gap-1">
-        <span>{insuranceText(p.claimsContactName)}</span>
-        <span>{insuranceText(p.claimsPhone)}</span>
-      </span>
-    ),
-  },
-  { key: 'binderFileName', titles: ['Insurance Document'], render: (p) => insuranceDocumentCell(p) },
-]
-
-function insuranceText(value: string): string {
-  return value.trim() || '—'
-}
-
-function insuranceDocumentCell(profile: InsuranceProfile): ReactNode {
-  const name = profile.binderFileName?.trim()
-  if (!name) return '—'
-  if (profile.binderFileUrl) {
-    return (
-      <a
-        href={profile.binderFileUrl}
-        target="_blank"
-        rel="noreferrer"
-        className="font-semibold text-[#186179] underline-offset-2 hover:underline"
-      >
-        {name}
-      </a>
-    )
-  }
-  return name
-}
-
-function InsuranceSavedTable({
-  insurance,
-  checked,
-  onChecked,
-}: {
-  insurance: InsuranceProfile
-  checked: boolean
-  onChecked: (checked: boolean) => void
-}) {
-  return (
-    <div className="w-full min-w-0 overflow-hidden rounded-[10px] border border-[#e2e8f0] bg-white">
-      <table className="w-full table-fixed border-collapse">
-        <thead>
-          <tr className="border-b border-[#e2e8f0] bg-[#f8fafc]">
-            <th className="w-8 px-2 py-2" aria-hidden />
-            {INSURANCE_TABLE_COLUMNS.map((column) => (
-              <th
-                key={column.key}
-                className="break-words px-1.5 py-2 text-left text-[10px] font-semibold uppercase leading-3 tracking-[0.2px] text-[#64748b] sm:px-2 sm:text-[11px] sm:leading-4"
-              >
-                <span className="flex flex-col gap-1">
-                  {column.titles.map((title) => (
-                    <span key={title}>{title}</span>
-                  ))}
-                </span>
-              </th>
-            ))}
-          </tr>
-        </thead>
-        <tbody>
-          <tr>
-            <td className="w-8 px-2 py-3 align-top">
-              <label className="flex cursor-pointer items-center justify-center">
-                <input
-                  type="checkbox"
-                  checked={checked}
-                  onChange={(e) => onChecked(e.target.checked)}
-                  aria-label="Select saved insurance"
-                  className="size-4 cursor-pointer rounded border-[#cbd5e1] accent-[#186179]"
-                />
-              </label>
-            </td>
-            {INSURANCE_TABLE_COLUMNS.map((column) => (
-              <td
-                key={column.key}
-                className="break-words px-1.5 py-3 align-top text-[12px] leading-[18px] text-[#0d0f11] sm:px-2 sm:text-[13px] sm:leading-[19.5px]"
-              >
-                {column.render(insurance)}
-              </td>
-            ))}
-          </tr>
-        </tbody>
-      </table>
-    </div>
-  )
-}
-
 function InsuranceField({
   label,
   value,
@@ -635,14 +589,238 @@ function InsuranceField({
   )
 }
 
-/** Expanded Insurance — Figma node 1140:1927. */
-function InsuranceExpandedPanel({
+function InsuranceDetailsFields({
   insurance,
-  savedInsurance,
-  insuranceRowChecked,
-  onInsuranceRowChecked,
+  onChange,
+  extracting = false,
+}: {
+  insurance: InsuranceProfile
+  onChange: (next: InsuranceProfile) => void
+  extracting?: boolean
+}) {
+  function patch(partial: Partial<InsuranceProfile>) {
+    onChange({ ...insurance, ...partial })
+  }
+
+  return (
+    <div className="flex flex-col gap-4">
+      <div className="flex min-w-0 flex-col gap-4">
+        <InsuranceField
+          label="Insurance Company"
+          value={insurance.carrier}
+          onChange={(carrier) => patch({ carrier })}
+          placeholder="Enter company name"
+        />
+        <InsuranceField
+          label="Policy Number"
+          value={insurance.policyNumber}
+          onChange={(policyNumber) => patch({ policyNumber })}
+          placeholder="Enter policy number"
+        />
+      </div>
+
+      <InsuranceField
+        label="Coverage Start Date"
+        value={insurance.coverageStartDate}
+        onChange={(coverageStartDate) => patch({ coverageStartDate })}
+        type="date"
+        placeholder="MM/DD/YYYY"
+      />
+      <InsuranceField
+        label="Coverage End Date"
+        value={insurance.coverageEndDate}
+        onChange={(coverageEndDate) => patch({ coverageEndDate })}
+        type="date"
+        placeholder="MM/DD/YYYY"
+      />
+      <InsuranceField
+        label="Renewal Date"
+        value={insurance.renewalDate}
+        onChange={(renewalDate) => patch({ renewalDate })}
+        type="date"
+        placeholder="Select date"
+      />
+
+      <InsuranceField
+        label="Claims Contact Name"
+        value={insurance.claimsContactName}
+        onChange={(claimsContactName) => patch({ claimsContactName })}
+        placeholder="Enter contact name"
+      />
+      <InsuranceField
+        label="Claims Phone"
+        value={insurance.claimsPhone}
+        onChange={(claimsPhone) => patch({ claimsPhone })}
+        type="tel"
+        placeholder="Enter phone number"
+      />
+
+      <InsuranceField
+        label="Annual Premium"
+        value={insurance.premium}
+        onChange={(premium) => patch({ premium })}
+        placeholder="1840"
+      />
+      <InsuranceField
+        label="Coverage Amount"
+        value={insurance.coverageAmount}
+        onChange={(coverageAmount) => patch({ coverageAmount })}
+        placeholder="450000"
+      />
+      <InsuranceField
+        label="Deductible"
+        value={insurance.deductible}
+        onChange={(deductible) => patch({ deductible })}
+        placeholder="1000"
+      />
+      <InsuranceField
+        label="Dwelling Coverage"
+        value={insurance.dwellingCoverage}
+        onChange={(dwellingCoverage) => patch({ dwellingCoverage })}
+        placeholder="450000"
+      />
+      <InsuranceField
+        label="Other Structures"
+        value={insurance.otherStructures}
+        onChange={(otherStructures) => patch({ otherStructures })}
+        placeholder="45000"
+      />
+      <InsuranceField
+        label="Liability"
+        value={insurance.liability}
+        onChange={(liability) => patch({ liability })}
+        placeholder="300000"
+      />
+      <InsuranceField
+        label="Loss of Rental Income"
+        value={insurance.lossOfRentalIncome}
+        onChange={(lossOfRentalIncome) => patch({ lossOfRentalIncome })}
+        placeholder="18000"
+      />
+
+      <div className="flex items-center gap-3 py-2">
+        <button
+          type="button"
+          role="switch"
+          aria-checked={insurance.additionalInsured}
+          disabled={extracting}
+          onClick={() => patch({ additionalInsured: !insurance.additionalInsured })}
+          className="pd-switch"
+        >
+          <span
+            className={[
+              'sa-switch-thumb absolute top-0.5 left-0.5 size-4 rounded-full bg-white shadow',
+              insurance.additionalInsured ? 'translate-x-[1.125rem]' : 'translate-x-0',
+            ].join(' ')}
+          />
+        </button>
+        <span className="text-[13px] font-semibold text-[#0d0f11]">
+          Additional Insured listed on policy
+        </span>
+      </div>
+    </div>
+  )
+}
+
+function CloseInsuranceRailIcon() {
+  return (
+    <svg className="size-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} aria-hidden>
+      <path d="M18 6L6 18M6 6l12 12" strokeLinecap="round" />
+    </svg>
+  )
+}
+
+function InsuranceDetailsRail({
+  open,
+  mode,
+  insurance,
+  extracting = false,
   onChange,
   onSave,
+  onClose,
+}: {
+  open: boolean
+  mode: 'add' | 'edit'
+  insurance: InsuranceProfile
+  extracting?: boolean
+  onChange: (next: InsuranceProfile) => void
+  onSave: () => void
+  onClose: () => void
+}) {
+  const titleId = useId()
+
+  useEffect(() => {
+    if (!open) return
+    function onKey(event: KeyboardEvent) {
+      if (event.key === 'Escape') onClose()
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [open, onClose])
+
+  if (!open || typeof document === 'undefined') return null
+
+  const canSave = !extracting && insuranceFormHasInput(insurance)
+
+  return createPortal(
+    <div className={ADMIN_RIGHT_RAIL_OVERLAY_HOST}>
+      <div role="presentation" className={ADMIN_RIGHT_RAIL_SCRIM} aria-hidden onClick={onClose} />
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={titleId}
+        className={adminRightRailPanelClass(undefined)}
+      >
+        <header className="sa-enter shrink-0 border-b border-[#e5e7eb] px-5 py-4 pr-12">
+          <h2 id={titleId} className="text-[16px] font-semibold leading-6 text-[#0a0a0a]">
+            {mode === 'edit' ? 'Edit insurance' : 'Add insurance'}
+          </h2>
+          <p className="mt-1 text-[13px] leading-5 text-[#6a7282]">
+            Store your property&apos;s insurance details in one secure place.
+          </p>
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="Close"
+            className="sa-press absolute right-4 top-4 rounded-lg p-1 text-[#9ca3af] outline-none hover:bg-black/5 hover:text-[#364153] focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2"
+          >
+            <CloseInsuranceRailIcon />
+          </button>
+        </header>
+
+        <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-5 py-4">
+          <InsuranceDetailsFields
+            insurance={insurance}
+            onChange={onChange}
+            extracting={extracting}
+          />
+        </div>
+
+        <footer className={ADMIN_RAIL_FOOTER_CLASS}>
+          <button type="button" onClick={onClose} className={ADMIN_RAIL_FOOTER_SECONDARY_BUTTON_CLASS}>
+            Cancel
+          </button>
+          <button
+            type="button"
+            onClick={onSave}
+            disabled={!canSave}
+            className={ADMIN_RAIL_FOOTER_PRIMARY_BUTTON_CLASS}
+          >
+            Save Details
+          </button>
+        </footer>
+      </div>
+    </div>,
+    document.body,
+  )
+}
+
+/** Expanded Insurance — Figma node 1140:1927. */
+function InsuranceExpandedPanel({
+  building,
+  insurance,
+  savedInsurance,
+  onOpenAdd,
   onEditSaved,
   onDeleteSaved,
   onBinderFiles,
@@ -650,12 +828,10 @@ function InsuranceExpandedPanel({
   extractLabel = null,
   extractProgress = 0,
 }: {
+  building: string
   insurance: InsuranceProfile
   savedInsurance: InsuranceProfile | null
-  insuranceRowChecked: boolean
-  onInsuranceRowChecked: (checked: boolean) => void
-  onChange: (next: InsuranceProfile) => void
-  onSave: () => void
+  onOpenAdd: () => void
   onEditSaved: () => void
   onDeleteSaved: () => void
   onBinderFiles: (files: FileList | null) => void
@@ -666,97 +842,10 @@ function InsuranceExpandedPanel({
   const binderInputId = useId()
   const binderInputRef = useRef<HTMLInputElement>(null)
   const [dragging, setDragging] = useState(false)
-
-  function patch(partial: Partial<InsuranceProfile>) {
-    onChange({ ...insurance, ...partial })
-  }
-
-  const showSaveDetails = extracting || !savedInsurance || insuranceFormHasInput(insurance)
+  const hasDraft = insuranceFormHasInput(insurance)
 
   return (
     <div className="flex flex-col gap-5">
-      <p className="text-[14px] leading-normal text-[#475569]">
-        Store your property&apos;s insurance details in one secure place.
-      </p>
-
-      <div className="flex flex-col gap-4">
-        <div className="flex min-w-0 flex-col gap-4 sm:flex-row sm:gap-4">
-          <InsuranceField
-            label="Insurance Company"
-            value={insurance.carrier}
-            onChange={(carrier) => patch({ carrier })}
-            placeholder="Enter company name"
-          />
-          <InsuranceField
-            label="Policy Number"
-            value={insurance.policyNumber}
-            onChange={(policyNumber) => patch({ policyNumber })}
-            placeholder="Enter policy number"
-          />
-        </div>
-
-        <div className="flex min-w-0 flex-col gap-4 sm:flex-row sm:gap-4">
-          <InsuranceField
-            label="Coverage Start Date"
-            value={insurance.coverageStartDate}
-            onChange={(coverageStartDate) => patch({ coverageStartDate })}
-            type="date"
-            placeholder="MM/DD/YYYY"
-          />
-          <InsuranceField
-            label="Coverage End Date"
-            value={insurance.coverageEndDate}
-            onChange={(coverageEndDate) => patch({ coverageEndDate })}
-            type="date"
-            placeholder="MM/DD/YYYY"
-          />
-          <InsuranceField
-            label="Renewal Date"
-            value={insurance.renewalDate}
-            onChange={(renewalDate) => patch({ renewalDate })}
-            type="date"
-            placeholder="Select date"
-          />
-        </div>
-
-        <div className="flex min-w-0 flex-col gap-4 sm:flex-row sm:gap-4">
-          <InsuranceField
-            label="Claims Contact Name"
-            value={insurance.claimsContactName}
-            onChange={(claimsContactName) => patch({ claimsContactName })}
-            placeholder="Enter contact name"
-          />
-          <InsuranceField
-            label="Claims Phone"
-            value={insurance.claimsPhone}
-            onChange={(claimsPhone) => patch({ claimsPhone })}
-            type="tel"
-            placeholder="Enter phone number"
-          />
-        </div>
-
-        <div className="flex items-center gap-3 py-2">
-          <button
-            type="button"
-            role="switch"
-            aria-checked={insurance.additionalInsured}
-            disabled={extracting}
-            onClick={() => patch({ additionalInsured: !insurance.additionalInsured })}
-            className="pd-switch"
-          >
-            <span
-              className={[
-                'sa-switch-thumb absolute top-0.5 left-0.5 size-4 rounded-full bg-white shadow',
-                insurance.additionalInsured ? 'translate-x-[1.125rem]' : 'translate-x-0',
-              ].join(' ')}
-            />
-          </button>
-          <span className="text-[13px] font-semibold text-[#0d0f11]">
-            Additional Insured listed on policy
-          </span>
-        </div>
-      </div>
-
       <div
         className={[
           'sa-dropzone flex flex-col items-center justify-center gap-3 rounded-[12px] border-2 border-dashed bg-[#f8fafc] p-10',
@@ -831,45 +920,45 @@ function InsuranceExpandedPanel({
         )}
       </div>
 
-      {showSaveDetails ? (
-        <div className="pt-2">
+      {!savedInsurance || hasDraft ? (
+        <div>
           <button
             type="button"
-            onClick={onSave}
+            onClick={onOpenAdd}
             disabled={extracting}
-            className="pd-btn pd-btn-primary rounded-[8px] px-5 py-2.5 text-[13px] font-semibold"
+            className="pd-btn pd-btn-ghost rounded-[10px] px-4 py-2.5 text-[13px] font-semibold text-[#186179] hover:bg-[#eff6ff]"
           >
-            {extracting ? 'Extracting…' : 'Save Details'}
+            {hasDraft ? 'Continue insurance details' : 'Add insurance details'}
           </button>
         </div>
       ) : null}
 
       {savedInsurance ? (
-        <div className="flex flex-col gap-3">
-          {insuranceRowChecked ? (
-            <div className="flex flex-wrap items-center justify-end gap-2">
-              <button
-                type="button"
-                onClick={onEditSaved}
-                className="pd-btn pd-btn-ghost rounded-[10px] px-4 py-2.5 text-[13px] font-semibold text-[#186179] hover:bg-[#eff6ff]"
-              >
-                Edit selected
-              </button>
-              <button
-                type="button"
-                onClick={onDeleteSaved}
-                className="pd-btn pd-btn-ghost rounded-[10px] px-4 py-2.5 text-[13px] font-semibold text-[#a03e3e] hover:bg-[#fef2f2] hover:text-[#991b1b]"
-              >
-                Delete selected
-              </button>
-            </div>
-          ) : null}
-          <InsuranceSavedTable
-            insurance={savedInsurance}
-            checked={insuranceRowChecked}
-            onChecked={onInsuranceRowChecked}
-          />
-        </div>
+        <PropertyInsurancePolicyCard
+          insurance={{
+            policyType: savedInsurance.policyType,
+            building,
+            carrier: savedInsurance.carrier,
+            policyNumber: savedInsurance.policyNumber,
+            premium: savedInsurance.premium,
+            coverageAmount: savedInsurance.coverageAmount,
+            deductible: savedInsurance.deductible,
+            coverageStartDate: savedInsurance.coverageStartDate,
+            coverageEndDate: savedInsurance.coverageEndDate,
+            dwellingCoverage: savedInsurance.dwellingCoverage,
+            otherStructures: savedInsurance.otherStructures,
+            liability: savedInsurance.liability,
+            lossOfRentalIncome: savedInsurance.lossOfRentalIncome,
+            agent: savedInsurance.claimsContactName,
+            claimHotline: savedInsurance.claimsPhone,
+            binderFileName: savedInsurance.binderFileName,
+            binderFileUrl: savedInsurance.binderFileUrl,
+            binderFileSize: savedInsurance.binderFileSize,
+            binderUploadedAt: savedInsurance.binderUploadedAt,
+          }}
+          onEdit={onEditSaved}
+          onDelete={onDeleteSaved}
+        />
       ) : null}
     </div>
   )
@@ -1061,20 +1150,35 @@ function HomeInspectionExpandedPanel({
   )
 }
 
+export type PropertyDetailsModule = 'inspection' | 'access' | 'insurance' | 'history'
+
 export type PropertyDetailsPanelProps = {
   building: string
   loading?: boolean
   /** Seed from onboarding / demo meta when no saved profile yet. */
   initialYearBuilt?: number | null
+  /** Which modules to show. Defaults to the full Property Intelligence stack. */
+  modules?: PropertyDetailsModule[]
 }
+
+const ALL_DETAIL_MODULES: PropertyDetailsModule[] = [
+  'inspection',
+  'access',
+  'insurance',
+  'history',
+]
 
 /** Property Details tab — Figma card stack for optional property data modules. */
 export function PropertyDetailsPanel({
   building,
   loading = false,
   initialYearBuilt = null,
+  modules = ALL_DETAIL_MODULES,
 }: PropertyDetailsPanelProps) {
-  const [expanded, setExpanded] = useState<SectionId | null>(null)
+  const showModule = (id: PropertyDetailsModule) => modules.includes(id)
+  const [expanded, setExpanded] = useState<SectionId | null>(() =>
+    modules.length === 1 ? modules[0]! : null,
+  )
   const [inspectionDocs, setInspectionDocs] = useState<InspectionDoc[]>([])
   const [inspectionHasPersistedWork, setInspectionHasPersistedWork] = useState(false)
   const [inspectionSaveMessage, setInspectionSaveMessage] = useState<string | null>(null)
@@ -1085,12 +1189,18 @@ export function PropertyDetailsPanel({
   const [accessRowChecked, setAccessRowChecked] = useState(false)
   const [insurance, setInsurance] = useState<InsuranceProfile>(EMPTY_INSURANCE)
   const [savedInsurance, setSavedInsurance] = useState<InsuranceProfile | null>(null)
-  const [insuranceRowChecked, setInsuranceRowChecked] = useState(false)
+  const [insuranceRailOpen, setInsuranceRailOpen] = useState(false)
+  const [insuranceRailMode, setInsuranceRailMode] = useState<'add' | 'edit'>('add')
   const [insuranceExtractStage, setInsuranceExtractStage] =
     useState<InsuranceBinderScanStage>('idle')
   const [insuranceExtractLabel, setInsuranceExtractLabel] = useState<string | null>(null)
   const [insuranceExtractProgress, setInsuranceExtractProgress] = useState(0)
   const [error, setError] = useState<string | null>(null)
+  const moduleKey = modules.join(',')
+
+  useEffect(() => {
+    if (modules.length === 1) setExpanded(modules[0]!)
+  }, [moduleKey])
 
   useEffect(() => {
     if (!building) return
@@ -1141,7 +1251,8 @@ export function PropertyDetailsPanel({
       setSavedInsurance(null)
       setInsurance(loadedInsurance)
     }
-    setInsuranceRowChecked(false)
+    setInsuranceRailOpen(false)
+    setInsuranceRailMode('add')
     setInsuranceExtractStage('idle')
     setInsuranceExtractLabel(null)
     setInsuranceExtractProgress(0)
@@ -1318,12 +1429,16 @@ export function PropertyDetailsPanel({
   return (
     <div className="mt-6 flex w-full min-w-0 flex-col gap-3 overflow-x-hidden">
       {error ? <p className="text-[12px] text-[#b91c1c]">{error}</p> : null}
-      {inspectionSaveMessage ? (
+      {showModule('inspection') && inspectionSaveMessage ? (
         <p className="text-[12px] text-[#059669]">{inspectionSaveMessage}</p>
       ) : null}
 
-      {limitedAlpha1 ? null : <PropertyRecordHierarchy />}
+      {limitedAlpha1 ||
+      !(showModule('inspection') || showModule('access') || showModule('history')) ? null : (
+        <PropertyRecordHierarchy />
+      )}
 
+      {showModule('inspection') ? (
       <DetailCard
         icon={
           <img
@@ -1350,7 +1465,9 @@ export function PropertyDetailsPanel({
           onRemove={(id) => void onRemoveInspectionDoc(id)}
         />
       </DetailCard>
+      ) : null}
 
+      {showModule('access') ? (
       <DetailCard
         icon={
           <img
@@ -1513,7 +1630,9 @@ export function PropertyDetailsPanel({
           ) : null}
         </div>
       </DetailCard>
+      ) : null}
 
+      {showModule('insurance') ? (
       <DetailCard
         icon={
           <img
@@ -1527,38 +1646,31 @@ export function PropertyDetailsPanel({
         empty={insuranceEmpty}
         expanded={expanded === 'insurance'}
         onToggle={() => toggle('insurance')}
+        collapsible={false}
       >
         <InsuranceExpandedPanel
+          building={building}
           insurance={insurance}
           savedInsurance={savedInsurance}
-          insuranceRowChecked={insuranceRowChecked}
-          onInsuranceRowChecked={setInsuranceRowChecked}
           extracting={isInsuranceBinderScanProcessing(insuranceExtractStage)}
           extractLabel={insuranceExtractLabel}
           extractProgress={insuranceExtractProgress}
-          onChange={(next) => {
-            setInsurance(next)
-          }}
-          onSave={() => {
-            const next = { ...insurance, updatedAt: new Date().toISOString() }
-            writeJson(landlordScopedKey('ulo.propertyInsurance', building), next)
-            setSavedInsurance(next)
-            setInsurance({ ...EMPTY_INSURANCE })
-            setInsuranceRowChecked(false)
-            setError(null)
-            notifyPropertyDetailsChanged(building)
+          onOpenAdd={() => {
+            setInsuranceRailMode('add')
+            setInsuranceRailOpen(true)
           }}
           onEditSaved={() => {
             if (!savedInsurance) return
             setInsurance({ ...savedInsurance, updatedAt: null })
-            setInsuranceRowChecked(false)
+            setInsuranceRailMode('edit')
+            setInsuranceRailOpen(true)
             setError(null)
           }}
           onDeleteSaved={() => {
             writeJson(landlordScopedKey('ulo.propertyInsurance', building), EMPTY_INSURANCE)
             setSavedInsurance(null)
             setInsurance({ ...EMPTY_INSURANCE })
-            setInsuranceRowChecked(false)
+            setInsuranceRailOpen(false)
             setError(null)
             notifyPropertyDetailsChanged(building)
           }}
@@ -1580,14 +1692,18 @@ export function PropertyDetailsPanel({
                 setInsurance((prev) => ({
                   ...prev,
                   ...result.extracted,
+                  policyType: result.extracted.policyType || prev.policyType || 'Homeowners',
                   binderFileName: result.fileName,
                   binderFileUrl,
+                  binderFileSize: file.size,
                   binderUploadedAt: new Date().toISOString(),
                   updatedAt: null,
                 }))
                 setInsuranceExtractStage('complete')
                 setInsuranceExtractLabel('Details filled from binder — review and save')
                 setInsuranceExtractProgress(100)
+                setInsuranceRailMode('add')
+                setInsuranceRailOpen(true)
               } catch (err) {
                 setInsuranceExtractStage('failed')
                 setInsuranceExtractLabel(
@@ -1600,8 +1716,31 @@ export function PropertyDetailsPanel({
             })()
           }}
         />
+        <InsuranceDetailsRail
+          open={insuranceRailOpen}
+          mode={insuranceRailMode}
+          insurance={insurance}
+          extracting={isInsuranceBinderScanProcessing(insuranceExtractStage)}
+          onChange={setInsurance}
+          onClose={() => setInsuranceRailOpen(false)}
+          onSave={() => {
+            const next = {
+              ...insurance,
+              policyType: insurance.policyType.trim() || 'Homeowners',
+              updatedAt: new Date().toISOString(),
+            }
+            writeJson(landlordScopedKey('ulo.propertyInsurance', building), next)
+            setSavedInsurance(next)
+            setInsurance({ ...EMPTY_INSURANCE })
+            setInsuranceRailOpen(false)
+            setError(null)
+            notifyPropertyDetailsChanged(building)
+          }}
+        />
       </DetailCard>
+      ) : null}
 
+      {showModule('history') ? (
       <DetailCard
         icon={
           <img
@@ -1625,6 +1764,7 @@ export function PropertyDetailsPanel({
           onError={setError}
         />
       </DetailCard>
+      ) : null}
     </div>
   )
 }

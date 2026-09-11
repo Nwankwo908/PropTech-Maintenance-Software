@@ -115,6 +115,11 @@ export type PortfolioDocumentExtractPayload = {
     policy_effective_date: string | null
     policy_expiration_date: string | null
     coverage_c_personal_property_limit: number | null
+    total_annual_premium?: number | null
+    coverage_a_dwelling_limit?: number | null
+    coverage_d_fair_rental_value_limit?: number | null
+    coverage_l_liability_limit?: number | null
+    deductible_all_other_perils?: number | null
   } | null
 }
 

@@ -11,7 +11,6 @@ import { SetupSuccessCheckboxGuide } from '@/components/SetupSuccessCheckboxGuid
 import { EmergencyApprovalRail } from '@/components/EmergencyApprovalRail'
 import { PropertyAnalyticsPanel } from '@/components/PropertyAnalyticsPanel'
 import { PropertyUnitsTable } from '@/components/PropertyUnitsTable'
-import { PropertyWorkflowsList } from '@/components/PropertyWorkflowsList'
 import { PropertyDetailsPanel } from '@/components/PropertyDetailsPanel'
 import { PropertyHistoryPanel } from '@/components/PropertyHistoryPanel'
 import { PropertyHomeDataPanel } from '@/components/PropertyHomeDataPanel'
@@ -77,7 +76,7 @@ import {
   type PropertyUnitResident,
 } from '@/lib/propertyUnitRows'
 import { buildPropertyAnalytics } from '@/lib/propertyAnalytics'
-import { buildPropertyWorkflowRows, evaluatePropertyWorkflow } from '@/lib/propertyWorkflowRows'
+import { evaluatePropertyWorkflow } from '@/lib/propertyWorkflowRows'
 import { fetchPropertyHistory, type PropertyHistoryRow } from '@/lib/propertyHistory'
 import {
   type PropertyVendorRecord,
@@ -96,8 +95,7 @@ import {
 type PropertyTab =
   | 'overview'
   | 'details'
-  | 'units'
-  | 'workflows'
+  | 'insurance'
   | 'history'
   | 'analytics'
 
@@ -143,11 +141,10 @@ type UrgentItem = {
 
 const TABS: { id: PropertyTab; label: string; href?: string }[] = [
   { id: 'overview', label: 'Overview' },
-  { id: 'details', label: 'Property Details' },
-  { id: 'units', label: 'Units' },
-  { id: 'workflows', label: 'Active Tasks' },
+  { id: 'details', label: 'Property Intelligence' },
+  { id: 'insurance', label: 'Property Insurance' },
   { id: 'history', label: 'Property History' },
-  { id: 'analytics', label: 'Analytics' },
+  { id: 'analytics', label: 'Performance' },
 ]
 
 function asString(value: unknown): string {
@@ -999,19 +996,6 @@ export function AdminPropertyDetailDashboard() {
     return Math.round((occupied / total) * 100)
   }, [propertyUnitRows, buildingUnits])
 
-  const propertyWorkflowRows = useMemo(() => {
-    if (!building) return []
-    return buildPropertyWorkflowRows({
-      building,
-      workflowData,
-      tickets: buildingTickets.map((ticket) => ({
-        id: ticket.id,
-        issueCategory: ticket.issueCategory,
-        urgency: ticket.urgency,
-      })),
-    })
-  }, [building, workflowData, buildingTickets])
-
   const propertyAnalytics = useMemo(() => {
     if (!building) return null
     return buildPropertyAnalytics({
@@ -1437,17 +1421,8 @@ export function AdminPropertyDetailDashboard() {
             }
             buildingName={building}
           />
-        </div>
-      ) : activeTab === 'details' ? (
-        <PropertyDetailsPanel
-          building={building ?? ''}
-          loading={loading}
-          initialYearBuilt={meta.yearBuilt}
-        />
-      ) : activeTab === 'units' ? (
-        <>
           {unitStatusError ? (
-            <p className="mt-4 rounded-lg border border-[#fecaca] bg-[#fef2f2] px-3 py-2 text-[13px] text-[#b91c1c]">
+            <p className="rounded-lg border border-[#fecaca] bg-[#fef2f2] px-3 py-2 text-[13px] text-[#b91c1c]">
               {unitStatusError}
             </p>
           ) : null}
@@ -1458,9 +1433,20 @@ export function AdminPropertyDetailDashboard() {
             loading={loading}
             onOccupancyStatusChange={(unitId, status) => handleOccupancyStatusChange(unitId, status)}
           />
-        </>
-      ) : activeTab === 'workflows' ? (
-        <PropertyWorkflowsList rows={propertyWorkflowRows} loading={loading} />
+        </div>
+      ) : activeTab === 'details' ? (
+        <PropertyDetailsPanel
+          building={building ?? ''}
+          loading={loading}
+          initialYearBuilt={meta.yearBuilt}
+          modules={['inspection', 'access', 'history']}
+        />
+      ) : activeTab === 'insurance' ? (
+        <PropertyDetailsPanel
+          building={building ?? ''}
+          loading={loading}
+          modules={['insurance']}
+        />
       ) : activeTab === 'history' ? (
         <PropertyHistoryPanel
           rows={

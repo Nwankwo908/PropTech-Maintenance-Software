@@ -37,6 +37,11 @@ describe('mapPortfolioInsuranceToPropertyFields', () => {
           policy_effective_date: '2026-06-27',
           policy_expiration_date: '2027-06-27',
           coverage_c_personal_property_limit: 0,
+          total_annual_premium: 3792.53,
+          coverage_a_dwelling_limit: 208400,
+          coverage_d_fair_rental_value_limit: 18000,
+          coverage_l_liability_limit: 300000,
+          deductible_all_other_perils: 2500,
         },
         insuranceCertificate: {
           named_insured: 'Ifunanya Okafor',
@@ -59,7 +64,13 @@ describe('mapPortfolioInsuranceToPropertyFields', () => {
     expect(extracted.coverageEndDate).toBe('2027-06-27')
     expect(extracted.coverageStartDate).not.toBe('2026-05-04')
     expect(extracted.additionalInsured).toBe(false)
-    expect(extracted.claimsContactName).toBe('')
+    expect(extracted.claimsContactName).toBe('Kirstein Insurance Agency, LLC')
+    expect(extracted.policyType).toBe('Dwelling')
+    expect(extracted.premium).toBe('3792.53')
+    expect(extracted.dwellingCoverage).toBe('208400')
+    expect(extracted.liability).toBe('300000')
+    expect(extracted.lossOfRentalIncome).toBe('18000')
+    expect(extracted.deductible).toBe('2500')
   })
 
   it('maps a COI using policy dates, not the certificate issue date', () => {

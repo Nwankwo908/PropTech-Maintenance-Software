@@ -12,14 +12,15 @@ import { getAdminEdgeSecret } from '@/lib/adminEdgeAuth'
 import { getErrorMessage } from '@/lib/errorMessage'
 import { loadHomeDataGraphSnapshot } from '@/lib/loadHomeDataGraph'
 import {
+  emptyHomeDataFacts,
   formatHomeDataDate,
   formatHomeDataMoney,
   formatHomeDataNumber,
   formatHomeDataPool,
   formatHomeDataRange,
   formatHomeDataSqft,
-  emptyHomeDataFacts,
   homeDataHasFacts,
+  homeDataHasListingFacts,
   homeDataNeedsProviderRefresh,
   type HomeDataFacts,
   type HomeDataGraphSnapshot,
@@ -240,6 +241,7 @@ export function PropertyHomeDataPanel({
           propertyId,
           landlordId,
           address: query,
+          force: !existing || !homeDataHasListingFacts(existing),
         })
         if (cancelled) return
         if (result.snapshot) setSnapshot(result.snapshot)
@@ -385,6 +387,9 @@ export function PropertyHomeDataPanel({
               <p className="text-[12px] leading-4 text-[#6a7282]">
                 Updating home value…
               </p>
+            ) : null}
+            {error && !hasLoadedFacts ? (
+              <p className="text-[12px] leading-4 text-[#92400e]">{error}</p>
             ) : null}
           </div>
           </div>

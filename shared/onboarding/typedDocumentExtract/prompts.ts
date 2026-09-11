@@ -55,7 +55,8 @@ ${JSON.stringify(LEASE_JSON_SCHEMA, null, 2)}
 
 NAME ROLES:
 - landlord_name: owner/lessor. May be an LLC, corporation, trust, or individual. One string. Do not split into first/last. Do not use the property manager or leasing agent as landlord.
-- tenant_names: every explicitly named tenant/lessee. Do not include guarantors or co-signers.
+- tenant_names: every explicitly named tenant/lessee. Do not include guarantors, co-signers, the landlord, or the management company.
+- If one party is an LLC/Inc/company and the other is a person, the company is landlord_name and the person is in tenant_names unless the document clearly labels the reverse.
 - guarantor_names: guarantors and co-signers only. A guarantor next to a tenant is still not a tenant.
 - property_manager_name: manager or leasing agent. Signing on behalf of the owner does not make them the landlord.
 

@@ -991,7 +991,7 @@ export function AdminPropertyResidentDetailDashboard() {
   }, [actionsOpen])
 
   const backFallbackHref = useMemo(() => {
-    if (propertyId) return propertyDetailPath(propertyId, 'units')
+    if (propertyId) return propertyDetailPath(propertyId)
     return '/admin/residents'
   }, [propertyId])
 

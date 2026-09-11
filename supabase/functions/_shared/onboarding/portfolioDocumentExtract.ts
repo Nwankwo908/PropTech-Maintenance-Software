@@ -30,6 +30,15 @@ import {
 } from "../../../../shared/onboarding/typedDocumentExtract/insuranceClassify.ts"
 import { parseAndMapTypedExtract } from "../../../../shared/onboarding/typedDocumentExtract/parseAndMap.ts"
 import {
+  extractStateCode,
+  orderLeaseDates,
+  placeAccountAndTenantNames,
+  placeAccountFields,
+  placePhoneEmail,
+  placePropertyAddressFields,
+  looksLikeCompanyParty,
+} from "../../../../shared/onboarding/typedDocumentExtract/placeFields.ts"
+import {
   typedExtractIntro,
   typedExtractSystemPrompt,
 } from "../../../../shared/onboarding/typedDocumentExtract/prompts.ts"
@@ -478,12 +487,19 @@ function normalizeProperty(row: Record<string, unknown>): PortfolioExtractProper
     "location",
   ])
   if (!name && !streetAddress) return null
-  return {
+  const placed = placePropertyAddressFields({
     name: name || streetAddress,
     streetAddress,
     city: cleanExtractedText(row.city),
-    state: cleanExtractedText(row.state).toUpperCase().slice(0, 2),
-    zipCode: cleanExtractedText(row.zipCode ?? row.zip_code),
+    state: cleanExtractedText(row.state ?? row.stateCode ?? row.state_code),
+    zipCode: cleanExtractedText(row.zipCode ?? row.zip_code ?? row.zip),
+  })
+  return {
+    name: placed.name || placed.streetAddress,
+    streetAddress: placed.streetAddress,
+    city: placed.city,
+    state: extractStateCode(placed.state),
+    zipCode: placed.zipCode,
     propertyType: normalizeExtractedPropertyType(
       readField(row, [
         "propertyType",
@@ -547,7 +563,7 @@ export function normalizeExtractedAccount(root: Record<string, unknown>): Portfo
     "organisation",
     ...(fromObject ? ["name"] : []),
   ])
-  return {
+  return placeAccountFields({
     companyName,
     contactName: readField(nested, [
       "contactName",
@@ -556,10 +572,6 @@ export function normalizeExtractedAccount(root: Record<string, unknown>): Portfo
       "owner_name",
       "businessOwnerName",
       "business_owner_name",
-      "landlordName",
-      "landlord_name",
-      "lessorName",
-      "lessor_name",
       "propertyManager",
       "property_manager",
       "managerName",
@@ -587,12 +599,12 @@ export function normalizeExtractedAccount(root: Record<string, unknown>): Portfo
       "telephone",
       "tel",
     ]),
-  }
+  })
 }
 
 export function normalizePortfolioDocumentExtract(raw: unknown): PortfolioDocumentExtractPayload {
   const root = raw && typeof raw === "object" ? (raw as Record<string, unknown>) : {}
-  return {
+  const payload: PortfolioDocumentExtractPayload = {
     account: normalizeExtractedAccount(root),
     properties: normalizeArray(root.properties, normalizeProperty),
     units: normalizeArray(root.units, (row) => {
@@ -608,14 +620,22 @@ export function normalizePortfolioDocumentExtract(raw: unknown): PortfolioDocume
     residents: normalizeArray(root.residents, (row) => {
       const fullName = resolveExtractedPersonName(row)
       if (!fullName) return null
+      const channels = placePhoneEmail(
+        cleanExtractedText(row.phone),
+        cleanExtractedText(row.email),
+      )
+      const dates = orderLeaseDates(
+        cleanExtractedText(row.leaseStart ?? row.lease_start),
+        cleanExtractedText(row.leaseEnd ?? row.lease_end),
+      )
       return {
         fullName,
         unit: resolveExtractedUnit(row),
         building: resolveExtractedBuilding(row),
-        phone: cleanExtractedText(row.phone),
-        email: cleanExtractedText(row.email),
-        leaseStart: cleanExtractedText(row.leaseStart ?? row.lease_start),
-        leaseEnd: cleanExtractedText(row.leaseEnd ?? row.lease_end),
+        phone: channels.phone,
+        email: channels.email,
+        leaseStart: dates.start,
+        leaseEnd: dates.end,
         monthlyRent: cleanExtractedText(row.monthlyRent ?? row.monthly_rent ?? row.rent),
         confidence: clampConfidence(row.confidence),
       }
@@ -625,23 +645,31 @@ export function normalizePortfolioDocumentExtract(raw: unknown): PortfolioDocume
       (row) => {
       const name = resolveExtractedVendorName(row)
       if (!name) return null
+      const channels = placePhoneEmail(
+        cleanExtractedText(row.phone ?? row.phoneNumber ?? row.phone_number),
+        cleanExtractedText(row.email),
+      )
       return {
         name,
         category: cleanExtractedText(row.category ?? row.trade ?? row.service),
-        phone: cleanExtractedText(row.phone ?? row.phoneNumber ?? row.phone_number),
-        email: cleanExtractedText(row.email),
+        phone: channels.phone,
+        email: channels.email,
         confidence: clampConfidence(row.confidence),
       }
     }),
     leases: normalizeArray(root.leases, (row) => {
       const residentName = resolveExtractedPersonName(row)
       if (!residentName) return null
+      const dates = orderLeaseDates(
+        cleanExtractedText(row.leaseStart ?? row.lease_start),
+        cleanExtractedText(row.leaseEnd ?? row.lease_end),
+      )
       return {
         residentName,
         unit: resolveExtractedUnit(row),
         building: resolveExtractedBuilding(row),
-        leaseStart: cleanExtractedText(row.leaseStart ?? row.lease_start),
-        leaseEnd: cleanExtractedText(row.leaseEnd ?? row.lease_end),
+        leaseStart: dates.start,
+        leaseEnd: dates.end,
         rentAmount: cleanExtractedText(row.rentAmount ?? row.rent_amount ?? row.rent),
         securityDeposit: cleanExtractedText(row.securityDeposit ?? row.security_deposit),
         confidence: clampConfidence(row.confidence),
@@ -686,6 +714,34 @@ export function normalizePortfolioDocumentExtract(raw: unknown): PortfolioDocume
     roleFacts: [],
     insuranceCertificate: null,
     dwellingPolicy: null,
+  }
+  const placed = placeAccountAndTenantNames({
+    companyName: payload.account.companyName,
+    contactName: payload.account.contactName,
+    tenantNames: [
+      ...payload.residents.map((row) => row.fullName),
+      ...payload.leases.map((row) => row.residentName),
+    ],
+  })
+  const wanted = new Set(placed.tenantNames.map((name) => name.toLowerCase()))
+  const person = placed.tenantNames[0] ?? ""
+  return {
+    ...payload,
+    account: {
+      ...payload.account,
+      companyName: placed.companyName,
+      contactName: placed.contactName,
+    },
+    residents: payload.residents.map((row) =>
+      looksLikeCompanyParty(row.fullName) && !wanted.has(row.fullName.toLowerCase()) && person
+        ? { ...row, fullName: person }
+        : row,
+    ),
+    leases: payload.leases.map((row) =>
+      looksLikeCompanyParty(row.residentName) && !wanted.has(row.residentName.toLowerCase()) && person
+        ? { ...row, residentName: person }
+        : row,
+    ),
   }
 }
 

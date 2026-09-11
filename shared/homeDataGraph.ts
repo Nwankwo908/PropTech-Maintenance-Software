@@ -1,17 +1,17 @@
 /**
  * Canonical Home Data Graph facts.
- * Provider adapters (ATTOM, manual, …) map into this shape.
+ * Provider adapters (Ulo, ATTOM, manual, …) map into this shape.
  * `rentcast` remains a stored source_provider id for historical rows; it is not ingested.
  * Do not put vendor-specific field names on the snapshot.
  */
 
-export const HOME_DATA_PROVIDERS = ['rentcast', 'attom', 'manual'] as const
+export const HOME_DATA_PROVIDERS = ['ulo', 'attom', 'manual', 'rentcast'] as const
 export type HomeDataProviderId = (typeof HOME_DATA_PROVIDERS)[number]
 
 export function parseHomeDataProviderId(value: string | null | undefined): HomeDataProviderId {
   const raw = (value ?? '').trim().toLowerCase()
-  if (raw === 'attom' || raw === 'manual' || raw === 'rentcast') return raw
-  return 'attom'
+  if (raw === 'ulo' || raw === 'attom' || raw === 'manual' || raw === 'rentcast') return raw
+  return 'ulo'
 }
 
 export type HomeDataFacts = {
@@ -125,11 +125,25 @@ export function homeDataHasVisuals(facts: Pick<HomeDataFacts, 'photoUrls' | 'lat
   return facts.latitude != null && facts.longitude != null
 }
 
+/** Overview cards need listing attributes, not coordinates alone. */
+export function homeDataHasListingFacts(facts: HomeDataFacts): boolean {
+  return (
+    facts.estimatedValue != null ||
+    facts.estimatedRent != null ||
+    facts.bedrooms != null ||
+    facts.bathrooms != null ||
+    facts.livingAreaSqft != null ||
+    facts.yearBuilt != null ||
+    Boolean(facts.propertyType?.trim())
+  )
+}
+
 export function homeDataNeedsProviderRefresh(
   snapshot: HomeDataGraphSnapshot | null,
   now = Date.now(),
 ): boolean {
   if (!snapshot || !homeDataHasFacts(snapshot)) return true
+  if (!homeDataHasListingFacts(snapshot)) return true
   if (isHomeDataStale(snapshot.fetchedAt, now)) return true
   if (!homeDataHasVisuals(snapshot)) return true
   return snapshot.rentLookupComplete !== true

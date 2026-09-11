@@ -133,6 +133,9 @@ function AdminTopBar() {
   const { displayName: workspaceDisplayName } = useLandlordWorkspace()
   const [resettingOnboarding, setResettingOnboarding] = useState(false)
   const workspaceLabel = workspaceDisplayName.trim() || getActiveLandlordLabel()
+  // Production testers and seeded tester logins are session-bound; hide the
+  // internal "Limited Alpha 1/2" account chip. Staff keep it for the switcher.
+  const hideInternalAccountChip = getSessionLandlordId() !== null
 
   async function handleResetOnboarding() {
     if (resettingOnboarding) return
@@ -198,11 +201,13 @@ function AdminTopBar() {
             >
               {resettingOnboarding ? 'Resetting…' : 'Reset onboarding'}
             </button>
-            <span className="shrink-0 rounded-full bg-[#dbeafe] px-3 py-1 text-[12px] font-semibold uppercase tracking-[0.06em] text-[#1d4ed8]">
-              {getActiveLandlordLabel()}
-            </span>
+            {hideInternalAccountChip ? null : (
+              <span className="shrink-0 rounded-full bg-[#dbeafe] px-3 py-1 text-[12px] font-semibold uppercase tracking-[0.06em] text-[#1d4ed8]">
+                {getActiveLandlordLabel()}
+              </span>
+            )}
           </>
-        ) : (
+        ) : hideInternalAccountChip && !workspaceDisplayName.trim() ? null : (
           <span className="shrink-0 rounded-full bg-[#f3f4f6] px-3 py-1 text-[12px] font-semibold uppercase tracking-[0.06em] text-[#4b5563]">
             {workspaceLabel}
           </span>

@@ -1,6 +1,6 @@
 /// <reference lib="deno.ns" />
 /**
- * Refresh the Home Data Graph from the active adapter (HOME_DATA_PROVIDER).
+ * Ulo property-facts API: refresh Home Data Graph (HOME_DATA_PROVIDER, default ulo).
  * The dashboard reads home_data_graph only — never vendor APIs.
  */
 import { serve } from "https://deno.land/std/http/server.ts"
@@ -8,7 +8,7 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1"
 import { adminEdgeCorsHeaders } from "../_shared/admin_edge_cors.ts"
 import { requireAdminReassignAuth } from "../_shared/admin_edge_auth.ts"
 import {
-  homeDataHasFacts,
+  homeDataHasListingFacts,
   homeDataNeedsProviderRefresh,
   type HomeDataGraphSnapshot,
 } from "../../../shared/homeDataGraph.ts"
@@ -89,7 +89,7 @@ serve(async (req) => {
           configured: false,
           lookupError: fetched.error,
         },
-        provider === "attom" ? 501 : 200,
+        200,
       )
     }
     if (fetched.status === "not_configured") {
@@ -101,12 +101,12 @@ serve(async (req) => {
       })
     }
 
-    if (!homeDataHasFacts(fetched.ingest.facts)) {
+    if (!homeDataHasListingFacts(fetched.ingest.facts)) {
       return jsonResponse({
         snapshot: existing,
         refreshed: false,
         configured: true,
-        lookupError: `No property data found for “${address}”. Check the street, city, and ZIP.`,
+        lookupError: `No listing details found for “${address}”. Check the street, city, and ZIP.`,
       })
     }
 

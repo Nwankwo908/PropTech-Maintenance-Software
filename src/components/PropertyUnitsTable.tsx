@@ -26,7 +26,7 @@ type PropertyUnitsTableProps = {
   ) => void | Promise<void | boolean>
 }
 
-/** Property detail — Units tab table (Figma property overview). */
+/** Property detail — units table on the Overview tab. */
 export function PropertyUnitsTable({
   building,
   propertyId,
@@ -56,7 +56,7 @@ export function PropertyUnitsTable({
 
   if (loading) {
     return (
-      <div className="mt-6 rounded-[10px] border border-[#e5e7eb] bg-white px-6 py-10 shadow-[0px_1px_2px_-1px_rgba(0,0,0,0.06)]">
+      <div className="rounded-[10px] border border-[#e5e7eb] bg-white px-6 py-10 shadow-[0px_1px_2px_-1px_rgba(0,0,0,0.06)]">
         <p className="text-center text-[13px] text-[#6a7282]">Loading units…</p>
       </div>
     )
@@ -64,19 +64,19 @@ export function PropertyUnitsTable({
 
   if (rows.length === 0) {
     return (
-      <div className="mt-6 rounded-[10px] border border-[#e5e7eb] bg-white px-6 py-10 shadow-[0px_1px_2px_-1px_rgba(0,0,0,0.06)]">
+      <div className="rounded-[10px] border border-[#e5e7eb] bg-white px-6 py-10 shadow-[0px_1px_2px_-1px_rgba(0,0,0,0.06)]">
         <p className="text-center text-[13px] text-[#6a7282]">No units found for this property.</p>
       </div>
     )
   }
 
-  const backToUnits =
+  const backToOverview =
     propertyId != null && propertyId.trim()
-      ? propertyDetailPath(propertyId, 'units')
-      : propertyDetailPath(building, 'units')
+      ? propertyDetailPath(propertyId)
+      : propertyDetailPath(building)
 
   return (
-    <div className="mt-6 overflow-hidden rounded-[10px] border border-[#e5e7eb] bg-white shadow-[0px_1px_2px_-1px_rgba(0,0,0,0.06)]">
+    <div className="overflow-hidden rounded-[10px] border border-[#e5e7eb] bg-white shadow-[0px_1px_2px_-1px_rgba(0,0,0,0.06)]">
       <div className="overflow-x-auto">
         <table className="min-w-full border-collapse">
           <thead>
@@ -107,7 +107,7 @@ export function PropertyUnitsTable({
                     {row.residentId && row.residentName ? (
                       <Link
                         to={residentDetailPath(row.residentId)}
-                        state={{ from: `${location.pathname}${location.search}` || backToUnits }}
+                        state={{ from: `${location.pathname}${location.search}` || backToOverview }}
                         className="sa-link font-medium text-[#186179] hover:text-[#0f4d5f] hover:underline"
                       >
                         {row.residentName}

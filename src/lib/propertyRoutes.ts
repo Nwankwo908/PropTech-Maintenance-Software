@@ -12,22 +12,15 @@ export type PropertyRouteSlug =
 export type PropertyDetailTab =
   | 'overview'
   | 'details'
-  | 'units'
-  | 'workflows'
+  | 'insurance'
   | 'history'
   | 'analytics'
 
-/** `?tab=conversations` still opens Property History. */
+/** `?tab=conversations` still opens Property History. `?tab=workflows` and `?tab=units` are retired. */
 export function parsePropertyDetailTab(raw: string | null | undefined): PropertyDetailTab {
   const tab = raw?.trim() ?? ''
   if (tab === 'conversations' || tab === 'history') return 'history'
-  if (
-    tab === 'details' ||
-    tab === 'units' ||
-    tab === 'workflows' ||
-    tab === 'analytics' ||
-    tab === 'overview'
-  ) {
+  if (tab === 'details' || tab === 'insurance' || tab === 'analytics' || tab === 'overview') {
     return tab
   }
   return 'overview'

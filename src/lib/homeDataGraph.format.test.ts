@@ -68,12 +68,22 @@ describe('homeDataGraph', () => {
         rentLookupComplete: true,
       }),
     ).toBe(false)
+    expect(
+      homeDataNeedsProviderRefresh({
+        ...withFacts,
+        bedrooms: null,
+        latitude: 40.7,
+        longitude: -74.1,
+        rentLookupComplete: true,
+      }),
+    ).toBe(true)
   })
 
   it('treats unknown provider ids as the default adapter without leaking vendor columns', () => {
+    expect(parseHomeDataProviderId('ulo')).toBe('ulo')
     expect(parseHomeDataProviderId('ATTOM')).toBe('attom')
     expect(parseHomeDataProviderId('manual')).toBe('manual')
     expect(parseHomeDataProviderId('rentcast')).toBe('rentcast')
-    expect(parseHomeDataProviderId('nope')).toBe('attom')
+    expect(parseHomeDataProviderId('nope')).toBe('ulo')
   })
 })

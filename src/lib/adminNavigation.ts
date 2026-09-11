@@ -99,7 +99,7 @@ const ADMIN_BASE = '/admin'
 export const ADMIN_NAV_TREE: AdminNavNode[] = [
   {
     id: 'overview',
-    label: 'Overview',
+    label: 'Dashboard',
     path: ADMIN_BASE,
     index: true,
     navEnd: true,
