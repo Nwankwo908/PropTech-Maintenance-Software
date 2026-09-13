@@ -193,6 +193,106 @@ describe('rent roll vs lease agreement source of truth', () => {
     expect(review.units.some((row) => /B/i.test(row.label))).toBe(true)
   })
 
+  it('lease-only with no unit number defaults to unit 1', () => {
+    const review = buildOnboardingExtractionReview([
+      uploadedDoc(
+        'lease',
+        'Grove-Lease.pdf',
+        emptyPayload({
+          leases: [
+            {
+              residentName: 'Jesus Bruno Gonzales',
+              unit: '',
+              building: '109 S Grove St',
+              leaseStart: '2026-01-01',
+              leaseEnd: '2026-12-31',
+              rentAmount: '1700',
+              securityDeposit: '1700',
+              confidence: 90,
+            },
+          ],
+        }),
+        'lease_agreement',
+      ),
+    ])
+
+    expect(review.residents).toHaveLength(1)
+    expect(review.residents[0]?.unit).toBe('1')
+    expect(review.residents[0]?.needsReview).toBe(false)
+    expect(review.leases[0]?.unit).toBe('1')
+    expect(review.units.some((row) => row.label === '1')).toBe(true)
+  })
+
+  it('lease-only copies rent due day onto residents when the lease states it', () => {
+    const review = buildOnboardingExtractionReview([
+      uploadedDoc(
+        'lease',
+        'Grove-Lease.pdf',
+        emptyPayload({
+          leases: [
+            {
+              residentName: 'Jamie Tenant',
+              unit: '1',
+              building: '109 S Grove St',
+              leaseStart: '2026-01-01',
+              leaseEnd: '2026-12-31',
+              rentAmount: '1700',
+              securityDeposit: '1700',
+              rentDueDay: '1',
+              confidence: 90,
+            },
+          ],
+        }),
+        'lease_agreement',
+      ),
+    ])
+
+    expect(review.residents[0]?.rentDueDay).toBe('1')
+  })
+
+  it('lease-only co-tenants on the same property default to unit 1 when the unit is not legible', () => {
+    const review = buildOnboardingExtractionReview([
+      uploadedDoc(
+        'lease',
+        'Grove-Lease.pdf',
+        emptyPayload({
+          leases: [
+            {
+              residentName: 'Alex Rivera',
+              unit: '',
+              building: '109 S Grove St',
+              leaseStart: '2026-01-01',
+              leaseEnd: '2026-12-31',
+              rentAmount: '1700',
+              securityDeposit: '1700',
+              confidence: 90,
+            },
+            {
+              residentName: 'Jordan Rivera',
+              unit: 'illegible',
+              building: '109 S Grove St',
+              leaseStart: '2026-01-01',
+              leaseEnd: '2026-12-31',
+              rentAmount: '1700',
+              securityDeposit: '1700',
+              confidence: 88,
+            },
+          ],
+        }),
+        'lease_agreement',
+      ),
+    ])
+
+    expect(review.residents).toHaveLength(2)
+    expect(review.residents.map((row) => row.fullName).sort()).toEqual([
+      'Alex Rivera',
+      'Jordan Rivera',
+    ])
+    expect(review.residents.every((row) => row.unit === '1')).toBe(true)
+    expect(review.residents.every((row) => row.needsReview === false)).toBe(true)
+    expect(review.units.some((row) => row.label === '1')).toBe(true)
+  })
+
   it('4 + 7. same tenant on rent roll + lease merges into one enriched resident', () => {
     const review = buildOnboardingExtractionReview([
       uploadedDoc(

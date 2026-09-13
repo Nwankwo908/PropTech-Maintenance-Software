@@ -14,6 +14,8 @@ import {
   residentOccupancyLabel,
   type ResidentOccupancyStatus,
 } from '@/lib/residentOccupancy'
+import { normalizeBuildingKey, normalizeUnitLabel } from '@/lib/propertyHealth'
+import { formatRentDueDayOrdinal } from '@/lib/onboarding/persist/residents'
 
 export type ResidentStanding = 'good_standing' | 'at_risk' | 'past_due'
 
@@ -64,6 +66,7 @@ export type ResidentProfileDetail = {
   leaseStartLabel: string
   leaseEndLabel: string
   monthlyRentLabel: string
+  rentDueDayLabel: string
   depositLabel: string
   tenantMaintenance: string | null
   landlordMaintenance: string | null
@@ -71,8 +74,15 @@ export type ResidentProfileDetail = {
   maintenanceResponsibilitiesClause: string | null
   balanceDue: number
   balanceLabel: string
+  /** Other current residents on the same unit and property. */
+  otherOccupants: ResidentOtherOccupant[]
   workflows: ResidentWorkflowSummaryItem[]
   communications: ResidentCommunicationItem[]
+}
+
+export type ResidentOtherOccupant = {
+  id: string
+  name: string
 }
 
 export type ResidentProfileUserRow = {
@@ -141,6 +151,98 @@ function formatCurrency(amount: number): string {
 
 function buildingShortName(building: string): string {
   return building.replace(/\s+Apartments$/i, '').trim() || building
+}
+
+/** Header place under the tenant name. Empty / placeholder property → Address. */
+export function residentPlaceLabel(building: string | null | undefined): string {
+  const value = (building ?? '').trim()
+  if (!value || value.toLowerCase() === 'portfolio') return 'Address'
+  return buildingShortName(value)
+}
+
+export type ResidentOccupantRow = {
+  id: string
+  fullName: string
+  unit: string
+  building: string | null
+  status: string
+}
+
+function samePropertyPlace(
+  left: string | null | undefined,
+  right: string | null | undefined,
+): boolean {
+  const leftKey = normalizeBuildingKey(left)
+  const rightKey = normalizeBuildingKey(right)
+  if (leftKey.toLowerCase() === rightKey.toLowerCase()) return true
+  const leftPlace = residentPlaceLabel(left)
+  const rightPlace = residentPlaceLabel(right)
+  if (leftPlace === 'Address' || rightPlace === 'Address') return false
+  return leftPlace.toLowerCase() === rightPlace.toLowerCase()
+}
+
+/** Same current lease: matching unit + property. Unassigned people stay ungrouped. */
+export function shareSameLeasePlace(
+  left: Pick<ResidentOccupantRow, 'unit' | 'building' | 'status'>,
+  right: Pick<ResidentOccupantRow, 'unit' | 'building' | 'status'>,
+): boolean {
+  if (left.status === 'past_resident' || right.status === 'past_resident') return false
+  const unitKey = normalizeUnitLabel(left.unit)
+  if (!unitKey) return false
+  if (normalizeUnitLabel(right.unit) !== unitKey) return false
+  return samePropertyPlace(left.building, right.building)
+}
+
+/** One household per property + unit. People without a unit stay on their own row. */
+export function groupResidentsByLeasePlace<T extends ResidentOccupantRow>(residents: T[]): T[][] {
+  const current = residents.filter((row) => row.status !== 'past_resident')
+  const used = new Set<string>()
+  const groups: T[][] = []
+
+  for (const row of current) {
+    if (used.has(row.id)) continue
+    if (!normalizeUnitLabel(row.unit)) {
+      used.add(row.id)
+      groups.push([row])
+      continue
+    }
+
+    const members = current.filter((other) => !used.has(other.id) && shareSameLeasePlace(row, other))
+    for (const member of members) used.add(member.id)
+    members.sort((a, b) => a.fullName.localeCompare(b.fullName, undefined, { sensitivity: 'base' }))
+    groups.push(members)
+  }
+
+  return groups.sort((a, b) =>
+    (a[0]?.fullName ?? '').localeCompare(b[0]?.fullName ?? '', undefined, { sensitivity: 'base' }),
+  )
+}
+
+/** Current residents on the same unit and property, excluding the open profile. */
+export function otherOccupantsOnSamePlace(input: {
+  residentId: string
+  unit: string
+  building: string | null | undefined
+  residents: ResidentOccupantRow[]
+}): ResidentOtherOccupant[] {
+  const unitKey = normalizeUnitLabel(input.unit)
+  if (!unitKey) return []
+
+  const seen = new Set<string>()
+  const occupants: ResidentOtherOccupant[] = []
+  for (const row of input.residents) {
+    if (row.id === input.residentId) continue
+    if (row.status === 'past_resident') continue
+    if (normalizeUnitLabel(row.unit) !== unitKey) continue
+    if (!samePropertyPlace(row.building, input.building)) continue
+    const name = row.fullName.trim()
+    if (!name) continue
+    const key = row.id.trim() || name.toLowerCase()
+    if (seen.has(key)) continue
+    seen.add(key)
+    occupants.push({ id: row.id, name })
+  }
+  return occupants.sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }))
 }
 
 function resolveStanding(status: string, balanceDue: number): {
@@ -244,12 +346,19 @@ export function buildResidentProfileDetail(input: {
     typeof user.monthlyRent === 'number' && Number.isFinite(user.monthlyRent) && user.monthlyRent > 0
       ? user.monthlyRent
       : null
+  const rentDueDay =
+    typeof user.rentDueDay === 'number' &&
+    Number.isFinite(user.rentDueDay) &&
+    user.rentDueDay >= 1 &&
+    user.rentDueDay <= 31
+      ? Math.trunc(user.rentDueDay)
+      : null
 
   return {
     id: user.id,
     name: user.fullName,
-    building: user.building?.trim() || 'Portfolio',
-    buildingShort: buildingShortName(user.building?.trim() || 'Portfolio'),
+    building: user.building?.trim() || 'Address',
+    buildingShort: residentPlaceLabel(user.building),
     unitDisplay: formatPropertyUnitDisplay(user.unit),
     standing: standing.standing,
     standingLabel: standing.standingLabel,
@@ -261,16 +370,11 @@ export function buildResidentProfileDetail(input: {
     leaseStatus: residentOccupancyLabel(user.status),
     leaseStartDate: user.leaseStartDate?.trim() || null,
     leaseEndDate: user.leaseEndDate?.trim() || null,
-    rentDueDay:
-      typeof user.rentDueDay === 'number' &&
-      Number.isFinite(user.rentDueDay) &&
-      user.rentDueDay >= 1 &&
-      user.rentDueDay <= 31
-        ? Math.trunc(user.rentDueDay)
-        : null,
+    rentDueDay,
     leaseStartLabel: formatPropertyLeaseEnd(user.leaseStartDate ?? null) ?? '—',
     leaseEndLabel: formatPropertyLeaseEnd(user.leaseEndDate) ?? '—',
     monthlyRentLabel: monthlyRent != null ? formatCurrency(monthlyRent) : '—',
+    rentDueDayLabel: rentDueDay != null ? formatRentDueDayOrdinal(rentDueDay) : '—',
     depositLabel: '—',
     tenantMaintenance: null,
     landlordMaintenance: null,
@@ -278,6 +382,7 @@ export function buildResidentProfileDetail(input: {
       user.maintenanceResponsibilitiesClause?.trim() || null,
     balanceDue: user.balanceDue,
     balanceLabel: formatCurrency(user.balanceDue),
+    otherOccupants: [],
     workflows: buildResidentWorkflowSummaries(user.id, workflowData),
     communications,
   }

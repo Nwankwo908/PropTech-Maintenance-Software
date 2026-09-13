@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 /**
- * Seed Twilio as the primary SMS provider and assign a Twilio number as the
- * landlord_main line. Mirror of scripts/seed-telnyx-primary.mjs, but env-driven
- * (no hardcoded number) so it works with whatever Twilio number you provision.
+ * Seed Twilio as the SMS provider and assign a Twilio number as the
+ * landlord_main line. Env-driven (no hardcoded number) so it works with
+ * whatever Twilio number you provision.
  *
  * Required env (from .env or shell):
  *   TWILIO_FROM_NUMBER            E.164 Twilio number, e.g. +14155551234
@@ -89,7 +89,7 @@ async function main() {
     auth: { autoRefreshToken: false, persistSession: false },
   })
 
-  // Flip provider precedence: Telnyx off, Twilio on (primary).
+  // Twilio is the only live SMS provider.
   await supabase.from('sms_providers').update({ active: false }).eq('name', 'telnyx')
 
   const { error: providerError } = await supabase.from('sms_providers').upsert(

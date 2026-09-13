@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react'
 import { getAdminEdgeSecret } from '@/lib/adminEdgeAuth'
 import { Link, useLocation, useNavigate } from 'react-router-dom'
 import {
@@ -16,7 +16,7 @@ import { postSlaAutoReassign, resolveSlaAutoReassignUrl } from '@/api/slaAutoRea
 import insightWarningIcon from '@/assets/noun-warning-recurring.png'
 import feedInfoIcon from '@/assets/noun-information.png'
 import { GetSetUpForSuccessCard } from '@/components/GetSetUpForSuccessCard'
-import { PropertyHealthBuildingGrid } from '@/components/PropertyHealthBuildingGrid'
+import { MyPropertiesAcrossAdmin } from '@/components/MyPropertiesAcrossAdmin'
 import { AwaitingDecisionListRail } from '@/components/AwaitingDecisionListRail'
 import { AwaitingDecisionOutcomeModal } from '@/components/AwaitingDecisionOutcomeModal'
 import { LateRentAccountReviewRail } from '@/components/LateRentAccountReviewRail'
@@ -66,7 +66,6 @@ import {
 } from '@/lib/needsAttentionWorkOrder'
 import {
   snapshotActiveOperations,
-  workflowOperationsPath,
 } from '@/lib/adminWorkflowKanban'
 import { fetchVendorYtdPaidTotal } from '@/lib/workflowPipelineDetail'
 import {
@@ -74,33 +73,19 @@ import {
   ADMIN_RIGHT_RAIL_SCRIM,
   ADMIN_RIGHT_RAIL_STACK_HOST,
 } from '@/lib/adminRightRail'
-import { buildPropertyIdByBuilding, propertyDetailPathForBuilding, propertyResidentDetailPathForBuilding } from '@/lib/propertyRoutes'
-import {
-  buildActivityFeedTooltipCopy,
-  splitEmphasizedText,
-  type FeedTooltipDestination,
-} from '@/lib/activityFeedTooltip'
-import { PORTFOLIO_RECOMMENDATION_EVENT } from '@/lib/conversationMonitoring'
+import { buildPropertyIdByBuilding, propertyResidentDetailPathForBuilding } from '@/lib/propertyRoutes'
 import {
   buildLeaseRenewalCallReasonLine,
   type VendorCallContext,
 } from '@/lib/vendorCallFlow'
-import {
-  fetchRecentPropertyOperationsEvents,
-  formatTimelineCategoryLabel,
-  formatTimelineContextLine,
-  type PropertyOperationsTimelineEvent,
-} from '@/lib/propertyOperationsGraph'
 import {
   buildPropertyHealthReport,
   enrichFeedbackFromTickets,
   fetchPropertyHealthSignals,
   mapTicketsForPropertyHealth,
   mapUnitsForPropertyHealth,
-  countDistinctPortfolioUnits,
   propertyHealthFactorBreakdownLines,
   propertyHealthKpiDelta,
-  resolvePropertyHealthKpiCaption,
   resolvePropertyHealthKpiValue,
   shouldShowPropertyHealthScore,
   type PropertyHealthAsset,
@@ -112,6 +97,7 @@ import {
   type PropertyHealthResident,
   type PropertyHealthVendorMetrics,
 } from '@/lib/propertyHealth'
+import { PropertyHealthDonut, propertyHealthDonutPercent } from '@/components/PropertyHealthDonut'
 import { buildEscalatedWorkflowReview } from '@/lib/escalatedWorkflowReview'
 import {
   applyLateRentAccountAction,
@@ -519,127 +505,6 @@ function TrendingDownIcon() {
   )
 }
 
-function isUnitRegisteredFeedEvent(event: PropertyOperationsTimelineEvent): boolean {
-  return event.eventType === 'unit.registered'
-}
-
-function feedEventOpenTarget(
-  event: PropertyOperationsTimelineEvent,
-  propertyIdByBuilding: Map<string, string>,
-): FeedTooltipDestination | null {
-  if (event.eventType === PORTFOLIO_RECOMMENDATION_EVENT) {
-    return { kind: 'property', path: '/admin' }
-  }
-  if (isUnitRegisteredFeedEvent(event)) {
-    const building = event.building?.trim()
-    return {
-      kind: 'property',
-      path: building
-        ? propertyDetailPathForBuilding(building, propertyIdByBuilding)
-        : '/admin/properties',
-    }
-  }
-  const runId = event.workflowRunId?.trim()
-  if (!runId) return null
-  return { kind: 'workflow', runId }
-}
-
-function FeedEventInfo({
-  event,
-  propertyIdByBuilding,
-  onOpen,
-}: {
-  event: PropertyOperationsTimelineEvent
-  propertyIdByBuilding: Map<string, string>
-  onOpen: (target: FeedTooltipDestination) => void
-}) {
-  const target = feedEventOpenTarget(event, propertyIdByBuilding)
-  const copy = buildActivityFeedTooltipCopy(event, target)
-  const summaryParts = splitEmphasizedText(copy.summary)
-
-  const openTarget = () => {
-    if (target) onOpen(target)
-  }
-
-  return (
-    <span className="group/feed-info relative inline-flex shrink-0 self-start pt-3.5">
-      <button
-        type="button"
-        tabIndex={0}
-        disabled={!target}
-        onClick={openTarget}
-        className={[
-          'sa-press inline-flex rounded p-0.5 outline-none focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-1',
-          target ? 'cursor-pointer hover:opacity-70' : 'cursor-default opacity-40',
-        ].join(' ')}
-        aria-label={
-          copy.actionLabel
-            ? `${copy.actionLabel}: ${copy.title}`
-            : `More information about ${copy.title}`
-        }
-      >
-        <img
-          src={feedInfoIcon}
-          alt=""
-          aria-hidden
-          className="size-5 opacity-55"
-        />
-      </button>
-      <div
-        role="tooltip"
-        className={[
-          'absolute right-0 top-full z-50 mt-1.5 w-[min(280px,calc(100vw-2.5rem))] max-w-[calc(100vw-2.5rem)] rounded-[10px] border border-[#e5e7eb] bg-white p-3 opacity-0 shadow-[0px_8px_24px_rgba(0,0,0,0.12)] transition-opacity duration-150 group-hover/feed-info:opacity-100 group-focus-within/feed-info:opacity-100',
-          target ? 'cursor-pointer' : 'pointer-events-none',
-        ].join(' ')}
-        onClick={(e) => {
-          if (!target) return
-          e.preventDefault()
-          e.stopPropagation()
-          openTarget()
-        }}
-        onKeyDown={(e) => {
-          if (!target) return
-          if (e.key === 'Enter' || e.key === ' ') {
-            e.preventDefault()
-            e.stopPropagation()
-            openTarget()
-          }
-        }}
-      >
-        <p className="text-[12px] font-semibold leading-4 text-[#0a0a0a]">{copy.title}</p>
-        <p className="mt-1.5 text-[12px] leading-[17px] text-[#374151]">
-          {summaryParts.map((part, index) =>
-            part.bold ? (
-              <strong key={`${part.text}-${index}`} className="font-semibold text-[#0a0a0a]">
-                {part.text}
-              </strong>
-            ) : (
-              <span key={`${part.text}-${index}`}>{part.text}</span>
-            ),
-          )}
-        </p>
-        {copy.fields.length ? (
-          <ul className="mt-2.5 flex flex-col gap-1.5">
-            {copy.fields.map((field) => (
-              <li key={field.label} className="flex flex-col gap-0.5">
-                <span className="text-[11px] font-medium leading-4 text-[#6a7282]">
-                  {field.label}
-                </span>
-                <span className="text-[12px] leading-4 text-[#0a0a0a]">{field.value}</span>
-              </li>
-            ))}
-          </ul>
-        ) : null}
-        {copy.actionLabel ? (
-          <p className="mt-2.5 text-[12px] font-semibold leading-4 text-[#0030b5]">
-            {copy.actionLabel}
-          </p>
-        ) : null}
-      </div>
-    </span>
-  )
-}
-
 function KpiBreakdownInfo({
   title,
   description,
@@ -703,6 +568,7 @@ function KpiBreakdownInfo({
 function KpiCard({
   label,
   value,
+  chart,
   delta,
   deltaSuffix = '',
   deltaFormatter,
@@ -715,6 +581,7 @@ function KpiCard({
 }: {
   label: string
   value: string
+  chart?: ReactNode
   delta: number | null
   /** Appended to the delta, e.g. '%' for rate cards. */
   deltaSuffix?: string
@@ -748,10 +615,19 @@ function KpiCard({
           />
         ) : null}
       </div>
-      <div className="flex min-w-0 flex-wrap items-end justify-between gap-2">
-        <p className="min-w-0 break-words text-[28px] font-bold leading-none tracking-[0.4px] text-[#0a0a0a] tabular-nums sm:text-[44px] xl:text-[52px]">
-          {value}
-        </p>
+      <div className={`flex min-w-0 flex-wrap justify-between gap-2 ${chart ? 'items-center' : 'items-end'}`}>
+        {chart ? (
+          <div className="flex min-w-0 items-center gap-3">
+            {chart}
+            <p className="min-w-0 break-words text-[28px] font-bold leading-none tracking-[0.4px] text-[#0a0a0a] tabular-nums sm:text-[44px] xl:text-[52px]">
+              {value}
+            </p>
+          </div>
+        ) : (
+          <p className="min-w-0 break-words text-[28px] font-bold leading-none tracking-[0.4px] text-[#0a0a0a] tabular-nums sm:text-[44px] xl:text-[52px]">
+            {value}
+          </p>
+        )}
         {delta != null ? (
           <span
             className={[
@@ -948,20 +824,6 @@ function PreventFutureRepairsInsightCard({ insight }: { insight: SmartInsight })
   )
 }
 
-const FEED_BADGE_STYLES: Record<string, string> = {
-  maintenance: 'bg-[#f3e8ff] text-[#7c3aed]',
-  rent: 'bg-[#fef9c2] text-[#a65f00]',
-  move_in: 'bg-[#dbfce7] text-[#008236]',
-  move_out: 'bg-[#ffe2e2] text-[#c10007]',
-  inspection: 'bg-[#dbeafe] text-[#1447e6]',
-  vendor: 'bg-[#e0f2fe] text-[#0069a8]',
-  admin: 'bg-[#f3f4f6] text-[#364153]',
-}
-
-async function loadOverviewFeedEvents(): Promise<PropertyOperationsTimelineEvent[]> {
-  return fetchRecentPropertyOperationsEvents(8)
-}
-
 function overviewGreetingSalutation(now: Date = new Date()): string {
   const hour = now.getHours()
   if (hour < 12) return 'Good morning'
@@ -1003,7 +865,6 @@ export function AdminOverviewDashboard() {
   const [units, setUnits] = useState<OverviewUnit[]>([])
   const [workflowData, setWorkflowData] =
     useState<AdminWorkflowDashboardData | null>(null)
-  const [feedEvents, setFeedEvents] = useState<PropertyOperationsTimelineEvent[]>([])
   const [pmTasks, setPmTasks] = useState<PropertyHealthPmTask[]>([])
   const [feedback, setFeedback] = useState<PropertyHealthFeedback[]>([])
   const [vendorMetrics, setVendorMetrics] = useState<PropertyHealthVendorMetrics[]>([])
@@ -1215,7 +1076,6 @@ export function AdminOverviewDashboard() {
         vendorScoresResult,
         unitsResult,
         workflowResult,
-        feedResult,
         healthSignals,
         residentsResult,
         invoicesResult,
@@ -1261,7 +1121,6 @@ export function AdminOverviewDashboard() {
           allowImportedOperations
             ? fetchAdminWorkflowDashboard()
             : Promise.resolve(emptyAdminWorkflowDashboardData()),
-          loadOverviewFeedEvents(),
           fetchPropertyHealthSignals(),
           supabase
             .from('users')
@@ -1431,7 +1290,6 @@ export function AdminOverviewDashboard() {
       }
 
       setWorkflowData(workflowResult)
-      setFeedEvents(feedResult)
       setPmTasks(healthSignals.pmTasks)
       setFeedback(healthSignals.feedback)
       setVendorMetrics(healthSignals.vendorMetrics)
@@ -1727,7 +1585,7 @@ export function AdminOverviewDashboard() {
 
       const landlordId = getActiveLandlordId()
       const allowImportedOperations = allowImportedOperationsRef.current
-      const [ticketsResult, feedResult, workflowResult] = await Promise.all([
+      const [ticketsResult, workflowResult] = await Promise.all([
         allowImportedOperations
           ? supabase
               .from('maintenance_request_enriched')
@@ -1738,14 +1596,12 @@ export function AdminOverviewDashboard() {
               .order('created_at', { ascending: false })
               .limit(500)
           : Promise.resolve({ data: [], error: null }),
-        loadOverviewFeedEvents(),
         allowImportedOperations
           ? fetchAdminWorkflowDashboard()
           : Promise.resolve(emptyAdminWorkflowDashboardData()),
       ])
 
       if (cancelled) return
-      setFeedEvents(feedResult)
       setWorkflowData(workflowResult)
       if (!ticketsResult.error) {
         const vendorNameById = Object.fromEntries(vendors.map((v) => [v.id, v.name]))
@@ -1801,17 +1657,6 @@ export function AdminOverviewDashboard() {
   const lateRentReviewRuns = useMemo(
     () => (workflowData ? collectLateRentReviewRuns(workflowData) : []),
     [workflowData],
-  )
-
-  const openFeedTarget = useCallback(
-    (target: FeedTooltipDestination) => {
-      if (target.kind === 'property') {
-        navigate(target.path)
-        return
-      }
-      navigate(workflowOperationsPath(target.runId))
-    },
-    [navigate],
   )
 
   const openLateRentRail = useCallback((runId: string) => {
@@ -2193,11 +2038,8 @@ export function AdminOverviewDashboard() {
       setEscalatedRailLoading(true)
       if (autoUrl && secret) {
         void postSlaAutoReassign({ url: autoUrl, secret, ticketId: ticketIdForAction })
-          .then(async (result) => {
+          .then(async () => {
             if (cancelled) return
-            if (result.outcome === 'reassigned') {
-              setFeedEvents(await loadOverviewFeedEvents())
-            }
             setEscalatedRailTarget(null)
           })
           .catch((err) => {
@@ -2484,7 +2326,6 @@ export function AdminOverviewDashboard() {
         setEscalatedRailError(null)
         if (allowImportedOperationsRef.current) {
           setWorkflowData(await fetchAdminWorkflowDashboard())
-          setFeedEvents(await loadOverviewFeedEvents())
         }
         showAwaitingDecisionOutcome(
           buildAttentionDeletedOutcome({
@@ -2565,7 +2406,6 @@ export function AdminOverviewDashboard() {
               : t,
           ),
         )
-        setFeedEvents(await loadOverviewFeedEvents())
         setFindExternalVendorOpen(false)
         setEscalatedRailTarget(null)
         setExternalVendorSuggestions([])
@@ -2809,11 +2649,6 @@ export function AdminOverviewDashboard() {
     (i) => i.badge === 'critical',
   ).length
 
-  const overviewBuildingHealth = useMemo(
-    () => healthReport.buildings.slice(0, 6),
-    [healthReport.buildings],
-  )
-
   const smartInsights = useMemo<SmartInsight[]>(() => {
     return computePortfolioInsights({
       tickets: tickets.map((t) => ({
@@ -2839,7 +2674,6 @@ export function AdminOverviewDashboard() {
   const updatedCaption =
     loading || !lastUpdated ? 'Updating…' : formatUpdatedAt(lastUpdated)
   const healthScoreReady = shouldShowPropertyHealthScore(healthReport.portfolio?.status)
-  const healthKpiCaption = resolvePropertyHealthKpiCaption(healthReport.portfolio)
   const healthFactorBreakdown =
     !loading && healthReport.portfolio && healthReport.portfolio.status !== 'pending_setup'
       ? propertyHealthFactorBreakdownLines(healthReport.portfolio.components, {
@@ -2852,7 +2686,7 @@ export function AdminOverviewDashboard() {
     : resolvePropertyHealthKpiValue(
         healthReport.portfolio?.status,
         healthReport.portfolio?.score,
-        'over100',
+        'percent',
       )
 
   const escalatedRailOpen = escalatedRailTarget != null && escalatedReview != null
@@ -2954,8 +2788,8 @@ export function AdminOverviewDashboard() {
   const stackedLeaseRenewalRails = leaseRenewalRailOpen && leaseRenewalIncentiveBrief != null
 
   return (
-    <div className="flex w-full min-w-0 max-w-full flex-col overflow-x-hidden px-4 pb-8 sm:px-6 lg:px-8">
-      <div className="flex items-center justify-between py-6">
+    <div className="flex w-full min-w-0 max-w-full flex-col gap-4 overflow-x-hidden px-4 pb-4 sm:px-6 lg:px-8">
+      <div className="flex items-center justify-between pt-6">
         <div>
           <h1 className="text-[24px] font-semibold leading-8 tracking-[0.0703px] text-[#0a0a0a]">
             Dashboard Overview
@@ -2969,7 +2803,7 @@ export function AdminOverviewDashboard() {
       {onboardingNotice ? (
         <div
           role="alert"
-          className="mb-4 flex items-start justify-between gap-3 rounded-[10px] border border-[#fde68a] bg-[#fffbeb] px-4 py-3 text-[13px] text-[#92400e]"
+          className="flex items-start justify-between gap-3 rounded-[10px] border border-[#fde68a] bg-[#fffbeb] px-4 py-3 text-[13px] text-[#92400e]"
         >
           <span>{onboardingNotice}</span>
           <button
@@ -2983,7 +2817,7 @@ export function AdminOverviewDashboard() {
       ) : null}
 
       {error ? (
-        <div className="mb-4 rounded-[10px] border border-[#fde68a] bg-[#fffbeb] px-4 py-3 text-[13px] text-[#92400e]">
+        <div className="rounded-[10px] border border-[#fde68a] bg-[#fffbeb] px-4 py-3 text-[13px] text-[#92400e]">
           {error}
         </div>
       ) : null}
@@ -2999,7 +2833,7 @@ export function AdminOverviewDashboard() {
       ) : null}
 
       {!loading && units.length === 0 && tickets.length === 0 ? (
-        <section className="mb-4 rounded-[10px] border border-[#e5e7eb] bg-white p-6 shadow-[0px_1px_2px_-1px_rgba(0,0,0,0.06)]">
+        <section className="rounded-[10px] border border-[#e5e7eb] bg-white p-6 shadow-[0px_1px_2px_-1px_rgba(0,0,0,0.06)]">
           <h2 className="text-[18px] font-semibold leading-7 text-[#0a0a0a]">
             Welcome to Ulo — let’s get your portfolio set up
           </h2>
@@ -3066,20 +2900,20 @@ export function AdminOverviewDashboard() {
         </section>
       ) : null}
 
-      <div className="grid min-w-0 grid-cols-2 gap-3 sm:gap-4 xl:grid-cols-4">
+      <div className="grid min-w-0 grid-cols-2 gap-4 xl:grid-cols-4">
         <KpiCard
           stagger={0}
           label="Critical Issues"
           value={loading ? '—' : String(kpis.criticalOpen)}
           delta={loading ? null : kpis.criticalDelta}
-          caption="More reported than 4 weeks ago"
+          caption="In the last 4 weeks"
         />
         <KpiCard
           stagger={1}
           label="Active Tasks"
           value={loading ? '—' : String(kpis.activeOps)}
           delta={loading ? null : kpis.activeOpsDelta}
-          caption="Compared to 4 weeks ago"
+          caption="In the last 4 weeks"
           infoTitle="Active tasks breakdown"
           infoDescription="Shows the tasks Ulo is actively managing, such as maintenance, rent, inspections, move-ins, move-outs, and lease renewals. It doesn't include every open work order—only those currently in progress."
           infoLines={loading ? undefined : kpis.activeOpsBreakdown}
@@ -3088,6 +2922,15 @@ export function AdminOverviewDashboard() {
           stagger={2}
           label="Property Health"
           value={healthKpiValue}
+          chart={
+            <PropertyHealthDonut
+              percent={propertyHealthDonutPercent(
+                kpis.propertyHealth,
+                !loading && healthScoreReady,
+              )}
+              label={`Property health ${healthKpiValue}`}
+            />
+          }
           delta={
             loading || !healthScoreReady
               ? null
@@ -3095,7 +2938,7 @@ export function AdminOverviewDashboard() {
           }
           deltaSuffix="%"
           goodWhenUp
-          caption={healthKpiCaption}
+          caption={updatedCaption}
           infoTitle="Property health factors"
           infoDescription="Condition, maintenance, and risk. Missing information is unknown — it does not lower the score."
           infoLines={healthFactorBreakdown}
@@ -3110,9 +2953,9 @@ export function AdminOverviewDashboard() {
         />
       </div>
 
-      <div className="mt-4 grid min-w-0 items-start gap-4 xl:grid-cols-[2fr_3fr]">
+      <div className="grid min-w-0 items-stretch gap-4 xl:grid-cols-2">
         {/* Smart Insights */}
-        <section className="flex min-w-0 flex-col rounded-[10px] border border-[#e5e7eb] bg-white shadow-[0px_1px_2px_-1px_rgba(0,0,0,0.06)]">
+        <section className="flex h-full min-w-0 flex-col rounded-[10px] border border-[#e5e7eb] bg-white shadow-[0px_1px_2px_-1px_rgba(0,0,0,0.06)]">
           <div className="border-b border-[#e5e7eb] px-4 py-4 sm:px-6">
             <h2 className="text-[16px] font-semibold leading-6 text-[#0a0a0a]">
               Property Insights
@@ -3121,7 +2964,7 @@ export function AdminOverviewDashboard() {
               Insights generated from activity across your property
             </p>
           </div>
-          <div className="flex flex-col gap-3 p-4">
+          <div className="flex min-h-0 flex-1 flex-col gap-3 p-4">
             {loading ? (
               <p className="px-2 py-6 text-center text-[13px] text-[#6a7282]">Loading…</p>
             ) : smartInsights.length === 0 ? (
@@ -3145,7 +2988,7 @@ export function AdminOverviewDashboard() {
         </section>
 
         {/* Needs Attention */}
-        <section className="flex min-w-0 flex-col rounded-[10px] border border-[#e5e7eb] bg-white shadow-[0px_1px_2px_-1px_rgba(0,0,0,0.06)]">
+        <section className="flex h-full min-w-0 flex-col rounded-[10px] border border-[#e5e7eb] bg-white shadow-[0px_1px_2px_-1px_rgba(0,0,0,0.06)]">
           <div className="flex flex-wrap items-start justify-between gap-2 border-b border-[#e5e7eb] px-4 py-4 sm:px-6">
             <div className="min-w-0">
               <h2 className="text-[16px] font-semibold leading-6 text-[#0a0a0a]">
@@ -3168,7 +3011,7 @@ export function AdminOverviewDashboard() {
               </button>
             ) : null}
           </div>
-          <div className="flex flex-col divide-y divide-[#f3f4f6]">
+          <div className="flex min-h-0 flex-1 flex-col divide-y divide-[#f3f4f6]">
             {loading ? (
               <p className="px-6 py-8 text-center text-[13px] text-[#6a7282]">Loading…</p>
             ) : attentionItems.length === 0 ? (
@@ -3228,96 +3071,9 @@ export function AdminOverviewDashboard() {
             )}
           </div>
         </section>
-
-        {/* AI Operations Feed */}
-        <section className="flex min-w-0 flex-col rounded-[10px] border border-[#e5e7eb] bg-white shadow-[0px_1px_2px_-1px_rgba(0,0,0,0.06)]">
-          <div className="flex items-center justify-between gap-3 border-b border-[#e5e7eb] px-4 py-4 sm:px-6">
-            <div className="min-w-0">
-              <h2 className="text-[16px] font-semibold leading-6 text-[#0a0a0a]">
-                Ulo Activity Feed
-              </h2>
-              <p className="text-[12px] leading-4 text-[#6a7282]">Actions completed across your properties</p>
-            </div>
-            <span className="size-2 shrink-0 rounded-full bg-[#00c950]" aria-hidden />
-          </div>
-          <div className="flex flex-col">
-            {loading ? (
-              <p className="px-6 py-8 text-center text-[13px] text-[#6a7282]">Loading…</p>
-            ) : feedEvents.length === 0 ? (
-              <p className="px-6 py-8 text-center text-[13px] text-[#6a7282]">
-                No AI actions yet. Activity will stream here as Ulo starts working.
-              </p>
-            ) : (
-              feedEvents.map((event, index) => {
-                const context = formatTimelineContextLine(event)
-                const isLast = index === feedEvents.length - 1
-                const isFirst = index === 0
-                return (
-                  <div
-                    key={event.id}
-                    style={{ animationDelay: `${Math.min(index, 8) * 35}ms` }}
-                    className="sa-enter flex min-w-0 gap-3 px-4 sm:px-6"
-                  >
-                    <div className="flex w-[4.75rem] shrink-0 flex-col items-center self-stretch">
-                      <span
-                        className={[
-                          'w-full text-center text-[11px] leading-4 text-[#6a7282]',
-                          isFirst ? 'mt-3' : 'mt-1',
-                        ].join(' ')}
-                      >
-                        {formatRelativeTime(event.createdAt)}
-                      </span>
-                      {!isLast ? (
-                        <span
-                          className="mt-1 w-0 min-h-[12px] flex-1 border-l border-dotted border-[#d1d5dc]"
-                          aria-hidden
-                        />
-                      ) : null}
-                    </div>
-                    <div className="min-w-0 flex-1 py-3">
-                      <p className="text-[14px] leading-5 tracking-[-0.1504px] text-[#0a0a0a]">
-                        {event.label}
-                        {context ? (
-                          <span className="text-[#6a7282]"> · {context}</span>
-                        ) : null}
-                      </p>
-                      <div className="mt-1 flex items-center gap-2">
-                        <span
-                          className={[
-                            'rounded-[4px] px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-[0.06em]',
-                            FEED_BADGE_STYLES[event.category] ?? FEED_BADGE_STYLES.admin,
-                          ].join(' ')}
-                        >
-                          {formatTimelineCategoryLabel(event.category)}
-                        </span>
-                      </div>
-                    </div>
-                    <FeedEventInfo
-                      event={event}
-                      propertyIdByBuilding={propertyIdByBuilding}
-                      onOpen={openFeedTarget}
-                    />
-                  </div>
-                )
-              })
-            )}
-          </div>
-        </section>
-
-        <PropertyHealthBuildingGrid
-          loading={loading}
-          buildings={overviewBuildingHealth}
-          buildingCount={healthReport.buildings.length}
-          totalUnits={countDistinctPortfolioUnits(units)}
-          buildingHref={(building) =>
-            propertyDetailPathForBuilding(building, propertyIdByBuilding)
-          }
-          headerAction={
-            <Link to="/admin/properties" className="admin-quiet-text-action sa-link">
-              View all properties →
-            </Link>
-          }
-        />
+        <div className="min-w-0 xl:col-span-2">
+          <MyPropertiesAcrossAdmin />
+        </div>
       </div>
 
       {escalatedRailError ? (

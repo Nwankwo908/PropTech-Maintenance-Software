@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { buildOnboardingReviewMetrics } from './review'
+import { LIMITED_ALPHA_1_TWILIO_SMS_NUMBER } from '@shared/landlordCapabilities'
+import { buildOnboardingReviewData, buildOnboardingReviewMetrics } from './review'
 import { sampleResident, sampleVendor, validOnboardingState } from './testFixtures'
 
 describe('buildOnboardingReviewMetrics', () => {
@@ -73,5 +74,19 @@ describe('buildOnboardingReviewMetrics', () => {
       ],
     })
     expect(buildOnboardingReviewMetrics(state, [], []).units).toBe(9)
+  })
+})
+
+describe('buildOnboardingReviewData SMS intake', () => {
+  it('does not show the retired Telnyx DID', () => {
+    const review = buildOnboardingReviewData(
+      validOnboardingState(),
+      [],
+      [],
+      undefined,
+      '+19734005760',
+    )
+    expect(review.smsIntakeNumber).toBe(LIMITED_ALPHA_1_TWILIO_SMS_NUMBER)
+    expect(review.smsIntakeNumberDisplay).not.toMatch(/973/)
   })
 })

@@ -34,7 +34,7 @@ export function isStorageMediaPath(value: string): boolean {
 }
 
 /**
- * Twilio/Telnyx media URLs require HTTP Basic and must never be used in
+ * Twilio media URLs require HTTP Basic and must never be used in
  * `<img>` / `<video>` — the browser prompts for credentials.
  */
 export function isProviderAuthMediaUrl(url: string): boolean {

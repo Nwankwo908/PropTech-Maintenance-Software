@@ -1,17 +1,12 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1"
-import { getSMSProviderFor } from "../_shared/sms/providerFactory.ts"
-import { processInboundSms, InboundSmsError } from "../_shared/sms/inbound_processor.ts"
+import { getSMSProvider } from "../_shared/sms/providerFactory.ts"
+import { InboundSmsError } from "../_shared/sms/inbound_processor.ts"
 import { processSmsStatusUpdate } from "../_shared/sms/processSmsStatusUpdate.ts"
-import {
-  isTelnyxInboundEventType,
-  isTelnyxStatusEventType,
-  peekTelnyxEventType,
-} from "../_shared/sms/TelnyxProvider.ts"
 
 const corsHeaders: Record<string, string> = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers":
-    "authorization, x-client-info, apikey, content-type, x-twilio-signature, telnyx-signature-ed25519, telnyx-timestamp",
+    "authorization, x-client-info, apikey, content-type, x-twilio-signature",
   "Access-Control-Allow-Methods": "POST, OPTIONS",
 }
 
@@ -47,30 +42,7 @@ Deno.serve(async (req) => {
   const rawBody = await req.text()
 
   try {
-    const telnyxEvent = peekTelnyxEventType(rawBody)
-    if (isTelnyxInboundEventType(telnyxEvent)) {
-      const inbound = await getSMSProviderFor("telnyx").normalizeInboundWebhook(req, {
-        rawBody,
-        signature: req.headers.get("telnyx-signature-ed25519") ?? "",
-        url: req.url,
-      })
-      const result = await processInboundSms(supabase, inbound)
-      console.info("[sms-status-callback] inbound message.received", {
-        providerMessageSid: inbound.providerMessageSid,
-        conversationId: result.conversationId,
-        messageId: result.messageId,
-      })
-      return emptyOk()
-    }
-    if (telnyxEvent && !isTelnyxStatusEventType(telnyxEvent)) {
-      console.info("[sms-status-callback] ignoring Telnyx event", { eventType: telnyxEvent })
-      return emptyOk()
-    }
-
-    const statusProvider = isTelnyxStatusEventType(telnyxEvent)
-      ? getSMSProviderFor("telnyx")
-      : getSMSProviderFor("twilio")
-    const statusUpdate = await statusProvider.normalizeStatusWebhook(
+    const statusUpdate = await getSMSProvider().normalizeStatusWebhook(
       requestWithBody(req, rawBody),
     )
 
@@ -94,11 +66,7 @@ Deno.serve(async (req) => {
       return emptyOk()
     }
     const message = err instanceof Error ? err.message : String(err)
-    if (
-      /Invalid Twilio webhook signature/i.test(message) ||
-      /Invalid Telnyx webhook signature/i.test(message) ||
-      /Missing Telnyx webhook signature headers/i.test(message)
-    ) {
+    if (/Invalid Twilio webhook signature/i.test(message)) {
       return new Response("Unauthorized", { status: 401, headers: corsHeaders })
     }
 

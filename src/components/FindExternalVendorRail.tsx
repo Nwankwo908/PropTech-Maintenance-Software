@@ -512,6 +512,8 @@ export function FindExternalVendorRail({
         vendorName: messageVendor.name,
         searchId: messageVendor.searchId,
         categoryId: messageVendor.categoryId,
+        issueCategory: outreachContext.jobCategory,
+        searchLocation: outreachContext.propertyAddress,
         text: draft,
       })
       setThreadsByBusiness((prev) => ({ ...prev, [businessId]: result.thread }))

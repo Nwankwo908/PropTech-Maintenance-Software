@@ -103,7 +103,7 @@ export function PropertyUnitsTable({
                   <td className="whitespace-nowrap px-5 py-4 text-[14px] font-semibold leading-5 text-[#0a0a0a]">
                     {row.unitDisplay}
                   </td>
-                  <td className="whitespace-nowrap px-5 py-4 text-[14px] leading-5 text-[#364153]">
+                  <td className="max-w-[280px] px-5 py-4 text-[14px] leading-5 text-[#364153]">
                     {row.residentId && row.residentName ? (
                       <Link
                         to={residentDetailPath(row.residentId)}

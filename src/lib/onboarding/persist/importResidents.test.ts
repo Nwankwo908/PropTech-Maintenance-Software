@@ -7,6 +7,7 @@ import {
   onboardingResidentScopeKey,
   onboardingResidentsToImportRows,
   resolveImportResidentBuilding,
+  resolveImportedResidentUnit,
 } from './importResidents'
 import type { OnboardingResident } from './residents'
 
@@ -53,6 +54,23 @@ describe('onboardingResidentIdentityMatch', () => {
         { fullName: 'Amy Chen', unit: '1A', building: 'Pine Court' },
       ),
     ).toBe(false)
+  })
+})
+
+describe('resolveImportedResidentUnit', () => {
+  it('defaults to unit 1 when a matched lease has no unit', () => {
+    expect(resolveImportedResidentUnit('', '', true)).toBe('1')
+    expect(resolveImportedResidentUnit(null, '  ', true)).toBe('1')
+    expect(resolveImportedResidentUnit('', 'illegible', true)).toBe('1')
+  })
+
+  it('keeps an extracted resident or lease unit', () => {
+    expect(resolveImportedResidentUnit('B', '', true)).toBe('B')
+    expect(resolveImportedResidentUnit('', '2A', true)).toBe('2A')
+  })
+
+  it('does not invent a unit when there is no lease match', () => {
+    expect(resolveImportedResidentUnit('', '', false)).toBe('')
   })
 })
 
@@ -245,6 +263,8 @@ describe('onboardingResidentsToImportRows', () => {
     expect(rows).toHaveLength(2)
     expect(rows.every(isSelectedOnboardingExtractedResident)).toBe(true)
     expect(rows.map((row) => row.fullName)).toEqual(['Jamie Tenant', 'Alex Renter'])
+    expect(rows[0]?.rentDueDay).toBe('1')
+    expect(rows[1]?.rentDueDay).toBe('')
   })
 
   it('collapses a saved row and an extracted copy into one import row', () => {

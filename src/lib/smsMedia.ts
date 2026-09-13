@@ -78,7 +78,7 @@ function itemsFromRefs(
   return items
 }
 
-/** Resolve stored MMS refs into browser-safe signed URLs (skips Twilio/Telnyx). */
+/** Resolve stored MMS refs into browser-safe signed URLs (skips Twilio). */
 export async function resolveSmsMediaItems(refs: unknown): Promise<SmsMediaItem[]> {
   const list = normalizeMediaRefs(refs)
   if (list.length === 0) return []

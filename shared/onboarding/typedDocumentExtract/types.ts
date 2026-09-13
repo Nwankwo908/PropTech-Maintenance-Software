@@ -52,6 +52,7 @@ export type RentRollUnitRow = {
   lease_start: string | null
   lease_end: string | null
   monthly_rent: number | null
+  rent_due_day: number | null
   status: RentRollUnitStatus | null
   confidence: number
   skipReason: string | null
@@ -75,6 +76,7 @@ export type LeaseExtract = {
   lease_end: string | null
   monthly_rent: number | null
   security_deposit: number | null
+  rent_due_day: number | null
   confidence: number
   warnings: string[]
 }

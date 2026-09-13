@@ -546,7 +546,7 @@ async function notifyResidentReschedule(
   const smsNumber = await findActiveLandlordMain(supabase, params.landlordId)
   if (!smsNumber?.phone_number) return { ok: false, conversationId: null }
 
-  const provider = (smsNumber.provider === "telnyx" ? "telnyx" : "twilio") as SmsProviderName
+  const provider: SmsProviderName = "twilio"
   const residentId =
     typeof ticket.resident_id === "string" && ticket.resident_id.trim()
       ? ticket.resident_id.trim()

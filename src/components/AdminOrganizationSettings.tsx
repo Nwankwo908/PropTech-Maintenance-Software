@@ -16,6 +16,8 @@ import {
   openOrganizationDocumentPreview,
   ORGANIZATION_BRAND_ACCENTS,
   RENT_REMINDER_CADENCE_OPTIONS,
+  rentDueDayChoiceFromSetting,
+  normalizeRentDueDaySetting,
   saveOrganizationSettings,
   type OrganizationDocument,
   type OrganizationDocumentStatus,
@@ -269,6 +271,7 @@ export function AdminOrganizationSettings() {
   const { refresh: refreshWorkspace } = useLandlordWorkspace()
   const [savedSettings, setSavedSettings] = useState<OrganizationSettingsForm>(DEFAULT_ORGANIZATION_SETTINGS)
   const [draft, setDraft] = useState<OrganizationSettingsForm>(DEFAULT_ORGANIZATION_SETTINGS)
+  const [rentDueCustomOpen, setRentDueCustomOpen] = useState(false)
   const [workspace, setWorkspace] = useState<OrganizationWorkspaceSummary | null>(null)
   const [documents, setDocuments] = useState<OrganizationDocument[]>([])
   const [loading, setLoading] = useState(true)
@@ -290,6 +293,7 @@ export function AdminOrganizationSettings() {
       if (cancelled) return
       setSavedSettings(settings)
       setDraft(settings)
+      setRentDueCustomOpen(rentDueDayChoiceFromSetting(settings.rentDueDay) === 'custom')
       setWorkspace(summary)
       setDocuments(complianceDocs)
       setLoading(false)
@@ -318,10 +322,19 @@ export function AdminOrganizationSettings() {
 
   function handleDiscard() {
     setDraft(savedSettings)
+    setRentDueCustomOpen(rentDueDayChoiceFromSetting(savedSettings.rentDueDay) === 'custom')
     setSaveMessage(null)
   }
 
   async function handleSave() {
+    if (
+      rentDueCustomOpen &&
+      draft.rentDueDay.trim() &&
+      !normalizeRentDueDaySetting(draft.rentDueDay)
+    ) {
+      setSaveMessage('Rent due day must be between 1 and 31.')
+      return
+    }
     setSaving(true)
     setSaveMessage(null)
     try {
@@ -329,6 +342,7 @@ export function AdminOrganizationSettings() {
       const refreshed = await loadOrganizationSettings()
       setSavedSettings(refreshed)
       setDraft(refreshed)
+      setRentDueCustomOpen(rentDueDayChoiceFromSetting(refreshed.rentDueDay) === 'custom')
       await refreshWorkspace()
       void recordActivityLog({
         landlordId: getActiveLandlordId(),
@@ -469,7 +483,7 @@ export function AdminOrganizationSettings() {
               </div>
 
               <div className="mt-5 grid gap-4 sm:grid-cols-2">
-                <FormField label="Legal name" htmlFor="org-legal-name" className="sm:col-span-2">
+                <FormField label="Company name" htmlFor="org-legal-name" className="sm:col-span-2">
                   <input
                     id="org-legal-name"
                     className={inputClass}
@@ -485,7 +499,7 @@ export function AdminOrganizationSettings() {
                     onChange={(e) => updateDraft({ displayName: e.target.value })}
                   />
                 </FormField>
-                <FormField label="Primary contact" htmlFor="org-contact-name">
+                <FormField label="Name" htmlFor="org-contact-name">
                   <input
                     id="org-contact-name"
                     className={inputClass}
@@ -900,6 +914,52 @@ export function AdminOrganizationSettings() {
               ) : null}
 
               <div className="mt-5 grid gap-4 sm:grid-cols-2">
+                <FormField label="Rent due day" htmlFor="org-rent-due">
+                  <SettingsSelect
+                    id="org-rent-due"
+                    value={
+                      rentDueCustomOpen
+                        ? 'custom'
+                        : rentDueDayChoiceFromSetting(draft.rentDueDay)
+                    }
+                    onChange={(choice) => {
+                      if (choice === '1' || choice === '5') {
+                        setRentDueCustomOpen(false)
+                        updateDraft({ rentDueDay: choice })
+                        return
+                      }
+                      if (choice === 'custom') {
+                        const current = draft.rentDueDay.trim()
+                        setRentDueCustomOpen(true)
+                        updateDraft({
+                          rentDueDay: current === '1' || current === '5' ? '' : current,
+                        })
+                        return
+                      }
+                      setRentDueCustomOpen(false)
+                      updateDraft({ rentDueDay: '' })
+                    }}
+                    options={[
+                      { value: '', label: 'Select day' },
+                      { value: '1', label: '1st' },
+                      { value: '5', label: '5th' },
+                      { value: 'custom', label: 'Custom' },
+                    ]}
+                  />
+                  {rentDueCustomOpen ? (
+                    <input
+                      className={`${inputClass} mt-2`}
+                      inputMode="numeric"
+                      value={draft.rentDueDay}
+                      onChange={(e) => updateDraft({ rentDueDay: e.target.value })}
+                      placeholder="Day of month (1–31)"
+                      aria-label="Custom rent due day"
+                    />
+                  ) : null}
+                  <p className="mt-1.5 text-[13px] leading-5 tracking-[-0.1504px] text-[#6a7282]">
+                    Default for the portfolio. A resident&apos;s own rent due day still wins when set.
+                  </p>
+                </FormField>
                 <FormField label="Rent reminder cadence" htmlFor="org-rent-cadence">
                   <SettingsSelect
                     id="org-rent-cadence"

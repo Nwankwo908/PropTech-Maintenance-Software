@@ -1,5 +1,5 @@
 import { formatMoney } from './parse.ts'
-import { placeAccountFields, placeLandlordAndTenants, placePropertyAddressFields, orderLeaseDates } from './placeFields.ts'
+import { placeAccountAndTenantNames, placeAccountFields, placeLandlordAndTenants, placePropertyAddressFields, orderLeaseDates } from './placeFields.ts'
 import {
   ROLE_LABELS,
   type DwellingPolicyDeclarations,
@@ -38,6 +38,7 @@ export type MappedPortfolioExtract = {
     leaseStart: string
     leaseEnd: string
     monthlyRent: string
+    rentDueDay: string
     confidence: number
   }>
   vendors: []
@@ -104,6 +105,7 @@ export function mapRentRollToPortfolio(extract: RentRollExtract): MappedPortfoli
         leaseStart: row.lease_start ?? '',
         leaseEnd: row.lease_end ?? '',
         monthlyRent: formatMoney(row.monthly_rent),
+        rentDueDay: row.rent_due_day != null ? String(row.rent_due_day) : '',
         confidence: row.confidence,
       })
     }
@@ -194,6 +196,7 @@ export function mapLeaseToPortfolio(extract: LeaseExtract): MappedPortfolioExtra
   }
 
   const dates = orderLeaseDates(extract.lease_start, extract.lease_end)
+  const rentDueDay = extract.rent_due_day != null ? String(extract.rent_due_day) : ''
   const residents = parties.tenantNames.map((name) => ({
     fullName: name,
     unit: extract.unit ?? '',
@@ -203,6 +206,7 @@ export function mapLeaseToPortfolio(extract: LeaseExtract): MappedPortfolioExtra
     leaseStart: dates.start,
     leaseEnd: dates.end,
     monthlyRent: formatMoney(extract.monthly_rent),
+    rentDueDay,
     confidence: extract.confidence,
   }))
   const leases = parties.tenantNames.map((name) => ({
@@ -215,12 +219,17 @@ export function mapLeaseToPortfolio(extract: LeaseExtract): MappedPortfolioExtra
     securityDeposit: formatMoney(extract.security_deposit),
     confidence: extract.confidence,
   }))
+  const accountNames = placeAccountAndTenantNames({
+    companyName: parties.landlordName,
+    contactName: '',
+    tenantNames: parties.tenantNames,
+  })
 
   return {
     extractKind: 'lease',
     account: placeAccountFields({
-      companyName: parties.landlordName,
-      contactName: '',
+      companyName: accountNames.companyName,
+      contactName: accountNames.contactName,
       email: '',
       phone: '',
     }),

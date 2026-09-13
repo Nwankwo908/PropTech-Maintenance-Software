@@ -109,6 +109,48 @@ describe('fast-track company name after extraction', () => {
     expect(account.companyName).toBe('')
   })
 
+  it('does not copy a shortened tenant name into Your name', () => {
+    const account = collectExtractedAccount(
+      [
+        emptyPayload({
+          account: {
+            companyName: 'Adrian Antonio Ruiz Trelles',
+            contactName: 'Adrian Antonio Ruiz Trelles',
+          },
+        }),
+      ],
+      ['Adrian Ruiz Trelles'],
+    )
+    expect(account.companyName).toBe('')
+    expect(account.contactName).toBe('')
+  })
+
+  it('keeps the landlord in Organization when the tenant is a different person', () => {
+    const review = buildOnboardingExtractionReview([
+      uploadedDoc(
+        'lease',
+        emptyPayload({
+          account: { companyName: 'Ifunanya Okafor', contactName: '' },
+          residents: [
+            {
+              fullName: 'Adrian Antonio Ruiz Trelles',
+              unit: '1',
+              building: '',
+              phone: '',
+              email: '',
+              leaseStart: '',
+              leaseEnd: '',
+              monthlyRent: '',
+              confidence: 90,
+            },
+          ],
+        }),
+      ),
+    ])
+    expect(review.account.contactName).toBe('Ifunanya Okafor')
+    expect(review.residents.map((row) => row.fullName)).toEqual(['Adrian Antonio Ruiz Trelles'])
+  })
+
   it('infers company name from a company-like property name when account is missing', () => {
     const review = buildOnboardingExtractionReview([
       uploadedDoc(

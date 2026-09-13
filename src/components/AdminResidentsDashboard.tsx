@@ -29,7 +29,7 @@ import {
   mapUnitsForPropertyHealth,
   normalizeBuildingKey,
 } from '@/lib/propertyHealth'
-import { displayResidentEmail } from '@/lib/residentProfileDetail'
+import { displayResidentEmail, groupResidentsByLeasePlace } from '@/lib/residentProfileDetail'
 import { isRentChargePaidFromRun } from '@/lib/paymentSettlement'
 import { deleteResidentsForLandlord } from '@/lib/residentDeletion'
 import {
@@ -37,7 +37,7 @@ import {
   isSetupSuccessCheckboxGuideActive,
   isSetupSuccessCheckboxGuideNavigation,
 } from '@/lib/setupSuccessGuide'
-import { resolveTenantActivationChip, countUnactivatedTenants } from '@/lib/tenantActivationStatus'
+import { resolveTenantActivationChip, countUnactivatedTenants, type TenantActivationStatus } from '@/lib/tenantActivationStatus'
 import { supabase } from '@/lib/supabase'
 import { getErrorMessage } from '@/lib/errorMessage'
 import { parseLeaseDateInput } from '@/lib/onboarding'
@@ -48,6 +48,7 @@ import type { PropertyHistoryPaymentStatus } from '@/lib/propertyHistory'
 type ResidentRow = {
   id: string
   name: string
+  unit: string
   building: string | null
   propertyLinkId: string | null
   unitLabel: string
@@ -60,6 +61,11 @@ type ResidentRow = {
   smsConsentStatus: string | null
   activationAttemptCount: number
   activationSmsSentAt: string | null
+}
+
+type ResidentHouseholdRow = {
+  key: string
+  members: ResidentRow[]
 }
 
 function asString(value: unknown): string {
@@ -94,6 +100,69 @@ function formatBalance(amount: number): string {
 function formatMonthlyRent(amount: number | null): string {
   if (amount == null || !Number.isFinite(amount) || amount <= 0) return '—'
   return formatBalance(amount)
+}
+
+const ACTIVATION_ATTENTION_ORDER: TenantActivationStatus[] = [
+  'action_required',
+  'delivery_failed',
+  'not_started',
+  'waiting',
+  'opted_out',
+  'activated',
+]
+
+function householdRentLabel(members: ResidentRow[]): string {
+  return members.find((member) => member.rentLabel !== '—')?.rentLabel ?? '—'
+}
+
+function householdPaymentStatus(members: ResidentRow[]): PropertyHistoryPaymentStatus {
+  return members.some((member) => member.paymentStatus === 'not_paid') ? 'not_paid' : 'paid'
+}
+
+function householdOccupancyLabel(members: ResidentRow[]): string {
+  const labels = new Set(members.map((member) => residentOccupancyLabel(member.status)))
+  if (labels.size === 1) return [...labels][0] ?? '—'
+  return residentOccupancyLabel(members[0]?.status ?? 'active')
+}
+
+function householdActivationChip(members: ResidentRow[]) {
+  const chips = members.map((member) =>
+    resolveTenantActivationChip({
+      activationStatus: member.activationStatus,
+      smsConsentStatus: member.smsConsentStatus,
+      activationAttemptCount: member.activationAttemptCount,
+      activationSmsSentAt: member.activationSmsSentAt,
+    }),
+  )
+  chips.sort(
+    (left, right) =>
+      ACTIVATION_ATTENTION_ORDER.indexOf(left.status) -
+      ACTIVATION_ATTENTION_ORDER.indexOf(right.status),
+  )
+  return chips[0] ?? resolveTenantActivationChip({})
+}
+
+function uniqueHouseholdContacts(members: ResidentRow[]): {
+  phones: string[]
+  emails: string[]
+} {
+  const phones: string[] = []
+  const emails: string[] = []
+  const seenPhone = new Set<string>()
+  const seenEmail = new Set<string>()
+  for (const member of members) {
+    const phone = member.contactPhone?.trim()
+    if (phone && !seenPhone.has(phone)) {
+      seenPhone.add(phone)
+      phones.push(phone)
+    }
+    const email = member.contactEmail?.trim()
+    if (email && !seenEmail.has(email.toLowerCase())) {
+      seenEmail.add(email.toLowerCase())
+      emails.push(email)
+    }
+  }
+  return { phones, emails }
 }
 
 function asRecord(value: unknown): Record<string, unknown> {
@@ -302,6 +371,7 @@ export function AdminResidentsDashboard() {
         return {
           id: asString(raw.id),
           name: asString(raw.full_name) || 'Unnamed resident',
+          unit: unit ?? '',
           building,
           propertyLinkId,
           unitLabel: formatUnit(building, unit),
@@ -437,21 +507,40 @@ export function AdminResidentsDashboard() {
     setAddResidentOpen(false)
   }
 
-  const filteredResidents = useMemo(() => {
-    const q = searchQuery.trim().toLowerCase()
-    const filtered = residents.filter((resident) => {
-      const matchesSearch =
-        !q ||
-        resident.name.toLowerCase().includes(q) ||
-        resident.unitLabel.toLowerCase().includes(q) ||
-        (resident.contactPhone ?? '').toLowerCase().includes(q) ||
-        (resident.contactEmail ?? '').toLowerCase().includes(q)
-      if (!matchesSearch) return false
-      return true
-    })
+  const residentHouseholds = useMemo((): ResidentHouseholdRow[] => {
+    const byId = new Map(residents.map((resident) => [resident.id, resident]))
+    return groupResidentsByLeasePlace(
+      residents.map((resident) => ({
+        id: resident.id,
+        fullName: resident.name,
+        unit: resident.unit,
+        building: resident.building,
+        status: resident.status,
+      })),
+    ).map((group) => ({
+      key: group.map((member) => member.id).join('|'),
+      members: group
+        .map((member) => byId.get(member.id))
+        .filter((member): member is ResidentRow => Boolean(member)),
+    }))
+  }, [residents])
 
-    return filtered.sort((a, b) => a.name.localeCompare(b.name))
-  }, [residents, searchQuery])
+  const filteredHouseholds = useMemo(() => {
+    const q = searchQuery.trim().toLowerCase()
+    const matchesSearch = (resident: ResidentRow) =>
+      !q ||
+      resident.name.toLowerCase().includes(q) ||
+      resident.unitLabel.toLowerCase().includes(q) ||
+      (resident.contactPhone ?? '').toLowerCase().includes(q) ||
+      (resident.contactEmail ?? '').toLowerCase().includes(q)
+
+    return residentHouseholds.filter((household) => household.members.some(matchesSearch))
+  }, [residentHouseholds, searchQuery])
+
+  const filteredResidents = useMemo(
+    () => filteredHouseholds.flatMap((household) => household.members),
+    [filteredHouseholds],
+  )
 
   const unactivatedResidentCount = useMemo(
     () =>
@@ -493,11 +582,23 @@ export function AdminResidentsDashboard() {
     setShowCheckboxGuide(false)
   }, [showCheckboxGuide, selectedResidentCount])
 
-  function toggleResidentSelected(id: string) {
+  function householdIsSelected(members: ResidentRow[]): boolean {
+    return members.length > 0 && members.every((member) => selectedResidentIds.has(member.id))
+  }
+
+  function householdIsIndeterminate(members: ResidentRow[]): boolean {
+    const selected = members.filter((member) => selectedResidentIds.has(member.id)).length
+    return selected > 0 && selected < members.length
+  }
+
+  function toggleHouseholdSelected(members: ResidentRow[]) {
     setSelectedResidentIds((prev) => {
       const next = new Set(prev)
-      if (next.has(id)) next.delete(id)
-      else next.add(id)
+      const selected = members.every((member) => next.has(member.id))
+      for (const member of members) {
+        if (selected) next.delete(member.id)
+        else next.add(member.id)
+      }
       return next
     })
   }
@@ -817,7 +918,7 @@ export function AdminResidentsDashboard() {
                 <th className="w-12 px-4 py-3">
                   <TableCheckbox
                     aria-label="Select all visible residents"
-                    disabled={loading || filteredResidents.length === 0}
+                    disabled={loading || filteredHouseholds.length === 0}
                     checked={allFilteredResidentsSelected}
                     indeterminate={someFilteredResidentsSelected}
                     onChange={toggleAllFilteredResidentsSelected}
@@ -839,7 +940,7 @@ export function AdminResidentsDashboard() {
                     Loading residents…
                   </td>
                 </tr>
-              ) : filteredResidents.length === 0 ? (
+              ) : filteredHouseholds.length === 0 ? (
                 <tr>
                     <td colSpan={8} className="px-6 py-10 text-center text-[14px] text-[#6a7282]">
                     {residents.length === 0 ? (
@@ -863,25 +964,32 @@ export function AdminResidentsDashboard() {
                   </td>
                 </tr>
               ) : (
-                filteredResidents.map((resident, index) => (
+                filteredHouseholds.map((household, index) => {
+                  const primary = household.members[0]
+                  if (!primary) return null
+                  const contacts = uniqueHouseholdContacts(household.members)
+                  const householdNames = household.members.map((member) => member.name).join(', ')
+                  return (
                   <tr
-                    key={resident.id}
+                    key={household.key}
                     style={{ animationDelay: `${Math.min(index, 12) * 30}ms` }}
                     className="sa-enter border-b border-[#f3f4f6] last:border-b-0"
                   >
                     <td className="w-12 px-4 py-4">
                       <div
                         ref={
-                          showCheckboxGuide && resident.id === checkboxGuideResidentId
+                          showCheckboxGuide &&
+                          household.members.some((member) => member.id === checkboxGuideResidentId)
                             ? checkboxGuideTargetRef
                             : undefined
                         }
                         className="inline-flex"
                       >
                         <TableCheckbox
-                          aria-label={`Select ${resident.name}`}
-                          checked={selectedResidentIds.has(resident.id)}
-                          onChange={() => toggleResidentSelected(resident.id)}
+                          aria-label={`Select ${householdNames}`}
+                          checked={householdIsSelected(household.members)}
+                          indeterminate={householdIsIndeterminate(household.members)}
+                          onChange={() => toggleHouseholdSelected(household.members)}
                         />
                       </div>
                     </td>
@@ -889,53 +997,48 @@ export function AdminResidentsDashboard() {
                       <button
                         type="button"
                         onClick={() =>
-                          navigate(residentDetailPath(resident.id), {
+                          navigate(residentDetailPath(primary.id), {
                             state: { from: '/admin/residents' },
                           })
                         }
                         className="sa-link rounded-[4px] text-left text-[#0a0a0a] hover:text-[#186179] hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2"
                       >
-                        {resident.name}
+                        {primary.name}
                       </button>
                     </td>
-                    <td className="px-6 py-4 text-[14px] text-[#6a7282]">{resident.unitLabel}</td>
+                    <td className="px-6 py-4 text-[14px] text-[#6a7282]">{primary.unitLabel}</td>
                     <td className="px-6 py-4 text-[14px] tabular-nums text-[#0a0a0a]">
-                      {resident.rentLabel}
+                      {householdRentLabel(household.members)}
                     </td>
                     <td className="px-6 py-4">
-                      <PaymentStatusChip status={resident.paymentStatus} />
+                      <PaymentStatusChip status={householdPaymentStatus(household.members)} />
                     </td>
                     <td className="px-6 py-4">
                       <div className="flex flex-col gap-0.5">
-                        {resident.contactPhone ? (
-                          <span className="text-[13px] leading-5 text-[#0a0a0a]">{resident.contactPhone}</span>
-                        ) : null}
-                        {resident.contactEmail ? (
-                          <span className="truncate text-[12px] leading-4 text-[#6a7282]">
-                            {resident.contactEmail}
+                        {contacts.phones.map((phone) => (
+                          <span key={phone} className="text-[13px] leading-5 text-[#0a0a0a]">
+                            {phone}
                           </span>
-                        ) : null}
-                        {!resident.contactPhone && !resident.contactEmail ? (
+                        ))}
+                        {contacts.emails.map((email) => (
+                          <span key={email} className="truncate text-[12px] leading-4 text-[#6a7282]">
+                            {email}
+                          </span>
+                        ))}
+                        {contacts.phones.length === 0 && contacts.emails.length === 0 ? (
                           <span className="text-[14px] text-[#6a7282]">—</span>
                         ) : null}
                       </div>
                     </td>
                     <td className="px-6 py-4 text-[14px] text-[#6a7282]">
-                      {residentOccupancyLabel(resident.status)}
+                      {householdOccupancyLabel(household.members)}
                     </td>
                     <td className="px-6 py-4 align-middle">
-                      {(() => {
-                        const chip = resolveTenantActivationChip({
-                          activationStatus: resident.activationStatus,
-                          smsConsentStatus: resident.smsConsentStatus,
-                          activationAttemptCount: resident.activationAttemptCount,
-                          activationSmsSentAt: resident.activationSmsSentAt,
-                        })
-                        return <TenantActivationStatusChip chip={chip} />
-                      })()}
+                      <TenantActivationStatusChip chip={householdActivationChip(household.members)} />
                     </td>
                   </tr>
-                ))
+                  )
+                })
               )}
             </tbody>
           </table>

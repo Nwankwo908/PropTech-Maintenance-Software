@@ -60,6 +60,16 @@ describe('rent roll extraction', () => {
     expect(mapped.residents.map((row) => row.fullName)).toEqual(['Alex Rivera', 'Jordan Rivera'])
   })
 
+  it('extracts rent due day from the lease when stated', () => {
+    const mapped = parseAndMapTypedExtract('lease', {
+      tenant_names: ['Jamie Tenant'],
+      rent_due_day: 1,
+      monthly_rent: 1700,
+      confidence: 90,
+    })
+    expect(mapped.residents[0]?.rentDueDay).toBe('1')
+  })
+
   it('3. vacant unit creates a unit and no resident', () => {
     const mapped = parseAndMapTypedExtract('rent_roll', {
       rows: [
@@ -189,6 +199,28 @@ describe('lease extraction', () => {
     })
     expect(mapped.account.companyName).toBe('Grove Holdings LLC')
     expect(mapped.residents.map((row) => row.fullName)).toEqual(['Jane Smith'])
+  })
+
+  it('does not copy a tenant into Your Organization when they were also labeled landlord', () => {
+    const mapped = parseAndMapTypedExtract('lease', {
+      landlord_name: 'Adrian Antonio Ruiz Trelles',
+      tenant_names: ['Adrian Ruiz Trelles'],
+      confidence: 90,
+    })
+    expect(mapped.account.companyName).toBe('')
+    expect(mapped.account.contactName).toBe('')
+    expect(mapped.residents.map((row) => row.fullName)).toEqual(['Adrian Antonio Ruiz Trelles'])
+  })
+
+  it('keeps a person landlord out of residents', () => {
+    const mapped = parseAndMapTypedExtract('lease', {
+      landlord_name: 'Ifunanya Okafor',
+      tenant_names: ['Adrian Antonio Ruiz Trelles'],
+      confidence: 90,
+    })
+    expect(mapped.account.contactName).toBe('Ifunanya Okafor')
+    expect(mapped.account.companyName).toBe('')
+    expect(mapped.residents.map((row) => row.fullName)).toEqual(['Adrian Antonio Ruiz Trelles'])
   })
 
   it('3. two tenants', () => {

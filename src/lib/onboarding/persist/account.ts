@@ -8,8 +8,10 @@ import { normalizeOnboardingApprovalRules } from '@/lib/onboardingApprovalRules'
 import { supabase } from '@/lib/supabase'
 import { requireOnboardingLandlord } from '../scope'
 import type { AccountSetupCounts, OnboardingAccountSetup } from '../types'
+import { parseRentDueDayInput } from './residents'
 import { resolveLandlordSupportEmail } from '@/lib/landlordSupportEmail'
 import { syncLandlordPortalTeamMember } from '@/lib/landlordPortalMembers'
+import { landlordPortfolioLabel } from '@shared/landlordPortfolioLabel'
 
 async function persistAccountProfileOnOnboarding(
   landlordId: string,
@@ -105,6 +107,7 @@ export async function persistLandlordAccountProfile(
 
   const companyName = account.companyName.trim()
   const contactName = account.contactName.trim()
+  const storedName = landlordPortfolioLabel({ companyName, contactName }) || 'New Landlord'
   const email = account.email.trim() || null
   const phoneResult = account.phone.trim()
     ? phoneForDbOrError(account.phone)
@@ -114,7 +117,7 @@ export async function persistLandlordAccountProfile(
   }
 
   const payload: Record<string, unknown> = {
-    name: companyName || 'New Landlord',
+    name: storedName,
     contact_name: contactName || null,
     email,
     phone: phoneResult.phone,
@@ -127,7 +130,7 @@ export async function persistLandlordAccountProfile(
       const { error: retryWithoutEmail } = await supabase
         .from('landlords')
         .update({
-          name: companyName || 'New Landlord',
+          name: storedName,
           contact_name: contactName || null,
           phone: phoneResult.phone,
         })
@@ -142,7 +145,7 @@ export async function persistLandlordAccountProfile(
       if (/contact_name|phone|column .* does not exist/i.test(retryWithoutEmail.message)) {
         const { error: nameOnly } = await supabase
           .from('landlords')
-          .update({ name: companyName || 'New Landlord' })
+          .update({ name: storedName })
           .eq('id', scope.landlordId)
         if (!nameOnly) return finishAccountPersistOk(scope.landlordId, account)
         return {
@@ -163,7 +166,7 @@ export async function persistLandlordAccountProfile(
       const { error: retryError } = await supabase
         .from('landlords')
         .update({
-          name: companyName || 'New Landlord',
+          name: storedName,
           email,
         })
         .eq('id', scope.landlordId)
@@ -171,7 +174,7 @@ export async function persistLandlordAccountProfile(
         if (isUniqueViolation(retryError) && /email/i.test(retryError.message)) {
           const { error: nameOnly } = await supabase
             .from('landlords')
-            .update({ name: companyName || 'New Landlord' })
+            .update({ name: storedName })
             .eq('id', scope.landlordId)
           if (!nameOnly) return finishAccountPersistOk(scope.landlordId, account)
           return {
@@ -202,9 +205,7 @@ export async function persistLandlordAccountProfile(
     source: 'onboarding',
     actorType: 'landlord',
     metadata: {
-      message: companyName
-        ? `Account profile updated for ${companyName}.`
-        : 'Account profile updated.',
+      message: `Account profile updated for ${storedName}.`,
       company_name: companyName || null,
       contact_name: contactName || null,
       step: 'account_setup',
@@ -212,6 +213,64 @@ export async function persistLandlordAccountProfile(
   })
 
   return finishAccountPersistOk(scope.landlordId, account)
+}
+
+/** Write onboarding rent due onto Organization settings when no portfolio default exists yet. */
+export async function persistLandlordDefaultRentDueDay(
+  landlordId: string,
+  rentDueDay: number | null,
+): Promise<{ ok: boolean; error?: string }> {
+  const scope = requireOnboardingLandlord(landlordId)
+  if (!scope.ok) return scope
+  if (!supabase) return { ok: true }
+  const day = parseRentDueDayInput(String(rentDueDay ?? ''))
+  if (day == null) return { ok: true }
+
+  const { data, error } = await supabase
+    .from('landlord_onboarding')
+    .select('account_settings')
+    .eq('landlord_id', scope.landlordId)
+    .maybeSingle()
+  if (error) {
+    console.warn('[landlordOnboarding] load account settings for rent due day', error.message)
+    return { ok: false, error: error.message }
+  }
+
+  const prior =
+    data?.account_settings && typeof data.account_settings === 'object'
+      ? (data.account_settings as Record<string, unknown>)
+      : {}
+  const operational =
+    prior.operational && typeof prior.operational === 'object'
+      ? { ...(prior.operational as Record<string, unknown>) }
+      : {}
+  const organization =
+    prior.organization && typeof prior.organization === 'object'
+      ? { ...(prior.organization as Record<string, unknown>) }
+      : {}
+  const existing =
+    parseRentDueDayInput(String(operational.rentDueDay ?? '')) ??
+    parseRentDueDayInput(String(organization.rentDueDay ?? ''))
+  if (existing != null) return { ok: true }
+
+  operational.rentDueDay = String(day)
+  organization.rentDueDay = String(day)
+
+  const { error: updateError } = await supabase
+    .from('landlord_onboarding')
+    .update({
+      account_settings: {
+        ...prior,
+        operational,
+        organization,
+      },
+    })
+    .eq('landlord_id', scope.landlordId)
+  if (updateError) {
+    console.warn('[landlordOnboarding] persist default rent due day', updateError.message)
+    return { ok: false, error: updateError.message }
+  }
+  return { ok: true }
 }
 
 /** Persist communication style on the landlord account (source of truth for outbound tone). */

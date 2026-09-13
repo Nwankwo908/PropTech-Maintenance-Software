@@ -1,95 +1,28 @@
 import { useMemo, useState } from 'react'
+import calendarIcon from '@/assets/calendar/calendar.svg'
+import chevronDownIcon from '@/assets/calendar/chevron-down.svg'
 import chevronLeftIcon from '@/assets/calendar/chevron-left.svg'
 import chevronRightIcon from '@/assets/calendar/chevron-right.svg'
-import eventCameraIcon from '@/assets/calendar/event-camera.svg'
-import searchIcon from '@/assets/calendar/search.svg'
 import { useLandlordWorkspace } from '@/context/LandlordWorkspaceContext'
-import { DEFAULT_RENT_REMINDER_CADENCE } from '@/lib/organizationSettings'
+import { DEFAULT_RENT_REMINDER_CADENCE, normalizeRentDueDaySetting } from '@/lib/organizationSettings'
 import type { PropertyOperationsTimelineEvent } from '@/lib/propertyOperationsGraph'
 import {
   addCalendarMonths,
   addDaysIso,
-  buildMonthGrid,
   buildResidentCalendarEvents,
   calendarEventsFromOperationsGraph,
-  datesInWeek,
+  datesInRange,
   mergeResidentCalendarEvents,
-  nearestCalendarFocusDate,
-  startOfWeekSunday,
+  RESIDENT_CALENDAR_PAGE_SIZE,
+  stripStartIncludingRentReminders,
   todayIsoDate,
   toIsoDate,
   type ResidentCalendarEvent,
   type ResidentCalendarEventKind,
 } from '@/lib/residentLeaseCalendar'
 
-type CalendarView = 'day' | 'week' | 'month' | 'year'
-
 const WEEKDAY_LABELS = ['SUN', 'MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT']
-const START_HOUR = 7
-const END_HOUR = 17
-const HOURS = Array.from({ length: END_HOUR - START_HOUR + 1 }, (_, index) => START_HOUR + index)
-
-const EVENT_STYLE: Record<
-  ResidentCalendarEventKind,
-  { bar: string; fill: string; text: string }
-> = {
-  rent: {
-    bar: 'bg-[#0ea5e9]',
-    fill: 'bg-[rgba(14,165,233,0.1)]',
-    text: 'text-[#0369a1]',
-  },
-  rent_reminder: {
-    bar: 'bg-[#0ea5e9]',
-    fill: 'bg-[rgba(14,165,233,0.1)]',
-    text: 'text-[#0369a1]',
-  },
-  maintenance: {
-    bar: 'bg-[#f43f5e]',
-    fill: 'bg-[rgba(244,63,94,0.1)]',
-    text: 'text-[#be123c]',
-  },
-}
-
-function hourLabel(hour: number): string {
-  if (hour === 0) return '12 AM'
-  if (hour === 12) return '12 PM'
-  if (hour < 12) return `${hour} AM`
-  return `${hour - 12} PM`
-}
-
-function eventClockParts(event: ResidentCalendarEvent): { time: string; meridiem: string } {
-  if (event.clock) return event.clock
-  if (event.kind === 'rent_reminder') return { time: '10:00', meridiem: 'AM' }
-  if (event.kind === 'rent') return { time: '9:00', meridiem: 'AM' }
-  return { time: '11:00', meridiem: 'AM' }
-}
-
-function eventStartHourMinute(event: ResidentCalendarEvent): { hour: number; minute: number } {
-  const clock = eventClockParts(event)
-  const [hourRaw, minuteRaw] = clock.time.split(':')
-  let hour = Number(hourRaw)
-  const minute = Number(minuteRaw) || 0
-  if (!Number.isFinite(hour)) hour = START_HOUR
-  if (clock.meridiem === 'PM' && hour !== 12) hour += 12
-  if (clock.meridiem === 'AM' && hour === 12) hour = 0
-  return { hour, minute: Number.isFinite(minute) ? minute : 0 }
-}
-
-function eventKey(event: ResidentCalendarEvent): string {
-  return `${event.id ?? ''}-${event.date}-${event.kind}-${event.label}-${event.daysBeforeDue ?? ''}`
-}
-
-function timezoneCaption(now = new Date()): string {
-  const parts = new Intl.DateTimeFormat('en-US', { timeZoneName: 'short' }).formatToParts(now)
-  const short = parts.find((part) => part.type === 'timeZoneName')?.value ?? 'Local'
-  const offsetHours = -now.getTimezoneOffset() / 60
-  const gmt = `GMT${offsetHours >= 0 ? '+' : ''}${offsetHours}`
-  return `${short} ${gmt}`
-}
-
-function dayNumber(iso: string): number {
-  return Number(iso.slice(8, 10))
-}
+const RAIL_PX = 220
 
 function weekdayIndex(iso: string): number {
   const year = Number(iso.slice(0, 4))
@@ -98,144 +31,58 @@ function weekdayIndex(iso: string): number {
   return new Date(year, month - 1, day).getDay()
 }
 
-function monthTitle(year: number, month: number): string {
-  return new Date(year, month - 1, 1).toLocaleDateString(undefined, {
-    month: 'long',
-    year: 'numeric',
-  })
+function dayNumber(iso: string): number {
+  return Number(iso.slice(8, 10))
 }
 
-function NavIcon({ src, alt }: { src: string; alt: string }) {
+function monthValue(year: number, month: number): string {
+  return `${year}-${String(month).padStart(2, '0')}`
+}
+
+function monthLabel(year: number, month: number): string {
+  return new Date(year, month - 1, 1)
+    .toLocaleDateString('en-US', { month: 'long', year: 'numeric' })
+    .toUpperCase()
+}
+
+const EVENT_CHIP: Record<ResidentCalendarEventKind, { fill: string; text: string }> = {
+  rent: { fill: 'bg-[#e0f2fe]', text: 'text-[#0369a1]' },
+  rent_reminder: { fill: 'bg-[#f0f9ff]', text: 'text-[#0284c7]' },
+  maintenance: { fill: 'bg-[#ffe4e6]', text: 'text-[#be123c]' },
+}
+
+function eventChipLabel(event: ResidentCalendarEvent): string {
+  if (event.kind === 'rent') return 'Rent due'
+  if (event.kind === 'rent_reminder') return 'Rent reminder'
+  return event.label
+}
+
+function headerKindForDay(
+  events: ResidentCalendarEvent[],
+): ResidentCalendarEventKind | null {
+  if (events.some((event) => event.kind === 'rent')) return 'rent'
+  if (events.some((event) => event.kind === 'maintenance')) return 'maintenance'
+  if (events.some((event) => event.kind === 'rent_reminder')) return 'rent_reminder'
+  return null
+}
+
+function initialsFromName(name: string): string {
+  const parts = name.trim().split(/\s+/).filter(Boolean)
+  if (parts.length === 0) return '?'
+  if (parts.length === 1) return parts[0]!.slice(0, 2).toUpperCase()
+  return (parts[0]![0]! + parts[parts.length - 1]![0]!).toUpperCase()
+}
+
+function Icon({ src, size, alt = '' }: { src: string; size: number; alt?: string }) {
   return (
-    <span className="relative block size-5 shrink-0">
-      <img alt={alt} src={src} className="absolute inset-0 block size-5 max-w-none" />
+    <span className="relative block shrink-0" style={{ width: size, height: size }}>
+      <img
+        alt={alt}
+        src={src}
+        className="absolute inset-0 block max-w-none"
+        style={{ width: size, height: size }}
+      />
     </span>
-  )
-}
-
-function EventCard({ event }: { event: ResidentCalendarEvent }) {
-  const style = EVENT_STYLE[event.kind]
-  const clock = eventClockParts(event)
-  const showCamera = event.kind === 'rent' || event.kind === 'rent_reminder'
-  return (
-    <div className={`sa-enter-scale sa-card flex h-[68px] items-start overflow-hidden rounded-[4px] ${style.fill}`}>
-      <div className={`h-full w-[3px] shrink-0 ${style.bar}`} />
-      <div className="flex h-[68px] min-w-px flex-1 flex-col items-start p-1.5">
-        <div className={`flex items-center gap-1 ${style.text}`}>
-          <span className="text-[12px] font-medium leading-4">{clock.time}</span>
-          <span className="text-[12px] font-medium leading-4">{clock.meridiem}</span>
-          {showCamera ? (
-            <span className="flex shrink-0 items-start rounded-full bg-[#0369a1] p-0.5">
-              <span className="relative block size-2">
-                <img alt="" src={eventCameraIcon} className="absolute inset-0 block size-2 max-w-none" />
-              </span>
-            </span>
-          ) : null}
-        </div>
-        <p className={`w-full text-[12px] font-semibold leading-4 ${style.text}`}>{event.label}</p>
-      </div>
-    </div>
-  )
-}
-
-function DayHeader({
-  iso,
-  today,
-  weekend,
-}: {
-  iso: string
-  today: boolean
-  weekend: boolean
-}) {
-  return (
-    <div
-      className={[
-        'relative flex min-w-0 flex-1 flex-col items-start px-2 pb-4 pt-1',
-        today ? 'bg-[#eff6ff]' : weekend ? 'bg-[#fafafa]' : 'bg-white',
-        'shadow-[inset_-1px_-1px_0_0_#e0e0e0]',
-      ].join(' ')}
-    >
-      <p className="w-full text-[10px] font-bold leading-3 text-[#71717a]">{WEEKDAY_LABELS[weekdayIndex(iso)]}</p>
-      <p className="w-full text-[22px] font-medium leading-8 text-black">{dayNumber(iso)}</p>
-    </div>
-  )
-}
-
-function HourGrid({
-  days,
-  todayIso,
-  eventsByDate,
-}: {
-  days: string[]
-  todayIso: string
-  eventsByDate: Map<string, ResidentCalendarEvent[]>
-}) {
-  const tz = timezoneCaption()
-  return (
-    <div className="min-w-0 overflow-x-auto">
-      <div className="flex min-w-[720px] flex-col">
-        <div className="flex items-start gap-3 pl-12">
-          <div className="flex min-w-0 flex-1">
-            {days.map((iso) => (
-              <DayHeader
-                key={iso}
-                iso={iso}
-                today={iso === todayIso}
-                weekend={weekdayIndex(iso) === 0 || weekdayIndex(iso) === 6}
-              />
-            ))}
-          </div>
-          <div className="w-9 shrink-0 pt-1 text-[10px] font-medium leading-3 text-[#71717a]">{tz}</div>
-        </div>
-
-        <div className="relative">
-          {HOURS.map((hour) => (
-            <div key={hour} className="flex items-start gap-3">
-              <div className="-mt-2 w-9 shrink-0 text-right text-[12px] font-medium leading-4 text-[#71717a]">
-                {hourLabel(hour)}
-              </div>
-              <div className="flex min-w-0 flex-1">
-                {days.map((iso) => {
-                  const weekend = weekdayIndex(iso) === 0 || weekdayIndex(iso) === 6
-                  const today = iso === todayIso
-                  const hourEvents = (eventsByDate.get(iso) ?? []).filter((event) => {
-                    const start = eventStartHourMinute(event)
-                    const slotHour = Math.min(END_HOUR, Math.max(START_HOUR, start.hour))
-                    return slotHour === hour
-                  })
-                  return (
-                    <div
-                      key={`${iso}-${hour}`}
-                      className={[
-                        'relative h-[72px] min-w-0 flex-1 overflow-visible shadow-[inset_-1px_-1px_0_0_#e0e0e0]',
-                        today ? 'bg-[#eff6ff]' : weekend ? 'bg-[#fafafa]' : 'bg-white',
-                      ].join(' ')}
-                    >
-                      <div className="h-9 shadow-[inset_0_-1px_0_0_#f7f7f7]" />
-                      {hourEvents.map((event) => {
-                        const { minute } = eventStartHourMinute(event)
-                        return (
-                          <div
-                            key={eventKey(event)}
-                            className="absolute inset-x-0.5 z-10"
-                            style={{ top: `${Math.round((minute / 60) * 72)}px` }}
-                          >
-                            <EventCard event={event} />
-                          </div>
-                        )
-                      })}
-                    </div>
-                  )
-                })}
-              </div>
-              <div className="-mt-2 w-9 shrink-0 text-[12px] font-medium leading-4 text-[#71717a]">
-                {hourLabel(hour)}
-              </div>
-            </div>
-          ))}
-        </div>
-      </div>
-    </div>
   )
 }
 
@@ -243,21 +90,29 @@ export function ResidentLeaseCalendar({
   leaseStartDate,
   leaseEndDate,
   rentDueDay,
+  rowTitle,
+  rowSubtitle,
   operationsEvents = [],
   visitEvents = [],
 }: {
   leaseStartDate: string | null
   leaseEndDate: string | null
   rentDueDay: number | null
+  rowTitle?: string
+  rowSubtitle?: string
   operationsEvents?: PropertyOperationsTimelineEvent[]
   visitEvents?: ResidentCalendarEvent[]
 }) {
   const { organization } = useLandlordWorkspace()
   const today = todayIsoDate()
-  const [view, setView] = useState<CalendarView>('week')
-  const [focusOverride, setFocusOverride] = useState<string | null>(null)
-  const [query, setQuery] = useState('')
+  const [windowStart, setWindowStart] = useState<string | null>(null)
   const rentReminderCadence = organization?.rentReminderCadence || DEFAULT_RENT_REMINDER_CADENCE
+  const orgRentDueDay = Number.parseInt(
+    normalizeRentDueDaySetting(organization?.rentDueDay),
+    10,
+  )
+  const resolvedRentDueDay =
+    rentDueDay ?? (Number.isFinite(orgRentDueDay) ? orgRentDueDay : null)
 
   const allEvents = useMemo(
     () =>
@@ -265,7 +120,7 @@ export function ResidentLeaseCalendar({
         buildResidentCalendarEvents({
           leaseStartDate,
           leaseEndDate,
-          rentDueDay,
+          rentDueDay: resolvedRentDueDay,
           rentReminderCadence,
         }),
         mergeResidentCalendarEvents(
@@ -273,234 +128,203 @@ export function ResidentLeaseCalendar({
           visitEvents,
         ),
       ),
-    [leaseStartDate, leaseEndDate, rentDueDay, rentReminderCadence, operationsEvents, visitEvents],
+    [leaseStartDate, leaseEndDate, resolvedRentDueDay, rentReminderCadence, operationsEvents, visitEvents],
   )
 
-  const events = useMemo(() => {
-    const needle = query.trim().toLowerCase()
-    if (!needle) return allEvents
-    return allEvents.filter((event) => event.label.toLowerCase().includes(needle))
-  }, [allEvents, query])
-
-  const autoFocus = useMemo(
-    () => nearestCalendarFocusDate(allEvents, today),
-    [allEvents, today],
+  const defaultStart = useMemo(
+    () => stripStartIncludingRentReminders(allEvents, today, rentReminderCadence),
+    [allEvents, rentReminderCadence, today],
   )
-  const focusDate = focusOverride ?? autoFocus
+  const startIso = windowStart ?? defaultStart
+  const visibleDates = useMemo(
+    () => datesInRange(startIso, addDaysIso(startIso, RESIDENT_CALENDAR_PAGE_SIZE - 1)),
+    [startIso],
+  )
+  const focusYear = Number(startIso.slice(0, 4))
+  const focusMonth = Number(startIso.slice(5, 7))
 
   const eventsByDate = useMemo(() => {
     const map = new Map<string, ResidentCalendarEvent[]>()
-    for (const event of events) {
+    for (const event of allEvents) {
       const list = map.get(event.date) ?? []
       list.push(event)
       map.set(event.date, list)
     }
     return map
-  }, [events])
+  }, [allEvents])
 
-  const focusYear = Number(focusDate.slice(0, 4))
-  const focusMonth = Number(focusDate.slice(5, 7))
-  const weekStart = startOfWeekSunday(focusDate)
-  const weekDays = datesInWeek(weekStart)
-  const monthCells = useMemo(
-    () => buildMonthGrid(focusYear, focusMonth, today),
-    [focusYear, focusMonth, today],
-  )
+  const monthOptions = useMemo(() => {
+    const from = { year: Number(today.slice(0, 4)), month: Number(today.slice(5, 7)) }
+    const leaseEndIso = (leaseEndDate ?? '').trim().slice(0, 10)
+    const until = /^\d{4}-\d{2}-\d{2}$/.test(leaseEndIso)
+      ? { year: Number(leaseEndIso.slice(0, 4)), month: Number(leaseEndIso.slice(5, 7)) }
+      : addCalendarMonths(from.year, from.month, 18)
+    const span = until.year * 12 + until.month - (from.year * 12 + from.month)
+    const count = Math.min(48, Math.max(1, span + 1))
+    return Array.from({ length: count }, (_, index) => {
+      const next = addCalendarMonths(from.year, from.month, index)
+      return {
+        value: monthValue(next.year, next.month),
+        label: monthLabel(next.year, next.month),
+      }
+    })
+  }, [leaseEndDate, today])
+
+  const title = rowTitle?.trim() || 'Lease'
+  const subtitle = rowSubtitle?.trim() || ''
+
+  function shiftPage(delta: number) {
+    const next = addDaysIso(startIso, delta * RESIDENT_CALENDAR_PAGE_SIZE)
+    const leaseEndIso = (leaseEndDate ?? '').trim().slice(0, 10)
+    if (delta < 0 && next < today) {
+      setWindowStart(today)
+      return
+    }
+    if (delta > 0 && /^\d{4}-\d{2}-\d{2}$/.test(leaseEndIso) && next > leaseEndIso) {
+      const lastStart = addDaysIso(leaseEndIso, 1 - RESIDENT_CALENDAR_PAGE_SIZE)
+      setWindowStart(lastStart > today ? lastStart : today)
+      return
+    }
+    setWindowStart(next)
+  }
 
   function goToday() {
-    setFocusOverride(today)
+    setWindowStart(today)
   }
 
-  function shift(delta: number) {
-    if (view === 'day') setFocusOverride(addDaysIso(focusDate, delta))
-    else if (view === 'week') setFocusOverride(addDaysIso(focusDate, delta * 7))
-    else if (view === 'month') {
-      const next = addCalendarMonths(focusYear, focusMonth, delta)
-      setFocusOverride(toIsoDate(next.year, next.month, 1))
-    } else {
-      setFocusOverride(toIsoDate(focusYear + delta, focusMonth, 1))
-    }
+  function onMonthChange(value: string) {
+    const [yearRaw, monthRaw] = value.split('-')
+    const year = Number(yearRaw)
+    const month = Number(monthRaw)
+    if (!Number.isFinite(year) || month < 1 || month > 12) return
+    setWindowStart(toIsoDate(year, month, 1))
   }
-
-  const views: CalendarView[] = ['day', 'week', 'month', 'year']
 
   return (
-    <section className="mt-4 overflow-hidden rounded-[10px] border border-[#e5e7eb] bg-white p-4 shadow-[0px_1px_2px_-1px_rgba(0,0,0,0.06)]">
+    <section className="mt-4 overflow-hidden rounded-[10px] border border-[#e5e7eb] bg-white shadow-[0px_1px_2px_-1px_rgba(0,0,0,0.06)]">
       <h2 className="sr-only">Lease calendar</h2>
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div className="flex items-stretch gap-px">
-          <button
-            type="button"
-            className="sa-press inline-flex items-center justify-center rounded-l-[6px] bg-[#f4f4f5] p-1"
-            aria-label="Previous"
-            onClick={() => shift(-1)}
-          >
-            <NavIcon src={chevronLeftIcon} alt="" />
-          </button>
-          <button
-            type="button"
-            className="sa-press bg-[#f4f4f5] px-4 py-1.5 text-[12px] leading-4 text-[#18181b]"
-            onClick={goToday}
-          >
-            Today
-          </button>
-          <button
-            type="button"
-            className="sa-press inline-flex items-center justify-center rounded-r-[6px] bg-[#f4f4f5] p-1"
-            aria-label="Next"
-            onClick={() => shift(1)}
-          >
-            <NavIcon src={chevronRightIcon} alt="" />
-          </button>
-        </div>
-
-        <div className="flex items-center">
-          {views.map((item) => {
-            const active = view === item
-            return (
-              <button
-                key={item}
-                type="button"
-                className={[
-                  'sa-pill sa-press rounded-[8px] px-4 py-1 text-[14px] font-medium leading-5',
-                  active ? 'bg-[#70ABC5] text-white' : 'text-[#71717a]',
-                ].join(' ')}
-                onClick={() => setView(item)}
+      <div className="flex min-w-0">
+        <div className="w-[220px] shrink-0 border-r border-[#ececec]" style={{ width: RAIL_PX }}>
+          <div className="flex h-[72px] items-center gap-2 border-b border-[#ececec] px-3">
+            <label className="relative min-w-0 flex-1">
+              <span className="sr-only">Month</span>
+              <select
+                value={monthValue(focusYear, focusMonth)}
+                onChange={(event) => onMonthChange(event.target.value)}
+                className="h-9 w-full cursor-pointer appearance-none bg-transparent pr-6 text-[13px] font-semibold tracking-[0.04em] text-[#8b7cf7] outline-none"
               >
-                {item.charAt(0).toUpperCase() + item.slice(1)}
-              </button>
-            )
-          })}
+                {monthOptions.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+              <span className="pointer-events-none absolute right-0 top-1/2 -translate-y-1/2">
+                <Icon src={chevronDownIcon} size={16} />
+              </span>
+            </label>
+            <button
+              type="button"
+              onClick={goToday}
+              aria-label="Go to today"
+              className="sa-press inline-flex size-10 shrink-0 items-center justify-center rounded-[10px] border border-[#e5e7eb] bg-white"
+            >
+              <Icon src={calendarIcon} size={20} />
+            </button>
+          </div>
+          <div className="flex h-[88px] items-center gap-3 bg-[#f4f2ff] px-3">
+            <span className="inline-flex size-11 shrink-0 items-center justify-center overflow-hidden rounded-[8px] bg-white text-[13px] font-semibold text-[#6a7282]">
+              {initialsFromName(title)}
+            </span>
+            <div className="min-w-0">
+              <p className="truncate text-[14px] font-semibold leading-5 text-[#0a0a0a]">{title}</p>
+              {subtitle ? (
+                <p className="truncate text-[12px] leading-4 text-[#6a7282]">{subtitle}</p>
+              ) : null}
+            </div>
+          </div>
         </div>
 
-        <label className="sa-surface flex w-[184px] items-center gap-2 rounded-[4px] bg-[#f4f4f5] p-1">
-          <span className="relative block size-5 shrink-0">
-            <img alt="" src={searchIcon} className="absolute inset-0 block size-5 max-w-none" />
-          </span>
-          <span className="sr-only">Search</span>
-          <input
-            type="search"
-            value={query}
-            onChange={(event) => setQuery(event.target.value)}
-            placeholder="Search"
-            className="min-w-0 flex-1 bg-transparent text-[12px] leading-4 text-[#18181b] outline-none placeholder:text-[#a1a1aa]"
-          />
-        </label>
-      </div>
+        <button
+          type="button"
+          aria-label="Previous days"
+          onClick={() => shiftPage(-1)}
+          className="sa-press flex w-9 shrink-0 items-center justify-center border-r border-[#ececec] bg-white text-[#18181b] hover:bg-[#fafafa]"
+        >
+          <Icon src={chevronLeftIcon} size={20} />
+        </button>
 
-      <div className="mt-4 min-w-0">
-        {view === 'week' ? (
-          <div className="sa-enter">
-            <HourGrid days={weekDays} todayIso={today} eventsByDate={eventsByDate} />
-          </div>
-        ) : null}
-
-        {view === 'day' ? (
-          <div className="sa-enter">
-            <HourGrid days={[focusDate]} todayIso={today} eventsByDate={eventsByDate} />
-          </div>
-        ) : null}
-
-        {view === 'month' ? (
-          <div className="sa-enter">
-            <p className="mb-3 text-[14px] font-medium leading-5 text-[#18181b]">
-              {monthTitle(focusYear, focusMonth)}
-            </p>
-            <div className="grid grid-cols-7">
-              {WEEKDAY_LABELS.map((label) => (
-                <div
-                  key={label}
-                  className="px-2 py-1 text-[10px] font-bold leading-3 text-[#71717a] shadow-[inset_-1px_-1px_0_0_#e0e0e0]"
-                >
-                  {label}
-                </div>
-              ))}
-              {monthCells.map((cell) => {
-                const dayEvents = eventsByDate.get(cell.date) ?? []
-                const weekend = weekdayIndex(cell.date) === 0 || weekdayIndex(cell.date) === 6
+        <div className="min-w-0 flex-1 overflow-hidden">
+            <div className="flex h-[72px] border-b border-[#ececec]">
+              {visibleDates.map((iso) => {
+                const isToday = iso === today
+                const dayEvents = eventsByDate.get(iso) ?? []
+                const kind = headerKindForDay(dayEvents)
                 return (
-                  <button
-                    key={cell.date}
-                    type="button"
-                    onClick={() => {
-                      setFocusOverride(cell.date)
-                      setView('day')
-                    }}
-                    className={[
-                      'sa-press flex min-h-[88px] flex-col items-start px-2 pb-2 pt-1 text-left shadow-[inset_-1px_-1px_0_0_#e0e0e0]',
-                      cell.isToday ? 'bg-[#eff6ff]' : weekend ? 'bg-[#fafafa]' : 'bg-white',
-                    ].join(' ')}
+                  <div
+                    key={iso}
+                    className="flex h-[72px] min-w-0 flex-1 flex-col items-center justify-center gap-1 border-r border-[#f3f4f6] last:border-r-0"
                   >
-                    <span
-                      className={[
-                        'text-[22px] font-medium leading-8',
-                        cell.inMonth ? 'text-black' : 'text-[#d4d4d8]',
-                      ].join(' ')}
-                    >
-                      {cell.day}
-                    </span>
-                    <span className="mt-1 flex w-full flex-col gap-0.5">
-                      {dayEvents.slice(0, 3).map((event) => (
-                        <span
-                          key={eventKey(event)}
-                          className={`sa-enter truncate rounded-[2px] px-1 text-[10px] font-medium leading-4 ${EVENT_STYLE[event.kind].fill} ${EVENT_STYLE[event.kind].text}`}
-                        >
-                          {event.label}
-                        </span>
-                      ))}
-                    </span>
-                  </button>
+                    <p className="text-[10px] font-semibold leading-3 tracking-[0.04em] text-[#c4c4cc]">
+                      {WEEKDAY_LABELS[weekdayIndex(iso)]}
+                    </p>
+                    {isToday || kind ? (
+                      <span
+                        className={[
+                          'inline-flex size-8 items-center justify-center rounded-full text-[15px] font-semibold leading-none text-white',
+                          isToday
+                            ? 'bg-[#52525b]'
+                            : kind === 'maintenance'
+                              ? 'bg-[#f43f5e]'
+                              : 'bg-[#0ea5e9]',
+                        ].join(' ')}
+                      >
+                        {dayNumber(iso)}
+                      </span>
+                    ) : (
+                      <span className="inline-flex size-8 items-center justify-center text-[15px] font-medium leading-none text-[#a1a1aa]">
+                        {dayNumber(iso)}
+                      </span>
+                    )}
+                  </div>
                 )
               })}
             </div>
-          </div>
-        ) : null}
 
-        {view === 'year' ? (
-          <div className="sa-enter grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
-            {Array.from({ length: 12 }, (_, index) => index + 1).map((month) => {
-              const cells = buildMonthGrid(focusYear, month, today)
-              return (
-                <button
-                  key={month}
-                  type="button"
-                  className="sa-press text-left"
-                  onClick={() => {
-                    setFocusOverride(toIsoDate(focusYear, month, 1))
-                    setView('month')
-                  }}
-                >
-                  <p className="mb-2 text-[13px] font-medium leading-5 text-[#18181b]">
-                    {new Date(focusYear, month - 1, 1).toLocaleDateString(undefined, { month: 'long' })}
-                  </p>
-                  <div className="grid grid-cols-7 gap-px">
-                    {WEEKDAY_LABELS.map((label) => (
-                      <div key={label} className="text-center text-[9px] font-bold text-[#71717a]">
-                        {label.charAt(0)}
-                      </div>
-                    ))}
-                    {cells.map((cell) => {
-                      const marked = (eventsByDate.get(cell.date) ?? []).length > 0
+            <div className="relative flex min-h-[88px] items-stretch">
+              {visibleDates.map((iso) => {
+                const dayEvents = eventsByDate.get(iso) ?? []
+                return (
+                  <div
+                    key={iso}
+                    className="relative z-10 flex min-h-[88px] min-w-0 flex-1 flex-col items-stretch justify-start gap-1 px-1 py-1.5 border-r border-[#f3f4f6] last:border-r-0"
+                  >
+                    {dayEvents.slice(0, 3).map((event) => {
+                      const style = EVENT_CHIP[event.kind]
                       return (
-                        <div
-                          key={cell.date}
-                          className={[
-                            'flex h-6 items-center justify-center text-[11px] leading-4',
-                            cell.inMonth ? 'text-[#18181b]' : 'text-[#d4d4d8]',
-                            cell.isToday ? 'rounded-full bg-[#eff6ff] font-medium' : '',
-                            marked ? 'font-semibold text-[#0369a1]' : '',
-                          ].join(' ')}
+                        <span
+                          key={`${event.kind}-${event.date}-${event.daysBeforeDue ?? ''}-${event.label}`}
+                          title={event.label}
+                          className={`block w-full truncate rounded-[4px] px-1 py-1 text-center text-[10px] font-semibold leading-3 ${style.fill} ${style.text}`}
                         >
-                          {cell.day}
-                        </div>
+                          {eventChipLabel(event)}
+                        </span>
                       )
                     })}
                   </div>
-                </button>
-              )
-            })}
-          </div>
-        ) : null}
+                )
+              })}
+            </div>
+        </div>
+
+        <button
+          type="button"
+          aria-label="Next days"
+          onClick={() => shiftPage(1)}
+          className="sa-press flex w-9 shrink-0 items-center justify-center border-l border-[#ececec] bg-white text-[#18181b] hover:bg-[#fafafa]"
+        >
+          <Icon src={chevronRightIcon} size={20} />
+        </button>
       </div>
     </section>
   )

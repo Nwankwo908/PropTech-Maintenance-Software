@@ -12,6 +12,12 @@ import { getAdminEdgeSecret } from '@/lib/adminEdgeAuth'
 import { getErrorMessage } from '@/lib/errorMessage'
 import { loadHomeDataGraphSnapshot } from '@/lib/loadHomeDataGraph'
 import {
+  loadPropertyAccess,
+  propertyAccessHasContent,
+  type PropertyAccessProfile,
+} from '@/lib/propertyAccess'
+import { PROPERTY_DETAILS_CHANGED_EVENT } from '@/lib/propertyDetailsCompleteness'
+import {
   emptyHomeDataFacts,
   formatHomeDataDate,
   formatHomeDataMoney,
@@ -31,6 +37,7 @@ type PropertyHomeDataPanelProps = {
   landlordId: string
   address: string | null
   buildingName?: string | null
+  onAddPropertyAccess?: () => void
 }
 
 type FactRow = { label: string; value: string }
@@ -93,18 +100,6 @@ function HighlightIcon({ name }: { name: HighlightRow['icon'] }) {
   return null
 }
 
-function PhotoChevron({ dir }: { dir: 'prev' | 'next' }) {
-  return (
-    <svg className="size-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} aria-hidden>
-      {dir === 'prev' ? (
-        <path d="M15 6l-6 6 6 6" strokeLinecap="round" strokeLinejoin="round" />
-      ) : (
-        <path d="M9 6l6 6-6 6" strokeLinecap="round" strokeLinejoin="round" />
-      )}
-    </svg>
-  )
-}
-
 function formatLotSize(value: number | null | undefined): string {
   if (value == null || !Number.isFinite(value)) return '—'
   return `${formatHomeDataNumber(value)} Square Feet`
@@ -159,6 +154,31 @@ function FactsCategory({ title, children }: { title: string; children: ReactNode
   )
 }
 
+function accessFactGroups(access: PropertyAccessProfile): Array<{ title: string; items: FactRow[] }> {
+  const group = (title: string, pairs: Array<[string, string]>) => {
+    const items = pairs
+      .map(([label, value]) => ({ label, value: value.trim() }))
+      .filter((row) => row.value)
+    return items.length ? { title, items } : null
+  }
+  return [
+    group('Entry', [
+      ['Building entry instructions', access.buildingEntry],
+      ['Gate code', access.gateCode],
+    ]),
+    group('Lockbox', [
+      ['Lockbox location', access.lockboxLocation],
+      ['Lockbox code', access.lockboxCode],
+    ]),
+    group('On site', [
+      ['Utility room access', access.utilityRoomAccess],
+      ['Visitor parking', access.visitorParking],
+      ['Superintendent contact', access.superintendentContact],
+      ['Emergency access notes', access.emergencyAccessNotes],
+    ]),
+  ].filter((row): row is { title: string; items: FactRow[] } => row != null)
+}
+
 function HomeMetricCard({ label, value }: FactRow) {
   return (
     <div className="flex min-h-[88px] flex-col justify-center rounded-[10px] bg-[#f3f4f6] px-4 py-3">
@@ -197,17 +217,18 @@ export function PropertyHomeDataPanel({
   landlordId,
   address,
   buildingName,
+  onAddPropertyAccess,
 }: PropertyHomeDataPanelProps) {
   const query = address?.trim() || ''
   const [snapshot, setSnapshot] = useState<HomeDataGraphSnapshot | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [photoIndex, setPhotoIndex] = useState(0)
-  const [listingPhotos, setListingPhotos] = useState<string[]>([])
   const [fallbackCoords, setFallbackCoords] = useState<{ lat: number; lng: number } | null>(null)
+  const [access, setAccess] = useState<PropertyAccessProfile | null>(null)
 
   useEffect(() => {
-    if (!propertyId || !query) {
+    const resolvedPropertyId = propertyId?.trim() ?? ''
+    if (!resolvedPropertyId || !query) {
       setSnapshot(null)
       setError(null)
       setLoading(false)
@@ -218,7 +239,7 @@ export function PropertyHomeDataPanel({
     setError(null)
 
     async function run() {
-      const existing = await loadHomeDataGraphSnapshot(propertyId)
+      const existing = await loadHomeDataGraphSnapshot(resolvedPropertyId)
       if (cancelled) return
       if (existing && !homeDataNeedsProviderRefresh(existing)) {
         setSnapshot(existing)
@@ -238,7 +259,7 @@ export function PropertyHomeDataPanel({
         const result = await postSyncHomeDataGraph({
           url,
           secret,
-          propertyId,
+          propertyId: resolvedPropertyId,
           landlordId,
           address: query,
           force: !existing || !homeDataHasListingFacts(existing),
@@ -262,14 +283,10 @@ export function PropertyHomeDataPanel({
 
   useEffect(() => {
     if (!query) {
-      setListingPhotos([])
       setFallbackCoords(null)
       return
     }
-    if ((snapshot?.photoUrls.length ?? 0) > 0) {
-      setListingPhotos([])
-      return
-    }
+    if (snapshot?.latitude != null && snapshot?.longitude != null) return
     const url = resolvePropertyInsightsUrl()
     const secret = getAdminEdgeSecret()
     if (!url || !secret) return
@@ -277,31 +294,48 @@ export function PropertyHomeDataPanel({
     void postPropertyInsights({ url, secret, address: query })
       .then((result) => {
         if (cancelled) return
-        setListingPhotos(result.photos)
         if (result.latitude != null && result.longitude != null) {
           setFallbackCoords({ lat: result.latitude, lng: result.longitude })
         }
       })
-      .catch(() => {
-        if (!cancelled) setListingPhotos([])
-      })
+      .catch(() => {})
     return () => {
       cancelled = true
     }
-  }, [query, snapshot?.photoUrls, snapshot?.fetchedAt])
+  }, [query, snapshot?.latitude, snapshot?.longitude])
 
   useEffect(() => {
-    setPhotoIndex(0)
-  }, [snapshot?.propertyId, snapshot?.fetchedAt, (snapshot?.photoUrls ?? []).join('|')])
+    const building = buildingName?.trim() ?? ''
+    if (!building) {
+      setAccess(null)
+      return
+    }
+    let cancelled = false
+    async function refresh() {
+      const loaded = await loadPropertyAccess(building)
+      if (cancelled) return
+      setAccess(propertyAccessHasContent(loaded) ? loaded : null)
+    }
+    void refresh()
+    function onChanged(event: Event) {
+      const detail = (event as CustomEvent<{ building?: string }>).detail
+      if (detail?.building && detail.building !== building) return
+      void refresh()
+    }
+    window.addEventListener(PROPERTY_DETAILS_CHANGED_EVENT, onChanged)
+    return () => {
+      cancelled = true
+      window.removeEventListener(PROPERTY_DETAILS_CHANGED_EVENT, onChanged)
+    }
+  }, [buildingName])
 
   const facts = snapshot ?? emptyHomeDataFacts()
   const cards = homeValueCards(facts)
   const highlights = homeHighlightRows(facts)
   const hasLoadedFacts = Boolean(snapshot && homeDataHasFacts(snapshot))
-  const photos = (snapshot?.photoUrls?.length ? snapshot.photoUrls : listingPhotos) ?? []
-  const currentPhoto = photos[photoIndex] ?? null
   const viewLat = snapshot?.latitude ?? fallbackCoords?.lat ?? null
   const viewLng = snapshot?.longitude ?? fallbackCoords?.lng ?? null
+  const accessGroups = access ? accessFactGroups(access) : []
 
   return (
     <section className="sa-surface overflow-hidden rounded-[10px] border border-[#e5e7eb] bg-white shadow-[0px_1px_2px_-1px_rgba(0,0,0,0.06)]">
@@ -313,52 +347,18 @@ export function PropertyHomeDataPanel({
         </div>
       ) : (
         <>
-          <div className="grid grid-cols-1 lg:grid-cols-2">
-          <div className="p-4 lg:p-6">
-          <div className="relative h-[240px] min-h-[240px] overflow-hidden rounded-[8px] bg-[#f3f4f6] [contain:strict] lg:h-full lg:min-h-[320px]">
-            {currentPhoto ? (
-              <div className="relative h-full min-h-[240px] lg:min-h-[320px]">
-                <img
-                  src={currentPhoto}
-                  alt=""
-                  className="h-full min-h-[240px] w-full object-cover lg:min-h-[320px]"
-                />
-                {photos.length > 1 ? (
-                  <>
-                    <button
-                      type="button"
-                      aria-label="Previous photo"
-                      onClick={() =>
-                        setPhotoIndex((i) => (i === 0 ? photos.length - 1 : i - 1))
-                      }
-                      className="sa-press absolute left-3 top-1/2 z-[2] flex size-9 -translate-y-1/2 items-center justify-center rounded-full bg-white/90 text-[#0a0a0a] shadow-sm outline-none hover:bg-white focus-visible:ring-2 focus-visible:ring-[#0030b5]"
-                    >
-                      <PhotoChevron dir="prev" />
-                    </button>
-                    <button
-                      type="button"
-                      aria-label="Next photo"
-                      onClick={() =>
-                        setPhotoIndex((i) => (i === photos.length - 1 ? 0 : i + 1))
-                      }
-                      className="sa-press absolute right-3 top-1/2 z-[2] flex size-9 -translate-y-1/2 items-center justify-center rounded-full bg-white/90 text-[#0a0a0a] shadow-sm outline-none hover:bg-white focus-visible:ring-2 focus-visible:ring-[#0030b5]"
-                    >
-                      <PhotoChevron dir="next" />
-                    </button>
-                  </>
-                ) : null}
-              </div>
-            ) : (
-              <PropertyHomeStreetView
-                address={query}
-                lat={viewLat}
-                lng={viewLng}
-                label={buildingName}
-              />
-            )}
+          <div className="grid grid-cols-1 items-start lg:grid-cols-2">
+          <div className="min-w-0 p-4 lg:p-6">
+          <div className="relative h-[240px] min-h-[240px] overflow-hidden rounded-[8px] bg-[#f3f4f6] lg:h-[320px] lg:min-h-[320px]">
+            <PropertyHomeStreetView
+              address={query}
+              lat={viewLat}
+              lng={viewLng}
+              label={buildingName}
+            />
           </div>
           </div>
-          <div className="relative z-10 flex min-h-[240px] flex-col gap-3 bg-white p-4 lg:min-h-[320px] lg:p-6">
+          <div className="relative flex min-h-[240px] min-w-0 flex-col gap-3 bg-white p-4 lg:min-h-[320px] lg:p-6">
             <h3 className="text-[13px] font-semibold leading-5 text-[#0a0a0a]">
               Home Value
             </h3>
@@ -436,7 +436,33 @@ export function PropertyHomeDataPanel({
                   ]}
                 />
               </FactsCategory>
+              {accessGroups.length > 0 ? (
+                <FactsCategory title="Property access">
+                  {accessGroups.map((group) => (
+                    <FactsGroup key={group.title} title={group.title} items={group.items} />
+                  ))}
+                </FactsCategory>
+              ) : null}
             </div>
+            {onAddPropertyAccess ? (
+              <div className="mt-4 flex justify-start">
+                <button
+                  type="button"
+                  onClick={onAddPropertyAccess}
+                  className="sa-press inline-flex shrink-0 items-center justify-center gap-1.5 rounded-[10px] bg-transparent px-0 py-2 text-[13px] font-medium leading-5 text-[#186179] outline-none focus-visible:ring-2 focus-visible:ring-[#186179] focus-visible:ring-offset-2"
+                >
+                  <svg viewBox="0 0 24 24" fill="none" aria-hidden className="size-3.5 shrink-0">
+                    <path
+                      d="M12 5v14M5 12h14"
+                      stroke="currentColor"
+                      strokeWidth={2}
+                      strokeLinecap="round"
+                    />
+                  </svg>
+                  {access ? 'Edit property access' : 'Add property access'}
+                </button>
+              </div>
+            ) : null}
           </div>
         </>
       )}

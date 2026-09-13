@@ -1,12 +1,11 @@
 /// <reference lib="deno.ns" />
 /**
  * Ulo property-facts ingest for Overview (Home Value, highlights, facts).
- * Prefers Chocodata Zillow Scraper API; RapidAPI is a fallback.
+ * Loads listing JSON via RapidAPI (ZILLOW_RAPIDAPI_KEY).
  * Output is always HomeDataFacts — never vendor field names on the graph.
  */
 import {
   emptyHomeDataFacts,
-  homeDataHasFacts,
   type HomeDataFacts,
   type HomeDataIngestResult,
 } from "../../../../shared/homeDataGraph.ts"
@@ -19,10 +18,6 @@ import {
   zillowRapidApiHeaders,
   zillowRapidApiHosts,
 } from "../zillow/propertyPhotos.ts"
-import {
-  loadChocodataListing,
-  mapChocodataPropertyToFacts,
-} from "./chocodataZillow.ts"
 
 export type UloPropertyFactsFetch =
   | { status: "ok"; ingest: HomeDataIngestResult }
@@ -349,7 +344,6 @@ export async function fetchUloPropertyFacts(input: {
   address: string
   zillowKey?: string | null
   zillowHost?: string | null
-  chocodataKey?: string | null
   geocodeFn?: typeof geocodeUsAddress
 }): Promise<UloPropertyFactsFetch> {
   const address = input.address.trim()
@@ -357,52 +351,34 @@ export async function fetchUloPropertyFacts(input: {
     return { status: "not_configured", error: "Missing address." }
   }
 
-  const chocodataKey =
-    input.chocodataKey?.trim() ?? Deno.env.get("CHOCODATA_API_KEY")?.trim() ?? ""
   const zillowKey = input.zillowKey?.trim() ?? Deno.env.get("ZILLOW_RAPIDAPI_KEY")?.trim() ?? ""
   const zillowHost = input.zillowHost ?? Deno.env.get("ZILLOW_RAPIDAPI_HOST")?.trim() ?? null
   const geocode = input.geocodeFn ?? geocodeUsAddress
 
-  const [chocodata, listing, coords] = await Promise.all([
-    chocodataKey ? loadChocodataListing({ address, apiKey: chocodataKey }) : Promise.resolve(null),
-    !chocodataKey && zillowKey
-      ? loadZillowListingJson({ address, apiKey: zillowKey, host: zillowHost })
-      : Promise.resolve(null),
+  if (!zillowKey) {
+    return {
+      status: "not_configured",
+      error: "Property data isn’t connected (set ZILLOW_RAPIDAPI_KEY).",
+    }
+  }
+
+  const [listing, coords] = await Promise.all([
+    loadZillowListingJson({ address, apiKey: zillowKey, host: zillowHost }),
     geocode(address).catch(() => null),
   ])
 
-  const mapped = chocodata
-    ? mapChocodataPropertyToFacts(chocodata.payload, chocodata.searchHit)
-    : listing
-      ? mapListingPayloadToHomeDataFacts(listing)
-      : { facts: emptyHomeDataFacts(), providerRecordId: null }
+  const mapped = listing
+    ? mapListingPayloadToHomeDataFacts(listing)
+    : { facts: emptyHomeDataFacts(), providerRecordId: null }
   const facts = { ...mapped.facts }
   if (facts.latitude == null && coords) facts.latitude = coords.lat
   if (facts.longitude == null && coords) facts.longitude = coords.lon
-
-  if (!homeDataHasFacts(facts)) {
-    if (!chocodataKey && !zillowKey) {
-      return {
-        status: "not_configured",
-        error: "Property data isn’t connected (set CHOCODATA_API_KEY).",
-      }
-    }
-    return {
-      status: "ok",
-      ingest: {
-        provider: "ulo",
-        providerRecordId: mapped.providerRecordId,
-        facts,
-        raw: chocodata?.payload ?? listing ?? { geocode: coords },
-      },
-    }
-  }
 
   const ingest: HomeDataIngestResult = {
     provider: "ulo",
     providerRecordId: mapped.providerRecordId,
     facts,
-    raw: chocodata?.payload ?? listing ?? { geocode: coords },
+    raw: listing ?? { geocode: coords },
   }
   return { status: "ok", ingest }
 }

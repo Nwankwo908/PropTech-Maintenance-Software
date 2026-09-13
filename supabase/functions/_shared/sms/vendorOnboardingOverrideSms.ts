@@ -54,7 +54,7 @@ export async function sendVendorOnboardingOverrideActivatedSms(
     const line = await resolveOutboundLandlordSmsLine(supabase, params.landlordId)
     if (!line?.phone) return skipped
 
-    const provider: SmsProviderName = line.provider === "telnyx" ? "telnyx" : "twilio"
+    const provider: SmsProviderName = "twilio"
     const identity = await upsertSmsIdentityForPhone(supabase, {
       landlordId: params.landlordId,
       phone,

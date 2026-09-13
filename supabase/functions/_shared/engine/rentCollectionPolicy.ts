@@ -51,6 +51,13 @@ export function shouldRunRentCollectionCron(
   return rentReminderSlotForToday(rentDueDay, cadenceDays, date) != null
 }
 
+/** Amount to put on a rent reminder: open balance, else contracted monthly rent. */
+export function rentReminderAmountDue(balanceDue: number, monthlyRent: number): number {
+  if (Number.isFinite(balanceDue) && balanceDue > 0) return balanceDue
+  if (Number.isFinite(monthlyRent) && monthlyRent > 0) return monthlyRent
+  return 0
+}
+
 /** Payments-off: ask the landlord on due day and each overdue day until answered. */
 export function shouldAskLandlordRentReceiptToday(
   rentDueDay: number,

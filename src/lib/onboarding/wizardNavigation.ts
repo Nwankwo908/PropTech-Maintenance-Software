@@ -4,6 +4,7 @@
 import {
   normalizeOnboardingStep,
   resolveOnboardingStepForPath,
+  resolveReviewEditStep,
 } from './steps'
 import type { LandlordOnboardingState, OnboardingSetupPath, OnboardingStep } from './types'
 
@@ -20,7 +21,10 @@ export function resolveWizardDisplayStep(input: {
 }): OnboardingStep {
   const stored = normalizeOnboardingStep(input.storedStep)
   if (input.editingFromReview && input.reviewEditStep != null) {
-    return input.reviewEditStep
+    if (stored !== 'review' && stored !== 'entry') {
+      return resolveOnboardingStepForPath(stored, input.setupPath)
+    }
+    return resolveReviewEditStep(input.reviewEditStep, input.setupPath)
   }
   if (input.onboardingStatus === 'not_started') {
     return 'entry'

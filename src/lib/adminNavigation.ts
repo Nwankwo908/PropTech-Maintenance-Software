@@ -230,13 +230,13 @@ export const ADMIN_NAV_TREE: AdminNavNode[] = [
   },
   {
     id: 'analytics',
-    label: 'Analytics',
+    label: 'Performance',
     path: `${ADMIN_BASE}/analytics`,
     routeSegment: 'analytics',
     surfaces: { sidebar: true, search: true },
     search: {
       category: 'report',
-      title: 'Reports & Analytics',
+      title: 'Performance',
       subtitle: 'Portfolio performance and operational metrics',
       keywords: ['reports', 'analytics', 'dashboard', 'metrics', 'performance', 'insights', 'charts'],
     },

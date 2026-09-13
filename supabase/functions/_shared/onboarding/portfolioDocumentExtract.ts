@@ -29,6 +29,7 @@ import {
   insuranceDocumentTypeToKind,
 } from "../../../../shared/onboarding/typedDocumentExtract/insuranceClassify.ts"
 import { parseAndMapTypedExtract } from "../../../../shared/onboarding/typedDocumentExtract/parseAndMap.ts"
+import { parseRentDueDay } from "../../../../shared/onboarding/typedDocumentExtract/parse.ts"
 import {
   extractStateCode,
   orderLeaseDates,
@@ -73,6 +74,7 @@ export type PortfolioExtractResident = {
   leaseStart: string
   leaseEnd: string
   monthlyRent: string
+  rentDueDay?: string
   confidence: number
 }
 
@@ -92,6 +94,7 @@ export type PortfolioExtractLease = {
   leaseEnd: string
   rentAmount: string
   securityDeposit: string
+  rentDueDay?: string
   confidence: number
 }
 
@@ -228,6 +231,7 @@ export const PORTFOLIO_EXTRACT_JSON_SCHEMA = {
       leaseStart: "YYYY-MM-DD or empty",
       leaseEnd: "YYYY-MM-DD or empty",
       monthlyRent: "string",
+      rentDueDay: "day of month 1-31 or empty",
       confidence: "number",
     },
   ],
@@ -251,6 +255,7 @@ export const PORTFOLIO_EXTRACT_JSON_SCHEMA = {
       leaseEnd: "string",
       rentAmount: "string",
       securityDeposit: "string",
+      rentDueDay: "day of month 1-31 or empty",
       confidence: "number",
     },
   ],
@@ -637,6 +642,10 @@ export function normalizePortfolioDocumentExtract(raw: unknown): PortfolioDocume
         leaseStart: dates.start,
         leaseEnd: dates.end,
         monthlyRent: cleanExtractedText(row.monthlyRent ?? row.monthly_rent ?? row.rent),
+        rentDueDay: (() => {
+          const day = parseRentDueDay(row.rentDueDay ?? row.rent_due_day ?? row.due_day)
+          return day == null ? "" : String(day)
+        })(),
         confidence: clampConfidence(row.confidence),
       }
     }),
@@ -672,6 +681,10 @@ export function normalizePortfolioDocumentExtract(raw: unknown): PortfolioDocume
         leaseEnd: dates.end,
         rentAmount: cleanExtractedText(row.rentAmount ?? row.rent_amount ?? row.rent),
         securityDeposit: cleanExtractedText(row.securityDeposit ?? row.security_deposit),
+        rentDueDay: (() => {
+          const day = parseRentDueDay(row.rentDueDay ?? row.rent_due_day ?? row.due_day)
+          return day == null ? "" : String(day)
+        })(),
         confidence: clampConfidence(row.confidence),
       }
     }),

@@ -55,7 +55,7 @@ async function insertSimulatedOutboundMessage(
       raw_payload: {
         source: "dashboard_lease_renewal_incentive",
         delivery: "simulated",
-        reason: "demo_placeholder_phone_skipped_telnyx",
+        reason: "demo_placeholder_phone_skipped_sms",
       },
     })
     .select("id")

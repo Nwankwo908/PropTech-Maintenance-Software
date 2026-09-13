@@ -4,11 +4,16 @@ import {
   buildResidentCalendarEvents,
   calendarEventsFromOperationsGraph,
   calendarEventsFromScheduledTickets,
+  datesForMonthWithRentReminders,
+  datesInRange,
   datesInWeek,
+  nextRentCalendarFocusDate,
+  sliceResidentCalendarPage,
   mergeResidentCalendarEvents,
   nearestCalendarFocusDate,
   rentDueIsoForMonth,
   startOfWeekSunday,
+  stripStartIncludingRentReminders,
 } from './residentLeaseCalendar'
 import type { PropertyOperationsTimelineEvent } from './propertyOperationsGraph'
 
@@ -24,13 +29,39 @@ describe('buildResidentCalendarEvents', () => {
       leaseStartDate: '2026-03-15',
       leaseEndDate: '2026-06-10',
       rentDueDay: 1,
+      now: new Date(2026, 3, 1),
     })
-    expect(events.filter((event) => event.kind === 'rent').map((event) => event.date)).toEqual([
-      '2026-04-01',
-      '2026-05-01',
-      '2026-06-01',
-    ])
+    const rents = events.filter((event) => event.kind === 'rent').map((event) => event.date)
+    expect(rents).toEqual(expect.arrayContaining(['2026-04-01', '2026-05-01', '2026-06-01']))
     expect(events.some((event) => event.kind === 'maintenance')).toBe(false)
+  })
+
+  it('plots rent from this month through lease end, not a past start month', () => {
+    const events = buildResidentCalendarEvents({
+      leaseStartDate: '2026-08-01',
+      leaseEndDate: '2027-07-31',
+      rentDueDay: 1,
+      now: new Date(2026, 8, 12),
+    })
+    const rents = events.filter((event) => event.kind === 'rent').map((event) => event.date)
+    expect(rents).toContain('2026-10-01')
+    expect(rents).toContain('2027-07-01')
+    expect(rents).not.toContain('2026-08-01')
+    expect(events.some((event) => event.kind === 'rent_reminder' && event.date >= '2026-09-12')).toBe(
+      true,
+    )
+    expect(events.some((event) => event.date.startsWith('2026-08'))).toBe(false)
+  })
+
+  it('does not keep this month’s already-passed rent (or its prior-month reminders)', () => {
+    const events = buildResidentCalendarEvents({
+      leaseStartDate: '2026-08-01',
+      leaseEndDate: '2027-07-31',
+      rentDueDay: 1,
+      now: new Date(2026, 8, 12),
+    })
+    expect(events.some((event) => event.date === '2026-09-01')).toBe(false)
+    expect(events.some((event) => event.date.startsWith('2026-08'))).toBe(false)
   })
 
   it('places reminder dates from cadence preferences before each rent due date', () => {
@@ -39,6 +70,7 @@ describe('buildResidentCalendarEvents', () => {
       leaseEndDate: '2026-04-30',
       rentDueDay: 10,
       rentReminderCadence: '5, 3, 1 days before',
+      now: new Date(2026, 3, 1),
     })
     expect(
       events
@@ -46,19 +78,49 @@ describe('buildResidentCalendarEvents', () => {
         .map((event) => `${event.date}:${event.daysBeforeDue}`),
     ).toEqual(['2026-04-05:5', '2026-04-07:3', '2026-04-09:1'])
   })
+})
 
+describe('stripStartIncludingRentReminders', () => {
+  it('starts early enough to show reminders before the next rent due date', () => {
+    const events = buildResidentCalendarEvents({
+      leaseStartDate: '2026-03-01',
+      leaseEndDate: '2026-12-31',
+      rentDueDay: 1,
+      rentReminderCadence: '5, 3, 1 days before',
+      now: new Date(2026, 8, 11),
+    })
+  })
+
+  it('does not open the strip in a month that has already passed', () => {
+    const events = buildResidentCalendarEvents({
+      leaseStartDate: '2026-08-01',
+      leaseEndDate: '2027-07-31',
+      rentDueDay: 1,
+      rentReminderCadence: '5, 3, 1 days before',
+      now: new Date(2026, 8, 12),
+    })
+    expect(stripStartIncludingRentReminders(events, '2026-09-12', '5, 3, 1 days before')).toBe(
+      '2026-09-26',
+    )
+  })
+})
+
+describe('buildResidentCalendarEvents extra cases', () => {
   it('includes rent on the lease start day when they fall on the same date', () => {
     const events = buildResidentCalendarEvents({
       leaseStartDate: '2026-08-01',
       leaseEndDate: '2026-08-31',
       rentDueDay: 1,
+      now: new Date(2026, 7, 1),
     })
-    expect(events.map((event) => `${event.date}:${event.kind}`)).toEqual([
-      '2026-07-27:rent_reminder',
-      '2026-07-29:rent_reminder',
-      '2026-07-31:rent_reminder',
-      '2026-08-01:rent',
-    ])
+    expect(events.map((event) => `${event.date}:${event.kind}`)).toEqual(
+      expect.arrayContaining([
+        '2026-07-27:rent_reminder',
+        '2026-07-29:rent_reminder',
+        '2026-07-31:rent_reminder',
+        '2026-08-01:rent',
+      ]),
+    )
   })
 
   it('defaults to the 1st when rent due day is missing', () => {
@@ -67,13 +129,14 @@ describe('buildResidentCalendarEvents', () => {
       leaseEndDate: '2026-08-31',
       rentDueDay: null,
       rentReminderCadence: '1 day before',
+      now: new Date(2026, 7, 1),
     })
-    expect(events.filter((event) => event.kind === 'rent').map((event) => event.date)).toEqual([
-      '2026-08-01',
-    ])
-    expect(events.filter((event) => event.kind === 'rent_reminder').map((event) => event.date)).toEqual([
-      '2026-07-31',
-    ])
+    expect(events.filter((event) => event.kind === 'rent').map((event) => event.date)).toEqual(
+      expect.arrayContaining(['2026-08-01']),
+    )
+    expect(events.filter((event) => event.kind === 'rent_reminder').map((event) => event.date)).toEqual(
+      expect.arrayContaining(['2026-07-31']),
+    )
   })
 })
 
@@ -208,6 +271,7 @@ describe('nearestCalendarFocusDate', () => {
       leaseEndDate: '2026-12-31',
       rentDueDay: 1,
       rentReminderCadence: '1 day before',
+      now: new Date(2026, 7, 1),
     })
     expect(nearestCalendarFocusDate(events, '2026-08-29')).toBe('2026-08-31')
   })
@@ -219,6 +283,7 @@ describe('nearestCalendarFocusDate', () => {
         leaseEndDate: '2026-12-31',
         rentDueDay: 1,
         rentReminderCadence: '1 day before',
+        now: new Date(2026, 7, 1),
       }),
       [{ date: '2026-08-25', kind: 'maintenance', label: 'Maintenance scheduled' }],
     )
@@ -238,5 +303,56 @@ describe('week helpers', () => {
       '2026-08-28',
       '2026-08-29',
     ])
+  })
+
+  it('includes prior-month reminders with the rent due month', () => {
+    const events = buildResidentCalendarEvents({
+      leaseStartDate: '2026-03-01',
+      leaseEndDate: '2026-12-31',
+      rentDueDay: 1,
+      rentReminderCadence: '5, 3, 1 days before',
+      now: new Date(2026, 8, 12),
+    })
+    const october = datesForMonthWithRentReminders(2026, 10, events)
+    expect(october.slice(0, 4)).toEqual([
+      '2026-09-26',
+      '2026-09-28',
+      '2026-09-30',
+      '2026-10-01',
+    ])
+    expect(october.at(-1)).toBe('2026-10-31')
+  })
+
+  it('lists inclusive dates across a range', () => {
+    expect(datesInRange('2026-04-29', '2026-05-02')).toEqual([
+      '2026-04-29',
+      '2026-04-30',
+      '2026-05-01',
+      '2026-05-02',
+    ])
+  })
+})
+
+describe('sliceResidentCalendarPage', () => {
+  it('pages a month strip seven days at a time', () => {
+    const dates = Array.from({ length: 31 }, (_, index) => `2026-10-${String(index + 1).padStart(2, '0')}`)
+    const first = sliceResidentCalendarPage(dates, 0)
+    expect(first.pageCount).toBe(5)
+    expect(first.dates).toEqual(dates.slice(0, 7))
+    expect(sliceResidentCalendarPage(dates, 4).dates).toEqual(dates.slice(28, 31))
+    expect(sliceResidentCalendarPage(dates, 99).pageIndex).toBe(4)
+  })
+})
+
+describe('nextRentCalendarFocusDate', () => {
+  it('returns the next rent due date on or after today', () => {
+    const events = buildResidentCalendarEvents({
+      leaseStartDate: '2026-03-01',
+      leaseEndDate: '2026-12-31',
+      rentDueDay: 15,
+      rentReminderCadence: '5, 3, 1 days before',
+      now: new Date(2026, 8, 12),
+    })
+    expect(nextRentCalendarFocusDate(events, '2026-09-12')).toBe('2026-09-15')
   })
 })

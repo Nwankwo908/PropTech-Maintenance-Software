@@ -14,6 +14,8 @@ import { PropertyUnitsTable } from '@/components/PropertyUnitsTable'
 import { PropertyDetailsPanel } from '@/components/PropertyDetailsPanel'
 import { PropertyHistoryPanel } from '@/components/PropertyHistoryPanel'
 import { PropertyHomeDataPanel } from '@/components/PropertyHomeDataPanel'
+import { PropertyAccessRail } from '@/components/PropertyAccessRail'
+import { MaintenanceHistoryRail } from '@/components/MaintenanceHistoryRail'
 import { isLimitedAlpha1Landlord } from '@shared/landlordCapabilities'
 import { getActiveLandlordId } from '@/lib/activeLandlord'
 import { fetchAdminWorkflowDashboard, isCancelledOnActiveTasks, type AdminWorkflowDashboardData } from '@/lib/adminWorkflows'
@@ -302,6 +304,8 @@ export function AdminPropertyDetailDashboard() {
   const [unitStatusError, setUnitStatusError] = useState<string | null>(null)
   const [editPropertyOpen, setEditPropertyOpen] = useState(false)
   const [editPropertyNotice, setEditPropertyNotice] = useState<string | null>(null)
+  const [propertyAccessRailOpen, setPropertyAccessRailOpen] = useState(false)
+  const [maintenanceHistoryRailOpen, setMaintenanceHistoryRailOpen] = useState(false)
   const loadSeqRef = useRef(0)
 
   useEffect(() => {
@@ -925,6 +929,13 @@ export function AdminPropertyDetailDashboard() {
     return resolvePropertyBuildingMeta(building, [], record, false)
   }, [building, canonicalProperty, canonicalProperties])
 
+  const overviewPropertyAddress = useMemo(() => {
+    const fromRecord = canonicalProperty
+      ? zillowLookupAddressFromProperty(canonicalProperty)
+      : null
+    return (fromRecord ?? meta.addressLine ?? building ?? '').trim()
+  }, [canonicalProperty, meta.addressLine, building])
+
   const urgentItems: UrgentItem[] = useMemo(() => {
     if (!workflowData || !building) return []
 
@@ -1219,7 +1230,7 @@ export function AdminPropertyDetailDashboard() {
   )
 
   return (
-    <main className="flex min-h-0 flex-1 flex-col px-8 pb-12">
+    <main className="flex min-h-0 flex-1 flex-col px-8 pb-4">
       <SetupSuccessCheckboxGuide
         key={propertyTabGuideRunId}
         active={showPropertyTabGuide && !loading}
@@ -1414,32 +1425,36 @@ export function AdminPropertyDetailDashboard() {
           <PropertyHomeDataPanel
             propertyId={canonicalProperty?.id ?? null}
             landlordId={getActiveLandlordId()}
-            address={
-              (canonicalProperty
-                ? zillowLookupAddressFromProperty(canonicalProperty)
-                : null) ?? meta.addressLine
-            }
+            address={overviewPropertyAddress || null}
             buildingName={building}
+            onAddPropertyAccess={() => setPropertyAccessRailOpen(true)}
           />
           {unitStatusError ? (
             <p className="rounded-lg border border-[#fecaca] bg-[#fef2f2] px-3 py-2 text-[13px] text-[#b91c1c]">
               {unitStatusError}
             </p>
           ) : null}
-          <PropertyUnitsTable
-            building={building ?? ''}
-            propertyId={canonicalProperty?.id}
-            rows={propertyUnitRows}
-            loading={loading}
-            onOccupancyStatusChange={(unitId, status) => handleOccupancyStatusChange(unitId, status)}
-          />
+          <div className="flex min-w-0 flex-col gap-4 pb-[40px]">
+            <h3 className="text-[24px] font-bold leading-8 tracking-[0.07px] text-[#0a0a0a]">
+              {overviewPropertyAddress
+                ? `Home Details for ${overviewPropertyAddress}`
+                : 'Home Details'}
+            </h3>
+            <PropertyUnitsTable
+              building={building ?? ''}
+              propertyId={canonicalProperty?.id}
+              rows={propertyUnitRows}
+              loading={loading}
+              onOccupancyStatusChange={(unitId, status) => handleOccupancyStatusChange(unitId, status)}
+            />
+          </div>
         </div>
       ) : activeTab === 'details' ? (
         <PropertyDetailsPanel
           building={building ?? ''}
           loading={loading}
           initialYearBuilt={meta.yearBuilt}
-          modules={['inspection', 'access', 'history']}
+          modules={['inspection']}
         />
       ) : activeTab === 'insurance' ? (
         <PropertyDetailsPanel
@@ -1459,6 +1474,7 @@ export function AdminPropertyDetailDashboard() {
           units={buildingUnits.map((unit) => ({ id: unit.id, unitLabel: unit.unitLabel }))}
           unitFilter={historyUnitFilter}
           onUnitFilterChange={setHistoryUnitFilter}
+          onAddMaintenanceHistory={() => setMaintenanceHistoryRailOpen(true)}
         />
       ) : activeTab === 'analytics' ? (
         <PropertyAnalyticsPanel
@@ -1500,6 +1516,16 @@ export function AdminPropertyDetailDashboard() {
         onSubmit={(payload) => {
           void saveEditedProperty(payload)
         }}
+      />
+      <PropertyAccessRail
+        open={propertyAccessRailOpen}
+        building={building ?? ''}
+        onClose={() => setPropertyAccessRailOpen(false)}
+      />
+      <MaintenanceHistoryRail
+        open={maintenanceHistoryRailOpen}
+        building={building ?? ''}
+        onClose={() => setMaintenanceHistoryRailOpen(false)}
       />
       <ConversationMonitoringModal
         open={monitoringConversationId != null}

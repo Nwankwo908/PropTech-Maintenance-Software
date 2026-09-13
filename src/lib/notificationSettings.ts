@@ -331,10 +331,10 @@ function applyLimitedAlphaNotificationFilter(
   return next
 }
 
-export function saveNotificationSettings(state: NotificationSettingsState): void {
+export function saveNotificationSettings(_state: NotificationSettingsState): void {
   // Deprecated: notifications persist server-side via saveNotificationSettingsForAccount.
   try {
-    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(state))
+    window.localStorage.removeItem(STORAGE_KEY)
   } catch {
     // private mode
   }

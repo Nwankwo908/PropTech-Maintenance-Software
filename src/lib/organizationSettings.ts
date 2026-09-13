@@ -78,6 +78,8 @@ export type OrganizationSettingsForm = {
   quietHoursStart: string
   quietHoursEnd: string
   rentReminderCadence: string
+  /** Day of month 1–31, or empty when unset. */
+  rentDueDay: string
   preferredLanguage: string
   /** Tone for Ulo-generated operational SMS and email. */
   communicationStyle: CommunicationStyle
@@ -98,6 +100,27 @@ export function normalizeRentReminderCadence(value: string | null | undefined): 
   if (trimmed === '3, 1 day before') return '3, 1 days before'
   if (RENT_REMINDER_CADENCE_OPTIONS.some((option) => option.value === trimmed)) return trimmed
   return trimmed || DEFAULT_RENT_REMINDER_CADENCE
+}
+
+/** Persist portfolio rent due day as `"1"`–`"31"`, or empty when unset. */
+export function normalizeRentDueDaySetting(value: unknown): string {
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    const day = Math.trunc(value)
+    return day >= 1 && day <= 31 ? String(day) : ''
+  }
+  const trimmed = typeof value === 'string' ? value.trim() : ''
+  if (!trimmed) return ''
+  const day = Number.parseInt(trimmed, 10)
+  if (!Number.isFinite(day) || day < 1 || day > 31) return ''
+  return String(day)
+}
+
+export function rentDueDayChoiceFromSetting(value: string): '' | '1' | '5' | 'custom' {
+  const day = normalizeRentDueDaySetting(value)
+  if (!day) return ''
+  if (day === '1') return '1'
+  if (day === '5') return '5'
+  return 'custom'
 }
 
 export type OrganizationWorkspaceSummary = {
@@ -145,6 +168,7 @@ export const DEFAULT_ORGANIZATION_SETTINGS: OrganizationSettingsForm = {
   quietHoursStart: '10:00 PM',
   quietHoursEnd: '8:00 AM',
   rentReminderCadence: DEFAULT_RENT_REMINDER_CADENCE,
+  rentDueDay: '',
   preferredLanguage: 'English (US)',
   communicationStyle: DEFAULT_COMMUNICATION_STYLE,
 }
@@ -182,10 +206,10 @@ export async function saveOrganizationSettings(
 /** @deprecated Account settings no longer use localStorage. Kept for migration shims. */
 export function writeStoredOrganizationSettings(
   landlordId: string,
-  settings: OrganizationSettingsForm,
+  _settings: OrganizationSettingsForm,
 ): void {
   try {
-    window.localStorage.setItem(storageKey(landlordId), JSON.stringify(settings))
+    window.localStorage.removeItem(storageKey(landlordId))
   } catch {
     // private mode
   }

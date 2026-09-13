@@ -8,6 +8,7 @@ export const RENT_ROLL_JSON_SCHEMA = {
       lease_start: 'YYYY-MM-DD or null',
       lease_end: 'YYYY-MM-DD or null',
       monthly_rent: 'number or null',
+      rent_due_day: '1-31 or null',
       status: 'occupied|vacant|notice|model|offline|other or null',
       confidence: '0-100',
     },
@@ -31,6 +32,7 @@ Rules:
 - Preserve rows even if some fields are null.
 - Dates: YYYY-MM-DD when clear; otherwise null. Do not guess.
 - monthly_rent: number or null. Strip $ and commas only when the value is clearly money.
+- rent_due_day: day of the month (1–31) when the roll says rent is due. null if not stated. Do not use lease start as the due day.
 - Do not hallucinate.`
 
 export const LEASE_JSON_SCHEMA = {
@@ -44,6 +46,7 @@ export const LEASE_JSON_SCHEMA = {
   lease_end: 'YYYY-MM-DD or null',
   monthly_rent: 'number or null',
   security_deposit: 'number or null',
+  rent_due_day: '1-31 or null',
   confidence: '0-100',
   warnings: ['string'],
 }
@@ -56,6 +59,9 @@ ${JSON.stringify(LEASE_JSON_SCHEMA, null, 2)}
 NAME ROLES:
 - landlord_name: owner/lessor. May be an LLC, corporation, trust, or individual. One string. Do not split into first/last. Do not use the property manager or leasing agent as landlord.
 - tenant_names: every explicitly named tenant/lessee. Do not include guarantors, co-signers, the landlord, or the management company.
+- Occupant / Tenant / Lessee signature blocks are tenants, never landlord_name. Do not copy a lessee into landlord_name because they signed first or their name is large on the last page.
+- Never put the same person in both landlord_name and tenant_names.
+- If both parties are people, follow labeled roles (Landlord/Lessor vs Tenant/Lessee/Occupant). Do not swap them.
 - If one party is an LLC/Inc/company and the other is a person, the company is landlord_name and the person is in tenant_names unless the document clearly labels the reverse.
 - guarantor_names: guarantors and co-signers only. A guarantor next to a tenant is still not a tenant.
 - property_manager_name: manager or leasing agent. Signing on behalf of the owner does not make them the landlord.
@@ -64,6 +70,7 @@ If a spelling mismatch exists, prefer the signed/signature-block version when it
 Do not merge two clearly different people because names are similar.
 Do not invent missing parties. If a role is not clearly identified, return null or [].
 Dates YYYY-MM-DD or null. Money as number or null.
+rent_due_day: the calendar day rent is due each month when the lease states it (the 1st, first of each month, due on the 5th). Integer 1–31 or null. Do not use lease start as the due day. Do not guess.
 Do not hallucinate.`
 
 export const INSURANCE_JSON_SCHEMA = {

@@ -1,5 +1,5 @@
 /** Supported SMS provider identifiers (matches `sms_providers.name`). */
-export type SmsProviderName = "twilio" | "telnyx"
+export type SmsProviderName = "twilio"
 
 export type SendMessageInput = {
   to: string

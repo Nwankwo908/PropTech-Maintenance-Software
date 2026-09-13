@@ -238,6 +238,7 @@ export type OnboardingAiReviewStepProps = {
   onReviewChange: (review: OnboardingExtractionReview) => void
   onBackToUploads: () => void
   onImportAll: () => void
+  continueLabel?: string
 }
 
 export function OnboardingAiReviewStep({
@@ -246,6 +247,7 @@ export function OnboardingAiReviewStep({
   onReviewChange,
   onBackToUploads,
   onImportAll,
+  continueLabel = 'Continue',
 }: OnboardingAiReviewStepProps) {
   const [editingId, setEditingId] = useState<string | null>(null)
   const [editDraft, setEditDraft] = useState('')
@@ -381,7 +383,8 @@ export function OnboardingAiReviewStep({
             placeholder="Phone"
           />
         </label>
-        <label className="block">
+        <div className="grid grid-cols-3 gap-3 sm:col-span-2">
+        <label className="block min-w-0">
           <span className={fieldLabelClass}>Occupancy status</span>
           <ResidentOccupancySelect
             className={selectClass}
@@ -390,7 +393,7 @@ export function OnboardingAiReviewStep({
             aria-label={`Occupancy status for ${item.fullName || 'resident'}`}
           />
         </label>
-        <label className="block">
+        <label className="block min-w-0">
           <span className={fieldLabelClass}>Monthly rent</span>
           <input
             className={inputClass}
@@ -399,7 +402,7 @@ export function OnboardingAiReviewStep({
             placeholder="$2,850"
           />
         </label>
-        <label className="block">
+        <label className="block min-w-0">
           <span className={fieldLabelClass}>Rent due day (1–31)</span>
           <input
             className={inputClass}
@@ -408,6 +411,7 @@ export function OnboardingAiReviewStep({
             placeholder="1"
           />
         </label>
+        </div>
         <label className="block sm:col-span-2">
           <span className={fieldLabelClass}>Maintenance responsibilities clause</span>
           <textarea
@@ -498,7 +502,8 @@ export function OnboardingAiReviewStep({
                         </select>
                       </div>
                     </label>
-                    <label className="block">
+                    <div className="grid grid-cols-3 gap-3 sm:col-span-2">
+                    <label className="block min-w-0">
                       <span className={fieldLabelClass}>ZIP</span>
                       <input
                         className={inputClass}
@@ -507,7 +512,23 @@ export function OnboardingAiReviewStep({
                         placeholder="07102"
                       />
                     </label>
-                    <label className="block">
+                    <label className="block min-w-0">
+                      <span className={fieldLabelClass}>Units</span>
+                      <input
+                        className={inputClass}
+                        type="number"
+                        min={1}
+                        value={item.unitCount > 0 ? String(item.unitCount) : ''}
+                        onChange={(e) => {
+                          const parsed = Number.parseInt(e.target.value, 10)
+                          patchProperty(item.id, {
+                            unitCount: Number.isFinite(parsed) && parsed >= 1 ? parsed : 0,
+                          })
+                        }}
+                        placeholder="1"
+                      />
+                    </label>
+                    <label className="block min-w-0">
                       <span className={fieldLabelClass}>Property type</span>
                       <div className="relative">
                         <select
@@ -537,97 +558,32 @@ export function OnboardingAiReviewStep({
                         </span>
                       </div>
                     </label>
-                    <label className="block">
-                      <span className={fieldLabelClass}>Property manager name</span>
-                      <input
-                        className={inputClass}
-                        value={item.propertyManagerName}
-                        onChange={(e) =>
-                          patchProperty(item.id, { propertyManagerName: e.target.value })
-                        }
-                        placeholder="Optional"
-                      />
-                    </label>
-                    <label className="block">
-                      <span className={fieldLabelClass}>Property manager phone</span>
-                      <input
-                        className={inputClass}
-                        value={item.propertyManagerPhone}
-                        onChange={(e) =>
-                          patchProperty(item.id, { propertyManagerPhone: e.target.value })
-                        }
-                        placeholder="Optional"
-                      />
-                    </label>
+                    </div>
                   </div>
 
-                  {propertyUnits.length > 0 ? (
-                    <div className="mt-3 border-t border-[#f3f4f6] pt-3">
-                      <p className="text-[12px] font-medium text-[#364153]">Units and residents</p>
-                      <ul className="mt-2 list-none space-y-2 pl-0">
-                        {propertyUnits.map((unit) => {
-                          const resident = residentForUnit(unit, review.residents)
-                          if (resident) assignedResidentIds.add(resident.id)
-                          return (
-                            <li key={unit.id} className="list-none space-y-2">
-                              <ReviewItemRow
-                                as="div"
-                                checked={unit.selected}
-                                onToggle={() => patchUnit(unit.id, { selected: !unit.selected })}
-                                label={`Unit ${unit.label}`}
-                                sourceDocumentName={unit.sourceDocumentName}
-                                editing={editingId === unit.id}
-                                editValue={editDraft}
-                                editMode="label"
-                                editFieldLabel="Unit number"
-                                onEdit={() => startEdit(unit.id, unit.label)}
-                                onSaveEdit={() => saveEdit('units', 'label', review.units)}
-                                onCancelEdit={() => setEditingId(null)}
-                                onEditChange={setEditDraft}
-                              />
-                              {resident ? (
-                                <ReviewItemRow
-                                  as="div"
-                                  checked={resident.selected}
-                                  onToggle={() =>
-                                    patchResident(resident.id, { selected: !resident.selected })
-                                  }
-                                  label={resident.fullName}
-                                  sourceDocumentName={resident.sourceDocumentName}
-                                  editing={editingId === resident.id}
-                                  editValue={editDraft}
-                                  editMode="label"
-                                  editFieldLabel="Resident name"
-                                  onEdit={() => startEdit(resident.id, resident.fullName)}
-                                  onSaveEdit={() =>
-                                    saveEdit('residents', 'fullName', review.residents)
-                                  }
-                                  onCancelEdit={() => setEditingId(null)}
-                                  onEditChange={setEditDraft}
-                                >
-                                  {renderResidentEditFields(resident)}
-                                </ReviewItemRow>
-                              ) : null}
-                            </li>
-                          )
-                        })}
-                      </ul>
-                    </div>
-                  ) : null}
-
                   {(() => {
-                    const propertyResidents = residentsForProperty(
+                    const propertyResidents: OnboardingExtractedResident[] = []
+                    const seenResidentIds = new Set<string>()
+                    for (const unit of propertyUnits) {
+                      const resident = residentForUnit(unit, review.residents)
+                      if (!resident || seenResidentIds.has(resident.id)) continue
+                      seenResidentIds.add(resident.id)
+                      propertyResidents.push(resident)
+                    }
+                    for (const resident of residentsForProperty(
                       item,
                       review.residents,
                       review.properties,
-                    ).filter((resident) => !assignedResidentIds.has(resident.id))
-                    if (propertyResidents.length === 0) return null
+                    )) {
+                      if (seenResidentIds.has(resident.id)) continue
+                      seenResidentIds.add(resident.id)
+                      propertyResidents.push(resident)
+                    }
                     propertyResidents.forEach((resident) => assignedResidentIds.add(resident.id))
+                    if (propertyResidents.length === 0) return null
                     return (
                       <div className="mt-3 border-t border-[#f3f4f6] pt-3">
-                        <p className="text-[12px] font-medium text-[#364153]">
-                          Residents without a linked unit
-                        </p>
+                        <p className="text-[12px] font-medium text-[#364153]">Residents</p>
                         <ul className="mt-2 list-none space-y-2 pl-0">
                           {propertyResidents.map((resident) => (
                             <li key={resident.id} className="list-none">
@@ -1024,63 +980,6 @@ export function OnboardingAiReviewStep({
                 'No lease information detected.',
               )}
             </ReviewSection>
-            <ReviewSection
-              title="Roles found on documents"
-              count={review.needsReview.filter((item) =>
-                [
-                  'landlord_lessor',
-                  'tenant_lessee',
-                  'guarantor',
-                  'property_manager',
-                  'named_insured',
-                  'certificate_holder',
-                  'additional_insured',
-                  'insurance_producer',
-                  'insurance_carrier',
-                  'unit_row_needs_review',
-                ].includes(item.dataType),
-              ).length}
-            >
-              {(() => {
-                const roleRows = review.needsReview.filter((item) =>
-                  [
-                    'landlord_lessor',
-                    'tenant_lessee',
-                    'guarantor',
-                    'property_manager',
-                    'named_insured',
-                    'certificate_holder',
-                    'additional_insured',
-                    'insurance_producer',
-                    'insurance_carrier',
-                    'unit_row_needs_review',
-                  ].includes(item.dataType),
-                )
-                if (roleRows.length === 0) {
-                  return (
-                    <p className="mt-2 text-[13px] text-[#6a7282]">
-                      No labeled landlord, tenant, guarantor, or insurance roles detected.
-                    </p>
-                  )
-                }
-                return (
-                  <ul className="mt-3 space-y-2">
-                    {roleRows.map((item) => (
-                      <li
-                        key={item.id}
-                        className="rounded-[8px] border border-[#eef0f3] px-3 py-2"
-                      >
-                        <p className="text-[12px] font-medium text-[#364153]">{item.label}</p>
-                        <p className="mt-0.5 text-[13px] text-[#101828]">{item.value}</p>
-                        {item.needsReview ? (
-                          <p className="mt-1 text-[12px] text-[#b54708]">Needs review</p>
-                        ) : null}
-                      </li>
-                    ))}
-                  </ul>
-                )
-              })()}
-            </ReviewSection>
             <ReviewSection title="Vendors Found" count={review.vendors.length}>
               {renderVendorRows()}
             </ReviewSection>
@@ -1126,7 +1025,7 @@ export function OnboardingAiReviewStep({
             onClick={onImportAll}
             className={btnPrimary}
           >
-            Continue
+            {continueLabel}
           </button>
         </div>
       </div>

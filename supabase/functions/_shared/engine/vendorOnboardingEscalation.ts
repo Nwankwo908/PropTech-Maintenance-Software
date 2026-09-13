@@ -137,9 +137,7 @@ async function sendReminderChannels(
     try {
       const line = await resolveOutboundLandlordSmsLine(supabase, params.landlordId)
       if (line) {
-        const provider: SmsProviderName = line.provider === "telnyx"
-          ? "telnyx"
-          : "twilio"
+        const provider: SmsProviderName = "twilio"
         const identity = await upsertSmsIdentityForPhone(supabase, {
           landlordId: params.landlordId,
           phone,

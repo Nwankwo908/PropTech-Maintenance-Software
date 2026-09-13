@@ -44,7 +44,7 @@ async function ensureConversation(
     }
   }
 
-  const provider: SmsProviderName = line.provider === "telnyx" ? "telnyx" : "twilio"
+  const provider: SmsProviderName = "twilio"
   const toNumber = normalizeSmsPhone(params.phone ?? "")
   let conversationId = await resolveVendorVerificationConversationId(supabase, params)
 

@@ -87,6 +87,7 @@ export type ExtractedLease = {
   leaseStart: string
   leaseEnd: string
   rentAmount?: string
+  rentDueDay?: string
   selected: boolean
 }
 

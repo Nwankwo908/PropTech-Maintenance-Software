@@ -31,6 +31,7 @@ export {
   getOnboardingStepsForPath,
   getOnboardingStepOrder,
   resolveOnboardingStepForPath,
+  resolveReviewEditStep,
   normalizeOnboardingStep,
   getPreviousOnboardingStep,
   getActiveOnboardingStepIndex,
@@ -63,6 +64,7 @@ export {
 
 export {
   persistLandlordAccountProfile,
+  persistLandlordDefaultRentDueDay,
   persistLandlordCommunicationStyle,
   fetchAccountSetupCounts,
 } from './persist/account'
@@ -86,6 +88,8 @@ export {
   fetchOnboardingResidents,
   parseMonthlyRentInput,
   parseRentDueDayInput,
+  formatRentDueDayOrdinal,
+  mostCommonRentDueDay,
   parseLeaseDateInput,
 } from './persist/residents'
 

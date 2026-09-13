@@ -68,6 +68,7 @@ import {
   persistOnboardingWizardLocally,
   readLocalOnboardingState,
   resolveOnboardingStepForPath,
+  resolveReviewEditStep,
   saveLandlordOnboarding,
   saveOnboardingWizardDraft,
   type LandlordOnboardingState,
@@ -257,6 +258,12 @@ export function useOnboardingWizard() {
     if (loading || !formsHydratedRef.current) return
     scheduleWizardPersist()
   }, [loading, state, propertyForms, vendorForms, residentForms, uploadDocuments, extractionReview])
+
+  useEffect(() => {
+    if (state.accountSetup.smsConsentAcceptedAt) {
+      setSmsConsentAccepted(true)
+    }
+  }, [state.accountSetup.smsConsentAcceptedAt])
 
   useEffect(() => {
     const cancelPendingSaves = () => {
@@ -692,6 +699,15 @@ export function useOnboardingWizard() {
       setResidentForms(draftResidentForms)
     }
 
+    wizardSnapshotRef.current = {
+      ...wizardSnapshotRef.current,
+      state: next!,
+      propertyForms: draftPropertyForms,
+      vendorForms: draftVendorForms,
+      residentForms: draftResidentForms,
+      extractionReview: draftSnap.extractionReview,
+    }
+
     setSaving(true)
     setError(null)
     try {
@@ -911,6 +927,10 @@ export function useOnboardingWizard() {
   }
 
   async function returnToDocumentUpload() {
+    if (editingFromReviewRef.current) {
+      await goTo('document_upload')
+      return
+    }
     // Drop the prior AI review so the next "Review data" rebuilds from files
     // instead of reusing (and inflating) a stale lease list.
     setExtractionReview(null)
@@ -938,6 +958,10 @@ export function useOnboardingWizard() {
   }
 
   async function skipDocumentUpload() {
+    if (editingFromReviewRef.current) {
+      await returnToReviewAfterEdit()
+      return
+    }
     setError(null)
     const review = emptyExtractionReview(state.accountSetup)
     setExtractionReview(review)
@@ -949,7 +973,9 @@ export function useOnboardingWizard() {
     setImportingPortfolio(true)
     setError(null)
     try {
-      await commitFastTrackImport({
+      const returnToReview = editingFromReviewRef.current
+      let importedPatch: Partial<LandlordOnboardingState> = {}
+      const imported = await commitFastTrackImport({
         review: extractionReview,
         accountSetup: state.accountSetup,
         onError: setError,
@@ -957,7 +983,14 @@ export function useOnboardingWizard() {
         onSaving: setSaving,
         refreshCounts,
         goTo,
+        nextStep: returnToReview ? 'review' : 'approval',
+        onImported: (patch) => {
+          importedPatch = patch
+        },
       })
+      if (imported && returnToReview) {
+        await returnToReviewAfterEdit(importedPatch)
+      }
     } finally {
       setImportingPortfolio(false)
     }
@@ -1022,27 +1055,23 @@ export function useOnboardingWizard() {
     setSaving(true)
     setError(null)
 
-    let snapshot = state
-    setState((prev) => {
-      snapshot = { ...prev, ...patch }
-      return snapshot
-    })
+    const snapshot = { ...wizardSnapshotRef.current.state, ...patch }
+    setState(snapshot)
 
     const [vendors, residents, smsIntakeNumber] = await Promise.all([
       fetchOnboardingVendors(),
       fetchOnboardingResidents(),
       fetchLandlordSmsIntakeNumber(snapshot.landlordId),
     ])
-    const nextState: LandlordOnboardingState = { ...snapshot, ...patch }
     setReviewData(
       buildOnboardingReviewData(
-        nextState,
+        snapshot,
         vendors,
         residents,
         undefined,
         smsIntakeNumber,
         reviewExtractedResidents(),
-        loadImportedOpsRecords(nextState.landlordId),
+        loadImportedOpsRecords(snapshot.landlordId),
       ),
     )
     await goTo('review', patch)
@@ -1052,11 +1081,30 @@ export function useOnboardingWizard() {
 
   async function editReviewStep(targetStep: OnboardingStep) {
     setError(null)
-    enterReviewEditMode(targetStep)
+    const resolved = resolveReviewEditStep(targetStep, state.setupPath)
+    enterReviewEditMode(resolved)
 
     if (targetStep === 'account_setup' && reviewData) {
       setState((prev) => ({ ...prev, accountSetup: reviewData.accountSetup }))
     }
+
+    if (state.setupPath === 'fast_track' && (resolved === 'document_upload' || resolved === 'ai_review')) {
+      if (resolved === 'ai_review' && !extractionReview) {
+        const review = fillExtractionReviewAccount(
+          uploadDocuments.length > 0
+            ? buildOnboardingExtractionReview(uploadDocuments, state.accountSetup)
+            : emptyExtractionReview(state.accountSetup),
+          uploadDocuments,
+          state.accountSetup,
+        )
+        setExtractionReview(review)
+        await goTo('ai_review', {}, { extractionReview: review })
+        return
+      }
+      await goTo(resolved)
+      return
+    }
+
     if (targetStep === 'property') {
       const properties = reviewData?.properties.length
         ? reviewData.properties
@@ -1079,7 +1127,7 @@ export function useOnboardingWizard() {
       )
       return
     }
-    await goTo(targetStep)
+    await goTo(resolved)
   }
 
   async function finishReview() {

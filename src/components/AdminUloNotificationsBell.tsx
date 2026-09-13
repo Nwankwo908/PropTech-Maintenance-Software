@@ -1,16 +1,16 @@
-import { useEffect, useId, useRef, useState, type CSSProperties } from 'react'
+import { useEffect, useId, useRef, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { AdminBottomSheet } from '@/components/AdminBottomSheet'
-import { ConversationMonitoringModal } from '@/components/ConversationMonitoringModal'
-import { getActiveLandlordId } from '@/lib/activeLandlord'
 import {
-  fetchAdminUloNotifications,
-  parseActivationFailureNotificationId,
-  parseRecommendationNotificationId,
-  type AdminUloNotification,
-} from '@/lib/conversationMonitoring'
-import { propertyResidentDetailPath } from '@/lib/propertyRoutes'
-import { supabase } from '@/lib/supabase'
+  activityFeedNavigatePath,
+  ULO_ACTIVITY_FEED_LIMIT,
+  UloActivityFeedList,
+  type FeedTooltipDestination,
+} from '@/components/UloActivityFeed'
+import { fetchRecentPropertyOperationsEvents, type PropertyOperationsTimelineEvent } from '@/lib/propertyOperationsGraph'
+import { listPropertiesForLandlord } from '@/lib/properties'
+import { buildPropertyIdByBuilding } from '@/lib/propertyRoutes'
+import { getActiveLandlordId } from '@/lib/activeLandlord'
 
 function BellIcon({ compact = false }: { compact?: boolean }) {
   return (
@@ -34,44 +34,21 @@ function CloseIcon() {
   )
 }
 
-function NotificationItem({
-  item,
-  onSelect,
-  stagger = 0,
-}: {
-  item: AdminUloNotification
-  onSelect: (conversationId: string) => void
-  stagger?: number
-}) {
-  return (
-    <button
-      type="button"
-      onClick={() => onSelect(item.conversationId)}
-      style={{ '--sa-stagger': stagger } as CSSProperties}
-      className="sa-stagger sa-row w-full border-b border-[#e5e7eb] px-4 py-3.5 text-left outline-none hover:bg-[#fafafa] focus-visible:bg-[#fafafa] focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[#0030b5] last:border-b-0"
-    >
-      <div className="flex items-start justify-between gap-2">
-        <p className="text-[13px] font-semibold leading-5 text-[#0a0a0a]">{item.title}</p>
-        <span className="shrink-0 text-[11px] leading-4 text-[#6a7282]">{item.timeLabel}</span>
-      </div>
-      <p className="mt-2 line-clamp-3 text-[13px] leading-5 text-[#364153]">{item.summary}</p>
-    </button>
-  )
-}
-
-function NotificationsPanel({
+function ActivityFeedPanel({
   titleId,
   loading,
-  notifications,
-  onSelect,
+  events,
+  propertyIdByBuilding,
+  onOpenTarget,
   onClose,
   onNavigate,
   showClose,
 }: {
   titleId: string
   loading: boolean
-  notifications: AdminUloNotification[]
-  onSelect: (conversationId: string) => void
+  events: PropertyOperationsTimelineEvent[]
+  propertyIdByBuilding: Map<string, string>
+  onOpenTarget: (target: FeedTooltipDestination) => void
   onClose: () => void
   onNavigate?: () => void
   showClose?: boolean
@@ -80,24 +57,24 @@ function NotificationsPanel({
     <>
       <div className="flex shrink-0 items-center justify-between gap-3 border-b border-[#e5e7eb] px-4 py-3">
         <p id={titleId} className="sa-enter text-[14px] font-semibold text-[#0a0a0a]">
-          Notifications
+          Ulo Activity Feed
         </p>
         <div className="flex shrink-0 items-center gap-3">
           <Link
-            to="/admin/communication"
+            to="/admin"
             onClick={() => {
               onClose()
               onNavigate?.()
             }}
             className="sa-link text-[12px] font-medium text-[#1447e6] outline-none hover:underline focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2"
           >
-            All conversations
+            Overview
           </Link>
           {showClose ? (
             <button
               type="button"
               onClick={onClose}
-              aria-label="Close notifications"
+              aria-label="Close activity feed"
               className="sa-press flex size-8 items-center justify-center rounded-[8px] text-[#364153] outline-none hover:bg-[#f3f4f6] focus-visible:ring-2 focus-visible:ring-[#101828] focus-visible:ring-offset-2"
             >
               <CloseIcon />
@@ -107,22 +84,14 @@ function NotificationsPanel({
       </div>
 
       <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
-        {loading ? (
-          <p className="px-4 py-8 text-center text-[13px] text-[#6a7282]">Loading…</p>
-        ) : notifications.length === 0 ? (
-          <p className="px-4 py-8 text-center text-[13px] text-[#6a7282]">
-            No admin-directed updates yet.
-          </p>
-        ) : (
-          notifications.map((item, index) => (
-            <NotificationItem
-              key={item.conversationId}
-              item={item}
-              stagger={Math.min(index, 8)}
-              onSelect={onSelect}
-            />
-          ))
-        )}
+        <UloActivityFeedList
+          events={events}
+          loading={loading}
+          propertyIdByBuilding={propertyIdByBuilding}
+          onOpenTarget={onOpenTarget}
+          showInfo={false}
+          dense
+        />
       </div>
     </>
   )
@@ -133,7 +102,7 @@ type AdminUloNotificationsBellProps = {
   compact?: boolean
 }
 
-/** Header bell — Ulo admin summaries with transcript drill-in. */
+/** Header bell — Ulo Activity Feed with a live activity count. */
 export function AdminUloNotificationsBell({
   onNavigate,
   compact = false,
@@ -141,6 +110,7 @@ export function AdminUloNotificationsBell({
   const navigate = useNavigate()
   const panelId = useId()
   const rootRef = useRef<HTMLDivElement>(null)
+  const landlordId = getActiveLandlordId()
   const [open, setOpen] = useState(false)
   const [useSideSheet, setUseSideSheet] = useState(
     () =>
@@ -148,8 +118,10 @@ export function AdminUloNotificationsBell({
       (typeof window !== 'undefined' && window.matchMedia('(max-width: 1279px)').matches),
   )
   const [loading, setLoading] = useState(false)
-  const [notifications, setNotifications] = useState<AdminUloNotification[]>([])
-  const [monitoringConversationId, setMonitoringConversationId] = useState<string | null>(null)
+  const [events, setEvents] = useState<PropertyOperationsTimelineEvent[]>([])
+  const [propertyIdByBuilding, setPropertyIdByBuilding] = useState<Map<string, string>>(
+    () => new Map(),
+  )
 
   useEffect(() => {
     const mq = window.matchMedia('(max-width: 1279px)')
@@ -160,21 +132,41 @@ export function AdminUloNotificationsBell({
   }, [compact])
 
   useEffect(() => {
-    if (!open) return
-
     let cancelled = false
-    setLoading(true)
-
-    void fetchAdminUloNotifications().then((items) => {
+    void fetchRecentPropertyOperationsEvents(ULO_ACTIVITY_FEED_LIMIT).then((items) => {
       if (cancelled) return
-      setNotifications(items)
-      setLoading(false)
+      setEvents(items)
     })
-
     return () => {
       cancelled = true
     }
-  }, [open])
+  }, [landlordId])
+
+  useEffect(() => {
+    if (!open) return
+    let cancelled = false
+    setLoading(true)
+    void fetchRecentPropertyOperationsEvents(ULO_ACTIVITY_FEED_LIMIT).then((items) => {
+      if (cancelled) return
+      setEvents(items)
+      setLoading(false)
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [open, landlordId])
+
+  useEffect(() => {
+    if (!open) return
+    let cancelled = false
+    void listPropertiesForLandlord(landlordId).then((result) => {
+      if (cancelled || !result.ok) return
+      setPropertyIdByBuilding(buildPropertyIdByBuilding(result.properties))
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [open, landlordId])
 
   useEffect(() => {
     if (!open || useSideSheet) return
@@ -197,47 +189,12 @@ export function AdminUloNotificationsBell({
     }
   }, [open, useSideSheet])
 
-  const unreadCount = notifications.filter(
-    (item) => Date.now() - item.updatedAtMs < 24 * 60 * 60 * 1000,
-  ).length
+  const activityCount = events.length
 
-  function handleSelect(conversationId: string) {
+  function handleOpenTarget(target: FeedTooltipDestination) {
     setOpen(false)
     onNavigate?.()
-
-    const recommendationKey = parseRecommendationNotificationId(conversationId)
-    if (recommendationKey) {
-      navigate('/admin')
-      return
-    }
-
-    const activationResidentId = parseActivationFailureNotificationId(conversationId)
-    if (activationResidentId) {
-      void (async () => {
-        if (!supabase) {
-          navigate('/admin/residents')
-          return
-        }
-        const { data } = await supabase
-          .from('users')
-          .select('building')
-          .eq('id', activationResidentId)
-          .eq('landlord_id', getActiveLandlordId())
-          .maybeSingle()
-        const building =
-          typeof data?.building === 'string' && data.building.trim()
-            ? data.building.trim()
-            : null
-        if (building) {
-          navigate(propertyResidentDetailPath(building, activationResidentId))
-          return
-        }
-        navigate('/admin/residents')
-      })()
-      return
-    }
-
-    setMonitoringConversationId(conversationId)
+    navigate(activityFeedNavigatePath(target))
   }
 
   function closePanel() {
@@ -245,11 +202,12 @@ export function AdminUloNotificationsBell({
   }
 
   const panel = (
-    <NotificationsPanel
+    <ActivityFeedPanel
       titleId={panelId}
       loading={loading}
-      notifications={notifications}
-      onSelect={handleSelect}
+      events={events}
+      propertyIdByBuilding={propertyIdByBuilding}
+      onOpenTarget={handleOpenTarget}
       onClose={closePanel}
       onNavigate={onNavigate}
       showClose={useSideSheet}
@@ -261,7 +219,7 @@ export function AdminUloNotificationsBell({
       <div ref={rootRef} className="relative">
         <button
           type="button"
-          aria-label="Notifications"
+          aria-label="Ulo Activity Feed"
           aria-expanded={open}
           aria-controls={panelId}
           onPointerDown={(event) => event.stopPropagation()}
@@ -280,7 +238,7 @@ export function AdminUloNotificationsBell({
           ].join(' ')}
         >
           <BellIcon compact={compact} />
-          {unreadCount > 0 ? (
+          {activityCount > 0 ? (
             <span
               className={[
                 'sa-enter-scale absolute flex items-center justify-center rounded-full bg-[#c10007] font-semibold leading-none text-white',
@@ -289,7 +247,7 @@ export function AdminUloNotificationsBell({
                   : 'right-1 top-1 size-4 text-[10px]',
               ].join(' ')}
             >
-              {unreadCount > 9 ? '9+' : unreadCount}
+              {activityCount > 9 ? '9+' : activityCount}
             </span>
           ) : null}
         </button>
@@ -313,12 +271,6 @@ export function AdminUloNotificationsBell({
       >
         {panel}
       </AdminBottomSheet>
-
-      <ConversationMonitoringModal
-        open={monitoringConversationId != null}
-        conversationId={monitoringConversationId}
-        onClose={() => setMonitoringConversationId(null)}
-      />
     </>
   )
 }

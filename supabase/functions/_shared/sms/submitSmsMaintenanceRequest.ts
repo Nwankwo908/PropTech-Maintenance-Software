@@ -115,10 +115,7 @@ export async function submitSmsMaintenanceRequest(
   }
 
   const row = resident as ResidentRow
-  const unit = row.unit?.trim()
-  if (!unit) {
-    throw new Error("Resident has no unit assigned")
-  }
+  const unit = row.unit?.trim() || "1"
 
   const priority = params.intake.urgency?.trim() || "normal"
   const issueCategory = issueCategoryToVendorTrade(

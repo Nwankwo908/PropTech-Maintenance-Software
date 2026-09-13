@@ -6,6 +6,7 @@ import {
   parseThumbtackCategoryId,
   parseThumbtackSearchContext,
   thumbtackIdsFromListingUrl,
+  thumbtackSearchContextForBusiness,
   buildThumbtackFilteredUserQuery,
   mergeThumbtackOauthScopes,
   thumbtackOpenConversationError,
@@ -104,6 +105,8 @@ Deno.test("parseThumbtackBusinesses maps partner search payload", () => {
   ) {
     throw new Error(`requestFlowUrl ${hit.requestFlowUrl}`)
   }
+  if (hit.searchId !== "s1") throw new Error(`searchId ${hit.searchId}`)
+  if (hit.categoryId !== "c1") throw new Error(`categoryId ${hit.categoryId}`)
   if (hit.imageUrl !== "https://production-next-images-cdn.thumbtack.com/i/example/profile") {
     throw new Error(`imageUrl ${hit.imageUrl}`)
   }
@@ -114,13 +117,21 @@ Deno.test("parseThumbtackBusinesses maps partner search payload", () => {
   }
 })
 
-Deno.test("parseThumbtackSearchContext and listing URL ids", () => {
+Deno.test("parseThumbtackSearchContext reads nested data and listing URL ids", () => {
   const ctx = parseThumbtackSearchContext({
+    data: {
+      searchID: "search-nested",
+      metadata: { categoryID: "cat-nested" },
+    },
+  })
+  if (ctx.searchId !== "search-nested") throw new Error(String(ctx.searchId))
+  if (ctx.categoryId !== "cat-nested") throw new Error(String(ctx.categoryId))
+  const top = parseThumbtackSearchContext({
     searchID: "search-abc",
     metadata: { categoryID: "cat-9" },
   })
-  if (ctx.searchId !== "search-abc") throw new Error(String(ctx.searchId))
-  if (ctx.categoryId !== "cat-9") throw new Error(String(ctx.categoryId))
+  if (top.searchId !== "search-abc") throw new Error(String(top.searchId))
+  if (top.categoryId !== "cat-9") throw new Error(String(top.categoryId))
   const fromUrl = thumbtackIdsFromListingUrl(
     "https://www.thumbtack.com/pro?project_pk=s1&category_pk=c2",
   )
@@ -143,6 +154,55 @@ Deno.test("messaging scopes always include requests.write", () => {
   if (thumbtackScopeAllowsMessaging("demand::businesses/search.read")) {
     throw new Error("search-only should not allow messaging")
   }
+})
+
+Deno.test("thumbtackSearchContextForBusiness prefers the matching pro", () => {
+  const ctx = thumbtackSearchContextForBusiness(
+    [
+      { name: "A", rating: 5, reviewCount: 1, priceLabel: null, source: "thumbtack", providerRef: "b1", searchId: "s-old", categoryId: "c-old" },
+      { name: "B", rating: 5, reviewCount: 1, priceLabel: null, source: "thumbtack", providerRef: "b2", searchId: "s-new", categoryId: "c-new" },
+    ],
+    "b2",
+  )
+  if (ctx?.searchId !== "s-new" || ctx?.categoryId !== "c-new") {
+    throw new Error(JSON.stringify(ctx))
+  }
+})
+
+Deno.test("thumbtackSearchContextForBusiness fills ids from other hits in the same search", () => {
+  const ctx = thumbtackSearchContextForBusiness(
+    [
+      { name: "A", rating: 5, reviewCount: 1, priceLabel: null, source: "thumbtack", providerRef: "b1", searchId: "s1", categoryId: null },
+      { name: "B", rating: 5, reviewCount: 1, priceLabel: null, source: "thumbtack", providerRef: "b2", searchId: null, categoryId: "c1" },
+    ],
+    "b1",
+  )
+  if (ctx?.searchId !== "s1" || ctx?.categoryId !== "c1") {
+    throw new Error(JSON.stringify(ctx))
+  }
+})
+
+Deno.test("thumbtackSearchContextForBusiness can require the matching pro", () => {
+  const ctx = thumbtackSearchContextForBusiness(
+    [
+      { name: "A", rating: 5, reviewCount: 1, priceLabel: null, source: "thumbtack", providerRef: "b1", searchId: "s1", categoryId: "c1" },
+    ],
+    "missing",
+    { requireBusiness: true },
+  )
+  if (ctx) throw new Error("expected null when the pro is not in this search")
+})
+
+Deno.test("thumbtackOpenConversationError explains 400 without a raw status code", () => {
+  const msg = thumbtackOpenConversationError(400, '{"error":"missing categoryID"}')
+  if (!/search for vendors again/i.test(msg)) throw new Error(msg)
+  if (/\(400\)/.test(msg)) throw new Error("should not echo 400")
+})
+
+Deno.test("thumbtackOpenConversationError explains an expired searchID", () => {
+  const msg = thumbtackOpenConversationError(400, '{"error":"invalid searchID"}')
+  if (!/expired/i.test(msg)) throw new Error(msg)
+  if (/\(400\)/.test(msg)) throw new Error("should not echo 400")
 })
 
 Deno.test("thumbtackOpenConversationError explains 401 without a raw status code", () => {

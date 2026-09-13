@@ -33,6 +33,9 @@ export type CommitFastTrackImportInput = {
     patch?: Partial<LandlordOnboardingState>,
     forms?: { extractionReview?: OnboardingExtractionReview | null },
   ) => Promise<void>
+  /** After import, continue to this step. Defaults to approval. */
+  nextStep?: OnboardingStep
+  onImported?: (patch: Partial<LandlordOnboardingState>) => void
 }
 
 export async function commitFastTrackImport(
@@ -186,9 +189,16 @@ export async function commitFastTrackImport(
     await input.refreshCounts()
   }
 
+  const nextStep = input.nextStep ?? 'approval'
+  const patch = { properties, accountSetup }
+  input.onImported?.(patch)
+  if (nextStep === 'review') {
+    input.onSaving(false)
+    return true
+  }
   await input.goTo(
-    'approval',
-    { properties, accountSetup },
+    nextStep,
+    patch,
     { extractionReview: normalized },
   )
   input.onSaving(false)

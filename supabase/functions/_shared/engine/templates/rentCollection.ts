@@ -59,6 +59,7 @@ import {
 import {
   daysUntilRentDue,
   parseRentReminderCadenceDays,
+  rentReminderAmountDue,
   rentReminderSlotForToday,
   resolvePreferredLanguage,
   type PreferredLanguageId,
@@ -291,6 +292,7 @@ type ResidentRow = {
   unit: string | null
   building: string | null
   balance_due: number
+  monthly_rent?: number | null
 }
 
 export type RentCollectionResident = ResidentRow
@@ -317,11 +319,7 @@ async function processRentDueTrigger(
   const rentDueDate = rentDueDateIso(rentDueDay)
   const paymentsOn = landlordHasPayments(landlordId)
   const daysUntil = daysUntilRentDue(rentDueDay)
-  const reminderSlot = paymentsOn
-    ? rentReminderSlotForToday(rentDueDay, cadenceDays)
-    : daysUntil <= 0
-    ? 0
-    : null
+  const reminderSlot = rentReminderSlotForToday(rentDueDay, cadenceDays)
 
   if (reminderSlot == null) {
     return {
@@ -344,10 +342,9 @@ async function processRentDueTrigger(
 
   const { data: residents, error } = await supabase
     .from("users")
-    .select("id, full_name, email, phone, unit, building, balance_due, status")
+    .select("id, full_name, email, phone, unit, building, balance_due, monthly_rent, status")
     .eq("landlord_id", landlordId)
     .eq("status", "active")
-    .gt("balance_due", 0)
 
   if (error) {
     console.error("[rent-collection] cron query", error.message)
@@ -384,8 +381,11 @@ async function processRentDueTrigger(
   for (const row of residents ?? []) {
     const resident = row as ResidentRow
     const residentId = String(resident.id)
-    const amountDue = Number(resident.balance_due ?? 0)
-    if (!Number.isFinite(amountDue) || amountDue <= 0) {
+    const amountDue = rentReminderAmountDue(
+      Number(resident.balance_due ?? 0),
+      Number(resident.monthly_rent ?? 0),
+    )
+    if (!(amountDue > 0)) {
       skipped++
       continue
     }
@@ -397,7 +397,7 @@ async function processRentDueTrigger(
     })
 
     if (existing && runBillingPeriod(existing) === billingPeriod) {
-      if (!paymentsOn) {
+      if (!paymentsOn && reminderSlot === 0) {
         if (existing.status !== "active") {
           skipped++
           continue
@@ -809,6 +809,24 @@ export async function executeRentCollectionRouteAndAct(
   },
 ): Promise<RentCollectionRouteActResult> {
   if (!landlordHasPayments(params.landlordId)) {
+    if (params.daysBeforeDue != null && params.daysBeforeDue > 0) {
+      const graphScope = graphScopeForRouteAct(params)
+      const routed = await routeRentCollectionOutreach(supabase, {
+        ...params,
+        paymentLink: null,
+        graphScope,
+      })
+      return {
+        smsSent: routed.smsSent,
+        emailSent: routed.emailSent,
+        channels: routed.channels,
+        paymentLink: null,
+        paymentRequested: false,
+        provider: null,
+        landlordReceiptAskStatus: null,
+      }
+    }
+
     if (params.daysBeforeDue !== 0) {
       return {
         smsSent: false,
@@ -1213,7 +1231,7 @@ async function lookupLandlordMainNumber(
 
   if (!data?.phone_number || !data?.id) return null
 
-  const provider = (data.provider === "telnyx" ? "telnyx" : "twilio") as SmsProviderName
+  const provider: SmsProviderName = "twilio"
   return {
     phone: String(data.phone_number).trim(),
     id: String(data.id),

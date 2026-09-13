@@ -109,7 +109,37 @@ function looksLikePersonName(value: string): boolean {
     return false
   }
   const words = text.split(/\s+/).filter(Boolean)
-  return words.length >= 2 && words.length <= 4
+  return words.length >= 2 && words.length <= 6
+}
+
+function normalizePersonNameKey(name: string): string {
+  return trim(name)
+    .toLowerCase()
+    .replace(/[.'’]/g, '')
+    .replace(/,/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+/** True when two strings are the same person (middle names and extra tokens OK). */
+export function namesLikelySamePerson(left: string, right: string): boolean {
+  const a = normalizePersonNameKey(left)
+  const b = normalizePersonNameKey(right)
+  if (!a || !b) return false
+  if (a === b) return true
+  const aParts = a.split(' ').filter(Boolean)
+  const bParts = b.split(' ').filter(Boolean)
+  if (aParts.length < 2 || bParts.length < 2) return false
+  const shorter = aParts.length <= bParts.length ? aParts : bParts
+  const longer = aParts.length <= bParts.length ? bParts : aParts
+  const longerSet = new Set(longer)
+  const shorterIsSubset = shorter.every((part) => longerSet.has(part))
+  if (shorterIsSubset && shorter[0] === longer[0]) return true
+  return aParts[0] === bParts[0] && aParts[aParts.length - 1] === bParts[bParts.length - 1]
+}
+
+export function nameMatchesAnyPerson(name: string, names: string[]): boolean {
+  return names.some((other) => namesLikelySamePerson(name, other))
 }
 
 export function looksLikeCompanyParty(value: string): boolean {
@@ -117,15 +147,18 @@ export function looksLikeCompanyParty(value: string): boolean {
 }
 
 function uniquePartyNames(names: string[]): string[] {
-  const seen = new Set<string>()
   const out: string[] = []
   for (const raw of names) {
     const name = trim(raw)
     if (!name || looksLikeStreetAddress(name)) continue
-    const key = name.toLowerCase()
-    if (seen.has(key)) continue
-    seen.add(key)
-    out.push(name)
+    const existingIdx = out.findIndex(
+      (existing) => existing.toLowerCase() === name.toLowerCase() || namesLikelySamePerson(existing, name),
+    )
+    if (existingIdx < 0) {
+      out.push(name)
+      continue
+    }
+    if (name.length > (out[existingIdx] ?? '').length) out[existingIdx] = name
   }
   return out
 }
@@ -161,9 +194,14 @@ export function placeLandlordAndTenants(input: {
     }
   }
 
+  const people = personTenants.length > 0 ? personTenants : tenants
+  if (landlord && nameMatchesAnyPerson(landlord, people)) {
+    return { landlordName: '', tenantNames: uniquePartyNames([landlord, ...people]) }
+  }
+
   return {
     landlordName: landlord,
-    tenantNames: personTenants.length > 0 ? personTenants : tenants,
+    tenantNames: people,
   }
 }
 
@@ -192,14 +230,14 @@ export function placeAccountAndTenantNames(input: {
     tenantNames: [...input.tenantNames, ...extraPeople],
   })
 
-  const tenantKeys = new Set(parties.tenantNames.map((name) => name.toLowerCase()))
   const companyName = looksLikeCompanyName(parties.landlordName)
     ? parties.landlordName
-    : looksLikePersonName(input.companyName) && tenantKeys.has(input.companyName.toLowerCase())
+    : nameMatchesAnyPerson(input.companyName, parties.tenantNames)
       ? ''
       : input.companyName
-  const contactName =
-    input.contactName && tenantKeys.has(input.contactName.toLowerCase()) ? '' : input.contactName
+  const contactName = nameMatchesAnyPerson(input.contactName, parties.tenantNames)
+    ? ''
+    : input.contactName
 
   return {
     companyName,

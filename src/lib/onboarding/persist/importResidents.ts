@@ -4,6 +4,7 @@
 import type { ExtractedLease, ExtractedResident } from '@/lib/onboardingMockExtraction'
 import { isUniqueViolation } from '@/lib/errorMessage'
 import { normalizePhoneForDb } from '@/lib/phoneFormat'
+import { leaseUnitOrDefault } from '@/lib/onboarding/leaseUnit'
 import { extractedPlacesOverlap } from '@/lib/onboarding/persist/properties'
 import { normalizeBuildingKey, normalizeUnitLabel } from '@/lib/propertyHealth'
 import { supabase } from '@/lib/supabase'
@@ -95,6 +96,18 @@ export function resolveImportResidentBuilding(
 
 function asTrimmed(value: string | null | undefined): string {
   return (value ?? '').trim()
+}
+
+/** Prefer the resident unit; if a lease is present with no unit, default to 1. */
+export function resolveImportedResidentUnit(
+  residentUnit: string | null | undefined,
+  matchedLeaseUnit: string | null | undefined,
+  hasMatchedLease: boolean,
+): string {
+  const fromResident = asTrimmed(residentUnit)
+  if (fromResident) return fromResident
+  if (hasMatchedLease) return leaseUnitOrDefault(matchedLeaseUnit)
+  return ''
 }
 
 const PERSISTED_USER_ID_RE =
@@ -496,7 +509,11 @@ export async function importOnboardingResidentsFromExtraction(
 
   for (const resident of selectedResidents) {
     const matchedLease = resolveLeaseMatch(resident, selectedLeases)
-    const resolvedUnit = asTrimmed(resident.unit) || asTrimmed(matchedLease?.unit) || ''
+    const resolvedUnit = resolveImportedResidentUnit(
+      resident.unit,
+      matchedLease?.unit,
+      Boolean(matchedLease),
+    )
     const resolvedBuilding = resolveImportResidentBuilding(
       resolvedUnit,
       asTrimmed(resident.building) || asTrimmed(matchedLease?.building) || '',
@@ -506,7 +523,9 @@ export async function importOnboardingResidentsFromExtraction(
     const monthlyRent =
       parseMonthlyRentInput(String(resident.monthlyRent ?? '')) ??
       (matchedLease?.rentAmount != null ? parseMonthlyRentInput(matchedLease.rentAmount) : null)
-    const rentDueDay = parseRentDueDayInput(String(resident.rentDueDay ?? ''))
+    const rentDueDay =
+      parseRentDueDayInput(String(resident.rentDueDay ?? '')) ??
+      parseRentDueDayInput(String(matchedLease?.rentDueDay ?? ''))
     const occupancyStatus = normalizeOnboardingOccupancyStatus(resident.occupancyStatus)
     const maintenanceClause = asTrimmed(resident.maintenanceResponsibilitiesClause) || null
     const normalizedPhone = resolveImportPhone(resident.phone)

@@ -3,6 +3,7 @@ import { useLayoutEffect, useRef, useState } from 'react'
 import { getActiveLandlordId } from '@/lib/activeLandlord'
 import { markLimitedAlphaPostOnboardingWelcomeSeen, shouldShowLimitedAlphaPostOnboardingWelcome } from '@/lib/postOnboardingWelcome'
 import { landlordHasPayments, landlordHasVendorMarketplace } from '@shared/landlordCapabilities'
+import { landlordPortfolioLabel } from '@shared/landlordPortfolioLabel'
 import { primaryPayoutMethodLabel } from '@/api/landlordStripeConnect'
 import { OnboardingWelcomeHub } from '@/components/onboarding/OnboardingWelcomeHub'
 import { OnboardingAllSetWelcome } from '@/components/onboarding/OnboardingAllSetWelcome'
@@ -193,7 +194,11 @@ export function OnboardingWizardShell() {
             <div className="onb-step-header mb-6">
               <div className="flex items-start justify-between gap-4">
                 <h1 className="text-[24px] font-semibold tracking-[-0.4px] text-[#101828]">
-                  {editingFromReview ? 'Edit your setup' : 'Set up Ulo for your portfolio'}
+                  {editingFromReview
+                    ? 'Edit your setup'
+                    : `Set up Ulo for ${
+                        landlordPortfolioLabel(state.accountSetup) || 'your portfolio'
+                      }`}
                 </h1>
                 {isComplete ? (
                   <Link to="/admin" className={`${btnSecondary} shrink-0`}>
@@ -266,6 +271,7 @@ export function OnboardingWizardShell() {
               onReviewChange={setExtractionReview}
               onBackToUploads={() => void returnToDocumentUpload()}
               onImportAll={() => void continueFromAiReview()}
+              continueLabel={editContinueLabel ?? 'Continue'}
             />
           ) : null}
 

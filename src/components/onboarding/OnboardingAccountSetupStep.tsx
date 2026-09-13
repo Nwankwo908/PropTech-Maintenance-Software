@@ -23,6 +23,7 @@ import {
   onboardingSelectClass,
 } from './onboardingFieldStyles'
 import {
+  hasOnboardingSmsConsent,
   saveOnboardingAccountSetupStep,
   type SaveOnboardingAccountSetupStepInput,
 } from './onboardingAccountForm'
@@ -154,9 +155,10 @@ export function OnboardingAccountSetupStep({
                 <input
                   id={smsConsentCheckboxId}
                   type="checkbox"
-                  checked={
-                    smsConsentAccepted || Boolean(accountSetup.smsConsentAcceptedAt)
-                  }
+                  checked={hasOnboardingSmsConsent(
+                    smsConsentAccepted,
+                    accountSetup.smsConsentAcceptedAt,
+                  )}
                   onChange={(e) => {
                     setSmsConsentAccepted(e.target.checked)
                     if (e.target.checked) {
@@ -390,7 +392,10 @@ export function OnboardingAccountSetupStep({
             saving={saving}
           >
             <OnboardingContinueButton
-              disabled={saving || !smsConsentAccepted}
+              disabled={
+                saving ||
+                !hasOnboardingSmsConsent(smsConsentAccepted, accountSetup.smsConsentAcceptedAt)
+              }
               onClick={handleContinue}
             >
               {editContinueLabel ?? 'Continue'}

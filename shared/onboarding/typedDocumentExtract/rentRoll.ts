@@ -4,6 +4,7 @@ import {
   cleanExtractedName,
   parseIsoDate,
   parseMoney,
+  parseRentDueDay,
   readField,
   uniqueNames,
 } from './parse.ts'
@@ -60,6 +61,7 @@ function normalizeRow(raw: unknown): RentRollUnitRow | null {
       lease_start: null,
       lease_end: null,
       monthly_rent: null,
+      rent_due_day: null,
       status: null,
       confidence: clampConfidence(row.confidence),
       skipReason: 'summary_or_total_row',
@@ -75,6 +77,9 @@ function normalizeRow(raw: unknown): RentRollUnitRow | null {
     lease_end: parseIsoDate(readField(row, ['lease_end', 'leaseEnd', 'end_date', 'expiration', 'lease_to'])),
     monthly_rent: parseMoney(
       readField(row, ['monthly_rent', 'monthlyRent', 'rent', 'current_rent', 'scheduled_rent', 'gross_rent']),
+    ),
+    rent_due_day: parseRentDueDay(
+      readField(row, ['rent_due_day', 'rentDueDay', 'due_day', 'dueDay']),
     ),
     status: status ?? (tenants.length > 0 ? 'occupied' : null),
     confidence: clampConfidence(row.confidence),

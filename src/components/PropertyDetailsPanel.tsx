@@ -3,9 +3,9 @@ import { createPortal } from 'react-dom'
 import { PropertyInsurancePolicyCard } from '@/components/PropertyInsurancePolicyCard'
 import { PropertyRecordHierarchy } from '@/components/PropertyRecordHierarchy'
 import { MaintenanceHistoryPanel } from '@/components/MaintenanceHistoryPanel'
+import { ApplianceInspectionUploader } from '@/components/ApplianceInspectionUploader'
 import insuranceUploadCloudIcon from '@/assets/insurance-upload-cloud.svg'
 import maintenanceHistoryIcon from '@/assets/maintenance-history.png'
-import propertyAccessIcon from '@/assets/property-access.png'
 import propertyInsuranceIcon from '@/assets/property-insurance.png'
 import smartInspectionReportIcon from '@/assets/smart-inspection-report.png'
 import {
@@ -33,14 +33,6 @@ import {
   type MaintenanceHistoryRecord,
 } from '@/lib/maintenanceHistoryImport'
 import {
-  EMPTY_PROPERTY_ACCESS,
-  clearPropertyAccess,
-  loadPropertyAccess,
-  propertyAccessHasContent,
-  savePropertyAccess,
-  type PropertyAccessProfile,
-} from '@/lib/propertyAccess'
-import {
   extractInsuranceBinder,
   isInsuranceBinderScanProcessing,
   type InsuranceBinderScanStage,
@@ -59,7 +51,7 @@ import {
 const INSPECTION_ACCEPT = '.pdf,.png,.jpg,.jpeg,.webp,application/pdf,image/*'
 const INSPECTION_MAX_BYTES = 25 * 1024 * 1024
 
-type SectionId = 'inspection' | 'access' | 'insurance' | 'history'
+type SectionId = 'inspection' | 'insurance' | 'history'
 
 type InspectionStatus = 'ready' | 'processing'
 
@@ -444,108 +436,6 @@ function DetailCard({
           </div>
         </div>
       ) : null}
-    </div>
-  )
-}
-
-const PROPERTY_ACCESS_TABLE_FIELDS: Array<{
-  key: keyof Omit<PropertyAccessProfile, 'updatedAt'>
-  label: string
-}> = [
-  { key: 'buildingEntry', label: 'Building Entry Instructions' },
-  { key: 'gateCode', label: 'Gate Code' },
-  { key: 'lockboxLocation', label: 'Lockbox Location' },
-  { key: 'lockboxCode', label: 'Lockbox Code' },
-  { key: 'utilityRoomAccess', label: 'Utility Room Access' },
-  { key: 'visitorParking', label: 'Visitor Parking Instructions' },
-  { key: 'superintendentContact', label: 'Superintendent Contact' },
-  { key: 'emergencyAccessNotes', label: 'Emergency Access Notes' },
-]
-
-function AccessField({
-  label,
-  value,
-  onChange,
-  placeholder,
-  required = false,
-}: {
-  label: string
-  value: string
-  onChange: (value: string) => void
-  placeholder?: string
-  required?: boolean
-}) {
-  const empty = !value.trim()
-  return (
-    <label className="flex min-w-0 flex-1 flex-col gap-1.5">
-      <span className="text-[12px] font-semibold leading-normal text-[#475569]">
-        {label}
-        {required ? <span className="text-[#ef4444]"> *</span> : null}
-      </span>
-      <input
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        placeholder={placeholder}
-        className={[
-          'w-full min-w-0 rounded-[8px] border px-3 py-3 text-[13px] leading-normal text-[#0d0f11] outline-none placeholder:text-[#94a3b8] focus:border-[#94a3b8]',
-          empty
-            ? 'border-dashed border-[#e2e8f0] bg-transparent'
-            : 'border-solid border-[#e2e8f0] bg-[#f8fafc]',
-        ].join(' ')}
-      />
-    </label>
-  )
-}
-
-function PropertyAccessSavedTable({
-  access,
-  checked,
-  onChecked,
-}: {
-  access: PropertyAccessProfile
-  checked: boolean
-  onChecked: (checked: boolean) => void
-}) {
-  return (
-    <div className="w-full min-w-0 overflow-hidden rounded-[10px] border border-[#e2e8f0] bg-white">
-      <table className="w-full table-fixed border-collapse">
-        <thead>
-          <tr className="border-b border-[#e2e8f0] bg-[#f8fafc]">
-            <th className="w-8 px-2 py-2" aria-hidden />
-            {PROPERTY_ACCESS_TABLE_FIELDS.map((field) => (
-              <th
-                key={field.key}
-                className="break-words px-1.5 py-2 text-left text-[10px] font-semibold uppercase leading-3 tracking-[0.2px] text-[#64748b] sm:px-2 sm:text-[11px] sm:leading-4"
-              >
-                {field.label}
-              </th>
-            ))}
-          </tr>
-        </thead>
-        <tbody>
-          <tr>
-            <td className="w-8 px-2 py-3 align-top">
-              <label className="flex cursor-pointer items-center justify-center">
-                <input
-                  type="checkbox"
-                  checked={checked}
-                  onChange={(e) => onChecked(e.target.checked)}
-                  aria-label="Select saved property access"
-                  className="size-4 cursor-pointer rounded border-[#cbd5e1] accent-[#186179]"
-                />
-              </label>
-            </td>
-            {PROPERTY_ACCESS_TABLE_FIELDS.map((field) => (
-              <td
-                key={field.key}
-                className="break-words px-1.5 py-3 align-top text-[12px] leading-[18px] text-[#0d0f11] sm:px-2 sm:text-[13px] sm:leading-[19.5px]"
-              >
-                {access[field.key].trim() || '—'}
-              </td>
-            ))}
-          </tr>
-        </tbody>
-      </table>
     </div>
   )
 }
@@ -1150,7 +1040,7 @@ function HomeInspectionExpandedPanel({
   )
 }
 
-export type PropertyDetailsModule = 'inspection' | 'access' | 'insurance' | 'history'
+export type PropertyDetailsModule = 'inspection' | 'insurance' | 'history'
 
 export type PropertyDetailsPanelProps = {
   building: string
@@ -1163,7 +1053,6 @@ export type PropertyDetailsPanelProps = {
 
 const ALL_DETAIL_MODULES: PropertyDetailsModule[] = [
   'inspection',
-  'access',
   'insurance',
   'history',
 ]
@@ -1184,9 +1073,6 @@ export function PropertyDetailsPanel({
   const [inspectionSaveMessage, setInspectionSaveMessage] = useState<string | null>(null)
   const [historyDocs, setHistoryDocs] = useState<MaintenanceHistoryDocument[]>([])
   const [historyApproved, setHistoryApproved] = useState<MaintenanceHistoryRecord[]>([])
-  const [access, setAccess] = useState<PropertyAccessProfile>(EMPTY_PROPERTY_ACCESS)
-  const [savedAccess, setSavedAccess] = useState<PropertyAccessProfile | null>(null)
-  const [accessRowChecked, setAccessRowChecked] = useState(false)
   const [insurance, setInsurance] = useState<InsuranceProfile>(EMPTY_INSURANCE)
   const [savedInsurance, setSavedInsurance] = useState<InsuranceProfile | null>(null)
   const [insuranceRailOpen, setInsuranceRailOpen] = useState(false)
@@ -1230,17 +1116,6 @@ export function PropertyDetailsPanel({
     const loadedHistory = loadMaintenanceHistoryDocuments({ building })
     setHistoryDocs(loadedHistory)
     setHistoryApproved(loadApprovedMaintenanceRecords({ building }))
-    void loadPropertyAccess(building).then((loaded) => {
-      if (cancelled) return
-      setAccessRowChecked(false)
-      if (loaded.updatedAt) {
-        setSavedAccess(loaded)
-        setAccess({ ...EMPTY_PROPERTY_ACCESS })
-      } else {
-        setSavedAccess(null)
-        setAccess(loaded)
-      }
-    })
     const loadedInsurance = normalizeInsuranceProfile(
       readJson(landlordScopedKey('ulo.propertyInsurance', building), EMPTY_INSURANCE),
     )
@@ -1413,7 +1288,6 @@ export function PropertyDetailsPanel({
   }
 
   const inspectionEmpty = !inspectionHasPersistedWork
-  const accessEmpty = !savedAccess
   const insuranceEmpty = !savedInsurance
   const historyEmpty = historyDocs.length === 0 && historyApproved.length === 0
   const limitedAlpha1 = isLimitedAlpha1Landlord(getActiveLandlordId())
@@ -1434,7 +1308,7 @@ export function PropertyDetailsPanel({
       ) : null}
 
       {limitedAlpha1 ||
-      !(showModule('inspection') || showModule('access') || showModule('history')) ? null : (
+      !(showModule('inspection') || showModule('history')) ? null : (
         <PropertyRecordHierarchy />
       )}
 
@@ -1456,6 +1330,7 @@ export function PropertyDetailsPanel({
         empty={inspectionEmpty}
         expanded={expanded === 'inspection'}
         onToggle={() => toggle('inspection')}
+        collapsible={false}
       >
         <HomeInspectionExpandedPanel
           building={building}
@@ -1464,171 +1339,6 @@ export function PropertyDetailsPanel({
           onFiles={(files) => void onInspectionFiles(files)}
           onRemove={(id) => void onRemoveInspectionDoc(id)}
         />
-      </DetailCard>
-      ) : null}
-
-      {showModule('access') ? (
-      <DetailCard
-        icon={
-          <img
-            src={propertyAccessIcon}
-            alt=""
-            className="size-[32px] object-contain"
-          />
-        }
-        title="Property Access"
-        description="Help vendors get to the job faster"
-        empty={accessEmpty}
-        expanded={expanded === 'access'}
-        onToggle={() => toggle('access')}
-      >
-        <div className="flex flex-col gap-4">
-          <div className="flex min-w-0 flex-col gap-4 sm:flex-row sm:gap-4">
-            <AccessField
-              label="Building Entry Instructions"
-              value={access.buildingEntry}
-              onChange={(buildingEntry) => setAccess((prev) => ({ ...prev, buildingEntry }))}
-              placeholder="e.g. Use main entrance, buzzer code…"
-            />
-            <AccessField
-              label="Gate Code"
-              value={access.gateCode}
-              onChange={(gateCode) => setAccess((prev) => ({ ...prev, gateCode }))}
-              placeholder="e.g. 4521#"
-            />
-          </div>
-          <div className="flex min-w-0 flex-col gap-4 sm:flex-row sm:gap-4">
-            <AccessField
-              label="Lockbox Location"
-              value={access.lockboxLocation}
-              onChange={(lockboxLocation) =>
-                setAccess((prev) => ({ ...prev, lockboxLocation }))
-              }
-              placeholder="e.g. Unit 101 — behind mailbox"
-            />
-            <AccessField
-              label="Lockbox Code"
-              value={access.lockboxCode}
-              onChange={(lockboxCode) => setAccess((prev) => ({ ...prev, lockboxCode }))}
-              placeholder="Enter lockbox code"
-              required
-            />
-          </div>
-          <div className="flex min-w-0 flex-col gap-4 sm:flex-row sm:gap-4">
-            <AccessField
-              label="Utility Room Access"
-              value={access.utilityRoomAccess}
-              onChange={(utilityRoomAccess) =>
-                setAccess((prev) => ({ ...prev, utilityRoomAccess }))
-              }
-              placeholder="e.g. Key is with Superintendent..."
-            />
-            <AccessField
-              label="Visitor Parking Instructions"
-              value={access.visitorParking}
-              onChange={(visitorParking) =>
-                setAccess((prev) => ({ ...prev, visitorParking }))
-              }
-              placeholder="e.g. Visitor lot B"
-            />
-          </div>
-          <div className="flex min-w-0 flex-col gap-4 sm:flex-row sm:gap-4">
-            <AccessField
-              label="Superintendent Contact"
-              value={access.superintendentContact}
-              onChange={(superintendentContact) =>
-                setAccess((prev) => ({ ...prev, superintendentContact }))
-              }
-              placeholder="e.g. Mike Rodriguez — 555-0142"
-            />
-            <AccessField
-              label="Emergency Access Notes"
-              value={access.emergencyAccessNotes}
-              onChange={(emergencyAccessNotes) =>
-                setAccess((prev) => ({ ...prev, emergencyAccessNotes }))
-              }
-              placeholder="e.g. Fire escape instructions..."
-            />
-          </div>
-          {propertyAccessHasContent(access) || !savedAccess ? (
-            <button
-              type="button"
-              onClick={() => {
-                if (!access.lockboxCode.trim()) {
-                  setError('Lockbox code is required.')
-                  return
-                }
-                void (async () => {
-                  try {
-                    const next = {
-                      ...access,
-                      updatedAt: new Date().toISOString(),
-                    }
-                    await savePropertyAccess(building, next)
-                    setSavedAccess(next)
-                    setAccess({ ...EMPTY_PROPERTY_ACCESS })
-                    setAccessRowChecked(false)
-                    setError(null)
-                    notifyPropertyDetailsChanged(building)
-                  } catch (err) {
-                    setError(
-                      getErrorMessage(err, 'Could not save property access.'),
-                    )
-                  }
-                })()
-              }}
-              className="pd-btn pd-btn-primary self-start rounded-[8px] px-4 py-2 text-[12px] font-semibold"
-            >
-              Save
-            </button>
-          ) : null}
-          {savedAccess ? (
-            <div className="flex flex-col gap-3">
-              {accessRowChecked ? (
-                <div className="flex flex-wrap items-center justify-end gap-2">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setAccess({ ...savedAccess, updatedAt: null })
-                      setAccessRowChecked(false)
-                      setError(null)
-                    }}
-                    className="pd-btn pd-btn-ghost rounded-[10px] px-4 py-2.5 text-[13px] font-semibold text-[#186179] hover:bg-[#eff6ff]"
-                  >
-                    Edit selected
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      void (async () => {
-                        try {
-                          await clearPropertyAccess(building)
-                          setSavedAccess(null)
-                          setAccess({ ...EMPTY_PROPERTY_ACCESS })
-                          setAccessRowChecked(false)
-                          setError(null)
-                          notifyPropertyDetailsChanged(building)
-                        } catch (err) {
-                          setError(
-                            getErrorMessage(err, 'Could not remove property access.'),
-                          )
-                        }
-                      })()
-                    }}
-                    className="pd-btn pd-btn-ghost rounded-[10px] px-4 py-2.5 text-[13px] font-semibold text-[#a03e3e] hover:bg-[#fef2f2] hover:text-[#991b1b]"
-                  >
-                    Delete selected
-                  </button>
-                </div>
-              ) : null}
-              <PropertyAccessSavedTable
-                access={savedAccess}
-                checked={accessRowChecked}
-                onChecked={setAccessRowChecked}
-              />
-            </div>
-          ) : null}
-        </div>
       </DetailCard>
       ) : null}
 

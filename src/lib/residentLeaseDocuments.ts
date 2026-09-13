@@ -151,12 +151,19 @@ export function collectResidentLeaseDocuments(
   const identity = residentIdentity(resident)
   if (!identity.fullName.trim()) return []
 
-  const associations = collectReviewAssociations(review, identity)
+  const identities = [identity]
+  if (identity.phone) {
+    identities.push({ ...identity, phone: '' })
+  }
+
   const matched = documents.filter((doc) => {
     if (!isLeasingDocumentCategory(doc.documentCategory)) return false
-    if (associations.documentIds.has(doc.id)) return true
-    if (associations.fileNames.has(doc.fileName.trim().toLowerCase())) return true
-    return payloadMentionsResident(doc.extractedPayload, identity)
+    return identities.some((person) => {
+      const associations = collectReviewAssociations(review, person)
+      if (associations.documentIds.has(doc.id)) return true
+      if (associations.fileNames.has(doc.fileName.trim().toLowerCase())) return true
+      return payloadMentionsResident(doc.extractedPayload, person)
+    })
   })
 
   return [...matched].sort((left, right) => left.fileName.localeCompare(right.fileName))

@@ -15,6 +15,7 @@ type PropertyHistoryPanelProps = {
   units?: Array<{ id: string; unitLabel: string }>
   unitFilter?: string | null
   onUnitFilterChange?: (unitLabel: string | null) => void
+  onAddMaintenanceHistory?: () => void
 }
 
 export function PropertyHistoryPanel({
@@ -24,6 +25,7 @@ export function PropertyHistoryPanel({
   units = [],
   unitFilter = null,
   onUnitFilterChange,
+  onAddMaintenanceHistory,
 }: PropertyHistoryPanelProps) {
   const unitSelectId = useId()
   const [expandedId, setExpandedId] = useState<string | null>(null)
@@ -50,6 +52,7 @@ export function PropertyHistoryPanel({
         <div className="rounded-[16px] border border-[#eceff1] bg-white px-6 py-10">
           <p className="text-center text-[13px] text-[#6b7280]">Loading property history…</p>
         </div>
+        <AddMaintenanceHistoryButton onClick={onAddMaintenanceHistory} />
       </div>
     )
   }
@@ -61,6 +64,7 @@ export function PropertyHistoryPanel({
         <div className="rounded-[16px] border border-[#fecaca] bg-[#fef2f2] px-6 py-10">
           <p className="text-center text-[13px] text-[#991b1b]">{error}</p>
         </div>
+        <AddMaintenanceHistoryButton onClick={onAddMaintenanceHistory} />
       </div>
     )
   }
@@ -178,6 +182,30 @@ export function PropertyHistoryPanel({
           </div>
         </div>
       )}
+      <AddMaintenanceHistoryButton onClick={onAddMaintenanceHistory} />
+    </div>
+  )
+}
+
+function AddMaintenanceHistoryButton({ onClick }: { onClick?: () => void }) {
+  if (!onClick) return null
+  return (
+    <div className="flex justify-start">
+      <button
+        type="button"
+        onClick={onClick}
+        className="sa-press inline-flex shrink-0 items-center justify-center gap-1.5 rounded-[10px] bg-transparent px-0 py-2 text-[13px] font-medium leading-5 text-[#186179] outline-none focus-visible:ring-2 focus-visible:ring-[#186179] focus-visible:ring-offset-2"
+      >
+        <svg viewBox="0 0 24 24" fill="none" aria-hidden className="size-3.5 shrink-0">
+          <path
+            d="M12 5v14M5 12h14"
+            stroke="currentColor"
+            strokeWidth={2}
+            strokeLinecap="round"
+          />
+        </svg>
+        Add maintenance history
+      </button>
     </div>
   )
 }

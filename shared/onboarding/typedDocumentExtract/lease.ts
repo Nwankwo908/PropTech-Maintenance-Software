@@ -3,6 +3,7 @@ import {
   cleanExtractedName,
   parseIsoDate,
   parseMoney,
+  parseRentDueDay,
   uniqueNames,
 } from './parse.ts'
 import type { LeaseExtract } from './types.ts'
@@ -37,6 +38,9 @@ export function normalizeLeaseExtract(raw: unknown): LeaseExtract {
     lease_end: parseIsoDate(root.lease_end ?? root.leaseEnd ?? root.end_date),
     monthly_rent: parseMoney(root.monthly_rent ?? root.monthlyRent ?? root.rent),
     security_deposit: parseMoney(root.security_deposit ?? root.securityDeposit ?? root.deposit),
+    rent_due_day: parseRentDueDay(
+      root.rent_due_day ?? root.rentDueDay ?? root.due_day ?? root.rent_due,
+    ),
     confidence: clampConfidence(root.confidence),
     warnings: uniqueNames(root.warnings),
   }

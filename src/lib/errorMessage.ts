@@ -128,11 +128,11 @@ export function toUserFriendlyMessage(raw: string, fallback: string): string {
     lower.includes('10 dlc') ||
     lower.includes('not 10dlc-registered')
   ) {
-    return 'US carriers blocked this text because (973) 400-5760 is not registered for business SMS yet. Finish 10DLC registration for that Telnyx number, then send the test again.'
+    return 'US carriers blocked this text because the sending number is not registered for business SMS yet. Finish 10DLC registration, then send the test again.'
   }
 
   if (
-    lower.includes('telnyx') ||
+    lower.includes('twilio') ||
     lower.includes('10004') ||
     lower.includes('invalid source') ||
     (lower.includes('twilio') && lower.includes('send')) ||
@@ -262,7 +262,13 @@ export function toUserFriendlyMessage(raw: string, fallback: string): string {
     return trimmed
   }
 
-  if (lower.includes('could not send this in ulo') || lower.includes('thumbtack did not issue a messaging token')) {
+  if (
+    lower.includes('could not send this in ulo') ||
+    lower.includes('thumbtack did not issue a messaging token') ||
+    lower.includes('thumbtack could not open this conversation') ||
+    lower.includes('thumbtack needs a service category') ||
+    lower.includes('thumbtack is missing a search')
+  ) {
     return trimmed
   }
 

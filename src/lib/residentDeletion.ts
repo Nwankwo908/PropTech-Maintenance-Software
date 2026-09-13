@@ -4,6 +4,7 @@ import { getErrorMessage } from '@/lib/errorMessage'
  * Clears occupancy (and vacates orphaned units) before removing `users` rows.
  */
 import { getActiveLandlordId } from '@/lib/activeLandlord'
+import { recordActivityLog } from '@/lib/recordActivityLog'
 import { supabase } from '@/lib/supabase'
 
 export type DeleteResidentsResult =
@@ -98,5 +99,22 @@ export async function deleteResidentsForLandlord(params: {
     return { ok: false, error: getErrorMessage(userDeleteError, 'Something went wrong. Please try again.') }
   }
 
-  return { ok: true, deletedCount: deletedRows?.length ?? residentIds.length }
+  const deletedCount = deletedRows?.length ?? residentIds.length
+  const deletedIds = (deletedRows ?? []).map((row) => row.id).filter(Boolean)
+  void recordActivityLog({
+    landlordId,
+    eventType: 'resident.deleted',
+    source: 'dashboard',
+    actorType: 'landlord',
+    residentId: deletedIds.length === 1 ? deletedIds[0] : null,
+    metadata: {
+      message:
+        deletedCount === 1
+          ? 'Resident account deleted.'
+          : `${deletedCount} resident accounts deleted.`,
+      resident_ids: deletedIds.length > 0 ? deletedIds : residentIds,
+    },
+  })
+
+  return { ok: true, deletedCount }
 }

@@ -9,6 +9,8 @@ import { normalizePhoneFlexible } from "../resident_notify.ts"
 import { findActiveLandlordMainNumber } from "./landlordSmsOnboarding.ts"
 import { getSMSProviderForSend } from "./providerFactory.ts"
 import { uloAppUrl } from "../uloAppUrl.ts"
+import { resolveSmsIntakeNumber } from "../../../../shared/landlordCapabilities.ts"
+import { landlordPortfolioLabel } from "../../../../shared/landlordPortfolioLabel.ts"
 
 export type LandlordOnboardingWelcomeParams = {
   landlordId: string
@@ -48,7 +50,7 @@ export function buildLandlordOnboardingWelcomeSms(input: {
   dashboardUrl: string
   smsIntakeDisplay: string | null
 }): string {
-  const company = input.companyName.trim() || "your portfolio"
+  const company = input.companyName.trim() || "your properties"
   const lines = [
     `Hi ${input.contactFirst},`,
     "",
@@ -73,7 +75,7 @@ export function buildLandlordOnboardingWelcomeEmail(input: {
   dashboardUrl: string
   smsIntakeDisplay: string | null
 }): { subject: string; text: string; html: string } {
-  const company = input.companyName.trim() || "your portfolio"
+  const company = input.companyName.trim() || "your properties"
   const subject = "Your Ulo setup is complete"
   const intakeLine = input.smsIntakeDisplay
     ? `Residents can report maintenance by text at ${input.smsIntakeDisplay}.`
@@ -179,10 +181,10 @@ function stringListFromMeta(value: unknown): string[] {
 async function loadSmsIntakeDisplay(
   supabase: SupabaseClient,
   landlordId: string,
-): Promise<string | null> {
+): Promise<string> {
   const { data } = await supabase
     .from("sms_numbers")
-    .select("phone_number")
+    .select("phone_number, provider")
     .eq("landlord_id", landlordId)
     .eq("purpose", "landlord_main")
     .eq("status", "active")
@@ -190,7 +192,7 @@ async function loadSmsIntakeDisplay(
     .limit(1)
     .maybeSingle()
   const phone = typeof data?.phone_number === "string" ? data.phone_number.trim() : ""
-  if (phone) return phone
+  const provider = typeof data?.provider === "string" ? data.provider : ""
 
   const { data: onboarding } = await supabase
     .from("landlord_onboarding")
@@ -201,7 +203,12 @@ async function loadSmsIntakeDisplay(
     typeof onboarding?.ulo_phone_number === "string"
       ? onboarding.ulo_phone_number.trim()
       : ""
-  return uloPhone || null
+
+  return resolveSmsIntakeNumber({
+    landlordId,
+    phone: phone || uloPhone,
+    provider,
+  })
 }
 
 async function loadWelcomeEmails(
@@ -306,13 +313,16 @@ export async function sendLandlordOnboardingWelcome(
     .eq("id", landlordId)
     .maybeSingle()
 
-  const companyName =
-    (params.companyName ?? "").trim() ||
-    (typeof landlordRow?.name === "string" ? landlordRow.name.trim() : "") ||
-    "your portfolio"
   const contactName =
     (params.contactName ?? "").trim() ||
     (typeof landlordRow?.contact_name === "string" ? landlordRow.contact_name.trim() : "")
+  const companyName =
+    landlordPortfolioLabel({
+      companyName:
+        (params.companyName ?? "").trim() ||
+        (typeof landlordRow?.name === "string" ? landlordRow.name.trim() : ""),
+      contactName,
+    }) || "your properties"
   const contactFirst = firstName(contactName)
   const dashboardUrl = uloAppUrl.admin()
   const smsIntakeDisplay = await loadSmsIntakeDisplay(supabase, landlordId)

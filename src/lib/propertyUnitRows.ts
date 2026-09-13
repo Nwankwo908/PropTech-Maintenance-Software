@@ -164,16 +164,16 @@ function pickOpenWorkflowLabel(
   return null
 }
 
-function findResidentForUnit(
+function findResidentsForUnit(
   unitLabel: string,
   building: string,
   residents: PropertyUnitResident[],
-): PropertyUnitResident | null {
+): PropertyUnitResident[] {
   const unitKey = normalizeUnitLabel(unitLabel)
   const unitMatches = residents.filter(
     (resident) => normalizeUnitLabel(resident.unit) === unitKey,
   )
-  if (unitMatches.length === 0) return null
+  if (unitMatches.length === 0) return []
 
   const buildingKey = normalizeBuildingKey(building)
   const matches =
@@ -185,13 +185,12 @@ function findResidentForUnit(
           return normalizeBuildingKey(residentBuilding) === buildingKey
         })
 
-  if (matches.length === 0) return null
-  return (
-    matches.find((resident) =>
-      OCCUPYING_RESIDENT_STATUSES.has(resident.status.trim().toLowerCase()),
-    ) ??
-    matches[0] ??
-    null
+  const occupying = matches.filter((resident) =>
+    OCCUPYING_RESIDENT_STATUSES.has(resident.status.trim().toLowerCase()),
+  )
+  const household = occupying.length > 0 ? occupying : matches.slice(0, 1)
+  return [...household].sort((a, b) =>
+    a.fullName.localeCompare(b.fullName, undefined, { sensitivity: 'base' }),
   )
 }
 
@@ -209,7 +208,8 @@ export function buildPropertyUnitRows(input: {
   return units
     .map((unit) => {
       const unitBuilding = unit.building?.trim() || building
-      const resident = findResidentForUnit(unit.unitLabel, unitBuilding, residents)
+      const household = findResidentsForUnit(unit.unitLabel, unitBuilding, residents)
+      const resident = household[0] ?? null
       const occupancyStatus = resolvePropertyUnitOccupancyStatus(unit.status)
       const showOccupiedDetails = occupancyStatus === 'occupied'
       const openWorkflowLabel = pickOpenWorkflowLabel(
@@ -218,21 +218,23 @@ export function buildPropertyUnitRows(input: {
         tickets,
         workflowRows,
       )
+      const names = household.map((member) => member.fullName.trim()).filter(Boolean)
+      const balanceDue = household.length > 0 ? Math.max(...household.map((member) => member.balanceDue), 0) : 0
+      const leaseEndDate =
+        household.find((member) => member.leaseEndDate?.trim())?.leaseEndDate ?? null
 
       return {
         id: unit.id,
         unitDisplay: formatPropertyUnitDisplay(unit.unitLabel),
         // Always link a matched resident so profile is reachable even if the unit
-        // chip has not flipped to Occupied yet.
+        // chip has not flipped to Occupied yet. Co-tenants share one cell.
         residentId: resident?.id ?? null,
-        residentName: resident?.fullName ?? null,
+        residentName: names.length > 0 ? names.join(', ') : null,
         occupancyStatus,
         openWorkflowLabel,
-        balanceDue: showOccupiedDetails && resident ? resident.balanceDue : 0,
+        balanceDue: showOccupiedDetails ? balanceDue : 0,
         leaseEndLabel:
-          showOccupiedDetails && resident
-            ? formatPropertyLeaseEnd(resident.leaseEndDate)
-            : null,
+          showOccupiedDetails ? formatPropertyLeaseEnd(leaseEndDate) : null,
         sortKey: unitSortKey(unit.unitLabel),
       }
     })

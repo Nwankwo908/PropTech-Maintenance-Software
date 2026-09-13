@@ -132,7 +132,7 @@ type PropertyHealthBuildingGridProps = {
   buildingHref?: (building: string) => string
   /** Optional React Router location state (e.g. setup-success coachmark). */
   buildingLinkState?: (building: string) => unknown
-  /** Highlight the first property card (Get set up for success coachmark). */
+  /** Highlight the first property row (Get set up for success coachmark). */
   firstCardRef?: Ref<HTMLElement | null>
 }
 
@@ -145,8 +145,8 @@ const HEADER_BTN_GHOST =
 const HEADER_BTN_DANGER =
   'sa-press inline-flex shrink-0 items-center justify-center gap-1.5 rounded-[10px] bg-transparent px-4 py-2 text-[13px] font-medium leading-5 text-[#b52a00] hover:bg-[#fff4f0] disabled:pointer-events-none disabled:opacity-50'
 
-const METRIC_CHIP =
-  'inline-flex items-center gap-1.5 rounded-[8px] border border-[#e5e7eb] bg-transparent px-2.5 py-1 text-[12px] leading-4 text-[#6a7282]'
+const TH_CLASS = 'px-4 py-3 text-[12px] font-medium text-[#6a7282] sm:px-6'
+const TD_CLASS = 'px-4 py-3.5 text-[14px] leading-5 text-[#0a0a0a] sm:px-6'
 
 function propertyHealthSubtitle(propertyCount: number): string {
   if (propertyCount <= 0) {
@@ -180,6 +180,8 @@ export function PropertyHealthBuildingGrid({
   const navigate = useNavigate()
   const selectedCount = selection?.selectedBuildings.size ?? 0
   const propertyCount = buildingCount ?? buildings.length
+  const columnCount =
+    6 + (selection ? 1 : 0) + (showMonthlySpend ? 1 : 0)
 
   return (
     <section
@@ -241,210 +243,195 @@ export function PropertyHealthBuildingGrid({
           {headerAction}
         </div>
       </div>
-      <div className="grid gap-4 p-4 sm:grid-cols-2 2xl:grid-cols-3">
-        {loading ? (
-          <p className="col-span-full px-2 py-8 text-center text-[13px] text-[#6a7282]">
-            Loading…
-          </p>
-        ) : buildings.length === 0 ? (
-          <div className="col-span-full px-2 py-10 text-center">
-            <p className="text-[13px] text-[#6a7282]">
-              No properties yet. Add buildings and units to start tracking operational health.
-            </p>
-            {onEmptyCtaClick ? (
-              <button
-                type="button"
-                onClick={onEmptyCtaClick}
-                className="sa-press mt-3 inline-block rounded-[10px] bg-[#101828] px-4 py-2 text-[13px] font-medium text-white hover:bg-[#1e2939]"
-              >
-                {emptyCtaLabel}
-              </button>
+      <div className="overflow-x-auto overscroll-x-contain">
+        <table className="min-w-full border-collapse text-left">
+          <thead>
+            <tr className="border-b border-[#e5e7eb]">
+              {selection ? (
+                <th className="w-12 px-4 py-3">
+                  <TableCheckbox
+                    aria-label="Select all visible properties"
+                    disabled={loading || buildings.length === 0}
+                    checked={selection.allSelected}
+                    indeterminate={selection.someSelected && !selection.allSelected}
+                    onChange={selection.onToggleAll}
+                  />
+                </th>
+              ) : null}
+              <th className={TH_CLASS}>Property</th>
+              <th className={`${TH_CLASS} text-right tabular-nums`}>Units</th>
+              <th className={TH_CLASS}>Health</th>
+              <th className={TH_CLASS}>Score</th>
+              <th className={`${TH_CLASS} text-right tabular-nums`}>Work orders</th>
+              <th className={`${TH_CLASS} text-right tabular-nums`}>Occupancy</th>
+              {showMonthlySpend ? (
+                <th className={`${TH_CLASS} text-right tabular-nums`}>Monthly cost</th>
+              ) : null}
+            </tr>
+          </thead>
+          <tbody>
+            {loading ? (
+              <tr>
+                <td
+                  colSpan={columnCount}
+                  className="px-6 py-10 text-center text-[14px] text-[#6a7282]"
+                >
+                  Loading…
+                </td>
+              </tr>
+            ) : buildings.length === 0 ? (
+              <tr>
+                <td colSpan={columnCount} className="px-6 py-10 text-center">
+                  <p className="text-[14px] text-[#6a7282]">
+                    No properties yet. Add buildings and units to start tracking operational
+                    health.
+                  </p>
+                  {onEmptyCtaClick ? (
+                    <button
+                      type="button"
+                      onClick={onEmptyCtaClick}
+                      className="sa-press mt-3 inline-block rounded-[10px] bg-[#101828] px-4 py-2 text-[13px] font-medium text-white hover:bg-[#1e2939]"
+                    >
+                      {emptyCtaLabel}
+                    </button>
+                  ) : (
+                    <Link
+                      to={inAppRouterPath(emptyCtaHref)}
+                      className="sa-press mt-3 inline-block rounded-[10px] bg-[#101828] px-4 py-2 text-[13px] font-medium text-white hover:bg-[#1e2939]"
+                    >
+                      {emptyCtaLabel}
+                    </Link>
+                  )}
+                </td>
+              </tr>
             ) : (
-              <Link
-                to={inAppRouterPath(emptyCtaHref)}
-                className="sa-press mt-3 inline-block rounded-[10px] bg-[#101828] px-4 py-2 text-[13px] font-medium text-white hover:bg-[#1e2939]"
-              >
-                {emptyCtaLabel}
-              </Link>
-            )}
-          </div>
-        ) : (
-          buildings.map((b, index) => {
-            const selected = selection?.selectedBuildings.has(b.building) ?? false
-            const href = buildingHref ? inAppRouterPath(buildingHref(b.building)) : null
-            const cardClassName = [
-              'sa-enter-scale sa-card group flex flex-col gap-3 rounded-[10px] border bg-white p-4 text-inherit no-underline',
-              href || onBuildingOpen ? 'cursor-pointer' : '',
-              selected
-                ? 'border-[#0030b5]/35 ring-1 ring-[#0030b5]/15 hover:border-[#0030b5]/50 hover:shadow-[0px_4px_12px_rgba(0,48,181,0.08)]'
-                : 'border-[#e5e7eb] hover:border-[#101828]/20 hover:bg-[#fafafa] hover:shadow-[0px_4px_12px_rgba(0,0,0,0.06)]',
-            ].join(' ')
-            const cardRef =
-              index === 0
-                ? (node: HTMLElement | null) => {
-                    if (typeof firstCardRef === 'function') firstCardRef(node)
-                    else if (firstCardRef) firstCardRef.current = node
+              buildings.map((b, index) => {
+                const selected = selection?.selectedBuildings.has(b.building) ?? false
+                const href = buildingHref ? inAppRouterPath(buildingHref(b.building)) : null
+                const rowOpens = Boolean(href || onBuildingOpen)
+                const rowRef =
+                  index === 0
+                    ? (node: HTMLTableRowElement | null) => {
+                        if (typeof firstCardRef === 'function') firstCardRef(node)
+                        else if (firstCardRef) firstCardRef.current = node
+                      }
+                    : undefined
+                const openRow = () => {
+                  onBuildingOpen?.(b.building)
+                  if (href) {
+                    navigate(href, { state: buildingLinkState?.(b.building) })
                   }
-                : undefined
-            const cardBody = (
-              <>
-              <div className="flex min-w-0 flex-wrap items-start justify-between gap-2">
-                <div className="flex min-w-0 items-center gap-2.5">
-                  <span className="flex size-9 shrink-0 items-center justify-center rounded-[8px] border border-[#e5e7eb] text-[#364153] transition-[border-color,background-color] duration-150 group-hover:border-[#101828]/15 group-hover:bg-[#f9fafb]">
-                    <BuildingIcon />
-                  </span>
-                  <div className="min-w-0">
-                    <p className="truncate text-[14px] font-semibold leading-5 text-[#0a0a0a]">
-                      {b.building}
-                    </p>
-                    <p className="text-[12px] leading-4 text-[#6a7282]">
-                      {b.unitCount} unit{b.unitCount === 1 ? '' : 's'}
-                    </p>
-                  </div>
-                </div>
-                <div className="flex shrink-0 items-start gap-2">
-                  <span
-                    className={`rounded-[4px] px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-[0.06em] ${HEALTH_BADGE_STYLES[b.status]}`}
-                    title={
-                      b.status === 'unknown'
-                        ? resolvePropertyHealthPendingMessage(b.pendingReason)
+                }
+                const showScore = shouldShowPropertyHealthScore(b.status)
+                const healthTitle =
+                  b.status === 'unknown'
+                    ? resolvePropertyHealthPendingMessage(b.pendingReason)
+                    : showScore
+                      ? `${b.score} of 100 health`
+                      : resolvePropertyHealthPendingMessage(b.pendingReason)
+
+                return (
+                  <tr
+                    key={b.building}
+                    ref={rowRef}
+                    style={{ animationDelay: `${Math.min(index, 8) * 40}ms` }}
+                    className={[
+                      'sa-enter border-b border-[#f3f4f6] last:border-b-0',
+                      rowOpens ? 'cursor-pointer hover:bg-[#fafafa]' : '',
+                      selected ? 'bg-[#f8f9ff]' : '',
+                    ].join(' ')}
+                    onClick={rowOpens ? openRow : undefined}
+                    onKeyDown={
+                      rowOpens
+                        ? (event) => {
+                            if (event.key === 'Enter' || event.key === ' ') {
+                              event.preventDefault()
+                              openRow()
+                            }
+                          }
                         : undefined
                     }
+                    tabIndex={rowOpens ? 0 : undefined}
                   >
-                    {HEALTH_BADGE_LABELS[b.status]}
-                  </span>
-                  {selection ? (
-                    <div
-                      className={[
-                        'pt-0.5',
-                        selected
-                          ? 'block'
-                          : 'hidden group-hover:block group-focus-within:block',
-                      ].join(' ')}
-                      onClick={(event) => event.stopPropagation()}
-                      onKeyDown={(event) => event.stopPropagation()}
-                    >
-                      <TableCheckbox
-                        aria-label={`Select ${b.building}`}
-                        checked={selected}
-                        onChange={() => selection.onToggleBuilding(b.building)}
-                      />
-                    </div>
-                  ) : null}
-                </div>
-              </div>
-              <div
-                aria-label={
-                  shouldShowPropertyHealthScore(b.status)
-                    ? `${b.score} of 100 health`
-                    : b.status === 'unknown'
-                      ? 'Unknown property health'
-                      : resolvePropertyHealthPendingMessage(b.pendingReason)
-                }
-              >
-                {shouldShowPropertyHealthScore(b.status) ? (
-                  <>
-                    <p className="text-[28px] font-bold leading-8 text-[#0a0a0a] tabular-nums">
-                      {b.score}
-                      <span className="text-[12px] font-normal text-[#6a7282]"> / 100 health</span>
-                    </p>
-                    <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-[#f3f4f6]">
-                      <div
-                        className={`sa-bar h-full rounded-full ${HEALTH_BAR_STYLES[b.status]}`}
-                        style={{ width: `${b.score}%` }}
-                      />
-                    </div>
-                  </>
-                ) : (
-                  <>
-                    <p className="text-[28px] font-bold leading-8 text-[#6a7282] tabular-nums">
-                      —
-                      {b.status === 'unknown' ? (
-                        <span className="text-[12px] font-normal text-[#6a7282]"> / 100 health</span>
-                      ) : null}
-                    </p>
-                    {b.status !== 'unknown' ? (
-                      <p className="text-[12px] leading-4 text-[#6a7282]">
-                        {resolvePropertyHealthPendingMessage(b.pendingReason)}
-                      </p>
+                    {selection ? (
+                      <td
+                        className="w-12 px-4 py-3.5"
+                        onClick={(event) => event.stopPropagation()}
+                        onKeyDown={(event) => event.stopPropagation()}
+                      >
+                        <TableCheckbox
+                          aria-label={`Select ${b.building}`}
+                          checked={selected}
+                          onChange={() => selection.onToggleBuilding(b.building)}
+                        />
+                      </td>
                     ) : null}
-                    <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-[#f3f4f6]">
-                      <div className="h-full w-0 rounded-full bg-[#d1d5dc]" />
-                    </div>
-                  </>
-                )}
-              </div>
-              <div className="flex flex-wrap gap-2 border-t border-[#f3f4f6] pt-3">
-                <span className={METRIC_CHIP}>
-                  <WorkOrderIcon />
-                  <span className="font-semibold text-[#0a0a0a]">{b.openTickets}</span> work orders
-                </span>
-                <span className={METRIC_CHIP}>
-                  <UsersIcon />
-                  <span className="font-semibold text-[#0a0a0a] tabular-nums">
-                    {b.occupancyPct}%
-                  </span>{' '}
-                  occ.
-                </span>
-                {showMonthlySpend && formatSpend && monthlySpendByBuilding ? (
-                  <span className={METRIC_CHIP}>
-                    <span>Monthly Cost</span>
-                    <span className="font-semibold text-[#0a0a0a] tabular-nums">
-                      {formatSpend(monthlySpendByBuilding.get(b.building) ?? 0)}
-                    </span>
-                  </span>
-                ) : null}
-              </div>
-            </>
-            )
-            if (href) {
-              return (
-                <button
-                  key={b.building}
-                  type="button"
-                  ref={cardRef}
-                  onClick={() => {
-                    onBuildingOpen?.(b.building)
-                    navigate(inAppRouterPath(href), { state: buildingLinkState?.(b.building) })
-                  }}
-                  style={{ animationDelay: `${Math.min(index, 8) * 40}ms` }}
-                  className={`${cardClassName} w-full text-left appearance-none`}
-                >
-                  {cardBody}
-                </button>
-              )
-            }
-            return (
-            <div
-              key={b.building}
-              ref={cardRef}
-              role={onBuildingOpen ? 'button' : undefined}
-              tabIndex={onBuildingOpen ? 0 : undefined}
-              onClick={
-                onBuildingOpen
-                  ? () => {
-                      onBuildingOpen(b.building)
-                    }
-                  : undefined
-              }
-              onKeyDown={
-                onBuildingOpen
-                  ? (event) => {
-                      if (event.key === 'Enter' || event.key === ' ') {
-                        event.preventDefault()
-                        onBuildingOpen(b.building)
-                      }
-                    }
-                  : undefined
-              }
-              style={{ animationDelay: `${Math.min(index, 8) * 40}ms` }}
-              className={cardClassName}
-            >
-              {cardBody}
-            </div>
-            )
-          })
-        )}
+                    <td className={TD_CLASS}>
+                      <div className="flex min-w-0 items-center gap-2.5">
+                        <span className="flex size-8 shrink-0 items-center justify-center rounded-[8px] border border-[#e5e7eb] text-[#364153]">
+                          <BuildingIcon />
+                        </span>
+                        <span className="truncate font-medium">{b.building}</span>
+                      </div>
+                    </td>
+                    <td className={`${TD_CLASS} text-right tabular-nums text-[#364153]`}>
+                      {b.unitCount}
+                    </td>
+                    <td className={TD_CLASS}>
+                      <span
+                        className={`inline-flex rounded-[4px] px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-[0.06em] ${HEALTH_BADGE_STYLES[b.status]}`}
+                        title={healthTitle}
+                      >
+                        {HEALTH_BADGE_LABELS[b.status]}
+                      </span>
+                    </td>
+                    <td className={TD_CLASS} title={healthTitle}>
+                      <div className="min-w-[7rem]">
+                        <p className="tabular-nums">
+                          {showScore ? (
+                            <>
+                              <span className="font-semibold">{b.score}</span>
+                              <span className="text-[12px] text-[#6a7282]"> / 100</span>
+                            </>
+                          ) : (
+                            <span className="text-[#6a7282]">—</span>
+                          )}
+                        </p>
+                        <div className="mt-1.5 h-1.5 w-full overflow-hidden rounded-full bg-[#f3f4f6]">
+                          <div
+                            className={`sa-bar h-full rounded-full ${
+                              showScore ? HEALTH_BAR_STYLES[b.status] : 'bg-[#d1d5dc]'
+                            }`}
+                            style={{ width: showScore ? `${b.score}%` : '0%' }}
+                          />
+                        </div>
+                      </div>
+                    </td>
+                    <td className={`${TD_CLASS} text-right tabular-nums`}>
+                      <span className="inline-flex items-center justify-end gap-1.5 text-[#364153]">
+                        <WorkOrderIcon />
+                        <span className="font-medium text-[#0a0a0a]">{b.openTickets}</span>
+                      </span>
+                    </td>
+                    <td className={`${TD_CLASS} text-right tabular-nums`}>
+                      <span className="inline-flex items-center justify-end gap-1.5 text-[#364153]">
+                        <UsersIcon />
+                        <span className="font-medium text-[#0a0a0a]">{b.occupancyPct}%</span>
+                      </span>
+                    </td>
+                    {showMonthlySpend && formatSpend && monthlySpendByBuilding ? (
+                      <td className={`${TD_CLASS} text-right font-medium tabular-nums`}>
+                        {formatSpend(monthlySpendByBuilding.get(b.building) ?? 0)}
+                      </td>
+                    ) : showMonthlySpend ? (
+                      <td className={`${TD_CLASS} text-right text-[#6a7282]`}>—</td>
+                    ) : null}
+                  </tr>
+                )
+              })
+            )}
+          </tbody>
+        </table>
       </div>
     </section>
   )

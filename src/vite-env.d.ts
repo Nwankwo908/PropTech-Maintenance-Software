@@ -13,6 +13,10 @@ interface ImportMetaEnv {
   readonly VITE_SUPABASE_ANON_KEY?: string
   /** Same Google Web client ID as Auth → Providers → Google. Brands the account picker with this site (www.ulohome.io). */
   readonly VITE_GOOGLE_OAUTH_CLIENT_ID?: string
+  /** Browser Maps JS + Street View Static (also read by the Vite `/ulo-streetview` proxy). */
+  readonly VITE_GOOGLE_MAPS_API_KEY?: string
+  /** Optional alias for VITE_GOOGLE_MAPS_API_KEY. */
+  readonly VITE_GOOGLE_PLACES_API_KEY?: string
   /** GA4 measurement ID. Scripts load only on production ulohome.io / www / app hosts. */
   readonly VITE_GA4_MEASUREMENT_ID?: string
   /** Microsoft Clarity project ID. Scripts load only on production ulohome.io / www / app hosts. */

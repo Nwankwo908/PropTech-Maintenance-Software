@@ -7,12 +7,14 @@ import {
 import { getErrorMessage } from '@/lib/errorMessage'
 import {
   orderLeaseDates,
+  nameMatchesAnyPerson,
   placeAccountAndTenantNames,
   placeAccountFields,
   placePhoneEmail,
   placePropertyAddressFields,
   streetLineFromAddress,
 } from '@shared/onboarding/typedDocumentExtract/placeFields'
+import { parseRentDueDay } from '@shared/onboarding/typedDocumentExtract/parse'
 /**
  * Onboarding fast-track — document upload, GPT-4o extraction, and review import.
  * File bytes are stored in the landlord-onboarding-documents bucket for preview.
@@ -32,6 +34,7 @@ import {
   resolveOnboardingPropertyType,
 } from '@/lib/onboarding/propertyType'
 import { normalizeBuildingKey, normalizeUnitLabel } from '@/lib/propertyHealth'
+import { assignSharedUnitToLeaseCoTenants, leaseUnitOrDefault, usableLeaseUnit } from '@/lib/onboarding/leaseUnit'
 import { collectExtractedUnitLabels, extractedPlacesOverlap } from '@/lib/onboarding/persist/properties'
 import { supabase } from '@/lib/supabase'
 
@@ -100,6 +103,7 @@ export type ExtractedLeaseInfo = {
   leaseEnd: string
   rentAmount: string
   securityDeposit: string
+  rentDueDay?: string
   sourceDocumentName: string
   confidence: number
   selected: boolean
@@ -286,6 +290,11 @@ export function isOnboardingExtractJunkValue(value: string): boolean {
 function cleanOnboardingExtractText(value: string | null | undefined): string {
   const text = (value ?? '').trim()
   return isOnboardingExtractJunkValue(text) ? '' : text
+}
+
+function formatExtractedRentDueDay(value: unknown): string {
+  const day = parseRentDueDay(value)
+  return day == null ? '' : String(day)
 }
 
 function cleanExtractedBuilding(value: string | null | undefined): string {
@@ -833,7 +842,8 @@ function extractedUnitMatchKey(unit: string, building: string): string {
 }
 
 function normalizeExtractedUnitKey(unit: string): string {
-  return normalizeUnitLabel(unit)
+  const usable = usableLeaseUnit(unit)
+  return usable ? normalizeUnitLabel(usable) : ''
 }
 
 function normalizePersonNameKey(name: string): string {
@@ -951,7 +961,7 @@ function mergeExtractedResidentRow(
   extra: OnboardingExtractedResident,
 ): OnboardingExtractedResident {
   const fullName = preferFullerPersonName(primary.fullName, extra.fullName)
-  const unit = primary.unit.trim() || extra.unit.trim()
+  const unit = usableLeaseUnit(primary.unit) || usableLeaseUnit(extra.unit)
   const building = primary.building.trim() || extra.building.trim()
   const confidence = Math.max(primary.confidence, extra.confidence)
     return {
@@ -964,13 +974,14 @@ function mergeExtractedResidentRow(
     leaseStart: primary.leaseStart.trim() || extra.leaseStart.trim(),
     leaseEnd: primary.leaseEnd.trim() || extra.leaseEnd.trim(),
     monthlyRent: primary.monthlyRent.trim() || extra.monthlyRent.trim(),
+    rentDueDay: (primary.rentDueDay ?? '').trim() || (extra.rentDueDay ?? '').trim(),
     sourceDocumentName: joinExtractedSourceNames(
       primary.sourceDocumentName,
       extra.sourceDocumentName,
     ),
     confidence,
     selected: primary.selected || extra.selected,
-    needsReview: confidence < 75 || Boolean(fullName.trim() && !unit.trim()),
+    needsReview: confidence < 75 || Boolean(fullName.trim() && !usableLeaseUnit(unit)),
   }
 }
 
@@ -1058,6 +1069,7 @@ function mergeExtractedLeaseRow(primary: ExtractedLeaseInfo, extra: ExtractedLea
     leaseEnd: primary.leaseEnd.trim() || extra.leaseEnd.trim(),
     rentAmount: primary.rentAmount.trim() || extra.rentAmount.trim(),
     securityDeposit: primary.securityDeposit.trim() || extra.securityDeposit.trim(),
+    rentDueDay: (primary.rentDueDay ?? '').trim() || (extra.rentDueDay ?? '').trim(),
     sourceDocumentName: joinExtractedSourceNames(
       primary.sourceDocumentName,
       extra.sourceDocumentName,
@@ -1240,7 +1252,7 @@ function fillExtractedResidentsFromLeases(
     matchedLeaseIds.add(lease.id)
 
     const fullName = preferFullerPersonName(resident.fullName, lease.residentName)
-    const unit = resident.unit.trim() || lease.unit.trim()
+    const unit = usableLeaseUnit(resident.unit) || leaseUnitOrDefault(lease.unit)
     const rentConflict =
       Boolean(resident.monthlyRent.trim()) &&
       Boolean(lease.rentAmount.trim()) &&
@@ -1274,6 +1286,7 @@ function fillExtractedResidentsFromLeases(
       monthlyRent: rentConflict
         ? resident.monthlyRent.trim()
         : resident.monthlyRent.trim() || lease.rentAmount.trim(),
+      rentDueDay: resident.rentDueDay.trim() || (lease.rentDueDay ?? '').trim(),
       needsReview:
         resident.needsReview ||
         rentConflict ||
@@ -1290,20 +1303,20 @@ function fillExtractedResidentsFromLeases(
       .map((lease) => ({
         id: `ext-res-from-lease-${lease.id}`,
         fullName: lease.residentName.trim(),
-        unit: lease.unit.trim(),
+        unit: leaseUnitOrDefault(lease.unit),
         building: lease.building.trim(),
         phone: '',
         email: '',
         leaseStart: lease.leaseStart.trim(),
         leaseEnd: lease.leaseEnd.trim(),
         monthlyRent: lease.rentAmount.trim(),
-        rentDueDay: '',
+        rentDueDay: (lease.rentDueDay ?? '').trim(),
         occupancyStatus: 'active' as const,
         maintenanceResponsibilitiesClause: '',
         sourceDocumentName: lease.sourceDocumentName,
         confidence: lease.confidence,
         selected: true,
-        needsReview: lease.confidence < 75 || !lease.unit.trim(),
+        needsReview: lease.confidence < 75,
       }))
     return {
       residents: [...nextResidents, ...minted],
@@ -1395,13 +1408,13 @@ function enrichExtractedResidentPlacement(
   const fallbackBuilding = defaultExtractedBuilding(properties)
 
   const enrichedResidents = residents.map((resident) => {
-    let unit = resident.unit.trim()
+    let unit = usableLeaseUnit(resident.unit)
     let building = resident.building.trim()
 
     // Require identity (name + unit/building) — never steal another tenant's lease by unit alone.
     const leaseMatch = leases.find((lease) => leaseResidentPlacementMatch(lease, resident))
     if (leaseMatch) {
-      unit = unit || leaseMatch.unit.trim()
+      unit = unit || leaseUnitOrDefault(leaseMatch.unit)
       building = building || leaseMatch.building.trim()
     }
 
@@ -1424,7 +1437,7 @@ function enrichExtractedResidentPlacement(
   })
 
   const enrichedLeases = leases.map((lease) => {
-    let unit = lease.unit.trim()
+    let unit = usableLeaseUnit(lease.unit)
     let building = lease.building.trim()
 
     const residentMatch = enrichedResidents.find((resident) =>
@@ -1434,6 +1447,7 @@ function enrichExtractedResidentPlacement(
       unit = unit || residentMatch.unit.trim()
       building = building || residentMatch.building.trim()
     }
+    unit = leaseUnitOrDefault(unit)
 
     if (unit && !building) {
       building = uniqueUnitBuildingForLabel(unit, units)
@@ -1897,6 +1911,8 @@ function finalizeExtractionReviewEntities(input: {
     const unmatched = filled.unmatchedLeases.find((row) => row.id === lease.id)
     return unmatched ?? lease
   })
+  residents = assignSharedUnitToLeaseCoTenants(residents)
+  leases = assignSharedUnitToLeaseCoTenants(leases)
 
   const propertyNames = properties.map((property) => property.name)
   properties = properties.map((property) => {
@@ -2033,9 +2049,8 @@ export function collectExtractedAccount(
   payloads: PortfolioDocumentExtractPayload[],
   residentNames: string[] = [],
 ): OnboardingReviewManualAccount {
-  const blocked = new Set(
-    residentNames.map((name) => name.trim().toLowerCase()).filter(Boolean),
-  )
+  const blockedResidents = residentNames.map((name) => name.trim()).filter(Boolean)
+  const isBlockedName = (name: string) => nameMatchesAnyPerson(name, blockedResidents)
   const companyFromAccount: string[] = []
   const companyFromProperties: string[] = []
   const contacts: string[] = []
@@ -2044,18 +2059,18 @@ export function collectExtractedAccount(
 
   for (const payload of payloads) {
     const company = usableOnboardingCompanyName(payloadAccountField(payload, 'companyName'))
-    if (company && !blocked.has(company.toLowerCase())) companyFromAccount.push(company)
+    if (company && !isBlockedName(company)) companyFromAccount.push(company)
 
     const contact = payloadAccountField(payload, 'contactName')
-    if (contact && !blocked.has(contact.toLowerCase())) contacts.push(contact)
+    if (contact && !isBlockedName(contact)) contacts.push(contact)
     const email = payloadAccountField(payload, 'email')
-    if (email && !blocked.has(email.toLowerCase())) emails.push(email)
+    if (email && !isBlockedName(email)) emails.push(email)
     const phone = payloadAccountField(payload, 'phone')
     if (phone) phones.push(phone)
 
     for (const property of payload.properties ?? []) {
       const name = usableOnboardingCompanyName(property.name)
-      if (name && looksLikeExtractedCompanyName(name) && !blocked.has(name.toLowerCase())) {
+      if (name && looksLikeExtractedCompanyName(name) && !isBlockedName(name)) {
         companyFromProperties.push(name)
       }
     }
@@ -2067,6 +2082,8 @@ export function collectExtractedAccount(
     email: mostFrequentName(emails),
     phone: mostFrequentName(phones),
   })
+  if (isBlockedName(placed.contactName)) placed.contactName = ''
+  if (isBlockedName(placed.companyName)) placed.companyName = ''
   return {
     ...placed,
     backupContactName: '',
@@ -2211,10 +2228,10 @@ function mergeExtractedDocuments(
           state: placed.state,
           zipCode: placed.zipCode,
           propertyType: resolveOnboardingPropertyType(item.propertyType),
-          unitCount: item.unitCount,
+        unitCount: item.unitCount,
           unitLabels: '',
-          propertyManagerName: '',
-          propertyManagerPhone: '',
+        propertyManagerName: '',
+        propertyManagerPhone: '',
           sourceDocumentName: source,
           confidence: item.confidence,
           selected: Boolean(item.name.trim() || item.streetAddress.trim()),
@@ -2270,7 +2287,9 @@ function mergeExtractedDocuments(
           leaseStart: dates.start,
           leaseEnd: dates.end,
           monthlyRent: cleanOnboardingExtractText(item.monthlyRent),
-      rentDueDay: '',
+          rentDueDay: formatExtractedRentDueDay(
+            (item as { rentDueDay?: string | number }).rentDueDay,
+          ),
           occupancyStatus: 'active',
       maintenanceResponsibilitiesClause: '',
           sourceDocumentName: source,
@@ -2320,12 +2339,48 @@ function mergeExtractedDocuments(
           leaseEnd: orderLeaseDates(item.leaseStart, item.leaseEnd).end,
           rentAmount: cleanOnboardingExtractText(item.rentAmount),
           securityDeposit: cleanOnboardingExtractText(item.securityDeposit),
+          rentDueDay: formatExtractedRentDueDay(
+            (item as { rentDueDay?: string | number }).rentDueDay,
+          ),
           sourceDocumentName: source,
           confidence: item.confidence,
           selected: Boolean(residentName.trim()),
           needsReview: item.confidence < 75,
         })
       })
+      if (leaseOnlyPortfolio) {
+        for (const lease of leaseRowsFromDoc) {
+          const already = residents.some((row) =>
+            extractedResidentIdentityMatch(row, {
+              fullName: lease.residentName,
+              unit: lease.unit,
+              building: lease.building,
+              phone: '',
+              email: '',
+            }),
+          )
+          if (already) continue
+          const dates = orderLeaseDates(lease.leaseStart, lease.leaseEnd)
+          residents.push({
+            id: `ext-res-from-lease-${lease.id}`,
+            fullName: lease.residentName.trim(),
+            unit: lease.unit.trim(),
+            building: lease.building.trim(),
+            phone: '',
+            email: '',
+            leaseStart: dates.start,
+            leaseEnd: dates.end,
+            monthlyRent: lease.rentAmount.trim(),
+            rentDueDay: (lease.rentDueDay ?? '').trim(),
+            occupancyStatus: 'active',
+      maintenanceResponsibilitiesClause: '',
+            sourceDocumentName: lease.sourceDocumentName,
+            confidence: lease.confidence,
+            selected: true,
+            needsReview: lease.confidence < 75,
+          })
+        }
+      }
       leases.push(...collapseLeasesFromSingleAgreement(leaseRowsFromDoc))
     }
 
@@ -2836,7 +2891,7 @@ export function normalizeExtractionReview(
         leaseStart: dates.start,
         leaseEnd: dates.end,
         monthlyRent: cleanOnboardingExtractText(item.monthlyRent ?? ''),
-      rentDueDay: item.rentDueDay ?? '',
+        rentDueDay: formatExtractedRentDueDay(item.rentDueDay),
       occupancyStatus: item.occupancyStatus ?? 'active',
       maintenanceResponsibilitiesClause: item.maintenanceResponsibilitiesClause ?? '',
       }

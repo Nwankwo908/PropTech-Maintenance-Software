@@ -41,6 +41,8 @@ describe('validateReviewManualAccount', () => {
 describe('usableOnboardingCompanyName', () => {
   it('drops system placeholders so extraction can fill company name', () => {
     expect(usableOnboardingCompanyName('New Landlord')).toBe('')
+    expect(usableOnboardingCompanyName('Limited Alpha 1')).toBe('')
+    expect(usableOnboardingCompanyName('Kendo Homes')).toBe('')
     expect(usableOnboardingCompanyName('your portfolio')).toBe('')
     expect(usableOnboardingCompanyName('CEO Rentals NJ')).toBe('CEO Rentals NJ')
   })

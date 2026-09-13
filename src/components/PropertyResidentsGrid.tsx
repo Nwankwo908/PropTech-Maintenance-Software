@@ -35,7 +35,7 @@ function ResidentCard({
           {resident.initials}
         </span>
         <div className="min-w-0">
-          <h3 className="truncate text-[15px] font-semibold leading-5 text-[#0a0a0a]">
+          <h3 className="text-[15px] font-semibold leading-5 text-[#0a0a0a] [overflow-wrap:anywhere]">
             {resident.name}
           </h3>
           <p className="mt-0.5 text-[13px] leading-5 text-[#6a7282]">

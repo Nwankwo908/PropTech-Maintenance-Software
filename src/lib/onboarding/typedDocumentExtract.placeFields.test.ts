@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import {
+  namesLikelySamePerson,
   orderLeaseDates,
+  placeAccountAndTenantNames,
   placeAccountFields,
   placeLandlordAndTenants,
   placePhoneEmail,
@@ -182,6 +184,68 @@ describe('placeLandlordAndTenants', () => {
       landlordName: 'Grove Holdings LLC',
       tenantNames: ['Jane Smith'],
     })
+  })
+
+  it('does not treat a tenant as the landlord when the model copied them into landlord_name', () => {
+    expect(
+      placeLandlordAndTenants({
+        landlordName: 'Adrian Antonio Ruiz Trelles',
+        tenantNames: ['Adrian Ruiz Trelles'],
+      }),
+    ).toEqual({
+      landlordName: '',
+      tenantNames: ['Adrian Antonio Ruiz Trelles'],
+    })
+  })
+
+  it('keeps a person landlord when the tenant is a different person', () => {
+    expect(
+      placeLandlordAndTenants({
+        landlordName: 'Ifunanya Okafor',
+        tenantNames: ['Adrian Antonio Ruiz Trelles'],
+      }),
+    ).toEqual({
+      landlordName: 'Ifunanya Okafor',
+      tenantNames: ['Adrian Antonio Ruiz Trelles'],
+    })
+  })
+})
+
+describe('placeAccountAndTenantNames', () => {
+  it('does not put a tenant into Your Organization', () => {
+    expect(
+      placeAccountAndTenantNames({
+        companyName: 'Adrian Antonio Ruiz Trelles',
+        contactName: 'Adrian Antonio Ruiz Trelles',
+        tenantNames: ['Adrian Ruiz Trelles'],
+      }),
+    ).toEqual({
+      companyName: '',
+      contactName: '',
+      tenantNames: ['Adrian Antonio Ruiz Trelles'],
+    })
+  })
+
+  it('keeps the landlord contact when the tenant is a different person', () => {
+    expect(
+      placeAccountAndTenantNames({
+        companyName: 'Ifunanya Okafor',
+        contactName: '',
+        tenantNames: ['Adrian Antonio Ruiz Trelles'],
+      }),
+    ).toEqual({
+      companyName: 'Ifunanya Okafor',
+      contactName: '',
+      tenantNames: ['Adrian Antonio Ruiz Trelles'],
+    })
+  })
+})
+
+describe('namesLikelySamePerson', () => {
+  it('matches shortened vs full tenant names', () => {
+    expect(namesLikelySamePerson('Adrian Antonio Ruiz Trelles', 'Adrian Ruiz Trelles')).toBe(true)
+    expect(namesLikelySamePerson('Ifunanya Okafor', 'Adrian Antonio Ruiz Trelles')).toBe(false)
+    expect(namesLikelySamePerson('Antonio Ruiz', 'Adrian Antonio Ruiz Trelles')).toBe(false)
   })
 })
 

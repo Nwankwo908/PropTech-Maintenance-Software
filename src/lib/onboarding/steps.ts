@@ -107,6 +107,22 @@ export function resolveOnboardingStepForPath(
   return next
 }
 
+/**
+ * Last-review Edit on fast track must open the fast-track stages (upload / AI review),
+ * not guided property/vendor/resident forms.
+ */
+export function resolveReviewEditStep(
+  target: OnboardingStep,
+  setupPath: OnboardingSetupPath,
+): OnboardingStep {
+  if (setupPath !== 'fast_track') return target
+  if (target === 'approval' || target === 'payouts' || target === 'review') return target
+  if (target === 'property' || target === 'document_upload' || target === 'account_setup') {
+    return 'document_upload'
+  }
+  return 'ai_review'
+}
+
 export function normalizeOnboardingStep(step: unknown): OnboardingStep {
   if (typeof step === 'string' && LEGACY_STEP_MAP[step]) {
     return LEGACY_STEP_MAP[step]

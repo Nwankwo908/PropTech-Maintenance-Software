@@ -749,7 +749,7 @@ async function lookupLandlordMainNumber(
 
   if (!data?.phone_number || !data?.id) return null
 
-  const provider = (data.provider === "telnyx" ? "telnyx" : "twilio") as SmsProviderName
+  const provider: SmsProviderName = "twilio"
   return {
     phone: String(data.phone_number).trim(),
     id: String(data.id),

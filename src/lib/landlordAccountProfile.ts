@@ -3,6 +3,7 @@
  * Onboarding account setup and Settings → Organization read/write through here.
  */
 import { getActiveLandlordId } from '@/lib/activeLandlord'
+import { supabase } from '@/lib/supabase'
 import {
   DEFAULT_COMMUNICATION_STYLE,
   normalizeCommunicationStyle,
@@ -10,7 +11,7 @@ import {
 } from '@/lib/communicationStyle'
 import type { OnboardingAccountSetup } from '@/lib/onboarding/types'
 import { resolveLandlordSupportEmail } from '@/lib/landlordSupportEmail'
-import { supabase } from '@/lib/supabase'
+import { storedLandlordCompanyName } from '@shared/landlordPortfolioLabel'
 
 export type LandlordAccountProfile = {
   companyName: string
@@ -178,7 +179,9 @@ export async function fetchLandlordAccountProfile(
   }
 
   const profile: LandlordAccountProfile = {
-    companyName: asTrimmed(landlord?.name) || account.companyName,
+    companyName:
+      storedLandlordCompanyName(landlord?.name, asTrimmed(landlord?.contact_name) || account.contactName) ||
+      account.companyName,
     contactName: asTrimmed(landlord?.contact_name) || account.contactName,
     email: resolveLandlordSupportEmail({
       accountSetupEmail: account.email,

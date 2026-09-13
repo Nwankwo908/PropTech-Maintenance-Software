@@ -373,9 +373,7 @@ export async function sendTenantActivation(
     return summary
   }
 
-  const provider: SmsProviderName = line.provider === "telnyx"
-    ? "telnyx"
-    : "twilio"
+  const provider: SmsProviderName = "twilio"
   const nowIso = new Date().toISOString()
 
   for (const row of rows) {

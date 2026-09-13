@@ -4,6 +4,7 @@
 import { ensureLandlordSmsOnboarding } from '@/api/landlordSmsOnboarding'
 import { getActiveLandlordId } from '@/lib/activeLandlord'
 import { formatPhoneNational } from '@/lib/phoneFormat'
+import { resolveSmsIntakeNumber } from '@shared/landlordCapabilities'
 import { normalizeOnboardingApprovalRules, type OnboardingApprovalRules } from '@/lib/onboardingApprovalRules'
 import { supabase } from '@/lib/supabase'
 import { fetchAccountSetupCounts } from './persist/account'
@@ -72,7 +73,10 @@ export function buildOnboardingReviewData(
     maintenanceIssues?: ImportedOnboardingMaintenanceIssue[]
   },
 ): OnboardingReviewData {
-  const normalized = smsIntakeNumber?.trim() || null
+  const normalized = resolveSmsIntakeNumber({
+    landlordId: state.landlordId,
+    phone: smsIntakeNumber,
+  })
   const mergedResidents =
     state.setupPath === 'fast_track' && extractedResidents?.length
       ? mergeFastTrackReviewResidents(residents, extractedResidents)
@@ -94,12 +98,13 @@ export function buildOnboardingReviewData(
 /** Active landlord_main SMS line used for resident maintenance intake. */
 export async function fetchLandlordSmsIntakeNumber(
   landlordId: string = getActiveLandlordId(),
-): Promise<string | null> {
-  if (!supabase) return null
+): Promise<string> {
+  const fallback = resolveSmsIntakeNumber({ landlordId })
+  if (!supabase) return fallback
 
   const { data, error } = await supabase
     .from('sms_numbers')
-    .select('phone_number')
+    .select('phone_number, provider')
     .eq('landlord_id', landlordId)
     .eq('purpose', 'landlord_main')
     .eq('status', 'active')
@@ -109,34 +114,34 @@ export async function fetchLandlordSmsIntakeNumber(
 
   if (!error) {
     const phone = typeof data?.phone_number === 'string' ? data.phone_number.trim() : ''
-    if (phone) return phone
+    const provider = typeof data?.provider === 'string' ? data.provider : ''
+    const usable = resolveSmsIntakeNumber({ landlordId, phone, provider })
+    if (usable) return usable
   } else {
     console.warn('[landlordOnboarding] sms intake lookup', error.message)
   }
 
-  // Provision / claim a pool number when none is assigned yet.
   try {
     const ensured = await ensureLandlordSmsOnboarding(landlordId)
-    const phone = ensured?.mainPhoneNumber?.trim()
-    if (phone) {
-      try {
-        await supabase
-          .from('landlord_onboarding')
-          .update({
-            ulo_phone_number: phone,
-            updated_at: new Date().toISOString(),
-          })
-          .eq('landlord_id', landlordId)
-      } catch {
-        // best-effort mirror
-      }
-      return phone
+    const phone = ensured?.mainPhoneNumber?.trim() ?? ''
+    const usable = resolveSmsIntakeNumber({ landlordId, phone })
+    try {
+      await supabase
+        .from('landlord_onboarding')
+        .update({
+          ulo_phone_number: usable,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('landlord_id', landlordId)
+    } catch {
+      // best-effort mirror
     }
+    return usable
   } catch (err) {
     console.warn('[landlordOnboarding] ensure sms intake failed', err)
   }
 
-  return null
+  return fallback
 }
 
 export async function fetchOnboardingReviewSupplement(
@@ -146,7 +151,7 @@ export async function fetchOnboardingReviewSupplement(
   vendors: OnboardingVendor[]
   residents: OnboardingResident[]
   dbCounts?: AccountSetupCounts
-  smsIntakeNumber: string | null
+  smsIntakeNumber: string
   financialRecords: ImportedOnboardingFinancialRecord[]
   maintenanceIssues: ImportedOnboardingMaintenanceIssue[]
 }> {

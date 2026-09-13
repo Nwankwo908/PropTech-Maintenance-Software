@@ -19,9 +19,7 @@ import { fetchLandlordAccountProfile } from '@/lib/landlordAccountProfile'
 import { formatPhoneNational } from '@/lib/phoneFormat'
 import { loadOrganizationSettings } from '@/lib/organizationSettings'
 import {
-  landlordUsesTwilioSms,
   LIMITED_ALPHA_1_TWILIO_SMS_NUMBER,
-  ULO_TELNYX_SMS_NUMBER,
 } from '@shared/landlordCapabilities'
 import {
   markSetupSuccessTestDeliveryComplete,
@@ -405,9 +403,7 @@ export function AdminNotificationSettings() {
   }
 
   const smsDestination = (profilePhone || organizationPhone).trim()
-  const smsFromNumber = landlordUsesTwilioSms(getActiveLandlordId())
-    ? LIMITED_ALPHA_1_TWILIO_SMS_NUMBER
-    : ULO_TELNYX_SMS_NUMBER
+  const smsFromNumber = LIMITED_ALPHA_1_TWILIO_SMS_NUMBER
 
   function handleSendTest(channel: 'email' | 'sms') {
     dismissSetupSuccessCheckboxGuide('test_delivery')

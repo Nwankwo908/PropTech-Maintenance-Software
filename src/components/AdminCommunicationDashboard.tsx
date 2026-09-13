@@ -190,7 +190,7 @@ const CLOSED_STATUSES = new Set([
   'cancelled',
 ])
 
-// Provider delivery statuses (Twilio / Telnyx / email) that mean "not delivered".
+// Provider delivery statuses (Twilio / email) that mean "not delivered".
 function isFailedDelivery(providerStatus: string): boolean {
   const s = providerStatus.toLowerCase()
   if (!s) return false

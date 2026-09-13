@@ -73,6 +73,23 @@ export function thumbtackOpenConversationError(status: number, bodyText?: string
   if (bodyText === "oauth_token_failed" || status === 401) {
     return "Could not send this in Ulo. Thumbtack did not accept the Message API login. Ask Thumbtack to enable production messaging for this app."
   }
+  const body = (bodyText ?? "").toLowerCase()
+  if (status === 400 && (body.includes("categor") || body.includes("categoryid"))) {
+    return "Thumbtack needs a service category for this pro. Search for vendors again, then send the message."
+  }
+  if (status === 403) {
+    return "Could not send this in Ulo. Thumbtack did not allow this Message API app to open the conversation."
+  }
+  if (
+    status === 400 &&
+    (body.includes("searchid") || body.includes("search_id") || body.includes("search id") ||
+      body.includes("expired") || body.includes("invalid search"))
+  ) {
+    return "This Thumbtack search expired. Search for vendors again, then send the message right away."
+  }
+  if (status === 400) {
+    return "Thumbtack could not open this conversation. Search for vendors again, then send the message."
+  }
   return `Could not send this message in Ulo (${status}).`
 }
 
@@ -138,19 +155,52 @@ export function thumbtackIdsFromListingUrl(listingUrl: string | null | undefined
   }
 }
 
+/** Prefer ids from the matching business; otherwise any hit in this search. */
+export function thumbtackSearchContextForBusiness(
+  hits: ExternalVendorHit[],
+  businessId: string,
+  opts?: { requireBusiness?: boolean },
+): { searchId: string; categoryId: string } | null {
+  if (hits.length === 0) return null
+  const id = businessId.trim()
+  const match = id
+    ? hits.find((hit) => (hit.providerRef ?? "").trim() === id)
+    : undefined
+  if (opts?.requireBusiness && !match) return null
+  const searchId =
+    match?.searchId?.trim() ||
+    hits.map((hit) => hit.searchId?.trim() ?? "").find(Boolean) ||
+    ""
+  const categoryId =
+    match?.categoryId?.trim() ||
+    hits.map((hit) => hit.categoryId?.trim() ?? "").find(Boolean) ||
+    ""
+  if (!searchId || !categoryId) return null
+  return { searchId, categoryId }
+}
+
 export function parseThumbtackSearchContext(parsed: unknown): {
   searchId: string | null
   categoryId: string | null
 } {
   if (!parsed || typeof parsed !== "object") return { searchId: null, categoryId: null }
   const obj = parsed as Record<string, unknown>
-  const searchId = pickString(obj, ["searchID", "searchId", "search_id"])
-  const meta = obj.metadata && typeof obj.metadata === "object"
-    ? obj.metadata as Record<string, unknown>
+  const nested = obj.data && typeof obj.data === "object" && !Array.isArray(obj.data)
+    ? obj.data as Record<string, unknown>
     : null
-  const categoryId = meta
-    ? pickString(meta, ["categoryID", "categoryId", "category_id"])
-    : ""
+  const meta = (obj.metadata && typeof obj.metadata === "object"
+    ? obj.metadata as Record<string, unknown>
+    : null) ??
+    (nested?.metadata && typeof nested.metadata === "object"
+      ? nested.metadata as Record<string, unknown>
+      : null)
+  const searchId =
+    pickString(obj, ["searchID", "searchId", "search_id"]) ||
+    (nested ? pickString(nested, ["searchID", "searchId", "search_id"]) : "")
+  const categoryId =
+    pickString(obj, ["categoryID", "categoryId", "category_id"]) ||
+    (nested ? pickString(nested, ["categoryID", "categoryId", "category_id"]) : "") ||
+    (meta ? pickString(meta, ["categoryID", "categoryId", "category_id"]) : "")
   return { searchId: searchId || null, categoryId: categoryId || null }
 }
 
@@ -181,7 +231,8 @@ export function parseThumbtackBusinesses(parsed: unknown): ExternalVendorHit[] {
     const tags = thumbtackTags(b)
     const licensed = Boolean(b.isBusinessLicenseVerified) ||
       tags.some((t) => t.toLowerCase() === "licensed")
-    const fromUrl = thumbtackIdsFromListingUrl(listingUrl)
+    const fromListing = thumbtackIdsFromListingUrl(listingUrl)
+    const fromFlow = thumbtackIdsFromListingUrl(requestFlowUrl)
     out.push({
       name,
       rating: typeof b.rating === "number" && Number.isFinite(b.rating) ? b.rating : null,
@@ -201,8 +252,10 @@ export function parseThumbtackBusinesses(parsed: unknown): ExternalVendorHit[] {
       listingUrl,
       requestFlowUrl,
       tags: tags.length > 0 ? tags : undefined,
-      searchId: fromUrl.searchId,
-      categoryId: fromUrl.categoryId,
+      searchId: fromListing.searchId || fromFlow.searchId,
+      categoryId: fromListing.categoryId || fromFlow.categoryId ||
+        pickString(b as Record<string, unknown>, ["categoryID", "categoryId", "category_id"]) ||
+        null,
       imageUrl: pickHttpUrl(b as Record<string, unknown>, [
         "businessImageURL",
         "businessImageUrl",
@@ -273,7 +326,7 @@ function annotateThumbtackHits(
 ): ExternalVendorHit[] {
   const ctx = parseThumbtackSearchContext(parsed)
   return hits.map((hit) => {
-    const searchId = hit.searchId || ctx.searchId
+    const searchId = ctx.searchId || hit.searchId
     const categoryId = hit.categoryId || ctx.categoryId
     return {
       ...hit,
@@ -382,11 +435,70 @@ export class ThumbtackExternalVendorProvider implements ExternalVendorProvider {
     })
   }
 
+  async searchWithAccessToken(
+    input: ExternalVendorSearchInput,
+    token: string,
+    apiBase?: string | null,
+  ): Promise<ExternalVendorHit[]> {
+    return await this.runBusinessSearch(input, token, apiBase)
+  }
+
+  /**
+   * Same-token sessions for search + create. Combined search+messaging first
+   * so searchID is valid for POST /v4/requests. Never mix two OAuth apps.
+   */
+  async mintRequestFlowSessions(): Promise<Array<{ token: string; apiBase: string }>> {
+    const sessions: Array<{ token: string; apiBase: string }> = []
+    const seen = new Set<string>()
+    const combined = mergeThumbtackOauthScopes(
+      THUMBTACK_SEARCH_OAUTH_SCOPE,
+      this.messagingScope() || THUMBTACK_MESSAGING_OAUTH_SCOPE,
+    )
+    const attempts: Array<{ scope: string; source: "messaging" | "search" }> = []
+    if (this.hasDedicatedMessagingCredentials()) {
+      attempts.push({ scope: combined, source: "messaging" })
+    }
+    attempts.push({ scope: combined, source: "search" })
+    if (this.hasDedicatedMessagingCredentials()) {
+      attempts.push({ scope: this.messagingScope() || THUMBTACK_MESSAGING_OAUTH_SCOPE, source: "messaging" })
+    }
+    attempts.push({
+      scope: this.messagingScope() || THUMBTACK_MESSAGING_OAUTH_SCOPE,
+      source: "search",
+    })
+
+    for (const attempt of attempts) {
+      const scope = attempt.scope.trim()
+      if (!scope) continue
+      const token = await this.accessToken({
+        scope,
+        allowUnscopedFallback: false,
+        credentialSource: attempt.source,
+        skipCache: true,
+        skipStagingFallback: true,
+      })
+      const next = token?.trim() ?? ""
+      if (!next || seen.has(next)) continue
+      seen.add(next)
+      sessions.push({ token: next, apiBase: this.apiBase() })
+    }
+
+    const refresh = await this.accessTokenFromRefresh()
+    if (refresh && !seen.has(refresh)) {
+      sessions.push({ token: refresh, apiBase: this.apiBase() })
+    }
+    return sessions
+  }
+
   /** Token that can open a request or send a negotiation message. */
   async getMessagingAccessToken(): Promise<string | null> {
     const refreshed = await this.accessTokenFromRefresh()
     if (refreshed) return refreshed
     const scopes = [
+      mergeThumbtackOauthScopes(
+        THUMBTACK_SEARCH_OAUTH_SCOPE,
+        this.messagingScope() || THUMBTACK_MESSAGING_OAUTH_SCOPE,
+      ),
       this.messagingScope(),
       THUMBTACK_MESSAGING_OAUTH_SCOPE,
       "demand::messages.write demand::messages.read",
@@ -415,6 +527,14 @@ export class ThumbtackExternalVendorProvider implements ExternalVendorProvider {
   }
 
   async search(input: ExternalVendorSearchInput): Promise<ExternalVendorHit[]> {
+    return await this.runBusinessSearch(input, await this.getAccessToken())
+  }
+
+  private async runBusinessSearch(
+    input: ExternalVendorSearchInput,
+    token: string | null,
+    apiBaseOverride?: string | null,
+  ): Promise<ExternalVendorHit[]> {
     this.lastSearchError = null
     if (!this.isConfigured()) {
       this.lastSearchError = "missing_credentials"
@@ -428,7 +548,6 @@ export class ThumbtackExternalVendorProvider implements ExternalVendorProvider {
       return []
     }
 
-    const token = await this.getAccessToken()
     if (!token) {
       if (!this.lastSearchError) this.lastSearchError = "oauth_token_failed"
       console.warn("[external-vendor/thumbtack] OAuth token failed")
@@ -436,6 +555,7 @@ export class ThumbtackExternalVendorProvider implements ExternalVendorProvider {
     }
 
     const apiBase = (
+      apiBaseOverride?.trim() ||
       this.resolvedApiBase ||
       this.opts.apiBaseUrl?.trim() ||
       DEFAULT_API_BASE
@@ -477,7 +597,10 @@ export class ThumbtackExternalVendorProvider implements ExternalVendorProvider {
       }))
     }
 
-    const hits = mergeHits(limit, groups)
+    const hits = mergeHits(limit, groups).map((hit) => ({
+      ...hit,
+      categoryId: hit.categoryId || categoryID,
+    }))
     if (hits.length > 0) {
       this.lastSearchError = null
       return hits
@@ -606,6 +729,17 @@ export class ThumbtackExternalVendorProvider implements ExternalVendorProvider {
       count: hits.length,
     })
     return hits
+  }
+
+  /** Public category lookup for opening a request when a listing omitted categoryID. */
+  async lookupCategoryId(query: string, zip: string): Promise<string | null> {
+    const token = await this.getAccessToken()
+    if (!token) return null
+    return await this.resolveCategoryId(
+      token,
+      { issueCategory: query, searchLocation: zip, tradeTerms: query, textQuery: query },
+      zip,
+    )
   }
 
   private async resolveCategoryId(
@@ -746,6 +880,8 @@ export class ThumbtackExternalVendorProvider implements ExternalVendorProvider {
     scope?: string
     allowUnscopedFallback?: boolean
     credentialSource?: "search" | "messaging"
+    skipCache?: boolean
+    skipStagingFallback?: boolean
   }): Promise<string | null> {
     const now = Date.now()
     const scope = opts?.scope?.trim() || this.opts.oauthScope?.trim() || DEFAULT_SCOPE
@@ -755,6 +891,7 @@ export class ThumbtackExternalVendorProvider implements ExternalVendorProvider {
       (needsMessaging && this.hasDedicatedMessagingCredentials() ? "messaging" : "search")
     const tokenCache = needsMessaging ? messagingTokenCache : searchTokenCache
     if (
+      !opts?.skipCache &&
       tokenCache &&
       tokenCache.expiresAtMs > now + 15_000 &&
       (!needsMessaging || thumbtackScopeAllowsMessaging(tokenCache.scope))
@@ -777,10 +914,10 @@ export class ThumbtackExternalVendorProvider implements ExternalVendorProvider {
       ]
       : [
         { tokenUrl: searchTokenUrl, apiBase: searchApi },
-        {
+        ...(opts?.skipStagingFallback ? [] : [{
           tokenUrl: "https://staging-auth.thumbtack.com/oauth2/token",
           apiBase: "https://staging-api.thumbtack.com/api",
-        },
+        }]),
       ]
 
     const { clientId, clientSecret } = this.credentialsFor(credentialSource)
@@ -857,9 +994,9 @@ export class ThumbtackExternalVendorProvider implements ExternalVendorProvider {
         } | null
         const accessToken = typeof data?.access_token === "string" ? data.access_token.trim() : ""
         if (!accessToken) continue
-        const granted = typeof data?.scope === "string" && data.scope.trim()
-          ? data.scope.trim()
-          : variant.grantedScope
+        const reportedScope = typeof data?.scope === "string" ? data.scope.trim() : ""
+        const granted = reportedScope ||
+          (credentialSource === "messaging" ? variant.grantedScope : "")
         if (needsMessaging && !thumbtackScopeAllowsMessaging(granted)) {
           console.warn("[external-vendor/thumbtack] token missing requests.write")
           continue

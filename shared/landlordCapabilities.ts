@@ -43,11 +43,47 @@ export function isLimitedAlpha1Landlord(landlordId: string | null | undefined): 
 /** Production Twilio DID used as Limited Alpha 1 and 2's shared landlord_main line. */
 export const LIMITED_ALPHA_1_TWILIO_SMS_NUMBER = '+18775803356'
 
-/** Production Telnyx DID (Full Alpha / platform). Not used for Limited Alpha. */
-export const ULO_TELNYX_SMS_NUMBER = '+19734005760'
+/** Retired Telnyx DID — never use as SMS intake or a test-SMS destination. */
+const RETIRED_PLATFORM_SMS_NUMBERS = ['+19734005760'] as const
 
 function smsDigits(phone: string | null | undefined): string {
   return (phone ?? '').replace(/\D/g, '')
+}
+
+function matchesAnyDid(phone: string | null | undefined, numbers: readonly string[]): boolean {
+  const digits = smsDigits(phone)
+  if (!digits) return false
+  return numbers.map(smsDigits).some((n) => digits === n || digits === n.slice(-10))
+}
+
+/** True when this number is the retired Telnyx intake DID. */
+export function isRetiredSmsIntakeNumber(phone: string | null | undefined): boolean {
+  return matchesAnyDid(phone, RETIRED_PLATFORM_SMS_NUMBERS)
+}
+
+/** True when a stored SMS line must not be shown or used as resident intake. */
+export function isUnusableSmsIntakeLine(params: {
+  phone?: string | null
+  provider?: string | null
+}): boolean {
+  if ((params.provider ?? '').trim().toLowerCase() === 'telnyx') return true
+  return isRetiredSmsIntakeNumber(params.phone)
+}
+
+/** Number residents should text. Never a Telnyx DID. */
+export function resolveSmsIntakeNumber(params: {
+  landlordId?: string | null
+  phone?: string | null
+  provider?: string | null
+}): string {
+  if (isLimitedAlphaLandlord(params.landlordId)) {
+    return LIMITED_ALPHA_1_TWILIO_SMS_NUMBER
+  }
+  const phone = (params.phone ?? '').trim()
+  if (phone && !isUnusableSmsIntakeLine({ phone, provider: params.provider })) {
+    return phone
+  }
+  return LIMITED_ALPHA_1_TWILIO_SMS_NUMBER
 }
 
 /** E.164 for US 10/11 digit numbers. */
@@ -63,8 +99,11 @@ export function normalizeUsSmsPhone(input: string | null | undefined): string | 
 export function isUloPlatformSmsNumber(phone: string | null | undefined): boolean {
   const digits = smsDigits(phone)
   if (!digits) return false
-  const platform = [LIMITED_ALPHA_1_TWILIO_SMS_NUMBER, ULO_TELNYX_SMS_NUMBER].map(smsDigits)
-  return platform.some((n) => digits === n || digits === n.slice(-10))
+  const platform = [
+    LIMITED_ALPHA_1_TWILIO_SMS_NUMBER,
+    ...RETIRED_PLATFORM_SMS_NUMBERS,
+  ]
+  return matchesAnyDid(phone, platform)
 }
 
 /** Shared Limited Alpha Twilio DID (+18775803356). */

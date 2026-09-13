@@ -4,16 +4,18 @@ import {
   FULL_ALPHA_LANDLORD_ID,
   LIMITED_ALPHA_1_LANDLORD_ID,
   LIMITED_ALPHA_2_LANDLORD_ID,
-  ULO_TELNYX_SMS_NUMBER,
+  LIMITED_ALPHA_1_TWILIO_SMS_NUMBER,
   isOnboardingLandlordId,
   isPaymentGraphEventType,
   isRetiredLandlordAccountId,
+  isRetiredSmsIntakeNumber,
   isUloPlatformSmsNumber,
   isLimitedAlphaTwilioSmsNumber,
   landlordHasPayments,
   landlordHasVendorMarketplace,
   landlordUsesTwilioSms,
   pickSettingsTestSmsDestination,
+  resolveSmsIntakeNumber,
   shouldRecordGraphEvent,
 } from '@shared/landlordCapabilities'
 
@@ -24,10 +26,22 @@ describe('Limited Alpha 1 capabilities', () => {
     expect(landlordHasPayments(FULL_ALPHA_LANDLORD_ID)).toBe(true)
     expect(landlordUsesTwilioSms(LIMITED_ALPHA_1_LANDLORD_ID)).toBe(true)
     expect(landlordUsesTwilioSms(LIMITED_ALPHA_2_LANDLORD_ID)).toBe(true)
-    expect(ULO_TELNYX_SMS_NUMBER).toBe('+19734005760')
     expect(isUloPlatformSmsNumber('+18775803356')).toBe(true)
     expect(isLimitedAlphaTwilioSmsNumber('+18775803356')).toBe(true)
-    expect(isLimitedAlphaTwilioSmsNumber('+19734005760')).toBe(false)
+    expect(isRetiredSmsIntakeNumber('+19734005760')).toBe(true)
+    expect(resolveSmsIntakeNumber({
+      landlordId: LIMITED_ALPHA_1_LANDLORD_ID,
+      phone: '+19734005760',
+      provider: 'telnyx',
+    })).toBe(LIMITED_ALPHA_1_TWILIO_SMS_NUMBER)
+    expect(resolveSmsIntakeNumber({
+      landlordId: LIMITED_ALPHA_2_LANDLORD_ID,
+      phone: '+19734005760',
+    })).toBe(LIMITED_ALPHA_1_TWILIO_SMS_NUMBER)
+    expect(resolveSmsIntakeNumber({
+      phone: '+19734005760',
+      provider: 'telnyx',
+    })).toBe(LIMITED_ALPHA_1_TWILIO_SMS_NUMBER)
     expect(isUloPlatformSmsNumber('+19734005760')).toBe(true)
     expect(isUloPlatformSmsNumber('+12025550111')).toBe(false)
     expect(pickSettingsTestSmsDestination(['+18775803356', '202-555-0111'])).toBe('+12025550111')

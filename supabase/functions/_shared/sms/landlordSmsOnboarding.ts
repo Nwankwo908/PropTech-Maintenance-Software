@@ -7,7 +7,6 @@ import {
 } from "./inbound_db.ts"
 import { ensureUnitRow, findUnitRow } from "../unitVacancy.ts"
 import { logGraphEvent } from "../graph/logGraphEvent.ts"
-import { resolveProviderName } from "./providerFactory.ts"
 import {
   provisionLandlordMainNumber,
   resolveLandlordId,
@@ -15,7 +14,6 @@ import {
 } from "./smsNumberPool.ts"
 import type { SmsProviderName } from "./types.ts"
 import {
-  landlordUsesTwilioSms,
   LIMITED_ALPHA_1_TWILIO_SMS_NUMBER,
 } from "../../../../shared/landlordCapabilities.ts"
 
@@ -117,15 +115,18 @@ async function findActiveNumberByPhoneAndProvider(
   return (shared as LandlordSmsNumberRow | null) ?? null
 }
 
-/** Twilio DID for Limited Alpha when that account has no owned row yet. */
-async function resolveLimitedAlphaTwilioOutboundLine(
+/** Shared Twilio from-number when this landlord has no Twilio landlord_main row yet. */
+async function resolveSharedTwilioOutboundLine(
   supabase: SupabaseClient,
-  landlordId: string,
+  landlordId?: string | null,
 ): Promise<OutboundLandlordSmsLine | null> {
   const envFrom =
     Deno.env.get("TWILIO_FROM_NUMBER")?.trim() || LIMITED_ALPHA_1_TWILIO_SMS_NUMBER
   const row =
-    (await findActiveNumberByPhoneAndProvider(supabase, envFrom, "twilio", landlordId)) ??
+    (landlordId
+      ? await findActiveNumberByPhoneAndProvider(supabase, envFrom, "twilio", landlordId)
+      : null) ??
+    (await findActiveNumberByPhoneAndProvider(supabase, envFrom, "twilio")) ??
     (await findActiveNumberByPhoneAndProvider(supabase, LIMITED_ALPHA_1_TWILIO_SMS_NUMBER, "twilio"))
   if (!row) return null
   return {
@@ -135,85 +136,28 @@ async function resolveLimitedAlphaTwilioOutboundLine(
   }
 }
 
-/** Shared Telnyx from-number (Full Alpha / env), used when this landlord has no line yet. */
-async function resolveSharedTelnyxOutboundLine(
-  supabase: SupabaseClient,
-  landlordId: string,
-): Promise<OutboundLandlordSmsLine | null> {
-  if (resolveProviderName() !== "telnyx") return null
-  const envFrom = Deno.env.get("TELNYX_FROM_NUMBER")?.trim()
-  if (!envFrom) return null
-
-  const envNorm = normalizeSmsPhone(envFrom)
-  const defaultLandlordId = Deno.env.get("DEFAULT_LANDLORD_ID")?.trim() ?? null
-  const telnyxRow =
-    (await findActiveNumberByPhoneAndProvider(supabase, envNorm, "telnyx", landlordId)) ??
-    (defaultLandlordId
-      ? await findActiveNumberByPhoneAndProvider(supabase, envNorm, "telnyx", defaultLandlordId)
-      : null)
-
-  if (!telnyxRow) return null
+function twilioLineFromRow(row: LandlordSmsNumberRow): OutboundLandlordSmsLine | null {
+  if (String(row.provider).toLowerCase() === "telnyx") return null
   return {
-    id: String(telnyxRow.id),
-    phone: normalizeSmsPhone(String(telnyxRow.phone_number)),
-    provider: "telnyx",
+    id: String(row.id),
+    phone: String(row.phone_number).trim(),
+    provider: "twilio",
   }
 }
 
 /**
  * Landlord_main line for outbound SMS.
  * Limited Alpha 1 and 2 always use the shared Twilio DID.
- * Other landlords use Telnyx when the platform provider is Telnyx, including a
- * shared-line fallback.
+ * Other landlords use their Twilio landlord_main row, with the shared Twilio DID as fallback.
  */
 export async function resolveOutboundLandlordSmsLine(
   supabase: SupabaseClient,
   landlordId: string,
 ): Promise<OutboundLandlordSmsLine | null> {
-  if (landlordUsesTwilioSms(landlordId)) {
-    const row = await findActiveLandlordMainNumber(supabase, landlordId)
-    if (row && row.provider !== "telnyx") {
-      return {
-        id: String(row.id),
-        phone: String(row.phone_number).trim(),
-        provider: "twilio",
-      }
-    }
-    return await resolveLimitedAlphaTwilioOutboundLine(supabase, landlordId)
-  }
-
   const row = await findActiveLandlordMainNumber(supabase, landlordId)
-  if (!row) {
-    return await resolveSharedTelnyxOutboundLine(supabase, landlordId)
-  }
-
-  const dbPhone = String(row.phone_number).trim()
-  const dbProvider = row.provider === "telnyx" ? "telnyx" : "twilio"
-
-  if (resolveProviderName() !== "telnyx") {
-    return { id: String(row.id), phone: dbPhone, provider: dbProvider }
-  }
-
-  const envFrom = Deno.env.get("TELNYX_FROM_NUMBER")?.trim()
-  if (!envFrom) {
-    return { id: String(row.id), phone: dbPhone, provider: "telnyx" }
-  }
-
-  const envNorm = normalizeSmsPhone(envFrom)
-  const dbNorm = normalizeSmsPhone(dbPhone)
-  if (dbProvider === "telnyx" && dbNorm === envNorm) {
-    return { id: String(row.id), phone: envNorm, provider: "telnyx" }
-  }
-
-  const shared = await resolveSharedTelnyxOutboundLine(supabase, landlordId)
-  if (shared) return shared
-
-  console.warn("[landlordSms] using TELNYX_FROM_NUMBER — landlord_main row is not Telnyx", {
-    landlordId,
-    dbPhone,
-    envFrom: envNorm,
-  })
-  return { id: String(row.id), phone: envNorm, provider: "telnyx" }
+  const line = row ? twilioLineFromRow(row) : null
+  if (line) return line
+  return await resolveSharedTwilioOutboundLine(supabase, landlordId)
 }
 
 /**

@@ -4,6 +4,7 @@ import { defineConfig } from 'vitest/config'
 import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
 import { prerenderPublicPagesPlugin } from './src/prerender/prerenderPublicPagesPlugin.ts'
+import { uloStreetViewProxyPlugin } from './vite/uloStreetViewProxyPlugin.ts'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const root = path.resolve(__dirname)
@@ -16,6 +17,7 @@ export default defineConfig({
     react(),
     tailwindcss(),
     prerenderPublicPagesPlugin(),
+    uloStreetViewProxyPlugin(root),
     {
       name: 'dev-local-canonical',
       transformIndexHtml(html, ctx) {

@@ -4,6 +4,7 @@ import {
   getPreviousOnboardingStep,
   normalizeOnboardingStep,
   resolveOnboardingStepForPath,
+  resolveReviewEditStep,
 } from './steps'
 
 describe('getOnboardingStepOrder', () => {
@@ -63,6 +64,30 @@ describe('resolveOnboardingStepForPath', () => {
   it('leaves steps alone on the guided path', () => {
     expect(resolveOnboardingStepForPath('property', 'guided')).toBe('property')
     expect(resolveOnboardingStepForPath('vendors', null)).toBe('vendors')
+  })
+})
+
+describe('resolveReviewEditStep', () => {
+  it('opens fast-track upload for property and account edits from last review', () => {
+    expect(resolveReviewEditStep('property', 'fast_track')).toBe('document_upload')
+    expect(resolveReviewEditStep('account_setup', 'fast_track')).toBe('document_upload')
+    expect(resolveReviewEditStep('document_upload', 'fast_track')).toBe('document_upload')
+  })
+
+  it('opens AI review for extracted roster and issue edits', () => {
+    expect(resolveReviewEditStep('vendors', 'fast_track')).toBe('ai_review')
+    expect(resolveReviewEditStep('residents', 'fast_track')).toBe('ai_review')
+    expect(resolveReviewEditStep('ai_review', 'fast_track')).toBe('ai_review')
+  })
+
+  it('leaves approval and payouts on their own steps', () => {
+    expect(resolveReviewEditStep('approval', 'fast_track')).toBe('approval')
+    expect(resolveReviewEditStep('payouts', 'fast_track')).toBe('payouts')
+  })
+
+  it('does not remap guided review edits', () => {
+    expect(resolveReviewEditStep('property', 'guided')).toBe('property')
+    expect(resolveReviewEditStep('account_setup', 'guided')).toBe('account_setup')
   })
 })
 

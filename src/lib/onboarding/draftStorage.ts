@@ -9,6 +9,7 @@ import {
   normalizeOnboardingApprovalRules,
 } from '@/lib/onboardingApprovalRules'
 import { resolveLandlordSupportEmail } from '@/lib/landlordSupportEmail'
+import { usableOnboardingCompanyName } from '@shared/landlordPortfolioLabel'
 import { supabase } from '@/lib/supabase'
 import { fetchAccountSetupCounts } from './persist/account'
 import { clearImportedOpsRecords } from './persist/importedOpsRecords'
@@ -121,7 +122,7 @@ function normalizeAccountSetup(raw: unknown): OnboardingAccountSetup {
   const smsConsentAcceptedAt =
     typeof consentRaw === 'string' && consentRaw.trim() ? consentRaw.trim() : null
   return {
-    companyName: String(row.companyName ?? ''),
+    companyName: usableOnboardingCompanyName(String(row.companyName ?? '')),
     contactName: String(row.contactName ?? ''),
     email: String(row.email ?? ''),
     phone: String(row.phone ?? ''),

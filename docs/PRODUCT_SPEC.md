@@ -330,7 +330,7 @@ Each item: **what it is** · *one-sentence UX story*
 
 | Spec                    | UX story                                                                        |
 | ----------------------- | ------------------------------------------------------------------------------- |
-| Twilio / Telnyx         | *Texts just work on the carrier the landlord’s line uses.*                      |
+| Twilio                   | *Texts just work on the carrier the landlord’s line uses.*                      |
 | Resend email            | *Invites and ops emails arrive branded and readable alongside SMS.*             |
 | Stripe                  | *Paying rent or an invoice feels like normal checkout, not a wire instruction.* |
 | OpenAI + discovery APIs | *Classification, Ask Ulo, and “find a vendor nearby” feel instant and local.*   |

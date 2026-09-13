@@ -578,7 +578,7 @@ export function AdminAnalyticsDashboard() {
     <main className="w-full min-w-0 px-8 pb-12">
       <div className="py-6">
         <h1 className="text-[24px] font-semibold leading-8 tracking-[0.0703px] text-[#0a0a0a]">
-          Analytics
+          Performance
         </h1>
         <p className="text-[14px] leading-5 tracking-[-0.1504px] text-[#6a7282]">
           Maintenance spend, preventive compliance, and portfolio performance trends.

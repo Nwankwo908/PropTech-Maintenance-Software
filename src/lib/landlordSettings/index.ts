@@ -25,6 +25,7 @@ import {
 } from '@/lib/notificationSettings'
 import {
   DEFAULT_ORGANIZATION_SETTINGS,
+  normalizeRentDueDaySetting,
   normalizeRentReminderCadence,
   type OrganizationSettingsForm,
   type OrganizationWorkspaceSummary,
@@ -34,6 +35,11 @@ import { resolveLandlordSupportEmail } from '@/lib/landlordSupportEmail'
 import { supabase } from '@/lib/supabase'
 import { formatLandlordDate } from '@/lib/landlordWorkspace'
 import { resolveLogoDisplayUrl } from '@/lib/landlordLogoUpload'
+import {
+  landlordPortfolioLabel,
+  storedLandlordCompanyName,
+  usableOnboardingCompanyName,
+} from '@shared/landlordPortfolioLabel'
 import {
   DEFAULT_OPERATIONAL_SETTINGS,
   DEFAULT_WORKSPACE_SETTINGS,
@@ -78,23 +84,12 @@ function planLabelFromRow(isDemo: boolean | null | undefined, planTier: string |
   return tier.charAt(0).toUpperCase() + tier.slice(1).toLowerCase()
 }
 
-function readLegacyOrganizationLocal(landlordId: string): Partial<OrganizationSettingsForm> | null {
+function discardLegacyClientSettings(landlordId: string): void {
   try {
-    const raw = window.localStorage.getItem(`${ORG_STORAGE_PREFIX}${landlordId}`)
-    if (!raw) return null
-    return JSON.parse(raw) as Partial<OrganizationSettingsForm>
+    window.localStorage.removeItem(`${ORG_STORAGE_PREFIX}${landlordId}`)
+    window.localStorage.removeItem(NOTIF_STORAGE_KEY)
   } catch {
-    return null
-  }
-}
-
-function readLegacyNotificationLocal(): Partial<NotificationSettingsState> | null {
-  try {
-    const raw = window.localStorage.getItem(NOTIF_STORAGE_KEY)
-    if (!raw) return null
-    return JSON.parse(raw) as Partial<NotificationSettingsState>
-  } catch {
-    return null
+    // private mode
   }
 }
 
@@ -128,19 +123,22 @@ export function mergeOrganizationForm(input: {
     ...(input.accountSettings.organization ?? {}),
   }
 
-  const legalName = asTrimmed(input.landlordRow?.name) || asTrimmed(account.companyName)
-  if (legalName) next.legalName = legalName
-
-  if (input.landlordRow) {
-    const displayFromDb = asTrimmed(input.landlordRow.display_name)
-    next.displayName = displayFromDb || legalName || next.displayName
-    next.about = asTrimmed(input.landlordRow.about)
-  } else if (legalName && !next.displayName.trim()) {
-    next.displayName = legalName
-  }
-
   const contactName = asTrimmed(input.landlordRow?.contact_name) || asTrimmed(account.contactName)
   if (contactName) next.contactName = contactName
+
+  const legalName =
+    storedLandlordCompanyName(input.landlordRow?.name, contactName) ||
+    usableOnboardingCompanyName(account.companyName) ||
+    storedLandlordCompanyName(next.legalName, contactName)
+  next.legalName = legalName
+
+  if (input.landlordRow) {
+    const displayFromDb = usableOnboardingCompanyName(input.landlordRow.display_name)
+    next.displayName = displayFromDb || usableOnboardingCompanyName(next.displayName)
+    next.about = asTrimmed(input.landlordRow.about)
+  } else {
+    next.displayName = usableOnboardingCompanyName(next.displayName)
+  }
   const email = resolveLandlordSupportEmail({
     accountSetupEmail: asTrimmed(account.email),
     organizationSupportEmail: asTrimmed(next.supportEmail),
@@ -225,6 +223,11 @@ export function mergeOrganizationForm(input: {
   if (asTrimmed(savedOperational.rentReminderCadence)) {
     next.rentReminderCadence = normalizeRentReminderCadence(savedOperational.rentReminderCadence)
   }
+  const savedRentDueDay =
+    normalizeRentDueDaySetting(savedOperational.rentDueDay) ||
+    normalizeRentDueDaySetting(input.accountSettings.organization?.rentDueDay) ||
+    normalizeRentDueDaySetting(input.persisted?.rentDueDay)
+  if (savedRentDueDay) next.rentDueDay = savedRentDueDay
   if (asTrimmed(savedOperational.preferredLanguage)) {
     next.preferredLanguage = asTrimmed(savedOperational.preferredLanguage)
   }
@@ -267,6 +270,7 @@ export function normalizeOrganizationSettings(settings: OrganizationSettingsForm
   return {
     ...settings,
     rentReminderCadence: normalizeRentReminderCadence(settings.rentReminderCadence),
+    rentDueDay: normalizeRentDueDaySetting(settings.rentDueDay),
     quietHoursStart: normalizeQuietHoursTime(settings.quietHoursStart),
     quietHoursEnd: normalizeQuietHoursTime(settings.quietHoursEnd, '8:00 AM'),
     communicationStyle: normalizeCommunicationStyle(settings.communicationStyle),
@@ -367,9 +371,11 @@ export async function loadLandlordSettings(
     ...(accountSettings.organization ?? {}),
   }
 
+  discardLegacyClientSettings(landlordId)
+
   const organization = mergeOrganizationForm({
     persisted: persistedOrg,
-    legacyLocal: readLegacyOrganizationLocal(landlordId),
+    legacyLocal: null,
     landlordRow: (landlord ?? null) as Record<string, unknown> | null,
     onboardingRow: (onboarding ?? null) as Record<string, unknown> | null,
     accountSettings,
@@ -384,7 +390,7 @@ export async function loadLandlordSettings(
 
   const notifications = mergeNotificationSettings({
     accountSettings,
-    legacyLocal: readLegacyNotificationLocal(),
+    legacyLocal: null,
     notificationChannel: asTrimmed(onboarding?.notification_channel),
     pushNotifications: organization.pushNotifications,
   })
@@ -422,6 +428,7 @@ export async function saveLandlordOrganizationSettings(
     requirePhotoEvidence: settings.requirePhotoEvidence,
     allowAiDispatch: settings.allowAiDispatch,
     rentReminderCadence: settings.rentReminderCadence,
+    rentDueDay: normalizeRentDueDaySetting(settings.rentDueDay),
     preferredLanguage: settings.preferredLanguage,
     quietHoursEnabled: settings.quietHours,
     quietHoursStart: normalizeQuietHoursTime(settings.quietHoursStart),
@@ -528,8 +535,15 @@ export async function saveLandlordOrganizationSettings(
     return { ok: false, error: onboardingError.message }
   }
 
+  const publicLabel = landlordPortfolioLabel({
+    companyName: settings.legalName,
+    contactName: settings.contactName,
+  })
   const landlordUpdate: Record<string, unknown> = {
-    name: settings.legalName.trim() || null,
+    name:
+      storedLandlordCompanyName(settings.legalName, settings.contactName) ||
+      publicLabel ||
+      null,
     display_name: settings.displayName.trim() || null,
     contact_name: settings.contactName.trim() || null,
     email: settings.supportEmail.trim() || null,

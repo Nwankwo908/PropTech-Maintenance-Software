@@ -70,7 +70,6 @@ function resolveAutoProvisionInput(params: {
   const phoneNumber =
     params.phoneNumber?.trim() ||
     Deno.env.get("SMS_AUTO_PROVISION_PHONE_NUMBER")?.trim() ||
-    Deno.env.get("TELNYX_FROM_NUMBER")?.trim() ||
     Deno.env.get("TWILIO_FROM_NUMBER")?.trim() ||
     null
 

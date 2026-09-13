@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   buildPropertyResidentUnitOptions,
+  residentPlacementUpdateForSave,
   resolveInventoryUnitForResidentSave,
 } from './propertyResidentUnitOptions'
 
@@ -40,5 +41,52 @@ describe('buildPropertyResidentUnitOptions', () => {
       editingResidentId: null,
     })
     expect(options.some((option) => option.value.includes('101'))).toBe(true)
+  })
+
+  it('keeps the tenant’s current unit selectable when inventory building text differs', () => {
+    const options = buildPropertyResidentUnitOptions({
+      building: '123 Maple Court',
+      units: [{ id: 'unit-4b', unitLabel: '4B', building: 'Building A' }],
+      residents: [
+        {
+          id: 'res-1',
+          unit: '4B',
+          building: '123 Maple Court',
+          status: 'active',
+        },
+      ],
+      editingResidentId: 'res-1',
+    })
+    expect(options.some((option) => option.label.includes('current'))).toBe(true)
+    expect(options.some((option) => option.value === '')).toBe(true)
+  })
+})
+
+describe('residentPlacementUpdateForSave', () => {
+  const units = [{ id: 'unit-1', unitLabel: '1', building: '109 S Grove St' }]
+
+  it('omits unit and building when contact fields change and the unit dropdown was not touched', () => {
+    expect(
+      residentPlacementUpdateForSave({
+        unitAssignmentChanged: false,
+        submittedUnitKey: '',
+        previousUnit: '1',
+        previousBuilding: '109 S Grove St',
+        units,
+      }),
+    ).toBeUndefined()
+  })
+
+  it('keeps the stored address when a new unit option has an empty building', () => {
+    expect(
+      residentPlacementUpdateForSave({
+        unitAssignmentChanged: true,
+        submittedUnitKey: '__pick:1:',
+        previousUnit: '1',
+        previousBuilding: '109 S Grove St',
+        units: [{ id: 'unit-1', unitLabel: '1', building: null }],
+        fallbackBuilding: '109 S Grove St',
+      }),
+    ).toEqual({ unit: '1', building: '109 S Grove St' })
   })
 })

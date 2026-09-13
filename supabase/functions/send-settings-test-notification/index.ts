@@ -9,7 +9,7 @@ import {
   normalizeOpsEmail,
   primaryLandlordSupportEmail,
 } from "../_shared/landlordOpsNotify.ts"
-import { getSMSProviderFor } from "../_shared/sms/providerFactory.ts"
+import { getSMSProvider } from "../_shared/sms/providerFactory.ts"
 import { resolveOutboundLandlordSmsLine } from "../_shared/sms/landlordSmsOnboarding.ts"
 import {
   landlordUsesTwilioSms,
@@ -169,9 +169,7 @@ serve(async (req) => {
       return jsonResponse({ error: "This account does not have an SMS number yet." }, 400)
     }
 
-    const provider = getSMSProviderFor(
-      landlordUsesTwilioSms(landlordId) ? "twilio" : (line?.provider ?? "telnyx"),
-    )
+    const provider = getSMSProvider()
     const bodyText =
       "This is a test notification from Ulo. If you received this, SMS delivery is working for your account."
     const send = await provider.sendMessage({

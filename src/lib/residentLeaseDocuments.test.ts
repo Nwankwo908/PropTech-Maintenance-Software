@@ -98,6 +98,34 @@ describe('collectResidentLeaseDocuments', () => {
     ])
   })
 
+  it('still attaches the lease after a phone is added to the tenant profile', () => {
+    const lease = doc({
+      id: 'doc-lease',
+      fileName: 'Jane-Doe-Lease.pdf',
+      extractedPayload: emptyPayload({
+        residents: [
+          {
+            fullName: 'Jane Doe',
+            unit: '4B',
+            building: 'Maple Court',
+            phone: '',
+            email: '',
+            leaseStart: '',
+            leaseEnd: '',
+            monthlyRent: '',
+            confidence: 90,
+          },
+        ],
+      }),
+    })
+
+    expect(
+      collectResidentLeaseDocuments([lease], { ...jane, phone: '(973) 555-0199' }).map(
+        (row) => row.fileName,
+      ),
+    ).toEqual(['Jane-Doe-Lease.pdf'])
+  })
+
   it('does not attach a rent roll even when it lists the tenant', () => {
     const roll = doc({
       id: 'doc-roll',

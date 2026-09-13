@@ -143,7 +143,6 @@ export function inboundOccurredAt(
       rawPayload.ReceivedAt,
       rawPayload.received_at,
       rawPayload.sent_at,
-      // Telnyx
       (rawPayload.data as Record<string, unknown> | undefined)?.occurred_at,
       (rawPayload.data as Record<string, unknown> | undefined)?.received_at,
     ]

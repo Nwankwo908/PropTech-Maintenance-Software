@@ -164,7 +164,7 @@ export async function appendVendorVerificationSubmittedToInbox(
         to_number: uloNumber || "unknown",
         body,
         media_urls: [],
-        provider: line?.provider === "telnyx" ? "telnyx" : "twilio",
+        provider: "twilio",
         provider_message_sid: `vendor-verification-submit:${params.verificationId}`,
         provider_status: "received",
         raw_payload: {

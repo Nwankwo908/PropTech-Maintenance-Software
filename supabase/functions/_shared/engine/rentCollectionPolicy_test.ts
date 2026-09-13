@@ -1,6 +1,7 @@
 import { assertEquals } from "https://deno.land/std@0.224.0/assert/mod.ts"
 import {
   parseRentReminderCadenceDays,
+  rentReminderAmountDue,
   rentReminderSlotForToday,
   resolvePreferredLanguage,
   shouldAskLandlordRentReceiptToday,
@@ -117,6 +118,36 @@ Deno.test("shouldSendOfflineTenantGraceReminder waits for landlord unpaid/partia
     }),
     false,
   )
+})
+
+Deno.test("shouldRunRentCollectionCron is true on cadence days and due date", () => {
+  const cadence = [5, 3, 1]
+  assertEquals(
+    shouldRunRentCollectionCron(10, cadence, new Date(2026, 7, 5)),
+    true,
+  )
+  assertEquals(
+    shouldRunRentCollectionCron(10, cadence, new Date(2026, 7, 7)),
+    true,
+  )
+  assertEquals(
+    shouldRunRentCollectionCron(10, cadence, new Date(2026, 7, 9)),
+    true,
+  )
+  assertEquals(
+    shouldRunRentCollectionCron(10, cadence, new Date(2026, 7, 10)),
+    true,
+  )
+  assertEquals(
+    shouldRunRentCollectionCron(10, cadence, new Date(2026, 7, 6)),
+    false,
+  )
+})
+
+Deno.test("rentReminderAmountDue prefers open balance then monthly rent", () => {
+  assertEquals(rentReminderAmountDue(1850, 1600), 1850)
+  assertEquals(rentReminderAmountDue(0, 1600), 1600)
+  assertEquals(rentReminderAmountDue(0, 0), 0)
 })
 
 Deno.test("shouldAskLandlordRentReceiptToday is true on/after due date", () => {

@@ -65,60 +65,97 @@ function clampRentDueDay(value: number | null | undefined): number | null {
   return day
 }
 
-/** Monthly rent due dates and reminder dates from cadence prefs, bounded by the lease. */
+/** Monthly rent due + reminders from this month through lease end (or 18 months). */
 export function buildResidentCalendarEvents(input: {
   leaseStartDate?: string | null
   leaseEndDate?: string | null
   rentDueDay?: number | null
   rentReminderCadence?: string | null
+  now?: Date
 }): ResidentCalendarEvent[] {
-  const leaseStart = parseIsoDateOnly(input.leaseStartDate)
-  const leaseEnd = parseIsoDateOnly(input.leaseEndDate)
   const rentDueDay = clampRentDueDay(input.rentDueDay) ?? 1
   const reminderDays = parseRentReminderCadenceDays(input.rentReminderCadence)
   const events: ResidentCalendarEvent[] = []
+  const todayIso = todayIsoDate(input.now)
+  const thisMonth = {
+    year: Number(todayIso.slice(0, 4)),
+    month: Number(todayIso.slice(5, 7)),
+  }
+  const leaseStart = parseIsoDateOnly(input.leaseStartDate)
+  const leaseEnd = parseIsoDateOnly(input.leaseEndDate)
+  const leaseStartMonth = leaseStart
+    ? { year: Number(leaseStart.slice(0, 4)), month: Number(leaseStart.slice(5, 7)) }
+    : null
+  const leaseEndMonth = leaseEnd
+    ? { year: Number(leaseEnd.slice(0, 4)), month: Number(leaseEnd.slice(5, 7)) }
+    : null
 
-  if (rentDueDay != null) {
-    const startParts = leaseStart
-      ? { year: Number(leaseStart.slice(0, 4)), month: Number(leaseStart.slice(5, 7)) }
-      : addMonths(new Date().getFullYear(), new Date().getMonth() + 1, -2)
-    const endParts = leaseEnd
-      ? { year: Number(leaseEnd.slice(0, 4)), month: Number(leaseEnd.slice(5, 7)) }
-      : addMonths(startParts.year, startParts.month, 18)
+  const startParts =
+    leaseStartMonth && compareMonthParts(leaseStartMonth, thisMonth) > 0
+      ? leaseStartMonth
+      : thisMonth
+  const endParts = leaseEndMonth && compareMonthParts(leaseEndMonth, startParts) >= 0
+    ? leaseEndMonth
+    : addMonths(startParts.year, startParts.month, 18)
 
-    let cursor = startParts
-    let months = 0
-    while (
-      months < 36 &&
-      (cursor.year < endParts.year ||
-        (cursor.year === endParts.year && cursor.month <= endParts.month))
-    ) {
-      const rentIso = rentDueIsoForMonth(cursor.year, cursor.month, rentDueDay)
-      const afterStart = !leaseStart || rentIso >= leaseStart
-      const beforeEnd = !leaseEnd || rentIso <= leaseEnd
-      if (afterStart && beforeEnd) {
-        events.push({ date: rentIso, kind: 'rent', label: 'Rent due' })
-        for (const daysBefore of reminderDays) {
-          const reminderIso = addDaysIso(rentIso, -daysBefore)
-          const reminderBeforeEnd = !leaseEnd || reminderIso <= leaseEnd
-          if (reminderBeforeEnd && reminderIso !== rentIso) {
-            events.push({
-              date: reminderIso,
-              kind: 'rent_reminder',
-              label:
-                daysBefore === 1 ? 'Rent reminder · 1 day before' : `Rent reminder · ${daysBefore} days before`,
-              daysBeforeDue: daysBefore,
-            })
-          }
+  let cursor = startParts
+  let months = 0
+  while (
+    months < 48 &&
+    (cursor.year < endParts.year ||
+      (cursor.year === endParts.year && cursor.month <= endParts.month))
+  ) {
+    const rentIso = rentDueIsoForMonth(cursor.year, cursor.month, rentDueDay)
+    const afterMoveIn = !leaseStart || rentIso >= leaseStart
+    const beforeMoveOut = !leaseEnd || rentIso <= leaseEnd
+    const stillUpcoming = rentIso >= todayIso
+    if (afterMoveIn && beforeMoveOut && stillUpcoming) {
+      events.push({ date: rentIso, kind: 'rent', label: 'Rent due' })
+      for (const daysBefore of reminderDays) {
+        const reminderIso = addDaysIso(rentIso, -daysBefore)
+        if (reminderIso !== rentIso) {
+          events.push({
+            date: reminderIso,
+            kind: 'rent_reminder',
+            label:
+              daysBefore === 1
+                ? 'Rent reminder · 1 day before'
+                : `Rent reminder · ${daysBefore} days before`,
+            daysBeforeDue: daysBefore,
+          })
         }
       }
-      cursor = addMonths(cursor.year, cursor.month, 1)
-      months += 1
     }
+    cursor = addMonths(cursor.year, cursor.month, 1)
+    months += 1
   }
 
   events.sort((a, b) => a.date.localeCompare(b.date) || a.kind.localeCompare(b.kind))
   return events
+}
+
+function compareMonthParts(
+  a: { year: number; month: number },
+  b: { year: number; month: number },
+): number {
+  return a.year * 12 + a.month - (b.year * 12 + b.month)
+}
+
+/** First visible day so the next rent due date and its reminders fit on the strip. */
+export function stripStartIncludingRentReminders(
+  events: ResidentCalendarEvent[],
+  today: string,
+  cadence?: string | null,
+): string {
+  const lead = Math.max(0, ...parseRentReminderCadenceDays(cadence))
+  const nextRent = events.find((event) => event.kind === 'rent' && event.date >= today)
+  if (nextRent) {
+    const start = addDaysIso(nextRent.date, -lead)
+    return start < today ? today : start
+  }
+  const nextReminder = events.find((event) => event.kind === 'rent_reminder' && event.date >= today)
+  if (nextReminder) return nextReminder.date
+  return today
 }
 
 function calendarDateFromInstant(iso: string | null | undefined): string | null {
@@ -330,10 +367,93 @@ export function datesInWeek(weekStartIso: string): string[] {
   return Array.from({ length: 7 }, (_, index) => addDaysIso(weekStartIso, index))
 }
 
+/** Inclusive calendar dates from start through end, capped at two months. */
+export function datesInRange(startIso: string, endIso: string): string[] {
+  const start = parseIsoDateOnly(startIso)
+  const end = parseIsoDateOnly(endIso)
+  if (!start || !end || start > end) return []
+  const dates: string[] = []
+  let cursor = start
+  while (cursor <= end && dates.length < 62) {
+    dates.push(cursor)
+    cursor = addDaysIso(cursor, 1)
+  }
+  return dates
+}
+
+/** Month days plus reminder dates that fall in the prior month for this month’s rent. */
+export function datesForMonthWithRentReminders(
+  year: number,
+  month: number,
+  events: ResidentCalendarEvent[],
+): string[] {
+  const start = toIsoDate(year, month, 1)
+  const end = toIsoDate(year, month, daysInMonth(year, month))
+  const monthKey = start.slice(0, 7)
+  const extras = new Set<string>()
+  for (const event of events) {
+    if (event.kind !== 'rent' || !event.date.startsWith(monthKey)) continue
+    for (const reminder of events) {
+      if (reminder.kind !== 'rent_reminder') continue
+      const expected =
+        reminder.daysBeforeDue != null
+          ? addDaysIso(event.date, -reminder.daysBeforeDue)
+          : null
+      if (expected && reminder.date === expected && reminder.date < start) {
+        extras.add(reminder.date)
+      }
+    }
+  }
+  return [...[...extras].sort((a, b) => a.localeCompare(b)), ...datesInRange(start, end)]
+}
+
+/** Next rent due date (or reminder) the strip should open on. */
+export function nextRentCalendarFocusDate(
+  events: ResidentCalendarEvent[],
+  today: string,
+): string | null {
+  const nextRent = events.find((event) => event.kind === 'rent' && event.date >= today)
+  if (nextRent) return nextRent.date
+  const nextReminder = events.find(
+    (event) => event.kind === 'rent_reminder' && event.date >= today,
+  )
+  return nextReminder?.date ?? null
+}
+
 export function addCalendarMonths(
   year: number,
   month: number,
   delta: number,
 ): { year: number; month: number } {
   return addMonths(year, month, delta)
+}
+
+/** Days shown at once in the resident profile strip (paged with the arrows). */
+export const RESIDENT_CALENDAR_PAGE_SIZE = 7
+
+export function sliceResidentCalendarPage(
+  dates: string[],
+  pageIndex: number,
+  pageSize = RESIDENT_CALENDAR_PAGE_SIZE,
+): { dates: string[]; pageIndex: number; pageCount: number } {
+  const size = pageSize > 0 ? pageSize : RESIDENT_CALENDAR_PAGE_SIZE
+  const pageCount = Math.max(1, Math.ceil(dates.length / size))
+  const safeIndex = Math.min(Math.max(0, pageIndex), pageCount - 1)
+  const start = safeIndex * size
+  return {
+    dates: dates.slice(start, start + size),
+    pageIndex: safeIndex,
+    pageCount,
+  }
+}
+
+export function calendarPageIndexForDate(
+  dates: string[],
+  iso: string,
+  pageSize = RESIDENT_CALENDAR_PAGE_SIZE,
+): number {
+  const index = dates.indexOf(iso)
+  if (index < 0) return 0
+  const size = pageSize > 0 ? pageSize : RESIDENT_CALENDAR_PAGE_SIZE
+  return Math.floor(index / size)
 }

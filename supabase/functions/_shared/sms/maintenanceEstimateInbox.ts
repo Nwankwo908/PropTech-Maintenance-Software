@@ -151,7 +151,7 @@ export async function appendEstimateDecisionStatusToVendorThread(
         to_number: vendorPhone || "unknown",
         body: params.body,
         media_urls: [],
-        provider: line?.provider === "telnyx" ? "telnyx" : "twilio",
+        provider: "twilio",
         provider_message_sid: sid,
         provider_status: "sent",
         raw_payload: {
@@ -268,7 +268,7 @@ export async function appendMaintenanceEstimateSubmittedToInbox(
         to_number: uloNumber || "unknown",
         body,
         media_urls: [],
-        provider: line?.provider === "telnyx" ? "telnyx" : "twilio",
+        provider: "twilio",
         provider_message_sid: sid,
         provider_status: "received",
         raw_payload: {

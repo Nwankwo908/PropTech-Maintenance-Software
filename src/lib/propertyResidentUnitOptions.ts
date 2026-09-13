@@ -1,4 +1,4 @@
-import { customUnitPickKey } from '@/lib/residentUnitKeys'
+import { customUnitPickKey, unitOptionKeyToCell } from '@/lib/residentUnitKeys'
 import { normalizeBuildingKey, normalizeUnitLabel } from '@/lib/propertyHealth'
 import { formatPropertyUnitDisplay } from '@/lib/propertyUnitRows'
 
@@ -52,6 +52,21 @@ export function buildPropertyResidentUnitOptions(input: {
         ? `${formatPropertyUnitDisplay(unitLabel)} (current)`
         : formatPropertyUnitDisplay(unitLabel),
     })
+  }
+
+  const editing = input.residents.find((resident) => resident.id === input.editingResidentId)
+  if (editing?.unit.trim()) {
+    const resolved = resolveInventoryUnitForResidentSave(input.units, {
+      unit: editing.unit,
+      building: (editing.building ?? '').trim() || input.building,
+    })
+    const currentKey = customUnitPickKey(resolved.unitLabel, resolved.building)
+    if (currentKey && !options.some((option) => option.value === currentKey)) {
+      options.push({
+        value: currentKey,
+        label: `${formatPropertyUnitDisplay(resolved.unitLabel)} (current)`,
+      })
+    }
   }
 
   return options.sort((a, b) => {
@@ -109,5 +124,38 @@ export function resolveInventoryUnitForResidentSave(
     unitLabel: assigned.unit.trim(),
     building: assigned.building.trim(),
     unitId: null,
+  }
+}
+
+/**
+ * Contact-only saves must not rewrite unit/building. `undefined` means omit those columns.
+ */
+export function residentPlacementUpdateForSave(input: {
+  unitAssignmentChanged: boolean
+  submittedUnitKey: string
+  previousUnit: string
+  previousBuilding: string
+  units: PropertyUnitOption[]
+  fallbackBuilding?: string
+}): { unit: string | null; building: string | null } | undefined {
+  if (!input.unitAssignmentChanged) return undefined
+
+  const submitted = input.submittedUnitKey.trim()
+  if (!submitted) return { unit: null, building: null }
+
+  const cell = unitOptionKeyToCell(submitted)
+  if (cell.kind !== 'assigned') return { unit: null, building: null }
+
+  const assigned = resolveInventoryUnitForResidentSave(input.units, {
+    unit: cell.unit,
+    building: cell.building,
+  })
+  return {
+    unit: assigned.unitLabel.trim() || input.previousUnit.trim() || null,
+    building:
+      assigned.building.trim() ||
+      input.previousBuilding.trim() ||
+      (input.fallbackBuilding ?? '').trim() ||
+      null,
   }
 }

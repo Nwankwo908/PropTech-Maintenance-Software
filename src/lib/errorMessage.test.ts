@@ -65,7 +65,7 @@ describe('toUserFriendlyMessage', () => {
     ).toMatch(/phone number in Organization/i)
   })
 
-  it('maps Telnyx 10DLC carrier blocks', () => {
+  it('maps 10DLC carrier blocks', () => {
     expect(
       toUserFriendlyMessage(
         'Not 10DLC registered: The sending number is not 10DLC-registered but is required to be by the carrier.',

@@ -335,9 +335,7 @@ export async function deliverVendorInvite(
         delivery.sms = "skipped"
         delivery.smsError = "no_active_landlord_sms_line"
       } else {
-        const provider: SmsProviderName = line.provider === "telnyx"
-          ? "telnyx"
-          : "twilio"
+        const provider: SmsProviderName = "twilio"
         const identity = await upsertSmsIdentityForPhone(supabase, {
           landlordId,
           phone,

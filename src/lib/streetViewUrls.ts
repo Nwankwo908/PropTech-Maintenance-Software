@@ -1,14 +1,19 @@
 import { resolveGoogleMapsApiKey } from '@/lib/googleMapsLoader'
 
+function shouldUseDevStreetViewProxy(explicit?: boolean): boolean {
+  if (explicit != null) return explicit
+  return Boolean(import.meta.env.DEV && typeof window !== 'undefined')
+}
+
 export function googleStreetViewStaticUrl(input: {
-  apiKey: string
+  apiKey?: string | null
   lat?: number | null
   lng?: number | null
   query?: string | null
   size?: string
+  /** Same-origin Vite proxy (dev). Tests should leave this unset. */
+  useDevProxy?: boolean
 }): string | null {
-  const apiKey = input.apiKey.trim()
-  if (!apiKey) return null
   const hasCoords =
     input.lat != null &&
     input.lng != null &&
@@ -18,13 +23,21 @@ export function googleStreetViewStaticUrl(input: {
     ? `${input.lat},${input.lng}`
     : input.query?.trim() || ''
   if (!location) return null
+
   const params = new URLSearchParams({
-    size: input.size ?? '640x420',
+    size: input.size ?? '800x640',
     location,
-    fov: '80',
-    source: 'outdoor',
-    key: apiKey,
+    fov: '90',
+    return_error_code: 'true',
   })
+
+  if (shouldUseDevStreetViewProxy(input.useDevProxy)) {
+    return `/ulo-streetview?${params.toString()}`
+  }
+
+  const apiKey = input.apiKey?.trim() ?? ''
+  if (!apiKey) return null
+  params.set('key', apiKey)
   return `https://maps.googleapis.com/maps/api/streetview?${params.toString()}`
 }
 
@@ -52,6 +65,22 @@ export function googleMapsStreetViewPageUrl(lat: number, lng: number): string {
 
 export function googleMapsSearchUrl(query: string): string {
   return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(query)}`
+}
+
+/**
+ * Localhost / LAN HTTP pages often send a Referer Google rejects (key allowlisted
+ * for production or for empty referrers). Drop the referrer so Static Street View
+ * can still load in `npm run dev`.
+ */
+export function streetViewStaticReferrerPolicy(
+  hostname: string = typeof window !== 'undefined' ? window.location.hostname : '',
+): 'no-referrer' | undefined {
+  const host = hostname.trim().toLowerCase().replace(/\.$/, '')
+  if (!host || host === 'localhost' || host === '127.0.0.1' || host === '[::1]') {
+    return 'no-referrer'
+  }
+  if (/^\d{1,3}(?:\.\d{1,3}){3}$/.test(host)) return 'no-referrer'
+  return undefined
 }
 
 export function streetViewApiKey(): string | null {

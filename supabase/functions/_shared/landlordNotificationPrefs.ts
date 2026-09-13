@@ -30,6 +30,7 @@ export type EdgeOperationalSettings = {
   defaultResponseSla: string
   escalationThreshold: string
   rentReminderCadence: string
+  rentDueDay: string
   preferredLanguage: string
   quietHoursEnabled: boolean
   quietHoursStart: string
@@ -192,6 +193,16 @@ export async function loadLandlordOperationalSettings(
         organization.rentReminderCadence.trim()) ||
     "5, 3, 1 days before"
 
+  const rentDueDayRaw =
+    (typeof operational.rentDueDay === "string" && operational.rentDueDay.trim()) ||
+    (typeof organization.rentDueDay === "string" && organization.rentDueDay.trim()) ||
+    ""
+  const rentDueDayParsed = Number.parseInt(rentDueDayRaw, 10)
+  const rentDueDay =
+    Number.isFinite(rentDueDayParsed) && rentDueDayParsed >= 1 && rentDueDayParsed <= 31
+      ? String(rentDueDayParsed)
+      : ""
+
   const preferredLanguage =
     (typeof operational.preferredLanguage === "string" &&
         operational.preferredLanguage.trim()) ||
@@ -232,6 +243,7 @@ export async function loadLandlordOperationalSettings(
     defaultResponseSla,
     escalationThreshold,
     rentReminderCadence,
+    rentDueDay,
     preferredLanguage,
     quietHoursEnabled: typeof operational.quietHoursEnabled === "boolean"
       ? operational.quietHoursEnabled

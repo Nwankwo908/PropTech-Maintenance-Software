@@ -253,7 +253,7 @@ export async function askTenantScheduleConfirmation(
     return { ok: false, conversationId: null, error: "no_landlord_main" }
   }
 
-  const provider = (smsNumber.provider === "telnyx" ? "telnyx" : "twilio") as SmsProviderName
+  const provider: SmsProviderName = "twilio"
   const residentId =
     typeof ticket.resident_id === "string" && ticket.resident_id.trim()
       ? ticket.resident_id.trim()
@@ -374,7 +374,7 @@ async function notifyVendorOnThread(
   const smsNumber = await findActiveLandlordMain(supabase, landlordId)
   if (!smsNumber?.phone_number) return
 
-  const provider = (smsNumber.provider === "telnyx" ? "telnyx" : "twilio") as SmsProviderName
+  const provider: SmsProviderName = "twilio"
   await sendInboundAutoReply(supabase, {
     conversationId: params.conversationId,
     landlordId,

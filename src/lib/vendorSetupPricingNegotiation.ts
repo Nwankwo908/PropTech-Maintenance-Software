@@ -204,6 +204,30 @@ function vendorSubmittedRatesLabel(
   return null
 }
 
+function targetRatesLabel(
+  targetServiceCall: number | null,
+  targetHourly: number | null,
+): string | null {
+  if (targetServiceCall != null && targetHourly != null) {
+    return `${formatEmergencyCurrency(targetServiceCall)} + ${formatEmergencyCurrency(targetHourly)}/hr`
+  }
+  if (targetServiceCall != null) return `${formatEmergencyCurrency(targetServiceCall)} service call`
+  if (targetHourly != null) return `${formatEmergencyCurrency(targetHourly)}/hr`
+  return null
+}
+
+function walkAwayRatesLabel(
+  walkAwayServiceCall: number | null,
+  walkAwayHourly: number | null,
+): string | null {
+  if (walkAwayServiceCall != null && walkAwayHourly != null) {
+    return `${formatEmergencyCurrency(walkAwayServiceCall)} + ${formatEmergencyCurrency(walkAwayHourly)}/hr`
+  }
+  if (walkAwayServiceCall != null) return `${formatEmergencyCurrency(walkAwayServiceCall)} service call`
+  if (walkAwayHourly != null) return `${formatEmergencyCurrency(walkAwayHourly)}/hr`
+  return null
+}
+
 function buildSuggestedMessages(input: {
   targetServiceCall: number | null
   targetHourly: number | null
@@ -227,98 +251,78 @@ function buildSuggestedMessages(input: {
     hourly,
     serviceCallVsMarket,
     hourlyVsMarket,
-    acceptsEmergency,
     canTakeJobToday,
-    availabilityNotes,
     sentFollowUpBodies,
   } = input
 
-  const messages: string[] = []
   const vendorRates = vendorSubmittedRatesLabel(serviceCall, hourly)
+  const targetRates = targetRatesLabel(targetServiceCall, targetHourly)
+  const walkAwayRates = walkAwayRatesLabel(walkAwayServiceCall, walkAwayHourly)
+  const aboveMarket = serviceCallVsMarket === 'above' || hourlyVsMarket === 'above'
+  const inRange =
+    serviceCallVsMarket === 'in_range' &&
+    (hourlyVsMarket === 'in_range' || hourlyVsMarket == null)
   const hasSentFollowUp = sentFollowUpBodies.length > 0
-  const notes = availabilityNotes.trim()
+  const messages: string[] = []
 
   if (!hasSentFollowUp) {
-    if (serviceCallVsMarket === 'above' || hourlyVsMarket === 'above') {
-      if (targetServiceCall != null && targetHourly != null) {
-        messages.push(
-          vendorRates
-            ? `Thanks for submitting ${vendorRates}. Can you do ${formatEmergencyCurrency(targetServiceCall)} + ${formatEmergencyCurrency(targetHourly)}/hr if we assign today?`
-            : `Thanks for the form. Can you do ${formatEmergencyCurrency(targetServiceCall)} service call and ${formatEmergencyCurrency(targetHourly)}/hr if we assign today?`,
-        )
-      } else if (targetServiceCall != null && serviceCallVsMarket === 'above') {
-        messages.push(
-          vendorRates
-            ? `Your ${formatEmergencyCurrency(serviceCall!)} service call is above our cap — can you match ${formatEmergencyCurrency(targetServiceCall)} for this job?`
-            : `Can you match ${formatEmergencyCurrency(targetServiceCall)} for the service call on this job?`,
-        )
-      } else if (targetHourly != null && hourlyVsMarket === 'above') {
-        messages.push(
-          vendorRates
-            ? `Can you bring ${formatEmergencyCurrency(hourly!)}/hr down to ${formatEmergencyCurrency(targetHourly)}/hr? We pay in 7 days.`
-            : `Can you bring labor to ${formatEmergencyCurrency(targetHourly)}/hr? We pay in 7 days vs the usual 30.`,
-        )
-      }
-    } else if (
-      serviceCallVsMarket === 'in_range' &&
-      (hourlyVsMarket === 'in_range' || hourlyVsMarket == null)
-    ) {
+    if (aboveMarket && vendorRates && targetRates) {
       messages.push(
-        vendorRates
-          ? `Thanks for the form — ${vendorRates} works for us. Please confirm you're locked in for this work order.`
-          : `Rates look good. Please confirm you're locked in at these numbers for this work order.`,
+        `Thanks for submitting ${vendorRates}. Can you do ${targetRates} if we assign today?`,
+      )
+    } else if (inRange && vendorRates) {
+      messages.push(
+        `Thanks for the form — ${vendorRates} works for us. Please confirm you're locked in for this work order.`,
+      )
+    } else if (vendorRates) {
+      messages.push(
+        `Thanks for submitting ${vendorRates}. Reply YES to confirm those rates and we'll send the work order.`,
       )
     }
 
-    if (canTakeJobToday === true && vendorRates) {
+    if (targetRates) {
       messages.push(
-        `Great that you're available today. If ${vendorRates} is firm, reply YES and we'll assign immediately.`,
+        `We pay in 7 days. Reply YES if you can honor ${targetRates} and we'll assign this job.`,
       )
-    } else if (canTakeJobToday === false) {
+    } else if (vendorRates) {
       messages.push(
-        vendorRates
-          ? `We need coverage today — can you still honor ${vendorRates} on a rush timeline?`
-          : `We need someone available today — can you still take this job?`,
+        `We pay in 7 days. If ${vendorRates} is firm, reply YES and we'll send the work order details.`,
       )
     }
 
-    if (acceptsEmergency === false && (serviceCallVsMarket === 'above' || hourlyVsMarket === 'above')) {
+    if (walkAwayRates && aboveMarket) {
       messages.push(
-        `Understood on standard-hours pricing — if you can flex on ${vendorRates ?? 'your quoted rates'}, we can approve fast with 7-day payment.`,
+        `If ${vendorRates ?? 'your quote'} is as low as you can go, the most we can approve is ${walkAwayRates}. Let us know by the end of the day.`,
+      )
+    } else if (canTakeJobToday === true && vendorRates) {
+      messages.push(
+        `You're marked available today. If ${vendorRates} still stands, reply YES and we'll assign immediately.`,
+      )
+    } else if (vendorRates) {
+      messages.push(
+        `Can you cover this property going forward at ${vendorRates}, or is this a one-time visit?`,
       )
     }
-
-    if (notes) {
-      messages.push(
-        vendorRates
-          ? `Noted your availability note. If ${vendorRates} holds, confirm and we'll send the work order details.`
-          : `Noted your availability note — please confirm your quoted rates so we can assign.`,
-      )
-    }
-  } else {
-    if (walkAwayServiceCall != null && walkAwayHourly != null) {
-      messages.push(
-        `Best we can approve is ${formatEmergencyCurrency(walkAwayServiceCall)} + ${formatEmergencyCurrency(walkAwayHourly)}/hr with 7-day payment — let us know by EOD.`,
-      )
-    }
-
-    if (
-      serviceCallVsMarket === 'in_range' &&
-      (hourlyVsMarket === 'in_range' || hourlyVsMarket == null) &&
-      vendorRates
-    ) {
+  } else if (vendorRates) {
+    if (targetRates && aboveMarket) {
+      messages.push(`Following up on your ${vendorRates} — any room on ${targetRates}?`)
+    } else {
       messages.push(
         `If ${vendorRates} is still firm after our last note, reply YES and we'll finalize vendor setup today.`,
       )
-    } else if (targetServiceCall != null && targetHourly != null) {
+    }
+    if (walkAwayRates) {
       messages.push(
-        `Following up on your ${vendorRates ?? 'quoted rates'} — any room on ${formatEmergencyCurrency(targetServiceCall)} + ${formatEmergencyCurrency(targetHourly)}/hr?`,
+        `Best we can approve is ${walkAwayRates} with 7-day payment — let us know by the end of the day.`,
       )
+    } else {
+      messages.push(`We pay in 7 days. Confirm ${vendorRates} and we'll assign the job.`)
     }
-
-    if (canTakeJobToday === true) {
-      messages.push(`Still have this job open for today — confirm your final rate and we'll assign.`)
-    }
+    messages.push(
+      canTakeJobToday === true
+        ? `Still have this job open for today — confirm ${vendorRates} and we'll assign.`
+        : `If you can't take this one at ${vendorRates}, just say so and we'll look for another vendor.`,
+    )
   }
 
   return [...new Set(messages)]

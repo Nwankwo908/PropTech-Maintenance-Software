@@ -26,7 +26,7 @@ export type SendLateRentAccountSmsResult = {
   conversationId: string | null
   messageId: string | null
   error?: string
-  /** True when the inbox row was written but Telnyx was skipped/failed (demo numbers). */
+  /** True when the inbox row was written but SMS was skipped/failed (demo numbers). */
   deliverySimulated?: boolean
   /** Present after a successful waive_late_fee balance adjustment. */
   balanceDueAfterWaiver?: number | null
@@ -182,7 +182,7 @@ export async function applyLateFeeWaiverBalances(
 
 /**
  * Seed/demo residents use NANP 555 exchange numbers (e.g. +15555620002).
- * Telnyx rejects those as invalid destinations (error 10002).
+ * Carriers reject those as invalid destinations.
  */
 export function isNonDeliverableDemoPhone(phone: string): boolean {
   const digits = phone.replace(/\D/g, "")
@@ -379,7 +379,7 @@ export async function sendLateRentAccountSms(
       body,
       provider: mainLine.provider,
       source,
-      reason: "demo_placeholder_phone_skipped_telnyx",
+        reason: "demo_placeholder_phone_skipped_sms",
     })
     if (!messageId) {
       return {

@@ -13,6 +13,7 @@ const {
   requireOnboardingLandlord,
   activateUnitsFromResidentAssignments,
   persistLandlordAccountProfile,
+  persistLandlordDefaultRentDueDay,
   persistLandlordCommunicationStyle,
   persistOnboardingProperties,
   sendLandlordOnboardingWelcome,
@@ -26,6 +27,7 @@ const {
     requireOnboardingLandlord: vi.fn(),
     activateUnitsFromResidentAssignments: vi.fn(),
     persistLandlordAccountProfile: vi.fn(),
+    persistLandlordDefaultRentDueDay: vi.fn(),
     persistLandlordCommunicationStyle: vi.fn(),
     persistOnboardingProperties: vi.fn(),
     sendLandlordOnboardingWelcome: vi.fn(),
@@ -49,6 +51,7 @@ vi.mock('./draftStorage', () => ({
 
 vi.mock('./persist/account', () => ({
   persistLandlordAccountProfile,
+  persistLandlordDefaultRentDueDay,
   persistLandlordCommunicationStyle,
 }))
 
@@ -134,6 +137,7 @@ describe('completeOnboarding', () => {
     saveLandlordOnboarding.mockResolvedValue(undefined)
     activateUnitsFromResidentAssignments.mockResolvedValue(undefined)
     persistLandlordAccountProfile.mockResolvedValue({ ok: true })
+    persistLandlordDefaultRentDueDay.mockResolvedValue({ ok: true })
     persistLandlordCommunicationStyle.mockResolvedValue(undefined)
     persistOnboardingProperties.mockImplementation(async (properties) => ({
       ok: true,
@@ -185,6 +189,7 @@ describe('completeOnboarding', () => {
     expect(saved.landlordId).toBe(TEST_LANDLORD_ID)
 
     expect(persistOnboardingProperties).toHaveBeenCalled()
+    expect(persistLandlordDefaultRentDueDay).toHaveBeenCalledWith(TEST_LANDLORD_ID, 1)
     expect(importOnboardingResidentsFromExtraction).toHaveBeenCalled()
     expect(activateUnitsFromResidentAssignments).toHaveBeenCalledWith(
       expect.objectContaining({

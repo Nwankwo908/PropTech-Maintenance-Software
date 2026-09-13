@@ -9,15 +9,26 @@ Deno.test("landlord onboarding welcome SMS includes dashboard and intake number"
     contactFirst: "Alex",
     companyName: "Oakwood Properties",
     dashboardUrl: "https://app.ulohome.io/admin",
-    smsIntakeDisplay: "+1 (973) 400-5760",
+    smsIntakeDisplay: "+1 (877) 580-3356",
   })
   if (!body.includes("Hi Alex,")) throw new Error("missing greeting")
   if (!body.includes("Oakwood Properties")) throw new Error("missing company")
-  if (!body.includes("+1 (973) 400-5760")) throw new Error("missing intake number")
+  if (!body.includes("+1 (877) 580-3356")) throw new Error("missing intake number")
   if (!body.includes("https://app.ulohome.io/admin")) throw new Error("missing dashboard url")
 })
 
-Deno.test("landlord onboarding welcome email omits intake line when absent", () => {
+Deno.test("landlord onboarding welcome SMS uses [name] properties without a company", () => {
+  const body = buildLandlordOnboardingWelcomeSms({
+    contactFirst: "Alex",
+    companyName: "Alex Rivera properties",
+    dashboardUrl: "https://app.ulohome.io/admin",
+    smsIntakeDisplay: null,
+  })
+  if (!body.includes("Alex Rivera properties")) {
+    throw new Error("missing name-properties label")
+  }
+  if (body.includes("your portfolio")) throw new Error("should not use your portfolio")
+})
   const mail = buildLandlordOnboardingWelcomeEmail({
     contactFirst: "Alex",
     companyName: "Oakwood Properties",

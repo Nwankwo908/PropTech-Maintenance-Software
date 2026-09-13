@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react'
 import { Link, useLocation, useNavigate, useParams } from 'react-router-dom'
 import { syncSmsIdentity } from '@/api/landlordSmsOnboarding'
 import {
@@ -10,6 +10,7 @@ import {
 } from '@/api/tenantActivation'
 import { ResidentOccupancySelect } from '@/components/ResidentOccupancySelect'
 import { ResidentLeaseCalendar } from '@/components/ResidentLeaseCalendar'
+import { SmartIntelligenceCard } from '@/components/SmartIntelligenceCard'
 import { isLimitedAlpha1Landlord } from '@shared/landlordCapabilities'
 import { TenantActivationStatusChip } from '@/components/TenantActivationStatusChip'
 import {
@@ -18,7 +19,7 @@ import {
   type EditResidentSavePayload,
 } from '@/components/EditResidentModal'
 import { getActiveLandlordId } from '@/lib/activeLandlord'
-import { fetchAdminWorkflowDashboard } from '@/lib/adminWorkflows'
+import { fetchAdminWorkflowDashboard, type AdminWorkflowDashboardData } from '@/lib/adminWorkflows'
 import {
   fetchPropertyOperationsTimeline,
   type PropertyOperationsTimelineEvent,
@@ -27,22 +28,24 @@ import { resolveTenantActivationChip } from '@/lib/tenantActivationStatus'
 import {
   buildPropertyResidentUnitOptions,
   initialUnitOptionKeyForResident,
+  residentPlacementUpdateForSave,
   resolveInventoryUnitForResidentSave,
 } from '@/lib/propertyResidentUnitOptions'
 import {
   buildResidentProfileDetail,
-  buildResidentWorkflowSummaries,
   displayResidentEmail,
   isPlaceholderResidentEmail,
+  otherOccupantsOnSamePlace,
   residentEmailPatchForSave,
+  residentPlaceLabel,
   type ResidentCommunicationItem,
   type ResidentProfileDetail,
 } from '@/lib/residentProfileDetail'
-import { unitOptionKeyToCell } from '@/lib/residentUnitKeys'
 import {
   parsePropertyRouteSlug,
   propertyDetailPath,
   propertyResidentDetailPath,
+  residentDetailPath,
 } from '@/lib/propertyRoutes'
 import { findPropertyById, findPropertyByName, listPropertiesForLandlord } from '@/lib/properties'
 import {
@@ -66,13 +69,18 @@ import {
   type OrganizationDocument,
 } from '@/lib/organizationSettings'
 import { loadResidentLeaseDocuments } from '@/lib/residentLeaseDocuments'
-import { fetchResidentMaintenanceCalendarEvents } from '@/lib/residentScheduledVisits'
+import {
+  fetchResidentMaintenanceCalendarEvents,
+  fetchResidentOpenMaintenanceTickets,
+} from '@/lib/residentScheduledVisits'
+import { buildSmartIntelligence, type SmartInsight, type SmartIntelligenceTicket } from '@/lib/smartIntelligence'
 import { getErrorMessage, isUniqueViolation } from '@/lib/errorMessage'
 import { parseLeaseDateInput, parseRentDueDayInput } from '@/lib/onboarding'
 import { parseIsoDateOnly, type ResidentCalendarEvent } from '@/lib/residentLeaseCalendar'
 import {
   syncAssignedUnitOccupancyFromResidentStatus,
 } from '@/lib/unitActivation'
+import { deleteResidentsForLandlord } from '@/lib/residentDeletion'
 import { supabase } from '@/lib/supabase'
 
 function asString(value: unknown): string {
@@ -158,6 +166,7 @@ function toEditResidentRow(user: LoadedResidentUser): EditResidentModalRow {
     status: user.status,
     leaseStart: user.leaseStartDate,
     leaseEnd: user.leaseEndDate,
+    rentDueDay: user.rentDueDay,
   }
 }
 
@@ -181,18 +190,6 @@ function DocumentIcon() {
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} className="size-4 text-[#6a7282]">
       <path d="M8 4h8l4 4v12H8V4z" strokeLinejoin="round" />
       <path d="M16 4v4h4" strokeLinejoin="round" />
-    </svg>
-  )
-}
-
-function WrenchIcon() {
-  return (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} className="size-4 text-[#6a7282]">
-      <path
-        d="M14.7 6.3a4 4 0 0 0-5.66 5.66L4 17v3h3l5.04-5.04a4 4 0 0 0 5.66-5.66l-1.41 1.41-2.83-2.83 1.41-1.41z"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
     </svg>
   )
 }
@@ -253,14 +250,19 @@ function DollarIcon() {
 function ProfileCard({
   title,
   icon,
+  id,
   children,
 }: {
   title: string
   icon: React.ReactNode
+  id?: string
   children: ReactNode
 }) {
   return (
-    <section className="rounded-[10px] border border-[#e5e7eb] bg-white p-5 shadow-[0px_1px_2px_-1px_rgba(0,0,0,0.06)]">
+    <section
+      id={id}
+      className="min-w-0 overflow-hidden rounded-[10px] border border-[#e5e7eb] bg-white p-5 shadow-[0px_1px_2px_-1px_rgba(0,0,0,0.06)]"
+    >
       <div className="flex items-center gap-2">
         {icon}
         <h2 className="text-[15px] font-semibold leading-5 text-[#0a0a0a]">{title}</h2>
@@ -286,22 +288,28 @@ function FileGlyph() {
 
 function ProfileContent({
   profile,
+  insights,
   leaseDocuments,
   documentPreviewError,
   occupancySaving = false,
   limitedAlpha1 = false,
   operationsEvents = [],
   visitEvents = [],
+  occupantProfilePath,
+  occupantProfileState,
   onOccupancyChange,
   onPreviewDocument,
 }: {
   profile: ResidentProfileDetail
+  insights: SmartInsight[]
   leaseDocuments: OrganizationDocument[]
   documentPreviewError: string | null
   occupancySaving?: boolean
   limitedAlpha1?: boolean
   operationsEvents?: PropertyOperationsTimelineEvent[]
   visitEvents?: ResidentCalendarEvent[]
+  occupantProfilePath: (residentId: string) => string
+  occupantProfileState?: { from: string }
   onOccupancyChange?: (status: ResidentOccupancyStatus) => void
   onPreviewDocument: (document: OrganizationDocument) => void
 }) {
@@ -375,25 +383,25 @@ function ProfileContent({
                       document.previewUrl || (document.storageBucket && document.storagePath),
                     )
                     return (
-                      <li key={document.id} className="flex items-start gap-2 py-2">
+                      <li key={document.id} className="flex min-w-0 items-start gap-2 py-2">
                         <span className="mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-[8px] bg-[#f3f4f6] text-[#364153]">
                           <FileGlyph />
                         </span>
-                        <div className="min-w-0">
+                        <div className="min-w-0 flex-1 overflow-hidden">
                           {canPreview ? (
                             <button
                               type="button"
-                              className="sa-link block truncate text-left text-[14px] font-medium leading-5 text-[#155dfc] underline-offset-2 hover:underline"
+                              className="sa-link block w-full text-left text-[14px] font-medium leading-5 text-[#155dfc] underline-offset-2 hover:underline [overflow-wrap:anywhere]"
                               onClick={() => onPreviewDocument(document)}
                             >
                               {document.name}
                             </button>
                           ) : (
-                            <p className="truncate text-[14px] font-medium leading-5 text-[#0a0a0a]">
+                            <p className="text-[14px] font-medium leading-5 text-[#0a0a0a] [overflow-wrap:anywhere]">
                               {document.name}
                             </p>
                           )}
-                          <p className="text-[12px] leading-4 text-[#6a7282]">
+                          <p className="text-[12px] leading-4 text-[#6a7282] [overflow-wrap:anywhere]">
                             {document.meta}
                             {canPreview ? '' : ' · Preview unavailable'}
                           </p>
@@ -407,7 +415,7 @@ function ProfileContent({
           </div>
         </ProfileCard>
 
-        <ProfileCard title="Lease" icon={<DocumentIcon />}>
+        <ProfileCard id="resident-lease" title="Lease" icon={<DocumentIcon />}>
           <div className="flex flex-col gap-4">
             <div>
               <p className="text-[12px] leading-4 text-[#6a7282]">Status</p>
@@ -447,9 +455,9 @@ function ProfileContent({
                 </p>
               </div>
               <div>
-                <p className="text-[12px] leading-4 text-[#6a7282]">Deposit</p>
+                <p className="text-[12px] leading-4 text-[#6a7282]">Rent due</p>
                 <p className="mt-1 text-[14px] font-semibold leading-5 text-[#0a0a0a]">
-                  {profile.depositLabel}
+                  {profile.rentDueDayLabel}
                 </p>
               </div>
             </div>
@@ -488,43 +496,44 @@ function ProfileContent({
               {profile.balanceLabel}
             </span>
           </div>
+
+          {profile.otherOccupants.length > 0 ? (
+            <div className="mt-4">
+              <p className="text-[12px] leading-4 text-[#6a7282]">
+                {profile.otherOccupants.length === 1 ? 'Other occupant' : 'Other occupants'}
+              </p>
+              <p className="mt-1 min-w-0 text-[14px] font-medium leading-5 text-[#155dfc] [overflow-wrap:anywhere]">
+                {profile.otherOccupants.map((occupant, index) => (
+                  <span key={occupant.id}>
+                    {index > 0 ? ', ' : null}
+                    <Link
+                      to={occupantProfilePath(occupant.id)}
+                      state={occupantProfileState}
+                      className="sa-link underline-offset-2 hover:underline"
+                    >
+                      {occupant.name}
+                    </Link>
+                  </span>
+                ))}
+              </p>
+            </div>
+          ) : null}
         </ProfileCard>
 
-        <ProfileCard title="Workflow summary" icon={<WrenchIcon />}>
-          {profile.workflows.length === 0 ? (
-            <p className="text-[13px] leading-5 text-[#6a7282]">No open workflows for this resident.</p>
-          ) : (
-            <ul className="flex flex-col gap-3">
-              {profile.workflows.map((workflow) => (
-                <li
-                  key={workflow.id}
-                  className="flex items-start justify-between gap-3 rounded-[8px] border border-[#f3f4f6] bg-[#fafafa] px-3 py-3"
-                >
-                  <div className="min-w-0">
-                    <p className="text-[14px] font-semibold leading-5 text-[#0a0a0a]">{workflow.title}</p>
-                    <p className="mt-0.5 text-[12px] leading-4 text-[#6a7282]">{workflow.subtitle}</p>
-                  </div>
-                  <span
-                    className={`inline-flex shrink-0 rounded-[4px] px-2 py-0.5 text-[10px] font-semibold tracking-[0.06em] ${workflow.priorityClassName}`}
-                  >
-                    {workflow.priorityLabel}
-                  </span>
-                </li>
-              ))}
-            </ul>
-          )}
-        </ProfileCard>
+        <SmartIntelligenceCard insights={insights} />
       </div>
 
-      {limitedAlpha1 ? (
-        <ResidentLeaseCalendar
-          leaseStartDate={profile.leaseStartDate}
-          leaseEndDate={profile.leaseEndDate}
-          rentDueDay={profile.rentDueDay}
-          operationsEvents={operationsEvents}
-          visitEvents={visitEvents}
-        />
-      ) : (
+      <ResidentLeaseCalendar
+        leaseStartDate={profile.leaseStartDate}
+        leaseEndDate={profile.leaseEndDate}
+        rentDueDay={profile.rentDueDay}
+        rowTitle={profile.name}
+        rowSubtitle={profile.unitDisplay}
+        operationsEvents={operationsEvents}
+        visitEvents={visitEvents}
+      />
+
+      {limitedAlpha1 ? null : (
       <section className="mt-4 rounded-[10px] border border-[#e5e7eb] bg-white p-5 shadow-[0px_1px_2px_-1px_rgba(0,0,0,0.06)]">
         <div className="flex items-center gap-2">
           <ChatIcon />
@@ -571,7 +580,10 @@ export function AdminPropertyResidentDetailDashboard() {
   const [buildingResidents, setBuildingResidents] = useState<PropertyResidentOption[]>([])
   const [editOpen, setEditOpen] = useState(false)
   const [actionsOpen, setActionsOpen] = useState(false)
+  const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false)
+  const [deleteSaving, setDeleteSaving] = useState(false)
   const actionsMenuRef = useRef<HTMLDivElement>(null)
+  const deleteConfirmTitleId = useId()
   const [actionError, setActionError] = useState<string | null>(null)
   const [occupancySaving, setOccupancySaving] = useState(false)
   const [resendingActivation, setResendingActivation] = useState(false)
@@ -580,6 +592,8 @@ export function AdminPropertyResidentDetailDashboard() {
   const [leaseDocuments, setLeaseDocuments] = useState<OrganizationDocument[]>([])
   const [operationsEvents, setOperationsEvents] = useState<PropertyOperationsTimelineEvent[]>([])
   const [visitEvents, setVisitEvents] = useState<ResidentCalendarEvent[]>([])
+  const [workflowData, setWorkflowData] = useState<AdminWorkflowDashboardData | null>(null)
+  const [maintenanceTickets, setMaintenanceTickets] = useState<SmartIntelligenceTicket[]>([])
   const [documentPreviewError, setDocumentPreviewError] = useState<string | null>(null)
   const profileIdRef = useRef<string | null>(null)
   const navigateRef = useRef(navigate)
@@ -622,6 +636,8 @@ export function AdminPropertyResidentDetailDashboard() {
       setLeaseDocuments([])
       setOperationsEvents([])
       setVisitEvents([])
+      setWorkflowData(null)
+      setMaintenanceTickets([])
     }
     setError(null)
     setDocumentPreviewError(null)
@@ -702,7 +718,7 @@ export function AdminPropertyResidentDetailDashboard() {
         email,
         phone: asString(raw.phone) || null,
         unit: asString(raw.unit),
-        building: asString(raw.building) || (slug?.kind === 'name' ? slug.value : '') || 'Portfolio',
+        building: asString(raw.building) || (slug?.kind === 'name' ? slug.value : ''),
         status: parseResidentStatus(asString(raw.status)),
         balanceDue: asFiniteNumber(raw.balance_due),
         leaseStartDate: asLeaseDate(raw.move_in_date),
@@ -826,6 +842,7 @@ export function AdminPropertyResidentDetailDashboard() {
           ? {
               ...current,
               building: buildingName,
+              buildingShort: residentPlaceLabel(buildingName),
               communications,
             }
           : current,
@@ -843,7 +860,7 @@ export function AdminPropertyResidentDetailDashboard() {
           unitsQuery.limit(200),
           supabase
             .from('users')
-            .select('id, unit, building, status')
+            .select('id, full_name, unit, building, status')
             .eq('landlord_id', landlordId)
             .neq('status', 'past_resident')
             .limit(300),
@@ -869,16 +886,28 @@ export function AdminPropertyResidentDetailDashboard() {
 
         if (profileIdRef.current !== loaded.id) return
 
+        const occupantRows = ((residentsResult.data ?? []) as Record<string, unknown>[]).map((row) => ({
+          id: asString(row.id),
+          fullName: asString(row.full_name),
+          unit: asString(row.unit),
+          building: asString(row.building) || null,
+          status: asString(row.status),
+        }))
+        const otherOccupants = otherOccupantsOnSamePlace({
+          residentId: loaded.id,
+          unit: loaded.unit,
+          building: buildingName || loaded.building,
+          residents: occupantRows,
+        })
+
         if (workflowDashboard) {
-          setProfile((current) =>
-            current && current.id === loaded.id
-              ? {
-                  ...current,
-                  workflows: buildResidentWorkflowSummaries(loaded.id, workflowDashboard),
-                }
-              : current,
-          )
+          setWorkflowData(workflowDashboard)
+        } else {
+          setWorkflowData(null)
         }
+        setProfile((current) =>
+          current && current.id === loaded.id ? { ...current, otherOccupants } : current,
+        )
 
         const healthUnits = mapUnitsForPropertyHealth(
           ((unitsResult.data ?? []) as Record<string, unknown>[]) ?? [],
@@ -900,40 +929,51 @@ export function AdminPropertyResidentDetailDashboard() {
               })),
         )
 
-        if (isLimitedAlpha1Landlord(landlordId)) {
-          const residentUnitId =
-            scopedUnits.find(
-              (unit) =>
-                normalizeUnitLabel(unit.unitLabel) === normalizeUnitLabel(loaded.unit),
-            )?.id ?? null
-          void fetchPropertyOperationsTimeline({
-            scope: residentUnitId
-              ? { unitId: residentUnitId, residentId: loaded.id }
-              : { residentId: loaded.id },
-            landlordId,
-            limit: 500,
+        const residentUnitId =
+          scopedUnits.find(
+            (unit) =>
+              normalizeUnitLabel(unit.unitLabel) === normalizeUnitLabel(loaded.unit),
+          )?.id ?? null
+        void fetchPropertyOperationsTimeline({
+          scope: residentUnitId
+            ? { unitId: residentUnitId, residentId: loaded.id }
+            : { residentId: loaded.id },
+          landlordId,
+          limit: 500,
+        })
+          .then((rows) => {
+            if (profileIdRef.current === loaded.id) setOperationsEvents(rows)
           })
-            .then((rows) => {
-              if (profileIdRef.current === loaded.id) setOperationsEvents(rows)
-            })
-            .catch((timelineError) => {
-              console.warn('[resident-profile] operations calendar', timelineError)
-              if (profileIdRef.current === loaded.id) setOperationsEvents([])
-            })
-          void fetchResidentMaintenanceCalendarEvents({
-            landlordId,
-            residentId: loaded.id,
-            residentName: loaded.fullName,
-            unitLabel: loaded.unit,
+          .catch((timelineError) => {
+            console.warn('[resident-profile] operations calendar', timelineError)
+            if (profileIdRef.current === loaded.id) setOperationsEvents([])
           })
-            .then((rows) => {
-              if (profileIdRef.current === loaded.id) setVisitEvents(rows)
-            })
-            .catch((visitError) => {
-              console.warn('[resident-profile] visit calendar', visitError)
-              if (profileIdRef.current === loaded.id) setVisitEvents([])
-            })
-        }
+        void fetchResidentMaintenanceCalendarEvents({
+          landlordId,
+          residentId: loaded.id,
+          residentName: loaded.fullName,
+          unitLabel: loaded.unit,
+        })
+          .then((rows) => {
+            if (profileIdRef.current === loaded.id) setVisitEvents(rows)
+          })
+          .catch((visitError) => {
+            console.warn('[resident-profile] visit calendar', visitError)
+            if (profileIdRef.current === loaded.id) setVisitEvents([])
+          })
+        void fetchResidentOpenMaintenanceTickets({
+          landlordId,
+          residentId: loaded.id,
+          residentName: loaded.fullName,
+          unitLabel: loaded.unit,
+        })
+          .then((rows) => {
+            if (profileIdRef.current === loaded.id) setMaintenanceTickets(rows)
+          })
+          .catch((ticketError) => {
+            console.warn('[resident-profile] maintenance intelligence', ticketError)
+            if (profileIdRef.current === loaded.id) setMaintenanceTickets([])
+          })
         const scopedBuildingResidents = filterResidentsForPropertyScope(
           residentsResult.error
             ? []
@@ -990,10 +1030,22 @@ export function AdminPropertyResidentDetailDashboard() {
     }
   }, [actionsOpen])
 
+  useEffect(() => {
+    if (!deleteConfirmOpen) return
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === 'Escape' && !deleteSaving) setDeleteConfirmOpen(false)
+    }
+    document.addEventListener('keydown', handleKeyDown)
+    return () => document.removeEventListener('keydown', handleKeyDown)
+  }, [deleteConfirmOpen, deleteSaving])
+
   const backFallbackHref = useMemo(() => {
-    if (propertyId) return propertyDetailPath(propertyId)
+    if (propertySlug) {
+      if (propertyId) return propertyDetailPath(propertyId)
+      return propertyDetailPath(propertySlug)
+    }
     return '/admin/residents'
-  }, [propertyId])
+  }, [propertyId, propertySlug])
 
   function handleBack() {
     const from = (location.state as { from?: string } | null)?.from
@@ -1029,24 +1081,41 @@ export function AdminPropertyResidentDetailDashboard() {
     if (!supabase) throw new Error("We can't reach the server right now. Please try again in a moment.")
     setActionError(null)
 
-    const unitCell = unitOptionKeyToCell(payload.unitOptionKey)
+    const previousUnit = loadedUser?.unit.trim() ?? ''
+    const previousBuilding = loadedUser?.building.trim() ?? ''
+    const placement = residentPlacementUpdateForSave({
+      unitAssignmentChanged: payload.unitAssignmentChanged,
+      submittedUnitKey: payload.unitOptionKey,
+      previousUnit,
+      previousBuilding,
+      units: buildingUnits,
+      fallbackBuilding: building ?? '',
+    })
     const assigned =
-      unitCell.kind === 'assigned'
+      placement && placement.unit
         ? resolveInventoryUnitForResidentSave(buildingUnits, {
-            unit: unitCell.unit,
-            building: unitCell.building,
+            unit: placement.unit,
+            building: placement.building ?? '',
           })
-        : null
+        : !placement && previousUnit
+          ? resolveInventoryUnitForResidentSave(buildingUnits, {
+              unit: previousUnit,
+              building: previousBuilding,
+            })
+          : null
     const previousPhone = loadedUser?.phone ?? null
     const emailPatch = residentEmailPatchForSave(payload.email, loadedUser?.email)
     const updatePayload: Record<string, unknown> = {
       full_name: payload.fullName,
       phone: payload.phone ?? null,
       status: payload.status,
-      unit: assigned?.unitLabel ?? null,
-      building: assigned?.building ?? null,
       move_in_date: parseLeaseDateInput(payload.leaseStart),
       lease_end_date: parseLeaseDateInput(payload.leaseEnd),
+      rent_due_day: payload.rentDueDay,
+    }
+    if (placement) {
+      updatePayload.unit = placement.unit
+      updatePayload.building = placement.building
     }
     if (emailPatch !== undefined) {
       updatePayload.email = emailPatch
@@ -1135,6 +1204,29 @@ export function AdminPropertyResidentDetailDashboard() {
     await loadResident()
   }
 
+  async function deleteResidentAccount() {
+    if (!loadedUser || deleteSaving) return
+    setActionError(null)
+    setDeleteSaving(true)
+    const result = await deleteResidentsForLandlord({
+      landlordId: getActiveLandlordId(),
+      residentIds: [loadedUser.id],
+    })
+    if (!result.ok) {
+      setActionError(result.error)
+      setDeleteSaving(false)
+      throw new Error(result.error)
+    }
+    setDeleteConfirmOpen(false)
+    setEditOpen(false)
+    setDeleteSaving(false)
+    handleBack()
+  }
+
+  async function handleResidentDelete(_row: EditResidentModalRow) {
+    await deleteResidentAccount()
+  }
+
   async function handleOccupancyChange(next: ResidentOccupancyStatus) {
     if (!loadedUser || !supabase) return
     if (next === loadedUser.status) return
@@ -1173,6 +1265,27 @@ export function AdminPropertyResidentDetailDashboard() {
     }
     await loadResident()
   }
+
+  const insights = useMemo(() => {
+    if (!profile) return []
+    return buildSmartIntelligence({
+      resident: {
+        id: profile.id,
+        name: profile.name,
+        unitDisplay: profile.unitDisplay,
+        balanceDue: profile.balanceDue,
+        monthlyRent: loadedUser?.monthlyRent ?? null,
+        rentDueDay: profile.rentDueDay,
+        leaseStartDate: profile.leaseStartDate,
+        leaseEndDate: profile.leaseEndDate,
+        activationStatus: loadedUser?.activationStatus ?? null,
+      },
+      propertyId,
+      workflowData,
+      tickets: maintenanceTickets,
+      communicationThreadId: profile.communications[0]?.id ?? null,
+    })
+  }, [profile, loadedUser, propertyId, workflowData, maintenanceTickets])
 
   const activationChip = loadedUser
     ? resolveTenantActivationChip({
@@ -1307,6 +1420,18 @@ export function AdminPropertyResidentDetailDashboard() {
                       >
                         Edit profile
                       </button>
+                      <button
+                        type="button"
+                        role="menuitem"
+                        className="sa-press block w-full cursor-pointer px-3 py-2 text-left text-[13px] font-medium text-[#b91c1c] hover:bg-[#fef2f2]"
+                        onClick={() => {
+                          setActionsOpen(false)
+                          setActionError(null)
+                          setDeleteConfirmOpen(true)
+                        }}
+                      >
+                        Delete tenant
+                      </button>
                     </div>
                   ) : null}
                 </div>
@@ -1322,12 +1447,21 @@ export function AdminPropertyResidentDetailDashboard() {
             <div className="mt-6">
               <ProfileContent
                 profile={profile}
+                insights={insights}
                 leaseDocuments={leaseDocuments}
                 documentPreviewError={documentPreviewError}
                 occupancySaving={occupancySaving}
                 limitedAlpha1={isLimitedAlpha1Landlord(getActiveLandlordId())}
                 operationsEvents={operationsEvents}
                 visitEvents={visitEvents}
+                occupantProfilePath={(id) =>
+                  propertySlug
+                    ? propertyResidentDetailPath(propertyId || propertySlug, id)
+                    : residentDetailPath(id)
+                }
+                occupantProfileState={{
+                  from: `${location.pathname}${location.search}`,
+                }}
                 onOccupancyChange={(status) => void handleOccupancyChange(status)}
                 onPreviewDocument={(document) => {
                   setDocumentPreviewError(null)
@@ -1347,7 +1481,73 @@ export function AdminPropertyResidentDetailDashboard() {
         initialUnitOptionKey={editInitialUnitKey}
         onClose={() => setEditOpen(false)}
         onSave={handleResidentSave}
+        onDelete={handleResidentDelete}
       />
+
+      {deleteConfirmOpen ? (
+        <div className="fixed inset-0 z-[81] flex items-center justify-center bg-black/40 p-4">
+          <div
+            role="presentation"
+            className="absolute inset-0"
+            aria-hidden
+            onClick={() => {
+              if (!deleteSaving) setDeleteConfirmOpen(false)
+            }}
+          />
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby={deleteConfirmTitleId}
+            className="relative flex w-full max-w-[440px] flex-col overflow-hidden rounded-[10px] bg-white shadow-[0px_20px_25px_-5px_rgba(0,0,0,0.1),0px_8px_10px_-6px_rgba(0,0,0,0.1)]"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="border-b border-[#e5e7eb] px-6 py-4">
+              <h2
+                id={deleteConfirmTitleId}
+                className="text-[18px] font-semibold leading-[27px] tracking-[-0.4395px] text-[#0a0a0a]"
+              >
+                Delete tenant account?
+              </h2>
+            </div>
+            <div className="flex flex-col gap-4 px-6 pb-6 pt-4">
+              <p className="text-[14px] leading-5 tracking-[-0.1504px] text-[#4a5565]">
+                This permanently removes{' '}
+                <span className="font-medium text-[#0a0a0a]">
+                  {loadedUser?.fullName.trim() || 'this resident'}
+                </span>{' '}
+                from your roster and their tenant account. This cannot be undone.
+              </p>
+              {actionError ? (
+                <p className="text-[13px] leading-4 text-[#b52a00]" role="alert">
+                  {actionError}
+                </p>
+              ) : null}
+              <div className="flex flex-wrap gap-3 pt-1">
+                <button
+                  type="button"
+                  disabled={deleteSaving || !loadedUser}
+                  className="inline-flex h-9 min-w-0 flex-1 items-center justify-center rounded-lg border border-[#b52a00]/30 bg-[#fff4f0] px-4 text-[14px] font-medium leading-5 tracking-[-0.1504px] text-[#b52a00] outline-none transition-colors hover:bg-[#ffe9e1] focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-60 sm:flex-initial"
+                  onClick={() => {
+                    void deleteResidentAccount().catch(() => {})
+                  }}
+                >
+                  {deleteSaving ? 'Deleting…' : 'Yes, delete tenant'}
+                </button>
+                <button
+                  type="button"
+                  disabled={deleteSaving}
+                  className="inline-flex h-9 items-center justify-center rounded-lg border border-black/10 bg-white px-[17px] text-[14px] font-medium leading-5 tracking-[-0.1504px] text-[#0a0a0a] outline-none transition-colors hover:bg-[#f3f4f6] focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-60"
+                  onClick={() => {
+                    if (!deleteSaving) setDeleteConfirmOpen(false)
+                  }}
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </main>
   )
 }

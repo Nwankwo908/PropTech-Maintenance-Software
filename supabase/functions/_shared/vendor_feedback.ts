@@ -224,7 +224,7 @@ export async function requestVendorFeedback(
     return
   }
 
-  const provider = (smsNumber.provider === "telnyx" ? "telnyx" : "twilio") as SmsProviderName
+  const provider: SmsProviderName = "twilio"
 
   const identity = await upsertSmsIdentityForPhone(supabase, {
     phone: phoneE164,

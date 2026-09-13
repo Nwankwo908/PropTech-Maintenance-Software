@@ -56,6 +56,28 @@ export function parseMoney(value: unknown): number | null {
   return Number.isFinite(amount) ? amount : null
 }
 
+/** Calendar day rent is due (1–31). Does not guess from lease start. */
+export function parseRentDueDay(value: unknown): number | null {
+  if (typeof value === 'number' && Number.isInteger(value) && value >= 1 && value <= 31) {
+    return value
+  }
+  const text = asTrimmed(value).toLowerCase()
+  if (!text || PLACEHOLDER.test(text)) return null
+  if (/\d{4}-\d{2}-\d{2}/.test(text) || /^\d{1,2}[/-]\d{1,2}[/-]\d{2,4}$/.test(text)) return null
+  if (
+    text === 'first' ||
+    /\bfirst of (the |each |every )?month\b/.test(text) ||
+    /\bdue on the first\b/.test(text)
+  ) {
+    return 1
+  }
+  const ordinal = text.match(/\b([1-9]|[12]\d|3[01])(?:st|nd|rd|th)?\b/)
+  if (!ordinal) return null
+  const day = Number(ordinal[1])
+  if (!Number.isFinite(day) || day < 1 || day > 31) return null
+  return day
+}
+
 /** Coverage limits: 0 is valid (excluded). Never treat 0 as missing. */
 export function parseCoverageLimit(value: unknown): number | null {
   if (value === null || value === undefined) return null

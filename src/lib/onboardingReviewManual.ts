@@ -4,6 +4,9 @@
  */
 import type { OnboardingAccountSetup, OnboardingOccupancyStatus } from '@/lib/onboarding'
 import { normalizeOnboardingOccupancyStatus } from '@/lib/onboarding'
+import { usableOnboardingCompanyName } from '@shared/landlordPortfolioLabel'
+
+export { usableOnboardingCompanyName } from '@shared/landlordPortfolioLabel'
 
 export type OnboardingReviewManualAccount = {
   companyName: string
@@ -14,23 +17,6 @@ export type OnboardingReviewManualAccount = {
   backupContactPhone: string
   backupContactEmail: string
   smsConsentAcceptedAt: string | null
-}
-
-const PLACEHOLDER_COMPANY_NAMES = new Set([
-  'new landlord',
-  'your portfolio',
-  'ulo',
-  'ulo home',
-  'ulo home, inc',
-  'ulo home inc',
-])
-
-/** Drop empty and system placeholder company names so extraction can fill the field. */
-export function usableOnboardingCompanyName(raw: string | null | undefined): string {
-  const name = (raw ?? '').trim()
-  if (!name) return ''
-  if (PLACEHOLDER_COMPANY_NAMES.has(name.toLowerCase())) return ''
-  return name
 }
 
 export function emptyReviewManualAccount(

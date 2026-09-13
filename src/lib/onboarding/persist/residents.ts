@@ -119,6 +119,46 @@ export function parseRentDueDayInput(value: string): number | null {
   return day
 }
 
+/** Most frequent rent due day across onboarding residents, if any. */
+export function mostCommonRentDueDay(
+  residents: Array<{ rentDueDay?: number | null }>,
+): number | null {
+  const counts = new Map<number, number>()
+  for (const row of residents) {
+    const raw = row.rentDueDay
+    if (typeof raw !== 'number' || !Number.isFinite(raw)) continue
+    const day = Math.trunc(raw)
+    if (day < 1 || day > 31) continue
+    counts.set(day, (counts.get(day) ?? 0) + 1)
+  }
+  let best: number | null = null
+  let bestCount = 0
+  for (const [day, count] of counts) {
+    if (count > bestCount || (count === bestCount && (best == null || day < best))) {
+      best = day
+      bestCount = count
+    }
+  }
+  return best
+}
+
+/** Display helper: 1 → "1st", 2 → "2nd", 11 → "11th". */
+export function formatRentDueDayOrdinal(day: number): string {
+  const whole = Math.trunc(day)
+  const mod100 = whole % 100
+  if (mod100 >= 11 && mod100 <= 13) return `${whole}th`
+  switch (whole % 10) {
+    case 1:
+      return `${whole}st`
+    case 2:
+      return `${whole}nd`
+    case 3:
+      return `${whole}rd`
+    default:
+      return `${whole}th`
+  }
+}
+
 /** Normalize date input (YYYY-MM-DD) for Postgres date columns. */
 export function parseLeaseDateInput(value: string): string | null {
   const trimmed = value.trim()

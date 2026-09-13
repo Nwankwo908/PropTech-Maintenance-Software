@@ -1,7 +1,8 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { useLocation, useNavigate, useSearchParams } from 'react-router-dom'
 import { AddPropertyModal, type AddPropertyFormPayload } from '@/components/AddPropertyModal'
 import { PropertyHealthBuildingGrid } from '@/components/PropertyHealthBuildingGrid'
+import { PropertyHealthDonut, propertyHealthDonutPercent } from '@/components/PropertyHealthDonut'
 import { SetupSuccessCheckboxGuide } from '@/components/SetupSuccessCheckboxGuide'
 import { registerPropertyUnitsSms } from '@/api/landlordSmsOnboarding'
 import { getActiveLandlordId } from '@/lib/activeLandlord'
@@ -283,6 +284,7 @@ function KpiBreakdownInfo({
 function KpiCard({
   label,
   value,
+  chart,
   delta,
   deltaSuffix = '',
   deltaFormatter,
@@ -294,6 +296,7 @@ function KpiCard({
 }: {
   label: string
   value: string
+  chart?: ReactNode
   delta: number | null
   deltaSuffix?: string
   deltaFormatter?: (delta: number) => string
@@ -320,10 +323,19 @@ function KpiCard({
           />
         ) : null}
       </div>
-      <div className="flex items-end justify-between gap-2">
-        <p className="text-[44px] font-bold leading-none tracking-[0.4px] text-[#0a0a0a] tabular-nums xl:text-[52px]">
-          {value}
-        </p>
+      <div className={`flex justify-between gap-2 ${chart ? 'items-center' : 'items-end'}`}>
+        {chart ? (
+          <div className="flex min-w-0 items-center gap-3">
+            {chart}
+            <p className="min-w-0 break-words text-[28px] font-bold leading-none tracking-[0.4px] text-[#0a0a0a] tabular-nums sm:text-[44px] xl:text-[52px]">
+              {value}
+            </p>
+          </div>
+        ) : (
+          <p className="text-[44px] font-bold leading-none tracking-[0.4px] text-[#0a0a0a] tabular-nums xl:text-[52px]">
+            {value}
+          </p>
+        )}
         {delta != null ? (
           <span
             className={[
@@ -690,7 +702,7 @@ export function AdminPropertiesDashboard() {
     : resolvePropertyHealthKpiValue(
         healthReport.portfolio?.status,
         healthReport.portfolio?.score,
-        'over100',
+        'percent',
       )
 
   const visibleBuildings = healthReport.buildings
@@ -883,6 +895,15 @@ export function AdminPropertiesDashboard() {
         <KpiCard
           label="Property Health"
           value={healthKpiValue}
+          chart={
+            <PropertyHealthDonut
+              percent={propertyHealthDonutPercent(
+                kpis.propertyHealth,
+                !loading && healthScoreReady,
+              )}
+              label={`Property health ${healthKpiValue}`}
+            />
+          }
           delta={
             loading || !healthScoreReady
               ? null

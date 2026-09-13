@@ -1,6 +1,7 @@
 import { useEffect, useId, useMemo, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { getErrorMessage } from '@/lib/errorMessage'
+import { parseRentDueDayInput, type RentDueDayChoice } from '@/lib/onboarding'
 import { formatPhoneNational, optionalPhoneForDbOrError } from '@/lib/phoneFormat'
 import { shouldOfferRestartTenantOnboarding } from '@/api/tenantActivation'
 import { checkboxInputClassName } from '@/components/TableCheckbox'
@@ -15,10 +16,14 @@ export type EditResidentSavePayload = {
   status: ResidentStatus
   /** Inventory key (e.g. `2b-a`); empty string = unassigned */
   unitOptionKey: string
+  /** False when the landlord only edited contact fields — do not rewrite unit/building. */
+  unitAssignmentChanged: boolean
   /** YYYY-MM-DD; empty when unset */
   leaseStart: string
   /** YYYY-MM-DD; empty when unset */
   leaseEnd: string
+  /** Day of month 1–31, or null when unset */
+  rentDueDay: number | null
   /** Send welcome SMS to the new number after a phone change. */
   restartOnboarding?: boolean
 }
@@ -36,6 +41,8 @@ export type EditResidentModalRow = {
   leaseStart?: string | null
   /** YYYY-MM-DD */
   leaseEnd?: string | null
+  /** Day of month 1–31 from onboarding / `users.rent_due_day` */
+  rentDueDay?: number | null
 }
 
 const STATUS_OPTIONS: { value: ResidentStatus; label: string }[] = [
@@ -78,6 +85,13 @@ function toDateInputValue(raw: string | null | undefined): string {
   return /^\d{4}-\d{2}-\d{2}$/.test(value) ? value : ''
 }
 
+function rentDueDayModeFromDay(day: number | null | undefined): RentDueDayChoice {
+  if (day == null || !Number.isFinite(day)) return ''
+  if (day === 1) return '1'
+  if (day === 5) return '5'
+  return 'custom'
+}
+
 function IconTrash({ className = 'size-4 shrink-0 text-error' }: { className?: string }) {
   return (
     <svg className={className} viewBox="0 0 24 24" fill="none" aria-hidden>
@@ -99,6 +113,7 @@ export function EditResidentModal({
   initialUnitOptionKey,
   onClose,
   onSave,
+  onDelete,
 }: {
   row: EditResidentModalRow | null
   /** Vacant units plus current assignment (for reassignment). */
@@ -108,6 +123,8 @@ export function EditResidentModal({
   onClose: () => void
   /** Persist changes (Supabase update or demo state patch in parent). */
   onSave: (payload: EditResidentSavePayload) => Promise<void>
+  /** Permanently remove the tenant roster account. */
+  onDelete: (row: EditResidentModalRow) => Promise<void>
 }) {
   const titleId = useId()
   const [fullName, setFullName] = useState('')
@@ -115,11 +132,17 @@ export function EditResidentModal({
   const [phone, setPhone] = useState('')
   const [status, setStatus] = useState<ResidentStatus>('active')
   const [unitKey, setUnitKey] = useState('')
+  const [unitAssignmentChanged, setUnitAssignmentChanged] = useState(false)
   const [leaseStart, setLeaseStart] = useState('')
   const [leaseEnd, setLeaseEnd] = useState('')
+  const [rentDueDayMode, setRentDueDayMode] = useState<RentDueDayChoice>('')
+  const [rentDueDay, setRentDueDay] = useState('')
   const [saving, setSaving] = useState(false)
+  const [deleting, setDeleting] = useState(false)
+  const [confirmDelete, setConfirmDelete] = useState(false)
   const [saveError, setSaveError] = useState<string | null>(null)
   const [restartOnboarding, setRestartOnboarding] = useState(true)
+  const busy = saving || deleting
 
   const formValid = useMemo(() => {
     const trimmedEmail = email.trim()
@@ -137,10 +160,17 @@ export function EditResidentModal({
     setPhone(row.phone ? formatPhoneNational(row.phone) : '')
     setStatus(row.status)
     setUnitKey(initialUnitOptionKey)
+    setUnitAssignmentChanged(false)
     setLeaseStart(toDateInputValue(row.leaseStart))
     setLeaseEnd(toDateInputValue(row.leaseEnd))
+    setRentDueDayMode(rentDueDayModeFromDay(row.rentDueDay))
+    setRentDueDay(
+      row.rentDueDay != null && Number.isFinite(row.rentDueDay) ? String(row.rentDueDay) : '',
+    )
     setSaveError(null)
     setRestartOnboarding(true)
+    setConfirmDelete(false)
+    setDeleting(false)
   }, [
     row?.id,
     row?.name,
@@ -149,17 +179,21 @@ export function EditResidentModal({
     row?.status,
     row?.leaseStart,
     row?.leaseEnd,
+    row?.rentDueDay,
     initialUnitOptionKey,
   ])
 
   useEffect(() => {
     if (!row) return
     function onKey(e: KeyboardEvent) {
-      if (e.key === 'Escape') onClose()
+      if (e.key === 'Escape') {
+        if (confirmDelete) setConfirmDelete(false)
+        else onClose()
+      }
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [row, onClose])
+  }, [row, onClose, confirmDelete])
 
   useEffect(() => {
     if (!row) return
@@ -186,6 +220,17 @@ export function EditResidentModal({
       setSaving(false)
       return
     }
+    if (rentDueDayMode === 'custom' && !rentDueDay.trim()) {
+      setSaveError('Enter a custom rent due day (1–31).')
+      setSaving(false)
+      return
+    }
+    const parsedRentDueDay = rentDueDay.trim() ? parseRentDueDayInput(rentDueDay) : null
+    if (rentDueDay.trim() && parsedRentDueDay == null) {
+      setSaveError('Rent due day must be between 1 and 31.')
+      setSaving(false)
+      return
+    }
     try {
       await onSave({
         id: row.id,
@@ -194,8 +239,10 @@ export function EditResidentModal({
         phone: phoneResult.phone ?? undefined,
         status,
         unitOptionKey: unitKey.trim(),
+        unitAssignmentChanged,
         leaseStart: leaseStart.trim(),
         leaseEnd: leaseEnd.trim(),
+        rentDueDay: parsedRentDueDay,
         restartOnboarding: offerRestartOnboarding && restartOnboarding,
       })
       onClose()
@@ -203,6 +250,25 @@ export function EditResidentModal({
       setSaveError(getErrorMessage(e, "Couldn't save. Please try again."))
     } finally {
       setSaving(false)
+    }
+  }
+
+  async function remove() {
+    if (!row || busy) return
+    if (!confirmDelete) {
+      setConfirmDelete(true)
+      setSaveError(null)
+      return
+    }
+    setDeleting(true)
+    setSaveError(null)
+    try {
+      await onDelete(row)
+      onClose()
+    } catch (e) {
+      setSaveError(getErrorMessage(e, "Couldn't delete this resident. Please try again."))
+    } finally {
+      setDeleting(false)
     }
   }
 
@@ -238,8 +304,9 @@ export function EditResidentModal({
           <button
             type="button"
             onClick={onClose}
+            disabled={busy}
             aria-label="Close"
-            className="sa-press flex size-9 shrink-0 items-center justify-center rounded-lg text-neutral outline-none hover:bg-secondary focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2"
+            className="sa-press flex size-9 shrink-0 items-center justify-center rounded-lg text-neutral outline-none hover:bg-secondary focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 disabled:opacity-50"
           >
             <svg className="size-5" viewBox="0 0 24 24" fill="none" aria-hidden>
               <path d="M18 6L6 18M6 6l12 12" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" />
@@ -327,11 +394,23 @@ export function EditResidentModal({
                 <select
                   id="edit-resident-unit"
                   value={unitKey}
-                  onChange={(e) => setUnitKey(e.target.value)}
+                  onChange={(e) => {
+                    setUnitKey(e.target.value)
+                    setUnitAssignmentChanged(true)
+                  }}
                   className={selectClass}
                 >
                   <option value="">Unassigned</option>
-                  {unitOptions.map((o) => (
+                  {unitKey && !unitOptions.some((o) => o.value === unitKey) ? (
+                    <option value={unitKey}>
+                      {row.unit.kind === 'assigned'
+                        ? `${row.unit.unit} (current)`
+                        : 'Current unit'}
+                    </option>
+                  ) : null}
+                  {unitOptions
+                    .filter((o) => o.value)
+                    .map((o) => (
                     <option key={o.value} value={o.value}>
                       {o.label}
                     </option>
@@ -379,6 +458,56 @@ export function EditResidentModal({
             </div>
             <div className="space-y-2">
               <label
+                htmlFor="edit-resident-rent-due"
+                className="block text-[14px] font-medium leading-5 tracking-[-0.1504px] text-neutral-variant"
+              >
+                Rent due day
+              </label>
+              <div className="relative">
+                <select
+                  id="edit-resident-rent-due"
+                  value={rentDueDayMode}
+                  onChange={(e) => {
+                    const choice = e.target.value as RentDueDayChoice
+                    if (choice === '1' || choice === '5') {
+                      setRentDueDayMode(choice)
+                      setRentDueDay(choice)
+                      return
+                    }
+                    if (choice === 'custom') {
+                      const current = rentDueDay.trim()
+                      setRentDueDayMode('custom')
+                      setRentDueDay(current === '1' || current === '5' ? '' : current)
+                      return
+                    }
+                    setRentDueDayMode('')
+                    setRentDueDay('')
+                  }}
+                  className={selectClass}
+                >
+                  <option value="">Select day</option>
+                  <option value="1">1st</option>
+                  <option value="5">5th</option>
+                  <option value="custom">Custom</option>
+                </select>
+                <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2">
+                  <IconChevronDown />
+                </span>
+              </div>
+              {rentDueDayMode === 'custom' ? (
+                <input
+                  type="text"
+                  inputMode="numeric"
+                  value={rentDueDay}
+                  onChange={(e) => setRentDueDay(e.target.value)}
+                  placeholder="Day of month (1–31)"
+                  className={inputClass}
+                  aria-label="Custom rent due day"
+                />
+              ) : null}
+            </div>
+            <div className="space-y-2">
+              <label
                 htmlFor="edit-resident-status"
                 className="block text-[14px] font-medium leading-5 tracking-[-0.1504px] text-neutral-variant"
               >
@@ -405,24 +534,43 @@ export function EditResidentModal({
           </div>
         </div>
 
-        <footer className="flex w-full shrink-0 gap-3 border-t border-secondary bg-secondary px-6 pb-5 pt-4">
-          <button
-            type="button"
-            onClick={onClose}
-            disabled={saving}
-            className="sa-press flex h-[42px] min-w-0 flex-1 basis-0 items-center justify-center gap-2 rounded-[10px] border border-error px-4 text-[16px] font-medium leading-6 tracking-[-0.3125px] text-error outline-none hover:bg-error focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 disabled:opacity-50"
-          >
-            <IconTrash />
-            Delete Account
-          </button>
-          <button
-            type="button"
-            onClick={() => void save()}
-            disabled={!formValid || saving}
-            className="sa-press flex h-[42px] min-w-0 flex-1 basis-0 items-center justify-center rounded-[10px] bg-extended-1 px-5 text-[16px] font-medium leading-6 tracking-[-0.3125px] text-white outline-none hover:bg-extended-1 focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50"
-          >
-            {saving ? 'Saving…' : 'Save Changes'}
-          </button>
+        <footer className="flex w-full shrink-0 flex-col gap-3 border-t border-secondary bg-secondary px-6 pb-5 pt-4">
+          {confirmDelete ? (
+            <p className="text-[13px] leading-5 text-neutral">
+              This permanently removes {row.name.trim() || 'this resident'} from your roster and
+              their tenant account. This cannot be undone.
+            </p>
+          ) : null}
+          <div className="flex w-full gap-3">
+            <button
+              type="button"
+              onClick={() => void remove()}
+              disabled={busy}
+              className="sa-press flex h-[42px] min-w-0 flex-1 basis-0 items-center justify-center gap-2 rounded-[10px] border border-error px-4 text-[16px] font-medium leading-6 tracking-[-0.3125px] text-error outline-none hover:bg-error focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 disabled:opacity-50"
+            >
+              <IconTrash />
+              {deleting ? 'Deleting…' : confirmDelete ? 'Delete account' : 'Delete Account'}
+            </button>
+            {confirmDelete ? (
+              <button
+                type="button"
+                onClick={() => setConfirmDelete(false)}
+                disabled={busy}
+                className="sa-press flex h-[42px] min-w-0 flex-1 basis-0 items-center justify-center rounded-[10px] border border-secondary bg-white px-5 text-[16px] font-medium leading-6 tracking-[-0.3125px] text-extended-3 outline-none hover:bg-secondary focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 disabled:opacity-50"
+              >
+                Cancel
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={() => void save()}
+                disabled={!formValid || busy}
+                className="sa-press flex h-[42px] min-w-0 flex-1 basis-0 items-center justify-center rounded-[10px] bg-extended-1 px-5 text-[16px] font-medium leading-6 tracking-[-0.3125px] text-white outline-none hover:bg-extended-1 focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50"
+              >
+                {saving ? 'Saving…' : 'Save Changes'}
+              </button>
+            )}
+          </div>
         </footer>
       </div>
     </div>,

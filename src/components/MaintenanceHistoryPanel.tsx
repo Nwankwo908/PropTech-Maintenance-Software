@@ -77,6 +77,7 @@ export type MaintenanceHistoryPanelProps = {
   onDocsChange: (docs: MaintenanceHistoryDocument[]) => void
   onApprovedChange: (records: MaintenanceHistoryRecord[]) => void
   onError: (message: string | null) => void
+  hideIntro?: boolean
 }
 
 export function MaintenanceHistoryPanel({
@@ -86,6 +87,7 @@ export function MaintenanceHistoryPanel({
   onDocsChange,
   onApprovedChange,
   onError,
+  hideIntro = false,
 }: MaintenanceHistoryPanelProps) {
   const uploadInputId = useId()
   const csvInputId = useId()
@@ -369,10 +371,12 @@ export function MaintenanceHistoryPanel({
 
   return (
     <div className="flex flex-col gap-5">
+      {hideIntro ? null : (
       <p className="text-[14px] leading-normal text-[#475569]">
         Upload previous invoices, receipts, or work orders to help Ulo understand past repairs,
         identify recurring issues, and improve future maintenance planning.
       </p>
+      )}
 
       {showEmpty ? (
         <div className="flex flex-col items-center gap-3 rounded-[12px] border border-dashed border-[#e2e8f0] bg-[#f8fafc] px-6 py-10 text-center">

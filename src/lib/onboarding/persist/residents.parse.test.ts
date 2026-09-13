@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
+  formatRentDueDayOrdinal,
+  mostCommonRentDueDay,
   parseLeaseDateInput,
   parseMonthlyRentInput,
   parseRentDueDayInput,
@@ -31,6 +33,33 @@ describe('parseRentDueDayInput', () => {
     expect(parseRentDueDayInput('0')).toBeNull()
     expect(parseRentDueDayInput('32')).toBeNull()
     expect(parseRentDueDayInput('first')).toBeNull()
+  })
+})
+
+describe('formatRentDueDayOrdinal', () => {
+  it('uses English ordinal suffixes', () => {
+    expect(formatRentDueDayOrdinal(1)).toBe('1st')
+    expect(formatRentDueDayOrdinal(2)).toBe('2nd')
+    expect(formatRentDueDayOrdinal(3)).toBe('3rd')
+    expect(formatRentDueDayOrdinal(5)).toBe('5th')
+    expect(formatRentDueDayOrdinal(11)).toBe('11th')
+    expect(formatRentDueDayOrdinal(21)).toBe('21st')
+  })
+})
+
+describe('mostCommonRentDueDay', () => {
+  it('returns the most frequent valid day', () => {
+    expect(
+      mostCommonRentDueDay([
+        { rentDueDay: 1 },
+        { rentDueDay: 1 },
+        { rentDueDay: 5 },
+      ]),
+    ).toBe(1)
+  })
+
+  it('returns null when no resident has a due day', () => {
+    expect(mostCommonRentDueDay([{ rentDueDay: null }, {}])).toBeNull()
   })
 })
 

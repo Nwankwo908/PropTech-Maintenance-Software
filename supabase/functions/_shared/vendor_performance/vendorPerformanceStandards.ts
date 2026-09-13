@@ -235,7 +235,7 @@ async function ensureVendorSmsChannel(
   if (!line?.phone) {
     return { conversationId: null, fromNumber: null, toNumber: null, provider: null }
   }
-  const provider: SmsProviderName = line.provider === "telnyx" ? "telnyx" : "twilio"
+  const provider: SmsProviderName = "twilio"
   const toNumber = normalizeSmsPhone(params.phone ?? "")
   let conversationId = await resolveVendorVerificationConversationId(supabase, {
     landlordId: params.landlordId,

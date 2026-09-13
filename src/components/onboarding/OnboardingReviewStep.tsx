@@ -6,7 +6,7 @@ import type {
   OnboardingStep,
 } from '@/lib/onboarding'
 import { communicationStyleLabel } from '@/lib/communicationStyle'
-import { onboardingOccupancyStatusLabel } from '@/lib/onboarding'
+import { formatRentDueDayOrdinal, onboardingOccupancyStatusLabel } from '@/lib/onboarding'
 import {
   afterHoursRuleLabel,
   emergencyTypeLabel,
@@ -17,25 +17,11 @@ import {
 } from '@/lib/onboardingApprovalRules'
 import { getActiveLandlordId } from '@/lib/activeLandlord'
 import { landlordHasPayments, landlordHasVendorMarketplace } from '@shared/landlordCapabilities'
+import { landlordPortfolioLabel } from '@shared/landlordPortfolioLabel'
 import {
   onboardingBtnPrimaryClass,
   onboardingBtnSecondaryClass,
 } from './onboardingFieldStyles'
-
-function formatRentDueDayOrdinal(day: number): string {
-  const mod100 = day % 100
-  if (mod100 >= 11 && mod100 <= 13) return `${day}th`
-  switch (day % 10) {
-    case 1:
-      return `${day}st`
-    case 2:
-      return `${day}nd`
-    case 3:
-      return `${day}rd`
-    default:
-      return `${day}th`
-  }
-}
 
 function formatResidentReviewValue(resident: OnboardingResident): string {
   const parts: string[] = [resident.fullName]
@@ -205,11 +191,10 @@ export function OnboardingReviewStep({
   const noVendorsTitleId = useId()
   const companyName = reviewData?.accountSetup.companyName.trim()
   const contactName = reviewData?.accountSetup.contactName.trim()
-  const headline = companyName
-    ? `Ready to launch Ulo for ${companyName}?`
-    : contactName
-      ? `Ready to launch Ulo, ${contactName}?`
-      : 'Ready to complete your setup?'
+  const portfolioLabel = landlordPortfolioLabel({ companyName, contactName })
+  const headline = portfolioLabel
+    ? `Ready to launch Ulo for ${portfolioLabel}?`
+    : 'Ready to complete your setup?'
   const notificationPrefsOnApproval = setupPath === 'fast_track'
   const hasVendors = (reviewData?.vendors.length ?? 0) > 0
 

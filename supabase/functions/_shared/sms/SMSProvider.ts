@@ -10,7 +10,7 @@ import type {
   SMSStatusUpdate,
 } from "./types.ts"
 
-/** Provider-agnostic SMS operations (Twilio, Telnyx, …). */
+/** Provider-agnostic SMS operations (Twilio). */
 export interface SMSProvider {
   readonly name: SmsProviderName
 

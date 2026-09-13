@@ -43,6 +43,23 @@ describe('mergeOrganizationForm operational settings', () => {
     expect(merged.preferredLanguage).toBe('Spanish (US)')
   })
 
+  it('loads portfolio rent due day from operational settings', () => {
+    const merged = mergeOrganizationForm({
+      persisted: DEFAULT_ORGANIZATION_SETTINGS,
+      legacyLocal: null,
+      landlordRow: null,
+      onboardingRow: null,
+      accountSettings: {
+        operational: {
+          rentDueDay: '5',
+        },
+      },
+      draftState: {},
+    })
+
+    expect(merged.rentDueDay).toBe('5')
+  })
+
   it('preserves quiet hours times from operational settings', () => {
     const merged = mergeOrganizationForm({
       persisted: DEFAULT_ORGANIZATION_SETTINGS,
@@ -119,5 +136,38 @@ describe('mergeOrganizationForm operational settings', () => {
     })
 
     expect(merged.supportEmail).toBe('')
+  })
+
+  it('does not treat the New Landlord placeholder as a company name', () => {
+    const merged = mergeOrganizationForm({
+      persisted: DEFAULT_ORGANIZATION_SETTINGS,
+      legacyLocal: null,
+      landlordRow: { name: 'New Landlord', contact_name: 'Alex Rivera' },
+      onboardingRow: null,
+      accountSettings: {},
+      draftState: { accountSetup: { companyName: '', contactName: 'Alex Rivera' } },
+    })
+
+    expect(merged.legalName).toBe('')
+    expect(merged.displayName).toBe('')
+    expect(merged.contactName).toBe('Alex Rivera')
+  })
+
+  it('drops leftover sample identity that was never entered by the landlord', () => {
+    const merged = mergeOrganizationForm({
+      persisted: {
+        ...DEFAULT_ORGANIZATION_SETTINGS,
+        legalName: 'Limited Alpha 1',
+        displayName: 'Kendo Homes',
+      },
+      legacyLocal: { displayName: 'Kendo Properties LLC' },
+      landlordRow: { name: 'Limited Alpha 1', display_name: 'Kendo Homes', contact_name: 'Alex' },
+      onboardingRow: null,
+      accountSettings: {},
+      draftState: { accountSetup: { companyName: 'Kendo Properties', contactName: 'Alex' } },
+    })
+
+    expect(merged.legalName).toBe('')
+    expect(merged.displayName).toBe('')
   })
 })

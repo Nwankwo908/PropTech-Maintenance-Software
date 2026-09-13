@@ -15,6 +15,7 @@ export type LandlordOperationalSettings = {
   requirePhotoEvidence: boolean
   allowAiDispatch: boolean
   rentReminderCadence: string
+  rentDueDay: string
   preferredLanguage: string
   quietHoursEnabled: boolean
   quietHoursStart: string
@@ -75,6 +76,7 @@ export const DEFAULT_OPERATIONAL_SETTINGS: LandlordOperationalSettings = {
   requirePhotoEvidence: true,
   allowAiDispatch: true,
   rentReminderCadence: '5, 3, 1 days before',
+  rentDueDay: '',
   preferredLanguage: 'English (US)',
   quietHoursEnabled: true,
   quietHoursStart: '10:00 PM',

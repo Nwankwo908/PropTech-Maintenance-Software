@@ -30,6 +30,7 @@ export type PortfolioDocumentExtractPayload = {
     leaseStart: string
     leaseEnd: string
     monthlyRent: string
+    rentDueDay?: string
     confidence: number
   }>
   vendors: Array<{
@@ -47,6 +48,7 @@ export type PortfolioDocumentExtractPayload = {
     leaseEnd: string
     rentAmount: string
     securityDeposit: string
+    rentDueDay?: string
     confidence: number
   }>
   maintenanceIssues: Array<{

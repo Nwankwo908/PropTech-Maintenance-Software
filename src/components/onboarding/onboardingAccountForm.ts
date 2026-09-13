@@ -25,6 +25,13 @@ export type SaveOnboardingAccountSetupStepInput = {
   ) => Promise<void>
 }
 
+export function hasOnboardingSmsConsent(
+  smsConsentAccepted: boolean,
+  smsConsentAcceptedAt?: string | null,
+): boolean {
+  return smsConsentAccepted || Boolean(smsConsentAcceptedAt)
+}
+
 export async function saveOnboardingAccountSetupStep(
   input: SaveOnboardingAccountSetupStepInput,
 ): Promise<void> {
@@ -45,7 +52,7 @@ export async function saveOnboardingAccountSetupStep(
     setError('Enter your name.')
     return
   }
-  if (!smsConsentAccepted && !accountSetupInput.smsConsentAcceptedAt) {
+  if (!hasOnboardingSmsConsent(smsConsentAccepted, accountSetupInput.smsConsentAcceptedAt)) {
     setError('Please agree to the SMS terms to continue.')
     return
   }

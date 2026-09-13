@@ -21,9 +21,13 @@ import {
 import {
   persistLandlordAccountProfile,
   persistLandlordCommunicationStyle,
+  persistLandlordDefaultRentDueDay,
 } from './persist/account'
 import { buildOnboardingReviewMetrics } from './review'
-import type { OnboardingResident } from './persist/residents'
+import {
+  mostCommonRentDueDay,
+  type OnboardingResident,
+} from './persist/residents'
 import type { OnboardingVendor } from './persist/vendors'
 import type { AccountSetupCounts, LandlordOnboardingState } from './types'
 
@@ -156,6 +160,16 @@ export async function completeOnboarding(
     }
   } catch (err) {
     console.warn('[landlordOnboarding] account profile persist failed', err)
+  }
+
+  try {
+    const defaultRentDueDay = mostCommonRentDueDay(residents)
+    const rentDue = await persistLandlordDefaultRentDueDay(scope.landlordId, defaultRentDueDay)
+    if (!rentDue.ok) {
+      console.warn('[landlordOnboarding] default rent due day persist failed', rentDue.error)
+    }
+  } catch (err) {
+    console.warn('[landlordOnboarding] default rent due day persist failed', err)
   }
 
   const rules = normalizeOnboardingApprovalRules(state.approvalRules)

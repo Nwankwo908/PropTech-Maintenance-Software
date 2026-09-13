@@ -4,9 +4,12 @@
 import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.49.1"
 import { recordActivityLog } from "../graph/recordActivityLog.ts"
 import { notifyLandlordNeedsAttention } from "../landlordAttentionNotify.ts"
+import type { ExternalVendorSearchInput } from "./types.ts"
 import {
+  extractZipFromLocation,
   thumbtackOpenConversationError,
   thumbtackProviderFromEnv,
+  thumbtackSearchContextForBusiness,
   type ThumbtackExternalVendorProvider,
 } from "./providers/thumbtack.ts"
 import {
@@ -44,6 +47,8 @@ export type ThumbtackSendMessageInput = {
   text: string
   propertyId?: string | null
   unitId?: string | null
+  issueCategory?: string | null
+  searchLocation?: string | null
 }
 
 export type ThumbtackSendMessageResult =
@@ -53,13 +58,14 @@ export type ThumbtackSendMessageResult =
 async function thumbtackFetch(
   provider: ThumbtackExternalVendorProvider,
   path: string,
-  init: { method: string; body?: unknown },
+  init: { method: string; body?: unknown; token?: string | null; apiBase?: string | null },
 ): Promise<{ ok: boolean; status: number; json: unknown; text: string }> {
-  const token = await provider.getMessagingAccessToken()
+  const token = init.token?.trim() || (await provider.getMessagingAccessToken())
   if (!token) {
     return { ok: false, status: 401, json: null, text: "oauth_token_failed" }
   }
-  const url = `${provider.apiBase()}${path.startsWith("/") ? path : `/${path}`}`
+  const base = (init.apiBase?.trim() || provider.apiBase()).replace(/\/$/, "")
+  const url = `${base}${path.startsWith("/") ? path : `/${path}`}`
   const res = await fetch(url, {
     method: init.method,
     headers: {
@@ -81,22 +87,31 @@ async function thumbtackFetch(
 
 async function createThumbtackRequest(input: {
   provider: ThumbtackExternalVendorProvider
+  token: string
+  apiBase?: string | null
   searchId: string
   businessId: string
-  categoryId: string | null
+  categoryId: string
 }): Promise<{ requestId: string | null; negotiationId: string | null; error?: string; status?: number }> {
   const body: Record<string, unknown> = {
     searchID: input.searchId,
     businessIDs: [input.businessId],
+    categoryID: input.categoryId,
     utmData: { utm_source: input.provider.partnerUtmSource() },
   }
-  if (input.categoryId) body.categoryID = input.categoryId
   const res = await thumbtackFetch(input.provider, "/v4/requests", {
     method: "POST",
     body,
+    token: input.token,
+    apiBase: input.apiBase,
   })
   if (!res.ok) {
-    console.warn("[thumbtack-messages] create request HTTP", res.status, res.text.slice(0, 240))
+    console.warn("[thumbtack-messages] create request HTTP", res.status, {
+      searchId: input.searchId,
+      businessId: input.businessId,
+      categoryId: input.categoryId,
+      body: res.text.slice(0, 400),
+    })
     return {
       requestId: null,
       negotiationId: null,
@@ -112,12 +127,14 @@ async function createThumbtackRequest(input: {
 
 async function loadNegotiationForBusiness(input: {
   provider: ThumbtackExternalVendorProvider
+  token?: string | null
+  apiBase?: string | null
   businessId: string
 }): Promise<string | null> {
   const res = await thumbtackFetch(
     input.provider,
     `/v4/businesses/${encodeURIComponent(input.businessId)}/negotiations`,
-    { method: "GET" },
+    { method: "GET", token: input.token, apiBase: input.apiBase },
   )
   if (!res.ok) {
     console.warn("[thumbtack-messages] list negotiations HTTP", res.status, res.text.slice(0, 200))
@@ -128,13 +145,15 @@ async function loadNegotiationForBusiness(input: {
 
 async function postNegotiationMessage(input: {
   provider: ThumbtackExternalVendorProvider
+  token?: string | null
+  apiBase?: string | null
   negotiationId: string
   text: string
 }): Promise<{ ok: true; messageId: string | null } | { ok: false; error: string; status: number }> {
   const res = await thumbtackFetch(
     input.provider,
     `/v4/negotiations/${encodeURIComponent(input.negotiationId)}/messages`,
-    { method: "POST", body: { text: input.text } },
+    { method: "POST", body: { text: input.text }, token: input.token, apiBase: input.apiBase },
   )
   if (!res.ok) {
     console.warn("[thumbtack-messages] send message HTTP", res.status, res.text.slice(0, 240))
@@ -145,6 +164,139 @@ async function postNegotiationMessage(input: {
     }
   }
   return { ok: true, messageId: pickMessageId(res.json) }
+}
+
+function searchInputFromSend(input: ThumbtackSendMessageInput): ExternalVendorSearchInput | null {
+  const loc = input.searchLocation?.trim() ?? ""
+  if (!extractZipFromLocation(loc)) return null
+  const category = (input.issueCategory ?? "").trim().replace(/_/g, " ") || "home repair"
+  return {
+    issueCategory: input.issueCategory,
+    searchLocation: loc,
+    tradeTerms: category,
+    textQuery: `${category} ${loc}`,
+    jobDescription: input.text.trim().slice(0, 280) || null,
+    limit: 12,
+  }
+}
+
+async function openThumbtackNegotiation(input: {
+  provider: ThumbtackExternalVendorProvider
+  send: ThumbtackSendMessageInput
+  businessId: string
+}): Promise<{
+  negotiationId: string | null
+  requestId: string | null
+  searchId: string
+  categoryId: string
+  token: string | null
+  apiBase?: string | null
+  error?: string
+  status?: number
+}> {
+  const searchInput = searchInputFromSend(input.send)
+  if (!searchInput) {
+    return {
+      negotiationId: null,
+      requestId: null,
+      searchId: "",
+      categoryId: "",
+      token: null,
+      error: "Thumbtack needs the property ZIP code to open this conversation.",
+    }
+  }
+
+  const sessions = await input.provider.mintRequestFlowSessions()
+  if (sessions.length === 0) {
+    return {
+      negotiationId: null,
+      requestId: null,
+      searchId: "",
+      categoryId: "",
+      token: null,
+      error: thumbtackOpenConversationError(401, "oauth_token_failed"),
+      status: 401,
+    }
+  }
+
+  let lastError: { error: string; status?: number } | null = null
+  let sawHitsWithoutBusiness = false
+  for (const session of sessions) {
+    const hits = await input.provider.searchWithAccessToken(
+      searchInput,
+      session.token,
+      session.apiBase,
+    )
+    const ctx = thumbtackSearchContextForBusiness(hits, input.businessId, {
+      requireBusiness: true,
+    })
+    if (!ctx) {
+      console.warn("[thumbtack-messages] request-flow search missed business", {
+        hits: hits.length,
+        businessId: input.businessId,
+        lastSearchError: input.provider.lastSearchError,
+      })
+      if (hits.length > 0) sawHitsWithoutBusiness = true
+      continue
+    }
+    const created = await createThumbtackRequest({
+      provider: input.provider,
+      token: session.token,
+      apiBase: session.apiBase,
+      searchId: ctx.searchId,
+      businessId: input.businessId,
+      categoryId: ctx.categoryId,
+    })
+    if (created.negotiationId) {
+      return {
+        negotiationId: created.negotiationId,
+        requestId: created.requestId,
+        searchId: ctx.searchId,
+        categoryId: ctx.categoryId,
+        token: session.token,
+        apiBase: session.apiBase,
+      }
+    }
+    const fallback = await loadNegotiationForBusiness({
+      provider: input.provider,
+      token: session.token,
+      apiBase: session.apiBase,
+      businessId: input.businessId,
+    })
+    if (fallback) {
+      return {
+        negotiationId: fallback,
+        requestId: created.requestId,
+        searchId: ctx.searchId,
+        categoryId: ctx.categoryId,
+        token: session.token,
+        apiBase: session.apiBase,
+      }
+    }
+    lastError = {
+      error: created.error ||
+        "Thumbtack did not return a conversation for this pro. Search again, then try Message Vendor.",
+      status: created.status,
+    }
+    if (created.status === 401 || created.status === 403) {
+      console.warn("[thumbtack-messages] request-flow token cannot open a request", created.status)
+    }
+  }
+
+  const failedLogin = lastError?.status === 401 || lastError?.status === 403
+  return {
+    negotiationId: null,
+    requestId: null,
+    searchId: "",
+    categoryId: "",
+    token: null,
+    error: failedLogin || !lastError
+      ? (sawHitsWithoutBusiness
+        ? "Thumbtack could not reopen this pro in a fresh search. Search for vendors again, then send the message."
+        : "Ulo could not start this Thumbtack conversation with the same login used to find the pro. Ask Thumbtack to enable finding pros and sending messages on one app, then try again.")
+      : lastError.error,
+    status: failedLogin ? undefined : lastError?.status,
+  }
 }
 
 export async function sendThumbtackVendorMessage(
@@ -173,41 +325,40 @@ export async function sendThumbtackVendorMessage(
   let thread = existing.data ? mapThumbtackThreadRow(existing.data as Record<string, unknown>) : null
   let negotiationId = thread?.negotiation_id?.trim() || null
   let requestId = thread?.request_id?.trim() || null
-  const searchId = input.searchId?.trim() || thread?.search_id?.trim() || ""
-  const categoryId = input.categoryId?.trim() || thread?.category_id?.trim() || null
+  let searchId = input.searchId?.trim() || thread?.search_id?.trim() || ""
+  let categoryId = input.categoryId?.trim() || thread?.category_id?.trim() || ""
+  let flowToken: string | null = null
+  let flowApiBase: string | null = null
 
   if (!negotiationId) {
-    if (searchId) {
-      const created = await createThumbtackRequest({
-        provider,
-        searchId,
-        businessId,
-        categoryId,
-      })
-      if (created.error && !created.negotiationId) {
-        const fallback = await loadNegotiationForBusiness({ provider, businessId })
-        if (!fallback) {
-          return { ok: false, error: created.error, httpStatus: created.status }
-        }
-        negotiationId = fallback
-      } else {
-        negotiationId = created.negotiationId
-        requestId = created.requestId ?? requestId
-      }
-    }
-    if (!negotiationId) {
-      negotiationId = await loadNegotiationForBusiness({ provider, businessId })
-    }
+    const opened = await openThumbtackNegotiation({
+      provider,
+      send: input,
+      businessId,
+    })
+    if (opened.searchId) searchId = opened.searchId
+    if (opened.categoryId) categoryId = opened.categoryId
+    requestId = opened.requestId ?? requestId
+    flowToken = opened.token
+    flowApiBase = opened.apiBase ?? null
+    negotiationId = opened.negotiationId
     if (!negotiationId) {
       return {
         ok: false,
-        error:
+        error: opened.error ||
           "Thumbtack did not return a conversation for this pro. Search again, then try Message Vendor.",
+        httpStatus: opened.status,
       }
     }
   }
 
-  const sent = await postNegotiationMessage({ provider, negotiationId, text })
+  const sent = await postNegotiationMessage({
+    provider,
+    token: flowToken,
+    apiBase: flowApiBase,
+    negotiationId,
+    text,
+  })
   if (!sent.ok) {
     return { ok: false, error: sent.error, httpStatus: sent.status }
   }
