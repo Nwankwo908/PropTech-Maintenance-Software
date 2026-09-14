@@ -8,6 +8,10 @@ export type ExternalVendorHit = {
   /** Optional stable id from the provider (Thumbtack businessID, etc.). */
   providerRef?: string | null
   etaMinutes?: number | null
+  /** Straight-line miles when both property and vendor coordinates are known. */
+  distanceMiles?: number | null
+  latitude?: number | null
+  longitude?: number | null
   address?: string | null
   phone?: string | null
   website?: string | null
@@ -33,6 +37,7 @@ export type ExternalVendorSuggestion = {
   sources: ExternalVendorSource[]
   rankScore: number
   etaMinutes: number | null
+  distanceMiles?: number | null
   address?: string | null
   phone?: string | null
   website?: string | null

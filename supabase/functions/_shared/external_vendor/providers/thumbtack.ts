@@ -233,6 +233,7 @@ export function parseThumbtackBusinesses(parsed: unknown): ExternalVendorHit[] {
       tags.some((t) => t.toLowerCase() === "licensed")
     const fromListing = thumbtackIdsFromListingUrl(listingUrl)
     const fromFlow = thumbtackIdsFromListingUrl(requestFlowUrl)
+    const coords = pickLatLng(b as Record<string, unknown>)
     out.push({
       name,
       rating: typeof b.rating === "number" && Number.isFinite(b.rating) ? b.rating : null,
@@ -246,6 +247,9 @@ export function parseThumbtackBusinesses(parsed: unknown): ExternalVendorHit[] {
         ? b.businessID.trim()
         : null,
       etaMinutes: hoursToEtaMinutes(b.responseTimeHours),
+      distanceMiles: pickDistanceMiles(b as Record<string, unknown>),
+      latitude: coords?.lat ?? null,
+      longitude: coords?.lng ?? null,
       address: typeof b.businessLocation === "string" && b.businessLocation.trim()
         ? b.businessLocation.trim()
         : null,
@@ -390,6 +394,52 @@ function pickString(row: Record<string, unknown>, keys: string[]): string {
     if (typeof v === "string" && v.trim()) return v.trim()
   }
   return ""
+}
+
+function pickFiniteNumber(row: Record<string, unknown>, keys: string[]): number | null {
+  for (const key of keys) {
+    const v = row[key]
+    if (typeof v === "number" && Number.isFinite(v)) return v
+    if (typeof v === "string" && v.trim()) {
+      const n = Number(v)
+      if (Number.isFinite(n)) return n
+    }
+  }
+  return null
+}
+
+function pickLatLng(row: Record<string, unknown>): { lat: number; lng: number } | null {
+  const nestedKeys = ["geo", "location", "coordinates", "latLng", "latlng", "businessLocation"]
+  for (const key of nestedKeys) {
+    const nested = row[key]
+    if (nested && typeof nested === "object" && !Array.isArray(nested)) {
+      const found = pickLatLng(nested as Record<string, unknown>)
+      if (found) return found
+    }
+  }
+  const lat = pickFiniteNumber(row, ["latitude", "lat", "businessLatitude"])
+  const lng = pickFiniteNumber(row, ["longitude", "lng", "lon", "businessLongitude"])
+  if (
+    lat == null ||
+    lng == null ||
+    Math.abs(lat) > 90 ||
+    Math.abs(lng) > 180
+  ) {
+    return null
+  }
+  return { lat, lng }
+}
+
+/** Thumbtack occasionally returns miles; ignore values that look like meters or hours. */
+function pickDistanceMiles(row: Record<string, unknown>): number | null {
+  const n = pickFiniteNumber(row, [
+    "distanceMiles",
+    "distance_miles",
+    "distanceInMiles",
+    "servingDistanceMiles",
+  ])
+  if (n == null || n < 0 || n > 500) return null
+  return Math.round(n * 10) / 10
 }
 
 function pickHttpUrl(row: Record<string, unknown>, keys: string[]): string | null {

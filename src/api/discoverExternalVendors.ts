@@ -26,6 +26,7 @@ export type ExternalVendorSuggestionDto = {
   priceLabel: string | null
   sources: ('thumbtack' | 'mock')[]
   etaMinutes?: number | null
+  distanceMiles?: number | null
   address?: string | null
   phone?: string | null
   website?: string | null

@@ -4,6 +4,7 @@ import { defineConfig } from 'vitest/config'
 import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
 import { prerenderPublicPagesPlugin } from './src/prerender/prerenderPublicPagesPlugin.ts'
+import { uloDistanceMatrixProxyPlugin } from './vite/uloDistanceMatrixProxyPlugin.ts'
 import { uloStreetViewProxyPlugin } from './vite/uloStreetViewProxyPlugin.ts'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
@@ -18,6 +19,7 @@ export default defineConfig({
     tailwindcss(),
     prerenderPublicPagesPlugin(),
     uloStreetViewProxyPlugin(root),
+    uloDistanceMatrixProxyPlugin(root),
     {
       name: 'dev-local-canonical',
       transformIndexHtml(html, ctx) {
@@ -55,6 +57,6 @@ export default defineConfig({
   },
   test: {
     environment: 'node',
-    include: ['src/**/*.{test,spec}.{ts,tsx}'],
+    include: ['src/**/*.{test,spec}.{ts,tsx}', 'shared/**/*.{test,spec}.{ts,tsx}'],
   },
 })

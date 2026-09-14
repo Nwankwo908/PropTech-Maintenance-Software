@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  applyVendorDistanceMiles,
   buildExternalSearchQueryLabel,
   enrichExternalVendorSuggestions,
   sanitizeExternalVendorDiscoveryForAccount,
@@ -40,6 +41,57 @@ describe('enrichExternalVendorSuggestions', () => {
     expect(rows.map((row) => row.name)).toEqual(
       expect.arrayContaining(['BrightWire Electric', 'SafePanel Contractors']),
     )
+    expect(rows.every((row) => row.distanceMiles == null)).toBe(true)
+  })
+
+  it('uses measured miles, not Thumbtack response-time ETA', () => {
+    const rows = enrichExternalVendorSuggestions(
+      [
+        {
+          name: 'J&J Telecom & Electric',
+          rating: 4.8,
+          reviewCount: 40,
+          priceLabel: null,
+          sources: ['thumbtack'],
+          etaMinutes: 60,
+          address: 'Toms River, NJ',
+          distanceMiles: 59.5,
+        },
+      ],
+      'electrical',
+    )
+    expect(rows[0]?.distanceMiles).toBe(59.5)
+  })
+
+  it('overlays driving miles and re-ranks by distance', () => {
+    const rows = enrichExternalVendorSuggestions(
+      [
+        {
+          name: 'Far Electric',
+          rating: 5,
+          reviewCount: 200,
+          priceLabel: null,
+          sources: ['thumbtack'],
+          address: 'Toms River, NJ',
+        },
+        {
+          name: 'Near Electric',
+          rating: 4.2,
+          reviewCount: 20,
+          priceLabel: null,
+          sources: ['thumbtack'],
+          address: 'East Orange, NJ',
+        },
+      ],
+      'electrical',
+    )
+    const overlay = applyVendorDistanceMiles(rows, {
+      'Far Electric': 59.5,
+      'Near Electric': 1.2,
+    })
+    expect(overlay.map((row) => row.name)).toEqual(['Near Electric', 'Far Electric'])
+    expect(overlay[0]?.distanceMiles).toBe(1.2)
+    expect(overlay[1]?.distanceMiles).toBe(59.5)
   })
 })
 

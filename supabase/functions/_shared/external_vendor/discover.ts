@@ -396,7 +396,7 @@ export async function discoverExternalVendorsForTicket(
     ...result,
     suggestions,
     jobContext: {
-      propertyAddress: locationLabel || searchLocation,
+      propertyAddress: searchLocation || locationLabel,
       jobCategory: formatThumbtackJobCategoryLabel(normalizedCategory),
       issueSummary,
       urgency,

@@ -4,6 +4,10 @@
   "buildCommand": "npm run build",
   "outputDirectory": "dist",
   "installCommand": "npm ci",
+  "env": {
+    "VITE_GA4_MEASUREMENT_ID": "G-V3TZ9DBCGX",
+    "VITE_CLARITY_PROJECT_ID": "yctaghhr6q"
+  },
   "rewrites": [
     { "source": "/terms", "destination": "/terms/index.html" },
     { "source": "/privacy", "destination": "/privacy/index.html" },

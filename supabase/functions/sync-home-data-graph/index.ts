@@ -106,7 +106,7 @@ serve(async (req) => {
         snapshot: existing,
         refreshed: false,
         configured: true,
-        lookupError: `No listing details found for “${address}”. Check the street, city, and ZIP.`,
+        lookupError: null,
       })
     }
 

@@ -50,10 +50,6 @@ function etaLabel(vendor: ExternalVendorDisplayRow): string | null {
     const high = low + 10
     return `ETA ${low}–${high} min`
   }
-  if (vendor.distanceMiles != null) {
-    const mins = Math.max(15, Math.round(vendor.distanceMiles * 12))
-    return `ETA ${mins}–${mins + 10} min`
-  }
   return null
 }
 

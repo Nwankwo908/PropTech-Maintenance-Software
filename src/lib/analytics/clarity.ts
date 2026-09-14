@@ -1,4 +1,5 @@
 import { isAnalyticsEnabled } from './isAnalyticsEnabled'
+import { resolveClarityProjectId } from './measurementIds'
 import { isAnonymousUuid, pickClarityTags } from './sanitize'
 
 declare global {
@@ -8,7 +9,7 @@ declare global {
 }
 
 function projectId(): string {
-  return (import.meta.env.VITE_CLARITY_PROJECT_ID ?? '').trim()
+  return resolveClarityProjectId()
 }
 
 function callClarity(...args: unknown[]): void {

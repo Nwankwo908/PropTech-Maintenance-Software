@@ -1,4 +1,5 @@
 import { isAnalyticsEnabled } from './isAnalyticsEnabled'
+import { resolveGa4MeasurementId } from './measurementIds'
 import { sanitizePageLocation, type AnalyticsProperties } from './sanitize'
 
 export type Ga4PageViewPayload = {
@@ -15,7 +16,7 @@ declare global {
 }
 
 function measurementId(): string {
-  return (import.meta.env.VITE_GA4_MEASUREMENT_ID ?? '').trim()
+  return resolveGa4MeasurementId()
 }
 
 function loadGtag(id: string): void {

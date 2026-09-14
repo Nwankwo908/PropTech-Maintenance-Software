@@ -30,6 +30,7 @@ type MutableAgg = {
   priceLabel: string | null
   sources: Set<ExternalVendorSource>
   etaMinutes: number | null
+  distanceMiles: number | null
   address: string | null
   phone: string | null
   website: string | null
@@ -94,6 +95,7 @@ export function mergeAndRankExternalHits(
         priceLabel: hit.priceLabel,
         sources: new Set([hit.source]),
         etaMinutes: hit.etaMinutes ?? null,
+        distanceMiles: hit.distanceMiles ?? null,
         address: hit.address?.trim() || null,
         phone: hit.phone?.trim() || null,
         website: hit.website?.trim() || null,
@@ -112,6 +114,7 @@ export function mergeAndRankExternalHits(
     prev.reviewCount = maxNullable(prev.reviewCount, hit.reviewCount)
     prev.rating = maxNullable(prev.rating, hit.rating)
     prev.etaMinutes = minNullable(prev.etaMinutes, hit.etaMinutes ?? null)
+    prev.distanceMiles = minNullable(prev.distanceMiles, hit.distanceMiles ?? null)
     prev.address = pickString(prev.address, hit.address)
     prev.phone = pickString(prev.phone, hit.phone)
     prev.website = pickString(prev.website, hit.website)
@@ -140,6 +143,7 @@ export function mergeAndRankExternalHits(
       sources,
       rankScore,
       etaMinutes: m.etaMinutes,
+      distanceMiles: m.distanceMiles,
       address: m.address,
       phone: m.phone,
       website: m.website,

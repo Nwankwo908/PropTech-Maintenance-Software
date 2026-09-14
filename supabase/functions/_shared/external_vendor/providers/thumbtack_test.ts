@@ -80,6 +80,9 @@ Deno.test("parseThumbtackBusinesses maps partner search payload", () => {
         numberOfReviews: 11,
         quote: { startingCost: 85, costUnit: "on-site estimate" },
         businessLocation: "Milpitas, CA",
+        latitude: 39.95,
+        longitude: -74.2,
+        distanceMiles: 59.5,
         responseTimeHours: 1,
         servicePageURL: "https://thumbtack.com/example",
         widgets: {
@@ -111,6 +114,9 @@ Deno.test("parseThumbtackBusinesses maps partner search payload", () => {
     throw new Error(`imageUrl ${hit.imageUrl}`)
   }
   if (hit.etaMinutes !== 60) throw new Error(`eta ${hit.etaMinutes}`)
+  if (hit.latitude !== 39.95) throw new Error(`lat ${hit.latitude}`)
+  if (hit.longitude !== -74.2) throw new Error(`lng ${hit.longitude}`)
+  if (hit.distanceMiles !== 59.5) throw new Error(`miles ${hit.distanceMiles}`)
   if (!hit.priceLabel?.includes("Licensed")) throw new Error(`price ${hit.priceLabel}`)
   if (!hit.tags?.includes("Licensed") || !hit.tags?.includes("Top Pro")) {
     throw new Error(`tags ${hit.tags?.join(",")}`)

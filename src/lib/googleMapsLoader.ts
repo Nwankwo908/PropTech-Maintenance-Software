@@ -37,6 +37,7 @@ async function importMapsLibraries(g: typeof google): Promise<void> {
     g.maps.importLibrary('maps'),
     g.maps.importLibrary('geocoding'),
     g.maps.importLibrary('streetView'),
+    g.maps.importLibrary('routes'),
   ])
 }
 

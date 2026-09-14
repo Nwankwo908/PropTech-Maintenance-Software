@@ -1,4 +1,5 @@
 import { useEffect, useId, useMemo, useRef, useState } from 'react'
+import { geocodablePropertyOrigin } from '@shared/geo/haversineMiles'
 import type { ExternalVendorJobContextDto, ExternalVendorSuggestionDto } from '@/api/discoverExternalVendors'
 import {
   getThumbtackVendorThreads,
@@ -21,10 +22,13 @@ import {
   type AdminRightRailStackedPosition,
 } from '@/lib/adminRightRail'
 import {
+  applyVendorDistanceMiles,
   buildExternalSearchQueryLabel,
   enrichExternalVendorSuggestions,
+  vendorDistanceLookupKey,
   type ExternalVendorDisplayRow,
 } from '@/lib/externalVendorDisplay'
+import { measureVendorDistancesFromProperty } from '@/lib/vendorDistanceMiles'
 import { PhoneTelLink } from '@/components/CallPhoneButton'
 import { vendorInitials } from '@/lib/vendorCallFlow'
 import {
@@ -367,13 +371,18 @@ export function FindExternalVendorRail({
     Record<string, ThumbtackVendorThreadDto>
   >({})
   const [listReentered, setListReentered] = useState(false)
-  const displayRows = enrichExternalVendorSuggestions(
+  const [measuredMiles, setMeasuredMiles] = useState<Record<string, number>>({})
+  const originAddress = geocodablePropertyOrigin(
+    jobContext?.propertyAddress || locationLabel || areaLabel,
+  )
+  const baseRows = enrichExternalVendorSuggestions(
     suggestions,
     issueCategory,
     locationLabel,
   ).map((row) =>
     applyThreadToVendor(row, row.providerRef ? threadsByBusiness[row.providerRef] : undefined),
   )
+  const displayRows = applyVendorDistanceMiles(baseRows, measuredMiles)
   const searchQuery = buildExternalSearchQueryLabel(issueCategory, areaLabel ?? '')
   const resultCount = displayRows.length
   const isSheet = presentation === 'sheet'
@@ -383,14 +392,33 @@ export function FindExternalVendorRail({
 
   const outreachContext = useMemo(
     () => ({
-      propertyAddress: jobContext?.propertyAddress || locationLabel || areaLabel,
+      propertyAddress: originAddress || jobContext?.propertyAddress || locationLabel || areaLabel,
       jobCategory: jobContext?.jobCategory || issueCategory,
       issueSummary: jobContext?.issueSummary ?? null,
       urgency: jobContext?.urgency ?? null,
       timeframe: jobContext?.timeframe ?? null,
     }),
-    [jobContext, locationLabel, areaLabel, issueCategory],
+    [jobContext, originAddress, locationLabel, areaLabel, issueCategory],
   )
+
+  useEffect(() => {
+    if (!open) {
+      setMeasuredMiles({})
+      return
+    }
+    const vendors = suggestions.map((row) => ({
+      key: vendorDistanceLookupKey(row),
+      name: row.name,
+      address: row.address ?? null,
+    }))
+    let cancelled = false
+    void measureVendorDistancesFromProperty({ originAddress, vendors }).then((miles) => {
+      if (!cancelled) setMeasuredMiles(miles)
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [open, originAddress, suggestions])
 
   useEffect(() => {
     if (open) return

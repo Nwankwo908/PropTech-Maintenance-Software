@@ -105,6 +105,11 @@ function formatLotSize(value: number | null | undefined): string {
   return `${formatHomeDataNumber(value)} Square Feet`
 }
 
+function isMissingListingNotice(message: string | null | undefined): boolean {
+  if (!message) return false
+  return /no listing details found|no property data found/i.test(message)
+}
+
 function formatTaxLine(facts: HomeDataFacts): string {
   const tax = formatHomeDataMoney(facts.propertyTaxAnnual)
   if (tax === '—') return '—'
@@ -266,7 +271,7 @@ export function PropertyHomeDataPanel({
         })
         if (cancelled) return
         if (result.snapshot) setSnapshot(result.snapshot)
-        setError(result.lookupError)
+        setError(isMissingListingNotice(result.lookupError) ? null : result.lookupError)
       } catch (err) {
         if (cancelled) return
         setError(getErrorMessage(err, 'Could not load property data.'))

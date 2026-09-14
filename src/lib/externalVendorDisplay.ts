@@ -196,7 +196,9 @@ export function enrichExternalVendorSuggestions(
           : [fallbackTag]
 
     const distanceMiles =
-      s.etaMinutes != null ? Math.max(0.5, s.etaMinutes / 18) : null
+      typeof s.distanceMiles === 'number' && Number.isFinite(s.distanceMiles)
+        ? s.distanceMiles
+        : null
 
     return {
       ...s,
@@ -215,4 +217,27 @@ export function enrichExternalVendorSuggestions(
   })
 
   return rows.sort(compareExternalVendorRows)
+}
+
+export function vendorDistanceLookupKey(row: {
+  providerRef?: string | null
+  name: string
+}): string {
+  return row.providerRef?.trim() || row.name.trim()
+}
+
+export function applyVendorDistanceMiles(
+  rows: ExternalVendorDisplayRow[],
+  milesByKey: Record<string, number>,
+): ExternalVendorDisplayRow[] {
+  const next = rows.map((row) => {
+    const miles = milesByKey[vendorDistanceLookupKey(row)]
+    if (miles == null || !Number.isFinite(miles)) return row
+    return {
+      ...row,
+      distanceMiles: miles,
+      distanceTier: getVendorDistanceTier(miles),
+    }
+  })
+  return next.sort(compareExternalVendorRows)
 }

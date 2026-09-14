@@ -8,6 +8,12 @@ import {
 import { shouldMaskClarityDom } from './clarityMasking'
 import { isAnalyticsEnabled, isProductionAnalyticsHost } from './isAnalyticsEnabled'
 import {
+  DEFAULT_CLARITY_PROJECT_ID,
+  DEFAULT_GA4_MEASUREMENT_ID,
+  resolveClarityProjectId,
+  resolveGa4MeasurementId,
+} from './measurementIds'
+import {
   pickClarityTags,
   pickIdentifyContext,
   sanitizeAnalyticsProperties,
@@ -36,6 +42,15 @@ describe('isProductionAnalyticsHost', () => {
 describe('isAnalyticsEnabled', () => {
   it('is off in Vite non-production (dev / unit tests)', () => {
     expect(isAnalyticsEnabled()).toBe(false)
+  })
+})
+
+describe('measurement IDs', () => {
+  it('falls back to the public GA4 and Clarity IDs when Vite env is unset', () => {
+    expect(resolveGa4MeasurementId()).toBe(DEFAULT_GA4_MEASUREMENT_ID)
+    expect(resolveClarityProjectId()).toBe(DEFAULT_CLARITY_PROJECT_ID)
+    expect(DEFAULT_GA4_MEASUREMENT_ID).toMatch(/^G-[A-Z0-9]+$/)
+    expect(DEFAULT_CLARITY_PROJECT_ID).toBe('yctaghhr6q')
   })
 })
 
