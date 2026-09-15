@@ -48,6 +48,12 @@ export type ThumbtackProviderOptions = {
   oauthScope?: string
   messagingOauthScope?: string
   messagingRefreshToken?: string
+  /** Staging Client Credentials app — used only against staging-auth.thumbtack.com. */
+  stagingClientId?: string
+  stagingClientSecret?: string
+  /** Staging Auth Code / Message API app. */
+  stagingMessagingClientId?: string
+  stagingMessagingClientSecret?: string
   utmSource?: string
 }
 
@@ -954,24 +960,52 @@ export class ThumbtackExternalVendorProvider implements ExternalVendorProvider {
     const messagingTokenUrl = this.opts.messagingTokenUrl?.trim() || searchTokenUrl
     const messagingApi = (this.opts.messagingApiBaseUrl?.trim() || searchApi).replace(/\/$/, "")
 
-    const attempts = credentialSource === "messaging"
+    const searchCreds = this.credentialsFor(credentialSource)
+    const stagingClientId = this.opts.stagingClientId?.trim() ?? ""
+    const stagingClientSecret = this.opts.stagingClientSecret?.trim() ?? ""
+    const stagingCreds = stagingClientId && stagingClientSecret
+      ? { clientId: stagingClientId, clientSecret: stagingClientSecret }
+      : null
+
+    const stagingMessagingClientId = this.opts.stagingMessagingClientId?.trim() ?? ""
+    const stagingMessagingClientSecret = this.opts.stagingMessagingClientSecret?.trim() ?? ""
+    const stagingMessagingCreds = stagingMessagingClientId && stagingMessagingClientSecret
+      ? { clientId: stagingMessagingClientId, clientSecret: stagingMessagingClientSecret }
+      : null
+
+    const attempts: Array<{
+      tokenUrl: string
+      apiBase: string
+      clientId: string
+      clientSecret: string
+    }> = credentialSource === "messaging"
       ? [
-        { tokenUrl: messagingTokenUrl, apiBase: messagingApi },
+        { tokenUrl: messagingTokenUrl, apiBase: messagingApi, ...searchCreds },
         {
           tokenUrl: "https://auth.thumbtack.com/oauth2/token",
           apiBase: DEFAULT_API_BASE,
+          ...searchCreds,
         },
+        ...(!opts?.skipStagingFallback && stagingMessagingCreds
+          ? [{
+            tokenUrl: "https://staging-auth.thumbtack.com/oauth2/token",
+            apiBase: "https://staging-api.thumbtack.com/api",
+            ...stagingMessagingCreds,
+          }]
+          : []),
       ]
       : [
-        { tokenUrl: searchTokenUrl, apiBase: searchApi },
-        ...(opts?.skipStagingFallback ? [] : [{
-          tokenUrl: "https://staging-auth.thumbtack.com/oauth2/token",
-          apiBase: "https://staging-api.thumbtack.com/api",
-        }]),
+        { tokenUrl: searchTokenUrl, apiBase: searchApi, ...searchCreds },
+        ...(!opts?.skipStagingFallback && stagingCreds
+          ? [{
+            tokenUrl: "https://staging-auth.thumbtack.com/oauth2/token",
+            apiBase: "https://staging-api.thumbtack.com/api",
+            ...stagingCreds,
+          }]
+          : []),
       ]
 
-    const { clientId, clientSecret } = this.credentialsFor(credentialSource)
-    if (!clientId || !clientSecret) return null
+    if (!searchCreds.clientId || !searchCreds.clientSecret) return null
     const formWithScope = new URLSearchParams({
       grant_type: "client_credentials",
       audience: "urn:partner-api",
@@ -981,10 +1015,12 @@ export class ThumbtackExternalVendorProvider implements ExternalVendorProvider {
       grant_type: "client_credentials",
       audience: "urn:partner-api",
     })
-    const basic = btoa(`${clientId}:${clientSecret}`)
 
     let lastStatus = 0
     for (const attempt of attempts) {
+      const { clientId, clientSecret } = attempt
+      if (!clientId || !clientSecret) continue
+      const basic = btoa(`${clientId}:${clientSecret}`)
       const variants: Array<{
         headers: Record<string, string>
         body: URLSearchParams
@@ -1083,6 +1119,11 @@ export function thumbtackProviderFromEnv(): ThumbtackExternalVendorProvider {
     oauthScope: Deno.env.get("THUMBTACK_OAUTH_SCOPE")?.trim() || undefined,
     messagingOauthScope: Deno.env.get("THUMBTACK_MESSAGING_OAUTH_SCOPE")?.trim() || undefined,
     messagingRefreshToken: Deno.env.get("THUMBTACK_MESSAGING_REFRESH_TOKEN")?.trim() || undefined,
+    stagingClientId: Deno.env.get("THUMBTACK_STAGING_CLIENT_ID")?.trim() || undefined,
+    stagingClientSecret: Deno.env.get("THUMBTACK_STAGING_CLIENT_SECRET")?.trim() || undefined,
+    stagingMessagingClientId: Deno.env.get("THUMBTACK_STAGING_MESSAGING_CLIENT_ID")?.trim() || undefined,
+    stagingMessagingClientSecret: Deno.env.get("THUMBTACK_STAGING_MESSAGING_CLIENT_SECRET")?.trim() ||
+      undefined,
     utmSource: normalizeThumbtackUtmSource(Deno.env.get("THUMBTACK_UTM_SOURCE")),
   })
 }
