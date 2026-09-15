@@ -131,6 +131,7 @@ async function tryLandlordVendorChoiceHandler(
     conversationId: ctx.conversationId,
     body: ctx.inbound.body,
     identityType: ctx.identity.identity_type,
+    fromPhone: ctx.inbound.from,
   })
   if (!result.handled) return { handled: false }
 
@@ -144,6 +145,7 @@ async function tryLandlordVendorChoiceHandler(
     reply: {
       body: result.replyBody,
       source: "landlord_vendor_choice",
+      skipGenericFallback: true,
     },
   }
 }

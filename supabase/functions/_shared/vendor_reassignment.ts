@@ -17,6 +17,7 @@ import {
 } from "./recommend_vendor_alternatives.ts"
 import {
   loadDeclinedVendorIdsForTicket,
+  loadJobStateForTicket,
   loadMostRecentlyAssignedVendorId,
   pickVendorForAssignment,
 } from "./vendor_assignment.ts"
@@ -104,6 +105,10 @@ export async function findReplacementVendorForTicket(
     marketplacePreference: landlordId
       ? await loadLandlordMarketplacePreference(supabase, landlordId)
       : "include_imported",
+    jobState: await loadJobStateForTicket(supabase, {
+      ticketId,
+      landlordId,
+    }),
   })
   if (!picked) return { ok: true, vendor: null }
   return { ok: true, vendor: { id: picked.id, name: picked.name } }

@@ -44,7 +44,7 @@ Cron: `check-vendor-performance-standards` (daily). No-shows from confirmed appo
 
 ## Incident protocols (pre-launch gates)
 
-Matching requires **ACTIVE** *and* a matching trade. Same-trade specialists first, then every Active **general / handyman**. **Never auto-assign.** Ulo texts the landlord first with **every** matchable vendor: reply **YES** when only one is available, or **1 / 2 / 3…** when more than one can take the job. After that SMS acknowledgement, Ulo assigns and coordinates. If no Active specialist or generalist exists, leave the job unassigned and use **Find External Vendor**. Do not assign a different specialist trade (e.g. plumber for HVAC).
+Matching requires **ACTIVE**, a matching trade, and the **same service-area state** as the property. Same-trade specialists first, then every Active **general / handyman** in that state. **Never auto-assign.** Ulo texts the landlord first with **every** matchable vendor: reply **YES** when only one is available, or **1 / 2 / 3…** when more than one can take the job. After that SMS acknowledgement, Ulo assigns and coordinates. If no Active specialist or generalist exists in the state, leave the job unassigned and use **Find External Vendor**. Do not assign a different specialist trade (e.g. plumber for HVAC), and do not assign a vendor whose service area is a different state.
 
 | Protocol | Key rule | Implementation |
 |---|---|---|
@@ -80,7 +80,7 @@ Matching requires **ACTIVE** *and* a matching trade. Same-trade specialists firs
 
 - Resolver: `src/lib/vendorStatusChip.ts` → `resolveVendorCapacityChip` / `isVendorMatchable`
 - UI chips: `AdminVendorsDashboard`, `AdminVendorDetailDashboard`, `vendorComplianceProfile`
-- Matching: `pickVendorForAssignment` / `resolveVendorAssignmentDecision` must only consider matchable (ACTIVE) vendors. Prefer the **same trade**; if none are Active, offer Active **general / handyman** vendors. Always SMS the landlord for acknowledgement before dispatch (YES for one vendor, 1 / 2 / 3… when more than one is Active). If neither exists, leave the job unassigned and use **Find External Vendor** — never last-resort a different specialist trade.
+- Matching: `pickVendorForAssignment` / `resolveVendorAssignmentDecision` must only consider matchable (ACTIVE) vendors whose **service area is the same US state** as the property. Prefer the **same trade**; if none are Active in-state, offer Active **general / handyman** vendors in that state. Always SMS the landlord for acknowledgement before dispatch (YES for one vendor, 1 / 2 / 3… when more than one is Active). If neither exists, leave the job unassigned and use **Find External Vendor** — never last-resort a different specialist trade or an out-of-state vendor.
 - Never show **Active** while verification is incomplete, unless the landlord used **Override onboarding**
 - Hide **Start onboarding** once the vendor is no longer Not activated (invite sent, form submitted, verified, or **Override onboarding**)
 - Override does **not** mark `vendor_verifications.status = verified` and does **not** send an invite

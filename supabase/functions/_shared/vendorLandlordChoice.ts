@@ -87,13 +87,7 @@ export function canHandleLandlordVendorChoice(input: {
   conversationType?: string | null
   intakeState: unknown
 }): boolean {
-  if (input.identityType === "vendor" || input.identityType === "resident") {
-    return false
-  }
-  const isLandlordThread =
-    input.conversationType === "landlord_update" ||
-    input.identityType === "landlord"
-  if (!isLandlordThread) return false
+  if (input.identityType === "resident") return false
   return readAwaitingVendorChoice(input.intakeState) != null
 }
 
@@ -204,7 +198,7 @@ export function buildLandlordVendorChoiceSms(input: {
     lines.push(
       `${name} (${kind}) can take this job.`,
       "",
-      `Reply YES to send this to ${name} and we'll handle the rest.`,
+      `Reply YES if you want us to send this to ${name}.`,
     )
   } else {
     lines.push("These vendors on your roster can take this job:")
@@ -214,7 +208,7 @@ export function buildLandlordVendorChoiceSms(input: {
     })
     lines.push(
       "",
-      `${landlordChoiceReplyHint(input.options.length)} and we'll send the work order and handle the rest.`,
+      `${landlordChoiceReplyHint(input.options.length)} and we'll send them the work order.`,
     )
   }
 
@@ -426,38 +420,59 @@ export async function tryHandleLandlordVendorChoiceInbound(
     conversationId: string
     body: string
     identityType: string
+    fromPhone?: string | null
   },
 ): Promise<
   | { handled: false }
   | { handled: true; ticketId: string; vendorId: string | null; replyBody: string }
 > {
+  if (params.identityType === "resident") return { handled: false }
+
   const { data: conv } = await supabase
     .from("sms_conversations")
-    .select("id, intake_state, conversation_type, maintenance_request_id")
+    .select("id, intake_state, conversation_type, maintenance_request_id, external_phone_number")
     .eq("id", params.conversationId)
     .eq("landlord_id", params.landlordId)
     .maybeSingle()
 
   if (!conv?.id) return { handled: false }
 
-  const priorIntake =
+  let conversationId = conv.id
+  let priorIntake =
     conv.intake_state && typeof conv.intake_state === "object"
       ? (conv.intake_state as Record<string, unknown>)
       : {}
+  let awaiting = readAwaitingVendorChoice(priorIntake)
 
-  if (
-    !canHandleLandlordVendorChoice({
-      identityType: params.identityType,
-      conversationType: typeof conv.conversation_type === "string"
-        ? conv.conversation_type
-        : null,
-      intakeState: priorIntake,
-    })
-  ) {
-    return { handled: false }
+  if (!awaiting) {
+    const phone = normalizeSmsPhone(
+      params.fromPhone?.trim() ||
+        (typeof conv.external_phone_number === "string"
+          ? conv.external_phone_number
+          : ""),
+    )
+    if (phone) {
+      const { data: others } = await supabase
+        .from("sms_conversations")
+        .select("id, intake_state")
+        .eq("landlord_id", params.landlordId)
+        .eq("external_phone_number", phone)
+        .order("updated_at", { ascending: false })
+        .limit(25)
+      const match = (others ?? []).find((row) =>
+        readAwaitingVendorChoice(row.intake_state) != null
+      )
+      if (match?.id) {
+        conversationId = match.id
+        priorIntake =
+          match.intake_state && typeof match.intake_state === "object"
+            ? (match.intake_state as Record<string, unknown>)
+            : {}
+        awaiting = readAwaitingVendorChoice(priorIntake)
+      }
+    }
   }
 
-  const awaiting = readAwaitingVendorChoice(priorIntake)
   if (!awaiting) return { handled: false }
 
   const chosen = parseLandlordVendorChoice(params.body, awaiting.options)
@@ -490,12 +505,12 @@ export async function tryHandleLandlordVendorChoiceInbound(
   }
 
   if (typeof ticket.assigned_vendor_id === "string" && ticket.assigned_vendor_id.trim()) {
-    await clearAwaitingVendorChoice(supabase, params.conversationId, priorIntake)
+    await clearAwaitingVendorChoice(supabase, conversationId, priorIntake)
     return {
       handled: true,
       ticketId: awaiting.ticketId,
       vendorId: ticket.assigned_vendor_id.trim(),
-      replyBody: "That work order already has a vendor. We'll keep coordinating from here.",
+      replyBody: "That work order already has a vendor. We'll text you when they reply.",
     }
   }
 
@@ -533,7 +548,7 @@ export async function tryHandleLandlordVendorChoiceInbound(
     }
   }
 
-  await clearAwaitingVendorChoice(supabase, params.conversationId, priorIntake)
+  await clearAwaitingVendorChoice(supabase, conversationId, priorIntake)
   await recordActivityLog(supabase, {
     landlordId: params.landlordId,
     eventType: "maintenance.vendor_choice_selected",
@@ -541,7 +556,7 @@ export async function tryHandleLandlordVendorChoiceInbound(
     actorType: "landlord",
     vendorId: chosen.id,
     maintenanceRequestId: awaiting.ticketId,
-    conversationId: params.conversationId,
+    conversationId,
     metadata: {
       message: `Assigned ${chosen.name} after the landlord confirmed.`,
     },
@@ -551,6 +566,6 @@ export async function tryHandleLandlordVendorChoiceInbound(
     handled: true,
     ticketId: awaiting.ticketId,
     vendorId: chosen.id,
-    replyBody: `We'll send this to ${chosen.name} now and handle the rest.`,
+    replyBody: `Got it — we'll send this to ${chosen.name} now and ask them to take the job. We'll text you when they reply.`,
   }
 }

@@ -1,11 +1,16 @@
 import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.49.1"
 import {
+  loadJobStateForTicket,
   loadMostRecentlyAssignedVendorId,
   resolveVendorAssignmentDecision,
   touchVendorLastAssignedAt,
   isVendorMatchableForDispatch,
 } from "../_shared/vendor_assignment.ts"
 import { vendorTradeMatchesForDispatch } from "../_shared/vendor_trades.ts"
+import {
+  vendorCoversJobState,
+  vendorServiceStateCodes,
+} from "../_shared/vendorServiceArea.ts"
 import { sendResendEmail } from "../_shared/delivery.ts"
 import { sendVendorJobAlert } from "../_shared/sms/vendorSmsRouting.ts"
 import { signVendorEmailAction } from "../_shared/vendor_action_token.ts"
@@ -263,6 +268,7 @@ async function loadPreferredVendorIfMatchable(
   vendorId: string,
   landlordId?: string | null,
   issueCategory?: string | null,
+  jobState?: string | null,
 ): Promise<VendorRow | null> {
   const id = vendorId.trim()
   if (!id) return null
@@ -287,7 +293,7 @@ async function loadPreferredVendorIfMatchable(
 
   let verifQuery = supabase
     .from("vendor_verifications")
-    .select("status, availability, updated_at")
+    .select("status, availability, service_area, license_state, updated_at")
     .eq("vendor_id", vendor.id)
     .order("updated_at", { ascending: false })
     .limit(1)
@@ -315,6 +321,14 @@ async function loadPreferredVendorIfMatchable(
   const vendorCategory =
     typeof vendor.category === "string" ? vendor.category : null
   if (!vendorTradeMatchesForDispatch(vendorCategory, issueCategory ?? null)) {
+    return null
+  }
+
+  const vendorStates = vendorServiceStateCodes({
+    serviceArea: verif?.service_area ?? null,
+    licenseState: typeof verif?.license_state === "string" ? verif.license_state : null,
+  })
+  if (!vendorCoversJobState(vendorStates, jobState)) {
     return null
   }
 
@@ -526,6 +540,11 @@ export async function assignVendorAndNotify(
   }
   payload.landlordId = landlordId
 
+  const jobState = await loadJobStateForTicket(supabase, {
+    ticketId: payload.ticketId,
+    landlordId,
+  })
+
   const alreadyAwaitingChoice =
     typeof ticket.vendor_notify_error === "string" &&
     ticket.vendor_notify_error.includes(AWAITING_LANDLORD_VENDOR_CHOICE)
@@ -570,6 +589,7 @@ export async function assignVendorAndNotify(
       payload.preferVendorId,
       landlordId,
       issueCategory,
+      jobState,
     )
   } else if (landlordId) {
     const preferNot = await loadMostRecentlyAssignedVendorId(supabase)
@@ -584,6 +604,7 @@ export async function assignVendorAndNotify(
       landlordId,
       preferPreferredEmergency: isEmergencyPriority(payload.priority),
       marketplacePreference,
+      jobState,
     })
     if (decision.kind === "landlord_choice") {
       await notifyLandlordVendorChoice(supabase, {
@@ -619,7 +640,7 @@ export async function assignVendorAndNotify(
       .from("maintenance_requests")
       .update({
         vendor_notify_error: landlordId
-          ? "No active vendor available for this trade"
+          ? "No active vendor available in this service area"
           : "No active vendor available",
       })
       .eq("id", payload.ticketId)

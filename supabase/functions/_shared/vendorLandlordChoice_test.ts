@@ -110,6 +110,14 @@ Deno.test("canHandleLandlordVendorChoice requires pending ask on landlord thread
   )
   assertEquals(
     canHandleLandlordVendorChoice({
+      identityType: "vendor",
+      conversationType: "open",
+      intakeState: intake,
+    }),
+    true,
+  )
+  assertEquals(
+    canHandleLandlordVendorChoice({
       identityType: "resident",
       conversationType: "landlord_update",
       intakeState: intake,

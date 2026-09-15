@@ -2,6 +2,11 @@ import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.49.1
 import type { MarketplacePreferenceId } from "./landlordNotificationPrefs.ts"
 import { vendorTradeMatchesForDispatch, isGeneralistTrade } from "./vendor_trades.ts"
 import {
+  normalizeUsStateCode,
+  vendorCoversJobState,
+  vendorServiceStateCodes,
+} from "./vendorServiceArea.ts"
+import {
   countVendorWeeklyAssignments,
   maybeAutoPauseVendorAtWeeklyCap,
 } from "./vendor_capacity.ts"
@@ -230,6 +235,11 @@ export type PickVendorForAssignmentOptions = {
   preferPreferredEmergency?: boolean
   /** Landlord vendor pool preference from organization settings. */
   marketplacePreference?: MarketplacePreferenceId
+  /**
+   * Two-letter US state for the work-order property. Vendors whose service
+   * area is a different state are not offered.
+   */
+  jobState?: string | null
 }
 
 /**
@@ -285,12 +295,17 @@ async function loadRankedVendorTiers(
   const candidateIds = candidates.map((v) => v.id)
   const verificationByVendor = new Map<
     string,
-    { status: string | null; availability: string | null }
+    {
+      status: string | null
+      availability: string | null
+      serviceArea: unknown
+      licenseState: string | null
+    }
   >()
   if (candidateIds.length > 0) {
     let verifQuery = supabase
       .from("vendor_verifications")
-      .select("vendor_id, status, availability, updated_at")
+      .select("vendor_id, status, availability, service_area, license_state, updated_at")
       .in("vendor_id", candidateIds)
       .order("updated_at", { ascending: false })
     if (landlordId) {
@@ -307,22 +322,33 @@ async function loadRankedVendorTiers(
         verificationByVendor.set(vendorId, {
           status: typeof rec.status === "string" ? rec.status : null,
           availability: typeof rec.availability === "string" ? rec.availability : null,
+          serviceArea: rec.service_area ?? null,
+          licenseState: typeof rec.license_state === "string" ? rec.license_state : null,
         })
       }
     }
   }
 
+  const jobState = options.jobState?.trim() || null
   const matchable = candidates.filter((v) => {
     if (!vendorAllowedForMarketplace(v, marketplacePreference)) return false
     const verif = verificationByVendor.get(v.id)
-    return isVendorMatchableForDispatch({
-      verificationStatus: verif?.status ?? null,
-      // Account readiness only — capacity pause is availability on verification.
-      vendorActive: v.active,
-      availability: verif?.availability ?? null,
-      rosterStatus: v.roster_status ?? null,
-      onboardingOverriddenAt: v.onboarding_overridden_at ?? null,
+    if (
+      !isVendorMatchableForDispatch({
+        verificationStatus: verif?.status ?? null,
+        vendorActive: v.active,
+        availability: verif?.availability ?? null,
+        rosterStatus: v.roster_status ?? null,
+        onboardingOverriddenAt: v.onboarding_overridden_at ?? null,
+      })
+    ) {
+      return false
+    }
+    const vendorStates = vendorServiceStateCodes({
+      serviceArea: verif?.serviceArea,
+      licenseState: verif?.licenseState ?? null,
     })
+    return vendorCoversJobState(vendorStates, jobState)
   })
 
   const underWeeklyCap: VendorAssignmentRow[] = []
@@ -410,4 +436,68 @@ export async function touchVendorLastAssignedAt(
       vendorId,
     })
   }
+}
+
+export async function loadJobStateForTicket(
+  supabase: SupabaseClient,
+  params: {
+    ticketId: string
+    landlordId?: string | null
+  },
+): Promise<string | null> {
+  const { data: ticket } = await supabase
+    .from("maintenance_requests")
+    .select("property_id, unit_id, landlord_id")
+    .eq("id", params.ticketId)
+    .maybeSingle()
+
+  const landlordId =
+    params.landlordId?.trim() ||
+    (typeof ticket?.landlord_id === "string" ? ticket.landlord_id.trim() : "") ||
+    null
+
+  async function stateFromPropertyId(propertyId: string): Promise<string | null> {
+    let query = supabase.from("properties").select("state").eq("id", propertyId)
+    if (landlordId) query = query.eq("landlord_id", landlordId)
+    const { data } = await query.maybeSingle()
+    return normalizeUsStateCode(
+      typeof data?.state === "string" ? data.state : "",
+    )
+  }
+
+  const propertyId =
+    typeof ticket?.property_id === "string" ? ticket.property_id.trim() : ""
+  if (propertyId) {
+    const fromProperty = await stateFromPropertyId(propertyId)
+    if (fromProperty) return fromProperty
+  }
+
+  const unitId = typeof ticket?.unit_id === "string" ? ticket.unit_id.trim() : ""
+  if (unitId) {
+    const { data: unit } = await supabase
+      .from("units")
+      .select("property_id")
+      .eq("id", unitId)
+      .maybeSingle()
+    const unitPropertyId =
+      typeof unit?.property_id === "string" ? unit.property_id.trim() : ""
+    if (unitPropertyId) {
+      const fromUnit = await stateFromPropertyId(unitPropertyId)
+      if (fromUnit) return fromUnit
+    }
+  }
+
+  if (!landlordId) return null
+  const { data: properties } = await supabase
+    .from("properties")
+    .select("state")
+    .eq("landlord_id", landlordId)
+    .limit(200)
+  const states = new Set<string>()
+  for (const row of properties ?? []) {
+    const code = normalizeUsStateCode(typeof row.state === "string" ? row.state : "")
+    if (code) states.add(code)
+  }
+  if (states.size === 1) return [...states][0] ?? null
+  return null
 }
