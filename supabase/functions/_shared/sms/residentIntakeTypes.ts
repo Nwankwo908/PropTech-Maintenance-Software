@@ -119,6 +119,10 @@ export type SmsIntakeState = {
   pending_related_text?: string
   /** Waiting for YES/NO: "Are you asking about your rent balance?" */
   awaiting_rent_balance_clarify?: boolean
+  /** Off-topic SMS parked until the resident replies YES or NO to welcome. */
+  pending_onboarding_request_body?: string
+  pending_onboarding_request_media?: string[]
+  pending_onboarding_request_at?: string
 }
 
 /** Same clarifying question may be sent at most this many times without a valid answer. */
@@ -404,6 +408,9 @@ const ISSUE_TYPE_ALIASES: Record<string, IssueType> = {
   pests: "pest",
   bug: "pest",
   roach: "pest",
+  exterminator: "pest",
+  extermination: "pest",
+  "pest control": "pest",
   lock: "lock",
   general: "general",
   other: "other",
@@ -446,7 +453,15 @@ export function inferIssueTypeFromText(text: string): IssueType | null {
   ) {
     return "HVAC"
   }
-  if (/\b(pest|roach|mouse|rat|bug|insect|termite)\b/.test(d)) return "pest"
+  // Keep aligned with shared/maintenance/deterministicRules.ts PEST_RE.
+  if (
+    /\b(pest(?:s| control)?|roach(?:es)?|cockroach(?:es)?|mouse|mice|rat|rats|rodent(?:s)?|vermin|bug|bugs|insect|ant(?:s)?|spider(?:s)?|termite|infestation|droppings|bee|bees|wasp|hornet|hive|exterminator|extermination|(?:bug|insect|flea|bed\s*bug|spider)s?\s+bites)\b/
+      .test(d) ||
+    /\bspray(?:ing)?\s+(?:the\s+)?(?:property|unit|apartment|building|home|house)\b/
+      .test(d)
+  ) {
+    return "pest"
+  }
   if (
     /\b(lock|key|deadbolt|door stuck|locked out|door (?:is |was )?(?:damaged|broken|jammed|won'?t (?:close|open|lock|shut)|off (?:the )?hinges?))\b/
       .test(d)

@@ -53,9 +53,11 @@ Deno.test("STOP works for onboarding and activated residents (compliance path)",
   )
 })
 
-Deno.test("activation YES is separate from compliance START", () => {
+Deno.test("activation YES/NO is separate from compliance START", () => {
   assertEquals(classifyTenantActivationKeyword("YES"), "start")
+  assertEquals(classifyTenantActivationKeyword("NO"), "decline")
   assertEquals(classifyTenantComplianceKeyword("YES"), null)
+  assertEquals(classifyTenantComplianceKeyword("NO"), null)
   assertEquals(classifyTenantComplianceKeyword("START"), "start")
   assertEquals(classifyTenantActivationKeyword("START"), null)
 })
@@ -64,6 +66,19 @@ Deno.test("1. pending activation + YES → activation reply eligible", () => {
   assertEquals(
     canHandleTenantActivationReply({
       body: "YES",
+      residentId: RESIDENT,
+      identityType: "resident",
+      conversationType: "resident_intake",
+      ...waitingActivation(),
+    }),
+    true,
+  )
+})
+
+Deno.test("1b. pending activation + NO → activation reply eligible", () => {
+  assertEquals(
+    canHandleTenantActivationReply({
+      body: "NO",
       residentId: RESIDENT,
       identityType: "resident",
       conversationType: "resident_intake",

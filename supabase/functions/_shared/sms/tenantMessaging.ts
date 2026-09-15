@@ -11,7 +11,7 @@ export type TenantConsentUpdate = {
   sms_consent_at?: string | null
   sms_opt_out_at?: string | null
   activation_sms_sent_at?: string | null
-  /** Landlord-facing activation status (stops retries on YES / STOP). */
+  /** Landlord-facing activation status (stops retries on YES / NO / STOP). */
   activation_status?:
     | "not_started"
     | "waiting"
@@ -19,6 +19,7 @@ export type TenantConsentUpdate = {
     | "action_required"
     | "activated"
     | "opted_out"
+    | "declined"
     | null
   last_delivery_error?: string | null
 }
@@ -26,7 +27,7 @@ export type TenantConsentUpdate = {
 /** Inbound compliance keyword classification (carrier + first-party handled). */
 export type TenantSmsKeyword = "stop" | "help" | "start" | null
 export type TenantComplianceKeyword = "stop" | "help" | "start" | null
-export type TenantActivationKeyword = "start" | null
+export type TenantActivationKeyword = "start" | "decline" | null
 
 const STOP_WORDS = new Set([
   "stop",
@@ -39,8 +40,9 @@ const STOP_WORDS = new Set([
 const HELP_WORDS = new Set(["help", "info"])
 /** Carrier / first-party re-opt-in. Global — not YES (YES stays contextual). */
 const COMPLIANCE_START_WORDS = new Set(["start", "unstop"])
-/** Welcome-SMS opt-in while `activation_status === waiting`. */
+/** Welcome-SMS YES / NO while `activation_status === waiting`. */
 const ACTIVATION_YES_WORDS = new Set(["yes", "y"])
+const ACTIVATION_NO_WORDS = new Set(["no", "n"])
 
 function complianceToken(body: string): string {
   return body.trim().toLowerCase().replace(/[.!?,]+$/g, "")
@@ -60,11 +62,12 @@ export function classifyTenantComplianceKeyword(body: string): TenantComplianceK
   return null
 }
 
-/** YES — tenant activation opt-in (contextual; see isTenantActivationPending). */
+/** YES / NO — tenant activation decision (contextual; see isTenantActivationPending). */
 export function classifyTenantActivationKeyword(body: string): TenantActivationKeyword {
   const token = complianceToken(body)
   if (!token || token.includes(" ")) return null
   if (ACTIVATION_YES_WORDS.has(token)) return "start"
+  if (ACTIVATION_NO_WORDS.has(token)) return "decline"
   return null
 }
 
@@ -74,11 +77,14 @@ export function classifyTenantActivationKeyword(body: string): TenantActivationK
  * maintenance report like "the heater stopped working" is never mistaken for STOP.
  */
 export function classifyTenantSmsKeyword(body: string): TenantSmsKeyword {
-  return classifyTenantComplianceKeyword(body) ??
-    classifyTenantActivationKeyword(body)
+  const compliance = classifyTenantComplianceKeyword(body)
+  if (compliance) return compliance
+  const activation = classifyTenantActivationKeyword(body)
+  if (activation === "start") return "start"
+  return null
 }
 
-/** True when Ulo is waiting for a tenant YES to complete SMS activation. */
+/** True when Ulo is waiting for a tenant YES or NO to complete SMS activation. */
 export function isTenantActivationPending(input: {
   activationStatus?: string | null
   smsConsentStatus?: string | null
@@ -89,6 +95,7 @@ export function isTenantActivationPending(input: {
 
   if (consent === "opted_in" || activation === "activated") return false
   if (consent === "opted_out" || activation === "opted_out") return false
+  if (activation === "declined") return false
   if (activation === "action_required") return false
   if (activation === "delivery_failed") return false
 
@@ -145,6 +152,15 @@ export function smsOptInActivationPatch(nowIso: string): TenantConsentUpdate {
     sms_consent_status: "opted_in",
     sms_consent_at: nowIso,
     activation_status: "activated",
+    last_delivery_error: null,
+  }
+}
+
+/** Welcome-SMS NO — stop YES/NO nudges; not STOP (they can still text repairs). */
+export function smsActivationDeclinePatch(): TenantConsentUpdate {
+  return {
+    sms_consent_status: "pending",
+    activation_status: "declined",
     last_delivery_error: null,
   }
 }
@@ -256,7 +272,8 @@ export function composeTenantWelcomeSms(params: {
     `about your home.\n\n` +
     `Save this number as "Ulo Assistant".\n\n` +
     `Reply YES to get updates about your maintenance requests and important ` +
-    `messages about your home.\n\n` +
+    `messages about your home.\n` +
+    `Reply NO if you don't want those updates.\n\n` +
     tenantSmsComplianceFooter()
   )
 }
@@ -275,6 +292,24 @@ export function tenantOptInConfirmationSms(params: {
     `Save this number as "Ulo Assistant".\n\n` +
     `Reply STOP to unsubscribe.`
   )
+}
+
+/** Auto-reply after a tenant replies NO to the welcome SMS. */
+export function tenantActivationDeclineSms(): string {
+  return (
+    `Got it — we won't send extra updates about your home. ` +
+    `You can still text this number anytime you need a repair.`
+  )
+}
+
+/** After YES/NO when we already have a parked request to continue. */
+export function tenantActivationContinueParkedSms(kind: "start" | "decline"): string {
+  if (kind === "decline") {
+    return (
+      `Got it — we won't send extra updates. I'll help with what you texted about next.`
+    )
+  }
+  return `You're all set, thank you. I'll help with what you texted about next.`
 }
 
 /** Auto-reply after STOP → START re-opt-in for a known resident. */
@@ -452,6 +487,8 @@ export type TenantActivationKeywordResult = {
   handled: boolean
   keyword: TenantActivationKeyword
   outboundMessageId?: string
+  /** Parked off-topic text to run through maintenance intake after YES/NO. */
+  resumeParkedRequest?: { body: string; mediaUrls: string[] } | null
 }
 
 type TenantKeywordHandlerParams = {
@@ -500,10 +537,10 @@ async function recordTenantConsentEvent(
     residentId: string | null
     conversationId: string
     eventType: string
-    keyword: "stop" | "help" | "start"
+    keyword: "stop" | "help" | "start" | "decline"
     fromPhone: string
     message: string
-    consentStatus?: "opted_in" | "opted_out"
+    consentStatus?: "opted_in" | "opted_out" | "pending"
   },
 ): Promise<void> {
   await recordActivityLog(supabase, {
@@ -525,7 +562,10 @@ async function recordTenantConsentEvent(
 
 async function applyTenantKeywordAction(
   supabase: SupabaseClient,
-  params: TenantKeywordHandlerParams & { keyword: "stop" | "help" | "start" },
+  params: TenantKeywordHandlerParams & {
+    keyword: "stop" | "help" | "start" | "decline"
+    continueParkedRequest?: boolean
+  },
 ): Promise<{ outboundMessageId?: string }> {
   const residentId = params.residentId?.trim() || null
   const nowIso = new Date().toISOString()
@@ -533,7 +573,7 @@ async function applyTenantKeywordAction(
   let replyBody: string
   const replySource =
     params.replySource ??
-    (params.keyword === "start"
+    (params.keyword === "start" || params.keyword === "decline"
       ? "tenant_activation_reply"
       : `tenant_compliance_${params.keyword}`)
 
@@ -632,6 +672,26 @@ async function applyTenantKeywordAction(
         consentStatus: "opted_in",
       })
     }
+    if (params.continueParkedRequest) {
+      replyBody = tenantActivationContinueParkedSms("start")
+    }
+  } else if (params.keyword === "decline") {
+    if (residentId) {
+      await updateTenantConsent(supabase, residentId, smsActivationDeclinePatch())
+    }
+    replyBody = params.continueParkedRequest
+      ? tenantActivationContinueParkedSms("decline")
+      : tenantActivationDeclineSms()
+    await recordTenantConsentEvent(supabase, {
+      landlordId: params.landlordId,
+      residentId,
+      conversationId: params.conversationId,
+      eventType: "tenant.activation_declined",
+      keyword: "decline",
+      fromPhone: params.externalPhone,
+      message: "Resident replied NO to SMS updates.",
+      consentStatus: "pending",
+    })
   } else {
     replyBody = tenantHelpReplySms({ companyName: params.companyName })
     await recordTenantConsentEvent(supabase, {
@@ -680,7 +740,7 @@ export async function tryHandleTenantComplianceKeyword(
 }
 
 /**
- * Inbound activation **reply** only — recognizes YES while onboarding is pending.
+ * Inbound activation **reply** only — recognizes YES / NO while onboarding is pending.
  * START is global compliance (re-opt-in) and is handled earlier in the registry.
  * Does not own welcome send, retries, or activation orchestration (see tenantActivation.ts).
  */
@@ -730,13 +790,27 @@ export async function tryHandleTenantActivationReply(
     return { handled: false, keyword: null }
   }
 
+  const { consumeParkedOnboardingRequest } = await import(
+    "./tenantActivationPending.ts"
+  )
+  const parked = await consumeParkedOnboardingRequest(
+    supabase,
+    params.conversationId,
+  )
+
   const { outboundMessageId } = await applyTenantKeywordAction(supabase, {
     ...params,
-    keyword: "start",
+    keyword,
+    continueParkedRequest: Boolean(parked?.body),
     replySource: "tenant_activation_reply",
   })
 
-  return { handled: true, keyword: "start", outboundMessageId }
+  return {
+    handled: true,
+    keyword,
+    outboundMessageId,
+    resumeParkedRequest: parked,
+  }
 }
 
 /** @deprecated Prefer tryHandleTenantActivationReply */

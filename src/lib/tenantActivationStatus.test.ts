@@ -33,13 +33,24 @@ describe('resolveTenantActivationChip — SMS consent stays in sync with activat
     expect(chip.status).not.toBe('action_required')
   })
 
-  it('shows Waiting only before the resident has opted in', () => {
+    it('keeps Waiting after several unanswered follow-ups', () => {
     const chip = resolveTenantActivationChip({
       activationStatus: 'waiting',
       smsConsentStatus: 'pending',
       activationSmsSentAt: '2026-08-01T00:00:00.000Z',
+      activationAttemptCount: 5,
     })
     expect(chip.status).toBe('waiting')
     expect(chip.label).toBe('Waiting for Resident')
+  })
+
+  it('shows Declined updates after NO', () => {
+    const chip = resolveTenantActivationChip({
+      activationStatus: 'declined',
+      smsConsentStatus: 'pending',
+      activationSmsSentAt: '2026-08-01T00:00:00.000Z',
+    })
+    expect(chip.status).toBe('declined')
+    expect(chip.label).toBe('Declined updates')
   })
 })

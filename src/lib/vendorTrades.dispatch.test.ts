@@ -16,14 +16,18 @@ describe('vendorTradeMatchesForDispatch', () => {
     expect(vendorTradeMatchesForDispatch('plumbing', 'hvac')).toBe(false)
   })
 
-  it('does not last-resort when the ticket trade is unknown', () => {
+  it('does not last-resort a different specialist when the ticket trade is unknown', () => {
     expect(vendorTradeMatchesForDispatch('plumbing', null)).toBe(false)
     expect(vendorTradeMatchesForDispatch('plumbing', 'general')).toBe(false)
     expect(vendorTradeMatchesForDispatch('plumbing', '')).toBe(false)
   })
 
-  it('does not treat a generalist as a matching trade', () => {
-    expect(vendorTradeMatchesForDispatch(null, 'appliance_repair')).toBe(false)
-    expect(vendorTradeMatchesForDispatch('', 'plumbing')).toBe(false)
+  it('lets general / handyman take any trade', () => {
+    expect(vendorTradeMatchesForDispatch('general', 'plumbing')).toBe(true)
+    expect(vendorTradeMatchesForDispatch('handyman', 'appliance_repair')).toBe(
+      true,
+    )
+    expect(vendorTradeMatchesForDispatch(null, 'hvac')).toBe(true)
+    expect(vendorTradeMatchesForDispatch('', 'pest_control')).toBe(true)
   })
 })

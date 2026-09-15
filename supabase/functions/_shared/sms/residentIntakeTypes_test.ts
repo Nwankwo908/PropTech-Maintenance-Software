@@ -51,7 +51,22 @@ Deno.test("infers electrical from electrician / outlet wording", () => {
   assertEqual(inferIssueTypeFromText("outlet sparking"), "electrical", "outlet")
 })
 
-Deno.test("infers lock from door damage / won't close", () => {
+Deno.test("infers pest from exterminator / spray-the-property wording", () => {
+  assertEqual(
+    inferIssueTypeFromText(
+      "Hi and thank you I was trying to see if an exterminator can come out to spray the property",
+    ),
+    "pest",
+    "exterminator",
+  )
+  assertEqual(
+    inferIssueTypeFromText("Can someone spray the property"),
+    "pest",
+    "spray the property",
+  )
+})
+
+Deno.test("infers lock from door damage wording", () => {
   assertEqual(inferIssueTypeFromText("My door is damaged"), "lock", "door damaged")
   assertEqual(inferIssueTypeFromText("The door won't close"), "lock", "door won't close")
 })

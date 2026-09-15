@@ -206,7 +206,7 @@ function KpiCard({
         {label}
       </p>
       <div className="flex items-end justify-between gap-2">
-        <p className="text-[44px] font-bold leading-none tracking-[0.4px] text-[#0a0a0a] tabular-nums xl:text-[52px]">
+        <p className="text-[44px] font-medium leading-none tracking-[0.4px] text-[#0a0a0a] tabular-nums xl:text-[52px]">
           {value}
         </p>
         {delta != null ? (
@@ -229,7 +229,7 @@ function KpiCard({
           </span>
         ) : null}
       </div>
-      <p className="text-[12px] leading-4 text-[#6a7282]">{caption}</p>
+      <p className="min-w-0 truncate whitespace-nowrap text-[12px] leading-4 text-[#6a7282]">{caption}</p>
     </div>
   )
 }

@@ -1,6 +1,6 @@
 import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.49.1"
 import type { MarketplacePreferenceId } from "./landlordNotificationPrefs.ts"
-import { vendorTradeMatchesForDispatch } from "./vendor_trades.ts"
+import { vendorTradeMatchesForDispatch, isGeneralistTrade } from "./vendor_trades.ts"
 import {
   countVendorWeeklyAssignments,
   maybeAutoPauseVendorAtWeeklyCap,
@@ -139,14 +139,11 @@ function lastAssignedSortKey(iso: string | null | undefined): number {
   return Number.isNaN(t) ? -1 : t
 }
 
-function rankVendorCandidates(
+function sortVendorCandidates(
   candidates: VendorAssignmentRow[],
   counts: Map<string, number>,
-  avoid: string | null,
-): VendorAssignmentRow | null {
-  if (candidates.length === 0) return null
-
-  candidates.sort((a, b) => {
+): VendorAssignmentRow[] {
+  return [...candidates].sort((a, b) => {
     const ca = counts.get(a.id) ?? 0
     const cb = counts.get(b.id) ?? 0
     if (ca !== cb) return ca - cb
@@ -157,16 +154,63 @@ function rankVendorCandidates(
     const bc = new Date(b.created_at).getTime()
     return ac - bc
   })
+}
 
-  if (
-    avoid &&
-    candidates.length > 1 &&
-    candidates[0]?.id === avoid
-  ) {
-    return candidates[1] ?? candidates[0]
+/** Fairness order for the landlord choice list (every matchable vendor in the tier). */
+function rankVendorCandidatesAll(
+  candidates: VendorAssignmentRow[],
+  counts: Map<string, number>,
+  avoid: string | null,
+): VendorAssignmentRow[] {
+  const ranked = sortVendorCandidates(candidates, counts)
+  if (ranked.length === 0) return []
+  if (avoid && ranked.length > 1 && ranked[0]?.id === avoid) {
+    return [...ranked.slice(1), ranked[0]!]
   }
+  return ranked
+}
 
-  return candidates[0] ?? null
+export type VendorAssignmentOption = {
+  vendor: VendorAssignmentRow
+  role: "specialist" | "generalist"
+}
+
+export type VendorAssignmentDecision =
+  | { kind: "none" }
+  | { kind: "landlord_choice"; options: VendorAssignmentOption[] }
+
+/**
+ * Never auto-assign. List every Active specialist, then every Active
+ * general / handyman. The landlord must acknowledge by text first.
+ */
+export function decideVendorAssignmentFromTiers(
+  specialists: VendorAssignmentRow[] | VendorAssignmentRow | null,
+  generalists: VendorAssignmentRow[] | VendorAssignmentRow | null,
+): VendorAssignmentDecision {
+  const specialistList = Array.isArray(specialists)
+    ? specialists
+    : specialists
+      ? [specialists]
+      : []
+  const generalistList = Array.isArray(generalists)
+    ? generalists
+    : generalists
+      ? [generalists]
+      : []
+  const seen = new Set<string>()
+  const options: VendorAssignmentOption[] = []
+  for (const vendor of specialistList) {
+    if (!vendor?.id || seen.has(vendor.id)) continue
+    seen.add(vendor.id)
+    options.push({ vendor, role: "specialist" })
+  }
+  for (const vendor of generalistList) {
+    if (!vendor?.id || seen.has(vendor.id)) continue
+    seen.add(vendor.id)
+    options.push({ vendor, role: "generalist" })
+  }
+  if (options.length === 0) return { kind: "none" }
+  return { kind: "landlord_choice", options }
 }
 
 export type PickVendorForAssignmentOptions = {
@@ -189,18 +233,21 @@ export type PickVendorForAssignmentOptions = {
 }
 
 /**
- * Pick only Active vendors whose trade matches the ticket.
- * No matching trade (or none Active) → null so the job stays unassigned
- * and Find External Vendor / admin assign can run. Do not last-resort a
- * different trade (e.g. plumber for an oven).
+ * Pick Active vendors whose trade matches the ticket, or Active general /
+ * handyman vendors when no specialist is available.
+ * A different specialist trade (e.g. plumber for an oven) is never used.
  *
- * Within the matching pool: preferred-emergency first (when requested), then
+ * Within a tier: preferred-emergency first (when requested), then
  * lowest active job count, then fairness on `last_assigned_at` / `created_at`.
  */
-export async function pickVendorForAssignment(
+async function loadRankedVendorTiers(
   supabase: SupabaseClient,
   options: PickVendorForAssignmentOptions,
-): Promise<VendorAssignmentRow | null> {
+): Promise<{
+  specialists: VendorAssignmentRow[]
+  generalists: VendorAssignmentRow[]
+}> {
+  const empty = { specialists: [] as VendorAssignmentRow[], generalists: [] as VendorAssignmentRow[] }
   const excluded = new Set(options.excludeVendorIds.filter(Boolean))
   const issueCat = options.issueCategory ?? null
   const avoid = options.preferNotVendorId?.trim() ?? null
@@ -225,7 +272,7 @@ export async function pickVendorForAssignment(
 
   if (error) {
     console.error("[vendor-assignment] list vendors", error)
-    return null
+    return empty
   }
 
   const candidates = (rows ?? []).filter((v) => {
@@ -233,7 +280,7 @@ export async function pickVendorForAssignment(
     return !excluded.has(row.id)
   }) as VendorAssignmentRow[]
 
-  if (candidates.length === 0) return null
+  if (candidates.length === 0) return empty
 
   const candidateIds = candidates.map((v) => v.id)
   const verificationByVendor = new Map<
@@ -291,24 +338,54 @@ export async function pickVendorForAssignment(
   }
 
   const base = underWeeklyCap
-  if (base.length === 0) return null
+  if (base.length === 0) return empty
 
   const counts = await loadActiveJobCounts(supabase)
 
-  function pickFromTier(tier: VendorAssignmentRow[]): VendorAssignmentRow | null {
-    if (tier.length === 0) return null
+  function rankTier(tier: VendorAssignmentRow[]): VendorAssignmentRow[] {
+    if (tier.length === 0) return []
     if (preferEmergency) {
       const preferred = tier.filter((v) => v.preferred_emergency === true)
-      const fromPreferred = rankVendorCandidates(preferred, counts, avoid)
-      if (fromPreferred) return fromPreferred
+      const rest = tier.filter((v) => v.preferred_emergency !== true)
+      return [
+        ...rankVendorCandidatesAll(preferred, counts, avoid),
+        ...rankVendorCandidatesAll(rest, counts, avoid),
+      ]
     }
-    return rankVendorCandidates(tier, counts, avoid)
+    return rankVendorCandidatesAll(tier, counts, avoid)
   }
 
   const matchingTrade = base.filter((v) =>
     vendorTradeMatchesForDispatch(v.category, issueCat)
   )
-  return pickFromTier(matchingTrade)
+  const specialists = matchingTrade.filter((v) => !isGeneralistTrade(v.category))
+  const generalists = matchingTrade.filter((v) => isGeneralistTrade(v.category))
+  return {
+    specialists: rankTier(specialists),
+    generalists: rankTier(generalists),
+  }
+}
+
+export async function resolveVendorAssignmentDecision(
+  supabase: SupabaseClient,
+  options: PickVendorForAssignmentOptions,
+): Promise<VendorAssignmentDecision> {
+  const { specialists, generalists } = await loadRankedVendorTiers(supabase, options)
+  return decideVendorAssignmentFromTiers(specialists, generalists)
+}
+
+/**
+ * Ranked roster pick for listing / rematch candidates.
+ * Dispatch still waits for landlord SMS acknowledgement via
+ * `resolveVendorAssignmentDecision` + `assignVendorAndNotify`.
+ */
+export async function pickVendorForAssignment(
+  supabase: SupabaseClient,
+  options: PickVendorForAssignmentOptions,
+): Promise<VendorAssignmentRow | null> {
+  const decision = await resolveVendorAssignmentDecision(supabase, options)
+  if (decision.kind === "landlord_choice") return decision.options[0]?.vendor ?? null
+  return null
 }
 
 export async function touchVendorLastAssignedAt(

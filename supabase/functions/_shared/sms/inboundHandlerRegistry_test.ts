@@ -32,18 +32,25 @@ Deno.test("START/HELP/STOP compliance runs before conversations and activation r
   assertEquals(priority("compliance_stop_help") < priority("tenant_activation_reply"), true)
 })
 
+Deno.test("landlord_vendor_choice runs with other landlord pending asks", () => {
+  assertEquals(priority("estimate_decision") < priority("landlord_vendor_choice"), true)
+  assertEquals(priority("landlord_vendor_choice") < priority("landlord_rent_receipt"), true)
+})
+
 Deno.test("schedule_confirm runs before tenant_activation_reply (YES disambiguation)", () => {
   assertEquals(priority("schedule_confirm") < priority("tenant_activation_reply"), true)
 })
 
 Deno.test("active conversations run before tenant_activation_reply", () => {
   assertEquals(priority("estimate_decision") < priority("tenant_activation_reply"), true)
+  assertEquals(priority("landlord_vendor_choice") < priority("tenant_activation_reply"), true)
   assertEquals(priority("landlord_rent_receipt") < priority("tenant_activation_reply"), true)
   assertEquals(priority("invoice_payment") < priority("tenant_activation_reply"), true)
 })
 
-Deno.test("tenant_activation_reply runs before vendor operations", () => {
-  assertEquals(priority("tenant_activation_reply") < priority("vendor_reschedule"), true)
+Deno.test("tenant_activation_reply runs before hold and vendor operations", () => {
+  assertEquals(priority("tenant_activation_reply") < priority("tenant_activation_hold"), true)
+  assertEquals(priority("tenant_activation_hold") < priority("vendor_reschedule"), true)
 })
 
 Deno.test("vendor_reschedule runs before vendor_capacity", () => {

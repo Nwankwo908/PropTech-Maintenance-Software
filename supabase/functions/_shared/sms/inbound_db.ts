@@ -891,17 +891,64 @@ export async function findOrCreateConversation(
   return { conversationId, created: true, conversationType }
 }
 
+const OPEN_WORK_ORDER_STATUSES = [
+  "unassigned",
+  "pending_accept",
+  "accepted",
+  "in_progress",
+] as const
+
+/** Drop a conversation-linked ticket that belongs to another landlord. */
+export async function maintenanceRequestIdIfSameLandlord(
+  supabase: SupabaseClient,
+  ticketId: string | null | undefined,
+  landlordId: string,
+): Promise<string | null> {
+  const id = ticketId?.trim()
+  if (!id) return null
+  const { data } = await supabase
+    .from("maintenance_requests")
+    .select("id, landlord_id")
+    .eq("id", id)
+    .maybeSingle()
+  if (!data?.id) return null
+  const ticketLandlord = (data.landlord_id as string | null)?.trim()
+  if (ticketLandlord && ticketLandlord !== landlordId) return null
+  return data.id as string
+}
+
 export async function resolveOpenMaintenanceRequestId(
   supabase: SupabaseClient,
   identity: SmsIdentityRow,
   fromNumber: string,
 ): Promise<string | null> {
   if (identity.vendor_id?.trim()) {
-    const { data: ticket } = await supabase
+    let vendorQuery = supabase
       .from("maintenance_requests")
       .select("id")
       .eq("assigned_vendor_id", identity.vendor_id)
       .in("vendor_work_status", ["pending_accept", "accepted", "in_progress"])
+    if (identity.landlord_id) {
+      vendorQuery = vendorQuery.eq("landlord_id", identity.landlord_id)
+    }
+    const { data: ticket } = await vendorQuery
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle()
+    if (ticket?.id) return ticket.id as string
+  }
+
+  const e164 = normalizePhoneFlexible(fromNumber)
+  if (e164) {
+    let phoneQuery = supabase
+      .from("maintenance_requests")
+      .select("id")
+      .eq("resident_phone", e164)
+      .in("vendor_work_status", OPEN_WORK_ORDER_STATUSES)
+    if (identity.landlord_id) {
+      phoneQuery = phoneQuery.eq("landlord_id", identity.landlord_id)
+    }
+    const { data: ticket } = await phoneQuery
       .order("created_at", { ascending: false })
       .limit(1)
       .maybeSingle()
@@ -915,17 +962,13 @@ export async function resolveOpenMaintenanceRequestId(
       .eq("id", identity.resident_id)
       .maybeSingle()
 
-    if (user?.unit) {
+    if (user?.unit && identity.landlord_id) {
       const { data: ticket } = await supabase
         .from("maintenance_requests")
         .select("id")
         .eq("unit", user.unit)
-        .in("vendor_work_status", [
-          "unassigned",
-          "pending_accept",
-          "accepted",
-          "in_progress",
-        ])
+        .eq("landlord_id", identity.landlord_id)
+        .in("vendor_work_status", OPEN_WORK_ORDER_STATUSES)
         .order("created_at", { ascending: false })
         .limit(1)
         .maybeSingle()
@@ -933,22 +976,5 @@ export async function resolveOpenMaintenanceRequestId(
     }
   }
 
-  const e164 = normalizePhoneFlexible(fromNumber)
-  if (!e164) return null
-
-  const { data: ticket } = await supabase
-    .from("maintenance_requests")
-    .select("id")
-    .eq("resident_phone", e164)
-    .in("vendor_work_status", [
-      "unassigned",
-      "pending_accept",
-      "accepted",
-      "in_progress",
-    ])
-    .order("created_at", { ascending: false })
-    .limit(1)
-    .maybeSingle()
-
-  return (ticket?.id as string | undefined) ?? null
+  return null
 }

@@ -108,6 +108,7 @@ const ACTIVATION_ATTENTION_ORDER: TenantActivationStatus[] = [
   'not_started',
   'waiting',
   'opted_out',
+  'declined',
   'activated',
 ]
 
@@ -556,6 +557,23 @@ export function AdminResidentsDashboard() {
   )
 
   const selectedResidentCount = selectedResidentIds.size
+  const selectedOnboardingRetryOnly = useMemo(() => {
+    const selected = residents.filter((resident) => selectedResidentIds.has(resident.id))
+    if (selected.length === 0) return false
+    return selected.every((resident) => {
+      const chip = resolveTenantActivationChip({
+        activationStatus: resident.activationStatus,
+        smsConsentStatus: resident.smsConsentStatus,
+        activationAttemptCount: resident.activationAttemptCount,
+        activationSmsSentAt: resident.activationSmsSentAt,
+      })
+      return (
+        chip.status === 'waiting' ||
+        chip.status === 'delivery_failed' ||
+        chip.status === 'action_required'
+      )
+    })
+  }, [residents, selectedResidentIds])
   const allFilteredResidentsSelected =
     filteredResidents.length > 0 &&
     filteredResidents.every((resident) => selectedResidentIds.has(resident.id))
@@ -668,13 +686,17 @@ export function AdminResidentsDashboard() {
       if (
         chip.status === 'activated' ||
         chip.status === 'opted_out' ||
-        chip.status === 'waiting'
+        chip.status === 'declined'
       ) {
         alreadyComplete += 1
         continue
       }
 
-      if (chip.actionRequired) {
+      if (
+        chip.actionRequired ||
+        chip.status === 'waiting' ||
+        chip.status === 'delivery_failed'
+      ) {
         resendIds.push(resident.id)
       } else {
         firstSendIds.push(resident.id)
@@ -691,7 +713,7 @@ export function AdminResidentsDashboard() {
       } else if (alreadyComplete > 0 && missingPhone === 0) {
         setResidentsBanner({
           kind: 'error',
-          message: 'Selected residents are already activated or waiting for a reply.',
+          message: 'Selected residents are already activated, opted out, or declined updates.',
         })
       } else {
         setResidentsBanner({
@@ -896,7 +918,11 @@ export function AdminResidentsDashboard() {
               onClick={() => void startOnboardingForSelected()}
               className="sa-press inline-flex h-9 items-center justify-center rounded-lg bg-[#187960] px-3 text-[14px] font-medium text-white outline-none hover:bg-[#146b52] focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50"
             >
-              {onboardingSaving ? 'Starting…' : 'Start onboarding'}
+              {onboardingSaving
+                ? 'Sending…'
+                : selectedOnboardingRetryOnly
+                  ? 'Retry onboarding'
+                  : 'Start onboarding'}
             </button>
             <button
               type="button"

@@ -10,12 +10,16 @@ export type TenantActivationStatus =
   | 'action_required'
   | 'activated'
   | 'opted_out'
+  | 'declined'
 
 export const MAX_ACTIVATION_ATTEMPTS = 3
-/** Hours after attempt 1 for automatic retry 2. */
+/** Hours after attempt 1 for automatic delivery retry 2. */
 export const ACTIVATION_RETRY_2_HOURS = 24
-/** Hours after attempt 1 for automatic retry 3 (final). */
+/** Hours after attempt 1 for automatic delivery retry 3 (final). */
 export const ACTIVATION_RETRY_3_HOURS = 72
+/** Hours after the last welcome/nudge before another YES/NO follow-up. */
+export const ACTIVATION_SILENCE_NUDGE_HOURS = 48
+export const MAX_SILENCE_NUDGE_ATTEMPTS = 14
 
 export type TenantActivationChip = {
   status: TenantActivationStatus
@@ -42,6 +46,7 @@ export function tenantActivationChipVisualClasses(status: TenantActivationStatus
     case 'action_required':
       return { pill: 'bg-[#fee2e2] text-[#991b1b]', dot: 'bg-[#dc2626]' }
     case 'opted_out':
+    case 'declined':
     case 'not_started':
     default:
       return { pill: 'bg-[#f3f4f6] text-[#6a7282]', dot: 'bg-[#9ca3af]' }
@@ -78,7 +83,20 @@ export function resolveTenantActivationChip(input: {
       attemptCount: attempts,
     }
   }
-  if (raw === 'action_required' || attempts >= MAX_ACTIVATION_ATTEMPTS) {
+  if (raw === 'declined') {
+    return {
+      status: 'declined',
+      label: 'Declined updates',
+      detail: 'Resident replied NO to SMS updates. They can still text about repairs.',
+      className: 'bg-[#f3f4f6] text-[#6a7282]',
+      actionRequired: false,
+      attemptCount: attempts,
+    }
+  }
+  if (
+    raw === 'action_required' ||
+    (raw === 'delivery_failed' && attempts >= MAX_ACTIVATION_ATTEMPTS)
+  ) {
     return {
       status: 'action_required',
       label: 'Action Required',
@@ -104,7 +122,8 @@ export function resolveTenantActivationChip(input: {
     return {
       status: 'waiting',
       label: 'Waiting for Resident',
-      detail: 'Welcome SMS sent. Waiting for the resident to reply YES.',
+      detail:
+        'Welcome SMS sent. Waiting for YES or NO. Ulo follows up every 48 hours if they have not replied.',
       className: 'bg-[#fef9c3] text-[#92400e]',
       actionRequired: false,
       attemptCount: attempts,

@@ -110,7 +110,9 @@ function isAppliance(state: SmsIntakeState, hay: string): boolean {
 function isPest(state: SmsIntakeState, hay: string): boolean {
   const cat = (state.primary_category ?? state.vendor_trade ?? state.issue_type ?? "")
     .toLowerCase()
-  return cat.includes("pest") || /\b(roach|roach(?:es)?|mouse|mice|rat|bug|ant|bedbug)\b/.test(hay)
+  return cat.includes("pest") ||
+    /\b(roach|roach(?:es)?|mouse|mice|rat|bug|ant|bedbug|exterminator|spray(?:ing)? the (?:property|unit))\b/
+      .test(hay)
 }
 
 function isStructural(state: SmsIntakeState, hay: string): boolean {

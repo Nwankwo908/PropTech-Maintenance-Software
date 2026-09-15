@@ -13,9 +13,11 @@ The same **Resend** and **Twilio** secrets notify the **submitter** (resident) o
 
 Vendor selection order (see `supabase/functions/_shared/vendor_assignment.ts`):
 
-1. **Specialists** whose normalized `vendors.category` matches the ticket’s `issue_category` (appliance / plumbing / electrical; substring normalization).
-2. If none, **generalists** (`category` is null or empty).
-3. If still none, **any active vendor** (last resort), ranked by low active job count and fairness.
+1. **Specialists** whose `vendors.category` matches the ticket’s `issue_category` (must be Active).
+2. **General / handyman** vendors who are Active.
+3. SMS the landlord before any assignment. List every Active matchable vendor (specialists first, then handymen). One vendor → reply YES. More than one → reply 1 / 2 / 3….
+4. After acknowledgement, Ulo assigns and coordinates.
+5. If still none, leave unassigned and use Find External Vendor. Do not assign a different specialist trade.
 
 If no vendor exists, the ticket is still created; assignment and notify are skipped (check logs).
 

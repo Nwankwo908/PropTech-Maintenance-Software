@@ -20,13 +20,16 @@ export function propertyHealthDonutPercent(
 type PropertyHealthDonutProps = {
   percent: number
   label: string
+  /** Score shown in the hole (e.g. 82% or —). */
+  centerText?: string
   sizeClassName?: string
 }
 
 export function PropertyHealthDonut({
   percent,
   label,
-  sizeClassName = 'size-20',
+  centerText,
+  sizeClassName = 'size-24',
 }: PropertyHealthDonutProps) {
   const clamped = propertyHealthDonutPercent(percent, true)
   const circumference = 2 * Math.PI * RADIUS
@@ -65,6 +68,14 @@ export function PropertyHealthDonut({
           />
         ) : null}
       </svg>
+      {centerText ? (
+        <span
+          className="pointer-events-none absolute inset-0 flex items-center justify-center px-1 text-center text-[15px] font-medium leading-none tracking-[0.2px] text-[#0a0a0a] tabular-nums"
+          aria-hidden
+        >
+          {centerText}
+        </span>
+      ) : null}
     </div>
   )
 }

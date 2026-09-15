@@ -7,6 +7,7 @@ import {
   lookupReleasedPendingSmsNumber,
   normalizeSmsPhone,
   resolveInboundSmsNumber,
+  maintenanceRequestIdIfSameLandlord,
   resolveLandlordIdForSharedTwilioInbound,
   resolveOpenMaintenanceRequestId,
 } from "./inbound_db.ts"
@@ -30,6 +31,7 @@ import { tryHandleInterpretedInbound } from "./inboundInterpretationAct.ts"
 import {
   InboundSmsError,
   type InboundSmsHandlerContext,
+  type InboundSmsHandlerResult,
   type ProcessInboundSmsResult,
 } from "./inboundHandlerTypes.ts"
 import {
@@ -274,8 +276,29 @@ export async function processInboundSms(
   const selfHealed = resolution.source === "self_healed_unit" ||
     (resolution.createdOrUpdated && resolution.source !== "sms_identity")
 
-  const maintenanceRequestId =
-    existingConversation?.maintenance_request_id ??
+  const linkedTicketId = await maintenanceRequestIdIfSameLandlord(
+    supabase,
+    existingConversation?.maintenance_request_id,
+    landlordId,
+  )
+  if (
+    existingConversation?.maintenance_request_id &&
+    !linkedTicketId
+  ) {
+    const { error: unlinkError } = await supabase
+      .from("sms_conversations")
+      .update({ maintenance_request_id: null })
+      .eq("id", existingConversation.id)
+    if (unlinkError) {
+      console.error(
+        "[sms-inbound] unlink cross-landlord ticket",
+        unlinkError.message,
+      )
+    } else {
+      existingConversation.maintenance_request_id = null
+    }
+  }
+  const maintenanceRequestId = linkedTicketId ??
     (await resolveOpenMaintenanceRequestId(supabase, identity, inbound.from))
 
   const conversationStatus = resolution.conversationStatus ?? "open"
@@ -394,17 +417,18 @@ export async function processInboundSms(
     return finishHandledInbound(handlerContext, handlerResult)
   }
 
-  // Pending question first (intake photo, urgency, YES confirms, …), then
-  // follow-up / switch / new issue. Draft work orders must not steal the ask.
-  const interpreted = await tryHandleInterpretedInbound(handlerContext)
-  if (interpreted.handled) {
-    return finishHandledInbound(handlerContext, interpreted)
+  let interpreted: InboundSmsHandlerResult = { handled: false }
+  if (!handlerContext.resumeParkedOnboardingRequest) {
+    interpreted = await tryHandleInterpretedInbound(handlerContext)
+    if (interpreted.handled) {
+      return finishHandledInbound(handlerContext, interpreted)
+    }
   }
 
   let workflow
   try {
     workflow = await routeInboundSmsWorkflow(supabase, {
-      inbound,
+      inbound: handlerContext.inbound,
       landlordId,
       identity,
       conversationId,
@@ -415,7 +439,9 @@ export async function processInboundSms(
       resolutionSource: resolution.source,
       selfHealingPhase: resolution.selfHealingPhase,
       suggestedUnit: resolution.suggestedUnit,
-      interpretation: interpreted.interpretation ?? null,
+      interpretation: handlerContext.resumeParkedOnboardingRequest
+        ? null
+        : interpreted.interpretation ?? null,
     })
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err)

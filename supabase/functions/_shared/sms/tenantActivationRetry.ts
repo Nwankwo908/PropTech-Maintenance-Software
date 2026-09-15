@@ -1,15 +1,23 @@
 /**
  * Tenant welcome-SMS retry schedule + eligibility (edge + client share semantics).
  *
- * Attempt 1: immediate
- * Attempt 2: T+24h after first attempt (delivery failure only)
- * Attempt 3: T+72h after first attempt (final automatic)
- * After 3 failures → action_required (no more auto retries)
+ * Delivery failures (welcome never arrived):
+ *   Attempt 1: immediate
+ *   Attempt 2: T+24h after first attempt
+ *   Attempt 3: T+72h after first attempt (final automatic)
+ *   After 3 failures → action_required
+ *
+ * Silence (welcome delivered, no YES/NO): follow up every 48 hours from the
+ * last outbound, until the resident replies or we hit the silence cap.
  */
 
 export const MAX_ACTIVATION_ATTEMPTS = 3
 export const ACTIVATION_RETRY_2_HOURS = 24
 export const ACTIVATION_RETRY_3_HOURS = 72
+/** Hours after the last welcome/nudge before another YES/NO follow-up. */
+export const ACTIVATION_SILENCE_NUDGE_HOURS = 48
+/** Welcome + follow-ups while waiting. Landlord resend restarts the count. */
+export const MAX_SILENCE_NUDGE_ATTEMPTS = 14
 
 export type TenantActivationDbStatus =
   | "not_started"
@@ -18,6 +26,7 @@ export type TenantActivationDbStatus =
   | "action_required"
   | "activated"
   | "opted_out"
+  | "declined"
 
 /** Digits-only fingerprint for phone-change detection. */
 export function normalizeActivationPhone(phone: string | null | undefined): string {
@@ -36,6 +45,7 @@ export function isRetryableDeliveryFailure(reason: string | null | undefined): b
     r === "opted_in" ||
     r === "already_activated" ||
     r === "already_waiting" ||
+    r === "declined" ||
     r === "missing_phone" ||
     r === "phone_changed" ||
     r === "no_active_landlord_sms_line" ||
@@ -94,6 +104,32 @@ export function isAutomaticRetryDue(params: {
     return hoursSinceFirst >= ACTIVATION_RETRY_3_HOURS
   }
   return false
+}
+
+/**
+ * Welcome was delivered (`waiting`) but the resident has not replied YES or NO.
+ * Follow up every 48 hours from the last outbound text.
+ */
+export function isSilenceNudgeDue(params: {
+  activationStatus: string | null | undefined
+  attemptCount: number
+  firstAttemptAt: string | Date | null | undefined
+  lastAttemptAt?: string | Date | null
+  now?: Date
+}): boolean {
+  const status = (params.activationStatus ?? "").trim().toLowerCase()
+  if (status !== "waiting") return false
+
+  const attempts = Math.max(0, Math.floor(params.attemptCount || 0))
+  if (attempts < 1 || attempts >= MAX_SILENCE_NUDGE_ATTEMPTS) return false
+
+  const lastRaw = params.lastAttemptAt ?? params.firstAttemptAt
+  const last = lastRaw ? new Date(lastRaw) : null
+  if (!last || Number.isNaN(last.getTime())) return false
+
+  const now = params.now ?? new Date()
+  const hoursSinceLast = (now.getTime() - last.getTime()) / (1000 * 60 * 60)
+  return hoursSinceLast >= ACTIVATION_SILENCE_NUDGE_HOURS
 }
 
 /** @deprecated Prefer buildActivationAdminEmail / notifyLandlordActivationUndeliverable. */

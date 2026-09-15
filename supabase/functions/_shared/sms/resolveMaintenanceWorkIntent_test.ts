@@ -208,3 +208,21 @@ Deno.test("Osi: I need a repair → NEW_ISSUE (not landlord handoff)", () => {
     "NEW_ISSUE",
   )
 })
+
+Deno.test("Takeira: exterminator spray is NEW_ISSUE even with a glued electrical ticket", () => {
+  const body =
+    "Hi and thank you I was trying to see if an exterminator can come out to spray the property"
+  assertEquals(
+    resolveMaintenanceWorkIntent({
+      body,
+      heuristicIntent: "other",
+      openTickets: [{
+        id: "oven-alpha2",
+        description: "My oven is broke / won’t power on",
+        vendor_work_status: "unassigned",
+        issue_category: "electrical",
+      }],
+    }),
+    "NEW_ISSUE",
+  )
+})

@@ -218,7 +218,15 @@ export function resolveMaintenanceWorkIntent(input: {
   if (!body && !hasMedia) return "OTHER"
 
   if (heuristic && SWITCH_HEURISTIC.has(heuristic)) {
-    return "OTHER"
+    // Pest / repair wording must still start intake even if the heuristic
+    // labeled the SMS as a general landlord message.
+    if (
+      !inferIssueTypeFromText(body) &&
+      !looksLikeBareRepairRequest(body) &&
+      !looksLikeMaintenanceRelatedMessage(body)
+    ) {
+      return "OTHER"
+    }
   }
 
   if (looksLikeCancelRepair(body) || heuristic === "maintenance_cancel") {

@@ -2,9 +2,12 @@
 import {
   ACTIVATION_RETRY_2_HOURS,
   ACTIVATION_RETRY_3_HOURS,
+  ACTIVATION_SILENCE_NUDGE_HOURS,
   isAutomaticRetryDue,
   isRetryableDeliveryFailure,
+  isSilenceNudgeDue,
   MAX_ACTIVATION_ATTEMPTS,
+  MAX_SILENCE_NUDGE_ATTEMPTS,
   normalizeActivationPhone,
 } from "./tenantActivationRetry.ts"
 
@@ -103,6 +106,73 @@ Deno.test("isAutomaticRetryDue follows 24h / 72h from attempt 1", () => {
       now: atRetry3,
     })
   ) {
-    throw new Error("waiting (delivered) must not auto-retry")
+    throw new Error("waiting (delivered) must not use delivery-failure retries")
+  }
+})
+
+Deno.test("isSilenceNudgeDue follows up every 48h from the last send", () => {
+  const first = new Date("2026-07-01T12:00:00.000Z")
+  const last = new Date("2026-07-03T12:00:00.000Z")
+  const before48 = new Date(last.getTime() + (ACTIVATION_SILENCE_NUDGE_HOURS - 1) * 3600_000)
+  const at48 = new Date(last.getTime() + ACTIVATION_SILENCE_NUDGE_HOURS * 3600_000)
+
+  if (
+    isSilenceNudgeDue({
+      activationStatus: "waiting",
+      attemptCount: 1,
+      firstAttemptAt: first,
+      lastAttemptAt: last,
+      now: before48,
+    })
+  ) {
+    throw new Error("nudge should not be due before 48h from last send")
+  }
+
+  if (
+    !isSilenceNudgeDue({
+      activationStatus: "waiting",
+      attemptCount: 1,
+      firstAttemptAt: first,
+      lastAttemptAt: last,
+      now: at48,
+    })
+  ) {
+    throw new Error("nudge should be due 48h after the last send")
+  }
+
+  if (
+    !isSilenceNudgeDue({
+      activationStatus: "waiting",
+      attemptCount: 4,
+      firstAttemptAt: first,
+      lastAttemptAt: last,
+      now: at48,
+    })
+  ) {
+    throw new Error("later unanswered follow-ups should still send every 48h")
+  }
+
+  if (
+    isSilenceNudgeDue({
+      activationStatus: "waiting",
+      attemptCount: MAX_SILENCE_NUDGE_ATTEMPTS,
+      firstAttemptAt: first,
+      lastAttemptAt: last,
+      now: at48,
+    })
+  ) {
+    throw new Error("silence nudges should stop at the cap")
+  }
+
+  if (
+    isSilenceNudgeDue({
+      activationStatus: "delivery_failed",
+      attemptCount: 1,
+      firstAttemptAt: first,
+      lastAttemptAt: last,
+      now: at48,
+    })
+  ) {
+    throw new Error("delivery_failed must not use silence nudges")
   }
 })

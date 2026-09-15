@@ -25,7 +25,7 @@ Managers send outreach when they are ready from **Residents** (welcome text) and
 
 | Who | Where | Action |
 |---|---|---|
-| Resident / tenant | Residents list or resident profile | **Send Welcome Text** when status is not started; **Resend Welcome Text** when Action Required |
+| Resident / tenant | Residents list or resident profile | **Start onboarding** when not started; **Retry onboarding** when waiting, delivery failed, or Action Required |
 | Vendor | Vendor profile (and Find External Vendor flow) | **Send verification invite** |
 
 ## Tenant activation SMS retries
@@ -34,20 +34,26 @@ Retries apply **after** the manager sends the first welcome text (or resends).
 
 | Attempt | When |
 |---|---|
-| 1 | When manager clicks Send Welcome Text or Resend Welcome Text |
-| 2 | 24 hours after attempt 1, only if attempt 1 was a **delivery** failure |
-| 3 | 72 hours after attempt 1 (final automatic retry) |
-| After 3 failures | Stop; `activation_status = action_required`; notify landlord |
+| 1 | When manager clicks Start onboarding, Retry onboarding, Send Welcome Text, or Resend Welcome Text |
+| Delivery 2 | 24 hours after attempt 1 if attempt 1 failed to send |
+| Delivery 3 | 72 hours after attempt 1 (final automatic delivery retry) |
+| Silence follow-up | Every **48 hours** after the last welcome/nudge while `waiting` and the resident has not replied YES or NO |
+| After 3 delivery failures | Stop; `activation_status = action_required`; notify landlord |
+| After 14 unanswered outbound texts | Stop auto-nudge; stay `waiting` so inbound YES/NO still works; landlord can **Retry onboarding** |
 
-**Retry only** on delivery problems (invalid number, carrier/network/provider errors).
+**Delivery retry** only on send/carrier problems (invalid number, network/provider errors).
 
-**Never auto-retry** when the resident replied STOP, already opted in / activated, or the phone number changed (landlord must update + **Start onboarding again** / **Resend Welcome Text**).
+**Silence nudge** when the welcome was delivered (`waiting`) and the resident has not replied YES or NO — measured from `last_activation_attempt_at`, every 48 hours.
 
-YES/START → `activated` (stop retries). STOP → `opted_out` (stop retries).
+**Never auto-retry / nudge** when the resident replied STOP, YES, or NO, already opted in / activated / declined, or the phone number changed (landlord must update + **Start onboarding again** / **Retry onboarding**).
 
-Landlord-facing statuses: Activated · Waiting for Resident · Delivery Failed (Retry X of 3) · Action Required · Not started (welcome not sent yet).
+YES/START → `activated` (stop retries). NO → `declined` (stop nudges; they can still text about a repair). STOP → `opted_out` (stop retries).
 
-Manual **Resend Welcome Text** (Action Required) restarts the retry sequence after a successful send.
+If they text **anything else** while waiting (e.g. a repair), ack the message, remind them to reply YES or NO first, park the request, then run that request after they reply YES or NO.
+
+Landlord-facing statuses: Activated · Waiting for Resident · Declined updates · Delivery Failed (Retry X of 3) · Action Required · Not started (welcome not sent yet).
+
+Manual **Retry onboarding** / **Resend Welcome Text** restarts the retry sequence after a successful send.
 
 Cron: `check-tenant-activation-retries`. Attempts audited in `tenant_activation_attempts`.
 
@@ -58,7 +64,7 @@ Cron: `check-tenant-activation-retries`. Attempts audited in `tenant_activation_
 - Best-effort delivery on manual send: surface errors in the UI; log graph events for the activity feed.
 - Skip people with no usable contact info (disable Send buttons when phone/email missing).
 - Follow the Ulo communication writing standard for all outbound copy.
-- Idempotent: skip duplicate welcome while waiting (`activation_sms_sent_at` / `waiting`) unless landlord **Resend Welcome Text**.
+- Idempotent: skip duplicate welcome while waiting (`activation_sms_sent_at` / `waiting`) unless landlord **Retry onboarding** / **Resend Welcome Text**.
 
 ## Where it lives
 
@@ -67,6 +73,7 @@ Cron: `check-tenant-activation-retries`. Attempts audited in `tenant_activation_
 - Manual tenant UI: `TenantActivationManualActions` in Residents + resident profile; **Start onboarding again** checkbox on `EditResidentModal` when the phone changes
 - Manual vendor invite: `src/api/vendorVerification.ts` → `sendVendorInvite`; UI on `AdminVendorDetailDashboard` + `InviteVendorModal`
 - Tenant send + retries: `supabase/functions/_shared/sms/tenantActivation.ts` / `send-tenant-activation` / `check-tenant-activation-retries`
+- YES/NO + parked requests while waiting: `tenantMessaging.ts` / `tenantActivationPending.ts` / `tenant_activation_hold`
 - Status UI: `src/lib/tenantActivationStatus.ts`
 
 ## Do not

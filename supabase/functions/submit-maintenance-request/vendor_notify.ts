@@ -1,7 +1,7 @@
 import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.49.1"
 import {
   loadMostRecentlyAssignedVendorId,
-  pickVendorForAssignment,
+  resolveVendorAssignmentDecision,
   touchVendorLastAssignedAt,
   isVendorMatchableForDispatch,
 } from "../_shared/vendor_assignment.ts"
@@ -23,6 +23,10 @@ import {
 } from "../_shared/landlordNotificationPrefs.ts"
 import { uloAppOrigin, uloAppUrl } from "../_shared/uloAppUrl.ts"
 import { emitServerProductEvent } from "../_shared/ga4MeasurementProtocol.ts"
+import {
+  AWAITING_LANDLORD_VENDOR_CHOICE,
+  notifyLandlordVendorChoice,
+} from "../_shared/vendorLandlordChoice.ts"
 
 export type TicketNotifyPayload = {
   ticketId: string
@@ -39,8 +43,16 @@ export type TicketNotifyPayload = {
   /**
    * When set (e.g. second same-trade ticket for the same unit), assign this
    * vendor if still ACTIVE for dispatch instead of picking a new one.
+   * Still requires landlord SMS acknowledgement unless `landlordAcknowledged`.
    */
   preferVendorId?: string | null
+  /** Landlord already confirmed this assignment by SMS (reply YES / 1 / 2). */
+  landlordAcknowledged?: boolean
+  /**
+   * Re-text the landlord with the current matchable vendors even if we already
+   * asked once. Does not assign.
+   */
+  refreshLandlordChoice?: boolean
   /** Resident-offered visit windows from intake (shown on assignment SMS). */
   residentAvailabilityText?: string | null
   /**
@@ -238,8 +250,8 @@ function buildSmsBody(
 }
 
 /**
- * Picks an Active vendor in the same trade. No match → skip assignment
- * (Find External Vendor / admin assign). Does not last-resort a different trade.
+ * Picks an Active vendor in the same trade, or an Active general / handyman
+ * if no specialist is available. Does not assign a different specialist trade.
  */
 function isEmergencyPriority(priority: string | null | undefined): boolean {
   const p = (priority ?? "").trim().toLowerCase()
@@ -316,38 +328,6 @@ async function loadPreferredVendorIfMatchable(
     category: vendor.category,
     portal_api_key: vendor.portal_api_key,
   }
-}
-
-async function resolveVendorForNewTicket(
-  supabase: SupabaseClient,
-  issueCategory: string | null,
-  landlordId?: string | null,
-  priority?: string | null,
-  preferVendorId?: string | null,
-): Promise<VendorRow | null> {
-  if (preferVendorId?.trim()) {
-    const preferred = await loadPreferredVendorIfMatchable(
-      supabase,
-      preferVendorId,
-      landlordId,
-      issueCategory,
-    )
-    if (preferred) return preferred
-  }
-
-  const preferNot = await loadMostRecentlyAssignedVendorId(supabase)
-  const marketplacePreference = landlordId?.trim()
-    ? await loadLandlordMarketplacePreference(supabase, landlordId.trim())
-    : "include_imported"
-  const picked = await pickVendorForAssignment(supabase, {
-    issueCategory,
-    excludeVendorIds: [],
-    preferNotVendorId: preferNot,
-    landlordId,
-    preferPreferredEmergency: isEmergencyPriority(priority),
-    marketplacePreference,
-  })
-  return picked ? (picked as VendorRow) : null
 }
 
 async function insertLog(
@@ -475,6 +455,7 @@ export type VendorAssignSkipReason =
   | "ai_dispatch_disabled"
   | "assign_failed"
   | "ticket_missing"
+  | "awaiting_landlord_choice"
 
 export type AssignVendorResult = {
   assigned: boolean
@@ -494,7 +475,7 @@ export async function assignVendorAndNotify(
   const { data: ticket } = await supabase
     .from("maintenance_requests")
     .select(
-      "id, vendor_notified_at, issue_category, resident_availability_text, assigned_vendor_id",
+      "id, vendor_notified_at, vendor_notify_error, issue_category, resident_availability_text, assigned_vendor_id",
     )
     .eq("id", payload.ticketId)
     .maybeSingle()
@@ -545,6 +526,21 @@ export async function assignVendorAndNotify(
   }
   payload.landlordId = landlordId
 
+  const alreadyAwaitingChoice =
+    typeof ticket.vendor_notify_error === "string" &&
+    ticket.vendor_notify_error.includes(AWAITING_LANDLORD_VENDOR_CHOICE)
+  if (
+    alreadyAwaitingChoice &&
+    payload.landlordAcknowledged !== true &&
+    payload.refreshLandlordChoice !== true
+  ) {
+    return {
+      assigned: false,
+      vendorId: null,
+      skipReason: "awaiting_landlord_choice",
+    }
+  }
+
   const operational = landlordId
     ? await (async () => {
       const { loadLandlordOperationalSettings } = await import(
@@ -567,13 +563,52 @@ export async function assignVendorAndNotify(
     return { assigned: false, vendorId: null, skipReason: "ai_dispatch_disabled" }
   }
 
-  const vendor = await resolveVendorForNewTicket(
-    supabase,
-    issueCategory,
-    landlordId,
-    payload.priority,
-    payload.preferVendorId,
-  )
+  let vendor = null as Awaited<ReturnType<typeof loadPreferredVendorIfMatchable>>
+  if (payload.landlordAcknowledged === true && payload.preferVendorId?.trim()) {
+    vendor = await loadPreferredVendorIfMatchable(
+      supabase,
+      payload.preferVendorId,
+      landlordId,
+      issueCategory,
+    )
+  } else if (landlordId) {
+    const preferNot = await loadMostRecentlyAssignedVendorId(supabase)
+    const marketplacePreference = await loadLandlordMarketplacePreference(
+      supabase,
+      landlordId,
+    )
+    const decision = await resolveVendorAssignmentDecision(supabase, {
+      issueCategory,
+      excludeVendorIds: [],
+      preferNotVendorId: preferNot,
+      landlordId,
+      preferPreferredEmergency: isEmergencyPriority(payload.priority),
+      marketplacePreference,
+    })
+    if (decision.kind === "landlord_choice") {
+      await notifyLandlordVendorChoice(supabase, {
+        landlordId,
+        ticketId: payload.ticketId,
+        unit: payload.unit,
+        issueCategory,
+        options: decision.options,
+      })
+      await supabase
+        .from("maintenance_requests")
+        .update({ vendor_notify_error: AWAITING_LANDLORD_VENDOR_CHOICE })
+        .eq("id", payload.ticketId)
+      return {
+        assigned: false,
+        vendorId: null,
+        skipReason: "awaiting_landlord_choice",
+      }
+    }
+    vendor = null
+  } else {
+    console.warn("[vendor-notify] no landlord to confirm vendor assignment", {
+      ticketId: payload.ticketId,
+    })
+  }
   if (!vendor) {
     console.warn("[vendor-notify] no active vendor; skipping assignment and notify", {
       ticketId: payload.ticketId,

@@ -16,6 +16,7 @@ import {
 } from "./inboundInterpretation.ts"
 import {
   allowsNewMaintenanceTicket,
+  looksLikeBareRepairRequest,
   resolveMaintenanceWorkIntent,
   tenantIntentForResolved,
   type ResolvedMaintenanceIntent,
@@ -23,6 +24,7 @@ import {
 import {
   isActiveMaintenanceTicketStatus,
   looksLikeClosedRepairStatusAsk,
+  looksLikeMaintenanceRelatedMessage,
   looksLikeProblemReturned,
   partitionMaintenanceTicketsByStatus,
 } from "./maintenanceTicketContext.ts"
@@ -390,6 +392,14 @@ export function resolveContextualFollowUp(input: {
     intent === "move_out_intent" ||
     intent === "other"
   ) {
+    if (
+      intent === "other" &&
+      (inferIssueTypeFromText(body) ||
+        looksLikeBareRepairRequest(body) ||
+        looksLikeMaintenanceRelatedMessage(body))
+    ) {
+      return { action: "new_issue" }
+    }
     return { action: "switch_intent" }
   }
 

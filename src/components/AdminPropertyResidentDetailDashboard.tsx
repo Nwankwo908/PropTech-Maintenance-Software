@@ -1296,17 +1296,21 @@ export function AdminPropertyResidentDetailDashboard() {
       })
     : null
 
-  const showStartOnboarding =
-    activationChip &&
-    activationChip.status !== 'activated' &&
-    activationChip.status !== 'opted_out' &&
-    activationChip.status !== 'waiting'
+  const canSendOnboardingSms = Boolean(loadedUser?.phone?.trim())
+  const retryOnboarding = Boolean(
+    activationChip && activationChip.status !== 'not_started',
+  )
 
   async function handleStartOnboarding() {
-    if (!loadedUser || !activationChip) return
+    if (!loadedUser || !activationChip || !canSendOnboardingSms) return
     setActionError(null)
     setResendingActivation(true)
-    const result = activationChip.actionRequired
+    const restartConsent =
+      activationChip.status === 'activated' || activationChip.status === 'opted_out'
+    if (restartConsent) {
+      await resetTenantActivationForPhoneChange({ residentId: loadedUser.id })
+    }
+    const result = retryOnboarding
       ? await resendTenantActivationSms({ residentId: loadedUser.id })
       : await sendTenantWelcomeSms({ residentId: loadedUser.id })
     setResendingActivation(false)
@@ -1374,15 +1378,19 @@ export function AdminPropertyResidentDetailDashboard() {
                 <p className="mt-1 text-[14px] leading-5 text-[#6a7282]">
                   {profile.buildingShort} · {profile.unitDisplay}
                 </p>
-                {showStartOnboarding ? (
+                {activationChip ? (
                   <div className="mt-3">
                     <button
                       type="button"
-                      disabled={resendingActivation}
+                      disabled={resendingActivation || !canSendOnboardingSms}
                       onClick={() => void handleStartOnboarding()}
                       className="sa-press inline-flex h-9 w-fit items-center rounded-[10px] bg-[#187960] px-4 text-[13px] font-medium leading-5 text-white hover:bg-[#146b52] disabled:opacity-50"
                     >
-                      {resendingActivation ? 'Sending…' : 'Start onboarding'}
+                      {resendingActivation
+                        ? 'Sending…'
+                        : retryOnboarding
+                          ? 'Retry onboarding'
+                          : 'Start onboarding'}
                     </button>
                   </div>
                 ) : null}

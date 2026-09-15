@@ -21,6 +21,7 @@ Deno.test("START is a global compliance keyword (not YES)", () => {
   assertEquals(classifyTenantComplianceKeyword("UNSTOP"), "start")
   assertEquals(classifyTenantComplianceKeyword("YES"), null)
   assertEquals(classifyTenantActivationKeyword("YES"), "start")
+  assertEquals(classifyTenantActivationKeyword("NO"), "decline")
   assertEquals(classifyTenantActivationKeyword("START"), null)
 })
 

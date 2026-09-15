@@ -53,6 +53,8 @@ export type InboundSmsHandlerContext = {
   selfHealingPhase: SelfHealingPhase
   /** Skip YES activation-reply hijack during active maintenance intake. */
   activeMaintenanceIntake: boolean
+  /** After YES/NO, replay a parked request through the workflow engine. */
+  resumeParkedOnboardingRequest?: boolean
 }
 
 export type InboundSmsHandlerReply = {

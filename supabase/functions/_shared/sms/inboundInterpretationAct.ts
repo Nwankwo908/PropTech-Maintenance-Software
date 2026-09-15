@@ -40,6 +40,7 @@ import {
   ticketsSharingRequestLabel,
 } from "./inboundContextualFollowUp.ts"
 import {
+  inferIssueTypeFromText,
   isAffirmativeReply,
   isNegativeReply,
   type SmsIntakeState,
@@ -84,6 +85,25 @@ type OpenTicket = {
 function firstName(name: string | null | undefined): string {
   const part = (name ?? "").trim().split(/\s+/)[0]
   return part || "there"
+}
+
+/** Don't hand a pest/repair ask to the landlord "pass along" path. */
+function shouldStartMaintenanceInsteadOfHandoff(body: string): boolean {
+  return Boolean(inferIssueTypeFromText(body)) ||
+    looksLikeBareRepairRequest(body) ||
+    looksLikeMaintenanceRelatedMessage(body)
+}
+
+function markAsNewMaintenanceIssue(
+  interpretation: InboundInterpretation,
+): InboundInterpretation {
+  interpretation.intent = "maintenance_new"
+  interpretation.extractedSlots = {
+    ...interpretation.extractedSlots,
+    contextual_action: "new_issue",
+  }
+  interpretation.needsClarification = false
+  return interpretation
 }
 
 function formatMoney(n: number): string {
@@ -2131,23 +2151,16 @@ export async function tryHandleInterpretedInbound(
     }
 
     if (decision.action === "switch_intent") {
+      if (shouldStartMaintenanceInsteadOfHandoff(ctx.inbound.body)) {
+        return {
+          handled: false,
+          interpretation: markAsNewMaintenanceIssue(interpretation),
+        }
+      }
       if (
         interpretation.intent === "maintenance_new" ||
         interpretation.intent == null
       ) {
-        // Don't hand off clear repair asks to landlord — start/continue intake.
-        if (
-          looksLikeBareRepairRequest(ctx.inbound.body) ||
-          looksLikeMaintenanceRelatedMessage(ctx.inbound.body)
-        ) {
-          interpretation.intent = "maintenance_new"
-          interpretation.extractedSlots = {
-            ...interpretation.extractedSlots,
-            contextual_action: "new_issue",
-          }
-          interpretation.needsClarification = false
-          return { handled: false, interpretation }
-        }
         interpretation.intent = "other"
       }
       interpretation.needsClarification = false
@@ -2293,6 +2306,12 @@ export async function tryHandleInterpretedInbound(
         profile,
       )
     case "other":
+      if (shouldStartMaintenanceInsteadOfHandoff(ctx.inbound.body)) {
+        return {
+          handled: false,
+          interpretation: markAsNewMaintenanceIssue(interpretation),
+        }
+      }
       return handleOther(ctx, intake, pending.activeIntake, profile?.full_name ?? null)
     default:
       return { handled: false, interpretation }

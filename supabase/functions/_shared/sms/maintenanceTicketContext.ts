@@ -120,7 +120,7 @@ export function looksLikeMaintenanceRelatedMessage(body: string): boolean {
   if (looksLikeProblemReturned(text)) return true
   if (looksLikeClosedRepairStatusAsk(text)) return true
   if (
-    /\b(repair|work order|ticket|plumber|electrician|technician|vendor|leak|outlet|spark|clog|flood|heater|hvac|ac\b|air conditioning|toilet|sink|faucet|lights?|flicker(?:ing)?|door|damaged)\b/i
+    /\b(repair|work order|ticket|plumber|electrician|technician|vendor|leak|outlet|spark|clog|flood|heater|hvac|ac\b|air conditioning|toilet|sink|faucet|lights?|flicker(?:ing)?|door|damaged|pest|exterminator|extermination|roach|cockroach|mice|mouse|termite|infestation|spray(?:ing)? the (?:property|unit|apartment|building|home))\b/i
       .test(text)
   ) {
     return true

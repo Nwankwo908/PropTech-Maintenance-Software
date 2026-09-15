@@ -16,7 +16,7 @@
  * Priority bands:
  *   1–9    Compliance (STOP / START / HELP)
  *  10–29   Active conversation replies (schedule, estimate, invoice, …)
- *  30–39   Tenant activation reply (YES only while activation_status = waiting)
+ *  30–39   Tenant activation (YES/NO while waiting; other texts held until then)
  *  40–59   Vendor operations (vendor_reschedule = intent detect + workflow dispatch)
  *  60–79   Special relay (vendor ↔ tenant proxy)
  *  (fallback) tryHandleInterpretedInbound() then routeInboundSmsWorkflow()
@@ -32,8 +32,10 @@ import {
   tryHandleTenantActivationReply,
   tryHandleTenantComplianceKeyword,
 } from "./tenantMessaging.ts"
+import { tryHandleTenantActivationHold } from "./tenantActivationPending.ts"
 import { relayInboundProxiedMessage } from "./proxiedMessaging.ts"
 import { tryHandleVendorRescheduleInbound } from "./vendorRescheduleInbound.ts"
+import { tryHandleLandlordVendorChoiceInbound } from "../vendorLandlordChoice.ts"
 import type {
   InboundSmsHandler,
   InboundSmsHandlerContext,
@@ -121,6 +123,31 @@ async function tryEstimateDecisionHandler(
   }
 }
 
+async function tryLandlordVendorChoiceHandler(
+  ctx: InboundSmsHandlerContext,
+): Promise<InboundSmsHandlerResult> {
+  const result = await tryHandleLandlordVendorChoiceInbound(ctx.supabase, {
+    landlordId: ctx.landlordId,
+    conversationId: ctx.conversationId,
+    body: ctx.inbound.body,
+    identityType: ctx.identity.identity_type,
+  })
+  if (!result.handled) return { handled: false }
+
+  return {
+    handled: true,
+    workflowRoute: "landlord_vendor_choice",
+    maintenanceRequestId: result.ticketId,
+    workflowMetadata: {
+      vendor_id: result.vendorId,
+    },
+    reply: {
+      body: result.replyBody,
+      source: "landlord_vendor_choice",
+    },
+  }
+}
+
 async function tryLandlordRentReceiptHandler(
   ctx: InboundSmsHandlerContext,
 ): Promise<InboundSmsHandlerResult> {
@@ -184,6 +211,17 @@ async function tryTenantActivationReplyHandler(
   })
   if (!result.handled) return { handled: false }
 
+  const parked = result.resumeParkedRequest
+  if (parked?.body) {
+    ctx.inbound = {
+      ...ctx.inbound,
+      body: parked.body,
+      mediaUrls: parked.mediaUrls.length > 0 ? parked.mediaUrls : ctx.inbound.mediaUrls,
+    }
+    ctx.resumeParkedOnboardingRequest = true
+    return { handled: false }
+  }
+
   return {
     handled: true,
     workflowRoute: "tenant_activation_reply",
@@ -191,6 +229,34 @@ async function tryTenantActivationReplyHandler(
       alreadySent: true,
       outboundMessageId: result.outboundMessageId,
       source: "tenant_activation_reply",
+    },
+  }
+}
+
+async function tryTenantActivationHoldHandler(
+  ctx: InboundSmsHandlerContext,
+): Promise<InboundSmsHandlerResult> {
+  const result = await tryHandleTenantActivationHold(ctx.supabase, {
+    body: ctx.inbound.body,
+    landlordId: ctx.landlordId,
+    conversationId: ctx.conversationId,
+    provider: ctx.inbound.provider,
+    uloNumber: ctx.inbound.to,
+    externalPhone: ctx.inbound.from,
+    residentId: ctx.identity.resident_id,
+    identityType: ctx.identity.identity_type,
+    conversationType: ctx.conversationType,
+    mediaUrls: ctx.inbound.mediaUrls,
+  })
+  if (!result.handled) return { handled: false }
+
+  return {
+    handled: true,
+    workflowRoute: "tenant_activation_hold",
+    reply: {
+      alreadySent: true,
+      outboundMessageId: result.outboundMessageId,
+      source: "tenant_activation_hold",
     },
   }
 }
@@ -309,11 +375,16 @@ export const INBOUND_SMS_HANDLER_PENDING_GATES: Readonly<
   schedule_confirm: "intake_state.awaiting_schedule_confirmation",
   estimate_decision:
     "intake_state.awaiting_estimate_decision or pending estimate on conversation WO",
+  landlord_vendor_choice:
+    "intake_state.awaiting_vendor_choice on landlord ops thread (YES, or reply 1 / 2 / 3…)",
   landlord_rent_receipt:
     "intake_state.awaiting_landlord_rent_receipt, awaiting_landlord_rent_amount, or awaiting_landlord_rent_method (YES/NO/PARTIAL then amount/method)",
   invoice_payment:
     "SMS_ADMIN_NOTIFY phone + recent maintenance.invoice_payment_options_sent event",
-  tenant_activation_reply: "users.activation_status === waiting",
+  tenant_activation_reply:
+    "users.activation_status === waiting + YES or NO",
+  tenant_activation_hold:
+    "users.activation_status === waiting + any other inbound (park request, remind YES/NO)",
   vendor_reschedule:
     "Reschedule intent (shouldAttemptVendorRescheduleInbound) → dispatch vendor_job_response workflow",
   vendor_capacity: "Vendor identity + PAUSE / RESUME / JOBS MAX command",
@@ -326,12 +397,18 @@ export const INBOUND_SMS_HANDLERS: readonly InboundSmsHandler[] = [
   { id: "compliance_stop_help", priority: 5, try: tryComplianceStopHelpHandler },
   { id: "schedule_confirm", priority: 10, try: tryScheduleConfirmHandler },
   { id: "estimate_decision", priority: 20, try: tryEstimateDecisionHandler },
+  { id: "landlord_vendor_choice", priority: 21, try: tryLandlordVendorChoiceHandler },
   { id: "landlord_rent_receipt", priority: 22, try: tryLandlordRentReceiptHandler },
   { id: "invoice_payment", priority: 25, try: tryInvoicePaymentHandler },
   {
     id: "tenant_activation_reply",
     priority: 30,
     try: tryTenantActivationReplyHandler,
+  },
+  {
+    id: "tenant_activation_hold",
+    priority: 32,
+    try: tryTenantActivationHoldHandler,
   },
   { id: "vendor_reschedule", priority: 40, try: tryVendorRescheduleHandler },
   { id: "vendor_capacity", priority: 50, try: tryVendorCapacityHandler },

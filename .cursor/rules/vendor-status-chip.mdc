@@ -44,7 +44,7 @@ Cron: `check-vendor-performance-standards` (daily). No-shows from confirmed appo
 
 ## Incident protocols (pre-launch gates)
 
-Matching requires **ACTIVE** *and* the **same trade**. Nothing enters the queue without both (`isVendorMatchableForDispatch` / `pickVendorForAssignment`). If there is no matching Active vendor, leave the job unassigned and use **Find External Vendor**.
+Matching requires **ACTIVE** *and* a matching trade. Same-trade specialists first, then every Active **general / handyman**. **Never auto-assign.** Ulo texts the landlord first with **every** matchable vendor: reply **YES** when only one is available, or **1 / 2 / 3…** when more than one can take the job. After that SMS acknowledgement, Ulo assigns and coordinates. If no Active specialist or generalist exists, leave the job unassigned and use **Find External Vendor**. Do not assign a different specialist trade (e.g. plumber for HVAC).
 
 | Protocol | Key rule | Implementation |
 |---|---|---|
@@ -80,7 +80,7 @@ Matching requires **ACTIVE** *and* the **same trade**. Nothing enters the queue 
 
 - Resolver: `src/lib/vendorStatusChip.ts` → `resolveVendorCapacityChip` / `isVendorMatchable`
 - UI chips: `AdminVendorsDashboard`, `AdminVendorDetailDashboard`, `vendorComplianceProfile`
-- Matching: `pickVendorForAssignment` must only consider matchable (ACTIVE) vendors **in the same trade**. If no matching trade is Active, leave the job unassigned and use **Find External Vendor** — never last-resort a different trade.
+- Matching: `pickVendorForAssignment` / `resolveVendorAssignmentDecision` must only consider matchable (ACTIVE) vendors. Prefer the **same trade**; if none are Active, offer Active **general / handyman** vendors. Always SMS the landlord for acknowledgement before dispatch (YES for one vendor, 1 / 2 / 3… when more than one is Active). If neither exists, leave the job unassigned and use **Find External Vendor** — never last-resort a different specialist trade.
 - Never show **Active** while verification is incomplete, unless the landlord used **Override onboarding**
 - Hide **Start onboarding** once the vendor is no longer Not activated (invite sent, form submitted, verified, or **Override onboarding**)
 - Override does **not** mark `vendor_verifications.status = verified` and does **not** send an invite

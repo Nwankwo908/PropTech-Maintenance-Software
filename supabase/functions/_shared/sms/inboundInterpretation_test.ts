@@ -108,6 +108,14 @@ Deno.test("Osi: door damaged starts maintenance_new (not other handoff)", () => 
   assertEquals(shouldHandleInterpretedIntent(interp, "My door is damaged"), false)
 })
 
+Deno.test("Takeira: exterminator spray is pest maintenance_new, not landlord handoff", () => {
+  const body =
+    "Hi and thank you I was trying to see if an exterminator can come out to spray the property"
+  const interp = heuristicInterpretInbound(body)
+  assertEquals(interp.intent, "maintenance_new")
+  assertEquals(shouldHandleInterpretedIntent(interp, body), false)
+})
+
 Deno.test("Osi: I need a repair starts maintenance_new (not other handoff)", () => {
   const interp = heuristicInterpretInbound("I need a repair")
   assertEquals(interp.intent, "maintenance_new")

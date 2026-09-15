@@ -59,16 +59,20 @@ export function TenantActivationManualActions({
   chip: TenantActivationChip
   onSendWelcome: () => void
 }) {
-  if (chip.status === 'not_started' && phone?.trim()) {
+  if ((chip.status === 'not_started' || chip.status === 'waiting') && phone?.trim()) {
     return (
       <div className={`flex flex-wrap items-center gap-2 ${className}`.trim()}>
         <button
           type="button"
-          onClick={onSendWelcome}
+          onClick={chip.status === 'waiting' ? onResend : onSendWelcome}
           disabled={resending}
           className="sa-press inline-flex min-h-[32px] items-center justify-center rounded-[8px] bg-[#101828] px-2.5 py-1.5 text-[11px] font-semibold text-white hover:bg-[#1e2939] disabled:opacity-50"
         >
-          {resending ? 'Sending…' : 'Send Welcome Text'}
+          {resending
+            ? 'Sending…'
+            : chip.status === 'waiting'
+              ? 'Retry onboarding'
+              : 'Send Welcome Text'}
         </button>
         <button
           type="button"
@@ -112,7 +116,7 @@ export function TenantActivationActionRequiredActions({
         disabled={resending}
         className="sa-press inline-flex min-h-[32px] items-center justify-center rounded-[8px] bg-[#101828] px-2.5 py-1.5 text-[11px] font-semibold text-white hover:bg-[#1e2939] disabled:opacity-50"
       >
-        {resending ? 'Sending…' : 'Resend Welcome Text'}
+        {resending ? 'Sending…' : 'Retry onboarding'}
       </button>
       <button
         type="button"

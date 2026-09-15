@@ -227,8 +227,27 @@ Deno.test("closed maintenance + move-out intent → move-out wins", () => {
   assertEquals(decision.action, "switch_intent")
 })
 
+Deno.test("Takeira: other heuristic + exterminator ask starts a new issue", () => {
+  const body =
+    "Hi and thank you I was trying to see if an exterminator can come out to spray the property"
+  const decision = resolveContextualFollowUp({
+    body,
+    hasMedia: false,
+    intent: "other",
+    openTickets: [outletOpen],
+    activeIntake: false,
+  })
+  assertEquals(decision.action, "new_issue")
+})
+
 Deno.test("historical ticket does not become active context from trade keywords alone", () => {
   assertEquals(looksLikeMaintenanceRelatedMessage("How much rent do I owe?"), false)
+  assertEquals(
+    looksLikeMaintenanceRelatedMessage(
+      "Hi and thank you I was trying to see if an exterminator can come out to spray the property",
+    ),
+    true,
+  )
   const resolved = resolveMaintenanceWorkIntent({
     body: "How much rent do I owe?",
     openTickets: [outletOpen],

@@ -11,6 +11,16 @@ import {
   composeTenantWelcomeSms,
   updateTenantConsent,
 } from "./tenantMessaging.ts"
+import { composeTenantActivationNudgeSms } from "./tenantActivationPending.ts"
+import {
+  isAutomaticRetryDue,
+  isRetryableDeliveryFailure,
+  isSilenceNudgeDue,
+  MAX_ACTIVATION_ATTEMPTS,
+  MAX_SILENCE_NUDGE_ATTEMPTS,
+  normalizeActivationPhone,
+  type TenantActivationDbStatus,
+} from "./tenantActivationRetry.ts"
 import {
   notifyLandlordActivationUndeliverable,
   resolveActivationAdminAlerts,
@@ -19,13 +29,6 @@ import {
   friendlyActivationFailureReason,
   isPermanentDeliveryFailure,
 } from "./tenantActivationFailure.ts"
-import {
-  isAutomaticRetryDue,
-  isRetryableDeliveryFailure,
-  MAX_ACTIVATION_ATTEMPTS,
-  normalizeActivationPhone,
-  type TenantActivationDbStatus,
-} from "./tenantActivationRetry.ts"
 import type { SmsProviderName } from "./types.ts"
 
 export type SendTenantActivationParams = {
@@ -44,6 +47,10 @@ export type SendTenantActivationParams = {
    * Never resets the attempt sequence.
    */
   automaticRetry?: boolean
+  /**
+   * Cron-driven YES/NO reminder. Only sends when waiting + schedule due.
+   */
+  automaticNudge?: boolean
 }
 
 export type TenantActivationSendResult = {
@@ -265,6 +272,8 @@ function skipReasonForResident(
 
   if (consent === "opted_out" || activation === "opted_out") {
     if (!(params.resend && phoneChangedOnRow)) return "opted_out"
+  } else if (activation === "declined") {
+    if (!params.resend) return "declined"
   } else if (consent === "opted_in" || activation === "activated") {
     if (!(params.resend && phoneChangedOnRow)) return "opted_in"
   }
@@ -290,6 +299,26 @@ function skipReasonForResident(
       return "not_eligible"
     }
     if (!isRetryableDeliveryFailure(row.last_delivery_error)) {
+      return "not_eligible"
+    }
+    return null
+  }
+
+  if (params.automaticNudge) {
+    if (activation !== "waiting") return "not_eligible"
+    const attempts = Math.max(0, Math.floor(Number(row.activation_attempt_count) || 0))
+    if (attempts >= MAX_SILENCE_NUDGE_ATTEMPTS) return "max_attempts"
+    if (storedPhone && currentPhone && storedPhone !== currentPhone) {
+      return "phone_changed"
+    }
+    if (
+      !isSilenceNudgeDue({
+        activationStatus: activation,
+        attemptCount: attempts,
+        firstAttemptAt: row.first_activation_attempt_at,
+        lastAttemptAt: row.last_activation_attempt_at,
+      })
+    ) {
       return "not_eligible"
     }
     return null
@@ -449,10 +478,14 @@ export async function sendTenantActivation(
         conversationStatus: "open",
       })
 
-      const body = composeTenantWelcomeSms({
-        tenantName: row.full_name,
-        companyName: params.companyName,
-      })
+      const body = params.automaticNudge
+        ? composeTenantActivationNudgeSms({
+          tenantName: row.full_name,
+        })
+        : composeTenantWelcomeSms({
+          tenantName: row.full_name,
+          companyName: params.companyName,
+        })
 
       const sent = await sendInboundAutoReply(supabase, {
         conversationId,
@@ -461,7 +494,9 @@ export async function sendTenantActivation(
         toNumber: phone,
         body,
         provider,
-        source: params.automaticRetry
+        source: params.automaticNudge
+          ? "tenant_activation_nudge"
+          : params.automaticRetry
           ? "tenant_activation_retry"
           : params.resend
           ? "tenant_activation_resend"
@@ -520,7 +555,9 @@ export async function sendTenantActivation(
 
       await logGraphEvent(supabase, {
         landlord_id: landlordId,
-        event_type: params.automaticRetry
+        event_type: params.automaticNudge
+          ? "tenant.activation_nudge_sent"
+          : params.automaticRetry
           ? "tenant.activation_sms_retry_sent"
           : "tenant.activation_sms_sent",
         source: "edge_function",
@@ -529,9 +566,13 @@ export async function sendTenantActivation(
         conversation_id: conversationId,
         message_id: sent.messageId,
         metadata: {
-          message: `Welcome text sent to ${
+          message: params.automaticNudge
+            ? `Follow-up sent to ${
+              row.full_name?.trim() || "resident"
+            }. Still waiting for YES or NO.`
+            : `Welcome text sent to ${
             row.full_name?.trim() || "resident"
-          }. Awaiting YES to confirm SMS updates.`,
+          }. Awaiting YES or NO to confirm SMS updates.`,
           phone: normalizeSmsPhone(phone),
           sms_number_id: line.id,
           from_number: line.phone,
@@ -727,7 +768,7 @@ async function finalizeFailedAttempt(
 }
 
 /**
- * Cron: find delivery_failed residents due for retry 2 (T+24h) or 3 (T+72h).
+ * Cron: delivery retries (T+24h / T+72h) plus YES/NO nudges every 48h while waiting.
  */
 export async function processTenantActivationRetries(
   supabase: SupabaseClient,
@@ -742,10 +783,9 @@ export async function processTenantActivationRetries(
   let query = supabase
     .from("users")
     .select(
-      "id, landlord_id, full_name, phone, activation_status, activation_attempt_count, first_activation_attempt_at, last_delivery_error, activation_phone_normalized, sms_consent_status",
+      "id, landlord_id, full_name, phone, activation_status, activation_attempt_count, first_activation_attempt_at, last_activation_attempt_at, last_delivery_error, activation_phone_normalized, sms_consent_status",
     )
-    .eq("activation_status", "delivery_failed")
-    .lt("activation_attempt_count", MAX_ACTIVATION_ATTEMPTS)
+    .in("activation_status", ["delivery_failed", "waiting"])
     .gt("activation_attempt_count", 0)
 
   if (landlordId?.trim()) {
@@ -769,33 +809,48 @@ export async function processTenantActivationRetries(
     activation_status: string | null
     activation_attempt_count: number | null
     first_activation_attempt_at: string | null
+    last_activation_attempt_at: string | null
     last_delivery_error: string | null
     activation_phone_normalized: string | null
     sms_consent_status: string | null
   }>
 
-  const dueIdsByLandlord = new Map<string, string[]>()
+  const retryIdsByLandlord = new Map<string, string[]>()
+  const nudgeIdsByLandlord = new Map<string, string[]>()
   for (const row of rows) {
-    if ((row.sms_consent_status ?? "").toLowerCase() === "opted_in") continue
-    if ((row.sms_consent_status ?? "").toLowerCase() === "opted_out") continue
-    if (
-      !isAutomaticRetryDue({
-        activationStatus: row.activation_status,
-        attemptCount: Number(row.activation_attempt_count) || 0,
-        firstAttemptAt: row.first_activation_attempt_at,
-      })
-    ) {
-      continue
-    }
+    const consent = (row.sms_consent_status ?? "").toLowerCase()
+    if (consent === "opted_in" || consent === "opted_out") continue
     const stored = normalizeActivationPhone(row.activation_phone_normalized)
     const current = normalizeActivationPhone(row.phone)
     if (stored && current && stored !== current) continue
-    if (!isRetryableDeliveryFailure(row.last_delivery_error)) continue
 
+    const attempts = Number(row.activation_attempt_count) || 0
     const lid = row.landlord_id
-    const list = dueIdsByLandlord.get(lid) ?? []
-    list.push(row.id)
-    dueIdsByLandlord.set(lid, list)
+    if (
+      isAutomaticRetryDue({
+        activationStatus: row.activation_status,
+        attemptCount: attempts,
+        firstAttemptAt: row.first_activation_attempt_at,
+      }) &&
+      isRetryableDeliveryFailure(row.last_delivery_error)
+    ) {
+      const list = retryIdsByLandlord.get(lid) ?? []
+      list.push(row.id)
+      retryIdsByLandlord.set(lid, list)
+      continue
+    }
+    if (
+      isSilenceNudgeDue({
+        activationStatus: row.activation_status,
+        attemptCount: attempts,
+        firstAttemptAt: row.first_activation_attempt_at,
+        lastAttemptAt: row.last_activation_attempt_at,
+      })
+    ) {
+      const list = nudgeIdsByLandlord.get(lid) ?? []
+      list.push(row.id)
+      nudgeIdsByLandlord.set(lid, list)
+    }
   }
 
   let sent = 0
@@ -803,27 +858,34 @@ export async function processTenantActivationRetries(
   let skipped = 0
   let due = 0
 
-  for (const [lid, ids] of dueIdsByLandlord) {
-    due += ids.length
-    // Load company name once per landlord.
-    const { data: landlord } = await supabase
-      .from("landlords")
-      .select("name")
-      .eq("id", lid)
-      .maybeSingle()
-    const companyName =
-      typeof landlord?.name === "string" ? landlord.name.trim() || null : null
+  const runBatch = async (
+    byLandlord: Map<string, string[]>,
+    flags: { automaticRetry?: boolean; automaticNudge?: boolean },
+  ) => {
+    for (const [lid, ids] of byLandlord) {
+      due += ids.length
+      const { data: landlord } = await supabase
+        .from("landlords")
+        .select("name")
+        .eq("id", lid)
+        .maybeSingle()
+      const companyName =
+        typeof landlord?.name === "string" ? landlord.name.trim() || null : null
 
-    const summary = await sendTenantActivation(supabase, {
-      landlordId: lid,
-      residentIds: ids,
-      companyName,
-      automaticRetry: true,
-    })
-    sent += summary.sent
-    failed += summary.failed
-    skipped += summary.skipped
+      const summary = await sendTenantActivation(supabase, {
+        landlordId: lid,
+        residentIds: ids,
+        companyName,
+        ...flags,
+      })
+      sent += summary.sent
+      failed += summary.failed
+      skipped += summary.skipped
+    }
   }
+
+  await runBatch(retryIdsByLandlord, { automaticRetry: true })
+  await runBatch(nudgeIdsByLandlord, { automaticNudge: true })
 
   return {
     scanned: rows.length,
