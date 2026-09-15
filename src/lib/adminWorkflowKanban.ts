@@ -8,6 +8,7 @@ import { DEMO_MOVE_OUT_WO_D777_RUN_ID } from '@/lib/activeLandlord'
 import { normalizeBuildingKey } from '@/lib/propertyHealth'
 import { formatWorkOrderRefForWorkflowRun } from '@/lib/vendorCallFlow'
 import { formatVendorTradeLabel } from '@/lib/vendorTrades'
+import { summarizeWorkOrderCardBlurb } from '@/lib/workOrderCardSummary'
 
 export type OperationsBreakdownLine = {
   id: string
@@ -69,6 +70,8 @@ export type WorkflowKanbanCard = {
   category: WorkflowKanbanCategory
   /** Trade / issue category chip for maintenance work orders, e.g. Plumbing. */
   issueCategoryLabel: string | null
+  /** 3–5 word work-order summary on Active Tasks cards. */
+  workOrderSummary: string | null
   stage: WorkflowKanbanStageId
   critical: boolean
   initials: string | null
@@ -473,6 +476,10 @@ export function buildWorkflowKanbanCard(
     }),
     category,
     issueCategoryLabel,
+    workOrderSummary:
+      category === 'maintenance'
+        ? summarizeWorkOrderCardBlurb(row.issueDescription, row.issueCategory)
+        : null,
     stage: deriveWorkflowKanbanStage(row, metadata),
     critical: row.status === 'escalated',
     initials: deriveInitials(row),

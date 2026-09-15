@@ -402,6 +402,11 @@ function KanbanCardItem({
           <span className="mt-1 size-2 shrink-0 rounded-full bg-[#fb2c36]" aria-hidden />
         ) : null}
       </div>
+      {card.workOrderSummary ? (
+        <p className="truncate text-[13px] font-medium leading-4 text-[#364153]">
+          {card.workOrderSummary}
+        </p>
+      ) : null}
       {card.context && card.context !== '—' ? (
         <p className="truncate text-[12px] leading-4 text-[#6a7282]">{card.context}</p>
       ) : null}

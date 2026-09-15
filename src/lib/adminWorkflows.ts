@@ -47,6 +47,8 @@ export type AdminWorkflowRow = {
   escalationReason: string | null
   /** From linked ticket `issue_category`, else workflow_runs.metadata.issue_category. */
   issueCategory: string | null
+  /** Linked ticket description (or intake metadata) for Active Tasks card blurbs. */
+  issueDescription?: string | null
   /**
    * From linked `maintenance_requests.vendor_work_status` when the run targets a ticket.
    * Drives Operations kanban: New Intake → Assigned → In Progress → Completed.
@@ -980,12 +982,13 @@ export async function fetchAdminWorkflowDashboard(
       vendor_work_status: string | null
       assigned_vendor_id: string | null
       issue_category: string | null
+      description: string | null
     }
   >()
   if (maintenanceTicketIds.length) {
     const { data: tickets, error: ticketsError } = await supabase
       .from('maintenance_requests')
-      .select('id, vendor_work_status, assigned_vendor_id, issue_category')
+      .select('id, vendor_work_status, assigned_vendor_id, issue_category, description')
       .in('id', maintenanceTicketIds)
     if (ticketsError) {
       console.error(
@@ -1008,6 +1011,10 @@ export async function fetchAdminWorkflowDashboard(
           issue_category:
             typeof ticket.issue_category === 'string' && ticket.issue_category.trim()
               ? ticket.issue_category.trim()
+              : null,
+          description:
+            typeof ticket.description === 'string' && ticket.description.trim()
+              ? ticket.description.trim()
               : null,
         })
       }
@@ -1061,6 +1068,11 @@ export async function fetchAdminWorkflowDashboard(
       escalationReason: readMetaString(metadata, 'escalation_reason'),
       issueCategory:
         ticket?.issue_category ?? readMetaString(metadata, 'issue_category'),
+      issueDescription:
+        ticket?.description ??
+        readMetaString(metadata, 'description') ??
+        readMetaString(metadata, 'issue_description') ??
+        readMetaString(metadata, 'issue_summary'),
       vendorWorkStatus: ticket?.vendor_work_status ?? null,
       assignedVendorId: ticket?.assigned_vendor_id ?? null,
     }
