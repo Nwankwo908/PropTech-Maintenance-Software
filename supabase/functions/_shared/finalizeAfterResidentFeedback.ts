@@ -11,7 +11,6 @@ import {
   markMaintenanceJobCompleted,
 } from "./maintenanceSpend.ts"
 import { notifyResidentCompleted } from "../submit-maintenance-request/resident_notify.ts"
-import { formatWorkOrderRef } from "./vendor_outreach_copy.ts"
 import { emitServerProductEvent } from "./ga4MeasurementProtocol.ts"
 
 const POSITIVE_RATING_MIN = 4
@@ -210,7 +209,9 @@ export async function finalizeJobAfterResidentFeedback(
       landlordId: params.landlordId,
       kind: "invoice_ready",
       headline: "Invoice ready to pay",
-      detail: `${formatWorkOrderRef(params.ticketId)}${unit ? ` · Unit ${unit}` : ""} · ${vendorName} · ${amount}`,
+      detail: [unit ? `Unit ${unit}` : null, vendorName, amount]
+        .filter(Boolean)
+        .join(" · "),
       idempotencyKey: `invoice:${invoiceId}`,
       maintenanceRequestId: params.ticketId,
       vendorId: params.vendorId,

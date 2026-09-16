@@ -174,6 +174,11 @@ export const uloAppUrl = {
     )
   },
 
+  /** Thumbtack authorization_code redirect (must match the registered redirect_uri). */
+  thumbtackOauthCallback(_options?: UloAppOriginOptions): string {
+    return "https://www.ulohome.io/"
+  },
+
   /** Lightweight phone capture page for AI Equipment Scan. */
   inspectionCapture(
     sessionId: string,

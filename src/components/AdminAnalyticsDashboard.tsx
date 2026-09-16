@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import {
   approveMaintenanceInvoice,
@@ -8,20 +8,9 @@ import {
   type RecognizedMaintenanceSpend,
 } from '@/api/maintenanceInvoice'
 import { getActiveLandlordId } from '@/lib/activeLandlord'
-import {
-  fetchPmCompliance,
-  formatPmDueLabel,
-  formatPmTaskSubtitle,
-  pmTaskKindUsesApplianceIcon,
-  pmTaskKindUsesInspectionIcon,
-  pmTaskKindUsesServiceIcon,
-  type PmComplianceSummary,
-  type PmComplianceTask,
-} from '@/lib/pmCompliance'
+import { fetchPmCompliance, type PmComplianceSummary } from '@/lib/pmCompliance'
+import { PmComplianceTaskCard } from '@/components/PmComplianceTaskCard'
 import { supabase } from '@/lib/supabase'
-import applianceRepairIcon from '@/assets/appliance-repair.png'
-import inspectionReviewIcon from '@/assets/inspection-review.png'
-import pmServiceIcon from '@/assets/pm-service.png'
 import { getErrorMessage } from '@/lib/errorMessage'
 import {
   applyFutureMonthProjections,
@@ -51,8 +40,6 @@ type MonthlySpend = {
   isFuture: boolean
   isProjection: boolean
 }
-
-type PmTaskStatusTone = 'danger' | 'warning' | 'neutral'
 
 const CLOSED_WORK_STATUSES = new Set(['completed', 'cancelled'])
 const MONTH_LABELS = [
@@ -230,62 +217,6 @@ function KpiCard({
         ) : null}
       </div>
       <p className="min-w-0 truncate whitespace-nowrap text-[12px] leading-4 text-[#6a7282]">{caption}</p>
-    </div>
-  )
-}
-
-function StatusText({ tone, children }: { tone: PmTaskStatusTone; children: ReactNode }) {
-  const className = {
-    danger: 'text-[#c10007] font-medium',
-    warning: 'text-[#c2410c] font-medium',
-    neutral: 'text-[#6a7282]',
-  }[tone]
-  return <span className={className}>{children}</span>
-}
-
-function PmComplianceRow({ task, index = 0 }: { task: PmComplianceTask; index?: number }) {
-  const due = formatPmDueLabel(task.dueAt, task.status)
-  const taskIcon = pmTaskKindUsesApplianceIcon(task.kind)
-    ? applianceRepairIcon
-    : pmTaskKindUsesInspectionIcon(task.kind)
-      ? inspectionReviewIcon
-      : pmTaskKindUsesServiceIcon(task.kind)
-        ? pmServiceIcon
-        : null
-
-  return (
-    <div
-      className="sa-enter flex flex-wrap items-start justify-between gap-3 py-3 first:pt-0 last:pb-0"
-      style={{ animationDelay: `${Math.min(index, 12) * 30}ms` }}
-    >
-      <div className="flex min-w-0 flex-1 gap-3">
-        {taskIcon ? (
-          <img
-            src={taskIcon}
-            alt=""
-            className="mt-0.5 size-8 shrink-0 object-contain"
-            aria-hidden
-          />
-        ) : null}
-        <div className="min-w-0 flex-1">
-          <p className="text-[14px] font-medium text-[#0a0a0a]">{task.title}</p>
-          <p className="text-[12px] text-[#6a7282]">{task.location}</p>
-          <p className="mt-1 text-[12px] leading-5 text-[#4b5563]">{formatPmTaskSubtitle(task)}</p>
-          {task.ageBasis === 'estimated_from_build_year' ||
-          task.ageBasis === 'ai_estimated' ? (
-            <p className="mt-1 text-[11px] font-medium uppercase tracking-wide text-[#94a3b8]">
-              Age estimated
-              {task.ageBasis === 'estimated_from_build_year' ? ' from build year' : ''}
-            </p>
-          ) : null}
-          {task.kind === 'appliance' && task.estimatedReplacementCost != null ? (
-            <p className="mt-1 text-[12px] font-medium text-[#0a0a0a]">
-              Est. replacement {formatSpend(task.estimatedReplacementCost)}
-            </p>
-          ) : null}
-        </div>
-      </div>
-      <StatusText tone={due.tone}>{due.label}</StatusText>
     </div>
   )
 }
@@ -863,14 +794,9 @@ export function AdminAnalyticsDashboard() {
           ) : analytics.pmTasks.length > 0 ? (
             <div>
               <div className="mb-3 flex flex-wrap items-start justify-between gap-2">
-                <div>
-                  <h3 className="text-[14px] font-semibold text-[#0a0a0a]">
-                    Preventive maintenance tasks
-                  </h3>
-                  <p className="mt-0.5 text-[12px] leading-4 text-[#6a7282]">
-                    Asset → task → workflow → assignment → completion
-                  </p>
-                </div>
+                <h3 className="text-[14px] font-semibold text-[#0a0a0a]">
+                  Preventive maintenance tasks
+                </h3>
                 <span className="text-[12px] font-medium text-[#6a7282]">
                   {analytics.pmTasks.length} task
                   {analytics.pmTasks.length === 1 ? '' : 's'} due
@@ -878,7 +804,14 @@ export function AdminAnalyticsDashboard() {
               </div>
               <div className="divide-y divide-[#f3f4f6]">
                 {analytics.pmTasks.map((task, index) => (
-                  <PmComplianceRow key={task.id} task={task} index={index} />
+                  <PmComplianceTaskCard
+                    key={task.id}
+                    task={task}
+                    index={index}
+                    onChanged={async () => {
+                      setPmComplianceData(await fetchPmCompliance())
+                    }}
+                  />
                 ))}
               </div>
             </div>

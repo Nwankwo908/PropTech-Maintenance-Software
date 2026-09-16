@@ -323,9 +323,9 @@ function KpiCard({
           />
         ) : null}
       </div>
-      <div className={`relative flex min-h-20 min-w-0 flex-1 flex-nowrap gap-2 ${chart ? 'items-center' : 'items-end justify-between'}`}>
+      <div className={`relative flex min-h-20 min-w-0 flex-1 flex-nowrap gap-2 ${chart ? 'items-center justify-end' : 'items-end justify-between'}`}>
         {chart ? (
-          <div className="pointer-events-none absolute -right-2 top-1/2 z-10 -translate-y-1/2 sm:-right-3">
+          <div className="pointer-events-none absolute -left-2 top-1/2 z-10 -translate-y-1/2 sm:-left-3">
             {chart}
           </div>
         ) : (

@@ -112,7 +112,7 @@ function headlineFor(templateId: string): string {
     case "inspection":
       return "Inspection needs attention"
     default:
-      return "Workflow needs attention"
+      return "This needs a decision"
   }
 }
 

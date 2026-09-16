@@ -73,5 +73,26 @@ Thank you,
 {company}
 ```
 
+## Reference — landlord Needs Your Attention (canonical example)
+
+Use this shape for landlord attention SMS/email (`buildLandlordAttentionSms`). Identify Ulo, what happened, where/when, why, then numbered nearby vendors when no preferred vendor can take the job. Those numbers **are** SMS replies (`1` / `2` / `3`) — reuse `landlord_vendor_choice`. Do not invent short URLs; use `uloAppUrl`. Do not put work-order IDs or engine jargon in the body.
+
+SMS:
+```
+Ulo: no vendor found — leaking kitchen faucet
+
+14 Maple Ave · Unit 1 · reported 2h ago
+
+No one on your preferred list can take this right now. Nearby vendors:
+1 — Rapid Plumb Co. · 4.9 stars (218 reviews)
+2 — Metro Plumbing Services · 4.6 stars (142 reviews)
+3 — Apex Pipe & Drain · 4.8 stars (96 reviews)
+
+Reply 1, 2, or 3 and we'll contact them.
+
+Details:
+{link}
+```
+
 ## Apply everywhere
-Vendor onboarding, tenant onboarding, maintenance updates, work order assignments, vendor reassignment, inspection reminders, rent reminders, lease renewals, broadcasts, passwordless/login links, verification requests, and all SMS/email notifications. Where activity-feed descriptions are user-facing, follow the same plain, professional tone.
+Vendor onboarding, tenant onboarding, maintenance updates, work order assignments, vendor reassignment, inspection reminders, rent reminders, lease renewals, broadcasts, passwordless/login links, verification requests, landlord attention alerts, and all SMS/email notifications. Where activity-feed descriptions are user-facing, follow the same plain, professional tone.

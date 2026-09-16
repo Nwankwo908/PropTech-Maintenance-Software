@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   hasPersistedInspectionData,
   inspectionPhotosForDisplay,
+  isInspectionReportAsset,
   isInspectionReportPhoto,
   pickBuildingInspectionWriteSessionId,
 } from '@/lib/inspectionSession'

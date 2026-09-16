@@ -7,7 +7,6 @@ import { getEstimatedMinutes } from "../sla_rules.ts"
 import { logGraphEvent } from "../graph/logGraphEvent.ts"
 import { updateWorkflowRun } from "../engine/workflowRuns.ts"
 import { issueCategoryToVendorTrade } from "../vendor_trades.ts"
-import { assignVendorAndNotify } from "../../submit-maintenance-request/vendor_notify.ts"
 import {
   emitJobCreatedBundle,
   emitServerProductEvent,
@@ -62,8 +61,8 @@ export function shouldMintEarlyTicket(state: SmsIntakeState): boolean {
 /**
  * Ensure the conversation is linked to a real maintenance_requests row.
  * Creates when missing; patches description/category while intake is still open.
- * Does not wait for final submit to assign — if a matchable vendor is available,
- * dispatch runs here so the board ticket is not left unassigned.
+ * Does not assign vendors, notify the landlord, or search nearby vendors.
+ * Dispatch starts only after the resident confirms (YES).
  */
 export async function ensureEarlySmsMaintenanceTicket(
   supabase: SupabaseClient,
@@ -162,16 +161,6 @@ export async function ensureEarlySmsMaintenanceTicket(
       .eq("id", params.conversationId)
 
     await linkRunToTicket(supabase, runId, draftId, params.intake)
-    await tryAssignVendorForEarlyTicket(supabase, {
-      ticketId: draftId,
-      landlordId: params.landlordId,
-      priority,
-      unit,
-      description,
-      dueAt: dueAt.toISOString(),
-      estimatedMinutes,
-      residentAvailabilityText: params.intake.preferred_visit_windows?.trim() || null,
-    })
     return { ticketId: draftId, created: false }
   }
 
@@ -219,16 +208,6 @@ export async function ensureEarlySmsMaintenanceTicket(
     .eq("id", params.conversationId)
 
   await linkRunToTicket(supabase, runId, ticketId, params.intake)
-  await tryAssignVendorForEarlyTicket(supabase, {
-    ticketId,
-    landlordId: params.landlordId,
-    priority,
-    unit,
-    description,
-    dueAt: dueAt.toISOString(),
-    estimatedMinutes,
-    residentAvailabilityText: params.intake.preferred_visit_windows?.trim() || null,
-  })
 
   try {
     await logGraphEvent(supabase, {
@@ -263,42 +242,6 @@ export async function ensureEarlySmsMaintenanceTicket(
   })
 
   return { ticketId, created: true }
-}
-
-async function tryAssignVendorForEarlyTicket(
-  supabase: SupabaseClient,
-  params: {
-    ticketId: string
-    landlordId: string
-    priority: string
-    unit: string
-    description: string
-    dueAt: string
-    estimatedMinutes: number
-    residentAvailabilityText: string | null
-  },
-): Promise<void> {
-  try {
-    const result = await assignVendorAndNotify(supabase, {
-      ticketId: params.ticketId,
-      priority: params.priority,
-      unit: params.unit,
-      description: params.description,
-      dueAt: params.dueAt,
-      estimatedMinutes: params.estimatedMinutes,
-      landlordId: params.landlordId,
-      residentAvailabilityText: params.residentAvailabilityText,
-      retryIfUnassigned: true,
-    })
-    if (!result.assigned) {
-      console.info("[sms-intake] early ticket left unassigned", {
-        ticketId: params.ticketId,
-        skipReason: result.skipReason ?? null,
-      })
-    }
-  } catch (err) {
-    console.error("[sms-intake] early ticket vendor assign failed", err)
-  }
 }
 
 /** Persist draft_ticket_id onto intake state after minting. */

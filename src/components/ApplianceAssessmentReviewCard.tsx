@@ -3,6 +3,7 @@ import { InspectionAssessmentTable } from '@/components/InspectionAssessmentTabl
 import type { ApplianceVisionResult, InspectionPhotoRow } from '@/lib/vision/types'
 import { visionResultsFromInspectionPhoto } from '@/lib/inspectionAssessmentTable'
 import { getErrorMessage } from '@/lib/errorMessage'
+import { isInspectionReportPhoto } from '@/lib/inspectionSession'
 
 type ApplianceAssessmentReviewCardProps = {
   photos: InspectionPhotoRow[]
@@ -24,6 +25,7 @@ export function ApplianceAssessmentReviewCard({
     () =>
       photos.filter(
         (photo) =>
+          !isInspectionReportPhoto(photo) &&
           photo.status !== 'queued' &&
           photo.status !== 'analyzing' &&
           Boolean(photo.confirmedResult ?? photo.aiResult),
@@ -33,7 +35,7 @@ export function ApplianceAssessmentReviewCard({
 
   const tableRows = useMemo(
     () =>
-      photos.flatMap((photo) => {
+      photos.filter((photo) => !isInspectionReportPhoto(photo)).flatMap((photo) => {
         const extracting = photo.status === 'queued' || photo.status === 'analyzing'
         const results = visionResultsFromInspectionPhoto(photo)
         if (extracting && results.length === 0) {
@@ -91,32 +93,6 @@ export function ApplianceAssessmentReviewCard({
     completed.length > 0 &&
     completed.every((photo) => photo.status === 'confirmed') &&
     !photos.some((photo) => photo.status === 'queued' || photo.status === 'analyzing')
-
-  async function handleConfirm() {
-    setError(null)
-    const pending = completed.filter((photo) => photo.status === 'needs_review')
-    if (pending.length === 0) {
-      setError('Nothing left to save.')
-      return
-    }
-    const missingType = pending.find((photo) => {
-      const result = drafts[photo.id] ?? photo.aiResult
-      return !result?.identifiedItem.type.trim()
-    })
-    if (missingType) {
-      setError('Item type is required before saving.')
-      return
-    }
-    try {
-      for (const photo of pending) {
-        const result = drafts[photo.id] ?? photo.aiResult
-        if (!result) continue
-        await onConfirm(photo.id, result)
-      }
-    } catch (err) {
-      setError(getErrorMessage(err, 'Could not save assessment.'))
-    }
-  }
 
   async function handleDelete() {
     const photoIds = [...new Set(checkedIds.map((id) => id.split(':')[0] ?? id))]
@@ -239,18 +215,6 @@ export function ApplianceAssessmentReviewCard({
         </div>
       ) : null}
 
-      {!saved ? (
-        <div className="mt-4 flex justify-start">
-          <button
-            type="button"
-            disabled={confirming || deleting}
-            onClick={() => void handleConfirm()}
-            className="pd-btn pd-btn-primary rounded-[10px] px-4 py-2.5 text-[13px] font-semibold"
-          >
-            {confirming ? 'Saving…' : 'Confirm & Save to Report'}
-          </button>
-        </div>
-      ) : null}
     </div>
   )
 }

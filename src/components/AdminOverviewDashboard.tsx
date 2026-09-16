@@ -615,9 +615,9 @@ function KpiCard({
           />
         ) : null}
       </div>
-      <div className={`relative flex min-h-20 min-w-0 flex-1 flex-nowrap gap-2 ${chart ? 'items-center' : 'items-end justify-between'}`}>
+      <div className={`relative flex min-h-20 min-w-0 flex-1 flex-nowrap gap-2 ${chart ? 'items-center justify-end' : 'items-end justify-between'}`}>
         {chart ? (
-          <div className="pointer-events-none absolute -right-2 top-1/2 z-10 -translate-y-1/2 sm:-right-3">
+          <div className="pointer-events-none absolute -left-2 top-1/2 z-10 -translate-y-1/2 sm:-left-3">
             {chart}
           </div>
         ) : (
@@ -2124,7 +2124,9 @@ export function AdminOverviewDashboard() {
         setEscalatedReview((prev) => {
           if (!prev) return prev
           const meta = [
-            pick.rating != null ? `${pick.rating.toFixed(1)}★` : null,
+            pick.rating != null && Number.isFinite(Number(pick.rating))
+              ? `${Number(pick.rating).toFixed(1)}★`
+              : null,
             pick.priceLabel,
           ]
             .filter(Boolean)
@@ -2183,7 +2185,9 @@ export function AdminOverviewDashboard() {
     setEscalatedReview((prev) => {
       if (!prev) return prev
       const meta = [
-        pick.rating != null ? `${pick.rating.toFixed(1)}★` : null,
+        pick.rating != null && Number.isFinite(Number(pick.rating))
+          ? `${Number(pick.rating).toFixed(1)}★`
+          : null,
         pick.priceLabel,
       ]
         .filter(Boolean)
@@ -3102,7 +3106,7 @@ export function AdminOverviewDashboard() {
               if (!escalatedRailSaving) closeEscalatedRail()
             }}
           />
-          <div className="relative flex h-full max-h-dvh max-w-full">
+          <div className="relative flex h-full max-h-dvh w-max max-w-full shrink-0">
             <FindExternalVendorRail
               panelOnly
               stackedPosition="left"
@@ -3214,7 +3218,7 @@ export function AdminOverviewDashboard() {
               }
             }}
           />
-          <div className="relative flex h-full max-h-dvh max-w-full">
+          <div className="relative flex h-full max-h-dvh w-max max-w-full shrink-0">
             <LateRentAccountMessageRail
               panelOnly
               stackedPosition="left"
@@ -3273,7 +3277,7 @@ export function AdminOverviewDashboard() {
               }
             }}
           />
-          <div className="relative flex h-full max-h-dvh max-w-full">
+          <div className="relative flex h-full max-h-dvh w-max max-w-full shrink-0">
             <LeaseRenewalIncentiveMessageRail
               panelOnly
               stackedPosition="left"

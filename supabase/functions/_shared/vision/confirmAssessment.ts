@@ -1,7 +1,13 @@
 import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.49.1"
 import { recordActivityLog } from "../graph/recordActivityLog.ts"
 import { resolveOperationsGraphScope } from "../graph/operationsGraph.ts"
-import type { ApplianceVisionResult, ConditionRating } from "./types.ts"
+import {
+  failureSignalsFromCondition,
+  naturalPmTaskTitle,
+  persistableAssetAgeYears,
+  pmTaskInstruction,
+} from "../../../../shared/pm/taskCard.ts"
+import type { ApplianceVisionResult } from "./types.ts"
 import { findReusableInspectionUnitAsset } from "./matchInspectionUnitAsset.ts"
 
 type RegistryAssetType =
@@ -11,6 +17,7 @@ type RegistryAssetType =
   | "appliance"
   | "roof"
   | "electrical_panel"
+  | "plumbing"
 
 type ApplianceSubtype =
   | "fridge"
@@ -22,8 +29,9 @@ type ApplianceSubtype =
 
 function usefulLifeYears(type: string, category: string): number {
   const t = `${category} ${type}`.toLowerCase()
+  if (category === "electrical_panel" || t.includes("electrical") || t.includes("panel")) return 30
+  if (category === "plumbing" || t.includes("plumb") || t.includes("supply line")) return 40
   if (t.includes("roof")) return 25
-  if (t.includes("electrical") || t.includes("panel")) return 30
   if (category === "boiler" || t.includes("boiler")) return 15
   if (t.includes("water") || t.includes("heater")) return 12
   if (t.includes("hvac") || t.includes("furnace") || t.includes("condenser") || t.includes("ac")) {
@@ -31,24 +39,6 @@ function usefulLifeYears(type: string, category: string): number {
   }
   if (t.includes("refrigerator") || t.includes("washer") || t.includes("dryer")) return 12
   return 10
-}
-
-function failureFromCondition(
-  rating: ConditionRating,
-  ageYears: number | null,
-  lifeYears: number,
-): { risk: number; window: string; replace: boolean; urgency: string } {
-  const ageRatio = ageYears != null && lifeYears > 0 ? ageYears / lifeYears : 0.5
-  if (rating === "unsafe") {
-    return { risk: 95, window: "Immediate", replace: true, urgency: "immediate" }
-  }
-  if (rating === "poor") {
-    return { risk: 75, window: "3–6 months", replace: true, urgency: "soon" }
-  }
-  if (rating === "fair" || ageRatio >= 0.75) {
-    return { risk: 45, window: "6–18 months", replace: ageRatio >= 0.85, urgency: "plan" }
-  }
-  return { risk: 15, window: "2–5 years", replace: false, urgency: "monitor" }
 }
 
 function addMonths(iso: string, months: number): string {
@@ -83,6 +73,16 @@ function resolveRegistryType(
   }
   if (category === "roof" || cat.includes("roof")) {
     return { registryAssetType: "roof", applianceSubtype: null, slotKey: "roof" }
+  }
+  if (
+    category === "plumbing" ||
+    (cat.includes("plumb") && !cat.includes("heater"))
+  ) {
+    return {
+      registryAssetType: "plumbing",
+      applianceSubtype: null,
+      slotKey: "plumbing",
+    }
   }
   // Boiler before water_heater — "heater" must not steal boilers.
   if (category === "boiler" || cat.includes("boiler")) {
@@ -148,6 +148,8 @@ export type ConfirmAssessmentInput = {
   provider: string | null
   storagePath: string | null
   actorId?: string | null
+  /** Inspection reports confirm many findings against one photo id. */
+  distinctFindingsPerPhoto?: boolean
 }
 
 export type ConfirmAssessmentOutput = {
@@ -204,6 +206,8 @@ export async function confirmInspectionAssessment(
       brand,
       model,
       serial,
+      slotKey: slot.slotKey,
+      distinctFindingsPerPhoto: input.distinctFindingsPerPhoto === true,
     })
     if (match) {
       existingId = String(match.id)
@@ -289,7 +293,13 @@ export async function confirmInspectionAssessment(
   const lastInspectionDate =
     typeof prevMeta.lastInspectionDate === "string" ? prevMeta.lastInspectionDate : null
 
-  const derived = failureFromCondition(result.condition.rating, ageYears, life)
+  // Risk is age vs typical life only — no separate confidence gate. A real
+  // estimatedAge.value flows through; missing age leaves risk empty (not 0).
+  const derived = failureSignalsFromCondition({
+    rating: result.condition.rating,
+    ageYears,
+    lifeYears: life,
+  })
 
   const priorSource = prevMeta.source
   const source =
@@ -315,6 +325,7 @@ export async function confirmInspectionAssessment(
       ? slot.registryAssetType
       : result.category,
     registryAssetType: slot.registryAssetType,
+    slotKey: slot.slotKey,
     applianceSubtype: slot.applianceSubtype,
     fuelType:
       slot.registryAssetType === "boiler"
@@ -360,7 +371,7 @@ export async function confirmInspectionAssessment(
     appliance_label: [mergedBrand, itemType].filter(Boolean).join(" ").slice(0, 160) || itemType,
     brand: mergedBrand,
     model: mergedModel,
-    estimated_age_years: ageYears != null && ageYears >= 0 ? ageYears : 0,
+    estimated_age_years: persistableAssetAgeYears(ageYears),
     useful_life_years: life,
     failure_risk_pct: derived.risk,
     failure_prediction_window: derived.window,
@@ -379,11 +390,7 @@ export async function confirmInspectionAssessment(
       result.maintenanceRecommendations[0]?.suggestedIntervalMonths ?? 12,
     ),
     task_kind:
-      slot.registryAssetType === "roof" || slot.registryAssetType === "hvac"
-        ? "inspection"
-        : slot.registryAssetType === "appliance"
-          ? "appliance"
-          : "service", // water_heater, boiler, electrical_panel
+      slot.registryAssetType === "appliance" ? "appliance" : "inspection",
     metadata,
     updated_at: now,
   }
@@ -412,14 +419,21 @@ export async function confirmInspectionAssessment(
       ? result.maintenanceRecommendations
       : [
           {
-            action:
-              slot.registryAssetType === "boiler"
-                ? `Annual professional service for ${itemType}`
-                : `Inspect / service ${itemType}`,
+            action: pmTaskInstruction({
+              title: itemType,
+              applianceType: itemType,
+              registryAssetType: slot.registryAssetType,
+            }),
             urgency: "routine" as const,
             suggestedIntervalMonths: 12,
           },
         ]
+  const displayTitle = naturalPmTaskTitle({
+    title: itemType,
+    kind: slot.registryAssetType === "appliance" ? "appliance" : "inspection",
+    applianceType: itemType,
+    registryAssetType: slot.registryAssetType,
+  })
 
   const taskIds: string[] = []
   // Avoid duplicate open tasks for the same asset from repeat inspections
@@ -432,46 +446,47 @@ export async function confirmInspectionAssessment(
     .limit(5)
 
   if (!openTasks?.length) {
-    for (const rec of recs) {
-      const months = rec.suggestedIntervalMonths && rec.suggestedIntervalMonths > 0
-        ? rec.suggestedIntervalMonths
-        : 12
-      const taskKind =
-        slot.registryAssetType === "hvac" ||
-          slot.registryAssetType === "water_heater" ||
-          slot.registryAssetType === "boiler" ||
-          slot.registryAssetType === "roof"
-          ? "service"
-          : "appliance"
-      const { data: task, error: taskError } = await supabase
-        .from("preventive_maintenance_tasks")
-        .insert({
-          landlord_id: landlordId,
-          unit_asset_id: unitAssetId,
-          title: rec.action.slice(0, 200),
-          task_kind: taskKind,
-          due_at: addMonths(now, months),
-          status: "scheduled",
-          building,
-          unit_label: null,
-          metadata: {
-            urgency: rec.urgency,
-            suggestedIntervalMonths: months,
-            source: "inspection_assessment",
-            photoId,
-            assessmentId,
-            conditionRating: result.condition.rating,
-            registryAssetType: slot.registryAssetType,
-          },
-        })
-        .select("id")
-        .single()
+    const rec = recs[0]!
+    const months = rec.suggestedIntervalMonths && rec.suggestedIntervalMonths > 0
+      ? rec.suggestedIntervalMonths
+      : 12
+    const taskKind =
+      slot.registryAssetType === "hvac" ||
+        slot.registryAssetType === "water_heater" ||
+        slot.registryAssetType === "boiler" ||
+        slot.registryAssetType === "roof" ||
+        slot.registryAssetType === "plumbing"
+        ? "service"
+        : "appliance"
+    const { data: task, error: taskError } = await supabase
+      .from("preventive_maintenance_tasks")
+      .insert({
+        landlord_id: landlordId,
+        unit_asset_id: unitAssetId,
+        title: displayTitle.slice(0, 200),
+        task_kind: taskKind,
+        due_at: addMonths(now, months),
+        status: "scheduled",
+        building,
+        unit_label: null,
+        metadata: {
+          urgency: rec.urgency,
+          suggestedIntervalMonths: months,
+          source: "inspection_assessment",
+          photoId,
+          assessmentId,
+          conditionRating: result.condition.rating,
+          registryAssetType: slot.registryAssetType,
+          instruction: rec.action,
+        },
+      })
+      .select("id")
+      .single()
 
-      if (taskError) {
-        console.error("[confirmInspectionAssessment] task insert", taskError.message)
-        continue
-      }
-      if (task?.id) taskIds.push(String(task.id))
+    if (taskError) {
+      console.error("[confirmInspectionAssessment] task insert", taskError.message)
+    } else if (task?.id) {
+      taskIds.push(String(task.id))
     }
   } else {
     taskIds.push(...openTasks.map((t) => String(t.id)))

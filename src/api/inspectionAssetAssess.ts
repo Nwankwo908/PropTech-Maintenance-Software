@@ -244,6 +244,8 @@ export async function uploadAndAnalyzeInspectionPhoto(input: {
   previewUrl?: string | null
   blob?: Blob
   imageBase64?: string
+  pageImages?: Array<{ base64: string; mediaType: string }>
+  pageTexts?: string[]
 }): Promise<InspectionPhotoRow> {
   const blob = input.blob
   if (blob && blob.size > MAX_INSPECTION_UPLOAD_BYTES) {
@@ -277,6 +279,8 @@ export async function uploadAndAnalyzeInspectionPhoto(input: {
       hintCategory: input.hintCategory ?? null,
       mode: input.mode ?? 'photo',
       autoConfirm: input.autoConfirm === true,
+      pageImages: input.pageImages,
+      pageTexts: input.pageTexts,
     })
     const mapped = mapPhoto(data.photo, input.previewUrl)
     if (mapped.previewUrl || !mapped.storagePath) return mapped
@@ -296,6 +300,8 @@ export async function uploadAndAnalyzeInspectionPhoto(input: {
     hintCategory: input.hintCategory ?? null,
     mode: input.mode ?? 'photo',
     autoConfirm: input.autoConfirm === true,
+    pageImages: input.pageImages,
+    pageTexts: input.pageTexts,
   })
   const mapped = mapPhoto(data.photo, input.previewUrl)
   if (mapped.previewUrl || !mapped.storagePath) return mapped

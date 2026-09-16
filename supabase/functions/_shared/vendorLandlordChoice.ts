@@ -21,16 +21,28 @@ export const AWAITING_LANDLORD_VENDOR_CHOICE = "Awaiting landlord vendor choice"
 export type VendorChoiceOption = {
   id: string
   name: string
-  role: "specialist" | "generalist"
+  role: "specialist" | "generalist" | "external"
+  source?: "roster" | "external"
+  searchId?: string | null
+  categoryId?: string | null
 }
 
 export type AwaitingVendorChoice = {
   ticketId: string
   options: VendorChoiceOption[]
+  searchLocation?: string | null
+  issueCategory?: string | null
+  issueSummary?: string | null
+  urgency?: string | null
 }
 
-function asRole(raw: unknown): "specialist" | "generalist" {
+function asRole(raw: unknown, source?: unknown): "specialist" | "generalist" | "external" {
+  if (raw === "external" || source === "external") return "external"
   return raw === "generalist" ? "generalist" : "specialist"
+}
+
+export function isExternalVendorChoice(option: VendorChoiceOption): boolean {
+  return option.role === "external" || option.source === "external"
 }
 
 export function readAwaitingVendorChoice(
@@ -51,7 +63,31 @@ export function readAwaitingVendorChoice(
       const id = typeof rec.id === "string" ? rec.id.trim() : ""
       const name = typeof rec.name === "string" ? rec.name.trim() : ""
       if (!id) continue
-      options.push({ id, name: name || "the vendor", role: asRole(rec.role) })
+      const source =
+        rec.source === "external"
+          ? ("external" as const)
+          : rec.source === "roster"
+            ? ("roster" as const)
+            : undefined
+      const role = asRole(rec.role, rec.source ?? source)
+      options.push({
+        id,
+        name: name || "the vendor",
+        role,
+        source: source ?? (role === "external" ? "external" : "roster"),
+        searchId:
+          typeof rec.search_id === "string"
+            ? rec.search_id
+            : typeof rec.searchId === "string"
+              ? rec.searchId
+              : null,
+        categoryId:
+          typeof rec.category_id === "string"
+            ? rec.category_id
+            : typeof rec.categoryId === "string"
+              ? rec.categoryId
+              : null,
+      })
     }
   }
   if (options.length === 0) {
@@ -79,7 +115,100 @@ export function readAwaitingVendorChoice(
     }
   }
   if (options.length === 0) return null
-  return { ticketId, options }
+  return {
+    ticketId,
+    options,
+    searchLocation:
+      typeof row.search_location === "string" ? row.search_location : null,
+    issueCategory:
+      typeof row.issue_category === "string" ? row.issue_category : null,
+    issueSummary:
+      typeof row.issue_summary === "string" ? row.issue_summary : null,
+    urgency: typeof row.urgency === "string" ? row.urgency : null,
+  }
+}
+
+export function serializeAwaitingVendorChoice(
+  awaiting: AwaitingVendorChoice,
+): Record<string, unknown> {
+  return {
+    ticket_id: awaiting.ticketId,
+    search_location: awaiting.searchLocation ?? null,
+    issue_category: awaiting.issueCategory ?? null,
+    issue_summary: awaiting.issueSummary ?? null,
+    urgency: awaiting.urgency ?? null,
+    options: awaiting.options.map((row) => ({
+      id: row.id,
+      name: row.name,
+      role: row.role,
+      source: row.source ?? (row.role === "external" ? "external" : "roster"),
+      search_id: row.searchId ?? null,
+      category_id: row.categoryId ?? null,
+    })),
+  }
+}
+
+export function formatExternalVendorSmsLine(row: {
+  name: string
+  rating?: number | null
+  reviewCount?: number | null
+}): string {
+  const name = row.name.trim() || "Vendor"
+  const rating =
+    typeof row.rating === "number" && Number.isFinite(row.rating)
+      ? Math.round(row.rating * 10) / 10
+      : null
+  const reviews =
+    typeof row.reviewCount === "number" && Number.isFinite(row.reviewCount)
+      ? Math.max(0, Math.round(row.reviewCount))
+      : null
+  const stars =
+    rating == null
+      ? null
+      : `${Number.isInteger(rating) ? String(rating) : rating.toFixed(1)} ${
+          rating === 1 ? "star" : "stars"
+        }`
+  const reviewBit =
+    reviews == null
+      ? null
+      : `(${reviews.toLocaleString("en-US")} ${reviews === 1 ? "review" : "reviews"})`
+  const social = [stars, reviewBit].filter(Boolean).join(" ")
+  return social ? `${name} · ${social}` : name
+}
+
+export function choiceOptionsFromExternalSuggestions(
+  rows: Array<{
+    name: string
+    providerRef?: string | null
+    searchId?: string | null
+    categoryId?: string | null
+  }>,
+  limit = 3,
+): VendorChoiceOption[] {
+  const options: VendorChoiceOption[] = []
+  for (const row of rows) {
+    if (options.length >= limit) break
+    const name = row.name.trim()
+    if (!name) continue
+    const providerRef = row.providerRef?.trim() || ""
+    options.push({
+      id: providerRef || `mock:${name}`,
+      name,
+      role: "external",
+      source: "external",
+      searchId: row.searchId ?? null,
+      categoryId: row.categoryId ?? null,
+    })
+  }
+  return options
+}
+
+export function landlordNumberedChoiceReplyHint(count: number): string {
+  if (count <= 0) return ""
+  if (count === 1) return "Reply 1 and we'll contact them."
+  if (count === 2) return "Reply 1 or 2 and we'll contact them."
+  const nums = Array.from({ length: count }, (_, i) => String(i + 1))
+  return `Reply ${nums.slice(0, -1).join(", ")}, or ${nums[nums.length - 1]} and we'll contact them.`
 }
 
 export function canHandleLandlordVendorChoice(input: {
@@ -235,14 +364,13 @@ function optionsFromAssignment(
   }))
 }
 
-async function persistLandlordChoiceSms(
+export async function persistLandlordChoiceSms(
   supabase: SupabaseClient,
   params: {
     landlordId: string
     phone: string
     body: string
-    ticketId: string
-    options: VendorChoiceOption[]
+    awaiting: AwaitingVendorChoice
     providerMessageSid: string
     provider: string
     fromNumber: string
@@ -258,12 +386,13 @@ async function persistLandlordChoiceSms(
   const main = await findActiveLandlordMainNumber(supabase, params.landlordId)
   if (!main?.id) return
 
+  const ticketId = params.awaiting.ticketId
   const { conversationId } = await findOrCreateConversation(supabase, {
     landlordId: params.landlordId,
     smsNumberId: main.id,
     externalPhone: params.phone,
     identity,
-    maintenanceRequestId: params.ticketId,
+    maintenanceRequestId: ticketId,
     conversationStatus: "open",
   })
 
@@ -280,7 +409,7 @@ async function persistLandlordChoiceSms(
     provider_status: "sent",
     raw_payload: {
       source: "landlord_vendor_choice",
-      ticket_id: params.ticketId,
+      ticket_id: ticketId,
     },
   })
 
@@ -300,13 +429,10 @@ async function persistLandlordChoiceSms(
       updated_at: new Date().toISOString(),
       status: "open",
       conversation_type: "landlord_update",
-      maintenance_request_id: params.ticketId,
+      maintenance_request_id: ticketId,
       intake_state: {
         ...prior,
-        awaiting_vendor_choice: {
-          ticket_id: params.ticketId,
-          options: params.options,
-        },
+        awaiting_vendor_choice: serializeAwaitingVendorChoice(params.awaiting),
       },
     })
     .eq("id", conversationId)
@@ -367,8 +493,7 @@ export async function notifyLandlordVendorChoice(
         landlordId: params.landlordId,
         phone,
         body: smsBody,
-        ticketId: params.ticketId,
-        options: choiceOptions,
+        awaiting: { ticketId: params.ticketId, options: choiceOptions },
         providerMessageSid:
           sendResult.providerMessageSid ??
           sendResult.messageId ??
@@ -505,12 +630,79 @@ export async function tryHandleLandlordVendorChoiceInbound(
   }
 
   if (typeof ticket.assigned_vendor_id === "string" && ticket.assigned_vendor_id.trim()) {
+    if (!isExternalVendorChoice(chosen)) {
+      await clearAwaitingVendorChoice(supabase, conversationId, priorIntake)
+      return {
+        handled: true,
+        ticketId: awaiting.ticketId,
+        vendorId: ticket.assigned_vendor_id.trim(),
+        replyBody: "That work order already has a vendor. We'll text you when they reply.",
+      }
+    }
+  }
+
+  if (isExternalVendorChoice(chosen)) {
+    const businessId = chosen.id.startsWith("mock:") ? "" : chosen.id.trim()
+    if (!businessId) {
+      return {
+        handled: true,
+        ticketId: awaiting.ticketId,
+        vendorId: null,
+        replyBody:
+          "Open Ulo to contact that vendor — I couldn't reach them over text from here.",
+      }
+    }
+    const { sendThumbtackVendorMessage } = await import(
+      "./external_vendor/thumbtackMessages.ts"
+    )
+    const { buildThumbtackVendorOutreachMessage } = await import(
+      "./external_vendor/thumbtackOutreachCopy.ts"
+    )
+    const text = buildThumbtackVendorOutreachMessage({
+      propertyAddress: awaiting.searchLocation,
+      jobCategory: awaiting.issueCategory,
+      issueSummary: awaiting.issueSummary,
+      urgency: awaiting.urgency,
+    })
+    const sent = await sendThumbtackVendorMessage(supabase, {
+      ticketId: awaiting.ticketId,
+      landlordId: params.landlordId,
+      businessId,
+      vendorName: chosen.name,
+      searchId: chosen.searchId,
+      categoryId: chosen.categoryId,
+      text,
+      issueCategory: awaiting.issueCategory,
+      searchLocation: awaiting.searchLocation,
+    })
+    if (!sent.ok) {
+      return {
+        handled: true,
+        ticketId: awaiting.ticketId,
+        vendorId: null,
+        replyBody:
+          `I couldn't reach ${chosen.name} just now. Try again, or open Ulo to message them.`,
+      }
+    }
     await clearAwaitingVendorChoice(supabase, conversationId, priorIntake)
+    await recordActivityLog(supabase, {
+      landlordId: params.landlordId,
+      eventType: "maintenance.vendor_choice_selected",
+      source: "sms",
+      actorType: "landlord",
+      maintenanceRequestId: awaiting.ticketId,
+      conversationId,
+      metadata: {
+        message: `Asked ${chosen.name} about this job after the landlord chose them.`,
+        source: "external",
+        business_id: businessId,
+      },
+    })
     return {
       handled: true,
       ticketId: awaiting.ticketId,
-      vendorId: ticket.assigned_vendor_id.trim(),
-      replyBody: "That work order already has a vendor. We'll text you when they reply.",
+      vendorId: null,
+      replyBody: `Got it — we'll contact ${chosen.name} about this job now. We'll text you when they reply.`,
     }
   }
 

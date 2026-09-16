@@ -25,6 +25,10 @@ describe("mapDibCategoryToVisionCategory", () => {
       "water_heater",
     )
     expect(mapDibCategoryToVisionCategory("Systems", "Boiler", null)).toBe("boiler")
+    expect(mapDibCategoryToVisionCategory("Electrical", "Electrical panel", null)).toBe(
+      "electrical_panel",
+    )
+    expect(mapDibCategoryToVisionCategory("Systems", "Plumbing", null)).toBe("plumbing")
   })
 })
 

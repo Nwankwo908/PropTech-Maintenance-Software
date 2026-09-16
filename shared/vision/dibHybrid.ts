@@ -56,6 +56,16 @@ export function mapDibCategoryToVisionCategory(
     return "roof"
   }
   if (
+    parts.includes("electrical panel") ||
+    parts.includes("breaker panel") ||
+    parts.includes("service panel")
+  ) {
+    return "electrical_panel"
+  }
+  if (parts.includes("plumb") || parts.includes("supply line") || parts.includes("drain pipe")) {
+    return "plumbing"
+  }
+  if (
     parts.includes("appliance") ||
     parts.includes("dishwasher") ||
     parts.includes("refrigerator") ||
@@ -67,7 +77,7 @@ export function mapDibCategoryToVisionCategory(
   ) {
     return "appliance"
   }
-  if (parts.includes("plumbing") || parts.includes("electrical") || parts.includes("system")) {
+  if (parts.includes("electrical") || parts.includes("system")) {
     return "other"
   }
   return "unknown"

@@ -1,5 +1,5 @@
+import { formatPmDueHeadline } from '@shared/pm/taskCard'
 import type { PmComplianceTask } from '@/lib/pmCompliance'
-import { formatPmDueLabel } from '@/lib/pmCompliance'
 import type { WorkflowKanbanCategory } from '@/lib/adminWorkflowKanban'
 import {
   countOccupiedUnits,

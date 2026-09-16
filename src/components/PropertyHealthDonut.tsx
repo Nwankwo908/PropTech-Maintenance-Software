@@ -1,5 +1,5 @@
 /**
- * Property Health donut — Figma 1469:862 (thick periwinkle ring, light track, round caps).
+ * Property Health donut — Figma 1469:862 (thick periwinkle ring, light track, square caps).
  */
 
 export const PROPERTY_HEALTH_DONUT_FILL = '#5B6CFF'

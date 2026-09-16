@@ -53,7 +53,7 @@ const INSPECTION_MAX_BYTES = 25 * 1024 * 1024
 
 type SectionId = 'inspection' | 'insurance' | 'history'
 
-type InspectionStatus = 'ready' | 'processing'
+type InspectionStatus = 'ready' | 'processing' | 'needs_review'
 
 type InspectionDoc = {
   id: string
@@ -196,6 +196,11 @@ function fileSizeFromAiResult(result: unknown): number {
   return typeof size === 'number' && Number.isFinite(size) ? size : 0
 }
 
+function packedNeedsManualReview(result: unknown): boolean {
+  if (!result || typeof result !== 'object') return false
+  return (result as { _needsManualReview?: unknown })._needsManualReview === true
+}
+
 function inspectionDocsFromSessionPhotos(
   photos: Array<{
     id: string
@@ -206,13 +211,18 @@ function inspectionDocsFromSessionPhotos(
     aiResult: unknown
   }>,
 ): InspectionDoc[] {
-  return photos.filter(isInspectionReportPhoto).map((photo) => ({
-    id: photo.id,
-    fileName: photo.fileName?.trim() || 'Inspection report',
-    fileSize: fileSizeFromAiResult(photo.aiResult),
-    uploadedAt: photo.createdAt || new Date().toISOString(),
-    status: photo.status === 'queued' || photo.status === 'analyzing' ? 'processing' : 'ready',
-  }))
+  return photos.filter(isInspectionReportPhoto).map((photo) => {
+    const processing = photo.status === 'queued' || photo.status === 'analyzing'
+    const needsReview =
+      photo.status === 'needs_review' || packedNeedsManualReview(photo.aiResult)
+    return {
+      id: photo.id,
+      fileName: photo.fileName?.trim() || 'Inspection report',
+      fileSize: fileSizeFromAiResult(photo.aiResult),
+      uploadedAt: photo.createdAt || new Date().toISOString(),
+      status: processing ? 'processing' : needsReview ? 'needs_review' : 'ready',
+    }
+  })
 }
 
 function formatBytes(bytes: number): string {
@@ -988,6 +998,10 @@ function HomeInspectionExpandedPanel({
                       <ReadyCheckIcon />
                       Ready
                     </span>
+                  ) : doc.status === 'needs_review' ? (
+                    <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-[#fff7ed] px-1.5 py-0.5 text-[10px] font-semibold text-[#c2410c]">
+                      Needs review
+                    </span>
                   ) : (
                     <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-[#fffbeb] px-1.5 py-0.5 text-[10px] font-semibold text-[#f59e0b]">
                       <ProcessingIcon />
@@ -1217,17 +1231,22 @@ export function PropertyDetailsPanel({
 
     try {
       const session = await loadBuildingInspectionSession(building)
+      const uploaded: Array<{ status: string; aiResult: unknown }> = []
       for (const file of accepted) {
         const compressed = await prepareInspectionDocumentUpload(file)
-        await uploadAndAnalyzeInspectionPhoto({
-          assessmentId: session.id,
-          blob: compressed.blob,
-          imageBase64: compressed.base64 || undefined,
-          contentType: compressed.contentType,
-          fileName: compressed.fileName,
-          mode: 'document',
-          autoConfirm: true,
-        })
+        uploaded.push(
+          await uploadAndAnalyzeInspectionPhoto({
+            assessmentId: session.id,
+            blob: compressed.blob,
+            imageBase64: compressed.base64 || undefined,
+            contentType: compressed.contentType,
+            fileName: compressed.fileName,
+            mode: 'document',
+            autoConfirm: true,
+            pageImages: compressed.pageImages,
+            pageTexts: compressed.pageTexts,
+          }),
+        )
       }
       const [refreshed, assets] = await Promise.all([
         loadBuildingInspectionSession(building),

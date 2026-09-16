@@ -4,6 +4,9 @@ import { decideVendorAssignmentFromTiers } from "./vendor_assignment.ts"
 import {
   buildLandlordVendorChoiceSms,
   canHandleLandlordVendorChoice,
+  choiceOptionsFromExternalSuggestions,
+  formatExternalVendorSmsLine,
+  landlordNumberedChoiceReplyHint,
   parseLandlordVendorChoice,
   readAwaitingVendorChoice,
 } from "./vendorLandlordChoice.ts"
@@ -166,4 +169,63 @@ Deno.test("buildLandlordVendorChoiceSms asks YES for one vendor and 1 or 2 for t
   assertEquals(twoHandymen.includes("Reply 1 or 2"), true)
   assertEquals(twoHandymen.includes("1. Ivanhomesolutions"), true)
   assertEquals(twoHandymen.includes("2. Handyman Services By Michael"), true)
+})
+
+Deno.test("external suggestions become numbered SMS choices", () => {
+  const options = choiceOptionsFromExternalSuggestions(
+    [
+      { name: "Rapid Plumb Co.", providerRef: "biz-1", searchId: "s1", categoryId: "c1" },
+      { name: "Metro Plumbing Services", providerRef: "biz-2" },
+      { name: "Apex Pipe & Drain", providerRef: "biz-3" },
+      { name: "Fourth should drop", providerRef: "biz-4" },
+    ],
+    3,
+  )
+  assertEquals(options.length, 3)
+  assertEquals(options[0]?.id, "biz-1")
+  assertEquals(options[0]?.role, "external")
+  assertEquals(parseLandlordVendorChoice("1", options)?.name, "Rapid Plumb Co.")
+  assertEquals(parseLandlordVendorChoice("3", options)?.id, "biz-3")
+  assertEquals(parseLandlordVendorChoice("4", options), null)
+  assertEquals(
+    landlordNumberedChoiceReplyHint(3),
+    "Reply 1, 2, or 3 and we'll contact them.",
+  )
+  assertEquals(
+    formatExternalVendorSmsLine({
+      name: "Rapid Plumb Co.",
+      rating: 4.5,
+      reviewCount: 100,
+    }),
+    "Rapid Plumb Co. · 4.5 stars (100 reviews)",
+  )
+  assertEquals(
+    formatExternalVendorSmsLine({ name: "Solo Pro", rating: 1, reviewCount: 1 }),
+    "Solo Pro · 1 star (1 review)",
+  )
+  assertEquals(formatExternalVendorSmsLine({ name: "No stats" }), "No stats")
+})
+
+Deno.test("readAwaitingVendorChoice keeps external search metadata", () => {
+  const awaiting = readAwaitingVendorChoice({
+    awaiting_vendor_choice: {
+      ticket_id: "t-ext",
+      search_location: "14 Maple Ave",
+      issue_category: "plumbing",
+      options: [
+        {
+          id: "biz-1",
+          name: "Rapid Plumb Co.",
+          role: "external",
+          source: "external",
+          search_id: "s1",
+          category_id: "c1",
+        },
+      ],
+    },
+  })
+  assertEquals(awaiting?.ticketId, "t-ext")
+  assertEquals(awaiting?.searchLocation, "14 Maple Ave")
+  assertEquals(awaiting?.options[0]?.searchId, "s1")
+  assertEquals(awaiting?.options[0]?.source, "external")
 })

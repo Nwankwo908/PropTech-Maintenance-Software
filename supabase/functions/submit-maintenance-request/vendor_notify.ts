@@ -65,6 +65,11 @@ export type TicketNotifyPayload = {
    * no vendor (e.g. landlord Override after a no-vendor submit).
    */
   retryIfUnassigned?: boolean
+  /**
+   * Resident confirmed the request (SMS YES / web submit). Ignore leftover
+   * draft dispatch flags and still offer preferred or nearby vendors.
+   */
+  residentConfirmed?: boolean
 }
 
 type VendorRow = {
@@ -498,6 +503,10 @@ export async function assignVendorAndNotify(
     console.error("[vendor-notify] ticket not found", payload.ticketId)
     return { assigned: false, vendorId: null, skipReason: "ticket_missing" }
   }
+  if (payload.residentConfirmed === true) {
+    payload.retryIfUnassigned = true
+    payload.refreshLandlordChoice = true
+  }
   const existingVendorId =
     typeof ticket.assigned_vendor_id === "string" && ticket.assigned_vendor_id.trim()
       ? ticket.assigned_vendor_id.trim()
@@ -568,7 +577,7 @@ export async function assignVendorAndNotify(
       return loadLandlordOperationalSettings(supabase, landlordId)
     })()
     : null
-  if (operational && operational.allowAiDispatch === false) {
+  if (operational && operational.allowAiDispatch === false && payload.residentConfirmed !== true) {
     console.log("[vendor-notify] AI dispatch disabled; awaiting landlord approval", {
       ticketId: payload.ticketId,
       landlordId,

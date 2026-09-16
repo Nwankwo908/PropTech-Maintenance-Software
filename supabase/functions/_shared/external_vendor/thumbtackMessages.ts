@@ -3,7 +3,6 @@
  */
 import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.49.1"
 import { recordActivityLog } from "../graph/recordActivityLog.ts"
-import { notifyLandlordNeedsAttention } from "../landlordAttentionNotify.ts"
 import type { ExternalVendorSearchInput } from "./types.ts"
 import {
   extractZipFromLocation,
@@ -12,6 +11,10 @@ import {
   thumbtackSearchContextForBusiness,
   type ThumbtackExternalVendorProvider,
 } from "./providers/thumbtack.ts"
+import {
+  loadLandlordThumbtackOAuth,
+  saveLandlordThumbtackRefreshToken,
+} from "./thumbtackOauthStore.ts"
 import {
   pickMessageId,
   pickNegotiationId,
@@ -37,6 +40,61 @@ const FETCH_HEADERS = {
   "User-Agent": "Ulo/1.0 (https://ulohome.io; Thumbtack demand partner)",
 } as const
 
+/** Prefer a searchID minted at send time. Never reuse the listing's ID (wrong OAuth app / expired). */
+export function resolveThumbtackRequestSearchIds(input: {
+  listingSearchId: string
+  listingCategoryId: string
+  sameToken?: { searchId: string; categoryId: string } | null
+}): { searchId: string; categoryId: string } {
+  const listingCategoryId = input.listingCategoryId.trim()
+  const freshSearch = input.sameToken?.searchId.trim() ?? ""
+  const freshCategory = input.sameToken?.categoryId.trim() ?? ""
+  if (freshSearch) {
+    return { searchId: freshSearch, categoryId: freshCategory || listingCategoryId }
+  }
+  return { searchId: "", categoryId: listingCategoryId }
+}
+
+export function thumbtackCreateRequestBodies(input: {
+  searchId: string
+  businessId: string
+  categoryId: string
+  utmSource: string
+  description?: string | null
+  zipCode?: string | null
+}): Record<string, unknown>[] {
+  const utmData = { utm_source: input.utmSource }
+  const description = input.description?.trim() || ""
+  const zip = input.zipCode?.trim() || ""
+  const bodies: Record<string, unknown>[] = []
+  if (input.searchId.trim() && input.categoryId.trim()) {
+    bodies.push({
+      searchID: input.searchId,
+      businessIDs: [input.businessId],
+      categoryID: input.categoryId,
+      utmData,
+      ...(description ? { description } : {}),
+      ...(zip ? { zipCode: zip } : {}),
+    })
+    bodies.push({
+      searchId: input.searchId,
+      businessIds: [input.businessId],
+      categoryId: input.categoryId,
+      utmData,
+    })
+  }
+  if (input.categoryId.trim() && zip) {
+    bodies.push({
+      businessIDs: [input.businessId],
+      categoryID: input.categoryId,
+      utmData,
+      zipCode: zip,
+      ...(description ? { description } : {}),
+    })
+  }
+  return bodies
+}
+
 export type ThumbtackSendMessageInput = {
   ticketId: string
   landlordId: string
@@ -49,6 +107,7 @@ export type ThumbtackSendMessageInput = {
   unitId?: string | null
   issueCategory?: string | null
   searchLocation?: string | null
+  connectedLandlordId?: string | null
 }
 
 export type ThumbtackSendMessageResult =
@@ -92,36 +151,46 @@ async function createThumbtackRequest(input: {
   searchId: string
   businessId: string
   categoryId: string
+  description?: string | null
+  zipCode?: string | null
 }): Promise<{ requestId: string | null; negotiationId: string | null; error?: string; status?: number }> {
-  const body: Record<string, unknown> = {
-    searchID: input.searchId,
-    businessIDs: [input.businessId],
-    categoryID: input.categoryId,
-    utmData: { utm_source: input.provider.partnerUtmSource() },
-  }
-  const res = await thumbtackFetch(input.provider, "/v4/requests", {
-    method: "POST",
-    body,
-    token: input.token,
-    apiBase: input.apiBase,
+  const bodies = thumbtackCreateRequestBodies({
+    searchId: input.searchId,
+    businessId: input.businessId,
+    categoryId: input.categoryId,
+    utmSource: input.provider.partnerUtmSource(),
+    description: input.description,
+    zipCode: input.zipCode,
   })
-  if (!res.ok) {
+
+  let last = { status: 0, text: "" }
+  for (const body of bodies) {
+    const res = await thumbtackFetch(input.provider, "/v4/requests", {
+      method: "POST",
+      body,
+      token: input.token,
+      apiBase: input.apiBase,
+    })
+    if (res.ok) {
+      return {
+        requestId: pickRequestId(res.json),
+        negotiationId: pickNegotiationId(res.json),
+      }
+    }
+    last = { status: res.status, text: res.text }
     console.warn("[thumbtack-messages] create request HTTP", res.status, {
       searchId: input.searchId,
       businessId: input.businessId,
       categoryId: input.categoryId,
       body: res.text.slice(0, 400),
     })
-    return {
-      requestId: null,
-      negotiationId: null,
-      error: thumbtackOpenConversationError(res.status, res.text),
-      status: res.status,
-    }
+    if (res.status !== 400) break
   }
   return {
-    requestId: pickRequestId(res.json),
-    negotiationId: pickNegotiationId(res.json),
+    requestId: null,
+    negotiationId: null,
+    error: thumbtackOpenConversationError(last.status, last.text),
+    status: last.status,
   }
 }
 
@@ -171,7 +240,7 @@ function searchInputFromSend(input: ThumbtackSendMessageInput): ExternalVendorSe
   if (!extractZipFromLocation(loc)) return null
   const category = (input.issueCategory ?? "").trim().replace(/_/g, " ") || "home repair"
   return {
-    issueCategory: input.issueCategory,
+    issueCategory: input.issueCategory ?? null,
     searchLocation: loc,
     tradeTerms: category,
     textQuery: `${category} ${loc}`,
@@ -206,8 +275,8 @@ async function openThumbtackNegotiation(input: {
     }
   }
 
-  const sessions = await input.provider.mintRequestFlowSessions()
-  if (sessions.length === 0) {
+  const messageToken = await input.provider.getMessagingAccessToken()
+  if (!messageToken) {
     return {
       negotiationId: null,
       requestId: null,
@@ -215,87 +284,96 @@ async function openThumbtackNegotiation(input: {
       categoryId: "",
       token: null,
       error: thumbtackOpenConversationError(401, "oauth_token_failed"),
-      status: 401,
+      status: 409,
     }
   }
 
-  let lastError: { error: string; status?: number } | null = null
-  let sawHitsWithoutBusiness = false
-  for (const session of sessions) {
-    const hits = await input.provider.searchWithAccessToken(
-      searchInput,
-      session.token,
-      session.apiBase,
-    )
-    const ctx = thumbtackSearchContextForBusiness(hits, input.businessId, {
-      requireBusiness: true,
-    })
-    if (!ctx) {
-      console.warn("[thumbtack-messages] request-flow search missed business", {
-        hits: hits.length,
-        businessId: input.businessId,
-        lastSearchError: input.provider.lastSearchError,
-      })
-      if (hits.length > 0) sawHitsWithoutBusiness = true
-      continue
-    }
-    const created = await createThumbtackRequest({
-      provider: input.provider,
-      token: session.token,
-      apiBase: session.apiBase,
-      searchId: ctx.searchId,
-      businessId: input.businessId,
-      categoryId: ctx.categoryId,
-    })
-    if (created.negotiationId) {
-      return {
-        negotiationId: created.negotiationId,
-        requestId: created.requestId,
-        searchId: ctx.searchId,
-        categoryId: ctx.categoryId,
-        token: session.token,
-        apiBase: session.apiBase,
-      }
-    }
-    const fallback = await loadNegotiationForBusiness({
-      provider: input.provider,
-      token: session.token,
-      apiBase: session.apiBase,
-      businessId: input.businessId,
-    })
-    if (fallback) {
-      return {
-        negotiationId: fallback,
-        requestId: created.requestId,
-        searchId: ctx.searchId,
-        categoryId: ctx.categoryId,
-        token: session.token,
-        apiBase: session.apiBase,
-      }
-    }
-    lastError = {
-      error: created.error ||
-        "Thumbtack did not return a conversation for this pro. Search again, then try Message Vendor.",
-      status: created.status,
-    }
-    if (created.status === 401 || created.status === 403) {
-      console.warn("[thumbtack-messages] request-flow token cannot open a request", created.status)
+  const searchApi = input.provider.apiBase().replace(/\/$/, "")
+  const listingSearchId = input.send.searchId?.trim() || ""
+  const listingCategoryId = input.send.categoryId?.trim() || ""
+  const sameTokenHits = await input.provider.searchWithAccessToken(
+    searchInput,
+    messageToken,
+    searchApi,
+  )
+  const sameTokenCtx = thumbtackSearchContextForBusiness(sameTokenHits, input.businessId, {
+    requireBusiness: true,
+  }) ?? thumbtackSearchContextForBusiness(sameTokenHits, input.businessId)
+
+  let { searchId, categoryId } = resolveThumbtackRequestSearchIds({
+    listingSearchId,
+    listingCategoryId,
+    sameToken: sameTokenCtx,
+  })
+
+  if (!categoryId) {
+    const zip = extractZipFromLocation(searchInput.searchLocation) ?? ""
+    const lookedUp = zip
+      ? await input.provider.lookupCategoryId(
+        searchInput.tradeTerms || searchInput.issueCategory || "home repair",
+        zip,
+      )
+      : null
+    if (lookedUp) categoryId = lookedUp
+  }
+
+  if (!categoryId) {
+    return {
+      negotiationId: null,
+      requestId: null,
+      searchId,
+      categoryId,
+      token: messageToken,
+      error:
+        "Thumbtack needs a service category for this pro. Search for vendors again, then send the message.",
     }
   }
 
-  const failedLogin = lastError?.status === 401 || lastError?.status === 403
+  const created = await createThumbtackRequest({
+    provider: input.provider,
+    token: messageToken,
+    apiBase: searchApi,
+    searchId,
+    businessId: input.businessId,
+    categoryId,
+    description: input.send.text,
+    zipCode: extractZipFromLocation(searchInput.searchLocation),
+  })
+  if (created.negotiationId) {
+    return {
+      negotiationId: created.negotiationId,
+      requestId: created.requestId,
+      searchId,
+      categoryId,
+      token: messageToken,
+      apiBase: searchApi,
+    }
+  }
+  const fallback = await loadNegotiationForBusiness({
+    provider: input.provider,
+    token: messageToken,
+    apiBase: searchApi,
+    businessId: input.businessId,
+  })
+  if (fallback) {
+    return {
+      negotiationId: fallback,
+      requestId: created.requestId,
+      searchId,
+      categoryId,
+      token: messageToken,
+      apiBase: searchApi,
+    }
+  }
   return {
     negotiationId: null,
-    requestId: null,
-    searchId: "",
-    categoryId: "",
-    token: null,
-    error: failedLogin || !lastError
-      ? (sawHitsWithoutBusiness
-        ? "Thumbtack could not reopen this pro in a fresh search. Search for vendors again, then send the message."
-        : "Ulo could not start this Thumbtack conversation with the same login used to find the pro. Ask Thumbtack to enable finding pros and sending messages on one app, then try again.")
-      : lastError.error,
-    status: failedLogin ? undefined : lastError?.status,
+    requestId: created.requestId,
+    searchId,
+    categoryId,
+    token: messageToken,
+    error: created.error ||
+      "Thumbtack did not return a conversation for this pro. Search again, then try Message Vendor.",
+    status: created.status === 401 || created.status === 403 ? 409 : created.status,
   }
 }
 
@@ -310,9 +388,41 @@ export async function sendThumbtackVendorMessage(
     return { ok: false, error: "This listing is missing a Thumbtack business id." }
   }
 
-  const provider = thumbtackProviderFromEnv()
+  const fromDb = await loadLandlordThumbtackOAuth(supabase, input.landlordId, [
+    input.connectedLandlordId,
+  ])
+  const oauthLandlordId = fromDb?.landlordId || input.landlordId
+  console.warn("[thumbtack-messages] load oauth", JSON.stringify({
+    ticket_landlord_id: input.landlordId,
+    connected_landlord_id: input.connectedLandlordId ?? null,
+    oauth_landlord_id: fromDb?.landlordId ?? null,
+    has_refresh_token: Boolean(fromDb?.refreshToken),
+    has_access_token: Boolean(fromDb?.accessToken),
+  }))
+  const provider = thumbtackProviderFromEnv({
+    messagingRefreshToken: fromDb?.refreshToken,
+    messagingAccessToken: fromDb?.accessToken,
+    messagingAccessExpiresAt: fromDb?.accessExpiresAt,
+  })
   if (!provider.isConfigured()) {
     return { ok: false, error: "Thumbtack is not configured on the server." }
+  }
+  if (!provider.isMessagingConfigured()) {
+    return {
+      ok: false,
+      error: "Thumbtack in-app messaging is not configured on the server.",
+    }
+  }
+  if (
+    !fromDb?.refreshToken &&
+    !fromDb?.accessToken &&
+    !Deno.env.get("THUMBTACK_MESSAGING_REFRESH_TOKEN")?.trim()
+  ) {
+    return {
+      ok: false,
+      error: thumbtackOpenConversationError(401, "oauth_token_failed"),
+      httpStatus: 409,
+    }
   }
 
   const existing = await supabase
@@ -366,7 +476,7 @@ export async function sendThumbtackVendorMessage(
   const now = new Date().toISOString()
   const upsert = {
     ticket_id: input.ticketId,
-    landlord_id: input.landlordId,
+    landlord_id: oauthLandlordId,
     business_id: businessId,
     vendor_name: input.vendorName.trim() || "Vendor",
     search_id: searchId || null,
@@ -391,6 +501,10 @@ export async function sendThumbtackVendorMessage(
   }
   thread = mapThumbtackThreadRow(saved.data as Record<string, unknown>)
 
+  const rotated = provider.lastRotatedRefreshToken?.trim()
+  if (rotated) {
+    await saveLandlordThumbtackRefreshToken(supabase, oauthLandlordId, rotated)
+  }
   await supabase.from("thumbtack_vendor_messages").insert({
     thread_id: thread.id,
     direction: "outbound",
@@ -418,7 +532,16 @@ export async function sendThumbtackVendorMessage(
 export async function applyThumbtackInboundMessage(
   supabase: SupabaseClient,
   inbound: ThumbtackWebhookInbound,
-): Promise<{ applied: boolean; reason?: string }> {
+): Promise<{
+  applied: boolean
+  reason?: string
+  landlordId?: string
+  ticketId?: string
+  vendorName?: string
+  threadId?: string
+  text?: string
+  messageId?: string | null
+}> {
   if (!inbound.fromPro) return { applied: false, reason: "not_from_pro" }
   const text = inbound.text?.trim() ?? ""
   if (!text) return { applied: false, reason: "empty" }
@@ -472,14 +595,13 @@ export async function applyThumbtackInboundMessage(
     },
   })
 
-  void notifyLandlordNeedsAttention(supabase, {
+  return {
+    applied: true,
     landlordId: thread.landlord_id,
-    kind: "external_vendor_replied",
-    headline: `${thread.vendor_name} replied`,
-    detail: text.length > 160 ? `${text.slice(0, 157).trimEnd()}…` : text,
-    idempotencyKey: `thumbtack-reply:${inbound.messageId || `${thread.id}:${now}`}`,
-    maintenanceRequestId: thread.ticket_id,
-  })
-
-  return { applied: true }
+    ticketId: thread.ticket_id,
+    vendorName: thread.vendor_name,
+    threadId: thread.id,
+    text,
+    messageId: inbound.messageId,
+  }
 }

@@ -1,11 +1,9 @@
 /**
- * Vendor onboarding escalation — remind stalled vendors, then notify landlord.
+ * Vendor onboarding silence follow-up — 48-hour reminders while the form is open.
  */
 import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.49.1"
 import { sendResendEmail } from "../delivery.ts"
-import { notifyLandlordNeedsAttention } from "../landlordAttentionNotify.ts"
 import { loadLandlordDisplayName } from "../landlordDisplayName.ts"
-import { logGraphEvent } from "../graph/logGraphEvent.ts"
 import {
   findOrCreateConversation,
   upsertSmsIdentityForPhone,
@@ -23,10 +21,6 @@ import {
   type VendorOnboardingState,
 } from "./vendorOnboardingPolicy.ts"
 import { recordVendorOnboardingReminder } from "./vendorOnboardingProgress.ts"
-import {
-  logPipelineStageEvent,
-  updateWorkflowRun,
-} from "./workflowRuns.ts"
 import type { WorkflowRunRow } from "./types.ts"
 import { uloAppUrl } from "../uloAppUrl.ts"
 
@@ -59,23 +53,6 @@ type VerificationContactRow = {
 }
 
 
-function positiveInt(value: unknown, fallback: number): number {
-  if (typeof value === "number" && Number.isFinite(value) && value > 0) {
-    return Math.floor(value)
-  }
-  if (typeof value === "string" && value.trim()) {
-    const parsed = Number.parseInt(value.trim(), 10)
-    if (Number.isFinite(parsed) && parsed > 0) return parsed
-  }
-  return fallback
-}
-
-function daysSince(iso: string, now = new Date()): number {
-  const start = new Date(iso)
-  if (Number.isNaN(start.getTime())) return 0
-  return (now.getTime() - start.getTime()) / (24 * 60 * 60 * 1000)
-}
-
 function vendorLabel(row: VerificationContactRow): string {
   return (
     row.business_name?.trim() ||
@@ -83,9 +60,6 @@ function vendorLabel(row: VerificationContactRow): string {
     "there"
   )
 }
-
-
-
 
 async function loadVerificationForRun(
   supabase: SupabaseClient,
@@ -195,7 +169,8 @@ async function sendReminderChannels(
 
 
 /**
- * Remind the vendor once, then escalate to the landlord if still stuck.
+ * Repeat 48-hour verification reminders while the vendor has not submitted.
+ * After the silence cap, stop auto-nudge; the invite stays open.
  */
 export async function escalateVendorOnboardingRun(
   supabase: SupabaseClient,
@@ -222,8 +197,16 @@ export async function escalateVendorOnboardingRun(
 
   const config = params.escalationConfig ?? {}
   const due = vendorOnboardingActionDue(run, config)
-  if (!due.due && params.reason !== "reminder_due") {
-    // Still allow when cron candidate finder marked due.
+  if (!due.due) {
+    return {
+      workflow_run_id: run.id,
+      action: "skipped",
+      reason: due.reason,
+      sms_sent: false,
+      email_sent: false,
+      admin_notified: [],
+      admin_notify_errors: [],
+    }
   }
 
   const verification = await loadVerificationForRun(supabase, run, state)
@@ -263,52 +246,12 @@ export async function escalateVendorOnboardingRun(
       admin_notify_errors: [],
     }
   }
-  const companyName = await loadLandlordDisplayName(supabase, landlordId)
-  const noResponseDays = positiveInt(config.no_response_days, 5)
-  const startedDays = daysSince(run.started_at)
-  const alreadyReminded = Boolean(state.reminder_sent_at)
 
-  // Prefer a vendor reminder before landlord escalation.
-  if (!alreadyReminded && verification?.token) {
-    const sent = await sendReminderChannels(supabase, {
-      landlordId,
-      row: verification,
-      companyName,
-      needsReview: false,
-    })
-    const channel = sent.sms && sent.email
-      ? "both"
-      : sent.sms
-      ? "sms"
-      : sent.email
-      ? "email"
-      : "none"
-
-    if (sent.sms || sent.email) {
-      await recordVendorOnboardingReminder(supabase, {
-        runId: run.id,
-        landlordId,
-        vendorId: verification.vendor_id,
-        conversationId: sent.conversationId,
-        channel,
-      })
-      return {
-        workflow_run_id: run.id,
-        action: "reminded",
-        reason: "reminder_due",
-        sms_sent: sent.sms,
-        email_sent: sent.email,
-        admin_notified: [],
-        admin_notify_errors: [],
-      }
-    }
-  }
-
-  if (startedDays < noResponseDays && alreadyReminded) {
+  if (!verification?.token) {
     return {
       workflow_run_id: run.id,
       action: "skipped",
-      reason: "awaiting_response_after_reminder",
+      reason: "missing_verification_token",
       sms_sent: false,
       email_sent: false,
       admin_notified: [],
@@ -316,84 +259,47 @@ export async function escalateVendorOnboardingRun(
     }
   }
 
-  // Escalate to landlord — vendor still stuck.
-  const now = new Date().toISOString()
-  const label = verification
-    ? vendorLabel(verification)
-    : state.business_name?.trim() || "Vendor"
-
-  await logPipelineStageEvent(supabase, {
-    runId: run.id,
-    stage: "escalate",
-    step: "escalated",
-    message: `${label} verification is stalled — notifying the property team.`,
-    metadata: {
-      reason: params.reason,
-      verification_id: verification?.id ?? state.verification_id,
-    },
+  const companyName = await loadLandlordDisplayName(supabase, landlordId)
+  const sent = await sendReminderChannels(supabase, {
+    landlordId,
+    row: verification,
+    companyName,
+    needsReview: false,
   })
+  const channel = sent.sms && sent.email
+    ? "both"
+    : sent.sms
+    ? "sms"
+    : sent.email
+    ? "email"
+    : "none"
 
-  await updateWorkflowRun(supabase, run.id, {
-    status: "escalated",
-    currentStep: "escalated",
-    metadata: {
-      escalated_at: now,
-      escalation_reason: params.reason,
-      step_state: {
-        ...state,
-        step: "escalated",
-        escalated_at: now,
-        escalation_reason: params.reason,
-        last_activity_at: now,
-      } satisfies VendorOnboardingState,
-    },
-  })
-
-  await logGraphEvent(supabase, {
-    landlord_id: landlordId,
-    event_type: "vendor.onboarding_escalated",
-    source: "automation",
-    actor_type: "system",
-    vendor_id: verification?.vendor_id ?? state.vendor_id ?? null,
-    conversation_id: verification?.invite_conversation_id ??
-      state.invite_conversation_id ?? null,
-    workflow_run_id: run.id,
-    workflow_template_id: "vendor_onboarding",
-    metadata: {
-      reason: params.reason,
-      message: `${label} has not finished verification.`,
-      verification_id: verification?.id ?? null,
-    },
-  })
-
-  try {
-    const attention = await notifyLandlordNeedsAttention(supabase, {
+  if (sent.sms || sent.email) {
+    await recordVendorOnboardingReminder(supabase, {
+      runId: run.id,
       landlordId,
-      kind: "workflow_escalated",
-      headline: "Vendor verification needs attention",
-      detail: `${label} has not finished verification`,
-      idempotencyKey: `workflow:${run.id}:vendor_onboarding_escalated`,
-      workflowRunId: run.id,
+      vendorId: verification.vendor_id,
+      conversationId: sent.conversationId,
+      channel,
     })
     return {
       workflow_run_id: run.id,
-      action: "escalated",
-      reason: params.reason,
-      sms_sent: false,
-      email_sent: false,
-      admin_notified: [...attention.smsSent, ...attention.emailSent],
-      admin_notify_errors: attention.errors,
-    }
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err)
-    return {
-      workflow_run_id: run.id,
-      action: "escalated",
-      reason: params.reason,
-      sms_sent: false,
-      email_sent: false,
+      action: "reminded",
+      reason: "reminder_due",
+      sms_sent: sent.sms,
+      email_sent: sent.email,
       admin_notified: [],
-      admin_notify_errors: [message],
+      admin_notify_errors: [],
     }
+  }
+
+  return {
+    workflow_run_id: run.id,
+    action: "skipped",
+    reason: "reminder_send_failed",
+    sms_sent: false,
+    email_sent: false,
+    admin_notified: [],
+    admin_notify_errors: [],
   }
 }

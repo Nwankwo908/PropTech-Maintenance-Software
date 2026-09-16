@@ -1,4 +1,4 @@
-import { lazy, Suspense, type ComponentType } from 'react'
+import { lazy, Suspense, useEffect, type ComponentType } from 'react'
 import { BrowserRouter, Navigate, Outlet, Routes, Route } from 'react-router-dom'
 import { useSessionAutoRefresh } from './hooks/useSessionAutoRefresh'
 import { supabase } from './lib/supabase'
@@ -9,6 +9,11 @@ import { LandingPage } from './components/landing/LandingPage'
 import { DemoPageRedirect } from './components/DemoPageRedirect'
 import { hasWaitlistOAuthIntent } from './lib/landingWaitlist'
 import { hasAdminGoogleOAuthIntent, isOAuthReturnUrl } from './lib/googleIdentitySignIn'
+import { thumbtackOauthParamsFromSearch } from './lib/uloAppUrl'
+import {
+  completeThumbtackOauthFromSearch,
+  notifyThumbtackOauthOpener,
+} from './lib/completeThumbtackOauth'
 import { TermsOfServicePage } from './components/legal/TermsOfServicePage'
 import { PrivacyPolicyPage } from './components/legal/PrivacyPolicyPage'
 
@@ -108,7 +113,25 @@ const InspectionCapturePage = lazyNamed(
   'InspectionCapturePage',
 )
 
+function ThumbtackOauthRootReturn() {
+  useEffect(() => {
+    void completeThumbtackOauthFromSearch(window.location.search).then((result) => {
+      const ok = Boolean(result.handled && !result.error)
+      if (notifyThumbtackOauthOpener({ ok, error: result.error })) return
+      window.location.replace(
+        result.error
+          ? '/admin?thumbtack=error'
+          : (result.returnPath || '/admin?thumbtack=connected'),
+      )
+    })
+  }, [])
+  return null
+}
+
 function LandingOrAdminOAuthReturn() {
+  if (typeof window !== 'undefined' && thumbtackOauthParamsFromSearch(window.location.search)) {
+    return <ThumbtackOauthRootReturn />
+  }
   const treatAsAdminCallback =
     typeof window !== 'undefined' &&
     isOAuthReturnUrl(window.location.search, window.location.hash) &&

@@ -5,7 +5,6 @@
 import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.49.1"
 import { sendLandlordOpsEmail } from "./landlordOpsNotify.ts"
 import { logGraphEvent } from "./graph/logGraphEvent.ts"
-import { normalizePhoneFlexible } from "./resident_notify.ts"
 import { findActiveLandlordMainNumber } from "./sms/landlordSmsOnboarding.ts"
 import { getSMSProviderForSend } from "./sms/providerFactory.ts"
 import { uloAppUrl } from "./uloAppUrl.ts"
@@ -15,6 +14,10 @@ import {
   resolveLandlordNotificationDelivery,
 } from "./landlordNotificationPrefs.ts"
 import { resolveLandlordOpsPhones } from "./sms/tenantActivationAdminAlert.ts"
+import {
+  persistLandlordChoiceSms,
+  type AwaitingVendorChoice,
+} from "./vendorLandlordChoice.ts"
 
 export type LandlordAttentionKind =
   | "invoice_ready"
@@ -29,11 +32,21 @@ export type LandlordAttentionKind =
 export type NotifyLandlordAttentionParams = {
   landlordId: string
   kind: LandlordAttentionKind
-  /** Short label shown after "needs your attention", e.g. "Invoice ready to pay". */
+  /** Plain-language event line, e.g. "No vendor found — leaking kitchen faucet". */
   headline: string
-  /** One plain-language context line (unit, vendor, amount, etc.). */
+  /** Place, people, amount, or latest message — avoid internal IDs when possible. */
   detail: string
   idempotencyKey: string
+  /** Address · unit · how recent, when known. */
+  locationLine?: string | null
+  /** Why this landed on them, in one sentence. */
+  whyLine?: string | null
+  /** Numbered next steps. Defaults from kind when omitted. */
+  nextSteps?: string[]
+  /** After numbered vendors: "Reply 1, 2, or 3 and we'll contact them." */
+  choiceReplyHint?: string | null
+  /** Persist 1/2/3 pending ask on the landlord SMS thread. */
+  vendorChoice?: AwaitingVendorChoice | null
   maintenanceRequestId?: string | null
   workflowRunId?: string | null
   vendorId?: string | null
@@ -61,97 +74,200 @@ function attentionDashboardUrl(params: NotifyLandlordAttentionParams): string {
   return uloAppUrl.admin()
 }
 
-function attentionLinkPrompt(kind: LandlordAttentionKind): string {
-  if (kind === "assign_vendor" || kind === "external_vendor_replied") {
-    return "Find a vendor for this job in Ulo:"
-  }
-  return "Review it in Needs Your Attention or your Ulo Activity Feed:"
-}
-
 function attentionEmailActionLabel(kind: LandlordAttentionKind): string {
   if (kind === "assign_vendor" || kind === "external_vendor_replied") {
     return "Open Find External Vendor"
   }
-  return "Open Needs Your Attention"
+  if (kind === "invoice_ready") return "Review invoice"
+  return "Open in Ulo"
 }
 
-function adminNotifyPhones(): string[] {
-  const raw =
-    Deno.env.get("SMS_ADMIN_NOTIFY_PHONES")?.trim() ||
-    Deno.env.get("LANDLORD_OPS_PHONE")?.trim() ||
-    ""
-  if (!raw) return []
-  return raw
-    .split(/[,;\s]+/)
-    .map((p: string) => normalizePhoneFlexible(p))
-    .filter((p: string | null): p is string => Boolean(p))
+export function defaultAttentionNextSteps(kind: LandlordAttentionKind): string[] {
+  switch (kind) {
+    case "assign_vendor":
+      return []
+    case "invoice_ready":
+      return ["Review the invoice", "Pay in Ulo"]
+    case "late_rent":
+      return ["Review the account", "Follow up with the resident"]
+    case "lease_renewal":
+      return ["Review renewal options", "Reach out to the resident"]
+    case "lease_info_missing":
+      return ["Add lease dates or a copy in Ulo"]
+    case "unknown_occupant":
+      return ["Review who texted", "Confirm they should get updates"]
+    case "external_vendor_replied":
+      return ["Read the reply", "Keep messaging in Ulo"]
+    default:
+      return ["Open Ulo to decide next"]
+  }
 }
 
-export function buildLandlordAttentionSms(input: {
-  headline: string
-  detail: string
-  dashboardUrl: string
-  linkPrompt?: string
+export function defaultAttentionWhyLine(kind: LandlordAttentionKind): string | null {
+  switch (kind) {
+    case "assign_vendor":
+      return "No one on your preferred list can take this right now."
+    case "invoice_ready":
+      return "The vendor finished the job and the invoice is ready."
+    case "late_rent":
+      return "This rent account needs a decision from you."
+    case "lease_renewal":
+      return "The resident has not responded, so this needs a decision from you."
+    case "lease_info_missing":
+      return "We don't have lease details on file to answer them."
+    case "unknown_occupant":
+      return "This person is not on the unit roster yet."
+    case "external_vendor_replied":
+      return "They wrote back on the job thread."
+    default:
+      return "This needs a decision from you."
+  }
+}
+
+export function formatReportedAgo(
+  iso: string | null | undefined,
+  now = new Date(),
+): string | null {
+  const raw = (iso ?? "").trim()
+  if (!raw) return null
+  const at = new Date(raw)
+  if (Number.isNaN(at.getTime())) return null
+  const hours = Math.max(0, Math.round((now.getTime() - at.getTime()) / 3_600_000))
+  if (hours < 1) return "reported just now"
+  if (hours === 1) return "reported 1h ago"
+  if (hours < 48) return `reported ${hours}h ago`
+  const days = Math.round(hours / 24)
+  return days === 1 ? "reported 1 day ago" : `reported ${days} days ago`
+}
+
+export function shortRepairLabel(
+  description: string | null | undefined,
+  issueCategory?: string | null,
+): string {
+  const line = (description ?? "").trim().split("\n")[0]?.trim() ?? ""
+  const cleaned = line.replace(/\s+/g, " ").replace(/[.;]+$/g, "")
+  if (cleaned && cleaned.length <= 72 && !/^wo-/i.test(cleaned)) {
+    return cleaned.charAt(0).toLowerCase() + cleaned.slice(1)
+  }
+  const cat = (issueCategory ?? "").trim().toLowerCase()
+  if (cat && cat !== "other" && cat !== "general") return `${cat} repair`
+  return "this repair"
+}
+
+export function formatAttentionLocationLine(parts: {
+  street?: string | null
+  building?: string | null
+  unit?: string | null
+  reportedAgo?: string | null
 }): string {
-  const detail = input.detail.trim()
-  const linkPrompt =
-    input.linkPrompt?.trim() ||
-    "Review it in Needs Your Attention or your Ulo Activity Feed:"
-  return [
-    "This is the property management team.",
-    "",
-    `Something needs your attention in Ulo: ${input.headline.trim()}.`,
-    detail ? detail : null,
-    "",
-    linkPrompt,
-    input.dashboardUrl,
-  ]
-    .filter((line): line is string => line != null)
-    .join("\n")
+  const place = (parts.street ?? "").trim() || (parts.building ?? "").trim()
+  const unitRaw = (parts.unit ?? "").trim()
+  const unitBit = unitRaw
+    ? (/^unit\b/i.test(unitRaw) ? unitRaw : `Unit ${unitRaw}`)
+    : ""
+  const ago = (parts.reportedAgo ?? "").trim()
+  return [place, unitBit, ago].filter(Boolean).join(" · ")
 }
 
-export function buildLandlordAttentionEmail(input: {
+type AttentionCopyInput = {
+  kind?: LandlordAttentionKind
   headline: string
-  detail: string
+  detail?: string | null
+  locationLine?: string | null
+  whyLine?: string | null
+  nextSteps?: string[]
+  choiceReplyHint?: string | null
   dashboardUrl: string
-  linkPrompt?: string
   actionLabel?: string
-}): { subject: string; text: string; html: string } {
-  const headline = input.headline.trim()
-  const detail = input.detail.trim()
-  const subject = `Needs your attention: ${headline}`
-  const linkPrompt =
-    input.linkPrompt?.trim() ||
-    "Review it in Needs Your Attention or your Ulo Activity Feed on Overview:"
-  const actionLabel = input.actionLabel?.trim() || "Open Needs Your Attention"
-  const text = [
-    "This is the property management team.",
-    "",
-    `Something needs your attention in Ulo: ${headline}.`,
-    detail ? detail : null,
-    "",
-    linkPrompt,
-    input.dashboardUrl,
-  ]
-    .filter((line): line is string => line != null)
-    .join("\n")
-
-  const html = `<p>This is the property management team.</p>
-<p>Something needs your attention in Ulo: <strong>${escapeHtml(headline)}</strong>.</p>
-${detail ? `<p>${escapeHtml(detail)}</p>` : ""}
-<p>This alert also appears in your <strong>Ulo Activity Feed</strong> on Overview.</p>
-<p><a href="${escapeHtml(input.dashboardUrl)}" style="display:inline-block;padding:10px 16px;background:#186179;color:#fff;text-decoration:none;border-radius:8px;font-weight:600;">${escapeHtml(actionLabel)}</a></p>
-<p style="color:#6a7282;font-size:13px;">If the button doesn't work, copy and paste this link into your browser:<br>${escapeHtml(input.dashboardUrl)}</p>`
-
-  return { subject, text, html }
 }
 
-function escapeHtml(s: string): string {
-  return s
+function escapeHtml(value: string): string {
+  return value
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;")
+}
+
+function attentionCopyParts(input: AttentionCopyInput) {
+  const headline = input.headline.trim()
+  const locationLine =
+    (input.locationLine ?? "").trim() || (input.detail ?? "").trim()
+  const whyLine =
+    (input.whyLine ?? "").trim() ||
+    (input.kind ? defaultAttentionWhyLine(input.kind) ?? "" : "")
+  const steps = input.nextSteps
+    ? input.nextSteps.map((s) => s.trim()).filter(Boolean)
+    : input.kind
+      ? defaultAttentionNextSteps(input.kind)
+      : []
+  const numbered = steps.map((s, i) => `${i + 1} — ${s}`).join("\n")
+  const choiceReplyHint = (input.choiceReplyHint ?? "").trim()
+  return { headline, locationLine, whyLine, numbered, choiceReplyHint }
+}
+
+export function buildLandlordAttentionSms(input: AttentionCopyInput): string {
+  const { headline, locationLine, whyLine, numbered, choiceReplyHint } =
+    attentionCopyParts(input)
+  return [
+    `Ulo: ${headline}`,
+    "",
+    locationLine || null,
+    whyLine || null,
+    numbered ? `\n${numbered}` : null,
+    choiceReplyHint ? `\n${choiceReplyHint}` : null,
+    "",
+    "Details:",
+    input.dashboardUrl,
+  ]
+    .filter((line): line is string => line != null)
+    .join("\n")
+    .replace(/\n{3,}/g, "\n\n")
+}
+
+export function buildLandlordAttentionEmail(input: AttentionCopyInput): {
+  subject: string
+  text: string
+  html: string
+} {
+  const { headline, locationLine, whyLine, numbered, choiceReplyHint } =
+    attentionCopyParts(input)
+  const actionLabel =
+    input.actionLabel?.trim() ||
+    (input.kind ? attentionEmailActionLabel(input.kind) : "Open in Ulo")
+  const text = [
+    `Ulo: ${headline}`,
+    "",
+    locationLine || null,
+    whyLine || null,
+    numbered ? `\n${numbered}` : null,
+    choiceReplyHint ? `\n${choiceReplyHint}` : null,
+    "",
+    "Details:",
+    input.dashboardUrl,
+  ]
+    .filter((line): line is string => line != null)
+    .join("\n")
+    .replace(/\n{3,}/g, "\n\n")
+
+  const htmlSteps = numbered
+    ? `<ol style="padding-left:1.2em;">${numbered
+      .split("\n")
+      .map((line) => line.replace(/^\d+\s—\s/, "").trim())
+      .filter(Boolean)
+      .map((s) => `<li>${escapeHtml(s)}</li>`)
+      .join("")}</ol>`
+    : ""
+
+  const html = `<p><strong>Ulo: ${escapeHtml(headline)}</strong></p>
+${locationLine ? `<p>${escapeHtml(locationLine)}</p>` : ""}
+${whyLine ? `<p>${escapeHtml(whyLine)}</p>` : ""}
+${htmlSteps}
+${choiceReplyHint ? `<p>${escapeHtml(choiceReplyHint)}</p>` : ""}
+<p><a href="${escapeHtml(input.dashboardUrl)}" style="display:inline-block;padding:10px 16px;background:#186179;color:#fff;text-decoration:none;border-radius:8px;font-weight:600;">${escapeHtml(actionLabel)}</a></p>
+<p style="color:#6a7282;font-size:13px;">If the button doesn't work, copy and paste this link into your browser:<br>${escapeHtml(input.dashboardUrl)}</p>`
+
+  return { subject: `Ulo: ${headline}`, text, html }
 }
 
 async function alreadyAlerted(
@@ -245,19 +361,19 @@ export async function notifyLandlordNeedsAttention(
   const allowEmail = deliveryPlan.channels.includes("email")
 
   const dashboardUrl = attentionDashboardUrl(params)
-  const smsBody = buildLandlordAttentionSms({
+  const copy = {
+    kind: params.kind,
     headline: params.headline,
     detail: params.detail,
+    locationLine: params.locationLine,
+    whyLine: params.whyLine,
+    nextSteps: params.nextSteps,
+    choiceReplyHint: params.choiceReplyHint,
     dashboardUrl,
-    linkPrompt: attentionLinkPrompt(params.kind),
-  })
-  const email = buildLandlordAttentionEmail({
-    headline: params.headline,
-    detail: params.detail,
-    dashboardUrl,
-    linkPrompt: attentionLinkPrompt(params.kind),
     actionLabel: attentionEmailActionLabel(params.kind),
-  })
+  }
+  const smsBody = buildLandlordAttentionSms(copy)
+  const email = buildLandlordAttentionEmail(copy)
 
   const errors: string[] = []
   const smsSent: string[] = []
@@ -269,7 +385,7 @@ export async function notifyLandlordNeedsAttention(
   if (allowSms && phones.length > 0) {
     const sender = await findActiveLandlordMainNumber(supabase, landlordId)
     const from = sender?.phone_number?.trim() || undefined
-    if (!from) {
+    if (!sender || !from) {
       errors.push("no_landlord_main_sms")
       console.warn("[landlord-attention] no landlord_main SMS number", landlordId)
     } else {
@@ -285,12 +401,30 @@ export async function notifyLandlordNeedsAttention(
           continue
         }
         smsSent.push(to)
+        const awaiting = params.vendorChoice
+        if (awaiting && awaiting.options.length > 0) {
+          try {
+            await persistLandlordChoiceSms(supabase, {
+              landlordId,
+              phone: to,
+              body: smsBody,
+              awaiting,
+              providerMessageSid:
+                send.providerMessageSid ??
+                send.messageId ??
+                `landlord-attention:${key}:${to}`,
+              provider: send.provider ?? "twilio",
+              fromNumber: from,
+            })
+          } catch (e) {
+            console.error("[landlord-attention] persist vendor choice", e)
+          }
+        }
       }
     }
   }
 
   if (allowEmail) {
-    // Account holder only — never CC Ulo staff SMS_ADMIN_NOTIFY_EMAILS.
     const mail = await sendLandlordOpsEmail(supabase, {
       landlordId,
       subject: email.subject,

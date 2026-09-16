@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   buildMonthGrid,
   buildResidentCalendarEvents,
+  buildTenantOnboardingCalendarEvents,
   calendarEventsFromOperationsGraph,
   calendarEventsFromScheduledTickets,
   datesForMonthWithRentReminders,
@@ -354,5 +355,89 @@ describe('nextRentCalendarFocusDate', () => {
       now: new Date(2026, 8, 12),
     })
     expect(nextRentCalendarFocusDate(events, '2026-09-12')).toBe('2026-09-15')
+  })
+})
+
+describe('buildTenantOnboardingCalendarEvents', () => {
+  it('plots 48-hour follow-ups keyed to this resident only', () => {
+    const last = new Date(2026, 8, 15, 10, 0, 0)
+    const events = buildTenantOnboardingCalendarEvents({
+      residentId: 'res-a',
+      activationStatus: 'waiting',
+      activationAttemptCount: 1,
+      lastActivationAttemptAt: last.toISOString(),
+      now: last,
+    })
+    expect(events.length).toBeGreaterThan(0)
+    expect(events[0]).toMatchObject({
+      kind: 'onboarding_reminder',
+      id: expect.stringMatching(/^onboarding:res-a:/),
+    })
+    const roommate = buildTenantOnboardingCalendarEvents({
+      residentId: 'res-b',
+      activationStatus: 'waiting',
+      activationAttemptCount: 1,
+      lastActivationAttemptAt: last.toISOString(),
+      now: last,
+    })
+    expect(roommate[0]?.id).toMatch(/^onboarding:res-b:/)
+    expect(roommate[0]?.id).not.toBe(events[0]?.id)
+  })
+
+  it('does not show onboarding reminders after YES/NO or when not started', () => {
+    const last = new Date(2026, 8, 15, 10, 0, 0).toISOString()
+    expect(
+      buildTenantOnboardingCalendarEvents({
+        residentId: 'res-a',
+        activationStatus: 'activated',
+        activationAttemptCount: 1,
+        lastActivationAttemptAt: last,
+        now: new Date(2026, 8, 15, 10, 0, 0),
+      }),
+    ).toEqual([])
+    expect(
+      buildTenantOnboardingCalendarEvents({
+        residentId: 'res-a',
+        activationStatus: 'not_started',
+        now: new Date(2026, 8, 15, 10, 0, 0),
+      }),
+    ).toEqual([])
+  })
+
+  it('stops projecting after 14 unanswered outbound texts', () => {
+    const last = new Date(2026, 8, 15, 10, 0, 0)
+    expect(
+      buildTenantOnboardingCalendarEvents({
+        residentId: 'res-a',
+        activationStatus: 'waiting',
+        activationAttemptCount: 14,
+        lastActivationAttemptAt: last.toISOString(),
+        now: last,
+      }),
+    ).toEqual([])
+  })
+
+  it('opens the strip on today when this tenant’s onboarding reminder is sooner than rent', () => {
+    const rent = buildResidentCalendarEvents({
+      leaseStartDate: '2026-03-01',
+      leaseEndDate: '2026-12-31',
+      rentDueDay: 1,
+      rentReminderCadence: '5, 3, 1 days before',
+      now: new Date(2026, 8, 15, 10, 0, 0),
+    })
+    const onboarding = buildTenantOnboardingCalendarEvents({
+      residentId: 'res-a',
+      activationStatus: 'waiting',
+      activationAttemptCount: 1,
+      lastActivationAttemptAt: new Date(2026, 8, 15, 10, 0, 0).toISOString(),
+      now: new Date(2026, 8, 15, 10, 0, 0),
+    })
+    expect(
+      stripStartIncludingRentReminders(
+        [...rent, ...onboarding],
+        '2026-09-15',
+        '5, 3, 1 days before',
+      ),
+    ).toBe('2026-09-15')
   })
 })

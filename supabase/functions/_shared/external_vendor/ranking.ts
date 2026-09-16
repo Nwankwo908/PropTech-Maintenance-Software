@@ -3,7 +3,7 @@ import type {
   ExternalVendorSource,
   ExternalVendorSuggestion,
 } from "./types.ts"
-import { EXTERNAL_VENDOR_SEARCH_LIMIT } from "../../../../shared/externalVendor/searchLimit.ts"
+import { EXTERNAL_VENDOR_SEARCH_LIMIT } from "./searchLimit.ts"
 
 /** Normalize vendor name for deduplication across providers. */
 export function compactVendorNameKey(name: string): string {

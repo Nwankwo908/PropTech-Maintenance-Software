@@ -15,18 +15,24 @@ import {
 import {
   normalizeThumbtackUtmSource,
   resolveThumbtackRequestFlowUrl,
-} from "../../../../../shared/externalVendor/thumbtackRequestFlow.ts"
+} from "../thumbtackRequestFlow.ts"
 
 Deno.test("extractZipFromLocation reads a 5-digit ZIP", () => {
   const zip = extractZipFromLocation("109 S Grove St, Newark, NJ 07112")
   if (zip !== "07112") throw new Error(`expected 07112, got ${zip}`)
 })
 
-Deno.test("normalizeThumbtackUtmSource prefixes cma-", () => {
-  if (normalizeThumbtackUtmSource("ulo") !== "cma-ulo") {
-    throw new Error("expected cma-ulo")
+  Deno.test("normalizeThumbtackUtmSource defaults to cma-ulohome", () => {
+  if (normalizeThumbtackUtmSource("") !== "cma-ulohome") {
+    throw new Error("expected cma-ulohome")
   }
-  if (normalizeThumbtackUtmSource("cma-admin") !== "cma-admin") {
+  if (normalizeThumbtackUtmSource("ulo") !== "cma-ulohome") {
+    throw new Error("ulo alias is cma-ulohome")
+  }
+  if (normalizeThumbtackUtmSource("cma-ulo") !== "cma-ulohome") {
+    throw new Error("cma-ulo alias is cma-ulohome")
+  }
+  if (normalizeThumbtackUtmSource("cma-ulohome") !== "cma-ulohome") {
     throw new Error("keep assigned partner source")
   }
 })
@@ -55,6 +61,20 @@ Deno.test("parseThumbtackCategoryId does not use an unmatched first category", (
     "appliance repair",
   )
   if (id !== null) throw new Error(`expected null, got ${id}`)
+})
+
+Deno.test("parseThumbtackCategoryId can take the first category when opening a request", () => {
+  const id = parseThumbtackCategoryId(
+    {
+      data: [
+        { categoryID: "1", name: "Kitchen Remodel" },
+        { categoryID: "2", name: "House Cleaning" },
+      ],
+    },
+    "appliance repair",
+    { allowFirst: true },
+  )
+  if (id !== "1") throw new Error(`expected 1, got ${id}`)
 })
 
 Deno.test("buildThumbtackFilteredUserQuery includes job, trade, and location", () => {
@@ -104,7 +124,7 @@ Deno.test("parseThumbtackBusinesses maps partner search payload", () => {
   if (hit.listingUrl !== "https://thumbtack.com/example") throw new Error("listingUrl")
   if (
     hit.requestFlowUrl !==
-      "https://thumbtack.com/embed/request-flow?category_pk=c1&project_pk=s1&utm_source=cma-ulo"
+      "https://thumbtack.com/embed/request-flow?category_pk=c1&project_pk=s1&utm_source=cma-ulohome"
   ) {
     throw new Error(`requestFlowUrl ${hit.requestFlowUrl}`)
   }
@@ -188,6 +208,18 @@ Deno.test("thumbtackSearchContextForBusiness fills ids from other hits in the sa
   }
 })
 
+Deno.test("thumbtackSearchContextForBusiness can omit category when the search has no categoryID", () => {
+  const ctx = thumbtackSearchContextForBusiness(
+    [
+      { name: "A", rating: 5, reviewCount: 1, priceLabel: null, source: "thumbtack", providerRef: "b1", searchId: "s1", categoryId: null },
+    ],
+    "b1",
+    { requireBusiness: true },
+  )
+  if (ctx?.searchId !== "s1") throw new Error(JSON.stringify(ctx))
+  if (ctx?.categoryId) throw new Error(JSON.stringify(ctx))
+})
+
 Deno.test("thumbtackSearchContextForBusiness can require the matching pro", () => {
   const ctx = thumbtackSearchContextForBusiness(
     [
@@ -207,14 +239,14 @@ Deno.test("thumbtackOpenConversationError explains 400 without a raw status code
 
 Deno.test("thumbtackOpenConversationError explains an expired searchID", () => {
   const msg = thumbtackOpenConversationError(400, '{"error":"invalid searchID"}')
-  if (!/expired/i.test(msg)) throw new Error(msg)
+  if (!/connect thumbtack/i.test(msg)) throw new Error(msg)
   if (/\(400\)/.test(msg)) throw new Error("should not echo 400")
 })
 
 Deno.test("thumbtackOpenConversationError explains 401 without a raw status code", () => {
   const msg = thumbtackOpenConversationError(401, "oauth_token_failed")
-  if (!/could not send this in ulo/i.test(msg)) throw new Error(msg)
-  if (!/message api login/i.test(msg)) throw new Error(msg)
+  if (!/connect thumbtack/i.test(msg)) throw new Error(msg)
+  if (!/thumbtack/i.test(msg)) throw new Error(msg)
   if (/\(401\)/.test(msg)) throw new Error("should not echo 401")
 })
 
@@ -226,7 +258,9 @@ Deno.test("resolveThumbtackRequestFlowUrl prefers the widget URL", () => {
     categoryId: "c1",
     utmSource: "ulo",
   })
-  if (url !== "https://thumbtack.com/embed/request-flow?x=1") throw new Error(String(url))
+  if (url !== "https://thumbtack.com/embed/request-flow?x=1&utm_source=cma-ulohome") {
+    throw new Error(String(url))
+  }
 })
 
 Deno.test("resolveThumbtackRequestFlowUrl builds embed URL from search ids", () => {
@@ -237,7 +271,7 @@ Deno.test("resolveThumbtackRequestFlowUrl builds embed URL from search ids", () 
   })
   if (
     url !==
-      "https://www.thumbtack.com/embed/request-flow?category_pk=c1&project_pk=s1&utm_source=cma-ulo"
+      "https://www.thumbtack.com/embed/request-flow?category_pk=c1&project_pk=s1&utm_source=cma-ulohome"
   ) {
     throw new Error(String(url))
   }

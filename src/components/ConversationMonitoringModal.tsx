@@ -19,6 +19,7 @@ import { respondToEstimate } from '@/api/maintenanceEstimate'
 import sendIcon from '@/assets/noun-send.png'
 import confirmHourlyRateIcon from '@/assets/noun-checkmark-invoice.png'
 import { getErrorMessage } from '@/lib/errorMessage'
+import { LinkifiedMessageText } from '@/components/LinkifiedMessageText'
 import {
   releaseConversationTakeover,
   sendConversationSms,
@@ -261,7 +262,9 @@ function DeliveryEventRow({
               <p className="mb-1 text-[10px] font-semibold uppercase tracking-[0.06em] text-[#6a7282]">
                 {section.title}
               </p>
-              <p className="whitespace-pre-wrap text-[12px] leading-5 text-[#364153]">{section.body}</p>
+              <p className="whitespace-pre-wrap text-[12px] leading-5 text-[#364153]">
+                <LinkifiedMessageText text={section.body} />
+              </p>
             </div>
           ))
         : null}
@@ -374,7 +377,7 @@ function TranscriptMessage({
           <div className="flex flex-col gap-2">
             {hasBody ? (
               <div className="overflow-hidden whitespace-pre-wrap break-words [overflow-wrap:anywhere] rounded-[12px] rounded-tl-[4px] border border-[#e9d5ff] bg-white px-3.5 py-2.5 text-[13px] leading-5 text-[#0a0a0a]">
-                {item.body}
+                <LinkifiedMessageText text={item.body} />
               </div>
             ) : null}
             <TranscriptMedia media={media} align="left" />
@@ -396,7 +399,7 @@ function TranscriptMessage({
         <div className="flex flex-col items-end gap-2">
           {hasBody ? (
             <div className="overflow-hidden whitespace-pre-wrap break-words [overflow-wrap:anywhere] rounded-[12px] rounded-tr-[4px] bg-[#dbeafe] px-3.5 py-2.5 text-left text-[13px] leading-5 text-[#0a0a0a]">
-              {item.body}
+              <LinkifiedMessageText text={item.body} />
             </div>
           ) : null}
           <TranscriptMedia media={media} align="right" />

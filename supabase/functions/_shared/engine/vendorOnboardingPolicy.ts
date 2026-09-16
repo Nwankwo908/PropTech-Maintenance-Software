@@ -1,7 +1,15 @@
 /**
  * Pure vendor-onboarding policy — steps, timing, reminder copy (no I/O).
+ *
+ * Silence follow-ups match tenant activation: every 48 hours from the last
+ * outbound invite/nudge until the vendor submits the form or we hit the cap.
  */
 import type { WorkflowRunRow } from "./types.ts"
+
+/** Same cadence as tenant `ACTIVATION_SILENCE_NUDGE_HOURS`. */
+export const VENDOR_ONBOARDING_SILENCE_NUDGE_HOURS = 48
+/** Invite + follow-ups. Same cap as tenant `MAX_SILENCE_NUDGE_ATTEMPTS`. */
+export const MAX_VENDOR_ONBOARDING_SILENCE_OUTBOUND = 14
 
 export type VendorOnboardingStep =
   | "invited"
@@ -92,54 +100,33 @@ export function readVendorOnboardingState(
   }
 }
 
-function positiveInt(value: unknown, fallback: number): number {
-  if (typeof value === "number" && Number.isFinite(value) && value > 0) {
-    return Math.floor(value)
-  }
-  if (typeof value === "string" && value.trim()) {
-    const parsed = Number.parseInt(value.trim(), 10)
-    if (Number.isFinite(parsed) && parsed > 0) return parsed
-  }
-  return fallback
-}
-
-function daysSince(iso: string, now = new Date()): number {
-  const start = new Date(iso)
-  if (Number.isNaN(start.getTime())) return 0
-  return (now.getTime() - start.getTime()) / (24 * 60 * 60 * 1000)
-}
-
 export function vendorOnboardingActionDue(
   run: WorkflowRunRow,
-  escalationConfig: Record<string, unknown>,
+  _escalationConfig: Record<string, unknown> = {},
   now = new Date(),
 ): { due: boolean; reason: string; overdueByMs: number } {
   const state = readVendorOnboardingState(run)
   if (VENDOR_ONBOARDING_TERMINAL_STEPS.has(state.step ?? "")) {
     return { due: false, reason: "terminal", overdueByMs: 0 }
   }
-
-  const reminderDays = positiveInt(escalationConfig.reminder_days, 2)
-  const noResponseDays = positiveInt(escalationConfig.no_response_days, 5)
-  const startedDays = daysSince(run.started_at, now)
-  const reminderSentAt = state.reminder_sent_at
-
-  if (!reminderSentAt && startedDays >= reminderDays) {
-    const overdueByMs = Math.max(
-      0,
-      now.getTime() -
-        (new Date(run.started_at).getTime() + reminderDays * 86400000),
-    )
-    return { due: true, reason: "reminder_due", overdueByMs }
+  if (vendorOnboardingFormWasSubmitted(state.step)) {
+    return { due: false, reason: "form_already_submitted", overdueByMs: 0 }
   }
 
-  if (startedDays >= noResponseDays) {
-    const overdueByMs = Math.max(
-      0,
-      now.getTime() -
-        (new Date(run.started_at).getTime() + noResponseDays * 86400000),
-    )
-    return { due: true, reason: "no_response_by_no_response_days", overdueByMs }
+  const reminderCount = Math.max(0, Math.floor(state.reminder_count ?? 0))
+  const outbound = 1 + reminderCount
+  if (outbound >= MAX_VENDOR_ONBOARDING_SILENCE_OUTBOUND) {
+    return { due: false, reason: "silence_cap", overdueByMs: 0 }
+  }
+
+  const lastOutboundIso = state.reminder_sent_at?.trim() || run.started_at
+  const lastOutbound = new Date(lastOutboundIso)
+  const dueMs = VENDOR_ONBOARDING_SILENCE_NUDGE_HOURS * 60 * 60 * 1000
+  const overdueByMs = Number.isNaN(lastOutbound.getTime())
+    ? 0
+    : now.getTime() - lastOutbound.getTime() - dueMs
+  if (overdueByMs >= 0) {
+    return { due: true, reason: "reminder_due", overdueByMs }
   }
 
   return { due: false, reason: "within_threshold", overdueByMs: 0 }

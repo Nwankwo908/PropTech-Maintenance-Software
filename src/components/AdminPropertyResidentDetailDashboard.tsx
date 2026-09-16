@@ -134,6 +134,8 @@ type LoadedResidentUser = {
   smsConsentStatus: string | null
   activationAttemptCount: number
   activationSmsSentAt: string | null
+  lastActivationAttemptAt: string | null
+  firstActivationAttemptAt: string | null
 }
 
 type PropertyUnitOption = {
@@ -295,6 +297,7 @@ function ProfileContent({
   limitedAlpha1 = false,
   operationsEvents = [],
   visitEvents = [],
+  onboarding = null,
   occupantProfilePath,
   occupantProfileState,
   onOccupancyChange,
@@ -308,6 +311,15 @@ function ProfileContent({
   limitedAlpha1?: boolean
   operationsEvents?: PropertyOperationsTimelineEvent[]
   visitEvents?: ResidentCalendarEvent[]
+  onboarding?: {
+    residentId: string
+    activationStatus?: string | null
+    smsConsentStatus?: string | null
+    activationAttemptCount?: number | null
+    activationSmsSentAt?: string | null
+    lastActivationAttemptAt?: string | null
+    firstActivationAttemptAt?: string | null
+  } | null
   occupantProfilePath: (residentId: string) => string
   occupantProfileState?: { from: string }
   onOccupancyChange?: (status: ResidentOccupancyStatus) => void
@@ -531,6 +543,7 @@ function ProfileContent({
         rowSubtitle={profile.unitDisplay}
         operationsEvents={operationsEvents}
         visitEvents={visitEvents}
+        onboarding={onboarding}
       />
 
       {limitedAlpha1 ? null : (
@@ -644,7 +657,7 @@ export function AdminPropertyResidentDetailDashboard() {
 
     const landlordId = getActiveLandlordId()
     const userSelect =
-      'id, resident_id, full_name, email, phone, unit, building, status, balance_due, move_in_date, lease_end_date, monthly_rent, rent_due_day, maintenance_responsibilities_clause, activation_status, sms_consent_status, activation_attempt_count, activation_sms_sent_at'
+      'id, resident_id, full_name, email, phone, unit, building, status, balance_due, move_in_date, lease_end_date, monthly_rent, rent_due_day, maintenance_responsibilities_clause, activation_status, sms_consent_status, activation_attempt_count, activation_sms_sent_at, last_activation_attempt_at, first_activation_attempt_at'
 
     try {
       let userResult = await supabase
@@ -731,6 +744,8 @@ export function AdminPropertyResidentDetailDashboard() {
         smsConsentStatus: asString(raw.sms_consent_status) || null,
         activationAttemptCount: asFiniteNumber(raw.activation_attempt_count),
         activationSmsSentAt: asString(raw.activation_sms_sent_at) || null,
+        lastActivationAttemptAt: asString(raw.last_activation_attempt_at) || null,
+        firstActivationAttemptAt: asString(raw.first_activation_attempt_at) || null,
       }
 
       setBuilding(loaded.building)
@@ -1462,21 +1477,19 @@ export function AdminPropertyResidentDetailDashboard() {
                 limitedAlpha1={isLimitedAlpha1Landlord(getActiveLandlordId())}
                 operationsEvents={operationsEvents}
                 visitEvents={visitEvents}
-                occupantProfilePath={(id) =>
-                  propertySlug
-                    ? propertyResidentDetailPath(propertyId || propertySlug, id)
-                    : residentDetailPath(id)
+                onboarding={
+                  loadedUser
+                    ? {
+                        residentId: loadedUser.id,
+                        activationStatus: loadedUser.activationStatus,
+                        smsConsentStatus: loadedUser.smsConsentStatus,
+                        activationAttemptCount: loadedUser.activationAttemptCount,
+                        activationSmsSentAt: loadedUser.activationSmsSentAt,
+                        lastActivationAttemptAt: loadedUser.lastActivationAttemptAt,
+                        firstActivationAttemptAt: loadedUser.firstActivationAttemptAt,
+                      }
+                    : null
                 }
-                occupantProfileState={{
-                  from: `${location.pathname}${location.search}`,
-                }}
-                onOccupancyChange={(status) => void handleOccupancyChange(status)}
-                onPreviewDocument={(document) => {
-                  setDocumentPreviewError(null)
-                  void openOrganizationDocumentPreview(document).then((result) => {
-                    if (!result.ok) setDocumentPreviewError(result.error)
-                  })
-                }}
               />
             </div>
           </>

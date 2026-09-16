@@ -370,7 +370,7 @@ export async function escalateWorkflowRun(
       landlordId: params.landlordId,
       kind: "workflow_escalated",
       headline: label,
-      detail: `${template.name}${run.current_step ? ` · waiting on ${run.current_step}` : ""}`,
+      detail: template.name,
       idempotencyKey: `workflow:${run.id}:escalated`,
       workflowRunId: run.id,
       residentId: run.resident_id,

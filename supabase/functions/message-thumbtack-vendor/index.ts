@@ -2,6 +2,7 @@ import { serve } from "https://deno.land/std/http/server.ts"
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1"
 import { adminEdgeCorsHeaders } from "../_shared/admin_edge_cors.ts"
 import { requireAdminReassignAuth } from "../_shared/admin_edge_auth.ts"
+import { isRetiredLandlordAccountId, LIMITED_ALPHA_1_LANDLORD_ID } from "../../../shared/landlordCapabilities.ts"
 import { isUuidShape } from "../_shared/uuid_shape.ts"
 import { resolveExternalVendorSearchContext } from "../_shared/external_vendor/search_location.ts"
 import { extractZipFromLocation } from "../_shared/external_vendor/providers/thumbtack.ts"
@@ -58,6 +59,7 @@ serve(async (req) => {
     categoryId?: string
     issueCategory?: string
     searchLocation?: string
+    landlordId?: string
     text?: string
   }
   try {
@@ -100,7 +102,10 @@ serve(async (req) => {
     ticket = loaded.data
   }
   if (!ticket) return jsonResponse({ error: "Ticket not found" }, 404)
-  const landlordId = typeof ticket.landlord_id === "string" ? ticket.landlord_id : ""
+  const landlordIdRaw = typeof ticket.landlord_id === "string" ? ticket.landlord_id : ""
+  const landlordId = isRetiredLandlordAccountId(landlordIdRaw)
+    ? LIMITED_ALPHA_1_LANDLORD_ID
+    : landlordIdRaw
   if (!landlordId) {
     return jsonResponse({ error: "Ticket is missing a landlord" }, 400)
   }
@@ -130,12 +135,19 @@ serve(async (req) => {
       ? ticket.issue_category
       : null,
     searchLocation,
+    connectedLandlordId: typeof body.landlordId === "string" ? body.landlordId : null,
     text,
   })
   if (!result.ok) {
-    return jsonResponse({ error: result.error }, result.httpStatus && result.httpStatus >= 400
+    const upstream = result.httpStatus ?? 0
+    const status = upstream === 409
+      ? 409
+      : upstream >= 500
       ? 502
-      : 400)
+      : upstream >= 400
+      ? upstream
+      : 400
+    return jsonResponse({ error: result.error }, status)
   }
   return jsonResponse({ ok: true, ticketId, thread: result.thread })
 })

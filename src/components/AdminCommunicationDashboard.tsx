@@ -1189,19 +1189,19 @@ export function AdminCommunicationDashboard() {
           ) : splitOnboardingFromRequests ? (
             <>
               <MessageLaneSection
-                title="Onboarding"
-                description="Welcome texts and verification invites."
-                rows={onboardingThreads}
-                empty="No onboarding threads."
-                indexOffset={0}
-                onOpen={openConversation}
-              />
-              <MessageLaneSection
                 title="Requests"
                 description="Maintenance and work-order SMS."
                 rows={requestThreads}
                 empty="No maintenance request threads."
-                indexOffset={onboardingThreads.length}
+                indexOffset={0}
+                onOpen={openConversation}
+              />
+              <MessageLaneSection
+                title="Onboarding"
+                description="Welcome texts and verification invites."
+                rows={onboardingThreads}
+                empty="No onboarding threads."
+                indexOffset={requestThreads.length}
                 onOpen={openConversation}
               />
             </>

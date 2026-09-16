@@ -378,7 +378,7 @@ export const INBOUND_SMS_HANDLER_PENDING_GATES: Readonly<
   estimate_decision:
     "intake_state.awaiting_estimate_decision or pending estimate on conversation WO",
   landlord_vendor_choice:
-    "intake_state.awaiting_vendor_choice on landlord ops thread (YES, or reply 1 / 2 / 3…)",
+    "intake_state.awaiting_vendor_choice on landlord ops thread (YES, or reply 1 / 2 / 3… — roster or nearby external vendors)",
   landlord_rent_receipt:
     "intake_state.awaiting_landlord_rent_receipt, awaiting_landlord_rent_amount, or awaiting_landlord_rent_method (YES/NO/PARTIAL then amount/method)",
   invoice_payment:

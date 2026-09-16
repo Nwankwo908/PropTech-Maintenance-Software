@@ -31,6 +31,8 @@ export type MaintenanceQuestionType =
   | "pest_frequency"
   | "pest_location"
   | "structural_risk"
+  | "door_part"
+  | "door_safety"
   | "lock_secure"
   | "general_clarify"
   | "duration_material"
@@ -115,17 +117,132 @@ function isPest(state: SmsIntakeState, hay: string): boolean {
       .test(hay)
 }
 
-function isStructural(state: SmsIntakeState, hay: string): boolean {
-  const cat = (state.primary_category ?? state.vendor_trade ?? "")
-    .toLowerCase()
-  return cat.includes("structural") || cat.includes("roof") || cat.includes("carpent") ||
-    /\b(crack|ceiling|hole in the wall|sagging)\b/.test(hay)
+/** True when the tenant described a crack, sagging ceiling, or a hole — not merely “ceiling” or “crack” as a side word. */
+function reportsStructuralDamage(hay: string): boolean {
+  if (
+    /\b(sagging\s+ceiling|ceiling\s+(?:is\s+)?(?:sagging|dropping|bowing)|(?:sagging|bowing|dropping)\s+ceiling)\b/
+      .test(hay)
+  ) {
+    return true
+  }
+  if (/\bhole\s+in(?:\s+(?:the|my|a|\w+)){0,3}\s+(?:wall|ceiling|floor)\b/.test(hay)) {
+    return true
+  }
+  if (
+    /\b(?:wall|ceiling|floor|foundation|drywall).{0,24}\bcrack/.test(hay) ||
+    /\bcrack.{0,24}\b(?:wall|ceiling|floor|foundation|drywall)/.test(hay)
+  ) {
+    return true
+  }
+  if (/\bstructural\s+(?:crack|damage|issue)\b/.test(hay)) return true
+  return false
+}
+
+function shouldAskStructuralRisk(state: SmsIntakeState, hay: string): boolean {
+  if (!reportsStructuralDamage(hay)) return false
+  if (isPest(state, hay) || isElectrical(state, hay) || isHvac(state, hay) || isLock(state, hay)) {
+    return false
+  }
+  if (isDoorComplaint(state, hay)) return false
+  if (isPlumbing(state, hay) && !/\b(crack|sag|hole in)\b/.test(hay)) return false
+  if (isAppliance(state, hay)) return false
+  return true
 }
 
 function isLock(state: SmsIntakeState, hay: string): boolean {
   const cat = (state.primary_category ?? state.vendor_trade ?? state.issue_type ?? "")
     .toLowerCase()
   return cat.includes("lock") || /\b(won'?t lock|can'?t lock|locked out|deadbolt)\b/.test(hay)
+}
+
+function isCabinetOrApplianceDoor(hay: string): boolean {
+  return /\b(cabinet|cupboard|pantry|dishwasher|fridge|refrigerator|oven|stove|microwave|washer|dryer|freezer)\b/
+    .test(hay)
+}
+
+function mentionsEntryDoor(hay: string): boolean {
+  return /\bdoors?\b/.test(hay) && !isCabinetOrApplianceDoor(hay)
+}
+
+function doorDamageLanguage(hay: string): boolean {
+  return /\b(broke|broken|damaged|jammed|won'?t\s+(?:close|open|lock|shut)|will\s+not\s+(?:close|open|lock|shut)|off\s+(?:the\s+)?hinges?)\b/
+    .test(hay)
+}
+
+function pendingDoorText(state: SmsIntakeState): string | null {
+  const bits = (state.pending_issues ?? [])
+    .map((i) => `${i.description} ${i.summary} ${i.vendor_trade} ${i.issue_type}`)
+    .filter((blob) => {
+      const t = blob.toLowerCase()
+      return mentionsEntryDoor(t) && !isCabinetOrApplianceDoor(t)
+    })
+  if (!bits.length) return null
+  const facts = state.diagnostic_facts ?? {}
+  return `${bits.join(" ")} ${facts.door_part ?? ""} ${facts.door_safety ?? ""} ${facts.lock_secure ?? ""}`
+    .toLowerCase()
+}
+
+function doorHay(state: SmsIntakeState, hay: string): string {
+  return pendingDoorText(state) ?? hay
+}
+
+function isDoorComplaint(state: SmsIntakeState, hay: string): boolean {
+  const scoped = doorHay(state, hay)
+  if (!mentionsEntryDoor(scoped)) return false
+  if (
+    isAppliance(state, hay) &&
+    isCabinetOrApplianceDoor(hay) &&
+    !pendingDoorText(state)
+  ) {
+    return false
+  }
+  if (doorDamageLanguage(scoped)) return true
+  const pendingCat = (state.pending_issues ?? [])
+    .map((i) => `${i.vendor_trade} ${i.issue_type}`)
+    .join(" ")
+    .toLowerCase()
+  const cat = (state.primary_category ?? state.vendor_trade ?? state.issue_type ?? pendingCat)
+    .toLowerCase()
+  return cat.includes("lock") || cat.includes("carpent") || cat.includes("window")
+}
+
+function isDoorLockHardware(hay: string): boolean {
+  return /\b(locks?|deadbolt|handle|knob|latch|doorknob)\b/.test(hay)
+}
+
+function isDoorStructurePart(hay: string): boolean {
+  return /\b(frame|hinges?|slab|panel|door itself)\b/.test(hay)
+}
+
+function namedDoorPart(hay: string): boolean {
+  return isDoorLockHardware(hay) ||
+    /\b(frame|hinges?|slab|panel|door itself)\b/.test(hay)
+}
+
+function doorSafetyAlreadyKnown(hay: string): boolean {
+  return /\b(stuck|hanging|off\s+(?:the\s+)?hinges?|falling|could fall|about to fall|loose)\b/
+    .test(hay)
+}
+
+function shouldAskDoorPart(state: SmsIntakeState, hay: string): boolean {
+  const scoped = doorHay(state, hay)
+  return isDoorComplaint(state, hay) && !namedDoorPart(scoped)
+}
+
+function doorFollowUpsPending(state: SmsIntakeState, hay: string): boolean {
+  if (!isDoorComplaint(state, hay)) return false
+  const scoped = doorHay(state, hay)
+  if (shouldAskDoorPart(state, hay) && !asked(state, "door_part")) return true
+  if (isDoorLockHardware(scoped) && !asked(state, "lock_secure")) return true
+  if (
+    !isDoorLockHardware(scoped) &&
+    !doorSafetyAlreadyKnown(scoped) &&
+    (isDoorStructurePart(scoped) || asked(state, "door_part")) &&
+    !asked(state, "door_safety")
+  ) {
+    return true
+  }
+  return false
 }
 
 function knownOverflow(state: SmsIntakeState, hay: string): boolean | null {
@@ -158,8 +275,9 @@ function questionBudget(state: SmsIntakeState, hay: string): number {
   const low = state.confidence_band === "low" ||
     (state.classification_confidence != null && state.classification_confidence < 0.45)
   const safety = alreadyHazard(hay) || knownOverflow(state, hay) === true ||
-    knownActiveFlow(state, hay) === true || isLock(state, hay)
-  if (safety || low) return 3
+    knownActiveFlow(state, hay) === true || isLock(state, hay) ||
+    isDoorComplaint(state, hay)
+  if (safety || low || (state.pending_issues?.length ?? 0) >= 2) return 3
   return 2
 }
 
@@ -182,7 +300,10 @@ function photoQuestion(state: SmsIntakeState, hay: string): NextMaintenanceQuest
   } else if (isPest(state, hay)) {
     question =
       "If you can, send a photo of what you saw. If you'd rather not, reply SKIP."
-  } else if (isStructural(state, hay)) {
+  } else if (isDoorComplaint(state, hay)) {
+    question =
+      "If you can, send a photo of the door so the property team can see the damage. If you'd rather not, reply SKIP."
+  } else if (reportsStructuralDamage(hay)) {
     question = "If it's safe to do so, send a photo of the area. If you'd rather not, reply SKIP."
   }
   return {
@@ -211,32 +332,24 @@ export function determineNextMaintenanceQuestion(
   }
 
   const overBudget = answered >= budget
+  const door = doorHay(state, hay)
+  const multi = (state.pending_issues?.length ?? 0) >= 2
+  const sharedRoomQuestion = multi
+    ? "Which room are these mostly happening in? Kitchen, bathroom, basement, bedroom, or somewhere else?"
+    : "Which room is this happening in? Kitchen, bathroom, basement, bedroom, or somewhere else?"
 
   const tryAsk = (
     type: MaintenanceQuestionType,
     question: string,
     step: IntakeStep = "diagnostic",
   ): NextMaintenanceQuestion | null => {
-    if (asked(state, type) || overBudget) return null
+    if (asked(state, type)) return null
+    const safetyFollowUp = type === "lock_secure" || type === "door_safety" ||
+      type === "door_part" || type === "electrical_hazard" ||
+      type === "structural_risk" || type === "plumbing_active_flow" ||
+      type === "hvac_dangerous_temp"
+    if (overBudget && !safetyFollowUp) return null
     return { shouldAsk: true, questionType: type, question, step }
-  }
-
-  if ((state.pending_issues?.length ?? 0) >= 2) {
-    if (!room && !hasFixture(hay)) {
-      const q = tryAsk(
-        "room_or_area",
-        "Which room are these mostly happening in? Kitchen, bathroom, basement, bedroom, or somewhere else?",
-        "room_or_area",
-      )
-      if (q) return q
-    }
-    const pestIssue = (state.pending_issues ?? []).some((i) =>
-      /pest/i.test(i.vendor_trade) || /pest/i.test(i.issue_type)
-    )
-    if (pestIssue && !asked(state, "photo") && (state.photo_urls?.length ?? 0) === 0) {
-      return photoQuestion(state, hay)
-    }
-    return { shouldAsk: false }
   }
 
   if (
@@ -368,7 +481,47 @@ export function determineNextMaintenanceQuestion(
     }
   }
 
-  if (isStructural(state, hay)) {
+  if (shouldAskDoorPart(state, hay)) {
+    const q = tryAsk(
+      "door_part",
+      "What happened to the door, and what part is broken? For example, is it the door itself, the frame, hinges, handle, or lock?",
+    )
+    if (q) return q
+  }
+
+  if (isDoorComplaint(state, hay) && isDoorLockHardware(door)) {
+    const q = tryAsk("lock_secure", "Are you currently able to secure the home?")
+    if (q) return q
+  }
+
+  if (
+    isDoorComplaint(state, hay) &&
+    !isDoorLockHardware(door) &&
+    !doorSafetyAlreadyKnown(door) &&
+    (isDoorStructurePart(door) || asked(state, "door_part"))
+  ) {
+    const q = tryAsk(
+      "door_safety",
+      "Is the door stuck, hanging loose, or could it fall?",
+    )
+    if (q) return q
+  }
+
+  if (
+    isDoorComplaint(state, hay) &&
+    (namedDoorPart(door) || asked(state, "door_part")) &&
+    !isDoorLockHardware(door) &&
+    !room
+  ) {
+    const q = tryAsk(
+      "room_or_area",
+      "Which room is that door in? Kitchen, bathroom, bedroom, front entrance, or somewhere else?",
+      "room_or_area",
+    )
+    if (q) return q
+  }
+
+  if (shouldAskStructuralRisk(state, hay)) {
     const q = tryAsk(
       "structural_risk",
       "Is the crack getting larger, sagging, or is there water coming through it?",
@@ -376,7 +529,7 @@ export function determineNextMaintenanceQuestion(
     if (q) return q
   }
 
-  if (isLock(state, hay)) {
+  if (isLock(state, hay) && !isDoorComplaint(state, hay)) {
     const q = tryAsk("lock_secure", "Are you currently able to secure the home?")
     if (q) return q
   }
@@ -386,11 +539,12 @@ export function determineNextMaintenanceQuestion(
     !hasFixture(hay) &&
     !isHvac(state, hay) &&
     !isLock(state, hay) &&
+    !isDoorComplaint(state, hay) &&
     (state.issue_type || state.vendor_trade)
   ) {
     const q = tryAsk(
       "room_or_area",
-      "Which room is this happening in? Kitchen, bathroom, basement, bedroom, or somewhere else?",
+      sharedRoomQuestion,
       "room_or_area",
     )
     if (q) return q
@@ -408,6 +562,16 @@ export function determineNextMaintenanceQuestion(
       "issue_type",
     )
     if (issue) return issue
+  }
+
+  if (
+    !asked(state, "photo") &&
+    (state.photo_urls?.length ?? 0) === 0 &&
+    isDoorComplaint(state, hay) &&
+    !doorFollowUpsPending(state, hay) &&
+    (namedDoorPart(door) || asked(state, "door_part") || asked(state, "lock_secure"))
+  ) {
+    return photoQuestion(state, hay)
   }
 
   if (
@@ -469,6 +633,9 @@ export function applyDiagnosticAnswer(
   let room = state.room_or_area
   let firstNoticed = state.first_noticed
 
+  let issueType = state.issue_type
+  let vendorTrade = state.vendor_trade
+
   if (type === "plumbing_overflow" || type === "toilet_overflow" || type === "plumbing_active_flow") {
     if (isNo(answer)) safety = "No overflow or standing water"
     if (isYes(answer)) safety = "Water is overflowing or actively leaking"
@@ -476,6 +643,22 @@ export function applyDiagnosticAnswer(
   if (type === "lock_secure") {
     if (isNo(answer)) safety = "Unable to secure the home"
     if (isYes(answer)) safety = "Home can be secured"
+  }
+  if (type === "door_part") {
+    const partHay = answer.toLowerCase()
+    if (isDoorLockHardware(partHay)) {
+      issueType = "lock"
+      vendorTrade = "locksmith"
+    } else if (isDoorStructurePart(partHay) || /\b(frame|hinge|door)\b/.test(partHay)) {
+      issueType = "general"
+      vendorTrade = "carpentry"
+    }
+  }
+  if (type === "door_safety") {
+    if (/\b(hang|fall|loose|stuck|off)\b/i.test(answer) && !isNo(answer)) {
+      safety = "Door may be stuck, hanging loose, or at risk of falling"
+    }
+    if (isNo(answer)) safety = safety ?? "Door is not hanging or at risk of falling"
   }
   if (type === "hvac_dangerous_temp" && isYes(answer)) {
     safety = "Home is becoming dangerously hot or cold"
@@ -509,6 +692,8 @@ export function applyDiagnosticAnswer(
     safety_concerns: safety,
     room_or_area: room,
     first_noticed: firstNoticed,
+    issue_type: issueType,
+    vendor_trade: vendorTrade,
     description,
   }
 }

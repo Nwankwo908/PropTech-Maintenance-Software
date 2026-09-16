@@ -8,22 +8,13 @@ import {
   PROPERTY_CHART_Y_MAX,
   PROPERTY_CHART_Y_TICKS,
 } from '@/lib/propertyAnalytics'
-import {
-  formatPmDueLabel,
-  formatPmTaskSubtitle,
-  pmTaskKindUsesApplianceIcon,
-  pmTaskKindUsesInspectionIcon,
-  pmTaskKindUsesServiceIcon,
-  type PmComplianceTask,
-} from '@/lib/pmCompliance'
-import applianceRepairIcon from '@/assets/appliance-repair.png'
-import inspectionReviewIcon from '@/assets/inspection-review.png'
-import pmServiceIcon from '@/assets/pm-service.png'
+import { PmComplianceTaskCard } from '@/components/PmComplianceTaskCard'
 
 type PropertyAnalyticsPanelProps = {
   building: string
   analytics: PropertyAnalyticsSnapshot | null
   loading?: boolean
+  onPmChanged?: () => void | Promise<void>
 }
 
 function formatSpend(amount: number): string {
@@ -32,58 +23,6 @@ function formatSpend(amount: number): string {
     currency: 'USD',
     maximumFractionDigits: 0,
   }).format(amount)
-}
-
-function PmComplianceRow({ task, index = 0 }: { task: PmComplianceTask; index?: number }) {
-  const due = formatPmDueLabel(task.dueAt, task.status)
-  const taskIcon = pmTaskKindUsesApplianceIcon(task.kind)
-    ? applianceRepairIcon
-    : pmTaskKindUsesInspectionIcon(task.kind)
-      ? inspectionReviewIcon
-      : pmTaskKindUsesServiceIcon(task.kind)
-        ? pmServiceIcon
-        : null
-
-  return (
-    <div
-      className="sa-enter flex flex-wrap items-start justify-between gap-3 py-3 first:pt-0 last:pb-0"
-      style={{ animationDelay: `${Math.min(index, 12) * 30}ms` }}
-    >
-      <div className="flex min-w-0 flex-1 gap-3">
-        {taskIcon ? (
-          <img src={taskIcon} alt="" className="mt-0.5 size-8 shrink-0 object-contain" aria-hidden />
-        ) : null}
-        <div className="min-w-0 flex-1">
-          <p className="text-[14px] font-medium text-[#0a0a0a]">{task.title}</p>
-          <p className="text-[12px] text-[#6a7282]">{task.location}</p>
-          <p className="mt-1 text-[12px] leading-5 text-[#4b5563]">{formatPmTaskSubtitle(task)}</p>
-          {task.ageBasis === 'estimated_from_build_year' ||
-          task.ageBasis === 'ai_estimated' ? (
-            <p className="mt-1 text-[11px] font-medium uppercase tracking-wide text-[#94a3b8]">
-              Age estimated
-              {task.ageBasis === 'estimated_from_build_year' ? ' from build year' : ''}
-            </p>
-          ) : null}
-          {task.kind === 'appliance' && task.estimatedReplacementCost != null ? (
-            <p className="mt-1 text-[12px] font-medium text-[#0a0a0a]">
-              Est. replacement {formatSpend(task.estimatedReplacementCost)}
-            </p>
-          ) : null}
-        </div>
-      </div>
-      <span
-        className={
-          due.tone === 'danger'
-            ? 'text-[#c10007] font-medium'
-            : due.tone === 'warning'
-              ? 'text-[#c2410c] font-medium'
-              : 'text-[#6a7282]'
-        }
-      >
-        {due.label}
-      </span>
-    </div>
-  )
 }
 
 function MaintenanceSpendBar({
@@ -152,6 +91,7 @@ export function PropertyAnalyticsPanel({
   building,
   analytics,
   loading = false,
+  onPmChanged,
 }: PropertyAnalyticsPanelProps) {
   const buildingShort = building.replace(/\s+Apartments$/i, '').trim()
   const pm = analytics?.pm
@@ -321,21 +261,21 @@ export function PropertyAnalyticsPanel({
           ) : openPmTasks.length > 0 ? (
             <div>
               <div className="mb-3 flex flex-wrap items-start justify-between gap-2">
-                <div>
-                  <h3 className="text-[14px] font-semibold text-[#0a0a0a]">
-                    Preventive maintenance tasks
-                  </h3>
-                  <p className="mt-0.5 text-[12px] leading-4 text-[#6a7282]">
-                    Asset → task → workflow → assignment → completion
-                  </p>
-                </div>
+                <h3 className="text-[14px] font-semibold text-[#0a0a0a]">
+                  Preventive maintenance tasks
+                </h3>
                 <span className="text-[12px] font-medium text-[#6a7282]">
                   {openPmTasks.length} open task{openPmTasks.length === 1 ? '' : 's'}
                 </span>
               </div>
               <div className="divide-y divide-[#f3f4f6]">
                 {openPmTasks.map((task, index) => (
-                  <PmComplianceRow key={task.id} task={task} index={index} />
+                  <PmComplianceTaskCard
+                    key={task.id}
+                    task={task}
+                    index={index}
+                    onChanged={onPmChanged}
+                  />
                 ))}
               </div>
             </div>

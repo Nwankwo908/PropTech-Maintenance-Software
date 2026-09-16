@@ -5,6 +5,7 @@ import {
   isThumbtackMessageCreatedEvent,
   parseThumbtackWebhookInbound,
 } from "../_shared/external_vendor/thumbtackMessages.ts"
+import { notifyLandlordNeedsAttention } from "../_shared/landlordAttentionNotify.ts"
 
 const corsHeaders: Record<string, string> = {
   "Access-Control-Allow-Origin": "*",
@@ -79,5 +80,16 @@ serve(async (req) => {
 
   const supabase = createClient(supabaseUrl, serviceKey)
   const result = await applyThumbtackInboundMessage(supabase, inbound)
+  if (result.applied && result.landlordId && result.text) {
+    const text = result.text
+    void notifyLandlordNeedsAttention(supabase, {
+      landlordId: result.landlordId,
+      kind: "external_vendor_replied",
+      headline: `${result.vendorName ?? "Vendor"} replied`,
+      detail: text.length > 160 ? `${text.slice(0, 157).trimEnd()}…` : text,
+      idempotencyKey: `thumbtack-reply:${result.messageId || `${result.threadId}:${Date.now()}`}`,
+      maintenanceRequestId: result.ticketId,
+    })
+  }
   return jsonResponse({ ok: true, ...result })
 })

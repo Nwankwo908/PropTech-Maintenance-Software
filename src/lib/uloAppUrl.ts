@@ -115,6 +115,11 @@ export const uloAppUrl = {
     return absolute ? joinOriginPath(uloAppOrigin(), path) : path
   },
 
+  /** Thumbtack authorization_code redirect (must match the registered redirect_uri). */
+  thumbtackOauthCallback(_absolute = true): string {
+    return 'https://www.ulohome.io/'
+  },
+
   /** Lightweight phone capture page for AI Equipment Scan. */
   inspectionCapture(sessionId: string, token: string, absolute = true): string {
     const url = new URL(
@@ -141,4 +146,20 @@ export function findExternalVendorTicketFromSearch(search: string): string | nul
   if (params.get(FIND_EXTERNAL_VENDOR_QUERY.flag) !== '1') return null
   const ticketId = params.get(FIND_EXTERNAL_VENDOR_QUERY.ticket)?.trim() ?? ''
   return ticketId || null
+}
+
+/** Thumbtack OAuth redirect on `/admin?code=&state=`. */
+export function thumbtackOauthParamsFromSearch(search: string): {
+  code: string
+  state: string
+  error: string | null
+} | null {
+  const raw = search.startsWith('?') ? search.slice(1) : search
+  const params = new URLSearchParams(raw)
+  const error = params.get('error')?.trim() || null
+  const code = params.get('code')?.trim() ?? ''
+  const state = params.get('state')?.trim() ?? ''
+  if (error && state.length >= 8) return { code: '', state, error }
+  if (code && state.length >= 8) return { code, state, error: null }
+  return null
 }

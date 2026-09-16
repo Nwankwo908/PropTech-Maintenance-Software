@@ -26,10 +26,18 @@ import {
   inspectionStorageExt,
   processInspectionUpload,
 } from "../_shared/vision/ingestInspectionUpload.ts"
+import {
+  parseInspectionPageImages,
+  parseInspectionPageTexts,
+} from "../_shared/vision/inspectionPageImages.ts"
 import { normalizeApplianceVisionResult } from "../_shared/vision/normalize.ts"
 import type { VisionHintCategory } from "../_shared/vision/types.ts"
 import { resolveOperationsGraphScope } from "../_shared/graph/operationsGraph.ts"
 import { recordActivityLog } from "../_shared/graph/recordActivityLog.ts"
+import {
+  inspectionRemovalActivity,
+  isInspectionDocumentFile,
+} from "../_shared/vision/inspectionRemoval.ts"
 
 const corsHeaders: Record<string, string> = {
   "Access-Control-Allow-Origin": "*",
@@ -277,11 +285,14 @@ serve(async (req) => {
           mode,
           autoConfirm: body.autoConfirm === true,
           existingStoragePath: storagePath,
+          pageImages: parseInspectionPageImages(body.pageImages),
+          pageTexts: parseInspectionPageTexts(body.pageTexts),
         })
         return jsonResponse({
           photo: mapPhotoRow(ingested.photo),
           unitAssetId: ingested.unitAssetId,
           taskIds: ingested.taskIds,
+          needsManualReview: ingested.needsManualReview === true,
         })
       } catch (err) {
         await supabase.storage.from("inspection-uploads").remove([storagePath])
@@ -341,11 +352,14 @@ serve(async (req) => {
         hintCategory,
         mode,
         autoConfirm: body.autoConfirm === true,
+        pageImages: parseInspectionPageImages(body.pageImages),
+        pageTexts: parseInspectionPageTexts(body.pageTexts),
       })
       return jsonResponse({
         photo: mapPhotoRow(ingested.photo),
         unitAssetId: ingested.unitAssetId,
         taskIds: ingested.taskIds,
+        needsManualReview: ingested.needsManualReview === true,
       })
     }
 
@@ -396,7 +410,7 @@ serve(async (req) => {
       }
       const { data: photo, error } = await supabase
         .from("property_inspection_photos")
-        .select("id, landlord_id, storage_path, file_name, assessment_id, unit_asset_id")
+        .select("id, landlord_id, storage_path, file_name, content_type, assessment_id, unit_asset_id")
         .eq("id", photoId)
         .eq("landlord_id", landlordId)
         .maybeSingle()
@@ -413,16 +427,26 @@ serve(async (req) => {
         .eq("landlord_id", landlordId)
 
       const unitAssetId = photo.unit_asset_id != null ? String(photo.unit_asset_id) : ""
-      if (unitAssetId) {
+      const assetIds = new Set<string>()
+      if (unitAssetId) assetIds.add(unitAssetId)
+      const { data: taggedAssets } = await supabase
+        .from("unit_assets")
+        .select("id")
+        .eq("landlord_id", landlordId)
+        .filter("metadata->>photoId", "eq", photoId)
+      for (const row of taggedAssets ?? []) {
+        if (row.id) assetIds.add(String(row.id))
+      }
+      for (const assetId of assetIds) {
         await supabase
           .from("preventive_maintenance_tasks")
           .delete()
-          .eq("unit_asset_id", unitAssetId)
+          .eq("unit_asset_id", assetId)
           .eq("landlord_id", landlordId)
         await supabase
           .from("unit_assets")
           .delete()
-          .eq("id", unitAssetId)
+          .eq("id", assetId)
           .eq("landlord_id", landlordId)
       }
 
@@ -441,14 +465,20 @@ serve(async (req) => {
           .maybeSingle()
         : { data: null }
 
+      const removal = inspectionRemovalActivity(
+        isInspectionDocumentFile(
+          photo.file_name != null ? String(photo.file_name) : null,
+          photo.content_type != null ? String(photo.content_type) : null,
+        ),
+      )
       await recordActivityLog(supabase, {
         landlordId,
-        eventType: "inspection.photo_removed",
+        eventType: removal.eventType,
         source: "dashboard",
         actorType: "landlord",
         propertyId: assessment?.property_id != null ? String(assessment.property_id) : null,
         metadata: {
-          message: "An inspection photo was removed.",
+          message: removal.message,
           photoId,
           fileName: photo.file_name != null ? String(photo.file_name) : null,
         },

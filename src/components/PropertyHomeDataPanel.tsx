@@ -38,6 +38,7 @@ type PropertyHomeDataPanelProps = {
   address: string | null
   buildingName?: string | null
   onAddPropertyAccess?: () => void
+  afterHomeValue?: ReactNode
 }
 
 type FactRow = { label: string; value: string }
@@ -223,6 +224,7 @@ export function PropertyHomeDataPanel({
   address,
   buildingName,
   onAddPropertyAccess,
+  afterHomeValue,
 }: PropertyHomeDataPanelProps) {
   const query = address?.trim() || ''
   const [snapshot, setSnapshot] = useState<HomeDataGraphSnapshot | null>(null)
@@ -345,11 +347,14 @@ export function PropertyHomeDataPanel({
   return (
     <section className="sa-surface overflow-hidden rounded-[10px] border border-[#e5e7eb] bg-white shadow-[0px_1px_2px_-1px_rgba(0,0,0,0.06)]">
       {!query ? (
-        <div className="px-6 py-16 text-center">
-          <p className="text-[13px] leading-5 text-[#6a7282]">
-            Save the property address in Details to load home data.
-          </p>
-        </div>
+        <>
+          <div className="px-6 py-16 text-center">
+            <p className="text-[13px] leading-5 text-[#6a7282]">
+              Save the property address in Details to load home data.
+            </p>
+          </div>
+          {afterHomeValue}
+        </>
       ) : (
         <>
           <div className="grid grid-cols-1 items-start lg:grid-cols-2">
@@ -398,6 +403,7 @@ export function PropertyHomeDataPanel({
             ) : null}
           </div>
           </div>
+          {afterHomeValue}
           <div className="px-4 pb-6 lg:px-6">
             <h3 className="pb-4 text-[24px] font-bold leading-8 tracking-[0.07px] text-[#0a0a0a]">
               Facts & features

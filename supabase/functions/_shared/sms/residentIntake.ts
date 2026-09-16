@@ -1130,9 +1130,10 @@ export async function processResidentMaintenanceIntake(
     )
     state = applyQuestionPlan(state)
     await saveIntakeState(supabase, ctx.conversationId, state)
-    const ack = receivedNow
-      ? "Thanks — I've got it.\n\n"
-      : hasPhoto
+    const goingToConfirm = state.step === "awaiting_confirm"
+    const ack = goingToConfirm
+      ? ""
+      : receivedNow || hasPhoto
         ? "Thanks — I've got it.\n\n"
         : "No problem.\n\n"
     return finishIntakeQuestion(

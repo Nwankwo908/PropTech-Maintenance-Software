@@ -30,6 +30,7 @@ const USEFUL_LIFE_YEARS: Record<MajorSystemId, number> = {
   boiler: 15,
   water_heater: 12,
   electrical_panel: 30,
+  plumbing: 40,
 }
 
 const MAJOR_SYSTEM_LABELS: Record<MajorSystemId, string> = {
@@ -38,9 +39,10 @@ const MAJOR_SYSTEM_LABELS: Record<MajorSystemId, string> = {
   boiler: 'Boiler',
   water_heater: 'Water heater',
   electrical_panel: 'Electrical panel',
+  plumbing: 'Plumbing',
 }
 
-export type MajorSystemId = 'roof' | 'hvac' | 'boiler' | 'water_heater' | 'electrical_panel'
+export type MajorSystemId = 'roof' | 'hvac' | 'boiler' | 'water_heater' | 'electrical_panel' | 'plumbing'
 
 export type PropertyHealthFactor = {
   id: string
@@ -176,6 +178,9 @@ export function resolveMajorSystemId(raw: string | null | undefined): MajorSyste
     /\bac\b/.test(text)
   ) {
     return 'hvac'
+  }
+  if (text.includes('plumb') || text.includes('supply line') || text.includes('drain')) {
+    return 'plumbing'
   }
   return null
 }

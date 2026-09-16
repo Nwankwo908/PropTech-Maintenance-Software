@@ -7,6 +7,7 @@ describe('resolvePhotoRequest', () => {
     expect(resolvePhotoRequest({ text: "There's a crack going up my wall." }).requested).toBe(true)
     expect(resolvePhotoRequest({ text: 'Fridge not cold' }).requested).toBe(true)
     expect(resolvePhotoRequest({ text: 'I saw a mouse in the kitchen' }).requested).toBe(true)
+    expect(resolvePhotoRequest({ text: 'My door broke' }).requested).toBe(true)
   })
 
   it('skips HVAC, electrical, and dripping faucets', () => {

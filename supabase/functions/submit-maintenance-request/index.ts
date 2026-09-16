@@ -11,14 +11,10 @@ import {
   resolveTicketSlaMinutes,
 } from "../_shared/landlordNotificationPrefs.ts"
 import { notifyResidentSubmitted } from "./resident_notify.ts"
-import { assignVendorAndNotify } from "./vendor_notify.ts"
+import { dispatchConfirmedMaintenanceTicket } from "../_shared/confirmedMaintenanceDispatch.ts"
 import { logGraphEvent } from "../_shared/graph/logGraphEvent.ts"
 import { startMaintenanceRequestWorkflow } from "../_shared/engine/startMaintenanceRequestWorkflow.ts"
 import { emitJobCreatedBundle } from "../_shared/ga4MeasurementProtocol.ts"
-import {
-  escalateMaintenanceNeedsVendor,
-  SUBMITTED_NO_VENDOR_ESCALATION,
-} from "../_shared/maintenance_admin_escalation.ts"
 import { resolveLandlordId } from "../_shared/sms/landlordSmsOnboarding.ts"
 import { lookupOutdoorTempForProperty } from "../_shared/weather/propertyOutdoorTemp.ts"
 import { issueCategoryToVendorTrade, VENDOR_TRADE_SLUGS } from "../_shared/vendor_trades.ts"
@@ -425,7 +421,7 @@ serve(async (req) => {
   let vendorAssigned = false
   let needsVendorEscalation = false
   try {
-    const assignResult = await assignVendorAndNotify(supabase, {
+    const outcome = await dispatchConfirmedMaintenanceTicket(supabase, {
       ticketId,
       priority,
       unit,
@@ -434,10 +430,18 @@ serve(async (req) => {
       estimatedMinutes,
       landlordId,
     })
-    vendorAssigned = assignResult.assigned
-    needsVendorEscalation = assignResult.skipReason === "no_vendor"
+    vendorAssigned = outcome.vendorAssigned
+    needsVendorEscalation = outcome.kind === "nearby_options_sent" ||
+      outcome.kind === "dispatch_error" ||
+      outcome.kind === "landlord_manual"
+    console.info("[submit-maintenance-request] confirmed dispatch", {
+      ticketId,
+      kind: outcome.kind,
+      nearbyOptionCount: outcome.nearbyOptionCount,
+      error: outcome.error ?? null,
+    })
   } catch (e) {
-    console.error("[submit-maintenance-request] vendor notify failed", e)
+    console.error("[submit-maintenance-request] confirmed dispatch failed", e)
     needsVendorEscalation = true
   }
 
@@ -459,18 +463,6 @@ serve(async (req) => {
     workflowRunId = started.workflowRunId
   } catch (e) {
     console.error("[submit-maintenance-request] workflow run", e)
-  }
-
-  if (needsVendorEscalation && !workflowRunId) {
-    try {
-      await escalateMaintenanceNeedsVendor(
-        supabase,
-        { id: ticketId, landlord_id: landlordId },
-        SUBMITTED_NO_VENDOR_ESCALATION,
-      )
-    } catch (e) {
-      console.error("[submit-maintenance-request] no-vendor escalation failed", e)
-    }
   }
 
   try {

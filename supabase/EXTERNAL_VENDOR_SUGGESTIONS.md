@@ -41,8 +41,10 @@ In-network roster suggestions remain on **`recommend-vendor-alternatives`** (Ope
 | `THUMBTACK_API_BASE_URL` | Optional API host (default `https://api.thumbtack.com/api`) |
 | `THUMBTACK_TOKEN_URL` | Optional token URL (default `https://auth.thumbtack.com/oauth2/token`) |
 | `THUMBTACK_OAUTH_SCOPE` | Optional search-app scopes. Default is `businesses/search.read` + `categories.read`. |
-| `THUMBTACK_MESSAGING_OAUTH_SCOPE` | Optional message-app scopes. Default is `requests.write` + negotiations. |
-| `THUMBTACK_UTM_SOURCE` | Optional `utm_source` on search (must be `cma-…`; default `cma-ulo`) |
+| `THUMBTACK_MESSAGING_OAUTH_SCOPE` | Optional. Connect always uses `negotiations.read`, `messages.read`, `messages.write`, and `offline_access`. Do not include `negotiations/messages.write` — Thumbtack rejects Connect with `invalid_scope`. |
+| `THUMBTACK_UTM_SOURCE` | Optional `utm_source` on search (must be `cma-…`; provisioned default `cma-ulohome`) |
+| `THUMBTACK_AUTH_URL` | Auth Code authorize URL (default `https://auth.thumbtack.com/oauth2/auth`) |
+| `THUMBTACK_OAUTH_REDIRECT_URI` | Must match Thumbtack console exactly. Production Message API app is `https://www.ulohome.io/`. |
 | `EXTERNAL_VENDOR_SEARCH_LOCATION` | Fallback geocode anchor when property address cannot be resolved |
 | `EXTERNAL_VENDOR_PROVIDER` | `auto` (default), `mock`, or `thumbtack` |
 | `EXTERNAL_VENDOR_USE_MOCK` | `true` forces mock provider in discover API |
@@ -51,7 +53,9 @@ When no live Thumbtack credentials are configured, **`mock`** provider returns d
 
 ### Thumbtack Partner Platform
 
-Demand-side **client credentials** OAuth against `urn:partner-api`, then:
+**OAuth split (Via / Thumbtack):** search uses **client_credentials**. Opening a request (`POST /api/v4/requests`) and sending messages uses **authorization_code** (`offline_access` refresh, rotated). Landlords connect once from Find External Vendor. Tokens live in `landlord_thumbtack_oauth` (service role). Search stays on the search app.
+
+Demand-side **client credentials** OAuth against `urn:partner-api` for search, then:
 
 1. `POST /v4/businesses/search-filtered` with ticket wording, trade, ZIP, and `projectMetadata.radiusMiles` (50)
 2. Fill remaining slots with `POST /v4/businesses/search` (`searchQuery` + ZIP), up to 10 unique businesses
@@ -133,7 +137,11 @@ Opens or reuses the Thumbtack **negotiation** for a search hit, then:
 
 `POST /api/v4/negotiations/{negotiationID}/messages` with `{ "text": "..." }`.
 
-Uses the stored OAuth access token on the Edge Function (never in the browser). First send may `POST /v4/requests` with `searchID` + `businessIDs` to mint the lead.
+Uses the landlord’s **authorization_code** refresh token on the Edge Function (never in the browser). First send may `POST /v4/requests` with `searchID` + `businessIDs` to mint the lead. Search listing still uses client_credentials.
+
+### POST `thumbtack-oauth`
+
+`GET ?landlordId=` → `{ connected }`. `POST { action: "start" }` → Thumbtack authorize URL. `POST { action: "exchange", code, state }` after redirect to `https://www.ulohome.io/?code=&state=`.
 
 Auth: same as discover (`ADMIN_REASSIGN_SECRET`).
 
@@ -155,10 +163,11 @@ Covers ranking, mock provider, Thumbtack payload mapping, discover fallback, and
 supabase db push   # migration
 supabase functions deploy discover-external-vendors
 supabase functions deploy message-thumbtack-vendor
+supabase functions deploy thumbtack-oauth
 supabase functions deploy thumbtack-webhook
 supabase functions deploy reassign-external-vendor
 ```
 
-Also `supabase db push` for `thumbtack_vendor_threads`.
+Also `supabase db push` for `thumbtack_vendor_threads` and `landlord_thumbtack_oauth`.
 
 Existing **`admin-reassign-vendor`** remains unchanged for in-network reassigns; vendor create path now scopes by ticket `landlord_id`.

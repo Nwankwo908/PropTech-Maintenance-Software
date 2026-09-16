@@ -72,7 +72,11 @@ export async function renderPdfFileToJpegDataUrls(
     canvas.height = Math.ceil(viewport.height)
     const context = canvas.getContext('2d')
     if (!context) break
-    await page.render({ canvas, viewport }).promise
+    await page.render({
+      canvas,
+      canvasContext: context,
+      viewport,
+    }).promise
     const url = canvas.toDataURL('image/jpeg', quality)
     if (url.startsWith('data:image/jpeg')) urls.push(url)
   }

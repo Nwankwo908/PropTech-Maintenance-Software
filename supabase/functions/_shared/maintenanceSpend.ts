@@ -224,12 +224,13 @@ export async function submitMaintenanceInvoice(
       currency: "USD",
       minimumFractionDigits: 2,
     })
-    const wo = formatWorkOrderRef(params.maintenanceRequestId)
     await notifyLandlordNeedsAttention(supabase, {
       landlordId: scope.landlordId,
       kind: "invoice_ready",
       headline: "Invoice ready to pay",
-      detail: `${wo}${unit ? ` · Unit ${unit}` : ""} · ${vendorName} · ${amount}`,
+      detail: [unit ? `Unit ${unit}` : null, vendorName, amount]
+        .filter(Boolean)
+        .join(" · "),
       idempotencyKey: `invoice:${invoice.id}`,
       maintenanceRequestId: params.maintenanceRequestId,
       vendorId: params.vendorId,

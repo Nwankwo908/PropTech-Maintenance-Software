@@ -10,6 +10,7 @@ import {
   addCalendarMonths,
   addDaysIso,
   buildResidentCalendarEvents,
+  buildTenantOnboardingCalendarEvents,
   calendarEventsFromOperationsGraph,
   datesInRange,
   mergeResidentCalendarEvents,
@@ -49,11 +50,13 @@ const EVENT_CHIP: Record<ResidentCalendarEventKind, { fill: string; text: string
   rent: { fill: 'bg-[#e0f2fe]', text: 'text-[#0369a1]' },
   rent_reminder: { fill: 'bg-[#f0f9ff]', text: 'text-[#0284c7]' },
   maintenance: { fill: 'bg-[#ffe4e6]', text: 'text-[#be123c]' },
+  onboarding_reminder: { fill: 'bg-[#fef9c3]', text: 'text-[#92400e]' },
 }
 
 function eventChipLabel(event: ResidentCalendarEvent): string {
   if (event.kind === 'rent') return 'Rent due'
   if (event.kind === 'rent_reminder') return 'Rent reminder'
+  if (event.kind === 'onboarding_reminder') return 'Onboarding Follow up'
   return event.label
 }
 
@@ -62,6 +65,7 @@ function headerKindForDay(
 ): ResidentCalendarEventKind | null {
   if (events.some((event) => event.kind === 'rent')) return 'rent'
   if (events.some((event) => event.kind === 'maintenance')) return 'maintenance'
+  if (events.some((event) => event.kind === 'onboarding_reminder')) return 'onboarding_reminder'
   if (events.some((event) => event.kind === 'rent_reminder')) return 'rent_reminder'
   return null
 }
@@ -94,6 +98,7 @@ export function ResidentLeaseCalendar({
   rowSubtitle,
   operationsEvents = [],
   visitEvents = [],
+  onboarding = null,
 }: {
   leaseStartDate: string | null
   leaseEndDate: string | null
@@ -102,6 +107,15 @@ export function ResidentLeaseCalendar({
   rowSubtitle?: string
   operationsEvents?: PropertyOperationsTimelineEvent[]
   visitEvents?: ResidentCalendarEvent[]
+  onboarding?: {
+    residentId: string
+    activationStatus?: string | null
+    smsConsentStatus?: string | null
+    activationAttemptCount?: number | null
+    activationSmsSentAt?: string | null
+    lastActivationAttemptAt?: string | null
+    firstActivationAttemptAt?: string | null
+  } | null
 }) {
   const { organization } = useLandlordWorkspace()
   const today = todayIsoDate()
@@ -117,18 +131,31 @@ export function ResidentLeaseCalendar({
   const allEvents = useMemo(
     () =>
       mergeResidentCalendarEvents(
-        buildResidentCalendarEvents({
-          leaseStartDate,
-          leaseEndDate,
-          rentDueDay: resolvedRentDueDay,
-          rentReminderCadence,
-        }),
+        mergeResidentCalendarEvents(
+          buildResidentCalendarEvents({
+            leaseStartDate,
+            leaseEndDate,
+            rentDueDay: resolvedRentDueDay,
+            rentReminderCadence,
+          }),
+          onboarding
+            ? buildTenantOnboardingCalendarEvents(onboarding)
+            : [],
+        ),
         mergeResidentCalendarEvents(
           calendarEventsFromOperationsGraph(operationsEvents),
           visitEvents,
         ),
       ),
-    [leaseStartDate, leaseEndDate, resolvedRentDueDay, rentReminderCadence, operationsEvents, visitEvents],
+    [
+      leaseStartDate,
+      leaseEndDate,
+      resolvedRentDueDay,
+      rentReminderCadence,
+      operationsEvents,
+      visitEvents,
+      onboarding,
+    ],
   )
 
   const defaultStart = useMemo(
@@ -274,9 +301,11 @@ export function ResidentLeaseCalendar({
                           'inline-flex size-8 items-center justify-center rounded-full text-[15px] font-semibold leading-none text-white',
                           isToday
                             ? 'bg-[#52525b]'
-                            : kind === 'maintenance'
-                              ? 'bg-[#f43f5e]'
-                              : 'bg-[#0ea5e9]',
+                            : kind === 'onboarding_reminder'
+                              ? 'bg-[#d97706]'
+                              : kind === 'maintenance'
+                                ? 'bg-[#f43f5e]'
+                                : 'bg-[#0ea5e9]',
                         ].join(' ')}
                       >
                         {dayNumber(iso)}
@@ -303,7 +332,7 @@ export function ResidentLeaseCalendar({
                       const style = EVENT_CHIP[event.kind]
                       return (
                         <span
-                          key={`${event.kind}-${event.date}-${event.daysBeforeDue ?? ''}-${event.label}`}
+                          key={event.id ?? `${event.kind}-${event.date}-${event.daysBeforeDue ?? ''}-${event.label}`}
                           title={event.label}
                           className={`block w-full truncate rounded-[4px] px-1 py-1 text-center text-[10px] font-semibold leading-3 ${style.fill} ${style.text}`}
                         >

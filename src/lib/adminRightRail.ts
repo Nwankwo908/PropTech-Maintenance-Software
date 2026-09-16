@@ -3,7 +3,21 @@
 export type AdminRightRailStackedPosition = 'left' | 'right'
 
 const PANEL_BASE =
-  'sa-rail relative flex h-full max-h-dvh w-full flex-col overflow-hidden border border-[#e5e7eb] bg-white shadow-[0px_8px_24px_rgba(0,0,0,0.12)]'
+  'sa-rail relative flex h-full max-h-dvh shrink-0 flex-col overflow-hidden border border-[#e5e7eb] bg-white shadow-[0px_8px_24px_rgba(0,0,0,0.12)]'
+
+/** Pair max-width with an explicit width so stacked rails cannot grow to 100vw. */
+export function railPanelWidthClasses(
+  maxWidthClass = 'max-w-[min(100vw,520px)]',
+): string {
+  const trimmed = maxWidthClass.trim()
+  if (trimmed.startsWith('max-w-[')) {
+    return `w-${trimmed.slice('max-w-'.length)} ${trimmed}`
+  }
+  if (trimmed.startsWith('max-w-')) {
+    return `${trimmed.replace(/^max-w-/, 'w-')} ${trimmed}`
+  }
+  return trimmed
+}
 
 /** Solo or stacked panel shell (pass Tailwind max-width class). */
 export function adminRightRailPanelClass(
@@ -16,7 +30,7 @@ export function adminRightRailPanelClass(
       : stackedPosition === 'right'
         ? 'rounded-none border-l-0'
         : 'rounded-l-[12px]'
-  return `${PANEL_BASE} ${maxWidthClass} ${rounded}`
+  return `${PANEL_BASE} ${railPanelWidthClasses(maxWidthClass)} ${rounded}`
 }
 
 /** Overlay host for a single rail (not used when panelOnly). */

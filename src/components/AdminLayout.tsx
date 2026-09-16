@@ -27,6 +27,7 @@ import {
 } from '@/lib/onboarding'
 import { supabase } from '@/lib/supabase'
 import { getErrorMessage } from '@/lib/errorMessage'
+import { completeThumbtackOauthFromSearch, notifyThumbtackOauthOpener, thumbtackJustConnected } from '@/lib/completeThumbtackOauth'
 
 // Sparkle strokes from assets/AI Icon (2).svg, without the purple circle
 // background; stroke follows the button text color.
@@ -348,8 +349,35 @@ function AdminMobileNavDrawer({
 }
 
 export function AdminLayout() {
+  const location = useLocation()
+  const navigate = useNavigate()
   const [mobileNavOpen, setMobileNavOpen] = useState(false)
   const [railCollapsed, setRailCollapsed] = useState(false)
+  const [thumbtackNotice, setThumbtackNotice] = useState<string | null>(null)
+
+  useEffect(() => {
+    let cancelled = false
+    void completeThumbtackOauthFromSearch(location.search).then((result) => {
+      if (cancelled) return
+      if (!result.handled && thumbtackJustConnected(location.search)) {
+        notifyThumbtackOauthOpener({ ok: true })
+        return
+      }
+      if (!result.handled) return
+      if (notifyThumbtackOauthOpener({ ok: !result.error, error: result.error })) return
+      if (result.error) {
+        setThumbtackNotice(result.error)
+        navigate({ pathname: location.pathname, search: '' }, { replace: true })
+        return
+      }
+      if (result.returnPath) {
+        navigate(result.returnPath, { replace: true })
+      }
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [location.pathname, location.search, navigate])
 
   const closeMobileNav = useCallback(() => {
     setMobileNavOpen(false)
@@ -403,6 +431,12 @@ export function AdminLayout() {
           </header>
 
           <AdminMobileNavDrawer open={mobileNavOpen} onClose={closeMobileNav} />
+
+          {thumbtackNotice ? (
+            <p className="shrink-0 border-b border-[#fecaca] bg-[#fef2f2] px-4 py-2 text-[13px] leading-5 text-[#b42318]" role="alert">
+              {thumbtackNotice}
+            </p>
+          ) : null}
 
           <AdminTopBar />
           <AdminMainContent />

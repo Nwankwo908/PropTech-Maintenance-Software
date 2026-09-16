@@ -1097,7 +1097,7 @@ async function handleMaintenanceUpdate(
             : applyKind === "no_show"
             ? "Resident said the vendor never showed up"
             : "Resident said a repair is getting worse",
-          detail: `${wo}: ${note.slice(0, 160)}`,
+          detail: note.slice(0, 160),
           idempotencyKey: `ticket-update:${ticket.id}:${ctx.messageId}`,
           maintenanceRequestId: ticket.id,
           residentId: ctx.identity.resident_id,

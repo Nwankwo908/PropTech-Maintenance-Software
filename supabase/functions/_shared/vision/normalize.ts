@@ -29,10 +29,20 @@ function asCategory(value: unknown): VisionCategory {
     v === "water_heater" ||
     v === "boiler" ||
     v === "roof" ||
+    v === "electrical_panel" ||
+    v === "plumbing" ||
     v === "other" ||
     v === "unknown"
   ) {
     return v
+  }
+  const lower = v.toLowerCase()
+  if (lower.includes("electrical") && (lower.includes("panel") || lower.includes("breaker"))) {
+    return "electrical_panel"
+  }
+  if (lower === "electrical") return "electrical_panel"
+  if (lower.includes("plumb") || lower.includes("supply line") || lower.includes("drain")) {
+    return "plumbing"
   }
   return "unknown"
 }
@@ -71,8 +81,9 @@ function asOverallConfidence(value: unknown, ageBand: AgeConfidence): number {
 }
 
 function asCondition(value: unknown): ConditionRating {
-  const v = asString(value)
-  if (v === "good" || v === "fair" || v === "poor" || v === "unsafe") return v
+  const v = asString(value).toLowerCase()
+  if (v === "good" || v === "satisfactory") return "good"
+  if (v === "fair" || v === "poor" || v === "unsafe") return v
   return "fair"
 }
 
@@ -98,18 +109,32 @@ function asUrgency(value: unknown): RecommendationUrgency {
 /** Coerce model JSON into ApplianceVisionResult. */
 export function normalizeApplianceVisionResult(raw: unknown): ApplianceVisionResult {
   const o = raw && typeof raw === "object" ? (raw as Record<string, unknown>) : {}
+  const identifiedRaw = o.identifiedItem ?? o.identified_item
   const item =
-    o.identifiedItem && typeof o.identifiedItem === "object"
-      ? (o.identifiedItem as Record<string, unknown>)
-      : {}
+    identifiedRaw && typeof identifiedRaw === "object"
+      ? (identifiedRaw as Record<string, unknown>)
+      : typeof identifiedRaw === "string"
+        ? { type: identifiedRaw }
+        : {}
+  const ageRaw = o.estimatedAge ?? o.estimated_age ?? o.age
   const age =
-    o.estimatedAge && typeof o.estimatedAge === "object"
-      ? (o.estimatedAge as Record<string, unknown>)
-      : {}
+    ageRaw && typeof ageRaw === "object"
+      ? (ageRaw as Record<string, unknown>)
+      : typeof ageRaw === "number" && Number.isFinite(ageRaw)
+        ? { value: ageRaw, confidence: "medium", basis: "Report stated age" }
+        : typeof o.ageYears === "number" || typeof o.estimated_age_years === "number"
+          ? {
+              value: o.ageYears ?? o.estimated_age_years,
+              confidence: "medium",
+              basis: "Report stated age",
+            }
+          : {}
   const condition =
     o.condition && typeof o.condition === "object"
       ? (o.condition as Record<string, unknown>)
-      : {}
+      : typeof o.condition === "string"
+        ? { rating: o.condition }
+        : {}
 
   const deficiencies = Array.isArray(o.deficiencies)
     ? o.deficiencies
@@ -136,20 +161,41 @@ export function normalizeApplianceVisionResult(raw: unknown): ApplianceVisionRes
         })
     : []
 
-  const brand = asString(item.brand)
+  const brand = asString(item.brand) || asString(o.brand)
   const modelNumber = asString(item.modelNumber)
   const serialNumber = asString(item.serialNumber)
   const fuelType = asFuelType(item.fuelType)
   const btuOutput = asNumberOrNull(item.btuOutput)
   const notes = asString(o.rawConfidenceNotes)
   const category = asCategory(o.category)
+  const typeFallback =
+    category === "electrical_panel"
+      ? "Electrical panel"
+      : category === "hvac"
+        ? "HVAC system"
+        : category === "water_heater"
+          ? "Water heater"
+          : category === "boiler"
+            ? "Boiler"
+            : category === "roof"
+              ? "Roof"
+              : category === "plumbing"
+                ? "Plumbing system"
+                : ""
   const ageConfidence = asConfidence(age.confidence)
-  const overallConfidence = asOverallConfidence(o.overallConfidence, ageConfidence)
+  const overallConfidence = asOverallConfidence(o.overallConfidence ?? o.overall_confidence, ageConfidence)
 
   return {
     category,
     identifiedItem: {
-      type: asString(item.type) || "Unknown item",
+      type:
+        asString(item.type) ||
+        asString(item.name) ||
+        asString(o.type) ||
+        asString(o.itemType) ||
+        asString(o.name) ||
+        typeFallback ||
+        "Unknown item",
       ...(brand ? { brand } : {}),
       ...(modelNumber ? { modelNumber } : {}),
       ...(serialNumber ? { serialNumber } : {}),
@@ -195,10 +241,74 @@ export function normalizeInspectionReportExtract(raw: unknown): {
   items: ApplianceVisionResult[]
 } {
   const o = raw && typeof raw === "object" ? (raw as Record<string, unknown>) : {}
+  const address = normalizeInspectionPropertyAddress(o.propertyAddress ?? o.address ?? o.property_address)
+  const itemSource = o.items ?? o.findings ?? o.systems ?? o.equipment ?? o.assets
   return {
-    propertyAddress: normalizeInspectionPropertyAddress(o.propertyAddress),
-    items: normalizeApplianceVisionResultList(o.items ?? o),
+    propertyAddress: address,
+    items: normalizeApplianceVisionResultList(itemSource ?? o),
   }
+}
+
+/** Predominant vs secondary covering — a 4-point form has at most two roofs. */
+export function roofCoveringIdentity(itemType: string | null | undefined): "secondary" | "predominant" {
+  const t = (itemType ?? "").trim().toLowerCase()
+  if (/\b(second(ary)?|other covering|additional roof)\b/.test(t)) return "secondary"
+  return "predominant"
+}
+
+export function inspectionFindingMergeKey(item: ApplianceVisionResult): string {
+  const type = (item.identifiedItem.type ?? "").trim().toLowerCase()
+  if (item.category === "roof" || /\broof\b/.test(type)) {
+    return `roof:${roofCoveringIdentity(type)}`
+  }
+  if (item.category === "electrical_panel" || type.includes("panel")) {
+    if (/\b(second|sub-?panel|auxiliary)\b/.test(type)) return "electrical_panel:secondary"
+    return "electrical_panel:main"
+  }
+  if (
+    item.category === "hvac" ||
+    item.category === "water_heater" ||
+    item.category === "plumbing" ||
+    item.category === "boiler"
+  ) {
+    return item.category
+  }
+  return `${item.category}:${type}`
+}
+
+function inspectionItemSpecificity(item: ApplianceVisionResult): number {
+  let score = item.overallConfidence ?? 0
+  if (item.identifiedItem.brand?.trim()) score += 20
+  if (item.estimatedAge.value != null) score += 20
+  score += Math.min(40, (item.identifiedItem.type ?? "").trim().length)
+  return score
+}
+
+/** Combine per-page extract calls into one report (later pages must not be dropped). */
+export function mergeInspectionReportExtracts(
+  parts: Array<ReturnType<typeof normalizeInspectionReportExtract>>,
+): ReturnType<typeof normalizeInspectionReportExtract> {
+  const propertyAddress =
+    parts.find((part) => part.propertyAddress.street || part.propertyAddress.raw)?.propertyAddress ??
+    parts[0]?.propertyAddress ??
+    normalizeInspectionPropertyAddress({})
+  const byKey = new Map<string, ApplianceVisionResult>()
+  const order: string[] = []
+  for (const part of parts) {
+    for (const item of part.items) {
+      const key = inspectionFindingMergeKey(item)
+      const existing = byKey.get(key)
+      if (!existing) {
+        byKey.set(key, item)
+        order.push(key)
+        continue
+      }
+      if (inspectionItemSpecificity(item) > inspectionItemSpecificity(existing)) {
+        byKey.set(key, item)
+      }
+    }
+  }
+  return { propertyAddress, items: order.map((key) => byKey.get(key)!) }
 }
 
 export function normalizeApplianceVisionResultList(raw: unknown): ApplianceVisionResult[] {
@@ -210,8 +320,28 @@ export function normalizeApplianceVisionResultList(raw: unknown): ApplianceVisio
     if (Array.isArray(o.items)) {
       return o.items.map((item) => normalizeApplianceVisionResult(item))
     }
-    if ("identifiedItem" in o || "category" in o) {
-      return [normalizeApplianceVisionResult(o)]
+    if (Array.isArray(o.findings)) {
+      return o.findings.map((item) => normalizeApplianceVisionResult(item))
+    }
+    if ("identifiedItem" in o || "identified_item" in o || "category" in o || "type" in o) {
+      if (!("street" in o || "propertyAddress" in o)) {
+        return [normalizeApplianceVisionResult(o)]
+      }
+    }
+    const nested = Object.entries(o)
+      .filter(([key, value]) => {
+        if (key === "propertyAddress" || key === "address" || key === "property_address") return false
+        return Boolean(value) && typeof value === "object" && !Array.isArray(value)
+      })
+      .map(([, value]) => value as Record<string, unknown>)
+      .filter((row) =>
+        "identifiedItem" in row ||
+        "identified_item" in row ||
+        "category" in row ||
+        "type" in row
+      )
+    if (nested.length > 0) {
+      return nested.map((item) => normalizeApplianceVisionResult(item))
     }
   }
   return []

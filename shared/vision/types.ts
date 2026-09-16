@@ -4,6 +4,8 @@ export type VisionCategory =
   | "water_heater"
   | "boiler"
   | "roof"
+  | "electrical_panel"
+  | "plumbing"
   | "other"
   | "unknown"
 

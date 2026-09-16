@@ -7,7 +7,7 @@ import { isUuidShape } from "../_shared/uuid_shape.ts"
 import {
   clampExternalVendorSearchLimit,
   EXTERNAL_VENDOR_SEARCH_LIMIT,
-} from "../../../shared/externalVendor/searchLimit.ts"
+} from "../_shared/external_vendor/searchLimit.ts"
 
 const corsHeaders = adminEdgeCorsHeaders
 

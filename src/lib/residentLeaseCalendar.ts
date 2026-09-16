@@ -1,6 +1,14 @@
 import type { PropertyOperationsTimelineEvent } from '@/lib/propertyOperationsGraph'
+import {
+  ACTIVATION_RETRY_2_HOURS,
+  ACTIVATION_RETRY_3_HOURS,
+  ACTIVATION_SILENCE_NUDGE_HOURS,
+  MAX_ACTIVATION_ATTEMPTS,
+  MAX_SILENCE_NUDGE_ATTEMPTS,
+  resolveTenantActivationChip,
+} from '@/lib/tenantActivationStatus'
 
-export type ResidentCalendarEventKind = 'rent' | 'rent_reminder' | 'maintenance'
+export type ResidentCalendarEventKind = 'rent' | 'rent_reminder' | 'maintenance' | 'onboarding_reminder'
 
 export type ResidentCalendarEvent = {
   id?: string
@@ -134,6 +142,95 @@ export function buildResidentCalendarEvents(input: {
   return events
 }
 
+function isoDateFromInstant(value: Date): string {
+  return toIsoDate(value.getFullYear(), value.getMonth() + 1, value.getDate())
+}
+
+function parseInstant(value: string | null | undefined): Date | null {
+  const raw = (value ?? '').trim()
+  if (!raw) return null
+  const parsed = new Date(raw)
+  if (!Number.isFinite(parsed.getTime())) return null
+  return parsed
+}
+
+/**
+ * Upcoming onboarding SMS follow-ups for this resident only (welcome already sent).
+ * Does not copy rent cadence or another tenant’s schedule.
+ */
+export function buildTenantOnboardingCalendarEvents(input: {
+  residentId: string
+  activationStatus?: string | null
+  smsConsentStatus?: string | null
+  activationAttemptCount?: number | null
+  activationSmsSentAt?: string | null
+  lastActivationAttemptAt?: string | null
+  firstActivationAttemptAt?: string | null
+  now?: Date
+}): ResidentCalendarEvent[] {
+  const residentId = input.residentId.trim()
+  if (!residentId) return []
+
+  const chip = resolveTenantActivationChip({
+    activationStatus: input.activationStatus,
+    smsConsentStatus: input.smsConsentStatus,
+    activationAttemptCount: input.activationAttemptCount,
+    activationSmsSentAt: input.activationSmsSentAt,
+  })
+  const now = input.now ?? new Date()
+  const today = todayIsoDate(now)
+  const events: ResidentCalendarEvent[] = []
+
+  if (chip.status === 'waiting') {
+    const last =
+      parseInstant(input.lastActivationAttemptAt) ??
+      parseInstant(input.activationSmsSentAt)
+    if (!last) return []
+    const sent = Math.max(1, chip.attemptCount)
+    const remaining = MAX_SILENCE_NUDGE_ATTEMPTS - sent
+    for (let index = 1; index <= remaining; index += 1) {
+      const when = new Date(
+        last.getTime() + index * ACTIVATION_SILENCE_NUDGE_HOURS * 60 * 60 * 1000,
+      )
+      const date = isoDateFromInstant(when)
+      if (date < today) continue
+      events.push({
+        id: `onboarding:${residentId}:${date}:${index}`,
+        date,
+        kind: 'onboarding_reminder',
+        label: 'Onboarding Follow up',
+      })
+    }
+  }
+
+  if (chip.status === 'delivery_failed' && chip.attemptCount < MAX_ACTIVATION_ATTEMPTS) {
+    const first =
+      parseInstant(input.firstActivationAttemptAt) ??
+      parseInstant(input.lastActivationAttemptAt) ??
+      parseInstant(input.activationSmsSentAt)
+    if (!first) return events
+    const retries: Array<{ hours: number; afterAttempts: number }> = [
+      { hours: ACTIVATION_RETRY_2_HOURS, afterAttempts: 1 },
+      { hours: ACTIVATION_RETRY_3_HOURS, afterAttempts: 2 },
+    ]
+    for (const retry of retries) {
+      if (chip.attemptCount !== retry.afterAttempts) continue
+      const when = new Date(first.getTime() + retry.hours * 60 * 60 * 1000)
+      const date = isoDateFromInstant(when)
+      if (date < today) continue
+      events.push({
+        id: `onboarding:${residentId}:retry:${date}`,
+        date,
+        kind: 'onboarding_reminder',
+        label: 'Onboarding Follow up',
+      })
+    }
+  }
+
+  events.sort((a, b) => a.date.localeCompare(b.date) || (a.id ?? '').localeCompare(b.id ?? ''))
+  return events
+}
+
 function compareMonthParts(
   a: { year: number; month: number },
   b: { year: number; month: number },
@@ -149,13 +246,23 @@ export function stripStartIncludingRentReminders(
 ): string {
   const lead = Math.max(0, ...parseRentReminderCadenceDays(cadence))
   const nextRent = events.find((event) => event.kind === 'rent' && event.date >= today)
+  let start = today
   if (nextRent) {
-    const start = addDaysIso(nextRent.date, -lead)
-    return start < today ? today : start
+    const rentStart = addDaysIso(nextRent.date, -lead)
+    start = rentStart < today ? today : rentStart
+  } else {
+    const nextReminder = events.find(
+      (event) => event.kind === 'rent_reminder' && event.date >= today,
+    )
+    if (nextReminder) start = nextReminder.date
   }
-  const nextReminder = events.find((event) => event.kind === 'rent_reminder' && event.date >= today)
-  if (nextReminder) return nextReminder.date
-  return today
+  const nextOnboarding = events.find(
+    (event) => event.kind === 'onboarding_reminder' && event.date >= today,
+  )
+  if (nextOnboarding && nextOnboarding.date < start) {
+    return today
+  }
+  return start
 }
 
 function calendarDateFromInstant(iso: string | null | undefined): string | null {

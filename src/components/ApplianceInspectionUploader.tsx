@@ -27,6 +27,8 @@ import {
 import {
   INSPECTION_SESSION_CHANGED_EVENT,
   inspectionPhotosForDisplay,
+  isInspectionReportAsset,
+  isInspectionReportPhoto,
   notifyInspectionSessionChanged,
 } from '@/lib/inspectionSession'
 import type {
@@ -252,6 +254,8 @@ export function ApplianceInspectionUploader({
             hintCategory: job.hintCategory,
             mode: job.mode,
             previewUrl: job.previewUrl,
+            pageImages: compressed.pageImages,
+            pageTexts: compressed.pageTexts,
           })
           if (
             removedIdsRef.current.has(optimisticId) ||

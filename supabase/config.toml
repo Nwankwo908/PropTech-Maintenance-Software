@@ -138,6 +138,12 @@ verify_jwt = false
 import_map = "./functions/message-thumbtack-vendor/deno.json"
 entrypoint = "./functions/message-thumbtack-vendor/index.ts"
 
+[functions.thumbtack-oauth]
+enabled = true
+verify_jwt = false
+import_map = "./functions/thumbtack-oauth/deno.json"
+entrypoint = "./functions/thumbtack-oauth/index.ts"
+
 [functions.thumbtack-webhook]
 enabled = true
 verify_jwt = false

@@ -133,10 +133,17 @@ Deno.test("beginMultiIssueSharedIntake enters wizard, keeps pending issues", () 
       },
     ],
   })
-  assertEquals(next.step === "photo" || next.step === "awaiting_confirm", true)
   assertEquals(next.pending_issues?.length, 2)
   assertEquals(next.preferred_contact_method, "text")
   assertEquals(next.room_or_area, "kitchen")
+  assertEquals(
+    next.diagnostic_question_type === "pest_frequency" ||
+      next.diagnostic_question_type === "door_part" ||
+      next.step === "photo" ||
+      next.step === "diagnostic" ||
+      next.step === "awaiting_confirm",
+    true,
+  )
 })
 
 Deno.test("buildRequestSubmittedSms does not ask the tenant to call the manager", () => {

@@ -68,6 +68,10 @@ Deno.test("uloAppUrl named paths", () => {
   )
   assertEquals(uloAppUrl.admin("", origin), "https://app.example/admin")
   assertEquals(
+    uloAppUrl.thumbtackOauthCallback(origin),
+    "https://www.ulohome.io/",
+  )
+  assertEquals(
     uloAppUrl.admin("analytics", origin),
     "https://app.example/admin/analytics",
   )

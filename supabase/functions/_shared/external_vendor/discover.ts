@@ -6,7 +6,7 @@ import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.49.1
 import {
   isDemoExternalVendorName,
   isDemoExternalVendorProviderRef,
-} from "../../../../shared/externalVendor/demoVendorNames.ts"
+} from "./demoVendorNames.ts"
 import { MockExternalVendorProvider } from "./providers/mock.ts"
 import {
   ThumbtackExternalVendorProvider,
@@ -23,12 +23,12 @@ import type {
   ExternalVendorSuggestion,
 } from "./types.ts"
 import { listThumbtackThreadsForTicket } from "./thumbtackThreads.ts"
-import { formatThumbtackJobCategoryLabel } from "../../../../shared/externalVendor/thumbtackOutreachCopy.ts"
+import { formatThumbtackJobCategoryLabel } from "./thumbtackOutreachCopy.ts"
 import { landlordHasVendorMarketplace } from "../../../../shared/landlordCapabilities.ts"
 import {
   clampExternalVendorSearchLimit,
   EXTERNAL_VENDOR_SEARCH_LIMIT,
-} from "../../../../shared/externalVendor/searchLimit.ts"
+} from "./searchLimit.ts"
 
 export type DiscoverExternalVendorsOptions = {
   issueCategory: string | null

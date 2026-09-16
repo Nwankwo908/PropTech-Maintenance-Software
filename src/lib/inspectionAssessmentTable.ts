@@ -6,6 +6,8 @@ const CATEGORY_LABELS: Record<VisionCategory, string> = {
   water_heater: 'Water heater',
   boiler: 'Boiler',
   roof: 'Roof',
+  electrical_panel: 'Electrical panel',
+  plumbing: 'Plumbing',
   other: 'Other',
   unknown: 'Unknown',
 }
@@ -111,6 +113,8 @@ const VISION_CATEGORIES: VisionCategory[] = [
   'water_heater',
   'boiler',
   'roof',
+  'electrical_panel',
+  'plumbing',
   'other',
   'unknown',
 ]

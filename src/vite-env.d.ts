@@ -52,6 +52,16 @@ interface ImportMetaEnv {
    */
   readonly VITE_DISCOVER_EXTERNAL_VENDORS_URL?: string
   /**
+   * GET/POST thumbtack-oauth (full URL); uses `VITE_ADMIN_REASSIGN_SECRET`.
+   * If omitted, defaults to `${VITE_SUPABASE_URL}/functions/v1/thumbtack-oauth`.
+   */
+  readonly VITE_THUMBTACK_OAUTH_URL?: string
+  /**
+   * POST/GET message-thumbtack-vendor (full URL); uses `VITE_ADMIN_REASSIGN_SECRET`.
+   * If omitted, defaults to `${VITE_SUPABASE_URL}/functions/v1/message-thumbtack-vendor`.
+   */
+  readonly VITE_MESSAGE_THUMBTACK_VENDOR_URL?: string
+  /**
    * POST verify-external-vendor-compliance (full URL); uses `VITE_ADMIN_REASSIGN_SECRET`.
    * If omitted, defaults to `${VITE_SUPABASE_URL}/functions/v1/verify-external-vendor-compliance`.
    */

@@ -1428,26 +1428,28 @@ export function AdminPropertyDetailDashboard() {
             address={overviewPropertyAddress || null}
             buildingName={building}
             onAddPropertyAccess={() => setPropertyAccessRailOpen(true)}
+            afterHomeValue={
+              <div className="flex min-w-0 flex-col gap-4 px-4 pb-6 lg:px-6">
+                <h3 className="text-[24px] font-bold leading-8 tracking-[0.07px] text-[#0a0a0a]">
+                  {overviewPropertyAddress
+                    ? `Home Details for ${overviewPropertyAddress}`
+                    : 'Home Details'}
+                </h3>
+                {unitStatusError ? (
+                  <p className="rounded-lg border border-[#fecaca] bg-[#fef2f2] px-3 py-2 text-[13px] text-[#b91c1c]">
+                    {unitStatusError}
+                  </p>
+                ) : null}
+                <PropertyUnitsTable
+                  building={building ?? ''}
+                  propertyId={canonicalProperty?.id}
+                  rows={propertyUnitRows}
+                  loading={loading}
+                  onOccupancyStatusChange={(unitId, status) => handleOccupancyStatusChange(unitId, status)}
+                />
+              </div>
+            }
           />
-          {unitStatusError ? (
-            <p className="rounded-lg border border-[#fecaca] bg-[#fef2f2] px-3 py-2 text-[13px] text-[#b91c1c]">
-              {unitStatusError}
-            </p>
-          ) : null}
-          <div className="flex min-w-0 flex-col gap-4 pb-[40px]">
-            <h3 className="text-[24px] font-bold leading-8 tracking-[0.07px] text-[#0a0a0a]">
-              {overviewPropertyAddress
-                ? `Home Details for ${overviewPropertyAddress}`
-                : 'Home Details'}
-            </h3>
-            <PropertyUnitsTable
-              building={building ?? ''}
-              propertyId={canonicalProperty?.id}
-              rows={propertyUnitRows}
-              loading={loading}
-              onOccupancyStatusChange={(unitId, status) => handleOccupancyStatusChange(unitId, status)}
-            />
-          </div>
         </div>
       ) : activeTab === 'details' ? (
         <PropertyDetailsPanel
@@ -1481,6 +1483,10 @@ export function AdminPropertyDetailDashboard() {
           building={building ?? ''}
           analytics={propertyAnalytics}
           loading={loading}
+          onPmChanged={async () => {
+            const pm = await fetchPmCompliance().catch(() => ({ tasks: [] as PmComplianceTask[] }))
+            setPmComplianceTasks(pm.tasks ?? [])
+          }}
         />
       ) : (
         <div className="mt-6 rounded-[10px] border border-[#e5e7eb] bg-white p-8 text-center shadow-[0px_1px_2px_-1px_rgba(0,0,0,0.06)]">

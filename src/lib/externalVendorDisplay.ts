@@ -183,10 +183,13 @@ export function enrichExternalVendorSuggestions(
 ): ExternalVendorDisplayRow[] {
   const fallbackTag = categoryTag(issueCategory)
 
-  const rows = suggestions.map((s) => {
-    const primarySource = s.sources[0] ?? 'mock'
-    const rating = s.rating ?? null
-    const reviewCount = s.reviewCount ?? null
+  const rows = (suggestions ?? []).map((s) => {
+    const primarySource = s.sources?.[0] ?? 'mock'
+    const ratingRaw = typeof s.rating === 'number' ? s.rating : Number(s.rating)
+    const rating = Number.isFinite(ratingRaw) ? ratingRaw : null
+    const reviewsRaw =
+      typeof s.reviewCount === 'number' ? s.reviewCount : Number(s.reviewCount)
+    const reviewCount = Number.isFinite(reviewsRaw) ? reviewsRaw : null
 
     const tags =
       s.tags && s.tags.length > 0

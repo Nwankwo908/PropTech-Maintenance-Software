@@ -7,6 +7,11 @@ import {
   resolveMessageThumbtackVendorUrl,
   type ThumbtackVendorThreadDto,
 } from '@/api/messageThumbtackVendor'
+import { getThumbtackOauthStatus, resolveThumbtackOauthUrl, startThumbtackOauth } from '@/api/thumbtackOauth'
+import { THUMBTACK_OAUTH_PAGE_MESSAGE } from '@/lib/completeThumbtackOauth'
+import { getActiveLandlordId } from '@/lib/activeLandlord'
+import { isRetiredLandlordAccountId, LIMITED_ALPHA_1_LANDLORD_ID } from '@shared/landlordCapabilities'
+import { supabase } from '@/lib/supabase'
 import { ChatComposerBar } from '@/components/ChatComposerBar'
 import { AdminBottomSheet } from '@/components/AdminBottomSheet'
 import { getAdminEdgeSecret } from '@/lib/adminEdgeAuth'
@@ -77,6 +82,20 @@ function PhoneIcon() {
       <path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.127.96.361 1.903.7 2.81a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.907.339 1.85.573 2.81.7A2 2 0 0 1 22 16.92z" strokeLinecap="round" strokeLinejoin="round" />
     </svg>
   )
+}
+
+async function resolveThumbtackLandlordId(ticketId: string | null | undefined): Promise<string> {
+  const fallback = getActiveLandlordId()
+  const id = ticketId?.trim() ?? ''
+  if (!id || !supabase) return fallback
+  const { data } = await supabase
+    .from('maintenance_requests')
+    .select('landlord_id')
+    .eq('id', id)
+    .maybeSingle()
+  const fromTicket = typeof data?.landlord_id === 'string' ? data.landlord_id.trim() : ''
+  if (!fromTicket) return fallback
+  return isRetiredLandlordAccountId(fromTicket) ? LIMITED_ALPHA_1_LANDLORD_ID : fromTicket
 }
 
 function GlobeIcon() {
@@ -198,8 +217,8 @@ function VendorResultRow({
   onMessage: () => void
 }) {
   const distanceLabel =
-    vendor.distanceMiles != null
-      ? `${vendor.distanceMiles.toFixed(1)} mi · ${vendor.address ?? ''}`
+    vendor.distanceMiles != null && Number.isFinite(Number(vendor.distanceMiles))
+      ? `${Number(vendor.distanceMiles).toFixed(1)} mi · ${vendor.address ?? ''}`
       : vendor.address
   const contactStatus = thumbtackContactStatusLabel(vendor)
   const contactedAtLabel = formatThumbtackContactedAt(vendor.contactedAt)
@@ -227,7 +246,9 @@ function VendorResultRow({
           <div className="mt-0.5 flex flex-wrap items-center gap-1">
             <StarRating rating={vendor.rating} />
             <span className="text-[11px] font-semibold text-[#0a0a0a]">
-              {vendor.rating != null ? vendor.rating.toFixed(1) : '—'}
+              {vendor.rating != null && Number.isFinite(Number(vendor.rating))
+                ? Number(vendor.rating).toFixed(1)
+                : '—'}
             </span>
             <span className="text-[11px] text-[#717182]">
               ({vendor.reviewCount != null ? vendor.reviewCount : '—'} reviews)
@@ -260,7 +281,7 @@ function VendorResultRow({
             </div>
           ) : null}
 
-          {vendor.tags.length > 0 ? (
+          {vendor.tags?.length > 0 ? (
             <div className="mt-2 flex flex-wrap gap-1">
               {vendor.tags.map((tag) => (
                 <span
@@ -370,6 +391,8 @@ export function FindExternalVendorRail({
   const [threadsByBusiness, setThreadsByBusiness] = useState<
     Record<string, ThumbtackVendorThreadDto>
   >({})
+  const [thumbtackConnected, setThumbtackConnected] = useState<boolean | null>(null)
+  const [thumbtackConnecting, setThumbtackConnecting] = useState(false)
   const [listReentered, setListReentered] = useState(false)
   const [measuredMiles, setMeasuredMiles] = useState<Record<string, number>>({})
   const originAddress = geocodablePropertyOrigin(
@@ -453,6 +476,97 @@ export function FindExternalVendorRail({
     }
   }, [open, ticketId])
 
+  useEffect(() => {
+    if (!open) {
+      setThumbtackConnected(null)
+      return
+    }
+    const url = resolveThumbtackOauthUrl()
+    const secret = getAdminEdgeSecret()
+    let cancelled = false
+    void resolveThumbtackLandlordId(ticketId).then((landlordId) => {
+      if (cancelled || !url || !secret || !landlordId) return
+      return getThumbtackOauthStatus({ url, secret, landlordId })
+        .then((result) => {
+          if (!cancelled) setThumbtackConnected(result.connected)
+        })
+        .catch(() => {
+          if (!cancelled) setThumbtackConnected(false)
+        })
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [open, ticketId])
+
+  async function connectThumbtack() {
+    const url = resolveThumbtackOauthUrl()
+    const secret = getAdminEdgeSecret()
+    const landlordId = await resolveThumbtackLandlordId(ticketId)
+    if (!url || !secret || !landlordId) {
+      setMessageError('Thumbtack connect is not configured for this dashboard.')
+      return
+    }
+    setThumbtackConnecting(true)
+    try {
+      const { authorizeUrl } = await startThumbtackOauth({
+        url,
+        secret,
+        landlordId,
+        returnOrigin: window.location.origin,
+        returnPath: `${window.location.pathname}${window.location.search}`,
+      })
+      const popup = window.open(authorizeUrl, 'ulo-thumbtack-oauth', 'width=480,height=720')
+      if (!popup) {
+        setMessageError('Allow pop-ups for Ulo to connect Thumbtack without leaving this page.')
+        setThumbtackConnecting(false)
+        return
+      }
+      const started = Date.now()
+      let settled = false
+      const finish = (connected: boolean, error?: string) => {
+        if (settled) return
+        settled = true
+        window.clearInterval(timer)
+        window.removeEventListener('message', onMessage)
+        setThumbtackConnecting(false)
+        if (connected) {
+          setThumbtackConnected(true)
+          setMessageError(null)
+          return
+        }
+        if (error) setMessageError(error)
+      }
+      const onMessage = (event: MessageEvent) => {
+        const data = event.data as { type?: string; ok?: boolean; error?: string } | null
+        if (!data || data.type !== THUMBTACK_OAUTH_PAGE_MESSAGE) return
+        finish(data.ok === true, data.error)
+      }
+      window.addEventListener('message', onMessage)
+      const timer = window.setInterval(() => {
+        if (popup.closed || Date.now() - started > 5 * 60 * 1000) {
+          void getThumbtackOauthStatus({ url, secret, landlordId })
+            .then((result) => {
+              finish(
+                result.connected,
+                result.connected
+                  ? undefined
+                  : 'Thumbtack sign-in did not finish. Stay here and try Connect Thumbtack again.',
+              )
+            })
+            .catch(() => {
+              finish(false, 'Thumbtack sign-in did not finish. Stay here and try Connect Thumbtack again.')
+            })
+        }
+      }, 1500)
+    } catch (err) {
+      setMessageError(
+        getErrorMessage(err, 'Could not start Thumbtack sign-in.'),
+      )
+      setThumbtackConnecting(false)
+    }
+  }
+
   const hasThread = composerThread.length > 0
   const canSendVendorMessage =
     Boolean(messageDraft.trim()) && !messageSending && !saving
@@ -532,7 +646,8 @@ export function FindExternalVendorRail({
     setMessageSending(true)
     setMessageError(null)
     try {
-      const result = await postMessageThumbtackVendor({
+      const connectedLandlordId = await resolveThumbtackLandlordId(ticketId)
+    const result = await postMessageThumbtackVendor({
         url,
         secret,
         ticketId,
@@ -542,6 +657,7 @@ export function FindExternalVendorRail({
         categoryId: messageVendor.categoryId,
         issueCategory: outreachContext.jobCategory,
         searchLocation: outreachContext.propertyAddress,
+        landlordId: connectedLandlordId,
         text: draft,
       })
       setThreadsByBusiness((prev) => ({ ...prev, [businessId]: result.thread }))
@@ -555,12 +671,16 @@ export function FindExternalVendorRail({
       ])
       setMessageDraft('')
     } catch (err) {
-      setMessageError(
-        getErrorMessage(
-          err,
-          'Could not send this message. The vendor is still available.',
-        ),
+      const message = getErrorMessage(
+        err,
+        'Could not send this message. The vendor is still available.',
       )
+      const cannotSendInUlo =
+        /did not allow sending a message|message api login|one-time thumbtack sign-in/i.test(
+          message,
+        )
+      if (cannotSendInUlo) setThumbtackConnected(false)
+      setMessageError(message)
     } finally {
       setMessageSending(false)
     }
@@ -591,6 +711,16 @@ export function FindExternalVendorRail({
         <p className="mt-1.5 text-[11px] leading-[15px] text-[#717182]">
           The vendor receives this in their Thumbtack inbox. You stay in Ulo — replies show up here.
         </p>
+        {thumbtackConnected === false ? (
+          <button
+            type="button"
+            className="mt-2 text-[12px] font-semibold text-[#186179] underline-offset-2 hover:underline"
+            onClick={() => void connectThumbtack()}
+            disabled={thumbtackConnecting || saving}
+          >
+            {thumbtackConnecting ? 'Opening Thumbtack…' : 'Connect Thumbtack'}
+          </button>
+        ) : null}
       </div>
     )
   }
@@ -742,6 +872,19 @@ export function FindExternalVendorRail({
                 ? 'Searching…'
                 : `${resultCount} business${resultCount === 1 ? '' : 'es'} found · not on your roster`}
             </p>
+            {thumbtackConnected === false ? (
+              <p className="mt-2 text-[11px] leading-[15px] text-[#717182]">
+                Message these pros in Ulo after a one-time Thumbtack sign-in.{' '}
+                <button
+                  type="button"
+                  className="font-semibold text-[#186179] underline-offset-2 hover:underline"
+                  onClick={() => void connectThumbtack()}
+                  disabled={thumbtackConnecting || saving}
+                >
+                  {thumbtackConnecting ? 'Opening Thumbtack…' : 'Connect Thumbtack'}
+                </button>
+              </p>
+            ) : null}
             {notice && !loading ? (
               <p className="mt-1 text-[11px] leading-[15px] text-[#717182]" role="status">
                 {notice}

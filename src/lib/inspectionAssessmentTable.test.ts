@@ -27,6 +27,8 @@ describe('inspectionAssessmentTable', () => {
   it('labels category and condition like the review table', () => {
     expect(assessmentCategoryLabel('appliance')).toBe('Appliance')
     expect(assessmentCategoryLabel('water_heater')).toBe('Water heater')
+    expect(assessmentCategoryLabel('electrical_panel')).toBe('Electrical panel')
+    expect(assessmentCategoryLabel('plumbing')).toBe('Plumbing')
     expect(assessmentConditionLabel('good')).toBe('Good')
     expect(assessmentConditionLabel('fair')).toBe('Fair')
   })

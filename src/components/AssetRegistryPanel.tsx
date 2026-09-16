@@ -229,6 +229,8 @@ function SystemCard({
     } else if (item.registryAssetType === 'roof') {
       patch.roofMaterial = roofMaterial.trim()
       patch.lastInspectionDate = lastInspectionDate || null
+    } else if (item.registryAssetType === 'plumbing') {
+      patch.lastInspectionDate = lastInspectionDate || null
     } else if (item.registryAssetType === 'electrical_panel') {
       patch.capacityAmps = amps != null && Number.isFinite(amps) ? amps : null
       patch.lastInspectionDate = lastInspectionDate || null
@@ -406,6 +408,18 @@ function SystemCard({
                 />
               </label>
             </>
+          ) : null}
+
+          {item.registryAssetType === 'plumbing' ? (
+            <label className="block text-[11px] font-semibold text-[#64748b] sm:col-span-2">
+              Last inspection date
+              <input
+                type="date"
+                value={lastInspectionDate}
+                onChange={(e) => setLastInspectionDate(e.target.value)}
+                className="mt-1 w-full rounded-[8px] border border-[#e2e8f0] bg-[#f8fafc] px-3 py-2 text-[13px] text-[#0d0f11] outline-none"
+              />
+            </label>
           ) : null}
 
           {item.registryAssetType === 'electrical_panel' ? (

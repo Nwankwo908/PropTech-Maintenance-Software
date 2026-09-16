@@ -808,10 +808,17 @@ export function buildConfirmationSummary(state: SmsIntakeState): string {
   const pending = Array.isArray(state.pending_issues) ? state.pending_issues : []
   const facts = state.diagnostic_facts ?? {}
 
+  const quoteRequest = (text: string): string => {
+    const cleaned = text
+      .replace(/^["“”']+|["“”']+$/g, "")
+      .replace(/\.$/, "")
+      .trim()
+    return `“${cleaned}.”`
+  }
+
   if (pending.length >= 2) {
-    bullets.push(`${pending.length} separate work orders:`)
     for (let i = 0; i < pending.length; i++) {
-      bullets.push(`• ${pending[i].summary}`)
+      bullets.push(`${i + 1}. ${quoteRequest(pending[i].summary)}`)
     }
   }
 
@@ -833,6 +840,9 @@ export function buildConfirmationSummary(state: SmsIntakeState): string {
   if (facts.pest_frequency?.trim()) {
     bullets.push(`• ${facts.pest_frequency.trim()}`)
   }
+  if (facts.door_part?.trim()) {
+    bullets.push(`• ${facts.door_part.trim()}`)
+  }
 
   if (state.preferred_visit_windows?.trim()) {
     bullets.push(`• Availability: ${state.preferred_visit_windows.trim()}`)
@@ -851,18 +861,19 @@ export function buildConfirmationSummary(state: SmsIntakeState): string {
     bullets.push(photoCount === 1 ? "• Photo attached" : `• ${photoCount} photos attached`)
   }
 
-  const headline = pending.length >= 2
-    ? `I'll open ${pending.length} work orders.`
-    : issueSummaryBullet(state)
+  const header = pending.length >= 2
+    ? "Got it. Here are the requests:"
+    : "Got it. Here's the request:"
+  const headline = pending.length >= 2 ? null : quoteRequest(issueSummaryBullet(state))
 
   return [
-    "Just to confirm:",
+    header,
     "",
     headline,
     ...bullets,
     "",
-    "Reply YES to submit, or tell me what needs to be changed.",
-  ].join("\n")
+    "Reply YES to submit, or reply with any changes.",
+  ].filter((line) => line != null).join("\n")
 }
 
 export function intakeQuestionForStep(

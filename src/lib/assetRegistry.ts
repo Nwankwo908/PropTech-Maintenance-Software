@@ -4,6 +4,7 @@ import { getErrorMessage } from '@/lib/errorMessage'
  * AI inspection confirm and manual Register/Edit both write the same Asset shape.
  */
 import { getActiveLandlordId } from '@/lib/activeLandlord'
+import { naturalPmTaskTitle } from '@shared/pm/taskCard'
 import {
   ageYearsFromBuildYear,
   loadPropertyBuildingProfile,
@@ -17,6 +18,7 @@ export type RegistryAssetType =
   | 'appliance'
   | 'roof'
   | 'electrical_panel'
+  | 'plumbing'
 
 export type BoilerFuelType = 'gas' | 'oil' | 'electric' | 'propane' | 'unknown'
 
@@ -163,6 +165,16 @@ const SYSTEM_SLOTS: SlotDef[] = [
     emptyHint:
       'Define amp capacity to prevent overload diagnostics during automated tenant work order reviews.',
   },
+  {
+    slotKey: 'plumbing',
+    registryAssetType: 'plumbing',
+    applianceSubtype: null,
+    kind: 'system',
+    emoji: '💧',
+    title: 'Plumbing System',
+    emptyHint:
+      'Add plumbing condition and last inspection so supply and drain findings become preventive tasks.',
+  },
 ]
 
 const APPLIANCE_SLOTS: SlotDef[] = (
@@ -226,6 +238,8 @@ export function usefulLifeForRegistryType(type: RegistryAssetType): number {
       return 12
     case 'electrical_panel':
       return 30
+    case 'plumbing':
+      return 40
     default:
       return 12
   }
@@ -241,6 +255,8 @@ function serviceIntervalMonths(type: RegistryAssetType): number {
       return 24
     case 'electrical_panel':
       return 36
+    case 'plumbing':
+      return 24
     default:
       return 24
   }
@@ -405,6 +421,9 @@ export function resolveRegistrySlot(input: {
       applianceSubtype: null,
     }
   }
+  if (reg === 'plumbing') {
+    return { slotKey: 'plumbing', registryAssetType: 'plumbing', applianceSubtype: null }
+  }
   if (reg === 'appliance') {
     const sub = normalizeApplianceSubtype(input.applianceSubtype || input.applianceType)
     return {
@@ -423,6 +442,9 @@ export function resolveRegistrySlot(input: {
     }
   }
   if (cat.includes('roof')) return { slotKey: 'roof', registryAssetType: 'roof', applianceSubtype: null }
+  if (cat.includes('plumb') && !cat.includes('heater')) {
+    return { slotKey: 'plumbing', registryAssetType: 'plumbing', applianceSubtype: null }
+  }
   if (cat.includes('boiler') || input.category === 'boiler') {
     return { slotKey: 'boiler', registryAssetType: 'boiler', applianceSubtype: null }
   }
@@ -810,8 +832,11 @@ export type ManualAssetPatch = {
 function failureFromAge(
   ageYears: number | null,
   lifeYears: number,
-): { risk: number; window: string; replace: boolean; urgency: string } {
-  const ratio = ageYears != null && lifeYears > 0 ? ageYears / lifeYears : 0.4
+): { risk: number | null; window: string; replace: boolean; urgency: string } {
+  if (ageYears == null || ageYears <= 0) {
+    return { risk: null, window: 'Not enough information', replace: false, urgency: 'monitor' }
+  }
+  const ratio = lifeYears > 0 ? ageYears / lifeYears : 0.4
   if (ratio >= 1) return { risk: 80, window: '3–6 months', replace: true, urgency: 'soon' }
   if (ratio >= 0.85) return { risk: 55, window: '6–18 months', replace: true, urgency: 'plan' }
   if (ratio >= 0.7) return { risk: 35, window: '1–3 years', replace: false, urgency: 'plan' }
@@ -957,7 +982,7 @@ export async function saveRegistryAsset(
     appliance_label: label,
     brand: brand || null,
     model: modelNumber || detail || null,
-    estimated_age_years: ageYears != null && ageYears >= 0 ? ageYears : 0,
+    estimated_age_years: ageYears != null && ageYears > 0 ? ageYears : null,
     useful_life_years: life,
     failure_risk_pct: derived.risk,
     failure_prediction_window: derived.window,
@@ -968,11 +993,7 @@ export async function saveRegistryAsset(
     last_detected_at: item.lastAssessedDate || now,
     due_at: dueAt,
     task_kind:
-      item.registryAssetType === 'roof' || item.registryAssetType === 'hvac'
-        ? 'inspection'
-        : item.registryAssetType === 'appliance'
-          ? 'appliance'
-          : 'service',
+      item.registryAssetType === 'appliance' ? 'appliance' : 'inspection',
     metadata,
     updated_at: now,
   }
@@ -1050,12 +1071,12 @@ export async function saveRegistryAsset(
     .neq('status', 'cancelled')
     .limit(1)
 
-  const taskTitle =
-    item.registryAssetType === 'hvac'
-      ? `Service ${label || 'HVAC'}`
-      : item.registryAssetType === 'roof' || item.registryAssetType === 'electrical_panel'
-        ? `Inspect ${label || item.title}`
-        : `Maintain ${label || item.title}`
+  const taskTitle = naturalPmTaskTitle({
+    title: label || item.title,
+    kind: payload.task_kind,
+    applianceType: applianceTypeLabel,
+    registryAssetType: item.registryAssetType,
+  })
 
   if (!existingTasks?.length) {
     await supabase.from('preventive_maintenance_tasks').insert({

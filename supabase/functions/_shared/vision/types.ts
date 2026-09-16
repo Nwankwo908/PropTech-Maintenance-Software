@@ -4,6 +4,8 @@ export type VisionCategory =
   | "water_heater"
   | "boiler"
   | "roof"
+  | "electrical_panel"
+  | "plumbing"
   | "other"
   | "unknown"
 
@@ -90,7 +92,7 @@ export const APPLIANCE_VISION_JSON_SCHEMA = {
   properties: {
     category: {
       type: "string",
-      enum: ["appliance", "hvac", "water_heater", "boiler", "roof", "other", "unknown"],
+      enum: ["appliance", "hvac", "water_heater", "boiler", "roof", "electrical_panel", "plumbing", "other", "unknown"],
     },
     identifiedItem: {
       type: "object",

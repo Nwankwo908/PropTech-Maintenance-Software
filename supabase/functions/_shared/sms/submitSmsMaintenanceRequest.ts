@@ -7,12 +7,8 @@ import {
 import { logGraphEvent } from "../graph/logGraphEvent.ts"
 import { updateWorkflowRun } from "../engine/workflowRuns.ts"
 import { startMaintenanceRequestWorkflow } from "../engine/startMaintenanceRequestWorkflow.ts"
-import { assignVendorAndNotify } from "../../submit-maintenance-request/vendor_notify.ts"
 import { notifyResidentSubmitted } from "../../submit-maintenance-request/resident_notify.ts"
-import {
-  escalateMaintenanceNeedsVendor,
-  SUBMITTED_NO_VENDOR_ESCALATION,
-} from "../maintenance_admin_escalation.ts"
+import { dispatchConfirmedMaintenanceTicket } from "../confirmedMaintenanceDispatch.ts"
 import type { SmsIntakeState } from "./residentIntakeTypes.ts"
 import {
   buildIntakeDescription,
@@ -284,7 +280,7 @@ export async function submitSmsMaintenanceRequest(
   let assignedVendorId: string | null = null
   let needsVendorEscalation = false
   try {
-    const assignResult = await assignVendorAndNotify(supabase, {
+    const outcome = await dispatchConfirmedMaintenanceTicket(supabase, {
       ticketId,
       priority,
       unit,
@@ -295,11 +291,19 @@ export async function submitSmsMaintenanceRequest(
       preferVendorId: params.preferVendorId,
       residentAvailabilityText: residentAvailability,
     })
-    vendorAssigned = assignResult.assigned
-    assignedVendorId = assignResult.vendorId
-    needsVendorEscalation = assignResult.skipReason === "no_vendor"
+    vendorAssigned = outcome.vendorAssigned
+    assignedVendorId = outcome.vendorId
+    needsVendorEscalation = outcome.kind === "nearby_options_sent" ||
+      outcome.kind === "dispatch_error" ||
+      outcome.kind === "landlord_manual"
+    console.info("[sms-intake] confirmed dispatch", {
+      ticketId,
+      kind: outcome.kind,
+      nearbyOptionCount: outcome.nearbyOptionCount,
+      error: outcome.error ?? null,
+    })
   } catch (e) {
-    console.error("[sms-intake] vendor notify failed", e)
+    console.error("[sms-intake] confirmed dispatch failed", e)
     needsVendorEscalation = true
   }
 
@@ -323,18 +327,6 @@ export async function submitSmsMaintenanceRequest(
     maintenanceWorkflowRunId = started.workflowRunId
   } catch (e) {
     console.error("[sms-intake] maintenance_request workflow", e)
-  }
-
-  if (needsVendorEscalation && !maintenanceWorkflowRunId) {
-    try {
-      await escalateMaintenanceNeedsVendor(
-        supabase,
-        { id: ticketId, landlord_id: params.landlordId },
-        SUBMITTED_NO_VENDOR_ESCALATION,
-      )
-    } catch (e) {
-      console.error("[sms-intake] no-vendor escalation failed", e)
-    }
   }
 
   try {

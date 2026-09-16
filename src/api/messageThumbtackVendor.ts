@@ -77,6 +77,7 @@ export async function postMessageThumbtackVendor(input: {
   categoryId?: string | null
   issueCategory?: string | null
   searchLocation?: string | null
+  landlordId?: string | null
   text: string
 }): Promise<{ ok: true; ticketId: string; thread: ThumbtackVendorThreadDto }> {
   const res = await fetchAdminEdgeFunction(input.url.trim(), {
@@ -90,6 +91,7 @@ export async function postMessageThumbtackVendor(input: {
       categoryId: input.categoryId ?? undefined,
       issueCategory: input.issueCategory ?? undefined,
       searchLocation: input.searchLocation ?? undefined,
+      landlordId: input.landlordId ?? undefined,
       text: input.text,
     }),
   })

@@ -11,6 +11,7 @@ import {
   persistInspectionDocumentAnalysis,
 } from "./persistInspectionDocument.ts"
 import type { VisionHintCategory } from "./types.ts"
+import type { InspectionPageImage } from "./inspectionPageImages.ts"
 
 /** Matches inspection-uploads bucket file_size_limit (25MB). */
 export const MAX_INSPECTION_UPLOAD_BYTES = 25 * 1024 * 1024
@@ -36,6 +37,7 @@ export type InspectionUploadResult = {
   photo: Record<string, unknown>
   unitAssetId: string | null
   taskIds: string[]
+  needsManualReview?: boolean
 }
 
 export async function processInspectionUpload(input: {
@@ -53,12 +55,17 @@ export async function processInspectionUpload(input: {
   autoConfirm: boolean
   /** When set, file is already in storage — skip upload and attach this path. */
   existingStoragePath?: string | null
+  /** Browser-rasterized PDF pages. Required for document PDFs (Deno has no canvas). */
+  pageImages?: InspectionPageImage[]
+  pageTexts?: string[]
 }): Promise<InspectionUploadResult> {
   const extractStarted = Date.now()
   const documentExtract = input.mode === "document"
     ? await extractInspectionReport({
       imageBase64: input.imageBase64,
       contentType: input.contentType,
+      pageImages: input.pageImages,
+      pageTexts: input.pageTexts,
     })
     : null
   if (documentExtract) {

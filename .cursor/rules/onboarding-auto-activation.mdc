@@ -57,6 +57,24 @@ Manual **Retry onboarding** / **Resend Welcome Text** restarts the retry sequenc
 
 Cron: `check-tenant-activation-retries`. Attempts audited in `tenant_activation_attempts`.
 
+## Vendor verification invite silence nudges
+
+Retries apply **after** the manager sends the first verification invite (or resends).
+
+| Attempt | When |
+|---|---|
+| 1 | When manager clicks **Send verification invite** |
+| Silence follow-up | Every **48 hours** after the last invite/nudge while the form is **not submitted** |
+| After 14 unanswered outbound texts | Stop auto-nudge; stay invited so the vendor can still open the link; landlord can send another invite |
+
+**Silence nudge** when the invite was delivered and the vendor has not submitted the verification form — measured from the last outbound invite/reminder, every 48 hours. Same hours and cap as tenant silence follow-ups.
+
+**Never auto-nudge** after the form is submitted (acknowledgement SMS only), after **Override onboarding**, or when the vendor is already verified / banned.
+
+Do **not** landlord-escalate solely because the vendor has not replied. Completing remaining verification details after submit stays optional.
+
+Cron: `check-vendor-onboarding` / `run-workflow-escalations`. Policy: `vendorOnboardingActionDue`.
+
 ## Requirements
 
 - Pass each vendor’s `vendorId` when sending verification so form submit updates that roster profile.

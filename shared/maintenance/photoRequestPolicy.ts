@@ -64,12 +64,18 @@ export function resolvePhotoRequest(input: PhotoRequestInput): PhotoRequestResul
     return { requested: true, reason: 'Water damage or an active leak — a photo changes urgency.' }
   }
 
-  if (
-    /\b(crack(?:s|ed)?|hole(?:s)?\s+in\s+(?:the\s+)?(?:wall|ceiling|floor)|sagging|sinking|structural)\b/.test(
+  if (/\b(crack(?:s|ed)?|hole(?:s)?\s+in\s+(?:the\s+)?(?:wall|ceiling|floor)|sagging|sinking|structural)\b/.test(
       hay,
     )
   ) {
     return { requested: true, reason: 'Structural damage is easier to assess with a photo.' }
+  }
+
+  if (
+    /\bdoors?\b/.test(hay) &&
+    /\b(broke|broken|damaged|hinge|frame|lock|handle|jammed)\b/.test(hay)
+  ) {
+    return { requested: true, reason: 'Door damage is easier to assess with a photo.' }
   }
 
   const appliance =

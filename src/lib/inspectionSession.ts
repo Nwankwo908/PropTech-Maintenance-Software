@@ -24,6 +24,21 @@ export function isInspectionReportPhoto(photo: {
   return type.includes('pdf') || name.endsWith('.pdf')
 }
 
+/** Saved unit_assets rows created from an inspection PDF / report, not a photo. */
+export function isInspectionReportAsset(asset: {
+  metadata?: Record<string, unknown> | null
+}): boolean {
+  const meta = asset.metadata ?? {}
+  if (meta.source === 'inspection_report' || meta.mode === 'document') return true
+  const raw = meta.rawAiResult
+  if (raw && typeof raw === 'object') {
+    const packed = raw as { _source?: unknown; mode?: unknown }
+    if (packed._source === 'inspection_report' || packed.mode === 'document') return true
+  }
+  const url = typeof meta.sourcePhotoUrl === 'string' ? meta.sourcePhotoUrl.toLowerCase() : ''
+  return url.includes('.pdf')
+}
+
 /** Newest-first session ids; write target is a session that already has photos, else newest. */
 export function pickBuildingInspectionWriteSessionId(
   sessionIdsNewestFirst: string[],

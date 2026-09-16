@@ -8,6 +8,26 @@
     "VITE_GA4_MEASUREMENT_ID": "G-V3TZ9DBCGX",
     "VITE_CLARITY_PROJECT_ID": "yctaghhr6q"
   },
+  "redirects": [
+    {
+      "source": "/",
+      "has": [
+        { "type": "query", "key": "code" },
+        { "type": "query", "key": "state" }
+      ],
+      "destination": "https://mzpqwuizhiaczxcnmxbt.supabase.co/functions/v1/thumbtack-oauth",
+      "permanent": false
+    },
+    {
+      "source": "/admin",
+      "has": [
+        { "type": "query", "key": "code" },
+        { "type": "query", "key": "state" }
+      ],
+      "destination": "https://mzpqwuizhiaczxcnmxbt.supabase.co/functions/v1/thumbtack-oauth",
+      "permanent": false
+    }
+  ],
   "rewrites": [
     { "source": "/terms", "destination": "/terms/index.html" },
     { "source": "/privacy", "destination": "/privacy/index.html" },

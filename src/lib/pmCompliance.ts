@@ -4,10 +4,19 @@
  * Pipeline: Property Asset → Preventive Task → Workflow → Assigned → Completed → Compliance
  */
 import { getActiveLandlordId } from '@/lib/activeLandlord'
+import { recordActivityLog } from '@/lib/recordActivityLog'
+import {
+  buildPmTaskCardCopy,
+  failureSignalsFromCondition,
+  formatPmDueHeadline,
+  knownAssetAgeYears,
+  persistableAssetAgeYears,
+  type PmDueTone as SharedPmDueTone,
+} from '@shared/pm/taskCard'
 
 export type PmTaskKind = 'appliance' | 'inspection' | 'service'
 export type PmTaskStatus = 'scheduled' | 'assigned' | 'completed' | 'cancelled'
-export type PmDueTone = 'danger' | 'warning' | 'neutral'
+export type PmDueTone = SharedPmDueTone
 
 /** Appliance-category PM tasks use the appliance-repair icon in Analytics. */
 export function pmTaskKindUsesApplianceIcon(kind: PmTaskKind): boolean {
@@ -44,6 +53,9 @@ export type PmComplianceTask = {
   failurePredictionWindow: string | null
   replacementRecommended: boolean
   estimatedReplacementCost: number | null
+  conditionRating: string | null
+  applianceType: string | null
+  registryAssetType: string | null
 }
 
 export type PmSafetyHazardAlert = {
@@ -94,6 +106,10 @@ function formatLocation(row: DashboardRow): string {
 }
 
 function mapDashboardRow(row: DashboardRow): PmComplianceTask {
+  const ageYears = knownAssetAgeYears(
+    row.estimated_age_years != null ? Number(row.estimated_age_years) : null,
+  )
+  const storedRisk = row.failure_risk_pct != null ? Number(row.failure_risk_pct) : null
   return {
     id: row.task_id,
     title: row.title,
@@ -104,18 +120,23 @@ function mapDashboardRow(row: DashboardRow): PmComplianceTask {
     completedAt: row.completed_at,
     workflowRunId: row.workflow_run_id,
     unitAssetId: row.unit_asset_id,
-    estimatedAgeYears:
-      row.estimated_age_years != null ? Number(row.estimated_age_years) : null,
+    estimatedAgeYears: ageYears,
     ageBasis: null,
     usefulLifeYears:
       row.useful_life_years != null ? Number(row.useful_life_years) : null,
-    failureRiskPct: row.failure_risk_pct != null ? Number(row.failure_risk_pct) : null,
-    failurePredictionWindow: row.failure_prediction_window,
+    failureRiskPct: ageYears == null ? null : storedRisk,
+    failurePredictionWindow:
+      ageYears == null && row.failure_prediction_window === '2–5 years'
+        ? null
+        : row.failure_prediction_window,
     replacementRecommended: row.replacement_recommended === true,
     estimatedReplacementCost:
       row.estimated_replacement_cost != null
         ? Number(row.estimated_replacement_cost)
         : null,
+    conditionRating: null,
+    applianceType: null,
+    registryAssetType: null,
   }
 }
 
@@ -134,46 +155,12 @@ export function formatPmDueLabel(
   dueAt: string | null,
   status?: PmTaskStatus,
 ): { label: string; tone: PmDueTone } {
-  if (status === 'completed') return { label: 'Completed', tone: 'neutral' }
-  if (!dueAt) return { label: 'Schedule pending', tone: 'warning' }
-  const due = new Date(dueAt)
-  if (Number.isNaN(due.getTime())) return { label: 'Schedule pending', tone: 'warning' }
-  const days = Math.round((due.getTime() - Date.now()) / (1000 * 60 * 60 * 24))
-  if (days < 0) {
-    const overdue = Math.abs(days)
-    return {
-      label: `${overdue} day${overdue === 1 ? '' : 's'} overdue`,
-      tone: 'danger',
-    }
-  }
-  if (days === 0) return { label: 'Due today', tone: 'warning' }
-  return {
-    label: `Due in ${days} day${days === 1 ? '' : 's'}`,
-    tone: days <= 7 ? 'warning' : 'neutral',
-  }
+  const due = formatPmDueHeadline(dueAt, status)
+  return { label: due.headline, tone: due.tone }
 }
 
 export function formatPmTaskSubtitle(task: PmComplianceTask): string {
-  if (task.kind === 'inspection') {
-    return task.failurePredictionWindow ?? 'Scheduled inspection'
-  }
-  if (
-    task.estimatedAgeYears != null &&
-    task.usefulLifeYears != null &&
-    task.failureRiskPct != null
-  ) {
-    const estimated =
-      task.ageBasis === 'estimated_from_build_year' || task.ageBasis === 'ai_estimated'
-        ? ' (estimated)'
-        : ''
-    const age = `${task.estimatedAgeYears} yr${task.estimatedAgeYears === 1 ? '' : 's'} old${estimated}`
-    const life = `${task.usefulLifeYears} yr useful life`
-    const risk = `${task.failureRiskPct}% fail risk${
-      task.failurePredictionWindow ? ` (${task.failurePredictionWindow})` : ''
-    }`
-    return `${age} · ${life} · ${risk}`
-  }
-  return task.failurePredictionWindow ?? 'Preventive maintenance'
+  return buildPmTaskCardCopy(task).summary
 }
 
 export function pmAgeIsEstimated(task: PmComplianceTask): boolean {
@@ -278,7 +265,15 @@ export async function fetchPmCompliance(): Promise<PmComplianceSummary> {
     ...new Set(tasks.map((t) => t.unitAssetId).filter((id): id is string => Boolean(id))),
   ]
   const safetyHazardAlerts: PmSafetyHazardAlert[] = []
-  const ageBasisByAsset = new Map<string, PmAgeBasis>()
+  const extrasByAsset = new Map<
+    string,
+    {
+      ageBasis: PmAgeBasis | null
+      conditionRating: string | null
+      applianceType: string | null
+      registryAssetType: string | null
+    }
+  >()
   if (assetIds.length > 0) {
     const { data: assets, error: assetError } = await supabase
       .from('unit_assets')
@@ -292,8 +287,14 @@ export async function fetchPmCompliance(): Promise<PmComplianceSummary> {
           asset.metadata && typeof asset.metadata === 'object'
             ? (asset.metadata as Record<string, unknown>)
             : {}
-        const basis = parseAgeBasis(meta.ageBasis)
-        if (basis) ageBasisByAsset.set(String(asset.id), basis)
+        extrasByAsset.set(String(asset.id), {
+          ageBasis: parseAgeBasis(meta.ageBasis),
+          conditionRating:
+            typeof meta.conditionRating === 'string' ? meta.conditionRating : null,
+          applianceType: asset.appliance_type != null ? String(asset.appliance_type) : null,
+          registryAssetType:
+            typeof meta.registryAssetType === 'string' ? meta.registryAssetType : null,
+        })
         const defs = Array.isArray(meta.deficiencies) ? meta.deficiencies : []
         for (const raw of defs) {
           if (!raw || typeof raw !== 'object') continue
@@ -310,10 +311,116 @@ export async function fetchPmCompliance(): Promise<PmComplianceSummary> {
     }
   }
 
-  tasks = tasks.map((task) => ({
-    ...task,
-    ageBasis: task.unitAssetId ? ageBasisByAsset.get(task.unitAssetId) ?? null : null,
-  }))
+  tasks = tasks.map((task) => {
+    const extras = task.unitAssetId ? extrasByAsset.get(task.unitAssetId) : null
+    return {
+      ...task,
+      ageBasis: extras?.ageBasis ?? null,
+      conditionRating: extras?.conditionRating ?? task.conditionRating,
+      applianceType: extras?.applianceType ?? task.applianceType,
+      registryAssetType: extras?.registryAssetType ?? task.registryAssetType,
+    }
+  })
 
   return buildSummary(tasks, safetyHazardAlerts)
+}
+
+export async function completePmTask(taskId: string): Promise<void> {
+  const { supabase } = await import('@/lib/supabase')
+  if (!supabase) throw new Error('Not connected.')
+  const landlordId = getActiveLandlordId()
+  const now = new Date().toISOString()
+  const { data, error } = await supabase
+    .from('preventive_maintenance_tasks')
+    .update({ status: 'completed', completed_at: now, updated_at: now })
+    .eq('id', taskId)
+    .eq('landlord_id', landlordId)
+    .select('id, title, building, workflow_run_id')
+    .maybeSingle()
+  if (error) throw new Error(error.message)
+  if (!data) throw new Error('That task could not be updated.')
+  await recordActivityLog({
+    landlordId,
+    eventType: 'pm.task_completed',
+    source: 'dashboard',
+    actorType: 'landlord',
+    taskId,
+    workflowRunId: data.workflow_run_id != null ? String(data.workflow_run_id) : null,
+    metadata: {
+      message: `${data.title || 'Preventive maintenance'} marked complete.`,
+      building: data.building,
+    },
+  })
+}
+
+export async function updatePmAssetInstallYear(input: {
+  unitAssetId: string
+  installYear: number
+}): Promise<void> {
+  const year = Math.round(input.installYear)
+  if (year < 1800 || year > 2100) throw new Error('Enter a valid installation year.')
+  const { supabase } = await import('@/lib/supabase')
+  if (!supabase) throw new Error('Not connected.')
+  const landlordId = getActiveLandlordId()
+  const { data: asset, error: loadError } = await supabase
+    .from('unit_assets')
+    .select('id, building, appliance_type, useful_life_years, metadata')
+    .eq('id', input.unitAssetId)
+    .eq('landlord_id', landlordId)
+    .maybeSingle()
+  if (loadError) throw new Error(loadError.message)
+  if (!asset) throw new Error('That equipment record could not be updated.')
+
+  const meta =
+    asset.metadata && typeof asset.metadata === 'object'
+      ? (asset.metadata as Record<string, unknown>)
+      : {}
+  const ageYears = persistableAssetAgeYears(year)
+  const life =
+    asset.useful_life_years != null && Number(asset.useful_life_years) > 0
+      ? Number(asset.useful_life_years)
+      : 25
+  const derived = failureSignalsFromCondition({
+    rating: typeof meta.conditionRating === 'string' ? meta.conditionRating : null,
+    ageYears,
+    lifeYears: life,
+  })
+  const now = new Date().toISOString()
+  const { error } = await supabase
+    .from('unit_assets')
+    .update({
+      estimated_age_years: ageYears,
+      failure_risk_pct: derived.risk,
+      failure_prediction_window: derived.window,
+      replacement_recommended: derived.replace,
+      replacement_urgency: derived.urgency,
+      metadata: {
+        ...meta,
+        ageBasis: 'known',
+        installYear: year,
+        fieldProvenance: {
+          ...(typeof meta.fieldProvenance === 'object' && meta.fieldProvenance
+            ? (meta.fieldProvenance as Record<string, unknown>)
+            : {}),
+          age: 'manual',
+        },
+      },
+      updated_at: now,
+    })
+    .eq('id', input.unitAssetId)
+    .eq('landlord_id', landlordId)
+  if (error) throw new Error(error.message)
+
+  await recordActivityLog({
+    landlordId,
+    eventType: 'pm.asset_age_updated',
+    source: 'dashboard',
+    actorType: 'landlord',
+    metadata: {
+      message: `Installation year added for ${asset.appliance_type || 'equipment'}.`,
+      building: asset.building,
+      unit_asset_id: input.unitAssetId,
+      install_year: year,
+    },
+  })
 }
