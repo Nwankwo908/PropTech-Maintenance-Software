@@ -2,6 +2,7 @@ import { extractOnboardingDocument, type PortfolioDocumentExtractPayload } from 
 import { extractPdfPageTexts, renderPdfFileToJpegDataUrls } from '@/lib/pdfPageImagesBrowser'
 import {
   findRelevantInsurancePages,
+  INSURANCE_SELECTED_PAGES_MAX,
   isInsuranceUploadHint,
 } from '@shared/onboarding/typedDocumentExtract/insuranceClassify'
 import { getErrorMessage } from '@/lib/errorMessage'
@@ -719,7 +720,7 @@ export async function runDocumentProcessing(
         }
         pageImages = await renderPdfFileToJpegDataUrls(file, {
           pageNumbers,
-          maxPages: insuranceHint ? 3 : undefined,
+          maxPages: insuranceHint ? 6 : undefined,
         })
       } catch (error) {
         console.warn(

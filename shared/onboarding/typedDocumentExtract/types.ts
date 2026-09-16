@@ -120,12 +120,16 @@ export type DwellingPolicyDeclarations = {
   named_insured_secondary: string | null
   insured_mailing_address: string | null
   producer_agency_name: string | null
+  producer_agency_address: string | null
+  producer_agency_phone: string | null
   insured_property_address: string | null
+  year_built: number | null
   total_annual_premium: number | null
   coverage_a_dwelling_limit: number | null
   coverage_c_personal_property_limit: number | null
   coverage_d_fair_rental_value_limit: number | null
   coverage_l_liability_limit: number | null
+  medical_payments_limit: number | null
   deductible_all_other_perils: number | null
   hurricane_deductible_percent: number | null
   hurricane_deductible_amount: number | null

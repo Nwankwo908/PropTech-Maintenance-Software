@@ -1,16 +1,20 @@
 import type { InsuranceDocumentType, TypedOrGenericExtractKind } from './types.ts'
 
-export const INSURANCE_PAGE_MARKERS = [
+/** Titles that actually identify the declarations / COI page — not coverage checklists. */
+export const DECLARATIONS_MARKERS = [
   'POLICY DECLARATIONS',
-  'POLICY DECLARATION',
   'DECLARATIONS PAGE',
-  'RENEWAL DECLARATIONS',
-  'DWELLING POLICY',
-  'LOCATION OF RESIDENCE PREMISES',
   'CERTIFICATE OF LIABILITY INSURANCE',
-  'ACORD',
-  'COVERAGE A',
 ] as const
+
+/** Extra declarations titles some carriers use (still not checklist copy). */
+const DECLARATIONS_TITLE_ALIASES = [
+  'POLICY DECLARATION',
+  'RENEWAL DECLARATIONS',
+] as const
+
+export const INSURANCE_SELECTED_PAGES_MAX = 6
+export const INSURANCE_PAGE_FALLBACK_MAX = 8
 
 const COI_MARKERS = [
   'CERTIFICATE OF LIABILITY INSURANCE',
@@ -51,6 +55,10 @@ function containsAny(haystack: string, markers: readonly string[]): boolean {
   return markers.some((marker) => haystack.includes(marker))
 }
 
+function hasDeclarationsTitle(upper: string): boolean {
+  return containsAny(upper, DECLARATIONS_MARKERS) || containsAny(upper, DECLARATIONS_TITLE_ALIASES)
+}
+
 function classifyFromFileName(fileName: string): InsuranceDocumentType {
   const lower = fileName.toLowerCase()
   if (/\b(certificate of (liability )?insurance|\bcoi\b|acord)\b/.test(lower)) {
@@ -75,10 +83,7 @@ export function classifyInsuranceDocumentType(
   const hasAcord = upper.includes('ACORD') && upper.includes('CERTIFICATE HOLDER')
   const hasDwelling =
     containsAny(upper, DWELLING_MARKERS) ||
-    ((upper.includes('POLICY DECLARATIONS') ||
-      upper.includes('POLICY DECLARATION') ||
-      upper.includes('RENEWAL DECLARATIONS') ||
-      upper.includes('DECLARATIONS PAGE')) &&
+    (hasDeclarationsTitle(upper) &&
       (upper.includes('NAMED INSURED') || upper.includes('MORTGAGEE')) &&
       !hasCoiTitle)
   const hasHomeowners = containsAny(upper, HOMEOWNERS_MARKERS)
@@ -97,22 +102,58 @@ export function classifyInsuranceDocumentType(
   return 'unknown'
 }
 
+function declarationsPageScore(upper: string): number {
+  if (!hasDeclarationsTitle(upper)) return 0
+  let score = 1
+  if (upper.includes('NAMED INSURED')) score += 2
+  if (upper.includes('MORTGAGEE')) score += 1
+  if (upper.includes('LOCATION OF RESIDENCE')) score += 1
+  if (upper.includes('CERTIFICATE HOLDER')) score += 2
+  if (upper.includes('COVERAGE A')) score += 1
+  if (/\$\s*[\d,]+/.test(upper)) score += 2
+  return score
+}
+
+function lastTightCluster(pages: number[]): number[] {
+  if (pages.length === 0) return []
+  const last = pages[pages.length - 1]!
+  const cluster = [last]
+  for (let index = pages.length - 2; index >= 0; index -= 1) {
+    const page = pages[index]!
+    if (cluster[0]! - page <= 2) cluster.unshift(page)
+    else break
+  }
+  return cluster
+}
+
+/**
+ * Locate declarations / COI pages, then include one page of buffer on each side.
+ * Do not return early checklist pages that mention Coverage A without a declarations title.
+ */
 export function findRelevantInsurancePages(pageTexts: string[]): number[] {
-  const hits: number[] = []
+  const scored: Array<{ page: number; score: number }> = []
   for (let index = 0; index < pageTexts.length; index += 1) {
-    const upper = (pageTexts[index] ?? '').toUpperCase()
-    if (INSURANCE_PAGE_MARKERS.some((marker) => upper.includes(marker))) {
-      hits.push(index + 1)
-    }
+    const score = declarationsPageScore((pageTexts[index] ?? '').toUpperCase())
+    if (score > 0) scored.push({ page: index + 1, score })
   }
-  if (hits.length === 0) return []
-  const expanded = new Set<number>()
-  for (const page of hits) {
-    expanded.add(page)
-    if (page + 1 <= pageTexts.length) expanded.add(page + 1)
-    if (page + 2 <= pageTexts.length) expanded.add(page + 2)
+  if (scored.length === 0) return []
+
+  const maxScore = Math.max(...scored.map((row) => row.score))
+  const bestHits = scored.filter((row) => row.score === maxScore).map((row) => row.page)
+  const cluster = lastTightCluster(bestHits)
+  const first = cluster[0]!
+  const last = cluster[cluster.length - 1]!
+  const start = Math.max(1, first - 1)
+  const end = Math.min(
+    pageTexts.length,
+    Math.max(last + 1, first + 2),
+  )
+  const selected: number[] = []
+  for (let page = start; page <= end; page += 1) {
+    selected.push(page)
+    if (selected.length >= INSURANCE_SELECTED_PAGES_MAX) break
   }
-  return [...expanded].sort((a, b) => a - b).slice(0, 5)
+  return selected
 }
 
 export function slicePageTexts(pageTexts: string[], pageNumbers: number[]): string {
@@ -124,7 +165,8 @@ export function slicePageTexts(pageTexts: string[], pageNumbers: number[]): stri
 }
 
 export function isInsuranceUploadHint(fileName: string, documentCategory: string): boolean {
-  if (documentCategory.trim().toLowerCase() === 'insurance_certificate') return true
+  const category = documentCategory.trim().toLowerCase()
+  if (category === 'insurance_certificate' || category === 'property_insurance') return true
   return /insurance|coi|acord|dwelling|dp-?3|homeowners|declarations|binder/i.test(fileName)
 }
 
@@ -140,7 +182,11 @@ export function parseInsuranceTypeClassifierResponse(raw: unknown): InsuranceDoc
   ) {
     return 'certificate_of_liability_insurance'
   }
-  if (type === 'dwelling_policy_declarations' || type === 'dwelling') {
+  if (
+    type === 'dwelling_policy_declarations' ||
+    type === 'dwelling' ||
+    type === 'property_insurance_policy'
+  ) {
     return 'dwelling_policy_declarations'
   }
   if (type === 'homeowners_policy_declarations' || type === 'homeowners') {
@@ -156,8 +202,8 @@ export const CLASSIFY_INSURANCE_SYSTEM_PROMPT = `You classify an insurance docum
 {"document_type":"certificate_of_liability_insurance"|"dwelling_policy_declarations"|"homeowners_policy_declarations"|"commercial_property_policy"|"unknown"}
 
 Rules:
-- certificate_of_liability_insurance: ACORD / CERTIFICATE OF LIABILITY INSURANCE with Certificate Holder.
-- dwelling_policy_declarations: dwelling / DP-3 / landlord hazard policy declarations. Named Insured is the owner. Occupancy: Tenant is not a COI.
+- certificate_of_liability_insurance: ACORD / CERTIFICATE OF LIABILITY INSURANCE with Certificate Holder. Named insured is the tenant or vendor. Has producer / certificate holder / additional insured. No mortgagee, no dwelling Coverage A limits.
+- dwelling_policy_declarations: dwelling / DP-3 / landlord hazard policy declarations. Named Insured is the owner. Occupancy: Tenant is not a COI. Has dwelling limits and often a mortgagee. No certificate_holder.
 - homeowners_policy_declarations: HO-3 / homeowners declarations.
 - commercial_property_policy: commercial property policy declarations.
 - unknown: insurance-related but type is unclear.

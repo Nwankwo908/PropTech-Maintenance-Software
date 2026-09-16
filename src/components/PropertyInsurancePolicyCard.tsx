@@ -142,6 +142,7 @@ type PropertyInsurancePolicyCardProps = {
   insurance: SavedPropertyInsuranceCard
   onEdit: () => void
   onDelete: () => void
+  className?: string
 }
 
 /** Saved policy card — Figma node 1454:1180. */

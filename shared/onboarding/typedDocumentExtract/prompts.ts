@@ -113,59 +113,69 @@ ROLES:
 If a role is missing, return null or []. Do not hallucinate. Do not convert one party role into another.`
 
 export const PROPERTY_POLICY_JSON_SCHEMA = {
-  document_type:
-    'dwelling_policy_declarations | homeowners_policy_declarations | commercial_property_policy',
-  insurer_name: 'string or null',
-  policy_number: 'string or null',
-  policy_form: 'string or null',
-  transaction_type: 'string or null',
-  date_issued: 'YYYY-MM-DD or null',
-  policy_effective_date: 'YYYY-MM-DD or null',
-  policy_expiration_date: 'YYYY-MM-DD or null',
-  named_insured_primary: 'string or null',
-  named_insured_secondary: 'string or null',
-  insured_mailing_address: 'string or null',
-  producer_agency_name: 'string or null',
-  insured_property_address: 'string or null',
-  total_annual_premium: 'number or null',
-  coverage_a_dwelling_limit: 'number or null',
-  coverage_c_personal_property_limit: 'number or null',
-  coverage_d_fair_rental_value_limit: 'number or null',
-  coverage_l_liability_limit: 'number or null',
-  deductible_all_other_perils: 'number or null',
-  hurricane_deductible_percent: 'number or null',
-  hurricane_deductible_amount: 'number or null',
-  mortgagee_name: 'string or null',
-  mortgagee_address: 'string or null',
-  loan_number: 'string or null',
-  occupancy_type: 'string or null',
-  property_use: 'string or null',
+  document_type: 'property_insurance_policy',
+  carrier: {
+    insurer_name: 'string',
+    policy_type: 'string',
+    policy_number: 'string',
+    transaction_type: 'New | Renewal | Change',
+    date_issued: 'YYYY-MM-DD or null',
+    effective_date: 'YYYY-MM-DD',
+    expiration_date: 'YYYY-MM-DD',
+  },
+  named_insured: {
+    primary_name: 'string',
+    secondary_name: 'string or null',
+    mailing_address: 'string',
+  },
+  insured_property: {
+    address: 'string',
+    year_built: 'number or null',
+    occupancy_type: 'string or null',
+    property_use: 'string or null',
+  },
+  agent: {
+    agency_name: 'string or null',
+    agency_address: 'string or null',
+    phone: 'string or null',
+  },
+  coverage: {
+    dwelling_limit: 'number or null',
+    personal_property_limit: 'number or null',
+    fair_rental_value_limit: 'number or null',
+    liability_limit: 'number or null',
+    medical_payments_limit: 'number or null',
+    deductible_all_other_perils: 'number or null',
+    hurricane_deductible_percent: 'number or null',
+    hurricane_deductible_amount: 'number or null',
+    total_annual_premium: 'number',
+  },
+  mortgagee: {
+    name: 'string or null',
+    address: 'string or null',
+    loan_number: 'string or null',
+  },
   confidence: '0-100',
   warnings: ['string'],
 }
 
-export const PROPERTY_POLICY_SYSTEM_PROMPT = `You extract a property insurance declarations page (dwelling / homeowners / commercial property). This is NOT a Certificate of Liability Insurance.
+export const PROPERTY_POLICY_SYSTEM_PROMPT = `You extract a property insurance declarations page (dwelling / landlord / homeowners / commercial property). This is NOT a Certificate of Liability Insurance (ACORD).
 
 Return JSON only matching this schema:
 ${JSON.stringify(PROPERTY_POLICY_JSON_SCHEMA, null, 2)}
 
-First identify the insurance document type.
+Rules:
+- named_insured on a dwelling/landlord policy is the property owner, not a tenant. Do not put this name in a tenant or lease field. Occupancy: Tenant is a rating classification, not a person.
+- named_insured.mailing_address and insured_property.address are commonly different. A landlord often does not live at the insured property. Do not copy one address into the other.
+- occupancy_type and property_use (for example Occupancy: Tenant, Use: Rental Property) describe how the property is used. Never extract a person's name from these fields.
+- personal_property_limit of 0 or Excluded is a correct, real value on a landlord policy — the owner does not insure the tenant's belongings. Do not treat zero as a failed extraction and do not substitute null.
+- Mortgagee names commonly carry a suffix like ISAOA ATIMA. Keep it attached to mortgagee.name as printed.
+- There are usually three distinct dates: date_issued (print/issue), effective_date, and expiration_date. Map each explicitly. Do not let "the date" default to whichever appears first.
+- This schema has no certificate_holder, additional_insured, or producer-as-COI fields. If the document is a tenant-furnished ACORD certificate, do not fill this schema.
 
-Do not infer roles from isolated words.
+Producer/agent sold the policy. Insurer/carrier underwrites it. Mortgagee is the lender.
 
-"Named Insured" on a dwelling or homeowners policy usually refers to the property owner.
-
-"Occupancy: Tenant" describes how the property is occupied and is not a tenant's name. Put it in occupancy_type only. Do not invent a tenant name when none is explicitly present.
-
-Do not invent a certificate holder. This schema has no certificate_holder field.
-
-Producer or agency is the agency that sold the policy. Insurer/carrier underwrites the policy. Mortgagee is the lender. Keep mortgagee clause suffixes such as ISAOA ATIMA.
-
-Keep issue date, effective date, and expiration date separate. Do not let the print/issue date overwrite policy_effective_date.
-
-A coverage explicitly marked Excluded may legitimately have a numeric limit of 0. 0 is valid. Return null when a requested value is absent. Do not substitute another nearby value merely to fill the schema.
-
-Do not hallucinate.`
+Return null when a requested value is absent. Do not hallucinate.`
 
 export function typedExtractSystemPrompt(
   kind: import('./types.ts').TypedExtractKind,
@@ -195,5 +205,5 @@ export function typedExtractIntro(
   if (kind === 'commercial_property_policy') {
     return `File: ${fileName}\nThis is a commercial property policy. Extract named insured, producer, insurer, location, dates, and coverage. Do not invent a certificate holder.`
   }
-  return `File: ${fileName}\nThis is a dwelling / landlord policy declarations page. Extract named insured (owner), producer, insurer, mortgagee, occupancy type, dates, and coverage. Do not invent a certificate holder or tenant name.`
+  return `File: ${fileName}\nThis is a dwelling / landlord policy declarations page. Extract named insured (owner, not a tenant), mailing address (often different from the insured property), producer, insurer, mortgagee, occupancy type, dates, and coverage. Do not invent a certificate holder or tenant name.`
 }

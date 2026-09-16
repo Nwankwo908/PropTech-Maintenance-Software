@@ -1462,6 +1462,7 @@ export function AdminPropertyDetailDashboard() {
         <PropertyDetailsPanel
           building={building ?? ''}
           loading={loading}
+          initialYearBuilt={meta.yearBuilt}
           modules={['insurance']}
         />
       ) : activeTab === 'history' ? (

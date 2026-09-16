@@ -109,6 +109,7 @@ export type PortfolioDocumentExtractPayload = {
     insurer_name?: string | null
     policy_number?: string | null
     producer_agency_name?: string | null
+    producer_agency_phone?: string | null
     named_insured_primary: string | null
     occupancy_type: string | null
     mortgagee_name: string | null

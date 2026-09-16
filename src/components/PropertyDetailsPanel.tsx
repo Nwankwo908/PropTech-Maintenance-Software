@@ -5,6 +5,7 @@ import { PropertyRecordHierarchy } from '@/components/PropertyRecordHierarchy'
 import { MaintenanceHistoryPanel } from '@/components/MaintenanceHistoryPanel'
 import { ApplianceInspectionUploader } from '@/components/ApplianceInspectionUploader'
 import insuranceUploadCloudIcon from '@/assets/insurance-upload-cloud.svg'
+import insuranceQuoteHouseArt from '@/assets/675cbc2b87a91eb992bd1764_aliens-house.webp'
 import maintenanceHistoryIcon from '@/assets/maintenance-history.png'
 import propertyInsuranceIcon from '@/assets/property-insurance.png'
 import smartInspectionReportIcon from '@/assets/smart-inspection-report.png'
@@ -15,6 +16,7 @@ import {
   uploadAndAnalyzeInspectionPhoto,
 } from '@/api/inspectionAssetAssess'
 import { getActiveLandlordId } from '@/lib/activeLandlord'
+import { findPropertyByName } from '@/lib/properties'
 import { isLimitedAlpha1Landlord } from '@shared/landlordCapabilities'
 import { prepareInspectionDocumentUpload } from '@/lib/prepareInspectionDocumentUpload'
 import {
@@ -39,6 +41,18 @@ import {
 } from '@/lib/propertyInsuranceBinderExtract'
 import { notifyPropertyDetailsChanged } from '@/lib/propertyDetailsCompleteness'
 import { getErrorMessage } from '@/lib/errorMessage'
+import { recordActivityLog } from '@/lib/recordActivityLog'
+import { loadPropertyBuildingProfile } from '@/lib/propertyBuildingProfile'
+import {
+  applySteadilyQuotePrefill,
+  fetchSteadilyAnnualPremium,
+  formatSteadilyPremium,
+  loadSteadilyPartnerScript,
+  refreshSteadilyPartnerWidgets,
+  steadilyQuoteAddressFromBuilding,
+  steadilyQuoteAddressFromParts,
+  submitSteadilyQuoteButton,
+} from '@/lib/steadilyPartner'
 import {
   ADMIN_RAIL_FOOTER_CLASS,
   ADMIN_RAIL_FOOTER_PRIMARY_BUTTON_CLASS,
@@ -398,7 +412,7 @@ function DetailCard({
   return (
     <div
       className={[
-        'property-details-card sa-surface group min-w-0 rounded-[12px] border border-solid bg-white',
+        'property-details-card sa-surface group h-full min-w-0 rounded-[12px] border border-solid bg-white',
         open
           ? 'overflow-x-hidden overflow-y-visible border-[#cbd5e1] shadow-[0px_2px_10px_0px_rgba(15,23,42,0.06)]'
           : 'overflow-hidden border-[#e2e8f0] shadow-none hover:border-[#cbd5e1] hover:bg-[#f8fafc] hover:shadow-[0px_2px_10px_0px_rgba(15,23,42,0.06)]',
@@ -517,6 +531,12 @@ function InsuranceDetailsFields({
           onChange={(policyNumber) => patch({ policyNumber })}
           placeholder="Enter policy number"
         />
+        <InsuranceField
+          label="Total Annual Premium"
+          value={insurance.premium}
+          onChange={(premium) => patch({ premium })}
+          placeholder="3792.53"
+        />
       </div>
 
       <InsuranceField
@@ -555,12 +575,6 @@ function InsuranceDetailsFields({
         placeholder="Enter phone number"
       />
 
-      <InsuranceField
-        label="Annual Premium"
-        value={insurance.premium}
-        onChange={(premium) => patch({ premium })}
-        placeholder="1840"
-      />
       <InsuranceField
         label="Coverage Amount"
         value={insurance.coverageAmount}
@@ -715,6 +729,203 @@ function InsuranceDetailsRail({
   )
 }
 
+function InsuranceQuoteCard({
+  building,
+  yearBuilt,
+}: {
+  building: string
+  yearBuilt: number | null
+}) {
+  const embedRef = useRef<HTMLDivElement>(null)
+  const [loadError, setLoadError] = useState<string | null>(null)
+  const [resolvedYear, setResolvedYear] = useState(yearBuilt)
+  const [annualPremium, setAnnualPremium] = useState<number | null>(null)
+  const [premiumReady, setPremiumReady] = useState(false)
+  const [explainOpen, setExplainOpen] = useState(false)
+  const [address, setAddress] = useState(() => steadilyQuoteAddressFromBuilding(building, yearBuilt))
+
+  useEffect(() => {
+    setResolvedYear(yearBuilt)
+    let cancelled = false
+    void loadPropertyBuildingProfile(building)
+      .then((profile) => {
+        if (cancelled) return
+        if (profile.yearBuilt != null) setResolvedYear(profile.yearBuilt)
+      })
+      .catch(() => {
+        /* keep year from the property record */
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [building, yearBuilt])
+
+  useEffect(() => {
+    let cancelled = false
+    const landlordId = getActiveLandlordId()
+    void (async () => {
+      let streetAddress = building
+      let city = ''
+      let state = ''
+      let zipCode = ''
+      let year = resolvedYear
+      if (landlordId) {
+        const result = await findPropertyByName(landlordId, building).catch(() => null)
+        if (result?.ok && result.property) {
+          streetAddress = result.property.streetAddress?.trim() || building
+          city = result.property.city?.trim() || ''
+          state = result.property.state?.trim() || ''
+          zipCode = result.property.zipCode?.trim() || ''
+          if (year == null) year = result.property.yearBuilt
+        }
+      }
+      if (cancelled) return
+      setAddress(
+        steadilyQuoteAddressFromParts({
+          building,
+          streetAddress,
+          city,
+          state,
+          zipCode,
+          yearBuilt: year,
+        }),
+      )
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [building, resolvedYear])
+
+  useEffect(() => {
+    applySteadilyQuotePrefill(embedRef.current, address)
+  }, [address])
+
+  useEffect(() => {
+    let cancelled = false
+    setPremiumReady(false)
+    void fetchSteadilyAnnualPremium(address)
+      .then((amount) => {
+        if (cancelled) return
+        setAnnualPremium(amount)
+        setPremiumReady(true)
+      })
+      .catch(() => {
+        if (cancelled) return
+        setAnnualPremium(null)
+        setPremiumReady(true)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [address.streetAddress, address.city, address.state, address.zipCode, address.yearBuilt])
+
+  async function openSteadilyQuote() {
+    try {
+      await loadSteadilyPartnerScript()
+      applySteadilyQuotePrefill(embedRef.current, address)
+      refreshSteadilyPartnerWidgets()
+      applySteadilyQuotePrefill(embedRef.current, address)
+      setLoadError(null)
+    } catch {
+      setLoadError('Steadily is unavailable right now. Try again in a moment.')
+      return
+    }
+    const opened = submitSteadilyQuoteButton(embedRef.current, address)
+    if (!opened) {
+      setLoadError('Steadily is still loading. Try again in a moment.')
+      return
+    }
+    const landlordId = getActiveLandlordId()
+    if (landlordId) {
+      void recordActivityLog({
+        landlordId,
+        eventType: 'insurance.steadily_quote_opened',
+        source: 'dashboard',
+        actorType: 'landlord',
+        metadata: {
+          message: 'Opened a landlord insurance quote with Steadily.',
+          building,
+        },
+      })
+    }
+  }
+
+  return (
+    <div className="relative flex h-full min-w-0 flex-col">
+      <div className="flex h-full min-w-0 flex-col overflow-hidden rounded-[12px] border border-solid border-[#e5e7eb] bg-white shadow-[0px_1px_3px_rgba(16,24,40,0.08)]">
+        <img
+          src={insuranceQuoteHouseArt}
+          alt=""
+          className="mx-auto mt-4 h-[148px] w-full object-contain"
+          aria-hidden
+        />
+        <div className="flex min-h-0 flex-1 flex-col px-6 pb-6 pt-4">
+        <p className="text-[22px] font-bold leading-7 tracking-[-0.3px] text-[#0a0a0a]">
+          Get a landlord insurance quote in minutes
+        </p>
+        <p className="mt-3 text-[14px] font-normal leading-5 text-[#4a5565]">
+          Find out how much coverage could cost for this rental, with no obligation to bind.
+        </p>
+
+        {annualPremium != null || !premiumReady ? (
+          <div className="mt-5">
+            <p className="text-[14px] font-bold leading-5 text-[#0a0a0a]">Estimated annual premium</p>
+            <p className="mt-1 text-[28px] font-bold leading-8 text-[#0f766e]">
+              {annualPremium != null ? formatSteadilyPremium(annualPremium) : '—'}
+            </p>
+            <button
+              type="button"
+              onClick={() => setExplainOpen((open) => !open)}
+              className="mt-1 text-[14px] leading-5 text-[#4a5565] underline decoration-dotted underline-offset-4 outline-none hover:text-[#0a0a0a]"
+            >
+              What is this number?
+            </button>
+            {explainOpen ? (
+              <p className="mt-2 text-[12px] leading-4 text-[#6a7282]">
+                This is a Steadily estimate for landlord coverage at this address. The final premium
+                can change after you complete the quote.
+              </p>
+            ) : null}
+          </div>
+        ) : null}
+
+        {loadError ? <p className="mt-3 text-[12px] leading-4 text-[#b91c1c]">{loadError}</p> : null}
+
+        <div className="mt-6 flex-1" />
+        <button
+          type="button"
+          onClick={() => void openSteadilyQuote()}
+          className="w-full rounded-[10px] bg-[#711D70] px-4 py-3 text-[16px] font-semibold leading-6 text-white outline-none hover:bg-[#5a1759] focus-visible:ring-2 focus-visible:ring-[#711D70] focus-visible:ring-offset-2"
+        >
+          Start now
+        </button>
+        </div>
+      </div>
+      <div ref={embedRef} className="pointer-events-none absolute h-px w-px overflow-hidden opacity-0">
+        <div
+          className="steadily-quote-button"
+          data-product="landlord-insurance"
+          data-show-modal-on-load="0"
+          data-button-text="Start now"
+          data-street_address={address.streetAddress || undefined}
+          data-city={address.city || undefined}
+          data-state={address.state || undefined}
+          data-postal_code={address.zipCode || undefined}
+          data-year_built={address.yearBuilt != null ? String(address.yearBuilt) : undefined}
+          data-property_details__street_address={address.streetAddress || undefined}
+          data-property_details__city={address.city || undefined}
+          data-property_details__state={address.state || undefined}
+          data-property_details__zip_code={address.zipCode || undefined}
+          data-property_details__year_built={
+            address.yearBuilt != null ? String(address.yearBuilt) : undefined
+          }
+          data-property_details__external_property_id={building.trim() || undefined}
+        />
+      </div>
+    </div>
+  )
+}
+
 /** Expanded Insurance — Figma node 1140:1927. */
 function InsuranceExpandedPanel({
   building,
@@ -745,10 +956,10 @@ function InsuranceExpandedPanel({
   const hasDraft = insuranceFormHasInput(insurance)
 
   return (
-    <div className="flex flex-col gap-5">
+    <div className="flex h-full min-h-0 flex-col gap-5">
       <div
         className={[
-          'sa-dropzone flex flex-col items-center justify-center gap-3 rounded-[12px] border-2 border-dashed bg-[#f8fafc] p-10',
+          'sa-dropzone flex min-h-[320px] w-full flex-1 flex-col items-center justify-center gap-3 rounded-[12px] border-2 border-dashed bg-[#f8fafc] px-10 py-12',
           dragging ? 'is-dragging border-[#94a3b8]' : 'border-[#e2e8f0]',
           extracting ? 'opacity-80' : '',
         ].join(' ')}
@@ -1362,6 +1573,7 @@ export function PropertyDetailsPanel({
       ) : null}
 
       {showModule('insurance') ? (
+      <div className="grid grid-cols-1 gap-3 lg:grid-cols-[minmax(0,7fr)_minmax(0,3fr)] lg:items-stretch [&>*]:min-w-0">
       <DetailCard
         icon={
           <img
@@ -1467,6 +1679,8 @@ export function PropertyDetailsPanel({
           }}
         />
       </DetailCard>
+      <InsuranceQuoteCard building={building} yearBuilt={initialYearBuilt} />
+      </div>
       ) : null}
 
       {showModule('history') ? (

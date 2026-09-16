@@ -5,7 +5,11 @@
 import { extractOnboardingDocument } from '@/api/onboardingDocumentExtract'
 import type { PortfolioDocumentExtractPayload } from '@/api/onboardingDocumentExtract'
 import { extractPdfPageTexts, renderPdfFileToJpegDataUrls } from '@/lib/pdfPageImagesBrowser'
-import { findRelevantInsurancePages } from '@shared/onboarding/typedDocumentExtract/insuranceClassify'
+import {
+  findRelevantInsurancePages,
+  INSURANCE_PAGE_FALLBACK_MAX,
+  INSURANCE_SELECTED_PAGES_MAX,
+} from '@shared/onboarding/typedDocumentExtract/insuranceClassify'
 
 export type InsuranceBinderScanStage =
   | 'idle'

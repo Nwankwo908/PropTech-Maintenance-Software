@@ -5,8 +5,11 @@ import {
   findRelevantInsurancePages,
 } from '@shared/onboarding/typedDocumentExtract/insuranceClassify'
 import { parseAndMapTypedExtract } from '@shared/onboarding/typedDocumentExtract/parseAndMap'
-import { formatInsurancePartyName, parseCoverageLimit } from '@shared/onboarding/typedDocumentExtract/parse'
-import { DWELLING_POLICY_GROUND_TRUTH } from '@shared/onboarding/typedDocumentExtract/insurancePolicy'
+import { formatInsurancePartyName, parseCoverageLimit, parseMoney } from '@shared/onboarding/typedDocumentExtract/parse'
+import {
+  DWELLING_POLICY_GROUND_TRUTH,
+  DWELLING_POLICY_NESTED_FIXTURE,
+} from '@shared/onboarding/typedDocumentExtract/insurancePolicy'
 
 const DWELLING_SNIPPET = `
 POLICY DECLARATIONS
@@ -62,6 +65,27 @@ describe('insurance document classification', () => {
 })
 
 describe('dwelling policy extraction', () => {
+  it('maps the nested Springdale declarations fixture', () => {
+    const mapped = parseAndMapTypedExtract(
+      'dwelling_policy_declarations',
+      DWELLING_POLICY_NESTED_FIXTURE,
+    )
+    const policy = mapped.dwellingPolicy
+    expect(policy?.named_insured_primary).toBe('Ifunanya Okafor')
+    expect(policy?.insured_mailing_address).toBe(
+      '6808 Piazza Grande Ave Apt 3205, Orlando, FL 32835-8786',
+    )
+    expect(policy?.insured_property_address).toBe('563 Springdale Cir, Palm Springs, FL 33461')
+    expect(policy?.insured_mailing_address).not.toBe(policy?.insured_property_address)
+    expect(policy?.coverage_c_personal_property_limit).toBe(0)
+    expect(policy?.mortgagee_name).toBe('CMG Mortgage Inc ISAOA ATIMA')
+    expect(policy?.date_issued).toBe('2026-05-04')
+    expect(policy?.policy_effective_date).toBe('2026-06-27')
+    expect(policy?.year_built).toBe(1980)
+    expect(policy?.occupancy_type).toBe('Tenant')
+    expect(mapped.residents).toHaveLength(0)
+  })
+
   it('maps the reference declarations ground truth', () => {
     const mapped = parseAndMapTypedExtract('dwelling_policy_declarations', {
       ...DWELLING_POLICY_GROUND_TRUTH,
@@ -85,12 +109,18 @@ describe('dwelling policy extraction', () => {
       '6808 Piazza Grande Ave Apt 3205, Orlando, FL 32835-8786',
     )
     expect(policy?.producer_agency_name).toBe('Kirstein Insurance Agency, LLC')
-    expect(policy?.insured_property_address).toBe('563 Springdale Cir, Palm Springs, FL 33461-1533')
+    expect(policy?.producer_agency_address).toBe(
+      '4722 NW 2nd Ave Ste C104, Boca Raton, FL 33431-4166',
+    )
+    expect(policy?.producer_agency_phone).toBe('(561) 998-0950')
+    expect(policy?.insured_property_address).toBe('563 Springdale Cir, Palm Springs, FL 33461')
+    expect(policy?.year_built).toBe(1980)
     expect(policy?.total_annual_premium).toBe(3792.53)
     expect(policy?.coverage_a_dwelling_limit).toBe(208400)
     expect(policy?.coverage_c_personal_property_limit).toBe(0)
     expect(policy?.coverage_d_fair_rental_value_limit).toBe(20840)
     expect(policy?.coverage_l_liability_limit).toBe(100000)
+    expect(policy?.medical_payments_limit).toBe(2000)
     expect(policy?.deductible_all_other_perils).toBe(2500)
     expect(policy?.hurricane_deductible_percent).toBe(5)
     expect(policy?.hurricane_deductible_amount).toBe(10420)
@@ -152,18 +182,35 @@ describe('dwelling policy extraction', () => {
 describe('insurance page reduction', () => {
   it('selects the declarations page range instead of the whole policy', () => {
     const pages = Array.from({ length: 94 }, (_, i) => `Page ${i + 1} filler`)
-    pages[14] = 'POLICY DECLARATIONS\nDWELLING POLICY DP-3\nNAMED INSURED'
+    pages[0] = 'Dear Policyholder'
+    pages[1] = 'Coverage checklist COVERAGE A Dwelling optional endorsements'
+    pages[13] = 'State disclosures'
+    pages[14] = 'POLICY DECLARATIONS\nDWELLING POLICY DP-3\nNAMED INSURED\n$208,400'
     pages[15] = 'Coverage A Dwelling'
-    pages[16] = 'Mortgagee'
+    pages[16] = 'Mortgagee CMG'
+    pages[17] = 'ISO form HO 00 03'
     const selected = findRelevantInsurancePages(pages)
-    expect(selected[0]).toBe(15)
     expect(selected).not.toContain(1)
-    expect(selected).toContain(15)
-    expect(selected.length).toBeLessThanOrEqual(5)
+    expect(selected).not.toContain(2)
+    expect(selected).toEqual([14, 15, 16, 17])
   })
 
-  it('finds dwelling pages that say DWELLING POLICY without POLICY DECLARATIONS', () => {
-    const pages = ['Cover letter', 'DWELLING POLICY DP-3\nNAMED INSURED\nCoverage A', 'Limits']
-    expect(findRelevantInsurancePages(pages)).toEqual([2, 3])
+  it('does not treat Coverage A checklist pages as the declarations page', () => {
+    const pages = [
+      'Dear Policyholder',
+      'COVERAGE A checklist DWELLING POLICY comparison',
+      'More disclosures ACORD notice',
+    ]
+    expect(findRelevantInsurancePages(pages)).toEqual([])
+  })
+
+  it('prefers the real declarations page over a table-of-contents mention', () => {
+    const pages = Array.from({ length: 20 }, (_, i) => `Page ${i + 1}`)
+    pages[2] = 'POLICY DECLARATIONS see page 15'
+    pages[14] = 'POLICY DECLARATIONS NAMED INSURED MORTGAGEE $208,400 LOCATION OF RESIDENCE PREMISES'
+    const selected = findRelevantInsurancePages(pages)
+    expect(selected[0]).toBeGreaterThanOrEqual(14)
+    expect(selected).toContain(15)
+    expect(selected).not.toContain(1)
   })
 })

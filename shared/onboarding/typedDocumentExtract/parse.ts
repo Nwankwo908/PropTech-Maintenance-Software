@@ -50,9 +50,12 @@ export function parseMoney(value: unknown): number | null {
   if (typeof value === 'number' && Number.isFinite(value)) return value
   const text = asTrimmed(value)
   if (!text || PLACEHOLDER.test(text)) return null
-  const stripped = text.replace(/[$,\s]/g, '')
-  if (!/^-?\d+(\.\d+)?$/.test(stripped)) return null
-  const amount = Number(stripped)
+  const stripped = text
+    .replace(/usd|us\$|per\s*year|annually|annual|premium|\/\s*yr|\/\s*year/gi, '')
+    .replace(/[$,\s]/g, '')
+  const match = stripped.match(/-?\d+(?:\.\d+)?/)
+  if (!match) return null
+  const amount = Number(match[0])
   return Number.isFinite(amount) ? amount : null
 }
 
@@ -86,6 +89,18 @@ export function parseCoverageLimit(value: unknown): number | null {
   if (!text) return null
   if (/^(excluded|not\s+covered|n\/c|none)$/i.test(text)) return 0
   return parseMoney(value)
+}
+
+export function parseYearBuilt(value: unknown): number | null {
+  if (typeof value === 'number' && Number.isInteger(value) && value >= 1600 && value <= 2100) {
+    return value
+  }
+  const text = asTrimmed(value)
+  if (!text) return null
+  const match = text.match(/\b(1[6-9]\d{2}|20\d{2})\b/)
+  if (!match) return null
+  const year = Number(match[1])
+  return Number.isInteger(year) ? year : null
 }
 
 const KEEP_UPPER_NAME_TOKENS = new Set([

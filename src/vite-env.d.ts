@@ -125,6 +125,8 @@ interface ImportMetaEnv {
    * If omitted, defaults to `${VITE_SUPABASE_URL}/functions/v1/property-insights`.
    */
   readonly VITE_PROPERTY_INSIGHTS_URL?: string
+  /** Steadily partner embed script. Defaults to staging `partner/v3.js?ref=ulo-staging`. */
+  readonly VITE_STEADILY_EMBED_SCRIPT_URL?: string
 }
 
 interface ImportMeta {

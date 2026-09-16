@@ -29,6 +29,7 @@ describe('mapPortfolioInsuranceToPropertyFields', () => {
           insurer_name: 'American Integrity Insurance Company',
           policy_number: 'ADC0931778',
           producer_agency_name: 'Kirstein Insurance Agency, LLC',
+          producer_agency_phone: '(561) 998-0950',
           named_insured_primary: 'Ifunanya Okafor',
           occupancy_type: 'Tenant',
           mortgagee_name: 'CMG Mortgage Inc ISAOA ATIMA',
@@ -65,6 +66,7 @@ describe('mapPortfolioInsuranceToPropertyFields', () => {
     expect(extracted.coverageStartDate).not.toBe('2026-05-04')
     expect(extracted.additionalInsured).toBe(false)
     expect(extracted.claimsContactName).toBe('Kirstein Insurance Agency, LLC')
+    expect(extracted.claimsPhone).toBe('(561) 998-0950')
     expect(extracted.policyType).toBe('Dwelling')
     expect(extracted.premium).toBe('3792.53')
     expect(extracted.dwellingCoverage).toBe('208400')
