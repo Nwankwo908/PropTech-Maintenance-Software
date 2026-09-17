@@ -122,6 +122,7 @@ export const PROPERTY_POLICY_JSON_SCHEMA = {
     date_issued: 'YYYY-MM-DD or null',
     effective_date: 'YYYY-MM-DD',
     expiration_date: 'YYYY-MM-DD',
+    claims_phone: 'string or null',
   },
   named_insured: {
     primary_name: 'string',
@@ -171,6 +172,7 @@ Rules:
 - personal_property_limit of 0 or Excluded is a correct, real value on a landlord policy — the owner does not insure the tenant's belongings. Do not treat zero as a failed extraction and do not substitute null.
 - Mortgagee names commonly carry a suffix like ISAOA ATIMA. Keep it attached to mortgagee.name as printed.
 - There are usually three distinct dates: date_issued (print/issue), effective_date, and expiration_date. Map each explicitly. Do not let "the date" default to whichever appears first.
+- Claims reporting on a personal-lines dwelling policy is almost always a generic carrier hotline, not a named contact. Extract carrier.claims_phone when the declarations page prints Claims Reporting / ClaimsReporting. Do not invent a claims contact name — personal-lines carriers do not assign a named contact until a claim is filed.
 - This schema has no certificate_holder, additional_insured, or producer-as-COI fields. If the document is a tenant-furnished ACORD certificate, do not fill this schema.
 
 Producer/agent sold the policy. Insurer/carrier underwrites it. Mortgagee is the lender.

@@ -83,6 +83,7 @@ describe('dwelling policy extraction', () => {
     expect(policy?.policy_effective_date).toBe('2026-06-27')
     expect(policy?.year_built).toBe(1980)
     expect(policy?.occupancy_type).toBe('Tenant')
+    expect(policy?.claims_phone).toBe('1-866-277-9871')
     expect(mapped.residents).toHaveLength(0)
   })
 
@@ -129,6 +130,7 @@ describe('dwelling policy extraction', () => {
     expect(policy?.loan_number).toBe('0180951220')
     expect(policy?.occupancy_type).toBe('Tenant')
     expect(policy?.property_use).toBe('Rental Property')
+    expect(policy?.claims_phone).toBe('1-866-277-9871')
     expect(mapped.residents).toHaveLength(0)
     expect(mapped.roleFacts.some((row) => row.role === 'certificate_holder')).toBe(false)
   })
@@ -192,7 +194,7 @@ describe('insurance page reduction', () => {
     const selected = findRelevantInsurancePages(pages)
     expect(selected).not.toContain(1)
     expect(selected).not.toContain(2)
-    expect(selected).toEqual([14, 15, 16, 17])
+    expect(selected).toEqual([14, 15, 16, 17, 18])
   })
 
   it('does not treat Coverage A checklist pages as the declarations page', () => {

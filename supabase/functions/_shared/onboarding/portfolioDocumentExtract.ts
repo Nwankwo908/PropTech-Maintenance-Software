@@ -22,6 +22,7 @@ import {
 } from "../../../../shared/onboarding/typedDocumentExtract/classify.ts"
 import {
   CLASSIFY_INSURANCE_SYSTEM_PROMPT,
+  INSURANCE_PAGE_FALLBACK_MAX,
   INSURANCE_SELECTED_PAGES_MAX,
   findRelevantInsurancePages,
   parseInsuranceTypeClassifierResponse,
@@ -46,6 +47,7 @@ import {
 } from "../../../../shared/onboarding/typedDocumentExtract/prompts.ts"
 import {
   isTypedExtractKind,
+  isPropertyPolicyKind,
   type TypedOrGenericExtractKind,
 } from "../../../../shared/onboarding/typedDocumentExtract/types.ts"
 
@@ -972,9 +974,16 @@ async function extractPdfViaPageImages(input: {
   pageNumbers?: number[]
 }): Promise<PortfolioDocumentExtractPayload | null> {
   let urls: string[]
+  const selectedCount = input.pageNumbers?.length ?? 0
+  const insurancePages = isPropertyPolicyKind(String(input.kind)) || input.kind === "insurance_certificate"
+  const maxPages = insurancePages
+    ? selectedCount > 0
+      ? Math.min(selectedCount, INSURANCE_SELECTED_PAGES_MAX)
+      : INSURANCE_PAGE_FALLBACK_MAX
+    : 3
   try {
     urls = await pdfPagesToJpegDataUrls(input.bytes, {
-      maxPages: 3,
+      maxPages,
       maxEdge: 1280,
       pageNumbers: input.pageNumbers,
     })
@@ -987,39 +996,25 @@ async function extractPdfViaPageImages(input: {
   }
   if (urls.length === 0) return null
 
-  const counts = urls.length > 1 ? [Math.min(urls.length, 2), 1] : [1]
-  let lastError: Error | null = null
-  for (const count of counts) {
-    const pageUrls = urls.slice(0, count)
-    const userContent: Array<Record<string, unknown>> = [
-      {
-        type: "text",
-        text: `${input.introText}\nThe following images are pages from the uploaded PDF.`,
-      },
-      ...pageUrls.map((url) => ({
-        type: "image_url",
-        image_url: { url },
-      })),
+  const pageUrls = insurancePages ? urls : urls.slice(0, Math.min(urls.length, 2))
+  const userContent: Array<Record<string, unknown>> = [
+    {
+      type: "text",
+      text: `${input.introText}\nThe following images are pages from the uploaded PDF.`,
+    },
+    ...pageUrls.map((url) => ({
+      type: "image_url",
+      image_url: { url },
+    })),
+  ]
+  const extracted = await extractWithChatCompletions(input.apiKey, userContent, input.kind)
+  if (!insurancePages && urls.length > pageUrls.length) {
+    extracted.warnings = [
+      `Scanned the first ${pageUrls.length} of ${urls.length}+ pages. Upload a JPG or shorter PDF if details are missing.`,
+      ...extracted.warnings,
     ]
-    try {
-      const extracted = await extractWithChatCompletions(input.apiKey, userContent, input.kind)
-      if (urls.length > count) {
-        extracted.warnings = [
-          `Scanned the first ${count} of ${urls.length}+ pages. Upload a JPG or shorter PDF if details are missing.`,
-          ...extracted.warnings,
-        ]
-      }
-      return extracted
-    } catch (err) {
-      lastError = err instanceof Error ? err : new Error("Document extract failed")
-      const message = lastError.message.toLowerCase()
-      if (!message.includes("busy") && !message.includes("too large") && !message.includes("couldn’t read")) {
-        throw lastError
-      }
-    }
   }
-  if (lastError) throw lastError
-  return null
+  return extracted
 }
 
 const EXTRACT_PDF_MODEL = "gpt-4o-mini"
@@ -1079,11 +1074,15 @@ async function extractWithResponsesPdf(input: {
   pageNumbers?: number[]
 }): Promise<PortfolioDocumentExtractPayload> {
   const prompt = systemPromptForKind(input.kind)
-  const pageCap = input.pageNumbers && input.pageNumbers.length > 0 ? Math.max(input.pageNumbers.length, 3) : 4
-  const attempts = [
-    { maxPages: pageCap, maxBytes: 900_000, pageNumbers: input.pageNumbers },
-    { maxPages: Math.min(2, pageCap), maxBytes: 450_000, pageNumbers: input.pageNumbers },
-  ]
+  const pageCap = input.pageNumbers && input.pageNumbers.length > 0
+    ? Math.min(input.pageNumbers.length, INSURANCE_SELECTED_PAGES_MAX)
+    : 4
+  const attempts = input.pageNumbers && input.pageNumbers.length > 0
+    ? [{ maxPages: pageCap, maxBytes: 900_000, pageNumbers: input.pageNumbers }]
+    : [
+        { maxPages: pageCap, maxBytes: 900_000, pageNumbers: input.pageNumbers },
+        { maxPages: Math.min(2, pageCap), maxBytes: 450_000, pageNumbers: input.pageNumbers },
+      ]
   let lastSentBytes = -1
   let lastError: Error | null = null
 
@@ -1658,7 +1657,6 @@ export async function extractPortfolioDocument(input: {
     0,
     insuranceFlow ? INSURANCE_SELECTED_PAGES_MAX : 3,
   )
-    input.documentCategory.trim().toLowerCase() === "property_insurance"
 
   let insurancePageNumbers: number[] | undefined
   if (insuranceFlow) {

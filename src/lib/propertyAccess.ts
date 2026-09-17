@@ -223,19 +223,62 @@ export async function savePropertyAccess(
 
 export async function clearPropertyAccess(building: string): Promise<void> {
   const landlordId = getActiveLandlordId()
-  savePropertyAccessLocal(building, { ...EMPTY_PROPERTY_ACCESS })
+  const name = building.trim()
+  const emptied: PropertyAccessProfile = { ...EMPTY_PROPERTY_ACCESS }
+  savePropertyAccessLocal(building, emptied)
 
-  if (!supabase || !landlordId || !building.trim()) return
+  if (!supabase || !landlordId || !name) return
 
-  const { error } = await supabase
+  const { data: rows, error: listError } = await supabase
     .from('property_access_profiles')
-    .delete()
+    .select('id, building')
     .eq('landlord_id', landlordId)
-    .eq('building', building.trim())
 
-  if (error) {
-    console.error('[property-access] clear', error.message)
-    throw new Error(getErrorMessage(error, 'Something went wrong. Please try again.'))
+  if (listError) {
+    console.error('[property-access] clear list', listError.message)
+    throw new Error(getErrorMessage(listError, 'Something went wrong. Please try again.'))
+  }
+
+  const want = name.toLowerCase()
+  const ids = (rows ?? [])
+    .filter(
+      (row) =>
+        String((row as { building?: unknown }).building ?? '')
+          .trim()
+          .toLowerCase() === want,
+    )
+    .map((row) => String((row as { id?: unknown }).id ?? ''))
+    .filter(Boolean)
+
+  if (ids.length > 0) {
+    const { error: updateError } = await supabase
+      .from('property_access_profiles')
+      .update({
+        building_entry: '',
+        gate_code: '',
+        lockbox_location: '',
+        lockbox_code: '',
+        utility_room_access: '',
+        visitor_parking: '',
+        superintendent_contact: '',
+        emergency_access_notes: '',
+        updated_at: new Date().toISOString(),
+      })
+      .in('id', ids)
+
+    if (updateError) {
+      console.error('[property-access] clear update', updateError.message)
+      throw new Error(getErrorMessage(updateError, 'Something went wrong. Please try again.'))
+    }
+
+    const { error: deleteError } = await supabase
+      .from('property_access_profiles')
+      .delete()
+      .in('id', ids)
+
+    if (deleteError) {
+      console.error('[property-access] clear delete', deleteError.message)
+    }
   }
 
   await recordActivityLog({
@@ -245,7 +288,7 @@ export async function clearPropertyAccess(building: string): Promise<void> {
     actorType: 'landlord',
     metadata: {
       message: 'Property access details were removed.',
-      building: building.trim(),
+      building: name,
     },
   })
 }

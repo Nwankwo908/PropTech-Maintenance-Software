@@ -46,7 +46,9 @@ import {
   isSetupSuccessCheckboxGuideActive,
   isSetupSuccessCheckboxGuideNavigation,
   markSetupSuccessCheckboxGuidePagePending,
-  setupCheckboxGuidePropertyTabState,
+  peekSetupSuccessPropertyFollowup,
+  propertyFollowupDetailTab,
+  setupCheckboxGuidePropertyDetailState,
 } from '@/lib/setupSuccessGuide'
 
 type PropertyTicket = {
@@ -606,6 +608,26 @@ export function AdminPropertiesDashboard() {
     })
   }, [units, tickets, pmTasks, feedback, vendorMetrics, healthAssets, healthInspections, healthDamageReports, residents, canonicalPropertiesForHealth, now])
 
+  useEffect(() => {
+    if (!showPropertyCardGuide || loading) return
+    if (peekSetupSuccessPropertyFollowup() !== 'property_access') return
+    const firstBuilding = healthReport.buildings[0]?.building?.trim()
+    if (!firstBuilding) return
+    dismissSetupSuccessCheckboxGuide('properties')
+    markSetupSuccessCheckboxGuidePagePending('property_access')
+    setShowPropertyCardGuide(false)
+    navigate(propertyDetailPathForBuilding(firstBuilding, propertyIdByBuilding, 'overview'), {
+      replace: true,
+      state: setupCheckboxGuidePropertyDetailState('property_access'),
+    })
+  }, [
+    showPropertyCardGuide,
+    loading,
+    healthReport.buildings,
+    propertyIdByBuilding,
+    navigate,
+  ])
+
   const monthlySpendByBuilding = useMemo(() => {
     const healthUnits = mapUnitsForPropertyHealth(units as unknown as Record<string, unknown>[])
     const unitBuildingById = new Map(
@@ -956,14 +978,18 @@ export function AdminPropertiesDashboard() {
         }}
         firstCardRef={propertyCardGuideTargetRef}
         buildingHref={(buildingName) =>
-          propertyDetailPathForBuilding(buildingName, propertyIdByBuilding)
+          propertyDetailPathForBuilding(
+            buildingName,
+            propertyIdByBuilding,
+            propertyFollowupDetailTab(),
+          )
         }
         buildingLinkState={() =>
-          showPropertyCardGuide ? setupCheckboxGuidePropertyTabState() : undefined
+          showPropertyCardGuide ? setupCheckboxGuidePropertyDetailState() : undefined
         }
         onBuildingOpen={() => {
           dismissSetupSuccessCheckboxGuide('properties')
-          markSetupSuccessCheckboxGuidePagePending('property_tab')
+          markSetupSuccessCheckboxGuidePagePending(peekSetupSuccessPropertyFollowup())
           setShowPropertyCardGuide(false)
         }}
         headerAction={

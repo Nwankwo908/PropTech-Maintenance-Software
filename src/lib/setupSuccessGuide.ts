@@ -7,10 +7,15 @@ export type SetupSuccessCheckboxGuidePage =
   | 'residents'
   | 'properties'
   | 'property_tab'
+  | 'property_access'
+  | 'property_insurance'
   | 'test_delivery'
 
 export const SETUP_SUCCESS_PROPERTY_TAB_GUIDE_MESSAGE =
   'Complete your property details to shift maintenance from reactive to proactive.'
+
+export const SETUP_SUCCESS_PROPERTY_ACCESS_GUIDE_MESSAGE =
+  'Select Add property access so vendors know how to get in.'
 
 export const SETUP_SUCCESS_TEST_DELIVERY_GUIDE_MESSAGE =
   'Select button to confirm your number is working'
@@ -21,9 +26,30 @@ export function setupCheckboxGuidePropertyTabState(): { setupCheckboxGuide: 'pro
 
 const PENDING_KEY_PREFIX = 'ulo.setupSuccessCheckboxGuide.pending.'
 const SEEN_KEY_PREFIX = 'ulo.setupSuccessCheckboxGuide.seen.'
+const FOLLOWUP_KEY_PREFIX = 'ulo.setupSuccessCheckboxGuide.followup.'
+
+const PROPERTY_DETAIL_FOLLOWUPS = [
+  'property_access',
+  'property_tab',
+  'property_insurance',
+] as const
+
+export type SetupSuccessPropertyDetailFollowup = (typeof PROPERTY_DETAIL_FOLLOWUPS)[number]
 
 function pendingKey(landlordId: string): string {
   return `${PENDING_KEY_PREFIX}${landlordId}`
+}
+
+function followupKey(landlordId: string): string {
+  return `${FOLLOWUP_KEY_PREFIX}${landlordId}`
+}
+
+function isPropertyDetailFollowup(value: string | null): value is SetupSuccessPropertyDetailFollowup {
+  return (
+    value === 'property_access' ||
+    value === 'property_tab' ||
+    value === 'property_insurance'
+  )
 }
 
 function seenKey(page: SetupSuccessCheckboxGuidePage, landlordId: string): string {
@@ -73,8 +99,21 @@ function storageRemove(key: string): void {
 function pageForSetupItem(itemId: SetupSuccessItemId): SetupSuccessCheckboxGuidePage | null {
   if (itemId === 'welcome_texts') return 'residents'
   if (itemId === 'verify_vendors') return 'vendors'
-  if (itemId === 'property_details') return 'properties'
+  if (
+    itemId === 'property_access' ||
+    itemId === 'property_intelligence' ||
+    itemId === 'property_insurance'
+  ) {
+    return 'properties'
+  }
   if (itemId === 'test_request') return 'test_delivery'
+  return null
+}
+
+function followupForSetupItem(itemId: SetupSuccessItemId): SetupSuccessPropertyDetailFollowup | null {
+  if (itemId === 'property_access') return 'property_access'
+  if (itemId === 'property_intelligence') return 'property_tab'
+  if (itemId === 'property_insurance') return 'property_insurance'
   return null
 }
 
@@ -111,6 +150,30 @@ export function markSetupSuccessCheckboxGuidePending(
   const page = pageForSetupItem(itemId)
   if (!page) return
   markSetupSuccessCheckboxGuidePagePending(page, landlordId)
+  const followup = followupForSetupItem(itemId)
+  if (followup) storageSet(followupKey(landlordId), followup)
+  else storageRemove(followupKey(landlordId))
+}
+
+export function peekSetupSuccessPropertyFollowup(
+  landlordId: string = getActiveLandlordId(),
+): SetupSuccessPropertyDetailFollowup {
+  const stored = storageGet(followupKey(landlordId))
+  return isPropertyDetailFollowup(stored) ? stored : 'property_tab'
+}
+
+export function setupCheckboxGuidePropertyDetailState(
+  page: SetupSuccessPropertyDetailFollowup = peekSetupSuccessPropertyFollowup(),
+): { setupCheckboxGuide: SetupSuccessPropertyDetailFollowup } {
+  return { setupCheckboxGuide: page }
+}
+
+export function propertyFollowupDetailTab(
+  followup: SetupSuccessPropertyDetailFollowup = peekSetupSuccessPropertyFollowup(),
+): 'overview' | 'details' | 'insurance' {
+  if (followup === 'property_access') return 'overview'
+  if (followup === 'property_insurance') return 'insurance'
+  return 'details'
 }
 
 export function shouldShowSetupSuccessCheckboxGuide(
@@ -142,7 +205,16 @@ export function clearSetupSuccessCheckboxGuide(
   landlordId: string = getActiveLandlordId(),
 ): void {
   storageRemove(pendingKey(landlordId))
-  for (const page of ['vendors', 'residents', 'properties', 'property_tab', 'test_delivery'] as const) {
+  storageRemove(followupKey(landlordId))
+  for (const page of [
+    'vendors',
+    'residents',
+    'properties',
+    'property_tab',
+    'property_access',
+    'property_insurance',
+    'test_delivery',
+  ] as const) {
     storageRemove(seenKey(page, landlordId))
   }
 }

@@ -2,7 +2,9 @@ import { useEffect, useId, useState, type CSSProperties, type ReactNode } from '
 import { Link } from 'react-router-dom'
 import welcomeTextsIcon from '@/assets/invitation.png'
 import verifyVendorsIcon from '@/assets/verify-vendors.png'
-import propertyDetailsIcon from '@/assets/property-details.png'
+import propertyAccessIcon from '@/assets/property-access.png'
+import propertyIntelligenceIcon from '@/assets/property-details.png'
+import propertyInsuranceIcon from '@/assets/property-insurance.png'
 import maintenancePrefsIcon from '@/assets/settings.png'
 import testRequestIcon from '@/assets/test-tube.png'
 import checkIcon from '@/assets/setup-success/check.svg'
@@ -16,10 +18,17 @@ import {
 const ITEM_ICONS: Record<SetupSuccessItemId, string> = {
   welcome_texts: welcomeTextsIcon,
   verify_vendors: verifyVendorsIcon,
-  property_details: propertyDetailsIcon,
+  property_access: propertyAccessIcon,
+  property_intelligence: propertyIntelligenceIcon,
+  property_insurance: propertyInsuranceIcon,
   maintenance_prefs: maintenancePrefsIcon,
   test_request: testRequestIcon,
 }
+
+const MUTED_ITEM_ICONS = new Set<SetupSuccessItemId>([
+  'property_access',
+  'property_insurance',
+])
 
 const COMPACT_SETUP_SHEET_MQ = '(max-width: 1279px)'
 
@@ -54,7 +63,11 @@ function SetupChecklist({ progress }: { progress: SetupSuccessProgress }) {
                   width={28}
                   height={28}
                   className={`size-7 max-w-none object-contain ${
-                    item.done ? 'opacity-40 grayscale' : ''
+                    item.done
+                      ? 'opacity-40 grayscale'
+                      : MUTED_ITEM_ICONS.has(item.id)
+                        ? 'opacity-70 grayscale'
+                        : ''
                   }`}
                 />
               </span>

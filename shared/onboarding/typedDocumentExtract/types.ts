@@ -138,6 +138,7 @@ export type DwellingPolicyDeclarations = {
   loan_number: string | null
   occupancy_type: string | null
   property_use: string | null
+  claims_phone: string | null
   confidence: number
   warnings: string[]
 }

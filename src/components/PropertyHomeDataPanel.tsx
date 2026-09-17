@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from 'react'
+import { useEffect, useState, type ReactNode, type RefObject } from 'react'
 import {
   postSyncHomeDataGraph,
   resolveSyncHomeDataGraphUrl,
@@ -12,11 +12,12 @@ import { getAdminEdgeSecret } from '@/lib/adminEdgeAuth'
 import { getErrorMessage } from '@/lib/errorMessage'
 import { loadHomeDataGraphSnapshot } from '@/lib/loadHomeDataGraph'
 import {
+  clearPropertyAccess,
   loadPropertyAccess,
   propertyAccessHasContent,
   type PropertyAccessProfile,
 } from '@/lib/propertyAccess'
-import { PROPERTY_DETAILS_CHANGED_EVENT } from '@/lib/propertyDetailsCompleteness'
+import { notifyPropertyDetailsChanged, PROPERTY_DETAILS_CHANGED_EVENT } from '@/lib/propertyDetailsCompleteness'
 import {
   emptyHomeDataFacts,
   formatHomeDataDate,
@@ -38,6 +39,7 @@ type PropertyHomeDataPanelProps = {
   address: string | null
   buildingName?: string | null
   onAddPropertyAccess?: () => void
+  accessActionRef?: RefObject<HTMLElement | null>
   afterHomeValue?: ReactNode
 }
 
@@ -149,11 +151,20 @@ function FactsGroup({
   )
 }
 
-function FactsCategory({ title, children }: { title: string; children: ReactNode }) {
+function FactsCategory({
+  title,
+  action,
+  children,
+}: {
+  title: string
+  action?: ReactNode
+  children: ReactNode
+}) {
   return (
     <div>
-      <div className="bg-[#f5f5f5] px-4 py-2.5">
+      <div className="flex items-center justify-between gap-3 bg-[#f5f5f5] px-4 py-2.5">
         <h4 className="text-[16px] font-bold leading-6 text-[#0a0a0a]">{title}</h4>
+        {action}
       </div>
       {children}
     </div>
@@ -224,6 +235,7 @@ export function PropertyHomeDataPanel({
   address,
   buildingName,
   onAddPropertyAccess,
+  accessActionRef,
   afterHomeValue,
 }: PropertyHomeDataPanelProps) {
   const query = address?.trim() || ''
@@ -232,6 +244,8 @@ export function PropertyHomeDataPanel({
   const [error, setError] = useState<string | null>(null)
   const [fallbackCoords, setFallbackCoords] = useState<{ lat: number; lng: number } | null>(null)
   const [access, setAccess] = useState<PropertyAccessProfile | null>(null)
+  const [accessDeleting, setAccessDeleting] = useState(false)
+  const [accessError, setAccessError] = useState<string | null>(null)
 
   useEffect(() => {
     const resolvedPropertyId = propertyId?.trim() ?? ''
@@ -344,6 +358,31 @@ export function PropertyHomeDataPanel({
   const viewLng = snapshot?.longitude ?? fallbackCoords?.lng ?? null
   const accessGroups = access ? accessFactGroups(access) : []
 
+  const accessAction = onAddPropertyAccess ? (
+    <div className="mt-4 flex flex-col items-start gap-2 px-4 pb-6 lg:px-6">
+      {accessError ? (
+        <p className="text-[12px] leading-4 text-[#92400e]">{accessError}</p>
+      ) : null}
+      <span ref={accessActionRef} className="inline-flex">
+        <button
+          type="button"
+          onClick={onAddPropertyAccess}
+          className="sa-press inline-flex shrink-0 items-center justify-center gap-1.5 rounded-[10px] bg-transparent px-0 py-2 text-[13px] font-medium leading-5 text-[#186179] outline-none focus-visible:ring-2 focus-visible:ring-[#186179] focus-visible:ring-offset-2"
+        >
+          <svg viewBox="0 0 24 24" fill="none" aria-hidden className="size-3.5 shrink-0">
+            <path
+              d="M12 5v14M5 12h14"
+              stroke="currentColor"
+              strokeWidth={2}
+              strokeLinecap="round"
+            />
+          </svg>
+          {access ? 'Edit property access' : 'Add property access'}
+        </button>
+      </span>
+    </div>
+  ) : null
+
   return (
     <section className="sa-surface overflow-hidden rounded-[10px] border border-[#e5e7eb] bg-white shadow-[0px_1px_2px_-1px_rgba(0,0,0,0.06)]">
       {!query ? (
@@ -354,6 +393,7 @@ export function PropertyHomeDataPanel({
             </p>
           </div>
           {afterHomeValue}
+          {accessAction}
         </>
       ) : (
         <>
@@ -448,32 +488,55 @@ export function PropertyHomeDataPanel({
                 />
               </FactsCategory>
               {accessGroups.length > 0 ? (
-                <FactsCategory title="Property access">
+                <FactsCategory
+                  title="Property access"
+                  action={
+                    <button
+                      type="button"
+                      disabled={accessDeleting}
+                      onClick={() => {
+                        const building = buildingName?.trim() ?? ''
+                        if (!building || !access) return
+                        const previous = access
+                        setAccess(null)
+                        setAccessError(null)
+                        setAccessDeleting(true)
+                        void clearPropertyAccess(building)
+                          .then(() => {
+                            notifyPropertyDetailsChanged(building)
+                          })
+                          .catch((err) => {
+                            setAccess(previous)
+                            setAccessError(
+                              getErrorMessage(err, 'Could not delete property access.'),
+                            )
+                          })
+                          .finally(() => {
+                            setAccessDeleting(false)
+                          })
+                      }}
+                      className="sa-press inline-flex h-8 w-fit shrink-0 items-center justify-center gap-1.5 rounded-[8px] bg-transparent px-2 text-[12px] font-medium leading-4 text-[#a03e3e] outline-none transition-colors hover:bg-[#fef2f2] hover:text-[#8a2f2f] focus-visible:ring-2 focus-visible:ring-[#a03e3e] focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      <svg viewBox="0 0 16 16" fill="none" className="size-[14px]" aria-hidden>
+                        <path
+                          d="M3.5 4.5h9M6.5 4.5V3.2c0-.4.3-.7.7-.7h1.6c.4 0 .7.3.7.7v1.3M5.2 4.5v8.2c0 .6.4 1 1 1h3.6c.6 0 1-.4 1-1V4.5M6.8 7v4M9.2 7v4"
+                          stroke="currentColor"
+                          strokeWidth="1.3"
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                        />
+                      </svg>
+                      Delete
+                    </button>
+                  }
+                >
                   {accessGroups.map((group) => (
                     <FactsGroup key={group.title} title={group.title} items={group.items} />
                   ))}
                 </FactsCategory>
               ) : null}
             </div>
-            {onAddPropertyAccess ? (
-              <div className="mt-4 flex justify-start">
-                <button
-                  type="button"
-                  onClick={onAddPropertyAccess}
-                  className="sa-press inline-flex shrink-0 items-center justify-center gap-1.5 rounded-[10px] bg-transparent px-0 py-2 text-[13px] font-medium leading-5 text-[#186179] outline-none focus-visible:ring-2 focus-visible:ring-[#186179] focus-visible:ring-offset-2"
-                >
-                  <svg viewBox="0 0 24 24" fill="none" aria-hidden className="size-3.5 shrink-0">
-                    <path
-                      d="M12 5v14M5 12h14"
-                      stroke="currentColor"
-                      strokeWidth={2}
-                      strokeLinecap="round"
-                    />
-                  </svg>
-                  {access ? 'Edit property access' : 'Add property access'}
-                </button>
-              </div>
-            ) : null}
+            {accessAction}
           </div>
         </>
       )}

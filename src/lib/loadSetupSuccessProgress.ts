@@ -1,6 +1,6 @@
 import { getActiveLandlordId } from '@/lib/activeLandlord'
 import { readLocalOnboardingState } from '@/lib/onboarding'
-import { isAnyPropertyDetailsComplete } from '@/lib/propertyDetailsCompleteness'
+import { loadPropertySetupModulesComplete } from '@/lib/propertyDetailsCompleteness'
 import { listPropertiesForLandlord } from '@/lib/properties'
 import {
   isSetupSuccessTestDeliveryComplete,
@@ -64,7 +64,7 @@ export async function loadSetupSuccessProgress(
   }
 
   const properties = propertiesResult.ok ? propertiesResult.properties : []
-  const propertyDetailsComplete = await isAnyPropertyDetailsComplete(properties)
+  const propertySetup = await loadPropertySetupModulesComplete(properties)
   const rules = readLocalOnboardingState()?.approvalRules
 
   return resolveSetupSuccessProgress({
@@ -72,7 +72,9 @@ export async function loadSetupSuccessProgress(
     vendorCount: vendorRows.length,
     verifiedVendorCount: vendorRows.filter((row) => row.overridden || verifiedIds.has(row.id))
       .length,
-    propertyDetailsComplete,
+    propertyAccessComplete: propertySetup.access,
+    propertyIntelligenceComplete: propertySetup.intelligence,
+    propertyInsuranceComplete: propertySetup.insurance,
     hasMaintenancePreferences: Number.isFinite(rules?.autoApprovalThreshold),
     maintenanceRequestCount: ticketsResult.count ?? 0,
     hasTestDelivery: isSetupSuccessTestDeliveryComplete(landlordId),

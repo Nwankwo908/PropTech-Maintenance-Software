@@ -133,6 +133,7 @@ export function mapPortfolioInsuranceToPropertyFields(
         coverageStartDate: asText(dwelling.policy_effective_date),
         coverageEndDate: asText(dwelling.policy_expiration_date),
         claimsContactName: asText(dwelling.producer_agency_name),
+        claimsPhone: asText(dwelling.claims_phone),
         additionalInsured: false,
         policyType: policyTypeFromDocumentType(dwelling.document_type),
         premium: amountToInput(dwelling.total_annual_premium),
@@ -213,8 +214,8 @@ export async function extractInsuranceBinder(
     const pageTexts = await extractPdfPageTexts(file)
     const relevant = findRelevantInsurancePages(pageTexts)
     pageImages = await renderPdfFileToJpegDataUrls(file, {
-      pageNumbers: relevant.length > 0 ? relevant : [1, 2, 3, 4, 5],
-      maxPages: 5,
+      pageNumbers: relevant.length > 0 ? relevant : undefined,
+      maxPages: relevant.length > 0 ? INSURANCE_SELECTED_PAGES_MAX : INSURANCE_PAGE_FALLBACK_MAX,
     })
   } catch {
     pageImages = []

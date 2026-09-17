@@ -12,6 +12,22 @@ import {
   welcomeTextsComplete,
 } from './setupSuccessChecklist'
 
+function progressInput(
+  overrides: Partial<Parameters<typeof resolveSetupSuccessProgress>[0]> = {},
+): Parameters<typeof resolveSetupSuccessProgress>[0] {
+  return {
+    residents: [],
+    vendorCount: 0,
+    verifiedVendorCount: 0,
+    propertyAccessComplete: false,
+    propertyIntelligenceComplete: false,
+    propertyInsuranceComplete: false,
+    hasMaintenancePreferences: false,
+    maintenanceRequestCount: 0,
+    ...overrides,
+  }
+}
+
 const memory = new Map<string, string>()
 const localStorageMock = {
   getItem: (key: string) => memory.get(key) ?? null,
@@ -55,71 +71,53 @@ describe('setupSuccessChecklist', () => {
 
   it('marks invite vendors complete after at least one vendor is added', () => {
     expect(
-      resolveSetupSuccessProgress({
-        residents: [],
-        vendorCount: 0,
-        verifiedVendorCount: 0,
-        propertyDetailsComplete: false,
-        hasMaintenancePreferences: false,
-        maintenanceRequestCount: 0,
-      }).items.find((item) => item.id === 'verify_vendors')?.done,
+      resolveSetupSuccessProgress(progressInput()).items.find((item) => item.id === 'verify_vendors')
+        ?.done,
     ).toBe(false)
     expect(
-      resolveSetupSuccessProgress({
-        residents: [],
-        vendorCount: 1,
-        verifiedVendorCount: 0,
-        propertyDetailsComplete: false,
-        hasMaintenancePreferences: false,
-        maintenanceRequestCount: 0,
-      }).items.find((item) => item.id === 'verify_vendors')?.done,
+      resolveSetupSuccessProgress(progressInput({ vendorCount: 1 })).items.find(
+        (item) => item.id === 'verify_vendors',
+      )?.done,
     ).toBe(true)
   })
 
   it('counts completed steps for the progress bar', () => {
-    const progress = resolveSetupSuccessProgress({
-      residents: [{ phone: '2015550100', activationStatus: 'waiting' }],
-      vendorCount: 1,
-      verifiedVendorCount: 0,
-      propertyDetailsComplete: true,
-      hasMaintenancePreferences: true,
-      maintenanceRequestCount: 0,
-    })
-    expect(progress.total).toBe(5)
-    expect(progress.doneCount).toBe(4)
+    const progress = resolveSetupSuccessProgress(
+      progressInput({
+        residents: [{ phone: '2015550100', activationStatus: 'waiting' }],
+        vendorCount: 1,
+        propertyAccessComplete: true,
+        propertyIntelligenceComplete: true,
+        propertyInsuranceComplete: true,
+        hasMaintenancePreferences: true,
+      }),
+    )
+    expect(progress.total).toBe(7)
+    expect(progress.doneCount).toBe(6)
     expect(progress.items.map((item) => [item.id, item.done])).toEqual([
       ['welcome_texts', true],
       ['verify_vendors', true],
-      ['property_details', true],
+      ['property_access', true],
+      ['property_intelligence', true],
+      ['property_insurance', true],
       ['maintenance_prefs', true],
       ['test_request', false],
     ])
   })
 
   it('sends the test request step to Notifications Test delivery', () => {
-    const item = resolveSetupSuccessProgress({
-      residents: [],
-      vendorCount: 0,
-      verifiedVendorCount: 0,
-      propertyDetailsComplete: false,
-      hasMaintenancePreferences: false,
-      maintenanceRequestCount: 0,
-    }).items.find((row) => row.id === 'test_request')
+    const item = resolveSetupSuccessProgress(progressInput()).items.find(
+      (row) => row.id === 'test_request',
+    )
     expect(item?.to).toBe('/admin/settings/operations/notifications#test-delivery')
     expect(item?.to.includes('/request')).toBe(false)
   })
 
   it('checks off the test request after Test delivery is used', () => {
     expect(
-      resolveSetupSuccessProgress({
-        residents: [],
-        vendorCount: 0,
-        verifiedVendorCount: 0,
-        propertyDetailsComplete: false,
-        hasMaintenancePreferences: false,
-        maintenanceRequestCount: 0,
-        hasTestDelivery: true,
-      }).items.find((item) => item.id === 'test_request')?.done,
+      resolveSetupSuccessProgress(progressInput({ hasTestDelivery: true })).items.find(
+        (item) => item.id === 'test_request',
+      )?.done,
     ).toBe(true)
     markSetupSuccessTestDeliveryComplete(LIMITED_ALPHA_1_LANDLORD_ID)
     expect(isSetupSuccessTestDeliveryComplete(LIMITED_ALPHA_1_LANDLORD_ID)).toBe(true)
@@ -127,19 +125,31 @@ describe('setupSuccessChecklist', () => {
     expect(isSetupSuccessTestDeliveryComplete(LIMITED_ALPHA_1_LANDLORD_ID)).toBe(false)
   })
 
-  it('does not check property details until at least one property has details filled', () => {
-    const progress = resolveSetupSuccessProgress({
-      residents: [],
-      vendorCount: 0,
-      verifiedVendorCount: 0,
-      propertyDetailsComplete: false,
-      hasMaintenancePreferences: false,
-      maintenanceRequestCount: 0,
+  it('tracks property access, intelligence, and insurance separately', () => {
+    const progress = resolveSetupSuccessProgress(progressInput())
+    expect(progress.items.find((item) => item.id === 'property_details')).toBeUndefined()
+    expect(progress.items.find((item) => item.id === 'property_access')).toMatchObject({
+      label: 'Property access',
+      done: false,
     })
-    expect(progress.items.find((item) => item.id === 'property_details')?.done).toBe(false)
-    expect(progress.items.find((item) => item.id === 'property_details')?.label).toBe(
-      'Property details',
+    expect(progress.items.find((item) => item.id === 'property_intelligence')).toMatchObject({
+      label: 'Property intelligence',
+      done: false,
+    })
+    expect(progress.items.find((item) => item.id === 'property_insurance')).toMatchObject({
+      label: 'Property insurance',
+      done: false,
+    })
+    const filled = resolveSetupSuccessProgress(
+      progressInput({
+        propertyAccessComplete: true,
+        propertyIntelligenceComplete: true,
+        propertyInsuranceComplete: true,
+      }),
     )
+    expect(filled.items.find((item) => item.id === 'property_access')?.done).toBe(true)
+    expect(filled.items.find((item) => item.id === 'property_intelligence')?.done).toBe(true)
+    expect(filled.items.find((item) => item.id === 'property_insurance')?.done).toBe(true)
   })
 
   it('remembers when the setup card is closed until onboarding reset', () => {
@@ -151,14 +161,13 @@ describe('setupSuccessChecklist', () => {
   })
 
   it('reports percent complete for the collapsed nav hint', () => {
-    const progress = resolveSetupSuccessProgress({
-      residents: [{ phone: '2015550100', activationStatus: 'waiting' }],
-      vendorCount: 1,
-      verifiedVendorCount: 1,
-      propertyDetailsComplete: false,
-      hasMaintenancePreferences: false,
-      maintenanceRequestCount: 0,
-    })
-    expect(setupSuccessPercent(progress)).toBe(40)
+    const progress = resolveSetupSuccessProgress(
+      progressInput({
+        residents: [{ phone: '2015550100', activationStatus: 'waiting' }],
+        vendorCount: 1,
+        verifiedVendorCount: 1,
+      }),
+    )
+    expect(setupSuccessPercent(progress)).toBe(29)
   })
 })

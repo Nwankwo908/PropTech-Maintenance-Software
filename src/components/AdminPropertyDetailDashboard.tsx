@@ -91,6 +91,7 @@ import {
   dismissSetupSuccessCheckboxGuide,
   isSetupSuccessCheckboxGuideActive,
   isSetupSuccessCheckboxGuideNavigation,
+  SETUP_SUCCESS_PROPERTY_ACCESS_GUIDE_MESSAGE,
   SETUP_SUCCESS_PROPERTY_TAB_GUIDE_MESSAGE,
 } from '@/lib/setupSuccessGuide'
 
@@ -265,6 +266,11 @@ export function AdminPropertyDetailDashboard() {
   )
   const [propertyTabGuideRunId, setPropertyTabGuideRunId] = useState(0)
   const propertyDetailsTabRef = useRef<HTMLElement | null>(null)
+  const [showPropertyAccessGuide, setShowPropertyAccessGuide] = useState(() =>
+    isSetupSuccessCheckboxGuideActive(location.state, 'property_access'),
+  )
+  const [propertyAccessGuideRunId, setPropertyAccessGuideRunId] = useState(0)
+  const propertyAccessGuideRef = useRef<HTMLElement | null>(null)
 
   const [activeTab, setActiveTab] = useState<PropertyTab>(() =>
     parsePropertyDetailTab(searchParams.get('tab')),
@@ -318,6 +324,16 @@ export function AdminPropertyDetailDashboard() {
   }, [location.pathname, location.search, location.state, navigate])
 
   useEffect(() => {
+    if (!isSetupSuccessCheckboxGuideActive(location.state, 'property_access')) return
+    setShowPropertyAccessGuide(true)
+    setActiveTab('overview')
+    setPropertyAccessGuideRunId((value) => value + 1)
+    if (isSetupSuccessCheckboxGuideNavigation(location.state, 'property_access')) {
+      navigate(location.pathname, { replace: true, state: {} })
+    }
+  }, [location.pathname, location.state, navigate])
+
+  useEffect(() => {
     if (!showPropertyTabGuide) return
     propertyDetailsTabRef.current?.scrollIntoView({
       block: 'nearest',
@@ -325,6 +341,15 @@ export function AdminPropertyDetailDashboard() {
       behavior: 'smooth',
     })
   }, [showPropertyTabGuide, building, loading])
+
+  useEffect(() => {
+    if (!showPropertyAccessGuide || activeTab !== 'overview') return
+    propertyAccessGuideRef.current?.scrollIntoView({
+      block: 'center',
+      inline: 'nearest',
+      behavior: 'smooth',
+    })
+  }, [showPropertyAccessGuide, activeTab, building, loading])
 
   const refreshResidents = useCallback(async () => {
     if (!supabase) return
@@ -1233,9 +1258,15 @@ export function AdminPropertyDetailDashboard() {
     <main className="flex min-h-0 flex-1 flex-col px-8 pb-4">
       <SetupSuccessCheckboxGuide
         key={propertyTabGuideRunId}
-        active={showPropertyTabGuide && !loading}
+        active={showPropertyTabGuide && !loading && !showPropertyAccessGuide}
         targetRef={propertyDetailsTabRef}
         message={SETUP_SUCCESS_PROPERTY_TAB_GUIDE_MESSAGE}
+      />
+      <SetupSuccessCheckboxGuide
+        key={`access-${propertyAccessGuideRunId}`}
+        active={showPropertyAccessGuide && !loading && activeTab === 'overview'}
+        targetRef={propertyAccessGuideRef}
+        message={SETUP_SUCCESS_PROPERTY_ACCESS_GUIDE_MESSAGE}
       />
       <div className="py-6">
         <Link
@@ -1427,7 +1458,12 @@ export function AdminPropertyDetailDashboard() {
             landlordId={getActiveLandlordId()}
             address={overviewPropertyAddress || null}
             buildingName={building}
-            onAddPropertyAccess={() => setPropertyAccessRailOpen(true)}
+            onAddPropertyAccess={() => {
+              dismissSetupSuccessCheckboxGuide('property_access')
+              setShowPropertyAccessGuide(false)
+              setPropertyAccessRailOpen(true)
+            }}
+            accessActionRef={propertyAccessGuideRef}
             afterHomeValue={
               <div className="flex min-w-0 flex-col gap-4 px-4 pb-6 lg:px-6">
                 <h3 className="text-[24px] font-bold leading-8 tracking-[0.07px] text-[#0a0a0a]">

@@ -39,7 +39,7 @@ import {
   SETUP_SUCCESS_ITEMS,
   shouldShowSetupSuccessCard,
 } from '@/lib/setupSuccessChecklist'
-import { isAnyPropertyDetailsComplete, PROPERTY_DETAILS_CHANGED_EVENTS } from '@/lib/propertyDetailsCompleteness'
+import { loadPropertySetupModulesComplete, PROPERTY_DETAILS_CHANGED_EVENTS } from '@/lib/propertyDetailsCompleteness'
 import { setupCheckboxGuideLinkState, markSetupSuccessCheckboxGuidePending } from '@/lib/setupSuccessGuide'
 import { landlordHasPayments } from '@shared/landlordCapabilities'
 import { cityStateZipForBuildingName, listPropertiesForLandlord, type PropertyRecord } from '@/lib/properties'
@@ -876,7 +876,11 @@ export function AdminOverviewDashboard() {
     runIds: new Set(),
   })
   const [canonicalProperties, setCanonicalProperties] = useState<PropertyRecord[]>([])
-  const [propertyDetailsComplete, setPropertyDetailsComplete] = useState(false)
+  const [propertySetupModules, setPropertySetupModules] = useState({
+    access: false,
+    intelligence: false,
+    insurance: false,
+  })
   const [setupSuccessDismissed, setSetupSuccessDismissed] = useState(isSetupSuccessCardDismissed)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -1357,8 +1361,8 @@ export function AdminOverviewDashboard() {
   useEffect(() => {
     let cancelled = false
     const refresh = () => {
-      void isAnyPropertyDetailsComplete(canonicalProperties).then((complete) => {
-        if (!cancelled) setPropertyDetailsComplete(complete)
+      void loadPropertySetupModulesComplete(canonicalProperties).then((complete) => {
+        if (!cancelled) setPropertySetupModules(complete)
       })
     }
     refresh()
@@ -1392,12 +1396,14 @@ export function AdminOverviewDashboard() {
       residents: overviewResidents,
       vendorCount: vendors.length,
       verifiedVendorCount: vendors.filter((vendor) => vendor.verified).length,
-      propertyDetailsComplete,
+      propertyAccessComplete: propertySetupModules.access,
+      propertyIntelligenceComplete: propertySetupModules.intelligence,
+      propertyInsuranceComplete: propertySetupModules.insurance,
       hasMaintenancePreferences: Number.isFinite(rules?.autoApprovalThreshold),
       maintenanceRequestCount: tickets.length,
       hasTestDelivery: isSetupSuccessTestDeliveryComplete(),
     })
-  }, [overviewResidents, vendors, propertyDetailsComplete, tickets.length])
+  }, [overviewResidents, vendors, propertySetupModules, tickets.length])
 
   const showSetupSuccess =
     shouldShowSetupSuccessCard(setupSuccessProgress) && !setupSuccessDismissed

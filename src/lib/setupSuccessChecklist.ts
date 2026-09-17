@@ -16,8 +16,18 @@ export const SETUP_SUCCESS_ITEMS = [
     to: '/admin/vendors',
   },
   {
-    id: 'property_details',
-    label: 'Property details',
+    id: 'property_access',
+    label: 'Property access',
+    to: '/admin/properties',
+  },
+  {
+    id: 'property_intelligence',
+    label: 'Property intelligence',
+    to: '/admin/properties',
+  },
+  {
+    id: 'property_insurance',
+    label: 'Property insurance',
     to: '/admin/properties',
   },
   {
@@ -60,7 +70,9 @@ export function resolveSetupSuccessProgress(input: {
   residents: { phone?: string | null; activationStatus?: string | null }[]
   vendorCount: number
   verifiedVendorCount: number
-  propertyDetailsComplete: boolean
+  propertyAccessComplete: boolean
+  propertyIntelligenceComplete: boolean
+  propertyInsuranceComplete: boolean
   hasMaintenancePreferences: boolean
   maintenanceRequestCount: number
   hasTestDelivery?: boolean
@@ -68,7 +80,9 @@ export function resolveSetupSuccessProgress(input: {
   const doneById: Record<SetupSuccessItemId, boolean> = {
     welcome_texts: welcomeTextsComplete(input.residents),
     verify_vendors: input.vendorCount > 0,
-    property_details: input.propertyDetailsComplete,
+    property_access: input.propertyAccessComplete,
+    property_intelligence: input.propertyIntelligenceComplete,
+    property_insurance: input.propertyInsuranceComplete,
     maintenance_prefs: input.hasMaintenancePreferences,
     test_request: Boolean(input.hasTestDelivery) || input.maintenanceRequestCount > 0,
   }

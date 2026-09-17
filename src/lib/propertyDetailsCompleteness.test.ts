@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   areAllPropertiesDetailsComplete,
   isAnyPropertyDetailsComplete,
+  loadPropertySetupModulesComplete,
   propertyDetailsHasAnySection,
   propertyDetailsSectionsComplete,
 } from './propertyDetailsCompleteness'
@@ -60,5 +61,10 @@ describe('portfolio property details completeness', () => {
   it('does not count an empty portfolio as complete', async () => {
     expect(await isAnyPropertyDetailsComplete([])).toBe(false)
     expect(await areAllPropertiesDetailsComplete([])).toBe(false)
+    expect(await loadPropertySetupModulesComplete([])).toEqual({
+      access: false,
+      intelligence: false,
+      insurance: false,
+    })
   })
 })

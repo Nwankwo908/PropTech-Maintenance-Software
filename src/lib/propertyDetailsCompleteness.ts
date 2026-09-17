@@ -139,12 +139,18 @@ export function notifyPropertyDetailsChanged(building?: string): void {
   }
 }
 
-export async function isPropertyDetailsComplete(
+export async function loadPropertyDetailsSections(
   building: string,
-  _initialYearBuilt?: number | null,
-): Promise<boolean> {
+): Promise<{
+  inspection: boolean
+  access: boolean
+  insurance: boolean
+  history: boolean
+}> {
   const name = building.trim()
-  if (!name) return false
+  if (!name) {
+    return { inspection: false, access: false, insurance: false, history: false }
+  }
 
   const inspection = await hasStoredInspectionWork(name)
   const history =
@@ -153,14 +159,55 @@ export async function isPropertyDetailsComplete(
   const insurance = loadInsuranceHasContent(name)
 
   const access = await loadPropertyAccess(name)
-  const accessFilled = Boolean(access.updatedAt) || propertyAccessHasContent(access)
+  const accessFilled = propertyAccessHasContent(access)
 
-  return propertyDetailsHasAnySection({
+  return {
     inspection,
     access: accessFilled,
     insurance,
     history,
-  })
+  }
+}
+
+export async function isPropertyDetailsComplete(
+  building: string,
+  _initialYearBuilt?: number | null,
+): Promise<boolean> {
+  const name = building.trim()
+  if (!name) return false
+  return propertyDetailsHasAnySection(await loadPropertyDetailsSections(name))
+}
+
+export type PropertySetupModulesComplete = {
+  access: boolean
+  intelligence: boolean
+  insurance: boolean
+}
+
+/** True when at least one named property has that setup-success module filled. */
+export async function loadPropertySetupModulesComplete(
+  properties: { name: string; yearBuilt?: number | null }[],
+): Promise<PropertySetupModulesComplete> {
+  const unique = new Map<string, number | null | undefined>()
+  for (const property of properties) {
+    const name = property.name.trim()
+    if (!name) continue
+    if (!unique.has(name)) unique.set(name, property.yearBuilt)
+  }
+  const result: PropertySetupModulesComplete = {
+    access: false,
+    intelligence: false,
+    insurance: false,
+  }
+  if (unique.size === 0) return result
+  for (const [name] of unique) {
+    const sections = await loadPropertyDetailsSections(name)
+    if (sections.access) result.access = true
+    if (sections.inspection) result.intelligence = true
+    if (sections.insurance) result.insurance = true
+    if (result.access && result.intelligence && result.insurance) break
+  }
+  return result
 }
 
 /** True when at least one named property has any Property Details section filled. */

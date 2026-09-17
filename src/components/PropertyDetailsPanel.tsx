@@ -938,6 +938,7 @@ function InsuranceExpandedPanel({
   extracting = false,
   extractLabel = null,
   extractProgress = 0,
+  quoteSlot,
 }: {
   building: string
   insurance: InsuranceProfile
@@ -949,86 +950,141 @@ function InsuranceExpandedPanel({
   extracting?: boolean
   extractLabel?: string | null
   extractProgress?: number
+  quoteSlot?: ReactNode
 }) {
   const binderInputId = useId()
   const binderInputRef = useRef<HTMLInputElement>(null)
   const [dragging, setDragging] = useState(false)
   const hasDraft = insuranceFormHasInput(insurance)
+  const policyInPrimary = Boolean(savedInsurance) && !extracting
+
+  const binderDropzone = (
+    <div
+      className={[
+        'sa-dropzone flex w-full cursor-pointer flex-col items-center justify-center gap-3 rounded-[12px] border-2 border-dashed bg-[#f8fafc]',
+        policyInPrimary ? 'min-h-[200px] px-8 py-8' : 'min-h-[320px] px-10 py-12',
+        dragging ? 'is-dragging border-[#94a3b8]' : 'border-[#e2e8f0]',
+        extracting ? 'opacity-80' : '',
+      ].join(' ')}
+      data-dragging={dragging ? 'true' : 'false'}
+      role="button"
+      tabIndex={extracting ? -1 : 0}
+      onClick={() => {
+        if (!extracting) binderInputRef.current?.click()
+      }}
+      onKeyDown={(e) => {
+        if (extracting) return
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault()
+          binderInputRef.current?.click()
+        }
+      }}
+      onDragEnter={(e) => {
+        e.preventDefault()
+        if (!extracting) setDragging(true)
+      }}
+      onDragOver={(e) => {
+        e.preventDefault()
+        if (!extracting) setDragging(true)
+      }}
+      onDragLeave={() => setDragging(false)}
+      onDrop={(e) => {
+        e.preventDefault()
+        setDragging(false)
+        if (!extracting) onBinderFiles(e.dataTransfer.files)
+      }}
+    >
+      <input
+        ref={binderInputRef}
+        id={binderInputId}
+        type="file"
+        accept=".pdf,image/*,application/pdf"
+        className="sr-only"
+        disabled={extracting}
+        onClick={(e) => e.stopPropagation()}
+        onChange={(e) => {
+          onBinderFiles(e.target.files)
+          if (binderInputRef.current) binderInputRef.current.value = ''
+        }}
+      />
+      <img
+        src={insuranceUploadCloudIcon}
+        alt=""
+        className="size-8 object-contain"
+        aria-hidden
+      />
+      <div className="flex flex-col items-center gap-1 text-center">
+        <p className="text-[14px] font-semibold text-[#0d0f11]">
+          {policyInPrimary ? 'Replace Insurance Binder' : 'Upload Insurance Binder'}
+        </p>
+        <p className="text-[12px] text-[#64748b]">
+          {extracting && extractLabel ? extractLabel : 'PDF or scanned documents'}
+        </p>
+      </div>
+      {extracting ? (
+        <div className="h-1.5 w-full max-w-[220px] overflow-hidden rounded-full bg-[#e2e8f0]">
+          <div
+            className="h-full rounded-full bg-[#187960] transition-[width] duration-300"
+            style={{ width: `${Math.min(100, Math.max(0, extractProgress))}%` }}
+          />
+        </div>
+      ) : (
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation()
+            binderInputRef.current?.click()
+          }}
+          className="mt-1 flex size-10 items-center justify-center rounded-[10px] bg-transparent text-[#186179] outline-none hover:text-[#0f4a5c] focus-visible:ring-2 focus-visible:ring-[#186179] disabled:text-[#94a3b8]"
+          aria-label={policyInPrimary ? 'Replace insurance binder' : 'Upload insurance binder'}
+        >
+          <svg viewBox="0 0 24 24" fill="none" className="size-6" aria-hidden>
+            <path
+              d="M12 5v14M5 12h14"
+              stroke="currentColor"
+              strokeWidth={2}
+              strokeLinecap="round"
+            />
+          </svg>
+        </button>
+      )}
+    </div>
+  )
+
+  const policyCard = savedInsurance ? (
+    <PropertyInsurancePolicyCard
+      className={policyInPrimary ? 'h-full' : undefined}
+      insurance={{
+        policyType: savedInsurance.policyType,
+        building,
+        carrier: savedInsurance.carrier,
+        policyNumber: savedInsurance.policyNumber,
+        premium: savedInsurance.premium,
+        coverageAmount: savedInsurance.coverageAmount,
+        deductible: savedInsurance.deductible,
+        coverageStartDate: savedInsurance.coverageStartDate,
+        coverageEndDate: savedInsurance.coverageEndDate,
+        dwellingCoverage: savedInsurance.dwellingCoverage,
+        otherStructures: savedInsurance.otherStructures,
+        liability: savedInsurance.liability,
+        lossOfRentalIncome: savedInsurance.lossOfRentalIncome,
+        agent: savedInsurance.claimsContactName,
+        claimHotline: savedInsurance.claimsPhone,
+        binderFileName: savedInsurance.binderFileName,
+        binderFileUrl: savedInsurance.binderFileUrl,
+        binderFileSize: savedInsurance.binderFileSize,
+        binderUploadedAt: savedInsurance.binderUploadedAt,
+      }}
+      onEdit={onEditSaved}
+      onDelete={onDeleteSaved}
+    />
+  ) : null
 
   return (
-    <div className="flex h-full min-h-0 flex-col gap-5">
-      <div
-        className={[
-          'sa-dropzone flex min-h-[320px] w-full flex-1 flex-col items-center justify-center gap-3 rounded-[12px] border-2 border-dashed bg-[#f8fafc] px-10 py-12',
-          dragging ? 'is-dragging border-[#94a3b8]' : 'border-[#e2e8f0]',
-          extracting ? 'opacity-80' : '',
-        ].join(' ')}
-        data-dragging={dragging ? 'true' : 'false'}
-        onDragEnter={(e) => {
-          e.preventDefault()
-          if (!extracting) setDragging(true)
-        }}
-        onDragOver={(e) => {
-          e.preventDefault()
-          if (!extracting) setDragging(true)
-        }}
-        onDragLeave={() => setDragging(false)}
-        onDrop={(e) => {
-          e.preventDefault()
-          setDragging(false)
-          if (!extracting) onBinderFiles(e.dataTransfer.files)
-        }}
-      >
-        <input
-          ref={binderInputRef}
-          id={binderInputId}
-          type="file"
-          accept=".pdf,image/*,application/pdf"
-          className="sr-only"
-          disabled={extracting}
-          onChange={(e) => {
-            onBinderFiles(e.target.files)
-            if (binderInputRef.current) binderInputRef.current.value = ''
-          }}
-        />
-        <img
-          src={insuranceUploadCloudIcon}
-          alt=""
-          className="size-8 object-contain"
-          aria-hidden
-        />
-        <div className="flex flex-col items-center gap-1 text-center">
-          <p className="text-[14px] font-semibold text-[#0d0f11]">Upload Insurance Binder</p>
-          <p className="text-[12px] text-[#64748b]">
-            {extracting && extractLabel
-              ? extractLabel
-              : 'PDF or scanned documents'}
-          </p>
-        </div>
-        {extracting ? (
-          <div className="h-1.5 w-full max-w-[220px] overflow-hidden rounded-full bg-[#e2e8f0]">
-            <div
-              className="h-full rounded-full bg-[#187960] transition-[width] duration-300"
-              style={{ width: `${Math.min(100, Math.max(0, extractProgress))}%` }}
-            />
-          </div>
-        ) : (
-          <button
-            type="button"
-            onClick={() => binderInputRef.current?.click()}
-            className="mt-1 flex size-10 items-center justify-center rounded-[10px] bg-transparent text-[#186179] outline-none hover:text-[#0f4a5c] focus-visible:ring-2 focus-visible:ring-[#186179] disabled:text-[#94a3b8]"
-            aria-label="Upload insurance binder"
-          >
-            <svg viewBox="0 0 24 24" fill="none" className="size-6" aria-hidden>
-              <path
-                d="M12 5v14M5 12h14"
-                stroke="currentColor"
-                strokeWidth={2}
-                strokeLinecap="round"
-              />
-            </svg>
-          </button>
-        )}
+    <div className="flex min-h-0 flex-col gap-5">
+      <div className="grid grid-cols-1 gap-3 lg:grid-cols-[minmax(0,7fr)_minmax(0,3fr)] lg:items-stretch [&>*]:min-w-0">
+        {policyInPrimary ? policyCard : binderDropzone}
+        {quoteSlot}
       </div>
 
       {!savedInsurance || hasDraft ? (
@@ -1044,33 +1100,7 @@ function InsuranceExpandedPanel({
         </div>
       ) : null}
 
-      {savedInsurance ? (
-        <PropertyInsurancePolicyCard
-          insurance={{
-            policyType: savedInsurance.policyType,
-            building,
-            carrier: savedInsurance.carrier,
-            policyNumber: savedInsurance.policyNumber,
-            premium: savedInsurance.premium,
-            coverageAmount: savedInsurance.coverageAmount,
-            deductible: savedInsurance.deductible,
-            coverageStartDate: savedInsurance.coverageStartDate,
-            coverageEndDate: savedInsurance.coverageEndDate,
-            dwellingCoverage: savedInsurance.dwellingCoverage,
-            otherStructures: savedInsurance.otherStructures,
-            liability: savedInsurance.liability,
-            lossOfRentalIncome: savedInsurance.lossOfRentalIncome,
-            agent: savedInsurance.claimsContactName,
-            claimHotline: savedInsurance.claimsPhone,
-            binderFileName: savedInsurance.binderFileName,
-            binderFileUrl: savedInsurance.binderFileUrl,
-            binderFileSize: savedInsurance.binderFileSize,
-            binderUploadedAt: savedInsurance.binderUploadedAt,
-          }}
-          onEdit={onEditSaved}
-          onDelete={onDeleteSaved}
-        />
-      ) : null}
+      {policyInPrimary ? binderDropzone : policyCard}
     </div>
   )
 }
@@ -1103,10 +1133,19 @@ function HomeInspectionExpandedPanel({
   const uploadCard = (
       <div
         className={[
-          'sa-dropzone flex h-full min-h-[220px] flex-col rounded-[10px] border border-dashed bg-[#f8fafc] p-px',
+          'sa-dropzone flex h-full min-h-[220px] cursor-pointer flex-col rounded-[10px] border border-dashed bg-[#f8fafc] p-px',
           dragging ? 'is-dragging' : 'border-[#cbd5e1]',
         ].join(' ')}
         data-dragging={dragging ? 'true' : 'false'}
+        role="button"
+        tabIndex={0}
+        onClick={() => inputRef.current?.click()}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault()
+            inputRef.current?.click()
+          }
+        }}
         onDragEnter={(e) => {
           e.preventDefault()
           setDragging(true)
@@ -1144,11 +1183,15 @@ function HomeInspectionExpandedPanel({
             accept={INSPECTION_ACCEPT}
             multiple
             className="sr-only"
+            onClick={(e) => e.stopPropagation()}
             onChange={(e) => handleFiles(e.target.files)}
           />
           <button
             type="button"
-            onClick={() => inputRef.current?.click()}
+            onClick={(e) => {
+              e.stopPropagation()
+              inputRef.current?.click()
+            }}
             className="mt-1 flex size-10 items-center justify-center rounded-[10px] bg-transparent text-[#186179] outline-none hover:text-[#0f4a5c] focus-visible:ring-2 focus-visible:ring-[#186179] disabled:text-[#94a3b8]"
             aria-label="Upload inspection report"
           >
@@ -1356,7 +1399,6 @@ export function PropertyDetailsPanel({
     setInsuranceExtractStage('idle')
     setInsuranceExtractLabel(null)
     setInsuranceExtractProgress(0)
-    setExpanded(null)
     setError(null)
     setInspectionSaveMessage(null)
     return () => {
@@ -1573,7 +1615,6 @@ export function PropertyDetailsPanel({
       ) : null}
 
       {showModule('insurance') ? (
-      <div className="grid grid-cols-1 gap-3 lg:grid-cols-[minmax(0,7fr)_minmax(0,3fr)] lg:items-stretch [&>*]:min-w-0">
       <DetailCard
         icon={
           <img
@@ -1596,6 +1637,7 @@ export function PropertyDetailsPanel({
           extracting={isInsuranceBinderScanProcessing(insuranceExtractStage)}
           extractLabel={insuranceExtractLabel}
           extractProgress={insuranceExtractProgress}
+          quoteSlot={<InsuranceQuoteCard building={building} yearBuilt={initialYearBuilt} />}
           onOpenAdd={() => {
             setInsuranceRailMode('add')
             setInsuranceRailOpen(true)
@@ -1679,8 +1721,6 @@ export function PropertyDetailsPanel({
           }}
         />
       </DetailCard>
-      <InsuranceQuoteCard building={building} yearBuilt={initialYearBuilt} />
-      </div>
       ) : null}
 
       {showModule('history') ? (
@@ -1697,6 +1737,7 @@ export function PropertyDetailsPanel({
         empty={historyEmpty}
         expanded={expanded === 'history'}
         onToggle={() => toggle('history')}
+        collapsible={false}
       >
         <MaintenanceHistoryPanel
           building={building}

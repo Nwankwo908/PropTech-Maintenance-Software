@@ -102,6 +102,12 @@ function flattenPropertyPolicyRaw(raw: unknown): Record<string, unknown> {
       root.policyExpirationDate,
       carrier.expiration_date,
     ),
+    claims_phone: pick(
+      root.claims_phone,
+      carrier.claims_phone,
+      root.claimsPhone,
+      root.claims_reporting,
+    ),
     named_insured_primary: pick(
       root.named_insured_primary,
       named.primary_name,
@@ -223,6 +229,7 @@ export function normalizePropertyPolicyExtract(
     loan_number: cleanExtractedName(root.loan_number),
     occupancy_type: parseOccupancyType(root.occupancy_type),
     property_use: parsePropertyUse(root.property_use),
+    claims_phone: cleanExtractedName(root.claims_phone),
     confidence: clampConfidence(root.confidence),
     warnings: uniqueNames(root.warnings),
   }
@@ -308,6 +315,7 @@ export const DWELLING_POLICY_NESTED_FIXTURE = {
     date_issued: '2026-05-04',
     effective_date: '2026-06-27',
     expiration_date: '2027-06-27',
+    claims_phone: '1-866-277-9871',
   },
   named_insured: {
     primary_name: 'Ifunanya Okafor',
@@ -374,6 +382,7 @@ export const DWELLING_POLICY_GROUND_TRUTH: DwellingPolicyDeclarations = {
   loan_number: '0180951220',
   occupancy_type: 'Tenant',
   property_use: 'Rental Property',
+  claims_phone: '1-866-277-9871',
   confidence: 95,
   warnings: [],
 }

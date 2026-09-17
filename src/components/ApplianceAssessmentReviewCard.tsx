@@ -84,16 +84,6 @@ export function ApplianceAssessmentReviewCard({
     })
   }, [completed])
 
-  const recommendations = completed.flatMap((photo) => {
-    const result = drafts[photo.id] ?? photo.confirmedResult ?? photo.aiResult
-    return result?.maintenanceRecommendations ?? []
-  })
-
-  const saved =
-    completed.length > 0 &&
-    completed.every((photo) => photo.status === 'confirmed') &&
-    !photos.some((photo) => photo.status === 'queued' || photo.status === 'analyzing')
-
   async function handleDelete() {
     const photoIds = [...new Set(checkedIds.map((id) => id.split(':')[0] ?? id))]
     if (photoIds.length === 0) return
@@ -194,27 +184,6 @@ export function ApplianceAssessmentReviewCard({
       />
 
       {error ? <p className="mt-3 text-[12px] text-[#b91c1c]">{error}</p> : null}
-
-      {!saved ? (
-        <div className="mt-4 rounded-[10px] border border-[#e2e8f0] bg-[#f8fafc] px-4 py-3">
-          <p className="text-[13px] font-semibold text-[#0f172a]">Maintenance recommendations</p>
-          {recommendations.length > 0 ? (
-            <ul className="mt-2 list-disc space-y-1 pl-5 text-[13px] text-[#475569]">
-              {recommendations.map((rec, idx) => (
-                <li key={`${rec.action}-${idx}`}>
-                  {rec.action}
-                  {rec.suggestedIntervalMonths
-                    ? ` · every ${rec.suggestedIntervalMonths} months`
-                    : ''}
-                </li>
-              ))}
-            </ul>
-          ) : (
-            <p className="mt-1 text-[13px] text-[#64748b]">No maintenance recommendations listed.</p>
-          )}
-        </div>
-      ) : null}
-
     </div>
   )
 }

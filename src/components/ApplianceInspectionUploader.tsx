@@ -646,10 +646,22 @@ export function ApplianceInspectionUploader({
         <div className="flex h-full min-h-[220px] min-w-0 flex-col">
       <div
         className={[
-          'sa-dropzone flex h-full min-h-[220px] flex-1 flex-col rounded-[10px] border border-dashed bg-[#f8fafc] p-px',
+          'sa-dropzone flex h-full min-h-[220px] flex-1 cursor-pointer flex-col rounded-[10px] border border-dashed bg-[#f8fafc] p-px',
           dragging ? 'is-dragging' : 'border-[#cbd5e1]',
         ].join(' ')}
         data-dragging={dragging ? 'true' : 'false'}
+        role="button"
+        tabIndex={assessmentId ? 0 : -1}
+        onClick={() => {
+          if (assessmentId) openInspectionChooser()
+        }}
+        onKeyDown={(e) => {
+          if (!assessmentId) return
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault()
+            openInspectionChooser()
+          }
+        }}
         onDragEnter={(e) => {
           e.preventDefault()
           setDragging(true)
@@ -688,6 +700,7 @@ export function ApplianceInspectionUploader({
             accept={ACCEPT}
             multiple
             className="sr-only"
+            onClick={(e) => e.stopPropagation()}
             onChange={(e) => void onFilesSelected(e.target.files)}
           />
           <input
@@ -696,12 +709,16 @@ export function ApplianceInspectionUploader({
             accept={CAMERA_ACCEPT}
             capture="environment"
             className="sr-only"
+            onClick={(e) => e.stopPropagation()}
             onChange={(e) => void onFilesSelected(e.target.files)}
           />
           <button
             type="button"
             disabled={!assessmentId}
-            onClick={openInspectionChooser}
+            onClick={(e) => {
+              e.stopPropagation()
+              openInspectionChooser()
+            }}
             className="mt-1 flex size-10 items-center justify-center rounded-[10px] bg-transparent text-[#186179] outline-none hover:text-[#0f4a5c] focus-visible:ring-2 focus-visible:ring-[#186179] disabled:text-[#94a3b8]"
             aria-label={busy ? 'Analyzing photos' : 'Scan property equipment'}
           >

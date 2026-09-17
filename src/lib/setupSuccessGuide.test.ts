@@ -6,7 +6,10 @@ import {
   isSetupSuccessCheckboxGuideActive,
   isSetupSuccessCheckboxGuideNavigation,
   markSetupSuccessCheckboxGuidePending,
+  peekSetupSuccessPropertyFollowup,
+  propertyFollowupDetailTab,
   setupCheckboxGuideLinkState,
+  setupCheckboxGuidePropertyDetailState,
   setupCheckboxGuidePropertyTabState,
   shouldShowSetupSuccessCheckboxGuide,
 } from './setupSuccessGuide'
@@ -50,7 +53,13 @@ describe('setupSuccessGuide', () => {
   it('attaches coachmark navigation state to welcome texts and verify vendors', () => {
     expect(setupCheckboxGuideLinkState('welcome_texts')).toEqual({ setupCheckboxGuide: 'residents' })
     expect(setupCheckboxGuideLinkState('verify_vendors')).toEqual({ setupCheckboxGuide: 'vendors' })
-    expect(setupCheckboxGuideLinkState('property_details')).toEqual({
+    expect(setupCheckboxGuideLinkState('property_access')).toEqual({
+      setupCheckboxGuide: 'properties',
+    })
+    expect(setupCheckboxGuideLinkState('property_intelligence')).toEqual({
+      setupCheckboxGuide: 'properties',
+    })
+    expect(setupCheckboxGuideLinkState('property_insurance')).toEqual({
       setupCheckboxGuide: 'properties',
     })
     expect(setupCheckboxGuideLinkState('test_request')).toEqual({
@@ -79,8 +88,20 @@ describe('setupSuccessGuide', () => {
     expect(shouldShowSetupSuccessCheckboxGuide('residents', LIMITED_ALPHA_1_LANDLORD_ID)).toBe(false)
   })
 
-  it('arms the properties guide after property details', () => {
-    markSetupSuccessCheckboxGuidePending('property_details', LIMITED_ALPHA_1_LANDLORD_ID)
+  it('arms the properties guide after property access, intelligence, or insurance', () => {
+    markSetupSuccessCheckboxGuidePending('property_access', LIMITED_ALPHA_1_LANDLORD_ID)
+    expect(shouldShowSetupSuccessCheckboxGuide('properties', LIMITED_ALPHA_1_LANDLORD_ID)).toBe(true)
+    expect(peekSetupSuccessPropertyFollowup(LIMITED_ALPHA_1_LANDLORD_ID)).toBe('property_access')
+    expect(propertyFollowupDetailTab('property_access')).toBe('overview')
+    expect(setupCheckboxGuidePropertyDetailState('property_access')).toEqual({
+      setupCheckboxGuide: 'property_access',
+    })
+    clearSetupSuccessCheckboxGuide(LIMITED_ALPHA_1_LANDLORD_ID)
+    markSetupSuccessCheckboxGuidePending('property_intelligence', LIMITED_ALPHA_1_LANDLORD_ID)
+    expect(shouldShowSetupSuccessCheckboxGuide('properties', LIMITED_ALPHA_1_LANDLORD_ID)).toBe(true)
+    expect(peekSetupSuccessPropertyFollowup(LIMITED_ALPHA_1_LANDLORD_ID)).toBe('property_tab')
+    clearSetupSuccessCheckboxGuide(LIMITED_ALPHA_1_LANDLORD_ID)
+    markSetupSuccessCheckboxGuidePending('property_insurance', LIMITED_ALPHA_1_LANDLORD_ID)
     expect(shouldShowSetupSuccessCheckboxGuide('properties', LIMITED_ALPHA_1_LANDLORD_ID)).toBe(true)
     expect(shouldShowSetupSuccessCheckboxGuide('vendors', LIMITED_ALPHA_1_LANDLORD_ID)).toBe(false)
     expect(shouldShowSetupSuccessCheckboxGuide('residents', LIMITED_ALPHA_1_LANDLORD_ID)).toBe(false)

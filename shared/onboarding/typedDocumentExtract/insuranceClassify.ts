@@ -126,6 +126,45 @@ function lastTightCluster(pages: number[]): number[] {
   return cluster
 }
 
+function looksLikeDeclarationsContinuation(upper: string): boolean {
+  if (hasDeclarationsTitle(upper)) return true
+  const isoBoilerplate =
+    /\b(ISO|HO 00|DP 00|COPYRIGHT|FORM SCHEDULE)\b/.test(upper) &&
+    !/\b(NAMED INSURED|MORTGAGEE|COVERAGE A)\b/.test(upper)
+  if (isoBoilerplate) return false
+  const markers = [
+    'NAMED INSURED',
+    'MORTGAGEE',
+    'COVERAGE A',
+    'LOCATION OF RESIDENCE',
+    'TOTAL PREMIUM',
+    'POLICY PERIOD',
+    'CLAIMSREPORTING',
+    'CLAIMS REPORTING',
+  ]
+  const hits = markers.filter((marker) => upper.includes(marker)).length
+  return hits >= 1
+}
+
+function expandDeclarationsRange(pageTexts: string[], titlePages: number[]): number[] {
+  if (titlePages.length === 0) return []
+  const first = titlePages[0]!
+  const lastTitle = titlePages[titlePages.length - 1]!
+  let last = lastTitle
+  for (let page = lastTitle + 1; page <= pageTexts.length && page <= lastTitle + 3; page += 1) {
+    if (!looksLikeDeclarationsContinuation((pageTexts[page - 1] ?? '').toUpperCase())) break
+    last = page
+  }
+  const start = Math.max(1, first - 1)
+  const end = Math.min(pageTexts.length, last + 1)
+  const selected: number[] = []
+  for (let page = start; page <= end; page += 1) {
+    selected.push(page)
+    if (selected.length >= INSURANCE_SELECTED_PAGES_MAX) break
+  }
+  return selected
+}
+
 /**
  * Locate declarations / COI pages, then include one page of buffer on each side.
  * Do not return early checklist pages that mention Coverage A without a declarations title.
@@ -140,20 +179,7 @@ export function findRelevantInsurancePages(pageTexts: string[]): number[] {
 
   const maxScore = Math.max(...scored.map((row) => row.score))
   const bestHits = scored.filter((row) => row.score === maxScore).map((row) => row.page)
-  const cluster = lastTightCluster(bestHits)
-  const first = cluster[0]!
-  const last = cluster[cluster.length - 1]!
-  const start = Math.max(1, first - 1)
-  const end = Math.min(
-    pageTexts.length,
-    Math.max(last + 1, first + 2),
-  )
-  const selected: number[] = []
-  for (let page = start; page <= end; page += 1) {
-    selected.push(page)
-    if (selected.length >= INSURANCE_SELECTED_PAGES_MAX) break
-  }
-  return selected
+  return expandDeclarationsRange(pageTexts, lastTightCluster(bestHits))
 }
 
 export function slicePageTexts(pageTexts: string[], pageNumbers: number[]): string {

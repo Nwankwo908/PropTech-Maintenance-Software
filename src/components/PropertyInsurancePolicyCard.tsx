@@ -1,8 +1,3 @@
-import { useEffect, useId, useRef, useState } from 'react'
-import policyDownloadIcon from '@/assets/insurance/policy-download.svg'
-import policyOverflowIcon from '@/assets/insurance/policy-overflow.svg'
-import policyShareIcon from '@/assets/insurance/policy-share.svg'
-
 export type SavedPropertyInsuranceCard = {
   policyType: string
   building: string
@@ -120,24 +115,6 @@ function downloadBinder(insurance: SavedPropertyInsuranceCard) {
   link.remove()
 }
 
-async function shareBinder(insurance: SavedPropertyInsuranceCard) {
-  const title = `${policyTypeLabel(insurance.policyType)} Policy - ${insurance.building}`
-  const href = insurance.binderFileUrl?.trim()
-  try {
-    if (navigator.share) {
-      await navigator.share({
-        title,
-        text: [insurance.carrier, insurance.policyNumber].filter(Boolean).join(' · '),
-        ...(href && /^https?:/i.test(href) ? { url: href } : {}),
-      })
-      return
-    }
-    await navigator.clipboard.writeText(title)
-  } catch {
-    // user cancelled share
-  }
-}
-
 type PropertyInsurancePolicyCardProps = {
   insurance: SavedPropertyInsuranceCard
   onEdit: () => void
@@ -150,38 +127,25 @@ export function PropertyInsurancePolicyCard({
   insurance,
   onEdit,
   onDelete,
+  className,
 }: PropertyInsurancePolicyCardProps) {
-  const menuId = useId()
-  const menuRef = useRef<HTMLDivElement>(null)
-  const [menuOpen, setMenuOpen] = useState(false)
   const canDownload = Boolean(insurance.binderFileUrl?.trim())
   const typeLabel = policyTypeLabel(insurance.policyType)
   const coverage = insurance.coverageAmount.trim() || insurance.dwellingCoverage
-
-  useEffect(() => {
-    if (!menuOpen) return
-    function onPointerDown(event: MouseEvent) {
-      if (!menuRef.current?.contains(event.target as Node)) setMenuOpen(false)
-    }
-    function onKey(event: KeyboardEvent) {
-      if (event.key === 'Escape') {
-        event.stopPropagation()
-        setMenuOpen(false)
-      }
-    }
-    document.addEventListener('mousedown', onPointerDown)
-    window.addEventListener('keydown', onKey)
-    return () => {
-      document.removeEventListener('mousedown', onPointerDown)
-      window.removeEventListener('keydown', onKey)
-    }
-  }, [menuOpen])
+  const actionClass =
+    'sa-press inline-flex h-10 w-fit shrink-0 items-center justify-center gap-1.5 rounded-[8px] bg-transparent px-3 py-2 text-[12px] font-medium leading-4 outline-none transition-colors focus-visible:ring-2 focus-visible:ring-[#155dfc] focus-visible:ring-offset-2'
 
   return (
-    <div className="flex w-full min-w-0 flex-col overflow-hidden rounded-[12px] border border-solid border-[#e5e7eb] bg-white shadow-[0px_2px_8px_0px_rgba(16,24,40,0.04)]">
-      <div className="flex w-full flex-col gap-3 border-b border-solid border-[#f3f4f6] px-5 py-4 lg:flex-row lg:items-start">
-        <div className="flex min-w-0 flex-1 items-start justify-between gap-3">
-          <div className="flex min-w-0 flex-col gap-1.5">
+    <div
+      className={[
+        'flex w-full min-w-0 flex-col overflow-hidden rounded-[12px] border border-solid border-[#e5e7eb] bg-white shadow-[0px_2px_8px_0px_rgba(16,24,40,0.04)]',
+        className,
+      ]
+        .filter(Boolean)
+        .join(' ')}
+    >
+      <div className="flex w-full flex-col gap-3 border-b border-solid border-[#f3f4f6] px-5 py-4 lg:flex-row lg:items-start lg:justify-between">
+        <div className="flex min-w-0 flex-1 flex-col gap-1.5">
             <span className="inline-flex w-fit items-center rounded-full bg-[#eff6ff] px-2 py-0.5 text-[10px] font-medium leading-[15px] text-[#1447e6]">
               {typeLabel}
             </span>
@@ -189,68 +153,56 @@ export function PropertyInsurancePolicyCard({
               {typeLabel} Policy - {insurance.building}
             </h3>
             <p className="text-[12px] leading-4 text-[#99a1af]">{insurance.carrier.trim() || '—'}</p>
-          </div>
-          <div ref={menuRef} className="relative shrink-0">
-            <button
-              type="button"
-              aria-label="Insurance actions"
-              aria-haspopup="menu"
-              aria-expanded={menuOpen}
-              aria-controls={menuOpen ? menuId : undefined}
-              onClick={() => setMenuOpen((open) => !open)}
-              className="sa-press inline-flex size-8 items-center justify-center rounded-[8px] border border-solid border-[#e5e7eb] bg-white"
-            >
-              <img src={policyOverflowIcon} alt="" width={16} height={16} className="size-4" />
-            </button>
-            {menuOpen ? (
-              <div
-                id={menuId}
-                role="menu"
-                className="sa-enter absolute right-0 z-20 mt-1 min-w-[140px] overflow-hidden rounded-[10px] border border-[#e5e7eb] bg-white py-1 shadow-[0_8px_24px_rgba(16,24,40,0.12)]"
-              >
-                <button
-                  type="button"
-                  role="menuitem"
-                  className="sa-press block w-full cursor-pointer px-3 py-2 text-left text-[13px] font-medium text-[#0a0a0a] hover:bg-[#f3f4f6]"
-                  onClick={() => {
-                    setMenuOpen(false)
-                    onEdit()
-                  }}
-                >
-                  Edit
-                </button>
-                <button
-                  type="button"
-                  role="menuitem"
-                  className="sa-press block w-full cursor-pointer px-3 py-2 text-left text-[13px] font-medium text-[#a03e3e] hover:bg-[#fef2f2]"
-                  onClick={() => {
-                    setMenuOpen(false)
-                    onDelete()
-                  }}
-                >
-                  Delete
-                </button>
-              </div>
-            ) : null}
-          </div>
         </div>
-        <div className="flex min-w-0 flex-1 gap-2">
+        <div className="flex w-fit shrink-0 flex-wrap items-center justify-end gap-1">
           <button
             type="button"
             disabled={!canDownload}
             onClick={() => downloadBinder(insurance)}
-            className="sa-press inline-flex h-10 min-w-px flex-1 items-center justify-center gap-1.5 rounded-[8px] bg-[#155dfc] px-3 py-2 text-[12px] font-medium leading-4 text-white disabled:cursor-not-allowed disabled:opacity-50"
+            className={`${actionClass} text-[#4a5565] hover:bg-[#f3f4f6] hover:text-[#1e2939] disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-transparent disabled:hover:text-[#4a5565]`}
           >
-            <img src={policyDownloadIcon} alt="" width={14} height={14} className="size-[14px]" />
+            <svg viewBox="0 0 14 14" fill="none" className="size-[14px]" aria-hidden>
+              <path
+                d="M7 5.8v3.5M8.8 7.6L7 9.3 5.2 7.6M1.8 9.9V4.1c0-.8.6-1.2 1.2-1.2h3.5L7.6 4.1h3.5c.6 0 1.2.4 1.2 1.2v4.6c0 .8-.6 1.2-1.2 1.2H2.9c-.6 0-1.1-.4-1.1-1.2Z"
+                stroke="currentColor"
+                strokeWidth="1.17"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
+            </svg>
             Download
           </button>
           <button
             type="button"
-            onClick={() => void shareBinder(insurance)}
-            className="sa-press inline-flex h-10 min-w-px flex-1 items-center justify-center gap-1.5 rounded-[8px] border border-solid border-[#e5e7eb] bg-white px-3 py-2 text-[12px] font-medium leading-4 text-[#4a5565]"
+            onClick={onEdit}
+            className={`${actionClass} text-[#4a5565] hover:bg-[#f3f4f6] hover:text-[#1e2939]`}
           >
-            <img src={policyShareIcon} alt="" width={14} height={14} className="size-[14px]" />
-            Share
+            <svg viewBox="0 0 16 16" fill="none" className="size-[14px]" aria-hidden>
+              <path
+                d="M11.5 2.5l2 2M3 13l.7-3.2L11.2 2.3a1.2 1.2 0 0 1 1.7 0l.8.8a1.2 1.2 0 0 1 0 1.7L5.2 12.3 2 13l1-3.2Z"
+                stroke="currentColor"
+                strokeWidth="1.4"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
+            </svg>
+            Edit
+          </button>
+          <button
+            type="button"
+            onClick={onDelete}
+            className={`${actionClass} text-[#a03e3e] hover:bg-[#fef2f2] hover:text-[#8a2f2f]`}
+          >
+            <svg viewBox="0 0 16 16" fill="none" className="size-[14px]" aria-hidden>
+              <path
+                d="M3.5 4.5h9M6.5 4.5V3.2c0-.4.3-.7.7-.7h1.6c.4 0 .7.3.7.7v1.3M5.2 4.5v8.2c0 .6.4 1 1 1h3.6c.6 0 1-.4 1-1V4.5M6.8 7v4M9.2 7v4"
+                stroke="currentColor"
+                strokeWidth="1.3"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
+            </svg>
+            Delete
           </button>
         </div>
       </div>

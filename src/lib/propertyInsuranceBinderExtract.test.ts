@@ -43,6 +43,7 @@ describe('mapPortfolioInsuranceToPropertyFields', () => {
           coverage_d_fair_rental_value_limit: 18000,
           coverage_l_liability_limit: 300000,
           deductible_all_other_perils: 2500,
+          claims_phone: '1-866-277-9871',
         },
         insuranceCertificate: {
           named_insured: 'Ifunanya Okafor',
@@ -66,7 +67,7 @@ describe('mapPortfolioInsuranceToPropertyFields', () => {
     expect(extracted.coverageStartDate).not.toBe('2026-05-04')
     expect(extracted.additionalInsured).toBe(false)
     expect(extracted.claimsContactName).toBe('Kirstein Insurance Agency, LLC')
-    expect(extracted.claimsPhone).toBe('(561) 998-0950')
+    expect(extracted.claimsPhone).toBe('1-866-277-9871')
     expect(extracted.policyType).toBe('Dwelling')
     expect(extracted.premium).toBe('3792.53')
     expect(extracted.dwellingCoverage).toBe('208400')

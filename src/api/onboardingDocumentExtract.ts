@@ -123,6 +123,7 @@ export type PortfolioDocumentExtractPayload = {
     coverage_d_fair_rental_value_limit?: number | null
     coverage_l_liability_limit?: number | null
     deductible_all_other_perils?: number | null
+    claims_phone?: string | null
   } | null
 }
 
