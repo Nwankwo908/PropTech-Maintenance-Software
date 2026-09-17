@@ -11,7 +11,9 @@ import {
 import { shrinkPdfForExtract } from "./pdfShrink.ts"
 import { pdfPagesToJpegDataUrls } from "./pdfPageImages.ts"
 import {
+  detectWordBinaryKind,
   isWordFile,
+  wordBytesToImageDataUrls,
   wordBytesToPlainText,
   WORD_TEXT_LIMIT,
 } from "./wordDocumentText.ts"
@@ -1637,7 +1639,11 @@ export async function extractPortfolioDocument(input: {
   const rawPageImages = (input.pageImages ?? [])
     .map((item) => item.trim())
     .filter((item) => item.startsWith("data:image/"))
-  const hasPdfBytes = input.bytes.length > 0 && isPdfFile(input.fileName, input.contentType)
+  const wordLike = isWordFile(input.fileName, input.contentType)
+  const wordBinaryKind = wordLike ? detectWordBinaryKind(input.bytes) : "unknown"
+  const hasPdfBytes =
+    input.bytes.length > 0 &&
+    (isPdfFile(input.fileName, input.contentType) || wordBinaryKind === "pdf")
 
   let pdfPageTexts: string[] = []
   if (hasPdfBytes) {
@@ -1653,10 +1659,30 @@ export async function extractPortfolioDocument(input: {
     input.documentCategory.trim().toLowerCase() === "insurance_certificate" ||
     input.documentCategory.trim().toLowerCase() === "property_insurance"
 
-  const pageImages = rawPageImages.slice(
+  let pageImages = rawPageImages.slice(
     0,
     insuranceFlow ? INSURANCE_SELECTED_PAGES_MAX : 3,
   )
+
+  let wordText: string | undefined
+  if (wordLike && wordBinaryKind !== "pdf") {
+    wordText = await wordBytesToPlainText(
+      input.bytes,
+      input.fileName,
+      input.contentType,
+    )
+    if (!wordText.trim()) {
+      const wordImages = await wordBytesToImageDataUrls(input.bytes)
+      if (wordImages.length > 0) {
+        pageImages = [...pageImages, ...wordImages.filter((url) => !pageImages.includes(url))]
+          .slice(0, insuranceFlow ? INSURANCE_SELECTED_PAGES_MAX : 3)
+      } else {
+        return emptyExtractPayload([
+          "Could not read text from this Word document. Check that the file is not empty or password-protected.",
+        ])
+      }
+    }
+  }
 
   let insurancePageNumbers: number[] | undefined
   if (insuranceFlow) {
@@ -1697,7 +1723,11 @@ export async function extractPortfolioDocument(input: {
     }
   }
 
-  if (pageImages.length > 0 && (!hasPdfBytes || !pdfPageTexts.some((page) => page.trim()))) {
+  if (
+    pageImages.length > 0 &&
+    !wordText?.trim() &&
+    (!hasPdfBytes || !pdfPageTexts.some((page) => page.trim()))
+  ) {
     if (kind === "unknown") {
       kind = "generic"
     }
@@ -1706,7 +1736,7 @@ export async function extractPortfolioDocument(input: {
     }
     const intro = isTypedExtractKind(kind)
       ? typedExtractIntro(kind, input.fileName)
-      : `File: ${input.fileName}\nDocument category hint: ${input.documentCategory || "unknown"}.\nThe following images are pages from a scanned PDF. Extract portfolio data from them.`
+      : `File: ${input.fileName}\nDocument category hint: ${input.documentCategory || "unknown"}.\nThe following images are pages from the uploaded document. Extract portfolio data from them.`
     return await extractWithChatCompletions(
       input.apiKey,
       [
@@ -1737,20 +1767,6 @@ export async function extractPortfolioDocument(input: {
         ? slicePageTexts(pdfPageTexts, insurancePageNumbers)
         : pdfPageTexts.join("\n\n")
     if (pdfText) pdfText = pdfText.slice(0, 120_000)
-  }
-
-  let wordText: string | undefined
-  if (isWordFile(input.fileName, input.contentType)) {
-    wordText = await wordBytesToPlainText(
-      input.bytes,
-      input.fileName,
-      input.contentType,
-    )
-    if (!wordText.trim()) {
-      return emptyExtractPayload([
-        "Could not read text from this Word document. Check that the file is not empty or password-protected.",
-      ])
-    }
   }
 
   if (

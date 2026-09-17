@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { Suspense, useEffect, useRef, useState } from 'react'
 import { Navigate, Outlet, useLocation, useNavigate } from 'react-router-dom'
 import {
   defaultOnboardingState,
@@ -10,6 +10,14 @@ import {
 } from '@/lib/onboarding'
 import { getActiveLandlordId } from '@/lib/activeLandlord'
 import { shouldShowLimitedAlphaPostOnboardingWelcome } from '@/lib/postOnboardingWelcome'
+
+function AdminRouteFallback() {
+  return (
+    <div className="flex flex-1 items-center justify-center p-8" aria-busy="true">
+      <p className="text-[14px] text-[#6a7282]">Loading…</p>
+    </div>
+  )
+}
 
 /**
  * Prefer in-memory guard state once loaded. Exception: after Complete, localStorage
@@ -120,15 +128,15 @@ export function AdminOnboardingGuard() {
     if (onOnboardingRoute) {
       return <Navigate to="/admin" replace />
     }
-    return <Outlet />
+    return (
+      <Suspense fallback={<AdminRouteFallback />}>
+        <Outlet />
+      </Suspense>
+    )
   }
 
   if (loading) {
-    return (
-      <div className="flex flex-1 items-center justify-center p-8" aria-busy="true">
-        <p className="text-[14px] text-[#6a7282]">Loading…</p>
-      </div>
-    )
+    return <AdminRouteFallback />
   }
 
   const resolvedState = resolveGuardOnboardingState(state, readLocalOnboardingState())
@@ -148,8 +156,17 @@ export function AdminOnboardingGuard() {
     resolvedState?.onboardingStatus === 'completed' &&
     !showPostOnboardingWelcome
   ) {
-    return <Navigate to="/admin" replace />
+    return (
+      <>
+        <AdminRouteFallback />
+        <Navigate to="/admin" replace />
+      </>
+    )
   }
 
-  return <Outlet />
+  return (
+    <Suspense fallback={<AdminRouteFallback />}>
+      <Outlet />
+    </Suspense>
+  )
 }

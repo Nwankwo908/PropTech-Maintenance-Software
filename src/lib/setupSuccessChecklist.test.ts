@@ -129,15 +129,15 @@ describe('setupSuccessChecklist', () => {
     const progress = resolveSetupSuccessProgress(progressInput())
     expect(progress.items.find((item) => item.id === 'property_details')).toBeUndefined()
     expect(progress.items.find((item) => item.id === 'property_access')).toMatchObject({
-      label: 'Property access',
+      label: 'Set up property access',
       done: false,
     })
     expect(progress.items.find((item) => item.id === 'property_intelligence')).toMatchObject({
-      label: 'Property intelligence',
+      label: 'Add property details',
       done: false,
     })
     expect(progress.items.find((item) => item.id === 'property_insurance')).toMatchObject({
-      label: 'Property insurance',
+      label: 'Add insurance details',
       done: false,
     })
     const filled = resolveSetupSuccessProgress(

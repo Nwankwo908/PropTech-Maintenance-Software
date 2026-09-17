@@ -8,6 +8,7 @@ export function LandingPrerenderMarkup() {
           <a href="/#how-it-works">How It Works</a>
           <a href="/#features">Features</a>
           <a href="/admin/login">Login</a>
+          <a href="/admin/get-started">Get Started</a>
         </nav>
       </header>
       <main>

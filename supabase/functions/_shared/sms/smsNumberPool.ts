@@ -2,7 +2,7 @@ import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.49.1
 import { getSMSProvider } from "./providerFactory.ts"
 import { logGraphEvent } from "../graph/logGraphEvent.ts"
 import { normalizePhoneFlexible } from "../resident_notify.ts"
-import { LIMITED_ALPHA_1_LANDLORD_ID, LIMITED_ALPHA_1_TWILIO_SMS_NUMBER, LIMITED_ALPHA_2_LANDLORD_ID } from "../../../../shared/landlordCapabilities.ts"
+import { LIMITED_ALPHA_1_LANDLORD_ID, LIMITED_ALPHA_1_TWILIO_SMS_NUMBER, LIMITED_ALPHA_2_LANDLORD_ID, isUnusableSmsIntakeLine } from "../../../../shared/landlordCapabilities.ts"
 
 export type LandlordSmsNumberRow = {
   id: string
@@ -97,15 +97,23 @@ export async function findActiveLandlordMain(
     .eq("purpose", "landlord_main")
     .eq("status", "active")
     .order("created_at", { ascending: true })
-    .limit(1)
-    .maybeSingle()
+    .limit(10)
 
   if (error) {
     console.error("[smsNumberPool] find landlord_main", error.message)
     throw new Error("Failed to look up landlord SMS number")
   }
 
-  return (data as LandlordSmsNumberRow | null) ?? null
+  const rows = (data as LandlordSmsNumberRow[] | null) ?? []
+  return (
+    rows.find(
+      (row) =>
+        !isUnusableSmsIntakeLine({
+          phone: row.phone_number,
+          provider: row.provider,
+        }),
+    ) ?? null
+  )
 }
 
 /** Claim oldest pool number with status=available (legacy: active + unassigned). */

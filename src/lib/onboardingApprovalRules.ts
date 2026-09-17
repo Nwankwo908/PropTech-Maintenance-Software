@@ -324,9 +324,6 @@ export function validateOnboardingApprovalRules(
   rules: OnboardingApprovalRules,
 ): { ok: boolean; missing: string[] } {
   const missing: string[] = []
-  if (!Number.isFinite(rules.autoApprovalThreshold) || rules.autoApprovalThreshold < 0) {
-    missing.push('Automatic Approval Limit')
-  }
   if (rules.emergencyTypes.length === 0) {
     missing.push('At least one emergency type')
   }

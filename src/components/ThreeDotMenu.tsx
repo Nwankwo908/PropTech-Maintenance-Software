@@ -1,14 +1,19 @@
-import { useEffect, useId, useRef, useState } from 'react'
+import { useEffect, useId, useRef, useState, type Ref } from 'react'
 
 export type ThreeDotMenuItem = {
   id: string
   label: string
   onSelect: () => void
+  buttonRef?: Ref<HTMLButtonElement>
 }
 
 type ThreeDotMenuProps = {
   ariaLabel: string
   items: ThreeDotMenuItem[]
+  /** Controlled open state (e.g. setup-success coachmark). */
+  open?: boolean
+  onOpenChange?: (open: boolean) => void
+  triggerRef?: Ref<HTMLButtonElement>
 }
 
 function DotsIcon() {
@@ -21,11 +26,30 @@ function DotsIcon() {
   )
 }
 
+function assignRef<T>(ref: Ref<T> | undefined, value: T | null) {
+  if (!ref) return
+  if (typeof ref === 'function') ref(value)
+  else ref.current = value
+}
+
 /** Compact ⋯ overflow menu (property cards, list rows). */
-export function ThreeDotMenu({ ariaLabel, items }: ThreeDotMenuProps) {
+export function ThreeDotMenu({
+  ariaLabel,
+  items,
+  open: openProp,
+  onOpenChange,
+  triggerRef,
+}: ThreeDotMenuProps) {
   const menuId = useId()
   const rootRef = useRef<HTMLDivElement>(null)
-  const [open, setOpen] = useState(false)
+  const [uncontrolledOpen, setUncontrolledOpen] = useState(false)
+  const controlled = openProp !== undefined
+  const open = controlled ? openProp : uncontrolledOpen
+
+  function setOpen(next: boolean) {
+    if (!controlled) setUncontrolledOpen(next)
+    onOpenChange?.(next)
+  }
 
   useEffect(() => {
     if (!open) return
@@ -55,11 +79,12 @@ export function ThreeDotMenu({ ariaLabel, items }: ThreeDotMenuProps) {
     >
       <button
         type="button"
+        ref={(node) => assignRef(triggerRef, node)}
         aria-label={ariaLabel}
         aria-haspopup="menu"
         aria-expanded={open}
         aria-controls={open ? menuId : undefined}
-        onClick={() => setOpen((current) => !current)}
+        onClick={() => setOpen(!open)}
         className="sa-press inline-flex size-7 items-center justify-center rounded-[8px] text-[#6a7282] hover:bg-[#f3f4f6] hover:text-[#0a0a0a] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-1"
       >
         <DotsIcon />
@@ -75,6 +100,7 @@ export function ThreeDotMenu({ ariaLabel, items }: ThreeDotMenuProps) {
               key={item.id}
               type="button"
               role="menuitem"
+              ref={(node) => assignRef(item.buttonRef, node)}
               className="sa-press block w-full cursor-pointer px-3 py-2 text-left text-[13px] font-medium text-[#0a0a0a] hover:bg-[#f3f4f6]"
               onClick={() => {
                 setOpen(false)

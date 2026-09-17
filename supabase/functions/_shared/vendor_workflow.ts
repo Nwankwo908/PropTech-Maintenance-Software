@@ -149,7 +149,10 @@ export async function applyVendorStatusTransition(
 
   const { error: upErr } = await supabase
     .from("maintenance_requests")
-    .update({ vendor_work_status: next })
+    .update({
+      vendor_work_status: next,
+      ...(next === "accepted" ? { vendor_notify_error: null } : {}),
+    })
     .eq("id", params.ticketId)
     .eq("assigned_vendor_id", assignedVendorId)
 

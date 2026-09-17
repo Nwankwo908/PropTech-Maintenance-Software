@@ -11,7 +11,6 @@ import {
 } from '@/lib/onboarding'
 import { ensureProperty } from '@/lib/properties'
 import { isPropertyIdSlug } from '@/lib/propertyRoutes'
-import { citiesForState } from '@/lib/usLocations'
 
 export type { PropertyFormRow }
 
@@ -47,15 +46,6 @@ export function normalizePropertyFormRow(
     propertyManagerName: form.propertyManagerName ?? '',
     propertyManagerPhone: form.propertyManagerPhone ?? '',
   }
-}
-
-export function cityOptionsForProperty(form: PropertyFormRow): string[] {
-  const cities = [...citiesForState(form.state)]
-  const current = form.city.trim()
-  if (current && !cities.includes(current)) {
-    cities.unshift(current)
-  }
-  return cities
 }
 
 export function formatPropertyAddress(property: OnboardingProperty): string {
@@ -121,12 +111,7 @@ export function applyPropertyFormPatch(
     if (row.id !== id) return row
     const next = { ...row, ...patch }
     if (patch.state !== undefined) {
-      const state = patch.state.trim().toUpperCase()
-      next.state = state
-      const allowed = citiesForState(state)
-      if (next.city && !allowed.includes(next.city)) {
-        next.city = ''
-      }
+      next.state = patch.state.trim().toUpperCase()
     }
     return next
   })

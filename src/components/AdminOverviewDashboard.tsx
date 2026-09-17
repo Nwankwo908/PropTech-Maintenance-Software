@@ -52,6 +52,7 @@ import {
   isMaintenanceAdminVendorEscalationReason,
   maintenanceAdminVendorAttentionMeta,
   maintenanceAdminVendorAttentionTitle,
+  shouldSkipSlaReassignForNeedsAdminVendor,
 } from '@/lib/maintenanceAdminVendor'
 import {
   emptyAdminWorkflowDashboardData,
@@ -73,7 +74,7 @@ import {
   ADMIN_RIGHT_RAIL_SCRIM,
   ADMIN_RIGHT_RAIL_STACK_HOST,
 } from '@/lib/adminRightRail'
-import { buildPropertyIdByBuilding, propertyResidentDetailPathForBuilding } from '@/lib/propertyRoutes'
+import { buildPropertyIdByBuilding, propertyDetailPathForBuilding, propertyResidentDetailPathForBuilding } from '@/lib/propertyRoutes'
 import {
   buildLeaseRenewalCallReasonLine,
   type VendorCallContext,
@@ -1399,7 +1400,8 @@ export function AdminOverviewDashboard() {
       propertyAccessComplete: propertySetupModules.access,
       propertyIntelligenceComplete: propertySetupModules.intelligence,
       propertyInsuranceComplete: propertySetupModules.insurance,
-      hasMaintenancePreferences: Number.isFinite(rules?.autoApprovalThreshold),
+      hasMaintenancePreferences:
+        Array.isArray(rules?.emergencyTypes) && rules.emergencyTypes.length > 0,
       maintenanceRequestCount: tickets.length,
       hasTestDelivery: isSetupSuccessTestDeliveryComplete(),
     })
@@ -1439,6 +1441,23 @@ export function AdminOverviewDashboard() {
       now,
     })
   }, [units, tickets, pmTasks, feedback, vendorMetrics, healthAssets, healthInspections, healthDamageReports, residents, canonicalPropertiesForHealth, now])
+
+  const firstPropertySetupPath = useCallback(
+    (tab: 'overview' | 'details' | 'insurance' = 'overview') => {
+      const firstCanonical = canonicalProperties.find((property) => property.name.trim())
+      if (firstCanonical) {
+        return propertyDetailPathForBuilding(
+          firstCanonical.name,
+          propertyIdByBuilding,
+          tab,
+        )
+      }
+      const firstBuilding = healthReport.buildings.find((row) => row.building.trim())?.building
+      if (!firstBuilding) return undefined
+      return propertyDetailPathForBuilding(firstBuilding, propertyIdByBuilding, tab)
+    },
+    [canonicalProperties, propertyIdByBuilding, healthReport.buildings],
+  )
 
   const kpis = useMemo(() => {
     const criticalOpen = openTickets.filter(isTicketCritical).length
@@ -1567,8 +1586,11 @@ export function AdminOverviewDashboard() {
 
     const toAuto = slaOverdueTickets.filter(
       (ticket) =>
-        !slaEscalatedNoVendorKeys.has(ticket.id) &&
-        ticketHasRosterAlternative(ticket, vendors, units),
+        !shouldSkipSlaReassignForNeedsAdminVendor({
+          assignedVendorId: ticket.assignedVendorId,
+          vendorWorkStatus: ticket.vendorWorkStatus,
+          workflowNeedsAdminVendor: slaEscalatedNoVendorKeys.has(ticket.id),
+        }) && ticketHasRosterAlternative(ticket, vendors, units),
     )
     if (toAuto.length === 0) return
 
@@ -1579,7 +1601,9 @@ export function AdminOverviewDashboard() {
         if (cancelled) break
         try {
           const result = await postSlaAutoReassign({ url, secret, ticketId: ticket.id })
-          if (result.outcome === 'reassigned') anyReassigned = true
+          if (result.outcome === 'reassigned' || result.outcome === 'awaiting_landlord_choice') {
+            anyReassigned = true
+          }
         } catch (err) {
           console.warn('[admin overview] sla auto-reassign', ticket.id, err)
         }
@@ -1747,7 +1771,15 @@ export function AdminOverviewDashboard() {
 
     for (const ticket of slaOverdueTickets) {
       if (completedTicketIds.has(ticket.id)) continue
-      if (slaEscalatedNoVendorKeys.has(ticket.id)) continue
+      if (
+        shouldSkipSlaReassignForNeedsAdminVendor({
+          assignedVendorId: ticket.assignedVendorId,
+          vendorWorkStatus: ticket.vendorWorkStatus,
+          workflowNeedsAdminVendor: slaEscalatedNoVendorKeys.has(ticket.id),
+        })
+      ) {
+        continue
+      }
       if (ticketHasRosterAlternative(ticket, vendors, units)) continue
       if (isNeedsAttentionDismissed(dismissedAttention, { ticketId: ticket.id })) continue
       const building =
@@ -2832,6 +2864,12 @@ export function AdminOverviewDashboard() {
       {!loading && showSetupSuccess ? (
         <GetSetUpForSuccessCard
           progress={setupSuccessProgress}
+          resolveItemTo={(itemId) => {
+            if (itemId === 'property_access') return firstPropertySetupPath('overview')
+            if (itemId === 'property_intelligence') return firstPropertySetupPath('overview')
+            if (itemId === 'property_insurance') return firstPropertySetupPath('insurance')
+            return undefined
+          }}
           onClose={() => {
             dismissSetupSuccessCard()
             setSetupSuccessDismissed(true)

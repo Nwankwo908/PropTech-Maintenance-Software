@@ -93,7 +93,7 @@ export function toUserFriendlyMessage(raw: string, fallback: string): string {
     lower.includes('signups not allowed') ||
     lower.includes('sign up is disabled')
   ) {
-    return 'This email does not have a login yet. Try Continue with Google, or request a new code after this update is live.'
+    return 'This email doesn’t have an account yet. Use Sign up to get started.'
   }
 
   if (

@@ -18,6 +18,55 @@ import type { VendorAssignmentOption } from "./vendor_assignment.ts"
 
 export const AWAITING_LANDLORD_VENDOR_CHOICE = "Awaiting landlord vendor choice"
 
+export function ticketIsAwaitingLandlordVendorChoice(
+  vendorNotifyError?: string | null,
+): boolean {
+  return (vendorNotifyError ?? "").includes(AWAITING_LANDLORD_VENDOR_CHOICE)
+}
+
+export function vendorChoiceOptionIdsEqual(a: string[], b: string[]): boolean {
+  const left = [...a].map((id) => id.trim()).filter(Boolean).sort()
+  const right = [...b].map((id) => id.trim()).filter(Boolean).sort()
+  if (left.length !== right.length) return false
+  return left.every((id, i) => id === right[i])
+}
+
+export async function loadStoredAwaitingVendorChoiceForTicket(
+  supabase: SupabaseClient,
+  ticketId: string,
+): Promise<AwaitingVendorChoice | null> {
+  const id = ticketId.trim()
+  if (!id) return null
+  const { data, error } = await supabase
+    .from("sms_conversations")
+    .select("intake_state")
+    .eq("maintenance_request_id", id)
+    .order("updated_at", { ascending: false })
+    .limit(25)
+  if (error) {
+    console.error("[vendor-choice] load stored awaiting choice", error)
+    return null
+  }
+  for (const row of data ?? []) {
+    const awaiting = readAwaitingVendorChoice(row.intake_state)
+    if (awaiting?.ticketId === id) return awaiting
+  }
+  return null
+}
+
+/** Landlord SMS can switch vendors while Ulo is still waiting for accept. */
+export function canReplaceAssignedVendorForLandlordChoice(
+  vendorWorkStatus?: string | null,
+): boolean {
+  const status = (vendorWorkStatus ?? "").trim().toLowerCase()
+  return (
+    status === "" ||
+    status === "unassigned" ||
+    status === "pending_accept" ||
+    status === "declined"
+  )
+}
+
 export type VendorChoiceOption = {
   id: string
   name: string
@@ -300,6 +349,8 @@ export function buildLandlordVendorChoiceSms(input: {
   tradeLabel: string
   options: VendorChoiceOption[]
   adminUrl?: string | null
+  /** Why we're asking — rematch copy when the current vendor didn't respond. */
+  reason?: "assign" | "no_response" | "declined" | "noshow"
 }): string {
   const first = input.landlordFirstName?.trim()
   const greeting = first ? `Hi ${first},` : "Hi,"
@@ -319,6 +370,14 @@ export function buildLandlordVendorChoiceSms(input: {
     `Work order ${wo}${where} is a ${trade} repair.`,
     "",
   ]
+
+  if (input.reason === "no_response") {
+    lines.push("The assigned vendor hasn't responded in time.", "")
+  } else if (input.reason === "declined") {
+    lines.push("The assigned vendor isn't able to take this job.", "")
+  } else if (input.reason === "noshow") {
+    lines.push("The assigned vendor didn't make the visit.", "")
+  }
 
   if (input.options.length === 1) {
     const only = input.options[0]
@@ -446,6 +505,7 @@ export async function notifyLandlordVendorChoice(
     unit: string
     issueCategory: string | null
     options: VendorAssignmentOption[]
+    reason?: "assign" | "no_response" | "declined" | "noshow"
   },
 ): Promise<{ sent: number }> {
   const choiceOptions = optionsFromAssignment(params.options)
@@ -468,6 +528,7 @@ export async function notifyLandlordVendorChoice(
     tradeLabel: tradeLabelFromCategory(params.issueCategory),
     options: choiceOptions,
     adminUrl: uloAppUrl.admin(),
+    reason: params.reason ?? "assign",
   })
 
   const main = await findActiveLandlordMainNumber(supabase, params.landlordId)
@@ -507,6 +568,10 @@ export async function notifyLandlordVendorChoice(
   }
 
   const names = choiceOptions.map((row) => row.name).join(" or ")
+  const rematch =
+    params.reason === "no_response" ||
+    params.reason === "declined" ||
+    params.reason === "noshow"
   await recordActivityLog(supabase, {
     landlordId: params.landlordId,
     eventType: "maintenance.vendor_choice_asked",
@@ -514,8 +579,11 @@ export async function notifyLandlordVendorChoice(
     actorType: "system",
     maintenanceRequestId: params.ticketId,
     metadata: {
-      message: `Asked the landlord to confirm vendor assignment for ${wo}: ${names}.`,
+      message: rematch
+        ? `Asked the landlord to confirm a replacement vendor for ${wo}: ${names}.`
+        : `Asked the landlord to confirm vendor assignment for ${wo}: ${names}.`,
       option_ids: choiceOptions.map((row) => row.id),
+      reason: params.reason ?? "assign",
     },
   })
 
@@ -613,7 +681,7 @@ export async function tryHandleLandlordVendorChoiceInbound(
   const { data: ticket } = await supabase
     .from("maintenance_requests")
     .select(
-      "id, priority, unit, description, due_at, estimated_minutes, resident_availability_text, assigned_vendor_id",
+      "id, priority, unit, description, due_at, estimated_minutes, resident_availability_text, assigned_vendor_id, vendor_work_status",
     )
     .eq("id", awaiting.ticketId)
     .eq("landlord_id", params.landlordId)
@@ -629,15 +697,67 @@ export async function tryHandleLandlordVendorChoiceInbound(
     }
   }
 
-  if (typeof ticket.assigned_vendor_id === "string" && ticket.assigned_vendor_id.trim()) {
-    if (!isExternalVendorChoice(chosen)) {
+  const assignedId =
+    typeof ticket.assigned_vendor_id === "string" && ticket.assigned_vendor_id.trim()
+      ? ticket.assigned_vendor_id.trim()
+      : ""
+  const workStatus =
+    typeof ticket.vendor_work_status === "string" ? ticket.vendor_work_status : ""
+
+  if (assignedId && !isExternalVendorChoice(chosen)) {
+    if (assignedId === chosen.id) {
       await clearAwaitingVendorChoice(supabase, conversationId, priorIntake)
       return {
         handled: true,
         ticketId: awaiting.ticketId,
-        vendorId: ticket.assigned_vendor_id.trim(),
+        vendorId: assignedId,
+        replyBody: `Got it — we'll keep ${chosen.name} on this job and wait for them to reply.`,
+      }
+    }
+    if (!canReplaceAssignedVendorForLandlordChoice(workStatus)) {
+      await clearAwaitingVendorChoice(supabase, conversationId, priorIntake)
+      return {
+        handled: true,
+        ticketId: awaiting.ticketId,
+        vendorId: assignedId,
         replyBody: "That work order already has a vendor. We'll text you when they reply.",
       }
+    }
+    const { reassignVendorByIdAndNotify } = await import(
+      "../submit-maintenance-request/vendor_notify.ts"
+    )
+    const reassigned = await reassignVendorByIdAndNotify(
+      supabase,
+      awaiting.ticketId,
+      chosen.id,
+    )
+    if ("error" in reassigned) {
+      return {
+        handled: true,
+        ticketId: awaiting.ticketId,
+        vendorId: null,
+        replyBody:
+          `I couldn't send this to ${chosen.name} just now. Try again, or assign them from the dashboard.`,
+      }
+    }
+    await clearAwaitingVendorChoice(supabase, conversationId, priorIntake)
+    await recordActivityLog(supabase, {
+      landlordId: params.landlordId,
+      eventType: "maintenance.vendor_choice_selected",
+      source: "sms",
+      actorType: "landlord",
+      vendorId: chosen.id,
+      maintenanceRequestId: awaiting.ticketId,
+      conversationId,
+      metadata: {
+        message: `Assigned ${chosen.name} after the landlord confirmed.`,
+      },
+    })
+    return {
+      handled: true,
+      ticketId: awaiting.ticketId,
+      vendorId: chosen.id,
+      replyBody: `Got it — we'll send this to ${chosen.name} now and ask them to take the job. We'll text you when they reply.`,
     }
   }
 

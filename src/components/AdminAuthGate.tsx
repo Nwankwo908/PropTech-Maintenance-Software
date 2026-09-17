@@ -25,7 +25,7 @@ async function gateStateForSession(session: Session | null): Promise<GateState> 
 }
 
 /**
- * Requires a Supabase session for /admin/* (except /admin/login, which renders outside this gate).
+ * Requires a Supabase session for /admin/* (except /admin/login and /admin/get-started, which render outside this gate).
  * Access is limited to allowlisted portal emails (staff, Alpha, demo accounts).
  * In Vite dev without Supabase env, children render so local UI work stays possible.
  */
@@ -96,7 +96,7 @@ export function AdminAuthGate({ children }: { children: React.ReactNode }) {
   if (state === 'anon') {
     const next = `${location.pathname}${location.search}`
     const loginTo =
-      next.startsWith('/admin') && next !== '/admin/login'
+      next.startsWith('/admin') && next !== '/admin/login' && !next.startsWith('/admin/get-started')
         ? `/admin/login?next=${encodeURIComponent(next)}`
         : '/admin/login'
     return <Navigate to={loginTo} replace />

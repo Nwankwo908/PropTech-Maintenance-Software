@@ -15,7 +15,10 @@ export const SETUP_SUCCESS_PROPERTY_TAB_GUIDE_MESSAGE =
   'Complete your property details to shift maintenance from reactive to proactive.'
 
 export const SETUP_SUCCESS_PROPERTY_ACCESS_GUIDE_MESSAGE =
-  'Select Add property access so vendors know how to get in.'
+  'Select Property access so vendors know how to get in.'
+
+export const SETUP_SUCCESS_PROPERTY_INSURANCE_GUIDE_MESSAGE =
+  'Open Property Insurance to add your policy details.'
 
 export const SETUP_SUCCESS_TEST_DELIVERY_GUIDE_MESSAGE =
   'Select button to confirm your number is working'
@@ -166,6 +169,20 @@ export function setupCheckboxGuidePropertyDetailState(
   page: SetupSuccessPropertyDetailFollowup = peekSetupSuccessPropertyFollowup(),
 ): { setupCheckboxGuide: SetupSuccessPropertyDetailFollowup } {
   return { setupCheckboxGuide: page }
+}
+
+/**
+ * Arm the property-detail coachmark and jump straight to that page
+ * (e.g. first property Overview for Property access).
+ */
+export function armSetupSuccessPropertyDetailGuide(
+  followup: SetupSuccessPropertyDetailFollowup,
+  landlordId: string = getActiveLandlordId(),
+): void {
+  if (!isLimitedAlpha1Landlord(landlordId)) return
+  storageRemove(seenKey(followup, landlordId))
+  storageSet(followupKey(landlordId), followup)
+  markSetupSuccessCheckboxGuidePagePending(followup, landlordId)
 }
 
 export function propertyFollowupDetailTab(

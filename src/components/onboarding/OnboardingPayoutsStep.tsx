@@ -345,7 +345,7 @@ export function OnboardingPayoutsStep({
           onClick={onContinue}
           className={btnContinue}
         >
-          Continue to review
+          Continue
         </button>
       </div>
       {!ready && !loading ? (

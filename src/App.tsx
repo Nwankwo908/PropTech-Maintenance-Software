@@ -175,6 +175,7 @@ export default function App() {
 
           <Route path="/auth/callback" element={<AuthCallback />} />
           <Route path="/admin/login" element={<AdminLoginPage />} />
+          <Route path="/admin/get-started" element={<AdminLoginPage />} />
           <Route
             path="/admin"
             element={

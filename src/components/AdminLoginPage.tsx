@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react'
-import { Navigate, Link, useNavigate, useSearchParams } from 'react-router-dom'
+import { Navigate, Link, useLocation, useNavigate, useSearchParams } from 'react-router-dom'
 import bgLogin from '@/assets/BG_Login.png'
 import uloLogo from '@/assets/Ulo_Logo_small.png'
 import {
@@ -54,12 +54,15 @@ function IconGoogle({ className = 'size-5' }: { className?: string }) {
 
 export function AdminLoginPage() {
   const navigate = useNavigate()
+  const location = useLocation()
   const [searchParams] = useSearchParams()
   const afterLoginPath = safeAdminNextPath(searchParams.get('next'))
+  const isGetStarted = location.pathname === '/admin/get-started'
   const oauthDenied = searchParams.get('error') === 'not_authorized'
   const googleSignInFailed = searchParams.get('error') === 'google_signin'
   const [step, setStep] = useState<'email' | 'otp'>('email')
   const [email, setEmail] = useState('')
+  const [emailFieldActive, setEmailFieldActive] = useState(false)
   const [otp, setOtp] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
@@ -134,7 +137,7 @@ export function AdminLoginPage() {
     }
     setSubmitting(true)
     try {
-      await sendAdminEmailOtp(email)
+      await sendAdminEmailOtp(email, { createUser: isGetStarted })
       setStep('otp')
     } catch (err) {
       if (isAuthEmailRateLimited(err)) {
@@ -157,9 +160,7 @@ export function AdminLoginPage() {
     }
     setSubmitting(true)
     try {
-      await verifyAdminEmailOtp(email, otp)
-      navigate(afterLoginPath, { replace: true })
-    } catch (err) {
+      await verifyAdminEmailOtp(email, otp, { requireAllowlist: isGetStarted })
       setError(getErrorMessage(err, 'Verification failed'))
     } finally {
       setSubmitting(false)
@@ -205,61 +206,84 @@ export function AdminLoginPage() {
 
       <div className="relative z-10 flex min-h-dvh items-center justify-center px-6 py-12">
         <div className="w-full max-w-md">
-          <div className="overflow-hidden rounded-2xl border border-[#e5e7eb] bg-white shadow-[0px_20px_25px_-5px_rgba(0,0,0,0.1),0px_8px_10px_-6px_rgba(0,0,0,0.1)]">
+          <div className="sa-enter-scale sa-surface overflow-hidden rounded-2xl border border-[#e5e7eb] bg-white shadow-[0px_20px_25px_-5px_rgba(0,0,0,0.1),0px_8px_10px_-6px_rgba(0,0,0,0.1)]">
             <div className="px-8 pb-8 pt-8">
               <div className="flex flex-col items-center gap-2 text-center">
                 <Link
                   to="/"
                   aria-label="Back to Ulo home"
-                  className="rounded-lg outline-none transition-opacity hover:opacity-80 focus-visible:ring-2 focus-visible:ring-emerald-500/40 focus-visible:ring-offset-2"
+                  className="sa-press rounded-lg outline-none hover:opacity-80 focus-visible:ring-2 focus-visible:ring-emerald-500/40 focus-visible:ring-offset-2"
                 >
                   <img src={uloLogo} alt="ülo home" className="h-10 w-auto object-contain" />
                 </Link>
-                <h1 className="text-[24px] font-bold leading-8 tracking-[0.0703px] text-[rgba(16,24,40,0.7)]">
-                  Welcome to Ulo Home
+                <h1
+                  key={isGetStarted ? 'get-started' : 'login'}
+                  className="sa-enter text-[24px] font-bold leading-8 tracking-[0.0703px] text-[rgba(16,24,40,0.7)]"
+                >
+                  {isGetStarted ? 'Sign up for Ulo Home' : 'Welcome back to Ulo Home'}
                 </h1>
-                <p className="text-[14px] font-normal leading-5 tracking-[-0.1504px] text-[#0a0a0a]">
-                  {step === 'email'
-                    ? 'Sign in with your authorized email'
-                    : 'Enter the verification code we sent to your email'}
-                </p>
+                {step === 'otp' ? (
+                  <p
+                    key="otp-copy"
+                    className="sa-enter text-[14px] font-normal leading-5 tracking-[-0.1504px] text-[#0a0a0a]"
+                  >
+                    Enter the verification code we sent to your email
+                  </p>
+                ) : isGetStarted ? (
+                  <p
+                    key="get-started-copy"
+                    className="sa-enter text-[14px] font-normal leading-5 tracking-[-0.1504px] text-[#0a0a0a]"
+                  >
+                    Get started for free with your email
+                  </p>
+                ) : null}
               </div>
 
               {oauthDenied ? (
-                <p className="mt-6 rounded-lg border border-[#fecaca] bg-[#fef2f2] px-3 py-2 text-[13px] leading-5 text-[#991b1b]" role="alert">
+                <p className="sa-enter mt-6 rounded-lg border border-[#fecaca] bg-[#fef2f2] px-3 py-2 text-[13px] leading-5 text-[#991b1b]" role="alert">
                   That Google account is not on the portal allowlist. Staff can use osi@ulohome.io
                   or emeka@ulohome.io. For Limited Alpha, use the email you were invited with.
                 </p>
               ) : null}
               {googleSignInFailed ? (
-                <p className="mt-6 rounded-lg border border-[#fecaca] bg-[#fef2f2] px-3 py-2 text-[13px] leading-5 text-[#991b1b]" role="alert">
+                <p className="sa-enter mt-6 rounded-lg border border-[#fecaca] bg-[#fef2f2] px-3 py-2 text-[13px] leading-5 text-[#991b1b]" role="alert">
                   Google sign-in did not finish. Try again, or use email and a verification code.
                 </p>
               ) : null}
 
               {step === 'email' ? (
-                <form className="mt-8 flex flex-col gap-4" onSubmit={onContinue} noValidate>
-                  <div className="flex flex-col gap-2">
-                    <label
-                      htmlFor="admin-email"
-                      className="text-[14px] font-medium leading-5 tracking-[-0.1504px] text-[#364153]"
+                <form key="email-step" className="sa-enter mt-8 flex flex-col gap-4" onSubmit={onContinue} noValidate>
+                  <div className="flex flex-col">
+                    <div
+                      className="sa-expand"
+                      data-open={emailFieldActive || email.trim().length > 0 ? 'true' : 'false'}
                     >
-                      Email
-                    </label>
+                      <div className="sa-expand-inner">
+                        <label
+                          htmlFor="admin-email"
+                          className="sa-expand-body mb-2 block text-[14px] font-medium leading-5 tracking-[-0.1504px] text-[#364153]"
+                        >
+                          Email
+                        </label>
+                      </div>
+                    </div>
                     <input
                       id="admin-email"
                       name="email"
                       type="email"
                       autoComplete="email"
+                      aria-label="Email"
                       placeholder="Enter your email..."
                       value={email}
                       onChange={(e) => setEmail(e.target.value)}
-                      className="h-9 w-full rounded-lg border border-transparent bg-[#f3f3f5] px-3 text-[14px] tracking-[-0.1504px] text-[#101828] outline-none placeholder:text-[#717182] focus:border-emerald-500/35 focus:bg-white focus:ring-2 focus:ring-emerald-500/20"
+                      onFocus={() => setEmailFieldActive(true)}
+                      onBlur={() => setEmailFieldActive(false)}
+                      className="sa-surface h-9 w-full rounded-lg border border-transparent bg-[#f3f3f5] px-3 text-[14px] tracking-[-0.1504px] text-[#101828] outline-none placeholder:text-[#717182] focus:border-emerald-500/35 focus:bg-white focus:ring-2 focus:ring-emerald-500/20"
                     />
                   </div>
 
                   {error ? (
-                    <p className="text-[13px] leading-4 text-[#b52a00]" role="alert">
+                    <p className="sa-enter text-[13px] leading-4 text-[#b52a00]" role="alert">
                       {error}
                     </p>
                   ) : null}
@@ -267,7 +291,7 @@ export function AdminLoginPage() {
                   <button
                     type="submit"
                     disabled={submitting}
-                    className="h-9 w-full rounded-lg bg-[#0e5c45] text-[14px] font-medium leading-5 tracking-[-0.1504px] text-white outline-none transition-opacity hover:opacity-95 focus-visible:ring-2 focus-visible:ring-emerald-600 focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-60"
+                    className="sa-press h-9 w-full rounded-lg bg-[#0e5c45] text-[14px] font-medium leading-5 tracking-[-0.1504px] text-white outline-none hover:opacity-95 focus-visible:ring-2 focus-visible:ring-emerald-600 focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-60"
                   >
                     {submitting ? 'Sending…' : 'Continue'}
                   </button>
@@ -282,14 +306,27 @@ export function AdminLoginPage() {
                     type="button"
                     disabled={submitting}
                     onClick={onGoogleSignIn}
-                    className="flex h-9 w-full items-center justify-center gap-2 rounded-lg border border-black/10 bg-white text-[14px] font-medium leading-5 tracking-[-0.1504px] text-[#6a7282] outline-none transition-colors hover:bg-gray-50 focus-visible:ring-2 focus-visible:ring-emerald-600 focus-visible:ring-offset-2 disabled:opacity-60"
+                    className="sa-press flex h-9 w-full items-center justify-center gap-2 rounded-lg border border-black/10 bg-white text-[14px] font-medium leading-5 tracking-[-0.1504px] text-[#6a7282] outline-none hover:bg-gray-50 focus-visible:ring-2 focus-visible:ring-emerald-600 focus-visible:ring-offset-2 disabled:opacity-60"
                   >
                     <IconGoogle />
                     Continue with Google
                   </button>
+
+                  {!isGetStarted ? (
+                    <p className="sa-enter text-center text-[14px] font-normal leading-5 tracking-[-0.1504px] text-[#0a0a0a]">
+                      Don&apos;t have an account?{' '}
+                      <Link
+                        to="/admin/get-started"
+                        className="sa-link font-medium outline-none hover:opacity-80 focus-visible:ring-2 focus-visible:ring-[#611879]/40 focus-visible:ring-offset-2"
+                        style={{ color: '#611879' }}
+                      >
+                        Sign up
+                      </Link>
+                    </p>
+                  ) : null}
                 </form>
               ) : (
-                <form className="mt-8 flex flex-col gap-4" onSubmit={onVerifyOtp} noValidate>
+                <form key="otp-step" className="sa-enter mt-8 flex flex-col gap-4" onSubmit={onVerifyOtp} noValidate>
                   <div className="flex flex-col gap-2">
                     <label
                       htmlFor="admin-otp"
@@ -306,12 +343,12 @@ export function AdminLoginPage() {
                       placeholder="Enter code"
                       value={otp}
                       onChange={(e) => setOtp(e.target.value)}
-                      className="h-9 w-full rounded-lg border border-transparent bg-[#f3f3f5] px-3 text-center font-mono text-[14px] tracking-[0.2em] text-[#101828] outline-none placeholder:tracking-normal placeholder:text-[#717182] focus:border-emerald-500/35 focus:bg-white focus:ring-2 focus:ring-emerald-500/20"
+                      className="sa-surface h-9 w-full rounded-lg border border-transparent bg-[#f3f3f5] px-3 text-center font-mono text-[14px] tracking-[0.2em] text-[#101828] outline-none placeholder:tracking-normal placeholder:text-[#717182] focus:border-emerald-500/35 focus:bg-white focus:ring-2 focus:ring-emerald-500/20"
                     />
                   </div>
 
                   {error ? (
-                    <p className="text-[13px] leading-4 text-[#b52a00]" role="alert">
+                    <p className="sa-enter text-[13px] leading-4 text-[#b52a00]" role="alert">
                       {error}
                     </p>
                   ) : null}
@@ -319,7 +356,7 @@ export function AdminLoginPage() {
                   <button
                     type="submit"
                     disabled={submitting}
-                    className="h-9 w-full rounded-lg bg-[#0e5c45] text-[14px] font-medium leading-5 tracking-[-0.1504px] text-white outline-none transition-opacity hover:opacity-95 focus-visible:ring-2 focus-visible:ring-emerald-600 focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-60"
+                    className="sa-press h-9 w-full rounded-lg bg-[#0e5c45] text-[14px] font-medium leading-5 tracking-[-0.1504px] text-white outline-none hover:opacity-95 focus-visible:ring-2 focus-visible:ring-emerald-600 focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-60"
                   >
                     {submitting ? 'Verifying…' : 'Continue'}
                   </button>
@@ -332,7 +369,7 @@ export function AdminLoginPage() {
                       setOtp('')
                       setError(null)
                     }}
-                    className="text-[14px] font-medium text-[#6a7282] underline underline-offset-2"
+                    className="sa-link text-[14px] font-medium text-[#6a7282] underline underline-offset-2"
                   >
                     Use a different email
                   </button>

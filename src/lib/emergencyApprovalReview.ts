@@ -243,19 +243,14 @@ export function buildEmergencyApprovalReview(
   const vendorName = options?.vendorName?.trim() || 'Assigned vendor'
   const { quoteLines, totalAmount, hasQuote } = buildQuoteLines(ticket)
 
-  const overCap = hasQuote && totalAmount > cap
-  const title = overCap
-    ? `${category} quote needs your approval`
-    : hasQuote
-      ? `Review ${category.toLowerCase()} quote at ${location}`
-      : `Review ${category.toLowerCase()} work at ${location}`
+  const title = hasQuote
+    ? `Review ${category.toLowerCase()} quote at ${location}`
+    : `Review ${category.toLowerCase()} work at ${location}`
 
   const summary = `Reported ${reported} at ${propertyName}`
 
   const footerNote = hasQuote
-    ? overCap
-      ? `This quote is over your ${formatCurrency(cap)} auto-approval cap, so Ulo needs your sign-off before work continues.`
-      : `Review this work order and approve to let the assigned vendor proceed.`
+    ? `Review this work order and approve to let the assigned vendor proceed.`
     : `No vendor quote amount is on file yet. Review the work order details, then approve to continue or decline to stop the job.`
 
   return {

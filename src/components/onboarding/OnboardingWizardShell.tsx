@@ -1,5 +1,5 @@
 import { Link, useNavigate } from 'react-router-dom'
-import { useLayoutEffect, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { getActiveLandlordId } from '@/lib/activeLandlord'
 import { markLimitedAlphaPostOnboardingWelcomeSeen, shouldShowLimitedAlphaPostOnboardingWelcome } from '@/lib/postOnboardingWelcome'
 import { landlordHasPayments, landlordHasVendorMarketplace } from '@shared/landlordCapabilities'
@@ -82,7 +82,9 @@ export function OnboardingWizardShell() {
 
   if (showAllSet) {
     return (
-      <OnboardingAllSetWelcome onGetStarted={handleGetStarted} />
+      <div className="flex h-full min-h-0 flex-1 flex-col overflow-hidden">
+        <OnboardingAllSetWelcome onGetStarted={handleGetStarted} />
+      </div>
     )
   }
 
@@ -170,7 +172,7 @@ export function OnboardingWizardShell() {
     <main
       className={
         isWelcomeStep
-          ? 'flex flex-1 flex-col items-center justify-center overflow-y-auto px-4 py-10 sm:px-8 sm:py-16'
+          ? 'flex flex-1 flex-col items-center overflow-y-auto px-4 pb-10 pt-[60px] sm:px-8 sm:pb-16'
           : 'flex-1 overflow-y-auto px-4 py-6 sm:px-8 sm:py-8'
       }
     >
@@ -223,6 +225,7 @@ export function OnboardingWizardShell() {
           <div className={isWelcomeStep ? undefined : 'onb-step-panel'}>
           {step === 'entry' ? (
             <OnboardingWelcomeHub
+              starting={saving}
               onStartScratch={() => void handleStartScratch()}
               onStartFastTrack={() => void handleStartFastTrack()}
             />

@@ -1,10 +1,11 @@
 /**
- * When maintenance_requests.due_at passes, auto-reassign to the next roster vendor.
- * Admin approval is only required when no vendor exists in the system (vendor API / onboarding).
+ * When maintenance_requests.due_at passes, ask the landlord to confirm a replacement
+ * vendor (YES / 1 / 2 / 3). Do not contact a vendor until they reply.
  */
 import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.49.1"
 import { runMaintenanceRequestViaEngine } from "./engine/maintenanceRequestEngine.ts"
-import { linkedWorkflowNeedsAdminVendor } from "./maintenance_admin_escalation.ts"
+import { workflowEscalatedNeedsAdminVendor } from "./maintenance_admin_escalation.ts"
+import { shouldSkipSlaReassignForNeedsAdminVendor } from "./slaReassignEligibility.ts"
 import { escalateWhenNoReplacementVendor } from "./vendor_reassignment.ts"
 
 const TERMINAL_STATUSES = new Set(["completed", "cancelled"])
@@ -20,6 +21,7 @@ const ADMIN_REVIEW_ONLY_STATUSES = new Set(["accepted", "in_progress"])
 export type SlaReassignOutcome =
   | "reassigned"
   | "needs_admin_vendor"
+  | "awaiting_landlord_choice"
   | "skipped"
 
 export type SlaReassignResult = {
@@ -77,7 +79,16 @@ async function processSlaExpiredTicketRow(
     }
   }
 
-  if (await linkedWorkflowNeedsAdminVendor(supabase, ticket.id)) {
+  if (
+    shouldSkipSlaReassignForNeedsAdminVendor({
+      assignedVendorId: ticket.assigned_vendor_id,
+      vendorWorkStatus: ticket.vendor_work_status,
+      workflowNeedsAdminVendor: await workflowEscalatedNeedsAdminVendor(
+        supabase,
+        ticket.id,
+      ),
+    })
+  ) {
     return {
       ticketId: ticket.id,
       outcome: "skipped",
@@ -117,6 +128,9 @@ async function processSlaExpiredTicketRow(
       newVendorId: meta.new_vendor_id,
     }
   }
+  if (outcome === "awaiting_landlord_choice") {
+    return { ticketId: ticket.id, outcome: "awaiting_landlord_choice" }
+  }
   if (outcome === "needs_admin_vendor") {
     return { ticketId: ticket.id, outcome: "needs_admin_vendor" }
   }
@@ -146,7 +160,7 @@ export async function processSlaExpiredAutoReassignForTicket(
   const { data: raw, error } = await supabase
     .from("maintenance_requests")
     .select(
-      "id, landlord_id, assigned_vendor_id, issue_category, vendor_work_status, due_at",
+      "id, landlord_id, assigned_vendor_id, issue_category, vendor_work_status, due_at, vendor_notify_error",
     )
     .eq("id", id)
     .maybeSingle()
@@ -179,7 +193,7 @@ export async function processSlaExpiredAutoReassign(
   const { data: rows, error } = await supabase
     .from("maintenance_requests")
     .select(
-      "id, landlord_id, assigned_vendor_id, issue_category, vendor_work_status",
+      "id, landlord_id, assigned_vendor_id, issue_category, vendor_work_status, vendor_notify_error",
     )
     .not("due_at", "is", null)
     .lt("due_at", nowIso)

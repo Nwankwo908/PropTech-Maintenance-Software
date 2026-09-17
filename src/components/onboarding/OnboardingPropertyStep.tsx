@@ -2,7 +2,7 @@
  * Guided onboarding — Property step.
  */
 import type { Dispatch, SetStateAction } from 'react'
-import { US_STATE_OPTIONS } from '@/lib/usLocations'
+import { StreetAddressAutocomplete } from '@/components/StreetAddressAutocomplete'
 import {
   OnboardingContinueButton,
   OnboardingStepNav,
@@ -15,7 +15,6 @@ import {
 } from './onboardingFieldStyles'
 import {
   applyPropertyFormPatch,
-  cityOptionsForProperty,
   createEmptyPropertyForm,
   mintOnboardingPropertyIdIfNeeded,
   saveOnboardingPropertyStep,
@@ -107,8 +106,8 @@ export function OnboardingPropertyStep({
                     </button>
                   ) : null}
                 </div>
-                <div className="grid gap-4 sm:grid-cols-2">
-                  <label className="block sm:col-span-2">
+                <div className="grid gap-4">
+                  <label className="block">
                     <span className={onboardingFieldLabelClass}>Property name</span>
                     <input
                       className={onboardingInputClass}
@@ -121,109 +120,96 @@ export function OnboardingPropertyStep({
                       aria-label={`Property ${index + 1} name`}
                     />
                   </label>
-                  <label className="block sm:col-span-2">
-                    <span className={onboardingFieldLabelClass}>Street address</span>
-                    <input
-                      className={onboardingInputClass}
-                      value={form.address}
-                      onChange={(e) => updatePropertyForm(form.id, { address: e.target.value })}
-                      placeholder="123 Main St"
-                      aria-label={`Property ${index + 1} street address`}
-                    />
-                  </label>
-                  <label className="block">
-                    <span className={onboardingFieldLabelClass}>State</span>
-                    <div className="relative">
-                      <select
-                        className={`${onboardingSelectClass} ${!form.state ? 'text-[#9ca3af]' : ''}`}
-                        value={form.state}
-                        onChange={(e) => updatePropertyForm(form.id, { state: e.target.value })}
-                        aria-label={`Property ${index + 1} state`}
-                      >
-                        <option value="">Select state</option>
-                        {US_STATE_OPTIONS.map((state) => (
-                          <option key={state.code} value={state.code}>
-                            {state.name}
-                          </option>
-                        ))}
-                      </select>
-                      <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-[#6a7282]" aria-hidden>
-                        <svg viewBox="0 0 24 24" fill="none" className="size-4">
-                          <path d="M6 9l6 6 6-6" stroke="currentColor" strokeWidth={2} strokeLinecap="round" />
-                        </svg>
-                      </span>
+                  <div className="grid gap-4 sm:grid-cols-[minmax(9rem,0.9fr)_minmax(0,1.8fr)_minmax(7rem,0.7fr)]">
+                    <label className="block min-w-0">
+                      <span className={onboardingFieldLabelClass}>Type</span>
+                      <div className="relative">
+                        <select
+                          className={onboardingSelectClass}
+                          value={form.propertyType}
+                          onChange={(e) => updatePropertyForm(form.id, { propertyType: e.target.value })}
+                          aria-label={`Property ${index + 1} type`}
+                        >
+                          {ONBOARDING_PROPERTY_TYPE_OPTIONS.map((option) => (
+                            <option key={option.value} value={option.value}>
+                              {option.label}
+                            </option>
+                          ))}
+                        </select>
+                        <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-[#6a7282]" aria-hidden>
+                          <svg viewBox="0 0 24 24" fill="none" className="size-4">
+                            <path d="M6 9l6 6 6-6" stroke="currentColor" strokeWidth={2} strokeLinecap="round" />
+                          </svg>
+                        </span>
+                      </div>
+                    </label>
+                    <div className="min-w-0">
+                      <span className={onboardingFieldLabelClass}>Street address</span>
+                      <StreetAddressAutocomplete
+                        className={onboardingInputClass}
+                        value={form.address}
+                        onChange={(address) => updatePropertyForm(form.id, { address })}
+                        onPlaceResolved={(parsed) =>
+                          updatePropertyForm(form.id, {
+                            address: parsed.street || form.address,
+                            city: parsed.city || form.city,
+                            state: parsed.state || form.state,
+                            zipCode: parsed.zipCode || form.zipCode,
+                            ...(form.name.trim() ? {} : { name: parsed.street }),
+                          })
+                        }
+                        placeholder="123 Main St"
+                        aria-label={`Property ${index + 1} street address`}
+                      />
                     </div>
-                  </label>
-                  <label className="block">
-                    <span className={onboardingFieldLabelClass}>City</span>
-                    <div className="relative">
-                      <select
-                        className={`${onboardingSelectClass} ${!form.city ? 'text-[#9ca3af]' : ''}`}
+                    <label className="block min-w-0">
+                      <span className={onboardingFieldLabelClass}>Total units</span>
+                      <input
+                        className={onboardingInputClass}
+                        type="number"
+                        min={1}
+                        value={form.unitCount}
+                        onChange={(e) => updatePropertyForm(form.id, { unitCount: e.target.value })}
+                        placeholder="48"
+                        aria-label={`Property ${index + 1} total units`}
+                      />
+                    </label>
+                  </div>
+                  <div className="grid gap-4 sm:grid-cols-3">
+                    <label className="block min-w-0">
+                      <span className={onboardingFieldLabelClass}>City</span>
+                      <input
+                        className={onboardingInputClass}
                         value={form.city}
                         onChange={(e) => updatePropertyForm(form.id, { city: e.target.value })}
-                        disabled={!form.state}
+                        placeholder="Newark"
                         aria-label={`Property ${index + 1} city`}
-                      >
-                        <option value="">{form.state ? 'Select city' : 'Select state first'}</option>
-                        {cityOptionsForProperty(form).map((city) => (
-                          <option key={city} value={city}>
-                            {city}
-                          </option>
-                        ))}
-                      </select>
-                      <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-[#6a7282]" aria-hidden>
-                        <svg viewBox="0 0 24 24" fill="none" className="size-4">
-                          <path d="M6 9l6 6 6-6" stroke="currentColor" strokeWidth={2} strokeLinecap="round" />
-                        </svg>
-                      </span>
-                    </div>
-                  </label>
-                  <label className="block">
-                    <span className={onboardingFieldLabelClass}>ZIP code</span>
-                    <input
-                      className={onboardingInputClass}
-                      value={form.zipCode}
-                      onChange={(e) => updatePropertyForm(form.id, { zipCode: e.target.value })}
-                      placeholder="07102"
-                      inputMode="numeric"
-                      aria-label={`Property ${index + 1} ZIP code`}
-                    />
-                  </label>
-                  <label className="block">
-                    <span className={onboardingFieldLabelClass}>Type</span>
-                    <div className="relative">
-                      <select
-                        className={onboardingSelectClass}
-                        value={form.propertyType}
-                        onChange={(e) => updatePropertyForm(form.id, { propertyType: e.target.value })}
-                        aria-label={`Property ${index + 1} type`}
-                      >
-                        {ONBOARDING_PROPERTY_TYPE_OPTIONS.map((option) => (
-                          <option key={option.value} value={option.value}>
-                            {option.label}
-                          </option>
-                        ))}
-                      </select>
-                      <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-[#6a7282]" aria-hidden>
-                        <svg viewBox="0 0 24 24" fill="none" className="size-4">
-                          <path d="M6 9l6 6 6-6" stroke="currentColor" strokeWidth={2} strokeLinecap="round" />
-                        </svg>
-                      </span>
-                    </div>
-                  </label>
-                  <label className="block">
-                    <span className={onboardingFieldLabelClass}>Total units</span>
-                    <input
-                      className={onboardingInputClass}
-                      type="number"
-                      min={1}
-                      value={form.unitCount}
-                      onChange={(e) => updatePropertyForm(form.id, { unitCount: e.target.value })}
-                      placeholder="48"
-                      aria-label={`Property ${index + 1} total units`}
-                    />
-                  </label>
-                  <div className="sm:col-span-2">
+                      />
+                    </label>
+                    <label className="block min-w-0">
+                      <span className={onboardingFieldLabelClass}>State</span>
+                      <input
+                        className={onboardingInputClass}
+                        value={form.state}
+                        onChange={(e) => updatePropertyForm(form.id, { state: e.target.value })}
+                        placeholder="NJ"
+                        maxLength={2}
+                        aria-label={`Property ${index + 1} state`}
+                      />
+                    </label>
+                    <label className="block min-w-0">
+                      <span className={onboardingFieldLabelClass}>ZIP code</span>
+                      <input
+                        className={onboardingInputClass}
+                        value={form.zipCode}
+                        onChange={(e) => updatePropertyForm(form.id, { zipCode: e.target.value })}
+                        placeholder="07102"
+                        inputMode="numeric"
+                        aria-label={`Property ${index + 1} ZIP code`}
+                      />
+                    </label>
+                  </div>
+                  <div>
                     <div className="mb-3 flex items-baseline justify-between gap-3">
                       <span className="text-[13px] font-medium text-[#364153]">
                         Property manager contact
@@ -263,7 +249,7 @@ export function OnboardingPropertyStep({
 
             <button
               type="button"
-              className="w-full rounded-[10px] border border-[#e5e7eb] bg-white py-2.5 text-[14px] font-medium text-[#101828] transition-colors hover:bg-[#f9fafb] active:bg-[#f3f4f6]"
+              className="w-full rounded-[10px] border border-[#186179] bg-white py-2.5 text-[14px] font-medium text-[#101828] transition-colors hover:bg-[#f9fafb] active:bg-[#f3f4f6]"
               onClick={addPropertyForm}
             >
               + Add another property
@@ -275,7 +261,7 @@ export function OnboardingPropertyStep({
             saving={saving}
           >
             <OnboardingContinueButton disabled={saving} onClick={handleContinue}>
-              {editContinueLabel ?? 'Save & continue'}
+              {editContinueLabel ?? 'Continue'}
             </OnboardingContinueButton>
           </OnboardingStepNav>
         </section>

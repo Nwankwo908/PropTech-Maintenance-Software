@@ -687,19 +687,6 @@ export function AdminOrganizationSettings() {
             >
               <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-[#6a7282]">Maintenance</p>
               <div className="mt-3 grid gap-4 sm:grid-cols-2">
-                <FormField label="Automatic Approval Limit" htmlFor="org-auto-approval">
-                  <div className="relative">
-                    <span className="pointer-events-none absolute top-1/2 left-3 -translate-y-1/2 text-[14px] text-[#6a7282]">
-                      $
-                    </span>
-                    <input
-                      id="org-auto-approval"
-                      className={`${inputClass} pl-7`}
-                      value={draft.autoApprovalLimit}
-                      onChange={(e) => updateDraft({ autoApprovalLimit: e.target.value })}
-                    />
-                  </div>
-                </FormField>
                 <FormField label="Escalation threshold" htmlFor="org-escalation">
                   <div className="relative">
                     <span className="pointer-events-none absolute top-1/2 left-3 -translate-y-1/2 text-[14px] text-[#6a7282]">

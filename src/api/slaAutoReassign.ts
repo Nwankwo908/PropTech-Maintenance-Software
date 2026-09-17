@@ -10,7 +10,7 @@ import {
 export type SlaAutoReassignOk = {
   ok: true
   ticketId: string
-  outcome: 'reassigned' | 'needs_admin_vendor' | 'skipped'
+  outcome: 'reassigned' | 'needs_admin_vendor' | 'awaiting_landlord_choice' | 'skipped'
   reason?: string
   newVendorId?: string
 }

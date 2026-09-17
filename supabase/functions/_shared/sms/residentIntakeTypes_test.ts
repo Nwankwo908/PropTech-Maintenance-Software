@@ -118,8 +118,8 @@ Deno.test("does not treat fixtures or the whole house as the room", () => {
       issue_type: "plumbing",
       initial_message: "My sink is leaking",
     }),
-    "awaiting_confirm",
-    "skip questionnaire after issue type",
+    "photo",
+    "ask photo after issue type",
   )
   const recovered = sanitizeIntakeState({
     step: "first_noticed",
@@ -231,26 +231,26 @@ Deno.test("bogus time room with no recoverable location asks which room", () => 
   })
   assertEqual(state.room_or_area, undefined, "cleared")
   assertEqual(state.step, "first_noticed", "does not rewrite the step")
-  assertEqual(nextCollectingStep("first_noticed", { first_noticed: "today" }), "awaiting_confirm", "skip questionnaire")
+  assertEqual(nextCollectingStep("first_noticed", { first_noticed: "today" }), "photo", "ask photo not extra questionnaire")
 })
 
-Deno.test("photo step is skipped for HVAC and dripping faucets", () => {
+Deno.test("photo step is asked for HVAC, faucets, and pest", () => {
   assertEqual(
     nextCollectingStep("preferred_contact_method", {
       description: "No heat",
       vendor_trade: "hvac",
       primary_category: "hvac",
     }),
-    "awaiting_confirm",
-    "hvac skip",
+    "photo",
+    "hvac asks",
   )
   assertEqual(
     nextCollectingStep("preferred_contact_method", {
       description: "Leaky faucet",
       vendor_trade: "plumbing",
     }),
-    "awaiting_confirm",
-    "faucet skip",
+    "photo",
+    "faucet asks",
   )
   assertEqual(
     nextCollectingStep("preferred_contact_method", {

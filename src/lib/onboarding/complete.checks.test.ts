@@ -73,14 +73,11 @@ describe('canCompleteOnboarding', () => {
 })
 
 describe('validateOnboardingApprovalRules', () => {
-  it('flags missing emergency types and invalid thresholds before normalize', () => {
+  it('flags missing emergency types', () => {
     const rules = defaultOnboardingApprovalRules()
     expect(
       validateOnboardingApprovalRules({ ...rules, emergencyTypes: [] }).missing,
     ).toContain('At least one emergency type')
-    expect(
-      validateOnboardingApprovalRules({ ...rules, autoApprovalThreshold: -1 }).missing,
-    ).toContain('Automatic Approval Limit')
   })
 })
 

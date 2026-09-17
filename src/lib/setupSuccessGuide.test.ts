@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { LIMITED_ALPHA_1_LANDLORD_ID } from '@shared/landlordCapabilities'
 import {
+  armSetupSuccessPropertyDetailGuide,
   clearSetupSuccessCheckboxGuide,
   dismissSetupSuccessCheckboxGuide,
   isSetupSuccessCheckboxGuideActive,
@@ -105,6 +106,26 @@ describe('setupSuccessGuide', () => {
     expect(shouldShowSetupSuccessCheckboxGuide('properties', LIMITED_ALPHA_1_LANDLORD_ID)).toBe(true)
     expect(shouldShowSetupSuccessCheckboxGuide('vendors', LIMITED_ALPHA_1_LANDLORD_ID)).toBe(false)
     expect(shouldShowSetupSuccessCheckboxGuide('residents', LIMITED_ALPHA_1_LANDLORD_ID)).toBe(false)
+  })
+
+  it('arms property-access detail guide for a direct Overview deep link', () => {
+    armSetupSuccessPropertyDetailGuide('property_access', LIMITED_ALPHA_1_LANDLORD_ID)
+    expect(shouldShowSetupSuccessCheckboxGuide('property_access', LIMITED_ALPHA_1_LANDLORD_ID)).toBe(
+      true,
+    )
+    expect(shouldShowSetupSuccessCheckboxGuide('properties', LIMITED_ALPHA_1_LANDLORD_ID)).toBe(false)
+    expect(peekSetupSuccessPropertyFollowup(LIMITED_ALPHA_1_LANDLORD_ID)).toBe('property_access')
+  })
+
+  it('arms property-insurance detail guide for a direct Insurance tab deep link', () => {
+    armSetupSuccessPropertyDetailGuide('property_insurance', LIMITED_ALPHA_1_LANDLORD_ID)
+    expect(shouldShowSetupSuccessCheckboxGuide('property_insurance', LIMITED_ALPHA_1_LANDLORD_ID)).toBe(
+      true,
+    )
+    expect(propertyFollowupDetailTab('property_insurance')).toBe('insurance')
+    expect(setupCheckboxGuidePropertyDetailState('property_insurance')).toEqual({
+      setupCheckboxGuide: 'property_insurance',
+    })
   })
 
   it('ignores unrelated setup steps', () => {

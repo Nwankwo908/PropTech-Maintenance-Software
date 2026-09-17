@@ -2,9 +2,7 @@
  * Shared back / continue nav chrome for guided onboarding steps.
  */
 import type { ReactNode } from 'react'
-import { onboardingNavBtnClass } from './onboardingFieldStyles'
-
-const btnNav = onboardingNavBtnClass
+import { onboardingBtnBackClass, onboardingBtnContinueClass } from './onboardingFieldStyles'
 
 export function OnboardingBackButton({
   disabled,
@@ -14,7 +12,7 @@ export function OnboardingBackButton({
   onClick: () => void
 }) {
   return (
-    <button type="button" disabled={disabled} onClick={onClick} className={btnNav}>
+    <button type="button" disabled={disabled} onClick={onClick} className={onboardingBtnBackClass}>
       <svg viewBox="0 0 24 24" fill="none" className="size-4" aria-hidden>
         <path
           d="M15 18l-6-6 6-6"
@@ -39,7 +37,7 @@ export function OnboardingContinueButton({
   children: ReactNode
 }) {
   return (
-    <button type="button" disabled={disabled} onClick={onClick} className={btnNav}>
+    <button type="button" disabled={disabled} onClick={onClick} className={onboardingBtnContinueClass}>
       {children}
       <svg viewBox="0 0 24 24" fill="none" className="size-4" aria-hidden>
         <path

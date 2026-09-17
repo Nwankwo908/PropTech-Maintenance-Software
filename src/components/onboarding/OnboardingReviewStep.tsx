@@ -411,10 +411,6 @@ export function OnboardingReviewStep({
 
           <ReviewSummaryCard title="Maintenance approval rules" onEdit={() => onEditStep('approval')}>
             <ReviewSummaryRow
-              label="Automatic Approval Limit"
-              value={`$${reviewData.approvalRules.autoApprovalThreshold.toLocaleString('en-US')}`}
-            />
-            <ReviewSummaryRow
               label="Emergencies"
               value={reviewData.approvalRules.emergencyTypes
                 .map((id) => emergencyTypeLabel(id))

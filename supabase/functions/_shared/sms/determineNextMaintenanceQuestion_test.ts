@@ -92,6 +92,24 @@ Deno.test("HVAC asks diagnostic behavior and not for a photo first", () => {
   assertEqual(next.step === "photo", false, "not photo")
 })
 
+Deno.test("bathroom sink leak asks for a photo after follow-ups", () => {
+  const planned = applyQuestionPlan({
+    issue_type: "plumbing",
+    vendor_trade: "plumbing",
+    primary_category: "plumbing",
+    room_or_area: "bathroom",
+    preferred_contact_method: "text",
+    initial_message:
+      "Hello. My bathroom sink is leaking bad. The wood of the bottom drawer of the vanity has soaked and broke. I have turned off the valves.",
+    description:
+      "Hello. My bathroom sink is leaking bad. The wood of the bottom drawer of the vanity has soaked and broke. I have turned off the valves.",
+    asked_question_types: ["plumbing_active_flow"],
+    diagnostic_facts: { plumbing_active_flow: "No, I turned off the valves" },
+  })
+  assertEqual(planned.step, "photo", "photo next")
+  assertMatch(planned.diagnostic_question ?? "", /photo/i, "asks for a photo")
+})
+
 Deno.test("bedroom outlets ask whether power is out elsewhere", () => {
   const next = determineNextMaintenanceQuestion({
     issue_type: "electrical",

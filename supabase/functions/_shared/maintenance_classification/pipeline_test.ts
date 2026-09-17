@@ -331,13 +331,13 @@ Deno.test("urgency policy bands on the classification pipeline", async () => {
 
 Deno.test("photo request policy on the classification pipeline", async () => {
   const faucet = await classify("Leaky faucet")
-  assertEqual(faucet.photoRequested, false, "faucet skip photo")
+  assertEqual(faucet.photoRequested, true, "faucet asks photo")
 
   const sparks = await classify("Outlet sparks")
   assertEqual(sparks.photoRequested, false, "electrical skip photo")
 
   const heat = await classify("No heat in the apartment")
-  assertEqual(heat.photoRequested, false, "hvac skip photo")
+  assertEqual(heat.photoRequested, true, "hvac asks photo")
 
   const pest = await classify("I saw a mouse in the kitchen")
   assertEqual(pest.photoRequested, true, "pest asks photo")

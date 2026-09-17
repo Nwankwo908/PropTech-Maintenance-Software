@@ -397,6 +397,11 @@ export function PropertyHomeDataPanel({
         </>
       ) : (
         <>
+          <div className="px-4 pt-4 lg:px-6 lg:pt-6">
+            <h3 className="text-[24px] font-bold leading-8 tracking-[0.07px] text-[#0a0a0a]">
+              Home Value
+            </h3>
+          </div>
           <div className="grid grid-cols-1 items-start lg:grid-cols-2">
           <div className="min-w-0 p-4 lg:p-6">
           <div className="relative h-[240px] min-h-[240px] overflow-hidden rounded-[8px] bg-[#f3f4f6] lg:h-[320px] lg:min-h-[320px]">
@@ -409,9 +414,6 @@ export function PropertyHomeDataPanel({
           </div>
           </div>
           <div className="relative flex min-h-[240px] min-w-0 flex-col gap-3 bg-white p-4 lg:min-h-[320px] lg:p-6">
-            <h3 className="text-[13px] font-semibold leading-5 text-[#0a0a0a]">
-              Home Value
-            </h3>
             <div className="grid grid-cols-2 content-start gap-3">
               {cards.map((card) => (
                 <HomeMetricCard key={card.label} {...card} />

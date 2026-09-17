@@ -19,6 +19,9 @@ import {
   landlordNumberedChoiceReplyHint,
   type AwaitingVendorChoice,
 } from "./vendorLandlordChoice.ts"
+import { shouldSkipSlaReassignForNeedsAdminVendor } from "./slaReassignEligibility.ts"
+
+export { shouldSkipSlaReassignForNeedsAdminVendor }
 
 export type MaintenanceAdminVendorEscalationReason =
   | "sla_expired_no_vendor"
@@ -70,6 +73,9 @@ export async function linkedWorkflowNeedsAdminVendor(
       : null,
   )
 }
+
+/** @deprecated Prefer linkedWorkflowNeedsAdminVendor — kept for call-site compatibility. */
+export const workflowEscalatedNeedsAdminVendor = linkedWorkflowNeedsAdminVendor
 
 export type EscalateMaintenanceNeedsVendorOpts = {
   escalationReason: MaintenanceAdminVendorEscalationReason
@@ -256,6 +262,52 @@ export async function resumeMaintenanceWorkflowAfterAutoReassign(
     pipelineStage: "act",
     eventMessage,
     eventStep: "vendor_reassigned",
+  })
+}
+
+/**
+ * After a vendor is assigned (initial dispatch or reassignment), clear
+ * "needs a vendor" escalation so the run waits on accept.
+ */
+export async function resumeMaintenanceWorkflowAfterVendorAssigned(
+  supabase: SupabaseClient,
+  params: {
+    ticketId: string
+    vendorId?: string | null
+    eventMessage?: string | null
+    eventStep?: string | null
+    currentStep?: string | null
+  },
+): Promise<void> {
+  const ticketId = params.ticketId.trim()
+  if (!ticketId) return
+
+  const { data: run } = await supabase
+    .from("workflow_runs")
+    .select("id, status, metadata")
+    .eq("entity_type", "maintenance_request")
+    .eq("entity_id", ticketId)
+    .in("status", ["escalated", "active", "pending"])
+    .order("started_at", { ascending: false })
+    .limit(1)
+    .maybeSingle()
+
+  if (!run?.id) return
+
+  const vendorId = params.vendorId?.trim() || null
+  const metadata: Record<string, unknown> = {
+    vendor_assigned_at: new Date().toISOString(),
+    escalation_reason: null,
+  }
+  if (vendorId) metadata.assigned_vendor_id = vendorId
+
+  await updateWorkflowRun(supabase, run.id, {
+    status: "active",
+    currentStep: params.currentStep?.trim() || "awaiting_vendor_accept",
+    metadata,
+    pipelineStage: "act",
+    eventMessage: params.eventMessage?.trim() || "Vendor assigned",
+    eventStep: params.eventStep?.trim() || "vendor_assigned",
   })
 }
 

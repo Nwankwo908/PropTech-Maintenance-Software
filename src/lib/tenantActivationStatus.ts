@@ -118,7 +118,7 @@ export function resolveTenantActivationChip(input: {
       attemptCount: attempts,
     }
   }
-  if (raw === 'waiting' || input.activationSmsSentAt) {
+  if (raw === 'waiting') {
     return {
       status: 'waiting',
       label: 'Waiting for Resident',

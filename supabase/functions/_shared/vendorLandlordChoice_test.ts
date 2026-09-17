@@ -4,11 +4,14 @@ import { decideVendorAssignmentFromTiers } from "./vendor_assignment.ts"
 import {
   buildLandlordVendorChoiceSms,
   canHandleLandlordVendorChoice,
+  canReplaceAssignedVendorForLandlordChoice,
   choiceOptionsFromExternalSuggestions,
   formatExternalVendorSmsLine,
   landlordNumberedChoiceReplyHint,
   parseLandlordVendorChoice,
   readAwaitingVendorChoice,
+  ticketIsAwaitingLandlordVendorChoice,
+  vendorChoiceOptionIdsEqual,
 } from "./vendorLandlordChoice.ts"
 
 const specialist = {
@@ -169,6 +172,38 @@ Deno.test("buildLandlordVendorChoiceSms asks YES for one vendor and 1 or 2 for t
   assertEquals(twoHandymen.includes("Reply 1 or 2"), true)
   assertEquals(twoHandymen.includes("1. Ivanhomesolutions"), true)
   assertEquals(twoHandymen.includes("2. Handyman Services By Michael"), true)
+})
+
+Deno.test("buildLandlordVendorChoiceSms rematch copy does not auto-assign", () => {
+  const sms = buildLandlordVendorChoiceSms({
+    landlordFirstName: "Alex",
+    companyName: "Ulo Homes",
+    workOrderRef: "WO-E6F7",
+    unit: "1",
+    tradeLabel: "plumbing",
+    reason: "no_response",
+    options: [
+      { id: "spec-1", name: "Frank Rooter LLC", role: "specialist" },
+      { id: "gen-2", name: "Handyman Services By Michael", role: "generalist" },
+    ],
+  })
+  assertEquals(sms.includes("hasn't responded in time"), true)
+  assertEquals(sms.includes("Reply 1 or 2"), true)
+  assertEquals(sms.includes("Frank Rooter LLC"), true)
+})
+
+Deno.test("canReplaceAssignedVendorForLandlordChoice allows pending_accept rematch", () => {
+  assertEquals(canReplaceAssignedVendorForLandlordChoice("pending_accept"), true)
+  assertEquals(canReplaceAssignedVendorForLandlordChoice("accepted"), false)
+  assertEquals(canReplaceAssignedVendorForLandlordChoice("in_progress"), false)
+  assertEquals(ticketIsAwaitingLandlordVendorChoice("Awaiting landlord vendor choice"), true)
+  assertEquals(ticketIsAwaitingLandlordVendorChoice(null), false)
+})
+
+Deno.test("vendorChoiceOptionIdsEqual ignores order", () => {
+  assertEquals(vendorChoiceOptionIdsEqual(["a", "b"], ["b", "a"]), true)
+  assertEquals(vendorChoiceOptionIdsEqual(["a", "b"], ["a"]), false)
+  assertEquals(vendorChoiceOptionIdsEqual(["a"], ["c"]), false)
 })
 
 Deno.test("external suggestions become numbered SMS choices", () => {

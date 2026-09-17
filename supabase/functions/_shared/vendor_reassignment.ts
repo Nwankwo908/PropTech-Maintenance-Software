@@ -6,7 +6,7 @@ import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.49.1
 import { runMaintenanceRequestViaEngine } from "./engine/maintenanceRequestEngine.ts"
 import {
   escalateMaintenanceNeedsVendor,
-  resumeMaintenanceWorkflowAfterAutoReassign,
+  resumeMaintenanceWorkflowAfterVendorAssigned,
   type MaintenanceTicketScope,
 } from "./maintenance_admin_escalation.ts"
 import { recordActivityLog } from "./graph/recordActivityLog.ts"
@@ -19,7 +19,10 @@ import {
   loadDeclinedVendorIdsForTicket,
   loadJobStateForTicket,
   loadMostRecentlyAssignedVendorId,
+  loadPreviouslyAssignedVendorIdsForTicket,
   pickVendorForAssignment,
+  resolveVendorAssignmentDecision,
+  type VendorAssignmentDecision,
 } from "./vendor_assignment.ts"
 import { loadLandlordMarketplacePreference } from "./landlordNotificationPrefs.ts"
 import { reassignVendorByIdAndNotify } from "../submit-maintenance-request/vendor_notify.ts"
@@ -87,7 +90,11 @@ export async function findReplacementVendorForTicket(
   }
 
   const declined = await loadDeclinedVendorIdsForTicket(supabase, ticketId)
-  const exclude = new Set([...declined, ...extraExclude])
+  const previouslyAssigned = await loadPreviouslyAssignedVendorIdsForTicket(
+    supabase,
+    ticketId,
+  )
+  const exclude = new Set([...declined, ...previouslyAssigned, ...extraExclude])
 
   let preferNot: string | null = input.preferNotVendorId?.trim() || null
   if (!preferNot && input.preferNotRecentlyAssigned) {
@@ -112,6 +119,32 @@ export async function findReplacementVendorForTicket(
   })
   if (!picked) return { ok: true, vendor: null }
   return { ok: true, vendor: { id: picked.id, name: picked.name } }
+}
+
+export async function resolveReplacementVendorChoiceForTicket(
+  supabase: SupabaseClient,
+  input: FindReplacementVendorInput,
+): Promise<VendorAssignmentDecision> {
+  const ticketId = input.ticketId.trim()
+  const assignedId = input.assignedVendorId ?? null
+  const extraExclude = new Set(input.excludeVendorIds ?? [])
+  if (assignedId) extraExclude.add(assignedId)
+  const declined = await loadDeclinedVendorIdsForTicket(supabase, ticketId)
+  const exclude = [...declined, ...extraExclude]
+  const landlordId = input.landlordId ?? null
+  return await resolveVendorAssignmentDecision(supabase, {
+    issueCategory: input.issueCategory ?? null,
+    excludeVendorIds: exclude,
+    preferNotVendorId: input.preferNotVendorId?.trim() || assignedId,
+    landlordId,
+    marketplacePreference: landlordId
+      ? await loadLandlordMarketplacePreference(supabase, landlordId)
+      : "include_imported",
+    jobState: await loadJobStateForTicket(supabase, {
+      ticketId,
+      landlordId,
+    }),
+  })
 }
 
 export type VendorReassignTrigger =
@@ -206,11 +239,13 @@ export async function executeAutoVendorReassignment(
 
   if (cfg.resumeWorkflow && !input.skipWorkflowAdvance) {
     try {
-      await resumeMaintenanceWorkflowAfterAutoReassign(
-        supabase,
+      await resumeMaintenanceWorkflowAfterVendorAssigned(supabase, {
         ticketId,
-        cfg.workflowMessage(newVendor.name),
-      )
+        vendorId: newVendor.id,
+        eventMessage: cfg.workflowMessage(newVendor.name),
+        eventStep: "vendor_reassigned",
+        currentStep: "awaiting_vendor_accept",
+      })
     } catch (e) {
       console.error(`[${cfg.logLabel}] resume workflow`, e)
     }

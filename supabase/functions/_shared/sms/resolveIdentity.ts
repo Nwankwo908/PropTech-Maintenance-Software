@@ -11,6 +11,7 @@ import {
   type SmsIdentityRow,
 } from "./inbound_db.ts"
 import { smsIdentityIsFullyResolved } from "./smsIdentityUpgrade.ts"
+import { findWaitingActivationResidentByPhone } from "./tenantActivationLookup.ts"
 import { logGraphEvent } from "../graph/logGraphEvent.ts"
 
 export type IdentityResolutionSource =
@@ -437,24 +438,46 @@ export async function resolvePhoneIdentity(
   )
 
   if (input.conversationStatus === AWAITING_UNIT_STATUS) {
-    if (vendor) {
+    const waitingWhileAwaiting = await findWaitingActivationResidentByPhone(supabase, {
+      fromNumber: input.fromNumber,
+      landlordId: input.landlordId,
+    })
+    if (!waitingWhileAwaiting && vendor) {
       return applyVendorIdentity(supabase, input, existingIdentity, vendor)
     }
-    return processUnitNumberSelfHealing(supabase, input)
+    if (!waitingWhileAwaiting) {
+      return processUnitNumberSelfHealing(supabase, input)
+    }
   }
 
   // Roster vendor on this landlord — never treat as an unknown/blank tenant.
-  if (vendor) {
+  // Exception: if this phone is waiting on tenant activation, YES/NO must win.
+  const waitingResident = await findWaitingActivationResidentByPhone(supabase, {
+    fromNumber: input.fromNumber,
+    landlordId: input.landlordId,
+  })
+  if (vendor && !waitingResident) {
     return applyVendorIdentity(supabase, input, existingIdentity, vendor)
   }
 
   let createdOrUpdated = false
 
-  const activeResident = await findActiveResidentByPhone(
-    supabase,
-    input.fromNumber,
-    input.landlordId,
-  )
+  const activeResident = waitingResident
+    ? ({
+        id: waitingResident.id,
+        resident_id: waitingResident.id,
+        full_name: waitingResident.full_name ?? "",
+        email: "",
+        phone: input.fromNumber,
+        unit: null,
+        building: null,
+        status: "active",
+      } as ResidentRow)
+    : await findActiveResidentByPhone(
+      supabase,
+      input.fromNumber,
+      input.landlordId,
+    )
   if (activeResident) {
     const identity = await upsertSmsIdentity(supabase, {
       fromNumber: input.fromNumber,

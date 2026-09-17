@@ -1,5 +1,6 @@
 import { useId, useState } from 'react'
 import { Link } from 'react-router-dom'
+import { StreetAddressAutocomplete } from '@/components/StreetAddressAutocomplete'
 import { TableCheckbox, checkboxInputClassName } from '@/components/TableCheckbox'
 import { PRIVACY_POLICY_PATH } from '@/lib/legal/privacyPolicyContent'
 import { ResidentOccupancySelect } from '@/components/ResidentOccupancySelect'
@@ -467,15 +468,23 @@ export function OnboardingAiReviewStep({
                     <p className="sm:col-span-2 text-[12px] font-medium text-[#364153]">
                       Complete location details (not always on the document)
                     </p>
-                    <label className="block sm:col-span-2">
+                    <div className="block sm:col-span-2">
                       <span className={fieldLabelClass}>Street address</span>
-                      <input
+                      <StreetAddressAutocomplete
                         className={inputClass}
                         value={item.address}
-                        onChange={(e) => patchProperty(item.id, { address: e.target.value })}
+                        onChange={(address) => patchProperty(item.id, { address })}
+                        onPlaceResolved={(parsed) =>
+                          patchProperty(item.id, {
+                            address: parsed.street || item.address,
+                            city: parsed.city || item.city,
+                            state: parsed.state || item.state,
+                            zipCode: parsed.zipCode || item.zipCode,
+                          })
+                        }
                         placeholder="Street address"
                       />
-                    </label>
+                    </div>
                     <label className="block">
                       <span className={fieldLabelClass}>City</span>
                       <input

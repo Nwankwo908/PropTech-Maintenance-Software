@@ -33,11 +33,19 @@ Deno.test("vendorServiceStateCodes reads verification service area and license",
     }),
     ["MD"],
   )
+  assertEquals(
+    vendorServiceStateCodes({
+      serviceArea: {},
+      rosterState: "New Jersey",
+    }),
+    ["NJ"],
+  )
 })
 
 Deno.test("vendorCoversJobState requires the same state when the job state is known", () => {
   assertEquals(vendorCoversJobState(["MD"], "Maryland"), true)
   assertEquals(vendorCoversJobState(["NJ"], "MD"), false)
   assertEquals(vendorCoversJobState([], "MD"), false)
-  assertEquals(vendorCoversJobState(["NJ"], null), true)
+  assertEquals(vendorCoversJobState(["NJ"], null), false)
+  assertEquals(vendorCoversJobState(["MD"], "NJ"), false)
 })

@@ -76,23 +76,36 @@ export async function signInAdmin(loginId: string, password: string): Promise<vo
   }
 }
 
-export async function sendAdminEmailOtp(loginId: string): Promise<void> {
+export async function sendAdminEmailOtp(
+  loginId: string,
+  options?: { createUser?: boolean },
+): Promise<void> {
   if (!supabase) throw new Error(SERVICE_UNAVAILABLE)
-  await assertAdminEmailAllowed(loginId)
+  const createUser = options?.createUser === true
+  // New accounts (Get Started) stay on the portal allowlist. Returning logins
+  // skip it so existing auth users can request a code.
+  if (createUser) {
+    await assertAdminEmailAllowed(loginId)
+  }
   const email = loginIdToEmail(loginId)
-  // First-time allowlisted testers have no auth.users row yet. OTP must create it.
   const { error } = await supabase.auth.signInWithOtp({
     email,
-    options: { shouldCreateUser: true },
+    options: { shouldCreateUser: createUser },
   })
   if (error) {
     throw new Error(getErrorMessage(error, 'Could not send a sign-in code. Please try again.'))
   }
 }
 
-export async function verifyAdminEmailOtp(loginId: string, token: string): Promise<void> {
+export async function verifyAdminEmailOtp(
+  loginId: string,
+  token: string,
+  options?: { requireAllowlist?: boolean },
+): Promise<void> {
   if (!supabase) throw new Error(SERVICE_UNAVAILABLE)
-  await assertAdminEmailAllowed(loginId)
+  if (options?.requireAllowlist !== false) {
+    await assertAdminEmailAllowed(loginId)
+  }
   const email = loginIdToEmail(loginId)
   const { error } = await supabase.auth.verifyOtp({
     email,

@@ -46,7 +46,7 @@ describe('toUserFriendlyMessage', () => {
   it('maps OTP signup-disabled for first-time admin emails', () => {
     expect(
       toUserFriendlyMessage('Signups not allowed for otp', 'fallback'),
-    ).toMatch(/does not have a login yet/i)
+    ).toMatch(/doesn’t have an account yet/i)
   })
 
   it('maps failed email codes without calling it a permission error', () => {

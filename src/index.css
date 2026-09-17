@@ -3048,3 +3048,8 @@ h6 {
     transform: none;
   }
 }
+
+/* Google Places suggestions attach to document.body; keep them above onboarding cards. */
+.pac-container {
+  z-index: 10000;
+}

@@ -406,10 +406,33 @@ export async function processInboundSms(
         return finishHandledInbound(handlerContext, complianceResult)
       }
     }
-    return finishHandledInbound(handlerContext, {
-      handled: true,
-      workflowRoute: "admin_takeover",
-    })
+    // Welcome YES/NO must still complete while the thread is paused for the PM.
+    const activationReply = INBOUND_SMS_HANDLERS.find(
+      (handler) => handler.id === "tenant_activation_reply",
+    )
+    if (activationReply) {
+      const activationResult = await activationReply.try(handlerContext)
+      if (activationResult.handled) {
+        return finishHandledInbound(handlerContext, activationResult)
+      }
+    }
+    if (handlerContext.resumeParkedOnboardingRequest) {
+      // Activation already applied; continue into workflow with parked repair text.
+    } else {
+      const activationHold = INBOUND_SMS_HANDLERS.find(
+        (handler) => handler.id === "tenant_activation_hold",
+      )
+      if (activationHold) {
+        const holdResult = await activationHold.try(handlerContext)
+        if (holdResult.handled) {
+          return finishHandledInbound(handlerContext, holdResult)
+        }
+      }
+      return finishHandledInbound(handlerContext, {
+        handled: true,
+        workflowRoute: "admin_takeover",
+      })
+    }
   }
 
   const handlerResult = await tryInboundSmsHandlers(handlerContext)

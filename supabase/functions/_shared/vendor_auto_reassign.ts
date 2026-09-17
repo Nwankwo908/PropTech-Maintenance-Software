@@ -1,6 +1,7 @@
 import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.49.1"
 import { runMaintenanceRequestViaEngine } from "./engine/maintenanceRequestEngine.ts"
-import { linkedWorkflowNeedsAdminVendor } from "./maintenance_admin_escalation.ts"
+import { workflowEscalatedNeedsAdminVendor } from "./maintenance_admin_escalation.ts"
+import { shouldSkipSlaReassignForNeedsAdminVendor } from "./slaReassignEligibility.ts"
 
 export type AutoReassignResult =
   | { outcome: "reassigned"; newVendorId: string }
@@ -47,7 +48,16 @@ export async function tryAutoReassignAfterDecline(
     return { outcome: "skipped", reason: "assignee_mismatch" }
   }
 
-  if (await linkedWorkflowNeedsAdminVendor(supabase, ticketId)) {
+  if (
+    shouldSkipSlaReassignForNeedsAdminVendor({
+      assignedVendorId: assigned,
+      vendorWorkStatus: status,
+      workflowNeedsAdminVendor: await workflowEscalatedNeedsAdminVendor(
+        supabase,
+        ticketId,
+      ),
+    })
+  ) {
     return { outcome: "skipped", reason: "already_needs_admin_vendor" }
   }
 

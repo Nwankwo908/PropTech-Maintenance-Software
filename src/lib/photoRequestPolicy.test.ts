@@ -10,12 +10,18 @@ describe('resolvePhotoRequest', () => {
     expect(resolvePhotoRequest({ text: 'My door broke' }).requested).toBe(true)
   })
 
-  it('skips HVAC, electrical, and dripping faucets', () => {
+  it('asks for plumbing, HVAC, and faucet photos; skips electrical hazards', () => {
     expect(resolvePhotoRequest({ text: 'No heat', primaryCategory: 'hvac' }).requested).toBe(
-      false,
+      true,
     )
+    expect(resolvePhotoRequest({ text: 'Leaky faucet' }).requested).toBe(true)
+    expect(
+      resolvePhotoRequest({
+        text:
+          'Hello. My bathroom sink is leaking bad. The wood of the bottom drawer of the vanity has soaked and broke.',
+      }).requested,
+    ).toBe(true)
     expect(resolvePhotoRequest({ text: 'Outlet sparks' }).requested).toBe(false)
-    expect(resolvePhotoRequest({ text: 'Leaky faucet' }).requested).toBe(false)
   })
 
   it('does not ask when a photo is already attached', () => {

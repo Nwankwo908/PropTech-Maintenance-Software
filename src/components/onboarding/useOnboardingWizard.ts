@@ -95,9 +95,6 @@ import {
   SETUP_COMPLETE_TRANSITION_MS,
 } from '@/lib/onboarding/wizardNavigation'
 import {
-  applyCurrentAutoApprovalDefault,
-  DEFAULT_AUTO_APPROVAL_THRESHOLD,
-  LEGACY_DEFAULT_AUTO_APPROVAL_THRESHOLD,
   type OnboardingApprovalRules,
 } from '@/lib/onboardingApprovalRules'
 
@@ -107,7 +104,6 @@ export function useOnboardingWizard() {
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [state, setState] = useState<LandlordOnboardingState>(() => defaultOnboardingState())
-  const upgradedLegacyAutoApprovalRef = useRef(false)
 
   const [propertyForms, setPropertyForms] = useState<PropertyFormRow[]>(() => [createEmptyPropertyForm()])
 
@@ -176,7 +172,7 @@ export function useOnboardingWizard() {
   const showBackButton =
     editingFromReview ||
     (step !== 'entry' && getPreviousOnboardingStep(step, state.setupPath) != null)
-  const editContinueLabel = editingFromReview ? 'Save and return to review' : undefined
+  const editContinueLabel = editingFromReview ? 'Continue' : undefined
   const propertyNames = state.properties
     .map((property) => property.name.trim())
     .filter(Boolean)
@@ -382,26 +378,6 @@ export function useOnboardingWizard() {
       cancelled = true
     }
   }, [])
-
-  useEffect(() => {
-    if (loading || upgradedLegacyAutoApprovalRef.current) return
-    if (state.onboardingStatus === 'completed') {
-      upgradedLegacyAutoApprovalRef.current = true
-      return
-    }
-    if (state.approvalRules.autoApprovalThreshold !== LEGACY_DEFAULT_AUTO_APPROVAL_THRESHOLD) {
-      upgradedLegacyAutoApprovalRef.current = true
-      return
-    }
-    upgradedLegacyAutoApprovalRef.current = true
-    setState((prev) => ({
-      ...prev,
-      approvalRules: {
-        ...prev.approvalRules,
-        autoApprovalThreshold: DEFAULT_AUTO_APPROVAL_THRESHOLD,
-      },
-    }))
-  }, [loading, state.onboardingStatus, state.approvalRules.autoApprovalThreshold])
 
   useEffect(() => {
     if (loading || step !== 'property') return
@@ -744,17 +720,16 @@ export function useOnboardingWizard() {
   }
 
   async function beginOnboarding(path: 'guided' | 'fast_track', targetStep: OnboardingStep) {
-    const clearedState = await wipePortfolioSession()
-    if (!clearedState) return
-
-    setSaving(true)
+    if (saving) return
+    setError(null)
+    resetOnboardingForms()
+    // Leave the welcome hub on the first click. Do not wipe-to-entry first —
+    // that kept status at `not_started` and pinned the display on `entry`.
     await goTo(targetStep, {
       onboardingStatus: 'in_progress',
       setupPath: path,
-      accountSetup: clearedState.accountSetup,
       properties: [],
     })
-    setSaving(false)
     trackProductEventOnce('signup_started', 'onboarding')
   }
 

@@ -2,6 +2,7 @@ import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.49.1
 import { phoneLookupVariants } from "./inbound_db.ts"
 import { sendInboundAutoReply } from "./inboundReply.ts"
 import { recordActivityLog } from "../graph/recordActivityLog.ts"
+import { findWaitingActivationResidentByPhone } from "./tenantActivationLookup.ts"
 import type { SmsProviderName } from "./types.ts"
 
 export type TenantSmsConsentStatus = "pending" | "opted_in" | "opted_out"
@@ -106,12 +107,16 @@ export function isTenantActivationPending(input: {
 /**
  * Pure gate for the inbound activation-reply handler.
  * Does not send SMS — only decides eligibility before DB-backed handling.
+ *
+ * Welcome YES/NO must win over leftover intake state or a mis-labeled vendor/
+ * landlord thread when we already know which waiting resident this phone is.
  */
 export function canHandleTenantActivationReply(input: {
   body: string
   residentId?: string | null
   identityType?: string | null
   conversationType?: string | null
+  /** @deprecated Ignored — pending activation always outranks open intake. */
   activeMaintenanceIntake?: boolean
   smsConsentStatus?: string | null
   activationStatus?: string | null
@@ -119,16 +124,14 @@ export function canHandleTenantActivationReply(input: {
 }): boolean {
   if (!classifyTenantActivationKeyword(input.body)) return false
   if (!input.residentId?.trim()) return false
-  if (input.activeMaintenanceIntake) return false
-  if (isNonTenantActivationThread(input.identityType, input.conversationType)) {
-    return false
-  }
   return isTenantActivationPending({
     smsConsentStatus: input.smsConsentStatus,
     activationStatus: input.activationStatus,
     activationSmsSentAt: input.activationSmsSentAt,
   })
 }
+
+export { findWaitingActivationResidentByPhone } from "./tenantActivationLookup.ts"
 
 export type SmsStartConfirmationKind =
   | "reopt_in"

@@ -1,5 +1,5 @@
 /**
- * Load Google Maps JS API (Geocoder + Map + Street View) once per session.
+ * Load Google Maps JS API (Geocoder + Map + Street View + Places) once per session.
  */
 
 declare global {

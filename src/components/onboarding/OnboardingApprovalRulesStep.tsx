@@ -7,8 +7,6 @@ import {
 } from '@/lib/communicationStyle'
 import {
   AFTER_HOURS_RULE_OPTIONS,
-  DEFAULT_AUTO_APPROVAL_THRESHOLD,
-  applyCurrentAutoApprovalDefault,
   EMERGENCY_TYPE_OPTIONS,
   MARKETPLACE_PREFERENCE_OPTIONS,
   NOTIFICATION_CHANNEL_OPTIONS,
@@ -85,13 +83,9 @@ export function OnboardingApprovalRulesStep({
   onBack,
   onContinue,
 }: OnboardingApprovalRulesStepProps) {
-  const [rules, setRules] = useState<OnboardingApprovalRules>(() => {
-    const normalized = normalizeOnboardingApprovalRules(initialRules)
-    return {
-      ...normalized,
-      autoApprovalThreshold: applyCurrentAutoApprovalDefault(normalized.autoApprovalThreshold),
-    }
-  })
+  const [rules, setRules] = useState<OnboardingApprovalRules>(() =>
+    normalizeOnboardingApprovalRules(initialRules),
+  )
   const [error, setError] = useState<string | null>(null)
   const [previewTab, setPreviewTab] = useState<'sms' | 'email'>('sms')
   const stylePreview = useMemo(
@@ -125,11 +119,6 @@ export function OnboardingApprovalRulesStep({
     onContinue(normalized)
   }
 
-  const thresholdDisplay =
-    Number.isFinite(rules.autoApprovalThreshold) && rules.autoApprovalThreshold >= 0
-      ? String(rules.autoApprovalThreshold)
-      : String(DEFAULT_AUTO_APPROVAL_THRESHOLD)
-
   return (
     <section className="sa-surface mx-auto w-full max-w-[640px]">
       <p className="text-[12px] font-semibold uppercase tracking-[0.08em] text-[#186179]">
@@ -139,38 +128,11 @@ export function OnboardingApprovalRulesStep({
         Maintenance approval rules
       </h2>
       <p className="mt-2 text-[14px] leading-6 text-[#6b7280]">
-        Tell Ulo when to schedule repairs automatically, what counts as an emergency, and how to
-        handle after-hours work. Smart defaults are selected — change anything that doesn’t fit your
-        portfolio.
+        Tell Ulo what counts as an emergency and how to handle after-hours work. Smart defaults
+        are selected — change anything that doesn’t fit your portfolio.
       </p>
 
       <div className="mt-8 space-y-8">
-        <div>
-          <h3 className="text-[15px] font-semibold text-[#111827]">Automatic Approval Limit</h3>
-          <p className="mt-1 text-[13px] leading-5 text-[#6b7280]">
-            Repairs under this amount can be scheduled automatically without waiting on you.
-          </p>
-          <div className="relative mt-3 max-w-[200px]">
-            <span className="pointer-events-none absolute top-1/2 left-3 -translate-y-1/2 text-[14px] text-[#6a7282]">
-              $
-            </span>
-            <input
-              type="number"
-              min={0}
-              step={50}
-              value={thresholdDisplay}
-              onChange={(e) => {
-                const next = Number(e.target.value)
-                patch({
-                  autoApprovalThreshold: Number.isFinite(next) ? Math.max(0, Math.round(next)) : 0,
-                })
-              }}
-              className="h-11 w-full rounded-[10px] border border-[#e5e7eb] bg-white pl-7 pr-3 text-[15px] text-[#111827] outline-none focus:border-[#186179] focus:ring-2 focus:ring-[#186179]/20"
-            />
-          </div>
-          <p className="mt-2 text-[12px] text-[#9ca3af]">Suggested default: $100</p>
-        </div>
-
         <div>
           <h3 className="text-[15px] font-semibold text-[#111827]">Emergency definition</h3>
           <p className="mt-1 text-[13px] leading-5 text-[#6b7280]">

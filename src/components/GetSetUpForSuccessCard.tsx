@@ -12,7 +12,9 @@ import { AdminBottomSheet } from '@/components/AdminBottomSheet'
 import type { SetupSuccessItemId, SetupSuccessProgress } from '@/lib/setupSuccessChecklist'
 import {
   markSetupSuccessCheckboxGuidePending,
+  armSetupSuccessPropertyDetailGuide,
   setupCheckboxGuideLinkState,
+  setupCheckboxGuidePropertyDetailState,
 } from '@/lib/setupSuccessGuide'
 
 const ITEM_ICONS: Record<SetupSuccessItemId, string> = {
@@ -35,6 +37,8 @@ const COMPACT_SETUP_SHEET_MQ = '(max-width: 1279px)'
 type GetSetUpForSuccessCardProps = {
   progress: SetupSuccessProgress
   onClose: () => void
+  /** Deep-link property setup steps to the first property when available. */
+  resolveItemTo?: (itemId: SetupSuccessItemId) => string | undefined
 }
 
 function CloseIcon() {
@@ -45,7 +49,13 @@ function CloseIcon() {
   )
 }
 
-function SetupChecklist({ progress }: { progress: SetupSuccessProgress }) {
+function SetupChecklist({
+  progress,
+  resolveItemTo,
+}: {
+  progress: SetupSuccessProgress
+  resolveItemTo?: (itemId: SetupSuccessItemId) => string | undefined
+}) {
   return (
     <div className="overflow-hidden rounded-[12px] border border-[#e2e8f0]">
       {progress.items.map((item, index) => {
@@ -100,13 +110,35 @@ function SetupChecklist({ progress }: { progress: SetupSuccessProgress }) {
           )
         }
 
+        const deepTo = resolveItemTo?.(item.id)?.trim() || undefined
+        const to = deepTo ?? item.to
+        const detailFollowup =
+          deepTo &&
+          (item.id === 'property_access' ||
+            item.id === 'property_intelligence' ||
+            item.id === 'property_insurance')
+            ? item.id === 'property_intelligence'
+              ? ('property_tab' as const)
+              : item.id
+            : null
+
         return (
           <Link
             key={item.id}
-            to={item.to}
-            state={setupCheckboxGuideLinkState(item.id)}
-            onClick={() => markSetupSuccessCheckboxGuidePending(item.id)}
-            onPointerDown={() => markSetupSuccessCheckboxGuidePending(item.id)}
+            to={to}
+            state={
+              detailFollowup
+                ? setupCheckboxGuidePropertyDetailState(detailFollowup)
+                : setupCheckboxGuideLinkState(item.id)
+            }
+            onClick={() => {
+              if (detailFollowup) armSetupSuccessPropertyDetailGuide(detailFollowup)
+              else markSetupSuccessCheckboxGuidePending(item.id)
+            }}
+            onPointerDown={() => {
+              if (detailFollowup) armSetupSuccessPropertyDetailGuide(detailFollowup)
+              else markSetupSuccessCheckboxGuidePending(item.id)
+            }}
             className={`sa-press ${rowClass} hover:bg-[#f9fafb] focus-visible:bg-[#f9fafb] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[#0030b5]`}
             style={rowStyle}
           >
@@ -159,7 +191,11 @@ function SetupCopy({
   )
 }
 
-export function GetSetUpForSuccessCard({ progress, onClose }: GetSetUpForSuccessCardProps) {
+export function GetSetUpForSuccessCard({
+  progress,
+  onClose,
+  resolveItemTo,
+}: GetSetUpForSuccessCardProps) {
   const titleId = useId()
   const [useSheet, setUseSheet] = useState(
     () => typeof window !== 'undefined' && window.matchMedia(COMPACT_SETUP_SHEET_MQ).matches,
@@ -193,7 +229,7 @@ export function GetSetUpForSuccessCard({ progress, onClose }: GetSetUpForSuccess
             <SetupProgressBar progress={progress} />
           </div>
           <div className="mt-5 min-h-0 flex-1 overflow-y-auto overscroll-contain">
-            <SetupChecklist progress={progress} />
+            <SetupChecklist progress={progress} resolveItemTo={resolveItemTo} />
           </div>
         </div>
       </AdminBottomSheet>
@@ -222,7 +258,7 @@ export function GetSetUpForSuccessCard({ progress, onClose }: GetSetUpForSuccess
         <SetupProgressBar progress={progress} />
       </div>
       <div className="mt-5">
-        <SetupChecklist progress={progress} />
+        <SetupChecklist progress={progress} resolveItemTo={resolveItemTo} />
       </div>
     </section>
   )

@@ -131,6 +131,7 @@ export async function advanceMaintenanceRequestVendorStep(
     eventMessage: string
     eventStep: string
     resumeFromEscalated?: boolean
+    vendorId?: string | null
   },
 ): Promise<string | null> {
   const { data: run } = await supabase
@@ -144,14 +145,17 @@ export async function advanceMaintenanceRequestVendorStep(
 
   if (!run?.id) return null
 
-  const resume = params.resumeFromEscalated && run.status === "escalated"
-
   await updateWorkflowRun(supabase, run.id, {
-    status: resume ? "active" : undefined,
+    status: run.status === "escalated" ? "active" : undefined,
     currentStep: params.step,
-    metadata: resume
-      ? { auto_reassigned_at: new Date().toISOString() }
-      : { vendor_assigned: true },
+    metadata: {
+      vendor_assigned: true,
+      assigned_vendor_id: params.vendorId?.trim() || null,
+      auto_reassigned_at: run.status === "escalated" || params.resumeFromEscalated
+        ? new Date().toISOString()
+        : undefined,
+      escalation_reason: null,
+    },
     pipelineStage: "act",
     eventMessage: params.eventMessage,
     eventStep: params.eventStep,

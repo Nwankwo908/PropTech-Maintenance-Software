@@ -178,15 +178,17 @@ export function EmergencyApprovalRail({
                 No quote amount is on this work order yet.
               </p>
             )}
+            {review.vendorRating != null || review.vendorEtaMinutes != null ? (
             <p className="mt-3 text-[12px] leading-4 text-[#6a7282]">
-              Auto-approval cap: {formatEmergencyCurrency(review.autoApprovalCap)}
               {review.vendorRating != null
-                ? ` · Vendor rating ${review.vendorRating.toFixed(1)}`
+                ? `Vendor rating ${review.vendorRating.toFixed(1)}`
                 : ''}
+              {review.vendorRating != null && review.vendorEtaMinutes != null ? ' · ' : ''}
               {review.vendorEtaMinutes != null
-                ? ` · On-site ETA ${review.vendorEtaMinutes} min`
+                ? `On-site ETA ${review.vendorEtaMinutes} min`
                 : ''}
             </p>
+            ) : null}
           </div>
 
           <p className="mt-5 text-[13px] leading-5 text-[#6a7282]">{review.footerNote}</p>

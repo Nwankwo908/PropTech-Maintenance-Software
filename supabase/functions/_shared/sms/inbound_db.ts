@@ -200,6 +200,29 @@ export async function resolveLandlordIdForSharedTwilioInbound(
   const variants = phoneLookupVariants(fromNumber)
   if (variants.length === 0) return fallbackLandlordId
 
+  // Prefer a waiting activation resident — YES/NO must land on the portfolio that
+  // sent the welcome text, even when the DID is owned by the other Alpha account.
+  const { data: waitingUsers, error: waitingErr } = await supabase
+    .from("users")
+    .select("landlord_id")
+    .in("phone", variants)
+    .eq("activation_status", "waiting")
+    .not("landlord_id", "is", null)
+    .limit(8)
+
+  if (waitingErr) {
+    console.error("[sms-inbound] shared Twilio waiting-resident lookup", waitingErr.message)
+  } else {
+    const waitingIds = [
+      ...new Set(
+        (waitingUsers ?? [])
+          .map((row) => String(row.landlord_id ?? "").trim())
+          .filter(Boolean),
+      ),
+    ]
+    if (waitingIds.length === 1) return waitingIds[0]
+  }
+
   const { data: identities, error } = await supabase
     .from("sms_identities")
     .select("landlord_id")
@@ -336,7 +359,11 @@ export async function upsertSmsIdentityForPhone(
   let result: SmsIdentityRow
 
   if (existing) {
-    const canApplyType = smsIdentityAllowsTypePatch(existing, params.identityType)
+    const canApplyType =
+    smsIdentityAllowsTypePatch(existing, params.identityType) ||
+    // Welcome / activation must re-bind a phone that was previously a vendor or
+    // blank row — otherwise YES lands on a non-tenant thread and is ignored.
+    (params.identityType === "resident" && Boolean(params.residentId?.trim()))
 
     const updatePayload = canApplyType
       ? { ...identityPatch, phone_number: e164, last_seen_at: now }

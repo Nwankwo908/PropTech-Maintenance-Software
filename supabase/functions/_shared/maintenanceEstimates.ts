@@ -488,19 +488,8 @@ export async function submitMaintenanceEstimate(
 
   const estimateId = inserted.id as string
 
-  const { autoApprovalThreshold, escalationThreshold } =
+  const { escalationThreshold } =
     await loadLandlordApprovalLimits(supabase, landlordId)
-  if (Number.isFinite(autoApprovalThreshold) && moneyNorm.totalCost <= autoApprovalThreshold) {
-    const auto = await decideMaintenanceEstimate(supabase, {
-      estimateId,
-      actionToken,
-      action: "approve",
-      source: "admin",
-    })
-    if (auto.ok) {
-      return { ok: true, estimateId, status: "approved" as const, autoApproved: true }
-    }
-  }
 
   const { data: vendor } = await supabase
     .from("vendors")

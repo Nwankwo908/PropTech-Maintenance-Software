@@ -17,17 +17,17 @@ export const SETUP_SUCCESS_ITEMS = [
   },
   {
     id: 'property_access',
-    label: 'Property access',
+    label: 'Set up property access',
     to: '/admin/properties',
   },
   {
     id: 'property_intelligence',
-    label: 'Property intelligence',
+    label: 'Add property details',
     to: '/admin/properties',
   },
   {
     id: 'property_insurance',
-    label: 'Property insurance',
+    label: 'Add insurance details',
     to: '/admin/properties',
   },
   {

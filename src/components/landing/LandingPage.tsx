@@ -399,6 +399,21 @@ function HeroHeadlineAndCopy() {
   )
 }
 
+const PRIMARY_BUTTON_CLASS = [
+  'sa-press flex items-center justify-center gap-2 whitespace-nowrap rounded-lg px-7 py-2.5 leading-none',
+  'text-sm font-semibold text-white',
+  'shadow-[0_4px_14px_rgba(14,92,68,0.4)]',
+  'transition-[transform,box-shadow,filter] duration-150 ease-out',
+  'hover:brightness-110 hover:shadow-[0_10px_28px_rgba(14,92,68,0.5)] hover:-translate-y-0.5',
+  'active:translate-y-px active:scale-[0.98] active:brightness-[0.92] active:shadow-[0_2px_10px_rgba(14,92,68,0.35)]',
+  'focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-emerald-500/50 focus-visible:ring-offset-2 focus-visible:ring-offset-[#f0fdf4]',
+  'disabled:pointer-events-none disabled:opacity-50 disabled:shadow-none disabled:translate-y-0 disabled:scale-100 disabled:brightness-100',
+].join(' ')
+
+function primaryControlClassName(className = '') {
+  return [PRIMARY_BUTTON_CLASS, className].filter(Boolean).join(' ')
+}
+
 function PrimaryButton({
   children,
   className = '',
@@ -407,24 +422,35 @@ function PrimaryButton({
   return (
     <button
       type="button"
-      className={[
-        'sa-press flex items-center justify-center gap-2 whitespace-nowrap rounded-lg px-7 py-2.5 leading-none',
-        'text-sm font-semibold text-white',
-        'shadow-[0_4px_14px_rgba(14,92,68,0.4)]',
-        'transition-[transform,box-shadow,filter] duration-150 ease-out',
-        'hover:brightness-110 hover:shadow-[0_10px_28px_rgba(14,92,68,0.5)] hover:-translate-y-0.5',
-        'active:translate-y-px active:scale-[0.98] active:brightness-[0.92] active:shadow-[0_2px_10px_rgba(14,92,68,0.35)]',
-        'focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-emerald-500/50 focus-visible:ring-offset-2 focus-visible:ring-offset-[#f0fdf4]',
-        'disabled:pointer-events-none disabled:opacity-50 disabled:shadow-none disabled:translate-y-0 disabled:scale-100 disabled:brightness-100',
-        className,
-      ]
-        .filter(Boolean)
-        .join(' ')}
+      className={primaryControlClassName(className)}
       style={{ backgroundImage: TEAL_GRADIENT }}
       {...props}
     >
       {children}
     </button>
+  )
+}
+
+function PrimaryLink({
+  children,
+  className = '',
+  to,
+  onClick,
+}: {
+  children: React.ReactNode
+  className?: string
+  to: string
+  onClick?: () => void
+}) {
+  return (
+    <Link
+      to={to}
+      onClick={onClick}
+      className={primaryControlClassName(className)}
+      style={{ backgroundImage: TEAL_GRADIENT }}
+    >
+      {children}
+    </Link>
   )
 }
 
@@ -622,13 +648,12 @@ export function LandingPage() {
               >
                 Login
               </Link>
-              <PrimaryButton
-                onClick={() => openEarlyAccess()}
+              <PrimaryLink
+                to="/admin/get-started"
                 className="ml-2 inline-flex landing-3840-2160:ml-3 landing-3840-2160:gap-3 landing-3840-2160:rounded-[0.75rem] landing-3840-2160:px-[2.625rem] landing-3840-2160:py-[0.9375rem] landing-3840-2160:text-[1.3125rem] landing-4096-2304:ml-[0.8rem] landing-5120-2880:ml-[0.8rem] landing-4096-2304:gap-[0.8rem] landing-5120-2880:gap-[0.8rem] landing-4096-2304:rounded-[0.8rem] landing-5120-2880:rounded-[0.8rem] landing-4096-2304:px-[2.8rem] landing-5120-2880:px-[2.8rem] landing-4096-2304:py-4 landing-5120-2880:py-4 landing-4096-2304:text-[1.4rem] landing-5120-2880:text-[1.4rem] landing-7680-4320:ml-5 landing-7680-4320:gap-5 landing-7680-4320:rounded-[1.25rem] landing-7680-4320:px-[4.375rem] landing-7680-4320:py-[1.5625rem] landing-7680-4320:text-[2.1875rem]"
               >
-                Request Early Access
-                <IconArrowRight className="size-4 landing-3840-2160:size-6 landing-4096-2304:size-[1.6rem] landing-5120-2880:size-[1.6rem] landing-7680-4320:size-10" />
-              </PrimaryButton>
+                Get Started
+              </PrimaryLink>
             </div>
             <button
               type="button"
@@ -661,6 +686,13 @@ export function LandingPage() {
               >
                 Login
               </Link>
+              <PrimaryLink
+                to="/admin/get-started"
+                className="mt-1 w-full justify-center"
+                onClick={() => setMobileMenuOpen(false)}
+              >
+                Get Started
+              </PrimaryLink>
               <button
                 type="button"
                 onClick={() => openEarlyAccess()}

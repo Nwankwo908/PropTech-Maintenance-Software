@@ -101,6 +101,7 @@ function statesFromCenterAddress(centerAddress: string | null | undefined): stri
 export function vendorServiceStateCodes(input: {
   serviceArea?: unknown
   licenseState?: string | null
+  rosterState?: string | null
 }): string[] {
   const codes = new Set<string>()
   const area = input.serviceArea && typeof input.serviceArea === "object"

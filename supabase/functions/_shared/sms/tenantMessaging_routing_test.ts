@@ -135,9 +135,10 @@ Deno.test("5. schedule confirmation YES wins over activation reply (registry ord
   assertEquals(schedule.priority < activation.priority, true)
 })
 
-Deno.test("7. vendor YES never triggers tenant activation reply", () => {
+Deno.test("7. mis-labeled vendor thread still eligible when resident is waiting", () => {
   assertEquals(classifyTenantActivationKeyword("YES"), "start")
   assertEquals(isNonTenantActivationThread("vendor", "vendor_alert"), true)
+  // Gate no longer blocks on identity_type — phone/waiting resolve repairs the thread.
   assertEquals(
     canHandleTenantActivationReply({
       body: "YES",
@@ -146,7 +147,21 @@ Deno.test("7. vendor YES never triggers tenant activation reply", () => {
       conversationType: "vendor_alert",
       ...waitingActivation(),
     }),
-    false,
+    true,
+  )
+})
+
+Deno.test("7b. open maintenance intake does not block waiting YES", () => {
+  assertEquals(
+    canHandleTenantActivationReply({
+      body: "YES",
+      residentId: RESIDENT,
+      identityType: "resident",
+      conversationType: "resident_intake",
+      activeMaintenanceIntake: true,
+      ...waitingActivation(),
+    }),
+    true,
   )
 })
 

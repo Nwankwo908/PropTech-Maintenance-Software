@@ -25,6 +25,12 @@ export const onboardingBtnPrimaryClass =
 export const onboardingBtnSecondaryClass =
   'sa-press inline-flex cursor-pointer items-center justify-center rounded-[10px] border border-[#e5e7eb] bg-white px-6 py-2.5 text-[14px] font-medium text-[#101828] outline-none transition-colors hover:bg-[#f9fafb] active:bg-[#f3f4f6] focus-visible:ring-2 focus-visible:ring-[#101828]/20 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50'
 
+export const onboardingBtnBackClass =
+  'sa-press inline-flex cursor-pointer items-center justify-center gap-1.5 rounded-[10px] bg-transparent px-6 py-2.5 text-[14px] font-medium text-[#186179] outline-none transition-colors hover:bg-[#f0f7fa] active:bg-[#e4eef2] focus-visible:ring-2 focus-visible:ring-[#186179]/40 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50'
+
+export const onboardingBtnContinueClass =
+  'sa-press inline-flex cursor-pointer items-center justify-center gap-1.5 rounded-[10px] bg-[#186179] px-6 py-2.5 text-[14px] font-semibold text-white outline-none transition-colors hover:bg-[#145066] active:bg-[#114455] focus-visible:ring-2 focus-visible:ring-[#186179]/40 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50'
+
 export const onboardingBtnGhostClass =
   'sa-press inline-flex cursor-pointer items-center justify-center rounded-[10px] px-4 py-2.5 text-[14px] font-medium text-[#6a7282] outline-none transition-colors hover:bg-[#f3f4f6] hover:text-[#101828] active:bg-[#e5e7eb] active:text-[#101828] focus-visible:ring-2 focus-visible:ring-[#101828]/20 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50'
 

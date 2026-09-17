@@ -134,6 +134,7 @@ describe('Clarity tags and DOM masking', () => {
     expect(shouldMaskClarityDom('/')).toBe(false)
     expect(shouldMaskClarityDom('/privacy')).toBe(false)
     expect(shouldMaskClarityDom('/admin/login')).toBe(true)
+    expect(shouldMaskClarityDom('/admin/get-started')).toBe(true)
     expect(shouldMaskClarityDom('/admin/residents')).toBe(true)
     expect(shouldMaskClarityDom('/admin/communication')).toBe(true)
     expect(shouldMaskClarityDom('/request')).toBe(true)

@@ -32,6 +32,7 @@ import {
   AWAITING_LANDLORD_VENDOR_CHOICE,
   notifyLandlordVendorChoice,
 } from "../_shared/vendorLandlordChoice.ts"
+import { resumeMaintenanceWorkflowAfterVendorAssigned } from "../_shared/maintenance_admin_escalation.ts"
 
 export type TicketNotifyPayload = {
   ticketId: string
@@ -512,6 +513,15 @@ export async function assignVendorAndNotify(
       ? ticket.assigned_vendor_id.trim()
       : null
   if (existingVendorId) {
+    try {
+      await resumeMaintenanceWorkflowAfterVendorAssigned(supabase, {
+        ticketId: payload.ticketId,
+        vendorId: existingVendorId,
+        currentStep: "awaiting_vendor_accept",
+      })
+    } catch (e) {
+      console.error("[vendor-notify] resume workflow after existing assignment", e)
+    }
     return { assigned: true, vendorId: existingVendorId }
   }
   if (ticket.vendor_notified_at && !payload.retryIfUnassigned) {
@@ -692,6 +702,16 @@ export async function assignVendorAndNotify(
   })
 
   await touchVendorLastAssignedAt(supabase, vendor.id, landlordId)
+
+  try {
+    await resumeMaintenanceWorkflowAfterVendorAssigned(supabase, {
+      ticketId: payload.ticketId,
+      vendorId: vendor.id,
+      currentStep: "awaiting_vendor_accept",
+    })
+  } catch (e) {
+    console.error("[vendor-notify] resume workflow after assignment", e)
+  }
 
   const errors = await notifyChannelsForAssignment(
     supabase,
@@ -910,6 +930,17 @@ export async function reassignVendorByIdAndNotify(
   const reassignLandlordId =
     typeof ticket.landlord_id === "string" ? ticket.landlord_id.trim() : null
   await touchVendorLastAssignedAt(supabase, vendor.id, reassignLandlordId)
+
+  try {
+    await resumeMaintenanceWorkflowAfterVendorAssigned(supabase, {
+      ticketId,
+      vendorId: vendor.id,
+      currentStep: "awaiting_vendor_accept",
+      eventStep: "vendor_reassigned",
+    })
+  } catch (e) {
+    console.error("[vendor-notify] resume workflow after reassign", e)
+  }
 
   const payload: TicketNotifyPayload = {
     ticketId,

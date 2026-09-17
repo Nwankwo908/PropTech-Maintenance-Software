@@ -11,13 +11,19 @@ import {
 } from "../../maintenance_admin_escalation.ts"
 import {
   escalateWhenNoReplacementVendor,
-  executeAutoVendorReassignment,
-  findReplacementVendorForTicket,
+  resolveReplacementVendorChoiceForTicket,
   type FindReplacementStrategy,
   type NoVendorEscalationTrigger,
   type ReplacementVendor,
   type VendorReassignTrigger,
 } from "../../vendor_reassignment.ts"
+import {
+  AWAITING_LANDLORD_VENDOR_CHOICE,
+  loadStoredAwaitingVendorChoiceForTicket,
+  notifyLandlordVendorChoice,
+  ticketIsAwaitingLandlordVendorChoice,
+  vendorChoiceOptionIdsEqual,
+} from "../../vendorLandlordChoice.ts"
 import { workflowRouteForTemplate } from "../logStage.ts"
 import {
   advanceMaintenanceRequestVendorStep,
@@ -67,6 +73,7 @@ export type MaintenanceRequestEngineInput = {
     ticketId: string
     trigger: VendorReassignTrigger
     vendorName: string
+    vendorId?: string
     workflowMessage: string
     resumeFromEscalated?: boolean
   }
@@ -175,6 +182,7 @@ export const maintenanceRequestTemplate: WorkflowTemplate = {
         step: "awaiting_vendor_accept",
         eventMessage: p.workflowMessage,
         eventStep: "vendor_reassigned",
+        vendorId: p.vendorId,
         resumeFromEscalated: p.resumeFromEscalated ?? true,
       })
       return {
@@ -197,6 +205,7 @@ export const maintenanceRequestTemplate: WorkflowTemplate = {
         eventMessage: `Admin reassigned to ${p.vendorName}`,
         eventStep: "admin_reassigned",
         resumeFromEscalated: true,
+        vendorId: p.vendorId,
       })
       return {
         templateId: "maintenance_request",
@@ -271,127 +280,147 @@ async function processMaintenanceAutoReassign(
       .eq("id", ticketId)
   }
 
-  let newVendor = input.newVendor ?? null
+  const { data: ticketRow } = await supabase
+    .from("maintenance_requests")
+    .select("unit, vendor_notify_error")
+    .eq("id", ticketId)
+    .maybeSingle()
 
-  if (!newVendor) {
-    const findResult = await findReplacementVendorForTicket(supabase, {
-      ticketId,
-      assignedVendorId: input.assignedVendorId,
-      issueCategory: input.issueCategory,
-      landlordId: input.landlordId,
-      excludeVendorIds: input.excludeVendorIds,
-      strategy: input.findStrategy,
-      preferNotRecentlyAssigned: input.preferNotRecentlyAssigned,
-      preferNotVendorId: input.preferNotVendorId,
-    })
+  if (
+    ticketIsAwaitingLandlordVendorChoice(
+      typeof ticketRow?.vendor_notify_error === "string"
+        ? ticketRow.vendor_notify_error
+        : null,
+    )
+  ) {
+    return {
+      templateId: "maintenance_request",
+      route: workflowRouteForTemplate("maintenance_request"),
+      metadata: {
+        action: "auto_reassign",
+        outcome: "awaiting_landlord_choice",
+        ticket_id: ticketId,
+        trigger: input.trigger,
+      },
+    }
+  }
 
-    if (!findResult.ok) {
+  const decision = await resolveReplacementVendorChoiceForTicket(supabase, {
+    ticketId,
+    assignedVendorId: input.assignedVendorId,
+    issueCategory: input.issueCategory,
+    landlordId: input.landlordId,
+    excludeVendorIds: input.excludeVendorIds,
+    preferNotVendorId: input.preferNotVendorId,
+  })
+
+  if (decision.kind === "landlord_choice" && decision.options.length > 0) {
+    const landlordId = input.landlordId?.trim()
+    if (!landlordId) {
       return {
         templateId: "maintenance_request",
         route: workflowRouteForTemplate("maintenance_request"),
         metadata: {
           action: "auto_reassign",
           outcome: "skipped",
-          reason: findResult.error,
+          reason: "missing_landlord",
           ticket_id: ticketId,
         },
       }
     }
-
-    newVendor = findResult.vendor
-  }
-
-  if (!newVendor) {
-    if (input.trigger === "vendor_declined" && input.previousVendorId) {
-      await supabase
-        .from("maintenance_requests")
-        .update({
-          assigned_vendor_id: null,
-          vendor_action_token: null,
-          vendor_work_status: "unassigned",
-          vendor_notified_at: null,
-          vendor_notify_error: null,
-        })
-        .eq("id", ticketId)
-        .eq("vendor_work_status", "declined")
-        .eq("assigned_vendor_id", input.previousVendorId)
-
-      await supabase.from("vendor_status_events").insert({
-        ticket_id: ticketId,
-        from_status: "declined",
-        to_status: "unassigned",
-        source: "auto_reassign",
-        vendor_id: input.previousVendorId,
-      })
+    const asked = await notifyLandlordVendorChoice(supabase, {
+      landlordId,
+      ticketId,
+      unit: typeof ticketRow?.unit === "string" ? ticketRow.unit : "",
+      issueCategory: input.issueCategory ?? null,
+      options: decision.options,
+      reason: landlordChoiceReasonForTrigger(input.trigger),
+    })
+    if (asked.sent < 1) {
+      return {
+        templateId: "maintenance_request",
+        route: workflowRouteForTemplate("maintenance_request"),
+        metadata: {
+          action: "auto_reassign",
+          outcome: "skipped",
+          reason: "landlord_choice_sms_failed",
+          ticket_id: ticketId,
+        },
+      }
     }
-
-    const escalationTrigger = mapReassignToEscalationTrigger(input.trigger)
-    if (escalationTrigger && input.landlordId) {
-      await escalateWhenNoReplacementVendor(
-        supabase,
-        { id: ticketId, landlord_id: input.landlordId },
-        escalationTrigger,
-      )
-    }
+    await supabase
+      .from("maintenance_requests")
+      .update({ vendor_notify_error: AWAITING_LANDLORD_VENDOR_CHOICE })
+      .eq("id", ticketId)
     return {
       templateId: "maintenance_request",
       route: workflowRouteForTemplate("maintenance_request"),
       metadata: {
         action: "auto_reassign",
-        outcome: "needs_admin_vendor",
+        outcome: "awaiting_landlord_choice",
         ticket_id: ticketId,
         trigger: input.trigger,
-      },
-      shouldEscalate: true,
-    }
-  }
-
-  const result = await executeAutoVendorReassignment(supabase, {
-    ticketId,
-    newVendor,
-    trigger: input.trigger,
-    previousVendorId: input.previousVendorId,
-    landlordId: input.landlordId,
-    notifyResident: input.notifyResident,
-    activityMetadataExtra: input.activityMetadataExtra,
-    skipWorkflowAdvance: true,
-  })
-
-  if (result.outcome === "failed") {
-    return {
-      templateId: "maintenance_request",
-      route: workflowRouteForTemplate("maintenance_request"),
-      metadata: {
-        action: "auto_reassign",
-        outcome: "failed",
-        reason: result.reason,
-        ticket_id: ticketId,
+        option_ids: decision.options.map((row) => row.vendor.id),
+        classified_reason: intent.reason,
       },
     }
   }
 
-  const workflowMessage = workflowMessageForTrigger(input.trigger, newVendor.name)
-  const runId = await advanceMaintenanceRequestVendorStep(supabase, {
-    ticketId,
-    step: "awaiting_vendor_accept",
-    eventMessage: workflowMessage,
-    eventStep: "vendor_reassigned",
-    resumeFromEscalated: input.trigger !== "pending_accept_stale" &&
-      input.trigger !== "noshow_rematch",
-  })
+  if (input.trigger === "vendor_declined" && input.previousVendorId) {
+    await supabase
+      .from("maintenance_requests")
+      .update({
+        assigned_vendor_id: null,
+        vendor_action_token: null,
+        vendor_work_status: "unassigned",
+        vendor_notified_at: null,
+        vendor_notify_error: null,
+      })
+      .eq("id", ticketId)
+      .eq("vendor_work_status", "declined")
+      .eq("assigned_vendor_id", input.previousVendorId)
 
+    await supabase.from("vendor_status_events").insert({
+      ticket_id: ticketId,
+      from_status: "declined",
+      to_status: "unassigned",
+      source: "auto_reassign",
+      vendor_id: input.previousVendorId,
+    })
+  }
+
+  const escalationTrigger = mapReassignToEscalationTrigger(input.trigger)
+  if (escalationTrigger && input.landlordId) {
+    await escalateWhenNoReplacementVendor(
+      supabase,
+      { id: ticketId, landlord_id: input.landlordId },
+      escalationTrigger,
+    )
+  }
   return {
     templateId: "maintenance_request",
     route: workflowRouteForTemplate("maintenance_request"),
-    runId,
     metadata: {
       action: "auto_reassign",
-      outcome: "reassigned",
+      outcome: "needs_admin_vendor",
       ticket_id: ticketId,
       trigger: input.trigger,
-      new_vendor_id: newVendor.id,
-      classified_reason: intent.reason,
     },
+    shouldEscalate: true,
+  }
+}
+
+function landlordChoiceReasonForTrigger(
+  trigger: VendorReassignTrigger,
+): "assign" | "no_response" | "declined" | "noshow" {
+  switch (trigger) {
+    case "vendor_declined":
+      return "declined"
+    case "noshow_rematch":
+      return "noshow"
+    case "sla_expired":
+    case "pending_accept_stale":
+      return "no_response"
   }
 }
 
@@ -407,21 +436,5 @@ function mapReassignToEscalationTrigger(
       return "pending_accept_stale"
     default:
       return null
-  }
-}
-
-function workflowMessageForTrigger(
-  trigger: VendorReassignTrigger,
-  vendorName: string,
-): string {
-  switch (trigger) {
-    case "vendor_declined":
-      return `Auto-reassigned to ${vendorName} after vendor decline`
-    case "sla_expired":
-      return `Auto-reassigned to ${vendorName} after response time expired`
-    case "pending_accept_stale":
-      return `Auto-reassigned to ${vendorName} after no response`
-    case "noshow_rematch":
-      return `No-show rematch to ${vendorName}`
   }
 }

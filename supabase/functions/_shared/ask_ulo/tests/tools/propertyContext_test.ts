@@ -58,12 +58,12 @@ Deno.test("legalOpsContextFromOpsBullets strips ticket dumps", () => {
   assertEquals(out.some((b) => /3 open maintenance/i.test(b)), true)
 })
 
-Deno.test("companyPolicyBulletsFromApprovalRules includes auto-approve threshold", () => {
+Deno.test("companyPolicyBulletsFromApprovalRules includes after-hours emergency policy", () => {
   const bullets = companyPolicyBulletsFromApprovalRules({
     autoApprovalThreshold: 250,
     afterHoursRule: "auto_approve_emergencies",
   })
-  assertEquals(bullets.some((p) => /Auto-approve maintenance under \$250/.test(p)), true)
+  assertEquals(bullets.some((p) => /Auto-approve maintenance under/.test(p)), false)
   assertEquals(bullets.some((p) => /After hours, emergencies/.test(p)), true)
 })
 

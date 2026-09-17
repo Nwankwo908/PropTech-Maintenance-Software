@@ -34,6 +34,8 @@ export type VendorAssignmentRow = {
   onboarded_from_external?: boolean | null
   /** Landlord activated without verification documents. */
   onboarding_overridden_at?: string | null
+  /** Landlord roster HQ / service state (fallback when verification area is empty). */
+  state?: string | null
 }
 
 /**
@@ -90,6 +92,41 @@ export async function loadDeclinedVendorIdsForTicket(
   for (const row of data ?? []) {
     const vid = row.vendor_id as string | null
     if (vid) ids.add(vid)
+  }
+  return [...ids]
+}
+
+/** Vendors already dispatched on this ticket (pending or otherwise) — do not re-offer after a missed response. */
+export async function loadPreviouslyAssignedVendorIdsForTicket(
+  supabase: SupabaseClient,
+  ticketId: string,
+): Promise<string[]> {
+  const ids = new Set<string>()
+  const { data, error } = await supabase
+    .from("vendor_status_events")
+    .select("vendor_id")
+    .eq("ticket_id", ticketId)
+
+  if (error) {
+    console.error("[vendor-assignment] load assignment events", error)
+  } else {
+    for (const row of data ?? []) {
+      const vid = row.vendor_id as string | null
+      if (vid) ids.add(vid)
+    }
+  }
+
+  const { data: graphRows, error: graphErr } = await supabase
+    .from("operations_graph_events")
+    .select("vendor_id")
+    .eq("maintenance_request_id", ticketId)
+  if (graphErr) {
+    console.error("[vendor-assignment] load assignment graph", graphErr)
+  } else {
+    for (const row of graphRows ?? []) {
+      const vid = row.vendor_id as string | null
+      if (vid) ids.add(vid)
+    }
   }
   return [...ids]
 }
@@ -269,7 +306,7 @@ async function loadRankedVendorTiers(
   let query = supabase
     .from("vendors")
     .select(
-      "id,name,email,phone,notification_channel,active,category,portal_api_key,last_assigned_at,created_at,roster_status,weekly_job_cap,preferred_emergency,onboarded_from_external,onboarding_overridden_at",
+      "id,name,email,phone,notification_channel,active,category,portal_api_key,last_assigned_at,created_at,roster_status,weekly_job_cap,preferred_emergency,onboarded_from_external,onboarding_overridden_at,state",
     )
     .eq("active", true)
 
@@ -347,6 +384,7 @@ async function loadRankedVendorTiers(
     const vendorStates = vendorServiceStateCodes({
       serviceArea: verif?.serviceArea,
       licenseState: verif?.licenseState ?? null,
+      rosterState: typeof v.state === "string" ? v.state : null,
     })
     return vendorCoversJobState(vendorStates, jobState)
   })
@@ -447,7 +485,7 @@ export async function loadJobStateForTicket(
 ): Promise<string | null> {
   const { data: ticket } = await supabase
     .from("maintenance_requests")
-    .select("property_id, unit_id, landlord_id")
+    .select("property_id, unit_id, landlord_id, unit")
     .eq("id", params.ticketId)
     .maybeSingle()
 
@@ -456,34 +494,159 @@ export async function loadJobStateForTicket(
     (typeof ticket?.landlord_id === "string" ? ticket.landlord_id.trim() : "") ||
     null
 
-  async function stateFromPropertyId(propertyId: string): Promise<string | null> {
-    let query = supabase.from("properties").select("state").eq("id", propertyId)
+  const currentPropertyId =
+    typeof ticket?.property_id === "string" ? ticket.property_id.trim() : ""
+  const currentUnitId =
+    typeof ticket?.unit_id === "string" ? ticket.unit_id.trim() : ""
+
+  async function persistLocation(next: {
+    propertyId?: string | null
+    unitId?: string | null
+  }): Promise<void> {
+    const patch: Record<string, string> = {}
+    const propertyId = next.propertyId?.trim() || ""
+    const unitId = next.unitId?.trim() || ""
+    if (!currentPropertyId && propertyId) patch.property_id = propertyId
+    if (!currentUnitId && unitId) patch.unit_id = unitId
+    if (Object.keys(patch).length === 0) return
+    const { error } = await supabase
+      .from("maintenance_requests")
+      .update(patch)
+      .eq("id", params.ticketId)
+    if (error) {
+      console.error("[vendor-assignment] persist ticket location", error)
+    }
+  }
+
+  async function locationFromPropertyId(
+    propertyId: string,
+  ): Promise<{ state: string; propertyId: string } | null> {
+    let query = supabase.from("properties").select("id, state").eq("id", propertyId)
     if (landlordId) query = query.eq("landlord_id", landlordId)
     const { data } = await query.maybeSingle()
-    return normalizeUsStateCode(
+    const state = normalizeUsStateCode(
       typeof data?.state === "string" ? data.state : "",
     )
+    if (!state) return null
+    return { state, propertyId }
   }
 
-  const propertyId =
-    typeof ticket?.property_id === "string" ? ticket.property_id.trim() : ""
-  if (propertyId) {
-    const fromProperty = await stateFromPropertyId(propertyId)
-    if (fromProperty) return fromProperty
-  }
-
-  const unitId = typeof ticket?.unit_id === "string" ? ticket.unit_id.trim() : ""
-  if (unitId) {
+  async function locationFromUnitId(
+    unitId: string,
+  ): Promise<{ state: string; propertyId: string; unitId: string } | null> {
     const { data: unit } = await supabase
       .from("units")
-      .select("property_id")
+      .select("id, property_id")
       .eq("id", unitId)
       .maybeSingle()
     const unitPropertyId =
       typeof unit?.property_id === "string" ? unit.property_id.trim() : ""
-    if (unitPropertyId) {
-      const fromUnit = await stateFromPropertyId(unitPropertyId)
-      if (fromUnit) return fromUnit
+    if (!unitPropertyId) return null
+    const fromProperty = await locationFromPropertyId(unitPropertyId)
+    if (!fromProperty) return null
+    return { ...fromProperty, unitId }
+  }
+
+  if (currentPropertyId) {
+    const fromProperty = await locationFromPropertyId(currentPropertyId)
+    if (fromProperty) return fromProperty.state
+  }
+
+  if (currentUnitId) {
+    const fromUnit = await locationFromUnitId(currentUnitId)
+    if (fromUnit) {
+      await persistLocation({ propertyId: fromUnit.propertyId })
+      return fromUnit.state
+    }
+  }
+
+  const { data: conversations } = await supabase
+    .from("sms_conversations")
+    .select("resident_id")
+    .eq("maintenance_request_id", params.ticketId)
+    .not("resident_id", "is", null)
+    .limit(10)
+  const residentIds = [
+    ...new Set(
+      (conversations ?? [])
+        .map((row) =>
+          typeof row.resident_id === "string" ? row.resident_id.trim() : "",
+        )
+        .filter(Boolean),
+    ),
+  ]
+  if (residentIds.length > 0) {
+    let occQuery = supabase
+      .from("occupancy")
+      .select("unit_id")
+      .in("resident_id", residentIds)
+      .limit(10)
+    if (landlordId) occQuery = occQuery.eq("landlord_id", landlordId)
+    const { data: occ } = await occQuery
+    let identQuery = supabase
+      .from("sms_identities")
+      .select("unit_id")
+      .in("resident_id", residentIds)
+      .not("unit_id", "is", null)
+      .limit(10)
+    if (landlordId) identQuery = identQuery.eq("landlord_id", landlordId)
+    const { data: identities } = await identQuery
+    const occUnitIds = [
+      ...new Set(
+        [...(occ ?? []), ...(identities ?? [])]
+          .map((row) => (typeof row.unit_id === "string" ? row.unit_id.trim() : ""))
+          .filter(Boolean),
+      ),
+    ]
+    const occLocations = []
+    for (const unitId of occUnitIds) {
+      const loc = await locationFromUnitId(unitId)
+      if (loc) occLocations.push(loc)
+    }
+    const occStates = new Set(occLocations.map((row) => row.state))
+    if (occStates.size === 1 && occLocations[0]) {
+      const uniqueUnits = new Set(occLocations.map((row) => row.unitId))
+      const uniqueProperties = new Set(occLocations.map((row) => row.propertyId))
+      await persistLocation({
+        propertyId: uniqueProperties.size === 1 ? occLocations[0].propertyId : null,
+        unitId: uniqueUnits.size === 1 ? occLocations[0].unitId : null,
+      })
+      return occLocations[0].state
+    }
+  }
+
+  const unitLabel = typeof ticket?.unit === "string" ? ticket.unit.trim() : ""
+  if (unitLabel && landlordId) {
+    const { data: labeled } = await supabase
+      .from("units")
+      .select("id, property_id")
+      .eq("landlord_id", landlordId)
+      .eq("unit_label", unitLabel)
+      .limit(50)
+    const labeledLocations = []
+    for (const row of labeled ?? []) {
+      const uid = typeof row.id === "string" ? row.id.trim() : ""
+      const pid = typeof row.property_id === "string" ? row.property_id.trim() : ""
+      if (!uid || !pid) continue
+      const fromProperty = await locationFromPropertyId(pid)
+      if (fromProperty) {
+        labeledLocations.push({
+          state: fromProperty.state,
+          propertyId: fromProperty.propertyId,
+          unitId: uid,
+        })
+      }
+    }
+    const labeledStates = new Set(labeledLocations.map((row) => row.state))
+    if (labeledStates.size === 1 && labeledLocations[0]) {
+      const uniqueUnits = new Set(labeledLocations.map((row) => row.unitId))
+      const uniqueProperties = new Set(labeledLocations.map((row) => row.propertyId))
+      await persistLocation({
+        propertyId:
+          uniqueProperties.size === 1 ? labeledLocations[0].propertyId : null,
+        unitId: uniqueUnits.size === 1 ? labeledLocations[0].unitId : null,
+      })
+      return labeledLocations[0].state
     }
   }
 

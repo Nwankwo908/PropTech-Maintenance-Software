@@ -22,12 +22,6 @@ export function companyPolicyBulletsFromApprovalRules(
   rules: ApprovalRulesSnapshot,
 ): string[] {
   const bullets: string[] = []
-  const threshold = rules.autoApprovalThreshold
-  if (typeof threshold === "number" && Number.isFinite(threshold) && threshold > 0) {
-    bullets.push(
-      `Auto-approve maintenance under $${threshold.toLocaleString("en-US")} (company policy).`,
-    )
-  }
   if (rules.afterHoursRule === "auto_approve_emergencies") {
     bullets.push(
       "After hours, emergencies can proceed without waiting on your approval (company policy).",

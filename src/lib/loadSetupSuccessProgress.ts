@@ -75,7 +75,8 @@ export async function loadSetupSuccessProgress(
     propertyAccessComplete: propertySetup.access,
     propertyIntelligenceComplete: propertySetup.intelligence,
     propertyInsuranceComplete: propertySetup.insurance,
-    hasMaintenancePreferences: Number.isFinite(rules?.autoApprovalThreshold),
+    hasMaintenancePreferences:
+      Array.isArray(rules?.emergencyTypes) && rules.emergencyTypes.length > 0,
     maintenanceRequestCount: ticketsResult.count ?? 0,
     hasTestDelivery: isSetupSuccessTestDeliveryComplete(landlordId),
   })

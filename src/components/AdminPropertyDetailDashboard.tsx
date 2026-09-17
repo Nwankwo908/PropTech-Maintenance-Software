@@ -92,6 +92,7 @@ import {
   isSetupSuccessCheckboxGuideActive,
   isSetupSuccessCheckboxGuideNavigation,
   SETUP_SUCCESS_PROPERTY_ACCESS_GUIDE_MESSAGE,
+  SETUP_SUCCESS_PROPERTY_INSURANCE_GUIDE_MESSAGE,
   SETUP_SUCCESS_PROPERTY_TAB_GUIDE_MESSAGE,
 } from '@/lib/setupSuccessGuide'
 
@@ -270,7 +271,12 @@ export function AdminPropertyDetailDashboard() {
     isSetupSuccessCheckboxGuideActive(location.state, 'property_access'),
   )
   const [propertyAccessGuideRunId, setPropertyAccessGuideRunId] = useState(0)
-  const propertyAccessGuideRef = useRef<HTMLElement | null>(null)
+  const propertyAccessGuideRef = useRef<HTMLButtonElement | null>(null)
+  const [showPropertyInsuranceGuide, setShowPropertyInsuranceGuide] = useState(() =>
+    isSetupSuccessCheckboxGuideActive(location.state, 'property_insurance'),
+  )
+  const [propertyInsuranceGuideRunId, setPropertyInsuranceGuideRunId] = useState(0)
+  const propertyInsuranceTabRef = useRef<HTMLElement | null>(null)
 
   const [activeTab, setActiveTab] = useState<PropertyTab>(() =>
     parsePropertyDetailTab(searchParams.get('tab')),
@@ -311,6 +317,7 @@ export function AdminPropertyDetailDashboard() {
   const [editPropertyOpen, setEditPropertyOpen] = useState(false)
   const [editPropertyNotice, setEditPropertyNotice] = useState<string | null>(null)
   const [propertyAccessRailOpen, setPropertyAccessRailOpen] = useState(false)
+  const [propertyActionsMenuOpen, setPropertyActionsMenuOpen] = useState(false)
   const [maintenanceHistoryRailOpen, setMaintenanceHistoryRailOpen] = useState(false)
   const loadSeqRef = useRef(0)
 
@@ -329,9 +336,24 @@ export function AdminPropertyDetailDashboard() {
     setActiveTab('overview')
     setPropertyAccessGuideRunId((value) => value + 1)
     if (isSetupSuccessCheckboxGuideNavigation(location.state, 'property_access')) {
-      navigate(location.pathname, { replace: true, state: {} })
+      navigate(`${location.pathname}${location.search}`, { replace: true, state: {} })
     }
-  }, [location.pathname, location.state, navigate])
+  }, [location.pathname, location.search, location.state, navigate])
+
+  useEffect(() => {
+    if (!isSetupSuccessCheckboxGuideActive(location.state, 'property_insurance')) return
+    setShowPropertyInsuranceGuide(true)
+    setActiveTab('insurance')
+    setPropertyInsuranceGuideRunId((value) => value + 1)
+    const onInsuranceTab = searchParams.get('tab') === 'insurance'
+    const fromGuideNav = isSetupSuccessCheckboxGuideNavigation(location.state, 'property_insurance')
+    if (!onInsuranceTab || fromGuideNav) {
+      navigate(`${location.pathname}?tab=insurance`, {
+        replace: true,
+        state: fromGuideNav ? {} : location.state,
+      })
+    }
+  }, [location.pathname, location.state, navigate, searchParams])
 
   useEffect(() => {
     if (!showPropertyTabGuide) return
@@ -344,12 +366,25 @@ export function AdminPropertyDetailDashboard() {
 
   useEffect(() => {
     if (!showPropertyAccessGuide || activeTab !== 'overview') return
-    propertyAccessGuideRef.current?.scrollIntoView({
-      block: 'center',
-      inline: 'nearest',
+    setPropertyActionsMenuOpen(true)
+    const id = window.setTimeout(() => {
+      propertyAccessGuideRef.current?.scrollIntoView({
+        block: 'center',
+        inline: 'nearest',
+        behavior: 'smooth',
+      })
+    }, 80)
+    return () => window.clearTimeout(id)
+  }, [showPropertyAccessGuide, activeTab, building, loading, propertyAccessGuideRunId])
+
+  useEffect(() => {
+    if (!showPropertyInsuranceGuide) return
+    propertyInsuranceTabRef.current?.scrollIntoView({
+      block: 'nearest',
+      inline: 'center',
       behavior: 'smooth',
     })
-  }, [showPropertyAccessGuide, activeTab, building, loading])
+  }, [showPropertyInsuranceGuide, building, loading, propertyInsuranceGuideRunId, activeTab])
 
   const refreshResidents = useCallback(async () => {
     if (!supabase) return
@@ -738,6 +773,10 @@ export function AdminPropertyDetailDashboard() {
       dismissSetupSuccessCheckboxGuide('property_tab')
       setShowPropertyTabGuide(false)
     }
+    if (tab === 'insurance') {
+      dismissSetupSuccessCheckboxGuide('property_insurance')
+      setShowPropertyInsuranceGuide(false)
+    }
     if (tab === activeTab) return
     setActiveTab(tab)
   }
@@ -747,6 +786,9 @@ export function AdminPropertyDetailDashboard() {
     else tabItemRefs.current.delete(tab)
     if (tab === 'details') {
       propertyDetailsTabRef.current = node
+    }
+    if (tab === 'insurance') {
+      propertyInsuranceTabRef.current = node
     }
   }
 
@@ -1258,15 +1300,31 @@ export function AdminPropertyDetailDashboard() {
     <main className="flex min-h-0 flex-1 flex-col px-8 pb-4">
       <SetupSuccessCheckboxGuide
         key={propertyTabGuideRunId}
-        active={showPropertyTabGuide && !loading && !showPropertyAccessGuide}
+        active={
+          showPropertyTabGuide &&
+          !loading &&
+          !showPropertyAccessGuide &&
+          !showPropertyInsuranceGuide
+        }
         targetRef={propertyDetailsTabRef}
         message={SETUP_SUCCESS_PROPERTY_TAB_GUIDE_MESSAGE}
       />
       <SetupSuccessCheckboxGuide
         key={`access-${propertyAccessGuideRunId}`}
-        active={showPropertyAccessGuide && !loading && activeTab === 'overview'}
+        active={
+          showPropertyAccessGuide &&
+          !loading &&
+          activeTab === 'overview' &&
+          !showPropertyInsuranceGuide
+        }
         targetRef={propertyAccessGuideRef}
         message={SETUP_SUCCESS_PROPERTY_ACCESS_GUIDE_MESSAGE}
+      />
+      <SetupSuccessCheckboxGuide
+        key={`insurance-${propertyInsuranceGuideRunId}`}
+        active={showPropertyInsuranceGuide && !loading}
+        targetRef={propertyInsuranceTabRef}
+        message={SETUP_SUCCESS_PROPERTY_INSURANCE_GUIDE_MESSAGE}
       />
       <div className="py-6">
         <Link
@@ -1297,6 +1355,11 @@ export function AdminPropertyDetailDashboard() {
               {canonicalProperty ? (
                 <ThreeDotMenu
                   ariaLabel={`Actions for ${building}`}
+                  open={showPropertyAccessGuide || propertyActionsMenuOpen}
+                  onOpenChange={(next) => {
+                    if (showPropertyAccessGuide && !next) return
+                    setPropertyActionsMenuOpen(next)
+                  }}
                   items={[
                     {
                       id: 'edit',
@@ -1304,6 +1367,17 @@ export function AdminPropertyDetailDashboard() {
                       onSelect: () => {
                         setEditPropertyNotice(null)
                         setEditPropertyOpen(true)
+                      },
+                    },
+                    {
+                      id: 'property_access',
+                      label: 'Property access',
+                      buttonRef: propertyAccessGuideRef,
+                      onSelect: () => {
+                        dismissSetupSuccessCheckboxGuide('property_access')
+                        setShowPropertyAccessGuide(false)
+                        setPropertyActionsMenuOpen(false)
+                        setPropertyAccessRailOpen(true)
                       },
                     },
                   ]}
@@ -1453,6 +1527,25 @@ export function AdminPropertyDetailDashboard() {
       <div key={activeTab} className="property-tab-panel min-w-0">
       {activeTab === 'overview' ? (
         <div className="mt-6 flex flex-col gap-4">
+          <div className="flex min-w-0 flex-col gap-4">
+            <h3 className="text-[24px] font-bold leading-8 tracking-[0.07px] text-[#0a0a0a]">
+              {overviewPropertyAddress
+                ? `Home Details for ${overviewPropertyAddress}`
+                : 'Home Details'}
+            </h3>
+            {unitStatusError ? (
+              <p className="rounded-lg border border-[#fecaca] bg-[#fef2f2] px-3 py-2 text-[13px] text-[#b91c1c]">
+                {unitStatusError}
+              </p>
+            ) : null}
+            <PropertyUnitsTable
+              building={building ?? ''}
+              propertyId={canonicalProperty?.id}
+              rows={propertyUnitRows}
+              loading={loading}
+              onOccupancyStatusChange={(unitId, status) => handleOccupancyStatusChange(unitId, status)}
+            />
+          </div>
           <PropertyHomeDataPanel
             propertyId={canonicalProperty?.id ?? null}
             landlordId={getActiveLandlordId()}
@@ -1463,28 +1556,6 @@ export function AdminPropertyDetailDashboard() {
               setShowPropertyAccessGuide(false)
               setPropertyAccessRailOpen(true)
             }}
-            accessActionRef={propertyAccessGuideRef}
-            afterHomeValue={
-              <div className="flex min-w-0 flex-col gap-4 px-4 pb-6 lg:px-6">
-                <h3 className="text-[24px] font-bold leading-8 tracking-[0.07px] text-[#0a0a0a]">
-                  {overviewPropertyAddress
-                    ? `Home Details for ${overviewPropertyAddress}`
-                    : 'Home Details'}
-                </h3>
-                {unitStatusError ? (
-                  <p className="rounded-lg border border-[#fecaca] bg-[#fef2f2] px-3 py-2 text-[13px] text-[#b91c1c]">
-                    {unitStatusError}
-                  </p>
-                ) : null}
-                <PropertyUnitsTable
-                  building={building ?? ''}
-                  propertyId={canonicalProperty?.id}
-                  rows={propertyUnitRows}
-                  loading={loading}
-                  onOccupancyStatusChange={(unitId, status) => handleOccupancyStatusChange(unitId, status)}
-                />
-              </div>
-            }
           />
         </div>
       ) : activeTab === 'details' ? (
