@@ -360,7 +360,8 @@ function HeroHeadlineAndCopy() {
           width: fullWidthCopy ? undefined : copyWidth,
         }}
       >
-       They say real estate should be passive. Ulo makes it feel that way. Tenants text. Landlords approve. Ulo handles the rest.
+       They say real estate should be passive. Ulo makes it feel that way. Tenants text. Landlords approve. Ulo handles the rest. No apps. No chasing. No chaos.
+
        ​​​​​​​​​​​​​​​​
       </p>
     </>
@@ -702,7 +703,7 @@ export function LandingPage() {
                 <span className="inline-flex max-w-full flex-wrap items-center gap-2 rounded-full border border-black/[0.04] bg-black/[0.06] px-[17px] py-[9px] shadow-[0px_2px_8px_0px_rgba(16,185,129,0.1)]">
                   <span className="landing-alpha-status-dot" aria-hidden />
                   <span className="font-mono text-[12px] font-normal leading-4 text-[#059669]">
-                    No apps. No chasing. No chaos.
+                    YOUR PROPERTY ASSISTANT.
                   </span>
                 </span>
 
