@@ -138,19 +138,6 @@ function HeroInteractionVideo() {
   )
 }
 
-function HeroUloMark() {
-  return (
-    <span
-      className="bg-clip-text text-transparent"
-      style={{
-        backgroundImage: 'linear-gradient(174deg, rgb(24, 121, 96) 0%, rgb(174, 225, 239) 100%)',
-      }}
-    >
-      Ulo
-    </span>
-  )
-}
-
 function HeroHeadlineAndCopy() {
   const headlineRef = useRef<HTMLHeadingElement>(null)
   const copyRef = useRef<HTMLParagraphElement>(null)
@@ -335,52 +322,32 @@ function HeroHeadlineAndCopy() {
       >
         {heroLines991 ? (
           <>
-            <span className="block whitespace-nowrap">They say real estate should be</span>
-            <span className="block whitespace-nowrap">
-              passive. <HeroUloMark /> actually makes
-            </span>
-            <span className="block whitespace-nowrap">it feel that way.</span>
+            <span className="block whitespace-nowrap">Property operations,</span>
+            <span className="block whitespace-nowrap">automated by text.</span>
           </>
         ) : heroLines768 ? (
           <>
-            <span className="block whitespace-nowrap">
-              They say real estate should be passive. <HeroUloMark /> actually
-            </span>
-            <span className="block whitespace-nowrap">makes it feel that way.</span>
+            <span className="block whitespace-nowrap">Property operations, automated by text.</span>
           </>
         ) : heroLines720 || heroLines600 ? (
           <>
-            <span className="block whitespace-nowrap">
-              They say real estate should be passive. <HeroUloMark />
-            </span>
-            <span className="block whitespace-nowrap">actually makes it feel that way.</span>
+            <span className="block whitespace-nowrap">Property operations,</span>
+            <span className="block whitespace-nowrap">automated by text.</span>
           </>
         ) : heroLines504 ? (
           <>
-            <span className="block whitespace-nowrap">They say real estate should be</span>
-            <span className="block whitespace-nowrap">
-              passive. <HeroUloMark /> actually makes it
-            </span>
-            <span className="block whitespace-nowrap">feel that way.</span>
+            <span className="block whitespace-nowrap">Property operations,</span>
+            <span className="block whitespace-nowrap">automated by text.</span>
           </>
         ) : heroLines432 ? (
           <>
-            <span className="block whitespace-nowrap">They say real estate</span>
-            <span className="block whitespace-nowrap">
-              should be passive. <HeroUloMark />
-            </span>
-            <span className="block whitespace-nowrap">actually makes it feel</span>
-            <span className="block whitespace-nowrap">that way.</span>
+            <span className="block whitespace-nowrap">Property operations,</span>
+            <span className="block whitespace-nowrap">automated by text.</span>
           </>
         ) : (
           <>
-            <span className="block whitespace-nowrap">They say real estate</span>
-            <span className="block whitespace-nowrap">should be passive.</span>
-            <span className="block whitespace-nowrap">
-              {' '}
-              <HeroUloMark /> actually makes
-            </span>
-            <span className="block whitespace-nowrap">it feel that way.</span>
+            <span className="block whitespace-nowrap">Property operations,</span>
+            <span className="block whitespace-nowrap">automated by text.</span>
           </>
         )}
       </h1>
@@ -393,7 +360,8 @@ function HeroHeadlineAndCopy() {
           width: fullWidthCopy ? undefined : copyWidth,
         }}
       >
-        Your tenants text. Ulo handles the rest. Turning requests into action, coordinating vendors, and logging every repair automatically. No apps required for tenants or vendors. No chasing. No chaos.​​​​​​​​​​​​​​​​
+       They say real estate should be passive. Ulo makes it feel that way. Tenants text. Landlords approve. Ulo handles the rest.
+       ​​​​​​​​​​​​​​​​
       </p>
     </>
   )
@@ -734,10 +702,7 @@ export function LandingPage() {
                 <span className="inline-flex max-w-full flex-wrap items-center gap-2 rounded-full border border-black/[0.04] bg-black/[0.06] px-[17px] py-[9px] shadow-[0px_2px_8px_0px_rgba(16,185,129,0.1)]">
                   <span className="landing-alpha-status-dot" aria-hidden />
                   <span className="font-mono text-[12px] font-normal leading-4 text-[#059669]">
-                    Now in Alpha
-                  </span>
-                  <span className="inline-flex shrink-0 items-center justify-center rounded-full bg-[#55b6a1] px-2 py-1 text-[12px] font-medium leading-normal text-white">
-                    Pilot Program
+                    No apps. No chasing. No chaos.
                   </span>
                 </span>
 

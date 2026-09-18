@@ -12,7 +12,7 @@ export function LandingPrerenderMarkup() {
         </nav>
       </header>
       <main>
-        <h1>Your tenants text. Ulo does the rest.</h1>
+        <h1>Property operations, automated by text.</h1>
         <p>
           Ulo helps landlords automate day-to-day maintenance, rent collection, and tenant
           communication through SMS workflows. No apps required for tenants or vendors.
