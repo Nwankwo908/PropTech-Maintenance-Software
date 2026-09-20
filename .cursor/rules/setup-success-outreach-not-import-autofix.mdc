@@ -1,0 +1,44 @@
+---
+description: Autofix Get set up for success steps marked done from onboarding import alone — require real outreach (welcome text / vendor invite), not roster rows.
+globs: src/lib/setupSuccessChecklist.ts,src/lib/setupSuccessChecklist.test.ts,src/lib/loadSetupSuccessProgress.ts,src/components/AdminOverviewDashboard.tsx,src/components/AdminVendorsDashboard.tsx,src/components/AdminResidentsDashboard.tsx,src/lib/setupSuccessGuide.ts
+alwaysApply: false
+---
+
+# Setup-success checklist — do not count onboarding import as done
+
+**Symptom:** After finishing setup (or Get Started), **Invite and verify vendors** (or a similar step) never appears as incomplete — the landlord already “completed” it because vendors/residents were imported during onboarding.
+
+**Cause:** Checklist `done` was tied to **roster presence** (`vendorCount > 0`, residents exist) instead of **manual outreach** (welcome text started / verification invite started). Onboarding does **not** auto-send SMS.
+
+## Rule
+
+| Checklist item | Done only when |
+|---|---|
+| `welcome_texts` | At least one resident has activation started (`activation_status` not empty / not `not_started`) — **not** merely imported with a phone |
+| `verify_vendors` | At least one vendor has outreach started: any `vendor_verifications` row **or** `onboarding_overridden_at` — **not** merely `vendors` roster rows from import |
+
+Mirror the product rule in `onboarding-auto-activation.mdc`: managers send outreach from Residents / Vendors when ready.
+
+## Autofix (Bugbot)
+
+On PR review or when a step is “done” right after Complete with only imported roster data:
+
+1. Grep `resolveSetupSuccessProgress` / `loadSetupSuccessProgress` for `vendorCount > 0` (or similar) as the sole `verify_vendors` predicate — replace with `vendorOutreachStartedCount > 0` (invite/override).
+2. Do not mark `welcome_texts` done from `residents.length` or phone present alone.
+3. Keep coachmarks aligned: imported not-activated vendors → checkbox / Start onboarding guide; empty roster → Add vendor guide.
+4. Add/keep a unit test: roster-only import → step **incomplete**; outreach started → **complete**.
+
+**Note:** Cursor Bugbot runs on pull requests. Agents must apply this when the symptom appears in chat or PR.
+
+## Where it lives
+
+- Progress: `src/lib/setupSuccessChecklist.ts` → `resolveSetupSuccessProgress`
+- Loader: `src/lib/loadSetupSuccessProgress.ts`
+- Overview mirror: `AdminOverviewDashboard` progress input
+- Vendors coachmark: `AdminVendorsDashboard`
+
+## Do not
+
+- Treat onboarding Fast Track / document import as completing invite or welcome-text steps
+- Auto-send vendor/tenant SMS on `completeOnboarding` to “fix” the checklist
+- Weaken the step by using roster count alone again

@@ -22,7 +22,7 @@ function progressInput(
   return {
     residents: [],
     vendorCount: 0,
-    verifiedVendorCount: 0,
+    vendorOutreachStartedCount: 0,
     propertyAccessComplete: false,
     propertyIntelligenceComplete: false,
     propertyInsuranceComplete: false,
@@ -73,15 +73,20 @@ describe('setupSuccessChecklist', () => {
     ).toBe(true)
   })
 
-  it('marks invite vendors complete after at least one vendor is added', () => {
+  it('marks invite vendors complete only after outreach starts (not roster-only)', () => {
     expect(
       resolveSetupSuccessProgress(progressInput()).items.find((item) => item.id === 'verify_vendors')
         ?.done,
     ).toBe(false)
     expect(
-      resolveSetupSuccessProgress(progressInput({ vendorCount: 1 })).items.find(
+      resolveSetupSuccessProgress(progressInput({ vendorCount: 2 })).items.find(
         (item) => item.id === 'verify_vendors',
       )?.done,
+    ).toBe(false)
+    expect(
+      resolveSetupSuccessProgress(
+        progressInput({ vendorCount: 2, vendorOutreachStartedCount: 1 }),
+      ).items.find((item) => item.id === 'verify_vendors')?.done,
     ).toBe(true)
   })
 
@@ -90,6 +95,7 @@ describe('setupSuccessChecklist', () => {
       progressInput({
         residents: [{ phone: '2015550100', activationStatus: 'waiting' }],
         vendorCount: 1,
+        vendorOutreachStartedCount: 1,
         propertyAccessComplete: true,
         propertyIntelligenceComplete: true,
         propertyInsuranceComplete: true,
@@ -169,7 +175,7 @@ describe('setupSuccessChecklist', () => {
       progressInput({
         residents: [{ phone: '2015550100', activationStatus: 'waiting' }],
         vendorCount: 1,
-        verifiedVendorCount: 1,
+        vendorOutreachStartedCount: 1,
       }),
     )
     expect(setupSuccessPercent(progress)).toBe(29)
@@ -184,7 +190,7 @@ describe('setupSuccessChecklist', () => {
       progressInput({
         residents: [{ phone: '2015550100', activationStatus: 'waiting' }],
         vendorCount: 1,
-        verifiedVendorCount: 1,
+        vendorOutreachStartedCount: 1,
         propertyAccessComplete: true,
         propertyIntelligenceComplete: true,
         propertyInsuranceComplete: true,

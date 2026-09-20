@@ -49,17 +49,19 @@ export async function loadSetupSuccessProgress(
     overridden: Boolean(row.onboarding_overridden_at),
   }))
   const vendorIds = vendorRows.map((row) => row.id).filter(Boolean)
-  const verifiedIds = new Set<string>()
+  const outreachStartedIds = new Set<string>()
+  for (const row of vendorRows) {
+    if (row.overridden && row.id) outreachStartedIds.add(row.id)
+  }
   if (vendorIds.length > 0) {
     const { data: verificationRows } = await supabase
       .from('vendor_verifications')
       .select('vendor_id, status')
       .in('vendor_id', vendorIds)
     for (const row of (verificationRows ?? []) as Record<string, unknown>[]) {
-      if (asString(row.status) === 'verified') {
-        const id = asString(row.vendor_id)
-        if (id) verifiedIds.add(id)
-      }
+      const id = asString(row.vendor_id)
+      // Any verification row means invite/outreach started (mirrors tenant welcome sent).
+      if (id) outreachStartedIds.add(id)
     }
   }
 
@@ -70,8 +72,7 @@ export async function loadSetupSuccessProgress(
   return resolveSetupSuccessProgress({
     residents,
     vendorCount: vendorRows.length,
-    verifiedVendorCount: vendorRows.filter((row) => row.overridden || verifiedIds.has(row.id))
-      .length,
+    vendorOutreachStartedCount: outreachStartedIds.size,
     propertyAccessComplete: propertySetup.access,
     propertyIntelligenceComplete: propertySetup.intelligence,
     propertyInsuranceComplete: propertySetup.insurance,

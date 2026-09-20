@@ -309,13 +309,41 @@ export function AdminVendorsDashboard() {
   const [marketplacePreference, setMarketplacePreference] = useState<string | null>(null)
 
   useEffect(() => {
+    if (loading) return
     if (!isSetupSuccessCheckboxGuideActive(location.state, 'vendors')) return
-    setShowAddVendorGuide(true)
-    setAddVendorGuideRunId((value) => value + 1)
+    // Roster already has not-activated vendors (typical after onboarding import) →
+    // guide the checkbox / Start onboarding path. Empty roster → Add vendor first.
+    const hasNotStarted = vendors.some((vendor) => {
+      const chip = resolveVendorCapacityChip({
+        verificationStatus: verificationByVendor.get(vendor.id),
+        vendorActive: vendor.active,
+        availability: availabilityByVendor.get(vendor.id),
+        rosterStatus: vendor.rosterStatus,
+        onboardingOverriddenAt: vendor.onboardingOverriddenAt,
+      })
+      return chip.status === 'not_started'
+    })
+    if (hasNotStarted) {
+      setShowAddVendorGuide(false)
+      setShowCheckboxGuide(true)
+      setCheckboxGuideRunId((value) => value + 1)
+    } else if (vendors.length === 0) {
+      setShowCheckboxGuide(false)
+      setShowAddVendorGuide(true)
+      setAddVendorGuideRunId((value) => value + 1)
+    }
     if (isSetupSuccessCheckboxGuideNavigation(location.state, 'vendors')) {
       navigate(location.pathname, { replace: true, state: {} })
     }
-  }, [location.pathname, location.state, navigate])
+  }, [
+    loading,
+    location.pathname,
+    location.state,
+    navigate,
+    vendors,
+    verificationByVendor,
+    availabilityByVendor,
+  ])
 
   useEffect(() => {
     if (!showAddVendorGuide || !addVendorOpen) return
@@ -775,6 +803,7 @@ export function AdminVendorsDashboard() {
         key={`checkbox-${checkboxGuideRunId}`}
         active={showCheckboxGuide}
         targetRef={checkboxGuideTargetRef}
+        message="Select the checkbox to start vendor onboarding"
       />
       <div className="flex items-start justify-between gap-3 py-6">
         <div>

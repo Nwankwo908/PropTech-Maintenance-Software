@@ -69,7 +69,8 @@ export function welcomeTextsComplete(
 export function resolveSetupSuccessProgress(input: {
   residents: { phone?: string | null; activationStatus?: string | null }[]
   vendorCount: number
-  verifiedVendorCount: number
+  /** Vendors with a verification invite started, verified, or onboarding overridden. */
+  vendorOutreachStartedCount: number
   propertyAccessComplete: boolean
   propertyIntelligenceComplete: boolean
   propertyInsuranceComplete: boolean
@@ -79,7 +80,8 @@ export function resolveSetupSuccessProgress(input: {
 }): SetupSuccessProgress {
   const doneById: Record<SetupSuccessItemId, boolean> = {
     welcome_texts: welcomeTextsComplete(input.residents),
-    verify_vendors: input.vendorCount > 0,
+    // Roster alone (e.g. onboarding import) is not enough — invite/override must start.
+    verify_vendors: input.vendorOutreachStartedCount > 0,
     property_access: input.propertyAccessComplete,
     property_intelligence: input.propertyIntelligenceComplete,
     property_insurance: input.propertyInsuranceComplete,

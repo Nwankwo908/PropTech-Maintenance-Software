@@ -1169,17 +1169,19 @@ export function AdminOverviewDashboard() {
           }))
           .filter((v) => v.id && v.name)
         const vendorIds = vendorRows.map((v) => v.id)
-        const verifiedIds = new Set<string>()
+        const outreachStartedIds = new Set<string>()
+        for (const v of vendorRows) {
+          if (v.overridden) outreachStartedIds.add(v.id)
+        }
         if (vendorIds.length > 0) {
           const { data: verificationRows } = await supabase
             .from('vendor_verifications')
             .select('vendor_id, status')
             .in('vendor_id', vendorIds)
           for (const row of (verificationRows ?? []) as Record<string, unknown>[]) {
-            if (asString(row.status) === 'verified') {
-              const id = asString(row.vendor_id)
-              if (id) verifiedIds.add(id)
-            }
+            const id = asString(row.vendor_id)
+            // Any verification row = invite/outreach started.
+            if (id) outreachStartedIds.add(id)
           }
         }
         const mappedVendors = vendorRows.map((v) => ({
@@ -1187,7 +1189,7 @@ export function AdminOverviewDashboard() {
           name: v.name,
           category: v.category,
           active: v.active,
-          verified: v.overridden || verifiedIds.has(v.id),
+          verified: outreachStartedIds.has(v.id),
         }))
         setVendors(mappedVendors)
         for (const v of mappedVendors) vendorNameById[v.id] = v.name
@@ -1396,7 +1398,7 @@ export function AdminOverviewDashboard() {
     return resolveSetupSuccessProgress({
       residents: overviewResidents,
       vendorCount: vendors.length,
-      verifiedVendorCount: vendors.filter((vendor) => vendor.verified).length,
+      vendorOutreachStartedCount: vendors.filter((vendor) => vendor.verified).length,
       propertyAccessComplete: propertySetupModules.access,
       propertyIntelligenceComplete: propertySetupModules.intelligence,
       propertyInsuranceComplete: propertySetupModules.insurance,
