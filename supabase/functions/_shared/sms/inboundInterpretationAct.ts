@@ -31,6 +31,13 @@ import {
   type TenantSmsIntent,
 } from "./inboundInterpretation.ts"
 import {
+  buildEscalatedOtherSms,
+  buildSmallTalkSms,
+  buildUnclearClarifySms,
+  classifyAssistantOtherMessage,
+  shouldEscalateAssistantOther,
+} from "./tenantAssistantReply.ts"
+import {
   dedupeTicketsByRequestLabel,
   isIdentifiableRequestLabel,
   looksLikeStatusInquiryTicketDescription,
@@ -1847,6 +1854,27 @@ async function handleOther(
     return { handled: false }
   }
   const who = firstName(residentName)
+  const kind = classifyAssistantOtherMessage(ctx.inbound.body)
+
+  // Greetings / thanks / small talk — warm reply only; never notify staff.
+  if (kind === "small_talk") {
+    await logOutcome(ctx, {
+      eventType: "sms.small_talk_replied",
+      message: "Replied to a greeting or thanks without escalating to the property team.",
+    })
+    return handled("sms_small_talk", buildSmallTalkSms(who))
+  }
+
+  // Unclear ask — one clarifying question; do not claim a handoff.
+  if (!shouldEscalateAssistantOther(kind)) {
+    await logOutcome(ctx, {
+      eventType: "sms.clarify_asked",
+      message: "Asked a clarifying question instead of starting a repair or escalating.",
+    })
+    return handled("sms_clarify", buildUnclearClarifySms(who))
+  }
+
+  // Human request / legal / complaint — escalate and only then say we passed it on.
   const latest = ctx.inbound.body.trim().slice(0, 160)
   const runId = await maybeReleaseIntake(
     ctx.supabase,
@@ -1859,10 +1887,12 @@ async function handleOther(
   void notifyLandlordNeedsAttention(ctx.supabase, {
     landlordId: ctx.landlordId,
     kind: "workflow_escalated",
-    headline: "Resident needs help over text",
+    headline: kind === "human_request"
+      ? "Resident asked to speak with someone"
+      : "Resident raised a complaint or legal concern",
     detail: latest
       ? `Latest message: "${latest}"`
-      : "They reached out with something that isn't a repair request.",
+      : "They asked for help that needs the property team.",
     idempotencyKey: `sms-other:${ctx.conversationId}:${ctx.messageId}`,
     maintenanceRequestId: intake.draft_ticket_id ?? ctx.maintenanceRequestId,
     residentId: ctx.identity.resident_id,
@@ -1871,21 +1901,12 @@ async function handleOther(
   })
   await logOutcome(ctx, {
     eventType: "sms.routed_to_landlord",
-    message: "Passed the resident's text to the property team instead of starting a repair request.",
+    message: kind === "human_request"
+      ? "Passed the resident's request to speak with someone to the property team."
+      : "Passed the resident's complaint or legal concern to the property team.",
     workflowRunId: runId,
   })
-  return handled(
-    "sms_routed_to_landlord",
-    [
-      `Hi ${who},`,
-      "",
-      "This is the property management team.",
-      "",
-      "I've passed your message to the team so they can help with what you need. They'll follow up with you here.",
-      "",
-      "If something in your home needs a repair, just text a short description anytime.",
-    ].join("\n"),
-  )
+  return handled("sms_routed_to_landlord", buildEscalatedOtherSms(who, kind))
 }
 
 function whichRequestPendingIntent(

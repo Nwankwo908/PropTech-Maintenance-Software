@@ -1,0 +1,46 @@
+---
+description: Profile setup ↑ +N% must flash after EVERY checklist completion path — Autofix if listeners or notifySetupSuccessProgressChanged are missing.
+globs: src/hooks/useSetupSuccessNavHint.ts,src/components/AdminSidebar.tsx,src/lib/setupSuccessChecklist.ts,src/lib/propertyDetailsCompleteness.ts,src/components/PropertyAccessRail.tsx,src/components/AdminResidentsDashboard.tsx,src/components/AdminVendorsDashboard.tsx,src/components/AdminNotificationSettings.tsx,src/components/SetupSuccessCardHost.tsx
+alwaysApply: false
+---
+
+# Profile setup nav — ↑ +N% after every checklist completion
+
+The sidebar **Profile setup** row must show a temporary **↑ +{delta}%** in `#57B769` whenever setup-success percent increases — for **all** checklist steps, not only property access.
+
+Same-tab `localStorage` writes do **not** fire the `storage` event. Completing a step without `notifySetupSuccessProgressChanged()` leaves the nav stale.
+
+## Rule
+
+| Completion path | Must call |
+|---|---|
+| Property access / details / insurance save | `notifyPropertyDetailsChanged` (also notifies progress) |
+| Welcome text sent (Residents / resident profile) | `notifySetupSuccessProgressChanged` when `sent > 0` |
+| Vendor invite / add (roster has vendors) | `notifySetupSuccessProgressChanged` |
+| Test Email/SMS delivery marked complete | `markSetupSuccessTestDeliveryComplete` → notifies |
+| Maintenance prefs / notification settings save | `notifySetupSuccessProgressChanged` |
+
+`useSetupSuccessNavHint` must listen to `SETUP_SUCCESS_PROGRESS_CHANGED_EVENT` **and** `PROPERTY_DETAILS_CHANGED_EVENTS`.
+
+## Autofix (Bugbot)
+
+On PR review, if Profile setup fails to flash after any checklist action:
+
+1. Add `notifySetupSuccessProgressChanged()` on that completion path (or extend `markSetupSuccessTestDeliveryComplete` / `notifyPropertyDetailsChanged`).
+2. Ensure the nav hook listens to `SETUP_SUCCESS_PROGRESS_CHANGED_EVENT`.
+3. Keep the gain flash UI: `setupSuccessNavPercentGain` → green **↑ +N%** under Profile setup.
+4. Do not rely only on route changes or cross-tab `storage`.
+
+**Note:** Cursor Bugbot runs on pull requests. It does not auto-run while debugging locally — agents must apply this rule when the symptom appears in chat or PR.
+
+## Where it lives
+
+- Event: `notifySetupSuccessProgressChanged` / `SETUP_SUCCESS_PROGRESS_CHANGED_EVENT` in `setupSuccessChecklist.ts`
+- Listeners: `useSetupSuccessNavHint.ts`, `SetupSuccessCardHost.tsx`
+- UI: `AdminSidebar.tsx`
+
+## Do not
+
+- Listen only for property-details events
+- Expect same-tab `localStorage` alone to refresh the nav
+- Gate the flash on Overview card dismiss

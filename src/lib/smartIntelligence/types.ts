@@ -13,6 +13,8 @@ export type SmartInsightPriority = 'urgent' | 'attention' | 'upcoming' | 'info'
 export type SmartInsightAction = {
   label: string
   route: string
+  /** When set, the resident profile handles this instead of navigating. */
+  intent?: 'edit_resident'
 }
 
 export type SmartInsight = {

@@ -1,0 +1,41 @@
+---
+description: After Limited Alpha setup, force All Set until ulo.postOnboardingWelcomeSeen is set — otherwise Get set up for success never shows. Autofix when the flag can be skipped.
+globs: src/components/AdminOnboardingGuard.tsx,src/lib/postOnboardingWelcome.ts,src/lib/setupSuccessChecklist.ts,src/components/AdminOverviewDashboard.tsx,src/components/onboarding/OnboardingWizardShell.tsx
+alwaysApply: false
+---
+
+# Post-onboarding welcome seen — required before Overview checklist
+
+Limited Alpha landlords who finish setup must press **Get Started** on All Set. That writes `ulo.postOnboardingWelcomeSeen.<landlordId>`.
+
+`shouldShowSetupSuccessCard` requires that flag. If it is missing and the landlord can still open Overview / Residents / other admin routes, the **Get set up for success** card never appears — treat as a bug and autofix.
+
+## Rule
+
+| State | Required behavior |
+|---|---|
+| Setup completed + welcome seen missing | Stay on `/admin/onboarding` (All Set) until Get Started |
+| Get Started pressed | Set `ulo.postOnboardingWelcomeSeen.<id>` then navigate to `/admin` |
+| Setup completed + welcome seen | Overview may show Get set up for success (unless dismissed / complete) |
+
+## Autofix (Bugbot)
+
+When a PR lets completed Limited Alpha accounts reach `/admin` (or any non-onboarding admin route) while `shouldShowLimitedAlphaPostOnboardingWelcome` would still be true:
+
+1. Redirect with `shouldForcePostOnboardingWelcomeRoute` / equivalent in `AdminOnboardingGuard` — do not only rely on the wizard staying mounted.
+2. Keep Get Started as the only writer of the seen flag (`markLimitedAlphaPostOnboardingWelcomeSeen`).
+3. Do not weaken `shouldShowSetupSuccessCard` by dropping the `hasSeenLimitedAlphaPostOnboardingWelcome` check to “fix” a missing card.
+4. Do not invent a second localStorage key for the same gate.
+
+## Where it lives
+
+- Flag helpers: `src/lib/postOnboardingWelcome.ts` (`hasSeen…`, `mark…`, `shouldShow…`, `shouldForcePostOnboardingWelcomeRoute`)
+- Guard redirect: `src/components/AdminOnboardingGuard.tsx`
+- Get Started CTA: `OnboardingWizardShell` → `OnboardingAllSetWelcome`
+- Checklist gate: `shouldShowSetupSuccessCard` in `setupSuccessChecklist.ts`
+
+## Do not
+
+- Allow Overview when `ulo.postOnboardingWelcomeSeen` is absent after completed setup
+- Clear the seen flag on normal navigation (only onboarding reset may clear it)
+- Show Get set up for success by skipping the welcome-seen prerequisite

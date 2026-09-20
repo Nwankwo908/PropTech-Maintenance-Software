@@ -52,7 +52,7 @@ export function LandingPrerenderMarkup() {
             <li>Rent Collection — automated SMS reminders and payment tracking</li>
             <li>Home Health Check — periodic walkthrough assessments dispatched to technicians</li>
             <li>Maintenance Request — tenant texts an issue, Ulo classifies and coordinates vendors</li>
-            <li>Move in Coordination — Ulo guides new tenants through move-in</li>
+            <li>Move in Coordination — From key handoff to utility setup, Ulo guides new tenants through move-in so you don't have to</li>
             <li>Lease Renewals — Ulo monitors expiry dates and launches renewal workflows</li>
           </ul>
         </section>

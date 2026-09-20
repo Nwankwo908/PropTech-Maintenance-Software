@@ -306,36 +306,54 @@ export function AdminSidebarContent({
               {!isCollapsedRail ? <span className="min-w-0 text-left">{item.label}</span> : null}
             </NavLink>
             {item.id === 'settings' && setupNavHint.show ? (
-              <Link
-                to="/admin"
-                title={isCollapsedRail ? `Get started · ${setupNavHint.percent}%` : undefined}
-                aria-label={`Get started, ${setupNavHint.percent}% complete`}
-                onClick={() => {
-                  setupNavHint.expandCard()
-                  item.onClick?.()
-                }}
-                className={
-                  isCollapsedRail
-                    ? `sa-press ${navBaseCollapsed} text-[11px] font-semibold tracking-[-0.02em] text-[#364153] opacity-60 hover:bg-[#f3f4f6] hover:opacity-100`
-                    : `sa-press ${navBase} text-[13px] font-medium text-[#364153] opacity-60 hover:bg-[#f3f4f6] hover:opacity-100`
-                }
-              >
-                {isCollapsedRail ? (
-                  <span className="tabular-nums">{setupNavHint.percent}%</span>
-                ) : (
-                  <>
-                    <span className="flex size-5 shrink-0 items-center justify-center" aria-hidden>
-                      <img
-                        src={getSetupIcon}
-                        alt=""
-                        className="size-5 max-w-none object-contain object-top"
-                      />
+              <Fragment key={`${item.to}-profile-setup`}>
+                <button
+                  type="button"
+                  title={isCollapsedRail ? `Profile setup · ${setupNavHint.percent}%` : undefined}
+                  aria-label={`Profile setup, ${setupNavHint.percent}% complete`}
+                  onClick={() => {
+                    setupNavHint.expandCard()
+                    item.onClick?.()
+                  }}
+                  className={
+                    isCollapsedRail
+                      ? `sa-press ${navBaseCollapsed} text-[11px] font-semibold tracking-[-0.02em] text-[#364153] opacity-60 hover:bg-[#f3f4f6] hover:opacity-100`
+                      : `sa-press ${navBase} text-[13px] font-medium text-[#364153] opacity-60 hover:bg-[#f3f4f6] hover:opacity-100`
+                  }
+                >
+                  {isCollapsedRail ? (
+                    <span className="tabular-nums">{setupNavHint.percent}%</span>
+                  ) : (
+                    <>
+                      <span className="flex size-5 shrink-0 items-center justify-center" aria-hidden>
+                        <img
+                          src={getSetupIcon}
+                          alt=""
+                          className="size-5 max-w-none object-contain object-top"
+                        />
+                      </span>
+                      <span className="min-w-0 text-left">Profile setup</span>
+                      <span className="ml-auto tabular-nums text-[#6a7282]">{setupNavHint.percent}%</span>
+                    </>
+                  )}
+                </button>
+                {setupNavHint.gainDelta > 0 ? (
+                  <div
+                    key={`profile-setup-gain-${setupNavHint.percent}-${setupNavHint.gainDelta}`}
+                    className={
+                      isCollapsedRail
+                        ? 'sa-enter mt-1 flex w-full justify-center'
+                        : 'sa-enter mt-1 flex w-full items-center gap-3 px-4'
+                    }
+                    aria-live="polite"
+                  >
+                    {!isCollapsedRail ? <span className="size-5 shrink-0" aria-hidden /> : null}
+                    <span className="text-[12px] font-semibold tabular-nums tracking-[-0.02em] text-[#57B769]">
+                      ↑ +{setupNavHint.gainDelta}%
                     </span>
-                    <span className="min-w-0 text-left">Profile setup</span>
-                    <span className="ml-auto tabular-nums text-[#6a7282]">{setupNavHint.percent}%</span>
-                  </>
-                )}
-              </Link>
+                  </div>
+                ) : null}
+              </Fragment>
             ) : null}
           </Fragment>
         ))}

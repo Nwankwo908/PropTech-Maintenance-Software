@@ -16,13 +16,10 @@ import { SetupSuccessCheckboxGuide } from '@/components/SetupSuccessCheckboxGuid
 import { getActiveLandlordId } from '@/lib/activeLandlord'
 import { getErrorMessage } from '@/lib/errorMessage'
 import { fetchLandlordAccountProfile } from '@/lib/landlordAccountProfile'
-import { formatPhoneNational } from '@/lib/phoneFormat'
 import { loadOrganizationSettings } from '@/lib/organizationSettings'
 import {
-  LIMITED_ALPHA_1_TWILIO_SMS_NUMBER,
-} from '@shared/landlordCapabilities'
-import {
   markSetupSuccessTestDeliveryComplete,
+  notifySetupSuccessProgressChanged,
   SETUP_SUCCESS_TEST_DELIVERY_HASH,
 } from '@/lib/setupSuccessChecklist'
 import {
@@ -396,6 +393,7 @@ export function AdminNotificationSettings() {
         setSaved(refreshed)
         setDraft(refreshed)
         setSaveMessage('Notification settings saved.')
+        notifySetupSuccessProgressChanged()
       })
       .catch((err: unknown) => {
         setSaveError(err instanceof Error ? err.message : 'Could not save notification settings.')
@@ -403,7 +401,6 @@ export function AdminNotificationSettings() {
   }
 
   const smsDestination = (profilePhone || organizationPhone).trim()
-  const smsFromNumber = LIMITED_ALPHA_1_TWILIO_SMS_NUMBER
 
   function handleSendTest(channel: 'email' | 'sms') {
     dismissSetupSuccessCheckboxGuide('test_delivery')
@@ -645,11 +642,9 @@ export function AdminNotificationSettings() {
                     <p className="text-[14px] font-medium tracking-[-0.1504px] text-[#101828]">
                       Send test {label}
                     </p>
-                    {channel === 'sms' ? (
+                    {channel === 'sms' && !smsDestination ? (
                       <p className="mt-1 text-[12px] tracking-[-0.1504px] text-[#6a7282]">
-                        {smsDestination
-                          ? `Sends to ${formatPhoneNational(smsDestination)} from ${formatPhoneNational(smsFromNumber)}`
-                          : 'Add your phone in Organization first.'}
+                        Add your phone in Organization first.
                       </p>
                     ) : null}
                     <OutlineButton

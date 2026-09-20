@@ -47,7 +47,33 @@ export async function commitFastTrackImport(
     return false
   }
 
-  const normalized = normalizeExtractionReview(input.review, input.accountSetup)
+  let accountSeed = input.accountSetup
+  if (!accountSeed.contactName.trim() && supabase) {
+    const { data: landlord } = await supabase
+      .from('landlords')
+      .select('contact_name, email, phone, name')
+      .eq('id', scope.landlordId)
+      .maybeSingle()
+    const contactName =
+      typeof landlord?.contact_name === 'string' ? landlord.contact_name.trim() : ''
+    if (contactName) {
+      accountSeed = {
+        ...accountSeed,
+        contactName,
+        email:
+          accountSeed.email.trim() ||
+          (typeof landlord?.email === 'string' ? landlord.email.trim() : ''),
+        phone:
+          accountSeed.phone.trim() ||
+          (typeof landlord?.phone === 'string' ? landlord.phone.trim() : ''),
+        companyName:
+          accountSeed.companyName.trim() ||
+          (typeof landlord?.name === 'string' ? landlord.name.trim() : ''),
+      }
+    }
+  }
+
+  const normalized = normalizeExtractionReview(input.review, accountSeed)
   const accountCheck = validateReviewManualAccount(normalized.account)
   if (!accountCheck.ok) {
     input.onError(accountCheck.error)

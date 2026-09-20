@@ -1,17 +1,26 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import magnifyingGlassIcon from '@/assets/Magnifying glass.svg'
+import editIcon from '@/assets/noun_edit_469454.svg'
 import { SetupSuccessCheckboxGuide } from '@/components/SetupSuccessCheckboxGuide'
 import { TableCheckbox } from '@/components/TableCheckbox'
 import { loadUnitsFromDb } from '@/api/unitVacancy'
 import { registerUnitSms, syncSmsIdentity } from '@/api/landlordSmsOnboarding'
 import {
+  phoneChanged,
+  restartTenantOnboardingAfterPhoneChange,
+  resetTenantActivationForPhoneChange,
   sendTenantActivationSms,
 } from '@/api/tenantActivation'
 import {
   AddResidentModal,
   type AddResidentSubmitPayload,
 } from '@/components/AddResidentModal'
+import {
+  EditResidentModal,
+  type EditResidentModalRow,
+  type EditResidentSavePayload,
+} from '@/components/EditResidentModal'
 import {
   TenantActivationStatusChip,
 } from '@/components/TenantActivationStatusChip'
@@ -29,24 +38,47 @@ import {
   mapUnitsForPropertyHealth,
   normalizeBuildingKey,
 } from '@/lib/propertyHealth'
-import { displayResidentEmail, groupResidentsByLeasePlace } from '@/lib/residentProfileDetail'
+import {
+  initialUnitOptionKeyForResident,
+  residentPlacementUpdateForSave,
+  resolveInventoryUnitForResidentSave,
+} from '@/lib/propertyResidentUnitOptions'
+import {
+  displayResidentEmail,
+  groupResidentsByLeasePlace,
+  residentEmailPatchForSave,
+} from '@/lib/residentProfileDetail'
 import { isRentChargePaidFromRun } from '@/lib/paymentSettlement'
 import { deleteResidentsForLandlord } from '@/lib/residentDeletion'
+import { uploadResidentLeaseDocuments } from '@/lib/residentLeaseDocuments'
 import {
   dismissSetupSuccessCheckboxGuide,
   isSetupSuccessCheckboxGuideActive,
   isSetupSuccessCheckboxGuideNavigation,
 } from '@/lib/setupSuccessGuide'
-import { resolveTenantActivationChip, countUnactivatedTenants, type TenantActivationStatus } from '@/lib/tenantActivationStatus'
+import { resolveTenantActivationChip, countUnactivatedTenants } from '@/lib/tenantActivationStatus'
 import { supabase } from '@/lib/supabase'
-import { getErrorMessage } from '@/lib/errorMessage'
+import { getErrorMessage, isUniqueViolation } from '@/lib/errorMessage'
 import { parseLeaseDateInput } from '@/lib/onboarding'
-import { residentOccupancyLabel } from '@/lib/residentOccupancy'
-import { activateUnitsFromResidentAssignments } from '@/lib/unitActivation'
+import {
+  normalizeResidentOccupancyStatus,
+  residentOccupancyLabel,
+} from '@/lib/residentOccupancy'
+import {
+  activateUnitsFromResidentAssignments,
+  syncAssignedUnitOccupancyFromResidentStatus,
+} from '@/lib/unitActivation'
 import type { PropertyHistoryPaymentStatus } from '@/lib/propertyHistory'
+
+type InventoryUnitOption = {
+  id: string
+  unitLabel: string
+  building: string | null
+}
 
 type ResidentRow = {
   id: string
+  residentId: string
   name: string
   unit: string
   building: string | null
@@ -57,6 +89,9 @@ type ResidentRow = {
   contactPhone: string | null
   contactEmail: string | null
   status: string
+  leaseStart: string | null
+  leaseEnd: string | null
+  rentDueDay: number | null
   activationStatus: string | null
   smsConsentStatus: string | null
   activationAttemptCount: number
@@ -102,16 +137,6 @@ function formatMonthlyRent(amount: number | null): string {
   return formatBalance(amount)
 }
 
-const ACTIVATION_ATTENTION_ORDER: TenantActivationStatus[] = [
-  'action_required',
-  'delivery_failed',
-  'not_started',
-  'waiting',
-  'opted_out',
-  'declined',
-  'activated',
-]
-
 function householdRentLabel(members: ResidentRow[]): string {
   return members.find((member) => member.rentLabel !== '—')?.rentLabel ?? '—'
 }
@@ -126,44 +151,28 @@ function householdOccupancyLabel(members: ResidentRow[]): string {
   return residentOccupancyLabel(members[0]?.status ?? 'active')
 }
 
+/** Activation follows the primary lease holder (first member on the household row). */
 function householdActivationChip(members: ResidentRow[]) {
-  const chips = members.map((member) =>
-    resolveTenantActivationChip({
-      activationStatus: member.activationStatus,
-      smsConsentStatus: member.smsConsentStatus,
-      activationAttemptCount: member.activationAttemptCount,
-      activationSmsSentAt: member.activationSmsSentAt,
-    }),
-  )
-  chips.sort(
-    (left, right) =>
-      ACTIVATION_ATTENTION_ORDER.indexOf(left.status) -
-      ACTIVATION_ATTENTION_ORDER.indexOf(right.status),
-  )
-  return chips[0] ?? resolveTenantActivationChip({})
+  const primary = members[0]
+  return resolveTenantActivationChip({
+    activationStatus: primary?.activationStatus,
+    smsConsentStatus: primary?.smsConsentStatus,
+    activationAttemptCount: primary?.activationAttemptCount,
+    activationSmsSentAt: primary?.activationSmsSentAt,
+  })
 }
 
-function uniqueHouseholdContacts(members: ResidentRow[]): {
+function primaryHouseholdContacts(primary: ResidentRow | undefined): {
   phones: string[]
   emails: string[]
 } {
-  const phones: string[] = []
-  const emails: string[] = []
-  const seenPhone = new Set<string>()
-  const seenEmail = new Set<string>()
-  for (const member of members) {
-    const phone = member.contactPhone?.trim()
-    if (phone && !seenPhone.has(phone)) {
-      seenPhone.add(phone)
-      phones.push(phone)
-    }
-    const email = member.contactEmail?.trim()
-    if (email && !seenEmail.has(email.toLowerCase())) {
-      seenEmail.add(email.toLowerCase())
-      emails.push(email)
-    }
+  if (!primary) return { phones: [], emails: [] }
+  const phone = primary.contactPhone?.trim()
+  const email = primary.contactEmail?.trim()
+  return {
+    phones: phone ? [phone] : [],
+    emails: email ? [email] : [],
   }
-  return { phones, emails }
 }
 
 function asRecord(value: unknown): Record<string, unknown> {
@@ -226,6 +235,53 @@ function ActivationReminderAlertIcon() {
   )
 }
 
+function SelectionTrashIcon({ className = 'size-4' }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 24 24" fill="none" aria-hidden>
+      <path
+        d="M3 6h18M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2m3 0v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6h14zM10 11v6M14 11v6"
+        stroke="currentColor"
+        strokeWidth={1.65}
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  )
+}
+
+function toEditResidentRow(resident: ResidentRow): EditResidentModalRow {
+  return {
+    id: resident.id,
+    residentId: resident.residentId || resident.id.slice(0, 8).toUpperCase(),
+    name: resident.name,
+    email: resident.contactEmail ?? '',
+    phone: resident.contactPhone ?? undefined,
+    unit: resident.unit.trim()
+      ? { kind: 'assigned', unit: resident.unit, building: resident.building ?? '' }
+      : { kind: 'unassigned' },
+    status: normalizeResidentOccupancyStatus(resident.status),
+    leaseStart: resident.leaseStart,
+    leaseEnd: resident.leaseEnd,
+    rentDueDay: resident.rentDueDay,
+  }
+}
+
+function leaseDateOnly(value: unknown): string | null {
+  const raw = asString(value).slice(0, 10)
+  return /^\d{4}-\d{2}-\d{2}$/.test(raw) ? raw : null
+}
+
+function rentDueDayFromRaw(value: unknown): number | null {
+  if (typeof value === 'number' && Number.isFinite(value) && value >= 1 && value <= 31) {
+    return Math.trunc(value)
+  }
+  if (typeof value === 'string' && value.trim()) {
+    const parsed = Number(value)
+    if (Number.isFinite(parsed) && parsed >= 1 && parsed <= 31) return Math.trunc(parsed)
+  }
+  return null
+}
+
 export function AdminResidentsDashboard() {
   const navigate = useNavigate()
   const location = useLocation()
@@ -236,6 +292,8 @@ export function AdminResidentsDashboard() {
   const [addResidentOpen, setAddResidentOpen] = useState(false)
   const [addResidentError, setAddResidentError] = useState<string | null>(null)
   const [unitOptions, setUnitOptions] = useState<{ value: string; label: string }[]>([])
+  const [inventoryUnits, setInventoryUnits] = useState<InventoryUnitOption[]>([])
+  const [editingResident, setEditingResident] = useState<ResidentRow | null>(null)
   const [selectedResidentIds, setSelectedResidentIds] = useState<Set<string>>(() => new Set())
   const [deleteResidentsSaving, setDeleteResidentsSaving] = useState(false)
   const [deleteResidentsError, setDeleteResidentsError] = useState<string | null>(null)
@@ -277,10 +335,11 @@ export function AdminResidentsDashboard() {
     setLoading(true)
     setError(null)
 
+    try {
     const selectWithActivation =
-      'id, full_name, unit, building, status, phone, email, monthly_rent, activation_status, sms_consent_status, activation_attempt_count, activation_sms_sent_at'
+      'id, resident_id, full_name, unit, building, status, phone, email, monthly_rent, move_in_date, lease_end_date, rent_due_day, activation_status, sms_consent_status, activation_attempt_count, activation_sms_sent_at'
     const selectLegacy =
-      'id, full_name, unit, building, status, phone, email, monthly_rent'
+      'id, resident_id, full_name, unit, building, status, phone, email, monthly_rent, move_in_date, lease_end_date'
 
     let data: Record<string, unknown>[] | null = null
     let fetchError: { message: string } | null = null
@@ -371,6 +430,7 @@ export function AdminResidentsDashboard() {
           (building ? propertyIdByBuilding.get(normalizeBuildingKey(building)) ?? null : null)
         return {
           id: asString(raw.id),
+          residentId: asString(raw.resident_id),
           name: asString(raw.full_name) || 'Unnamed resident',
           unit: unit ?? '',
           building,
@@ -381,6 +441,9 @@ export function AdminResidentsDashboard() {
           contactPhone: phone,
           contactEmail: email,
           status,
+          leaseStart: leaseDateOnly(raw.move_in_date),
+          leaseEnd: leaseDateOnly(raw.lease_end_date),
+          rentDueDay: rentDueDayFromRaw(raw.rent_due_day),
           activationStatus: asString(raw.activation_status) || null,
           smsConsentStatus: asString(raw.sms_consent_status) || null,
           activationAttemptCount: asFiniteNumber(raw.activation_attempt_count),
@@ -391,6 +454,11 @@ export function AdminResidentsDashboard() {
 
     setResidents(rows)
     setLoading(false)
+    } catch (error) {
+      setError(getErrorMessage(error, 'Something went wrong. Please try again.'))
+      setResidents([])
+      setLoading(false)
+    }
   }, [])
 
   useEffect(() => {
@@ -400,17 +468,23 @@ export function AdminResidentsDashboard() {
   useEffect(() => {
     void loadUnitsFromDb().then((rows) => {
       const landlordId = getActiveLandlordId()
+      const scoped = rows.filter((row) => row.landlord_id === landlordId && row.unit_label.trim())
+      setInventoryUnits(
+        scoped.map((row) => ({
+          id: row.id,
+          unitLabel: row.unit_label.trim(),
+          building: row.building?.trim() || null,
+        })),
+      )
       setUnitOptions(
-        rows
-          .filter((row) => row.landlord_id === landlordId && row.unit_label.trim())
-          .map((row) => {
-            const building = row.building?.trim() ?? ''
-            const unit = row.unit_label.trim()
-            return {
-              value: customUnitPickKey(unit, building),
-              label: building ? `${building} — ${unit}` : unit,
-            }
-          }),
+        scoped.map((row) => {
+          const building = row.building?.trim() ?? ''
+          const unit = row.unit_label.trim()
+          return {
+            value: customUnitPickKey(unit, building),
+            label: building ? `${building} — ${unit}` : unit,
+          }
+        }),
       )
     })
   }, [])
@@ -508,9 +582,206 @@ export function AdminResidentsDashboard() {
     setAddResidentOpen(false)
   }
 
+  const editResidentRow = useMemo(
+    () => (editingResident ? toEditResidentRow(editingResident) : null),
+    [editingResident],
+  )
+
+  const editUnitOptions = useMemo(() => {
+    const options = [{ value: '', label: 'Unassigned' }, ...unitOptions]
+    if (!editingResident?.unit.trim()) return options
+    const currentKey = initialUnitOptionKeyForResident(
+      editingResident.unit,
+      editingResident.building,
+      inventoryUnits,
+    )
+    if (currentKey && !options.some((option) => option.value === currentKey)) {
+      options.push({
+        value: currentKey,
+        label: `${editingResident.unitLabel} (current)`,
+      })
+    }
+    return options
+  }, [editingResident, inventoryUnits, unitOptions])
+
+  const editInitialUnitKey = useMemo(() => {
+    if (!editingResident?.unit.trim()) return ''
+    return initialUnitOptionKeyForResident(
+      editingResident.unit,
+      editingResident.building,
+      inventoryUnits,
+    )
+  }, [editingResident, inventoryUnits])
+
+  async function handleEditResidentSave(payload: EditResidentSavePayload) {
+    if (!supabase || !editingResident) {
+      throw new Error("We can't reach the server right now. Please try again in a moment.")
+    }
+
+    const previousUnit = editingResident.unit.trim()
+    const previousBuilding = (editingResident.building ?? '').trim()
+    const placement = residentPlacementUpdateForSave({
+      unitAssignmentChanged: payload.unitAssignmentChanged,
+      submittedUnitKey: payload.unitOptionKey,
+      previousUnit,
+      previousBuilding,
+      units: inventoryUnits,
+      fallbackBuilding: previousBuilding,
+    })
+    const assigned =
+      placement && placement.unit
+        ? resolveInventoryUnitForResidentSave(inventoryUnits, {
+            unit: placement.unit,
+            building: placement.building ?? '',
+          })
+        : !placement && previousUnit
+          ? resolveInventoryUnitForResidentSave(inventoryUnits, {
+              unit: previousUnit,
+              building: previousBuilding,
+            })
+          : null
+    const previousPhone = editingResident.contactPhone
+    const emailPatch = residentEmailPatchForSave(payload.email, editingResident.contactEmail)
+    const updatePayload: Record<string, unknown> = {
+      full_name: payload.fullName,
+      phone: payload.phone ?? null,
+      status: payload.status,
+      move_in_date: parseLeaseDateInput(payload.leaseStart),
+      lease_end_date: parseLeaseDateInput(payload.leaseEnd),
+      rent_due_day: payload.rentDueDay,
+    }
+    if (placement) {
+      updatePayload.unit = placement.unit
+      updatePayload.building = placement.building
+    }
+    if (emailPatch !== undefined) {
+      updatePayload.email = emailPatch
+    }
+
+    let { error: updateError } = await supabase
+      .from('users')
+      .update(updatePayload)
+      .eq('id', payload.id)
+      .eq('landlord_id', getActiveLandlordId())
+
+    if (
+      updateError &&
+      emailPatch !== undefined &&
+      isUniqueViolation(updateError) &&
+      /email/i.test(updateError.message ?? '')
+    ) {
+      const submitted = payload.email.trim()
+      const current = editingResident.contactEmail ?? ''
+      if (!submitted || submitted === current) {
+        const { email: _ignored, ...withoutEmail } = updatePayload
+        const retry = await supabase
+          .from('users')
+          .update(withoutEmail)
+          .eq('id', payload.id)
+          .eq('landlord_id', getActiveLandlordId())
+        updateError = retry.error
+      }
+    }
+
+    if (updateError) {
+      throw new Error(getErrorMessage(updateError, 'Something went wrong. Please try again.'))
+    }
+
+    if (assigned) {
+      await syncAssignedUnitOccupancyFromResidentStatus({
+        landlordId: getActiveLandlordId(),
+        residentId: payload.id,
+        unitId: assigned.unitId,
+        unitLabel: assigned.unitLabel,
+        building: assigned.building,
+        status: payload.status,
+        residentName: payload.fullName,
+        source: 'edit_resident',
+      })
+    }
+
+    if (payload.phone?.trim()) {
+      void syncSmsIdentity({
+        phone: payload.phone,
+        identityType: 'resident',
+        residentId: payload.id,
+        unitId: assigned?.unitId ?? null,
+        unitLabel: assigned?.unitLabel ?? null,
+        building: assigned?.building ?? null,
+      })
+    }
+
+    if (phoneChanged(previousPhone, payload.phone)) {
+      if (payload.restartOnboarding && payload.phone?.trim()) {
+        const result = await restartTenantOnboardingAfterPhoneChange({
+          landlordId: getActiveLandlordId(),
+          residentId: payload.id,
+        })
+        if (!result.ok || (result.failed ?? 0) > 0) {
+          throw new Error(
+            result.error ||
+              'Resident saved, but the welcome text could not be delivered. You can start onboarding again from the resident profile.',
+          )
+        }
+      } else {
+        await resetTenantActivationForPhoneChange({
+          landlordId: getActiveLandlordId(),
+          residentId: payload.id,
+        })
+      }
+    }
+
+    if (payload.leaseDocumentFiles && payload.leaseDocumentFiles.length > 0) {
+      const unitLabel =
+        placement?.unit?.trim() ||
+        (!placement ? previousUnit : '') ||
+        editingResident.unit.trim()
+      const buildingLabel =
+        (placement?.building ?? '').trim() ||
+        (!placement ? previousBuilding : '') ||
+        (editingResident.building ?? '').trim()
+      const docsResult = await uploadResidentLeaseDocuments({
+        landlordId: getActiveLandlordId(),
+        residentId: payload.id,
+        resident: {
+          fullName: payload.fullName,
+          unit: unitLabel,
+          building: buildingLabel,
+          phone: payload.phone,
+          email: payload.email,
+        },
+        files: payload.leaseDocumentFiles,
+      })
+      if (!docsResult.ok) {
+        throw new Error(docsResult.error)
+      }
+    }
+
+    setEditingResident(null)
+    await loadResidents()
+  }
+
+  async function handleEditResidentDelete(row: EditResidentModalRow) {
+    const result = await deleteResidentsForLandlord({
+      landlordId: getActiveLandlordId(),
+      residentIds: [row.id],
+    })
+    if (!result.ok) {
+      throw new Error(result.error)
+    }
+    setEditingResident(null)
+    setSelectedResidentIds((prev) => {
+      if (!prev.has(row.id)) return prev
+      const next = new Set(prev)
+      next.delete(row.id)
+      return next
+    })
+    await loadResidents()
+  }
+
   const residentHouseholds = useMemo((): ResidentHouseholdRow[] => {
     const byId = new Map(residents.map((resident) => [resident.id, resident]))
-    return groupResidentsByLeasePlace(
+    const groups = groupResidentsByLeasePlace(
       residents.map((resident) => ({
         id: resident.id,
         fullName: resident.name,
@@ -524,6 +795,7 @@ export function AdminResidentsDashboard() {
         .map((member) => byId.get(member.id))
         .filter((member): member is ResidentRow => Boolean(member)),
     }))
+    return groups
   }, [residents])
 
   const filteredHouseholds = useMemo(() => {
@@ -557,6 +829,21 @@ export function AdminResidentsDashboard() {
   )
 
   const selectedResidentCount = selectedResidentIds.size
+  /** One household selected (any member count) → Edit opens the primary lease holder. */
+  const selectedEditPrimary = useMemo(() => {
+    if (selectedResidentIds.size === 0) return null
+    const matched = residentHouseholds.filter((household) =>
+      household.members.some((member) => selectedResidentIds.has(member.id)),
+    )
+    if (matched.length !== 1) return null
+    const household = matched[0]
+    if (!household) return null
+    const memberIds = new Set(household.members.map((member) => member.id))
+    for (const id of selectedResidentIds) {
+      if (!memberIds.has(id)) return null
+    }
+    return household.members[0] ?? null
+  }, [residentHouseholds, selectedResidentIds])
   const selectedOnboardingRetryOnly = useMemo(() => {
     const selected = residents.filter((resident) => selectedResidentIds.has(resident.id))
     if (selected.length === 0) return false
@@ -752,6 +1039,11 @@ export function AdminResidentsDashboard() {
     await loadResidents()
     setOnboardingSaving(false)
 
+    if (sent > 0) {
+      const { notifySetupSuccessProgressChanged } = await import('@/lib/setupSuccessChecklist')
+      notifySetupSuccessProgressChanged()
+    }
+
     if (sent > 0 && failed === 0) {
       setResidentsBanner({
         kind: 'onboarding_started',
@@ -786,6 +1078,7 @@ export function AdminResidentsDashboard() {
     !loading && unactivatedResidentCount > 0 && !showOnboardingStartedBanner
   const showResidentsErrorBanner =
     residentsBanner?.kind === 'error' && !showOnboardingStartedBanner
+
 
   return (
     // Natural height so AdminLayout's scroll region owns vertical scrolling.
@@ -899,40 +1192,47 @@ export function AdminResidentsDashboard() {
         </div>
       ) : null}
       {selectedResidentCount > 0 ? (
-        <div className="mb-4 flex flex-wrap items-center justify-between gap-2 rounded-[10px] border border-[#e5e7eb] bg-white px-4 py-3 shadow-[0px_1px_2px_-1px_rgba(0,0,0,0.06)]">
-          <p className="text-[14px] leading-5 tracking-[-0.1504px] text-[#0a0a0a]">
-            <span className="font-medium">{selectedResidentCount}</span>
-            {selectedResidentCount === 1 ? ' resident selected' : ' residents selected'}
-          </p>
-          <div className="flex items-center gap-2">
-            <button
-              type="button"
-              onClick={() => setSelectedResidentIds(new Set())}
-              className="sa-press inline-flex h-9 items-center justify-center rounded-lg border border-black/10 bg-white px-3 text-[14px] font-medium text-[#0a0a0a] outline-none hover:bg-[#f3f4f6] focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2"
-            >
-              Clear selection
-            </button>
-            <button
-              type="button"
-              disabled={onboardingSaving || deleteResidentsSaving}
-              onClick={() => void startOnboardingForSelected()}
-              className="sa-press inline-flex h-9 items-center justify-center rounded-lg bg-[#187960] px-3 text-[14px] font-medium text-white outline-none hover:bg-[#146b52] focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50"
-            >
-              {onboardingSaving
-                ? 'Sending…'
-                : selectedOnboardingRetryOnly
-                  ? 'Retry onboarding'
-                  : 'Start onboarding'}
-            </button>
-            <button
-              type="button"
-              disabled={deleteResidentsSaving || onboardingSaving}
-              onClick={() => void deleteSelectedResidents()}
-              className="sa-press inline-flex h-9 items-center justify-center rounded-lg border border-[#b52a00]/30 bg-[#fff4f0] px-3 text-[14px] font-medium text-[#b52a00] outline-none hover:bg-[#ffe9e1] focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50"
-            >
-              {deleteResidentsSaving ? 'Deleting…' : 'Delete selected'}
-            </button>
-          </div>
+        <div className="mb-4 flex flex-wrap items-center gap-2 rounded-[10px] border border-[#e5e7eb] bg-white px-4 py-3 shadow-[0px_1px_2px_-1px_rgba(0,0,0,0.06)]">
+          <button
+            type="button"
+            aria-label="Edit resident"
+            disabled={deleteResidentsSaving || onboardingSaving || !selectedEditPrimary}
+            onClick={() => {
+              if (selectedEditPrimary) setEditingResident(selectedEditPrimary)
+            }}
+            className="sa-press inline-flex h-9 items-center justify-center gap-2 rounded-lg border border-black/10 bg-white px-3 text-[14px] font-medium text-[#0a0a0a] outline-none hover:bg-[#f3f4f6] focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50"
+          >
+            <img src={editIcon} alt="" className="size-4" />
+            Edit
+          </button>
+          <button
+            type="button"
+            disabled={deleteResidentsSaving || onboardingSaving}
+            onClick={() => void deleteSelectedResidents()}
+            className="sa-press inline-flex h-9 items-center justify-center gap-2 rounded-lg border border-black/10 bg-white px-3 text-[14px] font-medium text-[#b52a00] outline-none hover:bg-[#f3f4f6] focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50"
+          >
+            <SelectionTrashIcon />
+            Delete
+          </button>
+          <button
+            type="button"
+            onClick={() => setSelectedResidentIds(new Set())}
+            className="sa-press inline-flex h-9 items-center justify-center rounded-lg border border-black/10 bg-white px-3 text-[14px] font-medium text-[#0a0a0a] outline-none hover:bg-[#f3f4f6] focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2"
+          >
+            Clear
+          </button>
+          <button
+            type="button"
+            disabled={onboardingSaving || deleteResidentsSaving}
+            onClick={() => void startOnboardingForSelected()}
+            className="sa-press inline-flex h-9 items-center justify-center rounded-lg bg-[#187960] px-3 text-[14px] font-medium text-white outline-none hover:bg-[#146b52] focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50"
+          >
+            {onboardingSaving
+              ? 'Sending…'
+              : selectedOnboardingRetryOnly
+                ? 'Retry setup'
+                : 'Setup Resident'}
+          </button>
         </div>
       ) : null}
 
@@ -950,6 +1250,7 @@ export function AdminResidentsDashboard() {
                     onChange={toggleAllFilteredResidentsSelected}
                   />
                 </th>
+                <th className="w-10 px-2 py-3" aria-label="Edit" />
                 <th className="px-6 py-3 text-[12px] font-medium text-[#6a7282]">Resident</th>
                 <th className="px-6 py-3 text-[12px] font-medium text-[#6a7282]">Unit</th>
                 <th className="px-6 py-3 text-[12px] font-medium text-[#6a7282]">Rent</th>
@@ -962,13 +1263,13 @@ export function AdminResidentsDashboard() {
             <tbody>
               {loading ? (
                 <tr>
-                    <td colSpan={8} className="px-6 py-10 text-center text-[14px] text-[#6a7282]">
+                    <td colSpan={9} className="px-6 py-10 text-center text-[14px] text-[#6a7282]">
                     Loading residents…
                   </td>
                 </tr>
               ) : filteredHouseholds.length === 0 ? (
                 <tr>
-                    <td colSpan={8} className="px-6 py-10 text-center text-[14px] text-[#6a7282]">
+                    <td colSpan={9} className="px-6 py-10 text-center text-[14px] text-[#6a7282]">
                     {residents.length === 0 ? (
                       <>
                         No residents yet.{' '}
@@ -993,13 +1294,13 @@ export function AdminResidentsDashboard() {
                 filteredHouseholds.map((household, index) => {
                   const primary = household.members[0]
                   if (!primary) return null
-                  const contacts = uniqueHouseholdContacts(household.members)
+                  const contacts = primaryHouseholdContacts(primary)
                   const householdNames = household.members.map((member) => member.name).join(', ')
                   return (
                   <tr
                     key={household.key}
                     style={{ animationDelay: `${Math.min(index, 12) * 30}ms` }}
-                    className="sa-enter border-b border-[#f3f4f6] last:border-b-0"
+                    className="sa-enter group/row border-b border-[#f3f4f6] last:border-b-0 hover:bg-[#fafafa]"
                   >
                     <td className="w-12 px-4 py-4">
                       <div
@@ -1019,6 +1320,16 @@ export function AdminResidentsDashboard() {
                         />
                       </div>
                     </td>
+                    <td className="w-10 px-2 py-4">
+                      <button
+                        type="button"
+                        aria-label={`Edit ${primary.name}`}
+                        onClick={() => setEditingResident(primary)}
+                        className="sa-press inline-flex size-7 items-center justify-center rounded-[6px] opacity-0 transition-opacity duration-150 hover:bg-[#f3f4f6] group-hover/row:opacity-100 focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-1"
+                      >
+                        <img src={editIcon} alt="" className="size-3.5" />
+                      </button>
+                    </td>
                     <td className="px-6 py-4 text-[14px] font-medium text-[#0a0a0a]">
                       <button
                         type="button"
@@ -1027,7 +1338,7 @@ export function AdminResidentsDashboard() {
                             state: { from: '/admin/residents' },
                           })
                         }
-                        className="sa-link rounded-[4px] text-left text-[#0a0a0a] hover:text-[#186179] hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2"
+                        className="sa-link min-w-0 truncate rounded-[4px] text-left text-[#0a0a0a] hover:text-[#186179] hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2"
                       >
                         {primary.name}
                       </button>
@@ -1078,6 +1389,15 @@ export function AdminResidentsDashboard() {
         onSubmit={(payload) => {
           void addResidentFromModal(payload)
         }}
+      />
+
+      <EditResidentModal
+        row={editResidentRow}
+        unitOptions={editUnitOptions}
+        initialUnitOptionKey={editInitialUnitKey}
+        onClose={() => setEditingResident(null)}
+        onSave={handleEditResidentSave}
+        onDelete={handleEditResidentDelete}
       />
     </main>
   )

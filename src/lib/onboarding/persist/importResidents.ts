@@ -480,9 +480,8 @@ export async function importOnboardingResidentsFromExtraction(
     units?: ImportUnitInventoryRow[]
   },
 ): Promise<number> {
-  const selectedResidents = dedupeOnboardingImportResidents(
-    residents.filter(isSelectedOnboardingExtractedResident),
-  )
+  const selectedBeforeDedupe = residents.filter(isSelectedOnboardingExtractedResident)
+  const selectedResidents = dedupeOnboardingImportResidents(selectedBeforeDedupe)
   const selectedLeases = leases.filter((lease) => lease.selected)
   if (selectedResidents.length === 0 || !supabase) return 0
 

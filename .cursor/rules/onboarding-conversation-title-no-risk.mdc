@@ -28,5 +28,5 @@ Communication inbox / right-rail monitoring titles must match the **direction of
 
 - `deriveRisk` / `buildTitle` / `buildSubtitle` in `src/lib/conversationMonitoring.ts` short-circuit onboarding invite **and** verification-submit copy before status/urgency/issue heuristics.
 - `buildVendorSetupMonitoringDetail` in `src/lib/vendorSetupConversation.ts` uses the same vendor onboarding title + NO RISK badge.
-- Detect tenant activation via welcome/consent copy (`Reply YES to get updates…`, `Reply NO if you don't want those updates`, reach-us-by-text welcome, opt-in confirmation).
+- Detect tenant activation via welcome/consent copy (`Reply YES to submit maintenance requests…`, `Reply NO to opt out`, reach-us-by-text welcome, opt-in confirmation).
 - When adding new invite or onboarding monitoring surfaces, reuse this labeling.

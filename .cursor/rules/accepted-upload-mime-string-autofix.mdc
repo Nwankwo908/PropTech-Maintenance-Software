@@ -1,0 +1,51 @@
+---
+description: Autofix TypeError white screen when calling .join/.map on ACCEPTED_UPLOAD_MIME (already a string) or other join()-baked MIME constants.
+globs: src/**/*.{ts,tsx}
+alwaysApply: false
+---
+
+# ACCEPTED_UPLOAD_MIME — already a string (Bugbot autofix)
+
+**Symptom:** Opening a form (e.g. **Edit Resident**) whitescreens / React crashes with:
+
+`TypeError: ACCEPTED_UPLOAD_MIME.join is not a function`
+
+(or `.map` / `.filter` / `.forEach` on the same constant).
+
+**Cause:** `ACCEPTED_UPLOAD_MIME` in `src/lib/onboardingDocumentUpload.ts` is exported as a **comma-joined string**, not a string array:
+
+```ts
+export const ACCEPTED_UPLOAD_MIME = [
+  'application/pdf',
+  // …
+].join(',')
+```
+
+Callers that treat it like an array (`ACCEPTED_UPLOAD_MIME.join(',')`) throw at render time.
+
+## Rule
+
+| Use | Correct |
+|---|---|
+| `<input accept={…}>` | `accept={ACCEPTED_UPLOAD_MIME}` |
+| Need the string elsewhere | Use the export as-is — do **not** `.join(',')` again |
+| Need individual MIME types | Split once locally (`ACCEPTED_UPLOAD_MIME.split(',')`) or add a separate array export — do not assume the constant is an array |
+
+Canonical consumer: `OnboardingDocumentUploadStep.tsx` → `accept={ACCEPTED_UPLOAD_MIME}`.
+
+## Autofix (Bugbot)
+
+On PR review or when this crash / white screen appears in chat:
+
+1. Grep for `ACCEPTED_UPLOAD_MIME.join`, `.map(`, `.filter(`, `.forEach(` on that identifier (and any new `ACCEPTED_*_MIME` that is defined with `.join(',')`).
+2. Replace `accept={ACCEPTED_UPLOAD_MIME.join(',')}` with `accept={ACCEPTED_UPLOAD_MIME}`.
+3. If a caller truly needs an array, use `.split(',')` or introduce `ACCEPTED_UPLOAD_MIME_LIST` — do not change the existing string export’s shape without updating every consumer.
+4. Verify the modal/rail that crashed mounts without a TypeError (Edit Resident lease upload is the known incident).
+
+**Note:** Cursor Bugbot runs on pull requests. It does not auto-run while debugging locally — agents must apply this rule when the symptom appears in chat or PR.
+
+## Do not
+
+- Call `.join(',')` on `ACCEPTED_UPLOAD_MIME`
+- Redefine a parallel MIME list that drifts from `onboardingDocumentUpload.ts`
+- “Fix” by casting to `any` / `@ts-ignore` — fix the call site

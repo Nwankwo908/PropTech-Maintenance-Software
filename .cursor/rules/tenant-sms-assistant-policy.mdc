@@ -1,0 +1,42 @@
+---
+description: Tenant SMS assistant policy — greetings never escalate; clarify unclear; escalate only for human/rent/lease/legal/complaint/emergency; never claim handoff without notifying.
+globs: supabase/functions/_shared/sms/**/*.{ts,tsx}
+alwaysApply: false
+---
+
+# Tenant SMS text assistant policy
+
+## Behavior
+
+| Message type | Reply | Notify property team? |
+|---|---|---|
+| Greeting / thanks / small talk | Warm 1–2 sentences; ask what they need | **Never** |
+| Unclear | One short clarifying question | **Never** |
+| Repair | Gather issue, room, urgency, entry-if-not-home → work order | Only for emergencies |
+| Emergency (gas, fire, flood, no heat, CO, safety) | Call 911 if in danger; continue intake | **Yes, immediately** |
+| Speak to a person / legal / complaint | Escalate copy | **Yes** |
+| Rent / lease | Dedicated handlers (answer or escalate when missing) | Only when info is missing / needs human |
+
+**Only say “I’ve passed your message…” when `notifyLandlordNeedsAttention` actually ran.**
+
+## Implementation
+
+- Classifier + copy: `tenantAssistantReply.ts`
+- Non-repair act path: `handleOther` in `inboundInterpretationAct.ts`
+- Emergency opener + staff alert: `residentIntake.ts` (fresh intake when urgency band is emergency)
+- Entry permission: `unit_entry` in `determineNextMaintenanceQuestion.ts`
+- Stuck intake loop: clarify again — do **not** fake a handoff
+
+## Autofix (Bugbot)
+
+If a PR restores “I’ve passed your message to the team” for Hello/thanks, or notifies staff on small talk / unclear:
+
+1. Route through `classifyAssistantOtherMessage` / `handleOther` branches.
+2. Remove landlord notify from greeting and unclear paths.
+3. Keep escalate copy only on `human_request` / `complaint_or_legal` (and rent/lease missing / emergency).
+
+## Do not
+
+- Notify on “Hello”, “Thanks”, or vague one-word texts
+- Claim a handoff without calling `notifyLandlordNeedsAttention`
+- Skip the 911 / staff-alert opener on life-safety emergencies

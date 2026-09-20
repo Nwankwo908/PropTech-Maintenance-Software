@@ -1,14 +1,18 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 import { LIMITED_ALPHA_1_LANDLORD_ID } from '@shared/landlordCapabilities'
+import { markLimitedAlphaPostOnboardingWelcomeSeen } from './postOnboardingWelcome'
 import {
   clearSetupSuccessCardDismissed,
+  clearSetupSuccessNavPercentBaseline,
   clearSetupSuccessTestDelivery,
   dismissSetupSuccessCard,
   isSetupSuccessCardDismissed,
   isSetupSuccessTestDeliveryComplete,
   markSetupSuccessTestDeliveryComplete,
   resolveSetupSuccessProgress,
+  setupSuccessNavPercentGain,
   setupSuccessPercent,
+  shouldShowSetupSuccessNavHint,
   welcomeTextsComplete,
 } from './setupSuccessChecklist'
 
@@ -169,5 +173,34 @@ describe('setupSuccessChecklist', () => {
       }),
     )
     expect(setupSuccessPercent(progress)).toBe(29)
+  })
+
+  it('keeps the Profile setup nav hint until checklist is complete even if the card is open', () => {
+    markLimitedAlphaPostOnboardingWelcomeSeen(LIMITED_ALPHA_1_LANDLORD_ID)
+    clearSetupSuccessCardDismissed(LIMITED_ALPHA_1_LANDLORD_ID)
+    const incomplete = resolveSetupSuccessProgress(progressInput())
+    expect(shouldShowSetupSuccessNavHint(incomplete, LIMITED_ALPHA_1_LANDLORD_ID)).toBe(true)
+    const complete = resolveSetupSuccessProgress(
+      progressInput({
+        residents: [{ phone: '2015550100', activationStatus: 'waiting' }],
+        vendorCount: 1,
+        verifiedVendorCount: 1,
+        propertyAccessComplete: true,
+        propertyIntelligenceComplete: true,
+        propertyInsuranceComplete: true,
+        hasMaintenancePreferences: true,
+        maintenanceRequestCount: 1,
+        hasTestDelivery: true,
+      }),
+    )
+    expect(complete.doneCount).toBe(complete.total)
+    expect(shouldShowSetupSuccessNavHint(complete, LIMITED_ALPHA_1_LANDLORD_ID)).toBe(false)
+  })
+
+  it('reports positive percent-point gains for the nav flash', () => {
+    clearSetupSuccessNavPercentBaseline(LIMITED_ALPHA_1_LANDLORD_ID)
+    expect(setupSuccessNavPercentGain(14, LIMITED_ALPHA_1_LANDLORD_ID)).toBe(0)
+    expect(setupSuccessNavPercentGain(29, LIMITED_ALPHA_1_LANDLORD_ID)).toBe(15)
+    expect(setupSuccessNavPercentGain(29, LIMITED_ALPHA_1_LANDLORD_ID)).toBe(0)
   })
 })

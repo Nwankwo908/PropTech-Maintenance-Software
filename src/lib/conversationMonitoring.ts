@@ -321,6 +321,7 @@ function isVendorVerificationSubmitted(text: string): boolean {
 /** Tenant activation / welcome + consent SMS (not a maintenance report thread). */
 export function isTenantOnboardingInvite(text: string): boolean {
   return (
+    /reply yes to submit maintenance requests and get important home updates/i.test(text) ||
     /reply yes to get updates about your maintenance requests/i.test(text) ||
     /reply yes to get updates about repairs/i.test(text) ||
     /please reply yes or no to the welcome text/i.test(text) ||

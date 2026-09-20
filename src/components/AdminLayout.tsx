@@ -8,6 +8,7 @@ import { AskUloPanel } from '@/components/AskUloPanel'
 import { LandlordWorkspaceProvider, useLandlordWorkspace } from '@/context/LandlordWorkspaceContext'
 import uloLogo from '@/assets/landing/ulo-logo.png'
 import { AdminSidebarContent } from '@/components/AdminSidebar'
+import { SetupSuccessCardHost } from '@/components/SetupSuccessCardHost'
 import { IconClose, IconMenu } from '@/components/landing/LandingIcons'
 import type { SidebarAdminProfile } from '@/constants/sidebarAdminProfile'
 import { useSidebarAdminProfile } from '@/hooks/useSidebarAdminProfile'
@@ -440,6 +441,7 @@ export function AdminLayout() {
 
           <AdminTopBar />
           <AdminMainContent />
+          <SetupSuccessCardHost />
         </div>
       </div>
       </LandlordWorkspaceProvider>

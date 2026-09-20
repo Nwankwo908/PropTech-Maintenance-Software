@@ -138,6 +138,19 @@ function HeroInteractionVideo() {
   )
 }
 
+function HeroPropertyOperationsMark() {
+  return (
+    <span
+      className="bg-clip-text text-transparent"
+      style={{
+        backgroundImage: 'linear-gradient(45deg, #187960 0%, #B4DEEA 100%)',
+      }}
+    >
+      Property operations,
+    </span>
+  )
+}
+
 function HeroHeadlineAndCopy() {
   const headlineRef = useRef<HTMLHeadingElement>(null)
   const copyRef = useRef<HTMLParagraphElement>(null)
@@ -224,10 +237,18 @@ function HeroHeadlineAndCopy() {
         line.style.setProperty('white-space', 'nowrap', 'important')
         line.style.setProperty('word-break', 'keep-all', 'important')
         line.style.setProperty('overflow-wrap', 'normal', 'important')
+        line.style.removeProperty('transform')
+        line.style.removeProperty('width')
       }
 
       const narrow = window.matchMedia('(max-width: 1070px)').matches
-      if (narrow) {
+      const at320to990 = window.matchMedia('(min-width: 320px) and (max-width: 990px)').matches
+      const at991to1599 = window.matchMedia('(min-width: 991px) and (max-width: 1599px)').matches
+      const at600x1024 = window.matchMedia(
+        '(min-width: 580px) and (max-width: 640px) and (min-height: 980px) and (max-height: 1080px)',
+      ).matches
+      const at720to768 = window.matchMedia('(min-width: 720px) and (max-width: 768px)').matches
+      if (narrow || at320to990 || at991to1599) {
         node.style.setProperty('width', '100%', 'important')
       } else {
         node.style.removeProperty('width')
@@ -238,27 +259,49 @@ function HeroHeadlineAndCopy() {
       node.style.removeProperty('line-height')
 
       const target = parseFloat(getComputedStyle(node).fontSize) || 34
-      const at320to1024 = window.matchMedia('(min-width: 320px) and (max-width: 1024px)').matches
-      const at991 = window.matchMedia('(min-width: 820px) and (max-width: 1070px)').matches
+      const at991Layout = window.matchMedia('(min-width: 820px) and (max-width: 1070px)').matches
       const at768 = window.matchMedia('(min-width: 768px) and (max-width: 819px)').matches
       const lineHeightFor = (fontPx: number) => {
-        if (at991 || at768) return (40 / 34) * fontPx
+        if (at320to990 || at991to1599 || at600x1024 || at720to768) return fontPx * 1.15
+        if (at991Layout || at768) return (40 / 34) * fontPx
         return fontPx * 1.15
       }
 
-      if (at320to1024) {
-        const baseSize = 34
-        const baseLeading = at991 || at768 ? 40 : 39
-        node.style.setProperty('font-size', `${baseSize}px`, 'important')
-        node.style.setProperty('line-height', `${baseLeading}px`, 'important')
+      const fitBand = (minSize: number, maxSize: number) => {
+        node.style.setProperty('font-size', `${minSize}px`, 'important')
+        node.style.setProperty('line-height', `${lineHeightFor(minSize)}px`, 'important')
 
         const available = node.clientWidth
-        const maxLine = Math.max(1, ...lines.map((line) => line.scrollWidth))
-        if (available > 0 && maxLine > available) {
-          const size = baseSize * (available / maxLine)
-          node.style.setProperty('font-size', `${size}px`, 'important')
-          node.style.setProperty('line-height', `${lineHeightFor(size)}px`, 'important')
-        }
+        const naturalWidths = lines.map((line) => Math.max(1, line.scrollWidth))
+        const maxLine = Math.max(...naturalWidths)
+        if (available <= 0 || maxLine <= 0) return
+
+        const fitted = minSize * (available / maxLine)
+        const size = Math.min(maxSize, Math.max(minSize, fitted))
+        node.style.setProperty('font-size', `${size}px`, 'important')
+        node.style.setProperty('line-height', `${lineHeightFor(size)}px`, 'important')
+
+        const scaledWidths = lines.map((line) => Math.max(1, line.scrollWidth))
+        lines.forEach((line, index) => {
+          const lineWidth = scaledWidths[index] ?? 1
+          const scaleX = available / lineWidth
+          line.style.setProperty('display', 'block', 'important')
+          line.style.setProperty('width', '100%', 'important')
+          line.style.setProperty('transform-origin', 'left center', 'important')
+          if (Number.isFinite(scaleX) && scaleX > 0 && Math.abs(scaleX - 1) > 0.01) {
+            line.style.setProperty('transform', `scaleX(${scaleX})`, 'important')
+          } else {
+            line.style.removeProperty('transform')
+          }
+        })
+      }
+
+      if (at600x1024 || at720to768) {
+        fitBand(60, 60)
+      } else if (at320to990) {
+        fitBand(34, 60)
+      } else if (at991to1599) {
+        fitBand(48, 96)
       } else if (narrow) {
         const measure = copyRef.current ?? parent ?? node
         const available = measure.clientWidth
@@ -293,6 +336,12 @@ function HeroHeadlineAndCopy() {
       node.style.removeProperty('font-size')
       node.style.removeProperty('line-height')
       node.style.removeProperty('width')
+      for (const line of Array.from(node.children) as HTMLElement[]) {
+        line.style.removeProperty('transform')
+        line.style.removeProperty('width')
+        line.style.removeProperty('display')
+        line.style.removeProperty('transform-origin')
+      }
     }
   }, [heroLines432, heroLines504, heroLines600, heroLines720, heroLines768, heroLines991])
 
@@ -318,35 +367,47 @@ function HeroHeadlineAndCopy() {
     <>
       <h1
         ref={headlineRef}
-        className="landing-hero-title mt-4 w-fit max-w-full font-[family-name:var(--font-landing-heading)] leading-[56px] landing-compact:leading-[48px] landing-432:!leading-[39px] [@media(min-width:320px)_and_(max-width:1024px)]:!text-[34px] [@media(min-width:320px)_and_(max-width:991px)]:!leading-[39px] [@media(min-width:768px)_and_(max-width:960px)]:!leading-[40px] [@media(min-width:961px)_and_(max-width:1070px)]:!leading-[40px] text-[clamp(2.25rem,6vw+1.2rem,9rem)] font-bold tracking-[-0.03em] text-[#0f1623] sm:mt-6 max-[1070px]:!w-full landing-tablet-portrait:!leading-[58px] landing-1280-800:!leading-[66px] landing-1366-768:!leading-[66px] landing-1440-900:!leading-[66px] landing-1680-1050:!leading-[66px] landing-2560-1440:!leading-[96px] landing-3440-1440:!leading-[96px] landing-3840-2160:!leading-[96px] [@media(min-width:451px)_and_(max-width:1019px)_and_(min-height:1400px)_and_(max-height:1500px)]:text-[clamp(3.375rem,9vw+1.8rem,13.5rem)] [@media(min-width:300px)_and_(max-width:349px)_and_(min-height:850px)_and_(max-height:920px)]:text-[clamp(2.475rem,6.6vw+1.32rem,9.9rem)] [@media(min-width:350px)_and_(max-width:399px)_and_(min-height:850px)_and_(max-height:920px)]:text-[clamp(2.7rem,7.2vw+1.44rem,10.8rem)] landing-phone-tall:!leading-[56px] landing-phone-tall-hero-leading landing-884-hero-leading landing-1440-900-hero-leading landing-1680-1050-hero-leading landing-1920-1080-hero-leading landing-1920-1200-hero-leading landing-2560-1440-hero-leading landing-desktop-hero-leading landing-3440-1440-hero-leading landing-3840-2160-hero-leading landing-4096-2304-hero-leading landing-5120-2880-hero-leading [@media(min-width:350px)_and_(max-width:399px)_and_(min-height:1400px)_and_(max-height:1500px)]:text-[clamp(2.5875rem,6.9vw+1.38rem,10.35rem)] [@media(min-width:400px)_and_(max-width:500px)_and_(min-height:850px)_and_(max-height:920px)]:text-[clamp(2.8125rem,7.5vw+1.5rem,11.25rem)] [@media(min-width:400px)_and_(max-width:450px)_and_(min-height:1400px)_and_(max-height:1500px)]:text-[clamp(2.5875rem,6.9vw+1.38rem,10.35rem)] [@media(min-width:768px)_and_(max-width:850px)_and_(min-height:850px)_and_(max-height:920px)]:text-[clamp(3.6rem,9.6vw+1.92rem,14.4rem)] [@media(min-width:768px)_and_(max-width:850px)_and_(min-height:1400px)_and_(max-height:1500px)]:text-[clamp(3.375rem,9vw+1.8rem,13.5rem)] [@media(min-width:851px)_and_(max-width:1019px)_and_(min-height:1400px)_and_(max-height:1500px)]:text-[clamp(3.375rem,8.5vw+1.6rem,13.5rem)] [@media(min-width:1024px)_and_(max-width:1439px)_and_(min-height:550px)_and_(max-height:920px)]:text-[clamp(2.625rem,5.25vw,4.125rem)] [@media(min-width:1021px)_and_(max-width:1440px)_and_(min-height:1397px)_and_(max-height:1500px)]:text-[clamp(2.625rem,6.144vw,9.6rem)] min-[1440px]:text-[clamp(2.25rem,3.84vw,6rem)] [@media(min-width:1440px)_and_(max-width:1535px)_and_(min-height:850px)_and_(max-height:920px)]:text-[clamp(3.825rem,6.528vw,10.2rem)] [@media(min-width:1440px)_and_(max-width:1535px)_and_(min-height:1400px)_and_(max-height:1500px)]:text-[clamp(3.6rem,6.144vw,9.6rem)] lg:tracking-[-0.025em]"
+        className="landing-hero-title mt-4 w-fit max-w-full font-[family-name:var(--font-landing-heading)] leading-[56px] landing-compact:leading-[48px] landing-432:!leading-[39px] [@media(min-width:320px)_and_(max-width:990px)]:!text-[clamp(34px,calc(34px+(100vw-320px)*26/670),60px)] [@media(min-width:991px)_and_(max-width:1599px)]:!text-[clamp(48px,calc(48px+(100vw-991px)*48/608),96px)] [@media(min-width:320px)_and_(max-width:1599px)]:!leading-[1.15] [@media(min-width:768px)_and_(max-width:960px)]:!leading-[40px] text-[clamp(2.25rem,6vw+1.2rem,9rem)] font-bold tracking-[-0.03em] text-[#0f1623] sm:mt-6 max-[1070px]:!w-full landing-tablet-portrait:!leading-[58px] landing-1280-800:!leading-[66px] landing-1366-768:!leading-[66px] landing-1440-900:!leading-[66px] landing-1680-1050:!leading-[66px] landing-2560-1440:!leading-[96px] landing-3440-1440:!leading-[96px] landing-3840-2160:!leading-[96px] [@media(min-width:451px)_and_(max-width:990px)_and_(min-height:1400px)_and_(max-height:1500px)]:text-[clamp(3.375rem,9vw+1.8rem,13.5rem)] [@media(min-width:300px)_and_(max-width:349px)_and_(min-height:850px)_and_(max-height:920px)]:text-[clamp(2.475rem,6.6vw+1.32rem,9.9rem)] [@media(min-width:350px)_and_(max-width:399px)_and_(min-height:850px)_and_(max-height:920px)]:text-[clamp(2.7rem,7.2vw+1.44rem,10.8rem)] landing-phone-tall:!leading-[56px] landing-phone-tall-hero-leading landing-884-hero-leading landing-1440-900-hero-leading landing-1680-1050-hero-leading landing-1920-1080-hero-leading landing-1920-1200-hero-leading landing-2560-1440-hero-leading landing-desktop-hero-leading landing-3440-1440-hero-leading landing-3840-2160-hero-leading landing-4096-2304-hero-leading landing-5120-2880-hero-leading [@media(min-width:350px)_and_(max-width:399px)_and_(min-height:1400px)_and_(max-height:1500px)]:text-[clamp(2.5875rem,6.9vw+1.38rem,10.35rem)] [@media(min-width:400px)_and_(max-width:500px)_and_(min-height:850px)_and_(max-height:920px)]:text-[clamp(2.8125rem,7.5vw+1.5rem,11.25rem)] [@media(min-width:400px)_and_(max-width:450px)_and_(min-height:1400px)_and_(max-height:1500px)]:text-[clamp(2.5875rem,6.9vw+1.38rem,10.35rem)] [@media(min-width:768px)_and_(max-width:850px)_and_(min-height:850px)_and_(max-height:920px)]:text-[clamp(3.6rem,9.6vw+1.92rem,14.4rem)] [@media(min-width:768px)_and_(max-width:850px)_and_(min-height:1400px)_and_(max-height:1500px)]:text-[clamp(3.375rem,9vw+1.8rem,13.5rem)] [@media(min-width:851px)_and_(max-width:990px)_and_(min-height:1400px)_and_(max-height:1500px)]:text-[clamp(3.375rem,8.5vw+1.6rem,13.5rem)] min-[1600px]:text-[clamp(2.25rem,3.84vw,6rem)] lg:tracking-[-0.025em]"
       >
         {heroLines991 ? (
           <>
-            <span className="block whitespace-nowrap">Property operations,</span>
+            <span className="block whitespace-nowrap">
+              <HeroPropertyOperationsMark />
+            </span>
             <span className="block whitespace-nowrap">automated by text.</span>
           </>
         ) : heroLines768 ? (
           <>
-            <span className="block whitespace-nowrap">Property operations, automated by text.</span>
+            <span className="block whitespace-nowrap">
+              <HeroPropertyOperationsMark /> automated by text.
+            </span>
           </>
         ) : heroLines720 || heroLines600 ? (
           <>
-            <span className="block whitespace-nowrap">Property operations,</span>
+            <span className="block whitespace-nowrap">
+              <HeroPropertyOperationsMark />
+            </span>
             <span className="block whitespace-nowrap">automated by text.</span>
           </>
         ) : heroLines504 ? (
           <>
-            <span className="block whitespace-nowrap">Property operations,</span>
+            <span className="block whitespace-nowrap">
+              <HeroPropertyOperationsMark />
+            </span>
             <span className="block whitespace-nowrap">automated by text.</span>
           </>
         ) : heroLines432 ? (
           <>
-            <span className="block whitespace-nowrap">Property operations,</span>
+            <span className="block whitespace-nowrap">
+              <HeroPropertyOperationsMark />
+            </span>
             <span className="block whitespace-nowrap">automated by text.</span>
           </>
         ) : (
           <>
-            <span className="block whitespace-nowrap">Property operations,</span>
+            <span className="block whitespace-nowrap">
+              <HeroPropertyOperationsMark />
+            </span>
             <span className="block whitespace-nowrap">automated by text.</span>
           </>
         )}
@@ -360,7 +421,7 @@ function HeroHeadlineAndCopy() {
           width: fullWidthCopy ? undefined : copyWidth,
         }}
       >
-       They say real estate should be passive. Ulo makes it feel that way. Tenants text. Landlords approve. Ulo handles the rest. No apps. No chasing. No chaos.
+       Tenants text. Landlords approve. Ulo handles the rest.
 
        ​​​​​​​​​​​​​​​​
       </p>
@@ -703,7 +764,8 @@ export function LandingPage() {
                 <span className="inline-flex max-w-full flex-wrap items-center gap-2 rounded-full border border-black/[0.04] bg-black/[0.06] px-[17px] py-[9px] shadow-[0px_2px_8px_0px_rgba(16,185,129,0.1)]">
                   <span className="landing-alpha-status-dot" aria-hidden />
                   <span className="font-mono text-[12px] font-normal leading-4 text-[#059669]">
-                    YOUR PROPERTY ASSISTANT.
+                  No apps. No chasing. No chaos.
+
                   </span>
                 </span>
 

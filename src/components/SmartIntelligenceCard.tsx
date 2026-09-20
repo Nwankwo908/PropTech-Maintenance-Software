@@ -17,7 +17,16 @@ const PRIORITY_CLASS: Record<SmartInsightPriority, string> = {
   info: 'bg-[#f3f4f6] text-[#4a5565]',
 }
 
-export function SmartIntelligenceCard({ insights }: { insights: SmartInsight[] }) {
+const actionLinkClass = 'sa-link mt-2 inline-flex text-[12px] font-medium text-[#186179]'
+
+export function SmartIntelligenceCard({
+  insights,
+  onEditResident,
+}: {
+  insights: SmartInsight[]
+  /** Opens the Edit Resident right rail (Review Lease). */
+  onEditResident?: () => void
+}) {
   return (
     <section className="min-w-0 overflow-hidden rounded-[10px] border border-[#e5e7eb] bg-white p-5 shadow-[0px_1px_2px_-1px_rgba(0,0,0,0.06)]">
       <div className="flex items-center gap-2">
@@ -55,12 +64,15 @@ export function SmartIntelligenceCard({ insights }: { insights: SmartInsight[] }
                 </span>
               </div>
               {insight.action ? (
-                <Link
-                  to={insight.action.route}
-                  className="sa-link mt-2 inline-flex text-[12px] font-medium text-[#186179]"
-                >
-                  {insight.action.label} →
-                </Link>
+                insight.action.intent === 'edit_resident' && onEditResident ? (
+                  <button type="button" onClick={onEditResident} className={actionLinkClass}>
+                    {insight.action.label} →
+                  </button>
+                ) : (
+                  <Link to={insight.action.route} className={actionLinkClass}>
+                    {insight.action.label} →
+                  </Link>
+                )
               ) : null}
             </li>
           ))}

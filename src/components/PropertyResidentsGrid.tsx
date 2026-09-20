@@ -27,6 +27,7 @@ function ResidentCard({
   return (
     <Link
       to={path}
+      state={{ from: propertyId ? propertyDetailPath(propertyId) : propertyDetailPath(building) }}
       className="property-resident-card block w-full rounded-[10px] border border-[#e5e7eb] bg-white p-5 text-left shadow-[0px_1px_2px_-1px_rgba(0,0,0,0.06)] outline-none hover:border-[#187960]/50 hover:bg-[#f8fafc] hover:shadow-[0px_4px_12px_rgba(15,23,42,0.06)] focus-visible:shadow-[0_0_0_2px_#ffffff,0_0_0_4px_#187960]"
       style={{ animationDelay: `${Math.min(index, 12) * 45}ms` }}
     >

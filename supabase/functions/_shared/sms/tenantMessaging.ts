@@ -274,9 +274,8 @@ export function composeTenantWelcomeSms(params: {
     `You can now reach us by text anytime you need a repair or have a question ` +
     `about your home.\n\n` +
     `Save this number as "Ulo Assistant".\n\n` +
-    `Reply YES to get updates about your maintenance requests and important ` +
-    `messages about your home.\n` +
-    `Reply NO if you don't want those updates.\n\n` +
+    `Reply YES to submit maintenance requests and get important home updates.\n` +
+    `Reply NO to opt out.\n\n` +
     tenantSmsComplianceFooter()
   )
 }

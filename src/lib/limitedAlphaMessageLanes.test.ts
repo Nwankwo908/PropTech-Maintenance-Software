@@ -5,7 +5,7 @@ import {
 } from '@/lib/limitedAlphaMessageLanes'
 
 const WELCOME =
-  "You can now reach us by text anytime you need a repair or have a question. Reply YES to get updates about your maintenance requests and important property notices."
+  "You can now reach us by text anytime you need a repair or have a question. Reply YES to submit maintenance requests and get important home updates. Reply NO to opt out."
 
 describe('looksLikeNonOnboardingInboundSms', () => {
   it('ignores YES/START activation replies', () => {

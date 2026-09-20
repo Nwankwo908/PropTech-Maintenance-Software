@@ -1,0 +1,39 @@
+---
+description: Autofix Vite Oxc PARSE_ERROR from corrupted TSX (nested imports, adjacent JSX, truncated functions) — restore from HEAD when damage cascades.
+globs: src/**/*.{ts,tsx}
+alwaysApply: false
+---
+
+# Vite / Oxc parse overlay — corrupted file autofix
+
+**Symptom:** Vite overlay / Oxc transform fails. Common messages:
+
+| Oxc message | Typical cause |
+|---|---|
+| `'import' is a reserved word` / `Expected , or } but found {` | New `import` started inside an open `import { … }` |
+| `Adjacent JSX elements must be wrapped` | Sibling JSX left inside `{cond ? ( <> ) : null}` without a fragment |
+| `Expected }` but found `EOF` (points at a mid-file `function` / `load()`) | Function/`try`/`useEffect` body truncated — closers deleted |
+
+**Reference incident:** `AdminOverviewDashboard.tsx` — nested imports, `GetSetUpForSuccessCard` jammed into the `{error ? (` branch, then `async function load()` lost its `finally` / closers. Piecemeal edits kept failing; `git checkout HEAD -- <file>` recovered.
+
+## Autofix (Bugbot)
+
+On PR review or when this overlay appears in chat:
+
+1. **Scan the whole file**, not only the first Oxc line — one bad merge often leaves 2–3 parse breaks.
+2. **Nested import:** Close the open `import { … } from 'module'` (path from HEAD / siblings), keep the next `import` separate.
+3. **Adjacent JSX:** Put each root sibling in its own conditional, or wrap with `<>…</>`. Do not nest unrelated UI inside an `{error ? (` alert branch.
+4. **EOF / unclosed function:** Restore the missing `catch`/`finally`/`}`/`void load()`/`}, [])` from `git show HEAD:<path>`. Prefer HEAD for that function over inventing braces.
+5. **Cascade / depth wrong / second error after first fix:** Stop patching. Run:
+   `git checkout HEAD -- <path>`
+   Then re-apply only intentional product changes (e.g. card moved to `SetupSuccessCardHost` — do not leave a duplicate `GetSetUpForSuccessCard` on Overview).
+6. **Verify:** Vite transforms the file (HTTP 200 / no new Oxc overlay). Grep for `,\nimport {` and for `{error ? (` blocks that contain a second component.
+
+**Note:** Cursor Bugbot runs on pull requests. It does not auto-run while debugging locally — agents must apply this rule when the symptom appears in chat or PR.
+
+## Do not
+
+- Delete symbols or whole imports just to silence Oxc
+- Keep “fixing” brace-by-brace after 2+ distinct PARSE_ERRORs in one file — restore HEAD
+- Leave `GetSetUpForSuccessCard` on Overview when `SetupSuccessCardHost` already mounts it in `AdminLayout`
+- Guess module paths or function tails — use HEAD

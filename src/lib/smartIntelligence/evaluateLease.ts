@@ -31,7 +31,7 @@ export function evaluateLeaseIntelligence(ctx: SmartIntelligenceContext): SmartI
       description: days != null && days >= 0
         ? `${whose} lease ends in ${days} days and still needs a renewal decision.`
         : `${whose} lease renewal is waiting on a decision from the property team.`,
-      action: { label: 'Review Lease', route: renewalRoute },
+      action: { label: 'Review Lease', route: renewalRoute, intent: 'edit_resident' },
       dueAt: end ?? undefined,
       entityId: renewalRun.id,
       score: scoreInsight('urgent', { waitingOnLandlord: true, daysUntil: days ?? undefined }),
@@ -50,7 +50,7 @@ export function evaluateLeaseIntelligence(ctx: SmartIntelligenceContext): SmartI
       description: endLabel
         ? `${whose} lease at ${unit || 'this unit'} ended ${endLabel}.`
         : `${whose} lease has ended.`,
-      action: { label: 'Review Lease', route: leaseRoute },
+      action: { label: 'Review Lease', route: leaseRoute, intent: 'edit_resident' },
       dueAt: end ?? undefined,
       entityId: ctx.resident.id,
       score: scoreInsight('urgent', { overdueDays: Math.abs(days), waitingOnLandlord: true }),
@@ -67,7 +67,11 @@ export function evaluateLeaseIntelligence(ctx: SmartIntelligenceContext): SmartI
       description: endLabel
         ? `${whose} lease${unit ? ` at ${unit}` : ''} expires ${endLabel}. Consider starting the renewal conversation.`
         : `${whose} lease expires in ${days} days. Consider starting the renewal conversation.`,
-      action: { label: renewalRun ? 'Start Renewal' : 'Review Lease', route: renewalRun ? renewalRoute : leaseRoute },
+      action: {
+        label: renewalRun ? 'Start Renewal' : 'Review Lease',
+        route: renewalRun ? renewalRoute : leaseRoute,
+        intent: renewalRun ? undefined : 'edit_resident',
+      },
       dueAt: end,
       entityId: renewalRun?.id ?? ctx.resident.id,
       score: scoreInsight('attention', { daysUntil: days, waitingOnLandlord: true }),

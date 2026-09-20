@@ -13,6 +13,7 @@ import { clearLimitedAlphaPostOnboardingWelcomeSeen } from '@/lib/postOnboarding
 import {
   clearSetupSuccessCardDismissed,
   clearSetupSuccessTestDelivery,
+  clearSetupSuccessNavPercentBaseline,
 } from '@/lib/setupSuccessChecklist'
 import {
   clearLocalOnboardingStorage,
@@ -531,6 +532,7 @@ export async function restartNewLandlordOnboarding(
   clearLimitedAlphaPostOnboardingWelcomeSeen(scope.landlordId)
   clearSetupSuccessCardDismissed(scope.landlordId)
   clearSetupSuccessTestDelivery(scope.landlordId)
+  clearSetupSuccessNavPercentBaseline(scope.landlordId)
 
   const cleared: LandlordOnboardingState = {
     ...defaultOnboardingState(scope.landlordId),

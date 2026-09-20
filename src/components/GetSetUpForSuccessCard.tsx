@@ -52,9 +52,12 @@ function CloseIcon() {
 function SetupChecklist({
   progress,
   resolveItemTo,
+  onActionItemSelect,
 }: {
   progress: SetupSuccessProgress
   resolveItemTo?: (itemId: SetupSuccessItemId) => string | undefined
+  /** Minimize the card when the landlord starts an action item. */
+  onActionItemSelect?: () => void
 }) {
   return (
     <div className="overflow-hidden rounded-[12px] border border-[#e2e8f0]">
@@ -132,6 +135,7 @@ function SetupChecklist({
                 : setupCheckboxGuideLinkState(item.id)
             }
             onClick={() => {
+              onActionItemSelect?.()
               if (detailFollowup) armSetupSuccessPropertyDetailGuide(detailFollowup)
               else markSetupSuccessCheckboxGuidePending(item.id)
             }}
@@ -229,7 +233,11 @@ export function GetSetUpForSuccessCard({
             <SetupProgressBar progress={progress} />
           </div>
           <div className="mt-5 min-h-0 flex-1 overflow-y-auto overscroll-contain">
-            <SetupChecklist progress={progress} resolveItemTo={resolveItemTo} />
+            <SetupChecklist
+              progress={progress}
+              resolveItemTo={resolveItemTo}
+              onActionItemSelect={onClose}
+            />
           </div>
         </div>
       </AdminBottomSheet>
@@ -258,7 +266,11 @@ export function GetSetUpForSuccessCard({
         <SetupProgressBar progress={progress} />
       </div>
       <div className="mt-5">
-        <SetupChecklist progress={progress} resolveItemTo={resolveItemTo} />
+        <SetupChecklist
+          progress={progress}
+          resolveItemTo={resolveItemTo}
+          onActionItemSelect={onClose}
+        />
       </div>
     </section>
   )

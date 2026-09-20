@@ -1,0 +1,44 @@
+---
+description: Extract onboarding must not leave duplicate same-name residents on the same unit; Autofix by collapsing import + deleting extras on Residents.
+globs: src/lib/onboarding/persist/importResidents.ts,src/lib/onboarding/**/*.ts,src/components/AdminResidentsDashboard.tsx,src/lib/residentDeletion.ts
+alwaysApply: false
+---
+
+# Extract onboarding — no duplicate resident names on the same place
+
+Document extract / fast-track import must not create two `users` rows for the same person on the same unit + building (e.g. two “Leslie Ann Douglas” on 109C).
+
+When Residents shows duplicate names for the same lease place, delete the extra row (keep the richer / older profile) and harden import dedupe. Treat regressions as autofix.
+
+## Rule
+
+| Scenario | Required behavior |
+|---|---|
+| Same full name + unit + building in extract payload | One import row (`dedupeOnboardingImportResidents`) |
+| Same person on AI review and final review | Merge into one `users` row (`onboardingResidentIdentityMatch`) |
+| Residents list finds duplicate name+unit+building | Delete extras; do not leave both selectable for Start onboarding |
+
+## Why it breaks activation
+
+Household checkboxes select every member. A duplicate Leslie plus a roommate can send activation for the wrong ids, strip phones on collision, and surface `results` skipped/failed on Start onboarding.
+
+## Autofix (Bugbot)
+
+When a PR or bug report shows duplicate extracted residents on the same place:
+
+1. Strengthen identity match / dedupe in `importResidents.ts` so same name+unit+building collapses before insert.
+2. Prefer merging into an existing row over inserting a second id.
+3. If duplicates already exist in DB, remove extras via `deleteResidentsForLandlord` (keep one canonical id with phone/activation when present).
+4. Do not “fix” Start onboarding by only hiding duplicates in the UI while leaving two `users` rows.
+
+## Where it lives
+
+- Dedupe: `dedupeOnboardingImportResidents` / `onboardingResidentIdentityMatch` in `src/lib/onboarding/persist/importResidents.ts`
+- Delete: `src/lib/residentDeletion.ts`
+- List: `AdminResidentsDashboard` household grouping
+
+## Do not
+
+- Insert a second row because AI review and final review both listed the tenant
+- Leave phone on only one duplicate while the Contact column implies both have it
+- Skip autofix because “the landlord can delete manually”

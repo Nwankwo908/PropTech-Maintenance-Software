@@ -9,7 +9,7 @@ import {
   type LandlordOnboardingState,
 } from '@/lib/onboarding'
 import { getActiveLandlordId } from '@/lib/activeLandlord'
-import { shouldShowLimitedAlphaPostOnboardingWelcome } from '@/lib/postOnboardingWelcome'
+import { shouldShowLimitedAlphaPostOnboardingWelcome, shouldForcePostOnboardingWelcomeRoute } from '@/lib/postOnboardingWelcome'
 
 function AdminRouteFallback() {
   return (
@@ -141,19 +141,30 @@ export function AdminOnboardingGuard() {
 
   const resolvedState = resolveGuardOnboardingState(state, readLocalOnboardingState())
   const blockDashboard = resolvedState ? shouldBlockDashboard(resolvedState) : true
+  const onboardingCompleted = resolvedState?.onboardingStatus === 'completed'
   const showPostOnboardingWelcome = shouldShowLimitedAlphaPostOnboardingWelcome(
-    resolvedState?.onboardingStatus === 'completed',
+    onboardingCompleted,
     getActiveLandlordId(),
   )
+  const forcePostOnboardingWelcome = shouldForcePostOnboardingWelcomeRoute({
+    onboardingCompleted: Boolean(onboardingCompleted),
+    onOnboardingRoute,
+    landlordId: getActiveLandlordId(),
+  })
 
   if (blockDashboard && !onOnboardingRoute) {
+    return <Navigate to="/admin/onboarding" replace />
+  }
+
+  // Completed setup but Get Started not pressed — keep them on All Set until they do.
+  if (forcePostOnboardingWelcome) {
     return <Navigate to="/admin/onboarding" replace />
   }
 
   if (
     !blockDashboard &&
     onOnboardingRoute &&
-    resolvedState?.onboardingStatus === 'completed' &&
+    onboardingCompleted &&
     !showPostOnboardingWelcome
   ) {
     return (

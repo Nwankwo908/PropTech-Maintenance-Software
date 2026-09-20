@@ -37,6 +37,7 @@ export type MaintenanceQuestionType =
   | "general_clarify"
   | "duration_material"
   | "photo"
+  | "unit_entry"
 
 export type NextMaintenanceQuestion =
   | {
@@ -347,7 +348,7 @@ export function determineNextMaintenanceQuestion(
     const safetyFollowUp = type === "lock_secure" || type === "door_safety" ||
       type === "door_part" || type === "electrical_hazard" ||
       type === "structural_risk" || type === "plumbing_active_flow" ||
-      type === "hvac_dangerous_temp"
+      type === "hvac_dangerous_temp" || type === "unit_entry"
     if (overBudget && !safetyFollowUp) return null
     return { shouldAsk: true, questionType: type, question, step }
   }
@@ -584,6 +585,15 @@ export function determineNextMaintenanceQuestion(
 
   if (shouldRequestIntakePhoto(state) && !asked(state, "photo")) {
     return photoQuestion(state, hay)
+  }
+
+  if (!asked(state, "unit_entry") && !fact(state, "unit_entry")) {
+    const q = tryAsk(
+      "unit_entry",
+      "If you're not home, may staff or a vendor enter the unit to make the repair? Reply YES or NO.",
+      "diagnostic",
+    )
+    if (q) return q
   }
 
   return { shouldAsk: false }

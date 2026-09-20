@@ -1,11 +1,16 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useLocation } from 'react-router-dom'
-import { ASSET_REGISTRY_CHANGED_EVENT } from '@/lib/assetRegistry'
+import { getActiveLandlordId } from '@/lib/activeLandlord'
 import { loadSetupSuccessProgress } from '@/lib/loadSetupSuccessProgress'
+import { hasSeenLimitedAlphaPostOnboardingWelcome } from '@/lib/postOnboardingWelcome'
+import { PROPERTY_DETAILS_CHANGED_EVENTS } from '@/lib/propertyDetailsCompleteness'
+import { isLimitedAlpha1Landlord } from '@shared/landlordCapabilities'
 import {
   clearSetupSuccessCardDismissed,
-  isSetupSuccessCardDismissed,
   SETUP_SUCCESS_COLLAPSED_EVENT,
+  SETUP_SUCCESS_NAV_GAIN_FLASH_MS,
+  SETUP_SUCCESS_PROGRESS_CHANGED_EVENT,
+  setupSuccessNavPercentGain,
   setupSuccessPercent,
   shouldShowSetupSuccessNavHint,
   type SetupSuccessProgress,
@@ -13,51 +18,61 @@ import {
 
 export function useSetupSuccessNavHint() {
   const location = useLocation()
-  const [collapsed, setCollapsed] = useState(isSetupSuccessCardDismissed)
+  const landlordId = getActiveLandlordId()
+  const eligible =
+    isLimitedAlpha1Landlord(landlordId) && hasSeenLimitedAlphaPostOnboardingWelcome(landlordId)
   const [progress, setProgress] = useState<SetupSuccessProgress | null>(null)
-
-  const syncCollapsed = useCallback(() => {
-    setCollapsed(isSetupSuccessCardDismissed())
-  }, [])
+  const [gainDelta, setGainDelta] = useState(0)
+  const gainTimerRef = useRef<number | null>(null)
 
   useEffect(() => {
-    syncCollapsed()
-    window.addEventListener(SETUP_SUCCESS_COLLAPSED_EVENT, syncCollapsed)
-    window.addEventListener('storage', syncCollapsed)
-    return () => {
-      window.removeEventListener(SETUP_SUCCESS_COLLAPSED_EVENT, syncCollapsed)
-      window.removeEventListener('storage', syncCollapsed)
-    }
-  }, [syncCollapsed])
-
-  useEffect(() => {
-    if (!collapsed) {
+    if (!eligible) {
       setProgress(null)
+      setGainDelta(0)
       return
     }
     let cancelled = false
     const refresh = () => {
-      void loadSetupSuccessProgress().then((next) => {
-        if (!cancelled) setProgress(next)
+      void loadSetupSuccessProgress(landlordId).then((next) => {
+        if (cancelled || !next) return
+        const percent = setupSuccessPercent(next)
+        const gain = setupSuccessNavPercentGain(percent, landlordId)
+        setProgress(next)
+        if (gain > 0) {
+          setGainDelta(gain)
+          if (gainTimerRef.current != null) window.clearTimeout(gainTimerRef.current)
+          gainTimerRef.current = window.setTimeout(() => {
+            setGainDelta(0)
+            gainTimerRef.current = null
+          }, SETUP_SUCCESS_NAV_GAIN_FLASH_MS)
+        }
       })
     }
     refresh()
-    window.addEventListener(ASSET_REGISTRY_CHANGED_EVENT, refresh)
-    window.addEventListener('storage', refresh)
+    for (const eventName of PROPERTY_DETAILS_CHANGED_EVENTS) {
+      window.addEventListener(eventName, refresh)
+    }
+    window.addEventListener(SETUP_SUCCESS_COLLAPSED_EVENT, refresh)
+    window.addEventListener(SETUP_SUCCESS_PROGRESS_CHANGED_EVENT, refresh)
     return () => {
       cancelled = true
-      window.removeEventListener(ASSET_REGISTRY_CHANGED_EVENT, refresh)
-      window.removeEventListener('storage', refresh)
+      for (const eventName of PROPERTY_DETAILS_CHANGED_EVENTS) {
+        window.removeEventListener(eventName, refresh)
+      }
+      window.removeEventListener(SETUP_SUCCESS_COLLAPSED_EVENT, refresh)
+      window.removeEventListener(SETUP_SUCCESS_PROGRESS_CHANGED_EVENT, refresh)
+      if (gainTimerRef.current != null) window.clearTimeout(gainTimerRef.current)
     }
-  }, [collapsed, location.pathname])
+  }, [eligible, landlordId, location.pathname])
 
-  const show = Boolean(progress && shouldShowSetupSuccessNavHint(progress))
+  const incomplete = Boolean(progress && shouldShowSetupSuccessNavHint(progress))
+  const showCompletionFlash = Boolean(progress && progress.doneCount >= progress.total && gainDelta > 0)
+  const show = incomplete || showCompletionFlash
   const percent = progress ? setupSuccessPercent(progress) : 0
 
   const expandCard = useCallback(() => {
     clearSetupSuccessCardDismissed()
-    setCollapsed(false)
   }, [])
 
-  return { show, percent, expandCard }
+  return { show, percent, gainDelta, expandCard }
 }

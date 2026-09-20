@@ -4,6 +4,7 @@ import { EMPTY_LANDLORD_ID } from '@/lib/activeLandlord'
 import {
   clearLimitedAlphaPostOnboardingWelcomeSeen,
   markLimitedAlphaPostOnboardingWelcomeSeen,
+  shouldForcePostOnboardingWelcomeRoute,
   shouldShowLimitedAlphaPostOnboardingWelcome,
 } from './postOnboardingWelcome'
 

@@ -181,13 +181,23 @@ export function ResidentLeaseCalendar({
   }, [allEvents])
 
   const monthOptions = useMemo(() => {
-    const from = { year: Number(today.slice(0, 4)), month: Number(today.slice(5, 7)) }
+    const thisMonth = { year: Number(today.slice(0, 4)), month: Number(today.slice(5, 7)) }
+    const leaseStartIso = (leaseStartDate ?? '').trim().slice(0, 10)
     const leaseEndIso = (leaseEndDate ?? '').trim().slice(0, 10)
+    const leaseStartMonth = /^\d{4}-\d{2}-\d{2}$/.test(leaseStartIso)
+      ? { year: Number(leaseStartIso.slice(0, 4)), month: Number(leaseStartIso.slice(5, 7)) }
+      : null
+    const yearAgo = addCalendarMonths(thisMonth.year, thisMonth.month, -12)
+    const from =
+      leaseStartMonth &&
+      leaseStartMonth.year * 12 + leaseStartMonth.month < yearAgo.year * 12 + yearAgo.month
+        ? leaseStartMonth
+        : yearAgo
     const until = /^\d{4}-\d{2}-\d{2}$/.test(leaseEndIso)
       ? { year: Number(leaseEndIso.slice(0, 4)), month: Number(leaseEndIso.slice(5, 7)) }
-      : addCalendarMonths(from.year, from.month, 18)
+      : addCalendarMonths(thisMonth.year, thisMonth.month, 18)
     const span = until.year * 12 + until.month - (from.year * 12 + from.month)
-    const count = Math.min(48, Math.max(1, span + 1))
+    const count = Math.min(72, Math.max(1, span + 1))
     return Array.from({ length: count }, (_, index) => {
       const next = addCalendarMonths(from.year, from.month, index)
       return {
@@ -195,7 +205,7 @@ export function ResidentLeaseCalendar({
         label: monthLabel(next.year, next.month),
       }
     })
-  }, [leaseEndDate, today])
+  }, [leaseEndDate, leaseStartDate, today])
 
   const title = rowTitle?.trim() || 'Lease'
   const subtitle = rowSubtitle?.trim() || ''
@@ -203,13 +213,8 @@ export function ResidentLeaseCalendar({
   function shiftPage(delta: number) {
     const next = addDaysIso(startIso, delta * RESIDENT_CALENDAR_PAGE_SIZE)
     const leaseEndIso = (leaseEndDate ?? '').trim().slice(0, 10)
-    if (delta < 0 && next < today) {
-      setWindowStart(today)
-      return
-    }
     if (delta > 0 && /^\d{4}-\d{2}-\d{2}$/.test(leaseEndIso) && next > leaseEndIso) {
-      const lastStart = addDaysIso(leaseEndIso, 1 - RESIDENT_CALENDAR_PAGE_SIZE)
-      setWindowStart(lastStart > today ? lastStart : today)
+      setWindowStart(addDaysIso(leaseEndIso, 1 - RESIDENT_CALENDAR_PAGE_SIZE))
       return
     }
     setWindowStart(next)

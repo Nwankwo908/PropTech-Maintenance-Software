@@ -6,6 +6,7 @@ import {
   loadMaintenanceHistoryDocuments,
 } from '@/lib/maintenanceHistoryImport'
 import { loadPropertyAccess, propertyAccessHasContent } from '@/lib/propertyAccess'
+import { notifySetupSuccessProgressChanged } from '@/lib/setupSuccessChecklist'
 import { supabase } from '@/lib/supabase'
 
 function buildingKey(building: string): string {
@@ -137,6 +138,7 @@ export function notifyPropertyDetailsChanged(building?: string): void {
   } catch {
     // non-browser
   }
+  notifySetupSuccessProgressChanged()
 }
 
 export async function loadPropertyDetailsSections(

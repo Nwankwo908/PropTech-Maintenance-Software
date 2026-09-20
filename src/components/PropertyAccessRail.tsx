@@ -23,7 +23,6 @@ const ACCESS_FIELDS: Array<{
   key: keyof Omit<PropertyAccessProfile, 'updatedAt'>
   label: string
   placeholder: string
-  required?: boolean
 }> = [
   {
     key: 'buildingEntry',
@@ -40,7 +39,6 @@ const ACCESS_FIELDS: Array<{
     key: 'lockboxCode',
     label: 'Lockbox Code',
     placeholder: 'Enter lockbox code',
-    required: true,
   },
   {
     key: 'utilityRoomAccess',
@@ -69,20 +67,15 @@ function AccessField({
   value,
   onChange,
   placeholder,
-  required = false,
 }: {
   label: string
   value: string
   onChange: (value: string) => void
   placeholder?: string
-  required?: boolean
 }) {
   return (
     <label className="flex min-w-0 flex-col gap-1.5">
-      <span className="text-[12px] font-semibold leading-normal text-[#475569]">
-        {label}
-        {required ? <span className="text-[#ef4444]"> *</span> : null}
-      </span>
+      <span className="text-[12px] font-semibold leading-normal text-[#475569]">{label}</span>
       <input
         value={value}
         onChange={(e) => onChange(e.target.value)}

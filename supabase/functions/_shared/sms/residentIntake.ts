@@ -1,4 +1,4 @@
-import { parseDurationHours } from "../../../../shared/maintenance/urgencyPolicy.ts"
+import { parseDurationHours, resolveUrgencyPolicy } from "../../../../shared/maintenance/urgencyPolicy.ts"
 import { lookupOutdoorTempForProperty } from "../weather/propertyOutdoorTemp.ts"
 import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.49.1"
 import {
@@ -65,6 +65,7 @@ import {
   type SmsIntakeState,
 } from "./residentIntakeTypes.ts"
 import { looksLikeBareRepairRequest } from "./resolveMaintenanceWorkIntent.ts"
+import { buildEmergencySafetySms } from "./tenantAssistantReply.ts"
 
 const MAX_CLASSIFICATION_CLARIFICATIONS = 2
 
@@ -90,8 +91,8 @@ function shouldRestartLegacyQuestionnaire(
   return Boolean(inferIssueTypeFromText(t) || looksLikeBareRepairRequest(t))
 }
 
-const INTAKE_LOOP_HANDOFF_SMS =
-  "I've passed your message to the property team so they can help with what you need. They'll follow up with you here.\n\nIf something in your home needs a repair, just text a short description anytime."
+const INTAKE_LOOP_CLARIFY_SMS =
+  "I'm still not sure what you need. Can you describe it in a short sentence — for example a leak, no heat, or something about rent or your lease?"
 
 function tradeLabelForAck(trade: string): string {
   const labels: Record<string, string> = {
@@ -442,35 +443,17 @@ async function handOffStuckIntake(
   const latest = ctx.inbound.body.trim().slice(0, 160)
   const step = state.prompt_repeat_step ?? state.step ?? "unknown"
 
-  const { runId } = await releaseMaintenanceIntakePin(supabase, {
-    landlordId: ctx.landlordId,
-    conversationId: ctx.conversationId,
-    state,
-    runStatus: "escalated",
-    currentStep: "handed_off",
-    reason: "intake_clarify_loop",
-    lastResidentMessage: latest,
-    eventMessage:
-      "Intake handed off after the same question was repeated without a valid answer.",
-  })
-
-  void notifyLandlordNeedsAttention(supabase, {
-    landlordId: ctx.landlordId,
-    kind: "workflow_escalated",
-    headline: "Resident needs help over text",
-    detail: latest
-      ? `They said this isn't a repair we could take as a work order. Latest message: "${latest}"`
-      : "We couldn't match their replies to a maintenance request.",
-    idempotencyKey: `intake-handoff:${ctx.conversationId}:${step}`,
-    maintenanceRequestId: state.draft_ticket_id ?? ctx.maintenanceRequestId ?? null,
-    workflowRunId: runId,
-    unitId: ctx.identity.unit_id ?? null,
-    residentId,
-  })
+  // Do not escalate or claim a handoff — ask one more clarifying question.
+  const cleared: SmsIntakeState = {
+    ...state,
+    prompt_repeat_count: 0,
+    prompt_repeat_step: undefined,
+  }
+  await saveIntakeState(supabase, ctx.conversationId, cleared)
 
   await recordActivityLog(supabase, {
     landlordId: ctx.landlordId,
-    eventType: "sms.intake_handed_off",
+    eventType: "sms.intake_clarify_loop",
     source: "sms",
     actorType: "system",
     actorId: residentId,
@@ -479,11 +462,10 @@ async function handOffStuckIntake(
     maintenanceRequestId: state.draft_ticket_id ?? ctx.maintenanceRequestId ?? null,
     conversationId: ctx.conversationId,
     messageId: ctx.messageId,
-    workflowRunId: runId,
     workflowTemplateId: "maintenance_intake",
     metadata: {
       message:
-        "Passed the resident's text to the property team after the same question was asked twice without a usable answer.",
+        "Asked a clarifying question after the same intake prompt was repeated without a usable answer.",
       handed_off_step: step,
       last_resident_message: latest,
       draft_ticket_id: state.draft_ticket_id ?? null,
@@ -492,10 +474,10 @@ async function handOffStuckIntake(
 
   return {
     route: "resident_maintenance_intake",
-    replyHint: INTAKE_LOOP_HANDOFF_SMS,
+    replyHint: INTAKE_LOOP_CLARIFY_SMS,
     metadata: {
-      intakeStep: "handed_off",
-      handedOff: true,
+      intakeStep: state.step ?? "issue_type",
+      clarifyLoop: true,
       handed_off_step: step,
       skipGenericAutoReply: true,
     },
@@ -796,6 +778,58 @@ export async function processResidentMaintenanceIntake(
       },
     })
     const replyHint = questionForStep(state, state.step as IntakeStep)
+    const urgencyPolicy = resolveUrgencyPolicy({
+      text: body,
+      outdoorTempF: outdoorTempF ?? state.outdoor_temp_f ?? null,
+    })
+    let outbound = replyHint
+    if (urgencyPolicy.band === "emergency") {
+      const { data: residentRow } = residentId
+        ? await supabase
+          .from("users")
+          .select("full_name")
+          .eq("id", residentId)
+          .maybeSingle()
+        : { data: null }
+      const first =
+        String((residentRow as { full_name?: string } | null)?.full_name ?? "")
+          .trim()
+          .split(/\s+/)[0] || "there"
+      const safety = buildEmergencySafetySms({
+        firstName: first,
+        leaveImmediately: urgencyPolicy.leaveImmediately,
+        reason: urgencyPolicy.leaveImmediately ? null : urgencyPolicy.reason,
+      })
+      outbound = `${safety}\n\n${replyHint}`
+      void notifyLandlordNeedsAttention(supabase, {
+        landlordId: ctx.landlordId,
+        kind: "workflow_escalated",
+        headline: "Emergency reported over text",
+        detail: body.trim().slice(0, 200) || urgencyPolicy.reason,
+        idempotencyKey: `sms-emergency:${ctx.conversationId}:${ctx.messageId}`,
+        maintenanceRequestId: state.draft_ticket_id ?? ctx.maintenanceRequestId ?? null,
+        unitId: ctx.identity.unit_id ?? null,
+        residentId,
+      })
+      await recordActivityLog(supabase, {
+        landlordId: ctx.landlordId,
+        eventType: "sms.emergency_alerted",
+        source: "sms",
+        actorType: "system",
+        actorId: residentId,
+        unitId: ctx.identity.unit_id ?? null,
+        residentId,
+        maintenanceRequestId: state.draft_ticket_id ?? null,
+        conversationId: ctx.conversationId,
+        messageId: ctx.messageId,
+        workflowTemplateId: "maintenance_intake",
+        metadata: {
+          message: "Alerted the property team about an emergency reported over text.",
+          leave_immediately: urgencyPolicy.leaveImmediately,
+          urgency_reason: urgencyPolicy.reason,
+        },
+      })
+    }
     console.info("[sms-intake] started new intake", {
       conversationId: ctx.conversationId,
       step: state.step,
@@ -803,12 +837,14 @@ export async function processResidentMaintenanceIntake(
       vendorTrade: state.vendor_trade ?? null,
       confidence: state.classification_confidence ?? null,
       draftTicketId: state.draft_ticket_id ?? null,
+      emergency: urgencyPolicy.band === "emergency",
     })
-    return finishIntakeQuestion(supabase, ctx, state, replyHint, {
+    return finishIntakeQuestion(supabase, ctx, state, outbound, {
       started: true,
       vendor_trade: state.vendor_trade,
       classification_confidence: state.classification_confidence,
       draft_ticket_id: state.draft_ticket_id,
+      emergency: urgencyPolicy.band === "emergency",
     })
   }
 

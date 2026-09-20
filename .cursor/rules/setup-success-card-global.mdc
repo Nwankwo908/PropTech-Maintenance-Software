@@ -1,0 +1,37 @@
+---
+description: Get set up for success card must open on every admin route via SetupSuccessCardHost — Autofix if Overview-only again.
+globs: src/components/SetupSuccessCardHost.tsx,src/components/AdminLayout.tsx,src/components/GetSetUpForSuccessCard.tsx,src/components/AdminOverviewDashboard.tsx,src/hooks/useSetupSuccessNavHint.ts
+alwaysApply: false
+---
+
+# Get set up for success — global overlay
+
+The **Get set up for success** card is a fixed/sheet overlay for Limited Alpha after Get Started. It must appear on **every admin page**, not only Overview.
+
+## Rule
+
+| Surface | Behavior |
+|---|---|
+| Any `/admin/*` route (except while All Set blocks) | `SetupSuccessCardHost` may show the card when `shouldShowSetupSuccessCard` |
+| Profile setup nav click | Clears dismiss → host shows the card on the **current** page |
+| Action item click | Minimize (`dismissSetupSuccessCard`) then navigate — card stays closed until Profile setup |
+| Close (X) | `dismissSetupSuccessCard` — Profile setup nav remains until checklist complete |
+
+## Autofix (Bugbot)
+
+If a PR mounts `GetSetUpForSuccessCard` only inside `AdminOverviewDashboard` (or any single page):
+
+1. Move/keep it in `SetupSuccessCardHost` rendered from `AdminLayout`.
+2. Do not require navigating to Overview to reopen the card after Profile setup.
+3. Keep progress loading via `loadSetupSuccessProgress` + `PROPERTY_DETAILS_CHANGED_EVENTS` so saves on other pages update the card.
+
+## Where it lives
+
+- Host: `src/components/SetupSuccessCardHost.tsx`
+- Layout: `src/components/AdminLayout.tsx`
+- UI: `src/components/GetSetUpForSuccessCard.tsx`
+
+## Do not
+
+- Render the card only on Overview
+- Navigate to `/admin` solely to show the checklist after Profile setup

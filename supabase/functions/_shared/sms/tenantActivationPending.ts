@@ -30,8 +30,8 @@ export function composeTenantActivationNudgeSms(params: {
     `${greeting(params.tenantName)}\n\n` +
     `This is the property management team.\n\n` +
     `We still need a quick reply to set up texts for your home.\n\n` +
-    `Reply YES to get updates about repairs and important messages.\n` +
-    `Reply NO if you don't want those updates.\n\n` +
+    `Reply YES to submit maintenance requests and get important home updates.\n` +
+    `Reply NO to opt out.\n\n` +
     tenantSmsComplianceFooter()
   )
 }

@@ -104,10 +104,24 @@ export function setupSuccessPercent(progress: SetupSuccessProgress): number {
 
 export const SETUP_SUCCESS_COLLAPSED_EVENT = 'ulo:setup-success-collapsed'
 
+/** Fired whenever setup-success checklist progress may have changed (same-tab). */
+export const SETUP_SUCCESS_PROGRESS_CHANGED_EVENT = 'ulo:setup-success-progress-changed'
+
 function emitSetupSuccessCollapsedChange(): void {
   try {
     if (typeof window.dispatchEvent === 'function') {
       window.dispatchEvent(new Event(SETUP_SUCCESS_COLLAPSED_EVENT))
+    }
+  } catch {
+    // jsdom / private mode
+  }
+}
+
+/** Tell Profile setup / Get set up hosts to reload percent (same-tab; `storage` does not fire). */
+export function notifySetupSuccessProgressChanged(): void {
+  try {
+    if (typeof window.dispatchEvent === 'function') {
+      window.dispatchEvent(new Event(SETUP_SUCCESS_PROGRESS_CHANGED_EVENT))
     }
   } catch {
     // jsdom / private mode
@@ -177,6 +191,7 @@ export function markSetupSuccessTestDeliveryComplete(
   } catch {
     // private mode
   }
+  notifySetupSuccessProgressChanged()
 }
 
 export function clearSetupSuccessTestDelivery(
@@ -202,7 +217,7 @@ export function shouldShowSetupSuccessCard(
   )
 }
 
-/** Compact Get started row under Settings after the overlay is closed. */
+/** Compact Profile setup row in the sidebar until every checklist step is done. */
 export function shouldShowSetupSuccessNavHint(
   progress: SetupSuccessProgress,
   landlordId: string = getActiveLandlordId(),
@@ -210,7 +225,70 @@ export function shouldShowSetupSuccessNavHint(
   return (
     isLimitedAlpha1Landlord(landlordId) &&
     hasSeenLimitedAlphaPostOnboardingWelcome(landlordId) &&
-    isSetupSuccessCardDismissed(landlordId) &&
     progress.doneCount < progress.total
   )
+}
+
+/** How long the green ↑ +N% flash stays under Profile setup after progress increases. */
+export const SETUP_SUCCESS_NAV_GAIN_FLASH_MS = 4000
+
+const NAV_PERCENT_KEY_PREFIX = 'ulo.setupSuccessNavPercent.'
+
+function navPercentKey(landlordId: string): string {
+  return `${NAV_PERCENT_KEY_PREFIX}${landlordId}`
+}
+
+export function readSetupSuccessNavPercentBaseline(
+  landlordId: string = getActiveLandlordId(),
+): number | null {
+  try {
+    const raw = window.localStorage.getItem(navPercentKey(landlordId))
+    if (raw == null || raw === '') return null
+    const n = Number(raw)
+    return Number.isFinite(n) ? n : null
+  } catch {
+    return null
+  }
+}
+
+export function writeSetupSuccessNavPercentBaseline(
+  percent: number,
+  landlordId: string = getActiveLandlordId(),
+): void {
+  try {
+    window.localStorage.setItem(navPercentKey(landlordId), String(Math.max(0, Math.round(percent))))
+  } catch {
+    // private mode
+  }
+}
+
+export function clearSetupSuccessNavPercentBaseline(
+  landlordId: string = getActiveLandlordId(),
+): void {
+  try {
+    window.localStorage.removeItem(navPercentKey(landlordId))
+  } catch {
+    // private mode
+  }
+}
+
+/** Positive percent-point gain since the last baseline, or 0 if none. */
+export function setupSuccessNavPercentGain(
+  nextPercent: number,
+  landlordId: string = getActiveLandlordId(),
+): number {
+  const prev = readSetupSuccessNavPercentBaseline(landlordId)
+  if (prev == null) {
+    writeSetupSuccessNavPercentBaseline(nextPercent, landlordId)
+    return 0
+  }
+  const gain = Math.round(nextPercent) - Math.round(prev)
+  if (gain > 0) {
+    writeSetupSuccessNavPercentBaseline(nextPercent, landlordId)
+    return gain
+  }
+  if (Math.round(nextPercent) !== Math.round(prev)) {
+    writeSetupSuccessNavPercentBaseline(nextPercent, landlordId)
+  }
+  return 0
 }

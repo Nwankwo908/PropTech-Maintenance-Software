@@ -282,6 +282,46 @@ export type OnboardingDocumentArchive = {
   review: OnboardingExtractionReview | null
 }
 
+/** Drop empty / profile-upload stubs that wipe landlord name — keep real Fast Track reviews. */
+function shouldDiscardBlankAccountReview(review: OnboardingExtractionReview): boolean {
+  if (review.account?.contactName?.trim()) return false
+  if ((review.properties?.length ?? 0) > 0) return false
+  if ((review.residents?.length ?? 0) > 0) return false
+  if ((review.vendors?.length ?? 0) > 0) return false
+  if ((review.units?.length ?? 0) > 0) return false
+  const leases = review.leases ?? []
+  if (leases.length === 0) return true
+  // Profile lease uploads minted `ext-lease-{docId}-0` rows with no dates.
+  return leases.every(
+    (row) =>
+      /^ext-lease-.+-0$/.test(row.id) && !row.leaseStart?.trim() && !row.leaseEnd?.trim(),
+  )
+}
+
+function usableExtractionReview(value: unknown): OnboardingExtractionReview | null {
+  const review = asOnboardingExtractionReview(value)
+  if (!review) return null
+  if (shouldDiscardBlankAccountReview(review)) return null
+  return review
+}
+
+function clearBlankLocalExtractionReview(landlordId: string) {
+  try {
+    const key = `ulo.landlordOnboarding.${landlordId}`
+    const raw = window.localStorage.getItem(key)
+    if (!raw) return
+    const parsed = JSON.parse(raw) as Record<string, unknown>
+    const formDraft = (parsed.formDraft as Record<string, unknown> | undefined) ?? {}
+    const prior = asOnboardingExtractionReview(formDraft.extractionReview)
+    if (!prior || !shouldDiscardBlankAccountReview(prior)) return
+    const nextDraft = { ...formDraft }
+    delete nextDraft.extractionReview
+    window.localStorage.setItem(key, JSON.stringify({ ...parsed, formDraft: nextDraft }))
+  } catch {
+    // Best-effort self-heal.
+  }
+}
+
 /** Fast-track files + AI review from local draft and landlord_onboarding.draft_state. */
 export async function loadOnboardingDocumentArchive(
   landlordId: string = getActiveLandlordId(),
@@ -293,7 +333,10 @@ export async function loadOnboardingDocumentArchive(
   for (const doc of asOnboardingUploadedDocuments(localDraft?.uploadDocuments)) {
     byId.set(doc.id, doc)
   }
-  review = asOnboardingExtractionReview(localDraft?.extractionReview)
+  review = usableExtractionReview(localDraft?.extractionReview)
+  if (localDraft?.extractionReview && !review) {
+    clearBlankLocalExtractionReview(landlordId)
+  }
 
   if (supabase) {
     const { data: onboarding } = await supabase
@@ -307,7 +350,21 @@ export async function loadOnboardingDocumentArchive(
     for (const doc of asOnboardingUploadedDocuments(formDraft.uploadDocuments)) {
       byId.set(doc.id, doc)
     }
-    review = asOnboardingExtractionReview(formDraft.extractionReview) ?? review
+    const remoteReview = usableExtractionReview(formDraft.extractionReview)
+    review = remoteReview ?? review
+
+    // Persist the strip so Fast Track continue stops failing after a blank stub.
+    if (formDraft.extractionReview && !remoteReview && onboarding) {
+      const cleanedDraft = { ...formDraft }
+      delete cleanedDraft.extractionReview
+      void supabase
+        .from('landlord_onboarding')
+        .update({
+          draft_state: { ...draft, formDraft: cleanedDraft },
+          updated_at: new Date().toISOString(),
+        })
+        .eq('landlord_id', landlordId)
+    }
   }
 
   return { documents: Array.from(byId.values()), review }
@@ -332,7 +389,10 @@ export function organizationDocumentFromOnboarding(
     id: `onboarding:${doc.id}`,
     name: doc.fileName,
     meta: `${category} · ${typeLabel} · ${sizeLabel}`,
-    updatedLabel: 'From fast-track onboarding',
+    updatedLabel:
+      typeof doc.processingLabel === 'string' && doc.processingLabel.startsWith('Uploaded from')
+        ? doc.processingLabel
+        : 'From fast-track onboarding',
     status: onboardingUploadStatus(doc.uploadStatus),
     source: 'onboarding',
     sourceLabel: 'Onboarding upload',
@@ -384,6 +444,29 @@ export async function loadOrganizationComplianceDocuments(
   const archive = await loadOnboardingDocumentArchive(landlordId)
   for (const doc of archive.documents) {
     byId.set(`onboarding:${doc.id}`, organizationDocumentFromOnboarding(doc))
+  }
+
+  // Profile lease uploads live outside formDraft so they never touch AI-review account.
+  if (supabase) {
+    const { data: onboarding } = await supabase
+      .from('landlord_onboarding')
+      .select('draft_state')
+      .eq('landlord_id', landlordId)
+      .maybeSingle()
+    const draft = (onboarding?.draft_state ?? {}) as Record<string, unknown>
+    for (const doc of asOnboardingUploadedDocuments(draft.residentLeaseDocuments)) {
+      byId.set(`onboarding:${doc.id}`, organizationDocumentFromOnboarding(doc))
+    }
+  }
+  try {
+    const raw = window.localStorage.getItem(`ulo.residentLeaseDocs.${landlordId}`)
+    if (raw) {
+      for (const doc of asOnboardingUploadedDocuments(JSON.parse(raw))) {
+        byId.set(`onboarding:${doc.id}`, organizationDocumentFromOnboarding(doc))
+      }
+    }
+  } catch {
+    // ignore
   }
 
   if (supabase) {

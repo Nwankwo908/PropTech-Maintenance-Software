@@ -68,7 +68,7 @@ import {
   openOrganizationDocumentPreview,
   type OrganizationDocument,
 } from '@/lib/organizationSettings'
-import { loadResidentLeaseDocuments } from '@/lib/residentLeaseDocuments'
+import { loadResidentLeaseDocuments, uploadResidentLeaseDocuments } from '@/lib/residentLeaseDocuments'
 import {
   fetchResidentMaintenanceCalendarEvents,
   fetchResidentOpenMaintenanceTickets,
@@ -302,6 +302,7 @@ function ProfileContent({
   occupantProfileState,
   onOccupancyChange,
   onPreviewDocument,
+  onEditResident,
 }: {
   profile: ResidentProfileDetail
   insights: SmartInsight[]
@@ -320,10 +321,11 @@ function ProfileContent({
     lastActivationAttemptAt?: string | null
     firstActivationAttemptAt?: string | null
   } | null
-  occupantProfilePath: (residentId: string) => string
+  occupantProfilePath?: (residentId: string) => string
   occupantProfileState?: { from: string }
   onOccupancyChange?: (status: ResidentOccupancyStatus) => void
-  onPreviewDocument: (document: OrganizationDocument) => void
+  onPreviewDocument?: (document: OrganizationDocument) => void
+  onEditResident?: () => void
 }) {
   return (
     <>
@@ -400,7 +402,7 @@ function ProfileContent({
                           <FileGlyph />
                         </span>
                         <div className="min-w-0 flex-1 overflow-hidden">
-                          {canPreview ? (
+                          {canPreview && onPreviewDocument ? (
                             <button
                               type="button"
                               className="sa-link block w-full text-left text-[14px] font-medium leading-5 text-[#155dfc] underline-offset-2 hover:underline [overflow-wrap:anywhere]"
@@ -415,7 +417,7 @@ function ProfileContent({
                           )}
                           <p className="text-[12px] leading-4 text-[#6a7282] [overflow-wrap:anywhere]">
                             {document.meta}
-                            {canPreview ? '' : ' · Preview unavailable'}
+                            {canPreview && onPreviewDocument ? '' : ' · Preview unavailable'}
                           </p>
                         </div>
                       </li>
@@ -519,7 +521,9 @@ function ProfileContent({
                   <span key={occupant.id}>
                     {index > 0 ? ', ' : null}
                     <Link
-                      to={occupantProfilePath(occupant.id)}
+                      to={(typeof occupantProfilePath === 'function'
+                        ? occupantProfilePath
+                        : residentDetailPath)(occupant.id)}
                       state={occupantProfileState}
                       className="sa-link underline-offset-2 hover:underline"
                     >
@@ -532,7 +536,10 @@ function ProfileContent({
           ) : null}
         </ProfileCard>
 
-        <SmartIntelligenceCard insights={insights} />
+        <SmartIntelligenceCard
+          insights={insights}
+          onEditResident={onEditResident}
+        />
       </div>
 
       <ResidentLeaseCalendar
@@ -1055,6 +1062,8 @@ export function AdminPropertyResidentDetailDashboard() {
   }, [deleteConfirmOpen, deleteSaving])
 
   const backFallbackHref = useMemo(() => {
+    // Property-scoped profile URLs fall back to that property. Global /admin/residents/:id
+    // (including other-occupant hops) always returns to the Residents list.
     if (propertySlug) {
       if (propertyId) return propertyDetailPath(propertyId)
       return propertyDetailPath(propertySlug)
@@ -1065,6 +1074,14 @@ export function AdminPropertyResidentDetailDashboard() {
   function handleBack() {
     const from = (location.state as { from?: string } | null)?.from
     if (typeof from === 'string' && from.startsWith('/') && from !== location.pathname) {
+      // Never bounce between resident profiles — other-occupant hops should exit to the list.
+      if (
+        /\/admin\/residents\/[^/?#]+$/.test(from) ||
+        /\/admin\/properties\/[^/]+\/residents\/[^/?#]+$/.test(from)
+      ) {
+        navigate('/admin/residents')
+        return
+      }
       navigate(from)
       return
     }
@@ -1215,6 +1232,35 @@ export function AdminPropertyResidentDetailDashboard() {
       }
     }
 
+    if (payload.leaseDocumentFiles && payload.leaseDocumentFiles.length > 0) {
+      const unitLabel =
+        placement?.unit?.trim() ||
+        (!placement ? previousUnit : '') ||
+        loadedUser?.unit.trim() ||
+        ''
+      const buildingLabel =
+        (placement?.building ?? '').trim() ||
+        (!placement ? previousBuilding : '') ||
+        loadedUser?.building.trim() ||
+        ''
+      const docsResult = await uploadResidentLeaseDocuments({
+        landlordId: getActiveLandlordId(),
+        residentId: payload.id,
+        resident: {
+          fullName: payload.fullName,
+          unit: unitLabel,
+          building: buildingLabel,
+          phone: payload.phone,
+          email: payload.email,
+        },
+        files: payload.leaseDocumentFiles,
+      })
+      if (!docsResult.ok) {
+        setActionError(docsResult.error)
+        throw new Error(docsResult.error)
+      }
+    }
+
     setEditOpen(false)
     await loadResident()
   }
@@ -1235,7 +1281,7 @@ export function AdminPropertyResidentDetailDashboard() {
     setDeleteConfirmOpen(false)
     setEditOpen(false)
     setDeleteSaving(false)
-    handleBack()
+    navigate('/admin/residents')
   }
 
   async function handleResidentDelete(_row: EditResidentModalRow) {
@@ -1334,6 +1380,9 @@ export function AdminPropertyResidentDetailDashboard() {
         result.error ||
           'Welcome text could not be delivered. Check the phone number and try again.',
       )
+    } else {
+      const { notifySetupSuccessProgressChanged } = await import('@/lib/setupSuccessChecklist')
+      notifySetupSuccessProgressChanged()
     }
     await loadResident()
   }
@@ -1490,6 +1539,19 @@ export function AdminPropertyResidentDetailDashboard() {
                       }
                     : null
                 }
+                occupantProfilePath={(id) => residentDetailPath(id)}
+                occupantProfileState={{
+                  from: '/admin/residents',
+                }}
+                onEditResident={() => setEditOpen(true)}
+                onOccupancyChange={(status) => {
+                  void handleOccupancyChange(status)
+                }}
+                onPreviewDocument={(document) => {
+                  void openOrganizationDocumentPreview(document).then((result) => {
+                    setDocumentPreviewError(result.ok ? null : result.error)
+                  })
+                }}
               />
             </div>
           </>

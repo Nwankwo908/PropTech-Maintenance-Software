@@ -13,7 +13,7 @@ const FEATURE_MARQUEE_ITEMS = [
   { src: rentCollection, width: 4195, height: 4098, alt: 'Rent Collection — automated SMS reminders and payment tracking' },
   { src: homeHealth, width: 4195, height: 4098, alt: 'Home Health Check — periodic walkthrough assessments dispatched to technicians' },
   { src: maintenanceRequest, width: 4195, height: 4098, alt: 'Maintenance Request — tenant texts an issue, Ulo classifies and coordinates vendors' },
-  { src: moveInCoordination, width: 4195, height: 4098, alt: 'Move in Coordination — Ulo guides new tenants through move-in' },
+  { src: moveInCoordination, width: 4195, height: 4098, alt: 'Move in Coordination — From key handoff to utility setup, Ulo guides new tenants through move-in so you don\'t have to' },
   { src: leaseRenewals, width: 4168, height: 4098, alt: 'Lease Renewals — Ulo monitors expiry dates and launches renewal workflows' },
 ] as const
 

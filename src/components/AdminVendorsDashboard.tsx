@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { sendVendorInvite, type VendorInviteChannel } from '@/api/vendorVerification'
-import { VendorFormModal } from '@/components/VendorFormModal'
+import { VendorFormModal, type VendorManagementRow } from '@/components/VendorFormModal'
 import { SetupSuccessCheckboxGuide } from '@/components/SetupSuccessCheckboxGuide'
 import { TableCheckbox } from '@/components/TableCheckbox'
 import magnifyingGlassIcon from '@/assets/Magnifying glass.svg'
+import editIcon from '@/assets/noun_edit_469454.svg'
 import { getActiveLandlordId } from '@/lib/activeLandlord'
 import { adminNavPath } from '@/lib/adminNavigation'
 import { fetchLandlordAccountProfile } from '@/lib/landlordAccountProfile'
@@ -37,8 +38,13 @@ type VendorRow = {
   name: string
   trade: string
   category: string | null
+  contactName: string | null
   email: string | null
   phone: string | null
+  city: string | null
+  state: string | null
+  country: string | null
+  notificationChannel: 'email' | 'sms' | 'both'
   rating: number | null
   reviewCount: number
   completedJobs: number
@@ -48,9 +54,47 @@ type VendorRow = {
   createdAt: string | null
   onboardingOverriddenAt: string | null
   onboardedFromExternal: boolean
+  portalApiKey: string | null
 }
 
 type RatingSort = 'desc' | 'asc'
+
+function SelectionTrashIcon({ className = 'size-4' }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 24 24" fill="none" aria-hidden>
+      <path
+        d="M3 6h18M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2m3 0v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6h14zM10 11v6M14 11v6"
+        stroke="currentColor"
+        strokeWidth={1.65}
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  )
+}
+
+function asVendorNotificationChannel(value: unknown): 'email' | 'sms' | 'both' {
+  const raw = asString(value).toLowerCase()
+  if (raw === 'email' || raw === 'sms' || raw === 'both') return raw
+  return 'both'
+}
+
+function toVendorManagementRow(vendor: VendorRow): VendorManagementRow {
+  return {
+    id: vendor.id,
+    name: vendor.name,
+    category: vendor.category,
+    contactName: vendor.contactName,
+    email: vendor.email,
+    phone: vendor.phone,
+    city: vendor.city,
+    state: vendor.state,
+    country: vendor.country,
+    notification_channel: vendor.notificationChannel,
+    active: vendor.active,
+    portal_api_key: vendor.portalApiKey,
+  }
+}
 
 function asString(value: unknown): string {
   if (value == null) return ''
@@ -238,6 +282,7 @@ export function AdminVendorsDashboard() {
   const [error, setError] = useState<string | null>(null)
   const [scoresError, setScoresError] = useState<string | null>(null)
   const [addVendorOpen, setAddVendorOpen] = useState(false)
+  const [editingVendor, setEditingVendor] = useState<VendorRow | null>(null)
   const [showAddVendorGuide, setShowAddVendorGuide] = useState(() =>
     isSetupSuccessCheckboxGuideActive(location.state, 'vendors'),
   )
@@ -295,7 +340,7 @@ export function AdminVendorsDashboard() {
       supabase
         .from('vendors')
         .select(
-          'id, name, category, active, roster_status, email, phone, created_at, onboarding_overridden_at, onboarded_from_external',
+          'id, name, category, active, roster_status, email, phone, contact_name, city, state, country, notification_channel, portal_api_key, created_at, onboarding_overridden_at, onboarded_from_external',
         )
         .eq('landlord_id', landlordId)
         .order('created_at', { ascending: true }),
@@ -353,8 +398,13 @@ export function AdminVendorsDashboard() {
         name: asString(raw.name) || 'Unnamed vendor',
         trade: formatTrade(category),
         category,
+        contactName: asString(raw.contact_name) || null,
         email: asString(raw.email) || null,
         phone: asString(raw.phone) || null,
+        city: asString(raw.city) || null,
+        state: asString(raw.state) || null,
+        country: asString(raw.country) || null,
+        notificationChannel: asVendorNotificationChannel(raw.notification_channel),
         rating: metrics?.rating ?? null,
         reviewCount: metrics?.reviewCount ?? 0,
         completedJobs: metrics?.completedJobs ?? 0,
@@ -364,6 +414,7 @@ export function AdminVendorsDashboard() {
         createdAt: asString(raw.created_at) || null,
         onboardingOverriddenAt: asString(raw.onboarding_overridden_at) || null,
         onboardedFromExternal: raw.onboarded_from_external === true,
+        portalApiKey: asString(raw.portal_api_key) || null,
       }
     })
 
@@ -677,6 +728,11 @@ export function AdminVendorsDashboard() {
     }
 
     await Promise.all([loadVendors(), loadVerifications()])
+
+    if (sent > 0) {
+      const { notifySetupSuccessProgressChanged } = await import('@/lib/setupSuccessChecklist')
+      notifySetupSuccessProgressChanged()
+    }
     setOnboardingSaving(false)
 
     if (sent > 0 && failed === 0) {
@@ -833,38 +889,46 @@ export function AdminVendorsDashboard() {
       ) : null}
 
       {selectedVendorCount > 0 ? (
-        <div className="mb-4 flex flex-wrap items-center justify-between gap-2 rounded-[10px] border border-[#e5e7eb] bg-white px-4 py-3 shadow-[0px_1px_2px_-1px_rgba(0,0,0,0.06)]">
-          <p className="text-[14px] leading-5 tracking-[-0.1504px] text-[#0a0a0a]">
-            <span className="font-medium">{selectedVendorCount}</span>
-            {selectedVendorCount === 1 ? ' vendor selected' : ' vendors selected'}
-          </p>
-          <div className="flex items-center gap-2">
+        <div className="mb-4 flex flex-wrap items-center gap-2 rounded-[10px] border border-[#e5e7eb] bg-white px-4 py-3 shadow-[0px_1px_2px_-1px_rgba(0,0,0,0.06)]">
+          <button
+            type="button"
+            aria-label="Edit vendor"
+            disabled={deleteVendorsSaving || onboardingSaving || selectedVendorCount !== 1}
+            onClick={() => {
+              const selected = vendors.find((vendor) => selectedVendorIds.has(vendor.id))
+              if (selected) setEditingVendor(selected)
+            }}
+            className="sa-press inline-flex h-9 items-center justify-center gap-2 rounded-lg border border-black/10 bg-white px-3 text-[14px] font-medium text-[#0a0a0a] outline-none hover:bg-[#f3f4f6] focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50"
+          >
+            <img src={editIcon} alt="" className="size-4" />
+            Edit
+          </button>
+          <button
+            type="button"
+            disabled={deleteVendorsSaving || onboardingSaving}
+            onClick={() => void deleteSelectedVendors()}
+            className="sa-press inline-flex h-9 items-center justify-center gap-2 rounded-lg border border-black/10 bg-white px-3 text-[14px] font-medium text-[#b52a00] outline-none hover:bg-[#f3f4f6] focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50"
+          >
+            <SelectionTrashIcon />
+            Delete
+          </button>
+          <button
+            type="button"
+            onClick={() => setSelectedVendorIds(new Set())}
+            className="sa-press inline-flex h-9 items-center justify-center rounded-lg border border-black/10 bg-white px-3 text-[14px] font-medium text-[#0a0a0a] outline-none hover:bg-[#f3f4f6] focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2"
+          >
+            Clear
+          </button>
+          {selectedCanStartOnboarding ? (
             <button
               type="button"
-              onClick={() => setSelectedVendorIds(new Set())}
-              className="sa-press inline-flex h-9 items-center justify-center rounded-lg border border-black/10 bg-white px-3 text-[14px] font-medium text-[#0a0a0a] outline-none hover:bg-[#f3f4f6] focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2"
+              disabled={onboardingSaving || deleteVendorsSaving}
+              onClick={() => void startOnboardingForSelected()}
+              className="sa-press inline-flex h-9 items-center justify-center rounded-lg bg-[#187960] px-3 text-[14px] font-medium text-white outline-none hover:bg-[#146b52] focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50"
             >
-              Clear selection
+              {onboardingSaving ? 'Sending…' : 'Setup Vendor'}
             </button>
-            {selectedCanStartOnboarding ? (
-              <button
-                type="button"
-                disabled={onboardingSaving || deleteVendorsSaving}
-                onClick={() => void startOnboardingForSelected()}
-                className="sa-press inline-flex h-9 items-center justify-center rounded-lg bg-[#187960] px-3 text-[14px] font-medium text-white outline-none hover:bg-[#146b52] focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50"
-              >
-                {onboardingSaving ? 'Starting…' : 'Start onboarding'}
-              </button>
-            ) : null}
-            <button
-              type="button"
-              disabled={deleteVendorsSaving || onboardingSaving}
-              onClick={() => void deleteSelectedVendors()}
-              className="sa-press inline-flex h-9 items-center justify-center rounded-lg border border-[#b52a00]/30 bg-[#fff4f0] px-3 text-[14px] font-medium text-[#b52a00] outline-none hover:bg-[#ffe9e1] focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50"
-            >
-              {deleteVendorsSaving ? 'Deleting…' : 'Delete selected'}
-            </button>
-          </div>
+          ) : null}
         </div>
       ) : null}
 
@@ -1043,6 +1107,17 @@ export function AdminVendorsDashboard() {
             setShowCheckboxGuide(true)
             setCheckboxGuideRunId((value) => value + 1)
           })
+        }}
+      />
+
+      <VendorFormModal
+        open={editingVendor != null}
+        mode="edit"
+        initial={editingVendor ? toVendorManagementRow(editingVendor) : null}
+        onClose={() => setEditingVendor(null)}
+        onSaved={() => {
+          setEditingVendor(null)
+          void loadVendors()
         }}
       />
     </main>

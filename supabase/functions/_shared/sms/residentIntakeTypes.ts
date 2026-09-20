@@ -772,6 +772,10 @@ export function buildIntakeDescription(state: SmsIntakeState): string {
   if (state.first_noticed?.trim()) {
     parts.push(`First noticed: ${state.first_noticed.trim()}.`)
   }
+  const entry = state.diagnostic_facts?.unit_entry?.trim()
+  if (entry) {
+    parts.push(`Entry if not home: ${entry}.`)
+  }
   if (state.preferred_visit_windows?.trim()) {
     parts.push(
       `Resident availability: ${state.preferred_visit_windows.trim()}.`,
@@ -842,6 +846,17 @@ export function buildConfirmationSummary(state: SmsIntakeState): string {
   }
   if (facts.door_part?.trim()) {
     bullets.push(`• ${facts.door_part.trim()}`)
+  }
+  if (facts.unit_entry?.trim()) {
+    const entry = facts.unit_entry.trim()
+    const lower = entry.toLowerCase()
+    if (/^(y|yes)\b/.test(lower)) {
+      bullets.push("• OK to enter if not home")
+    } else if (/^(n|no)\b/.test(lower)) {
+      bullets.push("• Do not enter if not home")
+    } else {
+      bullets.push(`• Entry if not home: ${entry}`)
+    }
   }
 
   if (state.preferred_visit_windows?.trim()) {

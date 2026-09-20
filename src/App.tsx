@@ -23,7 +23,11 @@ function lazyNamed<Props>(
 ) {
   return lazy(async () => {
     const mod = await importer()
-    return { default: mod[exportName] }
+    const Comp = mod[exportName]
+    if (!Comp) {
+      throw new Error(`lazyNamed: missing export "${exportName}"`)
+    }
+    return { default: Comp }
   })
 }
 

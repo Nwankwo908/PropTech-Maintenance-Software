@@ -29,6 +29,24 @@ export function shouldShowLimitedAlphaPostOnboardingWelcome(
   )
 }
 
+/**
+ * After setup is complete, keep the landlord on All Set until Get Started writes
+ * `ulo.postOnboardingWelcomeSeen.<landlordId>`. Do not let them browse Overview
+ * (or any other admin route) while that flag is missing — otherwise the Get set
+ * up for success card never appears.
+ */
+export function shouldForcePostOnboardingWelcomeRoute(params: {
+  onboardingCompleted: boolean
+  onOnboardingRoute: boolean
+  landlordId?: string
+}): boolean {
+  if (params.onOnboardingRoute) return false
+  return shouldShowLimitedAlphaPostOnboardingWelcome(
+    params.onboardingCompleted,
+    params.landlordId,
+  )
+}
+
 export function markLimitedAlphaPostOnboardingWelcomeSeen(
   landlordId: string = getActiveLandlordId(),
 ): void {
