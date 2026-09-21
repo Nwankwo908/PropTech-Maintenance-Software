@@ -29,6 +29,8 @@ Deno.test("landlord onboarding welcome SMS uses [name] properties without a comp
   }
   if (body.includes("your portfolio")) throw new Error("should not use your portfolio")
 })
+
+Deno.test("landlord onboarding welcome email omits the intake line without a number", () => {
   const mail = buildLandlordOnboardingWelcomeEmail({
     contactFirst: "Alex",
     companyName: "Oakwood Properties",
