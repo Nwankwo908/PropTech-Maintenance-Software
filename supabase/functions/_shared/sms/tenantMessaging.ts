@@ -255,8 +255,7 @@ function firstNameOf(fullName?: string | null): string | null {
 
 /**
  * Compose the post-onboarding welcome/activation SMS.
- * Leads with what the resident can do, keeps the tone warm, and tucks the
- * required opt-in prompt + compliance footer at the end.
+ * Leads with the YES ask and saving the number, then how to use the thread.
  */
 export function composeTenantWelcomeSms(params: {
   tenantName?: string | null
@@ -264,19 +263,20 @@ export function composeTenantWelcomeSms(params: {
 }): string {
   const first = firstNameOf(params.tenantName)
   const company = params.companyName?.trim()
-  const greeting = first ? `Hi ${first},` : "Hi there,"
+  const greeting = first ? `Hi ${first}` : "Hi there"
   const team = company
     ? `this is the property management team at ${company}.`
     : "this is your property management team."
 
   return (
-    `${greeting} ${team}\n\n` +
-    `You can now reach us by text anytime you need a repair or have a question ` +
-    `about your home.\n\n` +
-    `Save this number as "Ulo Assistant".\n\n` +
-    `Reply YES to submit maintenance requests and get important home updates.\n` +
-    `Reply NO to opt out.\n\n` +
-    tenantSmsComplianceFooter()
+    `${greeting} — ${team}\n\n` +
+    `🏠 NEED A REPAIR?\n` +
+    `Reply YES to activate maintenance requests and important home updates.\n\n` +
+    `📲 SAVE THIS NUMBER\n` +
+    `Save us as "Ulo Assistant" so you can easily find us when you need help.\n\n` +
+    `Once activated, just text this number anytime you need a repair or have a question about your home.\n\n` +
+    `NO — Opt out | HELP — Help | STOP — Unsubscribe\n` +
+    `Msg & data rates may apply.`
   )
 }
 

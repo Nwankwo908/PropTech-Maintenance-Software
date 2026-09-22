@@ -319,26 +319,41 @@ export function beginMultiIssueSharedIntake(
 export function buildRequestSubmittedSms(
   ticketId: string,
   _vendorAssigned = true,
-  companyName?: string | null,
+  _companyName?: string | null,
+  opts?: {
+    categoryLabel?: string | null
+    handlingTip?: string | null
+  },
 ): string {
   const ref = ticketId.slice(0, 8).toUpperCase()
-  const who = companyName?.trim() || "the property team"
-  return `Done. Your maintenance request has been sent to ${who}. I'll keep you updated here by text.\n\nRequest ${ref}`
+  const category = opts?.categoryLabel?.trim() || "maintenance"
+  const tip = opts?.handlingTip?.trim()
+  const tipBlock = tip ? `\n\n${tip}` : ""
+  return (
+    `Got it. We've logged a ${category} request for your unit. A vendor will be in touch to schedule.` +
+    tipBlock +
+    `\n\nRequest ${ref}`
+  )
 }
 
 export function buildMultiIssueSubmittedSms(
   ticketIds: string[],
   _vendorAssigned = true,
-  companyName?: string | null,
+  _companyName?: string | null,
+  opts?: {
+    handlingTip?: string | null
+  },
 ): string {
   const refs = ticketIds
     .map((id) => id.slice(0, 8).toUpperCase())
     .join(", ")
   const n = ticketIds.length
-  const who = companyName?.trim() || "the property team"
+  const tip = opts?.handlingTip?.trim()
+  const tipBlock = tip ? `\n\n${tip}` : ""
   return (
-    `Done. I've sent ${n} maintenance request${n === 1 ? "" : "s"} to ${who}. I'll keep you updated here by text.\n\n` +
-    `Request ${refs}`
+    `Got it. We've logged ${n} maintenance request${n === 1 ? "" : "s"} for your unit. A vendor will be in touch to schedule.` +
+    tipBlock +
+    `\n\nRequest ${refs}`
   )
 }
 

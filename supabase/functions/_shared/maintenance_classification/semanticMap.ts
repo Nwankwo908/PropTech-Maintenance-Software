@@ -104,6 +104,32 @@ async function embedTexts(texts: string[]): Promise<number[][] | null> {
   }
 }
 
+/**
+ * The library never changes at runtime, so embed it once per isolate and only
+ * pay for the query vector on each call. A failed run is not cached.
+ */
+let libraryVectorsPromise: Promise<number[][] | null> | null = null
+
+function libraryVectors(): Promise<number[][] | null> {
+  if (!libraryVectorsPromise) {
+    libraryVectorsPromise = embedTexts(SEMANTIC_PHRASE_LIBRARY.map((p) => p.phrase))
+      .then((vectors) => {
+        if (!vectors) libraryVectorsPromise = null
+        return vectors
+      })
+      .catch(() => {
+        libraryVectorsPromise = null
+        return null
+      })
+  }
+  return libraryVectorsPromise
+}
+
+/** Tests and long-lived workers that change the API key start from scratch. */
+export function resetSemanticEmbeddingCache(): void {
+  libraryVectorsPromise = null
+}
+
 /** Rank phrase library against sanitized description. */
 export async function semanticMatchDescription(
   sanitized: string,
@@ -122,12 +148,12 @@ export async function semanticMatchDescription(
 
   if (opts?.skipEmbeddings) return lexical
 
-  const phrases = SEMANTIC_PHRASE_LIBRARY.map((p) => p.phrase)
-  const vectors = await embedTexts([sanitized, ...phrases])
-  if (!vectors || vectors.length < 2) return lexical
-
-  const [q, ...rest] = vectors
-  if (!q) return lexical
+  const [rest, queryVectors] = await Promise.all([
+    libraryVectors(),
+    embedTexts([sanitized]),
+  ])
+  const q = queryVectors?.[0]
+  if (!rest || !q) return lexical
 
   const embedded: SemanticMatch[] = SEMANTIC_PHRASE_LIBRARY.map((ex, i) => ({
     label: ex.phrase,

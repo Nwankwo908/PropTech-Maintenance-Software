@@ -2,6 +2,7 @@
  * Tenant SMS assistant policy for non-repair "other" messages.
  *
  * Greetings / thanks / small talk → warm reply, never escalate.
+ * During active intake, small talk re-asks the pending question and keeps state.
  * Unclear → one clarifying question, never escalate.
  * Human request / legal / complaint → escalate and only then say we passed it on.
  * Rent / lease stay on their dedicated handlers (not this module).
@@ -13,8 +14,23 @@ export type AssistantOtherKind =
   | "human_request"
   | "complaint_or_legal"
 
+export type AssistantOtherReplyType =
+  | "sms_small_talk"
+  | "sms_clarify"
+  | "sms_routed_to_landlord"
+
+export type AssistantOtherPlan = {
+  kind: AssistantOtherKind
+  replyType: AssistantOtherReplyType
+  /** Never true for greetings / unclear. */
+  notifyStaff: boolean
+  /** When true, do not release or rewrite intake_state. */
+  preserveIntake: boolean
+}
+
+/** Whole-message greetings / thanks only — bare "ok" stays unclear. */
 const GREETING_OR_THANKS =
-  /^(hi|hello|hey|hiya|yo|sup|howdy|good\s*(morning|afternoon|evening)|thanks?(?:\s*(?:you|so\s*much))?|thx|ty|thank\s*you(?:\s*so\s*much)?|ok(?:ay)?|cool|great|awesome|perfect|sounds?\s*good|have\s*a\s*(good|nice)\s*(day|night)|👋|🙂|😊|👍)+[.!?]*$/i
+  /^(hi|hello|hey|hiya|yo|sup|howdy|good\s*(morning|afternoon|evening)|thanks?(?:\s*(?:you|so\s*much))?|thx|ty|thank\s*you(?:\s*so\s*much)?|have\s*a\s*(good|nice)\s*(day|night)|👋|🙂|😊|👍)+[.!?]*$/i
 
 const SMALL_TALK =
   /\b(how are you|how'?s it going|what'?s up|just saying hi|checking in|good to (?:meet|hear from) you)\b/i
@@ -40,12 +56,64 @@ export function shouldEscalateAssistantOther(kind: AssistantOtherKind): boolean 
   return kind === "human_request" || kind === "complaint_or_legal"
 }
 
+/** Pure planner for act-path side effects (tests assert notify/preserve). */
+export function planAssistantOtherReply(input: {
+  body: string
+  activeIntake: boolean
+}): AssistantOtherPlan {
+  const kind = classifyAssistantOtherMessage(input.body)
+  if (kind === "small_talk") {
+    return {
+      kind,
+      replyType: "sms_small_talk",
+      notifyStaff: false,
+      preserveIntake: true,
+    }
+  }
+  if (!shouldEscalateAssistantOther(kind)) {
+    return {
+      kind,
+      replyType: "sms_clarify",
+      notifyStaff: false,
+      preserveIntake: true,
+    }
+  }
+  return {
+    kind,
+    replyType: "sms_routed_to_landlord",
+    notifyStaff: true,
+    // Escalation may release the intake pin so the human thread can proceed.
+    preserveIntake: false,
+  }
+}
+
 export function buildSmallTalkSms(firstName: string): string {
   const who = firstName.trim() || "there"
   return [
     `Hi ${who},`,
     "",
+    "This is Ulo AI.",
+    "",
     "Good to hear from you — how can I help today?",
+  ].join("\n")
+}
+
+/** Greeting during an open intake wizard — keep the pending question in play. */
+export function buildSmallTalkDuringIntakeSms(
+  firstName: string,
+  pendingQuestion: string,
+): string {
+  const who = firstName.trim() || "there"
+  const question = pendingQuestion.trim() ||
+    "When you're ready, reply with a short description of what's going on."
+  return [
+    `Hi ${who},`,
+    "",
+    "This is Ulo AI.",
+    "",
+    "Happy to keep helping with your request.",
+    "",
+    question,
   ].join("\n")
 }
 
@@ -72,11 +140,12 @@ export function buildEscalatedOtherSms(firstName: string, kind: AssistantOtherKi
   ].join("\n")
 }
 
-/** Life-safety opener when urgency policy says leave immediately or danger is clear. */
+/** Life-safety opener when the resident must leave / call 911 (gas, fire). */
 export function buildEmergencySafetySms(input: {
   firstName: string
   leaveImmediately: boolean
   reason?: string | null
+  handlingTip?: string | null
 }): string {
   const who = input.firstName.trim() || "there"
   const lines = [`Hi ${who},`, ""]
@@ -96,6 +165,39 @@ export function buildEmergencySafetySms(input: {
   if (input.reason?.trim()) {
     lines.push("")
     lines.push(input.reason.trim())
+  }
+  // Skip interim tips when they must leave immediately — safety first.
+  if (!input.leaveImmediately && input.handlingTip?.trim()) {
+    lines.push("")
+    lines.push(input.handlingTip.trim())
+  }
+  return lines.join("\n")
+}
+
+/**
+ * Same-day urgency (overflow, active leak, no heat, etc.) — alert the team
+ * without treating it like a 911 life-safety event.
+ */
+export function buildSameDayUrgencySms(input: {
+  firstName: string
+  reason?: string | null
+  handlingTip?: string | null
+}): string {
+  const who = input.firstName.trim() || "there"
+  const lines = [
+    `Hi ${who},`,
+    "",
+    "Thanks for letting us know — this needs same-day attention.",
+    "",
+    "I've alerted the property team so they can help quickly.",
+  ]
+  if (input.reason?.trim()) {
+    lines.push("")
+    lines.push(input.reason.trim())
+  }
+  if (input.handlingTip?.trim()) {
+    lines.push("")
+    lines.push(input.handlingTip.trim())
   }
   return lines.join("\n")
 }

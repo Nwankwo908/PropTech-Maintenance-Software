@@ -1,0 +1,44 @@
+---
+description: One shared recognizer answers "is this inbound text a repair?" — no second keyword list.
+globs: supabase/functions/_shared/sms/**/*.ts,shared/maintenance/**/*.ts
+alwaysApply: false
+---
+
+# Inbound SMS intent — one recognizer
+
+`recognizeInboundIntent(body, ctx)` in `supabase/functions/_shared/sms/recognizeInboundIntent.ts` is the only place that decides what an inbound resident text is about. It stops at the first confident layer.
+
+| # | Layer | Source |
+|---|---|---|
+| 1 | Emergency net (gas, CO, fire/smoke, sparking, active water, no heat while freezing) | `matchEmergencyNet` in `shared/maintenance/deterministicRules.ts` |
+| 2 | Greeting / thanks / acknowledgement | `classifyAssistantOtherMessage` |
+| 3 | Rent, lease / move-out, human request, complaint or legal, status check | `classifyRentSmsIntent`, `nonRepairIntents.ts`, `classifyAssistantOtherMessage` |
+| 4 | Repair | `resolveAmbiguousMaintenance` + `matchDeterministicRules` (weight ≥ 0.55) |
+| 5 | Semantic match | `semanticMatchDescription` (library embeddings cached per isolate) |
+| 6 | Fresh threads only: one JSON LLM call, 4s timeout | `llmLayer` |
+| 7 | Default | Any problem signal → start intake and confirm the reading; menu only when nothing signalled |
+
+`recognizeInboundIntentSync` runs layers 1–4 and 7 with no network, for the synchronous inbound gate.
+
+## Rules
+
+- Layer 1 is deterministic and **never** overridden by a model.
+- Non-English messages go through `bridgeSpanishMaintenanceText` first, so one English rule set covers both languages. Add translations there, not new Spanish rules.
+- New repair vocabulary belongs in `shared/maintenance/deterministicRules.ts`. `inferIssueTypeFromText` delegates to it — do not add keywords to `inferIssueTypeFromText` or start a parallel list anywhere in `_shared/sms`.
+- Show the repair / rent / lease menu (`buildUnclearClarifySms`) only when `recognition.showMenu` is true.
+- When confidence is low, intake confirms the reading in its first question (`recognition.confirmation`) instead of asking what the resident needs.
+
+## Logging
+
+| Event | When |
+|---|---|
+| `sms.intent_recognized` | Every interpreted inbound: deciding layer, confidence, issue summary |
+| `sms.gate_miss` | The menu went out and the resident's next text was a repair |
+
+Both are recognizer diagnostics, not landlord outcomes — keep them in `HIDDEN_SMS_TRANSPORT_TIMELINE_EVENT_TYPES` (`src/lib/landlordFacingTimeline.ts`).
+
+## Do not
+
+- Add a second "is this a repair?" regex in the gate, the act path, or a workflow template
+- Let a model downgrade an emergency-net hit
+- Send the menu for anything with a problem signal

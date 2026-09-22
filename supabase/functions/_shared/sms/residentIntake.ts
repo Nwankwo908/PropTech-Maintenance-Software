@@ -37,6 +37,11 @@ import type { WorkflowContext, WorkflowResult } from "./workflow_types.ts"
 import { extractResidentAvailabilityText } from "./residentAvailabilityExtract.ts"
 import { submitSmsMaintenanceRequest } from "./submitSmsMaintenanceRequest.ts"
 import {
+  isVagueTicketDescription,
+  looksLikeBareRepairRequest,
+  resolveIssueSeedFromRecentInbounds,
+} from "./clarifyMenuIntakeSeed.ts"
+import {
   applyDiagnosticAnswer,
   applyQuestionPlan,
   markQuestionAsked,
@@ -48,6 +53,8 @@ import {
   EDIT_FIELD_OPTIONS,
   extractFirstNoticedFromText,
   extractRoomFromText,
+  intakeCategoryHandlingTip,
+  intakeCategoryLabel,
   intakeQuestionForStep,
   INTAKE_VALIDATION,
   normalizeRoomOrArea,
@@ -64,8 +71,7 @@ import {
   type IntakeStep,
   type SmsIntakeState,
 } from "./residentIntakeTypes.ts"
-import { looksLikeBareRepairRequest } from "./resolveMaintenanceWorkIntent.ts"
-import { buildEmergencySafetySms } from "./tenantAssistantReply.ts"
+import { buildEmergencySafetySms, buildSameDayUrgencySms } from "./tenantAssistantReply.ts"
 
 const MAX_CLASSIFICATION_CLARIFICATIONS = 2
 
@@ -93,6 +99,29 @@ function shouldRestartLegacyQuestionnaire(
 
 const INTAKE_LOOP_CLARIFY_SMS =
   "I'm still not sure what you need. Can you describe it in a short sentence — for example a leak, no heat, or something about rent or your lease?"
+
+/** Look-back window for seed recovery — older texts describe finished business. */
+const SEED_LOOKBACK_MINUTES = 45
+
+async function loadRecentInboundBodies(
+  supabase: SupabaseClient,
+  conversationId: string,
+  limit = 8,
+): Promise<string[]> {
+  const since = new Date(Date.now() - SEED_LOOKBACK_MINUTES * 60_000).toISOString()
+  const { data, error } = await supabase
+    .from("sms_messages")
+    .select("body, direction, created_at")
+    .eq("conversation_id", conversationId)
+    .eq("direction", "inbound")
+    .gte("created_at", since)
+    .order("created_at", { ascending: false })
+    .limit(limit)
+  if (error || !Array.isArray(data)) return []
+  return data
+    .map((row) => String((row as { body?: string }).body ?? "").trim())
+    .filter(Boolean)
+}
 
 function tradeLabelForAck(trade: string): string {
   const labels: Record<string, string> = {
@@ -158,6 +187,15 @@ function questionForStep(state: SmsIntakeState, step: IntakeStep): string {
       | "diagnostic"
     >,
   )
+}
+
+/** Pending wizard prompt for small-talk breakouts (does not mutate state). */
+export function pendingIntakeQuestion(state: SmsIntakeState): string {
+  const step = (state.step ?? "issue_type") as IntakeStep
+  if (step === "submitted") {
+    return "When you're ready, reply with a short description of what's going on."
+  }
+  return questionForStep(state, step)
 }
 
 async function loadIntakeState(
@@ -509,6 +547,97 @@ async function finishIntakeQuestion(
   }
 }
 
+/**
+ * When urgency policy says emergency:
+ * - Life-safety (leave immediately) → 911 banner + landlord alert
+ * - Same-day water/habitability → soft same-day alert (no 911) + landlord alert
+ * Then continue the next intake question.
+ */
+async function prependEmergencySafetyIfNeeded(
+  supabase: SupabaseClient,
+  ctx: WorkflowContext,
+  state: SmsIntakeState,
+  replyHint: string,
+  residentId: string | null,
+): Promise<{ outbound: string; emergency: boolean }> {
+  const urgencyPolicy = resolveUrgencyPolicy({
+    text: [
+      state.initial_message,
+      state.description,
+      state.safety_concerns,
+      ...Object.values(state.diagnostic_facts ?? {}),
+    ]
+      .filter(Boolean)
+      .join(" "),
+    outdoorTempF: state.outdoor_temp_f ?? null,
+  })
+  if (urgencyPolicy.band !== "emergency") {
+    return { outbound: replyHint, emergency: false }
+  }
+
+  const { data: residentRow } = residentId
+    ? await supabase
+      .from("users")
+      .select("full_name")
+      .eq("id", residentId)
+      .maybeSingle()
+    : { data: null }
+  const first =
+    String((residentRow as { full_name?: string } | null)?.full_name ?? "")
+      .trim()
+      .split(/\s+/)[0] || "there"
+
+  const tip = intakeCategoryHandlingTip(state)
+  const safety = urgencyPolicy.leaveImmediately
+    ? buildEmergencySafetySms({
+      firstName: first,
+      leaveImmediately: true,
+      reason: null,
+      handlingTip: tip,
+    })
+    : buildSameDayUrgencySms({
+      firstName: first,
+      reason: urgencyPolicy.reason,
+      handlingTip: tip,
+    })
+
+  void notifyLandlordNeedsAttention(supabase, {
+    landlordId: ctx.landlordId,
+    kind: "workflow_escalated",
+    headline: urgencyPolicy.leaveImmediately
+      ? "Emergency reported over text"
+      : "Same-day maintenance reported over text",
+    detail: (state.description || state.initial_message || urgencyPolicy.reason)
+      .trim()
+      .slice(0, 200),
+    idempotencyKey: `sms-emergency:${ctx.conversationId}:${ctx.messageId}`,
+    maintenanceRequestId: state.draft_ticket_id ?? ctx.maintenanceRequestId ?? null,
+    unitId: ctx.identity.unit_id ?? null,
+    residentId,
+  })
+  await recordActivityLog(supabase, {
+    landlordId: ctx.landlordId,
+    eventType: "sms.emergency_alerted",
+    source: "sms",
+    actorType: "system",
+    actorId: residentId,
+    unitId: ctx.identity.unit_id ?? null,
+    residentId,
+    maintenanceRequestId: state.draft_ticket_id ?? null,
+    conversationId: ctx.conversationId,
+    messageId: ctx.messageId,
+    workflowTemplateId: "maintenance_intake",
+    metadata: {
+      message: urgencyPolicy.leaveImmediately
+        ? "Alerted the property team about an emergency reported over text."
+        : "Alerted the property team about a same-day maintenance issue over text.",
+      leave_immediately: urgencyPolicy.leaveImmediately,
+      urgency_reason: urgencyPolicy.reason,
+    },
+  })
+  return { outbound: `${safety}\n\n${replyHint}`, emergency: true }
+}
+
 async function refreshClassificationFromFollowUp(
   state: SmsIntakeState,
 ): Promise<SmsIntakeState> {
@@ -703,9 +832,26 @@ export async function processResidentMaintenanceIntake(
       unitId: ctx.identity.unit_id,
       description: body,
     })
+    // Clarify-menu “A repair” must not become the ticket — recover the prior problem report.
+    let seedBody = body.trim()
+    if (
+      looksLikeBareRepairRequest(seedBody) ||
+      isVagueTicketDescription(seedBody)
+    ) {
+      const recent = await loadRecentInboundBodies(supabase, ctx.conversationId)
+      const recovered = resolveIssueSeedFromRecentInbounds(seedBody, recent)
+      if (recovered !== seedBody) {
+        console.info("[sms-intake] recovered issue seed from prior inbound", {
+          conversationId: ctx.conversationId,
+          menuEcho: seedBody,
+          recovered,
+        })
+        seedBody = recovered
+      }
+    }
     // Multi-ask path: confirm split before the single-issue wizard.
     try {
-      const multiIssues = await detectMultipleMaintenanceIssues(body, {
+      const multiIssues = await detectMultipleMaintenanceIssues(seedBody, {
         outdoorTempF,
         onClassified: (result) => {
           void insertAiClassificationLog(supabase, {
@@ -718,7 +864,7 @@ export async function processResidentMaintenanceIntake(
         },
       })
       if (multiIssues.length >= 2) {
-        state = intakeStateForMultiIssueConfirm(body, multiIssues, outdoorTempF)
+        state = intakeStateForMultiIssueConfirm(seedBody, multiIssues, outdoorTempF)
         state = captureInboundMedia(
           state,
           ctx.inbound.mediaUrls,
@@ -748,7 +894,7 @@ export async function processResidentMaintenanceIntake(
     }
 
     const started = await initializeIntake(
-      body,
+      seedBody,
       ctx.inbound.mediaUrls.length,
       [],
       outdoorTempF,
@@ -778,58 +924,13 @@ export async function processResidentMaintenanceIntake(
       },
     })
     const replyHint = questionForStep(state, state.step as IntakeStep)
-    const urgencyPolicy = resolveUrgencyPolicy({
-      text: body,
-      outdoorTempF: outdoorTempF ?? state.outdoor_temp_f ?? null,
-    })
-    let outbound = replyHint
-    if (urgencyPolicy.band === "emergency") {
-      const { data: residentRow } = residentId
-        ? await supabase
-          .from("users")
-          .select("full_name")
-          .eq("id", residentId)
-          .maybeSingle()
-        : { data: null }
-      const first =
-        String((residentRow as { full_name?: string } | null)?.full_name ?? "")
-          .trim()
-          .split(/\s+/)[0] || "there"
-      const safety = buildEmergencySafetySms({
-        firstName: first,
-        leaveImmediately: urgencyPolicy.leaveImmediately,
-        reason: urgencyPolicy.leaveImmediately ? null : urgencyPolicy.reason,
-      })
-      outbound = `${safety}\n\n${replyHint}`
-      void notifyLandlordNeedsAttention(supabase, {
-        landlordId: ctx.landlordId,
-        kind: "workflow_escalated",
-        headline: "Emergency reported over text",
-        detail: body.trim().slice(0, 200) || urgencyPolicy.reason,
-        idempotencyKey: `sms-emergency:${ctx.conversationId}:${ctx.messageId}`,
-        maintenanceRequestId: state.draft_ticket_id ?? ctx.maintenanceRequestId ?? null,
-        unitId: ctx.identity.unit_id ?? null,
-        residentId,
-      })
-      await recordActivityLog(supabase, {
-        landlordId: ctx.landlordId,
-        eventType: "sms.emergency_alerted",
-        source: "sms",
-        actorType: "system",
-        actorId: residentId,
-        unitId: ctx.identity.unit_id ?? null,
-        residentId,
-        maintenanceRequestId: state.draft_ticket_id ?? null,
-        conversationId: ctx.conversationId,
-        messageId: ctx.messageId,
-        workflowTemplateId: "maintenance_intake",
-        metadata: {
-          message: "Alerted the property team about an emergency reported over text.",
-          leave_immediately: urgencyPolicy.leaveImmediately,
-          urgency_reason: urgencyPolicy.reason,
-        },
-      })
-    }
+    const { outbound, emergency } = await prependEmergencySafetyIfNeeded(
+      supabase,
+      ctx,
+      state,
+      replyHint,
+      residentId,
+    )
     console.info("[sms-intake] started new intake", {
       conversationId: ctx.conversationId,
       step: state.step,
@@ -837,14 +938,15 @@ export async function processResidentMaintenanceIntake(
       vendorTrade: state.vendor_trade ?? null,
       confidence: state.classification_confidence ?? null,
       draftTicketId: state.draft_ticket_id ?? null,
-      emergency: urgencyPolicy.band === "emergency",
+      emergency,
     })
     return finishIntakeQuestion(supabase, ctx, state, outbound, {
       started: true,
       vendor_trade: state.vendor_trade,
       classification_confidence: state.classification_confidence,
       draft_ticket_id: state.draft_ticket_id,
-      emergency: urgencyPolicy.band === "emergency",
+      emergency,
+      clarification_required: state.step === "classification_clarification",
     })
   }
 
@@ -1046,6 +1148,7 @@ export async function processResidentMaintenanceIntake(
               ticketIds,
               allVendorsAssigned,
               companyName,
+              { handlingTip: intakeCategoryHandlingTip(state) },
             ),
             metadata: {
               submitted: true,
@@ -1080,7 +1183,10 @@ export async function processResidentMaintenanceIntake(
         const companyName = await loadLandlordDisplayName(supabase, ctx.landlordId)
         return {
           route: "resident_maintenance_intake",
-          replyHint: buildRequestSubmittedSms(ticketId, vendorAssigned, companyName),
+          replyHint: buildRequestSubmittedSms(ticketId, vendorAssigned, companyName, {
+            categoryLabel: intakeCategoryLabel(state),
+            handlingTip: intakeCategoryHandlingTip(state),
+          }),
           metadata: { submitted: true, ticketId, intakeStep: "submitted" },
         }
       } catch (err) {
@@ -1216,16 +1322,28 @@ export async function processResidentMaintenanceIntake(
     draftTicketId: state.draft_ticket_id ?? null,
   })
 
+  const nextHint = questionForStep(state, state.step as IntakeStep)
+  const { outbound, emergency } = step === "diagnostic"
+    ? await prependEmergencySafetyIfNeeded(
+      supabase,
+      ctx,
+      state,
+      nextHint,
+      residentId,
+    )
+    : { outbound: nextHint, emergency: false }
+
   return finishIntakeQuestion(
     supabase,
     ctx,
     state,
-    questionForStep(state, state.step as IntakeStep),
+    outbound,
     {
       issue_type: state.issue_type,
       recommended_urgency: state.recommended_urgency,
       severity: state.severity,
       draft_ticket_id: state.draft_ticket_id,
+      emergency,
     },
   )
 }

@@ -12,9 +12,7 @@ import {
   classifyTenantComplianceKeyword,
 } from "./tenantMessaging.ts"
 import {
-  detectEmergencySignals,
   extractFirstNoticedFromText,
-  inferIssueTypeFromText,
   isAffirmativeReply,
   normalizeRoomOrArea,
   parseContactMethod,
@@ -29,8 +27,19 @@ import {
   classifyRentSmsIntent,
 } from "./rentIntent.ts"
 import { looksLikeBareRepairRequest } from "./resolveMaintenanceWorkIntent.ts"
+import {
+  classifyLeaseTopic,
+  looksLikeMaintenanceStatusAsk,
+  looksLikeMoveOutIntent,
+} from "./nonRepairIntents.ts"
+import {
+  isRepairRecognition,
+  recognizeInboundIntentSync,
+  type InboundIntentRecognition,
+} from "./recognizeInboundIntent.ts"
 
 export { looksLikeRentBalanceAsk } from "./rentIntent.ts"
+export { looksLikeMaintenanceStatusAsk } from "./nonRepairIntents.ts"
 
 export const TENANT_SMS_INTENTS = [
   "maintenance_new",
@@ -55,6 +64,8 @@ export type InboundInterpretation = {
   extractedSlots: Record<string, string>
   needsClarification: boolean
   source: "heuristic" | "llm" | "fast_path_skip"
+  /** Which recognizer layer decided, and how sure it was. Logged per inbound. */
+  recognition?: InboundIntentRecognition
 }
 
 export type InterpretationPendingContext = {
@@ -86,18 +97,6 @@ export function looksLikePhotoSkip(body: string): boolean {
   return /^(skip|no\s*photo|without a photo)([.!?\s]|$)/i.test(body.trim())
 }
 
-const LEASE_COPY =
-  /\b((copy|pdf|scan|picture|photo) of (my |our |the )?lease|lease (copy|agreement|document|pdf|file)|send (me )?(my |a )?(copy of (my )?)?lease|email (me )?(my )?lease|need (my |a )?(copy of (my )?)?lease|rental agreement)\b/i
-
-const LEASE_END =
-  /\b(when does (my |our )?lease (end|expire)|lease (end|expir(?:e|ation|y)) date|how long is (my |our )?lease)\b/i
-
-const LEASE_GENERAL =
-  /\b((interested in |ask(?:ing)? about )?leas(?:e|ing)|my lease|our lease|the lease|lease (info|information|details|dates|start)|when (did|does) (my |our )?lease start|tenancy( agreement)?)\b/i
-
-const MOVE_OUT =
-  /\b(mov(?:e|ing) out|vacat(?:e|ing)|i'?m leaving|change my move-?out)\b/i
-
 /** Whole-message cancel / close: natural ways tenants say maintenance is done. */
 const CANCEL_SHORT =
   /^(cancel(?:led)?\s+(?:it|that|this|the request|the repair|the work order|the ticket|the job)|never ?mind|nvm|forget it|false alarm|it'?s (?:fixed|working|fine)(?: now)?|it is (?:fixed|working|fine)(?: now)?|everything'?s? (?:good|fine|fixed|ok|okay)(?: now)?|we'?re all good|you can close (?:it|that|this)|close (?:it|that|this|the request|the repair)|i don'?t need anyone(?: anymore)?|the problem stopped|all good)\s*[.!]?\s*$/i
@@ -118,42 +117,6 @@ const REOPEN_REPAIR =
 
 const URGENCY_WORSE =
   /\b(getting worse|worse now|it'?s worse|its worse|emergency now|getting (really )?bad)\b/i
-
-const MAINTENANCE_STATUS =
-  /\b((status|update) (on|of|for) (my )?(repair|ticket|work order|request|job)|when is (the |my )?(plumber|electrician|vendor|tech|technician)|has (the )?(vendor|plumber|electrician) (been|come|arrived|shown)|any update on (my )?(repair|ticket|work order)|where is (the )?(vendor|plumber))\b/i
-
-const VENDOR_ARRIVAL_ROLE =
-  /\b(electrician|plumber|vendor|tech|technician|handyman|contractor|repair(?:s| ?person)?|work order|appointment|visit)\b/i
-
-const VENDOR_ARRIVAL_WHEN =
-  /\b(when(?:'s|\s+is|\s+will|\s+would|\s+can)?|what time|eta)\b/i
-
-const VENDOR_ARRIVAL_EVENT =
-  /\b(coming|arriv(?:e|ing)|show(?:ing)?\s+up|be here|get here|scheduled|on (?:their|his|her) way)\b/i
-
-/** True when the resident is asking when a vendor will visit — not reporting a new issue. */
-export function looksLikeMaintenanceStatusAsk(body: string): boolean {
-  const text = body.trim()
-  if (!text) return false
-  if (MAINTENANCE_STATUS.test(text)) return true
-  if (/\bwhen (?:the )?(?:electrician|plumber|vendor|tech|technician) is coming\b/i.test(text)) {
-    return true
-  }
-  if (
-    VENDOR_ARRIVAL_WHEN.test(text) &&
-    VENDOR_ARRIVAL_EVENT.test(text) &&
-    (VENDOR_ARRIVAL_ROLE.test(text) || /\b(he|she|they|someone)\b/i.test(text))
-  ) {
-    return true
-  }
-  if (
-    /\b(any (word|news|update) on (the )?(visit|appointment|vendor|electrician|plumber)|has (the )?(visit|appointment) been (set|scheduled))\b/i
-      .test(text)
-  ) {
-    return true
-  }
-  return false
-}
 
 const MAINTENANCE_UPDATE =
   /\b(still (broken|leaking|not fixed|going on)|getting worse|not fixed|same (problem|issue|leak)|happening again|came back|still not working)\b/i
@@ -447,6 +410,7 @@ export function formatRentDueDayLabel(day: number, now = new Date()): string | n
 function heuristicIntent(
   body: string,
   pending: InterpretationPendingContext,
+  recognized: InboundIntentRecognition,
   recentTurns?: string | null,
 ): {
   intent: TenantSmsIntent | null
@@ -458,16 +422,13 @@ function heuristicIntent(
     return { intent: null, extractedSlots: {}, confident: false }
   }
 
-  if (LEASE_COPY.test(text)) {
-    return { intent: "lease_info", extractedSlots: { topic: "lease_copy" }, confident: true }
-  }
-
-  if (LEASE_END.test(text)) {
-    return { intent: "lease_info", extractedSlots: { topic: "lease_end" }, confident: true }
-  }
-
-  if (LEASE_GENERAL.test(text) && !/\brenew/i.test(text)) {
-    return { intent: "lease_info", extractedSlots: { topic: "lease_info" }, confident: true }
+  const leaseTopic = classifyLeaseTopic(text)
+  if (leaseTopic) {
+    return {
+      intent: "lease_info",
+      extractedSlots: { topic: leaseTopic },
+      confident: true,
+    }
   }
 
   {
@@ -501,7 +462,7 @@ function heuristicIntent(
     }
   }
 
-  if (MOVE_OUT.test(text) && !/\brenew\b/i.test(text)) {
+  if (looksLikeMoveOutIntent(text)) {
     const date = parseResidentCalendarDate(text)
     return {
       intent: "move_out_intent",
@@ -591,13 +552,28 @@ function heuristicIntent(
     return { intent: "other", extractedSlots: {}, confident: true }
   }
 
-  const emergencyHit = detectEmergencySignals(text) ||
-    /\b(smell gas|gas in the|on fire|smoke alarm)\b/i.test(text)
-  if (emergencyHit || inferIssueTypeFromText(text) || looksLikeBareRepairRequest(text)) {
-    return { intent: "maintenance_new", extractedSlots: {}, confident: true }
+  // One shared recognizer decides "is this a repair?" — no second keyword list.
+  if (isRepairRecognition(recognized) || looksLikeBareRepairRequest(text)) {
+    return {
+      intent: "maintenance_new",
+      extractedSlots: repairSlots(recognized),
+      confident: true,
+    }
   }
 
   return { intent: null, extractedSlots: {}, confident: false }
+}
+
+/** What the recognizer understood, so intake can confirm it in the first question. */
+function repairSlots(
+  recognized: InboundIntentRecognition,
+): Record<string, string> {
+  return {
+    ...(recognized.issueSummary ? { issue_summary: recognized.issueSummary } : {}),
+    ...(recognized.confirmation
+      ? { confirm_interpretation: recognized.confirmation }
+      : {}),
+  }
 }
 
 export function heuristicInterpretInbound(
@@ -616,19 +592,25 @@ export function heuristicInterpretInbound(
   }
 
   const pendingMatch = pendingAnswerForStep(body, pending)
-  const guessed = heuristicIntent(body, pending, recentTurns)
+  const recognition = recognizeInboundIntentSync(body, {
+    activeIntake: pending.activeIntake,
+  })
+  const guessed = heuristicIntent(body, pending, recognition, recentTurns)
+  const withRecognition = (
+    interpretation: InboundInterpretation,
+  ): InboundInterpretation => ({ ...interpretation, recognition })
 
   if (
     guessed.intent === "maintenance_cancel" &&
     !pending.awaitingTicketCancelConfirm
   ) {
-    return {
+    return withRecognition({
       addressesPending: false,
       intent: "maintenance_cancel",
       extractedSlots: guessed.extractedSlots,
       needsClarification: false,
       source: "heuristic",
-    }
+    })
   }
 
   if (
@@ -636,66 +618,66 @@ export function heuristicInterpretInbound(
     PENDING_BREAKOUT_INTENTS.has(guessed.intent) &&
     !pending.awaitingMoveOutConfirm
   ) {
-    return {
+    return withRecognition({
       addressesPending: false,
       intent: guessed.intent,
       extractedSlots: guessed.extractedSlots,
       needsClarification: false,
       source: "heuristic",
-    }
+    })
   }
 
   if (pending.awaitingTicketUpdateConfirm && pendingMatch.addressesPending) {
-    return {
+    return withRecognition({
       addressesPending: true,
       pendingAnswer: pendingMatch.pendingAnswer,
       intent: "maintenance_update",
       extractedSlots: guessed.extractedSlots,
       needsClarification: false,
       source: "heuristic",
-    }
+    })
   }
 
   if (pending.awaitingTicketCancelConfirm && pendingMatch.addressesPending) {
-    return {
+    return withRecognition({
       addressesPending: true,
       pendingAnswer: pendingMatch.pendingAnswer,
       intent: "maintenance_cancel",
       extractedSlots: guessed.extractedSlots,
       needsClarification: false,
       source: "heuristic",
-    }
+    })
   }
 
   if (pending.awaitingMoveOutConfirm && pendingMatch.addressesPending) {
-    return {
+    return withRecognition({
       addressesPending: true,
       pendingAnswer: pendingMatch.pendingAnswer,
       intent: "move_out_intent",
       extractedSlots: guessed.extractedSlots,
       needsClarification: false,
       source: "heuristic",
-    }
+    })
   }
 
   if (pendingMatch.addressesPending) {
-    return {
+    return withRecognition({
       addressesPending: true,
       pendingAnswer: pendingMatch.pendingAnswer,
       intent: guessed.intent ?? "maintenance_new",
       extractedSlots: guessed.extractedSlots,
       needsClarification: false,
       source: "heuristic",
-    }
+    })
   }
 
-  return {
+  return withRecognition({
     addressesPending: false,
     intent: guessed.intent,
     extractedSlots: guessed.extractedSlots,
     needsClarification: !guessed.confident,
     source: "heuristic",
-  }
+  })
 }
 
 export function shouldHandleInterpretedIntent(
@@ -837,5 +819,6 @@ export async function interpretInboundSms(params: {
     },
     needsClarification: fromLlm.needsClarification ?? false,
     source: "llm",
+    recognition: heuristic.recognition,
   }
 }

@@ -12,10 +12,15 @@ export const HIDDEN_PIPELINE_TIMELINE_EVENT_TYPES = new Set([
   'workflow.log',
 ])
 
-/** Transport receipts. Outcomes live on domain events or collapsed onboarding. */
+/**
+ * Transport receipts and recognizer diagnostics. Outcomes live on domain
+ * events or collapsed onboarding; how Ulo read a text is not a landlord story.
+ */
 export const HIDDEN_SMS_TRANSPORT_TIMELINE_EVENT_TYPES = new Set([
   'sms.delivered',
   'sms.message_received',
+  'sms.intent_recognized',
+  'sms.gate_miss',
 ])
 
 /**

@@ -1,0 +1,52 @@
+---
+description: Autofix Bugbot — never treat clarify-menu replies as the maintenance ticket; always seed from the shared intent recognizer.
+globs: supabase/functions/_shared/sms/**/*.{ts,tsx}
+alwaysApply: false
+---
+
+# SMS intake — clarify menu must not become the ticket
+
+**Symptom (Adriana / Limited Alpha):** Tenant texts a real problem (`No hot water`). Ulo fails to classify it, sends “What do you need — a repair, rent, or lease?”. Tenant replies **“A repair”**. Confirm SMS becomes:
+
+```text
+Got it. Here's the request:
+“A repair.”
+Until help arrives: avoid using the affected area…
+```
+
+The real issue never lands on `initial_message` / `description` / classification.
+
+## Root cause checklist
+
+| Failure | Where |
+|---|---|
+| Symptom not recognized | Vocabulary missing from `shared/maintenance/deterministicRules.ts` — the one source `recognizeInboundIntent` and intake both read |
+| Menu echo treated as seed | `initializeIntake("A repair")` with no recovery from prior inbounds |
+| General trade skips symptom ask | `issue_type=general` → room/photo/confirm without `symptom_clarify` |
+| Tip/category wrong | `resolveCategoryHandlingTip` falls back to general because haystack is only “A repair” |
+
+## Autofix (Bugbot)
+
+On PR review or when this pattern appears in chat / SMS thread dumps:
+
+1. **Never** set `initial_message` / `description` / confirmation headline from a clarify-menu echo alone (`A repair`, `repair`, `maintenance`, `A repair is needed.`).
+2. **Always** run the seed through `inferIssueTypeFromText`. If null and the body is a bare/menu repair echo, call `resolveIssueSeedFromRecentInbounds(current, recentInboundBodies)` and re-initialize from the recovered problem report.
+3. If the seed is still vague (`isVagueTicketDescription`), ask `symptom_clarify` (“what needs to be fixed?”) **before** room, photo, or `awaiting_confirm`. Do not confirm.
+4. When `symptom_clarify` is answered, **replace** `initial_message` + `description` with that answer and re-derive `issue_type` / `vendor_trade` via `inferIssueTypeFromText` — do not append “Tenant update: …” onto “A repair”.
+5. Add new vocabulary to `shared/maintenance/deterministicRules.ts` only. `inferIssueTypeFromText` delegates there — never grow a second keyword list (see `sms-intent-recognizer.mdc`).
+6. Add/extend a Deno test that fails if “A repair” + prior “No hot water” still confirms “A repair.”
+
+## Canonical helpers
+
+| Concern | Module |
+|---|---|
+| Menu echo / vague seed / recover prior inbound | `clarifyMenuIntakeSeed.ts` |
+| SMS routing recognition | `recognizeInboundIntent` (issue type via `inferIssueTypeFromText`, which delegates to the shared rules) |
+| Symptom ask + replace seed | `symptom_clarify` in `determineNextMaintenanceQuestion.ts` |
+| Fresh intake seeding | `residentIntake.ts` → `resolveIssueSeedFromRecentInbounds` before `initializeIntake` |
+
+## Do not
+
+- Confirm a ticket whose headline is only “A repair” / “maintenance”
+- Drop a prior inbound that `inferIssueTypeFromText` already classifies when the resident only answered the clarify menu
+- Invent a new clarify menu path that writes the menu choice into `description` without recovery

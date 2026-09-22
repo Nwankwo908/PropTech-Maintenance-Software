@@ -21,11 +21,35 @@ export type RuleHit = {
 const PLUMBING_RE =
   /\b(leak|leaking|leaky|drip|dripping|faucet|tap|sink|basin|toilet|running\s+toilet|pipe|pipes|drain|clog|clogged|overflow|overflowing|flood|flooding|flooded|water\s*damage|sewage|sewer|plumber|plumbing|hose\s*bib|water\s*heater|supply\s*line|no\s*hot\s*water|low\s*(?:water\s*)?pressure|(?:water\s+)?pressure\s+(?:is\s+)?low)\b/i
 
+/**
+ * Loss of water service — distinct from `no hot water`. The first lookahead
+ * keeps "no hot water" out so each keeps its own questions and guidance. The
+ * trailing lookaheads drop cross-sentence artifacts: intake appends answers to
+ * the description, so "Tenant update: No" + "Water is not actively
+ * overflowing" must not read as "no water".
+ */
+const WATER_OUTAGE_RE =
+  /\b(?:no\s+(?!hot\b)(?:running\s+|cold\s+)?water\b(?!\s+(?:is|are|was)\s+not\b)(?!\s+(?:isn'?t|aren'?t|wasn'?t)\b)|water\s+(?:is\s+|has\s+been\s+)?(?:shut\s*off|shutoff|turned\s*off|completely\s+off|not\s+running)\b|water\s+(?:isn'?t|is\s+not)\s+(?:running|working|coming\s+(?:out|on))\b|(?:lost|losing)\s+(?:all\s+)?(?:our\s+|my\s+|the\s+)?water\b)/i
+
+/** Whole-home loss of water is a habitability problem, one dry fixture is not. */
+const WATER_OUTAGE_WHOLE_HOME_RE =
+  /\b(?:anywhere|at\s+all|whole\s+(?:home|house|apartment|unit|building)|entire\s+(?:home|house|apartment|unit|building)|any\s+of\s+the\s+(?:faucets|taps|sinks)|no\s+water\s+in\s+the\s+(?:home|house|apartment|unit)|all\s+(?:the\s+)?(?:faucets|taps|sinks))\b/i
+
+/** True when the text reports water service out, not merely no hot water. */
+export function matchesWaterOutage(text: string): boolean {
+  return WATER_OUTAGE_RE.test(text)
+}
+
+/** True when the water is reported out for the whole home, not one fixture. */
+export function matchesWholeHomeWaterOutage(text: string): boolean {
+  return WATER_OUTAGE_RE.test(text) && WATER_OUTAGE_WHOLE_HOME_RE.test(text)
+}
+
 const ELECTRICAL_RE =
-  /\b(electric|electrical|outlet|outlets|breaker|wiring|wire|wires|exposed\s*wire|spark|sparks|sparking|power|no\s*power|no\s*electricity|power\s*out|light(?:s)?|gfci|panel|short\s*circuit|circuit|fuse|burning\s*smell|electrical\s*smell)\b/i
+  /\b(electric|electrical|electrician|outlet|outlets|breaker|wiring|wire|wires|exposed\s*wire|spark|sparks|sparking|power|no\s*power|no\s*electricity|power\s*out|light(?:s)?|gfci|panel|short\s*circuit|circuit|fuse|burning\s*smell|electrical\s*smell)\b/i
 
 const HVAC_RE =
-  /\b(hvac|heat|heating|no\s*heat|no\s*cooling|furnace|thermostat|air\s*condition(?:ing|er)?|\bac\b|cool(?:ing)?|blowing\s*warm|won'?t\s*cool|too\s*hot|too\s*cold|no\s*airflow|no\s*air\s*flow|temperature\s+won'?t\s+change)\b/i
+  /\b(hvac|heat|heating|(?<!water\s)heater|no\s*heat|no\s*cooling|furnace|thermostat|air\s*condition(?:ing|er)?|\bac\b|cool(?:ing)?|blowing\s*warm|won'?t\s*cool|too\s*hot|too\s*cold|no\s*airflow|no\s*air\s*flow|temperature\s+won'?t\s+change)\b/i
 
 const APPLIANCE_RE =
   /\b(fridge|refrigerator|freezer|washer|dryer|oven|stove|dishwasher|microwave|washing\s*machine|appliance|not\s*cold|warm\s*inside)\b/i
@@ -34,13 +58,13 @@ const LOCK_RE =
   /\b(lock(?:ed|smith)?|key|keys|deadbolt|locked\s*out|can'?t\s*get\s*in|cannot\s*get\s*in|door\s*stuck|lockout)\b/i
 
 const PEST_RE =
-  /\b(pest|roach(?:es)?|cockroach(?:es)?|mouse|mice|rat|rats|rodent(?:s)?|vermin|bug|bugs|insect|ant(?:s)?|spider(?:s)?|termite|infestation|droppings|bee|bees|wasp|hornet|hive|exterminator|extermination|(?:bug|insect|flea|bed\s*bug|spider)s?\s+bites|creatures?\s+in\s+(?:my\s+)?(?:apartment|unit|home|kitchen))\b/i
+  /\b(pest|roach(?:es)?|cockroach(?:es)?|mouse|mice|rat|rats|rodent(?:s)?|vermin|bug|bugs|insect|ant(?:s)?|spider(?:s)?|termite|infestation|droppings|bee|bees|wasp|hornet|hive|exterminator|extermination|(?:bug|insect|flea|bed\s*bug|spider)s?\s+bites|creatures?\s+in\s+(?:my\s+)?(?:apartment|unit|home|kitchen)|spray(?:ing)?\s+(?:the\s+)?(?:property|unit|apartment|building|home|house))\b/i
 
 const APPLIANCE_AS_LOCATION_RE =
   /\b(?:behind|under|near|from\s+(?:behind|under)|around)\s+(?:the\s+)?(?:stove|oven|fridge|refrigerator|dishwasher|washer|dryer|freezer)\b/i
 
 const DOOR_HARDWARE_RE =
-  /\b(door\s*(?:piece|part|handle|knob|hinge|frame)|piece\s+for\s+(?:the\s+)?door|broken\s+door)\b/i
+  /\b(door\s*(?:piece|part|handle|knob|hinge|frame)|piece\s+for\s+(?:the\s+)?door|(?:broken|damaged|jammed)\s+door|door\s+(?:is\s+|was\s+)?(?:broken|damaged|jammed|off\s+(?:the\s+)?hinges?)|door\s+(?:won'?t|will\s+not|doesn'?t|does\s+not)\s+(?:close|open|lock|shut|latch))\b/i
 
 const STAIRS_ENTRANCE_RE =
   /\b(?:stairs?|stairway|stairwell|stepping|handrail|hand\s*rail|railing|banister|nosing|front\s*(?:step|steps|entrance|entry)|entrance\s*steps?|entry\s*steps?|leading\s+to\s+the\s+front|metal\s+piece|loose\s+(?:step|stair|metal)|broken\s+(?:step|stair|railing|handrail))\b/i
@@ -69,13 +93,38 @@ const HANDYMAN_RE =
   /\b(handyman|handy\s*man|general\s*maintenance|odd\s*job)\b/i
 
 const GAS_RE =
-  /\b(gas\s*smell|smell\s*(?:of\s*)?gas|gas\s*leak|natural\s*gas|rotten\s+eggs?|smells?\s+like\s+(?:rotten\s+)?(?:eggs?|sulfur)|sulfur\s+smell)\b/i
+  /\b(gas\s*smell|smell\s*(?:of\s*)?gas|smell\s+gas|gas\s*leak|natural\s*gas|carbon\s*monoxide|co\s+(?:alarm|detector)|rotten\s+eggs?|smells?\s+like\s+(?:rotten\s+)?(?:eggs?|sulfur)|sulfur\s+smell)\b/i
 const FIRE_RE = /\b(fire|smoke|flames?|burning)\b/i
 const FLOOD_ACTIVE_RE =
   /\b(pouring|gushing|flooding|water\s*everywhere|burst|active\s*leak|soaking)\b/i
 
 const INJURY_RE =
   /\b(?:hurt|injured|injury|almost\s+hurt|nearly\s+hurt|cut\s+(?:my|her|his|their)|trip(?:ped|ping)?|slip(?:ped|ping)?|fell|fall(?:ing)?|catch(?:ed|ing)?\s+onto|caught\s+onto|sandal|unsafe|sharp\s+edge|hazard)\b/i
+
+const SPARKING_RE = /\b(spark|sparks|sparking|sparked|arcing)\b/i
+const FREEZING_RE =
+  /\b(freezing|frigid|below\s*(?:zero|freezing)|sub\s*zero|ice\s*cold|it'?s\s*(?:so\s*)?cold\s*(?:in\s*here|inside)?)\b/i
+const NO_HEAT_RE = /\bno\s*heat(?:ing)?\b|\bheat\s+(?:is\s+)?(?:out|off)\b/i
+
+/**
+ * Life-safety net. Deterministic and always evaluated first — a model never
+ * overrides these. Callers pass text already bridged from other languages.
+ */
+export function matchEmergencyNet(
+  text: string,
+): { type: EmergencyType; keyword: string } | null {
+  const hay = text.toLowerCase()
+  if (GAS_RE.test(hay)) return { type: 'gas', keyword: 'gas / carbon monoxide' }
+  if (FIRE_RE.test(hay) && /\b(smoke|fire|flame)/i.test(hay)) {
+    return { type: 'fire', keyword: 'fire / smoke' }
+  }
+  if (SPARKING_RE.test(hay)) return { type: 'electrical', keyword: 'sparking' }
+  if (FLOOD_ACTIVE_RE.test(hay)) return { type: 'flood', keyword: 'active water' }
+  if (NO_HEAT_RE.test(hay) && FREEZING_RE.test(hay)) {
+    return { type: 'habitability', keyword: 'no heat in freezing weather' }
+  }
+  return null
+}
 
 export function matchDeterministicRules(text: string): RuleHit[] {
   const hay = text.toLowerCase()
@@ -129,6 +178,17 @@ export function matchDeterministicRules(text: string): RuleHit[] {
     0.92,
     /\b(overflow|flood|gushing|pouring)\b/i.test(hay) ? 'urgent' : null,
   )
+  if (WATER_OUTAGE_RE.test(hay)) {
+    const wholeHome = WATER_OUTAGE_WHOLE_HOME_RE.test(hay)
+    hits.push({
+      trade: 'plumbing',
+      issueType: 'plumbing',
+      keywords: [wholeHome ? 'no water in the home' : 'no water'],
+      severityBoost: wholeHome ? 'urgent' : null,
+      emergency: wholeHome ? 'habitability' : 'none',
+      weight: wholeHome ? 0.98 : 0.94,
+    })
+  }
   push(ELECTRICAL_RE, 'electrical', 'electrical', 0.9, /\bspark/i.test(hay) ? 'urgent' : null)
   push(HVAC_RE, 'hvac', 'hvac', 0.88)
   push(APPLIANCE_RE, 'appliance_repair', 'appliance', 0.86)
@@ -281,6 +341,19 @@ export function inferTradeFromText(text: string): VendorTrade | null {
 export function inferIssueTypeFromRules(text: string): IssueType | null {
   const hits = matchDeterministicRules(text)
   return hits[0]?.issueType ?? null
+}
+
+/**
+ * Something is wrong, even when no rule names the trade. Used by the inbound
+ * recognizer's default layer and by intake seed recovery — one vocabulary, so
+ * "start intake" and "recover the real report" never disagree.
+ */
+const PROBLEM_SIGNAL =
+  /\b(broke(?:n)?|break(?:ing)?|bust(?:ed)?|crack(?:ed)?|leak(?:s|ing|y)?|drip(?:s|ping)?|flood(?:ed|ing)?|damag(?:e|ed)|not\s+work(?:ing)?|isn'?t\s+work(?:ing)?|doesn'?t\s+work|won'?t\s+(?:work|turn|start|open|close|drain|flush|cool|heat)|stopped\s+work(?:ing)?|out\s+of\s+order|clog(?:ged)?|stuck|jam(?:med)?|loose|falling|fell|sagging|mold|mould|smell(?:s|ing)?|unsafe|hazard|dangerous|infest(?:ed|ation)?|no\s+(?:hot\s+water|water|power|heat|ac|air)|needs?\s+(?:fix(?:ing)?|repair(?:ed|ing)?|replac(?:ed|ing|ement)|cutting|trimming|cleaning)|fix\s+(?:my|the|this)|repair)\b/i
+
+/** True when the text reports that something is wrong, whatever the trade. */
+export function hasProblemSignal(text: string): boolean {
+  return PROBLEM_SIGNAL.test(text)
 }
 
 /** True when description text suggests HVAC / cooling (shared inbox + monitoring heuristics). */

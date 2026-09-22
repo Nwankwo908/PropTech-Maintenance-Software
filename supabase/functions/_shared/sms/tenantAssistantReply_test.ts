@@ -3,6 +3,8 @@ import { assertEquals } from "https://deno.land/std@0.224.0/assert/mod.ts"
 import {
   buildEmergencySafetySms,
   buildEscalatedOtherSms,
+  buildSameDayUrgencySms,
+  buildSmallTalkDuringIntakeSms,
   buildSmallTalkSms,
   buildUnclearClarifySms,
   classifyAssistantOtherMessage,
@@ -20,9 +22,28 @@ Deno.test("Hello / thanks are small talk — never escalate", () => {
     true,
   )
   assertEquals(
+    buildSmallTalkSms("Kenniesa").includes("Ulo AI"),
+    true,
+  )
+  assertEquals(
     buildSmallTalkSms("Kenniesa").toLowerCase().includes("passed"),
     false,
   )
+})
+
+Deno.test("Bare ok is unclear, not small talk", () => {
+  assertEquals(classifyAssistantOtherMessage("ok"), "unclear")
+  assertEquals(classifyAssistantOtherMessage("okay"), "unclear")
+})
+
+Deno.test("Small talk during intake re-asks the pending question", () => {
+  const sms = buildSmallTalkDuringIntakeSms(
+    "Alex",
+    "Which room is this happening in? Kitchen, bathroom, basement, bedroom, or somewhere else?",
+  )
+  assertEquals(sms.includes("Ulo AI"), true)
+  assertEquals(sms.includes("Which room"), true)
+  assertEquals(sms.toLowerCase().includes("passed"), false)
 })
 
 Deno.test("Unclear messages ask a clarifying question without handoff copy", () => {
@@ -66,4 +87,18 @@ Deno.test("Emergency safety SMS mentions 911 and staff alert", () => {
   })
   assertEquals(urgent.includes("911"), true)
   assertEquals(urgent.includes("No heat"), true)
+})
+
+Deno.test("Same-day urgency SMS alerts the team without 911", () => {
+  const sms = buildSameDayUrgencySms({
+    firstName: "Adriana",
+    reason: "An overflowing fixture needs same-day response.",
+    handlingTip:
+      "Until help arrives: if you can safely reach the shutoff valve, turn it off.",
+  })
+  assertEquals(sms.includes("911"), false)
+  assertEquals(sms.toLowerCase().includes("same-day"), true)
+  assertEquals(sms.toLowerCase().includes("alerted the property team"), true)
+  assertEquals(sms.includes("overflowing fixture"), true)
+  assertEquals(sms.toLowerCase().includes("shutoff"), true)
 })

@@ -32,9 +32,10 @@ import {
 } from "./inboundInterpretation.ts"
 import {
   buildEscalatedOtherSms,
+  buildSmallTalkDuringIntakeSms,
   buildSmallTalkSms,
   buildUnclearClarifySms,
-  classifyAssistantOtherMessage,
+  planAssistantOtherReply,
   shouldEscalateAssistantOther,
 } from "./tenantAssistantReply.ts"
 import {
@@ -53,7 +54,7 @@ import {
   type SmsIntakeState,
 } from "./residentIntakeTypes.ts"
 import { closeWorkOrderCancelledByResident } from "./cancelResidentWorkOrder.ts"
-import { releaseMaintenanceIntakePin } from "./residentIntake.ts"
+import { pendingIntakeQuestion, releaseMaintenanceIntakePin } from "./residentIntake.ts"
 import {
   formatTicketClosedDate,
   historicalClosureLabel,
@@ -63,6 +64,7 @@ import {
   looksLikeMaintenanceRelatedMessage,
 } from "./maintenanceTicketContext.ts"
 import { looksLikeBareRepairRequest } from "./resolveMaintenanceWorkIntent.ts"
+import { isRepairRecognition } from "./recognizeInboundIntent.ts"
 
 const TICKET_LOOKUP_STATUSES = [
   "unassigned",
@@ -386,6 +388,56 @@ async function logOutcome(
       message: params.message,
       ...params.extra,
     },
+  })
+}
+
+/** A menu shown less than a day ago is still the reason for this reply. */
+const GATE_MISS_WINDOW_MS = 24 * 60 * 60 * 1000
+
+/**
+ * Every inbound records which recognizer layer decided and how sure it was.
+ * When the previous reply was the repair / rent / lease menu and this text is
+ * a repair after all, that menu was a miss — log it so the gap is visible.
+ */
+async function logIntentRecognition(
+  ctx: InboundSmsHandlerContext,
+  intake: SmsIntakeState,
+  interpretation: InboundInterpretation,
+): Promise<void> {
+  const recognition = interpretation.recognition
+  if (!recognition) return
+
+  await logOutcome(ctx, {
+    eventType: "sms.intent_recognized",
+    message: `Read the resident's text as ${recognition.intent}.`,
+    extra: {
+      recognizer_intent: recognition.intent,
+      recognizer_layer: recognition.layer,
+      recognizer_confidence: recognition.confidence,
+      issue_summary: recognition.issueSummary,
+      interpreted_intent: interpretation.intent,
+      interpretation_source: interpretation.source,
+    },
+  })
+
+  if (!isRepairRecognition(recognition)) return
+
+  const shownAt = Date.parse(intake.clarify_menu_shown_at ?? "")
+  if (!Number.isFinite(shownAt)) return
+  if (Date.now() - shownAt > GATE_MISS_WINDOW_MS) return
+
+  await logOutcome(ctx, {
+    eventType: "sms.gate_miss",
+    message: "Asked what the resident needed, and their next text was a repair.",
+    extra: {
+      recognizer_layer: recognition.layer,
+      recognizer_confidence: recognition.confidence,
+      issue_summary: recognition.issueSummary,
+      menu_shown_at: intake.clarify_menu_shown_at,
+    },
+  })
+  await patchIntakeState(ctx.supabase, ctx.conversationId, {
+    clarify_menu_shown_at: undefined,
   })
 }
 
@@ -1854,24 +1906,49 @@ async function handleOther(
     return { handled: false }
   }
   const who = firstName(residentName)
-  const kind = classifyAssistantOtherMessage(ctx.inbound.body)
+  const plan = planAssistantOtherReply({
+    body: ctx.inbound.body,
+    activeIntake,
+  })
 
   // Greetings / thanks / small talk — warm reply only; never notify staff.
-  if (kind === "small_talk") {
+  // During intake: re-ask the pending question and keep wizard state as-is.
+  if (plan.kind === "small_talk") {
+    const body = activeIntake
+      ? buildSmallTalkDuringIntakeSms(who, pendingIntakeQuestion(intake))
+      : buildSmallTalkSms(who)
     await logOutcome(ctx, {
       eventType: "sms.small_talk_replied",
-      message: "Replied to a greeting or thanks without escalating to the property team.",
+      message: activeIntake
+        ? "Replied to a greeting during intake and re-asked the pending question without escalating."
+        : "Replied to a greeting or thanks without escalating to the property team.",
+      extra: {
+        preserve_intake: plan.preserveIntake,
+        intake_step: intake.step ?? null,
+        notify_staff: plan.notifyStaff,
+      },
     })
-    return handled("sms_small_talk", buildSmallTalkSms(who))
+    return handled(plan.replyType, body, {
+      preserveIntake: plan.preserveIntake,
+      intakeStep: intake.step ?? null,
+      notifyStaff: plan.notifyStaff,
+    })
   }
 
   // Unclear ask — one clarifying question; do not claim a handoff.
-  if (!shouldEscalateAssistantOther(kind)) {
+  if (!shouldEscalateAssistantOther(plan.kind)) {
+    await patchIntakeState(ctx.supabase, ctx.conversationId, {
+      clarify_menu_shown_at: new Date().toISOString(),
+    })
     await logOutcome(ctx, {
       eventType: "sms.clarify_asked",
       message: "Asked a clarifying question instead of starting a repair or escalating.",
+      extra: { notify_staff: false },
     })
-    return handled("sms_clarify", buildUnclearClarifySms(who))
+    return handled("sms_clarify", buildUnclearClarifySms(who), {
+      notifyStaff: false,
+      preserveIntake: true,
+    })
   }
 
   // Human request / legal / complaint — escalate and only then say we passed it on.
@@ -1887,7 +1964,7 @@ async function handleOther(
   void notifyLandlordNeedsAttention(ctx.supabase, {
     landlordId: ctx.landlordId,
     kind: "workflow_escalated",
-    headline: kind === "human_request"
+    headline: plan.kind === "human_request"
       ? "Resident asked to speak with someone"
       : "Resident raised a complaint or legal concern",
     detail: latest
@@ -1901,12 +1978,16 @@ async function handleOther(
   })
   await logOutcome(ctx, {
     eventType: "sms.routed_to_landlord",
-    message: kind === "human_request"
+    message: plan.kind === "human_request"
       ? "Passed the resident's request to speak with someone to the property team."
       : "Passed the resident's complaint or legal concern to the property team.",
     workflowRunId: runId,
+    extra: { notify_staff: true },
   })
-  return handled("sms_routed_to_landlord", buildEscalatedOtherSms(who, kind))
+  return handled("sms_routed_to_landlord", buildEscalatedOtherSms(who, plan.kind), {
+    notifyStaff: true,
+    preserveIntake: false,
+  })
 }
 
 function whichRequestPendingIntent(
@@ -1996,6 +2077,8 @@ export async function tryHandleInterpretedInbound(
       intake.awaiting_related_confirm === true ||
       (pending.activeIntake === true && isAffirmativeReply(ctx.inbound.body)),
   })
+
+  await logIntentRecognition(ctx, intake, interpretation)
 
   const residentId = ctx.identity.resident_id
   const profile = await loadResidentProfile(ctx.supabase, residentId)

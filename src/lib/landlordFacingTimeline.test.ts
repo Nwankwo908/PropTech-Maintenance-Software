@@ -20,6 +20,8 @@ describe('landlordFacingTimeline', () => {
   it('hides SMS transport receipts', () => {
     expect(isHiddenSmsTransportTimelineEventType('sms.delivered')).toBe(true)
     expect(isHiddenSmsTransportTimelineEventType('sms.message_received')).toBe(true)
+    expect(isHiddenSmsTransportTimelineEventType('sms.intent_recognized')).toBe(true)
+    expect(isHiddenSmsTransportTimelineEventType('sms.gate_miss')).toBe(true)
     expect(isHiddenSmsTransportTimelineEventType('sms.maintenance_cancelled')).toBe(false)
   })
 

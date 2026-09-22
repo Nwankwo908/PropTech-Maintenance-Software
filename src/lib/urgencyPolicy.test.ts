@@ -81,9 +81,34 @@ describe('resolveUrgencyPolicy', () => {
         text: 'My sink is clogged. No overflow or standing water',
       }).band,
     ).toBe('medium')
+    expect(
+      resolveUrgencyPolicy({
+        text: 'My sink is flooded. Water is not actively overflowing',
+      }).band,
+    ).toBe('medium')
     expect(resolveUrgencyPolicy({ text: 'The toilet is overflowing' }).band).toBe(
       'emergency',
     )
+  })
+
+  it('triages fixture-local flooding before treating it as an emergency', () => {
+    expect(resolveUrgencyPolicy({ text: 'My sink is flooded' }).band).toBe('medium')
+    expect(
+      resolveUrgencyPolicy({ text: 'Water is pouring from under my sink' }).band,
+    ).toBe('emergency')
+    expect(
+      resolveUrgencyPolicy({
+        text: 'My sink is flooded. Water is still actively flowing.',
+      }).band,
+    ).toBe('emergency')
+  })
+
+  it('keeps toilet overflow confirmed as same-day emergency', () => {
+    expect(
+      resolveUrgencyPolicy({
+        text: 'My toilet is clogged\nTenant update: Yes\nWater is actively overflowing or leaking',
+      }).band,
+    ).toBe('emergency')
   })
 
   it('schedules a single pest sighting in 7 days', () => {

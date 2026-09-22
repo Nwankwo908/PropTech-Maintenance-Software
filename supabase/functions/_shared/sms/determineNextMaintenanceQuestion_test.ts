@@ -65,6 +65,22 @@ Deno.test("active leak asks if water is still flowing", () => {
   assertMatch(next.question, /shutoff/i, "shutoff")
 })
 
+Deno.test("vague sink flooded asks flow/shutoff before photo or emergency", () => {
+  const planned = applyQuestionPlan({
+    issue_type: "plumbing",
+    vendor_trade: "plumbing",
+    primary_category: "plumbing",
+    initial_message: "My sink is flooded",
+    description: "My sink is flooded",
+    classification_confidence: 0.9,
+    confidence_band: "high",
+  })
+  assertEqual(planned.diagnostic_question_type, "plumbing_active_flow", "triage first")
+  assertMatch(planned.diagnostic_question ?? "", /still actively flowing/i, "flow")
+  assertMatch(planned.diagnostic_question ?? "", /shutoff/i, "shutoff")
+  assertEqual(planned.step === "photo", false, "not photo yet")
+})
+
 Deno.test("no hot water asks whole-home vs one fixture", () => {
   const next = determineNextMaintenanceQuestion({
     issue_type: "plumbing",
@@ -354,9 +370,10 @@ Deno.test("confirmation is tenant-facing and omits priority chips", () => {
   const sms = buildConfirmationSummary({
     issue_type: "plumbing",
     vendor_trade: "plumbing",
+    primary_category: "plumbing",
     initial_message: "My sink is clogged.",
     description: "My sink is clogged.",
-    safety_concerns: "No overflow or standing water",
+    safety_concerns: "Water is not actively overflowing",
     photo_urls: ["https://example.com/p.jpg"],
     urgency: "urgent",
     preferred_contact_method: "text",
@@ -364,8 +381,10 @@ Deno.test("confirmation is tenant-facing and omits priority chips", () => {
   assertMatch(sms, /Got it\. Here's the request:/i, "header")
   assertMatch(sms, /clogged/i, "headline")
   assertMatch(sms, /[“"].+[”"]/u, "quoted headline")
-  assertMatch(sms, /No overflow or standing water/i, "fact")
+  assertMatch(sms, /Water is not actively overflowing/i, "fact")
   assertMatch(sms, /Photo attached/i, "photo")
+  assertMatch(sms, /Until help arrives/i, "handling tip")
+  assertMatch(sms, /flushing|drain cleaner|fixture/i, "plumbing tip")
   assertEqual(/Priority:/i.test(sms), false, "no priority")
   assertEqual(/Updates via/i.test(sms), false, "no channel ask")
   assertMatch(sms, /Reply YES to submit, or reply with any changes/i, "cta")
@@ -384,5 +403,6 @@ Deno.test("door confirmation quotes the request instead of speaking in first per
   assertMatch(sms, /Got it\. Here's the request:/i, "header")
   assertMatch(sms, /[“"]My door broke\.[”"]/u, "quoted")
   assertEqual(/^My door broke$/m.test(sms), false, "not bare first person")
+  assertMatch(sms, /Until help arrives/i, "handling tip")
   assertMatch(sms, /Reply YES to submit, or reply with any changes/i, "cta")
 })

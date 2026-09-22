@@ -1,3 +1,13 @@
+import {
+  categoryLabelForSms,
+  resolveCategoryHandlingTip,
+} from "../../../../shared/maintenance/categoryHandlingTips.ts"
+import {
+  inferTradeFromText,
+  matchDeterministicRules,
+  matchesWaterOutage,
+  matchesWholeHomeWaterOutage,
+} from "../../../../shared/maintenance/deterministicRules.ts"
 import { resolvePhotoRequest } from "../../../../shared/maintenance/photoRequestPolicy.ts"
 import type { PrimaryCategory } from "../../../../shared/maintenance/primaryCategories.ts"
 import {
@@ -119,10 +129,26 @@ export type SmsIntakeState = {
   pending_related_text?: string
   /** Waiting for YES/NO: "Are you asking about your rent balance?" */
   awaiting_rent_balance_clarify?: boolean
+  /**
+   * When the repair / rent / lease menu was last sent. If the next text turns
+   * out to be a repair, that menu was a miss and we log it (`sms.gate_miss`).
+   */
+  clarify_menu_shown_at?: string
   /** Off-topic SMS parked until the resident replies YES or NO to welcome. */
   pending_onboarding_request_body?: string
   pending_onboarding_request_media?: string[]
   pending_onboarding_request_at?: string
+}
+
+function tipInputFromIntakeState(state: SmsIntakeState) {
+  return {
+    primaryCategory: state.primary_category,
+    issueType: state.issue_type,
+    vendorTrade: state.vendor_trade,
+    text: [state.initial_message, state.description].filter(Boolean).join(" "),
+    diagnosticFacts: state.diagnostic_facts,
+    safetyConcerns: state.safety_concerns,
+  }
 }
 
 /** Same clarifying question may be sent at most this many times without a valid answer. */
@@ -427,52 +453,18 @@ export function parseIssueType(input: string): IssueType | null {
   return null
 }
 
+/**
+ * Issue type for SMS routing.
+ *
+ * Do not add keywords here. This delegates to the shared deterministic rules
+ * so the inbound gate and the intake classifier can never drift apart —
+ * new vocabulary belongs in `shared/maintenance/deterministicRules.ts`.
+ */
 export function inferIssueTypeFromText(text: string): IssueType | null {
-  // Keep aligned with maintenance_classification/deterministicRules.ts
-  const d = text.toLowerCase()
-  if (/\b(leak|leaking|leaky|drip|dripping|flood(?:ed|ing)?|water damage)\b/.test(d)) {
-    return "leak"
-  }
-  if (
-    /\b(plumb(?:er|ing)?|pipe|drain|toilet|faucet|tap|sink|basin|clog|overflow|sewage|sewer)\b/
-      .test(d)
-  ) {
-    return "plumbing"
-  }
-  if (
-    /\b(electric(?:ian|al)?|outlet|breaker|wiring|light|power|spark)\b/.test(d)
-  ) {
-    return "electrical"
-  }
-  if (/\b(fridge|refrigerator|washer|dryer|oven|dishwasher|microwave|appliance)\b/.test(d)) {
-    return "appliance"
-  }
-  if (
-    /\b(hvac|heat(?:er|ing)?|cool(?:ing)?|furnace|thermostat|no heat|air ?cond(?:ition(?:er|ing))?|\bac\b)\b/
-      .test(d)
-  ) {
-    return "HVAC"
-  }
-  // Keep aligned with shared/maintenance/deterministicRules.ts PEST_RE.
-  if (
-    /\b(pest(?:s| control)?|roach(?:es)?|cockroach(?:es)?|mouse|mice|rat|rats|rodent(?:s)?|vermin|bug|bugs|insect|ant(?:s)?|spider(?:s)?|termite|infestation|droppings|bee|bees|wasp|hornet|hive|exterminator|extermination|(?:bug|insect|flea|bed\s*bug|spider)s?\s+bites)\b/
-      .test(d) ||
-    /\bspray(?:ing)?\s+(?:the\s+)?(?:property|unit|apartment|building|home|house)\b/
-      .test(d)
-  ) {
-    return "pest"
-  }
-  if (
-    /\b(lock|key|deadbolt|door stuck|locked out|door (?:is |was )?(?:damaged|broken|jammed|won'?t (?:close|open|lock|shut)|off (?:the )?hinges?))\b/
-      .test(d)
-  ) {
-    return "lock"
-  }
-  // Bare "door" + damage/broken language (order-flexible).
-  if (/\bdoors?\b/.test(d) && /\b(damaged|broken|jammed|won'?t (?:close|open|lock|shut))\b/.test(d)) {
-    return "lock"
-  }
-  return null
+  const top = matchDeterministicRules(text)[0]
+  if (top) return pipelineTradeToIssueType(top.issueType, top.trade)
+  const trade = inferTradeFromText(text)
+  return trade ? pipelineTradeToIssueType(null, trade) : null
 }
 
 export function detectEmergencySignals(text: string): boolean {
@@ -707,6 +699,10 @@ export function issueSummaryBullet(state: SmsIntakeState): string {
   if (/\btoilet\b/.test(all) && /\bclog/.test(all)) {
     return `${place}toilet is clogged`.replace(/^./, (c) => c.toUpperCase())
   }
+  // A later "no water anywhere" answer outranks the opening "no hot water".
+  if (matchesWaterOutage(all)) {
+    return matchesWholeHomeWaterOutage(all) ? "No water in the home" : "No water"
+  }
   if (/\bno hot water/.test(all)) return "No hot water"
   if (/\b(ac|air condition)/.test(all) && /\bwarm|not cooling|running/.test(all)) {
     return "Air conditioning is running but not cooling"
@@ -880,15 +876,28 @@ export function buildConfirmationSummary(state: SmsIntakeState): string {
     ? "Got it. Here are the requests:"
     : "Got it. Here's the request:"
   const headline = pending.length >= 2 ? null : quoteRequest(issueSummaryBullet(state))
+  const handlingTip = resolveCategoryHandlingTip(tipInputFromIntakeState(state))
 
   return [
     header,
     "",
     headline,
     ...bullets,
+    handlingTip ? "" : null,
+    handlingTip,
     "",
     "Reply YES to submit, or reply with any changes.",
   ].filter((line) => line != null).join("\n")
+}
+
+/** Shared tip resolver for submit / urgency SMS builders. */
+export function intakeCategoryHandlingTip(state: SmsIntakeState): string | null {
+  return resolveCategoryHandlingTip(tipInputFromIntakeState(state))
+}
+
+/** Short category word for SMS (“plumbing”, “HVAC”). */
+export function intakeCategoryLabel(state: SmsIntakeState): string {
+  return categoryLabelForSms(tipInputFromIntakeState(state))
 }
 
 export function intakeQuestionForStep(

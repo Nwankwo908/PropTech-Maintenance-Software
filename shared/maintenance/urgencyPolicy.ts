@@ -150,13 +150,32 @@ export function resolveUrgencyPolicy(input: UrgencyPolicyInput): UrgencyPolicyRe
   }
 
   const deniedOverflow =
+    /\bno overflow\b/.test(hay) ||
+    /\bnot overflowing\b/.test(hay) ||
+    /\bno standing water\b/.test(hay) ||
     /\b(?:no|not|without)\s+(?:an?\s+)?(?:active\s+)?overflow(?:ing)?\b/.test(hay) ||
-    /\bnot overflowing\b/.test(hay)
+    /\bwater is not actively overflowing\b/.test(hay)
   const deniedFlood =
-    /\b(?:no|not|without)\s+(?:active\s+)?(?:flooding|flooded|gushing|pouring)\b/.test(hay)
+    /\bno overflow\b/.test(hay) ||
+    /\bno standing water\b/.test(hay) ||
+    /\bwater is not actively overflowing\b/.test(hay) ||
+    /\b(?:no|not|without)\s+(?:active\s+)?(?:flooding|flooded|gushing|pouring)\b/.test(hay) ||
+    /\bnot\s+(?:actively\s+)?(?:leaking|overflowing|flooding|flooded)\b/.test(hay)
+
+  // "My sink is flooded" is often standing water / a clog — triage first.
+  // Clear overflowing / uncontrolled water stays emergency.
+  const fixtureLocalFlood =
+    /\b(sink|tub|bathtub|basin)\b/.test(hay) &&
+    /\b(flooded|flooding)\b/.test(hay) &&
+    !/\b(gushing|pouring|water\s+everywhere|burst(?:ing)?(?:\s+pipe)?|ceiling|whole\s+(?:unit|apartment|floor)|actively\s+(?:leaking|flowing|overflowing))\b/
+      .test(hay) &&
+    !deniedFlood &&
+    !deniedOverflow
 
   if (
     !deniedFlood &&
+    !deniedOverflow &&
+    !fixtureLocalFlood &&
     (emergencyType === 'flood' ||
       /\b(flooding|flooded|gushing|pouring|water\s+everywhere|burst(?:ing)?(?:\s+pipe)?)\b/.test(hay))
   ) {
@@ -165,6 +184,7 @@ export function resolveUrgencyPolicy(input: UrgencyPolicyInput): UrgencyPolicyRe
 
   if (
     !deniedOverflow &&
+    !deniedFlood &&
     /\boverflow(?:ing)?\b/.test(hay) &&
     /\b(toilet|tub|bathtub|sink)\b/.test(hay)
   ) {

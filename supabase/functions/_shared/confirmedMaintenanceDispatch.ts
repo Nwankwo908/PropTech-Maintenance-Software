@@ -40,6 +40,7 @@ export function confirmedTicketNeedsNearbySearch(result: AssignVendorResult): bo
   if (result.assigned && result.vendorId) return false
   if (result.skipReason === "ticket_missing") return false
   if (result.skipReason === "awaiting_landlord_choice") return false
+  if (result.skipReason === "awaiting_vendor_probe") return false
   return true
 }
 
@@ -90,7 +91,8 @@ export async function dispatchConfirmedMaintenanceTicket(
     })
   }
 
-  if (assign.skipReason === "awaiting_landlord_choice") {
+  if (assign.skipReason === "awaiting_landlord_choice" ||
+    assign.skipReason === "awaiting_vendor_probe") {
     return {
       kind: "preferred_selection_underway",
       vendorId: null,

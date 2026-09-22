@@ -68,16 +68,17 @@ const EXISTING_WORK_REF =
 const PROBLEM_REPORT =
   /\b(is|are|was|were|just|still)?\s*(broken|damaged|leaking|overflowing|clogged|sparking|sparks|not\s+working|isn'?t\s+working|won'?t\s+(turn|start|cool|heat|close|open|lock|shut)|stopped\s+working|flooding|on\s+fire)\b|\b(there'?s|there is|i have|we have|my .+ (is|are|just))\b/i
 
-/** Vague “I need a repair” with no object yet — still start intake, don’t hand off. */
-const BARE_REPAIR_REQUEST =
-  /\b((i |we )?(need|want|requesting) (a |some )?(repair|maintenance|fix)|need (it |something )?(fixed|repaired)|something (needs?|is) (a )?fix|please (help|fix|send).{0,40}\brepair)\b/i
+/** Vague “I need a repair” / clarify-menu “A repair” — still start intake, don’t hand off. */
+export {
+  looksLikeBareRepairRequest,
+  looksLikeClarifyMenuRepairEcho,
+  isVagueTicketDescription,
+  resolveIssueSeedFromRecentInbounds,
+} from "./clarifyMenuIntakeSeed.ts"
+import { looksLikeBareRepairRequest } from "./clarifyMenuIntakeSeed.ts"
 
 const NEW_LOCATION_HINT =
   /\b(now|also|another|kitchen|bathroom|bedroom|living\s*room|basement|hallway|closet)\b/i
-
-export function looksLikeBareRepairRequest(body: string): boolean {
-  return BARE_REPAIR_REQUEST.test(body.trim())
-}
 
 function ticketIssueType(ticket: OpenRequestSummary): IssueType | null {
   return inferIssueTypeFromText(

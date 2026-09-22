@@ -36,6 +36,10 @@ import { tryHandleTenantActivationHold } from "./tenantActivationPending.ts"
 import { relayInboundProxiedMessage } from "./proxiedMessaging.ts"
 import { tryHandleVendorRescheduleInbound } from "./vendorRescheduleInbound.ts"
 import { tryHandleLandlordVendorChoiceInbound } from "../vendorLandlordChoice.ts"
+import {
+  canHandleVendorAvailabilityProbe,
+  tryHandleVendorAvailabilityProbeInbound,
+} from "../vendorAvailabilityProbe.ts"
 import type {
   InboundSmsHandler,
   InboundSmsHandlerContext,
@@ -145,6 +149,44 @@ async function tryLandlordVendorChoiceHandler(
     reply: {
       body: result.replyBody,
       source: "landlord_vendor_choice",
+      skipGenericFallback: true,
+    },
+  }
+}
+
+async function tryVendorAvailabilityProbeHandler(
+  ctx: InboundSmsHandlerContext,
+): Promise<InboundSmsHandlerResult> {
+  const { data: conv } = await ctx.supabase
+    .from("sms_conversations")
+    .select("intake_state")
+    .eq("id", ctx.conversationId)
+    .maybeSingle()
+  if (
+    !canHandleVendorAvailabilityProbe({
+      identityType: ctx.identity.identity_type,
+      intakeState: conv?.intake_state,
+    })
+  ) {
+    return { handled: false }
+  }
+
+  const result = await tryHandleVendorAvailabilityProbeInbound(ctx.supabase, {
+    landlordId: ctx.landlordId,
+    conversationId: ctx.conversationId,
+    messageId: ctx.messageId,
+    body: ctx.inbound.body,
+    identityType: ctx.identity.identity_type,
+    vendorId: ctx.identity.vendor_id,
+  })
+  if (!result.handled) return { handled: false }
+
+  return {
+    handled: true,
+    workflowRoute: "vendor_availability_probe",
+    reply: {
+      body: result.replyBody,
+      source: "vendor_availability_probe",
       skipGenericFallback: true,
     },
   }
@@ -387,6 +429,8 @@ export const INBOUND_SMS_HANDLER_PENDING_GATES: Readonly<
     "users.activation_status === waiting + YES or NO",
   tenant_activation_hold:
     "users.activation_status === waiting + any other inbound (park request, remind YES/NO)",
+  vendor_availability_probe:
+    "intake_state.awaiting_vendor_probe on vendor thread (slot / NO before landlord assigns)",
   vendor_reschedule:
     "Reschedule intent (shouldAttemptVendorRescheduleInbound) → dispatch vendor_job_response workflow",
   vendor_capacity: "Vendor identity + PAUSE / RESUME / JOBS MAX command",
@@ -411,6 +455,11 @@ export const INBOUND_SMS_HANDLERS: readonly InboundSmsHandler[] = [
     id: "tenant_activation_hold",
     priority: 32,
     try: tryTenantActivationHoldHandler,
+  },
+  {
+    id: "vendor_availability_probe",
+    priority: 38,
+    try: tryVendorAvailabilityProbeHandler,
   },
   { id: "vendor_reschedule", priority: 40, try: tryVendorRescheduleHandler },
   { id: "vendor_capacity", priority: 50, try: tryVendorCapacityHandler },

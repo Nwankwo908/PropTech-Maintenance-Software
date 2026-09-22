@@ -148,19 +148,29 @@ Deno.test("beginMultiIssueSharedIntake enters wizard, keeps pending issues", () 
 
 Deno.test("buildRequestSubmittedSms does not ask the tenant to call the manager", () => {
   const noVendor = buildRequestSubmittedSms("abc12345-uuid", false)
-  assertMatch(noVendor, /I'll keep you updated here by text/i)
+  assertMatch(noVendor, /We've logged a maintenance request/i)
+  assertMatch(noVendor, /vendor will be in touch to schedule/i)
   assertEquals(/property manager/i.test(noVendor), false)
   assertEquals(/You're all set/i.test(noVendor), false)
 
-  const named = buildRequestSubmittedSms("abc12345-uuid", true, "Kendo Properties")
-  assertMatch(named, /Kendo Properties/)
+  const named = buildRequestSubmittedSms("abc12345-uuid", true, "Kendo Properties", {
+    categoryLabel: "plumbing",
+    handlingTip:
+      "Until help arrives: if you can safely reach the shutoff valve, turn it off.",
+  })
+  assertMatch(named, /We've logged a plumbing request/i)
+  assertMatch(named, /shutoff valve/i)
   assertMatch(named, /Request ABC12345/)
 
   assertEquals(/property manager/i.test(INTAKE_SUBMIT_FAILED_SMS), false)
 })
 
-Deno.test("buildMultiIssueSubmittedSms follows up with the team when no vendor", () => {
-  const body = buildMultiIssueSubmittedSms(["aaaaaaaa", "bbbbbbbb"], false)
-  assertMatch(body, /I'll keep you updated here by text/i)
+Deno.test("buildMultiIssueSubmittedSms follows up with schedule copy", () => {
+  const body = buildMultiIssueSubmittedSms(["aaaaaaaa", "bbbbbbbb"], false, null, {
+    handlingTip: "Until help arrives: avoid using the affected area.",
+  })
+  assertMatch(body, /We've logged 2 maintenance requests/i)
+  assertMatch(body, /vendor will be in touch to schedule/i)
+  assertMatch(body, /Until help arrives/i)
   assertEquals(/You're all set/i.test(body), false)
 })

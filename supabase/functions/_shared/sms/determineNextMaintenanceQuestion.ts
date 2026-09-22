@@ -6,13 +6,17 @@ import {
   applyPhotoRequestPolicy,
   computeIntakeSeverity,
   extractRoomFromText,
+  inferIssueTypeFromText,
   recommendUrgency,
   resolveRoomLabel,
   shouldRequestIntakePhoto,
   type IntakeStep,
   type SmsIntakeState,
 } from "./residentIntakeTypes.ts"
+import { isVagueTicketDescription, looksLikeBareRepairRequest } from "./clarifyMenuIntakeSeed.ts"
+import { recognizeInboundIntentSync } from "./recognizeInboundIntent.ts"
 import { parseDurationHours } from "../../../../shared/maintenance/urgencyPolicy.ts"
+import { matchesWaterOutage } from "../../../../shared/maintenance/deterministicRules.ts"
 
 export type MaintenanceQuestionType =
   | "classification_clarification"
@@ -21,6 +25,7 @@ export type MaintenanceQuestionType =
   | "plumbing_overflow"
   | "plumbing_active_flow"
   | "plumbing_hot_water_scope"
+  | "plumbing_water_outage_scope"
   | "toilet_overflow"
   | "toilet_only"
   | "hvac_behavior"
@@ -35,6 +40,7 @@ export type MaintenanceQuestionType =
   | "door_safety"
   | "lock_secure"
   | "general_clarify"
+  | "symptom_clarify"
   | "duration_material"
   | "photo"
   | "unit_entry"
@@ -318,6 +324,35 @@ function photoQuestion(state: SmsIntakeState, hay: string): NextMaintenanceQuest
 export function determineNextMaintenanceQuestion(
   state: SmsIntakeState,
 ): NextMaintenanceQuestion {
+  return withInterpretationConfirmation(
+    state,
+    resolveNextMaintenanceQuestion(state),
+  )
+}
+
+/**
+ * When the recognizer was only half sure what the resident meant, say the
+ * reading out loud in the first question rather than asking what they need.
+ */
+function withInterpretationConfirmation(
+  state: SmsIntakeState,
+  next: NextMaintenanceQuestion,
+): NextMaintenanceQuestion {
+  if (!next.shouldAsk) return next
+  if ((state.asked_question_types?.length ?? 0) > 0) return next
+  if (next.questionType === "symptom_clarify") return next
+
+  const seed = (state.description ?? state.initial_message ?? "").trim()
+  if (!seed) return next
+
+  const confirmation = recognizeInboundIntentSync(seed).confirmation
+  if (!confirmation) return next
+  return { ...next, question: `${confirmation}\n\n${next.question}` }
+}
+
+function resolveNextMaintenanceQuestion(
+  state: SmsIntakeState,
+): NextMaintenanceQuestion {
   const hay = haystack(state)
   const room = resolveRoomLabel(state)
   const budget = questionBudget(state, hay)
@@ -329,6 +364,26 @@ export function determineNextMaintenanceQuestion(
       questionType: "classification_clarification",
       question: state.clarification_question.trim(),
       step: "classification_clarification",
+    }
+  }
+
+  // Never confirm a clarify-menu echo (“A repair”) or other vague seed as the ticket.
+  const vagueSeed =
+    isVagueTicketDescription(state.initial_message ?? "") ||
+    isVagueTicketDescription(state.description ?? "") ||
+    (
+      !inferIssueTypeFromText(
+        [state.initial_message, state.description].filter(Boolean).join(" "),
+      ) &&
+      looksLikeBareRepairRequest(state.initial_message ?? "")
+    )
+  if (vagueSeed && !asked(state, "symptom_clarify")) {
+    return {
+      shouldAsk: true,
+      questionType: "symptom_clarify",
+      question:
+        "Got it — what needs to be fixed? For example: no hot water, a leak, no heat, or an outlet issue.",
+      step: "diagnostic",
     }
   }
 
@@ -366,6 +421,23 @@ export function determineNextMaintenanceQuestion(
     if (q) return q
   }
 
+  // Vague fixture flooding ("My sink is flooded") — confirm active flow + shutoff
+  // before photo / emergency escalation.
+  if (
+    isPlumbing(state, hay) &&
+    /\b(sink|tub|bathtub|basin)\b/.test(hay) &&
+    /\b(flood(?:ed|ing))\b/.test(hay) &&
+    knownActiveFlow(state, hay) == null &&
+    knownOverflow(state, hay) !== false &&
+    !/\bno active leak\b/.test(hay)
+  ) {
+    const q = tryAsk(
+      "plumbing_active_flow",
+      "Is the water still actively flowing? If you can safely reach the shutoff valve under the sink, turn it clockwise to stop the water. If you can't safely do that, move away from the area.",
+    )
+    if (q) return q
+  }
+
   if (isPlumbing(state, hay) && /\btoilet\b/.test(hay) && /\bclog|backup|won'?t (?:flush|go down)\b/.test(hay)) {
     if (knownOverflow(state, hay) == null) {
       const q = tryAsk("toilet_overflow", "Got it. Is the toilet overflowing right now?")
@@ -390,7 +462,27 @@ export function determineNextMaintenanceQuestion(
     if (q) return q
   }
 
-  if (isPlumbing(state, hay) && /\bno hot water|no heat(?:ed)? water\b/.test(hay)) {
+  // No water at all is its own problem — never ask hot-water questions for it.
+  if (isPlumbing(state, hay) && matchesWaterOutage(hay)) {
+    const q = tryAsk(
+      "plumbing_water_outage_scope",
+      "Is the water out everywhere in the home, or just at one sink or shower?",
+    )
+    if (q) return q
+    if (!state.first_noticed?.trim() && parseDurationHours(hay) == null) {
+      const duration = tryAsk(
+        "duration_material",
+        "Has the water been out for more than a day, or did this just start?",
+      )
+      if (duration) return duration
+    }
+  }
+
+  if (
+    isPlumbing(state, hay) &&
+    !matchesWaterOutage(hay) &&
+    /\bno hot water|no heat(?:ed)? water\b/.test(hay)
+  ) {
     const q = tryAsk(
       "plumbing_hot_water_scope",
       "Is there no hot water anywhere in the home, or only at one faucet or shower?",
@@ -614,6 +706,17 @@ export function applyQuestionPlan(state: SmsIntakeState): SmsIntakeState {
   }
   const next = determineNextMaintenanceQuestion(prepared)
   if (!next.shouldAsk) {
+    // Safety net: never land on confirm with a clarify-menu echo as the request.
+    if (isVagueTicketDescription([prepared.initial_message, prepared.description].filter(Boolean).join(" "))) {
+      return {
+        ...prepared,
+        step: "diagnostic",
+        diagnostic_question_type: "symptom_clarify",
+        diagnostic_question:
+          "Got it — what needs to be fixed? For example: no hot water, a leak, no heat, or an outlet issue.",
+        asked_question_types: prepared.asked_question_types,
+      }
+    }
     return {
       ...prepared,
       step: "awaiting_confirm",
@@ -647,8 +750,8 @@ export function applyDiagnosticAnswer(
   let vendorTrade = state.vendor_trade
 
   if (type === "plumbing_overflow" || type === "toilet_overflow" || type === "plumbing_active_flow") {
-    if (isNo(answer)) safety = "No overflow or standing water"
-    if (isYes(answer)) safety = "Water is overflowing or actively leaking"
+    if (isNo(answer)) safety = "Water is not actively overflowing"
+    if (isYes(answer)) safety = "Water is actively overflowing or leaking"
   }
   if (type === "lock_secure") {
     if (isNo(answer)) safety = "Unable to secure the home"
@@ -689,6 +792,51 @@ export function applyDiagnosticAnswer(
   }
   if (type === "appliance_symptom" && /\b(leak|pour|water|floor)\b/i.test(answer)) {
     safety = "Appliance leaking water"
+  }
+
+  // Replace clarify-menu / bare-repair seed with the real symptom.
+  if (type === "symptom_clarify") {
+    const inferred = inferIssueTypeFromText(answer)
+    const nextIssue = inferred ?? issueType
+    const nextTrade = inferred === "plumbing"
+      ? "plumbing"
+      : inferred === "HVAC"
+      ? "hvac"
+      : inferred === "electrical"
+      ? "electrical"
+      : inferred === "leak"
+      ? "plumbing"
+      : inferred === "pest"
+      ? "pest_control"
+      : inferred === "lock"
+      ? "locksmith"
+      : inferred === "appliance"
+      ? "appliance_repair"
+      : vendorTrade
+    return {
+      ...state,
+      asked_question_types: askedTypes,
+      diagnostic_facts: facts,
+      safety_concerns: safety,
+      room_or_area: room,
+      first_noticed: firstNoticed,
+      issue_type: nextIssue,
+      vendor_trade: nextTrade,
+      primary_category: inferred === "HVAC"
+        ? "hvac"
+        : inferred === "plumbing" || inferred === "leak"
+        ? "plumbing"
+        : inferred === "electrical"
+        ? "electrical"
+        : inferred === "pest"
+        ? "pest"
+        : inferred === "appliance"
+        ? "appliance"
+        : state.primary_category,
+      initial_message: answer,
+      description: answer,
+      sanitized_description: answer,
+    }
   }
 
   const description = [state.description?.trim(), `Tenant update: ${answer}`]

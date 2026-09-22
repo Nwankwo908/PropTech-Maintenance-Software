@@ -66,9 +66,11 @@ Deno.test("infers pest from exterminator / spray-the-property wording", () => {
   )
 })
 
-Deno.test("infers lock from door damage wording", () => {
-  assertEqual(inferIssueTypeFromText("My door is damaged"), "lock", "door damaged")
-  assertEqual(inferIssueTypeFromText("The door won't close"), "lock", "door won't close")
+// Door damage is carpentry work; only keys / lockouts belong to a locksmith.
+Deno.test("infers a repair from door damage wording", () => {
+  assertEqual(inferIssueTypeFromText("My door is damaged"), "general", "door damaged")
+  assertEqual(inferIssueTypeFromText("The door won't close"), "general", "door won't close")
+  assertEqual(inferIssueTypeFromText("I'm locked out of my apartment"), "lock", "lockout")
 })
 
 Deno.test("first_noticed prompt uses clean room and flooding wording", () => {
