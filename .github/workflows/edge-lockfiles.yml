@@ -1,0 +1,14 @@
+name: Edge function lockfiles
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  lockfile-version:
+    name: Supabase bundler can read every deno.lock
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: scripts/check-edge-lockfiles.sh
