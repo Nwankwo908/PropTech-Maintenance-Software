@@ -16,7 +16,9 @@ import {
   resolveRoomLabel,
   resolveUrgencyReply,
   sanitizeIntakeState,
+  shouldSendUrgencyAlert,
   urgencyQuestion,
+  type SmsIntakeState,
 } from "./residentIntakeTypes.ts"
 
 function assertEqual(actual: unknown, expected: unknown, label: string) {
@@ -262,5 +264,26 @@ Deno.test("photo step is asked for HVAC, faucets, and pest", () => {
     }),
     "photo",
     "pest asks",
+  )
+})
+
+Deno.test("the property team is alerted once per intake", () => {
+  // Found live: a water outage stays in the text we re-read each turn, so
+  // the resident answering three questions texted the team three times.
+  const state: SmsIntakeState = {}
+  assertEqual(shouldSendUrgencyAlert(state, "same_day"), true, "first alert sends")
+
+  state.urgency_alert_tier = "same_day"
+  assertEqual(shouldSendUrgencyAlert(state, "same_day"), false, "no repeat alert")
+
+  // An escalation to life safety still gets through.
+  assertEqual(shouldSendUrgencyAlert(state, "life_safety"), true, "escalation sends")
+
+  state.urgency_alert_tier = "life_safety"
+  assertEqual(shouldSendUrgencyAlert(state, "life_safety"), false, "no repeat 911")
+  assertEqual(
+    shouldSendUrgencyAlert(state, "same_day"),
+    false,
+    "never step back down to same-day copy",
   )
 })

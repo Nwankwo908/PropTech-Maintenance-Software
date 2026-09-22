@@ -68,8 +68,10 @@ import {
   pipelineTradeToIssueType,
   recommendUrgency,
   sanitizeIntakeState,
+  shouldSendUrgencyAlert,
   type IntakeStep,
   type SmsIntakeState,
+  type UrgencyAlertTier,
 } from "./residentIntakeTypes.ts"
 import { buildEmergencySafetySms, buildSameDayUrgencySms } from "./tenantAssistantReply.ts"
 
@@ -575,6 +577,17 @@ async function prependEmergencySafetyIfNeeded(
     return { outbound: replyHint, emergency: false }
   }
 
+  const tier: UrgencyAlertTier = urgencyPolicy.leaveImmediately
+    ? "life_safety"
+    : "same_day"
+  // The problem stays in the text we re-read each turn, so alert once per
+  // intake. Otherwise every answer repeats the banner and re-texts the team.
+  if (!shouldSendUrgencyAlert(state, tier)) {
+    return { outbound: replyHint, emergency: true }
+  }
+  state.urgency_alert_tier = tier
+  state.urgency_alert_sent_at = new Date().toISOString()
+
   const { data: residentRow } = residentId
     ? await supabase
       .from("users")
@@ -610,7 +623,10 @@ async function prependEmergencySafetyIfNeeded(
     detail: (state.description || state.initial_message || urgencyPolicy.reason)
       .trim()
       .slice(0, 200),
-    idempotencyKey: `sms-emergency:${ctx.conversationId}:${ctx.messageId}`,
+    // Keyed to the intake and tier, not the message, so answering more
+    // questions cannot re-alert even if the state write is lost.
+    idempotencyKey:
+      `sms-emergency:${ctx.conversationId}:${state.draft_ticket_id ?? "intake"}:${tier}`,
     maintenanceRequestId: state.draft_ticket_id ?? ctx.maintenanceRequestId ?? null,
     unitId: ctx.identity.unit_id ?? null,
     residentId,

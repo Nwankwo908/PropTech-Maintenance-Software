@@ -54,6 +54,21 @@ export type PendingIntakeIssue = {
   draft_ticket_id?: string
 }
 
+/** Life safety means "leave now"; same day is habitability, with no 911 copy. */
+export type UrgencyAlertTier = "same_day" | "life_safety"
+
+/**
+ * True when the property team still needs this alert. One alert per intake,
+ * and only an escalation to life safety may alert a second time.
+ */
+export function shouldSendUrgencyAlert(
+  state: SmsIntakeState,
+  tier: UrgencyAlertTier,
+): boolean {
+  if (state.urgency_alert_tier === "life_safety") return false
+  return state.urgency_alert_tier !== tier
+}
+
 export type SmsIntakeState = {
   step?: IntakeStep
   issue_type?: string
@@ -134,6 +149,13 @@ export type SmsIntakeState = {
    * out to be a repair, that menu was a miss and we log it (`sms.gate_miss`).
    */
   clarify_menu_shown_at?: string
+  /**
+   * Which urgency alert the property team already received for this intake.
+   * An outage stays in the text we re-read each turn, so without this the
+   * team gets a fresh alert for every answer the resident sends.
+   */
+  urgency_alert_tier?: UrgencyAlertTier
+  urgency_alert_sent_at?: string
   /** Off-topic SMS parked until the resident replies YES or NO to welcome. */
   pending_onboarding_request_body?: string
   pending_onboarding_request_media?: string[]
