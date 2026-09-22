@@ -64,7 +64,11 @@ import {
   looksLikeMaintenanceRelatedMessage,
 } from "./maintenanceTicketContext.ts"
 import { looksLikeBareRepairRequest } from "./resolveMaintenanceWorkIntent.ts"
-import { isRepairRecognition } from "./recognizeInboundIntent.ts"
+import {
+  isRepairRecognition,
+  recognizeInboundIntentSync,
+  upgradeUnmatchedRecognition,
+} from "./recognizeInboundIntent.ts"
 
 const TICKET_LOOKUP_STATUSES = [
   "unassigned",
@@ -2409,14 +2413,43 @@ export async function tryHandleInterpretedInbound(
         residentId,
         profile,
       )
-    case "other":
+    case "other": {
       if (shouldStartMaintenanceInsteadOfHandoff(ctx.inbound.body)) {
         return {
           handled: false,
           interpretation: markAsNewMaintenanceIssue(interpretation),
         }
       }
+      // The rules could not place this text. Give the phrase library a look
+      // before the clarify menu, so a new way of saying "no water" is caught
+      // by similarity. Whatever the library cannot place still reaches
+      // intake, which runs its own classification.
+      const fromLibrary = await upgradeUnmatchedRecognition(
+        ctx.inbound.body,
+        interpretation.recognition ??
+          recognizeInboundIntentSync(ctx.inbound.body, {
+            activeIntake: pending.activeIntake,
+          }),
+      )
+      if (isRepairRecognition(fromLibrary)) {
+        await logOutcome(ctx, {
+          eventType: "sms.intent_recognized",
+          message: "Read the resident's text as a repair report.",
+          extra: {
+            recognizer_intent: fromLibrary.intent,
+            recognizer_layer: fromLibrary.layer,
+            recognizer_confidence: fromLibrary.confidence,
+            issue_summary: fromLibrary.issueSummary,
+            instead_of: "clarify_menu",
+          },
+        })
+        return {
+          handled: false,
+          interpretation: markAsNewMaintenanceIssue(interpretation),
+        }
+      }
       return handleOther(ctx, intake, pending.activeIntake, profile?.full_name ?? null)
+    }
     default:
       return { handled: false, interpretation }
   }

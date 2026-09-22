@@ -6,7 +6,9 @@ import {
   isVagueTicketDescription,
   looksLikeBareRepairRequest,
   looksLikeClarifyMenuRepairEcho,
+  resolveIssueSeed,
   resolveIssueSeedFromRecentInbounds,
+  SEED_LOOKBACK_MINUTES,
 } from "./clarifyMenuIntakeSeed.ts"
 import { inferIssueTypeFromText } from "./residentIntakeTypes.ts"
 import {
@@ -15,7 +17,11 @@ import {
 } from "../../../../shared/maintenance/deterministicRules.ts"
 import { applyQuestionPlan, applyDiagnosticAnswer } from "./determineNextMaintenanceQuestion.ts"
 import { heuristicInterpretInbound } from "./inboundInterpretation.ts"
-import { buildConfirmationSummary } from "./residentIntakeTypes.ts"
+import {
+  buildConfirmationSummary,
+  headlineUpdateLine,
+  issueSummaryBullet,
+} from "./residentIntakeTypes.ts"
 
 Deno.test("no hot water is plumbing via inferIssueTypeFromText", () => {
   assertEquals(inferIssueTypeFromText("No hot water"), "plumbing")
@@ -198,4 +204,83 @@ Deno.test("reporting the absence of water damage is not an outage", () => {
   assertEquals(matchesWaterOutage("no water stains"), false)
   assertEquals(matchesWaterOutage("no water pressure"), false)
   assertEquals(matchesWaterOutage("no water in the home"), true)
+})
+
+Deno.test("a changed headline is stated back to the resident", () => {
+  // Her real correction: opened on hot water, then "no water anywhere".
+  const before = issueSummaryBullet({
+    initial_message: "I have no hot water water",
+    description: "I have no hot water water",
+    issue_type: "plumbing",
+    preferred_contact_method: "text",
+  })
+  const after = issueSummaryBullet({
+    initial_message: "I have no hot water water",
+    description: "I have no hot water water",
+    issue_type: "plumbing",
+    preferred_contact_method: "text",
+    diagnostic_facts: { plumbing_hot_water_scope: "There's no water anywhere" },
+  })
+  assertEquals(before, "No hot water")
+  assertEquals(after, "No water in the home")
+
+  const line = headlineUpdateLine(before, after)
+  assertMatch(line ?? "", /updated this to/i)
+  assertMatch(line ?? "", /No water in the home/)
+
+  // Unchanged readings stay quiet, and there is nothing to correct at the start.
+  assertEquals(headlineUpdateLine(after, after), null)
+  assertEquals(headlineUpdateLine(undefined, after), null)
+})
+
+Deno.test("seed selection reports when it differs from the newest text", () => {
+  const recovered = resolveIssueSeed("Repair", [
+    "I have no water",
+    "I have no hot water water",
+  ])
+  assertEquals(recovered.seed, "I have no water")
+  assertEquals(recovered.source, "recovered")
+  assertEquals(recovered.mostRecentInbound, "I have no water")
+  assertEquals(recovered.differsFromMostRecent, false)
+  assertEquals(recovered.lookbackMinutes, SEED_LOOKBACK_MINUTES)
+
+  // Here the newest text is not the one we use — the case worth watching.
+  const skipped = resolveIssueSeed("A repair", ["Yes", "Skip", "My sink is leaking"])
+  assertEquals(skipped.seed, "My sink is leaking")
+  assertEquals(skipped.mostRecentInbound, "Yes")
+  assertEquals(skipped.differsFromMostRecent, true)
+  assertEquals(skipped.skipped, 2)
+
+  const cancelled = resolveIssueSeed("A repair", ["Never mind", "My toilet is clogged"])
+  assertEquals(cancelled.seed, "A repair")
+  assertEquals(cancelled.source, "current")
+  assertEquals(cancelled.stoppedAtCancel, true)
+})
+
+Deno.test("the reclassification notice fires once, on the turn it changes", () => {
+  // Adriana's sequence, turn by turn: "I have no water" then the scope answer
+  // that makes it a whole-home outage, then a duration answer that does not.
+  const opened = applyQuestionPlan({
+    initial_message: "I have no water",
+    description: "I have no water",
+    issue_type: "plumbing",
+    vendor_trade: "plumbing",
+    primary_category: "plumbing",
+    preferred_contact_method: "text",
+  })
+  let told = issueSummaryBullet(opened)
+  assertEquals(told, "No water")
+
+  const scoped = applyDiagnosticAnswer(opened, "Everywhere in the home")
+  const afterScope = issueSummaryBullet(scoped)
+  const notice = headlineUpdateLine(told, afterScope)
+  assertMatch(notice ?? "", /I've updated this to .*No water in the home/)
+  told = afterScope
+
+  const dated = applyDiagnosticAnswer(
+    { ...scoped, diagnostic_question_type: "duration_material" },
+    "Yesterday",
+  )
+  // Same reading, so the resident is not told twice.
+  assertEquals(headlineUpdateLine(told, issueSummaryBullet(dated)), null)
 })

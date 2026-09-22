@@ -39,8 +39,13 @@ import { submitSmsMaintenanceRequest } from "./submitSmsMaintenanceRequest.ts"
 import {
   isVagueTicketDescription,
   looksLikeBareRepairRequest,
-  resolveIssueSeedFromRecentInbounds,
+  resolveIssueSeed,
+  SEED_LOOKBACK_MINUTES,
 } from "./clarifyMenuIntakeSeed.ts"
+import {
+  SYSTEM_SAFETY_NOTES,
+  TENANT_UPDATE_PREFIX,
+} from "./intakeSystemText.ts"
 import {
   applyDiagnosticAnswer,
   applyQuestionPlan,
@@ -67,6 +72,8 @@ import {
   applyPhotoRequestPolicy,
   pipelineTradeToIssueType,
   recommendUrgency,
+  issueSummaryBullet,
+  headlineUpdateLine,
   sanitizeIntakeState,
   shouldSendUrgencyAlert,
   type IntakeStep,
@@ -101,9 +108,6 @@ function shouldRestartLegacyQuestionnaire(
 
 const INTAKE_LOOP_CLARIFY_SMS =
   "I'm still not sure what you need. Can you describe it in a short sentence — for example a leak, no heat, or something about rent or your lease?"
-
-/** Look-back window for seed recovery — older texts describe finished business. */
-const SEED_LOOKBACK_MINUTES = 45
 
 async function loadRecentInboundBodies(
   supabase: SupabaseClient,
@@ -743,10 +747,10 @@ function applyStepAnswer(
       next.first_noticed = answer
       return { ok: true, state: applyQuestionPlan(next) }
     case "safety_concerns":
-      next.safety_concerns = /^none$/i.test(answer) ? "None reported" : answer
+      next.safety_concerns = /^none$/i.test(answer) ? SYSTEM_SAFETY_NOTES.noneReported : answer
       return { ok: true, state: applyQuestionPlan(next) }
     case "urgency":
-      next.description = [next.description, `Tenant update: ${answer}`].filter(Boolean).join("\n")
+      next.description = [next.description, `${TENANT_UPDATE_PREFIX} ${answer}`].filter(Boolean).join("\n")
       return { ok: true, state: applyQuestionPlan(next) }
     case "preferred_contact_method": {
       const parsed = parseContactMethod(answer)
@@ -855,14 +859,46 @@ export async function processResidentMaintenanceIntake(
       isVagueTicketDescription(seedBody)
     ) {
       const recent = await loadRecentInboundBodies(supabase, ctx.conversationId)
-      const recovered = resolveIssueSeedFromRecentInbounds(seedBody, recent)
-      if (recovered !== seedBody) {
+      const resolution = resolveIssueSeed(seedBody, recent)
+      if (resolution.source === "recovered") {
         console.info("[sms-intake] recovered issue seed from prior inbound", {
           conversationId: ctx.conversationId,
           menuEcho: seedBody,
-          recovered,
+          recovered: resolution.seed,
+          mostRecentInbound: resolution.mostRecentInbound,
+          differsFromMostRecent: resolution.differsFromMostRecent,
+          skipped: resolution.skipped,
+          lookbackMinutes: resolution.lookbackMinutes,
         })
-        seedBody = recovered
+        // Logged so we can see how often this logic changes the outcome
+        // versus simply taking the most recent inbound.
+        void recordActivityLog(supabase, {
+          landlordId: ctx.landlordId,
+          eventType: "sms.intake_seed_recovered",
+          source: "sms",
+          actorType: "system",
+          residentId: ctx.identity.resident_id ?? null,
+          unitId: ctx.identity.unit_id ?? null,
+          conversationId: ctx.conversationId,
+          messageId: ctx.messageId,
+          workflowTemplateId: "maintenance_intake",
+          metadata: {
+            message: "Used the resident's earlier problem report for this request.",
+            menu_reply: seedBody.slice(0, 120),
+            seed: resolution.seed.slice(0, 160),
+            most_recent_inbound: resolution.mostRecentInbound?.slice(0, 160) ?? null,
+            differs_from_most_recent: resolution.differsFromMostRecent,
+            skipped_messages: resolution.skipped,
+            lookback_minutes: resolution.lookbackMinutes,
+          },
+        })
+        seedBody = resolution.seed
+      } else if (resolution.stoppedAtCancel) {
+        console.info("[sms-intake] seed look-back stopped at a cancelled request", {
+          conversationId: ctx.conversationId,
+          menuEcho: seedBody,
+          lookbackMinutes: resolution.lookbackMinutes,
+        })
       }
     }
     // Multi-ask path: confirm split before the single-issue wizard.
@@ -925,6 +961,9 @@ export async function processResidentMaintenanceIntake(
       started.classification,
       state.draft_ticket_id ?? null,
     )
+    // Baseline for the reclassification notice. Without it, the first
+    // answer that moves the headline would change it silently.
+    state.acknowledged_headline = issueSummaryBullet(state)
     await saveIntakeState(supabase, ctx.conversationId, state)
     await logClassificationAudit(supabase, {
       landlordId: ctx.landlordId,
@@ -1338,7 +1377,17 @@ export async function processResidentMaintenanceIntake(
     draftTicketId: state.draft_ticket_id ?? null,
   })
 
-  const nextHint = questionForStep(state, state.step as IntakeStep)
+  // Say a changed reading out loud. The confirm step already prints the
+  // headline, so it does not need the extra line.
+  const headline = issueSummaryBullet(state)
+  const headlineNote = state.step === "awaiting_confirm"
+    ? null
+    : headlineUpdateLine(state.acknowledged_headline, headline)
+  state.acknowledged_headline = headline
+
+  const nextHint = [headlineNote, questionForStep(state, state.step as IntakeStep)]
+    .filter(Boolean)
+    .join("\n\n")
   const { outbound, emergency } = step === "diagnostic"
     ? await prependEmergencySafetyIfNeeded(
       supabase,

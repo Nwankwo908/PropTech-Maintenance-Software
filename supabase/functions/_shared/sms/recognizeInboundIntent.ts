@@ -353,6 +353,28 @@ function fallbackLayer(
   })
 }
 
+/**
+ * Layer 5 for callers that already have a synchronous reading. The rules could
+ * not place this text, so try the phrase library before falling back to the
+ * menu. Whatever the library cannot place still reaches intake's own model
+ * call, so new phrasings are caught by similarity instead of a new pattern.
+ */
+export async function upgradeUnmatchedRecognition(
+  body: string,
+  sync: InboundIntentRecognition,
+  ctx: RecognizeInboundIntentContext = {},
+): Promise<InboundIntentRecognition> {
+  if (sync.layer !== "menu" && sync.layer !== "problem_signal") return sync
+  if (ctx.skipSemantic) return sync
+  const original = body.trim()
+  if (!original) return sync
+  const semantic = await semanticLayer(
+    original,
+    bridgeSpanishMaintenanceText(original),
+  )
+  return semantic ?? sync
+}
+
 /** Layers 1-4 and 7. No network, so the inbound gate can stay synchronous. */
 export function recognizeInboundIntentSync(
   body: string,

@@ -17,6 +17,13 @@ export const SEMANTIC_PHRASE_LIBRARY: PhraseExample[] = [
   { phrase: "toilet overflowing", trade: "plumbing", issueType: "leak" },
   { phrase: "water dripping under the basin", trade: "plumbing", issueType: "leak" },
   { phrase: "clogged drain", trade: "plumbing", issueType: "plumbing" },
+  // Loss-of-water phrasings. New variants belong here, matched by similarity,
+  // rather than as another literal pattern in deterministicRules.ts.
+  { phrase: "no water pressure", trade: "plumbing", issueType: "plumbing" },
+  { phrase: "water won't turn on", trade: "plumbing", issueType: "plumbing" },
+  { phrase: "pipes are dry", trade: "plumbing", issueType: "plumbing" },
+  { phrase: "nothing coming out of the tap", trade: "plumbing", issueType: "plumbing" },
+  { phrase: "no hay agua", trade: "plumbing", issueType: "plumbing" },
   { phrase: "outlet sparks when I plug something in", trade: "electrical", issueType: "electrical" },
   { phrase: "no power in the living room", trade: "electrical", issueType: "electrical" },
   { phrase: "breaker keeps tripping", trade: "electrical", issueType: "electrical" },

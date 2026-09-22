@@ -5,6 +5,7 @@ import {
   recognizeInboundIntent,
   recognizeInboundIntentSync,
   summarizeIssueText,
+  upgradeUnmatchedRecognition,
 } from "./recognizeInboundIntent.ts"
 import { heuristicInterpretInbound } from "./inboundInterpretation.ts"
 import { planAssistantOtherReply } from "./tenantAssistantReply.ts"
@@ -225,4 +226,58 @@ Deno.test("an LLM failure falls through to the problem-signal default", async ()
   })
   assertEquals(recognized.intent, "repair")
   assertEquals(recognized.showMenu, false)
+})
+
+Deno.test("unplaced text goes to the phrase library before the menu", async () => {
+  // These phrasings are deliberately absent from deterministicRules.ts: new
+  // ways of saying "no water" should be caught by similarity instead.
+  for (
+    const text of [
+      "no water pressure",
+      "water won't turn on",
+      "pipes are dry",
+      "nothing coming out of the tap",
+      "no hay agua",
+    ]
+  ) {
+    const sync = recognizeInboundIntentSync(text)
+    const upgraded = await upgradeUnmatchedRecognition(text, sync)
+    assertEquals(upgraded.intent, "repair", text)
+    assertEquals(upgraded.showMenu, false, text)
+    // Placed by the rules or the library — never left for the menu.
+    assertEquals(
+      upgraded.layer === "rules" || upgraded.layer === "semantic",
+      true,
+      `${text} landed on ${upgraded.layer}`,
+    )
+  }
+
+  // "no hay agua" used to reach the menu; the library now places it.
+  const spanish = "no hay agua"
+  assertEquals(recognizeInboundIntentSync(spanish).layer, "menu")
+  const placed = await upgradeUnmatchedRecognition(
+    spanish,
+    recognizeInboundIntentSync(spanish),
+  )
+  assertEquals(placed.layer, "semantic")
+  // A library match is a guess, so the reading is confirmed back.
+  assertEquals(typeof placed.confirmation, "string")
+})
+
+Deno.test("the library is not consulted once a layer has decided", async () => {
+  const decided = recognizeInboundIntentSync("I smell gas")
+  assertEquals(decided.layer, "emergency_net")
+  assertEquals(
+    (await upgradeUnmatchedRecognition("I smell gas", decided)).layer,
+    "emergency_net",
+  )
+
+  const rent = recognizeInboundIntentSync("when is rent due")
+  assertEquals((await upgradeUnmatchedRecognition("when is rent due", rent)).intent, "rent")
+})
+
+Deno.test("text with no signal at all still gets the menu", async () => {
+  const sync = recognizeInboundIntentSync("ok thanks for that")
+  const upgraded = await upgradeUnmatchedRecognition("ok thanks for that", sync)
+  assertEquals(upgraded.intent === "repair", false)
 })

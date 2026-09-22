@@ -36,6 +36,29 @@ export function isVagueTicketDescription(text: string): boolean {
 }
 
 /**
+ * How far back seed recovery reads inbound texts. Older messages describe
+ * business the resident already finished. Logged with every recovery so the
+ * effect of the window is visible in production.
+ */
+export const SEED_LOOKBACK_MINUTES = 45
+
+/** Why a seed was chosen, for the recovery log. */
+export type IssueSeedResolution = {
+  seed: string
+  /** current = the text in hand; recovered = an earlier problem report. */
+  source: "current" | "recovered"
+  /** What plain "most recent inbound" would have picked. */
+  mostRecentInbound: string | null
+  /** True when this logic changed the outcome. */
+  differsFromMostRecent: boolean
+  /** Messages passed over before landing on the seed. */
+  skipped: number
+  /** Stopped early because the resident had cancelled that request. */
+  stoppedAtCancel: boolean
+  lookbackMinutes: number
+}
+
+/**
  * Ends a look-back. Text before a cancel belongs to a request the resident
  * already dropped, so it must never be resurrected as the new ticket.
  */
@@ -54,23 +77,61 @@ export function resolveIssueSeedFromRecentInbounds(
   currentBody: string,
   recentInboundBodies: string[],
 ): string {
+  return resolveIssueSeed(currentBody, recentInboundBodies).seed
+}
+
+/** Same choice as above, with the reasoning attached so it can be logged. */
+export function resolveIssueSeed(
+  currentBody: string,
+  recentInboundBodies: string[],
+): IssueSeedResolution {
   const current = currentBody.trim()
-  if (inferIssueTypeFromText(current)) return current
+  const mostRecent = recentInboundBodies
+    .map((b) => b.trim())
+    .find((b) => b && b.toLowerCase() !== current.toLowerCase()) ?? null
+
+  const asCurrent = (): IssueSeedResolution => ({
+    seed: current,
+    source: "current",
+    mostRecentInbound: mostRecent,
+    differsFromMostRecent: false,
+    skipped: 0,
+    stoppedAtCancel: false,
+    lookbackMinutes: SEED_LOOKBACK_MINUTES,
+  })
+
+  if (inferIssueTypeFromText(current)) return asCurrent()
 
   if (!looksLikeBareRepairRequest(current) && !isVagueTicketDescription(current)) {
-    return current
+    return asCurrent()
   }
 
+  let skipped = 0
   for (const raw of recentInboundBodies) {
     const candidate = raw.trim()
     if (!candidate) continue
-    if (CLOSED_REQUEST_MARKER.test(candidate)) break
-    if (candidate.toLowerCase() === current.toLowerCase()) continue
-    if (looksLikeBareRepairRequest(candidate)) continue
-    if (inferIssueTypeFromText(candidate) || hasProblemSignal(candidate)) {
-      return candidate
+    if (CLOSED_REQUEST_MARKER.test(candidate)) {
+      return { ...asCurrent(), skipped, stoppedAtCancel: true }
     }
+    if (candidate.toLowerCase() === current.toLowerCase()) continue
+    if (looksLikeBareRepairRequest(candidate)) {
+      skipped++
+      continue
+    }
+    if (inferIssueTypeFromText(candidate) || hasProblemSignal(candidate)) {
+      return {
+        seed: candidate,
+        source: "recovered",
+        mostRecentInbound: mostRecent,
+        differsFromMostRecent: candidate.toLowerCase() !==
+          (mostRecent ?? "").toLowerCase(),
+        skipped,
+        stoppedAtCancel: false,
+        lookbackMinutes: SEED_LOOKBACK_MINUTES,
+      }
+    }
+    skipped++
   }
 
-  return current
+  return { ...asCurrent(), skipped }
 }

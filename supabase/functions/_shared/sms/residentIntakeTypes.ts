@@ -8,6 +8,7 @@ import {
   matchesWaterOutage,
   matchesWholeHomeWaterOutage,
 } from "../../../../shared/maintenance/deterministicRules.ts"
+import { stripSystemIntakeText } from "./intakeSystemText.ts"
 import { resolvePhotoRequest } from "../../../../shared/maintenance/photoRequestPolicy.ts"
 import type { PrimaryCategory } from "../../../../shared/maintenance/primaryCategories.ts"
 import {
@@ -154,6 +155,8 @@ export type SmsIntakeState = {
    * An outage stays in the text we re-read each turn, so without this the
    * team gets a fresh alert for every answer the resident sends.
    */
+  /** Headline the resident has already been told, so a change can be stated. */
+  acknowledged_headline?: string
   urgency_alert_tier?: UrgencyAlertTier
   urgency_alert_sent_at?: string
   /** Off-topic SMS parked until the resident replies YES or NO to welcome. */
@@ -709,12 +712,28 @@ export function issueContextPhrase(state: SmsIntakeState): string {
 }
 
 /** One-line headline for confirmation, e.g. "Kitchen sink is clogged". */
+/**
+ * One line stating a changed reading. A later answer can move the headline
+ * ("no hot water" becomes "No water in the home"), and the resident should
+ * hear that immediately instead of finding it on the request later.
+ */
+export function headlineUpdateLine(
+  previous: string | null | undefined,
+  current: string,
+): string | null {
+  const before = (previous ?? "").trim()
+  const now = current.trim()
+  if (!before || !now) return null
+  if (before.toLowerCase() === now.toLowerCase()) return null
+  return `I've updated this to \u201C${now}.\u201D`
+}
+
 export function issueSummaryBullet(state: SmsIntakeState): string {
   const room = resolveRoomLabel(state)
   const issue = (state.issue_type ?? "").toLowerCase()
   const desc = (state.description ?? state.initial_message ?? "").toLowerCase()
   const facts = Object.values(state.diagnostic_facts ?? {}).join(" ").toLowerCase()
-  const all = `${desc} ${facts}`
+  const all = stripSystemIntakeText(`${desc} ${facts}`)
   const place = room ? `${room.charAt(0).toUpperCase()}${room.slice(1)} ` : ""
 
   if (/\bsink\b/.test(all) && /\bclog/.test(all)) return `${place}sink is clogged`.replace(/^./, (c) => c.toUpperCase())

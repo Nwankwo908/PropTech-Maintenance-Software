@@ -15,6 +15,12 @@ import {
 } from "./residentIntakeTypes.ts"
 import { isVagueTicketDescription, looksLikeBareRepairRequest } from "./clarifyMenuIntakeSeed.ts"
 import { recognizeInboundIntentSync } from "./recognizeInboundIntent.ts"
+import {
+  stripSystemIntakeText,
+  SYSTEM_SAFETY_NOTES,
+  TENANT_UPDATE_PREFIX,
+  tenantAuthoredText,
+} from "./intakeSystemText.ts"
 import { parseDurationHours } from "../../../../shared/maintenance/urgencyPolicy.ts"
 import { matchesWaterOutage } from "../../../../shared/maintenance/deterministicRules.ts"
 
@@ -342,7 +348,11 @@ function withInterpretationConfirmation(
   if ((state.asked_question_types?.length ?? 0) > 0) return next
   if (next.questionType === "symptom_clarify") return next
 
-  const seed = (state.description ?? state.initial_message ?? "").trim()
+  // Only what the resident typed. Reading our own safety notes back through
+  // the recognizer is what produced the sink-overflow artifact.
+  const seed = stripSystemIntakeText(
+    (state.description ?? state.initial_message ?? "").trim(),
+  )
   if (!seed) return next
 
   const confirmation = recognizeInboundIntentSync(seed).confirmation
@@ -354,6 +364,9 @@ function resolveNextMaintenanceQuestion(
   state: SmsIntakeState,
 ): NextMaintenanceQuestion {
   const hay = haystack(state)
+  // Category matching reads the resident's words only. `hay` still carries
+  // our safety notes, which other branches and urgency depend on.
+  const tenantHay = tenantAuthoredText(state).toLowerCase()
   const room = resolveRoomLabel(state)
   const budget = questionBudget(state, hay)
   const answered = answeredCount(state)
@@ -463,7 +476,7 @@ function resolveNextMaintenanceQuestion(
   }
 
   // No water at all is its own problem — never ask hot-water questions for it.
-  if (isPlumbing(state, hay) && matchesWaterOutage(hay)) {
+  if (isPlumbing(state, hay) && matchesWaterOutage(tenantHay)) {
     const q = tryAsk(
       "plumbing_water_outage_scope",
       "Is the water out everywhere in the home, or just at one sink or shower?",
@@ -480,7 +493,7 @@ function resolveNextMaintenanceQuestion(
 
   if (
     isPlumbing(state, hay) &&
-    !matchesWaterOutage(hay) &&
+    !matchesWaterOutage(tenantHay) &&
     /\bno hot water|no heat(?:ed)? water\b/.test(hay)
   ) {
     const q = tryAsk(
@@ -750,12 +763,12 @@ export function applyDiagnosticAnswer(
   let vendorTrade = state.vendor_trade
 
   if (type === "plumbing_overflow" || type === "toilet_overflow" || type === "plumbing_active_flow") {
-    if (isNo(answer)) safety = "Water is not actively overflowing"
-    if (isYes(answer)) safety = "Water is actively overflowing or leaking"
+    if (isNo(answer)) safety = SYSTEM_SAFETY_NOTES.overflowNo
+    if (isYes(answer)) safety = SYSTEM_SAFETY_NOTES.overflowYes
   }
   if (type === "lock_secure") {
-    if (isNo(answer)) safety = "Unable to secure the home"
-    if (isYes(answer)) safety = "Home can be secured"
+    if (isNo(answer)) safety = SYSTEM_SAFETY_NOTES.cannotSecure
+    if (isYes(answer)) safety = SYSTEM_SAFETY_NOTES.canSecure
   }
   if (type === "door_part") {
     const partHay = answer.toLowerCase()
@@ -769,19 +782,19 @@ export function applyDiagnosticAnswer(
   }
   if (type === "door_safety") {
     if (/\b(hang|fall|loose|stuck|off)\b/i.test(answer) && !isNo(answer)) {
-      safety = "Door may be stuck, hanging loose, or at risk of falling"
+      safety = SYSTEM_SAFETY_NOTES.doorAtRisk
     }
-    if (isNo(answer)) safety = safety ?? "Door is not hanging or at risk of falling"
+    if (isNo(answer)) safety = safety ?? SYSTEM_SAFETY_NOTES.doorSafe
   }
   if (type === "hvac_dangerous_temp" && isYes(answer)) {
-    safety = "Home is becoming dangerously hot or cold"
+    safety = SYSTEM_SAFETY_NOTES.dangerousTemp
   }
   if (type === "electrical_hazard" && isYes(answer)) {
-    safety = "Sparks, smoke, or burning smell reported"
+    safety = SYSTEM_SAFETY_NOTES.electricalHazard
   }
   if (type === "structural_risk") {
-    if (/\bwater\b/i.test(answer)) safety = "Water coming through structural damage"
-    if (/\bsag|collaps|fall/i.test(answer)) safety = "Possible collapse or sagging"
+    if (/\bwater\b/i.test(answer)) safety = SYSTEM_SAFETY_NOTES.structuralWater
+    if (/\bsag|collaps|fall/i.test(answer)) safety = SYSTEM_SAFETY_NOTES.structuralCollapse
   }
   if (type === "pest_location" || type === "room_or_area") {
     const extracted = extractRoomFromText(answer)
@@ -791,7 +804,7 @@ export function applyDiagnosticAnswer(
     firstNoticed = answer
   }
   if (type === "appliance_symptom" && /\b(leak|pour|water|floor)\b/i.test(answer)) {
-    safety = "Appliance leaking water"
+    safety = SYSTEM_SAFETY_NOTES.applianceLeak
   }
 
   // Replace clarify-menu / bare-repair seed with the real symptom.
@@ -839,7 +852,7 @@ export function applyDiagnosticAnswer(
     }
   }
 
-  const description = [state.description?.trim(), `Tenant update: ${answer}`]
+  const description = [state.description?.trim(), `${TENANT_UPDATE_PREFIX} ${answer}`]
     .filter(Boolean)
     .join("\n")
 

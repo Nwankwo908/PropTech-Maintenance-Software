@@ -21,6 +21,7 @@ export const HIDDEN_SMS_TRANSPORT_TIMELINE_EVENT_TYPES = new Set([
   'sms.message_received',
   'sms.intent_recognized',
   'sms.gate_miss',
+  'sms.intake_seed_recovered',
 ])
 
 /**
