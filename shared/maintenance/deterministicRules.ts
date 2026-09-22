@@ -29,11 +29,12 @@ const PLUMBING_RE =
  * overflowing" must not read as "no water".
  */
 const WATER_OUTAGE_RE =
-  /\b(?:no\s+(?!hot\b)(?:running\s+|cold\s+)?water\b(?!\s+(?:is|are|was)\s+not\b)(?!\s+(?:isn'?t|aren'?t|wasn'?t)\b)|water\s+(?:is\s+|has\s+been\s+)?(?:shut\s*off|shutoff|turned\s*off|completely\s+off|not\s+running)\b|water\s+(?:isn'?t|is\s+not)\s+(?:running|working|coming\s+(?:out|on))\b|(?:lost|losing)\s+(?:all\s+)?(?:our\s+|my\s+|the\s+)?water\b)/i
+  /\b(?:no\s+(?!hot\b)(?:running\s+|cold\s+)?water\b(?!\s+(?:is|are|was)\s+not\b)(?!\s+(?:isn'?t|aren'?t|wasn'?t)\b)(?!\s+(?:damage|damages|stain|stains|mark|marks|pressure)\b)|water\s+(?:is\s+|has\s+been\s+)?(?:shut\s*off|shutoff|turned\s*off|completely\s+off|not\s+running)\b|water\s+(?:isn'?t|is\s+not)\s+(?:running|working|coming\s+(?:out|on))\b|(?:lost|losing)\s+(?:all\s+)?(?:our\s+|my\s+|the\s+)?water\b)/i
 
 /** Whole-home loss of water is a habitability problem, one dry fixture is not. */
+// Includes the wording our own scope question invites ("everywhere in the home").
 const WATER_OUTAGE_WHOLE_HOME_RE =
-  /\b(?:anywhere|at\s+all|whole\s+(?:home|house|apartment|unit|building)|entire\s+(?:home|house|apartment|unit|building)|any\s+of\s+the\s+(?:faucets|taps|sinks)|no\s+water\s+in\s+the\s+(?:home|house|apartment|unit)|all\s+(?:the\s+)?(?:faucets|taps|sinks))\b/i
+  /\b(?:anywhere|everywhere|at\s+all|whole\s+(?:home|house|apartment|unit|building|place)|entire\s+(?:home|house|apartment|unit|building|place)|all\s+over\s+the\s+(?:home|house|apartment|unit|place)|any\s+of\s+the\s+(?:faucets|taps|sinks)|no\s+water\s+in\s+the\s+(?:home|house|apartment|unit)|every\s+(?:faucet|tap|sink|bathroom|room)|all\s+(?:the\s+)?(?:faucets|taps|sinks))\b/i
 
 /** True when the text reports water service out, not merely no hot water. */
 export function matchesWaterOutage(text: string): boolean {

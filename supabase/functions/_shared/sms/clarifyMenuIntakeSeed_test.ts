@@ -154,6 +154,32 @@ Deno.test("a total outage answer outranks an opening hot water report", () => {
   assertMatch(confirm, /faucets turned off/i)
 })
 
+Deno.test("the answer our scope question invites reads as a whole-home outage", () => {
+  // We ask "everywhere in the home, or just at one sink or shower?", so
+  // residents answer in those words. Found live: "everywhere" was missing.
+  const answer = "I have no water\nTenant update: Everywhere in the home"
+  assertEquals(matchesWholeHomeWaterOutage(answer), true)
+  assertEquals(matchesWholeHomeWaterOutage("no water, every faucet in the unit"), true)
+  assertEquals(matchesWholeHomeWaterOutage("no water all over the house"), true)
+  assertEquals(
+    matchesWholeHomeWaterOutage("I have no water\nTenant update: Just the kitchen sink"),
+    false,
+  )
+
+  const confirm = buildConfirmationSummary({
+    initial_message: "I have no water",
+    description: answer,
+    issue_type: "plumbing",
+    vendor_trade: "plumbing",
+    primary_category: "plumbing",
+    preferred_contact_method: "text",
+    diagnostic_facts: { plumbing_water_outage_scope: "Everywhere in the home" },
+  })
+  assertMatch(confirm, /No water in the home/i)
+  assertMatch(confirm, /faucets turned off/i)
+  assertEquals(/use cold water/i.test(confirm), false)
+})
+
 Deno.test("a No answer next to an overflow note is not a water outage", () => {
   // Intake appends answers to the description, so this exact string occurs.
   assertEquals(
@@ -162,4 +188,14 @@ Deno.test("a No answer next to an overflow note is not a water outage", () => {
   )
   // A real report that happens to use the same verb still counts.
   assertEquals(matchesWaterOutage("no water is coming out of the faucet"), true)
+})
+
+Deno.test("reporting the absence of water damage is not an outage", () => {
+  // Residents answer safety questions this way, and an outage now drives
+  // same-day urgency, so a false read here would over-escalate.
+  assertEquals(matchesWaterOutage("no water damage"), false)
+  assertEquals(matchesWaterOutage("there is no water damage on the ceiling"), false)
+  assertEquals(matchesWaterOutage("no water stains"), false)
+  assertEquals(matchesWaterOutage("no water pressure"), false)
+  assertEquals(matchesWaterOutage("no water in the home"), true)
 })

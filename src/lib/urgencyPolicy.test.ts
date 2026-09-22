@@ -66,6 +66,32 @@ describe('resolveUrgencyPolicy', () => {
     expect(parseDurationHours('no hot water for 2 days')).toBe(48)
   })
 
+  it('treats losing water service as same-day, one dry fixture as 48 hours', () => {
+    const wholeHome = resolveUrgencyPolicy({ text: "There's no water anywhere" })
+    expect(wholeHome.band).toBe('emergency')
+    // Same-day, not life safety — no 911 banner for a water outage.
+    expect(wholeHome.leaveImmediately).toBe(false)
+    expect(wholeHome.slaMinutes).toBeLessThanOrEqual(
+      URGENCY_SLA_MINUTES.emergencySameDay,
+    )
+
+    // The wording our own scope question invites must escalate too.
+    expect(
+      resolveUrgencyPolicy({
+        text: 'I have no water Everywhere in the home',
+      }).band,
+    ).toBe('emergency')
+    expect(
+      resolveUrgencyPolicy({ text: 'no water in the whole house' }).band,
+    ).toBe('emergency')
+
+    expect(
+      resolveUrgencyPolicy({ text: 'no water from the kitchen faucet' }).band,
+    ).toBe('medium')
+    // A total outage must not be read through the hot-water rule.
+    expect(resolveUrgencyPolicy({ text: 'No hot water' }).band).toBe('medium')
+  })
+
   it('keeps dripping faucets at 48 hours and slow drains at 7 days', () => {
     const faucet = resolveUrgencyPolicy({ text: 'Leaky faucet' })
     expect(faucet.band).toBe('medium')

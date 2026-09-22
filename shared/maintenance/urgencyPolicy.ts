@@ -3,6 +3,7 @@
  * Vendor matching still uses trade; this only sets response window + severity.
  */
 import type { EmergencyType, SeverityLevel } from './classificationTypes.ts'
+import { matchesWaterOutage, matchesWholeHomeWaterOutage } from './deterministicRules.ts'
 
 export const URGENCY_BANDS = ['emergency', 'medium', 'low'] as const
 export type UrgencyBand = (typeof URGENCY_BANDS)[number]
@@ -246,6 +247,14 @@ export function resolveUrgencyPolicy(input: UrgencyPolicyInput): UrgencyPolicyRe
       return result('medium', 'No heat while outdoor temperature is 55°F or above — respond within 48 hours.', hay, 'none')
     }
     return result('emergency', 'No heat — treat as same-day until outdoor temperature is known to be 55°F or above.', hay, 'habitability')
+  }
+
+  // Losing water service is a habitability problem; one dry fixture is not.
+  if (matchesWaterOutage(hay)) {
+    if (matchesWholeHomeWaterOutage(hay)) {
+      return result('emergency', 'No running water in the home needs same-day response.', hay, 'habitability')
+    }
+    return result('medium', 'No water at one fixture — respond within 48 hours.', hay, 'none')
   }
 
   const noHotWater = /\b(no\s+hot\s+water|out\s+of\s+hot\s+water|hot\s+water\s+(?:is\s+)?(?:out|gone|not\s+working))\b/.test(hay)
