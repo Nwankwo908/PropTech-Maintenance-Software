@@ -5,6 +5,7 @@ import {
   buildVendorAvailabilityProbeSms,
   buildVendorProbeAckSms,
   canHandleVendorAvailabilityProbe,
+  formatVendorProbeLocationLine,
   readAwaitingVendorProbe,
   readVendorAvailabilityProbe,
   ticketIsAwaitingVendorAvailabilityProbe,
@@ -111,17 +112,88 @@ Deno.test("readAwaitingVendorProbe + readVendorAvailabilityProbe round-trip shap
 Deno.test("buildVendorAvailabilityProbeSms asks for window before assign", () => {
   const body = buildVendorAvailabilityProbeSms({
     vendorName: "Manny Plumber",
-    companyName: "Acme Property",
+    companyName: "acme property",
     workOrderRef: "WO-1234",
-    unit: "14 Maple · Unit 1",
-    description: "Kitchen sink leaking",
+    location: "14 Maple Ave · Unit 1",
+    issueHeadline: "Kitchen sink leaking",
+    entryOkIfAbsent: true,
     residentAvailabilityText: "Weekdays after 3pm",
   })
+  assertStringIncludes(body, "Hi Manny Plumber — job WO-1234 at 14 Maple Ave · Unit 1")
   assertStringIncludes(body, "Acme Property")
-  assertStringIncludes(body, "Kitchen sink leaking")
-  assertStringIncludes(body, "Resident availability: Weekdays after 3pm")
-  assertStringIncludes(body, "earliest day and arrival window")
-  assertStringIncludes(body, "NO WO-1234")
+  assertStringIncludes(body, "Issue: Kitchen sink leaking")
+  assertStringIncludes(body, "Entry OK if resident out: Yes")
+  assertStringIncludes(body, "Resident avail: Weekdays after 3pm")
+  assertStringIncludes(body, "Take it? Reply earliest day + window")
+  assertStringIncludes(body, "Can't? Reply NO WO-1234")
+  // Accept and decline sit on adjacent lines — no blank between them.
+  assertStringIncludes(
+    body,
+    "Take it? Reply earliest day + window (ex: Wed 9am-12pm) + estimate if you have one\nCan't? Reply NO WO-1234",
+  )
+})
+
+Deno.test("buildVendorAvailabilityProbeSms uses clean headline, not Q&A-stuffed description", () => {
+  const stuffed =
+    "No water pressure Tenant update: No Affected area: kitchen. Entry if not home: No."
+  const body = buildVendorAvailabilityProbeSms({
+    vendorName: "Flex plumbing",
+    companyName: "maurice mcdonald properties",
+    workOrderRef: "WO-6633",
+    location: "120 Main St · Unit 1",
+    // Callers may still pass the stuffed description for legacy fields —
+    // the rendered issue line must ignore it.
+    description: stuffed,
+    issueHeadline: "No water pressure",
+    entryOkIfAbsent: false,
+    urgent: true,
+  })
+
+  assertStringIncludes(body, "Hi Flex plumbing — job WO-6633 at 120 Main St · Unit 1 — URGENT")
+  assertStringIncludes(body, "Maurice Mcdonald Properties")
+  assertStringIncludes(body, "Issue: No water pressure")
+  assertStringIncludes(body, "Entry OK if resident out: No")
+
+  const issueLine = body.split("\n").find((l) => l.startsWith("Issue:")) ?? ""
+  assertEquals(issueLine, "Issue: No water pressure")
+  assertEquals(/Tenant update/i.test(issueLine), false)
+  assertEquals(/Affected area/i.test(issueLine), false)
+  assertEquals(/Entry if not home/i.test(issueLine), false)
+  // Stuffed description text must not appear anywhere as the issue body.
+  assertEquals(body.includes(stuffed), false)
+})
+
+Deno.test("formatVendorProbeLocationLine prefers street address over bare unit", () => {
+  assertEquals(
+    formatVendorProbeLocationLine({
+      streetAddress: "14 Maple Ave",
+      unit: "1",
+    }),
+    "14 Maple Ave · Unit 1",
+  )
+  assertEquals(
+    formatVendorProbeLocationLine({ unit: "1" }),
+    "Unit 1",
+  )
+  assertEquals(
+    formatVendorProbeLocationLine({
+      streetAddress: "14 Maple Ave",
+      unit: null,
+    }),
+    "14 Maple Ave",
+  )
+})
+
+Deno.test("buildVendorAvailabilityProbeSms omits entry line when unknown", () => {
+  const body = buildVendorAvailabilityProbeSms({
+    vendorName: "Manny Plumber",
+    companyName: "Acme",
+    workOrderRef: "WO-1",
+    unit: "2",
+    issueHeadline: "Clogged drain",
+  })
+  assertEquals(/Entry OK if resident out/i.test(body), false)
+  assertEquals(/URGENT/i.test(body), false)
 })
 
 Deno.test("buildVendorProbeAckSms confirms window without assigning", () => {
@@ -135,19 +207,78 @@ Deno.test("buildVendorProbeAckSms confirms window without assigning", () => {
 
 Deno.test("landlord choice SMS after probe uses availability reason", () => {
   const body = buildLandlordVendorChoiceSms({
-    landlordFirstName: "Alex",
-    companyName: "Acme Property",
+    landlordFirstName: "Osita",
+    companyName: "Osita properties",
     workOrderRef: "WO-1234",
     unit: "Unit 1",
     tradeLabel: "plumbing",
     reason: "availability",
+    issueHeadline: "dripping faucet",
+    locationLabel: "563 Springdale Circle",
     options: [
-      { id: "v1", name: "Manny Plumber — Wed 9am–12pm · $150", role: "specialist" },
-      { id: "v2", name: "Rapid Plumb — Thu morning", role: "specialist" },
+      {
+        id: "v1",
+        name: "Flex Plumbing",
+        role: "specialist",
+        windowLabel: "Thursday, Sep 24 · 10 AM–1 PM",
+        estimateNote: "$200",
+      },
+      {
+        id: "v2",
+        name: "Rapid Plumb",
+        role: "specialist",
+        windowLabel: "Thu morning",
+      },
+    ],
+    adminUrl: "https://www.ulohome.io/admin",
+  })
+  assertStringIncludes(
+    body,
+    "Hi Osita — vendors are available for the dripping faucet at 563 Springdale Circle.",
+  )
+  assertEquals(body.includes("property management team"), false)
+  assertEquals(body.includes("returned availability"), false)
+  assertEquals(body.includes("WO-1234"), false)
+  assertStringIncludes(body, "1 — Flex Plumbing")
+  assertStringIncludes(body, "Thursday, Sep 24 · 10 AM–1 PM")
+  assertStringIncludes(body, "$200")
+  assertStringIncludes(body, "Reply 1 or 2 to send them the job.")
+  assertStringIncludes(body, "View details:")
+})
+
+Deno.test("landlord choice SMS single vendor leads with problem and YES", () => {
+  const body = buildLandlordVendorChoiceSms({
+    landlordFirstName: "Osita",
+    companyName: "Osita properties",
+    workOrderRef: "WO-1C50",
+    unit: "1",
+    tradeLabel: "plumbing",
+    reason: "availability",
+    issueHeadline: "dripping faucet",
+    locationLabel: "563 Springdale Circle",
+    adminUrl: "https://www.ulohome.io/admin",
+    options: [
+      {
+        id: "v1",
+        name: "Flex Plumbing",
+        role: "specialist",
+        windowLabel: "Thursday, Sep 24 · 10 AM–1 PM",
+        estimateNote: "$200",
+      },
     ],
   })
-  assertStringIncludes(body, "returned availability")
-  assertStringIncludes(body, "These vendors shared availability:")
-  assertStringIncludes(body, "1. Manny Plumber — Wed 9am–12pm · $150")
-  assertStringIncludes(body, "Reply 1 or 2")
+  assertEquals(
+    body,
+    [
+      "Hi Osita — Flex Plumbing is available for the dripping faucet at 563 Springdale Circle.",
+      "",
+      "Thursday, Sep 24 · 10 AM–1 PM",
+      "$200",
+      "",
+      "Reply YES to send the job to Flex Plumbing.",
+      "",
+      "View details:",
+      "https://www.ulohome.io/admin",
+    ].join("\n"),
+  )
 })

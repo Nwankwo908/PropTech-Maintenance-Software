@@ -1,17 +1,16 @@
 /**
- * Permanently delete a maintenance work order from the workflow pipeline.
+ * Soft-archive a maintenance work order (no hard-delete).
  * Auth: ADMIN_REASSIGN_SECRET via x-admin-reassign-secret.
  *
- * Removes the ticket + all linked maintenance_intake / maintenance_request runs.
- * SMS message history is kept, but conversation linkage + schedule / estimate
- * wait state for this ticket are cleared so the SMS AI does not keep acting
- * on the deleted work order.
+ * Preserves the ticket + estimates + activity history. Notifies the assigned
+ * vendor via terminateWorkOrder. Cancels linked workflow runs.
  */
 import { serve } from "https://deno.land/std/http/server.ts"
-import { createClient, type SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.49.1"
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1"
 import { adminEdgeCorsHeaders } from "../_shared/admin_edge_cors.ts"
 import { requireAdminReassignAuth } from "../_shared/admin_edge_auth.ts"
 import { detachDeletedTicketFromSmsConversations } from "../_shared/sms/detachTicketFromConversations.ts"
+import { terminateWorkOrder } from "../_shared/terminateWorkOrder.ts"
 
 const corsHeaders = adminEdgeCorsHeaders
 
@@ -44,68 +43,6 @@ function metaString(
   return asUuid(metadata[key])
 }
 
-async function collectMaintenanceRunIds(
-  supabase: SupabaseClient,
-  params: {
-    landlordId: string
-    workflowRunId: string
-    ticketId: string | null
-  },
-): Promise<string[]> {
-  const ids = new Set<string>([params.workflowRunId])
-
-  if (params.ticketId) {
-    const { data: byEntity } = await supabase
-      .from("workflow_runs")
-      .select("id")
-      .eq("landlord_id", params.landlordId)
-      .in("template_id", ["maintenance_request", "maintenance_intake"])
-      .eq("entity_type", "maintenance_request")
-      .eq("entity_id", params.ticketId)
-
-    for (const row of byEntity ?? []) {
-      const id = asUuid(row.id)
-      if (id) ids.add(id)
-    }
-
-    const { data: byMeta } = await supabase
-      .from("workflow_runs")
-      .select("id, metadata")
-      .eq("landlord_id", params.landlordId)
-      .in("template_id", ["maintenance_request", "maintenance_intake"])
-
-    for (const row of byMeta ?? []) {
-      const meta = (row.metadata ?? {}) as Record<string, unknown>
-      const linked =
-        metaString(meta, "maintenance_request_id") ||
-        metaString(meta, "draft_ticket_id")
-      if (linked === params.ticketId) {
-        const id = asUuid(row.id)
-        if (id) ids.add(id)
-      }
-    }
-  }
-
-  return [...ids]
-}
-
-async function bestEffortRemoveStorage(
-  supabase: SupabaseClient,
-  paths: unknown,
-): Promise<void> {
-  if (!Array.isArray(paths) || paths.length === 0) return
-  const clean = paths
-    .filter((p): p is string => typeof p === "string" && p.trim().length > 0)
-    .map((p) => p.trim())
-  if (clean.length === 0) return
-  const { error } = await supabase.storage
-    .from("maintenance-uploads")
-    .remove(clean)
-  if (error) {
-    console.warn("[admin-delete-work-order] storage remove", error.message)
-  }
-}
-
 serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response("ok", { headers: corsHeaders })
@@ -116,7 +53,6 @@ serve(async (req) => {
   }
   const adminAuth = requireAdminReassignAuth(req, "[admin-delete-work-order]", corsHeaders)
   if (!adminAuth.ok) return adminAuth.response
-
 
   let body: {
     landlordId?: string
@@ -168,13 +104,13 @@ serve(async (req) => {
   const templateId = String(run.template_id ?? "")
   if (!MAINTENANCE_TEMPLATES.has(templateId)) {
     return jsonResponse(
-      { error: "Only maintenance work orders can be permanently deleted here" },
+      { error: "Only maintenance work orders can be archived here" },
       400,
     )
   }
 
   const meta = (run.metadata ?? {}) as Record<string, unknown>
-  let ticketId =
+  const ticketId =
     bodyTicketId ||
     (String(run.entity_type ?? "") === "maintenance_request"
       ? asUuid(run.entity_id)
@@ -182,100 +118,63 @@ serve(async (req) => {
     metaString(meta, "maintenance_request_id") ||
     metaString(meta, "draft_ticket_id")
 
-  if (ticketId) {
-    const { data: ticket, error: ticketErr } = await supabase
-      .from("maintenance_requests")
-      .select("id, landlord_id, photo_paths, completion_photo_paths")
-      .eq("id", ticketId)
-      .maybeSingle()
-
-    if (ticketErr) {
-      console.error("[admin-delete-work-order] load ticket", ticketErr.message)
-      return jsonResponse({ error: "Load ticket failed" }, 500)
-    }
-    if (ticket && String(ticket.landlord_id) !== landlordId) {
-      return jsonResponse({ error: "Forbidden" }, 403)
-    }
-    if (!ticket) {
-      // Ticket already gone — still purge runs.
-      ticketId = ticketId
-    } else {
-      await bestEffortRemoveStorage(supabase, ticket.photo_paths)
-      await bestEffortRemoveStorage(supabase, ticket.completion_photo_paths)
-    }
+  if (!ticketId) {
+    // Run-only archive: cancel the run without a ticket row.
+    await supabase
+      .from("workflow_runs")
+      .update({ status: "cancelled", updated_at: new Date().toISOString() })
+      .eq("id", workflowRunId)
+      .eq("landlord_id", landlordId)
+    return jsonResponse({
+      ok: true,
+      workflowRunId,
+      maintenanceRequestId: null,
+      deletedRunIds: [workflowRunId],
+      archived: true,
+    })
   }
 
-  const runIds = await collectMaintenanceRunIds(supabase, {
+  const result = await terminateWorkOrder(supabase, {
     landlordId,
-    workflowRunId,
     ticketId,
+    mode: "archive",
+    source: "admin_api",
+    actorType: "admin",
+    reason: "Archived from the workflow pipeline",
+    closeWorkflowRuns: true,
+    notifyVendor: true,
   })
 
-  // Graph history for this WO (permanent delete = no tombstone).
-  if (ticketId) {
-    await supabase
-      .from("operations_graph_events")
-      .delete()
-      .eq("landlord_id", landlordId)
-      .eq("maintenance_request_id", ticketId)
-  }
-
-  if (runIds.length > 0) {
-    await supabase
-      .from("operations_graph_events")
-      .delete()
-      .eq("landlord_id", landlordId)
-      .in("workflow_run_id", runIds)
-
-    await supabase
-      .from("property_operations_graph")
-      .delete()
-      .eq("landlord_id", landlordId)
-      .in("workflow_run_id", runIds)
-
-    // workflow_events cascade with runs
-    const { error: runsErr } = await supabase
-      .from("workflow_runs")
-      .delete()
-      .eq("landlord_id", landlordId)
-      .in("id", runIds)
-
-    if (runsErr) {
-      console.error("[admin-delete-work-order] delete runs", runsErr.message)
-      return jsonResponse({ error: runsErr.message }, 500)
-    }
+  if (!result.ok) {
+    return jsonResponse({ error: result.error }, 400)
   }
 
   let smsConversationsDetached = 0
-  if (ticketId) {
-    try {
-      const detached = await detachDeletedTicketFromSmsConversations(supabase, {
-        ticketId,
-        landlordId,
-      })
-      smsConversationsDetached = detached.conversationsUpdated
-    } catch (e) {
-      console.error("[admin-delete-work-order] detach SMS conversations", e)
-    }
-
-    // Cascades invoices / estimates / feedback / notification logs.
-    const { error: ticketDelErr } = await supabase
-      .from("maintenance_requests")
-      .delete()
-      .eq("landlord_id", landlordId)
-      .eq("id", ticketId)
-
-    if (ticketDelErr) {
-      console.error("[admin-delete-work-order] delete ticket", ticketDelErr.message)
-      return jsonResponse({ error: ticketDelErr.message }, 500)
-    }
+  try {
+    const detached = await detachDeletedTicketFromSmsConversations(supabase, {
+      ticketId,
+      landlordId,
+    })
+    smsConversationsDetached = detached.conversationsUpdated
+  } catch (e) {
+    console.error("[admin-delete-work-order] detach SMS conversations", e)
   }
+
+  // Ensure the explicitly selected run is cancelled.
+  await supabase
+    .from("workflow_runs")
+    .update({ status: "cancelled", updated_at: new Date().toISOString() })
+    .eq("id", workflowRunId)
+    .eq("landlord_id", landlordId)
 
   return jsonResponse({
     ok: true,
     workflowRunId,
     maintenanceRequestId: ticketId,
-    deletedRunIds: runIds,
+    deletedRunIds: [],
     smsConversationsDetached,
+    archived: true,
+    vendorNotify: result.vendorNotify,
+    terminationId: result.terminationId,
   })
 })

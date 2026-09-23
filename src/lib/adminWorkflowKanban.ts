@@ -1,5 +1,6 @@
 import {
   formatLocationContextLabel,
+  isSettledOnActiveTasks,
   workflowTemplateGroupId,
   type AdminWorkflowDashboardData,
   type AdminWorkflowRow,
@@ -11,7 +12,13 @@ import { formatVendorTradeLabel } from '@/lib/vendorTrades'
 import { summarizeWorkOrderCardBlurb } from '@/lib/workOrderCardSummary'
 
 export type OperationsBreakdownLine = {
-  id: string
+  id:
+    | 'maintenance'
+    | 'rent'
+    | 'move_in'
+    | 'move_out'
+    | 'inspection'
+    | 'lease'
   label: string
   count: number
 }
@@ -496,12 +503,15 @@ export function isWorkflowRunActiveAt(run: AdminWorkflowRow, atMs: number): bool
   if (Number.isNaN(started) || started > atMs) return false
   if (run.completedAt) {
     const completed = new Date(run.completedAt).getTime()
-    return Number.isNaN(completed) || completed > atMs
+    if (!Number.isNaN(completed) && completed <= atMs) return false
   }
+  // Match Active Tasks board: cancelled/completed tickets are not open ops.
+  if (isSettledOnActiveTasks(run)) return false
+  if (run.completedAt) return true
   return run.status === 'active' || run.status === 'escalated'
 }
 
-function activeOperationsBucket(row: AdminWorkflowRow): OperationsBreakdownLine['id'] {
+function activeOperationsBucket(row: AdminWorkflowRow): OperationsBreakdownLine['id'] | null {
   if (row.templateId === 'lease_renewal') return 'lease'
   const group = workflowTemplateGroupId(row.templateId)
   if (group === 'maintenance') return 'maintenance'
@@ -509,7 +519,8 @@ function activeOperationsBucket(row: AdminWorkflowRow): OperationsBreakdownLine[
   if (group === 'move_in') return 'move_in'
   if (group === 'move_out') return 'move_out'
   if (group === 'inspection') return 'inspection'
-  return 'other'
+  // Vendor onboarding / job-response / other engine runs are not Active Tasks KPIs.
+  return null
 }
 
 const ACTIVE_OPS_LINE_LABELS: Record<OperationsBreakdownLine['id'], string> = {
@@ -519,7 +530,6 @@ const ACTIVE_OPS_LINE_LABELS: Record<OperationsBreakdownLine['id'], string> = {
   move_out: 'Move-outs',
   inspection: 'Inspections',
   lease: 'Lease renewals',
-  other: 'Other',
 }
 
 const ACTIVE_OPS_LINE_ORDER: OperationsBreakdownLine['id'][] = [
@@ -529,7 +539,6 @@ const ACTIVE_OPS_LINE_ORDER: OperationsBreakdownLine['id'][] = [
   'move_out',
   'inspection',
   'lease',
-  'other',
 ]
 
 /** Portfolio active operations total and per-type breakdown (matches Overview KPI rules). */
@@ -544,6 +553,7 @@ export function snapshotActiveOperations(
     for (const run of collectAdminWorkflowRuns(workflowData)) {
       if (!isWorkflowRunActiveAt(run, atMs)) continue
       const bucket = activeOperationsBucket(run)
+      if (!bucket) continue
       counts.set(bucket, (counts.get(bucket) ?? 0) + 1)
     }
   }

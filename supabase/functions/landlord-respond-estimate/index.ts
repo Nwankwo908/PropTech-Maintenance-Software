@@ -2,10 +2,14 @@
  * Landlord approve/reject for maintenance estimates (Phase 3 / 4.3).
  * GET  ?action=approve|reject&estimateId=&token=  (1-tap SMS/email links)
  * POST { action, estimateId, token }              (admin thread / SPA)
+ *
+ * GET always 302s to the SPA result page. Supabase rewrites text/html → text/plain
+ * on *.supabase.co, so HTML cannot be rendered from this function URL.
  */
 import { serve } from "https://deno.land/std/http/server.ts"
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1"
 import { decideMaintenanceEstimate } from "../_shared/maintenanceEstimates.ts"
+import { uloAppUrl } from "../_shared/uloAppUrl.ts"
 
 const corsHeaders: Record<string, string> = {
   "Access-Control-Allow-Origin": "*",
@@ -14,41 +18,30 @@ const corsHeaders: Record<string, string> = {
   "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
 }
 
-function escapeHtml(s: string): string {
-  return s
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-}
-
-function htmlResponse(
-  title: string,
-  message: string,
-  status = 200,
-): Response {
-  const body = `<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="utf-8"/>
-  <meta name="viewport" content="width=device-width, initial-scale=1"/>
-  <title>${escapeHtml(title)}</title>
-</head>
-<body style="font-family:system-ui,sans-serif;padding:24px;line-height:1.5;color:#101828;max-width:32rem;margin:0 auto;">
-  <h1 style="font-size:1.25rem;margin:0 0 12px;">${escapeHtml(title)}</h1>
-  <p style="margin:0;color:#364153;">${escapeHtml(message)}</p>
-</body>
-</html>`
-  return new Response(body, {
-    status,
-    headers: { ...corsHeaders, "Content-Type": "text/html; charset=utf-8" },
-  })
-}
-
 function jsonResponse(body: Record<string, unknown>, status = 200): Response {
   return new Response(JSON.stringify(body), {
     status,
     headers: { ...corsHeaders, "Content-Type": "application/json; charset=utf-8" },
+  })
+}
+
+function redirectToResult(params: {
+  status: "approved" | "rejected" | "error"
+  already?: boolean
+  message?: string | null
+}): Response {
+  const location = uloAppUrl.estimateDecisionResult({
+    status: params.status,
+    already: params.already,
+    message: params.message,
+  })
+  return new Response(null, {
+    status: 302,
+    headers: {
+      ...corsHeaders,
+      Location: location,
+      "Cache-Control": "no-store",
+    },
   })
 }
 
@@ -105,7 +98,10 @@ serve(async (req) => {
     if (parsed.error === "method") {
       return parsed.asJson
         ? jsonResponse({ ok: false, error: "Method not allowed" }, 405)
-        : htmlResponse("Method not allowed", "Use the link from your text or email.", 405)
+        : redirectToResult({
+          status: "error",
+          message: "Use the link from your text or email.",
+        })
     }
     return parsed.asJson
       ? jsonResponse(
@@ -116,11 +112,11 @@ serve(async (req) => {
         },
         400,
       )
-      : htmlResponse(
-        "Invalid link",
-        "This approval link is missing information. Ask for a new estimate notification.",
-        400,
-      )
+      : redirectToResult({
+        status: "error",
+        message:
+          "This approval link is missing information. Ask for a new estimate notification.",
+      })
   }
 
   const supabaseUrl = Deno.env.get("SUPABASE_URL")?.trim()
@@ -128,7 +124,10 @@ serve(async (req) => {
   if (!supabaseUrl || !serviceKey) {
     return parsed.asJson
       ? jsonResponse({ ok: false, error: "Server misconfiguration." }, 500)
-      : htmlResponse("Server error", "Misconfiguration.", 500)
+      : redirectToResult({
+        status: "error",
+        message: "Server misconfiguration.",
+      })
   }
 
   const supabase = createClient(supabaseUrl, serviceKey, {
@@ -148,11 +147,10 @@ serve(async (req) => {
         { ok: false, error: result.error },
         result.status ?? 500,
       )
-      : htmlResponse(
-        "Could not update estimate",
-        result.error,
-        result.status ?? 500,
-      )
+      : redirectToResult({
+        status: "error",
+        message: result.error,
+      })
   }
 
   if (parsed.asJson) {
@@ -163,19 +161,8 @@ serve(async (req) => {
     })
   }
 
-  if (result.already) {
-    return htmlResponse(
-      result.status === "approved" ? "Already approved" : "Already declined",
-      result.status === "approved"
-        ? "This estimate was already approved. The vendor was notified."
-        : "This estimate was already declined. The vendor was notified.",
-    )
-  }
-
-  return htmlResponse(
-    result.status === "approved" ? "Estimate approved" : "Estimate declined",
-    result.status === "approved"
-      ? "Thanks — the vendor has been notified that they can proceed."
-      : "Got it — the vendor has been notified that this estimate was not approved.",
-  )
+  return redirectToResult({
+    status: result.status,
+    already: result.already ?? false,
+  })
 })

@@ -8,6 +8,7 @@ import {
   choiceOptionsFromExternalSuggestions,
   formatExternalVendorSmsLine,
   landlordNumberedChoiceReplyHint,
+  landlordVendorChoiceResolvedIntake,
   parseLandlordVendorChoice,
   readAwaitingVendorChoice,
   ticketIsAwaitingLandlordVendorChoice,
@@ -66,6 +67,45 @@ Deno.test("decideVendorAssignmentFromTiers lists every matchable specialist and 
   assertEquals(decideVendorAssignmentFromTiers(null, null).kind, "none")
 })
 
+Deno.test("decideVendorAssignmentFromTiers prioritizes preferred over trade tier", () => {
+  const preferredGeneralist = {
+    ...generalist,
+    id: "gen-preferred",
+    name: "Preferred Handyman",
+    preferred_emergency: true,
+  }
+  const standardSpecialist = {
+    ...specialist,
+    preferred_emergency: false,
+  }
+  const preferredSpecialist = {
+    ...specialist,
+    id: "spec-preferred",
+    name: "Preferred Plumber",
+    preferred_emergency: true,
+  }
+  const standardGeneralist = {
+    ...generalistB,
+    preferred_emergency: false,
+  }
+
+  const decision = decideVendorAssignmentFromTiers(
+    [standardSpecialist, preferredSpecialist],
+    [preferredGeneralist, standardGeneralist],
+  )
+  assertEquals(decision.kind, "landlord_choice")
+  if (decision.kind === "landlord_choice") {
+    assertEquals(
+      decision.options.map((o) => o.vendor.id),
+      ["spec-preferred", "gen-preferred", "spec-1", "gen-2"],
+    )
+    assertEquals(
+      decision.options.map((o) => o.role),
+      ["specialist", "generalist", "specialist", "generalist"],
+    )
+  }
+})
+
 Deno.test("parseLandlordVendorChoice: YES confirms a single vendor", () => {
   const options = [
     { id: "gen-1", name: "Ivanhomesolutions", role: "generalist" as const },
@@ -97,7 +137,7 @@ Deno.test("parseLandlordVendorChoice: numbered reply when two handymen are liste
   assertEquals(parseLandlordVendorChoice("Handyman Services By Michael", options)?.id, "gen-2")
 })
 
-Deno.test("canHandleLandlordVendorChoice requires pending ask on landlord thread", () => {
+Deno.test("canHandleLandlordVendorChoice honors pending ask even if phone was mislabeled resident", () => {
   const intake = {
     awaiting_vendor_choice: {
       ticket_id: "t1",
@@ -116,17 +156,25 @@ Deno.test("canHandleLandlordVendorChoice requires pending ask on landlord thread
   )
   assertEquals(
     canHandleLandlordVendorChoice({
-      identityType: "vendor",
-      conversationType: "open",
+      identityType: "resident",
+      conversationType: "resident_intake",
       intakeState: intake,
     }),
     true,
   )
   assertEquals(
     canHandleLandlordVendorChoice({
-      identityType: "resident",
-      conversationType: "landlord_update",
+      identityType: "vendor",
+      conversationType: "vendor_alert",
       intakeState: intake,
+    }),
+    false,
+  )
+  assertEquals(
+    canHandleLandlordVendorChoice({
+      identityType: "landlord",
+      conversationType: "landlord_update",
+      intakeState: {},
     }),
     false,
   )
@@ -140,12 +188,16 @@ Deno.test("buildLandlordVendorChoiceSms asks YES for one vendor and 1 or 2 for t
     workOrderRef: "WO-E6F7",
     unit: "1",
     tradeLabel: "plumbing",
+    issueHeadline: "dripping faucet",
+    locationLabel: "563 Springdale Circle",
     options: [
       { id: "gen-1", name: "Ivanhomesolutions", role: "generalist" },
     ],
   })
-  assertEquals(one.includes("Reply YES"), true)
-  assertEquals(one.includes("Ivanhomesolutions"), true)
+  assertEquals(one.includes("Reply YES to send the job to Ivanhomesolutions"), true)
+  assertEquals(one.includes("property management team"), false)
+  assertEquals(one.includes("WO-E6F7"), false)
+  assertEquals(one.includes("dripping faucet at 563 Springdale Circle"), true)
 
   const two = buildLandlordVendorChoiceSms({
     landlordFirstName: "Alex",
@@ -158,6 +210,7 @@ Deno.test("buildLandlordVendorChoiceSms asks YES for one vendor and 1 or 2 for t
       { id: "gen-1", name: "Ivanhomesolutions", role: "generalist" },
     ],
   })
+  assertEquals(two.includes("Reply 1 or 2 to send them the job"), true)
   const twoHandymen = buildLandlordVendorChoiceSms({
     landlordFirstName: "Alex",
     companyName: "Ulo Homes",
@@ -170,8 +223,8 @@ Deno.test("buildLandlordVendorChoiceSms asks YES for one vendor and 1 or 2 for t
     ],
   })
   assertEquals(twoHandymen.includes("Reply 1 or 2"), true)
-  assertEquals(twoHandymen.includes("1. Ivanhomesolutions"), true)
-  assertEquals(twoHandymen.includes("2. Handyman Services By Michael"), true)
+  assertEquals(twoHandymen.includes("1 — Ivanhomesolutions"), true)
+  assertEquals(twoHandymen.includes("2 — Handyman Services By Michael"), true)
 })
 
 Deno.test("buildLandlordVendorChoiceSms rematch copy does not auto-assign", () => {
@@ -190,6 +243,7 @@ Deno.test("buildLandlordVendorChoiceSms rematch copy does not auto-assign", () =
   assertEquals(sms.includes("hasn't responded in time"), true)
   assertEquals(sms.includes("Reply 1 or 2"), true)
   assertEquals(sms.includes("Frank Rooter LLC"), true)
+  assertEquals(sms.includes("property management team"), false)
 })
 
 Deno.test("canReplaceAssignedVendorForLandlordChoice allows pending_accept rematch", () => {
@@ -198,6 +252,22 @@ Deno.test("canReplaceAssignedVendorForLandlordChoice allows pending_accept remat
   assertEquals(canReplaceAssignedVendorForLandlordChoice("in_progress"), false)
   assertEquals(ticketIsAwaitingLandlordVendorChoice("Awaiting landlord vendor choice"), true)
   assertEquals(ticketIsAwaitingLandlordVendorChoice(null), false)
+})
+
+Deno.test("landlordVendorChoiceResolvedIntake drops choice + probe host state", () => {
+  const next = landlordVendorChoiceResolvedIntake({
+    awaiting_vendor_choice: {
+      ticket_id: "t1",
+      options: [{ id: "v1", name: "Flex", role: "specialist" }],
+    },
+    vendor_availability_probe: { status: "awaiting_landlord", ticket_id: "t1" },
+    unknown_contact_intake: { status: "identifying_location" },
+    keep_me: true,
+  })
+  assertEquals(next.awaiting_vendor_choice, undefined)
+  assertEquals(next.vendor_availability_probe, undefined)
+  assertEquals(next.unknown_contact_intake, undefined)
+  assertEquals(next.keep_me, true)
 })
 
 Deno.test("vendorChoiceOptionIdsEqual ignores order", () => {

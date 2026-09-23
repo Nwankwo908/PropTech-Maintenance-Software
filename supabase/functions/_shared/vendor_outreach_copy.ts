@@ -43,10 +43,28 @@ export type VendorOpenJobSmsLine = {
   description?: string | null
 }
 
-/** Full company / legal business name for greetings. */
+/** Title-case a company label for vendor SMS greetings. */
+export function titleCaseCompanyName(raw: string | null | undefined): string {
+  const name = (raw ?? "").trim()
+  if (!name) return ""
+  return name
+    .split(/\s+/)
+    .map((word) => {
+      if (!word) return word
+      // Keep short all-caps tokens (NJ, LLC) as-is.
+      if (word.length <= 3 && word === word.toUpperCase()) return word
+      // Preserve mixed case (McDonald); title-case all-lowercase / all-caps words.
+      if (word !== word.toLowerCase() && word !== word.toUpperCase()) {
+        return word.charAt(0).toUpperCase() + word.slice(1)
+      }
+      return word.charAt(0).toUpperCase() + word.slice(1).toLowerCase()
+    })
+    .join(" ")
+}
+
+/** Full company / legal business name for greetings (title-cased). */
 export function vendorCompanyName(vendorName: string): string {
-  const trimmed = vendorName.trim()
-  return trimmed || "there"
+  return titleCaseCompanyName(vendorName) || "there"
 }
 
 /** @deprecated Use vendorCompanyName */

@@ -1,0 +1,60 @@
+---
+description: Autofix Bugbot — Limited Alpha 1 and 2 share only the Twilio DID; never route inbound/conversations via DID owner (Alpha 1).
+globs: supabase/functions/_shared/sms/**/*.{ts,tsx},shared/landlordCapabilities.ts
+alwaysApply: false
+---
+
+# Limited Alpha 1 ↔ 2 — share the Twilio number only
+
+**Symptom (Flex / WO probe):** Vendor on Limited Alpha 2 replies to a work-order SMS. Twilio has the message, but Communication inbox on Alpha 2 is empty — the thread appears under **Limited Alpha 1** as unknown resident / “I've let your property manager know…”.
+
+## Rule
+
+Limited Alpha 1 (`de300000-…0003`) and Limited Alpha 2 (`de300000-…0004`) share **one** production Twilio DID: `+18775803356`.
+
+That DID’s `sms_numbers.landlord_id` is **infrastructure ownership** (usually Alpha 1). It is **never** the inbound traffic account.
+
+| What | Shared? |
+|---|---|
+| Twilio phone `+18775803356` | **Yes** — only shared thing |
+| Single `sms_numbers` row for that DID | Yes (registry) — not a landlord traffic scope |
+| Conversations / `sms_messages` | **No** — keyed by sender-resolved `landlord_id` |
+| `sms_identities`, residents, vendors, tickets | **No** — per landlord |
+| Unknown / ambiguous From | **No** — ack only; create **no** thread on either Alpha |
+
+## Autofix (Bugbot)
+
+On PR review or when SMS thread dumps show Alpha-2 vendor/resident traffic under Alpha 1:
+
+1. **Never** set inbound `landlordId` from `sms_numbers.landlord_id` (DID owner) when `isLimitedAlphaTwilioSmsNumber(To)`.
+2. Route via `resolveLandlordIdForSharedTwilioInbound(From)` only — unique match among:
+   - waiting activation resident
+   - vendor roster phone
+   - Limited Alpha landlord/ops phone
+   - `sms_identities`
+   - resident `users` phone
+3. If no unique match → return `null`; processor ACKs without `findOrCreateConversation` on either Alpha (`unmatchedSharedDid`).
+4. Include **vendors** in the resolver (before `sms_identities`) so a mis-routed Alpha-1 unknown identity cannot steal Alpha-2 vendor replies.
+5. Scope unit/roster self-heal (`findActiveResidentsByUnit`, `suggestUnitFromRecentInvite`, `attachPhoneToUnitResident`) with `landlord_id` — never scan all landlords.
+6. Alpha 2 outbound may **reuse** the shared DID row for From (`findActiveLandlordMainNumber` / `resolveOutboundLandlordSmsLine`) without transferring `sms_numbers.landlord_id`.
+7. Add/extend a Deno test: unique vendor → Alpha 2; empty/ambiguous → `null` (not Alpha 1 DID owner).
+
+## Canonical helpers
+
+| Concern | Module |
+|---|---|
+| Shared DID inbound landlord | `resolveLandlordIdForSharedTwilioInbound` in `inbound_db.ts` |
+| Unmatched ack (no conversation) | `inbound_processor.ts` (`unmatchedSharedDid`) |
+| Alpha outbound From line | `findActiveLandlordMainNumber` / `resolveOutboundLandlordSmsLine` in `landlordSmsOnboarding.ts` |
+| DID constants | `LIMITED_ALPHA_*` / `isLimitedAlphaTwilioSmsNumber` in `shared/landlordCapabilities.ts` |
+| Isolation tests | `inbound_db_sharedTwilio_test.ts` |
+
+## Do not
+
+- Fall back inbound traffic to the DID owner when the sender is unknown or ambiguous
+- Re-introduce `return fallbackLandlordId` / `smsNumber.landlord_id` as shared-DID routing
+- Skip vendor roster lookup in the shared-DID resolver
+- Scan residents/units/tickets across landlords during shared-DID self-heal
+- Use the Alpha DID as From for non–Limited-Alpha landlords
+- Assume Alpha 2 “has no SMS line” — reuse the shared DID for From without changing ownership
+- Merge Alpha 1 and Alpha 2 Conversations, identities, or rosters because they share a phone number

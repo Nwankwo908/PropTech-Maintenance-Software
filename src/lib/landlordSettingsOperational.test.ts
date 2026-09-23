@@ -170,4 +170,93 @@ describe('mergeOrganizationForm operational settings', () => {
     expect(merged.legalName).toBe('')
     expect(merged.displayName).toBe('')
   })
+
+  it('does not resurrect old company or display names from onboarding JSON', () => {
+    const merged = mergeOrganizationForm({
+      persisted: {
+        ...DEFAULT_ORGANIZATION_SETTINGS,
+        legalName: 'Old Company LLC',
+        displayName: 'Old Brand',
+        contactName: 'Old Contact',
+      },
+      legacyLocal: null,
+      landlordRow: {
+        name: 'Alex Rivera properties',
+        display_name: '',
+        contact_name: 'Alex Rivera',
+      },
+      onboardingRow: null,
+      accountSettings: {
+        organization: {
+          legalName: 'Stale Org From Account Settings',
+          displayName: 'Stale Display',
+          contactName: 'Stale Contact',
+        },
+      },
+      draftState: {
+        accountSetup: {
+          companyName: 'Stale Onboarding Co',
+          contactName: 'Alex Rivera',
+        },
+      },
+    })
+
+    // Derived "{name} properties" and blank display stay blank — JSON must not fill them.
+    expect(merged.legalName).toBe('')
+    expect(merged.displayName).toBe('')
+    expect(merged.contactName).toBe('Alex Rivera')
+  })
+
+  it('clears contact name when the landlords row has none', () => {
+    const merged = mergeOrganizationForm({
+      persisted: {
+        ...DEFAULT_ORGANIZATION_SETTINGS,
+        contactName: 'Someone Else',
+        legalName: 'Prior Co',
+        displayName: 'Prior Brand',
+      },
+      legacyLocal: null,
+      landlordRow: {
+        name: '',
+        display_name: '',
+        contact_name: '',
+      },
+      onboardingRow: null,
+      accountSettings: {
+        organization: {
+          contactName: 'Someone Else',
+          legalName: 'Prior Co',
+          displayName: 'Prior Brand',
+        },
+      },
+      draftState: { accountSetup: { companyName: '', contactName: '' } },
+    })
+
+    expect(merged.contactName).toBe('')
+    expect(merged.legalName).toBe('')
+    expect(merged.displayName).toBe('')
+  })
+
+  it('still uses a real company name stored on the landlords row', () => {
+    const merged = mergeOrganizationForm({
+      persisted: {
+        ...DEFAULT_ORGANIZATION_SETTINGS,
+        legalName: 'Wrong Old Co',
+        displayName: 'Wrong Old Brand',
+      },
+      legacyLocal: null,
+      landlordRow: {
+        name: 'CEO Rentals NJ',
+        display_name: 'CEO Rentals',
+        contact_name: 'Maurice',
+      },
+      onboardingRow: null,
+      accountSettings: {},
+      draftState: {},
+    })
+
+    expect(merged.legalName).toBe('CEO Rentals NJ')
+    expect(merged.displayName).toBe('CEO Rentals')
+    expect(merged.contactName).toBe('Maurice')
+  })
 })

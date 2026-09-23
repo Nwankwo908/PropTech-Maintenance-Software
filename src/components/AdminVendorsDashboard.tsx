@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { sendVendorInvite, type VendorInviteChannel } from '@/api/vendorVerification'
 import { VendorFormModal, type VendorManagementRow } from '@/components/VendorFormModal'
+import { SetupOutreachAckModal } from '@/components/SetupOutreachAckModal'
 import { SetupSuccessCheckboxGuide } from '@/components/SetupSuccessCheckboxGuide'
 import { TableCheckbox } from '@/components/TableCheckbox'
 import magnifyingGlassIcon from '@/assets/Magnifying glass.svg'
@@ -26,7 +27,12 @@ import {
   isGeneralistTrade,
   VENDOR_TRADE_OPTIONS,
 } from '@/lib/vendorTrades'
-import { resolveVendorCapacityChip, vendorCapacityChipVisualClasses } from '@/lib/vendorStatusChip'
+import {
+  canRetryVendorOnboarding,
+  canShowStartVendorOnboarding,
+  resolveVendorCapacityChip,
+  vendorCapacityChipVisualClasses,
+} from '@/lib/vendorStatusChip'
 import {
   dismissSetupSuccessCheckboxGuide,
   isSetupSuccessCheckboxGuideActive,
@@ -50,6 +56,7 @@ type VendorRow = {
   completedJobs: number
   avgResponseMinutes: number | null
   active: boolean
+  preferredEmergency: boolean
   rosterStatus: string | null
   createdAt: string | null
   onboardingOverriddenAt: string | null
@@ -92,6 +99,7 @@ function toVendorManagementRow(vendor: VendorRow): VendorManagementRow {
     country: vendor.country,
     notification_channel: vendor.notificationChannel,
     active: vendor.active,
+    preferredEmergency: vendor.preferredEmergency,
     portal_api_key: vendor.portalApiKey,
   }
 }
@@ -305,6 +313,7 @@ export function AdminVendorsDashboard() {
   const [deleteVendorsSaving, setDeleteVendorsSaving] = useState(false)
   const [deleteVendorsError, setDeleteVendorsError] = useState<string | null>(null)
   const [onboardingSaving, setOnboardingSaving] = useState(false)
+  const [setupOutreachAckOpen, setSetupOutreachAckOpen] = useState(false)
   const [onboardingNotice, setOnboardingNotice] = useState<string | null>(null)
   const [marketplacePreference, setMarketplacePreference] = useState<string | null>(null)
 
@@ -368,7 +377,7 @@ export function AdminVendorsDashboard() {
       supabase
         .from('vendors')
         .select(
-          'id, name, category, active, roster_status, email, phone, contact_name, city, state, country, notification_channel, portal_api_key, created_at, onboarding_overridden_at, onboarded_from_external',
+          'id, name, category, active, preferred_emergency, roster_status, email, phone, contact_name, city, state, country, notification_channel, portal_api_key, created_at, onboarding_overridden_at, onboarded_from_external',
         )
         .eq('landlord_id', landlordId)
         .order('created_at', { ascending: true }),
@@ -438,6 +447,7 @@ export function AdminVendorsDashboard() {
         completedJobs: metrics?.completedJobs ?? 0,
         avgResponseMinutes: metrics?.avgResponseMinutes ?? null,
         active: raw.active !== false,
+        preferredEmergency: raw.preferred_emergency === true,
         rosterStatus: asString(raw.roster_status) || null,
         createdAt: asString(raw.created_at) || null,
         onboardingOverriddenAt: asString(raw.onboarding_overridden_at) || null,
@@ -584,17 +594,37 @@ export function AdminVendorsDashboard() {
     () =>
       vendors.some((vendor) => {
         if (!selectedVendorIds.has(vendor.id)) return false
-        const chip = resolveVendorCapacityChip({
+        const hasContact = Boolean(vendor.phone?.trim() || vendor.email?.trim())
+        return canShowStartVendorOnboarding({
+          hasContact,
           verificationStatus: verificationByVendor.get(vendor.id),
           vendorActive: vendor.active,
           availability: availabilityByVendor.get(vendor.id),
           rosterStatus: vendor.rosterStatus,
           onboardingOverriddenAt: vendor.onboardingOverriddenAt,
         })
-        return chip.status === 'not_started'
       }),
     [vendors, selectedVendorIds, verificationByVendor, availabilityByVendor],
   )
+
+  const selectedOnboardingRetryOnly = useMemo(() => {
+    const selected = vendors.filter((vendor) => selectedVendorIds.has(vendor.id))
+    if (selected.length === 0) return false
+    return selected.every((vendor) => {
+      const hasContact = Boolean(vendor.phone?.trim() || vendor.email?.trim())
+      return canRetryVendorOnboarding({
+        hasContact,
+        verificationStatus: verificationByVendor.get(vendor.id),
+        vendorActive: vendor.active,
+        availability: availabilityByVendor.get(vendor.id),
+        rosterStatus: vendor.rosterStatus,
+        onboardingOverriddenAt: vendor.onboardingOverriddenAt,
+      })
+    })
+  }, [vendors, selectedVendorIds, verificationByVendor, availabilityByVendor])
+
+  const selectedCanSetupOrRetry =
+    selectedCanStartOnboarding || selectedOnboardingRetryOnly
 
   function toggleVendorSelected(id: string) {
     setSelectedVendorIds((prev) => {
@@ -689,7 +719,6 @@ export function AdminVendorsDashboard() {
       if (
         chip.status === 'active' ||
         chip.status === 'paused' ||
-        chip.status === 'pending' ||
         chip.status === 'docs_submitted' ||
         chip.status === 'suspended' ||
         chip.status === 'banned'
@@ -698,7 +727,7 @@ export function AdminVendorsDashboard() {
         continue
       }
 
-      if (chip.status === 'not_started') {
+      if (chip.status === 'not_started' || chip.status === 'pending') {
         toInvite.push(vendor)
       }
     }
@@ -711,11 +740,11 @@ export function AdminVendorsDashboard() {
         )
       } else if (alreadyComplete > 0 && missingContact === 0) {
         setOnboardingNotice(
-          'Selected vendors are already activated, waiting for verification, or under review.',
+          'Selected vendors are already activated or under review.',
         )
       } else {
         setOnboardingNotice(
-          'No selected vendors are ready for onboarding. Add contact info or choose vendors who have not been invited yet.',
+          'No selected vendors are ready for onboarding. Add contact info or choose vendors who still need a verification invite.',
         )
       }
       return
@@ -948,14 +977,18 @@ export function AdminVendorsDashboard() {
           >
             Clear
           </button>
-          {selectedCanStartOnboarding ? (
+          {selectedCanSetupOrRetry ? (
             <button
               type="button"
               disabled={onboardingSaving || deleteVendorsSaving}
-              onClick={() => void startOnboardingForSelected()}
+              onClick={() => setSetupOutreachAckOpen(true)}
               className="sa-press inline-flex h-9 items-center justify-center rounded-lg bg-[#187960] px-3 text-[14px] font-medium text-white outline-none hover:bg-[#146b52] focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50"
             >
-              {onboardingSaving ? 'Sending…' : 'Setup Vendor'}
+              {onboardingSaving
+                ? 'Sending…'
+                : selectedOnboardingRetryOnly
+                  ? 'Retry setup'
+                  : 'Setup Vendor'}
             </button>
           ) : null}
         </div>
@@ -975,6 +1008,9 @@ export function AdminVendorsDashboard() {
                     onChange={toggleAllFilteredVendorsSelected}
                   />
                 </th>
+                <th className="w-10 px-2 py-3 text-center text-[12px] font-medium text-[#6a7282]">
+                  <span className="sr-only">Preferred</span>
+                </th>
                 <th className="px-6 py-3 text-[12px] font-medium text-[#6a7282]">Vendor</th>
                 <th className="px-6 py-3 text-[12px] font-medium text-[#6a7282]">Trade</th>
                 <th className="px-6 py-3 text-[12px] font-medium text-[#6a7282]">
@@ -992,13 +1028,13 @@ export function AdminVendorsDashboard() {
             <tbody>
               {loading ? (
                 <tr>
-                  <td colSpan={8} className="px-6 py-10 text-center text-[14px] text-[#6a7282]">
+                  <td colSpan={9} className="px-6 py-10 text-center text-[14px] text-[#6a7282]">
                     Loading vendors…
                   </td>
                 </tr>
               ) : filteredVendors.length === 0 ? (
                 <tr>
-                  <td colSpan={8} className="px-6 py-10 text-center text-[14px] text-[#6a7282]">
+                  <td colSpan={9} className="px-6 py-10 text-center text-[14px] text-[#6a7282]">
                     {vendors.length === 0
                       ? 'No vendors yet. Add vendors so Ulo can route work to them.'
                       : 'No vendors match your search or filters.'}
@@ -1026,6 +1062,32 @@ export function AdminVendorsDashboard() {
                           onChange={() => toggleVendorSelected(vendor.id)}
                         />
                       </div>
+                    </td>
+                    <td className="w-10 px-2 py-4 text-center">
+                      {vendor.preferredEmergency ? (
+                        <span
+                          className="inline-flex items-center justify-center"
+                          title="Preferred vendor"
+                          aria-label={`${vendor.name} is a preferred vendor`}
+                        >
+                          <svg
+                            className="size-4 text-[#186179]"
+                            viewBox="0 0 16 16"
+                            fill="none"
+                            aria-hidden
+                          >
+                            <path
+                              d="M3.5 8.5L6.5 11.5L12.5 4.5"
+                              stroke="currentColor"
+                              strokeWidth="1.8"
+                              strokeLinecap="round"
+                              strokeLinejoin="round"
+                            />
+                          </svg>
+                        </span>
+                      ) : (
+                        <span className="sr-only">{vendor.name} is not a preferred vendor</span>
+                      )}
                     </td>
                     <td className="px-6 py-4 text-[14px] font-medium text-[#0a0a0a]">
                       <Link
@@ -1147,6 +1209,23 @@ export function AdminVendorsDashboard() {
         onSaved={() => {
           setEditingVendor(null)
           void loadVendors()
+        }}
+      />
+
+      <SetupOutreachAckModal
+        open={setupOutreachAckOpen}
+        kind="vendor"
+        retry={selectedOnboardingRetryOnly}
+        saving={onboardingSaving}
+        onClose={() => {
+          if (onboardingSaving) return
+          setSetupOutreachAckOpen(false)
+        }}
+        onConfirm={() => {
+          void (async () => {
+            await startOnboardingForSelected()
+            setSetupOutreachAckOpen(false)
+          })()
         }}
       />
     </main>

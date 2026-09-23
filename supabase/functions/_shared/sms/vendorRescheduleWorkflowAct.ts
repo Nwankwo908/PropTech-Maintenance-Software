@@ -20,6 +20,7 @@ import {
 } from "./vendorWorkOrderClarification.ts"
 import {
   detectVendorRescheduleIntent,
+  looksLikeAvailabilityProposal,
   readVendorReschedulePending,
   tryHandleVendorRescheduleSms,
 } from "./vendorRescheduleSms.ts"
@@ -211,6 +212,8 @@ export async function actVendorRescheduleInboundTurn(
     forcedTicketId: forcedTicketId || pendingReschedule?.ticketId || null,
     continuePending: continueReschedulePending ||
       clarificationOriginalIntent === "reschedule",
+    contextReschedule: prev?.step === "scheduled" &&
+      looksLikeAvailabilityProposal(effectiveBody),
   })
 
   if (!rescheduleResult.handled) {
@@ -314,10 +317,16 @@ export function shouldAttemptVendorRescheduleInbound(input: {
       input.pendingRescheduleVendorId === input.vendorId &&
       !rescheduleIntent.isReschedule,
   )
+  // Already-scheduled job + bare day/window ⇒ reschedule by context, not keywords.
+  const bareTimeOnScheduled =
+    input.scheduleStep === "scheduled" &&
+    looksLikeAvailabilityProposal(input.body)
+
   const treatAsReschedule =
     rescheduleIntent.isReschedule ||
     continueReschedulePending ||
-    input.clarificationOriginalIntent === "reschedule"
+    input.clarificationOriginalIntent === "reschedule" ||
+    bareTimeOnScheduled
 
   const blockingInitialSchedule =
     !!input.scheduleStep &&

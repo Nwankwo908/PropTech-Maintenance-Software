@@ -28,6 +28,8 @@ export type VendorManagementRow = {
   country: string | null
   notification_channel: VendorNotificationChannel
   active: boolean
+  /** Prefer for work-order coordination (`vendors.preferred_emergency`). */
+  preferredEmergency: boolean
   portal_api_key: string | null
 }
 
@@ -115,6 +117,7 @@ export function VendorFormModal({
     useState<VendorNotificationChannel>('email')
   const [category, setCategory] = useState('')
   const [active, setActive] = useState(true)
+  const [preferredEmergency, setPreferredEmergency] = useState(false)
   const [contactName, setContactName] = useState('')
   const [saving, setSaving] = useState(false)
   const [saveError, setSaveError] = useState<string | null>(null)
@@ -134,6 +137,7 @@ export function VendorFormModal({
         channel === 'sms' || channel === 'both' || channel === 'email' ? channel : 'email',
       )
       setActive(initial.active)
+      setPreferredEmergency(initial.preferredEmergency)
       setContactName(initial.contactName ?? '')
     } else {
       setName('')
@@ -145,6 +149,7 @@ export function VendorFormModal({
       setCountry('United States')
       setNotificationChannel('email')
       setActive(true)
+      setPreferredEmergency(false)
       setContactName('')
     }
     setSaveError(null)
@@ -218,6 +223,7 @@ export function VendorFormModal({
           phone: phonePayload,
           notification_channel: notificationChannel,
           active,
+          preferred_emergency: preferredEmergency,
         })
         const { data, error } = await supabase
           .from('vendors')
@@ -232,6 +238,7 @@ export function VendorFormModal({
             country: countryPayload,
             notification_channel: notificationChannel,
             active,
+            preferred_emergency: preferredEmergency,
             landlord_id: getActiveLandlordId(),
           })
           .select('id')
@@ -255,6 +262,7 @@ export function VendorFormModal({
           phone: phonePayload,
           notification_channel: notificationChannel,
           active,
+          preferred_emergency: preferredEmergency,
         })
         const { error } = await supabase
           .from('vendors')
@@ -269,6 +277,7 @@ export function VendorFormModal({
             country: countryPayload,
             notification_channel: notificationChannel,
             active,
+            preferred_emergency: preferredEmergency,
           })
           .eq('id', initial.id)
         if (error) throw error
@@ -587,6 +596,43 @@ export function VendorFormModal({
                   Inactive
                 </button>
               </div>
+            </div>
+            <div className="space-y-3">
+              <p className="text-[14px] font-medium leading-5 tracking-[-0.1504px] text-[#364153]">
+                Preferred vendor
+              </p>
+              <div className="flex w-full rounded-[10px] border border-[#e5e7eb] bg-[#f3f3f5] p-1">
+                <button
+                  type="button"
+                  onClick={() => setPreferredEmergency(true)}
+                  className={[
+                    'sa-pill h-8 flex-1 rounded-[8px] px-4 text-[14px] font-medium outline-none focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-1',
+                    preferredEmergency
+                      ? 'bg-white text-[#0a0a0a] shadow-sm'
+                      : 'text-[#6a7282] hover:text-[#0a0a0a]',
+                  ].join(' ')}
+                  aria-pressed={preferredEmergency}
+                >
+                  Preferred
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setPreferredEmergency(false)}
+                  className={[
+                    'sa-pill h-8 flex-1 rounded-[8px] px-4 text-[14px] font-medium outline-none focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-1',
+                    !preferredEmergency
+                      ? 'bg-white text-[#0a0a0a] shadow-sm'
+                      : 'text-[#6a7282] hover:text-[#0a0a0a]',
+                  ].join(' ')}
+                  aria-pressed={!preferredEmergency}
+                >
+                  Standard
+                </button>
+              </div>
+              <p className="text-[12px] font-normal leading-4 text-[#6a7282]">
+                Preferred vendors are offered first when coordinating work orders,
+                ahead of other specialists or generalists in the same trade.
+              </p>
             </div>
           </div>
         </div>

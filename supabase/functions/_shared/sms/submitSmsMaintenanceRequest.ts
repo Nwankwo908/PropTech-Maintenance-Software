@@ -12,8 +12,10 @@ import { dispatchConfirmedMaintenanceTicket } from "../confirmedMaintenanceDispa
 import type { SmsIntakeState } from "./residentIntakeTypes.ts"
 import {
   buildIntakeDescription,
+  entryOkIfAbsentFromIntake,
   resolveIntakeIssueCategory,
   severityToDb,
+  ticketIssueHeadline,
 } from "./residentIntakeTypes.ts"
 import { issueCategoryToVendorTrade } from "../vendor_trades.ts"
 import { rehostInboundSmsMedia } from "./rehostInboundMedia.ts"
@@ -137,6 +139,8 @@ export async function submitSmsMaintenanceRequest(
 
   const residentAvailability =
     params.intake.preferred_visit_windows?.trim() || null
+  const issueHeadline = ticketIssueHeadline(params.intake)
+  const entryOkIfAbsent = entryOkIfAbsentFromIntake(params.intake)
 
   const ticketFields = {
     landlord_id: params.landlordId,
@@ -148,6 +152,8 @@ export async function submitSmsMaintenanceRequest(
     resident_notification_channel: notificationChannel,
     unit,
     description,
+    issue_headline: issueHeadline,
+    entry_ok_if_absent: entryOkIfAbsent,
     resident_user_id: null as string | null,
     issue_category: issueCategory,
     severity: dbSeverity,

@@ -18,6 +18,7 @@ import {
 import {
   createIdleScheduleState,
   persistVendorScheduleFsm,
+  SCHEDULE_TTL_MS,
 } from "../vendor_schedule_fsm.ts"
 import {
   findOrCreateConversation,
@@ -84,7 +85,58 @@ export function detectVendorRescheduleIntent(body: string): VendorRescheduleDete
   return { isReschedule: true, confidence, reason }
 }
 
-function extractRescheduleReason(body: string): string | null {
+/**
+ * True when the SMS looks like a day/window proposal (e.g. "Wed 2pm"),
+ * independent of reschedule keywords.
+ */
+export function looksLikeAvailabilityProposal(body: string): boolean {
+  const text = body.trim()
+  if (!text || text.length > 200) return false
+  // Avoid treating long free-text / status messages as a window.
+  if (text.split(/\s+/).length > 16) return false
+  const tz = scheduleTimeZone()
+  const resolved = parseAvailabilityResolved(text, new Date(), tz)
+  if (resolved?.windowLabel?.trim() || resolved?.entity?.display_text?.trim()) {
+    return true
+  }
+  const scheduledAt = parseAvailabilityToScheduledAt(text, new Date(), tz)
+  return Boolean(scheduledAt)
+}
+
+/**
+ * Internal reschedule reason fragments → landlord-safe phrases.
+ * Unmapped reasons are omitted (never shown raw to landlords in email).
+ */
+const VENDOR_RESCHEDULE_REASON_COPY: Record<string, string> = {
+  "running late": "The vendor is running late.",
+  "running behind": "The vendor is running behind on another job.",
+  "running over": "The vendor's previous job ran over.",
+  delayed: "The vendor was delayed.",
+  "previous job": "The vendor's previous job ran long.",
+}
+
+/**
+ * Map extracted reschedule reason text to landlord-safe copy.
+ * Returns null when unmapped — callers must omit the reason line.
+ */
+export function mapVendorRescheduleReason(
+  reason: string | null | undefined,
+): { safeText: string | null; unmapped: boolean; raw: string | null } {
+  const raw = reason?.trim() || null
+  if (!raw) return { safeText: null, unmapped: false, raw: null }
+  const lower = raw.toLowerCase()
+  for (const [key, safe] of Object.entries(VENDOR_RESCHEDULE_REASON_COPY)) {
+    if (lower.includes(key)) {
+      return { safeText: safe, unmapped: false, raw }
+    }
+  }
+  console.warn("[vendor-reschedule] unmapped reason omitted from landlord email", {
+    reason: raw,
+  })
+  return { safeText: null, unmapped: true, raw }
+}
+
+export function extractRescheduleReason(body: string): string | null {
   const m = body.match(
     /\b(running behind[^.!?]*(?:[.!?]|$)|running late[^.!?]*(?:[.!?]|$)|previous job[^.!?]*(?:[.!?]|$)|delayed[^.!?]*(?:[.!?]|$))/i,
   )
@@ -256,6 +308,21 @@ export function buildVendorResidentConfirmedRescheduleSms(input: {
   return `The resident confirmed the new appointment for work order ${input.workOrderRef} at ${input.newTimeLabel}.`
 }
 
+/** Vendor SMS when the resident can no longer make a confirmed visit. */
+export function buildVendorTenantInitiatedRescheduleSms(input: {
+  workOrderRef: string
+  previousTimeLabel: string
+}): string {
+  const wo = input.workOrderRef.trim() || "this work order"
+  const when = input.previousTimeLabel.trim() || "the scheduled visit"
+  return [
+    `Update for work order ${wo}.`,
+    "",
+    `The resident can no longer make ${when}.`,
+    "Please reply with a new day and arrival window (e.g. Thu 1pm–4pm).",
+  ].join("\n")
+}
+
 export function buildLandlordRescheduleEmail(input: {
   workOrderRef: string
   vendorName: string
@@ -266,9 +333,10 @@ export function buildLandlordRescheduleEmail(input: {
   reason: string | null
 }): { subject: string; text: string; html: string } {
   const subject = `Work order rescheduled — ${input.workOrderRef}`
-  const reasonLine = input.reason?.trim()
-    ? `Reason: ${input.reason.trim()}`
-    : "Reason: not provided"
+  const mapped = mapVendorRescheduleReason(input.reason)
+  const reasonLine = mapped.safeText
+    ? `Reason: ${mapped.safeText}`
+    : null
   const text = [
     `${input.vendorName} rescheduled work order ${input.workOrderRef} for ${input.propertyName}, ${input.unitLabel}.`,
     "",
@@ -277,10 +345,12 @@ export function buildLandlordRescheduleEmail(input: {
     reasonLine,
     "",
     "The resident has been notified and is awaiting confirmation.",
-  ].join("\n")
+  ]
+    .filter((line) => line !== null)
+    .join("\n")
   const html =
     `<p>${escapeHtml(input.vendorName)} rescheduled work order <strong>${escapeHtml(input.workOrderRef)}</strong> for ${escapeHtml(input.propertyName)}, ${escapeHtml(input.unitLabel)}.</p>` +
-    `<p>Previous time: ${escapeHtml(input.previousTimeLabel)}<br>New time: ${escapeHtml(input.newTimeLabel)}<br>${escapeHtml(reasonLine)}</p>` +
+    `<p>Previous time: ${escapeHtml(input.previousTimeLabel)}<br>New time: ${escapeHtml(input.newTimeLabel)}${mapped.safeText ? `<br>${escapeHtml(`Reason: ${mapped.safeText}`)}` : ""}</p>` +
     `<p>The resident has been notified and is awaiting confirmation.</p>`
   return { subject, text, html }
 }
@@ -701,21 +771,40 @@ export async function tryHandleVendorRescheduleSms(
     forcedTicketId?: string | null
     /** When true, treat as reschedule even without intent keywords (pending follow-up). */
     continuePending?: boolean
+    /**
+     * When true, a bare day/window on an already-scheduled job is treated as
+     * reschedule intent (context), without requiring keyword phrases.
+     */
+    contextReschedule?: boolean
   },
 ): Promise<HandleVendorRescheduleResult> {
   const detected = detectVendorRescheduleIntent(params.inboundBody)
-  if (!detected.isReschedule && !params.continuePending && !params.forcedTicketId) {
+  const contextOk = Boolean(params.contextReschedule) &&
+    looksLikeAvailabilityProposal(params.inboundBody)
+  if (
+    !detected.isReschedule &&
+    !params.continuePending &&
+    !contextOk &&
+    !params.forcedTicketId
+  ) {
     return { handled: false }
   }
   if (!detected.isReschedule && !params.continuePending && params.forcedTicketId) {
     // Forced ticket from WO clarify only counts when original message was reschedule
     // (caller sets continuePending / passes original body with intent).
-    if (!detectVendorRescheduleIntent(params.inboundBody).isReschedule) {
+    if (
+      !detectVendorRescheduleIntent(params.inboundBody).isReschedule &&
+      !contextOk
+    ) {
       return { handled: false }
     }
   }
 
-  const confidence = detected.isReschedule ? detected.confidence : 0.7
+  const confidence = detected.isReschedule
+    ? detected.confidence
+    : contextOk
+    ? 0.8
+    : 0.7
   const reason = detected.reason
 
   await logGraphEvent(supabase, {
@@ -1132,5 +1221,180 @@ export async function tryHandleVendorRescheduleSms(
       landlordEmail: landlord.emailOk,
       newTimeLabel,
     },
+  }
+}
+
+/**
+ * Tenant can no longer make a confirmed visit — clear confirmation, ask vendor
+ * for a new window, leave FSM in awaiting_availability (parity with vendor-
+ * initiated reschedule's clear of schedule_confirmed_at).
+ */
+export async function beginTenantInitiatedReschedule(
+  supabase: SupabaseClient,
+  params: {
+    landlordId: string
+    ticketId: string
+    conversationId?: string | null
+    residentMessage?: string | null
+  },
+): Promise<{
+  ok: boolean
+  vendorNotified: boolean
+  previousTimeLabel: string | null
+  vendorId: string | null
+  error?: string
+}> {
+  const { data: ticket, error } = await supabase
+    .from("maintenance_requests")
+    .select(
+      "id, landlord_id, unit, building, assigned_vendor_id, scheduled_at, scheduled_window_text, schedule_confirmed_at, vendor_work_status, issue_category",
+    )
+    .eq("id", params.ticketId)
+    .maybeSingle()
+
+  if (error || !ticket) {
+    return {
+      ok: false,
+      vendorNotified: false,
+      previousTimeLabel: null,
+      vendorId: null,
+      error: "ticket_not_found",
+    }
+  }
+
+  const vendorId =
+    typeof ticket.assigned_vendor_id === "string"
+      ? ticket.assigned_vendor_id.trim()
+      : ""
+  if (!vendorId) {
+    return {
+      ok: false,
+      vendorNotified: false,
+      previousTimeLabel: null,
+      vendorId: null,
+      error: "no_vendor",
+    }
+  }
+
+  const previousScheduledAt =
+    typeof ticket.scheduled_at === "string" ? ticket.scheduled_at : null
+  const previousWindow =
+    typeof ticket.scheduled_window_text === "string"
+      ? ticket.scheduled_window_text
+      : null
+  const tz = scheduleTimeZone()
+  const previousTimeLabel = formatRescheduleTimeLabel(
+    previousScheduledAt,
+    previousWindow ?? "",
+    tz,
+  )
+  const nowIso = new Date().toISOString()
+
+  const { error: upErr } = await supabase
+    .from("maintenance_requests")
+    .update({
+      previous_scheduled_at: previousScheduledAt,
+      previous_scheduled_window_text: previousWindow,
+      schedule_confirmed_at: null,
+      reschedule_requested_by: "resident",
+      reschedule_reason: params.residentMessage?.trim().slice(0, 240) || null,
+      reschedule_requested_at: nowIso,
+      resident_confirmation_status: null,
+      resident_confirmed_at: null,
+      schedule_status: "resident_requested_reschedule",
+    })
+    .eq("id", params.ticketId)
+
+  if (upErr) {
+    console.error("[tenant-reschedule] update failed", upErr.message)
+    return {
+      ok: false,
+      vendorNotified: false,
+      previousTimeLabel,
+      vendorId,
+      error: upErr.message,
+    }
+  }
+
+  const { data: vendor } = await supabase
+    .from("vendors")
+    .select("name, phone")
+    .eq("id", vendorId)
+    .maybeSingle()
+  const phone =
+    typeof vendor?.phone === "string" ? vendor.phone.trim() : ""
+  const workOrderRef = formatWorkOrderRef(params.ticketId)
+  const body = buildVendorTenantInitiatedRescheduleSms({
+    workOrderRef,
+    previousTimeLabel,
+  })
+
+  let vendorNotified = false
+  let vendorConversationId: string | null = null
+  if (phone) {
+    const { sendVendorJobAlert } = await import("./vendorSmsRouting.ts")
+    const alert = await sendVendorJobAlert(supabase, {
+      ticketId: params.ticketId,
+      vendorId,
+      vendorPhone: phone,
+      body,
+      landlordId: params.landlordId,
+    })
+    vendorNotified = alert.ok
+    vendorConversationId = alert.ok ? alert.conversationId : null
+  }
+
+  if (!vendorConversationId) {
+    const { resolveVendorJobConversationId } = await import(
+      "./maintenanceEstimateInbox.ts"
+    )
+    vendorConversationId = await resolveVendorJobConversationId(supabase, {
+      landlordId: params.landlordId,
+      ticketId: params.ticketId,
+      vendorId,
+      vendorPhone: phone || null,
+    })
+  }
+
+  if (vendorConversationId) {
+    try {
+      const at = new Date().toISOString()
+      const next = {
+        ...createIdleScheduleState(params.ticketId),
+        step: "awaiting_availability" as const,
+        ticketId: params.ticketId,
+        enteredAt: at,
+        expiresAt: new Date(Date.now() + SCHEDULE_TTL_MS).toISOString(),
+      }
+      await persistVendorScheduleFsm(supabase, {
+        conversationId: vendorConversationId,
+        ticketId: params.ticketId,
+        next,
+      })
+    } catch (e) {
+      console.warn("[tenant-reschedule] fsm sync", e)
+    }
+  }
+
+  await logGraphEvent(supabase, {
+    landlord_id: params.landlordId,
+    event_type: "maintenance.resident_reschedule_requested",
+    source: "sms",
+    actor_type: "resident",
+    vendor_id: vendorId,
+    maintenance_request_id: params.ticketId,
+    conversation_id: params.conversationId ?? null,
+    metadata: {
+      previous_time: previousTimeLabel,
+      vendor_notified: vendorNotified,
+      message: `Resident asked to change ${workOrderRef} (${previousTimeLabel}).`,
+    },
+  })
+
+  return {
+    ok: true,
+    vendorNotified,
+    previousTimeLabel,
+    vendorId,
   }
 }

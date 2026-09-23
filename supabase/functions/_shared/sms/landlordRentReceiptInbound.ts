@@ -11,9 +11,9 @@ export function canHandleLandlordRentReceiptInbound(params: {
   identityType: string
   intakeState: unknown
 }): boolean {
-  if (params.identityType === "resident" || params.identityType === "vendor") {
-    return false
-  }
+  // Ops phones may be mislabeled resident on a reused resident_intake thread.
+  // Pending rent-receipt ask wins; only skip real vendor threads.
+  if (params.identityType === "vendor") return false
   return hasLandlordRentReceiptPending(params.intakeState)
 }
 

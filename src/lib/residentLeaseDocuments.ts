@@ -341,6 +341,9 @@ export async function uploadResidentLeaseDocuments(params: {
 }): Promise<{ ok: true; uploaded: number } | { ok: false; error: string }> {
   const landlordId = (params.landlordId ?? getActiveLandlordId()).trim()
   const files = params.files.filter((file) => file.size > 0)
+  // #region agent log
+  fetch('http://127.0.0.1:7898/ingest/3050e2ef-64dd-49e5-a718-1f5719c45963',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'5d0562'},body:JSON.stringify({sessionId:'5d0562',runId:'pre-fix',hypothesisId:'D',location:'residentLeaseDocuments.ts:upload:entry',message:'lease upload start',data:{landlordIdLen:landlordId.length,fileCount:files.length,residentNameLen:params.resident.fullName.trim().length},timestamp:Date.now()})}).catch(()=>{});
+  // #endregion
   if (!landlordId) return { ok: false, error: 'Missing landlord account.' }
   if (files.length === 0) return { ok: true, uploaded: 0 }
   if (!supabase) return { ok: false, error: 'Supabase is not configured.' }
@@ -448,6 +451,10 @@ export async function uploadResidentLeaseDocuments(params: {
       fileNames: uploadedDocs.map((doc) => doc.fileName),
     },
   })
+
+  // #region agent log
+  fetch('http://127.0.0.1:7898/ingest/3050e2ef-64dd-49e5-a718-1f5719c45963',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'5d0562'},body:JSON.stringify({sessionId:'5d0562',runId:'pre-fix',hypothesisId:'D',location:'residentLeaseDocuments.ts:upload:ok',message:'lease upload stored under residentLeaseDocuments only',data:{uploaded:uploadedDocs.length,totalDocs:documents.length,storage:'residentLeaseDocuments'},timestamp:Date.now()})}).catch(()=>{});
+  // #endregion
 
   return { ok: true, uploaded: uploadedDocs.length }
 }

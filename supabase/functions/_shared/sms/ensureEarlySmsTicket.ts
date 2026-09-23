@@ -13,8 +13,10 @@ import {
 } from "../ga4MeasurementProtocol.ts"
 import {
   buildIntakeDescription,
+  entryOkIfAbsentFromIntake,
   resolveIntakeIssueCategory,
   severityToDb,
+  ticketIssueHeadline,
   type SmsIntakeState,
 } from "./residentIntakeTypes.ts"
 
@@ -122,6 +124,8 @@ export async function ensureEarlySmsMaintenanceTicket(
   const priority = params.intake.urgency?.trim() || "normal"
   const dbSeverity = severityToDb(params.intake.severity)
   const description = buildIntakeDescription(params.intake)
+  const issueHeadline = ticketIssueHeadline(params.intake)
+  const entryOkIfAbsent = entryOkIfAbsentFromIntake(params.intake)
   const estimatedMinutes = getEstimatedMinutes(issueCategory, dbSeverity, null, {
     description,
     outdoorTempF: params.intake.outdoor_temp_f,
@@ -134,6 +138,8 @@ export async function ensureEarlySmsMaintenanceTicket(
       .from("maintenance_requests")
       .update({
         description,
+        issue_headline: issueHeadline,
+        entry_ok_if_absent: entryOkIfAbsent,
         issue_category: issueCategory,
         priority,
         urgency: priority,
@@ -178,6 +184,8 @@ export async function ensureEarlySmsMaintenanceTicket(
       resident_user_id: null,
       photo_paths: storagePhotoPaths(params.intake.photo_urls),
       issue_category: issueCategory,
+      issue_headline: issueHeadline,
+      entry_ok_if_absent: entryOkIfAbsent,
       severity: dbSeverity,
       estimated_minutes: estimatedMinutes,
       due_at: dueAt.toISOString(),

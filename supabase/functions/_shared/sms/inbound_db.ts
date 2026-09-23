@@ -191,14 +191,36 @@ export async function findSmsIdentitiesByPhone(
   return (data as SmsIdentityRow[] | null) ?? []
 }
 
-/** When Limited Alpha 1 and 2 share a Twilio DID, route inbound by sender, not To-number owner. */
+/** Collapse landlord ids to a single id when exactly one distinct value exists. */
+export function uniqueLandlordIdFromRows(
+  rows: Array<{ landlord_id?: string | null } | null | undefined>,
+): string | null {
+  const unique = [
+    ...new Set(
+      rows
+        .map((row) => String(row?.landlord_id ?? "").trim())
+        .filter(Boolean),
+    ),
+  ]
+  return unique.length === 1 ? unique[0] : null
+}
+
+/**
+ * When Limited Alpha 1 and 2 share a Twilio DID, route inbound by **sender only**.
+ * The DID `sms_numbers.landlord_id` is infrastructure ownership — never a traffic
+ * account. Ambiguous or unknown senders return null (do not create a thread on
+ * either Alpha).
+ *
+ * Priority: waiting activation → unique vendor → landlord/ops phone →
+ * sms_identity → resident users. Never DID-owner fallback.
+ */
 export async function resolveLandlordIdForSharedTwilioInbound(
   supabase: SupabaseClient,
   fromNumber: string,
-  fallbackLandlordId: string,
-): Promise<string> {
+  _fallbackLandlordId?: string,
+): Promise<string | null> {
   const variants = phoneLookupVariants(fromNumber)
-  if (variants.length === 0) return fallbackLandlordId
+  if (variants.length === 0) return null
 
   // Prefer a waiting activation resident — YES/NO must land on the portfolio that
   // sent the welcome text, even when the DID is owned by the other Alpha account.
@@ -213,15 +235,36 @@ export async function resolveLandlordIdForSharedTwilioInbound(
   if (waitingErr) {
     console.error("[sms-inbound] shared Twilio waiting-resident lookup", waitingErr.message)
   } else {
-    const waitingIds = [
-      ...new Set(
-        (waitingUsers ?? [])
-          .map((row) => String(row.landlord_id ?? "").trim())
-          .filter(Boolean),
-      ),
-    ]
-    if (waitingIds.length === 1) return waitingIds[0]
+    const waitingId = uniqueLandlordIdFromRows(waitingUsers ?? [])
+    if (waitingId) return waitingId
   }
+
+  // Vendors before sms_identities: a mis-routed unknown-contact reply can create
+  // an Alpha-1 identity for an Alpha-2 vendor phone; roster must win.
+  const { data: vendors, error: vendorErr } = await supabase
+    .from("vendors")
+    .select("landlord_id")
+    .in("phone", variants)
+    .not("landlord_id", "is", null)
+    .limit(8)
+
+  if (vendorErr) {
+    console.error("[sms-inbound] shared Twilio vendor lookup", vendorErr.message)
+  } else {
+    const vendorLandlordId = uniqueLandlordIdFromRows(vendors ?? [])
+    if (vendorLandlordId) return vendorLandlordId
+  }
+
+  // Property-team / landlord account + ops phones (YES / 1-2-3 vendor choice, etc.).
+  // Same matcher resolvePhoneIdentity uses — one ownership rule.
+  const { resolveLandlordIdForAccountOrOpsPhone } = await import(
+    "./landlordAccountPhone.ts"
+  )
+  const opsLandlordId = await resolveLandlordIdForAccountOrOpsPhone(
+    supabase,
+    fromNumber,
+  )
+  if (opsLandlordId) return opsLandlordId
 
   const { data: identities, error } = await supabase
     .from("sms_identities")
@@ -232,17 +275,11 @@ export async function resolveLandlordIdForSharedTwilioInbound(
 
   if (error) {
     console.error("[sms-inbound] shared Twilio identity lookup", error.message)
-    return fallbackLandlordId
+    return null
   }
 
-  const unique = [
-    ...new Set(
-      (identities ?? [])
-        .map((row) => String(row.landlord_id ?? "").trim())
-        .filter(Boolean),
-    ),
-  ]
-  if (unique.length === 1) return unique[0]
+  const identityLandlordId = uniqueLandlordIdFromRows(identities ?? [])
+  if (identityLandlordId) return identityLandlordId
 
   const { data: users, error: usersErr } = await supabase
     .from("users")
@@ -253,19 +290,10 @@ export async function resolveLandlordIdForSharedTwilioInbound(
 
   if (usersErr) {
     console.error("[sms-inbound] shared Twilio user lookup", usersErr.message)
-    return fallbackLandlordId
+    return null
   }
 
-  const userIds = [
-    ...new Set(
-      (users ?? [])
-        .map((row) => String(row.landlord_id ?? "").trim())
-        .filter(Boolean),
-    ),
-  ]
-  if (userIds.length === 1) return userIds[0]
-
-  return fallbackLandlordId
+  return uniqueLandlordIdFromRows(users ?? [])
 }
 
 function pickCanonicalSmsIdentity(
@@ -672,6 +700,42 @@ export function conversationTypeForIdentity(
   )
 }
 
+/** Higher = stronger operational context; weaker inferred types must not clobber. */
+export const CONVERSATION_TYPE_STRENGTH: Record<string, number> = {
+  landlord_update: 40,
+  vendor_tenant_proxy: 30,
+  vendor_alert: 20,
+  resident_intake: 10,
+}
+
+export function conversationTypeStrength(conversationType: string): number {
+  return CONVERSATION_TYPE_STRENGTH[conversationType] ?? 0
+}
+
+/**
+ * Prefer the stronger of an existing thread type and a freshly inferred type.
+ * Example: keep landlord_update from a vendor-choice ask when identity briefly
+ * mis-resolves as a blank resident (resident_intake).
+ */
+export function pickStrongerConversationType(
+  existing: string | null | undefined,
+  inferred: "resident_intake" | "vendor_alert" | "vendor_tenant_proxy" | "landlord_update",
+): "resident_intake" | "vendor_alert" | "vendor_tenant_proxy" | "landlord_update" {
+  const prior = typeof existing === "string" ? existing.trim() : ""
+  if (!prior) return inferred
+  if (conversationTypeStrength(prior) >= conversationTypeStrength(inferred)) {
+    if (
+      prior === "landlord_update" ||
+      prior === "vendor_tenant_proxy" ||
+      prior === "vendor_alert" ||
+      prior === "resident_intake"
+    ) {
+      return prior
+    }
+  }
+  return inferred
+}
+
 /** Pick sms_conversations.conversation_type from resolved identity fields. */
 export function resolveConversationTypeFromFields(
   identityType: string,
@@ -880,10 +944,10 @@ export async function findOrCreateConversation(
   })
 
   if (existing) {
-    const preservedType =
-      existing.conversation_type === "vendor_tenant_proxy"
-        ? "vendor_tenant_proxy"
-        : conversationType
+    const preservedType = pickStrongerConversationType(
+      existing.conversation_type,
+      conversationType,
+    )
 
     const { error } = await supabase
       .from("sms_conversations")

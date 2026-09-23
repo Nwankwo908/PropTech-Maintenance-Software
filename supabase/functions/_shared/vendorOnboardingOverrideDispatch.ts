@@ -26,7 +26,7 @@ export async function dispatchUnassignedTicketsAfterOverride(
     const { data, error } = await supabase
       .from("maintenance_requests")
       .select(
-        "id, priority, unit, description, due_at, estimated_minutes, resident_availability_text, assigned_vendor_id, vendor_work_status",
+        "id, priority, urgency, severity, unit, description, issue_headline, entry_ok_if_absent, due_at, estimated_minutes, resident_availability_text, assigned_vendor_id, vendor_work_status",
       )
       .eq("landlord_id", params.landlordId)
       .is("assigned_vendor_id", null)
@@ -61,6 +61,14 @@ export async function dispatchUnassignedTicketsAfterOverride(
           : "normal",
         unit: typeof ticket.unit === "string" ? ticket.unit : "",
         description: typeof ticket.description === "string" ? ticket.description : "",
+        issueHeadline: typeof ticket.issue_headline === "string"
+          ? ticket.issue_headline
+          : null,
+        entryOkIfAbsent: typeof ticket.entry_ok_if_absent === "boolean"
+          ? ticket.entry_ok_if_absent
+          : null,
+        urgency: typeof ticket.urgency === "string" ? ticket.urgency : null,
+        severity: typeof ticket.severity === "string" ? ticket.severity : null,
         dueAt: typeof ticket.due_at === "string" ? ticket.due_at : null,
         estimatedMinutes: typeof ticket.estimated_minutes === "number"
           ? ticket.estimated_minutes

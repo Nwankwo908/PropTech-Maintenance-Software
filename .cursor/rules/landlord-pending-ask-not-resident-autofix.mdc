@@ -1,0 +1,74 @@
+---
+description: Autofix Bugbot — landlord pending SMS asks (vendor choice, estimate, rent receipt) must honor awaiting_* even when ops phone is mislabeled resident on a resident_intake thread.
+globs: supabase/functions/_shared/vendorLandlordChoice.ts,supabase/functions/_shared/sms/estimateDecisionInbound.ts,supabase/functions/_shared/sms/landlordRentReceiptInbound.ts,supabase/functions/_shared/engine/rentReceiptConfirmation.ts,supabase/functions/_shared/sms/inbound_db.ts
+alwaysApply: false
+---
+
+# Landlord pending SMS ask ≠ resident identity gate
+
+**Symptom (Osita / Alpha 2):** Ulo texts the landlord ops phone a vendor-choice ask (YES / 1 / 2). Choice SMS lands on a reused `resident_intake` / `awaiting_unit_number` thread. Landlord replies **YES**. Ulo answers like an unknown tenant: “I don't recognize this phone… Which property and apartment…”.
+
+## Root cause
+
+1. `findOrCreateConversation` reuses any open/`awaiting_unit_number` thread for that phone.
+2. `persistLandlordChoiceSms` (and similar) may attach `awaiting_vendor_choice` onto that thread and later set `conversation_type = landlord_update`.
+3. Inbound still resolves the ops phone as `identityType === "resident"` (mislabel / leftover identity).
+4. Handler early-returns on resident → registry falls through → unknown-contact / resident intake.
+
+The **pending ask** on the thread is the source of truth — not the identity label.
+
+## Rule
+
+| Pending intake key | Handler | Refuse only when |
+|---|---|---|
+| `awaiting_vendor_choice` | `landlord_vendor_choice` | `identityType === "vendor"` |
+| `awaiting_estimate_decision` (or WO-linked pending estimate) | `estimate_decision` | `identityType === "vendor"` (and no pending ask) |
+| `awaiting_landlord_rent_receipt` / amount / method | `landlord_rent_receipt` | `identityType === "vendor"` (and no pending ask) |
+
+When a pending landlord ask is present:
+
+- **Do** handle YES / 1 / 2 / APPROVE / DECLINE / rent YES-NO-PARTIAL even if `identityType === "resident"`.
+- **Do** best-effort upgrade the phone identity to `landlord` and clear `unknown_contact_intake`.
+- **Do** set `conversation_type = landlord_update`, `status = open` when persisting the outbound ask.
+- **Do not** refuse solely because `identityType === "resident"` or `conversation_type` was still `resident_intake`.
+
+## Landlord choice SMS copy (same Bugbot class)
+
+When texting the **landlord/ops phone**, never use tenant/vendor invite voice.
+
+| Bad | Good |
+|---|---|
+| “This is the property management team at {company}” | `Hi {firstName} — …` |
+| Lead with `Work order WO-…` | Lead with problem + address |
+| “Vendors returned availability” | `{Vendor} is available for the {issue} at {address}.` |
+| `$200 (plumbing) is available` | Separate lines: window, then `$200` |
+| Buried YES | `Reply YES to send the job to {Vendor}.` then `View details:` + admin URL |
+
+Canonical builder: `buildLandlordVendorChoiceSms` in `vendorLandlordChoice.ts`.
+
+## Autofix (Bugbot)
+
+On PR review or when SMS dumps show landlord YES → unknown-contact reply while `awaiting_*` is set:
+
+1. Change the gate from “refuse resident” to “refuse vendor; require pending ask”.
+2. In `tryHandle*`, if pending ask exists and identity was resident, upsert identity to landlord and clear `unknown_contact_intake`.
+3. When persisting the outbound landlord ask, force `conversation_type: landlord_update`, `status: open`, and strip unknown-contact intake.
+4. Prefer resolving `awaiting_*` across other threads for the same ops phone if the inbound conversation lacks it (already done for vendor choice).
+5. Add/extend a Deno test: `identityType: "resident"` + pending ask → `canHandle*` / handler path is true; vendor identity → false.
+6. For choice SMS regressions, assert no “property management team”, no WO ref in body, and YES CTA present.
+
+## Canonical helpers
+
+| Concern | Module |
+|---|---|
+| Vendor choice gate + copy | `vendorLandlordChoice.ts` |
+| Estimate APPROVE/DECLINE | `estimateDecisionInbound.ts` |
+| Rent receipt YES/NO/PARTIAL | `landlordRentReceiptInbound.ts` / `rentReceiptConfirmation.ts` |
+| Thread reuse | `findOrCreateConversation` / `findOpenConversation` in `inbound_db.ts` |
+
+## Do not
+
+- Early-return `{ handled: false }` on `identityType === "resident"` when `awaiting_vendor_choice` (or sibling landlord pending keys) is set
+- Require `conversation_type === "landlord_update"` before honoring a stored landlord pending ask
+- Reintroduce “property management team” / WO-first copy on landlord choice SMS
+- Treat a real vendor thread (`identityType === "vendor"`) as a landlord choice reply

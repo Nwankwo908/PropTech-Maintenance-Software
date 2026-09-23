@@ -1,7 +1,8 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useId, useMemo, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { ConversationMonitoringModal } from '@/components/ConversationMonitoringModal'
 import { AdminFilterToolbar } from '@/components/AdminFilterToolbar'
+import { TableCheckbox } from '@/components/TableCheckbox'
 import { isLimitedAlpha1Landlord } from '@shared/landlordCapabilities'
 import { getActiveLandlordId } from '@/lib/activeLandlord'
 import {
@@ -19,6 +20,7 @@ import {
   isVendorOnboardingInvite,
   parseResidentFeedbackRatingBody,
 } from '@/lib/conversationMonitoring'
+import { deleteCommunicationConversationsForLandlord } from '@/lib/deleteCommunicationConversations'
 import {
   classifyLimitedAlphaMessageLane,
   looksLikeNonOnboardingInboundSms,
@@ -414,73 +416,108 @@ function conversationMatchesParticipantFilters(
   return false
 }
 
+function SelectionTrashIcon({ className = 'size-4' }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 24 24" fill="none" aria-hidden>
+      <path
+        d="M3 6h18M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2m3 0v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6h14zM10 11v6M14 11v6"
+        stroke="currentColor"
+        strokeWidth={1.65}
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  )
+}
+
 function ConversationListRow({
   conversation: c,
   index,
+  selected,
+  onToggleSelect,
   onOpen,
 }: {
   conversation: Conversation
   index: number
+  selected: boolean
+  onToggleSelect: (id: string) => void
   onOpen: (id: string) => void
 }) {
   return (
-    <button
-      type="button"
-      onClick={() => onOpen(c.id)}
+    <div
       style={{ animationDelay: `${Math.min(index, 10) * 35}ms` }}
-      className="sa-enter sa-row flex w-full items-start gap-3 px-6 py-4 text-left hover:bg-[#f9fafb]"
+      className={`sa-enter sa-row flex w-full items-center gap-3 px-6 py-4 hover:bg-[#f9fafb] ${
+        selected ? 'bg-[#f5f3ff]' : ''
+      }`}
     >
-      <span className="relative flex shrink-0 items-center pt-0.5">
-        {c.unread ? (
-          <span className="absolute -left-3 top-1/2 size-2 -translate-y-1/2 rounded-full bg-[#1447e6]" />
-        ) : null}
-        {c.kind === 'ai' ? (
-          <AiSparkleAvatar />
-        ) : (
-          <span
-            className={`flex size-9 items-center justify-center rounded-full text-[12px] font-semibold ${avatarColor(c.name)}`}
-          >
-            {initials(c.name)}
-          </span>
-        )}
-      </span>
-
-      <div className="min-w-0 flex-1">
-        <div className="flex items-center gap-2">
-          <span
-            className={`truncate text-[14px] leading-5 ${
-              c.unread ? 'font-semibold text-[#0a0a0a]' : 'font-medium text-[#101828]'
-            }`}
-          >
-            {c.name}
-          </span>
-          <span
-            className={`shrink-0 rounded-[4px] px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-[0.04em] ${KIND_BADGE[c.kind].className}`}
-          >
-            {KIND_BADGE[c.kind].label}
-          </span>
-          {c.context ? (
-            <span className="truncate text-[12px] leading-4 text-[#6a7282]">
-              · {c.context}
+      <div
+        className="flex size-9 shrink-0 items-center justify-center"
+        onClick={(e) => e.stopPropagation()}
+        onKeyDown={(e) => e.stopPropagation()}
+      >
+        <TableCheckbox
+          aria-label={`Select conversation with ${c.name}`}
+          checked={selected}
+          onChange={() => onToggleSelect(c.id)}
+        />
+      </div>
+      <button
+        type="button"
+        onClick={() => onOpen(c.id)}
+        className="flex min-w-0 flex-1 items-center gap-3 text-left outline-none focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2"
+      >
+        <span className="relative flex size-9 shrink-0 items-center justify-center">
+          {c.unread ? (
+            <span className="absolute -left-3 top-1/2 size-2 -translate-y-1/2 rounded-full bg-[#1447e6]" />
+          ) : null}
+          {c.kind === 'ai' ? (
+            <AiSparkleAvatar />
+          ) : (
+            <span
+              className={`flex size-9 items-center justify-center rounded-full text-[12px] font-semibold ${avatarColor(c.name)}`}
+            >
+              {initials(c.name)}
             </span>
+          )}
+        </span>
+
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-2">
+            <span
+              className={`truncate text-[14px] leading-5 ${
+                c.unread ? 'font-semibold text-[#0a0a0a]' : 'font-medium text-[#101828]'
+              }`}
+            >
+              {c.name}
+            </span>
+            <span
+              className={`shrink-0 rounded-[4px] px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-[0.04em] ${KIND_BADGE[c.kind].className}`}
+            >
+              {KIND_BADGE[c.kind].label}
+            </span>
+            {c.context ? (
+              <span className="truncate text-[12px] leading-4 text-[#6a7282]">
+                · {c.context}
+              </span>
+            ) : null}
+          </div>
+          <p
+            className={`mt-0.5 truncate text-[13px] leading-5 ${c.unread ? 'font-medium text-[#364153]' : 'text-[#6a7282]'}`}
+          >
+            {c.preview}
+          </p>
+        </div>
+
+        <div className="flex shrink-0 flex-col items-end gap-1 pl-2">
+          <span className="text-[12px] leading-4 text-[#6a7282]">
+            {formatRelativeTime(c.lastActivity)}
+          </span>
+          {c.status ? (
+            <span className="text-[12px] leading-4 text-[#6a7282]">{c.status}</span>
           ) : null}
         </div>
-        <p
-          className={`mt-0.5 truncate text-[13px] leading-5 ${c.unread ? 'font-medium text-[#364153]' : 'text-[#6a7282]'}`}
-        >
-          {c.preview}
-        </p>
-      </div>
-
-      <div className="flex shrink-0 flex-col items-end gap-1 pl-2">
-        <span className="text-[12px] leading-4 text-[#6a7282]">
-          {formatRelativeTime(c.lastActivity)}
-        </span>
-        {c.status ? (
-          <span className="text-[12px] leading-4 text-[#6a7282]">{c.status}</span>
-        ) : null}
-      </div>
-    </button>
+      </button>
+    </div>
   )
 }
 
@@ -490,6 +527,8 @@ function MessageLaneSection({
   rows,
   empty,
   indexOffset,
+  selectedIds,
+  onToggleSelect,
   onOpen,
 }: {
   title: string
@@ -497,6 +536,8 @@ function MessageLaneSection({
   rows: Conversation[]
   empty: string
   indexOffset: number
+  selectedIds: Set<string>
+  onToggleSelect: (id: string) => void
   onOpen: (id: string) => void
 }) {
   return (
@@ -513,6 +554,8 @@ function MessageLaneSection({
             key={c.id}
             conversation={c}
             index={indexOffset + index}
+            selected={selectedIds.has(c.id)}
+            onToggleSelect={onToggleSelect}
             onOpen={onOpen}
           />
         ))
@@ -530,7 +573,12 @@ export function AdminCommunicationDashboard() {
   const [participantFilters, setParticipantFilters] = useState<Set<ParticipantFilterKey>>(
     () => new Set(),
   )
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set())
+  const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false)
+  const [deleteSaving, setDeleteSaving] = useState(false)
+  const [deleteError, setDeleteError] = useState<string | null>(null)
   const [monitoringConversationId, setMonitoringConversationId] = useState<string | null>(null)
+  const deleteConfirmTitleId = useId()
 
   useEffect(() => {
     let cancelled = false
@@ -1096,9 +1144,130 @@ export function AdminCommunicationDashboard() {
     })
   }
 
+  function toggleConversationSelected(id: string) {
+    setSelectedIds((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
+
+  function toggleAllFilteredSelected() {
+    setSelectedIds((prev) => {
+      const next = new Set(prev)
+      const allOn =
+        filtered.length > 0 && filtered.every((conversation) => next.has(conversation.id))
+      if (allOn) {
+        for (const conversation of filtered) next.delete(conversation.id)
+      } else {
+        for (const conversation of filtered) next.add(conversation.id)
+      }
+      return next
+    })
+  }
+
+  async function deleteSelectedConversations() {
+    if (selectedIds.size === 0) {
+      setDeleteConfirmOpen(false)
+      return
+    }
+    setDeleteError(null)
+    setDeleteSaving(true)
+    const idsToDelete = Array.from(selectedIds)
+    const result = await deleteCommunicationConversationsForLandlord({
+      conversationIds: idsToDelete,
+    })
+    if (!result.ok) {
+      setDeleteError(result.error)
+      setDeleteSaving(false)
+      return
+    }
+    const remove = new Set(idsToDelete)
+    setConversations((prev) => prev.filter((row) => !remove.has(row.id)))
+    setSelectedIds(new Set())
+    setMonitoringConversationId((cur) => (cur && remove.has(cur) ? null : cur))
+    setDeleteSaving(false)
+    setDeleteConfirmOpen(false)
+  }
+
+  useEffect(() => {
+    if (!deleteConfirmOpen) return
+    function onKey(e: KeyboardEvent) {
+      if (e.key === 'Escape' && !deleteSaving) setDeleteConfirmOpen(false)
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [deleteConfirmOpen, deleteSaving])
+
+  useEffect(() => {
+    if (deleteConfirmOpen && selectedIds.size === 0) {
+      setDeleteConfirmOpen(false)
+    }
+  }, [deleteConfirmOpen, selectedIds.size])
+
+  const selectedCount = selectedIds.size
+  const allFilteredSelected =
+    filtered.length > 0 && filtered.every((conversation) => selectedIds.has(conversation.id))
+  const someFilteredSelected =
+    filtered.some((conversation) => selectedIds.has(conversation.id)) && !allFilteredSelected
+
   const updatedCaption = metrics ? formatUpdatedAt(metrics.lastUpdated) : 'Updating…'
 
   return (
+    <>
+      {deleteConfirmOpen ? (
+        <div className="fixed inset-0 z-[81] flex items-center justify-center bg-black/40 p-4">
+          <div
+            role="presentation"
+            className="absolute inset-0"
+            aria-hidden
+            onClick={() => {
+              if (!deleteSaving) setDeleteConfirmOpen(false)
+            }}
+          />
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby={deleteConfirmTitleId}
+            className="relative flex w-full max-w-[440px] flex-col overflow-hidden rounded-[10px] bg-white shadow-[0px_20px_25px_-5px_rgba(0,0,0,0.1),0px_8px_10px_-6px_rgba(0,0,0,0.1)]"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="border-b border-[#e5e7eb] px-6 py-4">
+              <h2
+                id={deleteConfirmTitleId}
+                className="text-[18px] font-semibold leading-[27px] tracking-[-0.4395px] text-[#0a0a0a]"
+              >
+                Delete message threads?
+              </h2>
+            </div>
+            <div className="px-6 py-5 text-[14px] leading-5 text-[#364153]">
+              {selectedCount === 1
+                ? 'This permanently removes the selected conversation and its SMS history from Messages.'
+                : `This permanently removes ${selectedCount} conversations and their SMS history from Messages.`}
+            </div>
+            <div className="flex justify-end gap-2 border-t border-[#e5e7eb] px-6 py-4">
+              <button
+                type="button"
+                disabled={deleteSaving}
+                onClick={() => setDeleteConfirmOpen(false)}
+                className="sa-press inline-flex h-9 items-center justify-center rounded-lg border border-black/10 bg-white px-3 text-[14px] font-medium text-[#0a0a0a] outline-none hover:bg-[#f3f4f6] focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={deleteSaving}
+                onClick={() => void deleteSelectedConversations()}
+                className="sa-press inline-flex h-9 items-center justify-center rounded-lg bg-[#b52a00] px-3 text-[14px] font-medium text-white outline-none hover:bg-[#9a2400] focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50"
+              >
+                {deleteSaving ? 'Deleting…' : 'Delete'}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
     <main className="flex min-h-0 flex-1 flex-col px-8 pb-12">
       <div className="py-6">
         <h1 className="text-[24px] font-semibold leading-8 tracking-[0.0703px] text-[#0a0a0a]">
@@ -1114,6 +1283,11 @@ export function AdminCommunicationDashboard() {
       {error ? (
         <div className="mb-4 rounded-[10px] border border-[#fde68a] bg-[#fffbeb] px-4 py-3 text-[13px] text-[#92400e]">
           {error}
+        </div>
+      ) : null}
+      {deleteError ? (
+        <div className="mb-4 rounded-[10px] border border-[#fecaca] bg-[#fef2f2] px-4 py-3 text-[13px] text-[#b91c1c]">
+          Could not delete selected conversations: {deleteError}
         </div>
       ) : null}
 
@@ -1166,7 +1340,45 @@ export function AdminCommunicationDashboard() {
           activeFilters={participantFilters}
           onToggle={toggleParticipantFilter}
           onClear={() => setParticipantFilters(new Set())}
+          trailing={
+            selectedCount > 0 ? (
+              <>
+                <span className="text-[13px] font-medium text-[#364153]">
+                  {selectedCount} selected
+                </span>
+                <button
+                  type="button"
+                  disabled={deleteSaving}
+                  onClick={() => setDeleteConfirmOpen(true)}
+                  className="sa-press inline-flex h-9 items-center justify-center gap-2 rounded-lg border border-black/10 bg-white px-3 text-[14px] font-medium text-[#b52a00] outline-none hover:bg-[#f3f4f6] focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50"
+                >
+                  <SelectionTrashIcon />
+                  Delete
+                </button>
+                <button
+                  type="button"
+                  disabled={deleteSaving}
+                  onClick={() => setSelectedIds(new Set())}
+                  className="sa-press inline-flex h-9 items-center justify-center rounded-lg border border-black/10 bg-white px-3 text-[14px] font-medium text-[#0a0a0a] outline-none hover:bg-[#f3f4f6] focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50"
+                >
+                  Clear
+                </button>
+              </>
+            ) : null
+          }
         />
+        <div className="flex items-center gap-3 border-b border-[#e5e7eb] px-6 py-2.5">
+          <div className="flex size-9 items-center justify-center">
+            <TableCheckbox
+              aria-label="Select all visible conversations"
+              disabled={loading || filtered.length === 0}
+              checked={allFilteredSelected}
+              indeterminate={someFilteredSelected}
+              onChange={toggleAllFilteredSelected}
+            />
+          </div>
+          <span className="text-[12px] font-medium text-[#6a7282]">Select all</span>
+        </div>
 
         <div className="divide-y divide-[#f3f4f6]">
           {loading ? (
@@ -1194,6 +1406,8 @@ export function AdminCommunicationDashboard() {
                 rows={requestThreads}
                 empty="No maintenance request threads."
                 indexOffset={0}
+                selectedIds={selectedIds}
+                onToggleSelect={toggleConversationSelected}
                 onOpen={openConversation}
               />
               <MessageLaneSection
@@ -1202,6 +1416,8 @@ export function AdminCommunicationDashboard() {
                 rows={onboardingThreads}
                 empty="No onboarding threads."
                 indexOffset={requestThreads.length}
+                selectedIds={selectedIds}
+                onToggleSelect={toggleConversationSelected}
                 onOpen={openConversation}
               />
             </>
@@ -1211,6 +1427,8 @@ export function AdminCommunicationDashboard() {
                 key={c.id}
                 conversation={c}
                 index={index}
+                selected={selectedIds.has(c.id)}
+                onToggleSelect={toggleConversationSelected}
                 onOpen={openConversation}
               />
             ))
@@ -1230,5 +1448,6 @@ export function AdminCommunicationDashboard() {
         }}
       />
     </main>
+    </>
   )
 }

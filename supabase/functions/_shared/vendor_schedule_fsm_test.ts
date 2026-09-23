@@ -199,6 +199,47 @@ Deno.test("FSM: TTL expiry clears active scheduling", () => {
   assertEquals(late.state.step, "idle")
 })
 
+Deno.test("FSM: TTL_CHECK on awaiting_tenant_confirmation reopens availability", () => {
+  const started = reduceScheduleFsm(null, {
+    type: "JOB_ACCEPTED",
+    ticketId: "t1",
+    at: "2026-07-19T20:00:00.000Z",
+  })
+  const proposed = reduceScheduleFsm(started.state, {
+    type: "AVAILABILITY_TEXT",
+    at: "2026-07-19T20:05:00.000Z",
+    windowText: "Wed 2pm",
+    scheduledAt: "2026-07-22T18:00:00.000Z",
+    outcome: "resolved",
+  })
+  assertEquals(proposed.state.step, "awaiting_tenant_confirmation")
+  const expired = {
+    ...proposed.state,
+    expiresAt: "2026-07-19T21:00:00.000Z",
+  }
+  const ttl = reduceScheduleFsm(expired, {
+    type: "TTL_CHECK",
+    at: "2026-07-20T22:00:00.000Z",
+  })
+  assertEquals(ttl.effect.kind, "tenant_confirm_expired")
+  assertEquals(ttl.state.step, "awaiting_availability")
+  assertEquals(ttl.suppressReply, false)
+})
+
+Deno.test("FSM: TTL_CHECK while still within window is noop", () => {
+  const started = reduceScheduleFsm(null, {
+    type: "JOB_ACCEPTED",
+    ticketId: "t1",
+    at: "2026-07-20T20:00:00.000Z",
+  })
+  const ttl = reduceScheduleFsm(started.state, {
+    type: "TTL_CHECK",
+    at: "2026-07-20T20:30:00.000Z",
+  })
+  assertEquals(ttl.effect.kind, "noop")
+  assertEquals(ttl.state.step, "awaiting_availability")
+})
+
 Deno.test("circuit breaker detects repeated outbound", () => {
   let state = createIdleScheduleState("t1")
   const ask = buildVendorAvailabilityAskSms()

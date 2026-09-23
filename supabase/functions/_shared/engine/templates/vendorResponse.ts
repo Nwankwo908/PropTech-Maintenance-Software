@@ -85,6 +85,8 @@ function effectToReply(effect: ScheduleFsmEffect): string | undefined {
       return buildVendorScheduleSaveRetrySms(effect.windowText)
     case "expired":
       return effect.prompt
+    case "tenant_confirm_expired":
+      return effect.prompt
     case "decline_ack":
       return buildVendorSmsDeclineReply()
     default:

@@ -103,6 +103,10 @@ const WorkOrderEstimatePage = lazyNamed(
   () => import('./components/WorkOrderEstimatePage'),
   'WorkOrderEstimatePage',
 )
+const EstimateDecisionResultPage = lazyNamed(
+  () => import('./components/EstimateDecisionResultPage'),
+  'EstimateDecisionResultPage',
+)
 const WorkOrderUploadPage = lazyNamed(
   () => import('./components/WorkOrderUploadPage'),
   'WorkOrderUploadPage',
@@ -147,6 +151,24 @@ function LandingOrAdminOAuthReturn() {
 export default function App() {
   useSessionAutoRefresh(supabase)
 
+  // #region agent log
+  useEffect(() => {
+    const onError = (event: ErrorEvent) => {
+      fetch('http://127.0.0.1:7898/ingest/3050e2ef-64dd-49e5-a718-1f5719c45963',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'5d0562'},body:JSON.stringify({sessionId:'5d0562',runId:'pre-fix',hypothesisId:'A',location:'App.tsx:window.error',message:'window error',data:{message:event.message,filename:event.filename,lineno:event.lineno,colno:event.colno,stack:event.error instanceof Error ? event.error.stack : null,href:window.location.href},timestamp:Date.now()})}).catch(()=>{});
+    }
+    const onRejection = (event: PromiseRejectionEvent) => {
+      const reason = event.reason
+      fetch('http://127.0.0.1:7898/ingest/3050e2ef-64dd-49e5-a718-1f5719c45963',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'5d0562'},body:JSON.stringify({sessionId:'5d0562',runId:'pre-fix',hypothesisId:'D',location:'App.tsx:unhandledrejection',message:'unhandled rejection',data:{reason:reason instanceof Error ? {message:reason.message,stack:reason.stack} : String(reason),href:window.location.href},timestamp:Date.now()})}).catch(()=>{});
+    }
+    window.addEventListener('error', onError)
+    window.addEventListener('unhandledrejection', onRejection)
+    return () => {
+      window.removeEventListener('error', onError)
+      window.removeEventListener('unhandledrejection', onRejection)
+    }
+  }, [])
+  // #endregion
+
   return (
     <BrowserRouter>
       <StayOnDevOrigin />
@@ -162,6 +184,7 @@ export default function App() {
           <Route path="/request" element={<ResidentPortal />} />
           <Route path="/v/:token" element={<VendorIntakePortal />} />
           <Route path="/w/:token" element={<WorkOrderPublicPage />} />
+          <Route path="/estimate-decision" element={<EstimateDecisionResultPage />} />
           <Route path="/estimate/:token" element={<WorkOrderEstimatePage />} />
           <Route path="/upload/:token" element={<WorkOrderUploadPage />} />
           <Route path="/invoice/:token" element={<WorkOrderInvoicePage />} />

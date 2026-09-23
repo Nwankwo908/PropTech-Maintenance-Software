@@ -18,8 +18,10 @@ import type {
 } from "./vendor_assignment.ts"
 import {
   formatWorkOrderRef,
+  titleCaseCompanyName,
   vendorCompanyName,
 } from "./vendor_outreach_copy.ts"
+import { loadPropertyLocationFromTable } from "./properties/propertyLocation.ts"
 import { sendVendorJobAlert } from "./sms/vendorSmsRouting.ts"
 import {
   findOrCreateConversation,
@@ -51,6 +53,11 @@ export type VendorAvailabilityProbe = {
   unit: string
   issueCategory: string | null
   description: string
+  /** Clean issue line for vendor SMS — never the Q&A-stuffed description. */
+  issueHeadline: string | null
+  /** True/false when known; omitted from SMS when null. */
+  entryOkIfAbsent: boolean | null
+  urgent: boolean
   residentAvailabilityText: string | null
   candidates: Array<{
     vendorId: string
@@ -102,47 +109,159 @@ export function canHandleVendorAvailabilityProbe(input: {
   return readAwaitingVendorProbe(input.intakeState) != null
 }
 
+/** @deprecated Prefer titleCaseCompanyName from vendor_outreach_copy.ts */
+export { titleCaseCompanyName } from "./vendor_outreach_copy.ts"
+
+export function formatVendorProbeLocationLine(input: {
+  streetAddress?: string | null
+  building?: string | null
+  unit?: string | null
+}): string {
+  const street = (input.streetAddress ?? "").trim()
+  const building = (input.building ?? "").trim()
+  const place = street || building
+  const unitRaw = (input.unit ?? "").trim()
+  // If callers already passed "14 Maple · Unit 1", keep it.
+  if (
+    unitRaw &&
+    !place &&
+    (/\d/.test(unitRaw) && /[a-z]/i.test(unitRaw) || unitRaw.includes("·"))
+  ) {
+    return unitRaw
+  }
+  const unitBit = unitRaw
+    ? (/^unit\b/i.test(unitRaw) ? unitRaw : `Unit ${unitRaw}`)
+    : ""
+  if (place && unitBit) return `${place} · ${unitBit}`
+  if (place) return place
+  return unitBit
+}
+
+/** Resolve property street address (+ unit) for vendor probe SMS. */
+export async function resolveVendorProbeLocationLabel(
+  supabase: SupabaseClient,
+  params: {
+    landlordId: string
+    ticketId: string
+    unitFallback?: string | null
+  },
+): Promise<string> {
+  const { data: ticket } = await supabase
+    .from("maintenance_requests")
+    .select("unit, property_id, unit_id")
+    .eq("id", params.ticketId)
+    .maybeSingle()
+
+  const unitLabel =
+    (typeof ticket?.unit === "string" && ticket.unit.trim()
+      ? ticket.unit.trim()
+      : null) ||
+    (params.unitFallback?.trim() || null)
+
+  let propertyId =
+    typeof ticket?.property_id === "string" && ticket.property_id.trim()
+      ? ticket.property_id.trim()
+      : null
+  let building: string | null = null
+
+  if (
+    typeof ticket?.unit_id === "string" && ticket.unit_id.trim()
+  ) {
+    const { data: unitRow } = await supabase
+      .from("units")
+      .select("property_id, building, unit_label")
+      .eq("id", ticket.unit_id.trim())
+      .maybeSingle()
+    if (!propertyId && typeof unitRow?.property_id === "string") {
+      propertyId = unitRow.property_id.trim() || null
+    }
+    if (typeof unitRow?.building === "string" && unitRow.building.trim()) {
+      building = unitRow.building.trim()
+    }
+  }
+
+  const location = await loadPropertyLocationFromTable(supabase, params.landlordId, {
+    propertyId,
+    building,
+  })
+
+  return formatVendorProbeLocationLine({
+    streetAddress: location?.streetAddress ?? null,
+    building,
+    unit: unitLabel,
+  })
+}
+
+/**
+ * Compact availability probe. Issue line comes from the clean ticket headline,
+ * never the raw description that accumulates intake Q&A.
+ */
+
+export function ticketIsUrgentForVendorProbe(input: {
+  priority?: string | null
+  urgency?: string | null
+  severity?: string | null
+}): boolean {
+  const hay = [input.priority, input.urgency, input.severity]
+    .map((s) => (s ?? "").toLowerCase())
+    .join(" ")
+  return /\b(emergency|urgent)\b/.test(hay)
+}
+
+/**
+ * Compact availability probe. Issue line comes from the clean ticket headline,
+ * never the raw description that accumulates intake Q&A.
+ */
 export function buildVendorAvailabilityProbeSms(input: {
   vendorName: string
   companyName?: string | null
   workOrderRef: string
+  /**
+   * Property location for the first line — street address (· Unit N).
+   * Prefer `location` over bare `unit`.
+   */
+  location?: string | null
   unit?: string | null
-  description: string
+  /** @deprecated Prefer issueHeadline — kept so older callers still compile. */
+  description?: string | null
+  issueHeadline?: string | null
+  entryOkIfAbsent?: boolean | null
+  urgent?: boolean
   residentAvailabilityText?: string | null
   jobDetailUrl?: string | null
 }): string {
-  const company = vendorCompanyName(input.vendorName)
-  const who = input.companyName?.trim()
-    ? `This is the property management team at ${input.companyName.trim()}.`
-    : "This is Ulo."
+  const vendor = vendorCompanyName(input.vendorName)
+  const company = titleCaseCompanyName(input.companyName) || "Ulo"
   const wo = input.workOrderRef.trim() || "this work order"
-  const unit = input.unit?.trim()
-  const where = unit ? ` at ${unit}` : ""
-  const issue = input.description.trim().replace(/\s+/g, " ") ||
+  const loc = (input.location ?? "").trim() || (input.unit ?? "").trim()
+  const where = loc ? ` at ${loc}` : ""
+  const urgentMark = input.urgent ? " — URGENT" : ""
+  const issue = (input.issueHeadline ?? "").trim() ||
     "See the work order for details."
-  const avail = input.residentAvailabilityText?.trim()
 
   const lines = [
-    `Hi ${company},`,
+    `Hi ${vendor} — job ${wo}${where}${urgentMark}`,
+    company,
     "",
-    who,
-    "",
-    `Work order ${wo}${where} may be available:`,
-    issue,
+    `Issue: ${issue}`,
   ]
+  if (input.entryOkIfAbsent === true) {
+    lines.push("Entry OK if resident out: Yes")
+  } else if (input.entryOkIfAbsent === false) {
+    lines.push("Entry OK if resident out: No")
+  }
+  const avail = input.residentAvailabilityText?.trim()
   if (avail) {
-    lines.push("", `Resident availability: ${avail}`)
+    lines.push(`Resident avail: ${avail}`)
   }
   lines.push(
     "",
-    "If you can take this, reply with your earliest day and arrival window",
-    "(for example: Wed 9am–12pm). Add an estimate amount if you have one.",
-    "",
-    `If you can't take it, reply NO ${wo}.`,
+    "Take it? Reply earliest day + window (ex: Wed 9am-12pm) + estimate if you have one",
+    `Can't? Reply NO ${wo}`,
   )
   const url = input.jobDetailUrl?.trim()
   if (url) {
-    lines.push("", "Details:", url)
+    lines.push("", `Details: ${url}`)
   }
   return lines.join("\n")
 }
@@ -167,6 +286,9 @@ function serializeProbe(probe: VendorAvailabilityProbe): Record<string, unknown>
     unit: probe.unit,
     issue_category: probe.issueCategory,
     description: probe.description,
+    issue_headline: probe.issueHeadline,
+    entry_ok_if_absent: probe.entryOkIfAbsent,
+    urgent: probe.urgent,
     resident_availability_text: probe.residentAvailabilityText,
     candidates: probe.candidates.map((c) => ({
       vendor_id: c.vendorId,
@@ -212,6 +334,11 @@ export function readVendorAvailabilityProbe(
     unit: typeof row.unit === "string" ? row.unit : "",
     issueCategory: typeof row.issue_category === "string" ? row.issue_category : null,
     description: typeof row.description === "string" ? row.description : "",
+    issueHeadline: typeof row.issue_headline === "string" ? row.issue_headline : null,
+    entryOkIfAbsent: typeof row.entry_ok_if_absent === "boolean"
+      ? row.entry_ok_if_absent
+      : null,
+    urgent: row.urgent === true,
     residentAvailabilityText:
       typeof row.resident_availability_text === "string"
         ? row.resident_availability_text
@@ -336,26 +463,37 @@ export async function loadVendorAvailabilityProbeForTicket(
 }
 
 function probeOffersToChoiceNames(offers: VendorProbeOffer[]): VendorAssignmentOption[] {
-  return offers.map((offer) => {
-    const slot = offer.windowLabel.trim()
-    const estimate = offer.estimateNote?.trim()
-    const suffix = [slot, estimate].filter(Boolean).join(" · ")
-    return {
-      vendor: {
-        id: offer.vendorId,
-        name: suffix ? `${offer.name} — ${suffix}` : offer.name,
-        email: null,
-        phone: null,
-        notification_channel: "sms",
-        active: true,
-        category: null,
-        portal_api_key: null,
-        last_assigned_at: null,
-        created_at: "",
-      } satisfies VendorAssignmentRow,
-      role: offer.role,
+  return offers.map((offer) => ({
+    vendor: {
+      id: offer.vendorId,
+      name: offer.name,
+      email: null,
+      phone: null,
+      notification_channel: "sms",
+      active: true,
+      category: null,
+      portal_api_key: null,
+      last_assigned_at: null,
+      created_at: "",
+    } satisfies VendorAssignmentRow,
+    role: offer.role,
+  }))
+}
+
+function probeOffersAvailabilityByVendorId(
+  offers: VendorProbeOffer[],
+): Record<string, { windowLabel?: string | null; estimateNote?: string | null }> {
+  const out: Record<
+    string,
+    { windowLabel?: string | null; estimateNote?: string | null }
+  > = {}
+  for (const offer of offers) {
+    out[offer.vendorId] = {
+      windowLabel: offer.windowLabel?.trim() || null,
+      estimateNote: offer.estimateNote?.trim() || null,
     }
-  })
+  }
+  return out
 }
 
 /**
@@ -370,6 +508,9 @@ export async function startVendorAvailabilityProbe(
     unit: string
     issueCategory: string | null
     description: string
+    issueHeadline?: string | null
+    entryOkIfAbsent?: boolean | null
+    urgent?: boolean
     residentAvailabilityText?: string | null
     options: VendorAssignmentOption[]
   },
@@ -389,19 +530,34 @@ export async function startVendorAvailabilityProbe(
 
   const { data: landlord } = await supabase
     .from("landlords")
-    .select("name")
+    .select("name, display_name")
     .eq("id", params.landlordId)
     .maybeSingle()
-  const companyName =
-    typeof landlord?.name === "string" ? landlord.name.trim() : ""
+  const displayName =
+    typeof landlord?.display_name === "string" ? landlord.display_name.trim() : ""
+  const legalName = typeof landlord?.name === "string" ? landlord.name.trim() : ""
+  const companyName = displayName || legalName
 
   const wo = formatWorkOrderRef(params.ticketId)
+  const issueHeadline = params.issueHeadline?.trim() || null
+  const entryOkIfAbsent = typeof params.entryOkIfAbsent === "boolean"
+    ? params.entryOkIfAbsent
+    : null
+  const urgent = params.urgent === true
+  const locationLabel = await resolveVendorProbeLocationLabel(supabase, {
+    landlordId: params.landlordId,
+    ticketId: params.ticketId,
+    unitFallback: params.unit,
+  })
   const probe: VendorAvailabilityProbe = {
     ticketId: params.ticketId,
     landlordId: params.landlordId,
-    unit: params.unit,
+    unit: locationLabel || params.unit,
     issueCategory: params.issueCategory,
     description: params.description,
+    issueHeadline,
+    entryOkIfAbsent,
+    urgent,
     residentAvailabilityText: params.residentAvailabilityText?.trim() || null,
     candidates,
     offers: [],
@@ -427,8 +583,10 @@ export async function startVendorAvailabilityProbe(
       vendorName: candidate.name,
       companyName: companyName || null,
       workOrderRef: wo,
-      unit: params.unit,
-      description: params.description,
+      location: locationLabel || params.unit,
+      issueHeadline,
+      entryOkIfAbsent,
+      urgent,
       residentAvailabilityText: params.residentAvailabilityText,
     })
     const sent = await sendVendorJobAlert(supabase, {
@@ -437,6 +595,8 @@ export async function startVendorAvailabilityProbe(
       vendorPhone: candidate.phone,
       body,
       landlordId: params.landlordId,
+      // Soft-offer only — landlord YES assigns + sends the real job SMS.
+      bindAssignment: false,
     })
     if (!sent.ok) {
       console.warn("[vendor-probe] soft offer failed", candidate.vendorId, sent.error)
@@ -521,6 +681,11 @@ async function notifyLandlordOfProbeOffers(
 ): Promise<void> {
   if (probe.offers.length === 0) return
   const enriched = probeOffersToChoiceNames(probe.offers)
+  const locationLabel = await resolveVendorProbeLocationLabel(supabase, {
+    landlordId: probe.landlordId,
+    ticketId: probe.ticketId,
+    unitFallback: probe.unit,
+  })
 
   await notifyLandlordVendorChoice(supabase, {
     landlordId: probe.landlordId,
@@ -529,6 +694,9 @@ async function notifyLandlordOfProbeOffers(
     issueCategory: probe.issueCategory,
     options: enriched,
     reason: "availability",
+    issueHeadline: probe.issueHeadline,
+    locationLabel,
+    availabilityByVendorId: probeOffersAvailabilityByVendorId(probe.offers),
   })
 
   await supabase

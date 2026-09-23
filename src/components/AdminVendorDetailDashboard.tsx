@@ -14,6 +14,7 @@ import {
 import { parseVendorId } from '@/lib/vendorRoutes'
 import { formatWorkOrderRefFromTicketId } from '@/lib/vendorCallFlow'
 import {
+  canRetryVendorOnboarding,
   canShowStartVendorOnboarding,
   vendorCapacityChipVisualClasses,
   type VendorCapacityChipStatus,
@@ -40,6 +41,7 @@ import {
   type VendorInviteChannel,
 } from '@/api/vendorVerification'
 import { OverrideOnboardingModal } from '@/components/OverrideOnboardingModal'
+import { SetupOutreachAckModal } from '@/components/SetupOutreachAckModal'
 import {
   VENDOR_ONBOARDING_OVERRIDE_DISCLAIMER_VERSION,
   vendorOnboardingOverrideDisclaimerText,
@@ -61,6 +63,7 @@ type VendorRecord = {
   state: string | null
   country: string | null
   active: boolean
+  preferredEmergency: boolean
   rosterStatus: string | null
   performanceReview: string | null
   rosterStatusReason: string | null
@@ -543,6 +546,7 @@ export function AdminVendorDetailDashboard() {
   const [overrideSaving, setOverrideSaving] = useState(false)
   const [overrideError, setOverrideError] = useState<string | null>(null)
   const [overrideModalOpen, setOverrideModalOpen] = useState(false)
+  const [setupOutreachAckOpen, setSetupOutreachAckOpen] = useState(false)
   const [overrideActivationSmsSent, setOverrideActivationSmsSent] = useState(false)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -631,6 +635,7 @@ export function AdminVendorDetailDashboard() {
       state: asString(raw.state) || null,
       country: asString(raw.country) || null,
       active: raw.active !== false,
+      preferredEmergency: raw.preferred_emergency === true,
       rosterStatus: asString(raw.roster_status) || null,
       rosterStatusReason: asString(raw.roster_status_reason) || null,
       performanceReview: asString(raw.performance_review) || null,
@@ -778,6 +783,7 @@ export function AdminVendorDetailDashboard() {
       country: vendor.country,
       notification_channel: vendor.notificationChannel,
       active: vendor.active,
+      preferredEmergency: vendor.preferredEmergency,
       portal_api_key: vendor.portalApiKey,
     }
   }, [vendor])
@@ -790,6 +796,19 @@ export function AdminVendorDetailDashboard() {
     vendor &&
       !onboardingAlreadyActivated &&
       canShowStartVendorOnboarding({
+        hasContact: Boolean(vendor.phone?.trim() || vendor.email?.trim()),
+        verificationStatus: verification?.status,
+        vendorActive: vendor.active,
+        availability: verification?.availability,
+        rosterStatus: vendor.rosterStatus,
+        onboardingOverriddenAt: vendor.onboardingOverriddenAt,
+      }),
+  )
+
+  const canRetryVerificationInvite = Boolean(
+    vendor &&
+      !onboardingAlreadyActivated &&
+      canRetryVendorOnboarding({
         hasContact: Boolean(vendor.phone?.trim() || vendor.email?.trim()),
         verificationStatus: verification?.status,
         vendorActive: vendor.active,
@@ -1107,6 +1126,7 @@ export function AdminVendorDetailDashboard() {
             {!loading &&
             (performanceReviewLabel(vendor?.performanceReview ?? null) ||
               canSendVerificationInvite ||
+              canRetryVerificationInvite ||
               canOverrideOnboarding ||
               canSendOverrideActivationSms) ? (
               <div className="mt-3 flex flex-col gap-2">
@@ -1116,17 +1136,22 @@ export function AdminVendorDetailDashboard() {
                   </span>
                 ) : null}
                 {canSendVerificationInvite ||
+                canRetryVerificationInvite ||
                 canOverrideOnboarding ||
                 canSendOverrideActivationSms ? (
                   <div className="flex flex-wrap items-center gap-2">
-                    {canSendVerificationInvite ? (
+                    {canSendVerificationInvite || canRetryVerificationInvite ? (
                       <button
                         type="button"
                         disabled={inviteSaving}
-                        onClick={() => void handleStartOnboarding()}
+                        onClick={() => setSetupOutreachAckOpen(true)}
                         className="sa-press inline-flex h-9 w-fit items-center rounded-[10px] bg-[#187960] px-4 text-[13px] font-medium leading-5 text-white hover:bg-[#146b52] disabled:pointer-events-none disabled:opacity-60"
                       >
-                        {inviteSaving ? 'Starting…' : 'Start onboarding'}
+                        {inviteSaving
+                          ? 'Sending…'
+                          : canRetryVerificationInvite
+                            ? 'Retry setup'
+                            : 'Setup Vendor'}
                       </button>
                     ) : null}
                     {canOverrideOnboarding ? (
@@ -1402,6 +1427,22 @@ export function AdminVendorDetailDashboard() {
           setOverrideError(null)
         }}
         onActivate={() => void handleOverrideOnboarding()}
+      />
+      <SetupOutreachAckModal
+        open={setupOutreachAckOpen}
+        kind="vendor"
+        retry={canRetryVerificationInvite}
+        saving={inviteSaving}
+        onClose={() => {
+          if (inviteSaving) return
+          setSetupOutreachAckOpen(false)
+        }}
+        onConfirm={() => {
+          void (async () => {
+            await handleStartOnboarding()
+            setSetupOutreachAckOpen(false)
+          })()
+        }}
       />
       <VendorFormModal
         open={editOpen}

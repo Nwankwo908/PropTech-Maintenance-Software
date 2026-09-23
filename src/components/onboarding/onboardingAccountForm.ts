@@ -49,6 +49,9 @@ export async function saveOnboardingAccountSetupStep(
   } = input
 
   if (!accountSetupInput.contactName.trim()) {
+    // #region agent log
+    fetch('http://127.0.0.1:7898/ingest/3050e2ef-64dd-49e5-a718-1f5719c45963',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'5d0562'},body:JSON.stringify({sessionId:'5d0562',runId:'pre-fix',hypothesisId:'C',location:'onboardingAccountForm.ts:saveOnboardingAccountSetupStep',message:'Enter your name from account setup step',data:{editingFromReview:input.editingFromReview},timestamp:Date.now()})}).catch(()=>{});
+    // #endregion
     setError('Enter your name.')
     return
   }

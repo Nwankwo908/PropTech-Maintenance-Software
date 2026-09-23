@@ -129,6 +129,11 @@ export type ScheduleFsmEffect =
   | { kind: "decline_ack" }
   | { kind: "tenant_declined"; windowText: string }
   | { kind: "expired"; prompt: string }
+  | {
+    kind: "tenant_confirm_expired"
+    windowText: string
+    prompt: string
+  }
   | { kind: "noop"; reason: string }
 
 export type ScheduleTransition = {
@@ -312,13 +317,61 @@ export function reduceScheduleFsm(
   }
 
   if (event.type === "TTL_CHECK") {
-    if (isScheduleExpired(base, new Date(event.at))) {
-      return reduceScheduleFsm(base, {
-        type: "DECLINE",
-        at: event.at,
-      })
+    if (!isScheduleExpired(base, new Date(event.at))) {
+      return {
+        state: base,
+        effect: { kind: "noop", reason: "ttl_ok" },
+        suppressReply: true,
+      }
     }
-    return { state: base, effect: { kind: "noop", reason: "ttl_ok" }, suppressReply: true }
+    // Tenant never confirmed — reopen availability ask (do not decline the job).
+    if (base.step === "awaiting_tenant_confirmation") {
+      const windowText = base.pendingWindowText?.trim() || "that time"
+      const next = enterStep(
+        {
+          ...base,
+          pendingWindowText: undefined,
+          pendingScheduledAt: undefined,
+          pendingEndAt: undefined,
+          pendingSince: undefined,
+        },
+        "awaiting_availability",
+        event.at,
+        SCHEDULE_TTL_MS,
+      )
+      return {
+        state: next,
+        effect: {
+          kind: "tenant_confirm_expired",
+          windowText,
+          prompt:
+            `The resident hasn't confirmed ${windowText} yet. Please reply with another day and arrival window, or text us if that time still works.`,
+        },
+        suppressReply: false,
+      }
+    }
+    // Initial scheduling stalled — idle with restart prompt (job stays assigned).
+    const cleared = enterStep(
+      { ...base, ticketId: base.ticketId },
+      "idle",
+      event.at,
+      SCHEDULE_TTL_MS,
+      {
+        pendingWindowText: undefined,
+        pendingScheduledAt: undefined,
+        pendingEndAt: undefined,
+        pendingSince: undefined,
+      },
+    )
+    return {
+      state: cleared,
+      effect: {
+        kind: "expired",
+        prompt:
+          "That scheduling thread timed out. Reply YES if you still want the job and we will ask for your earliest availability again.",
+      },
+      suppressReply: false,
+    }
   }
 
   // Duplicate inbound SID — ignore.

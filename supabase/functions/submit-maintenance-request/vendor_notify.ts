@@ -32,6 +32,11 @@ import {
   AWAITING_LANDLORD_VENDOR_CHOICE,
   notifyLandlordVendorChoice,
 } from "../_shared/vendorLandlordChoice.ts"
+import {
+  startVendorAvailabilityProbe,
+  ticketIsAwaitingVendorAvailabilityProbe,
+  ticketIsUrgentForVendorProbe,
+} from "../_shared/vendorAvailabilityProbe.ts"
 import { resumeMaintenanceWorkflowAfterVendorAssigned } from "../_shared/maintenance_admin_escalation.ts"
 
 export type TicketNotifyPayload = {
@@ -40,6 +45,12 @@ export type TicketNotifyPayload = {
   priority: string
   unit: string
   description: string
+  /** Clean issue line for vendor SMS. Prefer this over description. */
+  issueHeadline?: string | null
+  /** Structured entry permission; null/undefined when unknown. */
+  entryOkIfAbsent?: boolean | null
+  severity?: string | null
+  urgency?: string | null
   /** ISO timestamp from SLA `due_at` (optional for legacy tickets). */
   dueAt?: string | null
   /** Deterministic SLA window in minutes (not from AI). */
@@ -476,6 +487,7 @@ export type VendorAssignSkipReason =
   | "assign_failed"
   | "ticket_missing"
   | "awaiting_landlord_choice"
+  | "awaiting_vendor_probe"
 
 export type AssignVendorResult = {
   assigned: boolean
@@ -495,7 +507,7 @@ export async function assignVendorAndNotify(
   const { data: ticket } = await supabase
     .from("maintenance_requests")
     .select(
-      "id, vendor_notified_at, vendor_notify_error, issue_category, resident_availability_text, assigned_vendor_id",
+      "id, vendor_notified_at, vendor_notify_error, issue_category, resident_availability_text, assigned_vendor_id, issue_headline, entry_ok_if_absent, priority, urgency, severity",
     )
     .eq("id", payload.ticketId)
     .maybeSingle()
@@ -512,7 +524,42 @@ export async function assignVendorAndNotify(
     typeof ticket.assigned_vendor_id === "string" && ticket.assigned_vendor_id.trim()
       ? ticket.assigned_vendor_id.trim()
       : null
-  if (existingVendorId) {
+  const preferVendorId = payload.preferVendorId?.trim() || ""
+  const alreadyNotified =
+    typeof ticket.vendor_notified_at === "string" &&
+    Boolean(ticket.vendor_notified_at.trim())
+  // Probe soft-offer may set assigned_vendor_id without a job SMS. Landlord YES
+  // with the same preferVendorId must continue into notify, not short-circuit.
+  const landlordNeedsNotify =
+    payload.landlordAcknowledged === true &&
+    Boolean(preferVendorId) &&
+    preferVendorId === existingVendorId &&
+    !alreadyNotified
+  if (existingVendorId && !landlordNeedsNotify) {
+    // #region agent log
+    fetch("http://127.0.0.1:7898/ingest/3050e2ef-64dd-49e5-a718-1f5719c45963", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Debug-Session-Id": "5d0562",
+      },
+      body: JSON.stringify({
+        sessionId: "5d0562",
+        runId: "pre-fix",
+        hypothesisId: "D",
+        location: "vendor_notify.ts:existingVendorEarlyReturn",
+        message: "assignVendorAndNotify early return existing assignment",
+        data: {
+          ticketId: payload.ticketId,
+          existingVendorId,
+          preferVendorId: preferVendorId || null,
+          alreadyNotified,
+          landlordAcknowledged: payload.landlordAcknowledged === true,
+        },
+        timestamp: Date.now(),
+      }),
+    }).catch(() => {})
+    // #endregion
     try {
       await resumeMaintenanceWorkflowAfterVendorAssigned(supabase, {
         ticketId: payload.ticketId,
@@ -523,6 +570,30 @@ export async function assignVendorAndNotify(
       console.error("[vendor-notify] resume workflow after existing assignment", e)
     }
     return { assigned: true, vendorId: existingVendorId }
+  }
+  if (landlordNeedsNotify) {
+    // #region agent log
+    fetch("http://127.0.0.1:7898/ingest/3050e2ef-64dd-49e5-a718-1f5719c45963", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Debug-Session-Id": "5d0562",
+      },
+      body: JSON.stringify({
+        sessionId: "5d0562",
+        runId: "pre-fix",
+        hypothesisId: "D",
+        location: "vendor_notify.ts:landlordNeedsNotify",
+        message: "continuing assign+notify despite existing assignment",
+        data: {
+          ticketId: payload.ticketId,
+          existingVendorId,
+          preferVendorId,
+        },
+        timestamp: Date.now(),
+      }),
+    }).catch(() => {})
+    // #endregion
   }
   if (ticket.vendor_notified_at && !payload.retryIfUnassigned) {
     console.log("[vendor-notify] skip, already notified", payload.ticketId)
@@ -538,6 +609,24 @@ export async function assignVendorAndNotify(
       ? ticket.resident_availability_text.trim()
       : ""
     if (fromTicket) payload.residentAvailabilityText = fromTicket
+  }
+  if (!payload.issueHeadline?.trim()) {
+    const headline = typeof ticket.issue_headline === "string"
+      ? ticket.issue_headline.trim()
+      : ""
+    if (headline) payload.issueHeadline = headline
+  }
+  if (payload.entryOkIfAbsent == null && typeof ticket.entry_ok_if_absent === "boolean") {
+    payload.entryOkIfAbsent = ticket.entry_ok_if_absent
+  }
+  if (!payload.urgency?.trim() && typeof ticket.urgency === "string") {
+    payload.urgency = ticket.urgency
+  }
+  if (!payload.severity?.trim() && typeof ticket.severity === "string") {
+    payload.severity = ticket.severity
+  }
+  if (!payload.priority?.trim() && typeof ticket.priority === "string") {
+    payload.priority = ticket.priority
   }
 
   const issueCategory =
@@ -567,6 +656,17 @@ export async function assignVendorAndNotify(
   const alreadyAwaitingChoice =
     typeof ticket.vendor_notify_error === "string" &&
     ticket.vendor_notify_error.includes(AWAITING_LANDLORD_VENDOR_CHOICE)
+  const alreadyAwaitingProbe =
+    typeof ticket.vendor_notify_error === "string" &&
+    ticketIsAwaitingVendorAvailabilityProbe(ticket.vendor_notify_error)
+  // Probe must not restart when residentConfirmed sets refreshLandlordChoice.
+  if (alreadyAwaitingProbe && payload.landlordAcknowledged !== true) {
+    return {
+      assigned: false,
+      vendorId: null,
+      skipReason: "awaiting_vendor_probe",
+    }
+  }
   if (
     alreadyAwaitingChoice &&
     payload.landlordAcknowledged !== true &&
@@ -626,21 +726,65 @@ export async function assignVendorAndNotify(
       jobState,
     })
     if (decision.kind === "landlord_choice") {
-      await notifyLandlordVendorChoice(supabase, {
+      // Refresh after landlord was already asked: re-text choice, do not re-probe.
+      if (alreadyAwaitingChoice) {
+        await notifyLandlordVendorChoice(supabase, {
+          landlordId,
+          ticketId: payload.ticketId,
+          unit: payload.unit,
+          issueCategory,
+          options: decision.options,
+        })
+        await supabase
+          .from("maintenance_requests")
+          .update({ vendor_notify_error: AWAITING_LANDLORD_VENDOR_CHOICE })
+          .eq("id", payload.ticketId)
+        return {
+          assigned: false,
+          vendorId: null,
+          skipReason: "awaiting_landlord_choice",
+        }
+      }
+      // Soft-offer availability first; landlord picks after vendors return slots.
+      const probe = await startVendorAvailabilityProbe(supabase, {
         landlordId,
         ticketId: payload.ticketId,
         unit: payload.unit,
         issueCategory,
+        description: payload.description,
+        issueHeadline: payload.issueHeadline,
+        entryOkIfAbsent: payload.entryOkIfAbsent,
+        urgent: ticketIsUrgentForVendorProbe({
+          priority: payload.priority,
+          urgency: payload.urgency ?? payload.priority,
+          severity: payload.severity,
+        }),
+        residentAvailabilityText: payload.residentAvailabilityText,
         options: decision.options,
       })
-      await supabase
-        .from("maintenance_requests")
-        .update({ vendor_notify_error: AWAITING_LANDLORD_VENDOR_CHOICE })
-        .eq("id", payload.ticketId)
+      if (probe.probed === 0) {
+        // No reachable phones — fall back to immediate landlord choice.
+        await notifyLandlordVendorChoice(supabase, {
+          landlordId,
+          ticketId: payload.ticketId,
+          unit: payload.unit,
+          issueCategory,
+          options: decision.options,
+        })
+        await supabase
+          .from("maintenance_requests")
+          .update({ vendor_notify_error: AWAITING_LANDLORD_VENDOR_CHOICE })
+          .eq("id", payload.ticketId)
+        return {
+          assigned: false,
+          vendorId: null,
+          skipReason: "awaiting_landlord_choice",
+        }
+      }
       return {
         assigned: false,
         vendorId: null,
-        skipReason: "awaiting_landlord_choice",
+        skipReason: "awaiting_vendor_probe",
       }
     }
     vendor = null
@@ -667,7 +811,9 @@ export async function assignVendorAndNotify(
   }
   const assignedAt = new Date().toISOString()
   const actionToken = crypto.randomUUID()
-  /** Single update: assigned_vendor_id + pending_accept together satisfies require_vendor_for_progress. */
+  /** Single update: assigned_vendor_id + pending_accept together satisfies require_vendor_for_progress.
+   * Always clear landlord/probe awaiting notify flags so the ticket cannot stay stuck on
+   * "Awaiting landlord vendor choice" after assignment (see stale-awaiting-flag-autofix). */
   const { error: assignError } = await supabase
     .from("maintenance_requests")
     .update({
@@ -676,6 +822,7 @@ export async function assignVendorAndNotify(
       vendor_action_token: actionToken,
       vendor_work_status: "pending_accept",
       issue_category: issueCategory ?? vendor.category ?? null,
+      vendor_notify_error: null,
     })
     .eq("id", payload.ticketId)
 
@@ -789,7 +936,7 @@ export async function reassignVendorByIdAndNotify(
   const { data: ticket, error: tErr } = await supabase
     .from("maintenance_requests")
     .select(
-      "id, landlord_id, priority, urgency, unit, description, vendor_work_status, issue_category, due_at, estimated_minutes, severity, assigned_vendor_id",
+      "id, landlord_id, priority, urgency, unit, description, issue_headline, entry_ok_if_absent, vendor_work_status, issue_category, due_at, estimated_minutes, severity, assigned_vendor_id",
     )
     .eq("id", ticketId)
     .maybeSingle()
@@ -894,6 +1041,38 @@ export async function reassignVendorByIdAndNotify(
       })
   const newDueAtIso = new Date(Date.now() + estMin * 60_000).toISOString()
 
+  const previousVendorId =
+    typeof ticket.assigned_vendor_id === "string" && ticket.assigned_vendor_id.trim()
+      ? ticket.assigned_vendor_id.trim()
+      : ""
+
+  // Notify previous vendor they are off the job before binding the replacement.
+  if (
+    previousVendorId &&
+    previousVendorId !== vendor.id &&
+    reassignLandlordIdEarly
+  ) {
+    try {
+      const { terminateWorkOrder } = await import(
+        "../_shared/terminateWorkOrder.ts"
+      )
+      await terminateWorkOrder(supabase, {
+        landlordId: reassignLandlordIdEarly,
+        ticketId,
+        mode: "release",
+        source: "reassignment",
+        actorType: "system",
+        vendorId: previousVendorId,
+        reason: "Job reassigned to another vendor",
+        notifyVendor: true,
+        clearAssignment: false,
+        closeWorkflowRuns: false,
+      })
+    } catch (e) {
+      console.error("[vendor-notify] previous vendor release notify", e)
+    }
+  }
+
   const assignedAt = new Date().toISOString()
   const { error: upAssign } = await supabase
     .from("maintenance_requests")
@@ -915,10 +1094,6 @@ export async function reassignVendorByIdAndNotify(
     return { error: upAssign.message ?? "Update failed" }
   }
 
-  const previousVendorId =
-    typeof ticket.assigned_vendor_id === "string" && ticket.assigned_vendor_id.trim()
-      ? ticket.assigned_vendor_id.trim()
-      : ""
   if (previousVendorId !== vendor.id) {
     void emitServerProductEvent(supabase, {
       eventName: "vendor_matched",
@@ -947,6 +1122,14 @@ export async function reassignVendorByIdAndNotify(
     priority: urgencyOrPriority,
     unit: ticket.unit as string,
     description: ticket.description as string,
+    issueHeadline: typeof ticket.issue_headline === "string"
+      ? ticket.issue_headline
+      : null,
+    entryOkIfAbsent: typeof ticket.entry_ok_if_absent === "boolean"
+      ? ticket.entry_ok_if_absent
+      : null,
+    urgency: typeof ticket.urgency === "string" ? ticket.urgency : null,
+    severity: typeof ticket.severity === "string" ? ticket.severity : null,
     dueAt: newDueAtIso,
     estimatedMinutes: estMin,
     landlordId: reassignLandlordId,

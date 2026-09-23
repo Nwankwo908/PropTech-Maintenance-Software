@@ -48,7 +48,7 @@ export function isClosedOrCancelledStatus(
   status: string | null | undefined,
 ): boolean {
   const v = normalizeVendorWorkStatus(status)
-  return v === "cancelled" || v === "completed"
+  return v === "cancelled" || v === "archived" || v === "completed"
 }
 
 export function partitionMaintenanceTicketsByStatus<T extends TicketStatusRow>(

@@ -200,6 +200,14 @@ export function canShowStartVendorOnboarding(
   return resolveVendorCapacityChip(input).status === 'not_started'
 }
 
+/** Resend verification invite while waiting for the vendor (invite sent, form not done). */
+export function canRetryVendorOnboarding(
+  input: VendorCapacityChipInput & { hasContact: boolean },
+): boolean {
+  if (!input.hasContact) return false
+  return resolveVendorCapacityChip(input).status === 'pending'
+}
+
 /** Count roster vendors still in verification / activation (not yet Active for dispatch). */
 export function countUnactivatedVendors(rows: VendorActivationFields[]): number {
   return rows.filter((row) => {

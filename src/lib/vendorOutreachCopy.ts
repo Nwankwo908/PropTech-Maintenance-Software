@@ -2,9 +2,25 @@
 
 const SMS_TARGET_CHARS = 320
 
-/** Full company / legal business name for greetings — never a first name or "there". */
+/** Full company / legal business name for greetings — title-cased. */
+export function titleCaseCompanyName(raw: string | null | undefined): string {
+  const name = (raw ?? '').trim()
+  if (!name) return ''
+  return name
+    .split(/\s+/)
+    .map((word) => {
+      if (!word) return word
+      if (word.length <= 3 && word === word.toUpperCase()) return word
+      if (word !== word.toLowerCase() && word !== word.toUpperCase()) {
+        return word.charAt(0).toUpperCase() + word.slice(1)
+      }
+      return word.charAt(0).toUpperCase() + word.slice(1).toLowerCase()
+    })
+    .join(' ')
+}
+
 export function vendorCompanyName(vendorName: string): string {
-  return vendorName.trim() || 'there'
+  return titleCaseCompanyName(vendorName) || 'there'
 }
 
 /** @deprecated Use vendorCompanyName — vendors are greeted by company name. */

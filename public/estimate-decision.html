@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="robots" content="noindex" />
+    <title>Estimate decision — Ulo</title>
+    <style>
+      :root {
+        color-scheme: light;
+      }
+      body {
+        margin: 0;
+        min-height: 100dvh;
+        font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+        background: #f9fafb;
+        color: #101828;
+      }
+      .wrap {
+        max-width: 480px;
+        margin: 0 auto;
+        padding: 40px 16px;
+      }
+      .card {
+        background: #fff;
+        border: 1px solid #e5e7eb;
+        border-radius: 20px;
+        box-shadow: 0 8px 24px rgba(0, 0, 0, 0.06);
+        padding: 32px 28px;
+      }
+      .brand {
+        margin: 0;
+        font-size: 13px;
+        font-weight: 600;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+        color: #186179;
+      }
+      h1 {
+        margin: 8px 0 0;
+        font-size: 22px;
+        font-weight: 600;
+        letter-spacing: -0.02em;
+      }
+      p {
+        margin: 12px 0 0;
+        font-size: 15px;
+        line-height: 1.55;
+        color: #364153;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <div class="card">
+        <p class="brand">Ulo</p>
+        <h1 id="title">Updating estimate…</h1>
+        <p id="body"></p>
+      </div>
+    </div>
+    <script>
+      ;(function () {
+        var params = new URLSearchParams(window.location.search)
+        var status = (params.get('status') || '').trim().toLowerCase()
+        var already = params.get('already') === '1'
+        var custom = (params.get('message') || '').trim()
+        var title = 'Could not update estimate'
+        var body =
+          custom ||
+          'This approval link is invalid or expired. Ask for a new estimate notification, or open the admin dashboard.'
+
+        if (status === 'approved') {
+          title = already ? 'Already approved' : 'Estimate approved'
+          body =
+            custom ||
+            (already
+              ? 'This estimate was already approved. The vendor was notified.'
+              : 'Thanks - the vendor has been notified that they can proceed.')
+        } else if (status === 'rejected' || status === 'declined') {
+          title = already ? 'Already declined' : 'Estimate declined'
+          body =
+            custom ||
+            (already
+              ? 'This estimate was already declined. The vendor was notified.'
+              : 'Got it - the vendor has been notified that this estimate was not approved.')
+        }
+
+        document.getElementById('title').textContent = title
+        document.getElementById('body').textContent = body
+        document.title = title + ' — Ulo'
+      })()
+    </script>
+  </body>
+</html>

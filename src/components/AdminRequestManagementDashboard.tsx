@@ -34,6 +34,7 @@ import {
   VENDOR_TRADE_OPTIONS,
 } from '@/lib/vendorTrades'
 import { getErrorMessage } from '@/lib/errorMessage'
+import { archiveWorkOrders } from '@/api/deleteWorkOrder'
 
 type UrgencyUi = 'urgent' | 'normal' | 'low'
 

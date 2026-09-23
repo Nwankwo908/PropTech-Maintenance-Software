@@ -222,8 +222,10 @@ export type VendorAssignmentDecision =
   | { kind: "landlord_choice"; options: VendorAssignmentOption[] }
 
 /**
- * Never auto-assign. List every Active specialist, then every Active
- * general / handyman. The landlord must acknowledge by text first.
+ * Never auto-assign. Preferred vendors are listed ahead of the same-trade /
+ * specialist-vs-generalist order. Within preferred and non-preferred groups:
+ * specialists first, then general / handyman. The landlord must acknowledge
+ * by text first.
  */
 export function decideVendorAssignmentFromTiers(
   specialists: VendorAssignmentRow[] | VendorAssignmentRow | null,
@@ -239,18 +241,32 @@ export function decideVendorAssignmentFromTiers(
     : generalists
       ? [generalists]
       : []
+
+  const preferredSpecialists = specialistList.filter((v) => v.preferred_emergency === true)
+  const standardSpecialists = specialistList.filter((v) => v.preferred_emergency !== true)
+  const preferredGeneralists = generalistList.filter((v) => v.preferred_emergency === true)
+  const standardGeneralists = generalistList.filter((v) => v.preferred_emergency !== true)
+
   const seen = new Set<string>()
   const options: VendorAssignmentOption[] = []
-  for (const vendor of specialistList) {
-    if (!vendor?.id || seen.has(vendor.id)) continue
-    seen.add(vendor.id)
-    options.push({ vendor, role: "specialist" })
+  const pushAll = (
+    list: VendorAssignmentRow[],
+    role: "specialist" | "generalist",
+  ) => {
+    for (const vendor of list) {
+      if (!vendor?.id || seen.has(vendor.id)) continue
+      seen.add(vendor.id)
+      options.push({ vendor, role })
+    }
   }
-  for (const vendor of generalistList) {
-    if (!vendor?.id || seen.has(vendor.id)) continue
-    seen.add(vendor.id)
-    options.push({ vendor, role: "generalist" })
-  }
+
+  // Preferred beats trade-tier ranking: preferred specialist → preferred
+  // generalist → standard specialist → standard generalist.
+  pushAll(preferredSpecialists, "specialist")
+  pushAll(preferredGeneralists, "generalist")
+  pushAll(standardSpecialists, "specialist")
+  pushAll(standardGeneralists, "generalist")
+
   if (options.length === 0) return { kind: "none" }
   return { kind: "landlord_choice", options }
 }
@@ -266,8 +282,9 @@ export type PickVendorForAssignmentOptions = {
   /** When set, only consider vendors for this landlord. */
   landlordId?: string | null
   /**
-   * When true (emergency / critical tickets), prefer vendors marked
-   * `preferred_emergency` within each matching tier before falling back.
+   * @deprecated Preferred vendors (`preferred_emergency`) are always ranked
+   * ahead of non-preferred vendors in coordination. Kept for callers that
+   * still pass emergency priority; ignored for ranking.
    */
   preferPreferredEmergency?: boolean
   /** Landlord vendor pool preference from organization settings. */
@@ -284,8 +301,9 @@ export type PickVendorForAssignmentOptions = {
  * handyman vendors when no specialist is available.
  * A different specialist trade (e.g. plumber for an oven) is never used.
  *
- * Within a tier: preferred-emergency first (when requested), then
- * lowest active job count, then fairness on `last_assigned_at` / `created_at`.
+ * Within a tier: preferred vendors first, then lowest active job count, then
+ * fairness on `last_assigned_at` / `created_at`. Across tiers, preferred
+ * vendors outrank non-preferred specialists and generalists.
  */
 async function loadRankedVendorTiers(
   supabase: SupabaseClient,
@@ -298,7 +316,6 @@ async function loadRankedVendorTiers(
   const excluded = new Set(options.excludeVendorIds.filter(Boolean))
   const issueCat = options.issueCategory ?? null
   const avoid = options.preferNotVendorId?.trim() ?? null
-  const preferEmergency = options.preferPreferredEmergency === true
   const marketplacePreference = landlordHasVendorMarketplace(options.landlordId)
     ? (options.marketplacePreference ?? "include_imported")
     : "include_imported"
@@ -408,15 +425,12 @@ async function loadRankedVendorTiers(
 
   function rankTier(tier: VendorAssignmentRow[]): VendorAssignmentRow[] {
     if (tier.length === 0) return []
-    if (preferEmergency) {
-      const preferred = tier.filter((v) => v.preferred_emergency === true)
-      const rest = tier.filter((v) => v.preferred_emergency !== true)
-      return [
-        ...rankVendorCandidatesAll(preferred, counts, avoid),
-        ...rankVendorCandidatesAll(rest, counts, avoid),
-      ]
-    }
-    return rankVendorCandidatesAll(tier, counts, avoid)
+    const preferred = tier.filter((v) => v.preferred_emergency === true)
+    const rest = tier.filter((v) => v.preferred_emergency !== true)
+    return [
+      ...rankVendorCandidatesAll(preferred, counts, avoid),
+      ...rankVendorCandidatesAll(rest, counts, avoid),
+    ]
   }
 
   const matchingTrade = base.filter((v) =>

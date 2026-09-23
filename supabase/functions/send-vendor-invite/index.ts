@@ -87,7 +87,7 @@ serve(async (req) => {
     const { data: ticket } = await supabase
       .from("maintenance_requests")
       .select(
-        "id, priority, unit, description, due_at, estimated_minutes, resident_availability_text, assigned_vendor_id, vendor_work_status",
+        "id, priority, urgency, severity, unit, description, issue_headline, entry_ok_if_absent, due_at, estimated_minutes, resident_availability_text, assigned_vendor_id, vendor_work_status",
       )
       .eq("id", ticketId)
       .eq("landlord_id", landlordId)

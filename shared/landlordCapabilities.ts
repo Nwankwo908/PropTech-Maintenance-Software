@@ -137,7 +137,8 @@ export function pickSettingsTestSmsDestination(
   return null
 }
 
-/** Limited Alpha 1 and 2 send and receive on the shared Twilio DID. */
+/** Limited Alpha 1 and 2 send and receive on the shared Twilio DID only —
+ *  conversations, identities, and rosters stay per-landlord. */
 export function landlordUsesTwilioSms(landlordId: string | null | undefined): boolean {
   return isLimitedAlphaLandlord(landlordId)
 }

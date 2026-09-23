@@ -1,0 +1,45 @@
+---
+description: Autofix Bugbot — never treat a named fixture (faucet, sink, toilet) as a known location; ask room when resolveRoomLabel is empty.
+globs: supabase/functions/_shared/sms/**/*.{ts,tsx}
+alwaysApply: false
+---
+
+# SMS intake — fixture name ≠ location
+
+**Symptom (Adriana):** Tenant texts `My faucet is dripping`. Ulo skips “Which room…?” and jumps to photo / entry / confirm. The ticket has no kitchen vs bathroom, so the vendor probe and dashboard cannot tell which faucet.
+
+## Rule
+
+A fixture word is **not** a room. Location is known only when `resolveRoomLabel(state)` returns a room (from `room_or_area` or text like “kitchen sink”).
+
+| Text | Location known? | Ask `room_or_area`? |
+|---|---|---|
+| `My faucet is dripping` | No | **Yes** |
+| `Kitchen faucet is dripping` | Yes (kitchen) | No |
+| `My sink is clogged` | No | **Yes** (after overflow triage) |
+| `Bathroom sink leaking` | Yes (bathroom) | No |
+| `I have no water` / whole-home outage | Scope ask, not room | Scope question instead |
+
+## Autofix (Bugbot)
+
+On PR review or when this pattern appears in chat / SMS thread dumps:
+
+1. **Never** skip `room_or_area` because `hasFixture(hay)` matched (`faucet`, `sink`, `toilet`, `shower`, `tub`, appliance, outlet, …).
+2. Gate the room ask on `!resolveRoomLabel(state)` (and non-HVAC / non-lock / non-door paths) — not on “fixture already named.”
+3. Whole-home outage / hot-water scope questions remain the location ask for those cases (`matchesWholeHomeWaterOutage`); do not also force a redundant room ask after “everywhere in the home.”
+4. Add/extend a Deno test: `"My faucet is dripping"` → `questionType === "room_or_area"`; `"Kitchen faucet is dripping"` → not `room_or_area`.
+
+## Canonical helpers
+
+| Concern | Module |
+|---|---|
+| Next question order | `determineNextMaintenanceQuestion.ts` |
+| Room extraction | `resolveRoomLabel` / `extractRoomFromText` in `residentIntakeTypes.ts` |
+| Whole-home outage | `matchesWholeHomeWaterOutage` in `deterministicRules.ts` |
+
+## Do not
+
+- Treat fixture vocabulary as answering “where”
+- Jump to photo / confirm while `resolveRoomLabel` is null for a fixture-only report
+- Re-introduce `!hasFixture(hay)` on the `room_or_area` gate
+- Ask room again after the resident already said the water is out everywhere

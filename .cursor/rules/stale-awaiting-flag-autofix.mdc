@@ -1,0 +1,50 @@
+---
+description: Autofix Bugbot — when a pending ask resolves (landlord YES, assign, accept), clear every paired awaiting flag so stale vendor_notify_error / intake keys cannot freeze the flow.
+globs: supabase/functions/_shared/vendorLandlordChoice.ts,supabase/functions/_shared/vendorAvailabilityProbe.ts,supabase/functions/submit-maintenance-request/vendor_notify.ts,supabase/functions/_shared/sms/estimateDecisionInbound.ts,supabase/functions/_shared/engine/templates/maintenanceRequest.ts
+alwaysApply: false
+---
+
+# Stale awaiting flags must not freeze the work order
+
+**Symptom (Osita / WO-1C50):** Landlord replied **YES** to Flex Plumbing. Ulo texted “we'll keep Flex plumbing on this job and wait for them to reply.” Ticket was already `pending_accept` with Flex assigned — but Active Tasks / notify state still showed **Awaiting landlord vendor choice** because `maintenance_requests.vendor_notify_error` was never cleared.
+
+## Rule
+
+Every “pending ask” has **paired state**. When the ask is answered (or becomes moot), clear **all** pairs — not only the conversation intake key.
+
+| Pending surface | Set when | Clear when |
+|---|---|---|
+| `sms_conversations.intake_state.awaiting_vendor_choice` | Landlord choice SMS sent | Landlord YES / 1 / 2 / … handled (any outcome that finishes the ask) |
+| `intake_state.vendor_availability_probe` (host thread) | Probe started / offers collected | Landlord choice resolved (probe is done) |
+| `maintenance_requests.vendor_notify_error` containing `Awaiting landlord vendor choice` | Choice SMS / rematch ask | Same moment as clearing `awaiting_vendor_choice` |
+| `vendor_notify_error` containing `Awaiting vendor availability before landlord choice` | Probe soft-offers sent | Probe completes into landlord choice **or** landlord acknowledges / assign proceeds |
+| `intake_state.awaiting_estimate_decision` | Estimate APPROVE/DECLINE ask | Estimate decision handled |
+
+**Ticket field vs intake:** Clearing only `awaiting_vendor_choice` while leaving `vendor_notify_error = "Awaiting landlord vendor choice"` makes the product look stuck on the landlord after they already replied.
+
+## Autofix (Bugbot)
+
+On PR review or when a ticket dump shows landlord/vendor already past the ask but `vendor_notify_error` still says Awaiting…:
+
+1. Find the resolve/clear helper for that ask (e.g. `clearAwaitingVendorChoice`).
+2. Require it to clear **conversation intake** and **ticket `vendor_notify_error`** (pass `ticketId`).
+3. Call that helper on **every** finish path — including early exits like “same vendor already assigned” / “already has a vendor.”
+4. When persisting assignment (`assigned_vendor_id` + `pending_accept`), set `vendor_notify_error: null` in the same update (do not rely only on a later clear).
+5. Do not invent a second parallel “awaiting” boolean — reuse `vendor_notify_error` + intake keys, but keep them in sync.
+6. Add/extend a Deno test: resolving landlord choice produces a clear payload that nulls notify error and drops `awaiting_vendor_choice` (+ probe host state).
+
+## Canonical helpers
+
+| Concern | Module |
+|---|---|
+| Landlord choice clear | `clearAwaitingVendorChoice` in `vendorLandlordChoice.ts` (intake + `vendor_notify_error: null`) |
+| Probe / choice notify strings | `AWAITING_VENDOR_AVAILABILITY_PROBE` / `AWAITING_LANDLORD_VENDOR_CHOICE` |
+| Assignment persist | `assignVendorAndNotify` / reassign in `vendor_notify.ts` — null notify error on success |
+| Predicates | `ticketIsAwaitingLandlordVendorChoice` / `ticketIsAwaitingVendorAvailabilityProbe` |
+
+## Do not
+
+- Clear only `awaiting_vendor_choice` and leave `vendor_notify_error` as “Awaiting landlord…”
+- Leave `vendor_availability_probe.status = awaiting_landlord` on the host thread after the landlord picked
+- Skip the clear helper on the “vendor already assigned / keep them” early return
+- Treat a stale `vendor_notify_error` as proof the landlord has not replied when assignment already moved to `pending_accept`

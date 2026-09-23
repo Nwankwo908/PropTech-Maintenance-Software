@@ -148,6 +148,18 @@ function clampTravelRadius(value: unknown): number {
   return Math.min(TRAVEL_RADIUS_MAX, Math.max(TRAVEL_RADIUS_MIN, Math.round(n)))
 }
 
+/** Match roster / free-text city to the dropdown option when casing differs. */
+function matchCityOption(stateCode: string, city: string): string {
+  const trimmed = city.trim()
+  if (!trimmed) return ''
+  const allowed = citiesForState(stateCode)
+  const exact = allowed.find((c) => c === trimmed)
+  if (exact) return exact
+  const lower = trimmed.toLowerCase()
+  const ci = allowed.find((c) => c.toLowerCase() === lower)
+  return ci ?? trimmed
+}
+
 function serviceAreaFieldsFromSession(session: VendorVerificationSession): {
   city: string
   state: string
@@ -155,10 +167,12 @@ function serviceAreaFieldsFromSession(session: VendorVerificationSession): {
   radiusMiles: number
 } {
   const parsed = parseCenterAddress(session.serviceArea.centerAddress)
+  const state =
+    usStateCodeFromLabel(firstListValue(session.serviceArea.counties)) || parsed.state
+  const rawCity = firstListValue(session.serviceArea.cities) || parsed.city
   return {
-    city: firstListValue(session.serviceArea.cities) || parsed.city,
-    state:
-      usStateCodeFromLabel(firstListValue(session.serviceArea.counties)) || parsed.state,
+    city: matchCityOption(state, rawCity),
+    state,
     zip: firstListValue(session.serviceArea.zips) || parsed.zip,
     radiusMiles: clampTravelRadius(session.serviceArea.radiusMiles),
   }

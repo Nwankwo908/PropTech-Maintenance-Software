@@ -89,6 +89,9 @@ export function validateReviewManualAccount(
   account: OnboardingReviewManualAccount,
 ): { ok: true } | { ok: false; error: string } {
   if (!account.contactName.trim()) {
+    // #region agent log
+    fetch('http://127.0.0.1:7898/ingest/3050e2ef-64dd-49e5-a718-1f5719c45963',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'5d0562'},body:JSON.stringify({sessionId:'5d0562',runId:'pre-fix',hypothesisId:'B',location:'onboardingReviewManual.ts:validateReviewManualAccount',message:'Enter your name from validateReviewManualAccount',data:{hasSmsConsent:Boolean(account.smsConsentAcceptedAt),companyNameLen:account.companyName.trim().length},timestamp:Date.now()})}).catch(()=>{});
+    // #endregion
     return { ok: false, error: 'Enter your name.' }
   }
   if (!account.smsConsentAcceptedAt) {

@@ -123,20 +123,25 @@ export function mergeOrganizationForm(input: {
     ...(input.accountSettings.organization ?? {}),
   }
 
-  const contactName = asTrimmed(input.landlordRow?.contact_name) || asTrimmed(account.contactName)
-  if (contactName) next.contactName = contactName
-
-  const legalName =
-    storedLandlordCompanyName(input.landlordRow?.name, contactName) ||
-    usableOnboardingCompanyName(account.companyName) ||
-    storedLandlordCompanyName(next.legalName, contactName)
-  next.legalName = legalName
-
+  /**
+   * Company / display / contact identity: the live landlords row is
+   * authoritative. Cleared or placeholder DB values must stay blank — do not
+   * resurrect older names from organizationSettings / account_settings JSON.
+   * Without a landlords row (draft-only), keep the onboarding/JSON merge.
+   */
   if (input.landlordRow) {
-    const displayFromDb = usableOnboardingCompanyName(input.landlordRow.display_name)
-    next.displayName = displayFromDb || usableOnboardingCompanyName(next.displayName)
+    const contactName =
+      asTrimmed(input.landlordRow.contact_name) || asTrimmed(account.contactName)
+    next.contactName = contactName
+    next.legalName = storedLandlordCompanyName(input.landlordRow.name, contactName)
+    next.displayName = usableOnboardingCompanyName(input.landlordRow.display_name)
     next.about = asTrimmed(input.landlordRow.about)
   } else {
+    const contactName = asTrimmed(account.contactName)
+    if (contactName) next.contactName = contactName
+    next.legalName =
+      usableOnboardingCompanyName(account.companyName) ||
+      storedLandlordCompanyName(next.legalName, contactName)
     next.displayName = usableOnboardingCompanyName(next.displayName)
   }
   const email = resolveLandlordSupportEmail({

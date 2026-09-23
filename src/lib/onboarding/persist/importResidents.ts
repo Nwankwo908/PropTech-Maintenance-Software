@@ -482,6 +482,23 @@ export async function importOnboardingResidentsFromExtraction(
 ): Promise<number> {
   const selectedBeforeDedupe = residents.filter(isSelectedOnboardingExtractedResident)
   const selectedResidents = dedupeOnboardingImportResidents(selectedBeforeDedupe)
+  // #region agent log
+  {
+    const nameCounts = new Map<string, number>()
+    for (const row of selectedBeforeDedupe) {
+      const key = String(row.fullName ?? '')
+        .trim()
+        .toLowerCase()
+        .replace(/\s+/g, ' ')
+      if (!key) continue
+      nameCounts.set(key, (nameCounts.get(key) ?? 0) + 1)
+    }
+    const dupNames = [...nameCounts.entries()]
+      .filter(([, n]) => n > 1)
+      .map(([name, count]) => ({ name, count }))
+    fetch('http://127.0.0.1:7898/ingest/3050e2ef-64dd-49e5-a718-1f5719c45963',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'5d0562'},body:JSON.stringify({sessionId:'5d0562',runId:'pre-fix',hypothesisId:'D',location:'importResidents.ts:importOnboardingResidentsFromExtraction',message:'extract import dedupe',data:{landlordId,beforeCount:selectedBeforeDedupe.length,afterCount:selectedResidents.length,dupNamesBefore:dupNames},timestamp:Date.now()})}).catch(()=>{});
+  }
+  // #endregion
   const selectedLeases = leases.filter((lease) => lease.selected)
   if (selectedResidents.length === 0 || !supabase) return 0
 

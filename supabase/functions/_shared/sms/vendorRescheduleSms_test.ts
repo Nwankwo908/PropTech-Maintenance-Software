@@ -5,10 +5,13 @@ import {
   buildResidentRescheduleNotifySms,
   buildVendorRescheduleClarifySms,
   buildVendorRescheduleConfirmSms,
+  buildVendorTenantInitiatedRescheduleSms,
   detectVendorRescheduleIntent,
   filterJobsByExistingTimeHint,
   formatRescheduleTimeLabel,
   humanizeTrade,
+  looksLikeAvailabilityProposal,
+  mapVendorRescheduleReason,
   type RescheduleJob,
 } from "./vendorRescheduleSms.ts"
 import { parseTenantScheduleDecision } from "./tenantScheduleConfirm.ts"
@@ -126,7 +129,47 @@ Deno.test("vendor / resident / landlord copy", () => {
   })
   assertMatch(email.subject, /WO-3B00/)
   assertMatch(email.text, /Previous time: 10:00 AM/)
-  assertMatch(email.text, /Running behind/)
+  assertMatch(email.text, /The vendor is running behind on another job/)
+  assertEquals(email.text.includes("Running behind on a previous job."), false)
+})
+
+Deno.test("landlord reschedule email omits unmapped raw reason", () => {
+  const email = buildLandlordRescheduleEmail({
+    workOrderRef: "WO-3B00",
+    vendorName: "Flex Plumbing",
+    propertyName: "123 Main",
+    unitLabel: "Apt 3B",
+    previousTimeLabel: "10:00 AM",
+    newTimeLabel: "2:00 PM today",
+    reason: "truck_broke_internal_code_v3",
+  })
+  assertEquals(email.text.includes("truck_broke_internal_code_v3"), false)
+  assertEquals(email.text.includes("Reason:"), false)
+  assertEquals(email.html.includes("truck_broke_internal_code_v3"), false)
+})
+
+Deno.test("mapVendorRescheduleReason maps known phrases", () => {
+  const mapped = mapVendorRescheduleReason("Running late — traffic")
+  assertEquals(mapped.safeText, "The vendor is running late.")
+  assertEquals(mapped.unmapped, false)
+  const unmapped = mapVendorRescheduleReason("secret_internal_code")
+  assertEquals(unmapped.safeText, null)
+  assertEquals(unmapped.unmapped, true)
+})
+
+Deno.test("looksLikeAvailabilityProposal recognizes bare windows", () => {
+  assertEquals(looksLikeAvailabilityProposal("Wed 2pm"), true)
+  assertEquals(looksLikeAvailabilityProposal("tomorrow 9am-12pm"), true)
+  assertEquals(looksLikeAvailabilityProposal("YES"), false)
+})
+
+Deno.test("buildVendorTenantInitiatedRescheduleSms asks for a new window", () => {
+  const body = buildVendorTenantInitiatedRescheduleSms({
+    workOrderRef: "WO-13F4",
+    previousTimeLabel: "Thu 2–4pm",
+  })
+  assertMatch(body, /can no longer make Thu 2–4pm/)
+  assertMatch(body, /new day and arrival window/)
 })
 
 Deno.test("humanizeTrade + formatRescheduleTimeLabel", () => {

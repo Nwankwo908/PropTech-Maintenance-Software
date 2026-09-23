@@ -24,6 +24,8 @@ export type VendorDbWorkStatus =
   | 'completed'
   | 'declined'
   | 'unassigned'
+  | 'cancelled'
+  | 'archived'
 
 /** Client-side guard: skip API for impossible transitions (DB: pending_accept → accepted → in_progress → completed). */
 export function isValidMove(

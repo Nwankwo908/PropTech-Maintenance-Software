@@ -251,6 +251,11 @@ export async function sendVendorJobAlert(
     vendorPhone: string
     body: string
     landlordId?: string | null
+    /**
+     * When false, do not write assigned_vendor_id (availability probe soft-offers).
+     * Real job assignment / reassignment SMS must leave this true (default).
+     */
+    bindAssignment?: boolean
   },
 ): Promise<VendorAlertSendResult> {
   const vendorPhone = params.vendorPhone.trim()

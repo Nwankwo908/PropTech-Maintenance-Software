@@ -448,7 +448,7 @@ async function matchLocationFromText(
   }
 
   // Fall back to active roster match (existing self-heal path)
-  const residents = await findActiveResidentsByUnit(supabase, unitInput)
+  const residents = await findActiveResidentsByUnit(supabase, unitInput, landlordId)
   if (residents.length === 0) return null
 
   let hits = residents

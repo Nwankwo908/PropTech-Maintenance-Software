@@ -39,11 +39,33 @@ import {
   rehostInboundSmsMedia,
 } from "./rehostInboundMedia.ts"
 import { isLimitedAlphaTwilioSmsNumber } from "../../../../shared/landlordCapabilities.ts"
+import { getSMSProviderFor } from "./providerFactory.ts"
 
 export {
   InboundSmsError,
   type ProcessInboundSmsResult,
 } from "./inboundHandlerTypes.ts"
+
+const UNMATCHED_SHARED_DID_ACK =
+  "Thanks for texting. We couldn't match this number to a property account. Please contact your property manager directly."
+
+/** Best-effort Twilio ack with no landlord conversation / identity write. */
+async function ackUnmatchedSharedDidInbound(
+  inbound: InboundSMSMessage,
+): Promise<void> {
+  try {
+    const result = await getSMSProviderFor(inbound.provider).sendMessage({
+      to: inbound.from,
+      from: inbound.to,
+      body: UNMATCHED_SHARED_DID_ACK,
+    })
+    if ("error" in result && result.error) {
+      console.warn("[sms-inbound] unmatched shared DID ack failed", result.error)
+    }
+  } catch (err) {
+    console.warn("[sms-inbound] unmatched shared DID ack threw", err)
+  }
+}
 
 async function saveInboundMessage(
   supabase: SupabaseClient,
@@ -250,11 +272,29 @@ export async function processInboundSms(
 
   let landlordId = smsNumber.landlord_id
   if (isLimitedAlphaTwilioSmsNumber(inbound.to)) {
-    landlordId = await resolveLandlordIdForSharedTwilioInbound(
+    const resolvedLandlordId = await resolveLandlordIdForSharedTwilioInbound(
       supabase,
       inbound.from,
-      landlordId,
+      smsNumber.landlord_id,
     )
+    if (!resolvedLandlordId) {
+      console.warn(
+        "[sms-inbound] shared DID unmatched sender — not attributing to DID owner",
+        {
+          from: inbound.from,
+          to: inbound.to,
+          didOwnerLandlordId: smsNumber.landlord_id,
+        },
+      )
+      await ackUnmatchedSharedDidInbound(inbound)
+      return {
+        ok: true,
+        unmatchedSharedDid: true,
+        conversationId: null,
+        messageId: null,
+      }
+    }
+    landlordId = resolvedLandlordId
   }
 
   const existingConversation = await findOpenConversation(supabase, {

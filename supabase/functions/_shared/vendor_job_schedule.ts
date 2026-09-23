@@ -193,8 +193,77 @@ export async function setVendorAwaitingAvailability(
 }
 
 /**
+ * Vendor already offered a visit window (probe / seed). Ask the resident to
+ * confirm it and put the vendor thread in awaiting_tenant_confirmation.
+ */
+export async function beginTenantConfirmForProposedWindow(
+  supabase: SupabaseClient,
+  params: {
+    ticketId: string
+    vendorId: string
+    conversationId: string | null
+    windowText: string
+    scheduledAt?: string | null
+  },
+): Promise<{ ok: boolean; conversationId: string | null; error?: string }> {
+  const windowText = params.windowText.trim()
+  if (!windowText) {
+    return { ok: false, conversationId: params.conversationId, error: "no_window" }
+  }
+
+  const { askTenantScheduleConfirmation } = await import(
+    "./sms/tenantScheduleConfirm.ts"
+  )
+
+  const ask = await askTenantScheduleConfirmation(supabase, {
+    ticketId: params.ticketId,
+    vendorId: params.vendorId,
+    vendorConversationId: params.conversationId,
+    windowText,
+    scheduledAt: params.scheduledAt ?? null,
+  })
+
+  if (params.conversationId) {
+    const { data: convo } = await supabase
+      .from("sms_conversations")
+      .select("intake_state")
+      .eq("id", params.conversationId)
+      .maybeSingle()
+    const intake = (convo?.intake_state as Record<string, unknown> | null) ?? {}
+    const prev =
+      readVendorScheduleFsm(intake) ??
+      createIdleScheduleState(params.ticketId)
+    const at = new Date().toISOString()
+    const transition = reduceScheduleFsm(
+      { ...prev, ticketId: params.ticketId },
+      {
+        type: "AVAILABILITY_TEXT",
+        at,
+        windowText,
+        scheduledAt: params.scheduledAt ?? null,
+        outcome: "resolved",
+      },
+    )
+    await persistVendorScheduleFsm(supabase, {
+      conversationId: params.conversationId,
+      ticketId: params.ticketId,
+      next: transition.state,
+      expectedRevision: prev.revision,
+    })
+  }
+
+  return {
+    ok: ask.ok,
+    conversationId: ask.conversationId,
+    error: ask.error,
+  }
+}
+
+/**
  * After accept (SMS or email): ask earliest availability over SMS when possible.
- * Does not notify resident/landlord.
+ * If a visit window was already offered (availability probe seed), confirm that
+ * window with the resident instead of re-asking the vendor.
+ * Does not notify resident/landlord when starting a fresh vendor ask.
  */
 export async function beginVendorAvailabilityAsk(
   supabase: SupabaseClient,
@@ -218,7 +287,9 @@ export async function beginVendorAvailabilityAsk(
 
   const { data: ticketRow } = await supabase
     .from("maintenance_requests")
-    .select("landlord_id, resident_availability_text")
+    .select(
+      "landlord_id, resident_availability_text, scheduled_window_text, scheduled_at, schedule_confirmed_at",
+    )
     .eq("id", params.ticketId)
     .maybeSingle()
   const landlordId =
@@ -229,6 +300,55 @@ export async function beginVendorAvailabilityAsk(
     typeof ticketRow?.resident_availability_text === "string"
       ? ticketRow.resident_availability_text.trim()
       : ""
+  const existingWindow =
+    typeof ticketRow?.scheduled_window_text === "string"
+      ? ticketRow.scheduled_window_text.trim()
+      : ""
+  const scheduleConfirmed =
+    typeof ticketRow?.schedule_confirmed_at === "string" &&
+    ticketRow.schedule_confirmed_at.trim().length > 0
+
+  let conversationId = params.conversationId ?? null
+  if (!conversationId) {
+    conversationId = await loadVendorConversationId(supabase, {
+      vendorId: params.vendorId,
+      ticketId: params.ticketId,
+    })
+  }
+
+  // Probe / prior seed already has a window — confirm with the tenant.
+  if (existingWindow && !scheduleConfirmed) {
+    const confirm = await beginTenantConfirmForProposedWindow(supabase, {
+      ticketId: params.ticketId,
+      vendorId: params.vendorId,
+      conversationId,
+      windowText: existingWindow,
+      scheduledAt:
+        typeof ticketRow?.scheduled_at === "string"
+          ? ticketRow.scheduled_at
+          : null,
+    })
+    if (confirm.ok && conversationId && phone) {
+      const waiting = (
+        await import("./sms/tenantScheduleConfirm.ts")
+      ).buildVendorWaitingOnTenantSms(existingWindow)
+      const send = await sendVendorJobAlert(supabase, {
+        ticketId: params.ticketId,
+        vendorId: params.vendorId,
+        vendorPhone: phone,
+        body: waiting,
+        landlordId,
+      })
+      return {
+        sentSms: send.ok,
+        conversationId: send.ok ? send.conversationId : conversationId,
+      }
+    }
+    return {
+      sentSms: false,
+      conversationId: confirm.conversationId ?? conversationId,
+    }
+  }
 
   // SMS 2 — scheduling ask (must use the ticket's landlord SMS line)
   const body = buildVendorAvailabilityAskSms(
@@ -252,7 +372,6 @@ export async function beginVendorAvailabilityAsk(
     })
   }
 
-  let conversationId = params.conversationId ?? null
   if (send.ok) {
     conversationId = send.conversationId
   } else if (!conversationId) {

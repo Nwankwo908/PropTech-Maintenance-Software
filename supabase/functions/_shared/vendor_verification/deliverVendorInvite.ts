@@ -14,6 +14,7 @@ import { resolveOutboundLandlordSmsLine } from "../sms/landlordSmsOnboarding.ts"
 import type { SmsProviderName } from "../sms/types.ts"
 import { uloAppUrl } from "../uloAppUrl.ts"
 import { markVendorOnboardingInviteDelivered } from "../engine/vendorOnboardingProgress.ts"
+import { buildServiceAreaFromVendorLocation } from "./serviceAreaFromVendorLocation.ts"
 
 export type VendorInviteDeliveryResult = {
   verificationId: string
@@ -260,6 +261,17 @@ export async function deliverVendorInvite(
   }
   if (runId) insertPayload.workflow_run_id = runId
 
+  const { data: vendorLocation } = await supabase
+    .from("vendors")
+    .select("city, state")
+    .eq("id", vendorId)
+    .maybeSingle()
+  const seededServiceArea = buildServiceAreaFromVendorLocation({
+    city: (vendorLocation as { city?: string | null } | null)?.city,
+    state: (vendorLocation as { state?: string | null } | null)?.state,
+  })
+  if (seededServiceArea) insertPayload.service_area = seededServiceArea
+
   let { data: inserted, error: insertErr } = await insertVendorVerificationInvite(
     supabase,
     insertPayload,
@@ -267,14 +279,16 @@ export async function deliverVendorInvite(
 
   if (insertErr) {
     console.error("[deliverVendorInvite] insert failed", insertErr)
-    const retry = await insertVendorVerificationInvite(supabase, {
+    const retryPayload: Record<string, unknown> = {
       landlord_id: landlordId,
       vendor_id: vendorId,
       token,
       business_name: businessName || null,
       email: email || null,
       phone: phone || null,
-    })
+    }
+    if (seededServiceArea) retryPayload.service_area = seededServiceArea
+    const retry = await insertVendorVerificationInvite(supabase, retryPayload)
     inserted = retry.data
     insertErr = retry.error
     if (insertErr) {

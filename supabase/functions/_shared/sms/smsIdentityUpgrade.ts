@@ -19,18 +19,43 @@ export function isLinkedResidentSmsIdentity(
 }
 
 /**
- * True when an existing identity may be rewritten as this landlord's vendor.
- * Blank tenant rows (resident, no resident_id) and unknown rows must upgrade.
- * Linked residents are left alone on inbound self-heal; outbound job SMS may still
- * call this with nextType vendor after an explicit vendor send.
+ * No linked person/vendor — label alone (including blank "resident") is not trusted.
+ * These rows may be corrected to a better-evidenced type.
+ */
+export function isUnresolvedSmsIdentity(
+  identity: SmsIdentityKindFields,
+): boolean {
+  if (identity.identity_type === "unknown") return true
+  if (isUnlinkedResidentSmsIdentity(identity)) return true
+  if (identity.identity_type === "vendor" && !identity.vendor_id?.trim()) {
+    return true
+  }
+  if (
+    identity.identity_type === "landlord" &&
+    !identity.resident_id?.trim() &&
+    !identity.vendor_id?.trim()
+  ) {
+    // Landlord rows intentionally have no resident/vendor link.
+    return false
+  }
+  return false
+}
+
+/**
+ * True when an existing identity may be rewritten as nextType.
+ * Unresolved rows (unknown, blank resident, vendor without vendor_id) may move
+ * to any better-evidenced type — not only literally `unknown` → landlord.
+ * Linked residents stay protected from casual inbound self-heal.
  */
 export function smsIdentityAllowsTypePatch(
   existing: SmsIdentityKindFields,
   nextType: "resident" | "vendor" | "landlord",
 ): boolean {
-  if (existing.identity_type === "unknown") return true
   if (existing.identity_type === nextType) return true
-  if (nextType === "vendor" && isUnlinkedResidentSmsIdentity(existing)) return true
+  if (isUnresolvedSmsIdentity(existing)) return true
+  if (nextType === "vendor" && isUnlinkedResidentSmsIdentity(existing)) {
+    return true
+  }
   return false
 }
 
@@ -40,6 +65,8 @@ export function smsIdentityIsFullyResolved(
 ): boolean {
   if (identity.identity_type === "unknown") return false
   if (isUnlinkedResidentSmsIdentity(identity)) return false
-  if (identity.identity_type === "vendor" && !identity.vendor_id?.trim()) return false
+  if (identity.identity_type === "vendor" && !identity.vendor_id?.trim()) {
+    return false
+  }
   return true
 }

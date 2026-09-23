@@ -131,7 +131,7 @@ export function resolveTenantActivationChip(input: {
   }
   return {
     status: 'not_started',
-    label: 'Not started',
+    label: 'Not activated',
     detail: 'Welcome SMS has not been sent yet.',
     className: 'bg-[#f3f4f6] text-[#6a7282]',
     actionRequired: false,

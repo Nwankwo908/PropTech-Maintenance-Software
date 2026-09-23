@@ -642,7 +642,6 @@ function resolveNextMaintenanceQuestion(
 
   if (
     !room &&
-    !hasFixture(hay) &&
     !isHvac(state, hay) &&
     !isLock(state, hay) &&
     !isDoorComplaint(state, hay) &&

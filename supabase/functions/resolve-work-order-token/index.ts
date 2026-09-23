@@ -102,7 +102,7 @@ serve(async (req) => {
   const { data: row, error } = await supabase
     .from("maintenance_requests")
     .select(
-      "id, created_at, landlord_id, priority, urgency, unit, description, photo_paths, completion_photo_paths, resident_name, resident_phone, email, issue_category, vendor_work_status, assigned_vendor_id, vendor_action_token, scheduled_at, scheduled_window_text, schedule_confirmed_at, access_instructions, due_at",
+      "id, created_at, landlord_id, priority, urgency, unit, description, issue_headline, entry_ok_if_absent, photo_paths, completion_photo_paths, resident_name, resident_phone, email, issue_category, vendor_work_status, assigned_vendor_id, vendor_action_token, scheduled_at, scheduled_window_text, schedule_confirmed_at, access_instructions, due_at",
     )
     .eq("vendor_action_token", token)
     .maybeSingle()
@@ -295,10 +295,11 @@ serve(async (req) => {
   // Latest non-superseded estimate drives action gating on /w/:token.
   // Best-effort: never fail the public job page if estimates aren't available yet.
   let estimateStatus: string | null = null
+  let estimateTotalCost: number | null = null
   try {
     const { data: estimateRow, error: estimateError } = await supabase
       .from("maintenance_estimates")
-      .select("status")
+      .select("status, total_cost")
       .eq("maintenance_request_id", ticketId)
       .neq("status", "superseded")
       .order("created_at", { ascending: false })
@@ -309,8 +310,14 @@ serve(async (req) => {
         "[resolve-work-order-token] estimate lookup",
         estimateError.message,
       )
-    } else if (typeof estimateRow?.status === "string") {
-      estimateStatus = estimateRow.status
+    } else if (estimateRow) {
+      if (typeof estimateRow.status === "string") {
+        estimateStatus = estimateRow.status
+      }
+      const total = Number(estimateRow.total_cost)
+      if (Number.isFinite(total) && total > 0) {
+        estimateTotalCost = total
+      }
     }
   } catch (err) {
     console.error("[resolve-work-order-token] estimate lookup threw", err)
@@ -318,6 +325,31 @@ serve(async (req) => {
   const estimateSubmitted =
     estimateStatus === "pending_approval" || estimateStatus === "approved"
   const estimateApproved = estimateStatus === "approved"
+
+  let invoiceStatus: string | null = null
+  try {
+    const { data: invoiceRow, error: invoiceError } = await supabase
+      .from("maintenance_invoices")
+      .select("status")
+      .eq("maintenance_request_id", ticketId)
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle()
+    if (invoiceError) {
+      console.error(
+        "[resolve-work-order-token] invoice lookup",
+        invoiceError.message,
+      )
+    } else if (typeof invoiceRow?.status === "string") {
+      invoiceStatus = invoiceRow.status
+    }
+  } catch (err) {
+    console.error("[resolve-work-order-token] invoice lookup threw", err)
+  }
+  const invoiceSubmitted =
+    invoiceStatus === "submitted" ||
+    invoiceStatus === "approved" ||
+    invoiceStatus === "paid"
 
   const completionPhotoPaths = Array.isArray(row.completion_photo_paths)
     ? (row.completion_photo_paths as unknown[]).filter(
@@ -385,6 +417,14 @@ serve(async (req) => {
         typeof row.issue_category === "string" ? row.issue_category : null,
       description:
         typeof row.description === "string" ? row.description : "",
+      issueHeadline:
+        typeof row.issue_headline === "string" && row.issue_headline.trim()
+          ? row.issue_headline.trim()
+          : null,
+      entryOkIfAbsent:
+        typeof row.entry_ok_if_absent === "boolean"
+          ? row.entry_ok_if_absent
+          : null,
       priority:
         (typeof row.priority === "string" && row.priority) ||
         (typeof row.urgency === "string" && row.urgency) ||
@@ -433,7 +473,10 @@ serve(async (req) => {
       estimateStatus,
       estimateSubmitted,
       estimateApproved,
+      estimateTotalCost,
       completionPhotosUploaded,
+      invoiceStatus,
+      invoiceSubmitted,
     },
   })
   } catch (err) {

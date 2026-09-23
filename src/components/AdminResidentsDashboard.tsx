@@ -24,6 +24,7 @@ import {
 import {
   TenantActivationStatusChip,
 } from '@/components/TenantActivationStatusChip'
+import { SetupOutreachAckModal } from '@/components/SetupOutreachAckModal'
 import { PaymentStatusChip } from '@/components/PaymentStatusChip'
 import { optionalPhoneForDbOrError } from '@/lib/phoneFormat'
 import { getActiveLandlordId } from '@/lib/activeLandlord'
@@ -298,6 +299,7 @@ export function AdminResidentsDashboard() {
   const [deleteResidentsSaving, setDeleteResidentsSaving] = useState(false)
   const [deleteResidentsError, setDeleteResidentsError] = useState<string | null>(null)
   const [onboardingSaving, setOnboardingSaving] = useState(false)
+  const [setupOutreachAckOpen, setSetupOutreachAckOpen] = useState(false)
   const [residentsBanner, setResidentsBanner] = useState<ResidentsBannerState>(null)
   const [showCheckboxGuide, setShowCheckboxGuide] = useState(() =>
     isSetupSuccessCheckboxGuideActive(location.state, 'residents'),
@@ -326,6 +328,9 @@ export function AdminResidentsDashboard() {
   }, [residentsBanner])
 
   const loadResidents = useCallback(async () => {
+    // #region agent log
+    fetch('http://127.0.0.1:7898/ingest/3050e2ef-64dd-49e5-a718-1f5719c45963',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'5d0562'},body:JSON.stringify({sessionId:'5d0562',runId:'pre-fix',hypothesisId:'D',location:'AdminResidentsDashboard.tsx:loadResidents:start',message:'loadResidents start',data:{landlordId:getActiveLandlordId()},timestamp:Date.now()})}).catch(()=>{});
+    // #endregion
     if (!supabase) {
       setLoading(false)
       setError('Supabase is not configured — connect a project to see residents.')
@@ -364,6 +369,9 @@ export function AdminResidentsDashboard() {
     }
 
     if (fetchError) {
+      // #region agent log
+      fetch('http://127.0.0.1:7898/ingest/3050e2ef-64dd-49e5-a718-1f5719c45963',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'5d0562'},body:JSON.stringify({sessionId:'5d0562',runId:'pre-fix',hypothesisId:'D',location:'AdminResidentsDashboard.tsx:loadResidents:fetchError',message:'users fetch error',data:{error:fetchError.message,landlordId:getActiveLandlordId()},timestamp:Date.now()})}).catch(()=>{});
+      // #endregion
       setError(getErrorMessage(fetchError, 'Something went wrong. Please try again.'))
       setResidents([])
       setLoading(false)
@@ -452,9 +460,36 @@ export function AdminResidentsDashboard() {
       })
       .filter((row) => row.id)
 
+    // #region agent log
+    {
+      const nameCounts = new Map<string, number>()
+      const scopeCounts = new Map<string, { count: number; ids: string[] }>()
+      for (const row of rows) {
+        const nameKey = row.name.trim().toLowerCase().replace(/\s+/g, ' ')
+        nameCounts.set(nameKey, (nameCounts.get(nameKey) ?? 0) + 1)
+        const scope = `${nameKey}::${row.unit.trim().toLowerCase()}::${(row.building ?? '')
+          .trim()
+          .toLowerCase()}`
+        const prev = scopeCounts.get(scope) ?? { count: 0, ids: [] }
+        prev.count += 1
+        prev.ids.push(row.id)
+        scopeCounts.set(scope, prev)
+      }
+      const dupNames = [...nameCounts.entries()]
+        .filter(([, n]) => n > 1)
+        .map(([name, count]) => ({ name, count }))
+      const dupScopes = [...scopeCounts.entries()]
+        .filter(([, v]) => v.count > 1)
+        .map(([scope, v]) => ({ scope, count: v.count, ids: v.ids }))
+      fetch('http://127.0.0.1:7898/ingest/3050e2ef-64dd-49e5-a718-1f5719c45963',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'5d0562'},body:JSON.stringify({sessionId:'5d0562',runId:'pre-fix',hypothesisId:'A',location:'AdminResidentsDashboard.tsx:loadResidents',message:'resident duplicate scan',data:{landlordId:getActiveLandlordId(),rowCount:rows.length,dupNames,dupScopes,sample:rows.slice(0,20).map((r)=>({id:r.id,name:r.name,unit:r.unit,building:r.building}))},timestamp:Date.now()})}).catch(()=>{});
+    }
+    // #endregion
     setResidents(rows)
     setLoading(false)
     } catch (error) {
+      // #region agent log
+      fetch('http://127.0.0.1:7898/ingest/3050e2ef-64dd-49e5-a718-1f5719c45963',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'5d0562'},body:JSON.stringify({sessionId:'5d0562',runId:'pre-fix',hypothesisId:'D',location:'AdminResidentsDashboard.tsx:loadResidents:catch',message:'loadResidents threw',data:{error:error instanceof Error ? {message:error.message,stack:error.stack} : String(error),landlordId:getActiveLandlordId()},timestamp:Date.now()})}).catch(()=>{});
+      // #endregion
       setError(getErrorMessage(error, 'Something went wrong. Please try again.'))
       setResidents([])
       setLoading(false)
@@ -795,6 +830,30 @@ export function AdminResidentsDashboard() {
         .map((member) => byId.get(member.id))
         .filter((member): member is ResidentRow => Boolean(member)),
     }))
+    // #region agent log
+    const multiNameRows = groups
+      .map((g) => {
+        const names = g.members.map((m) => m.name.trim().toLowerCase())
+        const uniq = new Set(names)
+        return {
+          key: g.key,
+          memberCount: g.members.length,
+          uniqueNames: uniq.size,
+          names: g.members.map((m) => m.name),
+        }
+      })
+      .filter((g) => g.memberCount > 1 || groups.filter((x) => x.members[0]?.name.trim().toLowerCase() === g.names[0]?.trim().toLowerCase()).length > 1)
+    const nameToHouseholds = new Map<string, number>()
+    for (const g of groups) {
+      const n = (g.members[0]?.name ?? '').trim().toLowerCase()
+      if (!n) continue
+      nameToHouseholds.set(n, (nameToHouseholds.get(n) ?? 0) + 1)
+    }
+    const repeatedPrimaryNames = [...nameToHouseholds.entries()].filter(([, c]) => c > 1)
+    if (repeatedPrimaryNames.length > 0 || multiNameRows.some((r) => r.uniqueNames < r.memberCount)) {
+      fetch('http://127.0.0.1:7898/ingest/3050e2ef-64dd-49e5-a718-1f5719c45963',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'5d0562'},body:JSON.stringify({sessionId:'5d0562',runId:'pre-fix',hypothesisId:'B',location:'AdminResidentsDashboard.tsx:households',message:'household duplicate name signal',data:{landlordId:getActiveLandlordId(),householdCount:groups.length,repeatedPrimaryNames,multiNameRows:multiNameRows.slice(0,20)},timestamp:Date.now()})}).catch(()=>{});
+    }
+    // #endregion
     return groups
   }, [residents])
 
@@ -1079,6 +1138,9 @@ export function AdminResidentsDashboard() {
   const showResidentsErrorBanner =
     residentsBanner?.kind === 'error' && !showOnboardingStartedBanner
 
+  // #region agent log
+  fetch('http://127.0.0.1:7898/ingest/3050e2ef-64dd-49e5-a718-1f5719c45963',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'5d0562'},body:JSON.stringify({sessionId:'5d0562',runId:'pre-fix',hypothesisId:'A',location:'AdminResidentsDashboard.tsx:render',message:'Residents dashboard rendering',data:{loading,residentCount:residents.length,householdCount:filteredHouseholds.length,landlordId:getActiveLandlordId(),error},timestamp:Date.now()})}).catch(()=>{});
+  // #endregion
 
   return (
     // Natural height so AdminLayout's scroll region owns vertical scrolling.
@@ -1224,7 +1286,7 @@ export function AdminResidentsDashboard() {
           <button
             type="button"
             disabled={onboardingSaving || deleteResidentsSaving}
-            onClick={() => void startOnboardingForSelected()}
+            onClick={() => setSetupOutreachAckOpen(true)}
             className="sa-press inline-flex h-9 items-center justify-center rounded-lg bg-[#187960] px-3 text-[14px] font-medium text-white outline-none hover:bg-[#146b52] focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50"
           >
             {onboardingSaving
@@ -1388,6 +1450,23 @@ export function AdminResidentsDashboard() {
         onClose={() => setAddResidentOpen(false)}
         onSubmit={(payload) => {
           void addResidentFromModal(payload)
+        }}
+      />
+
+      <SetupOutreachAckModal
+        open={setupOutreachAckOpen}
+        kind="resident"
+        retry={selectedOnboardingRetryOnly}
+        saving={onboardingSaving}
+        onClose={() => {
+          if (onboardingSaving) return
+          setSetupOutreachAckOpen(false)
+        }}
+        onConfirm={() => {
+          void (async () => {
+            await startOnboardingForSelected()
+            setSetupOutreachAckOpen(false)
+          })()
         }}
       />
 

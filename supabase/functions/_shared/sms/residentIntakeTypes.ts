@@ -681,6 +681,31 @@ export function severityToDb(severity: string | undefined): "low" | "normal" | "
   return "normal"
 }
 
+/**
+ * Structured entry permission from the unit_entry diagnostic. Null when the
+ * resident has not answered, or the answer is not a clear yes/no.
+ */
+export function entryOkIfAbsentFromIntake(
+  state: SmsIntakeState,
+): boolean | null {
+  const raw = state.diagnostic_facts?.unit_entry?.trim()
+  if (!raw) return null
+  const t = raw.toLowerCase()
+  if (
+    /^(y|yes|yeah|yep|yup|yea)\b/.test(t) ||
+    /\b(ok to enter|can enter|fine to enter|you can enter)\b/.test(t)
+  ) {
+    return true
+  }
+  if (
+    /^(n|no|nope|nah)\b/.test(t) ||
+    /\b(do not enter|don'?t enter|cannot enter|can'?t enter|no entry)\b/.test(t)
+  ) {
+    return false
+  }
+  return null
+}
+
 export function formatIssueTypeLabel(issueType: string | undefined): string {
   if (!issueType) return "Unknown"
   if (issueType === "HVAC") return "HVAC"
@@ -769,6 +794,13 @@ export function issueSummaryBullet(state: SmsIntakeState): string {
   if (room && issue) return `${place}${formatIssueTypeLabel(state.issue_type).toLowerCase()} issue`.trim()
   if (issue) return `${formatIssueTypeLabel(state.issue_type)} issue`
   return "Maintenance issue"
+}
+
+/** Clean ticket headline for vendor SMS / cards — never the Q&A-stuffed description. */
+export function ticketIssueHeadline(state: SmsIntakeState): string {
+  const acknowledged = state.acknowledged_headline?.trim()
+  if (acknowledged) return acknowledged
+  return issueSummaryBullet(state)
 }
 
 function urgencyRecommendationReason(state: SmsIntakeState): string {

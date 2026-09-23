@@ -24,6 +24,7 @@ import {
 } from "../_shared/vendor_verification/w9TaxProfile.ts"
 import { findLandlordVendorByContact } from "../_shared/vendor_verification/findVendor.ts"
 import { finalizeVendorVerificationSubmit } from "../_shared/vendor_verification/finalizeVendorVerificationSubmit.ts"
+import { mergeServiceAreaWithVendorLocation } from "../_shared/vendor_verification/serviceAreaFromVendorLocation.ts"
 import { runVendorOnboardingViaEngine } from "../_shared/engine/vendorOnboardingEngine.ts"
 import {
   assertConnectReturnOriginForStripe,
@@ -180,6 +181,7 @@ function sessionView(
   row: VerificationRow,
   documents: unknown[],
   payoutMethods: StripeConnectPayoutMethod[] = [],
+  serviceAreaOverride?: Record<string, unknown> | null,
 ) {
   const paymentsEnabled = landlordHasPayments(row.landlord_id)
   const checklist = computeVerificationChecklist(row, { requirePayouts: paymentsEnabled })
@@ -217,12 +219,43 @@ function sessionView(
     paymentsEnabled,
     payoutMethods,
     tradeCategories: row.trade_categories ?? [],
-    serviceArea: row.service_area ?? {},
+    serviceArea: serviceAreaOverride ?? row.service_area ?? {},
     availability: row.availability ?? "active",
     progress: row.progress ?? {},
     documents,
     checklist,
   }
+}
+
+async function serviceAreaForSessionView(
+  supabase: SupabaseClient,
+  row: VerificationRow,
+): Promise<Record<string, unknown>> {
+  const existing =
+    row.service_area && typeof row.service_area === "object"
+      ? (row.service_area as Record<string, unknown>)
+      : {}
+  const vendorId = typeof row.vendor_id === "string" ? row.vendor_id.trim() : ""
+  if (!vendorId) return existing
+  const { data: roster } = await supabase
+    .from("vendors")
+    .select("city, state")
+    .eq("id", vendorId)
+    .maybeSingle()
+  return mergeServiceAreaWithVendorLocation(existing, {
+    city: typeof roster?.city === "string" ? roster.city : null,
+    state: typeof roster?.state === "string" ? roster.state : null,
+  })
+}
+
+async function sessionViewWithRosterLocation(
+  supabase: SupabaseClient,
+  row: VerificationRow,
+  documents: unknown[],
+  payoutMethods: StripeConnectPayoutMethod[] = [],
+) {
+  const serviceArea = await serviceAreaForSessionView(supabase, row)
+  return sessionView(row, documents, payoutMethods, serviceArea)
 }
 
 async function ensureVendorRow(
@@ -522,7 +555,15 @@ serve(async (req) => {
     const documents = await loadDocuments(supabase, row.id)
     const payoutMethods = await payoutMethodsForVendor(supabase, current.vendor_id)
     return jsonResponse(
-      { ok: true, session: sessionView(current, documents, payoutMethods) },
+      {
+        ok: true,
+        session: await sessionViewWithRosterLocation(
+          supabase,
+          current,
+          documents,
+          payoutMethods,
+        ),
+      },
       status,
     )
   }
@@ -878,7 +919,8 @@ serve(async (req) => {
           ok: true,
           clientSecret: sessionCreated.clientSecret,
           publishableKey: stripePublishableKeyFromEnv() || undefined,
-          session: sessionView(
+          session: await sessionViewWithRosterLocation(
+            supabase,
             payload.current,
             payload.documents,
             payload.payoutMethods,
@@ -933,7 +975,8 @@ serve(async (req) => {
         return jsonResponse({
           ok: true,
           url: link.url,
-          session: sessionView(
+          session: await sessionViewWithRosterLocation(
+            supabase,
             payload.current,
             payload.documents,
             payload.payoutMethods,
@@ -1078,7 +1121,8 @@ serve(async (req) => {
         return jsonResponse({
           ok: true,
           overall,
-          session: sessionView(
+          session: await sessionViewWithRosterLocation(
+            supabase,
             { ...fresh, status: overall },
             documents,
             payoutMethods,

@@ -66,11 +66,14 @@ Deno.serve(async (req) => {
     console.info("[sms-inbound] processed", {
       providerMessageSid: inbound.providerMessageSid,
       releasedPending: "releasedPending" in result && result.releasedPending === true,
+      unmatchedSharedDid:
+        "unmatchedSharedDid" in result && result.unmatchedSharedDid === true,
       workflowRoute: "workflowRoute" in result ? result.workflowRoute : undefined,
       identityType: "identityType" in result ? result.identityType : undefined,
       conversationId: result.conversationId,
       messageId: result.messageId,
-      outboundMessageId: result.outboundMessageId,
+      outboundMessageId:
+        "outboundMessageId" in result ? result.outboundMessageId : undefined,
     })
 
     return webhookAckResponse()

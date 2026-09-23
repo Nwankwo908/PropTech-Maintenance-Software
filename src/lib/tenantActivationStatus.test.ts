@@ -51,7 +51,7 @@ describe('resolveTenantActivationChip — SMS consent stays in sync with activat
       activationSmsSentAt: '2026-08-01T00:00:00.000Z',
     })
     expect(chip.status).toBe('not_started')
-    expect(chip.label).toBe('Not started')
+    expect(chip.label).toBe('Not activated')
   })
 
   it('shows Declined updates after NO', () => {

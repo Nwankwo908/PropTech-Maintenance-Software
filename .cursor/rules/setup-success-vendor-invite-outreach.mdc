@@ -1,0 +1,60 @@
+---
+description: Autofix Get set up “Invite and verify vendors” — roster import alone must not complete the step; require invite/override outreach. Coachmark checkbox when not-started vendors exist.
+globs: src/lib/setupSuccessChecklist.ts,src/lib/loadSetupSuccessProgress.ts,src/lib/setupSuccessGuide.ts,src/components/AdminVendorsDashboard.tsx,src/components/SetupSuccessCardHost.tsx,src/components/AdminOverviewDashboard.tsx,src/lib/setupSuccessChecklist.test.ts
+alwaysApply: false
+---
+
+# Setup success — Invite and verify vendors (Bugbot autofix)
+
+**Symptom:** After onboarding completes (often with vendors imported on Review), **Invite and verify vendors** is already checked / never reminds the landlord to send verification invites. Or clicking the step always points at **Add vendor** even when the roster already has not-activated vendors.
+
+**Cause:** Completing `verify_vendors` with `vendorCount > 0` (roster only). Onboarding import creates `vendors` rows but does **not** send invites (`onboarding-auto-activation`: manual outreach from Vendors).
+
+## Rule
+
+| Signal | Completes `verify_vendors`? |
+|---|---|
+| Vendor on roster only (import / Add vendor save) | **No** |
+| Any `vendor_verifications` row for that vendor (invited / in progress / submitted / verified / needs_review) | **Yes** |
+| `vendors.onboarding_overridden_at` set | **Yes** |
+
+Mirror tenant welcome texts: residents existing ≠ welcome sent; vendors existing ≠ invite started.
+
+Use `vendorOutreachStartedCount` (or equivalent) in `resolveSetupSuccessProgress` — **not** raw `vendorCount`.
+
+### Coachmark (Vendors page)
+
+When the Get set up step opens `/admin/vendors` with the setup guide:
+
+| Roster state | Guide |
+|---|---|
+| No vendors | **Add vendor** |
+| ≥1 Not activated (no verification / not overridden) | Row **checkbox** → Start onboarding / send invite |
+| All already outreach-started | Do not fake a handoff coachmark |
+
+## Autofix (Bugbot)
+
+On PR review or when this symptom appears in chat:
+
+1. Grep `verify_vendors:` / `vendorCount > 0` in setup-success progress. If completion is roster-only, switch to outreach-started count.
+2. Ensure `loadSetupSuccessProgress` (and any Overview duplicate) counts override **or** any verification row — not only `status === 'verified'`.
+3. Vendors setup guide: if `not_started` vendors exist, show checkbox coachmark; only empty roster uses Add vendor.
+4. Keep tests: roster-only → incomplete; outreach started → complete.
+5. After invite send, keep `notifySetupSuccessProgressChanged` so the card/nav percent updates.
+
+**Note:** Cursor Bugbot runs on pull requests. Agents must apply this when the symptom appears in chat or PR.
+
+## Where it lives
+
+- Progress: `src/lib/setupSuccessChecklist.ts` → `resolveSetupSuccessProgress`
+- Load: `src/lib/loadSetupSuccessProgress.ts`
+- Guide routing: `src/lib/setupSuccessGuide.ts` (`verify_vendors` → `vendors`)
+- UI coachmark: `src/components/AdminVendorsDashboard.tsx`
+- Manual invite policy: `.cursor/rules/onboarding-auto-activation.mdc`
+
+## Do not
+
+- Mark `verify_vendors` done solely because `vendors.length > 0`
+- Treat onboarding vendor import as “invited”
+- Always coach **Add vendor** when imported not-activated vendors already exist
+- Auto-send vendor verification on `completeOnboarding` (manual only)

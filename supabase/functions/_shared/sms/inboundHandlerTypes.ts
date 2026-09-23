@@ -17,6 +17,12 @@ export type ProcessInboundSmsResult =
     }
   | {
       ok: true
+      unmatchedSharedDid: true
+      conversationId: null
+      messageId: null
+    }
+  | {
+      ok: true
       releasedPending?: false
       conversationId: string
       messageId: string

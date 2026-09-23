@@ -1040,10 +1040,7 @@ export async function handleLandlordRentReceiptReply(
     messageId?: string | null
   },
 ): Promise<{ handled: true; replyBody: string } | { handled: false }> {
-  if (
-    params.identityType === "resident" ||
-    params.identityType === "vendor"
-  ) {
+  if (params.identityType === "vendor") {
     return { handled: false }
   }
 

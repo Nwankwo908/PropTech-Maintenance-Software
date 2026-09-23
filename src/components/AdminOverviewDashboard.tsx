@@ -1361,6 +1361,30 @@ export function AdminOverviewDashboard() {
     }
   }, [])
 
+  // Active Tasks delete / dismiss happens on other routes; refresh ops KPI when Overview is shown again.
+  useEffect(() => {
+    let cancelled = false
+    async function refreshWorkflowKpi() {
+      if (!allowImportedOperationsRef.current) return
+      try {
+        const next = await fetchAdminWorkflowDashboard()
+        if (!cancelled) setWorkflowData(next)
+      } catch (err) {
+        console.warn('[admin overview] workflow kpi refresh', err)
+      }
+    }
+    function onVisible() {
+      if (document.visibilityState === 'visible') void refreshWorkflowKpi()
+    }
+    window.addEventListener('focus', onVisible)
+    document.addEventListener('visibilitychange', onVisible)
+    return () => {
+      cancelled = true
+      window.removeEventListener('focus', onVisible)
+      document.removeEventListener('visibilitychange', onVisible)
+    }
+  }, [])
+
   useEffect(() => {
     let cancelled = false
     const refresh = () => {
@@ -1398,7 +1422,7 @@ export function AdminOverviewDashboard() {
     return resolveSetupSuccessProgress({
       residents: overviewResidents,
       vendorCount: vendors.length,
-      vendorOutreachStartedCount: vendors.filter((vendor) => vendor.verified).length,
+      verifiedVendorCount: vendors.filter((vendor) => vendor.verified).length,
       propertyAccessComplete: propertySetupModules.access,
       propertyIntelligenceComplete: propertySetupModules.intelligence,
       propertyInsuranceComplete: propertySetupModules.insurance,

@@ -13,6 +13,7 @@ import { ResidentLeaseCalendar } from '@/components/ResidentLeaseCalendar'
 import { SmartIntelligenceCard } from '@/components/SmartIntelligenceCard'
 import { isLimitedAlpha1Landlord } from '@shared/landlordCapabilities'
 import { TenantActivationStatusChip } from '@/components/TenantActivationStatusChip'
+import { SetupOutreachAckModal } from '@/components/SetupOutreachAckModal'
 import {
   EditResidentModal,
   type EditResidentModalRow,
@@ -607,6 +608,7 @@ export function AdminPropertyResidentDetailDashboard() {
   const [actionError, setActionError] = useState<string | null>(null)
   const [occupancySaving, setOccupancySaving] = useState(false)
   const [resendingActivation, setResendingActivation] = useState(false)
+  const [setupOutreachAckOpen, setSetupOutreachAckOpen] = useState(false)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [leaseDocuments, setLeaseDocuments] = useState<OrganizationDocument[]>([])
@@ -1447,14 +1449,14 @@ export function AdminPropertyResidentDetailDashboard() {
                     <button
                       type="button"
                       disabled={resendingActivation || !canSendOnboardingSms}
-                      onClick={() => void handleStartOnboarding()}
+                      onClick={() => setSetupOutreachAckOpen(true)}
                       className="sa-press inline-flex h-9 w-fit items-center rounded-[10px] bg-[#187960] px-4 text-[13px] font-medium leading-5 text-white hover:bg-[#146b52] disabled:opacity-50"
                     >
                       {resendingActivation
                         ? 'Sending…'
                         : retryOnboarding
-                          ? 'Retry onboarding'
-                          : 'Start onboarding'}
+                          ? 'Retry setup'
+                          : 'Setup Resident'}
                     </button>
                   </div>
                 ) : null}
@@ -1631,6 +1633,23 @@ export function AdminPropertyResidentDetailDashboard() {
           </div>
         </div>
       ) : null}
+
+      <SetupOutreachAckModal
+        open={setupOutreachAckOpen}
+        kind="resident"
+        retry={retryOnboarding}
+        saving={resendingActivation}
+        onClose={() => {
+          if (resendingActivation) return
+          setSetupOutreachAckOpen(false)
+        }}
+        onConfirm={() => {
+          void (async () => {
+            await handleStartOnboarding()
+            setSetupOutreachAckOpen(false)
+          })()
+        }}
+      />
     </main>
   )
 }

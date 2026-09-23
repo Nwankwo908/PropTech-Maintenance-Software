@@ -264,7 +264,7 @@ export function OnboardingReviewStep({
             ) : null}
           </ReviewSummaryCard>
 
-          <section className="onb-form-card sa-surface rounded-2xl border border-[#84CBBB] bg-[#E0F2EF] px-6 py-5 shadow-[0_1px_2px_rgba(16,24,40,0.04)]">
+          <section className="onb-form-card sa-surface rounded-2xl border border-[#e8eaef] bg-white px-6 py-5 shadow-[0_1px_2px_rgba(16,24,40,0.04)]">
             <div className="flex items-start gap-2">
               <img
                 src={uloLogoSmall}

@@ -77,6 +77,45 @@ Deno.test("shouldActVendorRescheduleInWorkflow — registry dispatch reason bypa
   )
 })
 
+Deno.test("shouldAttempt — bare time on scheduled is reschedule by context", () => {
+  assertEquals(
+    shouldAttemptVendorRescheduleInbound({
+      vendorId: "v1",
+      body: "Wed 2pm",
+      pendingRescheduleVendorId: null,
+      clarificationOriginalIntent: null,
+      scheduleStep: "scheduled",
+    }),
+    true,
+  )
+})
+
+Deno.test("shouldAttempt — keyword reschedule on scheduled still works", () => {
+  assertEquals(
+    shouldAttemptVendorRescheduleInbound({
+      vendorId: "v1",
+      body: "Need to reschedule to tomorrow at 2pm",
+      pendingRescheduleVendorId: null,
+      clarificationOriginalIntent: null,
+      scheduleStep: "scheduled",
+    }),
+    true,
+  )
+})
+
+Deno.test("shouldAttempt — bare time on awaiting_availability still blocked", () => {
+  assertEquals(
+    shouldAttemptVendorRescheduleInbound({
+      vendorId: "v1",
+      body: "Wed 2pm",
+      pendingRescheduleVendorId: null,
+      clarificationOriginalIntent: null,
+      scheduleStep: "awaiting_availability",
+    }),
+    false,
+  )
+})
+
 Deno.test("registry inbound source dispatches via workflow engine only", async () => {
   const source = await Deno.readTextFile(
     new URL("./vendorRescheduleInbound.ts", import.meta.url),

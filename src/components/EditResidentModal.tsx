@@ -240,6 +240,9 @@ export function EditResidentModal({
       return
     }
     try {
+      // #region agent log
+      fetch('http://127.0.0.1:7898/ingest/3050e2ef-64dd-49e5-a718-1f5719c45963',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'5d0562'},body:JSON.stringify({sessionId:'5d0562',runId:'pre-fix',hypothesisId:'A',location:'EditResidentModal.tsx:save',message:'edit resident save start',data:{hasLeaseFiles:leaseFiles.length>0,leaseFileCount:leaseFiles.length,fullNameLen:fullName.trim().length},timestamp:Date.now()})}).catch(()=>{});
+      // #endregion
       await onSave({
         id: row.id,
         fullName: fullName.trim(),
@@ -254,9 +257,15 @@ export function EditResidentModal({
         restartOnboarding: offerRestartOnboarding && restartOnboarding,
         leaseDocumentFiles: leaseFiles.length > 0 ? leaseFiles : undefined,
       })
+      // #region agent log
+      fetch('http://127.0.0.1:7898/ingest/3050e2ef-64dd-49e5-a718-1f5719c45963',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'5d0562'},body:JSON.stringify({sessionId:'5d0562',runId:'pre-fix',hypothesisId:'A',location:'EditResidentModal.tsx:save:ok',message:'edit resident save succeeded',data:{hasLeaseFiles:leaseFiles.length>0},timestamp:Date.now()})}).catch(()=>{});
+      // #endregion
       onClose()
     } catch (e) {
       const msg = getErrorMessage(e, "Couldn't save. Please try again.")
+      // #region agent log
+      fetch('http://127.0.0.1:7898/ingest/3050e2ef-64dd-49e5-a718-1f5719c45963',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'5d0562'},body:JSON.stringify({sessionId:'5d0562',runId:'pre-fix',hypothesisId:'A',location:'EditResidentModal.tsx:save:catch',message:'edit resident save threw',data:{errorMessage:msg,isEnterYourName:msg==='Enter your name.',rawType:e instanceof Error?e.name:typeof e},timestamp:Date.now()})}).catch(()=>{});
+      // #endregion
       setSaveError(msg)
     } finally {
       setSaving(false)

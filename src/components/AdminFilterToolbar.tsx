@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react'
 import { AdminActiveFilterChips } from '@/components/AdminActiveFilterChips'
 import {
   AdminCheckboxFilterDropdown,
@@ -9,6 +10,8 @@ type AdminFilterToolbarProps<T extends string> = {
   activeFilters: Set<T>
   onToggle: (key: T) => void
   onClear: () => void
+  /** Optional actions on the same row (e.g. bulk Delete). */
+  trailing?: ReactNode
 }
 
 /** Filter chips on the left, expanded filter trigger on the right. */
@@ -17,6 +20,7 @@ export function AdminFilterToolbar<T extends string>({
   activeFilters,
   onToggle,
   onClear,
+  trailing,
 }: AdminFilterToolbarProps<T>) {
   return (
     <div className="flex items-center gap-4 border-b border-[#e5e7eb] px-6 py-3">
@@ -32,6 +36,7 @@ export function AdminFilterToolbar<T extends string>({
         onToggle={onToggle}
         onClear={onClear}
       />
+      {trailing ? <div className="ml-auto flex shrink-0 items-center gap-2">{trailing}</div> : null}
     </div>
   )
 }

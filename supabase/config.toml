@@ -443,6 +443,26 @@ enabled = true
 verify_jwt = false
 entrypoint = "./functions/check-tenant-activation-retries/index.ts"
 
+[functions.check-landlord-estimate-notify]
+enabled = true
+verify_jwt = false
+entrypoint = "./functions/check-landlord-estimate-notify/index.ts"
+
+[functions.terminate-work-order]
+enabled = true
+verify_jwt = false
+entrypoint = "./functions/terminate-work-order/index.ts"
+
+[functions.check-work-order-terminate-notify]
+enabled = true
+verify_jwt = false
+entrypoint = "./functions/check-work-order-terminate-notify/index.ts"
+
+[functions.check-schedule-fsm-ttl]
+enabled = true
+verify_jwt = false
+entrypoint = "./functions/check-schedule-fsm-ttl/index.ts"
+
 [functions.check-vendor-incident-protocols]
 enabled = true
 verify_jwt = false

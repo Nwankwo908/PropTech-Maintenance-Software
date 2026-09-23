@@ -270,6 +270,19 @@ export function upsertVendorSetupInboxEntry(entry: VendorSetupInboxEntry): void 
   writeVendorSetupInbox(entries, landlordId)
 }
 
+/** Drop local vendor-setup inbox rows (Communication Messages delete). */
+export function removeVendorSetupInboxEntries(
+  conversationIds: string[],
+  landlordId: string = getActiveLandlordId(),
+): void {
+  const remove = new Set(conversationIds.map((id) => id.trim()).filter(Boolean))
+  if (remove.size === 0) return
+  const next = readVendorSetupInbox(landlordId).filter(
+    (row) => !remove.has(row.conversationId),
+  )
+  writeVendorSetupInbox(next, landlordId)
+}
+
 export function touchVendorSetupInboxActivity(
   conversationId: string,
   preview: string,

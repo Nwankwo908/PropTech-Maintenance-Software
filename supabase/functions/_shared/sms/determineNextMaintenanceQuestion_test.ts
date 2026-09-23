@@ -33,7 +33,7 @@ Deno.test("clogged sink asks overflow, not urgency or when-noticed", () => {
   assertEqual(/emergency|priority|first notice/i.test(next.question), false, "no questionnaire")
 })
 
-Deno.test("clogged sink with no overflow then asks for a drain photo", () => {
+Deno.test("clogged sink with no overflow then asks which room before photo", () => {
   const afterNo = applyDiagnosticAnswer({
     issue_type: "plumbing",
     vendor_trade: "plumbing",
@@ -44,10 +44,59 @@ Deno.test("clogged sink with no overflow then asks for a drain photo", () => {
     preferred_contact_method: "text",
   }, "No")
   const planned = applyQuestionPlan(afterNo)
+  // Naming "sink" is not a location — ask room before photo.
+  assertEqual(planned.diagnostic_question_type, "room_or_area", "room next")
+  assertMatch(planned.diagnostic_question ?? "", /which room/i, "asks room")
+  assertEqual(planned.step === "photo", false, "not photo yet")
+})
+
+Deno.test("clogged sink with room known then asks for a drain photo", () => {
+  const afterNo = applyDiagnosticAnswer({
+    issue_type: "plumbing",
+    vendor_trade: "plumbing",
+    primary_category: "plumbing",
+    initial_message: "My sink is clogged.",
+    description: "My sink is clogged.",
+    room_or_area: "kitchen",
+    diagnostic_question_type: "plumbing_overflow",
+    preferred_contact_method: "text",
+    asked_question_types: ["plumbing_overflow", "room_or_area"],
+  }, "No")
+  const planned = applyQuestionPlan(afterNo)
   assertEqual(planned.step, "photo", "photo next")
   assertMatch(planned.diagnostic_question ?? "", /photo of the sink/i, "contextual photo")
   assertEqual(planned.urgency === "emergency", false, "ulo sets urgency")
   assertEqual(planned.preferred_contact_method, "text", "sms default")
+})
+
+Deno.test("faucet drip without a room asks which room, not photo first", () => {
+  const next = determineNextMaintenanceQuestion({
+    issue_type: "plumbing",
+    vendor_trade: "plumbing",
+    primary_category: "plumbing",
+    initial_message: "My faucet is dripping",
+    description: "My faucet is dripping",
+    preferred_contact_method: "text",
+  })
+  assertEqual(next.shouldAsk, true, "asks")
+  if (!next.shouldAsk) return
+  assertEqual(next.questionType, "room_or_area", "type")
+  assertMatch(next.question, /which room/i, "room copy")
+  assertEqual(/photo/i.test(next.question), false, "not photo")
+})
+
+Deno.test("kitchen faucet already has a room so skips the room ask", () => {
+  const next = determineNextMaintenanceQuestion({
+    issue_type: "plumbing",
+    vendor_trade: "plumbing",
+    primary_category: "plumbing",
+    initial_message: "Kitchen faucet is dripping",
+    description: "Kitchen faucet is dripping",
+    preferred_contact_method: "text",
+  })
+  assertEqual(next.shouldAsk, true, "asks")
+  if (!next.shouldAsk) return
+  assertEqual(next.questionType === "room_or_area", false, "room already known")
 })
 
 Deno.test("active leak asks if water is still flowing", () => {
@@ -360,7 +409,10 @@ Deno.test("appliance leak follow-up switches into water-damage safety copy", () 
   assertMatch(after.safety_concerns ?? "", /leak/i, "leak fact")
   const planned = applyQuestionPlan(after)
   assertEqual(
-    planned.step === "diagnostic" || planned.step === "photo" || planned.step === "awaiting_confirm",
+    planned.step === "diagnostic" ||
+      planned.step === "room_or_area" ||
+      planned.step === "photo" ||
+      planned.step === "awaiting_confirm",
     true,
     "continues",
   )

@@ -1274,11 +1274,38 @@ async function handleScheduleChange(
     "schedule_change",
     false,
   )
+
+  let vendorNotified = false
+  let previousTimeLabel: string | null = null
+  if (ticket?.id) {
+    const { beginTenantInitiatedReschedule } = await import(
+      "./vendorRescheduleSms.ts"
+    )
+    const reschedule = await beginTenantInitiatedReschedule(ctx.supabase, {
+      landlordId: ctx.landlordId,
+      ticketId: ticket.id,
+      conversationId: ctx.conversationId,
+      residentMessage: ctx.inbound.body,
+    })
+    vendorNotified = reschedule.vendorNotified
+    previousTimeLabel = reschedule.previousTimeLabel
+  }
+
   void notifyLandlordNeedsAttention(ctx.supabase, {
     landlordId: ctx.landlordId,
     kind: "workflow_escalated",
     headline: "Resident asked to change a visit time",
-    detail,
+    detail: [
+      detail,
+      previousTimeLabel ? `Previous visit: ${previousTimeLabel}.` : null,
+      vendorNotified
+        ? "Vendor was asked for a new window."
+        : ticket
+        ? "Vendor could not be reached automatically."
+        : null,
+    ]
+      .filter(Boolean)
+      .join(" "),
     idempotencyKey: `schedule-change:${ctx.conversationId}:${ctx.messageId}`,
     maintenanceRequestId: ticket?.id ?? null,
     residentId: ctx.identity.resident_id,
@@ -1301,7 +1328,9 @@ async function handleScheduleChange(
       "This is the property management team.",
       "",
       ticket
-        ? `I've passed your request to change the visit for ${formatWorkOrderRef(ticket.id)} to the property team. They'll follow up here.`
+        ? vendorNotified
+          ? `I've let the vendor know that ${formatWorkOrderRef(ticket.id)} no longer works for you. They'll propose a new time and we'll text you to confirm.`
+          : `I've passed your request to change the visit for ${formatWorkOrderRef(ticket.id)} to the property team. They'll follow up here.`
         : "I've passed your request to the property team. They'll follow up here about scheduling.",
       preferredDay ? `I noted you'd prefer ${preferredDay}.` : "",
     ].filter(Boolean).join("\n"),
@@ -1470,6 +1499,7 @@ async function executeResidentTicketCancel(
     descriptionNote:
       `Resident closed this request over text on ${new Date().toISOString().slice(0, 10)}.`,
     lastResidentMessage: ctx.inbound.body.trim().slice(0, 160),
+    notifyVendor: Boolean(vendorId),
   })
   if (!closed.ok) {
     console.warn("[sms-interpret] cancel ticket update failed", closed.error)
@@ -1484,15 +1514,7 @@ async function executeResidentTicketCancel(
       `Hi ${who},\n\nThis is the property management team.\n\nThat ${label} is already closed. If the problem comes back, just text me.`,
     )
   }
-  if (vendorId) {
-    const wo = formatWorkOrderRef(ticket.id)
-    await notifyVendorOnTicket(ctx.supabase, {
-      landlordId: ctx.landlordId,
-      ticketId: ticket.id,
-      vendorId,
-      body: `Hi, this is the property management team.\n\nWork order ${wo} has been cancelled. You don't need to take this job.`,
-    })
-  }
+  // Vendor notify is owned by terminateWorkOrder (called inside closeWorkOrderCancelledByResident).
   const siblings = ticketsSharingRequestLabel(tickets, ticket).filter((row) =>
     row.id !== ticket.id
   )

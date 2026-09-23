@@ -220,7 +220,7 @@ function DeliveryEventRow({
 }: {
   item: Extract<MonitoringTranscriptItem, { type: 'delivery_event' }>
 }) {
-  const [expanded, setExpanded] = useState(false)
+  const [expanded, setExpanded] = useState(true)
   const timeLabel = formatMonitoringTime(item.timestampMs)
 
   const sections =

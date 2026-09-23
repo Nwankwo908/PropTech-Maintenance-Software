@@ -73,6 +73,39 @@ describe('resolveVendorCapacityChip', () => {
     ).toBe(false)
   })
 
+  it('allows Retry setup while waiting for the vendor', () => {
+    expect(
+      canRetryVendorOnboarding({
+        hasContact: true,
+        verificationStatus: 'invited',
+      }),
+    ).toBe(true)
+    expect(
+      canRetryVendorOnboarding({
+        hasContact: true,
+        verificationStatus: 'in_progress',
+      }),
+    ).toBe(true)
+    expect(
+      canRetryVendorOnboarding({
+        hasContact: true,
+        verificationStatus: null,
+      }),
+    ).toBe(false)
+    expect(
+      canRetryVendorOnboarding({
+        hasContact: false,
+        verificationStatus: 'invited',
+      }),
+    ).toBe(false)
+    expect(
+      canRetryVendorOnboarding({
+        hasContact: true,
+        verificationStatus: 'verified',
+      }),
+    ).toBe(false)
+  })
+
   it('keeps pause and platform holds after onboarding override', () => {
     expect(
       resolveVendorCapacityChip({

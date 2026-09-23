@@ -50,7 +50,7 @@ export function evaluateLeaseIntelligence(ctx: SmartIntelligenceContext): SmartI
       description: endLabel
         ? `${whose} lease at ${unit || 'this unit'} ended ${endLabel}.`
         : `${whose} lease has ended.`,
-      action: { label: 'Review Lease', route: leaseRoute, intent: 'edit_resident' },
+      action: { label: 'Review Lease', route: leaseRoute },
       dueAt: end ?? undefined,
       entityId: ctx.resident.id,
       score: scoreInsight('urgent', { overdueDays: Math.abs(days), waitingOnLandlord: true }),

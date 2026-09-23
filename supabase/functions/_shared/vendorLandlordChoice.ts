@@ -12,6 +12,7 @@ import {
   normalizeSmsPhone,
   upsertSmsIdentityForPhone,
 } from "./sms/inbound_db.ts"
+import { UNKNOWN_CONTACT_INTAKE_KEY } from "./sms/unknownContactIntake.ts"
 import { getSMSProviderForSend } from "./sms/providerFactory.ts"
 import { resolveLandlordOpsPhones } from "./sms/tenantActivationAdminAlert.ts"
 import type { VendorAssignmentOption } from "./vendor_assignment.ts"
@@ -22,6 +23,21 @@ export function ticketIsAwaitingLandlordVendorChoice(
   vendorNotifyError?: string | null,
 ): boolean {
   return (vendorNotifyError ?? "").includes(AWAITING_LANDLORD_VENDOR_CHOICE)
+}
+
+/**
+ * Intake + ticket fields that must all clear when a landlord vendor-choice ask
+ * is finished (YES / 1 / 2, already-assigned short-circuit, etc.).
+ * Pure helper for tests / Bugbot — keep in sync with clearAwaitingVendorChoice.
+ */
+export function landlordVendorChoiceResolvedIntake(
+  priorIntake: Record<string, unknown>,
+): Record<string, unknown> {
+  const next = { ...priorIntake }
+  delete next.awaiting_vendor_choice
+  delete next.unknown_contact_intake
+  delete next.vendor_availability_probe
+  return next
 }
 
 export function vendorChoiceOptionIdsEqual(a: string[], b: string[]): boolean {
@@ -74,6 +90,10 @@ export type VendorChoiceOption = {
   source?: "roster" | "external"
   searchId?: string | null
   categoryId?: string | null
+  /** Availability window from a vendor probe reply (landlord-facing). */
+  windowLabel?: string | null
+  /** Estimate note from a vendor probe reply (e.g. "$200"). */
+  estimateNote?: string | null
 }
 
 export type AwaitingVendorChoice = {
@@ -136,6 +156,18 @@ export function readAwaitingVendorChoice(
             : typeof rec.categoryId === "string"
               ? rec.categoryId
               : null,
+        windowLabel:
+          typeof rec.window_label === "string"
+            ? rec.window_label
+            : typeof rec.windowLabel === "string"
+              ? rec.windowLabel
+              : null,
+        estimateNote:
+          typeof rec.estimate_note === "string"
+            ? rec.estimate_note
+            : typeof rec.estimateNote === "string"
+              ? rec.estimateNote
+              : null,
       })
     }
   }
@@ -193,8 +225,53 @@ export function serializeAwaitingVendorChoice(
       source: row.source ?? (row.role === "external" ? "external" : "roster"),
       search_id: row.searchId ?? null,
       category_id: row.categoryId ?? null,
+      window_label: row.windowLabel ?? null,
+      estimate_note: row.estimateNote ?? null,
     })),
   }
+}
+
+/** Strip probe suffixes embedded in older choice names ("Flex — Thu · $200"). */
+export function vendorChoiceDisplayName(name: string): string {
+  const raw = name.trim()
+  if (!raw) return "your vendor"
+  return raw.split(" — ")[0]?.trim() || raw
+}
+
+function problemContextForLandlordSms(input: {
+  tradeLabel: string
+  issueHeadline?: string | null
+  locationLabel?: string | null
+  unit?: string | null
+}): string {
+  const issueRaw = input.issueHeadline?.trim() || ""
+  const issue = issueRaw
+    ? /^(the|a|an)\s+/i.test(issueRaw)
+      ? issueRaw
+      : `the ${issueRaw}`
+    : ""
+  const loc =
+    input.locationLabel?.trim() ||
+    (() => {
+      const unit = input.unit?.trim() || ""
+      if (!unit) return ""
+      if ((/\d/.test(unit) && /[a-z]/i.test(unit)) || unit.includes("·")) return unit
+      return /^unit\b/i.test(unit) ? unit : `Unit ${unit}`
+    })()
+  const trade = input.tradeLabel.trim() || "maintenance"
+  if (issue && loc) return `${issue} at ${loc}`
+  if (issue) return issue
+  if (loc) return `the ${trade} repair at ${loc}`
+  return `the ${trade} repair`
+}
+
+function rematchReasonLine(
+  reason: "assign" | "no_response" | "declined" | "noshow" | "availability" | undefined,
+): string | null {
+  if (reason === "no_response") return "The assigned vendor hasn't responded in time."
+  if (reason === "declined") return "The assigned vendor isn't able to take this job."
+  if (reason === "noshow") return "The assigned vendor didn't make the visit."
+  return null
 }
 
 export function formatExternalVendorSmsLine(row: {
@@ -265,7 +342,9 @@ export function canHandleLandlordVendorChoice(input: {
   conversationType?: string | null
   intakeState: unknown
 }): boolean {
-  if (input.identityType === "resident") return false
+  // Ops phones are sometimes mislabeled as resident (unknown-contact reuse).
+  // Still honor a pending landlord choice ask; only skip real vendor threads.
+  if (input.identityType === "vendor") return false
   return readAwaitingVendorChoice(input.intakeState) != null
 }
 
@@ -331,10 +410,12 @@ export function parseLandlordVendorChoice(
 
 export function unclearVendorChoiceReply(options: VendorChoiceOption[]): string {
   if (options.length === 1) {
-    const name = options[0]?.name || "this vendor"
+    const name = vendorChoiceDisplayName(options[0]?.name || "this vendor")
     return `Please reply YES to send this to ${name}.`
   }
-  const names = options.map((row, index) => `${index + 1} for ${row.name}`)
+  const names = options.map(
+    (row, index) => `${index + 1} for ${vendorChoiceDisplayName(row.name)}`,
+  )
   if (names.length === 2) {
     return `Please reply ${names[0]} or ${names[1]}.`
   }
@@ -350,59 +431,61 @@ export function buildLandlordVendorChoiceSms(input: {
   options: VendorChoiceOption[]
   adminUrl?: string | null
   /** Why we're asking — rematch copy when the current vendor didn't respond. */
-  reason?: "assign" | "no_response" | "declined" | "noshow"
+  reason?: "assign" | "no_response" | "declined" | "noshow" | "availability"
+  issueHeadline?: string | null
+  locationLabel?: string | null
 }): string {
   const first = input.landlordFirstName?.trim()
-  const greeting = first ? `Hi ${first},` : "Hi,"
-  const company = input.companyName?.trim()
-  const who = company
-    ? `This is the property management team at ${company}.`
-    : "This is Ulo."
-  const wo = input.workOrderRef.trim() || "this work order"
-  const unit = input.unit?.trim()
-  const where = unit ? ` (${unit})` : ""
-  const trade = input.tradeLabel.trim() || "this"
-  const lines = [
-    greeting,
-    "",
-    who,
-    "",
-    `Work order ${wo}${where} is a ${trade} repair.`,
-    "",
-  ]
-
-  if (input.reason === "no_response") {
-    lines.push("The assigned vendor hasn't responded in time.", "")
-  } else if (input.reason === "declined") {
-    lines.push("The assigned vendor isn't able to take this job.", "")
-  } else if (input.reason === "noshow") {
-    lines.push("The assigned vendor didn't make the visit.", "")
-  }
+  const greeting = first ? `Hi ${first}` : "Hi"
+  const problem = problemContextForLandlordSms(input)
+  const available = input.reason === "availability"
+  const rematch = rematchReasonLine(input.reason)
+  const lines: string[] = []
 
   if (input.options.length === 1) {
     const only = input.options[0]
-    const name = only?.name || "your vendor"
-    const kind = only?.role === "generalist" ? "handyman" : trade
-    lines.push(
-      `${name} (${kind}) can take this job.`,
-      "",
-      `Reply YES if you want us to send this to ${name}.`,
-    )
+    const name = vendorChoiceDisplayName(only?.name || "your vendor")
+    const verb = available ? "is available for" : "can take"
+    lines.push(`${greeting} — ${name} ${verb} ${problem}.`)
+    if (rematch) {
+      lines.push("", rematch)
+    }
+    const window = only?.windowLabel?.trim()
+    const estimate = only?.estimateNote?.trim()
+    if (window || estimate) {
+      lines.push("")
+      if (window) lines.push(window)
+      if (estimate) lines.push(estimate)
+    }
+    lines.push("", `Reply YES to send the job to ${name}.`)
   } else {
-    lines.push("These vendors on your roster can take this job:")
+    lines.push(
+      available
+        ? `${greeting} — vendors are available for ${problem}.`
+        : `${greeting} — these vendors can take ${problem}.`,
+    )
+    if (rematch) {
+      lines.push("", rematch)
+    }
+    lines.push("")
     input.options.forEach((option, index) => {
-      const kind = option.role === "generalist" ? "handyman" : trade
-      lines.push(`${index + 1}. ${option.name} (${kind})`)
+      const name = vendorChoiceDisplayName(option.name)
+      lines.push(`${index + 1} — ${name}`)
+      const window = option.windowLabel?.trim()
+      const estimate = option.estimateNote?.trim()
+      if (window) lines.push(window)
+      if (estimate) lines.push(estimate)
+      if (index < input.options.length - 1) lines.push("")
     })
     lines.push(
       "",
-      `${landlordChoiceReplyHint(input.options.length)} and we'll send them the work order.`,
+      `${landlordChoiceReplyHint(input.options.length)} to send them the job.`,
     )
   }
 
   const adminUrl = input.adminUrl?.trim() ?? ""
   if (adminUrl) {
-    lines.push("", adminUrl)
+    lines.push("", "View details:", adminUrl)
   }
   return lines.join("\n")
 }
@@ -481,6 +564,8 @@ export async function persistLandlordChoiceSms(
     conv?.intake_state && typeof conv.intake_state === "object"
       ? (conv.intake_state as Record<string, unknown>)
       : {}
+  const nextIntake = { ...prior }
+  delete nextIntake[UNKNOWN_CONTACT_INTAKE_KEY]
 
   await supabase
     .from("sms_conversations")
@@ -490,7 +575,7 @@ export async function persistLandlordChoiceSms(
       conversation_type: "landlord_update",
       maintenance_request_id: ticketId,
       intake_state: {
-        ...prior,
+        ...nextIntake,
         awaiting_vendor_choice: serializeAwaitingVendorChoice(params.awaiting),
       },
     })
@@ -505,10 +590,28 @@ export async function notifyLandlordVendorChoice(
     unit: string
     issueCategory: string | null
     options: VendorAssignmentOption[]
-    reason?: "assign" | "no_response" | "declined" | "noshow"
+    reason?: "assign" | "no_response" | "declined" | "noshow" | "availability"
+    issueHeadline?: string | null
+    locationLabel?: string | null
+    /** Merge probe slot/estimate onto choice options by vendor id. */
+    availabilityByVendorId?: Record<
+      string,
+      { windowLabel?: string | null; estimateNote?: string | null }
+    >
   },
 ): Promise<{ sent: number }> {
-  const choiceOptions = optionsFromAssignment(params.options)
+  let choiceOptions = optionsFromAssignment(params.options)
+  if (params.availabilityByVendorId) {
+    choiceOptions = choiceOptions.map((opt) => {
+      const extra = params.availabilityByVendorId?.[opt.id]
+      if (!extra) return opt
+      return {
+        ...opt,
+        windowLabel: extra.windowLabel ?? opt.windowLabel ?? null,
+        estimateNote: extra.estimateNote ?? opt.estimateNote ?? null,
+      }
+    })
+  }
   if (choiceOptions.length === 0) return { sent: 0 }
 
   const { data: landlord } = await supabase
@@ -520,6 +623,35 @@ export async function notifyLandlordVendorChoice(
     typeof landlord?.name === "string" ? landlord.name.trim() : ""
   const landlordFirstName = companyName.split(/\s+/)[0] || null
   const wo = formatWorkOrderRef(params.ticketId)
+
+  let issueHeadline = params.issueHeadline?.trim() || null
+  let locationLabel = params.locationLabel?.trim() || null
+  if (!issueHeadline || !locationLabel) {
+    const { data: ticket } = await supabase
+      .from("maintenance_requests")
+      .select("issue_headline, unit")
+      .eq("id", params.ticketId)
+      .maybeSingle()
+    if (!issueHeadline && typeof ticket?.issue_headline === "string") {
+      issueHeadline = ticket.issue_headline.trim() || null
+    }
+  }
+  if (!locationLabel) {
+    try {
+      const { resolveVendorProbeLocationLabel } = await import(
+        "./vendorAvailabilityProbe.ts"
+      )
+      locationLabel = await resolveVendorProbeLocationLabel(supabase, {
+        landlordId: params.landlordId,
+        ticketId: params.ticketId,
+        unitFallback: params.unit,
+      })
+    } catch (e) {
+      console.error("[vendor-choice] location label", e)
+      locationLabel = params.unit?.trim() || null
+    }
+  }
+
   const smsBody = buildLandlordVendorChoiceSms({
     landlordFirstName,
     companyName: companyName || null,
@@ -529,6 +661,8 @@ export async function notifyLandlordVendorChoice(
     options: choiceOptions,
     adminUrl: uloAppUrl.admin(),
     reason: params.reason ?? "assign",
+    issueHeadline,
+    locationLabel,
   })
 
   const main = await findActiveLandlordMainNumber(supabase, params.landlordId)
@@ -567,7 +701,7 @@ export async function notifyLandlordVendorChoice(
     }
   }
 
-  const names = choiceOptions.map((row) => row.name).join(" or ")
+  const names = choiceOptions.map((row) => vendorChoiceDisplayName(row.name)).join(" or ")
   const rematch =
     params.reason === "no_response" ||
     params.reason === "declined" ||
@@ -594,16 +728,27 @@ async function clearAwaitingVendorChoice(
   supabase: SupabaseClient,
   conversationId: string,
   priorIntake: Record<string, unknown>,
+  ticketId?: string | null,
 ): Promise<void> {
-  const next = { ...priorIntake }
-  delete next.awaiting_vendor_choice
+  const next = landlordVendorChoiceResolvedIntake(priorIntake)
+  delete next[UNKNOWN_CONTACT_INTAKE_KEY]
   await supabase
     .from("sms_conversations")
     .update({
       intake_state: next,
+      status: "open",
+      conversation_type: "landlord_update",
       updated_at: new Date().toISOString(),
     })
     .eq("id", conversationId)
+
+  const id = ticketId?.trim()
+  if (id) {
+    await supabase
+      .from("maintenance_requests")
+      .update({ vendor_notify_error: null })
+      .eq("id", id)
+  }
 }
 
 export async function tryHandleLandlordVendorChoiceInbound(
@@ -619,7 +764,8 @@ export async function tryHandleLandlordVendorChoiceInbound(
   | { handled: false }
   | { handled: true; ticketId: string; vendorId: string | null; replyBody: string }
 > {
-  if (params.identityType === "resident") return { handled: false }
+  // Real vendor threads use availability probe / job response — not this ask.
+  if (params.identityType === "vendor") return { handled: false }
 
   const { data: conv } = await supabase
     .from("sms_conversations")
@@ -668,6 +814,27 @@ export async function tryHandleLandlordVendorChoiceInbound(
 
   if (!awaiting) return { handled: false }
 
+  // Ops phone was mislabeled as resident — treat as landlord for this ask.
+  if (params.identityType === "resident") {
+    const phone = normalizeSmsPhone(
+      params.fromPhone?.trim() ||
+        (typeof conv.external_phone_number === "string"
+          ? conv.external_phone_number
+          : ""),
+    )
+    if (phone) {
+      try {
+        await upsertSmsIdentityForPhone(supabase, {
+          landlordId: params.landlordId,
+          phone,
+          identityType: "landlord",
+        })
+      } catch (e) {
+        console.error("[vendor-choice] repair landlord identity", e)
+      }
+    }
+  }
+
   const chosen = parseLandlordVendorChoice(params.body, awaiting.options)
   if (!chosen) {
     return {
@@ -681,7 +848,7 @@ export async function tryHandleLandlordVendorChoiceInbound(
   const { data: ticket } = await supabase
     .from("maintenance_requests")
     .select(
-      "id, priority, unit, description, due_at, estimated_minutes, resident_availability_text, assigned_vendor_id, vendor_work_status",
+      "id, priority, urgency, severity, unit, description, issue_headline, entry_ok_if_absent, due_at, estimated_minutes, resident_availability_text, assigned_vendor_id, vendor_work_status, vendor_notified_at",
     )
     .eq("id", awaiting.ticketId)
     .eq("landlord_id", params.landlordId)
@@ -703,19 +870,140 @@ export async function tryHandleLandlordVendorChoiceInbound(
       : ""
   const workStatus =
     typeof ticket.vendor_work_status === "string" ? ticket.vendor_work_status : ""
+  const vendorNotifiedAt =
+    typeof ticket.vendor_notified_at === "string" && ticket.vendor_notified_at.trim()
+      ? ticket.vendor_notified_at.trim()
+      : ""
+
+  // #region agent log
+  fetch("http://127.0.0.1:7898/ingest/3050e2ef-64dd-49e5-a718-1f5719c45963", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "X-Debug-Session-Id": "5d0562",
+    },
+    body: JSON.stringify({
+      sessionId: "5d0562",
+      runId: "pre-fix",
+      hypothesisId: "A",
+      location: "vendorLandlordChoice.ts:tryHandle",
+      message: "landlord choice ticket state",
+      data: {
+        ticketId: awaiting.ticketId,
+        chosenId: chosen.id,
+        assignedId: assignedId || null,
+        workStatus,
+        vendorNotifiedAt: vendorNotifiedAt || null,
+        hasAwaiting: true,
+      },
+      timestamp: Date.now(),
+    }),
+  }).catch(() => {})
+  // #endregion
 
   if (assignedId && !isExternalVendorChoice(chosen)) {
     if (assignedId === chosen.id) {
-      await clearAwaitingVendorChoice(supabase, conversationId, priorIntake)
+      // Probe soft-offer may have bound assigned_vendor_id without a job SMS.
+      // If the vendor was never notified, treat YES as assign+notify — not a no-op.
+      if (!vendorNotifiedAt) {
+        // #region agent log
+        fetch("http://127.0.0.1:7898/ingest/3050e2ef-64dd-49e5-a718-1f5719c45963", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "X-Debug-Session-Id": "5d0562",
+          },
+          body: JSON.stringify({
+            sessionId: "5d0562",
+            runId: "pre-fix",
+            hypothesisId: "B",
+            location: "vendorLandlordChoice.ts:sameVendorUnnotified",
+            message: "same vendor but never notified — reassign+notify",
+            data: { ticketId: awaiting.ticketId, vendorId: assignedId },
+            timestamp: Date.now(),
+          }),
+        }).catch(() => {})
+        // #endregion
+        const { reassignVendorByIdAndNotify } = await import(
+          "../submit-maintenance-request/vendor_notify.ts"
+        )
+        const notified = await reassignVendorByIdAndNotify(
+          supabase,
+          awaiting.ticketId,
+          chosen.id,
+        )
+        if ("error" in notified) {
+          return {
+            handled: true,
+            ticketId: awaiting.ticketId,
+            vendorId: null,
+            replyBody:
+              `I couldn't send this to ${vendorChoiceDisplayName(chosen.name)} just now. Try again, or assign them from the dashboard.`,
+          }
+        }
+        await clearAwaitingVendorChoice(
+          supabase,
+          conversationId,
+          priorIntake,
+          awaiting.ticketId,
+        )
+        await recordActivityLog(supabase, {
+          landlordId: params.landlordId,
+          eventType: "maintenance.vendor_choice_selected",
+          source: "sms",
+          actorType: "landlord",
+          vendorId: chosen.id,
+          maintenanceRequestId: awaiting.ticketId,
+          conversationId,
+          metadata: {
+            message: `Assigned ${vendorChoiceDisplayName(chosen.name)} after the landlord confirmed.`,
+          },
+        })
+        return {
+          handled: true,
+          ticketId: awaiting.ticketId,
+          vendorId: assignedId,
+          replyBody: `Got it — we'll send this to ${vendorChoiceDisplayName(chosen.name)} now and ask them to take the job. We'll text you when they reply.`,
+        }
+      }
+      // #region agent log
+      fetch("http://127.0.0.1:7898/ingest/3050e2ef-64dd-49e5-a718-1f5719c45963", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Debug-Session-Id": "5d0562",
+        },
+        body: JSON.stringify({
+          sessionId: "5d0562",
+          runId: "pre-fix",
+          hypothesisId: "B",
+          location: "vendorLandlordChoice.ts:sameVendorAlreadyNotified",
+          message: "keep short-circuit — vendor already notified",
+          data: { ticketId: awaiting.ticketId, vendorId: assignedId },
+          timestamp: Date.now(),
+        }),
+      }).catch(() => {})
+      // #endregion
+      await clearAwaitingVendorChoice(
+        supabase,
+        conversationId,
+        priorIntake,
+        awaiting.ticketId,
+      )
       return {
         handled: true,
         ticketId: awaiting.ticketId,
         vendorId: assignedId,
-        replyBody: `Got it — we'll keep ${chosen.name} on this job and wait for them to reply.`,
+        replyBody: `Got it — we'll keep ${vendorChoiceDisplayName(chosen.name)} on this job and wait for them to reply.`,
       }
     }
     if (!canReplaceAssignedVendorForLandlordChoice(workStatus)) {
-      await clearAwaitingVendorChoice(supabase, conversationId, priorIntake)
+      await clearAwaitingVendorChoice(
+        supabase,
+        conversationId,
+        priorIntake,
+        awaiting.ticketId,
+      )
       return {
         handled: true,
         ticketId: awaiting.ticketId,
@@ -737,10 +1025,15 @@ export async function tryHandleLandlordVendorChoiceInbound(
         ticketId: awaiting.ticketId,
         vendorId: null,
         replyBody:
-          `I couldn't send this to ${chosen.name} just now. Try again, or assign them from the dashboard.`,
+          `I couldn't send this to ${vendorChoiceDisplayName(chosen.name)} just now. Try again, or assign them from the dashboard.`,
       }
     }
-    await clearAwaitingVendorChoice(supabase, conversationId, priorIntake)
+    await clearAwaitingVendorChoice(
+        supabase,
+        conversationId,
+        priorIntake,
+        awaiting.ticketId,
+      )
     await recordActivityLog(supabase, {
       landlordId: params.landlordId,
       eventType: "maintenance.vendor_choice_selected",
@@ -750,14 +1043,14 @@ export async function tryHandleLandlordVendorChoiceInbound(
       maintenanceRequestId: awaiting.ticketId,
       conversationId,
       metadata: {
-        message: `Assigned ${chosen.name} after the landlord confirmed.`,
+        message: `Assigned ${vendorChoiceDisplayName(chosen.name)} after the landlord confirmed.`,
       },
     })
     return {
       handled: true,
       ticketId: awaiting.ticketId,
       vendorId: chosen.id,
-      replyBody: `Got it — we'll send this to ${chosen.name} now and ask them to take the job. We'll text you when they reply.`,
+      replyBody: `Got it — we'll send this to ${vendorChoiceDisplayName(chosen.name)} now and ask them to take the job. We'll text you when they reply.`,
     }
   }
 
@@ -788,7 +1081,7 @@ export async function tryHandleLandlordVendorChoiceInbound(
       ticketId: awaiting.ticketId,
       landlordId: params.landlordId,
       businessId,
-      vendorName: chosen.name,
+      vendorName: vendorChoiceDisplayName(chosen.name),
       searchId: chosen.searchId,
       categoryId: chosen.categoryId,
       text,
@@ -801,10 +1094,15 @@ export async function tryHandleLandlordVendorChoiceInbound(
         ticketId: awaiting.ticketId,
         vendorId: null,
         replyBody:
-          `I couldn't reach ${chosen.name} just now. Try again, or open Ulo to message them.`,
+          `I couldn't reach ${vendorChoiceDisplayName(chosen.name)} just now. Try again, or open Ulo to message them.`,
       }
     }
-    await clearAwaitingVendorChoice(supabase, conversationId, priorIntake)
+    await clearAwaitingVendorChoice(
+        supabase,
+        conversationId,
+        priorIntake,
+        awaiting.ticketId,
+      )
     await recordActivityLog(supabase, {
       landlordId: params.landlordId,
       eventType: "maintenance.vendor_choice_selected",
@@ -813,7 +1111,7 @@ export async function tryHandleLandlordVendorChoiceInbound(
       maintenanceRequestId: awaiting.ticketId,
       conversationId,
       metadata: {
-        message: `Asked ${chosen.name} about this job after the landlord chose them.`,
+        message: `Asked ${vendorChoiceDisplayName(chosen.name)} about this job after the landlord chose them.`,
         source: "external",
         business_id: businessId,
       },
@@ -822,13 +1120,14 @@ export async function tryHandleLandlordVendorChoiceInbound(
       handled: true,
       ticketId: awaiting.ticketId,
       vendorId: null,
-      replyBody: `Got it — we'll contact ${chosen.name} about this job now. We'll text you when they reply.`,
+      replyBody: `Got it — we'll contact ${vendorChoiceDisplayName(chosen.name)} about this job now. We'll text you when they reply.`,
     }
   }
 
   const { assignVendorAndNotify } = await import(
     "../submit-maintenance-request/vendor_notify.ts"
   )
+  const displayName = vendorChoiceDisplayName(chosen.name)
   const result = await assignVendorAndNotify(supabase, {
     ticketId: awaiting.ticketId,
     priority: typeof ticket.priority === "string" && ticket.priority.trim()
@@ -836,6 +1135,14 @@ export async function tryHandleLandlordVendorChoiceInbound(
       : "normal",
     unit: typeof ticket.unit === "string" ? ticket.unit : "",
     description: typeof ticket.description === "string" ? ticket.description : "",
+    issueHeadline: typeof ticket.issue_headline === "string"
+      ? ticket.issue_headline
+      : null,
+    entryOkIfAbsent: typeof ticket.entry_ok_if_absent === "boolean"
+      ? ticket.entry_ok_if_absent
+      : null,
+    urgency: typeof ticket.urgency === "string" ? ticket.urgency : null,
+    severity: typeof ticket.severity === "string" ? ticket.severity : null,
     dueAt: typeof ticket.due_at === "string" ? ticket.due_at : null,
     estimatedMinutes: typeof ticket.estimated_minutes === "number"
       ? ticket.estimated_minutes
@@ -856,11 +1163,41 @@ export async function tryHandleLandlordVendorChoiceInbound(
       ticketId: awaiting.ticketId,
       vendorId: null,
       replyBody:
-        `I couldn't send this to ${chosen.name} just now. Try again, or assign them from the dashboard.`,
+        `I couldn't send this to ${displayName} just now. Try again, or assign them from the dashboard.`,
     }
   }
 
-  await clearAwaitingVendorChoice(supabase, conversationId, priorIntake)
+  // If this vendor offered a window during the availability probe, seed the schedule.
+  try {
+    const { findProbeOfferForVendor } = await import("./vendorAvailabilityProbe.ts")
+    const offer = await findProbeOfferForVendor(
+      supabase,
+      awaiting.ticketId,
+      chosen.id,
+    )
+    if (offer?.scheduledAt || offer?.windowLabel) {
+      const patch: Record<string, unknown> = {}
+      if (offer.scheduledAt) patch.scheduled_at = offer.scheduledAt
+      if (offer.windowLabel.trim()) {
+        patch.scheduled_window_text = offer.windowLabel.trim()
+      }
+      if (Object.keys(patch).length > 0) {
+        await supabase
+          .from("maintenance_requests")
+          .update(patch)
+          .eq("id", awaiting.ticketId)
+      }
+    }
+  } catch (e) {
+    console.warn("[landlord-vendor-choice] apply probe offer window", e)
+  }
+
+  await clearAwaitingVendorChoice(
+        supabase,
+        conversationId,
+        priorIntake,
+        awaiting.ticketId,
+      )
   await recordActivityLog(supabase, {
     landlordId: params.landlordId,
     eventType: "maintenance.vendor_choice_selected",
@@ -870,7 +1207,7 @@ export async function tryHandleLandlordVendorChoiceInbound(
     maintenanceRequestId: awaiting.ticketId,
     conversationId,
     metadata: {
-      message: `Assigned ${chosen.name} after the landlord confirmed.`,
+      message: `Assigned ${displayName} after the landlord confirmed.`,
     },
   })
 
@@ -878,6 +1215,6 @@ export async function tryHandleLandlordVendorChoiceInbound(
     handled: true,
     ticketId: awaiting.ticketId,
     vendorId: chosen.id,
-    replyBody: `Got it — we'll send this to ${chosen.name} now and ask them to take the job. We'll text you when they reply.`,
+    replyBody: `Got it — we'll send this to ${displayName} now and ask them to take the job. We'll text you when they reply.`,
   }
 }

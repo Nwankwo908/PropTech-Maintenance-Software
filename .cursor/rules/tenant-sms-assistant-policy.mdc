@@ -10,7 +10,8 @@ alwaysApply: false
 
 | Message type | Reply | Notify property team? |
 |---|---|---|
-| Greeting / thanks / small talk | Warm 1–2 sentences; ask what they need | **Never** |
+| Greeting / thanks / small talk | Warm 1–2 sentences; identify as Ulo AI; ask what they need | **Never** |
+| Greeting / thanks **during active intake** | Greet by name, identify as Ulo AI, **re-ask the pending intake question**; preserve intake state | **Never** |
 | Unclear | One short clarifying question | **Never** |
 | Repair | Gather issue, room, urgency, entry-if-not-home → work order | Only for emergencies |
 | Emergency (gas, fire, flood, no heat, CO, safety) | Call 911 if in danger; continue intake | **Yes, immediately** |
@@ -21,22 +22,26 @@ alwaysApply: false
 
 ## Implementation
 
-- Classifier + copy: `tenantAssistantReply.ts`
+- Classifier + copy: `tenantAssistantReply.ts` (`classifyAssistantOtherMessage`, `planAssistantOtherReply`, `buildSmallTalkDuringIntakeSms`)
 - Non-repair act path: `handleOther` in `inboundInterpretationAct.ts`
+- Intake breakout: `shouldKeepActivePendingContext` / `resolveContextualFollowUp` treat `small_talk` as `switch_intent` (never `continue_intake` / step answer)
 - Emergency opener + staff alert: `residentIntake.ts` (fresh intake when urgency band is emergency)
 - Entry permission: `unit_entry` in `determineNextMaintenanceQuestion.ts`
 - Stuck intake loop: clarify again — do **not** fake a handoff
 
 ## Autofix (Bugbot)
 
-If a PR restores “I’ve passed your message to the team” for Hello/thanks, or notifies staff on small talk / unclear:
+If a PR restores “I’ve passed your message to the team” for Hello/thanks, notifies staff on small talk / unclear, or applies Hello as an intake step answer:
 
 1. Route through `classifyAssistantOtherMessage` / `handleOther` branches.
 2. Remove landlord notify from greeting and unclear paths.
 3. Keep escalate copy only on `human_request` / `complaint_or_legal` (and rent/lease missing / emergency).
+4. During active intake, greetings must `switch_intent` + re-ask via `buildSmallTalkDuringIntakeSms` / `pendingIntakeQuestion` — never `continue_intake`.
 
 ## Do not
 
 - Notify on “Hello”, “Thanks”, or vague one-word texts
 - Claim a handoff without calling `notifyLandlordNeedsAttention`
 - Skip the 911 / staff-alert opener on life-safety emergencies
+- Treat greetings as answers to the current intake question
+- Reset or cancel intake when the resident only said hi / thanks

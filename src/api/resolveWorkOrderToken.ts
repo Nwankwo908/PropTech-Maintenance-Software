@@ -31,6 +31,10 @@ export type WorkOrderPublicJob = {
   unit: string
   issueCategory: string | null
   description: string
+  /** Short human title when present (e.g. "Burst pipe"). */
+  issueHeadline: string | null
+  /** Whether entry is OK if resident is away. */
+  entryOkIfAbsent: boolean | null
   priority: string | null
   status: string | null
   createdAt: string | null
@@ -63,8 +67,14 @@ export type WorkOrderPublicJob = {
   estimateSubmitted: boolean
   /** True only after the property team approves the estimate. */
   estimateApproved: boolean
+  /** Latest estimate total when available (display only). */
+  estimateTotalCost: number | null
   /** True after the vendor uploads at least one completion photo. */
   completionPhotosUploaded: boolean
+  /** Latest invoice status: submitted | approved | null */
+  invoiceStatus: string | null
+  /** True once an invoice row exists (submitted or paid). */
+  invoiceSubmitted: boolean
 }
 
 export type ResolveWorkOrderTokenResult = {
@@ -175,6 +185,12 @@ export async function resolveWorkOrderToken(
           : null,
       unit: typeof job.unit === 'string' && job.unit.trim() ? job.unit : 'Unit',
       description: typeof job.description === 'string' ? job.description : '',
+      issueHeadline:
+        typeof job.issueHeadline === 'string' && job.issueHeadline.trim()
+          ? job.issueHeadline.trim()
+          : null,
+      entryOkIfAbsent:
+        typeof job.entryOkIfAbsent === 'boolean' ? job.entryOkIfAbsent : null,
       photoUrls: Array.isArray(job.photoUrls)
         ? job.photoUrls.filter((u): u is string => typeof u === 'string' && u.trim().length > 0)
         : [],
@@ -268,7 +284,14 @@ export async function resolveWorkOrderToken(
         typeof job.estimateStatus === 'string' ? job.estimateStatus : null,
       estimateSubmitted: Boolean(job.estimateSubmitted),
       estimateApproved: Boolean(job.estimateApproved),
+      estimateTotalCost: (() => {
+        const n = Number(job.estimateTotalCost)
+        return Number.isFinite(n) && n > 0 ? n : null
+      })(),
       completionPhotosUploaded: Boolean(job.completionPhotosUploaded),
+      invoiceStatus:
+        typeof job.invoiceStatus === 'string' ? job.invoiceStatus : null,
+      invoiceSubmitted: Boolean(job.invoiceSubmitted),
     },
   }
 }

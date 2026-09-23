@@ -135,6 +135,30 @@ export const uloAppUrl = {
     )
   },
 
+  /**
+   * Landlord 1-tap estimate approve/decline result page.
+   * Edge Functions must redirect here — Supabase rewrites text/html to text/plain
+   * on *.supabase.co so HTML cannot be served from the function URL.
+   */
+  estimateDecisionResult(
+    params: {
+      status: "approved" | "rejected" | "error"
+      already?: boolean
+      message?: string | null
+    },
+    options?: UloAppOriginOptions,
+  ): string {
+    const url = new URL(
+      joinOriginPath(uloAppOrigin(options), "/estimate-decision"),
+    )
+    url.searchParams.set("status", params.status)
+    if (params.already) url.searchParams.set("already", "1")
+    if (params.message?.trim()) {
+      url.searchParams.set("message", params.message.trim().slice(0, 280))
+    }
+    return url.toString()
+  },
+
   /** Public invoice form. */
   invoice(token: string, options?: UloAppOriginOptions): string {
     return joinOriginPath(

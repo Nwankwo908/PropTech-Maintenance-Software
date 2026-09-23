@@ -321,6 +321,7 @@ function isVendorVerificationSubmitted(text: string): boolean {
 /** Tenant activation / welcome + consent SMS (not a maintenance report thread). */
 export function isTenantOnboardingInvite(text: string): boolean {
   return (
+    /reply yes to activate maintenance requests and important home updates/i.test(text) ||
     /reply yes to submit maintenance requests and get important home updates/i.test(text) ||
     /reply yes to get updates about your maintenance requests/i.test(text) ||
     /reply yes to get updates about repairs/i.test(text) ||
@@ -329,6 +330,8 @@ export function isTenantOnboardingInvite(text: string): boolean {
     /we won't send extra updates/i.test(text) ||
     /i'll help with what you texted about next/i.test(text) ||
     /reach us by text anytime you need a repair/i.test(text) ||
+    /once activated, just text this number anytime you need a repair/i.test(text) ||
+    /save us as ["“]ulo assistant["”]/i.test(text) ||
     /we'll text you here about your maintenance requests/i.test(text) ||
     /you'?re all set, thank you\. we'll text you here/i.test(text)
   )

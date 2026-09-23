@@ -20,8 +20,10 @@ Track acceptance from `maintenance_requests.vendor_work_status` only — do **no
 
 | Vendor job state | SMS behavior |
 |---|---|
-| Not yet replied (`pending_accept` / unknown) | Include update **and** ask: Reply YES to accept the work order or NO if unable |
-| Explicitly accepted (`accepted` / `in_progress`) | Status update only — do not re-ask YES/NO |
+| Not yet replied (`pending_accept` / unknown) | Include update **and** ask: Reply YES to accept the work order or NO if unable. Note that after accept, Ulo will set a visit time with the resident. |
+| Explicitly accepted (`accepted` / `in_progress`) and a visit window **already on the ticket** (probe seed) | Include update **and** tell the vendor Ulo is confirming that window with the resident. SMS the tenant YES/NO for that window — do **not** re-ask the vendor for availability. |
+| Explicitly accepted and **no** visit window yet | Include update **and** ask earliest availability (folded into the same SMS). Sets schedule FSM → vendor proposes window → tenant YES/NO. |
+| Explicitly accepted and visit already confirmed / tenant confirm in progress | Status update only — do not re-ask YES/NO or restart availability |
 | Declined | **Do not send** approval/continuation SMS; use existing reassignment |
 
 ## Canonical shapes
@@ -38,11 +40,45 @@ Would you like to continue with this job?
 
 Reply YES to accept the work order or NO if you're unable to take it.
 
+After you accept, we'll set a visit time with the resident.
+
 View details:
 {link}
 ```
 
-**Accepted — estimate approved:**
+**Accepted — estimate approved (vendor already offered a window):**
+```
+Hi {vendor},
+
+Update for work order {WO}.
+
+The property team approved your estimate of {$amount}.
+
+We're confirming {window} with the resident now.
+We'll text you when they reply.
+
+View details:
+{link}
+```
+
+**Accepted — estimate approved (no window yet):**
+```
+Hi {vendor},
+
+Update for work order {WO}.
+
+The property team approved your estimate of {$amount}.
+
+What's your earliest availability?
+Reply with a day and arrival window (e.g. Wed 9am–12pm) or an exact time (e.g. Wed at 10am).
+
+We'll confirm that time with the resident before you go.
+
+View details:
+{link}
+```
+
+**Accepted — estimate approved (visit already locked / tenant confirm in progress):**
 ```
 Hi {vendor},
 
@@ -75,7 +111,11 @@ Initial assignment copy remains in `buildVendorJobAssignmentSms` (always asks YE
 
 When a vendor submits an estimate, SMS the landlord (account / ops phones via `resolveLandlordOpsPhones`) asking them to **APPROVE** or **DECLINE**. Do not rely only on `SMS_ADMIN_NOTIFY_PHONES`.
 
-If they approve, text the vendor they can continue (acceptance-aware copy above).
+If they approve and the vendor is already on the job:
+
+- **Window already on the ticket** (availability probe seed / prior propose) → SMS tenant to confirm that window; tell the vendor we're confirming with the resident (`confirm_tenant`). Do not re-ask the vendor.
+- **No window yet** → start schedule coordination in the same SMS (`ask_vendor` + `setVendorAwaitingAvailability`).
+- If the vendor has not accepted yet, ask YES/NO first; their YES runs `beginVendorAvailabilityAsk`, which also prefers an existing seeded window and confirms with the tenant when present.
 
 If they do not approve, text the vendor with the **estimate form link** (`uloAppUrl.estimate`), not only the job-detail page.
 

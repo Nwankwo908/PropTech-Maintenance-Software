@@ -8,13 +8,16 @@ import {
   phoneLookupVariants,
   touchIdentityLastSeen,
   upsertSmsIdentity,
+  upsertSmsIdentityForPhone,
   type SmsIdentityRow,
 } from "./inbound_db.ts"
+import { isLandlordAccountOrOpsPhone } from "./landlordAccountPhone.ts"
 import { smsIdentityIsFullyResolved } from "./smsIdentityUpgrade.ts"
 import { findWaitingActivationResidentByPhone } from "./tenantActivationLookup.ts"
 import { logGraphEvent } from "../graph/logGraphEvent.ts"
 
 export type IdentityResolutionSource =
+  | "landlord"
   | "active_resident"
   | "sms_identity"
   | "vendor"
@@ -156,13 +159,14 @@ async function findVendorByPhone(
 async function suggestUnitFromRecentInvite(
   supabase: SupabaseClient,
   fromNumber: string,
-  _landlordId: string,
+  landlordId: string,
 ): Promise<string | null> {
   const e164 = normalizePhoneFlexible(fromNumber)
   if (e164) {
     const { data: ticket } = await supabase
       .from("maintenance_requests")
       .select("unit, created_at")
+      .eq("landlord_id", landlordId)
       .eq("resident_phone", e164)
       .not("unit", "is", null)
       .order("created_at", { ascending: false })
@@ -179,6 +183,7 @@ async function suggestUnitFromRecentInvite(
   const { data: pendingResident } = await supabase
     .from("users")
     .select("unit")
+    .eq("landlord_id", landlordId)
     .in("phone", variants)
     .eq("status", "pending")
     .not("unit", "is", null)
@@ -193,13 +198,15 @@ async function suggestUnitFromRecentInvite(
 export async function findActiveResidentsByUnit(
   supabase: SupabaseClient,
   unitInput: string,
+  landlordId: string,
 ): Promise<ResidentRow[]> {
   const wanted = normalizeUnitForMatch(unitInput)
-  if (!wanted) return []
+  if (!wanted || !landlordId.trim()) return []
 
   const { data, error } = await supabase
     .from("users")
     .select("id, resident_id, full_name, email, phone, unit, building, status")
+    .eq("landlord_id", landlordId)
     .eq("status", "active")
     .not("unit", "is", null)
     .limit(500)
@@ -221,6 +228,7 @@ export async function findActiveResidentsByUnit(
 export async function attachPhoneToUnitResident(
   supabase: SupabaseClient,
   params: {
+    landlordId: string
     fromNumber: string
     unit: string
     matchedResidents: ResidentRow[]
@@ -247,6 +255,7 @@ export async function attachPhoneToUnitResident(
         ...(params.building?.trim() ? { building: params.building.trim() } : {}),
       })
       .eq("id", vacant.id)
+      .eq("landlord_id", params.landlordId)
       .select("id, resident_id, full_name, email, phone, unit, building, status")
       .single()
 
@@ -261,6 +270,7 @@ export async function attachPhoneToUnitResident(
   const { data, error } = await supabase
     .from("users")
     .insert({
+      landlord_id: params.landlordId,
       resident_id: generateSmsResidentId(),
       full_name: params.fullName?.trim() || "SMS Resident",
       email: `${normalizedFrom.replace(/\D/g, "")}@sms-resident.ulohome.local`,
@@ -416,16 +426,82 @@ async function processUnitNumberSelfHealing(
  * Phone-to-unit resolver for inbound SMS.
  *
  * Resolution order:
- * 1. Landlord-scoped vendor roster match (wins over blank tenant identities)
- * 2. Active resident roster match (this landlord only)
- * 3. Existing fully resolved sms_identities row
- * 4. Likely unit from recent invite/onboarding activity
- * 5. Unknown identity + self-healing onboarding fallback
+ * 1. Landlord account / ops phone (wins over corrupted sms_identities)
+ * 2. Landlord-scoped vendor roster match (wins over blank tenant identities)
+ * 3. Active resident roster match (this landlord only)
+ * 4. Existing fully resolved sms_identities row
+ * 5. Likely unit from recent invite/onboarding activity
+ * 6. Unknown identity + self-healing onboarding fallback
  */
 export async function resolvePhoneIdentity(
   supabase: SupabaseClient,
   input: ResolveIdentityInput,
 ): Promise<ResolveIdentityResult> {
+  // Account / ops phone — always landlord, even when sms_identities is a blank
+  // "resident" row or the thread is stuck on awaiting_unit_number.
+  const isLandlordPhone = await isLandlordAccountOrOpsPhone(supabase, {
+    fromNumber: input.fromNumber,
+    landlordId: input.landlordId,
+  })
+  if (isLandlordPhone) {
+    const existingIdentity = await lookupSmsIdentity(
+      supabase,
+      input.fromNumber,
+      input.landlordId,
+    )
+    const identity = await upsertSmsIdentityForPhone(supabase, {
+      landlordId: input.landlordId,
+      phone: input.fromNumber,
+      identityType: "landlord",
+    })
+    if (!identity) {
+      // Should not happen for a normalized ops phone; fall through carefully.
+      console.error("[resolveIdentity] landlord upsert failed", {
+        landlordId: input.landlordId,
+      })
+    } else {
+      // Clear stale unknown-contact intake if this conversation was polluted.
+      if (input.conversationId?.trim()) {
+        try {
+          const { data: conv } = await supabase
+            .from("sms_conversations")
+            .select("intake_state")
+            .eq("id", input.conversationId.trim())
+            .maybeSingle()
+          const prior =
+            conv?.intake_state && typeof conv.intake_state === "object"
+              ? { ...(conv.intake_state as Record<string, unknown>) }
+              : {}
+          if ("unknown_contact_intake" in prior) {
+            delete prior.unknown_contact_intake
+            await supabase
+              .from("sms_conversations")
+              .update({
+                intake_state: prior,
+                status: "open",
+                conversation_type: "landlord_update",
+                updated_at: new Date().toISOString(),
+              })
+              .eq("id", input.conversationId.trim())
+          }
+        } catch (e) {
+          console.warn("[resolveIdentity] clear unknown_contact for landlord", e)
+        }
+      }
+      return {
+        identity,
+        source: "landlord",
+        suggestedUnit: null,
+        selfHealingPhase: "none",
+        notifyLandlord: false,
+        continueIntake: false,
+        createdOrUpdated:
+          !existingIdentity || existingIdentity.identity_type !== "landlord",
+        conversationStatus: "open",
+      }
+    }
+  }
+
   const existingIdentity = await lookupSmsIdentity(
     supabase,
     input.fromNumber,

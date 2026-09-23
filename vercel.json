@@ -31,8 +31,10 @@
   "rewrites": [
     { "source": "/terms", "destination": "/terms/index.html" },
     { "source": "/privacy", "destination": "/privacy/index.html" },
+    { "source": "/estimate/decision", "destination": "/estimate-decision.html" },
+    { "source": "/estimate-decision", "destination": "/estimate-decision.html" },
     {
-      "source": "/((?!assets/|favicon\\.png|og-image\\.png|robots\\.txt|sitemap\\.xml|icons\\.svg|figma-assets/|terms(?:/index\\.html)?|privacy(?:/index\\.html)?).*)",
+      "source": "/((?!assets/|favicon\\.png|og-image\\.png|robots\\.txt|sitemap\\.xml|icons\\.svg|figma-assets/|estimate-decision\\.html|terms(?:/index\\.html)?|privacy(?:/index\\.html)?).*)",
       "destination": "/index.html"
     }
   ],

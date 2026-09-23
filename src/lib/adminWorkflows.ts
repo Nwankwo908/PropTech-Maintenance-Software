@@ -206,13 +206,15 @@ export function maintenanceTicketIdFromWorkflowRun(run: {
   return null
 }
 
-/** Cancelled work orders must not appear as open Active Tasks, even if the run row is still `active`. */
+/** Cancelled/archived work orders must not appear as open Active Tasks, even if the run row is still `active`. */
 export function isCancelledOnActiveTasks(row: {
   status?: string | null
   vendorWorkStatus?: string | null
 }): boolean {
-  if ((row.status ?? '').trim().toLowerCase() === 'cancelled') return true
-  return (row.vendorWorkStatus ?? '').trim().toLowerCase() === 'cancelled'
+  const run = (row.status ?? '').trim().toLowerCase()
+  if (run === 'cancelled') return true
+  const vws = (row.vendorWorkStatus ?? '').trim().toLowerCase()
+  return vws === 'cancelled' || vws === 'archived'
 }
 
 /** Completed repairs belong in Active Tasks Completed — not Needs Your Attention. */

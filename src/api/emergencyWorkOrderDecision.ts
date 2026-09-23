@@ -1,13 +1,28 @@
 /**
  * Property-detail emergency Review: stop a job when there is no pending estimate.
- * Mirrors resident cancel — ticket cancelled + linked maintenance workflow runs closed.
+ * Soft-terminates via terminate-work-order Edge Function (vendor notify + audit).
  */
+import {
+  adminEdgeInvokeHeaders,
+  fetchAdminEdgeFunction,
+} from '@/api/adminReassignVendor'
+import { getAdminEdgeSecret } from '@/lib/adminEdgeAuth'
 import { getActiveLandlordId } from '@/lib/activeLandlord'
 import { recordActivityLog } from '@/lib/recordActivityLog'
-import { supabase } from '@/lib/supabase'
 
-const OPEN_RUN_STATUSES = ['active', 'escalated'] as const
-const MAINTENANCE_TEMPLATES = ['maintenance_intake', 'maintenance_request'] as const
+function terminateWorkOrderUrl(): string | null {
+  const explicit = import.meta.env.VITE_TERMINATE_WORK_ORDER_URL?.trim()
+  if (explicit) return explicit
+
+  const reassign = import.meta.env.VITE_ADMIN_REASSIGN_URL?.trim()
+  if (reassign) {
+    return reassign.replace(/admin-reassign-vendor\/?$/, 'terminate-work-order')
+  }
+
+  const base = import.meta.env.VITE_SUPABASE_URL?.trim()?.replace(/\/$/, '')
+  if (!base) return null
+  return `${base}/functions/v1/terminate-work-order`
+}
 
 export async function cancelEmergencyWorkOrder(input: {
   ticketId: string
@@ -15,66 +30,38 @@ export async function cancelEmergencyWorkOrder(input: {
   propertyId?: string | null
   vendorId?: string | null
 }): Promise<void> {
-  if (!supabase) {
-    throw new Error("We can't reach the server right now. Please try again in a moment.")
-  }
-
   const ticketId = input.ticketId.trim()
   if (!ticketId) throw new Error('Missing work order id.')
 
+  const url = terminateWorkOrderUrl()
+  const secret = getAdminEdgeSecret()
+  if (!url || !secret) {
+    throw new Error(
+      'Work order cancel is not configured (admin Edge URL/secret).',
+    )
+  }
+
   const landlordId = getActiveLandlordId()
-  const nowIso = new Date().toISOString()
+  const res = await fetchAdminEdgeFunction(url, {
+    method: 'POST',
+    headers: adminEdgeInvokeHeaders(secret),
+    body: JSON.stringify({
+      landlordId,
+      ticketId,
+      workflowRunId: input.workflowRunId ?? undefined,
+      mode: 'cancel',
+      source: 'emergency_decline',
+      reason: 'Emergency work declined by the property team',
+    }),
+  })
 
-  const { error: ticketError } = await supabase
-    .from('maintenance_requests')
-    .update({
-      vendor_work_status: 'cancelled',
-      assigned_vendor_id: null,
-      updated_at: nowIso,
-    })
-    .eq('id', ticketId)
-    .eq('landlord_id', landlordId)
-
-  if (ticketError) {
-    throw new Error(ticketError.message || 'Could not cancel this work order.')
+  const payload = (await res.json().catch(() => ({}))) as {
+    error?: string
+    ok?: boolean
   }
 
-  const runIds = new Set<string>()
-  if (input.workflowRunId?.trim()) {
-    runIds.add(input.workflowRunId.trim())
-  }
-
-  const base = () =>
-    supabase!
-      .from('workflow_runs')
-      .select('id, entity_id, metadata')
-      .eq('landlord_id', landlordId)
-      .in('status', [...OPEN_RUN_STATUSES])
-      .in('template_id', [...MAINTENANCE_TEMPLATES])
-
-  const [byEntity, byDraft, byMeta] = await Promise.all([
-    base().eq('entity_id', ticketId),
-    base().eq('metadata->>draft_ticket_id', ticketId),
-    base().eq('metadata->>maintenance_request_id', ticketId),
-  ])
-
-  for (const result of [byEntity, byDraft, byMeta]) {
-    for (const row of result.data ?? []) {
-      const id = typeof row.id === 'string' ? row.id : ''
-      if (id) runIds.add(id)
-    }
-  }
-
-  if (runIds.size > 0) {
-    const { error: runError } = await supabase
-      .from('workflow_runs')
-      .update({ status: 'cancelled', updated_at: nowIso })
-      .in('id', [...runIds])
-      .eq('landlord_id', landlordId)
-
-    if (runError) {
-      console.warn('[cancelEmergencyWorkOrder] workflow cancel', runError.message)
-    }
+  if (!res.ok) {
+    throw new Error(payload.error ?? `Cancel failed (${res.status})`)
   }
 
   void recordActivityLog({

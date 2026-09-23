@@ -86,6 +86,33 @@ export const uloAppUrl = {
     return absolute ? joinOriginPath(uloAppOrigin(), path) : path
   },
 
+  /**
+   * Landlord 1-tap estimate approve/decline result (rendered by the SPA).
+   * Edge Functions redirect here instead of returning HTML.
+   */
+  estimateDecisionResult(
+    params: {
+      status: 'approved' | 'rejected' | 'error'
+      already?: boolean
+      message?: string | null
+    },
+    absolute = true,
+  ): string {
+    const url = new URL(
+      joinOriginPath(
+        absolute ? uloAppOrigin() : 'https://placeholder.local',
+        '/estimate-decision',
+      ),
+    )
+    url.searchParams.set('status', params.status)
+    if (params.already) url.searchParams.set('already', '1')
+    if (params.message?.trim()) {
+      url.searchParams.set('message', params.message.trim().slice(0, 280))
+    }
+    if (!absolute) return `${url.pathname}${url.search}`
+    return url.toString()
+  },
+
   invoice(token: string, absolute = false): string {
     const path = `/invoice/${encodeURIComponent(token.trim())}`
     return absolute ? joinOriginPath(uloAppOrigin(), path) : path

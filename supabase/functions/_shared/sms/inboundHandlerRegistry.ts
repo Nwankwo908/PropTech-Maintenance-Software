@@ -108,6 +108,7 @@ async function tryEstimateDecisionHandler(
     messageId: ctx.messageId,
     body: ctx.inbound.body,
     identityType: ctx.identity.identity_type,
+    fromPhone: ctx.inbound.from,
   })
   if (!result.handled) return { handled: false }
 
