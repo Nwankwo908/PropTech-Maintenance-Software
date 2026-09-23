@@ -10,6 +10,7 @@
  *  - nyshaunbrown@gmail.com    → Limited Alpha 2
  *  - otbpictures12@gmail.com   → Limited Alpha 2
  *  - nwankwo908@gmail.com      → Limited Alpha 2
+ *  - bfamiloni@gmail.com       → Limited Alpha 2
  *  - demo@ulohome.io           → Demo Property Management (seeded showcase)
  *  - staff logins              → Limited Alpha 1, with a switcher for Demo and Limited Alpha 2
  *
@@ -69,6 +70,7 @@ const EMAIL_TO_LANDLORD_ID: Record<string, string> = {
   'nyshaunbrown@gmail.com': LIMITED_ALPHA_2_LANDLORD_ID,
   'otbpictures12@gmail.com': LIMITED_ALPHA_2_LANDLORD_ID,
   'nwankwo908@gmail.com': LIMITED_ALPHA_2_LANDLORD_ID,
+  'bfamiloni@gmail.com': LIMITED_ALPHA_2_LANDLORD_ID,
   [LIMITED_ALPHA_1_LOGIN_EMAIL]: LIMITED_ALPHA_1_LANDLORD_ID,
   [LIMITED_ALPHA_2_LOGIN_EMAIL]: LIMITED_ALPHA_2_LANDLORD_ID,
   'demo@ulohome.io': DEMO_LANDLORD_ID,
