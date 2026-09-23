@@ -463,7 +463,8 @@ export async function completeJobWithPhotos(
     : []
 
   const landlordId =
-    typeof ticket.landlord_id === "string" ? ticket.landlord_id.trim() : ""
+    (typeof ticket.landlord_id === "string" && ticket.landlord_id.trim()) ||
+    resolveLandlordId()
   const operational = landlordId
     ? await loadLandlordOperationalSettings(supabase, landlordId)
     : null
@@ -493,10 +494,6 @@ export async function completeJobWithPhotos(
       return { ok: false, error: "Could not update job", status: 500 }
     }
   }
-
-  const landlordId =
-    (typeof ticket.landlord_id === "string" && ticket.landlord_id.trim()) ||
-    resolveLandlordId()
 
   try {
     const { data: enriched } = await supabase

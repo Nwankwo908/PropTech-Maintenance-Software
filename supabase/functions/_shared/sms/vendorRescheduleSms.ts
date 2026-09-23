@@ -26,18 +26,18 @@ import {
 } from "./inbound_db.ts"
 import { sendInboundAutoReply } from "./inboundReply.ts"
 import { findActiveLandlordMainNumber } from "./landlordSmsOnboarding.ts"
+import { logOutboundNoLandlordMain } from "./logOutboundNoLandlordMain.ts"
 import { getSMSProviderForSend } from "./providerFactory.ts"
-import { findActiveLandlordMain } from "./smsNumberPool.ts"
 import type { SmsProviderName } from "./types.ts"
-
-/** Keep in sync with tenantScheduleConfirm.AWAITING_SCHEDULE_CONFIRM_KEY */
-const AWAITING_SCHEDULE_CONFIRM_KEY = "awaiting_schedule_confirmation"
 import {
   createVendorWorkOrderClarification,
   matchActiveJobsFromReply,
   persistVendorWorkOrderClarification,
   type VendorActiveJob,
 } from "./vendorWorkOrderClarification.ts"
+
+/** Keep in sync with tenantScheduleConfirm.AWAITING_SCHEDULE_CONFIRM_KEY */
+const AWAITING_SCHEDULE_CONFIRM_KEY = "awaiting_schedule_confirmation"
 
 export const VENDOR_RESCHEDULE_PENDING_KEY = "vendor_reschedule_pending"
 export const VENDOR_RESCHEDULE_PENDING_TTL_MS = 30 * 60 * 1000
@@ -613,8 +613,16 @@ async function notifyResidentReschedule(
   )
   if (!phoneE164) return { ok: false, conversationId: null }
 
-  const smsNumber = await findActiveLandlordMain(supabase, params.landlordId)
-  if (!smsNumber?.phone_number) return { ok: false, conversationId: null }
+  const smsNumber = await findActiveLandlordMainNumber(supabase, params.landlordId)
+  if (!smsNumber?.phone_number) {
+    await logOutboundNoLandlordMain(supabase, {
+      landlordId: params.landlordId,
+      messageType: "resident_reschedule_notify",
+      resolver: "findActiveLandlordMainNumber",
+      ticketId: params.ticketId,
+    })
+    return { ok: false, conversationId: null }
+  }
 
   const provider: SmsProviderName = "twilio"
   const residentId =

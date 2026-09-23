@@ -5,7 +5,8 @@
 import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.49.1"
 import { logGraphEvent } from "./graph/logGraphEvent.ts"
 import { getSMSProviderForSend } from "./sms/providerFactory.ts"
-import { findActiveLandlordMain } from "./sms/smsNumberPool.ts"
+import { findActiveLandlordMainNumber } from "./sms/landlordSmsOnboarding.ts"
+import { logOutboundNoLandlordMain } from "./sms/logOutboundNoLandlordMain.ts"
 import { formatWorkOrderRef } from "./vendor_outreach_copy.ts"
 import { uloAppUrl } from "./uloAppUrl.ts"
 import { landlordHasPayments } from "../../../shared/landlordCapabilities.ts"
@@ -68,9 +69,15 @@ export async function notifyLandlordInvoicePaymentOptions(
     return
   }
 
-  const sender = await findActiveLandlordMain(supabase, params.landlordId)
+  const sender = await findActiveLandlordMainNumber(supabase, params.landlordId)
   if (!sender?.phone_number) {
     console.warn("[invoice-payment-sms] no landlord_main SMS number")
+    await logOutboundNoLandlordMain(supabase, {
+      landlordId: params.landlordId,
+      messageType: "landlord_invoice_payment_notify",
+      resolver: "findActiveLandlordMainNumber",
+      ticketId: params.ticketId,
+    })
     return
   }
 

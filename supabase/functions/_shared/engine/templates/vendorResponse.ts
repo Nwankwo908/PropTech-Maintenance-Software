@@ -120,7 +120,7 @@ async function runAskTenantEffect(
   const replyHint = ask.ok
     ? buildVendorWaitingOnTenantSms(params.windowText)
     : buildVendorScheduleClarifySms(
-      "Thanks — we couldn't reach the resident yet. We'll keep trying. Reply with another time if this one changes.",
+      "We're still trying to reach the resident to confirm that time. No action needed from you yet — we'll text you when they reply.",
     )
 
   if (!ask.ok) {

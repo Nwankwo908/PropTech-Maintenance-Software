@@ -2,7 +2,7 @@ import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.49.1
 import { getSMSProvider } from "./providerFactory.ts"
 import { logGraphEvent } from "../graph/logGraphEvent.ts"
 import { normalizePhoneFlexible } from "../resident_notify.ts"
-import { LIMITED_ALPHA_1_LANDLORD_ID, LIMITED_ALPHA_1_TWILIO_SMS_NUMBER, LIMITED_ALPHA_2_LANDLORD_ID, isUnusableSmsIntakeLine } from "../../../../shared/landlordCapabilities.ts"
+import { LIMITED_ALPHA_1_LANDLORD_ID, LIMITED_ALPHA_1_TWILIO_SMS_NUMBER, LIMITED_ALPHA_2_LANDLORD_ID } from "../../../../shared/landlordCapabilities.ts"
 
 export type LandlordSmsNumberRow = {
   id: string
@@ -90,30 +90,13 @@ export async function findActiveLandlordMain(
   supabase: SupabaseClient,
   landlordId: string,
 ): Promise<LandlordSmsNumberRow | null> {
-  const { data, error } = await supabase
-    .from("sms_numbers")
-    .select(SMS_NUMBER_FIELDS)
-    .eq("landlord_id", landlordId)
-    .eq("purpose", "landlord_main")
-    .eq("status", "active")
-    .order("created_at", { ascending: true })
-    .limit(10)
-
-  if (error) {
-    console.error("[smsNumberPool] find landlord_main", error.message)
-    throw new Error("Failed to look up landlord SMS number")
-  }
-
-  const rows = (data as LandlordSmsNumberRow[] | null) ?? []
-  return (
-    rows.find(
-      (row) =>
-        !isUnusableSmsIntakeLine({
-          phone: row.phone_number,
-          provider: row.provider,
-        }),
-    ) ?? null
+  // Single implementation: Alpha-aware resolver (shared Twilio DID fallback).
+  // Do not reintroduce a parallel Telnyx-only lookup here — see
+  // findActiveLandlordMainNumber in landlordSmsOnboarding.ts.
+  const { findActiveLandlordMainNumber } = await import(
+    "./landlordSmsOnboarding.ts"
   )
+  return findActiveLandlordMainNumber(supabase, landlordId)
 }
 
 /** Claim oldest pool number with status=available (legacy: active + unassigned). */

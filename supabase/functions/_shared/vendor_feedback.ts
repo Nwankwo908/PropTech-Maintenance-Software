@@ -6,7 +6,8 @@ import {
   upsertSmsIdentityForPhone,
 } from "./sms/inbound_db.ts"
 import { sendInboundAutoReply } from "./sms/inboundReply.ts"
-import { findActiveLandlordMain } from "./sms/smsNumberPool.ts"
+import { findActiveLandlordMainNumber } from "./sms/landlordSmsOnboarding.ts"
+import { logOutboundNoLandlordMain } from "./sms/logOutboundNoLandlordMain.ts"
 import type { SmsProviderName } from "./sms/types.ts"
 import { normalizePhoneFlexible } from "./resident_notify.ts"
 
@@ -215,12 +216,19 @@ export async function requestVendorFeedback(
     return
   }
 
-  const smsNumber = await findActiveLandlordMain(supabase, input.landlordId)
+  const smsNumber = await findActiveLandlordMainNumber(supabase, input.landlordId)
   if (!smsNumber?.phone_number) {
     console.warn(
       "[vendor-feedback] skip — no landlord_main SMS number",
       input.landlordId,
     )
+    await logOutboundNoLandlordMain(supabase, {
+      landlordId: input.landlordId,
+      messageType: "vendor_feedback_request",
+      resolver: "findActiveLandlordMainNumber",
+      ticketId: input.ticketId,
+      residentId: input.residentId ?? null,
+    })
     return
   }
 

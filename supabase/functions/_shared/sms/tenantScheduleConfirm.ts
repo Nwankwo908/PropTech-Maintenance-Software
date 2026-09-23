@@ -18,14 +18,14 @@ import {
   findOrCreateConversation,
   upsertSmsIdentityForPhone,
 } from "./inbound_db.ts"
-import { findActiveLandlordMain } from "./smsNumberPool.ts"
+import { findActiveLandlordMainNumber } from "./landlordSmsOnboarding.ts"
+import { logOutboundNoLandlordMain } from "./logOutboundNoLandlordMain.ts"
 import type { SmsProviderName } from "./types.ts"
 import {
   buildLandlordResidentDeclinedRescheduleSms,
   buildVendorResidentConfirmedRescheduleSms,
   formatRescheduleTimeLabel,
 } from "./vendorRescheduleSms.ts"
-import { findActiveLandlordMainNumber } from "./landlordSmsOnboarding.ts"
 import { getSMSProviderForSend } from "./providerFactory.ts"
 
 export const AWAITING_SCHEDULE_CONFIRM_KEY = "awaiting_schedule_confirmation"
@@ -248,8 +248,17 @@ export async function askTenantScheduleConfirmation(
       ? vendor.name.trim()
       : "The vendor"
 
-  const smsNumber = await findActiveLandlordMain(supabase, landlordId)
+  const smsNumber = await findActiveLandlordMainNumber(supabase, landlordId)
   if (!smsNumber?.phone_number) {
+    await logOutboundNoLandlordMain(supabase, {
+      landlordId,
+      messageType: "tenant_schedule_ask",
+      resolver: "findActiveLandlordMainNumber",
+      ticketId: params.ticketId,
+      vendorId: params.vendorId,
+      residentId:
+        typeof ticket.resident_id === "string" ? ticket.resident_id : null,
+    })
     return { ok: false, conversationId: null, error: "no_landlord_main" }
   }
 
@@ -371,8 +380,18 @@ async function notifyVendorOnThread(
       : ""
   if (!landlordId || !to) return
 
-  const smsNumber = await findActiveLandlordMain(supabase, landlordId)
-  if (!smsNumber?.phone_number) return
+  const smsNumber = await findActiveLandlordMainNumber(supabase, landlordId)
+  if (!smsNumber?.phone_number) {
+    await logOutboundNoLandlordMain(supabase, {
+      landlordId,
+      messageType: "tenant_schedule_vendor_update",
+      resolver: "findActiveLandlordMainNumber",
+      ticketId: params.ticketId,
+      vendorId: params.vendorId,
+      conversationId: params.conversationId,
+    })
+    return
+  }
 
   const provider: SmsProviderName = "twilio"
   await sendInboundAutoReply(supabase, {
