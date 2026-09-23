@@ -53,13 +53,23 @@ serve(async (req) => {
   const landlordId = typeof body.landlord_id === "string"
     ? body.landlord_id.trim()
     : null
+  const ticketIds = Array.isArray(body.ticket_ids)
+    ? body.ticket_ids.map((id) => String(id).trim()).filter(Boolean)
+    : Array.isArray(body.ticketIds)
+    ? body.ticketIds.map((id) => String(id).trim()).filter(Boolean)
+    : null
+  const force = body.force === true
 
   const supabase = createClient(supabaseUrl, serviceKey, {
     auth: { persistSession: false, autoRefreshToken: false },
   })
 
   try {
-    const summary = await processScheduleFsmTtlChecks(supabase, { landlordId })
+    const summary = await processScheduleFsmTtlChecks(supabase, {
+      landlordId,
+      ticketIds,
+      force,
+    })
     return jsonResponse({ ok: true, ...summary })
   } catch (err) {
     console.error("[check-schedule-fsm-ttl]", err)

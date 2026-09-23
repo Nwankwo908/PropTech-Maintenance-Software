@@ -10,6 +10,7 @@ import {
   ensureInvoiceFromApprovedEstimate,
   markMaintenanceJobCompleted,
 } from "./maintenanceSpend.ts"
+import { cleanInvoiceJobHeadline } from "./sms/invoicePaidConfirmation.ts"
 import { notifyResidentCompleted } from "../submit-maintenance-request/resident_notify.ts"
 import { emitServerProductEvent } from "./ga4MeasurementProtocol.ts"
 
@@ -27,7 +28,7 @@ export async function finalizeJobAfterResidentFeedback(
   const { data: ticket, error } = await supabase
     .from("maintenance_requests")
     .select(
-      "id, unit, resident_name, email, resident_phone, resident_notification_channel, priority, vendor_work_status, assigned_vendor_id, completion_photo_paths, landlord_id",
+      "id, unit, resident_name, email, resident_phone, resident_notification_channel, priority, vendor_work_status, assigned_vendor_id, completion_photo_paths, landlord_id, description, issue_headline, issue_category",
     )
     .eq("id", params.ticketId)
     .maybeSingle()

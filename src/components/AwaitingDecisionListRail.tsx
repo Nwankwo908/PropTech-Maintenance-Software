@@ -124,7 +124,11 @@ export function AwaitingDecisionListRail({
                     <button
                       type="button"
                       onClick={() => onItemAction(item)}
-                      className={ADMIN_ATTENTION_ACTION_CLASS}
+                      className={
+                        /assign\s*vendor/i.test(item.actionLabel)
+                          ? 'sa-press shrink-0 rounded-[10px] bg-[#55B6A1] px-4 py-2 text-[13px] font-medium leading-5 text-white hover:opacity-90'
+                          : ADMIN_ATTENTION_ACTION_CLASS
+                      }
                     >
                       {item.actionLabel} →
                     </button>
@@ -132,7 +136,11 @@ export function AwaitingDecisionListRail({
                     <Link
                       to={item.actionTo ?? '/admin/workflows'}
                       onClick={() => onClose()}
-                      className={ADMIN_ATTENTION_ACTION_CLASS}
+                      className={
+                        /assign\s*vendor/i.test(item.actionLabel ?? '')
+                          ? 'sa-press shrink-0 rounded-[10px] bg-[#55B6A1] px-4 py-2 text-[13px] font-medium leading-5 text-white hover:opacity-90'
+                          : ADMIN_ATTENTION_ACTION_CLASS
+                      }
                     >
                       {item.actionLabel} →
                     </Link>

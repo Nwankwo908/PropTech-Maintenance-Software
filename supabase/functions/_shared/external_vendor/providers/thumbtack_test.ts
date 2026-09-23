@@ -124,7 +124,7 @@ Deno.test("parseThumbtackBusinesses maps partner search payload", () => {
   if (hit.listingUrl !== "https://thumbtack.com/example") throw new Error("listingUrl")
   if (
     hit.requestFlowUrl !==
-      "https://thumbtack.com/embed/request-flow?category_pk=c1&project_pk=s1&utm_source=cma-ulohome"
+      "https://thumbtack.com/embed/request-flow?category_pk=c1&project_pk=s1&utm_source=cma-ulohome&utm_medium=partnership"
   ) {
     throw new Error(`requestFlowUrl ${hit.requestFlowUrl}`)
   }
@@ -258,7 +258,25 @@ Deno.test("resolveThumbtackRequestFlowUrl prefers the widget URL", () => {
     categoryId: "c1",
     utmSource: "ulo",
   })
-  if (url !== "https://thumbtack.com/embed/request-flow?x=1&utm_source=cma-ulohome") {
+  if (
+    url !==
+      "https://thumbtack.com/embed/request-flow?x=1&utm_source=cma-ulohome&utm_medium=partnership"
+  ) {
+    throw new Error(String(url))
+  }
+})
+
+Deno.test("resolveThumbtackRequestFlowUrl builds embed URL from service_pk", () => {
+  const url = resolveThumbtackRequestFlowUrl({
+    categoryId: "c1",
+    servicePk: "999",
+    zipCode: "94107",
+    utmSource: "ulo",
+  })
+  if (
+    url !==
+      "https://thumbtack.com/embed/request-flow?category_pk=c1&service_pk=999&zip_code=94107&utm_source=cma-ulohome&utm_medium=partnership"
+  ) {
     throw new Error(String(url))
   }
 })
@@ -271,7 +289,7 @@ Deno.test("resolveThumbtackRequestFlowUrl builds embed URL from search ids", () 
   })
   if (
     url !==
-      "https://www.thumbtack.com/embed/request-flow?category_pk=c1&project_pk=s1&utm_source=cma-ulohome"
+      "https://thumbtack.com/embed/request-flow?category_pk=c1&project_pk=s1&utm_source=cma-ulohome&utm_medium=partnership"
   ) {
     throw new Error(String(url))
   }

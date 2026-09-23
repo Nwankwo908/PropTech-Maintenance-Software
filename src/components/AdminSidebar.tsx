@@ -1,5 +1,5 @@
 import { Link, NavLink, useSearchParams } from 'react-router-dom'
-import { Fragment, type ReactNode } from 'react'
+import { Fragment, useEffect, useState, type ReactNode } from 'react'
 import residentsIcon from '@/assets/Residents.svg'
 import graphIcon from '@/assets/graph.svg'
 import settingIcon from '@/assets/Setting.svg'
@@ -16,6 +16,10 @@ import {
   type AdminNavId,
 } from '@/lib/adminNavigation'
 import { useSetupSuccessNavHint } from '@/hooks/useSetupSuccessNavHint'
+import { useActiveTasksNavCount } from '@/hooks/useActiveTasksNavCount'
+import {
+  PROFILE_SETUP_NAV_POINT_EVENT,
+} from '@/lib/setupSuccessChecklist'
 
 const navBase =
   'flex min-h-[44px] w-full cursor-pointer items-center justify-start gap-3 whitespace-nowrap rounded-[10px] px-4 text-left text-[14px] font-medium tracking-[-0.1504px] outline-none transition-colors duration-150 focus-visible:ring-2 focus-visible:ring-[#101828] focus-visible:ring-offset-2 focus-visible:ring-offset-white'
@@ -169,7 +173,17 @@ export function AdminSidebarContent({
   const [searchParams] = useSearchParams()
   const isCollapsedRail = Boolean(forRail && collapsed)
   const setupNavHint = useSetupSuccessNavHint()
+  const activeTasksCount = useActiveTasksNavCount()
+  const [profileSetupPointed, setProfileSetupPointed] = useState(false)
 
+  useEffect(() => {
+    const onPoint = (event: Event) => {
+      const detail = (event as CustomEvent<{ active?: boolean }>).detail
+      setProfileSetupPointed(Boolean(detail?.active))
+    }
+    window.addEventListener(PROFILE_SETUP_NAV_POINT_EVENT, onPoint)
+    return () => window.removeEventListener(PROFILE_SETUP_NAV_POINT_EVENT, onPoint)
+  }, [])
   // Desktop rail brand height must match AdminTopBar so the shared grey rule lines up.
   const gutter = forRail
     ? isCollapsedRail
@@ -303,23 +317,38 @@ export function AdminSidebarContent({
               <span className="size-5 shrink-0 text-current" aria-hidden>
                 {item.icon}
               </span>
-              {!isCollapsedRail ? <span className="min-w-0 text-left">{item.label}</span> : null}
+              {!isCollapsedRail ? (
+                <>
+                  <span className="min-w-0 text-left">{item.label}</span>
+                  {item.id === 'workflows' && activeTasksCount != null ? (
+                    <span className="ml-auto inline-flex min-w-[1.25rem] shrink-0 items-center justify-center rounded-[4px] bg-[#101828] px-1.5 py-0.5 text-[11px] font-semibold leading-4 text-white tabular-nums">
+                      {activeTasksCount}
+                    </span>
+                  ) : null}
+                </>
+              ) : null}
             </NavLink>
             {item.id === 'settings' && setupNavHint.show ? (
               <Fragment key={`${item.to}-profile-setup`}>
                 <button
                   type="button"
+                  data-ulo-profile-setup-nav=""
                   title={isCollapsedRail ? `Profile setup · ${setupNavHint.percent}%` : undefined}
                   aria-label={`Profile setup, ${setupNavHint.percent}% complete`}
                   onClick={() => {
                     setupNavHint.expandCard()
                     item.onClick?.()
                   }}
-                  className={
+                  className={[
+                    'ulo-profile-setup-nav',
                     isCollapsedRail
                       ? `sa-press ${navBaseCollapsed} text-[11px] font-semibold tracking-[-0.02em] text-[#364153] opacity-60 hover:bg-[#f3f4f6] hover:opacity-100`
-                      : `sa-press ${navBase} text-[13px] font-medium text-[#364153] opacity-60 hover:bg-[#f3f4f6] hover:opacity-100`
-                  }
+                      : `sa-press ${navBase} text-[13px] font-medium text-[#364153] opacity-60 hover:bg-[#f3f4f6] hover:opacity-100`,
+                    profileSetupPointed ? 'relative z-10' : '',
+                  ]
+                    .filter(Boolean)
+                    .join(' ')}
+                  data-pointed={profileSetupPointed ? 'true' : 'false'}
                 >
                   {isCollapsedRail ? (
                     <span className="tabular-nums">{setupNavHint.percent}%</span>

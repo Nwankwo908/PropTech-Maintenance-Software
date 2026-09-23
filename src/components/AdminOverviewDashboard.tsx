@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, Fragment, type CSSProperties, type ReactNode } from 'react'
 import { getAdminEdgeSecret } from '@/lib/adminEdgeAuth'
 import { Link, useLocation, useNavigate } from 'react-router-dom'
 import {
@@ -13,8 +13,11 @@ import {
   resolveReassignExternalVendorUrl,
 } from '@/api/reassignExternalVendor'
 import { postSlaAutoReassign, resolveSlaAutoReassignUrl } from '@/api/slaAutoReassign'
-import insightWarningIcon from '@/assets/noun-warning-recurring.png'
 import feedInfoIcon from '@/assets/noun-information.png'
+import openRepairsIcon from '@/assets/repair-tool.png'
+import scheduledVisitsIcon from '@/assets/calendar.png'
+import propertyHealthIcon from '@/assets/hospital.png'
+import ytdMaintenanceCostIcon from '@/assets/price-up.png'
 import { GetSetUpForSuccessCard } from '@/components/GetSetUpForSuccessCard'
 import { MyPropertiesAcrossAdmin } from '@/components/MyPropertiesAcrossAdmin'
 import { AwaitingDecisionListRail } from '@/components/AwaitingDecisionListRail'
@@ -25,16 +28,20 @@ import { LeaseRenewalEscalatedRail } from '@/components/LeaseRenewalEscalatedRai
 import { LeaseRenewalIncentiveMessageRail } from '@/components/LeaseRenewalIncentiveMessageRail'
 import { InvoicePaymentRail, type InvoicePaymentReview, type InvoicePaymentSuccessDetails } from '@/components/InvoicePaymentRail'
 import { SlaOverdueActionRail } from '@/components/SlaOverdueActionRail'
+import { RecommendedActionsWorkOrdersRail } from '@/components/RecommendedActionsWorkOrdersRail'
+import type { RecommendedActionWorkOrderItem } from '@/components/RecommendedActionsWorkOrdersRail'
 import { FindExternalVendorRail } from '@/components/FindExternalVendorRail'
 import { VendorCallFlowModal } from '@/components/VendorCallFlowModal'
 import { useAdminDesktopLayout } from '@/hooks/useAdminDesktopLayout'
 import { findExternalVendorTicketFromSearch, FIND_EXTERNAL_VENDOR_QUERY } from '@/lib/uloAppUrl'
 import { getActiveLandlordId } from '@/lib/activeLandlord'
 import {
+  clearSetupSuccessCardDismissed,
   dismissSetupSuccessCard,
   isSetupSuccessCardDismissed,
   isSetupSuccessTestDeliveryComplete,
   resolveSetupSuccessProgress,
+  setProfileSetupNavPointed,
   SETUP_SUCCESS_COLLAPSED_EVENT,
   SETUP_SUCCESS_ITEMS,
   shouldShowSetupSuccessCard,
@@ -61,14 +68,17 @@ import {
   maintenanceTicketIdFromWorkflowRun,
   type AdminWorkflowDashboardData,
 } from '@/lib/adminWorkflows'
+import { collectAdminWorkflowRuns } from '@/lib/adminWorkflowKanban'
 import {
   collectCompletedWorkOrderTicketIds,
   shouldOmitEscalatedRunFromNeedsAttention,
 } from '@/lib/needsAttentionWorkOrder'
 import {
-  snapshotActiveOperations,
-} from '@/lib/adminWorkflowKanban'
-import { fetchVendorYtdPaidTotal } from '@/lib/workflowPipelineDetail'
+  fetchVendorYtdPaidTotal,
+  fetchWorkflowPipelineDetail,
+  type WorkflowPipelineDetail,
+} from '@/lib/workflowPipelineDetail'
+import { WorkflowPipelineDetailPanel } from '@/components/WorkflowPipelineDetailPanel'
 import {
   ADMIN_ATTENTION_ACTION_CLASS,
   ADMIN_RIGHT_RAIL_SCRIM,
@@ -99,6 +109,7 @@ import {
   type PropertyHealthVendorMetrics,
 } from '@/lib/propertyHealth'
 import { PropertyHealthDonut, propertyHealthDonutPercent } from '@/components/PropertyHealthDonut'
+import { ProfileSetupPointingArrow } from '@/components/ProfileSetupPointingArrow'
 import { buildEscalatedWorkflowReview } from '@/lib/escalatedWorkflowReview'
 import {
   applyLateRentAccountAction,
@@ -159,17 +170,35 @@ import {
 import { supabase } from '@/lib/supabase'
 import { getErrorMessage } from '@/lib/errorMessage'
 import {
+  applyInsightSynthesis,
   computePortfolioInsights,
+  acceptedStatusLabel,
+  needsExternalStatusLabel,
+  probingStatusLabel,
+  type InsightSchedulingCardState,
   type PortfolioInsightFinding,
+  type SynthesizedInsightCard,
 } from '@shared/portfolioIntelligence'
+import {
+  postSynthesizePropertyInsights,
+  resolveSynthesizePropertyInsightsUrl,
+} from '@/api/synthesizePropertyInsights'
+import {
+  defaultPropertyInsightActionDeps,
+  runPropertyInsightAction,
+  schedulingStateFromActionResult,
+} from '@/lib/propertyInsightActions'
 
 type OverviewTicket = {
   id: string
   createdAt: string
   urgency: string
   dueAt: string | null
+  /** Confirmed / proposed visit instant when set. */
+  scheduledAt: string | null
   vendorWorkStatus: string
   unit: string
+  unitId: string | null
   building: string | null
   email: string | null
   description: string | null
@@ -199,8 +228,6 @@ type OverviewUnit = {
   building: string | null
   status: string
 }
-
-type SmartInsight = PortfolioInsightFinding
 
 type AttentionItem = {
   key: string
@@ -294,8 +321,10 @@ function normalizeTicketRow(
       asString(raw.priority)
     ).toLowerCase(),
     dueAt: asString(raw.due_at) || null,
+    scheduledAt: asString(raw.scheduled_at) || null,
     vendorWorkStatus: asString(raw.vendor_work_status).toLowerCase(),
     unit: asString(raw.unit),
+    unitId: asString(raw.unit_id) || null,
     building: asString(raw.building) || null,
     email: asString(raw.email) || null,
     description: asString(raw.description) || null,
@@ -392,6 +421,43 @@ function isTicketOpen(ticket: OverviewTicket): boolean {
 
 function isTicketCritical(ticket: OverviewTicket): boolean {
   return CRITICAL_LEVELS.has(ticket.urgency)
+}
+
+/** Upcoming (or today) visit still on an open work order. */
+function isUpcomingScheduledVisit(
+  ticket: OverviewTicket,
+  nowMs: number = Date.now(),
+): boolean {
+  const instant = ticket.scheduledAt?.trim()
+  if (!instant) return false
+  const status = ticket.vendorWorkStatus
+  if (
+    status === 'cancelled' ||
+    status === 'declined' ||
+    status === 'completed'
+  ) {
+    return false
+  }
+  const at = new Date(instant).getTime()
+  if (Number.isNaN(at)) return false
+  const startOfToday = new Date(nowMs)
+  startOfToday.setHours(0, 0, 0, 0)
+  return at >= startOfToday.getTime()
+}
+
+function countScheduledBetween(
+  tickets: OverviewTicket[],
+  fromMs: number,
+  toMs: number,
+): number {
+  return tickets.filter((ticket) => {
+    const instant = ticket.scheduledAt?.trim()
+    if (!instant) return false
+    const status = ticket.vendorWorkStatus
+    if (status === 'cancelled' || status === 'declined') return false
+    const at = new Date(instant).getTime()
+    return !Number.isNaN(at) && at >= fromMs && at < toMs
+  }).length
 }
 
 function normalizeUnitLabel(label: string): string {
@@ -566,10 +632,71 @@ function KpiBreakdownInfo({
   )
 }
 
+function PropertyHealthUnavailableAside({
+  onOpenProfileSetup,
+}: {
+  onOpenProfileSetup: () => void
+}) {
+  const [pointing, setPointing] = useState(false)
+
+  const stopPointing = () => {
+    setPointing(false)
+    setProfileSetupNavPointed(false)
+  }
+
+  const startPointing = () => {
+    setPointing(true)
+    setProfileSetupNavPointed(true)
+  }
+
+  useEffect(() => {
+    return () => setProfileSetupNavPointed(false)
+  }, [])
+
+  return (
+    <>
+      <div
+        className={[
+          'sa-surface min-w-0 rounded-[8px] p-1 -m-1 outline-none focus-visible:ring-2 focus-visible:ring-[#101828] focus-visible:ring-offset-2',
+          pointing ? 'bg-[#E0F2EF]/70' : 'bg-transparent',
+        ].join(' ')}
+        tabIndex={0}
+        onMouseEnter={startPointing}
+        onMouseLeave={stopPointing}
+        onFocus={startPointing}
+        onBlur={(event) => {
+          if (event.currentTarget.contains(event.relatedTarget as Node | null)) return
+          stopPointing()
+        }}
+      >
+        <p className="text-[14px] font-semibold leading-5 tracking-[-0.1504px] text-[#0a0a0a]">
+          Not Available
+        </p>
+        <p className="mt-0.5 text-[12px] leading-4 text-[#6a7282]">
+          Complete your profile set up to unlock this metric
+        </p>
+        <button
+          type="button"
+          onClick={() => {
+            stopPointing()
+            onOpenProfileSetup()
+          }}
+          className="sa-link mt-2 text-[12px] font-semibold leading-4 text-[#186179]"
+        >
+          Profile setup →
+        </button>
+      </div>
+      <ProfileSetupPointingArrow active={pointing} />
+    </>
+  )
+}
+
 function KpiCard({
   label,
+  labelIcon,
   value,
   chart,
+  chartAside,
   delta,
   deltaSuffix = '',
   deltaFormatter,
@@ -581,8 +708,12 @@ function KpiCard({
   stagger = 0,
 }: {
   label: string
+  /** Optional icon shown in a gray rounded square to the left of the label. */
+  labelIcon?: string
   value: string
   chart?: ReactNode
+  /** Content to the right of the chart (e.g. Property Health unavailable copy). */
+  chartAside?: ReactNode
   delta: number | null
   /** Appended to the delta, e.g. '%' for rate cards. */
   deltaSuffix?: string
@@ -599,60 +730,116 @@ function KpiCard({
   const positive = (delta ?? 0) > 0
   const neutral = delta === 0
   const good = neutral ? false : positive === goodWhenUp
+
+  const deltaChip =
+    delta != null ? (
+      <span
+        className={[
+          'flex shrink-0 items-center gap-1 rounded-full px-2 py-1 text-[12px] leading-4 tracking-[-0.1504px] sm:gap-1.5 sm:px-3 sm:py-1.5 sm:text-[14px] sm:leading-5',
+          // Icon carries a brighter shade than the label text.
+          neutral
+            ? 'bg-[#f3f4f6] text-[#6a7282]'
+            : good
+              ? 'bg-[rgba(16,185,129,0.08)] text-[#008236] [&>svg]:text-[#10b981]'
+              : 'bg-[rgba(255,83,83,0.08)] text-[#c10007] [&>svg]:text-[#fb2c36]',
+        ].join(' ')}
+      >
+        {neutral ? null : positive ? <TrendingUpIcon /> : <TrendingDownIcon />}
+        {deltaFormatter
+          ? deltaFormatter(delta ?? 0)
+          : positive
+            ? `+${delta}${deltaSuffix}`
+            : `${delta}${deltaSuffix}`}
+      </span>
+    ) : null
+
+  const labelRow = (
+    <div className="flex min-w-0 items-center gap-1.5">
+      {labelIcon ? (
+        <span
+          className="flex size-[2.1rem] shrink-0 items-center justify-center rounded-[8px] bg-[#f3f4f6]"
+          aria-hidden
+        >
+          <img src={labelIcon} alt="" className="size-[1.2rem] object-contain" />
+        </span>
+      ) : null}
+      <p className="min-w-0 truncate text-left text-[14px] leading-5 tracking-[-0.1504px] text-[#6a7282]">
+        {label}
+      </p>
+      {infoLines?.length ? (
+        <KpiBreakdownInfo
+          title={infoTitle ?? label}
+          description={infoDescription}
+          lines={infoLines}
+        />
+      ) : null}
+    </div>
+  )
+
+  const valueBlock = (
+    <div
+      className={[
+        'relative flex min-h-20 min-w-0 flex-1 gap-3',
+        chart
+          ? chartAside
+            ? 'items-center'
+            : 'items-center justify-end'
+          : 'items-end justify-start',
+      ].join(' ')}
+    >
+      {chart ? (
+        <div
+          className={
+            chartAside
+              ? 'shrink-0'
+              : 'pointer-events-none absolute -left-2 top-1/2 z-10 -translate-y-1/2 sm:-left-3'
+          }
+        >
+          {chart}
+        </div>
+      ) : (
+        <p className="min-w-0 break-words text-left text-[28px] font-medium leading-none tracking-[0.4px] text-[#0a0a0a] tabular-nums sm:text-[44px] xl:text-[52px]">
+          {value}
+        </p>
+      )}
+      {chartAside ? <div className="min-w-0 flex-1 text-left">{chartAside}</div> : null}
+    </div>
+  )
+
+  const captionRow = (
+    <div className="mt-auto flex min-w-0 items-center gap-2">
+      <p className="min-w-0 truncate whitespace-nowrap text-left text-[12px] leading-4 text-[#6a7282]">
+        {caption}
+      </p>
+      {deltaChip}
+    </div>
+  )
+
+  // Icon width (2.1rem) + gap-1.5 so value/caption share the title text’s left edge.
+  const textIndentClass = labelIcon ? 'pl-[calc(2.1rem+0.375rem)]' : ''
+
   return (
     <div
-      className="sa-stagger-scale sa-card relative z-0 flex h-full min-w-0 flex-1 flex-col gap-4 overflow-visible rounded-[10px] border border-[#e5e7eb] bg-white p-4 shadow-[0px_1px_2px_-1px_rgba(0,0,0,0.06)] hover:z-20 focus-within:z-20 sm:p-6"
+      className="sa-stagger-scale sa-card relative z-0 flex h-full min-w-0 flex-1 flex-col gap-4 overflow-visible rounded-[10px] border border-[#e5e7eb] bg-white p-4 text-left shadow-[0px_1px_2px_-1px_rgba(0,0,0,0.06)] hover:z-20 focus-within:z-20 sm:p-6"
       style={{ '--sa-stagger': stagger } as CSSProperties}
     >
-      <div className="flex min-w-0 items-center gap-1.5">
-        <p className="min-w-0 truncate text-[14px] leading-5 tracking-[-0.1504px] text-[#6a7282]">
-          {label}
-        </p>
-        {infoLines?.length ? (
-          <KpiBreakdownInfo
-            title={infoTitle ?? label}
-            description={infoDescription}
-            lines={infoLines}
-          />
-        ) : null}
+      {labelRow}
+      <div className={['flex min-h-0 min-w-0 flex-1 flex-col gap-4', textIndentClass].filter(Boolean).join(' ')}>
+        {valueBlock}
+        {captionRow}
       </div>
-      <div className={`relative flex min-h-20 min-w-0 flex-1 flex-nowrap gap-2 ${chart ? 'items-center justify-end' : 'items-end justify-between'}`}>
-        {chart ? (
-          <div className="pointer-events-none absolute -left-2 top-1/2 z-10 -translate-y-1/2 sm:-left-3">
-            {chart}
-          </div>
-        ) : (
-          <p className="min-w-0 break-words text-[28px] font-medium leading-none tracking-[0.4px] text-[#0a0a0a] tabular-nums sm:text-[44px] xl:text-[52px]">
-            {value}
-          </p>
-        )}
-        {delta != null ? (
-          <span
-            className={[
-              'flex shrink-0 items-center gap-1 rounded-full px-2 py-1 text-[12px] leading-4 tracking-[-0.1504px] sm:gap-1.5 sm:px-3 sm:py-1.5 sm:text-[14px] sm:leading-5',
-              // Icon carries a brighter shade than the label text.
-              neutral
-                ? 'bg-[#f3f4f6] text-[#6a7282]'
-                : good
-                  ? 'bg-[rgba(16,185,129,0.08)] text-[#008236] [&>svg]:text-[#10b981]'
-                  : 'bg-[rgba(255,83,83,0.08)] text-[#c10007] [&>svg]:text-[#fb2c36]',
-            ].join(' ')}
-          >
-            {neutral ? null : positive ? <TrendingUpIcon /> : <TrendingDownIcon />}
-            {deltaFormatter
-              ? deltaFormatter(delta ?? 0)
-              : positive
-                ? `+${delta}${deltaSuffix}`
-                : `${delta}${deltaSuffix}`}
-          </span>
-        ) : null}
-      </div>
-      <p className="mt-auto min-w-0 truncate whitespace-nowrap text-[12px] leading-4 text-[#6a7282]">{caption}</p>
     </div>
   )
 }
 
-/** Map insight score (0–100) onto a 1–5 strength meter for insight cards. */
+const INSIGHT_TAG_LABEL: Record<PortfolioInsightFinding['tag'], string> = {
+  'RECURRING ISSUES': 'Recurring Issues',
+  RISK: 'Needs Attention',
+  'VENDOR RESPONSE': 'Vendor Response',
+  'PREVENT FUTURE REPAIRS': 'Prevent Future Repairs',
+}
+
+/** Map urgency (0–100) onto a 1–5 strength meter for recommendation cards. */
 function insightStrengthDots(score: number): number {
   return Math.min(5, Math.max(1, Math.floor((score - 50) / 10)))
 }
@@ -660,11 +847,11 @@ function insightStrengthDots(score: number): number {
 function InsightStrengthMeter({ score }: { score: number }) {
   const filled = insightStrengthDots(score)
   return (
-    <div className="flex shrink-0 items-center gap-[6px]" aria-hidden>
+    <div className="flex shrink-0 items-center gap-[6px]" aria-label={`Strength ${filled} of 5`}>
       {Array.from({ length: 5 }, (_, i) => (
         <span
           key={i}
-          className={`size-[10px] rounded-full ${
+          className={`sa-pill size-[10px] rounded-full ${
             i < filled ? 'bg-[#9E439F]' : 'bg-[#e2e8f0]'
           }`}
         />
@@ -673,150 +860,132 @@ function InsightStrengthMeter({ score }: { score: number }) {
   )
 }
 
-/** Alert badge for high-strength (4–5) or low-strength (1–2) insight cards. */
-function InsightAlertIcon({
-  score,
-  when,
+function PropertyInsightRecommendationCard({
+  card,
+  scheduling,
+  onAction,
+  onViewDetails,
+  onFindExternal,
+  actionBusy,
 }: {
-  score: number
-  when: 'high' | 'low'
+  card: SynthesizedInsightCard
+  scheduling: InsightSchedulingCardState | null
+  onAction: (card: SynthesizedInsightCard) => void
+  onViewDetails: (card: SynthesizedInsightCard) => void
+  onFindExternal: (ticketId: string) => void
+  actionBusy: boolean
 }) {
-  const dots = insightStrengthDots(score)
-  if (when === 'high' && dots < 4) return null
-  if (when === 'low' && dots > 2) return null
-  return (
-    <span
-      role="img"
-      aria-label={when === 'high' ? 'High priority insight' : 'Low vendor response'}
-      className="mt-0.5 size-5 shrink-0"
-      style={{
-        backgroundColor: '#DA4951',
-        WebkitMaskImage: `url(${insightWarningIcon})`,
-        WebkitMaskSize: 'contain',
-        WebkitMaskRepeat: 'no-repeat',
-        WebkitMaskPosition: 'center',
-        maskImage: `url(${insightWarningIcon})`,
-        maskSize: 'contain',
-        maskRepeat: 'no-repeat',
-        maskPosition: 'center',
-      }}
-    />
-  )
-}
-
-function RecurringIssuesInsightCard({ insight }: { insight: SmartInsight }) {
-  const categoryLabel = insight.categoryLabel ?? 'Maintenance'
-  const requestCount = insight.requestCount ?? 0
+  const title = INSIGHT_TAG_LABEL[card.tag] ?? card.tag
+  const requestCount = card.requestCount ?? 0
   const requestWord = requestCount === 1 ? 'Request' : 'Requests'
+  const strengthScore = Math.round(card.urgency * (card.confidence / 100))
+  const metaBits: string[] = []
+  if (card.tag === 'VENDOR RESPONSE') {
+    metaBits.push(
+      `${card.assignedCount ?? 0} Assigned ${(card.assignedCount ?? 0) === 1 ? 'Work Order' : 'Work Orders'}`,
+    )
+    metaBits.push('All Time')
+  } else {
+    if (card.tag === 'RISK') {
+      metaBits.push(`${requestCount} Maintenance ${requestWord}`)
+    } else if (card.categoryLabel) {
+      metaBits.push(`${requestCount} ${card.categoryLabel} ${requestWord}`)
+    } else if (requestCount > 0) {
+      metaBits.push(`${requestCount} ${requestWord}`)
+    }
+    metaBits.push('Last 60 Days')
+  }
+
+  const status = scheduling?.status ?? 'idle'
+  const scheduleCta =
+    card.actionType === 'request_diagnostic' ||
+    card.actionType === 'schedule_inspection' ||
+    card.actionType === 'schedule_building_inspection' ||
+    card.actionType === 'schedule_unit_walkthrough'
 
   return (
-    <div className="sa-enter-scale sa-surface flex min-w-0 flex-col gap-2 rounded-[12px] border border-[#eef2ff] bg-white p-4 shadow-[0px_1px_3px_rgba(0,0,0,0.08)]">
-      <div className="flex items-start justify-between gap-2">
-        <p className="text-[12px] font-extrabold uppercase leading-normal tracking-[0.04em] text-[#9E439F]">
-          Recurring Issues
-        </p>
-        <InsightAlertIcon score={insight.score} when="high" />
-      </div>
-      <div className="flex min-w-0 flex-wrap items-start gap-3 sm:items-center sm:gap-5">
-        <p className="min-w-0 flex-1 text-[16px] font-normal leading-[1.4] text-[#0f172a]">
-          {insight.text}
-        </p>
-        <InsightStrengthMeter score={insight.score} />
-      </div>
-      <div className="flex flex-wrap items-center gap-2 text-[13px] leading-normal text-[#64748b]">
-        <span>
-          {requestCount} {categoryLabel} {requestWord}
-        </span>
-        <span className="h-3 w-px shrink-0 bg-[#eef2ff]" aria-hidden />
-        <span>Last 60 Days</span>
-      </div>
-    </div>
-  )
-}
-
-function RiskInsightCard({ insight }: { insight: SmartInsight }) {
-  const requestCount = insight.requestCount ?? 0
-  const requestWord = requestCount === 1 ? 'Request' : 'Requests'
-
-  return (
-    <div className="sa-enter-scale sa-surface flex min-w-0 flex-col gap-2 rounded-[12px] border border-[#eef2ff] bg-white p-4 shadow-[0px_1px_3px_rgba(0,0,0,0.08)]">
-      <div className="flex items-start justify-between gap-2">
-        <p className="text-[12px] font-extrabold uppercase leading-normal tracking-[0.04em] text-[#9E439F]">
-          Needs Attention
-        </p>
-        <InsightAlertIcon score={insight.score} when="high" />
-      </div>
-      <div className="flex min-w-0 flex-wrap items-start gap-3 sm:items-center sm:gap-5">
-        <p className="min-w-0 flex-1 text-[16px] font-normal leading-[1.4] text-[#0f172a]">
-          {insight.text}
-        </p>
-        <InsightStrengthMeter score={insight.score} />
-      </div>
-      <div className="flex flex-wrap items-center gap-2 text-[13px] leading-normal text-[#64748b]">
-        <span>
-          {requestCount} Maintenance {requestWord}
-        </span>
-        <span className="h-3 w-px shrink-0 bg-[#eef2ff]" aria-hidden />
-        <span>Last 60 Days</span>
-      </div>
-    </div>
-  )
-}
-
-function VendorResponseInsightCard({ insight }: { insight: SmartInsight }) {
-  const assignedCount = insight.assignedCount ?? 0
-  const assignedWord = assignedCount === 1 ? 'Work Order' : 'Work Orders'
-
-  return (
-    <div className="sa-enter-scale sa-surface flex min-w-0 flex-col gap-2 rounded-[12px] border border-[#eef2ff] bg-white p-4 shadow-[0px_1px_3px_rgba(0,0,0,0.08)]">
-      <div className="flex items-start justify-between gap-2">
-        <p className="text-[12px] font-extrabold uppercase leading-normal tracking-[0.04em] text-[#9E439F]">
-          Vendor Response
-        </p>
-        <InsightAlertIcon score={insight.score} when="low" />
-      </div>
-      <div className="flex min-w-0 flex-wrap items-start gap-3 sm:items-center sm:gap-5">
-        <p className="min-w-0 flex-1 text-[16px] font-normal leading-[1.4] text-[#0f172a]">
-          {insight.text}
-        </p>
-        <InsightStrengthMeter score={insight.score} />
-      </div>
-      <div className="flex flex-wrap items-center gap-2 text-[13px] leading-normal text-[#64748b]">
-        <span>
-          {assignedCount} Assigned {assignedWord}
-        </span>
-        <span className="h-3 w-px shrink-0 bg-[#eef2ff]" aria-hidden />
-        <span>All Time</span>
-      </div>
-    </div>
-  )
-}
-
-function PreventFutureRepairsInsightCard({ insight }: { insight: SmartInsight }) {
-  const categoryLabel = insight.categoryLabel ?? 'Maintenance'
-  const requestCount = insight.requestCount ?? 0
-  const requestWord = requestCount === 1 ? 'Request' : 'Requests'
-
-  return (
-    <div className="sa-enter-scale sa-surface flex min-w-0 flex-col gap-2 rounded-[12px] border border-[#eef2ff] bg-white p-4 shadow-[0px_1px_3px_rgba(0,0,0,0.08)]">
-      <div className="flex items-start justify-between gap-2">
-        <p className="text-[12px] font-extrabold uppercase leading-normal tracking-[0.04em] text-[#9E439F]">
-          Prevent Future Repairs
-        </p>
-        <InsightAlertIcon score={insight.score} when="high" />
-      </div>
-      <div className="flex min-w-0 flex-wrap items-start gap-3 sm:items-center sm:gap-5">
-        <p className="min-w-0 flex-1 text-[16px] font-normal leading-[1.4] text-[#0f172a]">
-          {insight.text}
-        </p>
-        <InsightStrengthMeter score={insight.score} />
-      </div>
-      <div className="flex flex-wrap items-center gap-2 text-[13px] leading-normal text-[#64748b]">
-        <span>
-          {requestCount} {categoryLabel} {requestWord}
-        </span>
-        <span className="h-3 w-px shrink-0 bg-[#eef2ff]" aria-hidden />
-        <span>Last 60 Days</span>
+    <div className="sa-enter-scale sa-surface flex w-full min-w-0 flex-col gap-2 rounded-[12px] border border-[#eef2ff] bg-white p-3 shadow-[0px_1px_3px_rgba(0,0,0,0.08)] sm:p-4">
+      <div className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-x-4 gap-y-2 sm:gap-x-6">
+        <div className="flex min-w-0 flex-col gap-1.5 self-start">
+          <p className="min-w-0 text-[12px] font-extrabold uppercase leading-4 tracking-[0.04em] text-[#9E439F]">
+            {title}
+          </p>
+          <p className="min-w-0 text-[16px] font-normal leading-[1.35] text-[#0f172a]">{card.text}</p>
+          {status === 'probing' ? (
+            <p key="probing" className="sa-enter text-[13px] font-medium leading-5 text-[#64748b]">
+              {probingStatusLabel()}
+            </p>
+          ) : null}
+          {status === 'accepted' && scheduling ? (
+            <p key="accepted" className="sa-enter text-[13px] font-medium leading-5 text-[#146b52]">
+              {acceptedStatusLabel(scheduling)}
+            </p>
+          ) : null}
+          {status === 'needs_external' && scheduling?.targetDay ? (
+            <p key="needs-external" className="sa-enter text-[13px] font-medium leading-5 text-[#64748b]">
+              {needsExternalStatusLabel(scheduling.targetDay)}
+            </p>
+          ) : null}
+          {metaBits.length > 0 ? (
+            <div className="flex flex-wrap items-center gap-1.5">
+              {metaBits.map((bit) => (
+                <span
+                  key={bit}
+                  className="inline-flex items-center rounded-full bg-[#f3f4f6] px-2.5 py-1 text-[12px] font-medium leading-4 text-[#64748b]"
+                >
+                  {bit}
+                </span>
+              ))}
+            </div>
+          ) : null}
+        </div>
+        <div className="flex items-center justify-center">
+          <InsightStrengthMeter score={strengthScore} />
+        </div>
+        <div className="flex shrink-0 flex-col items-stretch gap-1.5 justify-self-end self-start">
+          {status === 'needs_external' && scheduling?.ticketId ? (
+            <button
+              key="find-external"
+              type="button"
+              onClick={() => onFindExternal(scheduling.ticketId!)}
+              className="sa-enter-scale sa-press rounded-[8px] bg-[#70ABC5] px-3 py-1.5 text-[12px] font-semibold text-white"
+            >
+              Find external vendor
+            </button>
+          ) : status === 'probing' ? (
+            <button
+              key="probing-cta"
+              type="button"
+              disabled
+              className="sa-enter-scale sa-press rounded-[8px] bg-[#e5e7eb] px-3 py-1.5 text-[12px] font-semibold text-[#6a7282]"
+            >
+              Reaching out…
+            </button>
+          ) : status === 'accepted' ? null : card.actionType !== 'none' && card.actionLabel ? (
+            <button
+              key="primary-cta"
+              type="button"
+              disabled={actionBusy}
+              onClick={() => onAction(card)}
+              className={`sa-enter-scale sa-press rounded-[8px] px-3 py-1.5 text-[12px] font-semibold text-white disabled:opacity-60 ${
+                scheduleCta || /assign\s*vendor/i.test(card.actionLabel)
+                  ? 'bg-[#70ABC5]'
+                  : 'bg-[#101828]'
+              }`}
+            >
+              {card.actionLabel}
+            </button>
+          ) : null}
+          {card.ticketIds.length > 0 ? (
+            <button
+              type="button"
+              onClick={() => onViewDetails(card)}
+              className="sa-press rounded-[8px] border border-[#e5e7eb] bg-white px-3 py-1.5 text-[12px] font-semibold text-[#364153] hover:bg-[#f9fafb]"
+            >
+              View details
+            </button>
+          ) : null}
+        </div>
       </div>
     </div>
   )
@@ -855,9 +1024,9 @@ export function AdminOverviewDashboard() {
   }, [])
   const { profile: accountHolderProfile } = useSidebarAdminProfile()
   const greetingName = overviewGreetingFirstName(accountHolderProfile?.name)
-  const greetingLine = greetingName
-    ? `${overviewGreetingSalutation()}, ${greetingName}. See what's happening across your portfolio.`
-    : `${overviewGreetingSalutation()}. See what's happening across your portfolio.`
+  const greetingTitle = greetingName
+    ? `${overviewGreetingSalutation()}, ${greetingName}`
+    : overviewGreetingSalutation()
   const [tickets, setTickets] = useState<OverviewTicket[]>([])
   const [vendors, setVendors] = useState<OverviewVendor[]>([])
   const [units, setUnits] = useState<OverviewUnit[]>([])
@@ -1090,7 +1259,7 @@ export function AdminOverviewDashboard() {
             ? supabase
                 .from('maintenance_request_enriched')
                 .select(
-                  'id, created_at, assigned_at, unit, unit_id, building, email, description, issue_category, assigned_vendor_id, vendor_work_status, urgency, severity, priority, due_at, resident_name, estimated_minutes, total_cost, invoice_total, amount, labor_cost, material_cost, materials_cost, tax_amount, tax, completed_at, resolved_at, closed_at',
+                  'id, created_at, assigned_at, unit, unit_id, building, email, description, issue_category, assigned_vendor_id, vendor_work_status, urgency, severity, priority, due_at, scheduled_at, resident_name, estimated_minutes, total_cost, invoice_total, amount, labor_cost, material_cost, materials_cost, tax_amount, tax, completed_at, resolved_at, closed_at',
                 )
                 .eq('landlord_id', landlordId)
                 .order('created_at', { ascending: false })
@@ -1486,32 +1655,31 @@ export function AdminOverviewDashboard() {
   )
 
   const kpis = useMemo(() => {
-    const criticalOpen = openTickets.filter(isTicketCritical).length
-    const criticalRecent = countCreatedBetween(
+    const openRepairs = openTickets.length
+    const openRepairsRecent = countCreatedBetween(
       tickets,
       now - fourWeeksMs,
       now,
-      isTicketCritical,
     )
-    const criticalPrevious = countCreatedBetween(
+    const openRepairsPrevious = countCreatedBetween(
       tickets,
       now - 2 * fourWeeksMs,
       now - fourWeeksMs,
-      isTicketCritical,
     )
 
-    // Active operations = every workflow run currently in flight, regardless
-    // of type (maintenance, rent collection, move-ins, move-outs, inspections).
-    const opsNowSnapshot = snapshotActiveOperations(workflowData, now)
-    const opsPreviousSnapshot = snapshotActiveOperations(
-      workflowData,
+    const scheduledVisits = tickets.filter((ticket) =>
+      isUpcomingScheduledVisit(ticket, now),
+    ).length
+    const scheduledVisitsRecent = countScheduledBetween(
+      tickets,
+      now - fourWeeksMs,
+      now,
+    )
+    const scheduledVisitsPrevious = countScheduledBetween(
+      tickets,
+      now - 2 * fourWeeksMs,
       now - fourWeeksMs,
     )
-    const activeOps = opsNowSnapshot.total
-    const activeOpsBreakdown = opsNowSnapshot.lines.map((line) => ({
-      label: line.label,
-      count: line.count,
-    }))
 
     const propertyHealth = healthReport.portfolio?.score ?? null
     const propertyHealthDelta = healthReport.portfolioDelta
@@ -1565,13 +1733,10 @@ export function AdminOverviewDashboard() {
     )
 
     return {
-      criticalOpen,
-      criticalDelta: criticalRecent - criticalPrevious,
-      activeOps,
-      activeOpsDelta: workflowData
-        ? opsNowSnapshot.total - opsPreviousSnapshot.total
-        : null,
-      activeOpsBreakdown,
+      openRepairs,
+      openRepairsDelta: openRepairsRecent - openRepairsPrevious,
+      scheduledVisits,
+      scheduledVisitsDelta: scheduledVisitsRecent - scheduledVisitsPrevious,
       propertyHealth,
       propertyHealthDelta,
       vendorResponse,
@@ -1579,7 +1744,7 @@ export function AdminOverviewDashboard() {
       ytdMaintenanceCost,
       ytdMaintenanceCostDelta,
     }
-  }, [tickets, openTickets, units, workflowData, healthReport, now, fourWeeksMs])
+  }, [tickets, openTickets, healthReport, now, fourWeeksMs])
 
   const slaOverdueTickets = useMemo(
     () =>
@@ -1643,7 +1808,7 @@ export function AdminOverviewDashboard() {
           ? supabase
               .from('maintenance_request_enriched')
               .select(
-                'id, created_at, assigned_at, unit, unit_id, building, description, issue_category, assigned_vendor_id, vendor_work_status, urgency, severity, priority, due_at, resident_name, estimated_minutes, total_cost, invoice_total, amount, labor_cost, material_cost, materials_cost, tax_amount, tax, completed_at, resolved_at, closed_at',
+                'id, created_at, assigned_at, unit, unit_id, building, description, issue_category, assigned_vendor_id, vendor_work_status, urgency, severity, priority, due_at, scheduled_at, resident_name, estimated_minutes, total_cost, invoice_total, amount, labor_cost, material_cost, materials_cost, tax_amount, tax, completed_at, resolved_at, closed_at',
               )
               .eq('landlord_id', landlordId)
               .order('created_at', { ascending: false })
@@ -1975,7 +2140,7 @@ export function AdminOverviewDashboard() {
     return items.sort((a, b) => (a.badge === b.badge ? 0 : a.badge === 'critical' ? -1 : 1))
   }, [workflowData, slaOverdueTickets, slaEscalatedNoVendorKeys, dismissedAttention, units, vendors, tickets, lateRentReviewRuns, invoicePayReviews, leaseInfoMissing, overviewResidents, propertyIdByBuilding, navigate, openEscalatedRailForTicket, openEscalatedRailForRun, openLateRentRail, openLeaseRenewalRail])
 
-  const attentionItems = useMemo(() => allAttentionItems.slice(0, 4), [allAttentionItems])
+  const attentionItems = useMemo(() => allAttentionItems.slice(0, 3), [allAttentionItems])
 
   const handleAwaitingDecisionItemAction = useCallback((item: AttentionItem) => {
     setAwaitingDecisionListOpen(false)
@@ -2045,6 +2210,7 @@ export function AdminOverviewDashboard() {
           dueAt: null,
           urgency: 'medium',
           unit: '',
+          unitId: null,
           building: null,
           description: null,
           issueCategory: null,
@@ -2714,19 +2880,22 @@ export function AdminOverviewDashboard() {
     (i) => i.badge === 'critical',
   ).length
 
-  const smartInsights = useMemo<SmartInsight[]>(() => {
+  const portfolioInsightFindings = useMemo<PortfolioInsightFinding[]>(() => {
     return computePortfolioInsights({
       tickets: tickets.map((t) => ({
         id: t.id,
         building: t.building,
         unit: t.unit,
+        unitId: t.unitId,
         issueCategory: t.issueCategory,
+        description: t.description,
         vendorWorkStatus: t.vendorWorkStatus,
         createdAt: t.createdAt,
         assignedVendorId: t.assignedVendorId,
         urgency: t.urgency,
       })),
       units: units.map((u) => ({
+        id: u.id,
         unitLabel: u.unitLabel,
         building: u.building,
       })),
@@ -2735,6 +2904,258 @@ export function AdminOverviewDashboard() {
       now,
     })
   }, [tickets, units, kpis.vendorResponse, now])
+
+  const [insightCards, setInsightCards] = useState<SynthesizedInsightCard[]>([])
+  const [insightActionBusy, setInsightActionBusy] = useState(false)
+  const [insightActionError, setInsightActionError] = useState<string | null>(null)
+  const [insightDetailsCard, setInsightDetailsCard] = useState<SynthesizedInsightCard | null>(null)
+  const [insightSchedulingByCard, setInsightSchedulingByCard] = useState<
+    Record<string, InsightSchedulingCardState>
+  >({})
+  const [insightPipelineRunId, setInsightPipelineRunId] = useState<string | null>(null)
+  const [insightPipelineDetail, setInsightPipelineDetail] = useState<WorkflowPipelineDetail | null>(null)
+  const [insightPipelineLoading, setInsightPipelineLoading] = useState(false)
+
+  const insightWorkflowRuns = useMemo(
+    () => (workflowData ? collectAdminWorkflowRuns(workflowData) : []),
+    [workflowData],
+  )
+
+  const recommendedActionCards = useMemo(
+    () => insightCards.filter((card) => card.tag !== 'RISK'),
+    [insightCards],
+  )
+
+  useEffect(() => {
+    if (loading) return
+    if (portfolioInsightFindings.length === 0) {
+      setInsightCards([])
+      return
+    }
+    // Plain aggregates immediately; synthesis enriches in one refresh call.
+    setInsightCards(applyInsightSynthesis(portfolioInsightFindings, null, { failed: true }))
+    let cancelled = false
+    const url = resolveSynthesizePropertyInsightsUrl()
+    const secret = getAdminEdgeSecret()
+    if (!url || !secret) return
+    void postSynthesizePropertyInsights({
+      url,
+      secret,
+      findings: portfolioInsightFindings,
+    })
+      .then((result) => {
+        if (cancelled) return
+        setInsightCards(result.cards)
+      })
+      .catch(() => {
+        // Keep plain aggregate cards already shown.
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [loading, portfolioInsightFindings])
+
+  const handleInsightAction = useCallback(async (card: SynthesizedInsightCard) => {
+    setInsightActionBusy(true)
+    setInsightActionError(null)
+    try {
+      const result = await runPropertyInsightAction(card, {
+        ...defaultPropertyInsightActionDeps,
+        resolveAssignedVendorId: async (ticketIds) => {
+          for (const id of ticketIds) {
+            const ticket = tickets.find((t) => t.id === id)
+            if (ticket?.assignedVendorId) return ticket.assignedVendorId
+          }
+          return null
+        },
+      })
+      if (!result.ok) {
+        setInsightActionError(result.error)
+        return
+      }
+      if (result.navigateTo) {
+        navigate(result.navigateTo)
+        return
+      }
+      if (result.scheduling) {
+        const next = schedulingStateFromActionResult(result.scheduling)
+        setInsightSchedulingByCard((prev) => ({ ...prev, [card.id]: next }))
+      }
+    } catch (err) {
+      setInsightActionError(getErrorMessage(err, 'Could not start that action.'))
+    } finally {
+      setInsightActionBusy(false)
+    }
+  }, [navigate, tickets])
+
+  const openInsightFindExternal = useCallback(
+    (ticketId: string) => {
+      setExternalVendorSuggestions([])
+      setExternalVendorDiscoverError(null)
+      setExternalVendorNotice(null)
+      setExternalVendorTicketId(ticketId)
+      setExternalVendorJobContext(null)
+      setFindExternalVendorOpen(true)
+      void runExternalVendorDiscovery(ticketId)
+    },
+    [runExternalVendorDiscovery],
+  )
+
+  useEffect(() => {
+    const probing = Object.values(insightSchedulingByCard).filter(
+      (s) => s.status === 'probing' && s.requestId,
+    )
+    if (probing.length === 0 || !supabase) return
+    let cancelled = false
+    const tick = async () => {
+      for (const state of probing) {
+        if (!state.requestId) continue
+        const { data } = await supabase
+          .from('insight_scheduling_requests')
+          .select('status, inspector_name, confirmed_window, ticket_id, target_day')
+          .eq('id', state.requestId)
+          .maybeSingle()
+        if (cancelled || !data) continue
+        const status = String(data.status ?? '')
+        if (status === 'accepted') {
+          setInsightSchedulingByCard((prev) => {
+            const cardId = Object.entries(prev).find(([, v]) => v.requestId === state.requestId)?.[0]
+            if (!cardId) return prev
+            return {
+              ...prev,
+              [cardId]: {
+                status: 'accepted',
+                ticketId: typeof data.ticket_id === 'string' ? data.ticket_id : state.ticketId,
+                targetDay:
+                  typeof data.target_day === 'string'
+                    ? String(data.target_day).slice(0, 10)
+                    : state.targetDay,
+                inspectorName:
+                  typeof data.inspector_name === 'string' ? data.inspector_name : null,
+                confirmedWindow:
+                  typeof data.confirmed_window === 'string' ? data.confirmed_window : null,
+                holdId: null,
+                requestId: state.requestId,
+              },
+            }
+          })
+        } else if (status === 'needs_external') {
+          setInsightSchedulingByCard((prev) => {
+            const cardId = Object.entries(prev).find(([, v]) => v.requestId === state.requestId)?.[0]
+            if (!cardId) return prev
+            return {
+              ...prev,
+              [cardId]: {
+                status: 'needs_external',
+                ticketId: typeof data.ticket_id === 'string' ? data.ticket_id : state.ticketId,
+                targetDay:
+                  typeof data.target_day === 'string'
+                    ? String(data.target_day).slice(0, 10)
+                    : state.targetDay,
+                inspectorName: null,
+                confirmedWindow: null,
+                holdId: null,
+                requestId: state.requestId,
+              },
+            }
+          })
+        }
+      }
+    }
+    void tick()
+    const id = window.setInterval(() => void tick(), 8000)
+    return () => {
+      cancelled = true
+      window.clearInterval(id)
+    }
+  }, [insightSchedulingByCard])
+
+  const insightDetailsItems = useMemo<RecommendedActionWorkOrderItem[]>(() => {
+    if (!insightDetailsCard) return []
+    const byId = new Map(tickets.map((t) => [t.id, t]))
+    const summaryById = new Map(
+      (insightDetailsCard.ticketSummaries ?? []).map((s) => [s.id, s.description]),
+    )
+    return insightDetailsCard.ticketIds.map((ticketId) => {
+      const ticket = byId.get(ticketId)
+      const fallbackSummary = summaryById.get(ticketId) ?? null
+      const categoryLabel = ticket
+        ? resolveMaintenanceTypeLabel(ticket.issueCategory, ticket)
+        : insightDetailsCard.categoryLabel
+      const status = (ticket?.vendorWorkStatus ?? '').trim()
+      const statusLabel = status
+        ? status.replace(/_/g, ' ').replace(/\b\w/g, (ch) => ch.toUpperCase())
+        : null
+      const location = [ticket?.building, ticket?.unit ? `Unit ${ticket.unit}` : null]
+        .filter(Boolean)
+        .join(' · ')
+      return {
+        id: ticketId,
+        title: ticketId.length > 12 ? `WO ${ticketId.slice(0, 8)}…` : `WO ${ticketId}`,
+        summary:
+          ticket?.description?.trim() ||
+          fallbackSummary ||
+          categoryLabel ||
+          'Maintenance request',
+        context: location || insightDetailsCard.unitLabel || insightDetailsCard.building || null,
+        categoryLabel: categoryLabel || null,
+        statusLabel,
+        critical: ticket ? isTicketCritical(ticket) : false,
+      }
+    })
+  }, [insightDetailsCard, tickets])
+
+  const closeInsightDetailsRail = useCallback(() => {
+    setInsightDetailsCard(null)
+    setInsightPipelineRunId(null)
+    setInsightPipelineDetail(null)
+    setInsightPipelineLoading(false)
+  }, [])
+
+  const handleInsightWorkOrderSelect = useCallback(
+    (item: RecommendedActionWorkOrderItem) => {
+      const ticketId = item.id
+      const run = insightWorkflowRuns.find(
+        (row) => maintenanceTicketIdFromWorkflowRun(row) === ticketId,
+      )
+      if (!run) {
+        navigate(`/admin/workflows?ticket=${encodeURIComponent(ticketId)}`)
+        return
+      }
+      setInsightPipelineRunId(run.id)
+      setInsightPipelineDetail(null)
+      setInsightPipelineLoading(true)
+    },
+    [insightWorkflowRuns, navigate],
+  )
+
+  useEffect(() => {
+    if (!insightPipelineRunId || !workflowData) {
+      if (!insightPipelineRunId) {
+        setInsightPipelineDetail(null)
+        setInsightPipelineLoading(false)
+      }
+      return
+    }
+
+    let cancelled = false
+    setInsightPipelineLoading(true)
+    setInsightPipelineDetail(null)
+
+    void fetchWorkflowPipelineDetail(
+      insightPipelineRunId,
+      insightWorkflowRuns,
+      workflowData.runMetadata,
+    ).then((result) => {
+      if (cancelled) return
+      setInsightPipelineDetail(result)
+      setInsightPipelineLoading(false)
+    })
+
+    return () => {
+      cancelled = true
+    }
+  }, [insightPipelineRunId, workflowData, insightWorkflowRuns])
 
   const updatedCaption =
     loading || !lastUpdated ? 'Updating…' : formatUpdatedAt(lastUpdated)
@@ -2856,14 +3277,112 @@ export function AdminOverviewDashboard() {
     <div className="flex w-full min-w-0 max-w-full flex-col gap-4 overflow-x-hidden px-4 pb-4 sm:px-6 lg:px-8">
       <div className="flex items-center justify-between pt-6">
         <div>
-          <h1 className="text-[24px] font-semibold leading-8 tracking-[0.0703px] text-[#0a0a0a]">
-            Dashboard Overview
+          <h1 className="text-[34px] font-semibold leading-10 tracking-[0.0703px] text-[#0a0a0a]">
+            {greetingTitle}
           </h1>
           <p className="text-[14px] leading-5 tracking-[-0.1504px] text-[#6a7282]">
-            {greetingLine}
+            See what&apos;s happening across your portfolio.
           </p>
         </div>
       </div>
+
+      {/* Needs Your Attention — top of page, under greeting */}
+      <section className="flex min-w-0 flex-col rounded-[10px] border border-[#e5e7eb] bg-white shadow-[0px_1px_2px_-1px_rgba(0,0,0,0.06)]">
+        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[#e5e7eb] px-4 py-4 sm:px-6">
+          <div className="flex min-w-0 items-center gap-2">
+            <h2 className="text-[16px] font-semibold leading-6 text-[#0a0a0a]">
+              Needs Your Attention
+            </h2>
+            <span className="inline-flex min-w-[1.25rem] items-center justify-center rounded-[4px] bg-[#DA4951] px-1.5 py-0.5 text-[11px] font-semibold leading-4 text-white tabular-nums">
+              {loading ? '—' : allAttentionItems.length}
+            </span>
+            {!loading && criticalAttentionCount > 0 ? (
+              <span className="text-[12px] font-medium leading-4 text-[#DA4951] tabular-nums">
+                {criticalAttentionCount} critical
+              </span>
+            ) : null}
+          </div>
+          {allAttentionItems.length > 3 ? (
+            <button
+              type="button"
+              onClick={() => setAwaitingDecisionListOpen(true)}
+              disabled={loading}
+              className="admin-quiet-text-action sa-link"
+            >
+              View all →
+            </button>
+          ) : null}
+        </div>
+        <div className="flex min-h-0 flex-1 flex-col divide-y divide-[#f3f4f6]">
+          {loading ? (
+            <p className="px-6 py-8 text-center text-[13px] text-[#6a7282]">Loading…</p>
+          ) : attentionItems.length === 0 ? (
+            <p className="px-6 py-8 text-center text-[13px] text-[#6a7282]">
+              Nothing needs attention.
+            </p>
+          ) : (
+            attentionItems.map((item, index) => (
+              <div
+                key={item.key}
+                style={{ animationDelay: `${Math.min(index, 3) * 40}ms` }}
+                className="sa-enter flex flex-col gap-3 px-4 py-4 sm:flex-row sm:items-center sm:gap-6 sm:px-6"
+              >
+                <div className="flex w-[4.75rem] shrink-0 items-center sm:justify-start">
+                  <span
+                    className={[
+                      'rounded-[4px] px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-[0.06em]',
+                      item.badge === 'critical'
+                        ? 'bg-[#E3646C] text-white'
+                        : item.actionStyle === 'alert'
+                          ? 'bg-[#FBE3E5] text-[#E3646C]'
+                          : 'bg-[#fef9c2] text-[#a65f00]',
+                    ].join(' ')}
+                  >
+                    {item.badge === 'critical' ? 'Critical' : 'Warning'}
+                  </span>
+                </div>
+                <div className="min-w-0 flex-1 basis-0">
+                  <p className="text-[14px] font-semibold leading-5 tracking-[-0.1504px] text-[#0a0a0a]">
+                    {item.title}
+                  </p>
+                  {item.context ? (
+                    <p className="mt-0.5 truncate text-[13px] leading-5 text-[#6a7282]">
+                      {item.context}
+                    </p>
+                  ) : null}
+                </div>
+                <p className="min-w-0 flex-1 basis-0 text-[12px] leading-4 text-[#6a7282] sm:text-[13px] sm:leading-5">
+                  {item.meta}
+                </p>
+                {item.onAction ? (
+                  <button
+                    type="button"
+                    onClick={item.onAction}
+                    className={
+                      /assign\s*vendor/i.test(item.actionLabel)
+                        ? 'sa-press shrink-0 self-start rounded-[10px] bg-[#55B6A1] px-4 py-2 text-[13px] font-medium leading-5 text-white hover:opacity-90 sm:self-center'
+                        : `${ADMIN_ATTENTION_ACTION_CLASS} shrink-0 self-start sm:self-center`
+                    }
+                  >
+                    {item.actionLabel} →
+                  </button>
+                ) : (
+                  <Link
+                    to={item.actionTo ?? '/admin/workflows'}
+                    className={
+                      /assign\s*vendor/i.test(item.actionLabel ?? '')
+                        ? 'sa-press shrink-0 self-start rounded-[10px] bg-[#55B6A1] px-4 py-2 text-[13px] font-medium leading-5 text-white hover:opacity-90 sm:self-center'
+                        : `${ADMIN_ATTENTION_ACTION_CLASS} shrink-0 self-start sm:self-center`
+                    }
+                  >
+                    {item.actionLabel} →
+                  </Link>
+                )}
+              </div>
+            ))
+          )}
+        </div>
+      </section>
 
       {onboardingNotice ? (
         <div
@@ -2971,27 +3490,31 @@ export function AdminOverviewDashboard() {
         </section>
       ) : null}
 
-      <div className="grid min-w-0 grid-cols-2 items-stretch gap-4 overflow-visible xl:grid-cols-4">
+      <section className="flex min-w-0 flex-col gap-3">
+        <h2 className="text-[20px] font-semibold leading-7 text-[#0a0a0a]">
+          Portfolio Snapshot
+        </h2>
+        <div className="grid min-w-0 grid-cols-2 items-stretch gap-4 overflow-visible xl:grid-cols-4">
         <KpiCard
           stagger={0}
-          label="Critical Issues"
-          value={loading ? '—' : String(kpis.criticalOpen)}
-          delta={loading ? null : kpis.criticalDelta}
-          caption="In the last 4 weeks"
+          label="Open Repairs"
+          labelIcon={openRepairsIcon}
+          value={loading ? '—' : String(kpis.openRepairs)}
+          delta={loading ? null : kpis.openRepairsDelta}
+          caption="Live maintenance repairs"
         />
         <KpiCard
           stagger={1}
-          label="Active Tasks"
-          value={loading ? '—' : String(kpis.activeOps)}
-          delta={loading ? null : kpis.activeOpsDelta}
-          caption="In the last 4 weeks"
-          infoTitle="Active tasks breakdown"
-          infoDescription="Shows the tasks Ulo is actively managing, such as maintenance, rent, inspections, move-ins, move-outs, and lease renewals. It doesn't include every open work order—only those currently in progress."
-          infoLines={loading ? undefined : kpis.activeOpsBreakdown}
+          label="Scheduled Visits"
+          labelIcon={scheduledVisitsIcon}
+          value={loading ? '—' : String(kpis.scheduledVisits)}
+          delta={loading ? null : kpis.scheduledVisitsDelta}
+          caption="Upcoming maintenance visits"
         />
         <KpiCard
           stagger={2}
           label="Property Health"
+          labelIcon={propertyHealthIcon}
           value={healthKpiValue}
           chart={
             <PropertyHealthDonut
@@ -3000,8 +3523,19 @@ export function AdminOverviewDashboard() {
                 !loading && healthScoreReady,
               )}
               label={`Property health ${healthKpiValue}`}
-              centerText={healthKpiValue}
+              centerText={
+                !loading && !healthScoreReady ? '—' : healthKpiValue
+              }
             />
+          }
+          chartAside={
+            !loading && !healthScoreReady ? (
+              <PropertyHealthUnavailableAside
+                onOpenProfileSetup={() => {
+                  clearSetupSuccessCardDismissed()
+                }}
+              />
+            ) : null
           }
           delta={
             loading || !healthScoreReady
@@ -3018,19 +3552,21 @@ export function AdminOverviewDashboard() {
         <KpiCard
           stagger={3}
           label="YTD Maintenance Cost"
+          labelIcon={ytdMaintenanceCostIcon}
           value={loading ? '—' : formatSpendCompact(kpis.ytdMaintenanceCost)}
           delta={loading ? null : kpis.ytdMaintenanceCostDelta}
           deltaFormatter={formatSignedSpend}
           caption={updatedCaption}
         />
-      </div>
+        </div>
+      </section>
 
-      <div className="grid min-w-0 items-stretch gap-4 xl:grid-cols-2">
+      <div className="grid min-w-0 items-stretch gap-4">
         {/* Smart Insights */}
         <section className="flex h-full min-w-0 flex-col rounded-[10px] border border-[#e5e7eb] bg-white shadow-[0px_1px_2px_-1px_rgba(0,0,0,0.06)]">
           <div className="border-b border-[#e5e7eb] px-4 py-4 sm:px-6">
             <h2 className="text-[16px] font-semibold leading-6 text-[#0a0a0a]">
-              Property Insights
+              Recommended Actions
             </h2>
             <p className="text-[12px] leading-4 text-[#6a7282]">
               Insights generated from activity across your property
@@ -3039,111 +3575,35 @@ export function AdminOverviewDashboard() {
           <div className="flex min-h-0 flex-1 flex-col gap-3 p-4">
             {loading ? (
               <p className="px-2 py-6 text-center text-[13px] text-[#6a7282]">Loading…</p>
-            ) : smartInsights.length === 0 ? (
+            ) : recommendedActionCards.length === 0 ? (
               <p className="px-2 py-6 text-center text-[13px] text-[#6a7282]">
                 Insights will appear as Ulo learns from your properties.
               </p>
             ) : (
-              smartInsights.map((insight) =>
-                insight.tag === 'RECURRING ISSUES' ? (
-                  <RecurringIssuesInsightCard key={insight.tag} insight={insight} />
-                ) : insight.tag === 'RISK' ? (
-                  <RiskInsightCard key={insight.tag} insight={insight} />
-                ) : insight.tag === 'VENDOR RESPONSE' ? (
-                  <VendorResponseInsightCard key={insight.tag} insight={insight} />
-                ) : (
-                  <PreventFutureRepairsInsightCard key={insight.tag} insight={insight} />
-                ),
-              )
-            )}
-          </div>
-        </section>
-
-        {/* Needs Attention */}
-        <section className="flex h-full min-w-0 flex-col rounded-[10px] border border-[#e5e7eb] bg-white shadow-[0px_1px_2px_-1px_rgba(0,0,0,0.06)]">
-          <div className="flex flex-wrap items-start justify-between gap-2 border-b border-[#e5e7eb] px-4 py-4 sm:px-6">
-            <div className="min-w-0">
-              <h2 className="text-[16px] font-semibold leading-6 text-[#0a0a0a]">
-                Needs Your Attention
-              </h2>
-              <p className="text-[12px] leading-4 text-[#6a7282]">
-                {allAttentionItems.length} operation{allAttentionItems.length === 1 ? '' : 's'}{' '}
-                need{allAttentionItems.length === 1 ? 's' : ''} your attention
-                {criticalAttentionCount > 0 ? ` · ${criticalAttentionCount} critical` : ''}
-              </p>
-            </div>
-            {allAttentionItems.length > 4 ? (
-              <button
-                type="button"
-                onClick={() => setAwaitingDecisionListOpen(true)}
-                disabled={loading}
-                className="admin-quiet-text-action sa-link"
-              >
-                View all →
-              </button>
-            ) : null}
-          </div>
-          <div className="flex min-h-0 flex-1 flex-col divide-y divide-[#f3f4f6]">
-            {loading ? (
-              <p className="px-6 py-8 text-center text-[13px] text-[#6a7282]">Loading…</p>
-            ) : attentionItems.length === 0 ? (
-              <p className="px-6 py-8 text-center text-[13px] text-[#6a7282]">
-                Nothing needs attention.
-              </p>
-            ) : (
-              attentionItems.map((item, index) => (
-                <div
-                  key={item.key}
-                  style={{ animationDelay: `${Math.min(index, 4) * 40}ms` }}
-                  className="sa-enter flex flex-col items-stretch gap-3 px-4 py-4 sm:flex-row sm:items-center sm:gap-4 sm:px-6"
-                >
-                  <div className="min-w-0 flex-1">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <p className="text-[14px] font-semibold leading-5 tracking-[-0.1504px] text-[#0a0a0a]">
-                        {item.title}
-                      </p>
-                      <span
-                        className={[
-                          'rounded-[4px] px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-[0.06em]',
-                          item.badge === 'critical'
-                            ? 'bg-[#E3646C] text-white'
-                            : item.actionStyle === 'alert'
-                              ? 'bg-[#FBE3E5] text-[#E3646C]'
-                              : 'bg-[#fef9c2] text-[#a65f00]',
-                        ].join(' ')}
-                      >
-                        {item.badge === 'critical' ? 'Critical' : 'Warning'}
-                      </span>
-                    </div>
-                    {item.context ? (
-                      <p className="mt-0.5 truncate text-[13px] leading-5 text-[#6a7282]">
-                        {item.context}
-                      </p>
-                    ) : null}
-                    <p className="text-[12px] leading-4 text-[#6a7282]">{item.meta}</p>
-                  </div>
-                  {item.onAction ? (
-                    <button
-                      type="button"
-                      onClick={item.onAction}
-                      className={`${ADMIN_ATTENTION_ACTION_CLASS} self-start`}
-                    >
-                      {item.actionLabel} →
-                    </button>
-                  ) : (
-                    <Link
-                      to={item.actionTo ?? '/admin/workflows'}
-                      className={`${ADMIN_ATTENTION_ACTION_CLASS} self-start`}
-                    >
-                      {item.actionLabel} →
-                    </Link>
-                  )}
+              <>
+                {insightActionError ? (
+                  <p className="rounded-[8px] border border-[#fecaca] bg-[#fef2f2] px-3 py-2 text-[12px] text-[#b91c1c]">
+                    {insightActionError}
+                  </p>
+                ) : null}
+                <div className="flex flex-col gap-3">
+                  {recommendedActionCards.map((card) => (
+                    <PropertyInsightRecommendationCard
+                      key={card.id}
+                      card={card}
+                      scheduling={insightSchedulingByCard[card.id] ?? null}
+                      onAction={handleInsightAction}
+                      onViewDetails={setInsightDetailsCard}
+                      onFindExternal={openInsightFindExternal}
+                      actionBusy={insightActionBusy}
+                    />
+                  ))}
                 </div>
-              ))
+              </>
             )}
           </div>
         </section>
-        <div className="min-w-0 xl:col-span-2">
+        <div className="min-w-0">
           <MyPropertiesAcrossAdmin />
         </div>
       </div>
@@ -3261,6 +3721,42 @@ export function AdminOverviewDashboard() {
         criticalCount={criticalAttentionCount}
         onClose={() => setAwaitingDecisionListOpen(false)}
         onItemAction={handleAwaitingDecisionItemAction}
+      />
+
+      <RecommendedActionsWorkOrdersRail
+        open={insightDetailsCard != null && insightPipelineRunId == null}
+        title={
+          insightDetailsCard
+            ? (INSIGHT_TAG_LABEL[insightDetailsCard.tag] ?? 'Recommended action')
+            : 'Recommended action'
+        }
+        subtitle={insightDetailsCard?.text ?? null}
+        items={insightDetailsItems}
+        onClose={closeInsightDetailsRail}
+        onSelect={handleInsightWorkOrderSelect}
+      />
+
+      <WorkflowPipelineDetailPanel
+        open={insightPipelineRunId != null}
+        detail={insightPipelineDetail}
+        loading={insightPipelineLoading}
+        onClose={() => {
+          setInsightPipelineRunId(null)
+          setInsightPipelineDetail(null)
+          setInsightPipelineLoading(false)
+        }}
+        onWorkflowUpdated={() => {
+          void fetchAdminWorkflowDashboard().then((next) => {
+            setWorkflowData(next)
+            if (insightPipelineRunId) {
+              void fetchWorkflowPipelineDetail(
+                insightPipelineRunId,
+                collectAdminWorkflowRuns(next),
+                next.runMetadata,
+              ).then(setInsightPipelineDetail)
+            }
+          })
+        }}
       />
 
       {landlordHasPayments(getActiveLandlordId()) && (invoicePaySuccess || invoicePayReview) ? (

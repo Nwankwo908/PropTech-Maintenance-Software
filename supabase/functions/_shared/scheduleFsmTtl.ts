@@ -30,13 +30,28 @@ export type ScheduleFsmTtlSummary = {
 /**
  * Find vendor SMS conversations with an open schedule FSM past TTL and
  * dispatch TTL_CHECK. Sends the effect prompt to the vendor when present.
+ *
+ * When `ticketIds` is set, only those work orders are considered.
+ * When `force` is true, TTL is treated as expired (manual nudge from Property Insights).
  */
 export async function processScheduleFsmTtlChecks(
   supabase: SupabaseClient,
-  options?: { landlordId?: string | null; now?: Date; limit?: number },
+  options?: {
+    landlordId?: string | null
+    now?: Date
+    limit?: number
+    ticketIds?: string[] | null
+    force?: boolean
+  },
 ): Promise<ScheduleFsmTtlSummary> {
   const now = options?.now ?? new Date()
   const limit = options?.limit ?? 40
+  const ticketFilter = (options?.ticketIds ?? [])
+    .map((id) => id.trim())
+    .filter(Boolean)
+  const ticketFilterSet = ticketFilter.length > 0 ? new Set(ticketFilter) : null
+  const force = options?.force === true
+
   let q = supabase
     .from("sms_conversations")
     .select("id, landlord_id, vendor_id, intake_state, maintenance_request_id")
@@ -68,8 +83,19 @@ export async function processScheduleFsmTtlChecks(
     const prev = readVendorScheduleFsm(intake)
     if (!prev) continue
     if (!PRE_SCHEDULED_STEPS.includes(prev.step)) continue
+
+    const ticketId =
+      prev.ticketId ||
+      (typeof row.maintenance_request_id === "string"
+        ? row.maintenance_request_id
+        : "") ||
+      ""
+    if (ticketFilterSet && !ticketFilterSet.has(ticketId)) {
+      continue
+    }
+
     scanned++
-    if (!isScheduleExpired(prev, now)) {
+    if (!force && !isScheduleExpired(prev, now)) {
       skipped++
       continue
     }
@@ -91,11 +117,6 @@ export async function processScheduleFsmTtlChecks(
     const conversationId = String(row.id)
     const landlordId = String(row.landlord_id)
     const vendorId = typeof row.vendor_id === "string" ? row.vendor_id : ""
-    const ticketId =
-      prev.ticketId ||
-      (typeof row.maintenance_request_id === "string"
-        ? row.maintenance_request_id
-        : "")
 
     if (prompt && vendorId) {
       const { data: vendor } = await supabase

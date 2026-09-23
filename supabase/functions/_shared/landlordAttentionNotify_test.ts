@@ -1,5 +1,8 @@
 /// <reference lib="deno.ns" />
-import { assertEquals, assertStringIncludes } from "https://deno.land/std@0.224.0/assert/mod.ts"
+import {
+  assertEquals,
+  assertStringIncludes,
+} from "https://deno.land/std@0.224.0/assert/mod.ts"
 import {
   buildLandlordAttentionEmail,
   buildLandlordAttentionSms,
@@ -7,7 +10,40 @@ import {
   shortRepairLabel,
 } from "./landlordAttentionNotify.ts"
 
-Deno.test("attention SMS names Ulo, place, why, numbered steps, and details link", () => {
+Deno.test("invoice_ready SMS uses YES/NO paid confirmation (no numbered fake options)", () => {
+  const body = buildLandlordAttentionSms({
+    kind: "invoice_ready",
+    headline: "Invoice ready to pay",
+    detail: "Unit 2B · Flex Plumbing · $450.00",
+    dashboardUrl: "https://www.ulohome.io/admin/requests?q=WO-9E41",
+    invoicePaid: {
+      landlordFirstName: "Alex",
+      unit: "2B",
+      vendorName: "flex plumbing",
+      amount: 450,
+      jobHeadline: "Leaking kitchen faucet",
+    },
+  })
+  assertEquals(
+    body,
+    [
+      "Hi Alex — invoice ready",
+      "",
+      "Unit 2B · Flex Plumbing · $450.00",
+      "Job: Leaking kitchen faucet",
+      "",
+      "Have you paid this invoice?",
+      "Reply YES if paid, or NO if not yet.",
+      "",
+      "Details:",
+      "https://www.ulohome.io/admin/requests?q=WO-9E41",
+    ].join("\n"),
+  )
+  assertEquals(body.includes("1 — Review the invoice"), false)
+  assertEquals(body.includes("2 — Pay in Ulo"), false)
+})
+
+Deno.test("invoice_ready without invoicePaid falls back to empty next steps", () => {
   const body = buildLandlordAttentionSms({
     kind: "invoice_ready",
     headline: "Invoice ready to pay",
@@ -15,12 +51,8 @@ Deno.test("attention SMS names Ulo, place, why, numbered steps, and details link
     dashboardUrl: "https://www.ulohome.io/admin",
   })
   assertStringIncludes(body, "Ulo: Invoice ready to pay")
-  assertStringIncludes(body, "Unit 2B · Flex Plumbing · $450.00")
-  assertStringIncludes(body, "The vendor finished the job and the invoice is ready.")
-  assertStringIncludes(body, "1 — Review the invoice")
-  assertStringIncludes(body, "2 — Pay in Ulo")
-  assertStringIncludes(body, "Details:")
-  assertStringIncludes(body, "https://www.ulohome.io/admin")
+  assertEquals(body.includes("1 — Review the invoice"), false)
+  assertEquals(body.includes("2 — Pay in Ulo"), false)
 })
 
 Deno.test("assign-vendor SMS lists nearby vendors for numbered reply", () => {

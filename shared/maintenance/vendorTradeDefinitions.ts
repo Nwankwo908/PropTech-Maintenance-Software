@@ -49,6 +49,11 @@ export const VENDOR_TRADE_DEFINITIONS = [
     rosterPlural: 'HVAC technicians',
   },
   {
+    slug: 'inspection',
+    label: 'Inspection',
+    rosterPlural: 'inspectors',
+  },
+  {
     slug: 'landscaping',
     label: 'Landscaping',
     rosterPlural: 'landscapers',

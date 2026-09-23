@@ -80,6 +80,10 @@ Deno.test("uloAppUrl named paths", () => {
     "https://app.example/admin?findVendor=1&ticket=ticket-1",
   )
   assertEquals(
+    uloAppUrl.adminWorkOrder("WO-ABCD", origin),
+    "https://app.example/admin/requests?q=WO-ABCD",
+  )
+  assertEquals(
     uloAppUrl.inspectionCapture("sess-1", "tok-hex", origin),
     "https://app.example/inspection/capture/sess-1?token=tok-hex",
   )

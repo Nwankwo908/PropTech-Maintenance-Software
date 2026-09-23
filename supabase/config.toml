@@ -84,6 +84,23 @@ verify_jwt = false
 import_map = "./functions/generate-late-rent-insights/deno.json"
 entrypoint = "./functions/generate-late-rent-insights/index.ts"
 
+[functions.synthesize-property-insights]
+enabled = true
+verify_jwt = false
+import_map = "./functions/synthesize-property-insights/deno.json"
+entrypoint = "./functions/synthesize-property-insights/index.ts"
+
+[functions.start-insight-inspection-scheduling]
+enabled = true
+verify_jwt = false
+import_map = "./functions/start-insight-inspection-scheduling/deno.json"
+entrypoint = "./functions/start-insight-inspection-scheduling/index.ts"
+
+[functions.check-insight-inspector-probe-ttl]
+enabled = true
+verify_jwt = false
+entrypoint = "./functions/check-insight-inspector-probe-ttl/index.ts"
+
 [functions.ask-ulo]
 enabled = true
 verify_jwt = false

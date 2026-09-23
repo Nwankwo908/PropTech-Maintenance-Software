@@ -109,6 +109,22 @@ export const SETUP_SUCCESS_COLLAPSED_EVENT = 'ulo:setup-success-collapsed'
 /** Fired whenever setup-success checklist progress may have changed (same-tab). */
 export const SETUP_SUCCESS_PROGRESS_CHANGED_EVENT = 'ulo:setup-success-progress-changed'
 
+/** Hover guide: Overview health KPI points at the Profile setup nav item. */
+export const PROFILE_SETUP_NAV_POINT_EVENT = 'ulo:profile-setup-nav-point'
+export const PROFILE_SETUP_NAV_ATTR = 'data-ulo-profile-setup-nav'
+
+export function setProfileSetupNavPointed(active: boolean): void {
+  try {
+    if (typeof window.dispatchEvent === 'function') {
+      window.dispatchEvent(
+        new CustomEvent(PROFILE_SETUP_NAV_POINT_EVENT, { detail: { active } }),
+      )
+    }
+  } catch {
+    // jsdom / private mode
+  }
+}
+
 function emitSetupSuccessCollapsedChange(): void {
   try {
     if (typeof window.dispatchEvent === 'function') {

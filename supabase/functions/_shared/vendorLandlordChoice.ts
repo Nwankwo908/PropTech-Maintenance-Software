@@ -4,7 +4,7 @@
  */
 import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.49.1"
 import { recordActivityLog } from "./graph/recordActivityLog.ts"
-import { formatWorkOrderRef } from "./vendor_outreach_copy.ts"
+import { formatWorkOrderRef, vendorCompanyName } from "./vendor_outreach_copy.ts"
 import { uloAppUrl } from "./uloAppUrl.ts"
 import { findActiveLandlordMainNumber } from "./sms/landlordSmsOnboarding.ts"
 import {
@@ -503,6 +503,75 @@ function optionsFromAssignment(
     id: row.vendor.id,
     name: row.vendor.name,
     role: row.role,
+    const { address, unitLabel } = addressAndUnitForLandlordSms({
+      locationLabel: input.locationLabel,
+      unit: input.unit,
+    })
+    if (address && unitLabel) {
+      lines.push(`${greeting} — job at ${address}, ${unitLabel}`)
+    } else if (address) {
+      lines.push(`${greeting} — job at ${address}`)
+    } else if (unitLabel) {
+      lines.push(`${greeting} — job at ${unitLabel}`)
+    } else {
+      lines.push(`${greeting} — new job`)
+    }
+    if (rematch) {
+      lines.push("", rematch)
+    }
+    lines.push("")
+    lines.push(`Issue: ${issueLabelForLandlordSms(input)}`)
+    lines.push(`Vendor: ${name}`)
+    const window = only?.windowLabel?.trim()
+    if (window) lines.push(`Available: ${window}`)
+    const estimate = only?.estimateNote?.trim()
+    if (estimate) lines.push(`Estimate: ${estimate}`)
+    lines.push("", `Reply YES to send this job to ${name}.`)
+  } else {
+    lines.push(
+      available
+        ? `${greeting} — vendors are available for ${problem}.`
+        : `${greeting} — these vendors can take ${problem}.`,
+    )
+    if (rematch) {
+      lines.push("", rematch)
+    }
+    lines.push("")
+    input.options.forEach((option, index) => {
+      const name = vendorChoiceDisplayName(option.name)
+      lines.push(`${index + 1} — ${name}`)
+      const window = option.windowLabel?.trim()
+      const estimate = option.estimateNote?.trim()
+      if (window) lines.push(window)
+      if (estimate) lines.push(estimate)
+      if (index < input.options.length - 1) lines.push("")
+    })
+    lines.push(
+      "",
+      `${landlordChoiceReplyHint(input.options.length)} to send them the job.`,
+    )
+  }
+
+  const adminUrl = input.adminUrl?.trim() ?? ""
+  if (adminUrl) {
+    lines.push("", `Details: ${adminUrl}`)
+  }
+  return lines.join("\n")
+}
+
+function tradeLabelFromCategory(issueCategory: string | null): string {
+  const raw = (issueCategory ?? "").trim().toLowerCase().replace(/_/g, " ")
+  if (!raw || raw === "other" || raw === "general") return "maintenance"
+  return raw
+}
+
+function optionsFromAssignment(
+  rows: VendorAssignmentOption[],
+): VendorChoiceOption[] {
+  return rows.map((row) => ({
+    id: row.vendor.id,
+    name: row.vendor.name,
+    role: row.role,
   }))
 }
 
@@ -659,65 +728,7 @@ export async function notifyLandlordVendorChoice(
     unit: params.unit,
     tradeLabel: tradeLabelFromCategory(params.issueCategory),
     options: choiceOptions,
-    adminUrl: uloAppUrl.admin(),
-    reason: params.reason ?? "assign",
-    issueHeadline,
-    locationLabel,
-  })
-
-  const main = await findActiveLandlordMainNumber(supabase, params.landlordId)
-  const provider = getSMSProviderForSend({
-    landlordId: params.landlordId,
-    lineProvider: main?.provider,
-  })
-  const { phones } = await resolveLandlordOpsPhones(supabase, params.landlordId)
-  let sent = 0
-  for (const phone of phones) {
-    const sendResult = await provider.sendMessage({
-      to: phone,
-      body: smsBody,
-      from: main?.phone_number,
-    })
-    if (sendResult.error) {
-      console.error("[vendor-choice] landlord SMS", phone, sendResult.error)
-      continue
-    }
-    sent += 1
-    try {
-      await persistLandlordChoiceSms(supabase, {
-        landlordId: params.landlordId,
-        phone,
-        body: smsBody,
-        awaiting: { ticketId: params.ticketId, options: choiceOptions },
-        providerMessageSid:
-          sendResult.providerMessageSid ??
-          sendResult.messageId ??
-          `landlord-vendor-choice:${params.ticketId}:${phone}`,
-        provider: sendResult.provider ?? "twilio",
-        fromNumber: main?.phone_number ?? "unknown",
-      })
-    } catch (e) {
-      console.error("[vendor-choice] persist landlord SMS thread", e)
-    }
-  }
-
-  const names = choiceOptions.map((row) => vendorChoiceDisplayName(row.name)).join(" or ")
-  const rematch =
-    params.reason === "no_response" ||
-    params.reason === "declined" ||
-    params.reason === "noshow"
-  await recordActivityLog(supabase, {
-    landlordId: params.landlordId,
-    eventType: "maintenance.vendor_choice_asked",
-    source: "automation",
-    actorType: "system",
-    maintenanceRequestId: params.ticketId,
-    metadata: {
-      message: rematch
-        ? `Asked the landlord to confirm a replacement vendor for ${wo}: ${names}.`
-        : `Asked the landlord to confirm vendor assignment for ${wo}: ${names}.`,
-      option_ids: choiceOptions.map((row) => row.id),
-      reason: params.reason ?? "assign",
+    adminUrl: uloAppUrl.adminWorkOrder(wo),
     },
   })
 

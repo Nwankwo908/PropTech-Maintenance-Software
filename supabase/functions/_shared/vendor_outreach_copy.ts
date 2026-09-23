@@ -136,8 +136,21 @@ export function buildVendorJobAssignmentSms(input: {
   vendorName: string
   priority: string
   unit: string
+  /**
+   * @deprecated Do not use for the Issue line — intake Q&A accumulates here.
+   * Prefer `issueHeadline`. Kept so older callers still compile.
+   */
   description: string
   ticketId: string
+  /** Clean ticket headline — never the stuffed description. */
+  issueHeadline?: string | null
+  /** Structured entry permission from the ticket; omit line when unknown. */
+  entryOkIfAbsent?: boolean | null
+  /**
+   * Property location for Address/Unit lines (street, or "street · Unit N").
+   * Prefer this over bare `unit` when the street is known.
+   */
+  location?: string | null
   /** Public job detail link (`/w/{vendor_action_token}`). */
   jobDetailUrl?: string | null
   viewJobUrl?: string | null
@@ -146,19 +159,26 @@ export function buildVendorJobAssignmentSms(input: {
   residentAvailabilityText?: string | null
 }): string {
   const company = vendorCompanyName(input.vendorName)
-  const issueSummary = input.description.trim().replace(/\s+/g, " ")
   const wo = formatWorkOrderRef(input.ticketId)
-  const avail = input.residentAvailabilityText?.trim()
+  // Never fall back to raw description — it often includes intake Q&A trail.
+  const issue = (input.issueHeadline ?? "").trim() ||
+    "See work order for details."
+  const { address, unitLabel } = addressAndUnitForVendorAssignmentSms({
+    location: input.location,
+    unit: input.unit,
+  })
 
-  const lines = [
-    `Hi ${company},`,
-    "",
-    `Ulo has assigned you a new work order (${wo}).`,
-    "",
-    `Issue: ${issueSummary || "See work order for details."}`,
-  ]
+  const lines = [`Hi ${company} — new job ${wo}`]
+  if (address) lines.push(`Address: ${address}`)
+  if (unitLabel) lines.push(`Unit: ${unitLabel}`)
+  lines.push(`Issue: ${issue}`)
+  if (input.entryOkIfAbsent === true) {
+    lines.push("Entry OK if resident out: Yes")
+  } else if (input.entryOkIfAbsent === false) {
+    lines.push("Entry OK if resident out: No")
+  }
+  const avail = input.residentAvailabilityText?.trim()
   if (avail) {
-    lines.push("")
     lines.push(`Resident availability: ${avail}`)
   }
   lines.push("")
@@ -167,11 +187,59 @@ export function buildVendorJobAssignmentSms(input: {
   )
   const jobUrl = (input.jobDetailUrl ?? input.viewJobUrl)?.trim()
   if (jobUrl) {
-    lines.push("")
-    lines.push("View this job:")
-    lines.push(jobUrl)
+    lines.push("", `Details: ${jobUrl}`)
   }
   return lines.join("\n")
+}
+
+/**
+ * Split location ("563 Springdale · Unit 1") into Address + Unit labels for
+ * vendor assignment SMS.
+ */
+export function addressAndUnitForVendorAssignmentSms(input: {
+  location?: string | null
+  unit?: string | null
+}): { address: string; unitLabel: string } {
+  const loc = input.location?.trim() || ""
+  const parts = loc.split(/\s*·\s*/).map((p) => p.trim()).filter(Boolean)
+  if (parts.length >= 2 && /^unit\b/i.test(parts[parts.length - 1] ?? "")) {
+    const unitPart = parts[parts.length - 1] ?? ""
+    return {
+      address: parts.slice(0, -1).join(" · "),
+      unitLabel: unitPart.replace(/^unit\b/i, "Unit"),
+    }
+  }
+
+  let unitRaw = (input.unit ?? "").trim()
+  if (unitRaw.includes("·")) {
+    const unitParts = unitRaw.split(/\s*·\s*/).map((p) => p.trim()).filter(Boolean)
+    if (
+      unitParts.length >= 2 &&
+      /^unit\b/i.test(unitParts[unitParts.length - 1] ?? "")
+    ) {
+      return {
+        address: loc || unitParts.slice(0, -1).join(" · "),
+        unitLabel: (unitParts[unitParts.length - 1] ?? "").replace(
+          /^unit\b/i,
+          "Unit",
+        ),
+      }
+    }
+    // Combined location passed as unit — treat as address when no separate loc.
+    if (!loc && unitRaw) {
+      return { address: unitRaw, unitLabel: "" }
+    }
+    unitRaw = ""
+  }
+
+  let unitLabel = ""
+  if (unitRaw) {
+    unitLabel = /^unit\b/i.test(unitRaw)
+      ? unitRaw.replace(/^unit\b/i, "Unit")
+      : `Unit ${unitRaw}`
+  }
+
+  return { address: loc, unitLabel }
 }
 
 /** Job detail link — sent after schedule is locked (completes the scheduling thread). */

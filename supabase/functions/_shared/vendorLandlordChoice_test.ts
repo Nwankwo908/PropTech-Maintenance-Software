@@ -1,5 +1,5 @@
 /// <reference lib="deno.ns" />
-import { assertEquals } from "https://deno.land/std@0.224.0/assert/mod.ts"
+import { assertEquals, assertStringIncludes } from "https://deno.land/std@0.224.0/assert/mod.ts"
 import { decideVendorAssignmentFromTiers } from "./vendor_assignment.ts"
 import {
   buildLandlordVendorChoiceSms,
@@ -194,10 +194,12 @@ Deno.test("buildLandlordVendorChoiceSms asks YES for one vendor and 1 or 2 for t
       { id: "gen-1", name: "Ivanhomesolutions", role: "generalist" },
     ],
   })
-  assertEquals(one.includes("Reply YES to send the job to Ivanhomesolutions"), true)
+  assertEquals(one.includes("Reply YES to send this job to Ivanhomesolutions"), true)
   assertEquals(one.includes("property management team"), false)
   assertEquals(one.includes("WO-E6F7"), false)
-  assertEquals(one.includes("dripping faucet at 563 Springdale Circle"), true)
+  assertStringIncludes(one, "Hi Alex — job at 563 Springdale Circle, Unit 1")
+  assertStringIncludes(one, "Issue: dripping faucet")
+  assertStringIncludes(one, "Vendor: Ivanhomesolutions")
 
   const two = buildLandlordVendorChoiceSms({
     landlordFirstName: "Alex",

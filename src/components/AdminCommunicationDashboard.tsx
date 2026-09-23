@@ -1,7 +1,6 @@
-import { useEffect, useId, useMemo, useState } from 'react'
+import { useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { ConversationMonitoringModal } from '@/components/ConversationMonitoringModal'
-import { AdminFilterToolbar } from '@/components/AdminFilterToolbar'
 import { TableCheckbox } from '@/components/TableCheckbox'
 import { isLimitedAlpha1Landlord } from '@shared/landlordCapabilities'
 import { getActiveLandlordId } from '@/lib/activeLandlord'
@@ -399,21 +398,102 @@ function AiSparkleAvatar() {
   )
 }
 
-type ParticipantFilterKey = 'tenant' | 'vendor'
+type ParticipantFilterKey = 'all' | 'tenant' | 'vendor'
 
 const PARTICIPANT_FILTER_OPTIONS: { id: ParticipantFilterKey; label: string }[] = [
+  { id: 'all', label: 'All' },
   { id: 'tenant', label: 'Tenant' },
   { id: 'vendor', label: 'Vendor' },
 ]
 
 function conversationMatchesParticipantFilters(
   conversation: Conversation,
-  filters: Set<ParticipantFilterKey>,
+  filter: ParticipantFilterKey,
 ): boolean {
-  if (filters.size === 0) return true
-  if (filters.has('tenant') && conversation.kind === 'tenant') return true
-  if (filters.has('vendor') && conversation.kind === 'vendor') return true
-  return false
+  if (filter === 'all') return true
+  if (filter === 'tenant') return conversation.kind === 'tenant'
+  if (filter === 'vendor') return conversation.kind === 'vendor'
+  return true
+}
+
+function ParticipantFilterChip({
+  value,
+  onChange,
+}: {
+  value: ParticipantFilterKey
+  onChange: (value: ParticipantFilterKey) => void
+}) {
+  const [open, setOpen] = useState(false)
+  const rootRef = useRef<HTMLDivElement>(null)
+  const listId = useId()
+  const label =
+    PARTICIPANT_FILTER_OPTIONS.find((option) => option.id === value)?.label ?? 'All'
+
+  useEffect(() => {
+    if (!open) return
+    function handlePointerDown(event: MouseEvent) {
+      if (!rootRef.current?.contains(event.target as Node)) setOpen(false)
+    }
+    document.addEventListener('mousedown', handlePointerDown)
+    return () => document.removeEventListener('mousedown', handlePointerDown)
+  }, [open])
+
+  return (
+    <div ref={rootRef} className="relative shrink-0">
+      <button
+        type="button"
+        aria-expanded={open}
+        aria-haspopup="listbox"
+        aria-controls={listId}
+        aria-label={`Participant filter: ${label}`}
+        onClick={() => setOpen((current) => !current)}
+        className="sa-press inline-flex h-8 cursor-pointer items-center gap-1.5 rounded-full border border-[#e5e7eb] bg-white px-3 text-[12px] font-medium text-[#364153] hover:bg-[#f9fafb] outline-none focus-visible:ring-2 focus-visible:ring-[#186179] focus-visible:ring-offset-2"
+      >
+        {label}
+        <svg
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth={2}
+          className="size-3.5 text-[#6a7282]"
+          aria-hidden
+        >
+          <path d="M6 9l6 6 6-6" strokeLinecap="round" strokeLinejoin="round" />
+        </svg>
+      </button>
+      {open ? (
+        <div
+          id={listId}
+          role="listbox"
+          className="absolute right-0 z-20 mt-1.5 min-w-[140px] rounded-[10px] border border-[#e5e7eb] bg-white p-1.5 shadow-lg"
+        >
+          {PARTICIPANT_FILTER_OPTIONS.map((option) => {
+            const selected = value === option.id
+            return (
+              <button
+                key={option.id}
+                type="button"
+                role="option"
+                aria-selected={selected}
+                onClick={() => {
+                  onChange(option.id)
+                  setOpen(false)
+                }}
+                className={[
+                  'sa-press flex w-full cursor-pointer items-center rounded-[8px] px-2.5 py-2 text-left text-[13px] font-medium',
+                  selected
+                    ? 'bg-[#e8f3f6] text-[#186179]'
+                    : 'text-[#364153] hover:bg-[#f9fafb]',
+                ].join(' ')}
+              >
+                {option.label}
+              </button>
+            )
+          })}
+        </div>
+      ) : null}
+    </div>
+  )
 }
 
 function SelectionTrashIcon({ className = 'size-4' }: { className?: string }) {
@@ -521,45 +601,104 @@ function ConversationListRow({
   )
 }
 
-function MessageLaneSection({
-  title,
-  description,
+function MessageLaneTabList({
+  active,
+  onChange,
+  requestCount,
+  onboardingCount,
+  participantFilter,
+  onParticipantFilterChange,
+  trailing,
+}: {
+  active: LimitedAlphaMessageLane
+  onChange: (lane: LimitedAlphaMessageLane) => void
+  requestCount: number
+  onboardingCount: number
+  participantFilter: ParticipantFilterKey
+  onParticipantFilterChange: (value: ParticipantFilterKey) => void
+  trailing?: ReactNode
+}) {
+  const tabs: { id: LimitedAlphaMessageLane; label: string; count: number }[] = [
+    { id: 'request', label: 'Requests', count: requestCount },
+    { id: 'onboarding', label: 'Onboarding', count: onboardingCount },
+  ]
+  return (
+    <div className="flex items-end gap-4 border-b border-[#e5e7eb] px-6">
+      <div
+        className="flex min-w-0 flex-1 items-end gap-5"
+        role="tablist"
+        aria-label="Message sections"
+      >
+        {tabs.map((tab) => {
+          const selected = active === tab.id
+          return (
+            <button
+              key={tab.id}
+              type="button"
+              role="tab"
+              aria-selected={selected}
+              onClick={() => onChange(tab.id)}
+              className={[
+                'sa-press -mb-px inline-flex items-center gap-2 border-b-2 px-0 pb-2.5 pt-3 text-[13px] font-medium leading-5 outline-none focus-visible:ring-2 focus-visible:ring-[#186179] focus-visible:ring-offset-2',
+                selected
+                  ? 'border-[#186179] text-[#186179]'
+                  : 'border-transparent text-[#6a7282] hover:text-[#186179]',
+              ].join(' ')}
+            >
+              {tab.label}
+              <span
+                className={[
+                  'inline-flex min-w-5 items-center justify-center rounded-full px-1.5 py-0.5 text-[11px] font-medium tabular-nums',
+                  selected
+                    ? 'bg-[#e8f3f6] text-[#186179]'
+                    : 'bg-[#f3f4f6] text-[#6a7282]',
+                ].join(' ')}
+              >
+                {tab.count}
+              </span>
+            </button>
+          )
+        })}
+      </div>
+      <div className="flex shrink-0 items-center gap-2 pb-2">
+        <ParticipantFilterChip
+          value={participantFilter}
+          onChange={onParticipantFilterChange}
+        />
+        {trailing}
+      </div>
+    </div>
+  )
+}
+
+function MessageLaneRows({
   rows,
   empty,
-  indexOffset,
   selectedIds,
   onToggleSelect,
   onOpen,
 }: {
-  title: string
-  description: string
   rows: Conversation[]
   empty: string
-  indexOffset: number
   selectedIds: Set<string>
   onToggleSelect: (id: string) => void
   onOpen: (id: string) => void
 }) {
+  if (rows.length === 0) {
+    return <p className="px-6 py-8 text-center text-[13px] text-[#6a7282]">{empty}</p>
+  }
   return (
     <>
-      <div className="bg-[#f9fafb] px-6 py-3">
-        <h2 className="text-[13px] font-semibold tracking-[0.02em] text-[#0a0a0a]">{title}</h2>
-        <p className="mt-0.5 text-[12px] leading-4 text-[#6a7282]">{description}</p>
-      </div>
-      {rows.length === 0 ? (
-        <p className="px-6 py-8 text-center text-[13px] text-[#6a7282]">{empty}</p>
-      ) : (
-        rows.map((c, index) => (
-          <ConversationListRow
-            key={c.id}
-            conversation={c}
-            index={indexOffset + index}
-            selected={selectedIds.has(c.id)}
-            onToggleSelect={onToggleSelect}
-            onOpen={onOpen}
-          />
-        ))
-      )}
+      {rows.map((c, index) => (
+        <ConversationListRow
+          key={c.id}
+          conversation={c}
+          index={index}
+          selected={selectedIds.has(c.id)}
+          onToggleSelect={onToggleSelect}
+          onOpen={onOpen}
+        />
+      ))}
     </>
   )
 }
@@ -570,9 +709,8 @@ export function AdminCommunicationDashboard() {
   const [metrics, setMetrics] = useState<CommMetrics | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
-  const [participantFilters, setParticipantFilters] = useState<Set<ParticipantFilterKey>>(
-    () => new Set(),
-  )
+  const [participantFilter, setParticipantFilter] = useState<ParticipantFilterKey>('all')
+  const [messageLaneTab, setMessageLaneTab] = useState<LimitedAlphaMessageLane>('request')
   const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set())
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false)
   const [deleteSaving, setDeleteSaving] = useState(false)
@@ -1122,9 +1260,9 @@ export function AdminCommunicationDashboard() {
   const filtered = useMemo(() => {
     const sorted = [...conversations].sort((a, b) => b.lastActivity - a.lastActivity)
     return sorted.filter((conversation) =>
-      conversationMatchesParticipantFilters(conversation, participantFilters),
+      conversationMatchesParticipantFilters(conversation, participantFilter),
     )
-  }, [conversations, participantFilters])
+  }, [conversations, participantFilter])
 
   const onboardingThreads = useMemo(
     () => filtered.filter((c) => c.threadLane === 'onboarding'),
@@ -1134,16 +1272,9 @@ export function AdminCommunicationDashboard() {
     () => filtered.filter((c) => c.threadLane === 'request'),
     [filtered],
   )
-
-  function toggleParticipantFilter(key: ParticipantFilterKey) {
-    setParticipantFilters((current) => {
-      const next = new Set(current)
-      if (next.has(key)) next.delete(key)
-      else next.add(key)
-      return next
-    })
-  }
-
+  const laneThreads =
+    messageLaneTab === 'onboarding' ? onboardingThreads : requestThreads
+  const visibleThreads = splitOnboardingFromRequests ? laneThreads : filtered
   function toggleConversationSelected(id: string) {
     setSelectedIds((prev) => {
       const next = new Set(prev)
@@ -1157,11 +1288,12 @@ export function AdminCommunicationDashboard() {
     setSelectedIds((prev) => {
       const next = new Set(prev)
       const allOn =
-        filtered.length > 0 && filtered.every((conversation) => next.has(conversation.id))
+        visibleThreads.length > 0 &&
+        visibleThreads.every((conversation) => next.has(conversation.id))
       if (allOn) {
-        for (const conversation of filtered) next.delete(conversation.id)
+        for (const conversation of visibleThreads) next.delete(conversation.id)
       } else {
-        for (const conversation of filtered) next.add(conversation.id)
+        for (const conversation of visibleThreads) next.add(conversation.id)
       }
       return next
     })
@@ -1209,9 +1341,11 @@ export function AdminCommunicationDashboard() {
   const selectedCount = selectedIds.size
   const allFilteredSelected =
     filtered.length > 0 && filtered.every((conversation) => selectedIds.has(conversation.id))
+    visibleThreads.length > 0 &&
+    visibleThreads.every((conversation) => selectedIds.has(conversation.id))
   const someFilteredSelected =
-    filtered.some((conversation) => selectedIds.has(conversation.id)) && !allFilteredSelected
-
+    visibleThreads.some((conversation) => selectedIds.has(conversation.id)) &&
+    !allFilteredSelected
   const updatedCaption = metrics ? formatUpdatedAt(metrics.lastUpdated) : 'Updating…'
 
   return (
@@ -1275,7 +1409,7 @@ export function AdminCommunicationDashboard() {
         </h1>
         <p className="text-[14px] leading-5 tracking-[-0.1504px] text-[#6a7282]">
           {splitOnboardingFromRequests
-            ? 'Onboarding texts are listed separately from maintenance request threads.'
+            ? 'Switch between maintenance requests and onboarding texts.'
             : 'See all resident and vendor conversations in one place.'}
         </p>
       </div>
@@ -1335,14 +1469,49 @@ export function AdminCommunicationDashboard() {
       </div>
 
       <section className="sa-surface flex min-w-0 flex-col rounded-[10px] border border-[#e5e7eb] bg-white shadow-[0px_1px_2px_-1px_rgba(0,0,0,0.06)]">
-        <AdminFilterToolbar
-          options={PARTICIPANT_FILTER_OPTIONS}
-          activeFilters={participantFilters}
-          onToggle={toggleParticipantFilter}
-          onClear={() => setParticipantFilters(new Set())}
-          trailing={
-            selectedCount > 0 ? (
-              <>
+        {splitOnboardingFromRequests ? (
+          <MessageLaneTabList
+            active={messageLaneTab}
+            onChange={setMessageLaneTab}
+            requestCount={requestThreads.length}
+            onboardingCount={onboardingThreads.length}
+            participantFilter={participantFilter}
+            onParticipantFilterChange={setParticipantFilter}
+            trailing={
+              selectedCount > 0 ? (
+                <>
+                  <span className="text-[13px] font-medium text-[#364153]">
+                    {selectedCount} selected
+                  </span>
+                  <button
+                    type="button"
+                    disabled={deleteSaving}
+                    onClick={() => setDeleteConfirmOpen(true)}
+                    className="sa-press inline-flex h-8 items-center justify-center gap-2 rounded-lg border border-black/10 bg-white px-3 text-[13px] font-medium text-[#b52a00] outline-none hover:bg-[#f3f4f6] focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50"
+                  >
+                    <SelectionTrashIcon />
+                    Delete
+                  </button>
+                  <button
+                    type="button"
+                    disabled={deleteSaving}
+                    onClick={() => setSelectedIds(new Set())}
+                    className="sa-press inline-flex h-8 items-center justify-center rounded-lg border border-black/10 bg-white px-3 text-[13px] font-medium text-[#0a0a0a] outline-none hover:bg-[#f3f4f6] focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50"
+                  >
+                    Clear
+                  </button>
+                </>
+              ) : null
+            }
+          />
+        ) : (
+          <div className="flex items-center gap-3 border-b border-[#e5e7eb] px-6 py-3">
+            <ParticipantFilterChip
+              value={participantFilter}
+              onChange={setParticipantFilter}
+            />
+            {selectedCount > 0 ? (
+              <div className="ml-auto flex shrink-0 items-center gap-2">
                 <span className="text-[13px] font-medium text-[#364153]">
                   {selectedCount} selected
                 </span>
@@ -1363,15 +1532,15 @@ export function AdminCommunicationDashboard() {
                 >
                   Clear
                 </button>
-              </>
-            ) : null
-          }
-        />
+              </div>
+            ) : null}
+          </div>
+        )}
         <div className="flex items-center gap-3 border-b border-[#e5e7eb] px-6 py-2.5">
           <div className="flex size-9 items-center justify-center">
             <TableCheckbox
               aria-label="Select all visible conversations"
-              disabled={loading || filtered.length === 0}
+              disabled={loading || visibleThreads.length === 0}
               checked={allFilteredSelected}
               indeterminate={someFilteredSelected}
               onChange={toggleAllFilteredSelected}
@@ -1393,34 +1562,23 @@ export function AdminCommunicationDashboard() {
               <p className="mt-1 text-[13px] text-[#6a7282]">
                 {conversations.length === 0
                   ? splitOnboardingFromRequests
-                    ? 'Tenant onboarding and maintenance request threads will appear in separate sections.'
+                    ? 'Tenant onboarding and maintenance request threads will appear under their tabs.'
                     : 'Tenant and vendor messages will appear here as they come in.'
                   : 'Try a different filter to see more conversations.'}
               </p>
             </div>
           ) : splitOnboardingFromRequests ? (
-            <>
-              <MessageLaneSection
-                title="Requests"
-                description="Maintenance and work-order SMS."
-                rows={requestThreads}
-                empty="No maintenance request threads."
-                indexOffset={0}
-                selectedIds={selectedIds}
-                onToggleSelect={toggleConversationSelected}
-                onOpen={openConversation}
-              />
-              <MessageLaneSection
-                title="Onboarding"
-                description="Welcome texts and verification invites."
-                rows={onboardingThreads}
-                empty="No onboarding threads."
-                indexOffset={requestThreads.length}
-                selectedIds={selectedIds}
-                onToggleSelect={toggleConversationSelected}
-                onOpen={openConversation}
-              />
-            </>
+            <MessageLaneRows
+              rows={laneThreads}
+              empty={
+                messageLaneTab === 'onboarding'
+                  ? 'No onboarding threads.'
+                  : 'No maintenance request threads.'
+              }
+              selectedIds={selectedIds}
+              onToggleSelect={toggleConversationSelected}
+              onOpen={openConversation}
+            />
           ) : (
             filtered.map((c, index) => (
               <ConversationListRow

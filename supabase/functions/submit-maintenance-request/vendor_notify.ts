@@ -73,6 +73,11 @@ export type TicketNotifyPayload = {
   /** Resident-offered visit windows from intake (shown on assignment SMS). */
   residentAvailabilityText?: string | null
   /**
+   * Street / building · unit for vendor SMS Address/Unit lines.
+   * Resolved from property data when omitted.
+   */
+  locationLabel?: string | null
+  /**
    * Retry assignment when the ticket was already marked notified but still has
    * no vendor (e.g. landlord Override after a no-vendor submit).
    */
@@ -266,6 +271,9 @@ function buildSmsBody(
     unit: payload.unit,
     description: payload.description,
     ticketId: payload.ticketId,
+    issueHeadline: payload.issueHeadline,
+    entryOkIfAbsent: payload.entryOkIfAbsent,
+    location: payload.locationLabel ?? payload.unit,
     jobDetailUrl: buildJobDetailUrl(actionToken) ?? legacyViewUrl,
     residentAvailabilityText: payload.residentAvailabilityText,
   })
@@ -434,12 +442,6 @@ async function notifyChannelsForAssignment(
       errors.push("sms: vendor has no phone")
       await insertLog(supabase, ticketId, vendor.id, "sms", null, "no vendor phone")
     } else {
-      const smsBody = buildSmsBody(
-        payload,
-        vendor.name,
-        actionToken,
-        jobDetailUrl,
-      )
       // Always scope the sender line to the ticket landlord — never fall back to
       // DEFAULT_LANDLORD_ID or SMS will miss New Landlord's Twilio number.
       let landlordId = payload.landlordId?.trim() || null
@@ -454,6 +456,29 @@ async function notifyChannelsForAssignment(
             ? ticketLandlord.landlord_id.trim()
             : null
       }
+      if (!payload.locationLabel?.trim() && landlordId) {
+        try {
+          const { resolveVendorProbeLocationLabel } = await import(
+            "../_shared/vendorAvailabilityProbe.ts"
+          )
+          payload.locationLabel = await resolveVendorProbeLocationLabel(
+            supabase,
+            {
+              landlordId,
+              ticketId,
+              unitFallback: payload.unit,
+            },
+          )
+        } catch (e) {
+          console.error("[vendor-notify] location label for assignment SMS", e)
+        }
+      }
+      const smsBody = buildSmsBody(
+        payload,
+        vendor.name,
+        actionToken,
+        jobDetailUrl,
+      )
       const r = await sendVendorJobAlert(supabase, {
         ticketId,
         vendorId: vendor.id,

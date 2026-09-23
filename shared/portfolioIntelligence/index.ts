@@ -16,5 +16,15 @@ export function computePortfolioIntelligence(
 
 export { computePortfolioInsights } from './computeInsights.ts'
 export { computePortfolioRecommendations } from './computeRecommendations.ts'
+export {
+  applyInsightSynthesis,
+  buildFallbackInsightRecommendations,
+  buildInsightSynthesisPromptPayload,
+  insightSynthesisSystemPrompt,
+  mergeInsightRecommendations,
+  normalizeInsightSynthesisModelResult,
+  rankInsightRecommendations,
+} from './synthesizeInsightRecommendations.ts'
+export * from './insightInspectorScheduling.ts'
 export * from './types.ts'
 export * from './helpers.ts'

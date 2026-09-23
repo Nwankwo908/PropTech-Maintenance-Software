@@ -198,6 +198,21 @@ export const uloAppUrl = {
     )
   },
 
+  /**
+   * Admin Requests filtered to a specific work order (WO ref or ticket id).
+   * Prefer the display ref (`WO-XXXX`) so the requests search matches.
+   */
+  adminWorkOrder(
+    workOrderQuery: string,
+    options?: UloAppOriginOptions,
+  ): string {
+    const q = encodeURIComponent(workOrderQuery.trim())
+    return joinOriginPath(
+      uloAppOrigin(options),
+      `/admin/requests?q=${q}`,
+    )
+  },
+
   /** Thumbtack authorization_code redirect (must match the registered redirect_uri). */
   thumbtackOauthCallback(_options?: UloAppOriginOptions): string {
     return "https://www.ulohome.io/"

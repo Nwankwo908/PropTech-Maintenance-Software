@@ -149,11 +149,10 @@ Deno.test("buildVendorAvailabilityProbeSms uses clean headline, not Q&A-stuffed 
     urgent: true,
   })
 
-  assertStringIncludes(body, "Hi Flex plumbing — job WO-6633 at 120 Main St · Unit 1 — URGENT")
+  assertStringIncludes(body, "Hi Flex Plumbing — job WO-6633 at 120 Main St · Unit 1 — URGENT")
   assertStringIncludes(body, "Maurice Mcdonald Properties")
   assertStringIncludes(body, "Issue: No water pressure")
   assertStringIncludes(body, "Entry OK if resident out: No")
-
   const issueLine = body.split("\n").find((l) => l.startsWith("Issue:")) ?? ""
   assertEquals(issueLine, "Issue: No water pressure")
   assertEquals(/Tenant update/i.test(issueLine), false)
@@ -230,7 +229,7 @@ Deno.test("landlord choice SMS after probe uses availability reason", () => {
         windowLabel: "Thu morning",
       },
     ],
-    adminUrl: "https://www.ulohome.io/admin",
+    adminUrl: "https://www.ulohome.io/admin/requests?q=WO-1234",
   })
   assertStringIncludes(
     body,
@@ -238,16 +237,16 @@ Deno.test("landlord choice SMS after probe uses availability reason", () => {
   )
   assertEquals(body.includes("property management team"), false)
   assertEquals(body.includes("returned availability"), false)
-  assertEquals(body.includes("WO-1234"), false)
+  assertEquals(body.includes("WO-1234"), true) // details URL
   assertStringIncludes(body, "1 — Flex Plumbing")
   assertStringIncludes(body, "Thursday, Sep 24 · 10 AM–1 PM")
   assertStringIncludes(body, "$200")
   assertStringIncludes(body, "Reply 1 or 2 to send them the job.")
-  assertStringIncludes(body, "View details:")
+  assertStringIncludes(body, "Details: https://www.ulohome.io/admin/requests?q=WO-1234")
 })
 
-Deno.test("landlord choice SMS single vendor leads with problem and YES", () => {
-  const body = buildLandlordVendorChoiceSms({
+Deno.test("landlord choice SMS single vendor is scannable with title-cased vendor", () => {
+  const withEstimate = buildLandlordVendorChoiceSms({
     landlordFirstName: "Osita",
     companyName: "Osita properties",
     workOrderRef: "WO-1C50",
@@ -256,11 +255,11 @@ Deno.test("landlord choice SMS single vendor leads with problem and YES", () => 
     reason: "availability",
     issueHeadline: "dripping faucet",
     locationLabel: "563 Springdale Circle",
-    adminUrl: "https://www.ulohome.io/admin",
+    adminUrl: "https://www.ulohome.io/admin/requests?q=WO-1C50",
     options: [
       {
         id: "v1",
-        name: "Flex Plumbing",
+        name: "flex plumbing",
         role: "specialist",
         windowLabel: "Thursday, Sep 24 · 10 AM–1 PM",
         estimateNote: "$200",
@@ -268,17 +267,45 @@ Deno.test("landlord choice SMS single vendor leads with problem and YES", () => 
     ],
   })
   assertEquals(
-    body,
+    withEstimate,
     [
-      "Hi Osita — Flex Plumbing is available for the dripping faucet at 563 Springdale Circle.",
+      "Hi Osita — job at 563 Springdale Circle, Unit 1",
       "",
-      "Thursday, Sep 24 · 10 AM–1 PM",
-      "$200",
+      "Issue: dripping faucet",
+      "Vendor: Flex Plumbing",
+      "Available: Thursday, Sep 24 · 10 AM–1 PM",
+      "Estimate: $200",
       "",
-      "Reply YES to send the job to Flex Plumbing.",
+      "Reply YES to send this job to Flex Plumbing.",
       "",
-      "View details:",
-      "https://www.ulohome.io/admin",
+      "Details: https://www.ulohome.io/admin/requests?q=WO-1C50",
     ].join("\n"),
   )
+
+  const noEstimate = buildLandlordVendorChoiceSms({
+    landlordFirstName: "Osita",
+    workOrderRef: "WO-1C50",
+    unit: "1",
+    tradeLabel: "plumbing",
+    reason: "availability",
+    issueHeadline: "dripping faucet",
+    locationLabel: "563 Springdale Circle · Unit 1",
+    adminUrl: "https://www.ulohome.io/admin/requests?q=WO-1C50",
+    options: [
+      {
+        id: "v1",
+        name: "Flex Plumbing",
+        role: "specialist",
+        windowLabel: "Thursday, Sep 24 · 10 AM–1 PM",
+      },
+    ],
+  })
+  assertEquals(noEstimate.includes("Estimate:"), false)
+  assertEquals(noEstimate.includes("$undefined"), false)
+  assertEquals(noEstimate.includes("Estimate: $"), false)
+  assertStringIncludes(noEstimate, "Hi Osita — job at 563 Springdale Circle, Unit 1")
+  assertStringIncludes(noEstimate, "Issue: dripping faucet")
+  assertStringIncludes(noEstimate, "Vendor: Flex Plumbing")
+  assertStringIncludes(noEstimate, "Available: Thursday, Sep 24 · 10 AM–1 PM")
+  assertStringIncludes(noEstimate, "Reply YES to send this job to Flex Plumbing.")
 })

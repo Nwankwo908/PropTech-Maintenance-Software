@@ -18,6 +18,11 @@ import { getAdminEdgeSecret } from '@/lib/adminEdgeAuth'
 import { getErrorMessage } from '@/lib/errorMessage'
 import { buildThumbtackVendorOutreachMessage } from '@shared/externalVendor/thumbtackOutreachCopy'
 import {
+  resolveThumbtackRequestFlowUrl,
+  resolveThumbtackServicePageEmbedUrl,
+  THUMBTACK_SERVICE_PAGE_IFRAME_ID,
+} from '@shared/externalVendor/thumbtackRequestFlow'
+import {
   ADMIN_RAIL_FOOTER_CLASS,
   ADMIN_RAIL_FOOTER_PRIMARY_BUTTON_CLASS,
   ADMIN_RAIL_FOOTER_SECONDARY_BUTTON_CLASS,
@@ -209,12 +214,12 @@ function VendorResultRow({
   vendor,
   saving,
   enterDelayMs,
-  onMessage,
+  onSelect,
 }: {
   vendor: ExternalVendorDisplayRow
   saving: boolean
   enterDelayMs?: number
-  onMessage: () => void
+  onSelect: () => void
 }) {
   const distanceLabel =
     vendor.distanceMiles != null && Number.isFinite(Number(vendor.distanceMiles))
@@ -222,7 +227,15 @@ function VendorResultRow({
       : vendor.address
   const contactStatus = thumbtackContactStatusLabel(vendor)
   const contactedAtLabel = formatThumbtackContactedAt(vendor.contactedAt)
-  const canOpenMessage = !saving && canMessageThumbtackVendor(vendor)
+  const canSelect = !saving && Boolean(
+    resolveThumbtackServicePageEmbedUrl({
+      listingUrl: vendor.listingUrl,
+      requestFlowUrl: vendor.requestFlowUrl,
+      providerRef: vendor.providerRef,
+      categoryId: vendor.categoryId,
+      iframeId: THUMBTACK_SERVICE_PAGE_IFRAME_ID,
+    }) || canMessageThumbtackVendor(vendor),
+  )
 
   return (
     <div
@@ -233,11 +246,9 @@ function VendorResultRow({
         <div className="min-w-0 flex-1">
           <button
             type="button"
-            disabled={!canOpenMessage}
-            onClick={onMessage}
-            title={
-              canOpenMessage ? `Message ${vendor.name}` : 'Messaging is available for Thumbtack vendors'
-            }
+            disabled={!canSelect}
+            onClick={onSelect}
+            title={canSelect ? `View ${vendor.name} on Thumbtack` : 'Profile is unavailable'}
             className="sa-press text-left text-[14px] font-semibold leading-5 text-[#0a0a0a] outline-none hover:underline focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-60"
           >
             {vendor.name}
@@ -309,12 +320,10 @@ function VendorResultRow({
 
         <button
           type="button"
-          disabled={!canOpenMessage}
-          onClick={onMessage}
-          aria-label={`Message ${vendor.name}`}
-          title={
-            canOpenMessage ? `Message ${vendor.name}` : 'Messaging is available for Thumbtack vendors'
-          }
+          disabled={!canSelect}
+          onClick={onSelect}
+          aria-label={`View ${vendor.name} on Thumbtack`}
+          title={canSelect ? `View ${vendor.name} on Thumbtack` : 'Profile is unavailable'}
           className="sa-card sa-press shrink-0 overflow-hidden rounded-[10px] outline-none hover:opacity-100 focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-60"
         >
           <VendorProfileImage name={vendor.name} imageUrl={vendor.imageUrl} />
@@ -384,6 +393,11 @@ export function FindExternalVendorRail({
   const messageInputRef = useRef<HTMLTextAreaElement>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const [messageVendor, setMessageVendor] = useState<ExternalVendorDisplayRow | null>(null)
+  const [servicePageVendor, setServicePageVendor] = useState<ExternalVendorDisplayRow | null>(null)
+  /** When Thumbtack starts Request Flow inside SPW, prefer the dedicated RF embed (needs allow-forms). */
+  const [embedMode, setEmbedMode] = useState<'service_page' | 'request_flow'>('service_page')
+  const [requestFlowOverrideUrl, setRequestFlowOverrideUrl] = useState<string | null>(null)
+  const [thumbtackRequestCreated, setThumbtackRequestCreated] = useState(false)
   const [messageDraft, setMessageDraft] = useState('')
   const [messageSending, setMessageSending] = useState(false)
   const [messageError, setMessageError] = useState<string | null>(null)
@@ -446,6 +460,10 @@ export function FindExternalVendorRail({
   useEffect(() => {
     if (open) return
     setMessageVendor(null)
+    setServicePageVendor(null)
+    setEmbedMode('service_page')
+    setRequestFlowOverrideUrl(null)
+    setThumbtackRequestCreated(false)
     setMessageError(null)
     setComposerThread([])
     setThreadsByBusiness({})
@@ -589,16 +607,28 @@ export function FindExternalVendorRail({
         leaveMessageView()
         return
       }
+      if (servicePageVendor) {
+        leaveServicePageView()
+        return
+      }
       handleDismiss()
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [open, handleDismiss, saving, messageVendor, messageSending])
+  }, [open, handleDismiss, saving, messageVendor, servicePageVendor, messageSending])
 
   function leaveMessageView() {
     setMessageVendor(null)
     setMessageError(null)
     setComposerThread([])
+    setListReentered(true)
+  }
+
+  function leaveServicePageView() {
+    setServicePageVendor(null)
+    setEmbedMode('service_page')
+    setRequestFlowOverrideUrl(null)
+    setThumbtackRequestCreated(false)
     setListReentered(true)
   }
 
@@ -608,7 +638,44 @@ export function FindExternalVendorRail({
       leaveMessageView()
       return
     }
+    if (servicePageVendor) {
+      leaveServicePageView()
+      return
+    }
     handleDismiss()
+  }
+
+  const propertyZip = useMemo(() => {
+    const loc =
+      jobContext?.propertyAddress ||
+      locationLabel ||
+      areaLabel ||
+      ''
+    const match = loc.match(/\b(\d{5})(?:-\d{4})?\b/)
+    return match?.[1] ?? null
+  }, [jobContext?.propertyAddress, locationLabel, areaLabel])
+
+  function openServicePage(vendor: ExternalVendorDisplayRow) {
+    setMessageError(null)
+    setEmbedMode('service_page')
+    setRequestFlowOverrideUrl(null)
+    setThumbtackRequestCreated(false)
+    const embed = resolveThumbtackServicePageEmbedUrl({
+      listingUrl: vendor.listingUrl,
+      requestFlowUrl: vendor.requestFlowUrl,
+      providerRef: vendor.providerRef,
+      categoryId: vendor.categoryId,
+      zipCode: propertyZip,
+      iframeId: THUMBTACK_SERVICE_PAGE_IFRAME_ID,
+    })
+    if (embed) {
+      setServicePageVendor(vendor)
+      return
+    }
+    // No embed URL — fall back to in-Ulo messaging when available.
+    if (canMessageThumbtackVendor(vendor)) {
+      openMessageComposer(vendor)
+    }
   }
 
   function openMessageComposer(vendor: ExternalVendorDisplayRow) {
@@ -725,9 +792,116 @@ export function FindExternalVendorRail({
     )
   }
 
+  const servicePageEmbedUrl = servicePageVendor
+    ? embedMode === 'request_flow'
+      ? requestFlowOverrideUrl ||
+        resolveThumbtackRequestFlowUrl({
+          requestFlowUrl: servicePageVendor.requestFlowUrl,
+          listingUrl: servicePageVendor.listingUrl,
+          searchId: servicePageVendor.searchId,
+          categoryId: servicePageVendor.categoryId,
+          providerRef: servicePageVendor.providerRef,
+          servicePk: servicePageVendor.providerRef,
+          zipCode: propertyZip,
+        })
+      : resolveThumbtackServicePageEmbedUrl({
+          listingUrl: servicePageVendor.listingUrl,
+          requestFlowUrl: servicePageVendor.requestFlowUrl,
+          providerRef: servicePageVendor.providerRef,
+          categoryId: servicePageVendor.categoryId,
+          zipCode: propertyZip,
+          iframeId: THUMBTACK_SERVICE_PAGE_IFRAME_ID,
+        })
+    : null
+
+  useEffect(() => {
+    if (!open || !servicePageVendor) return
+    const vendor = servicePageVendor
+    const zip = propertyZip
+    function onMessage(event: MessageEvent) {
+      const origin = (event.origin || '').toLowerCase()
+      if (
+        !origin.includes('thumbtack.com') &&
+        !origin.includes('staging-partner.thumbtack.com')
+      ) {
+        return
+      }
+      const raw = event.data
+      const type =
+        typeof raw === 'string'
+          ? raw
+          : raw && typeof raw === 'object' && typeof (raw as { type?: unknown }).type === 'string'
+            ? (raw as { type: string }).type
+            : ''
+      if (!type) return
+
+      // Estimate / contact form starts inside SPW — switch to dedicated Request Flow
+      // iframe (Thumbtack requires allow-forms for Next / submit).
+      if (type === 'THUMBTACK_RF_START') {
+        const data =
+          raw && typeof raw === 'object' && raw !== null && 'data' in raw
+            ? (raw as { data?: Record<string, unknown> }).data
+            : undefined
+        const categoryPk =
+          (typeof data?.category_pk === 'string' && data.category_pk.trim()) ||
+          vendor.categoryId ||
+          null
+        const servicePk =
+          (typeof data?.business_pk === 'string' && data.business_pk.trim()) ||
+          (typeof data?.service_pk === 'string' && data.service_pk.trim()) ||
+          vendor.providerRef ||
+          null
+        const eventZip =
+          (typeof data?.zip_code === 'string' && data.zip_code.trim()) || zip || null
+        const rfUrl = resolveThumbtackRequestFlowUrl({
+          requestFlowUrl: vendor.requestFlowUrl,
+          listingUrl: vendor.listingUrl,
+          searchId: vendor.searchId,
+          categoryId: categoryPk,
+          servicePk,
+          providerRef: vendor.providerRef,
+          zipCode: eventZip,
+        })
+        if (rfUrl) {
+          setRequestFlowOverrideUrl(rfUrl)
+          setEmbedMode('request_flow')
+        }
+        return
+      }
+      if (type === 'THUMBTACK_RF_REQUEST_CREATED') {
+        setThumbtackRequestCreated(true)
+        return
+      }
+      if (type === 'THUMBTACK_SP_CLOSE' || type === 'THUMBTACK_RF_CLOSE') {
+        leaveServicePageView()
+      }
+    }
+    window.addEventListener('message', onMessage)
+    return () => window.removeEventListener('message', onMessage)
+  }, [open, servicePageVendor, propertyZip])
+
+  useEffect(() => {
+    if (!open || !servicePageEmbedUrl || !servicePageVendor || embedMode !== 'service_page') return
+    const existing = document.querySelector(
+      `script[data-ulo-thumbtack-spw="${THUMBTACK_SERVICE_PAGE_IFRAME_ID}"]`,
+    )
+    if (existing) return
+    const script = document.createElement('script')
+    script.src = 'https://www.thumbtack.com/embed/service-page.js'
+    script.async = true
+    script.dataset.iframeId = THUMBTACK_SERVICE_PAGE_IFRAME_ID
+    script.dataset.uloThumbtackSpw = THUMBTACK_SERVICE_PAGE_IFRAME_ID
+    document.body.appendChild(script)
+    return () => {
+      script.remove()
+    }
+  }, [open, servicePageEmbedUrl, servicePageVendor, embedMode])
+
   if (!open) return null
 
-  const panelWidthClass = 'max-w-[min(100vw,520px)]'
+  const panelWidthClass = servicePageVendor
+    ? 'max-w-[min(100vw,720px)]'
+    : 'max-w-[min(100vw,520px)]'
 
   const panel = (
       <div
@@ -834,6 +1008,95 @@ export function FindExternalVendorRail({
               </button>
             </footer>
           </div>
+        ) : servicePageVendor ? (
+          <div
+            key={servicePageVendor.providerRef ?? servicePageVendor.name}
+            className="sa-enter-scale relative flex min-h-0 flex-1 flex-col overflow-hidden"
+          >
+            <header className="shrink-0 border-b border-[#e5e7eb] px-6 pb-4 pt-6 pr-12">
+              <button
+                type="button"
+                disabled={saving}
+                onClick={leaveServicePageView}
+                className="sa-link inline-flex items-center gap-1 text-[12px] font-medium text-[#717182] outline-none hover:text-[#0a0a0a] focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2 disabled:opacity-50"
+              >
+                <ChevronLeftIcon />
+                Back to results
+              </button>
+              <div className="mt-3 flex items-center gap-2.5">
+                <VendorProfileImage
+                  name={servicePageVendor.name}
+                  imageUrl={servicePageVendor.imageUrl}
+                  sizeClass="size-8"
+                />
+                <h2
+                  id={titleId}
+                  className="m-0 min-w-0 truncate text-[18px] font-semibold leading-7 tracking-[-0.3px] text-[#0a0a0a]"
+                >
+                  {servicePageVendor.name}
+                </h2>
+              </div>
+              <p
+                key={embedMode}
+                className="ulo-embed-crossfade mt-1 text-[12px] leading-[18px] text-[#717182]"
+              >
+                {embedMode === 'request_flow'
+                  ? 'Request an estimate on Thumbtack — then assign this vendor in Ulo when you are ready.'
+                  : 'Thumbtack service page — review this pro, then request an estimate or assign them in Ulo.'}
+              </p>
+            </header>
+
+            <div className="relative min-h-0 flex-1 bg-[#f3f4f6]">
+              {servicePageEmbedUrl ? (
+                <iframe
+                  key={`${servicePageVendor.providerRef ?? servicePageVendor.name}-${embedMode}`}
+                  id={
+                    embedMode === 'service_page'
+                      ? THUMBTACK_SERVICE_PAGE_IFRAME_ID
+                      : undefined
+                  }
+                  title={
+                    embedMode === 'request_flow'
+                      ? `Request estimate from ${servicePageVendor.name}`
+                      : `${servicePageVendor.name} on Thumbtack`
+                  }
+                  src={servicePageEmbedUrl}
+                  className="ulo-embed-crossfade absolute inset-0 h-full w-full border-0 bg-white"
+                  sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox"
+                  referrerPolicy="origin"
+                  allow="clipboard-write; payment"
+                />
+              ) : (
+                <div className="sa-enter flex h-full flex-col items-center justify-center gap-3 p-6 text-center">
+                  <p className="text-[13px] leading-5 text-[#6a7282]">
+                    This listing does not include a Thumbtack service page embed.
+                  </p>
+                  {servicePageVendor.listingUrl ? (
+                    <a
+                      href={servicePageVendor.listingUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="sa-press text-[13px] font-semibold text-[#186179] underline-offset-2 hover:underline"
+                    >
+                      Open on Thumbtack
+                    </a>
+                  ) : null}
+                </div>
+              )}
+            </div>
+
+            {thumbtackRequestCreated ? (
+              <p className="sa-enter shrink-0 border-t border-[#e5e7eb] px-6 py-3 text-[13px] leading-5 text-[#146b52]">
+                Request sent on Thumbtack. You can assign this vendor in Ulo when you are ready.
+              </p>
+            ) : null}
+
+            {saveError ? (
+              <p className="sa-enter shrink-0 px-6 pt-3 text-[13px] leading-5 text-error" role="alert">
+                {saveError}
+              </p>
+            ) : null}
+          </div>
         ) : (
         <div
           className={[
@@ -920,7 +1183,7 @@ export function FindExternalVendorRail({
                       vendor={vendor}
                       saving={saving}
                       enterDelayMs={Math.min(index, 8) * 40}
-                      onMessage={() => openMessageComposer(vendor)}
+                      onSelect={() => openServicePage(vendor)}
                     />
                   )
                 })}

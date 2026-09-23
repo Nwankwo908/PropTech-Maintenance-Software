@@ -1977,6 +1977,73 @@ h6 {
   animation-delay: calc(40ms + var(--sa-stagger, 0) * 50ms);
 }
 
+@keyframes ulo-profile-setup-nudge {
+  0%,
+  100% {
+    transform: translateX(0);
+    opacity: 0.85;
+  }
+  50% {
+    transform: translateX(-6px);
+    opacity: 1;
+  }
+}
+
+.ulo-profile-setup-nudge-arrow {
+  animation: ulo-profile-setup-nudge 1s var(--sa-ease) infinite;
+  will-change: transform, opacity;
+}
+
+/** Profile setup nav — morph dashed outline / fill when Property Health nudges it. */
+.ulo-profile-setup-nav {
+  outline: 2px dashed transparent;
+  outline-offset: 2px;
+  transition:
+    background-color var(--sa-duration) var(--sa-ease),
+    opacity var(--sa-duration) var(--sa-ease),
+    outline-color var(--sa-duration) var(--sa-ease),
+    outline-offset var(--sa-duration) var(--sa-ease),
+    color var(--sa-fast) ease,
+    transform var(--sa-press) ease;
+}
+
+.ulo-profile-setup-nav[data-pointed='true'] {
+  background-color: #e0f2ef;
+  opacity: 1;
+  outline-color: #101828;
+  outline-offset: 2px;
+}
+
+@keyframes ulo-embed-crossfade {
+  from {
+    opacity: 0;
+    transform: translateY(6px) scale(0.992);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.ulo-embed-crossfade {
+  animation: ulo-embed-crossfade var(--sa-duration) var(--sa-ease);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ulo-profile-setup-nudge-arrow {
+    animation: none;
+    opacity: 1;
+  }
+
+  .ulo-profile-setup-nav {
+    transition: none;
+  }
+
+  .ulo-embed-crossfade {
+    animation: none;
+  }
+}
+
 @keyframes setup-checkbox-guide-cursor-draw {
   0% {
     transform: translate3d(var(--guide-cursor-start-x, 0), var(--guide-cursor-start-y, 0), 0);
@@ -2505,6 +2572,18 @@ h6 {
 
 .sa-press:active:not(:disabled):not([aria-disabled='true']) {
   transform: scale(0.98);
+}
+
+/* Keep outline morph after .sa-press so smart-animate outline isn't wiped. */
+.ulo-profile-setup-nav {
+  transition:
+    background-color var(--sa-duration) var(--sa-ease),
+    opacity var(--sa-duration) var(--sa-ease),
+    outline-color var(--sa-duration) var(--sa-ease),
+    outline-offset var(--sa-duration) var(--sa-ease),
+    color var(--sa-fast) ease,
+    box-shadow var(--sa-fast) ease,
+    transform var(--sa-press) ease;
 }
 
 .sa-pill {

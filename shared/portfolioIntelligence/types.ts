@@ -8,6 +8,11 @@ export type PortfolioInsightTag =
   | 'PREVENT FUTURE REPAIRS'
   | 'VENDOR RESPONSE'
 
+export type PortfolioInsightTicketSummary = {
+  id: string
+  description: string
+}
+
 export type PortfolioInsightFinding = {
   tag: PortfolioInsightTag
   text: string
@@ -18,7 +23,72 @@ export type PortfolioInsightFinding = {
   requestCount?: number | null
   responseRate?: number | null
   assignedCount?: number | null
+  /** Underlying tickets that produced this aggregate (for grounding + deep links). */
+  ticketIds?: string[]
+  ticketSummaries?: PortfolioInsightTicketSummary[]
+  unitId?: string | null
 }
+
+/** Suggested next step from the Property Insights recommendation layer. */
+export type InsightRecommendationActionType =
+  | 'schedule_inspection'
+  | 'schedule_building_inspection'
+  | 'schedule_unit_walkthrough'
+  | 'request_diagnostic'
+  | 'nudge_vendor'
+  | 'flag_for_review'
+  | 'none'
+
+/** Outcome of an insight-triggered inspector scheduling attempt (card UI). */
+export type InsightSchedulingStatus =
+  | 'idle'
+  | 'probing'
+  | 'accepted'
+  | 'needs_external'
+
+export type InsightSchedulingScope = 'building' | 'unit' | 'diagnostic'
+
+/** Client-visible scheduling state for a Recommended Actions card. */
+export type InsightSchedulingCardState = {
+  status: InsightSchedulingStatus
+  ticketId: string | null
+  targetDay: string | null
+  /** Withheld until the inspector accepts. */
+  inspectorName: string | null
+  confirmedWindow: string | null
+  holdId: string | null
+  requestId: string | null
+}
+
+/**
+ * One ranked Property Insights card after synthesis (or deterministic fallback).
+ * `aggregateText` preserves the plain aggregate sentence for fallback display.
+ */
+export type SynthesizedInsightCard = {
+  id: string
+  sourceTags: PortfolioInsightTag[]
+  tag: PortfolioInsightTag
+  /** Grounded recommendation (or plain aggregate when mode is fallback). */
+  text: string
+  aggregateText: string
+  urgency: number
+  confidence: number
+  actionType: InsightRecommendationActionType
+  actionLabel: string | null
+  ticketIds: string[]
+  ticketSummaries: PortfolioInsightTicketSummary[]
+  unitId: string | null
+  unitLabel: string | null
+  categoryLabel: string | null
+  building: string | null
+  requestCount: number | null
+  responseRate: number | null
+  assignedCount: number | null
+  mode: 'openai' | 'fallback'
+}
+
+/** Below this confidence, synthesis text is discarded in favor of the plain aggregate. */
+export const INSIGHT_SYNTHESIS_LOW_CONFIDENCE = 40
 
 export type PortfolioRecommendationKind =
   | 'priority_property'
@@ -50,7 +120,9 @@ export type PortfolioTicketRow = {
   id?: string
   building?: string | null
   unit?: string | null
+  unitId?: string | null
   issueCategory?: string | null
+  description?: string | null
   vendorWorkStatus?: string | null
   createdAt: string
   assignedVendorId?: string | null
@@ -58,6 +130,7 @@ export type PortfolioTicketRow = {
 }
 
 export type PortfolioUnitRow = {
+  id?: string | null
   unitLabel?: string | null
   building?: string | null
 }

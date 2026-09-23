@@ -230,12 +230,19 @@ export function parseThumbtackBusinesses(parsed: unknown): ExternalVendorHit[] {
       pickString(b as Record<string, unknown>, ["businessName", "name", "business_name"]) ||
       String(b.businessName ?? "").trim()
     if (!name) continue
-    const listingUrl =
-      (typeof b.servicePageURL === "string" && b.servicePageURL.trim()) ||
-      (typeof b.widgets?.servicePageURL === "string" && b.widgets.servicePageURL.trim()) ||
-      null
     const widgets = b.widgets && typeof b.widgets === "object"
       ? b.widgets as Record<string, unknown>
+      : null
+    // Prefer widgets.servicePageURL — that is the iframe Service Page Flow embed
+    // (https://developers.thumbtack.com/docs/marketplace/businesses-search#get-businesses).
+    const rawListingUrl =
+      (widgets
+        ? pickHttpUrl(widgets, ["servicePageURL", "servicePageUrl", "service_page_url"])
+        : null) ||
+      (typeof b.servicePageURL === "string" && b.servicePageURL.trim()) ||
+      null
+    const listingUrl = rawListingUrl
+      ? applyThumbtackPartnerUtm(rawListingUrl)
       : null
     const rawRequestFlowUrl = widgets
       ? pickHttpUrl(widgets, ["requestFlowURL", "requestFlowUrl", "request_flow_url"])

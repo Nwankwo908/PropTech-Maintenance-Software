@@ -206,7 +206,7 @@ export async function submitMaintenanceInvoice(
     const [{ data: ticketRow }, { data: vendorRow }] = await Promise.all([
       supabase
         .from("maintenance_requests")
-        .select("unit, resident_name")
+        .select("unit, resident_name, description, issue_headline, issue_category")
         .eq("id", params.maintenanceRequestId)
         .maybeSingle(),
       supabase.from("vendors").select("name").eq("id", params.vendorId).maybeSingle(),
@@ -224,6 +224,11 @@ export async function submitMaintenanceInvoice(
       currency: "USD",
       minimumFractionDigits: 2,
     })
+    const { cleanInvoiceJobHeadline } = await import("./sms/invoicePaidConfirmation.ts")
+      typeof ticketRow?.description === "string" ? ticketRow.description : null,
+      typeof ticketRow?.issue_category === "string" ? ticketRow.issue_category : null,
+      typeof ticketRow?.issue_headline === "string" ? ticketRow.issue_headline : null,
+    )
     await notifyLandlordNeedsAttention(supabase, {
       landlordId: scope.landlordId,
       kind: "invoice_ready",
@@ -237,6 +242,14 @@ export async function submitMaintenanceInvoice(
       unitId: scope.unitId,
       propertyId: scope.propertyId,
       residentId: scope.residentId,
+      invoicePaidConfirmation: {
+        invoiceId: String(invoice.id),
+        ticketId: params.maintenanceRequestId,
+        amount: totalCost,
+        unit: unit || null,
+        vendorName,
+        jobHeadline,
+      },
     })
   } catch (e) {
     console.error("[maintenance-spend] attention notify", e)

@@ -18,6 +18,12 @@ import {
   persistLandlordChoiceSms,
   type AwaitingVendorChoice,
 } from "./vendorLandlordChoice.ts"
+import {
+  buildInvoiceReadyPaidConfirmationSms,
+  invoiceReadyDetailsUrl,
+  persistInvoicePaidConfirmationSms,
+  type AwaitingInvoicePaidConfirmation,
+} from "./sms/invoicePaidConfirmation.ts"
 
 export type LandlordAttentionKind =
   | "invoice_ready"
@@ -97,7 +103,8 @@ export function defaultAttentionNextSteps(kind: LandlordAttentionKind): string[]
     case "unknown_occupant":
       return ["Review who texted", "Confirm they should get updates"]
     case "external_vendor_replied":
-      return ["Read the reply", "Keep messaging in Ulo"]
+      // Paid confirmation uses YES/NO in the body — no numbered reply options.
+      return []
     default:
       return ["Open Ulo to decide next"]
   }
@@ -189,6 +196,24 @@ function escapeHtml(value: string): string {
     .replace(/"/g, "&quot;")
 }
 
+  /** When set with kind invoice_ready, SMS uses YES/NO paid-confirmation copy. */
+  invoicePaid?: {
+    landlordFirstName?: string | null
+    unit?: string | null
+    vendorName?: string | null
+    amount?: number | null
+    jobHeadline?: string | null
+  } | null
+}
+
+function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+}
+
 function attentionCopyParts(input: AttentionCopyInput) {
   const headline = input.headline.trim()
   const locationLine =
@@ -207,6 +232,16 @@ function attentionCopyParts(input: AttentionCopyInput) {
 }
 
 export function buildLandlordAttentionSms(input: AttentionCopyInput): string {
+  if (input.kind === "invoice_ready" && input.invoicePaid) {
+    return buildInvoiceReadyPaidConfirmationSms({
+      landlordFirstName: input.invoicePaid.landlordFirstName,
+      unit: input.invoicePaid.unit,
+      vendorName: input.invoicePaid.vendorName,
+      amount: input.invoicePaid.amount,
+      jobHeadline: input.invoicePaid.jobHeadline,
+      detailsUrl: input.dashboardUrl,
+    })
+  }
   const { headline, locationLine, whyLine, numbered, choiceReplyHint } =
     attentionCopyParts(input)
   return [
@@ -230,16 +265,27 @@ export function buildLandlordAttentionEmail(input: AttentionCopyInput): {
   text: string
   html: string
 } {
-  const { headline, locationLine, whyLine, numbered, choiceReplyHint } =
-    attentionCopyParts(input)
-  const actionLabel =
-    input.actionLabel?.trim() ||
-    (input.kind ? attentionEmailActionLabel(input.kind) : "Open in Ulo")
-  const text = [
-    `Ulo: ${headline}`,
-    "",
-    locationLine || null,
-    whyLine || null,
+  if (input.kind === "invoice_ready" && input.invoicePaid) {
+    const sms = buildInvoiceReadyPaidConfirmationSms({
+      landlordFirstName: input.invoicePaid.landlordFirstName,
+      unit: input.invoicePaid.unit,
+      vendorName: input.invoicePaid.vendorName,
+      amount: input.invoicePaid.amount,
+      jobHeadline: input.invoicePaid.jobHeadline,
+      detailsUrl: input.dashboardUrl,
+    })
+    const actionLabel =
+      input.actionLabel?.trim() || attentionEmailActionLabel("invoice_ready")
+    const html = `<p>${escapeHtml(sms).replace(/\n/g, "<br>")}</p>
+<p><a href="${escapeHtml(input.dashboardUrl)}" style="display:inline-block;padding:10px 16px;background:#186179;color:#fff;text-decoration:none;border-radius:8px;font-weight:600;">${escapeHtml(actionLabel)}</a></p>
+<p style="color:#6a7282;font-size:13px;">If the button doesn't work, copy and paste this link into your browser:<br>${escapeHtml(input.dashboardUrl)}</p>`
+    return {
+      subject: "Ulo: Invoice ready",
+      text: sms,
+      html,
+    }
+  }
+
     numbered ? `\n${numbered}` : null,
     choiceReplyHint ? `\n${choiceReplyHint}` : null,
     "",
@@ -371,6 +417,44 @@ export async function notifyLandlordNeedsAttention(
     choiceReplyHint: params.choiceReplyHint,
     dashboardUrl,
     actionLabel: attentionEmailActionLabel(params.kind),
+
+  let landlordFirstName = params.landlordFirstName?.trim() || null
+  if (params.kind === "invoice_ready" && !landlordFirstName) {
+    try {
+      const { data: landlord } = await supabase
+        .from("landlords")
+        .select("name")
+        .eq("id", landlordId)
+        .maybeSingle()
+      const raw = typeof landlord?.name === "string" ? landlord.name.trim() : ""
+      landlordFirstName = raw ? (raw.split(/\s+/)[0] ?? null) : null
+    } catch {
+      landlordFirstName = null
+    }
+  }
+
+  const invoicePaid =
+    params.kind === "invoice_ready" && params.invoicePaidConfirmation
+      ? {
+        landlordFirstName,
+        unit: params.invoicePaidConfirmation.unit,
+        vendorName: params.invoicePaidConfirmation.vendorName,
+        amount: params.invoicePaidConfirmation.amount,
+        jobHeadline: params.invoicePaidConfirmation.jobHeadline,
+      }
+      : null
+
+  const copy = {
+    kind: params.kind,
+    headline: params.headline,
+    detail: params.detail,
+    locationLine: params.locationLine,
+    whyLine: params.whyLine,
+    nextSteps: params.nextSteps,
+    choiceReplyHint: params.choiceReplyHint,
+    dashboardUrl,
+    actionLabel: attentionEmailActionLabel(params.kind),
+    invoicePaid,
   }
   const smsBody = buildLandlordAttentionSms(copy)
   const email = buildLandlordAttentionEmail(copy)
@@ -401,6 +485,31 @@ export async function notifyLandlordNeedsAttention(
           continue
         }
         smsSent.push(to)
+        const providerMessageSid =
+          send.providerMessageSid ??
+          send.messageId ??
+          `landlord-attention:${key}:${to}`
+        const providerName = send.provider ?? "twilio"
+
+        // Invoice-ready: always mirror outbound into the landlord thread and
+        // set awaiting_invoice_paid_confirmation (not only when vendorChoice exists).
+        if (params.invoicePaidConfirmation) {
+          try {
+            await persistInvoicePaidConfirmationSms(supabase, {
+              landlordId,
+              phone: to,
+              body: smsBody,
+              awaiting: params.invoicePaidConfirmation,
+              providerMessageSid,
+              provider: providerName,
+              fromNumber: from,
+            })
+          } catch (e) {
+            console.error("[landlord-attention] persist invoice paid ask", e)
+          }
+          continue
+        }
+
         const awaiting = params.vendorChoice
         if (awaiting && awaiting.options.length > 0) {
           try {
@@ -409,21 +518,8 @@ export async function notifyLandlordNeedsAttention(
               phone: to,
               body: smsBody,
               awaiting,
-              providerMessageSid:
-                send.providerMessageSid ??
-                send.messageId ??
-                `landlord-attention:${key}:${to}`,
-              provider: send.provider ?? "twilio",
-              fromNumber: from,
-            })
-          } catch (e) {
-            console.error("[landlord-attention] persist vendor choice", e)
-          }
-        }
-      }
-    }
-  }
-
+              providerMessageSid,
+              provider: providerName,
   if (allowEmail) {
     const mail = await sendLandlordOpsEmail(supabase, {
       landlordId,

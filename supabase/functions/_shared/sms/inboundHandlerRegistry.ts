@@ -27,6 +27,7 @@ import { tryHandleVendorFeedbackInbound } from "../vendor_feedback.ts"
 import { tryHandleVendorCapacityInbound } from "../vendor_capacity.ts"
 import { tryHandleEstimateDecisionInbound } from "./estimateDecisionInbound.ts"
 import { tryHandleLandlordRentReceiptInbound } from "./landlordRentReceiptInbound.ts"
+import { tryHandleInvoicePaidConfirmationInbound } from "./invoicePaidConfirmation.ts"
 import { tryHandleTenantScheduleConfirmInbound } from "./tenantScheduleConfirm.ts"
 import {
   tryHandleTenantActivationReply,
@@ -211,6 +212,35 @@ async function tryLandlordRentReceiptHandler(
     reply: {
       body: result.replyBody,
       source: "landlord_rent_receipt",
+    },
+  }
+}
+
+async function tryInvoicePaidConfirmationHandler(
+  ctx: InboundSmsHandlerContext,
+): Promise<InboundSmsHandlerResult> {
+  const result = await tryHandleInvoicePaidConfirmationInbound(ctx.supabase, {
+    landlordId: ctx.landlordId,
+    conversationId: ctx.conversationId,
+    body: ctx.inbound.body,
+    identityType: ctx.identity.identity_type,
+    messageId: ctx.messageId,
+  })
+  if (!result.handled) return { handled: false }
+
+  return {
+    handled: true,
+    workflowRoute: "landlord_invoice_paid_confirmation",
+    maintenanceRequestId: result.ticketId,
+    workflowMetadata: {
+      invoice_id: result.invoiceId,
+      action: result.action,
+      recognized_amount: result.recognizedAmount ?? null,
+    },
+    reply: {
+      body: result.replyBody,
+      source: `invoice_paid_confirmation_${result.action}`,
+      skipGenericFallback: true,
     },
   }
 }

@@ -70,6 +70,9 @@ export type VendorAvailabilityProbe = {
   status: "probing" | "awaiting_landlord"
   startedAt: string
   landlordNotifiedAt: string | null
+  /** Insight inspector path: assign on first offer (no landlord YES/1/2). */
+  insightAutoAssign?: boolean
+  insightSchedulingRequestId?: string | null
 }
 
 export type AwaitingVendorProbe = {
@@ -310,6 +313,8 @@ function serializeProbe(probe: VendorAvailabilityProbe): Record<string, unknown>
     status: probe.status,
     started_at: probe.startedAt,
     landlord_notified_at: probe.landlordNotifiedAt,
+    insight_auto_assign: probe.insightAutoAssign === true,
+    insight_scheduling_request_id: probe.insightSchedulingRequestId ?? null,
   }
 }
 
@@ -378,6 +383,11 @@ export function readVendorAvailabilityProbe(
     startedAt: typeof row.started_at === "string" ? row.started_at : "",
     landlordNotifiedAt:
       typeof row.landlord_notified_at === "string" ? row.landlord_notified_at : null,
+    insightAutoAssign: row.insight_auto_assign === true,
+    insightSchedulingRequestId:
+      typeof row.insight_scheduling_request_id === "string"
+        ? row.insight_scheduling_request_id
+        : null,
   }
 }
 
@@ -513,6 +523,9 @@ export async function startVendorAvailabilityProbe(
     urgent?: boolean
     residentAvailabilityText?: string | null
     options: VendorAssignmentOption[]
+    /** Insight inspector scheduling: auto-assign on offer; skip landlord choice SMS. */
+    insightAutoAssign?: boolean
+    insightSchedulingRequestId?: string | null
   },
 ): Promise<{ probed: number; skipReason?: string }> {
   const candidates = params.options
@@ -565,6 +578,8 @@ export async function startVendorAvailabilityProbe(
     status: "probing",
     startedAt: new Date().toISOString(),
     landlordNotifiedAt: null,
+    insightAutoAssign: params.insightAutoAssign === true,
+    insightSchedulingRequestId: params.insightSchedulingRequestId ?? null,
   }
 
   const host = await loadLandlordProbeConversation(
@@ -790,6 +805,19 @@ export async function tryHandleVendorAvailabilityProbeInbound(
       probe.candidates.length > 0 &&
       probe.candidates.every((c) => probe.declinedVendorIds.includes(c.vendorId))
     if (allDeclined) {
+      if (probe.insightAutoAssign) {
+        const requestId = probe.insightSchedulingRequestId?.trim()
+        if (requestId) {
+          const { markInsightSchedulingNeedsExternal } = await import(
+            "./insightInspectorScheduling.ts"
+          )
+          await markInsightSchedulingNeedsExternal(supabase, requestId)
+        }
+        await supabase
+          .from("maintenance_requests")
+          .update({ vendor_notify_error: null })
+          .eq("id", probe.ticketId)
+      } else {
       const fallbackOptions: VendorAssignmentOption[] = probe.candidates.map((c) => ({
         vendor: {
           id: c.vendorId,
@@ -817,6 +845,7 @@ export async function tryHandleVendorAvailabilityProbeInbound(
         .from("maintenance_requests")
         .update({ vendor_notify_error: AWAITING_LANDLORD_VENDOR_CHOICE })
         .eq("id", probe.ticketId)
+      }
     }
 
     return {
@@ -896,6 +925,68 @@ export async function tryHandleVendorAvailabilityProbeInbound(
   })
 
   // First offer (or refreshed set) → ask landlord to authorize one vendor.
+  // Insight inspector path: auto-assign immediately (landlord already tapped Schedule).
+  if (probe.insightAutoAssign) {
+    const { assignVendorAndNotify } = await import(
+      "../submit-maintenance-request/vendor_notify.ts"
+    )
+    const { markInsightSchedulingAccepted } = await import(
+      "./insightInspectorScheduling.ts"
+    )
+    const assignResult = await assignVendorAndNotify(supabase, {
+      ticketId: probe.ticketId,
+      priority: "normal",
+      unit: probe.unit,
+      description: probe.description,
+      issueHeadline: probe.issueHeadline,
+      entryOkIfAbsent: probe.entryOkIfAbsent,
+      urgency: null,
+      severity: null,
+      dueAt: null,
+      estimatedMinutes: null,
+      landlordId: probe.landlordId,
+      preferVendorId: vendorId,
+      landlordAcknowledged: true,
+      residentAvailabilityText: probe.residentAvailabilityText,
+      retryIfUnassigned: true,
+    })
+
+    const patch: Record<string, unknown> = {}
+    if (offer.scheduledAt) patch.scheduled_at = offer.scheduledAt
+    if (offer.windowLabel.trim()) {
+      patch.scheduled_window_text = offer.windowLabel.trim()
+    }
+    if (Object.keys(patch).length > 0) {
+      await supabase
+        .from("maintenance_requests")
+        .update(patch)
+        .eq("id", probe.ticketId)
+    }
+
+    const requestId = probe.insightSchedulingRequestId?.trim()
+    if (requestId && assignResult.assigned) {
+      await markInsightSchedulingAccepted(supabase, {
+        requestId,
+        inspectorName: vendorName,
+        confirmedWindow: offer.windowLabel.trim() || null,
+        vendorId,
+      })
+    } else if (requestId && !assignResult.assigned) {
+      const { markInsightSchedulingNeedsExternal } = await import(
+        "./insightInspectorScheduling.ts"
+      )
+      await markInsightSchedulingNeedsExternal(supabase, requestId)
+    }
+
+    return {
+      handled: true,
+      replyBody: buildVendorProbeAckSms({
+        windowLabel: windowLabel,
+        workOrderRef: wo,
+      }),
+    }
+  }
+
   await notifyLandlordOfProbeOffers(supabase, probe)
 
   return {

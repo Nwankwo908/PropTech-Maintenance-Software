@@ -45,6 +45,8 @@ Deno.test("active conversations run before tenant_activation_reply", () => {
   assertEquals(priority("estimate_decision") < priority("tenant_activation_reply"), true)
   assertEquals(priority("landlord_vendor_choice") < priority("tenant_activation_reply"), true)
   assertEquals(priority("landlord_rent_receipt") < priority("tenant_activation_reply"), true)
+  assertEquals(priority("landlord_rent_receipt") < priority("invoice_paid_confirmation"), true)
+  assertEquals(priority("invoice_paid_confirmation") < priority("invoice_payment"), true)
   assertEquals(priority("invoice_payment") < priority("tenant_activation_reply"), true)
 })
 
