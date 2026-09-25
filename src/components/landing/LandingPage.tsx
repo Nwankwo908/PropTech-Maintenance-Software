@@ -138,19 +138,6 @@ function HeroInteractionVideo() {
   )
 }
 
-function HeroPropertyOperationsMark() {
-  return (
-    <span
-      className="bg-clip-text text-transparent"
-      style={{
-        backgroundImage: 'linear-gradient(45deg, #187960 0%, #B4DEEA 100%)',
-      }}
-    >
-      Property operations,
-    </span>
-  )
-}
-
 function HeroHeadlineAndCopy() {
   const headlineRef = useRef<HTMLHeadingElement>(null)
   const copyRef = useRef<HTMLParagraphElement>(null)
@@ -369,46 +356,33 @@ function HeroHeadlineAndCopy() {
         ref={headlineRef}
         className="landing-hero-title mt-4 w-fit max-w-full font-[family-name:var(--font-landing-heading)] leading-[56px] landing-compact:leading-[48px] landing-432:!leading-[39px] [@media(min-width:320px)_and_(max-width:990px)]:!text-[clamp(34px,calc(34px+(100vw-320px)*26/670),60px)] [@media(min-width:991px)_and_(max-width:1599px)]:!text-[clamp(48px,calc(48px+(100vw-991px)*48/608),96px)] [@media(min-width:320px)_and_(max-width:1599px)]:!leading-[1.15] [@media(min-width:768px)_and_(max-width:960px)]:!leading-[40px] text-[clamp(2.25rem,6vw+1.2rem,9rem)] font-bold tracking-[-0.03em] text-[#0f1623] sm:mt-6 max-[1070px]:!w-full landing-tablet-portrait:!leading-[58px] landing-1280-800:!leading-[66px] landing-1366-768:!leading-[66px] landing-1440-900:!leading-[66px] landing-1680-1050:!leading-[66px] landing-2560-1440:!leading-[96px] landing-3440-1440:!leading-[96px] landing-3840-2160:!leading-[96px] [@media(min-width:451px)_and_(max-width:990px)_and_(min-height:1400px)_and_(max-height:1500px)]:text-[clamp(3.375rem,9vw+1.8rem,13.5rem)] [@media(min-width:300px)_and_(max-width:349px)_and_(min-height:850px)_and_(max-height:920px)]:text-[clamp(2.475rem,6.6vw+1.32rem,9.9rem)] [@media(min-width:350px)_and_(max-width:399px)_and_(min-height:850px)_and_(max-height:920px)]:text-[clamp(2.7rem,7.2vw+1.44rem,10.8rem)] landing-phone-tall:!leading-[56px] landing-phone-tall-hero-leading landing-884-hero-leading landing-1440-900-hero-leading landing-1680-1050-hero-leading landing-1920-1080-hero-leading landing-1920-1200-hero-leading landing-2560-1440-hero-leading landing-desktop-hero-leading landing-3440-1440-hero-leading landing-3840-2160-hero-leading landing-4096-2304-hero-leading landing-5120-2880-hero-leading [@media(min-width:350px)_and_(max-width:399px)_and_(min-height:1400px)_and_(max-height:1500px)]:text-[clamp(2.5875rem,6.9vw+1.38rem,10.35rem)] [@media(min-width:400px)_and_(max-width:500px)_and_(min-height:850px)_and_(max-height:920px)]:text-[clamp(2.8125rem,7.5vw+1.5rem,11.25rem)] [@media(min-width:400px)_and_(max-width:450px)_and_(min-height:1400px)_and_(max-height:1500px)]:text-[clamp(2.5875rem,6.9vw+1.38rem,10.35rem)] [@media(min-width:768px)_and_(max-width:850px)_and_(min-height:850px)_and_(max-height:920px)]:text-[clamp(3.6rem,9.6vw+1.92rem,14.4rem)] [@media(min-width:768px)_and_(max-width:850px)_and_(min-height:1400px)_and_(max-height:1500px)]:text-[clamp(3.375rem,9vw+1.8rem,13.5rem)] [@media(min-width:851px)_and_(max-width:990px)_and_(min-height:1400px)_and_(max-height:1500px)]:text-[clamp(3.375rem,8.5vw+1.6rem,13.5rem)] min-[1600px]:text-[clamp(2.25rem,3.84vw,6rem)] lg:tracking-[-0.025em]"
       >
-        {heroLines991 ? (
+        {heroLines768 ? (
           <>
-            <span className="block whitespace-nowrap">
-              <HeroPropertyOperationsMark />
+            <span className="block whitespace-nowrap">They say real estate</span>
+            <span className="block whitespace-nowrap">should be passive.</span>
+            <span
+              className="block bg-clip-text text-transparent"
+              style={{
+                backgroundImage: 'linear-gradient(45deg, #187960 0%, #B1DFF1 100%)',
+              }}
+            >
+              <span className="block whitespace-nowrap">Ulo actually makes it</span>
+              <span className="block whitespace-nowrap">feel that way.</span>
             </span>
-            <span className="block whitespace-nowrap">automated by text.</span>
-          </>
-        ) : heroLines768 ? (
-          <>
-            <span className="block whitespace-nowrap">
-              <HeroPropertyOperationsMark /> automated by text.
-            </span>
-          </>
-        ) : heroLines720 || heroLines600 ? (
-          <>
-            <span className="block whitespace-nowrap">
-              <HeroPropertyOperationsMark />
-            </span>
-            <span className="block whitespace-nowrap">automated by text.</span>
-          </>
-        ) : heroLines504 ? (
-          <>
-            <span className="block whitespace-nowrap">
-              <HeroPropertyOperationsMark />
-            </span>
-            <span className="block whitespace-nowrap">automated by text.</span>
-          </>
-        ) : heroLines432 ? (
-          <>
-            <span className="block whitespace-nowrap">
-              <HeroPropertyOperationsMark />
-            </span>
-            <span className="block whitespace-nowrap">automated by text.</span>
           </>
         ) : (
           <>
-            <span className="block whitespace-nowrap">
-              <HeroPropertyOperationsMark />
+            <span className="block whitespace-nowrap">They say real estate</span>
+            <span className="block whitespace-nowrap">should be passive.</span>
+            <span
+              className="block bg-clip-text text-transparent"
+              style={{
+                backgroundImage: 'linear-gradient(45deg, #187960 0%, #B1DFF1 100%)',
+              }}
+            >
+              <span className="block whitespace-nowrap">Ulo actually makes it</span>
+              <span className="block whitespace-nowrap">feel that way.</span>
             </span>
-            <span className="block whitespace-nowrap">automated by text.</span>
           </>
         )}
       </h1>
@@ -421,9 +395,9 @@ function HeroHeadlineAndCopy() {
           width: fullWidthCopy ? undefined : copyWidth,
         }}
       >
-       Tenants text. Landlords approve. Ulo handles the rest.
-
-       ​​​​​​​​​​​​​​​​
+        Tenants text. Landlords text. Ulo coordinates maintenance, vendors, and
+        repairs so you spend less time managing and more time owning. No apps
+        required for tenants or vendors.
       </p>
     </>
   )
@@ -752,7 +726,7 @@ export function LandingPage() {
             contentClassName="w-full max-w-none [@media(min-width:1024px)_and_(max-width:1439px)_and_(min-height:550px)_and_(max-height:920px)]:!ml-0 [@media(min-width:1024px)_and_(max-width:1439px)_and_(min-height:550px)_and_(max-height:920px)]:flex [@media(min-width:1024px)_and_(max-width:1439px)_and_(min-height:550px)_and_(max-height:920px)]:justify-center [@media(min-width:1021px)_and_(max-width:1440px)_and_(min-height:1397px)_and_(max-height:1500px)]:!ml-0 [@media(min-width:1021px)_and_(max-width:1440px)_and_(min-height:1397px)_and_(max-height:1500px)]:flex [@media(min-width:1021px)_and_(max-width:1440px)_and_(min-height:1397px)_and_(max-height:1500px)]:justify-center min-[1440px]:!ml-0 min-[1440px]:flex min-[1440px]:justify-center "
      >
       <div
-       className="landing-hero-991-row grid w-full grid-cols-1 items-start gap-12 [@media(min-width:1024px)_and_(max-width:1439px)_and_(min-height:550px)_and_(max-height:920px)]:mx-auto [@media(min-width:1024px)_and_(max-width:1439px)_and_(min-height:550px)_and_(max-height:920px)]:flex [@media(min-width:1024px)_and_(max-width:1439px)_and_(min-height:550px)_and_(max-height:920px)]:w-auto [@media(min-width:1024px)_and_(max-width:1439px)_and_(min-height:550px)_and_(max-height:920px)]:max-w-full [@media(min-width:1024px)_and_(max-width:1439px)_and_(min-height:550px)_and_(max-height:920px)]:flex-row [@media(min-width:1024px)_and_(max-width:1439px)_and_(min-height:550px)_and_(max-height:920px)]:flex-nowrap [@media(min-width:1024px)_and_(max-width:1439px)_and_(min-height:550px)_and_(max-height:920px)]:items-center [@media(min-width:1024px)_and_(max-width:1439px)_and_(min-height:550px)_and_(max-height:920px)]:gap-8 [@media(min-width:1021px)_and_(max-width:1440px)_and_(min-height:1397px)_and_(max-height:1500px)]:mx-auto [@media(min-width:1021px)_and_(max-width:1440px)_and_(min-height:1397px)_and_(max-height:1500px)]:flex [@media(min-width:1021px)_and_(max-width:1440px)_and_(min-height:1397px)_and_(max-height:1500px)]:w-auto [@media(min-width:1021px)_and_(max-width:1440px)_and_(min-height:1397px)_and_(max-height:1500px)]:max-w-full [@media(min-width:1021px)_and_(max-width:1440px)_and_(min-height:1397px)_and_(max-height:1500px)]:flex-row [@media(min-width:1021px)_and_(max-width:1440px)_and_(min-height:1397px)_and_(max-height:1500px)]:flex-nowrap [@media(min-width:1021px)_and_(max-width:1440px)_and_(min-height:1397px)_and_(max-height:1500px)]:items-center [@media(min-width:1021px)_and_(max-width:1440px)_and_(min-height:1397px)_and_(max-height:1500px)]:gap-[clamp(2rem,4vw,3.5rem)] min-[1440px]:mx-auto min-[1440px]:flex min-[1440px]:w-auto min-[1440px]:max-w-full min-[1440px]:flex-row min-[1440px]:flex-nowrap min-[1440px]:items-center min-[1440px]:gap-14 min-[1440px]:gap-y-0 min-[2560px]:gap-16 landing-3840-2160:origin-center landing-3840-2160:scale-[1.6] landing-4096-2304:origin-center landing-5120-2880:origin-center landing-4096-2304:scale-[1.4] landing-5120-2880:scale-[1.4] landing-7680-4320:origin-center landing-7680-4320:scale-[1.9]"
+       className="landing-hero-991-row grid w-full grid-cols-1 items-start gap-12 [@media(min-width:1024px)_and_(max-width:1439px)_and_(min-height:550px)_and_(max-height:920px)]:mx-auto [@media(min-width:1024px)_and_(max-width:1439px)_and_(min-height:550px)_and_(max-height:920px)]:flex [@media(min-width:1024px)_and_(max-width:1439px)_and_(min-height:550px)_and_(max-height:920px)]:w-full [@media(min-width:1024px)_and_(max-width:1439px)_and_(min-height:550px)_and_(max-height:920px)]:max-w-full [@media(min-width:1024px)_and_(max-width:1439px)_and_(min-height:550px)_and_(max-height:920px)]:flex-row [@media(min-width:1024px)_and_(max-width:1439px)_and_(min-height:550px)_and_(max-height:920px)]:flex-nowrap [@media(min-width:1024px)_and_(max-width:1439px)_and_(min-height:550px)_and_(max-height:920px)]:items-center [@media(min-width:1024px)_and_(max-width:1439px)_and_(min-height:550px)_and_(max-height:920px)]:gap-8 [@media(min-width:1021px)_and_(max-width:1440px)_and_(min-height:1397px)_and_(max-height:1500px)]:mx-auto [@media(min-width:1021px)_and_(max-width:1440px)_and_(min-height:1397px)_and_(max-height:1500px)]:flex [@media(min-width:1021px)_and_(max-width:1440px)_and_(min-height:1397px)_and_(max-height:1500px)]:w-full [@media(min-width:1021px)_and_(max-width:1440px)_and_(min-height:1397px)_and_(max-height:1500px)]:max-w-full [@media(min-width:1021px)_and_(max-width:1440px)_and_(min-height:1397px)_and_(max-height:1500px)]:flex-row [@media(min-width:1021px)_and_(max-width:1440px)_and_(min-height:1397px)_and_(max-height:1500px)]:flex-nowrap [@media(min-width:1021px)_and_(max-width:1440px)_and_(min-height:1397px)_and_(max-height:1500px)]:items-center [@media(min-width:1021px)_and_(max-width:1440px)_and_(min-height:1397px)_and_(max-height:1500px)]:gap-[clamp(2rem,4vw,3.5rem)] min-[1024px]:mx-auto min-[1024px]:flex min-[1024px]:w-full min-[1024px]:max-w-full min-[1024px]:flex-row min-[1024px]:flex-nowrap min-[1024px]:items-center min-[1024px]:gap-10 min-[1440px]:gap-14 min-[1440px]:gap-y-0 min-[2560px]:gap-16 landing-3840-2160:origin-center landing-3840-2160:scale-[1.6] landing-4096-2304:origin-center landing-5120-2880:origin-center landing-4096-2304:scale-[1.4] landing-5120-2880:scale-[1.4] landing-7680-4320:origin-center landing-7680-4320:scale-[1.9]"
               style={
                 {
                   '--hero-copy-max-w': HERO_COPY_MAX_WIDTH,
@@ -760,12 +734,11 @@ export function LandingPage() {
                 } as React.CSSProperties
               }
             >
-              <div className="landing-hero-991-copy relative z-10 w-full max-w-full min-w-0 pb-10 [@media(min-width:1024px)_and_(max-width:1439px)_and_(min-height:550px)_and_(max-height:920px)]:min-w-max [@media(min-width:1024px)_and_(max-width:1439px)_and_(min-height:550px)_and_(max-height:920px)]:w-max [@media(min-width:1024px)_and_(max-width:1439px)_and_(min-height:550px)_and_(max-height:920px)]:max-w-none [@media(min-width:1024px)_and_(max-width:1439px)_and_(min-height:550px)_and_(max-height:920px)]:shrink-0 [@media(min-width:1024px)_and_(max-width:1439px)_and_(min-height:550px)_and_(max-height:920px)]:pb-0 [@media(min-width:1021px)_and_(max-width:1440px)_and_(min-height:1397px)_and_(max-height:1500px)]:ml-0 [@media(min-width:1021px)_and_(max-width:1440px)_and_(min-height:1397px)_and_(max-height:1500px)]:min-w-max [@media(min-width:1021px)_and_(max-width:1440px)_and_(min-height:1397px)_and_(max-height:1500px)]:w-max [@media(min-width:1021px)_and_(max-width:1440px)_and_(min-height:1397px)_and_(max-height:1500px)]:max-w-none [@media(min-width:1021px)_and_(max-width:1440px)_and_(min-height:1397px)_and_(max-height:1500px)]:shrink-0 [@media(min-width:1021px)_and_(max-width:1440px)_and_(min-height:1397px)_and_(max-height:1500px)]:pb-0 min-[1440px]:ml-0 min-[1440px]:min-w-max min-[1440px]:w-max min-[1440px]:max-w-none min-[1440px]:shrink-0 min-[1440px]:pb-0">
+              <div className="landing-hero-991-copy relative z-10 w-full max-w-full min-w-0 pb-10 [@media(min-width:1024px)_and_(max-width:1439px)_and_(min-height:550px)_and_(max-height:920px)]:min-w-0 [@media(min-width:1024px)_and_(max-width:1439px)_and_(min-height:550px)_and_(max-height:920px)]:w-auto [@media(min-width:1024px)_and_(max-width:1439px)_and_(min-height:550px)_and_(max-height:920px)]:max-w-[var(--hero-copy-max-w)] [@media(min-width:1024px)_and_(max-width:1439px)_and_(min-height:550px)_and_(max-height:920px)]:flex-1 [@media(min-width:1024px)_and_(max-width:1439px)_and_(min-height:550px)_and_(max-height:920px)]:shrink [@media(min-width:1024px)_and_(max-width:1439px)_and_(min-height:550px)_and_(max-height:920px)]:pb-0 [@media(min-width:1021px)_and_(max-width:1440px)_and_(min-height:1397px)_and_(max-height:1500px)]:ml-0 [@media(min-width:1021px)_and_(max-width:1440px)_and_(min-height:1397px)_and_(max-height:1500px)]:min-w-0 [@media(min-width:1021px)_and_(max-width:1440px)_and_(min-height:1397px)_and_(max-height:1500px)]:w-auto [@media(min-width:1021px)_and_(max-width:1440px)_and_(min-height:1397px)_and_(max-height:1500px)]:max-w-[var(--hero-copy-max-w)] [@media(min-width:1021px)_and_(max-width:1440px)_and_(min-height:1397px)_and_(max-height:1500px)]:flex-1 [@media(min-width:1021px)_and_(max-width:1440px)_and_(min-height:1397px)_and_(max-height:1500px)]:shrink [@media(min-width:1021px)_and_(max-width:1440px)_and_(min-height:1397px)_and_(max-height:1500px)]:pb-0 min-[1024px]:ml-0 min-[1024px]:min-w-0 min-[1024px]:w-auto min-[1024px]:max-w-[var(--hero-copy-max-w)] min-[1024px]:flex-1 min-[1024px]:shrink min-[1024px]:pb-0">
                 <span className="inline-flex max-w-full flex-wrap items-center gap-2 rounded-full border border-black/[0.04] bg-black/[0.06] px-[17px] py-[9px] shadow-[0px_2px_8px_0px_rgba(16,185,129,0.1)]">
                   <span className="landing-alpha-status-dot" aria-hidden />
                   <span className="font-mono text-[12px] font-normal leading-4 text-[#059669]">
-                  No apps. No chasing. No chaos.
-
+                    PROPERTY OPERATIONS, AUTOMATED BY TEXT
                   </span>
                 </span>
 
