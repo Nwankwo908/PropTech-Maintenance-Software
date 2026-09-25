@@ -348,31 +348,93 @@
     }
   }
 
+  @media (min-width: 320px) {
+    .landing-hero-text-block {
+      width: 100% !important;
+      max-width: 100% !important;
+      overflow: visible !important;
+    }
+
+    .landing-hero-text-block > .landing-hero-title,
+    .landing-hero-text-block > p {
+      width: 100% !important;
+      max-width: 100% !important;
+      box-sizing: border-box !important;
+    }
+
+    .landing-hero-title {
+      overflow: visible !important;
+    }
+
+    .landing-hero-title > span {
+      display: block !important;
+      width: max-content !important;
+      max-width: none !important;
+      overflow: visible !important;
+      padding-inline-end: 0.08em !important;
+    }
+
+    /*
+      Gradient fill: keep the span box as wide as the glyphs (max-content).
+      max-width:100% + bg-clip:text makes overflowing letters invisible.
+    */
+    .landing-hero-title > span.landing-hero-ulo-line {
+      color: transparent !important;
+      -webkit-text-fill-color: transparent !important;
+      background-clip: text !important;
+      -webkit-background-clip: text !important;
+      background-size: 100% 100% !important;
+      background-repeat: no-repeat !important;
+    }
+  }
+
   @media (min-width: 320px) and (max-width: 990px) {
     .landing-hero-title {
       font-size: clamp(34px, calc(34px + (100vw - 320px) * 26 / 670), 60px) !important;
       line-height: 1.15 !important;
       width: 100% !important;
       max-width: 100% !important;
+      overflow: visible !important;
     }
 
     .landing-hero-title > span {
       display: block !important;
-      width: 100% !important;
-      max-width: 100% !important;
+      width: max-content !important;
+      max-width: none !important;
       box-sizing: border-box !important;
-      transform-origin: left center !important;
+      overflow: visible !important;
     }
 
     .landing-hero-991-row {
       max-width: 100% !important;
       width: 100% !important;
+      overflow: visible !important;
     }
 
     .landing-hero-991-copy {
       min-width: 0 !important;
       max-width: 100% !important;
       width: 100% !important;
+      overflow: visible !important;
+    }
+  }
+
+  /** Phone → ~800 wide: grow hero type across the full copy width. */
+  @media (min-width: 385px) and (max-width: 819px) {
+    .landing-hero-title {
+      font-size: clamp(38px, calc(38px + (100vw - 385px) * 40 / 415), 78px) !important;
+      line-height: 1.15 !important;
+      width: 100% !important;
+      max-width: 100% !important;
+      overflow: visible !important;
+    }
+
+    .landing-hero-title > span {
+      display: block !important;
+      width: max-content !important;
+      max-width: none !important;
+      box-sizing: border-box !important;
+      overflow: visible !important;
     }
   }
 
@@ -384,10 +446,10 @@
     }
   }
 
-  /** 720–768 wide — fixed 60px hero. */
-  @media (min-width: 720px) and (max-width: 768px) {
+  /** 720–819 wide — continue the ramp so ~800px fills the column. */
+  @media (min-width: 720px) and (max-width: 819px) {
     .landing-hero-title {
-      font-size: 60px !important;
+      font-size: clamp(64px, calc(38px + (100vw - 385px) * 40 / 415), 78px) !important;
       line-height: 1.15 !important;
     }
   }
@@ -398,14 +460,15 @@
       line-height: 1.15 !important;
       width: 100% !important;
       max-width: 100% !important;
+      overflow: visible !important;
     }
 
     .landing-hero-title > span {
       display: block !important;
-      width: 100% !important;
-      max-width: 100% !important;
+      width: max-content !important;
+      max-width: none !important;
       box-sizing: border-box !important;
-      transform-origin: left center !important;
+      overflow: visible !important;
     }
   }
 
@@ -414,6 +477,7 @@
       flex: 1 1 0% !important;
       width: auto !important;
       min-width: 0 !important;
+      overflow: visible !important;
     }
   }
 
@@ -422,17 +486,20 @@
       display: flex !important;
       flex-direction: row !important;
       flex-wrap: nowrap !important;
-      align-items: center !important;
+      align-items: stretch !important;
       justify-content: flex-start !important;
       gap: 0 !important;
       width: 100% !important;
+      overflow: visible !important;
     }
 
     .landing-hero-991-copy {
       flex: 1 1 0% !important;
       min-width: 0 !important;
       padding-bottom: 0 !important;
-      padding-right: 5.25rem !important;
+      /* Was 5.25rem — stole width from the title and caused mid-word clipping. */
+      padding-right: 1.25rem !important;
+      overflow: visible !important;
     }
 
     .landing-hero-991-arrow {
@@ -444,14 +511,18 @@
       margin-left: auto !important;
       margin-right: 0 !important;
       justify-content: flex-end !important;
+      align-items: stretch !important;
+      align-self: stretch !important;
       flex: 0 0 auto !important;
-      width: 280px !important;
+      width: auto !important;
+      height: auto !important;
     }
 
     .landing-hero-991-visual > * {
       margin-left: auto !important;
       margin-right: 0 !important;
       max-width: none !important;
+      height: 100% !important;
     }
   }
 
@@ -506,7 +577,7 @@
     }
 
     .landing-hero-991-visual {
-      width: 280px !important;
+      width: auto !important;
       margin-left: 0.75rem !important;
       margin-right: 0 !important;
     }

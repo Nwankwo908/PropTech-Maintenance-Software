@@ -73,6 +73,9 @@ const LANDING_SECTION_GAP = 'pb-16'
 /** Max width of hero copy on wide desktop. */
 const HERO_COPY_MAX_WIDTH = '40rem'
 
+/** Ulo hero lines — end color stays readable (near-white ends look like clipped letters). */
+const HERO_ULO_LINE_GRADIENT = 'linear-gradient(90deg, #187960 0%, #2A9B7E 55%, #55B6A1 100%)'
+
 /** Hero interaction display width (px). SVG native width is 543px. */
 const HERO_INTERACTION_VIDEO_WIDTH = 364
 const HERO_INTERACTION_ASPECT = 1010 / 543
@@ -107,24 +110,34 @@ function LandingContentShell({
   )
 }
 
-function HeroInteractionVideo() {
-  const displayWidth = HERO_INTERACTION_VIDEO_WIDTH
-  const displayHeight = Math.round(displayWidth * HERO_INTERACTION_ASPECT)
+function HeroInteractionVideo({ matchHeight }: { matchHeight?: number }) {
+  const defaultWidth = HERO_INTERACTION_VIDEO_WIDTH
+  const defaultHeight = Math.round(defaultWidth * HERO_INTERACTION_ASPECT)
+  const displayHeight =
+    matchHeight && matchHeight > 0 ? Math.round(matchHeight) : defaultHeight
+  const displayWidth = Math.round(displayHeight / HERO_INTERACTION_ASPECT)
+  const cornerScale = displayHeight / defaultHeight
+  const cornerH = Math.max(12, Math.round(25 * cornerScale))
+  const cornerW = Math.max(11, Math.round(23 * cornerScale))
 
   return (
-    <div className="relative mx-auto bg-transparent [@media(min-width:768px)_and_(max-width:850px)_and_(min-height:850px)_and_(max-height:920px)]:max-w-[291px] [@media(min-width:1024px)_and_(max-width:1439px)_and_(min-height:550px)_and_(max-height:920px)]:max-w-none [@media(min-width:1024px)_and_(max-width:1439px)_and_(min-height:550px)_and_(max-height:920px)]:inline-block [@media(min-width:1021px)_and_(max-width:1440px)_and_(min-height:1397px)_and_(max-height:1500px)]:max-w-none [@media(min-width:1021px)_and_(max-width:1440px)_and_(min-height:1397px)_and_(max-height:1500px)]:inline-block min-[1440px]:inline-block">
+    <div
+      className="landing-hero-interaction-video relative mx-auto bg-transparent"
+      style={{ width: displayWidth, height: displayHeight }}
+    >
       <img
         src={heroVideoCorner}
         alt=""
         aria-hidden
-        className="pointer-events-none absolute left-0 top-0 z-10 h-[25px] w-[23px] opacity-80"
+        className="pointer-events-none absolute left-0 top-0 z-10 opacity-80"
+        style={{ width: cornerW, height: cornerH }}
       />
       <img
         src={heroVideoCorner}
         alt=""
         aria-hidden
-        className="pointer-events-none absolute bottom-0 right-0 z-10 h-[25px] w-[23px] opacity-80"
-        style={{ transform: 'rotate(180deg)' }}
+        className="pointer-events-none absolute bottom-0 right-0 z-10 opacity-80"
+        style={{ width: cornerW, height: cornerH, transform: 'rotate(180deg)' }}
       />
       <object
         data={uloInteractionSvg}
@@ -132,7 +145,8 @@ function HeroInteractionVideo() {
         width={displayWidth}
         height={displayHeight}
         aria-label="Ulo handling a tenant maintenance text conversation"
-        className="mx-auto block h-auto w-full max-w-full bg-transparent"
+        className="mx-auto block bg-transparent"
+        style={{ width: displayWidth, height: displayHeight }}
       />
     </div>
   )
@@ -140,25 +154,12 @@ function HeroInteractionVideo() {
 
 function HeroHeadlineAndCopy() {
   const headlineRef = useRef<HTMLHeadingElement>(null)
-  const copyRef = useRef<HTMLParagraphElement>(null)
-  const [copyWidth, setCopyWidth] = useState<number>()
-  const [fullWidthCopy, setFullWidthCopy] = useState(false)
   const [heroLines432, setHeroLines432] = useState(false)
   const [heroLines504, setHeroLines504] = useState(false)
   const [heroLines768, setHeroLines768] = useState(false)
   const [heroLines600, setHeroLines600] = useState(false)
   const [heroLines720, setHeroLines720] = useState(false)
   const [heroLines991, setHeroLines991] = useState(false)
-
-  useEffect(() => {
-    const mq = window.matchMedia(
-      '(max-width: 1070px)',
-    )
-    const syncLayoutMode = () => setFullWidthCopy(mq.matches)
-    syncLayoutMode()
-    mq.addEventListener('change', syncLayoutMode)
-    return () => mq.removeEventListener('change', syncLayoutMode)
-  }, [])
 
   useEffect(() => {
     const mq = window.matchMedia('(min-width: 370px) and (max-width: 450px)')
@@ -211,93 +212,140 @@ function HeroHeadlineAndCopy() {
   useLayoutEffect(() => {
     const node = headlineRef.current
     if (!node) return
-    const parent = node.parentElement
+    const block = node.parentElement
+    if (!block) return
     let skipObserver = false
+
+    const ABSOLUTE_MIN_PX = 22
+    const FIT_SAFETY = 0.9
+
+    const measureNaturalMax = (lines: HTMLElement[]) => {
+      let max = 1
+      for (const line of lines) {
+        const prev = {
+          maxWidth: line.style.maxWidth,
+          width: line.style.width,
+          display: line.style.display,
+          transform: line.style.transform,
+        }
+        line.style.setProperty('max-width', 'none', 'important')
+        line.style.setProperty('width', 'max-content', 'important')
+        line.style.setProperty('display', 'inline-block', 'important')
+        line.style.removeProperty('transform')
+        max = Math.max(max, line.scrollWidth)
+        if (prev.maxWidth) line.style.maxWidth = prev.maxWidth
+        else line.style.removeProperty('max-width')
+        if (prev.width) line.style.width = prev.width
+        else line.style.removeProperty('width')
+        if (prev.display) line.style.display = prev.display
+        else line.style.removeProperty('display')
+        if (prev.transform) line.style.transform = prev.transform
+        else line.style.removeProperty('transform')
+      }
+      return max
+    }
 
     const fitTitle = () => {
       if (skipObserver) return
-
       const lines = Array.from(node.children) as HTMLElement[]
-      if (!lines.length) return
+      if (!lines.length || !block) return
+
+      skipObserver = true
 
       for (const line of lines) {
         line.style.setProperty('white-space', 'nowrap', 'important')
         line.style.setProperty('word-break', 'keep-all', 'important')
         line.style.setProperty('overflow-wrap', 'normal', 'important')
         line.style.removeProperty('transform')
-        line.style.removeProperty('width')
+        line.style.removeProperty('max-width')
+        line.style.setProperty('width', 'max-content', 'important')
+        line.style.setProperty('display', 'block', 'important')
       }
 
-      const narrow = window.matchMedia('(max-width: 1070px)').matches
-      const at320to990 = window.matchMedia('(min-width: 320px) and (max-width: 990px)').matches
-      const at991to1599 = window.matchMedia('(min-width: 991px) and (max-width: 1599px)').matches
-      const at600x1024 = window.matchMedia(
-        '(min-width: 580px) and (max-width: 640px) and (min-height: 980px) and (max-height: 1080px)',
-      ).matches
-      const at720to768 = window.matchMedia('(min-width: 720px) and (max-width: 768px)').matches
-      if (narrow || at320to990 || at991to1599) {
-        node.style.setProperty('width', '100%', 'important')
-      } else {
-        node.style.removeProperty('width')
-      }
-
-      skipObserver = true
+      // Block uses the full copy column while measuring; then shrink-wrap to the title.
+      block.style.setProperty('width', '100%', 'important')
+      block.style.setProperty('max-width', '100%', 'important')
+      node.style.setProperty('width', '100%', 'important')
       node.style.removeProperty('font-size')
       node.style.removeProperty('line-height')
 
-      const target = parseFloat(getComputedStyle(node).fontSize) || 34
-      const at991Layout = window.matchMedia('(min-width: 820px) and (max-width: 1070px)').matches
-      const at768 = window.matchMedia('(min-width: 768px) and (max-width: 819px)').matches
-      const lineHeightFor = (fontPx: number) => {
-        if (at320to990 || at991to1599 || at600x1024 || at720to768) return fontPx * 1.15
-        if (at991Layout || at768) return (40 / 34) * fontPx
-        return fontPx * 1.15
-      }
-
-      const fitBand = (minSize: number, maxSize: number) => {
-        node.style.setProperty('font-size', `${minSize}px`, 'important')
-        node.style.setProperty('line-height', `${lineHeightFor(minSize)}px`, 'important')
-
-        const available = node.clientWidth
-        const naturalWidths = lines.map((line) => Math.max(1, line.scrollWidth))
-        const maxLine = Math.max(...naturalWidths)
-        if (available <= 0 || maxLine <= 0) return
-
-        const fitted = minSize * (available / maxLine)
-        const size = Math.min(maxSize, Math.max(minSize, fitted))
-        node.style.setProperty('font-size', `${size}px`, 'important')
-        node.style.setProperty('line-height', `${lineHeightFor(size)}px`, 'important')
-
-        const scaledWidths = lines.map((line) => Math.max(1, line.scrollWidth))
-        lines.forEach((line, index) => {
-          const lineWidth = scaledWidths[index] ?? 1
-          const scaleX = available / lineWidth
-          line.style.setProperty('display', 'block', 'important')
-          line.style.setProperty('width', '100%', 'important')
-          line.style.setProperty('transform-origin', 'left center', 'important')
-          if (Number.isFinite(scaleX) && scaleX > 0 && Math.abs(scaleX - 1) > 0.01) {
-            line.style.setProperty('transform', `scaleX(${scaleX})`, 'important')
-          } else {
-            line.style.removeProperty('transform')
-          }
+      // Measure against the copy column, not a shrink-wrapped child.
+      const copyCol = block.parentElement
+      const available = Math.floor(copyCol?.clientWidth || block.clientWidth)
+      if (available <= 0) {
+        requestAnimationFrame(() => {
+          skipObserver = false
         })
+        return
       }
 
-      if (at600x1024 || at720to768) {
-        fitBand(60, 60)
-      } else if (at320to990) {
-        fitBand(34, 60)
-      } else if (at991to1599) {
-        fitBand(48, 96)
-      } else if (narrow) {
-        const measure = copyRef.current ?? parent ?? node
-        const available = measure.clientWidth
-        const maxLine = Math.max(1, ...lines.map((line) => line.scrollWidth))
-        const size = available > 0 ? target * (available / maxLine) : target
-        node.style.setProperty('font-size', `${size}px`, 'important')
-        node.style.setProperty('line-height', `${lineHeightFor(size)}px`, 'important')
-      } else if (at768) {
-        node.style.setProperty('line-height', `${lineHeightFor(target)}px`, 'important')
+      const budget = Math.floor(available * FIT_SAFETY)
+      const cssSize = parseFloat(getComputedStyle(node).fontSize) || 40
+      const at385to819 = window.matchMedia('(min-width: 385px) and (max-width: 819px)').matches
+      const at720to819 = window.matchMedia('(min-width: 720px) and (max-width: 819px)').matches
+      let preferred = cssSize
+      if (at385to819) {
+        const vw = window.innerWidth
+        preferred = Math.min(78, Math.max(38, 38 + ((vw - 385) * 40) / 415))
+        if (at720to819) preferred = Math.max(64, preferred)
+      }
+
+      const lineHeightFor = (fontPx: number) => fontPx * 1.15
+
+      // Apply end pad first so bg-clip / bold ink is included in the measure.
+      for (const line of lines) {
+        line.style.setProperty('padding-inline-end', '0.08em', 'important')
+      }
+
+      // Search up to a generous max so the longest line can fill the column when space allows.
+      const sizeCap = Math.max(preferred, 96)
+      let lo = ABSOLUTE_MIN_PX
+      let hi = sizeCap
+      let best = ABSOLUTE_MIN_PX
+      for (let i = 0; i < 16; i += 1) {
+        const mid = (lo + hi) / 2
+        node.style.setProperty('font-size', `${mid}px`, 'important')
+        node.style.setProperty('line-height', `${lineHeightFor(mid)}px`, 'important')
+        const maxLine = measureNaturalMax(lines)
+        if (maxLine <= budget) {
+          best = mid
+          lo = mid
+        } else {
+          hi = mid
+        }
+      }
+
+      node.style.setProperty('font-size', `${best}px`, 'important')
+      node.style.setProperty('line-height', `${lineHeightFor(best)}px`, 'important')
+
+      // Final pass: shrink until painted ink clears the column (bold glyphs overhang).
+      const inkWidth = () => {
+        let max = 1
+        for (const line of lines) {
+          const range = document.createRange()
+          range.selectNodeContents(line)
+          max = Math.max(max, range.getBoundingClientRect().width, line.scrollWidth)
+        }
+        return max
+      }
+      const inkBudget = Math.max(ABSOLUTE_MIN_PX, available - 12)
+      for (let guard = 0; guard < 24; guard += 1) {
+        const ink = inkWidth()
+        if (ink <= inkBudget) break
+        best = Math.max(ABSOLUTE_MIN_PX, best * (inkBudget / ink) * 0.985)
+        node.style.setProperty('font-size', `${best}px`, 'important')
+        node.style.setProperty('line-height', `${lineHeightFor(best)}px`, 'important')
+      }
+
+      // Keep the shared block at the full copy-column width so title + description stay equal.
+      block.style.setProperty('width', '100%', 'important')
+      node.style.setProperty('width', '100%', 'important')
+
+      for (const line of lines) {
+        line.style.setProperty('display', 'block', 'important')
+        line.style.setProperty('width', 'max-content', 'important')
+        line.style.removeProperty('max-width')
+        line.style.removeProperty('transform')
       }
 
       requestAnimationFrame(() => {
@@ -308,8 +356,9 @@ function HeroHeadlineAndCopy() {
     fitTitle()
     const observer = new ResizeObserver(fitTitle)
     observer.observe(node)
-    if (parent) observer.observe(parent)
-    if (copyRef.current) observer.observe(copyRef.current)
+    if (block.parentElement) observer.observe(block.parentElement)
+    const row = block.parentElement?.parentElement
+    if (row) observer.observe(row)
     window.addEventListener('resize', fitTitle)
     const refitFromTarget = () => {
       fitTitle()
@@ -323,51 +372,40 @@ function HeroHeadlineAndCopy() {
       node.style.removeProperty('font-size')
       node.style.removeProperty('line-height')
       node.style.removeProperty('width')
+      block.style.removeProperty('width')
       for (const line of Array.from(node.children) as HTMLElement[]) {
         line.style.removeProperty('transform')
         line.style.removeProperty('width')
         line.style.removeProperty('display')
+        line.style.removeProperty('max-width')
         line.style.removeProperty('transform-origin')
+        line.style.removeProperty('padding-inline-end')
+        line.style.removeProperty('box-decoration-break')
       }
     }
   }, [heroLines432, heroLines504, heroLines600, heroLines720, heroLines768, heroLines991])
 
-  useEffect(() => {
-    if (fullWidthCopy) return
-
-    const node = headlineRef.current
-    if (!node) return
-
-    const syncWidth = () => {
-      const lines = Array.from(node.children) as HTMLElement[]
-      const lineWidth = Math.max(0, ...lines.map((line) => line.offsetWidth))
-      setCopyWidth(Math.max(node.offsetWidth, lineWidth) || undefined)
-    }
-
-    syncWidth()
-    const observer = new ResizeObserver(syncWidth)
-    observer.observe(node)
-    return () => observer.disconnect()
-  }, [fullWidthCopy])
-
   return (
-    <>
+    <div className="landing-hero-text-block grid w-full max-w-full min-w-0 grid-cols-1 [&>*]:w-full [&>*]:max-w-full [&>*]:min-w-0">
       <h1
         ref={headlineRef}
-        className="landing-hero-title mt-4 w-fit max-w-full font-[family-name:var(--font-landing-heading)] leading-[56px] landing-compact:leading-[48px] landing-432:!leading-[39px] [@media(min-width:320px)_and_(max-width:990px)]:!text-[clamp(34px,calc(34px+(100vw-320px)*26/670),60px)] [@media(min-width:991px)_and_(max-width:1599px)]:!text-[clamp(48px,calc(48px+(100vw-991px)*48/608),96px)] [@media(min-width:320px)_and_(max-width:1599px)]:!leading-[1.15] [@media(min-width:768px)_and_(max-width:960px)]:!leading-[40px] text-[clamp(2.25rem,6vw+1.2rem,9rem)] font-bold tracking-[-0.03em] text-[#0f1623] sm:mt-6 max-[1070px]:!w-full landing-tablet-portrait:!leading-[58px] landing-1280-800:!leading-[66px] landing-1366-768:!leading-[66px] landing-1440-900:!leading-[66px] landing-1680-1050:!leading-[66px] landing-2560-1440:!leading-[96px] landing-3440-1440:!leading-[96px] landing-3840-2160:!leading-[96px] [@media(min-width:451px)_and_(max-width:990px)_and_(min-height:1400px)_and_(max-height:1500px)]:text-[clamp(3.375rem,9vw+1.8rem,13.5rem)] [@media(min-width:300px)_and_(max-width:349px)_and_(min-height:850px)_and_(max-height:920px)]:text-[clamp(2.475rem,6.6vw+1.32rem,9.9rem)] [@media(min-width:350px)_and_(max-width:399px)_and_(min-height:850px)_and_(max-height:920px)]:text-[clamp(2.7rem,7.2vw+1.44rem,10.8rem)] landing-phone-tall:!leading-[56px] landing-phone-tall-hero-leading landing-884-hero-leading landing-1440-900-hero-leading landing-1680-1050-hero-leading landing-1920-1080-hero-leading landing-1920-1200-hero-leading landing-2560-1440-hero-leading landing-desktop-hero-leading landing-3440-1440-hero-leading landing-3840-2160-hero-leading landing-4096-2304-hero-leading landing-5120-2880-hero-leading [@media(min-width:350px)_and_(max-width:399px)_and_(min-height:1400px)_and_(max-height:1500px)]:text-[clamp(2.5875rem,6.9vw+1.38rem,10.35rem)] [@media(min-width:400px)_and_(max-width:500px)_and_(min-height:850px)_and_(max-height:920px)]:text-[clamp(2.8125rem,7.5vw+1.5rem,11.25rem)] [@media(min-width:400px)_and_(max-width:450px)_and_(min-height:1400px)_and_(max-height:1500px)]:text-[clamp(2.5875rem,6.9vw+1.38rem,10.35rem)] [@media(min-width:768px)_and_(max-width:850px)_and_(min-height:850px)_and_(max-height:920px)]:text-[clamp(3.6rem,9.6vw+1.92rem,14.4rem)] [@media(min-width:768px)_and_(max-width:850px)_and_(min-height:1400px)_and_(max-height:1500px)]:text-[clamp(3.375rem,9vw+1.8rem,13.5rem)] [@media(min-width:851px)_and_(max-width:990px)_and_(min-height:1400px)_and_(max-height:1500px)]:text-[clamp(3.375rem,8.5vw+1.6rem,13.5rem)] min-[1600px]:text-[clamp(2.25rem,3.84vw,6rem)] lg:tracking-[-0.025em]"
+        className="landing-hero-title mt-4 w-full max-w-full font-[family-name:var(--font-landing-heading)] leading-[56px] landing-compact:leading-[48px] landing-432:!leading-[39px] [@media(min-width:320px)_and_(max-width:990px)]:!text-[clamp(34px,calc(34px+(100vw-320px)*26/670),60px)] [@media(min-width:385px)_and_(max-width:819px)]:!text-[clamp(38px,calc(38px+(100vw-385px)*40/415),78px)] [@media(min-width:991px)_and_(max-width:1599px)]:!text-[clamp(48px,calc(48px+(100vw-991px)*48/608),96px)] [@media(min-width:320px)_and_(max-width:1599px)]:!leading-[1.15] [@media(min-width:768px)_and_(max-width:960px)]:!leading-[40px] text-[clamp(2.25rem,6vw+1.2rem,9rem)] font-bold tracking-[-0.02em] text-[#0f1623] sm:mt-6 max-[1070px]:!w-full landing-tablet-portrait:!leading-[58px] landing-1280-800:!leading-[66px] landing-1366-768:!leading-[66px] landing-1440-900:!leading-[66px] landing-1680-1050:!leading-[66px] landing-2560-1440:!leading-[96px] landing-3440-1440:!leading-[96px] landing-3840-2160:!leading-[96px] [@media(min-width:451px)_and_(max-width:990px)_and_(min-height:1400px)_and_(max-height:1500px)]:text-[clamp(3.375rem,9vw+1.8rem,13.5rem)] [@media(min-width:300px)_and_(max-width:349px)_and_(min-height:850px)_and_(max-height:920px)]:text-[clamp(2.475rem,6.6vw+1.32rem,9.9rem)] [@media(min-width:350px)_and_(max-width:399px)_and_(min-height:850px)_and_(max-height:920px)]:text-[clamp(2.7rem,7.2vw+1.44rem,10.8rem)] landing-phone-tall:!leading-[56px] landing-phone-tall-hero-leading landing-884-hero-leading landing-1440-900-hero-leading landing-1680-1050-hero-leading landing-1920-1080-hero-leading landing-1920-1200-hero-leading landing-2560-1440-hero-leading landing-desktop-hero-leading landing-3440-1440-hero-leading landing-3840-2160-hero-leading landing-4096-2304-hero-leading landing-5120-2880-hero-leading [@media(min-width:350px)_and_(max-width:399px)_and_(min-height:1400px)_and_(max-height:1500px)]:text-[clamp(2.5875rem,6.9vw+1.38rem,10.35rem)] [@media(min-width:400px)_and_(max-width:500px)_and_(min-height:850px)_and_(max-height:920px)]:text-[clamp(2.8125rem,7.5vw+1.5rem,11.25rem)] [@media(min-width:400px)_and_(max-width:450px)_and_(min-height:1400px)_and_(max-height:1500px)]:text-[clamp(2.5875rem,6.9vw+1.38rem,10.35rem)] [@media(min-width:768px)_and_(max-width:850px)_and_(min-height:850px)_and_(max-height:920px)]:text-[clamp(3.6rem,9.6vw+1.92rem,14.4rem)] [@media(min-width:768px)_and_(max-width:850px)_and_(min-height:1400px)_and_(max-height:1500px)]:text-[clamp(3.375rem,9vw+1.8rem,13.5rem)] [@media(min-width:851px)_and_(max-width:990px)_and_(min-height:1400px)_and_(max-height:1500px)]:text-[clamp(3.375rem,8.5vw+1.6rem,13.5rem)] min-[1600px]:text-[clamp(2.25rem,3.84vw,6rem)] lg:tracking-[-0.025em]"
       >
         {heroLines768 ? (
           <>
             <span className="block whitespace-nowrap">They say real estate</span>
             <span className="block whitespace-nowrap">should be passive.</span>
             <span
-              className="block bg-clip-text text-transparent"
-              style={{
-                backgroundImage: 'linear-gradient(45deg, #187960 0%, #B1DFF1 100%)',
-              }}
+              className="landing-hero-ulo-line block whitespace-nowrap"
+              style={{ backgroundImage: HERO_ULO_LINE_GRADIENT }}
             >
-              <span className="block whitespace-nowrap">Ulo actually makes it</span>
-              <span className="block whitespace-nowrap">feel that way.</span>
+              Ulo actually makes it
+            </span>
+            <span
+              className="landing-hero-ulo-line block whitespace-nowrap"
+              style={{ backgroundImage: HERO_ULO_LINE_GRADIENT }}
+            >
+              feel that way.
             </span>
           </>
         ) : (
@@ -375,31 +413,32 @@ function HeroHeadlineAndCopy() {
             <span className="block whitespace-nowrap">They say real estate</span>
             <span className="block whitespace-nowrap">should be passive.</span>
             <span
-              className="block bg-clip-text text-transparent"
-              style={{
-                backgroundImage: 'linear-gradient(45deg, #187960 0%, #B1DFF1 100%)',
-              }}
+              className="landing-hero-ulo-line block whitespace-nowrap"
+              style={{ backgroundImage: HERO_ULO_LINE_GRADIENT }}
             >
-              <span className="block whitespace-nowrap">Ulo actually makes it</span>
-              <span className="block whitespace-nowrap">feel that way.</span>
+              Ulo actually makes it
+            </span>
+            <span
+              className="landing-hero-ulo-line block whitespace-nowrap"
+              style={{ backgroundImage: HERO_ULO_LINE_GRADIENT }}
+            >
+              feel that way.
             </span>
           </>
         )}
       </h1>
 
       <p
-        ref={copyRef}
-        className="mt-4 box-border max-w-full border-l-[3px] border-[#187960] pl-4 text-base font-normal text-[#4b5563] sm:mt-6 sm:pl-5 sm:text-lg max-[1070px]:!w-full"
+        className="mt-4 box-border border-l-[3px] border-[#187960] pl-4 text-base font-normal text-[#4b5563] sm:mt-6 sm:pl-5 sm:text-lg"
         style={{
           lineHeight: '28px',
-          width: fullWidthCopy ? undefined : copyWidth,
         }}
       >
         Tenants text. Landlords text. Ulo coordinates maintenance, vendors, and
         repairs so you spend less time managing and more time owning. No apps
         required for tenants or vendors.
       </p>
-    </>
+    </div>
   )
 }
 
@@ -473,11 +512,43 @@ export function LandingPage() {
   const [heroWaitlistEmail, setHeroWaitlistEmail] = useState('')
   const { scrollToId } = useLandingSmoothScroll()
   const landingRootRef = useRef<HTMLDivElement>(null)
+  const heroRowRef = useRef<HTMLDivElement>(null)
+  const heroCopyRef = useRef<HTMLDivElement>(null)
+  const [heroVideoMatchHeight, setHeroVideoMatchHeight] = useState<number>()
 
   useLayoutEffect(() => {
     const root = landingRootRef.current
     if (!root) return
     return bindHideOverlappingLogoColumnRules(root)
+  }, [])
+
+  useLayoutEffect(() => {
+    const row = heroRowRef.current
+    const copy = heroCopyRef.current
+    if (!row || !copy) return
+
+    const syncVideoHeight = () => {
+      const style = getComputedStyle(row)
+      const sideBySide =
+        (style.display === 'flex' || style.display === 'inline-flex') &&
+        style.flexDirection.startsWith('row')
+      if (!sideBySide) {
+        setHeroVideoMatchHeight(undefined)
+        return
+      }
+      const next = Math.round(copy.getBoundingClientRect().height)
+      setHeroVideoMatchHeight((prev) => (prev === next ? prev : next > 0 ? next : undefined))
+    }
+
+    syncVideoHeight()
+    const observer = new ResizeObserver(syncVideoHeight)
+    observer.observe(copy)
+    observer.observe(row)
+    window.addEventListener('resize', syncVideoHeight)
+    return () => {
+      observer.disconnect()
+      window.removeEventListener('resize', syncVideoHeight)
+    }
   }, [])
   useEffect(() => {
     primeUiClickSound()
@@ -711,7 +782,7 @@ export function LandingPage() {
 
       <main id="top" className="flex flex-1 flex-col">
         {/* Hero */}
-        <section className="relative overflow-hidden min-[2560px]:flex min-[2560px]:min-h-[calc(100dvh-4rem)] min-[2560px]:items-center landing-3840-2160:min-h-[calc(100dvh-6rem)] landing-4096-2304:min-h-[calc(100dvh-6.4rem)] landing-5120-2880:min-h-[calc(100dvh-6.4rem)] landing-7680-4320:min-h-[calc(100dvh-10rem)]">
+        <section className="relative overflow-x-clip overflow-y-visible min-[2560px]:flex min-[2560px]:min-h-[calc(100dvh-4rem)] min-[2560px]:items-center landing-3840-2160:min-h-[calc(100dvh-6rem)] landing-4096-2304:min-h-[calc(100dvh-6.4rem)] landing-5120-2880:min-h-[calc(100dvh-6.4rem)] landing-7680-4320:min-h-[calc(100dvh-10rem)]">
           <div
             aria-hidden
             className="pointer-events-none absolute inset-0 bg-cover bg-center bg-no-repeat opacity-[0.3]"
@@ -726,7 +797,8 @@ export function LandingPage() {
             contentClassName="w-full max-w-none [@media(min-width:1024px)_and_(max-width:1439px)_and_(min-height:550px)_and_(max-height:920px)]:!ml-0 [@media(min-width:1024px)_and_(max-width:1439px)_and_(min-height:550px)_and_(max-height:920px)]:flex [@media(min-width:1024px)_and_(max-width:1439px)_and_(min-height:550px)_and_(max-height:920px)]:justify-center [@media(min-width:1021px)_and_(max-width:1440px)_and_(min-height:1397px)_and_(max-height:1500px)]:!ml-0 [@media(min-width:1021px)_and_(max-width:1440px)_and_(min-height:1397px)_and_(max-height:1500px)]:flex [@media(min-width:1021px)_and_(max-width:1440px)_and_(min-height:1397px)_and_(max-height:1500px)]:justify-center min-[1440px]:!ml-0 min-[1440px]:flex min-[1440px]:justify-center "
      >
       <div
-       className="landing-hero-991-row grid w-full grid-cols-1 items-start gap-12 [@media(min-width:1024px)_and_(max-width:1439px)_and_(min-height:550px)_and_(max-height:920px)]:mx-auto [@media(min-width:1024px)_and_(max-width:1439px)_and_(min-height:550px)_and_(max-height:920px)]:flex [@media(min-width:1024px)_and_(max-width:1439px)_and_(min-height:550px)_and_(max-height:920px)]:w-full [@media(min-width:1024px)_and_(max-width:1439px)_and_(min-height:550px)_and_(max-height:920px)]:max-w-full [@media(min-width:1024px)_and_(max-width:1439px)_and_(min-height:550px)_and_(max-height:920px)]:flex-row [@media(min-width:1024px)_and_(max-width:1439px)_and_(min-height:550px)_and_(max-height:920px)]:flex-nowrap [@media(min-width:1024px)_and_(max-width:1439px)_and_(min-height:550px)_and_(max-height:920px)]:items-center [@media(min-width:1024px)_and_(max-width:1439px)_and_(min-height:550px)_and_(max-height:920px)]:gap-8 [@media(min-width:1021px)_and_(max-width:1440px)_and_(min-height:1397px)_and_(max-height:1500px)]:mx-auto [@media(min-width:1021px)_and_(max-width:1440px)_and_(min-height:1397px)_and_(max-height:1500px)]:flex [@media(min-width:1021px)_and_(max-width:1440px)_and_(min-height:1397px)_and_(max-height:1500px)]:w-full [@media(min-width:1021px)_and_(max-width:1440px)_and_(min-height:1397px)_and_(max-height:1500px)]:max-w-full [@media(min-width:1021px)_and_(max-width:1440px)_and_(min-height:1397px)_and_(max-height:1500px)]:flex-row [@media(min-width:1021px)_and_(max-width:1440px)_and_(min-height:1397px)_and_(max-height:1500px)]:flex-nowrap [@media(min-width:1021px)_and_(max-width:1440px)_and_(min-height:1397px)_and_(max-height:1500px)]:items-center [@media(min-width:1021px)_and_(max-width:1440px)_and_(min-height:1397px)_and_(max-height:1500px)]:gap-[clamp(2rem,4vw,3.5rem)] min-[1024px]:mx-auto min-[1024px]:flex min-[1024px]:w-full min-[1024px]:max-w-full min-[1024px]:flex-row min-[1024px]:flex-nowrap min-[1024px]:items-center min-[1024px]:gap-10 min-[1440px]:gap-14 min-[1440px]:gap-y-0 min-[2560px]:gap-16 landing-3840-2160:origin-center landing-3840-2160:scale-[1.6] landing-4096-2304:origin-center landing-5120-2880:origin-center landing-4096-2304:scale-[1.4] landing-5120-2880:scale-[1.4] landing-7680-4320:origin-center landing-7680-4320:scale-[1.9]"
+       ref={heroRowRef}
+       className="landing-hero-991-row grid w-full grid-cols-1 items-start gap-12 [@media(min-width:1024px)_and_(max-width:1439px)_and_(min-height:550px)_and_(max-height:920px)]:mx-auto [@media(min-width:1024px)_and_(max-width:1439px)_and_(min-height:550px)_and_(max-height:920px)]:flex [@media(min-width:1024px)_and_(max-width:1439px)_and_(min-height:550px)_and_(max-height:920px)]:w-full [@media(min-width:1024px)_and_(max-width:1439px)_and_(min-height:550px)_and_(max-height:920px)]:max-w-full [@media(min-width:1024px)_and_(max-width:1439px)_and_(min-height:550px)_and_(max-height:920px)]:flex-row [@media(min-width:1024px)_and_(max-width:1439px)_and_(min-height:550px)_and_(max-height:920px)]:flex-nowrap [@media(min-width:1024px)_and_(max-width:1439px)_and_(min-height:550px)_and_(max-height:920px)]:items-stretch [@media(min-width:1024px)_and_(max-width:1439px)_and_(min-height:550px)_and_(max-height:920px)]:gap-8 [@media(min-width:1021px)_and_(max-width:1440px)_and_(min-height:1397px)_and_(max-height:1500px)]:mx-auto [@media(min-width:1021px)_and_(max-width:1440px)_and_(min-height:1397px)_and_(max-height:1500px)]:flex [@media(min-width:1021px)_and_(max-width:1440px)_and_(min-height:1397px)_and_(max-height:1500px)]:w-full [@media(min-width:1021px)_and_(max-width:1440px)_and_(min-height:1397px)_and_(max-height:1500px)]:max-w-full [@media(min-width:1021px)_and_(max-width:1440px)_and_(min-height:1397px)_and_(max-height:1500px)]:flex-row [@media(min-width:1021px)_and_(max-width:1440px)_and_(min-height:1397px)_and_(max-height:1500px)]:flex-nowrap [@media(min-width:1021px)_and_(max-width:1440px)_and_(min-height:1397px)_and_(max-height:1500px)]:items-stretch [@media(min-width:1021px)_and_(max-width:1440px)_and_(min-height:1397px)_and_(max-height:1500px)]:gap-[clamp(2rem,4vw,3.5rem)] min-[1024px]:mx-auto min-[1024px]:flex min-[1024px]:w-full min-[1024px]:max-w-full min-[1024px]:flex-row min-[1024px]:flex-nowrap min-[1024px]:items-stretch min-[1024px]:gap-10 min-[1440px]:gap-14 min-[1440px]:gap-y-0 min-[2560px]:gap-16 landing-3840-2160:origin-center landing-3840-2160:scale-[1.6] landing-4096-2304:origin-center landing-5120-2880:origin-center landing-4096-2304:scale-[1.4] landing-5120-2880:scale-[1.4] landing-7680-4320:origin-center landing-7680-4320:scale-[1.9]"
               style={
                 {
                   '--hero-copy-max-w': HERO_COPY_MAX_WIDTH,
@@ -734,10 +806,10 @@ export function LandingPage() {
                 } as React.CSSProperties
               }
             >
-              <div className="landing-hero-991-copy relative z-10 w-full max-w-full min-w-0 pb-10 [@media(min-width:1024px)_and_(max-width:1439px)_and_(min-height:550px)_and_(max-height:920px)]:min-w-0 [@media(min-width:1024px)_and_(max-width:1439px)_and_(min-height:550px)_and_(max-height:920px)]:w-auto [@media(min-width:1024px)_and_(max-width:1439px)_and_(min-height:550px)_and_(max-height:920px)]:max-w-[var(--hero-copy-max-w)] [@media(min-width:1024px)_and_(max-width:1439px)_and_(min-height:550px)_and_(max-height:920px)]:flex-1 [@media(min-width:1024px)_and_(max-width:1439px)_and_(min-height:550px)_and_(max-height:920px)]:shrink [@media(min-width:1024px)_and_(max-width:1439px)_and_(min-height:550px)_and_(max-height:920px)]:pb-0 [@media(min-width:1021px)_and_(max-width:1440px)_and_(min-height:1397px)_and_(max-height:1500px)]:ml-0 [@media(min-width:1021px)_and_(max-width:1440px)_and_(min-height:1397px)_and_(max-height:1500px)]:min-w-0 [@media(min-width:1021px)_and_(max-width:1440px)_and_(min-height:1397px)_and_(max-height:1500px)]:w-auto [@media(min-width:1021px)_and_(max-width:1440px)_and_(min-height:1397px)_and_(max-height:1500px)]:max-w-[var(--hero-copy-max-w)] [@media(min-width:1021px)_and_(max-width:1440px)_and_(min-height:1397px)_and_(max-height:1500px)]:flex-1 [@media(min-width:1021px)_and_(max-width:1440px)_and_(min-height:1397px)_and_(max-height:1500px)]:shrink [@media(min-width:1021px)_and_(max-width:1440px)_and_(min-height:1397px)_and_(max-height:1500px)]:pb-0 min-[1024px]:ml-0 min-[1024px]:min-w-0 min-[1024px]:w-auto min-[1024px]:max-w-[var(--hero-copy-max-w)] min-[1024px]:flex-1 min-[1024px]:shrink min-[1024px]:pb-0">
+              <div ref={heroCopyRef} className="landing-hero-991-copy relative z-10 w-full max-w-full min-w-0 pb-10 [@media(min-width:1024px)_and_(max-width:1439px)_and_(min-height:550px)_and_(max-height:920px)]:min-w-0 [@media(min-width:1024px)_and_(max-width:1439px)_and_(min-height:550px)_and_(max-height:920px)]:w-auto [@media(min-width:1024px)_and_(max-width:1439px)_and_(min-height:550px)_and_(max-height:920px)]:max-w-[var(--hero-copy-max-w)] [@media(min-width:1024px)_and_(max-width:1439px)_and_(min-height:550px)_and_(max-height:920px)]:flex-1 [@media(min-width:1024px)_and_(max-width:1439px)_and_(min-height:550px)_and_(max-height:920px)]:shrink [@media(min-width:1024px)_and_(max-width:1439px)_and_(min-height:550px)_and_(max-height:920px)]:pb-0 [@media(min-width:1021px)_and_(max-width:1440px)_and_(min-height:1397px)_and_(max-height:1500px)]:ml-0 [@media(min-width:1021px)_and_(max-width:1440px)_and_(min-height:1397px)_and_(max-height:1500px)]:min-w-0 [@media(min-width:1021px)_and_(max-width:1440px)_and_(min-height:1397px)_and_(max-height:1500px)]:w-auto [@media(min-width:1021px)_and_(max-width:1440px)_and_(min-height:1397px)_and_(max-height:1500px)]:max-w-[var(--hero-copy-max-w)] [@media(min-width:1021px)_and_(max-width:1440px)_and_(min-height:1397px)_and_(max-height:1500px)]:flex-1 [@media(min-width:1021px)_and_(max-width:1440px)_and_(min-height:1397px)_and_(max-height:1500px)]:shrink [@media(min-width:1021px)_and_(max-width:1440px)_and_(min-height:1397px)_and_(max-height:1500px)]:pb-0 min-[1024px]:ml-0 min-[1024px]:min-w-0 min-[1024px]:w-auto min-[1024px]:max-w-[var(--hero-copy-max-w)] min-[1024px]:flex-1 min-[1024px]:shrink min-[1024px]:pb-0">
                 <span className="inline-flex max-w-full flex-wrap items-center gap-2 rounded-full border border-black/[0.04] bg-black/[0.06] px-[17px] py-[9px] shadow-[0px_2px_8px_0px_rgba(16,185,129,0.1)]">
-                  <span className="landing-alpha-status-dot" aria-hidden />
-                  <span className="font-mono text-[12px] font-normal leading-4 text-[#059669]">
+                  <span className="landing-alpha-status-dot max-[385px]:hidden" aria-hidden />
+                  <span className="font-mono text-[10px] font-normal leading-4 text-[#059669] min-[321px]:text-[12px]">
                     PROPERTY OPERATIONS, AUTOMATED BY TEXT
                   </span>
                 </span>
@@ -796,8 +868,8 @@ export function LandingPage() {
                 />
               </div>
 
-              <div className="landing-hero-991-visual relative z-0 mx-auto flex shrink-0 justify-center [@media(min-width:768px)_and_(max-width:850px)_and_(min-height:850px)_and_(max-height:920px)]:w-[291px] [@media(min-width:1024px)_and_(max-width:1439px)_and_(min-height:550px)_and_(max-height:920px)]:ml-3 [@media(min-width:1024px)_and_(max-width:1439px)_and_(min-height:550px)_and_(max-height:920px)]:mr-0 [@media(min-width:1024px)_and_(max-width:1439px)_and_(min-height:550px)_and_(max-height:920px)]:w-[280px] [@media(min-width:1021px)_and_(max-width:1440px)_and_(min-height:1397px)_and_(max-height:1500px)]:ml-0 [@media(min-width:1021px)_and_(max-width:1440px)_and_(min-height:1397px)_and_(max-height:1500px)]:mr-0 [@media(min-width:1021px)_and_(max-width:1440px)_and_(min-height:1397px)_and_(max-height:1500px)]:w-[clamp(280px,26vw,364px)] [@media(min-width:1021px)_and_(max-width:1440px)_and_(min-height:1397px)_and_(max-height:1500px)]:shrink-0 min-[1440px]:ml-8 min-[1440px]:mr-0 min-[1440px]:w-[var(--hero-video-col-w)] min-[2560px]:ml-12">
-                <HeroInteractionVideo />
+              <div className="landing-hero-991-visual relative z-0 mx-auto flex shrink-0 items-stretch justify-center self-stretch [@media(min-width:768px)_and_(max-width:850px)_and_(min-height:850px)_and_(max-height:920px)]:w-auto [@media(min-width:1024px)_and_(max-width:1439px)_and_(min-height:550px)_and_(max-height:920px)]:ml-3 [@media(min-width:1024px)_and_(max-width:1439px)_and_(min-height:550px)_and_(max-height:920px)]:mr-0 [@media(min-width:1024px)_and_(max-width:1439px)_and_(min-height:550px)_and_(max-height:920px)]:w-auto [@media(min-width:1021px)_and_(max-width:1440px)_and_(min-height:1397px)_and_(max-height:1500px)]:ml-0 [@media(min-width:1021px)_and_(max-width:1440px)_and_(min-height:1397px)_and_(max-height:1500px)]:mr-0 [@media(min-width:1021px)_and_(max-width:1440px)_and_(min-height:1397px)_and_(max-height:1500px)]:w-auto [@media(min-width:1021px)_and_(max-width:1440px)_and_(min-height:1397px)_and_(max-height:1500px)]:shrink-0 min-[1440px]:ml-8 min-[1440px]:mr-0 min-[1440px]:w-auto min-[2560px]:ml-12">
+                <HeroInteractionVideo matchHeight={heroVideoMatchHeight} />
               </div>
             </div>
           </LandingContentShell>
