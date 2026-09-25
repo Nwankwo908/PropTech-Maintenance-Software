@@ -1,4 +1,4 @@
-import { useEffect, useId, useState, type CSSProperties, type ReactNode } from 'react'
+import { useId, type CSSProperties, type ReactNode } from 'react'
 import { Link } from 'react-router-dom'
 import welcomeTextsIcon from '@/assets/invitation.png'
 import verifyVendorsIcon from '@/assets/verify-vendors.png'
@@ -8,7 +8,6 @@ import propertyInsuranceIcon from '@/assets/property-insurance.png'
 import maintenancePrefsIcon from '@/assets/settings.png'
 import testRequestIcon from '@/assets/test-tube.png'
 import checkIcon from '@/assets/setup-success/check.svg'
-import { AdminBottomSheet } from '@/components/AdminBottomSheet'
 import type { SetupSuccessItemId, SetupSuccessProgress } from '@/lib/setupSuccessChecklist'
 import {
   markSetupSuccessCheckboxGuidePending,
@@ -31,8 +30,6 @@ const MUTED_ITEM_ICONS = new Set<SetupSuccessItemId>([
   'property_access',
   'property_insurance',
 ])
-
-const COMPACT_SETUP_SHEET_MQ = '(max-width: 1279px)'
 
 type GetSetUpForSuccessCardProps = {
   progress: SetupSuccessProgress
@@ -201,52 +198,12 @@ export function GetSetUpForSuccessCard({
   resolveItemTo,
 }: GetSetUpForSuccessCardProps) {
   const titleId = useId()
-  const [useSheet, setUseSheet] = useState(
-    () => typeof window !== 'undefined' && window.matchMedia(COMPACT_SETUP_SHEET_MQ).matches,
-  )
 
-  useEffect(() => {
-    const mq = window.matchMedia(COMPACT_SETUP_SHEET_MQ)
-    const sync = () => setUseSheet(mq.matches)
-    sync()
-    mq.addEventListener('change', sync)
-    return () => mq.removeEventListener('change', sync)
-  }, [])
-
-  const closeButton = (
-    <button
-      type="button"
-      onClick={onClose}
-      aria-label="Close"
-      className="sa-press absolute right-0 top-0 z-10 rounded-lg p-1 text-[#9ca3af] outline-none hover:bg-black/5 hover:text-[#364153] focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2"
-    >
-      <CloseIcon />
-    </button>
-  )
-
-  if (useSheet) {
-    return (
-      <AdminBottomSheet open onClose={onClose} labelledBy={titleId}>
-        <div className="flex min-h-0 flex-1 flex-col overflow-hidden px-6 pb-6">
-          <SetupCopy titleId={titleId} closeButton={closeButton} />
-          <div className="mt-5 shrink-0">
-            <SetupProgressBar progress={progress} />
-          </div>
-          <div className="mt-5 min-h-0 flex-1 overflow-y-auto overscroll-contain">
-            <SetupChecklist
-              progress={progress}
-              resolveItemTo={resolveItemTo}
-              onActionItemSelect={onClose}
-            />
-          </div>
-        </div>
-      </AdminBottomSheet>
-    )
-  }
-
+  // Non-modal floating card only — never a full-viewport sheet/scrim.
+  // A blocking overlay here sat above the sidebar and killed NavLinks + buttons.
   return (
     <section
-      className="sa-enter pointer-events-auto fixed bottom-4 left-4 z-40 w-[min(520px,calc(100vw-2rem))] max-w-[calc(100vw-2rem)] rounded-[16px] border border-[#f1f5f9] bg-white p-6 shadow-[0px_8px_24px_rgba(16,24,40,0.12)] transition-[border-color,box-shadow] duration-200 hover:border-[#e5e7eb] hover:shadow-[0px_12px_32px_rgba(16,24,40,0.16)] sm:bottom-6 sm:left-6 lg:left-[calc(16rem+1.5rem)]"
+      className="sa-enter pointer-events-auto fixed bottom-4 left-4 z-40 max-h-[min(70dvh,calc(100dvh-2rem))] w-[min(520px,calc(100vw-2rem))] max-w-[calc(100vw-2rem)] overflow-y-auto overscroll-contain rounded-[16px] border border-[#f1f5f9] bg-white p-6 shadow-[0px_8px_24px_rgba(16,24,40,0.12)] transition-[border-color,box-shadow] duration-200 hover:border-[#e5e7eb] hover:shadow-[0px_12px_32px_rgba(16,24,40,0.16)] sm:bottom-6 sm:left-6 lg:left-[calc(16rem+1.5rem)]"
       aria-labelledby={titleId}
     >
       <SetupCopy

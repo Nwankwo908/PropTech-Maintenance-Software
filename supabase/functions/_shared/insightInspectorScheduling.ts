@@ -1,6 +1,8 @@
 /**
  * Insight CTA → inspector soft-offer scheduling (Edge orchestration).
- * Pure rules live in shared/portfolioIntelligence/insightInspectorScheduling.ts.
+ * Pure rules: ./portfolioIntelligence/insightInspectorScheduling.ts
+ * (vendored under functions/ so Supabase Docker bundle can resolve them;
+ * keep in sync with shared/portfolioIntelligence/insightInspectorScheduling.ts).
  */
 import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.49.1"
 import { recordActivityLog } from "./graph/recordActivityLog.ts"
@@ -16,8 +18,8 @@ import {
   type InspectorBusyTicket,
   type InspectorCandidate,
   type InspectorDayHold,
-} from "../../../shared/portfolioIntelligence/insightInspectorScheduling.ts"
-import type { InsightRecommendationActionType } from "../../../shared/portfolioIntelligence/types.ts"
+} from "./portfolioIntelligence/insightInspectorScheduling.ts"
+import type { InsightRecommendationActionType } from "./portfolioIntelligence/types.ts"
 import { isVendorMatchableForDispatch } from "./vendor_assignment.ts"
 import type { VendorAssignmentOption, VendorAssignmentRow } from "./vendor_assignment.ts"
 import { startVendorAvailabilityProbe } from "./vendorAvailabilityProbe.ts"

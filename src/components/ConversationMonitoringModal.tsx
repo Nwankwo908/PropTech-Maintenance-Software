@@ -1,5 +1,7 @@
-import { useCallback, useEffect, useId, useState } from 'react'
+import { useCallback, useEffect, useId, useRef, useState } from 'react'
+import { Link, useLocation } from 'react-router-dom'
 import {
+  applyMonitoringHeadingName,
   fetchInboxConversationMonitoring,
   formatMonitoringTime,
   monitoringInitials,
@@ -18,6 +20,7 @@ import { isVendorPricingConfirmedByAdmin } from '@/lib/vendorPricingConfirmation
 import { respondToEstimate } from '@/api/maintenanceEstimate'
 import sendIcon from '@/assets/noun-send.png'
 import confirmHourlyRateIcon from '@/assets/noun-checkmark-invoice.png'
+import uloLogoSmall from '@/assets/Ulo_Logo_small.png'
 import { getErrorMessage } from '@/lib/errorMessage'
 import { LinkifiedMessageText } from '@/components/LinkifiedMessageText'
 import {
@@ -25,19 +28,12 @@ import {
   sendConversationSms,
   takeOverConversation,
 } from '@/api/adminConversationSms'
+import { residentDetailPath } from '@/lib/propertyRoutes'
 
 function CloseIcon() {
   return (
     <svg className="size-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} aria-hidden>
       <path d="M18 6L6 18M6 6l12 12" strokeLinecap="round" />
-    </svg>
-  )
-}
-
-function ShieldIcon() {
-  return (
-    <svg className="size-3.5 shrink-0 text-[#9ca3af]" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} aria-hidden>
-      <path d="M12 3 4 6v6c0 5 3.5 9.5 8 10 4.5-.5 8-5 8-10V6l-8-3Z" strokeLinejoin="round" />
     </svg>
   )
 }
@@ -51,13 +47,48 @@ function SparkleIcon({ className = 'size-3.5' }: { className?: string }) {
 }
 
 function UloAvatar({ size = 'md' }: { size?: 'sm' | 'md' }) {
+  // Match tenant initials avi (size-8); logo 50% larger than size-4
   const dim = size === 'sm' ? 'size-8' : 'size-9'
-  const icon = size === 'sm' ? 'size-4' : 'size-[18px]'
+  const icon = size === 'sm' ? 'size-6' : 'size-[27px]'
   return (
-    <span className={`inline-flex ${dim} shrink-0 items-center justify-center rounded-full bg-[#0a0a0a] text-white`}>
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.7} strokeLinecap="round" strokeLinejoin="round" className={icon} aria-hidden>
-        <path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9L12 3Z" />
-      </svg>
+    <span className={`inline-flex ${dim} shrink-0 items-center justify-center rounded-full bg-[#F1E4F1]`}>
+      <img src={uloLogoSmall} alt="" className={`${icon} object-contain`} aria-hidden />
+    </span>
+  )
+}
+
+const PARTICIPANT_AVATAR_COLORS = [
+  'bg-[#dbeafe] text-[#1447e6]',
+  'bg-[#fce7f3] text-[#9d174d]',
+  'bg-[#dcfce7] text-[#15803d]',
+  'bg-[#ffedd5] text-[#c2410c]',
+  'bg-[#ede9fe] text-[#6d28d9]',
+  'bg-[#e0e7ff] text-[#3730a3]',
+] as const
+
+function participantAvatarColor(seed: string): string {
+  let hash = 0
+  for (let i = 0; i < seed.length; i += 1) hash = (hash * 31 + seed.charCodeAt(i)) | 0
+  return PARTICIPANT_AVATAR_COLORS[Math.abs(hash) % PARTICIPANT_AVATAR_COLORS.length]
+}
+
+function ParticipantAvatar({
+  name,
+  initials,
+  size = 'md',
+}: {
+  name: string
+  initials: string
+  size?: 'sm' | 'md'
+}) {
+  const dim = size === 'sm' ? 'size-8 text-[11px]' : 'size-9 text-[12px]'
+  const label = initials.trim() || monitoringInitials(name) || '?'
+  return (
+    <span
+      className={`inline-flex ${dim} shrink-0 items-center justify-center rounded-full font-semibold ${participantAvatarColor(name || label)}`}
+      aria-hidden
+    >
+      {label}
     </span>
   )
 }
@@ -79,12 +110,6 @@ function WrenchIcon() {
   )
 }
 
-const RISK_STYLES = {
-  high: 'border-[#fecaca] bg-[#fff5f5] text-[#c10007]',
-  medium: 'border-[#fde68a] bg-[#fffbeb] text-[#a65f00]',
-  low: 'border-[#bbf7d0] bg-[#f0fdf4] text-[#008236]',
-} as const
-
 type ConversationMonitoringModalProps = {
   open: boolean
   conversationId: string | null
@@ -92,6 +117,8 @@ type ConversationMonitoringModalProps = {
   onTakeOver?: (conversationId: string) => void
   /** Stack above assign-vendor rails (default z-50). */
   overlayClassName?: string
+  /** Messages list participant label — rail title when thread context lacks a name. */
+  headingName?: string | null
 }
 
 function SuggestedMessagesChevron({ expanded }: { expanded: boolean }) {
@@ -495,6 +522,8 @@ export function ConversationMonitoringBody({
   vendorOutreachChannel?: VendorOutreachChannel
   onVendorOutreachChannelChange?: (channel: VendorOutreachChannel) => void
 }) {
+  const location = useLocation()
+  const transcriptScrollRef = useRef<HTMLDivElement>(null)
   const [estimateActing, setEstimateActing] = useState<'approve' | 'reject' | null>(null)
   const [estimateActionError, setEstimateActionError] = useState<string | null>(null)
   const [estimateResolved, setEstimateResolved] = useState<'approved' | 'rejected' | null>(
@@ -555,6 +584,24 @@ export function ConversationMonitoringBody({
   // so nested scroll regions don't stack on top of each other in rails and modals.
   const useUnifiedScroll = embedded || Boolean(channelViews)
 
+  useEffect(() => {
+    const jumpToLatest = () => {
+      const el = transcriptScrollRef.current
+      if (!el) return
+      el.scrollTop = el.scrollHeight
+    }
+    // Wait for layout after thread paint (and rail enter animation ~280ms).
+    const frame = window.requestAnimationFrame(() => {
+      jumpToLatest()
+      window.requestAnimationFrame(jumpToLatest)
+    })
+    const timeout = window.setTimeout(jumpToLatest, 320)
+    return () => {
+      window.cancelAnimationFrame(frame)
+      window.clearTimeout(timeout)
+    }
+  }, [detail.conversationId, useUnifiedScroll, vendorOutreachChannel])
+
   const summaryBlock = (
     <div className={`border-b border-[#e5e7eb] bg-[#fafafa] px-6 py-4 ${embedded ? 'shrink-0' : 'shrink-0'}`}>
       {showChannelToggle ? (
@@ -581,13 +628,19 @@ export function ConversationMonitoringBody({
     ) : null
 
   const transcriptBlock = (
-    <div className={useUnifiedScroll ? 'px-6 py-5' : 'min-h-0 flex-1 overflow-y-auto overscroll-contain px-6 py-5'}>
+    <div
+      ref={useUnifiedScroll ? undefined : transcriptScrollRef}
+      className={useUnifiedScroll ? 'px-6 py-5' : 'min-h-0 flex-1 overflow-y-auto overscroll-contain px-6 py-5'}
+    >
       <TranscriptItemList items={threadTranscript} keyPrefix="thread" />
     </div>
   )
 
   const scrollableContent = useUnifiedScroll ? (
-    <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
+    <div
+      ref={transcriptScrollRef}
+      className="min-h-0 flex-1 overflow-y-auto overscroll-contain"
+    >
       {summaryBlock}
       {transcriptBlock}
       {followUpBlock}
@@ -604,26 +657,24 @@ export function ConversationMonitoringBody({
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
       {!embedded ? (
         <header className="shrink-0 border-b border-[#e5e7eb] px-6 pb-4 pt-6">
-          <div className="flex items-start gap-3 pr-10">
-            <UloAvatar />
-            <div className="min-w-0 flex-1">
-              <div className="flex flex-wrap items-start justify-between gap-2">
-                <h2 id={titleId} className="text-[18px] font-semibold leading-7 tracking-[-0.3px] text-[#0a0a0a]">
+          <div className="flex items-center gap-3 pr-10">
+            <ParticipantAvatar
+              name={detail.tenantName !== 'Participant' ? detail.tenantName : detail.title}
+              initials={detail.tenantInitials}
+            />
+            <h2 id={titleId} className="min-w-0 flex-1 text-[18px] font-semibold leading-7 tracking-[-0.3px] text-[#0a0a0a]">
+              {detail.residentId ? (
+                <Link
+                  to={residentDetailPath(detail.residentId)}
+                  state={{ from: `${location.pathname}${location.search}` }}
+                  className="sa-link text-[#186179] hover:text-[#0f4d5f] hover:underline"
+                >
                   {detail.title}
-                </h2>
-                {detail.riskLabel && detail.riskLevel ? (
-                  <span
-                    className={`shrink-0 rounded-[6px] border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.06em] ${RISK_STYLES[detail.riskLevel]}`}
-                  >
-                    {detail.riskLabel}
-                  </span>
-                ) : null}
-              </div>
-              <p className="mt-1 flex items-center gap-1.5 text-[12px] leading-4 text-[#6a7282]">
-                <ShieldIcon />
-                {detail.subtitle}
-              </p>
-            </div>
+                </Link>
+              ) : (
+                detail.title
+              )}
+            </h2>
           </div>
         </header>
       ) : null}
@@ -840,6 +891,8 @@ type ConversationMonitoringPanelProps = {
   refreshKey?: number
   /** Hide duplicate modal header when embedded in another rail (e.g. vendor verification). */
   embedded?: boolean
+  /** Messages list participant label — used when SMS context has no resolved name. */
+  headingName?: string | null
 }
 
 /** Inline conversation monitoring content — used in modals and embedded rails. */
@@ -849,6 +902,7 @@ export function ConversationMonitoringPanel({
   active = true,
   refreshKey = 0,
   embedded = false,
+  headingName = null,
 }: ConversationMonitoringPanelProps) {
   const titleId = useId()
   const [detail, setDetail] = useState<ConversationMonitoringDetail | null>(null)
@@ -924,10 +978,10 @@ export function ConversationMonitoringPanel({
         return
       }
 
-      setDetail(result)
+      setDetail(applyMonitoringHeadingName(result, headingName))
       setError(null)
     },
-    [conversationId],
+    [conversationId, headingName],
   )
 
   useEffect(() => {
@@ -1115,6 +1169,7 @@ export function ConversationMonitoringModal({
   onClose,
   onTakeOver,
   overlayClassName = 'z-50',
+  headingName = null,
 }: ConversationMonitoringModalProps) {
   const [renderOpen, setRenderOpen] = useState(false)
   const [entered, setEntered] = useState(false)
@@ -1180,6 +1235,7 @@ export function ConversationMonitoringModal({
           conversationId={activeId}
           onTakeOver={onTakeOver}
           active={open}
+          headingName={headingName}
         />
       </div>
     </div>

@@ -1,5 +1,4 @@
-import { useEffect, useId, useState, type ReactNode } from 'react'
-import uloLogoSmall from '@/assets/Ulo_Logo_small.png'
+import { useId, useState, type ReactNode } from 'react'
 import type {
   OnboardingResident,
   OnboardingReviewData,
@@ -19,6 +18,9 @@ import {
 import { getActiveLandlordId } from '@/lib/activeLandlord'
 import { landlordHasPayments, landlordHasVendorMarketplace } from '@shared/landlordCapabilities'
 import { landlordPortfolioLabel } from '@shared/landlordPortfolioLabel'
+import { OnboardingUloNumberCard } from '@/components/onboarding/OnboardingUloNumberCard'
+import { NoVendorsContinueModal } from '@/components/onboarding/NoVendorsContinueModal'
+import { OnboardingSendSwitch } from '@/components/onboarding/OnboardingSendSwitch'
 import {
   onboardingBtnPrimaryClass,
   onboardingBtnSecondaryClass,
@@ -100,12 +102,23 @@ function EditIcon() {
   )
 }
 
-function ReviewSummaryRow({ label, value }: { label: string; value: ReactNode }) {
+function ReviewSummaryRow({
+  label,
+  value,
+  trailing,
+}: {
+  label: string
+  value: ReactNode
+  trailing?: ReactNode
+}) {
   const display = value == null || value === '' ? '—' : value
   return (
     <div className="flex items-start justify-between gap-8 border-b border-[#eef0f3] py-4 last:border-b-0">
-      <dt className="max-w-[45%] text-[15px] font-medium leading-snug text-[#374151]">{label}</dt>
-      <dd className="max-w-[55%] text-right text-[15px] leading-snug text-[#6b7280]">{display}</dd>
+      <dt className="max-w-[40%] text-[15px] font-medium leading-snug text-[#374151]">{label}</dt>
+      <dd className="flex max-w-[60%] flex-1 items-start justify-end gap-3">
+        <span className="text-right text-[15px] leading-snug text-[#6b7280]">{display}</span>
+        {trailing}
+      </dd>
     </div>
   )
 }
@@ -116,21 +129,23 @@ function ReviewSummaryCard({
   children,
 }: {
   title: string
-  onEdit: () => void
+  onEdit?: () => void
   children: ReactNode
 }) {
   return (
     <section className="onb-form-card sa-surface rounded-2xl border border-[#e8eaef] bg-white px-6 py-5 shadow-[0_1px_2px_rgba(16,24,40,0.04)]">
       <div className="mb-2 flex items-center justify-between gap-4">
         <h3 className="text-[17px] font-semibold tracking-[-0.2px] text-[#111827]">{title}</h3>
-        <button
-          type="button"
-          onClick={onEdit}
-          className="sa-press inline-flex shrink-0 items-center gap-1.5 text-[14px] font-medium text-[#9E439F] transition-colors hover:text-[#863786]"
-        >
-          <EditIcon />
-          Edit
-        </button>
+        {onEdit ? (
+          <button
+            type="button"
+            onClick={onEdit}
+            className="sa-press inline-flex shrink-0 items-center gap-1.5 text-[14px] font-medium text-[#9E439F] transition-colors hover:text-[#863786]"
+          >
+            <EditIcon />
+            Edit
+          </button>
+        ) : null}
       </div>
       <dl>{children}</dl>
     </section>
@@ -171,6 +186,7 @@ export type OnboardingReviewStepProps = {
   /** Masked bank/card summary from Stripe Connect, e.g. "Chase •••• 6789". */
   payoutMethodLabel?: string | null
   onEditStep: (step: OnboardingStep) => void
+  onResidentOnboardingChange?: (residentId: string, enabled: boolean) => void
   onBack: () => void
   onComplete: () => void
 }
@@ -185,6 +201,7 @@ export function OnboardingReviewStep({
   payoutsReady = false,
   payoutMethodLabel = null,
   onEditStep,
+  onResidentOnboardingChange,
   onBack,
   onComplete,
 }: OnboardingReviewStepProps) {
@@ -264,35 +281,10 @@ export function OnboardingReviewStep({
             ) : null}
           </ReviewSummaryCard>
 
-          <section className="onb-form-card sa-surface rounded-2xl border border-[#e8eaef] bg-white px-6 py-5 shadow-[0_1px_2px_rgba(16,24,40,0.04)]">
-            <div className="flex items-start gap-2">
-              <img
-                src={uloLogoSmall}
-                alt=""
-                className="mt-0.5 size-6 shrink-0 object-contain"
-                aria-hidden
-              />
-              <div className="min-w-0 flex-1">
-                <h3 className="mb-1 text-[16px] font-semibold tracking-[-0.2px] text-[#111827]">
-                Your Ulo Number
-                </h3>
-                <p className="mb-2 text-[13px] leading-5 text-[#6b7280]">
-                  Residents text this Ulo number to report maintenance and get updates. Share it after
-                  setup, or include it in your welcome messages.
-                </p>
-                <dl>
-                  <ReviewSummaryRow
-                    label="Your Ulo Number"
-                    value={
-                      reviewData.smsIntakeNumberDisplay ||
-                      reviewData.smsIntakeNumber ||
-                      'Assigning your number…'
-                    }
-                  />
-                </dl>
-              </div>
-            </div>
-          </section>
+          <OnboardingUloNumberCard
+            smsIntakeNumber={reviewData.smsIntakeNumber}
+            smsIntakeNumberDisplay={reviewData.smsIntakeNumberDisplay}
+          />
 
           <ReviewSummaryCard title="Properties" onEdit={() => onEditStep('property')}>
             {reviewData.properties.length > 0 ? (
@@ -339,13 +331,29 @@ export function OnboardingReviewStep({
             )}
           </ReviewSummaryCard>
 
-          <ReviewSummaryCard title="Residents" onEdit={() => onEditStep('residents')}>
+          <ReviewSummaryCard title="Residents">
             {reviewData.residents.length > 0 ? (
               reviewData.residents.map((resident, index) => (
                 <ReviewSummaryRow
                   key={resident.id}
                   label={reviewData.residents.length > 1 ? `Resident ${index + 1}` : 'Resident'}
                   value={formatResidentReviewValue(resident)}
+                  trailing={
+                    onResidentOnboardingChange ? (
+                      <OnboardingSendSwitch
+                        enabled={Boolean(resident.sendOnboardingOnComplete)}
+                        disabled={!resident.phone.trim()}
+                        onChange={(enabled) =>
+                          onResidentOnboardingChange(resident.id, enabled)
+                        }
+                        aria-label={
+                          resident.phone.trim()
+                            ? `Send onboarding message to ${resident.fullName} when setup completes`
+                            : `Add a phone number to send onboarding to ${resident.fullName}`
+                        }
+                      />
+                    ) : null
+                  }
                 />
               ))
             ) : (
@@ -401,6 +409,8 @@ export function OnboardingReviewStep({
                       : 'Record'
                   }
                   value={[
+                    record.building || null,
+                    record.unit ? `Unit ${record.unit}` : null,
                     record.recordType || null,
                     record.description,
                     record.amount || null,
@@ -512,58 +522,6 @@ export function OnboardingReviewStep({
           }}
         />
       ) : null}
-    </div>
-  )
-}
-
-function NoVendorsContinueModal({
-  titleId,
-  saving,
-  onClose,
-  onConfirm,
-}: {
-  titleId: string
-  saving: boolean
-  onClose: () => void
-  onConfirm: () => void
-}) {
-  useEffect(() => {
-    function onKey(event: KeyboardEvent) {
-      if (event.key === 'Escape') onClose()
-    }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
-  }, [onClose])
-
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-      <div
-        role="presentation"
-        className="absolute inset-0"
-        aria-hidden
-        onClick={onClose}
-      />
-      <div
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby={titleId}
-        className="relative w-full max-w-[420px] rounded-[12px] bg-white p-6 shadow-[0px_20px_25px_-5px_rgba(0,0,0,0.1),0px_8px_10px_-6px_rgba(0,0,0,0.1)]"
-      >
-        <h2 id={titleId} className="text-[18px] font-semibold tracking-[-0.2px] text-[#111827]">
-          Continue without vendors?
-        </h2>
-        <p className="mt-2 text-[14px] leading-relaxed text-[#4b5563]">
-          Are you sure you want to continue without adding any vendors?
-        </p>
-        <div className="mt-6 flex flex-wrap items-center justify-end gap-3">
-          <button type="button" disabled={saving} onClick={onClose} className={btnReviewSecondary}>
-            Go back
-          </button>
-          <button type="button" disabled={saving} onClick={onConfirm} className={btnReviewPrimary}>
-            Continue
-          </button>
-        </div>
-      </div>
     </div>
   )
 }

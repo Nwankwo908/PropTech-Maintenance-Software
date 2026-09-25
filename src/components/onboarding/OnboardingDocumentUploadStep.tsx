@@ -9,7 +9,6 @@ import {
   type OnboardingUploadedDocument,
 } from '@/lib/onboardingDocumentUpload'
 import {
-  onboardingBtnGhostClass,
   onboardingBtnPrimaryClass,
   onboardingBtnSecondaryClass,
   onboardingSurfaceSectionClass,
@@ -18,8 +17,6 @@ import {
 const btnPrimary = onboardingBtnPrimaryClass
 
 const btnSecondary = onboardingBtnSecondaryClass
-
-const btnGhost = onboardingBtnGhostClass
 
 function UploadDocumentsIcon() {
   return (
@@ -190,7 +187,7 @@ export function OnboardingDocumentUploadStep({
         <div className="min-w-0">
           <h2 className="text-[18px] font-semibold text-[#101828]">Upload your documents</h2>
           <p className="mt-1 text-[14px] leading-relaxed text-[#6a7282]">
-            Upload leases, spreadsheets, photos, vendor information, or property documents, and Ulo
+            Upload leases, spreadsheets, vendor information, or property documents, and Ulo
             will pull out the important details for you to review before importing.
           </p>
         </div>
@@ -198,9 +195,9 @@ export function OnboardingDocumentUploadStep({
           type="button"
           disabled={processing}
           onClick={onSkip}
-          className={`${btnGhost} shrink-0`}
+          className="sa-press shrink-0 text-[14px] font-medium text-[#8D268F] underline underline-offset-2 outline-none hover:text-[#7a1f7c] focus-visible:ring-2 focus-visible:ring-[#8D268F]/40 focus-visible:ring-offset-2 disabled:cursor-wait disabled:opacity-60"
         >
-          Skip for now
+          Skip
         </button>
       </div>
 

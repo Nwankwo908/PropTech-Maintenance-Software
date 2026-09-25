@@ -201,7 +201,7 @@ export function AddPropertyModal({
         role="dialog"
         aria-modal="true"
         aria-labelledby={titleId}
-        className="relative flex h-full max-h-dvh w-full max-w-[min(100vw,753px)] flex-col overflow-hidden rounded-l-[10px] border-l border-secondary bg-white shadow-[inset_1px_0_0_0_#A788964D]"
+        className="relative z-10 flex h-full max-h-dvh w-full max-w-[min(100vw,753px)] flex-col overflow-hidden rounded-l-[10px] border-l border-secondary bg-white shadow-[inset_1px_0_0_0_#A788964D]"
       >
         <header className="flex h-[81px] shrink-0 items-center justify-between border-b border-secondary px-6 pt-4 pb-[17px]">
           <div className="flex min-w-0 items-center gap-3">

@@ -186,16 +186,6 @@ type AttentionCopyInput = {
   choiceReplyHint?: string | null
   dashboardUrl: string
   actionLabel?: string
-}
-
-function escapeHtml(value: string): string {
-  return value
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-}
-
   /** When set with kind invoice_ready, SMS uses YES/NO paid-confirmation copy. */
   invoicePaid?: {
     landlordFirstName?: string | null
@@ -286,6 +276,15 @@ export function buildLandlordAttentionEmail(input: AttentionCopyInput): {
     }
   }
 
+  const { headline, locationLine, whyLine, numbered, choiceReplyHint } =
+    attentionCopyParts(input)
+  const actionLabel =
+    input.actionLabel?.trim() || attentionEmailActionLabel(input.kind)
+  const text = [
+    `Ulo: ${headline}`,
+    "",
+    locationLine || null,
+    whyLine || null,
     numbered ? `\n${numbered}` : null,
     choiceReplyHint ? `\n${choiceReplyHint}` : null,
     "",
@@ -407,16 +406,6 @@ export async function notifyLandlordNeedsAttention(
   const allowEmail = deliveryPlan.channels.includes("email")
 
   const dashboardUrl = attentionDashboardUrl(params)
-  const copy = {
-    kind: params.kind,
-    headline: params.headline,
-    detail: params.detail,
-    locationLine: params.locationLine,
-    whyLine: params.whyLine,
-    nextSteps: params.nextSteps,
-    choiceReplyHint: params.choiceReplyHint,
-    dashboardUrl,
-    actionLabel: attentionEmailActionLabel(params.kind),
 
   let landlordFirstName = params.landlordFirstName?.trim() || null
   if (params.kind === "invoice_ready" && !landlordFirstName) {
@@ -520,6 +509,16 @@ export async function notifyLandlordNeedsAttention(
               awaiting,
               providerMessageSid,
               provider: providerName,
+              fromNumber: from,
+            })
+          } catch (e) {
+            console.error("[landlord-attention] persist landlord choice", e)
+          }
+        }
+      }
+    }
+  }
+
   if (allowEmail) {
     const mail = await sendLandlordOpsEmail(supabase, {
       landlordId,

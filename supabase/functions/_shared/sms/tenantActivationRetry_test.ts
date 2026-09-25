@@ -176,3 +176,49 @@ Deno.test("isSilenceNudgeDue follows up every 48h from the last send", () => {
     throw new Error("delivery_failed must not use silence nudges")
   }
 })
+
+Deno.test("shouldSkipLimitedAlphaStaleActivationAutomation gates leftover imports", async () => {
+  const { shouldSkipLimitedAlphaStaleActivationAutomation } = await import(
+    "./tenantActivationRetry.ts"
+  )
+
+  if (
+    !shouldSkipLimitedAlphaStaleActivationAutomation({
+      isLimitedAlphaLandlord: true,
+      firstAttemptAt: "2026-09-21T20:10:00.000Z",
+      onboardingCompletedAt: null,
+    })
+  ) {
+    throw new Error("limited alpha with no completed setup must skip")
+  }
+
+  if (
+    !shouldSkipLimitedAlphaStaleActivationAutomation({
+      isLimitedAlphaLandlord: true,
+      firstAttemptAt: "2026-09-21T20:10:00.000Z",
+      onboardingCompletedAt: "2026-09-25T20:50:00.000Z",
+    })
+  ) {
+    throw new Error("first attempt before current completed_at must skip")
+  }
+
+  if (
+    shouldSkipLimitedAlphaStaleActivationAutomation({
+      isLimitedAlphaLandlord: true,
+      firstAttemptAt: "2026-09-25T21:00:00.000Z",
+      onboardingCompletedAt: "2026-09-25T20:50:00.000Z",
+    })
+  ) {
+    throw new Error("welcome started after current setup must not skip")
+  }
+
+  if (
+    shouldSkipLimitedAlphaStaleActivationAutomation({
+      isLimitedAlphaLandlord: false,
+      firstAttemptAt: "2026-09-21T20:10:00.000Z",
+      onboardingCompletedAt: null,
+    })
+  ) {
+    throw new Error("non-limited-alpha must not use this gate")
+  }
+})

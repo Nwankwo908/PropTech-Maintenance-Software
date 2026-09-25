@@ -1,4 +1,4 @@
-import { useId, useState } from 'react'
+import { useEffect, useId, useState, type ReactNode } from 'react'
 import { Link } from 'react-router-dom'
 import { StreetAddressAutocomplete } from '@/components/StreetAddressAutocomplete'
 import { TableCheckbox, checkboxInputClassName } from '@/components/TableCheckbox'
@@ -8,7 +8,6 @@ import { normalizeOnboardingOccupancyStatus } from '@/lib/onboarding'
 import {
   countSelectedInReview,
   formatExtractedUnitPlacement,
-  type ExtractedFinancialRecord,
   type ExtractedLeaseInfo,
   type OnboardingExtractionReview,
   type OnboardingExtractedMaintenanceIssue,
@@ -26,7 +25,34 @@ import {
   ONBOARDING_PROPERTY_TYPE_OPTIONS,
   resolveOnboardingPropertyType,
 } from './onboardingFieldStyles'
+import { OnboardingUloNumberCard } from '@/components/onboarding/OnboardingUloNumberCard'
+import { NoVendorsContinueModal } from '@/components/onboarding/NoVendorsContinueModal'
+import { OnboardingSendSwitch } from '@/components/onboarding/OnboardingSendSwitch'
 import { US_STATE_OPTIONS } from '@/lib/usLocations'
+import { VENDOR_TRADE_OPTIONS as CANONICAL_VENDOR_TRADE_OPTIONS } from '@/lib/vendorTrades'
+
+const VENDOR_TRADE_OPTIONS: { value: string; label: string }[] = [
+  { value: '', label: 'Select trade' },
+  ...CANONICAL_VENDOR_TRADE_OPTIONS.map((trade) => ({
+    value: trade.value,
+    label: trade.label,
+  })),
+]
+
+function createEmptyExtractedVendor(): OnboardingExtractedVendor {
+  return {
+    id: `vendor-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    name: '',
+    category: null,
+    phone: '',
+    email: '',
+    preferredEmergency: false,
+    sourceDocumentName: 'Manual entry',
+    confidence: 1,
+    selected: false,
+    needsReview: false,
+  }
+}
 
 const btnPrimary = onboardingBtnPrimaryClass
 
@@ -115,6 +141,7 @@ function ReviewItemRow({
   onSaveEdit,
   onCancelEdit,
   onEditChange,
+  trailing,
   children,
   as = 'li',
 }: {
@@ -131,7 +158,9 @@ function ReviewItemRow({
   onSaveEdit: () => void
   onCancelEdit: () => void
   onEditChange: (value: string) => void
-  children?: React.ReactNode
+  /** Replaces the Edit control (e.g. resident Onboarding switch). */
+  trailing?: ReactNode
+  children?: ReactNode
   as?: 'li' | 'div'
 }) {
   const Wrapper = as
@@ -181,7 +210,9 @@ function ReviewItemRow({
           <p className="mt-1 text-[11px] text-[#9ca3af]">Source: {sourceDocumentName}</p>
           {children}
         </div>
-        {onEdit ? (
+        {trailing ? (
+          trailing
+        ) : onEdit ? (
           editing ? (
             <button
               type="button"
@@ -240,6 +271,9 @@ export type OnboardingAiReviewStepProps = {
   onBackToUploads: () => void
   onImportAll: () => void
   continueLabel?: string
+  /** Landlord SMS line assigned for this account (Review stage). */
+  smsIntakeNumber?: string | null
+  smsIntakeNumberDisplay?: string | null
 }
 
 export function OnboardingAiReviewStep({
@@ -249,12 +283,19 @@ export function OnboardingAiReviewStep({
   onBackToUploads,
   onImportAll,
   continueLabel = 'Continue',
+  smsIntakeNumber = null,
+  smsIntakeNumberDisplay = null,
 }: OnboardingAiReviewStepProps) {
   const [editingId, setEditingId] = useState<string | null>(null)
   const [editDraft, setEditDraft] = useState('')
+  const [confirmNoVendorsOpen, setConfirmNoVendorsOpen] = useState(false)
   const smsConsentId = useId()
+  const noVendorsTitleId = useId()
 
   const selectedCount = countSelectedInReview(review)
+  const hasSelectedVendors = review.vendors.some(
+    (vendor) => vendor.selected && vendor.name.trim().length > 0,
+  )
   const isEmpty =
     review.properties.length === 0 &&
     review.units.length === 0 &&
@@ -263,6 +304,24 @@ export function OnboardingAiReviewStep({
     review.vendors.length === 0 &&
     review.maintenanceIssues.length === 0 &&
     review.financialRecords.length === 0
+
+  useEffect(() => {
+    if (review.vendors.length > 0) return
+    onReviewChange({
+      ...review,
+      vendors: [createEmptyExtractedVendor()],
+    })
+    // Seed one blank row for manual entry when extraction found none.
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- only when the list is empty
+  }, [review.vendors.length])
+
+  function requestContinue() {
+    if (!hasSelectedVendors) {
+      setConfirmNoVendorsOpen(true)
+      return
+    }
+    onImportAll()
+  }
 
   function patchAccount(patch: Partial<OnboardingExtractionReview['account']>) {
     onReviewChange({
@@ -299,12 +358,24 @@ export function OnboardingAiReviewStep({
     })
   }
 
-  function setPropertySectionSelected(selected: boolean) {
+  function addVendorForm() {
     onReviewChange({
       ...review,
-      properties: review.properties.map((row) => ({ ...row, selected })),
-      units: review.units.map((row) => ({ ...row, selected })),
-      residents: review.residents.map((row) => ({ ...row, selected })),
+      vendors: [...review.vendors, createEmptyExtractedVendor()],
+    })
+  }
+
+  function removeVendorForm(id: string) {
+    if (review.vendors.length <= 1) {
+      onReviewChange({
+        ...review,
+        vendors: [createEmptyExtractedVendor()],
+      })
+      return
+    }
+    onReviewChange({
+      ...review,
+      vendors: review.vendors.filter((row) => row.id !== id),
     })
   }
 
@@ -364,6 +435,15 @@ export function OnboardingAiReviewStep({
   function renderResidentEditFields(item: OnboardingExtractedResident) {
     return (
       <div className="mt-3 grid gap-3 border-t border-[#f3f4f6] pt-3 sm:grid-cols-2">
+        <label className="block sm:col-span-2">
+          <span className={fieldLabelClass}>Full name</span>
+          <input
+            className={inputClass}
+            value={item.fullName}
+            onChange={(e) => patchResident(item.id, { fullName: e.target.value })}
+            placeholder="Full name"
+          />
+        </label>
         <label className="block">
           <span className={fieldLabelClass}>Email</span>
           <input
@@ -430,6 +510,24 @@ export function OnboardingAiReviewStep({
     )
   }
 
+  function residentOnboardingTrailing(resident: OnboardingExtractedResident) {
+    const hasPhone = resident.phone.trim().length > 0
+    return (
+      <OnboardingSendSwitch
+        enabled={Boolean(resident.sendOnboardingOnComplete)}
+        disabled={!hasPhone}
+        onChange={(sendOnboardingOnComplete) =>
+          patchResident(resident.id, { sendOnboardingOnComplete })
+        }
+        aria-label={
+          hasPhone
+            ? `Send onboarding message to ${resident.fullName || 'resident'} when setup completes`
+            : `Add a phone number to send onboarding to ${resident.fullName || 'resident'}`
+        }
+      />
+    )
+  }
+
   function renderPropertyRows() {
     if (
       review.properties.length === 0 &&
@@ -455,19 +553,25 @@ export function OnboardingAiReviewStep({
                 onToggle={() => patchProperty(item.id, { selected: !item.selected })}
                 label={item.name}
                 sourceDocumentName={item.sourceDocumentName}
-                editing={editingId === item.id}
-                editValue={editDraft}
-                editMode="label"
-                editFieldLabel="Property name"
-                onEdit={() => startEdit(item.id, item.name)}
-                onSaveEdit={() => saveEdit('properties', 'name', review.properties)}
-                onCancelEdit={() => setEditingId(null)}
-                onEditChange={setEditDraft}
+                editing={false}
+                editValue=""
+                onSaveEdit={() => undefined}
+                onCancelEdit={() => undefined}
+                onEditChange={() => undefined}
               >
                   <div className="mt-3 grid gap-3 border-t border-[#f3f4f6] pt-3 sm:grid-cols-2">
                     <p className="sm:col-span-2 text-[12px] font-medium text-[#364153]">
                       Complete location details (not always on the document)
                     </p>
+                    <label className="block sm:col-span-2">
+                      <span className={fieldLabelClass}>Property name</span>
+                      <input
+                        className={inputClass}
+                        value={item.name}
+                        onChange={(e) => patchProperty(item.id, { name: e.target.value })}
+                        placeholder="Property name"
+                      />
+                    </label>
                     <div className="block sm:col-span-2">
                       <span className={fieldLabelClass}>Street address</span>
                       <StreetAddressAutocomplete
@@ -604,16 +708,12 @@ export function OnboardingAiReviewStep({
                                 }
                                 label={resident.fullName}
                                 sourceDocumentName={resident.sourceDocumentName}
-                                editing={editingId === resident.id}
-                                editValue={editDraft}
-                                editMode="label"
-                                editFieldLabel="Resident name"
-                                onEdit={() => startEdit(resident.id, resident.fullName)}
-                                onSaveEdit={() =>
-                                  saveEdit('residents', 'fullName', review.residents)
-                                }
-                                onCancelEdit={() => setEditingId(null)}
-                                onEditChange={setEditDraft}
+                                editing={false}
+                                editValue=""
+                                onSaveEdit={() => undefined}
+                                onCancelEdit={() => undefined}
+                                onEditChange={() => undefined}
+                                trailing={residentOnboardingTrailing(resident)}
                               >
                                 {renderResidentEditFields(resident)}
                               </ReviewItemRow>
@@ -669,14 +769,12 @@ export function OnboardingAiReviewStep({
                         onToggle={() => patchResident(resident.id, { selected: !resident.selected })}
                         label={resident.fullName}
                         sourceDocumentName={resident.sourceDocumentName}
-                        editing={editingId === resident.id}
-                        editValue={editDraft}
-                        editMode="label"
-                        editFieldLabel="Resident name"
-                        onEdit={() => startEdit(resident.id, resident.fullName)}
-                        onSaveEdit={() => saveEdit('residents', 'fullName', review.residents)}
-                        onCancelEdit={() => setEditingId(null)}
-                        onEditChange={setEditDraft}
+                        editing={false}
+                        editValue=""
+                        onSaveEdit={() => undefined}
+                        onCancelEdit={() => undefined}
+                        onEditChange={() => undefined}
+                        trailing={residentOnboardingTrailing(resident)}
                       >
                         {renderResidentEditFields(resident)}
                       </ReviewItemRow>
@@ -699,14 +797,12 @@ export function OnboardingAiReviewStep({
                     onToggle={() => patchResident(resident.id, { selected: !resident.selected })}
                     label={resident.fullName}
                     sourceDocumentName={resident.sourceDocumentName}
-                    editing={editingId === resident.id}
-                    editValue={editDraft}
-                    editMode="label"
-                    editFieldLabel="Resident name"
-                    onEdit={() => startEdit(resident.id, resident.fullName)}
-                    onSaveEdit={() => saveEdit('residents', 'fullName', review.residents)}
-                    onCancelEdit={() => setEditingId(null)}
-                    onEditChange={setEditDraft}
+                    editing={false}
+                    editValue=""
+                    onSaveEdit={() => undefined}
+                    onCancelEdit={() => undefined}
+                    onEditChange={() => undefined}
+                    trailing={residentOnboardingTrailing(resident)}
                   >
                     {renderResidentEditFields(resident)}
                   </ReviewItemRow>
@@ -719,43 +815,143 @@ export function OnboardingAiReviewStep({
     )
   }
 
-  function renderVendorRows() {
-    if (review.vendors.length === 0) {
-      return <p className="mt-2 text-[13px] text-[#6a7282]">No vendors detected.</p>
-    }
+  function renderVendorForms() {
+    const vendors =
+      review.vendors.length > 0 ? review.vendors : [createEmptyExtractedVendor()]
+
     return (
-      <ul className="mt-3 space-y-2">
-        {review.vendors.map((item) => (
-          <ReviewItemRow
+      <div className="mt-3 flex flex-col gap-3">
+        <p className="text-[13px] text-[#6a7282]">
+          Add preferred vendors for repairs and property services. You can enter them here even if
+          none were found in your documents.
+        </p>
+        {vendors.map((item, index) => (
+          <div
             key={item.id}
-            checked={item.selected}
-            onToggle={() => patchVendor(item.id, { selected: !item.selected })}
-            label={item.name}
-            value={[item.category, item.phone, item.email].filter(Boolean).join(' · ')}
-            sourceDocumentName={item.sourceDocumentName}
-            editing={editingId === item.id}
-            editValue={editDraft}
-            onEdit={() => startEdit(item.id, item.email)}
-            onSaveEdit={() => saveEdit('vendors', 'email', review.vendors)}
-            onCancelEdit={() => setEditingId(null)}
-            onEditChange={setEditDraft}
+            className="rounded-[10px] border border-[#e5e7eb] bg-[#fafafa] p-4"
           >
-            <label className="mt-3 flex cursor-pointer items-start gap-2 border-t border-[#f3f4f6] pt-3">
-              <input
-                type="checkbox"
-                checked={item.preferredEmergency}
-                onChange={(e) =>
-                  patchVendor(item.id, { preferredEmergency: e.target.checked })
-                }
-                className={`${checkboxInputClassName} mt-0.5 accent-[#611879]`}
-              />
-              <span className="text-[12px] leading-5 text-[#364153]">
-                Preferred emergency vendor for urgent after-hours work
-              </span>
-            </label>
-          </ReviewItemRow>
+            <div className="mb-3 flex items-center justify-between gap-3">
+              <p className="text-[13px] font-semibold text-[#101828]">Vendor {index + 1}</p>
+              {vendors.length > 1 ? (
+                <button
+                  type="button"
+                  className="shrink-0 rounded-[8px] px-2 py-1 text-[12px] font-medium text-[#64748b] transition-colors hover:bg-[#fef2f2] hover:text-[#b91c1c]"
+                  onClick={() => removeVendorForm(item.id)}
+                  aria-label={`Remove vendor ${index + 1}`}
+                >
+                  Remove
+                </button>
+              ) : null}
+            </div>
+            <div className="grid gap-3 sm:grid-cols-2">
+              <label className="block sm:col-span-2">
+                <span className={fieldLabelClass}>Vendor name</span>
+                <input
+                  className={inputClass}
+                  value={item.name}
+                  onChange={(e) =>
+                    patchVendor(item.id, {
+                      name: e.target.value,
+                      selected: e.target.value.trim().length > 0,
+                    })
+                  }
+                  placeholder="Vendor name"
+                  aria-label={`Vendor ${index + 1} name`}
+                />
+              </label>
+              <label className="block relative">
+                <span className={fieldLabelClass}>Trade</span>
+                <select
+                  className={`${selectClass} ${!(item.category ?? '').trim() ? 'text-[#9ca3af]' : ''}`}
+                  value={item.category ?? ''}
+                  onChange={(e) =>
+                    patchVendor(item.id, {
+                      category: e.target.value.trim() || null,
+                      selected: item.name.trim().length > 0 || Boolean(e.target.value.trim()),
+                    })
+                  }
+                  aria-label={`Vendor ${index + 1} trade`}
+                >
+                  {VENDOR_TRADE_OPTIONS.map((option) => (
+                    <option key={option.value || 'placeholder'} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+                <span
+                  className="pointer-events-none absolute right-3 top-[30px] text-[#6a7282]"
+                  aria-hidden
+                >
+                  <svg viewBox="0 0 24 24" fill="none" className="size-4">
+                    <path
+                      d="M6 9l6 6 6-6"
+                      stroke="currentColor"
+                      strokeWidth={2}
+                      strokeLinecap="round"
+                    />
+                  </svg>
+                </span>
+              </label>
+              <label className="block">
+                <span className={fieldLabelClass}>Phone</span>
+                <input
+                  className={inputClass}
+                  type="tel"
+                  value={item.phone}
+                  onChange={(e) =>
+                    patchVendor(item.id, {
+                      phone: e.target.value,
+                      selected: item.name.trim().length > 0,
+                    })
+                  }
+                  placeholder="(555) 123-4567"
+                  aria-label={`Vendor ${index + 1} phone`}
+                />
+              </label>
+              <label className="block sm:col-span-2">
+                <span className={fieldLabelClass}>Email</span>
+                <input
+                  className={inputClass}
+                  type="email"
+                  value={item.email}
+                  onChange={(e) =>
+                    patchVendor(item.id, {
+                      email: e.target.value,
+                      selected: item.name.trim().length > 0,
+                    })
+                  }
+                  placeholder="Email"
+                  aria-label={`Vendor ${index + 1} email`}
+                />
+              </label>
+              <label className="flex cursor-pointer items-start gap-2 sm:col-span-2">
+                <input
+                  type="checkbox"
+                  checked={item.preferredEmergency}
+                  onChange={(e) =>
+                    patchVendor(item.id, {
+                      preferredEmergency: e.target.checked,
+                      selected: item.name.trim().length > 0,
+                    })
+                  }
+                  className={`${checkboxInputClassName} mt-0.5 accent-[#611879]`}
+                  aria-label={`Vendor ${index + 1} preferred emergency vendor`}
+                />
+                <span className="text-[12px] leading-5 text-[#364153]">
+                  Preferred emergency vendor for urgent after-hours work
+                </span>
+              </label>
+            </div>
+          </div>
         ))}
-      </ul>
+        <button
+          type="button"
+          className="w-full rounded-[10px] border border-[#e5e7eb] bg-white py-2.5 text-[13px] font-medium text-[#101828] transition-colors hover:bg-[#f9fafb]"
+          onClick={addVendorForm}
+        >
+          + Add another vendor
+        </button>
+      </div>
     )
   }
 
@@ -936,6 +1132,11 @@ export function OnboardingAiReviewStep({
           </div>
         </ReviewSection>
 
+        <OnboardingUloNumberCard
+          smsIntakeNumber={smsIntakeNumber}
+          smsIntakeNumberDisplay={smsIntakeNumberDisplay}
+        />
+
         {isEmpty ? (
           <div className="rounded-[10px] border border-dashed border-[#e5e7eb] bg-[#fafafa] px-4 py-8 text-center">
             <p className="text-[14px] font-medium text-[#101828]">No extracted portfolio data yet</p>
@@ -952,10 +1153,6 @@ export function OnboardingAiReviewStep({
                 review.properties.length ||
                 (review.units.length > 0 || review.residents.length > 0 ? 1 : 0)
               }
-              headerActions={sectionSelectActions(
-                () => setPropertySectionSelected(true),
-                () => setPropertySectionSelected(false),
-              )}
             >
               {renderPropertyRows()}
             </ReviewSection>
@@ -989,8 +1186,8 @@ export function OnboardingAiReviewStep({
                 'No lease information detected.',
               )}
             </ReviewSection>
-            <ReviewSection title="Vendors Found" count={review.vendors.length}>
-              {renderVendorRows()}
+            <ReviewSection title="Vendors" count={review.vendors.filter((v) => v.name.trim()).length || undefined}>
+              {renderVendorForms()}
             </ReviewSection>
             <ReviewSection title="Maintenance Issues Found" count={review.maintenanceIssues.length}>
               {renderSimpleRows<OnboardingExtractedMaintenanceIssue>(
@@ -1002,17 +1199,6 @@ export function OnboardingAiReviewStep({
                 'description',
                 (item) => item.description,
                 'No maintenance issues detected.',
-              )}
-            </ReviewSection>
-            <ReviewSection title="Financial Records Found" count={review.financialRecords.length}>
-              {renderSimpleRows<ExtractedFinancialRecord>(
-                review.financialRecords,
-                'financialRecords',
-                (item) => item.recordType,
-                (item) => `${item.description} · ${item.amount} · ${item.period}`,
-                'amount',
-                (item) => item.amount,
-                'No financial records detected.',
               )}
             </ReviewSection>
           </>
@@ -1031,13 +1217,25 @@ export function OnboardingAiReviewStep({
           <button
             type="button"
             disabled={saving}
-            onClick={onImportAll}
+            onClick={requestContinue}
             className={btnPrimary}
           >
             {continueLabel}
           </button>
         </div>
       </div>
+
+      {confirmNoVendorsOpen ? (
+        <NoVendorsContinueModal
+          titleId={noVendorsTitleId}
+          saving={saving}
+          onClose={() => setConfirmNoVendorsOpen(false)}
+          onConfirm={() => {
+            setConfirmNoVendorsOpen(false)
+            onImportAll()
+          }}
+        />
+      ) : null}
     </section>
   )
 }

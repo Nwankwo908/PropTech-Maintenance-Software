@@ -123,6 +123,8 @@ export type ResidentFormRow = {
   leaseEnd: string
   maintenanceResponsibilitiesClause: string
   occupancyStatus: OnboardingOccupancyStatus
+  /** When true, send tenant welcome SMS on Complete setup. */
+  sendOnboardingOnComplete?: boolean
 }
 
 export type OnboardingFormDraft = {
@@ -144,6 +146,9 @@ export type LandlordOnboardingState = {
   approvalRules: OnboardingApprovalRules
   formDraft?: OnboardingFormDraft
   completedAt: string | null
+  /** Current Start-setup run. Isolates imported residents + Overview feed. */
+  onboardingSessionId?: string | null
+  onboardingSessionStartedAt?: string | null
 }
 
 export type AccountSetupCounts = {

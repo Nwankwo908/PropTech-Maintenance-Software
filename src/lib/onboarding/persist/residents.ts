@@ -22,6 +22,8 @@ export type OnboardingResident = {
   leaseEnd: string | null
   maintenanceResponsibilitiesClause: string | null
   occupancyStatus: OnboardingOccupancyStatus
+  /** When true, send tenant welcome SMS on Complete setup (draft / review only). */
+  sendOnboardingOnComplete?: boolean
 }
 
 export async function fetchOnboardingResidents(
@@ -35,11 +37,16 @@ export async function fetchOnboardingResidents(
       'id, resident_id, full_name, email, phone, unit, building, status, monthly_rent, rent_due_day, move_in_date, lease_end_date, maintenance_responsibilities_clause',
     )
     .eq('landlord_id', landlordId)
+    .is('archived_at', null)
     .order('created_at', { ascending: true })
 
   if (error) {
     // Columns may be missing before migrations — fall back without newer fields.
-    if (/monthly_rent|rent_due_day|maintenance_responsibilities_clause|column/i.test(error.message)) {
+    if (
+      /monthly_rent|rent_due_day|maintenance_responsibilities_clause|archived_at|column/i.test(
+        error.message,
+      )
+    ) {
       const { data: legacy, error: legacyError } = await supabase
         .from('users')
         .select('id, resident_id, full_name, email, phone, unit, building, status, move_in_date, lease_end_date')

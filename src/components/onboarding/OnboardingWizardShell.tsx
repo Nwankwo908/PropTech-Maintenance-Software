@@ -18,6 +18,7 @@ import { OnboardingPropertyStep } from '@/components/onboarding/OnboardingProper
 import { OnboardingVendorsStep } from '@/components/onboarding/OnboardingVendorsStep'
 import { OnboardingResidentsStep } from '@/components/onboarding/OnboardingResidentsStep'
 import { OnboardingSetupTransition } from '@/components/onboarding/OnboardingSetupTransition'
+import { OnboardingProgressSavedNote } from '@/components/onboarding/OnboardingProgressSavedNote'
 import { useOnboardingWizard } from '@/components/onboarding/useOnboardingWizard'
 
 const btnSecondary =
@@ -139,6 +140,8 @@ export function OnboardingWizardShell() {
     continueFromAiReview,
     reviewData,
     reviewLoading,
+    smsIntakeNumber,
+    smsIntakeNumberDisplay,
     completionCheck,
     payoutsReady,
     setPayoutsReady,
@@ -154,6 +157,7 @@ export function OnboardingWizardShell() {
     saveApprovalRulesAndContinue,
     continueToReview,
     editReviewStep,
+    setResidentOnboardingOnComplete,
     finishReview,
   } = wizard
 
@@ -188,6 +192,12 @@ export function OnboardingWizardShell() {
         {error ? (
           <div className="sa-enter mb-4 rounded-[10px] border border-[#fecaca] bg-[#fef2f2] px-4 py-3 text-[13px] text-[#b91c1c]">
             {error}
+          </div>
+        ) : null}
+
+        {!isWelcomeStep ? (
+          <div className="mb-4">
+            <OnboardingProgressSavedNote />
           </div>
         ) : null}
 
@@ -275,6 +285,8 @@ export function OnboardingWizardShell() {
               onBackToUploads={() => void returnToDocumentUpload()}
               onImportAll={() => void continueFromAiReview()}
               continueLabel={editContinueLabel ?? 'Continue'}
+              smsIntakeNumber={smsIntakeNumber}
+              smsIntakeNumberDisplay={smsIntakeNumberDisplay}
             />
           ) : null}
 
@@ -337,7 +349,13 @@ export function OnboardingWizardShell() {
                 state.setupPath !== 'fast_track' &&
                 landlordHasVendorMarketplace(getActiveLandlordId())
               }
-              continueLabel={editContinueLabel ?? 'Continue'}
+              continueLabel={
+                editContinueLabel ??
+                (state.setupPath === 'fast_track' &&
+                !landlordHasPayments(getActiveLandlordId())
+                  ? 'Complete'
+                  : 'Continue')
+              }
               onBack={() => void handleBack()}
               onContinue={(rules) => void saveApprovalRulesAndContinue(rules)}
             />
@@ -354,11 +372,19 @@ export function OnboardingWizardShell() {
                   void returnToReviewAfterEdit()
                   return
                 }
+                if (state.setupPath === 'fast_track') {
+                  void finishReview()
+                  return
+                }
                 void continueToReview()
               }}
               onSkip={() => {
                 if (editingFromReviewRef.current) {
                   void returnToReviewAfterEdit()
+                  return
+                }
+                if (state.setupPath === 'fast_track') {
+                  void finishReview()
                   return
                 }
                 void continueToReview()
@@ -370,7 +396,7 @@ export function OnboardingWizardShell() {
             />
           ) : null}
 
-          {step === 'review' ? (
+          {step === 'review' && state.setupPath !== 'fast_track' ? (
             <OnboardingReviewStep
               loading={reviewLoading}
               saving={saving}
@@ -381,6 +407,7 @@ export function OnboardingWizardShell() {
               payoutsReady={payoutsReady}
               payoutMethodLabel={payoutMethodLabel}
               onEditStep={(targetStep) => void editReviewStep(targetStep)}
+              onResidentOnboardingChange={setResidentOnboardingOnComplete}
               onBack={() => void handleBack()}
               onComplete={() => void finishReview()}
             />

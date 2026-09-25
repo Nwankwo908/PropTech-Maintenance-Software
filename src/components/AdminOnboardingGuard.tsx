@@ -140,7 +140,9 @@ export function AdminOnboardingGuard() {
   }
 
   const resolvedState = resolveGuardOnboardingState(state, readLocalOnboardingState())
-  const blockDashboard = resolvedState ? shouldBlockDashboard(resolvedState) : true
+  // Only block when we positively know setup is incomplete. A missing snapshot
+  // must not bounce Alpha 2 (shared account) off Properties / Overview.
+  const blockDashboard = resolvedState ? shouldBlockDashboard(resolvedState) : false
   const onboardingCompleted = resolvedState?.onboardingStatus === 'completed'
   const showPostOnboardingWelcome = shouldShowLimitedAlphaPostOnboardingWelcome(
     onboardingCompleted,
@@ -152,12 +154,12 @@ export function AdminOnboardingGuard() {
     landlordId: getActiveLandlordId(),
   })
 
-  if (blockDashboard && !onOnboardingRoute) {
+  // Completed Alpha 1 setup but Get Started not pressed — keep them on All Set.
+  if (forcePostOnboardingWelcome) {
     return <Navigate to="/admin/onboarding" replace />
   }
 
-  // Completed setup but Get Started not pressed — keep them on All Set until they do.
-  if (forcePostOnboardingWelcome) {
+  if (blockDashboard && !onOnboardingRoute) {
     return <Navigate to="/admin/onboarding" replace />
   }
 

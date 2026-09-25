@@ -16,6 +16,10 @@ import {
   streetLineFromAddress,
 } from '@shared/onboarding/typedDocumentExtract/placeFields'
 import { parseRentDueDay } from '@shared/onboarding/typedDocumentExtract/parse'
+import {
+  looksLikePropertyFeatureNotRepair,
+  shouldAutoSelectMaintenanceIssue,
+} from '@shared/onboarding/maintenanceIssueGuard'
 /**
  * Onboarding fast-track — document upload, GPT-4o extraction, and review import.
  * File bytes are stored in the landlord-onboarding-documents bucket for preview.
@@ -117,6 +121,8 @@ export type ExtractedFinancialRecord = {
   description: string
   amount: string
   period: string
+  building: string
+  unit: string
   sourceDocumentName: string
   confidence: number
   selected: boolean
@@ -182,6 +188,8 @@ export type OnboardingExtractedResident = {
   confidence: number
   selected: boolean
   needsReview: boolean
+  /** When true, send tenant welcome SMS on Complete setup. */
+  sendOnboardingOnComplete?: boolean
 }
 
 export type OnboardingExtractedVendor = {
@@ -462,7 +470,9 @@ export function inferDocumentCategory(fileName: string): OnboardingDocumentCateg
     return 'property_statement'
   }
   if (/expense|receipt/.test(lower)) return 'expense_report'
-  if (/\.(jpg|jpeg|png|heic|webp|tif|tiff)$/.test(lower)) return 'inspection_report'
+  // Bare photos are NOT inspection reports — listing/unit images must not become
+  // fake maintenance issues. Only classify as inspection when the name says so.
+  if (/\.(jpg|jpeg|png|heic|webp|tif|tiff)$/.test(lower)) return 'unknown'
   if (/\.(xls|xlsx|csv)$/.test(lower)) return 'rent_roll'
   return 'unknown'
 }
@@ -983,6 +993,9 @@ function mergeExtractedResidentRow(
     confidence,
     selected: primary.selected || extra.selected,
     needsReview: confidence < 75 || Boolean(fullName.trim() && !usableLeaseUnit(unit)),
+    sendOnboardingOnComplete: Boolean(
+      primary.sendOnboardingOnComplete || extra.sendOnboardingOnComplete,
+    ),
   }
 }
 
@@ -2465,6 +2478,12 @@ function mergeExtractedDocuments(
             : '',
         )
       if (!description) return
+      // Drop listing-photo amenity labels (window, carpet, empty room, …).
+      if (looksLikePropertyFeatureNotRepair(description)) return
+      const autoSelect = shouldAutoSelectMaintenanceIssue({
+        description,
+        confidence: item.confidence,
+      })
       maintenanceIssues.push({
         id: `ext-maint-${doc.id}-${index}`,
         unit: cleanOnboardingExtractText(item.unit),
@@ -2474,8 +2493,8 @@ function mergeExtractedDocuments(
       priority: item.priority,
         sourceDocumentName: source,
         confidence: item.confidence,
-        selected: Boolean(description),
-        needsReview: item.confidence < 75,
+        selected: autoSelect,
+        needsReview: !autoSelect || item.confidence < 75,
         imageTags: doc.imageLabels,
       })
     })
@@ -2491,6 +2510,8 @@ function mergeExtractedDocuments(
         description: description || amount,
         amount,
         period: cleanOnboardingExtractText(item.period),
+        building: cleanOnboardingExtractText(item.building),
+        unit: cleanOnboardingExtractText(item.unit),
         sourceDocumentName: source,
         confidence: item.confidence,
         selected: Boolean(description || amount),
@@ -3015,6 +3036,8 @@ export function toMockExtractionReview(review: OnboardingExtractionReview): Mock
         description: item.description,
         amount: item.amount,
         period: item.period,
+        building: item.building,
+        unit: item.unit,
         selected: true,
         sourceDocumentName: item.sourceDocumentName,
       })),

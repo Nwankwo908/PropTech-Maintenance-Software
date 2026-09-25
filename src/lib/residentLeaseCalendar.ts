@@ -73,7 +73,7 @@ function clampRentDueDay(value: number | null | undefined): number | null {
   return day
 }
 
-/** Monthly rent due + reminders from this month through lease end (or 18 months). */
+/** Monthly rent due + reminders from lease start (or 12 months back) through lease end. */
 export function buildResidentCalendarEvents(input: {
   leaseStartDate?: string | null
   leaseEndDate?: string | null
@@ -98,26 +98,36 @@ export function buildResidentCalendarEvents(input: {
     ? { year: Number(leaseEnd.slice(0, 4)), month: Number(leaseEnd.slice(5, 7)) }
     : null
 
-  const startParts =
-    leaseStartMonth && compareMonthParts(leaseStartMonth, thisMonth) > 0
-      ? leaseStartMonth
-      : thisMonth
-  const endParts = leaseEndMonth && compareMonthParts(leaseEndMonth, startParts) >= 0
-    ? leaseEndMonth
-    : addMonths(startParts.year, startParts.month, 18)
+  // Match the month picker: lease start, else 12 months back — include past due dates.
+  const yearAgo = addMonths(thisMonth.year, thisMonth.month, -12)
+  let startParts: { year: number; month: number }
+  if (leaseStartMonth && compareMonthParts(leaseStartMonth, thisMonth) > 0) {
+    startParts = leaseStartMonth
+  } else if (leaseStartMonth && compareMonthParts(leaseStartMonth, yearAgo) > 0) {
+    startParts = leaseStartMonth
+  } else {
+    startParts = yearAgo
+  }
+  // Prefer lease end when set; otherwise project 18 months ahead of today.
+  const forwardEnd = addMonths(thisMonth.year, thisMonth.month, 18)
+  const resolvedEnd =
+    leaseEndMonth && compareMonthParts(leaseEndMonth, startParts) >= 0
+      ? leaseEndMonth
+      : compareMonthParts(forwardEnd, startParts) >= 0
+        ? forwardEnd
+        : startParts
 
   let cursor = startParts
   let months = 0
   while (
     months < 48 &&
-    (cursor.year < endParts.year ||
-      (cursor.year === endParts.year && cursor.month <= endParts.month))
+    (cursor.year < resolvedEnd.year ||
+      (cursor.year === resolvedEnd.year && cursor.month <= resolvedEnd.month))
   ) {
     const rentIso = rentDueIsoForMonth(cursor.year, cursor.month, rentDueDay)
     const afterMoveIn = !leaseStart || rentIso >= leaseStart
     const beforeMoveOut = !leaseEnd || rentIso <= leaseEnd
-    const stillUpcoming = rentIso >= todayIso
-    if (afterMoveIn && beforeMoveOut && stillUpcoming) {
+    if (afterMoveIn && beforeMoveOut) {
       events.push({ date: rentIso, kind: 'rent', label: 'Rent due' })
       for (const daysBefore of reminderDays) {
         const reminderIso = addDaysIso(rentIso, -daysBefore)
@@ -155,8 +165,8 @@ function parseInstant(value: string | null | undefined): Date | null {
 }
 
 /**
- * Upcoming onboarding SMS follow-ups for this resident only (welcome already sent).
- * Does not copy rent cadence or another tenant’s schedule.
+ * Onboarding SMS events for this resident (welcome + 48h follow-ups).
+ * Includes past dates so earlier months on the strip stay populated.
  */
 export function buildTenantOnboardingCalendarEvents(input: {
   residentId: string
@@ -177,15 +187,43 @@ export function buildTenantOnboardingCalendarEvents(input: {
     activationAttemptCount: input.activationAttemptCount,
     activationSmsSentAt: input.activationSmsSentAt,
   })
-  const now = input.now ?? new Date()
-  const today = todayIsoDate(now)
   const events: ResidentCalendarEvent[] = []
+  const first =
+    parseInstant(input.firstActivationAttemptAt) ??
+    parseInstant(input.activationSmsSentAt)
+  const last =
+    parseInstant(input.lastActivationAttemptAt) ??
+    parseInstant(input.activationSmsSentAt) ??
+    first
 
-  if (chip.status === 'waiting') {
-    const last =
-      parseInstant(input.lastActivationAttemptAt) ??
-      parseInstant(input.activationSmsSentAt)
-    if (!last) return []
+  // Welcome / prior sends — keep on the calendar after YES/NO too.
+  if (first && chip.status !== 'not_started') {
+    const sent = Math.max(1, chip.attemptCount || 1)
+    events.push({
+      id: `onboarding:${residentId}:sent:0`,
+      date: isoDateFromInstant(first),
+      kind: 'onboarding_reminder',
+      label: 'Onboarding Follow up',
+    })
+    if (last && sent > 1) {
+      for (let index = 1; index < sent; index += 1) {
+        const when = new Date(
+          first.getTime() + index * ACTIVATION_SILENCE_NUDGE_HOURS * 60 * 60 * 1000,
+        )
+        // Prefer the real last-attempt stamp for the most recent send.
+        const stamp = index === sent - 1 ? last : when
+        const date = isoDateFromInstant(stamp)
+        events.push({
+          id: `onboarding:${residentId}:sent:${index}`,
+          date,
+          kind: 'onboarding_reminder',
+          label: 'Onboarding Follow up',
+        })
+      }
+    }
+  }
+
+  if (chip.status === 'waiting' && last) {
     const sent = Math.max(1, chip.attemptCount)
     const remaining = MAX_SILENCE_NUDGE_ATTEMPTS - sent
     for (let index = 1; index <= remaining; index += 1) {
@@ -193,7 +231,6 @@ export function buildTenantOnboardingCalendarEvents(input: {
         last.getTime() + index * ACTIVATION_SILENCE_NUDGE_HOURS * 60 * 60 * 1000,
       )
       const date = isoDateFromInstant(when)
-      if (date < today) continue
       events.push({
         id: `onboarding:${residentId}:${date}:${index}`,
         date,
@@ -203,12 +240,7 @@ export function buildTenantOnboardingCalendarEvents(input: {
     }
   }
 
-  if (chip.status === 'delivery_failed' && chip.attemptCount < MAX_ACTIVATION_ATTEMPTS) {
-    const first =
-      parseInstant(input.firstActivationAttemptAt) ??
-      parseInstant(input.lastActivationAttemptAt) ??
-      parseInstant(input.activationSmsSentAt)
-    if (!first) return events
+  if (chip.status === 'delivery_failed' && chip.attemptCount < MAX_ACTIVATION_ATTEMPTS && first) {
     const retries: Array<{ hours: number; afterAttempts: number }> = [
       { hours: ACTIVATION_RETRY_2_HOURS, afterAttempts: 1 },
       { hours: ACTIVATION_RETRY_3_HOURS, afterAttempts: 2 },
@@ -217,7 +249,6 @@ export function buildTenantOnboardingCalendarEvents(input: {
       if (chip.attemptCount !== retry.afterAttempts) continue
       const when = new Date(first.getTime() + retry.hours * 60 * 60 * 1000)
       const date = isoDateFromInstant(when)
-      if (date < today) continue
       events.push({
         id: `onboarding:${residentId}:retry:${date}`,
         date,
@@ -227,8 +258,17 @@ export function buildTenantOnboardingCalendarEvents(input: {
     }
   }
 
-  events.sort((a, b) => a.date.localeCompare(b.date) || (a.id ?? '').localeCompare(b.id ?? ''))
-  return events
+  // Dedupe same-day chips (welcome + reconstructed send can collide).
+  const seen = new Set<string>()
+  const deduped: ResidentCalendarEvent[] = []
+  for (const event of events) {
+    const key = `${event.date}|${event.kind}`
+    if (seen.has(key)) continue
+    seen.add(key)
+    deduped.push(event)
+  }
+  deduped.sort((a, b) => a.date.localeCompare(b.date) || (a.id ?? '').localeCompare(b.id ?? ''))
+  return deduped
 }
 
 function compareMonthParts(

@@ -5,7 +5,7 @@ import editIcon from '@/assets/noun_edit_469454.svg'
 import { SetupSuccessCheckboxGuide } from '@/components/SetupSuccessCheckboxGuide'
 import { TableCheckbox } from '@/components/TableCheckbox'
 import { loadUnitsFromDb } from '@/api/unitVacancy'
-import { registerUnitSms, syncSmsIdentity } from '@/api/landlordSmsOnboarding'
+import { registerPropertyUnitsSms, registerUnitSms, syncSmsIdentity } from '@/api/landlordSmsOnboarding'
 import {
   phoneChanged,
   restartTenantOnboardingAfterPhoneChange,
@@ -14,8 +14,14 @@ import {
 } from '@/api/tenantActivation'
 import {
   AddResidentModal,
+  type AddResidentPropertyOption,
   type AddResidentSubmitPayload,
+  type AddResidentUnitOption,
 } from '@/components/AddResidentModal'
+import {
+  AddPropertyModal,
+  type AddPropertyFormPayload,
+} from '@/components/AddPropertyModal'
 import {
   EditResidentModal,
   type EditResidentModalRow,
@@ -28,12 +34,12 @@ import { SetupOutreachAckModal } from '@/components/SetupOutreachAckModal'
 import { PaymentStatusChip } from '@/components/PaymentStatusChip'
 import { optionalPhoneForDbOrError } from '@/lib/phoneFormat'
 import { getActiveLandlordId } from '@/lib/activeLandlord'
-import { customUnitPickKey, unitOptionKeyToCell } from '@/lib/residentUnitKeys'
+import { buildUnitOptionsFromPropertyPayload, customUnitPickKey, unitOptionKeyToCell } from '@/lib/residentUnitKeys'
 import {
   buildPropertyIdByBuilding,
   residentDetailPath,
 } from '@/lib/propertyRoutes'
-import { listPropertiesForLandlord } from '@/lib/properties'
+import { ensureProperty, linkUnitsToProperty, listPropertiesForLandlord } from '@/lib/properties'
 import {
   findCanonicalPropertyForResident,
   mapUnitsForPropertyHealth,
@@ -75,6 +81,7 @@ type InventoryUnitOption = {
   id: string
   unitLabel: string
   building: string | null
+  propertyId: string | null
 }
 
 type ResidentRow = {
@@ -138,42 +145,45 @@ function formatMonthlyRent(amount: number | null): string {
   return formatBalance(amount)
 }
 
-function householdRentLabel(members: ResidentRow[]): string {
-  return members.find((member) => member.rentLabel !== '—')?.rentLabel ?? '—'
-}
-
-function householdPaymentStatus(members: ResidentRow[]): PropertyHistoryPaymentStatus {
-  return members.some((member) => member.paymentStatus === 'not_paid') ? 'not_paid' : 'paid'
-}
-
-function householdOccupancyLabel(members: ResidentRow[]): string {
-  const labels = new Set(members.map((member) => residentOccupancyLabel(member.status)))
-  if (labels.size === 1) return [...labels][0] ?? '—'
-  return residentOccupancyLabel(members[0]?.status ?? 'active')
-}
-
-/** Activation follows the primary lease holder (first member on the household row). */
-function householdActivationChip(members: ResidentRow[]) {
-  const primary = members[0]
-  return resolveTenantActivationChip({
-    activationStatus: primary?.activationStatus,
-    smsConsentStatus: primary?.smsConsentStatus,
-    activationAttemptCount: primary?.activationAttemptCount,
-    activationSmsSentAt: primary?.activationSmsSentAt,
-  })
-}
-
-function primaryHouseholdContacts(primary: ResidentRow | undefined): {
+function residentContacts(resident: ResidentRow): {
   phones: string[]
   emails: string[]
 } {
-  if (!primary) return { phones: [], emails: [] }
-  const phone = primary.contactPhone?.trim()
-  const email = primary.contactEmail?.trim()
+  const phone = resident.contactPhone?.trim()
+  const email = resident.contactEmail?.trim()
   return {
     phones: phone ? [phone] : [],
     emails: email ? [email] : [],
   }
+}
+
+/** Prefer someone with rent on file as the lead row; otherwise alphabetical. */
+function sortHouseholdMembers(members: ResidentRow[]): ResidentRow[] {
+  return [...members].sort((a, b) => {
+    const aHasRent = a.rentLabel !== '—' ? 1 : 0
+    const bHasRent = b.rentLabel !== '—' ? 1 : 0
+    if (aHasRent !== bHasRent) return bHasRent - aHasRent
+    return a.name.localeCompare(b.name, undefined, { sensitivity: 'base' })
+  })
+}
+
+function OccupantsExpandIcon({ expanded }: { expanded: boolean }) {
+  return (
+    <svg
+      viewBox="0 0 16 16"
+      fill="none"
+      aria-hidden
+      className={`size-3.5 shrink-0 transition-transform duration-150 ${expanded ? 'rotate-90' : ''}`}
+    >
+      <path
+        d="M6 3.5 10.5 8 6 12.5"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  )
 }
 
 function asRecord(value: unknown): Record<string, unknown> {
@@ -292,10 +302,23 @@ export function AdminResidentsDashboard() {
   const [searchQuery, setSearchQuery] = useState('')
   const [addResidentOpen, setAddResidentOpen] = useState(false)
   const [addResidentError, setAddResidentError] = useState<string | null>(null)
+  const [addPropertyOpen, setAddPropertyOpen] = useState(false)
+  const [addPropertyError, setAddPropertyError] = useState<string | null>(null)
+  const [pendingPropertyLink, setPendingPropertyLink] = useState<{
+    residentId: string
+    customUnitLabel: string | null
+    status: string
+    leaseStart: string | null
+    leaseEnd: string | null
+    phone: string | null
+  } | null>(null)
   const [unitOptions, setUnitOptions] = useState<{ value: string; label: string }[]>([])
+  const [residentUnitOptions, setResidentUnitOptions] = useState<AddResidentUnitOption[]>([])
+  const [propertyOptions, setPropertyOptions] = useState<AddResidentPropertyOption[]>([])
   const [inventoryUnits, setInventoryUnits] = useState<InventoryUnitOption[]>([])
   const [editingResident, setEditingResident] = useState<ResidentRow | null>(null)
   const [selectedResidentIds, setSelectedResidentIds] = useState<Set<string>>(() => new Set())
+  const [expandedHouseholdKeys, setExpandedHouseholdKeys] = useState<Set<string>>(() => new Set())
   const [deleteResidentsSaving, setDeleteResidentsSaving] = useState(false)
   const [deleteResidentsError, setDeleteResidentsError] = useState<string | null>(null)
   const [onboardingSaving, setOnboardingSaving] = useState(false)
@@ -354,6 +377,7 @@ export function AdminResidentsDashboard() {
       .select(selectWithActivation)
       .eq('landlord_id', getActiveLandlordId())
       .neq('status', 'past_resident')
+      .is('archived_at', null)
 
     if (primary.error && /column .* does not exist/i.test(primary.error.message)) {
       const legacy = await supabase
@@ -402,9 +426,58 @@ export function AdminResidentsDashboard() {
             name: property.name,
           }))
         : []
+    setPropertyOptions(
+      propertiesResult.ok
+        ? propertiesResult.properties
+            .map((property) => ({
+              value: property.id,
+              label: property.name.trim() || 'Untitled property',
+              name: property.name.trim(),
+            }))
+            .filter((option) => option.name)
+            .sort((a, b) => a.label.localeCompare(b.label, undefined, { sensitivity: 'base' }))
+        : [],
+    )
     const propertyIdByBuilding = buildPropertyIdByBuilding(canonicalProperties)
     const healthUnits = mapUnitsForPropertyHealth(
       (unitsResult.data ?? []) as Record<string, unknown>[],
+    )
+    const unitRows = (unitsResult.error
+      ? []
+      : ((unitsResult.data ?? []) as Record<string, unknown>[]))
+      .map((row) => {
+        const unitLabel = asString(row.unit_label)
+        if (!unitLabel) return null
+        const building = asString(row.building) || ''
+        return {
+          id: asString(row.id),
+          unitLabel,
+          building: building || null,
+          propertyId: asString(row.property_id) || null,
+        }
+      })
+      .filter((row): row is InventoryUnitOption => Boolean(row))
+    setInventoryUnits(unitRows)
+    setUnitOptions(
+      unitRows.map((row) => {
+        const building = row.building ?? ''
+        return {
+          value: customUnitPickKey(row.unitLabel, building),
+          label: building ? `${building} — ${row.unitLabel}` : row.unitLabel,
+        }
+      }),
+    )
+    setResidentUnitOptions(
+      unitRows.map((row) => {
+        const building = row.building ?? ''
+        return {
+          value: customUnitPickKey(row.unitLabel, building),
+          label: row.unitLabel,
+          unitLabel: row.unitLabel,
+          building,
+          propertyId: row.propertyId,
+        }
+      }),
     )
     const paymentStatusByResident = new Map<string, PropertyHistoryPaymentStatus>()
     for (const raw of (rentRunsResult.data ?? []) as Record<string, unknown>[]) {
@@ -504,23 +577,41 @@ export function AdminResidentsDashboard() {
     void loadUnitsFromDb().then((rows) => {
       const landlordId = getActiveLandlordId()
       const scoped = rows.filter((row) => row.landlord_id === landlordId && row.unit_label.trim())
-      setInventoryUnits(
-        scoped.map((row) => ({
+      setInventoryUnits((prev) => {
+        // Prefer property-linked rows already loaded by loadResidents.
+        if (prev.some((row) => row.propertyId)) return prev
+        return scoped.map((row) => ({
           id: row.id,
           unitLabel: row.unit_label.trim(),
           building: row.building?.trim() || null,
-        })),
-      )
-      setUnitOptions(
-        scoped.map((row) => {
+          propertyId: null,
+        }))
+      })
+      setUnitOptions((prev) => {
+        if (prev.length > 0) return prev
+        return scoped.map((row) => {
           const building = row.building?.trim() ?? ''
           const unit = row.unit_label.trim()
           return {
             value: customUnitPickKey(unit, building),
             label: building ? `${building} — ${unit}` : unit,
           }
-        }),
-      )
+        })
+      })
+      setResidentUnitOptions((prev) => {
+        if (prev.length > 0) return prev
+        return scoped.map((row) => {
+          const building = row.building?.trim() ?? ''
+          const unit = row.unit_label.trim()
+          return {
+            value: customUnitPickKey(unit, building),
+            label: unit,
+            unitLabel: unit,
+            building,
+            propertyId: null,
+          }
+        })
+      })
     })
   }, [])
 
@@ -552,7 +643,16 @@ export function AdminResidentsDashboard() {
     }
 
     const residentId = `RES-${String(nextResidentNumber).padStart(3, '0')}`
-    const unitCell = payload.unit ? unitOptionKeyToCell(payload.unit) : { kind: 'unassigned' as const }
+    const propertyName = payload.propertyName?.trim() || ''
+    const customUnitLabel = payload.customUnitLabel?.trim() || ''
+    let unitCell = payload.unit ? unitOptionKeyToCell(payload.unit) : { kind: 'unassigned' as const }
+    if (unitCell.kind === 'unassigned' && propertyName) {
+      unitCell = {
+        kind: 'assigned',
+        unit: customUnitLabel,
+        building: propertyName,
+      }
+    }
     const phoneResult = optionalPhoneForDbOrError(payload.phone)
     if (phoneResult.error) {
       setAddResidentError(phoneResult.error)
@@ -566,8 +666,8 @@ export function AdminResidentsDashboard() {
         full_name: payload.fullName,
         email: payload.email,
         phone: phoneResult.phone,
-        unit: unitCell.kind === 'assigned' ? unitCell.unit : null,
-        building: unitCell.kind === 'assigned' ? unitCell.building : null,
+        unit: unitCell.kind === 'assigned' && unitCell.unit.trim() ? unitCell.unit : null,
+        building: unitCell.kind === 'assigned' && unitCell.building.trim() ? unitCell.building : null,
         status: payload.status,
         balance_due: 0,
         issues: [],
@@ -584,7 +684,49 @@ export function AdminResidentsDashboard() {
     }
 
     const newResidentId = asString(insertedRow?.id)
-    if (unitCell.kind === 'assigned' && newResidentId) {
+    if (
+      payload.isNewUnit &&
+      unitCell.kind === 'assigned' &&
+      unitCell.unit.trim() &&
+      propertyName &&
+      payload.propertyId
+    ) {
+      await registerPropertyUnitsSms({
+        landlordId,
+        units: [{ unitLabel: unitCell.unit, building: propertyName }],
+      })
+      await linkUnitsToProperty({
+        landlordId,
+        propertyId: payload.propertyId,
+        buildingName: propertyName,
+      })
+      const pickKey = customUnitPickKey(unitCell.unit, propertyName)
+      setResidentUnitOptions((prev) => {
+        if (prev.some((option) => option.value === pickKey)) return prev
+        return [
+          ...prev,
+          {
+            value: pickKey,
+            label: unitCell.unit,
+            unitLabel: unitCell.unit,
+            building: propertyName,
+            propertyId: payload.propertyId ?? null,
+          },
+        ]
+      })
+      setUnitOptions((prev) => {
+        if (prev.some((option) => option.value === pickKey)) return prev
+        return [
+          ...prev,
+          {
+            value: pickKey,
+            label: `${propertyName} — ${unitCell.unit}`,
+          },
+        ]
+      })
+    }
+
+    if (unitCell.kind === 'assigned' && unitCell.unit.trim() && newResidentId) {
       void registerUnitSms({
         unitLabel: unitCell.unit,
         building: unitCell.building,
@@ -615,6 +757,140 @@ export function AdminResidentsDashboard() {
 
     await loadResidents()
     setAddResidentOpen(false)
+
+    if (payload.openAddPropertyAfter && newResidentId) {
+      setAddPropertyError(null)
+      setPendingPropertyLink({
+        residentId: newResidentId,
+        customUnitLabel: customUnitLabel || null,
+        status: payload.status,
+        leaseStart: parseLeaseDateInput(payload.leaseStart),
+        leaseEnd: parseLeaseDateInput(payload.leaseEnd),
+        phone: phoneResult.phone,
+      })
+      setAddPropertyOpen(true)
+    }
+  }
+
+  async function addPropertyLinkedToResident(payload: AddPropertyFormPayload) {
+    if (!pendingPropertyLink || !supabase) return
+
+    setAddPropertyError(null)
+    const landlordId = getActiveLandlordId()
+    const yearRaw = payload.yearBuilt?.trim()
+    const yearBuilt =
+      yearRaw && Number.isFinite(Number(yearRaw)) && Number(yearRaw) >= 1800 && Number(yearRaw) <= 2100
+        ? Number(yearRaw)
+        : null
+    const unitCountRaw = Number.parseInt(payload.totalUnits.trim(), 10)
+    const unitCount = Number.isFinite(unitCountRaw) && unitCountRaw > 0 ? unitCountRaw : null
+
+    const ensured = await ensureProperty({
+      landlordId,
+      name: payload.propertyName,
+      streetAddress: payload.streetAddress,
+      city: payload.city,
+      state: payload.state,
+      zipCode: payload.zipCode,
+      propertyType: payload.propertyType,
+      unitCount,
+      yearBuilt,
+    })
+    if (!ensured.ok) {
+      setAddPropertyError(ensured.error)
+      return
+    }
+
+    if (yearBuilt != null) {
+      const { savePropertyBuildingProfile } = await import('@/lib/propertyBuildingProfile')
+      await savePropertyBuildingProfile(payload.propertyName, yearBuilt).catch(() => {})
+    }
+
+    const propertyName = payload.propertyName.trim()
+    const unitOptionsFromProperty = buildUnitOptionsFromPropertyPayload(payload)
+    const unitsToRegister = unitOptionsFromProperty
+      .map((option) => {
+        const cell = unitOptionKeyToCell(option.value)
+        if (cell.kind !== 'assigned') return null
+        return { unitLabel: cell.unit, building: cell.building }
+      })
+      .filter((u): u is { unitLabel: string; building: string } => u != null)
+
+    const linkedUnitLabel =
+      pendingPropertyLink.customUnitLabel?.trim() ||
+      unitsToRegister[0]?.unitLabel ||
+      'Unit 1'
+
+    if (
+      linkedUnitLabel &&
+      !unitsToRegister.some(
+        (u) =>
+          u.unitLabel.toLowerCase() === linkedUnitLabel.toLowerCase() &&
+          u.building.toLowerCase() === propertyName.toLowerCase(),
+      )
+    ) {
+      unitsToRegister.push({ unitLabel: linkedUnitLabel, building: propertyName })
+    }
+
+    if (unitsToRegister.length > 0) {
+      await registerPropertyUnitsSms({ units: unitsToRegister })
+      await linkUnitsToProperty({
+        landlordId,
+        propertyId: ensured.propertyId,
+        buildingName: propertyName,
+      })
+    }
+
+    const { error: linkError } = await supabase
+      .from('users')
+      .update({
+        unit: linkedUnitLabel,
+        building: propertyName,
+      })
+      .eq('id', pendingPropertyLink.residentId)
+      .eq('landlord_id', landlordId)
+
+    if (linkError) {
+      setAddPropertyError(linkError.message)
+      return
+    }
+
+    void registerUnitSms({
+      unitLabel: linkedUnitLabel,
+      building: propertyName,
+      residentId: pendingPropertyLink.residentId,
+      tenantPhone: pendingPropertyLink.phone,
+    })
+    void activateUnitsFromResidentAssignments({
+      landlordId,
+      residents: [
+        {
+          id: pendingPropertyLink.residentId,
+          unit: linkedUnitLabel,
+          building: propertyName,
+          status: pendingPropertyLink.status,
+          moveInDate: pendingPropertyLink.leaseStart,
+          leaseEndDate: pendingPropertyLink.leaseEnd,
+        },
+      ],
+      source: 'add_resident_property',
+    })
+
+    const pickKey = customUnitPickKey(linkedUnitLabel, propertyName)
+    setUnitOptions((prev) => {
+      if (prev.some((option) => option.value === pickKey)) return prev
+      return [
+        ...prev,
+        {
+          value: pickKey,
+          label: propertyName ? `${propertyName} — ${linkedUnitLabel}` : linkedUnitLabel,
+        },
+      ]
+    })
+
+    setAddPropertyOpen(false)
+    setPendingPropertyLink(null)
+    await loadResidents()
   }
 
   const editResidentRow = useMemo(
@@ -816,7 +1092,7 @@ export function AdminResidentsDashboard() {
 
   const residentHouseholds = useMemo((): ResidentHouseholdRow[] => {
     const byId = new Map(residents.map((resident) => [resident.id, resident]))
-    const groups = groupResidentsByLeasePlace(
+    return groupResidentsByLeasePlace(
       residents.map((resident) => ({
         id: resident.id,
         fullName: resident.name,
@@ -824,55 +1100,67 @@ export function AdminResidentsDashboard() {
         building: resident.building,
         status: resident.status,
       })),
-    ).map((group) => ({
-      key: group.map((member) => member.id).join('|'),
-      members: group
-        .map((member) => byId.get(member.id))
-        .filter((member): member is ResidentRow => Boolean(member)),
-    }))
-    // #region agent log
-    const multiNameRows = groups
-      .map((g) => {
-        const names = g.members.map((m) => m.name.trim().toLowerCase())
-        const uniq = new Set(names)
+    )
+      .map((group) => {
+        const members = sortHouseholdMembers(
+          group
+            .map((member) => byId.get(member.id))
+            .filter((member): member is ResidentRow => Boolean(member)),
+        )
         return {
-          key: g.key,
-          memberCount: g.members.length,
-          uniqueNames: uniq.size,
-          names: g.members.map((m) => m.name),
+          key: members.map((member) => member.id).join('|'),
+          members,
         }
       })
-      .filter((g) => g.memberCount > 1 || groups.filter((x) => x.members[0]?.name.trim().toLowerCase() === g.names[0]?.trim().toLowerCase()).length > 1)
-    const nameToHouseholds = new Map<string, number>()
-    for (const g of groups) {
-      const n = (g.members[0]?.name ?? '').trim().toLowerCase()
-      if (!n) continue
-      nameToHouseholds.set(n, (nameToHouseholds.get(n) ?? 0) + 1)
-    }
-    const repeatedPrimaryNames = [...nameToHouseholds.entries()].filter(([, c]) => c > 1)
-    if (repeatedPrimaryNames.length > 0 || multiNameRows.some((r) => r.uniqueNames < r.memberCount)) {
-      fetch('http://127.0.0.1:7898/ingest/3050e2ef-64dd-49e5-a718-1f5719c45963',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'5d0562'},body:JSON.stringify({sessionId:'5d0562',runId:'pre-fix',hypothesisId:'B',location:'AdminResidentsDashboard.tsx:households',message:'household duplicate name signal',data:{landlordId:getActiveLandlordId(),householdCount:groups.length,repeatedPrimaryNames,multiNameRows:multiNameRows.slice(0,20)},timestamp:Date.now()})}).catch(()=>{});
-    }
-    // #endregion
-    return groups
+      .filter((household) => household.members.length > 0)
+      .sort((a, b) => {
+        const unitCmp = (a.members[0]?.unitLabel ?? '').localeCompare(
+          b.members[0]?.unitLabel ?? '',
+          undefined,
+          { sensitivity: 'base' },
+        )
+        if (unitCmp !== 0) return unitCmp
+        return (a.members[0]?.name ?? '').localeCompare(b.members[0]?.name ?? '', undefined, {
+          sensitivity: 'base',
+        })
+      })
   }, [residents])
 
-  const filteredHouseholds = useMemo(() => {
-    const q = searchQuery.trim().toLowerCase()
-    const matchesSearch = (resident: ResidentRow) =>
+  const matchesResidentSearch = useCallback(
+    (resident: ResidentRow, q: string) =>
       !q ||
       resident.name.toLowerCase().includes(q) ||
       resident.unitLabel.toLowerCase().includes(q) ||
       (resident.contactPhone ?? '').toLowerCase().includes(q) ||
-      (resident.contactEmail ?? '').toLowerCase().includes(q)
+      (resident.contactEmail ?? '').toLowerCase().includes(q),
+    [],
+  )
 
-    return residentHouseholds.filter((household) => household.members.some(matchesSearch))
-  }, [residentHouseholds, searchQuery])
+  const filteredHouseholds = useMemo(() => {
+    const q = searchQuery.trim().toLowerCase()
+    return residentHouseholds.filter((household) =>
+      household.members.some((member) => matchesResidentSearch(member, q)),
+    )
+  }, [residentHouseholds, searchQuery, matchesResidentSearch])
 
   const filteredResidents = useMemo(
     () => filteredHouseholds.flatMap((household) => household.members),
     [filteredHouseholds],
   )
+
+  /** Expand households when search hits a non-lead occupant so the match is visible. */
+  const searchExpandedHouseholdKeys = useMemo(() => {
+    const q = searchQuery.trim().toLowerCase()
+    if (!q) return new Set<string>()
+    const keys = new Set<string>()
+    for (const household of filteredHouseholds) {
+      const others = household.members.slice(1)
+      if (others.some((member) => matchesResidentSearch(member, q))) {
+        keys.add(household.key)
+      }
+    }
+    return keys
+  }, [filteredHouseholds, searchQuery, matchesResidentSearch])
 
   const unactivatedResidentCount = useMemo(
     () =>
@@ -888,21 +1176,13 @@ export function AdminResidentsDashboard() {
   )
 
   const selectedResidentCount = selectedResidentIds.size
-  /** One household selected (any member count) → Edit opens the primary lease holder. */
-  const selectedEditPrimary = useMemo(() => {
-    if (selectedResidentIds.size === 0) return null
-    const matched = residentHouseholds.filter((household) =>
-      household.members.some((member) => selectedResidentIds.has(member.id)),
-    )
-    if (matched.length !== 1) return null
-    const household = matched[0]
-    if (!household) return null
-    const memberIds = new Set(household.members.map((member) => member.id))
-    for (const id of selectedResidentIds) {
-      if (!memberIds.has(id)) return null
-    }
-    return household.members[0] ?? null
-  }, [residentHouseholds, selectedResidentIds])
+  /** Edit toolbar opens when exactly one resident is selected. */
+  const selectedEditResident = useMemo(() => {
+    if (selectedResidentIds.size !== 1) return null
+    const id = [...selectedResidentIds][0]
+    if (!id) return null
+    return residents.find((resident) => resident.id === id) ?? null
+  }, [residents, selectedResidentIds])
   const selectedOnboardingRetryOnly = useMemo(() => {
     const selected = residents.filter((resident) => selectedResidentIds.has(resident.id))
     if (selected.length === 0) return false
@@ -946,23 +1226,24 @@ export function AdminResidentsDashboard() {
     setShowCheckboxGuide(false)
   }, [showCheckboxGuide, selectedResidentCount])
 
-  function householdIsSelected(members: ResidentRow[]): boolean {
-    return members.length > 0 && members.every((member) => selectedResidentIds.has(member.id))
+  function isHouseholdExpanded(key: string): boolean {
+    return expandedHouseholdKeys.has(key) || searchExpandedHouseholdKeys.has(key)
   }
 
-  function householdIsIndeterminate(members: ResidentRow[]): boolean {
-    const selected = members.filter((member) => selectedResidentIds.has(member.id)).length
-    return selected > 0 && selected < members.length
+  function toggleHouseholdExpanded(key: string) {
+    setExpandedHouseholdKeys((prev) => {
+      const next = new Set(prev)
+      if (next.has(key)) next.delete(key)
+      else next.add(key)
+      return next
+    })
   }
 
-  function toggleHouseholdSelected(members: ResidentRow[]) {
+  function toggleResidentSelected(residentId: string) {
     setSelectedResidentIds((prev) => {
       const next = new Set(prev)
-      const selected = members.every((member) => next.has(member.id))
-      for (const member of members) {
-        if (selected) next.delete(member.id)
-        else next.add(member.id)
-      }
+      if (next.has(residentId)) next.delete(residentId)
+      else next.add(residentId)
       return next
     })
   }
@@ -1138,12 +1419,8 @@ export function AdminResidentsDashboard() {
   const showResidentsErrorBanner =
     residentsBanner?.kind === 'error' && !showOnboardingStartedBanner
 
-  // #region agent log
-  fetch('http://127.0.0.1:7898/ingest/3050e2ef-64dd-49e5-a718-1f5719c45963',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'5d0562'},body:JSON.stringify({sessionId:'5d0562',runId:'pre-fix',hypothesisId:'A',location:'AdminResidentsDashboard.tsx:render',message:'Residents dashboard rendering',data:{loading,residentCount:residents.length,householdCount:filteredHouseholds.length,landlordId:getActiveLandlordId(),error},timestamp:Date.now()})}).catch(()=>{});
-  // #endregion
-
+  // Natural height so AdminLayout's scroll region owns vertical scrolling.
   return (
-    // Natural height so AdminLayout's scroll region owns vertical scrolling.
     <main className="px-8 pb-12">
       <SetupSuccessCheckboxGuide
         key={checkboxGuideRunId}
@@ -1258,9 +1535,9 @@ export function AdminResidentsDashboard() {
           <button
             type="button"
             aria-label="Edit resident"
-            disabled={deleteResidentsSaving || onboardingSaving || !selectedEditPrimary}
+            disabled={deleteResidentsSaving || onboardingSaving || !selectedEditResident}
             onClick={() => {
-              if (selectedEditPrimary) setEditingResident(selectedEditPrimary)
+              if (selectedEditResident) setEditingResident(selectedEditResident)
             }}
             className="sa-press inline-flex h-9 items-center justify-center gap-2 rounded-lg border border-black/10 bg-white px-3 text-[14px] font-medium text-[#0a0a0a] outline-none hover:bg-[#f3f4f6] focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50"
           >
@@ -1312,7 +1589,7 @@ export function AdminResidentsDashboard() {
                     onChange={toggleAllFilteredResidentsSelected}
                   />
                 </th>
-                <th className="w-10 px-2 py-3" aria-label="Edit" />
+                <th className="w-[4.5rem] px-2 py-3" aria-label="Edit" />
                 <th className="px-6 py-3 text-[12px] font-medium text-[#6a7282]">Resident</th>
                 <th className="px-6 py-3 text-[12px] font-medium text-[#6a7282]">Unit</th>
                 <th className="px-6 py-3 text-[12px] font-medium text-[#6a7282]">Rent</th>
@@ -1353,90 +1630,149 @@ export function AdminResidentsDashboard() {
                   </td>
                 </tr>
               ) : (
-                filteredHouseholds.map((household, index) => {
+                filteredHouseholds.flatMap((household, householdIndex) => {
                   const primary = household.members[0]
-                  if (!primary) return null
-                  const contacts = primaryHouseholdContacts(primary)
-                  const householdNames = household.members.map((member) => member.name).join(', ')
-                  return (
-                  <tr
-                    key={household.key}
-                    style={{ animationDelay: `${Math.min(index, 12) * 30}ms` }}
-                    className="sa-enter group/row border-b border-[#f3f4f6] last:border-b-0 hover:bg-[#fafafa]"
-                  >
-                    <td className="w-12 px-4 py-4">
-                      <div
-                        ref={
-                          showCheckboxGuide &&
-                          household.members.some((member) => member.id === checkboxGuideResidentId)
-                            ? checkboxGuideTargetRef
-                            : undefined
-                        }
-                        className="inline-flex"
+                  if (!primary) return []
+                  const others = household.members.slice(1)
+                  const expanded = others.length > 0 && isHouseholdExpanded(household.key)
+                  const rows: ResidentRow[] = expanded
+                    ? [primary, ...others]
+                    : [primary]
+
+                  return rows.map((resident, rowIndex) => {
+                    const isOccupant = rowIndex > 0
+                    const contacts = residentContacts(resident)
+                    const animationIndex = householdIndex + rowIndex
+                    return (
+                      <tr
+                        key={resident.id}
+                        style={{ animationDelay: `${Math.min(animationIndex, 12) * 30}ms` }}
+                        className={[
+                          'sa-enter group/row border-b border-[#f3f4f6] last:border-b-0',
+                          isOccupant ? 'bg-[#f9fafb] hover:bg-[#f3f4f6]' : 'hover:bg-[#fafafa]',
+                        ].join(' ')}
                       >
-                        <TableCheckbox
-                          aria-label={`Select ${householdNames}`}
-                          checked={householdIsSelected(household.members)}
-                          indeterminate={householdIsIndeterminate(household.members)}
-                          onChange={() => toggleHouseholdSelected(household.members)}
-                        />
-                      </div>
-                    </td>
-                    <td className="w-10 px-2 py-4">
-                      <button
-                        type="button"
-                        aria-label={`Edit ${primary.name}`}
-                        onClick={() => setEditingResident(primary)}
-                        className="sa-press inline-flex size-7 items-center justify-center rounded-[6px] opacity-0 transition-opacity duration-150 hover:bg-[#f3f4f6] group-hover/row:opacity-100 focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-1"
-                      >
-                        <img src={editIcon} alt="" className="size-3.5" />
-                      </button>
-                    </td>
-                    <td className="px-6 py-4 text-[14px] font-medium text-[#0a0a0a]">
-                      <button
-                        type="button"
-                        onClick={() =>
-                          navigate(residentDetailPath(primary.id), {
-                            state: { from: '/admin/residents' },
-                          })
-                        }
-                        className="sa-link min-w-0 truncate rounded-[4px] text-left text-[#0a0a0a] hover:text-[#186179] hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2"
-                      >
-                        {primary.name}
-                      </button>
-                    </td>
-                    <td className="px-6 py-4 text-[14px] text-[#6a7282]">{primary.unitLabel}</td>
-                    <td className="px-6 py-4 text-[14px] tabular-nums text-[#0a0a0a]">
-                      {householdRentLabel(household.members)}
-                    </td>
-                    <td className="px-6 py-4">
-                      <PaymentStatusChip status={householdPaymentStatus(household.members)} />
-                    </td>
-                    <td className="px-6 py-4">
-                      <div className="flex flex-col gap-0.5">
-                        {contacts.phones.map((phone) => (
-                          <span key={phone} className="text-[13px] leading-5 text-[#0a0a0a]">
-                            {phone}
-                          </span>
-                        ))}
-                        {contacts.emails.map((email) => (
-                          <span key={email} className="truncate text-[12px] leading-4 text-[#6a7282]">
-                            {email}
-                          </span>
-                        ))}
-                        {contacts.phones.length === 0 && contacts.emails.length === 0 ? (
-                          <span className="text-[14px] text-[#6a7282]">—</span>
-                        ) : null}
-                      </div>
-                    </td>
-                    <td className="px-6 py-4 text-[14px] text-[#6a7282]">
-                      {householdOccupancyLabel(household.members)}
-                    </td>
-                    <td className="px-6 py-4 align-middle">
-                      <TenantActivationStatusChip chip={householdActivationChip(household.members)} />
-                    </td>
-                  </tr>
-                  )
+                        <td className="w-12 px-4 py-4">
+                          <div
+                            ref={
+                              showCheckboxGuide && resident.id === checkboxGuideResidentId
+                                ? checkboxGuideTargetRef
+                                : undefined
+                            }
+                            className="inline-flex"
+                          >
+                            <TableCheckbox
+                              aria-label={`Select ${resident.name}`}
+                              checked={selectedResidentIds.has(resident.id)}
+                              onChange={() => toggleResidentSelected(resident.id)}
+                            />
+                          </div>
+                        </td>
+                        <td className="w-[4.5rem] px-2 py-4">
+                          <button
+                            type="button"
+                            aria-label={`Edit ${resident.name}`}
+                            onClick={() => setEditingResident(resident)}
+                            className="sa-press pointer-events-none inline-flex h-7 items-center justify-center gap-1.5 rounded-[8px] bg-[#F1E4F1] px-2 opacity-0 transition-opacity duration-150 group-hover/row:pointer-events-auto group-hover/row:opacity-100 focus-visible:pointer-events-auto focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-1"
+                          >
+                            <img src={editIcon} alt="" className="size-3.5" />
+                            <span className="text-[12px] font-medium leading-4 text-[#8B4A8B]">
+                              Edit
+                            </span>
+                          </button>
+                        </td>
+                        <td className="px-6 py-4 text-[14px] font-medium text-[#0a0a0a]">
+                          <div className={isOccupant ? 'pl-6' : undefined}>
+                            <div className="flex min-w-0 flex-col gap-1">
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  navigate(residentDetailPath(resident.id), {
+                                    state: { from: '/admin/residents' },
+                                  })
+                                }
+                                className="sa-link min-w-0 truncate rounded-[4px] text-left text-[#0a0a0a] hover:text-[#186179] hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2"
+                              >
+                                {resident.name}
+                              </button>
+                              {!isOccupant && others.length > 0 ? (
+                                searchExpandedHouseholdKeys.has(household.key) &&
+                                !expandedHouseholdKeys.has(household.key) ? (
+                                  <span className="inline-flex w-fit items-center gap-1 text-[12px] font-medium leading-4 text-[#6a7282]">
+                                    <OccupantsExpandIcon expanded />
+                                    {others.length === 1
+                                      ? '1 other occupant'
+                                      : `${others.length} other occupants`}
+                                  </span>
+                                ) : (
+                                  <button
+                                    type="button"
+                                    aria-expanded={expanded}
+                                    onClick={() => toggleHouseholdExpanded(household.key)}
+                                    className="admin-quiet-text-action sa-link inline-flex w-fit items-center gap-1 text-[12px]"
+                                  >
+                                    <OccupantsExpandIcon expanded={expanded} />
+                                    {expanded
+                                      ? others.length === 1
+                                        ? 'Hide other occupant'
+                                        : 'Hide other occupants'
+                                      : others.length === 1
+                                        ? 'Show 1 other occupant'
+                                        : `Show ${others.length} other occupants`}
+                                  </button>
+                                )
+                              ) : null}
+                              {isOccupant ? (
+                                <span className="text-[11px] font-medium leading-4 text-[#9ca3af]">
+                                  Other occupant
+                                </span>
+                              ) : null}
+                            </div>
+                          </div>
+                        </td>
+                        <td className="px-6 py-4 text-[14px] text-[#6a7282]">{resident.unitLabel}</td>
+                        <td className="px-6 py-4 text-[14px] tabular-nums text-[#0a0a0a]">
+                          {resident.rentLabel}
+                        </td>
+                        <td className="px-6 py-4">
+                          <PaymentStatusChip status={resident.paymentStatus} />
+                        </td>
+                        <td className="px-6 py-4">
+                          <div className="flex flex-col gap-0.5">
+                            {contacts.phones.map((phone) => (
+                              <span key={phone} className="text-[13px] leading-5 text-[#0a0a0a]">
+                                {phone}
+                              </span>
+                            ))}
+                            {contacts.emails.map((email) => (
+                              <span
+                                key={email}
+                                className="truncate text-[12px] leading-4 text-[#6a7282]"
+                              >
+                                {email}
+                              </span>
+                            ))}
+                            {contacts.phones.length === 0 && contacts.emails.length === 0 ? (
+                              <span className="text-[14px] text-[#6a7282]">—</span>
+                            ) : null}
+                          </div>
+                        </td>
+                        <td className="px-6 py-4 text-[14px] text-[#6a7282]">
+                          {residentOccupancyLabel(resident.status)}
+                        </td>
+                        <td className="px-6 py-4 align-middle">
+                          <TenantActivationStatusChip
+                            chip={resolveTenantActivationChip({
+                              activationStatus: resident.activationStatus,
+                              smsConsentStatus: resident.smsConsentStatus,
+                              activationAttemptCount: resident.activationAttemptCount,
+                              activationSmsSentAt: resident.activationSmsSentAt,
+                            })}
+                          />
+                        </td>
+                      </tr>
+                    )
+                  })
                 })
               )}
             </tbody>
@@ -1446,10 +1782,24 @@ export function AdminResidentsDashboard() {
 
       <AddResidentModal
         open={addResidentOpen}
-        extraUnitOptions={unitOptions}
+        propertyOptions={propertyOptions}
+        unitOptions={residentUnitOptions}
         onClose={() => setAddResidentOpen(false)}
         onSubmit={(payload) => {
           void addResidentFromModal(payload)
+        }}
+      />
+
+      <AddPropertyModal
+        open={addPropertyOpen}
+        error={addPropertyError}
+        onClose={() => {
+          setAddPropertyOpen(false)
+          setAddPropertyError(null)
+          setPendingPropertyLink(null)
+        }}
+        onSubmit={(payload) => {
+          void addPropertyLinkedToResident(payload)
         }}
       />
 

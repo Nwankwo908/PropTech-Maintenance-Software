@@ -18,7 +18,6 @@ import openRepairsIcon from '@/assets/repair-tool.png'
 import scheduledVisitsIcon from '@/assets/calendar.png'
 import propertyHealthIcon from '@/assets/hospital.png'
 import ytdMaintenanceCostIcon from '@/assets/price-up.png'
-import { GetSetUpForSuccessCard } from '@/components/GetSetUpForSuccessCard'
 import { MyPropertiesAcrossAdmin } from '@/components/MyPropertiesAcrossAdmin'
 import { AwaitingDecisionListRail } from '@/components/AwaitingDecisionListRail'
 import { AwaitingDecisionOutcomeModal } from '@/components/AwaitingDecisionOutcomeModal'
@@ -37,22 +36,14 @@ import { findExternalVendorTicketFromSearch, FIND_EXTERNAL_VENDOR_QUERY } from '
 import { getActiveLandlordId } from '@/lib/activeLandlord'
 import {
   clearSetupSuccessCardDismissed,
-  dismissSetupSuccessCard,
-  isSetupSuccessCardDismissed,
-  isSetupSuccessTestDeliveryComplete,
-  resolveSetupSuccessProgress,
   setProfileSetupNavPointed,
-  SETUP_SUCCESS_COLLAPSED_EVENT,
   SETUP_SUCCESS_ITEMS,
-  shouldShowSetupSuccessCard,
 } from '@/lib/setupSuccessChecklist'
-import { loadPropertySetupModulesComplete, PROPERTY_DETAILS_CHANGED_EVENTS } from '@/lib/propertyDetailsCompleteness'
 import { setupCheckboxGuideLinkState, markSetupSuccessCheckboxGuidePending } from '@/lib/setupSuccessGuide'
 import { landlordHasPayments } from '@shared/landlordCapabilities'
 import { cityStateZipForBuildingName, listPropertiesForLandlord, type PropertyRecord } from '@/lib/properties'
 import {
   ensureOnboardingDashboardMatchesPortfolio,
-  readLocalOnboardingState,
 } from '@/lib/onboarding'
 import { useSidebarAdminProfile } from '@/hooks/useSidebarAdminProfile'
 import {
@@ -84,7 +75,7 @@ import {
   ADMIN_RIGHT_RAIL_SCRIM,
   ADMIN_RIGHT_RAIL_STACK_HOST,
 } from '@/lib/adminRightRail'
-import { buildPropertyIdByBuilding, propertyDetailPathForBuilding, propertyResidentDetailPathForBuilding } from '@/lib/propertyRoutes'
+import { buildPropertyIdByBuilding, propertyResidentDetailPathForBuilding } from '@/lib/propertyRoutes'
 import {
   buildLeaseRenewalCallReasonLine,
   type VendorCallContext,
@@ -1046,12 +1037,6 @@ export function AdminOverviewDashboard() {
     runIds: new Set(),
   })
   const [canonicalProperties, setCanonicalProperties] = useState<PropertyRecord[]>([])
-  const [propertySetupModules, setPropertySetupModules] = useState({
-    access: false,
-    intelligence: false,
-    insurance: false,
-  })
-  const [setupSuccessDismissed, setSetupSuccessDismissed] = useState(isSetupSuccessCardDismissed)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null)
@@ -1554,56 +1539,8 @@ export function AdminOverviewDashboard() {
     }
   }, [])
 
-  useEffect(() => {
-    let cancelled = false
-    const refresh = () => {
-      void loadPropertySetupModulesComplete(canonicalProperties).then((complete) => {
-        if (!cancelled) setPropertySetupModules(complete)
-      })
-    }
-    refresh()
-    for (const eventName of PROPERTY_DETAILS_CHANGED_EVENTS) {
-      window.addEventListener(eventName, refresh)
-    }
-    return () => {
-      cancelled = true
-      for (const eventName of PROPERTY_DETAILS_CHANGED_EVENTS) {
-        window.removeEventListener(eventName, refresh)
-      }
-    }
-  }, [canonicalProperties, location.pathname])
-
-  useEffect(() => {
-    const syncCollapsed = () => setSetupSuccessDismissed(isSetupSuccessCardDismissed())
-    window.addEventListener(SETUP_SUCCESS_COLLAPSED_EVENT, syncCollapsed)
-    window.addEventListener('storage', syncCollapsed)
-    return () => {
-      window.removeEventListener(SETUP_SUCCESS_COLLAPSED_EVENT, syncCollapsed)
-      window.removeEventListener('storage', syncCollapsed)
-    }
-  }, [])
-
   const now = Date.now()
   const fourWeeksMs = 28 * 24 * 60 * 60 * 1000
-
-  const setupSuccessProgress = useMemo(() => {
-    const rules = readLocalOnboardingState()?.approvalRules
-    return resolveSetupSuccessProgress({
-      residents: overviewResidents,
-      vendorCount: vendors.length,
-      verifiedVendorCount: vendors.filter((vendor) => vendor.verified).length,
-      propertyAccessComplete: propertySetupModules.access,
-      propertyIntelligenceComplete: propertySetupModules.intelligence,
-      propertyInsuranceComplete: propertySetupModules.insurance,
-      hasMaintenancePreferences:
-        Array.isArray(rules?.emergencyTypes) && rules.emergencyTypes.length > 0,
-      maintenanceRequestCount: tickets.length,
-      hasTestDelivery: isSetupSuccessTestDeliveryComplete(),
-    })
-  }, [overviewResidents, vendors, propertySetupModules, tickets.length])
-
-  const showSetupSuccess =
-    shouldShowSetupSuccessCard(setupSuccessProgress) && !setupSuccessDismissed
 
   const openTickets = useMemo(() => tickets.filter(isTicketOpen), [tickets])
 
@@ -1636,23 +1573,6 @@ export function AdminOverviewDashboard() {
       now,
     })
   }, [units, tickets, pmTasks, feedback, vendorMetrics, healthAssets, healthInspections, healthDamageReports, residents, canonicalPropertiesForHealth, now])
-
-  const firstPropertySetupPath = useCallback(
-    (tab: 'overview' | 'details' | 'insurance' = 'overview') => {
-      const firstCanonical = canonicalProperties.find((property) => property.name.trim())
-      if (firstCanonical) {
-        return propertyDetailPathForBuilding(
-          firstCanonical.name,
-          propertyIdByBuilding,
-          tab,
-        )
-      }
-      const firstBuilding = healthReport.buildings.find((row) => row.building.trim())?.building
-      if (!firstBuilding) return undefined
-      return propertyDetailPathForBuilding(firstBuilding, propertyIdByBuilding, tab)
-    },
-    [canonicalProperties, propertyIdByBuilding, healthReport.buildings],
-  )
 
   const kpis = useMemo(() => {
     const openRepairs = openTickets.length
@@ -3406,22 +3326,6 @@ export function AdminOverviewDashboard() {
         </div>
       ) : null}
 
-      {!loading && showSetupSuccess ? (
-        <GetSetUpForSuccessCard
-          progress={setupSuccessProgress}
-          resolveItemTo={(itemId) => {
-            if (itemId === 'property_access') return firstPropertySetupPath('overview')
-            if (itemId === 'property_intelligence') return firstPropertySetupPath('overview')
-            if (itemId === 'property_insurance') return firstPropertySetupPath('insurance')
-            return undefined
-          }}
-          onClose={() => {
-            dismissSetupSuccessCard()
-            setSetupSuccessDismissed(true)
-          }}
-        />
-      ) : null}
-
       {!loading && units.length === 0 && tickets.length === 0 ? (
         <section className="rounded-[10px] border border-[#e5e7eb] bg-white p-6 shadow-[0px_1px_2px_-1px_rgba(0,0,0,0.06)]">
           <h2 className="text-[18px] font-semibold leading-7 text-[#0a0a0a]">
@@ -3561,7 +3465,7 @@ export function AdminOverviewDashboard() {
         </div>
       </section>
 
-      <div className="grid min-w-0 items-stretch gap-4">
+      <div className="grid min-w-0 items-stretch gap-4 lg:grid-cols-2">
         {/* Smart Insights */}
         <section className="flex h-full min-w-0 flex-col rounded-[10px] border border-[#e5e7eb] bg-white shadow-[0px_1px_2px_-1px_rgba(0,0,0,0.06)]">
           <div className="border-b border-[#e5e7eb] px-4 py-4 sm:px-6">
@@ -3603,8 +3507,8 @@ export function AdminOverviewDashboard() {
             )}
           </div>
         </section>
-        <div className="min-w-0">
-          <MyPropertiesAcrossAdmin />
+        <div className="flex h-full min-w-0 flex-col">
+          <MyPropertiesAcrossAdmin className="h-full" fitContainer />
         </div>
       </div>
 

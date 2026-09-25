@@ -37,7 +37,7 @@ describe('buildResidentCalendarEvents', () => {
     expect(events.some((event) => event.kind === 'maintenance')).toBe(false)
   })
 
-  it('plots rent from this month through lease end, not a past start month', () => {
+  it('plots rent from lease start through lease end, including months before today', () => {
     const events = buildResidentCalendarEvents({
       leaseStartDate: '2026-08-01',
       leaseEndDate: '2027-07-31',
@@ -45,24 +45,24 @@ describe('buildResidentCalendarEvents', () => {
       now: new Date(2026, 8, 12),
     })
     const rents = events.filter((event) => event.kind === 'rent').map((event) => event.date)
+    expect(rents).toContain('2026-08-01')
+    expect(rents).toContain('2026-09-01')
     expect(rents).toContain('2026-10-01')
     expect(rents).toContain('2027-07-01')
-    expect(rents).not.toContain('2026-08-01')
     expect(events.some((event) => event.kind === 'rent_reminder' && event.date >= '2026-09-12')).toBe(
       true,
     )
-    expect(events.some((event) => event.date.startsWith('2026-08'))).toBe(false)
   })
 
-  it('does not keep this month’s already-passed rent (or its prior-month reminders)', () => {
+  it('keeps this month’s already-passed rent and prior-month reminders when browsing history', () => {
     const events = buildResidentCalendarEvents({
       leaseStartDate: '2026-08-01',
       leaseEndDate: '2027-07-31',
       rentDueDay: 1,
       now: new Date(2026, 8, 12),
     })
-    expect(events.some((event) => event.date === '2026-09-01')).toBe(false)
-    expect(events.some((event) => event.date.startsWith('2026-08'))).toBe(false)
+    expect(events.some((event) => event.date === '2026-09-01')).toBe(true)
+    expect(events.some((event) => event.date.startsWith('2026-08'))).toBe(true)
   })
 
   it('places reminder dates from cadence preferences before each rent due date', () => {
@@ -384,17 +384,22 @@ describe('buildTenantOnboardingCalendarEvents', () => {
     expect(roommate[0]?.id).not.toBe(events[0]?.id)
   })
 
-  it('does not show onboarding reminders after YES/NO or when not started', () => {
+  it('keeps past welcome sends after YES/NO and hides when not started', () => {
     const last = new Date(2026, 8, 15, 10, 0, 0).toISOString()
-    expect(
-      buildTenantOnboardingCalendarEvents({
-        residentId: 'res-a',
-        activationStatus: 'activated',
-        activationAttemptCount: 1,
-        lastActivationAttemptAt: last,
-        now: new Date(2026, 8, 15, 10, 0, 0),
+    const activated = buildTenantOnboardingCalendarEvents({
+      residentId: 'res-a',
+      activationStatus: 'activated',
+      activationAttemptCount: 1,
+      activationSmsSentAt: last,
+      lastActivationAttemptAt: last,
+      now: new Date(2026, 8, 20, 10, 0, 0),
+    })
+    expect(activated).toEqual([
+      expect.objectContaining({
+        kind: 'onboarding_reminder',
+        date: '2026-09-15',
       }),
-    ).toEqual([])
+    ])
     expect(
       buildTenantOnboardingCalendarEvents({
         residentId: 'res-a',
@@ -402,6 +407,21 @@ describe('buildTenantOnboardingCalendarEvents', () => {
         now: new Date(2026, 8, 15, 10, 0, 0),
       }),
     ).toEqual([])
+  })
+
+  it('keeps overdue follow-up dates before today while waiting', () => {
+    const last = new Date(2026, 8, 15, 10, 0, 0)
+    const events = buildTenantOnboardingCalendarEvents({
+      residentId: 'res-a',
+      activationStatus: 'waiting',
+      activationAttemptCount: 1,
+      activationSmsSentAt: last.toISOString(),
+      lastActivationAttemptAt: last.toISOString(),
+      now: new Date(2026, 8, 20, 10, 0, 0),
+    })
+    expect(events.some((event) => event.date === '2026-09-15')).toBe(true)
+    expect(events.some((event) => event.date === '2026-09-17')).toBe(true)
+    expect(events.some((event) => event.date > '2026-09-20')).toBe(true)
   })
 
   it('stops projecting after 14 unanswered outbound texts', () => {

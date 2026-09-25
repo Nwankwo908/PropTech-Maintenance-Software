@@ -35,10 +35,9 @@ export const GUIDED_ONBOARDING_STEPS: { id: OnboardingStep; label: string }[] = 
 export const FAST_TRACK_ONBOARDING_STEPS: { id: OnboardingStep; label: string }[] = [
   { id: 'entry', label: 'Welcome' },
   { id: 'document_upload', label: 'Upload documents' },
-  { id: 'ai_review', label: 'AI review' },
+  { id: 'ai_review', label: 'Review' },
   { id: 'approval', label: 'Approval rules' },
   { id: 'payouts', label: 'Payouts' },
-  { id: 'review', label: 'Review' },
 ]
 
 const GUIDED_STEP_ORDER: OnboardingStep[] = [
@@ -58,7 +57,6 @@ const FAST_TRACK_STEP_ORDER: OnboardingStep[] = [
   'ai_review',
   'approval',
   'payouts',
-  'review',
 ]
 
 const ALL_ONBOARDING_STEP_IDS = new Set<OnboardingStep>([
@@ -102,13 +100,17 @@ export function resolveOnboardingStepForPath(
   if (setupPath === 'fast_track') {
     if (step === 'property') next = 'document_upload'
     else if (step === 'vendors' || step === 'residents') next = 'ai_review'
+    // Final Review was merged into AI review; leftover `review` → last setup stage.
+    else if (step === 'review') next = 'approval'
   }
-  if (!includePayoutsForAccount(options) && next === 'payouts') return 'review'
+  if (!includePayoutsForAccount(options) && next === 'payouts') {
+    return setupPath === 'fast_track' ? 'approval' : 'review'
+  }
   return next
 }
 
 /**
- * Last-review Edit on fast track must open the fast-track stages (upload / AI review),
+ * Edit targets on fast track open upload or the merged Review (ai_review) stage —
  * not guided property/vendor/resident forms.
  */
 export function resolveReviewEditStep(
@@ -116,10 +118,11 @@ export function resolveReviewEditStep(
   setupPath: OnboardingSetupPath,
 ): OnboardingStep {
   if (setupPath !== 'fast_track') return target
-  if (target === 'approval' || target === 'payouts' || target === 'review') return target
+  if (target === 'approval' || target === 'payouts') return target
   if (target === 'property' || target === 'document_upload' || target === 'account_setup') {
     return 'document_upload'
   }
+  // vendors / residents / ai_review / leftover review → merged Review stage
   return 'ai_review'
 }
 

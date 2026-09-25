@@ -11,7 +11,7 @@ import {
 import { ResidentOccupancySelect } from '@/components/ResidentOccupancySelect'
 import { ResidentLeaseCalendar } from '@/components/ResidentLeaseCalendar'
 import { SmartIntelligenceCard } from '@/components/SmartIntelligenceCard'
-import { isLimitedAlpha1Landlord } from '@shared/landlordCapabilities'
+import { isLimitedAlpha1Landlord, isLimitedAlphaLandlord } from '@shared/landlordCapabilities'
 import { TenantActivationStatusChip } from '@/components/TenantActivationStatusChip'
 import { SetupOutreachAckModal } from '@/components/SetupOutreachAckModal'
 import {
@@ -829,7 +829,7 @@ export function AdminPropertyResidentDetailDashboard() {
         }
       }
 
-      const skipCommunicationHistory = isLimitedAlpha1Landlord(landlordId)
+      const skipCommunicationHistory = isLimitedAlphaLandlord(landlordId)
       const communications: ResidentCommunicationItem[] = skipCommunicationHistory
         ? []
         : await (async () => {

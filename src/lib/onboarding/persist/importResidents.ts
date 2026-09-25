@@ -2,6 +2,20 @@
  * Import AI-extracted residents into the landlord roster during fast-track onboarding.
  */
 import type { ExtractedLease, ExtractedResident } from '@/lib/onboardingMockExtraction'
+import { recordActivityLog } from '@/lib/recordActivityLog'
+import {
+  importActorActivityMetadata,
+  importActorUserColumns,
+  resolveOnboardingImportActor,
+  type OnboardingImportActor,
+} from '@/lib/onboarding/importActor'
+import { readLocalOnboardingState } from '@/lib/onboarding/draftStorage'
+import {
+  onboardingSessionActivityMetadata,
+  onboardingSessionFromState,
+  onboardingSessionUserColumns,
+  type OnboardingSessionStamp,
+} from '@/lib/onboarding/session'
 import { isUniqueViolation } from '@/lib/errorMessage'
 import { normalizePhoneForDb } from '@/lib/phoneFormat'
 import { leaseUnitOrDefault } from '@/lib/onboarding/leaseUnit'
@@ -245,6 +259,9 @@ function mergeImportResidentRow(
       asTrimmed(primary.maintenanceResponsibilitiesClause) ||
       extra.maintenanceResponsibilitiesClause,
     selected: primary.selected || extra.selected,
+    sendOnboardingOnComplete: Boolean(
+      primary.sendOnboardingOnComplete || extra.sendOnboardingOnComplete,
+    ),
   }
 }
 
@@ -295,6 +312,7 @@ export function onboardingResidentsToImportRows(
         rentDueDay: row.rentDueDay != null ? String(row.rentDueDay) : '',
         occupancyStatus: row.occupancyStatus,
         maintenanceResponsibilitiesClause: row.maintenanceResponsibilitiesClause ?? '',
+        sendOnboardingOnComplete: Boolean(row.sendOnboardingOnComplete),
       })),
   )
 }
@@ -319,15 +337,27 @@ function resolveLeaseMatch(
 
 async function loadExistingResidents(landlordId: string): Promise<ExistingResidentRow[]> {
   if (!supabase) return []
-  const { data, error } = await supabase
+  const primary = await supabase
     .from('users')
     .select('id, full_name, unit, building, phone')
     .eq('landlord_id', landlordId)
-  if (error) {
-    console.warn('[landlordOnboarding] load residents for import', error.message)
+    .is('archived_at', null)
+  if (primary.error && /archived_at|column/i.test(primary.error.message)) {
+    const legacy = await supabase
+      .from('users')
+      .select('id, full_name, unit, building, phone')
+      .eq('landlord_id', landlordId)
+    if (legacy.error) {
+      console.warn('[landlordOnboarding] load residents for import', legacy.error.message)
+      return []
+    }
+    return (legacy.data ?? []) as ExistingResidentRow[]
+  }
+  if (primary.error) {
+    console.warn('[landlordOnboarding] load residents for import', primary.error.message)
     return []
   }
-  return (data ?? []) as ExistingResidentRow[]
+  return (primary.data ?? []) as ExistingResidentRow[]
 }
 
 function findExistingResident(
@@ -399,11 +429,26 @@ async function updateExistingResident(
     .update(payload)
     .eq('id', existingId)
     .eq('landlord_id', landlordId)
-  if (error) {
-    console.warn('[landlordOnboarding] update imported resident', error.message)
+  if (!error) return true
+  if (/imported_by_|import_session_id|imported_at|column/i.test(error.message)) {
+    const {
+      imported_by_user_id: _u,
+      imported_by_email: _e,
+      import_session_id: _s,
+      imported_at: _a,
+      ...legacy
+    } = payload
+    const { error: legacyError } = await supabase
+      .from('users')
+      .update(legacy)
+      .eq('id', existingId)
+      .eq('landlord_id', landlordId)
+    if (!legacyError) return true
+    console.warn('[landlordOnboarding] update imported resident', legacyError.message)
     return false
   }
-  return true
+  console.warn('[landlordOnboarding] update imported resident', error.message)
+  return false
 }
 
 async function insertImportedResident(
@@ -444,13 +489,47 @@ async function insertImportedResident(
       }
     }
     lastError = error.message
-    if (isUniqueViolation(error)) {
-      if (/resident_id/i.test(error.message)) continue
-      if (/phone/i.test(error.message) && phone) {
+    if (
+      /imported_by_|import_session_id|imported_at|onboarding_session_id|archived_at|column/i.test(
+        error.message,
+      )
+    ) {
+      const {
+        imported_by_user_id: _u,
+        imported_by_email: _e,
+        import_session_id: _s,
+        imported_at: _a,
+        onboarding_session_id: _session,
+        archived_at: _archived,
+        ...legacyPayload
+      } = payload
+      const { data: legacyData, error: legacyError } = await supabase
+        .from('users')
+        .insert({
+          ...legacyPayload,
+          email,
+          phone,
+          resident_id: residentId,
+          landlord_id: landlordId,
+        })
+        .select('id')
+        .maybeSingle()
+      if (!legacyError) {
+        return {
+          ok: true,
+          nextSeq: seq,
+          id: typeof legacyData?.id === 'string' ? legacyData.id : undefined,
+        }
+      }
+      lastError = legacyError.message
+    }
+    if (isUniqueViolation(error) || isUniqueViolation({ message: lastError })) {
+      if (/resident_id/i.test(lastError)) continue
+      if (/phone/i.test(lastError) && phone) {
         phone = null
         continue
       }
-      if (/email/i.test(error.message) && !email.includes('@onboarding.local')) {
+      if (/email/i.test(lastError) && !email.includes('@onboarding.local')) {
         email = `ulo.${residentId.toLowerCase()}@onboarding.local`
         continue
       }
@@ -478,6 +557,8 @@ export async function importOnboardingResidentsFromExtraction(
   options?: {
     properties?: ImportPropertyNameRow[]
     units?: ImportUnitInventoryRow[]
+    actor?: OnboardingImportActor
+    onboardingSession?: OnboardingSessionStamp | null
   },
 ): Promise<number> {
   const selectedBeforeDedupe = residents.filter(isSelectedOnboardingExtractedResident)
@@ -501,6 +582,14 @@ export async function importOnboardingResidentsFromExtraction(
   // #endregion
   const selectedLeases = leases.filter((lease) => lease.selected)
   if (selectedResidents.length === 0 || !supabase) return 0
+
+  const actor = options?.actor ?? (await resolveOnboardingImportActor())
+  const importedAt = new Date().toISOString()
+  const actorColumns = importActorUserColumns(actor, importedAt)
+  const session =
+    options?.onboardingSession ??
+    onboardingSessionFromState(readLocalOnboardingState(landlordId))
+  const sessionColumns = onboardingSessionUserColumns(session)
 
   let unitInventory = options?.units ?? []
   if (unitInventory.length === 0) {
@@ -560,6 +649,8 @@ export async function importOnboardingResidentsFromExtraction(
       monthly_rent: monthlyRent,
       rent_due_day: rentDueDay,
       maintenance_responsibilities_clause: maintenanceClause,
+      ...actorColumns,
+      ...sessionColumns,
     }
 
     const incoming: OnboardingResidentIdentity = {
@@ -639,6 +730,29 @@ export async function importOnboardingResidentsFromExtraction(
     })
   }
 
+  if (imported > 0) {
+    const who =
+      actor.email?.trim() ||
+      (actor.userId ? `user ${actor.userId.slice(0, 8)}` : 'unknown session')
+    await recordActivityLog({
+      landlordId,
+      eventType: 'residents.imported',
+      source: 'onboarding',
+      actorType: 'landlord',
+      actorId: actor.userId,
+      metadata: {
+        message:
+          imported === 1
+            ? `Imported 1 resident (initiated by ${who}).`
+            : `Imported ${imported} residents (initiated by ${who}).`,
+        count: imported,
+        source: 'onboarding_import',
+        ...importActorActivityMetadata(actor),
+        ...onboardingSessionActivityMetadata(session),
+      },
+    })
+  }
+
   return imported
 }
 
@@ -650,20 +764,27 @@ export function mergeFastTrackReviewResidents(
 
   for (const [index, row] of extracted.filter(isSelectedOnboardingExtractedResident).entries()) {
     const incoming = identityFromImportRow(row)
-    if (
-      merged.some((existing) =>
-        onboardingResidentIdentityMatch(
-          {
-            id: existing.id,
-            fullName: existing.fullName,
-            unit: existing.unit,
-            building: existing.building,
-            phone: existing.phone,
-          },
-          incoming,
+    const existingIndex = merged.findIndex((existing) =>
+      onboardingResidentIdentityMatch(
+        {
+          id: existing.id,
+          fullName: existing.fullName,
+          unit: existing.unit,
+          building: existing.building,
+          phone: existing.phone,
+        },
+        incoming,
+      ),
+    )
+    if (existingIndex >= 0) {
+      const existing = merged[existingIndex]
+      if (!existing) continue
+      merged[existingIndex] = {
+        ...existing,
+        sendOnboardingOnComplete: Boolean(
+          existing.sendOnboardingOnComplete || row.sendOnboardingOnComplete,
         ),
-      )
-    ) {
+      }
       continue
     }
     merged.push({
@@ -680,6 +801,7 @@ export function mergeFastTrackReviewResidents(
       leaseEnd: asTrimmed(row.leaseEnd) || null,
       maintenanceResponsibilitiesClause: asTrimmed(row.maintenanceResponsibilitiesClause) || null,
       occupancyStatus: normalizeOnboardingOccupancyStatus(row.occupancyStatus),
+      sendOnboardingOnComplete: Boolean(row.sendOnboardingOnComplete),
     })
   }
 

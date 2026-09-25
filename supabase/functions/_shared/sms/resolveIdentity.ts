@@ -15,6 +15,7 @@ import { isLandlordAccountOrOpsPhone } from "./landlordAccountPhone.ts"
 import { smsIdentityIsFullyResolved } from "./smsIdentityUpgrade.ts"
 import { findWaitingActivationResidentByPhone } from "./tenantActivationLookup.ts"
 import { logGraphEvent } from "../graph/logGraphEvent.ts"
+import { resolveUnitIdForLandlord } from "./resolveUnitId.ts"
 
 export type IdentityResolutionSource =
   | "landlord"
@@ -113,21 +114,23 @@ async function findActiveResidentByPhone(
   const variants = phoneLookupVariants(fromNumber)
   if (variants.length === 0) return null
 
+  // Include pending (move-in) roster rows — Messages + intake still need the link.
   const { data, error } = await supabase
     .from("users")
     .select("id, resident_id, full_name, email, phone, unit, building, status")
     .in("phone", variants)
     .eq("landlord_id", landlordId)
-    .eq("status", "active")
-    .limit(1)
-    .maybeSingle()
+    .in("status", ["active", "pending"])
+    .limit(5)
 
   if (error) {
     console.error("[resolveIdentity] active resident lookup", error.message)
     return null
   }
 
-  return (data as ResidentRow | null) ?? null
+  const rows = (data ?? []) as ResidentRow[]
+  if (rows.length === 0) return null
+  return rows.find((row) => row.status === "active") ?? rows[0] ?? null
 }
 
 async function findVendorByPhone(
@@ -555,6 +558,11 @@ export async function resolvePhoneIdentity(
       input.landlordId,
     )
   if (activeResident) {
+    const unitId = await resolveUnitIdForLandlord(supabase, {
+      landlordId: input.landlordId,
+      unitLabel: activeResident.unit,
+      building: activeResident.building,
+    })
     const identity = await upsertSmsIdentity(supabase, {
       fromNumber: input.fromNumber,
       landlordId: input.landlordId,
@@ -562,7 +570,7 @@ export async function resolvePhoneIdentity(
       patch: {
         identity_type: "resident",
         resident_id: activeResident.id,
-        unit_id: null,
+        unit_id: unitId,
         verified: false,
       },
     })

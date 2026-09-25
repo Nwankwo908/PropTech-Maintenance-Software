@@ -110,6 +110,8 @@ export function StreetAddressAutocomplete({
   const [open, setOpen] = useState(false)
   const [activeIndex, setActiveIndex] = useState(0)
   const [maps, setMaps] = useState<typeof google | null>(null)
+  /** Only fetch/show suggestions while the user is typing — not for prepopulated values. */
+  const typingRef = useRef(false)
 
   useEffect(() => {
     const apiKey = resolveGoogleMapsApiKey()
@@ -133,7 +135,7 @@ export function StreetAddressAutocomplete({
 
   useEffect(() => {
     if (!maps) return
-    if (suppressFetchRef.current) {
+    if (suppressFetchRef.current || !typingRef.current) {
       setOpen(false)
       setSuggestions([])
       return
@@ -148,7 +150,7 @@ export function StreetAddressAutocomplete({
     let cancelled = false
     const timer = window.setTimeout(() => {
       void fetchPredictions(maps, query).then((rows) => {
-        if (cancelled || suppressFetchRef.current) return
+        if (cancelled || suppressFetchRef.current || !typingRef.current) return
         setSuggestions(rows)
         setActiveIndex(0)
         setOpen(rows.length > 0)
@@ -160,6 +162,12 @@ export function StreetAddressAutocomplete({
       window.clearTimeout(timer)
     }
   }, [maps, value])
+
+  function closeSuggestions() {
+    typingRef.current = false
+    setOpen(false)
+    setSuggestions([])
+  }
 
   function applyParsed(parsed: ParsedStreetAddress | null, fallbackStreet: string) {
     if (!parsed) {
@@ -174,8 +182,7 @@ export function StreetAddressAutocomplete({
 
   function selectSuggestion(suggestion: AddressSuggestion) {
     suppressFetchRef.current = true
-    setOpen(false)
-    setSuggestions([])
+    closeSuggestions()
 
     const fromLabel = parseAddressSuggestionLabel(suggestion.label)
     const parsed = mergeParsedAddress(
@@ -210,7 +217,7 @@ export function StreetAddressAutocomplete({
     }
     if (event.key === 'Escape') {
       event.preventDefault()
-      setOpen(false)
+      closeSuggestions()
     }
   }
 
@@ -230,11 +237,14 @@ export function StreetAddressAutocomplete({
         value={value}
         onChange={(event) => {
           suppressFetchRef.current = false
+          typingRef.current = true
           onChange(event.target.value)
-          setOpen(true)
         }}
-        onFocus={() => {
-          if (!suppressFetchRef.current && suggestions.length > 0) setOpen(true)
+        onBlur={() => {
+          // Delay so suggestion pointerdown can select before the list unmounts.
+          window.setTimeout(() => {
+            closeSuggestions()
+          }, 150)
         }}
         onKeyDown={handleKeyDown}
         placeholder={placeholder}

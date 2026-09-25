@@ -35,9 +35,14 @@ export function isLimitedAlphaLandlord(landlordId: string | null | undefined): b
   return (LIMITED_ALPHA_LANDLORD_IDS as readonly string[]).includes(id)
 }
 
-/** @deprecated Prefer isLimitedAlphaLandlord — kept for existing call sites. */
+/** Limited Alpha 1 only — not Alpha 2. Prefer `isLimitedAlphaLandlord` for shared alpha gates. */
 export function isLimitedAlpha1Landlord(landlordId: string | null | undefined): boolean {
-  return isLimitedAlphaLandlord(landlordId)
+  return (landlordId ?? '').trim() === LIMITED_ALPHA_1_LANDLORD_ID
+}
+
+/** Limited Alpha 2 only. */
+export function isLimitedAlpha2Landlord(landlordId: string | null | undefined): boolean {
+  return (landlordId ?? '').trim() === LIMITED_ALPHA_2_LANDLORD_ID
 }
 
 /** Production Twilio DID used as Limited Alpha 1 and 2's shared landlord_main line. */

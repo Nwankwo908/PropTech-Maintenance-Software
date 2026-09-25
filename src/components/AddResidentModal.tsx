@@ -1,6 +1,7 @@
 import { useEffect, useId, useMemo, useState } from 'react'
+import { checkboxInputClassName } from '@/components/TableCheckbox'
 import { optionalPhoneForDbOrError } from '@/lib/phoneFormat'
-import { getInventoryUnitOptions } from '@/lib/propertyUnitOptions'
+import { customUnitPickKey } from '@/lib/residentUnitKeys'
 
 const STATUS_OPTIONS = [
   { value: 'active', label: 'Occupied' },
@@ -9,17 +10,47 @@ const STATUS_OPTIONS = [
   { value: 'suspended', label: 'Suspended' },
 ] as const
 
+export type AddResidentPropertyOption = {
+  /** Canonical `properties.id`. */
+  value: string
+  /** Display label in the select. */
+  label: string
+  /** Property name used as `users.building`. */
+  name: string
+}
+
+export type AddResidentUnitOption = {
+  /** `__pick:` unit+building key. */
+  value: string
+  /** Unit label shown in Assign unit. */
+  label: string
+  unitLabel: string
+  building: string
+  propertyId: string | null
+}
+
 export type AddResidentSubmitPayload = {
   fullName: string
   email: string
   phone: string
+  /** `__pick:` unit+building key when a unit is set; otherwise empty. */
   unit: string
   status: (typeof STATUS_OPTIONS)[number]['value']
   /** YYYY-MM-DD; empty when unset */
   leaseStart: string
   /** YYYY-MM-DD; empty when unset */
   leaseEnd: string
+  propertyId?: string
+  propertyName?: string
+  /** Free-text unit number from “Add unit”. */
+  customUnitLabel?: string
+  /** True when the unit was typed via Add unit and should be created on the property. */
+  isNewUnit?: boolean
+  /** After save, open the Add Property rail and link it to this resident. */
+  openAddPropertyAfter?: boolean
 }
+
+const ADD_UNIT_OPTION_VALUE = '__add_unit__'
 
 function IconUserPlusHeader({ className = 'size-5 text-extended-1' }: { className?: string }) {
   return (
@@ -53,13 +84,16 @@ const selectClass =
 /** Add New Resident form (Figma 129:16139). */
 export function AddResidentModal({
   open,
-  extraUnitOptions = [],
+  propertyOptions = [],
+  unitOptions = [],
   onClose,
   onSubmit,
 }: {
   open: boolean
-  /** Units from admin-registered properties; merged with default inventory. */
-  extraUnitOptions?: { value: string; label: string }[]
+  /** Landlord properties for Assign properties. */
+  propertyOptions?: AddResidentPropertyOption[]
+  /** Portfolio units — filtered by selected property for Assign unit. */
+  unitOptions?: AddResidentUnitOption[]
   onClose: () => void
   onSubmit: (payload: AddResidentSubmitPayload) => void
 }) {
@@ -67,7 +101,10 @@ export function AddResidentModal({
   const [fullName, setFullName] = useState('')
   const [email, setEmail] = useState('')
   const [phone, setPhone] = useState('')
-  const [unit, setUnit] = useState('')
+  const [propertyId, setPropertyId] = useState('')
+  const [unitValue, setUnitValue] = useState('')
+  const [customUnitLabel, setCustomUnitLabel] = useState('')
+  const [openAddPropertyAfter, setOpenAddPropertyAfter] = useState(false)
   const [leaseStart, setLeaseStart] = useState('')
   const [leaseEnd, setLeaseEnd] = useState('')
   const [status, setStatus] = useState<(typeof STATUS_OPTIONS)[number]['value']>('active')
@@ -77,35 +114,46 @@ export function AddResidentModal({
     return fullName.trim().length > 0 && email.trim().length > 0
   }, [fullName, email])
 
-  const unitOptions = useMemo(() => {
-    const seen = new Set<string>()
-    const merged: { value: string; label: string }[] = []
-    for (const o of getInventoryUnitOptions()) {
-      merged.push({ value: o.value, label: o.label })
-      seen.add(o.value)
-    }
-    for (const o of extraUnitOptions) {
-      if (seen.has(o.value)) continue
-      seen.add(o.value)
-      merged.push(o)
-    }
-    return [{ value: '', label: 'Select a unit' }, ...merged]
-  }, [extraUnitOptions])
+  const propertySelectOptions = useMemo(
+    () => [{ value: '', label: 'Select a property', name: '' }, ...propertyOptions],
+    [propertyOptions],
+  )
+
+  const selectedProperty = useMemo(
+    () => propertyOptions.find((option) => option.value === propertyId) ?? null,
+    [propertyOptions, propertyId],
+  )
+
+  const unitsForProperty = useMemo(() => {
+    if (!selectedProperty) return []
+    const propertyNameKey = selectedProperty.name.trim().toLowerCase()
+    return unitOptions
+      .filter((option) => {
+        if (option.propertyId && option.propertyId === selectedProperty.value) return true
+        return option.building.trim().toLowerCase() === propertyNameKey
+      })
+      .sort((a, b) => a.label.localeCompare(b.label, undefined, { sensitivity: 'base', numeric: true }))
+  }, [selectedProperty, unitOptions])
+
+  const addingCustomUnit = unitValue === ADD_UNIT_OPTION_VALUE
 
   const [prevOpen, setPrevOpen] = useState(open)
-  if (open !== prevOpen) {
+  useEffect(() => {
+    if (open === prevOpen) return
     setPrevOpen(open)
-    if (!open) {
-      setFullName('')
-      setEmail('')
-      setPhone('')
-      setUnit('')
-      setLeaseStart('')
-      setLeaseEnd('')
-      setStatus('active')
-      setPhoneError(null)
-    }
-  }
+    if (open) return
+    setFullName('')
+    setEmail('')
+    setPhone('')
+    setPropertyId('')
+    setUnitValue('')
+    setCustomUnitLabel('')
+    setOpenAddPropertyAfter(false)
+    setLeaseStart('')
+    setLeaseEnd('')
+    setStatus('active')
+    setPhoneError(null)
+  }, [open, prevOpen])
 
   useEffect(() => {
     if (!open) return
@@ -116,27 +164,45 @@ export function AddResidentModal({
     return () => window.removeEventListener('keydown', onKey)
   }, [open, onClose])
 
-  if (!open) return null
-
   function submit() {
-    if (!formValid) return
+    if (!open || !formValid) return
     const phoneResult = optionalPhoneForDbOrError(phone)
     if (phoneResult.error) {
       setPhoneError(phoneResult.error)
       return
     }
     setPhoneError(null)
+    const propertyName = selectedProperty?.name.trim() || ''
+    const isNewUnit = addingCustomUnit
+    const customLabel = isNewUnit ? customUnitLabel.trim() : ''
+    const selectedExisting = !isNewUnit
+      ? unitsForProperty.find((option) => option.value === unitValue) ?? null
+      : null
+    const unitKey = isNewUnit
+      ? customLabel && propertyName
+        ? customUnitPickKey(customLabel, propertyName)
+        : customLabel
+          ? customUnitPickKey(customLabel, '')
+          : ''
+      : selectedExisting?.value ?? ''
     onSubmit({
       fullName: fullName.trim(),
       email: email.trim(),
       phone: phoneResult.phone ?? '',
-      unit,
+      unit: unitKey,
       status,
       leaseStart: leaseStart.trim(),
       leaseEnd: leaseEnd.trim(),
+      propertyId: selectedProperty?.value || undefined,
+      propertyName: propertyName || undefined,
+      customUnitLabel: customLabel || selectedExisting?.unitLabel || undefined,
+      isNewUnit: Boolean(isNewUnit && customLabel),
+      openAddPropertyAfter,
     })
     onClose()
   }
+
+  if (!open) return null
 
   return (
     <div className="fixed inset-0 z-50 flex justify-end">
@@ -145,7 +211,7 @@ export function AddResidentModal({
         role="dialog"
         aria-modal="true"
         aria-labelledby={titleId}
-        className="sa-rail relative flex h-full max-h-dvh w-full max-w-[min(100vw,560px)] flex-col overflow-hidden border-l border-secondary bg-white shadow-[inset_1px_0_0_0_#A788964D]"
+        className="sa-rail relative z-10 flex h-full max-h-dvh w-full max-w-[min(100vw,560px)] flex-col overflow-hidden border-l border-secondary bg-white shadow-[inset_1px_0_0_0_#A788964D]"
       >
         <header className="flex h-[81px] shrink-0 items-center justify-between border-b border-secondary px-6">
           <div className="flex min-w-0 items-center gap-3">
@@ -230,17 +296,22 @@ export function AddResidentModal({
               )}
             </div>
             <div className="space-y-2">
-              <label htmlFor="add-resident-unit" className="block text-[14px] font-medium tracking-[-0.1504px] text-neutral-variant">
-                Unit Assignment
+              <label htmlFor="add-resident-property" className="block text-[14px] font-medium tracking-[-0.1504px] text-neutral-variant">
+                Assign properties
               </label>
               <div className="relative">
                 <select
-                  id="add-resident-unit"
-                  value={unit}
-                  onChange={(e) => setUnit(e.target.value)}
-                  className={`${selectClass} ${!unit ? 'text-neutral' : 'text-extended-3'}`}
+                  id="add-resident-property"
+                  value={openAddPropertyAfter ? '' : propertyId}
+                  disabled={openAddPropertyAfter}
+                  onChange={(e) => {
+                    setPropertyId(e.target.value)
+                    setUnitValue('')
+                    setCustomUnitLabel('')
+                  }}
+                  className={`${selectClass} ${openAddPropertyAfter || !propertyId ? 'text-neutral' : 'text-extended-3'} disabled:cursor-not-allowed disabled:opacity-60`}
                 >
-                  {unitOptions.map((o) => (
+                  {propertySelectOptions.map((o) => (
                     <option key={o.value || 'placeholder'} value={o.value}>
                       {o.label}
                     </option>
@@ -250,7 +321,72 @@ export function AddResidentModal({
                   <IconChevronDown />
                 </span>
               </div>
+              {propertyOptions.length === 0 && !openAddPropertyAfter ? (
+                <p className="text-[12px] leading-4 text-neutral">
+                  No properties yet. Check Add property below to create one for this resident.
+                </p>
+              ) : null}
             </div>
+            {selectedProperty && !openAddPropertyAfter ? (
+              <div className="space-y-2">
+                <label
+                  htmlFor="add-resident-unit"
+                  className="block text-[14px] font-medium tracking-[-0.1504px] text-neutral-variant"
+                >
+                  Assign unit
+                </label>
+                <div className="relative">
+                  <select
+                    id="add-resident-unit"
+                    value={unitValue}
+                    onChange={(e) => {
+                      const next = e.target.value
+                      setUnitValue(next)
+                      if (next !== ADD_UNIT_OPTION_VALUE) setCustomUnitLabel('')
+                    }}
+                    className={`${selectClass} ${!unitValue ? 'text-neutral' : 'text-extended-3'}`}
+                  >
+                    <option value="">Select a unit</option>
+                    {unitsForProperty.map((o) => (
+                      <option key={o.value} value={o.value}>
+                        {o.label}
+                      </option>
+                    ))}
+                    <option value={ADD_UNIT_OPTION_VALUE}>Add unit</option>
+                  </select>
+                  <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2">
+                    <IconChevronDown />
+                  </span>
+                </div>
+                {unitsForProperty.length === 0 && !addingCustomUnit ? (
+                  <p className="text-[12px] leading-4 text-neutral">
+                    No units on this property yet. Choose Add unit to create one.
+                  </p>
+                ) : null}
+                {addingCustomUnit ? (
+                  <div className="flex flex-col gap-2 pt-1">
+                    <label
+                      htmlFor="add-resident-custom-unit"
+                      className="block text-[13px] font-medium tracking-[-0.1504px] text-neutral-variant"
+                    >
+                      Unit number
+                    </label>
+                    <input
+                      id="add-resident-custom-unit"
+                      type="text"
+                      value={customUnitLabel}
+                      onChange={(e) => setCustomUnitLabel(e.target.value)}
+                      placeholder="e.g., 4B"
+                      className={inputClass}
+                      autoFocus
+                    />
+                    <p className="text-[12px] leading-4 text-neutral">
+                      This unit will be saved to {selectedProperty.name}.
+                    </p>
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
               <div className="space-y-2">
                 <label
@@ -307,6 +443,34 @@ export function AddResidentModal({
                 </span>
               </div>
             </div>
+            <label
+              htmlFor="add-resident-add-property"
+              className="flex cursor-pointer items-start gap-3 rounded-[10px] border border-secondary bg-secondary/60 px-3 py-3"
+            >
+              <input
+                id="add-resident-add-property"
+                type="checkbox"
+                checked={openAddPropertyAfter}
+                onChange={(e) => {
+                  const checked = e.target.checked
+                  setOpenAddPropertyAfter(checked)
+                  if (checked) {
+                    setPropertyId('')
+                    setUnitValue('')
+                    setCustomUnitLabel('')
+                  }
+                }}
+                className={`mt-0.5 ${checkboxInputClassName}`}
+              />
+              <span className="min-w-0">
+                <span className="block text-[14px] font-medium leading-5 tracking-[-0.1504px] text-extended-3">
+                  Add property
+                </span>
+                <span className="mt-0.5 block text-[12px] leading-4 text-neutral">
+                  After this resident is saved, open the add property form and connect it to them.
+                </span>
+              </span>
+            </label>
           </div>
         </div>
 

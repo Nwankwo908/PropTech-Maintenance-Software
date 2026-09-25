@@ -2,6 +2,9 @@
  * Property Insights → inspector day scheduling (pure helpers).
  * Edge / client orchestrate DB + SMS; this module owns free-day rules,
  * hold claim semantics, card state transitions, and action routing gates.
+ *
+ * Edge bundle copy: supabase/functions/_shared/portfolioIntelligence/insightInspectorScheduling.ts
+ * Keep both files identical (Supabase Docker cannot resolve imports outside functions/).
  */
 
 import type {

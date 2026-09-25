@@ -7,7 +7,7 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1"
 import { adminEdgeCorsHeaders } from "../_shared/admin_edge_cors.ts"
 import { requireAdminReassignAuth } from "../_shared/admin_edge_auth.ts"
 import { startInsightInspectorScheduling } from "../_shared/insightInspectorScheduling.ts"
-import type { InsightRecommendationActionType } from "../../../shared/portfolioIntelligence/types.ts"
+import type { InsightRecommendationActionType } from "../_shared/portfolioIntelligence/types.ts"
 
 const corsHeaders = adminEdgeCorsHeaders
 

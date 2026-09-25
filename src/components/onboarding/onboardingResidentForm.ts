@@ -50,6 +50,7 @@ export type ResidentFormInput = {
   leaseEnd?: string
   maintenanceResponsibilitiesClause?: string
   occupancyStatus?: OnboardingOccupancyStatus | string
+  sendOnboardingOnComplete?: boolean
 }
 
 export function residentFormRowHasUserInput(form: ResidentFormInput): boolean {
@@ -109,6 +110,7 @@ export function createEmptyResidentForm(defaultBuilding = ''): ResidentFormRow {
     leaseEnd: '',
     maintenanceResponsibilitiesClause: '',
     occupancyStatus: 'active',
+    sendOnboardingOnComplete: false,
   }
 }
 
@@ -129,6 +131,7 @@ export function normalizeResidentFormRow(form: ResidentFormInput): ResidentFormR
     leaseEnd: form.leaseEnd ?? '',
     maintenanceResponsibilitiesClause: form.maintenanceResponsibilitiesClause ?? '',
     occupancyStatus: normalizeOnboardingOccupancyStatus(form.occupancyStatus),
+    sendOnboardingOnComplete: Boolean(form.sendOnboardingOnComplete),
   }
 }
 
@@ -155,6 +158,7 @@ export function residentToFormRow(resident: OnboardingResident): ResidentFormRow
     leaseEnd: resident.leaseEnd ?? '',
     maintenanceResponsibilitiesClause: resident.maintenanceResponsibilitiesClause ?? '',
     occupancyStatus: normalizeOnboardingOccupancyStatus(resident.occupancyStatus),
+    sendOnboardingOnComplete: Boolean(resident.sendOnboardingOnComplete),
   }
 }
 

@@ -335,7 +335,7 @@ export function EditResidentModal({
                 id={titleId}
                 className="text-[18px] font-semibold leading-7 tracking-[-0.4395px] text-extended-3"
               >
-                Edit Resident
+                {fullName.trim() || row.name.trim() || 'Resident'}
               </h2>
               <p className="text-[14px] font-normal leading-5 tracking-[-0.1504px] text-neutral">
                 Resident ID: {row.residentId}

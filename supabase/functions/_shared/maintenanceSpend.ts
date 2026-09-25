@@ -225,6 +225,7 @@ export async function submitMaintenanceInvoice(
       minimumFractionDigits: 2,
     })
     const { cleanInvoiceJobHeadline } = await import("./sms/invoicePaidConfirmation.ts")
+    const jobHeadline = cleanInvoiceJobHeadline(
       typeof ticketRow?.description === "string" ? ticketRow.description : null,
       typeof ticketRow?.issue_category === "string" ? ticketRow.issue_category : null,
       typeof ticketRow?.issue_headline === "string" ? ticketRow.issue_headline : null,

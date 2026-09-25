@@ -1,4 +1,5 @@
 import { useEffect, useId, useState } from 'react'
+import { Link, useLocation } from 'react-router-dom'
 import { ConversationMonitoringBody } from '@/components/ConversationMonitoringModal'
 import { deleteWorkOrderPermanently } from '@/api/deleteWorkOrder'
 import {
@@ -19,6 +20,7 @@ import type {
   WorkflowPipelineStep,
 } from '@/lib/workflowPipelineDetail'
 import { getErrorMessage } from '@/lib/errorMessage'
+import { residentDetailPath } from '@/lib/propertyRoutes'
 
 function CloseIcon() {
   return (
@@ -312,6 +314,7 @@ export function WorkflowPipelineDetailPanel({
 }: WorkflowPipelineDetailPanelProps) {
   const titleId = useId()
   const threadTitleId = useId()
+  const location = useLocation()
   const [panelView, setPanelView] = useState<'work_order' | 'thread'>('work_order')
   const [threadSource, setThreadSource] = useState<'resident' | 'vendor'>('resident')
   const [threadDetail, setThreadDetail] = useState<ConversationMonitoringDetail | null>(null)
@@ -781,7 +784,17 @@ export function WorkflowPipelineDetailPanel({
                         {detail.resident.initials}
                       </span>
                       <div>
-                        <p className="text-[15px] font-semibold leading-5 text-[#0a0a0a]">{detail.resident.name}</p>
+                        {detail.resident.id ? (
+                          <Link
+                            to={residentDetailPath(detail.resident.id)}
+                            state={{ from: `${location.pathname}${location.search}` }}
+                            className="sa-link text-[15px] font-semibold leading-5 text-[#186179] hover:text-[#0f4d5f] hover:underline"
+                          >
+                            {detail.resident.name}
+                          </Link>
+                        ) : (
+                          <p className="text-[15px] font-semibold leading-5 text-[#0a0a0a]">{detail.resident.name}</p>
+                        )}
                         <p className="text-[12px] leading-4 text-[#6a7282]">{detail.resident.statusLine}</p>
                       </div>
                     </div>

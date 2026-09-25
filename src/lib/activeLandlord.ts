@@ -76,6 +76,12 @@ const EMAIL_TO_LANDLORD_ID: Record<string, string> = {
   'demo@ulohome.io': DEMO_LANDLORD_ID,
 }
 
+/** True when this address is a seeded portal / Alpha login (not a company support email). */
+export function isSeededLandlordLoginEmail(email: string | null | undefined): boolean {
+  const normalized = email?.trim().toLowerCase() ?? ''
+  return Boolean(normalized) && Object.prototype.hasOwnProperty.call(EMAIL_TO_LANDLORD_ID, normalized)
+}
+
 const OVERRIDE_STORAGE_KEY = 'ulo.adminActiveLandlord'
 
 /** Landlord bound to the signed-in account email (null for staff logins). */

@@ -64,6 +64,8 @@ export type PortfolioDocumentExtractPayload = {
     description: string
     amount: string
     period: string
+    building?: string
+    unit?: string
     confidence: number
   }>
   imageLabels: string[]

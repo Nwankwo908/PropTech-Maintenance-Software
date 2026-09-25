@@ -10,6 +10,8 @@ export type ImportedOnboardingFinancialRecord = {
   description: string
   amount: string
   period: string
+  building: string
+  unit: string
   sourceDocumentName: string
 }
 
@@ -44,7 +46,18 @@ export function loadImportedOpsRecords(
     if (!raw) return emptyImportedOpsRecords()
     const parsed = JSON.parse(raw) as Partial<ImportedOnboardingOpsRecords>
     return {
-      financialRecords: Array.isArray(parsed.financialRecords) ? parsed.financialRecords : [],
+      financialRecords: Array.isArray(parsed.financialRecords)
+        ? parsed.financialRecords.map((row) => ({
+            id: String(row.id ?? ''),
+            recordType: String(row.recordType ?? ''),
+            description: String(row.description ?? ''),
+            amount: String(row.amount ?? ''),
+            period: String(row.period ?? ''),
+            building: String(row.building ?? ''),
+            unit: String(row.unit ?? ''),
+            sourceDocumentName: String(row.sourceDocumentName ?? ''),
+          }))
+        : [],
       maintenanceIssues: Array.isArray(parsed.maintenanceIssues)
         ? parsed.maintenanceIssues
         : [],

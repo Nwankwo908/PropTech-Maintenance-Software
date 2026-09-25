@@ -12,6 +12,7 @@ import {
 import type { VendorSetupPricingNegotiationBrief } from '@/lib/vendorSetupPricingNegotiation'
 import type { SmsMediaItem } from '@/lib/smsMedia'
 import { resolveSmsMediaForMessages } from '@/lib/smsMedia'
+import { buildAdminMaintenanceReportSummary } from '@/lib/adminMonitoringIssueSummary'
 
 export type MonitoringRiskLevel = 'high' | 'medium' | 'low'
 
@@ -62,6 +63,8 @@ export type ConversationMonitoringDetail = {
   summary: string
   tenantName: string
   tenantInitials: string
+  /** When set, the rail title (resident name) links to this tenant profile. */
+  residentId: string | null
   transcript: MonitoringTranscriptItem[]
   readOnlyNote: string
   canTakeOver: boolean
@@ -122,6 +125,7 @@ export type MaintenanceUloThreadInput = {
   maintenanceRequestId: string | null
   conversationId: string | null
   workflowRunId: string
+  residentId: string | null
   residentName: string
   unitLabel: string
   propertyLabel: string
@@ -137,6 +141,7 @@ export type MoveInUloThreadInput = {
   kind: 'move_in'
   conversationId: string | null
   workflowRunId: string
+  residentId: string | null
   residentName: string
   unitLabel: string
   propertyLabel: string
@@ -148,6 +153,7 @@ export type InspectionUloThreadInput = {
   kind: 'inspection'
   conversationId: string | null
   workflowRunId: string
+  residentId: string | null
   residentName: string
   unitLabel: string
   propertyLabel: string
@@ -161,6 +167,7 @@ export type MoveOutUloThreadInput = {
   kind: 'move_out'
   conversationId: string | null
   workflowRunId: string
+  residentId: string | null
   residentName: string
   unitLabel: string
   propertyLabel: string
@@ -189,6 +196,7 @@ type ConversationContext = {
   id: string
   conversationType: string
   status: string
+  residentId: string
   residentName: string
   vendorName: string
   building: string
@@ -486,6 +494,65 @@ function buildAcFailureSummary(ctx: ConversationContext): string {
   return `Tenant reported AC outage. Ulo classified as urgent maintenance (heat advisory in zip), triaged, and dispatched Rapid Plumb HVAC. ETA confirmed 11:30a. No human action required unless ${tenant} escalates.`
 }
 
+/** True when the resident clearly confirmed a repair is done — not a polite "thank you" on a new ask. */
+export function looksLikeResidentConfirmedResolved(text: string): boolean {
+  if (!text.trim()) return false
+  if (
+    /(?:issue|problem|repair|leak|ac|hvac).{0,48}(?:is |was |has been )?(?:resolved|fixed|all set)/i.test(
+      text,
+    )
+  ) {
+    return true
+  }
+  if (/\b(?:all set|all good|it'?s fixed|problem is fixed|issue is fixed)\b/i.test(text)) {
+    return true
+  }
+  if (/thanks? for the (?:quick )?turnaround/i.test(text)) return true
+  if (/\b(?:resolved|fixed it|never mind[, ]+i fixed)\b/i.test(text) && !/\bexterminator|spray|repair|leak|broken|not working\b/i.test(text)) {
+    return true
+  }
+  return false
+}
+
+function residentReportMessageBodies(ctx: ConversationContext): string[] {
+  const bodies: string[] = []
+  if (ctx.ticketDescription.trim()) bodies.push(ctx.ticketDescription.trim())
+  for (const message of ctx.messages) {
+    if (!message?.body.trim()) continue
+    if (isTenantOnboardingInvite(message.body) || isVendorOnboardingInvite(message.body)) continue
+    if (message.direction === 'inbound') {
+      bodies.push(message.body.trim())
+      continue
+    }
+  }
+  // If no inbound tagged messages, still consider non-onboarding bodies as reports.
+  if (bodies.length <= (ctx.ticketDescription.trim() ? 1 : 0)) {
+    for (const message of ctx.messages) {
+      if (!message?.body.trim()) continue
+      if (isTenantOnboardingInvite(message.body) || isVendorOnboardingInvite(message.body)) continue
+      if (/^(yes|no|ok|okay|thanks?|thank you|start)[.!]?$/i.test(message.body.trim())) continue
+      bodies.push(message.body.trim())
+    }
+  }
+  return bodies
+}
+
+function buildMaintenanceThreadSummary(ctx: ConversationContext): string | null {
+  const hasTicket = Boolean(ctx.maintenanceRequestId.trim() || ctx.ticketDescription.trim())
+  const messageBodies = residentReportMessageBodies(ctx)
+  if (!hasTicket && messageBodies.length === 0) return null
+
+  return buildAdminMaintenanceReportSummary({
+    residentName: ctx.residentName,
+    unitLabel: ctx.unitLabel,
+    building: ctx.building,
+    ticketDescription: ctx.ticketDescription,
+    ticketCategory: ctx.ticketCategory,
+    ticketUrgency: ctx.ticketUrgency,
+    messageBodies,
+  })
+}
+
 function isPaymentPlanOfferBody(body: string): boolean {
   return /payment plan|installment|split (?:your |the )?balance/i.test(body)
 }
@@ -511,10 +578,6 @@ function buildSummary(ctx: ConversationContext): string {
 
   if (ctx.awaitingResidentFeedback || isResidentFeedbackAskBody(combined) || isResidentFeedbackAskBody(latest)) {
     return `Ulo asked ${tenant} to rate their repair at ${place} (1–5). Waiting for their reply — no landlord action required.`
-  }
-
-  if (mentionsAc(combined) || (ctx.ticketCategory === 'hvac' && ctx.status === 'in_progress')) {
-    return buildAcFailureSummary(ctx)
   }
 
   // Payment-plan / late-rent SMS bodies belong in the transcript as Ulo AI messages —
@@ -552,12 +615,18 @@ function buildSummary(ctx: ConversationContext): string {
     return `${vendor} submitted their verification form and is ready for work orders. Logged in this thread for your records.`
   }
 
-  if (isVendorOnboardingInvite(combined)) {
+  // Prefer the live maintenance report over a stale welcome SMS still in the same thread
+  // (Takeira: exterminator ask on a conversation that also has tenant onboarding copy).
+  const maintenanceSummary = buildMaintenanceThreadSummary(ctx)
+  if (maintenanceSummary) return maintenanceSummary
+
+  // Onboarding summaries only when the thread is still invite-only (no ticket / report above).
+  if (isVendorOnboardingInvite(latest) || isVendorOnboardingInvite(combined)) {
     const vendor = ctx.vendorName || 'this vendor'
     return `Ulo invited ${vendor} to complete a quick verification for your preferred vendor network. Monitor this thread for their reply.`
   }
 
-  if (isTenantOnboardingInvite(combined)) {
+  if (isTenantOnboardingInvite(latest) || isTenantOnboardingInvite(combined)) {
     return `Ulo sent ${tenant} a welcome text to activate SMS updates at ${place}. Monitor this thread for their reply.`
   }
 
@@ -578,11 +647,60 @@ function buildSummary(ctx: ConversationContext): string {
     return `${ctx.vendorName || 'Vendor'} thread is active. Ulo is coordinating status updates for ${buildingShortName(ctx.building) || 'this property'}.`
   }
 
-  if (/thanks|resolved|quick turnaround/i.test(combined)) {
+  if (looksLikeResidentConfirmedResolved(combined) || looksLikeResidentConfirmedResolved(latest)) {
     return `Resident confirmed the issue is resolved. Ulo closed the loop and updated the maintenance record — no further action needed.`
   }
 
+  // Demo-only AC narrative when there is no linked ticket / resident report to summarize.
+  if (mentionsAc(combined) || (ctx.ticketCategory === 'hvac' && ctx.status === 'in_progress')) {
+    return buildAcFailureSummary(ctx)
+  }
+
   return 'Ulo is monitoring this thread. No landlord action required unless the resident escalates.'
+}
+
+/** Testable entry for the Messages rail "Ulo summary for admin" copy. */
+export function buildAdminMonitoringSummary(input: {
+  residentName?: string
+  vendorName?: string
+  building?: string
+  unitLabel?: string
+  ticketDescription?: string
+  ticketUrgency?: string
+  ticketCategory?: string
+  maintenanceRequestId?: string
+  conversationType?: string
+  status?: string
+  messages?: Array<{ direction: string; body: string }>
+  pendingEstimateDecision?: PendingEstimateDecision | null
+  residentFeedbackRating?: number | null
+  awaitingResidentFeedback?: boolean
+}): string {
+  return buildSummary({
+    id: 'test',
+    conversationType: input.conversationType ?? 'resident_intake',
+    status: input.status ?? 'open',
+    residentName: input.residentName ?? '',
+    vendorName: input.vendorName ?? '',
+    building: input.building ?? '',
+    unitLabel: input.unitLabel ?? '',
+    ticketDescription: input.ticketDescription ?? '',
+    ticketUrgency: input.ticketUrgency ?? '',
+    ticketCategory: input.ticketCategory ?? '',
+    maintenanceRequestId: input.maintenanceRequestId ?? '',
+    createdAtMs: Date.now(),
+    updatedAtMs: Date.now(),
+    messages: (input.messages ?? []).map((message) => ({
+      direction: message.direction,
+      body: message.body,
+      createdAtMs: Date.now(),
+      media: [],
+    })),
+    pendingEstimateDecision: input.pendingEstimateDecision ?? null,
+    residentFeedbackRating: input.residentFeedbackRating ?? null,
+    awaitingResidentFeedback: input.awaitingResidentFeedback ?? false,
+    adminTakeoverActive: false,
+  })
 }
 
 function buildDemoAcFailureTranscript(ctx: ConversationContext): MonitoringTranscriptItem[] {
@@ -787,24 +905,126 @@ function isAdminTakeoverFromIntake(intakeState: unknown): boolean {
   return (raw as Record<string, unknown>).active === true
 }
 
-function buildMonitoringDetail(ctx: ConversationContext): ConversationMonitoringDetail {
-  const risk = deriveRisk(ctx)
-  const closed = ['resolved', 'completed', 'closed'].includes(ctx.status.toLowerCase())
-  const isAiCopilot = ctx.conversationType === 'ai_copilot'
+function isOnboardingMonitoringTitle(title: string): boolean {
+  return title === 'Tenant onboarding' || title === 'Vendor onboarding'
+}
+
+/**
+ * Messages right-rail heading: participant name first.
+ * Onboarding / issue / status labels move under the name as the subtitle
+ * (risk badges still come from deriveRisk — onboarding stays NO RISK).
+ */
+export function resolveMonitoringRailHeading(input: {
+  residentName: string
+  vendorName: string
+  conversationType: string
+  issueOrStatusTitle: string
+  fallbackSubtitle: string
+}): { title: string; subtitle: string } {
+  const issueOrStatusTitle = input.issueOrStatusTitle.trim()
+  const fallbackSubtitle = input.fallbackSubtitle.trim()
+  const isVendorThread =
+    input.conversationType === 'vendor_alert' ||
+    input.conversationType === 'vendor_job' ||
+    input.conversationType === 'vendor_tenant_proxy'
+  const participantName = (
+    isVendorThread
+      ? input.vendorName.trim() || input.residentName.trim()
+      : input.residentName.trim() || input.vendorName.trim()
+  ).trim()
+
+  if (participantName) {
+    return {
+      title: participantName,
+      subtitle: issueOrStatusTitle || fallbackSubtitle,
+    }
+  }
+
+  return {
+    title: issueOrStatusTitle || 'Conversation',
+    subtitle: fallbackSubtitle,
+  }
+}
+
+/**
+ * Apply the Messages list participant label when context failed to resolve a name.
+ * Keeps onboarding / issue titles as the subtitle so the rail still explains the thread.
+ */
+export function applyMonitoringHeadingName(
+  detail: ConversationMonitoringDetail,
+  headingName: string | null | undefined,
+): ConversationMonitoringDetail {
+  const name = headingName?.trim() ?? ''
+  if (
+    !name ||
+    name === 'Unknown' ||
+    name === 'Vendor' ||
+    name === 'Ulo AI' ||
+    name === 'Participant' ||
+    detail.title === name
+  ) {
+    return detail
+  }
+
+  const currentIsIssueOrOnboarding =
+    isOnboardingMonitoringTitle(detail.title) || detail.title !== detail.tenantName
+
+  return {
+    ...detail,
+    title: name,
+    subtitle: currentIsIssueOrOnboarding
+      ? detail.title
+      : detail.subtitle || detail.title,
+    tenantName: detail.tenantName === 'Participant' ? name : detail.tenantName,
+    tenantInitials:
+      detail.tenantName === 'Participant' ? monitoringInitials(name) : detail.tenantInitials,
+  }
+}
+
+function buildMonitoringRailHeading(ctx: ConversationContext): {
+  title: string
+  subtitle: string
+} {
+  const issueOrStatusTitle = buildTitle(ctx)
   const combinedText = [
     ctx.ticketDescription,
     ...ctx.messages.map((m) => m.body),
   ].join(' ')
+  const monitoringSubtitle = buildSubtitle(ctx.conversationType, combinedText)
+  return resolveMonitoringRailHeading({
+    residentName: ctx.residentName,
+    vendorName: ctx.vendorName,
+    conversationType: ctx.conversationType,
+    issueOrStatusTitle,
+    fallbackSubtitle: monitoringSubtitle,
+  })
+}
+
+function buildMonitoringDetail(ctx: ConversationContext): ConversationMonitoringDetail {
+  const risk = deriveRisk(ctx)
+  const closed = ['resolved', 'completed', 'closed'].includes(ctx.status.toLowerCase())
+  const isAiCopilot = ctx.conversationType === 'ai_copilot'
+  const heading = buildMonitoringRailHeading(ctx)
+  const isVendorThread =
+    ctx.conversationType === 'vendor_alert' ||
+    ctx.conversationType === 'vendor_job' ||
+    ctx.conversationType === 'vendor_tenant_proxy'
+  const residentName = ctx.residentName.trim()
+  const profileResidentId =
+    !isVendorThread && residentName && heading.title === residentName && ctx.residentId
+      ? ctx.residentId
+      : null
 
   return {
     conversationId: ctx.id,
-    title: buildTitle(ctx),
-    subtitle: buildSubtitle(ctx.conversationType, combinedText),
+    title: heading.title,
+    subtitle: heading.subtitle,
     riskLevel: risk.level,
     riskLabel: risk.label,
     summary: buildSummary(ctx),
     tenantName: ctx.residentName || ctx.vendorName || 'Participant',
     tenantInitials: monitoringInitials(ctx.residentName || ctx.vendorName || '?'),
+    residentId: profileResidentId,
     transcript: buildTranscript(ctx),
     readOnlyNote: ctx.pendingEstimateDecision
       ? 'Approve or decline this estimate here, or reply APPROVE / DECLINE by text on the ops notify thread.'
@@ -958,6 +1178,7 @@ async function loadConversationContext(
     id: conversationId,
     conversationType: asString(row.conversation_type),
     status: asString(row.status) || 'open',
+    residentId,
     residentName: asString(resident?.full_name),
     vendorName: asString(vendor?.name),
     building: resolveBuilding({
@@ -1318,13 +1539,14 @@ function buildSyntheticMoveOutThread(input: MoveOutUloThreadInput): Conversation
 
   return {
     conversationId: input.conversationId || workOrderThreadConversationId(input.workflowRunId),
-    title: `${tenant} · Move-out coordination`,
-    subtitle: 'Admin monitoring view · SMS · guided move-out thread',
+    title: tenant,
+    subtitle: 'Move-out coordination',
     riskLevel: 'low',
     riskLabel: 'In progress',
     summary: `Ulo is guiding ${tenant} through move-out at ${input.propertyLabel} — instructions, inspection, keys, and deposit updates stay in this SMS thread.`,
     tenantName: tenant,
     tenantInitials: monitoringInitials(tenant),
+    residentId: input.residentId?.trim() || null,
     transcript,
     readOnlyNote: 'Read-only · Coordination SMS is automated on this thread until a live inbox conversation is linked.',
     canTakeOver: false,
@@ -1422,13 +1644,14 @@ function buildSyntheticMoveInThread(input: MoveInUloThreadInput): ConversationMo
 
   return {
     conversationId: input.conversationId || workOrderThreadConversationId(input.workflowRunId),
-    title: `${input.residentName} · Move-in coordination`,
-    subtitle: 'Admin monitoring view · SMS · scheduled coordination messages',
+    title: input.residentName.trim() || 'Resident',
+    subtitle: 'Move-in coordination',
     riskLevel: 'low',
     riskLabel: 'On track',
     summary: `Ulo is coordinating ${input.residentName}'s move-in at ${input.propertyLabel} (${unitPhrase}) with scheduled SMS — welcome, reminders, key pickup, and inspection. Short replies only; no ongoing chat required.`,
     tenantName: input.residentName,
     tenantInitials: monitoringInitials(input.residentName),
+    residentId: input.residentId?.trim() || null,
     transcript,
     readOnlyNote:
       'Read-only · Ulo sends coordination SMS on schedule; resident replies are brief confirmations only.',
@@ -1620,13 +1843,14 @@ function buildSyntheticInspectionThread(input: InspectionUloThreadInput): Conver
 
   return {
     conversationId: input.conversationId || workOrderThreadConversationId(input.workflowRunId),
-    title: `${input.residentName} · Conversational inspection`,
-    subtitle: 'Admin monitoring view · SMS · guided room-by-room inspection',
+    title: input.residentName.trim() || 'Resident',
+    subtitle: 'Conversational inspection',
     riskLevel: 'low',
     riskLabel: 'On track',
     summary: `Ulo guided ${input.residentName} through a ${modeLabel} for ${input.propertyLabel} (${unitPhrase}) over SMS — no portal forms. Findings, photos, and timestamps were captured in a searchable report${input.hasMaintenanceFollowUp ? '; maintenance work orders were opened automatically for flagged issues' : ''}.`,
     tenantName: input.residentName,
     tenantInitials: monitoringInitials(input.residentName),
+    residentId: input.residentId?.trim() || null,
     transcript,
     readOnlyNote:
       'Read-only · Ulo runs inspections as guided SMS conversations, not static PDFs or portal forms.',
@@ -1635,10 +1859,12 @@ function buildSyntheticInspectionThread(input: InspectionUloThreadInput): Conver
 }
 
 function buildSyntheticWorkOrderThread(input: MaintenanceUloThreadInput): ConversationMonitoringDetail {
+  const residentId = input.residentId?.trim() || ''
   const ctx: ConversationContext = {
     id: input.conversationId || `work-order-${input.workflowRunId}`,
     conversationType: 'resident_intake',
     status: 'in_progress',
+    residentId,
     residentName: input.residentName,
     vendorName: input.vendorName || '',
     building: input.propertyLabel,
@@ -1651,16 +1877,23 @@ function buildSyntheticWorkOrderThread(input: MaintenanceUloThreadInput): Conver
     updatedAtMs: Date.now(),
     messages: [],
     pendingEstimateDecision: null,
+    residentFeedbackRating: null,
+    awaitingResidentFeedback: false,
+    adminTakeoverActive: false,
   }
 
   const transcript = buildWorkOrderSyntheticTranscript(input, [])
 
   const risk = deriveRisk(ctx)
+  const heading = buildMonitoringRailHeading(ctx)
+  const residentName = input.residentName.trim()
+  const profileResidentId =
+    residentName && heading.title === residentName && residentId ? residentId : null
 
   return {
     conversationId: ctx.id,
-    title: buildTitle(ctx),
-    subtitle: 'Admin monitoring view · SMS · auto-routed to Ulo AI',
+    title: heading.title,
+    subtitle: heading.subtitle,
     riskLevel: risk.level,
     riskLabel: risk.label,
     summary: input.vendorName
@@ -1668,6 +1901,7 @@ function buildSyntheticWorkOrderThread(input: MaintenanceUloThreadInput): Conver
       : `Ulo captured the resident report and opened ${input.workOrderRef}. Vendor matching and resident updates continue in the SMS thread below.`,
     tenantName: input.residentName || 'Resident',
     tenantInitials: monitoringInitials(input.residentName || 'Resident'),
+    residentId: profileResidentId,
     transcript,
     readOnlyNote: 'Read-only · Ulo handles resident SMS automatically on every maintenance work order.',
     canTakeOver: false,
@@ -1705,6 +1939,7 @@ async function buildSyntheticWorkOrderThreadWithEvents(
     id: input.conversationId || `work-order-${input.workflowRunId}`,
     conversationType: 'resident_intake',
     status: 'in_progress',
+    residentId: input.residentId?.trim() || '',
     residentName: input.residentName,
     vendorName: input.vendorName || '',
     building: input.propertyLabel,
@@ -1717,6 +1952,9 @@ async function buildSyntheticWorkOrderThreadWithEvents(
     updatedAtMs: Date.now(),
     messages: [],
     pendingEstimateDecision: null,
+    residentFeedbackRating: null,
+    awaitingResidentFeedback: false,
+    adminTakeoverActive: false,
   }
 
   const transcript = buildWorkOrderSyntheticTranscript(input, workflowMessages)
@@ -1919,5 +2157,8 @@ export async function fetchVendorJobConversationMonitoringByMaintenanceRequest(
 
 export function formatMonitoringTime(ms: number): string {
   if (Number.isNaN(ms)) return ''
-  return new Date(ms).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })
+  const date = new Date(ms)
+  const day = date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
+  const time = date.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })
+  return `${day} · ${time}`
 }

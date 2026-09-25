@@ -45,7 +45,8 @@ import {
 } from '@/api/landlordStripeConnect'
 import { loadImportedOpsRecords } from '@/lib/onboarding/persist/importedOpsRecords'
 import { getActiveLandlordId } from '@/lib/activeLandlord'
-import { isLimitedAlpha1Landlord, landlordHasPayments } from '@shared/landlordCapabilities'
+import { isLimitedAlpha1Landlord, isLimitedAlphaLandlord, landlordHasPayments } from '@shared/landlordCapabilities'
+import { formatPhoneNational } from '@/lib/phoneFormat'
 import {
   buildOnboardingReviewData,
   canCompleteOnboarding,
@@ -82,6 +83,9 @@ import {
 import { trackProductEventOnce } from '@/lib/analytics/productEvents'
 import { commitFastTrackImport } from '@/lib/onboarding/fastTrackImport'
 import { mergeFastTrackReviewResidents } from '@/lib/onboarding/persist/importResidents'
+import type { OnboardingExtractedResident } from '@/lib/onboardingDocumentUpload'
+import { mintOnboardingSession } from '@/lib/onboarding/session'
+import { archiveOrClearPriorOnboardingResidents } from '@/lib/onboarding/sessionResidents'
 import {
   buildOnboardingFormDraft,
   readPersistedExtractionReview,
@@ -97,6 +101,47 @@ import {
 import {
   type OnboardingApprovalRules,
 } from '@/lib/onboardingApprovalRules'
+
+function residentFlagMatchKeys(row: {
+  id?: string
+  fullName?: string
+  unit?: string
+  phone?: string
+}): string[] {
+  const keys: string[] = []
+  const id = (row.id ?? '').trim()
+  if (id) keys.push(`id:${id}`)
+  keys.push(
+    [
+      (row.fullName ?? '').trim().toLowerCase().replace(/\s+/g, ' '),
+      (row.unit ?? '').trim().toLowerCase(),
+      (row.phone ?? '').trim(),
+    ].join('|'),
+  )
+  return keys
+}
+
+/** Merge Onboarding-switch flags from AI review / guided forms onto the complete roster. */
+function applySendOnboardingFlags(
+  residents: OnboardingResident[],
+  extracted: OnboardingExtractedResident[] | undefined,
+  forms: ResidentFormRow[],
+): OnboardingResident[] {
+  const flagByKey = new Map<string, boolean>()
+  for (const row of [...(extracted ?? []), ...forms]) {
+    const enabled = Boolean(row.sendOnboardingOnComplete)
+    for (const key of residentFlagMatchKeys(row)) {
+      flagByKey.set(key, Boolean(flagByKey.get(key) || enabled))
+    }
+  }
+  return residents.map((resident) => ({
+    ...resident,
+    sendOnboardingOnComplete: Boolean(
+      resident.sendOnboardingOnComplete ||
+        residentFlagMatchKeys(resident).some((key) => flagByKey.get(key)),
+    ),
+  }))
+}
 
 export function useOnboardingWizard() {
   const navigate = useNavigate()
@@ -119,6 +164,9 @@ export function useOnboardingWizard() {
   const aiReviewAccountFilledRef = useRef(false)
   const [reviewData, setReviewData] = useState<OnboardingReviewData | null>(null)
   const [reviewLoading, setReviewLoading] = useState(false)
+  /** SMS intake line for Review (fast-track ai_review + guided review). */
+  const [smsIntakeNumber, setSmsIntakeNumber] = useState<string | null>(null)
+  const [smsIntakeNumberDisplay, setSmsIntakeNumberDisplay] = useState<string | null>(null)
   const [completingSetup, setCompletingSetup] = useState(false)
   const [importingPortfolio, setImportingPortfolio] = useState(false)
   const [editingFromReview, setEditingFromReview] = useState(false)
@@ -311,7 +359,7 @@ export function useOnboardingWizard() {
         const hasStalePortfolio =
           onWelcome &&
           !localInProgress &&
-          !isLimitedAlpha1Landlord(getActiveLandlordId()) &&
+          !isLimitedAlphaLandlord(getActiveLandlordId()) &&
           (onboarding.properties.length > 0 ||
             (counts != null &&
               (counts.properties > 0 ||
@@ -564,6 +612,12 @@ export function useOnboardingWizard() {
       if (cancelled) return
       setPayoutsReady(ready || stripeStatus?.ready === true)
       setPayoutMethodLabel(primaryPayoutMethodLabel(stripeStatus))
+      setSmsIntakeNumber(supplement.smsIntakeNumber)
+      setSmsIntakeNumberDisplay(
+        supplement.smsIntakeNumber
+          ? formatPhoneNational(supplement.smsIntakeNumber)
+          : null,
+      )
       setReviewData(
         buildOnboardingReviewData(
           state,
@@ -584,6 +638,23 @@ export function useOnboardingWizard() {
       cancelled = true
     }
   }, [loading, step, state])
+
+  // Fast-track Review (ai_review): assign / load the landlord Ulo SMS number.
+  useEffect(() => {
+    if (loading || step !== 'ai_review') return
+
+    let cancelled = false
+    void (async () => {
+      const phone = await fetchLandlordSmsIntakeNumber(state.landlordId)
+      if (cancelled) return
+      setSmsIntakeNumber(phone || null)
+      setSmsIntakeNumberDisplay(phone ? formatPhoneNational(phone) : null)
+    })()
+
+    return () => {
+      cancelled = true
+    }
+  }, [loading, step, state.landlordId])
 
   // Stripe Connect return/refresh lands on /admin/onboarding?connect=…
   useEffect(() => {
@@ -722,13 +793,32 @@ export function useOnboardingWizard() {
   async function beginOnboarding(path: 'guided' | 'fast_track', targetStep: OnboardingStep) {
     if (saving) return
     setError(null)
+
+    // New setup run: wipe/clear prior portfolio so leftover Alpha test residents
+    // and prior-session imports cannot bleed into this session's roster or feed.
+    const wiped = await wipePortfolioSession()
+    if (!wiped) return
+
+    const session = mintOnboardingSession()
+    const priorCleared = await archiveOrClearPriorOnboardingResidents({
+      landlordId: wiped.landlordId,
+      currentSessionId: session.onboardingSessionId,
+      mode: 'clear',
+    })
+    if (!priorCleared.ok) {
+      setError(priorCleared.error ?? 'Could not clear residents from the previous setup.')
+      return
+    }
+
     resetOnboardingForms()
-    // Leave the welcome hub on the first click. Do not wipe-to-entry first —
-    // that kept status at `not_started` and pinned the display on `entry`.
     await goTo(targetStep, {
       onboardingStatus: 'in_progress',
       setupPath: path,
       properties: [],
+      accountSetup: defaultOnboardingState(wiped.landlordId).accountSetup,
+      onboardingSessionId: session.onboardingSessionId,
+      onboardingSessionStartedAt: session.onboardingSessionStartedAt,
+      completedAt: null,
     })
     trackProductEventOnce('signup_started', 'onboarding')
   }
@@ -914,7 +1004,7 @@ export function useOnboardingWizard() {
 
   async function continueFromDocumentUpload() {
     if (uploadDocuments.length === 0) {
-      setError('Upload at least one document, or choose Skip for now.')
+      setError('Upload at least one document, or choose Skip.')
       return
     }
     if (anyDocumentProcessing(uploadDocuments)) {
@@ -958,7 +1048,8 @@ export function useOnboardingWizard() {
         onSaving: setSaving,
         refreshCounts,
         goTo,
-        nextStep: returnToReview ? 'review' : 'approval',
+        // Fast track has no separate final Review — continue to approval rules.
+        nextStep: 'approval',
         onImported: (patch) => {
           importedPatch = patch
         },
@@ -977,15 +1068,23 @@ export function useOnboardingWizard() {
   }
 
   async function saveApprovalRulesAndContinue(rules: LandlordOnboardingState['approvalRules']) {
-    if (editingFromReviewRef.current) {
+    if (editingFromReviewRef.current && state.setupPath !== 'fast_track') {
       await returnToReviewAfterEdit({ approvalRules: rules })
       return
     }
     clearReviewEditMode()
-    await goTo(
-      landlordHasPayments(getActiveLandlordId()) ? 'payouts' : 'review',
-      { approvalRules: rules },
-    )
+    const hasPayments = landlordHasPayments(getActiveLandlordId())
+    if (hasPayments) {
+      await goTo('payouts', { approvalRules: rules })
+      return
+    }
+    if (state.setupPath === 'fast_track') {
+      // Approval is the last fast-track step when payouts are off — complete setup.
+      await goTo('approval', { approvalRules: rules })
+      await finishReview()
+      return
+    }
+    await goTo('review', { approvalRules: rules })
   }
 
   async function continueToReview(cached?: {
@@ -1032,6 +1131,14 @@ export function useOnboardingWizard() {
 
     const snapshot = { ...wizardSnapshotRef.current.state, ...patch }
     setState(snapshot)
+
+    // Fast track: no separate Review step — return to approval (last stage).
+    if (snapshot.setupPath === 'fast_track') {
+      await goTo('approval', patch)
+      await refreshCounts()
+      setSaving(false)
+      return
+    }
 
     const [vendors, residents, smsIntakeNumber] = await Promise.all([
       fetchOnboardingVendors(),
@@ -1105,12 +1212,39 @@ export function useOnboardingWizard() {
     await goTo(resolved)
   }
 
+  function setResidentOnboardingOnComplete(residentId: string, enabled: boolean) {
+    setReviewData((prev) => {
+      if (!prev) return prev
+      return {
+        ...prev,
+        residents: prev.residents.map((row) =>
+          row.id === residentId ? { ...row, sendOnboardingOnComplete: enabled } : row,
+        ),
+      }
+    })
+    setResidentForms((prev) =>
+      prev.map((row) =>
+        row.id === residentId ? { ...row, sendOnboardingOnComplete: enabled } : row,
+      ),
+    )
+    setExtractionReview((prev) => {
+      if (!prev) return prev
+      return {
+        ...prev,
+        residents: prev.residents.map((row) =>
+          row.id === residentId ? { ...row, sendOnboardingOnComplete: enabled } : row,
+        ),
+      }
+    })
+  }
+
   async function finishReview() {
+    const latestState = wizardSnapshotRef.current.state
     const data =
       reviewData ??
-      (await fetchOnboardingReviewData(state.landlordId, reviewExtractedResidents()))
+      (await fetchOnboardingReviewData(latestState.landlordId, reviewExtractedResidents()))
     const reviewState: LandlordOnboardingState = {
-      ...state,
+      ...latestState,
       accountSetup: data.accountSetup,
       properties: data.properties,
       approvalRules: data.approvalRules,
@@ -1120,10 +1254,15 @@ export function useOnboardingWizard() {
     const rosterResidents = data.residents.length > 0
       ? data.residents
       : await fetchOnboardingResidents(reviewState.landlordId)
+    const flaggedResidents = applySendOnboardingFlags(
+      rosterResidents,
+      reviewExtractedResidents(),
+      wizardSnapshotRef.current.residentForms,
+    )
     const check = canCompleteOnboarding(
       reviewState,
       data.vendors,
-      rosterResidents,
+      flaggedResidents,
       data.metrics,
       ready,
     )
@@ -1141,7 +1280,7 @@ export function useOnboardingWizard() {
     const result = await completeOnboarding(
       reviewState,
       data.vendors,
-      rosterResidents,
+      flaggedResidents,
       data.metrics,
     )
     if (!result.ok) {
@@ -1233,6 +1372,8 @@ export function useOnboardingWizard() {
     // review / payouts
     reviewData,
     reviewLoading,
+    smsIntakeNumber,
+    smsIntakeNumberDisplay,
     completionCheck,
     payoutsReady,
     setPayoutsReady,
@@ -1250,6 +1391,7 @@ export function useOnboardingWizard() {
     saveApprovalRulesAndContinue,
     continueToReview,
     editReviewStep,
+    setResidentOnboardingOnComplete,
     finishReview,
   }
 }

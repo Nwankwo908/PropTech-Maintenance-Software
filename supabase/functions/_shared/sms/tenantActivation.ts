@@ -1,5 +1,6 @@
 import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.49.1"
 import { logGraphEvent } from "../graph/logGraphEvent.ts"
+import { isLimitedAlphaLandlord } from "../../../../shared/landlordCapabilities.ts"
 import { resolveOutboundLandlordSmsLine } from "./landlordSmsOnboarding.ts"
 import {
   findOrCreateConversation,
@@ -19,6 +20,7 @@ import {
   MAX_ACTIVATION_ATTEMPTS,
   MAX_SILENCE_NUDGE_ATTEMPTS,
   normalizeActivationPhone,
+  shouldSkipLimitedAlphaStaleActivationAutomation,
   type TenantActivationDbStatus,
 } from "./tenantActivationRetry.ts"
 import {
@@ -783,16 +785,32 @@ export async function processTenantActivationRetries(
   let query = supabase
     .from("users")
     .select(
-      "id, landlord_id, full_name, phone, activation_status, activation_attempt_count, first_activation_attempt_at, last_activation_attempt_at, last_delivery_error, activation_phone_normalized, sms_consent_status",
+      "id, landlord_id, full_name, phone, activation_status, activation_attempt_count, first_activation_attempt_at, last_activation_attempt_at, last_delivery_error, activation_phone_normalized, sms_consent_status, archived_at",
     )
     .in("activation_status", ["delivery_failed", "waiting"])
     .gt("activation_attempt_count", 0)
+    .is("archived_at", null)
 
   if (landlordId?.trim()) {
     query = query.eq("landlord_id", landlordId.trim())
   }
 
-  const { data, error } = await query.limit(500)
+  let { data, error } = await query.limit(500)
+  if (error && (error.code === "42703" || /archived_at|column .* does not exist/i.test(error.message))) {
+    let legacyQuery = supabase
+      .from("users")
+      .select(
+        "id, landlord_id, full_name, phone, activation_status, activation_attempt_count, first_activation_attempt_at, last_activation_attempt_at, last_delivery_error, activation_phone_normalized, sms_consent_status",
+      )
+      .in("activation_status", ["delivery_failed", "waiting"])
+      .gt("activation_attempt_count", 0)
+    if (landlordId?.trim()) {
+      legacyQuery = legacyQuery.eq("landlord_id", landlordId.trim())
+    }
+    const legacy = await legacyQuery.limit(500)
+    data = legacy.data
+    error = legacy.error
+  }
   if (error) {
     if (error.code === "42703" || /column .* does not exist/i.test(error.message)) {
       console.warn("[tenantActivationRetries] columns not migrated yet")
@@ -815,6 +833,39 @@ export async function processTenantActivationRetries(
     sms_consent_status: string | null
   }>
 
+  const limitedAlphaLandlordIds = [
+    ...new Set(
+      rows
+        .map((row) => row.landlord_id)
+        .filter((id) => isLimitedAlphaLandlord(id)),
+    ),
+  ]
+  const completedAtByLandlord = new Map<string, string | null>()
+  await Promise.all(
+    limitedAlphaLandlordIds.map(async (lid) => {
+      const { data: onboarding, error: onboardingError } = await supabase
+        .from("landlord_onboarding")
+        .select("completed_at")
+        .eq("landlord_id", lid)
+        .maybeSingle()
+      if (onboardingError) {
+        console.warn(
+          "[tenantActivationRetries] landlord_onboarding lookup",
+          lid,
+          onboardingError.message,
+        )
+        completedAtByLandlord.set(lid, null)
+        return
+      }
+      const completedAt =
+        typeof (onboarding as { completed_at?: unknown } | null)?.completed_at ===
+          "string"
+          ? String((onboarding as { completed_at: string }).completed_at)
+          : null
+      completedAtByLandlord.set(lid, completedAt)
+    }),
+  )
+
   const retryIdsByLandlord = new Map<string, string[]>()
   const nudgeIdsByLandlord = new Map<string, string[]>()
   for (const row of rows) {
@@ -823,6 +874,16 @@ export async function processTenantActivationRetries(
     const stored = normalizeActivationPhone(row.activation_phone_normalized)
     const current = normalizeActivationPhone(row.phone)
     if (stored && current && stored !== current) continue
+
+    if (
+      shouldSkipLimitedAlphaStaleActivationAutomation({
+        isLimitedAlphaLandlord: isLimitedAlphaLandlord(row.landlord_id),
+        firstAttemptAt: row.first_activation_attempt_at,
+        onboardingCompletedAt: completedAtByLandlord.get(row.landlord_id) ?? null,
+      })
+    ) {
+      continue
+    }
 
     const attempts = Number(row.activation_attempt_count) || 0
     const lid = row.landlord_id

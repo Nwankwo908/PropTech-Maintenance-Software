@@ -1,6 +1,7 @@
 /**
  * Guided onboarding — Account setup step.
  */
+import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import { checkboxInputClassName } from '@/components/TableCheckbox'
 import { PRIVACY_POLICY_PATH } from '@/lib/legal/privacyPolicyContent'
@@ -74,6 +75,10 @@ export function OnboardingAccountSetupStep({
   editContinueLabel,
   onBack,
 }: OnboardingAccountSetupStepProps) {
+  // Chrome paints the signed-in Google account into type=email even when React
+  // state is empty — unlock on focus so factory-reset Account Setup stays blank.
+  const [emailFieldUnlocked, setEmailFieldUnlocked] = useState(false)
+
   function handleContinue() {
     void saveOnboardingAccountSetupStep({
       accountSetup,
@@ -97,6 +102,8 @@ export function OnboardingAccountSetupStep({
               onChange={(e) => updateAccountSetup({ companyName: e.target.value })}
               placeholder="Company name (optional)"
               aria-label="Company name (optional)"
+              autoComplete="organization"
+              name="ulo-onboarding-company"
             />
             <input
               className={onboardingInputClass}
@@ -104,14 +111,24 @@ export function OnboardingAccountSetupStep({
               onChange={(e) => updateAccountSetup({ contactName: e.target.value })}
               placeholder="Full name"
               aria-label="Full name"
+              autoComplete="name"
+              name="ulo-onboarding-contact-name"
             />
             <input
               className={onboardingInputClass}
               type="email"
               value={accountSetup.email}
               onChange={(e) => updateAccountSetup({ email: e.target.value })}
+              onFocus={() => setEmailFieldUnlocked(true)}
+              readOnly={!emailFieldUnlocked}
               placeholder="Email"
               aria-label="Email"
+              // Block Chrome from painting the signed-in Google login into Support email.
+              autoComplete="off"
+              name="ulo-onboarding-support-email"
+              data-1p-ignore
+              data-lpignore="true"
+              data-form-type="other"
             />
             <div className="flex flex-col gap-2 sm:col-span-2">
               <input

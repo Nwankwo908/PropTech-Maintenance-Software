@@ -1,4 +1,4 @@
-import { Link, NavLink, useSearchParams } from 'react-router-dom'
+import { NavLink, useSearchParams } from 'react-router-dom'
 import { Fragment, useEffect, useState, type ReactNode } from 'react'
 import residentsIcon from '@/assets/Residents.svg'
 import graphIcon from '@/assets/graph.svg'
@@ -17,6 +17,7 @@ import {
 } from '@/lib/adminNavigation'
 import { useSetupSuccessNavHint } from '@/hooks/useSetupSuccessNavHint'
 import { useActiveTasksNavCount } from '@/hooks/useActiveTasksNavCount'
+import { assignAdminPath } from '@/lib/assignAdminPath'
 import {
   PROFILE_SETUP_NAV_POINT_EVENT,
 } from '@/lib/setupSuccessChecklist'
@@ -306,7 +307,15 @@ export function AdminSidebarContent({
               end={item.end}
               title={isCollapsedRail ? item.label : undefined}
               aria-label={isCollapsedRail ? item.label : undefined}
-              onClick={item.onClick}
+              onClick={(event) => {
+                event.preventDefault()
+                item.onClick?.()
+                assignAdminPath(
+                  askUloOpen
+                    ? withAskUloSearch(item.to, searchParams, { forceDock: true })
+                    : item.to,
+                )
+              }}
               className={({ isActive }) =>
                 navClassName({
                   isActive,

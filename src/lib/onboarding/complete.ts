@@ -1,7 +1,9 @@
 /**
  * Complete onboarding — persist portfolio + flip status + landlord welcome message.
+ * Opted-in residents (`sendOnboardingOnComplete`) get a welcome SMS after persist.
  */
 import { sendLandlordOnboardingWelcome } from '@/api/landlordOnboardingWelcome'
+import { sendTenantWelcomeSms } from '@/api/tenantActivation'
 import { getActiveLandlordId } from '@/lib/activeLandlord'
 import {
   normalizeOnboardingApprovalRules,
@@ -16,8 +18,10 @@ import { trackProductEventOnce } from '@/lib/analytics/productEvents'
 import { persistOnboardingProperties } from './persist/properties'
 import {
   importOnboardingResidentsFromExtraction,
+  onboardingResidentIdentityMatch,
   onboardingResidentsToImportRows,
 } from './persist/importResidents'
+import { onboardingSessionFromState } from './session'
 import {
   persistLandlordAccountProfile,
   persistLandlordCommunicationStyle,
@@ -25,6 +29,7 @@ import {
 } from './persist/account'
 import { buildOnboardingReviewMetrics } from './review'
 import {
+  fetchOnboardingResidents,
   mostCommonRentDueDay,
   type OnboardingResident,
 } from './persist/residents'
@@ -111,6 +116,7 @@ export async function completeOnboarding(
             id: property.id,
             name: property.name,
           })),
+          onboardingSession: onboardingSessionFromState(state),
         },
       )
       if (persisted < importRows.length) {
@@ -183,13 +189,70 @@ export async function completeOnboarding(
     console.warn('[landlordOnboarding] communication style persist failed', err)
   }
 
-  // Tenant/vendor outreach stays manual. Landlord welcome is sent once on complete.
-  const tenantsPendingOutreach = residents.filter((r) => r.phone.trim().length > 0).length
+  // Landlord welcome is sent once on complete. Tenant welcome SMS only for
+  // residents with Onboarding switch enabled (and a phone).
+  const optedInForWelcome = residents.filter(
+    (r) => Boolean(r.sendOnboardingOnComplete) && r.phone.trim().length > 0,
+  )
+  const tenantsPendingOutreach = residents.filter(
+    (r) => r.phone.trim().length > 0 && !r.sendOnboardingOnComplete,
+  ).length
   const vendorsPendingOutreach = vendors.filter(
     (v) => v.phone.trim().length > 0 || v.email.trim().length > 0,
   ).length
   const warnings: string[] = []
   let welcomeDelivered = false
+  let tenantWelcomeSent = 0
+
+  if (optedInForWelcome.length > 0) {
+    try {
+      const persistedResidents = await fetchOnboardingResidents(scope.landlordId)
+      const companyName = state.accountSetup.companyName.trim() || null
+      for (const target of optedInForWelcome) {
+        const match =
+          persistedResidents.find((row) => row.id === target.id) ??
+          persistedResidents.find((row) =>
+            onboardingResidentIdentityMatch(
+              {
+                id: row.id,
+                fullName: row.fullName,
+                unit: row.unit,
+                building: row.building,
+                phone: row.phone,
+              },
+              {
+                id: target.id,
+                fullName: target.fullName,
+                unit: target.unit,
+                building: target.building,
+                phone: target.phone,
+              },
+            ),
+          )
+        if (!match?.id) {
+          warnings.push(
+            `welcome text for ${target.fullName.trim() || 'a resident'} could not be matched`,
+          )
+          continue
+        }
+        const summary = await sendTenantWelcomeSms({
+          landlordId: scope.landlordId,
+          residentId: match.id,
+          companyName,
+        })
+        if (summary.ok && !(summary.failed ?? 0) && !summary.error) {
+          tenantWelcomeSent += 1
+        } else {
+          warnings.push(
+            `welcome text for ${match.fullName.trim() || 'a resident'} could not be sent`,
+          )
+        }
+      }
+    } catch (err) {
+      console.warn('[landlordOnboarding] opted-in tenant welcome failed', err)
+      warnings.push('resident welcome texts could not be sent')
+    }
+  }
 
   try {
     const welcome = await sendLandlordOnboardingWelcome({
@@ -218,9 +281,13 @@ export async function completeOnboarding(
 
   try {
     const { recordActivityLog } = await import('@/lib/recordActivityLog')
+    const tenantWelcomeNote =
+      tenantWelcomeSent > 0
+        ? ` Welcome texts were sent to ${tenantWelcomeSent} resident${tenantWelcomeSent === 1 ? '' : 's'}.`
+        : ''
     const outreachNote =
       tenantsPendingOutreach > 0 || vendorsPendingOutreach > 0
-        ? ' Send resident welcome texts and vendor verification invites from Residents and Vendors when you are ready.'
+        ? ' Send remaining resident welcome texts and vendor verification invites from Residents and Vendors when you are ready.'
         : ''
     const welcomeNote = welcomeDelivered ? ' Your welcome message was sent.' : ''
     await recordActivityLog({
@@ -229,8 +296,9 @@ export async function completeOnboarding(
       source: 'onboarding',
       actorType: 'landlord',
       metadata: {
-        message: `Setup complete.${welcomeNote}${outreachNote}`.trim(),
+        message: `Setup complete.${welcomeNote}${tenantWelcomeNote}${outreachNote}`.trim(),
         tenants_pending_outreach: tenantsPendingOutreach,
+        tenants_welcome_sent: tenantWelcomeSent,
         vendors_pending_outreach: vendorsPendingOutreach,
       },
     })
@@ -242,7 +310,7 @@ export async function completeOnboarding(
     warnings.length > 0
       ? `Setup finished, but ${warnings.join('; ')}.`
       : tenantsPendingOutreach > 0 || vendorsPendingOutreach > 0
-        ? 'Setup complete. Send resident welcome texts and vendor verification invites from Residents and Vendors when you are ready.'
+        ? 'Setup complete. Send remaining resident welcome texts and vendor verification invites from Residents and Vendors when you are ready.'
         : undefined
 
   return { ok: true, activationWarning }

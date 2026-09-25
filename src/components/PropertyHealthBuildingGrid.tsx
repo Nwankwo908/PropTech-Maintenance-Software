@@ -101,6 +101,8 @@ function TrashIcon({ className = 'size-3.5 shrink-0' }: { className?: string }) 
 
 type PropertyHealthBuildingGridProps = {
   className?: string
+  /** Shrink columns to the panel width — no horizontal scroll (Overview side-by-side). */
+  fitContainer?: boolean
   loading: boolean
   buildings: PropertyHealthBuildingRow[]
   totalUnits: number
@@ -147,6 +149,9 @@ const HEADER_BTN_DANGER =
 
 const TH_CLASS = 'px-4 py-3 text-[12px] font-medium text-[#6a7282] sm:px-6'
 const TD_CLASS = 'px-4 py-3.5 text-[14px] leading-5 text-[#0a0a0a] sm:px-6'
+/** Match section header inset (px-4 / sm:px-6) so left/right edges line up. */
+const TH_CLASS_FIT = 'px-4 py-2.5 text-left text-[11px] font-medium leading-4 text-[#6a7282] sm:px-6'
+const TD_CLASS_FIT = 'px-4 py-2.5 text-left text-[13px] leading-4 text-[#0a0a0a] sm:px-6'
 
 function propertyHealthSubtitle(propertyCount: number): string {
   if (propertyCount <= 0) {
@@ -160,6 +165,7 @@ function propertyHealthSubtitle(propertyCount: number): string {
 
 export function PropertyHealthBuildingGrid({
   className = '',
+  fitContainer = false,
   loading,
   buildings,
   totalUnits,
@@ -182,12 +188,15 @@ export function PropertyHealthBuildingGrid({
   const propertyCount = buildingCount ?? buildings.length
   const columnCount =
     6 + (selection ? 1 : 0) + (showMonthlySpend ? 1 : 0)
+  const th = fitContainer ? TH_CLASS_FIT : TH_CLASS
+  const td = fitContainer ? TD_CLASS_FIT : TD_CLASS
+  const numericAlign = fitContainer ? 'text-left' : 'text-right'
 
   return (
     <section
       className={`flex min-w-0 flex-col rounded-[10px] border border-[#e5e7eb] bg-white shadow-[0px_1px_2px_-1px_rgba(0,0,0,0.06)] ${className}`.trim()}
     >
-      <div className="flex flex-wrap items-start justify-between gap-3 border-b border-[#e5e7eb] px-4 py-4 sm:px-6">
+      <div className="relative z-10 flex shrink-0 flex-wrap items-start justify-between gap-3 border-b border-[#e5e7eb] px-4 py-4 sm:px-6">
         <div className="min-w-0">
           <h2 className="text-[16px] font-semibold leading-6 text-[#0a0a0a]">
             My Properties
@@ -205,7 +214,7 @@ export function PropertyHealthBuildingGrid({
             )}
           </p>
         </div>
-        <div className="flex min-w-0 flex-wrap items-center justify-end gap-2">
+        <div className="relative z-10 flex min-w-0 flex-wrap items-center justify-end gap-2">
           {selection ? (
             <>
               {!selection.allSelected ? (
@@ -243,8 +252,20 @@ export function PropertyHealthBuildingGrid({
           {headerAction}
         </div>
       </div>
-      <div className="overflow-x-auto overscroll-x-contain">
-        <table className="min-w-full border-collapse text-left">
+      <div
+        className={
+          fitContainer
+            ? 'min-w-0 flex-1 overflow-hidden'
+            : 'overflow-x-auto overscroll-x-contain'
+        }
+      >
+        <table
+          className={
+            fitContainer
+              ? 'w-full table-fixed border-collapse text-left'
+              : 'min-w-full border-collapse text-left'
+          }
+        >
           <thead>
             <tr className="border-b border-[#e5e7eb]">
               {selection ? (
@@ -258,14 +279,20 @@ export function PropertyHealthBuildingGrid({
                   />
                 </th>
               ) : null}
-              <th className={TH_CLASS}>Property</th>
-              <th className={`${TH_CLASS} text-right tabular-nums`}>Units</th>
-              <th className={TH_CLASS}>Health</th>
-              <th className={TH_CLASS}>Score</th>
-              <th className={`${TH_CLASS} text-right tabular-nums`}>Work orders</th>
-              <th className={`${TH_CLASS} text-right tabular-nums`}>Occupancy</th>
+              <th className={`${th} ${fitContainer ? 'w-[28%]' : ''}`}>Property</th>
+              <th className={`${th} ${numericAlign} tabular-nums ${fitContainer ? 'w-[10%]' : ''}`}>
+                Units
+              </th>
+              <th className={`${th} ${fitContainer ? 'w-[18%]' : ''}`}>Health</th>
+              <th className={`${th} ${fitContainer ? 'w-[16%]' : ''}`}>Score</th>
+              <th className={`${th} ${numericAlign} tabular-nums ${fitContainer ? 'w-[14%]' : ''}`}>
+                {fitContainer ? 'WOs' : 'Work orders'}
+              </th>
+              <th className={`${th} ${numericAlign} tabular-nums ${fitContainer ? 'w-[14%]' : ''}`}>
+                {fitContainer ? 'Occ.' : 'Occupancy'}
+              </th>
               {showMonthlySpend ? (
-                <th className={`${TH_CLASS} text-right tabular-nums`}>Monthly cost</th>
+                <th className={`${th} ${numericAlign} tabular-nums`}>Monthly cost</th>
               ) : null}
             </tr>
           </thead>
@@ -366,27 +393,31 @@ export function PropertyHealthBuildingGrid({
                         />
                       </td>
                     ) : null}
-                    <td className={TD_CLASS}>
+                    <td className={td}>
                       <div className="flex min-w-0 items-center gap-2.5">
-                        <span className="flex size-8 shrink-0 items-center justify-center rounded-[8px] border border-[#e5e7eb] text-[#364153]">
-                          <BuildingIcon />
-                        </span>
+                        {!fitContainer ? (
+                          <span className="flex size-8 shrink-0 items-center justify-center rounded-[8px] border border-[#e5e7eb] text-[#364153]">
+                            <BuildingIcon />
+                          </span>
+                        ) : null}
                         <span className="truncate font-medium">{b.building}</span>
                       </div>
                     </td>
-                    <td className={`${TD_CLASS} text-right tabular-nums text-[#364153]`}>
+                    <td className={`${td} ${numericAlign} tabular-nums text-[#364153]`}>
                       {b.unitCount}
                     </td>
-                    <td className={TD_CLASS}>
+                    <td className={td}>
                       <span
-                        className={`inline-flex rounded-[4px] px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-[0.06em] ${HEALTH_BADGE_STYLES[b.status]}`}
+                        className={`inline-flex max-w-full truncate rounded-[4px] px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-[0.06em] ${HEALTH_BADGE_STYLES[b.status]}`}
                         title={healthTitle}
                       >
-                        {HEALTH_BADGE_LABELS[b.status]}
+                        {fitContainer
+                          ? HEALTH_BADGE_LABELS[b.status].replace('NEEDS ATTENTION', 'NEEDS ATTN')
+                          : HEALTH_BADGE_LABELS[b.status]}
                       </span>
                     </td>
-                    <td className={TD_CLASS} title={healthTitle}>
-                      <div className="min-w-[7rem]">
+                    <td className={td} title={healthTitle}>
+                      <div className={fitContainer ? 'min-w-0' : 'min-w-[7rem]'}>
                         <p className="tabular-nums">
                           {showScore ? (
                             <>
@@ -407,24 +438,32 @@ export function PropertyHealthBuildingGrid({
                         </div>
                       </div>
                     </td>
-                    <td className={`${TD_CLASS} text-right tabular-nums`}>
-                      <span className="inline-flex items-center justify-end gap-1.5 text-[#364153]">
-                        <WorkOrderIcon />
+                    <td className={`${td} ${numericAlign} tabular-nums`}>
+                      <span
+                        className={`inline-flex items-center gap-1.5 text-[#364153] ${
+                          fitContainer ? 'justify-start' : 'justify-end'
+                        }`}
+                      >
+                        {!fitContainer ? <WorkOrderIcon /> : null}
                         <span className="font-medium text-[#0a0a0a]">{b.openTickets}</span>
                       </span>
                     </td>
-                    <td className={`${TD_CLASS} text-right tabular-nums`}>
-                      <span className="inline-flex items-center justify-end gap-1.5 text-[#364153]">
-                        <UsersIcon />
+                    <td className={`${td} ${numericAlign} tabular-nums`}>
+                      <span
+                        className={`inline-flex items-center gap-1.5 text-[#364153] ${
+                          fitContainer ? 'justify-start' : 'justify-end'
+                        }`}
+                      >
+                        {!fitContainer ? <UsersIcon /> : null}
                         <span className="font-medium text-[#0a0a0a]">{b.occupancyPct}%</span>
                       </span>
                     </td>
                     {showMonthlySpend && formatSpend && monthlySpendByBuilding ? (
-                      <td className={`${TD_CLASS} text-right font-medium tabular-nums`}>
+                      <td className={`${td} ${numericAlign} font-medium tabular-nums`}>
                         {formatSpend(monthlySpendByBuilding.get(b.building) ?? 0)}
                       </td>
                     ) : showMonthlySpend ? (
-                      <td className={`${TD_CLASS} text-right text-[#6a7282]`}>—</td>
+                      <td className={`${td} ${numericAlign} text-[#6a7282]`}>—</td>
                     ) : null}
                   </tr>
                 )

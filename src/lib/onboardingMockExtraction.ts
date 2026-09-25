@@ -46,6 +46,8 @@ export type ExtractedResident = {
   rentDueDay?: string
   occupancyStatus?: string
   maintenanceResponsibilitiesClause?: string
+  /** When true, send tenant welcome SMS on Complete setup. */
+  sendOnboardingOnComplete?: boolean
 }
 
 export type ExtractedVendor = {
@@ -75,6 +77,8 @@ export type ExtractedFinancialLine = {
   description: string
   amount: string
   period: string
+  building: string
+  unit: string
   selected: boolean
   sourceDocumentName?: string
 }

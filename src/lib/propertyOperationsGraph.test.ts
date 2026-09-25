@@ -106,6 +106,15 @@ describe('isLandlordFacingFeedEvent', () => {
         }),
       ),
     ).toBe(true)
+    expect(
+      isLandlordFacingFeedEvent(
+        feedEvent({
+          id: '12',
+          eventType: 'rent.collection_cron_triggered',
+          label: 'rent collection cron triggered',
+        }),
+      ),
+    ).toBe(false)
   })
 
   it('keeps collapsed tenant onboarding cards even when the latest type was a receipt', () => {
@@ -284,5 +293,40 @@ describe('selectLandlordFacingFeedEvents', () => {
 
     expect(selected).toHaveLength(1)
     expect(selected[0]?.label).toBe('Saad texted a repair for the kitchen sink.')
+  })
+
+  it('limits the feed to the current onboarding session while setup is in progress', () => {
+    const selected = selectLandlordFacingFeedEvents(
+      [
+        feedEvent({
+          id: 'old',
+          eventType: 'residents.imported',
+          label: 'Imported residents',
+          createdAt: '2026-09-20T16:24:00.000Z',
+        }),
+        feedEvent({
+          id: 'cron',
+          eventType: 'rent.collection_cron_triggered',
+          label: 'rent collection cron triggered',
+          createdAt: '2026-09-25T21:01:00.000Z',
+        }),
+        feedEvent({
+          id: 'new',
+          eventType: 'residents.imported',
+          label: 'Imported residents',
+          createdAt: '2026-09-25T21:05:00.000Z',
+          onboardingSessionId: 'sess-1',
+        }),
+      ],
+      8,
+      {
+        onboardingSession: {
+          onboardingSessionId: 'sess-1',
+          onboardingSessionStartedAt: '2026-09-25T21:00:00.000Z',
+        },
+      },
+    )
+
+    expect(selected.map((event) => event.id)).toEqual(['new'])
   })
 })

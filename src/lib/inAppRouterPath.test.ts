@@ -61,13 +61,22 @@ describe('inAppRouterPath', () => {
     ).toBeNull()
   })
 
-  it('intercepts relative admin hrefs on localhost', () => {
+  it('does not steal same-origin relative admin hrefs on localhost', () => {
     expect(
       localhostInAppClickPath(
         '/admin/properties/d38a52c1-3666-539f-83f8-aa7ef6c7c85b',
         'http://localhost:5175',
       ),
-    ).toBe('/admin/properties/d38a52c1-3666-539f-83f8-aa7ef6c7c85b')
+    ).toBeNull()
+  })
+
+  it('still rewrites production admin hrefs clicked on localhost', () => {
+    expect(
+      localhostInAppClickPath(
+        'https://www.ulohome.io/admin/properties/abc',
+        'http://localhost:5175',
+      ),
+    ).toBe('/admin/properties/abc')
   })
 
   it('rewrites production history URLs on localhost', () => {

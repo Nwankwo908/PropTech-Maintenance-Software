@@ -70,6 +70,7 @@ export type WorkflowPipelineAttachment = {
 }
 
 export type WorkflowPipelineResident = {
+  id: string | null
   name: string
   initials: string
   statusLine: string
@@ -1036,6 +1037,7 @@ function buildWorkOrderUloThreadInput(
     maintenanceRequestId: enrichment.maintenanceRequestId,
     conversationId: enrichment.conversationId,
     workflowRunId: row.id,
+    residentId: row.residentId,
     residentName,
     unitLabel: row.unitLabel || asString(ticket?.unit) || '',
     propertyLabel: row.propertyLabel || 'Property',
@@ -1063,6 +1065,7 @@ function buildMoveInUloThreadInput(
     kind: 'move_in',
     conversationId: enrichment.conversationId,
     workflowRunId: row.id,
+    residentId: row.residentId,
     residentName,
     unitLabel: row.unitLabel || '',
     propertyLabel: row.propertyLabel || 'Property',
@@ -1114,6 +1117,7 @@ function buildInspectionUloThreadInput(
     kind: 'inspection',
     conversationId: enrichment.conversationId,
     workflowRunId: row.id,
+    residentId: row.residentId,
     residentName,
     unitLabel: row.unitLabel || '',
     propertyLabel: row.propertyLabel || 'Property',
@@ -1141,6 +1145,7 @@ function buildMoveOutUloThreadInput(
     kind: 'move_out',
     conversationId: enrichment.conversationId,
     workflowRunId: row.id,
+    residentId: row.residentId,
     residentName,
     unitLabel: row.unitLabel || '',
     propertyLabel: row.propertyLabel || 'Property',
@@ -1347,6 +1352,7 @@ export async function fetchWorkflowPipelineDetail(
     asString(enrichment.resident?.full_name) || asString(ticket?.resident_name) || row.residentName || ''
   const residentBlock: WorkflowPipelineResident | null = residentName
     ? {
+        id: row.residentId,
         name: residentName,
         initials: initials(residentName),
         statusLine: [

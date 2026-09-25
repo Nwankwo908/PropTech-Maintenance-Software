@@ -34,6 +34,14 @@ export const HIDDEN_ACTIVATION_ALERT_TIMELINE_EVENT_TYPES = new Set([
   'tenant.activation_admin_alert_failed',
 ])
 
+/**
+ * Automation heartbeats that are not property-team outcomes (e.g. hourly cron
+ * fired with nothing to do).
+ */
+export const HIDDEN_OPS_HEARTBEAT_TIMELINE_EVENT_TYPES = new Set([
+  'rent.collection_cron_triggered',
+])
+
 const HIDDEN_PIPELINE_TIMELINE_LABELS = new Set([
   'logged',
   'action taken',
@@ -56,6 +64,12 @@ export function isHiddenActivationAlertTimelineEventType(
   eventType: string | null | undefined,
 ): boolean {
   return HIDDEN_ACTIVATION_ALERT_TIMELINE_EVENT_TYPES.has((eventType ?? '').trim().toLowerCase())
+}
+
+export function isHiddenOpsHeartbeatTimelineEventType(
+  eventType: string | null | undefined,
+): boolean {
+  return HIDDEN_OPS_HEARTBEAT_TIMELINE_EVENT_TYPES.has((eventType ?? '').trim().toLowerCase())
 }
 
 /** Hide engine-stage labels when a timeline row only has the plumbing copy. */

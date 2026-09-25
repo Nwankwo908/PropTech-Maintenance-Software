@@ -33,7 +33,12 @@ import { importOnboardingResidentsFromExtraction } from './persist/importResiden
 import { persistOnboardingProperties, collectExtractedUnitLabels } from './persist/properties'
 import { fetchOnboardingResidents } from './persist/residents'
 import { fetchOnboardingVendors } from './persist/vendors'
-import type { OnboardingProperty } from './types'
+import {
+  isMaintenanceExpenseFinancialRecord,
+  parseFinancialAmount,
+  parseFinancialPeriodToIso,
+  resolveListedPropertyForExpense,
+} from './maintenanceExpenseFromFinancial'
 
 type ImportUnitRow = {
   id: string
@@ -401,11 +406,18 @@ function importIssuesIntoMaintenanceHistory(
 
 async function importExtractedFinancialRecords(
   records: ExtractedFinancialLine[],
-  landlordId: string,
-): Promise<number> {
-  if (records.length === 0) return 0
+  params: {
+    landlordId: string
+    properties: { name: string }[]
+    units: ImportUnitRow[]
+    residents: ImportResidentRow[]
+    vendors: ImportVendorRow[]
+  },
+): Promise<{ financialRecords: number; historyTickets: number }> {
+  if (records.length === 0) return { financialRecords: 0, historyTickets: 0 }
+
   await recordActivityLog({
-    landlordId,
+    landlordId: params.landlordId,
     eventType: 'financial.imported',
     source: 'onboarding',
     actorType: 'landlord',
@@ -418,7 +430,145 @@ async function importExtractedFinancialRecords(
       source: 'onboarding_import',
     },
   })
-  return records.length
+
+  if (!supabase) return { financialRecords: records.length, historyTickets: 0 }
+
+  let historyTickets = 0
+  const now = Date.now()
+
+  for (let index = 0; index < records.length; index++) {
+    const record = records[index]!
+    if (!isMaintenanceExpenseFinancialRecord(record)) continue
+
+    const listedBuilding = resolveListedPropertyForExpense(record.building, params.properties)
+    if (!listedBuilding) continue
+
+    const amount = parseFinancialAmount(record.amount)
+    if (amount <= 0) continue
+
+    const resolvedUnit = resolveImportUnitLabel(record.unit, params.units)
+    const unitFromBuilding =
+      params.units.find(
+        (unit) =>
+          normalizeBuildingKey(unit.building ?? '') === normalizeBuildingKey(listedBuilding) &&
+          (!resolvedUnit ||
+            unit.unitLabel.trim().toLowerCase() === resolvedUnit.trim().toLowerCase()),
+      ) ??
+      params.units.find(
+        (unit) =>
+          normalizeBuildingKey(unit.building ?? '') === normalizeBuildingKey(listedBuilding),
+      )
+    const unitLabel =
+      (resolvedUnit && unitFromBuilding?.unitLabel) ||
+      unitFromBuilding?.unitLabel ||
+      resolvedUnit ||
+      '—'
+    const unit = findImportUnit(
+      params.units,
+      record.unit || unitLabel,
+      listedBuilding,
+      unitLabel,
+    )
+    const resident = findImportResident(params.residents, unitLabel, listedBuilding)
+    const matchedVendor = matchImportVendorForCategory(
+      record.description || record.recordType,
+      params.vendors,
+    )
+    const activityAt =
+      parseFinancialPeriodToIso(record.period) ||
+      new Date(now - index * 24 * 60 * 60 * 1000).toISOString()
+    const description =
+      record.description.trim() ||
+      record.recordType.trim() ||
+      'Imported maintenance expense'
+
+    const { data: ticketRow, error: ticketError } = await supabase
+      .from('maintenance_requests')
+      .insert({
+        landlord_id: params.landlordId,
+        created_at: activityAt,
+        completed_at: activityAt,
+        priority: 'normal',
+        urgency: 'normal',
+        severity: 'normal',
+        resident_name: resident?.fullName ?? 'Property Manager',
+        email: resident?.email?.trim() || '',
+        unit: unitLabel,
+        description,
+        assigned_vendor_id: matchedVendor?.id ?? null,
+        assigned_at: matchedVendor ? activityAt : null,
+        // `completed` requires an assignee; History still includes rows with completed_at.
+        vendor_work_status: matchedVendor ? 'completed' : 'unassigned',
+        issue_category: issueCategoryToVendorTrade(
+          record.description.trim() || record.recordType.trim() || 'general',
+        ),
+        estimated_minutes: 120,
+        spend_status: 'recognized',
+        recognized_spend_at: activityAt,
+        recognized_spend_amount: amount,
+      })
+      .select('id')
+      .single()
+
+    if (ticketError || !ticketRow?.id) {
+      console.warn('[landlordOnboarding] financial expense ticket import', ticketError?.message)
+      continue
+    }
+
+    const ticketId = String(ticketRow.id)
+    const invoiceNumber = `ONB-${ticketId.replace(/-/g, '').slice(0, 8).toUpperCase()}`
+
+    const { data: invoiceRow, error: invoiceError } = await supabase
+      .from('maintenance_invoices')
+      .insert({
+        landlord_id: params.landlordId,
+        maintenance_request_id: ticketId,
+        vendor_id: matchedVendor?.id ?? null,
+        invoice_number: invoiceNumber,
+        labor_cost: amount,
+        material_cost: 0,
+        tax_amount: 0,
+        status: 'approved',
+        submitted_at: activityAt,
+        approved_at: activityAt,
+        vendor_notes: record.sourceDocumentName?.trim() || 'Imported from onboarding documents',
+        metadata: {
+          source: 'onboarding_import',
+          building: listedBuilding,
+          unit: unitLabel,
+          record_type: record.recordType,
+          period: record.period,
+          financial_record_id: record.id,
+        },
+      })
+      .select('id')
+      .single()
+
+    if (invoiceError || !invoiceRow?.id) {
+      console.warn('[landlordOnboarding] financial expense invoice import', invoiceError?.message)
+      // Ticket alone still surfaces in History once completed; amount stays 0 without invoice.
+    }
+
+    historyTickets += 1
+    await recordActivityLog({
+      landlordId: params.landlordId,
+      eventType: 'maintenance.expense_imported',
+      source: 'onboarding',
+      actorType: 'landlord',
+      maintenanceRequestId: ticketId,
+      unitId: unit?.id ?? null,
+      vendorId: matchedVendor?.id ?? null,
+      metadata: {
+        message: `Imported maintenance expense: ${description} · $${amount.toFixed(2)}`,
+        source: 'onboarding_import',
+        building: listedBuilding,
+        amount,
+        invoice_id: invoiceRow?.id ? String(invoiceRow.id) : null,
+      },
+    })
+  }
+
+  return { financialRecords: records.length, historyTickets }
 }
 
 export async function importMockExtraction(
@@ -583,7 +733,18 @@ export async function importMockExtraction(
   }
 
   const financialRecords = (review.financialRecords ?? []).filter((row) => row.selected)
-  imported.financialRecords = await importExtractedFinancialRecords(financialRecords, landlordId)
+  const financialImport = await importExtractedFinancialRecords(financialRecords, {
+    landlordId,
+    properties: persistedProperties.map((property) => ({ name: property.name })),
+    units: importUnits,
+    residents: importResidents,
+    vendors: importVendors.map((vendor) => ({
+      id: vendor.id,
+      category: vendor.category,
+    })),
+  })
+  imported.financialRecords = financialImport.financialRecords
+  imported.tickets += financialImport.historyTickets
 
   saveImportedOpsRecords(
     {
@@ -601,6 +762,8 @@ export async function importMockExtraction(
         description: row.description,
         amount: row.amount,
         period: row.period,
+        building: row.building ?? '',
+        unit: row.unit ?? '',
         sourceDocumentName: row.sourceDocumentName ?? '',
       })),
     },

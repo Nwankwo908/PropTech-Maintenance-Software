@@ -110,14 +110,39 @@ export {
   fetchOnboardingReviewData,
 } from './review'
 
-export type { OnboardingDashboardSync } from './reset'
+export type { OnboardingDashboardSync, FactoryResetResult, FactoryResetActivityFeed, OpsPurgePath } from './reset'
 export {
   purgeOnboardingImportedOperations,
   ensureOnboardingDashboardMatchesPortfolio,
   resetOnboardingPortfolio,
   restartNewLandlordOnboarding,
+  factoryResetLandlordOnboarding,
   clearOnboardingPortfolioSession,
 } from './reset'
+
+export {
+  formatFactoryResetFailureAlert,
+  reportFactoryResetFailureToUser,
+  reportFactoryResetSuccessToConsole,
+  factoryResetSuccessLogPayload,
+  isFactoryResetActivityFeedEmpty,
+} from './factoryResetOutcome'
+
+export {
+  expectedFactoryResetAccountShape,
+  assertFactoryResetAccountShape,
+  factoryResetLandlordSeed,
+} from './factoryResetAccountShape'
+
+export {
+  mintOnboardingSession,
+  onboardingSessionFromState,
+  onboardingSessionUserColumns,
+  onboardingSessionActivityMetadata,
+  isEventInOnboardingSession,
+} from './session'
+export type { OnboardingSessionStamp } from './session'
+export { archiveOrClearPriorOnboardingResidents } from './sessionResidents'
 
 export { importMockExtraction } from './importPortfolio'
 

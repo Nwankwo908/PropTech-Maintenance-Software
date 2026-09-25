@@ -42,6 +42,17 @@ describe('inferDocumentCategory', () => {
     expect(inferDocumentCategory('April P&L.pdf')).toBe('property_statement')
     expect(inferDocumentCategory('expense report.csv')).toBe('expense_report')
   })
+
+  it('does not treat bare property photos as inspection reports', () => {
+    expect(inferDocumentCategory('IMG_2048.jpg')).toBe('unknown')
+    expect(inferDocumentCategory('living-room.png')).toBe('unknown')
+    expect(inferDocumentCategory('unit-photo.heic')).toBe('unknown')
+  })
+
+  it('still treats inspection-named photos as inspection reports', () => {
+    expect(inferDocumentCategory('unit-4b-inspection.jpg')).toBe('inspection_report')
+    expect(inferDocumentCategory('walkthrough-notes.png')).toBe('inspection_report')
+  })
 })
 
 describe('Fast Track vendor extraction review', () => {
@@ -158,7 +169,7 @@ describe('Fast Track maintenance and financial extraction review', () => {
     }
   }
 
-  it('shows low-confidence maintenance issues selected on AI review', () => {
+  it('leaves low-confidence maintenance issues unselected on AI review', () => {
     const review = buildOnboardingExtractionReview([
       reviewDoc('maintenance history.xlsx', 'inspection_report', {
         maintenanceIssues: [
@@ -174,10 +185,39 @@ describe('Fast Track maintenance and financial extraction review', () => {
       }),
     ])
     expect(review.maintenanceIssues).toHaveLength(1)
-    expect(review.maintenanceIssues[0]?.selected).toBe(true)
+    expect(review.maintenanceIssues[0]?.selected).toBe(false)
+    expect(review.maintenanceIssues[0]?.needsReview).toBe(true)
     expect(review.needsReview.some((row) => row.dataType === 'unknown_document_type')).toBe(
       false,
     )
+  })
+
+  it('auto-selects confident real repairs and drops amenity photo labels', () => {
+    const review = buildOnboardingExtractionReview([
+      reviewDoc('maintenance history.xlsx', 'inspection_report', {
+        maintenanceIssues: [
+          {
+            unit: '4B',
+            building: 'Maple',
+            category: 'Plumbing',
+            description: 'Kitchen sink leaking',
+            priority: 'normal',
+            confidence: 90,
+          },
+          {
+            unit: '',
+            building: '',
+            category: 'general',
+            description: 'empty room',
+            priority: 'low',
+            confidence: 95,
+          },
+        ],
+      }),
+    ])
+    expect(review.maintenanceIssues).toHaveLength(1)
+    expect(review.maintenanceIssues[0]?.description).toBe('Kitchen sink leaking')
+    expect(review.maintenanceIssues[0]?.selected).toBe(true)
   })
 
   it('shows low-confidence financial records selected on AI review', () => {
@@ -189,6 +229,8 @@ describe('Fast Track maintenance and financial extraction review', () => {
             description: 'Roof repair',
             amount: '4200',
             period: '2024-08',
+            building: 'Maple Heights',
+            unit: '102',
             confidence: 45,
           },
         ],

@@ -10,9 +10,15 @@ import {
 } from '@shared/landlordCapabilities'
 import {
   isHiddenActivationAlertTimelineEventType,
+  isHiddenOpsHeartbeatTimelineEventType,
   isHiddenPipelineTimelineEventType,
   isHiddenSmsTransportTimelineEventType,
 } from '@/lib/landlordFacingTimeline'
+import { readLocalOnboardingState } from '@/lib/onboarding/draftStorage'
+import {
+  isEventInOnboardingSession,
+  onboardingSessionFromState,
+} from '@/lib/onboarding/session'
 import { supabase } from '@/lib/supabase'
 
 export type PropertyOperationsTimelineCategory =
@@ -41,6 +47,8 @@ export type PropertyOperationsTimelineEvent = {
   vendorName: string | null
   maintenanceRequestId: string | null
   workflowRunId: string | null
+  /** Setup-run stamp from metadata when present (isolates Overview during onboarding). */
+  onboardingSessionId?: string | null
 }
 
 export type PropertyOperationsTimelineScope =
@@ -241,6 +249,7 @@ function mapEnrichedGraphRow(row: EnrichedGraphRow): PropertyOperationsTimelineE
         ? payload.maintenance_request_id
         : null,
     workflowRunId: row.workflow_run_id,
+    onboardingSessionId: readMetadataString(payload, 'onboarding_session_id'),
   }
 }
 
@@ -266,6 +275,7 @@ function mapLegacyBridgeRow(row: LegacyGraphRow): PropertyOperationsTimelineEven
         ? payload.maintenance_request_id
         : null,
     workflowRunId: row.workflow_run_id,
+    onboardingSessionId: readMetadataString(payload, 'onboarding_session_id'),
   }
 }
 
@@ -428,6 +438,7 @@ export function isLandlordFacingFeedEvent(event: PropertyOperationsTimelineEvent
   if (isHiddenPipelineTimelineEventType(event.eventType)) return false
   if (isHiddenSmsTransportTimelineEventType(event.eventType)) return false
   if (isHiddenActivationAlertTimelineEventType(event.eventType)) return false
+  if (isHiddenOpsHeartbeatTimelineEventType(event.eventType)) return false
   if (!landlordHasPayments(getActiveLandlordId()) && isPaymentGraphEventType(event.eventType)) {
     return false
   }
@@ -459,8 +470,25 @@ function landlordFacingEventLabel(event: PropertyOperationsTimelineEvent): strin
 export function selectLandlordFacingFeedEvents(
   events: PropertyOperationsTimelineEvent[],
   limit: number,
+  options?: {
+    /** When set (in-progress setup), drop leftovers from prior runs. */
+    onboardingSession?: ReturnType<typeof onboardingSessionFromState>
+  },
 ): PropertyOperationsTimelineEvent[] {
-  return consolidateFeedEvents(events)
+  const session = options?.onboardingSession ?? null
+  const scoped = session
+    ? events.filter((event) =>
+        isEventInOnboardingSession(
+          {
+            createdAt: event.createdAt,
+            metadataSessionId: event.onboardingSessionId,
+          },
+          session,
+        ),
+      )
+    : events
+
+  return consolidateFeedEvents(scoped)
     .filter(isLandlordFacingFeedEvent)
     .map((event) => ({
       ...event,
@@ -535,6 +563,7 @@ function mapOperationsGraphRow(row: OperationsGraphRow): PropertyOperationsTimel
     vendorName: null,
     maintenanceRequestId: row.maintenance_request_id,
     workflowRunId: row.workflow_run_id,
+    onboardingSessionId: readMetadataString(metadata, 'onboarding_session_id'),
   }
 }
 
@@ -721,9 +750,16 @@ export async function fetchRecentPropertyOperationsEvents(
     upsertTimelineEvent(merged, mapOperationsGraphRow(row))
   }
 
+  const localState = landlordId ? readLocalOnboardingState(landlordId) : null
+  const session =
+    localState?.onboardingStatus === 'in_progress'
+      ? onboardingSessionFromState(localState)
+      : null
+
   return selectLandlordFacingFeedEvents(
     [...merged.values()].sort((a, b) => b.createdAt.localeCompare(a.createdAt)),
     limit,
+    { onboardingSession: session },
   )
 }
 

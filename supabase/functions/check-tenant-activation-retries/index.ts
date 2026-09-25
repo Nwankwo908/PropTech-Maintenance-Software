@@ -1,10 +1,12 @@
 /**
- * Scheduled POST: automatic tenant welcome-SMS retries (T+24h / T+72h).
+ * Scheduled POST: automatic tenant welcome-SMS retries (T+24h / T+72h) and
+ * YES/NO silence nudges every 48h while waiting.
  *
+ * Prefer the combined hourly cron `run-ops-sms-crons`. Direct invoke:
  *   curl -X POST ".../functions/v1/check-tenant-activation-retries" \
  *     -H "Authorization: Bearer $CHECK_TENANT_ACTIVATION_SECRET" \
  *     -H "Content-Type: application/json" \
- *     -d '{"landlord_id":"YOUR_LANDLORD_UUID"}'
+ *     -d '{}'
  */
 import { serve } from "https://deno.land/std/http/server.ts"
 import { authorizedCronBearer } from "../_shared/admin_edge_auth.ts"
@@ -32,7 +34,11 @@ serve(async (req) => {
   if (req.method !== "POST") {
     return jsonResponse({ error: "Method not allowed" }, 405)
   }
-  if (!authorizedCronBearer(req, ["CHECK_TENANT_ACTIVATION_SECRET","ADMIN_REASSIGN_SECRET"])) {
+  if (!authorizedCronBearer(req, [
+    "ULO_OPS_CRON_SECRET",
+    "CHECK_TENANT_ACTIVATION_SECRET",
+    "ADMIN_REASSIGN_SECRET",
+  ])) {
     return jsonResponse({ error: "Unauthorized" }, 401)
   }
 
@@ -50,8 +56,8 @@ serve(async (req) => {
   }
 
   const landlordId = typeof body.landlord_id === "string"
-    ? body.landlord_id.trim()
-    : Deno.env.get("DEFAULT_LANDLORD_ID")?.trim() ?? null
+    ? body.landlord_id.trim() || null
+    : null
 
   const supabase = createClient(supabaseUrl, serviceKey, {
     auth: { persistSession: false, autoRefreshToken: false },

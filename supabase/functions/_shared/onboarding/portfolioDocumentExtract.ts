@@ -43,6 +43,7 @@ import {
   placePropertyAddressFields,
   looksLikeCompanyParty,
 } from "../../../../shared/onboarding/typedDocumentExtract/placeFields.ts"
+import { looksLikePropertyFeatureNotRepair } from "../../../../shared/onboarding/maintenanceIssueGuard.ts"
 import {
   typedExtractIntro,
   typedExtractSystemPrompt,
@@ -117,6 +118,10 @@ export type PortfolioExtractFinancialRecord = {
   description: string
   amount: string
   period: string
+  /** Property / building when shown on the line or document header. */
+  building: string
+  /** Unit when shown on the line. */
+  unit: string
   confidence: number
 }
 
@@ -284,6 +289,8 @@ export const PORTFOLIO_EXTRACT_JSON_SCHEMA = {
       description: "string",
       amount: "string",
       period: "string",
+      building: "string",
+      unit: "string",
       confidence: "number",
     },
   ],
@@ -295,8 +302,10 @@ const SYSTEM_PROMPT = `You extract structured property-management portfolio data
 
 Rules:
 - If the document is a vendor roster, preferred vendor list, contractor list, W-9, certificate of insurance, or vendor invoice, populate vendors[] with each company: name, trade/category, phone, and email. Do not put those companies in residents[] or properties[].
-- If the document is an inspection report, walkthrough, or maintenance history, populate maintenanceIssues[] with each finding: description, unit, building, trade/category, and priority. Do not put those findings in residents[] or properties[].
-- If the document is a P&L, operating statement, expense report, tax bill, or similar financial file, populate financialRecords[] with each line: recordType, description, amount, and period. Do not invent tenants from those rows.
+- If the document is an inspection report, walkthrough, or maintenance history, populate maintenanceIssues[] with each real defect, damage, or needed repair: description, unit, building, trade/category, and priority. Do not put those findings in residents[] or properties[].
+- Never put listing amenities, room names, finishes, or appliances into maintenanceIssues[] just because they appear in a photo or marketing packet (e.g. "window", "carpet", "kitchen", "empty room", "stainless steel appliances"). Those belong in imageLabels[] only.
+- Property / listing / unit photos that are not inspection reports: leave maintenanceIssues[] empty unless the image clearly shows damage, a defect, or handwritten/printed repair notes.
+- If the document is a P&L, operating statement, expense report, tax bill, or similar financial file, populate financialRecords[] with each line: recordType, description, amount, period, and building/unit when the line or document header shows a property or unit. Do not invent tenants from those rows.
 - Extract ONLY information explicitly visible in the document. Never invent names, addresses, units, rents, or vendors.
 - If nothing portfolio-related is present, return empty arrays and explain in warnings.
 - Prefer exact text from the document over inference.
@@ -702,6 +711,8 @@ export function normalizePortfolioDocumentExtract(raw: unknown): PortfolioDocume
         row.description ?? row.issue ?? row.finding ?? row.notes ?? row.problem ?? row.workPerformed,
       )
       if (!description) return null
+      // Drop amenity / listing-photo labels that are not real repairs.
+      if (looksLikePropertyFeatureNotRepair(description)) return null
       return {
         unit: resolveExtractedUnit(row),
         building: resolveExtractedBuilding(row),
@@ -723,6 +734,8 @@ export function normalizePortfolioDocumentExtract(raw: unknown): PortfolioDocume
         description: description || amount,
         amount,
         period: cleanExtractedText(row.period ?? row.date ?? row.month),
+        building: resolveExtractedBuilding(row),
+        unit: resolveExtractedUnit(row),
         confidence: clampConfidence(row.confidence),
       }
     }),
@@ -1380,7 +1393,7 @@ function vendorDocumentHint(fileName: string, documentCategory: string): string 
     documentCategory === "w9_form" ||
     /\b(vendor|contractor|preferred.?vendor|w-?9)\b/i.test(fileName)
   ) {
-    return "This file is vendor information (roster, preferred vendor list, W-9, insurance certificate, or vendor invoice). Populate vendors[] with every company listed: name, trade/category, phone, and email. If this is an invoice, also add billed line items to financialRecords[] (description, amount, period). Do not treat vendor companies as residents, tenants, or properties."
+    return "This file is vendor information (roster, preferred vendor list, W-9, insurance certificate, or vendor invoice). Populate vendors[] with every company listed: name, trade/category, phone, and email. If this is an invoice, also add billed line items to financialRecords[] (description, amount, period, building, unit when shown on the invoice or job address). Do not treat vendor companies as residents, tenants, or properties."
   }
   return ""
 }
@@ -1390,9 +1403,27 @@ function maintenanceDocumentHint(fileName: string, documentCategory: string): st
     documentCategory === "inspection_report" ||
     /inspection|walkthrough|maintenance.?history|repair.?history|service.?history/i.test(fileName)
   ) {
-    return "This file is an inspection report or maintenance history. Populate maintenanceIssues[] with every finding or past job: description, unit, building, trade/category, and priority. Do not treat those rows as residents or properties."
+    return "This file is an inspection report or maintenance history. Populate maintenanceIssues[] only with real defects, damage, or needed repairs (description, unit, building, trade/category, priority). Do not invent issues from room labels, finishes, or appliances. Do not treat those rows as residents or properties."
   }
   return ""
+}
+
+function propertyPhotoDocumentHint(
+  fileName: string,
+  documentCategory: string,
+  contentType: string,
+): string {
+  const isImage =
+    contentType.toLowerCase().startsWith("image/") ||
+    /\.(jpg|jpeg|png|heic|webp|tif|tiff)$/i.test(fileName)
+  if (!isImage) return ""
+  if (
+    documentCategory === "inspection_report" ||
+    /inspection|walkthrough|punch\s*list|repair|damage|defect/i.test(fileName)
+  ) {
+    return ""
+  }
+  return "This appears to be a property or listing photo — not an inspection report. Leave maintenanceIssues[] empty. Put short visible labels (room, finish, appliance) in imageLabels[] only. Create a maintenanceIssue only if the photo clearly shows damage, a defect, or handwritten/printed repair notes."
 }
 
 function financialDocumentHint(fileName: string, documentCategory: string): string {
@@ -1402,7 +1433,7 @@ function financialDocumentHint(fileName: string, documentCategory: string): stri
     documentCategory === "property_tax" ||
     /financial|p&l|profit|expense|receipt|statement|t-?12/i.test(fileName)
   ) {
-    return "This file is a financial statement, expense report, or tax record. Populate financialRecords[] with every line: recordType, description, amount, and period. Do not treat those rows as residents or vendors."
+    return "This file is a financial statement, expense report, or tax record. Populate financialRecords[] with every line: recordType, description, amount, period, and building/unit when the line or header shows a property or unit. Do not treat those rows as residents or vendors."
   }
   return ""
 }
@@ -1429,7 +1460,17 @@ export function buildUserContent(
   const vendorHint = typed ? "" : vendorDocumentHint(fileName, documentCategory)
   const maintenanceHint = typed ? "" : maintenanceDocumentHint(fileName, documentCategory)
   const financialHint = typed ? "" : financialDocumentHint(fileName, documentCategory)
-  const extraHints = [rentRollNameHint, leaseHint, vendorHint, maintenanceHint, financialHint]
+  const photoHint = typed
+    ? ""
+    : propertyPhotoDocumentHint(fileName, documentCategory, contentType)
+  const extraHints = [
+    rentRollNameHint,
+    leaseHint,
+    vendorHint,
+    maintenanceHint,
+    financialHint,
+    photoHint,
+  ]
     .filter(Boolean)
     .join("\n")
   const intro = typed

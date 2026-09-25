@@ -1,0 +1,52 @@
+---
+description: Autofix Bugbot — edge function 503 BOOT_ERROR from duplicate const/let in the same scope (e.g. landlordId in maintenanceCompletion) that prevents the Deno isolate from starting.
+globs: supabase/functions/**/*.ts
+alwaysApply: false
+---
+
+# Edge function BOOT_ERROR — duplicate binding autofix
+
+**Symptom:** Vendor (or any) edge call fails in the browser as “Connection issue” / `Failed to fetch`, while the function returns:
+
+```json
+{"code":"BOOT_ERROR","message":"Function failed to start (please check logs)"}
+```
+
+OPTIONS and POST both 503. The function never runs business logic.
+
+**Cause:** A **SyntaxError** at module load — most often a duplicate `const` / `let` in the same block:
+
+`SyntaxError: Identifier 'landlordId' has already been declared`
+
+**Reference incident:** `maintenanceCompletion.ts` `completeJobWithPhotos` declared `const landlordId` twice (once for operational settings, again for feedback). That module is imported by `vendor-update-job-status` and `vendor-complete-job-upload`, so both crashed on boot until the second declaration was removed.
+
+## Rule
+
+| Check | Action |
+|---|---|
+| Same block has two `const name` / `let name` | Merge into one binding (keep the fuller initializer / fallbacks) |
+| Second binding only adds a fallback | Fold the fallback into the first declaration |
+| Shared `_shared/` module syntax-breaks | Redeploy **every** edge function that imports it (not only the one the user clicked) |
+
+Same-scope duplicate `function` names and illegal `import` rebinds also cause BOOT_ERROR — treat the same way.
+
+## Autofix (Bugbot)
+
+On PR review or when 503 `BOOT_ERROR` / “Couldn’t update job status” + connection copy appears:
+
+1. Reproduce with a runtime import (not only `deno check` — type errors ≠ boot crash):
+   `deno eval 'await import("./supabase/functions/_shared/<suspect>.ts")'`
+   or import the edge entry and look for `SyntaxError` / `Identifier '…' has already been declared`.
+2. Open the file+line from the error. Remove or merge the duplicate binding; keep one `const`/`let` with the complete expression (e.g. ticket landlord id **or** `resolveLandlordId()`).
+3. Grep for other same-scope duplicates of that identifier in the file before finishing.
+4. Confirm import succeeds, then redeploy every consumer that bundles the fixed module (for the reference bug: `vendor-update-job-status` and `vendor-complete-job-upload`).
+5. Smoke: POST the function → not `BOOT_ERROR` (401/404/409 from real auth/ticket logic is fine).
+
+**Note:** Cursor Bugbot runs on pull requests. It does not auto-run while debugging locally — agents must apply this rule when the symptom appears in chat or PR.
+
+## Do not
+
+- Treat BOOT_ERROR as a client CORS / internet problem and only rewrite UI copy
+- “Fix” by renaming the second binding when both mean the same value — merge instead
+- Redeploy only one consumer when the broken module is shared under `_shared/`
+- Rely on `deno check` alone — BOOT_ERROR is a **parse/runtime load** failure

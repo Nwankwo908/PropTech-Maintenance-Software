@@ -17,7 +17,9 @@ const {
   persistLandlordCommunicationStyle,
   persistOnboardingProperties,
   sendLandlordOnboardingWelcome,
+  sendTenantWelcomeSms,
   importOnboardingResidentsFromExtraction,
+  fetchOnboardingResidents,
   supabaseFrom,
 } = vi.hoisted(() => {
   const supabaseFrom = vi.fn()
@@ -31,13 +33,19 @@ const {
     persistLandlordCommunicationStyle: vi.fn(),
     persistOnboardingProperties: vi.fn(),
     sendLandlordOnboardingWelcome: vi.fn(),
+    sendTenantWelcomeSms: vi.fn(),
     importOnboardingResidentsFromExtraction: vi.fn(),
+    fetchOnboardingResidents: vi.fn(),
     supabaseFrom,
   }
 })
 
 vi.mock('@/api/landlordOnboardingWelcome', () => ({
   sendLandlordOnboardingWelcome,
+}))
+
+vi.mock('@/api/tenantActivation', () => ({
+  sendTenantWelcomeSms,
 }))
 
 vi.mock('@/lib/unitActivation', () => ({
@@ -58,6 +66,16 @@ vi.mock('./persist/account', () => ({
 vi.mock('./persist/properties', () => ({
   persistOnboardingProperties,
 }))
+
+vi.mock('./persist/residents', async () => {
+  const actual = await vi.importActual<typeof import('./persist/residents')>(
+    './persist/residents',
+  )
+  return {
+    ...actual,
+    fetchOnboardingResidents,
+  }
+})
 
 vi.mock('./persist/importResidents', async () => {
   const actual = await vi.importActual<typeof import('./persist/importResidents')>(
@@ -144,6 +162,8 @@ describe('completeOnboarding', () => {
       properties,
     }))
     importOnboardingResidentsFromExtraction.mockResolvedValue(2)
+    fetchOnboardingResidents.mockResolvedValue([])
+    sendTenantWelcomeSms.mockResolvedValue({ ok: true, configured: true })
     recordActivityLog.mockResolvedValue(undefined)
     sendLandlordOnboardingWelcome.mockResolvedValue({
       ok: true,
@@ -179,8 +199,9 @@ describe('completeOnboarding', () => {
     expect(result).toEqual({
       ok: true,
       activationWarning:
-        'Setup complete. Send resident welcome texts and vendor verification invites from Residents and Vendors when you are ready.',
+        'Setup complete. Send remaining resident welcome texts and vendor verification invites from Residents and Vendors when you are ready.',
     })
+    expect(sendTenantWelcomeSms).not.toHaveBeenCalled()
     expect(saveLandlordOnboarding).toHaveBeenCalledTimes(1)
     const saved = saveLandlordOnboarding.mock.calls[0]?.[0] as LandlordOnboardingState
     expect(saved.onboardingStatus).toBe('completed')
@@ -237,9 +258,38 @@ describe('completeOnboarding', () => {
     expect(result).toEqual({
       ok: true,
       activationWarning:
-        'Setup complete. Send resident welcome texts and vendor verification invites from Residents and Vendors when you are ready.',
+        'Setup complete. Send remaining resident welcome texts and vendor verification invites from Residents and Vendors when you are ready.',
     })
     expect(saveLandlordOnboarding).toHaveBeenCalled()
+  })
+
+  it('sends welcome SMS for residents with Onboarding switch enabled', async () => {
+    const optedIn = sampleResident({
+      id: 'res-opt-in',
+      phone: '+12025550111',
+      sendOnboardingOnComplete: true,
+    })
+    fetchOnboardingResidents.mockResolvedValue([optedIn])
+    sendTenantWelcomeSms.mockResolvedValue({ ok: true, configured: true, failed: 0 })
+
+    const result = await completeOnboarding(validOnboardingState(), [], [optedIn])
+
+    expect(result.ok).toBe(true)
+    expect(sendTenantWelcomeSms).toHaveBeenCalledWith(
+      expect.objectContaining({
+        landlordId: TEST_LANDLORD_ID,
+        residentId: 'res-opt-in',
+      }),
+    )
+    expect(recordActivityLog).toHaveBeenCalledWith(
+      expect.objectContaining({
+        metadata: expect.objectContaining({
+          tenants_welcome_sent: 1,
+          tenants_pending_outreach: 0,
+          message: expect.stringMatching(/Welcome texts were sent to 1 resident/i),
+        }),
+      }),
+    )
   })
 
   it('does not complete when required setup is missing', async () => {

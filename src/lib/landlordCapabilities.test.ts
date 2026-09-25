@@ -5,6 +5,9 @@ import {
   LIMITED_ALPHA_1_LANDLORD_ID,
   LIMITED_ALPHA_2_LANDLORD_ID,
   LIMITED_ALPHA_1_TWILIO_SMS_NUMBER,
+  isLimitedAlpha1Landlord,
+  isLimitedAlpha2Landlord,
+  isLimitedAlphaLandlord,
   isOnboardingLandlordId,
   isPaymentGraphEventType,
   isRetiredLandlordAccountId,
@@ -20,6 +23,15 @@ import {
 } from '@shared/landlordCapabilities'
 
 describe('Limited Alpha 1 capabilities', () => {
+  it('distinguishes Alpha 1 vs Alpha 2 vs shared limited-alpha', () => {
+    expect(isLimitedAlpha1Landlord(LIMITED_ALPHA_1_LANDLORD_ID)).toBe(true)
+    expect(isLimitedAlpha1Landlord(LIMITED_ALPHA_2_LANDLORD_ID)).toBe(false)
+    expect(isLimitedAlpha2Landlord(LIMITED_ALPHA_2_LANDLORD_ID)).toBe(true)
+    expect(isLimitedAlpha2Landlord(LIMITED_ALPHA_1_LANDLORD_ID)).toBe(false)
+    expect(isLimitedAlphaLandlord(LIMITED_ALPHA_1_LANDLORD_ID)).toBe(true)
+    expect(isLimitedAlphaLandlord(LIMITED_ALPHA_2_LANDLORD_ID)).toBe(true)
+  })
+
   it('turns off payments but keeps Find External Vendor', () => {
     expect(landlordHasPayments(LIMITED_ALPHA_1_LANDLORD_ID)).toBe(false)
     expect(landlordHasVendorMarketplace(LIMITED_ALPHA_1_LANDLORD_ID)).toBe(true)
@@ -56,10 +68,12 @@ describe('Limited Alpha 1 capabilities', () => {
     expect(isRetiredLandlordAccountId(LIMITED_ALPHA_2_LANDLORD_ID)).toBe(false)
   })
 
-  it('retires Full Alpha and New Landlord from onboarding and default scope', () => {
+  it('retires Full Alpha, New Landlord, and Demo from onboarding scope', () => {
     expect(isOnboardingLandlordId(LIMITED_ALPHA_1_LANDLORD_ID)).toBe(true)
+    expect(isOnboardingLandlordId(LIMITED_ALPHA_2_LANDLORD_ID)).toBe(true)
     expect(isOnboardingLandlordId(FULL_ALPHA_LANDLORD_ID)).toBe(false)
     expect(isOnboardingLandlordId(EMPTY_LANDLORD_ID)).toBe(false)
+    expect(isOnboardingLandlordId('de300000-0000-4000-8000-000000000001')).toBe(false)
     expect(isRetiredLandlordAccountId(FULL_ALPHA_LANDLORD_ID)).toBe(true)
     expect(isRetiredLandlordAccountId(EMPTY_LANDLORD_ID)).toBe(true)
     expect(isRetiredLandlordAccountId(LIMITED_ALPHA_1_LANDLORD_ID)).toBe(false)

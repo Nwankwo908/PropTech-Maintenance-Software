@@ -1,14 +1,14 @@
 /**
  * Onboarding draft persistence — localStorage + landlord_onboarding row.
  */
-import { getActiveLandlordId } from '@/lib/activeLandlord'
+import { getActiveLandlordId, isSeededLandlordLoginEmail } from '@/lib/activeLandlord'
 import { loadCanonicalOnboardingProperties } from './hydrateProperties'
 import {
   applyCurrentAutoApprovalDefault,
   defaultOnboardingApprovalRules,
   normalizeOnboardingApprovalRules,
 } from '@/lib/onboardingApprovalRules'
-import { resolveLandlordSupportEmail } from '@/lib/landlordSupportEmail'
+import { isPlatformLoginEmail } from '@/lib/landlordSupportEmail'
 import { usableOnboardingCompanyName } from '@shared/landlordPortfolioLabel'
 import { supabase } from '@/lib/supabase'
 import { fetchAccountSetupCounts } from './persist/account'
@@ -111,6 +111,8 @@ export function defaultOnboardingState(landlordId: string = getActiveLandlordId(
     properties: [],
     approvalRules: defaultOnboardingApprovalRules(),
     completedAt: null,
+    onboardingSessionId: null,
+    onboardingSessionStartedAt: null,
   }
 }
 
@@ -135,10 +137,14 @@ function normalizeAccountSetup(raw: unknown): OnboardingAccountSetup {
 
 function normalizeOnboardingState(state: LandlordOnboardingState): LandlordOnboardingState {
   const approvalRules = normalizeOnboardingApprovalRules(state.approvalRules)
+  const accountSetup = normalizeAccountSetup(state.accountSetup)
+  if (isPlatformLoginEmail(accountSetup.email) || isOrphanSeededLoginAccountEmail(accountSetup)) {
+    accountSetup.email = ''
+  }
   return {
     ...state,
     currentStep: normalizeOnboardingStep(state.currentStep),
-    accountSetup: normalizeAccountSetup(state.accountSetup),
+    accountSetup,
     properties: normalizeOnboardingProperties(state.properties),
     approvalRules:
       state.onboardingStatus === 'completed'
@@ -220,24 +226,32 @@ function normalizeOnboardingProperties(raw: unknown): OnboardingProperty[] {
     .filter((item): item is OnboardingProperty => item != null)
 }
 
+/** Email-only draft using a seeded portal login — leftover from a shared Alpha run. */
+function isOrphanSeededLoginAccountEmail(account: OnboardingAccountSetup): boolean {
+  const email = account.email.trim()
+  if (!email || !isSeededLandlordLoginEmail(email)) return false
+  return (
+    !account.companyName.trim() &&
+    !account.contactName.trim() &&
+    !account.phone.trim() &&
+    !account.backupContactName.trim() &&
+    !account.backupContactPhone.trim() &&
+    !account.backupContactEmail.trim()
+  )
+}
+
 function rowToState(row: Record<string, unknown>, landlordId: string): LandlordOnboardingState {
   const draft = (row.draft_state ?? {}) as Record<string, unknown>
   const properties = normalizeOnboardingProperties(row.properties)
   const accountDraft = (draft.accountSetup ?? {}) as Record<string, unknown>
   const formDraft = draft.formDraft as OnboardingFormDraft | undefined
-  const accountSettings =
-    row.account_settings && typeof row.account_settings === 'object'
-      ? (row.account_settings as Record<string, unknown>)
-      : {}
-  const org = {
-    ...((draft.organizationSettings ?? {}) as Record<string, unknown>),
-    ...((accountSettings.organization ?? {}) as Record<string, unknown>),
-  }
   const accountSetup = normalizeAccountSetup(accountDraft)
-  accountSetup.email = resolveLandlordSupportEmail({
-    accountSetupEmail: accountSetup.email,
-    organizationSupportEmail: typeof org.supportEmail === 'string' ? org.supportEmail : '',
-  })
+  // Draft is the only source for Account Setup email. Do not resurrect
+  // account_settings.organization.supportEmail — that value survives partial
+  // factory-reset upserts and shared Limited Alpha prior runs (portal members
+  // like otbpictures12@gmail.com on the same landlord id).
+  accountSetup.email = accountSetup.email.trim()
+  // Platform / orphan stripping happens in normalizeOnboardingState.
 
   return {
     landlordId,
@@ -260,6 +274,20 @@ function rowToState(row: Record<string, unknown>, landlordId: string): LandlordO
     }),
     formDraft,
     completedAt: (row.completed_at as string | null) ?? null,
+    onboardingSessionId:
+      typeof row.onboarding_session_id === 'string' && row.onboarding_session_id.trim()
+        ? row.onboarding_session_id.trim()
+        : typeof draft.onboardingSessionId === 'string' && draft.onboardingSessionId.trim()
+          ? draft.onboardingSessionId.trim()
+          : null,
+    onboardingSessionStartedAt:
+      typeof row.onboarding_session_started_at === 'string' &&
+      row.onboarding_session_started_at.trim()
+        ? row.onboarding_session_started_at.trim()
+        : typeof draft.onboardingSessionStartedAt === 'string' &&
+            draft.onboardingSessionStartedAt.trim()
+          ? draft.onboardingSessionStartedAt.trim()
+          : null,
   }
 }
 
@@ -297,8 +325,12 @@ function stateToRow(state: LandlordOnboardingState): Record<string, unknown> {
       accountSetup: state.accountSetup,
       formDraft: state.formDraft,
       approvalRules: rules,
+      onboardingSessionId: state.onboardingSessionId ?? null,
+      onboardingSessionStartedAt: state.onboardingSessionStartedAt ?? null,
     },
     completed_at: state.completedAt,
+    onboarding_session_id: state.onboardingSessionId ?? null,
+    onboarding_session_started_at: state.onboardingSessionStartedAt ?? null,
     updated_at: new Date().toISOString(),
   }
 }
@@ -465,6 +497,7 @@ async function loadLandlordOnboarding(
 
 export async function saveLandlordOnboarding(
   state: LandlordOnboardingState,
+  options: { clearAccountSettings?: boolean } = {},
 ): Promise<void> {
   invalidateOnboardingFetchCache(state.landlordId)
   // During Reset, only persist explicit welcome-hub writes from restart helpers.
@@ -479,7 +512,10 @@ export async function saveLandlordOnboarding(
 
   if (!supabase) return
 
-  const row = stateToRow(state)
+  const row: Record<string, unknown> = {
+    ...stateToRow(state),
+    ...(options.clearAccountSettings ? { account_settings: {} } : {}),
+  }
   const { error } = await supabase.from('landlord_onboarding').upsert(row, {
     onConflict: 'landlord_id',
   })
@@ -487,13 +523,16 @@ export async function saveLandlordOnboarding(
   if (error) {
     if (
       error.code === '42703' ||
-      /marketplace_preference|communication_style|column .* does not exist/i.test(
+      /marketplace_preference|communication_style|account_settings|onboarding_session|column .* does not exist/i.test(
         error.message,
       )
     ) {
       const {
         marketplace_preference: _dropMarket,
         communication_style: _dropStyle,
+        account_settings: _dropSettings,
+        onboarding_session_id: _dropSessionId,
+        onboarding_session_started_at: _dropSessionStarted,
         ...legacyRow
       } = row
       const retry = await supabase.from('landlord_onboarding').upsert(legacyRow, {

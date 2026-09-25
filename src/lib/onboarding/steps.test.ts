@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   getOnboardingStepOrder,
+  getOnboardingStepsForPath,
   getPreviousOnboardingStep,
   normalizeOnboardingStep,
   resolveOnboardingStepForPath,
@@ -9,7 +10,7 @@ import {
 
 describe('getOnboardingStepOrder', () => {
   it('returns guided order for scratch / null path', () => {
-    expect(getOnboardingStepOrder(null)).toEqual([
+    expect(getOnboardingStepOrder(null, { includePayouts: true })).toEqual([
       'entry',
       'account_setup',
       'property',
@@ -19,18 +20,28 @@ describe('getOnboardingStepOrder', () => {
       'payouts',
       'review',
     ])
-    expect(getOnboardingStepOrder('guided')).toEqual(getOnboardingStepOrder(null))
+    expect(getOnboardingStepOrder('guided', { includePayouts: true })).toEqual(
+      getOnboardingStepOrder(null, { includePayouts: true }),
+    )
   })
 
-  it('returns fast-track order', () => {
-    expect(getOnboardingStepOrder('fast_track')).toEqual([
+  it('returns fast-track order without a separate final Review step', () => {
+    expect(getOnboardingStepOrder('fast_track', { includePayouts: true })).toEqual([
       'entry',
       'document_upload',
       'ai_review',
       'approval',
       'payouts',
-      'review',
     ])
+  })
+})
+
+describe('fast-track stepper labels', () => {
+  it('shows three stages when payouts are off (upload, review, approval)', () => {
+    const labels = getOnboardingStepsForPath('fast_track', { includePayouts: false })
+      .filter((step) => step.id !== 'entry')
+      .map((step) => step.label)
+    expect(labels).toEqual(['Upload documents', 'Review', 'Approval rules'])
   })
 })
 
@@ -59,6 +70,7 @@ describe('resolveOnboardingStepForPath', () => {
     expect(resolveOnboardingStepForPath('vendors', 'fast_track')).toBe('ai_review')
     expect(resolveOnboardingStepForPath('residents', 'fast_track')).toBe('ai_review')
     expect(resolveOnboardingStepForPath('approval', 'fast_track')).toBe('approval')
+    expect(resolveOnboardingStepForPath('review', 'fast_track')).toBe('approval')
   })
 
   it('leaves steps alone on the guided path', () => {
@@ -74,10 +86,11 @@ describe('resolveReviewEditStep', () => {
     expect(resolveReviewEditStep('document_upload', 'fast_track')).toBe('document_upload')
   })
 
-  it('opens AI review for extracted roster and issue edits', () => {
+  it('opens merged Review for extracted roster and issue edits', () => {
     expect(resolveReviewEditStep('vendors', 'fast_track')).toBe('ai_review')
     expect(resolveReviewEditStep('residents', 'fast_track')).toBe('ai_review')
     expect(resolveReviewEditStep('ai_review', 'fast_track')).toBe('ai_review')
+    expect(resolveReviewEditStep('review', 'fast_track')).toBe('ai_review')
   })
 
   it('leaves approval and payouts on their own steps', () => {
@@ -98,14 +111,22 @@ describe('getPreviousOnboardingStep', () => {
   })
 
   it('walks guided and fast-track orders independently', () => {
-    expect(getPreviousOnboardingStep('vendors', 'guided')).toBe('property')
-    expect(getPreviousOnboardingStep('approval', 'guided')).toBe('residents')
-    expect(getPreviousOnboardingStep('approval', 'fast_track')).toBe('ai_review')
-    expect(getPreviousOnboardingStep('payouts', 'fast_track')).toBe('approval')
+    expect(getPreviousOnboardingStep('vendors', 'guided', { includePayouts: true })).toBe('property')
+    expect(getPreviousOnboardingStep('approval', 'guided', { includePayouts: true })).toBe(
+      'residents',
+    )
+    expect(getPreviousOnboardingStep('approval', 'fast_track', { includePayouts: true })).toBe(
+      'ai_review',
+    )
+    expect(getPreviousOnboardingStep('payouts', 'fast_track', { includePayouts: true })).toBe(
+      'approval',
+    )
   })
 
   it('normalizes legacy ids before finding the previous step', () => {
-    expect(getPreviousOnboardingStep('completion', 'guided')).toBe('payouts')
+    expect(getPreviousOnboardingStep('completion', 'guided', { includePayouts: true })).toBe(
+      'payouts',
+    )
     expect(getPreviousOnboardingStep('property_setup', 'guided')).toBe('entry')
   })
 
@@ -115,8 +136,10 @@ describe('getPreviousOnboardingStep', () => {
       'document_upload',
       'ai_review',
       'approval',
-      'review',
     ])
     expect(getPreviousOnboardingStep('review', 'guided', { includePayouts: false })).toBe('approval')
+    expect(getPreviousOnboardingStep('review', 'fast_track', { includePayouts: false })).toBe(
+      'ai_review',
+    )
   })
 })

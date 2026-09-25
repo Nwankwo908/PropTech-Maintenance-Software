@@ -3,7 +3,6 @@
  */
 import {
   normalizeExtractionReview,
-  summarizeReviewSelections,
   toMockExtractionReview,
   type OnboardingExtractionReview,
 } from '@/lib/onboardingDocumentUpload'
@@ -82,32 +81,6 @@ export async function commitFastTrackImport(
 
   input.onExtractionReview(normalized)
   input.onSaving(true)
-
-  const selectionLog = summarizeReviewSelections(normalized)
-  console.info('[onboarding] AI review continue selections', selectionLog)
-  if (supabase) {
-    try {
-      const { recordActivityLog } = await import('@/lib/recordActivityLog')
-      await recordActivityLog({
-        landlordId: scope.landlordId,
-        eventType: 'onboarding.extraction_review_continued',
-        source: 'onboarding',
-        actorType: 'landlord',
-        metadata: {
-          message: `Imported ${selectionLog.selected.total} item${
-            selectionLog.selected.total === 1 ? '' : 's'
-          }; skipped ${selectionLog.skipped.total}.`,
-          step: 'ai_review',
-          selected: selectionLog.selected,
-          skipped: selectionLog.skipped,
-          selected_ids: selectionLog.selectedIds,
-          skipped_ids: selectionLog.skippedIds,
-        },
-      })
-    } catch (err) {
-      console.warn('[onboarding] selection log failed', err)
-    }
-  }
 
   const accountSetup = accountSetupFromReviewManual(normalized.account)
   const profile = await persistLandlordAccountProfile(scope.landlordId, accountSetup)

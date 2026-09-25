@@ -10,6 +10,7 @@ import {
   OnboardingContinueButton,
   OnboardingStepNav,
 } from './OnboardingStepChrome'
+import { OnboardingSendSwitch } from '@/components/onboarding/OnboardingSendSwitch'
 import {
   onboardingFieldLabelClass,
   onboardingInputClass,
@@ -103,16 +104,30 @@ export function OnboardingResidentsStep({
               >
                 <div className="mb-4 flex items-center justify-between gap-3">
                   <p className="text-[14px] font-semibold text-[#101828]">Resident {index + 1}</p>
-                  {residentForms.length > 1 ? (
-                    <button
-                      type="button"
-                      className="shrink-0 rounded-[8px] px-2 py-1 text-[13px] font-medium text-[#64748b] transition-colors hover:bg-[#fef2f2] hover:text-[#b91c1c] active:bg-[#fee2e2]"
-                      onClick={() => removeResidentForm(form.id)}
-                      aria-label={`Remove resident ${index + 1}`}
-                    >
-                      Remove
-                    </button>
-                  ) : null}
+                  <div className="flex items-center gap-3">
+                    <OnboardingSendSwitch
+                      enabled={Boolean(form.sendOnboardingOnComplete)}
+                      disabled={!form.phone.trim()}
+                      onChange={(sendOnboardingOnComplete) =>
+                        updateResidentForm(form.id, { sendOnboardingOnComplete })
+                      }
+                      aria-label={
+                        form.phone.trim()
+                          ? `Send onboarding message to resident ${index + 1} when setup completes`
+                          : `Add a phone number to send onboarding to resident ${index + 1}`
+                      }
+                    />
+                    {residentForms.length > 1 ? (
+                      <button
+                        type="button"
+                        className="shrink-0 rounded-[8px] px-2 py-1 text-[13px] font-medium text-[#64748b] transition-colors hover:bg-[#fef2f2] hover:text-[#b91c1c] active:bg-[#fee2e2]"
+                        onClick={() => removeResidentForm(form.id)}
+                        aria-label={`Remove resident ${index + 1}`}
+                      >
+                        Remove
+                      </button>
+                    ) : null}
+                  </div>
                 </div>
                 <div className="grid gap-4">
                   <div className="grid gap-4 sm:grid-cols-[minmax(0,1.5fr)_minmax(11rem,0.85fr)]">

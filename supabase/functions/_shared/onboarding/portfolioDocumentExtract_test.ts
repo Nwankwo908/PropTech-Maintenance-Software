@@ -122,6 +122,7 @@ Deno.test("maintenance and financial documents get extract hints", () => {
   )
   const maintenanceText = String(maintenance[0]?.text ?? "")
   assertEquals(/populate maintenanceIssues\[\]/i.test(maintenanceText), true)
+  assertEquals(/real defects/i.test(maintenanceText), true)
 
   const financial = buildUserContent(
     "Financial Records.xlsx",
@@ -133,6 +134,30 @@ Deno.test("maintenance and financial documents get extract hints", () => {
   assertEquals(/populate financialRecords\[\]/i.test(financialText), true)
 })
 
+Deno.test("property photos get a do-not-invent-maintenance hint", () => {
+  const parts = buildUserContent(
+    "IMG_2048.jpg",
+    "unknown",
+    "image/jpeg",
+    new Uint8Array([0xff, 0xd8, 0xff]),
+  )
+  const text = String(parts[0]?.text ?? "")
+  assertEquals(/listing photo/i.test(text) || /property or listing photo/i.test(text), true)
+  assertEquals(/leave maintenanceIssues\[\] empty/i.test(text), true)
+})
+
+Deno.test("listing amenity labels are dropped from maintenanceIssues", () => {
+  const payload = normalizePortfolioDocumentExtract({
+    maintenanceIssues: [
+      { description: "window", confidence: 90 },
+      { description: "empty room", confidence: 88 },
+      { description: "Kitchen sink leaking", unit: "4B", confidence: 92 },
+    ],
+  })
+  assertEquals(payload.maintenanceIssues.length, 1)
+  assertEquals(payload.maintenanceIssues[0]?.description, "Kitchen sink leaking")
+})
+
 Deno.test("financial aliases land in financialRecords[]", () => {
   const payload = normalizePortfolioDocumentExtract({
     expenses: [
@@ -141,6 +166,8 @@ Deno.test("financial aliases land in financialRecords[]", () => {
         total: "4200",
         type: "Expense",
         period: "2024-08",
+        building: "Maple Heights",
+        unit: "102",
         confidence: 90,
       },
     ],
@@ -148,6 +175,8 @@ Deno.test("financial aliases land in financialRecords[]", () => {
   assertEquals(payload.financialRecords.length, 1)
   assertEquals(payload.financialRecords[0]?.description, "Roof repair")
   assertEquals(payload.financialRecords[0]?.amount, "4200")
+  assertEquals(payload.financialRecords[0]?.building, "Maple Heights")
+  assertEquals(payload.financialRecords[0]?.unit, "102")
 })
 
 Deno.test("landlord / management company is read into account.companyName", () => {

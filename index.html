@@ -103,6 +103,8 @@
         color: #6b7280;
         font-family: Inter, ui-sans-serif, system-ui, sans-serif;
         font-size: 14px;
+        /* Never block clicks if the boot screen is still mounted over a live app. */
+        pointer-events: none;
       }
       #root:not(:empty) + #ulo-boot {
         display: none;

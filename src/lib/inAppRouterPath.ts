@@ -74,40 +74,17 @@ export function rewriteProductionUloHrefToPath(
 
 /**
  * Click path to keep localhost admin navigation in this SPA.
- * Covers production Ulo hrefs and relative `/admin/…` that a preview may
- * otherwise resolve against www.ulohome.io.
+ *
+ * Only intercept production Ulo hrefs (www/app.ulohome.io). Same-origin
+ * relative `/admin/…` links must NOT be stolen — re-routing every admin click
+ * through `navigate()` leaves NavLinks dead after HMR when that callback goes
+ * stale. React Router / the browser already keep those on localhost.
  */
 export function localhostInAppClickPath(
   href: string,
   currentOrigin: string,
 ): string | null {
-  const fromProd = rewriteProductionUloHrefToPath(href, currentOrigin)
-  if (fromProd) return fromProd
-
-  let current: URL
-  try {
-    current = new URL(currentOrigin)
-  } catch {
-    return null
-  }
-  if (!isNonProductionAppHost(current.hostname)) return null
-
-  const raw = href.trim()
-  if (!raw || raw.startsWith('#') || raw.startsWith('mailto:') || raw.startsWith('tel:')) {
-    return null
-  }
-
-  let url: URL
-  try {
-    url = new URL(raw, currentOrigin)
-  } catch {
-    return null
-  }
-  if (!url.pathname.startsWith('/admin')) return null
-  if (url.origin !== current.origin && !ULO_PRODUCTION_HOSTS.has(url.hostname)) {
-    return null
-  }
-  return `${url.pathname}${url.search}${url.hash}`
+  return rewriteProductionUloHrefToPath(href, currentOrigin)
 }
 
 /** Rewrite a history URL so localhost never pushState/assign to www.ulohome.io. */
@@ -149,7 +126,8 @@ export function installLoopbackNavigationGuards(): void {
     window.location.assign = (url: string | URL) => {
       const rewritten = rewriteProductionUloHrefToPath(String(url), origin())
       if (rewritten) {
-        window.history.pushState(window.history.state, '', rewritten)
+        // Full reload on the current origin — avoids desyncing React Router.
+        assign(sameOriginHref(rewritten, origin()))
         return
       }
       assign(url)
@@ -163,7 +141,7 @@ export function installLoopbackNavigationGuards(): void {
     window.location.replace = (url: string | URL) => {
       const rewritten = rewriteProductionUloHrefToPath(String(url), origin())
       if (rewritten) {
-        window.history.replaceState(window.history.state, '', rewritten)
+        replaceLoc(sameOriginHref(rewritten, origin()))
         return
       }
       replaceLoc(url)

@@ -24,6 +24,8 @@ import {
 import {
   isOnboardingLandlordAccount,
   markOnboardingResetInProgress,
+  reportFactoryResetFailureToUser,
+  reportFactoryResetSuccessToConsole,
   restartNewLandlordOnboarding,
 } from '@/lib/onboarding'
 import { supabase } from '@/lib/supabase'
@@ -141,6 +143,11 @@ function AdminTopBar() {
 
   async function handleResetOnboarding() {
     if (resettingOnboarding) return
+    const confirmed = window.confirm(
+      'Factory reset?\n\nThis permanently deletes all properties, residents, vendors, work orders, and SMS threads for this account, and returns you to the start of setup.',
+    )
+    if (!confirmed) return
+
     setResettingOnboarding(true)
     // Set before any await so a beforeunload flush during navigation cannot
     // rewrite the wiped wizard into localStorage.
@@ -154,14 +161,13 @@ function AdminTopBar() {
     try {
       const result = await restartNewLandlordOnboarding()
       if (!result.ok) {
-        console.error('[AdminLayout] reset onboarding failed', result.error)
-        window.alert(
-          `${result.error ?? 'Could not fully clear portfolio data.'}\n\nReturning to the setup choice screen.`,
-        )
+        reportFactoryResetFailureToUser(result)
+      } else {
+        reportFactoryResetSuccessToConsole(result)
       }
     } catch (err) {
-      console.error('[AdminLayout] reset onboarding failed', err)
-      window.alert(getErrorMessage(err, 'Could not reset onboarding.'))
+      console.error('[AdminLayout] factory reset failed', err)
+      window.alert(getErrorMessage(err, 'Could not complete factory reset.'))
     }
     // Always hard-reload so the welcome hub remounts on not_started / entry.
     window.location.assign('/admin/onboarding')
@@ -201,7 +207,7 @@ function AdminTopBar() {
                 void handleResetOnboarding()
               }}
             >
-              {resettingOnboarding ? 'Resetting…' : 'Reset onboarding'}
+              {resettingOnboarding ? 'Resetting…' : 'Factory reset'}
             </button>
             {hideInternalAccountChip ? null : (
               <span className="shrink-0 rounded-full bg-[#dbeafe] px-3 py-1 text-[12px] font-semibold uppercase tracking-[0.06em] text-[#1d4ed8]">
@@ -263,10 +269,10 @@ function AdminMainContent() {
   return (
     <div className="relative flex min-h-0 flex-1 overflow-hidden bg-white">
       <div
-        className={[
-          'min-h-0 min-w-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-y-contain',
-          docked ? '' : 'pointer-events-none',
-        ].join(' ')}
+        className="min-h-0 min-w-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-y-contain"
+        // Keep the route interactive under the undocked panel. The full-panel
+        // overlay already covers it; pointer-events-none left dead clicks if
+        // Ask Ulo open state and the overlay ever got out of sync.
         aria-hidden={!docked}
       >
         <Outlet />
@@ -321,7 +327,7 @@ function AdminMobileNavDrawer({
       <nav
         id="admin-mobile-nav"
         aria-label="Navigation"
-        className="sa-drawer relative flex h-full max-h-dvh min-h-0 w-[min(18rem,calc(100vw-3.5rem))] flex-col overflow-hidden bg-white pb-[env(safe-area-inset-bottom,0px)] shadow-[8px_0_24px_rgba(0,0,0,0.12)]"
+        className="sa-drawer relative z-10 flex h-full max-h-dvh min-h-0 w-[min(18rem,calc(100vw-3.5rem))] flex-col overflow-hidden bg-white pb-[env(safe-area-inset-bottom,0px)] shadow-[8px_0_24px_rgba(0,0,0,0.12)]"
       >
         <div className="flex shrink-0 items-center justify-between gap-3 border-b border-[#e5e7eb] py-4 pl-[1.4rem] pr-4">
           <img src={uloLogo} alt="Ulo Home" className="h-[2.4rem] w-auto object-contain" />

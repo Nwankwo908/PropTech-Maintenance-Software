@@ -1,6 +1,5 @@
 import { getErrorMessage } from '@/lib/errorMessage'
 import { getActiveLandlordId } from '@/lib/activeLandlord'
-import { recordActivityLog } from '@/lib/recordActivityLog'
 import { removeVendorSetupInboxEntries } from '@/lib/vendorSetupConversation'
 import { supabase } from '@/lib/supabase'
 
@@ -46,21 +45,6 @@ export async function deleteCommunicationConversationsForLandlord(params: {
   }
 
   const deletedCount = (data ?? []).length
-
-  void recordActivityLog({
-    landlordId,
-    eventType: 'communication.conversations_deleted',
-    source: 'dashboard',
-    actorType: 'landlord',
-    metadata: {
-      message:
-        deletedCount === 1
-          ? 'Deleted 1 message thread from Communication.'
-          : `Deleted ${deletedCount} message threads from Communication.`,
-      conversationIds,
-      deletedCount,
-    },
-  })
 
   return { ok: true, deletedCount: Math.max(deletedCount, conversationIds.length) }
 }

@@ -214,6 +214,7 @@ export default function App() {
             {/* Route segments must match `ADMIN_NAV_TREE` — see adminNavigation.test.ts */}
             <Route element={<AdminOnboardingGuard />}>
               <Route index element={<AdminOverviewDashboard />} />
+              <Route path="overview" element={<Navigate to="/admin" replace />} />
               <Route path="onboarding" element={<AdminOnboardingDashboard />} />
               <Route path="properties" element={<AdminPropertiesDashboard />} />
               <Route path="properties/:propertySlug" element={<AdminPropertyDetailDashboard />} />

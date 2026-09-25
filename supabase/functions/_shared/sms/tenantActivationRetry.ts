@@ -132,6 +132,27 @@ export function isSilenceNudgeDue(params: {
   return hoursSinceLast >= ACTIVATION_SILENCE_NUDGE_HOURS
 }
 
+/**
+ * Limited Alpha accounts are shared / resettable onboarding sandboxes.
+ * Skip automatic delivery retries and silence nudges when welcome SMS was
+ * started before the landlord's current setup completion (leftover imports).
+ */
+export function shouldSkipLimitedAlphaStaleActivationAutomation(params: {
+  isLimitedAlphaLandlord: boolean
+  firstAttemptAt: string | Date | null | undefined
+  onboardingCompletedAt: string | Date | null | undefined
+}): boolean {
+  if (!params.isLimitedAlphaLandlord) return false
+  const completedRaw = params.onboardingCompletedAt
+  if (completedRaw == null || String(completedRaw).trim() === "") return true
+  const firstRaw = params.firstAttemptAt
+  if (firstRaw == null || String(firstRaw).trim() === "") return true
+  const completed = new Date(completedRaw)
+  const first = new Date(firstRaw)
+  if (Number.isNaN(completed.getTime()) || Number.isNaN(first.getTime())) return true
+  return first.getTime() < completed.getTime()
+}
+
 /** @deprecated Prefer buildActivationAdminEmail / notifyLandlordActivationUndeliverable. */
 export function landlordActivationFailedCopy(residentName: string): {
   subject: string

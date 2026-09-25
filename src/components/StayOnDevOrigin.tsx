@@ -1,14 +1,15 @@
 import { useEffect } from 'react'
-import { useNavigate } from 'react-router-dom'
-import { localhostInAppClickPath } from '@/lib/inAppRouterPath'
+import { localhostInAppClickPath, sameOriginHref } from '@/lib/inAppRouterPath'
 
 /**
- * On localhost, keep admin link clicks in this SPA. Relative `/admin/…` hrefs
- * can otherwise resolve to www.ulohome.io in some previews.
+ * On localhost, keep clicks that target production Ulo hosts (www/app) inside
+ * this SPA origin via a full document load. Does not touch same-origin `/admin`
+ * links — those are handled by React Router or assignAdminPath.
+ *
+ * Uses location.assign (not navigate) so a stale React Router instance cannot
+ * silently swallow the click after HMR / long sessions.
  */
 export function StayOnDevOrigin() {
-  const navigate = useNavigate()
-
   useEffect(() => {
     function onClick(event: MouseEvent) {
       if (event.defaultPrevented) return
@@ -25,12 +26,12 @@ export function StayOnDevOrigin() {
       if (!path) return
 
       event.preventDefault()
-      navigate(path)
+      window.location.assign(sameOriginHref(path))
     }
 
     document.addEventListener('click', onClick, true)
     return () => document.removeEventListener('click', onClick, true)
-  }, [navigate])
+  }, [])
 
   return null
 }

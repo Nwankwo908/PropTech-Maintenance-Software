@@ -460,6 +460,11 @@ enabled = true
 verify_jwt = false
 entrypoint = "./functions/check-tenant-activation-retries/index.ts"
 
+[functions.run-ops-sms-crons]
+enabled = true
+verify_jwt = false
+entrypoint = "./functions/run-ops-sms-crons/index.ts"
+
 [functions.check-landlord-estimate-notify]
 enabled = true
 verify_jwt = false

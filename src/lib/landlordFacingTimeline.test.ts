@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   isHiddenActivationAlertTimelineEventType,
+  isHiddenOpsHeartbeatTimelineEventType,
   isHiddenPipelineTimelineEventType,
   isHiddenSmsTransportTimelineEventType,
   isVisibleLandlordTimelineDescription,
@@ -32,6 +33,11 @@ describe('landlordFacingTimeline', () => {
     expect(isHiddenActivationAlertTimelineEventType('tenant.activation_admin_alert_failed')).toBe(true)
     expect(isHiddenActivationAlertTimelineEventType('tenant.activation_action_required')).toBe(false)
     expect(isHiddenActivationAlertTimelineEventType('tenant.activation_completed')).toBe(false)
+  })
+
+  it('hides rent-collection cron heartbeats', () => {
+    expect(isHiddenOpsHeartbeatTimelineEventType('rent.collection_cron_triggered')).toBe(true)
+    expect(isHiddenOpsHeartbeatTimelineEventType('rent.reminder_sent')).toBe(false)
   })
 
   it('hides plumbing labels on Timeline copy', () => {

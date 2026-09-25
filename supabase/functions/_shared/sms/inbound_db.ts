@@ -2,6 +2,7 @@ import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.49.1
 import { normalizePhoneFlexible } from "../resident_notify.ts"
 import { claimPoolNumberByPhone } from "./smsNumberPool.ts"
 import { smsIdentityAllowsTypePatch } from "./smsIdentityUpgrade.ts"
+import { resolveUnitIdForLandlord } from "./resolveUnitId.ts"
 
 /** Normalize to E.164 when possible; fall back to trimmed raw for lookup. */
 export function normalizeSmsPhone(input: string): string {
@@ -570,6 +571,42 @@ export async function trySelfHealIdentity(
   if (identity.identity_type === "vendor" && identity.vendor_id?.trim()) {
     return identity
   }
+  // Resident linked but unit missing — fill units.id from roster label.
+  if (
+    identity.identity_type === "resident" &&
+    identity.resident_id?.trim() &&
+    !identity.unit_id?.trim()
+  ) {
+    const landlordId = identity.landlord_id?.trim() || ""
+    const { data: resident } = await supabase
+      .from("users")
+      .select("unit, building")
+      .eq("id", identity.resident_id)
+      .maybeSingle()
+    const unitId = await resolveUnitIdForLandlord(supabase, {
+      landlordId,
+      unitLabel: (resident as { unit?: string | null } | null)?.unit,
+      building: (resident as { building?: string | null } | null)?.building,
+    })
+    if (unitId) {
+      const { data: updated, error } = await supabase
+        .from("sms_identities")
+        .update({
+          unit_id: unitId,
+          last_seen_at: new Date().toISOString(),
+        })
+        .eq("id", identity.id)
+        .select(
+          "id, landlord_id, resident_id, vendor_id, unit_id, phone_number, identity_type, verified",
+        )
+        .single()
+      if (!error && updated) {
+        console.info("[sms-inbound] self-healed missing unit_id", identity.id)
+        return updated as SmsIdentityRow
+      }
+    }
+    return identity
+  }
   if (identity.identity_type === "resident" && identity.resident_id?.trim()) {
     return identity
   }
@@ -613,19 +650,30 @@ export async function trySelfHealIdentity(
 
   let usersQuery = supabase
     .from("users")
-    .select("id, phone, unit")
+    .select("id, phone, unit, building, status")
     .in("phone", variants)
+    .in("status", ["active", "pending"])
   if (landlordId) usersQuery = usersQuery.eq("landlord_id", landlordId)
   const { data: users } = await usersQuery.limit(1)
 
-  const resident = users?.[0] as { id: string; phone: string; unit: string | null } | undefined
+  const resident = users?.[0] as {
+    id: string
+    phone: string
+    unit: string | null
+    building: string | null
+  } | undefined
   if (resident?.id) {
+    const unitId = await resolveUnitIdForLandlord(supabase, {
+      landlordId,
+      unitLabel: resident.unit,
+      building: resident.building,
+    })
     const { data: updated, error } = await supabase
       .from("sms_identities")
       .update({
         identity_type: "resident",
         resident_id: resident.id,
-        unit_id: resident.unit ?? null,
+        unit_id: unitId,
         last_seen_at: new Date().toISOString(),
       })
       .eq("id", identity.id)
@@ -779,11 +827,21 @@ export async function findOpenConversation(
     smsNumberId: string
     externalPhone: string
   },
-): Promise<{ id: string; maintenance_request_id: string | null; status: string; conversation_type: string } | null> {
+): Promise<{
+  id: string
+  maintenance_request_id: string | null
+  status: string
+  conversation_type: string
+  resident_id: string | null
+  vendor_id: string | null
+  unit_id: string | null
+} | null> {
   const external = normalizeSmsPhone(params.externalPhone)
   const { data, error } = await supabase
     .from("sms_conversations")
-    .select("id, maintenance_request_id, status, conversation_type")
+    .select(
+      "id, maintenance_request_id, status, conversation_type, resident_id, vendor_id, unit_id",
+    )
     .eq("landlord_id", params.landlordId)
     .eq("sms_number_id", params.smsNumberId)
     .eq("external_phone_number", external)
@@ -804,7 +862,15 @@ export async function findOpenConversation(
     throw new Error("Failed to look up conversation")
   }
 
-  return data as { id: string; maintenance_request_id: string | null; status: string; conversation_type: string } | null
+  return data as {
+    id: string
+    maintenance_request_id: string | null
+    status: string
+    conversation_type: string
+    resident_id: string | null
+    vendor_id: string | null
+    unit_id: string | null
+  } | null
 }
 
 /**
@@ -958,9 +1024,10 @@ export async function findOrCreateConversation(
             ? (params.conversationStatus ?? "open")
             : (params.conversationStatus ?? existing.status ?? "open"),
         conversation_type: preservedType,
-        resident_id: params.identity.resident_id,
-        vendor_id: params.identity.vendor_id,
-        unit_id: params.identity.unit_id,
+        // Never wipe a linked resident/unit with a null identity patch.
+        resident_id: params.identity.resident_id ?? existing.resident_id ?? null,
+        vendor_id: params.identity.vendor_id ?? existing.vendor_id ?? null,
+        unit_id: params.identity.unit_id ?? existing.unit_id ?? null,
         maintenance_request_id:
           params.maintenanceRequestId ?? existing.maintenance_request_id,
       })

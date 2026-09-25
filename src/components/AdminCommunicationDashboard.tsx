@@ -2,7 +2,7 @@ import { useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'rea
 import { useSearchParams } from 'react-router-dom'
 import { ConversationMonitoringModal } from '@/components/ConversationMonitoringModal'
 import { TableCheckbox } from '@/components/TableCheckbox'
-import { isLimitedAlpha1Landlord } from '@shared/landlordCapabilities'
+import { isLimitedAlphaLandlord } from '@shared/landlordCapabilities'
 import { getActiveLandlordId } from '@/lib/activeLandlord'
 import {
   isCommunicationConversationUnread,
@@ -35,6 +35,12 @@ import { fetchCommunicationWorkOrderInboxRows } from '@/lib/workflowPipelineDeta
 import { isCommunicationInboxConversationType } from '@/lib/propertyConversations'
 import { inboxPreviewForSmsMessage } from '@/lib/smsMedia'
 import { supabase } from '@/lib/supabase'
+import {
+  buildResidentByPhoneDigits,
+  linkConversationToRosterByPhone,
+  type InboxUnitRow,
+  type RosterResidentForInboxLink,
+} from '@/lib/linkConversationToRoster'
 
 type ParticipantKind = 'tenant' | 'vendor' | 'ai' | 'landlord'
 
@@ -718,6 +724,15 @@ export function AdminCommunicationDashboard() {
   const [monitoringConversationId, setMonitoringConversationId] = useState<string | null>(null)
   const deleteConfirmTitleId = useId()
 
+  const monitoringHeadingName = useMemo(() => {
+    if (!monitoringConversationId) return null
+    const row = conversations.find((entry) => entry.id === monitoringConversationId)
+    if (!row || row.kind === 'ai') return null
+    const name = row.name.trim()
+    if (!name || name === 'Unknown' || name === 'Vendor') return null
+    return name
+  }, [conversations, monitoringConversationId])
+
   useEffect(() => {
     let cancelled = false
 
@@ -885,33 +900,62 @@ export function AdminCommunicationDashboard() {
         ),
       ) as Record<string, unknown>[])
 
-      // Fail-closed for guided: only conversations tied to this landlord's residents/vendors.
+      // Fail-closed for guided + always load roster so orphan SMS threads can link by phone.
+      const [portfolioResidents, portfolioVendors, portfolioUnits] = await Promise.all([
+        supabase
+          .from('users')
+          .select('id, full_name, phone, unit, building, status')
+          .eq('landlord_id', landlordId)
+          .in('status', ['active', 'pending'])
+          .limit(2000),
+        supabase.from('vendors').select('id, phone').eq('landlord_id', landlordId).limit(500),
+        supabase
+          .from('units')
+          .select('id, unit_label, building')
+          .eq('landlord_id', landlordId)
+          .limit(2000),
+      ])
+      if (cancelled) return
+
+      const rosterResidents: RosterResidentForInboxLink[] = (
+        (portfolioResidents.data ?? []) as Record<string, unknown>[]
+      )
+        .map((row) => ({
+          id: asString(row.id),
+          name: asString(row.full_name),
+          phone: asString(row.phone),
+          unit: asString(row.unit),
+          building: asString(row.building),
+        }))
+        .filter((row) => row.id)
+      const residentByPhone = buildResidentByPhoneDigits(rosterResidents)
+      const inventoryUnits: InboxUnitRow[] = (
+        (portfolioUnits.data ?? []) as Record<string, unknown>[]
+      )
+        .map((row) => ({
+          id: asString(row.id),
+          label: asString(row.unit_label),
+          building: asString(row.building),
+        }))
+        .filter((row) => row.id)
+
       let scopedRows = rows
       if (!allowImportedOperations) {
-        const [portfolioResidents, portfolioVendors] = await Promise.all([
-          supabase.from('users').select('id, phone').eq('landlord_id', landlordId).limit(2000),
-          supabase.from('vendors').select('id, phone').eq('landlord_id', landlordId).limit(500),
-        ])
-        if (cancelled) return
-        const allowedResidentIds = new Set(
-          (portfolioResidents.data ?? []).map((r) => asString((r as { id: string }).id)).filter(Boolean),
-        )
+        const allowedResidentIds = new Set(rosterResidents.map((r) => r.id))
         const allowedVendorIds = new Set(
-          (portfolioVendors.data ?? []).map((r) => asString((r as { id: string }).id)).filter(Boolean),
+          (portfolioVendors.data ?? [])
+            .map((r) => asString((r as { id: string }).id))
+            .filter(Boolean),
         )
-        const allowedPhones = new Set<string>()
-        for (const r of portfolioResidents.data ?? []) {
-          const digits = asString((r as { phone?: string }).phone).replace(/\D/g, '')
-          if (digits) allowedPhones.add(digits)
-        }
+        const allowedPhones = new Set<string>([...residentByPhone.keys()])
         for (const v of portfolioVendors.data ?? []) {
-          const digits = asString((v as { phone?: string }).phone).replace(/\D/g, '')
+          const digits = inboxPhoneDigits(asString((v as { phone?: string }).phone))
           if (digits) allowedPhones.add(digits)
         }
         scopedRows = rows.filter((r) => {
           const residentId = asString(r.resident_id)
           const vendorId = asString(r.vendor_id)
-          const phone = asString(r.external_phone_number).replace(/\D/g, '')
+          const phone = inboxPhoneDigits(asString(r.external_phone_number))
           if (residentId && allowedResidentIds.has(residentId)) return true
           if (vendorId && allowedVendorIds.has(vendorId)) return true
           if (phone && allowedPhones.has(phone)) return true
@@ -919,11 +963,59 @@ export function AdminCommunicationDashboard() {
         })
       }
 
+      const conversationBackfills: Array<{
+        id: string
+        residentId: string
+        unitId: string | null
+      }> = []
+      for (const row of scopedRows) {
+        const id = asString(row.id)
+        if (!id) continue
+        if (asString(row.resident_id) && asString(row.unit_id)) continue
+        const linked = linkConversationToRosterByPhone({
+          externalPhone: asString(row.external_phone_number),
+          residentByPhone,
+          units: inventoryUnits,
+        })
+        if (!linked) continue
+        if (!asString(row.resident_id)) row.resident_id = linked.residentId
+        if (!asString(row.unit_id) && linked.unitId) row.unit_id = linked.unitId
+        conversationBackfills.push({
+          id,
+          residentId: linked.residentId,
+          unitId: linked.unitId,
+        })
+      }
+      if (conversationBackfills.length > 0) {
+        void Promise.all(
+          conversationBackfills.map((entry) =>
+            supabase
+              .from('sms_conversations')
+              .update({
+                resident_id: entry.residentId,
+                ...(entry.unitId ? { unit_id: entry.unitId } : {}),
+              })
+              .eq('id', entry.id)
+              .eq('landlord_id', landlordId),
+          ),
+        ).catch((err) => {
+          console.warn('[admin communication] conversation roster backfill failed', err)
+        })
+      }
+
       const conversationIds = scopedRows.map((r) => asString(r.id)).filter(Boolean)
       const residentIds = [
-        ...new Set(scopedRows.map((r) => asString(r.resident_id)).filter(Boolean)),
+        ...new Set([
+          ...scopedRows.map((r) => asString(r.resident_id)).filter(Boolean),
+          ...rosterResidents.map((r) => r.id),
+        ]),
       ]
-      const unitIds = [...new Set(scopedRows.map((r) => asString(r.unit_id)).filter(Boolean))]
+      const unitIds = [
+        ...new Set([
+          ...scopedRows.map((r) => asString(r.unit_id)).filter(Boolean),
+          ...inventoryUnits.map((u) => u.id),
+        ]),
+      ]
       const ticketIds = [
         ...new Set(scopedRows.map((r) => asString(r.maintenance_request_id)).filter(Boolean)),
       ]
@@ -1068,11 +1160,25 @@ export function AdminCommunicationDashboard() {
 
       const mapped: Conversation[] = scopedRows.map((r) => {
         const id = asString(r.id)
-        const resident = residentById.get(asString(r.resident_id))
+        let resident = residentById.get(asString(r.resident_id))
+        const phoneDigits = inboxPhoneDigits(asString(r.external_phone_number))
+        if (!resident && phoneDigits) {
+          const linked = linkConversationToRosterByPhone({
+            externalPhone: asString(r.external_phone_number),
+            residentByPhone,
+            units: inventoryUnits,
+          })
+          if (linked) {
+            resident = {
+              name: linked.name,
+              unit: linked.unitLabel,
+              building: linked.building,
+            }
+          }
+        }
         const unit = unitById.get(asString(r.unit_id))
         const ticketId = asString(r.maintenance_request_id)
         const vendorId = asString(r.vendor_id)
-        const phoneDigits = inboxPhoneDigits(asString(r.external_phone_number))
         const rosterNameFromId = vendorById.get(vendorId)
         const rosterNameFromPhone = phoneDigits ? vendorByPhone.get(phoneDigits) : undefined
         const residentName = resident?.name || ''
@@ -1255,7 +1361,7 @@ export function AdminCommunicationDashboard() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchParams])
 
-  const splitOnboardingFromRequests = isLimitedAlpha1Landlord(getActiveLandlordId())
+  const splitOnboardingFromRequests = isLimitedAlphaLandlord(getActiveLandlordId())
 
   const filtered = useMemo(() => {
     const sorted = [...conversations].sort((a, b) => b.lastActivity - a.lastActivity)
@@ -1596,6 +1702,7 @@ export function AdminCommunicationDashboard() {
       <ConversationMonitoringModal
         open={monitoringConversationId != null}
         conversationId={monitoringConversationId}
+        headingName={monitoringHeadingName}
         onClose={() => {
           setMonitoringConversationId(null)
           if (searchParams.get('thread')) {
