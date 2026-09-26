@@ -8,7 +8,17 @@ import {
   matchesWaterOutage,
   matchesWholeHomeWaterOutage,
 } from "../../../../shared/maintenance/deterministicRules.ts"
-import { stripSystemIntakeText } from "./intakeSystemText.ts"
+import {
+  containsGreetingOrPleasantry,
+  extractIssueNounPhrase,
+  stripTenantMessageFiller,
+} from "../../../../shared/maintenance/issueNounPhrase.ts"
+import {
+  buildIntakeUnderstandingConfirm,
+  detectRecurringIssueSignal,
+} from "../../../../shared/maintenance/recurringIssueSignal.ts"
+import { stripSystemIntakeText, tenantAuthoredText } from "./intakeSystemText.ts"
+import { isDistinctResidentAvailability } from "./residentAvailabilityExtract.ts"
 import { resolvePhotoRequest } from "../../../../shared/maintenance/photoRequestPolicy.ts"
 import type { PrimaryCategory } from "../../../../shared/maintenance/primaryCategories.ts"
 import {
@@ -157,6 +167,13 @@ export type SmsIntakeState = {
    */
   /** Headline the resident has already been told, so a change can be stated. */
   acknowledged_headline?: string
+  /**
+   * Resident indicated this issue happened before (again / before / still / prior visit).
+   * Persisted on maintenance_requests.resident_reported_recurring for landlord visibility.
+   */
+  resident_reported_recurring?: boolean
+  /** Prior ticket id for the same unit + trade, when found during intake. */
+  prior_related_ticket_id?: string
   urgency_alert_tier?: UrgencyAlertTier
   urgency_alert_sent_at?: string
   /** Off-topic SMS parked until the resident replies YES or NO to welcome. */
@@ -736,21 +753,28 @@ export function issueContextPhrase(state: SmsIntakeState): string {
   return symptom
 }
 
-/** One-line headline for confirmation, e.g. "Kitchen sink is clogged". */
 /**
- * One line stating a changed reading. A later answer can move the headline
- * ("no hot water" becomes "No water in the home"), and the resident should
- * hear that immediately instead of finding it on the request later.
+ * One line stating a changed reading. Uses the same noun-phrase extraction as
+ * admin thread summaries — never echoes raw description / "Tenant update:" text.
  */
 export function headlineUpdateLine(
   previous: string | null | undefined,
   current: string,
+  opts?: { recurring?: boolean; priorVisitKnown?: boolean },
 ): string | null {
   const before = (previous ?? "").trim()
   const now = current.trim()
-  if (!before || !now) return null
-  if (before.toLowerCase() === now.toLowerCase()) return null
-  return `I've updated this to \u201C${now}.\u201D`
+  const recurring = Boolean(opts?.recurring)
+  const priorVisitKnown = Boolean(opts?.priorVisitKnown)
+  if (!now && !before) return null
+  const sameHeadline = Boolean(before && now && before.toLowerCase() === now.toLowerCase())
+  if (sameHeadline && !recurring && !priorVisitKnown) return null
+  if (!before && !recurring && !priorVisitKnown) return null
+  return buildIntakeUnderstandingConfirm({
+    issuePhrase: now || before,
+    recurring,
+    priorVisitKnown,
+  })
 }
 
 export function issueSummaryBullet(state: SmsIntakeState): string {
@@ -782,18 +806,28 @@ export function issueSummaryBullet(state: SmsIntakeState): string {
   if (/\bfront door\b/.test(all) && /\block/.test(all)) return "Front door won't lock"
   if (/\broach/.test(all)) return room ? `${place}roach sighting`.trim() : "Roach sighting"
 
-  const first = (state.initial_message ?? state.description ?? "")
-    .trim()
-    .split(/[.!\n]/)[0]
-    ?.trim()
-  if (first && first.length <= 80 && !/^maintenance issue/i.test(first)) {
-    return first.replace(/\.$/, "")
+  // Same extraction as admin Messages — never fall back to greeting-heavy raw text.
+  const authored = stripSystemIntakeText(tenantAuthoredText(state))
+  const category = resolveIntakeIssueCategory(state)
+  const extracted = extractIssueNounPhrase(authored, category)
+  let phrase = extracted.phrase.trim()
+  if (containsGreetingOrPleasantry(phrase) || /tenant update:/i.test(phrase)) {
+    phrase = extractIssueNounPhrase(stripTenantMessageFiller(authored), category).phrase.trim()
   }
-  const fallback = narrativeSummary(state).replace(/\.$/, "")
-  if (fallback && fallback !== "Maintenance issue reported via SMS") return fallback
+  if (phrase && !/^maintenance issue$/i.test(phrase)) {
+    const withoutArticle = phrase.replace(/^an?\s+/i, "")
+    return withoutArticle.charAt(0).toUpperCase() + withoutArticle.slice(1)
+  }
   if (room && issue) return `${place}${formatIssueTypeLabel(state.issue_type).toLowerCase()} issue`.trim()
   if (issue) return `${formatIssueTypeLabel(state.issue_type)} issue`
   return "Maintenance issue"
+}
+
+/** Mark recurring when tenant language indicates a prior / unresolved visit. */
+export function applyRecurringIssueSignal(state: SmsIntakeState): SmsIntakeState {
+  if (state.resident_reported_recurring) return state
+  if (!detectRecurringIssueSignal(tenantAuthoredText(state))) return state
+  return { ...state, resident_reported_recurring: true }
 }
 
 /** Clean ticket headline for vendor SMS / cards — never the Q&A-stuffed description. */
@@ -846,28 +880,39 @@ export function buildIntakeDescription(state: SmsIntakeState): string {
     parts.push(`Entry if not home: ${entry}.`)
   }
   if (state.preferred_visit_windows?.trim()) {
-    parts.push(
-      `Resident availability: ${state.preferred_visit_windows.trim()}.`,
-    )
+    const windows = state.preferred_visit_windows.trim()
+    if (
+      isDistinctResidentAvailability(windows, [
+        state.initial_message,
+        state.description,
+      ])
+    ) {
+      parts.push(`Resident availability: ${windows}.`)
+    }
   }
 
   return parts.join("\n\n").trim() || "Maintenance issue reported via SMS."
 }
 
 function narrativeSummary(state: SmsIntakeState): string {
-  const base = (state.description ?? state.initial_message ?? "").trim()
+  // Prefer classified noun phrases over raw description (greetings / Tenant update).
+  const authored = stripSystemIntakeText(tenantAuthoredText(state))
+  const category = resolveIntakeIssueCategory(state)
+  const phrase = extractIssueNounPhrase(authored, category).phrase.replace(/^an?\s+/i, "")
+  if (phrase && !/^maintenance issue$/i.test(phrase)) {
+    const room = resolveRoomLabel(state)
+    const safety = state.safety_concerns?.trim()
+    const hasSafety = safety && !/^(no|none|n\/a|nothing)/i.test(safety)
+    const base = phrase.charAt(0).toUpperCase() + phrase.slice(1)
+    if (room && !phrase.toLowerCase().includes(room.toLowerCase())) {
+      return `${base} in the ${room}${hasSafety ? `: ${safety}` : "."}`
+    }
+    return hasSafety ? `${base}. ${safety}` : `${base}.`
+  }
+
   const room = resolveRoomLabel(state)
   const safety = state.safety_concerns?.trim()
   const hasSafety = safety && !/^(no|none|n\/a|nothing)/i.test(safety)
-
-  if (base) {
-    const endsWithPunctuation = /[.!?]$/.test(base)
-    let summary = endsWithPunctuation ? base : `${base}.`
-    if (hasSafety && !summary.toLowerCase().includes(safety.toLowerCase().slice(0, 20))) {
-      summary = `${summary} ${safety}`.trim()
-    }
-    return summary
-  }
 
   if (room) {
     return `There is a ${formatIssueTypeLabel(state.issue_type).toLowerCase()} issue in the ${room}${hasSafety ? `: ${safety}` : "."}`
@@ -876,46 +921,88 @@ function narrativeSummary(state: SmsIntakeState): string {
   return "Maintenance issue reported via SMS."
 }
 
+/** True when a diagnostic fact is short/structured — not a pasted free-text narrative. */
+function isCleanDiagnosticFact(value: string, state: SmsIntakeState): boolean {
+  const t = value.replace(/\s+/g, " ").trim()
+  if (!t || t.length > 100) return false
+  if (/tenant update:/i.test(t)) return false
+  if (/^(?:hi|hello|hey|thank)/i.test(t)) return false
+  const initial = (state.initial_message ?? "").replace(/\s+/g, " ").trim().toLowerCase()
+  const desc = (state.description ?? "").replace(/\s+/g, " ").trim().toLowerCase()
+  const lower = t.toLowerCase()
+  if (initial && (lower === initial || initial.startsWith(lower) || lower.startsWith(initial))) {
+    return false
+  }
+  if (desc && (lower === desc || desc.includes(lower) && lower.length > 40)) {
+    // Long substring of description is almost certainly raw echo.
+    if (lower.length > 40) return false
+  }
+  return true
+}
+
 export function buildConfirmationSummary(state: SmsIntakeState): string {
-  const bullets: string[] = []
   const pending = Array.isArray(state.pending_issues) ? state.pending_issues : []
   const facts = state.diagnostic_facts ?? {}
+  const authored = tenantAuthoredText(state)
+  const recurring =
+    Boolean(state.resident_reported_recurring) || detectRecurringIssueSignal(authored)
 
-  const quoteRequest = (text: string): string => {
-    const cleaned = text
-      .replace(/^["“”']+|["“”']+$/g, "")
-      .replace(/\.$/, "")
-      .trim()
-    return `“${cleaned}.”`
-  }
+  const header = pending.length >= 2
+    ? "Got it. Here are the requests:"
+    : "Got it. Here's the request:"
 
+  // Issue line — Ulo's classification, not a verbatim quote.
+  const issueLines: string[] = []
   if (pending.length >= 2) {
     for (let i = 0; i < pending.length; i++) {
-      bullets.push(`${i + 1}. ${quoteRequest(pending[i].summary)}`)
+      const summary = (pending[i].summary ?? "").replace(/^["“”']+|["“”']+$/g, "").trim()
+      const cleaned = summary || issueSummaryBullet({
+        ...state,
+        description: summary,
+        initial_message: summary,
+      })
+      issueLines.push(`${i + 1}. ${cleaned.replace(/\.$/, "")}`)
     }
+  } else {
+    issueLines.push(issueSummaryBullet(state).replace(/\.$/, ""))
+  }
+
+  const handlingTip = resolveCategoryHandlingTip(tipInputFromIntakeState(state))
+
+  const bullets: string[] = []
+
+  if (recurring) {
+    const issue = issueSummaryBullet(state).replace(/\.$/, "").toLowerCase()
+    bullets.push(`• Recurring issue — ${issue} has come up before`)
   }
 
   const safety = state.safety_concerns?.trim()
-  if (safety) bullets.push(`• ${safety}`)
+  if (safety && isCleanDiagnosticFact(safety, state)) {
+    bullets.push(`• ${safety}`)
+  }
 
-  if (facts.hvac_behavior?.trim()) {
-    bullets.push(`• ${facts.hvac_behavior.trim()}`)
+  for (const key of [
+    "hvac_behavior",
+    "plumbing_hot_water_scope",
+    "plumbing_water_outage_scope",
+    "electrical_scope",
+    "appliance_symptom",
+    "door_part",
+  ] as const) {
+    const value = facts[key]?.trim()
+    if (value && isCleanDiagnosticFact(value, state)) {
+      bullets.push(`• ${value}`)
+    }
   }
-  if (facts.plumbing_hot_water_scope?.trim()) {
-    bullets.push(`• ${facts.plumbing_hot_water_scope.trim()}`)
+
+  // Pest frequency: never dump raw narrative; recurring is already stated above.
+  if (!recurring) {
+    const pestFreq = facts.pest_frequency?.trim()
+    if (pestFreq && isCleanDiagnosticFact(pestFreq, state)) {
+      bullets.push(`• ${pestFreq}`)
+    }
   }
-  if (facts.electrical_scope?.trim()) {
-    bullets.push(`• ${facts.electrical_scope.trim()}`)
-  }
-  if (facts.appliance_symptom?.trim()) {
-    bullets.push(`• ${facts.appliance_symptom.trim()}`)
-  }
-  if (facts.pest_frequency?.trim()) {
-    bullets.push(`• ${facts.pest_frequency.trim()}`)
-  }
-  if (facts.door_part?.trim()) {
-    bullets.push(`• ${facts.door_part.trim()}`)
-  }
+
   if (facts.unit_entry?.trim()) {
     const entry = facts.unit_entry.trim()
     const lower = entry.toLowerCase()
@@ -923,21 +1010,9 @@ export function buildConfirmationSummary(state: SmsIntakeState): string {
       bullets.push("• OK to enter if not home")
     } else if (/^(n|no)\b/.test(lower)) {
       bullets.push("• Do not enter if not home")
-    } else {
+    } else if (isCleanDiagnosticFact(entry, state)) {
       bullets.push(`• Entry if not home: ${entry}`)
     }
-  }
-
-  if (state.preferred_visit_windows?.trim()) {
-    bullets.push(`• Availability: ${state.preferred_visit_windows.trim()}`)
-  }
-
-  if (state.first_noticed?.trim()) {
-    const noticed = state.first_noticed.trim()
-    const line = /^(today|yesterday|this morning|this afternoon|last night|last week)/i.test(noticed)
-      ? `Started ${noticed.charAt(0).toLowerCase()}${noticed.slice(1)}`
-      : `Started ${noticed}`
-    bullets.push(`• ${line}`)
   }
 
   const photoCount = state.photo_urls?.length ?? 0
@@ -945,19 +1020,35 @@ export function buildConfirmationSummary(state: SmsIntakeState): string {
     bullets.push(photoCount === 1 ? "• Photo attached" : `• ${photoCount} photos attached`)
   }
 
-  const header = pending.length >= 2
-    ? "Got it. Here are the requests:"
-    : "Got it. Here's the request:"
-  const headline = pending.length >= 2 ? null : quoteRequest(issueSummaryBullet(state))
-  const handlingTip = resolveCategoryHandlingTip(tipInputFromIntakeState(state))
+  const availability = state.preferred_visit_windows?.trim()
+  if (
+    availability &&
+    isDistinctResidentAvailability(availability, [
+      state.initial_message,
+      state.description,
+      authored,
+    ])
+  ) {
+    bullets.push(`• Availability: ${availability}`)
+  }
 
+  if (state.first_noticed?.trim() && isCleanDiagnosticFact(state.first_noticed, state)) {
+    const noticed = state.first_noticed.trim()
+    const line = /^(today|yesterday|this morning|this afternoon|last night|last week)/i.test(noticed)
+      ? `Started ${noticed.charAt(0).toLowerCase()}${noticed.slice(1)}`
+      : `Started ${noticed}`
+    bullets.push(`• ${line}`)
+  }
+
+  // Order: issue → safety tip → structured bullets → CTA
   return [
     header,
     "",
-    headline,
-    ...bullets,
+    ...issueLines,
     handlingTip ? "" : null,
     handlingTip,
+    bullets.length ? "" : null,
+    ...bullets,
     "",
     "Reply YES to submit, or reply with any changes.",
   ].filter((line) => line != null).join("\n")

@@ -27,6 +27,15 @@ import {
   formatRescheduleTimeLabel,
 } from "./vendorRescheduleSms.ts"
 import { getSMSProviderForSend } from "./providerFactory.ts"
+import {
+  extractTenantSchedulePreferredWindow,
+  hasTenantScheduleTimeCue,
+} from "./tenantSchedulePreferredWindow.ts"
+
+export {
+  extractTenantSchedulePreferredWindow,
+  hasTenantScheduleTimeCue,
+} from "./tenantSchedulePreferredWindow.ts"
 
 export const AWAITING_SCHEDULE_CONFIRM_KEY = "awaiting_schedule_confirmation"
 
@@ -61,7 +70,7 @@ export function buildTenantScheduleAskSms(input: {
     "",
     `${vendor} proposed an arrival window of ${when}. Does that work for you?`,
     "",
-    "Reply YES to confirm or NO if you need a different time.",
+    "Reply YES to confirm, or NO with another day/time (e.g. Thu 2–4pm).",
   ].join("\n")
 }
 
@@ -70,7 +79,15 @@ export function buildTenantScheduleAcceptedSms(windowText: string): string {
   return `Thanks — you're confirmed for ${when}. We'll keep you updated on the repair.`
 }
 
-export function buildTenantScheduleDeclinedSms(): string {
+export function buildTenantScheduleDeclinedSms(
+  preferredWindowText?: string | null,
+): string {
+  const preferred = preferredWindowText?.trim()
+  if (preferred) {
+    return (
+      `Got it — we'll share ${preferred} with the vendor and text you when they reply.`
+    )
+  }
   return "No problem — we'll ask the vendor for another time and text you again."
 }
 
@@ -79,7 +96,18 @@ export function buildVendorWaitingOnTenantSms(windowText: string): string {
   return `Thanks — checking with the resident on ${when}. We'll text you once they confirm.`
 }
 
-export function buildVendorTenantNeedsDifferentTimeSms(): string {
+export function buildVendorTenantNeedsDifferentTimeSms(
+  preferredWindowText?: string | null,
+): string {
+  const preferred = preferredWindowText?.trim()
+  if (preferred) {
+    return [
+      "The resident needs a different arrival window.",
+      `They suggested: ${preferred}.`,
+      "",
+      "Reply with a day and arrival window that works (confirm that one or offer another).",
+    ].join("\n")
+  }
   return (
     "The resident needs a different arrival window. " +
     "What's another day and window that works (e.g. Thu 1pm–4pm)?"
@@ -110,9 +138,11 @@ export function parseTenantScheduleDecision(
     return "accept"
   }
 
-  if (
+  const declinePhrase =
     normalized === "NO" ||
     normalized === "N" ||
+    normalized === "NOPE" ||
+    normalized === "NAH" ||
     normalized === "DECLINE" ||
     normalized === "DECLINED" ||
     normalized === "DIFFERENT TIME" ||
@@ -124,19 +154,25 @@ export function parseTenantScheduleDecision(
     normalized === "I WON'T BE HOME" ||
     /\b(doesn'?t work|does not work|won'?t be home|cannot make|can'?t make)\b/i
       .test(trimmed)
+
+  // "No Wed 2pm" / "No, tomorrow after 3" — decline lead-in + alternate window.
+  if (
+    /^(?:no|n|nope|nah)\b/i.test(trimmed) &&
+    hasTenantScheduleTimeCue(trimmed)
   ) {
+    return "counter_propose"
+  }
+
+  if (declinePhrase) {
     // Counter-propose when they offer another day/time with the decline.
-    if (
-      /\b(tomorrow|today|mon|tue|wed|thu|fri|sat|sun|\d{1,2}\s*(a\.?m\.?|p\.?m\.?))\b/i
-        .test(trimmed)
-    ) {
+    if (hasTenantScheduleTimeCue(trimmed)) {
       return "counter_propose"
     }
     return "decline"
   }
 
   if (
-    /\b(can they come|come tomorrow|another (?:day|time)|different (?:day|time))\b/i
+    /\b(can they come|come tomorrow|another (?:day|time)|different (?:day|time)|how about|what about)\b/i
       .test(trimmed)
   ) {
     return "counter_propose"
@@ -462,9 +498,6 @@ export async function tryHandleTenantScheduleConfirmInbound(
 > {
   if (params.identityType !== "resident") return { handled: false }
 
-  const decision = parseTenantScheduleDecision(params.body)
-  if (!decision) return { handled: false }
-
   const { data: conv } = await supabase
     .from("sms_conversations")
     .select("id, intake_state, maintenance_request_id")
@@ -478,6 +511,18 @@ export async function tryHandleTenantScheduleConfirmInbound(
       : {}
   const pending = readAwaitingScheduleConfirmation(prior)
   if (!pending) return { handled: false }
+
+  // While a window is pending, bare day/time (or "No Wed 2pm") is a counter-propose.
+  let decision = parseTenantScheduleDecision(params.body)
+  if (!decision && hasTenantScheduleTimeCue(params.body)) {
+    decision = "counter_propose"
+  }
+  if (!decision) return { handled: false }
+
+  const preferredWindow =
+    decision === "counter_propose"
+      ? extractTenantSchedulePreferredWindow(params.body)
+      : null
 
   await clearAwaitingScheduleConfirmation(supabase, params.conversationId, prior)
 
@@ -589,14 +634,19 @@ export async function tryHandleTenantScheduleConfirmInbound(
   const confirmationStatus =
     decision === "counter_propose" ? "counter_proposed" : "declined"
 
+  const ticketUpdate: Record<string, unknown> = {}
   if (isReschedule) {
+    ticketUpdate.resident_confirmation_status = confirmationStatus
+    ticketUpdate.schedule_status = "resident_declined_reschedule"
+    ticketUpdate.schedule_confirmed_at = null
+  }
+  if (preferredWindow) {
+    ticketUpdate.resident_availability_text = preferredWindow
+  }
+  if (Object.keys(ticketUpdate).length > 0) {
     await supabase
       .from("maintenance_requests")
-      .update({
-        resident_confirmation_status: confirmationStatus,
-        schedule_status: "resident_declined_reschedule",
-        schedule_confirmed_at: null,
-      })
+      .update(ticketUpdate)
       .eq("id", pending.ticketId)
   }
 
@@ -621,7 +671,7 @@ export async function tryHandleTenantScheduleConfirmInbound(
       conversationId: pending.vendorConversationId,
       ticketId: pending.ticketId,
       vendorId: pending.vendorId,
-      body: buildVendorTenantNeedsDifferentTimeSms(),
+      body: buildVendorTenantNeedsDifferentTimeSms(preferredWindow),
     })
   }
 
@@ -656,6 +706,7 @@ export async function tryHandleTenantScheduleConfirmInbound(
         window_text: pending.windowText,
         status: confirmationStatus,
         resident_body: params.body.slice(0, 200),
+        preferred_window: preferredWindow,
       },
     })
   } else {
@@ -668,7 +719,11 @@ export async function tryHandleTenantScheduleConfirmInbound(
       maintenance_request_id: pending.ticketId,
       conversation_id: params.conversationId,
       message_id: params.messageId,
-      metadata: { window_text: pending.windowText },
+      metadata: {
+        window_text: pending.windowText,
+        preferred_window: preferredWindow,
+        status: confirmationStatus,
+      },
     })
   }
 
@@ -676,6 +731,6 @@ export async function tryHandleTenantScheduleConfirmInbound(
     handled: true,
     action: decision,
     ticketId: pending.ticketId,
-    replyBody: buildTenantScheduleDeclinedSms(),
+    replyBody: buildTenantScheduleDeclinedSms(preferredWindow),
   }
 }

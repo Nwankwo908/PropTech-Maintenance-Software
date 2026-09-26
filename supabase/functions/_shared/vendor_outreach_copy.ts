@@ -1,5 +1,7 @@
 /** Vendor outreach copy — short, friendly, one clear CTA (6th–8th grade reading level). */
 
+import { sanitizeResidentAvailabilityForVendor } from "./sms/residentAvailabilityExtract.ts"
+
 /** Short work-order ref for SMS (matches admin WO-XXXX style). */
 export function formatWorkOrderRef(ticketId: string): string {
   const compact = ticketId.replace(/-/g, "").slice(0, 4).toUpperCase()
@@ -177,7 +179,7 @@ export function buildVendorJobAssignmentSms(input: {
   } else if (input.entryOkIfAbsent === false) {
     lines.push("Entry OK if resident out: No")
   }
-  const avail = input.residentAvailabilityText?.trim()
+  const avail = sanitizeResidentAvailabilityForVendor(input.residentAvailabilityText)
   if (avail) {
     lines.push(`Resident availability: ${avail}`)
   }
@@ -258,7 +260,7 @@ export function buildVendorAvailabilityAskSms(
 ): string {
   const wo = workOrderRef?.trim()
   const forJob = wo ? ` for ${wo}` : ""
-  const avail = residentAvailabilityText?.trim()
+  const avail = sanitizeResidentAvailabilityForVendor(residentAvailabilityText)
   if (avail) {
     return (
       `The resident shared these times${forJob}: ${avail}. ` +

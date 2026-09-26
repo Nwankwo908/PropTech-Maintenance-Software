@@ -133,6 +133,24 @@ Deno.test("buildVendorAvailabilityProbeSms asks for window before assign", () =>
   )
 })
 
+Deno.test("buildVendorAvailabilityProbeSms omits opening issue text as resident avail", () => {
+  const body = buildVendorAvailabilityProbeSms({
+    vendorName: "Pest Patrol",
+    companyName: "Harbor Homes",
+    workOrderRef: "WO-5451",
+    location: "33 Maple Street · Unit 1",
+    issueHeadline: "Pest control request",
+    entryOkIfAbsent: false,
+    description:
+      "Hi and thank you I was trying to see if an exterminator can come out to spray the property",
+    residentAvailabilityText:
+      "Hi and thank you I was trying to see if an exterminator can come out to spray the property",
+  })
+  assertStringIncludes(body, "Harbor Homes")
+  assertEquals(body.includes("Resident avail"), false)
+  assertEquals(body.includes("exterminator can come out"), false)
+})
+
 Deno.test("buildVendorAvailabilityProbeSms uses clean headline, not Q&A-stuffed description", () => {
   const stuffed =
     "No water pressure Tenant update: No Affected area: kitchen. Entry if not home: No."

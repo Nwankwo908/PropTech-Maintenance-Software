@@ -88,6 +88,7 @@ import { supabase } from '@/lib/supabase'
 import type { UnitOccupancyStatus } from '@/components/UnitOccupancyStatusMenu'
 import { getErrorMessage } from '@/lib/errorMessage'
 import {
+  consumeSetupSuccessCheckboxGuidePending,
   dismissSetupSuccessCheckboxGuide,
   isSetupSuccessCheckboxGuideActive,
   isSetupSuccessCheckboxGuideNavigation,
@@ -325,6 +326,7 @@ export function AdminPropertyDetailDashboard() {
     if (!isSetupSuccessCheckboxGuideActive(location.state, 'property_tab')) return
     setShowPropertyTabGuide(true)
     setPropertyTabGuideRunId((value) => value + 1)
+    consumeSetupSuccessCheckboxGuidePending('property_tab')
     if (isSetupSuccessCheckboxGuideNavigation(location.state, 'property_tab')) {
       navigate(`${location.pathname}${location.search}`, { replace: true, state: {} })
     }
@@ -335,6 +337,7 @@ export function AdminPropertyDetailDashboard() {
     setShowPropertyAccessGuide(true)
     setActiveTab('overview')
     setPropertyAccessGuideRunId((value) => value + 1)
+    consumeSetupSuccessCheckboxGuidePending('property_access')
     if (isSetupSuccessCheckboxGuideNavigation(location.state, 'property_access')) {
       navigate(`${location.pathname}${location.search}`, { replace: true, state: {} })
     }
@@ -345,6 +348,7 @@ export function AdminPropertyDetailDashboard() {
     setShowPropertyInsuranceGuide(true)
     setActiveTab('insurance')
     setPropertyInsuranceGuideRunId((value) => value + 1)
+    consumeSetupSuccessCheckboxGuidePending('property_insurance')
     const onInsuranceTab = searchParams.get('tab') === 'insurance'
     const fromGuideNav = isSetupSuccessCheckboxGuideNavigation(location.state, 'property_insurance')
     if (!onInsuranceTab || fromGuideNav) {

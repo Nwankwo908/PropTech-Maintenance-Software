@@ -21,6 +21,8 @@ import {
   titleCaseCompanyName,
   vendorCompanyName,
 } from "./vendor_outreach_copy.ts"
+import { loadLandlordDisplayName } from "./landlordDisplayName.ts"
+import { sanitizeResidentAvailabilityForVendor } from "./sms/residentAvailabilityExtract.ts"
 import { loadPropertyLocationFromTable } from "./properties/propertyLocation.ts"
 import { sendVendorJobAlert } from "./sms/vendorSmsRouting.ts"
 import {
@@ -253,7 +255,10 @@ export function buildVendorAvailabilityProbeSms(input: {
   } else if (input.entryOkIfAbsent === false) {
     lines.push("Entry OK if resident out: No")
   }
-  const avail = input.residentAvailabilityText?.trim()
+  const avail = sanitizeResidentAvailabilityForVendor(
+    input.residentAvailabilityText,
+    [input.description, input.issueHeadline],
+  )
   if (avail) {
     lines.push(`Resident avail: ${avail}`)
   }
@@ -541,15 +546,11 @@ export async function startVendorAvailabilityProbe(
     return { probed: 0, skipReason: "no_vendor" }
   }
 
-  const { data: landlord } = await supabase
-    .from("landlords")
-    .select("name, display_name")
-    .eq("id", params.landlordId)
-    .maybeSingle()
-  const displayName =
-    typeof landlord?.display_name === "string" ? landlord.display_name.trim() : ""
-  const legalName = typeof landlord?.name === "string" ? landlord.name.trim() : ""
-  const companyName = displayName || legalName
+  const companyName = await loadLandlordDisplayName(supabase, params.landlordId)
+  const residentAvailabilityText = sanitizeResidentAvailabilityForVendor(
+    params.residentAvailabilityText,
+    [params.description, params.issueHeadline],
+  )
 
   const wo = formatWorkOrderRef(params.ticketId)
   const issueHeadline = params.issueHeadline?.trim() || null
@@ -571,7 +572,7 @@ export async function startVendorAvailabilityProbe(
     issueHeadline,
     entryOkIfAbsent,
     urgent,
-    residentAvailabilityText: params.residentAvailabilityText?.trim() || null,
+    residentAvailabilityText,
     candidates,
     offers: [],
     declinedVendorIds: [],
@@ -602,7 +603,7 @@ export async function startVendorAvailabilityProbe(
       issueHeadline,
       entryOkIfAbsent,
       urgent,
-      residentAvailabilityText: params.residentAvailabilityText,
+      residentAvailabilityText,
     })
     const sent = await sendVendorJobAlert(supabase, {
       ticketId: params.ticketId,

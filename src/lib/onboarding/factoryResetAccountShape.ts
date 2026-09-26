@@ -28,6 +28,7 @@ export type FactoryResetAccountShape = {
     email: string
     contact_name: null
     phone: null
+    display_name: null
   }
   onboarding: {
     onboarding_status: 'not_started'
@@ -76,6 +77,7 @@ export function expectedFactoryResetAccountShape(
       email: seed.email,
       contact_name: null,
       phone: null,
+      display_name: null,
     },
     onboarding: {
       onboarding_status: 'not_started',
@@ -94,6 +96,7 @@ export type FactoryResetShapeSnapshot = {
     email: string | null
     contact_name: string | null
     phone: string | null
+    display_name?: string | null
   }
   onboarding: {
     onboarding_status: string | null
@@ -170,6 +173,9 @@ export function diffFactoryResetAccountShape(
   }
   if (normNullableText(actual.landlord.phone) !== null) {
     push('landlords.phone', null, actual.landlord.phone)
+  }
+  if (normNullableText(actual.landlord.display_name) !== null) {
+    push('landlords.display_name', null, actual.landlord.display_name)
   }
 
   if (normText(actual.onboarding.onboarding_status) !== expected.onboarding.onboarding_status) {

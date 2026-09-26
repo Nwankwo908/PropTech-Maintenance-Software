@@ -42,6 +42,7 @@ function mapTicketRow(row: Record<string, unknown>): PortfolioTicketRow {
     assignedVendorId:
       typeof row.assigned_vendor_id === 'string' ? row.assigned_vendor_id : null,
     urgency: typeof row.urgency === 'string' ? row.urgency : null,
+    residentReportedRecurring: row.resident_reported_recurring === true,
   }
 }
 
@@ -56,7 +57,7 @@ export async function loadPortfolioIntelligenceInput(
     supabase
       .from('maintenance_request_enriched')
       .select(
-        'id, building, unit, issue_category, vendor_work_status, created_at, assigned_vendor_id, urgency',
+        'id, building, unit, issue_category, vendor_work_status, created_at, assigned_vendor_id, urgency, resident_reported_recurring',
       )
       .eq('landlord_id', id)
       .gte('created_at', since60)
@@ -65,7 +66,7 @@ export async function loadPortfolioIntelligenceInput(
     supabase
       .from('maintenance_request_enriched')
       .select(
-        'id, building, unit, issue_category, vendor_work_status, created_at, assigned_vendor_id, urgency',
+        'id, building, unit, issue_category, vendor_work_status, created_at, assigned_vendor_id, urgency, resident_reported_recurring',
       )
       .eq('landlord_id', id)
       .not('vendor_work_status', 'in', '("completed","cancelled","closed","resolved")')

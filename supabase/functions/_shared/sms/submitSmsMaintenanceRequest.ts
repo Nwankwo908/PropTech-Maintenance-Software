@@ -19,6 +19,7 @@ import {
 } from "./residentIntakeTypes.ts"
 import { issueCategoryToVendorTrade } from "../vendor_trades.ts"
 import { rehostInboundSmsMedia } from "./rehostInboundMedia.ts"
+import { sanitizeResidentAvailabilityForVendor } from "./residentAvailabilityExtract.ts"
 
 type ResidentRow = {
   id: string
@@ -137,10 +138,12 @@ export async function submitSmsMaintenanceRequest(
     params.intake.preferred_contact_method,
   )
 
-  const residentAvailability =
-    params.intake.preferred_visit_windows?.trim() || null
   const issueHeadline = ticketIssueHeadline(params.intake)
   const entryOkIfAbsent = entryOkIfAbsentFromIntake(params.intake)
+  const residentAvailability = sanitizeResidentAvailabilityForVendor(
+    params.intake.preferred_visit_windows,
+    [params.intake.initial_message, params.intake.description, issueHeadline],
+  )
 
   const ticketFields = {
     landlord_id: params.landlordId,
@@ -161,6 +164,7 @@ export async function submitSmsMaintenanceRequest(
     due_at: dueAt.toISOString(),
     vendor_work_status: "unassigned",
     resident_availability_text: residentAvailability,
+    resident_reported_recurring: Boolean(params.intake.resident_reported_recurring),
   }
 
   const existingTicketId = params.forceNewTicket

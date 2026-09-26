@@ -2,8 +2,12 @@
  * Dynamic SMS intake questions. Tenants give facts; Ulo classifies urgency/trade.
  * Ask only when the answer would change safety handling, routing, or next steps.
  */
+import { parseDurationHours } from "../../../../shared/maintenance/urgencyPolicy.ts"
+import { matchesWaterOutage } from "../../../../shared/maintenance/deterministicRules.ts"
+import { detectRecurringIssueSignal } from "../../../../shared/maintenance/recurringIssueSignal.ts"
 import {
   applyPhotoRequestPolicy,
+  applyRecurringIssueSignal,
   computeIntakeSeverity,
   extractRoomFromText,
   inferIssueTypeFromText,
@@ -21,8 +25,6 @@ import {
   TENANT_UPDATE_PREFIX,
   tenantAuthoredText,
 } from "./intakeSystemText.ts"
-import { parseDurationHours } from "../../../../shared/maintenance/urgencyPolicy.ts"
-import { matchesWaterOutage } from "../../../../shared/maintenance/deterministicRules.ts"
 
 export type MaintenanceQuestionType =
   | "classification_clarification"
@@ -573,17 +575,34 @@ function resolveNextMaintenanceQuestion(
   }
 
   if (isPest(state, hay)) {
-    const q = tryAsk(
-      "pest_frequency",
-      "Have you seen just one, or are you seeing them repeatedly?",
-    )
-    if (q) return q
+    const recurring =
+      Boolean(state.resident_reported_recurring) || detectRecurringIssueSignal(hay)
+    // Frequency is already answered when they said again / before / repeatedly.
+    if (!recurring) {
+      const q = tryAsk(
+        "pest_frequency",
+        "Have you seen just one, or are you seeing them repeatedly?",
+      )
+      if (q) return q
+    }
     if (!room) {
       const loc = tryAsk(
         "pest_location",
-        "Where are you seeing them most — kitchen, bathroom, bedroom, or multiple rooms?",
+        recurring
+          ? state.prior_related_ticket_id
+            ? "I see a prior pest visit for your unit. Is this the same spot as last time, or somewhere new?"
+            : "Since someone's been out before — is this the same spot as last time, or somewhere new?"
+          : "Where are you seeing them most — kitchen, bathroom, bedroom, or multiple rooms?",
       )
       if (loc) return loc
+    } else if (recurring && !asked(state, "pest_location")) {
+      const same = tryAsk(
+        "pest_location",
+        state.prior_related_ticket_id
+          ? "I see a prior pest visit for your unit. Is this the same issue coming back in that same spot?"
+          : "Is this the same spot as last time, or somewhere new?",
+      )
+      if (same) return same
     }
   }
 
@@ -704,14 +723,25 @@ function resolveNextMaintenanceQuestion(
 }
 
 export function applyQuestionPlan(state: SmsIntakeState): SmsIntakeState {
+  const withRecurring = applyRecurringIssueSignal(state)
   const withContact: SmsIntakeState = {
-    ...state,
-    preferred_contact_method: state.preferred_contact_method?.trim() || "text",
+    ...withRecurring,
+    preferred_contact_method: withRecurring.preferred_contact_method?.trim() || "text",
   }
   const withPhoto = applyPhotoRequestPolicy(withContact)
   const urgency = recommendUrgency(withPhoto)
+  let askedTypes = [...(withPhoto.asked_question_types ?? [])]
+  // Recurring language already answers "just one vs repeatedly".
+  if (
+    withPhoto.resident_reported_recurring &&
+    isPest(withPhoto, haystack(withPhoto)) &&
+    !askedTypes.includes("pest_frequency")
+  ) {
+    askedTypes = [...askedTypes, "pest_frequency"]
+  }
   const prepared: SmsIntakeState = {
     ...withPhoto,
+    asked_question_types: askedTypes,
     recommended_urgency: urgency,
     urgency,
     severity: computeIntakeSeverity({ ...withPhoto, urgency }),

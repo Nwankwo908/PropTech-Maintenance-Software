@@ -559,10 +559,7 @@ export function OnboardingAiReviewStep({
                 onEditChange={() => undefined}
               >
                   <div className="mt-3 grid gap-3 border-t border-[#f3f4f6] pt-3 sm:grid-cols-2">
-                    <p className="sm:col-span-2 text-[12px] font-medium text-[#364153]">
-                      Complete location details (not always on the document)
-                    </p>
-                    <label className="block sm:col-span-2">
+                    <label className="block min-w-0">
                       <span className={fieldLabelClass}>Property name</span>
                       <input
                         className={inputClass}
@@ -571,7 +568,7 @@ export function OnboardingAiReviewStep({
                         placeholder="Property name"
                       />
                     </label>
-                    <div className="block sm:col-span-2">
+                    <div className="min-w-0">
                       <span className={fieldLabelClass}>Street address</span>
                       <StreetAddressAutocomplete
                         className={inputClass}

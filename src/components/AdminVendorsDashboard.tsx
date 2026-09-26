@@ -34,6 +34,7 @@ import {
   vendorCapacityChipVisualClasses,
 } from '@/lib/vendorStatusChip'
 import {
+  consumeSetupSuccessCheckboxGuidePending,
   dismissSetupSuccessCheckboxGuide,
   isSetupSuccessCheckboxGuideActive,
   isSetupSuccessCheckboxGuideNavigation,
@@ -341,6 +342,7 @@ export function AdminVendorsDashboard() {
       setShowAddVendorGuide(true)
       setAddVendorGuideRunId((value) => value + 1)
     }
+    consumeSetupSuccessCheckboxGuidePending('vendors')
     if (isSetupSuccessCheckboxGuideNavigation(location.state, 'vendors')) {
       navigate(location.pathname, { replace: true, state: {} })
     }

@@ -11,7 +11,10 @@ import type { AccountSetupCounts, OnboardingAccountSetup } from '../types'
 import { parseRentDueDayInput } from './residents'
 import { resolveLandlordSupportEmail } from '@/lib/landlordSupportEmail'
 import { syncLandlordPortalTeamMember } from '@/lib/landlordPortalMembers'
-import { landlordPortfolioLabel } from '@shared/landlordPortfolioLabel'
+import {
+  landlordPortfolioLabel,
+  usableOnboardingCompanyName,
+} from '@shared/landlordPortfolioLabel'
 
 async function persistAccountProfileOnOnboarding(
   landlordId: string,
@@ -108,6 +111,7 @@ export async function persistLandlordAccountProfile(
   const companyName = account.companyName.trim()
   const contactName = account.contactName.trim()
   const storedName = landlordPortfolioLabel({ companyName, contactName }) || 'New Landlord'
+  const displayName = usableOnboardingCompanyName(companyName) || null
   const email = account.email.trim() || null
   const phoneResult = account.phone.trim()
     ? phoneForDbOrError(account.phone)
@@ -118,6 +122,7 @@ export async function persistLandlordAccountProfile(
 
   const payload: Record<string, unknown> = {
     name: storedName,
+    display_name: displayName,
     contact_name: contactName || null,
     email,
     phone: phoneResult.phone,
@@ -131,6 +136,7 @@ export async function persistLandlordAccountProfile(
         .from('landlords')
         .update({
           name: storedName,
+          display_name: displayName,
           contact_name: contactName || null,
           phone: phoneResult.phone,
         })
@@ -162,7 +168,7 @@ export async function persistLandlordAccountProfile(
           'That email is already used by another account. Use a different email.',
       }
     }
-    if (/contact_name|phone|column .* does not exist/i.test(error.message)) {
+    if (/contact_name|phone|display_name|column .* does not exist/i.test(error.message)) {
       const { error: retryError } = await supabase
         .from('landlords')
         .update({

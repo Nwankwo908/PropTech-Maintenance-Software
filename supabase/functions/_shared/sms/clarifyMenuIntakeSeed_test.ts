@@ -225,8 +225,8 @@ Deno.test("a changed headline is stated back to the resident", () => {
   assertEquals(after, "No water in the home")
 
   const line = headlineUpdateLine(before, after)
-  assertMatch(line ?? "", /updated this to/i)
-  assertMatch(line ?? "", /No water in the home/)
+  assertMatch(line ?? "", /Got it —/i)
+  assertMatch(line ?? "", /no water in the home/i)
 
   // Unchanged readings stay quiet, and there is nothing to correct at the start.
   assertEquals(headlineUpdateLine(after, after), null)
@@ -274,7 +274,7 @@ Deno.test("the reclassification notice fires once, on the turn it changes", () =
   const scoped = applyDiagnosticAnswer(opened, "Everywhere in the home")
   const afterScope = issueSummaryBullet(scoped)
   const notice = headlineUpdateLine(told, afterScope)
-  assertMatch(notice ?? "", /I've updated this to .*No water in the home/)
+  assertMatch(notice ?? "", /Got it —.*no water in the home/i)
   told = afterScope
 
   const dated = applyDiagnosticAnswer(

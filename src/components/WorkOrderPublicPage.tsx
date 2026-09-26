@@ -69,8 +69,6 @@ const SECTION_LABEL =
   'text-[11px] font-semibold uppercase tracking-[0.06em] text-[#6b7280]'
 const PRIMARY_BTN =
   'sa-press inline-flex h-12 w-full items-center justify-center gap-2 rounded-[10px] bg-[#187960] px-4 text-[16px] font-semibold text-white shadow-sm transition hover:bg-[#146b52] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#187960] active:scale-[0.99] disabled:cursor-not-allowed disabled:bg-[#9ca3af] disabled:shadow-none'
-const SECONDARY_BTN =
-  'sa-press inline-flex h-10 flex-1 items-center justify-center rounded-[8px] border border-[#d1d5db] bg-white px-3 text-[14px] font-semibold text-[#111827] transition hover:bg-[#f9fafb] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#187960]'
 
 function formatHistoryDate(iso: string, lang: JobPageLang): string {
   try {
@@ -488,14 +486,7 @@ function WorkOrderPublicPageInner() {
               <h2 className={SECTION_LABEL}>{copy.resident}</h2>
               <p className="text-[16px] font-semibold text-[#111827]">{job.tenant.name}</p>
               {job.tenant.phone ? (
-                <div className="flex gap-2">
-                  <a href={`tel:${job.tenant.phone}`} className={SECONDARY_BTN}>
-                    {copy.call}
-                  </a>
-                  <a href={`sms:${job.tenant.phone}`} className={SECONDARY_BTN}>
-                    {copy.textSms}
-                  </a>
-                </div>
+                <p className="text-[14px] text-[#333]">{job.tenant.phone}</p>
               ) : (
                 <p className="text-[14px] text-[#6b7280]">{copy.noPhone}</p>
               )}

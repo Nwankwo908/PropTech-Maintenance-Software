@@ -42,6 +42,7 @@ import { supabase } from '@/lib/supabase'
 import { getErrorMessage } from '@/lib/errorMessage'
 import { activateUnitsFromResidentAssignments } from '@/lib/unitActivation'
 import {
+  consumeSetupSuccessCheckboxGuidePending,
   dismissSetupSuccessCheckboxGuide,
   isSetupSuccessCheckboxGuideActive,
   isSetupSuccessCheckboxGuideNavigation,
@@ -396,6 +397,7 @@ export function AdminPropertiesDashboard() {
     if (!isSetupSuccessCheckboxGuideActive(location.state, 'properties')) return
     setShowPropertyCardGuide(true)
     setPropertyCardGuideRunId((value) => value + 1)
+    consumeSetupSuccessCheckboxGuidePending('properties')
     if (isSetupSuccessCheckboxGuideNavigation(location.state, 'properties')) {
       navigate(location.pathname, { replace: true, state: {} })
     }
@@ -988,6 +990,9 @@ export function AdminPropertiesDashboard() {
           showPropertyCardGuide ? setupCheckboxGuidePropertyDetailState() : undefined
         }
         onBuildingOpen={() => {
+          // Only continue the Get set up coachmark chain — never arm guides from
+          // normal Properties → property navigation.
+          if (!showPropertyCardGuide) return
           dismissSetupSuccessCheckboxGuide('properties')
           markSetupSuccessCheckboxGuidePagePending(peekSetupSuccessPropertyFollowup())
           setShowPropertyCardGuide(false)

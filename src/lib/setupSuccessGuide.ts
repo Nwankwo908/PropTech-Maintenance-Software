@@ -28,8 +28,12 @@ export function setupCheckboxGuidePropertyTabState(): { setupCheckboxGuide: 'pro
 }
 
 const PENDING_KEY_PREFIX = 'ulo.setupSuccessCheckboxGuide.pending.'
+const PENDING_ARMED_AT_KEY_PREFIX = 'ulo.setupSuccessCheckboxGuide.pendingArmedAt.'
 const SEEN_KEY_PREFIX = 'ulo.setupSuccessCheckboxGuide.seen.'
 const FOLLOWUP_KEY_PREFIX = 'ulo.setupSuccessCheckboxGuide.followup.'
+
+/** Pending is only a short mobile fallback after a Get set up card click. */
+export const SETUP_SUCCESS_GUIDE_PENDING_MAX_AGE_MS = 60_000
 
 const PROPERTY_DETAIL_FOLLOWUPS = [
   'property_access',
@@ -41,6 +45,10 @@ export type SetupSuccessPropertyDetailFollowup = (typeof PROPERTY_DETAIL_FOLLOWU
 
 function pendingKey(landlordId: string): string {
   return `${PENDING_KEY_PREFIX}${landlordId}`
+}
+
+function pendingArmedAtKey(landlordId: string): string {
+  return `${PENDING_ARMED_AT_KEY_PREFIX}${landlordId}`
 }
 
 function followupKey(landlordId: string): string {
@@ -143,6 +151,7 @@ export function markSetupSuccessCheckboxGuidePagePending(
 ): void {
   if (!isLimitedAlphaLandlord(landlordId)) return
   storageSet(pendingKey(landlordId), page)
+  storageSet(pendingArmedAtKey(landlordId), String(Date.now()))
 }
 
 /** After a Get set up row is tapped, show the coachmark on the destination page. */
@@ -199,7 +208,34 @@ export function shouldShowSetupSuccessCheckboxGuide(
 ): boolean {
   if (!isLimitedAlphaLandlord(landlordId)) return false
   if (storageGet(seenKey(page, landlordId)) === '1') return false
-  return storageGet(pendingKey(landlordId)) === page
+  if (storageGet(pendingKey(landlordId)) !== page) return false
+
+  const armedAt = Number(storageGet(pendingArmedAtKey(landlordId)) || 0)
+  if (!Number.isFinite(armedAt) || armedAt <= 0) {
+    storageRemove(pendingKey(landlordId))
+    storageRemove(pendingArmedAtKey(landlordId))
+    return false
+  }
+  if (Date.now() - armedAt > SETUP_SUCCESS_GUIDE_PENDING_MAX_AGE_MS) {
+    // Stale arm from an earlier Get set up click — do not revive on sidebar/direct nav.
+    storageRemove(pendingKey(landlordId))
+    storageRemove(pendingArmedAtKey(landlordId))
+    return false
+  }
+  return true
+}
+
+/**
+ * Consume the one-shot pending arm after the coachmark opens.
+ * Keeps the guide on this visit (React state) but blocks later visits outside Get set up.
+ */
+export function consumeSetupSuccessCheckboxGuidePending(
+  page: SetupSuccessCheckboxGuidePage,
+  landlordId: string = getActiveLandlordId(),
+): void {
+  if (storageGet(pendingKey(landlordId)) !== page) return
+  storageRemove(pendingKey(landlordId))
+  storageRemove(pendingArmedAtKey(landlordId))
 }
 
 /** Router state is dropped on some mobile navigations (portal sheet, iOS history). */
@@ -207,7 +243,11 @@ export function isSetupSuccessCheckboxGuideActive(
   state: unknown,
   page: SetupSuccessCheckboxGuidePage,
 ): boolean {
-  return isSetupSuccessCheckboxGuideNavigation(state, page) || shouldShowSetupSuccessCheckboxGuide(page)
+  // Prefer explicit Get set up navigation state; pending is only a fresh one-shot fallback.
+  return (
+    isSetupSuccessCheckboxGuideNavigation(state, page) ||
+    shouldShowSetupSuccessCheckboxGuide(page)
+  )
 }
 
 export function dismissSetupSuccessCheckboxGuide(
@@ -216,12 +256,14 @@ export function dismissSetupSuccessCheckboxGuide(
 ): void {
   storageSet(seenKey(page, landlordId), '1')
   storageRemove(pendingKey(landlordId))
+  storageRemove(pendingArmedAtKey(landlordId))
 }
 
 export function clearSetupSuccessCheckboxGuide(
   landlordId: string = getActiveLandlordId(),
 ): void {
   storageRemove(pendingKey(landlordId))
+  storageRemove(pendingArmedAtKey(landlordId))
   storageRemove(followupKey(landlordId))
   for (const page of [
     'vendors',

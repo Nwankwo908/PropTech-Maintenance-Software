@@ -1,8 +1,10 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { LIMITED_ALPHA_1_LANDLORD_ID } from '@shared/landlordCapabilities'
 import {
+  SETUP_SUCCESS_GUIDE_PENDING_MAX_AGE_MS,
   armSetupSuccessPropertyDetailGuide,
   clearSetupSuccessCheckboxGuide,
+  consumeSetupSuccessCheckboxGuidePending,
   dismissSetupSuccessCheckboxGuide,
   isSetupSuccessCheckboxGuideActive,
   isSetupSuccessCheckboxGuideNavigation,
@@ -39,6 +41,7 @@ describe('setupSuccessGuide', () => {
   })
 
   afterEach(() => {
+    vi.useRealTimers()
     clearSetupSuccessCheckboxGuide(LIMITED_ALPHA_1_LANDLORD_ID)
   })
 
@@ -145,6 +148,31 @@ describe('setupSuccessGuide', () => {
     markSetupSuccessCheckboxGuidePending('welcome_texts', LIMITED_ALPHA_1_LANDLORD_ID)
     expect(isSetupSuccessCheckboxGuideActive(null, 'residents')).toBe(true)
     expect(isSetupSuccessCheckboxGuideActive(null, 'vendors')).toBe(false)
+  })
+
+  it('consumes pending so later visits outside Get set up do not revive the guide', () => {
+    markSetupSuccessCheckboxGuidePending('welcome_texts', LIMITED_ALPHA_1_LANDLORD_ID)
+    expect(isSetupSuccessCheckboxGuideActive(null, 'residents')).toBe(true)
+    consumeSetupSuccessCheckboxGuidePending('residents', LIMITED_ALPHA_1_LANDLORD_ID)
+    expect(shouldShowSetupSuccessCheckboxGuide('residents', LIMITED_ALPHA_1_LANDLORD_ID)).toBe(false)
+    expect(isSetupSuccessCheckboxGuideActive(null, 'residents')).toBe(false)
+    // Explicit Get set up navigation still works without pending.
+    expect(
+      isSetupSuccessCheckboxGuideActive({ setupCheckboxGuide: 'residents' }, 'residents'),
+    ).toBe(true)
+  })
+
+  it('ignores stale pending arms from earlier Get set up clicks', () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-09-26T12:00:00.000Z'))
+    markSetupSuccessCheckboxGuidePending('welcome_texts', LIMITED_ALPHA_1_LANDLORD_ID)
+    expect(shouldShowSetupSuccessCheckboxGuide('residents', LIMITED_ALPHA_1_LANDLORD_ID)).toBe(true)
+
+    vi.setSystemTime(
+      new Date(Date.now() + SETUP_SUCCESS_GUIDE_PENDING_MAX_AGE_MS + 1),
+    )
+    expect(shouldShowSetupSuccessCheckboxGuide('residents', LIMITED_ALPHA_1_LANDLORD_ID)).toBe(false)
+    expect(isSetupSuccessCheckboxGuideActive(null, 'residents')).toBe(false)
   })
 
   it('dismisses the residents guide after checkbox interaction', () => {

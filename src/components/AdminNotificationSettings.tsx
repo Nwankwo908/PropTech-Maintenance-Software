@@ -23,6 +23,7 @@ import {
   SETUP_SUCCESS_TEST_DELIVERY_HASH,
 } from '@/lib/setupSuccessChecklist'
 import {
+  consumeSetupSuccessCheckboxGuidePending,
   dismissSetupSuccessCheckboxGuide,
   isSetupSuccessCheckboxGuideActive,
   isSetupSuccessCheckboxGuideNavigation,
@@ -341,6 +342,7 @@ export function AdminNotificationSettings() {
     if (!isSetupSuccessCheckboxGuideActive(location.state, 'test_delivery')) return
     setShowTestDeliveryGuide(true)
     setTestDeliveryGuideRunId((value) => value + 1)
+    consumeSetupSuccessCheckboxGuidePending('test_delivery')
     if (isSetupSuccessCheckboxGuideNavigation(location.state, 'test_delivery')) {
       navigate(`${location.pathname}${location.hash}`, { replace: true, state: {} })
     }

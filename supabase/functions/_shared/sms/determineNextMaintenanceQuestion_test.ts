@@ -432,11 +432,15 @@ Deno.test("confirmation is tenant-facing and omits priority chips", () => {
   })
   assertMatch(sms, /Got it\. Here's the request:/i, "header")
   assertMatch(sms, /clogged/i, "headline")
-  assertMatch(sms, /[“"].+[”"]/u, "quoted headline")
+  assertEqual(/[“"].*[”"]/u.test(sms), false, "no quote marks")
   assertMatch(sms, /Water is not actively overflowing/i, "fact")
   assertMatch(sms, /Photo attached/i, "photo")
   assertMatch(sms, /Until help arrives/i, "handling tip")
   assertMatch(sms, /flushing|drain cleaner|fixture/i, "plumbing tip")
+  // Tip sits above structured bullets (photo / safety note).
+  const tipIdx = sms.search(/Until help arrives/i)
+  const photoIdx = sms.search(/Photo attached/i)
+  assertEqual(tipIdx > 0 && tipIdx < photoIdx, true, "tip before photo bullet")
   assertEqual(/Priority:/i.test(sms), false, "no priority")
   assertEqual(/Updates via/i.test(sms), false, "no channel ask")
   assertMatch(sms, /Reply YES to submit, or reply with any changes/i, "cta")
@@ -444,7 +448,7 @@ Deno.test("confirmation is tenant-facing and omits priority chips", () => {
   assertEqual(/tell me what needs to be changed/i.test(sms), false, "no first-person cta")
 })
 
-Deno.test("door confirmation quotes the request instead of speaking in first person", () => {
+Deno.test("door confirmation states a clean issue phrase without quotation marks", () => {
   const sms = buildConfirmationSummary({
     issue_type: "general",
     vendor_trade: "carpentry",
@@ -453,8 +457,12 @@ Deno.test("door confirmation quotes the request instead of speaking in first per
     preferred_contact_method: "text",
   })
   assertMatch(sms, /Got it\. Here's the request:/i, "header")
-  assertMatch(sms, /[“"]My door broke\.[”"]/u, "quoted")
+  assertMatch(sms, /^Carpentry issue$/m, "issue line")
+  assertEqual(/[“"].*[”"]/u.test(sms), false, "no quote marks")
   assertEqual(/^My door broke$/m.test(sms), false, "not bare first person")
-  assertMatch(sms, /Until help arrives/i, "handling tip")
+  // Safety tip comes right after the issue line.
+  const tipIdx = sms.search(/Until help arrives/i)
+  const issueIdx = sms.search(/^Carpentry issue$/m)
+  assertEqual(tipIdx > issueIdx, true, "tip after issue")
   assertMatch(sms, /Reply YES to submit, or reply with any changes/i, "cta")
 })

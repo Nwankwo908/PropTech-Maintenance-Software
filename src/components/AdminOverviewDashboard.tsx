@@ -203,6 +203,8 @@ type OverviewTicket = {
   totalCost: number | null
   /** When the job was marked complete, when the schema records it. */
   completedAt: string | null
+  /** Resident said this issue happened before (SMS intake). */
+  residentReportedRecurring: boolean
 }
 
 type OverviewVendor = {
@@ -334,6 +336,7 @@ function normalizeTicketRow(
       asString(raw.resolved_at) ||
       asString(raw.closed_at) ||
       null,
+    residentReportedRecurring: raw.resident_reported_recurring === true,
   }
 }
 
@@ -2813,6 +2816,7 @@ export function AdminOverviewDashboard() {
         createdAt: t.createdAt,
         assignedVendorId: t.assignedVendorId,
         urgency: t.urgency,
+        residentReportedRecurring: t.residentReportedRecurring,
       })),
       units: units.map((u) => ({
         id: u.id,

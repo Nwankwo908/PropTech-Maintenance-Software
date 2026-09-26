@@ -51,7 +51,9 @@ import {
   applyQuestionPlan,
   markQuestionAsked,
 } from "./determineNextMaintenanceQuestion.ts"
+import { attachPriorRelatedTicket } from "./priorRelatedTicket.ts"
 import {
+  applyRecurringIssueSignal,
   buildConfirmationSummary,
   computeIntakeSeverity,
   conversationStatusForStep,
@@ -1379,10 +1381,35 @@ export async function processResidentMaintenanceIntake(
 
   // Say a changed reading out loud. The confirm step already prints the
   // headline, so it does not need the extra line.
+  state = applyRecurringIssueSignal(state)
+  if (state.resident_reported_recurring && residentId) {
+    const { data: residentRow } = await supabase
+      .from("users")
+      .select("unit")
+      .eq("id", residentId)
+      .maybeSingle()
+    const unitLabel =
+      typeof residentRow?.unit === "string" ? residentRow.unit.trim() : ""
+    if (unitLabel) {
+      state = await attachPriorRelatedTicket(supabase, {
+        landlordId: ctx.landlordId,
+        unit: unitLabel,
+        intake: state,
+        excludeTicketId: state.draft_ticket_id,
+      })
+      // Re-plan questions now that prior-ticket context may be available.
+      if (state.step === "diagnostic" || state.diagnostic_question_type) {
+        state = applyQuestionPlan(state)
+      }
+    }
+  }
   const headline = issueSummaryBullet(state)
   const headlineNote = state.step === "awaiting_confirm"
     ? null
-    : headlineUpdateLine(state.acknowledged_headline, headline)
+    : headlineUpdateLine(state.acknowledged_headline, headline, {
+      recurring: Boolean(state.resident_reported_recurring),
+      priorVisitKnown: Boolean(state.prior_related_ticket_id),
+    })
   state.acknowledged_headline = headline
 
   const nextHint = [headlineNote, questionForStep(state, state.step as IntakeStep)]
@@ -1409,6 +1436,7 @@ export async function processResidentMaintenanceIntake(
       severity: state.severity,
       draft_ticket_id: state.draft_ticket_id,
       emergency,
+      resident_reported_recurring: state.resident_reported_recurring ?? false,
     },
   )
 }

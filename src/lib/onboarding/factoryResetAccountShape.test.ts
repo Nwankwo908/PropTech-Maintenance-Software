@@ -41,6 +41,7 @@ describe('factoryResetAccountShape', () => {
           email: expected.landlord.email,
           contact_name: null,
           phone: null,
+          display_name: null,
         },
         onboarding: {
           onboarding_status: 'not_started',
@@ -70,6 +71,7 @@ describe('factoryResetAccountShape', () => {
         email: 'otbpictures12@gmail.com',
         contact_name: 'Prior Tester',
         phone: '+12025550111',
+        display_name: 'Os Proper',
       },
       onboarding: {
         onboarding_status: 'not_started',
@@ -104,6 +106,7 @@ describe('factoryResetAccountShape', () => {
     expect(result.mismatches.some((m) => m.startsWith('landlords.email'))).toBe(true)
     expect(result.mismatches.some((m) => m.startsWith('landlords.contact_name'))).toBe(true)
     expect(result.mismatches.some((m) => m.startsWith('landlords.phone'))).toBe(true)
+    expect(result.mismatches.some((m) => m.startsWith('landlords.display_name'))).toBe(true)
     expect(result.mismatches.some((m) => m.startsWith('landlord_onboarding.account_settings'))).toBe(
       true,
     )

@@ -5,6 +5,7 @@
  */
 
 import { vendorCompanyName } from "../vendor_outreach_copy.ts"
+import { sanitizeResidentAvailabilityForVendor } from "./residentAvailabilityExtract.ts"
 
 function money(n: number): string {
   return n.toLocaleString("en-US", { style: "currency", currency: "USD" })
@@ -144,6 +145,7 @@ export function buildEstimateDecisionStatusSms(input: {
         `The property team approved your estimate of ${amount}.`,
       ]
       const confirming = input.confirmingWindowText?.trim()
+      const avail = sanitizeResidentAvailabilityForVendor(input.residentAvailabilityText)
       if (confirming) {
         lines.push(
           "",
@@ -151,7 +153,6 @@ export function buildEstimateDecisionStatusSms(input: {
           "We'll text you when they reply.",
         )
       } else if (input.includeScheduleAsk) {
-        const avail = input.residentAvailabilityText?.trim()
         lines.push("")
         if (avail) {
           lines.push(

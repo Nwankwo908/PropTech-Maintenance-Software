@@ -102,6 +102,8 @@ export function computePortfolioInsights(
   )[0]
   let recurringBuilding: string | null = null
   let recurringCategory: string | null = null
+  // Aggregate count ≥ 2, or a single ticket the resident flagged as recurring.
+  const flaggedRecurring = recentTickets.filter((t) => t.residentReportedRecurring)
   if (topPattern && topPattern[1].length >= 2) {
     const [key, tickets] = topPattern
     const [building, category] = key.split('|')
@@ -115,6 +117,27 @@ export function computePortfolioInsights(
       building,
       categoryLabel: formatCategoryName(category),
       requestCount: tickets.length,
+      ...meta,
+    })
+  } else if (flaggedRecurring.length > 0) {
+    const ticket = flaggedRecurring[0]
+    const building = resolveTicketBuilding(ticket, buildingByUnit)
+    const category =
+      typeof ticket.issueCategory === 'string' && ticket.issueCategory.trim()
+        ? ticket.issueCategory.trim()
+        : 'maintenance'
+    recurringBuilding = building
+    recurringCategory = category
+    const meta = collectTicketMeta(flaggedRecurring)
+    insights.push({
+      tag: 'RECURRING ISSUES',
+      text: building
+        ? `${formatCategoryName(category)} issues keep occurring in ${building}.`
+        : `A resident reported a recurring ${formatCategoryName(category).toLowerCase()} issue.`,
+      score: Math.min(90, 72 + flaggedRecurring.length * 5),
+      building,
+      categoryLabel: formatCategoryName(category),
+      requestCount: flaggedRecurring.length,
       ...meta,
     })
   }

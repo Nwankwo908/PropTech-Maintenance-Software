@@ -59,6 +59,7 @@ import { isRentChargePaidFromRun } from '@/lib/paymentSettlement'
 import { deleteResidentsForLandlord } from '@/lib/residentDeletion'
 import { uploadResidentLeaseDocuments } from '@/lib/residentLeaseDocuments'
 import {
+  consumeSetupSuccessCheckboxGuidePending,
   dismissSetupSuccessCheckboxGuide,
   isSetupSuccessCheckboxGuideActive,
   isSetupSuccessCheckboxGuideNavigation,
@@ -334,6 +335,7 @@ export function AdminResidentsDashboard() {
     if (!isSetupSuccessCheckboxGuideActive(location.state, 'residents')) return
     setShowCheckboxGuide(true)
     setCheckboxGuideRunId((value) => value + 1)
+    consumeSetupSuccessCheckboxGuidePending('residents')
     if (isSetupSuccessCheckboxGuideNavigation(location.state, 'residents')) {
       navigate(location.pathname, { replace: true, state: {} })
     }
@@ -351,9 +353,6 @@ export function AdminResidentsDashboard() {
   }, [residentsBanner])
 
   const loadResidents = useCallback(async () => {
-    // #region agent log
-    fetch('http://127.0.0.1:7898/ingest/3050e2ef-64dd-49e5-a718-1f5719c45963',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'5d0562'},body:JSON.stringify({sessionId:'5d0562',runId:'pre-fix',hypothesisId:'D',location:'AdminResidentsDashboard.tsx:loadResidents:start',message:'loadResidents start',data:{landlordId:getActiveLandlordId()},timestamp:Date.now()})}).catch(()=>{});
-    // #endregion
     if (!supabase) {
       setLoading(false)
       setError('Supabase is not configured — connect a project to see residents.')
@@ -393,9 +392,6 @@ export function AdminResidentsDashboard() {
     }
 
     if (fetchError) {
-      // #region agent log
-      fetch('http://127.0.0.1:7898/ingest/3050e2ef-64dd-49e5-a718-1f5719c45963',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'5d0562'},body:JSON.stringify({sessionId:'5d0562',runId:'pre-fix',hypothesisId:'D',location:'AdminResidentsDashboard.tsx:loadResidents:fetchError',message:'users fetch error',data:{error:fetchError.message,landlordId:getActiveLandlordId()},timestamp:Date.now()})}).catch(()=>{});
-      // #endregion
       setError(getErrorMessage(fetchError, 'Something went wrong. Please try again.'))
       setResidents([])
       setLoading(false)
@@ -533,36 +529,9 @@ export function AdminResidentsDashboard() {
       })
       .filter((row) => row.id)
 
-    // #region agent log
-    {
-      const nameCounts = new Map<string, number>()
-      const scopeCounts = new Map<string, { count: number; ids: string[] }>()
-      for (const row of rows) {
-        const nameKey = row.name.trim().toLowerCase().replace(/\s+/g, ' ')
-        nameCounts.set(nameKey, (nameCounts.get(nameKey) ?? 0) + 1)
-        const scope = `${nameKey}::${row.unit.trim().toLowerCase()}::${(row.building ?? '')
-          .trim()
-          .toLowerCase()}`
-        const prev = scopeCounts.get(scope) ?? { count: 0, ids: [] }
-        prev.count += 1
-        prev.ids.push(row.id)
-        scopeCounts.set(scope, prev)
-      }
-      const dupNames = [...nameCounts.entries()]
-        .filter(([, n]) => n > 1)
-        .map(([name, count]) => ({ name, count }))
-      const dupScopes = [...scopeCounts.entries()]
-        .filter(([, v]) => v.count > 1)
-        .map(([scope, v]) => ({ scope, count: v.count, ids: v.ids }))
-      fetch('http://127.0.0.1:7898/ingest/3050e2ef-64dd-49e5-a718-1f5719c45963',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'5d0562'},body:JSON.stringify({sessionId:'5d0562',runId:'pre-fix',hypothesisId:'A',location:'AdminResidentsDashboard.tsx:loadResidents',message:'resident duplicate scan',data:{landlordId:getActiveLandlordId(),rowCount:rows.length,dupNames,dupScopes,sample:rows.slice(0,20).map((r)=>({id:r.id,name:r.name,unit:r.unit,building:r.building}))},timestamp:Date.now()})}).catch(()=>{});
-    }
-    // #endregion
     setResidents(rows)
     setLoading(false)
     } catch (error) {
-      // #region agent log
-      fetch('http://127.0.0.1:7898/ingest/3050e2ef-64dd-49e5-a718-1f5719c45963',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'5d0562'},body:JSON.stringify({sessionId:'5d0562',runId:'pre-fix',hypothesisId:'D',location:'AdminResidentsDashboard.tsx:loadResidents:catch',message:'loadResidents threw',data:{error:error instanceof Error ? {message:error.message,stack:error.stack} : String(error),landlordId:getActiveLandlordId()},timestamp:Date.now()})}).catch(()=>{});
-      // #endregion
       setError(getErrorMessage(error, 'Something went wrong. Please try again.'))
       setResidents([])
       setLoading(false)

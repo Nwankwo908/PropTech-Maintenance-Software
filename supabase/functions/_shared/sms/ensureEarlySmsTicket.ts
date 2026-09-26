@@ -19,6 +19,7 @@ import {
   ticketIssueHeadline,
   type SmsIntakeState,
 } from "./residentIntakeTypes.ts"
+import { sanitizeResidentAvailabilityForVendor } from "./residentAvailabilityExtract.ts"
 
 type ResidentRow = {
   id: string
@@ -126,6 +127,10 @@ export async function ensureEarlySmsMaintenanceTicket(
   const description = buildIntakeDescription(params.intake)
   const issueHeadline = ticketIssueHeadline(params.intake)
   const entryOkIfAbsent = entryOkIfAbsentFromIntake(params.intake)
+  const residentAvailability = sanitizeResidentAvailabilityForVendor(
+    params.intake.preferred_visit_windows,
+    [params.intake.initial_message, params.intake.description, issueHeadline],
+  )
   const estimatedMinutes = getEstimatedMinutes(issueCategory, dbSeverity, null, {
     description,
     outdoorTempF: params.intake.outdoor_temp_f,
@@ -148,9 +153,9 @@ export async function ensureEarlySmsMaintenanceTicket(
         due_at: dueAt.toISOString(),
         resident_name: row.full_name?.trim() || "Resident",
         resident_phone: row.phone,
-        resident_availability_text:
-          params.intake.preferred_visit_windows?.trim() || null,
+        resident_availability_text: residentAvailability,
         photo_paths: storagePhotoPaths(params.intake.photo_urls),
+        resident_reported_recurring: Boolean(params.intake.resident_reported_recurring),
       })
       .eq("id", draftId)
 
@@ -190,8 +195,8 @@ export async function ensureEarlySmsMaintenanceTicket(
       estimated_minutes: estimatedMinutes,
       due_at: dueAt.toISOString(),
       vendor_work_status: "unassigned",
-      resident_availability_text:
-        params.intake.preferred_visit_windows?.trim() || null,
+      resident_availability_text: residentAvailability,
+      resident_reported_recurring: Boolean(params.intake.resident_reported_recurring),
     })
     .select("id")
     .single()

@@ -1164,7 +1164,7 @@ export function AdminVendorDetailDashboard() {
                         }}
                         className="sa-press inline-flex h-9 w-fit items-center rounded-[10px] border border-[#187960] bg-white px-4 text-[13px] font-medium leading-5 text-[#364153] hover:bg-[#f9fafb] disabled:opacity-60"
                       >
-                        Skip Onboarding
+                        Skip setup
                       </button>
                     ) : null}
                     {canSendOverrideActivationSms ? (

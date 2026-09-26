@@ -1,3 +1,7 @@
+/**
+ * Twilio / Telnyx inbound SMS webhook → processInboundSms.
+ * Redeploy when schedule confirm / vendor probe shared copy changes.
+ */
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1"
 import { getSMSProvider } from "../_shared/sms/providerFactory.ts"
 import { ensureTwilioMessagingWebhooks, resolveTwilioWebhookValidationUrl } from "../_shared/sms/TwilioProvider.ts"

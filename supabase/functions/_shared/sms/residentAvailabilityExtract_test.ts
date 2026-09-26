@@ -2,6 +2,7 @@ import { assertEquals, assertMatch } from "https://deno.land/std@0.224.0/assert/
 import {
   extractResidentAvailabilityText,
   hasResidentAvailabilityCues,
+  sanitizeResidentAvailabilityForVendor,
 } from "./residentAvailabilityExtract.ts"
 import { detectMultipleMaintenanceIssues } from "./multiIssueIntake.ts"
 import { buildVendorAvailabilityAskSms, buildVendorJobAssignmentSms } from "../vendor_outreach_copy.ts"
@@ -13,6 +14,18 @@ const SAMPLE = [
   "",
   "Someone will be available this Saturday after 3:00 PM and Sunday between 11:00 AM and 4:00 PM. Mark will also be available this coming Monday from 10:30 AM to 12:00 PM.",
 ].join("\n")
+
+Deno.test("exterminator ask is not treated as visit availability", () => {
+  const body =
+    "Hi and thank you I was trying to see if an exterminator can come out to spray the property"
+  assertEquals(hasResidentAvailabilityCues(body), false)
+  assertEquals(extractResidentAvailabilityText(body), null)
+  assertEquals(sanitizeResidentAvailabilityForVendor(body), null)
+  assertEquals(
+    sanitizeResidentAvailabilityForVendor(body, [body]),
+    null,
+  )
+})
 
 Deno.test("extracts resident visit windows from SMS", () => {
   assertEquals(hasResidentAvailabilityCues(SAMPLE), true)

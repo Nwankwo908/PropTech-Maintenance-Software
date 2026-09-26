@@ -734,7 +734,7 @@ async function loadFactoryResetShapeSnapshot(
   const [landlordRes, onboardingRes] = await Promise.all([
     supabase
       .from('landlords')
-      .select('name, email, contact_name, phone')
+      .select('name, email, contact_name, phone, display_name')
       .eq('id', landlordId)
       .maybeSingle(),
     supabase
@@ -751,6 +751,7 @@ async function loadFactoryResetShapeSnapshot(
     email: string | null
     contact_name: string | null
     phone: string | null
+    display_name: string | null
   }
   const onboarding = onboardingRes.data as {
     onboarding_status: string | null
@@ -769,6 +770,7 @@ async function loadFactoryResetShapeSnapshot(
       email: landlord.email,
       contact_name: landlord.contact_name,
       phone: landlord.phone,
+      display_name: landlord.display_name,
     },
     onboarding: {
       onboarding_status: onboarding.onboarding_status,
@@ -805,10 +807,11 @@ async function resetLandlordProfileForFactoryReset(
       email: expected.landlord.email,
       contact_name: expected.landlord.contact_name,
       phone: expected.landlord.phone,
+      display_name: expected.landlord.display_name,
     })
     .eq('id', landlordId)
 
-  if (error && /contact_name|phone|column .* does not exist/i.test(error.message)) {
+  if (error && /contact_name|phone|display_name|column .* does not exist/i.test(error.message)) {
     const { error: nameEmail } = await supabase
       .from('landlords')
       .update({

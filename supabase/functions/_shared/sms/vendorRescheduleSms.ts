@@ -28,6 +28,7 @@ import { sendInboundAutoReply } from "./inboundReply.ts"
 import { findActiveLandlordMainNumber } from "./landlordSmsOnboarding.ts"
 import { logOutboundNoLandlordMain } from "./logOutboundNoLandlordMain.ts"
 import { getSMSProviderForSend } from "./providerFactory.ts"
+import { extractTenantSchedulePreferredWindow } from "./tenantSchedulePreferredWindow.ts"
 import type { SmsProviderName } from "./types.ts"
 import {
   createVendorWorkOrderClarification,
@@ -312,15 +313,27 @@ export function buildVendorResidentConfirmedRescheduleSms(input: {
 export function buildVendorTenantInitiatedRescheduleSms(input: {
   workOrderRef: string
   previousTimeLabel: string
+  preferredWindowText?: string | null
 }): string {
   const wo = input.workOrderRef.trim() || "this work order"
   const when = input.previousTimeLabel.trim() || "the scheduled visit"
-  return [
+  const preferred = input.preferredWindowText?.trim()
+  const lines = [
     `Update for work order ${wo}.`,
     "",
     `The resident can no longer make ${when}.`,
-    "Please reply with a new day and arrival window (e.g. Thu 1pm–4pm).",
-  ].join("\n")
+  ]
+  if (preferred) {
+    lines.push(`They suggested: ${preferred}.`)
+    lines.push(
+      "Reply with a day and arrival window that works (confirm that one or offer another).",
+    )
+  } else {
+    lines.push(
+      "Please reply with a new day and arrival window (e.g. Thu 1pm–4pm).",
+    )
+  }
+  return lines.join("\n")
 }
 
 export function buildLandlordRescheduleEmail(input: {
@@ -1297,6 +1310,9 @@ export async function beginTenantInitiatedReschedule(
     tz,
   )
   const nowIso = new Date().toISOString()
+  const preferredWindow = extractTenantSchedulePreferredWindow(
+    params.residentMessage ?? "",
+  )
 
   const { error: upErr } = await supabase
     .from("maintenance_requests")
@@ -1310,6 +1326,9 @@ export async function beginTenantInitiatedReschedule(
       resident_confirmation_status: null,
       resident_confirmed_at: null,
       schedule_status: "resident_requested_reschedule",
+      ...(preferredWindow
+        ? { resident_availability_text: preferredWindow }
+        : {}),
     })
     .eq("id", params.ticketId)
 
@@ -1335,6 +1354,7 @@ export async function beginTenantInitiatedReschedule(
   const body = buildVendorTenantInitiatedRescheduleSms({
     workOrderRef,
     previousTimeLabel,
+    preferredWindowText: preferredWindow,
   })
 
   let vendorNotified = false

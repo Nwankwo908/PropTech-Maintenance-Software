@@ -127,6 +127,8 @@ export type PortfolioTicketRow = {
   createdAt: string
   assignedVendorId?: string | null
   urgency?: string | null
+  /** Resident said this issue happened before (SMS intake signal). */
+  residentReportedRecurring?: boolean | null
 }
 
 export type PortfolioUnitRow = {
