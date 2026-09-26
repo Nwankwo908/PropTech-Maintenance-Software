@@ -485,11 +485,6 @@ function WorkOrderPublicPageInner() {
             <section className={`${CARD} flex flex-col gap-3`}>
               <h2 className={SECTION_LABEL}>{copy.resident}</h2>
               <p className="text-[16px] font-semibold text-[#111827]">{job.tenant.name}</p>
-              {job.tenant.phone ? (
-                <p className="text-[14px] text-[#333]">{job.tenant.phone}</p>
-              ) : (
-                <p className="text-[14px] text-[#6b7280]">{copy.noPhone}</p>
-              )}
             </section>
 
             <section className={`${CARD} flex flex-col gap-2`}>

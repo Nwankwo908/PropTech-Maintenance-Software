@@ -85,7 +85,6 @@ type JobPageCopy = {
   jobSpecificNotes: string
   tenantContact: string
   resident: string
-  noPhone: string
   appointment: string
   notScheduled: string
   vendorPrefix: string
@@ -166,7 +165,6 @@ export const JOB_PAGE_COPY: Record<JobPageLang, JobPageCopy> = {
     jobSpecificNotes: 'Job-specific notes',
     tenantContact: 'Tenant contact',
     resident: 'Resident',
-    noPhone: 'No phone on file',
     appointment: 'Appointment',
     notScheduled: 'Not scheduled yet',
     vendorPrefix: 'Vendor:',
@@ -249,7 +247,6 @@ export const JOB_PAGE_COPY: Record<JobPageLang, JobPageCopy> = {
     jobSpecificNotes: 'Notas de este trabajo',
     tenantContact: 'Contacto del inquilino',
     resident: 'Residente',
-    noPhone: 'No hay teléfono registrado',
     appointment: 'Cita',
     notScheduled: 'Aún no hay cita',
     vendorPrefix: 'Proveedor:',
