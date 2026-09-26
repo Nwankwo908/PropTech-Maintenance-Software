@@ -292,6 +292,7 @@ export function VendorIntakePortal() {
   const [travelRadiusMiles, setTravelRadiusMiles] = useState(TRAVEL_RADIUS_DEFAULT)
   const [attested, setAttested] = useState(false)
   const zipLookupRef = useRef<string>('')
+  const zipLookupTimerRef = useRef<number | null>(null)
 
   const initializedRef = useRef(false)
   const editingAfterSubmitRef = useRef(false)
@@ -299,9 +300,32 @@ export function VendorIntakePortal() {
   const applyServiceAreaFields = useCallback((city: string, state: string, zip?: string) => {
     const nextState = usStateCodeFromLabel(state)
     if (nextState) setServiceState(nextState)
-    if (city.trim()) setServiceCity(matchCityOption(nextState || state, city))
+    if (city.trim()) {
+      // Apply state first in the same tick so the city option list includes this state.
+      setServiceCity(matchCityOption(nextState || state, city))
+    }
     if (zip?.trim()) setServiceZip(zip.trim())
   }, [])
+
+  const fillCityStateFromZip = useCallback((rawZip: string, force = false) => {
+    const normalized = rawZip.trim().match(/^(\d{5})(?:-\d{4})?$/)?.[1] ?? ''
+    if (!normalized) return
+    if (!force && zipLookupRef.current === normalized) return
+
+    if (zipLookupTimerRef.current != null) {
+      window.clearTimeout(zipLookupTimerRef.current)
+      zipLookupTimerRef.current = null
+    }
+
+    zipLookupTimerRef.current = window.setTimeout(() => {
+      zipLookupTimerRef.current = null
+      void lookupCityStateFromUsZip(normalized).then((location) => {
+        if (!location) return
+        zipLookupRef.current = normalized
+        applyServiceAreaFields(location.city, location.state, location.zipCode)
+      })
+    }, 200)
+  }, [applyServiceAreaFields])
 
   const hydrate = useCallback((s: VendorVerificationSession) => {
     setSession(s)
@@ -319,6 +343,11 @@ export function VendorIntakePortal() {
       setServiceZip(area.zip)
       setTravelRadiusMiles(area.radiusMiles)
       setAttested(vendorSelfRepresentationAckFromProgress(s.progress))
+      if (area.zip && (!area.city || !area.state)) {
+        fillCityStateFromZip(area.zip, true)
+      } else if (area.zip) {
+        zipLookupRef.current = area.zip.match(/^(\d{5})/)?.[1] ?? ''
+      }
     } else {
       setLicenseNumber((prev) => s.license.number ?? prev)
       if (vendorSelfRepresentationAckFromProgress(s.progress)) setAttested(true)
@@ -330,7 +359,7 @@ export function VendorIntakePortal() {
     ) {
       setCompleted(true)
     }
-  }, [])
+  }, [fillCityStateFromZip])
 
   const fillFormFromSession = useCallback((s: VendorVerificationSession) => {
     setBusinessName(s.businessName ?? '')
@@ -344,38 +373,28 @@ export function VendorIntakePortal() {
     setServiceZip(area.zip)
     setTravelRadiusMiles(area.radiusMiles)
     setAttested(vendorSelfRepresentationAckFromProgress(s.progress))
-  }, [])
+    if (area.zip && (!area.city || !area.state)) {
+      fillCityStateFromZip(area.zip, true)
+    }
+  }, [fillCityStateFromZip])
 
   function handleServiceZipChange(next: string) {
     setServiceZip(next)
+    // New ZIP → allow a fresh lookup even if city/state were previously filled.
+    const normalized = next.trim().match(/^(\d{5})(?:-\d{4})?$/)?.[1] ?? ''
+    if (normalized && zipLookupRef.current !== normalized) {
+      zipLookupRef.current = ''
+    }
+    fillCityStateFromZip(next, true)
   }
 
-  // Browser / ZIP autofill: when a full US ZIP lands, fill city + state selects.
   useEffect(() => {
-    const zip = serviceZip.trim()
-    const normalized = zip.match(/^(\d{5})(?:-\d{4})?$/)?.[1] ?? ''
-    if (!normalized || zipLookupRef.current === normalized) return
-    if (serviceCity.trim() && serviceState.trim()) {
-      zipLookupRef.current = normalized
-      return
-    }
-
-    let cancelled = false
-    const timer = window.setTimeout(() => {
-      void lookupCityStateFromUsZip(normalized).then((location) => {
-        if (cancelled) return
-        zipLookupRef.current = normalized
-        if (!location) return
-        applyServiceAreaFields(location.city, location.state, location.zipCode)
-      })
-    }, 280)
-
     return () => {
-      cancelled = true
-      window.clearTimeout(timer)
+      if (zipLookupTimerRef.current != null) {
+        window.clearTimeout(zipLookupTimerRef.current)
+      }
     }
-  }, [serviceZip, serviceCity, serviceState, applyServiceAreaFields])
-
+  }, [])
   function startEditSubmittedForm() {
     if (!session) return
     editingAfterSubmitRef.current = true
