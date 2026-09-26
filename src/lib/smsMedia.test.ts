@@ -16,14 +16,13 @@ describe('sms media helpers', () => {
     )
   })
 
-  it('flags Twilio and Telnyx media as unsafe for the browser', () => {
+  it('flags Twilio media as unsafe for the browser', () => {
     expect(
       isProviderAuthMediaUrl(
         'https://api.twilio.com/2010-04-01/Accounts/ACxx/Messages/MMxx/Media/MExx',
       ),
     ).toBe(true)
     expect(isProviderAuthMediaUrl('https://media.twilio.com/foo')).toBe(true)
-    expect(isProviderAuthMediaUrl('https://api.telnyx.com/v2/media/abc')).toBe(true)
     expect(isProviderAuthMediaUrl('https://example.com/photo.jpg')).toBe(false)
   })
 

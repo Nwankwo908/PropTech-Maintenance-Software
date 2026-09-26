@@ -34,6 +34,7 @@ export function createEmptyVendorForm(): VendorFormRow {
     state: '',
     country: '',
     preferredEmergency: false,
+    sendOnboardingOnComplete: false,
   }
 }
 
@@ -48,6 +49,7 @@ export function vendorToFormRow(vendor: OnboardingVendor): VendorFormRow {
     state: vendor.state,
     country: vendor.country,
     preferredEmergency: Boolean(vendor.preferredEmergency),
+    sendOnboardingOnComplete: Boolean(vendor.sendOnboardingOnComplete),
   }
 }
 
@@ -64,6 +66,7 @@ export function normalizeVendorFormRow(
     state: form.state ?? '',
     country: form.country ?? '',
     preferredEmergency: Boolean(form.preferredEmergency),
+    sendOnboardingOnComplete: Boolean(form.sendOnboardingOnComplete),
   }
 }
 

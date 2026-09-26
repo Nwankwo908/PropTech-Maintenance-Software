@@ -17,14 +17,16 @@ import {
   type OnboardingExtractedVendor,
 } from '@/lib/onboardingDocumentUpload'
 import {
-  onboardingBtnGhostClass,
-  onboardingBtnPrimaryClass,
   onboardingNestedCardClass,
   onboardingSectionStackClass,
   onboardingSurfaceSectionClass,
   ONBOARDING_PROPERTY_TYPE_OPTIONS,
   resolveOnboardingPropertyType,
 } from './onboardingFieldStyles'
+import {
+  OnboardingContinueButton,
+  OnboardingStepNav,
+} from './OnboardingStepChrome'
 import { OnboardingUloNumberCard } from '@/components/onboarding/OnboardingUloNumberCard'
 import { NoVendorsContinueModal } from '@/components/onboarding/NoVendorsContinueModal'
 import { OnboardingSendSwitch } from '@/components/onboarding/OnboardingSendSwitch'
@@ -51,12 +53,9 @@ function createEmptyExtractedVendor(): OnboardingExtractedVendor {
     confidence: 1,
     selected: false,
     needsReview: false,
+    sendOnboardingOnComplete: false,
   }
 }
-
-const btnPrimary = onboardingBtnPrimaryClass
-
-const btnGhost = onboardingBtnGhostClass
 
 const inputClass =
   'mt-1 h-9 w-full rounded-[8px] border border-[#e5e7eb] bg-white px-3 text-[13px] text-[#101828] outline-none focus:border-[#155dfc] focus:ring-2 focus:ring-[#155dfc]/20'
@@ -832,16 +831,30 @@ export function OnboardingAiReviewStep({
           >
             <div className="mb-3 flex items-center justify-between gap-3">
               <p className="text-[13px] font-semibold text-[#101828]">Vendor {index + 1}</p>
-              {vendors.length > 1 ? (
-                <button
-                  type="button"
-                  className="shrink-0 rounded-[8px] px-2 py-1 text-[12px] font-medium text-[#64748b] transition-colors hover:bg-[#fef2f2] hover:text-[#b91c1c]"
-                  onClick={() => removeVendorForm(item.id)}
-                  aria-label={`Remove vendor ${index + 1}`}
-                >
-                  Remove
-                </button>
-              ) : null}
+              <div className="flex items-center gap-3">
+                <OnboardingSendSwitch
+                  enabled={Boolean(item.sendOnboardingOnComplete)}
+                  disabled={!item.phone.trim() && !item.email.trim()}
+                  onChange={(sendOnboardingOnComplete) =>
+                    patchVendor(item.id, { sendOnboardingOnComplete })
+                  }
+                  aria-label={
+                    item.phone.trim() || item.email.trim()
+                      ? `Send verification invite to vendor ${index + 1} when setup completes`
+                      : `Add a phone or email to send onboarding to vendor ${index + 1}`
+                  }
+                />
+                {vendors.length > 1 ? (
+                  <button
+                    type="button"
+                    className="shrink-0 rounded-[8px] px-2 py-1 text-[12px] font-medium text-[#64748b] transition-colors hover:bg-[#fef2f2] hover:text-[#b91c1c]"
+                    onClick={() => removeVendorForm(item.id)}
+                    aria-label={`Remove vendor ${index + 1}`}
+                  >
+                    Remove
+                  </button>
+                ) : null}
+              </div>
             </div>
             <div className="grid gap-3 sm:grid-cols-2">
               <label className="block sm:col-span-2">
@@ -1210,19 +1223,11 @@ export function OnboardingAiReviewStep({
           {selectedCount} item{selectedCount === 1 ? '' : 's'} selected for import
         </p>
 
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <button type="button" disabled={saving} onClick={onBackToUploads} className={btnGhost}>
-            Back
-          </button>
-          <button
-            type="button"
-            disabled={saving}
-            onClick={requestContinue}
-            className={btnPrimary}
-          >
+        <OnboardingStepNav showBack onBack={onBackToUploads} saving={saving}>
+          <OnboardingContinueButton disabled={saving} onClick={requestContinue}>
             {continueLabel}
-          </button>
-        </div>
+          </OnboardingContinueButton>
+        </OnboardingStepNav>
       </div>
 
       {confirmNoVendorsOpen ? (

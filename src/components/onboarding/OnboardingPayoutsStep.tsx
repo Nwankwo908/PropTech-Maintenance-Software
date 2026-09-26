@@ -11,18 +11,19 @@ import { StripeConnectEmbeddedOnboarding } from '@/components/StripeConnectEmbed
 import { getErrorMessage } from '@/lib/errorMessage'
 import {
   onboardingBtnGhostClass,
-  onboardingBtnPrimaryClass,
   onboardingBtnSecondaryClass,
   onboardingNestedCardClass,
   onboardingSurfaceSectionClass,
 } from './onboardingFieldStyles'
+import {
+  OnboardingContinueButton,
+  OnboardingStepNav,
+} from './OnboardingStepChrome'
 
 const btnPrimary =
   'sa-press inline-flex w-full cursor-pointer items-center justify-center rounded-[10px] bg-[#186179] px-4 py-3 text-[15px] font-semibold text-white transition-colors hover:bg-[#145066] disabled:cursor-not-allowed disabled:opacity-50'
 
 const btnSecondary = onboardingBtnSecondaryClass
-
-const btnContinue = onboardingBtnPrimaryClass
 
 const btnGhost = onboardingBtnGhostClass
 
@@ -326,28 +327,14 @@ export function OnboardingPayoutsStep({
         <p className="sa-enter mt-3 text-[13px] leading-5 text-[#b91c1c]">{error}</p>
       ) : null}
 
-      <div className="mt-8 flex flex-wrap items-center justify-between gap-3">
-        {showBack ? (
-          <button
-            type="button"
-            disabled={saving || busy}
-            onClick={onBack}
-            className={btnSecondary}
-          >
-            Back
-          </button>
-        ) : (
-          <span />
-        )}
-        <button
-          type="button"
+      <OnboardingStepNav showBack={showBack} onBack={onBack} saving={saving || busy}>
+        <OnboardingContinueButton
           disabled={saving || busy || loading || !ready}
           onClick={onContinue}
-          className={btnContinue}
         >
           Continue
-        </button>
-      </div>
+        </OnboardingContinueButton>
+      </OnboardingStepNav>
       {!ready && !loading ? (
         <p className="mt-3 text-center text-[12px] text-[#6b7280]">
           Set up payouts now, or choose Skip for now to continue without a connected account.

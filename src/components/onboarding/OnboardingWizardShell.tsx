@@ -20,6 +20,7 @@ import { OnboardingResidentsStep } from '@/components/onboarding/OnboardingResid
 import { OnboardingSetupTransition } from '@/components/onboarding/OnboardingSetupTransition'
 import { OnboardingProgressSavedNote } from '@/components/onboarding/OnboardingProgressSavedNote'
 import { useOnboardingWizard } from '@/components/onboarding/useOnboardingWizard'
+import { hasSavedOnboardingUserProgress } from '@/lib/onboarding'
 
 const btnSecondary =
   'sa-press inline-flex cursor-pointer items-center justify-center rounded-[10px] border border-[#e5e7eb] bg-white px-4 py-2.5 text-[14px] font-medium text-[#101828] transition-colors hover:bg-[#f9fafb] disabled:cursor-not-allowed disabled:opacity-50'
@@ -158,6 +159,7 @@ export function OnboardingWizardShell() {
     continueToReview,
     editReviewStep,
     setResidentOnboardingOnComplete,
+    setVendorOnboardingOnComplete,
     finishReview,
   } = wizard
 
@@ -195,7 +197,16 @@ export function OnboardingWizardShell() {
           </div>
         ) : null}
 
-        {!isWelcomeStep ? (
+        {!isWelcomeStep &&
+        hasSavedOnboardingUserProgress({
+          state,
+          propertyForms,
+          vendorForms,
+          residentForms,
+          uploadDocuments,
+          extractionReview,
+          payoutsReady,
+        }) ? (
           <div className="mb-4">
             <OnboardingProgressSavedNote />
           </div>
@@ -340,7 +351,6 @@ export function OnboardingWizardShell() {
 
           {step === 'approval' ? (
             <OnboardingApprovalRulesStep
-              key={JSON.stringify(state.approvalRules)}
               initialRules={state.approvalRules}
               saving={saving}
               showBack={showBackButton}
@@ -408,6 +418,7 @@ export function OnboardingWizardShell() {
               payoutMethodLabel={payoutMethodLabel}
               onEditStep={(targetStep) => void editReviewStep(targetStep)}
               onResidentOnboardingChange={setResidentOnboardingOnComplete}
+              onVendorOnboardingChange={setVendorOnboardingOnComplete}
               onBack={() => void handleBack()}
               onComplete={() => void finishReview()}
             />

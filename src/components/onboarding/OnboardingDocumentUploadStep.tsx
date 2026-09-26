@@ -9,14 +9,12 @@ import {
   type OnboardingUploadedDocument,
 } from '@/lib/onboardingDocumentUpload'
 import {
-  onboardingBtnPrimaryClass,
-  onboardingBtnSecondaryClass,
   onboardingSurfaceSectionClass,
 } from './onboardingFieldStyles'
-
-const btnPrimary = onboardingBtnPrimaryClass
-
-const btnSecondary = onboardingBtnSecondaryClass
+import {
+  OnboardingContinueButton,
+  OnboardingStepNav,
+} from './OnboardingStepChrome'
 
 function UploadDocumentsIcon() {
   return (
@@ -289,19 +287,14 @@ export function OnboardingDocumentUploadStep({
         </div>
       ) : null}
 
-      <div className="mt-6 flex flex-wrap items-center justify-end gap-3">
-        <button type="button" disabled={processing} onClick={onBack} className={btnSecondary}>
-          Back
-        </button>
-        <button
-          type="button"
+      <OnboardingStepNav showBack onBack={onBack} saving={processing}>
+        <OnboardingContinueButton
           disabled={processing || !canContinue}
           onClick={onContinue}
-          className={btnPrimary}
         >
           {processing ? 'Processing…' : 'Review data'}
-        </button>
-      </div>
+        </OnboardingContinueButton>
+      </OnboardingStepNav>
     </section>
   )
 }

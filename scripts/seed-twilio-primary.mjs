@@ -89,9 +89,7 @@ async function main() {
     auth: { autoRefreshToken: false, persistSession: false },
   })
 
-  // Twilio is the only live SMS provider.
-  await supabase.from('sms_providers').update({ active: false }).eq('name', 'telnyx')
-
+  // Twilio is the only SMS provider.
   const { error: providerError } = await supabase.from('sms_providers').upsert(
     {
       name: 'twilio',

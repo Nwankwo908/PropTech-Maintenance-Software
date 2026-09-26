@@ -1,6 +1,6 @@
 /**
  * Structured failure log when outbound SMS cannot resolve a landlord from-number.
- * Prefer this over only skipping the success event — makes Alpha / Telnyx misses one query.
+ * Prefer this over only skipping the success event — makes Alpha misses one query.
  */
 import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.49.1"
 import { recordActivityLog } from "../graph/recordActivityLog.ts"

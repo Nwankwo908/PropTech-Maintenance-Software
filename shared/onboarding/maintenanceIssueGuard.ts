@@ -107,6 +107,9 @@ export function looksLikePropertyFeatureNotRepair(description: string): boolean 
 /**
  * Only auto-check an extracted maintenance row when it looks like a real repair
  * and the model is reasonably confident.
+ *
+ * Even when selected, Fast Track imports these into Property Maintenance History
+ * only — they do not become Open Repairs / Active Tasks.
  */
 export function shouldAutoSelectMaintenanceIssue(input: {
   description: string

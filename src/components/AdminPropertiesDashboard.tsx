@@ -981,7 +981,7 @@ export function AdminPropertiesDashboard() {
           propertyDetailPathForBuilding(
             buildingName,
             propertyIdByBuilding,
-            propertyFollowupDetailTab(),
+            showPropertyCardGuide ? propertyFollowupDetailTab() : 'overview',
           )
         }
         buildingLinkState={() =>

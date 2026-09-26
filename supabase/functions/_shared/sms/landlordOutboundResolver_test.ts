@@ -3,7 +3,7 @@ import { assertEquals, assertStringIncludes } from "https://deno.land/std@0.224.
 
 /**
  * Guard: landlord outbound number resolution must not drift into two
- * implementations again (Telnyx-only vs Alpha-aware shared DID).
+ * implementations again (pool-only vs Alpha-aware shared DID).
  */
 Deno.test("findActiveLandlordMain delegates to findActiveLandlordMainNumber", async () => {
   const poolSource = await Deno.readTextFile(

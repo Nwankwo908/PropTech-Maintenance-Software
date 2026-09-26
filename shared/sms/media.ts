@@ -39,11 +39,7 @@ export function isStorageMediaPath(value: string): boolean {
  */
 export function isProviderAuthMediaUrl(url: string): boolean {
   const lower = url.toLowerCase()
-  return (
-    lower.includes('api.twilio.com') ||
-    lower.includes('media.twilio.com') ||
-    lower.includes('api.telnyx.com')
-  )
+  return lower.includes('api.twilio.com') || lower.includes('media.twilio.com')
 }
 
 export function mediaKindFromRef(ref: string): SmsMediaKind {

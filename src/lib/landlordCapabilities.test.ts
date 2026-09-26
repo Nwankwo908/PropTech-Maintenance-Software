@@ -44,7 +44,6 @@ describe('Limited Alpha 1 capabilities', () => {
     expect(resolveSmsIntakeNumber({
       landlordId: LIMITED_ALPHA_1_LANDLORD_ID,
       phone: '+19734005760',
-      provider: 'telnyx',
     })).toBe(LIMITED_ALPHA_1_TWILIO_SMS_NUMBER)
     expect(resolveSmsIntakeNumber({
       landlordId: LIMITED_ALPHA_2_LANDLORD_ID,
@@ -52,7 +51,6 @@ describe('Limited Alpha 1 capabilities', () => {
     })).toBe(LIMITED_ALPHA_1_TWILIO_SMS_NUMBER)
     expect(resolveSmsIntakeNumber({
       phone: '+19734005760',
-      provider: 'telnyx',
     })).toBe(LIMITED_ALPHA_1_TWILIO_SMS_NUMBER)
     expect(isUloPlatformSmsNumber('+19734005760')).toBe(true)
     expect(isUloPlatformSmsNumber('+12025550111')).toBe(false)

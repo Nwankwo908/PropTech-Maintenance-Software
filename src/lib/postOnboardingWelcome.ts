@@ -1,5 +1,5 @@
 import { getActiveLandlordId } from '@/lib/activeLandlord'
-import { isLimitedAlpha1Landlord } from '@shared/landlordCapabilities'
+import { isLimitedAlphaLandlord } from '@shared/landlordCapabilities'
 
 const SEEN_KEY_PREFIX = 'ulo.postOnboardingWelcomeSeen.'
 
@@ -17,14 +17,14 @@ export function hasSeenLimitedAlphaPostOnboardingWelcome(
   }
 }
 
-/** Limited Alpha 1 sees the all-set screen on the onboarding route until Get Started. */
+/** Limited Alpha sees the all-set screen on the onboarding route until Get Started. */
 export function shouldShowLimitedAlphaPostOnboardingWelcome(
   onboardingCompleted: boolean,
   landlordId: string = getActiveLandlordId(),
 ): boolean {
   return (
     onboardingCompleted &&
-    isLimitedAlpha1Landlord(landlordId) &&
+    isLimitedAlphaLandlord(landlordId) &&
     !hasSeenLimitedAlphaPostOnboardingWelcome(landlordId)
   )
 }
@@ -51,7 +51,7 @@ export function markLimitedAlphaPostOnboardingWelcomeSeen(
   landlordId: string = getActiveLandlordId(),
 ): void {
   const candidates = [landlordId.trim(), getActiveLandlordId().trim()]
-  const ids = new Set(candidates.filter((id) => isLimitedAlpha1Landlord(id)))
+  const ids = new Set(candidates.filter((id) => isLimitedAlphaLandlord(id)))
   for (const id of ids) {
     try {
       window.localStorage.setItem(seenKey(id), '1')

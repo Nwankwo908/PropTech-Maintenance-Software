@@ -78,7 +78,7 @@ describe('buildOnboardingReviewMetrics', () => {
 })
 
 describe('buildOnboardingReviewData SMS intake', () => {
-  it('does not show the retired Telnyx DID', () => {
+  it('does not show the retired platform DID', () => {
     const review = buildOnboardingReviewData(
       validOnboardingState(),
       [],

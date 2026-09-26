@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useId, useRef, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { PropertyInsurancePolicyCard } from '@/components/PropertyInsurancePolicyCard'
-import { PropertyRecordHierarchy } from '@/components/PropertyRecordHierarchy'
 import { MaintenanceHistoryPanel } from '@/components/MaintenanceHistoryPanel'
 import { ApplianceInspectionUploader } from '@/components/ApplianceInspectionUploader'
 import insuranceUploadCloudIcon from '@/assets/insurance-upload-cloud.svg'
@@ -17,7 +16,6 @@ import {
 } from '@/api/inspectionAssetAssess'
 import { getActiveLandlordId } from '@/lib/activeLandlord'
 import { findPropertyByName } from '@/lib/properties'
-import { isLimitedAlpha1Landlord } from '@shared/landlordCapabilities'
 import { prepareInspectionDocumentUpload } from '@/lib/prepareInspectionDocumentUpload'
 import {
   INSPECTION_SESSION_CHANGED_EVENT,
@@ -1562,7 +1560,6 @@ export function PropertyDetailsPanel({
   const inspectionEmpty = !inspectionHasPersistedWork
   const insuranceEmpty = !savedInsurance
   const historyEmpty = historyDocs.length === 0 && historyApproved.length === 0
-  const limitedAlpha1 = isLimitedAlpha1Landlord(getActiveLandlordId())
 
   if (loading) {
     return (
@@ -1578,11 +1575,6 @@ export function PropertyDetailsPanel({
       {showModule('inspection') && inspectionSaveMessage ? (
         <p className="text-[12px] text-[#059669]">{inspectionSaveMessage}</p>
       ) : null}
-
-      {limitedAlpha1 ||
-      !(showModule('inspection') || showModule('history')) ? null : (
-        <PropertyRecordHierarchy />
-      )}
 
       {showModule('inspection') ? (
       <DetailCard

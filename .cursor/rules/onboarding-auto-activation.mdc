@@ -14,7 +14,7 @@ Managers send outreach when they are ready from **Residents** (welcome text) and
 | Event | Automatic outreach |
 |---|---|
 | Onboarding complete — resident with phone | **None**, unless **Onboarding** switch was enabled for that resident |
-| Onboarding complete — vendor with phone/email | **None** — send manually from Vendors |
+| Onboarding complete — vendor with phone/email | **None**, unless **Onboarding** switch was enabled for that vendor |
 | Resident added after setup (with phone) | **None** — send manually from Residents |
 | Phone added later to existing resident | **None** — send manually from Residents |
 | Phone changed after setup (wrong number) | **None** — offer **Start onboarding again** on save; send only if checked |
@@ -26,10 +26,12 @@ Managers send outreach when they are ready from **Residents** (welcome text) and
 | Where | Behavior |
 |---|---|
 | Fast Track AI Review — each resident row | Replaces Edit; switch off by default |
+| Fast Track AI Review — each vendor card | Switch off by default; disabled without phone or email |
 | Guided Residents step — each resident card | Switch off by default; disabled without a phone |
-| Guided final Review — each resident row | Same switch; Edit on the Residents card removed |
+| Guided Vendors step — each vendor card | Switch off by default; disabled without phone or email |
+| Guided final Review — each resident / vendor row | Same switch; Edit on the Residents card removed |
 
-When enabled and the resident has a phone, `completeOnboarding` sends the welcome SMS after roster persist (same path as **Start onboarding**). Failures are best-effort and surfaced in the completion notice.
+When enabled and the resident has a phone, `completeOnboarding` sends the welcome SMS after roster persist (same path as **Start onboarding**). When enabled and the vendor has a phone or email, `completeOnboarding` sends the verification invite after roster persist (same path as **Send verification invite**). Failures are best-effort and surfaced in the completion notice.
 
 ## Manual send paths
 
@@ -112,5 +114,6 @@ Cron: `check-vendor-onboarding` / `run-workflow-escalations`. Policy: `vendorOnb
 
 - Auto-send welcome SMS on `completeOnboarding` for residents **without** the Onboarding switch
 - Auto-send welcome SMS on add resident or first phone save
-- Auto-send vendor verification on `completeOnboarding` or `VendorFormModal` save
-- Block finishing setup on SMS/email failure (opted-in welcome is best-effort)
+- Auto-send vendor verification on `completeOnboarding` for vendors **without** the Onboarding switch
+- Auto-send vendor verification on `VendorFormModal` save
+- Block finishing setup on SMS/email failure (opted-in welcome / invite is best-effort)

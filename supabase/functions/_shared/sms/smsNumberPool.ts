@@ -91,7 +91,7 @@ export async function findActiveLandlordMain(
   landlordId: string,
 ): Promise<LandlordSmsNumberRow | null> {
   // Single implementation: Alpha-aware resolver (shared Twilio DID fallback).
-  // Do not reintroduce a parallel Telnyx-only lookup here — see
+  // Do not reintroduce a parallel lookup here — see
   // findActiveLandlordMainNumber in landlordSmsOnboarding.ts.
   const { findActiveLandlordMainNumber } = await import(
     "./landlordSmsOnboarding.ts"

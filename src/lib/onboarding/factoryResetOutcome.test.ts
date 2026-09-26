@@ -35,18 +35,24 @@ describe('isFactoryResetActivityFeedEmpty', () => {
 
 describe('formatFactoryResetFailureAlert', () => {
   it('includes table names, counts, and opsPurgePath in the alert string', () => {
-    const result: Pick<FactoryResetResult, 'error' | 'opsPurgePath' | 'activityFeed'> = {
+    const result: Pick<FactoryResetResult, 'error' | 'opsPurgePath' | 'activityFeed' | 'opsCounts'> = {
       error: 'Activity feed still has rows after reset.',
       opsPurgePath: 'client_fallback',
       activityFeed: {
         remainingOperationsGraph: 12,
         remainingPropertyOperationsGraph: 3,
       },
+      opsCounts: {
+        remainingTickets: 344,
+        remainingActiveWorkflowRuns: 12,
+      },
     }
     const alert = formatFactoryResetFailureAlert(result)
     expect(alert).toContain('Activity feed still has rows after reset.')
     expect(alert).toContain('operations_graph_events: 12 remaining')
     expect(alert).toContain('property_operations_graph: 3 remaining')
+    expect(alert).toContain('maintenance_requests: 344 remaining')
+    expect(alert).toContain('active workflow_runs: 12 remaining')
     expect(alert).toContain('Ops purge path: client_fallback.')
     expect(alert).toContain('Returning to the setup choice screen.')
   })

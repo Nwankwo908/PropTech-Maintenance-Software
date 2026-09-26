@@ -19,7 +19,7 @@ import {
   type SetupSuccessItemId,
   type SetupSuccessProgress,
 } from '@/lib/setupSuccessChecklist'
-import { isLimitedAlpha1Landlord } from '@shared/landlordCapabilities'
+import { isLimitedAlphaLandlord } from '@shared/landlordCapabilities'
 
 /**
  * Global Get set up for success overlay — every admin route, not only Overview.
@@ -29,7 +29,7 @@ export function SetupSuccessCardHost() {
   const location = useLocation()
   const landlordId = getActiveLandlordId()
   const eligible =
-    isLimitedAlpha1Landlord(landlordId) && hasSeenLimitedAlphaPostOnboardingWelcome(landlordId)
+    isLimitedAlphaLandlord(landlordId) && hasSeenLimitedAlphaPostOnboardingWelcome(landlordId)
 
   const [progress, setProgress] = useState<SetupSuccessProgress | null>(null)
   const [dismissed, setDismissed] = useState(isSetupSuccessCardDismissed)

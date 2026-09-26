@@ -1,4 +1,4 @@
-import { useId, type CSSProperties, type ReactNode } from 'react'
+import { useId, type CSSProperties } from 'react'
 import { Link } from 'react-router-dom'
 import welcomeTextsIcon from '@/assets/invitation.png'
 import verifyVendorsIcon from '@/assets/verify-vendors.png'
@@ -168,16 +168,9 @@ function SetupProgressBar({ progress }: { progress: SetupSuccessProgress }) {
   )
 }
 
-function SetupCopy({
-  titleId,
-  closeButton,
-}: {
-  titleId: string
-  closeButton: ReactNode
-}) {
+function SetupCopy({ titleId }: { titleId: string }) {
   return (
-    <div className="relative flex w-full flex-col gap-2 pr-8">
-      {closeButton}
+    <div className="flex w-full flex-col gap-2 pr-8">
       <h2
         id={titleId}
         className="sa-enter font-[family-name:var(--font-admin)] text-[18px] font-bold leading-normal text-[#0d0b26]"
@@ -203,22 +196,18 @@ export function GetSetUpForSuccessCard({
   // A blocking overlay here sat above the sidebar and killed NavLinks + buttons.
   return (
     <section
-      className="sa-enter pointer-events-auto fixed bottom-4 left-4 z-40 max-h-[min(70dvh,calc(100dvh-2rem))] w-[min(520px,calc(100vw-2rem))] max-w-[calc(100vw-2rem)] overflow-y-auto overscroll-contain rounded-[16px] border border-[#f1f5f9] bg-white p-6 shadow-[0px_8px_24px_rgba(16,24,40,0.12)] transition-[border-color,box-shadow] duration-200 hover:border-[#e5e7eb] hover:shadow-[0px_12px_32px_rgba(16,24,40,0.16)] sm:bottom-6 sm:left-6 lg:left-[calc(16rem+1.5rem)]"
+      className="sa-enter pointer-events-auto fixed bottom-4 left-4 z-40 w-[min(520px,calc(100vw-2rem))] max-w-[calc(100vw-2rem)] overflow-hidden rounded-[16px] border border-[#f1f5f9] bg-white p-6 shadow-[0px_8px_24px_rgba(16,24,40,0.12)] transition-[border-color,box-shadow] duration-200 hover:border-[#e5e7eb] hover:shadow-[0px_12px_32px_rgba(16,24,40,0.16)] sm:bottom-6 sm:left-6 lg:left-[calc(16rem+1.5rem)]"
       aria-labelledby={titleId}
     >
-      <SetupCopy
-        titleId={titleId}
-        closeButton={
-          <button
-            type="button"
-            onClick={onClose}
-            aria-label="Close"
-            className="sa-press absolute right-4 top-4 z-10 rounded-lg p-1 text-[#9ca3af] outline-none hover:bg-black/5 hover:text-[#364153] focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2"
-          >
-            <CloseIcon />
-          </button>
-        }
-      />
+      <button
+        type="button"
+        onClick={onClose}
+        aria-label="Close"
+        className="sa-press absolute right-4 top-4 z-10 rounded-lg p-1 text-[#9ca3af] outline-none hover:bg-black/5 hover:text-[#364153] focus-visible:ring-2 focus-visible:ring-[#0030b5] focus-visible:ring-offset-2"
+      >
+        <CloseIcon />
+      </button>
+      <SetupCopy titleId={titleId} />
       <div className="mt-5">
         <SetupProgressBar progress={progress} />
       </div>

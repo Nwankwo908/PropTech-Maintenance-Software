@@ -1,10 +1,9 @@
 import { describe, expect, it, beforeEach } from 'vitest'
-import { LIMITED_ALPHA_1_LANDLORD_ID } from '@shared/landlordCapabilities'
+import { LIMITED_ALPHA_1_LANDLORD_ID, LIMITED_ALPHA_2_LANDLORD_ID } from '@shared/landlordCapabilities'
 import { EMPTY_LANDLORD_ID } from '@/lib/activeLandlord'
 import {
   clearLimitedAlphaPostOnboardingWelcomeSeen,
   markLimitedAlphaPostOnboardingWelcomeSeen,
-  shouldForcePostOnboardingWelcomeRoute,
   shouldShowLimitedAlphaPostOnboardingWelcome,
 } from './postOnboardingWelcome'
 
@@ -33,13 +32,20 @@ describe('postOnboardingWelcome', () => {
     memory.clear()
   })
 
-  it('shows the all-set screen for Limited Alpha 1 after setup until dismissed', () => {
+  it('shows the all-set screen for Limited Alpha after setup until dismissed', () => {
     expect(
       shouldShowLimitedAlphaPostOnboardingWelcome(true, LIMITED_ALPHA_1_LANDLORD_ID),
     ).toBe(true)
+    expect(
+      shouldShowLimitedAlphaPostOnboardingWelcome(true, LIMITED_ALPHA_2_LANDLORD_ID),
+    ).toBe(true)
     markLimitedAlphaPostOnboardingWelcomeSeen(LIMITED_ALPHA_1_LANDLORD_ID)
+    markLimitedAlphaPostOnboardingWelcomeSeen(LIMITED_ALPHA_2_LANDLORD_ID)
     expect(
       shouldShowLimitedAlphaPostOnboardingWelcome(true, LIMITED_ALPHA_1_LANDLORD_ID),
+    ).toBe(false)
+    expect(
+      shouldShowLimitedAlphaPostOnboardingWelcome(true, LIMITED_ALPHA_2_LANDLORD_ID),
     ).toBe(false)
   })
 
@@ -51,10 +57,10 @@ describe('postOnboardingWelcome', () => {
   })
 
   it('shows again after reset clears the seen flag', () => {
-    markLimitedAlphaPostOnboardingWelcomeSeen(LIMITED_ALPHA_1_LANDLORD_ID)
-    clearLimitedAlphaPostOnboardingWelcomeSeen(LIMITED_ALPHA_1_LANDLORD_ID)
+    markLimitedAlphaPostOnboardingWelcomeSeen(LIMITED_ALPHA_2_LANDLORD_ID)
+    clearLimitedAlphaPostOnboardingWelcomeSeen(LIMITED_ALPHA_2_LANDLORD_ID)
     expect(
-      shouldShowLimitedAlphaPostOnboardingWelcome(true, LIMITED_ALPHA_1_LANDLORD_ID),
+      shouldShowLimitedAlphaPostOnboardingWelcome(true, LIMITED_ALPHA_2_LANDLORD_ID),
     ).toBe(true)
   })
 })

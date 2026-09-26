@@ -18,8 +18,10 @@ const {
   persistOnboardingProperties,
   sendLandlordOnboardingWelcome,
   sendTenantWelcomeSms,
+  sendVendorInvite,
   importOnboardingResidentsFromExtraction,
   fetchOnboardingResidents,
+  fetchOnboardingVendors,
   supabaseFrom,
 } = vi.hoisted(() => {
   const supabaseFrom = vi.fn()
@@ -34,8 +36,10 @@ const {
     persistOnboardingProperties: vi.fn(),
     sendLandlordOnboardingWelcome: vi.fn(),
     sendTenantWelcomeSms: vi.fn(),
+    sendVendorInvite: vi.fn(),
     importOnboardingResidentsFromExtraction: vi.fn(),
     fetchOnboardingResidents: vi.fn(),
+    fetchOnboardingVendors: vi.fn(),
     supabaseFrom,
   }
 })
@@ -46,6 +50,10 @@ vi.mock('@/api/landlordOnboardingWelcome', () => ({
 
 vi.mock('@/api/tenantActivation', () => ({
   sendTenantWelcomeSms,
+}))
+
+vi.mock('@/api/vendorVerification', () => ({
+  sendVendorInvite,
 }))
 
 vi.mock('@/lib/unitActivation', () => ({
@@ -74,6 +82,16 @@ vi.mock('./persist/residents', async () => {
   return {
     ...actual,
     fetchOnboardingResidents,
+  }
+})
+
+vi.mock('./persist/vendors', async () => {
+  const actual = await vi.importActual<typeof import('./persist/vendors')>(
+    './persist/vendors',
+  )
+  return {
+    ...actual,
+    fetchOnboardingVendors,
   }
 })
 
@@ -163,7 +181,15 @@ describe('completeOnboarding', () => {
     }))
     importOnboardingResidentsFromExtraction.mockResolvedValue(2)
     fetchOnboardingResidents.mockResolvedValue([])
+    fetchOnboardingVendors.mockResolvedValue([])
     sendTenantWelcomeSms.mockResolvedValue({ ok: true, configured: true })
+    sendVendorInvite.mockResolvedValue({
+      ok: true,
+      verificationId: 'ver-1',
+      token: 'tok',
+      link: 'https://example.com/v/tok',
+      delivery: { sms: 'sent', email: null },
+    })
     recordActivityLog.mockResolvedValue(undefined)
     sendLandlordOnboardingWelcome.mockResolvedValue({
       ok: true,

@@ -56,6 +56,7 @@ export {
   saveOnboardingWizardDraft,
   hasOnboardingAccountDraft,
   hasOnboardingDraft,
+  hasSavedOnboardingUserProgress,
   isAccountEmpty,
   reconcileNewLandlordOnboarding,
   shouldBlockDashboard,
@@ -110,7 +111,7 @@ export {
   fetchOnboardingReviewData,
 } from './review'
 
-export type { OnboardingDashboardSync, FactoryResetResult, FactoryResetActivityFeed, OpsPurgePath } from './reset'
+export type { OnboardingDashboardSync, FactoryResetResult, FactoryResetActivityFeed, FactoryResetOpsCounts, OpsPurgePath } from './reset'
 export {
   purgeOnboardingImportedOperations,
   ensureOnboardingDashboardMatchesPortfolio,
@@ -121,11 +122,34 @@ export {
 } from './reset'
 
 export {
+  ONBOARDING_IMPORT_SOURCE,
+  collectOnboardingImportTicketIds,
+  purgeLeftoverOnboardingImportOps,
+  runOnboardingStartPrep,
+} from './purgeImportOps'
+export type { PurgeLeftoverImportOpsResult, OnboardingStartPrepDeps } from './purgeImportOps'
+
+export {
+  wouldHitHardDeleteForbidden,
+  archiveImportLineageTicketsForHardDelete,
+  archiveHardDeleteRiskTicketsForFactoryReset,
+} from './archiveImportLineageForPurge'
+
+export {
+  FAST_TRACK_HISTORICAL_ISSUE_DESTINATION,
+  FAST_TRACK_UNMATCHED_EXPENSE_FATE,
+  shouldMintOpenTicketFromHistoricalIssue,
+  shouldMintTicketFromExpenseLine,
+  isUnmatchedExpenseDropped,
+} from './fastTrackTicketPolicy'
+
+export {
   formatFactoryResetFailureAlert,
   reportFactoryResetFailureToUser,
   reportFactoryResetSuccessToConsole,
   factoryResetSuccessLogPayload,
   isFactoryResetActivityFeedEmpty,
+  isFactoryResetOpsEmpty,
 } from './factoryResetOutcome'
 
 export {

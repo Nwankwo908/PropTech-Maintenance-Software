@@ -86,6 +86,8 @@ export type VendorFormRow = {
   state: string
   country: string
   preferredEmergency: boolean
+  /** When true, send verification invite on Complete setup. */
+  sendOnboardingOnComplete?: boolean
 }
 
 /** Resident occupancy / account status collected during onboarding. */

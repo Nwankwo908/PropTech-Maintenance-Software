@@ -15,6 +15,8 @@ export type OnboardingVendor = {
   state: string
   country: string
   preferredEmergency: boolean
+  /** Wizard-only: send verification invite when setup completes. */
+  sendOnboardingOnComplete?: boolean
 }
 
 export async function fetchOnboardingVendors(

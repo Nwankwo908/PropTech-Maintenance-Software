@@ -4,7 +4,7 @@ type OnboardingAllSetWelcomeProps = {
   onGetStarted: () => void
 }
 
-/** Figma 1364:394 — post-setup welcome for Limited Alpha 1. */
+/** Figma 1364:394 — post-setup welcome for Limited Alpha. */
 export function OnboardingAllSetWelcome({ onGetStarted }: OnboardingAllSetWelcomeProps) {
   return (
     <main className="onb-all-set flex min-h-0 flex-1 flex-col items-center overflow-y-auto px-6 py-6 font-[family-name:var(--font-admin)] lg:h-[calc(100dvh-68px)] lg:max-h-[calc(100dvh-68px)] lg:overflow-hidden lg:px-10 lg:py-5">

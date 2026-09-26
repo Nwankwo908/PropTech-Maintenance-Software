@@ -71,6 +71,13 @@ serve(async (req) => {
       ? body.reason.trim()
       : null
   const workflowRunId = asUuid(body.workflowRunId)
+  // Factory-reset cleanup may pass notifyVendor:false to avoid bulk vendor SMS.
+  const notifyVendor = body.notifyVendor === false ? false : true
+  // After archive, clear vendor columns + termination FK rows so HARD_DELETE_FORBIDDEN
+  // allows a subsequent hard-delete. Only for explicit cleanup prep — does not weaken
+  // the trigger for any other caller.
+  const prepareForHardDelete =
+    body.prepareForHardDelete === true && source === "cleanup"
 
   if (!landlordId || !ticketId) {
     return jsonResponse({ error: "Missing landlordId or ticketId" }, 400)
@@ -101,11 +108,39 @@ serve(async (req) => {
             ? "Emergency work declined by the property team"
             : "Cancelled from the admin dashboard"),
       closeWorkflowRuns: true,
-      notifyVendor: true,
+      notifyVendor,
     })
 
     if (!result.ok) {
       return jsonResponse({ error: result.error }, 400)
+    }
+
+    if (prepareForHardDelete) {
+      // Unlock this import-lineage ticket for hard-delete without altering the trigger.
+      await supabase
+        .from("work_order_terminate_notify_attempts")
+        .delete()
+        .eq("ticket_id", ticketId)
+      await supabase
+        .from("work_order_terminations")
+        .delete()
+        .eq("ticket_id", ticketId)
+      const { error: clearErr } = await supabase
+        .from("maintenance_requests")
+        .update({
+          assigned_vendor_id: null,
+          previous_vendor_id: null,
+        })
+        .eq("id", ticketId)
+        .eq("landlord_id", landlordId)
+      if (clearErr) {
+        return jsonResponse(
+          {
+            error: `Archived but could not unlock for hard-delete: ${clearErr.message}`,
+          },
+          500,
+        )
+      }
     }
 
     // Clear SMS wait-state so AI does not keep acting on a closed WO.

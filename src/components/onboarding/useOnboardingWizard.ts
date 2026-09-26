@@ -45,16 +45,16 @@ import {
 } from '@/api/landlordStripeConnect'
 import { loadImportedOpsRecords } from '@/lib/onboarding/persist/importedOpsRecords'
 import { getActiveLandlordId } from '@/lib/activeLandlord'
-import { isLimitedAlpha1Landlord, isLimitedAlphaLandlord, landlordHasPayments } from '@shared/landlordCapabilities'
+import { isLimitedAlphaLandlord, landlordHasPayments } from '@shared/landlordCapabilities'
 import { formatPhoneNational } from '@/lib/phoneFormat'
 import {
   buildOnboardingReviewData,
+  buildOnboardingReviewMetrics,
   canCompleteOnboarding,
   completeOnboarding,
   defaultOnboardingState,
   fetchAccountSetupCounts,
   fetchLandlordOnboarding,
-  fetchOnboardingReviewData,
   fetchOnboardingReviewSupplement,
   fetchOnboardingResidents,
   fetchOnboardingVendors,
@@ -67,6 +67,7 @@ import {
   normalizeOnboardingStep,
   listOnboardingUnitOptions,
   persistOnboardingWizardLocally,
+  runOnboardingStartPrep,
   readLocalOnboardingState,
   resolveOnboardingStepForPath,
   resolveReviewEditStep,
@@ -80,10 +81,14 @@ import {
   type OnboardingStep,
   type OnboardingVendor,
 } from '@/lib/onboarding'
+import { getErrorMessage } from '@/lib/errorMessage'
 import { trackProductEventOnce } from '@/lib/analytics/productEvents'
 import { commitFastTrackImport } from '@/lib/onboarding/fastTrackImport'
 import { mergeFastTrackReviewResidents } from '@/lib/onboarding/persist/importResidents'
-import type { OnboardingExtractedResident } from '@/lib/onboardingDocumentUpload'
+import type {
+  OnboardingExtractedResident,
+  OnboardingExtractedVendor,
+} from '@/lib/onboardingDocumentUpload'
 import { mintOnboardingSession } from '@/lib/onboarding/session'
 import { archiveOrClearPriorOnboardingResidents } from '@/lib/onboarding/sessionResidents'
 import {
@@ -99,26 +104,25 @@ import {
   SETUP_COMPLETE_TRANSITION_MS,
 } from '@/lib/onboarding/wizardNavigation'
 import {
+  applyOnboardingSendFlags,
+  residentOnboardingFlagMatchKeys,
+  vendorOnboardingFlagMatchKeys,
+} from '@/lib/onboarding/onboardingSendFlags'
+import {
   type OnboardingApprovalRules,
 } from '@/lib/onboardingApprovalRules'
 
-function residentFlagMatchKeys(row: {
-  id?: string
-  fullName?: string
-  unit?: string
-  phone?: string
-}): string[] {
-  const keys: string[] = []
-  const id = (row.id ?? '').trim()
-  if (id) keys.push(`id:${id}`)
-  keys.push(
-    [
-      (row.fullName ?? '').trim().toLowerCase().replace(/\s+/g, ' '),
-      (row.unit ?? '').trim().toLowerCase(),
-      (row.phone ?? '').trim(),
-    ].join('|'),
+/** Merge Onboarding-switch flags from AI review / guided forms onto the complete vendor roster. */
+function applySendOnboardingVendorFlags(
+  vendors: OnboardingVendor[],
+  extracted: OnboardingExtractedVendor[] | undefined,
+  forms: VendorFormRow[],
+): OnboardingVendor[] {
+  return applyOnboardingSendFlags(
+    vendors,
+    [...(extracted ?? []), ...forms],
+    vendorOnboardingFlagMatchKeys,
   )
-  return keys
 }
 
 /** Merge Onboarding-switch flags from AI review / guided forms onto the complete roster. */
@@ -127,20 +131,11 @@ function applySendOnboardingFlags(
   extracted: OnboardingExtractedResident[] | undefined,
   forms: ResidentFormRow[],
 ): OnboardingResident[] {
-  const flagByKey = new Map<string, boolean>()
-  for (const row of [...(extracted ?? []), ...forms]) {
-    const enabled = Boolean(row.sendOnboardingOnComplete)
-    for (const key of residentFlagMatchKeys(row)) {
-      flagByKey.set(key, Boolean(flagByKey.get(key) || enabled))
-    }
-  }
-  return residents.map((resident) => ({
-    ...resident,
-    sendOnboardingOnComplete: Boolean(
-      resident.sendOnboardingOnComplete ||
-        residentFlagMatchKeys(resident).some((key) => flagByKey.get(key)),
-    ),
-  }))
+  return applyOnboardingSendFlags(
+    residents,
+    [...(extracted ?? []), ...forms],
+    residentOnboardingFlagMatchKeys,
+  )
 }
 
 export function useOnboardingWizard() {
@@ -621,8 +616,16 @@ export function useOnboardingWizard() {
       setReviewData(
         buildOnboardingReviewData(
           state,
-          supplement.vendors,
-          supplement.residents,
+          applySendOnboardingVendorFlags(
+            supplement.vendors,
+            wizardSnapshotRef.current.extractionReview?.vendors,
+            wizardSnapshotRef.current.vendorForms,
+          ),
+          applySendOnboardingFlags(
+            supplement.residents,
+            reviewExtractedResidents(),
+            wizardSnapshotRef.current.residentForms,
+          ),
           supplement.dbCounts,
           supplement.smsIntakeNumber,
           reviewExtractedResidents(),
@@ -776,6 +779,24 @@ export function useOnboardingWizard() {
     setSmsConsentAccepted(false)
   }
 
+  async function returnToWelcomeHub(): Promise<void> {
+    setSaving(true)
+    setError(null)
+    const landlordId = state.landlordId || getActiveLandlordId()
+    const cleared: LandlordOnboardingState = {
+      ...defaultOnboardingState(landlordId),
+      accountSetup: state.accountSetup,
+      onboardingStatus: 'not_started',
+      currentStep: 'entry',
+      setupPath: null,
+      properties: [],
+    }
+    await saveLandlordOnboarding(cleared)
+    setState(cleared)
+    resetOnboardingForms()
+    setSaving(false)
+  }
+
   async function wipePortfolioSession(): Promise<LandlordOnboardingState | null> {
     setSaving(true)
     setError(null)
@@ -794,28 +815,35 @@ export function useOnboardingWizard() {
     if (saving) return
     setError(null)
 
-    // New setup run: wipe/clear prior portfolio so leftover Alpha test residents
-    // and prior-session imports cannot bleed into this session's roster or feed.
-    const wiped = await wipePortfolioSession()
-    if (!wiped) return
-
+    const landlordId = state.landlordId || getActiveLandlordId()
     const session = mintOnboardingSession()
+
+    // Lineage-scoped leftover Fast Track import purge — independent of
+    // Start/Back permission soft-fail / wipePortfolioSession. Full portfolio
+    // wipe stays on Reset onboarding only.
+    const purged = await runOnboardingStartPrep(landlordId)
+    if (!purged.ok) {
+      console.warn('[onboarding] start prep leftover import ops', purged.error)
+    }
+
+    // Soft isolation only — do not factory-reset the portfolio on Start.
+    // Full wipe stays on Reset onboarding.
     const priorCleared = await archiveOrClearPriorOnboardingResidents({
-      landlordId: wiped.landlordId,
+      landlordId,
       currentSessionId: session.onboardingSessionId,
       mode: 'clear',
     })
     if (!priorCleared.ok) {
-      setError(priorCleared.error ?? 'Could not clear residents from the previous setup.')
-      return
+      console.warn('[onboarding] prior resident clear skipped', priorCleared.error)
     }
 
     resetOnboardingForms()
+    // Leave the welcome hub on the first click. Do not wipe-to-entry first —
+    // that kept status at `not_started` and pinned the display on `entry`.
     await goTo(targetStep, {
       onboardingStatus: 'in_progress',
       setupPath: path,
       properties: [],
-      accountSetup: defaultOnboardingState(wiped.landlordId).accountSetup,
       onboardingSessionId: session.onboardingSessionId,
       onboardingSessionStartedAt: session.onboardingSessionStartedAt,
       completedAt: null,
@@ -842,7 +870,7 @@ export function useOnboardingWizard() {
     if (!previous) return
     setError(null)
     if (previous === 'entry') {
-      await wipePortfolioSession()
+      await returnToWelcomeHub()
       return
     }
     if (step === 'review' && previous === 'payouts') {
@@ -1080,8 +1108,9 @@ export function useOnboardingWizard() {
     }
     if (state.setupPath === 'fast_track') {
       // Approval is the last fast-track step when payouts are off — complete setup.
-      await goTo('approval', { approvalRules: rules })
-      await finishReview()
+      // Do not goTo('approval') first: that remounts this step via the rules key and
+      // can clear saving mid-click so Complete looks dead. finishReview applies the patch.
+      await finishReview({ approvalRules: rules })
       return
     }
     await goTo('review', { approvalRules: rules })
@@ -1113,7 +1142,11 @@ export function useOnboardingWizard() {
     setReviewData(
       buildOnboardingReviewData(
         snapshot,
-        vendors,
+        applySendOnboardingVendorFlags(
+          vendors,
+          wizardSnapshotRef.current.extractionReview?.vendors,
+          wizardSnapshotRef.current.vendorForms,
+        ),
         residents,
         undefined,
         smsIntakeNumber,
@@ -1148,7 +1181,11 @@ export function useOnboardingWizard() {
     setReviewData(
       buildOnboardingReviewData(
         snapshot,
-        vendors,
+        applySendOnboardingVendorFlags(
+          vendors,
+          wizardSnapshotRef.current.extractionReview?.vendors,
+          wizardSnapshotRef.current.vendorForms,
+        ),
         residents,
         undefined,
         smsIntakeNumber,
@@ -1238,87 +1275,172 @@ export function useOnboardingWizard() {
     })
   }
 
-  async function finishReview() {
-    const latestState = wizardSnapshotRef.current.state
-    const data =
-      reviewData ??
-      (await fetchOnboardingReviewData(latestState.landlordId, reviewExtractedResidents()))
-    const reviewState: LandlordOnboardingState = {
-      ...latestState,
-      accountSetup: data.accountSetup,
-      properties: data.properties,
-      approvalRules: data.approvalRules,
-    }
-    const ready = await isLandlordStripePayoutsReady(reviewState.landlordId)
-    setPayoutsReady(ready)
-    const rosterResidents = data.residents.length > 0
-      ? data.residents
-      : await fetchOnboardingResidents(reviewState.landlordId)
-    const flaggedResidents = applySendOnboardingFlags(
-      rosterResidents,
-      reviewExtractedResidents(),
-      wizardSnapshotRef.current.residentForms,
+  function setVendorOnboardingOnComplete(vendorId: string, enabled: boolean) {
+    setReviewData((prev) => {
+      if (!prev) return prev
+      return {
+        ...prev,
+        vendors: prev.vendors.map((row) =>
+          row.id === vendorId ? { ...row, sendOnboardingOnComplete: enabled } : row,
+        ),
+      }
+    })
+    setVendorForms((prev) =>
+      prev.map((row) =>
+        row.id === vendorId ? { ...row, sendOnboardingOnComplete: enabled } : row,
+      ),
     )
-    const check = canCompleteOnboarding(
-      reviewState,
-      data.vendors,
-      flaggedResidents,
-      data.metrics,
-      ready,
-    )
-    if (!check.ok) {
-      setError(`Complete required setup: ${check.missing.join(', ')}`)
-      return
-    }
-    if (wizardRemoteSaveTimer.current != null) {
-      window.clearTimeout(wizardRemoteSaveTimer.current)
-      wizardRemoteSaveTimer.current = null
-    }
-    const transitionStartedAt = Date.now()
-    setCompletingSetup(true)
+    setExtractionReview((prev) => {
+      if (!prev) return prev
+      return {
+        ...prev,
+        vendors: prev.vendors.map((row) =>
+          row.id === vendorId ? { ...row, sendOnboardingOnComplete: enabled } : row,
+        ),
+      }
+    })
+  }
+
+  async function finishReview(patch: Partial<LandlordOnboardingState> = {}) {
+    setError(null)
     setSaving(true)
-    const result = await completeOnboarding(
-      reviewState,
-      data.vendors,
-      flaggedResidents,
-      data.metrics,
-    )
-    if (!result.ok) {
-      setCompletingSetup(false)
-      setSaving(false)
-      setError(result.error ?? 'Could not complete onboarding.')
-      return
+
+    const latestState: LandlordOnboardingState = {
+      ...wizardSnapshotRef.current.state,
+      ...patch,
     }
-    const completedState: LandlordOnboardingState = {
-      ...reviewState,
-      onboardingStatus: 'completed',
-      currentStep: 'review',
-      completedAt: new Date().toISOString(),
+    wizardSnapshotRef.current = {
+      ...wizardSnapshotRef.current,
+      state: latestState,
     }
-    setState(completedState)
-    persistOnboardingWizardLocally(completedState)
-    window.dispatchEvent(new Event('ulo:onboarding-completed'))
-    if (isLimitedAlpha1Landlord(reviewState.landlordId)) {
-      const remainingMs = ALL_SET_REVEAL_MS - (Date.now() - transitionStartedAt)
+
+    try {
+      const landlordId = latestState.landlordId
+      let vendors = reviewData?.vendors ?? []
+      let residents = reviewData?.residents ?? []
+      let dbCounts = reviewData?.metrics
+
+      // Fast-track Complete never visits the Review step, so reviewData is usually
+      // null. Load roster/counts only — do not block on SMS intake ensure.
+      if (!reviewData || vendors.length === 0 || residents.length === 0) {
+        const [dbVendors, dbResidents, counts] = await Promise.all([
+          vendors.length > 0
+            ? Promise.resolve(vendors)
+            : fetchOnboardingVendors(landlordId),
+          residents.length > 0
+            ? Promise.resolve(residents)
+            : fetchOnboardingResidents(landlordId),
+          latestState.properties.length === 0
+            ? fetchAccountSetupCounts(landlordId)
+            : Promise.resolve(undefined),
+        ])
+        vendors = dbVendors
+        residents = dbResidents
+        if (counts) dbCounts = counts
+      } else if (latestState.properties.length === 0) {
+        dbCounts = await fetchAccountSetupCounts(landlordId)
+      }
+
+      // Prefer live wizard state (just-saved approval rules / imported portfolio)
+      // over a stale reviewData snapshot that can wipe contact name or properties.
+      const reviewState: LandlordOnboardingState = {
+        ...latestState,
+        accountSetup:
+          latestState.accountSetup.contactName.trim() || !reviewData
+            ? latestState.accountSetup
+            : reviewData.accountSetup,
+        properties:
+          latestState.properties.length > 0 || !reviewData
+            ? latestState.properties
+            : reviewData.properties,
+        approvalRules: latestState.approvalRules,
+      }
+
+      const ready = await isLandlordStripePayoutsReady(reviewState.landlordId)
+      setPayoutsReady(ready)
+
+      const flaggedResidents = applySendOnboardingFlags(
+        residents.length > 0 ? residents : await fetchOnboardingResidents(landlordId),
+        reviewExtractedResidents(),
+        wizardSnapshotRef.current.residentForms,
+      )
+      const flaggedVendors = applySendOnboardingVendorFlags(
+        vendors.length > 0 ? vendors : await fetchOnboardingVendors(landlordId),
+        wizardSnapshotRef.current.extractionReview?.vendors,
+        wizardSnapshotRef.current.vendorForms,
+      )
+      const metrics = buildOnboardingReviewMetrics(
+        reviewState,
+        flaggedVendors,
+        flaggedResidents,
+        dbCounts,
+      )
+      const check = canCompleteOnboarding(
+        reviewState,
+        flaggedVendors,
+        flaggedResidents,
+        metrics,
+        ready,
+      )
+      if (!check.ok) {
+        setSaving(false)
+        setError(`Complete required setup: ${check.missing.join(', ')}`)
+        return
+      }
+      if (wizardRemoteSaveTimer.current != null) {
+        window.clearTimeout(wizardRemoteSaveTimer.current)
+        wizardRemoteSaveTimer.current = null
+      }
+      const transitionStartedAt = Date.now()
+      setCompletingSetup(true)
+      const result = await completeOnboarding(
+        reviewState,
+        flaggedVendors,
+        flaggedResidents,
+        metrics,
+      )
+      if (!result.ok) {
+        setCompletingSetup(false)
+        setSaving(false)
+        setError(result.error ?? 'Could not complete onboarding.')
+        return
+      }
+      const completedState: LandlordOnboardingState = {
+        ...reviewState,
+        onboardingStatus: 'completed',
+        currentStep: 'review',
+        completedAt: new Date().toISOString(),
+      }
+      setState(completedState)
+      persistOnboardingWizardLocally(completedState)
+      window.dispatchEvent(new Event('ulo:onboarding-completed'))
+      if (isLimitedAlphaLandlord(reviewState.landlordId)) {
+        const remainingMs = ALL_SET_REVEAL_MS - (Date.now() - transitionStartedAt)
+        if (remainingMs > 0) {
+          await new Promise((resolve) => window.setTimeout(resolve, remainingMs))
+        }
+        setCompletingSetup(false)
+        setSaving(false)
+        return
+      }
+      const remainingMs = SETUP_COMPLETE_TRANSITION_MS - (Date.now() - transitionStartedAt)
       if (remainingMs > 0) {
         await new Promise((resolve) => window.setTimeout(resolve, remainingMs))
       }
+      navigate('/admin', {
+        replace: true,
+        state: result.activationWarning
+          ? { onboardingNotice: result.activationWarning }
+          : undefined,
+      })
       setCompletingSetup(false)
       setSaving(false)
-      return
+    } catch (err) {
+      console.error('[onboarding] finishReview failed', err)
+      setCompletingSetup(false)
+      setSaving(false)
+      setError(getErrorMessage(err, 'Could not complete onboarding.'))
     }
-    const remainingMs = SETUP_COMPLETE_TRANSITION_MS - (Date.now() - transitionStartedAt)
-    if (remainingMs > 0) {
-      await new Promise((resolve) => window.setTimeout(resolve, remainingMs))
-    }
-    navigate('/admin', {
-      replace: true,
-      state: result.activationWarning
-        ? { onboardingNotice: result.activationWarning }
-        : undefined,
-    })
-    setCompletingSetup(false)
-    setSaving(false)
   }
 
 
@@ -1392,6 +1514,7 @@ export function useOnboardingWizard() {
     continueToReview,
     editReviewStep,
     setResidentOnboardingOnComplete,
+    setVendorOnboardingOnComplete,
     finishReview,
   }
 }

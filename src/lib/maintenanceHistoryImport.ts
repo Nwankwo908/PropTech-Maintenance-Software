@@ -120,6 +120,32 @@ function approvedStorageKey(scope: MaintenanceHistoryScope): string {
   return `ulo.maintenanceHistory.approved.${landlordKey(scope)}.${buildingSlug(scope)}`
 }
 
+/**
+ * Clear Fast Track / Property History localStorage for one landlord (all buildings).
+ * Called from factory reset so History imports do not survive Reset onboarding.
+ */
+export function clearMaintenanceHistoryForLandlord(landlordId: string): void {
+  if (!landlordId || typeof window === 'undefined') return
+  const prefix = `ulo.maintenanceHistory.`
+  const landlord = landlordId.trim()
+  try {
+    const keys: string[] = []
+    for (let i = 0; i < window.localStorage.length; i++) {
+      const key = window.localStorage.key(i)
+      if (!key || !key.startsWith(prefix)) continue
+      // Keys: ulo.maintenanceHistory.docs.|approved.|legacy.{landlordId}.{building}
+      if (key.includes(`.${landlord}.`) || key.endsWith(`.${landlord}`)) {
+        keys.push(key)
+      }
+    }
+    for (const key of keys) {
+      window.localStorage.removeItem(key)
+    }
+  } catch {
+    // private mode / quota
+  }
+}
+
 export function formatHistoryFileSize(bytes: number): string {
   if (!Number.isFinite(bytes) || bytes <= 0) return '0 B'
   if (bytes < 1024) return `${bytes} B`

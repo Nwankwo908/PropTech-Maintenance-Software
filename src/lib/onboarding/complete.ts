@@ -1,9 +1,11 @@
 /**
  * Complete onboarding — persist portfolio + flip status + landlord welcome message.
  * Opted-in residents (`sendOnboardingOnComplete`) get a welcome SMS after persist.
+ * Opted-in vendors get a verification invite after persist.
  */
 import { sendLandlordOnboardingWelcome } from '@/api/landlordOnboardingWelcome'
 import { sendTenantWelcomeSms } from '@/api/tenantActivation'
+import { sendVendorInvite, type VendorInviteChannel } from '@/api/vendorVerification'
 import { getActiveLandlordId } from '@/lib/activeLandlord'
 import {
   normalizeOnboardingApprovalRules,
@@ -33,8 +35,41 @@ import {
   mostCommonRentDueDay,
   type OnboardingResident,
 } from './persist/residents'
-import type { OnboardingVendor } from './persist/vendors'
+import { fetchOnboardingVendors, type OnboardingVendor } from './persist/vendors'
 import type { AccountSetupCounts, LandlordOnboardingState } from './types'
+
+function vendorHasInviteContact(vendor: { phone?: string; email?: string }): boolean {
+  return Boolean(vendor.phone?.trim() || vendor.email?.trim())
+}
+
+function vendorInviteChannel(vendor: {
+  phone?: string
+  email?: string
+}): VendorInviteChannel {
+  const phone = vendor.phone?.trim() ?? ''
+  const email = vendor.email?.trim() ?? ''
+  if (phone && email) return 'both'
+  if (phone) return 'sms'
+  return 'email'
+}
+
+function onboardingVendorIdentityMatch(
+  left: { id?: string; name?: string; phone?: string; email?: string },
+  right: { id?: string; name?: string; phone?: string; email?: string },
+): boolean {
+  const leftId = (left.id ?? '').trim()
+  const rightId = (right.id ?? '').trim()
+  if (leftId && rightId && leftId === rightId) return true
+  const leftName = (left.name ?? '').trim().toLowerCase().replace(/\s+/g, ' ')
+  const rightName = (right.name ?? '').trim().toLowerCase().replace(/\s+/g, ' ')
+  if (leftName && rightName && leftName === rightName) return true
+  const leftPhone = (left.phone ?? '').trim()
+  const rightPhone = (right.phone ?? '').trim()
+  if (leftPhone && rightPhone && leftPhone === rightPhone) return true
+  const leftEmail = (left.email ?? '').trim().toLowerCase()
+  const rightEmail = (right.email ?? '').trim().toLowerCase()
+  return Boolean(leftEmail && rightEmail && leftEmail === rightEmail)
+}
 
 /** Landlord Connect ready for rent payouts (onboarding + Checkout gate). */
 export async function isLandlordStripePayoutsReady(
@@ -189,20 +224,24 @@ export async function completeOnboarding(
     console.warn('[landlordOnboarding] communication style persist failed', err)
   }
 
-  // Landlord welcome is sent once on complete. Tenant welcome SMS only for
-  // residents with Onboarding switch enabled (and a phone).
+  // Landlord welcome is sent once on complete. Tenant welcome SMS / vendor
+  // verification invites only for rows with Onboarding switch enabled.
   const optedInForWelcome = residents.filter(
     (r) => Boolean(r.sendOnboardingOnComplete) && r.phone.trim().length > 0,
+  )
+  const optedInForVendorInvite = vendors.filter(
+    (v) => Boolean(v.sendOnboardingOnComplete) && vendorHasInviteContact(v),
   )
   const tenantsPendingOutreach = residents.filter(
     (r) => r.phone.trim().length > 0 && !r.sendOnboardingOnComplete,
   ).length
   const vendorsPendingOutreach = vendors.filter(
-    (v) => v.phone.trim().length > 0 || v.email.trim().length > 0,
+    (v) => vendorHasInviteContact(v) && !v.sendOnboardingOnComplete,
   ).length
   const warnings: string[] = []
   let welcomeDelivered = false
   let tenantWelcomeSent = 0
+  let vendorInviteSent = 0
 
   if (optedInForWelcome.length > 0) {
     try {
@@ -254,6 +293,51 @@ export async function completeOnboarding(
     }
   }
 
+  if (optedInForVendorInvite.length > 0) {
+    try {
+      const persistedVendors = await fetchOnboardingVendors(scope.landlordId)
+      for (const target of optedInForVendorInvite) {
+        const match =
+          persistedVendors.find((row) => row.id === target.id) ??
+          persistedVendors.find((row) => onboardingVendorIdentityMatch(row, target))
+        if (!match?.id) {
+          warnings.push(
+            `verification invite for ${target.name.trim() || 'a vendor'} could not be matched`,
+          )
+          continue
+        }
+        try {
+          const result = await sendVendorInvite({
+            landlordId: scope.landlordId,
+            vendorId: match.id,
+            businessName: match.name,
+            email: match.email.trim() || undefined,
+            phone: match.phone.trim() || undefined,
+            channel: vendorInviteChannel(match),
+            tradeCategories: match.category ? [match.category] : undefined,
+          })
+          const anySent =
+            result.delivery.sms === 'sent' || result.delivery.email === 'sent'
+          if (anySent) {
+            vendorInviteSent += 1
+          } else {
+            warnings.push(
+              `verification invite for ${match.name.trim() || 'a vendor'} could not be delivered`,
+            )
+          }
+        } catch (err) {
+          console.warn('[landlordOnboarding] opted-in vendor invite failed', err)
+          warnings.push(
+            `verification invite for ${match.name.trim() || 'a vendor'} could not be sent`,
+          )
+        }
+      }
+    } catch (err) {
+      console.warn('[landlordOnboarding] opted-in vendor invites failed', err)
+      warnings.push('vendor verification invites could not be sent')
+    }
+  }
+
   try {
     const welcome = await sendLandlordOnboardingWelcome({
       landlordId: scope.landlordId,
@@ -285,6 +369,10 @@ export async function completeOnboarding(
       tenantWelcomeSent > 0
         ? ` Welcome texts were sent to ${tenantWelcomeSent} resident${tenantWelcomeSent === 1 ? '' : 's'}.`
         : ''
+    const vendorInviteNote =
+      vendorInviteSent > 0
+        ? ` Verification invites were sent to ${vendorInviteSent} vendor${vendorInviteSent === 1 ? '' : 's'}.`
+        : ''
     const outreachNote =
       tenantsPendingOutreach > 0 || vendorsPendingOutreach > 0
         ? ' Send remaining resident welcome texts and vendor verification invites from Residents and Vendors when you are ready.'
@@ -296,10 +384,11 @@ export async function completeOnboarding(
       source: 'onboarding',
       actorType: 'landlord',
       metadata: {
-        message: `Setup complete.${welcomeNote}${tenantWelcomeNote}${outreachNote}`.trim(),
+        message: `Setup complete.${welcomeNote}${tenantWelcomeNote}${vendorInviteNote}${outreachNote}`.trim(),
         tenants_pending_outreach: tenantsPendingOutreach,
         tenants_welcome_sent: tenantWelcomeSent,
         vendors_pending_outreach: vendorsPendingOutreach,
+        vendors_invite_sent: vendorInviteSent,
       },
     })
   } catch (err) {

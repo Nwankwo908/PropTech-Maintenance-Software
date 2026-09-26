@@ -2281,6 +2281,41 @@ h6 {
   }
 }
 
+@keyframes onb-progress-saved-in {
+  from {
+    opacity: 0;
+    transform: translateX(-12px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+@keyframes onb-progress-saved-check-draw {
+  from {
+    stroke-dashoffset: 18;
+  }
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+
+@keyframes onb-progress-saved-check-pop {
+  0% {
+    opacity: 0;
+    transform: scale(0.6);
+  }
+  60% {
+    opacity: 1;
+    transform: scale(1.08);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
 @keyframes onb-welcome-in {
   from {
     opacity: 0;
@@ -2465,6 +2500,20 @@ h6 {
 
 .onb-step-panel {
   animation: onb-step-in 320ms var(--sa-ease);
+}
+
+.onb-progress-saved {
+  animation: onb-progress-saved-in 380ms var(--sa-ease);
+}
+
+.onb-progress-saved-icon {
+  animation: onb-progress-saved-check-pop 420ms var(--sa-ease) 80ms backwards;
+}
+
+.onb-progress-saved-check {
+  stroke-dasharray: 18;
+  stroke-dashoffset: 18;
+  animation: onb-progress-saved-check-draw 420ms var(--sa-ease) 120ms forwards;
 }
 
 .onb-welcome-title {
@@ -3171,6 +3220,9 @@ h6 {
   }
 
   .onb-step-panel,
+  .onb-progress-saved,
+  .onb-progress-saved-icon,
+  .onb-progress-saved-check,
   .onb-welcome-title,
   .onb-welcome-subtitle,
   .onb-welcome-card,
@@ -3193,6 +3245,10 @@ h6 {
   .onb-all-set-cta,
   .onb-review-progress-ring {
     animation: none;
+  }
+
+  .onb-progress-saved-check {
+    stroke-dashoffset: 0;
   }
 
   .onb-stepper-connector,

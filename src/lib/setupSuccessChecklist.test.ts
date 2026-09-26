@@ -73,7 +73,7 @@ describe('setupSuccessChecklist', () => {
     ).toBe(true)
   })
 
-  it('marks invite vendors complete after at least one vendor is added', () => {
+  it('marks invite vendors complete after outreach starts, not roster alone', () => {
     expect(
       resolveSetupSuccessProgress(progressInput()).items.find((item) => item.id === 'verify_vendors')
         ?.done,
@@ -82,6 +82,11 @@ describe('setupSuccessChecklist', () => {
       resolveSetupSuccessProgress(progressInput({ vendorCount: 1 })).items.find(
         (item) => item.id === 'verify_vendors',
       )?.done,
+    ).toBe(false)
+    expect(
+      resolveSetupSuccessProgress(
+        progressInput({ vendorCount: 1, vendorOutreachStartedCount: 1 }),
+      ).items.find((item) => item.id === 'verify_vendors')?.done,
     ).toBe(true)
   })
 
@@ -90,6 +95,7 @@ describe('setupSuccessChecklist', () => {
       progressInput({
         residents: [{ phone: '2015550100', activationStatus: 'waiting' }],
         vendorCount: 1,
+        vendorOutreachStartedCount: 1,
         propertyAccessComplete: true,
         propertyIntelligenceComplete: true,
         propertyInsuranceComplete: true,
@@ -169,12 +175,6 @@ describe('setupSuccessChecklist', () => {
       progressInput({
         residents: [{ phone: '2015550100', activationStatus: 'waiting' }],
         vendorCount: 1,
-        verifiedVendorCount: 1,
-      }),
-    )
-    expect(setupSuccessPercent(progress)).toBe(29)
-  })
-
         vendorOutreachStartedCount: 1,
       }),
     )
@@ -186,15 +186,24 @@ describe('setupSuccessChecklist', () => {
     clearSetupSuccessCardDismissed(LIMITED_ALPHA_1_LANDLORD_ID)
     const incomplete = resolveSetupSuccessProgress(progressInput())
     expect(shouldShowSetupSuccessNavHint(incomplete, LIMITED_ALPHA_1_LANDLORD_ID)).toBe(true)
+    expect(shouldShowSetupSuccessNavHint(incomplete, LIMITED_ALPHA_2_LANDLORD_ID)).toBe(false)
+    markLimitedAlphaPostOnboardingWelcomeSeen(LIMITED_ALPHA_2_LANDLORD_ID)
+    expect(shouldShowSetupSuccessNavHint(incomplete, LIMITED_ALPHA_2_LANDLORD_ID)).toBe(true)
     const complete = resolveSetupSuccessProgress(
       progressInput({
         residents: [{ phone: '2015550100', activationStatus: 'waiting' }],
         vendorCount: 1,
         vendorOutreachStartedCount: 1,
+        propertyAccessComplete: true,
+        propertyIntelligenceComplete: true,
+        propertyInsuranceComplete: true,
+        hasMaintenancePreferences: true,
+        maintenanceRequestCount: 1,
       }),
     )
     expect(complete.doneCount).toBe(complete.total)
     expect(shouldShowSetupSuccessNavHint(complete, LIMITED_ALPHA_1_LANDLORD_ID)).toBe(false)
+    expect(shouldShowSetupSuccessNavHint(complete, LIMITED_ALPHA_2_LANDLORD_ID)).toBe(false)
   })
 
   it('reports positive percent-point gains for the nav flash', () => {

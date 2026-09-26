@@ -203,6 +203,8 @@ export type OnboardingExtractedVendor = {
   confidence: number
   selected: boolean
   needsReview: boolean
+  /** When true, send verification invite on Complete setup. */
+  sendOnboardingOnComplete?: boolean
 }
 
 export type OnboardingExtractedMaintenanceIssue = {

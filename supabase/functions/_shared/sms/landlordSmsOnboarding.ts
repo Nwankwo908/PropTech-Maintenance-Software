@@ -159,7 +159,7 @@ async function resolveSharedTwilioOutboundLine(
 }
 
 function twilioLineFromRow(row: LandlordSmsNumberRow): OutboundLandlordSmsLine | null {
-  if (String(row.provider).toLowerCase() === "telnyx") return null
+  if (String(row.provider).toLowerCase() !== "twilio") return null
   return {
     id: String(row.id),
     phone: String(row.phone_number).trim(),

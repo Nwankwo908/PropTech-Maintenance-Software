@@ -34,6 +34,11 @@ export async function archiveOrClearPriorOnboardingResidents(params: {
     .eq('landlord_id', landlordId)
 
   if (error) {
+    // Migration not applied — wipe already cleared what it could; don't block Start setup.
+    if (/onboarding_session|archived_at|column/i.test(error.message)) {
+      console.warn('[onboarding] session resident columns unavailable', error.message)
+      return { ok: true, cleared: 0, archived: 0 }
+    }
     return {
       ok: false,
       error: getErrorMessage(error, 'Something went wrong. Please try again.'),
@@ -90,6 +95,11 @@ export async function archiveOrClearPriorOnboardingResidents(params: {
       .in('id', staleIds)
     if (!archiveError) {
       return { ok: true, cleared: 0, archived: staleIds.length }
+    }
+    if (/archived_at|column/i.test(archiveError.message)) {
+      // Cannot delete or archive — wipe already ran; do not block Start setup.
+      console.warn('[onboarding] prior residents remain', removed.error, archiveError.message)
+      return { ok: true, cleared: 0, archived: 0 }
     }
     return { ok: false, error: removed.error, cleared: 0, archived: 0 }
   }

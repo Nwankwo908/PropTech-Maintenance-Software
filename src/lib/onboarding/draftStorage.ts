@@ -12,6 +12,7 @@ import { isPlatformLoginEmail } from '@/lib/landlordSupportEmail'
 import { usableOnboardingCompanyName } from '@shared/landlordPortfolioLabel'
 import { supabase } from '@/lib/supabase'
 import { fetchAccountSetupCounts } from './persist/account'
+import { clearMaintenanceHistoryForLandlord } from '@/lib/maintenanceHistoryImport'
 import { clearImportedOpsRecords } from './persist/importedOpsRecords'
 import { isOnboardingLandlordAccount } from './scope'
 import type {
@@ -87,6 +88,8 @@ export function clearLocalOnboardingStorage(landlordId: string = getActiveLandlo
   try {
     window.localStorage.removeItem(localKey(landlordId))
     clearImportedOpsRecords(landlordId)
+    // Fast Track historical issues land in Property History localStorage — include in reset.
+    clearMaintenanceHistoryForLandlord(landlordId)
   } catch {
     // private mode
   }
@@ -576,12 +579,138 @@ export function hasOnboardingAccountDraft(state: LandlordOnboardingState): boole
     Boolean(accountSetup.companyName.trim()) ||
     Boolean(accountSetup.contactName.trim()) ||
     Boolean(accountSetup.email.trim()) ||
-    Boolean(accountSetup.phone.trim())
+    Boolean(accountSetup.phone.trim()) ||
+    Boolean(accountSetup.backupContactName.trim()) ||
+    Boolean(accountSetup.backupContactPhone.trim()) ||
+    Boolean(accountSetup.backupContactEmail.trim()) ||
+    Boolean(accountSetup.smsConsentAcceptedAt)
   )
 }
 
+function fieldHasText(value: unknown): boolean {
+  return typeof value === 'string' ? value.trim().length > 0 : false
+}
+
+/** True when a property form row has user-entered fields (ignore blank starter rows). */
+export function propertyFormHasUserContent(form: {
+  name?: string
+  address?: string
+  city?: string
+  state?: string
+  zipCode?: string
+  unitCount?: string
+  propertyManagerName?: string
+  propertyManagerPhone?: string
+}): boolean {
+  return (
+    fieldHasText(form.name) ||
+    fieldHasText(form.address) ||
+    fieldHasText(form.city) ||
+    fieldHasText(form.state) ||
+    fieldHasText(form.zipCode) ||
+    fieldHasText(form.unitCount) ||
+    fieldHasText(form.propertyManagerName) ||
+    fieldHasText(form.propertyManagerPhone)
+  )
+}
+
+function vendorFormHasUserContent(form: {
+  name?: string
+  category?: string
+  email?: string
+  phone?: string
+  city?: string
+  state?: string
+  preferredEmergency?: boolean
+  sendOnboardingOnComplete?: boolean
+}): boolean {
+  return (
+    fieldHasText(form.name) ||
+    fieldHasText(form.category) ||
+    fieldHasText(form.email) ||
+    fieldHasText(form.phone) ||
+    fieldHasText(form.city) ||
+    fieldHasText(form.state) ||
+    Boolean(form.preferredEmergency) ||
+    Boolean(form.sendOnboardingOnComplete)
+  )
+}
+
+function residentFormHasUserContent(form: {
+  name?: string
+  email?: string
+  phone?: string
+  propertyName?: string
+  unit?: string
+  leaseStart?: string
+  leaseEnd?: string
+  sendOnboardingOnComplete?: boolean
+}): boolean {
+  return (
+    fieldHasText(form.name) ||
+    fieldHasText(form.email) ||
+    fieldHasText(form.phone) ||
+    fieldHasText(form.propertyName) ||
+    fieldHasText(form.unit) ||
+    fieldHasText(form.leaseStart) ||
+    fieldHasText(form.leaseEnd) ||
+    Boolean(form.sendOnboardingOnComplete)
+  )
+}
+
+function extractionReviewHasUserContent(review: OnboardingFormDraft['extractionReview']): boolean {
+  if (!review) return false
+  return (
+    (review.properties?.length ?? 0) > 0 ||
+    (review.residents?.length ?? 0) > 0 ||
+    (review.vendors?.length ?? 0) > 0
+  )
+}
+
+function approvalRulesDifferFromDefault(rules: LandlordOnboardingState['approvalRules']): boolean {
+  return JSON.stringify(rules) !== JSON.stringify(defaultOnboardingApprovalRules())
+}
+
+export function hasOnboardingFormDraftContent(draft: OnboardingFormDraft | undefined): boolean {
+  if (!draft) return false
+  if ((draft.uploadDocuments?.length ?? 0) > 0) return true
+  if (extractionReviewHasUserContent(draft.extractionReview)) return true
+  if ((draft.propertyForms ?? []).some(propertyFormHasUserContent)) return true
+  if ((draft.vendorForms ?? []).some(vendorFormHasUserContent)) return true
+  if ((draft.residentForms ?? []).some(residentFormHasUserContent)) return true
+  return false
+}
+
 export function hasOnboardingDraft(state: LandlordOnboardingState): boolean {
-  return hasOnboardingAccountDraft(state) || state.properties.length > 0
+  return (
+    hasOnboardingAccountDraft(state) ||
+    state.properties.length > 0 ||
+    hasOnboardingFormDraftContent(state.formDraft) ||
+    approvalRulesDifferFromDefault(state.approvalRules)
+  )
+}
+
+/**
+ * True when the landlord has entered something worth calling “saved progress”.
+ * Includes live wizard form state that may not yet be mirrored onto `state.formDraft`.
+ */
+export function hasSavedOnboardingUserProgress(input: {
+  state: LandlordOnboardingState
+  propertyForms?: Array<Parameters<typeof propertyFormHasUserContent>[0]>
+  vendorForms?: Array<Parameters<typeof vendorFormHasUserContent>[0]>
+  residentForms?: Array<Parameters<typeof residentFormHasUserContent>[0]>
+  uploadDocuments?: unknown[]
+  extractionReview?: OnboardingFormDraft['extractionReview'] | null
+  payoutsReady?: boolean
+}): boolean {
+  if (hasOnboardingDraft(input.state)) return true
+  if ((input.uploadDocuments?.length ?? 0) > 0) return true
+  if (extractionReviewHasUserContent(input.extractionReview ?? undefined)) return true
+  if ((input.propertyForms ?? []).some(propertyFormHasUserContent)) return true
+  if ((input.vendorForms ?? []).some(vendorFormHasUserContent)) return true
+  if ((input.residentForms ?? []).some(residentFormHasUserContent)) return true
+  if (input.payoutsReady) return true
+  return false
 }
 
 export function isAccountEmpty(counts: AccountSetupCounts): boolean {

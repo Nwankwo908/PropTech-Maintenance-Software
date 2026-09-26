@@ -1,5 +1,5 @@
 import { getActiveLandlordId } from '@/lib/activeLandlord'
-import { isLimitedAlpha1Landlord } from '@shared/landlordCapabilities'
+import { isLimitedAlphaLandlord } from '@shared/landlordCapabilities'
 import { hasSeenLimitedAlphaPostOnboardingWelcome } from '@/lib/postOnboardingWelcome'
 
 export const SETUP_SUCCESS_TEST_DELIVERY_HASH = 'test-delivery'
@@ -222,13 +222,13 @@ export function clearSetupSuccessTestDelivery(
   }
 }
 
-/** Limited Alpha 1 overlay after Get Started, until every step is done or the card is closed. */
+/** Limited Alpha overlay after Get Started, until every step is done or the card is closed. */
 export function shouldShowSetupSuccessCard(
   progress: SetupSuccessProgress,
   landlordId: string = getActiveLandlordId(),
 ): boolean {
   return (
-    isLimitedAlpha1Landlord(landlordId) &&
+    isLimitedAlphaLandlord(landlordId) &&
     hasSeenLimitedAlphaPostOnboardingWelcome(landlordId) &&
     !isSetupSuccessCardDismissed(landlordId) &&
     progress.doneCount < progress.total
@@ -241,7 +241,7 @@ export function shouldShowSetupSuccessNavHint(
   landlordId: string = getActiveLandlordId(),
 ): boolean {
   return (
-    isLimitedAlpha1Landlord(landlordId) &&
+    isLimitedAlphaLandlord(landlordId) &&
     hasSeenLimitedAlphaPostOnboardingWelcome(landlordId) &&
     progress.doneCount < progress.total
   )

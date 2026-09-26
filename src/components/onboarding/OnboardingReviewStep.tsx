@@ -22,9 +22,9 @@ import { OnboardingUloNumberCard } from '@/components/onboarding/OnboardingUloNu
 import { NoVendorsContinueModal } from '@/components/onboarding/NoVendorsContinueModal'
 import { OnboardingSendSwitch } from '@/components/onboarding/OnboardingSendSwitch'
 import {
-  onboardingBtnPrimaryClass,
-  onboardingBtnSecondaryClass,
-} from './onboardingFieldStyles'
+  OnboardingContinueButton,
+  OnboardingStepNav,
+} from './OnboardingStepChrome'
 
 function formatResidentReviewValue(resident: OnboardingResident): string {
   const parts: string[] = [resident.fullName]
@@ -171,10 +171,6 @@ function formatVendorCategory(category: string): string {
   return value.charAt(0).toUpperCase() + value.slice(1).replace(/_/g, ' ')
 }
 
-const btnReviewPrimary = onboardingBtnPrimaryClass
-
-const btnReviewSecondary = onboardingBtnSecondaryClass
-
 export type OnboardingReviewStepProps = {
   loading: boolean
   saving: boolean
@@ -187,6 +183,7 @@ export type OnboardingReviewStepProps = {
   payoutMethodLabel?: string | null
   onEditStep: (step: OnboardingStep) => void
   onResidentOnboardingChange?: (residentId: string, enabled: boolean) => void
+  onVendorOnboardingChange?: (vendorId: string, enabled: boolean) => void
   onBack: () => void
   onComplete: () => void
 }
@@ -202,6 +199,7 @@ export function OnboardingReviewStep({
   payoutMethodLabel = null,
   onEditStep,
   onResidentOnboardingChange,
+  onVendorOnboardingChange,
   onBack,
   onComplete,
 }: OnboardingReviewStepProps) {
@@ -321,6 +319,20 @@ export function OnboardingReviewStep({
                   ]
                     .filter((part) => part && part !== '—')
                     .join(' · ')}
+                  trailing={
+                    onVendorOnboardingChange ? (
+                      <OnboardingSendSwitch
+                        enabled={Boolean(vendor.sendOnboardingOnComplete)}
+                        disabled={!vendor.phone.trim() && !vendor.email.trim()}
+                        onChange={(enabled) => onVendorOnboardingChange(vendor.id, enabled)}
+                        aria-label={
+                          vendor.phone.trim() || vendor.email.trim()
+                            ? `Send verification invite to ${vendor.name.trim() || `vendor ${index + 1}`} when setup completes`
+                            : `Add a phone or email to send onboarding to ${vendor.name.trim() || `vendor ${index + 1}`}`
+                        }
+                      />
+                    ) : undefined
+                  }
                 />
               ))
             ) : (
@@ -484,27 +496,17 @@ export function OnboardingReviewStep({
         </div>
       )}
 
-      <div className="mt-8 flex flex-col items-end gap-3">
-        <div className="flex flex-wrap items-center justify-end gap-3">
-          <button
-            type="button"
-            disabled={saving || loading}
-            onClick={onBack}
-            className={btnReviewSecondary}
-          >
-            Back
-          </button>
-          <button
-            type="button"
+      <div className="mt-6 flex flex-col gap-3">
+        <OnboardingStepNav showBack onBack={onBack} saving={saving || loading}>
+          <OnboardingContinueButton
             disabled={saving || loading || completionDisabled}
             onClick={requestComplete}
-            className={btnReviewPrimary}
           >
             Complete
-          </button>
-        </div>
+          </OnboardingContinueButton>
+        </OnboardingStepNav>
         {completionDisabled && completionMissing.length > 0 && !loading ? (
-          <p className="max-w-[480px] text-right text-[13px] leading-relaxed text-[#6b7280]">
+          <p className="max-w-[480px] self-end text-right text-[13px] leading-relaxed text-[#6b7280]">
             Complete required setup: {completionMissing.join(', ')}. Use Edit on the summary cards above to
             fill in missing details.
           </p>

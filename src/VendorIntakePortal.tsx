@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useId, useRef, useState } from 'react'
+import { useCallback, useEffect, useId, useRef, useState, type InputHTMLAttributes } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import {
   fileToBase64,
@@ -18,6 +18,7 @@ import {
 } from '@/lib/vendorSelfRepresentationAck'
 import { VENDOR_TRADE_OPTIONS } from '@/lib/vendorTrades'
 import { US_STATE_OPTIONS, citiesForState, usStateCodeFromLabel } from '@/lib/usLocations'
+import { lookupCityStateFromUsZip } from '@/lib/lookupCityStateFromUsZip'
 
 function Shell({ children }: { children: React.ReactNode }) {
   return (
@@ -78,6 +79,9 @@ function Field({
   placeholder,
   type = 'text',
   className,
+  autoComplete,
+  inputMode,
+  name,
 }: {
   label: string
   hint?: string
@@ -86,6 +90,9 @@ function Field({
   placeholder?: string
   type?: string
   className?: string
+  autoComplete?: string
+  inputMode?: InputHTMLAttributes<HTMLInputElement>['inputMode']
+  name?: string
 }) {
   return (
     <label className={['block min-w-0', className].filter(Boolean).join(' ')}>
@@ -93,8 +100,11 @@ function Field({
       {hint ? <span className="mt-0.5 block text-[12px] leading-4 text-[#6a7282]">{hint}</span> : null}
       <input
         type={type}
+        name={name}
         value={value}
         placeholder={placeholder}
+        autoComplete={autoComplete}
+        inputMode={inputMode}
         onChange={(e) => onChange(e.target.value)}
         className="mt-1.5 w-full rounded-[10px] border border-[#d1d5dc] bg-white px-3 py-2.5 text-[15px] text-[#0a0a0a] outline-none transition-colors focus:border-[#186179] focus:ring-2 focus:ring-[#186179]/20"
       />
@@ -117,7 +127,7 @@ function firstListValue(list?: string[]): string {
   return list?.find((item) => typeof item === 'string' && item.trim())?.trim() ?? ''
 }
 
-function parseCenterAddress(center?: string | null): {
+export function parseCenterAddress(center?: string | null): {
   city: string
   state: string
   zip: string
@@ -134,6 +144,12 @@ function parseCenterAddress(center?: string | null): {
       return { city: parts.slice(0, -1).join(', '), state, zip }
     }
     return { city: parts[0]!, state: '', zip }
+  }
+  // "Atlanta GA" / "Atlanta Georgia" without a comma
+  const spaced = withoutZip.match(/^(.+?)\s+([A-Za-z]{2}|[A-Za-z][a-z]+(?:\s+[A-Za-z][a-z]+)?)$/)
+  if (spaced) {
+    const state = usStateCodeFromLabel(spaced[2])
+    if (state) return { city: spaced[1]!.trim(), state, zip }
   }
   return { city: withoutZip, state: usStateCodeFromLabel(withoutZip), zip }
 }
@@ -275,9 +291,17 @@ export function VendorIntakePortal() {
   const [serviceZip, setServiceZip] = useState('')
   const [travelRadiusMiles, setTravelRadiusMiles] = useState(TRAVEL_RADIUS_DEFAULT)
   const [attested, setAttested] = useState(false)
+  const zipLookupRef = useRef<string>('')
 
   const initializedRef = useRef(false)
   const editingAfterSubmitRef = useRef(false)
+
+  const applyServiceAreaFields = useCallback((city: string, state: string, zip?: string) => {
+    const nextState = usStateCodeFromLabel(state)
+    if (nextState) setServiceState(nextState)
+    if (city.trim()) setServiceCity(matchCityOption(nextState || state, city))
+    if (zip?.trim()) setServiceZip(zip.trim())
+  }, [])
 
   const hydrate = useCallback((s: VendorVerificationSession) => {
     setSession(s)
@@ -289,8 +313,9 @@ export function VendorIntakePortal() {
       setPhone(s.phone ?? '')
       setLicenseNumber('')
       const area = serviceAreaFieldsFromSession(s)
-      setServiceCity(area.city)
+      // State first so the city select is enabled when city is applied.
       setServiceState(area.state)
+      setServiceCity(area.city)
       setServiceZip(area.zip)
       setTravelRadiusMiles(area.radiusMiles)
       setAttested(vendorSelfRepresentationAckFromProgress(s.progress))
@@ -314,12 +339,42 @@ export function VendorIntakePortal() {
     setPhone(s.phone ?? '')
     setLicenseNumber(s.license.number ?? '')
     const area = serviceAreaFieldsFromSession(s)
-    setServiceCity(area.city)
     setServiceState(area.state)
+    setServiceCity(area.city)
     setServiceZip(area.zip)
     setTravelRadiusMiles(area.radiusMiles)
     setAttested(vendorSelfRepresentationAckFromProgress(s.progress))
   }, [])
+
+  function handleServiceZipChange(next: string) {
+    setServiceZip(next)
+  }
+
+  // Browser / ZIP autofill: when a full US ZIP lands, fill city + state selects.
+  useEffect(() => {
+    const zip = serviceZip.trim()
+    const normalized = zip.match(/^(\d{5})(?:-\d{4})?$/)?.[1] ?? ''
+    if (!normalized || zipLookupRef.current === normalized) return
+    if (serviceCity.trim() && serviceState.trim()) {
+      zipLookupRef.current = normalized
+      return
+    }
+
+    let cancelled = false
+    const timer = window.setTimeout(() => {
+      void lookupCityStateFromUsZip(normalized).then((location) => {
+        if (cancelled) return
+        zipLookupRef.current = normalized
+        if (!location) return
+        applyServiceAreaFields(location.city, location.state, location.zipCode)
+      })
+    }, 280)
+
+    return () => {
+      cancelled = true
+      window.clearTimeout(timer)
+    }
+  }, [serviceZip, serviceCity, serviceState, applyServiceAreaFields])
 
   function startEditSubmittedForm() {
     if (!session) return
@@ -508,6 +563,8 @@ export function VendorIntakePortal() {
                   <span className="text-[13px] font-medium text-[#364153]">State</span>
                   <div className="relative">
                     <select
+                      name="state"
+                      autoComplete="address-level1"
                       value={serviceState}
                       onChange={(event) => {
                         const next = event.target.value
@@ -532,10 +589,11 @@ export function VendorIntakePortal() {
                   <span className="text-[13px] font-medium text-[#364153]">City</span>
                   <div className="relative">
                     <select
+                      name="city"
+                      autoComplete="address-level2"
                       value={serviceCity}
                       onChange={(event) => setServiceCity(event.target.value)}
-                      disabled={!serviceState}
-                      className={`${portalSelectClass} ${!serviceCity ? 'text-[#9ca3af]' : 'text-[#0a0a0a]'} disabled:cursor-not-allowed disabled:bg-[#f9fafb] disabled:text-[#9ca3af]`}
+                      className={`${portalSelectClass} ${!serviceCity ? 'text-[#9ca3af]' : 'text-[#0a0a0a]'}`}
                       aria-label="Service city"
                     >
                       <option value="">
@@ -555,9 +613,12 @@ export function VendorIntakePortal() {
                 </label>
                 <Field
                   label="ZIP"
+                  name="postal-code"
+                  autoComplete="postal-code"
+                  inputMode="numeric"
                   placeholder="60614"
                   value={serviceZip}
-                  onChange={setServiceZip}
+                  onChange={handleServiceZipChange}
                 />
               </div>
               <TravelRadiusSlider miles={travelRadiusMiles} onChange={setTravelRadiusMiles} />

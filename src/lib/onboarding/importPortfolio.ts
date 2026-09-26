@@ -10,6 +10,10 @@ import type {
 import { supabase } from '@/lib/supabase'
 import { activateUnitsFromResidentAssignments } from '@/lib/unitActivation'
 import { normalizePhoneForDb } from '@/lib/phoneFormat'
+import {
+  shouldMintOpenTicketFromHistoricalIssue,
+  shouldMintTicketFromExpenseLine,
+} from './fastTrackTicketPolicy'
 import { normalizeBuildingKey } from '@/lib/propertyHealth'
 import { isUniqueViolation } from '@/lib/errorMessage'
 import {
@@ -57,21 +61,6 @@ type ImportResidentRow = {
 type ImportVendorRow = {
   id: string
   category: string
-}
-
-function mapExtractedIssuePriority(priority: string): {
-  priority: string
-  urgency: string
-  severity: string
-} {
-  const value = priority.trim().toLowerCase()
-  if (value === 'urgent' || value === 'emergency') {
-    return { priority: 'urgent', urgency: 'urgent', severity: 'urgent' }
-  }
-  if (value === 'high') {
-    return { priority: 'high', urgency: 'urgent', severity: 'high' }
-  }
-  return { priority: 'normal', urgency: 'normal', severity: 'normal' }
 }
 
 function resolveImportUnitLabel(issueUnit: string, units: ImportUnitRow[]): string {
@@ -162,31 +151,6 @@ async function fetchImportResidents(landlordId: string): Promise<ImportResidentR
   }))
 }
 
-async function logImportWorkflowEvent(
-  workflowRunId: string,
-  event: {
-    eventType: string
-    step?: string
-    message: string
-    metadata?: Record<string, unknown>
-  },
-): Promise<void> {
-  if (!supabase) return
-
-  const { error } = await supabase.from('workflow_events').insert({
-    workflow_run_id: workflowRunId,
-    event_type: event.eventType,
-    step: event.step ?? null,
-    actor_type: 'system',
-    message: event.message,
-    metadata: event.metadata ?? {},
-  })
-
-  if (error) {
-    console.warn('[landlordOnboarding] workflow event insert', error.message)
-  }
-}
-
 function matchImportVendorForCategory(
   category: string,
   vendors: ImportVendorRow[],
@@ -208,141 +172,6 @@ function matchImportVendorForCategory(
   }
 
   return vendors[0]
-}
-
-async function importExtractedMaintenanceIssues(
-  issues: ExtractedMaintenanceIssue[],
-  params: {
-    landlordId: string
-    units: ImportUnitRow[]
-    residents: ImportResidentRow[]
-    vendors: ImportVendorRow[]
-  },
-): Promise<{ tickets: number; workflowRuns: number }> {
-  if (!supabase || issues.length === 0) {
-    return { tickets: 0, workflowRuns: 0 }
-  }
-
-  let tickets = 0
-  let workflowRuns = 0
-  const now = Date.now()
-
-  for (let index = 0; index < issues.length; index++) {
-    const issue = issues[index]!
-    const resolvedUnit = resolveImportUnitLabel(issue.unit, params.units)
-    const resident = findImportResident(params.residents, issue.unit, issue.building)
-    const unit = findImportUnit(params.units, issue.unit, issue.building, resolvedUnit)
-    const sla = mapExtractedIssuePriority(issue.priority)
-    const createdAt = new Date(now - index * 36 * 60 * 60 * 1000).toISOString()
-    const dueAt = new Date(
-      Date.now() -
-        (sla.severity === 'urgent' || sla.severity === 'high' ? 6 : 1) * 60 * 60 * 1000,
-    ).toISOString()
-    const matchedVendor = matchImportVendorForCategory(issue.category, params.vendors)
-    const vendorWorkStatus = matchedVendor
-      ? index % 2 === 0
-        ? 'pending_accept'
-        : 'accepted'
-      : 'unassigned'
-
-    const { data: ticketRow, error: ticketError } = await supabase
-      .from('maintenance_requests')
-      .insert({
-        landlord_id: params.landlordId,
-        created_at: createdAt,
-        priority: sla.priority,
-        urgency: sla.urgency,
-        severity: sla.severity,
-        resident_name: resident?.fullName ?? 'Property Manager',
-        email: resident?.email?.trim() || '',
-        unit: resolvedUnit,
-        description: issue.description.trim() || 'Imported maintenance issue',
-        assigned_vendor_id: matchedVendor?.id ?? null,
-        assigned_at: matchedVendor ? createdAt : null,
-        vendor_work_status: vendorWorkStatus,
-        issue_category: issue.category.trim()
-          ? issueCategoryToVendorTrade(issue.category)
-          : 'general',
-        estimated_minutes: sla.severity === 'urgent' ? 240 : 480,
-        due_at: dueAt,
-      })
-      .select('id')
-      .single()
-
-    if (ticketError || !ticketRow?.id) {
-      console.warn('[landlordOnboarding] maintenance import', ticketError?.message)
-      continue
-    }
-
-    tickets += 1
-    const ticketId = String(ticketRow.id)
-    const runStatus = sla.severity === 'urgent' || index === 0 ? 'escalated' : 'active'
-
-    const { data: runRow, error: runError } = await supabase
-      .from('workflow_runs')
-      .insert({
-        template_id: 'maintenance_intake',
-        status: runStatus,
-        entity_type: 'maintenance_request',
-        entity_id: ticketId,
-        property_id: null,
-        unit_id: unit?.id ?? null,
-        resident_id: resident?.id ?? null,
-        landlord_id: params.landlordId,
-        trigger_type: 'dashboard',
-        workflow_type: 'maintenance',
-        current_stage: runStatus === 'escalated' ? 'escalated' : 'routed',
-        current_step: runStatus === 'escalated' ? 'awaiting_review' : 'document_import',
-        started_at: createdAt,
-        metadata: {
-          landlord_id: params.landlordId,
-          unit_label: resolvedUnit,
-          building: issue.building,
-          maintenance_request_id: ticketId,
-          issue_category: issue.category,
-          source: 'onboarding_import',
-          description: issue.description,
-        },
-      })
-      .select('id')
-      .single()
-
-    if (runError || !runRow?.id) {
-      console.warn('[landlordOnboarding] maintenance workflow import', runError?.message)
-      continue
-    }
-
-    workflowRuns += 1
-    const runId = String(runRow.id)
-    await recordActivityLog({
-      landlordId: params.landlordId,
-      eventType: 'maintenance.imported',
-      source: 'onboarding',
-      actorType: 'landlord',
-      maintenanceRequestId: ticketId,
-      workflowRunId: runId,
-      unitId: unit?.id ?? null,
-      metadata: {
-        message: `Imported maintenance issue: ${issue.description.trim()}`,
-        source: 'onboarding_import',
-      },
-    })
-    await logImportWorkflowEvent(runId, {
-      eventType: 'workflow.trigger',
-      step: 'document_import',
-      message: 'Maintenance issue imported from onboarding documents',
-      metadata: { maintenance_request_id: ticketId, source: 'onboarding_import' },
-    })
-    if (runStatus === 'escalated') {
-      await logImportWorkflowEvent(runId, {
-        eventType: 'workflow.escalate',
-        step: 'awaiting_review',
-        message: 'Imported issue flagged for landlord review',
-      })
-    }
-  }
-
-  return { tickets, workflowRuns }
 }
 
 function fallbackImportBuilding(
@@ -413,8 +242,15 @@ async function importExtractedFinancialRecords(
     residents: ImportResidentRow[]
     vendors: ImportVendorRow[]
   },
-): Promise<{ financialRecords: number; historyTickets: number }> {
-  if (records.length === 0) return { financialRecords: 0, historyTickets: 0 }
+): Promise<{
+  financialRecords: number
+  historyTickets: number
+  /** Maintenance expense lines skipped because no vendor matched (dropped, not parked). */
+  unmatchedExpenses: number
+}> {
+  if (records.length === 0) {
+    return { financialRecords: 0, historyTickets: 0, unmatchedExpenses: 0 }
+  }
 
   await recordActivityLog({
     landlordId: params.landlordId,
@@ -431,9 +267,12 @@ async function importExtractedFinancialRecords(
     },
   })
 
-  if (!supabase) return { financialRecords: records.length, historyTickets: 0 }
+  if (!supabase) {
+    return { financialRecords: records.length, historyTickets: 0, unmatchedExpenses: 0 }
+  }
 
   let historyTickets = 0
+  let unmatchedExpenses = 0
   const now = Date.now()
 
   for (let index = 0; index < records.length; index++) {
@@ -474,6 +313,12 @@ async function importExtractedFinancialRecords(
       record.description || record.recordType,
       params.vendors,
     )
+    // PRODUCT DECISION: unmatched expenses are dropped (not parked for matching).
+    if (!matchedVendor || !shouldMintTicketFromExpenseLine({ matchedVendorId: matchedVendor.id })) {
+      unmatchedExpenses += 1
+      continue
+    }
+
     const activityAt =
       parseFinancialPeriodToIso(record.period) ||
       new Date(now - index * 24 * 60 * 60 * 1000).toISOString()
@@ -495,10 +340,9 @@ async function importExtractedFinancialRecords(
         email: resident?.email?.trim() || '',
         unit: unitLabel,
         description,
-        assigned_vendor_id: matchedVendor?.id ?? null,
-        assigned_at: matchedVendor ? activityAt : null,
-        // `completed` requires an assignee; History still includes rows with completed_at.
-        vendor_work_status: matchedVendor ? 'completed' : 'unassigned',
+        assigned_vendor_id: matchedVendor.id,
+        assigned_at: activityAt,
+        vendor_work_status: 'completed',
         issue_category: issueCategoryToVendorTrade(
           record.description.trim() || record.recordType.trim() || 'general',
         ),
@@ -568,7 +412,7 @@ async function importExtractedFinancialRecords(
     })
   }
 
-  return { financialRecords: records.length, historyTickets }
+  return { financialRecords: records.length, historyTickets, unmatchedExpenses }
 }
 
 export async function importMockExtraction(
@@ -718,17 +562,16 @@ export async function importMockExtraction(
 
   const maintenanceIssues = (review.maintenanceIssues ?? []).filter((issue) => issue.selected)
   if (maintenanceIssues.length > 0) {
-    const maintenanceImport = await importExtractedMaintenanceIssues(maintenanceIssues, {
-      landlordId,
-      units: importUnits,
-      residents: importResidents,
-      vendors: importVendors.map((vendor) => ({
-        id: vendor.id,
-        category: vendor.category,
-      })),
-    })
-    imported.tickets = maintenanceImport.tickets
-    imported.workflowRuns += maintenanceImport.workflowRuns
+    // PRODUCT DECISION (fastTrackTicketPolicy): always History-only — never Open Repairs.
+    const openFromHistorical = maintenanceIssues.filter((issue) =>
+      shouldMintOpenTicketFromHistoricalIssue(issue),
+    )
+    if (openFromHistorical.length > 0) {
+      console.warn(
+        '[fastTrackImport] policy violated: refusing to mint open tickets from historical issues',
+        openFromHistorical.length,
+      )
+    }
     importIssuesIntoMaintenanceHistory(maintenanceIssues, persistedProperties, landlordId)
   }
 

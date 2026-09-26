@@ -48,7 +48,7 @@ export function isLimitedAlpha2Landlord(landlordId: string | null | undefined): 
 /** Production Twilio DID used as Limited Alpha 1 and 2's shared landlord_main line. */
 export const LIMITED_ALPHA_1_TWILIO_SMS_NUMBER = '+18775803356'
 
-/** Retired Telnyx DID — never use as SMS intake or a test-SMS destination. */
+/** Retired platform DID — never use as SMS intake or a test-SMS destination. */
 const RETIRED_PLATFORM_SMS_NUMBERS = ['+19734005760'] as const
 
 function smsDigits(phone: string | null | undefined): string {
@@ -61,7 +61,7 @@ function matchesAnyDid(phone: string | null | undefined, numbers: readonly strin
   return numbers.map(smsDigits).some((n) => digits === n || digits === n.slice(-10))
 }
 
-/** True when this number is the retired Telnyx intake DID. */
+/** True when this number is a retired platform intake DID. */
 export function isRetiredSmsIntakeNumber(phone: string | null | undefined): boolean {
   return matchesAnyDid(phone, RETIRED_PLATFORM_SMS_NUMBERS)
 }
@@ -71,11 +71,10 @@ export function isUnusableSmsIntakeLine(params: {
   phone?: string | null
   provider?: string | null
 }): boolean {
-  if ((params.provider ?? '').trim().toLowerCase() === 'telnyx') return true
   return isRetiredSmsIntakeNumber(params.phone)
 }
 
-/** Number residents should text. Never a Telnyx DID. */
+/** Number residents should text. Never a retired platform DID. */
 export function resolveSmsIntakeNumber(params: {
   landlordId?: string | null
   phone?: string | null
@@ -85,7 +84,7 @@ export function resolveSmsIntakeNumber(params: {
     return LIMITED_ALPHA_1_TWILIO_SMS_NUMBER
   }
   const phone = (params.phone ?? '').trim()
-  if (phone && !isUnusableSmsIntakeLine({ phone, provider: params.provider })) {
+  if (phone && !isUnusableSmsIntakeLine({ phone })) {
     return phone
   }
   return LIMITED_ALPHA_1_TWILIO_SMS_NUMBER

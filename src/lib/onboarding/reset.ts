@@ -25,7 +25,9 @@ import {
 import {
   emptyFactoryResetActivityFeed,
   isFactoryResetActivityFeedEmpty,
+  isFactoryResetOpsEmpty,
   type FactoryResetActivityFeed,
+  type FactoryResetOpsCounts,
   type FactoryResetResult,
   type OpsPurgePath,
 } from './factoryResetOutcome'
@@ -35,28 +37,50 @@ import {
   hasOnboardingAccountDraft,
   markOnboardingResetInProgress,
   readLandlordOnboardingDraft,
-  readLocalOnboardingState,
   requireOnboardingLandlord,
   saveLandlordOnboarding,
   writeLocalOnboarding,
 } from './draftStorage'
 import { deleteUnitsByIds } from './persist/properties'
 import type { LandlordOnboardingState } from './types'
+import {
+  archiveHardDeleteRiskTicketsForFactoryReset,
+  wouldHitHardDeleteForbidden,
+  type HardDeleteRiskTicket,
+} from './archiveImportLineageForPurge'
 
-export type { FactoryResetActivityFeed, FactoryResetResult, OpsPurgePath } from './factoryResetOutcome'
+export type {
+  FactoryResetActivityFeed,
+  FactoryResetOpsCounts,
+  FactoryResetResult,
+  OpsPurgePath,
+} from './factoryResetOutcome'
+
+/** Tables only staff RPC / service_role can wipe — client DELETE often lacks GRANT or RLS. */
+function isIgnorableScopedDeleteError(message: string, bestEffort: boolean): boolean {
+  if (/does not exist|Could not find the table/i.test(message)) return true
+  if (!bestEffort) return false
+  return /permission denied|row-level security|rls|not authorized|forbidden/i.test(message)
+}
 
 async function deleteLandlordScopedRows(
   table: string,
   landlordId: string,
+  options: { bestEffort?: boolean } = {},
 ): Promise<{ ok: boolean; error?: string }> {
   if (!supabase) {
     return { ok: false, error: 'We can\'t reach the server right now. Please try again in a moment.' }
   }
+  const bestEffort = options.bestEffort === true
   const { error } = await supabase.from(table).delete().eq('landlord_id', landlordId)
-  if (error && !/does not exist|Could not find the table/i.test(error.message)) {
-    return { ok: false, error: getErrorMessage(error, 'Something went wrong. Please try again.') }
+  if (!error) return { ok: true }
+  if (isIgnorableScopedDeleteError(error.message, bestEffort)) {
+    if (bestEffort && !/does not exist|Could not find the table/i.test(error.message)) {
+      console.warn(`[landlordOnboarding] skip delete ${table}`, error.message)
+    }
+    return { ok: true }
   }
-  return { ok: true }
+  return { ok: false, error: getErrorMessage(error, 'Something went wrong. Please try again.') }
 }
 
 async function deleteInScopedRows(
@@ -165,14 +189,26 @@ async function detachVendorsFromMaintenanceRequests(
   return { ok: true }
 }
 
+export type PurgeOnboardingImportedOperationsResult = {
+  ok: boolean
+  error?: string
+  opsPurgePath: OpsPurgePath
+  archiveFailed?: { count: number; ticketIds: string[] }
+  hardDeleteBlocked?: { count: number; ticketIds: string[] }
+}
+
 /**
  * Remove tickets + workflow runs created by fast-track document import.
  * Keeps properties, units, residents, and vendors (guided portfolio).
+ *
+ * Import-lineage tickets that would hit HARD_DELETE_FORBIDDEN are archived via
+ * terminateWorkOrder first (lineage scope only), then unlocked for hard-delete.
+ * The DB trigger itself is never modified.
  */
 export async function purgeOnboardingImportedOperations(
   landlordId: string = getActiveLandlordId(),
   preservePortfolioSms = false,
-): Promise<{ ok: boolean; error?: string; opsPurgePath: OpsPurgePath }> {
+): Promise<PurgeOnboardingImportedOperationsResult> {
   const scope = requireOnboardingLandlord(landlordId)
   if (!scope.ok) return { ...scope, opsPurgePath: 'unknown' }
   if (!supabase) {
@@ -180,6 +216,19 @@ export async function purgeOnboardingImportedOperations(
       ok: false,
       error: 'We can\'t reach the server right now. Please try again in a moment.',
       opsPurgePath: 'unknown',
+    }
+  }
+
+  // Archive-first for tickets that would hit HARD_DELETE_FORBIDDEN.
+  // Factory-reset wipes the whole portfolio — include archived SMS tickets with
+  // previous_vendor_id, not only import-lineage (lineage markers may already be gone).
+  const archivePrep = await archiveHardDeleteRiskTicketsForFactoryReset(scope.landlordId)
+  if (!archivePrep.ok) {
+    return {
+      ok: false,
+      error: archivePrep.error ?? 'Could not archive work orders before purge.',
+      opsPurgePath: 'unknown',
+      archiveFailed: archivePrep.archiveFailed,
     }
   }
 
@@ -198,10 +247,12 @@ export async function purgeOnboardingImportedOperations(
     if (!alphaPurgeError) {
       const remaining = await countLandlordOps(scope.landlordId)
       if (remaining.tickets > 0 || remaining.activeWorkflowRuns > 0) {
+        const blocked = await diagnoseHardDeleteBlocked(scope.landlordId)
         return {
           ok: false,
           error: `Could not clear imported tasks (${remaining.activeWorkflowRuns} runs, ${remaining.tickets} tickets remain).`,
           opsPurgePath: 'purge_landlord_portfolio',
+          ...(blocked ? { hardDeleteBlocked: blocked } : {}),
         }
       }
       return { ok: true, opsPurgePath: 'purge_landlord_portfolio' }
@@ -233,10 +284,12 @@ export async function purgeOnboardingImportedOperations(
         ? remaining.tickets > 0
         : remaining.tickets > 0 || remaining.activeWorkflowRuns > 0
       if (blocked) {
+        const hardBlocked = await diagnoseHardDeleteBlocked(scope.landlordId)
         return {
           ok: false,
           error: `Could not clear imported tasks (${remaining.activeWorkflowRuns} runs, ${remaining.tickets} tickets remain).`,
           opsPurgePath: 'purge_empty_landlord_operations',
+          ...(hardBlocked ? { hardDeleteBlocked: hardBlocked } : {}),
         }
       }
       return { ok: true, opsPurgePath: 'purge_empty_landlord_operations' }
@@ -319,7 +372,14 @@ export async function purgeOnboardingImportedOperations(
   ]
 
   const failed = ordered.find((result) => !result.ok)
-  if (failed) return { ...failed, opsPurgePath }
+  if (failed) {
+    const hardBlocked = await diagnoseHardDeleteBlocked(scope.landlordId)
+    return {
+      ...failed,
+      opsPurgePath,
+      ...(hardBlocked ? { hardDeleteBlocked: hardBlocked } : {}),
+    }
+  }
 
   // Staff historically lacked DELETE on workflow_runs; UPDATE is allowed — retire leftovers
   // so Active tasks / Needs attention go empty for guided portfolios.
@@ -328,14 +388,32 @@ export async function purgeOnboardingImportedOperations(
 
   const remaining = await countLandlordOps(scope.landlordId)
   if (remaining.tickets > 0 || remaining.activeWorkflowRuns > 0) {
+    const hardBlocked = await diagnoseHardDeleteBlocked(scope.landlordId)
     return {
       ok: false,
       error: `Could not clear imported tasks (${remaining.activeWorkflowRuns} active workflow runs still remain). Apply migration 20260716120000_onboarding_ops_purge_staff, then reset again.`,
       opsPurgePath,
+      ...(hardBlocked ? { hardDeleteBlocked: hardBlocked } : {}),
     }
   }
 
   return { ok: true, opsPurgePath }
+}
+
+async function diagnoseHardDeleteBlocked(
+  landlordId: string,
+): Promise<{ count: number; ticketIds: string[] } | undefined> {
+  if (!supabase) return undefined
+  const { data, error } = await supabase
+    .from('maintenance_requests')
+    .select('id, assigned_vendor_id, previous_vendor_id')
+    .eq('landlord_id', landlordId)
+    .or('assigned_vendor_id.not.is.null,previous_vendor_id.not.is.null')
+  if (error || !data) return undefined
+  const blocked = (data as HardDeleteRiskTicket[])
+    .filter((t) => wouldHitHardDeleteForbidden(t))
+    .map((t) => t.id)
+  return blocked.length > 0 ? { count: blocked.length, ticketIds: blocked } : undefined
 }
 
 async function cancelLandlordWorkflowRuns(
@@ -393,6 +471,12 @@ const CLEARED_LANDLORD_PAYOUTS = {
  * Missing tables are ignored so older environments still reset.
  * Graph tables are first so mid-path client deletes clear the bell sources even
  * when the staff portfolio RPC already wiped them (or failed and fell through).
+ *
+ * Fast Track document import also writes maintenance_requests, maintenance_invoices,
+ * vendor_status_events, workflow_runs, workflow_events — those are wiped earlier via
+ * purgeOnboardingImportedOperations (RPC or client_fallback), not this list.
+ * Property Maintenance History localStorage is cleared in clearLocalOnboardingStorage
+ * → clearMaintenanceHistoryForLandlord.
  */
 const FACTORY_RESET_SCOPED_TABLES = [
   'operations_graph_events',
@@ -569,6 +653,41 @@ async function assertFactoryResetActivityFeedEmpty(
     }
   }
   return { ok: true, activityFeed }
+}
+
+/**
+ * Fail closed unless maintenance_requests + active workflow_runs are 0.
+ * Covers Fast Track document-import tickets — feed emptiness alone is not enough
+ * to treat the Open Repairs count as cleared.
+ */
+async function assertFactoryResetOpsEmpty(
+  landlordId: string,
+): Promise<{ ok: boolean; error?: string; opsCounts: FactoryResetOpsCounts }> {
+  try {
+    const remaining = await countLandlordOps(landlordId)
+    const opsCounts: FactoryResetOpsCounts = {
+      remainingTickets: remaining.tickets,
+      remainingActiveWorkflowRuns: remaining.activeWorkflowRuns,
+    }
+    if (!isFactoryResetOpsEmpty(opsCounts)) {
+      return {
+        ok: false,
+        error: `Open ops still remain after reset (maintenance_requests: ${remaining.tickets}, active workflow_runs: ${remaining.activeWorkflowRuns}).`,
+        opsCounts,
+      }
+    }
+    return { ok: true, opsCounts }
+  } catch (error) {
+    return {
+      ok: false,
+      error: 'Ticket count could not be verified after reset.',
+      opsCounts: {
+        remainingTickets: null,
+        remainingActiveWorkflowRuns: null,
+        countError: getErrorMessage(error, 'count failed'),
+      },
+    }
+  }
 }
 
 async function clearLandlordPayoutsOnOnboardingReset(
@@ -806,7 +925,7 @@ export async function ensureOnboardingDashboardMatchesPortfolio(
  */
 export async function resetOnboardingPortfolio(
   landlordId: string = getActiveLandlordId(),
-): Promise<{ ok: boolean; error?: string; opsPurgePath: OpsPurgePath }> {
+): Promise<PurgeOnboardingImportedOperationsResult> {
   const scope = requireOnboardingLandlord(landlordId)
   if (!scope.ok) {
     // Non-onboarding accounts: no-op (never wipe demo/default).
@@ -855,11 +974,24 @@ export async function resetOnboardingPortfolio(
 
   const unitIds = (unitRows ?? []).map((row) => String((row as { id: string }).id))
 
-  // Clear progress statuses before any vendor FK SET NULL can trip the check constraint.
+  // Factory-reset hard-delete prep: all vendor-assigned / previously-assigned tickets
+  // (portfolio wipe). Import-lineage-only prep stays on Start-setup leftover purge.
+  const archivePrep = await archiveHardDeleteRiskTicketsForFactoryReset(scope.landlordId)
+  if (!archivePrep.ok) {
+    return {
+      ok: false,
+      error: archivePrep.error ?? 'Could not archive work orders before purge.',
+      opsPurgePath: 'unknown',
+      archiveFailed: archivePrep.archiveFailed,
+    }
+  }
+
+  // Clear progress statuses before deleting vendors.
   const detached = await detachVendorsFromMaintenanceRequests(scope.landlordId, vendorIds)
   if (!detached.ok) return { ...detached, opsPurgePath: 'unknown' }
 
   // Tickets + workflow runs (RPC when available; verifies leftovers).
+  // archiveImportLineage is idempotent here when prep above already unlocked.
   const purged = await purgeOnboardingImportedOperations(scope.landlordId)
   const opsPurgePath = purged.opsPurgePath
   if (!purged.ok) return purged
@@ -891,6 +1023,7 @@ export async function resetOnboardingPortfolio(
     })
     if (!removedResidents.ok) {
       // Soft-archive leftovers when hard delete is blocked (FK / RESTRICT).
+      // Missing archived_at column (migration not applied) is non-fatal — continue wipe.
       const { error: archiveError } = await supabase
         .from('users')
         .update({ archived_at: new Date().toISOString() })
@@ -900,7 +1033,7 @@ export async function resetOnboardingPortfolio(
         return { ok: false, error: removedResidents.error, opsPurgePath }
       }
       if (archiveError) {
-        return { ok: false, error: removedResidents.error, opsPurgePath }
+        console.warn('[landlordOnboarding] resident archive skipped', archiveError.message)
       }
     }
   }
@@ -920,6 +1053,7 @@ export async function resetOnboardingPortfolio(
   if (!verificationsCleared.ok) return { ...verificationsCleared, opsPurgePath }
 
   // Insight / home-data / Thumbtack leftovers (RPC may already have cleared some).
+  // Best-effort: several of these are SELECT-only for authenticated (staff RPC owns wipe).
   for (const table of FACTORY_RESET_SCOPED_TABLES) {
     if (table === 'ask_ulo_conversations') {
       // Messages reference conversations; delete children first when the table exists.
@@ -927,7 +1061,10 @@ export async function resetOnboardingPortfolio(
         .from('ask_ulo_conversations')
         .select('id')
         .eq('landlord_id', scope.landlordId)
-      if (askLoadError && !/does not exist|Could not find the table/i.test(askLoadError.message)) {
+      if (
+        askLoadError &&
+        !isIgnorableScopedDeleteError(askLoadError.message, true)
+      ) {
         return {
           ok: false,
           error: getErrorMessage(askLoadError, 'Something went wrong. Please try again.'),
@@ -937,10 +1074,12 @@ export async function resetOnboardingPortfolio(
       const askIds = (askRows ?? []).map((row) => String((row as { id: string }).id))
       if (askIds.length > 0) {
         const messagesCleared = await deleteInScopedRows('ask_ulo_messages', 'conversation_id', askIds)
-        if (!messagesCleared.ok) return { ...messagesCleared, opsPurgePath }
+        if (!messagesCleared.ok) {
+          console.warn('[landlordOnboarding] skip ask_ulo_messages', messagesCleared.error)
+        }
       }
     }
-    const cleared = await deleteLandlordScopedRows(table, scope.landlordId)
+    const cleared = await deleteLandlordScopedRows(table, scope.landlordId, { bestEffort: true })
     if (!cleared.ok) return { ...cleared, opsPurgePath }
   }
 
@@ -1019,12 +1158,19 @@ export async function restartNewLandlordOnboarding(
     clearLocalOnboardingStorage(scope.landlordId)
     writeLocalOnboarding(cleared)
     const activityFeed = await countFactoryResetActivityFeed(scope.landlordId)
+    const opsAssert = await assertFactoryResetOpsEmpty(scope.landlordId)
+    const opsCounts: FactoryResetOpsCounts = {
+      ...opsAssert.opsCounts,
+      ...(reset.archiveFailed ? { archiveFailed: reset.archiveFailed } : {}),
+      ...(reset.hardDeleteBlocked ? { hardDeleteBlocked: reset.hardDeleteBlocked } : {}),
+    }
     return {
       ok: false,
       error: reset.error ?? 'Could not clear previous portfolio data.',
       state: cleared,
       opsPurgePath: reset.opsPurgePath,
       activityFeed,
+      opsCounts,
     }
   }
 
@@ -1065,12 +1211,26 @@ export async function restartNewLandlordOnboarding(
   // Assert emptiness via SELECT count — delete ok:true alone is not proof.
   const feedAssert = await assertFactoryResetActivityFeedEmpty(scope.landlordId)
   if (!feedAssert.ok) {
+    const opsAssert = await assertFactoryResetOpsEmpty(scope.landlordId)
     return {
       ok: false,
       error: feedAssert.error ?? 'Activity feed was not empty after reset.',
       state: cleared,
       opsPurgePath: reset.opsPurgePath,
       activityFeed: feedAssert.activityFeed,
+      opsCounts: opsAssert.opsCounts,
+    }
+  }
+
+  const opsAssert = await assertFactoryResetOpsEmpty(scope.landlordId)
+  if (!opsAssert.ok) {
+    return {
+      ok: false,
+      error: opsAssert.error ?? 'Open tickets were not empty after reset.',
+      state: cleared,
+      opsPurgePath: reset.opsPurgePath,
+      activityFeed: feedAssert.activityFeed,
+      opsCounts: opsAssert.opsCounts,
     }
   }
 
@@ -1079,13 +1239,16 @@ export async function restartNewLandlordOnboarding(
     state: cleared,
     opsPurgePath: reset.opsPurgePath,
     activityFeed: feedAssert.activityFeed,
+    opsCounts: opsAssert.opsCounts,
   }
 }
 
 /** Alias — Reset onboarding is a full factory reset. */
 export const factoryResetLandlordOnboarding = restartNewLandlordOnboarding
 
-/** Wipe units/vendors/residents and clear property draft; optionally keep account setup fields. */
+/** Return to the welcome hub draft. Optionally keep account setup fields.
+ * Does not factory-reset portfolio rows — that is Reset onboarding only.
+ */
 export async function clearOnboardingPortfolioSession(
   options: { keepAccountSetup?: boolean; landlordId?: string } = {},
 ): Promise<{ ok: boolean; error?: string; state: LandlordOnboardingState }> {
@@ -1101,13 +1264,11 @@ export async function clearOnboardingPortfolioSession(
     }
   }
 
+  // Best-effort portfolio wipe. Back / return-to-hub must not fail when staff-only
+  // tables refuse client DELETE — session isolation covers leftovers on the next run.
   const reset = await resetOnboardingPortfolio(scope.landlordId)
   if (!reset.ok) {
-    return {
-      ok: false,
-      error: reset.error,
-      state: readLocalOnboardingState(scope.landlordId) ?? defaultOnboardingState(scope.landlordId),
-    }
+    console.warn('[landlordOnboarding] portfolio wipe skipped', reset.error)
   }
 
   const draft = await readLandlordOnboardingDraft(scope.landlordId)

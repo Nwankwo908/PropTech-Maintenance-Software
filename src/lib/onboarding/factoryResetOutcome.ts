@@ -21,12 +21,27 @@ export type FactoryResetActivityFeed = {
   countError?: string
 }
 
+/** Post-wipe Open Repairs / ticket table verification (Fast Track import leftovers). */
+export type FactoryResetOpsCounts = {
+  remainingTickets: number | null
+  remainingActiveWorkflowRuns: number | null
+  countError?: string
+  /**
+   * Import-lineage tickets that still trip HARD_DELETE_FORBIDDEN after archive prep.
+   * Diagnosable without another manual DB trace.
+   */
+  hardDeleteBlocked?: { count: number; ticketIds: string[] }
+  /** Import-lineage tickets where terminateWorkOrder/archive failed before purge. */
+  archiveFailed?: { count: number; ticketIds: string[] }
+}
+
 export type FactoryResetResult = {
   ok: boolean
   error?: string
   state?: LandlordOnboardingState
   opsPurgePath: OpsPurgePath
   activityFeed: FactoryResetActivityFeed
+  opsCounts?: FactoryResetOpsCounts
 }
 
 export function emptyFactoryResetActivityFeed(
@@ -48,12 +63,21 @@ export function isFactoryResetActivityFeedEmpty(feed: FactoryResetActivityFeed):
   )
 }
 
+/** True only when ticket + active workflow run counts are exactly 0. */
+export function isFactoryResetOpsEmpty(ops: FactoryResetOpsCounts): boolean {
+  return (
+    !ops.countError &&
+    ops.remainingTickets === 0 &&
+    ops.remainingActiveWorkflowRuns === 0
+  )
+}
+
 /**
  * Single-shot alert body for a failed factory reset.
  * Must include error, feed table names + counts (or count-verify failure), and opsPurgePath.
  */
 export function formatFactoryResetFailureAlert(
-  result: Pick<FactoryResetResult, 'error' | 'opsPurgePath' | 'activityFeed'>,
+  result: Pick<FactoryResetResult, 'error' | 'opsPurgePath' | 'activityFeed' | 'opsCounts'>,
 ): string {
   const lines: string[] = [
     result.error?.trim() || 'Could not fully clear portfolio data.',
@@ -71,6 +95,26 @@ export function formatFactoryResetFailureAlert(
   lines.push(
     `property_operations_graph: ${formatRemaining(feed.remainingPropertyOperationsGraph)} remaining`,
   )
+  const ops = result.opsCounts
+  if (ops) {
+    if (ops.countError) {
+      lines.push(`Ticket count could not be verified (${ops.countError}).`)
+    }
+    lines.push(`maintenance_requests: ${formatRemaining(ops.remainingTickets)} remaining`)
+    lines.push(
+      `active workflow_runs: ${formatRemaining(ops.remainingActiveWorkflowRuns)} remaining`,
+    )
+    if (ops.archiveFailed && ops.archiveFailed.count > 0) {
+      lines.push(
+        `archiveFailed: ${ops.archiveFailed.count} — ${ops.archiveFailed.ticketIds.join(', ')}`,
+      )
+    }
+    if (ops.hardDeleteBlocked && ops.hardDeleteBlocked.count > 0) {
+      lines.push(
+        `hardDeleteBlocked: ${ops.hardDeleteBlocked.count} — ${ops.hardDeleteBlocked.ticketIds.join(', ')}`,
+      )
+    }
+  }
   lines.push(`Ops purge path: ${result.opsPurgePath}.`)
   lines.push('')
   lines.push('Returning to the setup choice screen.')
@@ -83,16 +127,18 @@ function formatRemaining(value: number | null): string {
 
 /** Debugging trail for a successful reset (no alert today). */
 export function factoryResetSuccessLogPayload(
-  result: Pick<FactoryResetResult, 'ok' | 'opsPurgePath' | 'activityFeed'>,
+  result: Pick<FactoryResetResult, 'ok' | 'opsPurgePath' | 'activityFeed' | 'opsCounts'>,
 ): {
   ok: boolean
   opsPurgePath: OpsPurgePath
   activityFeed: FactoryResetActivityFeed
+  opsCounts?: FactoryResetOpsCounts
 } {
   return {
     ok: result.ok,
     opsPurgePath: result.opsPurgePath,
     activityFeed: result.activityFeed,
+    ...(result.opsCounts ? { opsCounts: result.opsCounts } : {}),
   }
 }
 

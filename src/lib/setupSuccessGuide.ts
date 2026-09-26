@@ -1,5 +1,5 @@
 import { getActiveLandlordId } from '@/lib/activeLandlord'
-import { isLimitedAlpha1Landlord } from '@shared/landlordCapabilities'
+import { isLimitedAlphaLandlord } from '@shared/landlordCapabilities'
 import type { SetupSuccessItemId } from '@/lib/setupSuccessChecklist'
 
 export type SetupSuccessCheckboxGuidePage =
@@ -141,7 +141,7 @@ export function markSetupSuccessCheckboxGuidePagePending(
   page: SetupSuccessCheckboxGuidePage,
   landlordId: string = getActiveLandlordId(),
 ): void {
-  if (!isLimitedAlpha1Landlord(landlordId)) return
+  if (!isLimitedAlphaLandlord(landlordId)) return
   storageSet(pendingKey(landlordId), page)
 }
 
@@ -179,7 +179,7 @@ export function armSetupSuccessPropertyDetailGuide(
   followup: SetupSuccessPropertyDetailFollowup,
   landlordId: string = getActiveLandlordId(),
 ): void {
-  if (!isLimitedAlpha1Landlord(landlordId)) return
+  if (!isLimitedAlphaLandlord(landlordId)) return
   storageRemove(seenKey(followup, landlordId))
   storageSet(followupKey(landlordId), followup)
   markSetupSuccessCheckboxGuidePagePending(followup, landlordId)
@@ -197,7 +197,7 @@ export function shouldShowSetupSuccessCheckboxGuide(
   page: SetupSuccessCheckboxGuidePage,
   landlordId: string = getActiveLandlordId(),
 ): boolean {
-  if (!isLimitedAlpha1Landlord(landlordId)) return false
+  if (!isLimitedAlphaLandlord(landlordId)) return false
   if (storageGet(seenKey(page, landlordId)) === '1') return false
   return storageGet(pendingKey(landlordId)) === page
 }

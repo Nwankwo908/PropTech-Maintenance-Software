@@ -6,7 +6,7 @@ import { sendResendEmail } from "../delivery.ts"
 import { normalizeOpsEmail } from "../landlordOpsNotify.ts"
 import { recordActivityLog } from "../graph/recordActivityLog.ts"
 import { normalizePhoneFlexible } from "../resident_notify.ts"
-import { findActiveLandlordMainNumber } from "./landlordSmsOnboarding.ts"
+import { resolveOutboundLandlordSmsLine } from "./landlordSmsOnboarding.ts"
 import { getSMSProviderForSend } from "./providerFactory.ts"
 import { uloAppUrl } from "../uloAppUrl.ts"
 import { resolveSmsIntakeNumber } from "../../../../shared/landlordCapabilities.ts"
@@ -346,14 +346,15 @@ export async function sendLandlordOnboardingWelcome(
 
   const phones = skipSms ? [] : await loadWelcomePhones(supabase, landlordId)
   if (phones.length > 0) {
-    const sender = await findActiveLandlordMainNumber(supabase, landlordId)
-    const from = sender?.phone_number?.trim() || undefined
+    // Same Alpha-aware shared Twilio DID path as tenant welcome / vendor invite.
+    const line = await resolveOutboundLandlordSmsLine(supabase, landlordId)
+    const from = line?.phone?.trim() || undefined
     if (!from) {
       errors.push("no_landlord_main_sms")
     } else {
       const provider = getSMSProviderForSend({
         landlordId,
-        lineProvider: sender.provider,
+        lineProvider: line.provider,
       })
       for (const to of phones) {
         const send = await provider.sendMessage({ to, body: smsBody, from })

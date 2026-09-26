@@ -4,7 +4,7 @@ import { getActiveLandlordId } from '@/lib/activeLandlord'
 import { loadSetupSuccessProgress } from '@/lib/loadSetupSuccessProgress'
 import { hasSeenLimitedAlphaPostOnboardingWelcome } from '@/lib/postOnboardingWelcome'
 import { PROPERTY_DETAILS_CHANGED_EVENTS } from '@/lib/propertyDetailsCompleteness'
-import { isLimitedAlpha1Landlord } from '@shared/landlordCapabilities'
+import { isLimitedAlphaLandlord } from '@shared/landlordCapabilities'
 import {
   clearSetupSuccessCardDismissed,
   SETUP_SUCCESS_COLLAPSED_EVENT,
@@ -20,7 +20,7 @@ export function useSetupSuccessNavHint() {
   const location = useLocation()
   const landlordId = getActiveLandlordId()
   const eligible =
-    isLimitedAlpha1Landlord(landlordId) && hasSeenLimitedAlphaPostOnboardingWelcome(landlordId)
+    isLimitedAlphaLandlord(landlordId) && hasSeenLimitedAlphaPostOnboardingWelcome(landlordId)
   const [progress, setProgress] = useState<SetupSuccessProgress | null>(null)
   const [gainDelta, setGainDelta] = useState(0)
   const gainTimerRef = useRef<number | null>(null)

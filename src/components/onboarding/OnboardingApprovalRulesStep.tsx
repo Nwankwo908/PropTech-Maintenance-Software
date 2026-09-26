@@ -22,13 +22,9 @@ import {
   type OnboardingApprovalRules,
 } from '@/lib/onboardingApprovalRules'
 import {
-  onboardingBtnPrimaryClass,
-  onboardingBtnSecondaryClass,
-} from './onboardingFieldStyles'
-
-const btnSecondary = onboardingBtnSecondaryClass
-
-const btnContinue = onboardingBtnPrimaryClass
+  OnboardingContinueButton,
+  OnboardingStepNav,
+} from './OnboardingStepChrome'
 
 function ChoiceCard({
   selected,
@@ -116,6 +112,7 @@ export function OnboardingApprovalRulesStep({
       setError(`Please set: ${check.missing.join(', ')}.`)
       return
     }
+    setError(null)
     onContinue(normalized)
   }
 
@@ -447,16 +444,11 @@ export function OnboardingApprovalRulesStep({
         </p>
       ) : null}
 
-      <div className="mt-8 flex flex-wrap items-center justify-end gap-3">
-        {showBack ? (
-          <button type="button" disabled={saving} onClick={onBack} className={btnSecondary}>
-            Back
-          </button>
-        ) : null}
-        <button type="button" disabled={saving} onClick={handleContinue} className={btnContinue}>
+      <OnboardingStepNav showBack={showBack} onBack={onBack} saving={saving}>
+        <OnboardingContinueButton disabled={saving} onClick={handleContinue}>
           {saving ? 'Saving…' : continueLabel}
-        </button>
-      </div>
+        </OnboardingContinueButton>
+      </OnboardingStepNav>
     </section>
   )
 }
