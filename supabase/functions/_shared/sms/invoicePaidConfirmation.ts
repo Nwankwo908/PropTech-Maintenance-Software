@@ -215,16 +215,24 @@ export function isBareYesInvoicePaidReply(body: string): boolean {
 /**
  * YES / paid / done — and NO / not yet — with reasonable equivalents.
  * Bare numbered replies like "1" are not paid confirmations (legacy fake options).
+ * Work-order prefixes are stripped so "WO-B347 YES" / "YES WO-B347" count.
  */
 export function parseInvoicePaidConfirmationReply(
   body: string,
 ): InvoicePaidConfirmationReply | null {
-  const normalized = body
+  let normalized = body
     .trim()
     .toLowerCase()
     .replace(/[.!]+$/g, "")
     .replace(/\s+/g, " ")
   if (!normalized) return null
+
+  // Strip WO-XXXX / bare 8-char hex ticket prefixes so named YES/NO still parse.
+  normalized = normalized
+    .replace(/\bwo-?[0-9a-f]{4,8}\b/gi, " ")
+    .replace(/\b[0-9a-f]{8}\b/gi, " ")
+    .replace(/\s+/g, " ")
+    .trim()
 
   if (
     normalized === "yes" ||

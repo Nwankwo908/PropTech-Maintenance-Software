@@ -27,6 +27,9 @@ Deno.test("parseInvoicePaidConfirmationReply: YES / paid equivalents", () => {
     "mark paid",
     "yes paid",
     "i paid",
+    "WO-FC38 YES",
+    "yes WO-4ADC",
+    "WO-B347 paid",
   ]) {
     assertEquals(parseInvoicePaidConfirmationReply(body), "paid", body)
   }
