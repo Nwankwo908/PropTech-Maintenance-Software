@@ -68,6 +68,12 @@ serve(async (req) => {
     ? body.landlord_id.trim()
     : ""
   const dryRun = body.dry_run === true || body.dryRun === true
+  const digestOnly =
+    body.needs_admin_digest_only === true ||
+    body.needsAdminDigestOnly === true
+  const digestForce =
+    body.needs_admin_digest_force === true ||
+    body.needsAdminDigestForce === true
 
   const supabase = createClient(supabaseUrl, serviceKey, {
     auth: { persistSession: false, autoRefreshToken: false },
@@ -77,6 +83,22 @@ serve(async (req) => {
     const missingCrons = await reportMissingRequiredCronJobs(supabase, {
       landlordId: scopedLandlordId || null,
     })
+
+    if (digestOnly) {
+      const needsAdminDigest = await sendNeedsAdminVendorDigest(supabase, {
+        force: digestForce,
+        dryRun,
+      })
+      return jsonResponse({
+        ok: true,
+        needs_admin_digest_only: true,
+        needs_admin_vendor_digest: needsAdminDigest,
+        missing_required_crons: missingCrons.map((j) => ({
+          jobname: j.jobname,
+          edge_function: j.edgeFunction,
+        })),
+      })
+    }
 
     if (dryRun) {
       const landlordIds = scopedLandlordId
